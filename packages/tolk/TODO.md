@@ -17,7 +17,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   its manually staged kernel gets the structural name `E_2`, whereas the
   target tensor graph gets `r_2_2_2_2_2`; remove the remaining staging shortcuts.
 - Reconcile Metal source ordering in `lorenz_fold` and vector-lane extraction
-  in `vectorize_index`.
+  in `vectorize_index` when adopting weak CONST plus typed CAST.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -33,7 +33,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   flushes subnormals and clamps infinities, so rune refuses a compiled float8
   `Nx.bitcast`.
 
-- Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/ProgramInfo
+- Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg
   metadata, ALLOC, effectful CALL and scalar binding effects. Remove deleted
   operations and stale enum/cache formats.
 - Port sorted-axis UNSHARD and the corresponding COPY/CALL/WMMA spec rules
@@ -72,6 +72,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Render final constants.
 
 ## Storage, execution and devices
+
+- Reject overflowing byte ranges in MMIO and storage views before address
+  arithmetic.
 
 - Adopt BufferStorage, HostAllocator, per-device mappings and typed dispatch/
   transfer identities. Remove the nativeint-only transfer seam and Metal token

@@ -400,22 +400,12 @@ let launch_dim u =
        | _ -> U.Launch_sym u)
   | _ -> U.Launch_sym u
 
-let fixed_dims dims =
-  let rec loop acc i =
-    if i < 0 then Some acc
-    else
-      match U.const_int_value dims.(i) with
-      | Some n -> loop (n :: acc) (i - 1)
-      | None -> None
-  in
-  loop [] (Array.length dims - 1)
-
 let program_info t : U.program_info =
   {
     target = t.target;
-    name = t.name;
     global_size = List.map launch_dim (Array.to_list t.launch.global);
-    local_size = Option.bind t.launch.local fixed_dims;
+    local_size = List.map launch_dim
+      (Array.to_list (Option.value t.launch.local ~default:(default_dims ())));
     vars = List.map (fun def -> def.node) t.var_defs;
     globals = t.globals;
     outs = t.outs;

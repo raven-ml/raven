@@ -68,29 +68,6 @@ module Runner : sig
       [var_vals] defaults to [[]]. *)
 end
 
-(** {1:local_size Local size optimization} *)
-
-val optimize_local_size :
-  device:Device.t ->
-  vals:int64 array ->
-  Device.prog ->
-  int array ->
-  Device.Buffer.t list ->
-  int array
-(** [optimize_local_size ~device ~vals prg global_size rawbufs] finds the
-    local workgroup size that minimises execution time for [prg]
-    with [global_size] and scalar arguments [vals].
-
-    Enumerates all valid local sizes (each dimension drawn from
-    powers of two up to [1024], total product at most [1024]),
-    tries each twice in random order, and returns the fastest.
-
-    When the first buffer in [rawbufs] also appears later in the
-    list, a temporary buffer is allocated to avoid clobbering
-    output during measurement.
-
-    Raises [Invalid_argument] if every candidate fails. *)
-
 (** {1:compiled_runner Compiled runner} *)
 
 (** Kernel compilation and dispatch.

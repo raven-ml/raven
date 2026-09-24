@@ -39,82 +39,6 @@ module Runner = struct
     t.call rawbufs var_vals ~wait:false ~timeout:None
 end
 
-(* Local size optimization *)
-
-let max_workgroup = 1024
-
-let optimize_local_size ~device ~vals (prg : Device.prog) global_size
-    (rawbufs : Device.Buffer.t list) =
-  (* Avoid clobbering output if it also appears as input. *)
-  let bufs = match rawbufs with
-    | out :: rest when
-        List.exists (fun b ->
-          Device.Buffer.base_id b = Device.Buffer.base_id out) rest ->
-        let test_out =
-          Device.create_buffer ~size:(Device.Buffer.size out)
-            ~dtype:(Device.Buffer.dtype out) device
-        in
-        Device.Buffer.ensure_allocated test_out;
-        test_out :: rest
-    | _ -> rawbufs
-  in
-  let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
-  let ndims = Array.length global_size in
-  let powers = [| 1; 2; 4; 8; 16; 32; 64; 128; 256; max_workgroup |] in
-  (* For each dimension, valid local sizes are {sz} ∪ powers that fit. *)
-  let local_dims = Array.init ndims (fun i ->
-    let sz = global_size.(i) in
-    List.filter (fun x -> x <= sz)
-      (List.sort_uniq Int.compare (sz :: Array.to_list powers)))
-  in
-  (* Enumerate all combinations with product ≤ max_workgroup. *)
-  let local_sizes = ref [] in
-  let rec enumerate acc dim =
-    if dim >= ndims then begin
-      let ls = Array.of_list (List.rev acc) in
-      if Array.fold_left ( * ) 1 ls <= max_workgroup then
-        local_sizes := ls :: !local_sizes
-    end else
-      List.iter (fun x -> enumerate (x :: acc) (dim + 1)) local_dims.(dim)
-  in
-  enumerate [] 0;
-  (* Try each size twice, in random order. *)
-  let all = Array.of_list (!local_sizes @ !local_sizes) in
-  let n = Array.length all in
-  for i = n - 1 downto 1 do
-    let j = Random.int (i + 1) in
-    let tmp = all.(i) in all.(i) <- all.(j); all.(j) <- tmp
-  done;
-  let best_time = ref infinity in
-  let best_local = ref (Array.make ndims 1) in
-  for k = 0 to n - 1 do
-    let local_size = all.(k) in
-    let global = Array.init ndims (fun i -> global_size.(i) / local_size.(i)) in
-    let tm =
-      try
-        let ret =
-          try
-            prg.call buf_addrs ~global ~local:(Some local_size)
-              ~vals ~wait:true ~timeout:None
-          with exn ->
-            List.iter keep_alive bufs;
-            raise exn
-        in
-        List.iter keep_alive bufs;
-        match ret with Some t -> t | None -> infinity
-      with _ ->
-        List.iter keep_alive bufs;
-        infinity
-    in
-    if tm < !best_time then begin
-      best_time := tm;
-      best_local := local_size
-    end
-  done;
-  if Float.is_infinite !best_time then
-    invalid_arg "all optimize_local_size exec failed";
-  !best_local
-
 (* Compiled runner *)
 
 module Compiled_runner = struct
@@ -248,8 +172,7 @@ let () =
    on the kernel's semantic key, the device, and [program_config] (so tag-only
    differences share a compiled program, and a kernel compiled under one
    configuration is never served under another). [runtime_cache] memoizes the
-   device dispatch handle built from a PROGRAM's compiled binary.
-   [local_size_cache] memoizes the tuned workgroup shape per PROGRAM. *)
+   device dispatch handle built from a PROGRAM's compiled binary. *)
 
 let program_config () =
   let module D = Tolk_uop.Dtype in
@@ -277,7 +200,6 @@ let cache_key ~device ~ast_key =
 
 let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
 let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
-let local_size_cache : (int, int array) Hashtbl.t = Hashtbl.create 16
 
 (* Rewrite each kernel CALL(SINK) in [linear] to CALL(PROGRAM), compiling the
    body with [to_program] and caching the compiled PROGRAM by the SINK's
@@ -320,7 +242,7 @@ let program_args (info : Tolk_uop.Uop.program_info) args =
   let args = Array.of_list args in
   List.map (fun slot ->
       if slot < 0 || slot >= Array.length args then
-        invalid_arg (strf "program %S: missing buffer slot %d" info.name slot);
+        invalid_arg (strf "program: missing buffer slot %d" slot);
       args.(slot)) info.globals
 
 (* Device dispatch handle for a compiled PROGRAM, cached per node and device. *)
@@ -571,36 +493,16 @@ let call_arg_uops args =
       | _ -> true)
     args
 
-(* Resolve the launch geometry for a compiled PROGRAM. On backends with local
-   workgroups, an unfixed local size is tuned once and the global size divided
-   by the chosen workgroup shape, matching the kernel's thread decomposition. *)
-let launch_geometry ~device program (info : Tolk_uop.Uop.program_info) ~var_vals
-    prg bufs =
+(* The optimizer declares the workgroup shape before compilation; launch
+   resolves symbolic extents without trying alternate workgroups. *)
+let launch_geometry (info : Tolk_uop.Uop.program_info) ~var_vals =
   let module U = Tolk_uop.Uop in
   let global_values, local = U.program_launch_dims info ~var_vals in
-  let global =
-    Array.of_list
-      (List.map
-         (function
-           | U.Launch_value_int n -> n
-           | U.Launch_value_float f -> int_of_float f)
-         global_values)
-  in
-  let local = Option.map Array.of_list local in
-  match local with
-  | Some _ -> global, local
-  | None when Renderer.has_local (Device.renderer device) ->
-      let best =
-        match Hashtbl.find_opt local_size_cache (U.tag program) with
-        | Some b -> b
-        | None ->
-            let vals = Array.of_list (List.map Int64.of_int (U.program_vals info ~var_vals)) in
-            let b = optimize_local_size ~device ~vals prg global bufs in
-            Hashtbl.replace local_size_cache (U.tag program) b;
-            b
-      in
-      Array.mapi (fun i g -> g / best.(i)) global, Some best
-  | None -> global, None
+  let dims values = Array.of_list
+      (List.map (function
+         | U.Launch_value_int n -> n
+         | U.Launch_value_float f -> int_of_float f) values) in
+  dims global_values, dims local
 
 (* Stats *)
 
@@ -621,10 +523,7 @@ let get_call_name call bufs var_vals =
   | Some { body = ast; args; _ } -> (
       let arg_uops = call_arg_uops args in
       match (U.op ast, arg_uops, bufs) with
-      | Tolk_uop.Ops.Program, _, _ -> (
-          match U.as_program_info ast with
-          | Some info -> info.name
-          | None -> invalid_arg "get_call_name: PROGRAM without info")
+      | Tolk_uop.Ops.Program, _, _ -> U.program_function_name ast
       | Tolk_uop.Ops.Slice, out :: src :: _, _ ->
           let offset =
             match U.as_slice ast with
@@ -800,7 +699,7 @@ let exec_kernel binding ctx ~device call =
         List.iter Device.Buffer.ensure_allocated bufs;
         let prg = get_runtime ~device program in
         let global, local =
-          launch_geometry ~device program info ~var_vals prg bufs
+          launch_geometry info ~var_vals
         in
         let vals =
           Array.of_list
@@ -810,7 +709,7 @@ let exec_kernel binding ctx ~device call =
         in
         let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
         let run () =
-          try prg.call buf_addrs ~global ~local ~vals ~wait:ctx.wait
+          try prg.call buf_addrs ~global ~local:(Some local) ~vals ~wait:ctx.wait
                 ~timeout:None
           with exn ->
             List.iter keep_alive bufs;
@@ -998,11 +897,6 @@ module Graph_runner = struct
 
   type kernel = {
     info : U.program_info;
-    local : int array;
-    divide_global : bool;
-        (* The local size was tuned, so the recorded global size is the
-           launch-dim global divided by it; symbolic updates redo the
-           division. *)
     var_replace : (int * string) list;
         (* Scalar argument index -> variable name patched on replay. *)
     symbolic : bool;  (* Global launch dims depend on variables. *)
@@ -1047,7 +941,7 @@ module Graph_runner = struct
   let is_symbolic (info : U.program_info) =
     List.exists
       (function U.Launch_sym _ -> true | _ -> false)
-      info.global_size
+      (info.global_size @ info.local_size)
 
   (* Variables of a kernel, as (scalar argument index, name). *)
   let kernel_vars (info : U.program_info) =
@@ -1060,11 +954,9 @@ module Graph_runner = struct
       info.vars
     |> List.filter_map Fun.id
 
-  let updated_global k ~var_vals =
-    let values, _ = U.program_launch_dims k.info ~var_vals in
-    let global = launch_values_to_ints values in
-    if k.divide_global then Array.mapi (fun i g -> g / k.local.(i)) global
-    else global
+  let updated_launch k ~var_vals =
+    let global, local = U.program_launch_dims k.info ~var_vals in
+    launch_values_to_ints global, launch_values_to_ints local
 
   let create ~device binding ctx ast =
     let build =
@@ -1118,14 +1010,10 @@ module Graph_runner = struct
                 in
                 let prg = get_runtime ~device body in
                 let global, local =
-                  launch_geometry ~device body info ~var_vals:ctx.var_vals prg
-                    bufs
+                  launch_geometry info ~var_vals:ctx.var_vals
                 in
-                let divide_global = local <> None && info.local_size = None in
                 let global = pad3 global in
-                let local =
-                  match local with Some l -> pad3 l | None -> [| 1; 1; 1 |]
-                in
+                let local = pad3 local in
                 let vals =
                   Array.of_list
                     (U.program_vals info ~var_vals:ctx.var_vals)
@@ -1154,8 +1042,6 @@ module Graph_runner = struct
                       Kernel
                         {
                           info;
-                          local;
-                          divide_global;
                           var_replace = kernel_vars info;
                           symbolic = is_symbolic info;
                         };
@@ -1239,8 +1125,8 @@ module Graph_runner = struct
                       (strf "graph call %d: missing variable %S on replay" j name))
               k.var_replace;
             if k.symbolic then begin
-              t.exec.Device.Graph.set_launch_dims j
-                ~global:(updated_global k ~var_vals) ~local:k.local;
+              let global, local = updated_launch k ~var_vals in
+              t.exec.Device.Graph.set_launch_dims j ~global ~local;
               dirty := true
             end
         | Copy -> ());

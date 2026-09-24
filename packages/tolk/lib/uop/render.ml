@@ -298,11 +298,8 @@ and uop_repr_debug_string root =
 and program_info_debug_string (p : program_info) =
   dataclass_string "ProgramInfo"
     [
-      "name", python_quote p.name;
       "global_size", tuple_string (List.map launch_dim_debug_string p.global_size);
-      "local_size",
-      option_string (fun xs -> tuple_string (List.map string_of_int xs))
-        p.local_size;
+      "local_size", tuple_string (List.map launch_dim_debug_string p.local_size);
       ( "vars",
         tuple_string (List.map uop_repr_debug_string p.vars)
       );

@@ -1274,17 +1274,9 @@ let info_function_names_follow_tinygrad () =
       beam = 0;
     }
   in
-  let program_info name : Uop.program_info =
-    {
-      name;
-      target = Target.of_string "";
-      global_size = [ Launch_int 1; Launch_int 1; Launch_int 1 ];
-      local_size = Some [ 1; 1; 1 ];
-      vars = [];
-      globals = [];
-      outs = [];
-      ins = [];
-    }
+  let program name =
+    let sink = Uop.sink ~kernel_info:(kernel_info name) [] in
+    Uop.program ~sink ~info:(Uop.program_info_from_sink sink) ()
   in
   let cases =
     [
@@ -1301,8 +1293,8 @@ let info_function_names_follow_tinygrad () =
     (fun (name, expected) ->
       equal string ~msg:("KernelInfo.function_name " ^ name)
         expected (Uop.kernel_function_name (kernel_info name));
-      equal string ~msg:("ProgramInfo.function_name " ^ name)
-        expected (Uop.program_function_name (program_info name)))
+      equal string ~msg:("PROGRAM function name " ^ name)
+        expected (Uop.program_function_name (program name)))
     cases
 
 let cache_info_semantic_key_parity () =
@@ -1313,18 +1305,6 @@ let cache_info_semantic_key_parity () =
       opts_to_apply = None;
       estimates = None;
       beam;
-    }
-  in
-  let program_info name : Uop.program_info =
-    {
-      name;
-      target = Target.of_string "";
-      global_size = [ Launch_int 1; Launch_int 1; Launch_int 1 ];
-      local_size = Some [ 1; 1; 1 ];
-      vars = [];
-      globals = [];
-      outs = [];
-      ins = [];
     }
   in
   let call_info ?aux () : Uop.call_info =
@@ -1341,12 +1321,14 @@ let cache_info_semantic_key_parity () =
   let beamed = Uop.sink ~kernel_info:(kernel_info ~beam:3 "kernel") [] in
   is_true ~msg:"KernelInfo.beam participates in semantic_key"
     (Uop.semantic_key sink <> Uop.semantic_key beamed);
-  let raw_space = Uop.program ~sink ~info:(program_info "a b") () in
-  let raw_hex = Uop.program ~sink ~info:(program_info "a20b") () in
+  let named_program name =
+    let sink = Uop.sink ~kernel_info:(kernel_info name) [] in
+    Uop.program ~sink ~info:(Uop.program_info_from_sink sink) ()
+  in
+  let raw_space = named_program "a b" and raw_hex = named_program "a20b" in
   equal string ~msg:"different raw names can share function_name"
-    (Uop.program_function_name (program_info "a b"))
-    (Uop.program_function_name (program_info "a20b"));
-  is_true ~msg:"ProgramInfo semantic_key keeps raw name"
+    (Uop.program_function_name raw_space) (Uop.program_function_name raw_hex);
+  is_true ~msg:"PROGRAM semantic_key keeps its kernel's raw name"
     (Uop.semantic_key raw_space <> Uop.semantic_key raw_hex);
   let call_without_aux = Uop.call ~body:sink ~args:[] ~info:(call_info ()) in
   let call_with_aux =
@@ -1418,10 +1400,9 @@ let program_constructor_prefix_layouts () =
   let binary = Uop.binary "bin" in
   let info : Uop.program_info =
     {
-      name = "prog";
       target = Target.of_string "";
       global_size = [ Launch_int 1; Launch_int 1; Launch_int 1 ];
-      local_size = Some [ 1; 1; 1 ];
+      local_size = [ Uop.Launch_int 1; Uop.Launch_int 1; Uop.Launch_int 1 ];
       vars = [];
       globals = [];
       outs = [];
@@ -1482,8 +1463,8 @@ let program_info_from_sink_parity () =
   in
   let sink = Uop.sink ~kernel_info [ stored; group_dim; local_dim; core_id ] in
   let info = Uop.program_info_from_sink sink in
-  equal string ~msg:"ProgramInfo name comes from KernelInfo"
-    "kernel name" info.name;
+  equal string ~msg:"PROGRAM name comes from KernelInfo"
+    "kernel20name" (Uop.program_function_name (Uop.program ~sink ~info ()));
   equal (list int) ~msg:"ProgramInfo globals"
     [ 2; 3 ] info.globals;
   equal (list int) ~msg:"ProgramInfo outs"
@@ -1497,12 +1478,12 @@ let program_info_from_sink_parity () =
     [ 2; 6 ] (Uop.program_vals info ~var_vals:[ "core_id", 2; "n", 6 ]);
   raises_match
     (function
-      | Invalid_argument msg -> contains msg "kernel name" && contains msg "\"n\""
+      | Invalid_argument msg -> contains msg "\"n\""
       | _ -> false)
     (fun () -> Uop.program_vals info ~var_vals:[ "core_id", 2 ]);
   raises_match
     (function
-      | Invalid_argument msg -> contains msg "kernel name" && contains msg "\"n\""
+      | Invalid_argument msg -> contains msg "\"n\""
       | _ -> false)
     (fun () -> Uop.program_launch_dims info ~var_vals:[]);
   let global_size, local_size =
@@ -1511,8 +1492,8 @@ let program_info_from_sink_parity () =
   equal (list launch_value_testable) ~msg:"ProgramInfo launch dims"
     [ Launch_value_int 1; Launch_value_int 1; Launch_value_int 7 ]
     global_size;
-  equal (option (list int)) ~msg:"ProgramInfo local dims"
-    (Some [ 1; 8; 1 ]) local_size
+  equal (list launch_value_testable) ~msg:"ProgramInfo local dims"
+    [ Launch_value_int 1; Launch_value_int 8; Launch_value_int 1 ] local_size
 
 let program_launch_dims_floor_divmod () =
   let n =
@@ -1533,8 +1514,8 @@ let program_launch_dims_floor_divmod () =
     ~msg:"ProgramInfo floor launch global dims"
     [ Launch_value_int (-3); Launch_value_int 2; Launch_value_int 1 ]
     global_size;
-  equal (option (list int)) ~msg:"ProgramInfo floor launch local dims"
-    (Some [ 1; 1; 1 ]) local_size
+  equal (list launch_value_testable) ~msg:"ProgramInfo floor launch local dims"
+    [ Launch_value_int 1; Launch_value_int 1; Launch_value_int 1 ] local_size
 
 let debug_prints_toposort_like_tinygrad () =
   let a = Uop.const_int 1 in
@@ -1635,10 +1616,9 @@ let debug_prints_rich_args_dataclass_style () =
   let sink = Uop.sink ~kernel_info [] in
   let program_info : Uop.program_info =
     {
-      name = "prog";
       target = Target.of_string "";
       global_size = [ Launch_int 1; Launch_float 2.0 ];
-      local_size = None;
+      local_size = [ Uop.Launch_int 1; Uop.Launch_int 1; Uop.Launch_int 1 ];
       vars = [ param ];
       globals = [ 2 ];
       outs = [];
@@ -1678,7 +1658,7 @@ let debug_prints_rich_args_dataclass_style () =
     (contains out "Estimates(ops=1, lds=2, mem=3)");
   is_true ~msg:"ProgramInfo repr"
     (contains out
-       "ProgramInfo(name='prog', global_size=(1, 2.0), local_size=None");
+       "ProgramInfo(global_size=(1, 2.0), local_size=(1, 1, 1)");
   is_true ~msg:"ProgramInfo vars use UOp repr"
     (contains out "vars=(UOp(Ops.PARAM, dtypes.weakint, arg=ParamArg");
   is_true ~msg:"CallInfo repr"
@@ -2356,6 +2336,7 @@ let compiled_signature_preserves_slots_and_types () =
   let program = U.program ~sink ~linear:(U.linear [ b11; v; b3 ])
       ~source:(U.source "source") ~binary:(U.binary "\x7fELF\x00payload") ~info () in
   let obj = U.to_elf program in
+  equal string "test" obj.name;
   equal string "\x7fELF\x00payload" (Bytes.to_string obj.lib);
   equal string "PCI:2+AMD:HIP:gfx1100" (Target.to_string obj.target);
   equal (option string) (Some (U.semantic_key program)) obj.profile_key;

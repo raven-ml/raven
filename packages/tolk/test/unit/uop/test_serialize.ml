@@ -58,10 +58,9 @@ let compiled_program ~name () =
   let linear = U.linear [ kern_call; copy_call ] in
   let info : U.program_info =
     {
-      name;
       target = Target.of_string "PCI:0,2+AMD:HIP:gfx1100";
       global_size = [ U.Launch_sym var; U.Launch_int 1; U.Launch_int 1 ];
-      local_size = None;
+      local_size = [ U.Launch_sym U.O.(var + int_ 1); U.Launch_int 1; U.Launch_int 1 ];
       vars = [ var ];
       globals = [ 0 ];
       outs = [ 0 ];
@@ -153,7 +152,7 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
   (* Older layouts and future formats are rejected before reading the graph. *)
-  let current_version = Marshal.to_string 14 [] in
+  let current_version = Marshal.to_string 15 [] in
   let p = find_sub blob current_version in
   List.iter (fun version ->
       let replacement = Marshal.to_string version [] in
@@ -163,7 +162,7 @@ let import_rejects_malformed () =
             (p + String.length current_version)
             (String.length blob - p - String.length current_version)
       in
-      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 15 ]
+      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 16 ]
 
 (* Buffer nodes hash-cons on their slot: an imported graph that carries a
    process-local internal slot collides with a local buffer minted with the
@@ -244,6 +243,11 @@ let cross_process_import () =
            | U.Launch_sym s :: _ ->
                is_true ~msg:"Launch_sym remapped consistently" (s == var)
            | _ -> fail "expected symbolic launch dimension");
+          (match info.local_size with
+           | U.Launch_sym s :: _ ->
+               is_true ~msg:"local Launch_sym remapped consistently"
+                 (s == U.O.(var + int_ 1))
+           | _ -> fail "expected symbolic local dimension");
           let sink = (U.src imported).(0) in
           match U.as_kernel_info sink with
           | Some { estimates = Some { ops = U.Sym s; _ }; _ } ->

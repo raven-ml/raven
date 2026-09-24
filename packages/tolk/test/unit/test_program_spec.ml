@@ -187,7 +187,6 @@ let () =
               spec_of [ m; p0; p1; c0; groups; gid; out_idx; in_idx; ld; st ]
             in
             let info = Program_spec.program_info spec in
-            equal string "kern" info.name;
             equal (list int) [ 0; 1 ] info.globals;
             equal (list int) [ 0 ] info.outs;
             equal (list int) [ 1 ] info.ins;
@@ -197,7 +196,13 @@ let () =
                 is_true (U.equal groups u)
             | _ -> failwith "expected symbolic launch metadata"
             end;
-            equal (option (list int)) (Some [ 1; 1; 1 ]) info.local_size);
+            is_true (info.local_size = [ U.Launch_int 1; U.Launch_int 1; U.Launch_int 1 ]));
+          test "program_info preserves symbolic local dimensions" (fun () ->
+            let n = define_var "n" 1 32 in
+            let lid = special (Gpu_dim.Local_id 0) n in
+            let info = Program_spec.program_info (spec_of [ n; lid ]) in
+            let _, local = U.program_launch_dims info ~var_vals:[ "n", 8 ] in
+            is_true (local = [ U.Launch_value_int 8; U.Launch_value_int 1; U.Launch_value_int 1 ]));
           test "duplicate launch axis is rejected" (fun () ->
             let c4 = i32 4 in
             let gid0 = special (Gpu_dim.Group_id 0) c4 in

@@ -94,9 +94,8 @@ and launch_value = Launch_value_int of int | Launch_value_float of float
 
 and program_info = {
   target : Target.t;
-  name : string;
   global_size : launch_dim list;
-  local_size : int list option;
+  local_size : launch_dim list;
   vars : t list;
   globals : int list;
   outs : int list;
@@ -347,7 +346,6 @@ let sanitize_function_name name =
   Buffer.contents buf
 
 let kernel_function_name (info : kernel_info) = sanitize_function_name info.name
-let program_function_name (info : program_info) = sanitize_function_name info.name
 
 (* Accessors *)
 
@@ -3038,13 +3036,6 @@ let special_axis_with_prefix name prefix =
     int_of_string_opt (String.sub name n (String.length name - n))
   else None
 
-let exact_int_for_program name u =
-  match const_int_value (simplify u) with
-  | Some n -> n
-  | None ->
-      invalid_arg
-        (Printf.sprintf "Uop.%s: expected concrete integer launch dimension" name)
-
 let program_index_buffer u =
   let index =
     match op u, Array.to_list (src u) with
@@ -3062,7 +3053,7 @@ let program_info_from_sink ?(target = Target.of_string "") sink =
   let outs = ref [] in
   let ins = ref [] in
   let global_size = ref [ Launch_int 1; Launch_int 1; Launch_int 1 ] in
-  let local_size = ref (Some [ 1; 1; 1 ]) in
+  let local_size = ref [ Launch_int 1; Launch_int 1; Launch_int 1 ] in
   let collect_buffer_slot target u =
     match program_index_buffer u with
     | Some buf when Ops.equal (op buf) Ops.Param ->
@@ -3074,7 +3065,6 @@ let program_info_from_sink ?(target = Target.of_string "") sink =
   let update_special name size =
     match special_axis_with_prefix name "idx" with
     | Some axis ->
-        local_size := None;
         global_size :=
           set_nth "program_info_from_sink" !global_size axis
             (launch_dim_of_uop size)
@@ -3088,13 +3078,9 @@ let program_info_from_sink ?(target = Target.of_string "") sink =
             match special_axis_with_prefix name "lidx" with
             | None -> ()
             | Some axis ->
-                (match !local_size with
-                 | None -> ()
-                 | Some local ->
-                     local_size :=
-                       Some
-                         (set_nth "program_info_from_sink" local axis
-                            (exact_int_for_program "program_info_from_sink" size)))
+                local_size :=
+                  set_nth "program_info_from_sink" !local_size axis
+                    (launch_dim_of_uop size)
   in
   List.iter
     (fun u ->
@@ -3115,17 +3101,12 @@ let program_info_from_sink ?(target = Target.of_string "") sink =
            | None -> ())
        | _ -> ()))
     (toposort sink);
-  let name =
-    match as_kernel_info sink with
-    | Some info -> info.name
-    | None -> "test"
-  in
   let globals = sort_uniq_ints !globals in
   let outs, ins =
     if !outs = [] && !ins = [] then globals, globals
     else sort_uniq_ints !outs, sort_uniq_ints !ins
   in
-  { target; name; global_size = !global_size; local_size = !local_size;
+  { target; global_size = !global_size; local_size = !local_size;
     vars = sort_program_vars !vars; globals; outs; ins }
 
 let int_floor_div a b =
@@ -3280,15 +3261,15 @@ let exec_alu ?(truncate_output = true) op (target : Dtype.t) args =
         exec_ternary ~truncate_output op target a b c
     | _ -> None
 
-let rec infer_int program_name var_vals u =
+let rec infer_int var_vals u =
   match const_int_value (simplify u) with
   | Some n -> n
   | None ->
       let srcs = src u in
       let binary f =
         if Array.length srcs < 2 then raise Not_found;
-        f (infer_int program_name var_vals srcs.(0))
-          (infer_int program_name var_vals srcs.(1))
+        f (infer_int var_vals srcs.(0))
+          (infer_int var_vals srcs.(1))
       in
       match op u with
       | Ops.Param -> (
@@ -3297,12 +3278,11 @@ let rec infer_int program_name var_vals u =
               (match List.assoc_opt name var_vals with
                | Some value -> value
                | None -> invalid_arg
-                   (Printf.sprintf "program %S: missing launch variable %S"
-                      program_name name))
+                   (Printf.sprintf "program: missing launch variable %S" name))
           | None -> invalid_arg
-              (Printf.sprintf "program %S: unnamed launch variable" program_name))
-      | Ops.Bind when Array.length srcs >= 2 -> infer_int program_name var_vals srcs.(1)
-      | Ops.Cast when Array.length srcs >= 1 -> infer_int program_name var_vals srcs.(0)
+              "program: unnamed launch variable")
+      | Ops.Bind when Array.length srcs >= 2 -> infer_int var_vals srcs.(1)
+      | Ops.Cast when Array.length srcs >= 1 -> infer_int var_vals srcs.(0)
       | Ops.Add -> binary ( + )
       | Ops.Sub -> binary ( - )
       | Ops.Mul -> binary ( * )
@@ -3319,21 +3299,21 @@ let rec infer_int program_name var_vals u =
       | Ops.Xor -> binary ( lxor )
       | Ops.Shl -> binary ( lsl )
       | Ops.Shr -> binary ( asr )
-      | Ops.Neg when Array.length srcs >= 1 -> -infer_int program_name var_vals srcs.(0)
+      | Ops.Neg when Array.length srcs >= 1 -> -infer_int var_vals srcs.(0)
       | Ops.Where when Array.length srcs >= 3 ->
-          if infer_int program_name var_vals srcs.(0) <> 0 then
-            infer_int program_name var_vals srcs.(1)
-          else infer_int program_name var_vals srcs.(2)
+          if infer_int var_vals srcs.(0) <> 0 then
+            infer_int var_vals srcs.(1)
+          else infer_int var_vals srcs.(2)
       | _ -> raise Not_found
 
-let program_launch_dim program_name var_vals = function
+let program_launch_dim var_vals = function
   | Launch_int n -> Launch_value_int n
   | Launch_float f -> Launch_value_float f
-  | Launch_sym u -> Launch_value_int (infer_int program_name var_vals u)
+  | Launch_sym u -> Launch_value_int (infer_int var_vals u)
 
 let program_launch_dims (info : program_info) ~var_vals =
-  ( List.map (program_launch_dim info.name var_vals) info.global_size,
-    info.local_size )
+  ( List.map (program_launch_dim var_vals) info.global_size,
+    List.map (program_launch_dim var_vals) info.local_size )
 
 let program_vals (info : program_info) ~var_vals =
   List.map
@@ -3343,9 +3323,9 @@ let program_vals (info : program_info) ~var_vals =
           (match List.assoc_opt name var_vals with
            | Some value -> value
            | None -> invalid_arg
-               (Printf.sprintf "program %S: missing variable %S" info.name name))
+               (Printf.sprintf "program: missing variable %S" name))
       | None -> invalid_arg
-          (Printf.sprintf "program %S: unnamed variable" info.name))
+          "program: unnamed variable")
     info.vars
 
 (* Serialization *)
@@ -3361,13 +3341,13 @@ let arg_uops = function
         match e with Sym u -> u :: acc | Int _ -> acc
       in
       sym (sym (sym [] ops) lds) mem
-  | Arg.Program_info { vars; global_size; _ } ->
+  | Arg.Program_info { vars; global_size; local_size; _ } ->
       List.fold_left
         (fun acc (d : launch_dim) ->
           match d with
           | Launch_sym u -> u :: acc
           | Launch_int _ | Launch_float _ -> acc)
-        vars global_size
+        vars (global_size @ local_size)
   | _ -> []
 
 let map_arg_uops f = function
@@ -3388,7 +3368,8 @@ let map_arg_uops f = function
       Arg.Program_info
         { pi with
           vars = List.map f pi.vars;
-          global_size = List.map dim pi.global_size }
+          global_size = List.map dim pi.global_size;
+          local_size = List.map dim pi.local_size }
   | a -> a
 
 let semantic_key root =
@@ -3404,8 +3385,10 @@ let semantic_key root =
     | Arg.Program_info pi ->
         let scalar = function Launch_sym _ -> Launch_int 0 | x -> x in
         let symbolic = function Launch_sym _ -> true | _ -> false in
-        (Arg.Program_info { pi with vars = []; global_size = List.map scalar pi.global_size },
-         List.map symbolic pi.global_size, List.length pi.vars)
+        (Arg.Program_info { pi with vars = [];
+           global_size = List.map scalar pi.global_size;
+           local_size = List.map scalar pi.local_size },
+         List.map symbolic (pi.global_size @ pi.local_size), List.length pi.vars)
     | Arg.Call_info info -> (Arg.Call_info { info with aux = None }, [], 0)
     | arg -> (arg, [], 0)
   in
@@ -3470,13 +3453,19 @@ let program_signature (info : program_info) linear =
       info.vars in
   buffers @ scalars
 
+let program_function_name u =
+  match op u, children u with
+  | Ops.Program, sink :: _ when op sink = Ops.Sink ->
+      (match as_kernel_info sink with
+       | Some kernel -> kernel_function_name kernel
+       | None -> "test")
+  | _ -> invalid_arg "Uop.program_function_name: expected a PROGRAM with a SINK"
+
 let to_elf u =
   match op u, arg u, children u with
   | Ops.Program, Arg.Program_info info, [sink; linear; _source; binary]
     when op sink = Ops.Sink && op linear = Ops.Linear && op binary = Ops.Binary ->
-      let name = match as_kernel_info sink with
-        | Some kernel -> kernel_function_name kernel
-        | None -> program_function_name info in
+      let name = program_function_name u in
       let lib = match Arg.as_string (arg binary) with
         | Some lib -> Bytes.of_string lib
         | None -> invalid_arg "Uop.to_elf: binary is not a byte string" in
@@ -3486,7 +3475,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 14
+let export_version = 15
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

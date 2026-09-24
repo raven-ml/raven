@@ -246,9 +246,8 @@ type launch_value =
 
 type program_info = {
   target : Target.t;  (** Resolved compilation target. *)
-  name : string;  (** Program name before sanitization. *)
   global_size : launch_dim list;  (** Global launch dimensions. *)
-  local_size : int list option;  (** Local launch dimensions, if fixed. *)
+  local_size : launch_dim list;  (** Declared local launch dimensions. *)
   vars : t list;  (** Runtime symbolic parameters. *)
   globals : int list;  (** Global buffer slots. *)
   outs : int list;  (** Output buffer slots. *)
@@ -265,9 +264,10 @@ val kernel_function_name : kernel_info -> string
 (** [kernel_function_name info] is [info.name] sanitized for backend
     function emission. *)
 
-val program_function_name : program_info -> string
-(** [program_function_name info] is [info.name] sanitized for backend
-    function emission. *)
+val program_function_name : t -> string
+(** [program_function_name program] is the name of its kernel, sanitized for
+    backend function emission. An unnamed kernel uses ["test"], as in rendering.
+    Raises [Invalid_argument] unless [program] is a PROGRAM with a SINK body. *)
 
 val program_info_from_sink : ?target:Target.t -> t -> program_info
 (** [program_info_from_sink ?target sink] derives tinygrad-style program metadata
@@ -280,17 +280,16 @@ val program_info_from_sink : ?target:Target.t -> t -> program_info
     is conservatively treated as both an input and an output.
 
     Raises [Invalid_argument] if a launch axis is outside the three tinygrad
-    launch dimensions, or if a local launch dimension is not a concrete
-    integer. *)
+    launch dimensions. *)
 
 val program_launch_dims :
   program_info -> var_vals:(string * int) list ->
-  launch_value list * int list option
+  launch_value list * launch_value list
 (** [program_launch_dims info ~var_vals] resolves [info.global_size] and
-    [info.local_size] using [var_vals]. Symbolic global dimensions are
+    [info.local_size] using [var_vals]. Symbolic dimensions are
     evaluated as integer UOp expressions over named runtime variables.
 
-    Raises [Invalid_argument], naming the program and variable, if a symbolic
+    Raises [Invalid_argument], naming the variable, if a symbolic
     dimension references a missing variable. Raises [Not_found] for an
     expression outside the UOp-local evaluator. *)
 
@@ -298,7 +297,7 @@ val program_vals : program_info -> var_vals:(string * int) list -> int list
 (** [program_vals info ~var_vals] is the runtime argument tuple for
     [info.vars], in their declared order, resolved from [var_vals].
 
-    Raises [Invalid_argument], naming the program and variable, if a
+    Raises [Invalid_argument], naming the variable, if a
     variable has no supplied value. *)
 
 type wmma_info = {

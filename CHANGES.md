@@ -379,6 +379,12 @@ thread.
 
 ### Tolk (new)
 
+- Honor declared workgroup sizes, including symbolic extents during replay,
+  without extra trial executions on first launch.
+- `Uop.program_info` stores launch expressions for global and local dimensions.
+  It no longer duplicates the kernel name; `Uop.program_function_name` now
+  reads that name from the program itself.
+
 - Keep a single cast around conditional expressions during symbolic
   simplification instead of duplicating it across both branches.
 

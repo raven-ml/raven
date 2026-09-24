@@ -116,9 +116,8 @@ val global_size : t -> Tolk_uop.Uop.t array
 val local_size : t -> Tolk_uop.Uop.t array option
 val program_info : t -> Tolk_uop.Uop.program_info
 (** [program_info spec] is the runtime-facing program metadata carried by
-    [spec]. Symbolic global dimensions are preserved as launch expressions;
-    local dimensions are present only when every local dimension is a fixed
-    integer. *)
+    [spec]. Symbolic global and local dimensions are preserved as launch
+    expressions. Flat-thread launches use unit local dimensions. *)
 
 val launch_dims : t -> (string * int) list -> int array * int array option
 (** [launch_dims spec var_vals] evaluates launch dimensions by replacing

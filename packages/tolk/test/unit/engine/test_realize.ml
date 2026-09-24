@@ -240,18 +240,65 @@ let renderer_selection_tests =
           equal (pair string string) ("first", "TEST:TEST:first") (compile "first"));
     ]
 
-let tuning_binds_scalar_arguments () =
-  let device = test_device (runtime_state ()) in
+let compiled_launch_uses_fixed_workgroups () =
   let calls = ref 0 in
-  let prg : Device.prog =
-    { call = (fun bufs ~global:_ ~local:_ ~vals ~wait:_ ~timeout:_ ->
-          equal int 0 (Array.length bufs);
-          equal (array int64) [| 37L |] vals;
-          incr calls;
-          Some 1e-6);
-      free = (fun () -> ()); handle = 0n } in
-  ignore (Realize.optimize_local_size ~device ~vals:[| 37L |] prg [| 4 |] []);
-  is_true (!calls > 0)
+  let runtime _ =
+    let call bufs ~global ~local ~vals ~wait:_ ~timeout:_ =
+      equal int 0 (Array.length bufs);
+      equal (array int) [| 7; 1; 1 |] global;
+      equal (option (array int)) (Some [| 1; 1; 1 |]) local;
+      equal (array int64) [| 37L |] vals;
+      incr calls;
+      Some 1e-6
+    in
+    Device.{ call; free = (fun () -> ()); handle = 0n }
+  in
+  let renderer = Renderer.make ~name:"test" ~device:"TEST"
+      ~has_local:true ~has_shared:false ~shared_max:0
+      ~render:(fun ?name:_ _ -> "") () in
+  let renderer_set = Device.Renderer_set.make ~device:"TEST"
+      [ "TEST", Fun.const renderer ] in
+  let device = Device.make ~name:"TEST:fixed-workgroups"
+      ~allocator:(test_allocator (allocator_stats ())) ~renderer_set
+      ~runtime ~synchronize:(fun () -> ()) () in
+  let n = variable "n" 0 100 in
+  let flat = U.special ~name:"idx0" ~size:(U.const_int 7) () in
+  let body = U.sink ~kernel_info:(kernel_info "fixed_workgroups") [ flat; n ] in
+  let call = U.call ~body:(program_of body) ~args:[] ~info:(call_info None) in
+  let binding = Realize.Buffers.create ~device in
+  Realize.run_linear ~device ~to_program:program_of ~var_vals:[ "n", 37 ] binding (U.linear [ call ]);
+  equal int 1 !calls
+
+let graph_updates_symbolic_local_dimensions () =
+  let recorded = ref [||] and updates = ref [] in
+  let graph : Device.Graph.t =
+    { supports_copy = false; max_buffer_offset = None;
+      build = (fun nodes ->
+          recorded := nodes;
+          { Device.Graph.set_buf = (fun _ _ _ -> ());
+            set_val = (fun _ _ _ -> ());
+            set_launch_dims = (fun _ ~global ~local ->
+                equal (array int) [| 7; 1; 1 |] global;
+                updates := local.(0) :: !updates);
+            set_params = (fun _ -> ());
+            launch = (fun ~wait:_ -> None) }) } in
+  let device = test_device ~name:"TEST:symbolic-workgroups" ~graph (runtime_state ()) in
+  let n = variable "n" 1 8 in
+  let group = U.special ~name:"gidx0" ~size:(U.const_int 7) () in
+  let local = U.special ~name:"lidx0" ~size:n () in
+  let program = program_of (U.sink ~kernel_info:(kernel_info "symbolic_workgroups") [ group; local ]) in
+  let kernel = U.call ~body:program ~args:[] ~info:(call_info None) in
+  let body = U.custom_function ~name:"graph" ~srcs:[ U.linear [ kernel ] ] in
+  let call = U.call ~body ~args:[] ~info:(call_info None) in
+  let binding = Realize.Buffers.create ~device in
+  let launch n = Realize.run_linear ~device ~to_program:program_of
+      ~var_vals:[ "n", n ] binding (U.linear [ call ]) in
+  launch 2;
+  launch 4;
+  (match !recorded with
+   | [| Device.Graph.Kernel k |] -> equal (array int) [| 2; 1; 1 |] k.local
+   | _ -> fail "expected one recorded kernel");
+  equal (list int) [ 2; 4 ] (List.rev !updates)
 
 let graph_binds_sparse_arguments () =
   let recorded = ref [||] in
@@ -295,7 +342,8 @@ let () =
   run "Engine_realize"
     [
       renderer_selection_tests;
-      test "local-size tuning binds scalars" tuning_binds_scalar_arguments;
+      test "compiled launch uses fixed workgroups" compiled_launch_uses_fixed_workgroups;
+      test "graph updates symbolic local dimensions" graph_updates_symbolic_local_dimensions;
       test "graph binding compacts sparse slots and preserves dependencies"
         graph_binds_sparse_arguments;
       group "Compiled_runner"
