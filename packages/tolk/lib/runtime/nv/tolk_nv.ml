@@ -1900,6 +1900,7 @@ module State = struct
     end
 end
 
+let buffer_kind : Nv_iface.mem Hcq.Buffer.t Type.Id.t = Type.Id.make ()
 module Allocator = struct
   (* One DMA stream ordered against the device timeline: wait for the last
      submitted work, append the packets of [build], advance the timeline. *)
@@ -1924,8 +1925,12 @@ module Allocator = struct
     Timeline.copyout state.State.tl ~submit_chunk:(submit_chunk state) bytes
       buf
 
-  let transfer state ~dest ~src nbytes =
-    submit_copy state (fun cp -> Copy_queue.copy cp ~dest ~src nbytes)
+  let transfer state ~dest ~src ~dest_device ~src_device nbytes =
+    if Tolk.Device.canonicalize dest_device <> Tolk.Device.canonicalize src_device then false
+    else begin
+      submit_copy state (fun cp -> Copy_queue.copy cp ~dest ~src nbytes);
+      true
+    end
 
   let raw state =
     let alloc size (spec : Tolk.Device.Buffer_spec.t) =
@@ -1944,12 +1949,13 @@ module Allocator = struct
       Hcq.Buffer.offset buf ~off:byte_offset ~size ()
     in
     {
-      Tolk.Device.Allocator.alloc;
+      Tolk.Device.Allocator.kind = buffer_kind;
+      alloc;
       free;
       copyin = copyin state;
       copyout = copyout state;
       as_buffer = None;
-      addr = Hcq.Buffer.va;
+      addr = Some Hcq.Buffer.va;
       offset = Some offset;
       transfer = Some (transfer state);
       supports_transfer = true;
@@ -1993,6 +1999,9 @@ module Runtime = struct
         ~ensure_local_memory:(ensure_local_memory state) ~name lib
     in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
+      let bufs = Array.map (fun buf ->
+          match Tolk.Device.Buffer.get buffer_kind buf with
+          | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
       let local = Option.value local ~default:default_local in
       let tl = state.State.tl in
       let timeline_value = Timeline.next_timeline tl in

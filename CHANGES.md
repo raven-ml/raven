@@ -379,6 +379,13 @@ thread.
 
 ### Tolk (new)
 
+- Runtime programs and graph replay now take `Device.Buffer.t` arguments.
+  Allocator type identities protect dispatch and transfers; Metal keeps its
+  native handles and byte offsets directly, without a token registry.
+- Transfer hooks receive both device identities and can decline unsupported
+  pairs for host fallback. Replay detects reallocated buffers even when the
+  allocator reuses an address.
+
 - `Uop.max_shard_numel` computes per-device allocation sizes with exact
   multiplication. View and replay sizing now use the same checked shape
   properties instead of multiplying host integers independently.

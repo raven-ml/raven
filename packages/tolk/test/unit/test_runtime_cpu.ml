@@ -659,7 +659,7 @@ let test_sparse_program_arguments () =
   Fun.protect ~finally:prg.free (fun () ->
       List.iter (fun (nbufs, nvals) ->
           raises_match (function Invalid_argument _ -> true | _ -> false)
-            (fun () -> ignore (prg.call (Array.make nbufs 0n)
+            (fun () -> ignore (prg.call (Array.make nbufs input_buffer)
                 ~global:[| 1; 1; 1 |] ~local:None ~vals:(Array.make nvals 0L)
                 ~wait:false ~timeout:None)))
         [ 1, 1; 3, 1; 2, 0; 2, 2 ]);
@@ -708,7 +708,7 @@ let test_linear_formal_order ?(permute_slots = false) ~reverse_buffers ~reverse_
     Fun.protect ~finally:prg.free (fun () ->
         let vals = if reverse_scalars then [| Int64.of_int wide_value; 3L |]
           else [| 3L; Int64.of_int wide_value |] in
-        ignore (prg.call [| Device.Buffer.addr inp; Device.Buffer.addr out |]
+        ignore (prg.call [| inp; out |]
           ~global:[| 1; 1; 1 |] ~local:None ~vals ~wait:true ~timeout:None))
   end else begin
     let runner = Realize.Compiled_runner.create ~device spec in

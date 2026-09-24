@@ -42,7 +42,8 @@ let allocator =
   end in
   Device.Allocator.Pack
     {
-      Device.Allocator.alloc =
+      Device.Allocator.kind = Type.Id.make ();
+      alloc =
         (fun nbytes _spec ->
           Raw.{ data = Bytes.make nbytes '\000'; offset = 0; nbytes });
       free = (fun _ _ _ -> ());
@@ -50,7 +51,7 @@ let allocator =
       copyout =
         (fun dst raw -> Bytes.blit raw.Raw.data raw.offset dst 0 raw.nbytes);
       as_buffer = None;
-      addr = (fun _ -> Nativeint.zero);
+      addr = Some (fun _ -> Nativeint.zero);
       offset =
         Some
           (fun raw nbytes byte_offset ->

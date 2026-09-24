@@ -7,6 +7,9 @@
 
 open Tolk
 
+let buffer_kind : nativeint Type.Id.t = Type.Id.make ()
+let buffer_address buf = Option.value (Device.Buffer.get buffer_kind buf) ~default:0n
+
 module Ffi = struct
   external init : unit -> unit = "caml_tolk_cuda_init"
   external device_get : int -> int = "caml_tolk_cuda_device_get"
@@ -189,9 +192,13 @@ module Allocator = struct
           Ffi.memcpy_dtoh_ptr host buf size;
           Ffi.host_read bytes host)
     in
-    let transfer ~dest ~src nbytes =
-      Ffi.ctx_set_current state.State.context;
-      Ffi.memcpy_dtod_async dest src nbytes
+    let transfer ~dest ~src ~dest_device ~src_device nbytes =
+      if Device.canonicalize dest_device <> Device.canonicalize src_device then false
+      else begin
+        Ffi.ctx_set_current state.State.context;
+        Ffi.memcpy_dtod_async dest src nbytes;
+        true
+      end
     in
     let offset buf _size byte_offset =
       if byte_offset < 0 then
@@ -199,12 +206,13 @@ module Allocator = struct
       Nativeint.add buf (Nativeint.of_int byte_offset)
     in
     {
-      Device.Allocator.alloc;
+      Device.Allocator.kind = buffer_kind;
+      alloc;
       free;
       copyin;
       copyout;
       as_buffer = None;
-      addr = Fun.id;
+      addr = Some Fun.id;
       offset = Some offset;
       transfer = Some transfer;
       supports_transfer = true;
@@ -233,6 +241,7 @@ module Program = struct
     let default_local = [| 1; 1; 1 |] in
     let unloaded = ref false in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
+      let bufs = Array.map buffer_address bufs in
       if !unloaded then invalid_arg "CUDA program has been unloaded";
       let local = Option.value local ~default:default_local in
       Ffi.ctx_set_current state.State.context;
@@ -260,18 +269,22 @@ module Graph = struct
        Array.iter
          (function
            | Device.Graph.Kernel { handle; global; local; bufs; vals; deps } ->
-               ignore (Ffi.graph_add_kernel g handle global local bufs
+               ignore (Ffi.graph_add_kernel g handle global local
+                         (Array.map buffer_address bufs)
                          (Array.map Int64.of_int vals) deps : int)
            | Device.Graph.Copy { dest; src; nbytes; deps } ->
-               ignore (Ffi.graph_add_copy g state.State.context dest src nbytes
+               ignore (Ffi.graph_add_copy g state.State.context
+                         (buffer_address dest)
+                         (buffer_address src) nbytes
                          deps : int))
          nodes;
        Ffi.graph_instantiate g
      with exn -> Ffi.graph_destroy g; raise exn);
     let exec =
       {
-        Device.Graph.set_buf = (fun node pos addr ->
-          Ffi.graph_set_buf g node pos addr);
+        Device.Graph.set_buf = (fun node pos buf ->
+          Ffi.graph_set_buf g node pos
+            (buffer_address buf));
         set_val = (fun node idx v -> Ffi.graph_set_val g node idx (Int64.of_int v));
         set_launch_dims = (fun node ~global ~local ->
           Ffi.graph_set_launch g node global local);

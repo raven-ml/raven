@@ -7,6 +7,8 @@
 
 open Tolk
 
+let buffer_kind : nativeint Type.Id.t = Type.Id.make ()
+
 (* FFI Externals *)
 
 external cpu_alloc : int -> nativeint = "caml_tolk_cpu_alloc"
@@ -80,12 +82,13 @@ let raw_allocator () =
     Nativeint.add buf (Nativeint.of_int byte_offset)
   in
   {
-    Device.Allocator.alloc;
+    Device.Allocator.kind = buffer_kind;
+    alloc;
     free;
     copyin = cpu_copyin;
     copyout = cpu_copyout;
     as_buffer = Some cpu_as_buffer;
-    addr = Fun.id;
+    addr = Some Fun.id;
     offset = Some offset;
     transfer = None;
     supports_transfer = false;
@@ -112,6 +115,8 @@ let create ?aligned name =
       | Some slots -> Array.map (Array.get args) slots in
     let loaded = load_program ~name:entry_name ~lib in
     let call bufs ~global:_ ~local:_ ~vals ~wait ~timeout:_ =
+      let bufs = Array.map (fun buf ->
+          Option.value (Device.Buffer.get buffer_kind buf) ~default:0n) bufs in
       if loaded.unloaded then invalid_arg "CPU program has been unloaded";
       let st = if wait then monotonic_ns () else 0 in
       exec_call loaded.entry (reorder buffer_slots bufs) (reorder scalar_slots vals);

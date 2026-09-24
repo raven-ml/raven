@@ -95,10 +95,11 @@ let copy_from_tests =
 let failed_view_allocation_preserves_ownership () =
   let attempts = ref 0 and frees = ref 0 in
   let allocator = Device.Allocator.Pack {
+      kind = Type.Id.make ();
       alloc = (fun _ _ -> ());
       free = (fun () _ _ -> incr frees);
       copyin = (fun () _ -> ()); copyout = (fun _ () -> ());
-      addr = (fun () -> Nativeint.one);
+      addr = Some (fun () -> Nativeint.one);
       offset = Some (fun () _ _ ->
           incr attempts;
           if !attempts = 1 then failwith "offset failed");
@@ -121,12 +122,14 @@ let failed_view_allocation_preserves_ownership () =
 let empty_storage () =
   let unexpected op = fail ("empty storage called allocator " ^ op) in
   let allocator = Device.Allocator.Pack {
+      kind = Type.Id.make ();
       alloc = (fun _ _ -> unexpected "alloc");
       free = (fun () _ _ -> unexpected "free");
       copyin = (fun () _ -> unexpected "copyin");
       copyout = (fun _ () -> unexpected "copyout");
-      addr = (fun () -> unexpected "addr");
-      offset = None; as_buffer = None; transfer = None; supports_transfer = false;
+      as_buffer = None;
+      addr = Some (fun () -> unexpected "addr");
+      offset = None; transfer = None; supports_transfer = false;
       copy_from_disk = None; supports_copy_from_disk = false;
     } in
   let create () = Device.Buffer.create ~device:"EMPTY" ~size:0 ~dtype:i32 allocator in
@@ -271,7 +274,50 @@ let lazy_storage_serialization () =
       is_false (Storage.id buf = Storage.id buf')
   | _ -> fail "serialized graph lost its lazy storage"
 
+let typed_storage_identity () =
+  let kind : bytes Type.Id.t = Type.Id.make () in
+  let transfers = ref 0 in
+  let allocator : bytes Device.Allocator.t = {
+    kind;
+    alloc = (fun size _ -> Bytes.make size '\000');
+    free = (fun _ _ _ -> ());
+    copyin = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length src));
+    copyout = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length dst));
+    addr = None;
+    offset = None;
+    transfer = Some (fun ~dest ~src ~dest_device ~src_device size ->
+        equal string "OPAQUE" dest_device;
+        equal string "OPAQUE" src_device;
+        incr transfers; Bytes.blit src 0 dest 0 size; true);
+    supports_transfer = true;
+    copy_from_disk = None;
+    supports_copy_from_disk = false;
+  } in
+  let create alloc = Device.Buffer.create ~device:"OPAQUE" ~size:1 ~dtype:i32
+      (Device.Allocator.Pack alloc) in
+  let src = create allocator and dst = create allocator in
+  let incompatible = create { allocator with kind = Type.Id.make () } in
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> ignore (Device.Buffer.get kind incompatible));
+  is_false ~msg:"type rejection does not allocate" (Device.Buffer.is_allocated incompatible);
+  is_false ~msg:"a matching device name does not prove representation equality"
+    (Device.Buffer.transfer ~dst ~src:incompatible);
+  equal int 0 !transfers;
+  let raw = Option.get (Device.Buffer.get kind src) in
+  Bytes.set_int32_le raw 0 42l;
+  is_true (Device.Buffer.transfer ~dst ~src);
+  equal int 1 !transfers;
+  equal (list int) [42] (read_i32 dst);
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> ignore (Device.Buffer.addr src));
+  let generation = Device.Buffer.generation src in
+  equal int generation (Device.Buffer.generation src);
+  Device.Buffer.deallocate src;
+  is_false ~msg:"reallocation invalidates previously captured arguments"
+    (generation = Device.Buffer.generation src)
+
 let () = run __FILE__ [ copy_from_tests;
+  test "opaque storage dispatch and transfers require a type identity" typed_storage_identity;
   test "BUFFER owns storage across execution contexts" node_owned_storage;
   test "serialization preserves bytes and shared view ownership" storage_serialization;
   test "serialization copies external storage into an independent owner" external_storage_serialization;

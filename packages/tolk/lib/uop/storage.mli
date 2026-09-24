@@ -38,22 +38,21 @@ end
 module Allocator : sig
   (** {1:types Types} *)
 
-  type 'buf transfer = dest:'buf -> src:'buf -> int -> unit
-  (** The type for device-to-device transfers. [transfer ~dest ~src nbytes]
-      copies [nbytes] from [src] to [dest]. Both buffers belong to the same
-      backend.
-
-      The transfer carries no device identities, so it can only express copies
-      a single execution context can order. Backends whose instances hold
-      independent command queues (for example separate GPUs of one vendor)
-      cannot serialise a cross-instance copy through this hook and must fall
-      back to a host bounce. *)
+  type 'buf transfer =
+    dest:'buf -> src:'buf -> dest_device:string -> src_device:string -> int -> bool
+  (** [transfer ~dest ~src ~dest_device ~src_device nbytes] copies [nbytes]
+      between compatible backend buffers, ordering the operation against both
+      devices. Returns [false] without issuing work when the backend cannot
+      perform the transfer; the engine then uses a host bounce. *)
 
   type host_view =
     (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
   (** The type for a buffer's bytes seen from the host. *)
 
   type 'buf t = {
+    kind : 'buf Type.Id.t;
+        (** Identity of the backend buffer representation, shared by allocator
+            instances whose buffers can be passed to the same runtime. *)
     alloc : int -> Buffer_spec.t -> 'buf;
         (** [alloc nbytes spec] allocates a device buffer of [nbytes] bytes with
             options [spec]. *)
@@ -66,11 +65,8 @@ module Allocator : sig
         (** [copyout dst buf] copies [buf] into [dst]. *)
     as_buffer : ('buf -> int -> host_view) option;
         (** [as_buffer buf nbytes] is the [nbytes] bytes of [buf] as host memory,
-            without a copy, on backends whose memory the host addresses, or
-            [None]. The view aliases [buf]: it is valid while [buf] is
-            allocated, and it races with queued work that uses [buf] unless the
-            device is synchronized first. *)
-    addr : 'buf -> nativeint;  (** [addr buf] is the device address of [buf]. *)
+    addr : ('buf -> nativeint) option;
+        (** Device address access, absent for opaque buffer handles. *)
     offset : ('buf -> int -> int -> 'buf) option;
         (** [offset buf nbytes byte_offset] is a view into [buf] starting at
             [byte_offset] and spanning [nbytes], or [None] if the backend does
@@ -206,8 +202,8 @@ val supports_offset : t -> bool
 
 val supports_transfer : t -> t -> bool
 (** [supports_transfer dst src] is [true] iff [dst]'s allocator provides
-    native transfer and [dst] and [src] are on the same backend prefix
-    (for example ["METAL"] for ["METAL:0"] and ["METAL:1"]). *)
+    native transfer, their allocator representation identities agree, and
+    their device names have the same backend prefix. *)
 
 val allocator : t -> Allocator.packed
 (** [allocator b] is the allocator of [b]'s base buffer. *)
@@ -262,7 +258,7 @@ val transfer : dst:t -> src:t -> bool
 (** [transfer ~dst ~src] copies [src] into [dst] through [dst]'s allocator
     device-to-device transfer hook when {!supports_transfer} is [true],
     returning [true] when the native transfer ran and [false] when no hook is
-    available. Both buffers are allocated if the transfer runs. Low-level
+    available or the hook declines this device pair. Both buffers are allocated if the transfer runs. Low-level
     same-backend primitive that {!copy_from} uses as a fast path; application
     code should use {!copy_from}.
 
@@ -288,9 +284,20 @@ val install_copy_runner : (dst:t -> src:t -> unit) -> unit
     The execution engine installs it once during initialization; until then
     {!copy_from} raises [Invalid_argument]. Not for application use. *)
 
+val get : 'a Type.Id.t -> t -> 'a option
+(** [get kind b] initializes [b] and returns its backend buffer, or [None]
+    for empty storage. Raises [Invalid_argument] if [kind] differs from the
+    allocator's representation identity. The caller must retain [b] while
+    using its backend buffer. *)
+
+val generation : t -> int
+(** [generation b] initializes [b] and returns the identity of its current
+    allocation. Reallocating [b] changes this identity; replay uses it to
+    detect stale bindings without interpreting backend handles. *)
+
 val addr : t -> nativeint
 (** [addr b] is the device address of [b], or [0n] for empty storage.
-    Initializes [b] if needed. *)
+    Initializes [b] if needed. Raises [Invalid_argument] for opaque storage. *)
 
 (** {1:accounting Allocation accounting} *)
 

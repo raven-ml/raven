@@ -83,9 +83,9 @@ module Compiled_runner = struct
     let call bufs var_vals ~wait ~timeout =
       let global, local = Program_spec.launch_dims p var_vals in
       let vals = vals_of_spec p var_vals in
-      let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
+      let buf_args = Array.of_list bufs in
       let ret =
-        try prg.call buf_addrs ~global ~local ~vals ~wait ~timeout
+        try prg.call buf_args ~global ~local ~vals ~wait ~timeout
         with exn ->
           List.iter keep_alive bufs;
           raise exn
@@ -669,9 +669,9 @@ let exec_kernel binding ctx ~device call =
                Int64.of_int
                (U.program_vals info ~var_vals))
         in
-        let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
+        let buf_args = Array.of_list bufs in
         let run () =
-          try prg.call buf_addrs ~global ~local:(Some local) ~vals ~wait:ctx.wait
+          try prg.call buf_args ~global ~local:(Some local) ~vals ~wait:ctx.wait
                 ~timeout:None
           with exn ->
             List.iter keep_alive bufs;
@@ -848,8 +848,8 @@ module Graph_runner = struct
     dyn_bufs : Device.Buffer.t array;
         (* Last resolution of each dynamic argument, parallel to [dyn]; keeps
            the addresses committed in the graph backed by live buffers. *)
-    dyn_addrs : nativeint array;
-        (* Committed address of each dynamic argument, parallel to [dyn]. *)
+    dyn_generations : int array;
+        (* Committed allocation of each dynamic argument, parallel to [dyn]. *)
   }
 
   type t = {
@@ -931,7 +931,7 @@ module Graph_runner = struct
             List.iter Device.Buffer.ensure_allocated bufs;
             let bufs_arr = Array.of_list bufs in
             let dyn_bufs = Array.map (fun (pos, _) -> bufs_arr.(pos)) dyn in
-            let dyn_addrs = Array.map Device.Buffer.addr dyn_bufs in
+            let dyn_generations = Array.map Device.Buffer.generation dyn_bufs in
             match U.op body with
             | Tolk_uop.Ops.Program ->
                 let info =
@@ -962,7 +962,7 @@ module Graph_runner = struct
                       handle = prg.Device.handle;
                       global;
                       local;
-                      bufs = Array.of_list (List.map Device.Buffer.addr bufs);
+                      bufs = Array.of_list bufs;
                       vals;
                       deps = Array.of_list node_deps;
                     }
@@ -979,7 +979,7 @@ module Graph_runner = struct
                     bufs;
                     dyn;
                     dyn_bufs;
-                    dyn_addrs;
+                    dyn_generations;
                   }
                   :: !calls;
                 incr n
@@ -994,14 +994,14 @@ module Graph_runner = struct
                     nodes :=
                       Device.Graph.Copy
                         {
-                          dest = Device.Buffer.addr dest;
-                          src = Device.Buffer.addr src;
+                          dest;
+                          src;
                           nbytes = Device.Buffer.nbytes dest;
                           deps = Array.of_list node_deps;
                         }
                       :: !nodes;
                     calls :=
-                      { kind = Copy; bufs; dyn; dyn_bufs; dyn_addrs } :: !calls;
+                      { kind = Copy; bufs; dyn; dyn_bufs; dyn_generations } :: !calls;
                     incr n
                 | _ -> invalid_arg "graph: malformed COPY call")
             | _ ->
@@ -1033,13 +1033,11 @@ module Graph_runner = struct
         Array.iteri
           (fun i (pos, arg) ->
             let buf = resolve binding ctx arg in
-            (* [addr] allocates on first use, so a fresh buffer seeded for
-               this run is live before its address enters the graph. *)
-            let addr = Device.Buffer.addr buf in
+            let generation = Device.Buffer.generation buf in
             c.dyn_bufs.(i) <- buf;
-            if addr <> c.dyn_addrs.(i) then begin
-              c.dyn_addrs.(i) <- addr;
-              t.exec.Device.Graph.set_buf j pos addr;
+            if generation <> c.dyn_generations.(i) then begin
+              c.dyn_generations.(i) <- generation;
+              t.exec.Device.Graph.set_buf j pos buf;
               dirty := true
             end)
           c.dyn;

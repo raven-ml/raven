@@ -50,6 +50,7 @@ let test_renderer =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
     ~has_shared:false ~shared_max:0 ~render:(fun ?name:_ _ -> "") ()
 
+let buffer_kind = Type.Id.make ()
 let test_allocator =
   let alloc nbytes _spec = Bytes.make nbytes '\000' in
   let free _buf _nbytes _spec = () in
@@ -59,12 +60,13 @@ let test_allocator =
   Device.Allocator.Pack
     Device.Allocator.
       {
+        kind = buffer_kind;
         alloc;
         free;
         copyin;
         copyout;
         as_buffer = None;
-        addr;
+        addr = Some addr;
         offset = None;
         transfer = None;
         supports_transfer = false;

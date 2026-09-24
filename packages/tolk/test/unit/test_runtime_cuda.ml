@@ -118,7 +118,7 @@ let kernel_node handle bufs ?(vals = [||]) ?(deps = [||]) () =
       handle;
       global = ones3;
       local = ones3;
-      bufs = Array.map Device.Buffer.addr bufs;
+      bufs;
       vals;
       deps;
     }
@@ -397,8 +397,8 @@ let () =
               ignore (exec.Device.Graph.launch ~wait:false : float option);
               Device.synchronize device;
               equal (list int) [ 42 ] (read_i32 dst1);
-              exec.Device.Graph.set_buf 0 0 (Device.Buffer.addr dst2);
-              exec.Device.Graph.set_buf 0 1 (Device.Buffer.addr src2);
+              exec.Device.Graph.set_buf 0 0 dst2;
+              exec.Device.Graph.set_buf 0 1 src2;
               exec.Device.Graph.set_params 0;
               ignore (exec.Device.Graph.launch ~wait:false : float option);
               Device.synchronize device;
@@ -420,8 +420,8 @@ let () =
                   [|
                     Device.Graph.Copy
                       {
-                        dest = Device.Buffer.addr tmp;
-                        src = Device.Buffer.addr src;
+                        dest = tmp;
+                        src;
                         nbytes = Device.Buffer.nbytes src;
                         deps = [||];
                       };

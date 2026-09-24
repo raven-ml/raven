@@ -115,68 +115,22 @@ module Ffi = struct
   external device_arch : nativeint -> string = "caml_tolk_metal_device_arch"
 end
 
-(* Buffers cross the device interface as addresses, but a Metal buffer is an
-   object and a byte offset into it: every allocation and view is named by a
-   token, a negative address that resolves to both. *)
-module Buffer_token = struct
-  type buffer = {
-    token : nativeint;
-    handle : nativeint;
-    size : int;
-    offset : int;
-  }
-
-  let next = Atomic.make (-1)
-  let mutex = Mutex.create ()
-  let table : (nativeint, nativeint * int) Hashtbl.t = Hashtbl.create 1024
-
-  (* Tokens whose buffers are gone. A GC finaliser can run at any allocation,
-     including one made while [mutex] is held, so releasing a token never
-     locks: it is queued here, and the next holder of the lock removes it from
-     [table] before looking at it. *)
-  let released : nativeint list Atomic.t = Atomic.make []
-
-  let with_table f =
-    Mutex.protect mutex (fun () ->
-        List.iter (Hashtbl.remove table) (Atomic.exchange released []);
-        f table)
-
-  let rec unregister buffer =
-    let tokens = Atomic.get released in
-    if not (Atomic.compare_and_set released tokens (buffer.token :: tokens))
-    then unregister buffer
-
-  let register handle ~size ~offset =
-    let token = Nativeint.of_int (Atomic.fetch_and_add next (-1)) in
-    with_table (fun table -> Hashtbl.replace table token (handle, offset));
-    { token; handle; size; offset }
-
-  (* Views are never freed: a view's token is released once the view is
-     collected. The table holds the location, not the view, so it does not keep
-     the view alive. *)
-  let view handle ~size ~offset =
-    let buffer = register handle ~size ~offset in
-    Gc.finalise unregister buffer;
-    buffer
-
-  let resolve token =
-    match with_table (fun table -> Hashtbl.find_opt table token) with
-    | Some location -> location
-    | None when Nativeint.compare token Nativeint.zero >= 0 -> (token, 0)
-    | None ->
-        invalid_arg
-          (Printf.sprintf "unknown Metal buffer token %nd" token)
-
-  let resolve_array tokens =
-    let len = Array.length tokens in
+module Metal_buffer = struct
+  type t = { handle : nativeint; size : int; offset : int }
+  let kind : t Type.Id.t = Type.Id.make ()
+  let get buf =
+    Option.value (Device.Buffer.get kind buf)
+      ~default:{ handle = 0n; size = 0; offset = 0 }
+  let resolve_array buffers =
+    let len = Array.length buffers in
     let handles = Array.make len Nativeint.zero in
     let offsets = Array.make len 0 in
     for i = 0 to len - 1 do
-      let handle, offset = resolve tokens.(i) in
-      handles.(i) <- handle;
-      offsets.(i) <- offset
+      let buffer = get buffers.(i) in
+      handles.(i) <- buffer.handle;
+      offsets.(i) <- buffer.offset
     done;
-    (handles, offsets)
+    handles, offsets
 end
 
 module State = struct
@@ -262,50 +216,53 @@ module Allocator = struct
         | Some ptr -> ptr
         | None -> Ffi.buffer_alloc state.State.device size
       in
-      Buffer_token.register handle ~size ~offset:0
+      Metal_buffer.{handle; size; offset = 0}
     in
     let free buf _size spec =
-      Buffer_token.unregister buf;
       match spec.Device.Buffer_spec.external_ptr with
       | Some _ -> ()
-      | None -> Ffi.buffer_free buf.Buffer_token.handle
+      | None -> Ffi.buffer_free buf.Metal_buffer.handle
     in
     let copyin buf bytes =
       State.synchronize state;
-      Ffi.buffer_copyin buf.Buffer_token.handle buf.offset bytes
+      Ffi.buffer_copyin buf.Metal_buffer.handle buf.offset bytes
     in
     let copyout bytes buf =
       State.synchronize state;
-      Ffi.buffer_copyout bytes buf.Buffer_token.handle buf.offset
+      Ffi.buffer_copyout bytes buf.Metal_buffer.handle buf.offset
     in
     (* tinygrad's [_as_buffer]: the shared buffer's contents, in place. *)
     let as_buffer buf nbytes =
-      Ffi.buffer_contents buf.Buffer_token.handle buf.offset nbytes
+      Ffi.buffer_contents buf.Metal_buffer.handle buf.offset nbytes
     in
-    let transfer ~dest ~src nbytes =
-      State.synchronize state;
-      let cmd =
-        Ffi.blit_copy state.State.queue src.Buffer_token.handle src.offset
-          dest.Buffer_token.handle dest.offset nbytes
-      in
-      state.State.in_flight <- cmd :: state.State.in_flight;
-      State.synchronize state
+    let transfer ~dest ~src ~dest_device ~src_device nbytes =
+      if Device.canonicalize dest_device <> Device.canonicalize src_device then false
+      else begin
+        State.synchronize state;
+        let cmd =
+          Ffi.blit_copy state.State.queue src.Metal_buffer.handle src.offset
+            dest.Metal_buffer.handle dest.offset nbytes
+        in
+        state.State.in_flight <- cmd :: state.State.in_flight;
+        State.synchronize state;
+        true
+      end
     in
-    let addr buf = buf.Buffer_token.token in
     let offset buf size byte_offset =
       if byte_offset < 0 then
         invalid_arg "Metal buffer offset must be non-negative";
-      if byte_offset + size > buf.Buffer_token.size then
+      if byte_offset + size > buf.Metal_buffer.size then
         invalid_arg "Metal buffer view exceeds base buffer";
-      Buffer_token.view buf.handle ~size ~offset:(buf.offset + byte_offset)
+      Metal_buffer.{handle = buf.handle; size; offset = buf.offset + byte_offset}
     in
     {
-      Device.Allocator.alloc;
+      Device.Allocator.kind = Metal_buffer.kind;
+      alloc;
       free;
       copyin;
       copyout;
       as_buffer = Some as_buffer;
-      addr;
+      addr = None;
       offset = Some offset;
       transfer = Some transfer;
       supports_transfer = true;
@@ -340,7 +297,7 @@ module Program = struct
     let local_dims = [| 1; 1; 1 |] in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       let local = Option.value local ~default:local_dims in
-      let bufs, buf_offsets = Buffer_token.resolve_array bufs in
+      let bufs, buf_offsets = Metal_buffer.resolve_array bufs in
       let cmd =
         Ffi.program_dispatch state.State.queue handle bufs buf_offsets
           vals global local
@@ -369,7 +326,6 @@ module Icb = struct
     Ffi.icb_update_dispatch t.handle index global local
 
   let execute state t ~resources ~pipelines =
-    let resources, _offsets = Buffer_token.resolve_array resources in
     let fix_pipelines = if state.State.needs_icb_fix then pipelines else [||] in
     let cmd =
       Ffi.icb_execute state.State.queue t.handle t.count resources fix_pipelines
@@ -416,7 +372,7 @@ module Graph = struct
     let bound =
       try Array.mapi
         (fun j (program, global, local, buffers, vals) ->
-          let buffers, offsets = Buffer_token.resolve_array buffers in
+          let buffers, offsets = Metal_buffer.resolve_array buffers in
           Ffi.program_write_args program arg_buf arg_offsets.(j) buffers offsets
             (Array.map Int64.of_int vals);
           Icb.encode icb ~index:j ~program ~arg_buf ~arg_offset:arg_offsets.(j)
@@ -492,12 +448,12 @@ module Graph = struct
     let exec =
       {
         Device.Graph.set_buf =
-          (fun node pos addr ->
+          (fun node pos buf ->
             settle ();
-            let handle, offset = Buffer_token.resolve addr in
+            let buffer = Metal_buffer.get buf in
             Ffi.program_set_buffer (program node) arg_buf arg_offsets.(node) pos
-              handle offset;
-            bound.(node).(pos) <- handle;
+              buffer.handle buffer.offset;
+            bound.(node).(pos) <- buffer.handle;
             rebound := true);
         set_val =
           (fun node idx v ->

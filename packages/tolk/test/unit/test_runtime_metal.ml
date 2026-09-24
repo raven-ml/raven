@@ -85,7 +85,7 @@ let variable_program () =
   let dt = Dtype.int32 in
   let p0 = i32_param ~slot:0 in
   let c0 = U.const (Const.int dt 0) in
-  let n = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:dt () in
+  let n = U.variable ~param:true ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:dt () in
   let idx_dst = U.index ~ptr:p0 ~idxs:[c0] () in
   let store = U.store ~dst:idx_dst ~value:n () in
   [ p0; c0; n; idx_dst; store ]
@@ -129,7 +129,7 @@ let kernel_node handle bufs ?(vals = [||]) () =
       handle;
       global = ones3;
       local = ones3;
-      bufs = Array.map Device.Buffer.addr bufs;
+      bufs;
       vals;
       deps = [||];
     }
@@ -142,7 +142,7 @@ let test_mixed_scalar_widths () =
                 Dtype.int32, "word", 0, 65536, 12345;
                 Dtype.int64, "wide", 0, 0x3_0000_0000, 0x1_0000_0002 ] in
   let vars = List.map (fun (dtype, name, min_val, max_val, _) ->
-      U.variable ~name ~min_val ~max_val ~dtype ()) cases in
+      U.variable ~param:true ~name ~min_val ~max_val ~dtype ()) cases in
   let stores = List.mapi (fun i var ->
       let offset = U.const (Const.int Dtype.int32 i) in
       let ptr = U.index ~ptr:output ~idxs:[ offset ] () in
@@ -198,7 +198,7 @@ let test_many_buffer_arguments () =
       [| kernel_node prg.handle buffers (); kernel_node prg.handle second_buffers () |] in
   ignore (graph.launch ~wait:false);
   let replacement = i32_buf device [ 100 ] in
-  graph.set_buf 0 1 (Device.Buffer.addr replacement);
+  graph.set_buf 0 1 replacement;
   graph.set_params 0;
   ignore (graph.launch ~wait:true);
   equal (list int) [ 627 ] (read_i32 buffers.(0));
@@ -367,7 +367,7 @@ let () =
                 equal int 2 (Bigarray.Array1.get mem 0);
                 Bigarray.Array1.set mem 4 30;
                 equal (list int) [ 1; 2; 30; 4 ] (read_i32 base));
-          test "LRU-reused base buffers keep valid tokens" (fun () ->
+          test "LRU-reused buffers retain valid storage handles" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_lru_reused_add_one" in
             let dst = i32_buf device [ 0 ] in
@@ -492,7 +492,7 @@ let () =
             in
             ignore (exec.Device.Graph.launch ~wait:false : float option);
             exec.Device.Graph.set_val 0 0 9;
-            exec.Device.Graph.set_buf 0 0 (Device.Buffer.addr second);
+            exec.Device.Graph.set_buf 0 0 second;
             exec.Device.Graph.set_params 0;
             ignore (exec.Device.Graph.launch ~wait:false : float option);
             Device.synchronize device;
@@ -516,8 +516,8 @@ let () =
             ignore (exec.Device.Graph.launch ~wait:false : float option);
             Device.synchronize device;
             equal (list int) [ 42 ] (read_i32 dst1);
-            exec.Device.Graph.set_buf 0 0 (Device.Buffer.addr dst2);
-            exec.Device.Graph.set_buf 0 1 (Device.Buffer.addr src2);
+            exec.Device.Graph.set_buf 0 0 dst2;
+            exec.Device.Graph.set_buf 0 1 src2;
             exec.Device.Graph.set_params 0;
             ignore (exec.Device.Graph.launch ~wait:false : float option);
             Device.synchronize device;

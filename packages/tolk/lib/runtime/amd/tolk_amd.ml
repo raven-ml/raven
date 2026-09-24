@@ -1579,6 +1579,7 @@ end
 
 module State = struct
   type 'mem t = {
+    buffer_kind : 'mem Hcq.Buffer.t Type.Id.t;
     iface : 'mem Iface.t;
     hw : 'mem device;
     compute_queue : Queue_desc.t;
@@ -1646,9 +1647,13 @@ module Allocator = struct
         Timeline.copyout state.State.tl ~submit_chunk:(submit_chunk state qd)
           bytes buf
 
-  let transfer state ~dest ~src nbytes =
-    let qd = Option.get state.State.sdma_queue in
-    submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src nbytes)
+  let transfer state ~dest ~src ~dest_device ~src_device nbytes =
+    if Tolk.Device.canonicalize dest_device <> Tolk.Device.canonicalize src_device then false
+    else begin
+      let qd = Option.get state.State.sdma_queue in
+      submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src nbytes);
+      true
+    end
 
   let raw state =
     let alloc size (spec : Tolk.Device.Buffer_spec.t) =
@@ -1674,12 +1679,13 @@ module Allocator = struct
     in
     let has_sdma = Option.is_some state.State.sdma_queue in
     {
-      Tolk.Device.Allocator.alloc;
+      Tolk.Device.Allocator.kind = state.State.buffer_kind;
+      alloc;
       free;
       copyin = copyin state;
       copyout = copyout state;
       as_buffer = None;
-      addr = Hcq.Buffer.va;
+      addr = Some Hcq.Buffer.va;
       offset = Some offset;
       transfer = (if has_sdma then Some (transfer state) else None);
       supports_transfer = has_sdma;
@@ -1721,6 +1727,9 @@ module Runtime = struct
     in
     ensure_scratch state prg.Program.private_segment_size;
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
+      let bufs = Array.map (fun buf ->
+          match Tolk.Device.Buffer.get state.State.buffer_kind buf with
+          | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
       let local = Option.value local ~default:default_local in
       let tl = state.State.tl in
       let timeline_value = Timeline.next_timeline tl in
@@ -1870,7 +1879,8 @@ let open_device ~name iface =
   let bounce_count = 32 and bounce_size = 2 lsl 20 in
   let state =
     {
-      State.iface;
+      State.buffer_kind = Type.Id.make ();
+      iface;
       hw;
       compute_queue;
       sdma_queue;

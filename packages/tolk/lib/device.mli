@@ -81,7 +81,7 @@ module Buffer = Tolk_uop.Storage
 
 type prog = {
   call :
-    nativeint array -> global:int array -> local:int array option ->
+    Buffer.t array -> global:int array -> local:int array option ->
     vals:int64 array -> wait:bool -> timeout:int option -> float option;
   free : unit -> unit;
   handle : nativeint;
@@ -109,21 +109,21 @@ module Graph : sig
         handle : nativeint;  (** Kernel handle from {!prog.handle}. *)
         global : int array;  (** Global launch dimensions (3 entries). *)
         local : int array;  (** Local launch dimensions (3 entries). *)
-        bufs : nativeint array;  (** Buffer argument addresses. *)
+        bufs : Buffer.t array;  (** Buffer arguments and their ownership. *)
         vals : int array;  (** Scalar arguments. *)
         deps : int array;  (** Indices of nodes this node must wait on. *)
       }
     | Copy of {
-        dest : nativeint;  (** Destination address. *)
-        src : nativeint;  (** Source address. *)
+        dest : Buffer.t;  (** Destination buffer. *)
+        src : Buffer.t;  (** Source buffer. *)
         nbytes : int;  (** Copied byte count. *)
         deps : int array;  (** Indices of nodes this node must wait on. *)
       }  (** One recorded call. Node indices follow build order. *)
 
   type exec = {
-    set_buf : int -> int -> nativeint -> unit;
-        (** [set_buf node pos addr] stages buffer argument [pos] of [node] to
-            [addr]. For {!constructor-Copy} nodes position [0] is the
+    set_buf : int -> int -> Buffer.t -> unit;
+        (** [set_buf node pos buf] stages buffer argument [pos] of [node] to
+            [buf]. For {!constructor-Copy} nodes position [0] is the
             destination and position [1] the source. *)
     set_val : int -> int -> int -> unit;
         (** [set_val node idx v] stages scalar argument [idx] of [node]. *)

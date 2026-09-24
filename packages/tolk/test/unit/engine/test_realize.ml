@@ -42,6 +42,7 @@ let allocator_stats () =
   { copyin_calls = 0; copyout_calls = 0; transfer_calls = 0;
     synchronize_calls = 0 }
 
+let buffer_kind = Type.Id.make ()
 let test_allocator ?(transfer = false) stats =
   let alloc nbytes spec =
     ignore spec;
@@ -60,28 +61,27 @@ let test_allocator ?(transfer = false) stats =
     stats.copyout_calls <- stats.copyout_calls + 1;
     Bytes.blit buf 0 dst 0 (Bytes.length dst)
   in
-  let addr buf =
-    ignore buf;
-    Nativeint.zero
-  in
   let offset buf nbytes byte_offset = Bytes.sub buf byte_offset nbytes in
   let transfer_fn =
     if transfer then
       Some
-        (fun ~dest ~src nbytes ->
+        (fun ~dest ~src ~dest_device ~src_device nbytes ->
+           equal string "TEST:0" dest_device;
+           equal string "TEST:1" src_device;
            stats.transfer_calls <- stats.transfer_calls + 1;
-           Bytes.blit src 0 dest 0 nbytes)
+           Bytes.blit src 0 dest 0 nbytes; true)
     else None
   in
   Device.Allocator.Pack
     Device.Allocator.
       {
+        kind = buffer_kind;
         alloc;
         free;
         copyin;
         copyout;
         as_buffer = None;
-        addr;
+        addr = None;
         offset = Some offset;
         transfer = transfer_fn;
         supports_transfer = transfer;
@@ -311,12 +311,15 @@ let graph_updates_symbolic_local_dimensions () =
 
 let graph_binds_sparse_arguments () =
   let recorded = ref [||] in
+  let updates = ref [] in
   let launches = ref 0 in
   let graph : Device.Graph.t =
     { supports_copy = false; max_buffer_offset = None;
       build = (fun nodes ->
           recorded := nodes;
-          { set_buf = (fun _ _ _ -> ()); set_val = (fun _ _ _ -> ());
+          { set_buf = (fun node pos buf ->
+                updates := (node, pos, Device.Buffer.id buf) :: !updates);
+            set_val = (fun _ _ _ -> ());
             set_launch_dims = (fun _ ~global:_ ~local:_ -> ());
             set_params = (fun _ -> ());
             launch = (fun ~wait:_ -> incr launches; None) }) } in
@@ -337,15 +340,31 @@ let graph_binds_sparse_arguments () =
       ~srcs:[ U.linear [ kernel a b; kernel b a ] ] in
   let call = U.call ~body ~args:[] ~info:(call_info None) in
   let binding = Realize.Buffers.create () in
-  Realize.run_linear ~device ~to_program:program_of binding (U.linear [ call ]);
+  let owner = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
+  Realize.Buffers.seed binding a owner;
+  let launch () = Realize.run_linear ~device ~to_program:program_of binding (U.linear [call]) in
+  launch ();
   equal int 1 !launches;
-  match !recorded with
+  (match !recorded with
   | [| Device.Graph.Kernel first; Device.Graph.Kernel second |] ->
       equal int 2 (Array.length first.bufs);
       equal int 2 (Array.length second.bufs);
       equal (array int) [||] first.deps;
       equal (array int) [| 0 |] second.deps
-  | _ -> fail "expected two recorded kernels"
+  | _ -> fail "expected two recorded kernels");
+  launch ();
+  equal int 0 (List.length !updates);
+  Device.Buffer.deallocate owner;
+  launch ();
+  equal int 2 (List.length !updates);
+  let replacement = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
+  Realize.Buffers.seed binding a replacement;
+  launch ();
+  equal int 4 (List.length !updates);
+  List.iter (fun (_, _, id) -> equal int (Device.Buffer.id replacement) id)
+    (List.filteri (fun i _ -> i < 2) !updates);
+  launch ();
+  equal int 4 (List.length !updates)
 
 let () =
   run "Engine_realize"

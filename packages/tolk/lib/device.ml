@@ -70,7 +70,7 @@ module Buffer = Storage
 
 type prog = {
   call :
-    nativeint array -> global:int array -> local:int array option ->
+    Buffer.t array -> global:int array -> local:int array option ->
     vals:int64 array -> wait:bool -> timeout:int option -> float option;
   free : unit -> unit;
   handle : nativeint;
@@ -86,19 +86,19 @@ module Graph = struct
         handle : nativeint;
         global : int array;
         local : int array;
-        bufs : nativeint array;
+        bufs : Buffer.t array;
         vals : int array;
         deps : int array;
       }
     | Copy of {
-        dest : nativeint;
-        src : nativeint;
+        dest : Buffer.t;
+        src : Buffer.t;
         nbytes : int;
         deps : int array;
       }
 
   type exec = {
-    set_buf : int -> int -> nativeint -> unit;
+    set_buf : int -> int -> Buffer.t -> unit;
     set_val : int -> int -> int -> unit;
     set_launch_dims : int -> global:int array -> local:int array -> unit;
     set_params : int -> unit;

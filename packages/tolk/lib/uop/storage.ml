@@ -25,18 +25,19 @@ module Buffer_spec = struct
 end
 
 module Allocator = struct
-  type 'buf transfer = dest:'buf -> src:'buf -> int -> unit
+  type 'buf transfer = dest:'buf -> src:'buf -> dest_device:string -> src_device:string -> int -> bool
 
   type host_view =
     (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
   type 'buf t = {
+    kind : 'buf Type.Id.t;
     alloc : int -> Buffer_spec.t -> 'buf;
     free : 'buf -> int -> Buffer_spec.t -> unit;
     copyin : 'buf -> bytes -> unit;
     copyout : bytes -> 'buf -> unit;
     as_buffer : ('buf -> int -> host_view) option;
-    addr : 'buf -> nativeint;
+    addr : ('buf -> nativeint) option;
     offset : ('buf -> int -> int -> 'buf) option;
     transfer : 'buf transfer option;
     supports_transfer : bool;
@@ -67,6 +68,7 @@ type t = {
   spec : Buffer_spec.t;
   allocator : Allocator.packed Lazy.t;
   mutable storage : allocation;
+  mutable generation : int;
   base : t option;
   offset : int;
   mutable uop_refcount : int;
@@ -103,6 +105,7 @@ let counts_as_used buf =
 
 let rec allocate buf =
   if is_initialized buf then invalid_arg "buffer already allocated";
+  buf.generation <- fresh_id ();
   if nbytes buf = 0 then buf.storage <- Empty
   else match buf.base with
   | None ->
@@ -150,7 +153,7 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
   ignore (checked_nbytes size dtype : int);
   let buf = {
     id = fresh_id (); device; size; dtype; spec; allocator;
-    storage = Unallocated; base = None; offset = 0;
+    storage = Unallocated; generation = -1; base = None; offset = 0;
     uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise deallocate buf;
@@ -180,7 +183,9 @@ let same_backend a b = String.equal (device_prefix a) (device_prefix b)
 
 let supports_transfer dst src =
   let Allocator.Pack alloc = allocator dst in
-  alloc.supports_transfer && Option.is_some alloc.transfer
+  let Allocator.Pack source = allocator src in
+  Option.is_some (Type.Id.provably_equal alloc.kind source.kind)
+  && alloc.supports_transfer && Option.is_some alloc.transfer
   && same_backend dst.device src.device
 
 let ensure_size buf bytes =
@@ -223,11 +228,12 @@ let transfer ~dst ~src =
     ensure_allocated dst;
     ensure_allocated src;
     match dst.storage, src.storage with
-    | Allocated (Backing (alloc, dest)), Allocated (Backing (_, raw_src)) ->
-        (* Until backend transfer identities migrate, same-prefix devices
-           must use the same allocator representation. *)
-        (Option.get alloc.transfer) ~dest ~src:(Obj.magic raw_src) (nbytes dst);
-        true
+    | Allocated (Backing (alloc, dest)), Allocated (Backing (source, raw_src)) ->
+        (match Type.Id.provably_equal alloc.kind source.kind with
+         | Some Type.Equal ->
+             (Option.get alloc.transfer) ~dest ~src:raw_src
+               ~dest_device:dst.device ~src_device:src.device (nbytes dst)
+         | None -> false)
     | _ -> assert false
   end else false
 
@@ -247,16 +253,36 @@ let view buf ~size ~dtype ~offset =
     invalid_arg "buffer view exceeds base buffer";
   let v = {
     id = fresh_id (); device = root.device; size; dtype; spec = root.spec;
-    allocator = root.allocator; storage = Unallocated; base = Some root;
+    allocator = root.allocator; storage = Unallocated; generation = -1; base = Some root;
     offset = buf.offset + offset; uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise deallocate v;
   v
 
+let generation buf =
+  ensure_allocated buf;
+  buf.generation
+
+let get : type a. a Type.Id.t -> t -> a option = fun kind buf ->
+  let Allocator.Pack alloc = allocator buf in
+  if Option.is_none (Type.Id.provably_equal kind alloc.kind) then
+    invalid_arg "buffer storage belongs to a different backend";
+  ensure_allocated buf;
+  match buf.storage with
+  | Allocated (Backing (alloc, raw)) ->
+      (match Type.Id.provably_equal kind alloc.kind with
+       | Some Type.Equal -> Some raw
+       | None -> assert false)
+  | Empty -> None
+  | Unallocated -> assert false
+
 let addr buf =
   ensure_allocated buf;
   match buf.storage with
-  | Allocated (Backing (alloc, raw)) -> alloc.addr raw
+  | Allocated (Backing (alloc, raw)) ->
+      (match alloc.addr with
+       | Some addr -> addr raw
+       | None -> invalid_arg "buffer storage has no native address")
   | Empty -> Nativeint.zero
   | Unallocated -> assert false
 
