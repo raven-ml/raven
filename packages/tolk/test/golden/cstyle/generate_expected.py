@@ -155,7 +155,7 @@ def build_loop():
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
     idx_st = a.index(ridx)
     store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
-    end = UOp(Ops.END, dtypes.void, (ridx,))
+    end = UOp(Ops.END, dtypes.void, (store, ridx))
     return [sink, a, ten, ridx, idx_ld, ld, idx_st, store, end]
 
 
@@ -237,8 +237,8 @@ def build_nested_loops():
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
     idx_st = a.index(combined)
     store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
-    end1 = UOp(Ops.END, dtypes.void, (ridx1,))
-    end0 = UOp(Ops.END, dtypes.void, (ridx0,))
+    end1 = UOp(Ops.END, dtypes.void, (store, ridx1))
+    end0 = UOp(Ops.END, dtypes.void, (end1, ridx0))
     return [sink, a, ten, five, ridx0, ridx1, combined, idx_ld, ld, idx_st, store, end1, end0]
 
 

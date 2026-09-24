@@ -7,9 +7,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 ## Reference and coverage
 
 - Migrate every Python reference driver to the target API and generate the
-  complete corpus separately. Correct target-driver END construction before
-  accepting loop-source expectations: several currently emit a closing brace
-  as an integer assignment. Attribute every changed expectation to its owner;
+  complete corpus separately. Attribute every changed expectation to its owner;
   require exact source parity for supported renderers. Reconcile FP8 `sm_80`
   and CPU exponent-reduction fixtures (`rangeify`, `moe_gather_block`,
   `softmax_sink`, `swiglu_clamped`, `topk_rounds`) with the target, including

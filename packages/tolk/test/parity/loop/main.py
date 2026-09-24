@@ -20,7 +20,7 @@ def kernel():
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
     idx_st = a.index(ridx)
     store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
-    end = UOp(Ops.END, dtypes.void, (ridx,))
+    end = UOp(Ops.END, dtypes.void, (store, ridx))
     return [sink, a, ten, ridx, idx_ld, ld, idx_st, store, end]
 
 
