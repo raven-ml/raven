@@ -87,6 +87,31 @@ let golden_tests =
             [| 0.5334206819534302; 7.; 0.7630789279937744;
                0.4320552349090576 |]
             updated);
+      (* tinygrad 471a3aeb: seed 42, rand(5), raw little-endian bytes. *)
+      test "half-width rand packs an odd draw and advances by whole words" (fun () ->
+          List.iter
+            (fun (dtype, expected) ->
+              Rand.manual_seed 42;
+              equal string expected (hex (Run.data (Rand.rand ~dtype [ 5 ])));
+              match Rand.device_rng_counter (Run.device_name ()) with
+              | Some counter -> check_ints [| 3; 0 |] counter
+              | None -> failf "no rng counter for the default device")
+            [ D.float16, "34344438bc345c398830";
+              D.bfloat16, "843e083f943e2a3f103e" ]);
+      test "double-width rand matches the reference stream" (fun () ->
+          if not (Tolk.Renderer.supports_dtype
+                    (Tolk.Device.renderer (Run.device ())) D.float64) then
+            skip ~reason:"device does not support float64" ();
+          Rand.manual_seed 42;
+          equal string
+            "d04ca8256654b63f209917c04d4eb33fa26bf408b69dee3ff01da87b2370b13f6461fd9f7e3fd13f"
+            (hex (Run.data (Rand.rand ~dtype:D.float64 [ 5 ]))));
+      test "empty half-width rand has no bytes or counter advance" (fun () ->
+          Rand.manual_seed 42;
+          equal string "" (hex (Run.data (Rand.rand ~dtype:D.float16 [ 2; 0 ])));
+          match Rand.device_rng_counter (Run.device_name ()) with
+          | Some counter -> check_ints [| 0; 0 |] counter
+          | None -> failf "no rng counter for the default device");
       test "rand 4" (fun () ->
           Rand.manual_seed 42;
           check_floats_exact

@@ -18,9 +18,8 @@
     Results are deterministic given a seed: after {!manual_seed}, the same
     sequence of calls produces the same values, on any device. Every dimension
     of a requested [shape] must be non-negative; [Invalid_argument] is raised
-    otherwise. In this version {!rand} (and the samplers built on it) only
-    generates 32-bit floats; {!val-rand} raises [Invalid_argument] for other
-    float dtypes. *)
+    otherwise. The requested concrete float dtype must be supported by the
+    selected device. *)
 
 val manual_seed : int -> unit
 (** [manual_seed seed] sets the process seed and resets all generator state,
@@ -32,11 +31,12 @@ val manual_seed : int -> unit
 val rand :
   ?dtype:Tolk_uop.Dtype.t -> ?contiguous:bool -> int list -> Tensor.t
 (** [rand shape] is a tensor of shape [shape] filled with uniform random
-    values in [\[0, 1)]. [dtype] must be a 32-bit float type (default: the
-    default float). [contiguous] (default [true]) materialises the result
-    into its own buffer.
+    values in [\[0, 1)]. [dtype] must be a concrete float type (default: the
+    default float). Bits are packed at that dtype's width before constructing
+    the mantissa. [contiguous] (default [true]) materialises the result into
+    its own buffer.
 
-    @raise Invalid_argument if [dtype] is not a 32-bit float dtype. *)
+    @raise Invalid_argument if [dtype] is not a concrete float dtype. *)
 
 val rand_like :
   ?dtype:Tolk_uop.Dtype.t -> ?contiguous:bool -> Tensor.t -> Tensor.t

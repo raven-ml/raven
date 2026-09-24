@@ -162,8 +162,6 @@ let rand ?dtype ?(contiguous = true) shape =
   if (not (D.is_float dt)) || D.is_weak dt then
     invalid_arg "Rand.rand: only concrete float dtypes are supported";
   check_shape "rand" shape;
-  if D.itemsize dt <> 4 then
-    invalid_arg "Rand.rand: only 32-bit float dtypes are supported";
   let device = Run.device_name () in
   let key, counter =
     next_counter device (ceildiv (prod shape * D.itemsize dt) 4)

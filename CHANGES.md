@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Rand.rand` supports concrete float widths beyond float32, including
+  float16, bfloat16 and float64 on capable devices. Packed draws and counter
+  advancement match tinygrad, including odd-sized and empty half-width draws.
+
 - Kernels whose writes simplify away accept the resulting empty effect group,
   as tinygrad does. Identity assignments and reading the random counter after
   an empty draw no longer fail during linearization.
