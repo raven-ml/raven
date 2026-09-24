@@ -1,0 +1,13 @@
+; The model's modules are the example's.
+
+(copy_files ../{mxfp4,moe,gpt_oss,layer_loop}.{ml,mli})
+
+(test
+ (name test_layer_loop)
+ (package kaun)
+ (libraries kaun kaun.hf jsont rune nx unix windtrap)
+ (action
+  (setenv
+   RUNE_JIT_DEBUG
+   1
+   (run %{test}))))
