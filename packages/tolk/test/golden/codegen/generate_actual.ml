@@ -16,10 +16,9 @@ module U = Uop
 let global_fptr = Dtype.float32
 let idx n = U.const (Const.int Dtype.weakint n)
 
-let kernel_info ?(axis_types = []) name =
+let kernel_info name =
   {
     U.name;
-    axis_types;
     applied_opts = [];
     opts_to_apply = Some [];
     estimates = None;
@@ -61,7 +60,7 @@ let make_elementwise_add () =
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let st = U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ()) ~value:add () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "elementwise_add") [ e ]
+  U.sink ~kernel_info:(kernel_info "elementwise_add") [ e ]
 
 let make_sum_reduce () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -72,7 +71,7 @@ let make_sum_reduce () =
   let st =
     U.store ~dst:(U.index ~ptr:p1 ~idxs:[(idx 0)] ()) ~value:red ()
   in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Reduce ] "sum_reduce") [ st ]
+  U.sink ~kernel_info:(kernel_info "sum_reduce") [ st ]
 
 let make_max_reduce () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -85,7 +84,7 @@ let make_max_reduce () =
   let st =
     U.store ~dst:(U.index ~ptr:p1 ~idxs:[ idx 0 ] ()) ~value:red ()
   in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Reduce ] "max_reduce") [ st ]
+  U.sink ~kernel_info:(kernel_info "max_reduce") [ st ]
 
 let make_dot_product () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -99,7 +98,7 @@ let make_dot_product () =
   let st =
     U.store ~dst:(U.index ~ptr:p2 ~idxs:[(idx 0)] ()) ~value:red ()
   in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Reduce ] "dot_product") [ st ]
+  U.sink ~kernel_info:(kernel_info "dot_product") [ st ]
 
 let make_matmul_small () =
   let m, n, k = (4, 4, 4) in
@@ -124,7 +123,6 @@ let make_matmul_small () =
   U.sink
     ~kernel_info:
       (kernel_info
-         ~axis_types:[ Axis_type.Global; Axis_type.Global; Axis_type.Reduce ]
          "matmul_small")
     [ e ]
 
@@ -147,7 +145,6 @@ let make_elementwise_2d () =
   U.sink
     ~kernel_info:
       (kernel_info
-         ~axis_types:[ Axis_type.Global; Axis_type.Global ]
          "elementwise_2d")
     [ e ]
 
@@ -168,7 +165,6 @@ let make_reduce_rows () =
   U.sink
     ~kernel_info:
       (kernel_info
-         ~axis_types:[ Axis_type.Global; Axis_type.Reduce ]
          "reduce_rows")
     [ e ]
 
@@ -182,7 +178,7 @@ let make_no_optimize () =
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let st = U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ()) ~value:add () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "no_optimize") [ e ]
+  U.sink ~kernel_info:(kernel_info "no_optimize") [ e ]
 
 let make_multi_output () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -203,7 +199,7 @@ let make_multi_output () =
       ~value:(U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:two) ()
   in
   let end_ = U.end_ ~value:(U.group [ st1; st2 ]) ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "multi_output") [ end_ ]
+  U.sink ~kernel_info:(kernel_info "multi_output") [ end_ ]
 
 let make_gated_store () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -221,7 +217,7 @@ let make_gated_store () =
       ~value ()
   in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "gated_store") [ e ]
+  U.sink ~kernel_info:(kernel_info "gated_store") [ e ]
 
 let make_elementwise_where () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -233,7 +229,7 @@ let make_elementwise_where () =
   let w = U.alu_ternary ~op:Ops.Where ~a:cond ~b:ld ~c:zero in
   let st = U.store ~dst:(U.index ~ptr:p1 ~idxs:[r0] ()) ~value:w () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "elementwise_where") [ e ]
+  U.sink ~kernel_info:(kernel_info "elementwise_where") [ e ]
 
 let make_elementwise_cast_f16 () =
   (* c[i] = (float32)a_f16[i] + b[i]. Param order: 0=f16, 1=f32, 2=out_f32.
@@ -248,7 +244,7 @@ let make_elementwise_cast_f16 () =
   let add = U.alu_binary ~op:Ops.Add ~lhs:cast_a ~rhs:ld_b in
   let st = U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ()) ~value:add () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "elementwise_cast_f16") [ e ]
+  U.sink ~kernel_info:(kernel_info "elementwise_cast_f16") [ e ]
 
 let make_elementwise_sqrt () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -258,7 +254,7 @@ let make_elementwise_sqrt () =
   let sq = U.alu_unary ~op:Ops.Sqrt ~src:ld in
   let st = U.store ~dst:(U.index ~ptr:p1 ~idxs:[r0] ()) ~value:sq () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "elementwise_sqrt") [ e ]
+  U.sink ~kernel_info:(kernel_info "elementwise_sqrt") [ e ]
 
 let make_parallel_reduce () =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
@@ -276,7 +272,7 @@ let make_parallel_reduce () =
   let st2 =
     U.store ~dst:(U.index ~ptr:p2 ~idxs:[c0] ()) ~value:red2 ()
   in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Reduce ] "parallel_reduce") [ st1; st2 ]
+  U.sink ~kernel_info:(kernel_info "parallel_reduce") [ st1; st2 ]
 
 let make_elementwise_int32 () =
   let p0 = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int (-1)) () in
@@ -288,7 +284,7 @@ let make_elementwise_int32 () =
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let st = U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ()) ~value:add () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "elementwise_int32") [ e ]
+  U.sink ~kernel_info:(kernel_info "elementwise_int32") [ e ]
 
 (* A short Euler Lorenz fold. Each step reuses a constant-scaled difference
    [dt*sigma*(y-x)] that the next step negates, so the codegen simplifier must
@@ -317,7 +313,7 @@ let make_lorenz_fold () =
   let x, y, z = fold 3 (load px, load py, load pz) in
   let st = U.store ~dst:(U.index ~ptr:po ~idxs:[ r0 ] ()) ~value:(add (add x y) z) () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
-  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "lorenz_fold") [ e ]
+  U.sink ~kernel_info:(kernel_info "lorenz_fold") [ e ]
 
 let make_llama_rmsnorm backend =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 2) () in
@@ -377,7 +373,6 @@ let make_llama_rmsnorm backend =
     ~kernel_info:
       {
         U.name = name;
-        axis_types = [];
         applied_opts = [];
         opts_to_apply = Some opts_to_apply;
         estimates = None;
@@ -388,7 +383,6 @@ let make_llama_rmsnorm backend =
 let model_kernel_info name opts_to_apply =
   {
     U.name;
-    axis_types = [];
     applied_opts = [];
     opts_to_apply = Some opts_to_apply;
     estimates = None;

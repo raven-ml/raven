@@ -203,7 +203,6 @@ and kernel_info_debug_string (k : kernel_info) =
   dataclass_string "KernelInfo"
     [
       "name", python_quote k.name;
-      "axis_types", tuple_string (List.map axis_type_repr k.axis_types);
       "applied_opts", tuple_string (List.map opt_debug_string k.applied_opts);
       "opts_to_apply",
       option_string (fun opts -> tuple_string (List.map opt_debug_string opts))

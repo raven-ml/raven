@@ -23,7 +23,6 @@ let f32 x = U.const (C.float D.float32 x)
 let kernel_info () =
   {
     U.name = "";
-    axis_types = [];
     applied_opts = [];
     opts_to_apply = None;
     estimates = None;

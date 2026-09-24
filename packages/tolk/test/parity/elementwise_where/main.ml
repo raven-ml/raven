@@ -19,7 +19,6 @@ let kernel () =
     ~kernel_info:
       {
         U.name = "elementwise_where";
-        axis_types = [ Axis_type.Global ];
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

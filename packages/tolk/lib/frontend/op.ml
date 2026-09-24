@@ -678,7 +678,6 @@ let scatter_indexed t ~dim index src ~mode ~unique =
             ~kernel_info:
               {
                 Uop.name;
-                axis_types = [];
                 applied_opts = [];
                 opts_to_apply = (if unique then None else Some []);
                 estimates = None;

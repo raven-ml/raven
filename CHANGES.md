@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Remove `Uop.kernel_info.axis_types`; kernel axes are determined by their
+  range nodes. Older exported graphs and compiled caches are invalidated.
+
 - Use FNUZ FP8 formats on AMD CDNA3 for casts and matrix multiplication,
   including its 240-value E4M3 saturation limit. CDNA4 keeps OCP formats.
 

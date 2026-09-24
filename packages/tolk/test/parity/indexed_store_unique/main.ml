@@ -47,7 +47,6 @@ let kernel () =
     ~kernel_info:
       {
         U.name = "indexed_store_unique";
-        axis_types = [ Axis_type.Weak; Axis_type.Weak ];
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

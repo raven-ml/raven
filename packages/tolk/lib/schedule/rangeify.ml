@@ -1816,7 +1816,7 @@ let split_store n =
              let body, args =
                compact_kernel_params ctx
                  (U.sink ~kernel_info:{
-                    name = ""; axis_types = [];
+                    name = "";
                     applied_opts = []; opts_to_apply = ctx.opts;
                     estimates = None; beam = 0 } [ ret ])
              in

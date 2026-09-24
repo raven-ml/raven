@@ -38,8 +38,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   `Nx.bitcast`.
 
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/ProgramInfo
-  metadata, ALLOC, effectful CALL and scalar binding effects. Remove redundant
-  KernelInfo axis metadata, deleted operations and stale enum/cache formats.
+  metadata, ALLOC, effectful CALL and scalar binding effects. Remove deleted
+  operations and stale enum/cache formats.
 - Port sorted-axis UNSHARD and the corresponding COPY/CALL/WMMA spec rules
   with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules.

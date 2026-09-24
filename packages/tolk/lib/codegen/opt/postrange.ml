@@ -305,7 +305,6 @@ let get_optimized_ast ?name_override t =
   let ki : U.kernel_info =
     {
       name;
-      axis_types = [];
       applied_opts = t.applied_opts;
       opts_to_apply = None;
       estimates = None;

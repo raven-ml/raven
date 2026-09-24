@@ -24,7 +24,6 @@ let global_fptr = D.float32
 let kernel_info ?(opts_to_apply = None) () =
   {
     U.name = "test";
-    axis_types = [];
     applied_opts = [];
     opts_to_apply;
     estimates = None;

@@ -1268,7 +1268,6 @@ let info_function_names_follow_tinygrad () =
   let kernel_info name : Uop.kernel_info =
     {
       name;
-      axis_types = [];
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -1310,7 +1309,6 @@ let cache_info_semantic_key_parity () =
   let kernel_info ?(beam = 0) name : Uop.kernel_info =
     {
       name;
-      axis_types = [];
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -1476,7 +1474,6 @@ let program_info_from_sink_parity () =
   let kernel_info : Uop.kernel_info =
     {
       name = "kernel name";
-      axis_types = [];
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -1629,7 +1626,6 @@ let debug_prints_rich_args_dataclass_style () =
   let kernel_info : Uop.kernel_info =
     {
       name = "kern";
-      axis_types = [ Axis_type.Weak ];
       applied_opts = [ Uop.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 } ];
       opts_to_apply = Some [ Uop.Opt.Padto { axis = 0; amount = 4 } ];
       estimates = Some { ops = Uop.Int 1; lds = Uop.Int 2; mem = Uop.Int 3 };
@@ -1675,7 +1671,7 @@ let debug_prints_rich_args_dataclass_style () =
        "BufferizeOpts(device=0, addrspace=AddrSpace.LOCAL, removable=False)");
   is_true ~msg:"KernelInfo repr"
     (contains out
-       "KernelInfo(name='kern', axis_types=(AxisType.WEAK,),");
+       "KernelInfo(name='kern', applied_opts=");
   is_true ~msg:"Opt repr"
     (contains out "Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))");
   is_true ~msg:"Estimates repr"

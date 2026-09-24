@@ -85,7 +85,6 @@ let buffer_node ?(size = 4) ?(dtype = Dtype.int32) () =
 let kernel_info name : U.kernel_info =
   {
     name;
-    axis_types = [];
     applied_opts = [];
     opts_to_apply = None;
     estimates = None;

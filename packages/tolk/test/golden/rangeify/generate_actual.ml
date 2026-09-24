@@ -46,7 +46,6 @@ let scheduled_kernel ?(name = "") ?(optimize = true) args body =
   let kernel_info : U.kernel_info =
     {
       name;
-      axis_types = [];
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;

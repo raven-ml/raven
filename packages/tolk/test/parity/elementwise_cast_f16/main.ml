@@ -22,7 +22,6 @@ let kernel () =
     ~kernel_info:
       {
         U.name = "elementwise_cast_f16";
-        axis_types = [ Axis_type.Global ];
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

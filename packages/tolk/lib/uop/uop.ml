@@ -71,7 +71,6 @@ and estimates = { ops : estimate; lds : estimate; mem : estimate }
 
 and kernel_info = {
   name : string;
-  axis_types : Axis_type.t list;
   applied_opts : Opt.t list;
   opts_to_apply : Opt.t list option;
   estimates : estimates option;
@@ -3487,7 +3486,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 13
+let export_version = 14
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

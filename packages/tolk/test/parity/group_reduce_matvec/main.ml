@@ -40,7 +40,6 @@ let kernel () =
     ~kernel_info:
       {
         U.name = "group_reduce_matvec";
-        axis_types = [ Axis_type.Global; Axis_type.Reduce ];
         applied_opts = [];
         opts_to_apply =
           Some

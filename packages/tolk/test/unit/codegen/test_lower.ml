@@ -393,7 +393,6 @@ let () =
                 ~kernel_info:
                   {
                     U.name = "gated_store";
-                    axis_types = [ Axis_type.Global ];
                     applied_opts = [];
                     opts_to_apply = Some [];
                     estimates = None;

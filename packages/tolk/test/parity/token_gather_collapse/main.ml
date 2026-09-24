@@ -56,7 +56,6 @@ let kernel () =
     ~kernel_info:
       {
         U.name = "token_gather_collapse";
-        axis_types = [];
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

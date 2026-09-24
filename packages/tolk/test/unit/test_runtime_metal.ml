@@ -219,7 +219,7 @@ let test_thread_reduction kind width expected () =
   let value = U.reduce ~src:loaded ~ranges:[ seq; col ] ~op:Ops.Add ~dtype:Dtype.int32 in
   let store = U.store ~dst:(U.index ~ptr:output ~idxs:[ row ] ()) ~value () in
   let kernel_info : U.kernel_info =
-    { name = "metal_thread_reduce"; axis_types = [];
+    { name = "metal_thread_reduce";
       applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.end_ ~value:store ~ranges:[ row ] ] in
   let linear = Codegen.full_rewrite_to_sink ~optimize:false (Device.renderer device) sink
@@ -249,7 +249,7 @@ let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.floa
   let dst = U.index ~ptr:output ~idxs:[ U.O.(row * int_ n + col) ] () in
   let store = U.store ~dst ~value () in
   let kernel_info : U.kernel_info =
-    { name = "metal_warp_grouping"; axis_types = []; applied_opts = [];
+    { name = "metal_warp_grouping"; applied_opts = [];
       opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.end_ ~value:store ~ranges:[ row; col ] ] in
   let scheduler = Postrange.create sink ren in

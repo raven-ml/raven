@@ -21,7 +21,6 @@ let kernel () =
     ~kernel_info:
       {
         U.name = "reduce_rows";
-        axis_types = [ Axis_type.Global; Axis_type.Reduce ];
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

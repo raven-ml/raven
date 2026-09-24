@@ -23,7 +23,6 @@ module Axis_type = Tolk_uop.Axis_type
 let kernel_info ?opts_to_apply name =
   {
     U.name;
-    axis_types = [];
     applied_opts = [];
     opts_to_apply;
     estimates = None;

@@ -25,7 +25,6 @@ let kernel () =
     ~kernel_info:
       {
         U.name = "parallel_reduce";
-        axis_types = [ Axis_type.Reduce ];
         applied_opts = [];
         opts_to_apply = Some [];
         estimates = None;

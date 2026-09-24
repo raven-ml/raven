@@ -23,7 +23,6 @@ let idx n = U.const (C.int D.weakint n)
 let kernel_info () =
   {
     U.name = "";
-    axis_types = [];
     applied_opts = [];
     opts_to_apply = None;
     estimates = None;

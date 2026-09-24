@@ -43,7 +43,6 @@ let kernel renderer =
     ~kernel_info:
       {
         U.name = "tc_matmul_32";
-        axis_types = [ Axis_type.Global; Axis_type.Global; Axis_type.Reduce ];
         applied_opts = [];
         opts_to_apply =
           Some

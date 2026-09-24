@@ -72,7 +72,6 @@ let elementwise_1d_ast ~n =
   let ki =
     {
       U.name = "test";
-      axis_types = [];
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -95,7 +94,6 @@ let elementwise_1d_ast_with_params ~n ~ptr_n ~out_slot ~in_slot ?shape () =
   let ki =
     {
       U.name = "test";
-      axis_types = [];
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -122,7 +120,6 @@ let elementwise_2d_ast ~s0 ~s1 =
   let ki =
     {
       U.name = "test";
-      axis_types = [];
       applied_opts = [];
       opts_to_apply = None;
       estimates = None;
@@ -266,7 +263,6 @@ let beam_search_tests =
           let ki =
             {
               U.name = "test";
-              axis_types = [];
               applied_opts = [];
               opts_to_apply = None;
               estimates = None;

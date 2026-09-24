@@ -205,7 +205,6 @@ type estimates = {
 
 type kernel_info = {
   name : string;  (** Kernel name, used for debugging and codegen. *)
-  axis_types : Axis_type.t list;  (** Kind assignment per schedule axis. *)
   applied_opts : Opt.t list;  (** Schedule options already applied. *)
   opts_to_apply : Opt.t list option;
       (** Remaining options to apply, or [None] for auto-tuning. *)

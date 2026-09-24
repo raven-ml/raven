@@ -22,7 +22,6 @@ let call_info name : U.call_info =
 let kernel_info name : U.kernel_info =
   {
     name;
-    axis_types = [];
     applied_opts = [];
     opts_to_apply = None;
     estimates = None;

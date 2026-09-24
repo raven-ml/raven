@@ -70,10 +70,9 @@ let idx n = U.const (Const.int Dtype.weakint n)
 let ci n = U.const (Const.int Dtype.int32 n)
 let iparam ~slot size = U.param ~slot ~dtype:Dtype.int32 ~shape:(idx size) ()
 
-let kernel_info name axis_types : U.kernel_info =
+let kernel_info name : U.kernel_info =
   {
     name;
-    axis_types;
     applied_opts = [];
     opts_to_apply = Some [];
     estimates = None;
@@ -103,7 +102,7 @@ let double_kernel name ~size =
   let v = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:ld in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ()) ~value:v () in
   U.sink
-    ~kernel_info:(kernel_info name [ Axis_type.Weak ])
+    ~kernel_info:(kernel_info name)
     [ U.end_ ~value:st ~ranges:[ r ] ]
 
 (* out[i] = in[i] + [addend] over a CPU loop of [size] elements. *)
@@ -115,7 +114,7 @@ let add_const_kernel name ~size ~addend =
   let v = U.alu_binary ~op:Ops.Add ~lhs:ld ~rhs:(ci addend) in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r ] ()) ~value:v () in
   U.sink
-    ~kernel_info:(kernel_info name [ Axis_type.Weak ])
+    ~kernel_info:(kernel_info name)
     [ U.end_ ~value:st ~ranges:[ r ] ]
 
 (* out[i] = sum_{j<=i} in[j] — a triangular reduce (cumsum). *)
@@ -129,7 +128,7 @@ let running_sum_kernel name ~size =
   let red = U.reduce ~op:Ops.Add ~src:masked ~ranges:[ rj ] ~dtype:Dtype.int32 in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ ri ] ()) ~value:red () in
   U.sink
-    ~kernel_info:(kernel_info name [ Axis_type.Weak; Axis_type.Reduce ])
+    ~kernel_info:(kernel_info name)
     [ U.end_ ~value:st ~ranges:[ ri ] ]
 
 (* out[0] = sum_i in[i] over a single Reduce range — the scalar-output path. *)
@@ -140,7 +139,7 @@ let sum_to_scalar_kernel name ~size =
   let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ()) () in
   let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r ] ~dtype:Dtype.int32 in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ idx 0 ] ()) ~value:red () in
-  U.sink ~kernel_info:(kernel_info name [ Axis_type.Reduce ]) [ st ]
+  U.sink ~kernel_info:(kernel_info name) [ st ]
 
 (* JIT driver. The function builds the CALL(LINEAR) form allocations emits —
    scheduled kernels whose call-level PARAM slots index the outer buffer
