@@ -75,7 +75,7 @@ let core_id_program () =
   let dt = Dtype.int32 in
   let p0 = i32_param ~slot:0 in
   let core_id =
-    U.variable ~name:"core_id" ~min_val:2 ~max_val:7 ~dtype:dt ()
+    U.variable ~param:true ~name:"core_id" ~min_val:2 ~max_val:7 ~dtype:dt ()
   in
   let idx = U.index ~ptr:p0 ~idxs:[core_id] () in
   let store = U.store ~dst:idx ~value:core_id () in
@@ -635,7 +635,7 @@ let test_sparse_program_arguments () =
       applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.store ~dst:(index output) ~value:sum () ] in
   let program = Codegen.to_program ~optimize:false device (Device.renderer device) sink in
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   let bind values =
     let buffer = create_i32_buffer device values in
     let node = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.int32
@@ -673,9 +673,9 @@ let test_linear_formal_order ?(permute_slots = false) ~reverse_buffers ~reverse_
   let param slot = U.param ~slot ~dtype:Dtype.int64 ~shape:(U.const_int 1) () in
   let output = param (if reverse_buffers then 7 else 2) in
   let input = param (if reverse_buffers then 2 else 7) in
-  let small = U.variable ~name:"z_small" ~min_val:0 ~max_val:16 ~dtype:Dtype.int32 () in
+  let small = U.variable ~param:true ~name:"z_small" ~min_val:0 ~max_val:16 ~dtype:Dtype.int32 () in
   let wide_value = 0x1_0000_0002 in
-  let wide = U.variable ~name:"a_wide" ~min_val:0 ~max_val:(wide_value + 10)
+  let wide = U.variable ~param:true ~name:"a_wide" ~min_val:0 ~max_val:(wide_value + 10)
       ~dtype:Dtype.int64 () in
   let zero = U.const (Const.int Dtype.int32 0) in
   let index ptr = U.index ~ptr ~idxs:[ zero ] () in

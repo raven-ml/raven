@@ -159,7 +159,7 @@ let schedule_jit ~registry ~out_node ~body_calls =
     let linear, var_vals =
       Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big
     in
-    let binding = Realize.Buffers.create ~device in
+    let binding = Realize.Buffers.create () in
     List.iter
       (fun call ->
         match U.as_call call with

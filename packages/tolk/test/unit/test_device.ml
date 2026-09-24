@@ -184,7 +184,7 @@ let interleaved_kernel_formals () =
       ~synchronize:(fun () -> ()) () in
   let param slot = U.param ~slot ~dtype:i32 ~shape:(U.const_int 1) () in
   let output = param 7 and input = param 2 in
-  let increment = U.variable ~name:"increment" ~min_val:0 ~max_val:100 ~dtype:i32 () in
+  let increment = U.variable ~param:true ~name:"increment" ~min_val:0 ~max_val:100 ~dtype:i32 () in
   let zero = U.const (Const.int i32 0) in
   let src = U.index ~ptr:input ~idxs:[ zero ] () in
   let dst = U.index ~ptr:output ~idxs:[ zero ] () in
@@ -206,8 +206,8 @@ let interleaved_kernel_formals () =
 let node_owned_storage () =
   let node = Uop.buffer ~slot:(Uop.fresh_buffer_slot ()) ~dtype:i32
       ~shape:(Uop.const_int 4) ~device:(Uop.Single (Device.name device)) () in
-  let first = Realize.Buffers.create ~device in
-  let second = Realize.Buffers.create ~device in
+  let first = Realize.Buffers.create () in
+  let second = Realize.Buffers.create () in
   let a = Realize.Buffers.of_buffer_node first node in
   let b = Realize.Buffers.of_buffer_node second node in
   equal int (Device.Buffer.id a) (Device.Buffer.id b);
@@ -229,7 +229,7 @@ let storage_serialization () =
   let graph = Uop.sink [Uop.from_buffer base; Uop.from_buffer view] in
   let restored = Uop.import (Uop.export graph) in
   equal string (Uop.semantic_key graph) (Uop.semantic_key restored);
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   match Uop.children restored with
   | [base_node; view_node] ->
       let base' = Realize.Buffers.of_buffer_node binding base_node in
@@ -250,7 +250,7 @@ let external_storage_serialization () =
   let external_buffer = Device.create_buffer ~size:2 ~dtype:i32 ~spec device in
   Device.Buffer.ensure_allocated external_buffer;
   let node = Uop.from_buffer external_buffer in
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   equal int (Device.Buffer.id external_buffer)
     (Device.Buffer.id (Realize.Buffers.of_buffer_node binding node));
   let restored = Realize.Buffers.of_buffer_node binding (Uop.import (Uop.export node)) in

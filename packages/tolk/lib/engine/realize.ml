@@ -269,8 +269,8 @@ let capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref =
 (* Buffer binding
 
    Placed BUFFER nodes own storage directly. Caller bindings can override
-   that storage; a PARAM resolves through [input_uops], and a contiguous movement is an
-   offset view. Unplaced placeholders still use the execution device. *)
+   that storage; a PARAM resolves through [input_uops], and contiguous
+   movements resolve as byte-offset views. Execution never creates owners. *)
 
 type buffer =
   | Single of Device.Buffer.t
@@ -278,7 +278,6 @@ type buffer =
 
 module Buffers = struct
   type t = {
-    device : Device.t;
     tbl : (int, buffer) Hashtbl.t;
     seeded : (int, unit) Hashtbl.t;
         (* Tags ever bound through [seed]: their resolution may change between
@@ -287,8 +286,8 @@ module Buffers = struct
            per call. *)
   }
 
-  let create ~device =
-    { device; tbl = Hashtbl.create 64; seeded = Hashtbl.create 16 }
+  let create () =
+    { tbl = Hashtbl.create 64; seeded = Hashtbl.create 16 }
 
   let seed t node buf =
     let tag = Tolk_uop.Uop.tag node in
@@ -324,33 +323,10 @@ module Buffers = struct
         invalid_arg "Buffers.find_opt: node is bound to a multi-device buffer"
     | None -> None
 
-  let numel node = List.fold_left ( * ) 1 (Tolk_uop.Uop.max_shape node)
-
-  (* Concrete buffer backing a BUFFER node: the seeded buffer, or a fresh
-     allocation matching the node's element count and dtype, placed on the
-     node's device. A node on the binding's device (or without a placement)
-     allocates there; other placements resolve through the device registry. *)
   let buffer_of_node t node =
     match find_buffer t node with
     | Some buf -> buf
-    | None ->
-        let size = numel node and dtype = Tolk_uop.Uop.dtype node in
-        let buf =
-          match Tolk_uop.Uop.device_of node with
-          | Some (Tolk_uop.Uop.Multi devices) ->
-              Multi (Device.Multi_buffer.create ~devices ~size ~dtype ())
-          | Some (Tolk_uop.Uop.Single name)
-            when not
-                   (String.equal (Device.canonicalize name)
-                      (Device.canonicalize (Device.name t.device))) ->
-              Single (Device.create_buffer ~size ~dtype (Device.get name))
-          | Some (Tolk_uop.Uop.Index _) ->
-              invalid_arg "Buffers: BUFFER node with Index device"
-          | Some (Tolk_uop.Uop.Single _) | None ->
-              Single (Device.create_buffer ~size ~dtype t.device)
-        in
-        Hashtbl.replace t.tbl (Tolk_uop.Uop.tag node) buf;
-        buf
+    | None -> invalid_arg "Buffers: graph node has no storage or explicit binding"
 
   let of_buffer_node t node =
     match buffer_of_node t node with

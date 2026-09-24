@@ -72,7 +72,7 @@ let variable_program () =
   let dt = Dtype.int32 in
   let p0 = i32_param ~slot:0 in
   let c0 = U.const (Const.int dt 0) in
-  let n = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:dt () in
+  let n = U.variable ~param:true ~name:"n" ~min_val:0 ~max_val:1024 ~dtype:dt () in
   let idx_dst = U.index ~ptr:p0 ~idxs:[ c0 ] () in
   let store = U.store ~dst:idx_dst ~value:n () in
   [ p0; c0; n; idx_dst; store ]
@@ -236,7 +236,7 @@ let test_mixed_scalar_widths () =
                 Dtype.int32, "word", 0, 65536, 12345;
                 Dtype.int64, "wide", 0, 0x3_0000_0000, 0x1_0000_0002 ] in
   let vars = List.map (fun (dtype, name, min_val, max_val, _) ->
-      U.variable ~name ~min_val ~max_val ~dtype ()) cases in
+      U.variable ~param:true ~name ~min_val ~max_val ~dtype ()) cases in
   let stores = List.mapi (fun i var ->
       let offset = U.const (Const.int Dtype.int32 i) in
       let ptr = U.index ~ptr:output ~idxs:[ offset ] () in
@@ -502,7 +502,7 @@ let () =
               in
               is_true ~msg:"kernel uses the tensor core"
                 (List.exists (fun src -> contains src "__WMMA_") sources);
-              let binding = Realize.Buffers.create ~device in
+              let binding = Realize.Buffers.create () in
               Realize.Buffers.seed binding a_node (f16_buf device a_data);
               Realize.Buffers.seed binding b_node (f16_buf device b_data);
               Realize.run_linear ~device ~to_program binding linear;
@@ -548,7 +548,7 @@ let () =
                 schedule_graph_linear device ~to_program (U.sink [ out ])
               in
               let linear = wrap_graph linear in
-              let binding = Realize.Buffers.create ~device in
+              let binding = Realize.Buffers.create () in
               Realize.Buffers.seed binding buf_node (f32_buf device data);
               let check value =
                 Realize.run_linear ~device ~to_program binding
@@ -594,7 +594,7 @@ let () =
               let linear =
                 wrap_graph (U.substitute ~walk:true [ (buf_node, param) ] linear)
               in
-              let binding = Realize.Buffers.create ~device in
+              let binding = Realize.Buffers.create () in
               let check node data =
                 Realize.Buffers.seed binding node (f32_buf device data);
                 Realize.run_linear ~device ~to_program binding
@@ -634,7 +634,7 @@ let () =
                 | Some node -> U.buf_uop node
                 | None -> fail "output was not scheduled to a buffer"
               in
-              let binding = Realize.Buffers.create ~device in
+              let binding = Realize.Buffers.create () in
               let run in_buf out_buf =
                 Realize.Buffers.seed binding in_node in_buf;
                 Realize.Buffers.seed binding out_node out_buf;

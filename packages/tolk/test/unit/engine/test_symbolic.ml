@@ -67,7 +67,7 @@ let realize_output device ~to_program ~buf_node ~value =
   equal ~msg:"extracted bind value" (list (pair string int))
     [ ("start_pos", value) ]
     var_vals;
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   Realize.Buffers.seed binding buf_node (input_buffer device float_data);
   Realize.run_linear ~device ~to_program binding ~var_vals linear;
   Device.synchronize device;
@@ -98,7 +98,7 @@ let realize_neg_output device ~to_program ~buf_node ~value =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
   in
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   Realize.Buffers.seed binding buf_node (input_buffer device float_data);
   Realize.run_linear ~device ~to_program binding ~var_vals linear;
   Device.synchronize device;

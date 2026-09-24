@@ -126,7 +126,7 @@ let realize_buffers ts =
     Tolk.Schedule.create_linear_with_vars
       ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call
   in
-  let binding = Tolk.Realize.Buffers.create ~device:dev in
+  let binding = Tolk.Realize.Buffers.create () in
   Tolk.Realize.run_linear ~device:dev ~to_program binding ~var_vals linear;
   List.map2 (fun t out ->
       (match Hashtbl.find_opt buffer_map (U.tag out) with

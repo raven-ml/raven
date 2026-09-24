@@ -374,7 +374,7 @@ let call ?wait ?held_buffers t (input_uops : U.t array)
         jit_lower ~device:t.device ~to_program:t.to_program
           (combine_linears linears) held_bufs input_uops
       in
-      let binding = Realize.Buffers.create ~device:t.device in
+      let binding = Realize.Buffers.create () in
       seed_known_buffers binding ~buffers linear;
       let captured =
         {

@@ -3932,7 +3932,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
       List.rev !acc
     end
   in
-  let binding = Tolk.Realize.Buffers.create ~device:dev in
+  let binding = Tolk.Realize.Buffers.create () in
   let reserved = Hashtbl.create 16 in
   List.iter
     (fun inp ->

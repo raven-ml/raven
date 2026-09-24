@@ -183,14 +183,13 @@ type buffer =
 
     A placed {!Tolk_uop.Ops.Buffer} retains its own storage across execution
     contexts. Seeding explicitly overrides that storage for the binding.
-    Unplaced placeholders are allocated on the binding's default device. *)
+    Unowned nodes require an explicit binding; execution never allocates owners. *)
 module Buffers : sig
   type t
   (** The type for buffer bindings. *)
 
-  val create : device:Device.t -> t
-  (** [create ~device] is an empty binding allocating on [device] the nodes
-      that carry no device placement of their own. *)
+  val create : unit -> t
+  (** [create ()] is an empty set of caller-supplied buffer bindings. *)
 
   val seed : t -> Tolk_uop.Uop.t -> Device.Buffer.t -> unit
   (** [seed t node buf] binds [node] to [buf], overriding lazy allocation. *)
@@ -216,7 +215,9 @@ module Buffers : sig
 
   val buffer_of_node : t -> Tolk_uop.Uop.t -> buffer
   (** [buffer_of_node t node] is the buffer backing the {!Tolk_uop.Ops.Buffer}
-      [node], allocating and caching it on first use. *)
+      [node], taken from an explicit binding or the node's storage owner.
+
+      @raise Invalid_argument if neither exists. *)
 
   val of_buffer_node : t -> Tolk_uop.Uop.t -> Device.Buffer.t
   (** [of_buffer_node t node] is {!buffer_of_node} for a node backed by a

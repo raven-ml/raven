@@ -274,7 +274,7 @@ let compiled_launch_uses_fixed_workgroups () =
   let flat = U.special ~name:"idx0" ~size:(U.const_int 7) () in
   let body = U.sink ~kernel_info:(kernel_info "fixed_workgroups") [ flat; n ] in
   let call = U.call ~body:(program_of body) ~args:[] ~info:(call_info None) in
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   Realize.run_linear ~device ~to_program:program_of ~var_vals:[ "n", 37 ] binding (U.linear [ call ]);
   equal int 1 !calls
 
@@ -299,7 +299,7 @@ let graph_updates_symbolic_local_dimensions () =
   let kernel = U.call ~body:program ~args:[] ~info:(call_info None) in
   let body = U.custom_function ~name:"graph" ~srcs:[ U.linear [ kernel ] ] in
   let call = U.call ~body ~args:[] ~info:(call_info None) in
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   let launch n = Realize.run_linear ~device ~to_program:program_of
       ~var_vals:[ "n", n ] binding (U.linear [ call ]) in
   launch 2;
@@ -336,7 +336,7 @@ let graph_binds_sparse_arguments () =
   let body = U.custom_function ~name:"graph"
       ~srcs:[ U.linear [ kernel a b; kernel b a ] ] in
   let call = U.call ~body ~args:[] ~info:(call_info None) in
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   Realize.run_linear ~device ~to_program:program_of binding (U.linear [ call ]);
   equal int 1 !launches;
   match !recorded with
@@ -508,18 +508,28 @@ let () =
         ];
       group "Buffer binding"
         [
-          test "allocates and caches a buffer per BUFFER node" (fun () ->
-            let device = test_device (runtime_state ()) in
-            let binding = Realize.Buffers.create ~device in
+          test "resolves the owner retained by each BUFFER node" (fun () ->
+            let binding = Realize.Buffers.create () in
             let node = buffer_node ~size:4 () in
             let b1 = Realize.Buffers.of_buffer_node binding node in
             let b2 = Realize.Buffers.of_buffer_node binding node in
             equal int 4 (Device.Buffer.size b1);
             equal bool true (Dtype.equal Dtype.int32 (Device.Buffer.dtype b1));
             equal int (Device.Buffer.id b1) (Device.Buffer.id b2));
+          test "unplaced buffers require explicit storage bindings" (fun () ->
+            let node = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.int32
+                ~shape:(shape_const 4) () in
+            let binding = Realize.Buffers.create () in
+            raises (Invalid_argument "Buffers: graph node has no storage or explicit binding")
+              (fun () -> ignore (Realize.resolve binding (Realize.exec_context ()) node));
+            let device = test_device (runtime_state ()) in
+            let owner = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
+            Realize.Buffers.seed binding node owner;
+            let resolved = Realize.resolve binding (Realize.exec_context ()) node in
+            equal int (Device.Buffer.id owner) (Device.Buffer.id resolved));
           test "seed overrides lazy allocation" (fun () ->
             let device = test_device (runtime_state ()) in
-            let binding = Realize.Buffers.create ~device in
+            let binding = Realize.Buffers.create () in
             let node = buffer_node ~size:4 () in
             let seeded =
               Device.create_buffer ~size:4 ~dtype:Dtype.int32 device
@@ -529,7 +539,7 @@ let () =
             equal int (Device.Buffer.id seeded) (Device.Buffer.id got));
           test "resolves PARAM through input_uops" (fun () ->
             let device = test_device (runtime_state ()) in
-            let binding = Realize.Buffers.create ~device in
+            let binding = Realize.Buffers.create () in
             let input = buffer_node ~slot:0 ~size:4 () in
             let seeded =
               Device.create_buffer ~size:4 ~dtype:Dtype.int32 device
@@ -543,8 +553,7 @@ let () =
             let got = Realize.resolve binding ctx param in
             equal int (Device.Buffer.id seeded) (Device.Buffer.id got));
           test "resolves byte view as an offset view" (fun () ->
-            let device = test_device (runtime_state ()) in
-            let binding = Realize.Buffers.create ~device in
+            let binding = Realize.Buffers.create () in
             let base_node = buffer_node ~size:4 () in
             let slice =
               storage_view ~src:base_node ~offset:(shape_const 1) ~size:2
@@ -555,8 +564,7 @@ let () =
             equal int 2 (Device.Buffer.size view);
             equal int 4 (Device.Buffer.offset view));
           test "rejects an unbound PARAM" (fun () ->
-            let device = test_device (runtime_state ()) in
-            let binding = Realize.Buffers.create ~device in
+            let binding = Realize.Buffers.create () in
             let param = U.param ~slot:5 ~dtype:Dtype.int32 () in
             let ctx = Realize.exec_context () in
             raises_match
@@ -584,7 +592,7 @@ let () =
             let out = buffer_node ~slot:0 () in
             let inp = buffer_node ~slot:1 () in
             let call = U.call ~body ~args:[ out; inp ] ~info in
-            let binding = Realize.Buffers.create ~device in
+            let binding = Realize.Buffers.create () in
             Realize.run_linear ~device
               ~to_program:program_of
               binding
@@ -611,15 +619,14 @@ let () =
                 ~device:(U.Single "TEST:0") ()
             in
             let call = U.call ~body ~args:[ param ] ~info in
-            let binding = Realize.Buffers.create ~device in
+            let binding = Realize.Buffers.create () in
             Realize.run_linear ~device
               ~to_program:program_of
               binding ~input_uops:[| input |]
               (U.linear [ call ]);
             equal int 1 state.nbufs);
           test "resolves an offset byte view structurally" (fun () ->
-            let device = test_device (runtime_state ()) in
-            let binding = Realize.Buffers.create ~device in
+            let binding = Realize.Buffers.create () in
             let src_node = buffer_node ~slot:0 ~size:8 () in
             let view = storage_view ~src:src_node ~offset:(shape_const 4) ~size:2
                 ~dtype:Dtype.int32 in

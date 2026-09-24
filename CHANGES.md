@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Execution now requires graph-owned storage or an explicit buffer binding;
+  it no longer allocates unplaced placeholders on a default device.
+  `Realize.Buffers.create ()` therefore takes no device argument.
+
 - `Uop.contiguous` now creates bare `STAGE` materializations, replacing
   `CONTIGUOUS`. Preparation lowers them to call-local stores and shares
   assignment-hazard boundaries with copies and existing store effects.

@@ -135,7 +135,7 @@ let make_kernel_jit ?(body = U.sink ~kernel_info:(kernel_info "jit_k") [])
     let linear, vv =
       Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big
     in
-    let binding = Realize.Buffers.create ~device:dev in
+    let binding = Realize.Buffers.create () in
     Realize.run_linear ~device:dev ~to_program binding ~var_vals:vv linear;
     "ran"
   in

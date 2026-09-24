@@ -131,7 +131,7 @@ let run_sharded ?(host = "CPU") ~devices ~shape ~axis data op =
   let out =
     U.contiguous ~src:(U.copy ~src:(op xs) ~device:(U.Single host) ()) ()
   in
-  let binding = Realize.Buffers.create ~device in
+  let binding = Realize.Buffers.create () in
   Realize.Buffers.seed binding x (f32_buf device data);
   let buffer_map = realize ~device ~binding (U.sink [ out ]) in
   output_f32 binding buffer_map out
@@ -144,12 +144,11 @@ let () =
       group "Resolution"
         [
           test "mstack joins and mselect indexes seeded shards" (fun () ->
-              let device = Lazy.force cpu in
               let data1 = [| 1.; 2.; 3.; 4. |] in
               let data2 = [| 10.; 20.; 30.; 40. |] in
               let a = f32_buffer_node "CPU:1" [ 4 ] in
               let b = f32_buffer_node "CPU:2" [ 4 ] in
-              let binding = Realize.Buffers.create ~device in
+              let binding = Realize.Buffers.create () in
               Realize.Buffers.seed binding a
                 (f32_buf (Device.get "CPU:1") data1);
               Realize.Buffers.seed binding b
@@ -174,12 +173,11 @@ let () =
                   ignore
                     (Realize.resolve binding ctx (U.mselect ~src:a ~index:0))));
           test "multi buffer node allocates one shard per device" (fun () ->
-              let device = Lazy.force cpu in
               let node =
                 U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
                   ~shape:(shape_node [ 4 ]) ~device:(U.Multi devs2) ()
               in
-              let binding = Realize.Buffers.create ~device in
+              let binding = Realize.Buffers.create () in
               let ctx = Realize.exec_context () in
               match Realize.resolve_buffer binding ctx node with
               | Realize.Multi m ->
@@ -224,7 +222,7 @@ let () =
               let out =
                 U.contiguous ~src:(U.copy ~src:x ~device:(U.Multi devs2) ()) ()
               in
-              let binding = Realize.Buffers.create ~device in
+              let binding = Realize.Buffers.create () in
               Realize.Buffers.seed binding x (f32_buf device data);
               let buffer_map = realize ~device ~binding (U.sink [ out ]) in
               let node = output_node buffer_map out in
