@@ -294,6 +294,9 @@ thread.
 
 ### Tolk (new)
 
+- Emulated `int64` and `uint64` casts to `float64` preserve double precision
+  and the correct high word, fixing rounded results and zero output for `2^63`.
+
 - Split ranges retain their complete axis identities through expansion,
   scheduling and tensor-core contraction. `Uop.axis_id` exposes that identity;
   `wmma_info.tc_upcast_axes` now carries full IDs instead of root axis numbers.

@@ -192,11 +192,52 @@ let test_split_axis_identity () =
   run_spec device spec [ output ];
   equal (list int) [ 0; 1; 2; 10; 11; 12 ] (read_i32_buffer output)
 
+let test_emulated_long_to_float64 () =
+  let device = cpu "emulated-long-cast" in
+  let cases =
+    [ Dtype.int64, 0L, 0.0;
+      Dtype.int64, -1L, -1.0;
+      Dtype.int64, 2147483648L, 2147483648.0;
+      Dtype.int64, 4294967297L, 4294967297.0;
+      Dtype.int64, 4886718345L, 4886718345.0;
+      Dtype.int64, -4294967297L, -4294967297.0;
+      Dtype.int64, 9007199254740991L, 9007199254740991.0;
+      Dtype.int64, -9007199254740991L, -9007199254740991.0;
+      Dtype.int64, Int64.min_int, -9223372036854775808.0;
+      Dtype.uint64, 4294967297L, 4294967297.0;
+      Dtype.uint64, 4886718345L, 4886718345.0;
+      Dtype.uint64, Int64.min_int, 9223372036854775808.0;
+      Dtype.uint64, -1L, 18446744073709551616.0 ] in
+  let count = List.length cases in
+  let dst = U.param ~slot:0 ~dtype:Dtype.float64 ~shape:(U.const_int count)
+      ~addrspace:Dtype.Global () in
+  let stores = List.mapi (fun i (dtype, value, _) ->
+      let cast = U.cast ~src:(U.const (Const.int64 dtype value))
+          ~dtype:Dtype.float64 in
+      (* Explicit decomposition exercises the emulation on CPUs with native
+         64-bit integers as well. Lowering must preserve its numeric result. *)
+      let value = U.graph_rewrite ~bottom_up:true
+          (Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp) cast in
+      let index = U.index ~ptr:dst ~idxs:[ U.const_int i ] () in
+      U.store ~dst:index ~value ()) cases in
+  let program = Codegen_lower.lower (Device.renderer device) (U.sink stores)
+      |> Linearizer.linearize in
+  let spec = Device.compile_program device ~name:"emulated_long_cast" program in
+  let output = Device.create_buffer ~size:count ~dtype:Dtype.float64 device in
+  Device.Buffer.ensure_allocated output;
+  run_spec device spec [ output ];
+  let bytes = Device.Buffer.as_bytes output in
+  List.iteri (fun i (dtype, value, expected) ->
+      let actual = Int64.float_of_bits (Bytes.get_int64_le bytes (8 * i)) in
+      equal ~msg:(Printf.sprintf "%s %Ld" (Dtype.to_string dtype) value)
+        float_exact expected actual) cases
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
           test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;
           test "compilation preserves the selected buffer alignment" test_compilation_preserves_alignment;
           test "compile and run one kernel" (fun () ->

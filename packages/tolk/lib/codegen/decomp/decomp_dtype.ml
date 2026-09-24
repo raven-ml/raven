@@ -564,16 +564,18 @@ let rule_long_cast_to_long =
                     | _ -> None)
                  end
                  else begin
-                   (* int -> long (sign-extend).
-                      lo = cast(src, narrow);
-                      hi = (src < 0) ? -1 : 0 *)
+                   (* Signed integers sign-extend; unsigned integers and
+                      booleans have a zero high word. *)
                    let lo = Uop.cast ~src:a ~dtype:narrow_val in
                    let hi =
-                     Uop.alu_ternary ~op:Ops.Where
-                       ~a:(Uop.alu_binary ~op:Ops.Cmplt ~lhs:a
-                             ~rhs:(Uop.const_like a 0))
-                       ~b:(Uop.const (Const.int narrow (-1)))
-                       ~c:(Uop.const (Const.int narrow 0))
+                     if Dtype.is_unsigned adv || Dtype.is_bool adv then
+                       Uop.const (Const.int narrow 0)
+                     else
+                       Uop.alu_ternary ~op:Ops.Where
+                         ~a:(Uop.alu_binary ~op:Ops.Cmplt ~lhs:a
+                               ~rhs:(Uop.const_like a 0))
+                         ~b:(Uop.const (Const.int narrow (-1)))
+                         ~c:(Uop.const (Const.int narrow 0))
                    in
                    (match tag with
                     | Some "0" -> Some lo
@@ -597,6 +599,9 @@ let rule_long_cast_from_long =
         else
           let a = srcs.(0) in
           (match Uop.dtype a, Uop.dtype n with
+           (* A tagged operand is already selecting a word. Let that split
+              finish before narrowing, rather than selecting its low word again. *)
+           | adv, _ when is_long_dtype adv && Uop.node_tag a <> None -> None
            | adv, tdv when is_long_dtype adv ->
                let narrow = long_to_int_dtype adv in
                let narrow_val = narrow in
@@ -605,8 +610,8 @@ let rule_long_cast_from_long =
                let a1 =
                  Uop.cast ~src:(Uop.with_tag "1" a) ~dtype:narrow_val in
                if Dtype.is_float tdv then begin
-                 (* long -> float: small-value fast path + two-half
-                    reconstruction in float32. *)
+                 (* Reconstruct in float64 when requested, so a float32
+                    intermediate cannot discard the low word's precision. *)
                  let tdv_val = tdv in
                  let zero_a1 = Uop.const_like a1 0 in
                  let minus_one_a1 = Uop.const (Const.int narrow (-1)) in
@@ -625,18 +630,20 @@ let rule_long_cast_from_long =
                      ~rhs:(Uop.alu_binary ~op:Ops.And
                              ~lhs:hi_m1 ~rhs:lo_neg)
                  in
-                 let f32 = Dtype.float32 in
+                 let compute_dtype =
+                   if Dtype.equal tdv Dtype.float64 then Dtype.float64
+                   else Dtype.float32 in
                  let small_branch = Uop.cast ~src:a0 ~dtype:tdv_val in
-                 let hi_f32 = Uop.cast ~src:a1 ~dtype:f32 in
+                 let hi_float = Uop.cast ~src:a1 ~dtype:compute_dtype in
                  let two_pow_32 =
-                   Uop.const (Const.float Dtype.float32 4294967296.0) in
+                   Uop.const (Const.float compute_dtype 4294967296.0) in
                  let hi_scaled = Uop.alu_binary ~op:Ops.Mul
-                   ~lhs:hi_f32 ~rhs:two_pow_32 in
+                   ~lhs:hi_float ~rhs:two_pow_32 in
                  let lo_u = Uop.bitcast ~src:a0 ~dtype:Dtype.uint32 in
-                 let lo_f32 = Uop.cast ~src:lo_u ~dtype:f32 in
-                 let sum_f32 = Uop.alu_binary ~op:Ops.Add
-                   ~lhs:hi_scaled ~rhs:lo_f32 in
-                 let big_branch = Uop.cast ~src:sum_f32 ~dtype:tdv_val in
+                 let lo_float = Uop.cast ~src:lo_u ~dtype:compute_dtype in
+                 let sum = Uop.alu_binary ~op:Ops.Add
+                   ~lhs:hi_scaled ~rhs:lo_float in
+                 let big_branch = Uop.cast ~src:sum ~dtype:tdv_val in
                  Some (Uop.alu_ternary ~op:Ops.Where ~a:small
                          ~b:small_branch ~c:big_branch)
                end
