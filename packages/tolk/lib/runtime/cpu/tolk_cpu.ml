@@ -98,11 +98,23 @@ let raw_allocator () =
 let create ?aligned name =
   let runtime (obj : Tolk_uop.Tiny_elf.t) =
     let entry_name = obj.name and lib = obj.lib in
+    let buffers, scalars = List.partition
+        (fun (arg : Tolk_uop.Tiny_elf.argument) -> arg.addrspace <> Tolk_uop.Dtype.Alu)
+        obj.signature in
+    let slots offset args =
+      let slots = Array.of_list (List.map
+          (fun (arg : Tolk_uop.Tiny_elf.argument) -> arg.slot - offset) args) in
+      if Array.for_all Fun.id (Array.mapi (fun i slot -> i = slot) slots)
+      then None else Some slots in
+    let buffer_slots = slots 0 buffers and scalar_slots = slots (List.length buffers) scalars in
+    let reorder slots args = match slots with
+      | None -> args
+      | Some slots -> Array.map (Array.get args) slots in
     let loaded = load_program ~name:entry_name ~lib in
     let call bufs ~global:_ ~local:_ ~vals ~wait ~timeout:_ =
       if loaded.unloaded then invalid_arg "CPU program has been unloaded";
       let st = if wait then monotonic_ns () else 0 in
-      exec_call loaded.entry bufs vals;
+      exec_call loaded.entry (reorder buffer_slots bufs) (reorder scalar_slots vals);
       if wait then Some (float_of_int (monotonic_ns () - st) *. 1e-9)
       else None
     in

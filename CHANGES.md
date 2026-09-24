@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- CPU dispatch honors compact slots in compiled binary signatures, including
+  reordered buffer and mixed-width scalar bindings. Ordinary generated
+  signatures retain the allocation-free argument path.
+
 - AMD and NV dispatch bind arguments by their compiled slots and scalar widths,
   preserving mixed-width alignment and 64-bit values instead of packing every
   scalar into 32 bits. Invalid argument layouts leave mapped memory unchanged.

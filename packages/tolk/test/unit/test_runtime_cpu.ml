@@ -634,7 +634,7 @@ let test_sparse_program_arguments () =
   raises_match (function Invalid_argument _ -> true | _ -> false)
     (fun () -> ignore (Device.runtime device bad))
 
-let test_linear_formal_order ~reverse_buffers ~reverse_scalars () =
+let test_linear_formal_order ?(permute_slots = false) ~reverse_buffers ~reverse_scalars () =
   let device = cpu (Printf.sprintf "formal-order-%b-%b" reverse_buffers reverse_scalars) in
   let param slot = U.param ~slot ~dtype:Dtype.int64 ~shape:(U.const_int 1) () in
   let output = param (if reverse_buffers then 7 else 2) in
@@ -665,9 +665,22 @@ let test_linear_formal_order ~reverse_buffers ~reverse_scalars () =
   let slots = [ (if reverse_buffers then 7 else 2), out;
                 (if reverse_buffers then 2 else 7), inp ] in
   let buffers = List.map (fun slot -> List.assoc slot slots) (Program_spec.globals spec) in
-  let runner = Realize.Compiled_runner.create ~device spec in
-  ignore (Realize.Compiled_runner.call runner buffers [ "z_small", 3; "a_wide", wide_value ]
-    ~wait:true ~timeout:None);
+  if permute_slots then begin
+    let obj = Program_spec.to_elf spec in
+    let signature = List.map (fun (arg : Tiny_elf.argument) ->
+        let slot = if arg.addrspace = Dtype.Alu then 5 - arg.slot else 1 - arg.slot in
+        { arg with slot }) obj.signature in
+    let prg = Device.runtime device { obj with signature } in
+    Fun.protect ~finally:prg.free (fun () ->
+        let vals = if reverse_scalars then [| Int64.of_int wide_value; 3L |]
+          else [| 3L; Int64.of_int wide_value |] in
+        ignore (prg.call [| Device.Buffer.addr inp; Device.Buffer.addr out |]
+          ~global:[| 1; 1; 1 |] ~local:None ~vals ~wait:true ~timeout:None))
+  end else begin
+    let runner = Realize.Compiled_runner.create ~device spec in
+    ignore (Realize.Compiled_runner.call runner buffers [ "z_small", 3; "a_wide", wide_value ]
+      ~wait:true ~timeout:None)
+  end;
   equal int64 (Int64.of_int (wide_value + 8)) (Bytes.get_int64_le (Device.Buffer.as_bytes out) 0);
   equal int64 5L (Bytes.get_int64_le (Device.Buffer.as_bytes inp) 0)
 
@@ -680,6 +693,8 @@ let main () =
             (test_linear_formal_order ~reverse_buffers:true ~reverse_scalars:false);
           test "mixed-width scalar formals retain their declaration order"
             (test_linear_formal_order ~reverse_buffers:false ~reverse_scalars:true);
+          test "binary signature slots select buffers and mixed-width scalars"
+            (test_linear_formal_order ~permute_slots:true ~reverse_buffers:false ~reverse_scalars:true);
           test "compiled signatures bind sparse arguments and reject wrong arities"
             test_sparse_program_arguments;
           test "software sine handles large arguments and word boundaries"
