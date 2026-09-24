@@ -279,10 +279,15 @@ matrix's packed and decoded bytes. The kernel's options give its row tile
 kernel's arithmetic, which runs without tensor cores, starts to cost more
 than its reads. The options are a total function of the device and the
 shape, measured; a shape with no valid options, a symbolic dimension, and
-every device not yet measured have `ρ = 0`.
+every device not yet measured have `ρ = 0`. `ρ` is set per device and `x`
+dtype, measured at gpt-oss's `gate_up` expert against decode-then-matmul: 32
+on Metal at bfloat16 and float16 and 16 at float32, where the two forms tie;
+64 on the CPU at bfloat16 and 2 at float32.
 
 1. **Without `ids`,** a matrix that meets `r ≤ ρ` rows takes the kernel, which
-   reads it `⌈r/M⌉` times. Otherwise it takes decode-then-matmul.
+   reads it `⌈r/M⌉` times. Otherwise it takes decode-then-matmul. A stack of
+   matrices broadcast against a larger batch of `x` takes decode-then-matmul
+   whatever its rows.
 2. **With `ids` and one row per instance** (`m = 1`, the form a token's
    experts take), the routes are grouped when `R' · (R' − 1) / 2d > τ`, where
    `R' = R · d / ē` estimates a lane's own routes, with `ē` the experts of
@@ -320,20 +325,26 @@ and its scale byte once, decodes in registers, takes `M` float32 dot products,
 and multiplies each partial sum by the group's scale 2^(s − 127): the float
 whose bits are `s << 23` for 1 ≤ s ≤ 254, 2^−127 (bits `0x00400000`) for s =
 0, and NaN for s = 255. Row addresses with `ids` are computed at tolk's index
-dtype. Its loads of `w` and of `x` are gated on 0 ≤ id < e, and a position
-outside the gate is written as zero. On a GPU its loop over `k` is an outer
-loop, whose bound is zero for a work group whose positions all fall outside
-the gate, around the constant loop its options split, as in the block kernel
-(below). Its pinned options keep the position axis off local and upcast
-dimensions, and its builder raises if they do not. This gated form of the
-kernel is untested: its options GROUP the loop over groups, so the gated outer
-loop sits around a constant loop of the GROUP amount, which no measurement has
-built yet. It takes each part as whole storage, contiguous along its last
-axis; loaded and placed parts are, and a part that is not is copied on every
-call, which `RUNE_JIT_DEBUG` reports. The options start from tinygrad's
-matrix-vector options, with the group amount lowered to the largest divisor of
-`k / 32` at most 8 (6 for gpt-oss's 90 groups), and add an upcast of `x`'s
-rows by `M`. The kernel is an additive `DIVERGENCES.md` entry, since
+dtype. A position outside the gate is written as zero. On a GPU its loop over
+`k` is an outer loop, whose bound is zero for a work group whose positions all
+fall outside the gate, around the constant loop its options split, as in the
+block kernel (below), so no load of `w` or `x` runs for it; on the CPU the
+bound is constant and the loads are gated. In a bounded loop of at most one
+iteration every use of the index folds to 0, and the reduce over the loop,
+left unparented, is rewritten to its body times the loop's size (tinygrad's
+`reduce_unparented`, ported), which evaluates the loads of a position outside
+the gate. So the outer loop keeps two iterations or more, and a row of a
+single group (`k = 32`) is gated at its loads on a GPU too. Its
+pinned options keep the position axis off local and upcast dimensions, and its
+builder raises if they do not. It takes each part as whole storage, contiguous
+along its last axis; loaded and placed parts are, and a part that is not is
+copied on every call, which `RUNE_JIT_DEBUG` reports. The options are
+measured: on Metal, the group amount is the largest divisor of `k / 32` at
+most 15 (15 for gpt-oss's 90 groups: 45 to 49 µs per expert against 58 µs at
+6, tinygrad's matrix-vector amount), with 4 columns per work group and up to 4
+per thread, and `x`'s rows are upcast by `M` up to 8, columns per thread times
+rows at most 4, beyond which registers spill. The kernel is an additive
+`DIVERGENCES.md` entry, since
 tinygrad's only fused quantised products are AMD kernels in `extra/`, and
 tolk's tests hold it to the reference on every device.
 
@@ -482,7 +493,7 @@ by `[2880; 5760]`.
 | Form | Measured | Target | Ship, restating the target | Stop |
 |---|---|---|---|---|
 | Kernel, one row | `E_1` | at most 0.35 ms per layer: 150 GB/s over the selected experts' packed bytes, 8.5 ms per step | 0.35 to 0.66 ms | above 0.66 ms (80 GB/s) |
-| Kernel, row tile | one `gate_up` expert without `ids`, at 8 and 32 rows against 1 row | 8 rows within 1.25 times, 32 rows within 2.5 times | 8 rows within 4 times, the 32-row figure restated | 8 rows above 4 times |
+| Kernel, row tile | one `gate_up` expert without `ids`, at 8 and 32 rows against 1 row | 8 rows within 3.5 times, 32 rows within 12.9 times (restated at Stage 1's measurement; first 1.25 and 2.5 times) | 8 rows within 4 times, the 32-row figure restated | 8 rows above 4 times |
 | Grouped, decode | `E_8`, `E_32` | 150 GB/s over the packed bytes of the distinct experts the step selects, counted from its ids | 80 to 150 GB/s | below 80 GB/s |
 | Grouped, prefill | expert path of a 512-token prefill | the routes' arithmetic at half of `G` or better | a quarter to a half of `G` | below a quarter of `G` |
 | Grouped, one lane of eight | expert path of a 512-token prefill whose ids for experts 4 to 31 are −1, as lane 0 of eight (`ē` = 32: `B` = 64, 36 blocks) | within 1.25 times the same product called with only the positions of experts 0 to 3 | 1.25 to 1.5 times | above 1.5 times, or a Law 2 failure on a GPU |
@@ -493,6 +504,12 @@ where it selects about 31 (derived). The 512-token prefill's routes do 2.45
 TFLOP of expert arithmetic per step, an eighth of today's Dense form. That
 lane fills about 6 of its 36 blocks under uniform routing, and multiplying
 the gathered matrices with tolk's matmul it would multiply all 36 (derived).
+
+Stage 1 measured the kernel's first two rows. At one row the expert kernels
+take 0.26 ms per layer, in the target, and the real 20b decodes a token in 48
+to 54 ms. The row tile takes 3.5 times one row at 8 rows and 12.9 times at 32,
+in the ship band: each further row reloads `x`, a thread holding a group's 32
+inputs per row.
 
 Each form is time-boxed: the kernel at five days from its first compile, its
 row tile at three more, and the grouped form, with the block kernel, at five.
@@ -593,7 +610,12 @@ only a range of constant size (`uop/symbolic.py:250`).
    at load.** Prevents losing zero-copy to a kernel's preferred layout
    (Marlin, ggml's interleaved blocks).
 6. **On a GPU, the kernel and the block kernel run no multiply-adds for a
-   work group whose positions or block select no expert.** Held by tolk's
+   work group whose positions or block select no expert,** except the
+   kernel's rows of a single group (`k = 32`), whose loads are gated instead.
+   The cause is a reduce over a range that may run zero times, rewritten to
+   its body times the range's size once the body no longer reads the range
+   (`reduce_unparented`, as in tinygrad): the issue of a reduce over a
+   possibly empty range, where the exception's removal belongs. Held by tolk's
    codegen test for each renderer, by the kernels' builders refusing options
    on the position and block axes, and by §Target's one-lane row. Prevents
    expert parallelism dividing a device's expert reads while leaving it the
