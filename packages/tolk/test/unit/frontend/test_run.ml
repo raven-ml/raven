@@ -1428,6 +1428,16 @@ let lifetime_tests =
 let () =
   run "Tolk_frontend_run"
     [
+      test "DEV targets select the default device within a context" (fun () ->
+          let original = Run.device_name () in
+          Tolk.Helpers.Context_var.with_context
+            [ B (Tolk.Helpers.dev,
+                 [ Tolk_uop.Target.of_string "CPU:CLANG";
+                   Tolk_uop.Target.of_string "PCI+NV" ]) ] (fun () ->
+                equal string "CPU" (Run.device_name ());
+                equal (array (float 1e-6)) [| 4.; 6. |]
+                  (Run.to_float_array (El.add (vec [| 1.; 2. |]) (vec [| 3.; 4. |]))));
+          equal string original (Run.device_name ()));
       aliasing_tests;
       lifetime_tests;
       numerical_edge_tests;

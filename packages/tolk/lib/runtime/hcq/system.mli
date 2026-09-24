@@ -18,6 +18,15 @@
     them. On other systems the module loads and its pure entry points
     work, but device probing fails cleanly. *)
 
+val filter_visible_devices : string -> 'a list -> 'a list
+(** [filter_visible_devices device devices] selects and orders [devices] using
+    the indices of [device]'s [DEV] target. Comma-separated indices preserve
+    order and repetitions; [a-b] includes both ends. No indices, or an empty
+    range, preserves the inventory.
+
+    Raises [Invalid_argument] for malformed or unavailable indices, or use of
+    the deprecated [HCQ_VISIBLE_DEVICES] environment variable. *)
+
 (** {1:constants System constants} *)
 
 val available : bool

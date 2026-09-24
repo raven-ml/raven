@@ -7,6 +7,37 @@
 
 module File_io = Hcq.File_io
 
+let filter_visible_devices device devices =
+  let old = Tolk.Helpers.getenv_str "HCQ_VISIBLE_DEVICES" "" in
+  if old <> "" then
+    invalid_arg "HCQ_VISIBLE_DEVICES is deprecated, use device indices in DEV instead";
+  let indices = (Tolk.Helpers.target device).indices in
+  let devices_array = Array.of_list devices in
+  let at i =
+    if i < 0 || i >= Array.length devices_array then
+      invalid_arg (Printf.sprintf "%s device index %d is out of range (%d available)"
+        device i (Array.length devices_array));
+    devices_array.(i)
+  in
+  let index s = match int_of_string_opt (String.trim s) with
+    | Some i -> i
+    | None -> invalid_arg (Printf.sprintf "invalid device indices in DEV: %S" indices)
+  in
+  match String.split_on_char '-' indices with
+  | [ indices ] -> (
+      match List.filter (fun s -> String.trim s <> "") (String.split_on_char ',' indices) with
+      | [] -> devices
+      | ids -> List.map (fun i -> at (index i)) ids)
+  | first :: last :: _ ->
+      let first, last = index first, index last in
+      if first > last then devices
+      else begin
+        ignore (at first);
+        ignore (at last);
+        List.init (last - first + 1) (fun i -> at (first + i))
+      end
+  | [] -> assert false
+
 module Ffi = struct
   type constants = {
     o_wronly : int;
@@ -514,7 +545,9 @@ module Pci_iface_base = struct
   (* system.py:255 PCIIfaceBase.__init__ *)
   let create ~name ~devpref ~dev_id ~vendor ~devices ?base_class ~vram_bar
       ~va_start ~va_size ~dev_impl ~mm () =
-    let matching = pci_scan_bus ?base_class ~vendor devices in
+    let matching =
+      pci_scan_bus ?base_class ~vendor devices |> filter_visible_devices name
+    in
     let pcibus =
       match List.nth_opt matching dev_id with
       | Some pcibus -> pcibus

@@ -14,18 +14,20 @@
 
 (** {1 Device and storage}
 
-    Realization runs on one process-wide device, chosen once: the [DEV]
-    environment variable picks a backend by name, otherwise backends are
-    scanned in priority order and the first one that opens wins. Every buffer
+    The first [DEV] target selects the default backend. With no backend
+    specified, the first usable backend in priority order is opened and cached.
+    [DEV] uses {!Tolk_uop.Target.of_string} syntax, with semicolons separating
+    targets for different backends. Every buffer
     node backed by concrete device storage — host inputs, realized outputs,
     in-place assignment targets — retains its storage while the node is live.
     The registry itself does not keep nodes or their storage alive. *)
 
 val device : unit -> Tolk.Device.t
-(** [device ()] is the process-wide execution device, opened on first use. *)
+(** [device ()] is the default execution device for the current [DEV] context,
+    opened on first use. *)
 
 val device_name : unit -> string
-(** [device_name ()] is the name of the process-wide execution device. *)
+(** [device_name ()] is the name of the current default execution device. *)
 
 val buffer_of_node : Tolk_uop.Uop.t -> Tolk.Device.Buffer.t option
 (** [buffer_of_node node] is the concrete device buffer backing [node], if

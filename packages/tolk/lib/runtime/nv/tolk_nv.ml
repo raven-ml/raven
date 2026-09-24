@@ -814,7 +814,8 @@ module Nvk_iface = struct
             fd_uvm_2;
             root;
             defs;
-            gpus_info = Array.of_list !gpus;
+            gpus_info =
+              Array.of_list (Tolk_hcq.System.filter_visible_devices "NV" !gpus);
           }
         in
         state := Some st;
@@ -2232,13 +2233,6 @@ let create name =
   in
   let nvk () = Nvk_iface.iface ~device_id in
   let pci () = Pci_iface.iface (Pci_iface.create ~device_id) in
-  let candidates =
-    match Tolk.Helpers.getenv_str "NV_IFACE" "" with
-    | "" -> [ nvk; pci ]
-    | "NVK" -> [ nvk ]
-    | "PCI" -> [ pci ]
-    | other -> failwith (Printf.sprintf "NV_IFACE=%s: unknown interface (use NVK or PCI)" other)
-  in
-  let iface = Tolk.Helpers.select_first_inited candidates
-    ~message:(Printf.sprintf "No interface for NV:%d is available" device_id) in
+  let iface = Tolk.Helpers.select_interface ~device:name
+      [ "NVK", nvk; "PCI", pci ] in
   open_device ~name iface

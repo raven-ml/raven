@@ -18,7 +18,7 @@ module T = Tensor
    taking it as an argument. Backend openers are installed in the shared
    device registry so scheduled graphs can name any device instance; the
    default is chosen the same way tinygrad selects [Device.DEFAULT]: the
-   [DEV] environment variable picks a backend by name, otherwise backends are
+   first [DEV] target picks a backend, otherwise backends are
    scanned in priority order and the first one that opens wins, falling back
    to CPU. *)
 let all_backends : (string * (string -> Tolk.Device.t)) list =
@@ -39,18 +39,14 @@ let () =
 
 let default_device =
   lazy
-    (match Sys.getenv_opt "DEV" with
-    | Some dev when String.trim dev <> "" ->
-        Tolk.Device.get (String.trim dev)
-    | _ ->
-        let rec first_available = function
-          | [] -> failwith "no usable devices"
-          | (name, _) :: rest -> (
-              try Tolk.Device.get name with _ -> first_available rest)
-        in
-        first_available all_backends)
+    (Tolk.Helpers.select_first_inited ~message:"no usable devices"
+       (List.map (fun (name, _) () -> Tolk.Device.get name) all_backends))
 
-let device () = Lazy.force default_device
+let device () =
+  match Tolk.Helpers.Context_var.get Tolk.Helpers.dev with
+  | target :: _ when target.Tolk_uop.Target.device <> "" ->
+      Tolk.Device.get target.device
+  | _ -> Lazy.force default_device
 let device_name () = Tolk.Device.name (device ())
 
 (* A live node owns its storage. The registry itself keeps neither alive;

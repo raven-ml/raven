@@ -757,11 +757,11 @@ val create : string -> Tolk.Device.t
     fault reports raised through the completion timeline when the
     device hangs.
 
-    With [NV_IFACE] unset or empty, opens the kernel-driver interface first
+    With no interface in [DEV], opens the kernel-driver interface first
     and falls back to direct PCI access if interface initialization fails.
-    [NV_IFACE=NVK] or [NV_IFACE=PCI] selects only that interface. A later
+    [DEV=NVK+NV] or [DEV=PCI+NV] selects only that interface. A later
     runtime initialization failure does not trigger fallback.
 
-    Raises [Failure] when no requested interface can open the device, or
-    [NV_IFACE] names an unknown interface, and [Invalid_argument] when [name]
-    carries a malformed device index. *)
+    Raises [Failure] when no requested interface can open the device, and
+    [Invalid_argument] for an unknown interface, malformed device index,
+    or the deprecated [NV_IFACE] environment variable. *)

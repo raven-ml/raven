@@ -91,7 +91,7 @@
  (names test_amd_system)
  (modules test_amd_system)
  (package tolk)
- (libraries unix tolk tolk.hcq tolk.amd windtrap))
+ (libraries unix tolk tolk.uop tolk.hcq tolk.amd windtrap))
 (tests
  (names test_amd_tables)
  (modules test_amd_tables)

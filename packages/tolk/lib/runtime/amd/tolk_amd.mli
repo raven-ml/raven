@@ -785,9 +785,9 @@ val create : string -> Tolk.Device.t
     provides one, and fall back to host-visible device memory
     otherwise.
 
-    With [AMD_IFACE] unset or empty, opens the kernel-driver interface
+    With no interface in [DEV], opens the kernel-driver interface
     ({!Kfd_iface}) first and falls back to direct PCI access ({!Pci_iface})
-    if interface initialization fails. [AMD_IFACE=KFD] or [AMD_IFACE=PCI]
+    if interface initialization fails. [DEV=KFD+AMD] or [DEV=PCI+AMD]
     selects only that interface. A later runtime initialization failure
     does not trigger fallback.
 
@@ -795,9 +795,9 @@ val create : string -> Tolk.Device.t
     (no driver, no such device, or a failed driver-less boot), when
     the GPU is unsupported (supported: gfx942, gfx950, and the gfx11
     and gfx12 generations, single-die only; the PCI interface covers
-    the RDNA3/RDNA4 consumer parts of {!Pci_iface.pci_ids}), or when
-    [AMD_IFACE] names an unknown interface; [Invalid_argument] when
-    [name]'s device suffix is not a number. After a fault or a stalled
+    the RDNA3/RDNA4 consumer parts of {!Pci_iface.pci_ids}); [Invalid_argument]
+    for an unknown interface, malformed device index, or the deprecated
+    [AMD_IFACE] environment variable. After a fault or a stalled
     wait, {!Tolk.Device.synchronize} raises [Failure] with the
     device's fault report; the kernel-driver interface keeps raising
     (the device does not recover), while the driver-less interface

@@ -979,6 +979,8 @@ module Kfd_iface = struct
         Array.sort
           (fun a b -> Int.compare (int_of_string a) (int_of_string b))
           gpus;
+        let gpus = Array.of_list
+            (Tolk_hcq.System.filter_visible_devices "AMD" (Array.to_list gpus)) in
         state := Some (fd, gpus);
         (fd, gpus)
 
@@ -1944,15 +1946,8 @@ let create name =
     let iface = Pci_iface.iface (Pci_iface.create ~device_id) in
     fun () -> open_device ~name iface
   in
-  let candidates =
-    match Tolk.Helpers.getenv_str "AMD_IFACE" "" with
-    | "" -> [ kfd; pci ]
-    | "KFD" -> [ kfd ]
-    | "PCI" -> [ pci ]
-    | other -> failwith (Printf.sprintf "AMD_IFACE=%s: unknown interface (use KFD or PCI)" other)
-  in
   (* Select the interface before opening the runtime: a later compiler or
      queue error must not retry a working kernel driver through PCI. *)
-  let open_runtime = Tolk.Helpers.select_first_inited candidates
-    ~message:(Printf.sprintf "No interface for AMD:%d is available" device_id) in
+  let open_runtime = Tolk.Helpers.select_interface ~device:name
+      [ "KFD", kfd; "PCI", pci ] in
   open_runtime ()

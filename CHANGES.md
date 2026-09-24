@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `DEV` accepts tinygrad target strings and per-backend configurations.
+  AMD/NV interface selection and visible-device lists use this shared setting;
+  legacy `*_IFACE` and `HCQ_VISIBLE_DEVICES` settings report replacements.
+
 - `Op.getitem` preserves symbolic dimensions outside advanced-index axes and
   accepts symbolically sized index tensors. Both combined and separate index
   axes retain their logical shapes through gathering and masking.

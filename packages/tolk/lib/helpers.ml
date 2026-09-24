@@ -64,20 +64,20 @@ module Context_var = struct
       invalid_arg (Printf.sprintf "Context_var: %s is already declared" key);
     Hashtbl.replace declared key ()
 
-  let int ~key ~default =
+  let make ~key ~default ~parse =
     declare key;
-    { key; value = ref (getenv key default) }
+    { key; value = ref (match Sys.getenv_opt key with
+        | None -> default
+        | Some s -> parse s) }
+
+  let int ~key ~default =
+    make ~key ~default
+      ~parse:(fun s -> try int_of_string s with Failure _ -> default)
 
   let string ~key ~default =
-    declare key;
-    let value =
-      match Sys.getenv_opt key with
-      | Some s ->
-          let v = String.trim s in
-          if v = "" then default else v
-      | None -> default
-    in
-    { key; value = ref value }
+    make ~key ~default ~parse:(fun s ->
+        let s = String.trim s in
+        if s = "" then default else s)
 
   let key v = v.key
   let get v = !(v.value)
@@ -91,6 +91,41 @@ module Context_var = struct
       ~finally:(fun () -> List.iter (fun (B (v, old)) -> v.value := old) saved)
       f
 end
+
+let dev =
+  Context_var.make ~key:"DEV" ~default:[ Tolk_uop.Target.of_string "" ]
+    ~parse:(fun s -> List.map Tolk_uop.Target.of_string (String.split_on_char ';' s))
+
+let target ?(arch = "") device =
+  let open Tolk_uop.Target in
+  let device = String.uppercase_ascii (List.hd (String.split_on_char ':' device)) in
+  let targets = Context_var.get dev in
+  let t = match List.find_opt (fun t -> t.device = "" || t.device = device) targets with
+    | Some t -> t
+    | None -> of_string device
+  in
+  let key = device ^ "_CC" in
+  let old = getenv_str key "" in
+  if old <> "" then
+    invalid_arg (Printf.sprintf "%s=%s is deprecated, use DEV=%s instead"
+      key old (to_string { t with device; renderer = old }));
+  { t with device; arch = (if t.arch = "" then arch else t.arch) }
+
+let select_interface ~device candidates =
+  let t = target device in
+  let key = t.device ^ "_IFACE" in
+  let old = getenv_str key "" in
+  if old <> "" then
+    invalid_arg (Printf.sprintf "%s=%s is deprecated, use DEV=%s instead"
+      key old (Tolk_uop.Target.to_string { t with interface = old }));
+  let candidates = List.filter (fun (name, _) ->
+      (t.interface = "" || name = t.interface)
+      && (String.starts_with ~prefix:"MOCK" t.interface
+          || not (String.starts_with ~prefix:"MOCK" name))) candidates in
+  if candidates = [] then
+    invalid_arg (Printf.sprintf "%s has no interface %S" t.device t.interface);
+  select_first_inited ~message:(Printf.sprintf "No interface for %s is available" device)
+    (List.map snd candidates)
 
 (* Each variable is declared once, here, so every reader shares one value and
    a [with_context] override reaches all of them. *)

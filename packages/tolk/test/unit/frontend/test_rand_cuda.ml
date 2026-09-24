@@ -9,20 +9,20 @@
 
 open Windtrap
 
-let () = Unix.putenv "DEV" "CUDA"
-
-let cuda_available =
+let cuda_available () =
   try
     ignore (Tolk_frontend.Run.device ());
     true
   with _ -> false
 
 let () =
-  if cuda_available then
+  Tolk.Helpers.Context_var.with_context
+    [ B (Tolk.Helpers.dev, [ Tolk_uop.Target.of_string "CUDA" ]) ] (fun () ->
+  if cuda_available () then
     run "Tolk_frontend rand (CUDA)" Rand_cases.exact_groups
   else
     run "Tolk_frontend rand (CUDA)"
       [
         group "cuda"
           [ test "skipped" (fun () -> skip ~reason:"CUDA unavailable" ()) ];
-      ]
+      ])

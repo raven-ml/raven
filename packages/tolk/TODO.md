@@ -82,10 +82,10 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Migrate AMD queue descriptors, AQL/multi-XCC, race/recovery fixes and consumed
   firmware/register tables. Port NV channel/descriptor, semaphore, GSP and
   compute submission fixes, including compute hunks in video-labelled commits.
-- Adopt the unified target/interface configuration and remove superseded
-  backend-specific environment variables.
+- Apply unified targets to renderer and compiler architecture selection;
+  remove superseded renderer and architecture environment variables.
 - Fix PCI host/multi-die mappings and NV per-interface storage metadata, peer
-  mapping and ring placement. Add NV visible-device filtering.
+  mapping and ring placement.
 - Generate real hsaco/cubin fixtures with compiler provenance. Validate kernel
   dispatch, copy/compute dependencies, replay, peer transfers and recovery on
   the relevant hardware; skipped tests are not hardware evidence.

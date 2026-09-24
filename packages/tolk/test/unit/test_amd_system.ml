@@ -8,6 +8,11 @@ module System = Tolk_hcq.System
 module Pci_device = Tolk_hcq.System.Pci_device
 module File_io = Tolk_hcq.Hcq.File_io
 
+let visible target devices =
+  Tolk.Helpers.Context_var.with_context
+    [ B (Tolk.Helpers.dev, [ Tolk_uop.Target.of_string target ]) ]
+    (fun () -> System.filter_visible_devices "NV" devices)
+
 let ( // ) = Filename.concat
 
 let uid =
@@ -78,6 +83,26 @@ let is_failure = function Failure _ -> true | _ -> false
 let () =
   run "System"
     [
+      group "device visibility"
+        [
+          test "preserves enumeration without indices" (fun () ->
+              equal (list string) [ "a"; "b"; "c" ] (visible "NV" [ "a"; "b"; "c" ]));
+          test "selects and reorders physical devices" (fun () ->
+              equal (list string) [ "c"; "a"; "c" ]
+                (visible "PCI:2,0,2+NV" [ "a"; "b"; "c" ]));
+          test "ranges are inclusive" (fun () ->
+              equal (list string) [ "b"; "c" ]
+                (visible ":1-2+NV" [ "a"; "b"; "c"; "d" ]));
+          test "empty selections preserve the inventory" (fun () ->
+              List.iter (fun target -> equal (list int) [ 0; 1 ] (visible target [ 0; 1 ]))
+                [ ":,+NV"; ":2-1+NV" ]);
+          test "rejects malformed and unavailable indices" (fun () ->
+              List.iter (fun target ->
+                  raises_match (function Invalid_argument _ -> true | _ -> false)
+                    (fun () -> visible target [ 0; 1; 2 ]))
+                [ ":3+NV"; ":0-3+NV"; ":-1+NV"; ":a+NV";
+                  ":0-9999999999999999999999+NV" ]);
+        ];
       group "constants"
         [
           test "page size is a positive multiple of 4KB" (fun () ->
