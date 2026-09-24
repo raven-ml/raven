@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- CPU JIT kernels on x86-64 can call external functions more than 2 GiB away.
+  The ELF loader emits an absolute-address trampoline instead of truncating
+  the call displacement and jumping to the wrong address.
+
 - CPU kernels now finish on the calling domain, matching tinygrad's threadless
   execution model. SIMD remains enabled; `THREADS`, `NUM_CPU_THREADS`, and
   implicit `core_id` arguments no longer control dispatch.

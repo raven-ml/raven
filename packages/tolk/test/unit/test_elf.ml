@@ -121,9 +121,50 @@ let et_dyn_fixture () =
   set16 obj 62 8 (* e_shstrndx *);
   obj
 
+module Cpu_loader = Tolk_cpu__Elf_cpu_loader
+
+let external_call_object = lazy (
+  Tolk_cpu__Compiler_cpu.compile_clang ~arch:"x86_64,x86-64"
+    "extern int distant(int); int entry(int x) { return distant(x); }")
+
+let plt32_case delta ~trampoline =
+  let obj = Lazy.force external_call_object in
+  let elf = Elf.load obj in
+  let relocation = match Elf.relocs elf with
+    | [ relocation ] -> relocation
+    | relocs -> failf "expected one external relocation, got %d" (List.length relocs)
+  in
+  equal int 4 relocation.r_type;
+  equal string "distant" relocation.symbol.name;
+  let base = 0x400000000L in
+  let target = Int64.(add base (add (of_int (relocation.offset - relocation.addend)) delta)) in
+  let prepared = Cpu_loader.load ~entry:"entry"
+      ~link_symbol:(fun name -> equal string "distant" name; Int64.to_nativeint target) obj in
+  let linked = Cpu_loader.link ~base:(Int64.to_nativeint base) prepared in
+  let image_size = Bytes.length (Elf.image elf) in
+  is_true (Bytes.length linked <= Cpu_loader.alloc_size prepared);
+  let displacement = Int64.of_int32 (Bytes.get_int32_le linked relocation.offset) in
+  if trampoline then begin
+    equal int (image_size + 14) (Bytes.length linked);
+    equal string "\xff\x25\x00\x00\x00\x00" (Bytes.sub_string linked image_size 6);
+    equal int64 target (Bytes.get_int64_le linked (image_size + 6));
+    equal int64 (Int64.of_int (image_size + relocation.addend - relocation.offset)) displacement
+  end else begin
+    equal int image_size (Bytes.length linked);
+    equal int64 delta displacement
+  end
+
+let cpu_relocation_tests =
+  group "CPU external relocations"
+    [ test "PLT32 lower bound remains direct" (fun () -> plt32_case (-0x80000000L) ~trampoline:false);
+      test "PLT32 upper bound remains direct" (fun () -> plt32_case 0x7fffffffL ~trampoline:false);
+      test "PLT32 below lower bound uses an absolute trampoline" (fun () -> plt32_case (-0x80000001L) ~trampoline:true);
+      test "PLT32 above upper bound uses an absolute trampoline" (fun () -> plt32_case 0x80000000L ~trampoline:true) ]
+
 let () =
   run "Elf"
     [
+      cpu_relocation_tests;
       group "Parsing"
         [
           test "clang object exposes relocation sections" (fun () ->

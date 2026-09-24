@@ -57,8 +57,8 @@ val load : link_symbol:(string -> nativeint) -> entry:string -> Bytes.t -> t
 val alloc_size : t -> int
 (** [alloc_size t] is the number of bytes needed to materialize the final
     executable image. This is at least the flat image size, plus conservative
-    slack for AArch64 branch trampolines that {!link} may emit for out-of-range
-    [CALL26] / [JUMP26] relocations (16 bytes per such relocation). *)
+    slack for branch trampolines that {!link} may emit: 14 bytes per x86-64
+    [PLT32] relocation and 16 bytes per AArch64 [CALL26] or [JUMP26] relocation. *)
 
 val entry_offset : t -> int
 (** [entry_offset t] is the byte offset of the entry symbol within the image. *)
@@ -68,6 +68,11 @@ val entry_offset : t -> int
 val link : base:nativeint -> t -> Bytes.t
 (** [link ~base t] applies all relocations assuming the image will be loaded at
     address [base] and returns the final executable bytes.
+
+    For x86-64 [PLT32] relocations whose target is outside the signed 32-bit
+    displacement range, a trampoline ([JMP [RIP+0]; <8-byte absolute address>])
+    is appended. The absolute destination excludes the relocation addend;
+    the branch displacement retains it.
 
     For AArch64 [CALL26] and [JUMP26] relocations whose target is outside the
     +/-128 MiB direct-branch range, a trampoline

@@ -118,6 +118,7 @@ let prepare ~link_symbol ~entry elf =
         let cap =
           if reloc.r_type = r_aarch64_call26 || reloc.r_type = r_aarch64_jump26
           then cap + 16
+          else if reloc.r_type = r_x86_64_plt32 then cap + 14
           else cap
         in
         (reloc :: acc, cap))
@@ -136,9 +137,8 @@ let load ~link_symbol ~entry obj =
 
 (* Patches a single relocation in the loaded ELF image at runtime. Handles
    x86_64 PC-relative (PC32, PLT32) and ARM64 page-relative (ADRP, ADD/LDSTn
-   lo12, CALL26/JUMP26) relocation types. For ARM64 CALL26/JUMP26 targets
-   beyond the +/-128 MiB direct-branch range, emits a trampoline stub (LDR X17
-   + BR X17 + 8-byte absolute address) appended to the image. *)
+   lo12, CALL26/JUMP26) relocation types. External calls beyond their direct
+   displacement range use an absolute-address trampoline appended to the image. *)
 let apply_reloc image ~base reloc =
   let ploc = reloc.offset in
   let base_i64 = Int64.of_nativeint base in
@@ -154,9 +154,20 @@ let apply_reloc image ~base reloc =
   let rt = reloc.r_type in
   if rt = r_x86_64_pc32 then
     Image.set_u32 image ploc (i2u32 (Int64.sub tgt ploc_i64))
-  else if rt = r_x86_64_plt32 then
-    Image.set_u32 image ploc
-      (i2u32 (Int64.sub tgt (Int64.add ploc_i64 base_i64)))
+  else if rt = r_x86_64_plt32 then begin
+    let delta = Int64.sub tgt (Int64.add ploc_i64 base_i64) in
+    if Int64.compare delta (-0x80000000L) >= 0
+       && Int64.compare delta 0x80000000L < 0 then
+      Image.set_u32 image ploc (i2u32 delta)
+    else begin
+      (* JMP [RIP+0], followed by the symbol's absolute address. The ELF
+         addend adjusts the original displacement, not the jump target. *)
+      let off = Image.append_bytes image (Bytes.of_string "\xff\x25\x00\x00\x00\x00") in
+      ignore (Image.append_bytes image (Bytes.make 8 '\000'));
+      Image.set_i64 image (off + 6) (Int64.of_nativeint reloc.target);
+      Image.set_u32 image ploc (i2u32 (Int64.of_int (off + reloc.addend - ploc)))
+    end
+  end
   else if rt = r_aarch64_adr_prel_pg_hi21 then begin
     let instr = Image.get_u32 image ploc in
     let rel_pg =

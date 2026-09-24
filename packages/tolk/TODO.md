@@ -79,8 +79,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port HCQ2 queue construction, byte-interval dependency tracking, compile/link/
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.
-- Migrate CPU host calls; port ELF/TinyELF and
-  x86 out-of-range relocation trampolines. Reconcile the fixed-array CPU call
+- Migrate CPU host calls and ELF/TinyELF. Reconcile the fixed-array CPU call
   ABI with TinyELF signatures without adding an FFI dependency. Compare CPU
   matmul performance with the final target after optimizer migration and
   resolve avoidable regressions.
@@ -136,6 +135,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Remove closed divergence rulings and record retained ones with current
   consumer, test and reconsideration criterion. Adopt the frozen reference only
   when drivers, expectations and implementation agree.
+- Update the TSan workspace's OCaml 5.4 pin to a compiler compatible with the
+  current dependency set and run the runtime/lifetime stress tests there.
 - Run source parity, scalar/spec/OOB tests, lifetime stress, backend execution
   and relevant Rune/Kaun suites. Keep every unresolved difference attributable.
 
