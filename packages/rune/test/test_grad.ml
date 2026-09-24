@@ -219,8 +219,8 @@ let test_remat_returns_an_argument () =
 let test_remat_rejects_consumes () =
   raises
     (Invalid_argument
-       "Rune.remat: argument 2 is consumed; only a compiled call consumes its \
-        arguments") (fun () ->
+       "Rune.remat: the argument at 1 is consumed; only a compiled call \
+        consumes its arguments") (fun () ->
       let (_ : Nx.float64_t -> Nx.float64_t -> Nx.float64_t) =
         Rune.remat
           Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)

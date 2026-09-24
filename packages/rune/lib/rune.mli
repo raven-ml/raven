@@ -14,8 +14,8 @@
     - {!val-vmap} and {!remat} take the signature ({!Nx.Ptree.type-fn}) of the
       function they transform and return a function of the same type.
     - {!scan} takes the structures of its carry, rows and outputs.
-    - {!val-jit}, {!jit2}, {!jit_step} and {!val-pmap} take the structures of
-      their argument and result.
+    - {!val-jit} and {!val-pmap} take the signature of the function they
+      compile, whose arguments are read or consumed ({!Nx.Ptree.consumes}).
     - A function of one tensor has its own form of most of them: {!grad'},
       {!vmap'}, {!jit'}, {!scan'}, ...
 
@@ -195,7 +195,8 @@ val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
     ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
     tensor, if a tensor is a scalar, or if two tensors differ in the length of
-    their axis 0, naming the argument and the tensor's path. *)
+    their axis 0, naming each tensor by its path, as {!val-jit}'s messages do:
+    ["Rune.vmap: 1: 3 rows along axis 0, 0: 2"]. *)
 
 val vmap' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
 (** [vmap' f x] is [vmap Nx.Ptree.(tensor @-> returns tensor) f x]: [f] mapped
@@ -380,11 +381,11 @@ val check_grads :
     device buffer, and the result is resident like an output of a compiled call
     (see {!val-jit}): metadata reads are free, a read copies the elements it
     reads and leaves the buffer, a compiled function that takes it as an input
-    leaf uses the buffer with no transfer, and {!jit_step} consumes it when it
-    is a leaf of the state. Use it to put a model's weights on the device once,
-    as they are imported, instead of once per compiled function at its first
-    call. A buffer uploaded from a mapped file is returned to the system when
-    the value is released, not kept for reuse. *)
+    leaf uses the buffer with no transfer, and a call that consumes the argument
+    it is a leaf of ends it ({!val-jit}). Use it to put a model's weights on the
+    device once, as they are imported, instead of once per compiled function at
+    its first call. A buffer uploaded from a mapped file is returned to the
+    system when the value is released, not kept for reuse. *)
 
 val device : string -> Nx.Device.t
 (** [device name] is the device [name] names, opened at the first call. Every
@@ -423,111 +424,160 @@ exception Jit_error of string
     at trace time into the fixed number of steps their shapes imply. *)
 
 val jit :
-  ?device:string ->
+  ?devices:Nx.Device.t list ->
   ?beam:int ->
   ?beam_parallel:int ->
-  'p Nx.Ptree.t ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  ('c, 'd) Nx.t
-(** [jit p f] is [f] compiled, for an argument of structure [p]. The first
-    application traces [f], compiles the traced computation into fused kernels,
-    and runs them; later applications replay the compiled program on the new
-    tensors when their key equals a program's. The key is the device, every
-    tensor's path, dtype, shape and layout, and every report of [p]'s walk (an
-    integer, a case, an option's presence, a list's length), compared by path
-    segments: an argument with another window, or a list that gained an element
-    with no tensor, traces and compiles its own program. An integer that changes
-    on every call compiles a program per value; a value that varies belongs in a
-    tensor. [RUNE_JIT_DEBUG=1] reports each retrace with the first difference
-    from the previous call's key, such as
-    ["rune.jit: retrace: window: int 3 here, int 2 in the previous key"].
+  ('a -> 'b) Nx.Ptree.fn ->
+  ('a -> 'b) ->
+  'a ->
+  'b
+(** [jit s f] is [f] compiled, a function of [f]'s type whose arguments and
+    result have the structures of the signature [s]:
 
-    Every result leaf is a value of its own: a value [f] returns at two leaves
-    comes back as two values, the second a copy of the first.
+    {[
+    let step =
+      Rune.jit
+        Nx.Ptree.(
+          tensor @-> Cache_index.ptree @-> consumes caches
+          @@ returns (pair tensor caches))
+        (fun tokens index caches -> decode params tokens index caches)
+    ]}
 
-    A call runs where its placed input leaves and captures live
+    An argument built with {!Nx.Ptree.( @-> )} is read; one built with
+    {!Nx.Ptree.consumes} is given up by each call, which may write the result
+    over its storage. Tensors [f] closes over ([params] above) are constants of
+    the compiled function.
+
+    The first application traces [f], compiles the traced computation into fused
+    kernels, and runs them. Later applications replay a compiled program on the
+    new tensors when their key equals the program's.
+
+    {b Paths.} A leaf of the arguments is named by its path: the argument's
+    position counted from 0, then the leaf's path inside that argument. The
+    window of the second argument is [1.window], and a first argument that is
+    one tensor is [0]. Keys, errors and [RUNE_JIT_DEBUG] reports use these
+    paths.
+
+    {b Keys.} A key is the device, every tensor's path, dtype, shape and layout,
+    and every report of the arguments' walks (an integer, a case, an option's
+    presence, a list's length), compared by path segments. An argument with
+    another window, or a list that gained an element with no tensor, traces and
+    compiles its own program. An integer that changes on every call compiles a
+    program per value; a value that varies belongs in a tensor.
+    [RUNE_JIT_DEBUG=1] reports each retrace with the first difference from the
+    previous call's key, such as
+    ["rune.jit: retrace: 1.window: int 3 here, int 2 in the previous key"].
+
+    {b Results.} Every result leaf is a value with storage of its own. A result
+    that returns a read argument or a capture unchanged is a copy, and a value
+    [f] returns at two leaves comes back as two values, the second a copy of the
+    first. So a result can be read, or consumed by a later call, whatever
+    happens to the arguments and to the other results.
+
+    {b Consumption.} Before its first kernel, a call marks every storage that a
+    leaf of a consumed argument reaches as consumed; nothing unmarks it. From
+    then on a read of any value over that storage, or its use as an operand or
+    an argument, raises [Invalid_argument]
+    ["this value was consumed at 2.0.keys in a compiled call's arguments; use
+     the value the call returned"]; its shape and dtype stay readable. A
+    consumed leaf must hold its storage alone: the call raises
+    [Invalid_argument], before anything runs and without consuming anything, if
+    a consumed leaf views part of its storage (a slice, a transpose, a
+    broadcast: pass [Nx.copy] of it), or if another leaf of the call or a
+    capture of the function, bound or copied, reaches that storage, naming both
+    paths. A host leaf has no storage to consume: it is uploaded, stays usable,
+    and lends nothing. A call that raises before its first kernel consumes
+    nothing; one that fails after it has consumed its consumed arguments and
+    returns nothing.
+
+    {b Lending.} A result may take the storage of a consumed leaf, so a loop
+    that consumes its state holds one generation of it on the device. It does
+    when their dtypes, sizes and devices are equal, the storage is bound by no
+    compiled function, and writing the result there cannot change it: no kernel
+    reads the leaf after the first kernel that writes the result, and that
+    kernel reads it only when the result derives from it at its own index
+    (elementwise operations, equal-width casts and reshapes: an optimizer
+    update, a window write into a cache). Partners are chosen once per program:
+    first the results of an indexed write into a consumed leaf, then the results
+    that derive from one at their own index, a consumed leaf returned unchanged
+    included, then the rest, in the order the program writes them. Each storage
+    lends at most once; a result without a partner gets fresh storage, and the
+    consumed storage goes back to the device's allocator. [RUNE_JIT_DEBUG=1]
+    reports each consumed leaf:
+    ["rune.jit: 2.0.keys -> result 1.0.keys reused"], or what became of its
+    storage. On the host, results are host tensors and nothing is lent.
+
+    {b Devices.} A call runs where its placed input leaves and captures live
     ({!Nx.placement}), and on {!default_device} when none is placed. Captures
     are found by tracing: when the inputs are on the host, the first trace that
     meets a placed capture runs again on its device, and later calls run there.
-    [device] names the device instead, as {!val-device} does: ["CPU"] (the
-    host), ["AMD"] (AMD GPUs, Linux only), ["NV"] (NVIDIA GPUs on the kernel
-    driver's hardware queues, Linux only), ["CUDA"] (NVIDIA GPUs through the
-    CUDA driver API), ["METAL"] (macOS only), or a device with an index. Host
-    values join the device a call runs on. A placed input leaf on another device
-    raises [Invalid_argument] naming the leaf, before anything runs, and so does
-    a placed capture, at the trace that meets it: move it with {!Nx.place}
-    first. So does a dtype the device cannot hold, such as [float64] on Metal,
-    in an input leaf; in a value the function computes or captures it raises
-    {!Jit_error}. On the host, contiguous inputs and captured tensors are read
-    in place and outputs are computed directly into the returned tensors'
+    [devices] names the device instead, as a list of one device ({!val-device}).
+    Host values join the device a call runs on. A placed input leaf on another
+    device raises [Invalid_argument] naming its path, before anything runs, and
+    so does a placed capture, at the trace that meets it: move it with
+    {!Nx.place} first. So does a dtype the device cannot hold, such as [float64]
+    on Metal, in an input leaf; in a value the function computes or captures it
+    raises {!Jit_error}. On the host, contiguous inputs and captured tensors are
+    read in place and outputs are computed directly into the returned tensors'
     storage; non-contiguous tensors are copied.
 
-    On other devices, results are bit-identical but data moves lazily. Inputs
-    are copied to the device on every call; outputs are values placed on the
-    device ({!Nx.placement}): metadata such as shape and dtype never transfers,
-    a read copies the elements it reads and leaves the output where it is, and
-    an nx operation on it outside a compiled function returns a value on the
-    device. An output fed back as an input leaf of any jit call on the same
-    device seeds the compiled program's input directly — no transfer — which
-    makes iterated calls (training steps, decode loops with a cache) run without
-    per-call traffic. So does any placed value on the device, a view of part of
-    its storage included: the program reads the storage the view reaches in
-    place, and applies a strided view's layout itself. The range is bound from a
-    16-byte boundary: views that differ only by an offset that is a multiple of
-    16 bytes share a program, and a C-order window at such an offset shares the
-    program of a value that covers its storage. Only views whose windows overlap
-    ({!Nx.sliding_window}) are copied. Device memory backing an output is held
-    until the output is garbage-collected. Past a budget of device allocations
-    since the last major collection (the [RUNE_JIT_RESIDENT_BUDGET] environment
-    variable, in bytes, 4 GiB by default), a collection runs before allocating
-    more, and an allocation that still fails raises {!Nx.Device.Out_of_memory}.
-    A transfer failure surfaces as an exception at the first read of the
-    affected output. The intermediate values of a call live in scratch memory
-    that every compiled function on the device shares, sized to the largest any
-    of them needs, so functions called in turn (the blocks of a deep model) do
-    not each hold their own. A {!pmap} keeps its own.
+    On other devices, results are bit-identical but data moves lazily. Inputs on
+    the host are copied to the device on every call; outputs are values placed
+    on the device: metadata such as shape and dtype never transfers, a read
+    copies the elements it reads and leaves the output where it is, and an nx
+    operation on it outside a compiled function returns a value on the device. A
+    placed value on the device, an output of an earlier call included, seeds the
+    program's input directly with no transfer, which makes iterated calls
+    (training steps, decode loops with a cache) run without per-call traffic. A
+    view of part of a storage is read in place too: the program reads the
+    storage the view reaches and applies a strided view's layout itself. The
+    range is bound from a 16-byte boundary: views that differ only by an offset
+    that is a multiple of 16 bytes share a program, and a C-order window at such
+    an offset shares the program of a value that covers its storage. Only views
+    whose windows overlap ({!Nx.sliding_window}) are copied. Device memory
+    backing an output is held until the output is garbage-collected or consumed.
+    Past a budget of device allocations since the last major collection (the
+    [RUNE_JIT_RESIDENT_BUDGET] environment variable, in bytes, 4 GiB by
+    default), a collection runs before allocating more, and an allocation that
+    still fails raises {!Nx.Device.Out_of_memory} before the call consumes
+    anything. A transfer failure surfaces as an exception at the first read of
+    the affected output. The intermediate values of a call live in scratch
+    memory that every compiled function on the device shares, sized to the
+    largest any of them needs, so functions called in turn (the blocks of a deep
+    model) do not each hold their own. A {!pmap} keeps its own.
 
-    Inputs are read, never consumed: a resident input leaf is still resident and
-    readable after the call. {!jit_step} compiles a function that consumes part
-    of its argument, so its storage can be reused.
+    {b Captures.} The compilation cache lives in the partial application
+    [jit s f]: apply [jit] once and reuse the returned function. Tensors [f]
+    closes over are compile-time constants, bound once when the trace first
+    compiles: on the host contiguous captures are read in place, and every other
+    capture is copied to the device once per closure, and signatures share the
+    copy. A capture placed on the device, a view of it included, is bound
+    instead, except by a {!pmap}: the program uses its buffer as the constant
+    from its first compilation on, no bytes move, and every compiled function
+    that captures the value shares the one buffer. A compiled function keeps the
+    values it binds reachable, and their buffers stay while it is reachable: a
+    call that consumes a bound storage ends it for its values, and the programs
+    that bind it keep replaying with it. A closure whose capture was consumed
+    raises [Invalid_argument] at its next trace. A {!pmap} reads a placed
+    capture to the host and uploads it, as it does a host capture. Mutating a
+    captured tensor between calls is not supported and has unspecified
+    visibility (the host may observe the mutation through its in-place binding;
+    other devices never do): pass values that change between calls as arguments
+    rather than capturing them.
 
-    [beam] enables beam-search autotuning of this function's kernels with the
-    given width: instead of scheduling each kernel by fixed heuristics, the
-    compiler explores candidate schedules round by round, compiling and timing
-    them on the device and keeping the [beam] best at each step. Compilation
-    gets much slower and the compiled code usually faster; the tuned result
-    lands in the persistent cache like any other compilation, so the cost is
-    paid once per trace rather than once per process. When omitted (or [< 1]),
-    the [BEAM] environment variable applies.
-
-    [beam_parallel] compiles a search round's candidates across that many
-    domains, cutting beam-search compile time without changing its result —
-    candidates are still timed one at a time. It only matters when beam search
-    runs ([beam] here or the environment) and does not affect the compiled code,
-    so it is not part of any cache key. When omitted, the [BEAM_PARALLEL]
-    environment variable applies (default sequential).
-
-    The compilation cache lives in the partial application [jit p f]: apply
-    [jit] once and reuse the returned function. Tensors [f] closes over are
-    compile-time constants, bound once when the trace first compiles: on the
-    host contiguous captures are read in place, and every other capture is
-    copied to the device once per closure — signatures share the copy.
-
-    A capture placed on the device, a view of it included, is bound instead,
-    except by a {!pmap}: the program uses its buffer as the constant from its
-    first compilation on, no bytes move, and every compiled function that
-    captures the value shares the one buffer. A value donated before that first
-    compilation can no longer be used. A compiled function keeps the values it
-    binds reachable, and while it is reachable their storage is never donated:
-    passed as a leaf of the state of {!jit_step}, a bound value is used with no
-    transfer and is not consumed, and an output that returns it unchanged is a
-    copy on the device. [RUNE_JIT_DEBUG=1] reports such a leaf as [bound]. A
-    {!pmap} reads a placed capture to the host and uploads it, as it does a host
-    capture. Mutating a captured tensor between calls is not supported and has
-    unspecified visibility (the host may observe the mutation through its
-    in-place binding; other devices never do): pass values that change between
-    calls as tensors of the argument rather than capturing them.
+    {b Tuning.} [beam] enables beam-search autotuning of this function's kernels
+    with the given width: instead of scheduling each kernel by fixed heuristics,
+    the compiler explores candidate schedules round by round, compiling and
+    timing them on the device and keeping the [beam] best at each step.
+    Compilation gets much slower and the compiled code usually faster; the tuned
+    result lands in the persistent cache like any other compilation, so the cost
+    is paid once per trace rather than once per process. When omitted (or
+    [< 1]), the [BEAM] environment variable applies. [beam_parallel] compiles a
+    search round's candidates across that many domains, cutting beam-search
+    compile time without changing its result; candidates are still timed one at
+    a time. It only matters when beam search runs and does not affect the
+    compiled code, so it is not part of any key. When omitted, the
+    [BEAM_PARALLEL] environment variable applies (default sequential).
 
     Compiled programs also persist across processes: the first compilation of a
     trace writes the scheduled and compiled kernels to a disk cache under the
@@ -540,191 +590,109 @@ val jit :
     environment variable to [0] to disable the persistent cache; {!pmap}
     compilations are never persisted. Results are identical either way.
 
-    Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
-    outer [jit]), the wrapped function runs directly so the transformation
-    observes its operations: [jit] never changes results, only speed. Compose
-    the other way — differentiate {e inside} the jitted function — to compile
-    the forward and backward passes together:
+    {b Transformations.} Under an enclosing transformation ({!grad},
+    {!val-vmap}, {!with_debug}, an outer [jit]), the wrapped function runs
+    directly so the transformation observes its operations, and it checks and
+    consumes nothing: [jit] never changes results, only speed. Compose the other
+    way, differentiating {e inside} the compiled function, to compile the
+    forward and backward passes together:
 
     {[
-    let train_step =
-      Rune.jit2 linear linear (fun p ->
-          let g = Rune.grad linear loss p in
-          Nx.Ptree.map2 linear (fun _ w g -> Nx.sub w (Nx.mul_s g lr)) p g)
-    ]}
-
-    Tensors are values, so state threads through the argument: the function
-    returns its updated parameters, optimizer state or cache, and the caller
-    feeds them to the next call, as the example does. Structured values read
-    during tracing must not depend on traced tensors: a data-dependent {!cond}
-    or {!while_loop} predicate raises {!Jit_error}. Compiled functions are not
-    thread-safe.
-
-    Randomness inside a jitted function comes from a {!Nx.Rng} key threaded
-    through the inputs: samplers are pure functions of their key, so the
-    compiled program recomputes each draw from the current key on every call —
-    feed a fresh key ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for fresh values.
-
-    Either front-end works. Pass the key to each sampler ({!Nx.Rng.uniform} and
-    friends), or wrap the body in {!Nx.Rng.with_key} on that input key and keep
-    writing the keyless [Nx.rand]: the scope derives every draw from its root,
-    so a traced root makes the whole scope traced. What raises {!Jit_error} is a
-    root that does not depend on the inputs — a captured key, or
-    [Nx.Rng.with_key] on a constant key — since the draw would be a compile-time
-    constant replayed on every call.
-
-    Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
-    [Invalid_argument] for an unknown or unavailable [device] and for a leaf or
-    capture placed on another device. *)
-
-val jit2 :
-  ?device:string ->
-  ?beam:int ->
-  ?beam_parallel:int ->
-  'p Nx.Ptree.t ->
-  'q Nx.Ptree.t ->
-  ('p -> 'q) ->
-  'p ->
-  'q
-(** [jit2 p q f] is like {!val-jit} for a function whose result has structure
-    [q]. *)
-
-val jit_step :
-  ?device:string ->
-  ?beam:int ->
-  ?beam_parallel:int ->
-  'r Nx.Ptree.t ->
-  's Nx.Ptree.t ->
-  ('r -> 's -> 's) ->
-  'r ->
-  's ->
-  's
-(** [jit_step r s f] is [f] compiled as {!jit2} compiles it, for a step from a
-    state to the next one: the call reads its first argument and consumes its
-    second, the state, whose storage the next state takes. A deep model's block
-    reads its layer's weights and consumes the residual stream and its cache; a
-    training step reads its batch and consumes the parameters and the optimizer
-    state. What a step returns besides its state, such as a loss or the sampled
-    ids, is part of the state:
-
-    {[
-    let state = Nx.Ptree.(pair (pair linear (Vega.adam_ptree linear)) tensor)
+    let state = Nx.Ptree.pair linear (Vega.adam_ptree linear)
 
     let step =
-      Rune.jit_step
-        Nx.Ptree.(pair tensor tensor)
-        state
-        (fun (inputs, targets) ((params, opt), _) ->
+      Rune.jit
+        Nx.Ptree.(
+          tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
+        (fun inputs targets (params, opt) ->
           let loss, grads =
             Rune.value_and_grad linear (objective inputs targets) params
           in
           let params, opt = Vega.adamw_step linear ~lr opt ~params ~grads in
-          ((params, opt), loss))
+          (loss, (params, opt)))
     ]}
 
-    A step that reads nothing takes [Nx.Ptree.unit] and passes [()].
+    Tensors are values, so state threads through the arguments: the function
+    returns its updated parameters, optimizer state or cache, and the caller
+    feeds them to the next call. Structured values read during tracing must not
+    depend on traced tensors: a data-dependent {!cond} or {!while_loop}
+    predicate raises {!Jit_error}. Compiled functions are not thread-safe.
 
-    Once a call has run — never during it — every leaf of the state that is
-    resident (an output of an earlier call, or a value placed with {!Nx.place})
-    is consumed: its device buffer is released to the allocator or taken by an
-    output, and every view of it becomes unusable. Reading it, or feeding it to
-    a later call, raises [Invalid_argument]; copy the value to the host before
-    the call if it is still needed. A resident leaf whose view covers only part
-    of its storage cannot be consumed and raises [Invalid_argument] before the
-    call. A host leaf of the state is uploaded and stays usable. The first
-    argument's leaves are read as by {!val-jit} and are never consumed, and a
-    storage that both arguments reach, through any view, or that a compiled
-    function binds as a capture, is read: it lends nothing and stays usable.
+    Randomness inside a compiled function comes from a {!Nx.Rng} key passed as
+    an argument: samplers are pure functions of their key, so the compiled
+    program recomputes each draw from the current key on every call; feed a
+    fresh key ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for fresh values. Either
+    front-end works. Pass the key to each sampler ({!Nx.Rng.uniform} and
+    friends), or wrap the body in {!Nx.Rng.with_key} on that key and keep
+    writing the keyless [Nx.rand]: the scope derives every draw from its root,
+    so a traced root makes the whole scope traced. What raises {!Jit_error} is a
+    root that does not depend on the arguments (a captured key, or
+    [Nx.Rng.with_key] on a constant key), since the draw would be a compile-time
+    constant replayed on every call.
 
-    An output leaf takes the storage of the state's leaf at the same position
-    when their dtypes and sizes match, no other leaf of the call reaches that
-    storage, and reusing it cannot change the result: the output reads the leaf
-    only at the element it writes (an optimizer update, a window write into a
-    cache) or not at all (a bf16 copy of f32 master weights), and no kernel
-    reads the leaf after the output is written. A state-to-state loop therefore
-    holds one generation of state on the device. Any other output gets fresh
-    storage and the leaf is released after the call, about two generations.
-    [RUNE_JIT_DEBUG=1] reports, per input leaf in walk order (the first
-    argument's first), whether it was [read], its storage [reused] or [copied],
-    or was [not resident]. On the host outputs are host tensors and consuming
-    changes nothing.
-
-    Compilation, caching and capture semantics are {!val-jit}'s. Raises as
-    {!val-jit}. *)
+    Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
+    [Invalid_argument] if [s] has no argument, if [devices] is empty or names
+    more than one device, for a leaf or capture placed on another device, and as
+    consumption above says. *)
 
 val jit' :
-  ?device:string ->
+  ?devices:Nx.Device.t list ->
   ?beam:int ->
   ?beam_parallel:int ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t
-(** [jit' f] is like {!val-jit} for a function of a single tensor. *)
+(** [jit' f] is [jit Nx.Ptree.(tensor @-> returns tensor) f]: {!val-jit} for a
+    function of one tensor that reads it. *)
 
 val pmap :
-  devices:string list ->
+  devices:Nx.Device.t list ->
   ?in_axes:int option list ->
-  ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
-  'p Nx.Ptree.t ->
-  ('p -> ('c, 'd) Nx.t) ->
-  'p ->
-  ('c, 'd) Nx.t
-(** [pmap ~devices p f] is [f] compiled to run in parallel across [devices] —
-    {!val-jit} whose inputs are placed on a device tuple instead of one device.
-    Device names are as in {!val-device}, with an index to address several
-    devices of one backend (["CUDA"], ["CUDA:1"], or ["CPU:1"], ["CPU:2"], ...);
-    all devices must share one backend, and the host (["CPU"]) is not one of
-    them.
+  ('a -> 'b) Nx.Ptree.fn ->
+  ('a -> 'b) ->
+  'a ->
+  'b
+(** [pmap ~devices s f] is [f] compiled to run in parallel across [devices]:
+    {!val-jit} whose arguments are placed on a device tuple instead of one
+    device. [devices] share one backend, and the host ({!Nx.Device.host}) is not
+    one of them; name several devices of one backend with {!val-devices} or with
+    an index (["CUDA:1"], ["CPU:1"], ["CPU:2"], ...).
 
-    [in_axes] gives one entry per tensor of the argument, in walk order:
-    [Some a] splits the leaf along axis [a] into [List.length devices] equal
-    shards, one per device; [None] replicates the leaf, a full copy on every
-    device. It defaults to [Some 0] for every leaf. [f] observes full (global)
-    shapes and needs no collective operations: an operation combining sharded
-    and replicated values runs on every device over its shard, and a reduction
-    over a sharded axis (say the mean loss over a sharded batch) becomes a
-    cross-device allreduce automatically — differentiating such a loss inside
-    [pmap] yields allreduced gradients, which makes data-parallel training a
-    matter of sharding the batch and replicating the parameters.
+    [in_axes] gives one entry per argument of [s]: [Some a] splits every tensor
+    of the argument along axis [a] into [List.length devices] equal shards, one
+    per device; [None] replicates it, a full copy on every device. It defaults
+    to [Some 0] for every argument; another axis per tensor is {!Nx.moveaxis}.
+    [f] observes full (global) shapes and needs no collective operations: an
+    operation combining sharded and replicated values runs on every device over
+    its shard, and a reduction over a sharded axis (say the mean loss over a
+    sharded batch) becomes a cross-device allreduce automatically.
+    Differentiating such a loss inside [pmap] yields allreduced gradients, which
+    makes data-parallel training a matter of sharding the batch and replicating
+    the parameters.
 
-    Compilation, caching and capture semantics are {!val-jit}'s. Outputs stay
+    Keys, results, consumption, compilation and captures are {!val-jit}'s,
+    except that a consumed argument's per-device buffers are released after the
+    call and lend nothing: a consumed carry keeps two generations. Outputs stay
     resident, one buffer per device, placed split or replicated over the devices
     ({!Nx.placement}). A read gathers the shards in global order (a replicated
     output reads one replica) and leaves them, and an nx operation on such an
     output reads it and returns a host value. An output fed back as an input
-    leaf whose placement matches — same devices, same axis or replication —
-    seeds the compiled program's buffers directly with no transfer, so iterated
-    calls (a data-parallel training step) move only the freshly sharded batch.
-    [donate] (default [false]) consumes every resident input as {!jit_step}
-    consumes its state, releasing every per-device buffer of the donated value;
-    a value whose placement mismatches is read through the host and is not
-    donated. A donated carry keeps two generations. [pmap] keeps this
-    whole-argument form until {!val-jit} over device lists replaces [pmap].
+    leaf whose placement matches (same devices, same axis or replication) seeds
+    the compiled program's buffers directly with no transfer, so iterated calls
+    (a data-parallel training step) move only the freshly sharded batch; a value
+    whose placement mismatches is read through the host. [pmap] stays until
+    {!val-jit} over device lists replaces it.
 
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.
 
-    Raises [Invalid_argument] if [devices] is empty, mixes backends, names the
-    host, or a device is unavailable; if [in_axes] has one entry per leaf
-    missing or in excess; or if a sharded leaf's dimension does not divide
-    evenly across the devices. Raises {!Jit_error} when tracing fails, as
-    {!val-jit}. *)
-
-val pmap2 :
-  devices:string list ->
-  ?in_axes:int option list ->
-  ?donate:bool ->
-  ?beam:int ->
-  ?beam_parallel:int ->
-  'p Nx.Ptree.t ->
-  'q Nx.Ptree.t ->
-  ('p -> 'q) ->
-  'p ->
-  'q
-(** [pmap2 ~devices p q f] is like {!val-pmap} for a function whose result has
-    structure [q]. *)
+    Raises [Invalid_argument] if [devices] is empty, mixes backends or holds the
+    host; if [in_axes] has more or fewer entries than [s] has arguments; or if a
+    sharded tensor's rank is too small or its dimension does not divide evenly
+    across the devices, naming its path. Raises {!Jit_error} when tracing fails,
+    as {!val-jit}. *)
 
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
@@ -733,7 +701,7 @@ type jit_stats = {
       (** Device bytes held by outputs and placed values that are still
           reachable. *)
   reused_bytes : int;
-      (** Cumulative bytes of donated inputs whose storage an output took
+      (** Cumulative bytes of consumed inputs whose storage an output took
           instead of a fresh buffer. *)
 }
 (** Transfer accounting for compiled functions. The zero-copy CPU path moves no

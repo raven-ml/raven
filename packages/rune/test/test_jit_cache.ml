@@ -48,7 +48,12 @@ let child_twice () =
 let child_pmap () =
   let x = input () in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ] Nx.Ptree.tensor f in
+  let g =
+    Rune.pmap
+      ~devices:[ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+  in
   let got = g x in
   let e = to_arr expect and a = to_arr got in
   if e <> a then failwith "pmap result differs from jit";

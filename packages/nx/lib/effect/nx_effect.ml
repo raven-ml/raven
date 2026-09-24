@@ -20,7 +20,7 @@ open Nx_core
    [t_node].
 
    The views of one placed storage share one cell, which holds what belongs to
-   the storage rather than to a view: whether it is live or was donated to a
+   the storage rather than to a view: whether it is live or was consumed by a
    compiled call, and how many reachable programs bind it.
 
    A context says where a creation effect makes its value. It is declared over
@@ -49,7 +49,11 @@ and cell = {
   mutable bound : int; (* reachable programs that bind the storage *)
 }
 
-and state = Live of storage | Donated
+and state = Live of storage | Consumed of consumption
+
+(* Where a compiled call consumed a storage: the consumed leaf's path in the
+   call's arguments, whose first segment is the argument's position from 0. *)
+and consumption = { path : string }
 
 and ('a, 'b) traced = {
   t_id : int; (* fresh; identity tables key by it *)
@@ -100,10 +104,12 @@ let outside_trace () =
   invalid_arg
     "a traced tensor has no bytes; it was used outside the trace that made it"
 
-let donated () =
+let consumed { path } =
   invalid_arg
-    "this value was donated to a compiled call and no longer exists; read or \
-     copy it before the call"
+    (Printf.sprintf
+       "this value was consumed at %s in a compiled call's arguments; use the \
+        value the call returned"
+       path)
 
 (* Reading placed values *)
 
@@ -111,7 +117,7 @@ let donated () =
    broadcast. *)
 let read_elements (type a b) (r : (a, b) resident) : (a, b) Nx_buffer.t =
   match r.r_cell.state with
-  | Donated -> donated ()
+  | Consumed k -> consumed k
   | Live (Held (dt, v)) -> (
       let buf = Nx_buffer.create r.r_dtype (View.numel r.r_view) in
       match Dtype.equal_witness dt r.r_dtype with
@@ -656,7 +662,7 @@ let to_host (type a b) (x : (a, b) t) : (a, b) Nx_buffer.t =
 let move (type a b) p (x : (a, b) t) : (a, b) t =
   match x with
   | Traced _ -> outside_trace ()
-  | Placed { r_cell = { state = Donated; _ }; _ } -> donated ()
+  | Placed { r_cell = { state = Consumed k; _ }; _ } -> consumed k
   | Placed { r_placement; _ } when Placement.equal r_placement p -> x
   | Host _ when Placement.is_host p -> x
   | Placed r when Placement.is_host p -> Host (read_host r)

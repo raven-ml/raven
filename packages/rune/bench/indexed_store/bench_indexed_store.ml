@@ -3,12 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The indexed store under [Rune.jit]: a k-row [Nx.scatter] into a donated pool,
-   whose step time must not grow with the pool, and the gradient of [Nx.take]
-   into a vocabulary-sized table, whose cost must follow the tokens. Each step
-   ends with a scalar read that depends on the written tensor, so a timing
-   covers the device work. Run with DEV set to a GPU backend: on the host,
-   outputs are host tensors and no storage is reused. *)
+(* The indexed store under [Rune.jit]: a k-row [Nx.scatter] into a consumed
+   pool, whose step time must not grow with the pool, and the gradient of
+   [Nx.take] into a vocabulary-sized table, whose cost must follow the tokens.
+   Each step ends with a scalar read that depends on the written tensor, so a
+   timing covers the device work. Run with DEV set to a GPU backend: on the
+   host, outputs are host tensors and no storage is reused. *)
 
 type state = { pool : Nx.float32_t; rows : Nx.int32_t; values : Nx.float32_t }
 
@@ -84,14 +84,17 @@ let scatter_case ~runs ~n ~k =
     in
     written (Nx.scatter ~axis:0 ~indices ~values pool)
   in
-  (* DONATE=0 reads the pool instead of consuming it. *)
+  (* CONSUME=0 reads the pool instead of consuming it. *)
   let step =
-    if Sys.getenv_opt "DONATE" <> Some "0" then
-      Rune.jit_step batch_ptree written_ptree (fun batch w ->
-          write batch w.pool)
+    if Sys.getenv_opt "CONSUME" <> Some "0" then
+      Rune.jit
+        Nx.Ptree.(
+          batch_ptree @-> consumes written_ptree @@ returns written_ptree)
+        (fun batch w -> write batch w.pool)
     else
       let g =
-        Rune.jit2 state_ptree written_ptree
+        Rune.jit
+          Nx.Ptree.(state_ptree @-> returns written_ptree)
           (fun ({ pool; rows; values } : state) -> write { rows; values } pool)
       in
       fun ({ rows; values } : batch) (w : written) ->
@@ -116,12 +119,13 @@ let scatter_case ~runs ~n ~k =
      %!"
     n k med best words (reused / 1_000_000)
 
-(* One row written at a run-time position into a donated cache. *)
+(* One row written at a run-time position into a consumed cache. *)
 let window_case ~runs ~n =
   let row = Nx.ones Nx.float32 [| 1; width |] in
   let step =
-    Rune.jit_step Nx.Ptree.tensor written_ptree (fun pos w ->
-        written (Nx.set [ Nx.D (pos, 1) ] row w.pool))
+    Rune.jit
+      Nx.Ptree.(tensor @-> consumes written_ptree @@ returns written_ptree)
+      (fun pos w -> written (Nx.set [ Nx.D (pos, 1) ] row w.pool))
   in
   let state = ref (written (Nx.zeros Nx.float32 [| n; width |])) in
   let at = ref 0 in

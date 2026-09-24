@@ -117,7 +117,11 @@ let jit_benchmarks params x x0 =
   [
     Thumper.bench_with_setup ~tags:[ "lab" ]
       ~setup:(fun () ->
-        let f = Rune.jit mlp_ptree (fun p -> forward p x) in
+        let f =
+          Rune.jit
+            Nx.Ptree.(mlp_ptree @-> returns tensor)
+            (fun p -> forward p x)
+        in
         ignore (Sys.opaque_identity (f params));
         f)
       "jit run mlp"
@@ -132,8 +136,9 @@ let jit_benchmarks params x x0 =
       (fun f -> f x0);
   ]
 
-(* Jit footprint: the trace-plus-compile cost of a first Rune.jit call on the
-   campaign's compile-heavy workloads, and the steady-state replay cost.
+(* Jit footprint: the trace-plus-compile cost of a first Rune.jit Nx.Ptree.(call
+   @-> returns tensor) on the campaign's compile-heavy workloads, and the
+   steady-state replay cost.
 
    The workloads mirror the tolk-direct compile graphs so the first-call number
    sits alongside tolk's per-stage totals: [elementwise] a+b*c (one kernel, the
@@ -274,33 +279,43 @@ let fresh_scale () =
 
 let jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20 =
   let replay_ew () =
-    let f = Rune.jit ew_ptree ew_forward in
+    let f = Rune.jit Nx.Ptree.(ew_ptree @-> returns tensor) ew_forward in
     ignore (Sys.opaque_identity (f ew_params));
     f
   in
   let replay_lorenz n () =
-    let f = Rune.jit lorenz_ptree (fun p -> lorenz n p) in
+    let f =
+      Rune.jit Nx.Ptree.(lorenz_ptree @-> returns tensor) (fun p -> lorenz n p)
+    in
     ignore (Sys.opaque_identity (f lorenz_params));
     f
   in
   let replay_rnn_fwd params () =
-    let f = Rune.jit rnn_ptree rnn_forward in
+    let f = Rune.jit Nx.Ptree.(rnn_ptree @-> returns tensor) rnn_forward in
     ignore (Sys.opaque_identity (f params));
     f
   in
   let replay_rnn_grad params () =
-    let f = Rune.jit2 rnn_ptree rnn_ptree rnn_grad in
+    let f = Rune.jit Nx.Ptree.(rnn_ptree @-> returns rnn_ptree) rnn_grad in
     ignore (Sys.opaque_identity (f params));
     f
   in
   [
     Thumper.bench ~tags:[ "lab" ] "elementwise first-call" (fun () ->
         let s = fresh_scale () in
-        let f = Rune.jit ew_ptree (fun p -> Nx.mul_s (ew_forward p) s) in
+        let f =
+          Rune.jit
+            Nx.Ptree.(ew_ptree @-> returns tensor)
+            (fun p -> Nx.mul_s (ew_forward p) s)
+        in
         Sys.opaque_identity (f ew_params));
     Thumper.bench ~tags:[ "lab" ] "lorenz n10 first-call" (fun () ->
         let s = fresh_scale () in
-        let f = Rune.jit lorenz_ptree (fun p -> Nx.mul_s (lorenz 10 p) s) in
+        let f =
+          Rune.jit
+            Nx.Ptree.(lorenz_ptree @-> returns tensor)
+            (fun p -> Nx.mul_s (lorenz 10 p) s)
+        in
         Sys.opaque_identity (f lorenz_params));
     Thumper.bench_with_setup ~setup:replay_ew "elementwise replay" (fun f ->
         f ew_params);
@@ -338,23 +353,33 @@ let cold_compile spec =
     | [ "ew" ] ->
         let p = init_ew () in
         wall (fun () ->
-            let f = Rune.jit ew_ptree ew_forward in
+            let f =
+              Rune.jit Nx.Ptree.(ew_ptree @-> returns tensor) ew_forward
+            in
             ignore (Sys.opaque_identity (f p)))
     | [ "lorenz"; n ] ->
         let n = int_of_string n in
         let p = init_lorenz () in
         wall (fun () ->
-            let f = Rune.jit lorenz_ptree (fun q -> lorenz n q) in
+            let f =
+              Rune.jit
+                Nx.Ptree.(lorenz_ptree @-> returns tensor)
+                (fun q -> lorenz n q)
+            in
             ignore (Sys.opaque_identity (f p)))
     | [ "rnnfwd"; h ] ->
         let p = init_rnn (int_of_string h) in
         wall (fun () ->
-            let f = Rune.jit rnn_ptree rnn_forward in
+            let f =
+              Rune.jit Nx.Ptree.(rnn_ptree @-> returns tensor) rnn_forward
+            in
             ignore (Sys.opaque_identity (f p)))
     | [ "rnngrad"; h ] ->
         let p = init_rnn (int_of_string h) in
         wall (fun () ->
-            let f = Rune.jit2 rnn_ptree rnn_ptree rnn_grad in
+            let f =
+              Rune.jit Nx.Ptree.(rnn_ptree @-> returns rnn_ptree) rnn_grad
+            in
             ignore (Sys.opaque_identity (f p)))
     | _ ->
         prerr_endline "usage: --cold (ew | lorenz N | rnnfwd H | rnngrad H)";

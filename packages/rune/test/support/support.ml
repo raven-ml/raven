@@ -30,7 +30,7 @@ let cell_of (type a b) (x : (a, b) Nx.t) =
    live. *)
 let bound_by n x =
   let c = cell_of x in
-  c.bound = n && match c.state with Live _ -> true | Donated -> false
+  c.bound = n && match c.state with Live _ -> true | Consumed _ -> false
 
 let[@inline never] raise_exit () = raise Exit
 
@@ -436,16 +436,17 @@ let check_cjvp2 ?(h = 1e-5) ?(tol = 1e-5) ~msg
    both zeros, infinities, quiet and signalling NaN with payloads, subnormals.
    The bits leave and enter the compiled function as stored, and an eager
    bitcast, which is a view, reads them. *)
-let check_bitcast_matches_eager ?device () =
+let check_bitcast_matches_eager ?devices () =
   let check (type a b c d) name (bits : (a, b) Nx.t) (float : (c, d) Nx.dtype) =
     let int = Nx.dtype bits in
     let to_float x = Nx.bitcast float (Nx.transpose x) in
     let to_bits x = Nx.bitcast int (Nx.transpose x) in
     let expected = Nx.to_array (Nx.transpose bits) in
     equal ~msg:(name ^ " from bits") bool true
-      (Nx.to_array (Nx.bitcast int (Rune.jit' ?device to_float bits)) = expected);
+      (Nx.to_array (Nx.bitcast int (Rune.jit' ?devices to_float bits))
+      = expected);
     equal ~msg:(name ^ " to bits") bool true
-      (Nx.to_array (Rune.jit' ?device to_bits (Nx.bitcast float bits))
+      (Nx.to_array (Rune.jit' ?devices to_bits (Nx.bitcast float bits))
       = expected)
   in
   check "float32"
@@ -478,7 +479,7 @@ let check_bitcast_matches_eager ?device () =
    running count is int64: all but about a thousand entries tie at the
    threshold, more than 2^20 of them, so their count times k passes 2^31 along
    the row. Compiled, as eagerly, the first k of a stable descending sort. *)
-let check_top_k_long_row ?device () =
+let check_top_k_long_row ?devices () =
   let n = (1 lsl 20) + 8192 and k = 2048 in
   let st = Random.State.make [| 4 |] in
   let x =
@@ -493,7 +494,7 @@ let check_top_k_long_row ?device () =
   let f x = snd (Nx.top_k ~k x) in
   equal ~msg:"eager" (array int32) expected (Nx.to_array (f x));
   equal ~msg:"compiled" (array int32) expected
-    (Nx.to_array (Rune.jit' ?device f x))
+    (Nx.to_array (Rune.jit' ?devices f x))
 
 (* Sorting *)
 

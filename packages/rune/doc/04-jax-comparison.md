@@ -30,7 +30,7 @@ If you already use JAX, this should be enough to become productive in rune quick
 | Gradient stopping | `jax.lax.stop_gradient` | `detach`, `no_grad` |
 | Gradient checking | `jax.test_util.check_grads` | `check_grads` |
 | Randomness | Explicit splittable keys (`jax.random`) | Implicit scoped RNG (`Nx.Rng.with_key`) |
-| JIT compilation | `jax.jit` | `jit` — traces once per leaf signature; CPU, CUDA, or Metal |
+| JIT compilation | `jax.jit` | `jit` — traces once per key (every tensor's path, dtype and shape, and what its structure reports); CPU, CUDA, or Metal |
 | Devices | `jax.device_put`, GPU/TPU | `Nx.place` with `Rune.device`; compiled functions run on CPU, CUDA, Metal |
 
 ---
@@ -328,13 +328,13 @@ The trade-off surfaces under `vmap`: with explicit keys you would pass one key p
 
 | JAX feature | Status in rune |
 | --- | --- |
-| `jax.jit` | `jit p f` compiles to fused kernels, cached per leaf signature. It compiles `scan` as a loop and rejects data-dependent `cond`/`while_loop` predicates. |
-| GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~device:"CUDA"`/`"METAL"` runs compiled steps on GPU. `Nx.place (Nx.Placement.device (Rune.device "METAL"))` holds a tensor's bytes on a device, and a compiled function that captures it uses that buffer with no upload. |
+| `jax.jit` | `jit s f` compiles to fused kernels for the signature `s`, cached per key: each tensor's path, dtype and shape, and the data the structures report (a window, a list's length). It compiles `scan` as a loop and rejects data-dependent `cond`/`while_loop` predicates. |
+| GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~devices:[ Rune.device "CUDA" ]` (or `"METAL"`) runs compiled steps on GPU. `Nx.place (Nx.Placement.device (Rune.device "METAL"))` holds a tensor's bytes on a device, and a compiled function that captures it uses that buffer with no upload. |
 | `jax.pmap` / distributed | Not implemented. |
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
 | Full op coverage under `vmap` | The decompositions raise on batched inputs. |
 | `jax.random` keys | Implicit scoped RNG instead; see §11. |
-| Donation, sharding, `pjit` | `jit_step` reads its first argument and consumes its second, like `donate_argnums`, reusing its storage; no sharding or `pjit`. |
+| Donation, sharding, `pjit` | An argument marked `consumes` in `jit`'s signature is given up by the call, like `donate_argnums`, and results reuse its storage; a consumed value raises on use. No sharding or `pjit`. |
 
 Rune's failure model is deliberate: operations without a rule raise `Invalid_argument` rather than silently producing zero or wrong gradients.
 
@@ -365,4 +365,4 @@ Rune's failure model is deliberate: operations without a rule raise `Invalid_arg
 | Block region from AD | — | `no_grad (fun () -> ...)` |
 | Gradient check | `check_grads(f, (x,), 1)` | `check_grads p f params` |
 | Debug tracing | `jax.debug.print` | `with_debug (fun () -> ...)` |
-| JIT | `jax.jit(f)` | `jit p f` |
+| JIT | `jax.jit(f)` | `jit Nx.Ptree.(p @-> returns q) f` |

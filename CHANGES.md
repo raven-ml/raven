@@ -107,6 +107,28 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `Rune.jit` takes the signature of the function it compiles and
+  returns a function of the same type, with arguments read (`@->`) or consumed
+  (`consumes ... @@`) and a result of any structure. `jit2`, `jit_step`,
+  `pmap2` and `?donate` go: `jit p f` is `jit Nx.Ptree.(p @-> returns tensor)
+  f`, `jit2 p q f` is `jit Nx.Ptree.(p @-> returns q) f`, and `jit_step r s f`
+  is `jit Nx.Ptree.(r @-> consumes s @@ returns s) f`. `?device:string` is
+  `?devices:Nx.Device.t list`, of one device.
+- **Breaking:** a compiled call marks what it consumes before its first kernel,
+  and a value over consumed storage raises on use, naming where it was consumed
+  ("this value was consumed at 1.keys in a compiled call's arguments"): a
+  leaf's path starts with its argument's position from 0.
+  A consumed leaf that views part of its storage, or whose storage another leaf
+  of the call or a capture of the function reaches, raises before the call and
+  consumes nothing; such a storage was read instead. Consuming a storage a
+  compiled function binds ends it for its values, and that function keeps
+  replaying with its buffer.
+- A result takes the storage of the consumed leaf it derives from, or of one no
+  kernel reads after it is written, where it took only the state leaf at its
+  own position: a state returned in another order reuses its storage.
+- **Breaking:** `Rune.pmap` takes the signature of the function it compiles,
+  `~devices` as `Nx.Device.t list` and one `in_axes` entry per argument; a
+  consumed argument's shards are released after the call.
 - **Breaking:** a compiled function that returns one value at two leaves of
   its result returns two values, each with storage of its own; they were one
   value, which a call consuming one of them ended for the other.
@@ -224,8 +246,6 @@ All notable changes to this project will be documented in this file.
 - `RUNE_JIT_RESIDENT_BUDGET` counts every device allocation since the last
   major collection, eager results and uploads included, and a device that
   still cannot allocate after a collection raises `Nx.Device.Out_of_memory`.
-- `Rune.jit_step` raises when a state leaf is a view of part of its storage,
-  which cannot be donated; pass a copy of it.
 - A compiled function whose output has no elements returns an empty tensor of
   that output's dtype and shape instead of raising "an output of the traced
   function was not scheduled to a buffer".
@@ -248,9 +268,8 @@ All notable changes to this project will be documented in this file.
   on Metal goes from 60 ms to 18 ms.
 - A compiled call on a GPU returns without waiting for its kernels; reads wait.
   Twenty-six chained small calls on Metal take 2.9 ms instead of 10.8 ms.
-- Add `Rune.jit_step`: it reads its first argument and consumes and returns its
-  state. `?donate` leaves `jit`, `jit2` and `jit'`: `jit2 ~donate:true` becomes
-  `jit_step Nx.Ptree.unit s f` applied to `()`.
+- `?donate` leaves `jit`, `jit2` and `jit'`: a compiled function consumes the
+  arguments its signature marks with `Nx.Ptree.consumes`.
 - Tracing a function under `Rune.jit` no longer allocates a buffer for every
   traced value. Each placeholder was an uninitialised tensor of the result's
   full size; the pages were never touched, but OCaml counted the bytes and ran

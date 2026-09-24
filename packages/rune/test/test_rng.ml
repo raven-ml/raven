@@ -134,7 +134,7 @@ let test_scope_matches_explicit_draw () =
 let test_jit_uniform_bit_parity () =
   let f key = Nx.Rng.uniform key Nx.float32 [| 1000 |] in
   let k = Nx.Rng.key 42 in
-  let g = Rune.jit Nx.Ptree.tensor f in
+  let g = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
   check_bits ~msg:"eager == jit, bitwise" (f k) (g k);
   check_bits ~msg:"replay" (f k) (g k)
 
@@ -142,14 +142,17 @@ let test_jit_bits_parity () =
   let f key = Nx.Rng.bits key [| 3; 41 |] in
   let k = Nx.Rng.key 8 in
   is_true ~msg:"bits are identical under jit"
-    (Nx.to_array (f k) = Nx.to_array (Rune.jit Nx.Ptree.tensor f k))
+    (Nx.to_array (f k)
+    = Nx.to_array (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k))
 
 let test_jit_int_samplers_bit_parity () =
   let k = Nx.Rng.key 9 in
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
-  check_bits ~msg:"randint" (fr k) (Rune.jit Nx.Ptree.tensor fr k);
+  check_bits ~msg:"randint" (fr k)
+    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) fr k);
   let fb key = Nx.cast f32 (Nx.Rng.bernoulli key (param [| 64 |] 0.3)) in
-  check_bits ~msg:"bernoulli" (fb k) (Rune.jit Nx.Ptree.tensor fb k)
+  check_bits ~msg:"bernoulli" (fb k)
+    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) fb k)
 
 (* A parameter is data, traced through jit like the key: a jitted step can take
    its dropout probability or its rates as an input, and the compiled program
@@ -157,7 +160,7 @@ let test_jit_int_samplers_bit_parity () =
    compiled agree bit for bit. *)
 let test_jit_traced_parameter () =
   let f (p, key) = Nx.cast f32 (Nx.Rng.bernoulli key p) in
-  let g = Rune.jit Nx.Ptree.(pair tensor tensor) f in
+  let g = Rune.jit Nx.Ptree.(pair tensor tensor @-> returns tensor) f in
   let k = Nx.Rng.key 11 in
   let p = Nx.Rng.uniform (Nx.Rng.key 3) f32 [| 64 |] in
   check_bits ~msg:"bernoulli with a traced p" (f (p, k)) (g (p, k));
@@ -171,7 +174,9 @@ let test_jit_traced_parameter () =
 let test_jit_normal_matches_eager () =
   let f key = Nx.Rng.normal key Nx.float32 [| 1000 |] in
   let k = Nx.Rng.key 42 in
-  check_arr ~msg:"normal" (to_arr (f k)) (Rune.jit Nx.Ptree.tensor f k)
+  check_arr ~msg:"normal"
+    (to_arr (f k))
+    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)
 
 let test_jit_split_derived_key_traces () =
   let f key =
@@ -182,12 +187,14 @@ let test_jit_split_derived_key_traces () =
   in
   let k = Nx.Rng.key 11 in
   check_bits ~msg:"keys split inside the trace" (f k)
-    (Rune.jit Nx.Ptree.tensor f k)
+    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)
 
 let test_jit_fold_in_driven_steps () =
   let root = Nx.Rng.key 3 in
   let g =
-    Rune.jit Nx.Ptree.tensor (fun key -> Nx.Rng.uniform key f32 [| 8 |])
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun key -> Nx.Rng.uniform key f32 [| 8 |])
   in
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do
@@ -222,7 +229,7 @@ let test_fold_in_tensor_matches_the_host_form () =
 let test_jit_fold_in_tensor_tracks_a_traced_step () =
   let g =
     Rune.jit
-      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.(pair tensor tensor @-> returns tensor)
       (fun (key, step) ->
         Nx.Rng.uniform (Nx.Rng.fold_in_tensor key step) f32 [| 8 |])
   in
@@ -243,11 +250,13 @@ let test_jit_truncated_normal_compiles () =
     Nx.Rng.truncated_normal key (param [| 256 |] (-2.0)) (param [| 256 |] 2.0)
   in
   let k = Nx.Rng.key 31 in
-  check_arr ~msg:"eager == jit" (to_arr (f k)) (Rune.jit Nx.Ptree.tensor f k);
+  check_arr ~msg:"eager == jit"
+    (to_arr (f k))
+    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k);
   is_true ~msg:"compiled draws respect the bounds"
     (Array.for_all
        (fun v -> v >= -2.0 && v <= 2.0)
-       (to_arr (Rune.jit Nx.Ptree.tensor f k)))
+       (to_arr (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)))
 
 (* Both of these replace a rejection loop with something of fixed shape — gamma
    with a fixed round count, poisson with a cumulative product — for the sole
@@ -255,7 +264,9 @@ let test_jit_truncated_normal_compiles () =
    design would have bought nothing. *)
 let test_jit_gamma_and_poisson_compile () =
   let g_gamma =
-    Rune.jit Nx.Ptree.tensor (fun key -> Nx.Rng.gamma key (param [| 256 |] 2.5))
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun key -> Nx.Rng.gamma key (param [| 256 |] 2.5))
   in
   let a = to_arr (g_gamma (Nx.Rng.key 1)) in
   is_true ~msg:"compiled gamma draws are positive and finite"
@@ -263,8 +274,9 @@ let test_jit_gamma_and_poisson_compile () =
   is_true ~msg:"compiled gamma follows its key"
     (a <> to_arr (g_gamma (Nx.Rng.key 2)));
   let g_poisson =
-    Rune.jit Nx.Ptree.tensor (fun key ->
-        Nx.cast f32 (Nx.Rng.poisson key (param [| 256 |] 4.0)))
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun key -> Nx.cast f32 (Nx.Rng.poisson key (param [| 256 |] 4.0)))
   in
   let b = to_arr (g_poisson (Nx.Rng.key 1)) in
   is_true ~msg:"compiled poisson counts are non-negative integers"
@@ -284,15 +296,18 @@ let test_jit_scope_rooted_at_input_key_traces () =
         Nx.add (Nx.rand f32 [| 8 |]) (Nx.randn f32 [| 8 |]))
   in
   let k = Nx.Rng.key 17 in
-  check_arr ~msg:"eager == jit" (to_arr (f k)) (Rune.jit Nx.Ptree.tensor f k)
+  check_arr ~msg:"eager == jit"
+    (to_arr (f k))
+    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)
 
 (* Each call recomputes from the key it is given, so feeding fresh keys gives
    fresh values and the same key replays. A frozen draw would fail both. *)
 let test_jit_scope_recomputes_per_key () =
   let root = Nx.Rng.key 5 in
   let g =
-    Rune.jit Nx.Ptree.tensor (fun key ->
-        Nx.Rng.with_key key (fun () -> Nx.rand f32 [| 8 |]))
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun key -> Nx.Rng.with_key key (fun () -> Nx.rand f32 [| 8 |]))
   in
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do
@@ -309,7 +324,9 @@ let test_jit_scope_recomputes_per_key () =
    promises — the scope is not one draw replayed. *)
 let test_jit_scope_draws_are_decorrelated () =
   let g =
-    Rune.jit Nx.Ptree.tensor (fun key ->
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun key ->
         Nx.Rng.with_key key (fun () ->
             Nx.stack ~axis:0 [ Nx.rand f32 [| 64 |]; Nx.rand f32 [| 64 |] ]))
   in
@@ -452,13 +469,12 @@ let test_pmap_fold_in_axis_decorrelates () =
   let check devices =
     let n = List.length devices in
     let g =
-      Rune.pmap2 ~devices ~in_axes:[ Some 0; None ]
-        Nx.Ptree.(pair tensor tensor)
-        Nx.Ptree.tensor
-        (fun (rows, key) ->
+      Rune.pmap ~devices ~in_axes:[ Some 0; None ]
+        Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+        (fun rows key ->
           Nx.mul rows (Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f32 [| n; 8 |]))
     in
-    let out = g (Nx.ones f32 [| n; 8 |], key) in
+    let out = g (Nx.ones f32 [| n; 8 |]) key in
     for i = 0 to n - 1 do
       check_bits
         ~msg:(Printf.sprintf "%d devices: device %d draws fold_in key %d" n i i)
@@ -470,8 +486,8 @@ let test_pmap_fold_in_axis_decorrelates () =
       ~msg:(Printf.sprintf "%d devices: streams are decorrelated" n)
       (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
   in
-  check [ "CPU:1"; "CPU:2" ];
-  check [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
+  check (List.map Rune.device [ "CPU:1"; "CPU:2" ]);
+  check (List.map Rune.device [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ])
 
 let tests =
   [

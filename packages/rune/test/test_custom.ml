@@ -237,7 +237,7 @@ let test_jvp_of_vmap_of_custom_jvp () =
 
 let test_compiled_custom_vjp () =
   let f x = Nx.sum (Nx.mul (fake_grad_sin x) x) in
-  let compiled = Rune.jit' ~device:"CPU" (Rune.grad' f) in
+  let compiled = Rune.jit' ~devices:[ Rune.device "CPU" ] (Rune.grad' f) in
   List.iter (fun x ->
       Gc.full_major ();
       check_arr ~msg:"compiled custom backward uses fresh inputs"
@@ -246,7 +246,7 @@ let test_compiled_custom_vjp () =
 
 let test_compiled_custom_jvp () =
   let f x = snd (Rune.jvp' fake_jvp_sin x (Nx.mul_s x 2.)) in
-  let compiled = Rune.jit' ~device:"CPU" f in
+  let compiled = Rune.jit' ~devices:[ Rune.device "CPU" ] f in
   List.iter (fun x ->
       check_arr ~msg:"compiled custom tangent"
         (to_arr (Nx.mul_s x 200.)) (compiled x))
@@ -259,7 +259,7 @@ let test_compiled_custom_scatter_backward () =
       ~bwd:(fun zeros ct -> Nx.scatter ~mode:`Add ~axis:0 ~indices
         ~values:(Nx.mul_s ct 7.) zeros) x in
   let loss x = let y = take x in Nx.sum (Nx.mul y y) in
-  let compiled = Rune.jit' ~device:"CPU" (Rune.grad' loss) in
+  let compiled = Rune.jit' ~devices:[ Rune.device "CPU" ] (Rune.grad' loss) in
   check_arr ~msg:"custom scatter accumulates duplicate indices"
     [|14.; 0.; 84.; 0.|] (compiled (vec64 [|1.; 2.; 3.; 4.|]));
   Gc.full_major ();

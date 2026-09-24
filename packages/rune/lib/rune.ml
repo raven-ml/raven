@@ -169,20 +169,20 @@ let vmap fn =
         let batch = ref None in
         Nx.Ptree.fold u.args
           (fun path leaf () ->
-            let at () = Structure.argument u.arity path in
+            let at () = Nx.Ptree.Path.to_string path in
             match (Nx.shape leaf, !batch) with
             | [||], _ ->
                 invalid_arg
                   (Printf.sprintf
-                     "Rune.vmap: %s is a scalar; vmap maps axis 0 of every leaf"
+                     "Rune.vmap: %s: a scalar; vmap maps axis 0 of every leaf"
                      (at ()))
             | shape, None -> batch := Some (shape.(0), at ())
             | shape, Some (n, first) ->
                 if shape.(0) <> n then
                   invalid_arg
                     (Printf.sprintf
-                       "Rune.vmap: %s has %d rows along axis 0, %s has %d"
-                       (at ()) shape.(0) first n))
+                       "Rune.vmap: %s: %d rows along axis 0, %s: %d" (at ())
+                       shape.(0) first n))
           args ();
         let batch_size =
           match !batch with
@@ -383,11 +383,8 @@ let device = Jit.device
 let devices = Jit.devices
 let default_device = Jit.default_device
 let jit = Jit.jit
-let jit2 = Jit.jit2
-let jit_step = Jit.jit_step
 let jit' = Jit.jit'
 let pmap = Jit.pmap
-let pmap2 = Jit.pmap2
 
 type jit_stats = Jit.stats = {
   bytes_to_device : int;
