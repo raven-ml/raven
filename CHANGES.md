@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix `Opt.Padto` reductions: padded lanes now contribute the reduction identity,
+  including products and negative maxima, and padded loads remain valid inputs
+  to memory coalescing. Reject padding warp axes and multiples below two.
+
 - Workgroup reductions use `Local` and `Warp` axes, with shared-memory staging
   derived from the contracted ranges. Remove `Axis_type.Group_reduce` and
   invalidate older compiled-program exports and caches.

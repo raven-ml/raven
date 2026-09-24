@@ -68,7 +68,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 ## Optimizer and rendering
 
 - Replace optimizer actions with TC/SPLIT/PADTO/SWAP and port split-target,
-  reduction-range, shared-memory, padding and rollback rules.
+  reduction-range, shared-memory and rollback rules.
 - Move tensor-core descriptions to the renderer and adopt fragment-derived
   layouts. Converge large WMMA accumulator ordering at the optimizer/expander;
   port CUDA MMA, AMD MFMA/FP8 variants and Metal BF16 support.

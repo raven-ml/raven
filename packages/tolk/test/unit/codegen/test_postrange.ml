@@ -517,13 +517,14 @@ let padto_tests =
         match stores (P.ast t) with
         | { U.dst; _ } :: _ -> is_true (Option.is_some (U.as_index dst))
         | [] -> failwith "expected Store");
-      test "PADTO wraps load-like Index users" (fun () ->
+      test "PADTO keeps load sources as guarded Index nodes" (fun () ->
         let ast = elementwise_global_ast ~s0:17 ~s1:4 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         ignore (P.apply_opt t (U.Opt.Padto { axis = 0; amount = 32 }));
         match loads (P.ast t) with
-        | { U.src; _ } :: _ -> is_true (U.op src = Ops.Where)
+        | { U.src; _ } :: _ -> is_true (Option.is_some (U.as_index src));
+            is_true (List.exists (fun n -> U.op n = Ops.Where) (U.toposort src))
         | [] -> failwith "expected Load");
       test "PADTO preserves existing index validity" (fun () ->
         let ast = guarded_index_global_ast ~s0:17 ~s1:4 in
@@ -560,6 +561,15 @@ let padto_tests =
           in
           ignore
             (P.apply_opt t (U.Opt.Padto { axis = upcast_idx; amount = 8 }))));
+      test "PADTO rejects warp axes" (fun () ->
+        let warp = U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Warp () in
+        let t = P.create (wrap_sink [ warp ]) (gpu_renderer ()) in
+        raises_opt_error (fun () ->
+          ignore (P.apply_opt t (U.Opt.Padto { axis = 0; amount = 64 }))));
+      test "PADTO rejects a multiple of one" (fun () ->
+        let t = P.create (elementwise_global_ast ~s0:17 ~s1:4) (gpu_renderer ()) in
+        raises_opt_error (fun () ->
+          ignore (P.apply_opt t (U.Opt.Padto { axis = 0; amount = 1 }))));
       test "PADTO guards unsafe pad ops in reduce backward slice" (fun () ->
         let ast = reduce_unsafe_pad_ast ~s0:17 ~sr:32 in
         let ren = gpu_renderer () in

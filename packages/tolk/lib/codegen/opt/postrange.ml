@@ -712,53 +712,46 @@ let rec get_idx_valid u =
 
 
 (* Pad a range to a multiple of [amount]. *)
-let apply_padto t r amount _red_opt =
-  check (amount > 0) "invalid pad amount";
+let apply_padto t r amount =
+  check (amount > 1) "pad amount must be greater than one";
   check (Option.is_some (U.const_int_value (range_size r))) "only pad const axes";
   let rng_kind = range_kind r in
   check
-    (rng_kind <> Axis_type.Upcast && rng_kind <> Axis_type.Unroll)
-    "cannot pad upcasted";
+    (rng_kind <> Axis_type.Upcast && rng_kind <> Axis_type.Unroll
+     && rng_kind <> Axis_type.Warp)
+    "cannot pad upcasted or warp";
   let old_size = range_int_size r in
   let new_sz = round_up old_size amount in
   check (old_size > new_sz / 4) "pad adds more than quadruple the work";
-  let v = range_view r in
-  let replaced_rng =
-    U.range ~size:(U.const_int new_sz) ~axis:v.axis ~sub:v.sub ~kind:v.kind
-      ~dtype:(U.dtype r)
-      ()
-  in
+  let replaced_rng = U.replace r ~src:[| U.const_int new_sz |] () in
   let valid =
     U.alu_binary ~op:Ops.Cmplt ~lhs:replaced_rng ~rhs:(U.const_int old_size)
-  in
-  let store_targets =
-    U.toposort t.ast
-    |> List.filter_map (fun n ->
-         match U.as_store n with Some { dst; _ } -> Some dst | None -> None)
   in
   let subs =
     List.fold_left
       (fun acc b ->
         match U.as_index b with
-        | Some { ptr; idxs = [ idx ] } ->
+        | Some { ptr; idxs = [ idx ] } when List.memq r (U.ranges idx) ->
             let idx, idx_valid = get_idx_valid idx in
-            if not (U.equal r idx || U.in_backward_slice r idx) then acc
-            else
             let cond = U.alu_binary ~op:Ops.And ~lhs:valid ~rhs:idx_valid in
             let guarded_idx = U.valid ~src:idx ~cond in
-            let guarded = U.index ~ptr ~idxs:[ guarded_idx ] () in
-            let replacement =
-              if List.exists (fun target -> target == b) store_targets then
-                guarded
-              else
-                U.alu_ternary ~op:Ops.Where ~a:valid ~b:guarded
-                  ~c:(U.invalid ())
-            in
-            (b, replacement) :: acc
-        | Some _ -> acc
+            (b, U.replace b ~src:[| ptr; guarded_idx |] ()) :: acc
         | _ -> acc)
       [ (r, replaced_rng) ] (bufs t)
   in
+  let subs = List.fold_left (fun acc node ->
+      match U.as_reduce node with
+      | Some red when List.exists (fun axis -> List.memq r (U.ranges axis)) red.ranges ->
+          let dtype = U.dtype node in
+          let identity = match red.op with
+            | Ops.Add -> Const.zero dtype
+            | Ops.Mul -> Const.one dtype
+            | Ops.Max -> Const.min_value dtype
+            | _ -> raise (Opt_error "unsupported padded reduction") in
+          let value = U.alu_ternary ~op:Ops.Where ~a:valid ~b:red.src
+              ~c:(U.const identity) in
+          (node, U.replace node ~src:(Array.of_list (value :: red.ranges)) ()) :: acc
+      | _ -> acc) subs (U.backward_slice t.ast) in
   t.ast <- U.substitute subs t.ast;
   refresh t
 
@@ -959,7 +952,7 @@ and apply_opt ?(append_opt = true) t opt =
     | Padto { axis = _; amount } ->
         let ra = real_axis t opt (U.Opt.axis opt) in
         let r = List.nth (rngs t) ra in
-        apply_padto t r amount (reduceop t);
+        apply_padto t r amount;
         None
     | Swap { axis = _; with_axis } ->
         let ra = real_axis t opt (U.Opt.axis opt) in

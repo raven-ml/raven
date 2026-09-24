@@ -588,6 +588,40 @@ let test_software_sin_large_arguments () =
       is_true ~msg:(Printf.sprintf "sin(%g): expected %.9g, got %.9g" x expected actual)
         (Float.abs (expected -. actual) < 2.0e-6)) values
 
+let test_padded_reduction op transform values expected () =
+  let device = cpu "padded-reduction" in
+  let dtype = Dtype.float32 in
+  let count = List.length values in
+  let param slot size = U.param ~slot ~dtype ~shape:(U.const_int size) () in
+  let output = param 0 1 and input = param 1 count in
+  let range = U.range ~size:(U.const_int count) ~axis:0 ~kind:Axis_type.Reduce () in
+  let loaded = U.load ~src:(U.index ~ptr:input ~idxs:[ range ] ()) () in
+  let value = transform loaded in
+  let reduced = U.reduce ~op ~src:value ~ranges:[ range ] ~dtype in
+  let dst = U.index ~ptr:output ~idxs:[ U.const_int 0 ] () in
+  let kernel_info : U.kernel_info =
+    { name = "padded_reduction"; axis_types = []; dont_use_locals = false;
+      applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
+  let sink = U.sink ~kernel_info [ U.store ~dst ~value:reduced () ] in
+  let scheduler = Postrange.create sink (Device.renderer device) in
+  ignore (Postrange.apply_opt scheduler (U.Opt.Padto { axis = 0; amount = 4 }));
+  let lowered = Codegen.full_rewrite_to_sink ~optimize:false (Device.renderer device)
+      (Postrange.ast scheduler) in
+  let spec = Device.compile_program device ~name:"padded_reduction"
+      (Linearizer.linearize lowered) in
+  let buffer values =
+    let buf = Device.create_buffer ~size:(List.length values) ~dtype device in
+    let bytes = Bytes.create (List.length values * 4) in
+    List.iteri (fun i v -> Bytes.set_int32_le bytes (i * 4) (Int32.bits_of_float v)) values;
+    Device.Buffer.ensure_allocated buf;
+    Device.Buffer.copyin buf bytes;
+    buf in
+  let output_buf = buffer [ nan ] and input_buf = buffer values in
+  run_spec device spec [ output_buf; input_buf ];
+  let actual = Int32.float_of_bits (Bytes.get_int32_le (Device.Buffer.as_bytes output_buf) 0) in
+  is_true ~msg:(Printf.sprintf "expected %g, got %g" expected actual)
+    (Float.abs (actual -. expected) < 1.e-6)
+
 let test_sparse_program_arguments () =
   let device = cpu "sparse-arguments" in
   let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
@@ -689,6 +723,13 @@ let main () =
     [
       group "Execution"
         [
+          test "padded exponential sum uses zero for extra lanes"
+            (test_padded_reduction Ops.Add
+               (fun x -> U.alu_unary ~op:Ops.Exp2 ~src:x) [ 0.; 1.; 2. ] 7.);
+          test "padded negative maximum uses negative infinity"
+            (test_padded_reduction Ops.Max Fun.id [ -2.; -3.; -4. ] (-2.));
+          test "padded product uses one for extra lanes"
+            (test_padded_reduction Ops.Mul Fun.id [ -2.; -3.; -4. ] (-24.));
           test "linear buffer formals retain their declaration order"
             (test_linear_formal_order ~reverse_buffers:true ~reverse_scalars:false);
           test "mixed-width scalar formals retain their declaration order"
