@@ -24,14 +24,9 @@ let cache_dir =
     | Some dir when dir <> "" -> dir
     | _ -> (
         match Sys.getenv_opt "HOME" with
-        | Some home -> (
-            match Sys.os_type with
-            | "Unix" ->
-                (* macOS uses ~/Library/Caches, Linux uses ~/.cache *)
-                let macos_dir = Filename.concat home "Library/Caches" in
-                if Sys.file_exists macos_dir then macos_dir
-                else Filename.concat home ".cache"
-            | _ -> Filename.concat home ".cache")
+        | Some home ->
+            Filename.concat home
+              (if Host_config.system = "macosx" then "Library/Caches" else ".cache")
         | None -> Filename.current_dir_name)
   in
   Filename.concat base "tolk"

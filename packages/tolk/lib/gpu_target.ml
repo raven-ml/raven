@@ -11,29 +11,15 @@ type metal = Apple of int | Mac of int
 type opencl = string
 type cpu = X86_64 | Arm64 | Riscv64
 
-let uname flag =
-  try
-    let ic = Unix.open_process_in ("uname " ^ flag) in
-    let value = input_line ic in
-    let _ = Unix.close_process_in ic in
-    String.trim value
-  with _ -> ""
-
 let cpu_of_machine machine =
   match String.lowercase_ascii machine with
   | "x86_64" | "amd64" -> Some X86_64
   | "arm64" | "aarch64" -> Some Arm64
-  | "riscv64" -> Some Riscv64
+  | "riscv64" | "riscv" -> Some Riscv64
   | _ -> None
 
 let host_cpu () =
-  let machine =
-    if String.equal Sys.os_type "Win32" then
-      match Sys.getenv_opt "PROCESSOR_ARCHITECTURE" with
-      | Some arch when String.trim arch <> "" -> arch
-      | _ -> "amd64"
-    else uname "-m"
-  in
+  let machine = Host_config.architecture in
   match cpu_of_machine machine with
   | Some arch -> arch
   | None -> invalid_arg (Printf.sprintf "unsupported CPU architecture %S" machine)

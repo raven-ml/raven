@@ -3,4 +3,13 @@
 (library
  (name tolk)
  (public_name tolk)
+ (private_modules host_config)
  (libraries zarith unix tolk_uop))
+
+; Use the configured executable target, including cross-compilation, rather
+; than probing the build machine or starting shell tools at runtime.
+(rule
+ (target host_config.ml)
+ (action
+  (write-file %{target}
+   "let system = \"%{ocaml-config:system}\"\nlet architecture = \"%{ocaml-config:architecture}\"\n")))

@@ -35,7 +35,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port final weak commitment/lowering and remaining symbolic rules.
 - Centralize shape, numel, range and backward-slice properties. Remove parallel
   reconstruction and silent guesses in view offsets, stage
-  buffer sizes, renderer widths, range metadata and OS detection.
+  buffer sizes, renderer widths and range metadata.
 - Measure rewrite performance and long-lived memory use with weak node caches.
 
 ## Preparation and scheduling

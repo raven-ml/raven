@@ -197,14 +197,6 @@ let indexing_simplify : Upat.Pattern_matcher.t =
     => fun bs -> indexing_simplify_rule (bs $ "idx");
   ]
 
-let host_is_osx () =
-  try
-    let ic = Unix.open_process_in "uname -s" in
-    let value = input_line ic in
-    let _ = Unix.close_process_in ic in
-    String.equal (String.trim value) "Darwin"
-  with _ -> false
-
 let image_target ren =
   List.mem (Renderer.device ren) [ "QCOM"; "CL"; "PYTHON"; "NULL" ]
 
@@ -229,7 +221,7 @@ let transform_to_image shapes ren buf offset =
           | Some dims -> [ dims ]
           | None ->
               image_valid_dims
-                ~osx:(host_is_osx ())
+                ~osx:(Host_config.system = "macosx")
                 ~image_pitch_alignment:(Renderer.image_pitch_alignment ren)
                 ~base ~size ()
         in

@@ -7,14 +7,6 @@
 
 open Tolk
 
-let uname flag =
-  try
-    let ic = Unix.open_process_in ("uname " ^ flag) in
-    let value = input_line ic in
-    let _ = Unix.close_process_in ic in
-    String.trim value
-  with _ -> ""
-
 let cc =
   let var = Helpers.Context_var.string ~key:"CC" ~default:"clang" in
   fun () -> Helpers.Context_var.get var
@@ -23,33 +15,20 @@ let is_windows = String.equal Sys.os_type "Win32"
 
 (* Host Target *)
 
-type arch = X86_64 | Arm64 | Riscv64
-
-let windows_machine () =
-  match Sys.getenv_opt "PROCESSOR_ARCHITECTURE" with
-  | Some arch when String.trim arch <> "" -> arch
-  | _ -> "amd64"
-
-let host_machine () =
-  let machine = if is_windows then windows_machine () else uname "-m" in
-  String.lowercase_ascii machine
+type arch = Gpu_target.cpu = X86_64 | Arm64 | Riscv64
 
 let arch_of_machine machine =
-  match String.lowercase_ascii machine with
-  | "x86_64" | "amd64" -> X86_64
-  | "arm64" | "aarch64" -> Arm64
-  | "riscv64" -> Riscv64
-  | arch ->
-      raise
-        (Compiler.Compile_error
-           (Printf.sprintf "unsupported arch: %S" arch))
+  match Gpu_target.cpu_of_machine machine with
+  | Some arch -> arch
+  | None -> raise (Compiler.Compile_error
+      (Printf.sprintf "unsupported arch: %S" machine))
 
 let target = function
   | X86_64 -> "x86_64"
   | Arm64 -> "arm64"
   | Riscv64 -> "riscv64"
 
-let host_arch () = target (arch_of_machine (host_machine ())) ^ ",native"
+let host_arch () = target (Gpu_target.host_cpu ()) ^ ",native"
 
 let parse_arch description =
   match String.split_on_char ',' description with

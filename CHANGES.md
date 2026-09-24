@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Host defaults use the configured OCaml target, so CPU target selection and
+  JIT initialization do not require `uname`. macOS caches use `~/Library/Caches`
+  even before that directory exists; other systems consistently use `~/.cache`.
+
 - Beam search releases temporary program handles after timing completes,
   including failures and interruptions, instead of retaining every candidate
   for the process lifetime or reusing handles across device instances.

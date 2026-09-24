@@ -27,21 +27,9 @@ module B = Device.Buffer
 
 let debug = Helpers.getenv "DEBUG" 0
 
-let command_output cmd =
-  let ic = Unix.open_process_in cmd in
-  Fun.protect
-    ~finally:(fun () -> ignore (Unix.close_process_in ic))
-    (fun () ->
-      match input_line ic with
-      | line -> String.trim line
-      | exception End_of_file -> "")
-
 let default_jit_level =
-  let system = command_output "uname -s" in
-  let machine = command_output "uname -m" in
-  if
-    String.equal system "Darwin"
-    && List.mem machine [ "Intel"; "i386"; "x86_64" ]
+  if Host_config.system = "macosx"
+     && List.mem Host_config.architecture [ "amd64"; "i386" ]
   then 2
   else 1
 

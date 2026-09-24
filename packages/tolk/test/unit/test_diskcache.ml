@@ -64,6 +64,9 @@ let run_role = function
   | "put" -> child_put ()
   | "get" -> child_get ()
   | "spam" -> child_spam ()
+  | "platform" ->
+      ignore (Gpu_target.host_cpu ());
+      print_string (Tolk_cpu__Compiler_cpu.host_arch ())
   | role -> failwith ("unknown role: " ^ role)
 
 (* Parent-side driver. *)
@@ -91,9 +94,11 @@ let child_env extra =
   Array.of_list (base @ List.map (fun (k, v) -> k ^ "=" ^ v) extra)
 
 let spawn_child extra =
-  let env =
-    child_env (("XDG_CACHE_HOME", Lazy.force cache_root) :: extra)
+  let extra =
+    if List.mem_assoc "XDG_CACHE_HOME" extra then extra
+    else ("XDG_CACHE_HOME", Lazy.force cache_root) :: extra
   in
+  let env = child_env extra in
   let out_read, out_write = Unix.pipe ~cloexec:false () in
   let pid =
     Unix.create_process_env Sys.executable_name
@@ -142,6 +147,38 @@ let read_entry ~table ~key =
       (version, value))
 
 (* Tests. *)
+
+let platform_does_not_require_shell_tools () =
+  let expected = Tolk_cpu__Compiler_cpu.host_arch () in
+  equal string expected
+    (run_child [ (role_var, "platform"); ("PATH", Lazy.force cache_root) ])
+
+let cache_location_uses_the_platform () =
+  let is_macos =
+    if Sys.os_type <> "Unix" then false
+    else
+      let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+      Fun.protect ~finally:(fun () -> ignore (Unix.close_process_in ic))
+        (fun () -> String.trim (input_line ic) = "Darwin")
+  in
+  let fake_home = Filename.concat (Lazy.force cache_root) "cache-home" in
+  Unix.mkdir fake_home 0o755;
+  let expected = Filename.concat fake_home
+      (if is_macos then "Library/Caches/tolk" else ".cache/tolk") in
+  let check table =
+    equal string "ok"
+      (run_child [ (role_var, "put"); ("HOME", fake_home);
+                   ("XDG_CACHE_HOME", ""); (table_var, table);
+                   (key_var, "k"); (value_var, "value") ]);
+    let entry = Filename.concat (Filename.concat expected table)
+        (Digest.to_hex (Digest.string "k") ^ ".cache") in
+    is_true ~msg:("cache entry belongs at " ^ entry) (Sys.file_exists entry)
+  in
+  check "before-library";
+  List.iter (fun dir -> if not (Sys.file_exists dir) then Unix.mkdir dir 0o755)
+    [ Filename.concat fake_home "Library";
+      Filename.concat fake_home "Library/Caches" ];
+  check "after-library"
 
 let roundtrip_across_processes () =
   let extra = [ (table_var, "rt"); (key_var, "k") ] in
@@ -218,6 +255,10 @@ let () =
         [
           group "Diskcache"
             [
+              test "platform detection does not require shell tools"
+                platform_does_not_require_shell_tools;
+              test "cache location follows the platform, not directory contents"
+                cache_location_uses_the_platform;
               test "round-trips a value across processes"
                 roundtrip_across_processes;
               test "missing key is a miss" missing_key_is_a_miss;
