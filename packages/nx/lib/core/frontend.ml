@@ -350,7 +350,6 @@ module Make (B : Backend_intf.S) = struct
 
   let scalar ctx dt value = B.full ctx dt [||] value
   let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
-
   let empty ctx dtype shape_arr = B.buffer ctx dtype shape_arr
   let zeros ctx dtype shape_arr = B.full ctx dtype shape_arr (Dtype.zero dtype)
   let ones ctx dtype shape_arr = B.full ctx dtype shape_arr (Dtype.one dtype)
@@ -1462,8 +1461,8 @@ module Make (B : Backend_intf.S) = struct
         if len < 0 || len > dim_size then
           err "slice" "axis %d, window of %d does not fit in %d" axis len
             dim_size;
-        (* clamp the corner so the window always fits; a tensor operation, so
-           a traced start stays traced *)
+        (* clamp the corner so the window always fits; a tensor operation, so a
+           traced start stays traced *)
         let ctx = B.context start in
         let start = reshape [||] start in
         let start =
@@ -1709,7 +1708,10 @@ module Make (B : Backend_intf.S) = struct
               axis_ops
           in
           let starts =
-            if List.for_all (function `Int _ -> true | `Tensor _ -> false) corners
+            if
+              List.for_all
+                (function `Int _ -> true | `Tensor _ -> false)
+                corners
             then
               create ctx Dtype.int32 [| nd |]
                 (Array.of_list
@@ -1740,7 +1742,8 @@ module Make (B : Backend_intf.S) = struct
           let dims_info =
             List.map
               (function
-                | Squeeze { idx } -> (true, scalar ctx Dtype.int32 (Int32.of_int idx))
+                | Squeeze { idx } ->
+                    (true, scalar ctx Dtype.int32 (Int32.of_int idx))
                 | View { start; stop; step; _ } ->
                     (false, arange ctx Dtype.int32 start stop step)
                 | Gather indices ->
@@ -1752,7 +1755,8 @@ module Make (B : Backend_intf.S) = struct
                         Hashtbl.replace seen i ())
                       indices;
                     ( false,
-                      create ctx Dtype.int32 [| Array.length indices |]
+                      create ctx Dtype.int32
+                        [| Array.length indices |]
                         (Array.map Int32.of_int indices) )
                 | Window { start; len } ->
                     (false, add (arange ctx Dtype.int32 0 len 1) start)
@@ -1785,7 +1789,8 @@ module Make (B : Backend_intf.S) = struct
             dims_info;
           let x_flat = reshape [| numel x |] (contiguous x) in
           let y_flat =
-            reshape [| array_prod target_shape |]
+            reshape
+              [| array_prod target_shape |]
               (contiguous (reshape target_shape v))
           in
           let result =
@@ -1958,9 +1963,9 @@ module Make (B : Backend_intf.S) = struct
     in
     B.argmin ~axis ~keepdims x'
 
-  (* Above this many entries the selection rounds of [top_k] give way to a
-     full sort: each round is a pass over the axis that waits on the one
-     before it. *)
+  (* Above this many entries the selection rounds of [top_k] give way to a full
+     sort: each round is a pass over the axis that waits on the one before
+     it. *)
   let top_k_rounds = 16
 
   let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
@@ -1974,10 +1979,10 @@ module Make (B : Backend_intf.S) = struct
     let dt = dtype x in
     if Dtype.is_complex dt then err "top_k" "complex numbers are not ordered";
     let indices =
-      if k > top_k_rounds then
+      if k > top_k_rounds then (
         let bounds = Array.map (fun d -> (0, d)) (shape x) in
         bounds.(axis) <- (0, k);
-        shrink bounds (argsort ~descending:true ~axis x)
+        shrink bounds (argsort ~descending:true ~axis x))
       else begin
         let ctx = B.context x in
         let along = Array.make r 1 in
@@ -5127,8 +5132,7 @@ module Make (B : Backend_intf.S) = struct
     let axis = resolve_single_axis x ax in
     if axis < 0 || axis >= r then
       err "sliding_window" "axis %d out of bounds for %dD tensor" ax r;
-    if window < 1 then
-      err "sliding_window" "window must be >= 1, got %d" window;
+    if window < 1 then err "sliding_window" "window must be >= 1, got %d" window;
     if step < 1 then err "sliding_window" "step must be >= 1, got %d" step;
     let size = (shape x).(axis) in
     if window > size then

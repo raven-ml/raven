@@ -16,8 +16,8 @@ let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 let scalar t = (to_arr t).(0)
 
 (* The transformation rules for the sliding-window movement are written against
-   its effect; driving them through the public [Nx.sliding_window] pins
-   that the exposed function reaches those rules end to end. *)
+   its effect; driving them through the public [Nx.sliding_window] pins that the
+   exposed function reaches those rules end to end. *)
 let sliding_window ~axis ~window ~step x =
   Nx.sliding_window ~axis ~window ~step x
 

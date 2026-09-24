@@ -560,8 +560,8 @@ module type S = sig
       [shape t]; [starts] is already clamped so the window fits; dtypes match.
 
       {b Backend must:} allocate and return a tensor that never shares storage
-      with [t]. An output that reuses its input's storage under a compiler is
-      a binding decision above this contract. *)
+      with [t]. An output that reuses its input's storage under a compiler is a
+      binding decision above this contract. *)
 
   (** {1 Window Operations}
 

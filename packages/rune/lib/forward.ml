@@ -76,8 +76,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_const_scalar _ -> None
       | E_from_host _ -> None
       | E_threefry _ -> None
-      (* Placement is the identity under differentiation: a placed copy would
-         be a fresh, inactive value. *)
+      (* Placement is the identity under differentiation: a placed copy would be
+         a fresh, inactive value. *)
       | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
@@ -502,7 +502,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   (* dL = L phi(L^-1 dA L^-T), phi = strict lower + half
                      diagonal. *)
                   let l_lower, da_lower =
-                    if upper then (T.matrix_transpose l, T.matrix_transpose da) else (l, da)
+                    if upper then (T.matrix_transpose l, T.matrix_transpose da)
+                    else (l, da)
                   in
                   let w =
                     solve_triangular ~upper:false ~transpose:false
@@ -535,11 +536,13 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   | Some da ->
                       let da_used =
                         let tri = if upper then T.triu da else T.tril da in
-                        if unit_diag then T.sub tri (Derivs.diag_matrix (T.diagonal tri))
+                        if unit_diag then
+                          T.sub tri (Derivs.diag_matrix (T.diagonal tri))
                         else tri
                       in
                       let da_op =
-                        if transpose then T.matrix_transpose da_used else da_used
+                        if transpose then T.matrix_transpose da_used
+                        else da_used
                       in
                       let out_2d, was_1d =
                         if T.ndim out = T.ndim a - 1 then

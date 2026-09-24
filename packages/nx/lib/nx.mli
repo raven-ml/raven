@@ -142,19 +142,19 @@ type index =
   | N  (** [N] inserts a new axis of size 1 (does not consume an input axis). *)
   | D of (int32, int32_elt) t * int
       (** [D (start, len)] selects the run of [len] positions beginning at the
-          run-time value of the scalar tensor [start], clamped into
-          \[[0], [size - len]\] so the run always fits. Keeps the axis, like [R].
-          [len] is static because traced shapes are: one compiled program
-          serves every position. *)
+          run-time value of the scalar tensor [start], clamped into \[[0],
+          [size - len]\] so the run always fits. Keeps the axis, like [R]. [len]
+          is static because traced shapes are: one compiled program serves every
+          position. *)
 
 (** {1:properties Properties} *)
 
 val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
 (** [data t] is the underlying flat buffer of [t], shared with [t] without a
     copy on host backends and read-only by contract: a tensor is a value, so
-    writing the buffer after wrapping is outside the contract (the same
-    contract as [Bytes.unsafe_to_string]). The buffer may be larger than the
-    tensor's logical extent when [t] is a strided view.
+    writing the buffer after wrapping is outside the contract (the same contract
+    as [Bytes.unsafe_to_string]). The buffer may be larger than the tensor's
+    logical extent when [t] is a strided view.
 
     Element [[i0; ...; ik]] of [t] is at buffer index
     [offset t + i0 * s0 + ... + ik * sk], where [sj] is [strides t.(j)] divided
@@ -445,9 +445,9 @@ val triu : ?k:int -> ('a, 'b) t -> ('a, 'b) t
     See also {!tril}. *)
 
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
-(** [of_bigarray ba] is a tensor over [ba]'s memory, without a copy. The
-    tensor takes ownership: the caller must not write [ba] afterwards. Fill a
-    bigarray, then wrap it, to build a tensor element by element.
+(** [of_bigarray ba] is a tensor over [ba]'s memory, without a copy. The tensor
+    takes ownership: the caller must not write [ba] afterwards. Fill a bigarray,
+    then wrap it, to build a tensor element by element.
 
     See also {!to_bigarray}, which always copies. *)
 
@@ -1168,8 +1168,8 @@ val copy : ('a, 'b) t -> ('a, 'b) t
 
 val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [fill v t] is a tensor of [t]'s dtype and shape with every element set to
-    [v]; the same as {!full_like} [t v], with the value first so it pipes.
-    [t] is unchanged. *)
+    [v]; the same as {!full_like} [t v], with the value first so it pipes. [t]
+    is unchanged. *)
 
 (** {1:indexing Indexing and slicing} *)
 
@@ -1191,7 +1191,6 @@ val get : int list -> ('a, 'b) t -> ('a, 'b) t
     ]}
 
     See also {!item}, {!val-slice}. *)
-
 
 val slice : index list -> ('a, 'b) t -> ('a, 'b) t
 (** [slice specs t] extracts a sub-tensor using advanced indexing.
@@ -1229,16 +1228,16 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
 
 val set : index list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [set specs v t] is [t] with [v], broadcast to the selection, at the
-    positions [specs] select. [t] is unchanged: a tensor is a value, and this
-    is the one way to obtain one that differs from another at chosen
-    positions. [specs] uses the index forms of {!val-slice}; every selection is
-    injective, so an [L] listing a position twice raises.
+    positions [specs] select. [t] is unchanged: a tensor is a value, and this is
+    the one way to obtain one that differs from another at chosen positions.
+    [specs] uses the index forms of {!val-slice}; every selection is injective,
+    so an [L] listing a position twice raises.
 
-    The cost is one copy of [t] plus the selection. A mask alone with a [v]
-    that has no extent along the mask (a scalar, or one row per masked row)
-    selects through {!where}; a window ([I], [R], [Rs] with step ±1, [A], [N],
-    [D]) is one backend window write, which a compiler can perform in place;
-    any other combination scatters. Both operands differentiate.
+    The cost is one copy of [t] plus the selection. A mask alone with a [v] that
+    has no extent along the mask (a scalar, or one row per masked row) selects
+    through {!where}; a window ([I], [R], [Rs] with step ±1, [A], [N], [D]) is
+    one backend window write, which a compiler can perform in place; any other
+    combination scatters. Both operands differentiate.
 
     {@ocaml[
       # let x = zeros float32 [| 2; 3 |] in
@@ -1269,16 +1268,15 @@ val item : int list -> ('a, 'b) t -> 'a
 
     See also {!get}. *)
 
-val take :
-  ?axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [take ?axis ~indices t] gathers elements from [t] at [indices] along
-    [axis]. When [axis] is omitted, [t] is flattened first. Indices lie in
-    \[[0], [size]): wrap them with [mod_ (add_s i n) n] or clamp them with
-    {!clamp} yourself.
+val take : ?axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+(** [take ?axis ~indices t] gathers elements from [t] at [indices] along [axis].
+    When [axis] is omitted, [t] is flattened first. Indices lie in \[[0],
+    [size]): wrap them with [mod_ (add_s i n) n] or clamp them with {!clamp}
+    yourself.
 
-    Raises [Invalid_argument] if any index is out of bounds. Under [Rune.jit]
-    no check runs: an out-of-range position reads zero and never touches
-    memory outside [t].
+    Raises [Invalid_argument] if any index is out of bounds. Under [Rune.jit] no
+    check runs: an out-of-range position reads zero and never touches memory
+    outside [t].
 
     {@ocaml[
       # let x =
@@ -1326,10 +1324,10 @@ val scatter :
   ('a, 'b) t
 (** [scatter ?mode ?unique_indices ~axis ~indices ~values t] is [t] with
     [values] placed at the positions selected by [indices] along [axis]; the
-    tensor-indexed form of {!set}. [indices] must match [t]'s shape except
-    along [axis], and [values] is broadcast to [indices]' shape. Index values
-    lie in \[[0], [size along axis]): out of range raises [Invalid_argument]
-    eagerly and writes nothing under [Rune.jit].
+    tensor-indexed form of {!set}. [indices] must match [t]'s shape except along
+    [axis], and [values] is broadcast to [indices]' shape. Index values lie in
+    \[[0], [size along axis]): out of range raises [Invalid_argument] eagerly
+    and writes nothing under [Rune.jit].
 
     [mode] controls how updates combine with [t]: [`Set] (default) overwrites,
     the last update winning at duplicate positions; [`Add] accumulates every
@@ -2173,12 +2171,12 @@ val top_k :
     [values] is [take_along_axis ~axis ~indices t], so it differentiates with
     respect to [t].
 
-    Up to [k = 16] the cost is [k] passes over [axis], each after the one
-    before it, which suits a router choosing a few of many. A greater [k]
-    costs a whole sort of [axis].
+    Up to [k = 16] the cost is [k] passes over [axis], each after the one before
+    it, which suits a router choosing a few of many. A greater [k] costs a whole
+    sort of [axis].
 
-    Raises [Invalid_argument] if [t] has no dimension, [axis] is out of
-    bounds, [k] is outside \[[1], extent of [axis]\], or [t] is complex.
+    Raises [Invalid_argument] if [t] has no dimension, [axis] is out of bounds,
+    [k] is outside \[[1], extent of [axis]\], or [t] is complex.
 
     {@ocaml[
       # let values, indices =
@@ -3096,16 +3094,15 @@ val erfinv : (float, 'b) t -> (float, 'b) t
 val sliding_window :
   ?axis:int -> window:int -> ?step:int -> ('a, 'b) t -> ('a, 'b) t
 (** [sliding_window ?axis ~window ?step t] is a {e view} of [t] with sliding
-    windows of length [window] along [axis], taken every [step] elements.
-    [axis] defaults to the last axis; negative indices count from the end.
-    [step] defaults to [1].
+    windows of length [window] along [axis], taken every [step] elements. [axis]
+    defaults to the last axis; negative indices count from the end. [step]
+    defaults to [1].
 
     The size of [axis] becomes [(size - window) / step + 1] and a trailing axis
     of length [window] is appended. No data is copied, so framing a signal costs
     nothing: {!stft} is this view, a taper and one batched {!rfft}. Windows
-    closer together than they are wide share storage, which nothing can
-    observe: a tensor is a value. Under [Rune.jit] the windows are
-    materialized.
+    closer together than they are wide share storage, which nothing can observe:
+    a tensor is a value. Under [Rune.jit] the windows are materialized.
 
     @raise Invalid_argument
       if [window < 1], [step < 1], [window] exceeds the size of [axis], or
