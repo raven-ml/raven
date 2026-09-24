@@ -1640,7 +1640,7 @@ let debug_prints_float_and_special_args_like_tinygrad () =
 
 let debug_prints_direct_string_args_like_tinygrad () =
   let src = Uop.source "abc" in
-  let copied = Uop.copy ~src:(Uop.const_int 1) ~device:(Uop.Single "CPU") () in
+  let copied = Uop.copy ~src:(Uop.const (Const.int Dtype.int32 1)) ~device:(Uop.Single "CPU") () in
   let out = Render.uops_list_to_string [ src; copied ] in
   is_true ~msg:"SOURCE string arg is raw" (contains out " abc\n");
   is_true ~msg:"COPY string device arg is raw" (contains out " CPU\n");

@@ -125,7 +125,7 @@ let call_info_arg u =
   | _ -> false
 
 let opaque_call_body = function
-  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy
+  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store
   | Ops.Custom_function -> true
   | _ -> false
 
@@ -377,7 +377,7 @@ let tensor_spec : t =
       if valid_global_buffer u || Uop.is_variable u then Some true else None);
 
     op ~allow_any_len:true
-      ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Store; Ops.Copy;
+      ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Store;
                    Ops.Custom_function ] ]
       Ops.Call
     =?> (fun u _ ->

@@ -149,7 +149,7 @@ val pm_compile :
 (** [pm_compile ~device ?beam ~to_program linear] rewrites every kernel
     {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink}
     into a call whose body is the compiled {!Tolk_uop.Ops.Program} returned by
-    [to_program]. {!Tolk_uop.Ops.Copy} calls are left unchanged.
+    [to_program]. {!Tolk_uop.Ops.Store} calls are left unchanged.
 
     When [beam] is [b >= 1], every kernel sink that does not already carry a
     beam width (its {!Tolk_uop.Uop.kernel_info} has [beam = 0]) is stamped with [b]
@@ -299,7 +299,7 @@ val run_linear :
     compiled. Each call is then dispatched on its body: a
     {!Tolk_uop.Ops.Program} is launched with launch dimensions and scalar
     arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
-    built from its compiled binary; a {!Tolk_uop.Ops.Copy} transfers between its
+    built from its compiled binary; a {!Tolk_uop.Ops.Store} transfers between its
     resolved buffers; a {!Tolk_uop.Ops.Custom_function} named ["graph"] records
     its LINEAR body into the device's {!Device.Graph} on first execution and
     replays that graph afterwards, patching per run every buffer argument

@@ -150,7 +150,7 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
 (* [Device.Buffer.copy_from] is the host/device copy entry point the device and
    frontend layers call. The device layer keeps no executor of its own to avoid
    depending on the engine; the executor is installed here once when this module
-   initializes, routing those copies through the same path as scheduled COPY
+   initializes, routing those copies through the same path as scheduled STORE
    calls. *)
 let () =
   Device.Buffer.install_copy_runner (fun ~dst ~src ->
@@ -203,7 +203,7 @@ let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
 
 (* Rewrite each kernel CALL(SINK) in [linear] to CALL(PROGRAM), compiling the
    body with [to_program] and caching the compiled PROGRAM by the SINK's
-   semantic key. COPY calls pass through unchanged. [beam] stamps
+   semantic key. Bulk STORE calls pass through unchanged. [beam] stamps
    sinks that carry no beam width of their own; kernel_info is part of the
    semantic key, so a stamped sink gets its own cache entry. *)
 let pm_compile ~device ?beam ~to_program linear =
@@ -449,7 +449,7 @@ let unwrap_multi bufs =
 
    Executes a scheduled LINEAR by dispatching each CALL on its callee: kernel
    SINKs are compiled and launched,
-   and COPY bodies transfer between buffers. Buffer arguments are resolved
+   and STORE bodies transfer between buffers. Buffer arguments are resolved
    through the binding and PARAM slots through [input_uops]. *)
 
 (* Keep only the buffer arguments: bound scalar values and ALU symbolic variables are
@@ -497,7 +497,7 @@ let get_call_name call bufs var_vals =
       let arg_uops = call_arg_uops args in
       match (U.op ast, arg_uops, bufs) with
       | Tolk_uop.Ops.Program, _, _ -> U.program_function_name ast
-      | Tolk_uop.Ops.Copy, out :: _, dest :: src :: _ ->
+      | Tolk_uop.Ops.Store, out :: _, dest :: src :: _ ->
           Helpers.colored
             (strf "copy %10s, %7s <- %-7s" (size_str out) (dev_str dest)
                (dev_str src))
@@ -540,7 +540,7 @@ let estimate_uop call =
               | Some { estimates = Some e; _ } -> E.of_uop e
               | Some _ | None -> E.zero)
           | [] -> E.zero)
-      | Tolk_uop.Ops.Copy -> (
+      | Tolk_uop.Ops.Store -> (
           match args with
           | dest :: _ ->
               let nbytes =
@@ -745,7 +745,7 @@ let exec_copy binding ctx ~device call =
                       copy ~device:(device_for ~device dest) dest src
                   | _ -> assert false)
                 (unwrap_multi [ dest_b; src_b ]))
-      | _ -> invalid_arg "exec_copy: malformed COPY call")
+      | _ -> invalid_arg "exec_copy: malformed STORE call")
   | None -> invalid_arg "exec_copy: expected CALL"
 
 (* Graph runner
@@ -983,7 +983,7 @@ module Graph_runner = struct
                   }
                   :: !calls;
                 incr n
-            | Tolk_uop.Ops.Copy -> (
+            | Tolk_uop.Ops.Store -> (
                 match bufs with
                 | [ dest; src ] ->
                     let node_deps =
@@ -1003,7 +1003,7 @@ module Graph_runner = struct
                     calls :=
                       { kind = Copy; bufs; dyn; dyn_bufs; dyn_generations } :: !calls;
                     incr n
-                | _ -> invalid_arg "graph: malformed COPY call")
+                | _ -> invalid_arg "graph: malformed STORE call")
             | _ ->
                 invalid_arg
                   (Format.asprintf "graph: unsupported call body %a" U.pp body)
@@ -1151,7 +1151,7 @@ let rec dispatch_call binding ctx ~device call =
   match U.as_call call with
   | Some { body; _ } -> (
       match U.op body with
-      | Tolk_uop.Ops.Copy -> exec_copy binding ctx ~device call
+      | Tolk_uop.Ops.Store -> exec_copy binding ctx ~device call
       | Tolk_uop.Ops.Program -> exec_kernel binding ctx ~device call
       | Tolk_uop.Ops.Custom_function
         when U.Arg.as_string (U.arg body) = Some "graph" ->
@@ -1310,7 +1310,7 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
             when U.op body = Tolk_uop.Ops.Custom_function
                  && U.Arg.as_string (U.arg body) = Some "graph" ->
               "graph"
-          | Some { body; _ } when U.op body = Tolk_uop.Ops.Copy -> "copy"
+          | Some { body; _ } when U.op body = Tolk_uop.Ops.Store -> "copy"
           | _ -> "?")
         (U.children linear)
     in

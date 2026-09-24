@@ -502,7 +502,7 @@ let expand_bitcast bc =
     let x = src0 bc in
     let os = Dtype.itemsize (U.dtype x) in
     let ns = Dtype.itemsize (U.dtype bc) in
-    if os = ns then None
+    if os = ns || U.on_disk x then None
     else
       let uint = function
         | 1 -> Dtype.uint8 | 2 -> Dtype.uint16
@@ -610,6 +610,18 @@ let materialize n =
       | _ -> None)
   | Ops.Copy -> convert_copy_to_store n
   | Ops.Stage when U.arg n = U.Arg.Empty -> stage_to_store n
+  | _ -> None
+
+let disk_copy n =
+  match U.op n, U.src n with
+  | Ops.Copy, [|stage|] when U.op stage = Ops.Stage && U.arg stage = U.Arg.Empty ->
+      let input = src0 stage in
+      if is_movement input && U.on_disk input then
+        Some (U.replace n ~src:[|input|] ()) else None
+  | Ops.Copy, [|input|] when is_movement input && U.on_disk input ->
+      let moved = Array.copy (U.src input) in
+      moved.(0) <- U.replace n ~src:[|src0 input|] ();
+      Some (U.replace input ~src:moved ())
   | _ -> None
 
 let earliest_rewrites =
@@ -780,7 +792,7 @@ let prepare_rangeify root =
       root
   in
   let root = U.graph_rewrite ~name:"inline calls"
-      (U.first_match [movement_ops; inline_call; returned_after]) root in
+      (U.first_match [movement_ops; inline_call; returned_after; disk_copy]) root in
   let root =
     if getv Helpers.openpilot_hacks = 0 then root
     else

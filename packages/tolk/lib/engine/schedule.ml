@@ -387,7 +387,7 @@ let rec call_is_copy call =
   | Some { value; _ } -> call_is_copy value
   | None -> (
       match U.as_call call with
-      | Some { body; _ } -> is_op Ops.Copy body
+      | Some { body; _ } -> is_op Ops.Store body
       | None -> false)
 
 (* Lane key: the buffer's full device placement (single- or multi-device)
@@ -654,7 +654,7 @@ let copy_kernel_params ast =
 
 (* The kernel graph carries every COPY as a kernel storing one flat buffer
    into another. A kernel whose two buffers live on different devices is
-   simplified and, when it is such a store, becomes a COPY call again; any
+   simplified and, when it is such a store, becomes a bulk STORE call; any
    other kernel must keep to one device. *)
 let copy_from_store call =
   match U.as_call call with
@@ -673,7 +673,7 @@ let copy_from_store call =
         | Some (dst, src) -> (
             match U.device_of dst, U.device_of src with
             | Some d, Some s when d <> s ->
-                Some (U.call ~body:(U.copy ~src ~device:d ()) ~args ~info)
+                Some (U.call ~body:(U.store ~dst ~value:src ()) ~args ~info)
             | _ -> None)
         | None -> None
       in

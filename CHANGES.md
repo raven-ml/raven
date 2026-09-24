@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Execute bulk transfers as `CALL(STORE)` and apply disk views after copying
+  to the destination, avoiding temporary disk allocations. `Uop.copy` now
+  rejects weak dtypes and requires explicit stores for disk destinations.
+
 - `Storage.get ~device` maps an allocation into another device and shares
   that mapping across byte views. Mappings synchronize and unmap before
   their source storage is freed.

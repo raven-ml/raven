@@ -353,6 +353,10 @@ let copy_accepts_lowered_range_sources () =
     (accepts Spec.tensor_spec c)
 
 let copy_rejects_bad_device_or_dtype () =
+  raises (Invalid_argument "Uop.copy: storage requires a concrete dtype")
+    (fun () -> ignore (Uop.copy ~src:(Uop.const_int 1) ~device:(Uop.Single "CPU") ()));
+  raises (Invalid_argument "Uop.copy: disk destinations require an explicit store")
+    (fun () -> ignore (Uop.copy ~src:(i32 1) ~device:(Uop.Single "DISK:weights") ()));
   let src = i32 1 in
   let copy = Uop.copy ~src ~device:(Uop.Single "CPU") () in
   is_true ~msg:"Copy result dtype must match source"

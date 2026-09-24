@@ -680,6 +680,10 @@ and compute_device u =
         children;
       !found
 
+let on_disk u = match device_of u with
+  | Some (Single device) -> String.starts_with ~prefix:"DISK" device
+  | _ -> false
+
 (* No device is nowhere to store; a weak dtype is no width to store. Either
    way the value cannot back a buffer as it stands. *)
 let is_virtual u =
@@ -1047,6 +1051,11 @@ let mselect ~src ~index =
   mk ~op:Ops.Mselect ~dtype:(dtype src) ~src:[| src |] ~arg:(Arg.Int index)
 
 let copy ~src ~device () =
+  let disk = String.starts_with ~prefix:"DISK" in
+  if (match device with Single d -> disk d | Multi ds -> List.exists disk ds | Index _ -> false) then
+    invalid_arg "Uop.copy: disk destinations require an explicit store";
+  if Dtype.is_weak (dtype src) then
+    invalid_arg "Uop.copy: storage requires a concrete dtype";
   mk ~op:Ops.Copy ~dtype:(dtype src) ~src:[| src |] ~arg:(Arg.Device device)
 
 let rec base u =
@@ -1472,7 +1481,7 @@ let ranges_subset sub sup =
   List.for_all (fun r -> Ref_set.mem r sup_set) (ranges sub)
 
 let opaque_call_body = function
-  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store | Ops.Copy
+  | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store
   | Ops.Custom_function -> true
   | _ -> false
 
@@ -2461,6 +2470,12 @@ let param_like u ~slot =
       match device, axis u with
       | Some (Multi _), Some axis -> multi ~src:p ~axis
       | _ -> p
+
+let store_call ~dst ~src =
+  let body = store ~dst:(param_like dst ~slot:0) ~value:(param_like src ~slot:1) () in
+  let info = { grad_fxn = None; name = None; precompile = false;
+    precompile_backward = false; dtype = Dtype.void; aux = None } in
+  call ~body ~args:[dst; src] ~info
 
 let call_with_outputs ?output_pos ~values ~args ~info () =
   let count = List.length values + List.length args in
@@ -3589,7 +3604,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 24
+let export_version = 25
 
 type serialized_node = {
   serialized_op : Ops.t;

@@ -82,7 +82,8 @@ let transform_to_call sink =
       match U.op u with
       | Ops.Buffer when U.addrspace u = Some Dtype.Global -> replace_input u
       | (Ops.Shrink | Ops.Bitcast)
-        when List.for_all (fun d -> Option.is_some (U.const_int_value d)) (U.shape u) ->
+        when not (U.on_disk u)
+             && List.for_all (fun d -> Option.is_some (U.const_int_value d)) (U.shape u) ->
           (match contiguous_view u with Some view -> replace_input view | None -> None)
       | Ops.After when U.is_bound_var u -> replace_input u
       | _ -> None) body in

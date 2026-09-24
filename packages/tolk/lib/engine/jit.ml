@@ -171,7 +171,7 @@ let graph_split_rewrite ~device linear ~max_batch_size =
             (match graph with
             | Some g ->
                 (is_op Ops.Program body
-                || (is_op Ops.Copy body && g.Device.Graph.supports_copy))
+                || (is_op Ops.Store body && g.Device.Graph.supports_copy))
                 && (match g.Device.Graph.max_buffer_offset with
                    | Some max_offset -> view_offsets_within max_offset si
                    | None -> true)

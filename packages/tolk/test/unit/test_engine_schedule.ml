@@ -276,9 +276,36 @@ let fresh_internal_buffer_slots_stay_distinct () =
   is_true ~msg:"same slot aliases" (buffer a == buffer a);
   is_true ~msg:"fresh slot stays distinct" (not (buffer a == buffer b))
 
+let disk_views_move_after_bulk_transfers () =
+  let disk = U.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(shape [4; 4])
+      ~device:(U.Single "DISK:weights") () in
+  let view = U.shrink ~src:disk ~offset:(shape [1; 0]) ~size:(shape [2; 4]) in
+  let view = U.permute ~src:view ~order:[1; 0] in
+  let copied = U.copy ~src:(U.contiguous ~src:view ~force:true ())
+      ~device:(U.Single "CPU") () in
+  let call, _ = bufferized_call (U.sink [U.contiguous ~src:copied ()]) in
+  let linear, _ = Schedule.create_linear_with_vars
+      ~get_kernel_graph:Rangeify.get_kernel_graph call in
+  let calls = linear_calls linear in
+  let transfers = List.filter (fun c ->
+      match U.as_call c with Some {body; _} -> U.op body = Ops.Store | None -> false) calls in
+  equal int 1 (List.length transfers);
+  (match U.as_call (List.hd transfers) with
+   | Some {args = [dst; src]; _} ->
+       equal int 16 (U.max_numel src);
+       is_true (U.equal (U.storage_base src) (U.storage_base disk));
+       is_false (U.on_disk dst)
+   | _ -> fail "expected a two-argument bulk transfer");
+  List.iter (fun c -> match U.as_call c with
+      | Some {body; args; _} when U.op body = Ops.Sink ->
+          is_false ~msg:"view kernels allocate and run only on the destination"
+            (List.exists U.on_disk args)
+      | Some _ -> () | None -> fail "expected call") calls
+
 let () =
   run "Engine.Schedule"
     [
+      test "disk views move after explicit bulk transfers" disk_views_move_after_bulk_transfers;
       test "slice inputs are normalized before their bases"
         slice_inputs_are_normalized_before_their_bases;
       test "volatile inputs survive scheduling" volatile_inputs_survive_scheduling;

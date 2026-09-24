@@ -987,7 +987,10 @@ val mselect : src:t -> index:int -> t
 
 val copy : src:t -> device:device -> unit -> t
 (** [copy ~src ~device ()] copies [src] to [device]. Dtype is
-    inherited from [src]. Tensor. *)
+    inherited from [src]. Tensor.
+
+    @raise Invalid_argument if [src] has a weak dtype or [device] contains
+    a disk destination. Use an explicit store to write disk storage. *)
 
 (** {2:ctors_movement Movement}
 
@@ -1072,6 +1075,10 @@ val call : body:t -> args:t list -> info:call_info -> t
 val param_like : t -> slot:int -> t
 (** [param_like u ~slot] is a call formal with [u]'s shape and placement.
     Variables become scalar ALU formals with positional names. *)
+
+val store_call : dst:t -> src:t -> t
+(** [store_call ~dst ~src] is an executable bulk transfer into [dst]. Its
+    body stores between two formal buffers, bound to [dst] and [src]. *)
 
 val call_with_outputs :
   ?output_pos:int list -> values:t list -> args:t list -> info:call_info ->
@@ -1275,6 +1282,9 @@ val device_of : t -> device option
     {!Ops.Copy} and {!Ops.Allreduce} read their payload device.
     Other ops report the device of their first child that has one, or
     [None]. *)
+
+val on_disk : t -> bool
+(** [on_disk u] is [true] when [u] resides on one disk device. *)
 
 val is_virtual : t -> bool
 (** [is_virtual u] is [true] iff [u] cannot back a buffer as it stands:
