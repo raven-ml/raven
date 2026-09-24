@@ -731,7 +731,7 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
               if List.mem name used_vars then
                 (match Const.view value with
                  | Int n ->
-                     let n = Int64.to_int n in
+                     let n = Z.to_int n in
                      (match List.assoc_opt name !var_vals with
                       | Some prev when prev <> n ->
                           invalid_arg (Printf.sprintf

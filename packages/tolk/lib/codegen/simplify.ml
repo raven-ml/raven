@@ -25,7 +25,7 @@ let const_int_value u =
   match U.arg u with
   | U.Arg.Value c ->
       (match Const.view c with
-       | Const.Int n -> Some (Int64.to_int n)
+       | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
        | _ -> None)
   | _ -> None
 
@@ -33,7 +33,7 @@ let is_zero_const u =
   match U.op u, U.arg u with
   | Ops.Const, U.Arg.Value c ->
       (match Const.view c with
-       | Const.Int n -> Int64.equal n 0L
+       | Const.Int n -> Z.equal n Z.zero
        | Const.Float f -> Float.equal f 0.0
        | Const.Bool b -> not b
        | Const.Invalid -> false)

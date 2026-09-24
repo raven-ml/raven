@@ -5,10 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Capture before [open Tolk_uop] shadows it with the uop movement module. *)
-module Movement_ops = Movement
 open Tolk_uop
-module Movement = Movement_ops
 module D = Dtype
 module T = Tensor
 
@@ -23,28 +20,20 @@ let contiguous t =
 
 (* Broadcasting and promotion *)
 
-(* The literal a node carries if it is a weak-dtyped constant, seen through any
-   movement ops that reshape it. *)
-let weak_const_value t =
-  let base = Uop.base (T.uop t) in
-  if not (D.is_weak (T.dtype t) && Ops.equal (Uop.op base) Ops.Const) then None
-  else
-    match Option.map Const.view (Uop.Arg.as_value (Uop.arg base)) with
-    | Some (Const.Bool v) -> Some (T.Sbool v)
-    | Some (Const.Int n) -> Some (T.Sint (Int64.to_int n))
-    | Some (Const.Float x) -> Some (T.Sfloat x)
-    | Some Const.Invalid | None -> None
-
-(* [v] at dtype [dt], shaped like [t]. *)
-let const_shaped_like t dt v =
-  let scalar = T.of_uop (Uop.const (T.scalar_const dt v)) in
-  match T.symbolic_shape t with
-  | [] -> scalar
-  | dims ->
-      Movement.symbolic_broadcast_to
-        (Movement.symbolic_reshape scalar
-           (List.map (fun _ -> Uop.const_int 1) dims))
-        dims
+let promote_weak_const t dtype =
+  let node = T.uop t in
+  let base = Uop.base node in
+  match Uop.op base, Uop.Arg.as_value (Uop.arg base) with
+  | Ops.Const, Some value when D.is_weak (T.dtype t) ->
+      let rec remint u =
+        if u == base then Uop.const (Const.of_view dtype (Const.view value))
+        else
+          let src = Array.copy (Uop.src u) in
+          src.(0) <- remint src.(0);
+          Uop.replace u ~src ~dtype ()
+      in
+      Some (if D.equal (T.dtype t) dtype then t else T.of_uop (remint node))
+  | _ -> None
 
 (* Bring a pair of operands to a common dtype.
 
@@ -63,8 +52,8 @@ let broadcasted ?(reverse = false) a b =
   let promote t =
     if Uop.is_invalid_const (Uop.base (T.uop t)) then t
     else
-      match weak_const_value t with
-      | Some v -> const_shaped_like t (D.weak_dtype out) v
+      match promote_weak_const t (D.weak_dtype out) with
+      | Some t -> t
       | None -> Dtype_ops.cast t out
   in
   (promote x, promote y)

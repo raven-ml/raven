@@ -96,8 +96,8 @@ let int64_to_int_checked n =
 
 let dtype_int_bounds (dt : Dtype.t) =
   match Dtype.min dt, Dtype.max dt with
-  | `SInt lo, `SInt hi -> Some (lo, hi)
-  | `UInt lo, `UInt hi when Int64.compare hi 0L >= 0 -> Some (lo, hi)
+  | `Int lo, `Int hi when Z.fits_int64 lo && Z.fits_int64 hi ->
+      Some (Z.to_int64 lo, Z.to_int64 hi)
   | _ -> None
 
 let safe_mul_int64 a b =
@@ -259,7 +259,7 @@ type supported_ops = {
 let const_int64_value node =
   match Uop.op node, Uop.arg node with
   | Ops.Const, Uop.Arg.Value v ->
-      (match Const.view v with Const.Int n -> Some n | _ -> None)
+      (match Const.view v with Const.Int n when Z.fits_int64 n -> Some (Z.to_int64 n) | _ -> None)
   | _ -> None
 
 let const_bool_value node =
@@ -314,7 +314,7 @@ let is_neg_one node =
   match Uop.op node, Uop.arg node with
   | Ops.Const, Uop.Arg.Value v -> (
       match Const.view v with
-      | Const.Int n -> Int64.equal n (-1L)
+      | Const.Int n -> Z.equal n Z.minus_one
       | Const.Float f -> Float.equal f (-1.0)
       | _ -> false)
   | _ -> false

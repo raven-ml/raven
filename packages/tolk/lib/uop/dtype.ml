@@ -295,39 +295,27 @@ let sum_acc_dtype dt =
 
 (* Bounds *)
 
-type bound =
-  [ `Bool of bool | `SInt of int64 | `UInt of int64 | `Float of float ]
-
-let min (dt : t) =
-  let b = bitsize dt in
-  match dt with
-  | Bool -> `Bool false
-  | Uint8 | Uint16 | Uint32 | Uint64 -> `UInt 0L
-  | Uint128 | Uint256 -> `Bool false
-  | Weakint -> `SInt Int64.min_int
-  | Int8 | Int16 | Int32 | Int64 ->
-      if b >= 64 then `SInt Int64.min_int
-      else `SInt Int64.(neg (shift_left 1L (b - 1)))
-  | Float16 | Bfloat16 | Float32 | Float64
-  | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz | Weakfloat ->
-      `Float neg_infinity
-  | Void -> invalid_arg err_void_bounds
+type bound = [ `Bool of bool | `Int of Z.t | `Float of float ]
 
 let max (dt : t) =
-  let b = bitsize dt in
   match dt with
-  | Bool -> `Bool true
-  | Uint8 | Uint16 | Uint32 -> `UInt Int64.(sub (shift_left 1L b) 1L)
-  | Uint64 -> `UInt Int64.minus_one
-  | Uint128 | Uint256 -> `Bool true
-  | Weakint -> `SInt Int64.max_int
-  | Int8 | Int16 | Int32 | Int64 ->
-      if b >= 64 then `SInt Int64.max_int
-      else `SInt Int64.(sub (shift_left 1L (b - 1)) 1L)
-  | Float16 | Bfloat16 | Float32 | Float64
-  | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz | Weakfloat ->
+  | Bool | Uint128 | Uint256 -> `Bool true
+  | Uint8 | Uint16 | Uint32 | Uint64 ->
+      `Int (Z.pred (Z.shift_left Z.one (bitsize dt)))
+  | Int8 | Int16 | Int32 | Int64 | Weakint ->
+      `Int (Z.pred (Z.shift_left Z.one (bitsize dt - 1)))
+  | Fp8e4m3 -> `Float 448.
+  | Fp8e4m3fnuz -> `Float 240.
+  | Fp8e5m2fnuz -> `Float 57344.
+  | Float16 | Bfloat16 | Float32 | Float64 | Fp8e5m2 | Weakfloat ->
       `Float infinity
   | Void -> invalid_arg err_void_bounds
+
+let min (dt : t) =
+  match max dt with
+  | `Bool _ -> `Bool false
+  | `Int n -> `Int (if is_unsigned dt then Z.zero else Z.neg (Z.succ n))
+  | `Float f -> `Float (-. f)
 
 let finfo = function
   | Float16 -> 5, 10
@@ -656,6 +644,13 @@ let truncate_int (dt : t) x =
         if unsigned land (1 lsl (b - 1)) <> 0 then unsigned lor lnot mask
         else unsigned
   | _ -> invalid_arg "truncate_int: not an integer or bool dtype"
+
+let truncate_integer (dt : t) x =
+  if dt = Weakint then x
+  else if dt = Bool then if Z.equal x Z.zero then Z.zero else Z.one
+  else if is_unsigned dt then Z.extract x 0 (bitsize dt)
+  else if is_int dt then Z.signed_extract x 0 (bitsize dt)
+  else invalid_arg "truncate_integer: not an integer or bool dtype"
 
 (* Storage conversion *)
 

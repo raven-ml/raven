@@ -31,4 +31,4 @@
    SPEC
    1
    (run %{test})))
- (libraries unix tolk tolk.uop windtrap))
+ (libraries zarith unix tolk tolk.uop windtrap))

@@ -52,7 +52,7 @@ let rec shape_of_node n =
       (match U.arg n with
        | U.Arg.Value v ->
            (match Const.view v with
-            | Const.Int i -> Some [ Int64.to_int i ]
+            | Const.Int i -> Some [ Z.to_int i ]
             | _ -> None)
        | _ -> None)
   | Ops.Stack ->
@@ -564,7 +564,7 @@ let is_not c =
 
 let is_zero_const u =
   match const_view u with
-  | Some (Const.Int n) -> Int64.equal n 0L
+  | Some (Const.Int n) -> Z.equal n Z.zero
   | Some (Const.Float f) -> Float.equal f 0.0
   | _ -> false
 

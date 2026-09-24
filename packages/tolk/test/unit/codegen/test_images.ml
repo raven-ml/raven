@@ -279,7 +279,7 @@ let () =
                  (fun n ->
                    match U.op n, U.arg n with
                    | Ops.Const, U.Arg.Value c ->
-                       Const.view c = Const.Int 0L
+                       Const.view c = Const.Int Z.zero
                        && Dtype.equal (U.dtype n) Dtype.weakint
                    | _ -> false)
                  root);
@@ -353,9 +353,10 @@ let () =
                     (match U.op alt, U.arg alt with
                   | Ops.Const, U.Arg.Value c -> (
                       match Const.view c with
-                      | Const.Int 0L | Const.Float 0.0 | Const.Bool false ->
+                      | Const.Int n -> Z.equal n Z.zero
+                      | Const.Float 0.0 | Const.Bool false ->
                           true
-                      | Const.Int _ | Const.Float _ | Const.Bool _
+                      | Const.Float _ | Const.Bool _
                       | Const.Invalid ->
                           false)
                   | _ -> false)

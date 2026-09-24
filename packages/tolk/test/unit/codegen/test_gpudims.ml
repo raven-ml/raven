@@ -40,7 +40,7 @@ let const_int_exn node =
   match U.op node, U.arg node with
   | Ops.Const, U.Arg.Value value -> (
       match C.view value with
-      | C.Int n -> Int64.to_int n
+      | C.Int n -> Z.to_int n
       | _ -> failwith "const_int_exn: not int")
   | _ when U.vmin node = U.vmax node -> U.vmin node
   | _ -> failwith "const_int_exn: not const"

@@ -67,7 +67,7 @@ let range_size_int r =
       match U.Arg.as_value (U.arg size) with
       | Some value -> (
           match C.view value with
-          | C.Int n -> Int64.to_int n
+          | C.Int n -> Z.to_int n
           | _ -> failwith "range size is not int")
       | None -> failwith "range size is not const")
   | None -> failwith "range size: not a range"

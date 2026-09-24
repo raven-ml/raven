@@ -187,6 +187,7 @@
   (ocaml
    (>= 5.2))
   dune
+  zarith
   (windtrap :with-test)
   (thumper :with-test))
  (tags

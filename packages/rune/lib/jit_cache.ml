@@ -208,13 +208,9 @@ let vars_of_args names args =
         (fun u ->
           match U.as_bind u with
           | Some { var; value } -> (
-              match (U.as_param var, U.op value, U.arg value) with
-              | ( Some { param = { name = Some name; _ }; _ },
-                  Ops.Const,
-                  U.Arg.Value v ) -> (
-                  match Tolk_uop.Const.view v with
-                  | Tolk_uop.Const.Int n -> Some (name, Int64.to_int n)
-                  | _ -> None)
+              match (U.as_param var, U.const_int_value value) with
+              | Some { param = { name = Some name; _ }; _ }, Some n ->
+                  Some (name, n)
               | _ -> None)
           | None -> None)
         args

@@ -224,23 +224,22 @@ let pp_bindings fmt (b : bindings) =
 
 (* Literal patterns compare by numeric value across dtypes, mirroring the
    reference's Python [pat.arg == uop.arg] (where [-1 == -1.0] and
-   [True == 1]). Two values of the same class compare exactly; mixed
-   classes compare through float, which is lossless for the small literals
-   patterns use. *)
+   [True == 1]). Compare mixed integer/float values without rounding the
+   integer through a float. *)
 let const_value_equal a b =
-  let to_float = function
-    | Const.Bool b -> Some (if b then 1.0 else 0.0)
-    | Const.Int n -> Some (Int64.to_float n)
-    | Const.Float f -> Some f
-    | Const.Invalid -> None
+  let numeric = function
+    | Const.Bool b -> Const.Int (if b then Z.one else Z.zero)
+    | value -> value
   in
-  match Const.view a, Const.view b with
+  let integer_float n f =
+    Float.is_finite f && Float.floor f = f && Z.equal n (Z.of_float f)
+  in
+  match numeric (Const.view a), numeric (Const.view b) with
   | Const.Invalid, Const.Invalid -> true
-  | Const.Int x, Const.Int y -> Int64.equal x y
-  | va, vb -> (
-      match to_float va, to_float vb with
-      | Some x, Some y -> Int64.equal (Int64.bits_of_float x) (Int64.bits_of_float y)
-      | _ -> false)
+  | Const.Int x, Const.Int y -> Z.equal x y
+  | Const.Float x, Const.Float y -> x = y
+  | Const.Int n, Const.Float f | Const.Float f, Const.Int n -> integer_float n f
+  | _ -> false
 
 let match_arg pat uop_arg =
   match pat with

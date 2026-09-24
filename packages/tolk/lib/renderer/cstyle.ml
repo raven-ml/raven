@@ -174,20 +174,6 @@ let const_view_of_uop u =
   | Ops.Const, U.Arg.Value c -> Some c
   | _ -> None
 
-let truncate_uint32 (n : int64) = Int64.logand n 0xFFFFFFFFL
-
-let uint64_decimal n =
-  if Int64.equal n 0L then "0"
-  else
-    let rec loop acc n =
-      if Int64.equal n 0L then acc
-      else
-        let q = Int64.unsigned_div n 10L in
-        let r = Int64.unsigned_rem n 10L |> Int64.to_int in
-        loop (Char.chr (Char.code '0' + r) :: acc) q
-    in
-    String.of_seq (List.to_seq (loop [] n))
-
 (* Upper 16 bits of float32 encoding after round-to-nearest-even. *)
 let float_to_bf16_bits (f : float) =
   let bits = Int32.bits_of_float f in
@@ -521,7 +507,7 @@ let render_index (ctx : ctx) ~ptr ~idxs =
         | Some c -> (
             match Const.view c with
             | Const.Int i ->
-                let i = Int64.to_int i in
+                let i = Z.to_int i in
                 let base = lookup ctx ptr in
                 if max_numel ptr > ctx.lang.gep_arr_threshold then
                   strf "%s[%d]" base i
@@ -675,16 +661,15 @@ let render_float (ctx : ctx) (dt : Dtype.t) f =
     | _ -> lit
 
 let render_int (ctx : ctx) (dt : Dtype.t) n =
+  let text = Z.to_string n in
   match dt with
-  | Dtype.Int64 -> strf "%Ldl" n
-  | Dtype.Uint64 -> strf "%sul" (uint64_decimal n)
-  | Dtype.Uint32 -> strf "%Ldu" (truncate_uint32 n)
-  | Dtype.Uint8 | Dtype.Uint16 ->
-      strf "(%s)" (render_cast ctx dt (strf "%Ldu" n))
-  | Dtype.Int8 | Dtype.Int16 ->
-      strf "(%s)" (render_cast ctx dt (strf "%Ld" n))
-  | Dtype.Bool -> if Int64.compare n 0L = 0 then "0" else "1"
-  | _ -> strf "%Ld" n
+  | Dtype.Int64 -> text ^ "l"
+  | Dtype.Uint64 -> Z.to_string (Z.extract n 0 64) ^ "ul"
+  | Dtype.Uint32 -> Z.to_string (Z.extract n 0 32) ^ "u"
+  | Dtype.Uint8 | Dtype.Uint16 -> strf "(%s)" (render_cast ctx dt (text ^ "u"))
+  | Dtype.Int8 | Dtype.Int16 -> strf "(%s)" (render_cast ctx dt text)
+  | Dtype.Bool -> if Z.equal n Z.zero then "0" else "1"
+  | _ -> text
 
 (* [Invalid] payloads are never rendered directly; rejecting here leaves a
    visible error rather than emitting empty source. *)

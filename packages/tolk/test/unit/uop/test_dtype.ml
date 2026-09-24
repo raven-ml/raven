@@ -6,15 +6,13 @@ let dtype = Testable.make ~pp:Dtype.pp ~equal:Dtype.equal
 let bound =
   let pp fmt = function
     | `Bool b -> Format.fprintf fmt "`Bool %b" b
-    | `SInt n -> Format.fprintf fmt "`SInt %Ld" n
-    | `UInt n -> Format.fprintf fmt "`UInt %Ld" n
+    | `Int n -> Format.fprintf fmt "`Int %s" (Z.to_string n)
     | `Float f -> Format.fprintf fmt "`Float %h" f
   in
   let equal a b =
     match (a, b) with
     | `Bool a, `Bool b -> Bool.equal a b
-    | `SInt a, `SInt b -> Int64.equal a b
-    | `UInt a, `UInt b -> Int64.equal a b
+    | `Int a, `Int b -> Z.equal a b
     | `Float a, `Float b ->
         Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
     | _ -> false
@@ -400,18 +398,24 @@ let storage_roundtrips () =
 let bounds () =
   equal bound (`Bool false) (Dtype.min Dtype.bool);
   equal bound (`Bool true) (Dtype.max Dtype.bool);
-  equal bound (`SInt (-128L)) (Dtype.min Dtype.int8);
-  equal bound (`SInt 127L) (Dtype.max Dtype.int8);
-  equal bound (`UInt 0L) (Dtype.min Dtype.uint8);
-  equal bound (`UInt 255L) (Dtype.max Dtype.uint8);
-  equal bound (`SInt Int64.min_int) (Dtype.min Dtype.int64);
-  equal bound (`SInt Int64.max_int) (Dtype.max Dtype.int64);
-  equal bound (`UInt Int64.minus_one) (Dtype.max Dtype.uint64);
+  equal bound (`Int (Z.of_int (-128))) (Dtype.min Dtype.int8);
+  equal bound (`Int (Z.of_int 127)) (Dtype.max Dtype.int8);
+  equal bound (`Int Z.zero) (Dtype.min Dtype.uint8);
+  equal bound (`Int (Z.of_int 255)) (Dtype.max Dtype.uint8);
+  equal bound (`Int (Z.of_int64 Int64.min_int)) (Dtype.min Dtype.int64);
+  equal bound (`Int (Z.of_int64 Int64.max_int)) (Dtype.max Dtype.int64);
+  equal bound (`Int (Z.of_string "18446744073709551615")) (Dtype.max Dtype.uint64);
   equal bound (`Float neg_infinity) (Dtype.min Dtype.float32);
   equal bound (`Float infinity) (Dtype.max Dtype.float64);
-  (* Weak integers report the Int64 range as an approximation. *)
-  equal bound (`SInt Int64.min_int) (Dtype.min Dtype.weakint);
-  equal bound (`SInt Int64.max_int) (Dtype.max Dtype.weakint);
+  List.iter (fun (dt, limit) ->
+      equal bound (`Float (-. limit)) (Dtype.min dt);
+      equal bound (`Float limit) (Dtype.max dt);
+      equal const (Const.float dt limit) (Const.max_value dt))
+    [ Dtype.fp8e4m3, 448.; Dtype.fp8e4m3fnuz, 240.;
+      Dtype.fp8e5m2fnuz, 57344.; Dtype.fp8e5m2, infinity ];
+  (* Weak limits use the full sentinel width. *)
+  equal bound (`Int (Z.neg (Z.shift_left Z.one 799))) (Dtype.min Dtype.weakint);
+  equal bound (`Int (Z.pred (Z.shift_left Z.one 799))) (Dtype.max Dtype.weakint);
   equal bound (`Float neg_infinity) (Dtype.min Dtype.weakfloat);
   raises (Invalid_argument "void has no numeric bounds")
     (fun () -> Dtype.min Dtype.void)

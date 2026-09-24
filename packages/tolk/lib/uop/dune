@@ -2,4 +2,5 @@
 
 (library
  (name tolk_uop)
- (public_name tolk.uop))
+ (public_name tolk.uop)
+ (libraries zarith))

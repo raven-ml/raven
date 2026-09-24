@@ -5,6 +5,7 @@
  (public_name tolk.frontend)
  (libraries
   unix
+  zarith
   tolk_uop
   tolk
   tolk_amd

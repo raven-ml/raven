@@ -3,4 +3,4 @@
 (library
  (name tolk)
  (public_name tolk)
- (libraries unix tolk_uop))
+ (libraries zarith unix tolk_uop))

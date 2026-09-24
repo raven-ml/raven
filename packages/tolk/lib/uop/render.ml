@@ -97,7 +97,7 @@ let python_float_string f =
 let const_debug_string c =
   match Const.view c with
   | Const.Bool b -> python_bool b
-  | Const.Int n -> Int64.to_string n
+  | Const.Int n -> Z.to_string n
   | Const.Float f -> python_float_string f
   | Const.Invalid -> "Invalid"
 

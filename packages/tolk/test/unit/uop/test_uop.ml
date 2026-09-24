@@ -475,7 +475,7 @@ let const_scalar_payload_constructors () =
     (Dtype.equal (dtype scalar) Dtype.int32);
   (match arg scalar with
    | Arg.Value c ->
-       is_true ~msg:"scalar const keeps value" (Const.view c = Const.Int 2L)
+       is_true ~msg:"scalar const keeps value" (Const.view c = Const.Int (Z.of_int 2))
    | _ -> is_true ~msg:"scalar const payload" false);
   let coerced = const_of_dtype Dtype.float32 (Const_scalar (`Int 2L)) in
   is_true ~msg:"scalar const coerced to requested dtype"
@@ -984,7 +984,7 @@ let child_ops_reports_child_op_set () =
 let exec_alu_folds_and_absorbs () =
   let c n = Const.int Dtype.int32 n in
   (match Uop.exec_alu Ops.Add Dtype.int32 [ c 2; c 3 ] with
-   | Some r -> is_true ~msg:"Add folds constants" (Const.view r = Const.Int 5L)
+   | Some r -> is_true ~msg:"Add folds constants" (Const.view r = Const.Int (Z.of_int 5))
    | None -> is_true ~msg:"Add folds constants" false);
   (match
      Uop.exec_alu Ops.Add Dtype.int32 [ c 2; Const.invalid ]
@@ -998,15 +998,81 @@ let exec_alu_folds_and_absorbs () =
    with
    | Some r ->
        is_true ~msg:"truncated add wraps to the dtype width"
-         (Const.view r = Const.Int 0L)
+         (Const.view r = Const.Int (Z.of_int 0))
    | None -> is_true ~msg:"truncated add folds" false);
   (match
      Uop.exec_alu ~truncate_output:false Ops.Add Dtype.uint8 [ byte 255; byte 1 ]
    with
    | Some r ->
        is_true ~msg:"untruncated add keeps the full value"
-         (Const.view r = Const.Int 256L)
+         (Const.view r = Const.Int (Z.of_int 256))
    | None -> is_true ~msg:"untruncated add folds" false)
+
+let exec_alu_exact_scalars () =
+  let check name op dtype args expected =
+    let actual = Option.map Const.to_string (Uop.exec_alu op dtype args) in
+    equal ~msg:name (option string) (Some expected) actual
+  in
+  let i = Const.int64 Dtype.int64 in
+  check "preserves the high signed bits" Ops.Add Dtype.int64
+    [ i 4611686018427387904L; i 0L ] "4611686018427387904:i64";
+  check "compares signed int64 without narrowing" Ops.Cmplt Dtype.bool
+    [ i Int64.max_int; i 0L ] "false:bool";
+  check "wraps at the committed width" Ops.Add Dtype.int64
+    [ i Int64.max_int; i 1L ] "-9223372036854775808:i64";
+  check "compares unsigned int64 mathematically" Ops.Cmplt Dtype.bool
+    [ Const.int64 Dtype.uint64 Int64.minus_one; Const.int Dtype.uint64 0 ]
+    "false:bool";
+  check "weak and strong scalar equality uses values" Ops.Cmpeq Dtype.bool
+    [ Const.int Dtype.int32 1; Const.int Dtype.weakint 1 ] "true:bool";
+  check "zero to a negative power" Ops.Pow Dtype.float64
+    [ Const.float Dtype.float64 0.; Const.float Dtype.float64 (-1.) ] "inf:f64"
+
+let exec_alu_float_division () =
+  let fold x y =
+    match Uop.exec_alu Ops.Fdiv Dtype.float64
+      [ Const.float Dtype.float64 x; Const.float Dtype.float64 y ] with
+    | Some c -> (match Const.view c with Const.Float f -> f | _ -> fail "expected float")
+    | None -> fail "expected division to fold"
+  in
+  is_true ~msg:"zero divided by zero is NaN" (Float.is_nan (fold 0. 0.));
+  equal float_exact Float.neg_infinity (fold 1. (-0.));
+  is_true ~msg:"NaN divided by zero remains NaN" (Float.is_nan (fold Float.nan 0.))
+
+let scalar_float_to_weak_integer () =
+  let c = Const.of_scalar Dtype.weakint (`Float (2. ** 80.)) in
+  equal string "1208925819614629174706176:weakint" (Const.to_string c)
+
+let scalar_width_boundaries () =
+  let check op dt args expected =
+    equal (option string) (Some expected)
+      (Option.map Const.to_string (Uop.exec_alu op dt args))
+  in
+  let u n = Const.int64 Dtype.uint64 n in
+  check Ops.Cdiv Dtype.uint64 [ u Int64.minus_one; u 3L ] "6148914691236517205:u64";
+  check Ops.Shr Dtype.uint64 [ u Int64.minus_one; u 63L ] "1:u64";
+  check Ops.Cmpeq Dtype.bool
+    [ Const.int64 Dtype.weakint 9007199254740993L;
+      Const.float Dtype.float64 9007199254740992. ] "false:bool";
+  check Ops.Cmplt Dtype.bool
+    [ Const.float Dtype.float64 9007199254740992.;
+      Const.int64 Dtype.weakint 9007199254740993L ] "true:bool";
+  List.iter (fun (op, expected) ->
+    check op Dtype.int64 [ Const.int Dtype.int64 (-7); Const.int Dtype.int64 3 ] expected)
+    [ Ops.Cdiv, "-2:i64"; Ops.Cmod, "-1:i64";
+      Ops.Floordiv, "-3:i64"; Ops.Floormod, "2:i64" ]
+
+let exec_alu_weak_intermediates () =
+  let dtype = Dtype.weakint in
+  let value = Const.int64 dtype Int64.max_int in
+  let doubled =
+    match Uop.exec_alu Ops.Mul dtype [ value; Const.int dtype 2 ] with
+    | Some c -> c
+    | None -> fail "weak integer multiplication did not fold"
+  in
+  equal string "18446744073709551614:weakint" (Const.to_string doubled);
+  equal (option string) (Some "9223372036854775807:weakint")
+    (Option.map Const.to_string (Uop.exec_alu Ops.Sub dtype [ doubled; value ]))
 
 let exec_alu_trunc_keeps_nonfinite () =
   let folded x =
@@ -1581,7 +1647,7 @@ let upat_captures_operands () =
       let x = Upat.(bs $ "x") and y = Upat.(bs $ "y") in
       let get_int u = match Uop.arg u with
         | Uop.Arg.Value c -> (match Const.view c with
-            | Int n -> Some (Int64.to_int n) | _ -> None)
+            | Int n -> Some (Z.to_int n) | _ -> None)
         | _ -> None
       in
       is_true ~msg:"x = 7" (get_int x = Some 7);
@@ -1650,6 +1716,26 @@ let upat_matches_node_tags () =
     (Upat.match_ (Upat.tag "lane0" (Upat.cvar ())) tagged <> []);
   is_true ~msg:"different tag does not match"
     (Upat.match_ (Upat.tag "lane1" (Upat.cvar ())) tagged = [])
+
+let upat_numeric_literals () =
+  let matches pattern value = Upat.match_ pattern (Uop.const value) <> [] in
+  let exact = Const.integer Dtype.weakint (Z.of_string "9007199254740992") in
+  let next = Const.integer Dtype.weakint (Z.of_string "9007199254740993") in
+  let rounded = Const.float Dtype.float64 9007199254740992. in
+  is_true ~msg:"equal integer and float match" (matches (Upat.const exact) rounded);
+  is_false ~msg:"integer is not rounded to match float"
+    (matches (Upat.const next) rounded);
+  is_false ~msg:"float pattern does not round integer"
+    (matches (Upat.const rounded) next);
+  is_true ~msg:"negative zero matches integer zero"
+    (matches Upat.zero (Const.float Dtype.float64 (-0.)));
+  is_true ~msg:"negative zero matches positive zero"
+    (matches (Upat.const_float 0.) (Const.float Dtype.float64 (-0.)));
+  is_true ~msg:"integer one matches bool true" (matches Upat.one (Const.bool true));
+  is_false ~msg:"fractional floats do not match integers"
+    (matches Upat.one (Const.float Dtype.float64 1.5));
+  is_false ~msg:"infinity does not match integer"
+    (matches (Upat.const exact) (Const.float Dtype.float64 infinity))
 
 let pattern_matcher_rejects_opless_rules () =
   let open Upat in
@@ -1791,9 +1877,9 @@ let graph_rewrite_walk_does_not_enter_replacements () =
     match Uop.arg u with
     | Uop.Arg.Value c ->
         (match Const.view c with
-         | Int n when Int64.equal n 1L ->
+         | Int n when Z.equal n Z.one ->
              Some Uop.O.(Uop.const_int 2 + Uop.const_int 3)
-         | Int n when Int64.equal n 2L -> Some (Uop.const_int 20)
+         | Int n when Z.equal n (Z.of_int 2) -> Some (Uop.const_int 20)
          | view ->
              ignore view;
              None)
@@ -1935,8 +2021,8 @@ let graph_rewrite_skips_call_body_by_default () =
     match Uop.arg u with
     | Uop.Arg.Value c ->
         (match Const.view c with
-         | Int n when Int64.equal n 1L -> Some (Uop.const_int 10)
-         | Int n when Int64.equal n 2L -> Some (Uop.const_int 20)
+         | Int n when Z.equal n Z.one -> Some (Uop.const_int 10)
+         | Int n when Z.equal n (Z.of_int 2) -> Some (Uop.const_int 20)
          | view ->
              ignore view;
              None)
@@ -2182,6 +2268,11 @@ let () =
             child_ops_reports_child_op_set;
           test "exec_alu folds and absorbs invalids"
             exec_alu_folds_and_absorbs;
+          test "exec_alu division preserves IEEE exceptional values" exec_alu_float_division;
+          test "float-to-weak-int conversion retains all bits" scalar_float_to_weak_integer;
+          test "exec_alu handles unsigned and float/integer boundaries" scalar_width_boundaries;
+          test "exec_alu preserves exact scalar values" exec_alu_exact_scalars;
+          test "exec_alu keeps unbounded weak intermediates" exec_alu_weak_intermediates;
           test "exec_alu TRUNC keeps non-finite inputs"
             exec_alu_trunc_keeps_nonfinite;
           test "alu_unary promotes transcendentals"
@@ -2228,6 +2319,7 @@ let () =
           test "Pattern_matcher threads context"
             pattern_matcher_context_rewrites;
           test "matches node tags" upat_matches_node_tags;
+          test "numeric literals compare exactly" upat_numeric_literals;
           test "Pattern_matcher rejects op-less rules"
             pattern_matcher_rejects_opless_rules;
           test "context matcher rejects op-less rules"

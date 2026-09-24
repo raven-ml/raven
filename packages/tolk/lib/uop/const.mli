@@ -9,8 +9,8 @@
 
     A constant pairs a scalar payload with its {!Dtype.t}. Direct integer and
     floating-point constructors validate that the dtype matches the payload
-    kind. Integer payloads are always stored as [int64] regardless of the
-    integer width; floating-point payloads are rounded to [dtype]'s precision
+    kind. Integer payloads have arbitrary precision until an explicit
+    dtype conversion; floating-point payloads are rounded to [dtype]'s precision
     on construction, so a constant never carries more precision than its dtype
     can represent.
 
@@ -26,10 +26,7 @@ type t
 (** Read-only constant payload. Obtain via {!view}. *)
 type view =
   | Bool of bool  (** Boolean payload. *)
-  | Int of int64
-      (** Integer payload. Both signed and unsigned dtypes are stored in a
-          single [int64] slot; unsigned values are held as their raw 64-bit
-          bit pattern (e.g. [uint64] max is [Int64.minus_one]). *)
+  | Int of Z.t (** Exact mathematical integer, including unsigned values. *)
   | Float of float  (** Floating-point payload in native double precision. *)
   | Invalid
       (** Sentinel for masked-out or undefined values. Absorbing under ALU
@@ -48,15 +45,22 @@ val dtype : t -> Dtype.t
 val bool : bool -> t
 (** [bool b] is the boolean constant [b] with dtype {!Dtype.bool}. *)
 
+val integer : Dtype.t -> Z.t -> t
+(** [integer dtype n] is the exact integer [n] tagged with [dtype], without
+    range checking or truncation. Weak arithmetic can retain intermediates
+    larger than any storage dtype.
+
+    Raises [Invalid_argument] if [dtype] is not an integer dtype. *)
+
 val int : Dtype.t -> int -> t
-(** [int dtype n] is [int64 dtype (Int64.of_int n)]. See {!int64}.
+(** [int dtype n] is [integer dtype (Z.of_int n)]. See {!integer}.
 
     Raises [Invalid_argument] if [dtype] is not an integer dtype. *)
 
 val int64 : Dtype.t -> int64 -> t
-(** [int64 dtype n] is the integer constant [n] tagged with [dtype]. The
-    value is stored verbatim; no range-checking or truncation is performed
-    against [dtype]'s width.
+(** [int64 dtype n] is the integer constant [n] tagged with [dtype]. For
+    {!Dtype.uint64}, [n] is interpreted as an unsigned 64-bit bit pattern.
+    Other integer dtypes retain the signed value without truncation.
 
     Raises [Invalid_argument]
       if [dtype] is not an integer dtype (as per {!Dtype.is_int}, which accepts
@@ -77,11 +81,13 @@ val of_scalar : Dtype.t -> Dtype.storage_scalar -> t
 (** [of_scalar dtype x] coerces storage scalar [x] according to [dtype]:
     floating-point dtypes produce {!Float} payloads rounded to [dtype]'s
     precision, bool dtypes produce {!Bool}, and all other dtypes produce
-    integer payloads. Float-to-integer conversion follows {!Int64.of_float}. *)
+    integer payloads. Float-to-integer conversion truncates toward zero without a width limit.
+    Raises [Z.Overflow] when converting a non-finite float to an integer. *)
 
 val of_view : Dtype.t -> view -> t
 (** [of_view dtype v] is {!invalid} for {!Invalid}, ignoring [dtype];
-    otherwise it coerces [v] with {!of_scalar}. *)
+    otherwise it converts [v] to [dtype] while retaining exact integer payloads.
+    Float-to-integer conversion follows {!of_scalar}. *)
 
 (** {1:predicates Predicates and comparisons} *)
 

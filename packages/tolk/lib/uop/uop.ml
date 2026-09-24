@@ -412,22 +412,14 @@ let child_ops u =
       Ref_tbl.add child_ops_cache u ops;
       ops
 
-let int64_as_native n =
-  if Int64.compare n (Int64.of_int min_int) >= 0
-     && Int64.compare n (Int64.of_int max_int) <= 0
-  then Option.Some (Int64.to_int n)
-  else Option.None
+let integer_as_native n = if Z.fits_int n then Some (Z.to_int n) else None
 
-let saturate_int64 n =
-  if Int64.compare n (Int64.of_int min_int) < 0 then min_int
-  else if Int64.compare n (Int64.of_int max_int) > 0 then max_int
-  else Int64.to_int n
+let saturate_integer n =
+  if Z.fits_int n then Z.to_int n else if Z.sign n < 0 then min_int else max_int
 
-let const_int_bounds dtype n =
-  if Dtype.is_unsigned dtype && Int64.compare n 0L < 0 then max_int, max_int
-  else
-    let n = saturate_int64 n in
-    n, n
+let const_int_bounds n =
+  let n = saturate_integer n in
+  n, n
 
 let program_var_name u =
   match op u, arg u with
@@ -747,7 +739,7 @@ let bind ~var ~value =
     | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ }, Ops.Const, Arg.Value c ->
         (match Const.view c with
          | Const.Int n ->
-             (match int64_as_native n with
+             (match integer_as_native n with
               | Some n -> lo <= n && n <= hi
               | None -> false)
          | Const.Bool b ->
@@ -777,9 +769,7 @@ let index ~ptr ~idxs () =
     | Ops.Const, Arg.Value c -> (
         match Const.view c with
         | Const.Int n
-          when Int64.compare n (Int64.of_int min_int) >= 0
-               && Int64.compare n (Int64.of_int max_int) <= 0 ->
-            Some (Int64.to_int n)
+          when Z.fits_int n -> Some (Z.to_int n)
         | Const.Int _ | Const.Bool _ | Const.Float _ | Const.Invalid -> None)
     | _ -> None
   in
@@ -1750,15 +1740,7 @@ and compute_min_max u =
     let dt = dtype u in
     if Dtype.is_int dt then
       match Dtype.min dt, Dtype.max dt with
-      | `SInt a, `SInt b -> saturate_int64 a, saturate_int64 b
-      | `UInt a, `UInt b ->
-          (* Unsigned dtypes store their max as a raw 64-bit bit
-             pattern in int64; treating it as signed would give a
-             spurious negative. Saturate to max_int for widths that
-             overflow OCaml's native int. *)
-          let lo = saturate_int64 a in
-          let hi = if Int64.compare b 0L >= 0 then saturate_int64 b else max_int in
-          lo, hi
+      | `Int a, `Int b -> saturate_integer a, saturate_integer b
       | _ -> min_int, max_int
     else if Dtype.is_bool dt then 0, 1
     else min_int, max_int
@@ -1921,7 +1903,7 @@ and compute_min_max u =
       (match arg u with
        | Arg.Value c ->
            (match Const.view c with
-            | Const.Int n -> const_int_bounds (dtype u) n
+            | Const.Int n -> const_int_bounds n
             | Const.Bool b -> (if b then 1 else 0), (if b then 1 else 0)
             | Const.Float _ | Const.Invalid -> dtype_bounds ())
        | _ -> dtype_bounds ())
@@ -1963,9 +1945,7 @@ let const_int_value u =
   | Ops.Const, Arg.Value c ->
       (match Const.view c with
        | Const.Int n
-         when Int64.compare n (Int64.of_int min_int) >= 0
-              && Int64.compare n (Int64.of_int max_int) <= 0 ->
-           Option.Some (Int64.to_int n)
+         when Z.fits_int n -> Option.Some (Z.to_int n)
        | Const.Int _ -> Option.None
        | Const.Bool _ | Const.Float _ | Const.Invalid -> Option.None)
   | _ -> Option.None
@@ -3292,173 +3272,128 @@ let int_floor_div a b =
 
 let int_floor_mod a b = a - (int_floor_div a b * b)
 
-(* Constant folding execution for scalar ALU ops over typed constants. With
-   [truncate_output] the folded value is narrowed to the target dtype (a no-op
-   for the weak and index dtypes); at symbolic fold sites the caller passes
-   [false] to keep full host precision until emission. *)
-
+(* Scalar ALU execution uses mathematical integers until an explicit dtype
+   truncation. Storage conversion and host-sized indexing happen elsewhere. *)
 let const_as_float c =
   match Const.view c with
   | Const.Float f -> Some f
-  | Const.Int n -> Some (Int64.to_float n)
+  | Const.Int n -> Some (Z.to_float n)
   | Const.Bool b -> Some (if b then 1.0 else 0.0)
   | Const.Invalid -> None
 
-let const_as_int c =
+let const_as_integer c =
   match Const.view c with
-  | Const.Int n -> Some (Int64.to_int n)
-  | Const.Bool b -> Some (if b then 1 else 0)
+  | Const.Int n -> Some n
+  | Const.Bool b -> Some (if b then Z.one else Z.zero)
   | Const.Float _ | Const.Invalid -> None
 
-let const_of_target ?(truncate_output = false) ~(target : Dtype.t) v =
-  let sv : Dtype.storage_scalar =
-    match v with
-    | `Bool b -> `Bool b
-    | `Int n -> `Int (Int64.of_int n)
-    | `Float f -> `Float f
-  in
-  let sv =
-    if truncate_output && not (Dtype.equal target Dtype.void) then
-      Dtype.truncate target sv
-    else sv
-  in
-  Some (Const.of_scalar target sv)
+let const_of_target ~truncate_output ~(target : Dtype.t) value =
+  match value with
+  | `Int n ->
+      if Dtype.is_bool target then Some (Const.bool (Z.sign n <> 0))
+      else if Dtype.is_float target then Some (Const.float target (Z.to_float n))
+      else
+        Some (Const.integer target
+          (if truncate_output then Dtype.truncate_integer target n else n))
+  | `Float f -> Some (Const.float target f)
+
+let compare_integer_float n f =
+  if Float.is_nan f then None
+  else if f = Float.infinity then Some (-1)
+  else if f = Float.neg_infinity then Some 1
+  else
+    let c = Z.compare n (Z.of_float f) in
+    Some (if c <> 0 || f = Float.trunc f then c else if f > 0. then -1 else 1)
+
+let compare_constants a b =
+  match const_as_integer a, const_as_integer b, Const.view a, Const.view b with
+  | Some x, Some y, _, _ -> Some (Z.compare x y)
+  | Some n, None, _, Const.Float f -> compare_integer_float n f
+  | None, Some n, Const.Float f, _ -> Option.map (fun c -> -c) (compare_integer_float n f)
+  | None, None, Const.Float x, Const.Float y ->
+      if Float.is_nan x || Float.is_nan y then None else Some (Float.compare x y)
+  | _ -> None
 
 let any_invalid args = List.exists (fun c -> Const.view c = Const.Invalid) args
 
-let exec_unary ?(truncate_output = false) op (target : Dtype.t) c =
+let exec_unary ~truncate_output op (target : Dtype.t) c =
   if Dtype.is_float target then
     match const_as_float c with
     | None -> None
     | Some x ->
-        let r = match op with
+        let result = match op with
           | Ops.Neg -> Some (-.x)
-          | Ops.Exp2 -> Some (try 2.0 ** x with _ -> Float.infinity)
-          | Ops.Log2 ->
-              Some
-                (if x > 0.0 then log x /. log 2.0
-                 else if x = 0.0 then Float.neg_infinity
-                 else Float.nan)
+          | Ops.Exp2 -> Some (2.0 ** x)
+          | Ops.Log2 -> Some (if x > 0.0 then log x /. log 2.0
+                             else if x = 0.0 then Float.neg_infinity else Float.nan)
           | Ops.Sqrt -> Some (if x >= 0.0 then sqrt x else Float.nan)
-          | Ops.Reciprocal ->
-              Some
-                (if x <> 0.0 then 1.0 /. x
-                 else Float.copy_sign Float.infinity x)
-          | Ops.Sin ->
-              Some (if not (Float.is_finite x) then Float.nan else sin x)
+          | Ops.Reciprocal -> Some (1.0 /. x)
+          | Ops.Sin -> Some (if Float.is_finite x then sin x else Float.nan)
           | Ops.Trunc -> Some (Float.trunc x)
           | _ -> None
         in
-        (match r with
-         | None -> None
-         | Some f -> const_of_target ~truncate_output ~target (`Float f))
+        Option.bind result (fun f -> const_of_target ~truncate_output ~target (`Float f))
   else
-    match const_as_int c with
-    | None -> None
-    | Some x ->
-        let r = match op with
-          | Ops.Neg -> Some (-x)
-          | Ops.Trunc -> Some x
-          | _ -> None
-        in
-        (match r with
-         | None -> None
-         | Some n -> const_of_target ~truncate_output ~target (`Int n))
+    let result = Option.bind (const_as_integer c) (fun x ->
+      match op with Ops.Neg -> Some (Z.neg x) | Ops.Trunc -> Some x | _ -> None) in
+    Option.bind result (fun n -> const_of_target ~truncate_output ~target (`Int n))
 
-let exec_binary ?(truncate_output = false) op (target : Dtype.t) a b =
-  if Dtype.is_bool target then
-    match op with
-    | Ops.Cmplt | Ops.Cmpne | Ops.Cmpeq ->
-        (match op with
-         (* CMPEQ/CMPNE follow IEEE for floats (nan <> nan, 0.0 = -0.0);
-            for ints/bool the structural [Const.equal] is value equality. *)
-         | Ops.Cmpeq ->
-             (match Const.view a, Const.view b with
-              | Const.Float x, Const.Float y -> Some (Const.bool (x = y))
-              | _ -> Some (Const.bool (Const.equal a b)))
-         | Ops.Cmpne ->
-             (match Const.view a, Const.view b with
-              | Const.Float x, Const.Float y -> Some (Const.bool (x <> y))
-              | _ -> Some (Const.bool (not (Const.equal a b))))
-         (* CMPLT compares ints exactly; floats compare under IEEE. *)
-         | Ops.Cmplt ->
-             (match const_as_int a, const_as_int b with
-              | Some x, Some y -> Some (Const.bool (x < y))
-              | _ ->
-                  (match const_as_float a, const_as_float b with
-                   | Some x, Some y -> Some (Const.bool (x < y))
-                   | _ -> None))
-         | _ -> None)
-    | Ops.And | Ops.Or | Ops.Xor ->
-        (match const_as_int a, const_as_int b with
-         | Some x, Some y ->
-             let r = match op with
-               | Ops.And -> x land y
-               | Ops.Or -> x lor y
-               | Ops.Xor -> x lxor y
-               | _ -> 0
-             in
-             Some (Const.bool (r <> 0))
-         | _ -> None)
-    | _ -> None
+let exec_binary ~truncate_output op (target : Dtype.t) a b =
+  if Ops.Group.is_comparison op then
+    let comparison = compare_constants a b in
+    let result = match op with
+      | Ops.Cmpeq -> comparison = Some 0
+      | Ops.Cmpne -> comparison <> Some 0
+      | Ops.Cmplt -> Option.fold ~none:false ~some:(fun c -> c < 0) comparison
+      | _ -> assert false
+    in
+    Some (Const.bool result)
   else if Dtype.is_float target then
     match const_as_float a, const_as_float b with
     | Some x, Some y ->
-        let r = match op with
+        let result = match op with
           | Ops.Add -> Some (x +. y)
           | Ops.Sub -> Some (x -. y)
           | Ops.Mul -> Some (x *. y)
-          | Ops.Fdiv ->
-              Some (if y = 0.0 then Float.copy_sign Float.infinity x else x /. y)
-          | Ops.Max -> Some (max x y)
-          | Ops.Pow ->
-              (try
-                 let p = x ** y in
-                 if Float.is_nan p || not (Float.is_finite p) then
-                   if x > 0.0 && not (Float.is_finite y) then
-                     if abs_float x > 1.0 = (y > 0.0) then Some Float.infinity
-                     else Some 0.0
-                   else Some Float.nan
-                 else Some p
-               with _ -> Some Float.nan)
+          | Ops.Fdiv -> Some (x /. y)
+          | Ops.Max -> Some (if x < y then y else x)
+          | Ops.Pow -> Some (if x = 0. && y < 0. then Float.infinity else x ** y)
           | _ -> None
         in
-        (match r with
-         | None -> None
-         | Some f -> const_of_target ~truncate_output ~target (`Float f))
+        Option.bind result (fun f -> const_of_target ~truncate_output ~target (`Float f))
     | _ -> None
   else
-    match const_as_int a, const_as_int b with
+    match const_as_integer a, const_as_integer b with
     | Some x, Some y ->
-        let r = match op with
-          | Ops.Add -> Some (x + y)
-          | Ops.Sub -> Some (x - y)
-          | Ops.Mul -> Some (x * y)
-          | Ops.Cdiv -> Some (if y = 0 then 0 else x / y)
-          | Ops.Cmod -> Some (if y = 0 then x else x - (x / y) * y)
-          | Ops.Floordiv -> Some (if y = 0 then 0 else int_floor_div x y)
-          | Ops.Floormod -> Some (if y = 0 then x else int_floor_mod x y)
-          | Ops.Max -> Some (max x y)
-          | Ops.Xor -> Some (x lxor y)
-          | Ops.Or -> Some (x lor y)
-          | Ops.And -> Some (x land y)
-          | Ops.Shl -> Some (x lsl y)
-          | Ops.Shr -> Some (x asr y)
+        let result = match op with
+          | Ops.Add -> Some (Z.add x y)
+          | Ops.Sub -> Some (Z.sub x y)
+          | Ops.Mul -> Some (Z.mul x y)
+          | Ops.Cdiv -> Some (if Z.equal y Z.zero then Z.zero else Z.div x y)
+          | Ops.Cmod -> Some (if Z.equal y Z.zero then x else Z.rem x y)
+          | Ops.Floordiv -> Some (if Z.equal y Z.zero then Z.zero else Z.fdiv x y)
+          | Ops.Floormod -> Some (if Z.equal y Z.zero then x else Z.sub x (Z.mul (Z.fdiv x y) y))
+          | Ops.Max -> Some (Z.max x y)
+          | Ops.Xor -> Some (Z.logxor x y)
+          | Ops.Or -> Some (Z.logor x y)
+          | Ops.And -> Some (Z.logand x y)
+          | Ops.Shl -> Some (Z.shift_left x (Z.to_int y))
+          | Ops.Shr -> Some (Z.shift_right x (Z.to_int y))
           | _ -> None
         in
-        (match r with
-         | None -> None
-         | Some n -> const_of_target ~truncate_output ~target (`Int n))
+        Option.bind result (fun n -> const_of_target ~truncate_output ~target (`Int n))
     | _ -> None
 
-let exec_ternary ?(truncate_output = false) op (target : Dtype.t) a b c =
+let exec_ternary ~truncate_output op (target : Dtype.t) a b c =
   match op with
   | Ops.Where ->
-      (match Const.view a with
-       | Const.Bool true -> Some b
-       | Const.Bool false -> Some c
-       | Const.Int n -> Some (if n <> 0L then b else c)
-       | _ -> None)
+      let condition = match Const.view a with
+        | Const.Bool b -> Some b
+        | Const.Int n -> Some (Z.sign n <> 0)
+        | Const.Float f -> Some (f <> 0.)
+        | Const.Invalid -> None
+      in
+      Option.map (fun condition -> if condition then b else c) condition
   | Ops.Mulacc ->
       if Dtype.is_float target then
         (match const_as_float a, const_as_float b, const_as_float c with
@@ -3466,9 +3401,9 @@ let exec_ternary ?(truncate_output = false) op (target : Dtype.t) a b c =
              const_of_target ~truncate_output ~target (`Float ((x *. y) +. z))
          | _ -> None)
       else
-        (match const_as_int a, const_as_int b, const_as_int c with
+        (match const_as_integer a, const_as_integer b, const_as_integer c with
          | Some x, Some y, Some z ->
-             const_of_target ~truncate_output ~target (`Int ((x * y) + z))
+             const_of_target ~truncate_output ~target (`Int (Z.add (Z.mul x y) z))
          | _ -> None)
   | _ -> None
 
@@ -3623,7 +3558,7 @@ let map_arg_uops f = function
   | a -> a
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 1
+let export_version = 2
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

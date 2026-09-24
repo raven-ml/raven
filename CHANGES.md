@@ -294,6 +294,11 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.exec_alu` preserves full-width integer values and exact weak-integer
+  intermediates. Literal matching avoids float rounding; weak promotion
+  preserves padded values. `Const.Int` now carries a `Z.t` mathematical value.
+- `Dtype.min` and `Dtype.max` return exact `Z.t` integer bounds, including
+  weak integers, and finite limits for FP8 formats without infinities.
 - AMD and NV devices automatically fall back to PCI when kernel-driver
   interface initialization fails. Explicit `AMD_IFACE`/`NV_IFACE` selections
   continue to restrict the device to the requested interface.

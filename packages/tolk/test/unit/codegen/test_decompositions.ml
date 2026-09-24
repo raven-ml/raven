@@ -38,7 +38,7 @@ let contains_op op (u : Uop.t) =
 let const_int64_value node =
   match Uop.op node, Uop.arg node with
   | Ops.Const, Uop.Arg.Value v ->
-      (match Const.view v with Const.Int n -> Some n | _ -> None)
+      (match Const.view v with Const.Int n -> Some (Z.to_int64 n) | _ -> None)
   | _ -> None
 
 let const_float_value node =
@@ -197,7 +197,7 @@ let long_const_halves_are_truncated_to_int32 () =
   let const_int u =
     match Uop.op u, Uop.arg u with
     | Ops.Const, Uop.Arg.Value v ->
-        (match Const.view v with Const.Int n -> Some n | _ -> None)
+        (match Const.view v with Const.Int n -> Some (Z.to_int64 n) | _ -> None)
     | _ -> None
   in
   is_true ~msg:"low and high halves are signed int32 truncated"

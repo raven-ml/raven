@@ -59,7 +59,7 @@
  (name test_schedule_rangeify)
  (modules test_schedule_rangeify)
  (package tolk)
- (libraries unix tolk tolk.uop windtrap))
+ (libraries zarith unix tolk tolk.uop windtrap))
 
 (test
  (name test_schedule_scaling)

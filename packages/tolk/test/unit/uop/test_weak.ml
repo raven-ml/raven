@@ -18,7 +18,7 @@ let lower u = src (rewrite (Weak.pm_lower_index_dtype ()) (U.sink [ u ])) 0
 let const_int_of node =
   match U.op node, U.arg node with
   | Ops.Const, U.Arg.Value c -> (
-      match C.view c with C.Int n -> Some (Int64.to_int n) | _ -> None)
+      match C.view c with C.Int n -> Some (Z.to_int n) | _ -> None)
   | _ -> None
 
 let i32 n = U.const (C.int D.int32 n)

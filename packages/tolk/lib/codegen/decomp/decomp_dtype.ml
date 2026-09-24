@@ -7,12 +7,6 @@
 
 open Tolk_uop
 
-let int64_to_int_checked n =
-  if Int64.compare n (Int64.of_int min_int) < 0
-     || Int64.compare n (Int64.of_int max_int) > 0
-  then None
-  else Some (Int64.to_int n)
-
 let const_float_dt dt x = Uop.const (Const.float dt x)
 
 let fconst_like node x =
@@ -58,7 +52,7 @@ let const_of_node_int node =
   match Uop.op node, Uop.arg node with
   | Ops.Const, Uop.Arg.Value c ->
       (match Const.view c with
-       | Const.Int n -> int64_to_int_checked n
+       | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
        | _ -> None)
   | _ -> None
 
@@ -467,7 +461,7 @@ let rule_long_const =
         let narrow = long_to_int_dtype dv in
         (match Uop.node_tag n, Const.view v with
          | Some "1", Const.Int bits ->
-             let hi = Int64.shift_right_logical bits 32 in
+             let hi = Z.to_int64 (Z.extract bits 32 32) in
              let hi =
                match Dtype.truncate narrow (`Int hi) with
                | `Int n -> n
@@ -475,7 +469,7 @@ let rule_long_const =
              in
              Some (Uop.const (Const.int64 narrow hi))
          | (Some _ | None), Const.Int bits ->
-             let lo = Int64.logand bits 0xFFFFFFFFL in
+             let lo = Z.to_int64 (Z.extract bits 0 32) in
              let lo =
                match Dtype.truncate narrow (`Int lo) with
                | `Int n -> n

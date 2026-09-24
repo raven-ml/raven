@@ -8,4 +8,4 @@
   test_serialize
   test_weak)
  (package tolk)
- (libraries tolk.uop windtrap unix))
+ (libraries zarith tolk.uop windtrap unix))

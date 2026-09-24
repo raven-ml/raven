@@ -434,7 +434,7 @@ let launch_dim u =
   match U.arg u with
   | U.Arg.Value c ->
       (match Const.view c with
-       | Const.Int n -> U.Launch_int (Int64.to_int n)
+       | Const.Int n -> U.Launch_int (Z.to_int n)
        | Const.Float f -> U.Launch_float f
        | _ -> U.Launch_sym u)
   | _ -> U.Launch_sym u
@@ -488,7 +488,7 @@ let launch_dims t var_vals =
     match U.arg d with
     | U.Arg.Value c ->
         (match Const.view c with
-         | Const.Int n -> Int64.to_int n
+         | Const.Int n -> Z.to_int n
          | Const.Bool b -> if b then 1 else 0
          | _ -> invalid_arg "launch dimension is not an integer expression")
     | _ ->

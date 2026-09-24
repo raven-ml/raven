@@ -61,7 +61,7 @@ module P = struct
     match U.op u, U.Arg.as_value (U.arg u) with
     | Ops.Const, Some c -> (
         match Const.view c with
-        | Int n -> Some (Int64.to_int n)
+        | Int n -> Some (Z.to_int n)
         | _ -> None)
     | _ -> None
 

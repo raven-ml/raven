@@ -226,18 +226,14 @@ val sum_acc_dtype : t -> t
 
 (** {1:bounds Bounds} *)
 
-type bound =
-  [ `Bool of bool | `SInt of int64 | `UInt of int64 | `Float of float ]
+type bound = [ `Bool of bool | `Int of Z.t | `Float of float ]
 (** Numeric bounds for dtypes. Returned by {!min} and {!max}.
 
     - [`Bool b] for boolean bounds.
-    - [`SInt n] for signed integer bounds, including {!Weakint}, which reports
-      the [Int64] range as an approximation of its [800]-bit sentinel
-      width.
-    - [`UInt n] for unsigned integer bounds. Values are raw 64-bit unsigned bit
-      patterns stored in an [int64] (for example {!Uint64}'s max is
-      [`UInt Int64.minus_one]).
-    - [`Float f] for floating-point bounds ([neg_infinity] and [infinity]). *)
+    - [`Int n] for exact signed or unsigned integer bounds. {!Weakint}
+      reports the limits of its [800]-bit sentinel width.
+    - [`Float f] for floating-point bounds. FP8 formats without infinities
+      report finite limits; other formats report infinities. *)
 
 val min : t -> bound
 (** [min dt] is the smallest value representable by [dt]. {!Uint128} and
@@ -348,6 +344,13 @@ val truncate_int : t -> int -> int
     Raises [Invalid_argument] if [dt] is not an integer or bool type.
 
     See also {!truncate_float}. *)
+
+val truncate_integer : t -> Z.t -> Z.t
+(** [truncate_integer dt x] reduces [x] to the range of [dt] using two's
+    complement wrapping. {!Weakint} leaves [x] unchanged. {!Bool} maps zero
+    to zero and every other value to one.
+
+    Raises [Invalid_argument] if [dt] is not an integer or bool dtype. *)
 
 (** {1:storage Storage conversion}
 

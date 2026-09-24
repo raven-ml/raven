@@ -951,10 +951,31 @@ let constant_tests =
           check_floats [| 1.5; 1.5; 1.5; 1.5; 1.5; 1.5 |] t);
     ]
 
+let numerical_edge_tests =
+  let check expected t =
+    let actual = Run.to_float_array t in
+    equal int (Array.length expected) (Array.length actual);
+    Array.iteri
+      (fun i x ->
+        let y = actual.(i) in
+        if Float.is_nan x then is_true (Float.is_nan y)
+        else if Float.is_infinite x then equal float_exact x y
+        else if not (Float.abs (x -. y) <= 1e-4 *. max 1. (Float.abs x)) then
+          failf "element %d: expected %g, got %g" i x y)
+      expected
+  in
+  group "numerical edges"
+    [
+      test "weak promotion preserves padding" (fun () ->
+          let padded = Mv.pad (Mv.reshape (T.i 3) [ 1 ]) [ (1, 1) ] in
+          check [| 1.; 4.; 1. |] (El.add padded (vec [| 1.; 1.; 1. |])));
+    ]
+
 let () =
   run "Tolk_frontend_run"
     [
       aliasing_tests;
+      numerical_edge_tests;
       constant_tests;
       elementwise_tests;
       select_tests;

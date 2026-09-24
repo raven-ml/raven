@@ -263,15 +263,13 @@ let fdiv a b =
 
 let iceildiv a b = -fdiv (-a) b
 
-(* Whether every value in [[lo, hi]] is representable in [dt]. Dtypes with no
-   integer bounds impose no constraint. *)
+(* Whether the endpoints of [[lo, hi]] fit the numeric limits of [dt]. *)
 let range_fits dt lo hi =
   match (D.min dt, D.max dt) with
-  | `SInt dlo, `SInt dhi ->
-      Int64.compare (Int64.of_int lo) dlo >= 0
-      && Int64.compare (Int64.of_int hi) dhi <= 0
-  | `UInt _, `UInt dhi ->
-      lo >= 0 && Int64.unsigned_compare (Int64.of_int hi) dhi <= 0
+  | `Int dlo, `Int dhi ->
+      Z.compare (Z.of_int lo) dlo >= 0 && Z.compare (Z.of_int hi) dhi <= 0
+  | `Float dlo, `Float dhi ->
+      float_of_int lo >= dlo && float_of_int hi <= dhi
   | _, _ -> true
 
 let arange ?stop ?(step = 1) ?dtype start =

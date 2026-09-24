@@ -17,7 +17,7 @@ let const_int_v u =
   match Uop.op u, Uop.arg u with
   | Ops.Const, Uop.Arg.Value c ->
       (match Const.view c with
-       | Const.Int n -> Some (Int64.to_int n)
+       | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
        | _ -> None)
   | _ -> None
 
@@ -65,8 +65,9 @@ let is_zero_const node =
   match U.op node, U.arg node with
   | Ops.Const, U.Arg.Value c -> (
       match Const.view c with
-      | Const.Int 0L | Const.Float 0.0 | Const.Bool false -> true
-      | Const.Int _ | Const.Float _ | Const.Bool _ | Const.Invalid -> false)
+      | Const.Int n -> Z.equal n Z.zero
+      | Const.Float 0.0 | Const.Bool false -> true
+      | Const.Float _ | Const.Bool _ | Const.Invalid -> false)
   | _ -> false
 
 let invalid_where node =
@@ -179,8 +180,8 @@ let ceil_div a b = if a > 0 then ((a + b - 1) / b) else -(-a / b)
 
 let int_bounds (v : Dtype.t) =
   match Dtype.min v, Dtype.max v with
-  | `SInt lo, `SInt hi -> Some (Int64.to_int lo, Int64.to_int hi)
-  | `UInt lo, `UInt hi -> Some (Int64.to_int lo, Int64.to_int hi)
+  | `Int lo, `Int hi when Z.fits_int lo && Z.fits_int hi ->
+      Some (Z.to_int lo, Z.to_int hi)
   | _ -> None
 
 let overflows u (v : Dtype.t) =
@@ -190,7 +191,7 @@ let overflows u (v : Dtype.t) =
 
 let const_as_int c =
   match Const.view c with
-  | Const.Int n -> Some (Int64.to_int n)
+  | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
   | Const.Bool b -> Some (if b then 1 else 0)
   | Const.Float _ | Const.Invalid -> None
 
@@ -234,17 +235,13 @@ let scalar_const_as_int u =
   | Some c -> const_as_int c
   | None -> None
 
-let const_value_of_const c =
-  match Const.view c with
-  | Const.Bool b -> Uop.Const_scalar (`Bool b)
-  | Const.Int n -> Uop.Const_scalar (`Int n)
-  | Const.Float f -> Uop.Const_scalar (`Float f)
-  | Const.Invalid -> Uop.Const_invalid
-
 let cast_const target c =
   match Const.view c with
   | Const.Bool b -> Some (Const.of_scalar target (`Bool b))
-  | Const.Int n -> Some (Const.of_scalar target (`Int n))
+  | Const.Int n ->
+      let value = if Dtype.is_int target || Dtype.is_bool target then
+        Dtype.truncate_integer target n else n in
+      Some (Const.of_view target (Const.Int value))
   | Const.Float f -> Some (Const.of_scalar target (`Float f))
   | Const.Invalid -> None
 
@@ -252,8 +249,7 @@ let const_node_from_lanes dtype lanes =
   match lanes with
   | [ c ] -> Uop.const c
   | _ ->
-      Uop.const_of_dtype dtype
-        (Uop.Const_tuple (List.map const_value_of_const lanes))
+      Uop.stack ~dtype (List.map Uop.const lanes)
 
 let is_signed_int_scalar = function
   | Dtype.Int8 | Dtype.Int16 | Dtype.Int32 | Dtype.Int64 -> true
@@ -278,7 +274,7 @@ let raw_bits_of_const src c =
   match Const.view c with
   | Const.Bool b -> Some (if b then 1L else 0L)
   | Const.Int n when Dtype.is_int src || Dtype.is_bool src ->
-      Some (low_bits bytes n)
+      Some (Z.to_int64 (Z.signed_extract n 0 (min 64 (bytes * 8))))
   | Const.Float f ->
       (match src with
        | Dtype.Float32 ->
@@ -360,8 +356,7 @@ let fold_const_alu root =
     | Some [ c ] -> Some (Uop.const c)
     | Some cs ->
         Some
-          (Uop.const_of_dtype dtype
-             (Uop.Const_tuple (List.map const_value_of_const cs)))
+          (Uop.stack ~dtype (List.map Uop.const cs))
 
 (* Build a numeric const matching [c]'s dtype with value [v]. *)
 let const_numeric_like c v =

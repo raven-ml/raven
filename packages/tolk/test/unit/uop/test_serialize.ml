@@ -142,14 +142,14 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
   (* A future format version is rejected without touching the graph. *)
-  let v1 = Marshal.to_string 1 [] in
-  let v2 = Marshal.to_string 2 [] in
-  let p = find_sub blob v1 in
+  let current_version = Marshal.to_string 2 [] in
+  let future_version = Marshal.to_string 3 [] in
+  let p = find_sub blob current_version in
   let bumped =
-    String.sub blob 0 p ^ v2
+    String.sub blob 0 p ^ future_version
     ^ String.sub blob
-        (p + String.length v1)
-        (String.length blob - p - String.length v1)
+        (p + String.length current_version)
+        (String.length blob - p - String.length current_version)
   in
   failure (fun () -> U.import bumped)
 

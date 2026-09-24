@@ -1544,7 +1544,7 @@ val exec_alu : ?truncate_output:bool -> Ops.t -> Dtype.t -> Const.t list -> Cons
     [truncate_output] defaults to [true]: the folded value is narrowed to
     [target]'s value domain (a no-op for {!Dtype.weakint} and
     {!Dtype.weakfloat}, which have no finite width). Symbolic fold sites pass
-    [false] to keep full host precision, deferring narrowing to emission.
+    [false] to keep exact integer intermediates, deferring narrowing to emission.
 
     Bool comparisons follow IEEE for floats (nan differs from nan, [0.0] equals
     [-0.0]); integer division and modulo use C-truncating ({!Ops.Cdiv},
