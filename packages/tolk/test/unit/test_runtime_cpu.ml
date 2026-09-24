@@ -238,11 +238,12 @@ let test_emulated_long_buffer_arithmetic () =
       ~has_local:false ~has_shared:false ~shared_max:0
       ~supports_dtype:(fun dtype -> dtype <> Dtype.int64 && dtype <> Dtype.uint64)
       ~render:(fun ?name:_ _ -> "") () in
-  let values = [| 0L; 4294967295L; Int64.max_int; Int64.min_int; -4294967296L |] in
+  let values = [| 0L; 4294967295L; Int64.max_int; Int64.min_int;
+                  -4294967296L; 4294967299L; 3L |] in
   let increment = 4294967299L and fallback = 8589934595L in
   let sentinel = 0xdeadbeef11223344L in
   let count = Array.length values in
-  List.iter (fun (dtype, guarded, literal) ->
+  List.iter (fun (dtype, guarded, literal, op) ->
       let constant value =
         let weak = U.const (Const.int64 Dtype.weakint value) in
         match literal with
@@ -261,7 +262,11 @@ let test_emulated_long_buffer_arithmetic () =
           let loaded = U.load ~src:(index src (U.valid ~src:offset ~cond)) () in
           U.alu_ternary ~op:Ops.Where ~a:cond ~b:loaded ~c:(constant fallback)
         else U.load ~src:(index src range) () in
-      let value = U.alu_binary ~op:Ops.Add ~lhs:load ~rhs:(constant increment) in
+      let value =
+        let result = U.alu_binary ~op ~lhs:load ~rhs:(constant increment) in
+        if Ops.Group.is_comparison op then
+          U.alu_ternary ~op:Ops.Where ~a:result ~b:(constant fallback) ~c:load
+        else result in
       let offset = if guarded then
           U.valid ~src:range ~cond:(U.O.ne range (U.const_int 0)) else range in
       let store = U.store ~dst:(index dst offset) ~value () in
@@ -286,19 +291,29 @@ let test_emulated_long_buffer_arithmetic () =
       let result = Device.Buffer.as_bytes output in
       let expected = List.init count (fun i ->
           if guarded && i = 0 then sentinel
-          else Int64.add increment
-              (if not guarded then values.(i)
-               else if i = count - 1 then fallback else values.(i + 1))) in
+          else
+            let value = if not guarded then values.(i)
+              else if i = count - 1 then fallback else values.(i + 1) in
+            let cmp = if dtype = Dtype.uint64 then Int64.unsigned_compare value increment
+              else Int64.compare value increment in
+            match op with
+            | Ops.Add -> Int64.add value increment
+            | Ops.Cmplt -> if cmp < 0 then fallback else value
+            | Ops.Cmpeq -> if cmp = 0 then fallback else value
+            | Ops.Cmpne -> if cmp <> 0 then fallback else value
+            | _ -> assert false) in
       let literal_name = match literal with
         | `Weak -> "weak" | `Cast -> "cast" | `Typed -> "typed" in
-      equal ~msg:(Printf.sprintf "%s guarded=%b literal=%s"
-                    (Dtype.to_string dtype) guarded literal_name)
+      equal ~msg:(Printf.sprintf "%s %s guarded=%b literal=%s"
+                    (Ops.name op) (Dtype.to_string dtype) guarded literal_name)
         (list int64) expected
         (List.init count (fun i -> Bytes.get_int64_le result (8 * i))))
-    (List.concat_map (fun literal ->
-         [ Dtype.int64, false, literal; Dtype.uint64, false, literal;
-           Dtype.int64, true, literal; Dtype.uint64, true, literal ])
-       [ `Typed; `Weak; `Cast ])
+    (List.concat_map (fun op ->
+         List.concat_map (fun literal ->
+             [ Dtype.int64, false, literal, op; Dtype.uint64, false, literal, op;
+               Dtype.int64, true, literal, op; Dtype.uint64, true, literal, op ])
+           [ `Typed; `Weak; `Cast ])
+       [ Ops.Add; Ops.Cmplt; Ops.Cmpeq; Ops.Cmpne ])
 
 let test_emulated_fp8_loads () =
   let device = cpu "emulated-fp8-loads" in

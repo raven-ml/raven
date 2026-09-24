@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Emulated `int64` and `uint64` comparisons split both operands before
+  constructing word arithmetic, correctly distinguishing values with equal
+  low words and different high words.
+
 - Compact-float emulation constructs loads, vector slices, and bitcasts from
   their converted integer storage, keeping access dtypes consistent throughout
   lowering and preserving masked reads and writes.

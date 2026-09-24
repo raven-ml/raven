@@ -151,6 +151,20 @@ let long_scalar_variables_are_rejected () =
         (fun () -> ignore (Decomp_dtype.do_dtype_decomps renderer variable)))
     [ Dtype.int64; Dtype.uint64 ]
 
+let long_comparisons_split_before_arithmetic () =
+  List.iter (fun dtype ->
+      let lhs = Uop.const (Const.int64 dtype 4294967299L) in
+      let rhs = Uop.const (Const.int64 dtype 3L) in
+      List.iter (fun op ->
+          let cmp = Uop.alu_binary ~op ~lhs ~rhs in
+          match Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp cmp with
+          | None -> failwith "long comparison did not rewrite"
+          | Some result ->
+              Spec.type_verify Spec.full_spec result;
+              is_false ~msg:"comparison arithmetic receives already split words"
+                (contains_long result)) [ Ops.Cmplt; Ops.Cmpeq; Ops.Cmpne ])
+    [ Dtype.int64; Dtype.uint64 ]
+
 let mul_long_decomposes () =
   let a = Uop.const (Const.int64 Dtype.int64 0x1234567890abcdefL) in
   let b = Uop.const (Const.int64 Dtype.int64 0xfedcba9876543210L) in
@@ -871,6 +885,8 @@ let () =
           test "MUL lowers" mul_long_decomposes;
           test "IDIV lowers" idiv_long_decomposes;
           test "MOD lowers" mod_long_decomposes;
+          test "long comparisons split before arithmetic"
+            long_comparisons_split_before_arithmetic;
           test "CAST float->long lowers" cast_float_to_long_decomposes;
           test "CAST long->int lowers" cast_long_to_int_decomposes;
           test "BITCAST long->long lowers" bitcast_long_to_long_decomposes;

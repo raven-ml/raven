@@ -709,7 +709,7 @@ let rule_long_bitcast =
 
 (* Comparisons whose operands are long-valued reduce to the (lo, _)
    component of [l2i] on the four tagged halves of the operands. *)
-let rule_long_cmp =
+let rule_long_cmp rewrite =
   let open Upat in
   ops ~name:"c" [ Ops.Cmplt; Ops.Cmpeq; Ops.Cmpne ] => fun bs ->
     let n = bs $ "c" in
@@ -726,8 +726,8 @@ let rule_long_cmp =
             | Ops.Cmpne -> L2i_cmpne | _ -> assert false
           in
           let args = [
-            Uop.with_tag "0" lhs; Uop.with_tag "1" lhs;
-            Uop.with_tag "0" rhs; Uop.with_tag "1" rhs;
+            rewrite (Uop.with_tag "0" lhs); rewrite (Uop.with_tag "1" lhs);
+            rewrite (Uop.with_tag "0" rhs); rewrite (Uop.with_tag "1" rhs);
           ] in
           Some (fst (l2i l2i_op dt args))
       | _ -> None
@@ -786,7 +786,7 @@ and long_matcher = lazy (
     rule_long_cast_to_long;
     rule_long_cast_from_long;
     rule_long_bitcast;
-    rule_long_cmp;
+    rule_long_cmp rewrite_long;
     rule_long_alu;
   ]))
 
