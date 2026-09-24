@@ -1936,13 +1936,23 @@ let create name =
         | None -> invalid_arg (Printf.sprintf "invalid AMD device %S" name))
     | None -> 0
   in
-  (* The kernel driver is the only automatic choice; the driver-less
-     path is opt-in until it has been validated on hardware (the
-     reference falls back to it automatically). *)
-  match Tolk.Helpers.getenv_str "AMD_IFACE" "KFD" with
-  | "KFD" -> open_device ~name (Kfd_iface.iface (Kfd_iface.create ~device_id))
-  | "PCI" -> open_device ~name (Pci_iface.iface (Pci_iface.create ~device_id))
-  | other ->
-      failwith
-        (Printf.sprintf "AMD_IFACE=%s: unknown interface (use KFD or PCI)"
-           other)
+  let kfd () =
+    let iface = Kfd_iface.iface (Kfd_iface.create ~device_id) in
+    fun () -> open_device ~name iface
+  in
+  let pci () =
+    let iface = Pci_iface.iface (Pci_iface.create ~device_id) in
+    fun () -> open_device ~name iface
+  in
+  let candidates =
+    match Tolk.Helpers.getenv_str "AMD_IFACE" "" with
+    | "" -> [ kfd; pci ]
+    | "KFD" -> [ kfd ]
+    | "PCI" -> [ pci ]
+    | other -> failwith (Printf.sprintf "AMD_IFACE=%s: unknown interface (use KFD or PCI)" other)
+  in
+  (* Select the interface before opening the runtime: a later compiler or
+     queue error must not retry a working kernel driver through PCI. *)
+  let open_runtime = Tolk.Helpers.select_first_inited candidates
+    ~message:(Printf.sprintf "No interface for AMD:%d is available" device_id) in
+  open_runtime ()

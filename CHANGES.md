@@ -294,6 +294,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD and NV devices automatically fall back to PCI when kernel-driver
+  interface initialization fails. Explicit `AMD_IFACE`/`NV_IFACE` selections
+  continue to restrict the device to the requested interface.
 - Metal kernels cast between `bfloat16` and `float32` by bit manipulation, as
   the reference does to avoid a Metal compiler bug with
   `as_type<half>((bfloat)(const))`. tolk rendered native casts. Values are

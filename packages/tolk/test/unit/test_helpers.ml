@@ -31,11 +31,12 @@ let formatting =
           equal string "1.50 GB"
             (Helpers.size_to_str ((1 lsl 30) + (1 lsl 29))));
       test "colored" (fun () ->
-          equal string "\027[31mx\027[0m" (Helpers.colored "x" (Some "red"));
-          equal string "\027[91mx\027[0m" (Helpers.colored "x" (Some "RED"));
-          equal string "\027[46mx\027[0m"
-            (Helpers.colored ~background:true "x" (Some "cyan"));
-          equal string "x" (Helpers.colored "x" None));
+          Helpers.Context_var.with_context [ B (Helpers.no_color, 0) ] (fun () ->
+            equal string "\027[31mx\027[0m" (Helpers.colored "x" (Some "red"));
+            equal string "\027[91mx\027[0m" (Helpers.colored "x" (Some "RED"));
+            equal string "\027[46mx\027[0m"
+              (Helpers.colored ~background:true "x" (Some "cyan"));
+            equal string "x" (Helpers.colored "x" None)));
       test "ansilen ignores escape sequences" (fun () ->
           equal int 10
             (Helpers.ansilen (Helpers.colored "batched 26" (Some "cyan")));
@@ -68,4 +69,41 @@ let counters =
           Device.Buffer.deallocate buf);
     ]
 
-let () = run __FILE__ [ formatting; counters ]
+let select candidates =
+  Tolk.Helpers.select_first_inited ~message:"No interface is available" candidates
+
+let () =
+  run __FILE__
+    [ formatting; counters;
+      test "prefers the kernel driver without initializing PCI" (fun () ->
+          let calls = ref [] in
+          let create name () = calls := name :: !calls; name in
+          equal string "KFD" (select [ create "KFD"; create "PCI" ]);
+          equal (list string) [ "KFD" ] !calls);
+      test "falls back after driver initialization fails" (fun () ->
+          let calls = ref [] in
+          let driver () = calls := "NVK" :: !calls; failwith "driver unavailable" in
+          let pci () = calls := "PCI" :: !calls; "PCI" in
+          equal string "PCI" (select [ driver; pci ]);
+          equal (list string) [ "PCI"; "NVK" ] !calls);
+      test "preserves the error from an explicitly selected interface" (fun () ->
+          raises (Failure "PCI unavailable") (fun () ->
+              select [ (fun () -> failwith "PCI unavailable") ]));
+      test "reports failures from every attempted interface" (fun () ->
+          raises
+            (Failure
+               "No interface is available\nFailure(\"driver unavailable\")\nFailure(\"PCI unavailable\")")
+            (fun () ->
+              select
+                [ (fun () -> failwith "driver unavailable");
+                  (fun () -> failwith "PCI unavailable") ]));
+      test "does not retry after the selected runtime fails" (fun () ->
+          let pci_attempted = ref false in
+          let driver () = fun () -> failwith "queue initialization failed" in
+          let pci () = pci_attempted := true; fun () -> () in
+          let open_runtime = select [ driver; pci ] in
+          raises (Failure "queue initialization failed") open_runtime;
+          equal bool false !pci_attempted);
+      test "does not treat cancellation as an unavailable driver" (fun () ->
+          raises Sys.Break (fun () -> select [ (fun () -> raise Sys.Break); (fun () -> ()) ]));
+    ]

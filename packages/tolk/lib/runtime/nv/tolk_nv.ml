@@ -2230,12 +2230,15 @@ let create name =
         | None -> invalid_arg (Printf.sprintf "invalid NV device %S" name))
     | None -> 0
   in
-  (* The kernel driver is the only automatic choice; the driver-less path is
-     opt-in until it has been validated on hardware (the reference falls back
-     to it automatically). *)
-  match Tolk.Helpers.getenv_str "NV_IFACE" "NVK" with
-  | "NVK" -> open_device ~name (Nvk_iface.iface ~device_id)
-  | "PCI" -> open_device ~name (Pci_iface.iface (Pci_iface.create ~device_id))
-  | other ->
-      failwith
-        (Printf.sprintf "NV_IFACE=%s: unknown interface (use NVK or PCI)" other)
+  let nvk () = Nvk_iface.iface ~device_id in
+  let pci () = Pci_iface.iface (Pci_iface.create ~device_id) in
+  let candidates =
+    match Tolk.Helpers.getenv_str "NV_IFACE" "" with
+    | "" -> [ nvk; pci ]
+    | "NVK" -> [ nvk ]
+    | "PCI" -> [ pci ]
+    | other -> failwith (Printf.sprintf "NV_IFACE=%s: unknown interface (use NVK or PCI)" other)
+  in
+  let iface = Tolk.Helpers.select_first_inited candidates
+    ~message:(Printf.sprintf "No interface for NV:%d is available" device_id) in
+  open_device ~name iface

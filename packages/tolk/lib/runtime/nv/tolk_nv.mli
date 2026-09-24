@@ -547,10 +547,10 @@ end
     interface does, so the rest of the runtime is unchanged on top.
 
     Opening the device programs its firmware and engine registers
-    directly, so it requires Linux, PCI access rights, and — until the
-    path is validated on hardware — is reached only through the
-    [NV_IFACE=PCI] opt-in. The device probe below is pure and runs
-    anywhere. *)
+    directly, so it requires Linux and PCI access rights. The runtime uses
+    this interface when explicitly selected or when kernel-driver interface
+    initialization fails (see {!create}). The device probe below is pure
+    and runs anywhere. *)
 module Pci_iface : sig
   type t
   (** The type for driver-less PCI interfaces. *)
@@ -750,12 +750,18 @@ val on_device_hang :
 val create : string -> Tolk.Device.t
 (** [create name] opens the NVIDIA device [name] names — ["NV"] for the
     first visible device, ["NV:1"] for the second, and so on — through
-    the kernel driver and is its runtime: a compute and a copy channel,
+    the selected interface and is its runtime: a compute and a copy channel,
     an allocator staging host transfers through the copy engine,
     kernels compiled to the exact chip's binary format and dispatched
     through {!Program.call}, execution timing from device clocks, and
     fault reports raised through the completion timeline when the
     device hangs.
 
-    Raises [Failure] when the driver or the device is unavailable, and
-    [Invalid_argument] when [name] carries a malformed device index. *)
+    With [NV_IFACE] unset or empty, opens the kernel-driver interface first
+    and falls back to direct PCI access if interface initialization fails.
+    [NV_IFACE=NVK] or [NV_IFACE=PCI] selects only that interface. A later
+    runtime initialization failure does not trigger fallback.
+
+    Raises [Failure] when no requested interface can open the device, or
+    [NV_IFACE] names an unknown interface, and [Invalid_argument] when [name]
+    carries a malformed device index. *)

@@ -17,6 +17,24 @@ let getenv_str name default =
   | Some s when s <> "" -> s
   | _ -> default
 
+let select_first_inited ~message candidates =
+  let rec select errors = function
+    | [] ->
+        (match errors with
+         | [ exn, backtrace ] -> Printexc.raise_with_backtrace exn backtrace
+         | _ ->
+             let reasons = List.rev_map (fun (exn, _) -> Printexc.to_string exn) errors in
+             failwith (String.concat "\n" (message :: reasons)))
+    | create :: rest ->
+        match create () with
+        | value -> value
+        | exception (Out_of_memory | Stack_overflow | Sys.Break as exn) -> raise exn
+        | exception exn ->
+            let backtrace = Printexc.get_raw_backtrace () in
+            select ((exn, backtrace) :: errors) rest
+  in
+  select [] candidates
+
 let allow_half8 = getenv "ALLOW_HALF8" 0 <> 0
 
 (* Canonical device name: uppercase the backend part and strip a ":0"

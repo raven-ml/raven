@@ -1,5 +1,6 @@
 (tests
  (names
+  test_helpers
   test_program_spec
   test_cstyle
   test_diskcache
@@ -8,9 +9,9 @@
   test_engine_schedule
   test_elf
   test_runtime_cpu
-  test_runtime_search
-  test_helpers)
+  test_runtime_search)
  (modules
+  test_helpers
   test_program_spec
   test_cstyle
   test_diskcache
@@ -19,8 +20,7 @@
   test_engine_schedule
   test_elf
   test_runtime_cpu
-  test_runtime_search
-  test_helpers)
+  test_runtime_search)
  (package tolk)
  (libraries unix tolk tolk.uop tolk.cpu windtrap))
 

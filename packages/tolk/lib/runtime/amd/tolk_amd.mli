@@ -692,9 +692,8 @@ end
 
     Everything here needs Linux, root or equivalent capabilities, and
     the device firmware on disk; construction raises [Failure]
-    otherwise. This path has not been validated on hardware yet, so the
-    device runtime uses it only when the environment selects it (see
-    {!create}). *)
+    otherwise. The device runtime uses it when explicitly selected or
+    when kernel-driver interface initialization fails (see {!create}). *)
 module Pci_iface : sig
   type mem = (Am_boot.t, Amdev.Am_page_table.t) System.Pci_iface_base.meta
   (** The type for driver metadata of an allocation. *)
@@ -786,11 +785,11 @@ val create : string -> Tolk.Device.t
     provides one, and fall back to host-visible device memory
     otherwise.
 
-    The [AMD_IFACE] environment variable selects how the GPU is
-    reached: [KFD] (the default) goes through the Linux kernel driver
-    ({!Kfd_iface}); [PCI] drives the GPU directly over PCI with no
-    kernel driver ({!Pci_iface}) — deliberately opt-in, never a
-    fallback, until that path has been validated on hardware.
+    With [AMD_IFACE] unset or empty, opens the kernel-driver interface
+    ({!Kfd_iface}) first and falls back to direct PCI access ({!Pci_iface})
+    if interface initialization fails. [AMD_IFACE=KFD] or [AMD_IFACE=PCI]
+    selects only that interface. A later runtime initialization failure
+    does not trigger fallback.
 
     Raises [Failure] when the selected interface cannot open the GPU
     (no driver, no such device, or a failed driver-less boot), when
