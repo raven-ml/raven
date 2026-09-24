@@ -146,6 +146,35 @@ let where_closure_keeps_other_conditions () =
   let e = Uop.O.where c0 (Uop.O.where c1 a b) (Uop.O.where c1 b a) in
   equal ~msg:"unrelated condition survives" uop e (rewrite e)
 
+let where_closure_precedes_gate_merge () =
+  let x = var ~name:"x" ~lo:0 ~hi:10 () in
+  let y = var ~name:"y" ~lo:0 ~hi:10 () in
+  let a = var ~name:"a" ~lo:0 ~hi:3 () in
+  let cond = Uop.O.(x < Uop.const_int 5) in
+  let gate = Uop.O.(y < Uop.const_int 7) in
+  let combined = Uop.alu_binary ~op:Ops.And ~lhs:cond ~rhs:gate in
+  let expression = Uop.O.where cond
+      (Uop.O.where combined a (Uop.const_int 0)) (Uop.const_int 0) in
+  let result = Uop.graph_rewrite
+      (Upat.Pattern_matcher.rewrite Symbolic.symbolic) expression in
+  equal uop (Uop.O.where combined a (Uop.const_int 0)) result
+
+let nonzero_where_becomes_a_guard () =
+  let gate = var ~name:"gate" ~lo:0 ~hi:1 ~dtype:Dtype.bool () in
+  let x = var ~name:"x" ~lo:0 ~hi:5 () in
+  let result = rewrite Uop.O.(ne (where gate x (Uop.const_int 0)) (Uop.const_int 0)) in
+  let expected = Uop.alu_binary ~op:Ops.And ~lhs:gate
+      ~rhs:Uop.O.(ne x (Uop.const_int 0)) in
+  equal uop expected result
+
+let constant_where_guard_stays_out_of_index_validity () =
+  let buffer = Uop.param ~slot:0 ~dtype:Dtype.float32
+      ~shape:(Uop.const_int 8) () in
+  let value = Uop.index ~ptr:buffer ~idxs:[ Uop.const_int 0 ] () in
+  let expression = Uop.O.where (Uop.const_bool false) value (Uop.zero_like value) in
+  equal (option uop) None
+    (Upat.Pattern_matcher.rewrite Symbolic.pm_move_where_on_load expression)
+
 let invalid_gate_comparison_gates_nonweak_invalid () =
   let cond =
     var ~name:"valid" ~lo:0 ~hi:1 ~dtype:Dtype.bool ()
@@ -279,6 +308,10 @@ let simplify_driver_groups =
           where_closure_folds_nested_condition;
         test "where closure keeps unrelated conditions"
           where_closure_keeps_other_conditions;
+        test "where closure precedes gate merging" where_closure_precedes_gate_merge;
+        test "a nonzero where becomes a guard" nonzero_where_becomes_a_guard;
+        test "constant guards stay out of index validity"
+          constant_where_guard_stays_out_of_index_validity;
         test "non-weak invalid comparison gates bool result"
           invalid_gate_comparison_gates_nonweak_invalid;
         test "direct invalid comparison keeps bool dtype"

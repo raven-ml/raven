@@ -113,7 +113,8 @@ let where_on_load cond value =
           let idx_ranges = U.ranges idx in
           let idx_indexes = index_nodes idx in
           let can_move clause =
-            ranges_subset (U.ranges clause) idx_ranges
+            U.op clause <> Ops.Const
+            && ranges_subset (U.ranges clause) idx_ranges
             && List.for_all
                  (fun node ->
                    U.op node <> Ops.Index
@@ -1171,18 +1172,6 @@ let symbolic_simple : Upat.Pattern_matcher.t =
          alu [ alu [ x; x2 ] Ops.Mul; op ~src:[ x2 ] Ops.Reciprocal ] Ops.Mul)
        (fun x _ -> Some x));
 
-    (* a.where(b.where(c, d), d) -> (a & b).where(c, d). *)
-    (rewrite4
-       (fun a b c d -> where a (where b c d) d)
-       (fun a b c d ->
-         Some (Uop.O.where (Uop.alu_binary ~op:Ops.And ~lhs:a ~rhs:b) c d)));
-
-    (* a.where(c, b.where(c, d)) -> (a | b).where(c, d). *)
-    (rewrite4
-       (fun a b c d -> where a c (where b c d))
-       (fun a b c d ->
-         Some (Uop.O.where (Uop.alu_binary ~op:Ops.Or ~lhs:a ~rhs:b) c d)));
-
     (* bool max(x, y) -> x | y. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      alu [ x; y ] Ops.Max => fun bs ->
@@ -1584,6 +1573,25 @@ let symbolic : Upat.Pattern_matcher.t =
     (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
      where cond (var "t") (var "f") => fun bs ->
        fold_where_closure (bs $ "cond") (bs $ "t") (bs $ "f"));
+
+    (* A nonzero selected value requires both its guard and its own test. *)
+    (let gate = var "gate" and x = var "x" in
+     O.ne (where gate x zero) zero => fun bs ->
+       let gate = bs $ "gate" and x = bs $ "x" in
+       Some (Uop.alu_binary ~op:Ops.And ~lhs:gate
+               ~rhs:(Uop.O.ne x (Uop.zero_like x))));
+
+    (* a.where(b.where(c, d), d) -> (a & b).where(c, d). *)
+    (rewrite4
+       (fun a b c d -> where a (where b c d) d)
+       (fun a b c d ->
+         Some (Uop.O.where (Uop.alu_binary ~op:Ops.And ~lhs:a ~rhs:b) c d)));
+
+    (* a.where(c, b.where(c, d)) -> (a | b).where(c, d). *)
+    (rewrite4
+       (fun a b c d -> where a c (where b c d))
+       (fun a b c d ->
+         Some (Uop.O.where (Uop.alu_binary ~op:Ops.Or ~lhs:a ~rhs:b) c d)));
 
     (* Binary(where(c, t, f), where(c, tt, ff)) -> where(c, op(t,tt), op(f,ff))
        when at least one branch is const on both sides. *)

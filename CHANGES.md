@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- Conditional simplification folds known branch conditions before merging
+  guards, avoiding redundant predicates. Constant guards stay outside index
+  validity rewrites instead of repeatedly adding masks to the same access.
+
 - Staged weak arithmetic preserves wide integer values when it needs an
   intermediate buffer. `Run.of_bytes` rejects weak dtypes, which have no storage
   representation.
