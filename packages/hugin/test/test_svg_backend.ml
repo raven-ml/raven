@@ -119,6 +119,20 @@ let test_scatter_markers () =
   let svg = render (Hugin.point ~x:sample_x ~y:sample_y ()) in
   contains ~sub:"<path d=\"M" svg
 
+(* Marks read placed values to the host once, as they are made, and draw as host
+   values do. *)
+let test_placed_values () =
+  let reads = !Placed.reads in
+  let spec =
+    Hugin.line ~x:(Placed.place sample_x) ~y:(Placed.place sample_y) ()
+  in
+  equal ~msg:"one read per value" int (reads + 2) !Placed.reads;
+  equal ~msg:"a line" string (render (line ())) (render spec);
+  let rgb = Nx.create Nx.uint8 [| 1; 2; 3 |] [| 255; 0; 0; 0; 0; 255 |] in
+  equal ~msg:"an image" string
+    (render (Hugin.image rgb))
+    (render (Hugin.image (Placed.place rgb)))
+
 let () =
   run "Svg_backend"
     [
@@ -127,6 +141,7 @@ let () =
           test "XML envelope" test_svg_envelope;
           test "dimensions" test_svg_dimensions;
           test "clip region is referenced" test_clip_region;
+          test "placed values" test_placed_values;
         ];
       group "XML escaping"
         [

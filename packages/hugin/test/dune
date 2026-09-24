@@ -13,4 +13,16 @@
   test_vg_svg
   test_vg_pdf)
  (package hugin)
- (libraries hugin hugin.vg hugin.vg.raster hugin.vg.svg hugin.vg.pdf nx nx.io str windtrap))
+ (libraries
+  hugin
+  hugin.vg
+  hugin.vg.raster
+  hugin.vg.svg
+  hugin.vg.pdf
+  nx
+  nx.core
+  nx.buffer
+  nx.effect
+  nx.io
+  str
+  windtrap))

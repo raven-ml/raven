@@ -370,6 +370,22 @@ let test_image_nearest () =
   equal color (0, 0, 255, 255) (rgba img 3 0);
   equal color (255, 255, 255, 255) (rgba img 3 3)
 
+(* A placed image is read to the host once, as the picture is made. *)
+let test_image_placed () =
+  let data =
+    Nx.create Nx.uint8 [| 2; 2; 3 |]
+      [| 255; 0; 0; 0; 255; 0; 0; 0; 255; 255; 255; 255 |]
+  in
+  let draw data =
+    render ~w:4 ~h:4 (Picture.image ~x:0. ~y:0. ~w:4. ~h:4. data)
+  in
+  let expected = draw data in
+  let placed = Placed.place data in
+  let reads = !Placed.reads in
+  let img = draw placed in
+  equal ~msg:"one read" int (reads + 1) !Placed.reads;
+  equal ~msg:"the pixels" (array int) (Nx.to_array expected) (Nx.to_array img)
+
 let test_image_gray_and_alpha () =
   let gray = Nx.create Nx.uint8 [| 1; 2 |] [| 0; 200 |] in
   let img = render ~w:2 ~h:1 (Picture.image ~x:0. ~y:0. ~w:2. ~h:1. gray) in
@@ -463,6 +479,7 @@ let () =
       group "image"
         [
           test "nearest" test_image_nearest;
+          test "placed" test_image_placed;
           test "gray and alpha" test_image_gray_and_alpha;
           test "downscale averages" test_image_downscale_averages;
           test "partially off vg" test_image_partially_off_vg;

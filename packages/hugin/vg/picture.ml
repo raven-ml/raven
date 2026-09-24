@@ -34,6 +34,8 @@ let stroke stroke color path =
 let text font ~size color ~x ~y text =
   if text = "" then Empty else Text { font; size; color; x; y; text }
 
+(* The backends read an image's pixels from host memory, so a value placed on a
+   device is read to the host here, once. *)
 let image ~x ~y ~w ~h data =
   (match Nx.shape data with
   | [| _; _ |] | [| _; _; 1 | 3 | 4 |] -> ()
@@ -41,7 +43,7 @@ let image ~x ~y ~w ~h data =
       invalid_arg
         "Picture.image: expected shape [|rows; cols|] or [|rows; cols; c|] \
          with c in 1, 3, 4");
-  Image { x; y; w; h; data }
+  Image { x; y; w; h; data = Nx.place Nx.Placement.host data }
 
 let group = function [] -> Empty | [ p ] -> p | ps -> Group ps
 

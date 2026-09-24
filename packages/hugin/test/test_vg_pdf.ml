@@ -144,6 +144,13 @@ let test_image () =
   not_contains ~sub:"/SMask" pdf;
   check_xref pdf
 
+let test_image_placed () =
+  let data =
+    Nx.create Nx.uint8 [| 1; 2; 4 |] [| 255; 0; 0; 128; 0; 0; 255; 7 |]
+  in
+  let draw data = render (Picture.image ~x:1. ~y:2. ~w:20. ~h:10. data) in
+  equal ~msg:"as the host value" string (draw data) (draw (Placed.place data))
+
 let test_clip_transform_stamp () =
   let inner = Picture.fill red (Path.rect 0. 0. 1. 1.) in
   let pdf = render (Picture.clip (Path.rect 0. 0. 10. 10.) inner) in
@@ -169,5 +176,6 @@ let () =
       test "alpha" test_alpha_uses_ext_gstate;
       test "text embeds font" test_text_embeds_font;
       test "image" test_image;
+      test "placed image" test_image_placed;
       test "clip, transform and stamp" test_clip_transform_stamp;
     ]

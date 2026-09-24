@@ -18,6 +18,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- Marks and `Hugin_vg.Picture.image` read a placed value to the host once, as
+  they are made. A placed image raised in the raster and PDF backends.
 - Hugin no longer depends on cairo or SDL2. Plots render through
   `hugin.vg` with the bundled Inter font, so `opam install hugin` needs no
   system libraries and a specification produces the same bytes on every

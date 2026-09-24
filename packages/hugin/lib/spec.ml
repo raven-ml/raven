@@ -188,22 +188,32 @@ type t =
   | Decorated of { inner : t; decorations : decoration list }
   | Grid of { rows : t list list; gap : float }
 
-(* Mark constructors *)
+(* Mark constructors
+
+   Data is prepared and drawn on the host, element by element, so a value placed
+   on a device is read to the host once, as the mark is made. *)
+
+let host x = Nx.place Nx.Placement.host x
 
 let line ~x ~y ?color ?line_width ?line_style ?step ?marker ?label ?alpha () =
+  let x = host x and y = host y in
   Mark
     (Line { x; y; color; line_width; line_style; step; marker; label; alpha })
 
 let point ~x ~y ?color ?color_by ?size ?size_by ?marker ?label ?alpha () =
+  let x = host x and y = host y in
+  let color_by = Option.map host color_by
+  and size_by = Option.map host size_by in
   Mark (Point { x; y; color; color_by; size; size_by; marker; label; alpha })
 
 let bar ~x ~height ?width ?(bottom = 0.) ?color ?label ?alpha () =
+  let x = host x and height = host height in
   Mark (Bar { x; height; width; bottom; color; label; alpha })
 
 let hist ~x ?(bins = `Num 10) ?(density = false) ?color ?label () =
-  Mark (Hist { x; bins; density; color; label })
+  Mark (Hist { x = host x; bins; density; color; label })
 
-let image ?extent data = Mark (Image { data; extent })
+let image ?extent data = Mark (Image { data = host data; extent })
 
 let text ~x ~y s ?color ?font_size () =
   Mark (Text_mark { x; y; content = s; color; font_size })
@@ -219,6 +229,8 @@ let abline ~slope ~intercept ?color ?line_width ?line_style ?label ?alpha () =
     (Abline { slope; intercept; color; line_width; line_style; label; alpha })
 
 let fill_between ~x ~y1 ~y2 ?where ?color ?alpha ?label () =
+  let x = host x and y1 = host y1 and y2 = host y2 in
+  let where = Option.map host where in
   Mark (Fill_between { x; y1; y2; where; color; alpha; label })
 
 let hspan ~y0 ~y1 ?color ?alpha ?label () =
@@ -228,21 +240,27 @@ let vspan ~x0 ~x1 ?color ?alpha ?label () =
   Mark (Vspan { x0; x1; color; alpha; label })
 
 let errorbar ~x ~y ~yerr ?xerr ?color ?line_width ?cap_size ?label ?alpha () =
+  let err = function
+    | `Symmetric e -> `Symmetric (host e)
+    | `Asymmetric (lo, hi) -> `Asymmetric (host lo, host hi)
+  in
+  let x = host x and y = host y in
+  let yerr = err yerr and xerr = Option.map err xerr in
   Mark
     (Errorbar { x; y; yerr; xerr; color; line_width; cap_size; label; alpha })
 
 let heatmap ~data ?(annotate = false) ?cmap ?vmin ?vmax ?fmt () =
-  Mark (Heatmap { data; cmap; annotate; vmin; vmax; fmt })
+  Mark (Heatmap { data = host data; cmap; annotate; vmin; vmax; fmt })
 
 let imshow ~data ?(stretch = `Linear) ?cmap ?vmin ?vmax () =
-  Mark (Imshow { data; stretch; cmap; vmin; vmax })
+  Mark (Imshow { data = host data; stretch; cmap; vmin; vmax })
 
 let contour ~data ~x0 ~x1 ~y0 ~y1 ?(levels = `Num 8) ?(filled = false) ?cmap
     ?color ?line_width ?label ?alpha () =
   Mark
     (Contour
        {
-         data;
+         data = host data;
          x0;
          x1;
          y0;
