@@ -183,8 +183,8 @@ let selection_tests =
           (m23 ())
           (mat64 2 2 [| 0.3; 0.9; -1.1; 0.2 |]));
     test "scatter (set) with a repeated index" (fun () ->
-        (* Row 1 repeats an index: the last update wins, and the one it
-           shadows takes no cotangent. *)
+        (* Row 1 repeats an index: the last update wins, and the one it shadows
+           takes no cotangent. *)
         let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 1l |] in
         check_grad2 ~msg:"scatter set, repeated"
           (fun t v -> Nx.scatter ~axis:1 ~indices:idx ~values:v t)
@@ -288,13 +288,16 @@ let linalg_tests =
             let q, r = Nx.qr ~mode:`Reduced x in
             Nx.add (Nx.sum q) (Nx.sum r))
           (Nx.create f64 [| 2; 3; 2 |]
-             [| 1.3; 0.4; -0.6; 1.8; 0.2; -1.1; 0.7; -0.3; 1.1; 0.5; -0.9; 1.4 |]));
+             [|
+               1.3; 0.4; -0.6; 1.8; 0.2; -1.1; 0.7; -0.3; 1.1; 0.5; -0.9; 1.4;
+             |]));
     test "solve_triangular (batched vector rhs)" (fun () ->
         (* Only the lower triangle is read, so the upper entries get a zero
            gradient, and a vector right-hand side keeps its shape. *)
         check_grad2 ~msg:"solve_triangular batched"
           (fun a b -> Nx.solve_triangular a b)
-          (Nx.create f64 [| 2; 2; 2 |] [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
+          (Nx.create f64 [| 2; 2; 2 |]
+             [| 2.0; 9.0; 0.5; 3.0; 1.5; 9.0; -0.7; 2.5 |])
           (Nx.create f64 [| 2; 2 |] [| 1.0; -2.0; 0.5; 3.0 |]));
     test "solve_triangular (unit diagonal)" (fun () ->
         (* With [unit_diag] the diagonal is never read, so its gradient is
