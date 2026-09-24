@@ -162,6 +162,24 @@ let matmul_tests =
     ]
 
 let scan_tests =
+  (* Axes longer than 512 scan in chunks of 256; the lengths straddle that
+     threshold and leave a partial last chunk. *)
+  let values n = Array.init n (fun i -> ((i * 7) + 3) mod 11 - 5) in
+  let prefix f xs =
+    let acc = ref None in
+    Array.map
+      (fun x ->
+        let y = match !acc with None -> x | Some a -> f a x in
+        acc := Some y;
+        y)
+      xs
+  in
+  let floats xs = Array.map float_of_int xs in
+  let param n =
+    T.of_uop
+      (U.param ~slot:0 ~dtype:Tolk_uop.Dtype.float32 ~shape:(T.shape_uop [ n ])
+         ~device:(U.Single "CPU") ())
+  in
   group "scan"
     [
       test "cumsum 1d" (fun () ->
@@ -169,6 +187,46 @@ let scan_tests =
       test "cumsum 2d axis 1" (fun () ->
           check_floats [| 1.; 3.; 6.; 4.; 9.; 15. |]
             (Op.cumsum ~axis:1 (fa ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 4.; 5.; 6. |])));
+      test "long cumsum around the split threshold" (fun () ->
+          List.iter
+            (fun n ->
+              let xs = values n in
+              check_floats (floats (prefix ( + ) xs)) (Op.cumsum (vec (floats xs)));
+              check_ints (prefix ( + ) xs)
+                (Op.cumsum (Run.of_int_array ~shape:[ n ] xs)))
+            [ 512; 513; 1000; 1024; 3000 ]);
+      test "long cumsum of int8 accumulates in int32" (fun () ->
+          let xs = Array.make 1000 100 in
+          check_ints (prefix ( + ) xs)
+            (Op.cumsum (Dt.cast (Run.of_int_array ~shape:[ 1000 ] xs) Tolk_uop.Dtype.int8)));
+      test "long cumsum along a leading axis" (fun () ->
+          let n = 700 in
+          let xs = values (n * 3) in
+          let column c = Array.init n (fun i -> xs.((i * 3) + c)) in
+          let sums = Array.map (fun c -> prefix ( + ) (column c)) [| 0; 1; 2 |] in
+          check_ints
+            (Array.init (n * 3) (fun k -> sums.(k mod 3).(k / 3)))
+            (Op.cumsum ~axis:0 (Run.of_int_array ~shape:[ n; 3 ] xs)));
+      test "long cumprod" (fun () ->
+          let xs = Array.init 600 (fun i -> if i mod 97 = 0 then -1 else 1) in
+          check_ints (prefix ( * ) xs) (Op.cumprod (Run.of_int_array ~shape:[ 600 ] xs)));
+      test "long cummax" (fun () ->
+          let xs = Array.init 1000 (fun i -> ((i * 37) mod 1009) - (i mod 3)) in
+          let values, indices = Op.cummax (Run.of_int_array ~shape:[ 1000 ] xs) in
+          check_ints (prefix max xs) values;
+          let best = ref 0 in
+          check_ints
+            (Array.mapi
+               (fun i x ->
+                 if x > xs.(!best) then best := i;
+                 !best)
+               xs)
+            indices);
+      test "long scans split into chunk, total and combine kernels" (fun () ->
+          equal int 1 (count_kernels (Op.cumsum (param 512)));
+          equal int 3 (count_kernels (Op.cumsum (param 513)));
+          equal int 3 (count_kernels (Op.cumprod (param 1000)));
+          equal int 3 (count_kernels (fst (Op.cummax (param 1000)))));
     ]
 
 let logspace_tests =

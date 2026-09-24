@@ -1129,6 +1129,19 @@ let test_small_int_scans_keep_dtype () =
   check "int16" Nx.int16 [| 1; 2; 3 |];
   check "int16, 600" Nx.int16 (Array.init 600 (fun i -> i * 50))
 
+(* An axis longer than 512 scans in chunks; 1000 leaves a partial chunk. *)
+let test_long_scans_match_eager () =
+  let input f = Nx.create f32 [| 1000; 2 |] (Array.init 2000 f) in
+  let values = input (fun i -> float_of_int ((i * 7 mod 11) - 5)) in
+  let signs = input (fun i -> if i mod 97 = 0 then -1.0 else 1.0) in
+  let check name f x =
+    let g = Rune.jit' f in
+    check_arr ~msg:name (to_arr (f x)) (g x)
+  in
+  check "cumsum" (Nx.cumsum ~axis:0) values;
+  check "cummax" (Nx.cummax ~axis:0) values;
+  check "cumprod" (Nx.cumprod ~axis:0) signs
+
 (* Indexed access *)
 
 (* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
@@ -2824,6 +2837,7 @@ let tests =
       [
         slow "small integer scans keep their dtype"
           test_small_int_scans_keep_dtype;
+        test "long scans match eager" test_long_scans_match_eager;
       ];
     group "indexed access"
       [

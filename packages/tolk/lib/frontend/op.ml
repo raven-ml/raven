@@ -247,19 +247,20 @@ let pad_to ?(value = T.Sint 0) t dims =
 let dtype_min_tensor t = T.of_uop (Uop.const (Const.min_value (Uop.commit_dtype (T.uop t))))
 let dtype_max_tensor t = T.of_uop (Uop.const (Const.max_value (Uop.commit_dtype (T.uop t))))
 
+let identity_element t = function
+  | Ops.Add -> T.i 0
+  | Ops.Mul -> T.i 1
+  | Ops.Max -> dtype_min_tensor t
+  | _ -> invalid_arg "Op.cumalu: op must be Add, Mul, or Max"
+
+(* Each output reduces its own window of [k] inputs, so the work is quadratic
+   in the axis length. *)
 let cumalu t axis op =
   let k = List.nth (T.shape t) axis in
-  let ident =
-    match op with
-    | Ops.Add -> T.i 0
-    | Ops.Mul -> T.i 1
-    | Ops.Max -> dtype_min_tensor t
-    | _ -> invalid_arg "Op.cumalu: op must be Add, Mul, or Max"
-  in
   let xt = Movement.transpose ~dim0:axis ~dim1:(-1) t in
   let nd = T.ndim xt in
   let px = List.init nd (fun idx -> if idx = nd - 1 then Some (k - 1, 0) else None) in
-  let pooled = Movement.pool (pad_value xt px ident) ~k:[ k ] () in
+  let pooled = Movement.pool (pad_value xt px (identity_element t op)) ~k:[ k ] () in
   let reduced =
     match op with
     | Ops.Add -> Reduce.sum ~axis:[ -1 ] pooled
@@ -269,13 +270,49 @@ let cumalu t axis op =
   in
   Movement.transpose ~dim0:axis ~dim1:(-1) reduced
 
-let cumsum ?(axis = 0) t =
-  if T.ndim t = 0 || List.mem 0 (T.shape t) then t
-  else cumalu t (T.resolve_dim t axis) Ops.Add
+(* An axis longer than two chunks scans in two stages: each chunk of [split]
+   on its own, then the chunk totals, whose exclusive prefix is combined back
+   into every chunk. The work drops from quadratic in the axis length to
+   quadratic in [split] per chunk. *)
+let split_cumalu t axis op =
+  let axis = T.resolve_dim t axis in
+  if T.ndim t = 0 || List.mem 0 (T.shape t) then
+    match op with Ops.Add -> Dtype_ops.cast t (T.dtype (Reduce.sum t)) | _ -> t
+  else
+    let split = 256 in
+    let s = List.nth (T.shape t) axis in
+    if s <= split * 2 then cumalu t axis op
+    else
+      let value = identity_element t op in
+      let n = (s + split - 1) / split in
+      let total = n * split in
+      let xt = Movement.transpose ~dim0:axis ~dim1:(-1) t in
+      let nd = T.ndim xt in
+      let last_pad p = List.init nd (fun idx -> if idx = nd - 1 then Some p else None) in
+      let padded = pad_value xt (last_pad (total - s, 0)) value in
+      let chunks = cumalu (Movement.unflatten padded (-1) [ n; split ]) nd op in
+      let totals =
+        Movement.squeeze ~dim:(-1)
+          (Movement.shrink chunks
+             (List.mapi
+                (fun idx d -> if idx = nd then (split - 1, split) else (0, d))
+                (T.shape chunks)))
+      in
+      let base = pad_value (cumalu totals (nd - 1) op) (last_pad (1, -1)) value in
+      let scanned =
+        Movement.flatten ~start_dim:(-2)
+          (T.alu_binary op chunks (Movement.unsqueeze base (-1)))
+      in
+      let kept =
+        Movement.shrink scanned
+          (List.mapi
+             (fun idx d -> if idx = nd - 1 then (total - s, total) else (0, d))
+             (T.shape scanned))
+      in
+      Movement.transpose ~dim0:axis ~dim1:(-1) kept
 
-let cumprod ?(axis = 0) t =
-  if T.ndim t = 0 || List.mem 0 (T.shape t) then t
-  else cumalu t (T.resolve_dim t axis) Ops.Mul
+let cumsum ?(axis = 0) t = split_cumalu t axis Ops.Add
+let cumprod ?(axis = 0) t = split_cumalu t axis Ops.Mul
 
 (* Ranges *)
 
@@ -364,10 +401,11 @@ let tril ?(diagonal = 0) t =
 (* Cumulative extrema *)
 
 let cummax ?(axis = 0) t =
-  if T.ndim t = 0 then (t, Creation.zeros ~dtype:D.int32 ~buffer:false [])
+  if T.ndim t = 0 then
+    (split_cumalu t axis Ops.Max, Creation.zeros ~dtype:D.int32 ~buffer:false [])
   else
     let axis = T.resolve_dim t axis in
-    let values = cumalu t axis Ops.Max in
+    let values = split_cumalu t axis Ops.Max in
     let n = List.nth (T.shape t) axis in
     let x = Movement.transpose ~dim0:axis ~dim1:(-1) t in
     let values_t = Movement.transpose ~dim0:axis ~dim1:(-1) values in

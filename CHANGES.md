@@ -300,6 +300,10 @@ thread.
 
 ### Tolk (new)
 
+- `Op.cumsum`, `Op.cumprod` and `Op.cummax` values scan axes over 512 in chunks
+  of 256 (262,144 elements on Metal: 209 ms to 0.44 ms; `cummax` indices stay
+  quadratic). An empty int8 `Op.cumsum` returns int32, like a non-empty one.
+
 - `Device.Lru_allocator` no longer leaks a buffer that the GC frees while an
   allocation searches the cache. The allocation stored the cache it had read,
   dropping the new entry, so that buffer was never reused or freed.

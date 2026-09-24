@@ -454,6 +454,10 @@ let scan_tests =
           equal (list int) [ 4 ] (shape (Op.cumsum (ones_f [ 4 ]))));
       test "cumprod preserves shape" (fun () ->
           equal (list int) [ 2; 3 ] (shape (Op.cumprod ~axis:0 (ones_f [ 2; 3 ]))));
+      test "empty cumsum takes the dtype of a sum" (fun () ->
+          let empty = Cr.zeros ~dtype:D.int8 [ 2; 0 ] in
+          is_true (is_dtype (Op.cumsum ~axis:1 empty) D.int32);
+          is_true (is_dtype (Op.cumprod ~axis:1 empty) D.int8));
       test "arange length" (fun () ->
           equal (list int) [ 5 ] (shape (Op.arange 5)));
       test "arange start stop step" (fun () ->
