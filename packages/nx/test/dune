@@ -30,6 +30,7 @@
   test_backend_contract
   test_nx_support
   test_nx_io
+  test_nx_quant
   test_oxcaml_backend)
  (libraries nx.buffer nx nx.core nx.effect windtrap test_nx_support))
 
@@ -49,6 +50,12 @@
    %{dep:../lib/core/backend_intf.ml}
    %{dep:../lib/backend/nx_backend.mli}
    %{dep:../../../contrib/nx-oxcaml/lib/nx_backend.ml})))
+
+(test
+ (name test_nx_quant)
+ (package nx)
+ (modules test_nx_quant)
+ (libraries nx nx.buffer nx.core nx.effect nx.quant windtrap))
 
 (test
  (name test_nx_io)

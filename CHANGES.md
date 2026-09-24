@@ -1166,6 +1166,9 @@ thread.
 
 ### Nx
 
+- Add `nx.quant`: `Nx_quant.mxfp4` builds a weight from a checkpoint's MXFP4
+  codes and scales without a copy, and `Nx_quant.apply ?ids` multiplies by it
+  with `Nx.matmul`'s shapes, decoding a bounded chunk at a time eagerly.
 - `Nx.top_k` with `k` above 8 no longer takes one entry per pass, and over an
   axis longer than 2048 no longer sorts it: a radix select on the bits of each
   entry finds the `k`th greatest and only the `k` entries kept are ordered.
@@ -1188,6 +1191,7 @@ thread.
 - A read of a placed value (`item`, `to_array`, `to_buffer`, `pp`) copies the
   elements it reads and leaves the value where it is. `Nx.data` of a placed
   value raises: it has no host storage.
+
 - Fix `Nx_io.load_safetensors` and `save_safetensors` corrupting Unicode and
   control characters in tensor names. Decode JSON Unicode escapes and surrogate
   pairs, emit valid JSON escapes, and reject malformed string escapes.

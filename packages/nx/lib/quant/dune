@@ -1,0 +1,4 @@
+(library
+ (name nx_quant)
+ (public_name nx.quant)
+ (libraries nx nx.buffer))
