@@ -104,7 +104,7 @@ let param idx scalar =
   U.param ~slot:idx ~dtype:scalar ~shape:(U.const_int (-1))
     ~addrspace:Dtype.Global ()
 
-let const value = U.const value
+let const value = U.cconst value (Const.dtype value)
 let c0_i32 () = const (int32_c 0)
 let ptr_index ptr idx () = U.index ~ptr ~idxs:[ idx ] ()
 let load ?alt ?gate src = U.load ~src ?alt ?gate ()

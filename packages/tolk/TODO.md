@@ -14,9 +14,8 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 1. Complete the CPU path through the new protocol
 
-- Adopt weak CONST plus typed CAST, ALLOC, effectful CALL and scalar binding
-  effects. Remove remaining explicit dtype overrides with the legacy IR. Port
-  weak commitment/lowering and the corresponding spec rules together. Eliminate
+- Adopt ALLOC, effectful CALL and scalar binding effects. Remove remaining
+  explicit dtype overrides with the legacy IR. Eliminate
   unplaced BUFFER placeholders and their execution-time allocation fallback.
   Remove FUNCTION/TUPLE/GETTUPLE/BIND and obsolete enum/cache layouts as their producers
   move to the new protocol.

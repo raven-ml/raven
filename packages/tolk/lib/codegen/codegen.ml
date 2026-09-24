@@ -85,7 +85,6 @@ let full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
           (U.first_match
              [
                Upat.Pattern_matcher.rewrite sym;
-               Upat.Pattern_matcher.rewrite Symbolic.pm_fold_cast_const;
                Simplify.flatten_range;
             ])
           sink

@@ -144,10 +144,7 @@ let workitem_name name =
 
 (* Const rendering helpers *)
 
-let const_view_of_uop u =
-  match U.op u, U.arg u with
-  | Ops.Const, U.Arg.Value c -> Some c
-  | _ -> None
+let const_view_of_uop = U.as_const
 
 (* Upper 16 bits of float32 encoding after round-to-nearest-even. *)
 let float_to_bf16_bits (f : float) =
@@ -754,6 +751,9 @@ let base_rewrite : ctx rule list =
           Array.to_list srcs |> List.map (fun s -> lookup ctx s)
         in
         Some (strf "%s%s%s%s" ctor l (String.concat "," items) rr) );
+    (* CONST rules *)
+    ( cast ~name:"x" (op Ops.Const),
+      fun ctx _ u -> render_const_any ctx u );
     (* CAST vector (non-ptr): __builtin_convertvector *)
     ( op ~name:"x" Ops.Cast,
       fun ctx bs _ ->
@@ -795,9 +795,6 @@ let base_rewrite : ctx rule list =
                  (ctx.lang.code_for_workitem v.name)
                  (Render.expr_to_string v.size))
         | None -> None );
-    (* CONST rules *)
-    ( op ~name:"x" Ops.Const,
-      fun ctx _ u -> render_const_any ctx u );
     (* Scalar view metadata has no C expression form. It should normally be
        removed by movement/index rewrites; when a shape-1 view remains after
        linearization, rendering the source is the same scalar value. *)
@@ -1223,7 +1220,8 @@ let should_inline ~expand_ssa ~child_count (u : U.t) : bool =
   if U.op u = Ops.Cast && max_numel u <> 1 then false
   else
     match U.op u with
-    | Ops.Const | Ops.Index | Ops.Shrink | Ops.Customi -> true
+    | Ops.Index | Ops.Shrink | Ops.Customi -> true
+    | Ops.Cast when U.op (U.src u).(0) = Ops.Const -> true
     | Ops.Load ->
         (* A register load is only free to repeat at one use site; past that,
            name it so the read happens once. *)
@@ -1299,7 +1297,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
   List.iter
     (fun u ->
       match U.op u with
-      | Ops.Noop | Ops.Group | Ops.Custom_function -> ()
+      | Ops.Const | Ops.Noop | Ops.Group | Ops.Custom_function -> ()
       (* An empty void Stack is the rank-0 shape marker carried by scalar
          Param sources: structural, nothing to render. *)
       | Ops.Stack
@@ -1802,7 +1800,7 @@ let opencl_code_for_workitem name : string =
 
 let opencl_bf16_const_rule : ctx rule =
   let open Upat in
-  ( op ~name:"x" Ops.Const,
+  ( cast ~name:"x" (op Ops.Const),
     fun _ctx bs _ ->
       let x = bs $ "x" in
       match const_view_of_uop x with
@@ -2307,7 +2305,7 @@ let has_const_nonfinite uops =
   List.exists
     (fun u ->
       match U.op u, const_view_of_uop u with
-      | Ops.Const, Some c -> (
+      | Ops.Cast, Some c -> (
           match Const.view c with
           | Const.Float f -> not (Float.is_finite f)
           | Const.Bool _ | Const.Int _ | Const.Invalid -> false)
@@ -2346,7 +2344,7 @@ let amd_ocml_decls uops =
 
 let amd_fp8_const_rule : ctx rule =
   let open Upat in
-  ( op ~name:"x" Ops.Const,
+  ( cast ~name:"x" (op Ops.Const),
     fun ctx bs _ ->
       let x = bs $ "x" in
       match amd_fp8_index (U.dtype x), const_view_of_uop x with
@@ -2439,7 +2437,7 @@ let amd_non_native_float_scalars =
 
 let amd_bf16_const_cast node =
   match U.op node, const_view_of_uop node with
-  | Ops.Const, Some c when Dtype.equal (U.dtype node) Dtype.bfloat16 -> (
+  | Ops.Cast, Some c when Dtype.equal (U.dtype node) Dtype.bfloat16 -> (
       match Const.view c with
       | Const.Float f ->
           Some (cast_float_to_bf16 (U.const (Const.float Dtype.float32 f)))
@@ -2583,7 +2581,8 @@ let amd_preamble arch _lang uops =
       List.exists
         (fun u ->
           match U.op u, U.src u with
-          | Ops.Const, _ -> Option.is_some (amd_fp8_index (U.dtype u))
+          | Ops.Cast, _ when Option.is_some (const_view_of_uop u) ->
+              Option.is_some (amd_fp8_index (U.dtype u))
           | Ops.Cast, [| src |] ->
               Option.is_some (amd_fp8_index (U.dtype u))
               && (U.dtype src) = Dtype.Float32

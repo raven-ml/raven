@@ -46,14 +46,14 @@ let contains_op op (u : Uop.t) =
   List.exists (fun n -> Uop.op n = op) (Uop.toposort u)
 
 let const_int64_value node =
-  match Uop.op node, Uop.arg node with
-  | Ops.Const, Uop.Arg.Value v ->
+  match Uop.as_const node with
+  | Some v ->
       (match Const.view v with Const.Int n -> Some (Z.to_int64 n) | _ -> None)
   | _ -> None
 
 let const_float_value node =
-  match Uop.op node, Uop.arg node with
-  | Ops.Const, Uop.Arg.Value v ->
+  match Uop.as_const node with
+  | Some v ->
       (match Const.view v with Const.Float x -> Some x | _ -> None)
   | _ -> None
 
@@ -130,7 +130,7 @@ let sin_f16_cody_waite_casts_quadrant_to_f32 () =
 let decomposes_free_of_long u =
   let tagged = Uop.with_tag "0" u in
   let rewritten =
-    Uop.graph_rewrite
+    Uop.graph_rewrite ~bottom_up:true
       (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())) tagged
   in
   (* After decomposition we should have a narrow result and no long nodes
@@ -142,7 +142,7 @@ let decomposes_free_of_long u =
   narrow_result && not (contains_long rewritten)
 
 let rewrite_long_half tag u =
-  Uop.graph_rewrite
+  Uop.graph_rewrite ~bottom_up:true
     (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ()))
     (Uop.with_tag tag u)
 
@@ -221,7 +221,7 @@ let cast_long_to_int_decomposes () =
   let casted = Uop.cast ~src:a ~dtype:Dtype.int32 in
   (* Result is already int32; just check no int64 residue. *)
   let rewritten =
-    Uop.graph_rewrite
+    Uop.graph_rewrite ~bottom_up:true
       (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())) casted
   in
   is_true ~msg:"CAST int64->int32 has no int64 residue"
@@ -248,8 +248,8 @@ let long_const_halves_are_truncated_to_int32 () =
   let lo = rewrite_long_half "0" c in
   let hi = rewrite_long_half "1" c in
   let const_int u =
-    match Uop.op u, Uop.arg u with
-    | Ops.Const, Uop.Arg.Value v ->
+    match Uop.as_const u with
+    | Some v ->
         (match Const.view v with Const.Int n -> Some (Z.to_int64 n) | _ -> None)
     | _ -> None
   in
@@ -262,7 +262,7 @@ let long_const_halves_are_truncated_to_int32 () =
 let untagged_long_const_is_low_half () =
   let c = Uop.const (Const.int64 Dtype.int64 0x0000000100000002L) in
   let rewritten =
-    Uop.graph_rewrite
+    Uop.graph_rewrite ~bottom_up:true
       (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())) c
   in
   is_true ~msg:"untagged long CONST lowers to low half"
@@ -293,7 +293,10 @@ let untagged_long_index_is_not_rewritten () =
   let idx = Uop.index ~ptr:buf ~idxs:[ Uop.const_int 3 ] () in
   match Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ()) idx with
   | None -> ()
-  | Some _ -> is_true ~msg:"untagged INDEX should not rewrite" false
+  | Some result ->
+      is_true ~msg:"commitment does not split an untagged index"
+        (Dtype.equal (Uop.dtype result) Dtype.int64);
+      equal int 3 (Bound.to_int (Uop.vmin (Uop.src result).(1)))
 
 let tagged_long_index_narrows_storage () =
   let buf =
@@ -301,20 +304,17 @@ let tagged_long_index_narrows_storage () =
       ~addrspace:Dtype.Global ()
   in
   let idx = Uop.index ~ptr:buf ~idxs:[ Uop.const_int 3 ] () in
-  match
-    Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())
-      (Uop.with_tag "1" idx)
-  with
-  | Some rewritten ->
+  let rewritten = rewrite_long_half "1" idx in
+  (
       (match Uop.as_index rewritten with
        | Some { ptr; idxs = [ i ] } ->
-           is_true ~msg:"tagged INDEX is narrowed and offset to high half"
-             (Dtype.equal (Uop.dtype rewritten) Dtype.int32
-              && Dtype.equal (Uop.dtype ptr) Dtype.int32
-              && Uop.max_numel ptr = 16
-              && (Bound.to_int (Uop.vmin i)) = 7 && (Bound.to_int (Uop.vmax i)) = 7)
+           is_true ~msg:"index dtype" (Dtype.equal (Uop.dtype rewritten) Dtype.int32);
+           is_true ~msg:"storage dtype" (Dtype.equal (Uop.dtype ptr) Dtype.int32);
+           equal ~msg:"storage words" int 16 (Uop.max_numel ptr);
+           equal ~msg:"offset lower bound" int 7 (Bound.to_int (Uop.vmin i));
+           equal ~msg:"offset upper bound" int 7 (Bound.to_int (Uop.vmax i))
        | _ -> is_true ~msg:"rewritten node remains INDEX" false)
-  | None -> is_true ~msg:"tagged INDEX rule fired" false
+  )
 
 let tagged_long_index_preserves_multi_index_tail () =
   let buf =
@@ -324,18 +324,16 @@ let tagged_long_index_preserves_multi_index_tail () =
   let idx =
     Uop.index ~ptr:buf ~idxs:[ Uop.const_int 3; Uop.const_int 5 ] ()
   in
-  match
-    Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())
-      (Uop.with_tag "1" idx)
-  with
-  | Some rewritten ->
+  let rewritten = rewrite_long_half "1" idx in
+  (
       (match Uop.as_index rewritten with
        | Some { idxs = [ i; tail ]; _ } ->
-           is_true ~msg:"tagged INDEX rewrites first index and keeps tail"
-             ((Bound.to_int (Uop.vmin i)) = 7 && (Bound.to_int (Uop.vmax i)) = 7
-              && (Bound.to_int (Uop.vmin tail)) = 5 && (Bound.to_int (Uop.vmax tail)) = 5)
+           equal ~msg:"offset lower bound" int 7 (Bound.to_int (Uop.vmin i));
+           equal ~msg:"offset upper bound" int 7 (Bound.to_int (Uop.vmax i));
+           equal ~msg:"tail lower bound" int 5 (Bound.to_int (Uop.vmin tail));
+           equal ~msg:"tail upper bound" int 5 (Bound.to_int (Uop.vmax tail))
        | _ -> is_true ~msg:"rewritten node keeps two indexes" false)
-  | None -> is_true ~msg:"tagged INDEX rule fired" false
+  )
 
 let float_to_long_high_half_uses_reciprocal () =
   let f = Uop.const (Const.float Dtype.float64 1.5e10) in

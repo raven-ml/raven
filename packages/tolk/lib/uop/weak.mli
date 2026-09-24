@@ -10,8 +10,8 @@
     A weak dtype ({!Dtype.weakint}, {!Dtype.weakfloat}) is a mathematical value
     with no committed bit width. Literals, loop ranges, hardware indices, shape
     expressions, and symbolic variables all start weak, so index arithmetic
-    never forces a width before one is known. Nothing weak may reach a
-    renderer: these rules resolve every weak node to a concrete dtype.
+    never forces a width before one is known. Weak computations resolve before rendering. A literal retains a weak
+    CONST payload beneath a CAST that states its concrete width.
 
     Three demands commit a weak value, in decreasing priority:
 
@@ -35,10 +35,10 @@ val pm_commit_weak : Upat.Pattern_matcher.t
 (** [pm_commit_weak] commits weak sources under demand from a peer: a
     broadcastable node whose sources mix weak and concrete dtypes rebuilds its
     weak sources at the promotion of all of them, and a {!Ops.Store} rebuilds a
-    weak value at the destination's dtype. A weak constant is rebuilt in place;
-    any other weak node takes a cast.
+    weak value at the destination's dtype. Derivable literal edges retain bare
+    weak payloads; other edges receive a cast that states their width.
 
-    It runs both in {!pm_lower_index_dtype} and in the dtype decompositions, so
+    It runs before {!pm_lower_index_dtype} and in the dtype decompositions, so
     that a rule which mints a weak constant commits it within the same
     rewrite. *)
 
@@ -49,12 +49,14 @@ val pm_cast_weak : Upat.Pattern_matcher.t
     computation but never narrows it below the ranges its operands require. *)
 
 val pm_lower_index_dtype : unit -> Upat.Pattern_matcher.t
-(** [pm_lower_index_dtype ()] is the full weak-lowering pass: {!pm_commit_weak}
-    and {!pm_cast_weak}, then a catch-all that resolves any remaining weak
-    source of a concrete node at its default width, then a narrowing rule — a
-    gated [int64] index into a buffer whose element count fits [int32] narrows
-    to [int32], since out-of-gate values are discarded by the gate.
+(** [pm_lower_index_dtype ()] lowers weak expressions once peer and cast demands
+    have reached a fixed point. Derivable literal edges stay weak; unresolved
+    literals take their default width. Run separately from symbolic folding. *)
 
-    Each call allocates its own memo table for the catch-all, which lowers each
-    weak subgraph once per pass rather than once per consumer. Call it per
-    rewrite, not once at module initialisation. *)
+val pm_uncast_const : Upat.Pattern_matcher.t
+(** [pm_uncast_const] removes a literal's committed cast only when both operand
+    promotion and result dtype remain unchanged. *)
+
+val pm_cast_const : Upat.Pattern_matcher.t
+(** [pm_cast_const] states every remaining literal's concrete width at its
+    consumer edge before rendering, including bool literals. Invalid stays bare. *)

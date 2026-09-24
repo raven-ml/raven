@@ -288,36 +288,20 @@ let transform_to_image_rule shapes ren node =
       | _ -> None)
   | _ -> None
 
-let strip_float_half_float node =
-  match U.op node, U.src node, U.dtype node with
-  | Ops.Cast, [| half |], dst when Dtype.equal dst Dtype.float32 -> (
-      match U.op half, U.src half, U.dtype half with
-      | Ops.Cast, [| src |], mid
-        when Dtype.equal mid Dtype.float16
-             && Dtype.equal (U.dtype src) Dtype.float32 ->
-          Some src
-      | _ -> None)
-  | _ -> None
-
 let image_float_rule node =
-  match strip_float_half_float node with
-  | Some _ as r -> r
-  | None -> (
-      match U.as_load node with
-      | Some { src; alt = None; gate = None }
-        when U.op src = Ops.Index
-             && Dtype.equal (U.dtype src) Dtype.float32
-             && Dtype.equal (U.dtype node) Dtype.float16 ->
-          Some (U.cast ~src:(U.load ~src ()) ~dtype:Dtype.float16)
-      | _ -> (
-          match U.as_store node with
-          | Some { dst; value; gate = None }
-            when U.op dst = Ops.Index
-                 && Dtype.equal (U.dtype dst) Dtype.float32
-                 && Dtype.equal (U.dtype value) Dtype.float16 ->
-              Some
-                (U.store ~dst ~value:(U.cast ~src:value ~dtype:Dtype.float32) ())
-          | _ -> None))
+  match U.as_store node with
+  | Some { dst; value; gate = None }
+    when U.op dst = Ops.Index && Dtype.equal (U.dtype dst) Dtype.float32
+         && Dtype.equal (U.dtype value) Dtype.float16 ->
+      let half_storage = Dtype.equal (U.dtype (U.src dst).(0)) Dtype.float16 in
+      let as_float value = match U.op value, U.src value with
+        | Ops.Cast, [| source |]
+          when half_storage && Dtype.equal (U.dtype source) Dtype.float32 -> source
+        | _ -> U.cast ~src:value ~dtype:Dtype.float32 in
+      let value = if U.op value = Ops.Stack then
+          U.stack (List.map as_float (U.children value)) else as_float value in
+      Some (U.store ~dst ~value ())
+  | _ -> None
 
 let pm_simplify_add_image ren =
   let shapes = Hashtbl.create 8 in

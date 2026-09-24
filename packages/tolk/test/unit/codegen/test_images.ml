@@ -312,8 +312,8 @@ let () =
             equal int 1
               (count
                  (fun n ->
-                   match U.op n, U.arg n with
-                   | Ops.Const, U.Arg.Value c ->
+                   match U.as_const n with
+                   | Some c ->
                        Const.view c = Const.Float 0.0
                        && Dtype.equal (U.dtype n) Dtype.float32
                    | _ -> false)
@@ -336,7 +336,7 @@ let () =
               | Some _ -> failwith "expected scalar image coordinate"
               | None -> failwith "expected index"
             in
-            equal int 0 (count (fun n -> U.op n = Ops.Cast) idx));
+            equal int 0 (count (fun n -> U.op n = Ops.Cast && Dtype.is_weak (U.dtype n)) idx));
           test "lower index dtype concretizes index binary math" (fun () ->
             (* An all-weak expression commits only once something that is not
                itself weak demands a width from it, so drive it from a sink. *)
@@ -376,8 +376,8 @@ let () =
                 if not (U.equal keep gate) then failwith "expected outer gate";
                 if
                   not
-                    (match U.op alt, U.arg alt with
-                  | Ops.Const, U.Arg.Value c -> (
+                    (match U.as_const alt with
+                  | Some c -> (
                       match Const.view c with
                       | Const.Int n -> Z.equal n Z.zero
                       | Const.Float 0.0 | Const.Bool false ->

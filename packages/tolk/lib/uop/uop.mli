@@ -715,14 +715,24 @@ val bind : var:t -> value:t -> t
     Raises [Invalid_argument] if a constant [value] is outside [var]'s
     known bounds. Tensor. *)
 
-val const : ?srcs:t list -> Const.t -> t
-(** [const ?srcs v] is a compile-time constant [v]. [srcs] carries
-    scheduling dependencies and is empty at kernel stage. Dtype is
-    that of [v]. Shared. *)
+val const : Const.t -> t
+(** [const v] is [v] as a weak CONST, with a typed CAST for concrete numeric
+    dtypes. Boolean and Invalid constants remain bare. Shared. *)
+
+val as_const : t -> Const.t option
+(** [as_const u] reads a bare CONST or a CAST of a CONST at its stated dtype. *)
+
+val ccast : src:t -> dtype:Dtype.t -> t
+(** [ccast ~src ~dtype] converts a bare constant's payload before stating its
+    dtype. Other inputs receive a regular cast. *)
+
+val cconst : Const.t -> Dtype.t -> t
+(** [cconst value dtype] forces a CAST around [value], including boolean
+    literals, for the final program representation. *)
 
 val const_of_dtype : ?shape:t -> Dtype.t -> const_value -> t
 (** [const_of_dtype ?shape dtype value] is a constant node for [value] at
-    [dtype]. Scalar values produce a {!Ops.Const}. Tuple values produce a
+    [dtype]. Scalar values use {!const}. Tuple values produce a
     {!Ops.Stack} of scalar constants with lane dtype [dtype]; the tuple length
     is the lane count.
 

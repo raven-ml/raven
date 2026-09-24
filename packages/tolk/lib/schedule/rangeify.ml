@@ -355,10 +355,7 @@ let detect_expanded src =
    costs a pass over the table. [is_one_hot_sum] recognises the shape so the
    split leaves it whole. *)
 
-let const_view u =
-  match U.op u with
-  | Ops.Const -> Option.map Const.view (U.Arg.as_value (U.arg u))
-  | _ -> None
+let const_view u = Option.map Const.view (U.as_const u)
 
 let is_not c =
   U.op c = Ops.Cmpne && const_view (U.src c).(1) = Some (Const.Bool true)
@@ -1890,7 +1887,7 @@ let post_rangeify_rules =
        commits a cast of a constant to a concrete width, which is only safe
        once the ranges are built and nothing downstream still gets to choose
        that width. *)
-    Upat.Pattern_matcher.(rewrite (symbolic ++ Symbolic.pm_fold_cast_const));
+    Upat.Pattern_matcher.rewrite symbolic;
     Upat.Pattern_matcher.rewrite Simplify.pm_reduce_simplify;
     cleanup_dead_axes;
     remove_noop_stage;

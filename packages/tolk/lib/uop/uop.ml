@@ -339,7 +339,10 @@ let derived_dtype (node : node) =
        | _ -> invalid_arg "Uop: storage requires ParamArg")
   | Ops.Const ->
       (match node.arg with
-       | Arg.Value value -> Const.dtype value
+       | Arg.Value value -> (match Const.view value with
+           | Const.Bool _ | Const.Invalid -> Dtype.bool
+           | Const.Int _ -> Dtype.weakint
+           | Const.Float _ -> Dtype.weakfloat)
        | _ -> invalid_arg "Uop: CONST requires a scalar value")
   | Ops.Binary -> Dtype.uint8
   | Ops.Cmplt | Ops.Cmpne | Ops.Cmpeq -> Dtype.bool
@@ -765,9 +768,44 @@ let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint)
       ~vmin_vmax:(Bound.int min_val, Bound.int max_val) ~multiple_of
       ~addrspace:Dtype.Alu (-1)))
 
+
+let cast ~src ~dtype:target_dtype =
+  if Dtype.equal (dtype src) target_dtype then src
+  else mk ~op:Ops.Cast ~dtype:target_dtype ~src:[| src |] ~arg:(Arg.Dtype target_dtype)
+
+
+let const v =
+  let target = Const.dtype v in
+  let weak = match Const.view v with
+    | Const.Int _ -> Dtype.weakint
+    | Const.Float _ -> Dtype.weakfloat
+    | Const.Bool _ | Const.Invalid -> Dtype.bool in
+  let value = Const.of_view weak (Const.view v) in
+  let node = mk ~op:Ops.Const ~dtype:weak ~src:[||] ~arg:(Arg.Value value) in
+  cast ~src:node ~dtype:target
+
+let as_const u =
+  match op u, arg u, src u with
+  | Ops.Const, Arg.Value value, _ -> Some value
+  | Ops.Cast, _, [| value |] when op value = Ops.Const ->
+      (match arg value with
+       | Arg.Value c -> Some (Const.of_view (dtype u) (Const.view c))
+       | _ -> None)
+  | _ -> None
+
+let ccast ~src ~dtype =
+  match op src, arg src with
+  | Ops.Const, Arg.Value value -> const (Const.of_view dtype (Const.view value))
+  | _ -> cast ~src ~dtype
+
+let cconst value dtype =
+  let value = const value in
+  let value = if op value = Ops.Cast then (src value).(0) else value in
+  mk ~op:Ops.Cast ~dtype ~src:[| value |] ~arg:(Arg.Dtype dtype)
+
 let bind ~var ~value =
-  let in_bounds = match arg var, op value, arg value with
-    | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ }, Ops.Const, Arg.Value c ->
+  let in_bounds = match arg var, as_const value with
+    | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ }, Some c ->
         (match Const.view c with
          | Const.Int n ->
              Bound.le lo (`Int n) && Bound.le (`Int n) hi
@@ -781,9 +819,6 @@ let bind ~var ~value =
     mk ~op:Ops.Bind ~dtype:(dtype var) ~src:[| var; value |] ~arg:Arg.Empty
   else invalid_arg "Uop.bind: value outside variable bounds"
 
-let const ?(srcs = []) v =
-  mk ~op:Ops.Const ~dtype:(Const.dtype v) ~src:(Array.of_list srcs)
-    ~arg:(Arg.Value v)
 
 let invalid () = const Const.invalid
 let const_int n = const (Const.int Dtype.weakint n)
@@ -794,8 +829,8 @@ let const_like u n = const (Const.of_scalar (dtype u) (`Int (Int64.of_int n)))
 
 let index ~ptr ~idxs () =
   let const_int_value u =
-    match op u, arg u with
-    | Ops.Const, Arg.Value c -> (
+    match as_const u with
+    | Some c -> (
         match Const.view c with
         | Const.Int n
           when Z.fits_int n -> Some (Z.to_int n)
@@ -891,9 +926,6 @@ let valid ~src ~cond =
   let inv = const Const.invalid in
   alu_ternary ~op:Ops.Where ~a:cond ~b:src ~c:inv
 
-let cast ~src ~dtype:target_dtype =
-  if Dtype.equal (dtype src) target_dtype then src
-  else mk ~op:Ops.Cast ~dtype:target_dtype ~src:[| src |] ~arg:(Arg.Dtype target_dtype)
 
 let bitcast ~src ~dtype:target_dtype =
   if Dtype.equal (dtype src) target_dtype then src
@@ -1898,14 +1930,11 @@ let commit_dtype ?(default_int = Dtype.default_int) u =
     | None -> Dtype.int64
 
 let const_int_value u =
-  match op u, arg u with
-  | Ops.Const, Arg.Value c ->
-      (match Const.view c with
-       | Const.Int n
-         when Z.fits_int n -> Option.Some (Z.to_int n)
-       | Const.Int _ -> Option.None
-       | Const.Bool _ | Const.Float _ | Const.Invalid -> Option.None)
-  | _ -> Option.None
+  match as_const u with
+  | Some c -> (match Const.view c with
+      | Const.Int n when Z.fits_int n -> Some (Z.to_int n)
+      | _ -> None)
+  | None -> None
 
 let shape_arg dims = match dims with [ d ] -> d | ds -> stack ds
 
@@ -3077,7 +3106,7 @@ let sprod dims = simplify (dim_prod dims)
 let unbind u =
   match op u, src u with
   | Ops.Bind, [| var; value |]
-    when op var = Ops.Param && op value = Ops.Const -> (
+    when op var = Ops.Param && Option.is_some (as_const value) -> (
       match const_int_value value with
       | Some n -> (var, n)
       | None -> invalid_arg "Uop.unbind: bound value is not an integer")
@@ -3595,7 +3624,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 18
+let export_version = 19
 
 type serialized_node = {
   serialized_op : Ops.t;

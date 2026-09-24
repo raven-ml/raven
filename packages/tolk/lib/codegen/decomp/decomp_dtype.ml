@@ -49,8 +49,8 @@ let shl_i x n =
     ~rhs:(Uop.const (Const.int64 v (Int64.shift_left 1L n)))
 
 let const_of_node_int node =
-  match Uop.op node, Uop.arg node with
-  | Ops.Const, Uop.Arg.Value c ->
+  match Uop.as_const node with
+  | Some c ->
       (match Const.view c with
        | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
        | _ -> None)
@@ -456,10 +456,10 @@ let rule_long_load rewrite =
 (* Tagged long CONST -> 32-bit constant of the matching half. *)
 let rule_long_const =
   let open Upat in
-  op ~name:"c" Ops.Const => fun bs ->
+  cast ~name:"c" (op Ops.Const) => fun bs ->
     let n = bs $ "c" in
-    match Uop.dtype n, Uop.arg n with
-    | dv, Uop.Arg.Value v when is_long_dtype dv ->
+    match Uop.dtype n, Uop.as_const n with
+    | dv, Some v when is_long_dtype dv ->
         let narrow = long_to_int_dtype dv in
         (match Uop.node_tag n, Const.view v with
          | Some "1", Const.Int bits ->
@@ -478,20 +478,6 @@ let rule_long_const =
                | _ -> assert false
              in
              Some (Uop.const (Const.int64 narrow lo))
-         | _ -> None)
-    | _ -> None
-
-(* A constant cast retains its exact value until the word is selected. The
-   generic integer cast would sign-extend its low word and lose higher bits. *)
-let rule_long_cast_const =
-  let open Upat in
-  cast ~name:"c" (op ~name:"v" Ops.Const) => fun bs ->
-    let n = bs $ "c" and v = bs $ "v" in
-    match Uop.node_tag n, Uop.arg v with
-    | Some tag, Uop.Arg.Value value when is_long_dtype (Uop.dtype n) ->
-        (match Const.view value with
-         | Const.Int bits ->
-             Some (Uop.with_tag tag (Uop.const (Const.integer (Uop.dtype n) bits)))
          | _ -> None)
     | _ -> None
 
@@ -782,13 +768,22 @@ let pm_long_decomp () =
         Uop.Ref_tbl.add splits key result;
         result
   and matcher = lazy (
-    Upat.Pattern_matcher.(Weak.pm_commit_weak ++ make [
+    Upat.Pattern_matcher.(make [
+      (let open Upat in ops ~name:"u" Ops.Group.all => fun bs ->
+         let u = bs $ "u" in
+         match Array.find_opt (fun s -> is_long_dtype (Uop.dtype s)) (Uop.src u) with
+         | None -> None
+         | Some peer ->
+             let src = Array.map (fun s ->
+                 if Uop.op s = Ops.Const && Dtype.is_weak (Uop.dtype s)
+                 then Uop.ccast ~src:s ~dtype:(Uop.dtype peer) else s) (Uop.src u) in
+             let result = Uop.replace u ~src () in
+             if Uop.equal result u then None else Some result);
       rule_long_index_tagged rewrite_word;
       rule_long_defines;
       rule_long_store;
       rule_long_load rewrite_word;
       rule_long_const;
-      rule_long_cast_const;
       rule_long_cast_long_to_long rewrite_word;
       rule_long_cast_to_long rewrite_word;
       rule_long_cast_from_long rewrite_word;
@@ -1137,12 +1132,12 @@ let rule_float_cast ctx =
    the emulating dtype. *)
 let rule_float_const ctx =
   let open Upat in
-  op ~name:"x" Ops.Const => fun bs ->
+  cast ~name:"x" (op Ops.Const) => fun bs ->
     let x = bs $ "x" in
     if not (same_scalar ctx.from_dtype (Uop.dtype x)) then None
     else
-      match Uop.arg x with
-      | Uop.Arg.Value c -> (
+      match Uop.as_const x with
+      | Some c -> (
           match Const.view c with
           | Const.Float f -> Some (Uop.const (Const.float ctx.to_dtype f))
           | Const.Int _ | Const.Bool _ | Const.Invalid -> None)
@@ -1212,8 +1207,8 @@ let pm_float_decomp (ctx : float_decomp_ctx) : Upat.Pattern_matcher.t =
       rule_float_bitcast_load rewrite ctx;
       rule_float_bitcast_from ctx;
       rule_float_bitcast_to ctx;
-      rule_float_cast ctx;
       rule_float_const ctx;
+      rule_float_cast ctx;
       rule_float_all ctx;
       rule_float_store_bitcast ctx;
       rule_float_store ctx;

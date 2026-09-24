@@ -282,8 +282,8 @@ let stack_const_bitcast_folds () =
   let lanes = Uop.src r in
   equal int 2 (Array.length lanes);
   let expect i f =
-    match Uop.arg lanes.(i) with
-    | Uop.Arg.Value c -> (
+    match Uop.as_const lanes.(i) with
+    | Some c -> (
         match Const.view c with
         | Const.Int n ->
             equal int
@@ -378,9 +378,8 @@ let ptr_buffer slot =
 let raw_index_stack_const ~ptr ~idx ~dtype =
   U.replace ptr ~op:Ops.Index ~src:[| ptr; idx |] ~arg:U.Arg.Empty ~dtype ()
 
-(* [pm_fold_cast_const] is composed in explicitly, as the passes that want
-   constant casts collapsed do. *)
-let sym_pm = Upat.Pattern_matcher.(Symbolic.sym ++ Symbolic.pm_fold_cast_const)
+(* Symbolic folding understands bare and committed literals. *)
+let sym_pm = Symbolic.sym
 
 (* Apply sym to a single node (not bottom-up). *)
 let sym n = Upat.Pattern_matcher.rewrite sym_pm n
@@ -395,8 +394,8 @@ let fires rule node expected =
   | None -> fail "expected rule to fire"
 
 let const_value node =
-  match U.op node, U.Arg.as_value (U.arg node) with
-  | Ops.Const, Some value -> value
+  match U.as_const node with
+  | Some value -> value
   | _ -> fail "expected const"
 
 let check_const_int node expected =
@@ -1008,8 +1007,8 @@ let where_fold_tests =
       test "where eq one zero flips to ne zero one" (fun () ->
           let x = var "x" 0 10 and y = var "y" 0 10 in
           let cond = U.alu_binary ~op:Ops.Cmpeq ~lhs:x ~rhs:y in
-          let one = U.const (Const.int D.int32 1) in
-          let zero = U.const (Const.int D.int32 0) in
+          let one = U.const_int 1 in
+          let zero = U.const_int 0 in
           let expr = U.alu_ternary ~op:Ops.Where ~a:cond ~b:one ~c:zero in
           let result = simplify expr in
           check_op result Ops.Where;
@@ -1096,7 +1095,7 @@ let load_store_tests =
           let value = U.O.where gate alt old in
           let result = simplify (U.store ~dst ~value ()) in
           check_op result Ops.Store;
-          is_true (U.equal (src result 1) alt);
+          check_const_int (src result 1) 7;
           check_op (src result 0) Ops.Index;
           check_op (src (src result 0) 1) Ops.Where;
           is_true (U.equal (src (src (src result 0) 1) 0) gate);
@@ -1138,7 +1137,7 @@ let invalid_where_tests =
 
 let sigmoid_tests =
   let fvar name = U.variable ~name ~min_val:0 ~max_val:10 ~dtype:D.float32 () in
-  let recip_1p x = U.alu_unary ~op:Ops.Reciprocal ~src:U.O.(x + f32 1.0) in
+  let recip_1p x = U.alu_unary ~op:Ops.Reciprocal ~src:U.O.(x + U.const_float 1.0) in
   group "sigmoid"
     [
       test "x * (1/(1+x)) -> 1 - 1/(1+x)" (fun () ->
@@ -1310,7 +1309,7 @@ let unpack_u64_tests =
   let simple n = Upat.Pattern_matcher.rewrite Symbolic.symbolic_simple n in
   let u32 name = U.variable ~name ~min_val:0 ~max_val:0xFFFF ~dtype:D.uint32 () in
   let u64 x = U.cast ~src:x ~dtype:D.uint64 in
-  let shift32 = U.const (C.int D.uint64 32) in
+  let shift32 = U.const_int 32 in
   let pack hi lo =
     U.alu_binary ~op:Ops.Or
       ~lhs:(U.alu_binary ~op:Ops.Shl ~lhs:hi ~rhs:shift32)

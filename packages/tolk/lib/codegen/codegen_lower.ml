@@ -959,7 +959,6 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
       (U.first_match
          [
            pm symbolic_simple;
-           pm Symbolic.pm_fold_cast_const;
            pm mop_cleanup;
            pm_mops;
            pm devectorizer2;
@@ -968,10 +967,10 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
       sink
   in
 
-  (* some coalescing misses without this: [sym + pm_fold_cast_const]. *)
+  (* some coalescing misses without this: [sym]. *)
   let sink =
     rewrite ~name:"early symbolic"
-      (pm PM.(sym ++ Symbolic.pm_fold_cast_const))
+      (pm sym)
       sink
   in
 
@@ -986,7 +985,8 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   in
 
   (* extra symbolic before decomp: [sym]. *)
-  let sink = rewrite ~name:"extra symbolic" (pm sym) sink in
+  let sink = rewrite ~name:"extra symbolic"
+      (pm PM.(sym ++ Coalesce.indexing_simplify ++ Weak.pm_commit_weak)) sink in
 
   (* lower index dtype: [pm_lower_index_dtype + indexing_simplify]. *)
   let sink =
@@ -1003,13 +1003,12 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   let sink = rewrite ~name:"cast float alu operands" (pm pm_cast_float_alu) sink in
 
   (* early decompositions:
-     [symbolic_simple + pm_fold_cast_const + get_simplifying_rewrite_patterns]. *)
+     [symbolic_simple + get_simplifying_rewrite_patterns]. *)
   let ops = supported_ops_of ren in
   let pm_decomp =
     U.first_match
       [
         pm symbolic_simple;
-        pm Symbolic.pm_fold_cast_const;
         Decomp_op.get_simplifying_rewrite_patterns ops;
       ]
   in
@@ -1034,7 +1033,7 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   let sink = Gater.pm_move_gates_from_index sink in
 
   (* final rewrite:
-     [pm_commit_weak + pm_cast_weak + pm_decomp + extra_matcher + pm_split_ends
+     [pm_commit_weak + pm_decomp + extra_matcher + pm_split_ends
       + pm_remove_invalid]. *)
   let extra_matcher =
     match Renderer.extra_matcher ren with None -> fun _ -> None | Some m -> m
@@ -1044,7 +1043,6 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
       (U.first_match
          [
            pm Weak.pm_commit_weak;
-           pm Weak.pm_cast_weak;
            pm_decomp;
            extra_matcher;
            Linearizer.do_split_ends;
@@ -1052,6 +1050,8 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
          ])
       sink
   in
+
+  let sink = rewrite ~name:"cast final constants" (pm Weak.pm_cast_const) sink in
 
   (* add implicit barriers: stores and loads through LOCAL memory that are
      ordered by AFTER, or that race across loop iterations, need a workgroup

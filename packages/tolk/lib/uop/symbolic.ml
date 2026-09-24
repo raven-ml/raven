@@ -14,24 +14,24 @@
 module U = Uop
 
 let const_int_v u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c ->
+  match Uop.as_const u with
+  | Some c ->
       (match Const.view c with
        | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
        | _ -> None)
   | _ -> None
 
 let const_bool_v u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c ->
+  match Uop.as_const u with
+  | Some c ->
       (match Const.view c with
        | Const.Bool b -> Some b
        | _ -> None)
   | _ -> None
 
 let is_invalid_const u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c -> Const.view c = Const.Invalid
+  match Uop.as_const u with
+  | Some c -> Const.view c = Const.Invalid
   | _ -> false
 
 (* [Invalid] is a bool const, so a zero replacing it takes its dtype from the
@@ -160,12 +160,9 @@ let pm_move_where_on_load : Upat.Pattern_matcher.t =
   ]
 
 let const_float_v u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c ->
-      (match Const.view c with
-       | Const.Float f -> Some f
-       | _ -> None)
-  | _ -> None
+  match Uop.as_const u with
+  | Some c -> (match Const.view c with Const.Float f -> Some f | _ -> None)
+  | None -> None
 
 let const_nan_like u =
   let v = Uop.dtype u in
@@ -220,10 +217,7 @@ let const_of_target ~(target : Dtype.t) v =
    no Const-value pattern for Invalid. *)
 let invalid_pat = Upat.op ~name:"i" Ops.Const
 
-let const_of_uop u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c -> Some c
-  | _ -> None
+let const_of_uop = Uop.as_const
 
 let is_max_identity u =
   match const_of_uop u with
@@ -322,7 +316,7 @@ let const_lanes count u =
             | None -> None
         in
         loop (Array.length srcs - 1) []
-  | _ -> None
+  | _ -> Option.map (fun c -> List.init count (fun _ -> c)) (const_of_uop u)
 
 let fold_const_alu root =
   let dtype = Uop.dtype root in
@@ -735,22 +729,9 @@ let fold_mul_zero x =
   | Some f when not (Float.is_finite f) -> const_nan_like x
   | _ -> Some (Uop.const_like x 0)
 
-(* The one rule that collapses [CAST(dt, CONST v)] into a typed CONST. It is
-   kept out of the layers below because it writes a strongly typed constant,
-   which the weak-dtype lowering must be free to decide for itself; passes that
-   want the fold compose it explicitly. *)
-let pm_fold_cast_const : Upat.Pattern_matcher.t =
-  let open Upat in
-  Pattern_matcher.make [
-    (cast ~name:"root" (cvar ~name:"c" ()) => fun bs ->
-       match const_of_uop (bs $ "c") with
-       | Some c -> Option.map Uop.const (cast_const (Uop.dtype (bs $ "root")) c)
-       | None -> None);
-  ]
-
 let symbolic_simple : Upat.Pattern_matcher.t =
   let open Upat in
-  Pattern_matcher.(pm_data_invalid ++ make [
+  Pattern_matcher.(pm_data_invalid ++ Weak.pm_uncast_const ++ make [
     (* x + 0 -> x *)
     rewrite1 (fun x -> O.(x + zero)) (fun x -> Some x);
     (let x = var "x" and c = cvar ~name:"c" () in
@@ -880,6 +861,11 @@ let symbolic_simple : Upat.Pattern_matcher.t =
            | Ops.Stack -> Array.length (Uop.src x) | _ -> 1 in
          Some (Uop.broadcast (Uop.const_bool false) n)
        else None));
+
+    (cast ~name:"root" (var "value") => fun bs ->
+       match const_of_uop (bs $ "value") with
+       | Some c -> Some (Uop.const (Const.of_view (Uop.dtype (bs $ "root")) (Const.view c)))
+       | None -> None);
 
     (* Evaluate unary ALU on Consts or STACKs of Consts. *)
     (ops ~name:"root" Ops.Group.unary => fun bs ->
@@ -1014,11 +1000,14 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
     (* where(const gate, c0, c1) -> c0 or c1 based on gate *)
     (let gate = cvar ~name:"gate" () in
-     where gate (var "c0") (var "c1") => fun bs ->
-       match const_bool_v (bs $ "gate") with
-       | Some true -> Some (bs $ "c0")
-       | Some false -> Some (bs $ "c1")
-       | None -> None);
+     where ~name:"w" gate (var "c0") (var "c1") => fun bs ->
+       Option.map (fun select ->
+           let value = bs $ (if select then "c0" else "c1") in
+           let dtype = Uop.dtype (bs $ "w") in
+           if Uop.op value = Ops.Const && Dtype.is_weak (Uop.dtype value)
+              && not (Dtype.is_weak dtype)
+           then Uop.ccast ~src:value ~dtype else value)
+         (const_bool_v (bs $ "gate")));
 
 
     (* trunc on int-typed input -> input *)
@@ -1074,7 +1063,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        Some (Uop.bitcast ~src:(bs $ "x") ~dtype:(Uop.dtype (bs $ "b"))));
 
     (* Bitcast of scalar CONST -> reinterpret the const. *)
-    (bitcast ~name:"root" (cvar ~name:"c" ()) => fun bs ->
+    (bitcast ~name:"root" (var "c") => fun bs ->
        let root = bs $ "root" and c = bs $ "c" in
        match const_of_uop c with
        | Some value ->
@@ -2292,14 +2281,14 @@ let sym : Upat.Pattern_matcher.t =
 
 (* top-level simplifier *)
 
-(* Run [symbolic + pm_fold_cast_const] to fixed point, then install as
+(* Run [symbolic] to fixed point, then install as
    [Uop.simplify_ref]. This mirrors tinygrad, where [UOp.simplify] runs the
    phase-2 [symbolic] matcher (which itself carries [div_and_mod_symbolic]),
    not the heavier phase-3 [sym]: [sym]'s [pm_simplify_valid] re-enters
    [Uop.simplify], so using it here would make simplification mutually
    recursive. *)
 let simplify u =
-  let pm = Upat.Pattern_matcher.(symbolic ++ pm_fold_cast_const) in
+  let pm = symbolic in
   let rec loop u =
     let u' = Uop.graph_rewrite (fun n -> Upat.Pattern_matcher.rewrite pm n) u in
     if Uop.equal u u' then u else loop u'

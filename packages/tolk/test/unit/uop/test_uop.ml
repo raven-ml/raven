@@ -553,39 +553,39 @@ let uop_constructor_parity_shortcuts () =
 let const_scalar_payload_constructors () =
   let open Uop in
   let scalar = const_of_dtype Dtype.int32 (Const_scalar (`Int 2L)) in
-  is_true ~msg:"scalar const is a Const" (op scalar = Ops.Const);
+  is_true ~msg:"scalar const carries an explicit width" (op scalar = Ops.Cast);
   is_true ~msg:"scalar const keeps its dtype"
     (Dtype.equal (dtype scalar) Dtype.int32);
-  (match arg scalar with
-   | Arg.Value c ->
+  (match as_const scalar with
+   | Some c ->
        is_true ~msg:"scalar const keeps value" (Const.view c = Const.Int (Z.of_int 2))
    | _ -> is_true ~msg:"scalar const payload" false);
   let coerced = const_of_dtype Dtype.float32 (Const_scalar (`Int 2L)) in
   is_true ~msg:"scalar const coerced to requested dtype"
     (Dtype.equal (dtype coerced) Dtype.float32);
-  (match arg coerced with
-   | Arg.Value c ->
+  (match as_const coerced with
+   | Some c ->
        is_true ~msg:"int payload is coerced to float"
          (match Const.view c with Const.Float 2.0 -> true | _ -> false)
    | _ -> is_true ~msg:"coerced payload" false);
   let nan = const_of_dtype Dtype.float32 (Const_scalar (`Float Float.nan)) in
-  (match arg nan with
-   | Arg.Value c ->
+  (match as_const nan with
+   | Some c ->
        is_true ~msg:"nan payload is canonical NaN"
          (match Const.view c with Const.Float f -> Float.is_nan f | _ -> false);
        is_true ~msg:"nan const equals itself" (Const.equal c c)
    | _ -> is_true ~msg:"nan payload" false);
   let neg_zero = const_of_dtype Dtype.float32 (Const_scalar (`Float (-0.0))) in
   let pos_zero = const_of_dtype Dtype.float32 (Const_scalar (`Float 0.0)) in
-  (match arg neg_zero, arg pos_zero with
-   | Arg.Value a, Arg.Value b ->
+  (match as_const neg_zero, as_const pos_zero with
+   | Some a, Some b ->
        is_true ~msg:"-0.0 and 0.0 stay distinct"
          (not (Const.equal a b))
    | _ -> is_true ~msg:"zero payloads" false);
   let invalid = const_of_dtype Dtype.weakint Const_invalid in
   is_true ~msg:"invalid const is a Const" (op invalid = Ops.Const);
-  (match arg invalid with
-   | Arg.Value c ->
+  (match as_const invalid with
+   | Some c ->
        is_true ~msg:"invalid payload is Invalid"
          (match Const.view c with Const.Invalid -> true | _ -> false)
    | _ -> is_true ~msg:"invalid payload" false)
@@ -1226,8 +1226,8 @@ let division_promotes_integer_operands () =
   let typed = divide (Uop.const (Const.int Dtype.int32 3))
       (Uop.const (Const.int Dtype.int32 2)) in
   is_true (Dtype.equal (Uop.dtype typed) Dtype.float32);
-  (match Uop.arg (Uop.simplify typed) with
-   | Uop.Arg.Value c -> equal (option float_exact) (Some 1.5)
+  (match Uop.as_const (Uop.simplify typed) with
+   | Some c -> equal (option float_exact) (Some 1.5)
        (match Const.view c with Const.Float f -> Some f | _ -> None)
    | _ -> fail "integer division did not fold to a floating value")
 
@@ -1838,21 +1838,21 @@ let upat_numeric_literals () =
   let matches pattern value = Upat.match_ pattern (Uop.const value) <> [] in
   let exact = Const.integer Dtype.weakint (Z.of_string "9007199254740992") in
   let next = Const.integer Dtype.weakint (Z.of_string "9007199254740993") in
-  let rounded = Const.float Dtype.float64 9007199254740992. in
+  let rounded = Const.float Dtype.weakfloat 9007199254740992. in
   is_true ~msg:"equal integer and float match" (matches (Upat.const exact) rounded);
   is_false ~msg:"integer is not rounded to match float"
     (matches (Upat.const next) rounded);
   is_false ~msg:"float pattern does not round integer"
     (matches (Upat.const rounded) next);
   is_true ~msg:"negative zero matches integer zero"
-    (matches Upat.zero (Const.float Dtype.float64 (-0.)));
+    (matches Upat.zero (Const.float Dtype.weakfloat (-0.)));
   is_true ~msg:"negative zero matches positive zero"
-    (matches (Upat.const_float 0.) (Const.float Dtype.float64 (-0.)));
+    (matches (Upat.const_float 0.) (Const.float Dtype.weakfloat (-0.)));
   is_true ~msg:"integer one matches bool true" (matches Upat.one (Const.bool true));
   is_false ~msg:"fractional floats do not match integers"
-    (matches Upat.one (Const.float Dtype.float64 1.5));
+    (matches Upat.one (Const.float Dtype.weakfloat 1.5));
   is_false ~msg:"infinity does not match integer"
-    (matches (Upat.const exact) (Const.float Dtype.float64 infinity))
+    (matches (Upat.const exact) (Const.float Dtype.weakfloat infinity))
 
 let pattern_matcher_rejects_opless_rules () =
   let open Upat in

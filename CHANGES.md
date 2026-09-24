@@ -379,6 +379,11 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.const` represents concrete numeric literals as typed casts over weak
+  values. Weak arithmetic commits widths at its consumers before code emission.
+- Preserve half-precision rounding in `arange` and ordinary arithmetic when
+  promoting back to float32; image-store conversion no longer removes it.
+
 - `Uop` rewrites derive result dtypes from their new inputs. Integer `FDIV`
   produces a float, and `Uop.stack` promotes mixed element dtypes.
 - `Uop.param` and `Uop.buffer` describe flat maximum storage sizes, with

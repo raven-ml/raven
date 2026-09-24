@@ -163,7 +163,6 @@ let simplify_merge_adjacent u =
             (U.first_match
                [
                  Upat.Pattern_matcher.rewrite symbolic;
-                 Upat.Pattern_matcher.rewrite Symbolic.pm_fold_cast_const;
                  Upat.Pattern_matcher.rewrite pm_flatten_range;
                ])
             nidx

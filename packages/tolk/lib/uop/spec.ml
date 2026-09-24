@@ -219,7 +219,7 @@ let alu_param u =
       is_int u
   | _ -> false
 
-let bind_value u = Uop.op u = Ops.Const && bind_dtype u
+let bind_value u = Option.is_some (Uop.as_const u) && bind_dtype u
 
 let bind_ok u var value =
   arg_empty u
@@ -515,7 +515,7 @@ let program_spec : t =
   let open Upat in
   let program_only = make [
     ops Ops.Group.all =??> (fun u _ ->
-      if is_weak u then Some false else None);
+      if is_weak u && Uop.op u <> Ops.Const then Some false else None);
 
     op ~src:[ ops [ Ops.Param; Ops.Buffer; Ops.After ]; any; op Ops.Const ]
       Ops.Shrink

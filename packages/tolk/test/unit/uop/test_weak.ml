@@ -16,8 +16,8 @@ let rewrite pm u = U.graph_rewrite (Upat.Pattern_matcher.rewrite pm) u
 let lower u = src (rewrite (Weak.pm_lower_index_dtype ()) (U.sink [ u ])) 0
 
 let const_int_of node =
-  match U.op node, U.arg node with
-  | Ops.Const, U.Arg.Value c -> (
+  match U.as_const node with
+  | Some c -> (
       match C.view c with C.Int n -> Some (Z.to_int n) | _ -> None)
   | _ -> None
 
@@ -48,7 +48,7 @@ let unconstrained_float_const_commits_at_default_float () =
 let peer_commits_weak_const_at_its_own_width () =
   let r = rewrite Weak.pm_commit_weak U.O.(i8 3 + U.const_int 1) in
   equal dtype ~msg:"the peer's width wins" D.int8 (U.dtype r);
-  equal dtype ~msg:"the weak const is rebuilt, not cast" D.int8
+  equal dtype ~msg:"a derivable const retains its weak payload" D.weakint
     (U.dtype (src r 1));
   is_true ~msg:"no cast is introduced" (Ops.equal (U.op (src r 1)) Ops.Const)
 
@@ -56,8 +56,8 @@ let peer_commits_weak_alu_by_cast () =
   let x = U.variable ~name:"x" ~min_val:0 ~max_val:4 ~dtype:D.weakint () in
   let r = rewrite Weak.pm_commit_weak U.O.(i32 3 + (x + U.const_int 1)) in
   equal dtype ~msg:"the peer's width wins" D.int32 (U.dtype r);
-  is_true ~msg:"a weak non-const takes a cast"
-    (Ops.equal (U.op (src r 1)) Ops.Cast)
+  equal dtype ~msg:"the demanded weak expression commits at the peer width"
+    D.int32 (U.dtype (src r 1))
 
 let all_weak_sources_stay_weak () =
   let e = U.O.(U.const_int 1 + U.const_int 2) in
@@ -107,8 +107,8 @@ let consecutive_weak_casts_preserve_integer_conversion () =
   let x = U.const (C.float D.float32 1.5) in
   let e = U.cast ~src:(U.cast ~src:x ~dtype:D.weakint) ~dtype:D.weakfloat in
   let r = lower e |> Symbolic.simplify in
-  match U.arg r with
-  | U.Arg.Value c ->
+  match U.as_const r with
+  | Some c ->
       (match C.view c with
        | C.Float value -> equal float_exact 1.0 value
        | _ -> fail "expected a floating constant")
@@ -131,7 +131,7 @@ let range_arithmetic_lowers_to_concrete_int () =
   let lowered = lower e in
   is_true ~msg:"no weak dtype survives"
     (List.for_all
-       (fun n -> not (D.is_weak (U.dtype n)))
+       (fun n -> U.op n = Ops.Const || not (D.is_weak (U.dtype n)))
        (U.toposort lowered));
   equal dtype ~msg:"index math lands at int32" D.int32 (U.dtype lowered)
 
@@ -143,7 +143,7 @@ let comparison_unifies_operand_widths () =
   equal dtype ~msg:"a comparison is bool" D.bool (U.dtype lowered);
   is_true ~msg:"no weak dtype survives"
     (List.for_all
-       (fun n -> not (D.is_weak (U.dtype n)))
+       (fun n -> U.op n = Ops.Const || not (D.is_weak (U.dtype n)))
        (U.toposort lowered))
 
 let gated_long_index_narrows_for_small_buffers () =
@@ -158,9 +158,8 @@ let gated_long_index_narrows_for_small_buffers () =
   equal dtype ~msg:"an index into an 8-element buffer fits int32" D.int32
     (U.dtype (src (src r 1) 1))
 
-let gated_long_index_does_not_narrow_when_shape_product_overflows () =
-  let dim = U.const_int (1 lsl 32) in
-  let buf = U.param ~slot:0 ~dtype:D.float32 ~shape:(U.stack [ dim; dim ]) () in
+let gated_long_index_keeps_wide_storage () =
+  let buf = U.param ~slot:0 ~dtype:D.float32 ~shape:(U.const_int (1 lsl 33)) () in
   let index = U.variable ~name:"index" ~min_val:0 ~max_val:(1 lsl 32)
       ~dtype:D.int64 () in
   let gate = U.variable ~name:"g" ~min_val:0 ~max_val:1 ~dtype:D.bool () in
@@ -172,14 +171,42 @@ let uint64_width_and_unrepresentable_const () =
   let value n = U.const (C.integer D.weakint n) in
   let r = lower (value maximum) in
   equal dtype D.uint64 (U.dtype r);
-  (match U.arg r with
-   | U.Arg.Value c ->
+  (match U.as_const r with
+   | Some c ->
        (match C.view c with
         | C.Int n -> is_true (Z.equal maximum n)
         | _ -> fail "expected integer constant")
    | _ -> fail "expected constant");
   raises_match (function Invalid_argument _ -> true | _ -> false)
     (fun () -> lower (value (Z.succ maximum)))
+
+let uncast_preserves_operand_and_result_types () =
+  let x = U.variable ~name:"concrete" ~min_val:0 ~max_val:10 ~dtype:D.int32 () in
+  let sum = U.O.(x + i32 1) in
+  let bare = rewrite Weak.pm_uncast_const sum in
+  equal dtype D.int32 (U.dtype bare);
+  is_true (U.op (src bare 1) = Ops.Const);
+  let constants = U.O.(i32 1 + i32 2) in
+  is_true ~msg:"both constants keep the width of the expression"
+    (U.equal constants (rewrite Weak.pm_uncast_const constants));
+  let count = U.variable ~name:"shift" ~min_val:0 ~max_val:31 ~dtype:D.uint32 () in
+  let shift = U.alu_binary ~op:Ops.Shl ~lhs:(i32 1) ~rhs:count in
+  is_true ~msg:"a concrete operand meet cannot hide a weak shifted value"
+    (U.equal shift (rewrite Weak.pm_uncast_const shift))
+
+let final_constants_state_width_on_each_edge () =
+  let literal = U.const_int 1 in
+  let i = U.variable ~name:"integer" ~min_val:0 ~max_val:10 ~dtype:D.int32 () in
+  let f = U.variable ~name:"float" ~min_val:0 ~max_val:10 ~dtype:D.float32 () in
+  let root = U.sink [ U.O.(i + literal); U.O.(f + literal); U.const_bool true ] in
+  let result = rewrite Weak.pm_cast_const root in
+  equal dtype D.int32 (U.dtype (src (src result 0) 1));
+  equal dtype D.float32 (U.dtype (src (src result 1) 1));
+  let boolean = src result 2 in
+  is_true (U.op boolean = Ops.Cast && U.op (src boolean 0) = Ops.Const);
+  equal dtype D.bool (U.dtype boolean);
+  is_true ~msg:"final commitment is stable"
+    (U.equal result (rewrite Weak.pm_cast_const result))
 
 let () =
   run "tolk.uop.weak"
@@ -213,6 +240,9 @@ let () =
           test "a wider cast widens" consumer_cast_widens;
           test "a narrower cast does not narrow" consumer_cast_never_narrows;
         ];
+      group "literal edges"
+        [ test "uncasting preserves both derived types" uncast_preserves_operand_and_result_types;
+          test "final constants state edge widths" final_constants_state_width_on_each_edge ];
       group "whole pass"
         [
           test "range arithmetic" range_arithmetic_lowers_to_concrete_int;
@@ -220,6 +250,6 @@ let () =
           test "gated long index narrows"
             gated_long_index_narrows_for_small_buffers;
           test "gated long index keeps its width for huge buffers"
-            gated_long_index_does_not_narrow_when_shape_product_overflows;
+            gated_long_index_keeps_wide_storage;
         ];
     ]

@@ -839,8 +839,9 @@ let program_rejects_invalid_const () =
     (rejected Spec.program_spec (Uop.invalid ()))
 
 let program_rejects_weakint () =
-  is_true ~msg:"index const rejected in program_spec"
-    (rejected Spec.program_spec (Uop.const_int 1))
+  Spec.type_verify Spec.program_spec (Uop.const_int 1);
+  is_true ~msg:"weak computations are rejected in program_spec"
+    (rejected Spec.program_spec Uop.O.(Uop.const_int 1 + Uop.const_int 2))
 
 let program_buffer_rules () =
   let local =
@@ -1142,7 +1143,7 @@ let program_rejects_bad_if_layouts () =
   let valid = Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:idx in
   let non_bool_cond = Uop.if_ ~cond:(i32 1) ~idx_for_dedup:idx in
   let value_dedup =
-    Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:(i32 0)
+    Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:(Uop.const_int 0)
   in
   let missing_dedup =
     Uop.replace valid ~src:[| Uop.const_bool true |] ()
@@ -1224,7 +1225,7 @@ let verify_list_validates_flat_program () =
   let ld = Uop.load ~src:idx () in
   Spec.verify_list Spec.program_spec [ i32 0; idx; ld ];
   is_true ~msg:"verify_list rejects supplied invalid node"
-    (rejected_list Spec.program_spec [ Uop.const_int 1 ])
+    (rejected_list Spec.program_spec [ Uop.O.(Uop.const_int 1 + Uop.const_int 2) ])
 
 (* Full spec *)
 

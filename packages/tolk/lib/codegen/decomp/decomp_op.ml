@@ -190,8 +190,8 @@ type supported_ops = {
 }
 (* Reads an integer constant out of a [Uop.t] that is a scalar [Const]. *)
 let const_integer node =
-  match Uop.op node, Uop.arg node with
-  | Ops.Const, Uop.Arg.Value v ->
+  match Uop.as_const node with
+  | Some v ->
       (match Const.view v with Const.Int n -> Some n | _ -> None)
   | _ -> None
 
@@ -201,8 +201,8 @@ let const_int64_value node =
   | _ -> None
 
 let const_bool_value node =
-  match Uop.op node, Uop.arg node with
-  | Ops.Const, Uop.Arg.Value v ->
+  match Uop.as_const node with
+  | Some v ->
       (match Const.view v with Const.Bool b -> Some b | _ -> None)
   | _ -> None
 
@@ -249,8 +249,8 @@ let const_int64_value_signed n =
   else None
 
 let is_neg_one node =
-  match Uop.op node, Uop.arg node with
-  | Ops.Const, Uop.Arg.Value v -> (
+  match Uop.as_const node with
+  | Some v -> (
       match Const.view v with
       | Const.Int n -> Z.equal n Z.minus_one
       | Const.Float f -> Float.equal f (-1.0)
@@ -693,8 +693,8 @@ let rule_mul_recip_to_fdiv (ops : supported_ops) node =
           | dt when Dtype.is_float dt && Uop.op d = Ops.Fdiv ->
              let sd = Uop.src d in
              if Array.length sd = 2 then
-               (match Uop.op sd.(0), Uop.arg sd.(0) with
-                | Ops.Const, Uop.Arg.Value v ->
+               (match Uop.as_const sd.(0) with
+                | Some v ->
                     (match Const.view v with
                      | Const.Float 1.0 ->
                          Some (Uop.alu_binary ~op:Ops.Fdiv ~lhs:a ~rhs:sd.(1))

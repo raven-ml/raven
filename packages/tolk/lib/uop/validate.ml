@@ -11,8 +11,8 @@ let is_const_invalid u =
   | _ -> false
 
 let is_false_const u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c ->
+  match Uop.as_const u with
+  | Some c ->
       (match Const.view c with Const.Bool false -> true | _ -> false)
   | _ -> false
 
@@ -43,8 +43,8 @@ let tighten_lower = Bound.max
 let tighten_upper = Bound.min
 
 let integer_const u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c ->
+  match Uop.as_const u with
+  | Some c ->
       (match Const.view c with
        | Const.Int n -> Some (`Int n)
        | Const.Bool b -> Some (`Bool b)
