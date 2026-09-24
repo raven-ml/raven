@@ -360,6 +360,10 @@ thread.
 
 ### Tolk (new)
 
+- Add `Op.block_matmul`: each block of rows times the matrix of a stack its id
+  addresses, read in place. A block whose id is out of range is exactly zero,
+  and on a GPU it runs no multiply-adds.
+
 - Add `Op.quant_matmul`, a product with MXFP4 weights that decodes them in
   registers and reads each packed byte once per tile of rows, and
   `Op.quant_row_bound`, the most rows a matrix should meet before decoding it

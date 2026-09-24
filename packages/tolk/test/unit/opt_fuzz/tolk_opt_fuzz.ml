@@ -171,6 +171,43 @@ let quant_matmul ?ids name =
   in
   { name; sink; fill; allowed }
 
+(* The block kernel ([Op.block_matmul]) in both layouts, on the device the
+   sweep runs on: four blocks over three matrices, one block's id -1 and one's
+   past the matrices. Its builder refuses options on the block axis, the
+   first, so the actions leave it alone. *)
+let block_matmul ~transpose name =
+  let sink dev =
+    let device = U.Single (Device.name dev) in
+    let empty dtype shape =
+      Tolk_frontend.Creation.empty ~dtype ~device shape
+    in
+    let y =
+      Tolk_frontend.Op.block_matmul ~transpose
+        (empty D.float32 [ 4; 16; 32 ])
+        (empty D.float32 (if transpose then [ 3; 16; 32 ] else [ 3; 32; 16 ]))
+        ~ids:(empty D.int32 [ 4 ])
+    in
+    U.sink [ U.contiguous ~src:(Tolk_frontend.Tensor.uop y) () ]
+  in
+  let fill slot _ =
+    if slot <> 3 then None
+    else
+      let b = Bytes.create 16 in
+      List.iteri
+        (fun t id -> Bytes.set_int32_le b (4 * t) (Int32.of_int id))
+        [ 1; -1; 0; 3 ];
+      Some b
+  in
+  let allowed (opt : U.Opt.t) =
+    match opt with
+    | Upcast { axis; _ } | Local { axis; _ } | Thread { axis; _ }
+    | Padto { axis; _ } ->
+        axis <> 0
+    | Swap { axis; with_axis } -> axis <> 0 && with_axis <> 0
+    | Tc _ | Unroll _ | Group _ | Grouptop _ | Nolocals -> true
+  in
+  { name; sink; fill; allowed }
+
 let workloads =
   [
     elementwise;
@@ -181,6 +218,8 @@ let workloads =
     multi_store;
     quant_matmul "quant_matmul";
     quant_matmul ~ids:[ 1; -1; 0 ] "quant_matmul_ids";
+    block_matmul ~transpose:false "block_matmul";
+    block_matmul ~transpose:true "block_matmul_t";
   ]
 
 (* Kernel extraction *)

@@ -272,6 +272,39 @@ val quant_row_bound :
     rendering with [ren]: beyond it, decoding the matrix and multiplying costs
     less. It is [0] on a device whose options are not measured. *)
 
+val quant_row_tile : Tolk.Renderer.t -> int
+(** [quant_row_tile ren] is the most rows of [x] {!quant_matmul} reads per load
+    of a group on a device rendering with [ren]: [1] on a device whose options
+    are not measured. A block of more rows costs more than one of this many. *)
+
+val block_row_tiles :
+  Tolk.Renderer.t -> Tolk_uop.Dtype.t -> n:int -> k:int -> int list
+(** [block_row_tiles ren dtype ~n ~k] is, largest first, the rows a block of
+    {!block_matmul} may have for its pinned options to fill their tiles, with
+    [n] outputs and [k] inputs at [dtype] on a device rendering with [ren]:
+    empty where no options are pinned, and no number of rows fills a tile. *)
+
+val block_matmul :
+  ?transpose:bool -> Tensor.t -> Tensor.t -> ids:Tensor.t -> Tensor.t
+(** [block_matmul x w ~ids] multiplies each block of rows of [x] by the matrix
+    of [w] its id addresses: block [b] of the result is [matmul x.(b)
+    w.(ids.(b))] when [ids.(b)] is in \[[0];[e-1]\], and exactly zero
+    otherwise, whatever [x.(b)] holds. [x] is [\[nb; m; k\]], [ids] is
+    [\[nb\]] and the result is [\[nb; m; n\]] at [x]'s dtype. [w] is
+    [\[e; k; n\]]; with [transpose] (default [false]) it is [\[e; n; k\]] and
+    each block is multiplied by the transpose of its matrix, the layout of a
+    linear layer's weight. Products accumulate at float32.
+
+    Each block reads its own matrix in place, where [matmul] over [w] gathered
+    by [ids] would copy the gathered matrices. On a GPU, when [k] is at least
+    2, a block whose id is out of range reads its id and nothing else and runs
+    no multiply-adds; with one input its load is gated instead.
+
+    @raise Invalid_argument
+      if the shapes disagree as above, if [x] and [w] differ in dtype, if
+      [ids] is not an integer tensor, or if no operand is placed on a
+      device. *)
+
 val masked_select : ?fill_value:Tensor.scalar -> Tensor.t -> Tensor.t -> size:int -> Tensor.t
 (** [masked_select t mask ~size] is the 1-D tensor of the elements of [t] where
     [mask] is true, in row-major order, packed into a fixed length [size].

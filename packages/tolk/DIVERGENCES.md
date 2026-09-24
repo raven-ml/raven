@@ -154,6 +154,32 @@ delete it rather than registering it.
   kernel runs, and `sym_infer` cannot evaluate it, so tolk counts it at its
   upper bound. The reference has no loop of this kind.
 
+- **Block matrix product** (`frontend/op.ml` `block_matmul`). The reference
+  multiplies blocks of rows by matrices chosen per block only through `matmul`
+  over the gathered matrices, which copies one matrix per block, and a block
+  whose id selects nothing still multiplies. tolk's block kernel, built through
+  the ported `custom_kernel`, reads each block's matrix in place. Its
+  contraction is two loops: an outer loop over tiles of 8 whose bound, on a
+  renderer with work groups, is zero when the block's id is outside the stack,
+  around a constant loop of 8 that the tensor-core option splits. Such a block
+  reads its id, runs no multiply-adds and stores zeros. The bound is one value
+  per work group only while the block axis is a whole global dimension, so the
+  builder applies its options to the kernel and raises if the block axis does
+  not survive them whole. The CPU runs work groups as a loop, where a bound that
+  reads that loop's index miscompiles, so there the bound is constant, the
+  weight's load is gated and a select zeroes the store, as for a contraction of
+  one input anywhere, whose loop of one trip folds away. The options are pinned
+  per renderer and shape: on Metal the tensor cores, rows upcast by up to 8
+  tiles, columns by 3, and a local split of 4 on the columns, measured at 6.6 to
+  7.6 TFLOPS at bfloat16 on an M1 Max for 46 filled blocks of 64 rows at
+  gpt-oss's shapes, where the heuristic's `matmul` reaches 8.2 on a dense
+  product; elsewhere none yet. Coverage:
+  `test/unit/frontend/test_block_matmul.ml` (values on the default device, and
+  each renderer's loop bounds) and the opt-correctness workloads `block_matmul`
+  and `block_matmul_t`, under every action that leaves the block axis whole.
+  Consumer: rune's lowering of `Nx_quant` products over expert ids, grouped or
+  one block per position.
+
 - **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
   `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference
   selects unaligned vector types through the `ALIGNED` environment variable

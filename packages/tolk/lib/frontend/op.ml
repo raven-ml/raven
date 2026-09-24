@@ -745,12 +745,15 @@ let largest_divisor n ~at_most =
    and 119 ms at 64 at bfloat16, against 6.6 and 135 ms decoded; at float32
    the decoded product is faster from 4 rows. A device without measured
    options runs the kernel unoptimised and serves no rows. *)
+let quant_row_tile ren =
+  match Tolk.Renderer.device ren with "METAL" | "CPU" -> 8 | _ -> 1
+
 let quant_options ren ~dtype ~m ~n ~k =
   let groups = k / 32 in
   match Tolk.Renderer.device ren with
   | "METAL" ->
       let local = largest_divisor n ~at_most:4 in
-      let tile = largest_divisor m ~at_most:8 in
+      let tile = largest_divisor m ~at_most:(quant_row_tile ren) in
       ( {
           group = largest_divisor groups ~at_most:15;
           local;
@@ -763,7 +766,7 @@ let quant_options ren ~dtype ~m ~n ~k =
           group = 1;
           local = 1;
           upcast = largest_divisor n ~at_most:4;
-          tile = largest_divisor m ~at_most:8;
+          tile = largest_divisor m ~at_most:(quant_row_tile ren);
         },
         if D.equal dtype D.float32 then 2 else 64 )
   | _ -> ({ group = 1; local = 1; upcast = 1; tile = 1 }, 0)
@@ -1062,6 +1065,220 @@ let quant_matmul ?ids x ~codes ~scales =
       match ids with None -> srcs | Some ids -> srcs @ [ stored ids ]
     in
     List.hd (T.custom_kernel ~fxn srcs)
+  end
+
+(* Block matrix product
+
+   No tinygrad counterpart. A product of blocks of rows, each by the matrix of
+   a stack that its id addresses, written as [matmul] over [w] gathered by the
+   ids costs a copy of the gathered matrices, and a block whose id selects no
+   matrix still multiplies. This custom kernel reads each block's matrix in
+   place, and splits the contraction in two loops: an outer loop over tiles of
+   [depth], whose bound on a GPU is zero for a block whose id selects no matrix,
+   around a constant loop of [depth] that the tensor-core option splits. Such
+   a block reads its id, runs no multiply-adds and stores the reduction's
+   identity. The bound is one value per work group only while the block axis is
+   a global dimension of its own, so the options never split it: an upcast
+   block axis would make the bound a vector. The CPU runs work groups as a loop
+   and miscompiles a loop bound that reads that loop's index, so there the
+   bound is constant, the weight's load is gated and a select zeroes the store.
+   So is a contraction of one input anywhere: tolk folds the index of a loop
+   read from memory whose size is at most 1 to 0, and the loop drops out of its
+   reduce whatever its size at run time, so a bounded loop keeps at least two
+   trips (workaround: remove the one-input case and [depth]'s [k > 8] when
+   tolk keeps such a loop). *)
+
+(* [block_axis_kept ren kernel ~nb] is whether [kernel]'s block axis, axis 0,
+   is still one whole parallel dimension of [nb] once its options apply. *)
+let block_axis_kept ren kernel ~nb =
+  let k = Tolk.Postrange.create kernel ren in
+  Tolk.Postrange.convert_loop_to_global k;
+  let opts =
+    match Uop.as_kernel_info kernel with
+    | Some { opts_to_apply = Some opts; _ } -> opts
+    | _ -> []
+  in
+  List.iter (fun opt -> ignore (Tolk.Postrange.apply_opt k opt)) opts;
+  List.exists
+    (fun r ->
+      match Uop.as_range r with
+      | Some { axis = 0; sub = []; kind = Axis_type.Global | Axis_type.Weak; _ }
+        ->
+          Tolk.Postrange.range_int_size r = nb
+      | _ -> false)
+    (Tolk.Postrange.rngs k)
+
+(* The tensor cores serve a shape on Metal whose outputs and contraction are
+   tiles of 8, at a dtype they take. They multiply 8 by 8 tiles: the options
+   upcast the rows by up to 8 tiles and the columns by 3, then split the
+   columns 4 ways across a work group, measured at gpt-oss's shapes. *)
+let block_tensor_cores ren ~dtype ~n ~k =
+  Tolk.Renderer.device ren = "METAL"
+  && List.exists
+       (fun (tc : Tolk.Tc.t) -> D.equal tc.dtype_in dtype)
+       (Tolk.Renderer.tensor_cores ren)
+  && n mod 8 = 0 && k mod 8 = 0 && k > 8
+
+let row_upcasts = [ 8; 4; 2; 1 ]
+
+let block_row_tiles ren dtype ~n ~k =
+  if block_tensor_cores ren ~dtype ~n ~k then
+    List.map (fun u -> 8 * u) row_upcasts
+  else []
+
+(* The contraction's tile depth and the options, per renderer and shape,
+   pinned from measurements. The block axis is axis 0 when there are several
+   blocks; the rows, then the columns, follow it. *)
+let block_options ren ~dtype ~nb ~m ~n ~k =
+  let depth = if k mod 8 = 0 && k > 8 then 8 else 1 in
+  let first = if nb > 1 then 1 else 0 in
+  let largest l size = List.find (fun u -> size mod u = 0) l in
+  let opts =
+    if block_tensor_cores ren ~dtype ~n ~k && m mod 8 = 0 then
+      let rows = m / 8 and cols = n / 8 in
+      let ur = largest row_upcasts rows in
+      let uc = largest [ 3; 2; 1 ] cols in
+      let lc = largest [ 4; 2; 1 ] (cols / uc) in
+      let col = first + if rows / ur > 1 then 1 else 0 in
+      let opt amount o = if amount > 1 then [ o ] else [] in
+      (Uop.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }
+      :: opt ur (Uop.Opt.Upcast { axis = first; amount = ur }))
+      @ opt uc (Uop.Opt.Upcast { axis = col; amount = uc })
+      @ opt lc (Uop.Opt.Local { axis = col; amount = lc })
+    else []
+  in
+  (depth, opts)
+
+let block_matmul ?(transpose = false) x w ~ids =
+  let nb, m, k =
+    match T.shape x with
+    | [ nb; m; k ] -> (nb, m, k)
+    | _ -> invalid_arg "Op.block_matmul: x must be [blocks; rows; inputs]"
+  in
+  let e, n =
+    match (T.shape w, transpose) with
+    | [ e; k'; n ], false when k' = k -> (e, n)
+    | [ e; n; k' ], true when k' = k -> (e, n)
+    | _ -> invalid_arg "Op.block_matmul: w does not match x's inputs"
+  in
+  if T.shape ids <> [ nb ] then
+    invalid_arg "Op.block_matmul: ids must be [blocks]";
+  if not (D.is_int (T.dtype ids)) then
+    invalid_arg "Op.block_matmul: integer ids required";
+  let dtype = T.dtype x in
+  if not (D.equal dtype (T.dtype w)) then
+    invalid_arg "Op.block_matmul: x and w must have the same dtype";
+  let device =
+    match List.find_map T.device [ x; w; ids ] with
+    | Some device -> device
+    | None -> invalid_arg "Op.block_matmul: no operand is placed on a device"
+  in
+  let ren =
+    match device with
+    | Uop.Single name | Uop.Multi (name :: _) ->
+        Tolk.Device.renderer (Tolk.Device.get name)
+    | Uop.Multi [] | Uop.Index _ ->
+        invalid_arg "Op.block_matmul: no device name"
+  in
+  let out = Creation.empty ~dtype ~device [ nb; m; n ] in
+  if nb * m * n = 0 then out
+  else begin
+    let depth, opts = block_options ren ~dtype ~nb ~m ~n ~k in
+    let bounded = Tolk.Renderer.has_local ren && k / depth > 1 in
+    let fxn = function
+      | [ out; x; w; ids ] ->
+          let flat u size = Uop.reshape ~src:u ~shape:(Uop.const_int size) in
+          let out = flat out (nb * m * n) and x = flat x (nb * m * k) in
+          let w = flat w (e * n * k) and ids = flat ids nb in
+          let tiles = k / depth in
+          let open Uop.O in
+          let range size axis kind =
+            if size = 1 then Uop.const_int 0
+            else Uop.range ~size:(Uop.const_int size) ~axis ~kind ()
+          in
+          let block = range nb 0 Axis_type.Weak in
+          let row = range m 1 Axis_type.Weak in
+          let col = range n 2 Axis_type.Weak in
+          let load ptr idx =
+            Uop.load ~src:(Uop.index ~ptr ~idxs:[ idx ] ()) ()
+          in
+          let id = load ids block in
+          let bound v = Uop.const (Const.int (Uop.dtype id) v) in
+          let selects =
+            Uop.alu_binary ~op:Ops.And
+              ~lhs:(not_ (id < bound 0))
+              ~rhs:(id < bound e)
+          in
+          let tile =
+            if bounded then
+              Uop.range
+                ~size:(where selects (Uop.const_int tiles) (Uop.const_int 0))
+                ~axis:3 ~kind:Axis_type.Reduce ()
+            else range tiles 3 Axis_type.Reduce
+          in
+          let inner = range depth 4 Axis_type.Reduce in
+          let c = (tile * Uop.const_int depth) + inner in
+          let id = Uop.cast ~src:id ~dtype:D.weakint in
+          let ( *: ) i size = i * Uop.const_int size in
+          let xv = load x ((((block *: m) + row) *: k) + c) in
+          let waddr =
+            if transpose then (((id *: n) + col) *: k) + c
+            else (((id *: k) + c) *: n) + col
+          in
+          let wv =
+            load w
+              (if bounded then waddr else Uop.valid ~src:waddr ~cond:selects)
+          in
+          let is_range u = Uop.op u = Ops.Range in
+          let acc =
+            Uop.reduce
+              ~src:(Uop.cast ~src:(xv * wv) ~dtype:D.float32)
+              ~ranges:(List.filter is_range [ tile; inner ])
+              ~op:Ops.Add ~dtype:D.float32
+          in
+          let acc =
+            if bounded then acc
+            else where selects acc (Uop.const (Const.float D.float32 0.0))
+          in
+          let cell =
+            Uop.index ~ptr:out ~idxs:[ (((block *: m) + row) *: n) + col ] ()
+          in
+          let store =
+            Uop.store ~dst:cell ~value:(Uop.cast ~src:acc ~dtype) ()
+          in
+          let body =
+            Uop.end_ ~value:store
+              ~ranges:(List.filter is_range [ block; row; col ])
+          in
+          let kernel =
+            Uop.sink
+              ~kernel_info:
+                {
+                  Uop.name =
+                    Printf.sprintf "block_matmul%s_%d_%d_%d_%d_%d"
+                      (if transpose then "_t" else "")
+                      nb m n k e;
+                  axis_types = [];
+                  dont_use_locals = false;
+                  applied_opts = [];
+                  opts_to_apply = Some opts;
+                  estimates = None;
+                  beam = 0;
+                }
+              [ body ]
+          in
+          if nb > 1 && not (block_axis_kept ren kernel ~nb) then
+            invalid_arg
+              (Printf.sprintf
+                 "Op.block_matmul: the options [%s] split the block axis"
+                 (String.concat "; " (List.map Uop.Opt.to_string opts)));
+          kernel
+      | _ -> assert false
+    in
+    let stored t =
+      if Option.is_some (T.device t) then t else Creation.clone ~device t
+    in
+    List.hd (T.custom_kernel ~fxn [ out; stored x; stored w; stored ids ])
   end
 
 (* Indexing *)

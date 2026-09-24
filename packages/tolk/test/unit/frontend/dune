@@ -3,6 +3,7 @@
   test_frontend
   test_run
   test_custom_kernel
+  test_block_matmul
   test_linalg
   test_jit
   test_rand
@@ -12,6 +13,7 @@
   test_frontend
   test_run
   test_custom_kernel
+  test_block_matmul
   test_linalg
   test_jit
   test_rand
