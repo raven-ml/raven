@@ -1729,6 +1729,26 @@ thread.
 
 ### Nx
 
+- Add `Nx.Ptree`, structures of tensors. A structure is a type `'a t` with one
+  function, `walk`, that visits its parts with a `Walk` cursor: `leaf` for the
+  parameter's positions, `tensor` for tensors of a fixed type, `int` and `case`
+  for the data a compiled program depends on, and `field`, `index`, `option`
+  and `list` for the rest. `instantiate`, `nest`, `tensor`, `unit`, `pair`,
+  `option`, `list` and `iso` build a structure at one type, `'s Nx.Ptree.t`,
+  which transformations, optimisers and checkpoints take; `@->`, `consumes`
+  and `returns` build the signature of a compiled function.
+- `Nx.Ptree.map`, `map2` and `fold` pass each tensor its path, whose typed
+  segments (`Path.segments`) make a mask a pattern match. `cast` and
+  `Payload.map`, `map2` and `fold` change the payload's type, for casts and
+  for metadata shaped like a model. `map2` raises naming the first path at
+  which its two values differ and what each holds there. `visits` lists each
+  tensor and each report a walk makes, with its path, for a structure's
+  tests; `pp_visit` prints one. `flatten` returns a value's tensors in walk
+  order and its `Skeleton.t`, which compares and hashes; `rebuild` puts
+  tensors back into a value.
+- `Nx_quant.walk` walks a weight with a `Walk` cursor, reporting its format as a
+  case, and `Nx_quant.ptree` is its structure; `map2` and `iter` go, as
+  `Nx.Ptree.map2` and `fold` over `Nx_quant.ptree`.
 - **Breaking:** `Nx_io.packed` and `Nx_io.to_typed` become `Nx.packed` and
   `Nx.unpack`, one packed tensor type for files and checkpoints. `unpack`
   raises `Invalid_argument` naming both dtypes, where `to_typed` raised
@@ -1769,9 +1789,6 @@ thread.
   control characters in tensor names. Decode JSON Unicode escapes and surrogate
   pairs, emit valid JSON escapes, and reject malformed string escapes.
 
-- Add `Nx.Ptree.leaf`, the structure that is one tensor, for every dtype.
-  Pass it for the single-tensor roles of a transformation that takes several
-  structures, instead of writing a one-leaf module per tensor type.
 - Add `Nx_buffer.register_file` and `Nx_buffer.file_range`. A buffer whose
   memory lies inside a recorded file mapping, views and reinterpretations
   included, answers with the file and the byte offset of its first element, so
@@ -2030,22 +2047,6 @@ thread.
 - Fix `Nx.Rng.randint` skewing towards zero for a negative `low`: it truncated
   the shifted float, so `low` was never drawn and `0` was drawn twice as often.
   Values for a fixed key change.
-- **Breaking:** the stock dynamic tree is payload-generic: `Nx.Ptree.Tree` is
-  a `Uniform` structure (constructors `Leaf`/`List`/`Dict`, paths from list
-  positions and dict keys) and `Nx.Ptree.t` is `tensor Tree.t`. The `Tensor`
-  constructor is now `Tree.Leaf`; the `tensor`/`list`/`dict` constructors and
-  the rank-2 traversals are unchanged.
-- Add `Nx.Ptree.instantiate`, which fills a `Ptree.Uniform` structure's payload
-  hole at one tensor type as a first-class `Ptree.S` module — `let mlp =
-  Ptree.instantiate (module Mlp)` — so a payload-generic tree passes to
-  `Rune.grad` and the Vega optimizers with typed leaves and no packing.
-- Add the payload-generic module types `Nx.Ptree.Traverse` (the traversal
-  core: `map`, `map2`, `iter`) and `Nx.Ptree.Uniform` (the core plus
-  `fold`/`fold2` over dot-joined leaf paths and `names`, the tree of those
-  paths), and `Nx.Ptree.Make`, which turns a `Traverse` into an `Nx.Ptree.S`
-  with packed tensor leaves — so one `'a params` declaration serves both the
-  model and parameter-shaped data. `Nx.Ptree.unpack` recovers a typed tensor
-  from a packed leaf, naming the position in the error on a dtype mismatch.
 - **Breaking:** the real FFT family (`rfft`, `irfft`, `hfft`, `ihfft` and their
   2-D/N-D variants) and `fftfreq`/`rfftfreq` now take the output dtype first,
   like the constructors. It selects storage precision independent of the
@@ -2293,12 +2294,6 @@ thread.
   called the C backend directly, making them invisible to every effect
   handler (autodiff, vmap, jit). They now perform `E_rfft`/`E_irfft` like
   the other FFT operations, with the target `dtype` carried in the effect.
-- Add `Nx.Ptree`: parameter trees. The `Ptree.S` module type is the traversal
-  interface shared across the ecosystem — autodiff transformations (Rune),
-  structural optimizers (Vega), and checkpointing (Kaun) all operate on any
-  user structure implementing its three traversals (`map`, `map2`, `iter`).
-  A stock dynamic tree (`Ptree.t` with tensor, list, and dict nodes) covers
-  structures only known at runtime.
 - Require OCaml >= 5.5.0 (module-dependent functions are used by the
   `Ptree.S`-based APIs downstream).
 - Fix `flatten` raising on rank-0 tensors; it now reshapes them to `[|1|]`.

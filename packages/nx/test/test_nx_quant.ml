@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Quantised weights: construction, the format's values, the product with and
-   without ids, and the traversals. *)
+   without ids, and the structure. *)
 
 open Windtrap
 
@@ -132,9 +132,9 @@ let test_no_bytes_read () =
   let scales, scale_fills = deferred [| 2; 8; 2 |] in
   let w = Nx_quant.mxfp4 ~scales codes in
   equal ~msg:"shape" (array int) [| 2; 8; 64 |] (Nx_quant.shape w);
-  let w = Nx_quant.map (fun t -> t) w in
-  ignore (Nx_quant.map2 (fun a _ -> a) w w);
-  Nx_quant.iter ignore w;
+  let w = Nx.Ptree.map Nx_quant.ptree (fun _ t -> t) w in
+  ignore (Nx.Ptree.map2 Nx_quant.ptree (fun _ a _ -> a) w w);
+  ignore (Nx.Ptree.visits Nx_quant.ptree w);
   let bad, bad_fills = deferred [| 2; 8; 3 |] in
   raises ~msg:"a mismatch"
     (Invalid_argument
@@ -451,7 +451,7 @@ let test_transposed () =
 
 (* Views *)
 
-let contiguous w = Nx_quant.map Nx.contiguous w
+let contiguous w = Nx.Ptree.map Nx_quant.ptree (fun _ t -> Nx.contiguous t) w
 
 (* [check_views msg ?ids w x] checks that a weight whose parts are views gives
    the values and products of the same weight over contiguous parts. *)
@@ -475,17 +475,19 @@ let test_views () =
   let rows t = Nx.slice [ A; R (2, 7); A ] t in
   check_views "rows of each matrix"
     ~ids:(ints [| 4; 2 |] [| 0; 2; -1; 1; 2; 2; 1; 0 |])
-    (Nx_quant.map rows (weight [| 3; 10; 64 |]))
+    (Nx.Ptree.map Nx_quant.ptree (fun _ t -> rows t) (weight [| 3; 10; 64 |]))
     (floats [| 4; 1; 1; 64 |]);
   let swap t = Nx.transpose ~axes:[ 1; 0; 2; 3 ] t in
   check_views "leading axes swapped"
     ~ids:(ints [| 3; 2 |] [| 3; 0; -1; 2; 1; 1 |])
-    (Nx_quant.map swap (weight [| 4; 3; 5; 64 |]))
+    (Nx.Ptree.map Nx_quant.ptree (fun _ t -> swap t) (weight [| 4; 3; 5; 64 |]))
     (floats [| 3; 1; 1; 64 |]);
   let first_inputs t = Nx.slice [ A; A; R (0, Nx.dim 2 t / 2) ] t in
   check_views "the first half of the inputs"
     ~ids:(ints [| 2; 2 |] [| 1; 0; 2; -1 |])
-    (Nx_quant.map first_inputs (weight [| 3; 5; 128 |]))
+    (Nx.Ptree.map Nx_quant.ptree
+       (fun _ t -> first_inputs t)
+       (weight [| 3; 5; 128 |]))
     (floats [| 2; 1; 1; 64 |])
 
 (* An [x] that is a view whose batch axes do not merge, as a cotangent broadcast
@@ -579,52 +581,45 @@ let test_effect () =
 
 (* Traversals *)
 
-let test_traversal_order () =
+let test_visits () =
   let w = weight [| 3; 4; 64 |] in
-  let seen = ref [] in
-  let record t =
-    seen := (Nx.shape t, Nx_core.Dtype.to_string (Nx.dtype t)) :: !seen
+  equal ~msg:"the case, then codes before scales" (list string)
+    [ "the root: case \"mxfp4\""; "codes: a leaf"; "scales: a leaf" ]
+    (List.map
+       (Format.asprintf "%a" Nx.Ptree.pp_visit)
+       (Nx.Ptree.visits Nx_quant.ptree w));
+  let parts =
+    Nx.Ptree.fold Nx_quant.ptree
+      (fun _ t acc -> (Nx.shape t, Nx_core.Dtype.to_string (Nx.dtype t)) :: acc)
+      w []
   in
-  Nx_quant.iter record w;
-  let expected = [ ([| 3; 4; 32 |], "uint8"); ([| 3; 4; 2 |], "uint8") ] in
-  let order msg = equal ~msg (list (pair (array int) string)) in
-  order "iter" expected (List.rev !seen);
-  seen := [];
-  ignore
-    (Nx_quant.map
-       (fun t ->
-         record t;
-         t)
-       w);
-  order "map" expected (List.rev !seen);
-  seen := [];
-  ignore
-    (Nx_quant.map2
-       (fun a _ ->
-         record a;
-         a)
-       w w);
-  order "map2" expected (List.rev !seen)
+  equal ~msg:"each part keeps its dtype"
+    (list (pair (array int) string))
+    [ ([| 3; 4; 32 |], "uint8"); ([| 3; 4; 2 |], "uint8") ]
+    (List.rev parts);
+  let (Nx_quant.Mxfp4 { codes; scales }) = w in
+  let (Nx_quant.Mxfp4 r) =
+    Nx.Ptree.rebuild Nx_quant.ptree ~like:w
+      (fst (Nx.Ptree.flatten Nx_quant.ptree w))
+  in
+  is_true ~msg:"round trip" (r.codes == codes && r.scales == scales)
 
-let test_traversal_checks () =
+let test_walk_checks () =
   let w = weight [| 3; 4; 64 |] in
   (* Halving an axis of two leaves the scales one per 64 values. *)
-  let halve t =
+  let halve (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t =
     if Nx.dim (-1) t = 2 then Nx.slice [ A; A; R (0, 1) ] t else t
   in
   raises ~msg:"map"
     (Invalid_argument
-       "Nx_quant.map: scales must have shape [3; 4; 2], one per 32 values, got \
-        [3; 4; 1]") (fun () -> ignore (Nx_quant.map halve w));
+       "Nx_quant.walk: scales must have shape [3; 4; 2], one per 32 values, \
+        got [3; 4; 1]") (fun () ->
+      ignore (Nx.Ptree.map Nx_quant.ptree (fun _ t -> halve t) w));
   raises ~msg:"map2 on a changed part"
     (Invalid_argument
-       "Nx_quant.map2: scales must have shape [3; 4; 2], one per 32 values, \
+       "Nx_quant.walk: scales must have shape [3; 4; 2], one per 32 values, \
         got [3; 4; 1]") (fun () ->
-      ignore (Nx_quant.map2 (fun a _ -> halve a) w w));
-  raises ~msg:"map2 on two shapes"
-    (Invalid_argument
-       "Nx_quant.map2: weights of shapes [3; 4; 64] and [3; 4; 32] differ")
-    (fun () -> ignore (Nx_quant.map2 (fun a _ -> a) w (weight [| 3; 4; 32 |])))
+      ignore (Nx.Ptree.map2 Nx_quant.ptree (fun _ a _ -> halve a) w w))
 
 let tests =
   [
@@ -662,8 +657,8 @@ let tests =
     group "effect" [ test "apply and dequant perform E_quant" test_effect ];
     group "traversals"
       [
-        test "codes before scales" test_traversal_order;
-        test "results are checked" test_traversal_checks;
+        test "the case, then codes before scales" test_visits;
+        test "rebuilt parts are checked" test_walk_checks;
       ];
   ]
 

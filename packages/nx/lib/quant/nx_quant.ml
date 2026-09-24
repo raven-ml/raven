@@ -57,29 +57,25 @@ let shape (Mxfp4 { codes; _ }) =
   s.(r - 1) <- 2 * s.(r - 1);
   s
 
-(* Traversals *)
+(* Structure *)
 
-let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (Mxfp4 { codes; scales }) =
-  let codes = f codes in
-  let scales = f scales in
-  check_mxfp4 "Nx_quant.map" codes scales;
+let walk c (Mxfp4 { codes; scales }) =
+  let open Nx.Ptree.Walk in
+  case c "mxfp4";
+  let codes = field c "codes" tensor codes in
+  let scales = field c "scales" tensor scales in
+  check_mxfp4 "Nx_quant.walk" codes scales;
   Mxfp4 { codes; scales }
 
-let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t)
-    (Mxfp4 a as w) (Mxfp4 b as w') =
-  if Nx.shape a.codes <> Nx.shape b.codes then
-    invalid_arg
-      (strf "Nx_quant.map2: weights of shapes %s and %s differ"
-         (pp_shape (shape w))
-         (pp_shape (shape w')));
-  let codes = f a.codes b.codes in
-  let scales = f a.scales b.scales in
-  check_mxfp4 "Nx_quant.map2" codes scales;
-  Mxfp4 { codes; scales }
+type weight = t
 
-let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (Mxfp4 { codes; scales }) =
-  f codes;
-  f scales
+module Structure = struct
+  type _ t = weight
+
+  let walk = walk
+end
+
+let ptree = Nx.Ptree.instantiate (module Structure)
 
 (* Decoding. A byte holds two e2m1 codes, the low nibble first; a code is a sign
    bit over the magnitudes 0, 0.5, 1, 1.5, 2, 3, 4 and 6. Every value, scaled,

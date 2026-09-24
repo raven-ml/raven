@@ -21,7 +21,7 @@
   test_nx_splat
   test_nx_sliding_window
   test_nx_stft
-  test_ptree_uniform)
+  test_ptree)
  (package nx)
  (modules
   :standard
