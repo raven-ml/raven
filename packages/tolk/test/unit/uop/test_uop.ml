@@ -1437,6 +1437,16 @@ let program_info_from_sink_parity () =
     [ ("core_id", 0) ] (Uop.program_runtimevars info);
   equal (list (option int)) ~msg:"ProgramInfo vals skip runtime vars"
     [ None; Some 6 ] (Uop.program_vals info ~var_vals:[ "n", 6 ]);
+  raises_match
+    (function
+      | Invalid_argument msg -> contains msg "kernel name" && contains msg "\"n\""
+      | _ -> false)
+    (fun () -> Uop.program_vals info ~var_vals:[]);
+  raises_match
+    (function
+      | Invalid_argument msg -> contains msg "kernel name" && contains msg "\"n\""
+      | _ -> false)
+    (fun () -> Uop.program_launch_dims info ~var_vals:[]);
   let global_size, local_size =
     Uop.program_launch_dims info ~var_vals:[ "n", 6 ]
   in

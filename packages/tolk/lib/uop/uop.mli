@@ -307,15 +307,17 @@ val program_launch_dims :
     [info.local_size] using [var_vals]. Symbolic global dimensions are
     evaluated as integer UOp expressions over named runtime variables.
 
-    Raises [Not_found] if a symbolic dimension references a missing variable
-    or an expression outside the UOp-local evaluator. *)
+    Raises [Invalid_argument], naming the program and variable, if a symbolic
+    dimension references a missing variable. Raises [Not_found] for an
+    expression outside the UOp-local evaluator. *)
 
 val program_vals : program_info -> var_vals:(string * int) list -> int option list
 (** [program_vals info ~var_vals] is the runtime argument tuple for
     [info.vars]. Variables listed by {!program_runtimevars} return [None];
     other variables return [Some value] from [var_vals].
 
-    Raises [Not_found] if a non-runtime variable has no supplied value. *)
+    Raises [Invalid_argument], naming the program and variable, if a
+    non-runtime variable has no supplied value. *)
 
 type wmma_info = {
   dims : int * int * int;  (** Matrix dimensions [(M, N, K)]. *)

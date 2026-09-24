@@ -500,7 +500,7 @@ let launch_dims t var_vals =
               | Some v -> v
               | None ->
                   invalid_arg
-                    (Printf.sprintf "missing launch variable %S" name))
+                    (Printf.sprintf "program %S: missing launch variable %S" t.name name))
          | _ ->
              match U.op d, U.src d with
              | (Ops.Cast | Ops.Bitcast), [| x |] -> eval x

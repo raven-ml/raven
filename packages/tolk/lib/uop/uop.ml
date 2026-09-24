@@ -3415,22 +3415,29 @@ let exec_alu ?(truncate_output = true) op (target : Dtype.t) args =
         exec_ternary ~truncate_output op target a b c
     | _ -> None
 
-let rec infer_int var_vals u =
+let rec infer_int program_name var_vals u =
   match const_int_value (simplify u) with
   | Some n -> n
   | None ->
       let srcs = src u in
       let binary f =
         if Array.length srcs < 2 then raise Not_found;
-        f (infer_int var_vals srcs.(0)) (infer_int var_vals srcs.(1))
+        f (infer_int program_name var_vals srcs.(0))
+          (infer_int program_name var_vals srcs.(1))
       in
       match op u with
       | Ops.Param -> (
           match program_var_name u with
-          | Some name -> List.assoc name var_vals
-          | None -> raise Not_found)
-      | Ops.Bind when Array.length srcs >= 2 -> infer_int var_vals srcs.(1)
-      | Ops.Cast when Array.length srcs >= 1 -> infer_int var_vals srcs.(0)
+          | Some name ->
+              (match List.assoc_opt name var_vals with
+               | Some value -> value
+               | None -> invalid_arg
+                   (Printf.sprintf "program %S: missing launch variable %S"
+                      program_name name))
+          | None -> invalid_arg
+              (Printf.sprintf "program %S: unnamed launch variable" program_name))
+      | Ops.Bind when Array.length srcs >= 2 -> infer_int program_name var_vals srcs.(1)
+      | Ops.Cast when Array.length srcs >= 1 -> infer_int program_name var_vals srcs.(0)
       | Ops.Add -> binary ( + )
       | Ops.Sub -> binary ( - )
       | Ops.Mul -> binary ( * )
@@ -3447,19 +3454,20 @@ let rec infer_int var_vals u =
       | Ops.Xor -> binary ( lxor )
       | Ops.Shl -> binary ( lsl )
       | Ops.Shr -> binary ( asr )
-      | Ops.Neg when Array.length srcs >= 1 -> -infer_int var_vals srcs.(0)
+      | Ops.Neg when Array.length srcs >= 1 -> -infer_int program_name var_vals srcs.(0)
       | Ops.Where when Array.length srcs >= 3 ->
-          if infer_int var_vals srcs.(0) <> 0 then infer_int var_vals srcs.(1)
-          else infer_int var_vals srcs.(2)
+          if infer_int program_name var_vals srcs.(0) <> 0 then
+            infer_int program_name var_vals srcs.(1)
+          else infer_int program_name var_vals srcs.(2)
       | _ -> raise Not_found
 
-let program_launch_dim var_vals = function
+let program_launch_dim program_name var_vals = function
   | Launch_int n -> Launch_value_int n
   | Launch_float f -> Launch_value_float f
-  | Launch_sym u -> Launch_value_int (infer_int var_vals u)
+  | Launch_sym u -> Launch_value_int (infer_int program_name var_vals u)
 
-let program_launch_dims info ~var_vals =
-  ( List.map (program_launch_dim var_vals) info.global_size,
+let program_launch_dims (info : program_info) ~var_vals =
+  ( List.map (program_launch_dim info.name var_vals) info.global_size,
     info.local_size )
 
 let program_vals info ~var_vals =
@@ -3468,8 +3476,13 @@ let program_vals info ~var_vals =
     (fun var ->
       match program_var_name var with
       | Some name when List.mem_assoc name runtimevars -> None
-      | Some name -> Some (List.assoc name var_vals)
-      | None -> raise Not_found)
+      | Some name ->
+          (match List.assoc_opt name var_vals with
+           | Some value -> Some value
+           | None -> invalid_arg
+               (Printf.sprintf "program %S: missing variable %S" info.name name))
+      | None -> invalid_arg
+          (Printf.sprintf "program %S: unnamed variable" info.name))
     info.vars
 
 (* Serialization *)

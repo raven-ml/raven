@@ -194,7 +194,7 @@ let () =
           test "requires non-runtime scalar variables" (fun () ->
             let state = runtime_state () in
             let n = variable "n" 0 16 in
-            raises (Invalid_argument "missing variable \"n\"") (fun () ->
+            raises (Invalid_argument "program \"kern\": missing variable \"n\"") (fun () ->
                 ignore (call_runner state [ n ] [])));
         ];
       group "Program cache"

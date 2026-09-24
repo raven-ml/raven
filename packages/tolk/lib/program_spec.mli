@@ -122,4 +122,7 @@ val program_info : t -> Tolk_uop.Uop.program_info
 
 val launch_dims : t -> (string * int) list -> int array * int array option
 (** [launch_dims spec var_vals] evaluates launch dimensions by replacing
-    symbolic variables with the values in [var_vals]. *)
+    symbolic variables with the values in [var_vals].
+
+    Raises [Invalid_argument], naming the program and variable, if a symbolic
+    dimension references a missing variable. *)

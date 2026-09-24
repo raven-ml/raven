@@ -294,6 +294,8 @@ thread.
 
 ### Tolk (new)
 
+- Missing runtime variables report their name and program or replay call,
+  including variables needed to compute launch dimensions.
 - `CHECK_OOB` rejects unproved scalar accesses containing bitcasts or stacks
   and accesses without a known buffer extent. Out-of-range signed casts no
   longer produce spurious empty bounds.

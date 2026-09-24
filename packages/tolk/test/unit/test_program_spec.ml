@@ -124,6 +124,15 @@ let () =
                 [ "m", 3; "n", 9 ]
             in
             equal (array int) [| 9; 1; 1 |] global);
+          test "missing launch variables identify the program" (fun () ->
+            let n = define_var "n" 1 32 in
+            let gid = special (Gpu_dim.Group_id 0) n in
+            raises_match
+              (function
+                | Invalid_argument msg ->
+                    msg = "program \"kern\": missing launch variable \"n\""
+                | _ -> false)
+              (fun () -> Program_spec.launch_dims (spec_of [ n; gid ]) []));
           test "launch floor div and mod use Python semantics" (fun () ->
             let n = define_var "n" (-10) 10 in
             let three = i32 3 in

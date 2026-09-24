@@ -135,7 +135,8 @@ module Compiled_runner = struct
       else
         match List.assoc_opt v.name var_vals with
         | Some n -> Int64.of_int n
-        | None -> invalid_arg (strf "missing variable %S" v.name))
+        | None -> invalid_arg
+            (strf "program %S: missing variable %S" (Program_spec.name p) v.name))
     |> Array.of_list
 
   let create ~device ?prg (p : Program_spec.t) =
@@ -1247,7 +1248,7 @@ module Graph_runner = struct
                     dirty := true
                 | None ->
                     invalid_arg
-                      (strf "graph: missing variable %S on replay" name))
+                      (strf "graph call %d: missing variable %S on replay" j name))
               k.var_replace;
             if k.symbolic then begin
               t.exec.Device.Graph.set_launch_dims j
