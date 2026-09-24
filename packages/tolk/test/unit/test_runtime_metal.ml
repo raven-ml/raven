@@ -119,9 +119,7 @@ let prog_of_spec device spec =
         let comp = Option.get (Renderer.compiler (Device.renderer device)) in
         Compiler.compile_cached comp (Program_spec.src spec)
   in
-  Device.runtime device
-    (U.sanitize_function_name (Program_spec.name spec))
-    lib
+  Device.runtime device (Program_spec.to_elf (Program_spec.with_lib lib spec))
 
 let ones3 = [| 1; 1; 1 |]
 

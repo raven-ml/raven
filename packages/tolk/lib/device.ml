@@ -374,7 +374,7 @@ type prog = {
   handle : nativeint;
 }
 
-type runtime = string -> bytes -> prog
+type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 (* Batched dispatch graphs *)
 
@@ -466,7 +466,26 @@ let make ~name ~allocator ~renderer_set ~runtime ~synchronize
 
 let name d = d.name
 let renderer d = Renderer_set.select d.renderer_set
-let runtime d = d.runtime
+let runtime d (obj : Tolk_uop.Tiny_elf.t) =
+  let nbufs = List.fold_left (fun n (a : Tolk_uop.Tiny_elf.argument) ->
+      if a.addrspace = Tolk_uop.Dtype.Alu then n else n + 1) 0 obj.signature in
+  let nvals = List.length obj.signature - nbufs in
+  let seen = Array.make (nbufs + nvals) false in
+  List.iter (fun (a : Tolk_uop.Tiny_elf.argument) ->
+      if a.slot < 0 || a.slot >= Array.length seen || seen.(a.slot)
+         || ((a.addrspace = Tolk_uop.Dtype.Alu) <> (a.slot >= nbufs)) then
+        invalid_arg (Printf.sprintf "program %S: invalid argument slot %d" obj.name a.slot);
+      seen.(a.slot) <- true) obj.signature;
+  let prg = d.runtime obj in
+  let name = obj.name in
+  let call bufs ~global ~local ~vals ~wait ~timeout =
+    if Array.length bufs <> nbufs || Array.length vals <> nvals then
+      invalid_arg (Printf.sprintf
+          "program %S: expected %d buffers and %d scalars, received %d and %d"
+          name nbufs nvals (Array.length bufs) (Array.length vals));
+    prg.call bufs ~global ~local ~vals ~wait ~timeout
+  in
+  { prg with call }
 let synchronize d = d.synchronize ()
 let graph d = d.graph
 

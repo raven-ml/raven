@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- `Device.runtime` now loads `Tiny_elf.t` binaries with their compilation
+  target and argument signature. Dispatch checks argument counts, binds only
+  the buffers used by each kernel, and supplies scalars during local-size tuning.
 - Compiled programs and beam-search caches distinguish the selected renderer
   and target architecture. Switching targets can no longer reuse a program
   compiled for an earlier architecture on the same device.

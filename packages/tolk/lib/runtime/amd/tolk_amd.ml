@@ -1710,7 +1710,8 @@ module Runtime = struct
 
   let default_local = [| 1; 1; 1 |]
 
-  let runtime state name lib =
+  let runtime state (obj : Tolk_uop.Tiny_elf.t) =
+    let name = obj.name and lib = obj.lib in
     let prg =
       Program.load state.State.hw
         ~alloc:(fun size ->

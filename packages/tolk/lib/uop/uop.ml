@@ -3464,6 +3464,45 @@ let semantic_key root =
   in
   key root
 
+let program_signature (info : program_info) linear =
+  let buffer_slots = List.mapi (fun i slot -> slot, i) info.globals in
+  let argument slot u =
+    match op u, arg u with
+    | Ops.Param, Arg.Param_arg p ->
+        let shape = List.map (fun dim -> Bound.to_int (vmax dim)) (shape u) in
+        Tiny_elf.{ name = p.name; slot; dtype = dtype u; shape;
+          addrspace = p.addrspace }
+    | _ -> invalid_arg "Uop.program_signature: expected a parameter"
+  in
+  let buffers = List.filter_map (fun u ->
+      match op u, arg u with
+      | Ops.Param, Arg.Param_arg p when p.addrspace <> Dtype.Alu ->
+          (match List.assoc_opt p.slot buffer_slots with
+           | Some slot -> Some (argument slot u)
+           | None -> invalid_arg "Uop.program_signature: buffer missing from globals")
+      | _ -> None) linear in
+  let slots = List.map (fun (a : Tiny_elf.argument) -> a.slot) buffers in
+  if List.sort Int.compare slots <> List.init (List.length info.globals) Fun.id then
+    invalid_arg "Uop.program_signature: globals and linear parameters disagree";
+  let scalars = List.mapi (fun i u -> argument (List.length info.globals + i) u)
+      info.vars in
+  buffers @ scalars
+
+let to_elf u =
+  match op u, arg u, children u with
+  | Ops.Program, Arg.Program_info info, [sink; linear; _source; binary]
+    when op sink = Ops.Sink && op linear = Ops.Linear && op binary = Ops.Binary ->
+      let name = match as_kernel_info sink with
+        | Some kernel -> kernel_function_name kernel
+        | None -> program_function_name info in
+      let lib = match Arg.as_string (arg binary) with
+        | Some lib -> Bytes.of_string lib
+        | None -> invalid_arg "Uop.to_elf: binary is not a byte string" in
+      Tiny_elf.{ lib; name; target = info.target;
+        signature = program_signature info (children linear);
+        profile_key = Some (semantic_key u) }
+  | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
+
 let export_magic = "TOLKUOP\x00"
 let export_version = 10
 

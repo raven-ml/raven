@@ -72,13 +72,14 @@ end
 
 val optimize_local_size :
   device:Device.t ->
+  vals:int64 array ->
   Device.prog ->
   int array ->
   Device.Buffer.t list ->
   int array
-(** [optimize_local_size ~device prg global_size rawbufs] finds the
+(** [optimize_local_size ~device ~vals prg global_size rawbufs] finds the
     local workgroup size that minimises execution time for [prg]
-    with [global_size].
+    with [global_size] and scalar arguments [vals].
 
     Enumerates all valid local sizes (each dimension drawn from
     powers of two up to [1024], total product at most [1024]),

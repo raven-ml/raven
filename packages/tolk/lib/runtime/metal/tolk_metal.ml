@@ -328,7 +328,8 @@ module Compiler = struct
 end
 
 module Program = struct
-  let runtime state entry_name lib =
+  let runtime state (obj : Tolk_uop.Tiny_elf.t) =
+    let entry_name = obj.name and lib = obj.lib in
     let handle = Ffi.program_create state.State.device entry_name lib in
     let local_dims = [| 1; 1; 1 |] in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =

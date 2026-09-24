@@ -588,11 +588,59 @@ let test_software_sin_large_arguments () =
       is_true ~msg:(Printf.sprintf "sin(%g): expected %.9g, got %.9g" x expected actual)
         (Float.abs (expected -. actual) < 2.0e-6)) values
 
+let test_sparse_program_arguments () =
+  let device = cpu "sparse-arguments" in
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+  let output = ptr 3 and input = ptr 11 in
+  let value = U.variable ~name:"increment" ~min_val:(-100) ~max_val:100
+      ~dtype:Dtype.int32 () in
+  let index ptr = U.index ~ptr ~idxs:[ U.const_int 0 ] () in
+  let sum = U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:(index input) ()) ~rhs:value in
+  let kernel_info : U.kernel_info =
+    { name = "sparse_arguments"; axis_types = []; dont_use_locals = false;
+      applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
+  let sink = U.sink ~kernel_info [ U.store ~dst:(index output) ~value:sum () ] in
+  let program = Codegen.to_program ~optimize:false device (Device.renderer device) sink in
+  let binding = Realize.Buffers.create ~device in
+  let bind values =
+    let buffer = create_i32_buffer device values in
+    let node = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.int32
+        ~shape:(U.const_int 1) ~device:(U.Single (Device.name device)) () in
+    Realize.Buffers.seed binding node buffer;
+    node, buffer in
+  let output_node, output_buffer = bind [ 0 ] in
+  let input_node, input_buffer = bind [ 41 ] in
+  let unused = ptr 999 in
+  let args = List.init 12 (function 3 -> output_node | 11 -> input_node | _ -> unused) in
+  let info : U.call_info =
+    { grad_fxn = None; name = None; precompile = false;
+      precompile_backward = false; aux = None; dtype = Dtype.void } in
+  let call = U.call ~body:program ~args ~info in
+  Realize.run_linear ~device ~to_program:(Codegen.to_program device (Device.renderer device))
+    binding ~var_vals:[ "increment", 1 ] (U.linear [ call ]);
+  equal (list int) [ 42 ] (read_i32_buffer output_buffer);
+  equal (list int) [ 41 ] (read_i32_buffer input_buffer);
+  let obj = U.to_elf program in
+  let prg = Device.runtime device obj in
+  Fun.protect ~finally:prg.free (fun () ->
+      List.iter (fun (nbufs, nvals) ->
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> ignore (prg.call (Array.make nbufs 0n)
+                ~global:[| 1; 1; 1 |] ~local:None ~vals:(Array.make nvals 0L)
+                ~wait:false ~timeout:None)))
+        [ 1, 1; 3, 1; 2, 0; 2, 2 ]);
+  let bad = { obj with signature = List.map (fun (a : Tiny_elf.argument) ->
+      { a with slot = 0 }) obj.signature } in
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> ignore (Device.runtime device bad))
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "compiled signatures bind sparse arguments and reject wrong arities"
+            test_sparse_program_arguments;
           test "software sine handles large arguments and word boundaries"
             test_software_sin_large_arguments;
           test "emulated compact-float storage preserves masks and bitcasts"

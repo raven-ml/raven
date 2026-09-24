@@ -348,9 +348,9 @@ type prog = {
 }
 (** A device-specific dispatch handle. *)
 
-type runtime = string -> bytes -> prog
-(** [runtime name lib] creates a dispatch handle for [lib] with entry point
-    [name]. Scalar arguments use the order declared by the program. *)
+type runtime = Tolk_uop.Tiny_elf.t -> prog
+(** [runtime obj] creates a dispatch handle for [obj]. Scalar arguments use
+    the order declared by its signature. *)
 
 (** {1:graph Batched dispatch graphs} *)
 
@@ -449,7 +449,7 @@ val make :
 (** [make ~name ~allocator ~renderer_set ~runtime ~synchronize
     ?invalidate_caches ?graph ()] is a device runtime.
 
-    [runtime name lib] loads a compiled binary and returns a dispatch handle.
+    [runtime obj] loads a compiled binary and returns a dispatch handle.
 
     [synchronize ()] blocks until all pending work on the device completes.
 
@@ -463,7 +463,11 @@ val renderer : t -> Renderer.t
 (** [renderer d] is the active renderer. *)
 
 val runtime : t -> runtime
-(** [runtime d] is [d]'s runtime factory. *)
+(** [runtime d obj] loads [obj] on [d]. Its dispatch handle checks buffer and
+    scalar argument counts before entering the backend.
+
+    Raises [Invalid_argument] if signature slots are not a permutation of
+    buffers followed by scalars. *)
 
 val synchronize : t -> unit
 (** [synchronize d] blocks until all pending work on [d] completes. *)

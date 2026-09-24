@@ -368,12 +368,7 @@ let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
       factor := f;
       Program_spec.with_global_dims scaled_global p
   in
-  let lib = match Program_spec.lib p with
-    | Some lib -> lib
-    | None -> invalid_arg "Search.time_program: missing compiled binary"
-  in
-  let name = U.sanitize_function_name (Program_spec.name p) in
-  let prg = Device.runtime device name lib in
+  let prg = Device.runtime device (Program_spec.to_elf p) in
   (* Candidates are timed once per search. Retain a handle for its samples,
      then drain queued work and release it even if timing raises. Ordinary
      execution owns its separate runtime cache. *)

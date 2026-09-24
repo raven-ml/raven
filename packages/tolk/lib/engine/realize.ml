@@ -43,7 +43,7 @@ end
 
 let max_workgroup = 1024
 
-let optimize_local_size ~device (prg : Device.prog) global_size
+let optimize_local_size ~device ~vals (prg : Device.prog) global_size
     (rawbufs : Device.Buffer.t list) =
   (* Avoid clobbering output if it also appears as input. *)
   let bufs = match rawbufs with
@@ -95,7 +95,7 @@ let optimize_local_size ~device (prg : Device.prog) global_size
         let ret =
           try
             prg.call buf_addrs ~global ~local:(Some local_size)
-              ~vals:[||] ~wait:true ~timeout:None
+              ~vals ~wait:true ~timeout:None
           with exn ->
             List.iter keep_alive bufs;
             raise exn
@@ -141,22 +141,20 @@ module Compiled_runner = struct
               (Program_spec.applied_opts p)));
     if debug >= 4 then
       Printf.eprintf "%s\n%!" (Program_spec.src p);
-    let p, lib = match Program_spec.lib p with
-      | Some lib -> p, lib
+    let p = match Program_spec.lib p with
+      | Some _ -> p
       | None ->
           let comp = match Renderer.compiler (Device.renderer device) with
             | Some c -> c
             | None -> invalid_arg "no compiler for device"
           in
           let lib = Compiler.compile_cached comp (Program_spec.src p) in
-          Program_spec.with_lib lib p, lib
+          Program_spec.with_lib lib p
     in
     let prg = match prg with
       | Some h -> h
       | None ->
-          Device.runtime device
-            (Tolk_uop.Uop.sanitize_function_name (Program_spec.name p))
-            lib
+          Device.runtime device (Program_spec.to_elf p)
     in
     let call bufs var_vals ~wait ~timeout =
       let global, local = Program_spec.launch_dims p var_vals in
@@ -319,27 +317,21 @@ let pm_compile ~device ?beam ~to_program linear =
   in
   U.linear (List.map compile_call (U.children linear))
 
-(* Compiled machine code carried by a PROGRAM's BINARY child. *)
-let program_binary program =
-  let module U = Tolk_uop.Uop in
-  match U.children program with
-  | [ _sink; _linear; _source; binary ] -> (
-      match U.Arg.as_string (U.arg binary) with
-      | Some s -> s
-      | None -> invalid_arg "PROGRAM binary is not a byte string")
-  | _ -> invalid_arg "PROGRAM is missing its compiled binary"
+let program_args (info : Tolk_uop.Uop.program_info) args =
+  let args = Array.of_list args in
+  List.map (fun slot ->
+      if slot < 0 || slot >= Array.length args then
+        invalid_arg (strf "program %S: missing buffer slot %d" info.name slot);
+      args.(slot)) info.globals
 
 (* Device dispatch handle for a compiled PROGRAM, cached per node and device. *)
-let get_runtime ~device program (info : Tolk_uop.Uop.program_info) =
+let get_runtime ~device program =
   let module U = Tolk_uop.Uop in
   let ckey = cache_key ~device ~ast_key:(string_of_int (U.tag program)) in
   match Hashtbl.find_opt runtime_cache ckey with
   | Some prg -> prg
   | None ->
-      let lib = Bytes.of_string (program_binary program) in
-      let prg =
-        Device.runtime device (U.program_function_name info) lib
-      in
+      let prg = Device.runtime device (U.to_elf program) in
       Hashtbl.replace runtime_cache ckey prg;
       prg
 
@@ -603,7 +595,8 @@ let launch_geometry ~device program (info : Tolk_uop.Uop.program_info) ~var_vals
         match Hashtbl.find_opt local_size_cache (U.tag program) with
         | Some b -> b
         | None ->
-            let b = optimize_local_size ~device prg global bufs in
+            let vals = Array.of_list (List.map Int64.of_int (U.program_vals info ~var_vals)) in
+            let b = optimize_local_size ~device ~vals prg global bufs in
             Hashtbl.replace local_size_cache (U.tag program) b;
             b
       in
@@ -799,13 +792,14 @@ let exec_kernel binding ctx ~device call =
         | None -> invalid_arg "exec_kernel: expected CALL(PROGRAM)"
       in
       let resolved =
-        List.map (resolve_buffer binding ctx) (call_arg_uops args)
+        List.map (resolve_buffer binding ctx)
+          (program_args info (call_arg_uops args))
       in
       (* One compiled program; on a multi-device call, one launch per device
          with the device index bound as the [_device_num] variable. *)
       let launch ~device ~var_vals bufs =
         List.iter Device.Buffer.ensure_allocated bufs;
-        let prg = get_runtime ~device program info in
+        let prg = get_runtime ~device program in
         let global, local =
           launch_geometry ~device program info ~var_vals prg bufs
         in
@@ -1091,6 +1085,9 @@ module Graph_runner = struct
         match U.as_call call with
         | Some { body; args; _ } -> (
             let args = call_arg_uops args in
+            let args = match U.as_program_info body with
+              | Some info -> program_args info args
+              | None -> args in
             let dyn =
               List.mapi
                 (fun pos arg ->
@@ -1120,7 +1117,7 @@ module Graph_runner = struct
                   | Some info -> info
                   | None -> invalid_arg "graph: PROGRAM without info"
                 in
-                let prg = get_runtime ~device body info in
+                let prg = get_runtime ~device body in
                 let global, local =
                   launch_geometry ~device body info ~var_vals:ctx.var_vals prg
                     bufs
@@ -1137,7 +1134,9 @@ module Graph_runner = struct
                 let node_deps =
                   Deps.access deps
                     (List.map Device.Buffer.base bufs)
-                    info.outs !n
+                    (List.mapi (fun i slot -> i, slot) info.globals
+                     |> List.filter_map (fun (i, slot) ->
+                         if List.mem slot info.outs then Some i else None)) !n
                 in
                 nodes :=
                   Device.Graph.Kernel

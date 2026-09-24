@@ -1653,6 +1653,19 @@ val semantic_key : t -> string
     keys. It excludes hash-cons identity, {!node_tag}, and side
     {!metadata}. *)
 
+val program_signature : program_info -> t list -> Tiny_elf.argument list
+(** [program_signature info linear] extracts the compiled argument signature
+    from [linear], using [info]'s buffer slots and scalar binding order.
+    Symbolic dimensions use their maximum bounds.
+
+    Raises [Invalid_argument] if [info.globals] and the linear buffer formals
+    disagree, or a scalar formal is not a parameter. *)
+
+val to_elf : t -> Tiny_elf.t
+(** [to_elf program] is [program]'s binary, entry point, target and signature.
+    Raises [Invalid_argument] unless [program] is a compiled {!Ops.Program}
+    with a linear body and binary. *)
+
 (** {1:operators Operators}
 
     Infix sugar for common ALU expressions. Open locally to avoid

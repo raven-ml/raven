@@ -385,7 +385,7 @@ let transient_program_lifetimes =
     let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
     let allocator = Device.Buffer.allocator sample in
     let loaded = ref 0 and freed = ref 0 and pending = ref false in
-    let runtime _ _ =
+    let runtime _ =
       incr loaded;
       let released = ref false in
       let call _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ =
@@ -439,8 +439,8 @@ let codegen_midpoint_rounds_down () =
   let backing = cpu "beam-midpoint" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
   let observed = ref [] in
-  let runtime name lib =
-    let prg = Device.runtime backing name lib in
+  let runtime obj =
+    let prg = Device.runtime backing obj in
     let call bufs ~global ~local ~vals ~wait ~timeout =
       observed := Array.to_list vals :: !observed;
       prg.call bufs ~global ~local ~vals ~wait ~timeout

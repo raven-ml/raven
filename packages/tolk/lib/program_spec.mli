@@ -86,6 +86,10 @@ val of_program :
 val with_lib : bytes -> t -> t
 (** [with_lib lib spec] is [spec] with [lib] set to [Some lib]. *)
 
+val to_elf : t -> Tolk_uop.Tiny_elf.t
+(** [to_elf spec] is [spec]'s binary and argument signature.
+    Raises [Invalid_argument] if [spec] has no compiled binary. *)
+
 val with_estimates : Estimates.t -> t -> t
 (** [with_estimates e spec] is [spec] with estimates replaced by [e]. *)
 

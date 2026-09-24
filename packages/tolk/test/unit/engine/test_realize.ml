@@ -81,10 +81,10 @@ let test_allocator ?(transfer = false) stats =
       }
 
 let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
-    ?(transfer = false)
+    ?(transfer = false) ?graph
     ?(renderer_set = Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const test_renderer ])
     state =
-  let runtime _name _lib =
+  let runtime _ =
     let call bufs ~global ~local:_ ~vals ~wait:_ ~timeout:_ =
       state.nbufs <- Array.length bufs;
       state.global <- Array.copy global;
@@ -98,7 +98,7 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
   in
   Device.make ~name
     ~allocator:(test_allocator ~transfer stats)
-    ~renderer_set ~runtime ~synchronize ()
+    ~renderer_set ~runtime ~synchronize ?graph ()
 
 let variable name lo hi =
   U.variable ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 ()
@@ -116,7 +116,7 @@ let spec_of program =
 (* Build the empty PROGRAM the exec path dispatches on from a kernel sink. *)
 let program_of body =
   let info = U.program_info_from_sink body in
-  U.program ~sink:body ~linear:(U.linear []) ~source:(U.source "")
+  U.program ~sink:body ~linear:(U.linear (U.toposort body)) ~source:(U.source "")
     ~binary:(U.binary "") ~info ()
 
 let call_info name : U.call_info =
@@ -242,10 +242,64 @@ let renderer_selection_tests =
           equal (pair string string) ("first", "TEST:TEST:first") (compile "first"));
     ]
 
+let tuning_binds_scalar_arguments () =
+  let device = test_device (runtime_state ()) in
+  let calls = ref 0 in
+  let prg : Device.prog =
+    { call = (fun bufs ~global:_ ~local:_ ~vals ~wait:_ ~timeout:_ ->
+          equal int 0 (Array.length bufs);
+          equal (array int64) [| 37L |] vals;
+          incr calls;
+          Some 1e-6);
+      free = (fun () -> ()); handle = 0n } in
+  ignore (Realize.optimize_local_size ~device ~vals:[| 37L |] prg [| 4 |] []);
+  is_true (!calls > 0)
+
+let graph_binds_sparse_arguments () =
+  let recorded = ref [||] in
+  let launches = ref 0 in
+  let graph : Device.Graph.t =
+    { supports_copy = false; max_buffer_offset = None;
+      build = (fun nodes ->
+          recorded := nodes;
+          { set_buf = (fun _ _ _ -> ()); set_val = (fun _ _ _ -> ());
+            set_launch_dims = (fun _ ~global:_ ~local:_ -> ());
+            set_params = (fun _ -> ());
+            launch = (fun ~wait:_ -> incr launches; None) }) } in
+  let device = test_device ~graph (runtime_state ()) in
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(shape_const 4) () in
+  let index ptr = U.index ~ptr ~idxs:[ U.const_int 0 ] () in
+  let body = U.sink ~kernel_info:(kernel_info "sparse_graph")
+      [ U.store ~dst:(index (ptr 3)) ~value:(U.load ~src:(index (ptr 11)) ()) () ] in
+  let program = program_of body in
+  let a = buffer_node ~slot:(U.fresh_buffer_slot ()) () in
+  let b = buffer_node ~slot:(U.fresh_buffer_slot ()) () in
+  let unused = ptr 999 in
+  let kernel output input =
+    U.call ~body:program
+      ~args:(List.init 12 (function 3 -> output | 11 -> input | _ -> unused))
+      ~info:(call_info None) in
+  let body = U.custom_function ~name:"graph"
+      ~srcs:[ U.linear [ kernel a b; kernel b a ] ] in
+  let call = U.call ~body ~args:[] ~info:(call_info None) in
+  let binding = Realize.Buffers.create ~device in
+  Realize.run_linear ~device ~to_program:program_of binding (U.linear [ call ]);
+  equal int 1 !launches;
+  match !recorded with
+  | [| Device.Graph.Kernel first; Device.Graph.Kernel second |] ->
+      equal int 2 (Array.length first.bufs);
+      equal int 2 (Array.length second.bufs);
+      equal (array int) [||] first.deps;
+      equal (array int) [| 0 |] second.deps
+  | _ -> fail "expected two recorded kernels"
+
 let () =
   run "Engine_realize"
     [
       renderer_selection_tests;
+      test "local-size tuning binds scalars" tuning_binds_scalar_arguments;
+      test "graph binding compacts sparse slots and preserves dependencies"
+        graph_binds_sparse_arguments;
       group "Compiled_runner"
         [
           test "passes every scalar from program metadata" (fun () ->
@@ -459,7 +513,9 @@ let () =
           test "runs a kernel call with resolved buffers" (fun () ->
             let state = runtime_state () in
             let device = test_device state in
-            let body = U.sink ~kernel_info:(kernel_info "rl_kernel") [] in
+            let body = U.sink ~kernel_info:(kernel_info "rl_kernel")
+                [ U.param ~slot:0 ~dtype:Dtype.int32 ();
+                  U.param ~slot:1 ~dtype:Dtype.int32 () ] in
             let info : U.call_info =
               {
                 grad_fxn = None;
@@ -482,7 +538,8 @@ let () =
           test "resolves PARAM kernel args from input_uops" (fun () ->
             let state = runtime_state () in
             let device = test_device state in
-            let body = U.sink ~kernel_info:(kernel_info "rl_param") [] in
+            let body = U.sink ~kernel_info:(kernel_info "rl_param")
+                [ U.param ~slot:0 ~dtype:Dtype.int32 () ] in
             let info : U.call_info =
               {
                 grad_fxn = None;

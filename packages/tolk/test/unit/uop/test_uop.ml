@@ -2351,11 +2351,50 @@ let bind_validates_range () =
   is_true ~msg:"below-range bind value rejected" (rejects 1);
   is_true ~msg:"above-range bind value rejected" (rejects 6)
 
+let compiled_signature_preserves_slots_and_types () =
+  let module U = Uop in
+  let extent = U.variable ~name:"extent" ~min_val:1 ~max_val:12 () in
+  let b3 = U.param ~slot:3 ~name:"named_buffer" ~dtype:Dtype.float32
+      ~shape:(U.stack [ extent; U.const_int 4 ]) () in
+  let b11 = U.param ~slot:11 ~dtype:Dtype.int16 ~shape:(U.const_int 0) () in
+  let v = U.variable ~name:"value" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.int64 () in
+  let sink = U.sink [ b11; b3; v ] in
+  let target = Target.of_string "PCI:2+AMD:HIP:gfx1100" in
+  let info = { (U.program_info_from_sink ~target sink) with vars = [ v ] } in
+  let program = U.program ~sink ~linear:(U.linear [ b11; v; b3 ])
+      ~source:(U.source "source") ~binary:(U.binary "\x7fELF\x00payload") ~info () in
+  let obj = U.to_elf program in
+  equal string "\x7fELF\x00payload" (Bytes.to_string obj.lib);
+  equal string "PCI:2+AMD:HIP:gfx1100" (Target.to_string obj.target);
+  equal (option string) (Some (U.semantic_key program)) obj.profile_key;
+  equal (list int) [ 1; 0; 2 ] (List.map (fun (a : Tiny_elf.argument) -> a.slot) obj.signature);
+  equal (list (list int)) [ [ 0 ]; [ 12; 4 ]; [] ]
+    (List.map (fun (a : Tiny_elf.argument) -> a.shape) obj.signature);
+  match obj.signature with
+  | [ zero; named; scalar ] ->
+      is_true (Dtype.equal zero.dtype Dtype.int16);
+      equal (option string) (Some "named_buffer") named.name;
+      is_true (named.addrspace = Dtype.Global);
+      is_true (scalar.addrspace = Dtype.Alu);
+      is_true (Dtype.equal scalar.dtype Dtype.int64)
+  | _ -> fail "expected two buffers and one scalar"
+
+let incomplete_program_has_no_binary () =
+  let sink = Uop.sink [] in
+  let info = Uop.program_info_from_sink sink in
+  List.iter (fun u ->
+      raises_match (function Invalid_argument _ -> true | _ -> false)
+        (fun () -> ignore (Uop.to_elf u)))
+    [ sink; Uop.program ~sink ~info () ]
+
 let () =
   run "tolk.uop"
     [
       group "Construction"
         [
+          test "compiled signatures preserve sparse slots and argument types"
+            compiled_signature_preserves_slots_and_types;
+          test "incomplete programs have no binary" incomplete_program_has_no_binary;
           test "Ops and dtype access" ops_access;
           test "Ops tinygrad order" ops_tinygrad_order;
           test "Ops.Group algebra" group_algebra;

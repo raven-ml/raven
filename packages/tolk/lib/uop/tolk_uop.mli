@@ -72,6 +72,7 @@ module Dtype = Dtype
 module Const = Const
 module Bound = Bound
 module Target = Target
+module Tiny_elf = Tiny_elf
 module Uop = Uop
 module Render = Render
 module Upat = Upat

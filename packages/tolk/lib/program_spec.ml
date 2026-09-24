@@ -440,6 +440,14 @@ let program_info t : U.program_info =
     ins = t.ins;
   }
 
+let to_elf t =
+  let lib = match t.lib with
+    | Some lib -> lib
+    | None -> invalid_arg "Program_spec.to_elf: missing compiled binary" in
+  Tiny_elf.{ lib; name = U.sanitize_function_name t.name; target = t.target;
+    signature = U.program_signature (program_info t) t.program;
+    profile_key = None }
+
 let name t = t.name
 let src t = t.src
 let device t = t.device

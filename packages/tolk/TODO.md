@@ -33,6 +33,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/ProgramInfo
   metadata, ALLOC, effectful CALL and scalar binding effects. Remove deleted
   operations and stale enum/cache formats.
+- Unify formal argument ordering across rendering, `Program_spec` and runtime
+  binding. Cover mixed-width scalars and hand-built linear programs whose
+  formal order differs from their slot order.
 - Adopt the final axis kinds. Port sorted-axis
   UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules.
@@ -79,8 +82,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port HCQ2 queue construction, byte-interval dependency tracking, compile/link/
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.
-- Migrate CPU host calls and ELF/TinyELF. Reconcile the fixed-array CPU call
-  ABI with TinyELF signatures without adding an FFI dependency. Compare CPU
+- Finish CPU host-call integration and reconcile the fixed-array CPU call
+  ABI with typed dispatch without adding an FFI dependency. Compare CPU
   matmul performance with the final target after optimizer migration and
   resolve avoidable regressions.
 - Migrate Metal/CUDA queues and argument bindings; implement CUDA peer enablement

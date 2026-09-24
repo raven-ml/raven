@@ -96,7 +96,8 @@ let raw_allocator () =
 (* Device Registration *)
 
 let create ?aligned name =
-  let runtime entry_name lib =
+  let runtime (obj : Tolk_uop.Tiny_elf.t) =
+    let entry_name = obj.name and lib = obj.lib in
     let loaded = load_program ~name:entry_name ~lib in
     let call bufs ~global:_ ~local:_ ~vals ~wait ~timeout:_ =
       if loaded.unloaded then invalid_arg "CPU program has been unloaded";

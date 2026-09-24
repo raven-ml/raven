@@ -217,7 +217,8 @@ module Allocator = struct
 end
 
 module Program = struct
-  let runtime state entry_name lib =
+  let runtime state (obj : Tolk_uop.Tiny_elf.t) =
+    let entry_name = obj.name and lib = obj.lib in
     Ffi.ctx_set_current state.State.context;
     let module_ = Ffi.module_load lib in
     let func = Ffi.module_get_function module_ entry_name in
