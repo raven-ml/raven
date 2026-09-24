@@ -151,11 +151,17 @@ let test_created_scalars_are_held () =
   let p = Nx.place on1 (m23 ()) in
   let before = !uploads in
   let y = Nx.mul_s p 2.0 in
-  let z = Nx.zeros_like p in
   equal ~msg:"one upload: the product" int (before + 1) !uploads;
-  equal ~msg:"a filled value lives on the device" placement on1 (Nx.placement z);
+  let z = Nx.zeros_like p in
+  equal ~msg:"a filled value is uploaded" int (before + 2) !uploads;
+  equal ~msg:"it lives on the device" placement on1 (Nx.placement z);
+  is_true ~msg:"its view covers its storage"
+    (match z with Nx_effect.Placed r -> Nx_effect.covers r | _ -> false);
   equal ~msg:"its elements" (array float_exact) (Array.make 6 0.0)
     (Nx.to_array z);
+  let s = Nx.zeros_like (Nx.sum p) in
+  equal ~msg:"a filled scalar is held" int (before + 2) !uploads;
+  equal ~msg:"and lives on the device" placement on1 (Nx.placement s);
   equal ~msg:"the product" (array float_exact)
     [| 2.; 4.; 6.; 8.; 10.; 12. |]
     (Nx.to_array y)
@@ -266,7 +272,7 @@ let tests =
         test "a split must divide evenly" test_place_splits_evenly;
         test "results live with their operands"
           test_results_live_with_their_operands;
-        test "scalars created on a device are held"
+        test "scalars created on a device are held, filled values are not"
           test_created_scalars_are_held;
         test "a read copies what it reads" test_a_read_copies_what_it_reads;
         test "views share their cell" test_views_share_the_cell;
