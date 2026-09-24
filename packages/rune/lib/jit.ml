@@ -6,8 +6,8 @@
 (* Just-in-time compilation as an effect handler over Nx operations.
 
    Tracing: the handler answers every intercepted operation with a fresh
-   symbolic placeholder tensor of the result's shape and dtype, and records
-   the corresponding node of a Tolk tensor graph in a side table keyed by tensor
+   symbolic placeholder tensor of the result's shape and dtype, and records the
+   corresponding node of a Tolk tensor graph in a side table keyed by tensor
    identity. Running the function once under the handler therefore turns its
    whole computation into a single graph.
 
@@ -36,10 +36,10 @@
    into a number of steps fixed by the input shapes alone (see
    [Tolk_frontend.Linalg]); [Nx.solve] and [Nx.inv] compile through them, a
    singular system yielding infinities where the eager kernel raises. Threefry
-   (the RNG primitive)
-   compiles, but only when its key depends on the traced inputs: a constant key
-   would burn one draw into the program and silently replay it on every call, so
-   it raises [Jit_error] pointing at [Nx.Rng] key threading. *)
+   (the RNG primitive) compiles, but only when its key depends on the traced
+   inputs: a constant key would burn one draw into the program and silently
+   replay it on every call, so it raises [Jit_error] pointing at [Nx.Rng] key
+   threading. *)
 
 open Nx_effect
 module F = Tolk_frontend
@@ -252,9 +252,9 @@ let release_entry e =
       Hashtbl.remove resident e.r_id;
       account e (-1);
       (* Deallocation returns each buffer to its device's LRU pool, where only
-         work queued after the kernels that use it can take it. A placed
-         value's buffer bypasses the pool and returns to the system, so the
-         work that may still read it is awaited first. A base buffer with a
+         work queued after the kernels that use it can take it. A placed value's
+         buffer bypasses the pool and returns to the system, so the work that
+         may still read it is awaited first. A base buffer with a
          still-allocated transient view (a kernel-argument slice not yet
          collected) cannot be deallocated; those are reclaimed by the buffer's
          own GC finalizer instead. *)
@@ -380,8 +380,8 @@ let make_node st dtolk n =
     | Some names -> U.Multi names (* pmap: constants replicate on the tuple *)
     | None -> U.Single (Tolk.Device.name st.st_device)
   in
-  U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:dtolk ~shape:(F.Tensor.shape_uop [ n ])
-    ~device ()
+  U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:dtolk
+    ~shape:(F.Tensor.shape_uop [ n ]) ~device ()
 
 (* Bind a tensor whose bytes exist outside the traced computation (a closure
    capture, or a host constant created while tracing) as a compile-time
@@ -401,10 +401,10 @@ let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   Tbl.replace st.table (Obj.repr x) tt;
   tt
 
-(* A capture that is resident on the trace's own single device keeps its
-   buffer: the program reads it as the constant and no bytes move. From here on
-   the buffer outlives reads and donations of the value (it is marked before
-   the traced function can read the capture), and the compiled record keeps the
+(* A capture that is resident on the trace's own single device keeps its buffer:
+   the program reads it as the constant and no bytes move. From here on the
+   buffer outlives reads and donations of the value (it is marked before the
+   traced function can read the capture), and the compiled record keeps the
    value reachable. *)
 let bindable st x =
   match (st.st_multi, resident_of x) with
@@ -477,9 +477,9 @@ let depends_on_input st u =
   in
   go u
 
-(* The storage an indexed write of [t] lands in: tolk's write is in place, and
-   a tensor is a value, so the write never lands in [t] itself. A computed [t]
-   is computed into fresh storage. A [t] that is an input is not copied by the
+(* The storage an indexed write of [t] lands in: tolk's write is in place, and a
+   tensor is a value, so the write never lands in [t] itself. A computed [t] is
+   computed into fresh storage. A [t] that is an input is not copied by the
    program at all: the write lands in an empty buffer, recorded in
    [st.prefills], and replay gives that buffer [t]'s value before the program
    runs, by handing it the input's donated storage or by copying. A program
@@ -676,8 +676,8 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
 (* The scheduling pipeline allocates internal kernel buffers from a counter
    seeded at the scheduled graph's maximum slot. That counter is local to the
    schedule: a fresh buffer must never collide with a live scheduled buffer
-   (buffer identity is the slot), so advance the process-wide counter past
-   every non-negative buffer slot the linear mentions. *)
+   (buffer identity is the slot), so advance the process-wide counter past every
+   non-negative buffer slot the linear mentions. *)
 let reserve_slots_of linear =
   U.toposort ~enter_calls:true linear
   |> List.iter (fun n ->
@@ -797,8 +797,8 @@ let build_loop_call ~body_linear ~reversed ~n ~in_slots ~out_slots ~copies
         ~src:(Array.of_list (payload :: args))
         ()
 
-(* The buffer [u] is, when it is a whole buffer after the effects that wrote
-   it, under any reshape. *)
+(* The buffer [u] is, when it is a whole buffer after the effects that wrote it,
+   under any reshape. *)
 let rec written_buffer u =
   match U.op u with
   | Tolk_uop.Ops.Reshape -> written_buffer (U.src u).(0)
@@ -846,12 +846,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
       r =
    fun k dt tq tr ->
     let shape tt = Array.of_list (F.Tensor.shape tt) in
-    let phq : (a, b) Nx_effect.t =
-      Nx_effect.symbolic st.st_ctx dt (shape tq)
-    in
-    let phr : (a, b) Nx_effect.t =
-      Nx_effect.symbolic st.st_ctx dt (shape tr)
-    in
+    let phq : (a, b) Nx_effect.t = Nx_effect.symbolic st.st_ctx dt (shape tq) in
+    let phr : (a, b) Nx_effect.t = Nx_effect.symbolic st.st_ctx dt (shape tr) in
     Tbl.replace st.table (Obj.repr phq) tq;
     Tbl.replace st.traced (Obj.repr phq) ();
     Tbl.replace st.table (Obj.repr phr) tr;
@@ -1165,8 +1161,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             ret k (dt data) (F.Op.gather (go data) ~dim:axis (go indices)))
-    | E_scatter
-        { data_template; indices; updates; axis; mode; unique_indices } ->
+    | E_scatter { data_template; indices; updates; axis; mode; unique_indices }
+      ->
         Some
           (fun k ->
             let t = go data_template and index = go indices in
@@ -1183,12 +1179,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                     ~include_self:true ()
             in
             ret k (dt data_template) r)
-    (* The window write. A constant corner is a padded [v] selected over [t]
-       in one pass. A traced corner is a scatter of [v]'s elements at their
-       flat positions in [t], which are distinct and, the corner being clamped
-       by the frontend, inside [t]: its cost is [v]. Flat positions are int32,
-       and a sharded trace keeps the one-hot scatter, so beyond either the
-       window is read through a clamped gather per axis and masked. *)
+    (* The window write. A constant corner is a padded [v] selected over [t] in
+       one pass. A traced corner is a scatter of [v]'s elements at their flat
+       positions in [t], which are distinct and, the corner being clamped by the
+       frontend, inside [t]: its cost is [v]. Flat positions are int32, and a
+       sharded trace keeps the one-hot scatter, so beyond either the window is
+       read through a clamped gather per axis and masked. *)
     | E_update { t_in; starts; v } ->
         Some
           (fun k ->
@@ -1202,15 +1198,16 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               let sv = Nx_effect.view starts in
               let s k =
                 Int32.to_int
-                  (Nx_buffer.get host (NV.offset sv + (k * (NV.strides sv).(0))))
+                  (Nx_buffer.get host
+                     (NV.offset sv + (k * (NV.strides sv).(0))))
               in
               let pads =
                 List.init rank (fun k ->
                     Some (s k, tshape.(k) - s k - vshape.(k)))
               in
               let ones =
-                F.Creation.full ~buffer:false ~dtype:TD.bool (Array.to_list vshape)
-                  (F.Tensor.Sbool true)
+                F.Creation.full ~buffer:false ~dtype:TD.bool
+                  (Array.to_list vshape) (F.Tensor.Sbool true)
               in
               let mask = F.Op.pad ~value:(F.Tensor.Sbool false) ones pads in
               ret k (dt t_in)
@@ -1270,24 +1267,30 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               for ax = 0 to rank - 1 do
                 let n = tshape.(ax) and len = vshape.(ax) in
                 let start =
-                  F.Movement.reshape (F.Movement.shrink st_t [ (ax, ax + 1) ]) []
+                  F.Movement.reshape
+                    (F.Movement.shrink st_t [ (ax, ax + 1) ])
+                    []
                 in
                 let ar = F.Op.arange ~dtype:TD.int32 n in
                 let rel = F.Elementwise.sub ar start in
-                let lo = F.Creation.full ~buffer:false ~dtype:TD.int32 [] (F.Tensor.Sint 0) in
+                let lo =
+                  F.Creation.full ~buffer:false ~dtype:TD.int32 []
+                    (F.Tensor.Sint 0)
+                in
                 let hi =
                   F.Creation.full ~buffer:false ~dtype:TD.int32 []
                     (F.Tensor.Sint (len - 1))
                 in
                 let idx = F.Elementwise.clamp ~min:lo ~max:hi rel in
                 let inside =
-                  F.Elementwise.bitwise_and
-                    (F.Elementwise.ge rel lo)
+                  F.Elementwise.bitwise_and (F.Elementwise.ge rel lo)
                     (F.Elementwise.lt rel
                        (F.Creation.full ~buffer:false ~dtype:TD.int32 []
                           (F.Tensor.Sint len)))
                 in
-                let along = List.init rank (fun d -> if d = ax then -1 else 1) in
+                let along =
+                  List.init rank (fun d -> if d = ax then -1 else 1)
+                in
                 let shp =
                   List.mapi
                     (fun d s -> if d = ax then n else s)
@@ -2275,8 +2278,8 @@ let scratch_bytes tbl size =
         b
 
 (* The window of [buf] that starts at byte [off] and spans [len] bytes; [buf]
-   itself when the window covers it. A window is released before its base
-   can be. *)
+   itself when the window covers it. A window is released before its base can
+   be. *)
 let with_window buf ~off ~len f =
   if off = 0 && len = Tolk.Device.Buffer.nbytes buf then f buf
   else begin
@@ -2344,10 +2347,9 @@ let with_file_source host f =
                    (fun ~pos bytes len ->
                      read_at fd ~pos:(base + pos) bytes len))))
 
-(* [base_layout v] is [Some (shape, axes)] when the elements of the view [v]
-   are exactly a contiguous run of its buffer seen through a permutation of
-   axes: [shape] is the run's own shape and permuting it by [axes] gives
-   [v]. *)
+(* [base_layout v] is [Some (shape, axes)] when the elements of the view [v] are
+   exactly a contiguous run of its buffer seen through a permutation of axes:
+   [shape] is the run's own shape and permuting it by [axes] gives [v]. *)
 let base_layout v =
   let shape = NV.shape v and strides = NV.strides v in
   let rank = Array.length shape in
@@ -2449,8 +2451,10 @@ let rec copyin_at : type a b.
         read := None;
         Nx_buffer.blit_to_bytes ~src_off ~len host bytes
       end;
-      with_window buf ~off:(off + (!pos * item)) ~len:(len * item) (fun w ->
-          Tolk.Device.Buffer.copyin w bytes);
+      with_window buf
+        ~off:(off + (!pos * item))
+        ~len:(len * item)
+        (fun w -> Tolk.Device.Buffer.copyin w bytes);
       bytes_to_device := !bytes_to_device + (len * item);
       note_copied dev (len * item);
       pos := !pos + len
@@ -2674,9 +2678,9 @@ let make_handle : type a b.
 (* Placement
 
    [to_device] copies a tensor into one device buffer that no compiled function
-   owns and hands it back as a resident handle, exactly like an unread output
-   of a compiled call. The buffer bypasses the allocator's cache: a dropped
-   model is returned to the system, not parked in a pool keyed by its sizes. *)
+   owns and hands it back as a resident handle, exactly like an unread output of
+   a compiled call. The buffer bypasses the allocator's cache: a dropped model
+   is returned to the system, not parked in a pool keyed by its sizes. *)
 
 let place (type a b) ?device (x : (a, b) Nx_effect.t) : (a, b) Nx_effect.t =
   let device = match device with Some d -> d | None -> F.Run.device_name () in
@@ -2742,22 +2746,22 @@ type 'q compiled = {
       (* captures bound by aliasing host memory: kernels read that memory on
          every call, so it must stay reachable while the trace can run *)
   cp_bound : packed array;
-      (* resident captures whose device buffers are this program's constants:
-         a buffer is released by its handle's finalizer alone, so the handles
-         must stay reachable while the trace can run *)
+      (* resident captures whose device buffers are this program's constants: a
+         buffer is released by its handle's finalizer alone, so the handles must
+         stay reachable while the trace can run *)
   cp_outputs : (Obj.t * packed * U.t * leaf_place) list;
       (* output leaf -> its placeholder (dtype and shape), buffer node, and
          placement *)
   cp_aliases : (int * int) list;
-      (* output buffer node tag -> traversal position of the consumed input
-         leaf whose storage the output may take, the one at the output's own
-         position in the state (see [elision] below); an output tag equal to
-         the input's own node tag is an input returned unchanged, whose
-         storage moves to the output *)
+      (* output buffer node tag -> traversal position of the consumed input leaf
+         whose storage the output may take, the one at the output's own position
+         in the state (see [elision] below); an output tag equal to the input's
+         own node tag is an input returned unchanged, whose storage moves to the
+         output *)
   cp_prefills : (U.t * int) list;
-      (* output buffer node -> traversal position of the input leaf whose
-         value the output starts from: an indexed write lands in it, and the
-         program never copies the input into it *)
+      (* output buffer node -> traversal position of the input leaf whose value
+         the output starts from: an indexed write lands in it, and the program
+         never copies the input into it *)
   cp_reserved : (int, unit) Hashtbl.t;
       (* tags of input and constant buffer nodes: outputs must not reseed
          them *)
@@ -2779,23 +2783,21 @@ module Ops = Tolk_uop.Ops
    Safe means two things, both decided once at compile time. First, in the
    traced graph every path from the input's buffer node to the output's node
    passes only through elementwise operations, casts of equal width, reshapes,
-   and contiguous markers, so the kernel storing the output reads the input
-   only at the index it writes, whatever the scheduler fuses into it. Second,
-   in the linear schedule no kernel reads the input after the one that first
-   writes the output, so the old value is never read through the new one.
-   An output that never reads an input meets the first condition vacuously
-   and may take that input's buffer under the second: a bf16 copy of f32
-   master weights takes the previous copy's storage this way. The one
-   candidate is the consumed leaf at the output's own position in the state:
-   a step returns its state in the order it took it.
-   An indexed write into an input is the third case. Its output is a buffer
-   the program writes at loaded indices and never fills: replay gives it the
-   input's value (see [write_destination]). Taking the input's storage is how
-   it gets that value for free, so it is taken only when that input is the
+   and contiguous markers, so the kernel storing the output reads the input only
+   at the index it writes, whatever the scheduler fuses into it. Second, in the
+   linear schedule no kernel reads the input after the one that first writes the
+   output, so the old value is never read through the new one. An output that
+   never reads an input meets the first condition vacuously and may take that
+   input's buffer under the second: a bf16 copy of f32 master weights takes the
+   previous copy's storage this way. The one candidate is the consumed leaf at
+   the output's own position in the state: a step returns its state in the order
+   it took it. An indexed write into an input is the third case. Its output is a
+   buffer the program writes at loaded indices and never fills: replay gives it
+   the input's value (see [write_destination]). Taking the input's storage is
+   how it gets that value for free, so it is taken only when that input is the
    output's candidate, and the kernel that writes it reads at indices of its
-   own, so under the second condition it must not read the input either.
-   Replay adds
-   what only it knows: the input must have seeded from a donated resident
+   own, so under the second condition it must not read the input either. Replay
+   adds what only it knows: the input must have seeded from a donated resident
    entry that seeds no other leaf of the call, and nothing else may claim the
    same buffer. Single-device programs only; a pmap carry keeps two
    generations. *)
@@ -2820,13 +2822,14 @@ let same_index_paths ~(inode : U.t) (u : U.t) =
               (U.src u);
             let op = U.op u in
             let allowed =
-              (Ops.Group.is_elementwise op
+              Ops.Group.is_elementwise op
               && (op <> Ops.Cast
                  || Array.length (U.src u) = 0
-                 || TD.itemsize (U.dtype u) = TD.itemsize (U.dtype (U.src u).(0))
-                 ))
+                 || TD.itemsize (U.dtype u)
+                    = TD.itemsize (U.dtype (U.src u).(0)))
               || op = Ops.Reshape || op = Ops.Contiguous
-              || op = Ops.Contiguous_backward || op = Ops.Detach
+              || op = Ops.Contiguous_backward
+              || op = Ops.Detach
             in
             (!reaches, !bad || (!reaches && not allowed))
           end
@@ -2837,9 +2840,9 @@ let same_index_paths ~(inode : U.t) (u : U.t) =
   let reaches, bad = go u in
   (reaches, not bad)
 
-(* The schedule's calls in execution order, descending into batched graph
-   calls. [Opaque] marks a call whose inner order is unknown (a staged loop):
-   it may read and write its arguments in any order. *)
+(* The schedule's calls in execution order, descending into batched graph calls.
+   [Opaque] marks a call whose inner order is unknown (a staged loop): it may
+   read and write its arguments in any order. *)
 type scheduled = Kernel of U.t | Opaque of U.t
 
 let rec schedule_calls linear =
@@ -2867,10 +2870,10 @@ let held_buffers bound linear =
   in
   List.concat_map buffers bound @ opaque
 
-(* No kernel reads the buffer [itag] after the first kernel that writes
-   [otag], and neither buffer is touched by an opaque call. That first kernel
-   may read [itag] itself when it writes each element where it read it. An
-   indexed write does not, so under [indexed] it must not read [itag] either. *)
+(* No kernel reads the buffer [itag] after the first kernel that writes [otag],
+   and neither buffer is touched by an opaque call. That first kernel may read
+   [itag] itself when it writes each element where it read it. An indexed write
+   does not, so under [indexed] it must not read [itag] either. *)
 let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
   let mentions call tag =
     match U.as_call call with
@@ -2906,8 +2909,8 @@ let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
     | None, _ -> false
   end
 
-(* The input's resident entry hands its storage to the output: the buffers
-   now belong to the output handle built by [make_handle]. *)
+(* The input's resident entry hands its storage to the output: the buffers now
+   belong to the output handle built by [make_handle]. *)
 let transfer_entry e =
   if e.r_bufs <> [] then begin
     e.r_bufs <- [];
@@ -2926,14 +2929,14 @@ let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
   List.rev !acc
 
 let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
-    ?multi
-    ?beam
-    ?beam_parallel (module P : Nx.Ptree.S with type t = p)
+    ?multi ?beam ?beam_parallel (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t) :
     Q.t compiled =
   (* Input leaves from position [n] on are consumed, and output leaf [k] is the
      state's leaf at input position [n + k]. *)
-  let consumed i = match consumed_from with Some n -> i >= n | None -> false in
+  let consumed i =
+    match consumed_from with Some n -> i >= n | None -> false
+  in
   let st =
     {
       st_device = dev;
@@ -3235,9 +3238,10 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
   in
   (* Batch consecutive graph-compatible kernels into device execution graphs
      (CUDA graphs, Metal indirect command buffers), so replay dispatches each
-     batch as one launch instead of one launch per kernel. Buffers rebound between replays (inputs, fresh per-call
-     outputs) are diff-patched into the recorded graph by [Realize.run_linear]'s
-     graph runner. Honors JIT (>= 2 disables) and JIT_BATCH_SIZE. *)
+     batch as one launch instead of one launch per kernel. Buffers rebound
+     between replays (inputs, fresh per-call outputs) are diff-patched into the
+     recorded graph by [Realize.run_linear]'s graph runner. Honors JIT (>= 2
+     disables) and JIT_BATCH_SIZE. *)
   let linear = Tolk.Jit.batch_graphs ~device:dev linear in
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   let reserved = Hashtbl.create 16 in
@@ -3371,8 +3375,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
                   if U.tag b = otag then Some (U.tag input) else None)
                 st.prefills
             in
-            (* [Some true] when the output derives from the input, [Some
-               false] when it never reads it; either may take its storage. *)
+            (* [Some true] when the output derives from the input, [Some false]
+               when it never reads it; either may take its storage. *)
             let fits inp =
               let itag = U.tag inp.i_node in
               if
@@ -3476,10 +3480,10 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
   (* Entries that seeded a consumed leaf of this call. Their buffers are
      released back to the allocator once the call completes — never during it:
      the schedule has no aliasing knowledge, so a consumed buffer must stay
-     intact until every kernel has read it. A handle whose placement
-     mismatched is forced by the copy path instead and is never consumed. A
-     bound entry is some program's constant, and an entry that also seeded a
-     read leaf is read: neither is consumed. *)
+     intact until every kernel has read it. A handle whose placement mismatched
+     is forced by the copy path instead and is never consumed. A bound entry is
+     some program's constant, and an entry that also seeded a read leaf is read:
+     neither is consumed. *)
   let seeded = ref [] and read = ref [] in
   let seed_entry = Array.make (Array.length c.cp_inputs) None in
   let note i e =
@@ -3503,8 +3507,8 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
           | None ->
               Tolk.Realize.Buffers.seed_multi c.cp_binding inp.i_node
                 (Tolk.Device.Multi_buffer.of_bufs inp.i_bufs);
-              upload_multi c.cp_scratch inp.i_place spec.md_devs inp.i_bufs
-                leaf)
+              upload_multi c.cp_scratch inp.i_place spec.md_devs inp.i_bufs leaf
+          )
       | None -> (
           match resident_single leaf with
           | Some e ->
@@ -3542,8 +3546,8 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
     Hashtbl.create 8
   in
   (* Elision claims: an output takes the storage of the consumed input at its
-     position when that input seeded from a resident entry seeding no other
-     leaf of this call, and no earlier output claimed the entry. *)
+     position when that input seeded from a resident entry seeding no other leaf
+     of this call, and no earlier output claimed the entry. *)
   let claims : (int, resident_entry) Hashtbl.t = Hashtbl.create 4 in
   if not c.cp_zero_copy then begin
     let uses e =
@@ -3619,9 +3623,9 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
           | (P_replicated | P_sharded _), None -> assert false
           end)
       c.cp_outputs;
-  (* An output an indexed write lands in starts from its input. One that
-     claimed that input's storage already holds the value; any other is given
-     it by a copy. *)
+  (* An output an indexed write lands in starts from its input. One that claimed
+     that input's storage already holds the value; any other is given it by a
+     copy. *)
   List.iter
     (fun (node, i) ->
       let claimed =
@@ -3651,40 +3655,40 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
       (fun (_, Packed (odt, ph), node, _) ->
         let tag = U.tag node in
         if Hashtbl.mem c.cp_reserved tag && not (Hashtbl.mem out_bufs tag) then
-        match Hashtbl.find_opt claims tag with
-        | Some e -> Hashtbl.add out_bufs tag e.r_bufs
-        | None -> begin
-          let copy_to dev n src =
-            let dst = create_fresh_buffer dev (tolk_dtype odt) n in
-            if not (Tolk.Device.Buffer.transfer ~dst ~src) then
-              Tolk.Device.Buffer.copy_between ~dst ~src;
-            dst
-          in
-          match Tolk.Realize.Buffers.buffer_of_node c.cp_binding node with
-          | Tolk.Realize.Single src ->
-              Hashtbl.add out_bufs tag
-                [ copy_to c.cp_device (numel (shape_of ph)) src ]
-          | Tolk.Realize.Multi m ->
-              let devs =
-                match c.cp_multi with
-                | Some spec -> spec.md_devs
-                | None -> assert false
+          match Hashtbl.find_opt claims tag with
+          | Some e -> Hashtbl.add out_bufs tag e.r_bufs
+          | None -> begin
+              let copy_to dev n src =
+                let dst = create_fresh_buffer dev (tolk_dtype odt) n in
+                if not (Tolk.Device.Buffer.transfer ~dst ~src) then
+                  Tolk.Device.Buffer.copy_between ~dst ~src;
+                dst
               in
-              Hashtbl.add out_bufs tag
-                (List.map2
-                   (fun dev src ->
-                     copy_to dev (Tolk.Device.Buffer.size src) src)
-                   devs
-                   (Tolk.Device.Multi_buffer.bufs m))
-        end)
+              match Tolk.Realize.Buffers.buffer_of_node c.cp_binding node with
+              | Tolk.Realize.Single src ->
+                  Hashtbl.add out_bufs tag
+                    [ copy_to c.cp_device (numel (shape_of ph)) src ]
+              | Tolk.Realize.Multi m ->
+                  let devs =
+                    match c.cp_multi with
+                    | Some spec -> spec.md_devs
+                    | None -> assert false
+                  in
+                  Hashtbl.add out_bufs tag
+                    (List.map2
+                       (fun dev src ->
+                         copy_to dev (Tolk.Device.Buffer.size src) src)
+                       devs
+                       (Tolk.Device.Multi_buffer.bufs m))
+            end)
       c.cp_outputs;
   (* The call returns while its kernels may still run. An output is a handle
      whose first read waits for the device, and a buffer released below goes
-     back to the device's pool, where only work queued after these kernels
-     can take it. Two programs still wait here. On the zero-copy device the
-     outputs are host tensors the kernels write in place, and wrapped buffers
-     alias caller memory (seeded inputs and wrapped captures) that the caller
-     may touch as soon as the call returns. A pmap waits too. *)
+     back to the device's pool, where only work queued after these kernels can
+     take it. Two programs still wait here. On the zero-copy device the outputs
+     are host tensors the kernels write in place, and wrapped buffers alias
+     caller memory (seeded inputs and wrapped captures) that the caller may
+     touch as soon as the call returns. A pmap waits too. *)
   (match c.cp_multi with
   | Some spec -> List.iter Tolk.Device.synchronize spec.md_devs
   | None -> if c.cp_zero_copy then Tolk.Device.synchronize c.cp_device);
@@ -3746,11 +3750,11 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
         | None -> assert false)
       c.cp_skeleton
   in
-  (* Consumption. The storage of each consumed input that seeded from a
-     resident entry is either owned by an output handle now (a claimed entry:
-     its storage moved) or returned to the allocator, where the next call's
-     fresh outputs reuse it in queue order, after the kernels of this call.
-     The handle becomes Donated — forcing it now raises. *)
+  (* Consumption. The storage of each consumed input that seeded from a resident
+     entry is either owned by an output handle now (a claimed entry: its storage
+     moved) or returned to the allocator, where the next call's fresh outputs
+     reuse it in queue order, after the kernels of this call. The handle becomes
+     Donated — forcing it now raises. *)
   Hashtbl.iter (fun _ e -> transfer_entry e) claims;
   List.iter
     (fun e ->
@@ -3779,8 +3783,7 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
               in
               Printf.eprintf "rune.jit: input leaf %d: %s\n%!" i
                 (if e.r_bound then "bound"
-                 else if (not (c.cp_consumed i)) || List.memq e read then
-                   "read"
+                 else if (not (c.cp_consumed i)) || List.memq e read then "read"
                  else if reused then "storage reused"
                  else "storage copied"))
         seed_entry
@@ -3982,9 +3985,7 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
             let c =
               trace_compile ~device:dev ~zero_copy:false
                 ~consumed_from:(if donate then Some 0 else None)
-                ~const_cache
-                ?beam
-                ?beam_parallel ~multi:(spec, places)
+                ~const_cache ?beam ?beam_parallel ~multi:(spec, places)
                 (module P)
                 (module Q)
                 f params
