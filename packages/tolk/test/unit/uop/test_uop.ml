@@ -461,7 +461,8 @@ let max_numel_handles_zero_after_large_dimensions () =
   let huge = Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one 100)) in
   let buffer = Uop.param ~slot:0 ~dtype:Dtype.float32
       ~shape:(Uop.stack [ huge; Uop.const_int 0 ]) () in
-  equal int 0 (Uop.max_numel buffer)
+  equal int 0 (Uop.max_numel buffer);
+  equal int 0 (Uop.max_shard_numel buffer)
 
 let exact_symbolic_bounds () =
   let huge = Z.shift_left Z.one 200 in
@@ -664,6 +665,7 @@ let property_helpers_parity () =
        (Uop.shard_shape multi));
   equal (list int) ~msg:"Multi max_shard_shape uses shard dimensions"
     [ 2; 4 ] (Uop.max_shard_shape multi);
+  equal int 8 (Uop.max_shard_numel multi);
   equal (list (pair int int)) ~msg:"Multi bounds follow shard size"
     [ (0, 2); (2, 4) ]
     (List.map
@@ -1070,6 +1072,20 @@ let child_ops_reports_child_op_set () =
     && List.exists (Ops.equal Ops.Buffer) ops);
   is_true ~msg:"child_ops is stable across calls" (Uop.child_ops node = ops)
 
+let backward_slice_tracks_shared_dependencies () =
+  let leaf = Uop.param ~slot:97 ~dtype:Dtype.int32 () in
+  let branch = Uop.alu_binary ~op:Ops.Add ~lhs:leaf ~rhs:(Uop.const_int 3) in
+  let root = Uop.sink [branch; leaf; branch] in
+  let nodes = Uop.backward_slice root in
+  equal (list int) (List.map Uop.tag (Uop.toposort root) |> List.filter ((<>) (Uop.tag root)))
+    (List.map Uop.tag nodes);
+  is_false ~msg:"a slice excludes its own root" (Uop.in_backward_slice root root);
+  is_true ~msg:"shared inputs remain reachable" (Uop.in_backward_slice leaf root);
+  let changed = Uop.replace root ~src:[| Uop.const_int 8 |] () in
+  is_false ~msg:"replacement has an independent slice" (Uop.in_backward_slice leaf changed);
+  is_true ~msg:"querying another root preserves the original slice"
+    (Uop.in_backward_slice leaf root)
+
 let property_caches_release_nodes () =
   let weak = Stdlib.Weak.create 2 in
   let[@inline never] populate () =
@@ -1083,6 +1099,8 @@ let property_caches_release_nodes () =
     ignore (Uop.bool_slice_mem cond cond);
     ignore (Uop.vmin r);
     ignore (Uop.shape r);
+    ignore (Uop.backward_slice cond);
+    ignore (Uop.in_backward_slice r cond);
     Stdlib.Weak.set weak 0 (Some r);
     Stdlib.Weak.set weak 1 (Some cond)
   in
@@ -2475,6 +2493,7 @@ let () =
           test "tinygrad integer bounds parity" integer_bounds_parity;
           test "tinygrad CAST bounds parity" cast_bounds_parity;
           test "flat storage parameters retain symbolic views" flat_storage_parameters;
+          test "backward slices track shared dependencies" backward_slice_tracks_shared_dependencies;
           test "max_numel checks host range" max_numel_checks_host_range;
           test "max_numel handles zero after large dimensions"
             max_numel_handles_zero_after_large_dimensions;

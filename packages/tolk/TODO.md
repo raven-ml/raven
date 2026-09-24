@@ -3,32 +3,14 @@
 Migrate the reference from `baa6148066f1a29f56bb870f6f139c15bb3f495f` to the
 frozen target `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences
 belong in [DIVERGENCES.md](DIVERGENCES.md). Remove work when its acceptance
-criteria pass. The three milestones below define migration completion;
+criteria pass. The remaining milestones below define migration completion;
 separately scoped work does not block it.
 
 Work in milestone order. Defer individual renderer discrepancies, optimizer
-policy and accelerator tuning until the CPU protocol works end to end, unless
+policy and accelerator tuning until storage and execution use the shared protocol, unless
 one blocks that path. Use focused tests during implementation and the broader
 consumer suites at milestone boundaries. Commit coherent architectural changes
 with their rationale and validation; commit count is not an acceptance metric.
-
-## 1. Complete the CPU path through the new protocol
-
-- Port CPU scheduling and realization onto that graph: explicit allocation and
-  call arguments, RAW/WAR dependencies for overlapping assignments, self-copy,
-  nested calls and shared aliases, and cycle rejection. Centralize shape,
-  numel, range and backward-slice properties for allocation sizes and view
-  bounds.
-
-Acceptance: the public Tolk frontend executes CPU elementwise, reduction,
-matmul and custom multi-output kernels through the new protocol. Cover nested
-calls, duplicate arguments, anonymous outputs and internal allocations,
-overlapping views, symbolic sizes/scalars and replay, empty outputs and
-external buffers. Verify results,
-call order, allocation ownership and source/spec contracts. Inspect the
-scheduled graph to ensure this path does not fall back to the old function,
-binding or SLICE protocol. Run the CPU frontend and scheduling suites as the
-milestone gate; do not declare the milestone complete from isolated IR tests.
 
 ## 2. Migrate storage, execution and existing consumers
 

@@ -59,7 +59,7 @@ type input_info = {
 
 let input_info_of_uop u =
   {
-    ii_size = List.fold_left ( * ) 1 (U.max_shape u);
+    ii_size = U.max_numel u;
     ii_dtype = U.dtype u;
     ii_device = U.device_of u;
   }

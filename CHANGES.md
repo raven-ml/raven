@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.max_shard_numel` computes per-device allocation sizes with exact
+  multiplication. View and replay sizing now use the same checked shape
+  properties instead of multiplying host integers independently.
+
 - Reject cyclic buffer dependencies during scheduling instead of silently
   dropping mutually dependent kernels or returning a partial schedule.
 

@@ -1303,14 +1303,28 @@ let topovisit visitor cache root =
   done;
   Hashtbl.find cache (tag root)
 
-let backward_slice root =
-  List.filter (fun u -> not (u == root)) (toposort root)
+let backward_slice_cache : (t list * unit Ref_tbl.t) Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
+
+let backward_slice_property root =
+  let cache = Domain.DLS.get backward_slice_cache in
+  match Weak_tbl.find_opt cache root with
+  | Some result -> result
+  | None ->
+      let nodes = List.filter (fun u -> not (u == root)) (toposort root) in
+      let members = Ref_tbl.create (List.length nodes) in
+      List.iter (fun u -> Ref_tbl.add members u ()) nodes;
+      let result = nodes, members in
+      Weak_tbl.add cache root result;
+      result
+
+let backward_slice root = fst (backward_slice_property root)
 
 let find_nodes p root =
   List.filter p (toposort root)
 
 let in_backward_slice needle haystack =
-  List.exists (fun u -> u == needle) (backward_slice haystack)
+  Ref_tbl.mem (snd (backward_slice_property haystack)) needle
 
 let is_scratch_buffer u =
   match op u, Arg.as_param_arg (arg u) with
@@ -2247,15 +2261,16 @@ let reshape ~src ~shape =
       mk ~op:Ops.Reshape ~dtype:(dtype src) ~src:[| src; shape |] ~arg:Arg.Empty
 
 let max_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shape u)
-let max_numel u =
-  List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one (shape u)
+let max_shape_numel dims =
+  List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one dims
   |> Bound.to_int
+
+let max_numel u = max_shape_numel (shape u)
 
 let storage_size dims =
   match dims with
   | [] -> None
-  | _ -> Some (List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one dims
-               |> Bound.to_int)
+  | _ -> Some (max_shape_numel dims)
 
 let view_as node dims =
   match dims with
@@ -2423,6 +2438,7 @@ let shard_shape u =
   | _ -> shape u
 
 let max_shard_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shard_shape u)
+let max_shard_numel u = max_shape_numel (shard_shape u)
 
 (* Calls pass storage explicitly; outputs are allocations in the caller. *)
 

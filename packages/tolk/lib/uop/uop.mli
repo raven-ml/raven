@@ -1223,7 +1223,9 @@ val topovisit : (t -> 'a) -> (int, 'a) Hashtbl.t -> t -> 'a
     result computed for [root]. *)
 
 val backward_slice : t -> t list
-(** [backward_slice root] is [toposort root] without [root] itself. *)
+(** [backward_slice root] is [toposort root] without [root] itself.
+    The ordered slice and its membership index are memoized per domain;
+    cached properties do not keep an otherwise unreachable graph alive. *)
 
 val find_nodes : (t -> bool) -> t -> t list
 (** [find_nodes p root] is the nodes of the DAG rooted at [root] that
@@ -1356,6 +1358,11 @@ val shard_shape : t -> t list
 val max_shard_shape : t -> int list
 (** [max_shard_shape u] is {!shard_shape} with every symbolic dimension
     replaced by its conservative upper bound. *)
+
+val max_shard_numel : t -> int
+(** [max_shard_numel u] is the product of the upper bounds of {!shard_shape}.
+    Multiplication and host-range checks have the same contract as
+    {!max_numel}. *)
 
 val axis : t -> int option
 (** [axis u] is [u]'s sharding axis. {!Ops.Param} reads [param_arg.axis],

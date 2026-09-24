@@ -44,7 +44,7 @@ let view_buffer node =
   | Some (base, offset) ->
       Option.map
         (fun src ->
-          let numel = List.fold_left ( * ) 1 (U.max_shape node) in
+          let numel = U.max_numel node in
           let dtype = U.dtype node in
           if
             offset = 0

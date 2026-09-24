@@ -344,11 +344,10 @@ let collect_bufs u =
   in
   loop [] u
 
-let buffer_numel b =
-  U.max_shard_shape b |> List.fold_left ( * ) 1
-
 let buffer_nbytes b =
-  buffer_numel b * Dtype.itemsize (U.dtype b)
+  Bound.mul (Bound.int (U.max_shard_numel b))
+    (Bound.int (Dtype.itemsize (U.dtype b)))
+  |> Bound.to_int
 
 let plannable_device_name dev =
   not
