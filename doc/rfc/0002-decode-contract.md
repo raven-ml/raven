@@ -5,9 +5,13 @@
 - Packages: kaun, nx (one documentation line), rune and tolk (the indexed
   store)
 - Implementation: commits `Make attention total` through `Group attention
-  keys without copying them` on main
-- Revision: 2. Replaces the first revision in place; Rationale says what it
-  chose and why it lost.
+  keys without copying them` on main; revision 3 in `Add Cache_index.select,
+  a read of chosen columns` and `Add Cache_index.every, blocks of positions
+  under their own table`
+- Revision: 3 (2026-09-24). Extends revision 2 in place with chosen columns
+  and blocks of positions; Rationale records what revision 2 chose and why it
+  changed. Revision 2 replaced the first revision; Rationale says what that
+  one chose and why it lost.
 
 ## Summary
 
@@ -19,11 +23,13 @@ one forward pass. A cache is any record of pools: tensors whose axis 0 is a
 slot axis, with no batch axis. A cache index is an opaque value built from two
 int32 tensors, each token's position and a table from a sequence's positions
 to slots. Contiguous decoding, paging, shared prefixes and beam forks are
-values of the table, so kaun has one cache type and one cached attention.
-Attention is total: a query that sees no key yields zero. Kaun ships no model:
-the contract is kaun's types, a convention and the laws that kaun's decoder
-tests check, so training, a generate loop and a future inference engine run
-one definition that lives in user code.
+values of the table, so kaun has one cache type and one cached attention. A
+layer that attends to a few columns per token selects them, and a layer that
+keeps one entry per block of positions reads through a second table, both
+derived from the same index. Attention is total: a query that sees no key
+yields zero. Kaun ships no model: the contract is kaun's types, a convention
+and the laws that kaun's decoder tests check, so training, a generate loop and
+a future inference engine run one definition that lives in user code.
 
 ## Motivation
 
@@ -126,6 +132,29 @@ parameters are fields of the step because a captured tensor is a constant of
 the program. The first call has `seq = max lens` and the rest `seq = 1`, so
 one source compiles to two programs.
 
+### Layers that read less or keep less
+
+```ocaml
+(* a sparse read: each token attends to the k columns it chose *)
+let chosen = Cache_index.select top index in       (* top : [batch; seq; k] *)
+let seen, pool = Cache_index.extend chosen values pool in   (* [..; k; ...] *)
+let mask = Cache_index.mask chosen in                 (* [batch; seq; k] *)
+
+(* a compressed stream: one entry per block of 4 positions *)
+let blocks = Cache_index.every 4 index in
+let seen, entries = Cache_index.extend blocks entry entries in
+```
+
+A selection bounds a read by `k` rather than by the context: the last `w`
+positions of a sliding window, or the columns an indexer scored highest. A
+layer that keeps one entry per block of `m` positions (a compressed key) stores
+it in a pool of its own, addressed by a table of blocks that the engine passes
+as `Cache_index.make ~every:[(m, blocks)]` beside the positions' table. The
+model still passes one index to every layer and each layer derives what it
+reads. An unfinished block is not state: what its entry is made of is stored
+per position like any key, and the token that closes the block reads it
+through a selection, computes the entry and stores it under `every m`.
+
 ### What an engine does per tick
 
 ```ocaml
@@ -181,10 +210,14 @@ address nothing.
 ```ocaml
 module Cache_index : sig
   type t
-  val make : ?row:Nx.int32_t -> pos:Nx.int32_t -> table:Nx.int32_t -> unit -> t
-  val rows : context:int -> int array -> t
+  val make :
+    ?row:Nx.int32_t -> ?every:(int * Nx.int32_t) list ->
+    pos:Nx.int32_t -> table:Nx.int32_t -> unit -> t
+  val rows : ?every:int list -> context:int -> int array -> t
   val whole : ?lens:int array -> batch:int -> seq:int -> unit -> t
   val window : int -> t -> t                (* the last w positions; static *)
+  val every : int -> t -> t                 (* blocks of m positions; static *)
+  val select : Nx.int32_t -> t -> t         (* [batch; seq; k] chosen columns *)
   val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
   val advance : t -> t
 
@@ -193,7 +226,7 @@ module Cache_index : sig
 
   val extend :
     t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t
-  val mask : t -> Nx.bool_t                 (* [batch; seq; context] *)
+  val mask : t -> Nx.bool_t                 (* [batch; seq; context], or k *)
 
   val map : (Nx.int32_t -> Nx.int32_t) -> t -> t     (* map2, iter likewise *)
 end
@@ -209,32 +242,69 @@ one-token lanes is expressed.
 **`-1` addresses nothing, everywhere:** as a position, a table entry or a
 sequence, and so does any slot outside the pool. No slot number a cache index
 computes is out of range, so an eager run and a compiled run agree on every
-index. `Cache_index.positions` is the positions clamped into `[0, context)`,
-for rotating and for indexing a table of position embeddings.
+index. `Cache_index.positions` is the positions clamped into the positions'
+table, for rotating and for indexing a table of position embeddings.
 
-A token stores at the slot its table names at its own position. Padding and a
-position past the last column store nothing, so a full context is never
-overwritten. A token past the last column sees every column without itself and
-its output is unspecified; an engine retires the sequence first.
+A column *stands at* a position: a column of the positions' table at its
+position, a column of a table of blocks of `m` at its block's last position. A
+token stores at the slot its table names at the column that stands at its
+position. Padding and a position past the last column store nothing, so a full
+context is never overwritten. A token past the last column sees every column
+without itself and its output is unspecified; an engine retires the sequence
+first.
 
 `rows ~context lens` is the Guide's contiguous allocator: sequence `b` owns
 slots `b * context ..`. `advance` moves every lane to one past its greatest
 position, a lane of padding to `0`. It is per lane: where two lanes name one
 sequence an engine sets positions itself. `whole` reads and keeps nothing.
 
-`extend index values pool` is `(seen, pool')`. `pool'` is `pool` with `values :
-[batch; seq; ...]` stored where the call's tokens sit, by one `Nx.scatter
-~unique_indices:true` over the call's tokens, in place on a pool donated to
-`Rune.jit`. `seen : [batch; context; ...]` is what those tokens attend over:
-each lane's sequence read from `pool'`, with every column that is unallocated,
-past the lane's positions or below every query's window as zero. It writes
-and then reads the written pool, so a token below the last column sees itself
-through the table, and RFC 0001's order for storage reuse holds by dataflow.
-On a whole index `seen` is `values` and `pool'` is `pool`; that case is fixed
-when the index is built, before any tensor has a value, so it holds under
-`Rune.jit`. `mask` says which columns of `seen` each token sees: those at or
-before its position, and under the index's window only the last of them. A
-padded token sees nothing. The window is part of the index,
+`make ~every:[(m, blocks)]` adds a table of blocks:
+`blocks : [rows; context_m]` names the slot holding block `j` of sequence `r`,
+positions `j * m` to `j * m + m - 1`, `-1` when none is allocated; `m >= 2`,
+one table per `m`. `rows ~every` gives sequence `b` its run of
+`ceil (context / m)` block slots; the last block of a run is closed only past
+the context when `m` does not divide it. `every m index` is `index` read
+through that table: `extend` stores only the values of the tokens that close a
+block, since only they have a column that stands at their position, and a
+token at `t` sees block `j` when `j * m + m - 1 <= t`, which is
+`(j + 1) * m <= t + 1`; a token that closes no block writes the scratch row.
+`mask`, the zeroing and a window read the same rule, the window still counting
+positions. `context` is the table of blocks' width and `positions` stay the
+tokens'. On a whole index the columns are the lane's blocks by position,
+`ceil (seq / m)` of them, read from the tokens that close them. `every` keeps
+the window. An index that already reads blocks of `m` is returned as it is;
+otherwise `every` raises on an index that reads another stride, selects
+columns, or has no table for `m`.
+
+`select columns index` is `index` whose token `i` of lane `b` reads only the
+columns `columns.(b).(i)`, of shape `[batch; seq; k]`. `extend` then returns
+`seen : [batch; seq; k; ...]`, where entry `c` holds the column the token chose
+`c`-th, and `mask` returns `[batch; seq; k]`. Both read the selection from the
+index, as they read its window, so a layer cannot gather with one selection
+and mask with another. A chosen column that the token does not see reads as
+zero and is masked: a column that stands after its position, below the window
+or outside the context. An unallocated column reads as zero, a hole as without
+a selection, since the mask is positional. A column chosen twice is read
+twice. What is stored does not change. `advance` drops the selection and keeps
+the window and the stride, and the traversals carry the selection and every
+table. On a whole index a column is a token of the lane, or a block of the
+lane under `every`.
+
+`extend index values pool` is `(seen, pool')`. `pool'` is `pool` with
+`values : [batch; seq; ...]` stored where the call's tokens sit, by one
+`Nx.scatter ~unique_indices:true` over the call's tokens, in place on a pool
+donated to `Rune.jit`. `seen : [batch; context; ...]` is what those tokens
+attend over: each lane's sequence read from `pool'`, with every column that is
+unallocated, past the lane's positions or below every query's window as zero.
+It writes and then reads the written pool, so a token below the last column
+sees itself through the table, and RFC 0001's order for storage reuse holds by
+dataflow. On a whole index `pool'` is `pool` and `seen` is read from
+`values`: `values` itself, the values of the tokens that close each block
+under `every`, or the chosen tokens' under a selection. Which case applies is
+fixed when the index is built, before any tensor has a value, so it holds
+under `Rune.jit`. `mask` says which columns of `seen` each token sees: those
+that stand at or before its position, and under the index's window only the
+last of them. A padded token sees nothing. The window is part of the index,
 `Cache_index.window w index`, and both functions read it there, so a layer
 cannot zero with one window and mask with another.
 
@@ -310,7 +380,10 @@ real weights.
 | four decode steps at different positions share one trace | 2, 7 |
 
 The poisoning checks were validated by mutation: with the zeroing select
-removed they fail in both modes.
+removed they fail in both modes. Chosen columns and blocks of positions are
+layer tests in `test_attention.ml`, among them a compressed stream fed whole,
+in chunks that split blocks, token by token and as one-token lanes, eagerly and
+compiled, and compiled for Metal in `test_cache_index_metal.ml`.
 
 ### Cost
 
@@ -337,12 +410,26 @@ Measured on an M1 Max with Metal, GPT-2 124M shape unless noted.
   leaf per layer before attention, float32 under the half-precision island.
   `T` one-token lanes of one sequence gather `T x context` rows where one lane
   of `T` tokens gathers `context`, so the flattened layout suits decode lanes
-  and short chunks. The index's window bounds what is seen; a read bounded by
-  the window is future work behind the same signature.
+  and short chunks. A selection bounds it: selecting a window's columns is
+  the read bounded by the window.
+- A selected read costs `k` rows per token, whatever the context. One compiled
+  decode step of a DeepSeek-V3.2 sparse layer's read (a prototype, not in the
+  tree; 16 heads, a 576-wide slot, a fixed selection of `k = 2048`, float32,
+  minimum of 40 steps on a shared machine) stays at 0.9 to 1.1 ms from 4k to
+  128k tokens, where masking the full read grows from 1.4 to 4.9 ms and
+  gathering from it from 0.9 to 2.6 ms. Choosing the columns from scores costs
+  a sort of the context per token while `Nx.top_k` above `k = 16` sorts the
+  whole axis.
+- A table of blocks costs its columns. One compiled decode step of a
+  DeepSeek-V4-Flash layer (a prototype, not in the tree; random float32
+  weights, minimum of 30 steps on a shared machine) takes 2.4 to 2.6 ms from
+  4k to 128k tokens at `m = 128`, and 6.5 to 12.6 ms at `m = 4` with its
+  indexer, half of that growth `Nx.top_k` sorting `context / 4` scores.
 
-Compiled programs are keyed by `(batch, seq, rows, context)`, by whether the
-index carries `row`, by the slot count and by the dtype. An engine buckets the
-first four and builds every index of a bucket the same way.
+Compiled programs are keyed by `(batch, seq, rows, context)`, by the width of
+every table of blocks and a selection's `k`, by whether the index carries
+`row`, by the slot count and by the dtype. An engine buckets the first four
+and builds every index of a bucket the same way.
 
 ### Layers and functions shipped with the contract
 
@@ -374,18 +461,21 @@ Each names who owes it: K for kaun's layers, M for a model author, E for an
 engine or any caller of `Cache_index.make`.
 
 1. **Column is position (E).** `table.(r).(j)` holds position `j` of sequence
-   `r`, and within a row a slot appears once. A slot shared by two sequences
-   is shared at the same position after the same tokens, because a stored key
-   is rotated at its position and computed from every token before it. Every
-   column a token sees names a slot that this call or an earlier one stored; a
-   column left `-1` inside that range reads as a zero key and takes the weight
-   of a zero score. Prevents keys read at the wrong position or from another
-   prefix, and attention diluted by holes. A sliding window keeps this law: a
-   column is freed and becomes `-1` once it is below every window still to be
-   fed.
-2. **Positions, tables, keys and sampling parameters are inputs of the step
-   (M).** A captured one compiles a program for one position or one
-   temperature.
+   `r`, and a table of blocks of `m` positions holds block `j`, positions
+   `j * m` to `j * m + m - 1`, at column `j`; a column stands at its position,
+   or at its block's last. Within a row a slot appears once. A slot shared by
+   two sequences is shared at the same column after the same tokens, because a
+   stored key is rotated at its position and computed from every token before
+   it. Every column a token sees names a slot that this call or an earlier one
+   stored; a column left `-1` inside that range reads as a zero key and takes
+   the weight of a zero score. Prevents keys read at the wrong position or
+   from another prefix, and attention diluted by holes. A column is freed and
+   becomes `-1` once it is below every reach still to be fed. A layer's reach
+   through a table is the furthest back any of its reads looks: its window,
+   its selections, and a closing token's read of its block's positions.
+2. **Positions, tables (every stride's), keys and sampling parameters are
+   inputs of the step (M).** A captured one compiles a program for one
+   position or one temperature.
 3. **Attention is total (K).** A query that sees no key yields zero and a zero
    gradient. Prevents `nan` from padded lanes and empty windows, in decoding
    and in training.
@@ -393,16 +483,18 @@ engine or any caller of `Cache_index.make`.
    and the scratch row is never observed (K).** Prevents the two modes
    disagreeing on a bad index, and results that depend on what an allocator
    left in memory.
-5. **A column that is unallocated, past every position of its lane, or below
-   every window of its lane contributes exactly zero to that lane, whatever
-   its slot holds (K).** Prevents one request's overflow becoming another's
-   `nan`.
+5. **A column that is unallocated, that stands past every position of its
+   lane, or below every window of its lane contributes exactly zero to that
+   lane, whatever its slot holds (K).** Under a selection this holds per
+   chosen column, and a column the token did not choose is not read. Prevents
+   one request's overflow becoming another's `nan`.
 6. **Every cache leaf is one pool, built with `Cache_index.pool`: a tensor of
    `slots + 1` rows whose axis 0 is the slot axis, leaves in a fixed order
    (M).** No two leaves hold one tensor: a
    donated tensor seeds one leaf. Prevents an engine needing model code to
    move state, lost storage reuse, and a compiled program keyed by another
-   traversal.
+   traversal. A leaf belongs to one table, the positions' or the blocks' of
+   one `m`, and its slot axis counts that table's slots. A model says which.
 7. **Shapes are static, values vary (M, E).** Prevents a retrace per
    admission.
 8. **`cached` is invariant under chunking (K, M).** Given Law 1, tokens fed
@@ -413,8 +505,12 @@ engine or any caller of `Cache_index.make`.
    `5e-2` against the float32 reference. The constants are provisional until
    calibrated. Kaun owes it for its layers. A model author owes that
    everything outside kaun's layers acts on each token alone and takes
-   positions from `Cache_index.positions`. Prevents a model that trains
-   cleanly and decodes garbage.
+   positions from `Cache_index.positions`. A layer whose tokens choose columns
+   from scores is invariant where the choice is the same. A near-tie at the
+   cut may be chosen differently after reassociation, and the outputs then
+   differ by more than reassociation. `Nx.top_k` breaks exact ties by the
+   lowest column, which is the lowest position (or block) in every index.
+   Prevents a model that trains cleanly and decodes garbage.
 9. **Conventions that import depends on are the layer's (K).** RoPE's pairing
    and the query-to-kv-head grouping are pinned by a gradient check and a
    reference-logit test at `groups > 1`.
@@ -429,10 +525,13 @@ engine or any caller of `Cache_index.make`.
 ## Drawbacks
 
 - Addressing code grew: `attention.ml` went from 523 to 369 lines and
-  `cache_index.ml` adds 255. The difference buys windows, the row indirection,
-  the whole index and leaves of any rank and dtype.
-- A cache index is one of two kinds behind one type, and `advance` raises on a
-  whole index.
+  `cache_index.ml` added 255 in revision 2, which buy windows, the row
+  indirection, the whole index and leaves of any rank and dtype. Revision 3
+  takes `cache_index.ml` from 285 to 524 lines for chosen columns and tables
+  of blocks.
+- A cache index is one of two kinds behind one type, and also carries a stride
+  and a selection. `advance` raises on a whole index, and `every` on an index
+  that selects columns at another stride.
 - An index is recomputed per leaf and relies on the compiler to share the
   work. An eager run pays it per layer, which only tests do.
 - Each sampling mask is a bitonic sort of the vocabulary under jit until
@@ -441,6 +540,10 @@ engine or any caller of `Cache_index.make`.
   engine checks them in its own tests.
 - The bf16 clause of Law 8 is checked by the Llama validator only; equal
   greedy tokens over many steps has no test.
+- Whether a token closes a block is the index's business, so a layer computes
+  an entry in every token and the index stores it only for the closing one: at
+  `m = 4`, three decode steps in four read their block's positions for an
+  entry written to the scratch row.
 
 ## Rationale and alternatives
 
@@ -472,6 +575,26 @@ and `causal_mask` kept its diagonal for that reason alone. `hidden` was
 defined as `cached` over a fresh cache and implemented as a second pass,
 because the definition cost up to three times as much to differentiate.
 
+**Revision 2 and blocks of positions.** Revision 2 gave every table one
+column per position and left slots that hold a block of positions out of
+scope, expecting one index per table. DeepSeek-V4 keeps a compressed stream of
+one entry per 4 or 128 positions beside a per-position sliding window, so the
+contract needed a table whose column is a block, and a read that costs the
+columns a token chose rather than the context. Revision 3 derives both from
+the one index a model passes, adds one term, "stands at", and changes no model
+written against revision 2. Rejected:
+
+- The block's entry at the slot of its last position, in one table: every
+  compressed pool becomes context-sized for one row used in `m`, and the
+  positions' table can free nothing since a closed block stays visible; 30 GB
+  per sequence at 128k tokens for V4-Flash in bf16, against 860 MB plus a
+  fixed 24 MB.
+- The reference implementations' recurrent state, the partial block per
+  sequence updated in call order: a third kind of leaf an engine must copy on
+  a fork, and two lanes of one sequence in one call would both update it.
+- A gather from `extend`'s full read instead of `select`: no contract change,
+  but it still reads the whole context and the gather does not fuse into it.
+
 **A `decode` transformation in rune that derives the step from `hidden`.**
 Outside mixing layers a decoder acts on each token alone, and such a function
 is its own chunk form, so the transformation would derive nothing there. What
@@ -483,7 +606,8 @@ argument later.
 speculation trees and for slots that hold a block of positions. With
 write-then-read it is redundant with the table for every case built here, and
 a token stored where its table does not name it never sees itself. It is left
-out until a layout needs it.
+out until a layout needs it; blocks of positions arrived as a second table
+instead.
 
 **`read` and `write` as the index's verbs, with the layer branching on a whole
 index.** A mode every layer author must match, and two halves that invite the
@@ -518,10 +642,8 @@ of layers; a signature cannot say "validated logits" and Laws 8 and 9 can.
 
 The engine: scheduling, allocation, request state, prefix caching, preemption.
 Each of the following is left out and arrives behind the opaque index or as a
-new module: slots that hold a block of positions; per-query reads at columns a
-layer computed; per-sequence state for recurrent layers; speculation trees; a
-window-bounded read. None changes the signature of a model written today; a
-model whose layers allocate state separately will take one index per table.
+new module: per-sequence state for recurrent layers; speculation trees. None
+changes the signature of a model written today.
 Caches that evict or reorder, where a column's position is data. Quantised
 state and tensor-parallel layout, which need compiler work first. Packed
 training sequences with position reset. Mixture of experts. `Rune.remat` under
@@ -536,15 +658,19 @@ None blocks the contract.
 - Before an engine exists: a rune test that alternates two compiled programs
   on one donated state and reports reuse for every leaf. Single-program reuse
   and pass-through are pinned today.
+- For the engine RFC: how a model publishes which table each leaf belongs to,
+  and each table's reach, which frees columns under Law 1.
 
 ## Future possibilities
 
-A surface for each capability under Non-goals, behind the index:
-`Cache_index.make ?every` for slots that hold a block of positions, a
-per-query read, a module for per-sequence state. A second layout constructor
-for ragged batches once a variable-length kernel exists. The battery as a
-function over a step. A checker that refuses token-mixing operations outside
-kaun's layers. In nx and tolk: `Nx.top_k` with indices, a row-form store that
-takes `[k]` indices and `[k; ...]` rows, and the fused attention kernel that
-consumes the table. Nothing listed here is a reason to accept this or a later
-RFC.
+A surface for each capability under Non-goals, behind the index: a module for
+per-sequence state. `?every` means blocks of positions under their own table,
+not pages of positions per slot; pages stay rejected, since a block table is
+an affine function of a slot index. A selection shared by a lane's tokens,
+which bounds a prompt's read by its chunk plus the layer's reach. A second
+layout constructor for ragged batches once a variable-length kernel exists.
+The battery as a function over a step. A checker that refuses token-mixing
+operations outside kaun's layers. In nx and tolk: `Nx.top_k` with indices, a
+row-form store that takes `[k]` indices and `[k; ...]` rows, and the fused
+attention kernel that consumes the table. Nothing listed here is a reason to
+accept this or a later RFC.
