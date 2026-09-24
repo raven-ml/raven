@@ -214,6 +214,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_copy { t_in } when batched st t_in -> Some (fun k -> elt1 k copy t_in)
     | E_cast { t_in; target_dtype } when batched st t_in ->
         Some (fun k -> elt1 k (cast ~dtype:target_dtype) t_in)
+    | E_bitcast { t_in; target_dtype } when batched st t_in ->
+        Some (fun k -> elt1 k (bitcast ~dtype:target_dtype) t_in)
     (* Selection *)
     | E_where { condition; if_true; if_false }
       when batched st condition || batched st if_true || batched st if_false ->

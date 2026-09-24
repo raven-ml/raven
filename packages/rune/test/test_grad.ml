@@ -90,6 +90,16 @@ let test_grad_single_tensor () =
   let g = Rune.grad' f (vec32 [| 1.0; -2.0; 3.0 |]) in
   check_arr ~msg:"dx" [| 2.0; -4.0; 6.0 |] g
 
+(* A bitcast has zero derivative, as the bitwise operations do: the gradient
+   flows only through the other use of [x]. *)
+let test_bitcast_has_zero_derivative () =
+  let f x = Nx.add x (Nx.cast f32 (Nx.bitcast Nx.int32 x)) in
+  let x = vec32 [| 1.0; -2.0; 3.0 |] in
+  check_arr ~msg:"reverse" [| 1.0; 1.0; 1.0 |]
+    (Rune.grad' (fun x -> Nx.sum (f x)) x);
+  check_arr ~msg:"forward" [| 0.5; 0.5; 0.5 |]
+    (snd (Rune.jvp' f x (vec32 [| 0.5; 0.5; 0.5 |])))
+
 let test_vjp_single_tensor () =
   let f x = Nx.mul x x in
   let _, g = Rune.vjp' f (vec32 [| 1.0; 2.0 |]) (vec32 [| 10.0; 1.0 |]) in
@@ -269,6 +279,7 @@ let tests =
       [
         test "grad' matches the analytic gradient" test_grad_single_tensor;
         test "vjp' pulls back the cotangent" test_vjp_single_tensor;
+        test "a bitcast has zero derivative" test_bitcast_has_zero_derivative;
       ];
   ]
 

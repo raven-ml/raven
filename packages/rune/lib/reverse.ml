@@ -18,11 +18,11 @@
 
    Every Nx effect constructor is matched explicitly. Operations without a
    gradient fall into two deliberate categories: - zero derivative (comparisons,
-   bitwise and integer ops, rounding, argmax/argmin/argsort, RNG, tensor
-   creation): fall through untracked, which yields the correct zero gradient; -
-   no rule implemented (svd, eig, eigh, psum, mod): raise when an input is
-   tracked instead of silently producing a zero gradient — detach the input if
-   differentiation should not flow through it. *)
+   bitwise and integer ops, bitcasts, rounding, argmax/argmin/argsort, RNG,
+   tensor creation): fall through untracked, which yields the correct zero
+   gradient; - no rule implemented (svd, eig, eigh, psum, mod): raise when an
+   input is tracked instead of silently producing a zero gradient — detach the
+   input if differentiation should not flow through it. *)
 
 open Nx_effect
 module T = Nx
@@ -147,6 +147,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_xor _ -> None
       | E_or _ -> None
       | E_and _ -> None
+      | E_bitcast _ -> None
       | E_idiv _ -> None
       | E_argmax _ -> None
       | E_argmin _ -> None

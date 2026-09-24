@@ -81,6 +81,8 @@ let handler ppf =
     | E_cat { t_list; axis } -> Some (fun k -> obs k "cat" (cat t_list ~axis))
     | E_cast { t_in; target_dtype } ->
         Some (fun k -> obs k "cast" (cast ~dtype:target_dtype t_in))
+    | E_bitcast { t_in; target_dtype } ->
+        Some (fun k -> obs k "bitcast" (bitcast ~dtype:target_dtype t_in))
     | E_contiguous { t_in } ->
         Some (fun k -> obs k "contiguous" (contiguous t_in))
     | E_copy { t_in } -> Some (fun k -> obs k "copy" (copy t_in))

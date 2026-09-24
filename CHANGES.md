@@ -1159,6 +1159,11 @@ thread.
 
 ### Nx
 
+- Add `Nx.bitcast`, which reads each element's bits as another dtype of the
+  same width without converting it, NaN payloads and subnormals included. It
+  compiles under `Rune.jit`, except to or from float8, which the compiler
+  emulates and `Rune.jit` refuses; it maps under `vmap` and has zero
+  derivative.
 - `Nx_buffer.create` documents what it does: the contents of a new buffer are
   unspecified. It claimed a zero fill, which only some element kinds got, so a
   new `float32` buffer could hold NaN; call `Nx_buffer.fill` for zeros.

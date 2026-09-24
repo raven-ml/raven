@@ -474,6 +474,18 @@ module type S = sig
       built on both directions, so a backend that instead cast complex through
       its modulus would silently change their results. *)
 
+  val bitcast : dtype:('c, 'd) Dtype.t -> ('a, 'b) t -> ('c, 'd) t
+  (** [bitcast ~dtype x] reads the bits of each element of [x] as an element of
+      [dtype], without conversion.
+
+      {b Frontend guarantees:} [dtype] and [x]'s dtype have the same width in
+      bits, and neither is [Bool], [Int4] or [UInt4].
+
+      {b Backend must:} return a tensor of [x]'s shape whose element at every
+      index has, in the machine's byte order, exactly the bits of [x]'s element
+      at that index: NaN payloads, signalling NaN and subnormals included. The
+      result may share [x]'s storage. *)
+
   val contiguous : ('a, 'b) t -> ('a, 'b) t
   (** [contiguous t] returns a C-contiguous version of [t].
 

@@ -1401,6 +1401,34 @@ let test_sort_matches_eager () =
         (Rune.jit' positions e5m2))
     [ false; true ]
 
+let test_bitcast_matches_eager () =
+  check_bitcast_matches_eager ();
+  let doubles =
+    Nx.create Nx.int64 [| 2; 3 |]
+      [| 0L; Int64.min_int; 0x7FF0000000000001L; 0xFFF8000000000123L; 1L; -1L |]
+  in
+  let to_bits x = Nx.bitcast Nx.int64 (Nx.transpose x) in
+  equal ~msg:"float64 to bits" bool true
+    (Nx.to_array (Rune.jit' to_bits (Nx.bitcast f64 doubles))
+    = Nx.to_array (Nx.transpose doubles))
+
+(* The compiler emulates float8 through a wider float, so a compiled float8
+   bitcast would change subnormal and infinite bits: it is refused, both ways,
+   while eager reads every one of the 256 patterns back. *)
+let test_float8_bitcast_is_refused () =
+  let bytes = Nx.init Nx.uint8 [| 256 |] (fun i -> i.(0)) in
+  let check (type b) name (fp : (float, b) Nx.dtype) =
+    equal ~msg:(name ^ " eager") (array int) (Nx.to_array bytes)
+      (Nx.to_array (Nx.bitcast Nx.uint8 (Nx.bitcast fp bytes)));
+    raises_jit_error (fun () ->
+        ignore (Rune.jit' (fun x -> Nx.bitcast fp x) bytes));
+    raises_jit_error (fun () ->
+        ignore
+          (Rune.jit' (fun x -> Nx.bitcast Nx.uint8 x) (Nx.bitcast fp bytes)))
+  in
+  check "float8_e4m3" Nx.float8_e4m3;
+  check "float8_e5m2" Nx.float8_e5m2
+
 (* Either side of [Nx.top_k]'s switch from selection rounds to a sort, with
    repeated scores in every row. *)
 let test_top_k_matches_eager () =
@@ -3183,6 +3211,9 @@ let tests =
     group "jit basics"
       [
         test "element-wise chain matches eager" test_elementwise_matches_eager;
+        test "bitcast matches eager" test_bitcast_matches_eager;
+        test "a compiled float8 bitcast is refused"
+          test_float8_bitcast_is_refused;
         test "replay reads fresh input data" test_replay_reads_fresh_inputs;
         test "a new shape retraces" test_retrace_on_new_shape;
         test "zero-size outputs are empty tensors" test_zero_size_outputs;

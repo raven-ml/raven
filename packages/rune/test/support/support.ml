@@ -437,3 +437,45 @@ let check_cjvp2 ?(h = 1e-5) ?(tol = 1e-5) ~msg
   check_cclose ~tol ~msg
     (Array.mapi (fun i d -> Complex.add d from_b.(i)) from_a)
     (to_carr dy)
+
+(* Bitcast compiles to the bits eager reads, both ways, from a transposed view:
+   both zeros, infinities, quiet and signalling NaN with payloads, subnormals.
+   The bits leave and enter the compiled function as stored, and an eager
+   bitcast, which is a view, reads them. *)
+let check_bitcast_matches_eager ?device () =
+  let check (type a b c d) name (bits : (a, b) Nx.t) (float : (c, d) Nx.dtype) =
+    let int = Nx.dtype bits in
+    let to_float x = Nx.bitcast float (Nx.transpose x) in
+    let to_bits x = Nx.bitcast int (Nx.transpose x) in
+    let expected = Nx.to_array (Nx.transpose bits) in
+    equal ~msg:(name ^ " from bits") bool true
+      (Nx.to_array (Nx.bitcast int (Rune.jit' ?device to_float bits)) = expected);
+    equal ~msg:(name ^ " to bits") bool true
+      (Nx.to_array (Rune.jit' ?device to_bits (Nx.bitcast float bits))
+      = expected)
+  in
+  check "float32"
+    (Nx.create Nx.int32 [| 2; 5 |]
+       [|
+         0l;
+         0x80000000l;
+         0x7F800000l;
+         0xFF800000l;
+         0x7FC00000l;
+         0x7F800001l;
+         0xFFC00123l;
+         1l;
+         0x807FFFFFl;
+         0x3F800000l;
+       |])
+    Nx.float32;
+  let halves =
+    [| 0; 0x8000; 0x7C00; 0xFC00; 0x7E00; 0x7C01; 0xFE23; 1; 0x83FF; 0x3C00 |]
+  in
+  check "float16" (Nx.create Nx.uint16 [| 2; 5 |] halves) Nx.float16;
+  check "bfloat16"
+    (Nx.create Nx.uint16 [| 2; 5 |]
+       [|
+         0; 0x8000; 0x7F80; 0xFF80; 0x7FC0; 0x7F81; 0xFFC3; 1; 0x807F; 0x3F80;
+       |])
+    Nx.bfloat16

@@ -32,6 +32,10 @@ let oracle_tests =
     test "closure constants broadcast" (fun () ->
         let c = vec64 [| 2.0; -1.0; 0.5 |] in
         check_vmap ~msg:"x * c" (fun r -> Nx.mul r c) (xs ()));
+    test "bitcast" (fun () ->
+        check_vmap ~msg:"the bits of each row"
+          (fun r -> Nx.cast f64 (Nx.bitcast Nx.int64 r))
+          (xs ()));
     test "scalar closure constant" (fun () ->
         check_vmap ~msg:"x + 3" (fun r -> Nx.add_s r 3.0) (xs ()));
     test "full reduction" (fun () ->

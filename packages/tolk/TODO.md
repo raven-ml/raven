@@ -19,6 +19,11 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 ## Scalar semantics and UOp contracts
 
+- Make a `Bitcast` to or from an emulated float8 act on the stored byte. Today
+  the float decomposition decodes the element through float16 and back, which
+  flushes subnormals and clamps infinities, so rune refuses a compiled float8
+  `Nx.bitcast`.
+
 - Adopt derived dtypes, weak CONST plus typed CAST, final ParamArg/CallInfo/
   ProgramInfo metadata, ALLOC, effectful CALL, scalar binding effects and
   void RANGE/BACKEDGE. Remove deleted operations and stale enum/cache formats.

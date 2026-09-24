@@ -504,6 +504,26 @@ let test_astype_int64_to_float32 () =
   let u = Nx.cast Nx.float32 t in
   check_t "astype int64 to float32" [| 3 |] [| 1000.0; 2000.0; 3000.0 |] u
 
+(* A float's bits read as an integer, in the element's place in a view. *)
+let test_bitcast_reads_bits () =
+  let t =
+    Nx.create Nx.float32 [| 2; 2 |] [| -0.; 1.; Float.neg_infinity; 1e-45 |]
+  in
+  check_t "bitcast float32 to int32 of a transpose" [| 2; 2 |]
+    [| Int32.min_int; 0xFF800000l; 0x3F800000l; 1l |]
+    (Nx.bitcast Nx.int32 (Nx.transpose t))
+
+let test_bitcast_refuses () =
+  check_invalid_arg "different widths"
+    "bitcast: cannot reinterpret float32 as int16, their widths differ (32 and \
+     16 bits)" (fun () -> Nx.bitcast Nx.int16 (Nx.zeros Nx.float32 [| 2 |]));
+  check_invalid_arg "bool"
+    "bitcast: cannot reinterpret uint8 as bool, bool holds only 0 and 1"
+    (fun () -> Nx.bitcast Nx.bool (Nx.zeros Nx.uint8 [| 2 |]));
+  check_invalid_arg "int4"
+    "bitcast: cannot reinterpret int4 as int8, 4-bit elements are packed in \
+     pairs" (fun () -> Nx.bitcast Nx.int8 (Nx.zeros Nx.int4 [| 2 |]))
+
 (* Test Suite Organization *)
 
 let creation_edge_cases =
@@ -633,6 +653,8 @@ let type_conversion =
       test_cast_same_dtype_is_the_tensor;
     test "astype float32 to int16" test_astype_float32_to_int16;
     test "astype int64 to float32" test_astype_int64_to_float32;
+    test "bitcast reads bits" test_bitcast_reads_bits;
+    test "bitcast refuses" test_bitcast_refuses;
   ]
 
 let suite =

@@ -92,6 +92,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_xor _ -> None
       | E_or _ -> None
       | E_and _ -> None
+      | E_bitcast _ -> None
       | E_idiv _ -> None
       | E_argmax _ -> None
       | E_argmin _ -> None

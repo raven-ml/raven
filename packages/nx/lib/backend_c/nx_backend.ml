@@ -275,6 +275,18 @@ let cast ~dtype x =
   caml_cast out x;
   out
 
+(* Equal widths keep every element at its offset: the view is kept, over the
+   same memory read at the new kind. *)
+let bitcast ~dtype x =
+  {
+    buffer = Nx_buffer.reinterpret dtype x.buffer;
+    shape = x.shape;
+    strides = x.strides;
+    offset = x.offset;
+    dtype;
+    context = x.context;
+  }
+
 (* fold family (nx_c_fold.c): [reduce] preserves the input dtype and drops the
    reduced axes — keepdims is a frontend concern (it reinserts the size-1 axes),
    so the interface's [reduce] never carries it. argreduce writes int32; scan

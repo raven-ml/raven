@@ -1239,6 +1239,32 @@ val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
 
     See also {!contiguous}, {!copy}. *)
 
+val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
+(** [bitcast dtype t] reads the bits of each element of [t] as an element of
+    [dtype], without conversion: [t]'s shape, each element keeping its place. It
+    reinterprets, where {!cast} converts values. The bits are read in the
+    machine's byte order, NaN payloads and subnormals included, and the result
+    may share [t]'s storage.
+
+    Raises [Invalid_argument] if the two dtypes differ in width, or if either is
+    [bool], whose only bytes are 0 and 1, or [int4] or [uint4], whose elements
+    are packed in pairs. A compiled function (under [Rune.jit]) refuses a
+    bitcast to or from [float8_e4m3] or [float8_e5m2]: the compiler emulates
+    those formats through a wider float, which would change subnormal and
+    infinite bits.
+
+    Reading a float's bits as an integer of its width gives a key that sorts as
+    the float does once negative keys have their other bits flipped:
+
+    {@ocaml[
+      # let bits = create float32 [| 3 |] [| -1.5; 0.; 2. |] |> bitcast int32 in
+        let flipped = bitwise_xor bits (scalar int32 Int32.max_int) in
+        to_array (where (less_s bits 0l) flipped bits)
+      - : int32 array = [|-1069547521l; 0l; 1073741824l|]
+    ]}
+
+    See also {!cast}. *)
+
 val contiguous : ('a, 'b) t -> ('a, 'b) t
 (** [contiguous t] is [t] if it is already C-contiguous, or a fresh contiguous
     copy otherwise.

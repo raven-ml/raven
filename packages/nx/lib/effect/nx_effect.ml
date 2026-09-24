@@ -481,6 +481,11 @@ type _ Effect.t +=
       target_dtype : ('c, 'd) Dtype.t;
     }
       -> ('c, 'd) t Effect.t
+  | E_bitcast : {
+      t_in : ('a, 'b) t;
+      target_dtype : ('c, 'd) Dtype.t;
+    }
+      -> ('c, 'd) t Effect.t
   | E_contiguous : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_copy : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_threefry : {
@@ -1042,6 +1047,15 @@ let cast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) : (c, d) t =
     match t_in with
     | Host t -> Host (Nx_backend.cast ~dtype:target_dtype t)
     | _ -> routed1 "cast" t_in (Nx_backend.cast ~dtype:target_dtype))
+
+let bitcast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) :
+    (c, d) t =
+  let target_dtype = dtype in
+  try Effect.perform (E_bitcast { t_in; target_dtype })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Host t -> Host (Nx_backend.bitcast ~dtype:target_dtype t)
+    | _ -> routed1 "bitcast" t_in (Nx_backend.bitcast ~dtype:target_dtype))
 
 (* Indexed access *)
 

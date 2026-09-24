@@ -458,9 +458,9 @@ exception Jit_error of string
     [Nx.Rng.with_key] on a constant key — the draw would be a compile-time
     constant replayed on every call; pass the key as an input instead), or it
     used an operation the compiler does not support (FFT, the SVD and
-    eigensolvers, complex, int4 and uint4 tensors). QR, triangular solves,
-    Cholesky, [solve], and [inv] do compile: they unroll at trace time into the
-    fixed number of steps their shapes imply. *)
+    eigensolvers, complex, int4 and uint4 tensors, a bitcast to or from float8).
+    QR, triangular solves, Cholesky, [solve], and [inv] do compile: they unroll
+    at trace time into the fixed number of steps their shapes imply. *)
 
 val jit :
   ?device:string ->

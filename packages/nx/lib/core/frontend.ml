@@ -327,6 +327,29 @@ module Make (B : Backend_intf.S) = struct
     | None -> B.cast ~dtype:dt x
 
   let astype dt x = cast dt x
+
+  let bitcast (type a b c d) (dt : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
+    let src = dtype x in
+    let refuse reason =
+      err "bitcast" "cannot reinterpret %s as %s, %s" (Dtype.to_string src)
+        (Dtype.to_string dt) reason
+    in
+    let unfit (type e f) (d : (e, f) Dtype.t) =
+      match d with
+      | Dtype.Bool -> Some "bool holds only 0 and 1"
+      | Dtype.Int4 | Dtype.UInt4 -> Some "4-bit elements are packed in pairs"
+      | _ -> None
+    in
+    (match (unfit src, unfit dt) with
+    | Some reason, _ | None, Some reason -> refuse reason
+    | None, None -> ());
+    if Dtype.itemsize src <> Dtype.itemsize dt then
+      refuse
+        (Printf.sprintf "their widths differ (%d and %d bits)"
+           (8 * Dtype.itemsize src)
+           (8 * Dtype.itemsize dt));
+    B.bitcast ~dtype:dt x
+
   let contiguous x = B.contiguous x
   let copy x = B.copy x
 

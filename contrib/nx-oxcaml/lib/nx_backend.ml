@@ -1463,6 +1463,14 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
     | _ -> invalid_arg "contiguous: unsupported dtype");
     out
 
+(* The unboxed arrays hold one element type each, so the bits cross through
+   host storage, where a buffer can be read at another kind. *)
+let bitcast (type a b c d) ~(dtype : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t
+    =
+  let host = to_host (contiguous x) in
+  let out = from_host x.context (Nx_buffer.reinterpret dtype host) in
+  { out with view = View.reshape out.view (shape x.view) }
+
 let copy (type a b) (t : (a, b) t) : (a, b) t =
   let c = contiguous t in
   let shape_arr = shape c.view in

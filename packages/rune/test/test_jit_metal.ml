@@ -654,6 +654,8 @@ let tests =
         test "element-wise chain matches eager" test_elementwise_on_metal;
         test "duplicate scatter updates land in order"
           test_scatter_duplicates_on_metal;
+        test "bitcast reads on the GPU the bits eager reads"
+          (check_bitcast_matches_eager ~device:"METAL");
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "multi-kernel traces replay as device graphs"
           test_graph_batched_replay;

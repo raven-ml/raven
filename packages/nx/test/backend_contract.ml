@@ -1622,6 +1622,116 @@ struct
         ];
     ]
 
+  (* ───── Bitcast ─────
+
+     Every ordered pair of dtypes of one width, through bit patterns that a
+     value conversion would not keep: both zeros, infinities, quiet and
+     signalling NaN with payloads, subnormals. Each width's unsigned integer
+     carries the patterns in and reads them back out. *)
+
+  let bitcast_round_trips (type a b) classify path (carrier : (a, b) Dtype.t)
+      (bits : a array) (members : Dtype.packed list) =
+    let source = F.create ctx carrier [| Array.length bits |] bits in
+    List.concat_map
+      (fun (Dtype.Pack first) ->
+        List.map
+          (fun (Dtype.Pack second) ->
+            let name =
+              Printf.sprintf "%s->%s" (Dtype.to_string first)
+                (Dtype.to_string second)
+            in
+            case classify path name (fun () ->
+                let back =
+                  B.bitcast ~dtype:carrier
+                    (B.bitcast ~dtype:second (B.bitcast ~dtype:first source))
+                in
+                let got = F.to_array back in
+                Array.iteri
+                  (fun i b ->
+                    if got.(i) <> b then
+                      failf "%s: pattern %d does not come back" name i)
+                  bits))
+          members)
+      members
+
+  let bitcast_tests classify path =
+    let st = Random.State.make [| 17 |] in
+    let bits32 =
+      Array.append
+        [|
+          0l;
+          0x80000000l;
+          0x7F800000l;
+          0xFF800000l;
+          0x7FC00000l;
+          0x7F800001l;
+          0xFFC00123l;
+          0x00000001l;
+          0x807FFFFFl;
+          0x7F7FFFFFl;
+          0xFFFFFFFFl;
+        |]
+        (Array.init 1000 (fun _ -> Random.State.bits32 st))
+    in
+    let bits64 =
+      Array.append
+        [|
+          0L;
+          Int64.min_int;
+          0x7FF0000000000000L;
+          0xFFF0000000000000L;
+          0x7FF8000000000000L;
+          0x7FF0000000000001L;
+          0xFFF8000000000123L;
+          1L;
+          0x800FFFFFFFFFFFFFL;
+          -1L;
+        |]
+        (Array.init 1000 (fun _ -> Random.State.bits64 st))
+    in
+    let known =
+      [
+        case classify path "float32 bit patterns" (fun () ->
+            let t =
+              F.create ctx F.float32 [| 4 |] [| -0.; 1.; Float.infinity; -2. |]
+            in
+            equal ~msg:"bits" (array int32)
+              [| 0x80000000l; 0x3F800000l; 0x7F800000l; 0xC0000000l |]
+              (F.to_array (B.bitcast ~dtype:F.int32 t)));
+        case classify path "a subnormal and a NaN read as float64" (fun () ->
+            let t =
+              F.create ctx F.int64 [| 2 |] [| 1L; 0x7FF8000000000000L |]
+            in
+            let v = F.to_array (B.bitcast ~dtype:F.float64 t) in
+            equal ~msg:"least subnormal" bool true
+              (v.(0) = 4.9406564584124654e-324);
+            equal ~msg:"NaN" bool true (Float.is_nan v.(1)));
+        case classify path "a transposed view" (fun () ->
+            let t = F.create ctx F.uint32 [| 2; 3 |] (Array.sub bits32 0 6) in
+            let seen = B.bitcast ~dtype:F.float32 (B.permute t [| 1; 0 |]) in
+            equal ~msg:"elements keep their places" (array int32)
+              (permute_arr [| 2; 3 |] [| 1; 0 |] (Array.sub bits32 0 6))
+              (F.to_array (B.bitcast ~dtype:F.uint32 seen)));
+      ]
+    in
+    [
+      group "bitcast"
+        (known
+        @ bitcast_round_trips classify path F.uint8 (Array.init 256 Fun.id)
+            [
+              Dtype.Pack F.int8;
+              Pack F.uint8;
+              Pack F.float8_e4m3;
+              Pack F.float8_e5m2;
+            ]
+        @ bitcast_round_trips classify path F.uint16 (Array.init 65536 Fun.id)
+            [ Pack F.int16; Pack F.uint16; Pack F.float16; Pack F.bfloat16 ]
+        @ bitcast_round_trips classify path F.uint32 bits32
+            [ Pack F.int32; Pack F.uint32; Pack F.float32 ]
+        @ bitcast_round_trips classify path F.uint64 bits64
+            [ Pack F.int64; Pack F.uint64; Pack F.float64; Pack F.complex64 ]);
+    ]
+
   (* ───── Threefry ─────
 
      Independent OCaml port of threefry2x32-20 (Int32 arithmetic wraps mod 2^32,
@@ -3386,6 +3496,7 @@ struct
           ];
           movement_tests classify "movement";
           cast_tests classify "cast";
+          bitcast_tests classify "bitcast";
           threefry_tests classify "threefry";
           unfold_tests classify "window";
           matmul_tests classify "matmul";
