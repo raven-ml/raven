@@ -234,9 +234,14 @@ type (_, _) op =
               transpose : bool } -> (float, 'b) op
   | Dequant : (float, 'b) Nx.dtype -> (float, 'b) op
 type _ Effect.t += E_quant : { w : t; op : ('a, 'b) op } -> ('a, 'b) Nx.t Effect.t
+val perform : t -> ('a, 'b) op -> ('a, 'b) Nx.t
 ```
 
-Only the reverse rule sets `transpose`: `apply` leaves it false.
+`perform w op` performs the effect and, where no handler takes it, runs `op`
+eagerly; `apply` and `dequant` are `perform`. It checks an `Apply`'s shapes
+before performing, so no handler sees shapes that disagree. Only the reverse
+rule sets `transpose`: `apply` leaves it false, and the rule reaches the
+transposed product, and its eager loop, through `perform`.
 `nx_effect.ml` and `backend_intf.ml` do not change, and no engine implements
 anything.
 
@@ -256,10 +261,10 @@ the time of that upload. The decode uses byte arithmetic until its last step
 and a 256-entry table for power-of-two scales, since nx's `exp2` is not exact
 at integer arguments.
 
-**A handler without a rule of its own** (debug) calls `apply` or `dequant`
-again from its clause rather than performing the effect, as debug does every
-operation. An enclosing handler then sees one effect, and an unhandled one
-runs the chunk loop.
+**A handler without a rule of its own** (debug) re-performs the operation with
+`Nx_quant.Effect.perform` from its clause, as debug does every operation. An
+enclosing handler then sees one effect, and an unhandled one runs the chunk
+loop.
 
 ### Lowering under `Rune.jit`
 
@@ -297,9 +302,12 @@ every device not yet measured have `ρ = 0`.
    tile per work group. The padding is then at most about the routes' own
    rows, and the arithmetic scales with the `k` experts a token selects,
    whatever `e` is. If the grouped prefill has stopped (§Target), a call that
-   would take this branch takes the example's Dense form instead: every
-   route's row multiplied by every expert, the selection following the
-   product.
+   would take this branch takes the dense form instead: every row of `x`
+   multiplied by every expert of its lane, each position keeping its own
+   expert's product. Per product that is `e` times the routes' arithmetic
+   where `x` is per route, as gpt-oss's `down` is, and `e / k` times where it
+   is per token, as `gate_up` is: for gpt-oss twice the arithmetic of the
+   example's Dense form, which ran each expert's whole block on every token.
 
 No form multiplies a row by an expert that did not select it, outside the
 grouped prefill's stop outcome (§Target).
@@ -410,8 +418,10 @@ kernel run per lane. Any other layout takes decode-then-matmul, and
   without the kernel, so it is grouped where the forward is and otherwise
   decode-then-matmul. The tape holds `w` and `ids`, and nothing decoded.
 - **reverse and forward** raise when a part of `w` is tracked or has a
-  tangent, for `apply` and `dequant` alike. Integer parts passed inside
-  differentiated parameters are carried like any integer leaf.
+  tangent, for `apply` and `dequant` alike. Under `grad`, integer parts passed
+  inside differentiated parameters are carried like any integer leaf; `jvp`
+  takes a tangent for every leaf it is given, so under `jvp` the weight must
+  be captured.
 - **forward, vmap:** the forward rule is `apply ~ids w ẋ`. vmap puts a lane
   axis at the front of `x`, of every part and of `ids`, inserting a unit axis
   where one is unbatched, so the lane is a leading `b` axis: each lane of a
@@ -441,7 +451,11 @@ kernel run per lane. Any other layout takes decode-then-matmul, and
 - **Subnormals.** Metal flushes subnormal float32: scale byte 0 decodes to
   zero there, and a byte-1 group loses its ±0.5 codes. gpt-oss-20b's scale
   bytes span 115 to 136 (all 597,196,800 measured), and DeepSeek's quantiser
-  never writes byte 0.
+  never writes byte 0. Per term such a device loses a byte-0 group's value,
+  at most `3 · 2^−126 · |x|` since the flushed scale zeroes values up to
+  `6 · 2^−127`, a product below `2^−126` and a running sum below `2^−126`,
+  hence Law 2's `k · 2^−126 · (3 · max |x| + 2)`. A subnormal `x` on such a
+  device is outside Law 2.
 - **Activation quantisation** is not part of the product. DeepSeek rounds
   activations to e4m3 per 128 values before each product, a relative error of
   about 2.7% RMS, sixteen times bfloat16's, and V4 was trained that way. raven
@@ -489,10 +503,10 @@ form at its measurement point, and otherwise the rule excludes it: at one row,
 the compiled product is today's form, the selected experts' rows decoded at
 bfloat16 into a buffer that dies with the product and then multiplied; without
 the row tile, `M` is 1; without grouped decode, `τ` is infinite; without
-grouped prefill, a prompt keeps today's Dense form; and without the block
-kernel, the blocks multiply the gathered matrices with tolk's matmul, empty
-blocks included, and RFC 0005 states that expert-parallel prefill divides
-reads only. The surface of `Nx_quant` is the same in every outcome.
+grouped prefill, a prompt takes the per-product dense form of rule 3; and
+without the block kernel, the blocks multiply the gathered matrices with tolk's
+matmul, empty blocks included, and RFC 0005 states that expert-parallel prefill
+divides reads only. The surface of `Nx_quant` is the same in every outcome.
 
 If Stage 0 measures `F_1` at 45 ms or more, this RFC states no step figure
 and keeps `E_1` alone.
@@ -557,15 +571,15 @@ only a range of constant size (`uop/symbolic.py:250`).
    defines it, or `w` itself without `ids`, and a position that selects no
    expert is exactly zero, within the error of a float32 sum of `k` terms in
    unspecified order whose decoded weights and products may each be rounded
-   to `x`'s dtype, plus `k · 2^−126 · max |x|` on a device that flushes
-   subnormals, and is NaN exactly where that reference is, barring a decoded
-   value that overflows**, in each device's default math mode. Held by a
-   property test per format, form, device and `x` dtype over random codes and
-   scale bytes whose decoded values are finite (at most 252 for MXFP4 and 246
-   for e8m0-scaled FP8), byte 255 included, and over ids with duplicates and
-   ids outside `[0, e)`; on a device CI lacks, it runs locally before landing.
-   Prevents a fast path computing another function, or substituting a value
-   for a NaN group.
+   to `x`'s dtype, plus `k · 2^−126 · (3 · max |x| + 2)` on a device that
+   flushes subnormals, for an `x` with no subnormal values, and is NaN exactly
+   where that reference is, barring a decoded value that overflows**, in each
+   device's default math mode. Held by a property test per format, form, device
+   and `x` dtype over random codes and scale bytes whose decoded values are
+   finite (at most 252 for MXFP4 and 246 for e8m0-scaled FP8), byte 255
+   included, and over ids with duplicates and ids outside `[0, e)`; on a device
+   CI lacks, it runs locally before landing. Prevents a fast path computing
+   another function, or substituting a value for a NaN group.
 3. **`apply` and `dequant` never differentiate a quantised weight: a tracked
    part, or a part with a tangent, raises.** Prevents FP8 weights trained
    without their scales.
@@ -676,9 +690,12 @@ loop the tensor-core option splits, which is how the block kernel is written.
 
 **Every route multiplied by every expert** (the example's Dense form). It
 needs no ranking of routes, and while a step is bound by its reads it costs
-little more than decoding every expert. Its arithmetic is `e / k` times the
-routes', 8 for gpt-oss and 43 for DeepSeek, which a prefill pays in full; it
-stays only as the grouped prefill's stop outcome.
+little more than decoding every expert. Run on a whole expert block, as the
+example did, its arithmetic is `e / k` times the routes', 8 for gpt-oss and 43
+for DeepSeek. Run per product, as a lowering must, it is `e` times the routes'
+where `x` is per route: 16 times over gpt-oss's two projections, twice the
+example's form. A prefill pays it in full; it stays only as the grouped
+prefill's stop outcome.
 
 **Grouping in user code**, sorting tokens into `[experts; capacity; k]` for a
 product without `ids`. A fixed capacity drops the routes past it, which
