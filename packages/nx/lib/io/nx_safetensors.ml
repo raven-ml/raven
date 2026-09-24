@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Error
-open Packed_nx
 
 let strf = Printf.sprintf
 
@@ -77,7 +76,7 @@ let tensor (type a b) mapping (kind : (a, b) Nx_buffer.kind) shape ~off ~len =
       buffer
     end
   in
-  P (Nx.of_buffer buffer ~shape)
+  Nx.P (Nx.of_buffer buffer ~shape)
 
 let read_exactly fd n =
   let buf = Bytes.create n in
@@ -262,7 +261,7 @@ let save_safetensors ?(overwrite = true) path items =
   check_overwrite overwrite path;
   let tensor_views =
     List.map
-      (fun (name, P arr) ->
+      (fun (name, Nx.P arr) ->
         let shape = Array.to_list (Nx.shape arr) in
         let dtype, data = tensor_to_bytes arr in
         match Safetensors.tensor_view_new ~dtype ~shape ~data with

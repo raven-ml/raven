@@ -310,6 +310,8 @@ let traced (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
 type ('a, 'b) host_buffer =
   | Host_buffer : ('a, 'b) Nx_buffer.t -> ('a, 'b) host_buffer
 
+type packed = P : ('a, 'b) t -> packed
+
 (* Effects *)
 
 type _ Effect.t +=

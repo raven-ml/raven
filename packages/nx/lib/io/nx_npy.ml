@@ -4,10 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 open Error
-open Packed_nx
 
 let strf = Printf.sprintf
-let npy_to_nx (Npy.P (buffer, shape)) = P (Nx.of_buffer buffer ~shape)
+let npy_to_nx (Npy.P (buffer, shape)) = Nx.P (Nx.of_buffer buffer ~shape)
 
 (* Uniform exception-to-result conversion *)
 let wrap_exn f =
@@ -67,7 +66,7 @@ let save_npz ?(overwrite = true) path items =
     let zo = Zip_archive.open_out ~exclusive output in
     try
       List.iter
-        (fun (name, P nx) ->
+        (fun (name, Nx.P nx) ->
           Zip_archive.add_npy zo name (Npy.P (Nx.to_buffer nx, Nx.shape nx)))
         items;
       Zip_archive.close_out zo

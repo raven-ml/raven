@@ -140,7 +140,7 @@ let test_npy_save_load_float32 () =
 
   (* Load it back *)
   let loaded = Nx_io.load_npy path in
-  let loaded_f32 = Nx_io.to_typed Nx.float32 loaded in
+  let loaded_f32 = Nx.unpack Nx.float32 loaded in
 
   (* Check shape and values *)
   equal ~msg:"loaded shape" (array int) [| 3; 4 |] (Nx.shape loaded_f32);
@@ -158,7 +158,7 @@ let test_npy_save_load_int64 () =
 
   (* Load it back *)
   let loaded = Nx_io.load_npy path in
-  let loaded_i64 = Nx_io.to_typed Nx.int64 loaded in
+  let loaded_i64 = Nx.unpack Nx.int64 loaded in
 
   (* Check shape *)
   equal ~msg:"loaded shape" (array int) [| 2; 5 |] (Nx.shape loaded_i64);
@@ -231,21 +231,21 @@ let test_npy_external_variants () =
   equal ~msg:"v3 fixture length" int 131
     (String.length (string_of_hex npy_v3_fixture));
   with_hex_file ".npy" npy_fortran_fixture (fun path ->
-      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.float32 in
+      let actual = Nx_io.load_npy path |> Nx.unpack Nx.float32 in
       equal ~msg:"Fortran shape" (array int) [| 2; 3 |] (Nx.shape actual);
       equal ~msg:"Fortran values" (array float_exact)
         [| 1.; 2.; 3.; 4.; 5.; 6. |]
         (Nx.to_array actual));
   with_hex_file ".npy" npy_big_endian_fixture (fun path ->
-      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.int16 in
+      let actual = Nx_io.load_npy path |> Nx.unpack Nx.int16 in
       equal ~msg:"big-endian values" (array int) [| 1; 256; -2 |]
         (Nx.to_array actual));
   with_hex_file ".npy" npy_v2_fixture (fun path ->
-      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.int32 in
+      let actual = Nx_io.load_npy path |> Nx.unpack Nx.int32 in
       equal ~msg:"NPY v2 values" (array int32) [| 7l; 8l; 9l |]
         (Nx.to_array actual));
   with_hex_file ".npy" npy_v3_fixture (fun path ->
-      let actual = Nx_io.load_npy path |> Nx_io.to_typed Nx.bool in
+      let actual = Nx_io.load_npy path |> Nx.unpack Nx.bool in
       equal ~msg:"NPY v3 values" (array bool) [| true; false; true |]
         (Nx.to_array actual))
 
@@ -270,11 +270,7 @@ let test_npz_save_load_multiple () =
 
   (* Save multiple arrays *)
   Nx_io.save_npz path
-    [
-      ("weights", Nx_io.P weights);
-      ("bias", Nx_io.P bias);
-      ("scale", Nx_io.P scale);
-    ];
+    [ ("weights", Nx.P weights); ("bias", Nx.P bias); ("scale", Nx.P scale) ];
 
   (* Load all back *)
   let archive = Nx_io.load_npz path in
@@ -286,13 +282,9 @@ let test_npz_save_load_multiple () =
   equal ~msg:"has scale" bool true (Hashtbl.mem archive "scale");
 
   (* Check shapes *)
-  let loaded_weights =
-    Hashtbl.find archive "weights" |> Nx_io.to_typed Nx.float32
-  in
-  let loaded_bias = Hashtbl.find archive "bias" |> Nx_io.to_typed Nx.float32 in
-  let loaded_scale =
-    Hashtbl.find archive "scale" |> Nx_io.to_typed Nx.float64
-  in
+  let loaded_weights = Hashtbl.find archive "weights" |> Nx.unpack Nx.float32 in
+  let loaded_bias = Hashtbl.find archive "bias" |> Nx.unpack Nx.float32 in
+  let loaded_scale = Hashtbl.find archive "scale" |> Nx.unpack Nx.float64 in
 
   equal ~msg:"weights shape" (array int) [| 5; 3 |] (Nx.shape loaded_weights);
   equal ~msg:"bias shape" (array int) [| 3 |] (Nx.shape loaded_bias);
@@ -310,20 +302,18 @@ let test_npz_load_entry () =
   (* Save arrays *)
   Nx_io.save_npz path
     [
-      ("array1", Nx_io.P array1);
-      ("array2", Nx_io.P array2);
-      ("array3", Nx_io.P array3);
+      ("array1", Nx.P array1); ("array2", Nx.P array2); ("array3", Nx.P array3);
     ];
 
   (* Load specific entries *)
   let loaded1 =
-    Nx_io.load_npz_entry ~name:"array1" path |> Nx_io.to_typed Nx.float32
+    Nx_io.load_npz_entry ~name:"array1" path |> Nx.unpack Nx.float32
   in
   let loaded2 =
-    Nx_io.load_npz_entry ~name:"array2" path |> Nx_io.to_typed Nx.int32
+    Nx_io.load_npz_entry ~name:"array2" path |> Nx.unpack Nx.int32
   in
   let loaded3 =
-    Nx_io.load_npz_entry ~name:"array3" path |> Nx_io.to_typed Nx.float64
+    Nx_io.load_npz_entry ~name:"array3" path |> Nx.unpack Nx.float64
   in
 
   equal ~msg:"array1 shape" (array int) [| 10 |] (Nx.shape loaded1);
@@ -356,10 +346,10 @@ let test_npz_external_deflate () =
   with_hex_file ".npz" npz_deflate_fixture (fun path ->
       let archive = Nx_io.load_npz path in
       equal ~msg:"external entry count" int 2 (Hashtbl.length archive);
-      let a = Hashtbl.find archive "a" |> Nx_io.to_typed Nx.float32 in
+      let a = Hashtbl.find archive "a" |> Nx.unpack Nx.float32 in
       equal ~msg:"external float values" (array float_exact) [| 1.5; -2. |]
         (Nx.to_array a);
-      let b = Hashtbl.find archive "b" |> Nx_io.to_typed Nx.int64 in
+      let b = Hashtbl.find archive "b" |> Nx.unpack Nx.int64 in
       equal ~msg:"external int values" (array int64) [| 3L; 4L; 5L |]
         (Nx.to_array b))
 
@@ -371,16 +361,16 @@ let test_npz_selects_store_for_incompressible_data () =
   Fun.protect
     ~finally:(fun () -> Sys.remove path)
     (fun () ->
-      Nx_io.save_npz path [ ("random", Nx_io.P tensor) ];
+      Nx_io.save_npz path [ ("random", Nx.P tensor) ];
       let archive_bytes = read_file_bytes path in
       equal ~msg:"local ZIP method" int 0
         (Char.code archive_bytes.[8] lor (Char.code archive_bytes.[9] lsl 8));
       let loaded =
-        Nx_io.load_npz_entry ~name:"random" path |> Nx_io.to_typed Nx.uint8
+        Nx_io.load_npz_entry ~name:"random" path |> Nx.unpack Nx.uint8
       in
       equal ~msg:"stored NPZ values" (array int) values (Nx.to_array loaded);
       let zeros = Nx.zeros Nx.uint8 [| 70_000 |] in
-      Nx_io.save_npz path [ ("zeros", Nx_io.P zeros) ];
+      Nx_io.save_npz path [ ("zeros", Nx.P zeros) ];
       let archive_bytes = read_file_bytes path in
       let u16 offset =
         Char.code archive_bytes.[offset]
@@ -391,7 +381,7 @@ let test_npz_selects_store_for_incompressible_data () =
       equal ~msg:"dynamic DEFLATE block" int 2
         ((Char.code archive_bytes.[payload] lsr 1) land 3);
       let loaded =
-        Nx_io.load_npz_entry ~name:"zeros" path |> Nx_io.to_typed Nx.uint8
+        Nx_io.load_npz_entry ~name:"zeros" path |> Nx.unpack Nx.uint8
       in
       equal ~msg:"deflated NPZ values" (array int) (Nx.to_array zeros)
         (Nx.to_array loaded))
@@ -402,7 +392,7 @@ let test_npz_rejects_bad_crc_and_unsafe_names () =
   Fun.protect
     ~finally:(fun () -> Sys.remove path)
     (fun () ->
-      Nx_io.save_npz path [ ("values", Nx_io.P tensor) ];
+      Nx_io.save_npz path [ ("values", Nx.P tensor) ];
       let contents = read_file_bytes path |> Bytes.of_string in
       let central =
         find_substring (Bytes.unsafe_to_string contents) "PK\x01\x02"
@@ -414,7 +404,7 @@ let test_npz_rejects_bad_crc_and_unsafe_names () =
       expect_failure "NPZ CRC-32 mismatch" (fun () ->
           Nx_io.load_npz_entry ~name:"values" path);
       expect_failure "unsafe NPZ entry name" (fun () ->
-          Nx_io.save_npz path [ ("../values", Nx_io.P tensor) ]))
+          Nx_io.save_npz path [ ("../values", Nx.P tensor) ]))
 
 let gzip_fixture =
   "1f8b08000000000002ffcb48cdc9c9d751c8ab5048afca2c50e40200ca30838010000000"
@@ -1070,7 +1060,7 @@ let test_safetensors_json_escapes () =
       let archive = Nx_io.load_safetensors path in
       let name = "aé🚀\"\\/\b\012\r\n\t" in
       equal (list string) [ name ] (Hashtbl.to_seq_keys archive |> List.of_seq);
-      let tensor = Hashtbl.find archive name |> Nx_io.to_typed Nx.uint8 in
+      let tensor = Hashtbl.find archive name |> Nx.unpack Nx.uint8 in
       equal (array int) [| 42 |] (Nx.to_array tensor))
 
 let test_safetensors_json_encoding () =
@@ -1080,7 +1070,7 @@ let test_safetensors_json_encoding () =
     (fun () ->
       let name = "é🚀\000\001\b\012\r\n\t\"\\" in
       Nx_io.save_safetensors path
-        [ (name, Nx_io.P (Nx.create Nx.uint8 [| 1 |] [| 42 |])) ];
+        [ (name, Nx.P (Nx.create Nx.uint8 [| 1 |] [| 42 |])) ];
       let contents = read_file_bytes path in
       let length = Int64.to_int (String.get_int64_le contents 0) in
       let header = String.sub contents 8 length |> String.trim in
@@ -1115,9 +1105,9 @@ let test_safetensors_save_load () =
   (* Save tensors *)
   Nx_io.save_safetensors path
     [
-      ("model.weights", Nx_io.P weights);
-      ("model.bias", Nx_io.P bias);
-      ("embeddings", Nx_io.P embeddings);
+      ("model.weights", Nx.P weights);
+      ("model.bias", Nx.P bias);
+      ("embeddings", Nx.P embeddings);
     ];
 
   (* Load back *)
@@ -1131,13 +1121,11 @@ let test_safetensors_save_load () =
 
   (* Check shapes *)
   let loaded_weights =
-    Hashtbl.find archive "model.weights" |> Nx_io.to_typed Nx.float32
+    Hashtbl.find archive "model.weights" |> Nx.unpack Nx.float32
   in
-  let loaded_bias =
-    Hashtbl.find archive "model.bias" |> Nx_io.to_typed Nx.float32
-  in
+  let loaded_bias = Hashtbl.find archive "model.bias" |> Nx.unpack Nx.float32 in
   let loaded_embeddings =
-    Hashtbl.find archive "embeddings" |> Nx_io.to_typed Nx.float32
+    Hashtbl.find archive "embeddings" |> Nx.unpack Nx.float32
   in
 
   equal ~msg:"weights shape" (array int) [| 10; 5 |] (Nx.shape loaded_weights);
@@ -1164,23 +1152,21 @@ let test_safetensors_different_dtypes () =
   (* Save *)
   Nx_io.save_safetensors path
     [
-      ("float32_array", Nx_io.P f32_data);
-      ("float64_array", Nx_io.P f64_data);
-      ("int32_array", Nx_io.P i32_data);
+      ("float32_array", Nx.P f32_data);
+      ("float64_array", Nx.P f64_data);
+      ("int32_array", Nx.P i32_data);
     ];
 
   (* Load and verify *)
   let archive = Nx_io.load_safetensors path in
 
   let loaded_f32 =
-    Hashtbl.find archive "float32_array" |> Nx_io.to_typed Nx.float32
+    Hashtbl.find archive "float32_array" |> Nx.unpack Nx.float32
   in
   let loaded_f64 =
-    Hashtbl.find archive "float64_array" |> Nx_io.to_typed Nx.float64
+    Hashtbl.find archive "float64_array" |> Nx.unpack Nx.float64
   in
-  let loaded_i32 =
-    Hashtbl.find archive "int32_array" |> Nx_io.to_typed Nx.int32
-  in
+  let loaded_i32 = Hashtbl.find archive "int32_array" |> Nx.unpack Nx.int32 in
 
   check_array_approx "float32 values" f32_data loaded_f32;
   check_array_approx "float64 values" ~eps:1e-10 f64_data loaded_f64;
@@ -1206,14 +1192,12 @@ let test_dtype_conversions () =
   let loaded = Nx_io.load_npy path in
 
   (* Test successful conversion *)
-  let as_f32 = Nx_io.to_typed Nx.float32 loaded in
+  let as_f32 = Nx.unpack Nx.float32 loaded in
   check_array_approx "float32 conversion" original as_f32;
 
   (* Test failing conversion (wrong dtype) *)
-  (try
-     ignore (Nx_io.to_typed Nx.int32 loaded);
-     fail "expected Failure for wrong dtype"
-   with Failure _ -> ());
+  raises (Invalid_argument "unpack: expected dtype int32, got float32")
+    (fun () -> ignore (Nx.unpack Nx.int32 loaded));
 
   (* Clean up *)
   Sys.remove path
@@ -1226,7 +1210,7 @@ let test_empty_arrays () =
 
   Nx_io.save_npy path empty;
   let loaded = Nx_io.load_npy path in
-  let loaded_f32 = Nx_io.to_typed Nx.float32 loaded in
+  let loaded_f32 = Nx.unpack Nx.float32 loaded in
 
   equal ~msg:"empty array shape" (array int) [| 0 |] (Nx.shape loaded_f32);
 
@@ -1240,7 +1224,7 @@ let test_large_arrays () =
 
   Nx_io.save_npy path large;
   let loaded = Nx_io.load_npy path in
-  let loaded_f32 = Nx_io.to_typed Nx.float32 loaded in
+  let loaded_f32 = Nx.unpack Nx.float32 loaded in
 
   equal ~msg:"large array shape" (array int) [| 100; 100 |]
     (Nx.shape loaded_f32);
@@ -1262,7 +1246,7 @@ let test_high_dimensional_arrays () =
 
   Nx_io.save_npy path high_dim;
   let loaded = Nx_io.load_npy path in
-  let loaded_f32 = Nx_io.to_typed Nx.float32 loaded in
+  let loaded_f32 = Nx.unpack Nx.float32 loaded in
 
   equal ~msg:"5D array shape" (array int) [| 2; 3; 4; 5; 1 |]
     (Nx.shape loaded_f32);
@@ -1304,11 +1288,11 @@ let test_safetensors_float16_roundtrip () =
   let path = temp_file "test_safetensors_f16_" ".safetensors" in
 
   (* Save the data *)
-  Nx_io.save_safetensors path [ ("test_f16", Nx_io.P test_data) ];
+  Nx_io.save_safetensors path [ ("test_f16", Nx.P test_data) ];
 
   (* Load it back *)
   let archive = Nx_io.load_safetensors path in
-  let loaded = Hashtbl.find archive "test_f16" |> Nx_io.to_typed Nx.float16 in
+  let loaded = Hashtbl.find archive "test_f16" |> Nx.unpack Nx.float16 in
 
   (* Check shape and values *)
   equal ~msg:"float16 shape" (array int) [| 2; 3 |] (Nx.shape loaded);
@@ -1323,7 +1307,7 @@ let test_safetensors_float16_bit_exact () =
   let fixture = Filename.concat fixture_dir "f16_bit_exact.safetensors" in
   let archive = Nx_io.load_safetensors fixture in
   let packed = Hashtbl.find archive "f16_tensor" in
-  let values = packed |> Nx_io.to_typed Nx.float16 |> Nx.to_array in
+  let values = packed |> Nx.unpack Nx.float16 |> Nx.to_array in
   equal ~msg:"subnormal preserved" bool true (values.(1) <> 0.0);
   equal ~msg:"nan preserved" bool true (Float.is_nan values.(4));
   (* Round-trip: save and check raw payload is identical *)
@@ -1341,11 +1325,11 @@ let test_safetensors_bfloat16_roundtrip () =
   let path = temp_file "test_safetensors_bf16_" ".safetensors" in
 
   (* Save the data *)
-  Nx_io.save_safetensors path [ ("test_bf16", Nx_io.P test_data) ];
+  Nx_io.save_safetensors path [ ("test_bf16", Nx.P test_data) ];
 
   (* Load it back *)
   let archive = Nx_io.load_safetensors path in
-  let loaded = Hashtbl.find archive "test_bf16" |> Nx_io.to_typed Nx.bfloat16 in
+  let loaded = Hashtbl.find archive "test_bf16" |> Nx.unpack Nx.bfloat16 in
 
   (* Check shape and values *)
   equal ~msg:"bfloat16 shape" (array int) [| 2; 3 |] (Nx.shape loaded);
@@ -1360,9 +1344,9 @@ let safetensors_roundtrip (type a b) (dt : (a, b) Nx.dtype) (t : (a, b) Nx.t) =
   Fun.protect
     ~finally:(fun () -> remove_loaded path)
     (fun () ->
-      Nx_io.save_safetensors path [ ("t", Nx_io.P t) ];
+      Nx_io.save_safetensors path [ ("t", Nx.P t) ];
       let archive = Nx_io.load_safetensors path in
-      Nx.copy (Hashtbl.find archive "t" |> Nx_io.to_typed dt))
+      Nx.copy (Hashtbl.find archive "t" |> Nx.unpack dt))
 
 let test_safetensors_half_values_roundtrip () =
   (* Varied magnitudes, all exactly representable at both half dtypes, so the
@@ -1484,12 +1468,12 @@ let test_safetensors_failed_save () =
   with_temp_dir @@ fun dir ->
   let path = Filename.concat dir "weights.safetensors" in
   let kept = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  Nx_io.save_safetensors path [ ("kept", Nx_io.P kept) ];
+  Nx_io.save_safetensors path [ ("kept", Nx.P kept) ];
   let before = read_file path in
   let unwritable = Nx.zeros Nx.complex128 [| 2 |] in
   expect_failure "complex entries have no SafeTensors dtype" (fun () ->
       Nx_io.save_safetensors path
-        [ ("kept", Nx_io.P kept); ("unwritable", Nx_io.P unwritable) ]);
+        [ ("kept", Nx.P kept); ("unwritable", Nx.P unwritable) ]);
   equal ~msg:"destination bytes" string before (read_file path);
   equal ~msg:"no stray sibling" (array string)
     [| "weights.safetensors" |]
@@ -1510,7 +1494,7 @@ let test_safetensors_refused_rename () =
       let message =
         match
           Nx_io.save_safetensors path
-            [ ("w", Nx_io.P (Nx.create Nx.float32 [| 3 |] values)) ]
+            [ ("w", Nx.P (Nx.create Nx.float32 [| 3 |] values)) ]
         with
         | () -> fail "expected the rename over a directory to be refused"
         | exception Failure message -> message
@@ -1528,7 +1512,7 @@ let test_safetensors_refused_rename () =
       ignore (find_substring message temporary);
       let archive = Nx_io.load_safetensors temporary in
       equal ~msg:"kept file holds the tensors" (array float_exact) values
-        (Hashtbl.find archive "w" |> Nx_io.to_typed Nx.float32 |> Nx.to_array))
+        (Hashtbl.find archive "w" |> Nx.unpack Nx.float32 |> Nx.to_array))
 
 (* The test runner captures descriptors 1 and 2 and shows nothing of a test that
    does not fail. *)
@@ -1545,9 +1529,9 @@ let test_safetensors_replace_loaded_file () =
   let first = Array.init n float_of_int in
   let second = Array.init n (fun i -> float_of_int (-i)) in
   Nx_io.save_safetensors path
-    [ ("w", Nx_io.P (Nx.create Nx.float32 [| n |] first)) ];
+    [ ("w", Nx.P (Nx.create Nx.float32 [| n |] first)) ];
   let load () =
-    Hashtbl.find (Nx_io.load_safetensors path) "w" |> Nx_io.to_typed Nx.float32
+    Hashtbl.find (Nx_io.load_safetensors path) "w" |> Nx.unpack Nx.float32
   in
   let loaded = load () in
   let outcome f =
@@ -1558,7 +1542,7 @@ let test_safetensors_replace_loaded_file () =
   let saved =
     outcome (fun () ->
         Nx_io.save_safetensors path
-          [ ("w", Nx_io.P (Nx.create Nx.float32 [| n |] second)) ])
+          [ ("w", Nx.P (Nx.create Nx.float32 [| n |] second)) ])
   in
   let reloaded = if saved = "allowed" then Nx.to_array (load ()) else second in
   let removed = outcome (fun () -> Sys.remove path) in
@@ -1609,14 +1593,15 @@ let with_safetensors contents f =
   write_file_bytes path contents;
   f path
 
-let stored_bytes (Nx_io.P t) =
+let stored_bytes (Nx.P t) =
   let buffer = Nx.to_buffer (Nx.reshape [| Nx.numel t |] (Nx.contiguous t)) in
   let size = Nx_buffer.kind_size_in_bytes (Nx_buffer.kind buffer) in
   let bytes = Bytes.create (Nx_buffer.length buffer * size) in
   Nx_buffer.blit_to_bytes buffer bytes;
   Bytes.to_string bytes
 
-let dtype_name (Nx_io.P t) = Nx_core.Dtype.to_string (Nx.dtype t)
+let dtype_name (Nx.P t) = Nx_core.Dtype.to_string (Nx.dtype t)
+let packed_shape (Nx.P t) = Nx.shape t
 
 let pattern n seed =
   String.init n (fun i -> Char.chr (((i * 37) + seed) land 255))
@@ -1641,7 +1626,7 @@ let check_typed_entries archive =
     (fun (name, _, shape, data) ->
       let packed = Hashtbl.find archive name in
       equal ~msg:(name ^ " shape") (array int) (Array.of_list shape)
-        (Nx_io.packed_shape packed);
+        (packed_shape packed);
       equal ~msg:(name ^ " bytes") string data (stored_bytes packed))
     typed_entries;
   equal ~msg:"entries" int (List.length typed_entries) (Hashtbl.length archive)
@@ -1657,7 +1642,7 @@ let test_safetensors_views_bit_exact () =
   (* Entries of an aligned file are views of one mapping: they lie as far apart
      in memory as in the file. *)
   let address name =
-    let (Nx_io.P t) = Hashtbl.find archive name in
+    let (Nx.P t) = Hashtbl.find archive name in
     Nx_buffer.unsafe_data_ptr (Nx.to_buffer t)
   in
   equal ~msg:"u32 follows u64 in memory" nativeint 16n
@@ -1671,7 +1656,7 @@ let test_safetensors_misaligned_twin () =
    copied does not. *)
 let test_safetensors_file_range () =
   let range archive name =
-    let (Nx_io.P t) = Hashtbl.find archive name in
+    let (Nx.P t) = Hashtbl.find archive name in
     Option.map
       (fun ((file : Nx_buffer.file), offset) -> (file.path, file.size, offset))
       (Nx_buffer.file_range (Nx.to_buffer t))
@@ -1712,7 +1697,7 @@ let test_safetensors_foreign_dtypes () =
     (fun (name, shape) ->
       let packed = Hashtbl.find archive name in
       equal ~msg:(name ^ " dtype") string "uint8" (dtype_name packed);
-      equal ~msg:(name ^ " shape") (array int) shape (Nx_io.packed_shape packed))
+      equal ~msg:(name ^ " shape") (array int) shape (packed_shape packed))
     [ ("scales", [| 2; 3 |]); ("nibbles", [| 4 |]); ("sixes", [| 3 |]) ];
   List.iter
     (fun (name, _, _, data) ->
@@ -1778,7 +1763,7 @@ let test_safetensors_bfloat16_bit_exact () =
   let fixture = Filename.concat fixture_dir "bf16_bit_exact.safetensors" in
   let archive = Nx_io.load_safetensors fixture in
   let packed = Hashtbl.find archive "bf16_tensor" in
-  let values = packed |> Nx_io.to_typed Nx.bfloat16 |> Nx.to_array in
+  let values = packed |> Nx.unpack Nx.bfloat16 |> Nx.to_array in
   equal ~msg:"bf16 subnormal preserved" bool true (values.(1) <> 0.0);
   equal ~msg:"bf16 nan preserved" bool true (Float.is_nan values.(4));
   (* Round-trip: save and check raw payload is identical *)
