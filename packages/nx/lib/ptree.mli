@@ -87,7 +87,7 @@ end
 
     {!module-type:Uniform} extends {!module-type:Traverse} with path-threading
     reductions; it is the contract checkpointing consumes and the one
-    [\[@@deriving ptree\]] derives for payload-generic types. Additional laws:
+    [[@@deriving ptree]] derives for payload-generic types. Additional laws:
     - [fold f acc t] visits every payload in the traversal order; the [string]
       argument is the path to the current position.
     - [fold2] is like [fold] but across two structurally equal trees.
@@ -135,9 +135,8 @@ val instantiate :
     ]}
 
     Transformations only walk tensor leaves, so they take this instantiated
-    walker. Checkpointing also names leaves, and names come from the
-    structure's shape, so it takes the structure's module itself (see
-    [Kaun.Checkpoint]). *)
+    walker. Checkpointing also names leaves, and names come from the structure's
+    shape, so it takes the structure's module itself (see [Kaun.Checkpoint]). *)
 
 val unpack :
   ?at:string -> ('a, 'b) Nx_core.Dtype.t -> tensor -> ('a, 'b) Nx_effect.t
@@ -146,9 +145,9 @@ val unpack :
     optional [~at] string, if non-empty, is included in the error message as the
     location of the mismatch. *)
 
-(** The stock dynamic tree: ordered lists and string-keyed dicts, generic in
-    the payload. It satisfies {!module-type:Uniform}, with zero-based list
-    positions and dict keys as path segments. *)
+(** The stock dynamic tree: ordered lists and string-keyed dicts, generic in the
+    payload. It satisfies {!module-type:Uniform}, with zero-based list positions
+    and dict keys as path segments. *)
 module Tree : sig
   type 'a t =
     | Leaf of 'a  (** A payload leaf. *)
@@ -159,8 +158,8 @@ module Tree : sig
 end
 
 type t = tensor Tree.t
-(** The stock dynamic parameter tree — {!Tree} with packed tensor leaves;
-    itself satisfies {!S}. *)
+(** The stock dynamic parameter tree — {!Tree} with packed tensor leaves; itself
+    satisfies {!S}. *)
 
 val tensor : ('a, 'b) Nx_effect.t -> t
 (** [tensor x] is [Tree.Leaf (P x)]. *)
