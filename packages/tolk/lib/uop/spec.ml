@@ -396,6 +396,14 @@ let tensor_spec : t =
     ops ~src:[ any ] [ Ops.Sin; Ops.Log2; Ops.Exp2; Ops.Sqrt; Ops.Reciprocal ]
     =?> (fun u _ -> Dtype.is_float (Uop.dtype u));
 
+    op Ops.Alloc =?> (fun u _ ->
+      match Uop.Arg.as_param_arg (Uop.arg u) with
+      | Some { addrspace = Dtype.Global; buffer = None; size; device; _ } ->
+          Array.length (Uop.src u) = 0 && not (is_weak u)
+          && option_for_all (fun n -> n >= 0) size
+          && option_for_all valid_device_payload device
+      | _ -> false);
+
     op Ops.Buffer =??> (fun u _ ->
       if valid_global_buffer u || Uop.is_variable u then Some true else None);
 

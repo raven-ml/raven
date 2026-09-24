@@ -18,7 +18,8 @@ type t =
   (** {2 Defines and special indices} *)
 
   | Special  (** Hardware index, such as group, local, or global ids. *)
-  | Buffer  (** Buffer allocation or buffer identity. *)
+  | Buffer  (** Bound storage, scalar variable, or kernel-local buffer. *)
+  | Alloc  (** Unbound global storage owned by a call invocation. *)
 
   (** {2 Non-op uops} *)
 

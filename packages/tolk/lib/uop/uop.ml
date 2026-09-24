@@ -333,7 +333,7 @@ let derived_dtype (node : node) =
       (match node.arg with
        | Arg.Dtype dtype -> dtype
        | _ -> invalid_arg "Uop: casts require a dtype payload")
-  | Ops.Buffer | Ops.Param ->
+  | Ops.Buffer | Ops.Alloc | Ops.Param ->
       (match node.arg with
        | Arg.Param_arg p -> p.dtype
        | _ -> invalid_arg "Uop: storage requires ParamArg")
@@ -669,7 +669,7 @@ and compute_device u =
             per
         in
         Some (Multi (Array.to_list names))
-  | Ops.Param | Ops.Buffer ->
+  | Ops.Param | Ops.Buffer | Ops.Alloc ->
       (match Arg.as_param_arg (arg u) with
        | Some param -> param.device
        | None -> None)
@@ -1100,7 +1100,7 @@ let rec addrspace u =
 and compute_addrspace u =
   let srcs = src u in
   match op u with
-  | Ops.Param | Ops.Buffer ->
+  | Ops.Param | Ops.Buffer | Ops.Alloc ->
       (match Arg.as_param_arg (arg u) with
        | Some param -> Some param.addrspace
        | None -> None)
@@ -1138,7 +1138,7 @@ and compute_addrspace u =
 let rec buf_uop u =
   let srcs = src u in
   match op u with
-  | Ops.Buffer | Ops.Param -> u
+  | Ops.Buffer | Ops.Alloc | Ops.Param -> u
   | Ops.Mselect -> (
       match Array.to_list srcs, Arg.as_int (arg u) with
       | [ src ], Some index -> mselect ~src:(buf_uop src) ~index
@@ -1152,7 +1152,7 @@ let rec buf_uop u =
         let rec walk s =
           let srcs = src s in
           match op s with
-          | Ops.Buffer | Ops.Param | Ops.Stage | Ops.Mstack -> s
+          | Ops.Buffer | Ops.Alloc | Ops.Param | Ops.Stage | Ops.Mstack -> s
           | _ -> if Array.length srcs = 0 then s else walk srcs.(0)
         in
         walk u
@@ -1172,7 +1172,7 @@ let rec has_buffer_identity ?(after_ok = false) u =
           && i < Array.length tuple_srcs
           && has_buffer_identity ~after_ok tuple_srcs.(i)
       | _ -> false)
-  | Ops.Buffer | Ops.Slice | Ops.Param -> true
+  | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Param -> true
   | _ -> false
 
 let expand ~src ~dims =
@@ -1293,7 +1293,7 @@ let replace u ?op:op_opt ?src:src_opt ?arg:arg_opt ?dtype:dtype_opt
   let arg = match dtype_opt, op, arg with
     | Some dtype, (Ops.Cast | Ops.Bitcast), _ -> Arg.Dtype dtype
     | Some dtype, (Ops.Custom | Ops.Customi | Ops.Ins), Arg.Typed (text, _) -> Arg.Typed (text, dtype)
-    | Some dtype, (Ops.Param | Ops.Buffer), Arg.Param_arg p -> Arg.Param_arg { p with dtype }
+    | Some dtype, (Ops.Param | Ops.Buffer | Ops.Alloc), Arg.Param_arg p -> Arg.Param_arg { p with dtype }
     | _ -> arg
   in
   let node_tag = Option.value node_tag_opt ~default:n.node_tag in
@@ -1904,7 +1904,7 @@ and compute_min_max u =
                 | Const.Float f when not (Float.is_nan f) -> `Float f, `Float f
                 | Const.Float _ | Const.Invalid -> dtype_bounds ())
            | _ -> dtype_bounds ())
-      | (Ops.Param | Ops.Buffer), _ ->
+      | (Ops.Param | Ops.Buffer | Ops.Alloc), _ ->
           (match arg u with
            | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ } -> lo, hi
            | _ -> dtype_bounds ())
@@ -2199,7 +2199,7 @@ and compute_shape_opt u =
       (match arg u with
        | Arg.String s -> Some [ const_int (String.length s) ]
        | _ -> Some [])
-  | Ops.Buffer | Ops.Param ->
+  | Ops.Buffer | Ops.Alloc | Ops.Param ->
       (match Arg.as_param_arg (arg u) with
        | Some p -> Some (storage_shape p)
        | None -> None)
@@ -2393,6 +2393,13 @@ let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatil
       List.map (fun device -> Storage.on_device ~device ~size:(Option.value size ~default:1) ~dtype ()) devices)
       devices in
   view_as (mk ~op:Ops.Buffer ~dtype ~src:[||] ~arg:(Arg.Param_arg { p with buffer })) dims
+
+let alloc ~slot ~dtype ?shape:shape_arg ?device () =
+  if Dtype.is_weak dtype then invalid_arg "Uop.alloc: dtype must be concrete";
+  let dims = match shape_arg with None -> [] | Some s -> as_shape s in
+  let p = default_param_arg ~dtype ?size:(storage_size dims) ?device slot in
+  view_as (mk ~op:Ops.Alloc ~dtype ~src:[||]
+    ~arg:(Arg.Param_arg p)) dims
 
 let from_buffer buf =
   let dtype = Storage.dtype buf in
@@ -2675,7 +2682,7 @@ let contiguous_view_offset u =
   in
   let rec walk node =
     match op node with
-    | Ops.Buffer | Ops.Param -> Some (0, shape node)
+    | Ops.Buffer | Ops.Alloc | Ops.Param -> Some (0, shape node)
     | Ops.Slice ->
         (match as_slice node with
          | Some { src; offset; _ } ->
@@ -2871,7 +2878,7 @@ let rec const_factor u =
       (match const_int_value a, const_int_value b with
        | Option.Some n, _ | _, Option.Some n -> n
        | _ -> 1)
-  | Ops.Param | Ops.Buffer ->
+  | Ops.Param | Ops.Buffer | Ops.Alloc ->
       (match Arg.as_param_arg (arg u) with
        | Option.Some { multiple_of = Option.Some m; _ } -> m
        | _ -> 1)
@@ -2906,7 +2913,7 @@ let rec divides u n =
            (match divides b n with
             | Option.Some qb -> Option.Some (alu_binary ~op:Ops.Mul ~lhs:a ~rhs:qb)
             | Option.None -> Option.None))
-  | Ops.Param | Ops.Buffer ->
+  | Ops.Param | Ops.Buffer | Ops.Alloc ->
       (match Arg.as_param_arg (arg u) with
        | Option.Some { multiple_of = Option.Some m; _ } when m mod n = 0 ->
            Option.Some (alu_binary ~op:Ops.Floordiv ~lhs:u ~rhs:(const_like u n))
@@ -3621,7 +3628,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 20
+let export_version = 21
 
 type serialized_node = {
   serialized_op : Ops.t;

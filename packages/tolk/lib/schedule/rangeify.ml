@@ -57,91 +57,10 @@ let shape_of n =
   in
   Option.bind (U.shape_opt n) concrete
 
-let argsort order =
-  List.map snd (List.sort compare (List.mapi (fun i o -> (o, i)) order))
-
 let device_max_bufs =
   function "METAL" -> 31 | "WEBGPU" -> 8 | "CPU" -> 31 | _ -> 0
 
 let base n = U.base n
-
-(* Movement-op rewrites *)
-
-let pm_mop_through_index n =
-  match U.as_index n with
-  | Some { ptr; _ } when is_movement ptr ->
-      let src = Option.get (movement_src ptr) in
-      let idxs = src_tail n in
-      let mop_shape u =
-        match shape_of u with
-        | Some _ as shape -> shape
-        | None -> (
-            try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape u))
-            with Invalid_argument _ -> None)
-      in
-      (match mop_shape src, mop_shape ptr with
-       | Some _, Some ps when List.length idxs = List.length ps ->
-           let new_idxs =
-             Indexing.apply_movement_op ~shapes:shape_of ptr idxs
-           in
-           Some (U.replace n ~src:(Array.of_list (src :: new_idxs)) ())
-       | Some src_shape, Some ptr_shape when U.op ptr = Ops.Reshape ->
-           let nidxs = List.length idxs in
-           let ptr_suffix =
-             List.filteri (fun i _ -> i >= nidxs) ptr_shape
-           in
-           let src_prefix = List.length src_shape - List.length ptr_suffix in
-           if src_prefix < 0 then None
-           else
-             let src_suffix =
-               List.filteri (fun i _ -> i >= src_prefix) src_shape
-             in
-             if src_suffix <> ptr_suffix then None
-             else if src_prefix = 0 then
-               if Dtype.equal (U.dtype src) (U.dtype n) then Some src
-               else None
-             else
-               let src_prefix_shape =
-                 List.filteri (fun i _ -> i < src_prefix) src_shape
-               in
-               let ptr_prefix_shape =
-                 List.filteri (fun i _ -> i < nidxs) ptr_shape
-               in
-               let shapes u =
-                 if u == src then Some src_prefix_shape
-                 else if u == ptr then Some ptr_prefix_shape
-                 else shape_of u
-               in
-               let new_idxs = Indexing.apply_movement_op ~shapes ptr idxs in
-               let ret = U.replace n ~src:(Array.of_list (src :: new_idxs)) () in
-               if shape_of ret = shape_of n then Some ret else None
-       | _ -> None)
-  | _ -> None
-
-let pm_mop_past_after n =
-  match U.op n with
-  | Ops.After ->
-      let r = src0 n in
-      let op = U.op r in
-      if not (Ops.Group.is_movement op || op = Ops.Index) then None
-      else
-        let src = Array.copy (U.src r) in
-        src.(0) <- U.after ~src:(src0 r) ~deps:(src_tail n);
-        Some (U.replace r ~src ())
-  | _ -> None
-
-let pm_mop_past_end n =
-  match U.as_end n with
-  | Some { value; ranges } when is_movement value ->
-      Some (U.end_ ~value:(Option.get (movement_src value)) ~ranges)
-  | _ -> None
-
-let movement_ops n =
-  match
-    U.first_match [ pm_mop_through_index; pm_mop_past_after; pm_mop_past_end ] n
-  with
-  | Some n' when not (U.equal n n') -> Some n'
-  | Some _ | None -> None
 
 let pm_early_rangeify n =
   match U.as_index n with
@@ -191,9 +110,7 @@ let early_movement_pass sink =
   let ctr = ref 1000 in
   let rules =
     [
-      pm_mop_through_index;
-      pm_mop_past_after;
-      pm_mop_past_end;
+      Prepare.movement_ops;
       pm_early_rangeify;
       pm_add_ranges_to_store ctr;
     ]
@@ -202,570 +119,7 @@ let early_movement_pass sink =
     (U.first_match rules)
     sink
 
-let rewrite_movement_ops sink =
-  U.graph_rewrite ~bottom_up:true ~name:"early movement ops"
-    (U.first_match [ movement_ops ])
-    sink
-
-(* Fold moved AFTERs (openpilot hack) *)
-
-let is_invalid u =
-  U.op u = Ops.Const
-  && (match U.arg u with
-      | U.Arg.Value v -> Const.view v = Const.Invalid | _ -> false)
-
-let found_after ctx ~after ~value =
-  let x = ref value and a = ref after in
-  if getv Helpers.float16 <> 0 && U.op !x = Ops.Cast
-     && Dtype.equal (U.dtype !x) Dtype.float16
-  then begin
-    a := U.cast ~src:!a ~dtype:Dtype.float32;
-    x := src0 !x
-  end;
-  let continue_ = ref true in
-  while !continue_ do
-    match U.op !x with
-    | Ops.Permute ->
-        let order = match U.arg !x with U.Arg.Ints o -> o | _ -> [] in
-        a := U.permute ~src:!a ~order:(argsort order);
-        x := src0 !x
-    | Ops.Reshape ->
-        (match shape_of (src0 !x) with
-         | Some s ->
-             a := U.reshape ~src:!a ~shape:(shape_node s);
-             x := src0 !x
-         | None -> continue_ := false)
-    | Ops.Where ->
-        let s = U.src !x in
-        if is_invalid s.(2) && U.op s.(1) = Ops.Pad then x := src0 s.(1);
-        continue_ := false
-    | _ -> continue_ := false
-  done;
-  U.Ref_tbl.replace ctx !x !a
-
-let pm_fold_moved_after ctx n =
-  match U.op n with
-  | Ops.After ->
-      let deps = src_tail n in
-      (match List.find_opt (fun d -> U.op d = Ops.Store) deps with
-       | Some s ->
-           let value = (Option.get (U.as_store s)).value in
-           (match U.op value with
-            | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute
-            | Ops.Flip | Ops.Cast | Ops.Where ->
-                found_after ctx ~after:n ~value; None
-            | _ -> None)
-       | None -> None)
-  | op when Ops.Group.is_alu op || op = Ops.Cast || op = Ops.Bitcast ->
-      let children = U.children n in
-      let new_children =
-        List.map (fun s ->
-            Option.value (U.Ref_tbl.find_opt ctx s) ~default:s)
-          children
-      in
-      if List.for_all2 ( == ) children new_children then None
-      else Some (U.replace n ~src:(Array.of_list new_children) ())
-  | _ -> None
-
-(* Earliest rewrites *)
-
-let fix_store_hazard ~target ~value =
-  let target_has_shrink =
-    List.exists (fun u -> U.op u = Ops.Shrink) (U.toposort target)
-  in
-  let unsafe op =
-    op = Ops.Permute || op = Ops.Flip
-    || (op = Ops.Shrink && target_has_shrink)
-  in
-  let b = base target in
-  let slice =
-    U.toposort ~gate:(fun s -> U.op s <> Ops.Contiguous) value
-  in
-  let reaches = U.Ref_tbl.create (List.length slice) in
-  let found = ref false in
-  List.iter (fun s ->
-      if not !found then begin
-        let r = s == b
-          || List.exists (fun c ->
-                 U.Ref_tbl.find_opt reaches c = Some true)
-               (U.children s)
-        in
-        U.Ref_tbl.replace reaches s r;
-        if r && unsafe (U.op s) then found := true
-      end) slice;
-  if !found then
-    Some (U.store ~dst:target ~value:(U.contiguous ~src:value ()) ())
-  else None
-
-let resolve_function n =
-  match U.as_call n with
-  | Some { body; args; info } when U.op n = Ops.Function && not info.precompile ->
-      let params =
-        List.filter (fun u -> U.op u = Ops.Param) (U.toposort body)
-      in
-      let idx_of p =
-        match U.as_param p with
-        | Some { param = { slot; _ }; _ } -> slot
-        | None -> -1
-      in
-      let params = List.sort (fun a b -> compare (idx_of a) (idx_of b)) params in
-      let n_args = List.length args in
-      let mappings =
-        List.filter_map (fun p ->
-            let i = idx_of p in
-            if i >= 0 && i < n_args then Some (p, List.nth args i) else None)
-          params
-      in
-      Some (U.substitute mappings body)
-  | _ -> None
-
-let rec push_movement node rngs =
-  match U.op node with
-  | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute | Ops.Flip ->
-      push_movement (src0 node)
-        (Indexing.apply_movement_op ~shapes:shape_of node rngs)
-  | _ -> (node, rngs)
-
-let live_axes rngs =
-  List.concat_map (fun r ->
-      List.filter_map (fun x ->
-          Option.map (fun (v : U.range_view) -> v.axis) (U.as_range x))
-        (r :: U.backward_slice r))
-    rngs
-
-let axis_ranges sh =
-  List.mapi (fun i s ->
-      if s > 1 then U.range ~size:(int_ s) ~axis:i ~kind:Axis_type.Weak ()
-      else int_ 0) sh
-
-let detect_expanded src =
-  let sh = Option.value (shape_of src) ~default:[] in
-  let n = List.length sh in
-  if n = 0 then []
-  else
-    let live = live_axes (snd (push_movement src (axis_ranges sh))) in
-    List.init n (fun i -> not (List.mem i live))
-
-(* One-hot sum
-
-   No tinygrad counterpart. A gather is a sum over
-   [where (index = arange) x 0], and the reduce that sums it collapses to one
-   gated load once the kernel is lowered. Splitting that reduce first puts a
-   buffer between the two halves, and neither half collapses: the gather then
-   costs a pass over the table. [is_one_hot_sum] recognises the shape so the
-   split leaves it whole. *)
-
-let const_view u = Option.map Const.view (U.as_const u)
-
-let is_not c =
-  U.op c = Ops.Cmpne && const_view (U.src c).(1) = Some (Const.Bool true)
-
-let is_zero_const u =
-  match const_view u with
-  | Some (Const.Int n) -> Z.equal n Z.zero
-  | Some (Const.Float f) -> Float.equal f 0.0
-  | _ -> false
-
-(* [rngs] indexes [parent]; the result indexes [child], an operand that
-   [parent] broadcasts. *)
-let operand_rngs ~parent ~child rngs =
-  match shape_of parent, shape_of child with
-  | Some psh, Some csh ->
-      let nleft = List.length psh - List.length csh in
-      if nleft < 0 then None
-      else
-        Some
-          (List.filteri (fun j _ -> j >= nleft) rngs
-           |> List.mapi (fun j r ->
-                if List.nth csh j = 1 && List.nth psh (j + nleft) <> 1
-                then U.const_like r 0
-                else r))
-  | _ -> None
-
-let is_one_hot_sum ~src ~op ~num_axes =
-  op = Ops.Add
-  &&
-  match shape_of src with
-  | None -> false
-  | Some sh ->
-      let where, rngs = push_movement src (axis_ranges sh) in
-      U.op where = Ops.Where
-      &&
-      let srcs = U.src where in
-      (is_zero_const (U.base srcs.(1)) || is_zero_const (U.base srcs.(2)))
-      &&
-      let rec condition parent rngs child =
-        match operand_rngs ~parent ~child rngs with
-        | Some rngs when is_not child -> condition child rngs (src0 child)
-        | Some rngs -> Some (child, rngs)
-        | None -> None
-      in
-      match condition where rngs srcs.(0) with
-      | Some (cond, cond_rngs)
-        when (U.op cond = Ops.Cmpne || U.op cond = Ops.Cmpeq)
-             && Dtype.is_int (U.dtype (src0 cond)) ->
-          let live operand =
-            match operand_rngs ~parent:cond ~child:operand cond_rngs with
-            | Some rngs -> Some (live_axes (snd (push_movement operand rngs)))
-            | None -> None
-          in
-          let reduced a = a < num_axes in
-          let one_hot a b =
-            a <> [] && List.for_all reduced a
-            && not (List.exists reduced b)
-          in
-          (match live (U.src cond).(0), live (U.src cond).(1) with
-           | Some a, Some b -> one_hot a b || one_hot b a
-           | _ -> false)
-      | _ -> false
-
-let pow2 n =
-  if n < 0 then 1 else
-    let rec loop acc i = if i = 0 then acc else loop (acc * 2) (i - 1) in
-    loop 1 n
-
-let range_down from_ until =
-  let rec loop acc n = if n < until then List.rev acc else loop (n :: acc) (n - 1) in
-  loop [] from_
-
-let split_reduceop_rule n =
-  match U.as_reduce n with
-  | Some { src; op; num_axes; _ } when num_axes > 0 ->
-      (match shape_of src, shape_of n with
-       | Some in_shape, Some out_shape
-         when prod out_shape <> 0
-              && getv Helpers.split_reduceop <> 0
-              && prod in_shape / max 1 (prod out_shape)
-                 >= getv Helpers.reduceop_split_threshold
-              && not (is_one_hot_sum ~src ~op ~num_axes) ->
-           let expanded = detect_expanded src in
-           let cap =
-             min 256
-               (pow2 (getv Helpers.reduceop_split_size)
-                / max 1 (prod out_shape))
-           in
-           (* Reduced axes are permuted to the front, so they are exactly the
-              first [num_axes] axes of [src]. *)
-           let candidates =
-             List.concat_map
-               (fun axis ->
-                 if axis < 0 || axis >= List.length in_shape then []
-                 else
-                   let dim = List.nth in_shape axis in
-                   range_down cap 8
-                   |> List.filter_map (fun divisor ->
-                       if dim mod divisor = 0
-                          && not (List.nth expanded axis)
-                       then Some (axis, divisor)
-                       else None))
-               (List.init num_axes Fun.id)
-           in
-           (match candidates with
-            | [] -> None
-            | (axis, divisor) :: _ ->
-                let split_shape =
-                  List.concat
-                    [
-                      List.filteri (fun i _ -> i < axis) in_shape;
-                      [ divisor; List.nth in_shape axis / divisor ];
-                      List.filteri (fun i _ -> i > axis) in_shape;
-                    ]
-                in
-                let order =
-                  List.filter (fun i -> i <> axis)
-                    (List.init (List.length split_shape) Fun.id)
-                  @ [ axis ]
-                in
-                let splitted =
-                  U.reshape ~src ~shape:(shape_node split_shape)
-                  |> fun u -> U.permute ~src:u ~order
-                in
-                let first =
-                  U.contiguous
-                    ~src:
-                      (U.reduce_axis ~src:splitted ~op
-                         ~axes:(List.init num_axes Fun.id))
-                    ()
-                in
-                let second_axis = List.length out_shape in
-                let second =
-                  U.reduce_axis ~src:first ~op ~axes:[ second_axis ]
-                in
-                Some (U.reshape ~src:second ~shape:(shape_node out_shape)))
-       | _ -> None)
-  | _ -> None
-
-let identity_of op dtv = match op with
-  | Ops.Add -> Const.zero dtv
-  | Ops.Mul -> Const.one dtv
-  | Ops.Max -> Const.min_value dtv
-  | _ -> Const.zero dtv
-
-(* tinygrad/schedule/prepare.py: repack the trailing dimension through
-   unsigned integer lanes before scalar indexing fixes each element's width. *)
-let expand_bitcast bc =
-  if U.op bc <> Ops.Bitcast then None
-  else
-    let x = src0 bc in
-    let os = Dtype.itemsize (U.dtype x) in
-    let ns = Dtype.itemsize (U.dtype bc) in
-    if os = ns then None
-    else
-      let uint = function
-        | 1 -> Dtype.uint8 | 2 -> Dtype.uint16
-        | 4 -> Dtype.uint32 | 8 -> Dtype.uint64
-        | _ -> invalid_arg "Rangeify.expand_bitcast: unsupported element width"
-      in
-      let dims = function [ d ] -> d | ds -> U.stack ds in
-      let reshape x shape = U.reshape ~src:x ~shape:(dims shape) in
-      let shape = U.shape x in
-      if shape = [] then
-        invalid_arg "Rangeify.expand_bitcast: size-changing bitcast needs an axis";
-      let target = U.shape bc in
-      let tmp = U.bitcast ~src:x ~dtype:(uint os) in
-      let repacked =
-        if ns > os then begin
-          let rate = ns / os in
-          let tmp = reshape tmp (target @ [ int_ rate ]) in
-          let prefix = List.map (fun _ -> int_ 0) target in
-          let parts =
-            List.init rate (fun i ->
-                let part = U.shrink ~src:tmp
-                    ~offset:(dims (prefix @ [ int_ i ]))
-                    ~size:(dims (target @ [ int_ 1 ])) in
-                U.alu_binary ~op:Ops.Shl
-                  ~lhs:(U.cast ~src:part ~dtype:(uint ns))
-                  ~rhs:(int_ (8 * i * os)))
-          in
-          match parts with
-          | first :: rest ->
-              reshape (List.fold_left (fun lhs rhs ->
-                  U.alu_binary ~op:Ops.Add ~lhs ~rhs) first rest) target
-          | [] -> assert false
-        end else begin
-          let parts = List.init (os / ns) (fun i ->
-              U.alu_binary ~op:Ops.Shr ~lhs:tmp ~rhs:(int_ (8 * i * ns))) in
-          let order = List.init (List.length shape) (fun i -> i + 1) @ [ 0 ] in
-          U.cast ~dtype:(uint ns)
-            ~src:(reshape (U.permute ~src:(U.stack parts) ~order) target)
-        end
-      in
-      Some (U.bitcast ~src:repacked ~dtype:(U.dtype bc))
-
-let earliest_rewrites =
-  let shaped_const n value =
-    let dims = match U.shape n with [ d ] -> d | ds -> U.stack ds in
-    U.expand ~src:(U.const value) ~dims
-  in
-  U.first_match
-    [ pm_mop_through_index;
-      pm_mop_past_after; pm_mop_past_end;
-      Upat.Pattern_matcher.rewrite Movement.mop_cleanup; resolve_function;
-      (* Resolve TUPLE + GETTUPLE. *)
-      (fun n -> match U.op n with
-         | Ops.Gettuple ->
-             let t = src0 n in
-             if U.op t <> Ops.Tuple then None
-             else
-               (match U.Arg.as_int (U.arg n) with
-                | Some i when i >= 0 && i < Array.length (U.src t) ->
-                    Some (U.src t).(i)
-                | _ -> None)
-         | _ -> None);
-      (fun n -> match U.as_allreduce n with
-         | Some { src; device; op } ->
-             (* [shape_of] is concrete and stays undefined on a symbolic
-                dimension; the node's own shape at its bounds is the
-                backstop. *)
-             let shape = match shape_of n with
-               | Some _ as s -> s
-               | None ->
-                   (try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape n))
-                    with Invalid_argument _ -> None)
-             in
-             (match shape with
-              | Some shape ->
-                  Allreduce.create_allreduce_function src ~device ~op
-                    ~dtype:(U.dtype n) ~shape ()
-              | None -> None)
-         | None -> None);
-      split_reduceop_rule;
-      (fun n -> match U.op n with
-         | Ops.Detach | Ops.Contiguous_backward -> Some (src0 n)
-         | _ -> None);
-      (* COPY transfers a contiguous range, so materialise a source that is
-         resized (shrink/pad/expand) or reordered (permute/flip). *)
-      (fun n -> match U.op n with
-         | Ops.Copy when is_movement (src0 n) ->
-             let s = src0 n in
-             let resized =
-               match shape_of (base s), shape_of s with
-               | Some a, Some b -> prod a <> prod b
-               | _ -> false
-             in
-             if resized || U.contiguous_view_offset s = None then
-               let sr = Array.copy (U.src n) in
-               sr.(0) <- U.contiguous ~src:s ();
-               Some (U.replace n ~src:sr ())
-             else None
-         | _ -> None);
-      (* Copying an MSELECT to its own device is just the MSELECT (no NOOP
-         kernel). *)
-      (fun n -> match U.op n with
-         | Ops.Copy when U.op (src0 n) = Ops.Mselect ->
-             let ms = src0 n in
-             (match U.device_of ms, U.device_of n with
-              | Some d1, Some d2 when d1 = d2 -> Some ms
-              | _ -> None)
-         | _ -> None);
-      (fun n -> match U.op n with
-         | Ops.Copy ->
-             let s = src0 n in
-             (match U.device_of s, U.device_of n with
-              | Some d1, Some d2 when d1 = d2 ->
-                  Some (U.noop ~src:s ~dtype:(U.dtype s) ())
-              | _ -> None)
-         | _ -> None);
-      (* Copy on reshape is reshape on copy. *)
-      (fun n -> match U.op n with
-         | Ops.Copy when U.op (src0 n) = Ops.Reshape ->
-             let shp = src0 n in
-             (match U.Arg.as_device (U.arg n) with
-              | Some device ->
-                  Some
-                    (U.reshape
-                       ~src:(U.copy ~src:(src0 shp) ~device ())
-                       ~shape:(U.src shp).(1))
-              | None -> None)
-         | _ -> None);
-      (fun n -> match U.op n with
-         | Ops.Sink ->
-             let children = U.children n in
-             let new_children =
-               List.map
-                 (fun child ->
-                    match U.op child, U.src child with
-                    | Ops.After, srcs when Array.length srcs > 1 -> child
-                    | _ -> base child)
-                 children
-             in
-             if List.for_all2 ( == ) children new_children then None
-             else Some (U.replace n ~src:(Array.of_list new_children) ())
-         | _ -> None);
-      (fun n -> match U.as_store n with
-         | Some { dst = target; value; _ } -> fix_store_hazard ~target ~value
-         | _ -> None);
-      (* Two STOREs of the same value into the same buffer: keep the first. *)
-      (fun n -> match U.op n with
-         | Ops.After -> (
-             match src_tail n with
-             | [ store2 ] ->
-                 let a1 = src0 n in
-                 if U.op a1 <> Ops.After then None
-                 else
-                   (match U.as_store store2, src_tail a1 with
-                    | Some { dst = d2; value = v2; _ }, [ store1 ]
-                      when d2 == a1 ->
-                        (match U.as_store store1 with
-                         | Some { dst = d1; value = v1; _ }
-                           when d1 == src0 a1 && v1 == v2 -> Some a1
-                         | _ -> None)
-                    | _ -> None)
-             | _ -> None)
-         | _ -> None);
-      (* A buffer storing its own already-stored contents back into itself. *)
-      (fun n -> match U.op n with
-         | Ops.After -> (
-             match src_tail n with
-             | [ store ] ->
-                 let buf = src0 n in
-                 (match U.as_store store with
-                  | Some { dst; value = a1; _ }
-                    when dst == buf && U.op a1 = Ops.After && src0 a1 == buf ->
-                      (match src_tail a1 with
-                       | [ store1 ] ->
-                           (match U.as_store store1 with
-                            | Some { dst = d1; _ } when d1 == buf -> Some a1
-                            | _ -> None)
-                       | _ -> None)
-                  | _ -> None)
-             | _ -> None)
-         | _ -> None);
-      (fun n -> match U.as_store n with
-         | Some { dst; value; _ } when U.op dst = Ops.Bitcast ->
-             let inner = src0 dst in
-             Some (U.store ~dst:inner
-                     ~value:(U.bitcast ~src:value ~dtype:(U.dtype inner))
-                     ())
-         | _ -> None);
-      expand_bitcast;
-      (fun n -> match U.as_reduce n with
-         | Some { src; op; _ } ->
-             (match shape_of src, shape_of n with
-              | Some s, Some t when List.mem 0 s && not (List.mem 0 t) ->
-                  Some (shaped_const n (identity_of op (U.dtype n)))
-              | _ -> None)
-         | None -> None);
-      (fun n ->
-        if U.op n = Ops.Sink then None
-        else match shape_of n with
-          | Some s when List.mem 0 s ->
-              Some (shaped_const n (Const.zero (U.dtype n)))
-          | _ -> None);
-    ]
-
-(* Copies to stores *)
-
-let dims_node = function [ d ] -> d | ds -> U.stack ds
-
-(* Reshapes as the tensor layer builds them: an identity reshape is the
-   value itself, so a view shared between consumers stays one node. *)
-let reshape_to u dims =
-  if List.equal U.equal (U.shape u) dims then u
-  else U.reshape ~src:u ~shape:(dims_node dims)
-
-let flatten u =
-  match U.shape u with
-  | [] -> reshape_to u [ int_ 1 ]
-  | [ _ ] -> u
-  | ds -> reshape_to u [ U.simplify (U.uprod ds) ]
-
-(* A COPY is a plain kernel: the source's flat view, made contiguous unless
-   it already names a buffer, stored into a flat buffer on the target device
-   and reshaped back. [existing] is the buffer an assignment stores the copy
-   into; it is written directly only when it is a whole buffer. The
-   scheduler turns the kernel back into a transfer. *)
-let convert_copy_to_store ?existing copy =
-  let input = src0 copy in
-  let input =
-    if U.has_buffer_identity ~after_ok:true input then input
-    else U.contiguous ~src:input ()
-  in
-  let input = flatten input in
-  match existing with
-  | Some buf ->
-      if not (U.has_buffer_identity ~after_ok:true buf) then None
-      else Some (U.store ~dst:(flatten buf) ~value:input ())
-  | None ->
-      let device = U.Arg.as_device (U.arg copy) in
-      let buf =
-        U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:(U.dtype copy)
-          ~shape:(shape_node (U.max_shape input)) ?device ()
-      in
-      let stored =
-        U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:input () ]
-      in
-      Some (reshape_to stored (U.shape copy))
-
-let pm_copy_to_store n =
-  match U.op n with
-  | Ops.Store -> (
-      match U.as_store n with
-      | Some { dst; value; gate = None } when U.op value = Ops.Copy ->
-          convert_copy_to_store ~existing:dst value
-      | _ -> None)
-  | Ops.Copy -> convert_copy_to_store n
-  | _ -> None
+let is_invalid = U.is_invalid_const
 
 (* Post-rangeify *)
 
@@ -1130,16 +484,7 @@ let flatten_stage n =
          carries an unresolved dimension. *)
       let range_dims = List.map (fun r -> Bound.to_int (Bound.succ (U.vmax r))) ranges in
       let shape = try U.max_shape n with Invalid_argument _ -> range_dims in
-      let flat_src =
-        U.buffer ~slot:(-1) ~dtype:(U.dtype src)
-          ~shape:(shape_node [ prod range_dims ]) ()
-      in
-      let flat_view = U.reshape ~src:flat_src ~shape:(shape_node range_dims) in
-      let flat_idx =
-        match Indexing.apply_movement_op ~shapes:shape_of flat_view ranges with
-        | [ idx ] -> idx
-        | _ -> invalid_arg "Rangeify.flatten_stage: reshape did not flatten"
-      in
+      let flat_idx = flat_index_of_ranges ~dims:range_dims ranges in
       let flat = U.stage ~src ~ranges:[ flat_idx ] ~opts in
       let ret = U.reshape ~src:flat ~shape:(shape_node shape) in
       let sym_shape =
@@ -1243,8 +588,8 @@ let stage_to_store ?(allow_locals = true) counter n =
             let id = !counter in
             incr counter;
             let buf =
-              U.buffer ~slot:id ?device:opts.device ~shape:(shape_node [ size ])
-                ~addrspace:Dtype.Global ~dtype:buf_dtype ()
+              U.alloc ~slot:id ?device:opts.device ~shape:(shape_node [ size ])
+                ~dtype:buf_dtype ()
             in
             let idx = U.index ~ptr:buf ~idxs:[ idx_expr ] () in
             let ended =
@@ -1278,30 +623,26 @@ type split_context = {
   mutable slot : int;
   buf_map : U.t U.Ref_tbl.t;
   mutable formals : (int * U.t) list;
-  (* BINDs unbound inside the kernel, most recent first. *)
+  (* Scalar bindings unbound inside the kernel, most recent first. *)
   mutable vars : U.t list;
   mutable range_ctr : int;
   mutable opts : U.Opt.t list option;
-  buf_shapes : int list U.Ref_tbl.t;
 }
 
 let create_split_context () =
   { slot = 0; buf_map = U.Ref_tbl.create 16; formals = [];
     vars = [];
     range_ctr = 0;
-    opts = None; buf_shapes = U.Ref_tbl.create 16 }
+    opts = None }
 
 let same_split_buffer a b =
   if a == b then true
   else
     let identity n =
       let b = U.buf_uop n in
-      match U.as_buffer b, U.as_param b with
-      | Some { buffer; _ }, _ ->
-          Some (`Buffer (buffer.slot, buffer.addrspace))
-      | _, Some { param; _ } ->
-          Some (`Param (param.slot, param.addrspace))
-      | None, None -> None
+      match U.op b, U.Arg.as_param_arg (U.arg b) with
+      | (Ops.Buffer | Ops.Alloc | Ops.Param), Some p -> Some (U.op b, p.slot, p.addrspace)
+      | _ -> None
     in
     match identity a, identity b with
     | Some ia, Some ib -> ia = ib
@@ -1321,33 +662,9 @@ let replace_formal_arg ctx old_arg new_arg =
 
 let debuf ctx n =
   let dtype = U.dtype n in
-  (* A genuinely rank-0 buffer keeps its scalar view: the reshape to rank 0
-     is how a scalar access acquires its flat 0 index when the index moves
-     through it. *)
-  let rank0 =
-    shape_of n = Some []
-    && (match (try Some (U.max_shape n) with Invalid_argument _ -> None) with
-        | Some [] -> true
-        | _ -> false)
-  in
-  let shape =
-    if rank0 then []
-    else
-      match shape_of n with
-      | Some sh when sh <> [] -> sh
-      | _ ->
-          (match U.Ref_tbl.find_opt ctx.buf_shapes n with
-           | Some sh when sh <> [] -> sh
-           | _ -> [ 1 ])
-  in
-  let max_shape =
-    if rank0 then []
-    else
-      match (try U.max_shape n with Invalid_argument _ -> []) with
-      | _ :: _ as sh -> sh
-      | [] -> shape
-  in
-  let size = prod max_shape in
+  let shape = U.shape n in
+  let max_shape = U.max_shape n in
+  let size = U.max_numel n in
   let addrspace =
     match U.addrspace n with Some a -> a | None -> Dtype.Global
   in
@@ -1366,10 +683,10 @@ let debuf ctx n =
     let reshaped = U.reshape ~src:param ~shape:(shape_node max_shape) in
     (* Symbolic buffers: the param is sized for [max_shape]; shrink the
        max-sized view down to the actual [shape] when they differ. *)
-    if max_shape <> shape then
+    if not (List.equal U.equal (U.shape reshaped) shape) then
       U.shrink ~src:reshaped
         ~offset:(shape_node (List.map (fun _ -> 0) shape))
-        ~size:(shape_node shape)
+        ~size:(match shape with [d] -> d | dims -> U.stack dims)
     else reshaped
   in
   let arg = match find_buf_arg ctx n with
@@ -1477,7 +794,7 @@ let find_bufs n =
       | Some { ptr; _ } ->
           let b = U.buf_uop ptr in
           (match U.op b with
-           | Ops.Buffer | Ops.Param ->
+           | Ops.Buffer | Ops.Alloc | Ops.Param ->
                let ptr_op = U.op ptr in
                (match U.Ref_tbl.find_opt read_from b with
                 | Some prev when not (Ops.equal prev ptr_op) ->
@@ -1496,7 +813,7 @@ let to_define_global ctx n =
   match U.op n with
   | Ops.Store -> find_bufs n
   | Ops.Buffer when U.is_variable n -> Some (U.replace n ~op:Ops.Param ())
-  | Ops.Buffer | Ops.Mstack | Ops.Mselect -> debuf ctx n
+  | Ops.Buffer | Ops.Alloc | Ops.Mstack | Ops.Mselect -> debuf ctx n
   | Ops.Param -> (
       match U.as_param n with
       (* A named, ranged PARAM normalises to the canonical variable so
@@ -1505,10 +822,10 @@ let to_define_global ctx n =
           Some
             (U.param ~slot:(-1) ~name ~dtype:(U.dtype n) ~shape:(U.stack [])
                ~vmin_vmax:(lo, hi) ?multiple_of ~addrspace:Dtype.Alu ~volatile ())
-      (* Renumber only an already-tagged, shaped, unnamed PARAM. The tag is
-         set by the param/range tagging rule so a PARAM freshly created here
-         is not debuffed again. *)
-      | Some { param = { name = None; size = Some _; _ }; _ }
+      (* A scalar storage formal also needs the flat size-one kernel view.
+         The tag prevents freshly created kernel parameters from being
+         renumbered again. *)
+      | Some { param = { name = None; _ }; _ }
         when U.node_tag n = Some "" ->
           debuf ctx n
       | _ -> None)
@@ -1611,17 +928,6 @@ let split_store n =
       if List.exists (fun r -> not (is_device_range r)) (U.ranges n) then None
       else
         let ctx = create_split_context () in
-        let record ptr idxs =
-          match U.op ptr with
-          | Ops.Buffer | Ops.Param ->
-              let dims = List.map (fun r -> match U.as_range r with
-                  | Some v -> U.const_int_value v.size
-                  | None -> if U.op r = Ops.Const then Some 1 else None) idxs
-              in
-              if List.for_all Option.is_some dims then
-                U.Ref_tbl.replace ctx.buf_shapes ptr (List.map Option.get dims)
-          | _ -> ()
-        in
         (* Stop at [After]: nodes behind a buffer boundary belong to already
            split upstream kernels, which the kernel rewrite prunes anyway.
            Walking into them would rescan the whole graph history per kernel. *)
@@ -1636,25 +942,6 @@ let split_store n =
                    max acc (slot + 1)
                | _ -> acc)
             ctx.slot nodes;
-        List.iter (fun nd -> match U.as_store nd with
-            | Some { dst; _ } ->
-                (match U.as_index dst with
-                 | Some { ptr; _ } ->
-                     let tail = src_tail dst in
-                     if tail <> [] then record ptr tail
-                     else (match U.op ptr with
-                         | Ops.Buffer | Ops.Param ->
-                             U.Ref_tbl.replace ctx.buf_shapes ptr []
-                         | _ -> ())
-                 | None -> ())
-            | None -> ()) nodes;
-        List.iter (fun nd -> match U.as_index nd with
-            | Some { ptr; _ } ->
-                let tail = src_tail nd in
-                if List.length tail > 1
-                   && not (U.Ref_tbl.mem ctx.buf_shapes ptr)
-                then record ptr tail
-            | None -> ()) nodes;
         (* A precompiled call stored as the value (e.g. a staged loop) is its
            own kernel, returned as-is below: the kernel rewrite debufs its
            argument buffers like any other, but without the formals mapping
@@ -1682,7 +969,7 @@ let split_store n =
         in
         let rewrite =
           U.first_match
-            [ to_define_global ctx; Simplify.flatten_range; pm_mop_through_index ]
+            [ to_define_global ctx; Simplify.flatten_range; Prepare.movement_ops ]
         in
         let ret =
           U.graph_rewrite ~bottom_up:true ~name:"kernel_split" rewrite n
@@ -1843,7 +1130,7 @@ let fix_war_deps root =
         let u_buf = buf_of u in
         let reads = match call_of u with
           | Some c ->
-              List.filter (fun a -> U.op a = Ops.Buffer || U.op a = Ops.Param)
+              List.filter (fun a -> Ops.Group.is_define (U.op a))
                 (src_tail c)
           | None -> []
         in
@@ -1881,9 +1168,7 @@ let fix_war_deps root =
 
 let post_rangeify_rules =
   U.first_match [
-    pm_mop_through_index;
-    pm_mop_past_after;
-    pm_mop_past_end;
+    Prepare.movement_ops;
     (* The constant fold runs here and not in every symbolic rewrite: it
        commits a cast of a constant to a concrete width, which is only safe
        once the ranges are built and nothing downstream still gets to choose
@@ -1921,7 +1206,7 @@ let post_rangeify_rules =
 
 let add_buffers_rules ?(allow_locals = true) counter =
   U.first_match [
-    pm_mop_through_index; pm_mop_past_after; pm_mop_past_end;
+    Prepare.movement_ops;
     flatten_stage;
     stage_to_store ~allow_locals counter;
     (* Index the buffer under the read-back cast the rule above adds, and cast
@@ -2019,33 +1304,7 @@ let add_buffers_rules ?(allow_locals = true) counter =
   ]
 
 let get_kernel_graph root =
-  (* Sharding rewrites see the graph's own shapes with every symbolic
-     dimension maxed to its bound, so a shard sized by a variable still
-     reports the size it is allocated at. *)
-  let multi_shapes n =
-    match U.max_shape n with
-    | s -> Some s
-    | exception Invalid_argument _ -> None
-  in
-  let root =
-    U.graph_rewrite ~name:"multi_pm"
-      (Multi.multi_pm ~shapes:multi_shapes ~devices:U.device_of)
-      root
-  in
-  let root =
-    if getv Helpers.openpilot_hacks = 0 then root
-    else
-      let ctx = U.Ref_tbl.create 16 in
-      U.graph_rewrite ~name:"fold moved afters" (pm_fold_moved_after ctx) root
-  in
-  let root =
-    U.graph_rewrite ~bottom_up:true ~name:"earliest rewrites"
-      earliest_rewrites root
-  in
-  let root =
-    U.graph_rewrite ~bottom_up:true ~name:"convert copy to store"
-      pm_copy_to_store root
-  in
+  let root = Prepare.prepare_rangeify root in
   let rctx =
     Indexing.run_rangeify root ~shapes:shape_of ~shape_exprs:shape_expr_of
   in
@@ -2059,10 +1318,9 @@ let get_kernel_graph root =
   let buffer_slot_start =
     List.fold_left (fun acc x ->
         let slot =
-          match U.as_buffer x, U.as_param x with
-          | Some { buffer = { slot; _ }; _ }, _ -> Some slot
-          | None, Some { param = { slot; _ }; _ } -> Some slot
-          | None, None -> None
+          match U.Arg.as_param_arg (U.arg x) with
+          | Some { slot; _ } -> Some slot
+          | None -> None
         in
         match slot with
         | Some slot when slot >= 0 -> max acc (slot + 1)

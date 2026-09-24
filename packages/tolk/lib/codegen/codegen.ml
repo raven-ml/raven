@@ -75,7 +75,8 @@ let sym = Symbolic.sym
    hand-coded optimizations via Postrange. *)
 let full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
   if debug () >= 5 then Format.eprintf "=== ast ===@.%a@." U.pp sink;
-  let sink = Rangeify.rewrite_movement_ops sink in
+  let sink = U.graph_rewrite ~bottom_up:true ~name:"early movement ops"
+      Prepare.movement_ops sink in
   let sink =
     if optimize && not (has_tag sink) then
       let sink = Simplify.load_collapse_all sink in

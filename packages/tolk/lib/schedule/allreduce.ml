@@ -197,21 +197,12 @@ let create_allreduce_function buf ~op ~device ~dtype ~shape ?output () =
     match output with
     | Some o -> o
     | None ->
-        (* A shaped Invalid placeholder cloned onto [device]: a fresh flat
-           output buffer viewed at [shape], initialised by storing the
-           (deviceless) Invalid const, so no cross-device copy is needed. *)
-        let shape_node = emit_shape shape in
-        let numel = List.fold_left ( * ) 1 shape in
-        let invalid_shaped =
-          U.const_of_dtype ~shape:shape_node dtype U.Const_invalid
-        in
-        let buffer =
-          U.buffer ~slot:(U.fresh_buffer_slot ())
+        let allocation =
+          U.alloc ~slot:(U.fresh_buffer_slot ())
             ~device:(canonicalize_device device)
-            ~shape:(emit_shape [ numel ]) ~addrspace:Dtype.Global ~dtype ()
+            ~shape:(emit_shape (if shape = [] then [1] else shape)) ~dtype ()
         in
-        let view = U.reshape ~src:buffer ~shape:shape_node in
-        U.after ~src:view ~deps:[ U.store ~dst:view ~value:invalid_shaped () ]
+        U.reshape ~src:allocation ~shape:(emit_shape shape)
   in
   (* Build params mirroring the output and source signatures. *)
   let to_ =

@@ -49,7 +49,7 @@ let symbolic_simple = Symbolic.symbolic_simple
 let mop_cleanup = Movement.mop_cleanup
 
 (* Movement-op / index pushing rule shared with the scheduler. *)
-let pm_mops = Rangeify.movement_ops
+let pm_mops = Prepare.movement_ops
 
 (* expander (expand_rewrite) *)
 

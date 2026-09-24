@@ -162,7 +162,7 @@ type param_arg = {
       (** Storage owned by a global BUFFER, one buffer per device. Parameters
           and kernel-local buffers do not own runtime storage. *)
 }
-(** Payload for {!Ops.Param} and {!Ops.Buffer}. *)
+(** Payload for {!Ops.Param}, {!Ops.Buffer}, and {!Ops.Alloc}. *)
 
 type realization_state =
   | Never_realized
@@ -690,6 +690,13 @@ val buffer :
 (** [buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ?volatile ()] is a
     flat {!Ops.Buffer} viewed at [shape]. Its maximum storage size lives in
     {!param_arg}; placed global buffers own their storage directly. Tensor. *)
+
+val alloc :
+  slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device -> unit -> t
+(** [alloc ~slot ~dtype ?shape ?device ()] declares unbound global storage.
+    Scheduling gives each invocation a fresh owner.
+
+    @raise Invalid_argument if [dtype] is weak. *)
 
 val from_buffer : Storage.t -> t
 (** [from_buffer b] is a flat BUFFER retaining [b], including its external
@@ -1318,7 +1325,7 @@ val buf_uop : t -> t
 
 val has_buffer_identity : ?after_ok:bool -> t -> bool
 (** [has_buffer_identity ?after_ok u] is [true] iff [u] is a concrete graph
-    buffer identity: {!Ops.Param}, {!Ops.Buffer}, {!Ops.Slice}, or those
+    buffer identity: {!Ops.Param}, {!Ops.Buffer}, {!Ops.Alloc}, {!Ops.Slice}, or those
     identities through {!Ops.Reshape}, {!Ops.Unshard}, {!Ops.Mselect}, or
     direct {!Ops.Gettuple} from a {!Ops.Tuple}. With [after_ok] (default
     [false]) an {!Ops.After} over such an identity also qualifies. *)

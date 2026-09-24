@@ -112,39 +112,52 @@ let create_linear_call_substitutes_params_and_new_buffers () =
   let shape = U.const_int 4 in
   let formal = U.param ~slot:0 ~dtype:Dtype.int32 ~shape () in
   let actual = U.buffer ~slot:10 ~dtype:Dtype.int32 ~shape () in
-  let cached_tmp = U.buffer ~slot:99 ~dtype:Dtype.int32 ~shape
+  let temp = U.alloc ~slot:99 ~dtype:Dtype.int32 ~shape
       ~device:(U.Single "DISK:cached") () in
-  let body_call = call "kernel" [ formal; cached_tmp ] in
-  let cached_linear = U.linear [ body_call ] in
-  let big_sink =
-    U.call ~body:cached_linear ~args:[ actual ] ~info:(call_info "linear")
+  let retained = U.buffer ~slot:100 ~dtype:Dtype.int32 ~shape
+      ~device:(U.Single "DISK:retained") () in
+  let body = U.linear [call "kernel" [formal; temp; temp; retained]] in
+  let big_sink = U.call ~body ~args:[actual] ~info:(call_info "linear") in
+  let instantiate () =
+    let linear, var_vals = Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big_sink in
+    equal (list (pair string int)) [] var_vals;
+    match U.children linear with
+    | [si] ->
+        (match U.as_call si with
+         | Some {args = [arg; tmp; alias; kept]; _} ->
+             is_true ~msg:"formal binds the supplied buffer" (arg == actual);
+             is_true ~msg:"aliases share one allocation per invocation" (tmp == alias);
+             is_true ~msg:"existing storage keeps its owner" (kept == retained);
+             (match U.as_buffer tmp with
+              | Some {buffer = {buffer = Some [storage]; _}; _} -> Storage.id storage
+              | _ -> fail "allocation was not bound to storage")
+         | _ -> fail "expected four arguments")
+    | _ -> fail "expected one kernel"
   in
-  let linear, var_vals =
-    Schedule.create_linear_with_vars
-      ~get_kernel_graph:(fun u -> u) big_sink
-  in
-  equal (list (pair string int)) [] var_vals;
-  match U.children linear with
-  | [ si ] ->
-      (match U.as_call si with
-       | Some { args = [ arg0; arg1 ]; _ } ->
-           is_true ~msg:"PARAM slot substituted with call argument"
-             (U.equal actual arg0);
-           is_true ~msg:"cached BUFFER gets a distinct schedule identity"
-             (not (U.equal cached_tmp arg1));
-           (match U.as_buffer arg1 with
-            | Some { buffer; _ } ->
-                is_true ~msg:"fresh schedule buffer uses internal slot"
-                  (buffer.slot < 0);
-                let storage_id node = match U.as_buffer node with
-                  | Some { buffer = { buffer = Some [buf]; _ }; _ } -> Storage.id buf
-                  | _ -> fail "expected owned storage"
-                in
-                is_false ~msg:"cached schedule instantiates a fresh storage owner"
-                  (storage_id cached_tmp = storage_id arg1)
-            | None -> failwith "expected fresh BUFFER")
-       | _ -> failwith "expected single CALL with two args")
-  | _ -> failwith "expected single scheduled item"
+  let first = instantiate () and second = instantiate () in
+  is_false ~msg:"cache reuse gives temporaries fresh owners" (first = second)
+
+let nested_allocations_have_separate_owners () =
+  let shape = U.const_int 4 in
+  let temp = U.alloc ~slot:0 ~dtype:Dtype.int32 ~shape () in
+  let body = U.linear [call "kernel" [temp; temp]] in
+  let actual slot = U.buffer ~slot ~dtype:Dtype.int32 ~shape
+      ~device:(U.Single "DISK:scope") () in
+  let nested slot = U.call ~body ~args:[actual slot] ~info:(call_info "nested") in
+  let outer = U.call ~body:(U.linear [nested 10; nested 11]) ~args:[]
+      ~info:(call_info "outer") in
+  let linear, _ = Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id outer in
+  let owners = List.map (fun si ->
+      match U.as_call si with
+      | Some {args = [a; b]; _} ->
+          is_true ~msg:"local aliases share storage" (a == b);
+          is_true ~msg:"allocation inherits the caller placement"
+            (U.device_of a = Some (U.Single "DISK:scope"));
+          a
+      | _ -> fail "expected local aliases") (U.children linear) in
+  match owners with
+  | [a; b] -> is_false ~msg:"separate calls never share anonymous storage" (a == b)
+  | _ -> fail "expected two calls"
 
 (* Replacement slots are assigned over every replaced input, BINDs included,
    so a PARAM slot indexes the raw argument list. *)
@@ -201,7 +214,7 @@ let internal_buffer_sink () =
   let shape = U.const_int 4 in
   let formal = U.param ~slot:0 ~dtype:Dtype.int32 ~shape () in
   let tmp =
-    U.buffer ~slot:77 ~dtype:Dtype.int32 ~shape
+    U.alloc ~slot:77 ~dtype:Dtype.int32 ~shape
       ~device:(U.Single "TEST:0") ()
   in
   let actual = U.buffer ~slot:10 ~dtype:Dtype.int32 ~shape () in
@@ -280,8 +293,10 @@ let () =
         [
           test "nested scalar arguments shadow and inherit lexical bindings"
             nested_scalar_bindings_are_lexical;
-          test "resolves LINEAR calls with params and fresh buffers"
+          test "resolves allocations per invocation while preserving owners"
             create_linear_call_substitutes_params_and_new_buffers;
+          test "nested calls own separate anonymous allocations"
+            nested_allocations_have_separate_owners;
           test "PARAM slots count BIND arguments"
             create_linear_call_param_slots_count_binds;
           test "returns only binds used by scheduled kernels"

@@ -13,7 +13,7 @@ module U = Uop
 (* Ops that never need realization: they produce contiguous output, so
    their consumers can always index directly. *)
 let always_contiguous = function
-  | Ops.Contiguous | Ops.After | Ops.Buffer | Ops.Slice | Ops.Const
+  | Ops.Contiguous | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Const
   | Ops.Mselect | Ops.Mstack | Ops.Param | Ops.Load | Ops.Call
   | Ops.Function ->
       true
@@ -211,7 +211,7 @@ let broadcast_rngs ctx x src rngs =
 let data_srcs op (srcs : U.t array) =
   let value_src = if Array.length srcs = 0 then [] else [ srcs.(0) ] in
   match op with
-  | Ops.Param | Ops.Buffer | Ops.Range | Ops.Special -> []
+  | Ops.Param | Ops.Buffer | Ops.Alloc | Ops.Range | Ops.Special -> []
   | Ops.Index | Ops.Slice | Ops.Stage | Ops.Reduce | Ops.After | Ops.End ->
       value_src
   | op when Ops.Group.is_movement op -> value_src
@@ -613,7 +613,7 @@ let direct_buffer_src u =
       match U.as_param u with
       | Some { param = { addrspace = Dtype.Alu; _ }; _ } -> false
       | _ -> true)
-  | Ops.Buffer | Ops.Slice | Ops.Mstack | Ops.Mselect | Ops.After -> true
+  | Ops.Buffer | Ops.Alloc | Ops.Slice | Ops.Mstack | Ops.Mselect | Ops.After -> true
   | _ -> false
 
 (* Movement ops disappear — their effect is captured in the range_map. *)

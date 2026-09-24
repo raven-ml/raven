@@ -8,20 +8,16 @@
 (** Schedule pipeline: tensor graph to kernel graph.
 
     Transforms a tensor-level SINK into a graph of CALL nodes wrapping
-    kernel ASTs ready for codegen.  The pipeline has ten passes:
+    kernel ASTs ready for codegen.  Preparation precedes range assignment. The indexing pipeline runs:
 
     {ol
-    {- {e multi_pm} — multi-device rewriting.}
-    {- {e fold_moved_after} — openpilot AFTER folding (when enabled).}
-    {- {e earliest_rewrites} — syntactic sugar, movement ops,
-       call resolution, allreduce, split-reduce, size-0 folding.}
     {- {e run_rangeify} — core range analysis (in {!Indexing}).}
     {- {e apply_rangeify} — bottom-up rewrite with rangeify context.}
     {- {e post-rangeify} — dead-axis cleanup, buffer folding, const
        folding, cost-based buffer removal.}
     {- {e limit_bufs} — insert STAGE when a kernel exceeds the
        device buffer limit.}
-    {- {e add_buffers} — lower STAGE to STORE + BUFFER.}
+    {- {e add_buffers} — lower STAGE to STORE + ALLOC or local BUFFER.}
     {- {e split_kernels} — convert STORE/END subtrees into
        CALL(kernel SINK).}
     {- {e WAR deps} — write-after-read dependency fixup.}} *)
@@ -33,12 +29,6 @@ val get_kernel_graph : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     AFTER nodes whose deps are CALL nodes wrapping kernel ASTs,
     connected by WAR dependency edges. *)
 
-val detect_expanded : Tolk_uop.Uop.t -> bool list
-(** [detect_expanded u] tells, for each axis of [u], whether [u] holds one
-    value along it: the axis has extent one, or the movement ops above [u]'s
-    first non-movement node broadcast it. Empty when [u] has no concrete
-    shape. *)
-
 val early_movement_pass : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [early_movement_pass sink] runs the cleanup rewrites that the reference
     applies at the very top of codegen on a just-split kernel body: strip
@@ -49,12 +39,4 @@ val early_movement_pass : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     scalar [STORE(reshape(param)(1,))] is lifted into
     [STORE(param.index(r), value.index(r)).end(r)] and later passes see
     plain pointer-indexed form. *)
-
-val rewrite_movement_ops : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [rewrite_movement_ops sink] pushes movement ops through [INDEX],
-    [AFTER], and [END]. *)
-
-val movement_ops : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
-(** [movement_ops u] pushes movement ops through [INDEX], [AFTER], and
-    [END]. *)
 

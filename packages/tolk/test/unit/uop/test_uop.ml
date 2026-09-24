@@ -72,6 +72,7 @@ let ops_tinygrad_order () =
     [
       "SPECIAL";
       "BUFFER";
+      "ALLOC";
       "NOOP";
       "REWRITE_ERROR";
       "PARAM";
@@ -191,8 +192,8 @@ let group_algebra () =
      ]);
   is_true ~msg:"tinygrad reduce ops are add/mul/max"
     (reduce = [ Ops.Add; Ops.Mul; Ops.Max ]);
-  is_true ~msg:"Defines are Buffer and Param"
-    (defines = [ Ops.Buffer; Ops.Param ]);
+  is_true ~msg:"Defines include bound and unbound storage"
+    (defines = [ Ops.Buffer; Ops.Alloc; Ops.Param ]);
   is_true ~msg:"Irreducible includes Param and Getaddr"
     (irreducible = [ Ops.Special; Ops.Param; Ops.Getaddr; Ops.Range; Ops.Const ]);
   is_true ~msg:"broadcastable excludes Group"

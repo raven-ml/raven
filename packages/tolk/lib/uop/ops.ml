@@ -12,6 +12,7 @@ type t =
   (* 1 -- defines/special *)
   | Special
   | Buffer
+  | Alloc
   (* 2 -- non-op uops *)
   | Noop
   | Rewrite_error
@@ -105,6 +106,7 @@ let compare : t -> t -> int = Stdlib.compare
 let name = function
   | Special -> "SPECIAL"
   | Buffer -> "BUFFER"
+  | Alloc -> "ALLOC"
   | Noop -> "NOOP"
   | Rewrite_error -> "REWRITE_ERROR"
   | Param -> "PARAM"
@@ -229,7 +231,7 @@ module Group = struct
   let alu = unary @ binary @ ternary
   let broadcastable = binary @ ternary
   let elementwise = [ Cast; Bitcast ] @ alu
-  let defines = [ Buffer; Param ]
+  let defines = [ Buffer; Alloc; Param ]
   let irreducible = [ Special; Param; Getaddr; Range; Const ]
   let movement = [ Shrink; Reshape; Permute; Expand; Pad; Flip ]
   let commutative = [ Add; Mul; Max; Cmpne; Cmpeq; Xor; Or; And ]
@@ -242,6 +244,7 @@ module Group = struct
     [
       Special;
       Buffer;
+      Alloc;
       Noop;
       Rewrite_error;
       Param;
@@ -339,7 +342,7 @@ module Group = struct
   let is_broadcastable op = is_binary op || is_ternary op
   let is_elementwise op = is_alu op || equal op Cast || equal op Bitcast
 
-  let is_define = function Param | Buffer -> true | _ -> false
+  let is_define = function Param | Buffer | Alloc -> true | _ -> false
 
   let is_irreducible = function
     | Const | Special | Range | Param | Getaddr -> true

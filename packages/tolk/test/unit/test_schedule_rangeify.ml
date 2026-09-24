@@ -50,61 +50,12 @@ let const_bool_uop u =
 
 let first_src u = (U.src u).(0)
 
-let rec shape_node u =
-  match U.op u with
-  | Ops.Const -> Option.map (fun value -> [ const_to_int value ]) (const_value u)
-  | Ops.Stack ->
-      let rec collect = function
-        | [] -> Some []
-        | x :: xs ->
-            (match shape_node x with
-            | Some [ v ] -> Option.map (fun rest -> v :: rest) (collect xs)
-            | _ -> None)
-      in
-      collect (U.children u)
-  | _ -> None
-
-let rec shape_of u =
-  match U.op u with
-  | Ops.Param ->
-      Option.bind
-        (List.find_opt
-           (fun child -> Option.is_some (shape_node child))
-           (U.children u))
-        shape_node
-  | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
-  | Ops.After ->
-      shape_of (first_src u)
-  | op when Ops.Group.is_elementwise op -> shape_of (first_src u)
-  | Ops.Reduce ->
-      (* Reduced axes are permuted to the front, so the output shape drops the
-         leading [num_axes] dimensions of the source. *)
-      (match U.as_reduce u with
-      | Some { src; num_axes; _ } ->
-          Option.map (List.filteri (fun i _ -> i >= num_axes)) (shape_of src)
-      | None -> None)
-  | Ops.Reshape -> shape_node (U.src u).(1)
-  | Ops.Expand ->
-      (* Expand prepends its dims to the source shape. *)
-      (match shape_node (U.src u).(1), shape_of (first_src u) with
-      | Some dims, Some inner -> Some (dims @ inner)
-      | _ -> None)
-  | Ops.Pad | Ops.Shrink ->
-      let combine = if op_is Ops.Pad u then ( + ) else ( - ) in
-      (match shape_of (first_src u), shape_node (U.src u).(1), shape_node (U.src u).(2) with
-      | Some shape, Some before, Some after ->
-          Some
-            (List.map2
-               (fun dim (before, after) -> combine (combine dim before) after)
-               shape
-               (List.combine before after))
-      | _ -> None)
-  | Ops.Permute ->
-      (match U.Arg.as_ints (U.arg u), shape_of (first_src u) with
-      | Some order, Some shape -> Some (List.map (List.nth shape) order)
-      | _ -> None)
-  | Ops.Flip -> shape_of (first_src u)
-  | _ -> None
+let shape_of u =
+  let rec concrete = function
+    | [] -> Some []
+    | dim :: dims -> Option.bind (U.const_int_value dim) (fun dim ->
+        Option.map (fun dims -> dim :: dims) (concrete dims)) in
+  Option.bind (U.shape_opt u) concrete
 
 let is_always_contiguous u = Indexing.always_contiguous (U.op u)
 
@@ -234,14 +185,14 @@ let is_always_contiguous_tests =
                (U.buffer ~slot:0 ~device:(U.Single "CPU")
                   ~shape:(mk_shape [ 4 ]) ~dtype:D.float32 ())));
       test "const" (fun () ->
-          is_true (is_always_contiguous (U.const (C.int D.int32 0))));
+          is_true (is_always_contiguous (U.const_int 0)));
       test "param" (fun () ->
           is_true (is_always_contiguous (U.param ~slot:0 ~dtype:D.float32 ())));
       test "call" (fun () ->
           is_true
             (is_always_contiguous
                (U.call
-                  ~body:(U.const (C.int D.int32 0))
+                  ~body:(U.const_int 0)
                   ~args:[]
                   ~info:
                     {
@@ -787,7 +738,7 @@ let apply_rangeify_pass_tests =
           match U.as_reduce red with
           | Some { src; _ } ->
               (match U.as_index src with
-              | Some { ptr; _ } -> is_true (ptr == param)
+              | Some { ptr; _ } -> is_true (U.buf_uop ptr == U.buf_uop param)
               | None -> fail "expected indexed reduce source")
           | None -> fail "expected lowered reduce");
       test "pad where uses indexed child" (fun () ->
@@ -810,7 +761,7 @@ let apply_rangeify_pass_tests =
           in
           let src = (U.src where).(1) in
           (match U.as_index src with
-          | Some { ptr; _ } -> is_true (ptr == param)
+          | Some { ptr; _ } -> is_true (U.buf_uop ptr == U.buf_uop param)
           | None -> fail "expected indexed pad source"));
       (* Two consumers that disagree on their ranges stage the sum. *)
       test "staged elementwise indexes raw params" (fun () ->
@@ -1125,7 +1076,7 @@ let shape_queries_release_graphs () =
     let p = U.param ~slot:898127 ~dtype:D.float32
         ~shape:(U.stack [ U.const_int 4; U.const_int 8 ]) () in
     let view = U.permute ~src:p ~order:[ 1; 0 ] in
-    ignore (Rangeify.detect_expanded view);
+    ignore (Prepare.detect_expanded view);
     Stdlib.Weak.set weak 0 (Some view)
   in
   populate ();

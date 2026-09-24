@@ -379,6 +379,12 @@ thread.
 
 ### Tolk (new)
 
+- Tensor preparation helpers move from `Rangeify` to `Prepare`:
+  `movement_ops` and `detect_expanded` share the preparation pass used by scheduling.
+- `Uop.alloc` declares temporary storage. Cached schedules bind it separately
+  for each invocation while preserving buffers that already own storage.
+- Fix sharded reductions to a scalar emitting an unindexed output pointer;
+  scalar storage parameters now acquire a flat size-one kernel view.
 - `Uop.variable` now creates a scalar storage identity; `Uop.bind` sequences
   its value through a store and rejects violations of its declared divisor.
   Nested calls resolve scalar parameters within their own scope.

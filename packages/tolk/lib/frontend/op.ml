@@ -598,7 +598,7 @@ let scatter_indexed t ~dim index src ~mode ~unique =
   let count = List.nth ish dim and extent = List.nth tsh dim in
   if count = 0 || prod tsh = 0 then t
   else begin
-    let expanded = Tolk.Rangeify.detect_expanded (T.uop index) in
+    let expanded = Tolk.Prepare.detect_expanded (T.uop index) in
     let index =
       if List.length expanded <> rank then index
       else

@@ -25,10 +25,6 @@ let round_up n align = (n + align - 1) / align * align
 
 let is_op op n = Ops.equal (U.op n) op
 
-let is_global_addrspace = function
-  | Dtype.Global -> true
-  | Dtype.Local | Dtype.Reg | Dtype.Alu -> false
-
 let after_parts n =
   match U.op n, U.children n with
   | Ops.After, src :: deps -> Some (src, deps)
@@ -70,7 +66,7 @@ let gate_kernel_sink n =
    source: After, Buffer, Param, Mselect, Mstack, or a bound variable. *)
 let rec unwrap_src (node : U.t) : U.t =
   match U.op node with
-  | Ops.After | Ops.Buffer | Ops.Param | Ops.Mselect | Ops.Mstack ->
+  | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Param | Ops.Mselect | Ops.Mstack ->
       node
   | _ ->
       match U.children node with
@@ -88,7 +84,7 @@ let states s =
     match U.op s with
     | Ops.Mselect | Ops.Mstack -> List.concat_map loop (U.children s)
     | _ when U.is_bound_var s || U.is_variable s -> []
-    | Ops.After | Ops.Buffer | Ops.Param -> [ s ]
+    | Ops.After | Ops.Buffer | Ops.Alloc | Ops.Param -> [ s ]
     | _ ->
         invalid_arg
           (Format.asprintf
@@ -264,31 +260,26 @@ let param_slot_arg args idx =
   else None
 
 let create_post_sched_buffer ctx b =
-  let tag = U.tag b in
-  match Hashtbl.find_opt ctx.created_buffers tag with
+  match Hashtbl.find_opt ctx.created_buffers (U.tag b) with
   | Some ret -> ret
   | None ->
-      let ret =
-        match U.as_buffer b with
-        | Some { buffer; shape } ->
-            let slot = fresh_internal_buffer_slot () in
-            let fresh = U.buffer ~slot ~dtype:buffer.dtype ~shape
-                ?name:buffer.name ~addrspace:buffer.addrspace ?axis:buffer.axis
-                ?device:buffer.device ~volatile:buffer.volatile () in
-            (match U.node_tag b with Some tag -> U.with_tag tag fresh | None -> fresh)
-        | None -> assert false
-      in
-      Hashtbl.replace ctx.created_buffers tag ret;
+      let p = Option.get (U.Arg.as_param_arg (U.arg b)) in
+      let device = match p.device with
+        | Some device -> device
+        | None ->
+            (match List.find_map U.device_of ctx.param_bufs with
+             | Some device -> device
+             | None -> invalid_arg "Schedule: ALLOC needs a placed call argument") in
+      let ret = U.buffer ~slot:(fresh_internal_buffer_slot ()) ~dtype:p.dtype
+          ?shape:(Option.map U.const_int p.size) ~device () in
+      Hashtbl.replace ctx.created_buffers (U.tag b) ret;
       ret
 
 let post_sched_cache_rule ctx node =
-  match U.as_param node, U.as_buffer node with
-  | Some { param = { slot; _ }; _ }, _ -> param_slot_arg ctx.param_bufs slot
-  | _, Some { buffer; _ } ->
-      if buffer.slot >= 0 && is_global_addrspace buffer.addrspace then
-        Some (create_post_sched_buffer ctx node)
-      else None
-  | None, None -> None
+  match U.op node, U.Arg.as_param_arg (U.arg node) with
+  | Ops.Param, Some { slot; _ } -> param_slot_arg ctx.param_bufs slot
+  | Ops.Alloc, Some _ -> Some (create_post_sched_buffer ctx node)
+  | _ -> None
 
 (* A LINEAR call introduces a lexical scope. Substitute its positional
    storage formals without entering callees, then resolve scalar names inside
@@ -615,7 +606,7 @@ let simplify_copy_kernel ast =
     U.first_match
       [
         Upat.Pattern_matcher.rewrite Symbolic.sym;
-        Rangeify.movement_ops;
+        Prepare.movement_ops;
         Simplify.flatten_range;
       ]
   in
