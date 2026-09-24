@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Device.Lru_allocator` no longer leaks a buffer that the GC frees while an
+  allocation searches the cache. The allocation stored the cache it had read,
+  dropping the new entry, so that buffer was never reused or freed.
+
 - Dropping a Metal graph no longer risks a crash at a later synchronize. Its
   finaliser pruned the in-flight command list and could run while another
   graph was pruning it, leaving a released command buffer to be awaited.

@@ -48,34 +48,53 @@ module Allocator = struct
 end
 
 module Lru_allocator = struct
+  (* Buffers are freed by GC finalisers, which can run inside any allocation,
+     including one that [alloc] makes while it searches the cache, so the cache
+     only changes by compare-and-set: an update that raced with a free is
+     retried rather than overwriting it. *)
   let wrap (inner : 'buf Allocator.t) : 'buf Allocator.t =
-    let cache : (int * Buffer_spec.t * 'buf) list ref = ref [] in
+    let cache : (int * Buffer_spec.t * 'buf) list Atomic.t = Atomic.make [] in
     let free_cache () =
-      List.iter (fun (size, spec, buf) -> inner.free buf size spec) !cache;
-      cache := []
+      List.iter
+        (fun (size, spec, buf) -> inner.free buf size spec)
+        (Atomic.exchange cache [])
+    in
+    let rec take size spec =
+      let entries = Atomic.get cache in
+      let rec find acc = function
+        | (s, sp, buf) :: rest when s = size && sp = spec ->
+            Some (buf, List.rev_append acc rest)
+        | entry :: rest -> find (entry :: acc) rest
+        | [] -> None
+      in
+      match find [] entries with
+      | None -> None
+      | Some (buf, rest) ->
+          if Atomic.compare_and_set cache entries rest then Some buf
+          else take size spec
+    in
+    let rec cache_buf entry =
+      let entries = Atomic.get cache in
+      if not (Atomic.compare_and_set cache entries (entry :: entries)) then
+        cache_buf entry
     in
     {
       inner with
       alloc =
         (fun size spec ->
-          let rec find acc = function
-            | (s, sp, buf) :: rest when s = size && sp = spec ->
-                cache := List.rev_append acc rest;
-                buf
-            | entry :: rest -> find (entry :: acc) rest
-            | [] -> (
-                try inner.alloc size spec
-                with exn -> (
-                  free_cache ();
-                  try inner.alloc size spec with _ -> raise exn))
-          in
-          find [] !cache);
+          match take size spec with
+          | Some buf -> buf
+          | None -> (
+              try inner.alloc size spec
+              with exn -> (
+                free_cache ();
+                try inner.alloc size spec with _ -> raise exn)));
       free =
         (fun buf size spec ->
           if Helpers.Context_var.get Helpers.lru <> 0
              && (not spec.Buffer_spec.nolru)
              && Option.is_none spec.external_ptr
-          then cache := (size, spec, buf) :: !cache
+          then cache_buf (size, spec, buf)
           else inner.free buf size spec);
     }
 end
