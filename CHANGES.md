@@ -1891,6 +1891,10 @@ thread.
 
 ### Kaun
 
+- Add `Cache_index.every m index` for layers that keep one entry per block of
+  `m` positions, such as a compressed key: `make ~every` and `rows ~every` give
+  the index a table of blocks, and a block is stored by its last token and seen
+  from that token on.
 - Add `Cache_index.select columns index`: each token reads only the columns it
   chose, so `extend` returns `[batch; seq; k; ...]` rows and a sparse or
   windowed layer's read costs `k` rows per token whatever the context.

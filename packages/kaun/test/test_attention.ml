@@ -894,6 +894,425 @@ let test_index_select_compiled () =
         (slots_of compiled.pool))
     [ [| 1; 3; 2; -1; 1; 5; 6; 0; 4; 0 |]; [| 0; 1; 2; 3; 4; 4; 3; 2; 1; 0 |] ]
 
+(* Blocks of positions. With values numbered by position, a block holds the
+   value of the position that closed it. *)
+
+(* One sequence of 12 positions over contiguous slots, its blocks of 4 over the
+   shuffled slots [blocks], and a pool of 3 blocks. *)
+let blocks_at ?(blocks = [| 2; 0; 1 |]) pos =
+  let n = Array.length pos in
+  Cache_index.make
+    ~every:[ (4, int32s [| 1; 3 |] blocks) ]
+    ~pos:(int32s [| 1; n |] pos)
+    ~table:(int32s [| 1; 12 |] (Array.init 12 Fun.id))
+    ()
+
+let block_pool () = Cache_index.pool ~slots:3 Nx.float32 [| 1 |]
+
+(* Token [t] sees block [j] when [(j + 1) * 4 <= t + 1]. *)
+let closed ~blocks positions =
+  List.concat_map
+    (fun t -> List.init blocks (fun j -> t >= 0 && (j + 1) * 4 <= t + 1))
+    positions
+
+let test_index_every () =
+  let from0 = List.init 10 Fun.id in
+  let index = Cache_index.every 4 (blocks_at (Array.of_list from0)) in
+  equal ~msg:"a column is a block" int 3 (Cache_index.context index);
+  let seen, pool =
+    Cache_index.extend index (numbered ~batch:1 ~from:0 10) (block_pool ())
+  in
+  values_are ~msg:"only a block's last token stores, at the block's slot"
+    ~tol:0. [| 8.; 0.; 4. |] (slots_of pool);
+  values_are ~msg:"a block is seen once closed" ~tol:0. [| 4.; 8.; 0. |] seen;
+  equal ~msg:"position t sees block j when (j + 1) * 4 <= t + 1" (list bool)
+    (closed ~blocks:3 from0)
+    (bools (Cache_index.mask index));
+  (* One token at a time, the block closes with its last token. *)
+  let _, pool =
+    List.fold_left
+      (fun (_, pool) t ->
+        let index = Cache_index.every 4 (blocks_at [| t |]) in
+        let seen, pool =
+          Cache_index.extend index (numbered ~batch:1 ~from:t 1) pool
+        in
+        values_are
+          ~msg:(Printf.sprintf "position %d, one token" t)
+          ~tol:0.
+          (Array.init 3 (fun j ->
+               if (j + 1) * 4 <= t + 1 then float_of_int ((j * 4) + 4) else 0.))
+          seen;
+        (seen, pool))
+      (Nx.zeros Nx.float32 [| 1 |], block_pool ())
+      (List.init 12 Fun.id)
+  in
+  values_are ~msg:"token by token stores the same blocks" ~tol:0.
+    [| 8.; 12.; 4. |] (slots_of pool);
+  (* 10 positions in 3 blocks: the last block reaches past the positions. *)
+  let ten =
+    Cache_index.make
+      ~every:[ (4, int32s [| 1; 3 |] [| 0; 1; 2 |]) ]
+      ~pos:(int32s [| 1; 3 |] [| 9; 10; 11 |])
+      ~table:(int32s [| 1; 10 |] (Array.init 10 Fun.id))
+      ()
+  in
+  let positions index =
+    Array.to_list (Array.map Int32.to_int (flat (Cache_index.positions index)))
+  in
+  equal ~msg:"positions are clamped to the positions' table, at any stride"
+    (list int) (positions ten)
+    (positions (Cache_index.every 4 ten))
+
+(* A padded token, a lane outside the table and an unallocated block store
+   nothing, and the scratch row they write is never read. Every value is
+   nonzero. *)
+let test_index_every_addresses () =
+  let index =
+    Cache_index.every 4
+      (Cache_index.make
+         ~row:(int32s [| 2 |] [| 0; 3 |])
+         ~every:[ (4, int32s [| 1; 3 |] [| 2; -1; 1 |]) ]
+         ~pos:(int32s [| 2; 9 |] (Array.init 18 (fun i -> (i mod 9) - 1)))
+         ~table:(int32s [| 1; 12 |] (Array.init 12 Fun.id))
+         ())
+  in
+  let values =
+    Nx.create Nx.float32 [| 2; 9; 1 |]
+      (Array.init 18 (fun i -> float_of_int (10 + i)))
+  in
+  let seen, pool = Cache_index.extend index values (block_pool ()) in
+  values_are
+    ~msg:
+      "position 3 stores block 0; block 1 is unallocated, padding and the lane \
+       outside the table store nothing"
+    ~tol:0. [| 0.; 0.; 14. |] (slots_of pool);
+  is_true ~msg:"the scratch row holds a store" (Nx.item [ 3; 0 ] pool <> 0.);
+  values_are ~msg:"yet an unallocated block reads as zero" ~tol:0.
+    [| 14.; 0.; 0.; 0.; 0.; 0. |]
+    seen
+
+(* Tokens at positions 10 and 11 behind a padded one. *)
+let test_index_every_window () =
+  let window =
+    Cache_index.window 4 (Cache_index.every 4 (blocks_at [| -1; 10; 11 |]))
+  in
+  equal ~msg:"under a window w, block j is seen while also j * 4 + 3 > t - w"
+    (list bool)
+    [ false; false; false; false; true; false; false; false; true ]
+    (bools (Cache_index.mask window));
+  let pool = Nx.create Nx.float32 [| 4; 1 |] [| 8.; 0.; 4.; 0. |] in
+  let seen, _ =
+    Cache_index.extend window
+      (Nx.create Nx.float32 [| 1; 3; 1 |] [| 99.; 11.; 12. |])
+      pool
+  in
+  values_are
+    ~msg:"a block below every window reads as zero; block 2 closes in the call"
+    ~tol:0. [| 0.; 8.; 12. |] seen;
+  equal ~msg:"advance keeps the blocks and the window" (list bool)
+    [ false; false; true ]
+    (bools (Cache_index.mask (Cache_index.advance window)))
+
+(* A selection at stride 4 chooses blocks: a block not yet closed reads as zero
+   and is masked, even where its slot holds something. *)
+let test_index_every_select () =
+  let pool = Nx.create Nx.float32 [| 4; 1 |] [| 0.; nan; 4.; nan |] in
+  let columns = int32s [| 1; 2; 4 |] [| 1; 0; 2; -1; 1; 0; 2; 3 |] in
+  let index =
+    Cache_index.select columns (Cache_index.every 4 (blocks_at [| 5; 7 |]))
+  in
+  let seen, pool =
+    Cache_index.extend index
+      (Nx.create Nx.float32 [| 1; 2; 1 |] [| 6.; 8. |])
+      pool
+  in
+  values_are
+    ~msg:"position 7 closes block 1 in the call and reads it; others are zero"
+    ~tol:0.
+    [| 0.; 4.; 0.; 0.; 8.; 4.; 0.; 0. |]
+    seen;
+  equal ~msg:"and masked" (list bool)
+    [ false; true; false; false; true; true; false; false ]
+    (bools (Cache_index.mask index));
+  values_are ~msg:"what is stored does not change" ~tol:0. [| 8. |]
+    (Nx.slice [ R (0, 1) ] pool)
+
+(* On a whole index the columns are the lane's blocks by position. Lane 0 holds
+   6 tokens padded by 4, lane 1 holds 10. *)
+let test_index_every_whole () =
+  let index =
+    Cache_index.every 4
+      (Cache_index.whole ~lens:[| 6; 10 |] ~batch:2 ~seq:10 ())
+  in
+  equal ~msg:"ceil (seq / m) blocks" int 3 (Cache_index.context index);
+  let pool = Cache_index.pool ~slots:0 Nx.float32 [| 1 |] in
+  let seen, pool' =
+    Cache_index.extend index (numbered ~batch:2 ~from:0 10) pool
+  in
+  values_are
+    ~msg:"the values of the tokens that close a block, zero for an open one"
+    ~tol:0.
+    [| 8.; 0.; 0.; 4.; 8.; 0. |]
+    seen;
+  is_true ~msg:"nothing is kept" (pool == pool');
+  equal ~msg:"a token sees the blocks closed at or before its position"
+    (list bool)
+    (closed ~blocks:3 [ -1; -1; -1; -1; 0; 1; 2; 3; 4; 5 ]
+    @ closed ~blocks:3 (List.init 10 Fun.id))
+    (bools (Cache_index.mask index));
+  let chosen =
+    Cache_index.select
+      (Nx.broadcast_to [| 2; 10; 2 |] (int32s [| 1; 1; 2 |] [| 1; 0 |]))
+      index
+  in
+  let seen, _ = Cache_index.extend chosen (numbered ~batch:2 ~from:0 10) pool in
+  values_are ~msg:"a chosen block is read from the token that closed it" ~tol:0.
+    (Array.concat
+       [
+         Array.concat (List.init 7 (fun _ -> [| 0.; 0. |]));
+         Array.concat (List.init 3 (fun _ -> [| 0.; 8. |]));
+         Array.concat (List.init 3 (fun _ -> [| 0.; 0. |]));
+         Array.concat (List.init 4 (fun _ -> [| 0.; 4. |]));
+         Array.concat (List.init 3 (fun _ -> [| 8.; 4. |]));
+       ])
+    seen
+
+(* Each sequence owns a run of ceil (context / m) block slots. *)
+let test_index_every_rows () =
+  let index =
+    Cache_index.every 4 (Cache_index.rows ~every:[ 4 ] ~context:10 [| 4; 4 |])
+  in
+  equal ~msg:"ceil (10 / 4) blocks" int 3 (Cache_index.context index);
+  let _, pool =
+    Cache_index.extend index
+      (numbered ~batch:2 ~from:0 4)
+      (Cache_index.pool ~slots:6 Nx.float32 [| 1 |])
+  in
+  values_are ~msg:"sequence b's block j is slot 3 b + j" ~tol:0.
+    [| 4.; 0.; 0.; 4.; 0.; 0. |]
+    (slots_of pool)
+
+let test_index_every_rejects () =
+  let rows = Cache_index.rows ~every:[ 4; 128 ] ~context:12 [| 4 |] in
+  is_true ~msg:"every 1 of a constructor's index is that index"
+    (Cache_index.every 1 rows == rows);
+  let four = Cache_index.every 4 rows in
+  is_true ~msg:"every m of an index read in blocks of m is that index"
+    (Cache_index.every 4 four == four);
+  raises (Invalid_argument "Cache_index.every: m must be positive, got 0")
+    (fun () -> Cache_index.every 0 rows);
+  raises
+    (Invalid_argument
+       "Cache_index.every: the index has no table for blocks of 8 positions")
+    (fun () -> Cache_index.every 8 rows);
+  raises
+    (Invalid_argument
+       "Cache_index.every: the index already reads blocks of 4 positions")
+    (fun () -> Cache_index.every 128 four);
+  raises (Invalid_argument "Cache_index.every: the index selects columns")
+    (fun () ->
+      Cache_index.every 4
+        (Cache_index.select (int32s [| 1; 4; 1 |] [| 0; 1; 2; 3 |]) rows));
+  raises
+    (Invalid_argument
+       "Cache_index.rows: a block holds at least 2 positions, got 1") (fun () ->
+      Cache_index.rows ~every:[ 1 ] ~context:12 [| 2 |]);
+  raises
+    (Invalid_argument "Cache_index.rows: two tables for blocks of 4 positions")
+    (fun () -> Cache_index.rows ~every:[ 4; 4 ] ~context:12 [| 2 |]);
+  let table = int32s [| 1; 12 |] (Array.init 12 Fun.id) in
+  let make every =
+    Cache_index.make ~every ~pos:(int32s [| 1; 1 |] [| 0 |]) ~table ()
+  in
+  let three = int32s [| 1; 3 |] [| 0; 1; 2 |] in
+  raises
+    (Invalid_argument
+       "Cache_index.make: a block holds at least 2 positions, got 1") (fun () ->
+      make [ (1, three) ]);
+  raises
+    (Invalid_argument "Cache_index.make: two tables for blocks of 4 positions")
+    (fun () -> make [ (4, three); (4, three) ]);
+  raises
+    (Invalid_argument
+       "Cache_index.make: the table of blocks of 4 positions must have shape \
+        [1; context], context positive") (fun () ->
+      make [ (4, int32s [| 2; 3 |] (Array.make 6 0)) ]);
+  let count index =
+    let n = ref 0 in
+    Cache_index.iter (fun _ -> incr n) index;
+    !n
+  in
+  equal ~msg:"the traversals visit every table" int 4 (count rows);
+  let unallocated =
+    Cache_index.map
+      (fun t -> if Nx.shape t = [| 1; 3 |] then Nx.full_like t (-1l) else t)
+      four
+  in
+  let _, pool =
+    Cache_index.extend unallocated (numbered ~batch:1 ~from:0 4) (block_pool ())
+  in
+  values_are ~msg:"map reaches the tables of blocks" ~tol:0. [| 0.; 0.; 0. |]
+    (slots_of pool);
+  raises
+    (Invalid_argument
+       "Cache_index.map2: the indices read blocks of different sizes")
+    (fun () -> Cache_index.map2 (fun a _ -> a) four rows);
+  raises
+    (Invalid_argument
+       "Cache_index.map2: the indices were not built the same way") (fun () ->
+      Cache_index.map2
+        (fun a _ -> a)
+        rows
+        (Cache_index.rows ~every:[ 4 ] ~context:12 [| 2 |]))
+
+(* A toy compressed stream: each token stores its value at its position; the
+   token that closes a block of 4 reads its block's positions through a
+   selection and stores their sum as the block's entry; each token then sums the
+   entries it sees. *)
+
+type stream = {
+  index : Cache_index.t;
+  x : Nx.float32_t;
+  y : Nx.float32_t;
+  sources : Nx.float32_t;
+  entries : Nx.float32_t;
+}
+
+module Stream = struct
+  type t = stream
+
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
+    {
+      index = Cache_index.map f s.index;
+      x = f s.x;
+      y = f s.y;
+      sources = f s.sources;
+      entries = f s.entries;
+    }
+
+  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
+    {
+      index = Cache_index.map2 f a.index b.index;
+      x = f a.x b.x;
+      y = f a.y b.y;
+      sources = f a.sources b.sources;
+      entries = f a.entries b.entries;
+    }
+
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) s =
+    Cache_index.iter f s.index;
+    f s.x;
+    f s.y;
+    f s.sources;
+    f s.entries
+end
+
+let stream s =
+  let batch = Cache_index.batch s.index and seq = Cache_index.seq s.index in
+  let pos = Cache_index.positions s.index in
+  let first = Nx.reshape [| batch; seq; 1 |] (Nx.sub pos (Nx.mod_s pos 4l)) in
+  let block =
+    Nx.add first (Nx.reshape [| 1; 1; 4 |] (Nx.arange Nx.int32 0 4 1))
+  in
+  let own, sources =
+    Cache_index.extend (Cache_index.select block s.index) s.x s.sources
+  in
+  let blocks = Cache_index.every 4 s.index in
+  let seen, entries =
+    Cache_index.extend blocks (Nx.sum ~axes:[ 2 ] own) s.entries
+  in
+  let context = Cache_index.context blocks in
+  let y =
+    Nx.sum ~axes:[ 2 ]
+      (Nx.where (Cache_index.mask blocks)
+         (Nx.reshape [| batch; 1; context |] seen)
+         (Nx.zeros Nx.float32 [| 1 |]))
+  in
+  { s with y; sources; entries }
+
+(* Blocks sum positions plus one: block j holds 16 j + 10. *)
+let stream_expected positions =
+  List.map
+    (fun t ->
+      List.fold_left ( +. ) 0.
+        (List.init 3 (fun j ->
+             if (j + 1) * 4 <= t + 1 then float_of_int ((16 * j) + 10) else 0.)))
+    positions
+
+(* A sequence of 12 positions fed in calls, each a list of lanes of one
+   sequence, each lane a list of positions, over shuffled tables. *)
+let feed_stream ?(step = stream) calls =
+  let table = int32s [| 1; 12 |] [| 5; 11; 0; 7; 2; 9; 4; 1; 10; 3; 8; 6 |] in
+  let blocks = int32s [| 1; 3 |] [| 1; 2; 0 |] in
+  let ys, s =
+    List.fold_left
+      (fun (ys, s) lanes ->
+        let batch = List.length lanes and seq = List.length (List.hd lanes) in
+        let pos = int32s [| batch; seq |] (Array.of_list (List.concat lanes)) in
+        let index =
+          Cache_index.make
+            ~row:(int32s [| batch |] (Array.make batch 0))
+            ~every:[ (4, blocks) ]
+            ~pos ~table ()
+        in
+        let x =
+          Nx.add_s (Nx.cast Nx.float32 (Nx.reshape [| batch; seq; 1 |] pos)) 1.
+        in
+        let s =
+          step { s with index; x; y = Nx.zeros Nx.float32 [| batch; seq |] }
+        in
+        (List.rev_append (Array.to_list (flat s.y)) ys, s))
+      ( [],
+        {
+          index = Cache_index.rows ~context:1 [| 1 |];
+          x = Nx.zeros Nx.float32 [| 1; 1; 1 |];
+          y = Nx.zeros Nx.float32 [| 1; 1 |];
+          sources = Cache_index.pool ~slots:12 Nx.float32 [| 1 |];
+          entries = Cache_index.pool ~slots:3 Nx.float32 [| 1 |];
+        } )
+      calls
+  in
+  (List.rev ys, slots_of s.entries)
+
+let test_index_every_stream () =
+  let expected = stream_expected (List.init 12 Fun.id) in
+  let entries = [| 42.; 10.; 26. |] in
+  let check msg calls =
+    let ys, stored = feed_stream calls in
+    equal ~msg:(msg ^ ": outputs") (list float_exact) expected ys;
+    values_are ~msg:(msg ^ ": entries") ~tol:0. entries stored
+  in
+  check "whole" [ [ List.init 12 Fun.id ] ];
+  check "chunks of 3 split every block"
+    (List.init 4 (fun c -> [ List.init 3 (fun i -> (3 * c) + i) ]));
+  check "token by token" (List.init 12 (fun t -> [ [ t ] ]));
+  check "one-token lanes close blocks 1 and 2 in one call"
+    [ [ [ 0; 1; 2; 3 ] ]; List.init 8 (fun i -> [ 4 + i ]) ];
+  let whole = Cache_index.whole ~batch:1 ~seq:12 () in
+  let s =
+    stream
+      {
+        index = whole;
+        x = numbered ~batch:1 ~from:0 12;
+        y = Nx.zeros Nx.float32 [| 1; 12 |];
+        sources = Cache_index.pool ~slots:0 Nx.float32 [| 1 |];
+        entries = Cache_index.pool ~slots:0 Nx.float32 [| 1 |];
+      }
+  in
+  equal ~msg:"a whole index computes the same outputs" (list float_exact)
+    expected
+    (Array.to_list (flat s.y))
+
+let test_index_every_compiled () =
+  let step = Rune.jit2 (module Stream) (module Stream) stream in
+  let expected = stream_expected (List.init 12 Fun.id) in
+  let ys, stored =
+    feed_stream ~step
+      [ [ [ 0; 1; 2 ] ]; [ [ 3; 4; 5 ] ]; [ [ 6; 7; 8 ] ]; [ [ 9; 10; 11 ] ] ]
+  in
+  equal ~msg:"outputs" (list float_exact) expected ys;
+  values_are ~msg:"entries" ~tol:0. [| 42.; 10.; 26. |] stored
+
 let test_cached_chunking_is_invariant () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = layer Nx.float32 in
@@ -1568,6 +1987,19 @@ let () =
             test_index_select_traversals;
           test "a compiled selection reads and stores as eager"
             test_index_select_compiled;
+          test "a block stands at its last position" test_index_every;
+          test "what addresses nothing stores no block"
+            test_index_every_addresses;
+          test "a window counts positions, not blocks" test_index_every_window;
+          test "a selection of blocks sees closed ones" test_index_every_select;
+          test "on a whole index blocks are read from their closing tokens"
+            test_index_every_whole;
+          test "rows gives each sequence a run of blocks" test_index_every_rows;
+          test "blocks are part of the index" test_index_every_rejects;
+          test "a block's entry does not depend on how it was fed"
+            test_index_every_stream;
+          test "a compiled stream of blocks stores and reads as eager"
+            test_index_every_compiled;
           test "chunking is invariant" test_cached_chunking_is_invariant;
           test "rows of different lengths share a batch"
             test_cached_ragged_batch;

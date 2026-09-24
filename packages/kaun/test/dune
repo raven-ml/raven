@@ -24,5 +24,15 @@
   test_half
   test_rope
   test_decoder)
+ (modules
+  (:standard \ test_cache_index_metal))
  (package kaun)
  (libraries kaun rune vega nx nx.core windtrap unix))
+
+(tests
+ (names test_cache_index_metal)
+ (modules test_cache_index_metal)
+ (package kaun)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries kaun rune nx windtrap))
