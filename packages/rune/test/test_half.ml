@@ -94,17 +94,6 @@ let test_jit_layernorm (type b) name (dt : (float, b) Nx.dtype) ~eps () =
 
 (* ───── pmap with bfloat16 leaves ───── *)
 
-module Single_bf16 = struct
-  type t = Nx.bfloat16_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 let devs2 = [ "CPU:1"; "CPU:2" ]
 
 (* Reducing over the sharded axis forces a cross-device allreduce at bfloat16.
@@ -114,7 +103,7 @@ let test_pmap_bf16_allreduce () =
   let f x = Nx.sum x ~axes:[ 0 ] in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 (module Single_bf16) f in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor f in
   check_arr ~eps:0.0625 ~msg:"bf16 allreduce vs single device" (to_arr expect)
     (g x);
   check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g x)
@@ -125,7 +114,7 @@ let test_pmap_bf16_elementwise () =
   let f x = Nx.mul x x in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 (module Single_bf16) f in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor f in
   check_arr ~eps:0.0 ~msg:"bf16 elementwise byte-equal" (to_arr expect) (g x)
 
 let test_pmap_bf16_mean_grad () =
@@ -133,7 +122,7 @@ let test_pmap_bf16_mean_grad () =
   let grads x = Rune.grad' loss x in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' grads x in
-  let g = Rune.pmap ~devices:devs2 (module Single_bf16) grads in
+  let g = Rune.pmap ~devices:devs2 Nx.Ptree.tensor grads in
   check_arr ~eps:0.0625 ~msg:"bf16 grad allreduce" (to_arr expect) (g x)
 
 (* ───── vmap over half tensors ───── *)

@@ -192,79 +192,45 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   Effect.perform (Scan.E_scan { req with req_record = true })
                 with
                 | res ->
-                    let Scan.
-                          {
-                            r_carry = Scan.Tree (_, c');
-                            r_ys = Scan.Tree (ymod, ys);
-                          } =
-                      res
-                    in
-                    let Scan.
-                          {
-                            req_carry = Scan.Tree (cmod, c0);
-                            req_xs = Scan.Tree (xmod, xs0);
-                            req_step = step;
-                            _;
-                          } =
-                      req
-                    in
-                    let module C = (val cmod) in
-                    let module X = (val xmod) in
-                    let module Y = (val ymod) in
-                    (* Both packs bind this module's [t]. *)
-                    let c' = Obj.magic c' in
-                    Y.iter (fun (type a b) (leaf : (a, b) t) -> track leaf) ys;
-                    C.iter (fun (type a b) (leaf : (a, b) t) -> track leaf) c';
+                    let Scan.{ req_carry; req_xs; req_step = step; _ } = req in
+                    List.iter (fun (Nx.P leaf) -> track leaf) res.r_ys;
+                    List.iter (fun (Nx.P leaf) -> track leaf) res.r_carry;
                     Tape.record tape (fun () ->
-                        let cotangents (type a)
-                            (module P : Nx.Ptree.S with type t = a) (v : a) =
-                          P.map
-                            (fun (type a b) (leaf : (a, b) t) ->
-                              Tape.cotangent tape leaf)
-                            v
+                        let cotangents =
+                          List.map (fun (Nx.P leaf) ->
+                              Nx.P (Tape.cotangent tape leaf))
                         in
                         let bwd =
                           Scan.
                             {
                               bwd_step = step;
-                              bwd_carry = Scan.Tree (cmod, c0);
-                              bwd_xs = Scan.Tree (xmod, xs0);
-                              bwd_dc = Scan.Tree (cmod, cotangents cmod c');
-                              bwd_dys = Scan.Tree (ymod, cotangents ymod ys);
+                              bwd_carry = req_carry;
+                              bwd_xs = req_xs;
+                              bwd_dc = cotangents res.r_carry;
+                              bwd_dys = cotangents res.r_ys;
                             }
                         in
-                        match Effect.perform (Scan.E_scan_bwd bwd) with
-                        | Scan.
-                            {
-                              br_carry = Scan.Tree (_, dc0);
-                              br_xs = Scan.Tree (_, dxs);
-                              br_closed;
-                            } ->
-                            let accumulate (type a)
-                                (module P : Nx.Ptree.S with type t = a) (v : a)
-                                dv =
-                              ignore
-                                (P.map2
-                                   (fun (type a b) (a : (a, b) t) (b : (a, b) t)
-                                      ->
-                                     if Tape.tracked tape a then
-                                       Tape.accumulate tape a b;
-                                     b)
-                                   v (Obj.magic dv))
-                            in
-                            accumulate cmod c0 dc0;
-                            accumulate xmod xs0 dxs;
-                            (* External inputs of the loop (tensors the body
-                               closes over): accumulate the cotangents the
-                               backward loop totalled for them. Only a tensor
-                               tracked here receives a contribution — loop-slot
-                               placeholders and compile-time constants never
-                               are. *)
-                            List.iter
-                              (fun (Scan.Closed_ctan (g, dg)) ->
-                                if Tape.tracked tape g then
-                                  Tape.accumulate tape g dg)
-                              br_closed);
+                        let { Scan.br_carry; br_xs; br_closed } =
+                          Effect.perform (Scan.E_scan_bwd bwd)
+                        in
+                        let accumulate =
+                          List.iter2 (fun (Nx.P a) b ->
+                              if Tape.tracked tape a then
+                                Tape.accumulate tape a
+                                  (Nx.unpack (Nx.dtype a) b))
+                        in
+                        accumulate req_carry br_carry;
+                        accumulate req_xs br_xs;
+                        (* External inputs of the loop (tensors the body closes
+                           over): accumulate the cotangents the backward loop
+                           totalled for them. Only a tensor tracked here
+                           receives a contribution — loop-slot placeholders and
+                           compile-time constants never are. *)
+                        List.iter
+                          (fun (Scan.Closed_ctan (g, dg)) ->
+                            if Tape.tracked tape g then
+                              Tape.accumulate tape g dg)
+                          br_closed);
                     continue k res
                 | exception Scan.Not_staged ->
                     (* The stager declined after tracing the body (e.g. a
@@ -1097,38 +1063,51 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       (* Custom rules. The forward function runs in the enclosing context: this
          handler replaces its internals with the user's rule, while enclosing
          transformations see the forward computation itself. *)
-      | Custom.E_custom_vjp (Custom.Vjp_call { tree; params; fwd; bwd }) ->
+      | Custom.E_custom_vjp
+          (Custom.Vjp_call { params_s; result_s; params; fwd; bwd }) ->
           Some
             (fun k ->
-              let (module Q) = tree in
-              let any = ref false in
-              Q.iter (fun leaf -> if tracked leaf then any := true) params;
+              let any =
+                Nx.Ptree.fold params_s
+                  (fun _ leaf any -> any || tracked leaf)
+                  params false
+              in
               let y, res = fwd params in
               (* A result that is one of the parameters is aliased, so its
                  cotangent is the result's alone. *)
-              let y = if !any then reshape y (T.shape y) else y in
-              if !any then begin
-                track y;
+              let y = if any then Structure.aliases result_s y else y in
+              if any then begin
+                Nx.Ptree.fold result_s (fun _ leaf () -> track leaf) y ();
                 Tape.record tape (fun () ->
-                    match Tape.find tape y with
-                    | None -> ()
-                    | Some ct ->
-                        let grads = bwd res ct in
-                        ignore
-                          (Q.map2
-                             (fun leaf g ->
-                               if tracked leaf then Tape.accumulate tape leaf g;
-                               leaf)
-                             params grads))
+                    let seeded = ref false in
+                    let cts =
+                      Nx.Ptree.map result_s
+                        (fun _ leaf ->
+                          match Tape.find tape leaf with
+                          | Some ct ->
+                              seeded := true;
+                              ct
+                          | None -> T.zeros_like leaf)
+                        y
+                    in
+                    if !seeded then
+                      ignore
+                        (Structure.map2 "Rune.custom_vjp" params_s
+                           ~this:"the parameters" ~that:"bwd's gradients"
+                           (fun _ leaf g ->
+                             if tracked leaf then Tape.accumulate tape leaf g;
+                             leaf)
+                           params (bwd res cts)))
               end;
               continue k y)
-      | Custom.E_custom_jvp (Custom.Jvp_call { tree; params; f; _ }) ->
+      | Custom.E_custom_jvp (Custom.Jvp_call { params_s; params; f; _ }) ->
           Some
             (fun k ->
-              let (module Q) = tree in
-              let any = ref false in
-              Q.iter (fun leaf -> if tracked leaf then any := true) params;
-              if !any then
+              if
+                Nx.Ptree.fold params_s
+                  (fun _ leaf any -> any || tracked leaf)
+                  params false
+              then
                 invalid_arg
                   "Rune: a custom_jvp function is not reverse-differentiable; \
                    define a custom_vjp rule instead"

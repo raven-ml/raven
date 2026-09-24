@@ -189,19 +189,7 @@ let devices =
 
 (* The ids and x of a case are the compiled function's inputs; the weight is
    captured, as a model captures its parameters. *)
-module Inputs = struct
-  type t = Nx.int32_t * Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (ids, x) = (f ids, f x)
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (ids, x)
-      (ids', x') =
-    (f ids ids', f x x')
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (ids, x) =
-    f ids;
-    f x
-end
+let inputs () = Nx.Ptree.(pair tensor tensor)
 
 (* The compiled product, [x] an input at its own dtype. [x] is rounded once
    outside: rune's jit, as tinygrad, folds a float32 -> float16 -> float32 round
@@ -211,22 +199,7 @@ let compiled (type b) ~device c (x : (float, b) Nx.t) : (float, b) Nx.t =
   match c.ids with
   | None -> Rune.jit' ~device (product c) x
   | Some ids ->
-      let module I = struct
-        type t = Nx.int32_t * (float, b) Nx.t
-
-        let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) (ids, x) =
-          (f ids, f x)
-
-        let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
-            (ids, x) (ids', x') =
-          (f ids ids', f x x')
-
-        let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) (ids, x) =
-          f ids;
-          f x
-      end in
-      Rune.jit ~device
-        (module I)
+      Rune.jit ~device (inputs ())
         (fun (ids, x) -> product { c with ids = Some ids } x)
         (ids, x)
 
@@ -562,7 +535,7 @@ let test_dequant () =
           let actual =
             Nx.to_array
               (Nx.cast Nx.float32
-                 (Rune.jit ~device (module Nx_quant) (Nx_quant.dequant dt) w))
+                 (Rune.jit ~device Nx_quant.ptree (Nx_quant.dequant dt) w))
           in
           Array.iteri
             (fun i e ->
@@ -593,9 +566,8 @@ let test_one_token_gathers () =
     let w = weight ~scale:(fun _ -> 127) [| e; 64; 256 |] in
     let ids = ints [| 1; 4 |] [| 3; 0; 2; 1 |] in
     let f =
-      Rune.jit ~device:"CPU"
-        (module Inputs)
-        (fun (ids, x) -> Nx_quant.apply ~ids w x)
+      Rune.jit ~device:"CPU" (inputs ()) (fun (ids, x) ->
+          Nx_quant.apply ~ids w x)
     in
     ignore (Nx.to_array (f (ids, x)));
     let before = !Tolk.Helpers.Global_counters.global_ops in
@@ -840,7 +812,7 @@ let test_vmap () =
         (per_lane
            (fun i -> Nx_quant.apply ~ids w (Nx.slice [ A; I i ] xt))
            (Nx.dim 1 xt))
-        (Rune.vmap' ~in_axis:1 (Nx_quant.apply ~ids w) xt))
+        (Rune.vmap' (Nx_quant.apply ~ids w) (Nx.moveaxis 1 0 xt)))
     [
       ints [| 3; 1 |] [| 0; 3; -1 |];
       ints [| 3; 4 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |];
@@ -848,16 +820,21 @@ let test_vmap () =
   let routed (ids, x) = Nx_quant.apply ~ids w x in
   close ~msg:"over ids and x"
     (per_lane (fun i -> routed (row i ids, row i xs)) 3)
-    (Rune.vmap (module Inputs) routed (ids, xs));
+    (Rune.vmap Nx.Ptree.(inputs () @-> returns tensor) routed (ids, xs));
   close ~msg:"over ids and x, compiled"
     (per_lane (fun i -> routed (row i ids, row i xs)) 3)
-    (Rune.jit (module Inputs) (Rune.vmap (module Inputs) routed) (ids, xs));
+    (Rune.jit (inputs ())
+       (Rune.vmap Nx.Ptree.(inputs () @-> returns tensor) routed)
+       (ids, xs));
   let ws = weight [| 3; 4; 8; 64 |] in
-  let lane i = Nx_quant.map (fun t -> row i t) ws in
+  let lane i = Nx.Ptree.map Nx_quant.ptree (fun _ t -> row i t) ws in
   let x = row 0 xs and one = row 0 ids in
   close ~msg:"over the weight"
     (per_lane (fun i -> Nx_quant.apply ~ids:one (lane i) x) 3)
-    (Rune.vmap (module Nx_quant) (fun w -> Nx_quant.apply ~ids:one w x) ws);
+    (Rune.vmap
+       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
+       (fun w -> Nx_quant.apply ~ids:one w x)
+       ws);
   let (Nx_quant.Mxfp4 { codes; scales }) = ws in
   let scales = row 0 scales in
   let with_codes i = Nx_quant.mxfp4 ~scales (row i codes) in
@@ -872,12 +849,16 @@ let test_vmap () =
     (Rune.jit' (Rune.vmap' one_part) codes);
   close ~msg:"over the weight, dequant"
     (per_lane (fun i -> Nx_quant.dequant Nx.float32 (lane i)) 3)
-    (Rune.vmap (module Nx_quant) (Nx_quant.dequant Nx.float32) ws);
+    (Rune.vmap
+       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
+       (Nx_quant.dequant Nx.float32)
+       ws);
   close ~msg:"over the weight, compiled"
     (per_lane (fun i -> Nx_quant.apply ~ids:one (lane i) x) 3)
-    (Rune.jit
-       (module Nx_quant)
-       (Rune.vmap (module Nx_quant) (fun w -> Nx_quant.apply ~ids:one w x))
+    (Rune.jit Nx_quant.ptree
+       (Rune.vmap
+          Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
+          (fun w -> Nx_quant.apply ~ids:one w x))
        ws)
 
 (* pmap: a program over several devices multiplies the blocks by their gathered
@@ -889,9 +870,7 @@ let test_pmap () =
     (fun (msg, ids, x) ->
       close ~msg
         (routed (ids, x))
-        (Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ]
-           (module Inputs)
-           routed (ids, x)))
+        (Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ] (inputs ()) routed (ids, x)))
     [
       ("gathered", ints [| 2; 1 |] [| 3; -1 |], floats [| 2; 1; 1; 64 |]);
       ( "several rows per position",
@@ -929,8 +908,7 @@ let form_cases () =
       fun () -> apply wide distinct (floats [| 40; 1; 64 |]) );
     ( "sixteen routes under pmap",
       fun () ->
-        Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ]
-          (module Inputs)
+        Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ] (inputs ())
           (fun (ids, x) -> Nx_quant.apply ~ids w x)
           (ids, floats [| 8; 2; 1; 64 |]) );
   ]
@@ -1010,7 +988,7 @@ let test_debug () =
   let w = weight ~scale:moderate [| 4; 8; 64 |] in
   let ids = ints [| 3; 2 |] [| 0; 3; -1; 2; 1; 1 |] in
   let x = floats [| 3; 1; 1; 64 |] in
-  let first = Nx_quant.map (fun t -> row 0 t) w in
+  let first = Nx.Ptree.map Nx_quant.ptree (fun _ t -> row 0 t) w in
   let g = floats [| 3; 2; 1; 8 |] in
   let f () =
     ( Nx_quant.apply ~ids w x,

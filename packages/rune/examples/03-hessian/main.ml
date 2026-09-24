@@ -14,15 +14,6 @@ let rosenbrock x =
   let b = Nx.square (Nx.sub x1 (Nx.square x0)) in
   Nx.add a (Nx.mul_s b 100.0)
 
-(* A single float64 vector as a one-leaf Ptree.S structure, for check_grads. *)
-module Vec = struct
-  type t = Nx.float64_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
-end
-
 let () =
   let x0 = Nx.create Nx.float64 [| 2 |] [| -1.2; 1.0 |] in
 
@@ -48,7 +39,7 @@ let () =
 
   (* check_grads compares reverse-mode gradients against central differences
      along deterministic directions. *)
-  match Rune.check_grads (module Vec) rosenbrock x0 with
+  match Rune.check_grads Nx.Ptree.tensor rosenbrock x0 with
   | Ok () ->
       Printf.printf "check_grads: reverse mode agrees with finite differences\n"
   | Error msg -> Printf.printf "check_grads: %s\n" msg

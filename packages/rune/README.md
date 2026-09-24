@@ -6,33 +6,30 @@ and friends — for OCaml, inspired by [JAX](https://github.com/jax-ml/jax).
 Rune differentiates ordinary OCaml functions over ordinary OCaml values:
 there is no special tensor type (functions compute with plain
 [Nx](../nx/) tensors) and no runtime tree encoding (parameters are your
-own typed records). Declare once how to traverse a record's tensor
-leaves — the `Nx.Ptree.S` interface, three one-liners — and every
+own typed records). Write once how to walk a record's parts, an
+`Nx.Ptree.S` module with one `walk` and a line per field, and every
 transformation works on it directly, preserving its type.
 
 ## The Core Idea
 
 ```ocaml
-type params = { w : Nx.float32_t; b : Nx.float32_t }
+type 'a params = { w : 'a; b : 'a }
 
 module Params = struct
-  type t = params
+  type 'a t = 'a params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
 end
 
+let params_ptree = Nx.Ptree.instantiate (module Params)
 let loss p = Nx.mean (Nx.square (Nx.sub (Nx.add (Nx.matmul x p.w) p.b) y))
 
-(* The gradient of [loss] at [params] — a value of type [params]. *)
-let grads = Rune.grad (module Params) loss params
+(* The gradient of [loss] at [params], a value of the same record type. *)
+let grads = Rune.grad params_ptree loss params
 ```
 
 Leaves may mix dtypes freely: a single forward and backward pass
@@ -50,7 +47,7 @@ nest into records, so models compose structurally — see
 - **Forward mode** — `jvp` for Jacobian-vector products in a single
   forward pass
 - **Vectorizing map** — `vmap` lifts a per-example function to batched
-  inputs; `in_axes`/`out_axis` control which axes are mapped
+  inputs, mapping axis 0 of every argument its signature lists
 - **Composition** — transformations nest freely: `vmap` of `grad` is
   per-sample gradients, `jvp` of `grad` powers `hvp`, `grad` of `grad`
   is second order
@@ -68,9 +65,9 @@ nest into records, so models compose structurally — see
   fused kernels, on CPU (the default), CUDA, or Metal via `~device`
 - **Debugging** — `with_debug` logs every tensor operation; `detach`
   and `no_grad` stop gradient flow
-- **Structured outputs** — `vjp2`, `jvp2`, `vmap2` for functions
-  returning a parameter structure rather than one tensor; primed
-  variants (`grad'`, `vmap'`, ...) for single-tensor functions
+- **Structures** — every transformation takes the structures it walks,
+  so results may be structures too; primed variants (`grad'`, `vmap'`,
+  ...) serve single-tensor functions
 
 ## Quick Start
 
@@ -78,19 +75,20 @@ Gradient descent is `value_and_grad` plus a record update:
 
 ```ocaml
 let step p =
-  let l, g = Rune.value_and_grad (module Params) loss p in
+  let l, g = Rune.value_and_grad params_ptree loss p in
   ({ w = Nx.sub p.w (Nx.mul_s g.w lr); b = Nx.sub p.b (Nx.mul_s g.b lr) }, l)
 ```
 
-Per-sample gradients compose `vmap2` with `grad`:
+Per-sample gradients compose `vmap` with `grad`. The signature says that
+the mapped function takes two tensors and returns the parameters'
+structure; each argument is mapped over its axis 0:
 
 ```ocaml
 let per_sample =
-  Rune.vmap2
-    (module Example)
-    (module Params)
-    (fun ex -> Rune.grad (module Params) (loss ex) params)
-    batch
+  Rune.vmap
+    Nx.Ptree.(tensor @-> tensor @-> returns params_ptree)
+    (fun x y -> Rune.grad params_ptree (loss x y) params)
+    xs ys
 ```
 
 See the [API reference](lib/rune.mli) for the full contracts.
@@ -100,7 +98,7 @@ See the [API reference](lib/rune.mli) for the full contracts.
 - [`01-gradient-descent`](examples/01-gradient-descent) — fit a linear
   model by differentiating a function of a typed record
 - [`02-per-sample-grads`](examples/02-per-sample-grads) — per-example
-  gradients via `vmap2` of `grad`, checked against the loop
+  gradients via `vmap` of `grad`, checked against the loop
 - [`03-hessian`](examples/03-hessian) — Newton's method with
   `hessian'`, matrix-free `hvp'`, and `check_grads`
 

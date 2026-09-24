@@ -397,7 +397,7 @@ type state = {
          backward thunk, and is fresh per [Rune.scan] call, so it identifies the
          scan. Identity-keyed: a structural table compares the record's closure
          on a hash collision. *)
-  scan_closed : Scan.packed_t list Tbl.t;
+  scan_closed : Nx.packed list Tbl.t;
       (* staged scans: the step record's identity -> the external inputs the
          forward staging observed the body reading (tensors it closes over), for
          the backward loop to accumulate their cotangents. Keyed as
@@ -1539,47 +1539,41 @@ let add_rows_in_value st l ~slot ~numel ~n tt =
 (* A staged body's slot: the placeholder the body receives for one leaf, bound
    to a buffer node the loop rebinds per iteration. *)
 type body_slot = {
-  s_ph : Scan.packed_t;
+  s_ph : Nx.packed;
   s_node : U.t;
   s_dt : TD.t;
   s_shape : int array;
 }
 
-(* One slot per leaf of [tree], a row of it (its leading axis dropped) under
-   [row], and the structure over the slots' placeholders. *)
-let body_slots st ?(row = false) (Scan.Tree (m, t) as tree) =
-  let slots =
-    List.map
-      (fun (Scan.Packed_t leaf) ->
-        let shape = shape_of leaf in
-        let shape =
-          if row then Array.sub shape 1 (Array.length shape - 1) else shape
-        in
-        let dt = tolk_dtype (Nx_effect.dtype leaf) in
-        let node = make_node st dt (numel shape) in
-        let ph = traced st (Nx_effect.dtype leaf) (buffer_tensor node shape) in
-        { s_ph = Scan.Packed_t ph; s_node = node; s_dt = dt; s_shape = shape })
-      (Scan.leaves tree)
-  in
-  (Scan.Tree (m, Scan.unflatten m t (List.map (fun s -> s.s_ph) slots)), slots)
+(* One slot per tensor of [leaves], a row of it (its leading axis dropped) under
+   [row]. *)
+let body_slots st ?(row = false) leaves =
+  List.map
+    (fun (Nx.P leaf) ->
+      let shape = shape_of leaf in
+      let shape =
+        if row then Array.sub shape 1 (Array.length shape - 1) else shape
+      in
+      let dt = tolk_dtype (Nx_effect.dtype leaf) in
+      let node = make_node st dt (numel shape) in
+      let ph = traced st (Nx_effect.dtype leaf) (buffer_tensor node shape) in
+      { s_ph = Nx.P ph; s_node = node; s_dt = dt; s_shape = shape })
+    leaves
 
-(* [tree]'s structure over fresh placeholders standing for [values], one
-   [(shape, value)] per leaf, of the leaf's dtype. *)
-let placeholders st (Scan.Tree (m, t) as tree) values =
-  let phs =
-    List.map2
-      (fun (Scan.Packed_t leaf) (shape, value) ->
-        let ph =
-          Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
-            (Node { trace = st.st_id; tensor = value })
-        in
-        Scan.Packed_t ph)
-      (Scan.leaves tree) values
-  in
-  Scan.Tree (m, Scan.unflatten m t phs)
+let slot_values slots = List.map (fun s -> s.s_ph) slots
+
+(* Fresh placeholders standing for [values], one [(shape, value)] per tensor of
+   [leaves], of that tensor's dtype. *)
+let placeholders st leaves values =
+  List.map2
+    (fun (Nx.P leaf) (shape, value) ->
+      Nx.P
+        (Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
+           (Node { trace = st.st_id; tensor = value })))
+    leaves values
 
 let same_shapes leaves slots =
-  List.for_all2 (fun (Scan.Packed_t l) s -> shape_of l = s.s_shape) leaves slots
+  List.for_all2 (fun (Nx.P l) s -> shape_of l = s.s_shape) leaves slots
 
 (* Handler *)
 
@@ -2269,12 +2263,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   { retc = Fun.id; exnc = raise; effc }
 
 (* The forward scan: trace the body once, compile it as a sub-program, and emit
-   the loop call. The carry, the rows and the outputs are structures: every leaf
-   has its own slot, and slots pair with their buffers by traversal position
-   ([Scan.leaves], [Scan.unflatten]). A carry leaf is a buffer pair, a row leaf
-   is read at row [i] of its stacked input, and an output leaf is written at row
-   [i] of its stack. When a staged transpose will read them ([req_record]), the
-   body also writes the carry it receives to a carry stack. *)
+   the loop call. The carry, the rows and the outputs arrive as their tensors in
+   walk order: every tensor has its own slot, and slots pair with their buffers
+   by position. A carry leaf is a buffer pair, a row leaf is read at row [i] of
+   its stacked input, and an output leaf is written at row [i] of its stack.
+   When a staged transpose will read them ([req_record]), the body also writes
+   the carry it receives to a carry stack. *)
 and stage_scan : type r.
     state -> Scan.scan_req -> (Scan.scan_res, r) Effect.Deep.continuation -> r =
  fun st req k ->
@@ -2306,15 +2300,12 @@ and stage_scan : type r.
           if
             ND.is_float (Nx_effect.dtype t)
             && predates t
-            && not
-                 (List.exists
-                    (fun (Scan.Packed_t g) -> Obj.repr g == k)
-                    !closed)
-          then closed := Scan.Packed_t t :: !closed);
+            && not (List.exists (fun (Nx.P g) -> Obj.repr g == k) !closed)
+          then closed := Nx.P t :: !closed);
     }
   in
-  let slot_c, c_slots = body_slots st req_carry in
-  let slot_x, x_slots = body_slots st ~row:true req_xs in
+  let c_slots = body_slots st req_carry in
+  let x_slots = body_slots st ~row:true req_xs in
   (* Trace the body once under a nested copy of this tracer, collecting its
      external inputs and the buffers its indexed writes into the carry land
      in. *)
@@ -2329,7 +2320,7 @@ and stage_scan : type r.
         st.scan_writes <- outer_writes)
       (fun () ->
         Effect.Deep.match_with
-          (fun () -> step.run slot_c slot_x)
+          (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
           () (handler st))
   in
   Tbl.replace st.scan_closed (Obj.repr step) !closed;
@@ -2338,20 +2329,18 @@ and stage_scan : type r.
      staging — the scan folds eagerly and unrolls into this trace, as every jit
      did before staging existed. The traced body's nodes are unreachable from
      any output and never get scheduled. *)
-  let c_next = Scan.leaves c_next in
   if not (same_shapes c_next c_slots) then
     Effect.Deep.discontinue k Scan.Not_staged
   else
-    let ys = Scan.leaves y in
     let y_outs =
       List.map
-        (fun (Scan.Packed_t y) ->
+        (fun (Nx.P y) ->
           let shape = shape_of y in
           ( tolk_dtype (Nx_effect.dtype y),
             shape,
             make_node st (tolk_dtype (Nx_effect.dtype y)) (numel shape),
             tolk_of st y ))
-        ys
+        y
     in
     let stack_outs =
       if req_record then
@@ -2369,7 +2358,7 @@ and stage_scan : type r.
        instead, the other carries stay pairs, and the body is scheduled again
        until every remaining candidate holds. *)
     let next_values =
-      List.map (fun (Scan.Packed_t c) -> F.Tensor.uop (tolk_of st c)) c_next
+      List.map (fun (Nx.P c) -> F.Tensor.uop (tolk_of st c)) c_next
     in
     let slot_writes = List.map (fun (_, w) -> !w) writes in
     let c_outs =
@@ -2489,13 +2478,13 @@ and stage_scan : type r.
     let modes, body_linear, resolve_node = settle ~copied ~same_index in
     let l = loop () in
     List.iter2
-      (fun s (Scan.Packed_t x) ->
+      (fun s (Nx.P x) ->
         add_rows_in_value st l ~slot:s.s_node ~numel:(numel s.s_shape) ~n
           (tolk_of st x))
-      x_slots (Scan.leaves req_xs);
+      x_slots req_xs;
     let pairs =
       List.map2
-        (fun (s, mode) (Scan.Packed_t c) ->
+        (fun (s, mode) (Nx.P c) ->
           let add = add_carry st l ~dt:s.s_dt ~numel:(numel s.s_shape) in
           let init = tolk_of st c in
           match mode with
@@ -2506,7 +2495,7 @@ and stage_scan : type r.
           | `Pair (es, c_out) ->
               add ~reads:(s.s_node :: es) ~writes:[ c_out ] init)
         (List.combine c_slots modes)
-        (Scan.leaves req_carry)
+        req_carry
     in
     let ys_rows =
       List.map
@@ -2568,12 +2557,12 @@ and stage_scan_bwd : type r.
  fun st bwd k ->
   let Scan.{ bwd_step = step; bwd_carry; bwd_xs; bwd_dc; bwd_dys } = bwd in
   let n = Scan.length bwd_xs in
-  let slot_c, c_slots = body_slots st bwd_carry in
-  let slot_x, x_slots = body_slots st ~row:true bwd_xs in
-  let _, dc_slots = body_slots st bwd_dc in
-  let _, dy_slots = body_slots st ~row:true bwd_dys in
+  let c_slots = body_slots st bwd_carry in
+  let x_slots = body_slots st ~row:true bwd_xs in
+  let dc_slots = body_slots st bwd_dc in
+  let dy_slots = body_slots st ~row:true bwd_dys in
   let differentiable s =
-    let (Scan.Packed_t ph) = s.s_ph in
+    let (Nx.P ph) = s.s_ph in
     ND.is_float (Nx_effect.dtype ph)
   in
   (* The body's external inputs, discovered by the forward staging of this
@@ -2603,7 +2592,7 @@ and stage_scan_bwd : type r.
      inside it to recover residuals). The external inputs are tracked too, so
      the pullback emits their per-step contributions. *)
   let tape = Tape.create () in
-  let track (Scan.Packed_t t) = Tape.track tape t in
+  let track (Nx.P t) = Tape.track tape t in
   List.iter (fun s -> track s.s_ph) c_slots;
   List.iter (fun s -> if differentiable s then track s.s_ph) x_slots;
   List.iter track closed;
@@ -2611,25 +2600,23 @@ and stage_scan_bwd : type r.
     Effect.Deep.match_with
       (fun () ->
         Effect.Deep.match_with
-          (fun () -> step.run slot_c slot_x)
+          (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
           () (Reverse.handler tape))
       () (handler st)
   in
-  let c_next = Scan.leaves c_next in
   if not (same_shapes c_next c_slots) then
     err
       "Rune.jit: the scan body must return a carry of the same shapes it \
        receives (shape-stable carry)";
-  let cotangent (Scan.Packed_t t) = Scan.Packed_t (Tape.cotangent tape t) in
+  let cotangent (Nx.P t) = Nx.P (Tape.cotangent tape t) in
   let dc_i, dx_i, dgs =
     Effect.Deep.match_with
       (fun () ->
-        let seed (Scan.Packed_t v) s =
-          let (Scan.Packed_t d) = s.s_ph in
-          Tape.accumulate tape v (Obj.magic d)
+        let seed (Nx.P v) s =
+          Tape.accumulate tape v (Nx.unpack (Nx_effect.dtype v) s.s_ph)
         in
         List.iter2 seed c_next dc_slots;
-        List.iter2 seed (Scan.leaves y) dy_slots;
+        List.iter2 seed y dy_slots;
         Tape.backward tape;
         ( List.map (fun s -> cotangent s.s_ph) c_slots,
           List.map
@@ -2637,8 +2624,7 @@ and stage_scan_bwd : type r.
               if differentiable s then Some (cotangent s.s_ph) else None)
             x_slots,
           List.map
-            (fun (Scan.Packed_t g) ->
-              Scan.Closed_ctan (g, Tape.cotangent tape g))
+            (fun (Nx.P g) -> Scan.Closed_ctan (g, Tape.cotangent tape g))
             closed ))
       () (handler st)
   in
@@ -2662,7 +2648,7 @@ and stage_scan_bwd : type r.
         let g_shape = shape_of g in
         let gdt = tolk_dtype (Nx_effect.dtype g) in
         let gn = numel g_shape in
-        ( Scan.Packed_t g,
+        ( Nx.P g,
           g_shape,
           gdt,
           gn,
@@ -2671,7 +2657,7 @@ and stage_scan_bwd : type r.
           tolk_of st dg ))
       dgs
   in
-  let value (Scan.Packed_t t) = tolk_of st t in
+  let value (Nx.P t) = tolk_of st t in
   let body_sink =
     U.sink
       (List.map2
@@ -2711,19 +2697,19 @@ and stage_scan_bwd : type r.
     (fun s x ->
       add_rows_in_value st l ~slot:s.s_node ~numel:(numel s.s_shape) ~n
         (value x))
-    x_slots (Scan.leaves bwd_xs);
+    x_slots bwd_xs;
   List.iter2
     (fun s dy ->
       add_rows_in_value st l ~slot:s.s_node ~numel:(numel s.s_shape) ~n
         (value dy))
-    dy_slots (Scan.leaves bwd_dys);
+    dy_slots bwd_dys;
   let dc_pairs =
     List.map2
       (fun ((s, dc_out), d) dc ->
         add_carry st l ~reads:[ d.s_node ] ~writes:[ dc_out ] ~dt:s.s_dt
           ~numel:(numel s.s_shape) (value dc))
       (List.combine (List.combine c_slots dc_outs) dc_slots)
-      (Scan.leaves bwd_dc)
+      bwd_dc
   in
   let dx_rows =
     List.map2
@@ -2767,7 +2753,7 @@ and stage_scan_bwd : type r.
   (* Each external input's total cotangent, as outputs of the loop. *)
   let br_closed =
     List.map2
-      (fun (Scan.Packed_t g, g_shape, _, _, _, _, _) pair ->
+      (fun (Nx.P g, g_shape, _, _, _, _, _) pair ->
         let after = written_by call (final_carry ~n pair) in
         let ph = traced st (Nx_effect.dtype g) (buffer_tensor after g_shape) in
         Scan.Closed_ctan (g, ph))
@@ -3589,20 +3575,16 @@ let donate (c : Nx_effect.cell) ~lend =
   | None -> ());
   c.state <- Donated
 
-let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
-    =
-  let acc = ref [] in
-  P.iter
-    (fun leaf ->
-      acc := (ND.to_string (Nx_effect.dtype leaf), shape_of leaf) :: !acc)
-    params;
-  List.rev !acc
+let signature_of p params =
+  List.rev
+    (Nx.Ptree.fold p
+       (fun _ leaf acc ->
+         (ND.to_string (Nx_effect.dtype leaf), shape_of leaf) :: acc)
+       params [])
 
 let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
-    ?(may_move = false) ?layouts ?multi ?beam ?beam_parallel
-    (module P : Nx.Ptree.S with type t = p)
-    (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t) :
-    Q.t compiled =
+    ?(may_move = false) ?layouts ?multi ?beam ?beam_parallel (p : p Nx.Ptree.t)
+    (q : q Nx.Ptree.t) (f : p -> q) (params : p) : q compiled =
   (* Input leaves from position [n] on are consumed, and output leaf [k] is the
      state's leaf at input position [n + k]. *)
   let consumed i =
@@ -3642,8 +3624,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
      inputs, equal on this call and free to differ on the next. *)
   let inputs = ref [] and placeholders = ref [] in
   let pos = ref 0 in
-  P.iter
-    (fun leaf ->
+  Nx.Ptree.fold p
+    (fun _ leaf () ->
       let dtolk = tolk_dtype (Nx_effect.dtype leaf) in
       (* On a guessed device the refusal waits for the trace, whose captures may
          move the program where the dtype is held. *)
@@ -3705,7 +3687,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
           (Node { trace = st.st_id; tensor = tt })
       in
-      placeholders := Scan.Packed_t ph :: !placeholders;
+      placeholders := Nx.P ph :: !placeholders;
       Hashtbl.replace st.input_tags (U.tag node) !pos;
       inputs :=
         {
@@ -3717,8 +3699,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         }
         :: !inputs;
       incr pos)
-    params;
-  let ph_params = Scan.unflatten (module P) params (List.rev !placeholders) in
+    params ();
+  let ph_params = Nx.Ptree.rebuild p ~like:params (List.rev !placeholders) in
   let y =
     Gate.with_transform (fun () ->
         Effect.Deep.match_with f ph_params (handler st))
@@ -3726,14 +3708,14 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
   (* Collect the output leaves; a leaf the trace never saw is a constant passing
      through unchanged. *)
   let out_assoc = ref [] in
-  Q.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
+  Nx.Ptree.fold q
+    (fun (type a b) _ (leaf : (a, b) Nx_effect.t) () ->
       let key = Obj.repr leaf in
       if not (List.exists (fun (k, _, _) -> k == key) !out_assoc) then
         out_assoc :=
           (key, Packed (Nx_effect.dtype leaf, leaf), tolk_of st leaf)
           :: !out_assoc)
-    y;
+    y ();
   Option.iter raise st.refusal;
   let empty, outs =
     List.partition
@@ -4076,11 +4058,11 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
       (* The first traversal position of an output leaf. *)
       let output_position key =
         let k = ref 0 and at = ref None in
-        Q.iter
-          (fun leaf ->
+        Nx.Ptree.fold q
+          (fun _ leaf () ->
             if !at = None && Obj.repr leaf == key then at := Some !k;
             incr k)
-          y;
+          y ();
         !at
       in
       List.concat_map
@@ -4185,9 +4167,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
     compiled;
   compiled
 
-let replay (type p q) (module P : Nx.Ptree.S with type t = p)
-    (module Q : Nx.Ptree.S with type t = q) (c : Q.t compiled) (params : P.t) :
-    Q.t =
+let replay (type p q) (p : p Nx.Ptree.t) (q : q Nx.Ptree.t) (c : q compiled)
+    (params : p) : q =
   drain_releases ();
   (* Rebind arenas before queue replay patches their addresses: another
      compiled function may have grown the shared storage since the last call. *)
@@ -4249,8 +4230,8 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
   @@ fun () ->
   let keep = ref [] in
   let i = ref 0 in
-  P.iter
-    (fun leaf ->
+  Nx.Ptree.fold p
+    (fun _ leaf () ->
       let inp = c.cp_inputs.(!i) in
       (* A storage a read leaf reaches, through any view, is read. Read leaves
          come first in traversal. *)
@@ -4317,7 +4298,7 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
                       copyin_tensor c.cp_scratch c.cp_device buf leaf
                   | _ -> assert false))));
       incr i)
-    params;
+    params ();
   let read = !read in
   let seeded = List.filter (fun e -> not (List.memq e read)) !seeded in
   (* Wire the outputs' storage. On the zero-copy device, fresh host buffers
@@ -4488,8 +4469,8 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
      device buffer has a single owner. *)
   let handles : (int, packed) Hashtbl.t = Hashtbl.create 8 in
   let y =
-    Q.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
+    Nx.Ptree.map q
+      (fun (type a b) _ (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
         match
           List.find_opt (fun (k, _, _, _) -> k == Obj.repr leaf) c.cp_outputs
         with
@@ -4611,12 +4592,11 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
 
 (* The device a call's placed leaves share. Each must be on [requested] when a
    device is requested, on the same device as the others, and on one device. *)
-let leaves_device (type p) (module P : Nx.Ptree.S with type t = p) ~requested
-    (params : P.t) =
+let leaves_device p ~requested params =
   let name = Nx.Device.name in
   let found = ref None and i = ref 0 in
-  P.iter
-    (fun leaf ->
+  Nx.Ptree.fold p
+    (fun _ leaf () ->
       (match leaf with
       | Nx_effect.Placed { r_placement = Device d; _ } -> (
           (match requested with
@@ -4636,15 +4616,15 @@ let leaves_device (type p) (module P : Nx.Ptree.S with type t = p) ~requested
                    i0 !i (name d0) (name d))
           | Some _ -> ()
           | None -> found := Some (d, !i))
-      | Nx_effect.Placed { r_placement = p; _ } ->
+      | Nx_effect.Placed { r_placement; _ } ->
           invalid_arg
             (Format.asprintf
                "Rune.jit: input leaf %d is on %a; a compiled function runs on \
                 one device, so place it on one device, or on the host"
-               !i Nx.Placement.pp p)
+               !i Nx.Placement.pp r_placement)
       | _ -> ());
       incr i)
-    params;
+    params ();
   Option.map fst !found
 
 (* The compiled function over [P]. With [consumed_from p = Some n], the leaves
@@ -4657,11 +4637,10 @@ let leaves_device (type p) (module P : Nx.Ptree.S with type t = p) ~requested
    tracing: a trace on the default device that meets a capture placed elsewhere
    runs again on the capture's device, which every later call then takes. *)
 let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
-    (module P : Nx.Ptree.S with type t = p)
-    (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
+    (p : p Nx.Ptree.t) (q : q Nx.Ptree.t) (f : p -> q) : p -> q =
   let requested = Option.map device name in
   let captured_on = ref None in
-  let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
+  let cache : (_, q compiled) Hashtbl.t = Hashtbl.create 4 in
   (* Device copies of captured tensors, per device, shared by every signature of
      this closure and keyed by capture identity. *)
   let const_caches : (string, Tolk.Realize.buffer Tensor_map.Tbl.t) Hashtbl.t =
@@ -4678,29 +4657,28 @@ let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
     in
     (* The host's programs run over host memory. *)
     trace_compile ~device:(tolk_device_of d) ~zero_copy:(d == Nx.Device.host)
-      ~consumed_from ~const_cache ~may_move ~layouts ?beam ?beam_parallel
-      (module P)
-      (module Q)
-      f params
+      ~consumed_from ~const_cache ~may_move ~layouts ?beam ?beam_parallel p q f
+      params
   in
   fun params ->
     if Gate.transforming () then f params
     else
       let d, may_move =
-        match
-          (requested, leaves_device (module P) ~requested params, !captured_on)
-        with
+        match (requested, leaves_device p ~requested params, !captured_on) with
         | Some d, _, _ | None, Some d, _ | None, None, Some d -> (d, false)
         | None, None, None -> (default_device (), true)
       in
       let consumed_from = consumed_from params in
-      let signature = signature_of (module P) params in
+      let signature = signature_of p params in
       (* A leaf bound as a view reads its range in the program, so how it does
          joins the key; any other leaf is its elements in C order. *)
       let layouts =
-        let dev = tolk_device_of d and acc = ref [] in
-        P.iter (fun leaf -> acc := layout_of (seed_of dev leaf) :: !acc) params;
-        Array.of_list (List.rev !acc)
+        let dev = tolk_device_of d in
+        Array.of_list
+          (List.rev
+             (Nx.Ptree.fold p
+                (fun _ leaf acc -> layout_of (seed_of dev leaf) :: acc)
+                params []))
       in
       let key d = (Nx.Device.name d, consumed_from, signature, layouts) in
       let compiled d ~may_move =
@@ -4721,84 +4699,24 @@ let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
             captured_on := Some d';
             compiled d' ~may_move:false
       in
-      replay (module P) (module Q) c params
+      replay p q c params
 
 let jit2 ?device ?beam ?beam_parallel p q f =
   compile_fn ?device ?beam ?beam_parallel ~consumed_from:(fun _ -> None) p q f
 
-let jit_step (type r s) ?device ?beam ?beam_parallel
-    (module R : Nx.Ptree.S with type t = r)
-    (module S : Nx.Ptree.S with type t = s) (f : R.t -> S.t -> S.t) :
-    R.t -> S.t -> S.t =
-  let module P = struct
-    type t = R.t * S.t
-
-    let map (f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) (r, s) =
-      let r = R.map f r in
-      (r, S.map f s)
-
-    let map2
-        (f :
-          'a 'b.
-          ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t)
-        (r, s) (r', s') =
-      let r = R.map2 f r r' in
-      (r, S.map2 f s s')
-
-    let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) (r, s) =
-      R.iter f r;
-      S.iter f s
-  end in
-  let consumed_from (r, _) =
-    let n = ref 0 in
-    R.iter (fun _ -> incr n) r;
-    Some !n
-  in
+let jit_step ?device ?beam ?beam_parallel r s f =
+  let consumed_from (x, _) = Some (Nx.Ptree.fold r (fun _ _ n -> n + 1) x 0) in
   let g =
-    compile_fn ?device ?beam ?beam_parallel ~consumed_from
-      (module P)
-      (module S)
-      (fun (r, s) -> f r s)
+    compile_fn ?device ?beam ?beam_parallel ~consumed_from (Nx.Ptree.pair r s) s
+      (fun (x, y) -> f x y)
   in
-  fun r s -> g (r, s)
+  fun x y -> g (x, y)
 
-let jit (type p c d) ?device ?beam ?beam_parallel
-    (module P : Nx.Ptree.S with type t = p) (f : P.t -> (c, d) Nx_effect.t) :
-    P.t -> (c, d) Nx_effect.t =
-  let module Q = struct
-    type t = (c, d) Nx_effect.t
+let jit ?device ?beam ?beam_parallel p f =
+  jit2 ?device ?beam ?beam_parallel p Nx.Ptree.tensor f
 
-    let map (f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) t = f t
-
-    let map2
-        (f :
-          'a 'b.
-          ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t)
-        a b =
-      f a b
-
-    let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
-  end in
-  jit2 ?device ?beam ?beam_parallel (module P) (module Q) f
-
-let jit' (type a b c d) ?device ?beam ?beam_parallel
-    (f : (a, b) Nx_effect.t -> (c, d) Nx_effect.t) :
-    (a, b) Nx_effect.t -> (c, d) Nx_effect.t =
-  let module L = struct
-    type t = (a, b) Nx_effect.t
-
-    let map (f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) t = f t
-
-    let map2
-        (f :
-          'a 'b.
-          ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t)
-        a b =
-      f a b
-
-    let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
-  end in
-  jit ?device ?beam ?beam_parallel (module L) f
+let jit' ?device ?beam ?beam_parallel f =
+  jit ?device ?beam ?beam_parallel Nx.Ptree.tensor f
 
 (* pmap: multi-device parallel jit. The compiled core is [trace_compile] /
    [replay] with a multi-device placement; pmap only derives the placement from
@@ -4824,23 +4742,26 @@ let pmap_names devices =
   names
 
 let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
-    (module P : Nx.Ptree.S with type t = p)
-    (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
+    (p : p Nx.Ptree.t) (q : q Nx.Ptree.t) (f : p -> q) : p -> q =
   let names = pmap_names devices in
   let devs = List.map (fun n -> tolk_device_of (device n)) names in
   let spec = { md_names = names; md_devs = devs } in
   let dev = List.hd devs in
   let ndev = List.length names in
-  let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
+  let cache : (_, q compiled) Hashtbl.t = Hashtbl.create 4 in
   let const_cache : Tolk.Realize.buffer Tensor_map.Tbl.t =
     Tensor_map.Tbl.create 4
   in
   fun params ->
     if Gate.transforming () then f params
     else begin
-      let shapes = ref [] in
-      P.iter (fun leaf -> shapes := shape_of leaf :: !shapes) params;
-      let shapes = Array.of_list (List.rev !shapes) in
+      let shapes =
+        Array.of_list
+          (List.rev
+             (Nx.Ptree.fold p
+                (fun _ leaf acc -> shape_of leaf :: acc)
+                params []))
+      in
       let nleaves = Array.length shapes in
       let axes =
         match in_axes with
@@ -4876,7 +4797,7 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
                 P_sharded a)
           axes
       in
-      let sg = signature_of (module P) params in
+      let sg = signature_of p params in
       let c =
         match Hashtbl.find_opt cache sg with
         | Some c -> c
@@ -4884,32 +4805,14 @@ let pmap2 (type p q) ~devices ?in_axes ?(donate = false) ?beam ?beam_parallel
             let c =
               trace_compile ~device:dev ~zero_copy:false
                 ~consumed_from:(if donate then Some 0 else None)
-                ~const_cache ?beam ?beam_parallel ~multi:(spec, places)
-                (module P)
-                (module Q)
-                f params
+                ~const_cache ?beam ?beam_parallel ~multi:(spec, places) p q f
+                params
             in
             Hashtbl.add cache sg c;
             c
       in
-      replay (module P) (module Q) c params
+      replay p q c params
     end
 
-let pmap (type p c d) ~devices ?in_axes ?donate ?beam ?beam_parallel
-    (module P : Nx.Ptree.S with type t = p) (f : P.t -> (c, d) Nx_effect.t) :
-    P.t -> (c, d) Nx_effect.t =
-  let module Q = struct
-    type t = (c, d) Nx_effect.t
-
-    let map (f : 'a 'b. ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t) t = f t
-
-    let map2
-        (f :
-          'a 'b.
-          ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t)
-        a b =
-      f a b
-
-    let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
-  end in
-  pmap2 ~devices ?in_axes ?donate ?beam ?beam_parallel (module P) (module Q) f
+let pmap ~devices ?in_axes ?donate ?beam ?beam_parallel p f =
+  pmap2 ~devices ?in_axes ?donate ?beam ?beam_parallel p Nx.Ptree.tensor f

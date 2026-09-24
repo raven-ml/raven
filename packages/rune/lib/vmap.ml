@@ -583,21 +583,25 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        batched forward computation. Letting the call fall through instead would
        hand physically batched tensors to an enclosing differentiation outside
        the batching scope. Calls on constants do fall through. *)
-    | Custom.E_custom_vjp
-        (Custom.Vjp_call { tree = (module Q); params; fwd; _ }) ->
-        let any = ref false in
-        Q.iter (fun leaf -> if batched st leaf then any := true) params;
-        if not !any then None
+    | Custom.E_custom_vjp (Custom.Vjp_call { params_s; params; fwd; _ }) ->
+        if
+          not
+            (Nx.Ptree.fold params_s
+               (fun _ leaf any -> any || batched st leaf)
+               params false)
+        then None
         else
           Some
             (fun k ->
               continue k
                 (match_with (fun () -> fst (fwd params)) () (handler st)))
-    | Custom.E_custom_jvp (Custom.Jvp_call { tree = (module Q); params; f; _ })
-      ->
-        let any = ref false in
-        Q.iter (fun leaf -> if batched st leaf then any := true) params;
-        if not !any then None
+    | Custom.E_custom_jvp (Custom.Jvp_call { params_s; params; f; _ }) ->
+        if
+          not
+            (Nx.Ptree.fold params_s
+               (fun _ leaf any -> any || batched st leaf)
+               params false)
+        then None
         else
           Some
             (fun k ->

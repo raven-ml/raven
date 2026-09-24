@@ -20,9 +20,9 @@ If you already use JAX, this should be enough to become productive in rune quick
 | AD mechanism | Tracing + XLA compilation | OCaml 5 effect handlers, eager |
 | Parameter containers | Pytrees (registered runtime trees) | `Nx.Ptree.S` — your own typed records |
 | Reverse mode | `jax.grad`, `jax.value_and_grad` | `grad`, `value_and_grad`, `_aux` variants |
-| VJP | `jax.vjp` | `vjp`, `vjp_fun` (reusable pullback), `vjp2` |
-| Forward mode | `jax.jvp` | `jvp`, `jvp_aux`, `jvp2` |
-| Vectorizing map | `jax.vmap` | `vmap`, `vmap2`, `vmap'` |
+| VJP | `jax.vjp` | `vjp`, `vjp_fun` (reusable pullback) |
+| Forward mode | `jax.jvp` | `jvp`, `jvp_aux` |
+| Vectorizing map | `jax.vmap` | `vmap`, `vmap'` |
 | Custom rules | `jax.custom_vjp`, `jax.custom_jvp` | `custom_vjp`, `custom_jvp` |
 | Checkpointing | `jax.checkpoint` / `jax.remat` | `remat` |
 | Jacobians / Hessians | `jacfwd`, `jacrev`, `hessian` | `jacfwd'`, `jacrev'`, `hessian'`, `hvp` |
@@ -35,7 +35,7 @@ If you already use JAX, this should be enough to become productive in rune quick
 
 ---
 
-## 2. Pytrees → Ptree.S
+## 2. Pytrees → Nx.Ptree
 
 This is the deepest difference. JAX flattens arbitrary registered containers into lists of leaves at runtime:
 
@@ -46,29 +46,27 @@ params = {"w": w, "b": b}          # any registered pytree
 grads = jax.grad(loss)(params)      # same pytree of gradients
 ```
 
-Rune has no runtime tree. A parameter structure is a record you define, and you tell the library how to traverse its tensor leaves by implementing `Nx.Ptree.S` — three hand-written one-liners, no ppx, no registration table:
+Rune has no runtime tree. A parameter structure is a record you define, and an `Nx.Ptree.S` module walks it with one function, `walk`, a line per field; no ppx, no registration table:
 
 ```ocaml
-type params = { w : Nx.float32_t; b : Nx.float32_t }
+type 'a params = { w : 'a; b : 'a }
 
 module Params = struct
-  type t = params
+  type 'a t = 'a params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
 end
+
+let params_ptree = Nx.Ptree.instantiate (module Params)
 ```
 
-Every transformation takes the module as a first-class argument and preserves the type: the gradient of a function of `params` *is* a `params`. There is no `tree_map` because `Params.map` is `tree_map`, specialized to your type — and `Rune.Ptree` (that is, `Nx.Ptree.t`) is the stock dynamic instance for structures only known at runtime, the closest analogue of a raw pytree.
+Every transformation takes the structure and preserves the type: the gradient of a function of `params` *is* a `params`. `Nx.Ptree.map`, `map2` and `fold` are `tree_map` and its kin, and they pass each tensor its path (`w`, `b`), which is also its checkpoint name.
 
-Where JAX distinguishes leaves by position in a flattened list, rune leaves keep their record field names, dtypes, and shapes in the type. Mixed dtypes work: a single backward pass produces a gradient for every leaf, each with its leaf's dtype.
+Where JAX distinguishes leaves by position in a flattened list, rune tensors keep their record field names, dtypes, and shapes in the type. Mixed dtypes work: a single backward pass produces a gradient for every leaf, each with its leaf's dtype.
 
 ---
 
@@ -96,14 +94,12 @@ let () =
   let params =
     { w = Nx.zeros Nx.float32 [| 3; 1 |]; b = Nx.zeros Nx.float32 [| 1 |] }
   in
-  let grads = Rune.grad (module Params) loss params in
-  let loss_value, grads' =
-    Rune.value_and_grad (module Params) loss params
-  in
+  let grads = Rune.grad params_ptree loss params in
+  let loss_value, grads' = Rune.value_and_grad params_ptree loss params in
   ignore (grads, loss_value, grads')
 ```
 
-Both require a scalar output. JAX's `argnums` has no equivalent: differentiate with respect to *the* parameter structure and close over everything else. For a function of one tensor, `grad'` skips the module argument.
+Both require a scalar output. JAX's `argnums` has no equivalent: differentiate with respect to *the* parameter structure and close over everything else. For a function of one tensor, `grad'` takes no structure.
 
 ### Auxiliary outputs
 
@@ -115,7 +111,7 @@ JAX uses a flag; rune has dedicated `_aux` variants:
 
 <!-- $MDX skip -->
 ```ocaml
-let loss, grads, aux = Rune.value_and_grad_aux (module Params) f params
+let loss, grads, aux = Rune.value_and_grad_aux params_ptree f params
 ```
 
 ---
@@ -159,7 +155,7 @@ let () =
   ignore (y, tangent)
 ```
 
-For functions returning a structure rather than one tensor, use `vjp2`/`jvp2` with a second module describing the output.
+`vjp` and `jvp` take the structure of the result beside that of the parameters, so a function returning a structure takes one cotangent or tangent per tensor of its result.
 
 ---
 
@@ -171,7 +167,7 @@ jax.vmap(f, in_axes=(0, None))               # hold the second input fixed
 per_sample = jax.vmap(jax.grad(loss))(batch) # per-example gradients
 ```
 
-`in_axes` translates directly: `Some i` for a mapped axis, `None` for a constant, one entry per leaf in traversal order:
+Rune's `vmap` maps axis 0 of every tensor of the arguments its signature lists; a value held fixed is captured, and another axis is moved to the front with `Nx.moveaxis`:
 
 ```ocaml
 let () =
@@ -183,17 +179,15 @@ let () =
 
 <!-- $MDX skip -->
 ```ocaml
-(* Hold the second leaf fixed: *)
-let ys =
-  Rune.vmap ~in_axes:[ Some 0; None ] (module Pair) f pairs
+(* Hold the second input fixed by capturing it: *)
+let ys = Rune.vmap Nx.Ptree.(tensor @-> returns tensor) (fun x -> f x y) xs
 
-(* Per-sample gradients: vmap2 of grad. *)
+(* Per-sample gradients: vmap of grad. *)
 let per_sample =
-  Rune.vmap2
-    (module Example)
-    (module Params)
-    (fun ex -> Rune.grad (module Params) (loss ex) params)
-    batch
+  Rune.vmap
+    Nx.Ptree.(tensor @-> tensor @-> returns params_ptree)
+    (fun x y -> Rune.grad params_ptree (loss x y) params)
+    xs ys
 ```
 
 Two honest caveats relative to `jax.vmap`:
@@ -219,17 +213,8 @@ f.defvjp(f_fwd, f_bwd)
 rune packs the same three pieces into one call — the forward function returns the residual alongside its result:
 
 ```ocaml
-module Vec = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v = f v
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) v = f v
-end
-
 let f x =
-  Rune.custom_vjp
-    (module Vec)
+  Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
     ~fwd:(fun x -> (Nx.square x, x))
     ~bwd:(fun res ct -> Nx.mul ct (Nx.mul_s res 2.0))
     x
@@ -257,7 +242,7 @@ let () =
   let expensive v = Nx.mean (Nx.square (Nx.sin v)) in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let g =
-    Rune.grad' (fun v -> Rune.remat (module Vec) expensive v) x
+    Rune.grad' (Rune.remat Nx.Ptree.(tensor @-> returns tensor) expensive) x
   in
   ignore g
 ```
@@ -276,7 +261,7 @@ let () =
   ignore (Rune.grad' f (Nx.scalar Nx.float32 2.0))
 ```
 
-Rune still provides `scan`, `cond`, and `while_loop` because they give a loop a structure the compiler can see: `jit` compiles `scan` as a loop, forward and reverse, and rejects data-dependent `cond`/`while_loop` predicates. `lax.scan`'s carry-and-stacked-outputs contract translates directly, with one module per structure, where JAX infers pytrees:
+Rune still provides `scan`, `cond`, and `while_loop` because they give a loop a structure the compiler can see: `jit` compiles `scan` as a loop, forward and reverse, and rejects data-dependent `cond`/`while_loop` predicates. `lax.scan`'s carry-and-stacked-outputs contract translates directly, with one structure each for the carry, the rows and the outputs, where JAX infers pytrees:
 
 ```python
 final, ys = jax.lax.scan(f, init, xs)
@@ -285,7 +270,7 @@ final, ys = jax.lax.scan(f, init, xs)
 <!-- $MDX skip -->
 ```ocaml
 let final, ys = Rune.scan' ~f ~init xs (* single tensors *)
-let final, ys = Rune.scan (module Carry) (module Rows) (module Outputs) ~f ~init xs
+let final, ys = Rune.scan carry rows outputs ~f ~init xs
 ```
 
 ---
@@ -297,7 +282,7 @@ let final, ys = Rune.scan (module Carry) (module Rows) (module Outputs) ~f ~init
 | `jax.jacfwd(f)(x)` | `jacfwd' f x` |
 | `jax.jacrev(f)(x)` | `jacrev' f x` |
 | `jax.hessian(f)(x)` | `hessian' f x` |
-| `jvp`-of-`grad` HVP recipe | `hvp (module P) f params v` / `hvp' f x v` |
+| `jvp`-of-`grad` HVP recipe | `hvp p f params v` / `hvp' f x v` |
 
 JAX's docs derive the Hessian-vector product as `jvp` of `grad`; rune ships that composition as `hvp`, matrix-free, for any parameter structure.
 
@@ -313,17 +298,8 @@ check_grads(f, (x,), order=1)
 ```ocaml
 let () =
   let f v = Nx.sum (Nx.mul v v) in
-  let module V64 = struct
-    type t = Nx.float64_t
-
-    let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v = f v
-    let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
-    let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) v = f v
-  end in
   match
-    Rune.check_grads
-      (module V64)
-      f
+    Rune.check_grads Nx.Ptree.tensor f
       (Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |])
   with
   | Ok () -> print_endline "ok"
@@ -352,7 +328,7 @@ The trade-off surfaces under `vmap`: with explicit keys you would pass one key p
 
 | JAX feature | Status in rune |
 | --- | --- |
-| `jax.jit` | `jit (module P) f` compiles to fused kernels, cached per leaf signature. It compiles `scan` as a loop and rejects data-dependent `cond`/`while_loop` predicates. |
+| `jax.jit` | `jit p f` compiles to fused kernels, cached per leaf signature. It compiles `scan` as a loop and rejects data-dependent `cond`/`while_loop` predicates. |
 | GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~device:"CUDA"`/`"METAL"` runs compiled steps on GPU. `Nx.place (Nx.Placement.device (Rune.device "METAL"))` holds a tensor's bytes on a device, and a compiled function that captures it uses that buffer with no upload. |
 | `jax.pmap` / distributed | Not implemented. |
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
@@ -368,26 +344,25 @@ Rune's failure model is deliberate: operations without a rule raise `Invalid_arg
 
 | Task | JAX | rune |
 | --- | --- | --- |
-| Gradient | `jax.grad(f)(params)` | `grad (module P) f params` |
+| Gradient | `jax.grad(f)(params)` | `grad p f params` |
 | Gradient (one tensor) | `jax.grad(f)(x)` | `grad' f x` |
-| Value + gradient | `jax.value_and_grad(f)(params)` | `value_and_grad (module P) f params` |
-| Auxiliary output | `value_and_grad(f, has_aux=True)` | `value_and_grad_aux (module P) f params` |
-| Parameter container | pytree registration | `Ptree.S` record + 3 one-line traversals |
-| Dynamic tree | pytree | `Rune.Ptree.t` |
-| VJP | `jax.vjp(f, x)` then call | `vjp_fun (module P) f params` / `vjp'` |
-| JVP | `jax.jvp(f, (x,), (v,))` | `jvp (module P) f params v` / `jvp'` |
-| Batch map | `jax.vmap(f)(batch)` | `vmap (module P) f batch` / `vmap' f batch` |
-| Axis control | `in_axes=(0, None)` | `~in_axes:[ Some 0; None ]` |
-| Per-sample grads | `vmap(grad(f))` | `vmap2` of `grad` |
-| Custom reverse rule | `@jax.custom_vjp` | `custom_vjp (module P) ~fwd ~bwd` |
-| Custom forward rule | `@jax.custom_jvp` | `custom_jvp (module P) ~f ~jvp` |
-| Rematerialization | `jax.checkpoint(f)` | `remat (module P) f` |
+| Value + gradient | `jax.value_and_grad(f)(params)` | `value_and_grad p f params` |
+| Auxiliary output | `value_and_grad(f, has_aux=True)` | `value_and_grad_aux p f params` |
+| Parameter container | pytree registration | `Nx.Ptree.S` record with one `walk` |
+| VJP | `jax.vjp(f, x)` then call | `vjp_fun p q f params` / `vjp_fun'` |
+| JVP | `jax.jvp(f, (x,), (v,))` | `jvp p q f params v` / `jvp'` |
+| Batch map | `jax.vmap(f)(batch)` | `vmap Nx.Ptree.(tensor @-> returns tensor) f batch` / `vmap' f batch` |
+| Axis control | `in_axes=(0, None)` | capture the fixed input; `Nx.moveaxis` another axis to 0 |
+| Per-sample grads | `vmap(grad(f))` | `vmap` of `grad` |
+| Custom reverse rule | `@jax.custom_vjp` | `custom_vjp p ~fwd ~bwd` |
+| Custom forward rule | `@jax.custom_jvp` | `custom_jvp p ~f ~jvp` |
+| Rematerialization | `jax.checkpoint(f)` | `remat s f`, `s` the signature of `f` |
 | Jacobian | `jacfwd` / `jacrev` | `jacfwd'` / `jacrev'` |
 | Hessian | `jax.hessian(f)(x)` | `hessian' f x` |
 | HVP | `jvp`-of-`grad` recipe | `hvp` / `hvp'` |
-| Scan | `jax.lax.scan(f, init, xs)` | `scan' ~f ~init xs`, or `scan (module C) (module X) (module Y) ~f ~init xs` over structures |
+| Scan | `jax.lax.scan(f, init, xs)` | `scan' ~f ~init xs`, or `scan c x y ~f ~init xs` over structures |
 | Stop gradient | `jax.lax.stop_gradient(x)` | `detach x` |
 | Block region from AD | — | `no_grad (fun () -> ...)` |
-| Gradient check | `check_grads(f, (x,), 1)` | `check_grads (module P) f params` |
+| Gradient check | `check_grads(f, (x,), 1)` | `check_grads p f params` |
 | Debug tracing | `jax.debug.print` | `with_debug (fun () -> ...)` |
-| JIT | `jax.jit(f)` | `jit (module P) f` |
+| JIT | `jax.jit(f)` | `jit p f` |

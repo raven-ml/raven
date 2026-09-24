@@ -18,18 +18,6 @@ open Rune_test_support.Support
 
 let role_var = "RUNE_JITCACHE_ROLE"
 
-(* A single-tensor Ptree.S instance. *)
-module Single_f32 = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
-
 (* Child side *)
 
 (* An elementwise chain plus a reduction: several kernels, one capture. *)
@@ -60,7 +48,7 @@ let child_twice () =
 let child_pmap () =
   let x = input () in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ] (module Single_f32) f in
+  let g = Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ] Nx.Ptree.tensor f in
   let got = g x in
   let e = to_arr expect and a = to_arr got in
   if e <> a then failwith "pmap result differs from jit";

@@ -52,27 +52,25 @@ Key points:
 
 ## Differentiating a Record
 
-Real models have more than one parameter. In rune the parameters are a record you define, made traversable by implementing `Nx.Ptree.S` — three one-line functions that visit the record's tensor leaves:
+Real models have more than one parameter. In rune the parameters are a record you define, and an `Nx.Ptree.S` module says how to walk it: one `walk` with a line per field. `field` names the field and `leaf` marks a position of the record's type parameter, a tensor:
 
 ```ocaml
-type params = { w : Nx.float32_t; b : Nx.float32_t }
+type 'a params = { w : 'a; b : 'a }
 
 module Params = struct
-  type t = params
+  type 'a t = 'a params
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-    { w = f w; b = f b }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w = f p.w q.w; b = f p.b q.b }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-    f w;
-    f b
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let b = field c "b" leaf b in
+    { w; b }
 end
+
+let params_ptree = Nx.Ptree.instantiate (module Params)
 ```
 
-That is the entire registration story: no ppx, no runtime tree, no string keys. Every transformation takes the module as a first-class argument and returns values of your record type:
+That is the entire registration story: no ppx, no runtime tree, no string keys. `instantiate` makes the structure at one type, `Nx.float32_t params` here once a use fixes the dtype, and every transformation takes it and returns values of your record type:
 
 ```ocaml
 let () =
@@ -85,7 +83,7 @@ let () =
     { w = Nx.zeros Nx.float32 [| 3; 1 |]; b = Nx.zeros Nx.float32 [| 1 |] }
   in
   (* The gradient is a value of type [params]. *)
-  let g = Rune.grad (module Params) loss params in
+  let g = Rune.grad params_ptree loss params in
   Printf.printf "dw:\n%s\n" (Nx.to_string g.w);
   Printf.printf "db: %s\n" (Nx.to_string g.b)
 ```
@@ -111,7 +109,7 @@ let () =
 
   let lr = 0.1 in
   let step p =
-    let l, g = Rune.value_and_grad (module Params) loss p in
+    let l, g = Rune.value_and_grad params_ptree loss p in
     let p =
       { w = Nx.sub p.w (Nx.mul_s g.w lr); b = Nx.sub p.b (Nx.mul_s g.b lr) }
     in
@@ -143,20 +141,13 @@ let () =
     let pred = Nx.mul v v in
     (Nx.mean pred, pred) (* pred is auxiliary — not differentiated *)
   in
-  let module Vec = struct
-    type t = Nx.float32_t
-
-    let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v = f v
-    let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
-    let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) v = f v
-  end in
-  let loss, g, pred = Rune.value_and_grad_aux (module Vec) f x in
+  let loss, g, pred = Rune.value_and_grad_aux Nx.Ptree.tensor f x in
   Printf.printf "loss = %.2f\n" (Nx.item [] loss);
   Printf.printf "grad = %s\n" (Nx.to_string g);
   Printf.printf "pred = %s\n" (Nx.to_string pred)
 ```
 
-The `Vec` module above is worth noting: a single tensor is itself a one-leaf `Ptree.S` structure, so the structured API subsumes the single-tensor one.
+`Nx.Ptree.tensor` is the structure of a single tensor, so the structured API covers the single-tensor case; `grad'` and the other primed forms are its shorthands.
 
 ## Higher-Order Derivatives
 

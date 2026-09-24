@@ -22,20 +22,21 @@ let jacobian_fn x =
 let test_pullback_reusable () =
   let f p = Nx.mul p.fst p.snd in
   let a = v3 () and b = vec64 [| 1.9; 0.8; -0.6 |] in
-  let _, pullback = Rune.vjp_fun (module Pair) f { fst = a; snd = b } in
+  let _, pullback =
+    Rune.vjp_fun pair_ptree Nx.Ptree.tensor f { fst = a; snd = b }
+  in
   let ct1 = vec64 [| 1.0; 0.0; 0.0 |] and ct2 = vec64 [| 0.0; 2.0; 0.0 |] in
   let g1 = pullback ct1 in
   let g2 = pullback ct2 in
-  let _, e1 = Rune.vjp (module Pair) f { fst = a; snd = b } ct1 in
-  let _, e2 = Rune.vjp (module Pair) f { fst = a; snd = b } ct2 in
+  let _, e1 = Rune.vjp pair_ptree Nx.Ptree.tensor f { fst = a; snd = b } ct1 in
+  let _, e2 = Rune.vjp pair_ptree Nx.Ptree.tensor f { fst = a; snd = b } ct2 in
   check_arr ~msg:"first call" (to_arr e1.fst) g1.fst;
   check_arr ~msg:"second call" (to_arr e2.fst) g2.fst;
   check_arr ~msg:"second call snd" (to_arr e2.snd) g2.snd
 
 let test_pullback_shape_mismatch () =
   let _, pullback =
-    Rune.vjp_fun
-      (module Pair)
+    Rune.vjp_fun pair_ptree Nx.Ptree.tensor
       (fun p -> Nx.add p.fst p.snd)
       { fst = v3 (); snd = v3 () }
   in
@@ -124,41 +125,29 @@ let test_hvp_structured () =
   let v =
     { fst = vec64 [| 1.0; 0.0; 2.0 |]; snd = vec64 [| 0.5; -1.0; 0.0 |] }
   in
-  let hv = Rune.hvp (module Pair) f params v in
+  let hv = Rune.hvp pair_ptree f params v in
   check_arr ~msg:"d fst" [| 2.5; -1.0; 4.0 |] hv.fst;
   check_arr ~msg:"d snd" [| 1.0; 0.0; 2.0 |] hv.snd
-
-module Single = struct
-  type t = Nx.float64_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
-end
 
 let test_check_grads_accepts_correct () =
   let f p = Nx.sum (Nx.mul (Nx.exp p.fst) (Nx.sin p.snd)) in
   let params =
     { fst = vec64 [| 0.7; -1.3; 2.1 |]; snd = vec64 [| 1.9; 0.8; -0.6 |] }
   in
-  match Rune.check_grads (module Pair) f params with
+  match Rune.check_grads pair_ptree f params with
   | Ok () -> ()
   | Error msg -> fail msg
 
 let test_check_grads_catches_wrong_rule () =
   (* A custom rule with a wrong bwd must be flagged. *)
   let broken x =
-    Rune.custom_vjp
-      (module Single)
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
       ~fwd:(fun x -> (Nx.sin x, x))
       ~bwd:(fun x ct -> Nx.mul ct (Nx.mul_s (Nx.cos x) 2.0))
       x
   in
   match
-    Rune.check_grads (module Single) (fun x -> Nx.sum (broken x)) (v3 ())
+    Rune.check_grads Nx.Ptree.tensor (fun x -> Nx.sum (broken x)) (v3 ())
   with
   | Ok () -> fail "check_grads accepted a wrong gradient"
   | Error _ -> ()

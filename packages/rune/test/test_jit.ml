@@ -93,7 +93,7 @@ let test_jit2_structured_output () =
   let f p =
     { w = Nx.mul p.w p.w; b = Nx.add p.b p.b; scale = Nx.mul_s p.scale 2.0 }
   in
-  let g = Rune.jit2 (module Params) (module Params) f in
+  let g = Rune.jit2 params_ptree params_ptree f in
   let p = params () in
   let r = g p in
   let e = f p in
@@ -105,10 +105,8 @@ let test_jit2_structured_output () =
 
 let test_grad_inside_jit () =
   let step =
-    Rune.jit2
-      (module Params)
-      (module Params)
-      (fun p -> Rune.grad (module Params) quadratic p)
+    Rune.jit2 params_ptree params_ptree (fun p ->
+        Rune.grad params_ptree quadratic p)
   in
   let g = step (params ()) in
   check_arr ~msg:"dw" [| 2.0; -4.0; 6.0 |] g.w;
@@ -138,33 +136,6 @@ let test_jit_under_vmap_is_transparent () =
    the LAPACK conventions: the reflector sign, and a column with a zero tail
    taking no reflector at all. *)
 
-(* A single-tensor structure: jit2's input or output. *)
-module Csingle = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
-end
-
-(* QR returns two tensors, so the jitted form needs a pair output. *)
-module Pair32 = struct
-  type t = Nx.float32_t * Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (q, r) = (f q, f r)
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (q1, r1)
-      (q2, r2) =
-    (f q1 q2, f r1 r2)
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (q, r) =
-    f q;
-    f r
-end
-
 let test_qr_reduced_matches_eager () =
   let a =
     Nx.create f32 [| 4; 4 |]
@@ -188,9 +159,8 @@ let test_qr_reduced_matches_eager () =
       |]
   in
   let jq, jr =
-    Rune.jit2
-      (module Csingle)
-      (module Pair32)
+    Rune.jit2 Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor tensor)
       (fun m -> Nx.qr ~mode:`Reduced m)
       a
   in
@@ -205,9 +175,8 @@ let test_qr_zero_tail_matches_eager () =
     Nx.create f32 [| 3; 3 |] [| 1.0; 0.0; 2.0; 0.0; 2.0; 3.0; 0.0; 0.0; 4.0 |]
   in
   let jq, jr =
-    Rune.jit2
-      (module Csingle)
-      (module Pair32)
+    Rune.jit2 Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor tensor)
       (fun m -> Nx.qr ~mode:`Reduced m)
       a
   in
@@ -228,8 +197,8 @@ let test_solve_triangular_flags_match_eager () =
       in
       let x =
         Rune.jit2
-          (module Pair32)
-          (module Csingle)
+          Nx.Ptree.(pair tensor tensor)
+          Nx.Ptree.tensor
           (fun (a, b) -> Nx.solve_triangular ~upper ~transpose ~unit_diag a b)
           (a, b)
       in
@@ -254,8 +223,8 @@ let test_solve_triangular_vector_rhs () =
   let b = Nx.create f32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let x =
     Rune.jit2
-      (module Pair32)
-      (module Csingle)
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.tensor
       (fun (a, b) ->
         Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false a b)
       (a, b)
@@ -292,8 +261,8 @@ let test_solve_triangular_batched () =
   let b = Nx.create f32 [| 2; 3; 1 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let x =
     Rune.jit2
-      (module Pair32)
-      (module Csingle)
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.tensor
       (fun (a, b) ->
         Nx.solve_triangular ~upper:true ~transpose:false ~unit_diag:false a b)
       (a, b)
@@ -426,7 +395,7 @@ let test_solve_matches_eager () =
     Nx.create f32 [| 3; 3 |] [| 4.0; 1.0; 2.0; 1.0; 5.0; 3.0; 2.0; 3.0; 6.0 |]
   in
   let b = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let g = Rune.jit2 (module Pair32) (module Csingle) solve in
+  let g = Rune.jit2 Nx.Ptree.(pair tensor tensor) Nx.Ptree.tensor solve in
   check_arr ~msg:"first call" (to_arr (Nx.solve a b)) (g (a, b));
   (* Replay solves a different system with the same compiled program. *)
   let a2 = Nx.mul_s a 1.5 in
@@ -448,20 +417,19 @@ let cumsum xs =
 
 (* A two-tensor carry. *)
 module Pair = struct
-  type t = { u : Nx.float32_t; v : Nx.float32_t }
+  type pair = { u : Nx.float32_t; v : Nx.float32_t }
+  type _ t = pair
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { u; v } =
-    { u = f u; v = f v }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { u = f p.u q.u; v = f p.v q.v }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { u; v } =
-    f u;
-    f v
+  let walk c { u; v } =
+    let open Nx.Ptree.Walk in
+    let u = field c "u" tensor u in
+    let v = field c "v" tensor v in
+    { u; v }
 end
 
-type pair = Pair.t
+let pair_ptree = Nx.Ptree.instantiate (module Pair)
+
+type pair = Pair.pair
 
 let test_scan_matches_eager () =
   let g = Rune.jit' (fun xs -> snd (cumsum xs)) in
@@ -527,9 +495,7 @@ let test_grad_through_scan_carry_only () =
 let test_grad_through_scan_multi_leaf () =
   let loss xs =
     let p, ys =
-      Rune.scan
-        (module Pair)
-        Nx.Ptree.leaf Nx.Ptree.leaf
+      Rune.scan pair_ptree Nx.Ptree.tensor Nx.Ptree.tensor
         ~f:(fun p x ->
           let u = Nx.add p.u x and v = Nx.mul p.v x in
           ({ u; v }, Nx.mul u v))
@@ -549,9 +515,7 @@ let test_grad_through_scan_asymmetric_pair () =
      the result instead of cancelling out. *)
   let loss xs =
     let p, ys =
-      Rune.scan
-        (module Pair)
-        Nx.Ptree.leaf Nx.Ptree.leaf
+      Rune.scan pair_ptree Nx.Ptree.tensor Nx.Ptree.tensor
         ~f:(fun p x ->
           let u = Nx.tanh (Nx.add p.u x) and v = Nx.mul p.v (Nx.add_s x 0.5) in
           ({ u; v }, Nx.add (Nx.mul_s u 2.0) v))
@@ -655,24 +619,21 @@ let test_grad_through_scan_vector_carry () =
    float/int row, and two outputs. The cotangent of the rows is stacked like
    them, row i from step i; the integer row gets none. *)
 module Rows = struct
-  type t = { w : Nx.float32_t; b : Nx.float32_t; step : Nx.int32_t }
+  type rows = { w : Nx.float32_t; b : Nx.float32_t; step : Nx.int32_t }
+  type _ t = rows
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) r =
-    { w = f r.w; b = f r.b; step = f r.step }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) r r' =
-    { w = f r.w r'.w; b = f r.b r'.b; step = f r.step r'.step }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) r =
-    f r.w;
-    f r.b;
-    f r.step
+  let walk c { w; b; step } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" tensor w in
+    let b = field c "b" tensor b in
+    let step = field c "step" tensor step in
+    { w; b; step }
 end
 
+let rows_ptree = Nx.Ptree.instantiate (module Rows)
+
 let layers xs =
-  Rune.scan Nx.Ptree.leaf
-    (module Rows)
-    (module Pair)
+  Rune.scan Nx.Ptree.tensor rows_ptree pair_ptree
     ~f:(fun h { Rows.w; b; step } ->
       let h =
         Nx.tanh
@@ -697,23 +658,19 @@ let rows () =
 let test_scan_over_structured_rows () =
   let xs = rows () in
   let h, ys = layers xs in
-  let g = Rune.jit2 (module Rows) (module Pair) (fun xs -> snd (layers xs)) in
+  let g = Rune.jit2 rows_ptree pair_ptree (fun xs -> snd (layers xs)) in
   let ys' = g xs in
   check_arr ~msg:"first output" (to_arr ys.Pair.u) ys'.Pair.u;
   check_arr ~msg:"second output" (to_arr ys.Pair.v) ys'.Pair.v;
   check_arr ~msg:"final carry" (to_arr h)
-    (Rune.jit2 (module Rows) (module Csingle) (fun xs -> fst (layers xs)) xs);
+    (Rune.jit2 rows_ptree Nx.Ptree.tensor (fun xs -> fst (layers xs)) xs);
   let loss xs =
     let h, ys = layers xs in
     Nx.add (Nx.sum h) (Nx.sum (Nx.mul ys.Pair.u ys.Pair.u))
   in
-  let expected = Rune.grad (module Rows) loss xs in
+  let expected = Rune.grad rows_ptree loss xs in
   let actual =
-    Rune.jit2
-      (module Rows)
-      (module Rows)
-      (fun xs -> Rune.grad (module Rows) loss xs)
-      xs
+    Rune.jit2 rows_ptree rows_ptree (fun xs -> Rune.grad rows_ptree loss xs) xs
   in
   check_arr ~msg:"stacked weights' cotangent" (to_arr expected.Rows.w)
     actual.Rows.w;
@@ -726,9 +683,7 @@ let test_scan_over_structured_rows () =
 let test_scan_rejects_ragged_rows () =
   let bad xs =
     ignore
-      (Rune.scan Nx.Ptree.leaf
-         (module Rows)
-         Nx.Ptree.leaf
+      (Rune.scan Nx.Ptree.tensor rows_ptree Nx.Ptree.tensor
          ~f:(fun c _ -> (c, c))
          ~init:(vec32 [| 0.0 |]) xs)
   in
@@ -743,41 +698,23 @@ let test_scan_rejects_ragged_rows () =
    step moves that row, not the cache. A body that reads the old cache after
    writing the new one still sees the old values: the write lands in a copy. *)
 module Cache_carry = struct
-  type t = { h : Nx.float32_t; cache : Nx.float32_t }
+  type cache_carry = { h : Nx.float32_t; cache : Nx.float32_t }
+  type _ t = cache_carry
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) c =
-    { h = f c.h; cache = f c.cache }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) c c' =
-    { h = f c.h c'.h; cache = f c.cache c'.cache }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) c =
-    f c.h;
-    f c.cache
+  let walk c { h; cache } =
+    let open Nx.Ptree.Walk in
+    let h = field c "h" tensor h in
+    let cache = field c "cache" tensor cache in
+    { h; cache }
 end
 
-module Carry_and_sums = struct
-  type t = Cache_carry.t * Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (c, y) =
-    (Cache_carry.map f c, f y)
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (c, y)
-      (c', y') =
-    (Cache_carry.map2 f c c', f y y')
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (c, y) =
-    Cache_carry.iter f c;
-    f y
-end
+let cache_carry_ptree = Nx.Ptree.instantiate (module Cache_carry)
 
 let test_scan_carry_written_in_place () =
   let layers = 4 and slots = 64 and d = 16 in
-  let fold ~read_old (c : Cache_carry.t) =
-    Rune.scan
-      (module Cache_carry)
-      Nx.Ptree.leaf Nx.Ptree.leaf
-      ~f:(fun (c : Cache_carry.t) l ->
+  let fold ~read_old (c : Cache_carry.cache_carry) =
+    Rune.scan cache_carry_ptree Nx.Ptree.tensor Nx.Ptree.tensor
+      ~f:(fun (c : Cache_carry.cache_carry) l ->
         let h = Nx.tanh (Nx.add_s c.h 0.25) in
         let cache =
           Nx.set
@@ -801,7 +738,9 @@ let test_scan_carry_written_in_place () =
     (fun read_old ->
       let expected_c, expected_ys = fold ~read_old c0 in
       let g =
-        Rune.jit2 (module Cache_carry) (module Carry_and_sums) (fold ~read_old)
+        Rune.jit2 cache_carry_ptree
+          Nx.Ptree.(pair cache_carry_ptree tensor)
+          (fold ~read_old)
       in
       ignore (g c0);
       let before = !Tolk.Helpers.Global_counters.global_mem in
@@ -902,12 +841,9 @@ let test_grad_through_scan_external_input () =
     Nx.add (Nx.reshape [||] c) (Nx.sum ys)
   in
   let p = { Pair.u = Nx.scalar f32 0.5; v = vec32 [| 1.0; 2.0; 3.0; 0.5 |] } in
-  let expected = Rune.grad (module Pair) loss p in
+  let expected = Rune.grad pair_ptree loss p in
   let g =
-    Rune.jit2
-      (module Pair)
-      (module Pair)
-      (fun p -> Rune.grad (module Pair) loss p)
+    Rune.jit2 pair_ptree pair_ptree (fun p -> Rune.grad pair_ptree loss p)
   in
   let actual = g p in
   check_arr ~msg:"external weight" (to_arr expected.Pair.u) actual.Pair.u;
@@ -916,7 +852,7 @@ let test_grad_through_scan_external_input () =
   let p2 =
     { Pair.u = Nx.scalar f32 (-0.25); v = vec32 [| 0.25; -1.0; 1.5; 0.75 |] }
   in
-  let expected2 = Rune.grad (module Pair) loss p2 in
+  let expected2 = Rune.grad pair_ptree loss p2 in
   let actual2 = g p2 in
   check_arr ~msg:"external weight, replay" (to_arr expected2.Pair.u)
     actual2.Pair.u;
@@ -928,19 +864,16 @@ let test_grad_through_scan_external_input () =
 type windowed = { x : Nx.float32_t; pos : Nx.int32_t }
 
 module Windowed = struct
-  type t = windowed
+  type _ t = windowed
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { x; pos } =
-    { x = f x; pos = f pos }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { x = f p.x q.x; pos = f p.pos q.pos }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { x; pos } =
-    f x;
-    f pos
+  let walk c { x; pos } =
+    let open Nx.Ptree.Walk in
+    let x = field c "x" tensor x in
+    let pos = field c "pos" tensor pos in
+    { x; pos }
 end
 
+let windowed_ptree = Nx.Ptree.instantiate (module Windowed)
 let pos_at i = Nx.scalar Nx.int32 (Int32.of_int i)
 
 (* One compiled program serves every window position: the start is read on every
@@ -949,7 +882,7 @@ let pos_at i = Nx.scalar Nx.int32 (Int32.of_int i)
 let test_set_traced_window_replays_position () =
   let v = vec32 [| 9.0; 8.0 |] in
   let f { x; pos } = Nx.set [ Nx.D (pos, 2) ] v x in
-  let g = Rune.jit2 (module Windowed) (module Csingle) f in
+  let g = Rune.jit2 windowed_ptree Nx.Ptree.tensor f in
   let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
   let at i = { x; pos = pos_at i } in
   check_arr ~msg:"first position" (to_arr (f (at 1))) (g (at 1));
@@ -962,7 +895,7 @@ let test_set_traced_window_replays_position () =
 let test_set_traced_window_over_two_axes () =
   let v = Nx.create f32 [| 2; 3 |] [| 9.0; 8.0; 7.0; 6.0; 5.0; 4.0 |] in
   let f { x; pos } = Nx.set [ Nx.D (pos, 2); Nx.D (pos, 3) ] v x in
-  let g = Rune.jit2 (module Windowed) (module Csingle) f in
+  let g = Rune.jit2 windowed_ptree Nx.Ptree.tensor f in
   let x = Nx.create f32 [| 4; 6 |] (Array.init 24 float_of_int) in
   let at i = { x; pos = pos_at i } in
   List.iter
@@ -984,31 +917,30 @@ let test_set_static_window_matches_eager () =
 
 let test_slice_traced_window_replays_position () =
   let f { x; pos } = Nx.slice [ Nx.D (pos, 2) ] x in
-  let g = Rune.jit2 (module Windowed) (module Csingle) f in
+  let g = Rune.jit2 windowed_ptree Nx.Ptree.tensor f in
   let x = vec32 [| 0.0; 1.0; 2.0; 3.0; 4.0 |] in
   let at i = { x; pos = pos_at i } in
   check_arr ~msg:"first position" [| 1.0; 2.0 |] (g (at 1));
   check_arr ~msg:"second position, same program" [| 3.0; 4.0 |] (g (at 3))
 
 module Trio = struct
-  type t = { a : Nx.float32_t; b : Nx.float32_t; xs : Nx.float32_t }
+  type trio = { a : Nx.float32_t; b : Nx.float32_t; xs : Nx.float32_t }
+  type _ t = trio
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { a; b; xs } =
-    { a = f a; b = f b; xs = f xs }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { a = f p.a q.a; b = f p.b q.b; xs = f p.xs q.xs }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { a; b; xs } =
-    f a;
-    f b;
-    f xs
+  let walk c { a; b; xs } =
+    let open Nx.Ptree.Walk in
+    let a = field c "a" tensor a in
+    let b = field c "b" tensor b in
+    let xs = field c "xs" tensor xs in
+    { a; b; xs }
 end
+
+let trio_ptree = Nx.Ptree.instantiate (module Trio)
 
 let test_grad_through_scan_external_matrices () =
   (* An RNN step: the recurrence and input matrices are external inputs of the
      loop, each earning a cotangent contribution per step. *)
-  let loss (p : Trio.t) =
+  let loss (p : Trio.trio) =
     let step x ut =
       let x = Nx.tanh (Nx.add (Nx.matmul x p.Trio.a) (Nx.matmul ut p.Trio.b)) in
       (x, x)
@@ -1024,12 +956,9 @@ let test_grad_through_scan_external_matrices () =
         xs = Nx.create f32 [| 3; 2 |] [| 1.0; 0.5; -1.0; 2.0; 0.25; 1.0 |];
       }
   in
-  let expected = Rune.grad (module Trio) loss p in
+  let expected = Rune.grad trio_ptree loss p in
   let g =
-    Rune.jit2
-      (module Trio)
-      (module Trio)
-      (fun p -> Rune.grad (module Trio) loss p)
+    Rune.jit2 trio_ptree trio_ptree (fun p -> Rune.grad trio_ptree loss p)
   in
   let actual = g p in
   check_arr ~msg:"recurrence matrix" (to_arr expected.Trio.a) actual.Trio.a;
@@ -1887,19 +1816,17 @@ let test_diag_matches_eager () =
 type mlp = { w1 : Nx.float32_t; b1 : Nx.float32_t; w2 : Nx.float32_t }
 
 module Mlp = struct
-  type t = mlp
+  type _ t = mlp
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w1; b1; w2 } =
-    { w1 = f w1; b1 = f b1; w2 = f w2 }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { w1 = f p.w1 q.w1; b1 = f p.b1 q.b1; w2 = f p.w2 q.w2 }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w1; b1; w2 } =
-    f w1;
-    f b1;
-    f w2
+  let walk c { w1; b1; w2 } =
+    let open Nx.Ptree.Walk in
+    let w1 = field c "w1" tensor w1 in
+    let b1 = field c "b1" tensor b1 in
+    let w2 = field c "w2" tensor w2 in
+    { w1; b1; w2 }
 end
+
+let mlp_ptree = Nx.Ptree.instantiate (module Mlp)
 
 let test_jitted_training_matches_eager () =
   let xs =
@@ -1927,10 +1854,12 @@ let test_jitted_training_matches_eager () =
     Nx.mean (Nx.mul d d)
   in
   let update p =
-    let g = Rune.grad (module Mlp) loss p in
-    Mlp.map2 (fun w dw -> Nx.sub w (Nx.mul (scalar_like dw 0.1) dw)) p g
+    let g = Rune.grad mlp_ptree loss p in
+    Nx.Ptree.map2 mlp_ptree
+      (fun _ w dw -> Nx.sub w (Nx.mul (scalar_like dw 0.1) dw))
+      p g
   in
-  let step = Rune.jit2 (module Mlp) (module Mlp) update in
+  let step = Rune.jit2 mlp_ptree mlp_ptree update in
   let rec train f p n = if n = 0 then p else train f (f p) (n - 1) in
   let jitted = train step (init ()) 5 in
   let eager = train update (init ()) 5 in
@@ -2109,8 +2038,7 @@ let test_leaves_elsewhere_raise () =
             Rune.jit' ~device:"CPU" (fun x -> Nx.mul_s x 2.0) x);
         invalid_starting "Rune.jit: input leaves 0 and 1 are on CPU:1 and CPU:2"
           (fun () ->
-            Rune.jit
-              (module Pair)
+            Rune.jit pair_ptree
               (fun p -> Nx.add p.Pair.u p.v)
               { Pair.u = x; v = y }))
   in
@@ -2240,9 +2168,8 @@ let test_views_of_inputs_as_outputs () =
     (Rune.jit' slice (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]));
   check_arr ~msg:"on the host" [| 1.; 2. |]
     (Rune.jit' ~device:"CPU" slice (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]));
-  let step = Rune.jit_step (module Nx.Ptree) (module Csingle) (fun _ v -> v) in
-  check_arr ~msg:"a window of the state, read" [| 1.; 2.; 3.; 4. |]
-    (step (Nx.Ptree.list [ Nx.Ptree.tensor x ]) w)
+  let step = Rune.jit_step Nx.Ptree.tensor Nx.Ptree.tensor (fun _ v -> v) in
+  check_arr ~msg:"a window of the state, read" [| 1.; 2.; 3.; 4. |] (step x w)
 
 (* Views of one shape with other strides are other programs. *)
 let test_strides_key_programs () =
@@ -2328,13 +2255,11 @@ let test_mixed_placements_raise () =
 let test_host_started_loop_compiles_once () =
   let traces = ref 0 in
   let step =
-    Rune.jit_step ~device:"CPU:1"
-      (module Nx.Ptree)
-      (module Csingle)
-      (fun _ x ->
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.unit Nx.Ptree.tensor
+      (fun () x ->
         incr traces;
         Nx.add_s (Nx.mul_s x 0.5) 1.0)
-      (Nx.Ptree.list [])
+      ()
   in
   let x = ref (vec32 (Array.make 8 0.0)) in
   for _ = 1 to 4 do
@@ -2443,10 +2368,8 @@ let test_forced_handle_feeds_current_bytes () =
 
 let test_same_handle_as_two_leaves () =
   let g =
-    Rune.jit2 ~device:"CPU:1"
-      (module Pair)
-      (module Pair)
-      (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
+    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun p ->
+        { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
   in
   let h =
     Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
@@ -2458,10 +2381,7 @@ let test_same_handle_as_two_leaves () =
 
 let test_duplicate_outputs_share_one_handle () =
   let g =
-    Rune.jit2 ~device:"CPU:1"
-      (module Pair)
-      (module Pair)
-      (fun p ->
+    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun p ->
         let y = Nx.add p.u p.v in
         { u = y; v = y })
   in
@@ -2491,10 +2411,8 @@ let test_cross_signature_feedback () =
 
 let test_pass_through_output_survives () =
   let g =
-    Rune.jit2 ~device:"CPU:1"
-      (module Pair)
-      (module Pair)
-      (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
+    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun p ->
+        { u = p.u; v = Nx.mul_s p.v 2.0 })
   in
   let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
   let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
@@ -2741,28 +2659,11 @@ let raises_donated f =
       | _ -> false)
     (fun () -> ignore (f ()))
 
-(* One tensor as a tree. *)
-let leaf (type a b) () : (module Nx.Ptree.S with type t = (a, b) Nx.t) =
-  (module struct
-    type t = (a, b) Nx.t
-
-    let map (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t) x = f x
-
-    let map2 (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t -> ('p, 'q) Nx.t) a b =
-      f a b
-
-    let iter (f : 'p 'q. ('p, 'q) Nx.t -> unit) x = f x
-  end)
-
 (* [f] compiled as a step that reads nothing and consumes its state. *)
 let consume state f =
-  Rune.jit_step ~device:"CPU:1"
-    (module Nx.Ptree)
-    state
-    (fun _ x -> f x)
-    (Nx.Ptree.list [])
+  Rune.jit_step ~device:"CPU:1" Nx.Ptree.unit state (fun () x -> f x) ()
 
-let consume' f = consume (leaf ()) f
+let consume' f = consume Nx.Ptree.tensor f
 
 let test_donate_bounds_resident_memory () =
   let n = 4096 in
@@ -2827,13 +2728,13 @@ let test_donate_refuses_movement_path () =
 (* An input read by a kernel that runs after the output's store keeps its own
    storage: here the reduction over [u] must see the old value. *)
 let test_donate_refuses_later_reader () =
-  let f (p : Pair.t) =
+  let f (p : Pair.pair) =
     {
       Pair.u = Nx.add_s p.u 1.0;
       v = Nx.add p.v (Nx.broadcast_to (Nx.shape p.v) (Nx.sum p.u));
     }
   in
-  let step = consume (module Pair) f in
+  let step = consume pair_ptree f in
   let p =
     { Pair.u = vec32 [| 1.0; 2.0; 3.0 |]; v = vec32 [| 0.0; 0.0; 0.0 |] }
   in
@@ -2849,9 +2750,8 @@ let test_donate_refuses_later_reader () =
 (* A donated input returned unchanged moves its storage to the output. *)
 let test_donate_moves_pass_through () =
   let step =
-    consume
-      (module Pair)
-      (fun (p : Pair.t) -> { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
+    consume pair_ptree (fun (p : Pair.pair) ->
+        { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
   in
   let p =
     { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } |> step |> step
@@ -2870,9 +2770,8 @@ let test_donate_moves_pass_through () =
    copies out after the kernels ran. *)
 let test_donate_keeps_pass_through_readable () =
   let step =
-    consume
-      (module Pair)
-      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
+    consume pair_ptree (fun (p : Pair.pair) ->
+        { Pair.u = Nx.add_s p.u 1.0; v = p.u })
   in
   let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 0.0; 0.0 |] } in
   let r = step (step p) in
@@ -2884,9 +2783,8 @@ let test_donate_keeps_pass_through_readable () =
    inputs. *)
 let test_donate_reuses_every_leaf () =
   let step =
-    consume
-      (module Pair)
-      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
+    consume pair_ptree (fun (p : Pair.pair) ->
+        { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
   in
   let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
   let r1 = step p in
@@ -2900,9 +2798,8 @@ let test_donate_reuses_every_leaf () =
 (* A staged loop refuses reuse only for the leaves it touches. *)
 let test_donate_reuses_beside_a_scan () =
   let step =
-    consume
-      (module Pair)
-      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
+    consume pair_ptree (fun (p : Pair.pair) ->
+        { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
   in
   let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 1.0; 2.0 |] } in
   let r1 = step p in
@@ -2917,10 +2814,8 @@ let test_donate_reuses_beside_a_scan () =
    later call keeps its bytes whatever the outputs are. *)
 let test_outputs_never_write_into_inputs () =
   let step =
-    Rune.jit2 ~device:"CPU:1"
-      (module Pair)
-      (module Pair)
-      (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
+    Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun (p : Pair.pair) ->
+        { Pair.u = Nx.add_s p.u 1.0; v = p.u })
   in
   let p = { Pair.u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 5.0; 6.0 |] } in
   let r1 = step p in
@@ -2937,7 +2832,7 @@ let test_donate_reuses_window_write () =
   let f { x; pos } =
     { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2l }
   in
-  let step = consume (module Windowed) f in
+  let step = consume windowed_ptree f in
   let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
   let s = ref (step s0) in
   full_major ();
@@ -2957,23 +2852,17 @@ let test_donate_reuses_window_write () =
 type pool = { slots : Nx.float32_t; writer : Nx.int32_t; read : Nx.float32_t }
 
 module Pool = struct
-  type t = pool
+  type _ t = pool
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { slots; writer; read } =
-    { slots = f slots; writer = f writer; read = f read }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    {
-      slots = f p.slots q.slots;
-      writer = f p.writer q.writer;
-      read = f p.read q.read;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { slots; writer; read } =
-    f slots;
-    f writer;
-    f read
+  let walk c { slots; writer; read } =
+    let open Nx.Ptree.Walk in
+    let slots = field c "slots" tensor slots in
+    let writer = field c "writer" tensor writer in
+    let read = field c "read" tensor read in
+    { slots; writer; read }
 end
+
+let pool_ptree = Nx.Ptree.instantiate (module Pool)
 
 let test_donate_reuses_pool_read_after_write () =
   let n = 1024 in
@@ -2984,7 +2873,7 @@ let test_donate_reuses_pool_read_after_write () =
     let slots = Nx.where (Nx.greater_equal_s writer 0l) fresh slots in
     { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
   in
-  let step = consume (module Pool) f in
+  let step = consume pool_ptree f in
   let writer =
     Nx.create Nx.int32 [| n |]
       (Array.init n (fun i ->
@@ -3007,7 +2896,7 @@ let test_donate_reuses_pool_read_after_write () =
    the other still owns would corrupt the state here. *)
 let test_donate_alternates_two_programs () =
   let n = 8 in
-  let mix (p : Pair.t) =
+  let mix (p : Pair.pair) =
     let a = Nx.tanh (Nx.matmul p.u p.v) in
     let scale = Nx.add_s (Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.abs a)) 1.0 in
     {
@@ -3015,13 +2904,13 @@ let test_donate_alternates_two_programs () =
       v = Nx.sub p.v (Nx.mul_s (Nx.transpose a) 0.1);
     }
   in
-  let fold (p : Pair.t) =
+  let fold (p : Pair.pair) =
     let m = Nx.mean ~axes:[ 0 ] ~keepdims:true (Nx.matmul p.v p.u) in
     let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
     { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
   in
-  let mix' = consume (module Pair) mix in
-  let fold' = consume (module Pair) fold in
+  let mix' = consume pair_ptree mix in
+  let fold' = consume pair_ptree fold in
   let init k =
     Nx.create f32 [| n; n |]
       (Array.init (n * n) (fun i -> sin (float_of_int ((k * i) + 1))))
@@ -3054,8 +2943,8 @@ let scatter_pool ~donate =
     { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
   in
   let step =
-    if donate then consume (module Pool) f
-    else Rune.jit2 ~device:"CPU:1" (module Pool) (module Pool) f
+    if donate then consume pool_ptree f
+    else Rune.jit2 ~device:"CPU:1" pool_ptree pool_ptree f
   in
   (* Tokens 1 and 3 aim at slot 5: the later one wins. Token 2 has no slot. *)
   let writer = Nx.create Nx.int32 [| 4 |] [| 2l; 5l; -1l; 5l |] in
@@ -3125,11 +3014,11 @@ let test_scatter_of_the_pool_into_itself () =
 let test_scatter_refuses_a_later_reader_of_the_pool () =
   let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
   let values = vec32 [| 50.0; 70.0 |] in
-  let f (p : Pair.t) =
+  let f (p : Pair.pair) =
     let u = Nx.scatter ~axis:0 ~indices ~values p.u in
     { Pair.u; v = Nx.add (Nx.flip p.u) u }
   in
-  let step = consume (module Pair) f in
+  let step = consume pair_ptree f in
   let p =
     { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
   in
@@ -3147,13 +3036,13 @@ let test_scatter_refuses_a_later_reader_of_the_pool () =
 let test_scatter_beside_a_reader_of_the_old_value () =
   let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
   let values = vec32 [| 50.0; 70.0 |] in
-  let f (p : Pair.t) =
+  let f (p : Pair.pair) =
     {
       Pair.u = Nx.scatter ~axis:0 ~indices ~values p.u;
       v = Nx.add (Nx.flip p.u) p.v;
     }
   in
-  let step = consume (module Pair) f in
+  let step = consume pair_ptree f in
   let p () =
     { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
   in
@@ -3425,7 +3314,7 @@ let test_donated_handle_refeed_raises () =
 
 let test_donate_duplicate_leaves_once () =
   let g =
-    consume (module Pair) (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
+    consume pair_ptree (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
   in
   let h =
     Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |])
@@ -3465,10 +3354,8 @@ let test_jit_leaves_handle_readable () =
    after call, and stays readable. *)
 let test_step_reads_its_first_argument () =
   let step =
-    Rune.jit_step ~device:"CPU:1"
-      (module Csingle)
-      (module Csingle)
-      (fun w x -> Nx.add (Nx.mul w x) w)
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
+        Nx.add (Nx.mul w x) w)
   in
   let w = place (vec32 [| 1.0; 2.0 |]) in
   let x = place (vec32 [| 3.0; 4.0 |]) in
@@ -3485,10 +3372,8 @@ let test_step_reads_its_first_argument () =
 let test_step_reuses_only_the_state () =
   let w = place (vec32 [| 1.0; 2.0 |]) in
   let add =
-    Rune.jit_step ~device:"CPU:1"
-      (module Csingle)
-      (module Csingle)
-      (fun w x -> Nx.add x w)
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
+        Nx.add x w)
   in
   let x, reused =
     reused_by_second_step (add w) (place (vec32 [| 0.0; 0.0 |]))
@@ -3496,10 +3381,8 @@ let test_step_reuses_only_the_state () =
   equal ~msg:"the state's storage is reused" int 8 reused;
   check_arr ~msg:"value" [| 2.0; 4.0 |] x;
   let double =
-    Rune.jit_step ~device:"CPU:1"
-      (module Csingle)
-      (module Csingle)
-      (fun w _ -> Nx.mul_s w 2.0)
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w _ ->
+        Nx.mul_s w 2.0)
   in
   let y, reused =
     reused_by_second_step (double w) (place (vec32 [| 0.0; 0.0 |]))
@@ -3512,10 +3395,8 @@ let test_step_reuses_only_the_state () =
    nothing, and the handle stays usable. *)
 let test_step_reads_a_handle_in_both_arguments () =
   let step =
-    Rune.jit_step ~device:"CPU:1"
-      (module Csingle)
-      (module Csingle)
-      (fun w x -> Nx.add w x)
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun w x ->
+        Nx.add w x)
   in
   let h = place (vec32 [| 1.0; 2.0 |]) in
   let before = (Rune.jit_stats ()).reused_bytes in
@@ -3545,10 +3426,8 @@ let test_step_refuses_a_partial_view () =
    it through a view of part of it. *)
 let test_step_reads_a_storage_both_arguments_reach () =
   let step =
-    Rune.jit_step ~device:"CPU:1"
-      (module Csingle)
-      (module Csingle)
-      (fun r s -> Nx.add s (Nx.sum r))
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun r s ->
+        Nx.add s (Nx.sum r))
   in
   let w = place (vec32 [| 1.0; 2.0; 3.0; 4.0 |]) in
   let view = Nx.slice [ Nx.R (0, 2) ] w in
@@ -3562,10 +3441,8 @@ let test_step_reads_a_storage_both_arguments_reach () =
 let test_step_write_into_a_read_leaf () =
   let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
   let step =
-    Rune.jit_step ~device:"CPU:1"
-      (module Csingle)
-      (module Csingle)
-      (fun pool x -> Nx.scatter ~axis:0 ~indices ~values:x pool)
+    Rune.jit_step ~device:"CPU:1" Nx.Ptree.tensor Nx.Ptree.tensor (fun pool x ->
+        Nx.scatter ~axis:0 ~indices ~values:x pool)
   in
   let pool = place (vec32 [| 1.0; 2.0; 3.0 |]) in
   let a = step pool (vec32 [| 10.0; 30.0 |]) in
@@ -3579,7 +3456,7 @@ let test_step_write_into_a_read_leaf () =
    tensors to them. *)
 let test_aliased_input_leaves () =
   let f (p : pair) = Nx.sub p.u (Nx.mul_s p.v 2.0) in
-  let g = Rune.jit (module Pair) f in
+  let g = Rune.jit pair_ptree f in
   let x = vec32 [| 1.0; 2.0; 3.0 |] in
   check_arr ~msg:"aliased call" [| -1.0; -2.0; -3.0 |] (g { u = x; v = x });
   check_arr ~msg:"distinct call" [| -7.0; -8.0; -9.0 |]
@@ -3587,10 +3464,8 @@ let test_aliased_input_leaves () =
   (* Under grad inside jit the two leaves are separate parameters, as
      eagerly. *)
   let dg =
-    Rune.jit2
-      (module Pair)
-      (module Pair)
-      (fun p -> Rune.grad (module Pair) (fun p -> Nx.sum (f p)) p)
+    Rune.jit2 pair_ptree pair_ptree
+      (fun p -> Rune.grad pair_ptree (fun p -> Nx.sum (f p)) p)
       { u = x; v = x }
   in
   check_arr ~msg:"d/du" [| 1.0; 1.0; 1.0 |] dg.u;

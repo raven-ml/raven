@@ -126,21 +126,12 @@ let oracle_tests =
 
 (* Axes and structure *)
 
-let test_in_axis () =
-  let x =
-    Nx.transpose (xs ())
-    (* [3; 4], mapped axis 1 *)
-  in
-  check_arr ~msg:"in_axis 1"
+let test_moved_axis () =
+  (* Another axis is mapped by moving it to the front, a view. *)
+  let x = Nx.transpose (xs ()) in
+  check_arr ~msg:"axis 1"
     (to_arr (loop_map (fun r -> Nx.sum (Nx.mul r r)) (xs ())))
-    (Rune.vmap' ~in_axis:1 (fun r -> Nx.sum (Nx.mul r r)) x)
-
-let test_out_axis () =
-  let y = Rune.vmap' ~out_axis:1 (fun r -> Nx.mul r r) (xs ()) in
-  equal ~msg:"shape" (array int) [| 3; 4 |] (Nx.shape y);
-  check_arr ~msg:"values"
-    (to_arr (Nx.transpose (loop_map (fun r -> Nx.mul r r) (xs ()))))
-    y
+    (Rune.vmap' (fun r -> Nx.sum (Nx.mul r r)) (Nx.moveaxis 1 0 x))
 
 let test_vmap_structure () =
   (* Two mapped leaves: per-slice matrix products. *)
@@ -151,7 +142,7 @@ let test_vmap_structure () =
   in
   let y =
     Rune.vmap
-      (module Pair)
+      Nx.Ptree.(pair_ptree @-> returns tensor)
       (fun p -> Nx.matmul p.fst p.snd)
       { fst = a; snd = b }
   in
@@ -160,7 +151,11 @@ let test_vmap_structure () =
       (List.init 2 (fun i ->
            Nx.matmul (Nx.slice [ Nx.I i ] a) (Nx.slice [ Nx.I i ] b)))
   in
-  check_arr ~msg:"pair matmul" (to_arr expected) y
+  check_arr ~msg:"pair matmul" (to_arr expected) y;
+  let y' =
+    Rune.vmap Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.matmul a b
+  in
+  check_arr ~msg:"curried matmul" (to_arr expected) y'
 
 let test_vmap_structure_leading_dims () =
   (* Two mapped leaves whose elements carry different leading ranks: a batch of
@@ -202,7 +197,7 @@ let test_vmap_structure_leading_dims () =
   in
   let y =
     Rune.vmap
-      (module Pair)
+      Nx.Ptree.(pair_ptree @-> returns tensor)
       (fun p -> Nx.matmul p.fst p.snd)
       { fst = a; snd = b }
   in
@@ -213,102 +208,80 @@ let test_vmap_structure_leading_dims () =
   in
   check_arr ~msg:"pair matmul, leading dims" (to_arr expected) y
 
-let test_in_axes_constant_leaf () =
-  (* Second leaf held constant: per-slice a_i @ b. *)
+let test_captured_value_is_constant () =
+  (* A value the function captures is not mapped: per-slice a_i @ b. *)
   let a = ms () in
   let b = w32 () in
   let y =
-    Rune.vmap ~in_axes:[ Some 0; None ]
-      (module Pair)
-      (fun p -> Nx.matmul p.fst p.snd)
-      { fst = a; snd = b }
+    Rune.vmap Nx.Ptree.(tensor @-> returns tensor) (fun a -> Nx.matmul a b) a
   in
   let expected =
     Nx.stack ~axis:0
       (List.init 2 (fun i -> Nx.matmul (Nx.slice [ Nx.I i ] a) b))
   in
-  check_arr ~msg:"constant leaf" (to_arr expected) y
+  check_arr ~msg:"constant" (to_arr expected) y
 
-let test_in_axes_non_leading () =
-  (* First leaf mapped along axis 1. *)
-  let a =
-    Nx.moveaxis 0 1 (ms ())
-    (* batch now at axis 1 *)
-  in
-  let b = w32 () in
+(* A capture that is the same value as an argument is a constant: each lane adds
+   the whole of [w]. *)
+let test_capture_of_the_argument_is_constant () =
+  let w = vec64 [| 1.0; 2.0; 3.0 |] in
   let y =
-    Rune.vmap ~in_axes:[ Some 1; None ]
-      (module Pair)
-      (fun p -> Nx.matmul p.fst p.snd)
-      { fst = a; snd = b }
+    Rune.vmap Nx.Ptree.(tensor @-> returns tensor) (fun x -> Nx.add x w) w
   in
-  let expected =
-    Nx.stack ~axis:0
-      (List.init 2 (fun i -> Nx.matmul (Nx.slice [ Nx.I i ] (ms ())) b))
-  in
-  check_arr ~msg:"axis 1" (to_arr expected) y
+  equal ~msg:"shape" (array int) [| 3; 3 |] (Nx.shape y);
+  check_arr ~msg:"lanes" [| 2.0; 3.0; 4.0; 3.0; 4.0; 5.0; 4.0; 5.0; 6.0 |] y;
+  check_arr ~msg:"vmap'"
+    [| 2.0; 3.0; 4.0; 3.0; 4.0; 5.0; 4.0; 5.0; 6.0 |]
+    (Rune.vmap' (fun x -> Nx.add x w) w)
 
-let test_in_axes_negative_axis () =
-  (* [Some (-2)] names the same axis as [Some 1] on a rank-3 leaf. *)
-  let a = Nx.moveaxis 0 1 (ms ()) in
-  let b = w32 () in
-  let y =
-    Rune.vmap ~in_axes:[ Some (-2); None ]
-      (module Pair)
-      (fun p -> Nx.matmul p.fst p.snd)
-      { fst = a; snd = b }
-  in
-  let expected =
-    Nx.stack ~axis:0
-      (List.init 2 (fun i -> Nx.matmul (Nx.slice [ Nx.I i ] (ms ())) b))
-  in
-  check_arr ~msg:"negative axis" (to_arr expected) y
+let test_rejects_no_leaf () =
+  raises (Invalid_argument "Rune.vmap: the arguments have no leaf to map")
+    (fun () ->
+      ignore (Rune.vmap Nx.Ptree.(unit @-> returns tensor) (fun () -> xs ()) ()))
 
-let test_in_axes_out_of_bounds () =
-  raises_match Exn.invalid_arg (fun () ->
-      ignore
-        (Rune.vmap ~in_axes:[ Some 2; None ]
-           (module Pair)
-           (fun p -> Nx.add p.fst p.snd)
-           { fst = xs (); snd = xs () }))
-
-let test_in_axes_length_mismatch () =
-  raises_match Exn.invalid_arg (fun () ->
-      ignore
-        (Rune.vmap ~in_axes:[ Some 0 ]
-           (module Pair)
-           (fun p -> Nx.add p.fst p.snd)
-           { fst = xs (); snd = xs () }))
-
-let test_in_axes_maps_no_leaf () =
-  raises_match Exn.invalid_arg (fun () ->
-      ignore
-        (Rune.vmap ~in_axes:[ None; None ]
-           (module Pair)
-           (fun p -> Nx.add p.fst p.snd)
-           { fst = xs (); snd = xs () }))
-
-let test_structural_out_axis () =
-  let y =
-    Rune.vmap ~out_axis:1
-      (module Pair)
-      (fun p -> Nx.add p.fst p.snd)
-      { fst = xs (); snd = xs () }
-  in
-  equal ~msg:"shape" (array int) [| 3; 4 |] (Nx.shape y);
-  check_arr ~msg:"values" (to_arr (Nx.transpose (Nx.add (xs ()) (xs ())))) y
+let test_rejects_consumes () =
+  raises
+    (Invalid_argument
+       "Rune.vmap: argument 1 is consumed; only a compiled call consumes its \
+        arguments") (fun () ->
+      let (_ : Nx.float64_t -> Nx.float64_t) =
+        Rune.vmap Nx.Ptree.(consumes tensor @@ returns tensor) Fun.id
+      in
+      ())
 
 let test_batch_size_mismatch () =
-  raises_match Exn.invalid_arg (fun () ->
+  raises
+    (Invalid_argument
+       "Rune.vmap: argument 1, leaf snd has 3 rows along axis 0, argument 1, \
+        leaf fst has 2") (fun () ->
       ignore
         (Rune.vmap
-           (module Pair)
+           Nx.Ptree.(pair_ptree @-> returns tensor)
            (fun p -> Nx.add p.fst p.snd)
-           { fst = vec64 [| 1.0; 2.0 |]; snd = vec64 [| 1.0; 2.0; 3.0 |] }))
+           { fst = vec64 [| 1.0; 2.0 |]; snd = vec64 [| 1.0; 2.0; 3.0 |] }));
+  raises
+    (Invalid_argument
+       "Rune.vmap: argument 2 has 3 rows along axis 0, argument 1 has 2")
+    (fun () ->
+      ignore
+        (Rune.vmap
+           Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+           Nx.add
+           (vec64 [| 1.0; 2.0 |])
+           (vec64 [| 1.0; 2.0; 3.0 |])))
 
 let test_scalar_leaf_rejected () =
   raises_match Exn.invalid_arg (fun () ->
-      ignore (Rune.vmap' (fun x -> x) (Nx.scalar f64 1.0)))
+      ignore (Rune.vmap' (fun x -> x) (Nx.scalar f64 1.0)));
+  raises
+    (Invalid_argument
+       "Rune.vmap: argument 1, leaf 1 is a scalar; vmap maps axis 0 of every \
+        leaf") (fun () ->
+      ignore
+        (Rune.vmap
+           Nx.Ptree.(pair tensor tensor @-> returns tensor)
+           (fun (x, y) -> Nx.add x y)
+           (xs (), Nx.scalar f64 1.0)))
 
 let test_reading_batched_value_raises () =
   raises_match Exn.invalid_arg (fun () ->
@@ -334,14 +307,13 @@ let test_no_rule_raises () =
            (Nx.create f64 [| 2; 2; 2 |]
               [| 4.0; 1.0; 1.0; 3.0; 5.0; 0.5; 0.5; 2.0 |])))
 
-let test_vmap2_structured_output () =
+let test_vmap_structured_output () =
   (* Both output leaves gain a batch axis; one depends on the input, the other
      is constant and broadcasts. *)
   let c = vec64 [| 9.0 |] in
   let y =
-    Rune.vmap2
-      (module Pair)
-      (module Pair)
+    Rune.vmap
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
       (fun p -> { fst = Nx.mul p.fst p.snd; snd = c })
       { fst = xs (); snd = xs () }
   in
@@ -434,18 +406,17 @@ let test_jvp_through_vmap () =
 (* A window write batches over the template and the value; each row gets its own
    window. *)
 module Row_pos = struct
-  type t = { row : Nx.float32_t; pos : Nx.int32_t }
+  type row_pos = { row : Nx.float32_t; pos : Nx.int32_t }
+  type _ t = row_pos
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { row; pos } =
-    { row = f row; pos = f pos }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { row = f a.row b.row; pos = f a.pos b.pos }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { row; pos } =
-    f row;
-    f pos
+  let walk c { row; pos } =
+    let open Nx.Ptree.Walk in
+    let row = field c "row" tensor row in
+    let pos = field c "pos" tensor pos in
+    { row; pos }
 end
+
+let row_pos = Nx.Ptree.(instantiate (module Row_pos) @-> returns tensor)
 
 (* A batched window start: each example writes and reads at its own clamped
    position. *)
@@ -455,13 +426,11 @@ let test_vmap_set_window_batched_start () =
   let v = vec32 [| 9.0; 8.0 |] in
   check_arr ~msg:"per-example windows, the second clamped"
     [| 0.; 9.; 8.; 3.; 10.; 11.; 9.; 8. |]
-    (Rune.vmap
-       (module Row_pos)
+    (Rune.vmap row_pos
        (fun r -> Nx.set [ Nx.D (r.pos, 2) ] v r.row)
        { row = xs; pos });
   check_arr ~msg:"per-example reads" [| 1.; 2.; 12.; 13. |]
-    (Rune.vmap
-       (module Row_pos)
+    (Rune.vmap row_pos
        (fun r -> Nx.slice [ Nx.D (r.pos, 2) ] r.row)
        { row = xs; pos })
 
@@ -482,19 +451,15 @@ let tests =
     group "loop oracle" oracle_tests;
     group "axes and structure"
       [
-        test "maps a non-leading axis" test_in_axis;
-        test "places the batch axis on output" test_out_axis;
+        test "maps a moved axis" test_moved_axis;
         test "maps all leaves of a structure" test_vmap_structure;
         test "maps leaves of different leading ranks"
           test_vmap_structure_leading_dims;
-        test "in_axes holds a leaf constant" test_in_axes_constant_leaf;
-        test "in_axes maps a non-leading axis" test_in_axes_non_leading;
-        test "in_axes accepts a negative axis" test_in_axes_negative_axis;
-        test "in_axes rejects an out-of-bounds axis" test_in_axes_out_of_bounds;
-        test "in_axes must have one entry per leaf" test_in_axes_length_mismatch;
-        test "in_axes must map at least one leaf" test_in_axes_maps_no_leaf;
-        test "out_axis places the structural batch axis"
-          test_structural_out_axis;
+        test "a captured value is a constant" test_captured_value_is_constant;
+        test "a capture of the argument is a constant"
+          test_capture_of_the_argument_is_constant;
+        test "rejects arguments with no leaf" test_rejects_no_leaf;
+        test "rejects a consumed argument" test_rejects_consumes;
         test "rejects mismatched batch sizes" test_batch_size_mismatch;
         test "rejects scalar leaves" test_scalar_leaf_rejected;
         test "raises without a batching rule" test_no_rule_raises;
@@ -514,7 +479,7 @@ let tests =
           test_rng_is_identical_per_lane;
       ];
     group "structured outputs"
-      [ test "vmap2 batches every output leaf" test_vmap2_structured_output ];
+      [ test "batches every output leaf" test_vmap_structured_output ];
     group "composition"
       [
         test "vmap of grad: per-sample gradients" test_per_sample_gradients;

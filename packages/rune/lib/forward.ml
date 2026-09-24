@@ -592,29 +592,49 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_eigh { t_in } ->
           Some (fun k -> no_rule k "eigh" (active t_in) (fun () -> eigh t_in))
       (* Custom rules. *)
-      | Custom.E_custom_jvp (Custom.Jvp_call { tree; params; f; jvp }) ->
+      | Custom.E_custom_jvp
+          (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
           Some
             (fun k ->
-              let (module Q) = tree in
-              let any = ref false in
-              Q.iter (fun leaf -> if active leaf then any := true) params;
-              if not !any then continue k (f params)
+              if
+                not
+                  (Nx.Ptree.fold params_s
+                     (fun _ leaf any -> any || active leaf)
+                     params false)
+              then continue k (f params)
               else begin
-                let dparams = Q.map (fun leaf -> tan_or_zeros leaf) params in
+                let dparams =
+                  Nx.Ptree.map params_s (fun _ leaf -> tan_or_zeros leaf) params
+                in
                 let y, dy = jvp params dparams in
                 (* A result that is one of the parameters is aliased, so the
                    parameter keeps its own tangent. *)
-                let y = reshape y (T.shape y) in
-                set_tangent y dy;
+                let y = Structure.aliases result_s y in
+                let set path yl dyl =
+                  if T.shape yl <> T.shape dyl then
+                    invalid_arg
+                      (Printf.sprintf
+                         "Rune.custom_jvp: %s: tangent shape [%s] does not \
+                          match result shape [%s]"
+                         (Structure.describe path)
+                         (Structure.shape_string (T.shape dyl))
+                         (Structure.shape_string (T.shape yl)));
+                  set_tangent yl dyl;
+                  yl
+                in
+                ignore
+                  (Structure.map2 "Rune.custom_jvp" result_s ~this:"the result"
+                     ~that:"jvp's tangents" set y dy);
                 continue k y
               end)
-      | Custom.E_custom_vjp (Custom.Vjp_call { tree; params; fwd; _ }) ->
+      | Custom.E_custom_vjp (Custom.Vjp_call { params_s; params; fwd; _ }) ->
           Some
             (fun k ->
-              let (module Q) = tree in
-              let any = ref false in
-              Q.iter (fun leaf -> if active leaf then any := true) params;
-              if !any then
+              if
+                Nx.Ptree.fold params_s
+                  (fun _ leaf any -> any || active leaf)
+                  params false
+              then
                 invalid_arg
                   "Rune: a custom_vjp function is not forward-differentiable; \
                    define a custom_jvp rule instead"
