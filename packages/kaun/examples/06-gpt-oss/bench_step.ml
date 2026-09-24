@@ -164,7 +164,11 @@ let run (type b) ?device c (params : (float, b) Nx.t Gpt_oss.params)
     match device with
     | None -> step
     | Some device ->
-        Rune.jit2 ~device ~donate:true (module Step) (module Step) step
+        Rune.jit_step ~device
+          (module Nx.Ptree)
+          (module Step)
+          (fun _ s -> step s)
+          (Nx.Ptree.list [])
   in
   let timed s =
     let t0 = Unix.gettimeofday () in

@@ -118,41 +118,29 @@ let close ~msg expected actual =
 
 let finite ~msg t = is_true ~msg (Array.for_all Float.is_finite (flat t))
 
-(* One call, eagerly or through a compiled step that donates its caches. *)
+(* One call, eagerly or through a compiled step that reads the tokens and the
+   index and consumes the caches. The step's state carries the stream it returns
+   beside them; the stream it is given is a placeholder. *)
 
-type call = {
-  tokens : Nx.int32_t;
-  index : Cache_index.t;
-  caches : Nx.float32_t Attention.Cache.List.t;
-}
+type query = { tokens : Nx.int32_t; index : Cache_index.t }
 
 type result = {
   stream : Nx.float32_t;
   written : Nx.float32_t Attention.Cache.List.t;
 }
 
-module Call = struct
-  type t = call
+module Query = struct
+  type t = query
 
-  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { tokens; index; caches }
-      =
-    {
-      tokens = f tokens;
-      index = Cache_index.map f index;
-      caches = Attention.Cache.List.map f caches;
-    }
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { tokens; index } =
+    { tokens = f tokens; index = Cache_index.map f index }
 
   let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-    {
-      tokens = f a.tokens b.tokens;
-      index = Cache_index.map2 f a.index b.index;
-      caches = Attention.Cache.List.map2 f a.caches b.caches;
-    }
+    { tokens = f a.tokens b.tokens; index = Cache_index.map2 f a.index b.index }
 
-  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { tokens; index; caches } =
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { tokens; index } =
     f tokens;
-    Cache_index.iter f index;
-    Attention.Cache.List.iter f caches
+    Cache_index.iter f index
 end
 
 module Result = struct
@@ -176,15 +164,18 @@ let eager m caches index tokens = cached m caches index tokens
 
 let compiled m =
   let step =
-    Rune.jit2 ~donate:true
-      (module Call)
+    Rune.jit_step
+      (module Query)
       (module Result)
-      (fun { tokens; index; caches } ->
-        let stream, written = cached m caches index tokens in
+      (fun { tokens; index } { written; stream = _ } ->
+        let stream, written = cached m written index tokens in
         { stream; written })
   in
   fun caches index tokens ->
-    let { stream; written } = step { tokens; index; caches } in
+    let placeholder = Nx.zeros Nx.float32 [| 1 |] in
+    let { stream; written } =
+      step { tokens; index } { stream = placeholder; written = caches }
+    in
     (stream, written)
 
 (* Every law below holds for both. *)
@@ -393,9 +384,9 @@ let test_empty_lane m call =
   in
   finite ~msg:"a call of padding alone is finite" h'
 
-(* Greedy generation through a jitted, donated step equals re-running the whole
-   sequence for every token, and every cache leaf is written in its own
-   storage. *)
+(* Greedy generation through a compiled step that consumes its state equals
+   re-running the whole sequence for every token, and every cache leaf is
+   written in its own storage. *)
 
 type state = {
   token : Nx.int32_t;
@@ -465,7 +456,13 @@ let test_generation_matches_recomputation () =
       kv;
     }
   in
-  let step = Rune.jit2 ~donate:true (module State) (module State) step in
+  let step =
+    Rune.jit_step
+      (module Nx.Ptree)
+      (module State)
+      (fun _ s -> step s)
+      (Nx.Ptree.list [])
+  in
   let context = Array.length start + steps in
   let s =
     ref

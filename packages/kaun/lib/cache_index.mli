@@ -157,8 +157,8 @@ val extend :
 
     - [pool'] is [pool] with [values], of shape [[| batch; seq; ... |]], stored
       where the call's tokens sit: one {!Nx.scatter}[ ~unique_indices:true] over
-      the tokens, in place on a pool donated to {!Rune.jit}. Every slot the call
-      does not target is as it was.
+      the tokens, in place on a pool consumed by {!Rune.jit_step}. Every slot
+      the call does not target is as it was.
     - [seen], of shape [[| batch; context; ... |]], is what those tokens attend
       over, read from [pool']: column [j] is the slot holding position [j], so
       the call's own tokens are in it. A column that is unallocated, past every

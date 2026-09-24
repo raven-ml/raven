@@ -36,8 +36,6 @@ let test_matmul_grad_on_cuda () =
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through cuda jit" (to_arr (Rune.grad' f x)) (g x)
 
-
-
 (* Device residency: outputs stay on the GPU until read, and unread outputs fed
    back as inputs move no bytes. *)
 
@@ -83,7 +81,6 @@ let test_cuda_handle_into_cpu_jit () =
   (* A handle from another device takes the ordinary host path: it forces and
      copies. *)
   check_arr ~msg:"cuda handle read on the cpu device" [| 3.0; 5.0 |] (gp h)
-
 
 (* Multi-kernel compiled traces replay as batched device execution graphs: the
    kernels are recorded into a CUDA graph on the first call and later calls
@@ -289,7 +286,7 @@ let test_pmap_feedback_on_cuda () =
     (Array.init 8 (fun i -> 4.0 *. float_of_int i))
     y2
 
-(* Donation on the GPU: a state-to-state loop with [donate:true] releases each
+(* Donation on the GPU: a state-to-state loop through [jit_step] releases each
    consumed generation's device buffer once its call completes, so resident
    bytes stay bounded at two generations with every handle still reachable and
    no GC; the donated handles raise on read. *)
@@ -304,6 +301,14 @@ let raises_donated f =
              it before the call"
       | _ -> false)
     (fun () -> ignore (f ()))
+
+(* [f] compiled for CUDA with its argument consumed. *)
+let consuming f =
+  Rune.jit_step ~device:"CUDA"
+    (module Nx.Ptree)
+    (module Single_f32)
+    (fun _ x -> f x)
+    (Nx.Ptree.list [])
 
 let test_donate_bounds_resident_memory_on_cuda () =
   require_cuda ();
@@ -322,7 +327,10 @@ let test_donate_bounds_resident_memory_on_cuda () =
     done;
     ((Rune.jit_stats ()).resident_bytes - base, !h)
   in
-  let step d = Rune.jit' ~device:"CUDA" ~donate:d (fun x -> Nx.add_s x 1.0) in
+  let step d =
+    let f x = Nx.add_s x 1.0 in
+    if d then consuming f else Rune.jit' ~device:"CUDA" f
+  in
   let grew, h = run (step true) in
   is_true ~msg:"donate holds at most two generations" (grew <= 2 * n * 4);
   check_arr ~msg:"donated chain computes the right value" (Array.make n 11.0) h;
@@ -333,7 +341,7 @@ let test_donate_bounds_resident_memory_on_cuda () =
 
 let test_donated_handle_raises_on_cuda () =
   require_cuda ();
-  let g = Rune.jit' ~device:"CUDA" ~donate:true (fun x -> Nx.mul_s x 2.0) in
+  let g = consuming (fun x -> Nx.mul_s x 2.0) in
   let h1 = g (vec32 [| 1.0; 2.0 |]) in
   let h2 = g h1 in
   raises_donated (fun () -> to_arr h1);
@@ -342,7 +350,7 @@ let test_donated_handle_raises_on_cuda () =
 
 let test_forced_handle_unaffected_by_donate_on_cuda () =
   require_cuda ();
-  let g = Rune.jit' ~device:"CUDA" ~donate:true (fun x -> Nx.mul_s x 2.0) in
+  let g = consuming (fun x -> Nx.mul_s x 2.0) in
   let h = g (vec32 [| 1.0; 2.0 |]) in
   check_arr ~msg:"read before the call forces to host" [| 2.0; 4.0 |] h;
   ignore (g h);

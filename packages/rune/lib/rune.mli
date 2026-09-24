@@ -421,7 +421,6 @@ exception Jit_error of string
 
 val jit :
   ?device:string ->
-  ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
   (module Ptree.S with type t = 'p) ->
@@ -461,27 +460,9 @@ val jit :
     {!val-to_device}. A transfer failure surfaces as an exception at the first
     read of the affected output.
 
-    [donate] (default [false]) consumes the resident inputs: once a call
-    completes — never during it — the device buffers of every input leaf that
-    was an unread resident output of an earlier call are released to the
-    allocator, and the donated handle becomes unusable — reading it, or feeding
-    it to a later call (which reads it), raises [Invalid_argument]; read or copy
-    the value before the call if it is still needed. The next call's fresh
-    outputs reuse the released storage. An output that reads a donated leaf
-    only at the element it writes (an optimizer update, a window write into a
-    cache) is computed straight into that leaf's storage, and so is an output
-    that never reads a donated leaf of its own dtype and size once no kernel
-    reads that leaf (a bf16 copy of f32 master weights takes the previous
-    copy's storage); a state-to-state loop ([state <- step state] with [step]
-    jitted [~donate:true]) therefore holds one generation of state on the
-    device. An output that reads its leaf elsewhere (through a transpose or a
-    reduction) or whose leaf another kernel reads afterwards gets fresh
-    storage and the leaf is released after the call, about two generations.
-    [RUNE_JIT_DEBUG=1] reports, per input leaf, whether its storage was
-    reused, copied, or was not resident. Only
-    resident handles are consumed: host tensors and handles already read are
-    unaffected. A handle appearing as several input leaves is donated once
-    and never reused in place. Programs under {!pmap} keep two generations.
+    Inputs are read, never consumed: a resident input leaf is still resident
+    and readable after the call. {!jit_step} compiles a function that consumes
+    part of its argument, so its storage can be reused.
 
     [beam] enables beam-search autotuning of this function's kernels with the
     given width: instead of scheduling each kernel by fixed heuristics, the
@@ -561,7 +542,6 @@ val jit :
 
 val jit2 :
   ?device:string ->
-  ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
   (module Ptree.S with type t = 'p) ->
@@ -572,9 +552,73 @@ val jit2 :
 (** [jit2 (module P) (module Q) f] is like {!val-jit} for a function returning a
     structured output. *)
 
+val jit_step :
+  ?device:string ->
+  ?beam:int ->
+  ?beam_parallel:int ->
+  (module Ptree.S with type t = 'r) ->
+  (module Ptree.S with type t = 's) ->
+  ('r -> 's -> 's) ->
+  'r ->
+  's ->
+  's
+(** [jit_step (module R) (module S) f] is [f] compiled as {!jit2} compiles it,
+    for a step from a state to the next one: the call reads its first argument
+    and consumes its second, the state, whose storage the next state takes. A
+    deep model's block reads its layer's weights and consumes the residual
+    stream and its cache; a training step reads its batch and consumes the
+    parameters and the optimizer state. What a step returns besides its state,
+    such as a loss or the sampled ids, is a field of the state:
+
+    {[
+    let step =
+      Rune.jit_step
+        (module Batch)
+        (module State)
+        (fun { Batch.inputs; targets } { State.params; opt; loss = _ } ->
+          let loss, grads =
+            Rune.value_and_grad (module Params) (objective inputs targets)
+              params
+          in
+          let params, opt =
+            Vega.adamw_step (module Params) ~lr opt ~params ~grads
+          in
+          { State.params; opt; loss })
+    ]}
+
+    A step that reads nothing takes [(module Nx.Ptree)] and passes
+    [Nx.Ptree.list []].
+
+    Once a call has run — never during it — every leaf of the state that was
+    resident (an unread output of an earlier call, or a value placed with
+    {!val-to_device}) is consumed: its device buffer is released to the
+    allocator or taken by an output, and the handle becomes unusable. Reading
+    it, or feeding it to a later call (which reads it), raises
+    [Invalid_argument]; read or copy the value before the call if it is still
+    needed. A host leaf of the state is uploaded and stays usable, and so does
+    a handle already read. The first argument's leaves are read as by
+    {!val-jit} and are never consumed, and a handle that is a leaf of both
+    arguments, or that a compiled function binds as a capture, is read:
+    it lends nothing and stays usable.
+
+    An output leaf takes the storage of the state's leaf at the same position
+    when their dtypes and sizes match, no other leaf of the call reaches that
+    storage, and reusing it cannot change the result: the output reads the
+    leaf only at the element it writes (an optimizer update, a window write
+    into a cache) or not at all (a bf16 copy of f32 master weights), and no
+    kernel reads the leaf after the output is written. A state-to-state loop
+    therefore holds one generation of state on the device. Any other output
+    gets fresh storage and the leaf is released after the call, about two
+    generations. [RUNE_JIT_DEBUG=1] reports, per input leaf in traversal order
+    (the first argument's first), whether it was [read], its storage [reused]
+    or [copied], or was [not resident]. On the CPU device outputs are host
+    tensors and consuming changes nothing.
+
+    Compilation, caching and capture semantics are {!val-jit}'s. Raises as
+    {!val-jit}. *)
+
 val jit' :
   ?device:string ->
-  ?donate:bool ->
   ?beam:int ->
   ?beam_parallel:int ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
@@ -616,9 +660,12 @@ val pmap :
     leaf whose placement matches — same devices, same axis or replication —
     seeds the compiled program's buffers directly with no transfer, so iterated
     calls (a data-parallel training step) move only the freshly sharded batch.
-    [donate] consumes resident inputs as in {!val-jit}, releasing every
-    per-device buffer of the donated handle; a handle whose placement mismatches
-    is forced to the host first and is not donated.
+    [donate] (default [false]) consumes every resident input as {!jit_step}
+    consumes its state, releasing every per-device buffer of the
+    donated handle; a handle whose placement mismatches is forced to the host
+    first and is not donated. A donated carry keeps two generations. [pmap]
+    keeps this whole-argument form until {!val-jit} over device lists replaces
+    [pmap].
 
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.
@@ -652,13 +699,13 @@ val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     The bytes are copied 64 MiB at a time into one device buffer, and the result
     is resident like an unread output of a compiled call (see {!val-jit}):
     metadata reads are free, a compiled function on [device] that takes it as an
-    input leaf uses the buffer with no transfer, and [~donate:true] consumes it
-    when it is an input leaf. The first host read of its data copies it back and
-    releases the buffer, and every nx operation outside a compiled function is a
-    host read, views included. [x] is untouched and may be dropped. A value
-    already resident on [device] is returned as it is, and one resident on
-    another device goes through the host. The buffer is returned to the system
-    when the value is released, not kept for reuse.
+    input leaf uses the buffer with no transfer, and {!jit_step} consumes it
+    when it is a leaf of the state. The first host read of its data copies it
+    back and releases the buffer, and every nx operation outside a compiled
+    function is a host read, views included. [x] is untouched and may be
+    dropped. A value already resident on [device] is returned as it is, and one
+    resident on another device goes through the host. The buffer is returned to
+    the system when the value is released, not kept for reuse.
 
     {b Captures bind.} A compiled function that captures a resident value on
     its own device, and is not a {!pmap}, uses that value's buffer as its
@@ -669,9 +716,9 @@ val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     permanent. A bound value keeps its buffer for as long as it is reachable,
     and a compiled function keeps the values it binds reachable. A host read of
     a bound value copies it out, keeps the copy on the value as for any tensor
-    that was read, and leaves the buffer in place. Passed as an input leaf of a
-    [~donate:true] call, a bound value is used with no transfer and is not
-    consumed, and an output that returns it unchanged is a copy on the device.
+    that was read, and leaves the buffer in place. Passed as a leaf of the state
+    of {!jit_step}, a bound value is used with no transfer and is not consumed,
+    and an output that returns it unchanged is a copy on the device.
     [RUNE_JIT_DEBUG=1] reports such a leaf as [bound]. A capture resident on
     another device, and any resident capture of a {!pmap}, is read to the host
     and uploaded, as a host capture is.

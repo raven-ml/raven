@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Add `Rune.jit_step`: it reads its first argument and consumes and returns its
+  state. `?donate` leaves `jit`, `jit2` and `jit'`: `jit2 ~donate:true` becomes
+  `jit_step (module Nx.Ptree) (module S) f` applied to `Nx.Ptree.list []`.
 - Tracing a function under `Rune.jit` no longer allocates a buffer for every
   traced value. Each placeholder was an uninitialised tensor of the result's
   full size; the pages were never touched, but OCaml counted the bytes and ran

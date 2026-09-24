@@ -55,9 +55,9 @@ let load_tokenizer () =
    generation: it consumes the tokens its index places, fills the caches, and
    returns the next token, the advanced index and the updated caches — its output
    feeds the next call directly. Positions and slots enter as tensors, so under
-   [--jit] [Rune.jit2] compiles exactly two variants: a prefill over the whole
-   prompt, and a single-token step replayed for every generated token, writing
-   the donated caches in place.
+   [--jit] [Rune.jit_step] compiles exactly two variants: a prefill over the
+   whole prompt, and a single-token step replayed for every generated token,
+   writing the consumed caches in place.
 
    The step is generic over the parameters' float dtype [b]: the key-value
    caches carry the same dtype as the weights, so [--dtype float16] decodes with
@@ -112,7 +112,11 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
     match device with
     | None -> step
     | Some device ->
-        Rune.jit2 ~device ~donate:true (module Step) (module Step) step
+        Rune.jit_step ~device
+          (module Nx.Ptree)
+          (module Step)
+          (fun _ s -> step s)
+          (Nx.Ptree.list [])
   in
   let t0 = Unix.gettimeofday () in
   let state =

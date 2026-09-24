@@ -44,22 +44,17 @@ The structural optimizers' state is a parameter tree like the parameters themsel
 ```ocaml
 module Opt = Vega.Adam_state (Model)
 
-module Step_in = struct
-  type t = {
-    params : Model.t;
-    opt : Opt.t;
-    inputs : Nx.float32_t;
-    targets : (int32, Nx.int32_elt) Nx.t;
-  }
+module State = struct
+  type t = { params : Model.t; opt : Opt.t; loss : Nx.float32_t }
 
   (* map/map2/iter: one-line delegations to Model and Opt over the fields —
-     or [@@deriving ptree] with ppx_ptree. Step_out carries params, opt and
-     the loss the same way. *)
+     or [@@deriving ptree] with ppx_ptree. Batch carries inputs and targets
+     the same way. *)
 end
 
 let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
 
-let train_step { Step_in.params; opt; inputs; targets } =
+let train_step { Batch.inputs; targets } { State.params; opt; loss = _ } =
   let loss, grads =
     Rune.value_and_grad model (objective inputs targets) params
   in
@@ -67,15 +62,16 @@ let train_step { Step_in.params; opt; inputs; targets } =
   let params, opt =
     Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
   in
-  { Step_out.params; opt; loss }
+  { State.params; opt; loss }
 
-(* ~donate:true releases the previous generation's device buffers once the
-   call completes — this loop never reads the pre-step state. *)
+(* The step reads the batch and consumes the state: the previous generation's
+   device buffers are released once the call completes — this loop never reads
+   the pre-step state. *)
 let step =
-  Rune.jit2 ~donate:true (module Step_in) (module Step_out) train_step
+  Rune.jit_step (module Batch) (module State) train_step
 ```
 
-Looping `step` over batches compiles once and replays: the state flows out and back in as leaves, and the schedule derives from the state's own counter inside the program. `~donate:true` keeps the loop at about two generations of device buffers instead of one per call awaiting collection — it consumes the handles it frees, so leave it off while the loop still reads the state it feeds in (on the CPU device it changes nothing). The same record works for data-parallel `Rune.pmap2` — replicate the parameters and the state, shard the batch.
+Looping `step` over batches compiles once and replays: the state flows out and back in as leaves, the loss among them, and the schedule derives from the state's own counter inside the program. Consuming the state keeps the loop at about two generations of device buffers instead of one per call awaiting collection — it consumes the handles it frees, so compile with `Rune.jit2` while the loop still reads the state it feeds in (on the CPU device it changes nothing). The same fields work for data-parallel `Rune.pmap2` in one record — replicate the parameters and the state, shard the batch.
 
 Schedules are tensor arithmetic over the counter, so the same schedule drives an eager loop; `Schedule.eval` reads one at a host step number for logging.
 

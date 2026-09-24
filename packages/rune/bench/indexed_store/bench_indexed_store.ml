@@ -31,22 +31,53 @@ module State = struct
     f s.values
 end
 
-type written = { next : Nx.float32_t; probe : Nx.float32_t }
+type batch = { rows : Nx.int32_t; values : Nx.float32_t }
+
+module Batch = struct
+  type t = batch
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b =
+    { rows = f b.rows; values = f b.values }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b c =
+    { rows = f b.rows c.rows; values = f b.values c.values }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) b =
+    f b.rows;
+    f b.values
+end
+
+(* One tensor as a tree. *)
+let leaf (type a b) () : (module Nx.Ptree.S with type t = (a, b) Nx.t) =
+  (module struct
+    type t = (a, b) Nx.t
+
+    let map (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t) x = f x
+
+    let map2 (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t -> ('p, 'q) Nx.t) a b =
+      f a b
+
+    let iter (f : 'p 'q. ('p, 'q) Nx.t -> unit) x = f x
+  end)
+
+(* A step's state: the pool, and a scalar read from it after the write. *)
+type written = { pool : Nx.float32_t; probe : Nx.float32_t }
 
 module Written = struct
   type t = written
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) w =
-    { next = f w.next; probe = f w.probe }
+    { pool = f w.pool; probe = f w.probe }
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v w =
-    { next = f v.next w.next; probe = f v.probe w.probe }
+    { pool = f v.pool w.pool; probe = f v.probe w.probe }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) w =
-    f w.next;
+    f w.pool;
     f w.probe
 end
 
+let written pool = { pool; probe = Nx.sum (Nx.slice [ Nx.R (0, 1) ] pool) }
 let heads = 8
 let width = 64
 
@@ -71,25 +102,38 @@ let timed ~warmup ~runs step =
   (median times, List.fold_left min infinity times, words)
 
 let scatter_case ~runs ~n ~k =
-  let write { pool; rows; values } =
+  let write ({ rows; values } : batch) pool =
     let indices =
       Nx.broadcast_to [| k; heads; width |] (Nx.reshape [| k; 1; 1 |] rows)
     in
-    let next = Nx.scatter ~axis:0 ~indices ~values pool in
-    { next; probe = Nx.sum (Nx.slice [ Nx.R (0, 1) ] next) }
+    written (Nx.scatter ~axis:0 ~indices ~values pool)
   in
-  let donate = Sys.getenv_opt "DONATE" <> Some "0" in
-  let step = Rune.jit2 ~donate (module State) (module Written) write in
+  (* DONATE=0 reads the pool instead of consuming it. *)
+  let step =
+    if Sys.getenv_opt "DONATE" <> Some "0" then
+      Rune.jit_step
+        (module Batch)
+        (module Written)
+        (fun batch w -> write batch w.pool)
+    else
+      let g =
+        Rune.jit2
+          (module State)
+          (module Written)
+          (fun ({ pool; rows; values } : state) -> write { rows; values } pool)
+      in
+      fun ({ rows; values } : batch) (w : written) ->
+        g { pool = w.pool; rows; values }
+  in
   let rows =
     Nx.create Nx.int32 [| k |]
       (Array.init k (fun i -> Int32.of_int (i * (n / k))))
   in
   let values = Nx.ones Nx.float32 [| k; heads; width |] in
-  let pool = ref (Nx.zeros Nx.float32 [| n; heads; width |]) in
+  let state = ref (written (Nx.zeros Nx.float32 [| n; heads; width |])) in
   let once () =
-    let w = step { pool = !pool; rows; values } in
-    pool := w.next;
-    ignore (Nx.item [] w.probe : float)
+    state := step { rows; values } !state;
+    ignore (Nx.item [] !state.probe : float)
   in
   Rune.reset_jit_stats ();
   let med, best, words = timed ~warmup:3 ~runs once in
@@ -100,38 +144,21 @@ let scatter_case ~runs ~n ~k =
      %!"
     n k med best words (reused / 1_000_000)
 
-type cache = { rows_of : Nx.float32_t; pos : Nx.int32_t }
-
-module Cache = struct
-  type t = cache
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) c =
-    { rows_of = f c.rows_of; pos = f c.pos }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) c d =
-    { rows_of = f c.rows_of d.rows_of; pos = f c.pos d.pos }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) c =
-    f c.rows_of;
-    f c.pos
-end
-
 (* One row written at a run-time position into a donated cache. *)
 let window_case ~runs ~n =
   let row = Nx.ones Nx.float32 [| 1; width |] in
-  let write { rows_of; pos } =
-    let next = Nx.set [ Nx.D (pos, 1) ] row rows_of in
-    { next; probe = Nx.sum (Nx.slice [ Nx.R (0, 1) ] next) }
+  let step =
+    Rune.jit_step (leaf ())
+      (module Written)
+      (fun pos w -> written (Nx.set [ Nx.D (pos, 1) ] row w.pool))
   in
-  let step = Rune.jit2 ~donate:true (module Cache) (module Written) write in
-  let cache = ref (Nx.zeros Nx.float32 [| n; width |]) in
+  let state = ref (written (Nx.zeros Nx.float32 [| n; width |])) in
   let at = ref 0 in
   let once () =
     let pos = Nx.scalar Nx.int32 (Int32.of_int (!at mod n)) in
     incr at;
-    let w = step { rows_of = !cache; pos } in
-    cache := w.next;
-    ignore (Nx.item [] w.probe : float)
+    state := step pos !state;
+    ignore (Nx.item [] !state.probe : float)
   in
   let med, best, words = timed ~warmup:3 ~runs once in
   Printf.printf

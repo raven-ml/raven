@@ -1518,11 +1518,11 @@ let test_traced_values_have_no_storage () =
   equal ~msg:"input, result, and both results of a two-result operation"
     (list bool) [ true; true; true; true ] traced
 
-(* Donation. [donate:true] consumes resident input handles: their device buffers
-   return to the allocator once the call completes, so a state-to-state loop
-   holds ~2 generations of device memory instead of one per call, without any
-   GC. A donated handle raises on read; host tensors, already-read handles, and
-   written-back leaves are unaffected. *)
+(* Donation. [jit_step] consumes the resident leaves of its state: their device
+   buffers return to the allocator once the call completes, so a state-to-state
+   loop holds ~2 generations of device memory instead of one per call, without
+   any GC. A donated handle raises on read; the first argument's leaves, host
+   tensors, already-read handles, and written-back leaves are unaffected. *)
 
 let raises_donated f =
   raises_match
@@ -1535,10 +1535,32 @@ let raises_donated f =
       | _ -> false)
     (fun () -> ignore (f ()))
 
+(* One tensor as a tree. *)
+let leaf (type a b) () : (module Nx.Ptree.S with type t = (a, b) Nx.t) =
+  (module struct
+    type t = (a, b) Nx.t
+
+    let map (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t) x = f x
+
+    let map2 (f : 'p 'q. ('p, 'q) Nx.t -> ('p, 'q) Nx.t -> ('p, 'q) Nx.t) a b =
+      f a b
+
+    let iter (f : 'p 'q. ('p, 'q) Nx.t -> unit) x = f x
+  end)
+
+(* [f] compiled as a step that reads nothing and consumes its state. *)
+let consume state f =
+  Rune.jit_step (module Nx.Ptree) state (fun _ x -> f x) (Nx.Ptree.list [])
+
+let consume' f = consume (leaf ()) f
+
 let test_donate_bounds_resident_memory () =
   with_force_copy (fun () ->
       let n = 4096 in
-      let step d = Rune.jit' ~donate:d (fun x -> Nx.add_s x 1.0) in
+      let step d =
+        let f x = Nx.add_s x 1.0 in
+        if d then consume' f else Rune.jit' f
+      in
       let x = vec32 (Array.make n 0.0) in
       (* Every handle created here stays reachable; retiring the handles earlier
          tests dropped unread keeps their release out of the measured window. *)
@@ -1568,7 +1590,7 @@ let test_donate_bounds_resident_memory () =
 let test_donate_reuses_storage () =
   with_force_copy (fun () ->
       let n = 4096 in
-      let step = Rune.jit' ~donate:true (fun x -> Nx.add_s x 1.0) in
+      let step = consume' (fun x -> Nx.add_s x 1.0) in
       let x = vec32 (Array.make n 0.0) in
       Gc.full_major ();
       let base = (Rune.jit_stats ()).resident_bytes in
@@ -1587,7 +1609,7 @@ let test_donate_reuses_storage () =
 let test_donate_refuses_movement_path () =
   with_force_copy (fun () ->
       let f x = Nx.add x (Nx.transpose x) in
-      let step = Rune.jit' ~donate:true f in
+      let step = consume' f in
       let x = Nx.create f32 [| 3; 3 |] (Array.init 9 float_of_int) in
       let e = ref x and h = ref x in
       for _ = 1 to 3 do
@@ -1606,7 +1628,7 @@ let test_donate_refuses_later_reader () =
           v = Nx.add p.v (Nx.broadcast_to (Nx.shape p.v) (Nx.sum p.u));
         }
       in
-      let step = Rune.jit2 ~donate:true (module Pair) (module Pair) f in
+      let step = consume (module Pair) f in
       let p =
         { Pair.u = vec32 [| 1.0; 2.0; 3.0 |]; v = vec32 [| 0.0; 0.0; 0.0 |] }
       in
@@ -1623,8 +1645,7 @@ let test_donate_refuses_later_reader () =
 let test_donate_moves_pass_through () =
   with_force_copy (fun () ->
       let step =
-        Rune.jit2 ~donate:true
-          (module Pair)
+        consume
           (module Pair)
           (fun (p : Pair.t) -> { Pair.u = p.u; v = Nx.add_s p.v 1.0 })
       in
@@ -1647,8 +1668,7 @@ let test_donate_moves_pass_through () =
 let test_donate_keeps_pass_through_readable () =
   with_force_copy (fun () ->
       let step =
-        Rune.jit2 ~donate:true
-          (module Pair)
+        consume
           (module Pair)
           (fun (p : Pair.t) -> { Pair.u = Nx.add_s p.u 1.0; v = p.u })
       in
@@ -1663,8 +1683,7 @@ let test_donate_keeps_pass_through_readable () =
 let test_donate_reuses_every_leaf () =
   with_force_copy (fun () ->
       let step =
-        Rune.jit2 ~donate:true
-          (module Pair)
+        consume
           (module Pair)
           (fun (p : Pair.t) ->
             { Pair.u = Nx.add_s p.u 1.0; v = Nx.add_s p.v 2.0 })
@@ -1682,8 +1701,7 @@ let test_donate_reuses_every_leaf () =
 let test_donate_reuses_beside_a_scan () =
   with_force_copy (fun () ->
       let step =
-        Rune.jit2 ~donate:true
-          (module Pair)
+        consume
           (module Pair)
           (fun (p : Pair.t) ->
             { Pair.u = Nx.add_s p.u 1.0; v = snd (cumsum p.v) })
@@ -1724,7 +1742,7 @@ let test_donate_reuses_window_write () =
       let f { x; pos } =
         { x = Nx.set [ Nx.D (pos, 2) ] v x; pos = Nx.add_s pos 2l }
       in
-      let step = Rune.jit2 ~donate:true (module Windowed) (module Windowed) f in
+      let step = consume (module Windowed) f in
       let s0 = { x = vec32 (Array.make 8 0.0); pos = pos_at 0 } in
       let s = ref (step s0) in
       Gc.full_major ();
@@ -1772,7 +1790,7 @@ let test_donate_reuses_pool_read_after_write () =
         let slots = Nx.where (Nx.greater_equal_s writer 0l) fresh slots in
         { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
       in
-      let step = Rune.jit2 ~donate:true (module Pool) (module Pool) f in
+      let step = consume (module Pool) f in
       let writer =
         Nx.create Nx.int32 [| n |]
           (Array.init n (fun i ->
@@ -1812,8 +1830,8 @@ let test_donate_alternates_two_programs () =
         let u = Nx.mul_s (Nx.sin (Nx.add p.u m)) 0.5 in
         { Pair.u; v = Nx.add (Nx.mul_s p.v 0.9) (Nx.matmul u u) }
       in
-      let mix' = Rune.jit2 ~donate:true (module Pair) (module Pair) mix in
-      let fold' = Rune.jit2 ~donate:true (module Pair) (module Pair) fold in
+      let mix' = consume (module Pair) mix in
+      let fold' = consume (module Pair) fold in
       let init k =
         Nx.create f32 [| n; n |]
           (Array.init (n * n) (fun i -> sin (float_of_int ((k * i) + 1))))
@@ -1845,7 +1863,10 @@ let scatter_pool ~donate =
     let slots = Nx.reshape [| n |] slots in
     { slots; writer; read = Nx.take ~axis:0 ~indices:window slots }
   in
-  let step = Rune.jit2 ~donate (module Pool) (module Pool) f in
+  let step =
+    if donate then consume (module Pool) f
+    else Rune.jit2 (module Pool) (module Pool) f
+  in
   (* Tokens 1 and 3 aim at slot 5: the later one wins. Token 2 has no slot. *)
   let writer = Nx.create Nx.int32 [| 4 |] [| 2l; 5l; -1l; 5l |] in
   let first =
@@ -1893,7 +1914,7 @@ let test_scatter_of_values_read_from_the_pool () =
         let values = Nx.mul_s (Nx.slice [ Nx.R (6, 8) ] (Nx.flip x)) 10.0 in
         Nx.scatter ~axis:0 ~indices ~values x
       in
-      let step = Rune.jit' ~donate:true f in
+      let step = consume' f in
       let x = vec32 (Array.init n float_of_int) in
       let expected = to_arr (f (f x)) in
       let z, reused = reused_by_second_step step x in
@@ -1906,7 +1927,7 @@ let test_scatter_of_the_pool_into_itself () =
   with_force_copy (fun () ->
       let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 2l; 1l; 0l |] in
       let f x = Nx.scatter ~axis:0 ~indices ~values:x x in
-      let step = Rune.jit' ~donate:true f in
+      let step = consume' f in
       let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
       check_arr ~msg:"reversed" [| 4.0; 3.0; 2.0; 1.0 |] (step (step (step x)));
       let _, reused = reused_by_second_step step x in
@@ -1919,17 +1940,19 @@ let test_scatter_refuses_a_later_reader_of_the_pool () =
   with_force_copy (fun () ->
       let indices = Nx.create Nx.int32 [| 2 |] [| 1l; 3l |] in
       let values = vec32 [| 50.0; 70.0 |] in
-      let f x =
-        let u = Nx.scatter ~axis:0 ~indices ~values x in
-        { Pair.u; v = Nx.add (Nx.flip x) u }
+      let f (p : Pair.t) =
+        let u = Nx.scatter ~axis:0 ~indices ~values p.u in
+        { Pair.u; v = Nx.add (Nx.flip p.u) u }
       in
-      let step = Rune.jit2 ~donate:true (module Csingle) (module Pair) f in
-      let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-      let e = f (f x).Pair.u in
-      let r1 = step x in
+      let step = consume (module Pair) f in
+      let p =
+        { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
+      in
+      let e = f (f p) in
+      let r1 = step p in
       let before = (Rune.jit_stats ()).reused_bytes in
-      let r2 = step r1.Pair.u in
-      equal ~msg:"the pool's storage is not reused" int 0
+      let r2 = step r1 in
+      equal ~msg:"only the leaf the step never reads lends its storage" int 16
         ((Rune.jit_stats ()).reused_bytes - before);
       check_arr ~msg:"written" (to_arr e.Pair.u) r2.Pair.u;
       check_arr ~msg:"old value read" (to_arr e.Pair.v) r2.Pair.v)
@@ -1946,7 +1969,7 @@ let test_scatter_beside_a_reader_of_the_old_value () =
           v = Nx.add (Nx.flip p.u) p.v;
         }
       in
-      let step = Rune.jit2 ~donate:true (module Pair) (module Pair) f in
+      let step = consume (module Pair) f in
       let p () =
         { Pair.u = vec32 [| 1.0; 2.0; 3.0; 4.0 |]; v = vec32 (Array.make 4 0.) }
       in
@@ -1957,7 +1980,7 @@ let test_scatter_beside_a_reader_of_the_old_value () =
 
 let test_place_then_donate_consumes () =
   with_force_copy (fun () ->
-      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let g = consume' (fun x -> Nx.mul_s x 2.0) in
       ignore (g (vec32 [| 0.0; 0.0 |]));
       let p = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
       check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
@@ -2137,7 +2160,7 @@ let test_bound_input_is_not_donated () =
       let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
       let g = Rune.jit' (fun x -> Nx.mul x w) in
       ignore (g (vec32 [| 0.0; 0.0; 0.0 |]));
-      let step = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let step = consume' (fun x -> Nx.mul_s x 2.0) in
       let y, up, _ = delta (fun () -> step w) in
       equal ~msg:"the bound input seeds with no transfer" int 0 up;
       check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] y;
@@ -2145,7 +2168,7 @@ let test_bound_input_is_not_donated () =
       check_arr ~msg:"and still the constant" [| 2.0; 4.0; 6.0 |]
         (g (vec32 [| 2.0; 2.0; 2.0 |]));
       (* Returned unchanged, it comes back as a copy on the device. *)
-      let pass = Rune.jit' ~donate:true (fun x -> x) in
+      let pass = consume' (fun x -> x) in
       let z, up, _ = delta (fun () -> pass w) in
       equal ~msg:"the pass-through uploads nothing" int 0 up;
       is_true ~msg:"the pass-through is another value" (z != w);
@@ -2158,7 +2181,7 @@ let test_bound_input_is_not_donated () =
 let test_bound_capture_returned_is_a_copy () =
   with_force_copy (fun () ->
       let w = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
-      let g = Rune.jit' ~donate:true (fun (_ : Nx.float32_t) -> w) in
+      let g = consume' (fun (_ : Nx.float32_t) -> w) in
       let y = g (vec32 [| 0.0 |]) in
       is_true ~msg:"another value" (y != w);
       check_arr ~msg:"the copy" [| 1.0; 2.0; 3.0 |] y;
@@ -2199,7 +2222,7 @@ let test_budget_ignores_placed_values () =
 
 let test_donated_handle_raises_on_read () =
   with_force_copy (fun () ->
-      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let g = consume' (fun x -> Nx.mul_s x 2.0) in
       let h1 = g (vec32 [| 1.0; 2.0 |]) in
       let h2 = g h1 in
       (* h1 was donated to the second call: its storage is gone. *)
@@ -2208,7 +2231,7 @@ let test_donated_handle_raises_on_read () =
 
 let test_donated_handle_refeed_raises () =
   with_force_copy (fun () ->
-      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let g = consume' (fun x -> Nx.mul_s x 2.0) in
       let h1 = g (vec32 [| 1.0; 2.0 |]) in
       ignore (g h1);
       (* Seeding a donated handle forces it, which raises the same error. *)
@@ -2217,8 +2240,7 @@ let test_donated_handle_refeed_raises () =
 let test_donate_duplicate_leaves_once () =
   with_force_copy (fun () ->
       let g =
-        Rune.jit2 ~donate:true
-          (module Pair)
+        consume
           (module Pair)
           (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
       in
@@ -2235,7 +2257,7 @@ let test_donate_duplicate_leaves_once () =
 
 let test_forced_handle_unaffected_by_donate () =
   with_force_copy (fun () ->
-      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let g = consume' (fun x -> Nx.mul_s x 2.0) in
       let h = g (vec32 [| 1.0; 2.0 |]) in
       check_arr ~msg:"read before the call forces to host" [| 2.0; 4.0 |] h;
       ignore (g h);
@@ -2244,17 +2266,98 @@ let test_forced_handle_unaffected_by_donate () =
 
 let test_host_input_unaffected_by_donate () =
   with_force_copy (fun () ->
-      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let g = consume' (fun x -> Nx.mul_s x 2.0) in
       let x = vec32 [| 1.0; 2.0 |] in
       ignore (g x);
       check_arr ~msg:"a host tensor is never consumed" [| 1.0; 2.0 |] x)
 
-let test_donate_false_leaves_handle_readable () =
+let test_jit_leaves_handle_readable () =
   with_force_copy (fun () ->
       let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
       let h1 = g (vec32 [| 1.0; 2.0 |]) in
       ignore (g h1);
-      check_arr ~msg:"default keeps the input handle alive" [| 2.0; 4.0 |] h1)
+      check_arr ~msg:"jit keeps the input handle alive" [| 2.0; 4.0 |] h1)
+
+(* A step reads its first argument: a resident leaf there is used in place, call
+   after call, and stays readable. *)
+let test_step_reads_its_first_argument () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit_step
+          (module Csingle)
+          (module Csingle)
+          (fun w x -> Nx.add (Nx.mul w x) w)
+      in
+      let w = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let x = Rune.to_device (vec32 [| 3.0; 4.0 |]) in
+      let y = step w x in
+      let z, up, _ = delta (fun () -> step w y) in
+      equal ~msg:"resident leaves upload nothing" int 0 up;
+      check_arr ~msg:"two steps" [| 5.0; 22.0 |] z;
+      raises_donated (fun () -> to_arr x);
+      raises_donated (fun () -> to_arr y);
+      check_arr ~msg:"the read leaf is readable" [| 1.0; 2.0 |] w)
+
+(* The next state takes the storage of the state leaf at its own position; a
+   read leaf lends none, even to an output that derives from it alone. *)
+let test_step_reuses_only_the_state () =
+  with_force_copy (fun () ->
+      let w = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let add =
+        Rune.jit_step (module Csingle) (module Csingle) (fun w x -> Nx.add x w)
+      in
+      let x, reused =
+        reused_by_second_step (add w) (Rune.to_device (vec32 [| 0.0; 0.0 |]))
+      in
+      equal ~msg:"the state's storage is reused" int 8 reused;
+      check_arr ~msg:"value" [| 2.0; 4.0 |] x;
+      let double =
+        Rune.jit_step
+          (module Csingle)
+          (module Csingle)
+          (fun w _ -> Nx.mul_s w 2.0)
+      in
+      let y, reused =
+        reused_by_second_step (double w) (Rune.to_device (vec32 [| 0.0; 0.0 |]))
+      in
+      equal ~msg:"the state lends its storage, the read leaf none" int 8 reused;
+      check_arr ~msg:"value" [| 2.0; 4.0 |] y;
+      check_arr ~msg:"the read leaf is intact" [| 1.0; 2.0 |] w)
+
+(* A handle passed as both arguments is read: the call consumes nothing, lends
+   nothing, and the handle stays usable. *)
+let test_step_reads_a_handle_in_both_arguments () =
+  with_force_copy (fun () ->
+      let step =
+        Rune.jit_step (module Csingle) (module Csingle) (fun w x -> Nx.add w x)
+      in
+      let h = Rune.to_device (vec32 [| 1.0; 2.0 |]) in
+      let before = (Rune.jit_stats ()).reused_bytes in
+      let y = step h h in
+      let y' = step h h in
+      equal ~msg:"it lends nothing" int 0
+        ((Rune.jit_stats ()).reused_bytes - before);
+      check_arr ~msg:"first" [| 2.0; 4.0 |] y;
+      check_arr ~msg:"second" [| 2.0; 4.0 |] y';
+      check_arr ~msg:"the handle is readable" [| 1.0; 2.0 |] h)
+
+(* An indexed write into a read leaf lands in fresh storage: the leaf keeps its
+   value. *)
+let test_step_write_into_a_read_leaf () =
+  with_force_copy (fun () ->
+      let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+      let step =
+        Rune.jit_step
+          (module Csingle)
+          (module Csingle)
+          (fun pool x -> Nx.scatter ~axis:0 ~indices ~values:x pool)
+      in
+      let pool = Rune.to_device (vec32 [| 1.0; 2.0; 3.0 |]) in
+      let a = step pool (vec32 [| 10.0; 30.0 |]) in
+      let b = step pool (vec32 [| 40.0; 60.0 |]) in
+      check_arr ~msg:"first write" [| 10.0; 2.0; 30.0 |] a;
+      check_arr ~msg:"second write" [| 40.0; 2.0; 60.0 |] b;
+      check_arr ~msg:"the pool keeps its value" [| 1.0; 2.0; 3.0 |] pool)
 
 (* One tensor behind both leaves on the tracing call: two inputs that happen to
    be equal, each bound to its own position, so a later call may pass distinct
@@ -2490,8 +2593,15 @@ let tests =
         test "a handle read before the call is unaffected"
           test_forced_handle_unaffected_by_donate;
         test "host inputs are unaffected" test_host_input_unaffected_by_donate;
-        test "donate:false is the unchanged default"
-          test_donate_false_leaves_handle_readable;
+        test "jit never consumes its inputs" test_jit_leaves_handle_readable;
+        test "a step reads its first argument"
+          test_step_reads_its_first_argument;
+        test "a step reuses only its state's storage"
+          test_step_reuses_only_the_state;
+        test "a handle in both arguments is read"
+          test_step_reads_a_handle_in_both_arguments;
+        test "an indexed write into a read leaf keeps it"
+          test_step_write_into_a_read_leaf;
       ];
     group "values"
       [

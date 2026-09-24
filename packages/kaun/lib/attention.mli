@@ -111,8 +111,8 @@ val causal_mask :
 
     Everything is functional: {!cached} returns the written cache and never
     mutates its argument. Thread the cache through the decode loop like any
-    other state; under {!Rune.jit} with [~donate:true] the write happens in the
-    cache's own storage.
+    other state; under {!Rune.jit_step}, which consumes it, the write happens in
+    the cache's own storage.
 
     The addressing laws are {!Cache_index}'s. The layer adds three:
 
@@ -127,8 +127,8 @@ val causal_mask :
       {!Cache_index.whole}, so it has one implementation and none to keep equal.
     + {b One tensor per cache leaf.} Two sequences share a prefix by naming the
       same slots in an index's table, never by two leaves holding one tensor:
-      storage reuse under [~donate:true] needs each donated tensor to seed one
-      leaf. *)
+      storage reuse under {!Rune.jit_step} needs each consumed tensor to seed
+      one leaf. *)
 
 (** Key-value caches. *)
 module Cache : sig
@@ -220,8 +220,9 @@ val cached :
     {!apply}: a model's whole-sequence forward pass is this function over
     {!Cache_index.whole}. Otherwise each leaf costs one scatter of the call's
     tokens and one gather of its context; both trace once under {!Rune.jit}
-    whatever the index holds. With [~donate:true] on a device the step's cost
-    does not depend on the size of the cache. Differentiable through Rune.
+    whatever the index holds. Consumed by {!Rune.jit_step} on a device, the
+    step's cost does not depend on the size of the cache. Differentiable through
+    Rune.
 
     Raises [Invalid_argument] if [x] does not have shape
     [[| batch; seq; embed_dim |]] with the index's batch and seq, [head_dim]

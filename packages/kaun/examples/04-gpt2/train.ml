@@ -11,10 +11,11 @@
    targets columns 1..64, the same batch every step - mean cross-entropy over
    all 4*64 positions - plain SGD, lr 1e-4, no momentum; the LM head is tied to
    [wte] so the embedding's gradient accumulates from both of its uses - the
-   whole step (forward, backward, update) compiles as one [Rune.jit2] program,
-   [~donate:true] so each step releases the previous generation's unread
-   buffers (the metrics read a few leaves per step; donation consumes only
-   unread resident inputs); the loss recorded at step i is computed before
+   whole step (forward, backward, update) compiles as one [Rune.jit_step]
+   program, which reads the dropout key and consumes the parameters, so each
+   step releases the previous generation's unread buffers (the metrics read a
+   few leaves per step; a step consumes only unread resident inputs); the loss
+   recorded at step i is computed before
    update i - [--devices]
    switches the step to data-parallel [Rune.pmap2]: parameters replicated on
    every device, the batch sharded on axis 0, gradients allreduced by
@@ -153,7 +154,9 @@ let loss_fn_half compute inputs targets ?dropout params =
   (* The loss upcasts inside itself; only the scalar is cast for the record. *)
   Nx.cast Nx.float32 (Loss.softmax_cross_entropy_sparse logits targets)
 
-(* The jitted step returns the updated parameters and the pre-update loss. *)
+(* The jitted step returns the updated parameters and the pre-update loss; a
+   single-device step consumes the same record, the loss of the step before
+   included. *)
 module Step_out = struct
   type t = { params : Gpt2.t; loss : Nx.float32_t }
 
@@ -168,6 +171,9 @@ module Step_out = struct
     f t.loss
 end
 
+(* The loss a step's state holds before the first step. *)
+let no_loss () = Nx.zeros Nx.float32 [||]
+
 let train_step objective params =
   let loss, grads = Rune.value_and_grad gpt2_tree objective params in
   (* Plain SGD: momentum is 0, so the zero velocity from [sgd_init] leaves the
@@ -178,69 +184,35 @@ let train_step objective params =
   in
   { Step_out.params; loss }
 
-(* The step's dropout key rides the input structures as one more optional
-   int32 leaf: [Some key] when [--dropout] is positive, [None] otherwise —
-   [None] contributes no leaf, so dropout-free runs trace the exact reference
-   graph. *)
+(* The step's dropout key is one more optional int32 leaf of the input: [Some
+   key] when [--dropout] is positive, [None] otherwise — [None] contributes no
+   leaf, so dropout-free runs trace the exact reference graph. *)
 let map2_key f a b =
   match (a, b) with
   | Some a, Some b -> Some (f a b)
   | None, None -> None
   | _ -> invalid_arg "dropout key: presence mismatch"
 
-(* Single-device step input: the parameters plus the optional dropout key; the
-   fixed batch stays captured by the objective. *)
-module Keyed_in = struct
-  type t = { params : Gpt2.t; key : Nx.Rng.key option }
+(* What a single-device step reads: the optional dropout key. The fixed batch
+   stays captured by the objective, and the step consumes the parameters. *)
+module Key = struct
+  type t = Nx.Rng.key option
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { params = Gpt2.Params.map f t.params; key = Option.map f t.key }
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) key = Option.map f key
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      params = Gpt2.Params.map2 f a.params b.params;
-      key = map2_key f a.key b.key;
-    }
+    map2_key f a b
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    Gpt2.Params.iter f t.params;
-    Option.iter f t.key
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) key = Option.iter f key
 end
 
 (* Float16 compute needs loss scaling: float16 gradients underflow below 2^-24.
-   The scale state rides the jitted step's input and output structures as tensor
-   leaves, so the dynamic scale really updates across compiled calls. Overflowed
-   steps keep the previous parameters (selected with [Nx.where] on the finite
-   flag, so the step still traces once). *)
+   The scale state is consumed and returned by the jitted step as tensor leaves,
+   so the dynamic scale really updates across compiled calls. Overflowed steps
+   keep the previous parameters (selected with [Nx.where] on the finite flag, so
+   the step still traces once). *)
 
-module Scaled_in = struct
-  type t = {
-    params : Gpt2.t;
-    ls : Vega.Loss_scale.t;
-    key : Nx.Rng.key option;
-  }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    {
-      params = Gpt2.Params.map f t.params;
-      ls = Vega.Loss_scale.map f t.ls;
-      key = Option.map f t.key;
-    }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      params = Gpt2.Params.map2 f a.params b.params;
-      ls = Vega.Loss_scale.map2 f a.ls b.ls;
-      key = map2_key f a.key b.key;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    Gpt2.Params.iter f t.params;
-    Vega.Loss_scale.iter f t.ls;
-    Option.iter f t.key
-end
-
-module Scaled_out = struct
+module Scaled = struct
   type t = { params : Gpt2.t; loss : Nx.float32_t; ls : Vega.Loss_scale.t }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
@@ -263,7 +235,7 @@ module Scaled_out = struct
     Vega.Loss_scale.iter f t.ls
 end
 
-let train_step_scaled objective { Scaled_in.params; ls; key } =
+let train_step_scaled objective key { Scaled.params; ls; loss = _ } =
   (* The scale enters as the backward seed: [vjp] against the scale cotangent is
      exactly [grad (fun p -> Loss_scale.scale ls (objective p))] — every float16
      cotangent downstream carries the scale, which is the underflow protection —
@@ -284,7 +256,7 @@ let train_step_scaled objective { Scaled_in.params; ls; key } =
   let params =
     Gpt2.Params.map2 (fun p p' -> Nx.where finite p' p) params params'
   in
-  { Scaled_out.params; loss; ls = Vega.Loss_scale.adjust ls ~finite }
+  { Scaled.params; loss; ls = Vega.Loss_scale.adjust ls ~finite }
 
 (* Data-parallel input: the batch joins the parameters as leaves so [pmap2] can
    shard it (axis 0) while replicating the parameters. The dropout key leaf is
@@ -555,31 +527,34 @@ let () =
      the float16 variant additionally threads its loss-scale state, hidden in
      the closure. *)
   let step : int -> Gpt2.t -> Gpt2.t * float =
-    if !devices = "" then
+    if !devices = "" then (
       if !compute_dtype = "float16" then begin
         let f =
-          Rune.jit2 ~device:!device ~donate:true
-            (module Scaled_in)
-            (module Scaled_out)
+          Rune.jit_step ~device:!device
+            (module Key)
+            (module Scaled)
             (train_step_scaled (fun key -> obj key inputs targets))
         in
-        let ls = ref (Vega.Loss_scale.dynamic ()) in
+        let ls = ref (Vega.Loss_scale.dynamic ()) and loss = ref (no_loss ()) in
         fun i params ->
-          let out = f { Scaled_in.params; ls = !ls; key = key_at i } in
-          ls := out.Scaled_out.ls;
-          (out.Scaled_out.params, Nx.item [] out.Scaled_out.loss)
+          let out = f (key_at i) { Scaled.params; ls = !ls; loss = !loss } in
+          ls := out.Scaled.ls;
+          loss := out.Scaled.loss;
+          (out.Scaled.params, Nx.item [] out.Scaled.loss)
       end
       else
         let f =
-          Rune.jit2 ~device:!device ~donate:true
-            (module Keyed_in)
+          Rune.jit_step ~device:!device
+            (module Key)
             (module Step_out)
-            (fun { Keyed_in.params; key } ->
+            (fun key { Step_out.params; loss = _ } ->
               train_step (obj key inputs targets) params)
         in
+        let loss = ref (no_loss ()) in
         fun i params ->
-          let out = f { Keyed_in.params; key = key_at i } in
-          (out.Step_out.params, Nx.item [] out.Step_out.loss)
+          let out = f (key_at i) { Step_out.params; loss = !loss } in
+          loss := out.Step_out.loss;
+          (out.Step_out.params, Nx.item [] out.Step_out.loss))
     else begin
       if !compute_dtype = "float16" then
         failwith "--compute-dtype float16 does not support --devices";

@@ -98,28 +98,26 @@ end
 
 let cnn = Kaun.ptree (module Cnn)
 
-(* The jitted step's input: the batch joins the parameters as leaves — values
-   that change between calls must be inputs, never captures. *)
-module Step_in = struct
-  type t = {
-    params : Nx.float32_t Cnn.t;
-    x : (float, Nx.float32_elt) Nx.t;
-    y : (int32, Nx.int32_elt) Nx.t;
-  }
+(* What the jitted step reads: the batch, an input like the parameters it
+   consumes — values that change between calls must be inputs, never
+   captures. *)
+module Batch = struct
+  type t = { x : (float, Nx.float32_elt) Nx.t; y : (int32, Nx.int32_elt) Nx.t }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { params = Cnn.map f t.params; x = f t.x; y = f t.y }
+    { x = f t.x; y = f t.y }
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { params = Cnn.map2 f a.params b.params; x = f a.x b.x; y = f a.y b.y }
+    { x = f a.x b.x; y = f a.y b.y }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    Cnn.iter f t.params;
     f t.x;
     f t.y
 end
 
-module Step_out = struct
+(* What the jitted step consumes and returns: the parameters and the loss of the
+   last step. *)
+module State = struct
   type t = { params : Nx.float32_t Cnn.t; loss : (float, Nx.float32_elt) Nx.t }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
@@ -213,19 +211,20 @@ let () =
   (* The whole training step — forward, backward, SGD update — compiles into one
      program. Parameters flow out and back in as unread device-resident tensors,
      so training never round-trips them through the host. *)
-  let train_step { Step_in.params; x; y } =
+  let train_step { Batch.x; y } { State.params; loss = _ } =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let loss, grads = Rune.value_and_grad cnn loss_fn params in
     let params, _ = Vega.sgd_step cnn ~lr:(Vega.lr !lr) state ~params ~grads in
-    { Step_out.params; loss }
+    { State.params; loss }
   in
-  (* ~donate:true releases the previous generation's device buffers once each
-     call completes — the loop reads only the fresh loss, never the pre-step
-     state, so the resident loop turns over about two generations of buffers. *)
+  (* The step consumes the parameters: it releases the previous generation's
+     device buffers once each call completes — the loop reads only the fresh
+     loss, never the pre-step state, so the resident loop turns over about two
+     generations of buffers. *)
   let step =
-    Rune.jit2 ~device:!device ~donate:true (module Step_in) (module Step_out)
-      train_step
+    Rune.jit_step ~device:!device (module Batch) (module State) train_step
   in
+  let last_loss = ref (Nx.zeros Nx.float32 [||]) in
   let forward =
     Rune.jit ~device:!device
       (module Eval_in)
@@ -259,11 +258,14 @@ let () =
         incr global_step;
         let s = !global_step in
         let t0 = Unix.gettimeofday () in
-        let out = step { Step_in.params = !params; x; y } in
-        params := out.Step_out.params;
+        let out =
+          step { Batch.x; y } { State.params = !params; loss = !last_loss }
+        in
+        params := out.State.params;
+        last_loss := out.State.loss;
         (* Reading the loss is the step's only device-to-host transfer and its
            synchronization point, so [dt] covers the full step. *)
-        let loss = Nx.item [] out.Step_out.loss in
+        let loss = Nx.item [] out.State.loss in
         let dt = Unix.gettimeofday () -. t0 in
         loss_sum := !loss_sum +. loss;
         incr loss_count;

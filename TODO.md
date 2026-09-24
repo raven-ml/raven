@@ -17,9 +17,8 @@ rune/jit follow-ups:
 - symbolic shapes through rune (inherit tolk's symbolic shrink/assign): one
   compiled kernel set for all positions, dissolves the fixed-shape kv-cache
   masks in kaun attention and per-prompt-length signatures
-- donate phase 3: per-leaf donation mask (`in_axes`-style), same-call buffer
-  reuse via static last-read-before-first-write analysis on the linear
-  schedule, lru pool watermark knob
+- donation: same-call buffer reuse via static last-read-before-first-write
+  analysis on the linear schedule, lru pool watermark knob
 - ptree product combinators (`Pair`/`List_of`/`Leaf` functors) to absorb
   hand-written jit2 step modules; dedupe jit.ml's two inline leaf modules
 

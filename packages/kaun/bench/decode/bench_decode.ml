@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* The jitted decode step of a GPT-2 124M shaped decoder: one token in, one
-   token out, through key-value caches, with the state donated and the sampled
+   token out, through key-value caches, with the state consumed and the sampled
    token read back on the host as a generate loop does. The stack is built here
    from kaun layers with zero weights: the step's cost does not depend on their
    values, and kaun ships no model to depend on.
@@ -127,10 +127,10 @@ end
    of samples. *)
 let decoder params ~len =
   let step =
-    Rune.jit2 ~donate:true
+    Rune.jit_step
+      (module Nx.Ptree)
       (module Step)
-      (module Step)
-      (fun { Step.token; index; caches } ->
+      (fun _ { Step.token; index; caches } ->
         let seq = (Nx.shape token).(1) in
         let h, caches = cached params caches index token in
         let last = Nx.slice [ A; I (seq - 1) ] h in
@@ -140,6 +140,7 @@ let decoder params ~len =
           index = Cache_index.advance index;
           caches;
         })
+      (Nx.Ptree.list [])
   in
   let state =
     ref

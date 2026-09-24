@@ -357,7 +357,7 @@ The trade-off surfaces under `vmap`: with explicit keys you would pass one key p
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
 | Full op coverage under `vmap` | The decompositions raise on batched inputs. |
 | `jax.random` keys | Implicit scoped RNG instead; see §11. |
-| Donation, sharding, `pjit` | `jit ~donate:true` reuses input storage; no sharding or `pjit`. |
+| Donation, sharding, `pjit` | `jit_step` reads its first argument and consumes its second, like `donate_argnums`, reusing its storage; no sharding or `pjit`. |
 
 Rune's failure model is deliberate: operations without a rule raise `Invalid_argument` rather than silently producing zero or wrong gradients.
 

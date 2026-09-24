@@ -27,22 +27,17 @@
     {[
     module Opt = Vega.Adam_state (Model)
 
-    module Step_in = struct
-      type t = {
-        params : Model.t;
-        opt : Opt.t;
-        inputs : Nx.float32_t;
-        targets : (int32, Nx.int32_elt) Nx.t;
-      }
+    module State = struct
+      type t = { params : Model.t; opt : Opt.t; loss : Nx.float32_t }
 
       (* map/map2/iter: one-line delegations to [Model] and [Opt] over the
-         fields — or [@@deriving ptree] with ppx_ptree. [Step_out] carries
-         [params], [opt] and the loss the same way. *)
+         fields — or [@@deriving ptree] with ppx_ptree. [Batch] carries [inputs]
+         and [targets] the same way. *)
     end
 
     let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
 
-    let train_step { Step_in.params; opt; inputs; targets } =
+    let train_step { Batch.inputs; targets } { State.params; opt; loss = _ } =
       let loss, grads =
         Rune.value_and_grad model (objective inputs targets) params
       in
@@ -50,27 +45,29 @@
       let params, opt =
         Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
       in
-      { Step_out.params; opt; loss }
+      { State.params; opt; loss }
 
-    (* ~donate:true hands the previous generation's device buffers back to the
-       allocator once the call completes; the loop never reads the pre-step
-       state, so they are safe to release. *)
+    (* The step reads the batch and consumes the state: it hands the previous
+       generation's device buffers back to the allocator once the call
+       completes; the loop never reads the pre-step state, so they are safe to
+       release. *)
     let step =
-      Rune.jit2 ~donate:true (module Step_in) (module Step_out) train_step
+      Rune.jit_step (module Batch) (module State) train_step
     ]}
 
     Hyperparameters that do not change across steps ([b1], [b2], [eps],
     [weight_decay], [max_norm]) are compile-time constants. Everything that does
     — the moments, the step counter, the learning rate — is a tensor leaf or
     derived from one, so the compiled program replays correctly on every call:
-    no data transfers, no retracing. [~donate:true] keeps the state-to-state
-    loop at about two generations of device buffers instead of one per call
-    awaiting collection; it consumes the handles it frees — reading the pre-step
-    state after the call raises — so leave it off while a loop still inspects
-    the state it feeds in. On the CPU device it changes nothing: outputs are
-    host tensors there. Steps are pure traversals — a step consumes a state and
-    returns the next one — so checkpointing an optimizer means saving a record
-    of parameter-shaped values plus a step counter leaf.
+    no data transfers, no retracing. Consuming the state keeps the
+    state-to-state loop at about two generations of device buffers instead of
+    one per call awaiting collection; it consumes the handles it frees — reading
+    the pre-step state after the call raises — so compile with {!Rune.jit2}
+    while a loop still inspects the state it feeds in. On the CPU device it
+    changes nothing: outputs are host tensors there. Steps are pure traversals —
+    a step consumes a state and returns the next one — so checkpointing an
+    optimizer means saving a record of parameter-shaped values plus a step
+    counter leaf.
 
     {b Non-parameter leaves.} A structure may carry leaves that are not
     parameters — an {!Nx.Rng.key} threaded through a compiled step, a counter, a

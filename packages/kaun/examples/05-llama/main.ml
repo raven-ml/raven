@@ -93,7 +93,11 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
     match device with
     | None -> step
     | Some device ->
-        Rune.jit2 ~device ~donate:true (module Step) (module Step) step
+        Rune.jit_step ~device
+          (module Nx.Ptree)
+          (module Step)
+          (fun _ s -> step s)
+          (Nx.Ptree.list [])
   in
   let n0 = Array.length prompt in
   let context = n0 + max_tokens in

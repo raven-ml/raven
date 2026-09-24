@@ -136,18 +136,69 @@ let test_placed_weights_bind () =
   equal ~msg:"a second function uploads its input only" int (Nx.nbytes x) up;
   check_arr ~msg:"second function" (to_arr (Nx.add (Nx.matmul x w1) x)) y
 
+(* One float32 tensor as a tree. *)
+module Single = struct
+  type t = Nx.float32_t
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
+end
+
+let raises_donated f =
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with ~prefix:"Rune.jit: this tensor was donated" msg
+      | _ -> false)
+    (fun () -> ignore (f ()))
+
 let test_bound_input_is_not_donated () =
   let w1, _ = weights () in
   let p = Rune.to_device ~device:"METAL" w1 in
   let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x p) in
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
   ignore (g x);
-  let step = Rune.jit' ~device:"METAL" ~donate:true (fun m -> Nx.mul_s m 2.0) in
+  let step =
+    Rune.jit_step ~device:"METAL"
+      (module Nx.Ptree)
+      (module Single)
+      (fun _ m -> Nx.mul_s m 2.0)
+      (Nx.Ptree.list [])
+  in
   let y, up = delta (fun () -> step p) in
   equal ~msg:"the bound input seeds with no transfer" int 0 up;
   check_arr ~msg:"result" (to_arr (Nx.mul_s w1 2.0)) y;
   check_arr ~msg:"the bound value is still readable" (to_arr w1) p;
   check_arr ~msg:"and still the constant" (to_arr (Nx.matmul x w1)) (g x)
+
+(* A step reads placed weights and consumes its state: the weights stay resident
+   and readable, the state is written over its own storage. *)
+let test_step_reads_weights_consumes_state () =
+  let w1, _ = weights () in
+  let w = Rune.to_device ~device:"METAL" w1 in
+  let f w x = Nx.add_s (Nx.mul x x) (Nx.item [] (Nx.mean w)) in
+  let step =
+    Rune.jit_step ~device:"METAL"
+      (module Single)
+      (module Single)
+      (fun w x -> Nx.add (Nx.mul x x) (Nx.mean w))
+  in
+  let x0 =
+    Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i /. 16.0))
+  in
+  let x1 = step w x0 in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let x2, up = delta (fun () -> step w x1) in
+  equal ~msg:"resident leaves upload nothing" int 0 up;
+  equal ~msg:"the state is written over its own storage" int (Nx.nbytes x0)
+    ((Rune.jit_stats ()).reused_bytes - before);
+  check_arr ~eps:1e-5 ~msg:"two steps" (to_arr (f w1 (f w1 x0))) x2;
+  raises_donated (fun () -> to_arr x1);
+  check_arr ~msg:"the weights are readable" (to_arr w1) w
 
 let test_capture_resident_elsewhere () =
   Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
@@ -222,6 +273,8 @@ let tests =
           test_placed_weights_bind;
         test "a bound input is not consumed by donation"
           test_bound_input_is_not_donated;
+        test "a step reads its weights and consumes its state"
+          test_step_reads_weights_consumes_state;
         test "a capture resident on another device is uploaded"
           test_capture_resident_elsewhere;
         test "a weight over a mapped file is placed from the file"
