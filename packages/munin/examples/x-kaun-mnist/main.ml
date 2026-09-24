@@ -21,7 +21,12 @@ let lr = 0.001
    (the Nx.Ptree.S contract plus checkpoint names). *)
 
 module Cnn = struct
-  type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type 'a t = {
+    c1 : 'a Conv.t;
+    c2 : 'a Conv.t;
+    l1 : 'a Linear.t;
+    l2 : 'a Linear.t;
+  }
 
   let map f { c1; c2; l1; l2 } =
     let c1 = Conv.map f c1 in
