@@ -1934,7 +1934,9 @@ module Allocator = struct
           state.State.iface.Nv_iface.alloc ~host:spec.host
             ~cpu_access:spec.cpu_access size
     in
+    (* A queued kernel may still use the memory. *)
     let free buf _size (_ : Tolk.Device.Buffer_spec.t) =
+      Timeline.synchronize state.State.tl;
       state.State.iface.Nv_iface.free buf
     in
     let offset buf size byte_offset =

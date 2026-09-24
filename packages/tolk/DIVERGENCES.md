@@ -105,6 +105,14 @@ campaign.
   shared open path allocates the channel ring without `force_devmem`, a
   divergence to revisit at hardware validation.
 
+## CPU runtime
+
+- **The CPU device runs on tolk's own worker queue; the reference's CPU device
+  is HCQ.** A free waits for the queue, as `HCQAllocator._free` does, except a
+  free that a GC finaliser runs inside the queue's lock: it is deferred to the
+  next synchronize (`runtime/cpu/tolk_cpu.ml` `after_queue`), so that memory
+  can return later than in the reference.
+
 ## Tolk extensions
 
 Code tolk carries that the reference does not. Every site has a comment

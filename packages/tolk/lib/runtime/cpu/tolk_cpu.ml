@@ -61,16 +61,17 @@ let unload_program loaded =
 
 (* Allocator *)
 
-let raw_allocator ~synchronize =
+let raw_allocator ~synchronize ~after_queue =
   let alloc size spec =
     match spec.Device.Buffer_spec.external_ptr with
     | Some ptr -> ptr
     | None -> cpu_alloc size
   in
+  (* A queued kernel may still use the memory. *)
   let free buf _size spec =
     match spec.Device.Buffer_spec.external_ptr with
     | Some _ -> ()
-    | None -> cpu_free buf
+    | None -> after_queue (fun () -> cpu_free buf)
   in
   let copyin buf bytes =
     synchronize ();
@@ -176,6 +177,11 @@ module Cpu_queue = struct
     mutable worker_thread : unit Domain.t option;
     mutable pending : int;
     mutable error : exn option;
+    mutable holding : bool;
+        (* the dispatch domain holds [mutex]; a GC finaliser run there by an
+           allocation must not wait on the queue *)
+    mutable deferred : (unit -> unit) list;
+        (* work for after the queue drains, left by such a finaliser *)
   }
 
   let run_kernel task tid =
@@ -265,6 +271,8 @@ module Cpu_queue = struct
         worker_thread = None;
         pending = 0;
         error = None;
+        holding = false;
+        deferred = [];
       }
     in
     let worker_thread = Domain.spawn (fun () -> worker t) in
@@ -274,25 +282,44 @@ module Cpu_queue = struct
   let exec t ~entry ~bufs ~vals ~threads ~core_id_index =
     let task = Work { entry; bufs; vals; threads; core_id_index } in
     Mutex.lock t.mutex;
+    t.holding <- true;
     let error = t.error in
     (match error with
     | None ->
         Queue.add task t.tasks;
         t.pending <- t.pending + 1;
         Condition.signal t.cond;
+        t.holding <- false;
         Mutex.unlock t.mutex
     | Some exn ->
+        t.holding <- false;
         Mutex.unlock t.mutex;
         raise exn)
 
   let synchronize t =
     Mutex.lock t.mutex;
+    t.holding <- true;
     while t.pending > 0 do
       Condition.wait t.cond t.mutex
     done;
     let error = t.error in
+    t.holding <- false;
     Mutex.unlock t.mutex;
+    let deferred = t.deferred in
+    t.deferred <- [];
+    List.iter (fun f -> f ()) deferred;
     match error with None -> () | Some exn -> raise exn
+
+  (* [after_queue t f] runs [f] once the work queued so far has completed. Inside
+     the queue's own critical section, where a GC finaliser can run, waiting
+     would take the lock twice: [f] then runs at the next [synchronize], which
+     waits for that work too. *)
+  let after_queue t f =
+    if t.holding then t.deferred <- f :: t.deferred
+    else begin
+      synchronize t;
+      f ()
+    end
 
   let shutdown t =
     match t.worker_thread with
@@ -354,6 +381,8 @@ let create ?aligned name =
   let renderer_set = Device.Renderer_set.make [renderer, None] in
   let allocator =
     Device.Allocator.Pack
-      (Device.Lru_allocator.wrap (raw_allocator ~synchronize))
+      (Device.Lru_allocator.wrap
+         (raw_allocator ~synchronize
+            ~after_queue:(Cpu_queue.after_queue state)))
   in
   Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()

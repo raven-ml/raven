@@ -1597,6 +1597,12 @@ module State = struct
       t.tl.Timeline.timeline;
     Compute_queue.submit cq t.compute_queue;
     Timeline.synchronize t.tl
+
+  let synchronize t =
+    Timeline.synchronize t.tl;
+    match t.iface.Iface.after_sync with
+    | Some after_sync -> after_sync ()
+    | None -> ()
 end
 
 module Allocator = struct
@@ -1656,7 +1662,9 @@ module Allocator = struct
               (spec.cpu_access || Option.is_none state.State.sdma_queue)
             size
     in
+    (* A queued kernel may still use the memory. *)
     let free buf _size (_ : Tolk.Device.Buffer_spec.t) =
+      State.synchronize state;
       state.State.iface.Iface.free buf
     in
     let offset buf size byte_offset =
@@ -1914,11 +1922,7 @@ let open_device ~name iface =
   let renderer_set = Tolk.Device.Renderer_set.make [ (renderer, None) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~runtime:(Runtime.runtime state)
-    ~synchronize:(fun () ->
-      Timeline.synchronize state.State.tl;
-      match iface.Iface.after_sync with
-      | Some after_sync -> after_sync ()
-      | None -> ())
+    ~synchronize:(fun () -> State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ()
 
