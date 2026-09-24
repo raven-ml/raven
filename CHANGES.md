@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- FP8 emulation uses `float32` arithmetic even on backends with native
+  `float16`, preserving small normal `fp8e5m2fnuz` values that previously
+  underflowed to zero.
+
 - Emulated `int64` and `uint64` arithmetic accepts weak integer literals and
   preserves their high words through explicit casts, including masked-load
   fallback values.

@@ -300,11 +300,59 @@ let test_emulated_long_buffer_arithmetic () =
            Dtype.int64, true, literal; Dtype.uint64, true, literal ])
        [ `Typed; `Weak; `Cast ])
 
+let test_emulated_fp8_loads () =
+  let device = cpu "emulated-fp8-loads" in
+  let renderer = Renderer.make ~name:"emulation" ~device:"TEST"
+      ~has_local:false ~has_shared:false ~shared_max:0
+      ~supports_dtype:(fun dtype -> not (Dtype.is_fp8 dtype))
+      ~render:(fun ?name:_ _ -> "") () in
+  List.iter (fun dtype ->
+      let param slot dtype = U.param ~slot ~dtype ~shape:(U.const_int 256)
+          ~addrspace:Dtype.Global () in
+      let dst = param 0 Dtype.float32 and src = param 1 dtype in
+      let range = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Weak () in
+      let index ptr = U.index ~ptr ~idxs:[ range ] () in
+      let value = U.cast ~src:(U.load ~src:(index src) ()) ~dtype:Dtype.float32 in
+      let sink = U.sink [ U.end_ ~value:(U.store ~dst:(index dst) ~value ())
+                              ~ranges:[ range ] ] in
+      let decomposed = Decomp_dtype.do_dtype_decomps renderer sink in
+      Spec.type_verify Spec.full_spec decomposed;
+      is_false ~msg:"FP8 arithmetic uses float32 even when float16 is supported"
+        (List.exists (fun n -> Dtype.is_fp8 (U.dtype n) || U.dtype n = Dtype.float16)
+           (U.toposort decomposed));
+      let program = Codegen_lower.lower (Device.renderer device) decomposed
+          |> Linearizer.linearize in
+      let spec = Device.compile_program device ~name:"emulated_fp8_loads" program in
+      let input = Device.create_buffer ~size:256 ~dtype device in
+      let output = Device.create_buffer ~size:256 ~dtype:Dtype.float32 device in
+      Device.Buffer.ensure_allocated input;
+      Device.Buffer.ensure_allocated output;
+      Device.Buffer.copyin input (Bytes.init 256 Char.chr);
+      run_spec device spec [ output; input ];
+      let bytes = Device.Buffer.as_bytes output in
+      let exponent_bits, mantissa_bits = Dtype.finfo dtype in
+      let fnuz = dtype = Dtype.fp8e4m3fnuz || dtype = Dtype.fp8e5m2fnuz in
+      for bits = 0 to 255 do
+        let exponent = (bits lsr mantissa_bits) land ((1 lsl exponent_bits) - 1) in
+        (* The emulation contract flushes subnormals; the storage decoder
+           preserves them. FNUZ's signed-zero bit pattern is NaN. *)
+        let expected =
+          if fnuz && bits = 128 then Float.nan
+          else if exponent = 0 then (if bits land 128 = 0 then 0.0 else -0.0)
+          else Dtype.fp8_to_float dtype bits in
+        let actual = Int32.float_of_bits (Bytes.get_int32_le bytes (4 * bits)) in
+        let msg = Printf.sprintf "%s 0x%02x" (Dtype.to_string dtype) bits in
+        if Float.is_nan expected then is_true ~msg (Float.is_nan actual)
+        else equal ~msg int32 (Int32.bits_of_float expected) (Int32.bits_of_float actual)
+      done)
+    [ Dtype.fp8e4m3; Dtype.fp8e5m2; Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz ]
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "emulated FP8 loads preserve all normal values" test_emulated_fp8_loads;
           test "emulated long buffer arithmetic preserves both words" test_emulated_long_buffer_arithmetic;
           test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
           test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;

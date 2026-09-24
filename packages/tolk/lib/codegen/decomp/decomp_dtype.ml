@@ -911,14 +911,8 @@ let rec f2f v fr to_ =
                (Int64.shift_left (Int64.of_int ((1 lsl te) - 1)) tm)
                (Int64.shift_left 1L (tm - 1)))
         in
-        (* The fnuz bias can exceed the target's, so exponents in
-           [1, fb - tb] are normal in the source but land below the
-           target's normal range; they flush to zero like denormals. *)
-        let flush_below =
-          int_const_val to_uint (Int64.of_int (max (fb - tb) 0 + 1))
-        in
         iwhere fnuz_nan qnan
-          (ior sign (iwhere (icmplt exp flush_below)
+          (ior sign (iwhere (icmpeq exp (int_const_val to_uint 0L))
                        (int_const_val to_uint 0L) norm))
       else
         let is_nan =
@@ -1250,12 +1244,6 @@ let should_emulate renderer scalar =
        (fun (from_dtype, _) -> Dtype.equal from_dtype scalar)
        (Renderer.emulated_float_dtypes renderer)
 
-let float_decomp_target renderer scalar =
-  if is_fp8_scalar scalar
-     && not (should_emulate renderer Dtype.Float16)
-  then Dtype.Float16
-  else Dtype.Float32
-
 let do_dtype_decomps (renderer : Renderer.t) (sink : Uop.t) : Uop.t =
   let ctx = { detected = Hashtbl.create 8 } in
   ignore (Uop.graph_rewrite ~name:"detect dtypes" (pm_dtype_decomps ctx) sink);
@@ -1276,7 +1264,7 @@ let do_dtype_decomps (renderer : Renderer.t) (sink : Uop.t) : Uop.t =
        | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
        | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz ->
            let ctx =
-             { from_dtype = dtype; to_dtype = float_decomp_target renderer dtype }
+             { from_dtype = dtype; to_dtype = Dtype.Float32 }
            in
            rewrite (pm_float_decomp ctx)
              (Printf.sprintf "decomp %s -> %s"
