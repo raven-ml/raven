@@ -216,8 +216,10 @@ let create_schedule (sink : U.t) : U.t =
       | Some _ | None -> ())
     (List.rev !degree_order);
   let linearized = ref [] in
+  let visited = ref 0 in
   while not (Queue.is_empty queue) do
     let rk = Queue.pop queue in
+    incr visited;
     (match linear_srcs rk with
      | Some srcs ->
          linearized := List.rev_append srcs !linearized
@@ -246,6 +248,8 @@ let create_schedule (sink : U.t) : U.t =
         if deg = 0 then Queue.add x queue)
       succs
   done;
+  if !visited <> Hashtbl.length in_degree then
+    invalid_arg "Schedule.create_schedule: cyclic buffer dependencies";
   U.linear (List.rev !linearized)
 
 (* Resolve cached LINEAR calls. *)

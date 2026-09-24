@@ -108,6 +108,22 @@ let war_edge_orders_reader_before_writer () =
   let linear = Schedule.create_schedule (U.sink [ after_b; after_c ]) in
   equal (list string) [ "reader"; "writer" ] (linear_names linear)
 
+let cyclic_writes_are_rejected () =
+  let buffer slot = U.buffer ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in
+  let a = buffer 0 and b = buffer 1 and independent = buffer 2 in
+  let write_a = call "write_a" [a; b] in
+  let write_b = call "write_b" [b; a] in
+  let a = U.after ~src:a ~deps:[write_a] in
+  let b = U.after ~src:b ~deps:[write_b] in
+  let independent = U.after ~src:independent
+      ~deps:[call "independent" [independent]] in
+  (* Each writer needs the other's previous contents. Scheduling either one
+     first would destroy a read, even though the UOp graph itself is acyclic. *)
+  List.iter (fun outputs ->
+      raises (Invalid_argument "Schedule.create_schedule: cyclic buffer dependencies") (fun () ->
+          ignore (Schedule.create_schedule (U.sink outputs))))
+    [[a; b]; [independent; a; b]]
+
 let create_linear_call_substitutes_params_and_new_buffers () =
   let shape = U.const_int 4 in
   let formal = U.param ~slot:0 ~dtype:Dtype.int32 ~shape () in
@@ -288,6 +304,8 @@ let () =
             after_partition_orders_nested_after_dependencies;
           test "orders a reader before a superseding writer (WAR)"
             war_edge_orders_reader_before_writer;
+          test "rejects cycles instead of returning empty or partial schedules"
+            cyclic_writes_are_rejected;
         ];
       group "create_linear_with_vars"
         [

@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Reject cyclic buffer dependencies during scheduling instead of silently
+  dropping mutually dependent kernels or returning a partial schedule.
+
 - Remove `Uop.replace ~dtype`: result types follow source edges or typed
   metadata. Cast and storage rewrites must update their payload explicitly.
 
