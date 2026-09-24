@@ -24,8 +24,8 @@
 
    Symbolic variables: a stored entry records the names of the bound variables
    whose values the schedule needs, and [load] re-extracts the values from the
-   fresh CALL's BIND arguments. Rune traces cannot produce BINDs today (no
-   symbolic shapes), so the list is always empty; the code handles them anyway
+   fresh CALL's scalar bindings. Rune traces have no symbolic shapes today,
+   so the list is always empty; the code handles them anyway
    so the entry format does not change when they appear. *)
 
 module U = Tolk_uop.Uop
@@ -58,10 +58,10 @@ let exe_digest = lazy (Digest.to_hex (Digest.file Sys.executable_name))
    the saving trace's before the graph is imported; [e_linear] is [Uop.export]
    of the compiled LINEAR with each CALL argument replaced by a PARAM carrying
    its position; [e_vars] are the symbolic variable names whose values must be
-   re-extracted from the fresh CALL's BIND args. *)
+   re-extracted from the fresh CALL's scalar bindings. *)
 
 type slot_desc = {
-  sd_numel : int; (* -1 when the argument has no tensor shape (a BIND) *)
+  sd_numel : int; (* -1 when the argument has no tensor shape (a scalar binding) *)
   sd_dtype : TD.t;
   sd_device : U.device option;
   sd_is_bind : bool;
@@ -83,11 +83,11 @@ let slot_desc u =
     sd_numel = numel_of u;
     sd_dtype = U.dtype u;
     sd_device = U.device_of u;
-    sd_is_bind = Ops.equal (U.op u) Ops.Bind;
+    sd_is_bind = U.is_bound_var u;
   }
 
 let slot_matches sd u =
-  Bool.equal sd.sd_is_bind (Ops.equal (U.op u) Ops.Bind)
+  Bool.equal sd.sd_is_bind (U.is_bound_var u)
   && sd.sd_numel = numel_of u
   && TD.equal sd.sd_dtype (U.dtype u)
   && sd.sd_device = U.device_of u
@@ -196,7 +196,7 @@ let store ~key call linear var_vals =
 
 (* Load *)
 
-(* Mirrors the BIND extraction in [Schedule.create_linear_with_vars]: bind
+(* Mirrors the binding extraction in [Schedule.create_linear_with_vars]: bind
    values live in the CALL's arguments and rebind on every compile. Raises
    [Not_found] when a stored name has no fresh bind, which [load] turns into a
    miss. *)
@@ -208,8 +208,8 @@ let vars_of_args names args =
         (fun u ->
           match U.as_bind u with
           | Some { var; value } -> (
-              match (U.as_param var, U.const_int_value value) with
-              | Some { param = { name = Some name; _ }; _ }, Some n ->
+              match (U.Arg.as_param_arg (U.arg var), U.const_int_value value) with
+              | Some { name = Some name; _ }, Some n ->
                   Some (name, n)
               | _ -> None)
           | None -> None)
@@ -256,7 +256,7 @@ let rebind entry args =
        save-time normalization, matching PARAMs by slot as
        [Schedule.post_sched_cache_rule] does. Kernel-internal PARAMs live inside
        CALL bodies, which the default traversal does not enter, and replacements
-       are final ([walk]) so a fresh BIND's own variable PARAM is not
+       are final ([walk]) so a fresh binding's own scalar BUFFER is not
        rewritten. *)
     let n = Array.length args_a in
     let linear =

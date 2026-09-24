@@ -43,7 +43,7 @@ let concrete_shape n =
   Option.bind (U.shape_opt n) (loop [])
 
 (* Address space of an input buffer replaced by a PARAM: the node's own
-   address space, defaulting to global for nodes that carry none (a BIND, a
+   address space, defaulting to global for nodes that carry none (a scalar binding, a
    plain scalar). *)
 let replacement_addrspace node =
   match U.addrspace node with Some a -> a | None -> D.Global
@@ -88,7 +88,7 @@ let base x = base_through_after (multibase x)
 
 (* Ops that do not need buffer realization. *)
 let dont_realize = function
-  | Ops.Const | Ops.Buffer | Ops.Param | Ops.Bind | Ops.After -> true
+  | Ops.Const | Ops.Buffer | Ops.Param | Ops.After -> true
   | _ -> false
 
 (* Shrink [src] to [target_shape].  Each dimension is kept from 0 to
@@ -152,7 +152,8 @@ let tag_uop ctx x =
    plain AFTER nodes.  Runs bottom-up so children are tagged before
    parents. *)
 let add_tags ctx node =
-  match after_parts node with
+  if U.is_bound_var node then None
+  else match after_parts node with
   | Some (src, deps) ->
       if List.exists (fun d ->
         match U.op d with Ops.Store -> true | _ -> false) deps
@@ -381,7 +382,8 @@ let remove_detach node =
 (* Strip tags, map each original numbered node to its final buffer,
    and collect assigns. *)
 let pm_finalize ctx node =
-  match U.op node with
+  if U.is_bound_var node then None
+  else match U.op node with
   | Ops.After ->
       (match get_tags ctx node with
        | Some tag_indices ->
@@ -397,7 +399,7 @@ let pm_finalize ctx node =
       None
   | _ -> None
 
-(* Replace input BUFFER, SLICE(BUFFER), and BIND with dense PARAMs for
+(* Replace input BUFFER, SLICE(BUFFER), and bound variables with dense PARAMs for
    cache-key normalisation. *)
 let pm_replace_buf ctx node =
   let replacement_slot b =
@@ -423,7 +425,7 @@ let pm_replace_buf ctx node =
       | Some sh -> shape_node sh
       | None -> U.shape_to_shape_arg None
     in
-    let addrspace = replacement_addrspace b in
+    let addrspace = if U.is_bound_var b then D.Alu else replacement_addrspace b in
     let volatile =
       match U.Arg.as_param_arg (U.arg (U.buf_uop b)) with
       | Some param -> param.volatile
@@ -431,17 +433,9 @@ let pm_replace_buf ctx node =
     in
     match U.as_bind b, ctx.shapes b with
     | Some { var; _ }, _ ->
-        (* A bound variable keeps its name and range so the kernel graph can
-           recover the canonical variable; the value is stripped so different
-           bind values hit the same schedule cache. *)
-        let vmin_vmax, name =
-          match U.as_param var with
-          | Some { param = { vmin_vmax; name; _ }; _ } -> vmin_vmax, name
-          | None -> None, None
-        in
-        Some
-          (U.param ~slot:idx ~dtype ~shape ?device ?vmin_vmax ?name ~addrspace ~volatile
-             ())
+        let p = Option.get (U.Arg.as_param_arg (U.arg var)) in
+        Some (U.replace var ~op:Ops.Param
+          ~arg:(U.Arg.Param_arg { p with slot = idx; name = Some ("p" ^ string_of_int idx) }) ())
     (* A buffer is always numel-shaped: a scalar output is a size-1 buffer
        viewed as a scalar. Emitting a bare scalar PARAM loses the size-1
        dimension that scheduling needs to index the store at offset 0, so
@@ -455,11 +449,9 @@ let pm_replace_buf ctx node =
     | None, _ -> Some (U.param ~slot:idx ~dtype ~shape ?device ~addrspace ~volatile ())
   in
   match U.op node, U.children node with
-  | Ops.Buffer, _ ->
-      replace_input node
+  | Ops.Buffer, _ when not (U.is_variable node) -> replace_input node
   | Ops.Slice, src :: _ when U.op src = Ops.Buffer -> replace_input node
-  | Ops.Bind, [ var; v ] when is_op Ops.Param var && is_op Ops.Const v ->
-      replace_input node
+  | Ops.After, _ when U.is_bound_var node -> replace_input node
   | _ -> None
 
 (* Entry point *)

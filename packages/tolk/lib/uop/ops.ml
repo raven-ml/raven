@@ -10,7 +10,6 @@
    to tinygrad.uop.Ops. *)
 type t =
   (* 1 -- defines/special *)
-  | Bind
   | Special
   | Buffer
   (* 2 -- non-op uops *)
@@ -104,7 +103,6 @@ let equal : t -> t -> bool = ( = )
 let compare : t -> t -> int = Stdlib.compare
 
 let name = function
-  | Bind -> "BIND"
   | Special -> "SPECIAL"
   | Buffer -> "BUFFER"
   | Noop -> "NOOP"
@@ -242,7 +240,6 @@ module Group = struct
 
   let all =
     [
-      Bind;
       Special;
       Buffer;
       Noop;

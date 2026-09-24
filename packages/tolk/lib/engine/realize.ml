@@ -489,13 +489,13 @@ let unwrap_multi bufs =
    and COPY bodies transfer between buffers. Buffer arguments are resolved
    through the binding and PARAM slots through [input_uops]. *)
 
-(* Keep only the buffer arguments: BIND values and ALU symbolic variables are
+(* Keep only the buffer arguments: bound scalar values and ALU symbolic variables are
    delivered through [var_vals], not as buffers. *)
 let call_arg_uops args =
   List.filter
     (fun s ->
       match Tolk_uop.Uop.op s with
-      | Tolk_uop.Ops.Bind -> false
+      | _ when Tolk_uop.Uop.is_bound_var s || Tolk_uop.Uop.is_variable s -> false
       | Tolk_uop.Ops.Param -> (
           match Tolk_uop.Uop.as_param s with
           | Some { param = { addrspace = Tolk_uop.Dtype.Alu; _ }; _ } -> false

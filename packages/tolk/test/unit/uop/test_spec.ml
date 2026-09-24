@@ -73,7 +73,7 @@ let const_matching_dtype () =
   is_true ~msg:"const accepted" (accepts Spec.shared_spec (i32 42))
 
 let param_with_param_arg () =
-  let p = Uop.variable ~name:"n" ~min_val:0 ~max_val:8 () in
+  let p = Uop.variable ~param:true ~name:"n" ~min_val:0 ~max_val:8 () in
   is_true ~msg:"Param with Param_arg accepted" (accepts Spec.shared_spec p)
 
 let param_rejects_empty_arg () =
@@ -653,47 +653,35 @@ let stage_rejects_bad_layouts () =
   is_true ~msg:"Stage requires BufferizeOpts"
     (rejected Spec.tensor_spec bad_arg)
 
-let bind_accepts_alu_param_const () =
+let bind_accepts_variable_const () =
   let var =
     Uop.variable ~name:"n" ~min_val:0 ~max_val:4 ~dtype:Dtype.weakint ()
   in
   let b = Uop.bind ~var ~value:(Uop.const_int 3) in
-  is_true ~msg:"ALU Param bound to weakint const accepted"
+  is_true ~msg:"scalar variable bound to weakint const accepted"
     (accepts Spec.tensor_spec b)
 
-let bind_rejects_alu_param_stack () =
-  let var =
-    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"shape"
-      ~vmin_vmax:(Bound.int (0), Bound.int (8)) ~addrspace:Dtype.Alu ()
-  in
+let bind_rejects_nonconstant_value () =
+  let var = Uop.variable ~name:"shape" ~min_val:0 ~max_val:8 () in
   let value = stack [ Uop.const_int 1; Uop.const_int 2 ] ~dtype:Dtype.weakint in
-  let b = Uop.bind ~var ~value in
-  is_true ~msg:"Bind requires a scalar Const value"
-    (rejected Spec.tensor_spec b)
+  raises (Invalid_argument "Uop.bind: expected a constant value")
+    (fun () -> ignore (Uop.bind ~var ~value))
 
-let bind_rejects_non_alu_param () =
-  let var = Uop.param ~slot:0 ~dtype:Dtype.int32 () in
-  let b = Uop.bind ~var ~value:(i32 3) in
-  is_true ~msg:"non-ALU Param Bind rejected"
-    (rejected Spec.tensor_spec b)
+let bind_rejects_parameter () =
+  let var = Uop.variable ~param:true ~name:"formal" ~min_val:0 ~max_val:8 () in
+  raises (Invalid_argument "Uop.bind: expected a variable")
+    (fun () -> ignore (Uop.bind ~var ~value:(i32 3)))
 
-(* A 64-bit variable is a valid binding target. *)
 let bind_accepts_64_bit_variable () =
-  let var =
-    Uop.param ~slot:(-1) ~dtype:Dtype.int64 ~name:"n" ~vmin_vmax:(Bound.int (0), Bound.int (8))
-      ~addrspace:Dtype.Alu ()
-  in
+  let var = Uop.variable ~name:"n" ~min_val:0 ~max_val:8 ~dtype:Dtype.int64 () in
   let b = Uop.bind ~var ~value:(Uop.const (Const.int Dtype.int64 3)) in
-  is_true ~msg:"64-bit Bind accepted" (accepts Spec.tensor_spec b)
+  is_true ~msg:"64-bit binding accepted" (accepts Spec.tensor_spec b);
+  is_true ~msg:"bound literal is bare" (Uop.op (Option.get (Uop.as_bind b)).value = Ops.Const)
 
-let bind_rejects_dtype_mismatch () =
-  let var =
-    Uop.variable ~name:"n" ~min_val:0 ~max_val:4
-      ~dtype:Dtype.int32 ()
-  in
+let bind_variable_supplies_dtype () =
+  let var = Uop.variable ~name:"n" ~min_val:0 ~max_val:4 ~dtype:Dtype.int32 () in
   let b = Uop.bind ~var ~value:(Uop.const_int 3) in
-  is_true ~msg:"Bind dtype mismatch rejected"
-    (rejected Spec.tensor_spec b)
+  is_true ~msg:"variable supplies the literal width" (accepts Spec.tensor_spec b)
 
 let movement_validates_shape_contracts () =
   let shape2 = Uop.stack [ Uop.const_int 2; Uop.const_int 4 ] in
@@ -773,14 +761,6 @@ let full_spec_accepts_intermediate_forms () =
   let loose_end =
     Uop.replace (i32 1) ~op:Ops.End ~src:[| i32 1; i32 2 |] ()
   in
-  let bound =
-    Uop.bind
-      ~var:(Uop.variable ~name:"n" ~min_val:0 ~max_val:4 ())
-      ~value:(Uop.const_int 2)
-  in
-  let loose_bind =
-    Uop.replace bound ~src:[| i32 1; Uop.const_float 2.0 |] ()
-  in
   let loose_load =
     Uop.replace (i32 1) ~op:Ops.Load ~src:[| i32 1 |] ()
   in
@@ -814,8 +794,6 @@ let full_spec_accepts_intermediate_forms () =
   is_true ~msg:"full_spec accepts ranges replaced by hardware indices"
     (accepts Spec.full_spec
        (Uop.end_ ~value:(Uop.noop ~dtype:Dtype.void ()) ~ranges:[ special ]));
-  is_true ~msg:"full_spec accepts transitional Bind intermediate"
-    (accepts Spec.full_spec loose_bind);
   is_true ~msg:"full_spec accepts transitional Load intermediate"
     (accepts Spec.full_spec loose_load);
   is_true ~msg:"full_spec accepts transitional Store intermediate"
@@ -986,7 +964,7 @@ let program_oob_enabled_rejects_out_of_bounds_load () =
 let program_oob_enabled_accepts_minmax_in_bounds_load () =
   let p = global_i32_param ~size:16 () in
   let n =
-    Uop.variable ~name:"n" ~min_val:0 ~max_val:15
+    Uop.variable ~param:true ~name:"n" ~min_val:0 ~max_val:15
       ~dtype:Dtype.int32 ()
   in
   let idx = Uop.index ~ptr:p ~idxs:[n] () in
@@ -1025,7 +1003,7 @@ let program_oob_false_gate_accepts_out_of_bounds_load () =
 let program_oob_symbolic_false_gate_accepts_out_of_bounds_load () =
   let p = global_i32_param ~size:16 () in
   let n =
-    Uop.variable ~name:"n" ~min_val:0 ~max_val:16
+    Uop.variable ~param:true ~name:"n" ~min_val:0 ~max_val:16
       ~dtype:Dtype.int32 ()
   in
   let gate = Uop.alu_binary ~op:Ops.Cmplt ~lhs:n ~rhs:(i32 0) in
@@ -1038,7 +1016,7 @@ let program_oob_symbolic_false_gate_accepts_out_of_bounds_load () =
 let program_oob_symbolic_store_remains_rejected () =
   let p = global_i32_param ~size:16 () in
   let n =
-    Uop.variable ~name:"n" ~min_val:(-1) ~max_val:16
+    Uop.variable ~param:true ~name:"n" ~min_val:(-1) ~max_val:16
       ~dtype:Dtype.int32 ()
   in
   let idx = Uop.index ~ptr:p ~idxs:[n] () in
@@ -1050,7 +1028,7 @@ let program_oob_symbolic_store_remains_rejected () =
 let program_oob_masked_symbolic_bounds_are_accepted () =
   let p = global_i32_param ~size:16 () in
   let n =
-    Uop.variable ~name:"n" ~min_val:(-1) ~max_val:16
+    Uop.variable ~param:true ~name:"n" ~min_val:(-1) ~max_val:16
       ~dtype:Dtype.int32 ()
   in
   let ge_zero = Uop.alu_binary ~op:Ops.Cmplt ~lhs:(i32 (-1)) ~rhs:n in
@@ -1066,7 +1044,7 @@ let program_oob_masked_symbolic_bounds_are_accepted () =
 let program_oob_masked_symbolic_lower_bound_only_rejected () =
   let p = global_i32_param ~size:16 () in
   let n =
-    Uop.variable ~name:"n" ~min_val:(-1) ~max_val:16
+    Uop.variable ~param:true ~name:"n" ~min_val:(-1) ~max_val:16
       ~dtype:Dtype.int32 ()
   in
   let gate = Uop.alu_binary ~op:Ops.Cmplt ~lhs:(i32 (-1)) ~rhs:n in
@@ -1376,11 +1354,11 @@ let () =
           test "Mstack layouts" multi_device_stack_layouts;
           test "Multi layouts" multi_device_multi_layouts;
           test "Stage bad layouts rejected" stage_rejects_bad_layouts;
-          test "Bind accepts ALU Param const" bind_accepts_alu_param_const;
-          test "Bind rejects ALU Param stack" bind_rejects_alu_param_stack;
-          test "Bind rejects non-ALU Param" bind_rejects_non_alu_param;
-          test "Bind accepts a 64-bit variable" bind_accepts_64_bit_variable;
-          test "Bind rejects dtype mismatch" bind_rejects_dtype_mismatch;
+          test "bind accepts a variable and constant" bind_accepts_variable_const;
+          test "bind rejects a nonconstant value" bind_rejects_nonconstant_value;
+          test "bind rejects a call parameter" bind_rejects_parameter;
+          test "bind accepts a 64-bit variable" bind_accepts_64_bit_variable;
+          test "variable supplies the bound literal dtype" bind_variable_supplies_dtype;
           test "Movement validates shape contracts"
             movement_validates_shape_contracts;
           test "If/Endif rejected" tensor_rejects_if_endif;

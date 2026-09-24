@@ -70,7 +70,6 @@ let ops_access () =
 let ops_tinygrad_order () =
   let expected =
     [
-      "BIND";
       "SPECIAL";
       "BUFFER";
       "NOOP";
@@ -194,7 +193,7 @@ let group_algebra () =
     (reduce = [ Ops.Add; Ops.Mul; Ops.Max ]);
   is_true ~msg:"Defines are Buffer and Param"
     (defines = [ Ops.Buffer; Ops.Param ]);
-  is_true ~msg:"Irreducible includes Param and Getaddr, not Bind"
+  is_true ~msg:"Irreducible includes Param and Getaddr"
     (irreducible = [ Ops.Special; Ops.Param; Ops.Getaddr; Ops.Range; Ops.Const ]);
   is_true ~msg:"broadcastable excludes Group"
     (not (is_broadcastable Ops.Group));
@@ -296,7 +295,7 @@ let arithmetic_helpers_tinygrad_parity () =
 
 let param_arg_symbolic_constructor () =
   let v = Uop.variable ~name:"n" ~min_val:2 ~max_val:8 () in
-  is_true ~msg:"variable is Param" (Uop.op v = Ops.Param);
+  is_true ~msg:"variable is scalar Buffer" (Uop.is_variable v);
   (match Uop.arg v with
    | Uop.Arg.Param_arg { slot; name; vmin_vmax; addrspace; _ } ->
        is_true ~msg:"symbolic slot" (slot = -1);
@@ -304,8 +303,8 @@ let param_arg_symbolic_constructor () =
        is_true ~msg:"symbolic bounds" (vmin_vmax = Some (Bound.int 2, Bound.int 8));
        is_true ~msg:"symbolic addrspace" (addrspace = Dtype.Alu)
    | _ -> is_true ~msg:"Param carries Param_arg" false);
-  (match Uop.as_param v with
-   | Some { param = { name; vmin_vmax; _ }; shape } ->
+  (match Uop.as_buffer v with
+   | Some { buffer = { name; vmin_vmax; _ }; shape } ->
        is_true ~msg:"param view name" (name = Some "n");
        is_true ~msg:"param view bounds" (vmin_vmax = Some (Bound.int 2, Bound.int 8));
        is_true ~msg:"variable has scalar shape child"
@@ -318,7 +317,7 @@ let bind_requires_concrete_value () =
   let var = Uop.variable ~name:"n" ~min_val:0 ~max_val:4 () in
   let value = Uop.const_int 3 in
   let bound = Uop.bind ~var ~value in
-  is_true ~msg:"Bind op" (Uop.op bound = Ops.Bind);
+  is_true ~msg:"binding effect" (Uop.is_bound_var bound);
   (match Uop.as_bind bound with
    | Some { var = v; value = got } ->
        is_true ~msg:"bind keeps symbolic param" (v == var);
@@ -330,7 +329,17 @@ let bind_requires_concrete_value () =
       false
     with Invalid_argument _ -> true
   in
-  is_true ~msg:"out-of-range bind value rejected" out_of_bounds_rejected
+  is_true ~msg:"out-of-range bind value rejected" out_of_bounds_rejected;
+  let var = Uop.variable ~name:"aligned" ~min_val:0 ~max_val:16 ~multiple_of:4 () in
+  raises (Invalid_argument "Uop.bind: value violates variable divisor")
+    (fun () -> ignore (Uop.bind ~var ~value:(Uop.const_int 6)));
+  let bound = Uop.bind ~var ~value:(Uop.const_int 12) in
+  equal int 12 (snd (Uop.unbind bound));
+  equal int 4 (Uop.const_factor var);
+  is_true ~msg:"variable has no runtime allocation"
+    (match Uop.as_buffer var with
+     | Some { buffer = { buffer = None; size = None; _ }; _ } -> true
+     | _ -> false)
 
 let integer_bounds_parity () =
   let empty_range =
@@ -670,11 +679,10 @@ let property_helpers_parity () =
   let copied = Uop.copy ~src:multi ~device:(Uop.Single "CPU") () in
   is_true ~msg:"Copy clears axis" (Uop.axis copied = None);
   let var =
-    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~vmin_vmax:(Bound.int (0), Bound.int (8))
-      ~name:"n" ~addrspace:Dtype.Alu ~axis:0 ()
+    Uop.variable ~name:"n" ~min_val:0 ~max_val:8 ()
   in
   let bound = Uop.bind ~var ~value:(Uop.const_int 3) in
-  is_true ~msg:"Bind inherits symbolic axis" (Uop.axis bound = Some 0);
+  is_true ~msg:"scalar binding has no shard axis" (Uop.axis bound = None);
   is_true ~msg:"Param addrspace comes from ParamArg"
     (Uop.addrspace var = Some Dtype.Alu);
   let buffer =
@@ -1063,7 +1071,7 @@ let child_ops_reports_child_op_set () =
   is_true ~msg:"child_ops dedups child ops to a set"
     (List.length ops = 2
     && List.exists (Ops.equal Ops.Const) ops
-    && List.exists (Ops.equal Ops.Param) ops);
+    && List.exists (Ops.equal Ops.Buffer) ops);
   is_true ~msg:"child_ops is stable across calls" (Uop.child_ops node = ops)
 
 let property_caches_release_nodes () =
@@ -1706,7 +1714,7 @@ let debug_prints_rich_args_dataclass_style () =
     (contains out
        "ProgramInfo(global_size=(1, 2.0), local_size=(1, 1, 1)");
   is_true ~msg:"ProgramInfo vars use UOp repr"
-    (contains out "vars=(UOp(Ops.PARAM, dtypes.weakint, arg=ParamArg");
+    (contains out "vars=(UOp(Ops.BUFFER, dtypes.weakint, arg=ParamArg");
   is_true ~msg:"CallInfo repr"
     (contains out "CallInfo(None, 'fn', True, False)")
 
@@ -2375,7 +2383,7 @@ let compiled_signature_preserves_slots_and_types () =
   let b3 = U.param ~slot:3 ~name:"named_buffer" ~dtype:Dtype.float32
       ~shape:(U.stack [ extent; U.const_int 4 ]) () in
   let b11 = U.param ~slot:11 ~dtype:Dtype.int16 ~shape:(U.const_int 0) () in
-  let v = U.variable ~name:"value" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.int64 () in
+  let v = U.variable ~param:true ~name:"value" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.int64 () in
   let sink = U.sink [ b11; b3; v ] in
   let target = Target.of_string "PCI:2+AMD:HIP:gfx1100" in
   let info = { (U.program_info_from_sink ~target sink) with vars = [ v ] } in
@@ -2464,10 +2472,10 @@ let () =
           test "infix O module builds Mul" infix_builds_mul;
           test "usum and uprod fold booleans with Or and And"
             bool_folds_are_logical;
-          test "PARAM carries Param_arg" param_arg_symbolic_constructor;
+          test "scalar BUFFER carries Param_arg" param_arg_symbolic_constructor;
           test "tinygrad arithmetic helper parity"
             arithmetic_helpers_tinygrad_parity;
-          test "BIND requires a concrete value" bind_requires_concrete_value;
+          test "binding requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
           test "tinygrad CAST bounds parity" cast_bounds_parity;
           test "flat storage parameters retain symbolic views" flat_storage_parameters;

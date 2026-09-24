@@ -246,6 +246,26 @@ let capture_hands_unplanned_schedule_to_capturer () =
         (Ops.equal (U.op (internal_buffer_arg captured)) Ops.Buffer)
   | None -> failwith "expected the capturer to receive the schedule"
 
+let nested_scalar_bindings_are_lexical () =
+  let variable name = U.variable ~name ~min_val:0 ~max_val:16 () in
+  let bound name value = U.bind ~var:(variable name) ~value:(U.const_int value) in
+  let formal = U.variable ~param:true ~name:"p0" ~min_val:0 ~max_val:16 () in
+  let kernel = U.call ~body:(kernel_body "scalar" [formal]) ~args:[]
+      ~info:(call_info "scalar") in
+  let shared_body = U.linear [kernel] in
+  let nested args = U.call ~body:shared_body ~args ~info:(call_info "nested") in
+  let inner_arg = U.param ~slot:1 ~dtype:Dtype.weakint ~addrspace:Dtype.Alu () in
+  let outer = U.call ~body:(U.linear [nested []; nested [inner_arg]; nested []])
+      ~args:[bound "outer" 3; bound "inner" 7] ~info:(call_info "outer") in
+  let linear, vars = Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id outer in
+  let names = List.map (fun item ->
+      match U.as_call item with
+      | Some {body; _} -> List.map (fun (_, name, _, _) -> name) (U.symbolic_vars body)
+      | None -> fail "expected kernel call") (U.children linear) in
+  equal (list (list string)) [["outer"]; ["inner"]; ["outer"]] names;
+  equal (list (pair string int)) [("inner", 7); ("outer", 3)]
+    (List.sort compare vars)
+
 let () =
   run "Engine_schedule"
     [
@@ -258,6 +278,8 @@ let () =
         ];
       group "create_linear_with_vars"
         [
+          test "nested scalar arguments shadow and inherit lexical bindings"
+            nested_scalar_bindings_are_lexical;
           test "resolves LINEAR calls with params and fresh buffers"
             create_linear_call_substitutes_params_and_new_buffers;
           test "PARAM slots count BIND arguments"

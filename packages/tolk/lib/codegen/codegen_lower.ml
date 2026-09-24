@@ -885,6 +885,7 @@ let number_params sink =
     |> ref
   in
   let rewrite_param node =
+    if U.is_variable node then Some (U.replace node ~op:Ops.Param ()) else
     match U.as_param node with
     | Some { param; _ } when param.slot = -1 ->
         let slot = !next_slot in

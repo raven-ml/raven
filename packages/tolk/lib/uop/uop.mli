@@ -533,7 +533,7 @@ type special_view = { name : string; size : t }
     bound. *)
 
 type bind_view = { var : t; value : t }
-(** View of an {!Ops.Bind} node: symbolic parameter and concrete value. *)
+(** View of a variable binding effect: scalar variable and stored constant. *)
 
 type marg =
   | Marg_shape of t list
@@ -599,7 +599,13 @@ val as_special : t -> special_view option
 (** [as_special u] matches {!Ops.Special}. *)
 
 val as_bind : t -> bind_view option
-(** [as_bind u] matches {!Ops.Bind}. *)
+(** [as_bind u] matches [AFTER(var, STORE(var, CONST))]. *)
+
+val is_variable : t -> bool
+(** [is_variable u] is true for a ranged scalar BUFFER in ALU address space. *)
+
+val is_bound_var : t -> bool
+(** [is_bound_var u] is true when {!as_bind} recognizes a binding effect. *)
 
 val as_contiguous_opts : t -> Opt.t list option
 (** [as_contiguous_opts u] is [Some opts] when [u] is an {!Ops.Contiguous}
@@ -669,9 +675,10 @@ val param :
 
 val variable :
   name:string -> min_val:int -> max_val:int -> ?dtype:Dtype.t ->
-  ?multiple_of:int -> unit -> t
-(** [variable ~name ~min_val ~max_val ?dtype ?multiple_of ()] is a symbolic
-    {!Ops.Param} in {!Dtype.Alu} address space. [dtype] defaults to
+  ?multiple_of:int -> ?param:bool -> unit -> t
+(** [variable ~name ~min_val ~max_val ?dtype ?multiple_of ?param ()] is a scalar
+    {!Ops.Buffer} in {!Dtype.Alu} address space. [param = true] creates the
+    kernel-side {!Ops.Param} form. [dtype] defaults to
     {!Dtype.weakint}. [multiple_of] declares a known divisor of every value
     the variable can take and defaults to [1], which every integer divides;
     see {!param_arg}. Shared. *)
@@ -709,11 +716,12 @@ val slice : src:t -> offset:t -> size:int -> dtype:Dtype.t -> t
 (** {2:ctors_scalars Variables, binds, constants} *)
 
 val bind : var:t -> value:t -> t
-(** [bind ~var ~value] binds symbolic parameter [var] to concrete
-    [value]. Dtype is inherited from [var]; [src] is [(var, value)].
+(** [bind ~var ~value] stores a constant into a scalar variable and returns
+    its AFTER effect. The variable supplies the dtype; the stored constant
+    remains weak.
 
-    Raises [Invalid_argument] if a constant [value] is outside [var]'s
-    known bounds. Tensor. *)
+    @raise Invalid_argument if [var] is not a variable, [value] is not a
+    constant, or its value violates the variable's bounds or divisor. *)
 
 val const : Const.t -> t
 (** [const v] is [v] as a weak CONST, with a typed CAST for concrete numeric
@@ -1294,7 +1302,7 @@ val addrspace : t -> Dtype.addr_space option
 val base : t -> t
 (** [base u] walks through movement ops and {!Ops.Detach} to the
     underlying node. Other ops, including {!Ops.Unshard}, {!Ops.Stage},
-    {!Ops.Slice}, {!Ops.Bind}, {!Ops.Param}, and {!Ops.Buffer}, are their
+    {!Ops.Slice}, {!Ops.Param}, and {!Ops.Buffer}, are their
     own base. *)
 
 val storage_base : t -> t

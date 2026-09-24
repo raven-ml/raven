@@ -437,7 +437,7 @@ let make_custom () =
 let make_define_var ?(dtype = Dtype.int32) () =
   let ptr = global_ptr dt in
   let p0 = param 0 ptr in
-  let dv = U.variable ~name:"n" ~min_val:0 ~max_val:1024 ~dtype () in
+  let dv = U.variable ~param:true ~name:"n" ~min_val:0 ~max_val:1024 ~dtype () in
   let idx = ptr_index p0 dv () in
   let ld = load idx in
   [ p0; dv; idx; ld; store idx ld ]

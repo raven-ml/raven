@@ -1495,15 +1495,16 @@ let find_bufs n =
 let to_define_global ctx n =
   match U.op n with
   | Ops.Store -> find_bufs n
+  | Ops.Buffer when U.is_variable n -> Some (U.replace n ~op:Ops.Param ())
   | Ops.Buffer | Ops.Mstack | Ops.Mselect -> debuf ctx n
   | Ops.Param -> (
       match U.as_param n with
       (* A named, ranged PARAM normalises to the canonical variable so
          binding identity survives the kernel split. *)
-      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); volatile; _ }; _ } ->
+      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); multiple_of; volatile; _ }; _ } ->
           Some
             (U.param ~slot:(-1) ~name ~dtype:(U.dtype n) ~shape:(U.stack [])
-               ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ~volatile ())
+               ~vmin_vmax:(lo, hi) ?multiple_of ~addrspace:Dtype.Alu ~volatile ())
       (* Renumber only an already-tagged, shaped, unnamed PARAM. The tag is
          set by the param/range tagging rule so a PARAM freshly created here
          is not debuffed again. *)
@@ -1511,7 +1512,7 @@ let to_define_global ctx n =
         when U.node_tag n = Some "" ->
           debuf ctx n
       | _ -> None)
-  | Ops.Bind -> unbind_kernel ctx n
+  | Ops.After when U.is_bound_var n -> unbind_kernel ctx n
   | Ops.After -> handle_after ctx n
   (* ALU params are scalar symbolic values, not buffers. *)
   | Ops.Index

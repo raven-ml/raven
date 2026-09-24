@@ -58,7 +58,7 @@ let linear_srcs n =
   | Ops.Linear -> Some (U.children n)
   | _ -> None
 
-let call_arg_uops args = List.filter (fun s -> not (is_op Ops.Bind s)) args
+let call_arg_uops args = List.filter (fun s -> not (U.is_bound_var s)) args
 
 let gate_kernel_sink n =
   match U.op n with
@@ -67,10 +67,10 @@ let gate_kernel_sink n =
   | _ -> true
 
 (* Follow src[0] chains through movement ops until hitting a data
-   source: After, Buffer, Param, Mselect, Mstack, or Bind. *)
+   source: After, Buffer, Param, Mselect, Mstack, or a bound variable. *)
 let rec unwrap_src (node : U.t) : U.t =
   match U.op node with
-  | Ops.After | Ops.Buffer | Ops.Param | Ops.Mselect | Ops.Mstack | Ops.Bind ->
+  | Ops.After | Ops.Buffer | Ops.Param | Ops.Mselect | Ops.Mstack ->
       node
   | _ ->
       match U.children node with
@@ -80,14 +80,14 @@ let rec unwrap_src (node : U.t) : U.t =
 let call_arg_buffer_node node = U.buf_uop (unwrap_src node)
 
 (* Unwrap a kernel input to the buffer states (After, Buffer, or Param) it
-   resolves to. Mselect/Mstack join per-device states, Bind is not a buffer
+   resolves to. Mselect/Mstack join per-device states, A bound variable is not a buffer
    dependency. *)
 let states s =
   let rec loop s =
     let s = unwrap_src s in
     match U.op s with
     | Ops.Mselect | Ops.Mstack -> List.concat_map loop (U.children s)
-    | Ops.Bind -> []
+    | _ when U.is_bound_var s || U.is_variable s -> []
     | Ops.After | Ops.Buffer | Ops.Param -> [ s ]
     | _ ->
         invalid_arg
@@ -290,33 +290,45 @@ let post_sched_cache_rule ctx node =
       else None
   | None, None -> None
 
-(* Resolve CALL(LINEAR, ...) by substituting PARAMs with buffer
-   arguments. Flatten nested LINEAR nodes. *)
-let resolve_linear_call_rule (node : U.t) : U.t option =
+(* A LINEAR call introduces a lexical scope. Substitute its positional
+   storage formals without entering callees, then resolve scalar names inside
+   each kernel. Nested calls inherit outer names and shadow positional names. *)
+let rec resolve_linear_call outer_binds node =
   match U.as_call node with
-  | Some { body; args; _ } ->
-      if is_op Ops.Linear body then
-        (* Replacement slots were assigned over every replaced input,
-           including BINDs, so index the raw argument list. *)
-        let ctx =
-          { param_bufs = args;
-            created_buffers = Hashtbl.create 16 }
-        in
-        Some (U.graph_rewrite ~walk:true (post_sched_cache_rule ctx) body)
-      else None
+  | Some { body; args; _ } when is_op Ops.Linear body ->
+      let ctx = { param_bufs = args; created_buffers = Hashtbl.create 16 } in
+      let linear = U.graph_rewrite ~walk:true (post_sched_cache_rule ctx) body in
+      let binds = List.mapi (fun i x ->
+          Option.map (fun (v : U.bind_view) ->
+              ("p" ^ string_of_int i, U.replace v.var ~op:Ops.Param ())) (U.as_bind x)) args
+        |> List.filter_map Fun.id in
+      let binds = binds @ outer_binds in
+      let apply item =
+        match U.as_call item with
+        | Some { body; _ } when is_op Ops.Linear body -> resolve_linear_call binds item
+        | _ ->
+            let apply_source source =
+              U.graph_rewrite ~walk:true (fun v ->
+                  match U.Arg.as_param_arg (U.arg v) with
+                  | Some { addrspace = Dtype.Alu; name = Some name; _ }
+                    when U.op v = Ops.Param || U.is_variable v ->
+                      List.assoc_opt name binds
+                  | _ -> None) source in
+            U.replace item ~src:(Array.map apply_source (U.src item)) ()
+      in
+      let items = List.concat_map (fun item ->
+          let item = apply item in
+          if is_op Ops.Linear item then U.children item else [item]) (U.children linear) in
+      U.linear items
+  | _ -> invalid_arg "resolve_linear_call: expected CALL(LINEAR)"
+
+let resolve_linear_call_rule node =
+  match U.as_call node with
+  | Some { body; _ } when is_op Ops.Linear body -> Some (resolve_linear_call [] node)
   | None when is_op Ops.Linear node ->
-      let srcs = U.children node in
-      let has_nested = List.exists (fun s -> is_op Ops.Linear s) srcs in
-      if has_nested then
-        let flat =
-          List.concat_map
-            (fun s ->
-              match linear_srcs s with
-              | Some inner -> inner
-              | None -> [ s ])
-            srcs
-        in
-        Some (U.linear flat)
+      if List.exists (is_op Ops.Linear) (U.children node) then
+        Some (U.linear (List.concat_map (fun item ->
+            if is_op Ops.Linear item then U.children item else [item]) (U.children node)))
       else None
   | _ -> None
 
@@ -684,8 +696,8 @@ let copy_from_store call =
 let variables_of_kernel_body body =
   U.toposort ~enter_calls:true body
   |> List.filter_map (fun node ->
-         match U.as_param node with
-         | Some { param = { name = Some name; addrspace = Dtype.Alu; _ }; _ }
+         match U.Arg.as_param_arg (U.arg node) with
+         | Some { name = Some name; addrspace = Dtype.Alu; _ }
            ->
              Some name
          | _ -> None)
@@ -701,7 +713,7 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
       big_sink
   in
   (* Step 2: resolve CALL(LINEAR, ...) into the LINEAR result *)
-  let linear = U.graph_rewrite resolve_linear_call_rule graph in
+  let linear = U.graph_rewrite ~bottom_up:true resolve_linear_call_rule graph in
   (* Step 3: rebuild the transfers the kernel graph carries as copy kernels *)
   let linear =
     U.graph_rewrite ~name:"create COPY kernels" copy_from_store linear
@@ -711,7 +723,7 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
     | Some srcs -> srcs
     | None -> invalid_arg "create_linear_with_vars: expected Linear node"
   in
-  (* Step 4: extract var_vals from used BIND nodes. *)
+  (* Step 4: extract var_vals from used scalar bindings. *)
   let used_vars =
     List.concat_map
       (fun si ->
@@ -726,8 +738,8 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
     List.iter (fun src ->
       match U.as_bind src with
       | Some { var; value = v } -> begin
-          match U.as_param var, U.op v, U.arg v with
-          | Some { param = { name = Some name; _ }; _ }, Ops.Const,
+          match U.Arg.as_param_arg (U.arg var), U.op v, U.arg v with
+          | Some { name = Some name; _ }, Ops.Const,
             U.Arg.Value value ->
               if List.mem name used_vars then
                 (match Const.view value with

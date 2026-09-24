@@ -1284,7 +1284,7 @@ let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
         List.exists
           (fun a ->
             match U.op a with
-            | Tolk_uop.Ops.Bind -> false
+            | _ when U.is_bound_var a || U.is_variable a -> false
             | _ -> U.tag (U.buf_uop a) = tag)
           args
     | None -> false

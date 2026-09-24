@@ -100,8 +100,8 @@ let prepare_inputs tensors vars =
           | None -> raise (Jit_error "JIT vars must be bound variables")
         in
         let name =
-          match U.as_param var with
-          | Some { param = { name = Some name; _ }; _ } -> name
+          match U.Arg.as_param_arg (U.arg var) with
+          | Some { name = Some name; _ } -> name
           | _ -> raise (Jit_error "JIT vars must bind named variables")
         in
         (match List.assoc_opt name acc with

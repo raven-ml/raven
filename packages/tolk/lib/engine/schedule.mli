@@ -40,8 +40,8 @@ val create_schedule : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     {!Tolk_uop.Ops.Store} children are ignored.
 
     Raises [Invalid_argument] if a kernel dependency is not an [After],
-    [Buffer], [Param], [Mselect], [Mstack], or [Bind] after source
-    unwrapping. *)
+    [Buffer], [Param], [Mselect], [Mstack], or a scalar binding effect after
+    source unwrapping. *)
 
 val lower_sink_to_linear :
   get_kernel_graph:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->

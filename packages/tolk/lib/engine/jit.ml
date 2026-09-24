@@ -41,7 +41,7 @@ let is_op op n = Ops.equal (U.op n) op
 exception Jit_error of string
 
 (* Buffer arguments of a scheduled call, dropping symbolic binds. *)
-let call_arg_uops args = List.filter (fun s -> not (is_op Ops.Bind s)) args
+let call_arg_uops args = List.filter (fun s -> not (U.is_bound_var s)) args
 
 let call_args call =
   match U.as_call call with Some { args; _ } -> args | None -> []
@@ -130,7 +130,7 @@ let call_device_prefixes si =
   let rec loop acc = function
     | [] -> Some (dedup (List.rev acc))
     | b :: rest ->
-        if is_op Ops.Bind b then loop acc rest
+        if U.is_bound_var b then loop acc rest
         else (
           match U.device_of b with
           | Some (U.Single d) -> loop (device_prefix d :: acc) rest

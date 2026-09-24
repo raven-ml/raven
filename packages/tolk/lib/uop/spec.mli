@@ -137,8 +137,7 @@ val full_spec : t
     transitional full-spec forms plus {!tensor_spec} and {!program_spec}. It
     accepts rewrite-error markers, known intermediate {!Ops.Slice},
     {!Ops.Call} over slice bodies, loose {!Ops.After}/{!Ops.End}, expander raw
-    memory access, and transitional scalar {!Ops.Bind} nodes. It has no
-    catch-all rule. *)
+    memory access, and scalar binding effects. It has no catch-all rule. *)
 
 (** {1:verify Verification} *)
 

@@ -14,15 +14,14 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 1. Complete the CPU path through the new protocol
 
-- Adopt ALLOC, effectful CALL and scalar binding effects. Remove remaining
+- Adopt ALLOC and effectful CALL. Remove remaining
   explicit dtype overrides with the legacy IR. Eliminate
   unplaced BUFFER placeholders and their execution-time allocation fallback.
-  Remove FUNCTION/TUPLE/GETTUPLE/BIND and obsolete enum/cache layouts as their producers
+  Remove FUNCTION/TUPLE/GETTUPLE and obsolete enum/cache layouts as their producers
   move to the new protocol.
 - Introduce the final preparation owner. Move early rewrites out of
-  rangeify/callify, port inline calls, explicit allocations, output forwarding,
-  lexical scalar formals and the separate becomes map. Handle precompiled
-  calls without preallocation. Keep the one-hot gather guard with preparation.
+  rangeify/callify, port inline calls, explicit allocations, output forwarding
+  and the separate becomes map. Handle precompiled calls without preallocation. Keep the one-hot gather guard with preparation.
 - Port CPU scheduling and realization onto that graph: explicit allocation and
   call arguments, RAW/WAR dependencies for overlapping assignments, self-copy,
   nested calls and shared aliases, and cycle rejection. Replace SLICE memory

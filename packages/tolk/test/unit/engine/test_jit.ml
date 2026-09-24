@@ -252,7 +252,7 @@ let () =
             let body =
               U.sink
                 ~kernel_info:(kernel_info "jit_sym")
-                [ U.special ~name:"gidx0" ~size:n () ]
+                [ U.special ~name:"gidx0" ~size:(U.replace n ~op:Ops.Param ()) () ]
             in
             let binds var_vals =
               [ U.bind ~var:n

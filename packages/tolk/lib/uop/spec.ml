@@ -35,13 +35,6 @@ let same_dtype a b =
 
 let matches_or_weak u s = same_dtype u s || is_weak s
 
-(* Dtypes a bound variable may carry: a concrete 32- or 64-bit signed integer,
-   or an index-domain integer whose width is not yet committed. *)
-let bind_dtype u =
-  Dtype.equal (Uop.dtype u) Dtype.int32
-  || Dtype.equal (Uop.dtype u) Dtype.int64
-  || is_weakint u
-
 let arg_empty u = match Uop.arg u with Uop.Arg.Empty -> true | _ -> false
 
 let option_for_all p = function
@@ -212,21 +205,6 @@ let local_reg_buffer u =
       &&
       (match buffer.addrspace with Dtype.Local | Dtype.Reg -> true | _ -> false)
   | None -> false
-
-let alu_param u =
-  match Uop.as_param u with
-  | Some { param = { addrspace = Dtype.Alu; _ }; _ } ->
-      is_int u
-  | _ -> false
-
-let bind_value u = Option.is_some (Uop.as_const u) && bind_dtype u
-
-let bind_ok u var value =
-  arg_empty u
-  && alu_param var
-  && bind_value value
-  && same_dtype u var
-  && same_dtype var value
 
 let mselect_ok u =
   match Uop.Arg.as_int (Uop.arg u), Uop.src u with
@@ -419,10 +397,7 @@ let tensor_spec : t =
     =?> (fun u _ -> Dtype.is_float (Uop.dtype u));
 
     op Ops.Buffer =??> (fun u _ ->
-      if valid_global_buffer u then Some true else None);
-
-    op ~src:[ var "var"; var "value" ] Ops.Bind
-    =?> (fun u bs -> bind_ok u (bs $ "var") (bs $ "value"));
+      if valid_global_buffer u || Uop.is_variable u then Some true else None);
 
     op ~allow_any_len:true
       ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Copy;
@@ -569,8 +544,6 @@ let full_only_spec : t =
 
     ops [ Ops.Load; Ops.Store ] =?> (fun _ _ -> true);
 
-    op ~src:[ any; any ] Ops.Bind
-    =?> (fun u _ -> arg_empty u && bind_dtype u);
   ]
 
 let full_spec : t =

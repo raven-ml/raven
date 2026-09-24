@@ -17,7 +17,6 @@
 type t =
   (** {2 Defines and special indices} *)
 
-  | Bind  (** Pairs a symbolic {!Param} with a concrete value. *)
   | Special  (** Hardware index, such as group, local, or global ids. *)
   | Buffer  (** Buffer allocation or buffer identity. *)
 

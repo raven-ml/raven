@@ -511,10 +511,10 @@ let expr_to_string ?(simplify = true) u =
   and s2 u = go (src u).(2)
   and render u =
     match op u with
-    | Ops.Param -> (
-        match as_param u with
-        | Some { param = { name = Some name; _ }; _ } -> name
-        | Some { param = { slot; _ }; _ } -> "p" ^ string_of_int slot
+    | Ops.Param | Ops.Buffer -> (
+        match Uop.Arg.as_param_arg (arg u) with
+        | Some { name = Some name; _ } -> name
+        | Some { slot; _ } -> "p" ^ string_of_int slot
         | None -> uop_repr_debug_string u)
     | Ops.Special -> (
         match as_special u with
@@ -537,7 +537,7 @@ let expr_to_string ?(simplify = true) u =
           else dt
         in
         Printf.sprintf "(%s)(%s)" dt (s0 u)
-    | Ops.Bind -> s0 u
+    | Ops.After when Uop.is_bound_var u -> s0 u
     | Ops.Neg -> Printf.sprintf "(-%s)" (s0 u)
     | Ops.Reciprocal -> Printf.sprintf "(1/%s)" (s0 u)
     | Ops.Max -> Printf.sprintf "max(%s, %s)" (s0 u) (s1 u)

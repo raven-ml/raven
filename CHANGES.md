@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.variable` now creates a scalar storage identity; `Uop.bind` sequences
+  its value through a store and rejects violations of its declared divisor.
+  Nested calls resolve scalar parameters within their own scope.
 - `Uop.const` represents concrete numeric literals as typed casts over weak
   values. Weak arithmetic commits widths at its consumers before code emission.
 - Preserve half-precision rounding in `arange` and ordinary arithmetic when

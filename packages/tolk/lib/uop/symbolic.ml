@@ -1431,7 +1431,7 @@ let symbolic : Upat.Pattern_matcher.t =
     (ops ~name:"x"
        [ Ops.Cmplt; Ops.Cmpne; Ops.Cdiv; Ops.Cmod;
          Ops.Floordiv; Ops.Floormod;
-         Ops.Param; Ops.Bind; Ops.Special ]
+         Ops.Param; Ops.Buffer; Ops.Special ]
      => fun bs ->
        let x = bs $ "x" in
        let lo = Uop.vmin x and hi = Uop.vmax x in

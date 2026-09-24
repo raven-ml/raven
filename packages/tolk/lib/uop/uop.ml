@@ -366,7 +366,7 @@ let derived_dtype (node : node) =
        | _ -> first ())
   | Ops.Load | Ops.Unshard | Ops.Reduce | Ops.After | Ops.Range | Ops.Copy
   | Ops.Stage | Ops.Detach | Ops.Mstack | Ops.Mselect | Ops.Allreduce | Ops.Special
-  | Ops.End | Ops.Contiguous | Ops.Contiguous_backward | Ops.Bind -> first ()
+  | Ops.End | Ops.Contiguous | Ops.Contiguous_backward -> first ()
   | Ops.Gettuple | Ops.Slice -> node.dtype
   | op when Ops.Group.is_unary op || Ops.Group.is_movement op -> first ()
   | op when Ops.Group.is_broadcastable op -> promote (Array.to_list node.src)
@@ -490,7 +490,7 @@ let integer_as_native n = if Z.fits_int n then Some (Z.to_int n) else None
 
 let program_var_name u =
   match op u, arg u with
-  | Ops.Param, Arg.Param_arg { name = Some name; _ } -> Some name
+  | (Ops.Param | Ops.Buffer), Arg.Param_arg { name = Some name; _ } -> Some name
   | _ -> None
 
 (* View accessors — structured views over per-op src/arg contracts. *)
@@ -608,10 +608,22 @@ let as_special u =
   | Ops.Special, Arg.String name, [ size ] -> Some { name; size }
   | _ -> Option.None
 
+let is_variable u =
+  match op u, arg u, src u with
+  | Ops.Buffer, Arg.Param_arg { addrspace = Dtype.Alu; size = None;
+      vmin_vmax = Some _; _ }, [||] -> true
+  | _ -> false
+
 let as_bind u =
-  match op u, Array.to_list (src u) with
-  | Ops.Bind, [ var; value ] -> Option.Some { var; value }
-  | _ -> Option.None
+  match op u, src u with
+  | Ops.After, [| var; store |] when is_variable var ->
+      (match op store, src store with
+       | Ops.Store, [| dst; value |] when dst == var && op value = Ops.Const ->
+           Some { var; value }
+       | _ -> None)
+  | _ -> None
+
+let is_bound_var u = Option.is_some (as_bind u)
 
 let device_cache : device option Weak_tbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> Weak_tbl.create 32)
@@ -762,8 +774,10 @@ let stage ~src ~ranges ~opts =
     ~arg:(Arg.Stage_info opts)
 
 let variable ~name ~min_val ~max_val ?(dtype = Dtype.weakint)
-    ?(multiple_of = 1) () =
-  mk ~op:Ops.Param ~dtype ~src:[||]
+    ?(multiple_of = 1) ?(param = false) () =
+  if min_val > max_val || multiple_of <= 0 then
+    invalid_arg "Uop.variable: invalid bounds or divisor";
+  mk ~op:(if param then Ops.Param else Ops.Buffer) ~dtype ~src:[||]
     ~arg:(Arg.Param_arg (default_param_arg ~dtype ~name
       ~vmin_vmax:(Bound.int min_val, Bound.int max_val) ~multiple_of
       ~addrspace:Dtype.Alu (-1)))
@@ -804,20 +818,29 @@ let cconst value dtype =
   mk ~op:Ops.Cast ~dtype ~src:[| value |] ~arg:(Arg.Dtype dtype)
 
 let bind ~var ~value =
-  let in_bounds = match arg var, as_const value with
-    | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ }, Some c ->
-        (match Const.view c with
-         | Const.Int n ->
-             Bound.le lo (`Int n) && Bound.le (`Int n) hi
-         | Const.Bool b ->
-             let n = `Bool b in
-             Bound.le lo n && Bound.le n hi
-         | Const.Float _ | Const.Invalid -> true)
-    | _ -> true
-  in
-  if in_bounds then
-    mk ~op:Ops.Bind ~dtype:(dtype var) ~src:[| var; value |] ~arg:Arg.Empty
-  else invalid_arg "Uop.bind: value outside variable bounds"
+  if not (is_variable var) then invalid_arg "Uop.bind: expected a variable";
+  let value = match as_const value with
+    | Some c ->
+        let weak = match Const.view c with
+          | Const.Int _ -> Dtype.weakint | Const.Float _ -> Dtype.weakfloat
+          | Const.Bool _ | Const.Invalid -> Dtype.bool in
+        const (Const.of_view weak (Const.view c))
+    | None -> invalid_arg "Uop.bind: expected a constant value" in
+  let p = match arg var with Arg.Param_arg p -> p | _ -> assert false in
+  let c = match as_const value with Some c -> c | None -> assert false in
+  let bound = match Const.view c with
+    | Const.Int n -> `Int n | Const.Bool b -> `Bool b | Const.Float f -> `Float f
+    | Const.Invalid -> invalid_arg "Uop.bind: invalid value" in
+  let lo, hi = Option.get p.vmin_vmax in
+  if not (Bound.le lo bound && Bound.le bound hi) then
+    invalid_arg "Uop.bind: value outside variable bounds";
+  (match Const.view c with
+   | Const.Int n when not (Z.equal Z.zero
+       (Z.rem n (Z.of_int (Option.value p.multiple_of ~default:1)))) ->
+       invalid_arg "Uop.bind: value violates variable divisor"
+   | _ -> ());
+  let store = mk ~op:Ops.Store ~dtype:void_dtype ~src:[| var; value |] ~arg:Arg.Empty in
+  mk ~op:Ops.After ~dtype:(dtype var) ~src:[| var; store |] ~arg:Arg.Empty
 
 
 let invalid () = const Const.invalid
@@ -1077,13 +1100,9 @@ let rec addrspace u =
 and compute_addrspace u =
   let srcs = src u in
   match op u with
-  | Ops.Param ->
+  | Ops.Param | Ops.Buffer ->
       (match Arg.as_param_arg (arg u) with
        | Some param -> Some param.addrspace
-       | None -> None)
-  | Ops.Buffer ->
-      (match Arg.as_param_arg (arg u) with
-       | Some buffer -> Some buffer.addrspace
        | None -> None)
   | Ops.Special | Ops.Range -> Some Dtype.Alu
   | Ops.Load -> Some Dtype.Alu
@@ -1885,7 +1904,7 @@ and compute_min_max u =
                 | Const.Float f when not (Float.is_nan f) -> `Float f, `Float f
                 | Const.Float _ | Const.Invalid -> dtype_bounds ())
            | _ -> dtype_bounds ())
-      | Ops.Param, _ ->
+      | (Ops.Param | Ops.Buffer), _ ->
           (match arg u with
            | Arg.Param_arg { vmin_vmax = Some (lo, hi); _ } -> lo, hi
            | _ -> dtype_bounds ())
@@ -1897,7 +1916,7 @@ and compute_min_max u =
             (min_max srcs.(0)) srcs
       | Ops.Pad, srcs when Array.length srcs > 0 ->
           let lo, hi = min_max srcs.(0) in B.min lo zero, B.max hi zero
-      | (Ops.Bind | Ops.Index | Ops.Stage | Ops.After | Ops.Detach | Ops.Copy
+      | (Ops.Index | Ops.Stage | Ops.After | Ops.Detach | Ops.Copy
         | Ops.Contiguous | Ops.Contiguous_backward), srcs when Array.length srcs > 0 -> min_max srcs.(0)
       | movement, srcs when Ops.Group.is_movement movement && Array.length srcs > 0 -> min_max srcs.(0)
       | Ops.Cast, [| s |] ->
@@ -2174,7 +2193,7 @@ and compute_shape_opt u =
       if Array.length srcs = 0 then Some []
       else Some (const_int (Array.length srcs) :: shape srcs.(0))
   | Ops.Const -> Some []
-  | Ops.Getaddr | Ops.Bind | Ops.Range | Ops.Special -> Some []
+  | Ops.Getaddr | Ops.Range | Ops.Special -> Some []
   | Ops.Binary ->
       (* One dimension per compiled byte. *)
       (match arg u with
@@ -2852,7 +2871,7 @@ let rec const_factor u =
       (match const_int_value a, const_int_value b with
        | Option.Some n, _ | _, Option.Some n -> n
        | _ -> 1)
-  | Ops.Param ->
+  | Ops.Param | Ops.Buffer ->
       (match Arg.as_param_arg (arg u) with
        | Option.Some { multiple_of = Option.Some m; _ } -> m
        | _ -> 1)
@@ -2887,7 +2906,7 @@ let rec divides u n =
            (match divides b n with
             | Option.Some qb -> Option.Some (alu_binary ~op:Ops.Mul ~lhs:a ~rhs:qb)
             | Option.None -> Option.None))
-  | Ops.Param ->
+  | Ops.Param | Ops.Buffer ->
       (match Arg.as_param_arg (arg u) with
        | Option.Some { multiple_of = Option.Some m; _ } when m mod n = 0 ->
            Option.Some (alu_binary ~op:Ops.Floordiv ~lhs:u ~rhs:(const_like u n))
@@ -3032,32 +3051,11 @@ let simplify u = !simplify_ref u
 
 (* Symbolic variables of [u], as (node, name, vmin, vmax). *)
 let symbolic_vars u =
-  find_nodes
-    (fun n ->
-      match as_param n with
-      | Some
-          {
-            param =
-              { addrspace = Dtype.Alu; name = Some _; vmin_vmax = Some _; _ };
-            _;
-          } ->
-          true
-      | _ -> false)
-    u
+  find_nodes (fun n -> op n = Ops.Param || is_variable n) u
   |> List.filter_map (fun n ->
-      match as_param n with
-      | Some
-          {
-            param =
-              {
-                addrspace = Dtype.Alu;
-                name = Some name;
-                vmin_vmax = Some (lo, hi);
-                _;
-              };
-            _;
-          } ->
-          Some (n, name, lo, hi)
+      match Arg.as_param_arg (arg n) with
+      | Some { addrspace = Dtype.Alu; name = Some name;
+          vmin_vmax = Some (lo, hi); _ } -> Some (n, name, lo, hi)
       | _ -> None)
 
 let sym_infer u var_vals =
@@ -3104,9 +3102,8 @@ let smin = function
 let sprod dims = simplify (dim_prod dims)
 
 let unbind u =
-  match op u, src u with
-  | Ops.Bind, [| var; value |]
-    when op var = Ops.Param && Option.is_some (as_const value) -> (
+  match as_bind u with
+  | Some { var; value } -> (
       match const_int_value value with
       | Some n -> (var, n)
       | None -> invalid_arg "Uop.unbind: bound value is not an integer")
@@ -3420,7 +3417,7 @@ let rec infer_int var_vals u =
           (infer_int var_vals srcs.(1))
       in
       match op u with
-      | Ops.Param -> (
+      | Ops.Param | Ops.Buffer -> (
           match program_var_name u with
           | Some name ->
               (match List.assoc_opt name var_vals with
@@ -3429,7 +3426,7 @@ let rec infer_int var_vals u =
                    (Printf.sprintf "program: missing launch variable %S" name))
           | None -> invalid_arg
               "program: unnamed launch variable")
-      | Ops.Bind when Array.length srcs >= 2 -> infer_int var_vals srcs.(1)
+      | Ops.After when is_bound_var u -> infer_int var_vals (Option.get (as_bind u)).value
       | Ops.Cast when Array.length srcs >= 1 -> infer_int var_vals srcs.(0)
       | Ops.Add -> binary ( + )
       | Ops.Sub -> binary ( - )
@@ -3624,7 +3621,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 19
+let export_version = 20
 
 type serialized_node = {
   serialized_op : Ops.t;
