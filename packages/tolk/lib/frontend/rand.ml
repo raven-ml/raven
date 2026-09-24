@@ -192,7 +192,7 @@ let randn_like ?dtype t =
 
 let randn ?dtype shape =
   check_shape "randn" shape;
-  randn_like ?dtype (Creation.zeros ~buffer:false shape)
+  randn_like ?dtype (Creation.empty shape)
 
 let uniform ?(low = 0.) ?(high = 1.) ?dtype shape =
   check_shape "uniform" shape;

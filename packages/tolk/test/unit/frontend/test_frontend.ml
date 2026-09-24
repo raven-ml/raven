@@ -35,6 +35,15 @@ let ones_i sh = Cr.ones ~dtype:D.int32 sh
 let creation_tests =
   group "creation"
     [
+      test "a weak clone has a concrete dtype and fresh storage" (fun () ->
+          let input = T.i (1 lsl 40) in
+          let a = Cr.clone input and b = Cr.clone input in
+          is_true (is_dtype a D.int64);
+          is_false (U.equal (U.buf_uop (T.uop a)) (U.buf_uop (T.uop b))));
+      test "empty storage rejects weak dtypes" (fun () ->
+          List.iter (fun dtype ->
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> Cr.empty ~dtype [ 2 ])) [ D.weakint; D.weakfloat ]);
       test "zeros shape and dtype" (fun () ->
           let t = Cr.zeros [ 2; 3 ] in
           equal (list int) [ 2; 3 ] (shape t);
@@ -50,6 +59,7 @@ let creation_tests =
           is_true (Ops.equal (U.op (src t 0)) Ops.Reshape));
       test "full ~buffer:false is a broadcast const" (fun () ->
           let t = Cr.full ~buffer:false [ 2; 2 ] (T.Sint 7) in
+          is_true (is_dtype t D.weakint);
           (* Expand(Reshape(Const)) *)
           is_true (has_op t Ops.Expand);
           is_true (Ops.equal (U.op (src t 0)) Ops.Reshape));

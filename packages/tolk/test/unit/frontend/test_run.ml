@@ -991,6 +991,52 @@ let numerical_edge_tests =
   in
   group "numerical edges"
     [
+      test "staged weak arithmetic preserves its storage width" (fun () ->
+          let large = 1 lsl 40 in
+          let source = Dt.cast (int64s [| Int64.of_int large |]) Tolk_uop.Dtype.weakint in
+          let expression = El.add source (T.i 1) in
+          let staged = T.of_uop (U.contiguous ~src:(T.uop expression) ()) in
+          check_int64s [| Int64.of_int (large + 1) |] (Dt.long staged));
+      test "raw host bytes require a concrete dtype" (fun () ->
+          List.iter (fun dtype ->
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> Run.of_bytes ~dtype ~shape:[ 1 ] (Bytes.make 100 '\000')))
+            Tolk_uop.Dtype.[ weakint; weakfloat ]);
+      test "weak constants and their clones read at a concrete width" (fun () ->
+          let large = 1 lsl 40 in
+          let t = T.i large in
+          check_int64s [| Int64.of_int large |] t;
+          check_int64s [| Int64.of_int large |] (Creation.clone t));
+      test "fills infer the width of large integers" (fun () ->
+          let large = 1 lsl 40 in
+          let expected = Array.make 2 (Int64.of_int large) in
+          check_int64s expected (Creation.full [ 2 ] (T.Sint large));
+          check_int64s expected (Creation.full ~buffer:false [ 2 ] (T.Sint large));
+          check_int64s expected
+            (Creation.full_like (Mv.expand (Mv.reshape (T.i 0) [ 1 ]) [ 2 ])
+               (T.Sint large)));
+      test "weak scans select a finite storage identity" (fun () ->
+          let large = 1 lsl 40 in
+          let t = Mv.expand (Mv.reshape (T.i large) [ 1 ]) [ 3 ] in
+          check_int64s (Array.make 3 (Int64.of_int large)) (fst (Op.cummax t)));
+      test "weak scatter reductions select a finite storage identity" (fun () ->
+          let large = 1 lsl 40 in
+          let input = Mv.expand (Mv.reshape (T.i large) [ 1 ]) [ 2 ] in
+          let source = Mv.reshape (T.i (large + 1)) [ 1 ] in
+          let index = Run.of_int_array ~shape:[ 1 ] [| 0 |] in
+          List.iter (fun reduce ->
+              check_int64s [| Int64.of_int (large + 1); Int64.of_int large |]
+                (Op.scatter_reduce input ~dim:0 index source ~reduce
+                   ~include_self:false ())) [ `Amax; `Amin ]);
+      test "weak max pooling pads at a concrete integer minimum" (fun () ->
+          let input = Mv.expand (Mv.reshape (T.i (-5)) [ 1; 1; 1; 1 ])
+              [ 1; 1; 2; 2 ] in
+          check_ints (Array.make 4 (-5)) (Op.max_pool2d ~padding:[ 1 ] input));
+      test "weak promotion preserves padding and movement" (fun () ->
+          let padded = Mv.pad (Mv.expand (Mv.reshape (T.i 5) [ 1; 1 ]) [ 1; 2 ])
+              [ (0, 2); (0, 0) ] in
+          check_floats [| 6.; 6.; 2.; 2.; 3.; 3. |]
+            (El.add padded (fa ~shape:[ 3; 1 ] [| 1.; 2.; 3. |])));
       test "int64 scan, sort and scatter retain full-width identities" (fun () ->
           let lo = Int64.min_int and hi = Int64.max_int in
           let ascending = [| lo; Int64.succ lo; Int64.add lo 2L |] in

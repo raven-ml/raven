@@ -54,8 +54,8 @@ val of_bytes :
     order.
 
     @raise Invalid_argument
-      if the length of [data] does not equal the element count of [shape]
-      times the element size of [dtype]. *)
+      if [dtype] is weak, or if the length of [data] does not equal the element
+      count of [shape] times the element size of [dtype]. *)
 
 (** {1 Realization} *)
 

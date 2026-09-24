@@ -139,6 +139,7 @@ let of_int_array ~shape data =
         data)
 
 let of_bytes ~dtype ~shape data =
+  if D.is_weak dtype then invalid_arg "Run.of_bytes: dtype must be concrete";
   let n = List.fold_left ( * ) 1 shape in
   let nbytes = n * D.itemsize dtype in
   if Bytes.length data <> nbytes then
@@ -233,17 +234,7 @@ let realize t =
 (* Materialize [t] into a fresh buffer on the default device, written by a
    store effect. A graph that folds to a pure constant expression is placed on
    no device and owns no storage; reading its bytes needs one. *)
-let materialize t =
-  let shape = T.shape t in
-  let n = List.fold_left ( * ) 1 shape in
-  let buf =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:(T.dtype t)
-      ~shape:(T.shape_uop [ n ])
-      ~device:(U.Single (device_name ()))
-      ()
-  in
-  let dst = U.reshape ~src:buf ~shape:(T.shape_uop shape) in
-  T.of_uop (U.after ~src:dst ~deps:[ U.store ~dst ~value:(T.uop t) () ])
+let materialize t = Creation.clone ~device:(U.Single (device_name ())) t
 
 let buffer_of t =
   match buffer_of_node (T.uop t) with

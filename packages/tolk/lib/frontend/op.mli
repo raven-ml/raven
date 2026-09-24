@@ -203,7 +203,8 @@ val scatter_indexed :
     [index] and [src] have the rank of [t]; [src] has the extent of [t] on
     every axis but [dim], where it has the extent of [index]; off [dim],
     [index] has the extent of [t] or one, and an index broadcast along an axis
-    is read once for that axis.
+    is read once for that axis. A weak [src] converts to [t]'s dtype before
+    the write; a concrete [src] must already have that dtype.
 
     Under [`Set] the last of the updates aimed at one position wins, in the
     order of [index] along [dim]; under [`Add] they all accumulate onto [t]'s
@@ -316,9 +317,7 @@ val max_pool2d :
   ?kernel_size:int list -> ?stride:int list -> ?dilation:int list ->
   ?padding:int list -> Tensor.t -> Tensor.t
 (** [max_pool2d x] takes the maximum of each sliding window over the spatial
-    axes. [stride] defaults to [kernel_size].
-
-    @raise Invalid_argument if [x] is not floating point. *)
+    axes. [stride] defaults to [kernel_size]. *)
 
 (** {1 Ranges} *)
 

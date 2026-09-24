@@ -1316,7 +1316,7 @@ let stage_to_store ?(allow_locals = true) counter n =
   | Some { src; ranges; opts } ->
       (* A buffer is never weak: store at a committed width and cast the
          result back, so readers see the dtype the stage had. *)
-      let buf_dtype = Dtype.strong_dtype (U.dtype n) in
+      let buf_dtype = U.commit_dtype n in
       let read_back u = U.cast ~src:u ~dtype:(U.dtype n) in
       let shape =
         match shape_of n with

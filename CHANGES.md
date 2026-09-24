@@ -294,6 +294,18 @@ thread.
 
 ### Tolk (new)
 
+- Staged weak arithmetic preserves wide integer values when it needs an
+  intermediate buffer. `Run.of_bytes` rejects weak dtypes, which have no storage
+  representation.
+
+- `Creation.clone`, `Creation.full`, and scalar reads select a concrete storage
+  dtype without narrowing large weak integers. Scan, scatter, sort, and pooling
+  padding use extrema of that concrete dtype; `Creation.empty` rejects weak dtypes.
+
+- `Creation.full ~buffer:false` leaves an inferred numeric dtype weak, so its
+  consumers choose the precision. `Op.scatter_indexed` commits weak update values
+  to the destination dtype, matching assignment.
+
 - `Reduce.sum`, `Reduce.prod`, `Reduce.max`, and `Op.mean` preserve weak integer
   inputs beyond `int32` by choosing a storage dtype from their bounds. Exact values
   beyond all integer storage types are rejected before accumulation.

@@ -520,13 +520,14 @@ let contig_to_store_after ctx node =
         let shape = match ctx.shapes src with Some s -> s | None -> [] in
         if shape_prod shape = 0 then Some src
         else begin
-          let buf = buffer_like ctx src (U.dtype node) in
-          let store = U.store ~dst:buf ~value:src () in
+          let dtype = U.commit_dtype node in
+          let buf = buffer_like ctx src dtype in
+          let store = U.store ~dst:buf ~value:(U.cast ~src ~dtype) () in
           let result = U.after ~src:buf ~deps:[store] in
           (match get_tags ctx node with
            | Some ts -> set_tags ctx result ts
            | None -> ());
-          Some result
+          Some (U.cast ~src:result ~dtype:(U.dtype node))
         end
   | _ -> None
 

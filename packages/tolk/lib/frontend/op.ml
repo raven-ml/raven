@@ -223,8 +223,8 @@ let pad_to ?(value = T.Sint 0) t dims =
 
 (* Associative scans *)
 
-let dtype_min_tensor t = T.of_uop (Uop.const (Const.min_value (T.val_dtype t)))
-let dtype_max_tensor t = T.of_uop (Uop.const (Const.max_value (T.val_dtype t)))
+let dtype_min_tensor t = T.of_uop (Uop.const (Const.min_value (Uop.commit_dtype (T.uop t))))
+let dtype_max_tensor t = T.of_uop (Uop.const (Const.max_value (Uop.commit_dtype (T.uop t))))
 
 let cumalu t axis op =
   let k = List.nth (T.shape t) axis in
@@ -507,6 +507,9 @@ let scatter t ~dim index src =
    the store off. *)
 
 let scatter_indexed t ~dim index src ~mode ~unique =
+  let src =
+    if D.is_weak (T.dtype src) then Dtype_ops.cast src (T.dtype t) else src
+  in
   let dim = T.resolve_dim t dim in
   let tsh = T.shape t and ish = T.shape index and ssh = T.shape src in
   let rank = List.length tsh in

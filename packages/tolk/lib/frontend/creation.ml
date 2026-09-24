@@ -14,8 +14,8 @@ module D = Dtype
 module T = Tensor
 
 let dtype_of_fill = function
-  | T.Sint _ -> D.default_int
-  | T.Sfloat _ -> D.default_float
+  | T.Sint _ -> D.weakint
+  | T.Sfloat _ -> D.weakfloat
   | T.Sbool _ -> D.bool
 
 let broadcast_scalar dt fill shape =
@@ -23,6 +23,7 @@ let broadcast_scalar dt fill shape =
   Movement.expand (Movement.reshape v (List.map (fun _ -> 1) shape)) shape
 
 let empty ?(dtype = D.default_float) ?device shape =
+  if D.is_weak dtype then invalid_arg "Creation.empty: dtype must be concrete";
   let n = List.fold_left ( * ) 1 shape in
   let buf =
     U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
@@ -37,8 +38,9 @@ let clone ?device t =
   let shape = T.shape t in
   let n = List.fold_left ( * ) 1 shape in
   let device = match device with Some _ -> device | None -> T.device t in
+  let dtype = U.commit_dtype (T.uop t) in
   let buf =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:(T.dtype t)
+    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype
       ~shape:(T.shape_uop [ n ]) ?device ()
   in
   let dst = U.reshape ~src:buf ~shape:(T.shape_uop shape) in
@@ -48,6 +50,7 @@ let clone ?device t =
         U.copy ~src:(T.uop t) ~device ()
     | _ -> T.uop t
   in
+  let value = U.cast ~src:value ~dtype in
   T.of_uop (U.after ~src:dst ~deps:[ U.store ~dst ~value () ])
 
 let full ?dtype ?(buffer = true) shape fill =

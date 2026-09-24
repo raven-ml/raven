@@ -12,8 +12,9 @@
     storage that in-place assignment (see {!Op.assign}) can later write to.
     With [~buffer:false] the result is instead a pure broadcast view of a
     single scalar constant: no storage is ever allocated and the value folds
-    into its consumers. When [dtype] is omitted, it follows the fill value's
-    variant (see {!Tensor.scalar}). *)
+    into its consumers. When [dtype] is omitted, scalar integers and floats
+    start weak (see {!Tensor.scalar}). Materialization chooses a concrete dtype
+    from the value's bounds with {!Tolk_uop.Uop.commit_dtype}. *)
 
 val empty :
   ?dtype:Tolk_uop.Dtype.t -> ?device:Tolk_uop.Uop.device -> int list ->
@@ -21,7 +22,9 @@ val empty :
 (** [empty shape] is a tensor of shape [shape] over fresh storage whose
     contents are unspecified until something writes them. [dtype] defaults to
     the default float dtype. The storage is placed on [device]; without one it
-    is placed by whatever consumes it. *)
+    is placed by whatever consumes it.
+
+    Raises [Invalid_argument] if [dtype] is weak. *)
 
 val clone : ?device:Tolk_uop.Uop.device -> Tensor.t -> Tensor.t
 (** [clone t] is [t]'s value in fresh storage: a new buffer written by one
@@ -29,7 +32,9 @@ val clone : ?device:Tolk_uop.Uop.device -> Tensor.t -> Tensor.t
     storage alone. The buffer is placed on [device], which defaults to [t]'s
     device, and [t] is copied across when it lives on another one. A constant
     [t] has no device, and without [device] its clone is placed by whatever
-    consumes it. *)
+    consumes it. Weak inputs commit to a concrete dtype according to
+    {!Tolk_uop.Uop.commit_dtype}; exact integers outside all storage types
+    raise [Invalid_argument]. *)
 
 val full :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> int list -> Tensor.scalar ->

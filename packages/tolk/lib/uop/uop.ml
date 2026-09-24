@@ -1807,7 +1807,7 @@ and compute_min_max u =
       | Ops.Pad, srcs when Array.length srcs > 0 ->
           let lo, hi = min_max srcs.(0) in B.min lo zero, B.max hi zero
       | (Ops.Bind | Ops.Index | Ops.Stage | Ops.After | Ops.Detach | Ops.Copy
-        | Ops.Contiguous_backward), srcs when Array.length srcs > 0 -> min_max srcs.(0)
+        | Ops.Contiguous | Ops.Contiguous_backward), srcs when Array.length srcs > 0 -> min_max srcs.(0)
       | movement, srcs when Ops.Group.is_movement movement && Array.length srcs > 0 -> min_max srcs.(0)
       | Ops.Cast, [| s |] ->
           let dt = dtype u in

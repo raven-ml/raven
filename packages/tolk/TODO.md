@@ -25,7 +25,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Use complete tuple axis IDs and the final axis kinds. Port sorted-axis
   UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules, including
-  movement-preserving promotion and validity closure ordering.
+  validity closure ordering.
 - Centralize shape, numel, range and backward-slice properties. Remove parallel
   reconstruction and silent guesses in broadcast, callify, indexing, stage
   buffer sizes, renderer widths, range metadata and OS detection.

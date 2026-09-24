@@ -420,6 +420,7 @@ let exact_symbolic_bounds () =
   in
   exact Uop.O.(value huge - value Z.(pred huge)) Z.one;
   exact Uop.O.(value huge * value huge) Z.(mul huge huge);
+  exact (Uop.contiguous ~src:(value huge) ~force:true ()) huge;
   let shifted = Uop.alu_binary ~op:Ops.Shl ~lhs:(value huge) ~rhs:(Uop.const_int 100) in
   exact shifted Z.(shift_left one 300);
   let v = Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"wide"
