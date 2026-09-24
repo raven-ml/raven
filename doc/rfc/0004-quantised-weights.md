@@ -288,34 +288,49 @@ on Metal at bfloat16 and float16 and 16 at float32, where the two forms tie;
    reads it `⌈r/M⌉` times. Otherwise it takes decode-then-matmul. A stack of
    matrices broadcast against a larger batch of `x` takes decode-then-matmul
    whatever its rows.
-2. **With `ids` and one row per instance** (`m = 1`, the form a token's
-   experts take), the routes are grouped when `R' · (R' − 1) / 2d > τ`, where
-   `R' = R · d / ē` estimates a lane's own routes, with `ē` the experts of
+2. **With `ids` and one row per instance** (`m = 1`, the form a token's experts
+   take), the routes are grouped when `R' > d` and `R' · (R' − 1) / 2d > τ`,
+   where `R' = R · d / ē` estimates a lane's own routes, with `ē` the experts of
    every lane (rule 3), so `R' = R` on one device. The left side estimates,
    under uniform routing, the reads of an expert that a route shares with an
-   earlier route, which grouping saves; `τ` is the grouping's fixed cost
-   counted in reads of one matrix, measured per device and shape. Ungrouped,
-   and with `m > 1`, each instance takes rule 1 with `r = m`.
-3. **Grouped,** the blocks take the kernel, in blocks of `M` rows, while the
-   rows an expert meets on average, `R / ē`, are at most `ρ`. Here `ē` counts
-   the experts of every lane: `d` times the lanes of a weight split on its
-   leading axis, and `d` itself on one device. Under expert parallelism a
-   lane's `R` counts every route of the step, most of them −1, so `R / d`
-   would overstate its rows per expert by the number of lanes. Otherwise the
-   blocks take decode-then-matmul, in blocks of `B` rows, the largest of the
-   matmul's row tiles at most `R / ē` and a multiple of the product's row
-   tile per work group. The padding is then at most about the routes' own
-   rows, and the arithmetic scales with the `k` experts a token selects,
-   whatever `e` is. If the grouped prefill has stopped (§Target), a call that
-   would take this branch takes the dense form instead: every row of `x`
-   multiplied by every expert of its lane, each position keeping its own
-   expert's product. Per product that is `e` times the routes' arithmetic
-   where `x` is per route, as gpt-oss's `down` is, and `e / k` times where it
-   is per token, as `gate_up` is: for gpt-oss twice the arithmetic of the
-   example's Dense form, which ran each expert's whole block on every token.
+   earlier route, which grouping saves; `τ` is the grouping's fixed cost counted
+   in reads of one matrix, measured per device and shape. With `R' ≤ d` the
+   kernel's blocks are one row (rule 3), and a block of one row shares no read.
+   On the M1 Max at gpt-oss-20b's decode shapes `τ = 16`: grouping lost at 32
+   routes over 32 experts, where every block is one row (111 against 101 ms per
+   step), and won from 64 (135 against 150 ms; 213 against 249 ms at 128), so
+   `τ` lies between 0 and 63 there; nothing between 33 and 63 routes was
+   measured. It is infinite on the CPU, where grouping lost at every size
+   measured (16 to 512 routes of gpt-oss's MoE block; at 512, 10.2 against 7.1
+   s) with the block kernel unoptimised, and on every device not measured.
+   Ungrouped, and with `m > 1`, each instance takes rule 1 with `r = m`.
+3. **Grouped,** the blocks take the kernel while the rows an expert meets on
+   average, `R / ē`, are at most `ρ`, each block as many rows as that average
+   rounded up to a power of two, at most `M`: a row the kernel carries costs a
+   share of a matrix read, and gpt-oss-20b's decode step at 128 routes took 281
+   ms in blocks of `M` = 8 against 213 ms in blocks of 4. Here `ē` counts the
+   experts of every lane: `d` times the lanes of a weight split on its leading
+   axis, and `d` itself on one device, so `R / ē = R / d` until split parts
+   (Stage 2). A weight mapped over lanes on one device (vmap) counts `d` times
+   its lanes as experts, and `R` counts every lane's routes, since one ranking
+   serves them all. Under expert parallelism a lane's `R` counts every route of
+   the step, most of them −1, so `R / d` would overstate its rows per expert by
+   the number of lanes. Otherwise the blocks take decode-then-matmul, in blocks
+   of `B` rows, the largest of the matmul's row tiles at most `R / ē` and a
+   multiple of the product's row tile per work group: on Metal 64, 32, 16 or 8
+   rows, a tensor-core tile of 8 upcast by up to 8. The padding is then at most
+   about the routes' own rows, and the arithmetic scales with the `k` experts a
+   token selects, whatever `e` is. If the grouped prefill has stopped (§Target),
+   a call that would take this branch takes the dense form instead: every row of
+   `x` multiplied by every expert of its lane, each position keeping its own
+   expert's product. Per product that is `e` times the routes' arithmetic where
+   `x` is per route, as gpt-oss's `down` is, and `e / k` times where it is per
+   token, as `gate_up` is: for gpt-oss twice the arithmetic of the example's
+   Dense form, which ran each expert's whole block on every token.
 
 No form multiplies a row by an expert that did not select it, outside the
-grouped prefill's stop outcome (§Target).
+grouped prefill's stop outcome (§Target) and, until split parts land, a program
+over several devices (below).
 
 **The kernel** is tolk's `Op.quant_matmul`, beside `Op.scatter_indexed`, built
 through the ported `Tensor.custom_kernel` with its optimisation options
@@ -364,11 +379,9 @@ and each route's result is gathered back from its slot. A filled block reads
 its expert once and multiplies its `B` rows. An empty block reads no weights
 and, on a GPU, runs no multiply-adds, so it costs a launch, one read of its id
 and a store of zeros (the block kernel, below). The arithmetic is the routes'
-plus at most `d · B` rows of padding. On the CPU an empty block multiplies its
-`B` rows of zeros, and the blocks multiply `nb · B` rows, at most the routes'
-plus `(d + 1) · B`: at gpt-oss's 512-token prefill, about 4,100 rows for 2,048
-routes against about 2,970 on a GPU (derived). A route with no expert has no
-slot, so under expert parallelism, where a lane's ids name its own experts and
+plus at most `d · B` rows of padding. The CPU does not group (`τ` is infinite
+there) until the block kernel has options measured on it. A route with no
+expert has no slot, so under expert parallelism, where a lane's ids name its own experts and
 −1 the others, a device reads and multiplies only for its own routes. The
 ranking, the gathers of rows and the empty blocks' zeros follow the bound,
 which counts the step's routes on every lane.
@@ -401,12 +414,20 @@ value per work group, so barriers and tensor-core instructions stay
 convergent. The pinned options never split or vectorise the block axis, and
 the kernel's builder raises if they do: an upcast block axis turns the bound
 into a vector that does not compile. On the CPU, tolk runs work groups as a
-loop, and a loop bound that reads that loop's index miscompiles, so there the
-bound is constant and a select on the id zeroes the store. At gpt-oss's `down`
+loop, and a loop bound that reads that loop's index miscompiles, the
+reduction's accumulator reset moving inside that loop, so there the bound is
+constant and a select on the id zeroes the store. A contraction of one input
+takes that form on every device: a bounded loop of at most one iteration drops
+out of its reduce, as the kernel's does (above), so the bounded loop keeps two
+trips or more and the depth of 8 applies only past 8 inputs. At gpt-oss's `down`
 shape, with 46 of 65 blocks of 64 rows filled, it measures 16.9 ms on the M1
 Max at float32, where tolk's matmul over the gathered matrices takes 23.9 ms
 plus 10.4 ms to copy them, 34.3 ms in all; the rejected gated rule (Rationale)
-brings that matmul to 16.8 ms and keeps the copy. Its results are exact at
+brings that matmul to 16.8 ms and keeps the copy. Stage 1's build, at bfloat16
+with its options pinned on Metal (tensor cores, rows upcast by up to 8 tiles,
+columns by 3 and split 4 ways across a work group), measures 6.6 to 7.6 TFLOPS
+on 46 filled blocks of 64 rows at gpt-oss's shapes, where `G` is 8.2; 64 empty
+blocks take 120 µs, the store of their zeros. Its results are exact at
 float32, float16 and bfloat16. The kernel is an additive `DIVERGENCES.md`
 entry, and tolk's tests hold it to the reference on every device.
 
@@ -417,7 +438,11 @@ match: a split leading axis, the lane of expert parallelism, and a split `n`
 give a result split on the matching axis, and a split `k` gives partial sums,
 which the lowering reduces with tolk's allreduce. Grouping and the block
 kernel run per lane. Any other layout takes decode-then-matmul, and
-`RUNE_JIT_DEBUG` reports it.
+`RUNE_JIT_DEBUG` reports it. Until split parts land, a program over several
+devices groups nothing, since the ranking would run along a sharded axis, and
+multiplies as many positions as experts or more in rule 3's dense form, whose
+products hold `e` values per output where a copy of one decoded matrix per
+position would hold `n · k`.
 
 ### Transformations
 
@@ -494,8 +519,8 @@ by `[2880; 5760]`.
 |---|---|---|---|---|
 | Kernel, one row | `E_1` | at most 0.35 ms per layer: 150 GB/s over the selected experts' packed bytes, 8.5 ms per step | 0.35 to 0.66 ms | above 0.66 ms (80 GB/s) |
 | Kernel, row tile | one `gate_up` expert without `ids`, at 8 and 32 rows against 1 row | 8 rows within 3.5 times, 32 rows within 12.9 times (restated at Stage 1's measurement; first 1.25 and 2.5 times) | 8 rows within 4 times, the 32-row figure restated | 8 rows above 4 times |
-| Grouped, decode | `E_8`, `E_32` | 150 GB/s over the packed bytes of the distinct experts the step selects, counted from its ids | 80 to 150 GB/s | below 80 GB/s |
-| Grouped, prefill | expert path of a 512-token prefill | the routes' arithmetic at half of `G` or better | a quarter to a half of `G` | below a quarter of `G` |
+| Grouped, decode | `E_8`, `E_32` | 150 GB/s over the packed bytes of the distinct experts the step selects, counted from its ids (restated at Stage 1's measurement: 114 GB/s at batch 8, 61 GB/s at batch 32) | 80 to 150 GB/s | below 80 GB/s |
+| Grouped, prefill | expert path of a 512-token prefill | the routes' arithmetic at half of `G` or better (restated at Stage 1's measurement: 0.41 of `G`) | a quarter to a half of `G` | below a quarter of `G` |
 | Grouped, one lane of eight | expert path of a 512-token prefill whose ids for experts 4 to 31 are −1, as lane 0 of eight (`ē` = 32: `B` = 64, 36 blocks) | within 1.25 times the same product called with only the positions of experts 0 to 3 | 1.25 to 1.5 times | above 1.5 times, or a Law 2 failure on a GPU |
 
 Under uniform routing the grouped decode target is about 1.9 ms per layer at
@@ -508,8 +533,22 @@ the gathered matrices with tolk's matmul it would multiply all 36 (derived).
 Stage 1 measured the kernel's first two rows. At one row the expert kernels
 take 0.26 ms per layer, in the target, and the real 20b decodes a token in 48
 to 54 ms. The row tile takes 3.5 times one row at 8 rows and 12.9 times at 32,
-in the ship band: each further row reloads `x`, a thread holding a group's 32
-inputs per row.
+in the ship band: each further row's cost is attributed to reloading `x`, a
+thread holding a group's 32 inputs per row.
+
+Stage 1 measured the grouped rows on the real gpt-oss-20b, bfloat16, the M1
+Max, each step against its floor, with the kernel in place. The 512-token
+prefill's expert path takes 0.73 s, 0.41 of `G`, in the ship band; the prefill
+takes 1.09 s against 3.14 s ungrouped. The one-lane row is 1.02 to 1.08 times,
+in the target. At batch 8, rule 2 leaves 32 routes over 32 experts ungrouped,
+and the kernel takes each route: `E_8` is 45 ms per step, 114 GB/s, in the
+ship band. At batch 32 the routes are grouped in blocks of 4 rows on the
+kernel: `E_32` is 135 ms per step, 61 GB/s, in the stop band, bound by the
+kernel's cost per row. It ships, as it beats today's form (701 ms per layer at
+Stage 0) and the ungrouped kernel (249 against 209 ms per step); the kernel's
+row tile is what moves it. The prefill's remaining cost is the blocks' padding,
+about 1.9 times the routes at gpt-oss's routing, and decoding every expert,
+about 10 ms per layer.
 
 Each form is time-boxed: the kernel at five days from its first compile, its
 row tile at three more, and the grouped form, with the block kernel, at five.
@@ -544,27 +583,27 @@ experts; that is a placement copy, not a repacking.
 ### Stages
 
 0. The measurements of §Target.
-1. `nx.quant` with `Mxfp4` only: constructor, `dequant`, `apply`, the
-   `Ptree.S` traversal, the effect and its eager loop, and `place` once RFC
-   0005's first stage gives nx its placements; rune's reverse, forward, vmap and debug rules; the three
-   compiled forms on Metal, time-boxed as §Target says: the kernel with its
-   row tile, the grouped form and decode-then-matmul; before the grouped form,
-   tolk's `cumsum` split in chunks of 256 as tinygrad's `_split_cumalu` does
-   (`mixin/op.py:754-765`), a parity fix; tolk's block kernel, with its
-   `DIVERGENCES.md` entry, its pinned options on Metal, a builder that refuses
-   options on the block axis, a codegen test for each renderer that its loop
-   bound, and the kernel's, reads the id on a GPU and is constant on the CPU,
-   and its kernels in tolk's opt-correctness fuzzer under options that leave
-   the block axis alone; gpt-oss migrated. Gates: `validate_stream`'s 228
-   checks at their tolerances; Law 2's battery for every form on Metal and on
-   the CPU; the eager validator's dense block without `--experts-by-one` at
-   most 0.5 GB above the weights, against 18.97 GB today; §Target's five rows;
-   at batch 1, peak footprint at most 16.5 GB and first call at most 48 s.
-   Stage 1's budget in engineer-days is derived before it starts: the forms'
-   time boxes, thirteen days, bound only the compiled work, and the surface,
-   the eager loop, the rules, the scan, the block kernel's options and the Law
-   2 battery come on top. At that budget the stage stops and ships the forms
-   that have reached their ship bands.
+1. `nx.quant` with `Mxfp4` only: constructor, `dequant`, `apply`, the `Ptree.S`
+   traversal, the effect and its eager loop, and `place` once RFC 0005's first
+   stage gives nx its placements; rune's reverse, forward, vmap and debug rules;
+   the three compiled forms on Metal, time-boxed as §Target says: the kernel
+   with its row tile, the grouped form and decode-then-matmul; before the
+   grouped form, tolk's `cumsum` split in chunks of 256 as tinygrad's
+   `_split_cumalu` does (`mixin/op.py:754-765`), a parity fix; tolk's block
+   kernel, with its `DIVERGENCES.md` entry, its pinned options on Metal, a
+   builder that refuses options on the block axis, a codegen test for each
+   renderer that its loop bound, and the kernel's, reads the id on a GPU and is
+   constant on the CPU, and its kernels in tolk's opt-correctness fuzzer under
+   options that leave the block axis alone; gpt-oss migrated. Gates:
+   `validate_stream`'s 228 checks at their tolerances; Law 2's battery for every
+   form on each device that takes it, Metal and the CPU; the eager validator's
+   dense block without `--experts-by-one` at most 0.5 GB above the weights,
+   against 18.97 GB today; §Target's five rows; at batch 1, peak footprint at
+   most 16.5 GB and first call at most 48 s. Stage 1's budget in engineer-days
+   is derived before it starts: the forms' time boxes, thirteen days, bound only
+   the compiled work, and the surface, the eager loop, the rules, the scan, the
+   block kernel's options and the Law 2 battery come on top. At that budget the
+   stage stops and ships the forms that have reached their ship bands.
 2. Split parts: the kernel over shards, grouping and the block kernel per
    lane, and the block kernel's options on each device of the node, with RFC
    0005's stage for several devices. Gate: split weights on `CPU:1` to `CPU:4`
@@ -573,9 +612,9 @@ experts; that is a placement copy, not a repacking.
 `Fp8` is designed here and lands with DeepSeek, after NV hardware is
 validated, with its Law 2 rows.
 
-A tolk parity bug found here is fixed on its own: tolk's `Range` rule folds
-any range whose bounds are equal (`uop/symbolic.ml:1496`), where tinygrad folds
-only a range of constant size (`uop/symbolic.py:250`).
+A tolk parity bug found here was fixed on its own (8b26ea10a): tolk's `Range`
+rule folded any range whose bounds are equal (`uop/symbolic.ml:1496`), where
+tinygrad folds only a range of constant size (`uop/symbolic.py:250`).
 
 ## Laws
 
@@ -608,17 +647,18 @@ only a range of constant size (`uop/symbolic.py:250`).
 5. **A layout `Nx_quant` names loads as it is: nothing repacks a part's bytes
    at load.** Prevents losing zero-copy to a kernel's preferred layout
    (Marlin, ggml's interleaved blocks).
-6. **On a GPU, the kernel and the block kernel run no multiply-adds for a
-   work group whose positions or block select no expert,** except the
-   kernel's rows of a single group (`k = 32`), whose loads are gated instead.
-   The cause is a reduce over a range that may run zero times, rewritten to
-   its body times the range's size once the body no longer reads the range
-   (`reduce_unparented`, as in tinygrad): the issue of a reduce over a
-   possibly empty range, where the exception's removal belongs. Held by tolk's
-   codegen test for each renderer, by the kernels' builders refusing options
-   on the position and block axes, and by §Target's one-lane row. Prevents
-   expert parallelism dividing a device's expert reads while leaving it the
-   whole step's arithmetic.
+6. **On a GPU, the kernel and the block kernel run no multiply-adds for a work
+   group whose positions or block select no expert,** except the kernel's rows
+   of a single group (`k = 32`) and the block kernel's contractions of one
+   input, whose loads are gated instead. The cause is a bounded loop of at most
+   one iteration: every use of its index folds to 0, so it drops out of its
+   reduce, and the reduce, left unparented, is rewritten to its body times the
+   loop's size (`reduce_unparented`, as in tinygrad), which runs the body
+   whatever the bound. It is the issue of a reduce over a possibly empty range,
+   where the exceptions' removal belongs. Held by tolk's codegen test for each
+   renderer, by the kernels' builders refusing options on the position and block
+   axes, and by §Target's one-lane row. Prevents expert parallelism dividing a
+   device's expert reads while leaving it the whole step's arithmetic.
 
 ## Drawbacks
 
@@ -803,8 +843,10 @@ During implementation:
   Whether the jit checks a structure's fields beyond its leaves, or `fp8`
   excludes the ambiguity, is decided when `Fp8` lands.
 - Whether `τ`'s uniform-routing estimate `R' (R' − 1) / 2d` under-groups
-  skewed routers, and whether a measured duplicate rate replaces it. Decided
-  with Stage 1's first measurement.
+  skewed routers, and whether a measured duplicate rate replaces it. Stage 1
+  did not test the estimate: at gpt-oss's shapes the `R' > d` guard decides
+  before `τ` does. A model whose decode step has more routes than experts at
+  small `R' (R' − 1) / 2d`, or a second router, decides it.
 - Whether tolk's CPU linearizer accepts a loop bound that reads an enclosing
   loop's index, which would let the CPU skip empty blocks too. Today the
   reduction's accumulator reset moves inside that loop.
