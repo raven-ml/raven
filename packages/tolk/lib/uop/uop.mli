@@ -1516,11 +1516,13 @@ val split_uop : t -> Ops.t -> t list
     Returns [[u]] when [u]'s op is not [op]. *)
 
 val usum : t list -> t
-(** [usum xs] left-folds [xs] with {!Ops.Add}.
+(** [usum xs] left-folds [xs] with {!Ops.Add}, or with {!Ops.Or} when the
+    first element is boolean.
     @raise Invalid_argument if [xs] is empty. *)
 
 val uprod : t list -> t
-(** [uprod xs] left-folds [xs] with {!Ops.Mul}.
+(** [uprod xs] left-folds [xs] with {!Ops.Mul}, or with {!Ops.And} when the
+    first element is boolean.
     @raise Invalid_argument if [xs] is empty. *)
 
 val divide_exact : t -> t -> t option

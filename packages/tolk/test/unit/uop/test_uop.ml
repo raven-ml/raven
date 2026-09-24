@@ -231,6 +231,17 @@ let infix_builds_mul () =
   let e = (Uop.const_int 3 + Uop.const_int 4) * int_ 2 in
   is_true ~msg:"outer op is Mul" (Uop.op e = Ops.Mul)
 
+(* Validity masks combine through these folds, and the valid simplifier
+   splits conjunctions on [And]. *)
+let bool_folds_are_logical () =
+  let flag name = Uop.variable ~name ~min_val:0 ~max_val:1 ~dtype:Dtype.bool () in
+  let a = flag "a" and b = flag "b" in
+  equal op_testable Ops.And (Uop.op (Uop.uprod [ a; b ]));
+  equal op_testable Ops.Or (Uop.op (Uop.usum [ a; b ]));
+  let x = Uop.variable ~name:"x" ~min_val:0 ~max_val:8 () in
+  equal op_testable Ops.Mul (Uop.op (Uop.uprod [ x; x ]));
+  equal op_testable Ops.Add (Uop.op (Uop.usum [ x; x ]))
+
 let arithmetic_helpers_tinygrad_parity () =
   let open Uop.O in
   let x = Uop.variable ~name:"x" ~min_val:0 ~max_val:64 () in
@@ -2321,6 +2332,8 @@ let () =
           test "hash-consing yields same node" hashcons_identity;
           test "Add has two srcs" add_has_two_srcs;
           test "infix O module builds Mul" infix_builds_mul;
+          test "usum and uprod fold booleans with Or and And"
+            bool_folds_are_logical;
           test "PARAM carries Param_arg" param_arg_symbolic_constructor;
           test "tinygrad arithmetic helper parity"
             arithmetic_helpers_tinygrad_parity;

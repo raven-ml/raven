@@ -97,14 +97,8 @@ let rec get_valid r =
   | Ops.Const when is_invalid_const r -> bfalse
   | _ -> btrue
 
-(* Boolean fold: MUL for conjunction, ADD for disjunction. *)
-let prod_valid = function
-  | [] -> btrue
-  | x :: rest -> List.fold_left ( *! ) x rest
-
-let sum_valid = function
-  | [] -> bfalse
-  | x :: rest -> List.fold_left ( +! ) x rest
+let prod_valid valids = U.uprod (btrue :: valids)
+let sum_valid valids = U.usum (bfalse :: valids)
 
 (* Simplify [expr] under the installed symbolic rules. *)
 let simplify_expr = U.simplify

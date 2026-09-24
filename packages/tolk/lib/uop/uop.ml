@@ -2784,15 +2784,15 @@ let rec split_uop u target_op =
 let err_empty_list fn =
   invalid_arg (Printf.sprintf "Uop.%s: empty list" fn)
 
-let usum = function
-  | [] -> err_empty_list "usum"
+(* On a boolean first operand the folds are logical or / and. *)
+let fold_first name ~bool_op ~op = function
+  | [] -> err_empty_list name
   | x :: xs ->
-      List.fold_left (fun acc y -> alu_binary ~op:Ops.Add ~lhs:acc ~rhs:y) x xs
+      let op = if Dtype.equal (dtype x) Dtype.bool then bool_op else op in
+      List.fold_left (fun acc y -> alu_binary ~op ~lhs:acc ~rhs:y) x xs
 
-let uprod = function
-  | [] -> err_empty_list "uprod"
-  | x :: xs ->
-      List.fold_left (fun acc y -> alu_binary ~op:Ops.Mul ~lhs:acc ~rhs:y) x xs
+let usum = fold_first "usum" ~bool_op:Ops.Or ~op:Ops.Add
+let uprod = fold_first "uprod" ~bool_op:Ops.And ~op:Ops.Mul
 
 let remove_one_factor needle factors =
   let rec loop prefix = function
