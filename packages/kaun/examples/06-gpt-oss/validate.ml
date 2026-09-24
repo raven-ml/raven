@@ -382,6 +382,49 @@ let rotary fx (cfg : Gpt_oss.config) =
     (floats (mem "sin" r))
     (part half)
 
+(* [Gpt_oss.cached cfg p] compiled as one program for the whole model. *)
+let compiled_cached (type b) ~device cfg (p : (float, b) Nx.t Gpt_oss.params) =
+  let module Caches =
+    (val Nx.Ptree.instantiate (module Gpt_oss.Cache)
+        : Nx.Ptree.S with type t = (float, b) Nx.t Gpt_oss.Cache.t)
+  in
+  let module In = struct
+    type t = Caches.t * Cache_index.t * Nx.int32_t
+
+    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) (caches, index, ids) =
+      (Caches.map f caches, Cache_index.map f index, f ids)
+
+    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
+        (caches, index, ids) (caches', index', ids') =
+      (Caches.map2 f caches caches', Cache_index.map2 f index index', f ids ids')
+
+    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) (caches, index, ids) =
+      Caches.iter f caches;
+      Cache_index.iter f index;
+      f ids
+  end in
+  let module Out = struct
+    type t = (float, b) Nx.t * Caches.t
+
+    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) (h, caches) =
+      (f h, Caches.map f caches)
+
+    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t)
+        (h, caches) (h', caches') =
+      (f h h', Caches.map2 f caches caches')
+
+    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) (h, caches) =
+      f h;
+      Caches.iter f caches
+  end in
+  let run =
+    Rune.jit2 ~device
+      (module In)
+      (module Out)
+      (fun (caches, index, ids) -> Gpt_oss.cached cfg p caches index ids)
+  in
+  fun caches index ids -> run (caches, index, ids)
+
 let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (p : (float, b) Nx.t Gpt_oss.params) (dt : (float, b) Nx.dtype) =
   let name what = Printf.sprintf "%s: %s" label what in
@@ -492,26 +535,26 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
         (stream k))
     (if device = None then List.init n_layers (fun i -> i + 1) else [ n_layers ]);
   let slots = Nx.create Nx.int32 [| 1; n |] (Array.init n Int32.of_int) in
-  let _, hs, _ =
-    List.fold_left
-      (fun (at, hs, caches) len ->
-        let len = min len (n - at) in
-        if len = 0 then (at, hs, caches)
-        else
-          let pos =
-            Nx.create Nx.int32 [| 1; len |]
-              (Array.init len (fun i -> Int32.of_int (at + i)))
-          in
-          let h, caches =
-            Gpt_oss.cached cfg p caches
-              (Cache_index.make ~pos ~table:slots ())
-              (Nx.slice [ A; R (at, at + len) ] ids)
-          in
-          (at + len, h :: hs, caches))
-      (0, [], Gpt_oss.cache cfg ~slots:n dt)
-      [ 1; 7; n ]
-  in
-  let chunked =
+  let chunked cached =
+    let _, hs, _ =
+      List.fold_left
+        (fun (at, hs, caches) len ->
+          let len = min len (n - at) in
+          if len = 0 then (at, hs, caches)
+          else
+            let pos =
+              Nx.create Nx.int32 [| 1; len |]
+                (Array.init len (fun i -> Int32.of_int (at + i)))
+            in
+            let h, caches =
+              cached caches
+                (Cache_index.make ~pos ~table:slots ())
+                (Nx.slice [ A; R (at, at + len) ] ids)
+            in
+            (at + len, h :: hs, caches))
+        (0, [], Gpt_oss.cache cfg ~slots:n dt)
+        [ 1; 7; n ]
+    in
     to32 (Gpt_oss.logits cfg p (Nx.concatenate ~axis:1 (List.rev hs)))
   in
   let eager_logits =
@@ -520,7 +563,16 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
   in
   close ~tol
     (name "cached, in chunks of 1, 7 and the rest, every position")
-    (flat eager_logits) (flat chunked);
+    (flat eager_logits)
+    (flat (chunked (Gpt_oss.cached cfg p)));
+  Option.iter
+    (fun device ->
+      let whole = compiled_cached ~device cfg p in
+      close ~tol:1e-6
+        (name "one program per layer kind is the whole-model program")
+        (flat (chunked whole))
+        (flat (chunked (Layer_loop.cached ~device cfg p))))
+    device;
   let short = ints (mem "short_ids" fx) in
   let m = Array.length short in
   let padded = Array.append (Array.make (n - m) 0) short in

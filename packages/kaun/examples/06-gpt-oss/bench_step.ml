@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Time of the compiled decode step at the widths of gpt-oss-20b, on random
-   weights placed on the device: no checkpoint is read. [--layers] sets the
-   depth, so a few layers give the cost of one before the 13.8 GB of the full 24
-   are built; [--small-vocab] leaves out the 201088-row tables.
+(* Time of the compiled decode step, [Layer_loop.greedy], at the widths of
+   gpt-oss-20b, on random weights placed on the device: no checkpoint is read.
+   [--layers] sets the depth, so a few layers give the cost of one before the
+   13.8 GB of the full 24 are built; [--small-vocab] leaves out the 201088-row
+   tables.
 
    Usage: bench_step.exe [--jit DEVICE] [--layers N] [--tokens N] [--steps N]
    [--context N] [--dtype DT] [--small-vocab]. The first call takes [--tokens]
@@ -124,57 +125,15 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
     head = Some (linear ~bias:false c.dim vocab);
   }
 
-let run (type b) ?device c (params : (float, b) Nx.t Gpt_oss.params)
-    (dt : (float, b) Nx.dtype) ~tokens ~steps ~context =
-  let module Step = struct
-    type t = {
-      token : Nx.int32_t;
-      index : Cache_index.t;
-      caches : (float, b) Nx.t Gpt_oss.Cache.t;
-    }
-
-    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) s =
-      let token = f s.token in
-      let index = Cache_index.map f s.index in
-      let caches = Gpt_oss.Cache.map f s.caches in
-      { token; index; caches }
-
-    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
-      let token = f a.token b.token in
-      let index = Cache_index.map2 f a.index b.index in
-      let caches = Gpt_oss.Cache.map2 f a.caches b.caches in
-      { token; index; caches }
-
-    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) s =
-      f s.token;
-      Cache_index.iter f s.index;
-      Gpt_oss.Cache.iter f s.caches
-  end in
-  let step (s : Step.t) =
-    let seq = Nx.dim 1 s.token in
-    let h, caches = Gpt_oss.cached c params s.caches s.index s.token in
-    let logits = Gpt_oss.logits c params (Nx.slice [ A; I (seq - 1) ] h) in
-    {
-      Step.token = Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 logits);
-      index = Cache_index.advance s.index;
-      caches;
-    }
-  in
-  let step =
-    match device with
-    | None -> step
-    | Some device ->
-        Rune.jit_step ~device
-          (module Nx.Ptree)
-          (module Step)
-          (fun _ s -> step s)
-          (Nx.Ptree.list [])
-  in
-  let timed s =
+let run ?device c params dt ~tokens ~steps ~context =
+  let step = Layer_loop.greedy ?device c params in
+  let timed (caches, index, ids) =
     let t0 = Unix.gettimeofday () in
-    let s = step s in
-    let token = Nx.item [ 0; 0 ] s.Step.token in
-    (s, token, Unix.gettimeofday () -. t0)
+    let token, caches = step caches index ids in
+    let token = Nx.item [ 0 ] token in
+    let t = Unix.gettimeofday () -. t0 in
+    let ids = Nx.create Nx.int32 [| 1; 1 |] [| token |] in
+    ((caches, Cache_index.advance index, ids), t)
   in
   let report name t =
     let st = Rune.jit_stats () in
@@ -182,26 +141,23 @@ let run (type b) ?device c (params : (float, b) Nx.t Gpt_oss.params)
       name t st.bytes_to_device st.bytes_from_device st.resident_bytes;
     Rune.reset_jit_stats ()
   in
-  let state, _, t =
+  let state, t =
     timed
-      {
-        Step.token =
-          Nx.create Nx.int32 [| 1; tokens |]
-            (Array.init tokens (fun i -> Int32.of_int (17 + i)));
-        index = Cache_index.rows ~context [| tokens |];
-        caches = Gpt_oss.cache c ~slots:context dt;
-      }
+      ( Gpt_oss.cache c ~slots:context dt,
+        Cache_index.rows ~context [| tokens |],
+        Nx.create Nx.int32 [| 1; tokens |]
+          (Array.init tokens (fun i -> Int32.of_int (17 + i))) )
   in
   report (Printf.sprintf "first call, %d tokens" tokens) t;
   let state = ref state in
   if tokens > 1 then begin
-    let s, _, t = timed !state in
+    let s, t = timed !state in
     state := s;
     report "first single-token call" t
   end;
   let times =
     Array.init steps (fun _ ->
-        let s, _, t = timed !state in
+        let s, t = timed !state in
         state := s;
         t)
   in
