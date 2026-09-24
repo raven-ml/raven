@@ -128,6 +128,13 @@ delete it rather than registering it.
   `Set` and an unspecified value under `Add`; every other position stays
   exact. Consumer: `Nx.top_k`, whose compaction is a permutation.
 
+- **A loop bounded by a loaded value counts at its bound in estimates**
+  (`program_spec.ml` `estimate_of_size`). The reference multiplies a loop's
+  trip count into the estimates symbolically. A trip count that reads memory,
+  such as the quantised product's id-bounded loop, is not known before the
+  kernel runs, and `sym_infer` cannot evaluate it, so tolk counts it at its
+  upper bound. The reference has no loop of this kind.
+
 - **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
   `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference
   selects unaligned vector types through the `ALIGNED` environment variable

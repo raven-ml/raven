@@ -302,6 +302,21 @@ let () =
             let end_ = U.end_ ~value:body ~ranges:[ r ] in
             let est = E.of_program [ c10; r; a; body; end_ ] in
             expect_int_estimate "ops" 1 est.ops);
+          test "a loop bounded by a loaded value counts at its bound"
+            (fun () ->
+              (* The id-bounded loop of a gated kernel: its trip count is
+                 known only when the kernel runs. *)
+              let p0 = param 0 Dtype.int32 in
+              let c0 = i32 0 in
+              let id = load (index p0 c0) in
+              let selects = U.alu_binary ~op:Ops.Cmplt ~lhs:c0 ~rhs:id in
+              let size = U.alu_ternary ~op:Ops.Where ~a:selects ~b:(i32 6) ~c:c0 in
+              let r = range size in
+              let a = f32 1.0 in
+              let body = add a a in
+              let end_ = U.end_ ~value:body ~ranges:[ r ] in
+              let est = E.of_program [ r; a; body; end_ ] in
+              expect_int_estimate "ops" 6 est.ops);
           test "special multiplier stacks" (fun () ->
             let c8 = i32 8 in
             let idx = special (Gpu_dim.Global_idx 0) c8 in

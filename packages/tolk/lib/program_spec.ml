@@ -115,9 +115,15 @@ module Estimates = struct
   let min_estimate a b =
     match (a, b) with Int a, Int b -> Int (min a b) | _ -> a
 
+  (* A trip count read from memory (a loop bounded by a loaded id) is known
+     only when the kernel runs, so it counts at its upper bound. No tinygrad
+     counterpart: the reference has no such loop. *)
   let estimate_of_size u =
     match U.const_int_value u with
     | Some n -> Int n
+    | None
+      when List.exists (fun n -> U.op n = Ops.Load) (U.backward_slice u) ->
+        Int (Bound.to_int (U.vmax u))
     | None -> Symbolic u
 
   let rec add_reachable set u =

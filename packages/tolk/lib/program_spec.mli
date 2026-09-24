@@ -68,7 +68,9 @@ module Estimates : sig
   (** [to_uop t] is the inverse of {!of_uop}. *)
 
   val of_program : program -> t
-  (** [of_program p] computes estimates by walking [p]. *)
+  (** [of_program p] computes estimates by walking [p]. A loop counts its
+      body once per iteration; a loop whose trip count reads memory counts at
+      the trip count's upper bound. *)
 end
 
 (** {1:spec Kernel specifications} *)
