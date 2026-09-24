@@ -147,7 +147,7 @@ let linearize_raw (sink : U.t) : U.t list =
     let c =
       compare (U.Ref_tbl.find priorities a) (U.Ref_tbl.find priorities b)
     in
-    if c <> 0 then c else U.compare_structure a b
+    if c <> 0 then c else Render.compare_uops a b
   in
   List.iteri (fun i u -> U.Ref_tbl.replace nkey u i)
     (List.stable_sort order_cmp lst);

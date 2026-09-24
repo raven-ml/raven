@@ -352,6 +352,46 @@ let arg_debug_string = function
   | Arg.Program_info info -> program_info_debug_string info
   | Arg.Wmma_info info -> wmma_info_debug_string info
 
+(* Tinygrad's tuple order compares argument reprs, not their payload values.
+   Keep this order shared by symbolic canonicalization and linearization. *)
+let argument_reprs : string Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 256)
+
+let argument_repr u =
+  let cache = Domain.DLS.get argument_reprs in
+  match Weak_tbl.find_opt cache u with
+  | Some repr -> repr
+  | None ->
+      let repr = match op u, arg u with
+        | (Ops.Cast | Ops.Bitcast), _ -> dtype_debug_string (dtype u)
+        | _, Arg.Value c -> const_repr_string c
+        | _, Arg.Device d -> device_repr_string d
+        | _, arg -> arg_debug_string arg in
+      Weak_tbl.add cache u repr;
+      repr
+
+let rec compare_uops a b =
+  if a == b then 0
+  else
+    let c = Ops.compare (op a) (op b) in
+    if c <> 0 then c
+    else
+      let c = String.compare (argument_repr a) (argument_repr b) in
+      if c <> 0 then c
+      else
+        let c = Dtype.compare (dtype a) (dtype b) in
+        if c <> 0 then c
+        else
+          let sa = src a and sb = src b in
+          let rec loop i =
+            if i = Array.length sa || i = Array.length sb then
+              Int.compare (Array.length sa) (Array.length sb)
+            else
+              let c = compare_uops sa.(i) sb.(i) in
+              if c <> 0 then c else loop (i + 1)
+          in
+          loop 0
+
 let range_debug_key r =
   match as_range r with
   | Some { axis; sub; kind; _ } -> axis :: sub, kind

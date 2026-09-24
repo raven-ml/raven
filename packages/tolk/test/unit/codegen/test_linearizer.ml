@@ -900,6 +900,17 @@ let () =
         ];
       group "Priority ordering"
         [
+          test "load offsets follow lexical argument order" (fun () ->
+            let ptr = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:(U.const_int 128) () in
+            let load offset = U.load ~src:(U.index ~ptr
+                ~idxs:[ U.const (Const.int Dtype.int32 offset) ] ()) () in
+            let program = Linearizer.linearize (U.sink (List.map load [ 2; 10; 100 ])) in
+            let offsets = List.filter_map (fun u -> match U.as_load u with
+                | Some v -> (match U.as_index v.src with
+                    | Some { idxs = [ index ]; _ } -> U.const_int_value index
+                    | _ -> None)
+                | None -> None) program in
+            equal (list int) [ 10; 100; 2 ] offsets);
           test "params ordered by index" (fun () ->
             let p2 = U.param ~slot:2 ~dtype:ptr () in
             let p0 = U.param ~slot:0 ~dtype:ptr () in

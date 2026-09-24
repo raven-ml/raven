@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Use tinygrad's lexical argument ordering for weak-index simplification
+  and kernel instruction scheduling.
+
 - Remove `Uop.kernel_info.axis_types`; kernel axes are determined by their
   range nodes. Older exported graphs and compiled caches are invalidated.
 

@@ -2411,6 +2411,13 @@ let incomplete_program_has_no_binary () =
         (fun () -> ignore (Uop.to_elf u)))
     [ sink; Uop.program ~sink ~info () ]
 
+let commutative_axes_use_lexical_argument_order () =
+  let axis n = Uop.range ~size:(Uop.const_int 32) ~axis:n ~kind:Axis_type.Weak () in
+  let a = axis 2 and b = axis 10 in
+  let sum = Uop.simplify Uop.O.(a + b) in
+  is_true ~msg:"axis 10 sorts before axis 2" ((Uop.src sum).(0) == b && (Uop.src sum).(1) == a);
+  is_true ~msg:"canonical order is idempotent" (Uop.simplify sum == sum)
+
 let () =
   run "tolk.uop"
     [
@@ -2421,6 +2428,7 @@ let () =
           test "argument structures align pointers and mixed scalar widths" binary_argument_layout;
           test "argument packing follows slots, widths and alignment" binary_argument_packing;
           test "incomplete programs have no binary" incomplete_program_has_no_binary;
+          test "weak axes follow lexical argument order" commutative_axes_use_lexical_argument_order;
           test "Ops and dtype access" ops_access;
           test "Ops tinygrad order" ops_tinygrad_order;
           test "Ops.Group algebra" group_algebra;

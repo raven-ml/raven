@@ -1355,28 +1355,6 @@ let fold_where_closure cond t f =
 
 let symbolic : Upat.Pattern_matcher.t =
   let open Upat in
-  let rec compare_tuplize a b =
-    if Uop.equal a b then 0
-    else
-      let c = Ops.compare (Uop.op a) (Uop.op b) in
-      if c <> 0 then c
-      else
-        let c = Uop.Arg.compare (Uop.arg a) (Uop.arg b) in
-        if c <> 0 then c
-        else
-          let c = Dtype.compare (Uop.dtype a) (Uop.dtype b) in
-          if c <> 0 then c
-          else
-            let sa = Uop.src a and sb = Uop.src b in
-            let rec cmp i =
-              if i = Array.length sa || i = Array.length sb then
-                Int.compare (Array.length sa) (Array.length sb)
-              else
-                let c = compare_tuplize sa.(i) sb.(i) in
-                if c <> 0 then c else cmp (i + 1)
-            in
-            cmp 0
-  in
   let phase_2_rules = [
     (* x | !x -> True *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
@@ -1388,7 +1366,7 @@ let symbolic : Upat.Pattern_matcher.t =
        let x = bs $ "x" in
        let s = Uop.src x in
        if Array.length s <> 2 then None
-       else if compare_tuplize s.(1) s.(0) < 0
+       else if Render.compare_uops s.(1) s.(0) < 0
        then Some (Uop.replace x ~src:[| s.(1); s.(0) |] ())
        else None);
 

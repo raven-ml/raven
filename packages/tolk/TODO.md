@@ -14,14 +14,13 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   and CPU exponent-reduction fixtures (`rangeify`, `moe_gather_block`,
   `softmax_sink`, `swiglu_clamped`, `topk_rounds`) with the target, including
   intermediate GROUP cleanup and remaining ordering differences.
-  Reconcile threadless CPU ordering in `wide_reduce_thread`,
-  `upcast_lane_store` and `lorenz_fold`, and the intermediate GROUP in
+  Reconcile CPU ordering in `lorenz_fold` and the intermediate GROUP in
   `multi_output`. Align the Llama attention-score driver with the target graph:
   its manually staged kernel gets the structural name `E_2`, whereas the
   target tensor graph gets `r_2_2_2_2_2`; remove the remaining staging shortcuts.
-- Reconcile Metal source ordering in `lorenz_fold`, `tc_matmul_32`,
-  `banded_causal_mask`, `expert_gather_packed`, the RNN and MXFP4 matmul cases,
-  and vector-lane extraction in `vectorize_index`.
+- Reconcile Metal source ordering in `lorenz_fold` and vector-lane extraction
+  in `vectorize_index`. Align Boolean CAST/WHERE and reduction placement in
+  `moe_gather_block` on CPU and Metal.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -59,7 +58,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Replace SLICE memory-plan views with SHRINK/BITCAST byte offsets. Unify
   contiguous-view folding and test leading-dimension and symbolic views.
 - Port final sharding/indexing/allreduce ownership and hierarchical allreduce;
-  cover symbolic maximum sizes and call argument slots. Complete the narrow
+  cover symbolic maximum sizes and call argument slots. Reconcile the extra
+  slice-copy kernels in `multi_allreduce_ring`. Complete the narrow
   frontend sharding surface.
 - Adapt Rune staged-scan and indexed-scatter extensions to the new call/storage
   protocol. Revalidate the large one-hot gather guard at the split threshold
@@ -67,9 +67,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 ## Optimizer and rendering
 
-- Converge large WMMA accumulator ordering at the optimizer/expander; port
-  CUDA MMA and remaining AMD MFMA variants.
-  Reconcile CDNA4 K128 FP8 load ordering with the target HIP renderer.
+- Validate large WMMA accumulator ordering at the optimizer/expander,
+  including 128³ kernels and BF16/FNUZ variants across supported renderers.
 - Port final gpudims, slot allocation, range merge, gating and WAR barriers.
   Preserve symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.

@@ -11,6 +11,13 @@
     stable graph listings. The output is intended for debugging and golden
     tests, not for parsing. *)
 
+val compare_uops : Uop.t -> Uop.t -> int
+(** [compare_uops a b] orders nodes by operation, lexical argument
+    representation, dtype and recursively by their sources. This is tinygrad's
+    tuple order, used for weak-index canonicalization and instruction
+    scheduling. Tags and side metadata do not affect the order. Argument
+    representations are cached weakly within each domain. *)
+
 val uops_list_to_string : Uop.t list -> string
 (** [uops_list_to_string uops] is a tinygrad-shaped debug listing of [uops] in
     the supplied order. Rows contain the row index, operation, live range
