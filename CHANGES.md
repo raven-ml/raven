@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Metal kernels use one typed argument structure for dispatch and replay,
+  preserving 64-bit scalar values and buffer view addresses and allowing more
+  than 31 buffer arguments. Older compiled-program exports are invalidated.
 - Hand-built linear programs preserve buffer and scalar declaration order in
   `Program_spec`, preventing dispatch from swapping arguments when slot or
   variable-name order differs from the rendered function signature.

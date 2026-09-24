@@ -992,7 +992,7 @@ let () =
             assert_contains "opencl scalar param in signature"
               (render opencl_renderer prog) "__global float* data0_-1, const int n";
             assert_contains "metal scalar param in signature"
-              (render metal_renderer prog) "device float* data0_-1, constant int& n";
+              (render metal_renderer prog) "struct args_t { device float* data0_-1; int n; };";
             assert_contains "cuda scalar param in signature"
               (render (Cstyle.cuda Gpu_target.SM80) prog) "float* data0_-1, const int n");
           test "64-bit scalar parameter" (fun () ->
@@ -1002,7 +1002,7 @@ let () =
             assert_contains "clang 64-bit scalar forwarded through vals"
               (render clang_renderer prog) "(long)vals[0]";
             assert_contains "metal 64-bit scalar param"
-              (render metal_renderer prog) "constant long& n";
+              (render metal_renderer prog) "long n = args.n;";
             assert_contains "opencl 64-bit scalar param"
               (render opencl_renderer prog) "const long n");
           test "buffer parameter and body both use type_map" (fun () ->

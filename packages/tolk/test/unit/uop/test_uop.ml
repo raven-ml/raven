@@ -2379,6 +2379,22 @@ let compiled_signature_preserves_slots_and_types () =
       is_true (Dtype.equal scalar.dtype Dtype.int64)
   | _ -> fail "expected two buffers and one scalar"
 
+let binary_argument_layout () =
+  let arg slot addrspace dtype : Tiny_elf.argument =
+    { name = None; slot; addrspace; dtype; shape = [] } in
+  let signature = [ arg 0 Dtype.Global Dtype.float32;
+    arg 1 Dtype.Alu Dtype.int8; arg 2 Dtype.Alu Dtype.int16;
+    arg 3 Dtype.Alu Dtype.int32; arg 4 Dtype.Alu Dtype.int64 ] in
+  let fields = Tiny_elf.layout signature in
+  equal (list (pair int int)) [ 0, 8; 8, 1; 10, 2; 12, 4; 16, 8 ]
+    (List.map (fun (field : Tiny_elf.field) -> field.offset, field.size) fields);
+  equal (list int) [ 0; 1; 2; 3; 4 ]
+    (List.map (fun (field : Tiny_elf.field) -> field.argument.slot) fields);
+  List.iter (fun dtype ->
+      raises_match (function Invalid_argument _ -> true | _ -> false)
+        (fun () -> ignore (Tiny_elf.layout [ arg 0 Dtype.Alu dtype ])))
+    [ Dtype.void; Dtype.weakint; Dtype.weakfloat ]
+
 let incomplete_program_has_no_binary () =
   let sink = Uop.sink [] in
   let info = Uop.program_info_from_sink sink in
@@ -2394,6 +2410,7 @@ let () =
         [
           test "compiled signatures preserve sparse slots and argument types"
             compiled_signature_preserves_slots_and_types;
+          test "argument structures align pointers and mixed scalar widths" binary_argument_layout;
           test "incomplete programs have no binary" incomplete_program_has_no_binary;
           test "Ops and dtype access" ops_access;
           test "Ops tinygrad order" ops_tinygrad_order;

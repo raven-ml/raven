@@ -86,8 +86,8 @@ end
     + {!Icb.create} to allocate the ICB.
     + {!Icb.encode} for each kernel in the batch.
     + {!Icb.execute} to submit.
-    + {!Icb.update_buffer} / {!Icb.update_dispatch} then {!Icb.execute} for
-      subsequent iterations.
+    + Update the argument storage or use {!Icb.update_dispatch}, then
+      {!Icb.execute} for subsequent iterations.
     + {!Icb.release} when done. *)
 
 module Icb : sig
@@ -104,30 +104,24 @@ module Icb : sig
     t ->
     index:int ->
     program:nativeint ->
-    buffers:nativeint array ->
     arg_buf:nativeint ->
-    arg_offsets:int array ->
+    arg_offset:int ->
     global:int array ->
     local:int array ->
     unit
-  (** [encode t ~index ~program ~buffers ~arg_buf ~arg_offsets ~global ~local]
-      encodes a compute dispatch at command [index] with:
-      - [program] — opaque Metal program handle for the kernel pipeline.
-      - [buffers] — kernel buffer bindings (array of Metal buffer addresses).
-      - [arg_buf] — Metal buffer holding packed [int32] variable parameters, or
-        [0n] if there are none.
-      - [arg_offsets] — byte offsets into [arg_buf] for each variable parameter.
-      - [global] — threadgroup grid dimensions, length 3.
-      - [local] — threads per threadgroup, length 3.
+  (** [encode t ~index ~program ~arg_buf ~arg_offset ~global ~local] encodes
+      [program] at command [index]. [arg_buf] holds the kernel's packed
+      argument structure at byte offset [arg_offset], using its {!Tolk_uop.Tiny_elf}
+      signature. Buffer fields contain full GPU addresses, including view
+      offsets. Both dispatch dimension arrays must have length three.
 
-      A memory barrier is inserted after the dispatch so commands execute in
-      order.
+      A memory barrier after the dispatch orders commands. Argument storage
+      must remain live and unchanged until the previous execution completes.
+      [program] must remain live while the ICB uses it.
 
-      Raises [Failure] if [local] threads exceed the pipeline's maximum. *)
-
-  val update_buffer : t -> index:int -> buf_index:int -> buf:nativeint -> unit
-  (** [update_buffer t ~index ~buf_index ~buf] replaces the buffer at binding
-      [buf_index] for command [index], at the view offset [buf] carries. *)
+      Raises [Failure] if [local] exceeds the pipeline's maximum.
+      Raises [Invalid_argument] if [arg_offset] exceeds the ICB's 32-bit arena
+      offset or the argument structure does not fit in [arg_buf]. *)
 
   val update_dispatch :
     t -> index:int -> global:int array -> local:int array -> unit

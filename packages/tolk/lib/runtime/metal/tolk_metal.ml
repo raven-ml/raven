@@ -32,7 +32,7 @@ module Ffi = struct
     nativeint -> int -> int -> Device.Allocator.host_view
     = "caml_tolk_metal_buffer_contents"
 
-  external program_create : nativeint -> string -> bytes -> nativeint
+  external program_create : nativeint -> string -> bytes -> int -> int array -> nativeint
     = "caml_tolk_metal_program_create"
 
   external program_free : nativeint -> unit = "caml_tolk_metal_program_free"
@@ -42,11 +42,24 @@ module Ffi = struct
     nativeint ->
     nativeint array ->
     int array ->
-    int array ->
+    int64 array ->
     int array ->
     int array ->
     nativeint
     = "caml_tolk_metal_program_dispatch_bc" "caml_tolk_metal_program_dispatch"
+
+  external program_args_size : nativeint -> int = "caml_tolk_metal_program_args_size"
+
+  external program_write_args :
+    nativeint -> nativeint -> int -> nativeint array -> int array -> int64 array -> unit
+    = "caml_tolk_metal_program_write_args_bc" "caml_tolk_metal_program_write_args"
+
+  external program_set_buffer :
+    nativeint -> nativeint -> int -> int -> nativeint -> int -> unit
+    = "caml_tolk_metal_program_set_buffer_bc" "caml_tolk_metal_program_set_buffer"
+
+  external program_set_value : nativeint -> nativeint -> int -> int -> int64 -> unit
+    = "caml_tolk_metal_program_set_value"
 
   external command_buffer_wait : nativeint -> unit
     = "caml_tolk_metal_command_buffer_wait"
@@ -57,20 +70,8 @@ module Ffi = struct
     = "caml_tolk_metal_icb_create"
 
   external icb_encode :
-    nativeint ->
-    int ->
-    nativeint ->
-    nativeint array ->
-    int array ->
-    nativeint ->
-    int array ->
-    int array ->
-    int array ->
-    unit = "caml_tolk_metal_icb_encode_bc" "caml_tolk_metal_icb_encode"
-
-  external icb_update_buffer :
-    nativeint -> int -> int -> nativeint -> int -> unit
-    = "caml_tolk_metal_icb_update_buffer"
+    nativeint -> int -> nativeint -> nativeint -> int -> int array -> int array -> unit
+    = "caml_tolk_metal_icb_encode_bc" "caml_tolk_metal_icb_encode"
 
   external icb_update_dispatch :
     nativeint -> int -> int array -> int array -> unit
@@ -330,15 +331,19 @@ end
 module Program = struct
   let runtime state (obj : Tolk_uop.Tiny_elf.t) =
     let entry_name = obj.name and lib = obj.lib in
-    let handle = Ffi.program_create state.State.device entry_name lib in
+    let fields = Tolk_uop.Tiny_elf.layout obj.signature in
+    let layout = Array.of_list (List.concat_map (fun (field : Tolk_uop.Tiny_elf.field) ->
+        [ field.argument.slot; field.offset; field.size ]) fields) in
+    let nbufs = List.fold_left (fun n (arg : Tolk_uop.Tiny_elf.argument) ->
+        if arg.addrspace = Tolk_uop.Dtype.Alu then n else n + 1) 0 obj.signature in
+    let handle = Ffi.program_create state.State.device entry_name lib nbufs layout in
     let local_dims = [| 1; 1; 1 |] in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       let local = Option.value local ~default:local_dims in
       let bufs, buf_offsets = Buffer_token.resolve_array bufs in
-      let args = Array.map Int64.to_int vals in
       let cmd =
         Ffi.program_dispatch state.State.queue handle bufs buf_offsets
-          args global local
+          vals global local
       in
       if wait then Some (Ffi.command_buffer_wait_time cmd)
       else begin
@@ -357,14 +362,8 @@ module Icb = struct
     let handle = Ffi.icb_create state.State.device count in
     { handle; count }
 
-  let encode t ~index ~program ~buffers ~arg_buf ~arg_offsets ~global ~local =
-    let buffers, buffer_offsets = Buffer_token.resolve_array buffers in
-    Ffi.icb_encode t.handle index program buffers buffer_offsets arg_buf
-      arg_offsets global local
-
-  let update_buffer t ~index ~buf_index ~buf =
-    let handle, offset = Buffer_token.resolve buf in
-    Ffi.icb_update_buffer t.handle index buf_index handle offset
+  let encode t ~index ~program ~arg_buf ~arg_offset ~global ~local =
+    Ffi.icb_encode t.handle index program arg_buf arg_offset global local
 
   let update_dispatch t ~index ~global ~local =
     Ffi.icb_update_dispatch t.handle index global local
@@ -385,8 +384,8 @@ module Graph = struct
      encoded once as an indirect compute command, and a replay submits the
      whole sequence in a single command buffer. Commands are separated by
      barriers, so they run in recording order and node dependencies need no
-     encoding. Scalar arguments live in one shared int32 buffer bound at
-     per-argument offsets. *)
+     encoding. Each command binds one argument structure in a shared arena;
+     signature slots locate its full GPU addresses and typed scalar values. *)
   let build state (nodes : Device.Graph.node array) =
     let count = Array.length nodes in
     let kernels =
@@ -398,40 +397,42 @@ module Graph = struct
               invalid_arg "Metal graph: unsupported COPY node")
         nodes
     in
-    let val_offsets = Array.make (count + 1) 0 in
+    let arg_offsets = Array.make (count + 1) 0 in
     Array.iteri
-      (fun j (_, _, _, _, vals) ->
-        val_offsets.(j + 1) <- val_offsets.(j) + (4 * Array.length vals))
+      (fun j (program, _, _, _, _) ->
+        let size = Ffi.program_args_size program in
+        arg_offsets.(j + 1) <- arg_offsets.(j) + ((size + 255) / 256 * 256))
       kernels;
-    let var_buf =
-      if val_offsets.(count) = 0 then Nativeint.zero
-      else Ffi.buffer_alloc state.State.device val_offsets.(count)
-    in
-    let scratch = Bytes.create 4 in
+    let arg_buf = Ffi.buffer_alloc state.State.device (max 8 arg_offsets.(count)) in
+    let program j = let handle, _, _, _, _ = kernels.(j) in handle in
     let write_val j i v =
-      Bytes.set_int32_le scratch 0 (Int32.of_int v);
-      Ffi.buffer_copyin var_buf (val_offsets.(j) + (4 * i)) scratch
+      Ffi.program_set_value (program j) arg_buf arg_offsets.(j) i (Int64.of_int v)
     in
-    let icb = Icb.create state ~count in
-    (* Metal buffer handle bound at each (node, position): the resources a
-       replay declares to the encoder. *)
+    let icb =
+      try Icb.create state ~count
+      with exn -> Ffi.buffer_free arg_buf; raise exn in
+    (* Referenced buffer resources are retained across replay and refreshed
+       when an argument's GPU address is patched. *)
     let bound =
-      Array.mapi
+      try Array.mapi
         (fun j (program, global, local, buffers, vals) ->
-          Array.iteri (write_val j) vals;
-          Icb.encode icb ~index:j ~program ~buffers ~arg_buf:var_buf
-            ~arg_offsets:
-              (Array.init (Array.length vals) (fun i ->
-                   val_offsets.(j) + (4 * i)))
+          let buffers, offsets = Buffer_token.resolve_array buffers in
+          Ffi.program_write_args program arg_buf arg_offsets.(j) buffers offsets
+            (Array.map Int64.of_int vals);
+          Icb.encode icb ~index:j ~program ~arg_buf ~arg_offset:arg_offsets.(j)
             ~global ~local;
-          fst (Buffer_token.resolve_array buffers))
+          buffers)
         kernels
+      with exn ->
+        Icb.release icb;
+        Ffi.buffer_free arg_buf;
+        raise exn
     in
     let dedup handles =
       let seen = Hashtbl.create 64 in
       List.filter
         (fun h ->
-          (not (Hashtbl.mem seen h))
+          h <> Nativeint.zero && not (Hashtbl.mem seen h)
           && (Hashtbl.replace seen h ();
               true))
         handles
@@ -450,13 +451,12 @@ module Graph = struct
     in
     let resources () =
       dedup
-        ((if var_buf = Nativeint.zero then [] else [ var_buf ])
-        @ List.concat_map Array.to_list (Array.to_list bound))
+        (arg_buf :: List.concat_map Array.to_list (Array.to_list bound))
     in
     let all_resources = ref (resources ()) in
     let rebound = ref false in
     let last = ref None in
-    (* The recorded commands and the scalar buffer are read by the GPU until
+    (* The recorded commands and argument arena are read by the GPU until
        the previous replay completes, so it is awaited before either is
        patched or resubmitted. A synchronize since that replay has already
        awaited and released its command buffer, whose address a later command
@@ -495,7 +495,8 @@ module Graph = struct
           (fun node pos addr ->
             settle ();
             let handle, offset = Buffer_token.resolve addr in
-            Ffi.icb_update_buffer icb.Icb.handle node pos handle offset;
+            Ffi.program_set_buffer (program node) arg_buf arg_offsets.(node) pos
+              handle offset;
             bound.(node).(pos) <- handle;
             rebound := true);
         set_val =
@@ -519,16 +520,15 @@ module Graph = struct
       (fun (_ : Device.Graph.exec) ->
         if not state.State.closed then begin
           Icb.release icb;
-          if var_buf <> Nativeint.zero then Ffi.buffer_free var_buf
+          Ffi.buffer_free arg_buf
         end)
       exec;
     exec
 
-  (* Indirect compute commands encode buffer offsets as 32-bit values. *)
   let create state =
     {
       Device.Graph.supports_copy = false;
-      max_buffer_offset = Some 0xFFFFFFFF;
+      max_buffer_offset = None;
       build = build state;
     }
 end

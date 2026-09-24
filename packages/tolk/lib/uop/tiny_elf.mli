@@ -32,3 +32,14 @@ type t = {
   profile_key : string option;
       (** Semantic identity of the compiled program, when available. *)
 }
+
+type field = { argument : argument; offset : int; size : int }
+(** A field in a packed argument structure. *)
+
+val layout : argument list -> field list
+(** [layout signature] places arguments in declaration order, naturally aligned
+    to their storage widths. Buffer addresses occupy eight bytes; scalar values
+    occupy their dtype's width. Offsets start at zero.
+
+    Raises [Invalid_argument] for void or weak scalar dtypes, or if offsets
+    exceed the host size range. *)

@@ -1978,6 +1978,21 @@ let metal_preamble lang uops =
   [ "#include <metal_stdlib>"; "using namespace metal;" ]
   @ metal_wmma_helpers lang uops
 
+let metal_render_kernel ctx ~function_name ~kernel ~bufs ~uops ~prefix =
+  (* The binary signature groups buffers before scalar bindings. Raw linear
+     programs can encounter scalar formals before their buffers. *)
+  let buffers, scalars = List.partition (fun (u, _, _) -> addrspace_of u <> Dtype.Alu) bufs in
+  let args = List.map (fun (u, name, (dtype, _)) ->
+      name, volatile_prefix u ^ render_dtype_c ctx.lang ~sz:1
+        ~addrspace:(addrspace_of u) dtype) (buffers @ scalars) in
+  let declaration = "struct args_t { " ^ String.concat " "
+      (List.map (fun (name, dtype) -> strf "%s %s;" dtype name) args) ^ " };" in
+  let prefix = Some (Option.value prefix ~default:[] @ [ declaration ]) in
+  let bindings = "  " ^ String.concat " "
+      (List.map (fun (name, dtype) -> strf "%s %s = args.%s;" dtype name name) args) in
+  default_render_kernel ctx ~function_name ~kernel:(bindings :: kernel)
+    ~bufs:[] ~uops ~prefix
+
 let metal_language : language =
   make_language
     ~kernel_typedef:"kernel void"
@@ -1989,6 +2004,7 @@ let metal_language : language =
     ~code_for_workitem:metal_code_for_workitem
     ~extra_args:
       [
+        "constant args_t& args [[buffer(0)]]";
         "uint3 gid [[threadgroup_position_in_grid]]";
         "uint3 lid [[thread_position_in_threadgroup]]";
       ]
@@ -1997,6 +2013,7 @@ let metal_language : language =
     ~string_rewrite:(metal_bitcast_rule :: base_rewrite)
     ~extra_matcher:metal_extra_matcher
     ~preamble:metal_preamble
+    ~render_kernel:metal_render_kernel
     ()
 
 (* CUDARenderer *)

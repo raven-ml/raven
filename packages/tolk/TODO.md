@@ -7,7 +7,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 ## Reference and coverage
 
 - Migrate every Python reference driver to the target API and generate the
-  complete corpus separately. Attribute every changed expectation to its owner;
+  complete corpus separately. Correct target-driver END construction before
+  accepting loop-source expectations: several currently emit a closing brace
+  as an integer assignment. Attribute every changed expectation to its owner;
   require exact source parity for supported renderers. Reconcile FP8 `sm_80`
   and CPU exponent-reduction fixtures (`rangeify`, `moe_gather_block`,
   `softmax_sink`, `swiglu_clamped`, `topk_rounds`) with the target, including
@@ -15,6 +17,9 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   Reconcile threadless CPU cases `wide_reduce_thread`, `two_sum`,
   `upcast_lane_load`, `upcast_lane_store` and `lorenz_fold` (names and ordering),
   and the intermediate GROUP in `multi_output`.
+- Reconcile Metal source ordering in `lorenz_fold`, `tc_matmul_32`,
+  `banded_causal_mask`, `expert_gather_packed`, the RNN and MXFP4 matmul cases,
+  and vector-lane extraction in `vectorize_index`.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -69,7 +74,6 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   Preserve WARP dimensions and symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
 - Render final constants.
-  Coordinate Metal's argument-struct ABI with its runtime binding.
 
 ## Storage, execution and devices
 
@@ -84,7 +88,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Finish CPU host-call integration with HCQ2. Compare CPU
   matmul performance with the final target after optimizer migration and
   resolve avoidable regressions.
-- Migrate Metal/CUDA queues and argument bindings; implement CUDA peer enablement
+- Migrate Metal/CUDA queues and CUDA argument bindings; implement CUDA peer enablement
   and synchronized cross-device transfer with unsupported-peer fallback.
 - Migrate AMD queue descriptors, AQL/multi-XCC, race/recovery fixes and consumed
   firmware/register tables. Port NV channel/descriptor, semaphore, GSP and

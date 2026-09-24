@@ -3504,7 +3504,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 10
+let export_version = 11
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

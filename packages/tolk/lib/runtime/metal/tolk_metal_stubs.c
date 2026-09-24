@@ -26,6 +26,9 @@ typedef struct {
   uint64_t max_total_threads;
   char* name;
   NSString* label; // cached NSString for command buffer labeling
+  size_t nbufs, nvals, args_size;
+  size_t* arg_offsets;
+  uint8_t* arg_widths;
 } tolk_metal_program;
 
 static void fail_with_nserror(NSError* error, const char* fallback) {
@@ -157,8 +160,24 @@ CAMLprim value caml_tolk_metal_buffer_contents(value v_buf, value v_offset,
 }
 
 CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,
-                                         value v_lib) {
-  CAMLparam3(v_device, v_name, v_lib);
+                                         value v_lib, value v_nbufs, value v_layout) {
+  CAMLparam5(v_device, v_name, v_lib, v_nbufs, v_layout);
+  size_t count = Wosize_val(v_layout) / 3;
+  intnat nbufs = Long_val(v_nbufs);
+  if (Wosize_val(v_layout) % 3 || nbufs < 0 || (size_t)nbufs > count)
+    caml_invalid_argument("Metal: invalid argument signature");
+  size_t args_size = 8;
+  for (size_t i = 0; i < count; ++i) {
+    intnat slot = Long_val(Field(v_layout, 3*i));
+    intnat offset = Long_val(Field(v_layout, 3*i+1));
+    intnat width = Long_val(Field(v_layout, 3*i+2));
+    if (slot < 0 || (size_t)slot >= count || offset < 0 ||
+        (width != 1 && width != 2 && width != 4 && width != 8) ||
+        (slot < nbufs && width != 8) || offset > Max_long - width - 7)
+      caml_invalid_argument("Metal: invalid argument layout");
+    size_t end = ((size_t)offset + width + 7) & ~(size_t)7;
+    if (end > args_size) args_size = end;
+  }
   @autoreleasepool {
     id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
     const char* name = String_val(v_name);
@@ -226,13 +245,23 @@ CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,
       [library release];
       fail_with_nserror(error, "Metal pipeline creation failed");
     }
-    tolk_metal_program* prog =
-        (tolk_metal_program*)calloc(1, sizeof(tolk_metal_program));
+    tolk_metal_program* prog = calloc(1, sizeof(tolk_metal_program) +
+        count * (sizeof(size_t) + sizeof(uint8_t)));
     if (prog == NULL) {
       [pipeline release];
       [function release];
       [library release];
       caml_failwith("Metal program allocation failed");
+    }
+    prog->nbufs = (size_t)nbufs;
+    prog->nvals = count - nbufs;
+    prog->args_size = args_size;
+    prog->arg_offsets = (size_t*)(prog + 1);
+    prog->arg_widths = (uint8_t*)(prog->arg_offsets + count);
+    for (size_t i = 0; i < count; ++i) {
+      size_t slot = Long_val(Field(v_layout, 3*i));
+      prog->arg_offsets[slot] = Long_val(Field(v_layout, 3*i+1));
+      prog->arg_widths[slot] = Long_val(Field(v_layout, 3*i+2));
     }
     prog->library = library;
     prog->function = function;
@@ -261,6 +290,98 @@ CAMLprim value caml_tolk_metal_program_free(value v_prog) {
   }
 }
 
+static void metal_check_args(tolk_metal_program* prog, value buffers,
+                             value offsets, value vals) {
+  if (Wosize_val(buffers) != prog->nbufs || Wosize_val(offsets) != prog->nbufs ||
+      Wosize_val(vals) != prog->nvals)
+    caml_invalid_argument("Metal: argument count does not match the binary signature");
+}
+
+static uint64_t metal_buffer_address(value buffer, value offset) {
+  id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(buffer);
+  return (uint64_t)[buf gpuAddress] + (uint64_t)Long_val(offset);
+}
+
+static void metal_pack_args(tolk_metal_program* prog, uint8_t* dst,
+                            value buffers, value offsets, value vals) {
+  for (size_t i = 0; i < prog->nbufs; ++i) {
+    uint64_t address = metal_buffer_address(Field(buffers, i), Field(offsets, i));
+    memcpy(dst + prog->arg_offsets[i], &address, sizeof(address));
+  }
+  for (size_t i = 0; i < prog->nvals; ++i) {
+    uint64_t bits = (uint64_t)Int64_val(Field(vals, i));
+    size_t slot = prog->nbufs + i;
+    memcpy(dst + prog->arg_offsets[slot], &bits, prog->arg_widths[slot]);
+  }
+}
+
+static uint8_t* metal_argument_destination(tolk_metal_program* prog,
+                                          value buffer, value offset) {
+  id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(buffer);
+  intnat off = Long_val(offset);
+  if (buf == nil || off < 0 || (uint64_t)off > [buf length] ||
+      prog->args_size > [buf length] - (uint64_t)off)
+    caml_invalid_argument("Metal: argument storage is too small");
+  return (uint8_t*)[buf contents] + off;
+}
+
+CAMLprim value caml_tolk_metal_program_args_size(value v_prog) {
+  CAMLparam1(v_prog);
+  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
+  CAMLreturn(Val_long(prog->args_size));
+}
+
+CAMLprim value caml_tolk_metal_program_write_args(value v_prog, value v_args,
+                                                value v_offset, value v_buffers,
+                                                value v_offsets, value v_vals) {
+  CAMLparam5(v_prog, v_args, v_offset, v_buffers, v_offsets);
+  CAMLxparam1(v_vals);
+  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
+  metal_check_args(prog, v_buffers, v_offsets, v_vals);
+  uint8_t* dst = metal_argument_destination(prog, v_args, v_offset);
+  metal_pack_args(prog, dst, v_buffers, v_offsets, v_vals);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_metal_program_write_args_bc(value* argv, int argc) {
+  (void)argc;
+  return caml_tolk_metal_program_write_args(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+}
+
+CAMLprim value caml_tolk_metal_program_set_buffer(value v_prog, value v_args,
+                                                value v_offset, value v_slot,
+                                                value v_buffer, value v_buf_offset) {
+  CAMLparam5(v_prog, v_args, v_offset, v_slot, v_buffer);
+  CAMLxparam1(v_buf_offset);
+  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
+  intnat slot = Long_val(v_slot);
+  if (slot < 0 || (size_t)slot >= prog->nbufs)
+    caml_invalid_argument("Metal: buffer argument slot is out of range");
+  uint8_t* dst = metal_argument_destination(prog, v_args, v_offset);
+  uint64_t address = metal_buffer_address(v_buffer, v_buf_offset);
+  memcpy(dst + prog->arg_offsets[slot], &address, sizeof(address));
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_metal_program_set_buffer_bc(value* argv, int argc) {
+  (void)argc;
+  return caml_tolk_metal_program_set_buffer(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+}
+
+CAMLprim value caml_tolk_metal_program_set_value(value v_prog, value v_args,
+                                               value v_offset, value v_index, value v_value) {
+  CAMLparam5(v_prog, v_args, v_offset, v_index, v_value);
+  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
+  intnat index = Long_val(v_index);
+  if (index < 0 || (size_t)index >= prog->nvals)
+    caml_invalid_argument("Metal: scalar argument slot is out of range");
+  size_t slot = prog->nbufs + index;
+  uint8_t* dst = metal_argument_destination(prog, v_args, v_offset);
+  uint64_t bits = (uint64_t)Int64_val(v_value);
+  memcpy(dst + prog->arg_offsets[slot], &bits, prog->arg_widths[slot]);
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value caml_tolk_metal_program_dispatch(value v_queue, value v_prog,
                                            value v_buffers, value v_offsets,
                                            value v_args, value v_global,
@@ -271,10 +392,7 @@ CAMLprim value caml_tolk_metal_program_dispatch(value v_queue, value v_prog,
     id<MTLCommandQueue> queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
     tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
     mlsize_t buf_count = Wosize_val(v_buffers);
-    mlsize_t arg_count = Wosize_val(v_args);
-    if (Wosize_val(v_offsets) != buf_count) {
-      caml_failwith("Metal dispatch: buffer and offset array length mismatch");
-    }
+    metal_check_args(prog, v_buffers, v_offsets, v_args);
     if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3) {
       caml_failwith("Metal dispatch expects 3D sizes");
     }
@@ -295,16 +413,15 @@ CAMLprim value caml_tolk_metal_program_dispatch(value v_queue, value v_prog,
     if (encoder == nil) caml_failwith("Metal compute encoder creation failed");
     [encoder setComputePipelineState:prog->pipeline];
 
+    id<MTLBuffer> args = [[queue device] newBufferWithLength:prog->args_size
+                                                   options:MTLResourceStorageModeShared];
+    if (args == nil) caml_failwith("Metal argument buffer allocation failed");
+    metal_pack_args(prog, (uint8_t*)[args contents], v_buffers, v_offsets, v_args);
+    [encoder setBuffer:args offset:0 atIndex:0];
+    [args release];
     for (mlsize_t i = 0; i < buf_count; ++i) {
       id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(Field(v_buffers, i));
-      NSUInteger offset = (NSUInteger)Long_val(Field(v_offsets, i));
-      [encoder setBuffer:buf offset:offset atIndex:i];
-    }
-    for (mlsize_t i = 0; i < arg_count; ++i) {
-      int32_t arg_value = (int32_t)Int_val(Field(v_args, i));
-      [encoder setBytes:&arg_value
-                 length:sizeof(arg_value)
-                atIndex:(buf_count + i)];
+      if (buf != nil) [encoder useResource:buf usage:MTLResourceUsageRead | MTLResourceUsageWrite];
     }
 
     MTLSize global =
@@ -337,8 +454,8 @@ CAMLprim value caml_tolk_metal_icb_create(value v_device, value v_count) {
     desc.commandTypes = MTLIndirectCommandTypeConcurrentDispatch;
     desc.inheritBuffers = NO;
     desc.inheritPipelineState = NO;
-    // 31 is Metal's hardware limit on kernel buffer bindings per command.
-    desc.maxKernelBufferBindCount = 31;
+    // All pointers and scalar values live in one argument structure.
+    desc.maxKernelBufferBindCount = 1;
     id<MTLIndirectCommandBuffer> icb =
         [device newIndirectCommandBufferWithDescriptor:desc
                                        maxCommandCount:count
@@ -350,21 +467,19 @@ CAMLprim value caml_tolk_metal_icb_create(value v_device, value v_count) {
 }
 
 CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_prog,
-                                     value v_buffers, value v_buffer_offsets,
-                                     value v_arg_buf, value v_arg_offsets,
+                                     value v_arg_buf, value v_arg_offset,
                                      value v_global, value v_local) {
-  CAMLparam5(v_icb, v_index, v_prog, v_buffers, v_buffer_offsets);
-  CAMLxparam4(v_arg_buf, v_arg_offsets, v_global, v_local);
+  CAMLparam5(v_icb, v_index, v_prog, v_arg_buf, v_arg_offset);
+  CAMLxparam2(v_global, v_local);
   @autoreleasepool {
     id<MTLIndirectCommandBuffer> icb =
         (id<MTLIndirectCommandBuffer>)Nativeint_val(v_icb);
     NSUInteger index = (NSUInteger)Int_val(v_index);
     tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
-    mlsize_t buf_count = Wosize_val(v_buffers);
-    mlsize_t arg_count = Wosize_val(v_arg_offsets);
-    if (Wosize_val(v_buffer_offsets) != buf_count) {
-      caml_failwith("Metal ICB: buffer and offset array length mismatch");
-    }
+    intnat arg_offset = Long_val(v_arg_offset);
+    if (arg_offset < 0 || (uint64_t)arg_offset > UINT32_MAX)
+      caml_invalid_argument("Metal ICB: argument arena offset exceeds 32 bits");
+    (void)metal_argument_destination(prog, v_arg_buf, v_arg_offset);
     if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3) {
       caml_failwith("Metal ICB expects 3D sizes");
     }
@@ -383,18 +498,8 @@ CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_pr
         [icb indirectComputeCommandAtIndex:index];
     [cmd setComputePipelineState:prog->pipeline];
 
-    for (mlsize_t i = 0; i < buf_count; ++i) {
-      id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(Field(v_buffers, i));
-      NSUInteger offset = (NSUInteger)Long_val(Field(v_buffer_offsets, i));
-      [cmd setKernelBuffer:buf offset:offset atIndex:i];
-    }
-    if (Nativeint_val(v_arg_buf) != 0 && arg_count > 0) {
-      id<MTLBuffer> arg_buf = (id<MTLBuffer>)Nativeint_val(v_arg_buf);
-      for (mlsize_t i = 0; i < arg_count; ++i) {
-        NSUInteger offset = (NSUInteger)Int_val(Field(v_arg_offsets, i));
-        [cmd setKernelBuffer:arg_buf offset:offset atIndex:(buf_count + i)];
-      }
-    }
+    id<MTLBuffer> arg_buf = (id<MTLBuffer>)Nativeint_val(v_arg_buf);
+    [cmd setKernelBuffer:arg_buf offset:(NSUInteger)arg_offset atIndex:0];
 
     MTLSize global =
         MTLSizeMake((NSUInteger)gx, (NSUInteger)gy, (NSUInteger)gz);
@@ -410,25 +515,7 @@ CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_pr
 CAMLprim value caml_tolk_metal_icb_encode_bc(value* argv, int argc) {
   (void)argc;
   return caml_tolk_metal_icb_encode(argv[0], argv[1], argv[2], argv[3], argv[4],
-                              argv[5], argv[6], argv[7], argv[8]);
-}
-
-CAMLprim value caml_tolk_metal_icb_update_buffer(value v_icb, value v_index,
-                                           value v_buf_index, value v_buf,
-                                           value v_offset) {
-  CAMLparam5(v_icb, v_index, v_buf_index, v_buf, v_offset);
-  @autoreleasepool {
-    id<MTLIndirectCommandBuffer> icb =
-        (id<MTLIndirectCommandBuffer>)Nativeint_val(v_icb);
-    NSUInteger index = (NSUInteger)Int_val(v_index);
-    NSUInteger buf_index = (NSUInteger)Int_val(v_buf_index);
-    id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(v_buf);
-    NSUInteger offset = (NSUInteger)Long_val(v_offset);
-    id<MTLIndirectComputeCommand> cmd =
-        [icb indirectComputeCommandAtIndex:index];
-    [cmd setKernelBuffer:buf offset:offset atIndex:buf_index];
-    CAMLreturn(Val_unit);
-  }
+                              argv[5], argv[6]);
 }
 
 CAMLprim value caml_tolk_metal_icb_update_dispatch(value v_icb, value v_index,

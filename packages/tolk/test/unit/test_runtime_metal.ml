@@ -134,11 +134,85 @@ let kernel_node handle bufs ?(vals = [||]) () =
       deps = [||];
     }
 
+let test_mixed_scalar_widths () =
+  let device = metal_device () in
+  let output = U.param ~slot:0 ~dtype:Dtype.int64 ~shape:(U.const_int 4) () in
+  let cases = [ Dtype.int8, "small", -128, 127, -7;
+                Dtype.int16, "halfword", -512, 512, 300;
+                Dtype.int32, "word", 0, 65536, 12345;
+                Dtype.int64, "wide", 0, 0x3_0000_0000, 0x1_0000_0002 ] in
+  let vars = List.map (fun (dtype, name, min_val, max_val, _) ->
+      U.variable ~name ~min_val ~max_val ~dtype ()) cases in
+  let stores = List.mapi (fun i var ->
+      let offset = U.const (Const.int Dtype.int32 i) in
+      let ptr = U.index ~ptr:output ~idxs:[ offset ] () in
+      let value = U.cast ~src:var ~dtype:Dtype.int64 in
+      [ offset; ptr; value; U.store ~dst:ptr ~value () ]) vars |> List.concat in
+  let spec = Device.compile_program device ~name:"metal_mixed_widths"
+      (vars @ (output :: stores)) in
+  let buffer = Device.create_buffer ~size:4 ~dtype:Dtype.int64 device in
+  Device.Buffer.ensure_allocated buffer;
+  Device.Buffer.copyin buffer (Bytes.make 32 '\000');
+  let bindings = List.map (fun (_, name, _, _, value) -> name, value) cases in
+  let read () =
+    let bytes = Device.Buffer.as_bytes buffer in
+    List.init 4 (fun i -> Bytes.get_int64_le bytes (8 * i)) in
+  ignore (call_spec device spec [ buffer ] bindings);
+  equal (list int64) [ -7L; 300L; 12345L; 0x1_0000_0002L ] (read ());
+  let prg = prog_of_spec device spec in
+  let vals = Array.of_list (List.map snd bindings) in
+  let graph = (device_graph device).build [| kernel_node prg.handle [| buffer |] ~vals () |] in
+  ignore (graph.launch ~wait:false);
+  graph.set_val 0 0 11;
+  graph.set_val 0 3 0x2_0000_0003;
+  graph.set_params 0;
+  ignore (graph.launch ~wait:true);
+  equal (list int64) [ 11L; 300L; 12345L; 0x2_0000_0003L ] (read ())
+
+let test_many_buffer_arguments () =
+  let device = metal_device () in
+  let count = 33 in
+  let params = List.init count (fun slot ->
+      U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) ()) in
+  let output = List.hd params in
+  let zero = U.const (Const.int Dtype.int32 0) in
+  let nodes = ref [] and sum = ref zero in
+  List.iter (fun ptr ->
+      let index = U.index ~ptr ~idxs:[ zero ] () in
+      let value = U.load ~src:index () in
+      let next = U.alu_binary ~op:Ops.Add ~lhs:!sum ~rhs:value in
+      nodes := next :: value :: index :: !nodes;
+      sum := next) (List.tl params);
+  let dst = U.index ~ptr:output ~idxs:[ zero ] () in
+  let linear = params @ [ zero ] @ List.rev !nodes @
+      [ dst; U.store ~dst ~value:!sum () ] in
+  let spec = Device.compile_program device ~name:"metal_many_arguments" linear in
+  let buffers = Array.init count (fun i -> i32_buf device [ i ]) in
+  run_spec device spec (Array.to_list buffers);
+  equal (list int) [ 528 ] (read_i32 buffers.(0));
+  let second = i32_buf device [ 0 ] in
+  let second_buffers = Array.copy buffers in
+  second_buffers.(0) <- second;
+  let prg = prog_of_spec device spec in
+  let graph = (device_graph device).build
+      [| kernel_node prg.handle buffers (); kernel_node prg.handle second_buffers () |] in
+  ignore (graph.launch ~wait:false);
+  let replacement = i32_buf device [ 100 ] in
+  graph.set_buf 0 1 (Device.Buffer.addr replacement);
+  graph.set_params 0;
+  ignore (graph.launch ~wait:true);
+  equal (list int) [ 627 ] (read_i32 buffers.(0));
+  equal (list int) [ 528 ] (read_i32 second)
+
 let () =
   run "Metal_runtime"
     [
       group "Execution"
         [
+          test "typed argument structures preserve scalar widths in dispatch and replay"
+            test_mixed_scalar_widths;
+          test "argument structures support more than 31 buffers and rebinding"
+            test_many_buffer_arguments;
           test "compile and run one kernel" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_add_one" in
