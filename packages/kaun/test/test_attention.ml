@@ -690,6 +690,210 @@ let test_index_window () =
   raises (Invalid_argument "Cache_index.window: window must be positive, got 0")
     (fun () -> Cache_index.window 0 index)
 
+(* Selections. A value is its position plus one, so what a column reads names
+   the position it holds. *)
+
+let numbered ~batch ~from n =
+  Nx.create Nx.float32 [| batch; n; 1 |]
+    (Array.init (batch * n) (fun i -> float_of_int (from + (i mod n) + 1)))
+
+let bools t = Array.to_list (Nx.to_array t)
+
+(* Positions 0 to 4 over a shuffled table whose column 3 is unallocated. The
+   scratch row and the slot of column 5, which no position has reached, hold
+   NaN. *)
+let selection_fixture () =
+  let slots = [| [| 3; 0; 4; -1; 2; 1 |] |] in
+  let _, pool =
+    Cache_index.extend
+      (index_at ~pos:[| [| 0; 1; 2; 3; 4 |] |] ~slots)
+      (numbered ~batch:1 ~from:0 5)
+      (Cache_index.pool ~slots:5 Nx.float32 [| 1 |])
+  in
+  let nan = Nx.full Nx.float32 [| 1; 1 |] nan in
+  let pool = Nx.set [ Nx.R (5, 6) ] nan (Nx.set [ Nx.R (1, 2) ] nan pool) in
+  (index_at ~pos:[| [| 2; 4 |] |] ~slots, pool)
+
+(* The call's tokens, at positions 2 and 4, store new values there. *)
+let tokens_2_4 = Nx.create Nx.float32 [| 1; 2; 1 |] [| 30.; 50. |]
+
+let test_index_select () =
+  let index, pool = selection_fixture () in
+  let columns =
+    int32s [| 1; 2; 5 |] [| 1; 3; 2; -1; 1; (* at 4 *) 5; 6; 0; 4; 3 |]
+  in
+  let selected = Cache_index.select columns index in
+  let seen, pool' = Cache_index.extend selected tokens_2_4 pool in
+  shape_is ~msg:"a row per chosen column" [| 1; 2; 5; 1 |] seen;
+  values_are
+    ~msg:
+      "the chosen columns, this call's stores included; zero after the \
+       position, outside the context and unallocated; a column chosen twice is \
+       read twice"
+    ~tol:0.
+    [| 2.; 0.; 30.; 0.; 2.; 0.; 0.; 1.; 50.; 0. |]
+    seen;
+  equal
+    ~msg:
+      "the mask hides what the token does not see; an unallocated column is a \
+       hole, a zero row it sees"
+    (list bool)
+    [ true; false; true; false; true; false; false; true; true; true ]
+    (bools (Cache_index.mask selected));
+  let _, stored = Cache_index.extend index tokens_2_4 pool in
+  values_are ~msg:"what is stored does not change" ~tol:0.
+    (flat (slots_of stored))
+    (slots_of pool');
+  let windowed = Cache_index.select columns (Cache_index.window 2 index) in
+  let seen, _ = Cache_index.extend windowed tokens_2_4 pool in
+  values_are ~msg:"under a window, a column below it reads as zero" ~tol:0.
+    [| 2.; 0.; 30.; 0.; 2.; 0.; 0.; 0.; 50.; 0. |]
+    seen;
+  equal ~msg:"and is masked" (list bool)
+    [ true; false; true; false; true; false; false; false; true; true ]
+    (bools (Cache_index.mask windowed));
+  raises
+    (Invalid_argument
+       "Cache_index.select: columns must have shape [1; 2; k], k > 0")
+    (fun () -> Cache_index.select (int32s [| 1; 2 |] [| 0; 1 |]) index);
+  raises
+    (Invalid_argument
+       "Cache_index.select: columns must have shape [1; 2; k], k > 0")
+    (fun () -> Cache_index.select (int32s [| 1; 2; 0 |] [||]) index)
+
+(* Choosing every column in order is the read without a selection, token by
+   token. *)
+let test_index_select_everything () =
+  let index, pool = selection_fixture () in
+  let every = Nx.broadcast_to [| 1; 2; 6 |] (Nx.arange Nx.int32 0 6 1) in
+  let seen, _ = Cache_index.extend index tokens_2_4 pool in
+  let chosen, _ =
+    Cache_index.extend (Cache_index.select every index) tokens_2_4 pool
+  in
+  let mask = Cache_index.mask index in
+  equal ~msg:"the same mask" (list bool) (bools mask)
+    (bools (Cache_index.mask (Cache_index.select every index)));
+  let per_token =
+    Nx.where
+      (Nx.reshape [| 1; 2; 6; 1 |] mask)
+      (Nx.broadcast_to [| 1; 2; 6; 1 |] (Nx.reshape [| 1; 1; 6; 1 |] seen))
+      (Nx.zeros Nx.float32 [| 1 |])
+  in
+  values_are ~msg:"the same rows where the token sees them" ~tol:0.
+    (flat per_token) chosen
+
+(* On a whole index a column is a token of the lane: lane 0 is padded by one
+   token. *)
+let test_index_select_whole () =
+  let index = Cache_index.whole ~lens:[| 2; 3 |] ~batch:2 ~seq:3 () in
+  let values =
+    Nx.create Nx.float32 [| 2; 3; 1 |] [| 1.; 2.; 3.; 11.; 12.; 13. |]
+  in
+  let columns =
+    int32s [| 2; 3; 3 |] (Array.concat (List.init 6 (fun _ -> [| 2; 0; 1 |])))
+  in
+  let selected = Cache_index.select columns index in
+  let pool = Cache_index.pool ~slots:0 Nx.float32 [| 1 |] in
+  let seen, pool' = Cache_index.extend selected values pool in
+  values_are ~msg:"the chosen tokens a token sees, zero elsewhere" ~tol:0.
+    [|
+      0.;
+      0.;
+      0.;
+      0.;
+      0.;
+      2.;
+      3.;
+      0.;
+      2.;
+      (* lane 1 *)
+      0.;
+      11.;
+      0.;
+      0.;
+      11.;
+      12.;
+      13.;
+      11.;
+      12.;
+    |]
+    seen;
+  equal ~msg:"padding is hidden and a padded token sees nothing" (list bool)
+    (List.map (fun v -> v <> 0.) (Array.to_list (flat seen)))
+    (bools (Cache_index.mask selected));
+  is_true ~msg:"and nothing is kept" (pool == pool')
+
+(* The selection is a tensor of the index: the traversals carry it, [advance]
+   drops it. *)
+let test_index_select_traversals () =
+  let index, _ = selection_fixture () in
+  let columns = int32s [| 1; 2; 1 |] [| 3; 5 |] in
+  let selected = Cache_index.select columns index in
+  let count index =
+    let n = ref 0 in
+    Cache_index.iter (fun _ -> incr n) index;
+    !n
+  in
+  equal ~msg:"iter visits the selection" int (count index + 1) (count selected);
+  equal ~msg:"map reaches the selection" (list bool) [ true; true ]
+    (bools
+       (Cache_index.mask
+          (Cache_index.map
+             (fun t ->
+               if Nx.shape t = [| 1; 2; 1 |] then Nx.zeros_like t else t)
+             selected)));
+  shape_is ~msg:"advance drops the selection" [| 1; 1; 6 |]
+    (Cache_index.mask (Cache_index.advance selected));
+  raises
+    (Invalid_argument
+       "Cache_index.map2: one index selects columns, one does not") (fun () ->
+      Cache_index.map2 (fun a _ -> a) selected index)
+
+module Selected = struct
+  type t = { index : Cache_index.t; pool : Nx.float32_t; seen : Nx.float32_t }
+
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { index; pool; seen } =
+    { index = Cache_index.map f index; pool = f pool; seen = f seen }
+
+  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
+    {
+      index = Cache_index.map2 f a.index b.index;
+      pool = f a.pool b.pool;
+      seen = f a.seen b.seen;
+    }
+
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { index; pool; seen } =
+    Cache_index.iter f index;
+    f pool;
+    f seen
+end
+
+(* Compiled, the columns are an input: what is read and stored is eager's. *)
+let test_index_select_compiled () =
+  let index, pool = selection_fixture () in
+  let step { Selected.index; pool; seen = _ } =
+    let seen, pool = Cache_index.extend index tokens_2_4 pool in
+    { Selected.index; pool; seen }
+  in
+  let run columns =
+    let s =
+      {
+        Selected.index = Cache_index.select (int32s [| 1; 2; 5 |] columns) index;
+        pool;
+        seen = Nx.zeros Nx.float32 [| 1; 2; 5; 1 |];
+      }
+    in
+    (step s, Rune.jit2 (module Selected) (module Selected) step s)
+  in
+  List.iter
+    (fun columns ->
+      let eager, compiled = run columns in
+      values_are ~msg:"what is read" ~tol:0. (flat eager.seen) compiled.seen;
+      values_are ~msg:"what is stored" ~tol:0.
+        (flat (slots_of eager.pool))
+        (slots_of compiled.pool))
+    [ [| 1; 3; 2; -1; 1; 5; 6; 0; 4; 0 |]; [| 0; 1; 2; 3; 4; 4; 3; 2; 1; 0 |] ]
+
 let test_cached_chunking_is_invariant () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = layer Nx.float32 in
@@ -1354,6 +1558,16 @@ let () =
           test "a window bounds what a token sees" test_cached_window;
           test "a pool is its slots and a scratch row" test_index_pool;
           test "a window is part of the index" test_index_window;
+          test "a selection reads the columns each token chose"
+            test_index_select;
+          test "selecting every column is the read without a selection"
+            test_index_select_everything;
+          test "on a whole index a chosen column is a token"
+            test_index_select_whole;
+          test "a selection is a tensor of the index"
+            test_index_select_traversals;
+          test "a compiled selection reads and stores as eager"
+            test_index_select_compiled;
           test "chunking is invariant" test_cached_chunking_is_invariant;
           test "rows of different lengths share a batch"
             test_cached_ragged_batch;

@@ -7,7 +7,8 @@ type tokens =
   | Whole of Nx.int32_t
   | Tabled of { row : Nx.int32_t option; pos : Nx.int32_t; table : Nx.int32_t }
 
-type t = { tokens : tokens; window : int option }
+(* [columns] is the selection, the columns each token reads: [batch; seq; k]. *)
+type t = { tokens : tokens; window : int option; columns : Nx.int32_t option }
 
 let invalid fmt = Printf.ksprintf invalid_arg fmt
 
@@ -36,7 +37,7 @@ let whole ?lens ~batch ~seq () =
           "Cache_index.whole: a lane of %d tokens does not fit %d positions" n
           seq)
     lens;
-  { tokens = Whole (left_padded ~seq lens); window = None }
+  { tokens = Whole (left_padded ~seq lens); window = None; columns = None }
 
 let rows ~context lens =
   let batch = Array.length lens in
@@ -58,6 +59,7 @@ let rows ~context lens =
   {
     tokens = Tabled { row = None; pos = left_padded ~seq lens; table };
     window = None;
+    columns = None;
   }
 
 let make ?row ~pos ~table () =
@@ -74,7 +76,7 @@ let make ?row ~pos ~table () =
       invalid_arg
         "Cache_index.make: pos must have shape [batch; seq] and table [rows; \
          context], neither of them empty");
-  { tokens = Tabled { row; pos; table }; window = None }
+  { tokens = Tabled { row; pos; table }; window = None; columns = None }
 
 let window w index =
   if w <= 0 then invalid "Cache_index.window: window must be positive, got %d" w;
@@ -83,6 +85,14 @@ let window w index =
 let raw index = match index.tokens with Whole pos | Tabled { pos; _ } -> pos
 let batch index = Nx.dim 0 (raw index)
 let seq index = Nx.dim 1 (raw index)
+
+let select columns index =
+  (match Nx.shape columns with
+  | [| b; s; k |] when b = batch index && s = seq index && k > 0 -> ()
+  | _ ->
+      invalid "Cache_index.select: columns must have shape [%d; %d; k], k > 0"
+        (batch index) (seq index));
+  { index with columns = Some columns }
 
 let context index =
   match index.tokens with
@@ -114,7 +124,11 @@ let advance index =
       let last =
         Nx.maximum_s (Nx.max ~axes:[ 1 ] ~keepdims:true (pos index)) (-1l)
       in
-      { index with tokens = Tabled { row; pos = Nx.add_s last 1l; table } }
+      {
+        index with
+        tokens = Tabled { row; pos = Nx.add_s last 1l; table };
+        columns = None;
+      }
 
 (* The table of each lane. *)
 let lanes ~row table =
@@ -126,7 +140,7 @@ let lanes ~row table =
 
 (* Masks *)
 
-(* [keys] broadcasts to [batch; 1; m]: the position each key holds. *)
+(* [keys] broadcasts against [batch; seq; 1]: the position each key holds. *)
 let sees ?window ~keys pos =
   let query = Nx.reshape [| Nx.dim 0 pos; Nx.dim 1 pos; 1 |] pos in
   let causal = Nx.less_equal keys query in
@@ -138,13 +152,38 @@ let sees ?window ~keys pos =
 let column ~context =
   Nx.reshape [| 1; context |] (Nx.arange Nx.int32 0 context 1)
 
+(* The position each chosen column holds, [-1] outside the context. On a whole
+   index a column is a token of the lane, which holds its token's position. *)
+let chosen index columns =
+  let context = context index in
+  let at = Nx.clamp ~min:0l ~max:(Int32.of_int (context - 1)) columns in
+  let at =
+    match index.tokens with
+    | Tabled _ -> at
+    | Whole pos ->
+        let b = Nx.dim 0 at and s = Nx.dim 1 at and k = Nx.dim 2 at in
+        Nx.reshape [| b; s; k |]
+          (Nx.take_along_axis ~axis:1
+             ~indices:(Nx.reshape [| b; s * k |] at)
+             pos)
+  in
+  Nx.where (inside ~below:context columns) at (Nx.full_like at (-1l))
+
+(* Which of its chosen columns each token sees, [batch; seq; k]. *)
+let sees_chosen index columns =
+  let keys = chosen index columns in
+  Nx.logical_and
+    (Nx.greater_equal_s keys 0l)
+    (sees ?window:index.window ~keys (pos index))
+
 let mask index =
   let pos = pos index and window = index.window in
-  match index.tokens with
-  | Whole _ ->
+  match (index.columns, index.tokens) with
+  | Some columns, _ -> sees_chosen index columns
+  | None, Whole _ ->
       let keys = Nx.reshape [| Nx.dim 0 pos; 1; Nx.dim 1 pos |] pos in
       Nx.logical_and (Nx.greater_equal_s keys 0l) (sees ?window ~keys pos)
-  | Tabled { table; _ } ->
+  | None, Tabled { table; _ } ->
       let context = Nx.dim 1 table in
       sees ?window ~keys:(Nx.reshape [| 1; 1; context |] (column ~context)) pos
 
@@ -229,18 +268,66 @@ let read ?window ~pos ~table pool =
     (Array.append [| batch; context |] tail)
     (Nx.where live win (Nx.zeros (Nx.dtype pool) [| 1 |]))
 
+(* The rows a selection reads, [batch; seq; k] then [tail], zero where a token
+   does not see its column. [fetch flat] is the rows at the columns [flat],
+   [batch; seq * k] and clamped to the context, as [batch; seq * k] then [tail],
+   with which of them are allocated when some may not be. *)
+let read_chosen index columns ~tail fetch =
+  let b = Nx.dim 0 columns and s = Nx.dim 1 columns and k = Nx.dim 2 columns in
+  let last = Int32.of_int (context index - 1) in
+  let flat = Nx.reshape [| b; s * k |] (Nx.clamp ~min:0l ~max:last columns) in
+  let rows, allocated = fetch flat in
+  let live = Nx.reshape [| b; s * k |] (sees_chosen index columns) in
+  let live = Option.fold ~none:live ~some:(Nx.logical_and live) allocated in
+  Nx.reshape
+    (Array.append [| b; s; k |] tail)
+    (Nx.where
+       (Nx.reshape (Array.append [| b; s * k |] (ones tail)) live)
+       rows
+       (Nx.zeros (Nx.dtype rows) [| 1 |]))
+
+(* The rows of [values], [batch; seq] then [tail], at the tokens [token],
+   [batch; n]. *)
+let rows_at ~tail values token =
+  let indices =
+    Nx.broadcast_to
+      (Array.append (Nx.shape token) tail)
+      (Nx.reshape (Array.append (Nx.shape token) (ones tail)) token)
+  in
+  Nx.take_along_axis ~axis:1 ~indices values
+
+(* The rows of [pool] at the slots [table] names at the columns [flat], [batch;
+   n], as [batch; n] then [tail], and which of them are allocated. *)
+let from_pool ~tail ~table pool flat =
+  let slots = Nx.dim 0 pool - 1 in
+  let slot = Nx.take_along_axis ~axis:1 ~indices:flat table in
+  let allocated = inside ~below:slots slot in
+  let slot = Nx.where allocated slot (Nx.full_like slot (Int32.of_int slots)) in
+  let n = Nx.dim 0 flat * Nx.dim 1 flat in
+  ( Nx.reshape
+      (Array.append (Nx.shape flat) tail)
+      (Nx.take ~axis:0 ~indices:(Nx.reshape [| n |] slot) pool),
+    Some allocated )
+
 let extend index values pool =
   let tail = tail pool in
   if Nx.shape values <> Array.append [| batch index; seq index |] tail then
     invalid
       "Cache_index.extend: values must have shape [%d; %d] then the pool's"
       (batch index) (seq index);
-  match index.tokens with
-  | Whole _ -> (values, pool)
-  | Tabled { row; table; _ } ->
+  match (index.tokens, index.columns) with
+  | Whole _, None -> (values, pool)
+  | Whole _, Some columns ->
+      (* A column a token sees is a token of its lane. *)
+      let fetch flat = (rows_at ~tail values flat, None) in
+      (read_chosen index columns ~tail fetch, pool)
+  | Tabled { row; table; _ }, columns -> (
       let pos = pos index and table = lanes ~row table in
       let pool = write ~pos ~table values pool in
-      (read ?window:index.window ~pos ~table pool, pool)
+      match columns with
+      | None -> (read ?window:index.window ~pos ~table pool, pool)
+      | Some columns ->
+          (read_chosen index columns ~tail (from_pool ~tail ~table pool), pool))
 
 (* Traversals *)
 
@@ -254,7 +341,7 @@ let map f index =
         let table = f table in
         Tabled { row; pos; table }
   in
-  { index with tokens }
+  { index with tokens; columns = Option.map f index.columns }
 
 let map2 f a b =
   if a.window <> b.window then
@@ -274,12 +361,20 @@ let map2 f a b =
     | _ ->
         invalid_arg "Cache_index.map2: the indices were not built the same way"
   in
-  { a with tokens }
+  let columns =
+    match (a.columns, b.columns) with
+    | None, None -> None
+    | Some c, Some c' -> Some (f c c')
+    | _ ->
+        invalid_arg "Cache_index.map2: one index selects columns, one does not"
+  in
+  { a with tokens; columns }
 
 let iter f index =
-  match index.tokens with
+  (match index.tokens with
   | Whole pos -> f pos
   | Tabled { row; pos; table } ->
       Option.iter f row;
       f pos;
-      f table
+      f table);
+  Option.iter f index.columns

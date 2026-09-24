@@ -55,7 +55,9 @@
       it. That covers an unallocated column, a column past every position of the
       lane, and a column below the index's {!window} for every token of the
       lane. The zeroing and the {!mask} read one window, the index's, so a layer
-      cannot zero with one and mask with another.
+      cannot zero with one and mask with another. Under a selection ({!select})
+      this holds per chosen column, and a column the token did not choose is not
+      read.
     + {b Values vary, shapes do not.} Positions and tables are tensors: under
       {!Rune.jit} they are inputs of the step, and one compiled program serves
       every position and every allocation. *)
@@ -113,12 +115,32 @@ val window : int -> t -> t
 
     Raises [Invalid_argument] if [w] is not positive. *)
 
+val select : Nx.int32_t -> t -> t
+(** [select columns index] is [index] whose token [i] of lane [b] reads only the
+    columns [columns.(b).(i)], of shape [[| batch; seq; k |]]: {!extend}'s
+    [seen] has shape [[| batch; seq; k; ... |]], entry [c] of a token holding
+    the column it chose [c]-th, and {!mask} has shape [[| batch; seq; k |]].
+    Both read the selection from the index, as they read its window. A chosen
+    column the token does not see (after its position, below the window, outside
+    the context) reads as zero and is masked; an unallocated one reads as zero,
+    a hole as without a selection. A column chosen twice is read twice. What is
+    stored does not change. It keeps [index]'s window and replaces any selection
+    [index] had. On a whole index a column is a token of the lane, as in
+    {!mask}.
+
+    A layer that attends to a few columns per token, chosen from scores or fixed
+    as the last [w] positions, reads [k] rows per token whatever the context,
+    where {!extend} without a selection reads [context] per lane.
+
+    Raises [Invalid_argument] if [columns] does not have that shape or [k] is
+    [0]. *)
+
 val advance : t -> t
 (** [advance index] is the index of the next token of every lane, with [index]'s
-    window: [seq] is [1] and the position is one past the lane's greatest. A
-    lane of padding advances to position [0]. It is per lane: where two lanes
-    name one sequence it is not the sequence's next position, and the caller
-    sets positions itself.
+    window and no selection: [seq] is [1] and the position is one past the
+    lane's greatest. A lane of padding advances to position [0]. It is per lane:
+    where two lanes name one sequence it is not the sequence's next position,
+    and the caller sets positions itself.
 
     Raises [Invalid_argument] on a whole index. *)
 
@@ -163,11 +185,12 @@ val extend :
       over, read from [pool']: column [j] is the slot holding position [j], so
       the call's own tokens are in it. A column that is unallocated, past every
       position of its lane, or below the index's {!window} for every token of
-      its lane, is zero.
+      its lane, is zero. Under a selection it is each token's chosen columns, of
+      shape [[| batch; seq; k; ... |]] (see {!select}).
 
-    On a whole index [seen] is [values] and [pool'] is [pool]. Which case
-    applies depends on how [index] was built and on no tensor's value, so it
-    holds under {!Rune.jit}.
+    On a whole index [seen] is [values], or the chosen tokens' values under a
+    selection, and [pool'] is [pool]. Which case applies depends on how [index]
+    was built and on no tensor's value, so it holds under {!Rune.jit}.
 
     Costs are in the call's tokens and in [context], never in [slots]. Compiled,
     the slot numbers and the zeroing fuse into the gather: the read is one gated
@@ -182,12 +205,14 @@ val mask : t -> Nx.bool_t
     {!extend}'s [seen] each token sees: those at or before its position, and
     under the index's {!window} only the last of them. On a whole index the
     columns are the call's tokens, and padded ones are hidden. A padded token
-    sees none. *)
+    sees none. Under a selection it has shape [[| batch; seq; k |]] and says
+    which of its chosen columns each token sees. *)
 
 (** {1:traversals Traversals}
 
-    Over the index's int32 tensors, for the state of a jitted step. They compute
-    nothing and keep the window, which is no tensor. *)
+    Over the index's int32 tensors, its selection included, for the state of a
+    jitted step. They compute nothing and keep the window, which is no tensor.
+*)
 
 val map : (Nx.int32_t -> Nx.int32_t) -> t -> t
 (** [map f index] is [index] with [f] applied to every tensor. *)
@@ -195,8 +220,8 @@ val map : (Nx.int32_t -> Nx.int32_t) -> t -> t
 val map2 : (Nx.int32_t -> Nx.int32_t -> Nx.int32_t) -> t -> t -> t
 (** [map2 f index index'] combines [index] and [index'] tensor by tensor.
 
-    Raises [Invalid_argument] if they were not built the same way or differ in
-    their window. *)
+    Raises [Invalid_argument] if they were not built the same way, differ in
+    their window, or one selects columns and the other does not. *)
 
 val iter : (Nx.int32_t -> unit) -> t -> unit
 (** [iter f index] applies [f] to every tensor of [index]. *)

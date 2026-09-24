@@ -1891,6 +1891,9 @@ thread.
 
 ### Kaun
 
+- Add `Cache_index.select columns index`: each token reads only the columns it
+  chose, so `extend` returns `[batch; seq; k; ...]` rows and a sparse or
+  windowed layer's read costs `k` rows per token whatever the context.
 - `Kaun_hf.load_checkpoint` no longer asks the Hub for a shard index when the
   repository is already cached as a single `model.safetensors`: a cached model
   used to make one network request on every start, and to stall without a
