@@ -270,9 +270,12 @@ let create_post_sched_buffer ctx b =
   | None ->
       let ret =
         match U.as_buffer b with
-        | Some { buffer; _ } ->
+        | Some { buffer; shape } ->
             let slot = fresh_internal_buffer_slot () in
-            U.replace b ~arg:(U.Arg.Param_arg { buffer with slot }) ()
+            let fresh = U.buffer ~slot ~dtype:buffer.dtype ~shape
+                ?name:buffer.name ~addrspace:buffer.addrspace ?axis:buffer.axis
+                ?device:buffer.device ~volatile:buffer.volatile () in
+            (match U.node_tag b with Some tag -> U.with_tag tag fresh | None -> fresh)
         | None -> assert false
       in
       Hashtbl.replace ctx.created_buffers tag ret;

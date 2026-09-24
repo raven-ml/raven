@@ -235,15 +235,8 @@ module Global_counters = struct
   let global_mem = ref 0
   let time_sum_s = ref 0.0
   let kernel_count = ref 0
-  let mem_used = ref 0
-  let mem_used_per_device : (string, int) Hashtbl.t = Hashtbl.create 4
-
-  let add_mem_used device nbytes =
-    mem_used := !mem_used + nbytes;
-    let prev =
-      Option.value (Hashtbl.find_opt mem_used_per_device device) ~default:0
-    in
-    Hashtbl.replace mem_used_per_device device (prev + nbytes)
+  let mem_used = Tolk_uop.Storage.mem_used
+  let mem_used_per_device = Tolk_uop.Storage.mem_used_per_device
 
   let reset () =
     global_ops := 0;

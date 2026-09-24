@@ -379,6 +379,11 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.from_buffer` retains storage directly in the graph, including external
+  buffers and views. Realization no longer needs a frontend storage registry.
+- `Uop.export` preserves buffer contents and shared views across import while
+  leaving unallocated buffers lazy; native pointers are never serialized.
+
 - Reject negative or overflowing buffer sizes and view ranges before native
   memory access. Large offsets can no longer bypass MMIO bounds checks.
 

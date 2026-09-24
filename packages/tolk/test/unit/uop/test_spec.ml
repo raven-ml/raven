@@ -112,7 +112,7 @@ let buffer_rejects_alu_addrspace () =
         (Uop.Arg.Param_arg
            { slot = 0; dtype = Dtype.int32; vmin_vmax = None;
              multiple_of = None; name = None; addrspace = Dtype.Alu;
-             axis = None; device = None; volatile = false })
+             axis = None; device = None; volatile = false; buffer = None })
       ()
   in
   is_true ~msg:"Buffer with ALU addrspace rejected"
@@ -636,8 +636,9 @@ let multi_device_multi_layouts () =
   is_true ~msg:"Multi rejects sources without multi-device placement"
     (rejected Spec.tensor_spec no_device);
   let empty_group =
-    Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape ~axis:0
-      ~device:(Uop.Multi []) ()
+    let param = Option.get (Uop.Arg.as_param_arg (Uop.arg sharded)) in
+    Uop.replace sharded
+      ~arg:(Uop.Arg.Param_arg { param with device = Some (Uop.Multi []) }) ()
   in
   let empty_multi = Uop.multi ~src:empty_group ~axis:0 in
   is_true ~msg:"Multi rejects empty multi-device placement"

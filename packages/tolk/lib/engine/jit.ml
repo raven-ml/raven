@@ -223,7 +223,7 @@ let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
           match U.as_buffer u with
           | Some { buffer; _ } ->
               U.replace u ~op:Ops.Param
-                ~arg:(U.Arg.Param_arg { buffer with slot = i }) ()
+                ~arg:(U.Arg.Param_arg { buffer with slot = i; buffer = None }) ()
           | None ->
               U.param ~slot:i ~dtype:(U.dtype u) ?device:(U.device_of u) ()
         in
@@ -271,8 +271,7 @@ let seed_known_buffers binding ~buffers linear =
       List.iter
         (fun arg ->
           let node = U.buf_uop arg in
-          if not (Realize.Buffers.mem binding node) then
-            match buffers node with
+          match buffers node with
             | Some buf -> Realize.Buffers.seed binding node buf
             | None -> ())
         (call_arg_uops (call_args call)))

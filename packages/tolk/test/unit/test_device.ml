@@ -203,4 +203,76 @@ let interleaved_kernel_formals () =
   equal (list int) [ 0; 1; 2 ]
     (List.map (fun (arg : Tiny_elf.argument) -> arg.slot) obj.signature)
 
-let () = run __FILE__ [ copy_from_tests; test "buffer byte ranges reject overflow" buffer_byte_ranges; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]
+let node_owned_storage () =
+  let node = Uop.buffer ~slot:(Uop.fresh_buffer_slot ()) ~dtype:i32
+      ~shape:(Uop.const_int 4) ~device:(Uop.Single (Device.name device)) () in
+  let first = Realize.Buffers.create ~device in
+  let second = Realize.Buffers.create ~device in
+  let a = Realize.Buffers.of_buffer_node first node in
+  let b = Realize.Buffers.of_buffer_node second node in
+  equal int (Device.Buffer.id a) (Device.Buffer.id b);
+  is_false (Device.Buffer.is_allocated a);
+  Device.Buffer.ensure_allocated a;
+  Device.Buffer.copyin a (i32_to_bytes [1; 2; 3; 4]);
+  Realize.Buffers.clear first;
+  Gc.full_major ();
+  equal (list int) [1; 2; 3; 4] (read_i32 b);
+  let imported = Uop.from_buffer a in
+  is_true (imported == Uop.from_buffer a);
+  equal int (Device.Buffer.id a)
+    (Device.Buffer.id (Realize.Buffers.of_buffer_node second imported))
+
+let storage_serialization () =
+  let base = filled_i32 [10; 20; 30; 40] in
+  let view = Device.Buffer.view base ~size:2 ~dtype:i32 ~offset:4 in
+  Device.Buffer.ensure_allocated view;
+  let graph = Uop.sink [Uop.from_buffer base; Uop.from_buffer view] in
+  let restored = Uop.import (Uop.export graph) in
+  equal string (Uop.semantic_key graph) (Uop.semantic_key restored);
+  let binding = Realize.Buffers.create ~device in
+  match Uop.children restored with
+  | [base_node; view_node] ->
+      let base' = Realize.Buffers.of_buffer_node binding base_node in
+      let view' = Realize.Buffers.of_buffer_node binding view_node in
+      equal (list int) [10; 20; 30; 40] (read_i32 base');
+      equal (list int) [20; 30] (read_i32 view');
+      equal int (Device.Buffer.id base') (Device.Buffer.base_id view');
+      is_false (Device.Buffer.id base = Device.Buffer.id base');
+      Device.Buffer.copyin view' (i32_to_bytes [7; 8]);
+      equal (list int) [10; 7; 8; 40] (read_i32 base');
+      equal (list int) [10; 20; 30; 40] (read_i32 base)
+  | _ -> fail "serialized graph lost its two buffers"
+
+let external_storage_serialization () =
+  let owner = filled_i32 [6; 7] in
+  let spec = { Device.Buffer_spec.default with
+      external_ptr = Some (Device.Buffer.addr owner) } in
+  let external_buffer = Device.create_buffer ~size:2 ~dtype:i32 ~spec device in
+  Device.Buffer.ensure_allocated external_buffer;
+  let node = Uop.from_buffer external_buffer in
+  let binding = Realize.Buffers.create ~device in
+  equal int (Device.Buffer.id external_buffer)
+    (Device.Buffer.id (Realize.Buffers.of_buffer_node binding node));
+  let restored = Realize.Buffers.of_buffer_node binding (Uop.import (Uop.export node)) in
+  is_true (Option.is_none (Device.Buffer.spec restored).external_ptr);
+  equal (list int) [6; 7] (read_i32 restored);
+  Device.Buffer.copyin restored (i32_to_bytes [8; 9]);
+  equal (list int) [6; 7] (read_i32 owner)
+
+let lazy_storage_serialization () =
+  let buf = Storage.on_device ~device:"UNOPENED" ~size:4 ~dtype:i32 () in
+  let node = Uop.from_buffer buf in
+  let restored = Uop.import (Uop.export node) in
+  match Uop.Arg.as_param_arg (Uop.arg restored) with
+  | Some { buffer = Some [buf']; _ } ->
+      is_false (Storage.is_allocated buf');
+      equal string "UNOPENED" (Storage.device buf');
+      equal int 4 (Storage.size buf');
+      is_false (Storage.id buf = Storage.id buf')
+  | _ -> fail "serialized graph lost its lazy storage"
+
+let () = run __FILE__ [ copy_from_tests;
+  test "BUFFER owns storage across execution contexts" node_owned_storage;
+  test "serialization preserves bytes and shared view ownership" storage_serialization;
+  test "serialization copies external storage into an independent owner" external_storage_serialization;
+  test "serialization keeps unopened storage lazy" lazy_storage_serialization; test "buffer byte ranges reject overflow" buffer_byte_ranges; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]

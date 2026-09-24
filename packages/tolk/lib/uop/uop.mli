@@ -154,6 +154,9 @@ type param_arg = {
   volatile : bool;
       (** Preserve individual memory accesses and emit volatile parameters.
           Defaults to [false]; does not provide atomicity or synchronization. *)
+  buffer : Storage.t list option;
+      (** Storage owned by a global BUFFER, one buffer per device. Parameters
+          and kernel-local buffers do not own runtime storage. *)
 }
 (** Payload for {!Ops.Param} and {!Ops.Buffer}. *)
 
@@ -673,10 +676,13 @@ val buffer :
     {!Ops.Buffer} carrying {!param_arg} and exactly one shape child. [shape]
     defaults to {!shape_to_shape_arg} [None]. Tensor. *)
 
+val from_buffer : Storage.t -> t
+(** [from_buffer b] is a flat BUFFER retaining [b], including its external
+    backing and view owner. Repeated calls with [b] return the same node. *)
+
 val fresh_buffer_slot : unit -> int
-(** [fresh_buffer_slot ()] draws the next process-unique buffer slot. Two
-    buffers with the same slot, dtype, shape, and device hash-cons to the same
-    node, so every distinct allocation must draw a fresh slot. *)
+(** [fresh_buffer_slot ()] draws the next process-unique buffer slot for
+    graph construction. Bound storage also participates in node identity. *)
 
 val reserve_buffer_slots : int -> unit
 (** [reserve_buffer_slots n] raises the {!fresh_buffer_slot} counter so that
@@ -1421,7 +1427,8 @@ val export : t -> string
     and the uops embedded in node arguments: {!kernel_info} estimates
     ({!Sym}), {!program_info} variables, and symbolic launch dimensions
     ({!Launch_sym}). Node tags ({!node_tag}) are preserved; {!metadata}
-    side data is not.
+    side data is not. Bound storage is serialized as bytes and ownership
+    relationships; allocator closures and native pointers are excluded.
 
     Raises [Invalid_argument] if any node carries a gradient function
     ([grad_fxn] in its {!call_info}): gradient functions are closures and
@@ -1435,11 +1442,9 @@ val import : string -> t
     node arguments are remapped consistently with the [src] edges, so
     sharing between arguments and sources survives the round-trip.
 
-    {b Warning.} {!Ops.Buffer} nodes hash-cons on their slot, so importing
-    a graph whose internal buffer slots were minted by another process can
-    make an imported buffer collide with a distinct local buffer that
-    reuses the same slot, silently aliasing their storage. Renumber
-    imported internal (negative) buffer slots before use.
+    Bound buffers acquire independent storage while their bytes and shared
+    base/view relationships are preserved. Unallocated buffers stay lazy.
+    Kernel-local buffers and unbound placeholders remain structural nodes.
 
     Raises [Failure] on malformed or version-incompatible input. Inputs
     are trusted: [import] rejects truncated data and unknown format

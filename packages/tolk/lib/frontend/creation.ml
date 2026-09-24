@@ -24,10 +24,11 @@ let broadcast_scalar dt fill shape =
 
 let empty ?(dtype = D.default_float) ?device shape =
   if D.is_weak dtype then invalid_arg "Creation.empty: dtype must be concrete";
+  let device = Option.value device ~default:(U.Single (Backend.device_name ())) in
   let n = List.fold_left ( * ) 1 shape in
   let buf =
     U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
-      ?device ()
+      ~device ()
   in
   Movement.reshape (T.of_uop buf) shape
 
@@ -38,11 +39,14 @@ let clone ?device t =
   let shape = T.symbolic_shape t in
   let max_shape = U.max_shape (T.uop t) in
   let n = U.max_numel (T.uop t) in
-  let device = match device with Some _ -> device | None -> T.device t in
+  let device = match device, T.device t with
+    | Some device, _ | None, Some device -> device
+    | None, None -> U.Single (Backend.device_name ())
+  in
   let dtype = U.commit_dtype (T.uop t) in
   let buf =
     U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype
-      ~shape:(T.shape_uop [ n ]) ?device ()
+      ~shape:(T.shape_uop [ n ]) ~device ()
   in
   let dst = U.reshape ~src:buf ~shape:(T.shape_uop max_shape) in
   let dst =
@@ -53,7 +57,7 @@ let clone ?device t =
   in
   let value =
     match (T.device t, device) with
-    | Some from, Some device when from <> device ->
+    | Some from, device when from <> device ->
         U.copy ~src:(T.uop t) ~device ()
     | _ -> T.uop t
   in

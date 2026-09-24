@@ -13,65 +13,14 @@ module U = Uop
 module D = Dtype
 module T = Tensor
 
-(* One process-wide default device backs every realization. This mirrors
-   tinygrad, whose [Tensor.realize] resolves the device internally rather than
-   taking it as an argument. Backend openers are installed in the shared
-   device registry so scheduled graphs can name any device instance; the
-   default is chosen the same way tinygrad selects [Device.DEFAULT]: the
-   first [DEV] target picks a backend, otherwise backends are
-   scanned in priority order and the first one that opens wins, falling back
-   to CPU. *)
-let all_backends : (string * (string -> Tolk.Device.t)) list =
-  (match Device_metal.opener with
-  | Some create -> [ ("METAL", create) ]
-  | None -> [])
-  @ [
-      ("AMD", Tolk_amd.create);
-      ("NV", Tolk_nv.create);
-      ("CUDA", Tolk_cuda.create);
-      ("CPU", fun name -> Tolk_cpu.create name);
-    ]
+let device = Backend.device
+let device_name = Backend.device_name
 
-let () =
-  List.iter
-    (fun (prefix, create) -> Tolk.Device.register prefix create)
-    all_backends
-
-let default_device =
-  lazy
-    (Tolk.Helpers.select_first_inited ~message:"no usable devices"
-       (List.map (fun (name, _) () -> Tolk.Device.get name) all_backends))
-
-let device () =
-  match Tolk.Helpers.Context_var.get Tolk.Helpers.dev with
-  | target :: _ when target.Tolk_uop.Target.device <> "" ->
-      Tolk.Device.get target.device
-  | _ -> Lazy.force default_device
-let device_name () = Tolk.Device.name (device ())
-
-(* A live node owns its storage. The registry itself keeps neither alive;
-   views and captured graphs retain their nodes through ordinary references. *)
-let storage : Tolk.Device.Buffer.t U.Weak_tbl.t = U.Weak_tbl.create 64
-
-(* Ephemeron tables have no iterator. This weak set supplies the live keys
-   needed by capture without changing their ownership. *)
-module Buffer_nodes = Stdlib.Weak.Make (struct
-  type t = U.t
-  let equal = ( == )
-  let hash = U.tag
-end)
-
-let stored_nodes = Buffer_nodes.create 64
-
-let register node buf =
-  U.Weak_tbl.replace storage node buf;
-  let b = U.buf_uop node in
-  if Ops.equal (U.op b) Ops.Buffer then begin
-    ignore (Buffer_nodes.merge stored_nodes b);
-    if b != node then U.Weak_tbl.replace storage b buf
-  end
-
-let buffer_of_node node = U.Weak_tbl.find_opt storage node
+let owned_buffer node =
+  match U.op node, U.Arg.as_param_arg (U.arg node) with
+  | Ops.Buffer, Some { buffer = Some [buf]; _ }
+    when Storage.is_allocated buf -> Some buf
+  | _ -> None
 
 (* Resolve a node that is a contiguous view of a realized buffer to that buffer
    viewed at its element offset — an alias, with no copy. Returns [None] when
@@ -80,7 +29,7 @@ let buffer_of_node node = U.Weak_tbl.find_opt storage node
    itself, so an already-materialised node keeps its exact identity. *)
 let view_buffer node =
   let rec pending_effect node =
-    if Option.is_some (buffer_of_node node) then false
+    if Option.is_some (owned_buffer node) then false
     else
       match U.op node with
       | Ops.After -> true
@@ -109,9 +58,9 @@ let view_buffer node =
             in
             Tolk.Device.Buffer.ensure_allocated v;
             v)
-        (buffer_of_node (U.buf_uop node))
+        (owned_buffer (U.buf_uop node))
 
-let buffer_nodes () = Buffer_nodes.fold List.cons stored_nodes []
+let buffer_of_node = view_buffer
 
 let make_input ~dtype ~shape n fill =
   let dev = device () in
@@ -120,11 +69,7 @@ let make_input ~dtype ~shape n fill =
   let bytes = Bytes.create (Tolk.Device.Buffer.nbytes buf) in
   fill bytes;
   Tolk.Device.Buffer.copyin buf bytes;
-  let node =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
-      ~device:(U.Single (device_name ())) ()
-  in
-  register node buf;
+  let node = U.from_buffer buf in
   Movement.reshape (T.of_uop node) shape
 
 let of_float_array ~shape data =
@@ -150,8 +95,8 @@ let of_bytes ~dtype ~shape data =
   make_input ~dtype ~shape n (fun bytes -> Bytes.blit data 0 bytes 0 nbytes)
 
 (* Realize a batch of tensors: lower the shared graph to a linear schedule,
-   seed the host inputs and previously realized buffers, execute, then rebind
-   each tensor onto its output buffer. Scheduled nodes appearing in other live
+   execute using graph-owned storage, then rebind each tensor onto its output
+   buffer. Scheduled nodes appearing in other live
    tensors — in particular the write effects embedded by [Op.assign] — are
    rebound onto their storage through [Tensor.apply_map], so an assignment
    executes once and later reads reuse the written buffer. Other shared
@@ -181,22 +126,7 @@ let realize_buffers ts =
       ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call
   in
   let binding = Tolk.Realize.Buffers.create ~device:dev in
-  List.iter
-    (fun node ->
-      match buffer_of_node node with
-      | Some buf -> Tolk.Realize.Buffers.seed binding node buf
-      | None -> ())
-    (U.toposort sink);
   Tolk.Realize.run_linear ~device:dev ~to_program binding ~var_vals linear;
-  (* Persist the storage of every rebound node so the next realize seeds it
-     instead of recomputing (or, worse, reallocating it empty). *)
-  List.iter
-    (fun (_, v) ->
-      let b = U.buf_uop v in
-      match Tolk.Realize.Buffers.find_opt binding b with
-      | Some buf -> register b buf
-      | None -> ())
-    mappings;
   List.map2
     (fun t out ->
       match Hashtbl.find_opt buffer_map (U.tag out) with
@@ -205,19 +135,14 @@ let realize_buffers ts =
             Tolk.Realize.Buffers.of_buffer_node binding (U.buf_uop node)
           in
           T.set_uop t node;
-          register node buf;
           Some buf
       | None ->
           (* Nothing was scheduled: the tensor is a contiguous view of a
              realized buffer (the callify fold leaves it a bare view, aliasing
              its source), is already materialised, or folded to a constant. A
-             view aliases its source buffer at the element offset; record it
-             under the tensor's own node so later reads resolve without
-             recomputing. *)
+             view aliases its source buffer at the element offset. *)
           (match view_buffer (T.uop t) with
-           | Some buf ->
-               U.Weak_tbl.replace storage (T.uop t) buf;
-               Some buf
+           | Some buf -> Some buf
            | None -> buffer_of_node (U.buf_uop out)))
     ts outs
 

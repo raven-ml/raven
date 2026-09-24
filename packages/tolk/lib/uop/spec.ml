@@ -85,7 +85,7 @@ let valid_global_buffer u =
   match Uop.as_buffer u with
   | None -> false
   | Some { Uop.buffer; shape } ->
-      buffer.slot >= 0
+      (buffer.slot >= 0 || Option.is_some buffer.buffer)
       && buffer.addrspace = Dtype.Global
       && option_for_all valid_device_payload buffer.device
       && valid_shape_child shape

@@ -20,7 +20,7 @@
     targets for different backends. Every buffer
     node backed by concrete device storage — host inputs, realized outputs,
     in-place assignment targets — retains its storage while the node is live.
-    The registry itself does not keep nodes or their storage alive. *)
+    The BUFFER payload owns its storage directly. *)
 
 val device : unit -> Tolk.Device.t
 (** [device ()] is the default execution device for the current [DEV] context,
@@ -32,10 +32,6 @@ val device_name : unit -> string
 val buffer_of_node : Tolk_uop.Uop.t -> Tolk.Device.Buffer.t option
 (** [buffer_of_node node] is the concrete device buffer backing [node], if
     [node] has been given storage by a previous realization or host upload. *)
-
-val buffer_nodes : unit -> Tolk_uop.Uop.t list
-(** [buffer_nodes ()] is every {!Tolk_uop.Ops.Buffer} node currently backed by
-    concrete device storage, in no particular order. *)
 
 (** {1 Host data} *)
 

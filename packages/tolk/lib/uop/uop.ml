@@ -61,6 +61,7 @@ type param_arg = {
   axis : int option;
   device : device option;
   volatile : bool;
+  buffer : Storage.t list option;
 }
 
 type reduce_arg = { op : Ops.t; num_axes : int }
@@ -195,7 +196,10 @@ module Arg = struct
     | Op x, Op y -> Ops.equal x y
     | Range_info a, Range_info b ->
         a.axis = b.axis && a.sub = b.sub && Axis_type.equal a.kind b.kind
-    | Param_arg x, Param_arg y -> x = y
+    | Param_arg x, Param_arg y ->
+        { x with buffer = None } = { y with buffer = None }
+        && Option.equal (List.equal (fun a b -> Storage.id a = Storage.id b))
+             x.buffer y.buffer
     | Reduce_arg x, Reduce_arg y ->
         Ops.equal x.op y.op && x.num_axes = y.num_axes
     | Device x, Device y -> x = y
@@ -218,7 +222,14 @@ module Arg = struct
     | Wmma_info x, Wmma_info y -> x = y
     | _ -> false
 
-  let compare = Stdlib.compare
+  let identity = function
+    | Param_arg p ->
+        (Param_arg { p with buffer = None },
+         Option.map (List.map Storage.id) p.buffer)
+    | arg -> (arg, None)
+
+  let compare a b = Stdlib.compare (identity a) (identity b)
+  let hash arg = Hashtbl.hash (identity arg)
 
   let as_int = function Int n -> Option.Some n | _ -> Option.None
   let as_ints = function Ints l -> Option.Some l | _ -> Option.None
@@ -262,7 +273,7 @@ module Node_hashed = struct
   let hash (n : node) =
     let h = ref (Hashtbl.hash n.op * 17 + Hashtbl.hash n.dtype) in
     Array.iter (fun s -> h := !h * 31 + s.Hashcons.tag) n.src;
-    h := !h * 31 + Hashtbl.hash n.arg;
+    h := !h * 31 + Arg.hash n.arg;
     h := !h * 31 + Hashtbl.hash n.node_tag;
     !h land max_int
 end
@@ -289,7 +300,7 @@ let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
 
 let default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Dtype.Global) ?axis ?device ?(volatile = false) slot =
-  { slot; dtype; vmin_vmax; multiple_of; name; addrspace; axis; device; volatile }
+  { slot; dtype; vmin_vmax; multiple_of; name; addrspace; axis; device; volatile; buffer = None }
 
 let sanitize_function_name name =
   let len = String.length name in
@@ -670,12 +681,6 @@ let param ~slot ~dtype ?shape ?device ?vmin_vmax ?multiple_of ?name ?addrspace
     ~arg:(Arg.Param_arg
             (default_param_arg ~dtype ?vmin_vmax ?multiple_of ?name ?addrspace
                ?axis ?device ?volatile slot))
-
-let buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ?volatile () =
-  let shape = shape_to_shape_arg shape in
-  mk ~op:Ops.Buffer ~dtype ~src:[| shape |]
-    ~arg:(Arg.Param_arg
-            (default_param_arg ~dtype ?name ?addrspace ?axis ?device ?volatile slot))
 
 (* Buffer slots come from one process-wide counter: buffers hash-cons on
    (slot, dtype, shape, device), so reusing a slot would collapse two distinct
@@ -2242,6 +2247,31 @@ let max_numel u =
   List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one (shape u)
   |> Bound.to_int
 
+let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatile () =
+  let shape = shape_to_shape_arg shape_arg in
+  let p = default_param_arg ~dtype ?name ?addrspace ?axis ?device ?volatile slot in
+  let buffers = match p.addrspace, device with
+    | Dtype.Global, Some (Single device) -> Some [device]
+    | Dtype.Global, Some (Multi devices) -> Some devices
+    | _ -> None
+  in
+  let buffer = Option.map (fun devices ->
+      if devices = [] then invalid_arg "Uop.buffer: empty device placement";
+      let dims = if op shape = Ops.Noop then [] else as_shape shape in
+      let size = List.fold_left (fun n dim -> Bound.mul n (vmax dim)) Bound.one dims
+          |> Bound.to_int in
+      List.map (fun device -> Storage.on_device ~device ~size ~dtype ()) devices)
+      buffers in
+  mk ~op:Ops.Buffer ~dtype ~src:[|shape|] ~arg:(Arg.Param_arg { p with buffer })
+
+let from_buffer buf =
+  let dtype = Storage.dtype buf in
+  let shape = const_int (Storage.size buf) in
+  let p = default_param_arg ~dtype ~device:(Single (Storage.device buf))
+      (-1 - Storage.id buf) in
+  mk ~op:Ops.Buffer ~dtype ~src:[|shape|]
+    ~arg:(Arg.Param_arg { p with buffer = Some [buf] })
+
 (* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
    exponential in residual depth. *)
 let axis_cache : int option Weak_tbl.t Domain.DLS.key =
@@ -3390,6 +3420,7 @@ let semantic_key root =
            local_size = List.map scalar pi.local_size },
          List.map symbolic (pi.global_size @ pi.local_size), List.length pi.vars)
     | Arg.Call_info info -> (Arg.Call_info { info with aux = None }, [], 0)
+    | Arg.Param_arg p -> (Arg.Param_arg { p with buffer = None }, [], 0)
     | arg -> (arg, [], 0)
   in
   (* Memoized per call: an unmemoized walk re-digests shared subgraphs and
@@ -3475,74 +3506,61 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 15
+let export_version = 16
+
+type serialized_node = {
+  serialized_op : Ops.t;
+  serialized_dtype : Dtype.t;
+  serialized_src : int array;
+  serialized_arg : arg;
+  serialized_tag : string option;
+  serialized_buffers : int list option;
+}
 
 let export root =
-  (* Reject gradient functions before marshalling: they are closures, and
-     silently dropping them would corrupt the graph's semantics. Explicit
-     worklist; lowered kernel bodies are too deep for recursion. *)
-  let visited = Ref_tbl.create 512 in
-  let stack = Stack.create () in
-  Stack.push root stack;
-  while not (Stack.is_empty stack) do
-    let u = Stack.pop stack in
-    if not (Ref_tbl.mem visited u) then begin
-      Ref_tbl.replace visited u ();
-      (match arg u with
-       | Arg.Call_info { grad_fxn = Option.Some _; _ } ->
-           invalid_arg "Uop.export: graph carries a gradient function"
-       | _ -> ());
-      Array.iter (fun c -> Stack.push c stack) (src u);
-      List.iter (fun c -> Stack.push c stack) (arg_uops (arg u))
-    end
-  done;
-  String.concat ""
-    [
-      export_magic;
-      Marshal.to_string export_version [];
-      Marshal.to_string root [];
-    ]
-
-(* Re-intern an unmarshalled graph bottom-up. Unmarshalled nodes are foreign:
-   their tags are stale and they are unknown to [global_table], so nothing may
-   escape this function without passing through [intern_node]. The memo table
-   keys on the foreign nodes' physical identity (Marshal preserves intra-blob
-   sharing, so a node reachable both through [src] and through an argument
-   embedding is one object); stale tags are used only as memo hash values,
-   where a collision is harmless. *)
-let reintern root =
-  let memo : t Ref_tbl.t = Ref_tbl.create 512 in
+  let ids = Ref_tbl.create 512 in
+  let nodes = ref [] and buffers = ref [] in
+  let buffer_ids = Hashtbl.create 16 in
+  let buffer_id buf =
+    match Hashtbl.find_opt buffer_ids (Storage.id buf) with
+    | Some id -> id
+    | None ->
+        let id = Hashtbl.length buffer_ids in
+        Hashtbl.add buffer_ids (Storage.id buf) id;
+        buffers := buf :: !buffers;
+        id
+  in
   let stack = Stack.create () in
   Stack.push (root, false) stack;
   while not (Stack.is_empty stack) do
     let u, expanded = Stack.pop stack in
-    if not (Ref_tbl.mem memo u) then
+    if not (Ref_tbl.mem ids u) then
       if expanded then begin
-        (* All extended children were pushed above [u] and are memoized. *)
-        let map c = Ref_tbl.find memo c in
-        let n = u.Hashcons.node in
-        let interned =
-          intern_node
-            {
-              op = n.op;
-              dtype = n.dtype;
-              src = Array.map map n.src;
-              arg = map_arg_uops map n.arg;
-              node_tag = n.node_tag;
-            }
+        let arg, owned = match arg u with
+          | Arg.Call_info { grad_fxn = Some _; _ } ->
+              invalid_arg "Uop.export: graph carries a gradient function"
+          | Arg.Param_arg p ->
+              Arg.Param_arg { p with buffer = None },
+              Option.map (List.map buffer_id) p.buffer
+          | arg -> arg, None
         in
-        Ref_tbl.replace memo u interned
-      end
-      else begin
+        let node = {
+          serialized_op = op u; serialized_dtype = dtype u;
+          serialized_src = Array.map (Ref_tbl.find ids) (src u);
+          serialized_arg = map_arg_uops (fun u -> const_int (Ref_tbl.find ids u)) arg;
+          serialized_tag = node_tag u; serialized_buffers = owned;
+        } in
+        Ref_tbl.add ids u (Ref_tbl.length ids);
+        nodes := node :: !nodes
+      end else begin
         Stack.push (u, true) stack;
-        let push c =
-          if not (Ref_tbl.mem memo c) then Stack.push (c, false) stack
-        in
-        Array.iter push (src u);
-        List.iter push (arg_uops (arg u))
+        Array.iter (fun c -> Stack.push (c, false) stack) (src u);
+        List.iter (fun c -> Stack.push (c, false) stack) (arg_uops (arg u))
       end
   done;
-  Ref_tbl.find memo root
+  let data = Array.of_list (List.rev !nodes), Storage.snapshot (List.rev !buffers) in
+  String.concat ""
+    [export_magic; Marshal.to_string export_version []; Marshal.to_string data []]
 
 let import s =
   let error () = failwith "Uop.import: malformed input" in
@@ -3571,10 +3589,31 @@ let import s =
     failwith (Printf.sprintf "Uop.import: unsupported format version %d" version);
   let graph_ofs = version_ofs + version_size in
   ignore (block_size graph_ofs : int);
-  let root : t =
+  let (serialized, snapshots : serialized_node array * Storage.snapshot list) =
     try Marshal.from_string s graph_ofs with Failure _ -> error ()
   in
-  reintern root
+  if Array.length serialized = 0 then error ();
+  let buffers = Array.of_list (Storage.of_snapshot snapshots) in
+  let nodes = Array.make (Array.length serialized) (const_int 0) in
+  Array.iteri (fun i n ->
+      let node id = if id < 0 || id >= i then error (); nodes.(id) in
+      let arg = map_arg_uops (fun u -> match const_int_value u with
+          | Some id -> node id | None -> error ()) n.serialized_arg in
+      let arg = match arg, n.serialized_buffers with
+        | Arg.Param_arg p, Some ids ->
+            let buffer = List.map (fun id ->
+                if id < 0 || id >= Array.length buffers then error ();
+                buffers.(id)) ids in
+            Arg.Param_arg { p with buffer = Some buffer }
+        | _, None -> arg
+        | _ -> error ()
+      in
+      nodes.(i) <- intern_node {
+        op = n.serialized_op; dtype = n.serialized_dtype;
+        src = Array.map node n.serialized_src; arg;
+        node_tag = n.serialized_tag;
+      }) serialized;
+  nodes.(Array.length nodes - 1)
 
 (* Operators *)
 

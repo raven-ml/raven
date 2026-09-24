@@ -268,11 +268,9 @@ let capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref =
 
 (* Buffer binding
 
-   Resolves buffer UOps to concrete device buffers. A BUFFER node backs a
-   fresh device allocation the first time it is resolved and is cached by node
-   identity; a PARAM resolves through the caller-supplied [input_uops]; a SLICE
-   is an offset view of its resolved source. A BUFFER placed on multiple
-   devices backs one allocation per device. *)
+   Placed BUFFER nodes own storage directly. Caller bindings can override
+   that storage; a PARAM resolves through [input_uops], and a SLICE is an
+   offset view. Unplaced placeholders still use the execution device. *)
 
 type buffer =
   | Single of Device.Buffer.t
@@ -304,8 +302,20 @@ module Buffers = struct
 
   let seeded t node = Hashtbl.mem t.seeded (Tolk_uop.Uop.tag node)
   let remove t node = Hashtbl.remove t.tbl (Tolk_uop.Uop.tag node)
-  let mem t node = Hashtbl.mem t.tbl (Tolk_uop.Uop.tag node)
-  let find_buffer t node = Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node)
+  let owned_buffer node =
+    match Tolk_uop.Uop.op node,
+          Tolk_uop.Uop.Arg.as_param_arg (Tolk_uop.Uop.arg node) with
+    | Tolk_uop.Ops.Buffer, Some { buffer = Some [buf]; _ } -> Some (Single buf)
+    | Tolk_uop.Ops.Buffer, Some { buffer = Some bufs; _ } ->
+        Some (Multi (Device.Multi_buffer.of_bufs bufs))
+    | _ -> None
+
+  let find_buffer t node =
+    match Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node) with
+    | Some _ as buf -> buf
+    | None -> owned_buffer node
+
+  let mem t node = Option.is_some (find_buffer t node)
 
   let find_opt t node =
     match find_buffer t node with
@@ -321,7 +331,7 @@ module Buffers = struct
      node's device. A node on the binding's device (or without a placement)
      allocates there; other placements resolve through the device registry. *)
   let buffer_of_node t node =
-    match Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node) with
+    match find_buffer t node with
     | Some buf -> buf
     | None ->
         let size = numel node and dtype = Tolk_uop.Uop.dtype node in

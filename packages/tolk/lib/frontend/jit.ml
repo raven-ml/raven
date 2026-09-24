@@ -123,7 +123,6 @@ let prepare_inputs tensors vars =
 let held_buffers () =
   let held = Hashtbl.create 64 in
   let add node = Hashtbl.replace held (U.tag node) node in
-  List.iter add (Run.buffer_nodes ());
   List.iter
     (fun tensor ->
       List.iter

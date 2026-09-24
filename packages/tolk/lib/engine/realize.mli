@@ -180,13 +180,11 @@ type buffer =
       (** One buffer per device of a multi-device placement. *)
 (** The type for concrete buffers named by call arguments. *)
 
-(** Maps buffer UOps to concrete device buffers.
+(** Resolves graph-owned buffers and caller-supplied bindings.
 
-    A {!Tolk_uop.Ops.Buffer} node is backed by a fresh allocation the first
-    time it is resolved — on the node's own device placement, resolved
-    through the device registry ({!Device.get}), with one allocation per
-    device for multi-device placements — then cached by node identity;
-    seeding a node with {!seed} overrides that allocation. *)
+    A placed {!Tolk_uop.Ops.Buffer} retains its own storage across execution
+    contexts. Seeding explicitly overrides that storage for the binding.
+    Unplaced placeholders are allocated on the binding's default device. *)
 module Buffers : sig
   type t
   (** The type for buffer bindings. *)

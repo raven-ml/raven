@@ -14,15 +14,11 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 1. Complete the CPU path through the new protocol
 
-- Establish a buffer/storage owner below both UOp and Device so a BUFFER can
-  own its actual buffer through ParamArg without a module cycle, nativeint
-  placeholder or global identity registry. Preserve external-buffer ownership,
-  empty buffers and views. This is the storage prerequisite for the CPU path;
-  cross-device mappings and accelerator queues belong to milestone 2.
 - Adopt derived dtypes, weak CONST plus typed CAST, flat ParamArg storage size
   and image metadata, ALLOC, effectful CALL and scalar binding effects. Port
-  weak commitment/lowering and the corresponding spec rules together. Remove
-  FUNCTION/TUPLE/GETTUPLE/BIND and obsolete enum/cache layouts as their producers
+  weak commitment/lowering and the corresponding spec rules together. Eliminate
+  unplaced BUFFER placeholders and their execution-time allocation fallback.
+  Remove FUNCTION/TUPLE/GETTUPLE/BIND and obsolete enum/cache layouts as their producers
   move to the new protocol. Include integer FDIV and mixed-dtype STACK promotion.
 - Introduce the final preparation owner. Move early rewrites out of
   rangeify/callify, port inline calls, explicit allocations, output forwarding,

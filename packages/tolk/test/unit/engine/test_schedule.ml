@@ -112,7 +112,8 @@ let create_linear_call_substitutes_params_and_new_buffers () =
   let shape = U.const_int 4 in
   let formal = U.param ~slot:0 ~dtype:Dtype.int32 ~shape () in
   let actual = U.buffer ~slot:10 ~dtype:Dtype.int32 ~shape () in
-  let cached_tmp = U.buffer ~slot:99 ~dtype:Dtype.int32 ~shape () in
+  let cached_tmp = U.buffer ~slot:99 ~dtype:Dtype.int32 ~shape
+      ~device:(U.Single "DISK:cached") () in
   let body_call = call "kernel" [ formal; cached_tmp ] in
   let cached_linear = U.linear [ body_call ] in
   let big_sink =
@@ -134,7 +135,13 @@ let create_linear_call_substitutes_params_and_new_buffers () =
            (match U.as_buffer arg1 with
             | Some { buffer; _ } ->
                 is_true ~msg:"fresh schedule buffer uses internal slot"
-                  (buffer.slot < 0)
+                  (buffer.slot < 0);
+                let storage_id node = match U.as_buffer node with
+                  | Some { buffer = { buffer = Some [buf]; _ }; _ } -> Storage.id buf
+                  | _ -> fail "expected owned storage"
+                in
+                is_false ~msg:"cached schedule instantiates a fresh storage owner"
+                  (storage_id cached_tmp = storage_id arg1)
             | None -> failwith "expected fresh BUFFER")
        | _ -> failwith "expected single CALL with two args")
   | _ -> failwith "expected single scheduled item"

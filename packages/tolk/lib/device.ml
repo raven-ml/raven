@@ -9,47 +9,8 @@ open Tolk_uop
 
 (* Buffer + Allocators *)
 
-module Buffer_spec = struct
-  type t = {
-    uncached : bool;
-    cpu_access : bool;
-    host : bool;
-    nolru : bool;
-    external_ptr : nativeint option;
-  }
-
-  let default =
-    {
-      uncached = false;
-      cpu_access = false;
-      host = false;
-      nolru = false;
-      external_ptr = None;
-    }
-end
-
-module Allocator = struct
-  type 'buf transfer = dest:'buf -> src:'buf -> int -> unit
-
-  type host_view =
-    (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-  type 'buf t = {
-    alloc : int -> Buffer_spec.t -> 'buf;
-    free : 'buf -> int -> Buffer_spec.t -> unit;
-    copyin : 'buf -> bytes -> unit;
-    copyout : bytes -> 'buf -> unit;
-    as_buffer : ('buf -> int -> host_view) option;
-    addr : 'buf -> nativeint;
-    offset : ('buf -> int -> int -> 'buf) option;
-    transfer : 'buf transfer option;
-    supports_transfer : bool;
-    copy_from_disk : ('buf -> 'buf -> int -> unit) option;
-    supports_copy_from_disk : bool;
-  }
-
-  type packed = Pack : 'buf t -> packed
-end
+module Buffer_spec = Storage.Buffer_spec
+module Allocator = Storage.Allocator
 
 module Lru_allocator = struct
   (* Buffers are freed by GC finalisers, which can run inside any allocation,
@@ -103,274 +64,7 @@ module Lru_allocator = struct
     }
 end
 
-module Buffer = struct
-  type 'buf storage = Unallocated | Empty | Backing of 'buf
-
-  type 'buf raw = {
-    id : int;
-    device : string;
-    size : int;
-    dtype : Dtype.t;
-    spec : Buffer_spec.t;
-    allocator : 'buf Allocator.t;
-    mutable storage : 'buf storage;
-    base : 'buf raw option;
-    offset : int;
-    mutable uop_refcount : int;
-    mutable allocated_views : int;
-  }
-
-  type t = Pack : 'buf raw -> t
-
-  let next_id = Atomic.make 0
-  let fresh_id () = Atomic.fetch_and_add next_id 1
-
-  let rec base_raw (buf : 'buf raw) =
-    match buf.base with None -> buf | Some base -> base_raw base
-
-  let base (Pack buf as t) =
-    match buf.base with None -> t | Some _ -> Pack (base_raw buf)
-
-  let offset (Pack buf) = buf.offset
-  let uop_refcount (Pack buf) = (base_raw buf).uop_refcount
-  let id (Pack buf) = buf.id
-  let base_id (Pack buf) = (base_raw buf).id
-
-  let add_ref (Pack buf as t) cnt =
-    let base = base_raw buf in
-    base.uop_refcount <- base.uop_refcount + cnt;
-    t
-
-  let initialized buf = match buf.storage with Unallocated -> false | Empty | Backing _ -> true
-  let is_allocated (Pack buf) = initialized buf || initialized (base_raw buf)
-  let is_initialized (Pack buf) = initialized buf
-  let allocated_views (Pack buf) = (base_raw buf).allocated_views
-  let nbytes (Pack buf) = buf.size * Dtype.itemsize buf.dtype
-
-  let counts_as_used buf =
-    (not (String.starts_with ~prefix:"DISK" buf.device))
-    && Option.is_none buf.spec.external_ptr
-
-  let rec allocate (Pack buf as t) =
-    if initialized buf then invalid_arg "buffer already allocated";
-    if nbytes t = 0 then buf.storage <- Empty
-    else match buf.base with
-    | None ->
-        buf.storage <- Backing (buf.allocator.alloc (nbytes t) buf.spec);
-        if counts_as_used buf then
-          Helpers.Global_counters.add_mem_used buf.device (nbytes t)
-    | Some base ->
-        ensure_allocated (Pack base);
-        let offset =
-          match buf.allocator.offset with
-          | None -> invalid_arg "allocator offset is required for buffer views"
-          | Some f -> f
-        in
-        let base_buf =
-          match base.storage with Backing b -> b | Unallocated | Empty -> assert false
-        in
-        buf.storage <- Backing (offset base_buf (nbytes t) buf.offset);
-        base.allocated_views <- base.allocated_views + 1
-
-  and ensure_allocated t = if not (is_initialized t) then allocate t
-
-  let rec deallocate (Pack buf as t) =
-    match (buf.base, buf.storage) with
-    | _, Unallocated -> ()
-    | _, Empty -> buf.storage <- Unallocated
-    | None, Backing raw ->
-        (* Catch use-after-free early: freeing a base while views still
-           reference it would leave dangling pointers. *)
-        if buf.allocated_views <> 0 then
-          invalid_arg "base buffer still has allocated views";
-        if counts_as_used buf then
-          Helpers.Global_counters.add_mem_used buf.device (-nbytes t);
-        buf.allocator.free raw (nbytes t) buf.spec;
-        buf.storage <- Unallocated
-    | Some base, Backing _ ->
-        buf.storage <- Unallocated;
-        base.allocated_views <- base.allocated_views - 1
-
-  let checked_nbytes size dtype =
-    let itemsize = Dtype.itemsize dtype in
-    if size < 0 || (itemsize > 0 && size > max_int / itemsize) then
-      invalid_arg "buffer size is negative or exceeds the byte address range";
-    size * itemsize
-
-  let create ~device ~size ~dtype ?spec allocator =
-    ignore (checked_nbytes size dtype : int);
-    let spec = Option.value spec ~default:Buffer_spec.default in
-    match allocator with
-    | Allocator.Pack alloc ->
-        let raw =
-          {
-            id = fresh_id ();
-            device;
-            size;
-            dtype;
-            spec;
-            allocator = alloc;
-            storage = Unallocated;
-            base = None;
-            offset = 0;
-            uop_refcount = 0;
-            allocated_views = 0;
-          }
-        in
-        Gc.finalise (fun raw -> deallocate (Pack raw)) raw;
-        Pack raw
-
-  let device (Pack b) = b.device
-  let size (Pack b) = b.size
-  let dtype (Pack b) = b.dtype
-  let spec (Pack b) = b.spec
-  let supports_offset (Pack b) = Option.is_some b.allocator.offset
-  let device_prefix device =
-    match String.split_on_char ':' device with
-    | prefix :: _ -> prefix
-    | [] -> device
-
-  let same_backend a b =
-    String.equal (device_prefix a) (device_prefix b)
-
-  let supports_transfer (Pack dst) (Pack src) =
-    dst.allocator.supports_transfer
-    && Option.is_some dst.allocator.transfer
-    && same_backend dst.device src.device
-
-  let allocator (Pack b) = Allocator.Pack (base_raw b).allocator
-
-  let ensure_size t bytes =
-    let expected = nbytes t in
-    if Bytes.length bytes <> expected then
-      invalid_arg
-        (Printf.sprintf "buffer size mismatch: got %d bytes, expected %d"
-           (Bytes.length bytes) expected)
-
-  let copyin (Pack b as t) bytes =
-    ensure_size t bytes;
-    match b.storage with
-    | Unallocated -> invalid_arg "buffer is not allocated"
-    | Empty -> ()
-    | Backing raw -> b.allocator.copyin raw bytes
-
-  let copyout (Pack b as t) bytes =
-    ensure_size t bytes;
-    match b.storage with
-    | Unallocated -> invalid_arg "buffer is not allocated"
-    | Empty -> ()
-    | Backing raw -> b.allocator.copyout bytes raw
-
-  let as_buffer (Pack b as t) =
-    match b.storage with
-    | Unallocated -> invalid_arg "buffer is not allocated"
-    | Empty -> None
-    | Backing raw -> Option.map (fun f -> f raw (nbytes t)) b.allocator.as_buffer
-
-  let transfer ~dst:((Pack dst_raw) as dst) ~src:((Pack src_raw) as src) =
-    if size dst <> size src then invalid_arg "buffer transfer size mismatch";
-    if not (Dtype.equal (dtype dst) (dtype src)) then
-      invalid_arg "buffer transfer dtype mismatch";
-    if nbytes dst = 0 then begin
-      ensure_allocated dst;
-      ensure_allocated src;
-      true
-    end else match dst_raw.allocator.transfer with
-    | Some transfer
-      when dst_raw.allocator.supports_transfer
-           && same_backend dst_raw.device src_raw.device ->
-        ensure_allocated dst;
-        ensure_allocated src;
-        let dest =
-          match dst_raw.storage with Backing raw -> raw | Unallocated | Empty -> assert false
-        in
-        let src =
-          match src_raw.storage with Backing raw -> raw | Unallocated | Empty -> assert false
-        in
-        (* Allocator raw buffer types are hidden by [Buffer.t].  tinygrad's
-           transfer fast path is selected by backend prefix; Tolk keeps the
-           same contract here, so same-prefix buffers must come from one
-           backend representation. *)
-        transfer ~dest ~src:(Obj.magic src) (nbytes dst);
-        true
-    | Some _ | None -> false
-
-  let as_bytes t =
-    let buf = Bytes.create (nbytes t) in
-    copyout t buf;
-    buf
-
-  let view (Pack b as t) ~size ~dtype ~offset =
-    if offset < 0 then invalid_arg "buffer view offset must be non-negative";
-    if offset > nbytes t || (offset = nbytes t && size <> 0) then
-      invalid_arg "buffer view offset is outside the buffer";
-    let view_nbytes = checked_nbytes size dtype in
-    let base = base_raw b in
-    let remaining = nbytes (Pack base) - b.offset in
-    if offset > remaining || view_nbytes > remaining - offset then
-      invalid_arg "buffer view exceeds base buffer";
-    let absolute_offset = b.offset + offset in
-    let raw =
-      {
-        id = fresh_id ();
-        device = base.device;
-        size;
-        dtype;
-        spec = base.spec;
-        allocator = base.allocator;
-        storage = Unallocated;
-        base = Some base;
-        offset = absolute_offset;
-        uop_refcount = 0;
-        allocated_views = 0;
-      }
-    in
-    Gc.finalise (fun raw -> deallocate (Pack raw)) raw;
-    Pack raw
-
-  let addr (Pack b as t) =
-    ensure_allocated t;
-    match b.storage with
-    | Backing raw -> b.allocator.addr raw
-    | Empty -> Nativeint.zero
-    | Unallocated -> assert false
-
-  (* XXX: copy_between belongs in the engine layer, not the device layer.
-     tinygrad's buffer-to-buffer copies live in realize.py with fast paths
-     (disk, zero-copy via _as_buffer, device-to-device _transfer), and tolk's
-     engine has that path too ([Realize.exec_copy]).  This naive CPU bounce
-     survives for one caller: rune's single-device jit replay drives buffers
-     directly and opts out of the device registry the engine path resolves
-     through.  Delete it when that caller migrates. *)
-  let copy_between ~dst ~src =
-    if size dst <> size src then invalid_arg "buffer copy size mismatch";
-    if not (Dtype.equal (dtype dst) (dtype src)) then
-      invalid_arg "buffer copy dtype mismatch";
-    ensure_allocated dst;
-    ensure_allocated src;
-    let tmp = Bytes.create (nbytes src) in
-    copyout src tmp;
-    copyin dst tmp
-
-  (* Buffer-to-buffer copy is a scheduled device operation, not a device-layer
-     primitive: the executor lives in the engine, which installs it here once
-     at initialization.  Keeping a single installer avoids a cyclic dependency
-     between this module and the engine while letting [copy_from] present a
-     stable contract. *)
-  let copy_runner : (dst:t -> src:t -> unit) ref =
-    ref (fun ~dst:_ ~src:_ ->
-      invalid_arg
-        "Device.Buffer.copy_from: no copy runner installed; link the realize \
-         engine to route buffer copies")
-
-  let install_copy_runner f = copy_runner := f
-
-  let copy_from ~dst ~src =
-    if size dst <> size src then invalid_arg "buffer copy size mismatch";
-    if not (Dtype.equal (dtype dst) (dtype src)) then
-      invalid_arg "buffer copy dtype mismatch";
-    !copy_runner ~dst ~src
-end
+module Buffer = Storage
 
 (* Compiled devices *)
 
@@ -467,10 +161,28 @@ type t = {
 
 type device = t
 
+let canonicalize device =
+  let device =
+    match String.index_opt device ':' with
+    | Some i ->
+        String.uppercase_ascii (String.sub device 0 i)
+        ^ String.sub device i (String.length device - i)
+    | None -> String.uppercase_ascii device
+  in
+  let len = String.length device in
+  if len >= 2 && String.equal (String.sub device (len - 2) 2) ":0" then
+    String.sub device 0 (len - 2)
+  else device
+
+let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
+let opened : (string, t) Hashtbl.t = Hashtbl.create 8
+
 let make ~name ~allocator ~renderer_set ~runtime ~synchronize
     ?invalidate_caches ?graph () =
-  { name; allocator; renderer_set; runtime; synchronize;
-    invalidate_caches_fn = invalidate_caches; graph }
+  let device = { name; allocator; renderer_set; runtime; synchronize;
+    invalidate_caches_fn = invalidate_caches; graph } in
+  Hashtbl.replace opened (canonicalize name) device;
+  device
 
 let name d = d.name
 let renderer d = Renderer_set.select d.renderer_set
@@ -528,24 +240,13 @@ let invalidate_caches d = Option.iter (fun f -> f ()) d.invalidate_caches_fn
    by a scheduled graph through [get], so multi-device schedules can span
    device instances the caller never opened itself. *)
 
-let canonicalize device =
-  let device =
-    match String.index_opt device ':' with
-    | Some i ->
-        String.uppercase_ascii (String.sub device 0 i)
-        ^ String.sub device i (String.length device - i)
-    | None -> String.uppercase_ascii device
-  in
-  let len = String.length device in
-  if len >= 2 && String.equal (String.sub device (len - 2) 2) ":0" then
-    String.sub device 0 (len - 2)
-  else device
-
-let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
-let opened : (string, t) Hashtbl.t = Hashtbl.create 8
-
 let register prefix opener =
   Hashtbl.replace openers (String.uppercase_ascii prefix) opener
+
+let device_prefix device =
+  match String.index_opt device ':' with
+  | Some i -> String.sub device 0 i
+  | None -> device
 
 let get device =
   let device = canonicalize device in
@@ -553,12 +254,14 @@ let get device =
   | Some d -> d
   | None ->
       let d =
-        match Hashtbl.find_opt openers (Buffer.device_prefix device) with
+        match Hashtbl.find_opt openers (device_prefix device) with
         | Some create -> create device
         | None -> failwith (Printf.sprintf "unknown device %S" device)
       in
       Hashtbl.replace opened device d;
       d
+
+let () = Storage.install_allocator_resolver (fun name -> (get name).allocator)
 
 module Multi_buffer = struct
   type t = { bufs : Buffer.t list }

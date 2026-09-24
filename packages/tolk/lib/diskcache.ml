@@ -16,7 +16,7 @@
    spelled. The key still matches, so the entry is still found, and it is now
    an answer to a different question. Renaming a variant and reusing the old
    name for a new concept does exactly this. Bump for those too. *)
-let cache_version = 29
+let cache_version = 30
 
 let cache_dir =
   let base =
