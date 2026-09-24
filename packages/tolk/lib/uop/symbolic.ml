@@ -1686,12 +1686,13 @@ let symbolic : Upat.Pattern_matcher.t =
        if is_invalid_const f then None
        else Some (Uop.O.where c f t));
 
-    (* (c0 + x) < c1 -> x < (c1 - c0). *)
+    (* Integer (c0 + x) < c1 -> x < (c1 - c0). Float rounding prevents this. *)
     (let x = var "x"
      and c0 = cvar ~name:"c0" () and c1 = cvar ~name:"c1" () in
      O.((c0 + x) < c1) => fun bs ->
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       Some Uop.O.(x < (c1 - c0)));
+       if Dtype.is_int (Uop.dtype x) then Some Uop.O.(x < (c1 - c0))
+       else None);
 
     (* A range mod its own upper bound is just the range. *)
     (let end_p = var "end" in
@@ -2038,7 +2039,8 @@ let simplify_valid valid =
 let pm_simplify_valid =
   let open Upat in
   Pattern_matcher.make [
-    (op ~name:"valid" Ops.And => fun bs -> simplify_valid (bs $ "valid"));
+    (op ~dtype:Dtype.bool ~name:"valid" Ops.And => fun bs ->
+       simplify_valid (bs $ "valid"));
 
     (let cond = var "cond" and x = var "x" in
      where cond x invalid_pat => fun bs ->

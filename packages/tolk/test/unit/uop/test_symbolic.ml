@@ -798,6 +798,14 @@ let bool_cast_fold_tests =
 let lt_fold_tests =
   group "lt_fold"
     [
+      test "floating comparison preserves rounding before comparison" (fun () ->
+          let x = U.variable ~name:"rounded" ~min_val:0 ~max_val:2
+              ~dtype:D.float64 () in
+          let c value = U.const (C.float D.float64 value) in
+          let expr = U.O.((c 1e16 + x) < c (1e16 +. 2.)) in
+          let got = simplify expr in
+          let evaluated = simplify (U.substitute [ x, c 1.5 ] got) in
+          equal bool false (const_bool evaluated));
       test "lt mul fold: 2*x < 10 → x < 5" (fun () ->
           let x = var "x" 0 100 in
           let expr =
@@ -1159,6 +1167,18 @@ let simplify_valid_tests =
   in
   group "simplify_valid"
     [
+      test "integer bitwise and retains its value" (fun () ->
+          let x = U.cast ~src:(var "bits" 0 15) ~dtype:Dtype.int32 in
+          let mask = U.const (Const.int Dtype.int32 12) in
+          let expr = U.alu_binary ~op:Ops.And
+              ~lhs:(U.alu_binary ~op:Ops.And ~lhs:x ~rhs:mask) ~rhs:x in
+          let got = fixpoint expr in
+          for value = 0 to 15 do
+            let bound = U.const (Const.int Dtype.int32 value) in
+            let evaluated = fixpoint (U.substitute [ x, bound ] got) in
+            equal ~msg:(Printf.sprintf "bits=%d" value) int (value land 12)
+              (const_int evaluated)
+          done);
       test "a clause its peers depend on is folded in first" (fun () ->
           let x, y, narrow, valid = predicate () in
           let got = fixpoint valid in

@@ -54,7 +54,8 @@ val symbolic : Upat.Pattern_matcher.t
       including {!Ops.Floordiv} when the outer divisor is positive);
     - const-tail canonicalisation for [+] and [*] so constants float
       to the right;
-    - [Cmplt] with a shifted constant sum ([(c0 + x) < c1 -> x < c1 - c0]);
+    - integer [Cmplt] with a shifted constant sum
+      ([(c0 + x) < c1 -> x < c1 - c0]);
     - range-bound specialisations (a {!Ops.Range} modulo or divided by
       its own upper bound, and any node whose analysis bounds coincide
       folds to that constant);
@@ -73,7 +74,7 @@ val index_pushing : Upat.Pattern_matcher.t
     [pm_reduce + index_pushing], not the full symbolic matcher. *)
 
 val pm_simplify_valid : Upat.Pattern_matcher.t
-(** [pm_simplify_valid] simplifies validity predicates and gated weakint
+(** [pm_simplify_valid] simplifies boolean validity predicates and gated weakint
     indices. *)
 
 val pm_drop_and_clauses : Upat.Pattern_matcher.t

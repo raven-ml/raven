@@ -294,6 +294,14 @@ thread.
 
 ### Tolk (new)
 
+- Preserve floating-point rounding when simplifying comparisons with added
+  constants. The rewrite `(c0 + x) < c1` to `x < c1 - c0` now applies only
+  to integers.
+
+- Fix symbolic simplification changing integer bit masks into multiplication.
+  Validity-predicate rewrites now apply only to booleans, preserving expressions
+  such as `(x & 12) & x`.
+
 - `Uop.vmin`, `Uop.vmax` and parameter bounds retain exact integers and
   floating-point limits. Weak scalars can commit to `uint64`; values beyond
   all supported integer widths are rejected instead of silently narrowing.
