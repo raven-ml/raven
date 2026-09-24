@@ -276,7 +276,7 @@ let () =
   ignore (Rune.grad' f (Nx.scalar Nx.float32 2.0))
 ```
 
-Rune still provides `scan`, `cond`, and `while_loop` — not because you need them today, but because their signatures are staging-ready: code written with them differentiates and vectorizes now, and a future staging `jit` can trace them as structured control flow. Today `jit` unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates. `lax.scan`'s carry-and-stacked-outputs contract translates directly:
+Rune still provides `scan`, `cond`, and `while_loop` because they give a loop a structure the compiler can see: `jit` compiles `scan` as a loop, forward and reverse, and rejects data-dependent `cond`/`while_loop` predicates. `lax.scan`'s carry-and-stacked-outputs contract translates directly, with one module per structure, where JAX infers pytrees:
 
 ```python
 final, ys = jax.lax.scan(f, init, xs)
@@ -284,7 +284,8 @@ final, ys = jax.lax.scan(f, init, xs)
 
 <!-- $MDX skip -->
 ```ocaml
-let final, ys = Rune.scan (module Carry) ~f ~init xs
+let final, ys = Rune.scan' ~f ~init xs (* single tensors *)
+let final, ys = Rune.scan (module Carry) (module Rows) (module Outputs) ~f ~init xs
 ```
 
 ---
@@ -351,7 +352,7 @@ The trade-off surfaces under `vmap`: with explicit keys you would pass one key p
 
 | JAX feature | Status in rune |
 | --- | --- |
-| `jax.jit` | `jit (module P) f` compiles to fused kernels, cached per leaf signature. It unrolls `scan` and rejects data-dependent `cond`/`while_loop` predicates. |
+| `jax.jit` | `jit (module P) f` compiles to fused kernels, cached per leaf signature. It compiles `scan` as a loop and rejects data-dependent `cond`/`while_loop` predicates. |
 | GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~device:"CUDA"`/`"METAL"` runs compiled steps on GPU. `Rune.to_device` holds a tensor's bytes on a device, and a compiled function that captures it uses that buffer with no upload. |
 | `jax.pmap` / distributed | Not implemented. |
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
@@ -384,7 +385,7 @@ Rune's failure model is deliberate: operations without a rule raise `Invalid_arg
 | Jacobian | `jacfwd` / `jacrev` | `jacfwd'` / `jacrev'` |
 | Hessian | `jax.hessian(f)(x)` | `hessian' f x` |
 | HVP | `jvp`-of-`grad` recipe | `hvp` / `hvp'` |
-| Scan | `jax.lax.scan(f, init, xs)` | `scan (module C) ~f ~init xs` |
+| Scan | `jax.lax.scan(f, init, xs)` | `scan' ~f ~init xs`, or `scan (module C) (module X) (module Y) ~f ~init xs` over structures |
 | Stop gradient | `jax.lax.stop_gradient(x)` | `detach x` |
 | Block region from AD | — | `no_grad (fun () -> ...)` |
 | Gradient check | `check_grads(f, (x,), 1)` | `check_grads (module P) f params` |

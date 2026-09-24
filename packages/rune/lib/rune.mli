@@ -32,6 +32,9 @@
     let grads = Rune.grad (module Params) loss params
     ]}
 
+    A transformation that takes several structures takes their modules in the
+    order their types appear in the type of its function argument.
+
     A structure is a positional sequence of leaves. A tensor that sits behind
     two leaves is two parameters that happen to be equal: each gets its own
     gradient, and each is its own input of a compiled function, free to differ
@@ -762,22 +765,47 @@ val reset_jit_stats : unit -> unit
     {!cond} and {!while_loop} predicates. *)
 
 val scan :
-  (module Ptree.S with type t = 'p) ->
-  f:('p -> ('a, 'b) Nx.t -> 'p * ('c, 'd) Nx.t) ->
-  init:'p ->
-  ('a, 'b) Nx.t ->
-  'p * ('c, 'd) Nx.t
-(** [scan (module C) ~f ~init xs] folds [f] over slices of [xs] along axis 0:
-    [f carry x] returns the next carry and a per-step output. The result is the
-    final carry and the outputs stacked along a new axis 0. Under {!val-jit} the
-    fold step compiles once and runs as a loop in the compiled program, and
-    differentiating compiles a reversed loop over the step's pullback. Staging
-    needs the carry to keep its shapes across steps; a fold that changes them —
-    or one reached through {!val-vmap} or {!val-pmap} — unrolls into the
+  (module Ptree.S with type t = 'c) ->
+  (module Ptree.S with type t = 'x) ->
+  (module Ptree.S with type t = 'y) ->
+  f:('c -> 'x -> 'c * 'y) ->
+  init:'c ->
+  'x ->
+  'c * 'y
+(** [scan (module C) (module X) (module Y) ~f ~init xs] folds [f] over the rows
+    of [xs]: every leaf of [xs] has the same leading length [n], and step [i]
+    passes [f] the structure of row [i] of every leaf. [f carry x] returns the
+    next carry and the step's outputs; the result is the final carry and the
+    outputs, every leaf stacked along a new axis 0. A fold with nothing to emit
+    passes [(module Nx.Ptree)] for the outputs and returns [Nx.Ptree.list []].
+
+    Under {!val-jit} the fold step compiles once and runs as a loop in the
+    compiled program, and differentiating compiles a reversed loop over the
+    step's pullback. The loop reads row [i] of each leaf of [xs] in place, so
+    data that differs per step, such as the weights of stacked layers, belongs
+    in [xs]: reading it from a tensor [f] captures, for instance with
+    {!Nx.index.D} at a step counter, is a gather. The cotangent of [xs] is
+    stacked like the outputs, row [i] coming from step [i], while a captured
+    tensor's cotangent is the sum over the steps, accumulated on every one.
+    Staging needs the carry to keep its shapes across steps; a fold that changes
+    them — or one reached through {!val-vmap} or {!val-pmap} — unrolls into the
     compiled program instead. Everywhere else the scan folds eagerly, tracing
     every step.
 
-    Raises [Invalid_argument] if [xs] is a scalar or empty along axis 0. *)
+    {!scan'} is the form for single tensors, and {!Nx.Ptree.leaf} stands for a
+    role that is one.
+
+    Raises [Invalid_argument] if [xs] has no leaf, a scalar leaf or leaves of
+    different leading lengths, or if [n] is [0]. *)
+
+val scan' :
+  f:(('a, 'b) Nx.t -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t * ('e, 'f) Nx.t) ->
+  init:('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t ->
+  ('a, 'b) Nx.t * ('e, 'f) Nx.t
+(** [scan' ~f ~init xs] is {!scan} for a carry, rows and outputs that are single
+    tensors: it folds [f] over the slices of [xs] along axis 0 and returns the
+    final carry and the outputs stacked along a new axis 0. *)
 
 val cond :
   (bool, Nx.bool_elt) Nx.t -> then_:(unit -> 'r) -> else_:(unit -> 'r) -> 'r

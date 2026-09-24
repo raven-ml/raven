@@ -174,67 +174,72 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                 in
                 continue k res
               else
-                match Effect.perform (Scan.E_scan req) with
+                match
+                  Effect.perform (Scan.E_scan { req with req_record = true })
+                with
                 | res ->
                     let Scan.
                           {
-                            r_carry = Scan.Packed_c (_, c');
-                            r_y = Scan.Packed_t ys;
+                            r_carry = Scan.Tree (_, c');
+                            r_ys = Scan.Tree (ymod, ys);
                           } =
                       res
                     in
                     let Scan.
                           {
-                            req_carry = Scan.Packed_c (cmod, c0);
-                            req_x = Scan.Packed_t xs0;
+                            req_carry = Scan.Tree (cmod, c0);
+                            req_xs = Scan.Tree (xmod, xs0);
                             req_step = step;
+                            _;
                           } =
                       req
                     in
                     let module C = (val cmod) in
+                    let module X = (val xmod) in
+                    let module Y = (val ymod) in
                     (* Both packs bind this module's [t]. *)
                     let c' = Obj.magic c' in
-                    track ys;
+                    Y.iter (fun (type a b) (leaf : (a, b) t) -> track leaf) ys;
                     C.iter (fun (type a b) (leaf : (a, b) t) -> track leaf) c';
                     Tape.record tape (fun () ->
-                        let dy = Tape.cotangent tape ys in
-                        let dc =
-                          C.map
+                        let cotangents (type a)
+                            (module P : Nx.Ptree.S with type t = a) (v : a) =
+                          P.map
                             (fun (type a b) (leaf : (a, b) t) ->
                               Tape.cotangent tape leaf)
-                            c'
+                            v
                         in
                         let bwd =
                           Scan.
                             {
                               bwd_step = step;
-                              bwd_carry = Scan.Packed_c (cmod, c0);
-                              bwd_x = Scan.Packed_t xs0;
-                              bwd_n = (T.shape xs0).(0);
-                              bwd_dc = Scan.Packed_c (cmod, dc);
-                              bwd_dy = Scan.Packed_t dy;
-                              bwd_y_shape =
-                                Array.sub (T.shape ys) 1
-                                  (Array.length (T.shape ys) - 1);
+                              bwd_carry = Scan.Tree (cmod, c0);
+                              bwd_xs = Scan.Tree (xmod, xs0);
+                              bwd_dc = Scan.Tree (cmod, cotangents cmod c');
+                              bwd_dys = Scan.Tree (ymod, cotangents ymod ys);
                             }
                         in
                         match Effect.perform (Scan.E_scan_bwd bwd) with
                         | Scan.
                             {
-                              br_carry = Scan.Packed_c (_, dc0);
-                              br_y = Scan.Packed_t dxs;
+                              br_carry = Scan.Tree (_, dc0);
+                              br_xs = Scan.Tree (_, dxs);
                               br_closed;
                             } ->
-                            let dc0 = Obj.magic dc0 in
-                            let dxs = Obj.magic dxs in
-                            ignore
-                              (C.map2
-                                 (fun (type a b) (a : (a, b) t) (b : (a, b) t)
-                                    ->
-                                   Tape.accumulate tape a b;
-                                   b)
-                                 c0 dc0);
-                            Tape.accumulate tape xs0 dxs;
+                            let accumulate (type a)
+                                (module P : Nx.Ptree.S with type t = a) (v : a)
+                                dv =
+                              ignore
+                                (P.map2
+                                   (fun (type a b) (a : (a, b) t) (b : (a, b) t)
+                                      ->
+                                     if Tape.tracked tape a then
+                                       Tape.accumulate tape a b;
+                                     b)
+                                   v (Obj.magic dv))
+                            in
+                            accumulate cmod c0 dc0;
+                            accumulate xmod xs0 dxs;
                             (* External inputs of the loop (tensors the body
                                closes over): accumulate the cotangents the
                                backward loop totalled for them. Only a tensor

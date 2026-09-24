@@ -680,8 +680,7 @@ let test_grad_through_scan_inside_pmap () =
   let loss x =
     let rows = (Nx.shape x).(0) in
     let _, ys =
-      Rune.scan
-        (module Single_f32)
+      Rune.scan'
         ~f:(fun c col ->
           let c = Nx.tanh (Nx.add c col) in
           (c, Nx.mul c c))

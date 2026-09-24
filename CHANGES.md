@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.scan (module C) (module X) (module Y)` folds over structures, `scan'`
+  over single tensors, and `Nx.Ptree.leaf` fills a single-tensor role. Put
+  per-step data such as stacked layer weights in `xs`: `jit` reads it in place.
 - A `Rune.scan` staged under `Rune.jit` replays its body as batched device
   graphs instead of launching each kernel: a 64-step scan on Metal goes from
   18.5 ms to 6.4 ms.

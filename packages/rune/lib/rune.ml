@@ -475,16 +475,13 @@ let check_grads (type p) ?(eps = 1e-4) ?(tol = 1e-2)
     (fun acc d -> match acc with Ok () -> check d | e -> e)
     (Ok ()) directions
 
-(* Control flow. Eager implementations with staging-ready signatures: a future
-   jit stages these as structured control flow instead of unrolled traces.
-   [scan] attempts the staged [Scan.E_scan] effect; when no handler claims it,
-   the eager fold below runs, observed by whatever transformation handlers are
-   installed. *)
+(* Control flow. [scan] attempts the staged [Scan.E_scan] effect, which jit
+   compiles as a loop; when no handler claims it, the eager fold runs, observed
+   by whatever transformation handlers are installed. [cond] and [while_loop]
+   run eagerly. *)
 
-let scan (type p) (module C : Ptree.S with type t = p)
-    ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t) ~(init : C.t)
-    (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
-  Scan.scan (module C) ~f ~init xs
+let scan = Scan.scan
+let scan' ~f ~init xs = Scan.scan Ptree.leaf Ptree.leaf Ptree.leaf ~f ~init xs
 
 let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
     ~(else_ : unit -> 'r) : 'r =

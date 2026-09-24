@@ -70,25 +70,13 @@ let test_graph_batched_replay () =
 (* A staged scan's body replays as one device graph per iteration, the slot
    buffers rebound between iterations patched into it, instead of launching its
    kernels one by one. *)
-module Vec = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    f a b
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
-end
-
 let test_scan_body_replays_as_a_graph () =
   let w =
     Nx.create f32 [| 4; 4 |]
       (Array.init 16 (fun i -> (float_of_int (i mod 5) /. 4.0) -. 0.5))
   in
   let fold xs =
-    Rune.scan
-      (module Vec)
+    Rune.scan'
       ~f:(fun c x ->
         let c =
           Nx.tanh

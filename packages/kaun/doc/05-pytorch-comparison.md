@@ -238,7 +238,7 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 | PyTorch feature | Status in kaun |
 | --- | --- |
 | GPU / `model.to("cuda")` | Eager execution is CPU-only; compile a step with `Rune.jit` and pass `~device:"CUDA"` or `~device:"METAL"`. |
-| `torch.compile` / JIT | `Rune.jit` compiles a step (note it unrolls `Rune.scan`). |
+| `torch.compile` / JIT | `Rune.jit` compiles a step, and a `Rune.scan` in it as a loop. |
 | Layer coverage | Deliberately small: no recurrent layers; `Attention` covers grouped queries, rotary embeddings (`Rope`) and cached decoding (`Attention.cached`) and nothing beyond, no sliding windows or cross-attention layer; `Conv` is im2col-based and not tuned for large inputs. |
 | Mixed precision / AMP | Manual: cast with `map (Nx.cast dt)` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |
 | `DataLoader` workers | No; data is in-memory tensors and a `Seq.t`. |

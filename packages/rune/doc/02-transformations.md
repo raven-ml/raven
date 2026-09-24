@@ -357,14 +357,13 @@ Ordinary OCaml control flow — `if`, `match`, loops, recursion — works inside
 
 ### scan
 
-`scan (module C) ~f ~init xs` folds `f` over slices of `xs` along axis 0; `f carry x` returns the next carry and a per-step output. The result is the final carry and the outputs stacked along a new axis 0:
+`scan' ~f ~init xs` folds `f` over the slices of `xs` along axis 0; `f carry x` returns the next carry and a per-step output. The result is the final carry and the outputs stacked along a new axis 0:
 
 ```ocaml
 let () =
   let xs = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
   let final, partials =
-    Rune.scan
-      (module Vec)
+    Rune.scan'
       ~f:(fun c x ->
         let c = Nx.add c x in
         (c, c))
@@ -375,7 +374,42 @@ let () =
   (* the running sums [1. 3. 6. 10.] *)
 ```
 
-Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop over the step's pullback — the compiled program's size does not depend on the number of steps. Staging needs the carry to keep its shapes across steps; a fold that changes them, or one reached through `vmap` or `pmap`, unrolls into the compiled program instead. Everywhere outside `jit` the scan folds eagerly and differentiating traces every step.
+`scan (module C) (module X) (module Y) ~f ~init xs` is the same fold over structures: one module each for the carry, the rows and the outputs, in the order of `f`'s type. Every leaf of `xs` has the same leading length, step `i` receives row `i` of every leaf, and every leaf of the outputs is stacked. `Nx.Ptree.leaf` stands for a role that is a single tensor:
+
+```ocaml
+module Moments = struct
+  type t = { sum : Nx.float32_t; squares : Nx.float32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) m =
+    { sum = f m.sum; squares = f m.squares }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) m m' =
+    { sum = f m.sum m'.sum; squares = f m.squares m'.squares }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) m =
+    f m.sum;
+    f m.squares
+end
+
+let () =
+  let xs = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let m, _ =
+    Rune.scan (module Moments) Nx.Ptree.leaf Nx.Ptree.leaf
+      ~f:(fun m x ->
+        ( { Moments.sum = Nx.add m.Moments.sum x;
+            squares = Nx.add m.squares (Nx.mul x x) },
+          x ))
+      ~init:{ Moments.sum = Nx.scalar Nx.float32 0.0;
+              squares = Nx.scalar Nx.float32 0.0 }
+      xs
+  in
+  Printf.printf "sum %s, squares %s\n" (Nx.to_string m.sum)
+    (Nx.to_string m.squares)
+```
+
+Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop over the step's pullback — the compiled program's size does not depend on the number of steps. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
+
+Staging needs the carry to keep its shapes across steps; a fold that changes them, or one reached through `vmap` or `pmap`, unrolls into the compiled program instead. Everywhere outside `jit` the scan folds eagerly and differentiating traces every step.
 
 ### cond and while_loop
 

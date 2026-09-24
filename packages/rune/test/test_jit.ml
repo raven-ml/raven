@@ -90,7 +90,7 @@ let test_jit_under_vmap_is_transparent () =
    the LAPACK conventions: the reflector sign, and a column with a zero tail
    taking no reflector at all. *)
 
-(* A single-tensor structure: jit2's input or output, or a scan carry. *)
+(* A single-tensor structure: jit2's input or output. *)
 module Csingle = struct
   type t = Nx.float32_t
 
@@ -392,8 +392,7 @@ let test_solve_matches_eager () =
    (unrolled) scan and the eager gradient. *)
 
 let cumsum xs =
-  Rune.scan
-    (module Csingle)
+  Rune.scan'
     ~f:(fun c x ->
       let c = Nx.add c x in
       (c, c))
@@ -428,8 +427,7 @@ let test_grad_through_scan_matches_eager () =
      records. *)
   let loss xs =
     let c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let c = Nx.tanh (Nx.add c x) in
           (c, c))
@@ -465,8 +463,7 @@ let test_grad_through_scan_carry_only () =
      zero. *)
   let loss xs =
     let c, _ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let c = Nx.mul c x in
           (c, c))
@@ -484,6 +481,7 @@ let test_grad_through_scan_multi_leaf () =
     let p, ys =
       Rune.scan
         (module Pair)
+        Nx.Ptree.leaf Nx.Ptree.leaf
         ~f:(fun p x ->
           let u = Nx.add p.u x and v = Nx.mul p.v x in
           ({ u; v }, Nx.mul u v))
@@ -505,6 +503,7 @@ let test_grad_through_scan_asymmetric_pair () =
     let p, ys =
       Rune.scan
         (module Pair)
+        Nx.Ptree.leaf Nx.Ptree.leaf
         ~f:(fun p x ->
           let u = Nx.tanh (Nx.add p.u x) and v = Nx.mul p.v (Nx.add_s x 0.5) in
           ({ u; v }, Nx.add (Nx.mul_s u 2.0) v))
@@ -529,8 +528,7 @@ let test_scan_shape_unstable_carry_unrolls () =
      trace, forward and under grad. *)
   let loss xs =
     let c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           (Nx.concatenate ~axis:0 [ c; Nx.reshape [| 1 |] x ], Nx.sum c))
         ~init:(Nx.zeros f32 [| 1 |]) xs
@@ -547,12 +545,10 @@ let test_grad_through_scan_nested () =
   (* The body itself scans (over the elements of a vector x). *)
   let loss xs =
     let c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let ci, inner =
-            Rune.scan
-              (module Csingle)
+            Rune.scan'
               ~f:(fun ci xi ->
                 let ci = Nx.add ci xi in
                 (ci, Nx.mul ci xi))
@@ -575,8 +571,7 @@ let test_grad_through_scan_captured_weight () =
   let w = vec32 [| 2.0 |] in
   let loss xs =
     let _c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let c = Nx.add c (Nx.mul x (Nx.reshape [||] w)) in
           (c, Nx.mul c c))
@@ -592,8 +587,7 @@ let test_grad_through_scan_captured_weight () =
 let test_grad_through_scan_vector_carry () =
   let loss xs =
     let c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let c = Nx.tanh (Nx.add c x) in
           (c, Nx.mul c c))
@@ -609,20 +603,97 @@ let test_grad_through_scan_vector_carry () =
 (* A loop steps through its stacked rows at a stride padded to 16 bytes, so rows
    that fall short of it (five halves, three floats) read and write only their
    own elements, forward and backward. *)
+(* Rows and outputs are structures: a stack of per-step weights and a mixed
+   float/int row, and two outputs. The cotangent of the rows is stacked like
+   them, row i from step i; the integer row gets none. *)
+module Rows = struct
+  type t = { w : Nx.float32_t; b : Nx.float32_t; step : Nx.int32_t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) r =
+    { w = f r.w; b = f r.b; step = f r.step }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) r r' =
+    { w = f r.w r'.w; b = f r.b r'.b; step = f r.step r'.step }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) r =
+    f r.w;
+    f r.b;
+    f r.step
+end
+
+let layers xs =
+  Rune.scan Nx.Ptree.leaf
+    (module Rows)
+    (module Pair)
+    ~f:(fun h { Rows.w; b; step } ->
+      let h =
+        Nx.tanh
+          (Nx.add
+             (Nx.reshape [| 3 |] (Nx.matmul (Nx.reshape [| 1; 3 |] h) w))
+             b)
+      in
+      (h, { Pair.u = h; v = Nx.mul_s (Nx.cast f32 step) 2.0 }))
+    ~init:(vec32 [| 0.5; -0.25; 1.0 |])
+    xs
+
+let rows () =
+  {
+    Rows.w =
+      Nx.create f32 [| 4; 3; 3 |]
+        (Array.init 36 (fun i -> (Float.of_int (i * 5 mod 7) /. 7.0) -. 0.4));
+    b =
+      Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> Float.of_int i /. 12.0));
+    step = Nx.arange Nx.int32 0 4 1;
+  }
+
+let test_scan_over_structured_rows () =
+  let xs = rows () in
+  let h, ys = layers xs in
+  let g = Rune.jit2 (module Rows) (module Pair) (fun xs -> snd (layers xs)) in
+  let ys' = g xs in
+  check_arr ~msg:"first output" (to_arr ys.Pair.u) ys'.Pair.u;
+  check_arr ~msg:"second output" (to_arr ys.Pair.v) ys'.Pair.v;
+  check_arr ~msg:"final carry" (to_arr h)
+    (Rune.jit2 (module Rows) (module Csingle) (fun xs -> fst (layers xs)) xs);
+  let loss xs =
+    let h, ys = layers xs in
+    Nx.add (Nx.sum h) (Nx.sum (Nx.mul ys.Pair.u ys.Pair.u))
+  in
+  let expected = Rune.grad (module Rows) loss xs in
+  let actual =
+    Rune.jit2
+      (module Rows)
+      (module Rows)
+      (fun xs -> Rune.grad (module Rows) loss xs)
+      xs
+  in
+  check_arr ~msg:"stacked weights' cotangent" (to_arr expected.Rows.w)
+    actual.Rows.w;
+  check_arr ~msg:"stacked biases' cotangent" (to_arr expected.Rows.b)
+    actual.Rows.b;
+  equal ~msg:"the integer row gets a zero cotangent" (array int32)
+    [| 0l; 0l; 0l; 0l |]
+    (Nx.to_array actual.Rows.step)
+
+let test_scan_rejects_ragged_rows () =
+  let bad xs =
+    ignore
+      (Rune.scan Nx.Ptree.leaf
+         (module Rows)
+         Nx.Ptree.leaf
+         ~f:(fun c _ -> (c, c))
+         ~init:(vec32 [| 0.0 |]) xs)
+  in
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> bad { (rows ()) with Rows.step = Nx.arange Nx.int32 0 3 1 });
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> bad { (rows ()) with Rows.step = Nx.scalar Nx.int32 0l })
+
 let test_scan_rows_short_of_16_bytes () =
   let fold xs =
-    Rune.scan
-      (module struct
-        type t = Nx.float16_t
-
-        let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) x = f x
-
-        let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a
-            b =
-          f a b
-
-        let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) x = f x
-      end)
+    Rune.scan'
       ~f:(fun c x ->
         let c = Nx.add (Nx.mul_s c 0.5) x in
         (c, Nx.mul c x))
@@ -642,8 +713,7 @@ let test_scan_rows_short_of_16_bytes () =
     (Nx.cast f32 (Rune.jit' (fun xs -> snd (fold xs)) xs));
   let loss xs =
     let c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let c = Nx.tanh (Nx.add c x) in
           (c, Nx.mul c x))
@@ -665,8 +735,7 @@ let test_grad_through_scan_external_input () =
   let loss (p : pair) =
     let w = p.Pair.u and xs = p.Pair.v in
     let c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let c = Nx.tanh (Nx.add (Nx.mul c (Nx.reshape [||] w)) x) in
           (c, c))
@@ -786,9 +855,7 @@ let test_grad_through_scan_external_matrices () =
       let x = Nx.tanh (Nx.add (Nx.matmul x p.Trio.a) (Nx.matmul ut p.Trio.b)) in
       (x, x)
     in
-    let _, ys =
-      Rune.scan (module Csingle) ~f:step ~init:(Nx.zeros f32 [| 2 |]) p.Trio.xs
-    in
+    let _, ys = Rune.scan' ~f:step ~init:(Nx.zeros f32 [| 2 |]) p.Trio.xs in
     Nx.sum ys
   in
   let p =
@@ -816,8 +883,7 @@ let test_grad_through_scan_matrix_carry () =
      flattened. *)
   let loss xs =
     let c, ys =
-      Rune.scan
-        (module Csingle)
+      Rune.scan'
         ~f:(fun c x ->
           let c = Nx.tanh (Nx.add c x) in
           (c, Nx.mul c c))
@@ -2532,6 +2598,9 @@ let tests =
         test "grad through a scan with a matrix carry"
           test_grad_through_scan_matrix_carry;
         test "scan rows short of 16 bytes" test_scan_rows_short_of_16_bytes;
+        test "a scan over structured rows" test_scan_over_structured_rows;
+        test "a scan rejects ragged or scalar rows"
+          test_scan_rejects_ragged_rows;
       ];
     group "sliding windows"
       [

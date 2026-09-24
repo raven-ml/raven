@@ -25,8 +25,7 @@ let v4 () = vec64 [| 0.5; -1.2; 2.1; 0.8 |]
 (* scan with a running-sum carry is a cumulative sum. *)
 let cumsum_scan xs =
   snd
-    (Rune.scan
-       (module Single)
+    (Rune.scan'
        ~f:(fun c x ->
          let c = Nx.add c x in
          (c, c))
@@ -39,10 +38,7 @@ let test_scan_is_cumsum () =
 
 let test_scan_final_carry () =
   let carry, _ =
-    Rune.scan
-      (module Single)
-      ~f:(fun c x -> (Nx.add c x, c))
-      ~init:(Nx.scalar f64 0.0) (v4 ())
+    Rune.scan' ~f:(fun c x -> (Nx.add c x, c)) ~init:(Nx.scalar f64 0.0) (v4 ())
   in
   check_arr ~msg:"carry" [| 0.5 -. 1.2 +. 2.1 +. 0.8 |] carry
 

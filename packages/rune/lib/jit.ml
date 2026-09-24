@@ -892,6 +892,52 @@ let add_rows_in_value st l ~slot ~numel ~n tt =
   in
   add_rows_in l ~slot ~numel ~stride node
 
+(* A staged body's slot: the placeholder the body receives for one leaf, bound
+   to a buffer node the loop rebinds per iteration. *)
+type body_slot = {
+  s_ph : Scan.packed_t;
+  s_node : U.t;
+  s_dt : TD.t;
+  s_shape : int array;
+}
+
+(* One slot per leaf of [tree], a row of it (its leading axis dropped) under
+   [row], and the structure over the slots' placeholders. *)
+let body_slots st ?(row = false) (Scan.Tree (m, t) as tree) =
+  let slots =
+    List.map
+      (fun (Scan.Packed_t leaf) ->
+        let shape = shape_of leaf in
+        let shape =
+          if row then Array.sub shape 1 (Array.length shape - 1) else shape
+        in
+        let ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) shape in
+        let dt = tolk_dtype (Nx_effect.dtype leaf) in
+        let node = make_node st dt (numel shape) in
+        Tbl.replace st.table (Obj.repr ph) (buffer_tensor node shape);
+        Tbl.replace st.traced (Obj.repr ph) ();
+        { s_ph = Scan.Packed_t ph; s_node = node; s_dt = dt; s_shape = shape })
+      (Scan.leaves tree)
+  in
+  (Scan.Tree (m, Scan.unflatten m t (List.map (fun s -> s.s_ph) slots)), slots)
+
+(* [tree]'s structure over fresh placeholders standing for [values], one
+   [(shape, value)] per leaf, of the leaf's dtype. *)
+let placeholders st (Scan.Tree (m, t) as tree) values =
+  let phs =
+    List.map2
+      (fun (Scan.Packed_t leaf) (shape, value) ->
+        let ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) shape in
+        Tbl.replace st.table (Obj.repr ph) value;
+        Tbl.replace st.traced (Obj.repr ph) ();
+        Scan.Packed_t ph)
+      (Scan.leaves tree) values
+  in
+  Scan.Tree (m, Scan.unflatten m t phs)
+
+let same_shapes leaves slots =
+  List.for_all2 (fun (Scan.Packed_t l) s -> shape_of l = s.s_shape) leaves slots
+
 (* Handler *)
 
 let rec handler : type r. state -> (r, r) Effect.Deep.handler =
@@ -1489,29 +1535,17 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   { retc = Fun.id; exnc = raise; effc }
 
 (* The forward scan: trace the body once, compile it as a sub-program, and emit
-   the loop call. The carry is a structure, so every tensor leaf has its own
-   buffer pair and carry-stack rows; leaves pair with their buffers by traversal
-   position (one [P.map]/[P.iter] instance visits leaves in a fixed order). The
-   carry stack is written every iteration — the backward loop reads it — and
-   carrying it always keeps the forward loop's shape independent of whether a
-   backward pass exists. *)
+   the loop call. The carry, the rows and the outputs are structures: every leaf
+   has its own slot, and slots pair with their buffers by traversal position
+   ([Scan.leaves], [Scan.unflatten]). A carry leaf is a buffer pair, a row leaf
+   is read at row [i] of its stacked input, and an output leaf is written at row
+   [i] of its stack. When a staged transpose will read them ([req_record]), the
+   body also writes the carry it receives to a carry stack. *)
 and stage_scan : type r.
     state -> Scan.scan_req -> (Scan.scan_res, r) Effect.Deep.continuation -> r =
  fun st req k ->
-  let Scan.
-        {
-          req_carry = Scan.Packed_c (cmod, c);
-          req_x = Scan.Packed_t x;
-          req_step = step;
-        } =
-    req
-  in
-  let module C = (val cmod) in
-  let xdt = Nx_effect.dtype x in
-  let x_shape = shape_of x in
-  let n = x_shape.(0) in
-  let x_shape = Array.sub x_shape 1 (Array.length x_shape - 1) in
-  let numel_x = numel x_shape in
+  let Scan.{ req_carry; req_xs; req_step = step; req_record } = req in
+  let n = Scan.length req_xs in
   (* Discover the body's external inputs — the differentiable tensors it closes
      over: everything the body runs through [tolk_of] that predates its trace is
      a free input of the loop. The backward loop accumulates their cotangents,
@@ -1540,53 +1574,18 @@ and stage_scan : type r.
           then closed := Scan.Packed_t t :: !closed);
     }
   in
-  (* Per-leaf carry slots, paired by identity: the slot placeholder is bound to
-     the leaf's input buffer node inside the map callback. The pairing is
-     recovered by traversing the slot structure with [C.iter] — a [C.map]
-     callback's side effects run in evaluation order (right-to-left for
-     constructor arguments), which need not match [C.iter]'s traversal order,
-     and the per-leaf lists below must all follow the latter. *)
-  let slot_ins = Tbl.create 4 in
-  let slot_c =
-    C.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let cdt = Nx_effect.dtype leaf in
-        let c_shape = shape_of leaf in
-        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
-        let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
-        Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
-        Tbl.replace st.traced (Obj.repr slot) ();
-        Tbl.replace slot_ins (Obj.repr slot) (tolk_dtype cdt, c_shape, c_in);
-        slot)
-      c
-  in
-  let slot_infos = ref [] in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-      let tdt, c_shape, c_in = Tbl.find slot_ins (Obj.repr leaf) in
-      let c_out = make_node st tdt (numel c_shape) in
-      slot_infos := (tdt, c_shape, c_in, c_out) :: !slot_infos)
-    slot_c;
-  let slot_infos = List.rev !slot_infos in
-  let slot_x = Nx_effect.symbolic st.st_ctx xdt x_shape in
-  let x_in = make_node st (tolk_dtype xdt) numel_x in
-  Tbl.replace st.table (Obj.repr slot_x) (buffer_tensor x_in x_shape);
-  Tbl.replace st.traced (Obj.repr slot_x) ();
+  let slot_c, c_slots = body_slots st req_carry in
+  let slot_x, x_slots = body_slots st ~row:true req_xs in
   (* Trace the body once under a nested copy of this tracer, collecting its
      external inputs. *)
-  let trace_body () =
-    Effect.Deep.match_with
-      (fun () -> step.run (Scan.Packed_c (cmod, slot_c)) (Scan.Packed_t slot_x))
-      () (handler st)
-  in
   st.scan_collectors <- collect :: st.scan_collectors;
   let c_next, y =
     Fun.protect
       ~finally:(fun () -> st.scan_collectors <- List.tl st.scan_collectors)
       (fun () ->
-        match trace_body () with
-        | Scan.Packed_c (_, c_next), Scan.Packed_t y ->
-            (Obj.magic c_next, Obj.magic y))
+        Effect.Deep.match_with
+          (fun () -> step.run slot_c slot_x)
+          () (handler st))
   in
   Tbl.replace st.scan_closed (Obj.repr step) !closed;
   (* A loop can only be compiled from a shape-stable carry (the single prototype
@@ -1594,132 +1593,116 @@ and stage_scan : type r.
      staging — the scan folds eagerly and unrolls into this trace, as every jit
      did before staging existed. The traced body's nodes are unreachable from
      any output and never get scheduled. *)
-  let stable = ref true in
-  let c_next =
-    C.map2
-      (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t) ->
-        if shape_of a <> shape_of b then stable := false;
-        a)
-      c_next c
-  in
-  if not !stable then Effect.Deep.discontinue k Scan.Not_staged
+  let c_next = Scan.leaves c_next in
+  if not (same_shapes c_next c_slots) then
+    Effect.Deep.discontinue k Scan.Not_staged
   else
-    let y_shape = shape_of y in
-    let numel_y = numel y_shape in
-    let y_dt = tolk_dtype (Nx_effect.dtype y) in
-    (* The body's output leaf nodes, in traversal order (the same order
-       [slot_infos] was collected in). *)
-    let c_next_nodes = ref [] in
-    C.iter
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        c_next_nodes := tolk_of st leaf :: !c_next_nodes)
-      c_next;
-    let c_next_nodes = List.rev !c_next_nodes in
-    let infos =
-      List.map2 (fun info node -> (info, node)) slot_infos c_next_nodes
+    let ys = Scan.leaves y in
+    let y_outs =
+      List.map
+        (fun (Scan.Packed_t y) ->
+          let shape = shape_of y in
+          ( tolk_dtype (Nx_effect.dtype y),
+            shape,
+            make_node st (tolk_dtype (Nx_effect.dtype y)) (numel shape),
+            tolk_of st y ))
+        ys
+    in
+    let c_outs =
+      List.map (fun s -> make_node st s.s_dt (numel s.s_shape)) c_slots
+    in
+    let stack_outs =
+      if req_record then
+        List.map (fun s -> make_node st s.s_dt (numel s.s_shape)) c_slots
+      else []
     in
     (* The body sub-program writes every output into a buffer the loop rebinds
-       per iteration: the next carry, the output row, and the carry-stack row, a
-       copy of the carry it received. *)
-    let y_out = make_node st y_dt numel_y in
-    let stack_outs =
-      List.map
-        (fun ((tdt, c_shape, _, _), _) -> make_node st tdt (numel c_shape))
-        infos
-    in
+       per iteration: the next carry, the output rows, and the carry-stack rows,
+       copies of the carry it received. *)
     let body_sink =
       U.sink
-        (List.map
-           (fun ((_, c_shape, _, c_out), node) ->
-             U.after ~src:c_out ~deps:[ store_flat c_out (numel c_shape) node ])
-           infos
-        @ [
-            U.after ~src:y_out ~deps:[ store_flat y_out numel_y (tolk_of st y) ];
-          ]
+        (List.map2
+           (fun (s, c_out) (Scan.Packed_t c) ->
+             U.after ~src:c_out
+               ~deps:[ store_flat c_out (numel s.s_shape) (tolk_of st c) ])
+           (List.combine c_slots c_outs)
+           c_next
+        @ List.map
+            (fun (_, shape, y_out, value) ->
+              U.after ~src:y_out ~deps:[ store_flat y_out (numel shape) value ])
+            y_outs
         @ List.map2
-            (fun ((_, c_shape, c_in, _), _) stack_out ->
+            (fun s stack_out ->
               U.after ~src:stack_out
                 ~deps:
                   [
-                    store_flat stack_out (numel c_shape)
-                      (buffer_tensor c_in c_shape);
+                    store_flat stack_out (numel s.s_shape)
+                      (buffer_tensor s.s_node s.s_shape);
                   ])
-            infos stack_outs)
+            (if req_record then c_slots else [])
+            stack_outs)
     in
     let body_linear = schedule_body_linear st body_sink in
     let l = loop () in
-    add_rows_in_value st l ~slot:x_in ~numel:numel_x ~n (tolk_of st x);
-    let inits = ref [] in
-    C.iter
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        inits := tolk_of st leaf :: !inits)
-      c;
+    List.iter2
+      (fun s (Scan.Packed_t x) ->
+        add_rows_in_value st l ~slot:s.s_node ~numel:(numel s.s_shape) ~n
+          (tolk_of st x))
+      x_slots (Scan.leaves req_xs);
     let pairs =
       List.map2
-        (fun ((tdt, c_shape, c_in, c_out), _) init ->
-          add_carry st l ~slot_in:c_in ~slot_out:c_out ~dt:tdt
-            ~numel:(numel c_shape) init)
-        infos (List.rev !inits)
+        (fun (s, c_out) (Scan.Packed_t c) ->
+          add_carry st l ~slot_in:s.s_node ~slot_out:c_out ~dt:s.s_dt
+            ~numel:(numel s.s_shape) (tolk_of st c))
+        (List.combine c_slots c_outs)
+        (Scan.leaves req_carry)
     in
-    let ys_buf, ys_stride =
-      add_rows_out st l ~slot:y_out ~dt:y_dt ~numel:numel_y ~n
+    let ys_rows =
+      List.map
+        (fun (dt, shape, y_out, _) ->
+          (shape, add_rows_out st l ~slot:y_out ~dt ~numel:(numel shape) ~n))
+        y_outs
     in
     let stacks =
       List.map2
-        (fun ((tdt, c_shape, _, _), _) stack_out ->
-          add_rows_out st l ~slot:stack_out ~dt:tdt ~numel:(numel c_shape) ~n)
-        infos stack_outs
+        (fun s stack_out ->
+          add_rows_out st l ~slot:stack_out ~dt:s.s_dt ~numel:(numel s.s_shape)
+            ~n)
+        (if req_record then c_slots else [])
+        stack_outs
     in
     let call = loop_call l ~body_linear ~reversed:false ~n in
     (* Register the carry stacks as outputs of the forward loop: the backward
        loop reads them, and only a graph-visible dependency keeps the forward
        loop reachable (and so scheduled) when the scan's declared outputs are
        dead — e.g. under [grad], which discards the loss value. *)
-    Tbl.replace st.scan_stacks (Obj.repr step)
-      (List.map (fun (buf, stride) -> (written_by call buf, stride)) stacks);
-    (* Pair each leaf with its final carry through the identity of its slot leaf
-       — slots are fresh, so unique — never positionally: [pairs] follows
-       [C.iter]'s stable order, and a [C.map] callback's evaluation order can
-       differ from it, silently crossing same-shaped leaves. *)
-    let final_afters = Tbl.create 4 in
-    (let rest = ref pairs in
-     C.iter
-       (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-         match !rest with
-         | pair :: tl ->
-             Tbl.replace final_afters (Obj.repr leaf)
-               (written_by call (final_carry ~n pair));
-             rest := tl
-         | [] -> assert false)
-       slot_c);
-    let c_final_ph =
-      C.map
-        (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-          let after = Tbl.find final_afters (Obj.repr leaf) in
-          let ph =
-            Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
-          in
-          Tbl.replace st.table (Obj.repr ph)
-            (buffer_tensor after (shape_of leaf));
-          Tbl.replace st.traced (Obj.repr ph) ();
-          ph)
-        slot_c
+    if req_record then
+      Tbl.replace st.scan_stacks (Obj.repr step)
+        (List.map (fun (buf, stride) -> (written_by call buf, stride)) stacks);
+    let r_carry =
+      placeholders st req_carry
+        (List.map2
+           (fun s pair ->
+             ( s.s_shape,
+               buffer_tensor (written_by call (final_carry ~n pair)) s.s_shape
+             ))
+           c_slots pairs)
     in
-    let ys_shape = Array.append [| n |] y_shape in
-    let ys_ph = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype y) ys_shape in
-    Tbl.replace st.table (Obj.repr ys_ph)
-      (rows_tensor (written_by call ys_buf) ~n ~stride:ys_stride y_shape);
-    Tbl.replace st.traced (Obj.repr ys_ph) ();
-    Effect.Deep.continue k
-      {
-        Scan.r_carry = Scan.Packed_c (cmod, c_final_ph);
-        r_y = Scan.Packed_t ys_ph;
-      }
+    let r_ys =
+      placeholders st y
+        (List.map
+           (fun (shape, (buf, stride)) ->
+             ( Array.append [| n |] shape,
+               rows_tensor (written_by call buf) ~n ~stride shape ))
+           ys_rows)
+    in
+    Effect.Deep.continue k { Scan.r_carry; r_ys }
 
 (* The backward scan (the transpose): capture the body's pullback against
    placeholder slot tensors — recomputing the forward step inside the body to
-   recover its residuals — and emit a reversed loop carrying the cotangent
-   double-buffers. Reads the carry of step i from the forward loop's stack.
+   recover its residuals — and emit a reversed loop carrying the carry's
+   cotangent. Reads the carry of step i from the forward loop's stack, and
+   writes the cotangent of row i of every floating-point row leaf.
 
    The body's external inputs (the differentiable tensors it closes over,
    observed by the forward staging) are tracked on the private tape, so the
@@ -1732,92 +1715,36 @@ and stage_scan_bwd : type r.
     (Scan.scan_bwd_res, r) Effect.Deep.continuation ->
     r =
  fun st bwd k ->
-  let Scan.
-        {
-          bwd_step = step;
-          bwd_carry = Scan.Packed_c (cmod, c0);
-          bwd_x = Scan.Packed_t xs0;
-          bwd_n = n;
-          bwd_dc = Scan.Packed_c (_, dc);
-          bwd_dy = Scan.Packed_t dy;
-          bwd_y_shape = y_shape;
-        } =
-    bwd
+  let Scan.{ bwd_step = step; bwd_carry; bwd_xs; bwd_dc; bwd_dys } = bwd in
+  let n = Scan.length bwd_xs in
+  let slot_c, c_slots = body_slots st bwd_carry in
+  let slot_x, x_slots = body_slots st ~row:true bwd_xs in
+  let _, dc_slots = body_slots st bwd_dc in
+  let _, dy_slots = body_slots st ~row:true bwd_dys in
+  let differentiable s =
+    let (Scan.Packed_t ph) = s.s_ph in
+    ND.is_float (Nx_effect.dtype ph)
   in
-  let module C = (val cmod) in
-  (* The two packs bind distinct existential instances; both are this module's
-     [t]. *)
-  let dc = Obj.magic dc in
-  let xdt = Nx_effect.dtype xs0 in
-  let x_shape = shape_of xs0 in
-  let x_shape = Array.sub x_shape 1 (Array.length x_shape - 1) in
-  let numel_x = numel x_shape in
-  let numel_y = numel y_shape in
-  (* The backward body's slots: the step's carry and element, the incoming carry
-     cotangent (a structure), and the output cotangent. The per-leaf nodes are
-     recovered by identity through [C.iter] passes: a [C.map] callback's side
-     effects run in evaluation order (right-to-left for constructor arguments),
-     which need not match [C.iter]'s traversal order. *)
-  let slot_ins = Tbl.create 4 in
-  let slot_c =
-    C.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let cdt = Nx_effect.dtype leaf in
-        let c_shape = shape_of leaf in
-        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
-        let c_in = make_node st (tolk_dtype cdt) (numel c_shape) in
-        Tbl.replace st.table (Obj.repr slot) (buffer_tensor c_in c_shape);
-        Tbl.replace st.traced (Obj.repr slot) ();
-        Tbl.replace slot_ins (Obj.repr slot) (tolk_dtype cdt, c_shape, c_in);
-        slot)
-      c0
-  in
-  let slot_infos = ref [] in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-      slot_infos := Tbl.find slot_ins (Obj.repr leaf) :: !slot_infos)
-    slot_c;
-  let slot_infos = List.rev !slot_infos in
-  let dc_ins = Tbl.create 4 in
-  let slot_dc =
-    C.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let cdt = Nx_effect.dtype leaf in
-        let c_shape = shape_of leaf in
-        let slot = Nx_effect.symbolic st.st_ctx cdt c_shape in
-        let dc_in = make_node st (tolk_dtype cdt) (numel c_shape) in
-        Tbl.replace st.table (Obj.repr slot) (buffer_tensor dc_in c_shape);
-        Tbl.replace st.traced (Obj.repr slot) ();
-        Tbl.replace dc_ins (Obj.repr slot) dc_in;
-        slot)
-      c0
-  in
-  let dc_infos = ref [] in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-      dc_infos := Tbl.find dc_ins (Obj.repr leaf) :: !dc_infos)
-    slot_dc;
-  let dc_infos = List.rev !dc_infos in
-  let slot_x = Nx_effect.symbolic st.st_ctx xdt x_shape in
-  let x_in = make_node st (tolk_dtype xdt) numel_x in
-  Tbl.replace st.table (Obj.repr slot_x) (buffer_tensor x_in x_shape);
-  Tbl.replace st.traced (Obj.repr slot_x) ();
-  let slot_dy = Nx_effect.symbolic st.st_ctx (Nx_effect.dtype dy) y_shape in
-  let dy_in = make_node st (tolk_dtype (Nx_effect.dtype dy)) numel_y in
-  Tbl.replace st.table (Obj.repr slot_dy) (buffer_tensor dy_in y_shape);
-  Tbl.replace st.traced (Obj.repr slot_dy) ();
   (* The body's external inputs, discovered by the forward staging of this
      scan. *)
+  let not_staged () =
+    (* Reachable only if a handler claimed [E_scan] without answering
+       [E_scan_probe]: reverse then recorded a transpose for a scan this trace
+       never staged with its carries recorded. *)
+    err
+      "Rune.jit: backward scan for a scan this trace did not stage with its \
+       carries recorded (a handler claimed E_scan without answering \
+       E_scan_probe)"
+  in
   let closed =
     match Tbl.find_opt st.scan_closed (Obj.repr step) with
     | Some closed -> closed
-    | None ->
-        (* Reachable only if a handler claimed [E_scan] without answering
-           [E_scan_probe]: reverse then recorded a transpose for a scan this
-           trace never staged. *)
-        err
-          "Rune.jit: backward scan for a scan this trace did not stage (a \
-           handler claimed E_scan without answering E_scan_probe)"
+    | None -> not_staged ()
+  in
+  let stacks =
+    match Tbl.find_opt st.scan_stacks (Obj.repr step) with
+    | Some stacks -> stacks
+    | None -> not_staged ()
   in
   (* Capture the pullback: run the body once under a private reverse tape, then
      replay the tape against the placeholder cotangents — every op lands in the
@@ -1825,76 +1752,59 @@ and stage_scan_bwd : type r.
      inside it to recover residuals). The external inputs are tracked too, so
      the pullback emits their per-step contributions. *)
   let tape = Tape.create () in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) -> Tape.track tape leaf)
-    slot_c;
-  Tape.track tape slot_x;
-  List.iter (fun (Scan.Packed_t g) -> Tape.track tape g) closed;
+  let track (Scan.Packed_t t) = Tape.track tape t in
+  List.iter (fun s -> track s.s_ph) c_slots;
+  List.iter (fun s -> if differentiable s then track s.s_ph) x_slots;
+  List.iter track closed;
   let c_next, y =
-    match
-      Effect.Deep.match_with
-        (fun () ->
-          Effect.Deep.match_with
-            (fun () ->
-              step.run (Scan.Packed_c (cmod, slot_c)) (Scan.Packed_t slot_x))
-            () (Reverse.handler tape))
-        () (handler st)
-    with
-    | Scan.Packed_c (_, c_next), Scan.Packed_t y ->
-        (Obj.magic c_next, Obj.magic y)
+    Effect.Deep.match_with
+      (fun () ->
+        Effect.Deep.match_with
+          (fun () -> step.run slot_c slot_x)
+          () (Reverse.handler tape))
+      () (handler st)
   in
-  let c_next =
-    C.map2
-      (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t) ->
-        if shape_of a <> shape_of b then
-          err
-            "Rune.jit: the scan body must return a carry of the same shapes it \
-             receives (shape-stable carry)";
-        a)
-      c_next c0
-  in
+  let c_next = Scan.leaves c_next in
+  if not (same_shapes c_next c_slots) then
+    err
+      "Rune.jit: the scan body must return a carry of the same shapes it \
+       receives (shape-stable carry)";
+  let cotangent (Scan.Packed_t t) = Scan.Packed_t (Tape.cotangent tape t) in
   let dc_i, dx_i, dgs =
     Effect.Deep.match_with
       (fun () ->
-        ignore
-          (C.map2
-             (fun (type a b) (a : (a, b) Nx_effect.t) (b : (a, b) Nx_effect.t)
-                ->
-               Tape.accumulate tape a b;
-               b)
-             c_next slot_dc);
-        Tape.accumulate tape y slot_dy;
+        let seed (Scan.Packed_t v) s =
+          let (Scan.Packed_t d) = s.s_ph in
+          Tape.accumulate tape v (Obj.magic d)
+        in
+        List.iter2 seed c_next dc_slots;
+        List.iter2 seed (Scan.leaves y) dy_slots;
         Tape.backward tape;
-        ( C.map
-            (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-              Tape.cotangent tape leaf)
-            slot_c,
-          Tape.cotangent tape slot_x,
+        ( List.map (fun s -> cotangent s.s_ph) c_slots,
+          List.map
+            (fun s ->
+              if differentiable s then Some (cotangent s.s_ph) else None)
+            x_slots,
           List.map
             (fun (Scan.Packed_t g) ->
               Scan.Closed_ctan (g, Tape.cotangent tape g))
             closed ))
       () (handler st)
   in
-  (* The backward body: per-leaf carry cotangent buffers plus the stacked input
-     cotangent. *)
-  let dc_i_nodes = ref [] in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-      dc_i_nodes := tolk_of st leaf :: !dc_i_nodes)
-    dc_i;
-  let dc_i_nodes = List.rev !dc_i_nodes in
+  (* The backward body: per-leaf carry cotangents, row cotangents, and the
+     external inputs' accumulators. The accumulation is elementwise, so it runs
+     on the flat buffers directly. The tensor itself stays packed — unpacked,
+     its type would escape its scope in the tuple. *)
   let dc_outs =
-    List.map2
-      (fun (tdt, c_shape, _) node ->
-        (tdt, c_shape, make_node st tdt (numel c_shape), node))
-      slot_infos dc_i_nodes
+    List.map (fun s -> make_node st s.s_dt (numel s.s_shape)) c_slots
   in
-  let dx_out = make_node st (tolk_dtype xdt) numel_x in
-  (* Per external input: the body's accumulator in/out nodes and the step's
-     cotangent contribution. The body writes [acc + dg_i]; the accumulation is
-     elementwise, so it runs on the flat buffers directly. The tensor itself
-     stays packed — unpacked, its type would escape its scope in the tuple. *)
+  let dx_outs =
+    List.map
+      (fun s ->
+        if differentiable s then Some (make_node st s.s_dt (numel s.s_shape))
+        else None)
+      x_slots
+  in
   let g_outs =
     List.map
       (fun (Scan.Closed_ctan (g, dg)) ->
@@ -1910,16 +1820,25 @@ and stage_scan_bwd : type r.
           tolk_of st dg ))
       dgs
   in
+  let value (Scan.Packed_t t) = tolk_of st t in
   let body_sink =
     U.sink
-      (List.map
-         (fun (_, c_shape, dc_out, node) ->
-           U.after ~src:dc_out ~deps:[ store_flat dc_out (numel c_shape) node ])
-         dc_outs
-      @ [
-          U.after ~src:dx_out
-            ~deps:[ store_flat dx_out numel_x (tolk_of st dx_i) ];
-        ]
+      (List.map2
+         (fun (s, dc_out) dc ->
+           U.after ~src:dc_out
+             ~deps:[ store_flat dc_out (numel s.s_shape) (value dc) ])
+         (List.combine c_slots dc_outs)
+         dc_i
+      @ List.concat_map
+          (fun ((s, dx_out), dx) ->
+            match (dx_out, dx) with
+            | Some dx_out, Some dx ->
+                [
+                  U.after ~src:dx_out
+                    ~deps:[ store_flat dx_out (numel s.s_shape) (value dx) ];
+                ]
+            | _ -> [])
+          (List.combine (List.combine x_slots dx_outs) dx_i)
       @ List.map
           (fun (_, _, _, gn, g_in, g_out, dg_tt) ->
             U.after ~src:g_out
@@ -1932,37 +1851,38 @@ and stage_scan_bwd : type r.
           g_outs)
   in
   let body_linear = schedule_body_linear st body_sink in
-  (* The forward loop's carry stacks, by identity of the scan it staged. *)
-  let stacks =
-    match Tbl.find_opt st.scan_stacks (Obj.repr step) with
-    | Some stacks -> stacks
-    | None ->
-        err
-          "Rune.jit: backward scan for a scan this trace did not stage (a \
-           handler claimed E_scan without answering E_scan_probe)"
-  in
   let l = loop () in
   List.iter2
-    (fun (_, c_shape, c_in) (stack, stride) ->
-      add_rows_in l ~slot:c_in ~numel:(numel c_shape) ~stride stack)
-    slot_infos stacks;
-  add_rows_in_value st l ~slot:x_in ~numel:numel_x ~n (tolk_of st xs0);
-  add_rows_in_value st l ~slot:dy_in ~numel:numel_y ~n (tolk_of st dy);
-  let dc_inits = ref [] in
-  C.iter
-    (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-      dc_inits := tolk_of st leaf :: !dc_inits)
-    dc;
+    (fun s (stack, stride) ->
+      add_rows_in l ~slot:s.s_node ~numel:(numel s.s_shape) ~stride stack)
+    c_slots stacks;
+  List.iter2
+    (fun s x ->
+      add_rows_in_value st l ~slot:s.s_node ~numel:(numel s.s_shape) ~n
+        (value x))
+    x_slots (Scan.leaves bwd_xs);
+  List.iter2
+    (fun s dy ->
+      add_rows_in_value st l ~slot:s.s_node ~numel:(numel s.s_shape) ~n
+        (value dy))
+    dy_slots (Scan.leaves bwd_dys);
   let dc_pairs =
     List.map2
-      (fun ((tdt, c_shape, dc_out, _), dc_in) init ->
-        add_carry st l ~slot_in:dc_in ~slot_out:dc_out ~dt:tdt
-          ~numel:(numel c_shape) init)
-      (List.combine dc_outs dc_infos)
-      (List.rev !dc_inits)
+      (fun ((s, dc_out), d) dc ->
+        add_carry st l ~slot_in:d.s_node ~slot_out:dc_out ~dt:s.s_dt
+          ~numel:(numel s.s_shape) (value dc))
+      (List.combine (List.combine c_slots dc_outs) dc_slots)
+      (Scan.leaves bwd_dc)
   in
-  let dxs_buf, dxs_stride =
-    add_rows_out st l ~slot:dx_out ~dt:(tolk_dtype xdt) ~numel:numel_x ~n
+  let dx_rows =
+    List.map2
+      (fun s dx_out ->
+        Option.map
+          (fun dx_out ->
+            add_rows_out st l ~slot:dx_out ~dt:s.s_dt ~numel:(numel s.s_shape)
+              ~n)
+          dx_out)
+      x_slots dx_outs
   in
   let g_pairs =
     List.map
@@ -1972,36 +1892,27 @@ and stage_scan_bwd : type r.
       g_outs
   in
   let call = loop_call l ~body_linear ~reversed:true ~n in
-  (* Identity pairing through the slot leaves, as for the forward loop's final
-     carry: positional pairing under [C.map] can cross same-shaped leaves. *)
-  let dc_afters = Tbl.create 4 in
-  (let rest = ref dc_pairs in
-   C.iter
-     (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-       match !rest with
-       | pair :: tl ->
-           Tbl.replace dc_afters (Obj.repr leaf)
-             (written_by call (final_carry ~n pair));
-           rest := tl
-       | [] -> assert false)
-     slot_c);
-  let dc0_ph =
-    C.map
-      (fun (type a b) (leaf : (a, b) Nx_effect.t) ->
-        let after = Tbl.find dc_afters (Obj.repr leaf) in
-        let ph =
-          Nx_effect.symbolic st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
-        in
-        Tbl.replace st.table (Obj.repr ph) (buffer_tensor after (shape_of leaf));
-        Tbl.replace st.traced (Obj.repr ph) ();
-        ph)
-      slot_c
+  let br_carry =
+    placeholders st bwd_carry
+      (List.map2
+         (fun s pair ->
+           ( s.s_shape,
+             buffer_tensor (written_by call (final_carry ~n pair)) s.s_shape ))
+         c_slots dc_pairs)
   in
-  let dxs_shape = Array.append [| n |] x_shape in
-  let dxs_ph = Nx_effect.symbolic st.st_ctx xdt dxs_shape in
-  Tbl.replace st.table (Obj.repr dxs_ph)
-    (rows_tensor (written_by call dxs_buf) ~n ~stride:dxs_stride x_shape);
-  Tbl.replace st.traced (Obj.repr dxs_ph) ();
+  (* A row leaf that is not floating point gets a zero cotangent. *)
+  let br_xs =
+    placeholders st bwd_xs
+      (List.map2
+         (fun s rows ->
+           let shape = Array.append [| n |] s.s_shape in
+           match rows with
+           | Some (buf, stride) ->
+               (shape, rows_tensor (written_by call buf) ~n ~stride s.s_shape)
+           | None ->
+               (shape, F.Creation.zeros ~dtype:s.s_dt (Array.to_list shape)))
+         x_slots dx_rows)
+  in
   (* Each external input's total cotangent, as outputs of the loop. *)
   let br_closed =
     List.map2
@@ -2013,12 +1924,7 @@ and stage_scan_bwd : type r.
         Scan.Closed_ctan (g, ph))
       g_outs g_pairs
   in
-  Effect.Deep.continue k
-    {
-      Scan.br_carry = Scan.Packed_c (cmod, dc0_ph);
-      br_y = Scan.Packed_t dxs_ph;
-      br_closed;
-    }
+  Effect.Deep.continue k { Scan.br_carry; br_xs; br_closed }
 
 (* Host transfers *)
 
