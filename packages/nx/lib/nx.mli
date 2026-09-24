@@ -147,6 +147,18 @@ type index =
           is static because traced shapes are: one compiled program serves every
           position. *)
 
+(** {2:packed Packed tensors} *)
+
+type packed = Nx_effect.packed =
+  | P : ('a, 'b) t -> packed
+      (** The type for tensors of any dtype, such as a file's named tensors or a
+          checkpoint's entries. *)
+
+val unpack : ('a, 'b) dtype -> packed -> ('a, 'b) t
+(** [unpack dtype p] is the tensor in [p], which has [dtype].
+
+    Raises [Invalid_argument] if [p]'s tensor has another dtype. *)
+
 (** {1:properties Properties} *)
 
 val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t

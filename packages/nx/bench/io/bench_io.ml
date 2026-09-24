@@ -108,8 +108,8 @@ let gzip_output = temporary ".raw"
 
 let () =
   Nx_io.save_npy npy_input structured;
-  Nx_io.save_npz npz_deflate_input [ ("structured", Nx_io.P structured) ];
-  Nx_io.save_npz npz_store_input [ ("random", Nx_io.P random) ];
+  Nx_io.save_npz npz_deflate_input [ ("structured", Nx.P structured) ];
+  Nx_io.save_npz npz_store_input [ ("random", Nx.P random) ];
   Nx_io.save_image png_input image;
   Nx_io.save_image jpeg_input image;
   write_file gzip_input (stored_gzip (String.make (1024 * 1024) '\x5a'))
@@ -130,10 +130,10 @@ let benchmarks =
         Thumper.bench "Load NPZ Store 1 MiB u8" (fun () ->
             Nx_io.load_npz npz_store_input);
         Thumper.bench "Save NPZ adaptive 1 MiB u8" (fun () ->
-            Nx_io.save_npz npz_output [ ("random", Nx_io.P random) ]);
+            Nx_io.save_npz npz_output [ ("random", Nx.P random) ]);
         Thumper.bench "Save NPZ Deflate 1 MiB f32" (fun () ->
             Nx_io.save_npz npz_deflate_output
-              [ ("structured", Nx_io.P structured) ]);
+              [ ("structured", Nx.P structured) ]);
       ];
     Thumper.group "png"
       [

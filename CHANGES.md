@@ -1729,6 +1729,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_io.packed` and `Nx_io.to_typed` become `Nx.packed` and
+  `Nx.unpack`, one packed tensor type for files and checkpoints. `unpack`
+  raises `Invalid_argument` naming both dtypes, where `to_typed` raised
+  `Failure`. `Nx_io.packed_dtype` and `packed_shape` are removed: match on
+  `Nx.P`.
 - `Nx.top_k` on `float8_e4m3` with `k` up to 8 returns the greatest entries.
   It returned the first entry repeatedly: `Dtype.min_value` was `-infinity`,
   which that dtype encodes as NaN; its bounds are now `-448` and `448`.

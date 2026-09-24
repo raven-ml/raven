@@ -10,15 +10,7 @@ let strf = Printf.sprintf
 let err_unsupported_ext ext = strf "unsupported image format: %s" ext
 let err_bad_dims n s = strf "expected 2 or 3 dimensions, got %d (%s)" n s
 
-(* Packed tensors *)
-
-type packed = Packed_nx.t = P : ('a, 'b) Nx.t -> packed
-type archive = (string, packed) Hashtbl.t
-type packed_dtype = Dtype : ('a, 'b) Nx.dtype -> packed_dtype
-
-let to_typed dtype packed = Packed_nx.to_typed dtype packed
-let packed_dtype (P nx) = Dtype (Nx.dtype nx)
-let packed_shape (P nx) = Nx.shape nx
+type archive = (string, Nx.packed) Hashtbl.t
 
 (* Result unwrapping *)
 

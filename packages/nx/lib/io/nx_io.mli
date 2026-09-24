@@ -8,30 +8,11 @@
     Load and save {!Nx} tensors in common formats: images (PNG and JPEG), NumPy
     ([.npy] and [.npz]), SafeTensors, and delimited text. *)
 
-(** {1:packed Packed tensors} *)
+(** {1:archives Archives} *)
 
-type packed =
-  | P : ('a, 'b) Nx.t -> packed
-      (** An existentially packed tensor. Use {!to_typed} to recover a typed
-          tensor. *)
-
-type archive = (string, packed) Hashtbl.t
-(** Named tensors. Returned by {!load_npz} and {!load_safetensors}. *)
-
-type packed_dtype =
-  | Dtype : ('a, 'b) Nx.dtype -> packed_dtype
-      (** An existentially packed dtype. *)
-
-val to_typed : ('a, 'b) Nx.dtype -> packed -> ('a, 'b) Nx.t
-(** [to_typed dtype p] is the tensor in [p] with [dtype].
-
-    @raise Failure if the packed tensor has a different dtype. *)
-
-val packed_dtype : packed -> packed_dtype
-(** [packed_dtype p] is the dtype of [p]. *)
-
-val packed_shape : packed -> int array
-(** [packed_shape p] is the shape of [p]. *)
+type archive = (string, Nx.packed) Hashtbl.t
+(** The type for named tensors, as {!load_npz} and {!load_safetensors} return
+    them. Read an entry with {!Nx.unpack}. *)
 
 (** {1:image Images} *)
 
@@ -70,7 +51,7 @@ val encode_png : (int, Nx.uint8_elt) Nx.t -> string
 
 (** {1:numpy NumPy formats} *)
 
-val load_npy : string -> packed
+val load_npy : string -> Nx.packed
 (** [load_npy path] loads a tensor from a [.npy] file.
 
     @raise Failure
@@ -95,7 +76,7 @@ val load_npz : string -> archive
     @raise Failure
       if [path] cannot be read or the archive or an entry is malformed. *)
 
-val load_npz_entry : name:string -> string -> packed
+val load_npz_entry : name:string -> string -> Nx.packed
 (** [load_npz_entry ~name path] loads a single entry from an [.npz] archive.
 
     [name] is the logical entry name, without the [.npy] suffix.
@@ -104,7 +85,7 @@ val load_npz_entry : name:string -> string -> packed
       if [path] cannot be read, [name] is missing, or the archive or entry is
       malformed. *)
 
-val save_npz : ?overwrite:bool -> string -> (string * packed) list -> unit
+val save_npz : ?overwrite:bool -> string -> (string * Nx.packed) list -> unit
 (** [save_npz ?overwrite path entries] writes named tensors to an [.npz]
     archive.
 
@@ -172,7 +153,7 @@ val load_safetensors : string -> archive
       does. *)
 
 val save_safetensors :
-  ?overwrite:bool -> string -> (string * packed) list -> unit
+  ?overwrite:bool -> string -> (string * Nx.packed) list -> unit
 (** [save_safetensors ?overwrite path entries] writes named tensors to a
     SafeTensors file.
 

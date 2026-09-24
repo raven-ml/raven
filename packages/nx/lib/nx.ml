@@ -26,6 +26,17 @@ let data x =
 
 module Ptree = Ptree
 
+type packed = Nx_effect.packed = P : ('a, 'b) t -> packed
+
+let unpack (type a b) (dt : (a, b) dtype) (P x) : (a, b) t =
+  match Nx_core.Dtype.equal_witness (dtype x) dt with
+  | Some Type.Equal -> x
+  | None ->
+      invalid_arg
+        (Printf.sprintf "unpack: expected dtype %s, got %s"
+           (Nx_core.Dtype.to_string dt)
+           (Nx_core.Dtype.to_string (dtype x)))
+
 module Rng = struct
   include F.Rng
 
