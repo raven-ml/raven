@@ -131,7 +131,7 @@ let decomposes_free_of_long u =
   let tagged = Uop.with_tag "0" u in
   let rewritten =
     Uop.graph_rewrite
-      (Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp) tagged
+      (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())) tagged
   in
   (* After decomposition we should have a narrow result and no long nodes
      remaining in the reachable graph. *)
@@ -143,7 +143,7 @@ let decomposes_free_of_long u =
 
 let rewrite_long_half tag u =
   Uop.graph_rewrite
-    (Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp)
+    (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ()))
     (Uop.with_tag tag u)
 
 let emulation_renderer unsupported =
@@ -167,7 +167,7 @@ let long_comparisons_split_before_arithmetic () =
       let rhs = Uop.const (Const.int64 dtype 3L) in
       List.iter (fun op ->
           let cmp = Uop.alu_binary ~op ~lhs ~rhs in
-          match Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp cmp with
+          match Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ()) cmp with
           | None -> failwith "long comparison did not rewrite"
           | Some result ->
               Spec.type_verify Spec.full_spec result;
@@ -208,7 +208,7 @@ let cast_long_to_int_decomposes () =
   (* Result is already int32; just check no int64 residue. *)
   let rewritten =
     Uop.graph_rewrite
-      (Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp) casted
+      (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())) casted
   in
   is_true ~msg:"CAST int64->int32 has no int64 residue"
     (not (contains_long rewritten))
@@ -219,7 +219,7 @@ let bitcast_long_to_long_decomposes () =
   in
   let b = Uop.bitcast ~src:a ~dtype:Dtype.uint64 in
   let half tag =
-    Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp
+    Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())
       (Uop.with_tag tag b)
   in
   match half "0", half "1" with
@@ -249,7 +249,7 @@ let untagged_long_const_is_low_half () =
   let c = Uop.const (Const.int64 Dtype.int64 0x0000000100000002L) in
   let rewritten =
     Uop.graph_rewrite
-      (Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp) c
+      (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())) c
   in
   is_true ~msg:"untagged long CONST lowers to low half"
     (Dtype.equal (Uop.dtype rewritten) Dtype.int32
@@ -260,7 +260,7 @@ let unbounded_long_param_keeps_unbounded_size () =
      narrows to int32 in both the node and its argument, and the missing
      size is left untouched. *)
   let buf = Uop.param ~slot:0 ~dtype:Dtype.int64 ~addrspace:Dtype.Global () in
-  match Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp buf with
+  match Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ()) buf with
   | Some rewritten ->
       let arg_narrowed =
         match Uop.as_param rewritten with
@@ -277,7 +277,7 @@ let untagged_long_index_is_not_rewritten () =
       ~addrspace:Dtype.Global ()
   in
   let idx = Uop.index ~ptr:buf ~idxs:[ Uop.const_int 3 ] () in
-  match Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp idx with
+  match Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ()) idx with
   | None -> ()
   | Some _ -> is_true ~msg:"untagged INDEX should not rewrite" false
 
@@ -288,7 +288,7 @@ let tagged_long_index_narrows_storage () =
   in
   let idx = Uop.index ~ptr:buf ~idxs:[ Uop.const_int 3 ] () in
   match
-    Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp
+    Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())
       (Uop.with_tag "1" idx)
   with
   | Some rewritten ->
@@ -311,7 +311,7 @@ let tagged_long_index_preserves_multi_index_tail () =
     Uop.index ~ptr:buf ~idxs:[ Uop.const_int 3; Uop.const_int 5 ] ()
   in
   match
-    Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp
+    Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())
       (Uop.with_tag "1" idx)
   with
   | Some rewritten ->

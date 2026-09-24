@@ -13,9 +13,10 @@ open Tolk_uop
     matcher. Graph-level dtype detection and scheduling are still performed by
     codegen lowering and renderer hooks. *)
 
-val pm_long_decomp : Upat.Pattern_matcher.t
-(** [pm_long_decomp] rewrites int64 and uint64 values as pairs of 32-bit
-    values. *)
+val pm_long_decomp : unit -> Upat.Pattern_matcher.t
+(** [pm_long_decomp ()] rewrites int64 and uint64 values as pairs of 32-bit
+    values. Create one matcher per {!Uop.graph_rewrite} call and use
+    [~bottom_up:true]. The matcher retains shared word splits for that pass. *)
 
 type float_decomp_ctx = {
   from_dtype : Tolk_uop.Dtype.t;

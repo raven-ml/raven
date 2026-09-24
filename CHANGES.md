@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- 64-bit integer emulation shares fully lowered word splits within each pass,
+  avoiding repeated arithmetic expansion and redundant casts.
+  `Decomp_dtype.pm_long_decomp ()` creates a matcher for one pass.
+
 - Integer floor division by powers of two lowers directly to arithmetic
   shifts, including negative inputs. `MAX` keeps its bounds until late
   lowering so subsequent compiler passes can use them.

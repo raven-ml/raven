@@ -502,7 +502,7 @@ let rule_long_cast_const =
 
 (* CAST between two long dtypes (int64 <-> uint64): equivalent to a
    bitcast of each narrow half. Selected by the CAST node's tag. *)
-let rule_long_cast_long_to_long =
+let rule_long_cast_long_to_long rewrite =
   let open Upat in
   op ~name:"c" Ops.Cast => fun bs ->
     let n = bs $ "c" in
@@ -517,11 +517,9 @@ let rule_long_cast_long_to_long =
             let a = srcs.(0) in
             (match Uop.dtype a with
              | adv when is_long_dtype adv ->
-                 let src_narrow = long_to_int_dtype adv in
                  let dst_narrow = long_to_int_dtype dv in
                  let half t =
-                   let h = Uop.cast ~src:(Uop.with_tag t a)
-                     ~dtype:src_narrow in
+                   let h = rewrite (Uop.with_tag t a) in
                    Uop.bitcast ~src:h ~dtype:dst_narrow
                  in
                  (match tag with
@@ -534,7 +532,7 @@ let rule_long_cast_long_to_long =
 (* CAST whose result is long: the operand is non-long (int or float).
    Inlines the direction-specific logic; picks the half by the CAST
    node's tag. *)
-let rule_long_cast_to_long =
+let rule_long_cast_to_long rewrite =
   let open Upat in
   op ~name:"c" Ops.Cast => fun bs ->
     let n = bs $ "c" in
@@ -552,6 +550,7 @@ let rule_long_cast_to_long =
              | None -> None
              | Some adv when is_long_dtype adv -> let _ = adv in None
              | Some adv ->
+                 let a = rewrite a in
                  let narrow = long_to_int_dtype dv in
                  let narrow_val = narrow in
                  if Dtype.is_float adv then begin
@@ -608,7 +607,7 @@ let rule_long_cast_to_long =
 (* CAST whose operand is long and result is non-long (int or float):
    expand the long operand into its (lo, hi) halves and combine
    inline. *)
-let rule_long_cast_from_long =
+let rule_long_cast_from_long rewrite =
   let open Upat in
   op ~name:"c" Ops.Cast => fun bs ->
     let n = bs $ "c" in
@@ -625,11 +624,8 @@ let rule_long_cast_from_long =
            | adv, _ when is_long_dtype adv && Uop.node_tag a <> None -> None
            | adv, tdv when is_long_dtype adv ->
                let narrow = long_to_int_dtype adv in
-               let narrow_val = narrow in
-               let a0 =
-                 Uop.cast ~src:(Uop.with_tag "0" a) ~dtype:narrow_val in
-               let a1 =
-                 Uop.cast ~src:(Uop.with_tag "1" a) ~dtype:narrow_val in
+               let a0 = rewrite (Uop.with_tag "0" a) in
+               let a1 = rewrite (Uop.with_tag "1" a) in
                if Dtype.is_float tdv then begin
                  (* Reconstruct in float64 when requested, so a float32
                     intermediate cannot discard the low word's precision. *)
@@ -678,7 +674,7 @@ let rule_long_cast_from_long =
 (* BITCAST whose result is long and source is a long (i.e. int64<->uint64):
    expand operand into narrow pair and dispatch through [l2i L2i_bitcast].
    Selected by the BITCAST node's tag. *)
-let rule_long_bitcast =
+let rule_long_bitcast split =
   let open Upat in
   op ~name:"b" Ops.Bitcast => fun bs ->
     let n = bs $ "b" in
@@ -693,13 +689,9 @@ let rule_long_bitcast =
             let a = srcs.(0) in
             (match Uop.dtype a with
              | adv when is_long_dtype adv ->
-                 let src_narrow = long_to_int_dtype adv in
                  let dst_narrow = long_to_int_dtype dv in
-                 let a0 = Uop.cast
-                     ~src:(Uop.with_tag "0" a) ~dtype:src_narrow in
-                 let a1 = Uop.cast
-                     ~src:(Uop.with_tag "1" a) ~dtype:src_narrow in
-                 let lo, hi = l2i L2i_bitcast dst_narrow [a0; a1] in
+                 let lo, hi = split n L2i_bitcast dst_narrow
+                     [ Uop.with_tag "0" a; Uop.with_tag "1" a ] in
                  (match tag with
                   | Some "0" -> Some lo
                   | Some "1" -> Some hi
@@ -709,7 +701,7 @@ let rule_long_bitcast =
 
 (* Comparisons whose operands are long-valued reduce to the (lo, _)
    component of [l2i] on the four tagged halves of the operands. *)
-let rule_long_cmp rewrite =
+let rule_long_cmp split =
   let open Upat in
   ops ~name:"c" [ Ops.Cmplt; Ops.Cmpeq; Ops.Cmpne ] => fun bs ->
     let n = bs $ "c" in
@@ -726,17 +718,17 @@ let rule_long_cmp rewrite =
             | Ops.Cmpne -> L2i_cmpne | _ -> assert false
           in
           let args = [
-            rewrite (Uop.with_tag "0" lhs); rewrite (Uop.with_tag "1" lhs);
-            rewrite (Uop.with_tag "0" rhs); rewrite (Uop.with_tag "1" rhs);
+            Uop.with_tag "0" lhs; Uop.with_tag "1" lhs;
+            Uop.with_tag "0" rhs; Uop.with_tag "1" rhs;
           ] in
-          Some (fst (l2i l2i_op dt args))
+          Some (fst (split n l2i_op dt args))
       | _ -> None
 
 (* Generic ALU (unary/binary/ternary) whose result dtype is long and
    which has been tagged "0" or "1" by a downstream reader. Expands each
-   long operand into a pair of 32-bit sources tagged "0" and "1",
-   narrows each via CAST, runs [l2i], and returns the requested half. *)
-let rule_long_alu =
+   long operand into a pair of tagged sources, splits them before running
+   word arithmetic, and returns the requested half. *)
+let rule_long_alu split =
   let open Upat in
   ops ~name:"__root__" Ops.Group.alu => fun bs ->
     let n = bs $ "__root__" in
@@ -752,45 +744,64 @@ let rule_long_alu =
              | None -> None
              | Some l2i_op ->
                  let dt = long_to_int_dtype dv in
-                 let narrow = dt in
                  let expanded =
-                   Array.fold_right (fun c acc ->
-                     match Uop.dtype c with
-                     | cdv when is_long_dtype cdv ->
-                         Uop.cast ~src:(Uop.with_tag "0" c) ~dtype:narrow ::
-                         Uop.cast ~src:(Uop.with_tag "1" c) ~dtype:narrow ::
-                         acc
-                     | _ -> c :: acc)
-                     (Uop.src n) []
+                   match op, Uop.src n with
+                   | (Ops.Shl | Ops.Shr), [| value; count |] ->
+                       [ Uop.with_tag "0" value; Uop.with_tag "1" value;
+                         if is_long_dtype (Uop.dtype count) then Uop.with_tag "0" count
+                         else count ]
+                   | _, src ->
+                       Array.fold_right (fun c acc ->
+                         if is_long_dtype (Uop.dtype c) then
+                           Uop.with_tag "0" c :: Uop.with_tag "1" c :: acc
+                         else c :: acc) src []
                  in
-                 let lo, hi = l2i l2i_op dt expanded in
+                 let lo, hi = split n l2i_op dt expanded in
                  (match tag with
                   | Some "0" -> Some lo
                   | Some "1" -> Some hi
                   | _ -> None))
         | _ -> None
 
-let rec rewrite_long node =
-  Uop.graph_rewrite ~bottom_up:true
-    (Upat.Pattern_matcher.rewrite (Lazy.force long_matcher)) node
-
-and long_matcher = lazy (
-  Upat.Pattern_matcher.(Weak.pm_commit_weak ++ make [
-    rule_long_index_tagged rewrite_long;
-    rule_long_defines;
-    rule_long_store;
-    rule_long_load rewrite_long;
-    rule_long_const;
-    rule_long_cast_const;
-    rule_long_cast_long_to_long;
-    rule_long_cast_to_long;
-    rule_long_cast_from_long;
-    rule_long_bitcast;
-    rule_long_cmp rewrite_long;
-    rule_long_alu;
-  ]))
-
-let pm_long_decomp = Lazy.force long_matcher
+let pm_long_decomp () =
+  let rewritten = Uop.Ref_tbl.create 64 in
+  let splits = Uop.Ref_tbl.create 64 in
+  let rec rewrite_word node =
+    match Uop.Ref_tbl.find_opt rewritten node with
+    | Some result -> result
+    | None ->
+        let result = Uop.graph_rewrite ~bottom_up:true
+            (Upat.Pattern_matcher.rewrite (Lazy.force matcher)) node in
+        Uop.Ref_tbl.add rewritten node result;
+        result
+  and split node op dtype operands =
+    let key = Uop.replace node ~node_tag:None () in
+    match Uop.Ref_tbl.find_opt splits key with
+    | Some result -> result
+    | None ->
+        let operands = List.map (fun operand ->
+            let word = rewrite_word operand in
+            if op = L2i_bitcast || Dtype.is_bool (Uop.dtype word) then word
+            else Uop.cast ~src:word ~dtype) operands in
+        let result = l2i op dtype operands in
+        Uop.Ref_tbl.add splits key result;
+        result
+  and matcher = lazy (
+    Upat.Pattern_matcher.(Weak.pm_commit_weak ++ make [
+      rule_long_index_tagged rewrite_word;
+      rule_long_defines;
+      rule_long_store;
+      rule_long_load rewrite_word;
+      rule_long_const;
+      rule_long_cast_const;
+      rule_long_cast_long_to_long rewrite_word;
+      rule_long_cast_to_long rewrite_word;
+      rule_long_cast_from_long rewrite_word;
+      rule_long_bitcast split;
+      rule_long_cmp split;
+      rule_long_alu split;
+    ])) in
+  Lazy.force matcher
 
 type float_decomp_ctx = {
   from_dtype : Dtype.t;
@@ -1269,7 +1280,7 @@ let do_dtype_decomps (renderer : Renderer.t) (sink : Uop.t) : Uop.t =
     (fun sink dtype ->
        match dtype with
        | Dtype.Int64 ->
-           rewrite pm_long_decomp "decomp long -> int" sink
+           rewrite (pm_long_decomp ()) "decomp long -> int" sink
        | Dtype.Float16 | Dtype.Bfloat16
        | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
        | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz ->

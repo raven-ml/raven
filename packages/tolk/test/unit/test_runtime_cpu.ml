@@ -217,7 +217,7 @@ let test_emulated_long_to_float64 () =
       (* Explicit decomposition exercises the emulation on CPUs with native
          64-bit integers as well. Lowering must preserve its numeric result. *)
       let value = U.graph_rewrite ~bottom_up:true
-          (Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp) cast in
+          (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_long_decomp ())) cast in
       let index = U.index ~ptr:dst ~idxs:[ U.const_int i ] () in
       U.store ~dst:index ~value ()) cases in
   let program = Codegen_lower.lower (Device.renderer device) (U.sink stores)
@@ -298,6 +298,12 @@ let test_emulated_long_buffer_arithmetic () =
               else Int64.compare value increment in
             match op with
             | Ops.Add -> Int64.add value increment
+            | Ops.Sub -> Int64.sub value increment
+            | Ops.Mul -> Int64.mul value increment
+            | Ops.And -> Int64.logand value increment
+            | Ops.Or -> Int64.logor value increment
+            | Ops.Xor -> Int64.logxor value increment
+            | Ops.Max -> if cmp < 0 then increment else value
             | Ops.Cmplt -> if cmp < 0 then fallback else value
             | Ops.Cmpeq -> if cmp = 0 then fallback else value
             | Ops.Cmpne -> if cmp <> 0 then fallback else value
@@ -313,7 +319,58 @@ let test_emulated_long_buffer_arithmetic () =
              [ Dtype.int64, false, literal, op; Dtype.uint64, false, literal, op;
                Dtype.int64, true, literal, op; Dtype.uint64, true, literal, op ])
            [ `Typed; `Weak; `Cast ])
-       [ Ops.Add; Ops.Cmplt; Ops.Cmpeq; Ops.Cmpne ])
+       [ Ops.Add; Ops.Sub; Ops.Mul; Ops.And; Ops.Or; Ops.Xor; Ops.Max;
+         Ops.Cmplt; Ops.Cmpeq; Ops.Cmpne ])
+
+let test_emulated_long_division () =
+  let device = cpu "emulated-long-division" in
+  let renderer = Renderer.make ~name:"emulation" ~device:"TEST"
+      ~has_local:false ~has_shared:false ~shared_max:0
+      ~supports_dtype:(fun dtype -> dtype <> Dtype.int64 && dtype <> Dtype.uint64)
+      ~render:(fun ?name:_ _ -> "") () in
+  let cases = [| Int64.min_int, 1L; Int64.min_int, 7L; -1L, 7L;
+                 -4294967299L, 3L; Int64.max_int, 3L; Int64.max_int, -7L;
+                 4294967299L, 4294967297L; 0L, -3L |] in
+  let count = Array.length cases in
+  List.iter (fun dtype ->
+      let param slot size = U.param ~slot ~dtype ~shape:(U.const_int size)
+          ~addrspace:Dtype.Global () in
+      let dst = param 0 (2 * count) and lhs = param 1 count and rhs = param 2 count in
+      let range = U.range ~size:(U.const_int count) ~axis:0 ~kind:Axis_type.Weak () in
+      let index ptr offset = U.index ~ptr ~idxs:[ offset ] () in
+      let a = U.load ~src:(index lhs range) () and b = U.load ~src:(index rhs range) () in
+      let stores = List.mapi (fun i op ->
+          let offset = U.const_int (i * count) in
+          U.store ~dst:(index dst U.O.(range + offset))
+            ~value:(U.alu_binary ~op ~lhs:a ~rhs:b) ()) [ Ops.Cdiv; Ops.Cmod ] in
+      let sink = U.sink [ U.end_ ~value:(U.group stores) ~ranges:[ range ] ] in
+      let decomposed = Decomp_dtype.do_dtype_decomps renderer sink in
+      Spec.type_verify Spec.full_spec decomposed;
+      is_false ~msg:"division and remainder leave no 64-bit operations"
+        (List.exists (fun n -> U.dtype n = Dtype.int64 || U.dtype n = Dtype.uint64)
+           (U.toposort decomposed));
+      let program = Codegen_lower.lower (Device.renderer device) decomposed
+          |> Linearizer.linearize in
+      let spec = Device.compile_program device ~name:"emulated_long_division" program in
+      let create values =
+        let size = Array.length values in
+        let buffer = Device.create_buffer ~size ~dtype device in
+        Device.Buffer.ensure_allocated buffer;
+        let bytes = Bytes.create (8 * size) in
+        Array.iteri (fun i value -> Bytes.set_int64_le bytes (8 * i) value) values;
+        Device.Buffer.copyin buffer bytes;
+        buffer in
+      let input = create (Array.map fst cases) and divisors = create (Array.map snd cases) in
+      let output = create (Array.make (2 * count) 0L) in
+      run_spec device spec [ output; input; divisors ];
+      let bytes = Device.Buffer.as_bytes output in
+      let div, rem = if dtype = Dtype.uint64 then Int64.unsigned_div, Int64.unsigned_rem
+        else Int64.div, Int64.rem in
+      Array.iteri (fun i (a, b) ->
+          let msg = Printf.sprintf "%s %Ld / %Ld" (Dtype.to_string dtype) a b in
+          equal ~msg int64 (div a b) (Bytes.get_int64_le bytes (8 * i));
+          equal ~msg int64 (rem a b) (Bytes.get_int64_le bytes (8 * (i + count)))) cases)
+    [ Dtype.int64; Dtype.uint64 ]
 
 let test_emulated_fp8_loads () =
   let device = cpu "emulated-fp8-loads" in
@@ -477,6 +534,8 @@ let main () =
           test "emulated compact-float storage preserves masks and bitcasts"
             test_emulated_compact_float_storage;
           test "emulated FP8 loads preserve all normal values" test_emulated_fp8_loads;
+          test "emulated long division preserves quotient and remainder"
+            test_emulated_long_division;
           test "emulated long buffer arithmetic preserves both words" test_emulated_long_buffer_arithmetic;
           test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
           test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;
