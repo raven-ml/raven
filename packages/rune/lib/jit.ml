@@ -2911,7 +2911,7 @@ let read_out : type a b.
 
 (* Copy the elements [v] reaches into [dst] in C order, from [src], which holds
    the storage's elements from [base] on. *)
-let gather_view : type a b.
+let gather_elements : type a b.
     (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t -> unit =
  fun src ~base v dst ->
   let shape = NV.shape v and strides = NV.strides v in
@@ -2931,6 +2931,35 @@ let gather_view : type a b.
       end
     done
   done
+
+(* [gather_elements] over the elements' bits, read as integers of their width: a
+   float read into an OCaml float would quiet a signalling NaN. An element of 16
+   bytes is two 8-byte words; 4-bit elements are copied as values. *)
+let gather_view : type a b.
+    (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t -> unit =
+ fun src ~base v dst ->
+  let as_words (type c d) (word : (c, d) Nx_buffer.kind) w =
+    let shape = NV.shape v and strides = NV.strides v in
+    let words =
+      NV.create
+        ~offset:(NV.offset v * w)
+        ~strides:(Array.append (Array.map (fun s -> s * w) strides) [| 1 |])
+        (Array.append shape [| w |])
+    in
+    gather_elements
+      (Nx_buffer.reinterpret word src)
+      ~base:(base * w) words
+      (Nx_buffer.reinterpret word dst)
+  in
+  match Nx_buffer.kind src with
+  | Nx_buffer.Int4 | Nx_buffer.UInt4 -> gather_elements src ~base v dst
+  | kind -> (
+      match Nx_buffer.kind_size_in_bytes kind with
+      | 1 -> as_words Nx_buffer.Int8 1
+      | 2 -> as_words Nx_buffer.Int16 1
+      | 4 -> as_words Nx_buffer.Int32 1
+      | 8 -> as_words Nx_buffer.Int64 1
+      | n -> as_words Nx_buffer.Int64 (n / 8))
 
 (* The elements of [buf]'s storage from [lo] to [hi] on the host: borrowed from
    the buffer's memory when the host addresses it, copied otherwise. *)

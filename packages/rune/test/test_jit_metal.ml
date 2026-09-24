@@ -646,6 +646,18 @@ let test_scatter_duplicates_on_metal () =
       check_arr ~msg:name (to_arr (f t)) (Rune.jit' ~device:"METAL" f t))
     [ ("set", `Set); ("add", `Add) ]
 
+(* Reading a strided view of a placed value copies bits: a signalling NaN and
+   its payload survive the read, as they do for a contiguous one. *)
+let test_placed_view_keeps_nan_bits () =
+  let bits =
+    Nx.create Nx.int32 [| 2; 3 |]
+      [| 0x7F800001l; 0xFFC00123l; 1l; 0x80000000l; 0x7FA00000l; -1l |]
+  in
+  let placed = on_metal (Nx.bitcast f32 bits) in
+  equal ~msg:"a transposed view" (array int32)
+    (Nx.to_array (Nx.transpose bits))
+    (Nx.to_array (Nx.bitcast Nx.int32 (Nx.transpose placed)))
+
 let tests =
   [
     group "metal device"
@@ -671,6 +683,7 @@ let tests =
       ];
     group "placed weights"
       [
+        test "a placed view is read bit for bit" test_placed_view_keeps_nan_bits;
         test "a dtype Metal cannot hold raises at placement"
           test_unsupported_dtype_raises_at_placement;
         test "placed weights bind and replay as device graphs"

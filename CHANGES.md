@@ -109,6 +109,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Fix reading a strided view of a placed value (`Nx.to_array`, `Nx.copy`, or
+  an eager operation on `Nx.transpose` of it): the elements were copied
+  through OCaml values, which quieted signalling NaNs. They are now copied as
+  bits.
 - Compiled `Nx.sort` and `Nx.argsort` put NaN after every number in either
   direction, as eager ones do. A NaN dropped out of the sorted values, with
   another value repeated in its place, and the positions around it were wrong.
