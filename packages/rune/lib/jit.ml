@@ -268,8 +268,19 @@ let free_retired_arenas () =
         end)
       !retired_arenas
 
+(* Buffer views over a range of a value's storage that a finished call or a
+   dropped program bound (see [seed_of]). They go at the next safe point, before
+   any storage does: a base buffer with a view still allocated cannot be
+   freed. *)
+let pending_views : Tolk.Device.Buffer.t list ref = ref []
+
 let drain_releases () =
   if !retired_arenas <> [] then free_retired_arenas ();
+  (match !pending_views with
+  | [] -> ()
+  | views ->
+      pending_views := [];
+      List.iter Tolk.Device.Buffer.deallocate views);
   match !pending_release with
   | [] -> ()
   | stores ->
@@ -327,6 +338,19 @@ let shared_arena dev k nbytes =
       Hashtbl.replace arenas key buf;
       buf
 
+(* How a program reads an input or constant from its node: from element [skip]
+   on, the value's elements in C order, or a view of [strides] over the elements
+   of storage it reaches (see [view_movement]). *)
+type layout = { skip : int; strides : int array option }
+
+let dense = { skip = 0; strides = None }
+
+(* How a value seeds a program's input or constant: see [seed_of]. *)
+type seed =
+  | Whole of Nx_effect.cell
+  | Range of { cell : Nx_effect.cell; lo : int; span : int; layout : layout }
+  | Copy
+
 (* Trace state *)
 
 type input = {
@@ -365,7 +389,7 @@ type state = {
          whose value it starts from (see [write_destination]) *)
   mutable consts : (U.t * packed) list; (* reverse order *)
   bound : F.Tensor.t Tensor_map.Tbl.t; (* resident captures bound in place *)
-  mutable bound_consts : (U.t * Nx_effect.cell * packed) list;
+  mutable bound_consts : (U.t * Nx_effect.cell * packed * seed) list;
   mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
   scan_stacks : (U.t * int) list Tbl.t;
       (* staged scans: the step record's identity -> the per-leaf carry-stack
@@ -483,28 +507,181 @@ let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   Tensor_map.Tbl.replace st.table (Key x) tt;
   tt
 
-(* A capture resident on the trace's own single device, whose view covers its
-   storage, keeps its buffer: the program reads it as the constant and no bytes
-   move. The compiled record keeps the value reachable and counts the binding on
-   its cell, so the storage is never donated while the program lives. *)
-let bindable : type a b. state -> (a, b) Nx_effect.t -> Nx_effect.cell option =
- fun st x ->
-  match (st.st_multi, x) with
-  | None, Placed r -> (
-      match store_of r.r_cell with
-      | Some { s_devices = [ d ]; _ }
-        when d == st.st_device && Nx_effect.covers r ->
-          Some r.r_cell
-      | _ -> None)
-  | _ -> None
+(* The range of storage elements [v] reaches, [lo] to [hi] exclusive. *)
+let extent v =
+  let strides = NV.strides v in
+  let lo = ref (NV.offset v) and hi = ref (NV.offset v) in
+  Array.iteri
+    (fun d n ->
+      let span = strides.(d) * (n - 1) in
+      if span < 0 then lo := !lo + span else hi := !hi + span)
+    (NV.shape v);
+  (!lo, !hi + 1)
 
-let bind_const (type a b) st cell (x : (a, b) Nx_effect.t) : F.Tensor.t =
+(* Placed views
+
+   A value placed on a program's device seeds the program without a copy: its
+   buffer when its view covers its storage, otherwise the range of storage its
+   view reaches, bound as a buffer view from a 16-byte boundary (see
+   [alignment]). A C-order window is that range as it is; any other view is
+   movement over the range, which the program applies, when its axes nest. A
+   value that seeds neither way is copied. *)
+
+(* The axes a view steps along, by decreasing stride. *)
+let stepped_axes shape strides =
+  List.init (Array.length shape) Fun.id
+  |> List.filter (fun d -> shape.(d) > 1 && strides.(d) <> 0)
+  |> List.stable_sort (fun a b ->
+      Int.compare (Int.abs strides.(b)) (Int.abs strides.(a)))
+
+(* Whether each stepped axis's stride is a multiple of the next one's and
+   reaches past its extent: the view is then a cut of a C-order layout of its
+   range, seen through a permutation, flips and broadcasts. Overlapping windows
+   are not. *)
+let nests shape strides =
+  let rec go = function
+    | a :: (b :: _ as rest) ->
+        let sa = Int.abs strides.(a) and sb = Int.abs strides.(b) in
+        sa mod sb = 0 && sa >= sb * shape.(b) && go rest
+    | _ -> true
+  in
+  go (stepped_axes shape strides)
+
+(* The view of [shape] and [strides] over [flat], its [span]-element range: the
+   range padded to whole rows of the largest stride, reshaped into the nested
+   layout, cut to the view's extents, then permuted, flipped and broadcast into
+   place. *)
+let view_movement flat ~span shape strides =
+  let axes = stepped_axes shape strides in
+  let base = Array.mapi (fun d n -> if strides.(d) = 0 then 1 else n) shape in
+  let t =
+    match axes with
+    | [] -> F.Movement.shrink flat [ (0, 1) ]
+    | a0 :: _ ->
+        let s0 = Int.abs strides.(a0) in
+        let rows = (span + s0 - 1) / s0 in
+        let flat =
+          if rows * s0 = span then flat
+          else F.Movement.pad flat [ (0, (rows * s0) - span) ]
+        in
+        let rec inner = function
+          | a :: (b :: _ as rest) ->
+              (Int.abs strides.(a) / Int.abs strides.(b)) :: inner rest
+          | [ a ] -> [ Int.abs strides.(a) ]
+          | [] -> []
+        in
+        let t = F.Movement.reshape flat (rows :: inner axes) in
+        let t =
+          F.Movement.shrink t
+            (List.map (fun a -> (0, base.(a))) axes @ [ (0, 1) ])
+        in
+        let t = F.Movement.reshape t (List.map (fun a -> base.(a)) axes) in
+        let position a =
+          let rec find i = function
+            | x :: rest -> if x = a then i else find (i + 1) rest
+            | [] -> assert false
+          in
+          find 0 axes
+        in
+        F.Movement.permute t (List.map position (List.sort Int.compare axes))
+  in
+  let t = F.Movement.reshape t (Array.to_list base) in
+  let flipped =
+    List.filter
+      (fun d -> strides.(d) < 0 && shape.(d) > 1)
+      (List.init (Array.length shape) Fun.id)
+  in
+  let t = if flipped = [] then t else F.Movement.flip t flipped in
+  F.Movement.expand t (Array.to_list shape)
+
+(* Kernels may load 16 bytes at a time from where a buffer starts, and CUDA and
+   NV fault on a vector load from an address that is not a multiple of its width
+   (Metal leaves it undefined). A range is therefore bound from the element at
+   or below it whose byte offset is a multiple of 16, and the program skips the
+   elements in front of it: those skipped join the cache key, so ranges whose
+   offsets differ by a multiple of 16 bytes share a program. *)
+let alignment = 16
+
+let seed_of : type a b. Tolk.Device.t -> (a, b) Nx_effect.t -> seed =
+ fun dev x ->
+  match x with
+  | Placed r -> (
+      match store_of r.r_cell with
+      | Some { s_devices = [ d ]; s_bufs = [ buf ]; _ } when d == dev ->
+          let v = r.r_view in
+          let range lo n strides =
+            let per =
+              Int.max 1 (alignment / TD.itemsize (Tolk.Device.Buffer.dtype buf))
+            in
+            let skip = lo mod per in
+            Range
+              {
+                cell = r.r_cell;
+                lo = lo - skip;
+                span = n + skip;
+                layout = { skip; strides };
+              }
+          in
+          if Nx_effect.covers r then Whole r.r_cell
+          else if NV.numel v = 0 || not (Tolk.Device.Buffer.supports_offset buf)
+          then Copy
+          else if NV.is_c_contiguous v then
+            range (NV.offset v) (NV.numel v) None
+          else if nests (NV.shape v) (NV.strides v) then
+            let lo, hi = extent v in
+            range lo (hi - lo) (Some (NV.strides v))
+          else Copy
+      | _ -> Copy)
+  | _ -> Copy
+
+(* [buf]'s elements [lo] to [lo + span], as a buffer of its own. *)
+let buffer_range buf ~lo ~span =
+  let dtype = Tolk.Device.Buffer.dtype buf in
+  let v =
+    Tolk.Device.Buffer.view buf ~size:span ~dtype
+      ~offset:(lo * TD.itemsize dtype)
+  in
+  Tolk.Device.Buffer.ensure_allocated v;
+  v
+
+let layout_of = function
+  | Range { layout; _ } -> layout
+  | Whole _ | Copy -> dense
+
+(* The elements of a node read under [layout], for a value of [shape]. *)
+let layout_size layout shape =
+  match layout.strides with
+  | None -> layout.skip + numel shape
+  | Some strides ->
+      let lo, hi = extent (NV.create ~strides shape) in
+      layout.skip + (hi - lo)
+
+let layout_tensor node layout shape =
+  if layout = dense then buffer_tensor node shape
+  else
+    let size = layout_size layout shape in
+    let flat = buffer_tensor node [| size |] in
+    let range =
+      if layout.skip = 0 then flat
+      else F.Movement.shrink flat [ (layout.skip, size) ]
+    in
+    match layout.strides with
+    | None -> F.Movement.reshape range (Array.to_list shape)
+    | Some strides ->
+        view_movement range ~span:(size - layout.skip) shape strides
+
+(* A capture placed on a single-device program's device keeps its storage: the
+   program reads it as the constant and no bytes move. The compiled record keeps
+   the value reachable and counts the binding on its cell, so the storage is
+   never donated while the program lives. *)
+let bind_const (type a b) st seed cell (x : (a, b) Nx_effect.t) : F.Tensor.t =
   let dt = Nx_effect.dtype x in
   check_dtype st dt "a constant of the function";
   let shape = shape_of x in
-  let node = make_node st (tolk_dtype dt) (numel shape) in
-  st.bound_consts <- (node, cell, Packed (dt, x)) :: st.bound_consts;
-  let tt = buffer_tensor node shape in
+  let layout = layout_of seed in
+  let node = make_node st (tolk_dtype dt) (layout_size layout shape) in
+  st.bound_consts <- (node, cell, Packed (dt, x), seed) :: st.bound_consts;
+  let tt = layout_tensor node layout shape in
   Tensor_map.Tbl.replace st.bound (Key x) tt;
   tt
 
@@ -524,12 +701,12 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
          computed inside a jitted function exists outside it only as an output"
   | _ -> (
       check_capture st x;
-      match bindable st x with
-      | Some cell -> (
+      match if st.st_multi = None then seed_of st.st_device x else Copy with
+      | (Whole cell | Range { cell; _ }) as seed -> (
           match Tensor_map.Tbl.find_opt st.bound (Key x) with
           | Some t -> t
-          | None -> bind_const st cell x)
-      | None -> (
+          | None -> bind_const st seed cell x)
+      | Copy -> (
           match Tensor_map.Tbl.find_opt st.table (Key x) with
           | Some t -> t
           | None ->
@@ -2653,17 +2830,6 @@ let read_out : type a b.
    the elements are copied straight out of the buffer's own memory; elsewhere
    the range the view reaches is copied out first. *)
 
-(* The range of storage elements [v] reaches, [lo] to [hi] exclusive. *)
-let extent v =
-  let strides = NV.strides v in
-  let lo = ref (NV.offset v) and hi = ref (NV.offset v) in
-  Array.iteri
-    (fun d n ->
-      let span = strides.(d) * (n - 1) in
-      if span < 0 then lo := !lo + span else hi := !hi + span)
-    (NV.shape v);
-  (!lo, !hi + 1)
-
 (* Copy the elements [v] reaches into [dst] in C order, from [src], which holds
    the storage's elements from [base] on. *)
 let gather_view : type a b.
@@ -3102,7 +3268,7 @@ let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
   List.rev !acc
 
 let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
-    ?(may_move = false) ?multi ?beam ?beam_parallel
+    ?(may_move = false) ?layouts ?multi ?beam ?beam_parallel
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t) :
     Q.t compiled =
@@ -3169,13 +3335,16 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
          a per-shard buffer on the device tuple wrapped in MULTI (whose shape
          multiplies the axis back up); a replicated leaf is a full-size buffer
          on the tuple with no wrapper. *)
+      (* A view of part of a storage binds the range of storage it reaches. *)
+      let layout = match layouts with Some a -> a.(!pos) | None -> dense in
+      let size = layout_size layout shape in
       let node, tt, bufs =
         match (place, multi) with
         | P_single, _ ->
-            let node = make_node st dtolk n in
+            let node = make_node st dtolk size in
             ( node,
-              buffer_tensor node shape,
-              [ Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev ] )
+              layout_tensor node layout shape,
+              [ Tolk.Device.create_buffer ~size ~dtype:dtolk dev ] )
         | P_replicated, Some (spec, _) ->
             let node = make_node st dtolk n in
             ( node,
@@ -3213,7 +3382,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
           i_place = place;
           i_bufs = bufs;
           i_dtype = ND.to_string (Nx_effect.dtype leaf);
-          i_numel = n;
+          i_numel = size;
         }
         :: !inputs;
       incr pos)
@@ -3308,22 +3477,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         | _ -> P_replicated)
     | Some (U.Single _) | Some (U.Index _) | None -> P_single
   in
-  (* A buffer after the effects that wrote it is already the result: it is sunk
-     as it stands, under no reshape, since a [contiguous] over it would copy it
-     out. *)
-  let out_conts =
-    List.map2
-      (fun (key, pk, _) u ->
-        let c =
-          match written_buffer u with
-          | Some v -> v
-          | None -> U.contiguous ~src:u ()
-        in
-        (key, pk, u, place_of u, c))
-      out_anch out_uops
-  in
-  let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
-  let call, buffer_map = Tolk.Callify.transform_to_call sink in
   (* Resolve each output to the buffer node realization assigned it. An output
      whose node is a graph buffer under identity wrappers (an input or constant
      returned unchanged: [U.contiguous] elides itself on buffer-identity
@@ -3338,6 +3491,35 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         else None
     | _ -> None
   in
+  let rec moves u =
+    match U.op u with
+    | Tolk_uop.Ops.Buffer -> true
+    | op when Tolk_uop.Ops.Group.is_movement op ->
+        Array.length (U.src u) > 0 && moves (U.src u).(0)
+    | _ -> false
+  in
+  (* A buffer after the effects that wrote it is already the result: it is sunk
+     as it stands, under no reshape, since a [contiguous] over it would copy it
+     out. Any other movement of a buffer (a shrink of an input, say) is copied
+     into an output of its own: the schedule would leave a [contiguous] of it a
+     view of that buffer, which no output node stands for. *)
+  let out_conts =
+    List.map2
+      (fun (key, pk, _) u ->
+        let c =
+          match written_buffer u with
+          | Some v -> v
+          | None when multi = None && strip_identity u = None && moves u ->
+              Option.get
+                (written_buffer
+                   (F.Tensor.uop (F.Creation.clone (F.Tensor.of_uop u))))
+          | None -> U.contiguous ~src:u ()
+        in
+        (key, pk, u, place_of u, c))
+      out_anch out_uops
+  in
+  let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
+  let call, buffer_map = Tolk.Callify.transform_to_call sink in
   let resolve what u c =
     let unwrap node = U.buf_uop node in
     match Hashtbl.find_opt buffer_map (U.tag c) with
@@ -3396,7 +3578,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
           let bound =
             List.map (fun inp -> inp.i_node) !inputs
             @ List.map fst st.consts
-            @ List.map (fun (node, _, _) -> node) st.bound_consts
+            @ List.map (fun (node, _, _, _) -> node) st.bound_consts
             @ Option.to_list st.axis_index
             @ List.map (fun (_, _, node, _) -> node) cp_outputs
           in
@@ -3439,7 +3621,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         (fun n -> Hashtbl.replace bound (U.tag n) ())
         (List.map (fun inp -> inp.i_node) !inputs
         @ List.map fst st.consts
-        @ List.map (fun (node, _, _) -> node) st.bound_consts
+        @ List.map (fun (node, _, _, _) -> node) st.bound_consts
         @ List.map (fun (_, _, node, _) -> node) cp_outputs);
       let seen = Hashtbl.create 4 and acc = ref [] in
       List.iter
@@ -3524,12 +3706,17 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
     st.consts;
   (* A bound capture seeds its constant with the resident buffer itself: reads
      leave storage in place, and the value is reachable from the trace. *)
+  let views = ref [] in
   let bound =
     List.map
-      (fun (node, cell, pk) ->
+      (fun (node, cell, pk, seed) ->
         Hashtbl.replace reserved (U.tag node) ();
-        (match store_of cell with
-        | Some { s_bufs = [ buf ]; _ } ->
+        (match (store_of cell, seed) with
+        | Some { s_bufs = [ buf ]; _ }, Range { lo; span; _ } ->
+            let view = buffer_range buf ~lo ~span in
+            views := view :: !views;
+            Tolk.Realize.Buffers.seed binding node view
+        | Some { s_bufs = [ buf ]; _ }, (Whole _ | Copy) ->
             Tolk.Realize.Buffers.seed binding node buf
         | _ -> err "Rune.jit: a bound capture was donated while tracing");
         (cell, pk))
@@ -3664,9 +3851,10 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
       cp_scratch = Hashtbl.create 8;
     }
   in
-  let cells = List.map fst bound in
+  let cells = List.map fst bound and views = !views in
   Gc.finalise_last
     (fun () ->
+      pending_views := views @ !pending_views;
       List.iter
         (fun (cell : Nx_effect.cell) -> cell.bound <- cell.bound - 1)
         cells)
@@ -3693,19 +3881,11 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
      leaf is contiguous, and copy its bytes if not. Seeded leaves and wrapped
      hosts are kept reachable until the run completes, so no finalizer can
      release a buffer the kernels still read. *)
-  (* A placed value seeds the compiled input only when its view covers its
-     storage and its placement matches the input's: the same single device, or
-     the same device tuple with the same shard axis. Any other value is read by
-     the copy path, which leaves it where it is, and re-split. *)
-  let resident_single : type a b. (a, b) Nx_effect.t -> Nx_effect.cell option =
-    function
-    | Placed r when Nx_effect.covers r -> (
-        match store_of r.r_cell with
-        | Some { s_devices = [ d ]; s_bufs = [ _ ]; _ } when d == c.cp_device ->
-            Some r.r_cell
-        | _ -> None)
-    | _ -> None
-  in
+  (* A placed value on a single device seeds the compiled input as [seed_of]
+     says. On a device tuple, it seeds only when its view covers its storage and
+     its placement matches the input's: the same tuple with the same shard axis.
+     Any other value is read by the copy path, which leaves it where it is, and
+     re-split. *)
   let resident_multi : type a b.
       multi_spec -> leaf_place -> (a, b) Nx_effect.t -> Nx_effect.cell option =
    fun spec place -> function
@@ -3737,6 +3917,12 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
     if not (c.cp_consumed i) then read := e :: !read
     else if e.bound = 0 && not (List.memq e !seeded) then seeded := e :: !seeded
   in
+  (* The buffer views of this call's ranges are released once it has run, or has
+     raised: not at a safe point inside it, where the launch would allocate them
+     again. *)
+  let ranges = ref [] in
+  Fun.protect ~finally:(fun () -> pending_views := !ranges @ !pending_views)
+  @@ fun () ->
   let keep = ref [] in
   let i = ref 0 in
   P.iter
@@ -3761,14 +3947,23 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
               upload_multi c.cp_scratch inp.i_place spec.md_devs inp.i_bufs
                 (on_host leaf))
       | None -> (
-          match resident_single leaf with
-          | Some e ->
+          match seed_of c.cp_device leaf with
+          | Whole e ->
               keep := Obj.repr leaf :: !keep;
               note !i e;
               seed_entry.(!i) <- Some e;
               Tolk.Realize.Buffers.seed c.cp_binding inp.i_node
                 (List.hd (bufs_of e))
-          | None -> (
+          (* A view of part of a storage is read, never consumed. *)
+          | Range { cell = e; lo; span; _ }
+            when (not (c.cp_consumed !i)) || List.memq e !read ->
+              keep := Obj.repr leaf :: !keep;
+              note !i e;
+              seed_entry.(!i) <- Some e;
+              let range = buffer_range (List.hd (bufs_of e)) ~lo ~span in
+              ranges := range :: !ranges;
+              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node range
+          | Range _ | Copy -> (
               (* A state leaf is donated by cell: a held value is consumed, and
                  a view of part of its storage cannot be. *)
               (match leaf with
@@ -4150,7 +4345,7 @@ let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
   let const_caches : (string, Tolk.Realize.buffer Tensor_map.Tbl.t) Hashtbl.t =
     Hashtbl.create 1
   in
-  let compile d ~may_move consumed_from params =
+  let compile d ~may_move ~layouts consumed_from params =
     let const_cache =
       match Hashtbl.find_opt const_caches (Nx.Device.name d) with
       | Some t -> t
@@ -4161,7 +4356,7 @@ let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
     in
     (* The host's programs run over host memory. *)
     trace_compile ~device:(tolk_device_of d) ~zero_copy:(d == Nx.Device.host)
-      ~consumed_from ~const_cache ~may_move ?beam ?beam_parallel
+      ~consumed_from ~const_cache ~may_move ~layouts ?beam ?beam_parallel
       (module P)
       (module Q)
       f params
@@ -4178,12 +4373,19 @@ let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
       in
       let consumed_from = consumed_from params in
       let signature = signature_of (module P) params in
-      let key d = (Nx.Device.name d, consumed_from, signature) in
+      (* A leaf bound as a view reads its range in the program, so how it does
+         joins the key; any other leaf is its elements in C order. *)
+      let layouts =
+        let dev = tolk_device_of d and acc = ref [] in
+        P.iter (fun leaf -> acc := layout_of (seed_of dev leaf) :: !acc) params;
+        Array.of_list (List.rev !acc)
+      in
+      let key d = (Nx.Device.name d, consumed_from, signature, layouts) in
       let compiled d ~may_move =
         match Hashtbl.find_opt cache (key d) with
         | Some c -> c
         | None ->
-            let c = compile d ~may_move consumed_from params in
+            let c = compile d ~may_move ~layouts consumed_from params in
             (* Captures it binds make the device the closure's. *)
             if c.cp_bound <> [||] && !captured_on = None then
               captured_on := Some d;

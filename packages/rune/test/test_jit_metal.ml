@@ -210,6 +210,37 @@ let test_unsupported_dtype_raises_at_placement () =
   cannot_hold (fun () -> Nx.cast Nx.float64 p);
   cannot_hold (fun () -> Nx.cast Nx.float64 (Nx.sum p))
 
+(* A view of part of a placed storage binds it at any element offset, whatever
+   the dtype's width, and a strided one is movement in the program. *)
+let test_placed_views_bind () =
+  let metal = Nx.Placement.device (Rune.device "METAL") in
+  let check (type a b) ~msg (dt : (a, b) Nx.dtype) =
+    let n = 4097 in
+    let x =
+      Nx.cast dt
+        (Nx.create f32 [| n |]
+           (Array.init n (fun i -> float_of_int (i mod 61))))
+    in
+    let p = Nx.place metal x in
+    let f v = Nx.add v v in
+    let view = Nx.slice [ Nx.R (1, n) ] p in
+    let y, up = delta (fun () -> Rune.jit' ~device:"METAL" f view) in
+    equal ~msg:(msg ^ ": nothing is uploaded") int 0 up;
+    let expected = f (Nx.slice [ Nx.R (1, n) ] x) in
+    is_true ~msg:(msg ^ ": value")
+      (Nx.item [] (Nx.all (Nx.equal (Nx.place Nx.Placement.host y) expected)))
+  in
+  check ~msg:"float32" f32;
+  check ~msg:"bfloat16" Nx.bfloat16;
+  check ~msg:"int8" Nx.int8;
+  let w1, _ = weights () in
+  let p = Nx.place metal w1 in
+  let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
+  let g = Rune.jit' ~device:"METAL" (fun w -> Nx.matmul x w) in
+  let y, up = delta (fun () -> g (Nx.matrix_transpose p)) in
+  equal ~msg:"a transpose: only the capture is uploaded" int (Nx.nbytes x) up;
+  check_arr ~msg:"a transpose" (to_arr (Nx.matmul x (Nx.matrix_transpose w1))) y
+
 (* A compiled function refuses a dtype its device cannot hold before it runs: a
    host input, a value it computes, and a value it captures. *)
 let test_unsupported_dtype_raises_before_a_call () =
@@ -527,6 +558,7 @@ let tests =
           test_step_reads_weights_consumes_state;
         test "a capture resident on another device raises"
           test_capture_resident_elsewhere;
+        test "placed views bind at any offset" test_placed_views_bind;
         test "a dtype Metal cannot hold raises before a compiled call"
           test_unsupported_dtype_raises_before_a_call;
         test "a capture moves a program past a dtype"

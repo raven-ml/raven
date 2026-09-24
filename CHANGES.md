@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A placed leaf or capture that views part of its storage (a slice, a
+  transpose, a flip, a broadcast) is read in place by a compiled function on its
+  device, where it was copied through the host on every call.
 - A compiled function runs where its placed inputs and captures live, else on
   `Rune.default_device`. A leaf or capture elsewhere, or a `pmap` output, raises
   instead of going through the host; so does `float64` on Metal.

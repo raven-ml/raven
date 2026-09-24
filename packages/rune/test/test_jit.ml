@@ -1659,6 +1659,137 @@ let test_capture_device_is_remembered () =
   is_true ~msg:"on the capture's device"
     (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement y))
 
+(* Placed views. A view of part of a placed storage binds the storage it
+   reaches, with no copy; a strided view is movement in the program. *)
+let m34 () = place (Nx.create f32 [| 3; 4 |] (Array.init 12 float_of_int))
+
+let check_bound ~msg f x =
+  let expected = to_arr (f (Nx.place Nx.Placement.host x)) in
+  let y, up, _ = delta (fun () -> Rune.jit' f x) in
+  check_arr ~msg expected y;
+  equal ~msg:(msg ^ ": nothing is uploaded") int 0 up
+
+let test_views_bind_without_a_copy () =
+  let p = m34 () in
+  let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
+  check_bound ~msg:"a C-order window" f (Nx.slice [ Nx.R (1, 3) ] p);
+  check_bound ~msg:"a transpose" f (Nx.matrix_transpose p);
+  check_bound ~msg:"a column cut" f (Nx.slice [ Nx.A; Nx.R (1, 3) ] p);
+  check_bound ~msg:"a flip" f (Nx.flip ~axes:[ 1 ] p);
+  check_bound ~msg:"a broadcast" f
+    (Nx.broadcast_to [| 3; 2; 4 |] (Nx.slice [ Nx.R (1, 3) ] p));
+  check_bound ~msg:"a reduction over a cut" Nx.sum
+    (Nx.slice [ Nx.Rs (0, 3, 2); Nx.R (1, 4) ] p)
+
+(* A C-order window shares the program of a value covering its storage, and two
+   strided views whose offsets differ by a multiple of 16 bytes share one. *)
+let test_views_share_programs () =
+  let traces = ref 0 in
+  let g =
+    Rune.jit' (fun x ->
+        incr traces;
+        Nx.mul_s x 2.0)
+  in
+  let p = m34 () in
+  let covering = place (Nx.zeros f32 [| 2; 4 |]) in
+  let (_ : Nx.float32_t), up, _ = delta (fun () -> g covering) in
+  equal ~msg:"a covering value uploads nothing" int 0 up;
+  let n = !traces in
+  let y, up, _ = delta (fun () -> g (Nx.slice [ Nx.R (1, 3) ] p)) in
+  check_arr ~msg:"a window" [| 8.; 10.; 12.; 14.; 16.; 18.; 20.; 22. |] y;
+  equal ~msg:"a window uploads nothing" int 0 up;
+  equal ~msg:"shares the covering value's program" int n !traces;
+  let wide = place (Nx.create f32 [| 3; 8 |] (Array.init 24 float_of_int)) in
+  ignore (g (Nx.slice [ Nx.A; Nx.R (0, 2) ] wide));
+  let n = !traces in
+  let y, up, _ = delta (fun () -> g (Nx.slice [ Nx.A; Nx.R (4, 6) ] wide)) in
+  check_arr ~msg:"another offset" [| 8.; 10.; 24.; 26.; 40.; 42. |] y;
+  equal ~msg:"a strided view uploads nothing" int 0 up;
+  equal ~msg:"shares the strided program" int n !traces
+
+(* A range is bound from a 16-byte boundary and the program skips the elements
+   before it, so windows whose offsets differ by four float32 share a program,
+   and the others each have one. *)
+let test_windows_bind_from_aligned_offsets () =
+  let n = 1024 in
+  let x = place (Nx.create f32 [| n + 4 |] (Array.init (n + 4) float_of_int)) in
+  let traces = ref 0 in
+  let g =
+    Rune.jit' (fun x ->
+        incr traces;
+        Nx.add_s x 1.0)
+  in
+  for k = 0 to 4 do
+    let y, up, _ = delta (fun () -> g (Nx.slice [ Nx.R (k, k + n) ] x)) in
+    let msg = Printf.sprintf "offset %d" k in
+    check_arr ~msg (Array.init n (fun i -> float_of_int (k + i + 1))) y;
+    equal ~msg:(msg ^ ": nothing is uploaded") int 0 up
+  done;
+  equal ~msg:"offsets 0 and 4 share a program" int 4 !traces
+
+(* An output that is a movement of an input is copied out of it: an unaligned
+   window returned as it is, a slice of an input. *)
+let test_views_of_inputs_as_outputs () =
+  let x = place (Nx.create f32 [| 8 |] (Array.init 8 float_of_int)) in
+  let w = Nx.slice [ Nx.R (1, 5) ] x in
+  check_arr ~msg:"an unaligned window returned" [| 1.; 2.; 3.; 4. |]
+    (Rune.jit' (fun v -> v) w);
+  check_arr ~msg:"the window is still readable" [| 1.; 2.; 3.; 4. |] w;
+  let slice v = Nx.slice [ Nx.R (1, 3) ] v in
+  check_arr ~msg:"a slice of a host input" [| 1.; 2. |]
+    (Rune.jit' slice (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]));
+  check_arr ~msg:"on the host" [| 1.; 2. |]
+    (Rune.jit' ~device:"CPU" slice (Nx.create f32 [| 4 |] [| 0.; 1.; 2.; 3. |]));
+  let step = Rune.jit_step (module Nx.Ptree) (module Csingle) (fun _ v -> v) in
+  check_arr ~msg:"a window of the state, read" [| 1.; 2.; 3.; 4. |]
+    (step (Nx.Ptree.list [ Nx.Ptree.tensor x ]) w)
+
+(* Views of one shape with other strides are other programs. *)
+let test_strides_key_programs () =
+  let traces = ref 0 in
+  let g =
+    Rune.jit' (fun x ->
+        incr traces;
+        Nx.mul_s x 1.0)
+  in
+  let a = place (Nx.create f32 [| 3; 4 |] (Array.init 12 float_of_int)) in
+  let b = place (Nx.create f32 [| 4; 6 |] (Array.init 24 float_of_int)) in
+  let cut = Nx.slice [ Nx.A; Nx.R (1, 4) ] b in
+  List.iter
+    (fun (msg, v) ->
+      check_arr ~msg (to_arr (Nx.place Nx.Placement.host v)) (g v))
+    [
+      ("a transpose", Nx.matrix_transpose a);
+      ("a column cut", cut);
+      ("its flip", Nx.flip ~axes:[ 1 ] cut);
+      ("a stepped cut", Nx.slice [ Nx.A; Nx.Rs (0, 6, 2) ] b);
+    ];
+  equal ~msg:"four programs" int 4 !traces
+
+(* Overlapping windows do not nest: they are copied, and read correctly. *)
+let test_overlapping_views_are_copied () =
+  let p = place (Nx.create f32 [| 6 |] (Array.init 6 float_of_int)) in
+  let w = Nx.sliding_window ~window:3 p in
+  let y, up, _ = delta (fun () -> Rune.jit' (fun x -> Nx.mul_s x 2.0) w) in
+  check_arr ~msg:"value"
+    (to_arr
+       (Nx.mul_s
+          (Nx.sliding_window ~window:3 (Nx.place Nx.Placement.host p))
+          2.0))
+    y;
+  is_true ~msg:"uploaded" (up > 0)
+
+let test_captured_views_bind () =
+  let p = m34 () in
+  let w = Nx.matrix_transpose (Nx.slice [ Nx.R (1, 3) ] p) in
+  let g = Rune.jit' (fun x -> Nx.matmul x w) in
+  let x = Nx.ones f32 [| 1; 4 |] in
+  let y, up, _ = delta (fun () -> g x) in
+  check_arr ~msg:"value" (to_arr (Nx.matmul x (Nx.place Nx.Placement.host w))) y;
+  equal ~msg:"only the input is uploaded" int (Nx.nbytes x) up;
+  let (_ : Nx.float32_t), up, _ = delta (fun () -> g x) in
+  equal ~msg:"again" int (Nx.nbytes x) up
+
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
 let test_item_reads_one_element () =
   let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
@@ -1936,6 +2067,27 @@ let test_read_after_call_waits () =
 let device_bytes name =
   Option.value ~default:0
     (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device name)
+
+(* Not inlined: once it returns, only [g]'s binding refers to the window's range
+   of storage, through a buffer view the call made. *)
+let[@inline never] read_a_window g n =
+  let x = place (Nx.create f32 [| n + 1 |] (Array.make (n + 1) 1.0)) in
+  check_arr ~msg:"the window" (Array.make n 2.0)
+    (g (Nx.slice [ Nx.R (1, n + 1) ] x))
+
+(* A call releases the buffer views of its ranges once it has run, so a dropped
+   value's storage returns to the device while the program that read a window of
+   it lives. *)
+let test_a_window's_view_is_released () =
+  let n = 1 lsl 18 in
+  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+  read_a_window g n;
+  let before = device_bytes "CPU:1" in
+  full_major ();
+  is_true ~msg:"the window's storage is freed"
+    (device_bytes "CPU:1" <= before - (n * 4));
+  check_arr ~msg:"the program still runs" [| 2.0 |]
+    (g (place (vec32 [| 1.0 |])))
 
 (* An [n x n] intermediate from an [n x 8] input: its arena outweighs the input
    and output storage the program also allocates. *)
@@ -3057,6 +3209,15 @@ let tests =
         test "a capture decides the device" test_capture_decides_the_device;
         test "a capture's device is remembered"
           test_capture_device_is_remembered;
+        test "placed views bind without a copy" test_views_bind_without_a_copy;
+        test "placed views share programs" test_views_share_programs;
+        test "windows bind from aligned offsets"
+          test_windows_bind_from_aligned_offsets;
+        test "strides key programs" test_strides_key_programs;
+        test "views of inputs as outputs" test_views_of_inputs_as_outputs;
+        test "a window's view is released" test_a_window's_view_is_released;
+        test "overlapping views are copied" test_overlapping_views_are_copied;
+        test "captured views bind" test_captured_views_bind;
         test "a program on the host is on the host"
           test_host_program_is_on_the_host;
       ];

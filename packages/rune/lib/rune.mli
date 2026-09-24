@@ -491,16 +491,22 @@ val jit :
     device. An output fed back as an input leaf of any jit call on the same
     device seeds the compiled program's input directly — no transfer — which
     makes iterated calls (training steps, decode loops with a cache) run without
-    per-call traffic. Device memory backing an output is held until the output
-    is garbage-collected. Past a budget of device allocations since the last
-    major collection (the [RUNE_JIT_RESIDENT_BUDGET] environment variable, in
-    bytes, 4 GiB by default), a collection runs before allocating more, and an
-    allocation that still fails raises {!Nx.Device.Out_of_memory}. A transfer
-    failure surfaces as an exception at the first read of the affected output.
-    The intermediate values of a call live in scratch memory that every compiled
-    function on the device shares, sized to the largest any of them needs, so
-    functions called in turn (the blocks of a deep model) do not each hold their
-    own. A {!pmap} keeps its own.
+    per-call traffic. So does any placed value on the device, a view of part of
+    its storage included: the program reads the storage the view reaches in
+    place, and applies a strided view's layout itself. The range is bound from a
+    16-byte boundary: views that differ only by an offset that is a multiple of
+    16 bytes share a program, and a C-order window at such an offset shares the
+    program of a value that covers its storage. Only views whose windows overlap
+    ({!Nx.sliding_window}) are copied. Device memory backing an output is held
+    until the output is garbage-collected. Past a budget of device allocations
+    since the last major collection (the [RUNE_JIT_RESIDENT_BUDGET] environment
+    variable, in bytes, 4 GiB by default), a collection runs before allocating
+    more, and an allocation that still fails raises {!Nx.Device.Out_of_memory}.
+    A transfer failure surfaces as an exception at the first read of the
+    affected output. The intermediate values of a call live in scratch memory
+    that every compiled function on the device shares, sized to the largest any
+    of them needs, so functions called in turn (the blocks of a deep model) do
+    not each hold their own. A {!pmap} keeps its own.
 
     Inputs are read, never consumed: a resident input leaf is still resident and
     readable after the call. {!jit_step} compiles a function that consumes part
@@ -754,17 +760,17 @@ val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     system when the value is released, not kept for reuse.
 
     {b Captures bind.} A compiled function that captures a resident value on its
-    own device, and is not a {!pmap}, uses that value's buffer as its constant
-    from its first compilation on: no bytes move, and every compiled function
-    that captures the value shares the one buffer. A value donated before that
-    first compilation can no longer be used. A compiled function keeps the
-    values it binds reachable, and while it is reachable their storage is never
-    donated: passed as a leaf of the state of {!jit_step}, a bound value is used
-    with no transfer and is not consumed, and an output that returns it
-    unchanged is a copy on the device. [RUNE_JIT_DEBUG=1] reports such a leaf as
-    [bound]. A capture resident on another device raises (see {!val-jit}), and a
-    {!pmap} reads a resident capture to the host and uploads it, as it does a
-    host capture.
+    own device, a view of it included, and is not a {!pmap}, uses that value's
+    buffer as its constant from its first compilation on: no bytes move, and
+    every compiled function that captures the value shares the one buffer. A
+    value donated before that first compilation can no longer be used. A
+    compiled function keeps the values it binds reachable, and while it is
+    reachable their storage is never donated: passed as a leaf of the state of
+    {!jit_step}, a bound value is used with no transfer and is not consumed, and
+    an output that returns it unchanged is a copy on the device.
+    [RUNE_JIT_DEBUG=1] reports such a leaf as [bound]. A capture resident on
+    another device raises (see {!val-jit}), and a {!pmap} reads a resident
+    capture to the host and uploads it, as it does a host capture.
 
     On the host, the result is [Nx.contiguous x]. Elsewhere it is {!Nx.place} on
     [device]: under {!val-grad} and {!val-jvp} placement is linear and a
