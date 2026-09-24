@@ -312,6 +312,20 @@ let test_placed_capture_is_replicated () =
   check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
   check_arr ~msg:"bound, after the pmap read it" (to_arr (Nx.mul x w)) (bound x)
 
+(* A compiled function runs on one device: an output of a pmap, on several,
+   raises as its input instead of being read through the host. *)
+let test_split_output_into_jit_raises () =
+  let g =
+    Rune.pmap ~devices:devs2 (module Single_f32) (fun x -> Nx.mul_s x 2.0)
+  in
+  let y = g (m46 ()) in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with ~prefix:"Rune.jit: input leaf 0 is on sharded" msg
+      | _ -> false)
+    (fun () -> Rune.jit' (fun x -> Nx.add_s x 1.0) y)
+
 let test_pass_through_output () =
   let g =
     Rune.pmap2 ~devices:devs2
@@ -745,6 +759,7 @@ let tests =
         test "pass-through outputs gather on read" test_pass_through_output;
         test "a placed capture is read back and replicated"
           test_placed_capture_is_replicated;
+        test "a split output into jit raises" test_split_output_into_jit_raises;
       ];
     group "donation"
       [

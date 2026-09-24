@@ -107,6 +107,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function runs where its placed inputs and captures live, else on
+  `Rune.default_device`. A leaf or capture elsewhere, or a `pmap` output, raises
+  instead of going through the host; so does `float64` on Metal.
 - Add `Rune.device`, `Rune.devices` and `Rune.default_device`: one
   `Nx.Device.t` per name (`"METAL"`, `"CUDA:3"`). `"CPU"` is `Nx.Device.host`,
   so placing on the host inside a host program is the identity; `"CPU:1"`,

@@ -1576,6 +1576,89 @@ let test_host_program_is_on_the_host () =
   check_arr ~msg:"and so is its gradient's" [| 2.0; 2.0 |]
     (Rune.jit' ~device:"CPU" (Rune.grad' (fun x -> Nx.sum (f x))) x)
 
+(* A compiled function runs where its placed inputs and captures live, and
+   refuses a value placed elsewhere before it runs. *)
+let invalid_starting prefix f =
+  raises_match
+    (function
+      | Invalid_argument msg -> String.starts_with ~prefix msg | _ -> false)
+    f
+
+let test_runs_where_its_inputs_live () =
+  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+  let x = place (vec32 [| 1.0; 2.0 |]) in
+  let y, up, _ = delta (fun () -> g x) in
+  is_true ~msg:"the output is on the input's device"
+    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement y));
+  equal ~msg:"nothing is uploaded" int 0 up;
+  check_arr ~msg:"value" [| 2.0; 4.0 |] y;
+  is_true ~msg:"a host input runs on the default device"
+    (Nx.Placement.equal Nx.Placement.host
+       (Nx.placement (g (vec32 [| 1.0; 2.0 |]))))
+
+let test_leaves_elsewhere_raise () =
+  let x = place (vec32 [| 1.0; 2.0 |]) in
+  let y = Nx.place (Nx.Placement.device (Rune.device "CPU:2")) x in
+  let (), up, _ =
+    delta (fun () ->
+        invalid_starting
+          "Rune.jit: input leaf 0 is on CPU:1 and ~device names CPU:2"
+          (fun () -> Rune.jit' ~device:"CPU:2" (fun x -> Nx.mul_s x 2.0) x);
+        invalid_starting
+          "Rune.jit: input leaf 0 is on CPU:1 and ~device names CPU" (fun () ->
+            Rune.jit' ~device:"CPU" (fun x -> Nx.mul_s x 2.0) x);
+        invalid_starting "Rune.jit: input leaves 0 and 1 are on CPU:1 and CPU:2"
+          (fun () ->
+            Rune.jit
+              (module Pair)
+              (fun p -> Nx.add p.Pair.u p.v)
+              { Pair.u = x; v = y }))
+  in
+  equal ~msg:"nothing is uploaded" int 0 up
+
+(* A capture decides where a function whose inputs are on the host runs, at the
+   first trace that meets it; later calls run there without tracing. *)
+let test_capture_decides_the_device () =
+  let w = place (vec32 [| 1.0; 2.0 |]) in
+  let traces = ref 0 in
+  let g =
+    Rune.jit' (fun x ->
+        incr traces;
+        Nx.mul x w)
+  in
+  let y = g (vec32 [| 3.0; 4.0 |]) in
+  is_true ~msg:"the output is on the capture's device"
+    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement y));
+  check_arr ~msg:"value" [| 3.0; 8.0 |] y;
+  let traced = !traces in
+  let y, up, _ = delta (fun () -> g (vec32 [| 1.0; 1.0 |])) in
+  equal ~msg:"a later call does not trace" int traced !traces;
+  equal ~msg:"and uploads only its input" int 8 up;
+  check_arr ~msg:"value" [| 1.0; 2.0 |] y;
+  invalid_starting
+    "Rune.jit: a captured value is on CPU:1 and the program runs on CPU:2"
+    (fun () ->
+      Rune.jit' ~device:"CPU:2" (fun x -> Nx.mul x w) (vec32 [| 1.0; 1.0 |]))
+
+(* A program that binds a capture makes its device the closure's: a later call
+   from the host runs there with no new trace. *)
+let test_capture_device_is_remembered () =
+  let w = place (vec32 [| 1.0; 2.0 |]) in
+  let traces = ref 0 in
+  let g =
+    Rune.jit' (fun x ->
+        incr traces;
+        Nx.mul x w)
+  in
+  check_arr ~msg:"a placed input" [| 3.0; 8.0 |]
+    (g (place (vec32 [| 3.0; 4.0 |])));
+  let traced = !traces in
+  let y = g (vec32 [| 1.0; 1.0 |]) in
+  check_arr ~msg:"a host input" [| 1.0; 2.0 |] y;
+  equal ~msg:"shares the program" int traced !traces;
+  is_true ~msg:"on the capture's device"
+    (Nx.Placement.equal (Nx.Placement.device cpu1) (Nx.placement y))
+
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
 let test_item_reads_one_element () =
   let g = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
@@ -2968,6 +3051,12 @@ let tests =
         test "placing elsewhere inside jit raises"
           test_placing_elsewhere_inside_jit_raises;
         test "one device per name" test_one_device_per_name;
+        test "a compiled function runs where its inputs live"
+          test_runs_where_its_inputs_live;
+        test "an input on another device raises" test_leaves_elsewhere_raise;
+        test "a capture decides the device" test_capture_decides_the_device;
+        test "a capture's device is remembered"
+          test_capture_device_is_remembered;
         test "a program on the host is on the host"
           test_host_program_is_on_the_host;
       ];

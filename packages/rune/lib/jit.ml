@@ -104,6 +104,14 @@ let scalar_of : type a b. (a, b) ND.t -> a -> F.Tensor.scalar =
   | ND.Complex64 -> unsupported "a complex tensor"
   | ND.Complex128 -> unsupported "a complex tensor"
 
+(* Whether [dev]'s programs can load, store and compute [dt], natively or by
+   emulation. *)
+let holds : type a b. Tolk.Device.t -> (a, b) ND.t -> bool =
+ fun dev dt ->
+  match tolk_dtype dt with
+  | tdt -> Tolk.Decomp_dtype.is_dtype_supported (Tolk.Device.renderer dev) tdt
+  | exception Jit_error _ -> false
+
 (* Identity-keyed tables over tensors, as in [Tensor_map]. *)
 module Tbl = Hashtbl.Make (struct
   type t = Obj.t
@@ -334,6 +342,13 @@ type state = {
   st_device : Tolk.Device.t;
   st_multi : string list option; (* pmap device tuple, [None] = single *)
   st_placement : Nx.Placement.t option; (* a single device's placement *)
+  st_may_move : bool;
+      (* nothing decided the device: a capture placed elsewhere moves the
+         program to it (see [Runs_on]) *)
+  mutable refusal : exn option;
+      (* the first reason the program cannot run on its device, raised once the
+         function returns: raising inside a handler would drop the function's
+         own cleanups *)
   st_takes_storage : int -> bool;
       (* the input positions whose storage replay may hand an output: consumed
          leaves of a single-device program whose outputs are not in host
@@ -378,6 +393,46 @@ and tensor_hook = { hook : 'a 'b. ('a, 'b) Nx_effect.t -> unit }
 let shape_of x = NV.shape (Nx_effect.view x)
 let numel shape = Array.fold_left ( * ) 1 shape
 
+(* A capture placed on another device than the program's, when nothing else
+   decided where the program runs: the program runs there instead. *)
+exception Runs_on of Nx.Device.t
+
+(* The first refusal wins, except that while nothing decided the device, a
+   capture's device replaces what the guessed device refused: the program runs
+   there instead. *)
+let refuse st e =
+  match (st.refusal, e) with
+  | None, _ -> st.refusal <- Some e
+  | Some (Runs_on _), _ -> ()
+  | Some _, Runs_on _ when st.st_may_move -> st.refusal <- Some e
+  | Some _, _ -> ()
+
+let check_dtype : type a b. state -> (a, b) ND.t -> string -> unit =
+ fun st dt what ->
+  if not (holds st.st_device dt) then
+    refuse st
+      (Jit_error
+         (Printf.sprintf "Rune.jit: %s is %s, which %s cannot hold" what
+            (ND.to_string dt)
+            (Tolk.Device.name st.st_device)))
+
+(* A captured value lives on the program's device or on the host. A pmap reads
+   any other through the host. *)
+let check_capture : type a b. state -> (a, b) Nx_effect.t -> unit =
+ fun st x ->
+  match (st.st_placement, x) with
+  | Some (Device d), Placed { r_placement = Device d'; _ } when d' == d -> ()
+  | Some _, Placed { r_placement = Device d'; _ } when st.st_may_move ->
+      refuse st (Runs_on d')
+  | Some p, Placed { r_placement = p'; _ } ->
+      refuse st
+        (Invalid_argument
+           (Format.asprintf
+              "Rune.jit: a captured value is on %a and the program runs on %a; \
+               place it on %a, or on the host"
+              Nx.Placement.pp p' Nx.Placement.pp p Nx.Placement.pp p))
+  | _ -> ()
+
 (* A traced tensor's payload: the trace that made it and its node. *)
 type Nx_effect.node += Node of { trace : int; tensor : F.Tensor.t }
 
@@ -385,6 +440,7 @@ let trace_counter = ref 0
 
 (* A fresh traced tensor of [st]'s trace standing for [tt], of [tt]'s shape. *)
 let traced st dt tt =
+  check_dtype st dt "a value the function computes";
   let shape = Array.of_list (F.Tensor.shape tt) in
   Nx_effect.traced st.st_ctx dt shape (Node { trace = st.st_id; tensor = tt })
 
@@ -419,6 +475,7 @@ let make_node st dtolk n =
    share it, uploaded once when the trace compiles otherwise. *)
 let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   let dt = Nx_effect.dtype x in
+  check_dtype st dt "a constant of the function";
   let shape = shape_of x in
   let node = make_node st (tolk_dtype dt) (numel shape) in
   st.consts <- (node, Packed (dt, x)) :: st.consts;
@@ -443,6 +500,7 @@ let bindable : type a b. state -> (a, b) Nx_effect.t -> Nx_effect.cell option =
 
 let bind_const (type a b) st cell (x : (a, b) Nx_effect.t) : F.Tensor.t =
   let dt = Nx_effect.dtype x in
+  check_dtype st dt "a constant of the function";
   let shape = shape_of x in
   let node = make_node st (tolk_dtype dt) (numel shape) in
   st.bound_consts <- (node, cell, Packed (dt, x)) :: st.bound_consts;
@@ -465,6 +523,7 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
         "Rune.jit: a tensor traced by another jit entered this trace; a value \
          computed inside a jitted function exists outside it only as an output"
   | _ -> (
+      check_capture st x;
       match bindable st x with
       | Some cell -> (
           match Tensor_map.Tbl.find_opt st.bound (Key x) with
@@ -1163,6 +1222,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_const_scalar { value; dtype; _ } ->
         Some
           (fun k ->
+            check_dtype st dtype "a constant of the function";
             (* [buffer:false] keeps the scalar an immediate constant: it folds
                into consuming kernels instead of being stored into a one-element
                buffer by a kernel of its own. *)
@@ -2751,15 +2811,9 @@ let tolk_device_of d =
     | Some (d', dev) when d' == d -> dev
     | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
 
-(* Raise unless [dev] can hold [dt]: its programs load, store and compute it,
-   natively or by emulation. *)
+(* Raise unless [dev] can hold [dt]. *)
 let check_holds (type a b) d dev (dt : (a, b) ND.t) =
-  let holds =
-    match tolk_dtype dt with
-    | tdt -> Tolk.Decomp_dtype.is_dtype_supported (Tolk.Device.renderer dev) tdt
-    | exception Jit_error _ -> false
-  in
-  if not holds then
+  if not (holds dev dt) then
     invalid_arg
       (Printf.sprintf "Nx.place: %s cannot hold %s" (Nx.Device.name d)
          (ND.to_string dt))
@@ -3048,7 +3102,8 @@ let signature_of (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
   List.rev !acc
 
 let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
-    ?multi ?beam ?beam_parallel (module P : Nx.Ptree.S with type t = p)
+    ?(may_move = false) ?multi ?beam ?beam_parallel
+    (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) (params : P.t) :
     Q.t compiled =
   (* Input leaves from position [n] on are consumed, and output leaf [k] is the
@@ -3066,6 +3121,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         (match multi with
         | None -> Some (Nx.Placement.device (nx_device dev))
         | Some _ -> None);
+      st_may_move = may_move;
+      refusal = None;
       st_takes_storage =
         (fun i -> consumed i && (not zero_copy) && multi = None);
       st_ctx = Nx_effect.create_context ();
@@ -3091,6 +3148,18 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
   P.iter
     (fun leaf ->
       let dtolk = tolk_dtype (Nx_effect.dtype leaf) in
+      (* On a guessed device the refusal waits for the trace, whose captures may
+         move the program where the dtype is held. *)
+      if not (holds dev (Nx_effect.dtype leaf)) then begin
+        let e =
+          Invalid_argument
+            (Printf.sprintf
+               "Rune.jit: input leaf %d is %s, which %s cannot hold" !pos
+               (ND.to_string (Nx_effect.dtype leaf))
+               (Tolk.Device.name dev))
+        in
+        if may_move then refuse st e else raise e
+      end;
       let shape = shape_of leaf in
       let n = numel shape in
       let place =
@@ -3165,6 +3234,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
           (key, Packed (Nx_effect.dtype leaf, leaf), tolk_of st leaf)
           :: !out_assoc)
     y;
+  Option.iter raise st.refusal;
   let empty, outs =
     List.partition
       (fun (_, Packed (_, ph), _) -> numel (shape_of ph) = 0)
@@ -4022,42 +4092,110 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
 
 (* Public entry points *)
 
+(* The device a call's placed leaves share. Each must be on [requested] when a
+   device is requested, on the same device as the others, and on one device. *)
+let leaves_device (type p) (module P : Nx.Ptree.S with type t = p) ~requested
+    (params : P.t) =
+  let name = Nx.Device.name in
+  let found = ref None and i = ref 0 in
+  P.iter
+    (fun leaf ->
+      (match leaf with
+      | Nx_effect.Placed { r_placement = Device d; _ } -> (
+          (match requested with
+          | Some r when r != d ->
+              invalid_arg
+                (Printf.sprintf
+                   "Rune.jit: input leaf %d is on %s and ~device names %s; \
+                    place it on %s, or on the host"
+                   !i (name d) (name r) (name r))
+          | _ -> ());
+          match !found with
+          | Some (d0, i0) when d0 != d ->
+              invalid_arg
+                (Printf.sprintf
+                   "Rune.jit: input leaves %d and %d are on %s and %s; place \
+                    them on one device"
+                   i0 !i (name d0) (name d))
+          | Some _ -> ()
+          | None -> found := Some (d, !i))
+      | Nx_effect.Placed { r_placement = p; _ } ->
+          invalid_arg
+            (Format.asprintf
+               "Rune.jit: input leaf %d is on %a; a compiled function runs on \
+                one device, so place it on one device, or on the host"
+               !i Nx.Placement.pp p)
+      | _ -> ());
+      incr i)
+    params;
+  Option.map fst !found
+
 (* The compiled function over [P]. With [consumed_from p = Some n], the leaves
    from position [n] on are the state, which the call consumes and [Q] returns
    in the same order. Two splits of one leaf sequence compile apart: which
-   inputs an indexed write lands in and which outputs may take storage
-   differ. *)
+   inputs an indexed write lands in and which outputs may take storage differ.
+
+   A call runs on the requested device, else where its placed leaves live, else
+   where a capture lives, else on the default device. Captures are found by
+   tracing: a trace on the default device that meets a capture placed elsewhere
+   runs again on the capture's device, which every later call then takes. *)
 let compile_fn (type p q) ?device:name ?beam ?beam_parallel ~consumed_from
     (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (f : P.t -> Q.t) : P.t -> Q.t =
-  let d = match name with Some n -> device n | None -> default_device () in
-  let dev = tolk_device_of d in
-  (* The host's programs run over host memory. *)
-  let zero_copy = d == Nx.Device.host in
+  let requested = Option.map device name in
+  let captured_on = ref None in
   let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
-  (* Device copies of captured tensors, shared by every signature of this
-     closure and keyed by capture identity. *)
-  let const_cache : Tolk.Realize.buffer Tensor_map.Tbl.t =
-    Tensor_map.Tbl.create 4
+  (* Device copies of captured tensors, per device, shared by every signature of
+     this closure and keyed by capture identity. *)
+  let const_caches : (string, Tolk.Realize.buffer Tensor_map.Tbl.t) Hashtbl.t =
+    Hashtbl.create 1
+  in
+  let compile d ~may_move consumed_from params =
+    let const_cache =
+      match Hashtbl.find_opt const_caches (Nx.Device.name d) with
+      | Some t -> t
+      | None ->
+          let t = Tensor_map.Tbl.create 4 in
+          Hashtbl.add const_caches (Nx.Device.name d) t;
+          t
+    in
+    (* The host's programs run over host memory. *)
+    trace_compile ~device:(tolk_device_of d) ~zero_copy:(d == Nx.Device.host)
+      ~consumed_from ~const_cache ~may_move ?beam ?beam_parallel
+      (module P)
+      (module Q)
+      f params
   in
   fun params ->
     if Gate.transforming () then f params
     else
+      let d, may_move =
+        match
+          (requested, leaves_device (module P) ~requested params, !captured_on)
+        with
+        | Some d, _, _ | None, Some d, _ | None, None, Some d -> (d, false)
+        | None, None, None -> (default_device (), true)
+      in
       let consumed_from = consumed_from params in
-      let key = (consumed_from, signature_of (module P) params) in
-      let c =
-        match Hashtbl.find_opt cache key with
+      let signature = signature_of (module P) params in
+      let key d = (Nx.Device.name d, consumed_from, signature) in
+      let compiled d ~may_move =
+        match Hashtbl.find_opt cache (key d) with
         | Some c -> c
         | None ->
-            let c =
-              trace_compile ~device:dev ~zero_copy ~consumed_from ~const_cache
-                ?beam ?beam_parallel
-                (module P)
-                (module Q)
-                f params
-            in
-            Hashtbl.add cache key c;
+            let c = compile d ~may_move consumed_from params in
+            (* Captures it binds make the device the closure's. *)
+            if c.cp_bound <> [||] && !captured_on = None then
+              captured_on := Some d;
+            Hashtbl.add cache (key d) c;
             c
+      in
+      let c =
+        match compiled d ~may_move with
+        | c -> c
+        | exception Runs_on d' ->
+            captured_on := Some d';
+            compiled d' ~may_move:false
       in
       replay (module P) (module Q) c params
 

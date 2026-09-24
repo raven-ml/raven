@@ -70,12 +70,20 @@
  (package rune)
  (libraries rune nx nx.core unix windtrap rune_test_support))
 
+; Metal is the default device here, so a function with no placed value runs
+; on it.
+
 (tests
  (names test_jit_metal)
  (modules test_jit_metal)
  (package rune)
  (enabled_if
   (= %{system} macosx))
+ (action
+  (setenv
+   DEV
+   METAL
+   (run %{test})))
  (libraries rune nx nx.core nx.buffer tolk unix windtrap rune_test_support))
 
 (tests

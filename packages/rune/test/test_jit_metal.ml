@@ -210,6 +210,75 @@ let test_unsupported_dtype_raises_at_placement () =
   cannot_hold (fun () -> Nx.cast Nx.float64 p);
   cannot_hold (fun () -> Nx.cast Nx.float64 (Nx.sum p))
 
+(* A compiled function refuses a dtype its device cannot hold before it runs: a
+   host input, a value it computes, and a value it captures. *)
+let test_unsupported_dtype_raises_before_a_call () =
+  let x = Nx.create f64 [| 3 |] [| 1.; 2.; 3. |] in
+  let (), up =
+    delta (fun () ->
+        raises_match
+          (function
+            | Invalid_argument msg ->
+                msg
+                = "Rune.jit: input leaf 0 is float64, which METAL cannot hold"
+            | _ -> false)
+          (fun () -> Rune.jit' ~device:"METAL" (fun x -> Nx.mul_s x 2.0) x))
+  in
+  equal ~msg:"an input: nothing is uploaded" int 0 up;
+  let cannot_hold f =
+    raises_match
+      (function
+        | Rune.Jit_error msg ->
+            String.ends_with ~suffix:"float64, which METAL cannot hold" msg
+        | _ -> false)
+      f
+  in
+  cannot_hold (fun () ->
+      Rune.jit' ~device:"METAL"
+        (fun x -> Nx.cast Nx.float32 (Nx.mul_s (Nx.cast Nx.float64 x) 2.0))
+        (vec32 [| 1.0; 2.0 |]));
+  cannot_hold (fun () ->
+      Rune.jit' ~device:"METAL"
+        (fun y -> Nx.add y (Nx.cast Nx.float32 x))
+        (vec32 [| 1.0; 2.0; 3.0 |]))
+
+(* On the default device, a dtype it cannot hold waits for the captures: one on
+   CPU:1, which holds float64, moves the program there, whichever the trace
+   meets first. *)
+let test_capture_moves_past_a_dtype () =
+  is_true ~msg:"METAL is the default"
+    (Rune.default_device () == Rune.device "METAL");
+  let cpu1 = Nx.Placement.device (Rune.device "CPU:1") in
+  let w = Nx.place cpu1 (vec32 [| 1.0; 2.0; 3.0 |]) in
+  let x = vec32 [| 4.0; 5.0; 6.0 |] in
+  let expected = [| 5.0; 7.0; 9.0 |] in
+  let on_cpu1 ~msg y =
+    is_true ~msg:(msg ^ ": on CPU:1") (Nx.Placement.equal cpu1 (Nx.placement y));
+    check_arr ~msg expected y
+  in
+  on_cpu1 ~msg:"the input's float64 first"
+    (Rune.jit'
+       (fun x ->
+         let a = Nx.cast Nx.float64 x in
+         let b = Nx.cast Nx.float64 w in
+         Nx.cast f32 (Nx.add a b))
+       x);
+  on_cpu1 ~msg:"the capture's float64 first"
+    (Rune.jit'
+       (fun x ->
+         let b = Nx.cast Nx.float64 w in
+         let a = Nx.cast Nx.float64 x in
+         Nx.cast f32 (Nx.add a b))
+       x);
+  on_cpu1 ~msg:"a float64 input"
+    (Nx.cast f32
+       (Rune.jit'
+          (fun x -> Nx.add x (Nx.cast Nx.float64 w))
+          (Nx.cast Nx.float64 x)));
+  raises_match
+    (function Rune.Jit_error _ -> true | _ -> false)
+    (fun () -> Rune.jit' (fun x -> Nx.cast f32 (Nx.cast Nx.float64 x)) x)
+
 let test_bound_input_is_not_donated () =
   let w1, _ = weights () in
   let p = Rune.to_device ~device:"METAL" w1 in
@@ -375,11 +444,17 @@ let test_capture_resident_elsewhere () =
   let p = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) w1 in
   let g = Rune.jit' ~device:"METAL" (fun x -> Nx.matmul x p) in
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 1.0) in
-  let y, up = delta (fun () -> g x) in
-  equal ~msg:"the capture goes through the host and is uploaded" int
-    (Nx.nbytes x + Nx.nbytes w1)
-    up;
-  check_arr ~msg:"result" (to_arr (Nx.matmul x w1)) y
+  let (), up =
+    delta (fun () ->
+        raises_match
+          (function
+            | Invalid_argument msg ->
+                String.starts_with
+                  ~prefix:"Rune.jit: a captured value is on CPU:1" msg
+            | _ -> false)
+          (fun () -> g x))
+  in
+  equal ~msg:"nothing is uploaded" int 0 up
 
 (* A weight over a mapped file is placed by reading the file. *)
 let test_place_from_a_mapped_file () =
@@ -450,8 +525,12 @@ let tests =
           test_bound_input_is_not_donated;
         test "a step reads its weights and consumes its state"
           test_step_reads_weights_consumes_state;
-        test "a capture resident on another device is uploaded"
+        test "a capture resident on another device raises"
           test_capture_resident_elsewhere;
+        test "a dtype Metal cannot hold raises before a compiled call"
+          test_unsupported_dtype_raises_before_a_call;
+        test "a capture moves a program past a dtype"
+          test_capture_moves_past_a_dtype;
         test "a weight over a mapped file is placed from the file"
           test_place_from_a_mapped_file;
       ];

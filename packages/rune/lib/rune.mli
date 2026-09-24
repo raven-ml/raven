@@ -466,13 +466,22 @@ val jit :
     order — replay the compiled program on the new leaf values. A new signature
     triggers a fresh trace and compilation.
 
-    [device] names the device the kernels compile and run on, as {!val-device}
-    does: ["CPU"] (the host), ["AMD"] (AMD GPUs, Linux only), ["NV"] (NVIDIA
-    GPUs on the kernel driver's hardware queues, Linux only), ["CUDA"] (NVIDIA
-    GPUs through the CUDA driver API), ["METAL"] (macOS only), or a device with
-    an index. It defaults to {!default_device}. On the host, contiguous inputs
-    and captured tensors are read in place and outputs are computed directly
-    into the returned tensors' storage; non-contiguous tensors are copied.
+    A call runs where its placed input leaves and captures live
+    ({!Nx.placement}), and on {!default_device} when none is placed. Captures
+    are found by tracing: when the inputs are on the host, the first trace that
+    meets a placed capture runs again on its device, and later calls run there.
+    [device] names the device instead, as {!val-device} does: ["CPU"] (the
+    host), ["AMD"] (AMD GPUs, Linux only), ["NV"] (NVIDIA GPUs on the kernel
+    driver's hardware queues, Linux only), ["CUDA"] (NVIDIA GPUs through the
+    CUDA driver API), ["METAL"] (macOS only), or a device with an index. Host
+    values join the device a call runs on. A placed input leaf on another device
+    raises [Invalid_argument] naming the leaf, before anything runs, and so does
+    a placed capture, at the trace that meets it: move it with {!Nx.place}
+    first. So does a dtype the device cannot hold, such as [float64] on Metal,
+    in an input leaf; in a value the function computes or captures it raises
+    {!Jit_error}. On the host, contiguous inputs and captured tensors are read
+    in place and outputs are computed directly into the returned tensors'
+    storage; non-contiguous tensors are copied.
 
     On other devices, results are bit-identical but data moves lazily. Inputs
     are copied to the device on every call; outputs are values placed on the
@@ -570,7 +579,8 @@ val jit :
     constant replayed on every call.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
-    [Invalid_argument] for an unknown or unavailable [device]. *)
+    [Invalid_argument] for an unknown or unavailable [device] and for a leaf or
+    capture placed on another device. *)
 
 val jit2 :
   ?device:string ->
@@ -752,8 +762,9 @@ val to_device : ?device:string -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     donated: passed as a leaf of the state of {!jit_step}, a bound value is used
     with no transfer and is not consumed, and an output that returns it
     unchanged is a copy on the device. [RUNE_JIT_DEBUG=1] reports such a leaf as
-    [bound]. A capture resident on another device, and any resident capture of a
-    {!pmap}, is read to the host and uploaded, as a host capture is.
+    [bound]. A capture resident on another device raises (see {!val-jit}), and a
+    {!pmap} reads a resident capture to the host and uploads it, as it does a
+    host capture.
 
     On the host, the result is [Nx.contiguous x]. Elsewhere it is {!Nx.place} on
     [device]: under {!val-grad} and {!val-jvp} placement is linear and a
