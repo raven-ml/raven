@@ -275,12 +275,10 @@ let build_cfg_context (sink : U.t) : cfg_context =
 (* Split multi-range END into nested single-range ENDs, innermost first
    by full range argument (descending). *)
 
-(* Raven encodes tinygrad RANGE.arg as [(axis, sub, kind)] for split-end
-   ordering. *)
 let range_key r =
   match U.as_range r with
-  | Some v -> (v.axis, v.sub, v.kind)
-  | None -> (0, [], Axis_type.Weak)
+  | Some v -> (U.axis_id r, v.kind)
+  | None -> invalid_arg "Linearizer.range_key: expected RANGE"
 
 let do_split_ends (e : U.t) : U.t option =
   match U.as_end e with

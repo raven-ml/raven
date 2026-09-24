@@ -405,10 +405,6 @@ let rec transpose lists =
   else
     List.map List.hd lists :: transpose (List.map List.tl lists)
 
-(* Used only on nodes that come out of [U.ranges], always Range. *)
-let range_axis r = match U.as_range r with
-  | Some v -> v.axis | None -> assert false
-
 (* After choosing out_rngs, force additional axes to be realized when a
    reduce closes ranges earlier than the surrounding elementwise would. *)
 let check_ending_ranges ctx ~pcontig ~ending_get ~ending_set ~out_shape x out_rngs =
@@ -422,7 +418,7 @@ let check_ending_ranges ctx ~pcontig ~ending_get ~ending_set ~out_shape x out_rn
       if not (List.mem i !axes) then
         if pcontig <= 1
            || List.exists (fun rr ->
-                List.exists (fun e -> range_axis rr > range_axis e)
+                List.exists (fun e -> U.axis_id rr > U.axis_id e)
                   (ending_get x))
                 (U.ranges r)
         then axes := !axes @ [i]) out_rngs;

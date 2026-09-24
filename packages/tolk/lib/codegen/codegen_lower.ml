@@ -58,9 +58,10 @@ let build_range_map sink =
   U.toposort sink
   |> List.iter (fun node ->
          match U.as_range node with
-         | Some { axis; kind = Axis_type.Unroll | Axis_type.Upcast; _ } ->
-             if not (Hashtbl.mem ctx axis) then
-               Hashtbl.add ctx axis (Hashtbl.length ctx)
+         | Some { kind = Axis_type.Unroll | Axis_type.Upcast; _ } ->
+             let id = U.axis_id node in
+             if not (Hashtbl.mem ctx id) then
+               Hashtbl.add ctx id (Hashtbl.length ctx)
          | Some _ | None -> ());
   ctx
 
@@ -165,8 +166,8 @@ let expander2 range_map =
       => fun bs ->
            let r = bs $ "r" in
            match U.as_range r with
-           | Some { axis; _ } when Hashtbl.mem range_map axis ->
-               let idx = Hashtbl.find range_map axis in
+           | Some _ when Hashtbl.mem range_map (U.axis_id r) ->
+               let idx = Hashtbl.find range_map (U.axis_id r) in
                let n = Bound.to_int (Bound.succ (U.vmax r)) in
                let dtype = U.dtype r in
                let dims =

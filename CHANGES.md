@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- Split ranges retain their complete axis identities through expansion,
+  scheduling and tensor-core contraction. `Uop.axis_id` exposes that identity;
+  `wmma_info.tc_upcast_axes` now carries full IDs instead of root axis numbers.
+
 - `Device.compile_program` preserves the selected renderer's alignment and
   each call's device and optimization metadata. It uses the source-based
   compiler cache, avoiding unsafe reuse of aligned kernels for unaligned inputs.

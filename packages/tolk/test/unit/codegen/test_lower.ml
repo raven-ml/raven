@@ -58,6 +58,27 @@ let global_ptr ?(slot = 0) () =
 let () =
   run "Codegen_lower"
     [
+      test "WMMA contracts complete split-axis identities" (fun () ->
+          let range sub = U.range ~size:(U.const_int 2) ~axis:7 ~sub ~kind:Axis_type.Upcast () in
+          let row = range [ 0 ] and col = range [ 1 ] in
+          let axes a b = [ ([ 7; 0 ], a); ([ 7; 1 ], b) ] in
+          let info : U.wmma_info =
+            { dims = (8, 8, 8); dtype_in = Dtype.float16; device = "METAL"; threads = 32;
+              tc_upcast_axes = Some (axes 2 1, axes 1 2, axes 2 1) } in
+          let zero = U.const (Const.float Dtype.float32 0.) in
+          let value = U.wmma ~a:(U.cast ~src:row ~dtype:Dtype.float16)
+              ~b:(U.cast ~src:col ~dtype:Dtype.float16) ~c:(U.stack [ zero; zero ])
+              ~info ~dtype:Dtype.float32 in
+          let dst = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:(U.const_int 2)
+              ~addrspace:Dtype.Global () in
+          let store = U.store ~dst:(U.index ~ptr:dst ~idxs:[ row ] ()) ~value () in
+          let sink = U.sink [ U.end_ ~value:store ~ranges:[ row; col ] ] in
+          let lowered = Codegen_lower.lower (Cstyle.metal (Gpu_target.Apple 7)) sink in
+          let wmmas = List.filter_map U.as_wmma (U.toposort lowered) in
+          equal int 1 (List.length wmmas);
+          List.iter (fun (wmma : U.wmma_view) ->
+              is_true ~msg:"contraction consumes the axis metadata" (wmma.info.tc_upcast_axes = None);
+              equal (list int) [ 2; 2; 2 ] (List.map U.max_numel [ wmma.a; wmma.b; wmma.c ])) wmmas);
       group "final cleanup"
         [
           test "final rewrite concretizes leftover index dtypes" (fun () ->

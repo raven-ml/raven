@@ -347,7 +347,8 @@ and program_info_debug_string (p : program_info) =
     ]
 
 and wmma_info_debug_string (w : wmma_info) =
-  let pair (a, b) = tuple_string [ string_of_int a; string_of_int b ] in
+  let pair (id, size) =
+    tuple_string [ tuple_string (List.map string_of_int id); string_of_int size ] in
   let pairs xs = tuple_string (List.map pair xs) in
   tuple_string
     [

@@ -173,11 +173,31 @@ let test_compilation_preserves_alignment () =
   compile true "aligned-cache";
   compile false "unaligned-cache"
 
+let test_split_axis_identity () =
+  let device = cpu "split-axis-identity" in
+  let range sub size =
+    U.range ~size:(U.const_int size) ~axis:7 ~sub ~kind:Axis_type.Upcast () in
+  let row = range [ 0 ] 2 and col = range [ 1 ] 3 in
+  let mul x n = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(U.const_int n) in
+  let add a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
+  let dst = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 6)
+      ~addrspace:Dtype.Global () in
+  let index = U.index ~ptr:dst ~idxs:[ add (mul row 3) col ] () in
+  let value = U.cast ~src:(add (mul row 10) col) ~dtype:Dtype.int32 in
+  let store = U.store ~dst:index ~value () in
+  let sink = U.sink [ U.end_ ~value:store ~ranges:[ row; col ] ] in
+  let program = Codegen_lower.lower (Device.renderer device) sink |> Linearizer.linearize in
+  let spec = Device.compile_program device ~name:"split_axis_identity" program in
+  let output = create_i32_buffer device [ -1; -1; -1; -1; -1; -1 ] in
+  run_spec device spec [ output ];
+  equal (list int) [ 0; 1; 2; 10; 11; 12 ] (read_i32_buffer output)
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;
           test "compilation preserves the selected buffer alignment" test_compilation_preserves_alignment;
           test "compile and run one kernel" (fun () ->
             let device = cpu "run-one" in

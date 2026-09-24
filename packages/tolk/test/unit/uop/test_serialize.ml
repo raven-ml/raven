@@ -141,17 +141,18 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 4));
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
-  (* A future format version is rejected without touching the graph. *)
-  let current_version = Marshal.to_string 4 [] in
-  let future_version = Marshal.to_string 5 [] in
+  (* Older layouts and future formats are rejected before reading the graph. *)
+  let current_version = Marshal.to_string 5 [] in
   let p = find_sub blob current_version in
-  let bumped =
-    String.sub blob 0 p ^ future_version
-    ^ String.sub blob
-        (p + String.length current_version)
-        (String.length blob - p - String.length current_version)
-  in
-  failure (fun () -> U.import bumped)
+  List.iter (fun version ->
+      let replacement = Marshal.to_string version [] in
+      let changed =
+        String.sub blob 0 p ^ replacement
+        ^ String.sub blob
+            (p + String.length current_version)
+            (String.length blob - p - String.length current_version)
+      in
+      failure (fun () -> U.import changed)) [ 4; 6 ]
 
 (* Buffer nodes hash-cons on their slot: an imported graph that carries a
    process-local internal slot collides with a local buffer minted with the
@@ -246,6 +247,16 @@ let () =
     [
       group "Serialization"
         [
+          test "split range identities and WMMA axes round-trip" (fun () ->
+              let row = U.range ~size:(U.const_int 2) ~axis:3 ~sub:[ 1; 2 ] ~kind:Axis_type.Upcast () in
+              equal (list int) [ 3; 1; 2 ] (U.axis_id row);
+              raises (Invalid_argument "Uop.axis_id: expected RANGE") (fun () -> U.axis_id (U.const_int 0));
+              let x = U.cast ~src:row ~dtype:Dtype.float32 in
+              let info : U.wmma_info =
+                { dims = (8, 8, 8); dtype_in = Dtype.float32; device = "TEST"; threads = 32;
+                  tc_upcast_axes = Some ([ ([ 3; 1; 2 ], 2) ], [], [ ([ 3; 1; 2 ], 2) ]) } in
+              let value = U.wmma ~a:x ~b:x ~c:x ~info ~dtype:Dtype.float32 in
+              is_true ~msg:"nested axis metadata survives import" (U.import (U.export value) == value));
           test "compiled program round-trips physically"
             program_roundtrips_physically;
           test "import reuses live structurally-equal nodes"

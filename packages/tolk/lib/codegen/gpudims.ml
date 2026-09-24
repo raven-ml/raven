@@ -165,16 +165,12 @@ let rec get_grouped_dims kind dims max_sizes ~reverse =
     in
     decompose_flat (flat_index raw limited_dims) dims
 
-(* Range key: (axis, sub) — everything except the kind. *)
+(* Complete range identity, excluding the kind. *)
 module Range_key = struct
-  type t = int * int list
+  type t = int list
 
   let compare = Stdlib.compare
-
-  let of_range r =
-    match U.as_range r with
-    | Some v -> (v.axis, v.sub)
-    | None -> invalid_arg "Range_key.of_range: not a range"
+  let of_range = U.axis_id
 end
 
 module Rkmap = Map.Make (Range_key)

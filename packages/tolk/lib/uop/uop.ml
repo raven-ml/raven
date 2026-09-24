@@ -127,7 +127,7 @@ and wmma_info = {
   device : string;
   threads : int;
   tc_upcast_axes :
-    ((int * int) list * (int * int) list * (int * int) list) option;
+    ((int list * int) list * (int list * int) list * (int list * int) list) option;
 }
 
 and arg =
@@ -485,6 +485,11 @@ let as_range u =
   | Ops.Range, Arg.Range_info { axis; sub; kind }, size :: parents ->
       Option.Some { size; parents; axis; sub; kind }
   | _ -> Option.None
+
+let axis_id u =
+  match op u, arg u with
+  | Ops.Range, Arg.Range_info { axis; sub; _ } -> axis :: sub
+  | _ -> invalid_arg "Uop.axis_id: expected RANGE"
 
 let as_end u =
   match op u, Array.to_list (src u) with
@@ -3493,7 +3498,7 @@ let semantic_key root =
   key root
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 4
+let export_version = 5
 
 let export root =
   (* Reject gradient functions before marshalling: they are closures, and

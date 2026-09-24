@@ -45,7 +45,6 @@ let range_view u =
 
 let range_size u = (range_view u).size
 let range_axis u = (range_view u).axis
-let range_sub u = (range_view u).sub
 let range_kind u = (range_view u).kind
 let is_range u = Option.is_some (U.as_range u)
 let const_int_or default u =
@@ -72,8 +71,8 @@ let compute_shape ast =
            is_range u && Bound.lt (Bound.int 0) (U.vmax u) && range_kind u <> Axis_type.Device)
     |> List.sort (fun a b ->
          compare
-           (Axis_type.to_pos (range_kind a), range_axis a, range_sub a)
-           (Axis_type.to_pos (range_kind b), range_axis b, range_sub b))
+           (Axis_type.to_pos (range_kind a), U.axis_id a)
+           (Axis_type.to_pos (range_kind b), U.axis_id b))
   in
   let axis_types = List.map range_kind rngs in
   let full_shape = List.map (fun r -> U.simplify (range_size r)) rngs in
@@ -545,11 +544,11 @@ let build_wmma_node t (tc : Tc.t) ne =
   let tc_upcast_axes =
     List.map
       (fun v ->
-        List.map (fun (a, sz) -> (range_axis (List.nth rngs_now a), sz)) v)
+        List.map (fun (a, sz) -> (U.axis_id (List.nth rngs_now a), sz)) v)
       tc_upcast_axes
   in
   let tc_reduce_axes =
-    List.map (fun a -> range_axis (List.nth rngs_now a)) tc_reduce_axes
+    List.map (fun a -> U.axis_id (List.nth rngs_now a)) tc_reduce_axes
   in
   (* Build the WMMA node *)
   let src0, src1 =
@@ -599,7 +598,7 @@ let build_wmma_node t (tc : Tc.t) ne =
   let red_range_nodes = U.find_nodes is_range (U.sink red_ranges) in
   let extra_reduces =
     List.filter
-      (fun x -> not (List.mem (range_axis x) tc_reduce_axes))
+      (fun x -> not (List.mem (U.axis_id x) tc_reduce_axes))
       red_range_nodes
   in
   let tc_uop =
@@ -883,7 +882,7 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
         let in1_ranges = U.ranges in1 in
         let red_ranges = red_view.ranges in
         let sort_desc =
-          List.sort (fun a b -> compare (range_axis b) (range_axis a))
+          List.sort (fun a b -> compare (U.axis_id b) (U.axis_id a))
         in
         let try_tc (tc : Tc.t) =
           let snap = snapshot t in

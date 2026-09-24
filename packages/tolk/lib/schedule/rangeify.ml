@@ -1359,9 +1359,7 @@ let flatten_stage n =
         Some (U.shrink ~src:ret ~offset:zeros ~size)
   | _ -> None
 
-let range_axis_cmp a b =
-  let ax u = match U.as_range u with Some v -> v.axis | None -> 0 in
-  compare (ax a) (ax b)
+let range_axis_cmp a b = compare (U.axis_id a) (U.axis_id b)
 
 let stage_to_store ?(allow_locals = true) counter n =
   match U.as_stage n with

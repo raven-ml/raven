@@ -328,8 +328,8 @@ type wmma_info = {
   device : string;  (** Target device name. *)
   threads : int;  (** Warp thread count. *)
   tc_upcast_axes :
-    ((int * int) list * (int * int) list * (int * int) list) option;
-      (** [(axis, amount)] pairs for the [A]/[B]/[C] operands, pending
+    ((int list * int) list * (int list * int) list * (int list * int) list) option;
+      (** [(axis_id, amount)] pairs for the [A]/[B]/[C] operands, pending
           expansion. [None] once the operands have been contracted, which is
           what marks the node as already expanded.
 
@@ -569,6 +569,12 @@ val as_store : t -> store_view option
 
 val as_range : t -> range_view option
 (** [as_range u] matches {!Ops.Range}. *)
+
+val axis_id : t -> int list
+(** [axis_id r] is the full identity of range [r]: its root axis followed by
+    every split component. The range kind is not part of its identity.
+
+    Raises [Invalid_argument] if [r] is not a range. *)
 
 val as_end : t -> end_view option
 (** [as_end u] matches {!Ops.End}. *)

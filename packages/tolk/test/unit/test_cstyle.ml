@@ -1119,7 +1119,7 @@ let () =
             let prog =
               make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
-                ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
+                ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
             in
             let out = render (Cstyle.cuda Gpu_target.SM80) prog in
@@ -1131,7 +1131,7 @@ let () =
             let one =
               make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
-                ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
+                ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
             in
             let out = render (Cstyle.cuda Gpu_target.SM80) (one @ one) in
@@ -1148,7 +1148,7 @@ let () =
               let prog =
                 make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
                   ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
-                  ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
+                  ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                   ~a_count:8 ~b_count:4 ~c_count:4 ()
               in
               assert_contains "cuda wmma declaration width"
@@ -1160,7 +1160,7 @@ let () =
             let prog =
               make_wmma ~device:"METAL" ~threads:32 ~dims:(8, 8, 8)
                 ~dtype_in:Dtype.Float32 ~dtype_out:Dtype.Float32
-                ~upcast_axes:([ (0, 2) ], [ (0, 2) ], [ (0, 2) ])
+                ~upcast_axes:([ ([ 0 ], 2) ], [ ([ 0 ], 2) ], [ ([ 0 ], 2) ])
                 ~a_count:2 ~b_count:2 ~c_count:2 ()
             in
             let out = render metal_renderer prog in
@@ -1284,7 +1284,7 @@ let () =
             let wmma =
               make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
-                ~upcast_axes:([ (0, 8) ], [ (0, 4) ], [ (0, 4) ])
+                ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
             in
             List.iter

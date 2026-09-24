@@ -1384,7 +1384,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
                        ^ (U.ranges u
                          |> List.map (fun r ->
                                 match U.as_range r with
-                                | Some v -> string_of_int v.axis
+                                | Some _ -> String.concat "_" (List.map string_of_int (U.axis_id r))
                                 | None -> Ops.name (U.op r))
                          |> String.concat ",")
                        ^ " node="
