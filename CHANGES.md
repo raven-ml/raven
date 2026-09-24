@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- Kernels whose writes simplify away accept the resulting empty effect group,
+  as tinygrad does. Identity assignments and reading the random counter after
+  an empty draw no longer fail during linearization.
+
 - `Dtype_ops.bitcast` supports different element widths by rescaling the last
   axis. Packing preserves byte order through non-contiguous views and
   unaligned subword slices.

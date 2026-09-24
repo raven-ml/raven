@@ -866,11 +866,14 @@ let () =
               (fun () ->
                 ignore (Linearizer.pm_add_control_flow (U.sink [ parent_end ]))));
         ];
-      group "Error paths"
+      group "Empty effects"
         [
-          test "empty Group is rejected" (fun () ->
-            raises_linearize "empty Group" (fun () ->
-                ignore (linearize (U.sink [ U.group [] ]))));
+          test "empty Group is a valid no-op effect" (fun () ->
+            let empty = U.group [] in
+            let root = U.sink [ empty ] in
+            Spec.type_verify Spec.program_spec root;
+            let program = Linearizer.linearize root in
+            is_true (List.equal U.equal [ empty; root ] program));
         ];
       group "Priority ordering"
         [

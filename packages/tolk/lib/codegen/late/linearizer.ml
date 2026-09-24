@@ -120,8 +120,6 @@ let validate_linearize_ready sink =
          | Ops.Stage -> failwith "Stage must be lowered before linearize"
          | Ops.If | Ops.Endif ->
              failwith "IF/ENDIF must be inserted by linearize cleanups"
-         | Ops.Group when Array.length (U.src u) = 0 ->
-             failwith "empty Group"
          | Ops.Load when Array.length (U.src u) = 2 ->
              failwith "gated loads require an alt value before linearize"
          | _ -> ())

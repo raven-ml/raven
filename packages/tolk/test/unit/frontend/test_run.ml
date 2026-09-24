@@ -663,6 +663,10 @@ let triu_tests =
 let assign_tests =
   group "assign"
     [
+      test "assign an identity computation leaves storage unchanged" (fun () ->
+          let t = vec [| 1.; 2.; 3. |] in
+          ignore (Op.assign t (El.add t (T.f 0.)));
+          check_floats [| 1.; 2.; 3. |] t);
       test "reads execute pending assignments exactly once" (fun () ->
           let t = vec [| 1.; 2.; 3. |] in
           ignore (Op.assign t (El.add t (T.f 1.)));
