@@ -52,25 +52,40 @@ let matmul ~m ~k ~n a b =
 
 let wrap_sink srcs = U.sink (List.map (fun src -> U.contiguous ~src ()) srcs)
 
-type workload = { name : string; sink : U.t }
+(* [sink] builds the graph for the device it runs on, since a custom kernel's
+   structure depends on the renderer. [fill slot count] gives a buffer's bytes
+   where the default floats are not valid inputs, and [allowed] the actions
+   the kernel's own options admit. *)
+type workload = {
+  name : string;
+  sink : Device.t -> U.t;
+  fill : int -> int -> Bytes.t option;
+  allowed : U.Opt.t -> bool;
+}
+
+let graph name sink =
+  {
+    name;
+    sink = Fun.const sink;
+    fill = (fun _ _ -> None);
+    allowed = Fun.const true;
+  }
 
 let elementwise =
   let a = mk_param ~slot:0 [ 64; 64 ] in
   let b = mk_param ~slot:1 [ 64; 64 ] in
   let c = mk_param ~slot:2 [ 64; 64 ] in
-  { name = "elementwise"; sink = wrap_sink [ add a (mul b c) ] }
+  graph "elementwise" (wrap_sink [ add a (mul b c) ])
 
 let row_reduce =
   let x = mk_param ~slot:0 [ 64; 64 ] in
-  {
-    name = "row_reduce";
-    sink = wrap_sink [ U.reduce_axis ~src:x ~op:Ops.Add ~axes:[ 1 ] ];
-  }
+  graph "row_reduce"
+    (wrap_sink [ U.reduce_axis ~src:x ~op:Ops.Add ~axes:[ 1 ] ])
 
 let matmul_kernel =
   let a = mk_param ~slot:0 [ 32; 32 ] in
   let b = mk_param ~slot:1 [ 32; 32 ] in
-  { name = "matmul"; sink = wrap_sink [ matmul ~m:32 ~k:32 ~n:32 a b ] }
+  graph "matmul" (wrap_sink [ matmul ~m:32 ~k:32 ~n:32 a b ])
 
 (* Full reduce of a matmul to a scalar: the shape of the per-step loss in a
    recurrent net, where the miscompile was first observed. *)
@@ -78,10 +93,8 @@ let matmul_full_reduce =
   let a = mk_param ~slot:0 [ 32; 32 ] in
   let b = mk_param ~slot:1 [ 32; 32 ] in
   let h = matmul ~m:32 ~k:32 ~n:32 a b in
-  {
-    name = "matmul_full_reduce";
-    sink = wrap_sink [ U.reduce_axis ~src:(mul h h) ~op:Ops.Add ~axes:[ 0; 1 ] ];
-  }
+  graph "matmul_full_reduce"
+    (wrap_sink [ U.reduce_axis ~src:(mul h h) ~op:Ops.Add ~axes:[ 0; 1 ] ])
 
 (* Two chained matmuls summed, then reduced: one recurrent step. *)
 let rnn_step =
@@ -93,10 +106,8 @@ let rnn_step =
   let h =
     add (matmul ~m:d ~k:d ~n:d x w_in) (matmul ~m:d ~k:d ~n:d h0 w_rec)
   in
-  {
-    name = "rnn_step";
-    sink = wrap_sink [ U.reduce_axis ~src:(mul h h) ~op:Ops.Add ~axes:[ 0; 1 ] ];
-  }
+  graph "rnn_step"
+    (wrap_sink [ U.reduce_axis ~src:(mul h h) ~op:Ops.Add ~axes:[ 0; 1 ] ])
 
 (* Two stores sharing one iteration space: the column axis is an output axis
    for the scaled copy and a reduce axis for the row sum. Guards that classify
@@ -105,15 +116,60 @@ let rnn_step =
    one store while the other reduces along it. *)
 let multi_store =
   let x = mk_param ~slot:0 [ 64; 64 ] in
-  {
-    name = "multi_store";
-    sink =
-      wrap_sink
-        [
-          mul x (U.const (C.float D.float32 2.0));
-          U.reduce_axis ~src:x ~op:Ops.Add ~axes:[ 1 ];
-        ];
-  }
+  graph "multi_store"
+    (wrap_sink
+       [
+         mul x (U.const (C.float D.float32 2.0));
+         U.reduce_axis ~src:x ~op:Ops.Add ~axes:[ 1 ];
+       ])
+
+(* The quantised product's custom kernel, on the device the sweep runs on:
+   four rows of one matrix, and three positions, one of which selects no
+   matrix. Its scale bytes keep values finite, and the actions leave the
+   position axis, the first, alone. *)
+let quant_matmul ?ids name =
+  let sink dev =
+    let device = U.Single (Device.name dev) in
+    let empty dtype shape =
+      Tolk_frontend.Creation.empty ~dtype ~device shape
+    in
+    let e, i, ix, m =
+      match ids with
+      | Some ids -> (2, List.length ids, 3, 1)
+      | None -> (1, 1, 1, 4)
+    in
+    let n = 16 and k = 64 in
+    let y =
+      Tolk_frontend.Op.quant_matmul
+        ?ids:(Option.map (fun _ -> empty D.int32 [ i ]) ids)
+        (empty D.float32 [ ix; m; k ])
+        ~codes:(empty D.uint8 [ e; n; k / 2 ])
+        ~scales:(empty D.uint8 [ e; n; k / 32 ])
+    in
+    U.sink [ U.contiguous ~src:(Tolk_frontend.Tensor.uop y) () ]
+  in
+  let fill slot count =
+    match (slot, ids) with
+    | 3, _ -> Some (Bytes.init count (fun b -> Char.chr (118 + (b mod 6))))
+    | 4, Some ids ->
+        let b = Bytes.create (4 * count) in
+        List.iteri
+          (fun t id -> Bytes.set_int32_le b (4 * t) (Int32.of_int id))
+          ids;
+        Some b
+    | _ -> None
+  in
+  let allowed (opt : U.Opt.t) =
+    ids = None
+    ||
+    match opt with
+    | Upcast { axis; _ } | Local { axis; _ } | Thread { axis; _ }
+    | Padto { axis; _ } ->
+        axis <> 0
+    | Swap { axis; with_axis } -> axis <> 0 && with_axis <> 0
+    | Tc _ | Unroll _ | Group _ | Grouptop _ | Nolocals -> true
+  in
+  { name; sink; fill; allowed }
 
 let workloads =
   [
@@ -123,18 +179,20 @@ let workloads =
     matmul_full_reduce;
     rnn_step;
     multi_store;
+    quant_matmul "quant_matmul";
+    quant_matmul ~ids:[ 1; -1; 0 ] "quant_matmul_ids";
   ]
 
 (* Kernel extraction *)
 
-let kernels_of w =
+let kernels_of dev w =
   List.filter_map
     (fun node ->
       match (U.op node, U.as_call node) with
       | Ops.Call, Some { body; _ } when U.as_kernel_info body <> None ->
           Some body
       | _ -> None)
-    (U.toposort (Rangeify.get_kernel_graph w.sink))
+    (U.toposort (Rangeify.get_kernel_graph (w.sink dev)))
 
 (* [with_opts ki_opts ast] is [ast] with its kernel info pinned to apply
    exactly [ki_opts], bypassing both beam search and the hand-coded
@@ -167,7 +225,7 @@ let read_f32 buf =
 
 (* Allocate one buffer per PARAM slot of [ast], seeded so that every run of
    every candidate sees byte-identical inputs. *)
-let make_buffers dev ast =
+let make_buffers dev ~fill ast =
   List.mapi
     (fun seed p ->
       let slot =
@@ -178,14 +236,18 @@ let make_buffers dev ast =
       let size = List.fold_left ( * ) 1 (U.max_shape p) in
       let buf = Device.create_buffer ~size ~dtype:(U.dtype p) dev in
       Device.Buffer.ensure_allocated buf;
-      (slot, buf, size, seed))
+      let bytes =
+        match fill slot size with
+        | Some bytes -> bytes
+        | None ->
+            let floats = fill_bytes ~size ~seed in
+            Bytes.sub floats 0 (Device.Buffer.nbytes buf)
+      in
+      (slot, buf, bytes))
     (P.bufs_from_ast ast)
 
 let seed_buffers bufs =
-  List.iter
-    (fun (_, buf, size, seed) ->
-      Device.Buffer.copyin buf (fill_bytes ~size ~seed))
-    bufs
+  List.iter (fun (_, buf, bytes) -> Device.Buffer.copyin buf bytes) bufs
 
 (* Compile [ast] and run it once against freshly seeded [bufs]; returns every
    buffer's contents afterwards, so an action that scribbles outside its
@@ -199,8 +261,8 @@ let run_kernel dev ast bufs =
   let args =
     List.map
       (fun slot ->
-        match List.find_opt (fun (s, _, _, _) -> s = slot) bufs with
-        | Some (_, buf, _, _) -> buf
+        match List.find_opt (fun (s, _, _) -> s = slot) bufs with
+        | Some (_, buf, _) -> buf
         | None ->
             invalid_arg (Printf.sprintf "run_kernel: no buffer for slot %d" slot))
       (Program_spec.globals program)
@@ -208,7 +270,7 @@ let run_kernel dev ast bufs =
   let runner = Realize.Compiled_runner.create ~device:dev program in
   ignore (Realize.Compiled_runner.call runner args [] ~wait:true ~timeout:None);
   Device.synchronize dev;
-  List.map (fun (slot, buf, _, _) -> (slot, read_f32 buf)) bufs
+  List.map (fun (slot, buf, _) -> (slot, read_f32 buf)) bufs
 
 (* Comparison *)
 
@@ -285,8 +347,8 @@ type result = {
   rejected : (string * string) list;
 }
 
-let check_kernel dev ~index ast acc =
-  let bufs = make_buffers dev ast in
+let check_kernel dev w ~index ast acc =
+  let bufs = make_buffers dev ~fill:w.fill ast in
   let baseline = run_kernel dev (with_opts [] ast) bufs in
   let acc = ref acc in
   let note field opts detail =
@@ -309,7 +371,7 @@ let check_kernel dev ~index ast acc =
             note
               (fun a e -> { a with miscompiled = e :: a.miscompiled })
               opts detail)
-      Search.actions
+      (List.filter w.allowed Search.actions)
   in
   explore [] (depth ());
   !acc
@@ -320,9 +382,9 @@ let check dev w =
   let empty = { sequences = 0; miscompiled = []; rejected = [] } in
   let r =
     List.fold_left
-      (fun acc (index, ast) -> check_kernel dev ~index ast acc)
+      (fun acc (index, ast) -> check_kernel dev w ~index ast acc)
       empty
-      (List.mapi (fun i ast -> (i, ast)) (kernels_of w))
+      (List.mapi (fun i ast -> (i, ast)) (kernels_of dev w))
   in
   {
     r with

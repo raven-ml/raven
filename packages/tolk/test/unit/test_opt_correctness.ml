@@ -8,6 +8,9 @@
 
 open Windtrap
 
+(* The quantised product's kernel resolves its renderer by device name. *)
+let () = Tolk.Device.register "CPU" Tolk_cpu.create
+
 let device = lazy (Tolk_cpu.create "CPU:opt-correctness")
 
 (* A sequence that raises is one beam search discards, so it is reported as a

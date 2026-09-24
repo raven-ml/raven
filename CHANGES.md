@@ -352,6 +352,11 @@ thread.
 
 ### Tolk (new)
 
+- Add `Op.quant_matmul`, a product with MXFP4 weights that decodes them in
+  registers and reads each packed byte once per tile of rows, and
+  `Op.quant_row_bound`, the most rows a matrix should meet before decoding it
+  costs less. One gpt-oss expert (5760 by 2880) takes 50 us at one row on an
+  M1 Max, 180 GB/s over its packed bytes.
 - `Op.scatter_indexed ~unique:true`, and so `Nx.scatter ~unique_indices:true`
   under `Rune.jit`, gets launch sizes from the optimizer instead of one thread
   per workgroup: 64 rows of 32768 on Metal take 0.17 ms instead of 2.9 ms. A

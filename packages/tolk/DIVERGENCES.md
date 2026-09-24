@@ -128,6 +128,25 @@ delete it rather than registering it.
   `Set` and an unspecified value under `Add`; every other position stays
   exact. Consumer: `Nx.top_k`, whose compaction is a permutation.
 
+- **Quantised matrix product** (`frontend/op.ml` `quant_matmul`). The
+  reference's only fused quantised products are hand-written AMD kernels in
+  `extra/`; a product with MXFP4 weights written as tensor operations decodes
+  every weight before it multiplies, and the matrix-vector options do not
+  apply to a reduction whose source is a decode. tolk writes the product as a
+  custom kernel through the ported `custom_kernel`, with its options pinned per
+  device (`quant_options`: measured on Metal and the CPU, none elsewhere).
+  Each 32-value group's code bytes and scale byte are read once per tile of
+  rows and decoded in registers. Codes and 16-bit inputs are read through a
+  float32 placeholder over their storage, since the reference folds only float
+  loads into vectors. With ids, a position whose id selects no matrix bounds
+  the outer reduce loop at zero on a GPU and gates its loads on the CPU.
+  Consumer: rune's lowering of `Nx_quant.apply` (RFC 0004), which takes it
+  within `quant_row_bound`'s rows. Coverage:
+  `test/unit/frontend/test_quant_matmul.ml` (a host reference on the default
+  device, and per renderer that every float multiply lies in the id-bounded
+  loop on a GPU and that no loop reads memory on the CPU), the opt-correctness
+  sweeps on CPU and Metal, and rune's Law 2 battery.
+
 - **A loop bounded by a loaded value counts at its bound in estimates**
   (`program_spec.ml` `estimate_of_size`). The reference multiplies a loop's
   trip count into the estimates symbolically. A trip count that reads memory,

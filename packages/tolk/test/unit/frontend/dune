@@ -6,7 +6,8 @@
   test_linalg
   test_jit
   test_rand
-  test_rand_cuda)
+  test_rand_cuda
+  test_quant_matmul)
  (modules
   test_frontend
   test_run
@@ -15,6 +16,7 @@
   test_jit
   test_rand
   test_rand_cuda
+  test_quant_matmul
   rand_cases)
  (package tolk)
  (libraries unix tolk tolk.uop tolk.frontend windtrap))

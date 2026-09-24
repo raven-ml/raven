@@ -19,8 +19,9 @@ type workload
 
 val workloads : workload list
 (** Element-wise, reduce, matmul, matmul-with-reduced-output, one recurrent
-    step, and a two-store kernel whose column axis is an output axis for one
-    store and a reduce axis for the other. *)
+    step, a two-store kernel whose column axis is an output axis for one store
+    and a reduce axis for the other, and the quantised product's custom kernel
+    with and without ids, swept under the actions its own options admit. *)
 
 val name : workload -> string
 (** [name w] identifies [w] in test output. *)

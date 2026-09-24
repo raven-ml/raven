@@ -10,6 +10,9 @@
 
 open Windtrap
 
+(* The quantised product's kernel resolves its renderer by device name. *)
+let () = Tolk.Device.register "METAL" Tolk_metal.create
+
 let device = lazy (Tolk_metal.create "METAL:opt-correctness")
 
 (* A sequence that raises is one beam search discards, so it is reported as a

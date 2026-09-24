@@ -237,6 +237,41 @@ val scatter_indexed :
       does not have the dtype of [t], or if [index] is not an integer
       tensor. *)
 
+val quant_matmul :
+  ?ids:Tensor.t -> Tensor.t -> codes:Tensor.t -> scales:Tensor.t -> Tensor.t
+(** [quant_matmul ?ids x ~codes ~scales] multiplies rows of [x] by the
+    transposes of MXFP4 matrices, decoding the weights in registers.
+
+    [codes] is [\[e; n; k/2\]] uint8, two 4-bit e2m1 codes per byte, the low
+    nibble first, and [scales] is [\[e; n; k/32\]] uint8, one power-of-two
+    scale 2{^ s-127} per 32 values along [k], 255 standing for NaN. [x] is
+    [\[ix; m; k\]] at float32, bfloat16 or float16, and the result is
+    [\[i; m; n\]] at [x]'s dtype, where [i] is the length of [ids], or [e]
+    without them, and [ix] divides [i]. Instance [t] of the result is block
+    [t / (i / ix)] of [x] times the transpose of matrix [ids.(t)], or of
+    matrix [t] without [ids]. An id outside \[[0];[e-1]\] selects no matrix:
+    its instance is exactly zero, whatever [x] holds there. Products and sums
+    are float32, each group's partial sum is multiplied by its scale, and the
+    result is rounded once.
+
+    Every operand is read as whole storage: a view is copied first. On a GPU,
+    when [k] is at least 64, an instance whose id selects no matrix reads its
+    id and nothing else, and runs no multiply-adds; with a single group per
+    row, its loads are gated instead.
+
+    @raise Invalid_argument
+      if the shapes disagree as above, if [k] is not a multiple of 32, if
+      [codes] or [scales] is not uint8, if [x]'s dtype is not one of the
+      three, if [ids] is not an integer tensor, or if no operand is placed on
+      a device. *)
+
+val quant_row_bound :
+  Tolk.Renderer.t -> Tolk_uop.Dtype.t -> n:int -> k:int -> int
+(** [quant_row_bound ren dtype ~n ~k] is the most rows of an [x] at [dtype]
+    that one [n] by [k] matrix of {!quant_matmul} should meet on a device
+    rendering with [ren]: beyond it, decoding the matrix and multiplying costs
+    less. It is [0] on a device whose options are not measured. *)
+
 val masked_select : ?fill_value:Tensor.scalar -> Tensor.t -> Tensor.t -> size:int -> Tensor.t
 (** [masked_select t mask ~size] is the 1-D tensor of the elements of [t] where
     [mask] is true, in row-major order, packed into a fixed length [size].

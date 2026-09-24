@@ -698,6 +698,372 @@ let scatter_indexed t ~dim index src ~mode ~unique =
     List.hd (T.custom_kernel ~fxn [ t; stored index; stored src ])
   end
 
+(* Quantised matrix product
+
+   No tinygrad counterpart. A product with MXFP4 weights written as a tensor
+   composition decodes every weight to a float before it multiplies, and the
+   matrix-vector options do not apply to a reduction whose source is a decode.
+   This custom kernel reads each 32-value group's code bytes and scale byte
+   once per tile of rows, decodes the codes in registers and multiplies each
+   group's partial sums by its scale. Its options are pinned per device, so
+   neither the heuristic nor a search picks them.
+
+   Codes, and inputs narrower than float32, are read as float32 words, eight
+   codes or two inputs in each, since only float loads fold into vectors. A
+   code becomes the IEEE half with its bits in place, whose value is 2^-14
+   times the code's, half codes included; converted to float32 and scaled back
+   it is exact.
+
+   With ids, the positions are a global axis that the options never split: the
+   loop over a row's groups is an outer loop, whose bound on a GPU is zero for
+   a position whose id selects no matrix, around a constant loop that the group
+   option splits. Such a position reads its id, runs no multiply-adds and
+   stores the reduction's identity. The CPU runs work groups as a loop and
+   miscompiles a loop bound that reads that loop's index, so there the bound is
+   constant, the loads are gated and a select zeroes the store. *)
+
+type quant_options = {
+  group : int; (* threads splitting a row's groups, dividing k / 32 *)
+  local : int; (* output columns per work group, on a local axis *)
+  upcast : int; (* output columns per thread *)
+  tile : int; (* rows of x per load of a group *)
+}
+
+let largest_divisor n ~at_most =
+  let rec go d = if n mod d = 0 then d else go (d - 1) in
+  go (max 1 (min n at_most))
+
+(* The options measured on a device for [m] rows of [n] outputs over [k]
+   inputs at [dtype], and the most rows a matrix may meet there. On the M1
+   Max, one row of gpt-oss's 5760 by 2880 expert reads its packed bytes at
+   180 GB/s and each further row costs about 20 us, bound by the reloads of x
+   from the cache; a thread holds all 32 inputs of a group for each of its
+   rows, so columns per thread times rows beyond 4 spill registers and run
+   ten times slower. Decoding and multiplying on tensor cores costs about
+   0.56 ms at one row and 0.74 ms at 32 at bfloat16, and less than the kernel
+   from 16 rows at float32. On its CPU the same expert takes 5.0 ms at one row
+   and 119 ms at 64 at bfloat16, against 6.6 and 135 ms decoded; at float32
+   the decoded product is faster from 4 rows. A device without measured
+   options runs the kernel unoptimised and serves no rows. *)
+let quant_options ren ~dtype ~m ~n ~k =
+  let groups = k / 32 in
+  match Tolk.Renderer.device ren with
+  | "METAL" ->
+      let local = largest_divisor n ~at_most:4 in
+      let tile = largest_divisor m ~at_most:8 in
+      ( {
+          group = largest_divisor groups ~at_most:15;
+          local;
+          upcast = largest_divisor (n / local) ~at_most:(max 1 (4 / tile));
+          tile;
+        },
+        if D.equal dtype D.float32 then 16 else 32 )
+  | "CPU" ->
+      ( {
+          group = 1;
+          local = 1;
+          upcast = largest_divisor n ~at_most:4;
+          tile = largest_divisor m ~at_most:8;
+        },
+        if D.equal dtype D.float32 then 2 else 64 )
+  | _ -> ({ group = 1; local = 1; upcast = 1; tile = 1 }, 0)
+
+let quant_row_bound ren dtype ~n ~k =
+  snd (quant_options ren ~dtype ~m:1 ~n ~k)
+
+(* An option splitting the first axis. With several positions that axis is
+   theirs, whose loop bound must stay one value per work group, so
+   [quant_matmul] refuses such options. *)
+let splits_axis0 (opt : Uop.Opt.t) =
+  match opt with
+  | Upcast { axis; _ } | Local { axis; _ } | Thread { axis; _ }
+  | Padto { axis; _ } ->
+      axis = 0
+  | Swap { axis; with_axis } -> axis = 0 || with_axis = 0
+  | Tc _ | Unroll _ | Group _ | Grouptop _ | Nolocals -> false
+
+let quant_matmul ?ids x ~codes ~scales =
+  let xs = T.shape x and cs = T.shape codes and ss = T.shape scales in
+  let ix, m, k =
+    match xs with
+    | [ ix; m; k ] -> (ix, m, k)
+    | _ ->
+        invalid_arg "Op.quant_matmul: x must be [instances; rows; inputs]"
+  in
+  let e, n =
+    match cs with
+    | [ e; n; half ] when 2 * half = k -> (e, n)
+    | _ ->
+        invalid_arg "Op.quant_matmul: codes must be [matrices; outputs; k/2]"
+  in
+  if k mod 32 <> 0 then
+    invalid_arg "Op.quant_matmul: inputs must be a multiple of 32";
+  if ss <> [ e; n; k / 32 ] then
+    invalid_arg "Op.quant_matmul: scales must be [matrices; outputs; k/32]";
+  if not (D.equal (T.dtype codes) D.uint8 && D.equal (T.dtype scales) D.uint8)
+  then invalid_arg "Op.quant_matmul: codes and scales must be uint8";
+  let dtype = T.dtype x in
+  let narrow =
+    match dtype with
+    | D.Float32 -> false
+    | D.Bfloat16 | D.Float16 -> true
+    | _ ->
+        invalid_arg "Op.quant_matmul: x must be float32, bfloat16 or float16"
+  in
+  let i =
+    match ids with
+    | None -> e
+    | Some ids -> (
+        if not (D.is_int (T.dtype ids)) then
+          invalid_arg "Op.quant_matmul: integer ids required";
+        match T.shape ids with
+        | [ i ] -> i
+        | _ -> invalid_arg "Op.quant_matmul: ids must be [instances]")
+  in
+  if (ix = 0 && i > 0) || (ix > 0 && i mod ix <> 0) then
+    invalid_arg "Op.quant_matmul: x's instances must divide the product's";
+  let device =
+    match List.find_map T.device [ x; codes; scales ] with
+    | Some device -> device
+    | None -> invalid_arg "Op.quant_matmul: no operand is placed on a device"
+  in
+  let ren =
+    match device with
+    | Uop.Single name | Uop.Multi (name :: _) ->
+        Tolk.Device.renderer (Tolk.Device.get name)
+    | Uop.Multi [] | Uop.Index _ ->
+        invalid_arg "Op.quant_matmul: no device name"
+  in
+  let out = Creation.empty ~dtype ~device [ i; m; n ] in
+  if i * m * n = 0 then out
+  else if k = 0 then
+    Creation.clone ~device (Creation.zeros ~dtype [ i; m; n ])
+  else begin
+    let gpu = Tolk.Renderer.has_local ren in
+    let groups = k / 32 and gated = Option.is_some ids in
+    (* Without ids, one row per instance makes instances and columns one
+       axis: output, codes and scales are all linear in [t * n + col], and
+       the range simplifier would merge the two anyway. *)
+    let merged = (not gated) && m = 1 in
+    let positions = if merged then 1 else i
+    and cols = if merged then i * n else n in
+    let o, _ = quant_options ren ~dtype ~m ~n:cols ~k in
+    (* The id bounds the outer loop on a GPU only while that loop has two
+       iterations or more. In a loop of at most one, every use of the index
+       folds to 0, and the reduce over it, left unparented, is rewritten to
+       its body times the loop's size (reduce_unparented, as in tinygrad): the
+       body's loads then run for an invalid id too, Metal returns garbage
+       there and, under an upcast or a group, fails to compile. Before
+       8b26ea10a the range rule also folded the loop itself. A single group
+       is gated at its loads instead, so it runs its multiply-adds. *)
+    let group =
+      if not gpu then 1
+      else if gated then
+        largest_divisor groups ~at_most:(min o.group (groups / 2))
+      else o.group
+    in
+    let outer = groups / group and rep = i / ix in
+    let x_span = n * rep in
+    let bounded = gpu && gated && outer >= 2 in
+    (* Axes: positions, rows and columns are global, in that order; the outer
+       loop, the group loop and the four words of a group reduce. *)
+    let exists size = if size > 1 then 1 else 0 in
+    let col_axis = exists positions + exists m
+    and row_axis = exists positions in
+    let unrollable = (if bounded then 0 else exists outer) + exists group in
+    let group_axis = if bounded || outer > 1 then 1 else 0 in
+    let opts =
+      List.concat
+        [
+          [ Uop.Opt.Unroll { axis = unrollable; amount = 4 } ];
+          (if group > 1 then
+             [ Uop.Opt.Group { axis = group_axis; amount = group } ]
+           else []);
+          (if o.local > 1 && gpu then
+             [ Uop.Opt.Local { axis = col_axis; amount = o.local } ]
+           else []);
+          (if o.upcast > 1 then
+             [ Uop.Opt.Upcast { axis = col_axis; amount = o.upcast } ]
+           else []);
+          (if o.tile > 1 then
+             [ Uop.Opt.Upcast { axis = row_axis; amount = o.tile } ]
+           else []);
+        ]
+    in
+    if positions > 1 then
+      Option.iter
+        (fun opt ->
+          invalid_arg
+            (Printf.sprintf "Op.quant_matmul: option %s splits the positions"
+               (Uop.Opt.to_string opt)))
+        (List.find_opt splits_axis0 opts);
+    let fxn srcs =
+      let out, x, codes, scales, ids =
+        match srcs with
+        | [ out; x; codes; scales ] -> (out, x, codes, scales, None)
+        | [ out; x; codes; scales; ids ] -> (out, x, codes, scales, Some ids)
+        | _ -> assert false
+      in
+      let flat u size = Uop.reshape ~src:u ~shape:(Uop.const_int size) in
+      (* Words: the same storage, read four bytes at a time. *)
+      let words slot size =
+        Uop.placeholder ~shape:[ size ] ~dtype:D.float32 ~slot ()
+      in
+      let out = flat out (i * m * n) in
+      let x =
+        if narrow then words 1 (ix * m * k / 2) else flat x (ix * m * k)
+      in
+      let x_row = if narrow then k / 2 else k in
+      let codes = words 2 (e * n * k / 8) and code_row = k / 8 in
+      let scales = flat scales (e * n * groups) in
+      let nibble j = 4 * j in
+      let open Uop.O in
+      let int = Uop.const_int in
+      let u32 v = Uop.const (Const.int D.uint32 v) in
+      let f32 v = Uop.const (Const.float D.float32 v) in
+      let bits op a b = Uop.alu_binary ~op ~lhs:a ~rhs:b in
+      (* The float32 value of the half whose bits are the low 16 of [u]. *)
+      let of_half u =
+        Uop.cast
+          ~src:
+            (Uop.bitcast ~src:(Uop.cast ~src:u ~dtype:D.uint16) ~dtype:D.float16)
+          ~dtype:D.float32
+      in
+      let range size axis =
+        if size = 1 then int 0
+        else Uop.range ~size:(int size) ~axis ~kind:Axis_type.Weak ()
+      in
+      let reduce size axis =
+        if size = 1 then int 0
+        else Uop.range ~size:(int size) ~axis ~kind:Axis_type.Reduce ()
+      in
+      let at ptr idx = Uop.index ~ptr ~idxs:[ idx ] () in
+      let pos = range positions 0 and row = range m 1 and col = range cols 2 in
+      let selects, matrix =
+        match ids with
+        | None -> (None, pos)
+        | Some ids ->
+            let id = at (flat ids i) pos in
+            let bound v = Uop.const (Const.int (Uop.dtype id) v) in
+            ( Some (bits Ops.And (not_ (id < bound 0)) (id < bound e)),
+              Uop.cast ~src:id ~dtype:D.weakint )
+      in
+      let t =
+        match selects with
+        | Some selects when bounded ->
+            Uop.range ~size:(where selects (int outer) (int 0)) ~axis:3
+              ~kind:Axis_type.Reduce ()
+        | _ -> reduce outer 3
+      in
+      let a = reduce group 4 and q = reduce 4 5 in
+      let g = (t * int group) + a in
+      let gate idx =
+        match selects with
+        | Some selects when not bounded -> Uop.valid ~src:idx ~cond:selects
+        | _ -> idx
+      in
+      let load ptr idx = Uop.load ~src:(at ptr (gate idx)) () in
+      let line = if merged then col else (matrix * int n) + col in
+      let word =
+        Uop.bitcast
+          ~src:(load codes ((line * int code_row) + (g * int 4) + q))
+          ~dtype:D.uint32
+      in
+      (* Input [j] of the eight a word's codes multiply, as float32. *)
+      let xrow =
+        if merged then col // int x_span
+        else ((if rep = 1 then pos else pos // int rep) * int m) + row
+      in
+      let input j =
+        let idx = (g * int 32) + (q * int 8) + int j in
+        if not narrow then load x ((xrow * int x_row) + idx)
+        else
+          let w =
+            Uop.bitcast
+              ~src:(load x ((xrow * int x_row) + (idx // int 2)))
+              ~dtype:D.uint32
+          in
+          let half =
+            if j land 1 = 0 then bits Ops.And w (u32 0xffff)
+            else bits Ops.Shr w (u32 16)
+          in
+          match dtype with
+          | D.Bfloat16 ->
+              Uop.bitcast ~src:(bits Ops.Shl half (u32 16)) ~dtype:D.float32
+          | _ -> of_half half
+      in
+      let code j =
+        let c = bits Ops.And (bits Ops.Shr word (u32 (nibble j))) (u32 15) in
+        of_half
+          (bits Ops.Or
+             (bits Ops.Shl (bits Ops.And c (u32 7)) (u32 9))
+             (bits Ops.Shl (bits Ops.And c (u32 8)) (u32 12)))
+        * f32 16384.0
+      in
+      let scale =
+        let s =
+          Uop.cast ~src:(load scales ((line * int groups) + g)) ~dtype:D.int32
+        in
+        let i32 v = Uop.const (Const.int D.int32 v) in
+        Uop.bitcast
+          ~src:
+            (where (s < i32 1) (i32 0x00400000)
+               (where (Uop.alu_binary ~op:Ops.Cmpeq ~lhs:s ~rhs:(i32 255))
+                  (i32 0x7fc00000)
+                  (bits Ops.Shl s (i32 23))))
+          ~dtype:D.float32
+      in
+      let is_range u = Uop.op u = Ops.Range in
+      (* A reduce of its own for each loop keeps the outer loop apart from the
+         group loop, which the range simplifier would otherwise merge. *)
+      let sum r v =
+        if is_range r then
+          Uop.reduce ~src:v ~ranges:[ r ] ~op:Ops.Add ~dtype:D.float32
+        else v
+      in
+      let terms = List.init 8 (fun j -> input j * code j) in
+      let partial =
+        sum q (List.fold_left ( + ) (List.hd terms) (List.tl terms))
+      in
+      let acc = sum a (sum t (partial * scale)) in
+      let acc =
+        match selects with
+        | Some selects when not bounded -> where selects acc (f32 0.0)
+        | _ -> acc
+      in
+      let store =
+        Uop.store
+          ~dst:
+            (at out
+               (if merged then col else (((pos * int m) + row) * int n) + col))
+          ~value:(Uop.cast ~src:acc ~dtype) ()
+      in
+      Uop.sink
+        ~kernel_info:
+          {
+            Uop.name = Printf.sprintf "quant_matmul_%d_%d_%d_%d" i m n k;
+            axis_types = [];
+            dont_use_locals = false;
+            applied_opts = [];
+            opts_to_apply = Some opts;
+            estimates = None;
+            beam = 0;
+          }
+        [
+          Uop.end_ ~value:store
+            ~ranges:(List.filter is_range [ pos; row; col ]);
+        ]
+    in
+    let stored t =
+      if Option.is_some (T.device t) then t else Creation.clone ~device t
+    in
+    let srcs = [ out; stored x; stored codes; stored scales ] in
+    let srcs =
+      match ids with None -> srcs | Some ids -> srcs @ [ stored ids ]
+    in
+    List.hd (T.custom_kernel ~fxn srcs)
+  end
+
 (* Indexing *)
 
 let rec getitem t indices =
