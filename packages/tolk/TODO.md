@@ -68,7 +68,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 ## Optimizer and rendering
 
 - Converge large WMMA accumulator ordering at the optimizer/expander; port
-  CUDA MMA, remaining AMD MFMA variants, and Metal BF16 support.
+  CUDA MMA and remaining AMD MFMA variants.
   Reconcile CDNA4 K128 FP8 load ordering with the target HIP renderer.
 - Port final gpudims, slot allocation, range merge, gating and WAR barriers.
   Preserve symbolic extents.

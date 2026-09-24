@@ -229,12 +229,14 @@ let test_thread_reduction kind width expected () =
   run_spec device spec [ output; input ];
   equal (list int) expected (read_i32 output)
 
-let test_tensor_core_matmul ~m ~n ~k ~locals () =
+let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.float32)
+    ~m ~n ~k ~locals () =
   let device = metal_device () in
   let ren = Device.renderer device in
   if Renderer.tensor_cores ren = [] then skip ~reason:"Metal tensor cores unavailable" ();
-  let param slot size = U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int size) () in
-  let output = param 0 (m * n) and a = param 1 (m * k) and b = param 2 (k * n) in
+  let param dtype slot size = U.param ~slot ~dtype ~shape:(U.const_int size) () in
+  let output = param dtype_out 0 (m * n) in
+  let a = param dtype_in 1 (m * k) and b = param dtype_in 2 (k * n) in
   let range axis size kind = U.range ~size:(U.const_int size) ~axis ~kind () in
   let row = range 0 m Axis_type.Global and col = range 1 n Axis_type.Global in
   let red = range 2 k Axis_type.Reduce in
@@ -242,7 +244,8 @@ let test_tensor_core_matmul ~m ~n ~k ~locals () =
   let av = load a U.O.(row * int_ k + red) in
   let bv = load b U.O.(red * int_ n + col) in
   let product = U.alu_binary ~op:Ops.Mul ~lhs:av ~rhs:bv in
-  let value = U.reduce ~src:product ~ranges:[ red ] ~op:Ops.Add ~dtype:Dtype.float32 in
+  let product = if dtype_in = dtype_out then product else U.cast ~src:product ~dtype:dtype_out in
+  let value = U.reduce ~src:product ~ranges:[ red ] ~op:Ops.Add ~dtype:dtype_out in
   let dst = U.index ~ptr:output ~idxs:[ U.O.(row * int_ n + col) ] () in
   let store = U.store ~dst ~value () in
   let kernel_info : U.kernel_info =
@@ -261,23 +264,32 @@ let test_tensor_core_matmul ~m ~n ~k ~locals () =
   let linear = Codegen.full_rewrite_to_sink ~optimize:false ren (Postrange.ast scheduler)
       |> Linearizer.linearize in
   let spec = Device.compile_program device ~name:"metal_warp_grouping" linear in
-  let buffer values =
-    let buf = Device.create_buffer ~size:(Array.length values) ~dtype:Dtype.float32 device in
-    let bytes = Bytes.create (Array.length values * 4) in
-    Array.iteri (fun i v -> Bytes.set_int32_le bytes (i * 4) (Int32.bits_of_float v)) values;
+  let buffer dtype values =
+    let buf = Device.create_buffer ~size:(Array.length values) ~dtype device in
+    let bytes = Bytes.create (Array.length values * Dtype.itemsize dtype) in
+    Array.iteri (fun i v -> match dtype with
+      | Dtype.Float32 -> Bytes.set_int32_le bytes (i * 4) (Int32.bits_of_float v)
+      | Dtype.Bfloat16 -> Bytes.set_uint16_le bytes (i * 2)
+          (Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float (Dtype.float_to_bf16 v)) 16))
+      | _ -> invalid_arg "tensor-core test dtype") values;
     Device.Buffer.ensure_allocated buf;
     Device.Buffer.copyin buf bytes;
     buf in
   let a = Array.init (m * k) (fun i -> float_of_int ((i * 13 mod 7) - 2)) in
   let b = Array.init (k * n) (fun i -> float_of_int ((i * 11 mod 9) - 3)) in
-  let output = buffer (Array.make (m * n) nan) in
-  run_spec device spec [ output; buffer a; buffer b ];
+  let output = buffer dtype_out (Array.make (m * n) nan) in
+  run_spec device spec [ output; buffer dtype_in a; buffer dtype_in b ];
   let bytes = Device.Buffer.as_bytes output in
   for i = 0 to m - 1 do
     for j = 0 to n - 1 do
       let expected = ref 0. in
       for r = 0 to k - 1 do expected := !expected +. a.(i * k + r) *. b.(r * n + j) done;
-      let actual = Int32.float_of_bits (Bytes.get_int32_le bytes ((i * n + j) * 4)) in
+      if dtype_out = Dtype.Bfloat16 then expected := Dtype.float_to_bf16 !expected;
+      let actual = match dtype_out with
+        | Dtype.Float32 -> Int32.float_of_bits (Bytes.get_int32_le bytes ((i * n + j) * 4))
+        | Dtype.Bfloat16 -> Int32.float_of_bits (Int32.shift_left
+            (Int32.of_int (Bytes.get_uint16_le bytes ((i * n + j) * 2))) 16)
+        | _ -> invalid_arg "tensor-core test dtype" in
       is_true ~msg:(Printf.sprintf "matmul[%d,%d]: expected %g, got %g" i j !expected actual)
         (Float.abs (actual -. !expected) < 1.e-5)
     done
@@ -292,6 +304,13 @@ let () =
             (test_tensor_core_matmul ~m:32 ~n:64 ~k:8 ~locals:3);
           test "tensor cores preserve padded output and contraction lanes"
             (test_tensor_core_matmul ~m:9 ~n:11 ~k:13 ~locals:0);
+          test "tensor cores preserve a 128-cubed contraction"
+            (test_tensor_core_matmul ~m:128 ~n:128 ~k:128 ~locals:0);
+          test "tensor cores accumulate BF16 inputs in float32"
+            (test_tensor_core_matmul ~dtype_in:Dtype.Bfloat16 ~m:9 ~n:11 ~k:13 ~locals:0);
+          test "tensor cores accumulate BF16 inputs in BF16"
+            (test_tensor_core_matmul ~dtype_in:Dtype.Bfloat16 ~dtype_out:Dtype.Bfloat16
+              ~m:9 ~n:11 ~k:13 ~locals:0);
           test "local reductions preserve independent output threads"
             (test_thread_reduction Axis_type.Local 4 [ 496; 1520 ]);
           test "warp reductions preserve independent output threads"
