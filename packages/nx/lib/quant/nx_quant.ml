@@ -37,6 +37,20 @@ let mxfp4 ~scales codes =
   check_mxfp4 "Nx_quant.mxfp4" codes scales;
   Mxfp4 { codes; scales }
 
+let place p (Mxfp4 { codes; scales }) =
+  (match p with
+  | Nx.Placement.Sharded { axis; devices } ->
+      let r = Nx.ndim scales in
+      let groups = (Nx.shape scales).(r - 1) and parts = List.length devices in
+      if axis = r - 1 && groups mod parts <> 0 then
+        invalid_arg
+          (strf
+             "Nx_quant.place: splitting codes and scales along axis %d in %d \
+              cuts a 32-value group (%d groups)"
+             axis parts groups)
+  | Nx.Placement.Device _ | Nx.Placement.Replicated _ -> ());
+  Mxfp4 { codes = Nx.place p codes; scales = Nx.place p scales }
+
 let shape (Mxfp4 { codes; _ }) =
   let s = Array.copy (Nx.shape codes) in
   let r = Array.length s in

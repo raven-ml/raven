@@ -54,6 +54,14 @@ val mxfp4 : scales:(int, Nx.uint8_elt) Nx.t -> (int, Nx.uint8_elt) Nx.t -> t
 val shape : t -> int array
 (** [shape w] is [w]'s logical shape, [[| ...; n; k |]]. *)
 
+val place : Nx.Placement.t -> t -> t
+(** [place p w] is [w] with every part placed with [p] ({!Nx.place}). A leading
+    axis or [n] splits wherever {!Nx.place} can split it; [k] splits only at a
+    32-value group, so that each shard holds whole groups and their scales.
+
+    Raises [Invalid_argument] naming the part and the axis if [p] splits [k]
+    across a group, or as {!Nx.place} does for either part. *)
+
 (** {1:products Products} *)
 
 val dequant : (float, 'b) Nx.dtype -> t -> (float, 'b) Nx.t

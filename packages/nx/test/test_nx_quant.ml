@@ -142,6 +142,18 @@ let test_no_bytes_read () =
         got [2; 8; 3]") (fun () -> ignore (Nx_quant.mxfp4 ~scales:bad codes));
   equal ~msg:"bytes read" int 0 (!code_fills + !scale_fills + !bad_fills)
 
+(* A weight already where it is placed keeps its parts. *)
+let test_place_host () =
+  let w =
+    Nx_quant.mxfp4
+      ~scales:(Nx.full Nx.uint8 [| 8; 2 |] 127)
+      (Nx.full Nx.uint8 [| 8; 32 |] 0x21)
+  in
+  let (Nx_quant.Mxfp4 { codes; scales }) = w in
+  let (Nx_quant.Mxfp4 p) = Nx_quant.place Nx.Placement.host w in
+  is_true ~msg:"codes" (p.codes == codes);
+  is_true ~msg:"scales" (p.scales == scales)
+
 (* Values *)
 
 (* Every scale byte and every code byte, overflowing groups included. *)
@@ -620,6 +632,7 @@ let tests =
       [
         test "mxfp4 checks shapes" test_mxfp4_shapes;
         test "construction reads no bytes" test_no_bytes_read;
+        test "place keeps parts already placed" test_place_host;
       ];
     group "dequant"
       [

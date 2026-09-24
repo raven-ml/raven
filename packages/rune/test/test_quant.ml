@@ -537,6 +537,34 @@ let test_rule () =
         (past > 2 * n * k))
     devices
 
+(* Placement *)
+
+(* A weight placed on a device holds its parts there and decodes to the same
+   values. A split along the inputs that cuts a group raises before anything
+   moves. (Splits themselves wait for RFC 0005's next stage.) *)
+let test_place () =
+  let w = weight ~scale:(fun _ -> 120) [| 2; 4; 128 |] in
+  let expected = Nx.to_array (Nx_quant.dequant Nx.float32 w) in
+  List.iter
+    (fun device ->
+      let p = Nx.Placement.device (Rune.device device) in
+      let (Nx_quant.Mxfp4 { codes; scales } as placed) = Nx_quant.place p w in
+      is_true ~msg:(device ^ ", codes")
+        (Nx.Placement.equal p (Nx.placement codes));
+      is_true ~msg:(device ^ ", scales")
+        (Nx.Placement.equal p (Nx.placement scales));
+      equal ~msg:device (array float_exact) expected
+        (Nx.to_array (Nx_quant.dequant Nx.float32 placed)))
+    ("CPU:1" :: List.filter (( = ) "METAL") devices);
+  (* 48 code bytes split evenly over two devices; 3 groups do not. *)
+  let two = [ Rune.device "CPU:1"; Rune.device "CPU:2" ] in
+  raises
+    (Invalid_argument
+       "Nx_quant.place: splitting codes and scales along axis 1 in 2 cuts a \
+        32-value group (3 groups)") (fun () ->
+      ignore
+        (Nx_quant.place (Nx.Placement.sharded ~axis:1 two) (weight [| 4; 96 |])))
+
 (* Reverse and forward mode *)
 
 (* [dense c] is the product of [c] as an ordinary matmul over [w'] decoded at
@@ -796,6 +824,8 @@ let () =
           slow "past the row bound" test_past_the_bound;
           test "the row bound chooses the kernel" test_rule;
         ];
+      group "placement"
+        [ test "place splits at the format's blocks" test_place ];
       group "rules"
         [
           slow "grad with respect to x" test_grad;

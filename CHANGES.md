@@ -1179,6 +1179,8 @@ thread.
 
 ### Nx
 
+- Add `Nx_quant.place`, which places a quantised weight part by part and
+  refuses a split of its inputs that would cut a 32-value group.
 - Add `nx.quant`: `Nx_quant.mxfp4` builds a weight from a checkpoint's MXFP4
   codes and scales without a copy, and `Nx_quant.apply ?ids` multiplies by it
   with `Nx.matmul`'s shapes, decoding a bounded chunk at a time eagerly.

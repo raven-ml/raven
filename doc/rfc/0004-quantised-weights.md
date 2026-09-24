@@ -546,8 +546,7 @@ experts; that is a placement copy, not a repacking.
 0. The measurements of §Target.
 1. `nx.quant` with `Mxfp4` only: constructor, `dequant`, `apply`, the
    `Ptree.S` traversal, the effect and its eager loop, and `place` once RFC
-   0005's first stage gives nx its placements (the importer places with `map`
-   until then); rune's reverse, forward, vmap and debug rules; the three
+   0005's first stage gives nx its placements; rune's reverse, forward, vmap and debug rules; the three
    compiled forms on Metal, time-boxed as §Target says: the kernel with its
    row tile, the grouped form and decode-then-matmul; before the grouped form,
    tolk's `cumsum` split in chunks of 256 as tinygrad's `_split_cumalu` does
