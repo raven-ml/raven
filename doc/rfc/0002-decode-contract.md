@@ -418,13 +418,14 @@ Measured on an M1 Max with Metal, GPT-2 124M shape unless noted.
   minimum of 40 steps on a shared machine) stays at 0.9 to 1.1 ms from 4k to
   128k tokens, where masking the full read grows from 1.4 to 4.9 ms and
   gathering from it from 0.9 to 2.6 ms. Choosing the columns from scores costs
-  a sort of the context per token while `Nx.top_k` above `k = 16` sorts the
-  whole axis.
+  a radix select over the context per token: `Nx.top_k` sorts no axis longer
+  than 2048 entries (512 of 32768 in 0.9 ms compiled on Metal).
 - A table of blocks costs its columns. One compiled decode step of a
   DeepSeek-V4-Flash layer (a prototype, not in the tree; random float32
   weights, minimum of 30 steps on a shared machine) takes 2.4 to 2.6 ms from
   4k to 128k tokens at `m = 128`, and 6.5 to 12.6 ms at `m = 4` with its
-  indexer, half of that growth `Nx.top_k` sorting `context / 4` scores.
+  indexer, half of that growth `Nx.top_k` sorting `context / 4` scores,
+  measured before `Nx.top_k` selected by radix.
 
 Compiled programs are keyed by `(batch, seq, rows, context)`, by the width of
 every table of blocks and a selection's `k`, by whether the index carries
