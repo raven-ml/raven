@@ -773,68 +773,6 @@ let exec_copy binding ctx ~device call =
 module Graph_runner = struct
   module U = Tolk_uop.Uop
 
-  (* Tracks (start, end, node) access ranges per base buffer so a new node
-     waits on every earlier node whose access overlaps: writes wait on reads
-     and writes, reads wait on writes. A write supersedes the overlapped part
-     of earlier ranges. *)
-  module Deps = struct
-    type t = {
-      w : (int, (int * int * int) list ref) Hashtbl.t;
-      r : (int, (int * int * int) list ref) Hashtbl.t;
-    }
-
-    let create () = { w = Hashtbl.create 16; r = Hashtbl.create 16 }
-
-    let ranges tbl key =
-      match Hashtbl.find_opt tbl key with
-      | Some l -> l
-      | None ->
-          let l = ref [] in
-          Hashtbl.replace tbl key l;
-          l
-
-    let key buf =
-      let s = Device.Buffer.offset buf in
-      (Device.Buffer.base_id buf, s, s + Device.Buffer.nbytes buf)
-
-    let access t bufs write node =
-      let wait = ref [] in
-      List.iteri
-        (fun i buf ->
-          let k, s, e = key buf in
-          let overlapping l =
-            List.iter
-              (fun (st, en, dep) -> if st < e && s < en then wait := dep :: !wait)
-              !l
-          in
-          overlapping (ranges t.w k);
-          if List.mem i write then overlapping (ranges t.r k))
-        bufs;
-      List.iteri
-        (fun i buf ->
-          let k, s, e = key buf in
-          if List.mem i write then begin
-            let split l =
-              l :=
-                List.concat_map
-                  (fun (st, en, dep) ->
-                    (if st < min s en then [ (st, min s en, dep) ] else [])
-                    @ if max e st < en then [ (max e st, en, dep) ] else [])
-                  !l
-            in
-            split (ranges t.w k);
-            split (ranges t.r k);
-            let l = ranges t.w k in
-            l := (s, e, node) :: !l
-          end
-          else begin
-            let l = ranges t.r k in
-            l := (s, e, node) :: !l
-          end)
-        bufs;
-      List.sort_uniq Int.compare !wait
-  end
-
   type kernel = {
     info : U.program_info;
     var_replace : (int * string) list;
@@ -909,7 +847,7 @@ module Graph_runner = struct
       | [ linear ] -> linear
       | _ -> invalid_arg "graph: expected a single LINEAR body"
     in
-    let deps = Deps.create () in
+    let deps = Deps_tracker.create () in
     let calls = ref [] and nodes = ref [] and n = ref 0 in
     List.iter
       (fun call ->
@@ -959,9 +897,9 @@ module Graph_runner = struct
                     (U.program_vals info ~var_vals:ctx.var_vals)
                 in
                 let node_deps =
-                  Deps.access deps
-                    (List.map Device.Buffer.base bufs)
-                    (List.mapi (fun i slot -> i, slot) info.globals
+                  Deps_tracker.access deps
+                    (List.map Deps_tracker.buffer bufs)
+                    ~writes:(List.mapi (fun i slot -> i, slot) info.globals
                      |> List.filter_map (fun (i, slot) ->
                          if List.mem slot info.outs then Some i else None)) !n
                 in
@@ -973,7 +911,7 @@ module Graph_runner = struct
                       local;
                       bufs = Array.of_list bufs;
                       vals;
-                      deps = Array.of_list node_deps;
+                      deps = Array.of_list (List.sort_uniq Int.compare node_deps);
                     }
                   :: !nodes;
                 calls :=
@@ -996,9 +934,9 @@ module Graph_runner = struct
                 match bufs with
                 | [ dest; src ] ->
                     let node_deps =
-                      Deps.access deps
-                        (List.map Device.Buffer.base bufs)
-                        [ 0 ] !n
+                      Deps_tracker.access deps
+                        (List.map Deps_tracker.buffer bufs)
+                        ~writes:[ 0 ] !n
                     in
                     nodes :=
                       Device.Graph.Copy
@@ -1006,7 +944,7 @@ module Graph_runner = struct
                           dest;
                           src;
                           nbytes = Device.Buffer.nbytes dest;
-                          deps = Array.of_list node_deps;
+                          deps = Array.of_list (List.sort_uniq Int.compare node_deps);
                         }
                       :: !nodes;
                     calls :=

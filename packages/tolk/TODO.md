@@ -29,7 +29,9 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 - Adopt HCQ2 byte-interval dependencies and queue encoding on the
   compile/link/run path, including CPU host submission and retained JIT
-  execution. Replace the old graph APIs.
+  execution. Replace the old graph APIs. Validate replay inputs whose alias
+  relationships change, including overlapping external views and duplicate
+  input buffers, so compiled dependencies cannot become stale.
 - Migrate Metal/CUDA queues. Implement CUDA peer enablement and synchronized
   cross-device transfer with unsupported-peer fallback. Port AMD queue
   descriptors, AQL/multi-XCC, race/recovery fixes and consumed firmware/register

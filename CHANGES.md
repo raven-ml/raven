@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Track graph dependencies over byte views instead of their entire backing
+  allocations, allowing disjoint views to remain independent while preserving
+  ordering for overlapping reads and writes.
+
 - Separate `Realize.compile_linear` (formerly `pm_compile`) from
   `Realize.link_linear`. Linking initializes command storage once and retains
   allocations referenced by native addresses across replay.
