@@ -768,6 +768,39 @@ let test_scan_carry_written_in_place () =
           (bytes < 3 * layers * slots * d * 4))
     [ false; true ]
 
+(* The layers of a stack passed as rows are read in place: a replay launches the
+   kernels of the same body reading one captured layer, and nothing copies the
+   row the step reads. The body gathers two of the layer's eight rows and
+   broadcasts them into a matrix product. *)
+let test_scan_reads_rows_in_place () =
+  let stack =
+    Nx.create f32 [| 4; 8; 4; 4 |]
+      (Array.init 512 (fun i -> Float.of_int (i * 7 mod 13) /. 13.0))
+  in
+  let rows = Nx.create Nx.int32 [| 2 |] [| 1l; 5l |] in
+  let step x w =
+    let w = Nx.take ~axis:0 ~indices:rows w in
+    let y = Nx.sum ~axes:[ 0 ] (Nx.matmul w (Nx.reshape [| 4; 1 |] x)) in
+    (Nx.tanh (Nx.reshape [| 4 |] y), Nx.zeros f32 [||])
+  in
+  let over_rows x0 = fst (Rune.scan' ~f:step ~init:x0 stack) in
+  let layer = Nx.slice [ I 2 ] stack in
+  let over_capture x0 =
+    fst (Rune.scan' ~f:(fun x _ -> step x layer) ~init:x0 stack)
+  in
+  let x0 = vec32 [| 0.5; -1.0; 0.25; 2.0 |] in
+  let kernels_per_replay f =
+    let g = Rune.jit' f in
+    ignore (g x0);
+    let before = !Tolk.Helpers.Global_counters.kernel_count in
+    let y = g x0 in
+    (y, !Tolk.Helpers.Global_counters.kernel_count - before)
+  in
+  let y, from_rows = kernels_per_replay over_rows in
+  let _, from_capture = kernels_per_replay over_capture in
+  check_arr ~msg:"matches the eager fold" (to_arr (over_rows x0)) y;
+  equal ~msg:"no copy of the row" int from_capture from_rows
+
 let test_scan_rows_short_of_16_bytes () =
   let fold xs =
     Rune.scan'
@@ -2679,6 +2712,7 @@ let tests =
         test "a scan rejects ragged or scalar rows"
           test_scan_rejects_ragged_rows;
         test "a scan carry is written in place" test_scan_carry_written_in_place;
+        test "a scan reads its rows in place" test_scan_reads_rows_in_place;
       ];
     group "sliding windows"
       [
