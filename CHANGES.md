@@ -294,6 +294,8 @@ thread.
 
 ### Tolk (new)
 
+- Beam search uses the 0.01µs progress threshold and reconsiders candidates
+  rejected by a previous round's compute filter while reusing compiled code.
 - `State.safe_load` decodes escaped Unicode names and validates metadata,
   shapes and byte offsets before uploading tensors. Empty host inputs no
   longer attempt zero-byte native allocations.

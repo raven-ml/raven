@@ -36,15 +36,11 @@ let beam_parallel = Helpers.Context_var.int ~key:"BEAM_PARALLEL" ~default:0
 let cachelevel () = Helpers.getenv "CACHELEVEL" 1
 let ignore_beam_cache () = Helpers.getenv "IGNORE_BEAM_CACHE" 0 <> 0
 
-(* Minimum measurable progress per beam step, in microseconds. Must sit above
-   the device timer resolution (~0.5us for CUDA events): below it the exit
-   conditions only fire when a step improves by nothing at all, and searches
-   run to exhaustion. The reference defaults to 0.01, its production configs
-   to 5-10; 5us is a deliberate divergence (TODO.md). *)
+(* Minimum progress per beam step, in microseconds. *)
 let beam_min_progress () =
   (match Sys.getenv_opt "BEAM_MIN_PROGRESS" with
-   | Some s -> (try Float.of_string s with Failure _ -> 5.0)
-   | None -> 5.0) /. 1e6
+   | Some s when s <> "" -> Float.of_string s
+   | _ -> 0.01) /. 1e6
 
 (* Actions *)
 
@@ -507,11 +503,9 @@ let beam_search ?(allow_test_size = true) ?disable_cache
   | None ->
       let beam = ref [(s, infinity)] in
       let seen_libs : (bytes, unit) Hashtbl.t = Hashtbl.create 256 in
-      (* Candidates whose AST has already been compiled: applying actions in
-         different orders converges to identical programs, and compiling is
-         the expensive part. Nodes are hash-consed, so the AST's tag is an
-         exact identity key. *)
-      let seen_asts : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+      (* Compilation is reusable; eligibility is reconsidered each round.
+         Only a binary accepted for timing enters [seen_libs]. *)
+      let compiled_asts : compiled option U.Ref_tbl.t = U.Ref_tbl.create 256 in
       let nworkers = Helpers.Context_var.get beam_parallel in
       if beam_debug > 0 then
         Format.eprintf "BEAM_SEARCH:@\n%a@." U.pp (P.ast s);
@@ -588,13 +582,14 @@ let beam_search ?(allow_test_size = true) ?disable_cache
               List.map snd (get_kernel_actions ~include_0:false si))
             !beam
         in
-        let candidates =
+        let pending = U.Ref_tbl.create (List.length candidates) in
+        let uncompiled =
           List.filter
             (fun cand ->
-              let k = U.tag (P.ast cand) in
-              if Hashtbl.mem seen_asts k then false
+              let ast = P.ast cand in
+              if U.Ref_tbl.mem compiled_asts ast || U.Ref_tbl.mem pending ast then false
               else begin
-                Hashtbl.replace seen_asts k ();
+                U.Ref_tbl.add pending ast ();
                 true
               end)
             candidates
@@ -602,11 +597,12 @@ let beam_search ?(allow_test_size = true) ?disable_cache
         let timed = ref [] in
         let least_compute_ops = ref infinity in
         let n_candidates = List.length candidates in
-        let compiled = compile_candidates ~device ~nworkers candidates in
+        let compiled = compile_candidates ~device ~nworkers uncompiled in
+        List.iteri (fun i cand -> U.Ref_tbl.add compiled_asts (P.ast cand) compiled.(i)) uncompiled;
         List.iteri
           (fun i cand ->
             consume_one timed least_compute_ops n_candidates i cand
-              compiled.(i))
+              (U.Ref_tbl.find compiled_asts (P.ast cand)))
           candidates;
         let opts =
           List.sort (fun (_, t1) (_, t2) -> Float.compare t1 t2) !timed
