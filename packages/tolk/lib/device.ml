@@ -31,11 +31,15 @@ end
 module Allocator = struct
   type 'buf transfer = dest:'buf -> src:'buf -> int -> unit
 
+  type host_view =
+    (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
   type 'buf t = {
     alloc : int -> Buffer_spec.t -> 'buf;
     free : 'buf -> int -> Buffer_spec.t -> unit;
     copyin : 'buf -> bytes -> unit;
     copyout : bytes -> 'buf -> unit;
+    as_buffer : ('buf -> int -> host_view) option;
     addr : 'buf -> nativeint;
     offset : ('buf -> int -> int -> 'buf) option;
     transfer : 'buf transfer option;
@@ -242,6 +246,11 @@ module Buffer = struct
     match b.buf with
     | None -> invalid_arg "buffer is not allocated"
     | Some raw -> b.allocator.copyout bytes raw
+
+  let as_buffer (Pack b as t) =
+    match b.buf with
+    | None -> invalid_arg "buffer is not allocated"
+    | Some raw -> Option.map (fun f -> f raw (nbytes t)) b.allocator.as_buffer
 
   let transfer ~dst:((Pack dst_raw) as dst) ~src:((Pack src_raw) as src) =
     if size dst <> size src then invalid_arg "buffer transfer size mismatch";

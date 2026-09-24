@@ -13,6 +13,9 @@ external cpu_alloc : int -> nativeint = "caml_tolk_cpu_alloc"
 external cpu_free : nativeint -> unit = "caml_tolk_cpu_free"
 external cpu_copyin : nativeint -> bytes -> unit = "caml_tolk_cpu_copyin"
 external cpu_copyout : bytes -> nativeint -> unit = "caml_tolk_cpu_copyout"
+
+external cpu_as_buffer : nativeint -> int -> Device.Allocator.host_view
+  = "caml_tolk_cpu_as_buffer"
 external exec_alloc : int -> nativeint = "caml_tolk_cpu_jit_alloc"
 external exec_free : nativeint -> int -> unit = "caml_tolk_cpu_jit_free"
 external exec_write : nativeint -> bytes -> unit = "caml_tolk_cpu_jit_write"
@@ -90,6 +93,7 @@ let raw_allocator ~synchronize ~after_queue =
     free;
     copyin;
     copyout;
+    as_buffer = Some cpu_as_buffer;
     addr = Fun.id;
     offset = Some offset;
     transfer = None;

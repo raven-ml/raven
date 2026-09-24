@@ -201,6 +201,7 @@ module Allocator = struct
       free;
       copyin;
       copyout;
+      as_buffer = None;
       addr = Fun.id;
       offset = Some offset;
       transfer = Some transfer;

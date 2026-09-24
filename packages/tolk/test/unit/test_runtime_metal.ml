@@ -178,6 +178,17 @@ let () =
             equal (list int) [ 2; 3 ] (read_i32 view);
             Device.Buffer.copyin view (int32_to_bytes [ 20; 30 ]);
             equal (list int) [ 1; 20; 30; 4 ] (read_i32 base));
+          test "as_buffer aliases a view's bytes" (fun () ->
+            let device = metal_device () in
+            let base = i32_buf device [ 1; 2; 3; 4 ] in
+            let view = i32_view base ~offset:4 ~size:2 in
+            match Device.Buffer.as_buffer view with
+            | None -> fail "Metal memory is host-visible"
+            | Some mem ->
+                equal int 8 (Bigarray.Array1.dim mem);
+                equal int 2 (Bigarray.Array1.get mem 0);
+                Bigarray.Array1.set mem 4 30;
+                equal (list int) [ 1; 2; 30; 4 ] (read_i32 base));
           test "LRU-reused base buffers keep valid tokens" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_lru_reused_add_one" in

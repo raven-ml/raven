@@ -40,6 +40,7 @@ let allocator =
       copyin = (fun raw src -> Bytes.blit src 0 raw.Raw.data raw.offset raw.nbytes);
       copyout =
         (fun dst raw -> Bytes.blit raw.Raw.data raw.offset dst 0 raw.nbytes);
+      as_buffer = None;
       addr = (fun _ -> Nativeint.zero);
       offset =
         Some

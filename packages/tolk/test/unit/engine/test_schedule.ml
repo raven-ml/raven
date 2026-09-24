@@ -64,6 +64,7 @@ let test_allocator =
         free;
         copyin;
         copyout;
+        as_buffer = None;
         addr;
         offset = None;
         transfer = None;

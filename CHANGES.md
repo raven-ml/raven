@@ -300,6 +300,10 @@ thread.
 
 ### Tolk (new)
 
+- Add `Device.Buffer.as_buffer`, a buffer's bytes as host memory without a
+  copy on devices the host addresses (Metal, the CPU device), as tinygrad's
+  `_as_buffer`.
+
 - `Op.cumsum`, `Op.cumprod` and `Op.cummax` values scan axes over 512 in chunks
   of 256 (262,144 elements on Metal: 209 ms to 0.44 ms; `cummax` indices stay
   quadratic). An empty int8 `Op.cumsum` returns int32, like a non-empty one.

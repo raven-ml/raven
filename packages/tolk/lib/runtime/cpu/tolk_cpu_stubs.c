@@ -1,4 +1,5 @@
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -94,6 +95,13 @@ CAMLprim value caml_tolk_cpu_copyout(value v_bytes, value v_ptr) {
   size_t len = (size_t)caml_string_length(v_bytes);
   memcpy(Bytes_val(v_bytes), ptr, len);
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_cpu_as_buffer(value v_ptr, value v_len) {
+  CAMLparam2(v_ptr, v_len);
+  CAMLreturn(caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1,
+                                (void *)Nativeint_val(v_ptr),
+                                (intnat)Long_val(v_len)));
 }
 
 CAMLprim value caml_tolk_cpu_jit_alloc(value v_size) {

@@ -74,6 +74,10 @@ module Allocator : sig
       cannot serialise a cross-instance copy through this hook and must fall
       back to a host bounce. *)
 
+  type host_view =
+    (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  (** The type for a buffer's bytes seen from the host. *)
+
   type 'buf t = {
     alloc : int -> Buffer_spec.t -> 'buf;
         (** [alloc nbytes spec] allocates a device buffer of [nbytes] bytes with
@@ -85,6 +89,12 @@ module Allocator : sig
         (** [copyin buf src] copies [src] into [buf]. *)
     copyout : bytes -> 'buf -> unit;
         (** [copyout dst buf] copies [buf] into [dst]. *)
+    as_buffer : ('buf -> int -> host_view) option;
+        (** [as_buffer buf nbytes] is the [nbytes] bytes of [buf] as host memory,
+            without a copy, on backends whose memory the host addresses, or
+            [None]. The view aliases [buf]: it is valid while [buf] is
+            allocated, and it races with queued work that uses [buf] unless the
+            device is synchronized first. *)
     addr : 'buf -> nativeint;  (** [addr buf] is the device address of [buf]. *)
     offset : ('buf -> int -> int -> 'buf) option;
         (** [offset buf nbytes byte_offset] is a view into [buf] starting at
@@ -273,6 +283,15 @@ module Buffer : sig
 
       Raises [Invalid_argument] if [Bytes.length dst <> nbytes b] or if [b] is
       not allocated. *)
+
+  val as_buffer : t -> Allocator.host_view option
+  (** [as_buffer b] is [b]'s bytes as host memory, without a copy, when its
+      allocator has {!Allocator.field-as_buffer}, as tinygrad's zero-copy
+      [as_memoryview]. The device is not synchronized: the caller waits for the
+      work that writes [b] before reading, and the view must not outlive [b]'s
+      allocation.
+
+      Raises [Invalid_argument] if [b] is not allocated. *)
 
   val as_bytes : t -> bytes
   (** [as_bytes b] is a fresh [bytes] value containing the contents of [b].

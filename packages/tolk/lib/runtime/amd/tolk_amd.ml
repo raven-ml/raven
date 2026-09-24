@@ -1678,6 +1678,7 @@ module Allocator = struct
       free;
       copyin = copyin state;
       copyout = copyout state;
+      as_buffer = None;
       addr = Hcq.Buffer.va;
       offset = Some offset;
       transfer = (if has_sdma then Some (transfer state) else None);

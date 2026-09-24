@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -144,6 +145,15 @@ CAMLprim value caml_tolk_metal_buffer_copyout(value v_bytes, value v_buf,
   size_t len = (size_t)caml_string_length(v_bytes);
   memcpy(Bytes_val(v_bytes), src, len);
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_metal_buffer_contents(value v_buf, value v_offset,
+                                               value v_len) {
+  CAMLparam3(v_buf, v_offset, v_len);
+  id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(v_buf);
+  uint8_t* data = (uint8_t*)[buf contents] + Long_val(v_offset);
+  CAMLreturn(caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, data,
+                                (intnat)Long_val(v_len)));
 }
 
 CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,

@@ -328,6 +328,17 @@ let main () =
             equal (list int) [ 2; 3 ] (read_i32_buffer view);
             Device.Buffer.copyin view (int32_to_bytes [ 20; 30 ]);
             equal (list int) [ 1; 20; 30; 4 ] (read_i32_buffer base));
+          test "as_buffer aliases a view's bytes" (fun () ->
+            let device = cpu "as-buffer" in
+            let base = create_i32_buffer device [ 1; 2; 3; 4 ] in
+            let view = i32_view base ~offset:4 ~size:2 in
+            match Device.Buffer.as_buffer view with
+            | None -> fail "CPU memory is host memory"
+            | Some mem ->
+                equal int 8 (Bigarray.Array1.dim mem);
+                equal int 2 (Bigarray.Array1.get mem 0);
+                Bigarray.Array1.set mem 4 30;
+                equal (list int) [ 1; 2; 30; 4 ] (read_i32_buffer base));
           test "nested buffer views compose byte offsets" (fun () ->
             let device = cpu "nested-views" in
             let base = create_i32_buffer device [ 1; 2; 3; 4 ] in

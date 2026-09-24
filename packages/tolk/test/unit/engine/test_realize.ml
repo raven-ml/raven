@@ -72,6 +72,7 @@ let test_allocator ?(transfer = false) stats =
         free;
         copyin;
         copyout;
+        as_buffer = None;
         addr;
         offset = Some offset;
         transfer = transfer_fn;

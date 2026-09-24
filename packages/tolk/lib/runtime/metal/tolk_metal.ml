@@ -28,6 +28,10 @@ module Ffi = struct
   external buffer_copyout : bytes -> nativeint -> int -> unit
     = "caml_tolk_metal_buffer_copyout"
 
+  external buffer_contents :
+    nativeint -> int -> int -> Device.Allocator.host_view
+    = "caml_tolk_metal_buffer_contents"
+
   external program_create : nativeint -> string -> bytes -> nativeint
     = "caml_tolk_metal_program_create"
 
@@ -273,6 +277,10 @@ module Allocator = struct
       State.synchronize state;
       Ffi.buffer_copyout bytes buf.Buffer_token.handle buf.offset
     in
+    (* tinygrad's [_as_buffer]: the shared buffer's contents, in place. *)
+    let as_buffer buf nbytes =
+      Ffi.buffer_contents buf.Buffer_token.handle buf.offset nbytes
+    in
     let transfer ~dest ~src nbytes =
       State.synchronize state;
       let cmd =
@@ -295,6 +303,7 @@ module Allocator = struct
       free;
       copyin;
       copyout;
+      as_buffer = Some as_buffer;
       addr;
       offset = Some offset;
       transfer = Some transfer;
