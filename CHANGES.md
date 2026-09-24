@@ -1738,6 +1738,9 @@ thread.
 
 ### Nx
 
+- `Nx.zeros`, `ones`, `full` and their `_like` forms, made outside a compiled
+  function on a device, return a value with storage of its own. They were a
+  broadcast of one held scalar, which a compiled call cannot consume.
 - Add `Nx.Ptree`, structures of tensors. A structure is a type `'a t` with one
   function, `walk`, that visits its parts with a `Walk` cursor: `leaf` for the
   parameter's positions, `tensor` for tensors of a fixed type, `int` and `case`

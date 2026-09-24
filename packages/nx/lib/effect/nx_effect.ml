@@ -952,9 +952,10 @@ let pad t_in padding_config fill_value =
         routed1 "pad" t_in (fun t -> Nx_backend.pad t padding_config fill_value))
 
 (* Creation operations. A value created in the context of one device lives
-   there, and a scalar there is held by nx and allocates nothing. A value
-   created in the context of several devices is a host value, as an operation
-   over them gives. *)
+   there, and a scalar there is held by nx and allocates nothing. A filled value
+   of more than one element has storage of its own, so that its view covers its
+   storage and a compiled call can consume it. A value created in the context of
+   several devices is a host value, as an operation over them gives. *)
 
 let at_devices = function [ d ] -> At (Device d) | _ -> On_host
 
@@ -984,16 +985,19 @@ let broadcast scalar shape_arr =
   else expand (reshape scalar (Array.map (fun _ -> 1) shape_arr)) shape_arr
 
 let full (ctx : context) dtype shape_arr value =
-  (* Under an effect handler (jit tracing), and in a device context, a filled
-     tensor is a broadcast scalar constant: no bytes are materialized. On the
-     host it stays a concrete, mutable backend tensor. *)
+  (* Under an effect handler (jit tracing) a filled tensor is a broadcast scalar
+     constant: no bytes are materialized. Until devices compute (RFC 0005 stage
+     3), a fill in a device's context runs on the host and is placed, which
+     holds a host copy of the value until the next collection; stage 3 fills on
+     the device. *)
   match Effect.perform (E_const_scalar { context = ctx; value; dtype }) with
   | scalar -> broadcast scalar shape_arr
   | exception Effect.Unhandled _ -> (
       match ctx with
       | Host c -> Host (Nx_backend.full c dtype shape_arr value)
-      | On [ d ] -> broadcast (held (Device d) dtype value [||]) shape_arr
-      | On _ -> Host (Nx_backend.full host_context dtype shape_arr value))
+      | On ds ->
+          settle (at_devices ds)
+            (Nx_backend.full host_context dtype shape_arr value))
 
 let from_host (ctx : context) array =
   try Effect.perform (E_from_host { context = ctx; array })
