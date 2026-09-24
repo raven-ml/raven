@@ -7,17 +7,10 @@
 
 open Tolk
 
-let buffer_kind : nativeint Type.Id.t = Type.Id.make ()
+let buffer_kind = Tolk_uop.Storage.Host_allocator.kind
 
 (* FFI Externals *)
 
-external cpu_alloc : int -> nativeint = "caml_tolk_cpu_alloc"
-external cpu_free : nativeint -> unit = "caml_tolk_cpu_free"
-external cpu_copyin : nativeint -> bytes -> unit = "caml_tolk_cpu_copyin"
-external cpu_copyout : bytes -> nativeint -> unit = "caml_tolk_cpu_copyout"
-
-external cpu_as_buffer : nativeint -> int -> Device.Allocator.host_view
-  = "caml_tolk_cpu_as_buffer"
 external exec_alloc : int -> nativeint = "caml_tolk_cpu_jit_alloc"
 external exec_free : nativeint -> int -> unit = "caml_tolk_cpu_jit_free"
 external exec_write : nativeint -> bytes -> unit = "caml_tolk_cpu_jit_write"
@@ -66,36 +59,6 @@ let unload_program loaded =
 
 (* Allocator *)
 
-let raw_allocator () =
-  let alloc size spec =
-    match spec.Device.Buffer_spec.external_ptr with
-    | Some ptr -> ptr
-    | None -> cpu_alloc size
-  in
-  let free buf _size spec =
-    match spec.Device.Buffer_spec.external_ptr with
-    | Some _ -> ()
-    | None -> cpu_free buf
-  in
-  let offset buf _size byte_offset =
-    if byte_offset < 0 then invalid_arg "CPU buffer offset must be non-negative";
-    Nativeint.add buf (Nativeint.of_int byte_offset)
-  in
-  {
-    Device.Allocator.kind = buffer_kind;
-    alloc;
-    free;
-    copyin = cpu_copyin;
-    copyout = cpu_copyout;
-    as_buffer = Some cpu_as_buffer;
-    addr = Some Fun.id;
-    offset = Some offset;
-    transfer = None;
-    supports_transfer = false;
-    copy_from_disk = None;
-    supports_copy_from_disk = false;
-  }
-
 (* Device Registration *)
 
 let create ?aligned name =
@@ -116,7 +79,7 @@ let create ?aligned name =
     let loaded = load_program ~name:entry_name ~lib in
     let call bufs ~global:_ ~local:_ ~vals ~wait ~timeout:_ =
       let bufs = Array.map (fun buf ->
-          Option.value (Device.Buffer.get buffer_kind buf) ~default:0n) bufs in
+          Option.value (Device.Buffer.get ~device:name buffer_kind buf) ~default:0n) bufs in
       if loaded.unloaded then invalid_arg "CPU program has been unloaded";
       let st = if wait then monotonic_ns () else 0 in
       exec_call loaded.entry (reorder buffer_slots bufs) (reorder scalar_slots vals);
@@ -141,6 +104,6 @@ let create ?aligned name =
                ?aligned arch)) ] in
   let allocator =
     Device.Allocator.Pack
-      (Device.Lru_allocator.wrap (raw_allocator ()))
+      (Device.Lru_allocator.wrap (Tolk_uop.Storage.Host_allocator.make ~synchronize))
   in
   Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()

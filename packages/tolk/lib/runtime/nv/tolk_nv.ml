@@ -1950,11 +1950,13 @@ module Allocator = struct
     in
     {
       Tolk.Device.Allocator.kind = buffer_kind;
+      host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
+      mapping = None;
+      synchronize = (fun () -> Timeline.synchronize state.State.tl);
       alloc;
       free;
       copyin = copyin state;
       copyout = copyout state;
-      as_buffer = None;
       addr = Some Hcq.Buffer.va;
       offset = Some offset;
       transfer = Some (transfer state);

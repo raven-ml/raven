@@ -75,7 +75,7 @@
  (package tolk)
  (build_if
   (= %{system} macosx))
- (libraries tolk tolk.uop tolk.metal windtrap))
+ (libraries tolk tolk.uop tolk.metal tolk.cpu windtrap))
 
 (tests
  (names test_runtime_cuda)

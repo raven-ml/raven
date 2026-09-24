@@ -1680,11 +1680,13 @@ module Allocator = struct
     let has_sdma = Option.is_some state.State.sdma_queue in
     {
       Tolk.Device.Allocator.kind = state.State.buffer_kind;
+      host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
+      mapping = None;
+      synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
       copyin = copyin state;
       copyout = copyout state;
-      as_buffer = None;
       addr = Some Hcq.Buffer.va;
       offset = Some offset;
       transfer = (if has_sdma then Some (transfer state) else None);

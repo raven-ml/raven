@@ -20,6 +20,8 @@ module Ffi = struct
   external buffer_alloc : nativeint -> int -> nativeint
     = "caml_tolk_metal_buffer_alloc"
 
+  external buffer_contents : nativeint -> nativeint = "caml_tolk_metal_buffer_contents"
+
   external buffer_free : nativeint -> unit = "caml_tolk_metal_buffer_free"
 
   external buffer_copyin : nativeint -> int -> bytes -> unit
@@ -27,10 +29,6 @@ module Ffi = struct
 
   external buffer_copyout : bytes -> nativeint -> int -> unit
     = "caml_tolk_metal_buffer_copyout"
-
-  external buffer_contents :
-    nativeint -> int -> int -> Device.Allocator.host_view
-    = "caml_tolk_metal_buffer_contents"
 
   external program_create : nativeint -> string -> bytes -> int -> int array -> nativeint
     = "caml_tolk_metal_program_create"
@@ -231,10 +229,6 @@ module Allocator = struct
       State.synchronize state;
       Ffi.buffer_copyout bytes buf.Metal_buffer.handle buf.offset
     in
-    (* tinygrad's [_as_buffer]: the shared buffer's contents, in place. *)
-    let as_buffer buf nbytes =
-      Ffi.buffer_contents buf.Metal_buffer.handle buf.offset nbytes
-    in
     let transfer ~dest ~src ~dest_device ~src_device nbytes =
       if Device.canonicalize dest_device <> Device.canonicalize src_device then false
       else begin
@@ -257,11 +251,14 @@ module Allocator = struct
     in
     {
       Device.Allocator.kind = Metal_buffer.kind;
+      host = (fun buf -> Some (Nativeint.add (Ffi.buffer_contents buf.Metal_buffer.handle)
+          (Nativeint.of_int buf.offset)));
+      mapping = None;
+      synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
       copyin;
       copyout;
-      as_buffer = Some as_buffer;
       addr = None;
       offset = Some offset;
       transfer = Some transfer;

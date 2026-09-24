@@ -23,7 +23,6 @@ let numbering () =
       free = (fun buf _ _ -> freed := buf :: !freed);
       copyin = (fun _ _ -> ());
       copyout = (fun _ _ -> ());
-      as_buffer = None;
       addr = Nativeint.of_int;
       offset = None;
       transfer = None;

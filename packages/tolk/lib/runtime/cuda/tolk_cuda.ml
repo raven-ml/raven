@@ -207,11 +207,13 @@ module Allocator = struct
     in
     {
       Device.Allocator.kind = buffer_kind;
+      host = Fun.const None;
+      mapping = None;
+      synchronize = (fun () -> State.synchronize_system ());
       alloc;
       free;
       copyin;
       copyout;
-      as_buffer = None;
       addr = Some Fun.id;
       offset = Some offset;
       transfer = Some transfer;

@@ -43,6 +43,9 @@ let allocator =
   Device.Allocator.Pack
     {
       Device.Allocator.kind = Type.Id.make ();
+      host = Fun.const None;
+      mapping = None;
+      synchronize = (fun () -> ());
       alloc =
         (fun nbytes _spec ->
           Raw.{ data = Bytes.make nbytes '\000'; offset = 0; nbytes });
@@ -50,7 +53,6 @@ let allocator =
       copyin = (fun raw src -> Bytes.blit src 0 raw.Raw.data raw.offset raw.nbytes);
       copyout =
         (fun dst raw -> Bytes.blit raw.Raw.data raw.offset dst 0 raw.nbytes);
-      as_buffer = None;
       addr = Some (fun _ -> Nativeint.zero);
       offset =
         Some

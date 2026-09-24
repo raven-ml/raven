@@ -76,11 +76,13 @@ let test_allocator ?(transfer = false) stats =
     Device.Allocator.
       {
         kind = buffer_kind;
+        host = Fun.const None;
+        mapping = None;
+        synchronize = (fun () -> ());
         alloc;
         free;
         copyin;
         copyout;
-        as_buffer = None;
         addr = None;
         offset = Some offset;
         transfer = transfer_fn;

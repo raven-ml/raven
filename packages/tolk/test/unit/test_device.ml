@@ -96,6 +96,9 @@ let failed_view_allocation_preserves_ownership () =
   let attempts = ref 0 and frees = ref 0 in
   let allocator = Device.Allocator.Pack {
       kind = Type.Id.make ();
+      host = Fun.const None;
+      mapping = None;
+      synchronize = (fun () -> ());
       alloc = (fun _ _ -> ());
       free = (fun () _ _ -> incr frees);
       copyin = (fun () _ -> ()); copyout = (fun _ () -> ());
@@ -123,11 +126,13 @@ let empty_storage () =
   let unexpected op = fail ("empty storage called allocator " ^ op) in
   let allocator = Device.Allocator.Pack {
       kind = Type.Id.make ();
+      host = Fun.const None;
+      mapping = None;
+      synchronize = (fun () -> ());
       alloc = (fun _ _ -> unexpected "alloc");
       free = (fun () _ _ -> unexpected "free");
       copyin = (fun () _ -> unexpected "copyin");
       copyout = (fun _ () -> unexpected "copyout");
-      as_buffer = None;
       addr = Some (fun () -> unexpected "addr");
       offset = None; transfer = None; supports_transfer = false;
       copy_from_disk = None; supports_copy_from_disk = false;
@@ -279,6 +284,7 @@ let typed_storage_identity () =
   let transfers = ref 0 in
   let allocator : bytes Device.Allocator.t = {
     kind;
+    host = Fun.const None; mapping = None; synchronize = (fun () -> ());
     alloc = (fun size _ -> Bytes.make size '\000');
     free = (fun _ _ _ -> ());
     copyin = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length src));
@@ -316,7 +322,74 @@ let typed_storage_identity () =
   is_false ~msg:"reallocation invalidates previously captured arguments"
     (generation = Device.Buffer.generation src)
 
+let mappings_follow_storage_ownership () =
+  let source_kind : bytes Type.Id.t = Type.Id.make () in
+  let target_kind : (bytes * int) Type.Id.t = Type.Id.make () in
+  let events = ref [] in
+  let record event = events := event :: !events in
+  let source_allocator : bytes Device.Allocator.t = {
+    kind = source_kind; host = Fun.const None; mapping = None;
+    synchronize = (fun () -> record "source sync");
+    alloc = (fun n _ -> Bytes.make n '\000');
+    free = (fun _ _ _ -> record "source free");
+    copyin = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length src));
+    copyout = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length dst));
+    addr = None; offset = Some (fun raw _ _ -> raw);
+    transfer = None; supports_transfer = false;
+    copy_from_disk = None; supports_copy_from_disk = false;
+  } in
+  let source = Device.Buffer.create ~device:"MAP_SOURCE" ~size:4 ~dtype:i32
+      (Device.Allocator.Pack source_allocator) in
+  let target name =
+    let allocator : (bytes * int) Device.Allocator.t = {
+      kind = target_kind; host = Fun.const None;
+      mapping = Some {
+        map = (fun source -> record (name ^ " map");
+            Option.get (Device.Buffer.get source_kind source), 0);
+        unmap = (fun (_, offset) -> equal int 0 offset; record (name ^ " unmap"));
+      };
+      synchronize = (fun () -> record (name ^ " sync"));
+      alloc = (fun _ _ -> fail "mapping must not allocate target storage");
+      free = (fun _ _ _ -> fail "mapping must not free source through target");
+      copyin = (fun (data, offset) src -> Bytes.blit src 0 data offset (Bytes.length src));
+      copyout = (fun dst (data, offset) -> Bytes.blit data offset dst 0 (Bytes.length dst));
+      addr = None; offset = Some (fun (raw, base) _ offset -> raw, base + offset);
+      transfer = None; supports_transfer = false;
+      copy_from_disk = None; supports_copy_from_disk = false;
+    } in
+    Device.make ~name ~allocator:(Device.Allocator.Pack allocator)
+      ~renderer_set:(Device.Renderer_set.make ~device:name
+          ["CLANG", (fun _ -> Device.renderer device)])
+      ~runtime:(fun _ -> fail "mapping test does not execute code")
+      ~synchronize:allocator.synchronize () in
+  let first = target "MAP_TARGET:1" and second = target "MAP_TARGET:2" in
+  let get device buf = Option.get (Device.Buffer.get ~device:(Device.name device) target_kind buf) in
+  let data, offset = get first source in
+  equal int 0 offset;
+  Bytes.set_int32_le data 4 42l;
+  let view = Device.Buffer.view source ~size:2 ~dtype:i32 ~offset:4 in
+  let view_data, view_offset = get first view in
+  is_true (data == view_data);
+  equal int 4 view_offset;
+  ignore (get first source);
+  ignore (get second view);
+  let count event = List.length (List.filter (String.equal event) !events) in
+  equal int 1 (count "MAP_TARGET:1 map");
+  equal int 1 (count "MAP_TARGET:2 map");
+  equal (list int) [0; 42; 0; 0] (read_i32 source);
+  Device.Buffer.deallocate view;
+  equal int 0 (count "MAP_TARGET:1 unmap");
+  events := [];
+  Device.Buffer.deallocate source;
+  equal (list string)
+    ["MAP_TARGET:2 sync"; "MAP_TARGET:2 unmap";
+     "MAP_TARGET:1 sync"; "MAP_TARGET:1 unmap"; "source free"]
+    (List.rev !events);
+  ignore (get first source);
+  equal int 1 (count "MAP_TARGET:1 map")
+
 let () = run __FILE__ [ copy_from_tests;
+  test "per-device mappings share base ownership and release before storage" mappings_follow_storage_ownership;
   test "opaque storage dispatch and transfers require a type identity" typed_storage_identity;
   test "BUFFER owns storage across execution contexts" node_owned_storage;
   test "serialization preserves bytes and shared view ownership" storage_serialization;

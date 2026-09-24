@@ -293,7 +293,6 @@ let renderer_device name ren =
           free = (fun _ _ _ -> ());
           copyin = (fun _ _ -> ());
           copyout = (fun _ _ -> ());
-          as_buffer = None;
           addr = (fun _ -> Nativeint.zero);
           offset = None;
           transfer = None;

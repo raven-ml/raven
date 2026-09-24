@@ -379,6 +379,12 @@ thread.
 
 ### Tolk (new)
 
+- `Storage.get ~device` maps an allocation into another device and shares
+  that mapping across byte views. Mappings synchronize and unmap before
+  their source storage is freed.
+- CPU uses `Storage.Host_allocator` and can run directly over CPU-accessible
+  device storage, including Metal buffers and offset views, without copying.
+
 - Runtime programs and graph replay now take `Device.Buffer.t` arguments.
   Allocator type identities protect dispatch and transfers; Metal keeps its
   native handles and byte offsets directly, without a token registry.

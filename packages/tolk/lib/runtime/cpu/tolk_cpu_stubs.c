@@ -51,59 +51,6 @@ static void *jit_alloc_executable(size_t size) {
 #endif
 }
 
-CAMLprim value caml_tolk_cpu_alloc(value v_size) {
-  CAMLparam1(v_size);
-  size_t size = (size_t)Long_val(v_size);
-#if defined(_WIN32)
-  void *ptr = _aligned_malloc(size, 64);
-  if (ptr == NULL) {
-    caml_failwith("cpu_alloc failed");
-  }
-  memset(ptr, 0, size);
-#else
-  void *ptr = NULL;
-  if (posix_memalign(&ptr, 64, size == 0 ? 64 : size) != 0) {
-    caml_failwith("cpu_alloc failed");
-  }
-  memset(ptr, 0, size);
-#endif
-  CAMLreturn(caml_copy_nativeint((intnat)ptr));
-}
-
-CAMLprim value caml_tolk_cpu_free(value v_ptr) {
-  CAMLparam1(v_ptr);
-  void *ptr = (void *)Nativeint_val(v_ptr);
-#if defined(_WIN32)
-  _aligned_free(ptr);
-#else
-  free(ptr);
-#endif
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cpu_copyin(value v_ptr, value v_bytes) {
-  CAMLparam2(v_ptr, v_bytes);
-  void *ptr = (void *)Nativeint_val(v_ptr);
-  size_t len = (size_t)caml_string_length(v_bytes);
-  memcpy(ptr, Bytes_val(v_bytes), len);
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cpu_copyout(value v_bytes, value v_ptr) {
-  CAMLparam2(v_bytes, v_ptr);
-  void *ptr = (void *)Nativeint_val(v_ptr);
-  size_t len = (size_t)caml_string_length(v_bytes);
-  memcpy(Bytes_val(v_bytes), ptr, len);
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cpu_as_buffer(value v_ptr, value v_len) {
-  CAMLparam2(v_ptr, v_len);
-  CAMLreturn(caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1,
-                                (void *)Nativeint_val(v_ptr),
-                                (intnat)Long_val(v_len)));
-}
-
 CAMLprim value caml_tolk_cpu_jit_alloc(value v_size) {
   CAMLparam1(v_size);
   size_t size = (size_t)Long_val(v_size);

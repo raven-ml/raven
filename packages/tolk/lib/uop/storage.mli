@@ -7,6 +7,9 @@
 
 (** Buffer ownership independent of compilation and execution. *)
 
+type t
+(** The type for device buffers and their owned storage. *)
+
 module Buffer_spec : sig
   type t = {
     uncached : bool;  (** [true] to request uncached memory. *)
@@ -38,6 +41,17 @@ end
 module Allocator : sig
   (** {1:types Types} *)
 
+  type buffer = t
+  (** An owned buffer that may be mapped by another allocator. *)
+
+  type 'buf mapping = {
+    map : buffer -> 'buf;
+        (** [map source] maps the source allocation into this allocator's device. *)
+    unmap : 'buf -> unit;
+        (** [unmap mapped] releases mapping metadata, without freeing source storage. *)
+  }
+  (** Cross-device mapping operations. *)
+
   type 'buf transfer =
     dest:'buf -> src:'buf -> dest_device:string -> src_device:string -> int -> bool
   (** [transfer ~dest ~src ~dest_device ~src_device nbytes] copies [nbytes]
@@ -50,6 +64,12 @@ module Allocator : sig
   (** The type for a buffer's bytes seen from the host. *)
 
   type 'buf t = {
+    host : 'buf -> nativeint option;
+        (** Host address of the allocation, if CPU-accessible. *)
+    mapping : 'buf mapping option;
+        (** Mapping operations, absent when the device cannot map other storage. *)
+    synchronize : unit -> unit;
+        (** Waits for this allocator's device before host access or unmapping. *)
     kind : 'buf Type.Id.t;
         (** Identity of the backend buffer representation, shared by allocator
             instances whose buffers can be passed to the same runtime. *)
@@ -63,8 +83,6 @@ module Allocator : sig
         (** [copyin buf src] copies [src] into [buf]. *)
     copyout : bytes -> 'buf -> unit;
         (** [copyout dst buf] copies [buf] into [dst]. *)
-    as_buffer : ('buf -> int -> host_view) option;
-        (** [as_buffer buf nbytes] is the [nbytes] bytes of [buf] as host memory,
     addr : ('buf -> nativeint) option;
         (** Device address access, absent for opaque buffer handles. *)
     offset : ('buf -> int -> int -> 'buf) option;
@@ -88,9 +106,6 @@ module Allocator : sig
 end
 
 (** {1:types Types} *)
-
-type t
-(** The type for existentially-packed device buffers. *)
 
 (** {1:constructors Constructors} *)
 
@@ -242,7 +257,7 @@ val copyout : t -> bytes -> unit
 
 val as_buffer : t -> Allocator.host_view option
 (** [as_buffer b] is [b]'s bytes as host memory, without a copy, when its
-    allocator has {!Allocator.field-as_buffer}, as tinygrad's zero-copy
+    allocator exposes a {!Allocator.field-host} address, as tinygrad's zero-copy
     [as_memoryview]. The device is not synchronized: the caller waits for the
     work that writes [b] before reading, and the view must not outlive [b]'s
     allocation.
@@ -284,19 +299,28 @@ val install_copy_runner : (dst:t -> src:t -> unit) -> unit
     The execution engine installs it once during initialization; until then
     {!copy_from} raises [Invalid_argument]. Not for application use. *)
 
-val get : 'a Type.Id.t -> t -> 'a option
-(** [get kind b] initializes [b] and returns its backend buffer, or [None]
-    for empty storage. Raises [Invalid_argument] if [kind] differs from the
-    allocator's representation identity. The caller must retain [b] while
-    using its backend buffer. *)
+val get : ?device:string -> 'a Type.Id.t -> t -> 'a option
+(** [get ?device kind b] initializes [b] and returns its backend buffer, or
+    [None] for empty storage. [device] defaults to [b]'s device. Another device
+    maps the base allocation once, then derives byte-offset views from that
+    mapping. Mappings are retained by the source owner and unmapped before it
+    is freed; querying a foreign mapping first synchronizes the source device.
+
+    Raises [Invalid_argument] if [kind] differs from the target allocator's
+    identity or it cannot map [b]. The caller must retain [b] while using the
+    returned backend buffer. *)
 
 val generation : t -> int
 (** [generation b] initializes [b] and returns the identity of its current
     allocation. Reallocating [b] changes this identity; replay uses it to
     detect stale bindings without interpreting backend handles. *)
 
-val addr : t -> nativeint
-(** [addr b] is the device address of [b], or [0n] for empty storage.
+val host_addr : t -> nativeint option
+(** [host_addr b] initializes and synchronizes [b], then returns its host
+    mapping, if any. The pointer is valid while [b] remains allocated. *)
+
+val addr : ?device:string -> t -> nativeint
+(** [addr ?device b] is the device address of [b], or [0n] for empty storage.
     Initializes [b] if needed. Raises [Invalid_argument] for opaque storage. *)
 
 (** {1:accounting Allocation accounting} *)
@@ -319,3 +343,13 @@ val snapshot : t list -> snapshot list
 val of_snapshot : snapshot list -> t list
 (** [of_snapshot snapshots] restores independent storage through the device
     registry. Shared bases within [snapshots] remain shared after restoration. *)
+
+module Host_allocator : sig
+  val kind : nativeint Type.Id.t
+  (** [kind] identifies shared host-address storage. *)
+
+  val make : synchronize:(unit -> unit) -> nativeint Allocator.t
+  (** [make ~synchronize] allocates aligned host memory and maps CPU-accessible
+      storage without copying. It accepts external pointers and byte views;
+      host reads, writes and frees wait for [synchronize]. *)
+end

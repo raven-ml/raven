@@ -295,11 +295,30 @@ let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.floa
     done
   done
 
+let cpu_maps_metal_storage () =
+  let metal = metal_device () in
+  let cpu = Tolk_cpu.create "CPU:metal-map" in
+  let base = i32_buf metal [0; 41; 0; 0] in
+  let input = i32_view base ~offset:4 ~size:1 in
+  let output = i32_view base ~offset:8 ~size:1 in
+  let ptr = Option.get (Device.Buffer.get ~device:(Device.name cpu)
+      Storage.Host_allocator.kind base) in
+  equal nativeint (Nativeint.add ptr 4n)
+    (Device.Buffer.addr ~device:(Device.name cpu) input);
+  let spec = compile_incr cpu "cpu_over_metal_storage" in
+  run_spec cpu spec [output; input];
+  equal (list int) [0; 41; 42; 0] (read_i32 base);
+  Device.Buffer.copyin input (int32_to_bytes [8]);
+  run_spec cpu spec [output; input];
+  equal (list int) [0; 8; 9; 0] (read_i32 base)
+
 let () =
   run "Metal_runtime"
     [
       group "Execution"
         [
+          test "CPU kernels map Metal storage and byte views without copying"
+            cpu_maps_metal_storage;
           test "tensor cores retain warp lanes across four local dimensions"
             (test_tensor_core_matmul ~m:32 ~n:64 ~k:8 ~locals:3);
           test "tensor cores preserve padded output and contraction lanes"
