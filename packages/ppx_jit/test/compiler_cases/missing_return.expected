@@ -1,0 +1,5 @@
+File "compiler_cases/missing_return.ml", line 1, characters 0-34:
+1 | let[@jit] f (a : Nx.float32_t) = a
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: ppx_jit: missing return type annotation: let[@jit] f (a : A.t) : B.t =
+       ...

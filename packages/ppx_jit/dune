@@ -1,0 +1,7 @@
+(library
+ (name ppx_jit)
+ (public_name ppx_jit)
+ (kind ppx_rewriter)
+ (flags
+  (:standard -warn-error +a))
+ (libraries ppxlib ppx_ptree))

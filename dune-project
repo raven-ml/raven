@@ -150,6 +150,32 @@
   (ppx parameter-tree automatic-differentiation machine-learning)))
 
 (package
+ (name ppx_jit)
+ (dir packages/ppx_jit)
+ (synopsis "Compile functions with Rune.jit without Ptree boilerplate")
+ (description
+  "Ppx_jit provides the [@jit] attribute: let[@jit] f (a : A.t) : B.t = ... expands into the input and output Ptree.S modules (derived with ppx_ptree), the Rune.jit2 call, and a wrapper recovering the original function type. The optional payload [@jit { device = \"NV\"; beam = 8 }] is spliced into the Rune.jit2 call.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  (ppxlib
+   (>= 0.38.0))
+  (ppx_ptree
+   (= :version))
+  (nx
+   (and
+    (= :version)
+    :with-test))
+  (rune
+   (and
+    (= :version)
+    :with-test))
+  (windtrap :with-test))
+ (tags
+  (ppx jit machine-learning)))
+
+(package
  (name kaun)
  (dir packages/kaun)
  (synopsis "Neural networks for OCaml")

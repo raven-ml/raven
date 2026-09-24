@@ -1,0 +1,4 @@
+File "compiler_cases/and_group.ml", line 1, characters 0-49:
+1 | let[@jit] f (a : Nx.float32_t) : Nx.float32_t = a
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: ppx_jit: [@jit] does not support [let ... and ...] groups
