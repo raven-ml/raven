@@ -1928,7 +1928,8 @@ and compute_min_max u =
       let s_lo, s_hi = min_max (src u).(0) in
       if Dtype.is_unsigned dt then
         if s_lo >= 0 && s_hi <= d_hi then s_lo, s_hi else d_lo, d_hi
-      else if Dtype.is_float dt || Dtype.is_int dt then
+      else if (Dtype.is_float dt || Dtype.is_int dt)
+              && s_lo <= d_hi && d_lo <= s_hi then
         max d_lo s_lo, min s_hi d_hi
       else d_lo, d_hi
   | _ -> dtype_bounds ())

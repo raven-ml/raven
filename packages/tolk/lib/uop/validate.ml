@@ -16,8 +16,6 @@ let is_false_const u =
       (match Const.view c with Const.Bool false -> true | _ -> false)
   | _ -> false
 
-let prod_ints xs = List.fold_left ( * ) 1 xs
-
 let is_image_shape u =
   match (try Uop.max_shape u with Invalid_argument _ -> []) with
   | [ _; _; 4 ] -> true
@@ -25,7 +23,11 @@ let is_image_shape u =
 
 let max_numel u =
   match Uop.max_shape u with
-  | shape -> Some (prod_ints shape)
+  | shape ->
+      let size = List.fold_left (fun size n -> Z.mul size (Z.of_int n)) Z.one shape in
+      if List.for_all (fun n -> n >= 0) shape && Z.fits_int size then
+        Some (Z.to_int size)
+      else None
   | exception Invalid_argument _ -> None
 
 let check_oob_enabled () =
@@ -34,15 +36,6 @@ let check_oob_enabled () =
   | Some "" | Some "0" | Some "false" | Some "False" | Some "FALSE" ->
       false
   | Some _ -> true
-
-let has_oob_bypass u =
-  let rec walk u =
-    match Uop.op u, Uop.src u with
-    | Ops.Bitcast, _ | Ops.Stack, _ -> true
-    | Ops.Param, _ -> false
-    | _ -> Array.exists walk (Uop.src u)
-  in
-  walk u
 
 let sat_pred n = if n = min_int then min_int else n - 1
 let sat_succ n = if n = max_int then max_int else n + 1
@@ -92,12 +85,10 @@ let validate_index ?gate uidx =
     let idxs = Array.sub srcs 1 (Array.length srcs - 1) |> Array.to_list in
     List.exists is_const_invalid idxs
     || (not (check_oob_enabled ()))
-    || List.exists has_oob_bypass idxs
     || is_image_shape buf
     ||
     match gate with
     | Some g when is_false_const g || Uop.vmax g = 0 -> true
-    | Some g when has_oob_bypass g -> true
     | _ -> (
         let check_axis size idx =
           (0 <= Uop.vmin idx && Uop.vmax idx < size)
@@ -109,7 +100,7 @@ let validate_index ?gate uidx =
         match idxs with
         | [ idx ] -> (
             match max_numel buf with
-            | None -> true
+            | None -> false
             | Some size -> check_axis size idx)
         | _ -> (
             try

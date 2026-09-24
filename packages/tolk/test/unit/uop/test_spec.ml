@@ -958,6 +958,22 @@ let program_oob_disabled_accepts_out_of_bounds_load () =
       Spec.verify_list Spec.program_spec [ p; idx; ld ]);
   is_true ~msg:"CHECK_OOB=0 does not validate bounds" true
 
+let program_oob_rejects_unproved_indices () =
+  let p = global_i32_param ~size:16 () in
+  let indices =
+    [ Uop.bitcast ~src:(i32 16) ~dtype:Dtype.uint32;
+      Uop.stack [ i32 0; i32 16 ] ]
+  in
+  with_env "CHECK_OOB" "1" (fun () ->
+      List.iter (fun idx ->
+          is_false (Validate.validate_index_source (Uop.index ~ptr:p ~idxs:[ idx ] ()))) indices;
+      let shapeless = Uop.noop ~dtype:Dtype.int32 () in
+      is_false (Validate.validate_index_source
+          (Uop.index ~ptr:shapeless ~idxs:[ i32 0 ] ()));
+      let narrowed = Uop.cast ~src:(i32 128) ~dtype:Dtype.int8 in
+      is_false (Validate.validate_index_source ~gate:(Uop.const_bool true)
+          (Uop.index ~ptr:p ~idxs:[ narrowed ] ())))
+
 let program_oob_enabled_rejects_out_of_bounds_load () =
   let p = global_i32_param ~size:16 () in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] () in
@@ -1318,6 +1334,8 @@ let () =
           test "Plain store accepted" program_accepts_plain_store;
           test "CHECK_OOB disabled accepts out-of-bounds load"
             program_oob_disabled_accepts_out_of_bounds_load;
+          test "CHECK_OOB rejects unproved indices"
+            program_oob_rejects_unproved_indices;
           test "CHECK_OOB rejects proven out-of-bounds load"
             program_oob_enabled_rejects_out_of_bounds_load;
           test "CHECK_OOB accepts minmax-proven in-bounds load"

@@ -11,7 +11,7 @@
     memory access is accepted, image accesses (three-dimensional buffers whose
     last dimension is four) bypass bounds checks, buffer sizes come from the
     access target's shape, and simple boolean gates can refine symbolic index
-    bounds. General solver-backed validation is intentionally absent. *)
+    bounds. An access whose scalar bounds cannot be established is rejected. *)
 
 val is_index_source : Uop.t -> bool
 (** [is_index_source src] is [true] iff [src] is a memory-source node,
@@ -24,6 +24,6 @@ val validate_index_source : ?gate:Uop.t -> Uop.t -> bool
 
     Accepted sources are {!Ops.Index}, {!Ops.Shrink}, or one {!Ops.Cast} over
     either form. When [CHECK_OOB] is enabled, the underlying index must be
-    statically in bounds, bypassed by a hard-to-model form (a bitcast or stack
-    in the index expression), protected by a statically false gate, or proven in
-    bounds by the deterministic gate refinement implemented here. *)
+    statically in bounds, protected by a statically false gate, or proven in
+    bounds by gate refinement. A bitcast or stack in the index does not bypass
+    validation. Scalar accesses require a known buffer extent. *)

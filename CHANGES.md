@@ -294,6 +294,9 @@ thread.
 
 ### Tolk (new)
 
+- `CHECK_OOB` rejects unproved scalar accesses containing bitcasts or stacks
+  and accesses without a known buffer extent. Out-of-range signed casts no
+  longer produce spurious empty bounds.
 - Beam search uses the 0.01µs progress threshold and reconsiders candidates
   rejected by a previous round's compute filter while reusing compiled code.
 - `State.safe_load` decodes escaped Unicode names and validates metadata,
