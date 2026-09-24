@@ -53,10 +53,10 @@ let load_tokenizer () =
 
 (* Greedy decoding with a key-value cache. One step function serves the whole
    generation: it consumes the tokens its index places, fills the caches, and
-   returns the next token, the advanced index and the updated caches — its output
-   feeds the next call directly. Positions and slots enter as tensors, so under
-   [--jit] [Rune.jit_step] compiles exactly two variants: a prefill over the
-   whole prompt, and a single-token step replayed for every generated token,
+   returns the next token, the advanced index and the updated caches — its
+   output feeds the next call directly. Positions and slots enter as tensors, so
+   under [--jit] [Rune.jit_step] compiles exactly two variants: a prefill over
+   the whole prompt, and a single-token step replayed for every generated token,
    writing the consumed caches in place.
 
    The step is generic over the parameters' float dtype [b]: the key-value
@@ -175,9 +175,7 @@ let check cfg params dt ids =
       (0, [], Gpt2.cache cfg ~slots:n dt)
       [ 1; 7; n ]
   in
-  let chunked =
-    Gpt2.logits cfg params (Nx.concatenate ~axis:1 (List.rev hs))
-  in
+  let chunked = Gpt2.logits cfg params (Nx.concatenate ~axis:1 (List.rev hs)) in
   let scale = Nx.item [] (Nx.max (Nx.abs whole)) in
   let worst = Nx.item [] (Nx.max (Nx.abs (Nx.sub whole chunked))) /. scale in
   Printf.printf
@@ -207,9 +205,9 @@ let () =
          omitted" );
       ( "--dtype",
         Arg.Set_string dtype,
-        "Model dtype: float32, float16 or bfloat16 (default: the \
-         checkpoint's own, which casts nothing). Weights, activations and \
-         caches run at this dtype" );
+        "Model dtype: float32, float16 or bfloat16 (default: the checkpoint's \
+         own, which casts nothing). Weights, activations and caches run at \
+         this dtype" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "gpt2 [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
