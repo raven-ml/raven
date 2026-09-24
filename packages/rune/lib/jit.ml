@@ -732,6 +732,103 @@ let schedule_body_linear st body_sink =
         (Tolk.Realize.pm_compile ~device:st.st_device
            ~to_program:(to_program st.st_device) body_linear)
 
+(* Schedule analyses, shared by buffer reuse at the jit boundary and inside a
+   staged loop's body. *)
+
+(* Every path from [inode] to [u] stays at the same element index. *)
+let same_index_paths ~(inode : U.t) (u : U.t) =
+  let memo : (int, bool * bool) Hashtbl.t = Hashtbl.create 64 in
+  (* (reaches the input, reaches it through a disallowed op) *)
+  let rec go u =
+    match Hashtbl.find_opt memo (U.tag u) with
+    | Some r -> r
+    | None ->
+        let r =
+          if U.tag u = U.tag inode then (true, false)
+          else begin
+            let reaches = ref false and bad = ref false in
+            Array.iter
+              (fun s ->
+                let r, b = go s in
+                reaches := !reaches || r;
+                bad := !bad || b)
+              (U.src u);
+            let op = U.op u in
+            let allowed =
+              Tolk_uop.Ops.Group.is_elementwise op
+              && (op <> Tolk_uop.Ops.Cast
+                 || Array.length (U.src u) = 0
+                 || TD.itemsize (U.dtype u)
+                    = TD.itemsize (U.dtype (U.src u).(0)))
+              || op = Tolk_uop.Ops.Reshape
+              || op = Tolk_uop.Ops.Contiguous
+              || op = Tolk_uop.Ops.Contiguous_backward
+              || op = Tolk_uop.Ops.Detach
+            in
+            (!reaches, !bad || (!reaches && not allowed))
+          end
+        in
+        Hashtbl.replace memo (U.tag u) r;
+        r
+  in
+  let reaches, bad = go u in
+  (reaches, not bad)
+
+(* The schedule's calls in execution order, descending into batched graph calls.
+   [Opaque] marks a call whose inner order is unknown (a staged loop): it may
+   read and write its arguments in any order. *)
+type scheduled = Kernel of U.t | Opaque of U.t
+
+let rec schedule_calls linear =
+  List.concat_map
+    (fun call ->
+      match U.as_call call with
+      | Some { body; _ } when U.op body = Tolk_uop.Ops.Custom_function -> (
+          match (U.Arg.as_string (U.arg body), U.src body) with
+          | Some "graph", [| inner |] -> schedule_calls inner
+          | _ -> [ Opaque call ])
+      | _ -> [ Kernel call ])
+    (U.children linear)
+
+(* No kernel reads the buffer [itag] after the first kernel that writes [otag],
+   and neither buffer is touched by an opaque call. That first kernel may read
+   [itag] itself when it writes each element where it read it. An indexed write
+   does not, so under [indexed] it must not read [itag] either. *)
+let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
+  let mentions call tag =
+    match U.as_call call with
+    | Some { args; _ } ->
+        List.exists
+          (fun a ->
+            match U.op a with
+            | Tolk_uop.Ops.Bind -> false
+            | _ -> U.tag (U.buf_uop a) = tag)
+          args
+    | None -> false
+  in
+  let calls = schedule_calls linear in
+  let opaque_touch =
+    List.exists
+      (function
+        | Opaque c -> mentions c itag || mentions c otag | Kernel _ -> false)
+      calls
+  in
+  if opaque_touch then false
+  else begin
+    let first_o = ref None and last_i = ref None in
+    List.iteri
+      (fun k -> function
+        | Opaque _ -> ()
+        | Kernel c ->
+            if !first_o = None && mentions c otag then first_o := Some k;
+            if mentions c itag then last_i := Some k)
+      calls;
+    match (!first_o, !last_i) with
+    | Some o, Some i -> if indexed then i < o else i <= o
+    | Some _, None -> true
+    | None, _ -> false
+  end
+
 (* Loop calls.
 
    A staged loop replays its compiled body once per iteration and rebinds the
@@ -2529,60 +2626,6 @@ module Ops = Tolk_uop.Ops
    same buffer. Single-device programs only; a pmap carry keeps two
    generations. *)
 
-(* Every path from [inode] to [u] stays at the same element index. *)
-let same_index_paths ~(inode : U.t) (u : U.t) =
-  let memo : (int, bool * bool) Hashtbl.t = Hashtbl.create 64 in
-  (* (reaches the input, reaches it through a disallowed op) *)
-  let rec go u =
-    match Hashtbl.find_opt memo (U.tag u) with
-    | Some r -> r
-    | None ->
-        let r =
-          if U.tag u = U.tag inode then (true, false)
-          else begin
-            let reaches = ref false and bad = ref false in
-            Array.iter
-              (fun s ->
-                let r, b = go s in
-                reaches := !reaches || r;
-                bad := !bad || b)
-              (U.src u);
-            let op = U.op u in
-            let allowed =
-              Ops.Group.is_elementwise op
-              && (op <> Ops.Cast
-                 || Array.length (U.src u) = 0
-                 || TD.itemsize (U.dtype u)
-                    = TD.itemsize (U.dtype (U.src u).(0)))
-              || op = Ops.Reshape || op = Ops.Contiguous
-              || op = Ops.Contiguous_backward
-              || op = Ops.Detach
-            in
-            (!reaches, !bad || (!reaches && not allowed))
-          end
-        in
-        Hashtbl.replace memo (U.tag u) r;
-        r
-  in
-  let reaches, bad = go u in
-  (reaches, not bad)
-
-(* The schedule's calls in execution order, descending into batched graph calls.
-   [Opaque] marks a call whose inner order is unknown (a staged loop): it may
-   read and write its arguments in any order. *)
-type scheduled = Kernel of U.t | Opaque of U.t
-
-let rec schedule_calls linear =
-  List.concat_map
-    (fun call ->
-      match U.as_call call with
-      | Some { body; _ } when U.op body = Ops.Custom_function -> (
-          match (U.Arg.as_string (U.arg body), U.src body) with
-          | Some "graph", [| inner |] -> schedule_calls inner
-          | _ -> [ Opaque call ])
-      | _ -> [ Kernel call ])
-    (U.children linear)
-
 (* The buffers the memory planner must leave alone: those under the nodes replay
    binds (inputs, constants, outputs), and every buffer a staged loop mentions,
    since its compiled body addresses them by node. *)
@@ -2596,45 +2639,6 @@ let held_buffers bound linear =
       (schedule_calls linear)
   in
   List.concat_map buffers bound @ opaque
-
-(* No kernel reads the buffer [itag] after the first kernel that writes [otag],
-   and neither buffer is touched by an opaque call. That first kernel may read
-   [itag] itself when it writes each element where it read it. An indexed write
-   does not, so under [indexed] it must not read [itag] either. *)
-let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
-  let mentions call tag =
-    match U.as_call call with
-    | Some { args; _ } ->
-        List.exists
-          (fun a ->
-            match U.op a with
-            | Ops.Bind -> false
-            | _ -> U.tag (U.buf_uop a) = tag)
-          args
-    | None -> false
-  in
-  let calls = schedule_calls linear in
-  let opaque_touch =
-    List.exists
-      (function
-        | Opaque c -> mentions c itag || mentions c otag | Kernel _ -> false)
-      calls
-  in
-  if opaque_touch then false
-  else begin
-    let first_o = ref None and last_i = ref None in
-    List.iteri
-      (fun k -> function
-        | Opaque _ -> ()
-        | Kernel c ->
-            if !first_o = None && mentions c otag then first_o := Some k;
-            if mentions c itag then last_i := Some k)
-      calls;
-    match (!first_o, !last_i) with
-    | Some o, Some i -> if indexed then i < o else i <= o
-    | Some _, None -> true
-    | None, _ -> false
-  end
 
 (* The input's resident entry hands its storage to the output: the buffers now
    belong to the output handle built by [make_handle]. *)
