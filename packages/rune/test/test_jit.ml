@@ -89,6 +89,93 @@ let test_closure_matmul () =
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"matmul" (to_arr (f x)) (g x)
 
+(* Keys. Two calls share a program exactly when their arguments visit the same
+   leaves at the same paths, with the same dtypes and shapes, and make the same
+   reports. *)
+
+module Windowed_input = struct
+  type input = { x : Nx.float32_t; window : int; bias : Nx.float32_t option }
+  type _ t = input
+
+  let walk c { x; window; bias } =
+    let open Nx.Ptree.Walk in
+    let x = field c "x" tensor x in
+    let window = field c "window" int window in
+    let bias = field c "bias" (option tensor) bias in
+    { x; window; bias }
+end
+
+let windowed_input = Nx.Ptree.instantiate (module Windowed_input)
+
+let test_reports_key_programs () =
+  let traces = ref 0 in
+  let g =
+    Rune.jit windowed_input (fun { Windowed_input.x; window; bias } ->
+        incr traces;
+        let y = Nx.slice [ Nx.R (0, window) ] x in
+        match bias with Some b -> Nx.sum (Nx.add y b) | None -> Nx.sum y)
+  in
+  let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+  let call window bias = scalar (g { Windowed_input.x; window; bias }) in
+  equal ~msg:"window 2" float_exact 3.0 (call 2 None);
+  equal ~msg:"an equal key replays" float_exact 3.0 (call 2 None);
+  equal ~msg:"one program" int 1 !traces;
+  equal ~msg:"window 3" float_exact 6.0 (call 3 None);
+  equal ~msg:"a changed int compiles a second program" int 2 !traces;
+  equal ~msg:"window 2 again" float_exact 3.0 (call 2 None);
+  equal ~msg:"and replays the first" int 2 !traces;
+  equal ~msg:"a bias" float_exact 5.0 (call 2 (Some (vec32 [| 1.0 |])));
+  equal ~msg:"presence compiles a third" int 3 !traces
+
+let test_a_leafless_element_keys_programs () =
+  let traces = ref 0 in
+  let s = Nx.Ptree.(pair tensor (list (option tensor))) in
+  let g =
+    Rune.jit s (fun (x, extras) ->
+        incr traces;
+        Nx.mul_s x (float_of_int (List.length extras)))
+  in
+  let x = vec32 [| 1.0; 2.0 |] in
+  check_arr ~msg:"one element" [| 1.0; 2.0 |] (g (x, [ None ]));
+  check_arr ~msg:"two elements" [| 2.0; 4.0 |] (g (x, [ None; None ]));
+  equal ~msg:"a list gaining a leafless element compiles again" int 2 !traces;
+  check_arr ~msg:"one element again" [| 1.0; 2.0 |] (g (x, [ None ]));
+  equal ~msg:"and replays" int 2 !traces
+
+type shaped = Square of Nx.float32_t | Circle of Nx.float32_t
+
+module Shaped = struct
+  type _ t = shaped
+
+  let walk c =
+    let open Nx.Ptree.Walk in
+    function
+    | Square x ->
+        case c "square";
+        Square (field c "side" tensor x)
+    | Circle x ->
+        case c "circle";
+        Circle (field c "radius" tensor x)
+end
+
+let test_cases_key_programs () =
+  let traces = ref 0 in
+  let g =
+    Rune.jit
+      (Nx.Ptree.instantiate (module Shaped))
+      (fun s ->
+        incr traces;
+        match s with
+        | Square x -> Nx.mul x x
+        | Circle x -> Nx.mul_s (Nx.mul x x) 3.0)
+  in
+  let x = vec32 [| 2.0 |] in
+  check_arr ~msg:"square" [| 4.0 |] (g (Square x));
+  check_arr ~msg:"circle" [| 12.0 |] (g (Circle x));
+  equal ~msg:"a case with equal leaves compiles again" int 2 !traces;
+  check_arr ~msg:"square again" [| 4.0 |] (g (Square x));
+  equal ~msg:"and replays" int 2 !traces
+
 let test_jit2_structured_output () =
   let f p =
     { w = Nx.mul p.w p.w; b = Nx.add p.b p.b; scale = Nx.mul_s p.scale 2.0 }
@@ -2379,16 +2466,40 @@ let test_same_handle_as_two_leaves () =
   check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
   check_arr ~msg:"v" [| 9.0; 36.0 |] r.v
 
-let test_duplicate_outputs_share_one_handle () =
+(* A value returned at two leaves is two values, each with storage of its own:
+   the first takes the output's storage and the second is a copy. *)
+let test_duplicate_outputs_are_two_values () =
   let g =
     Rune.jit2 ~device:"CPU:1" pair_ptree pair_ptree (fun p ->
         let y = Nx.add p.u p.v in
         { u = y; v = y })
   in
   let r = g { u = vec32 [| 1.0 |]; v = vec32 [| 2.0 |] } in
-  is_true ~msg:"both leaves are one handle" (r.u == r.v);
+  is_true ~msg:"two values" (r.u != r.v);
+  is_true ~msg:"with storage of their own" (cell_of r.u != cell_of r.v);
   check_arr ~msg:"readable" [| 3.0 |] r.u;
-  check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v
+  check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v;
+  let x = place (vec32 [| 4.0; 5.0 |]) in
+  let twice =
+    Rune.jit2 ~device:"CPU:1" Nx.Ptree.tensor pair_ptree (fun x ->
+        { u = x; v = x })
+  in
+  let r = twice x in
+  is_true ~msg:"a read input returned twice is two copies"
+    (cell_of r.u != cell_of r.v
+    && cell_of r.u != cell_of x
+    && cell_of r.v != cell_of x);
+  check_arr ~msg:"first copy" [| 4.0; 5.0 |] r.u;
+  check_arr ~msg:"second copy" [| 4.0; 5.0 |] r.v;
+  let host =
+    Rune.jit2 pair_ptree pair_ptree (fun p ->
+        let y = Nx.mul p.u p.v in
+        { u = y; v = y })
+  in
+  let r = host { u = vec32 [| 2.0 |]; v = vec32 [| 3.0 |] } in
+  is_true ~msg:"on the host too" (Nx.to_buffer r.u != Nx.to_buffer r.v);
+  check_arr ~msg:"host value" [| 6.0 |] r.u;
+  check_arr ~msg:"host copy" [| 6.0 |] r.v
 
 let test_cross_jit_feedback () =
   let g1 = Rune.jit' ~device:"CPU:1" (fun x -> Nx.mul_s x 2.0) in
@@ -3499,6 +3610,13 @@ let tests =
         test "aliased input leaves are separate inputs"
           test_aliased_input_leaves;
       ];
+    group "keys"
+      [
+        test "reports key programs" test_reports_key_programs;
+        test "a leafless element keys programs"
+          test_a_leafless_element_keys_programs;
+        test "cases key programs" test_cases_key_programs;
+      ];
     group "composition"
       [
         test "grad inside jit matches eager grad" test_grad_inside_jit;
@@ -3687,8 +3805,8 @@ let tests =
           test_forced_handle_feeds_current_bytes;
         test "the same handle can seed two leaves"
           test_same_handle_as_two_leaves;
-        test "duplicate output leaves share one handle"
-          test_duplicate_outputs_share_one_handle;
+        test "duplicate output leaves are two values"
+          test_duplicate_outputs_are_two_values;
         test "handles feed other jitted closures" test_cross_jit_feedback;
         test "handles feed new signatures without forcing"
           test_cross_signature_feedback;
