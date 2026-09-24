@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- `Search.beam_search` requires explicit `var_vals` for candidate filtering and
+  timing, and rejects missing or out-of-bounds values. Codegen supplies
+  floor-rounded interval midpoints by default, including negative intervals.
+
 - Host defaults use the configured OCaml target, so CPU target selection and
   JIT initialization do not require `uname`. macOS caches use `~/Library/Caches`
   even before that directory exists; other systems consistently use `~/.cache`.

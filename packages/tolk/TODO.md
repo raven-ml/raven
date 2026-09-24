@@ -126,7 +126,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Share a bounded compilation worker facility across beam and ordinary lowering;
   snapshot context and handle cancellation/timeouts and errors safely. Respect
   affinity/container limits and audit nested contexts and concurrent caches.
-- Port final beam actions, heuristics, explicit variable values, device-aware
+- Port final beam actions, heuristics, device-aware
   compilation and dynamic cache policy. Measure search cost, chosen-kernel
   latency, JIT replay, allocations and handle counts on consumer workloads.
 - Remove closed divergence rulings and record retained ones with current

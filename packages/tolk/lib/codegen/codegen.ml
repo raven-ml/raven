@@ -44,6 +44,9 @@ let make_beam_search device beam_width =
          large graphs. Freed explicitly below — [beam_search] only times on
          them — rather than waiting for a GC that may run much later. *)
       let spec = { Device.Buffer_spec.default with nolru = true } in
+      let var_vals = U.symbolic_vars (Postrange.ast k)
+          |> List.map (fun (_, name, lo, hi) ->
+              name, Bound.to_int (Bound.floordiv (Bound.add lo hi) (Bound.int 2))) in
       let rawbufs =
         List.map
           (fun (_, dtype, size) -> Device.create_buffer ~size ~dtype ~spec dev)
@@ -54,7 +57,7 @@ let make_beam_search device beam_width =
         (fun () ->
           Search.beam_search
             ~allow_test_size:(beam_estimate () <> 0)
-            k rawbufs beam_width dev))
+            k rawbufs ~var_vals beam_width dev))
     device
 
 let beam_width sink =

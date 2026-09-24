@@ -27,11 +27,15 @@ val beam_search :
   ?disable_cache:bool ->
   Postrange.t ->
   Device.Buffer.t list ->
+  var_vals:(string * int) list ->
   int ->
   Device.t ->
   Postrange.t
-(** [beam_search s rawbufs amt device] optimises scheduler [s] using
-    beam search with beam width [amt].
+(** [beam_search s rawbufs ~var_vals amt device] optimises scheduler [s] using
+    beam search with beam width [amt]. [var_vals] supplies the named scalar
+    values used for candidate filtering, estimates, launch dimensions and timing.
+    Every symbolic variable in [s] must have a value within its declared bounds.
+    Missing or out-of-bounds values raise [Invalid_argument].
 
     - [allow_test_size] (default [true]) scales down global dimensions
       during timing to stay within hardware limits.

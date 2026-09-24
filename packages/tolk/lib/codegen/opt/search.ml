@@ -79,13 +79,6 @@ let actions =
 
 let is_tc = function U.Opt.Tc _ -> true | _ -> false
 
-(* Variable scraping *)
-
-(* Build name-keyed var_vals from symbolic Param nodes in the AST, using the
-   midpoint of each variable's range. *)
-let build_var_vals ast =
-  U.symbolic_vars ast |> List.map (fun (_, name, lo, hi) -> (name, Bound.to_int (Bound.cdiv (Bound.add lo hi) (Bound.int 2))))
-
 (* Action filtering *)
 
 (* Skip actions that are equivalent to the zero-variant already in the list. *)
@@ -97,10 +90,9 @@ let is_noop a ax full_shape =
       | _ -> false)
 
 (* Return valid actions for a scheduler state as (index, scheduler) pairs. *)
-let get_kernel_actions ?(include_0 = true) ?max_up s =
+let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
   let max_up = Option.value max_up ~default:(beam_upcast_max ()) in
   let max_lcl = beam_local_max () in
-  let var_vals = build_var_vals (P.ast s) in
   let dominated a =
     match U.Opt.axis a with
     | Some _ when not (is_tc a) ->
@@ -112,8 +104,7 @@ let get_kernel_actions ?(include_0 = true) ?max_up s =
   let factor x =
     match U.const_int_value x with
     | Some sz -> sz
-    | None ->
-        (try U.sym_infer x var_vals with Invalid_argument _ -> (Bound.to_int (U.vmax x)))
+    | None -> U.sym_infer x var_vals
   in
   let upcast_and_local s2 =
     let up = ref 1 and lcl = ref 1 in
@@ -460,8 +451,16 @@ let program_ops program var_vals =
   | Symbolic node -> Float.of_int (U.sym_infer node var_vals)
 
 let beam_search ?(allow_test_size = true) ?disable_cache
-    (s : P.t) (rawbufs : Device.Buffer.t list) (amt : int)
+    (s : P.t) (rawbufs : Device.Buffer.t list) ~var_vals (amt : int)
     (device : Device.t) : P.t =
+  List.iter (fun (_, name, lo, hi) ->
+      match List.assoc_opt name var_vals with
+      | None -> invalid_arg (Printf.sprintf "beam_search: missing variable %S" name)
+      | Some value ->
+          let value = Bound.int value in
+          if Bound.lt value lo || Bound.lt hi value then
+            invalid_arg (Printf.sprintf "beam_search: variable %S is outside its bounds" name))
+    (U.symbolic_vars (P.ast s));
   let ren = P.ren s in
   let cache_key = cache_key_of s amt allow_test_size ren in
   let disable_cache =
@@ -495,7 +494,6 @@ let beam_search ?(allow_test_size = true) ?disable_cache
       in
       List.iter (fun (_, buf) -> Device.Buffer.ensure_allocated buf)
         rawbufs_by_slot;
-      let var_vals = build_var_vals (P.ast s) in
       let st = Unix.gettimeofday () in
       let exiting = ref false in
       let time_one timed n_candidates i cand program compile_time =
@@ -556,7 +554,7 @@ let beam_search ?(allow_test_size = true) ?disable_cache
         let candidates =
           List.concat_map
             (fun (si, _) ->
-              List.map snd (get_kernel_actions ~include_0:false si))
+              List.map snd (get_kernel_actions ~include_0:false ~var_vals si))
             !beam
         in
         let pending = U.Ref_tbl.create (List.length candidates) in

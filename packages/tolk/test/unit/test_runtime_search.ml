@@ -172,14 +172,14 @@ let beam_search_tests =
           let rawbufs = create_bufs_for_kernel device ast in
           let input_data = List.init n (fun i -> Float.of_int i) in
           Device.Buffer.copyin (List.nth rawbufs 1) (f32_to_bytes input_data);
-          let result = Search.beam_search s rawbufs 1 device in
+          let result = Search.beam_search s rawbufs ~var_vals:[] 1 device in
           is_true (P.shape_len result >= 1));
       slow "completes on 2D elementwise kernel" (fun () ->
           let device = cpu "beam-2d" in
           let ast = elementwise_2d_ast ~s0:8 ~s1:8 in
           let s = P.create ast ren in
           let rawbufs = create_bufs_for_kernel device ast in
-          let result = Search.beam_search s rawbufs 1 device in
+          let result = Search.beam_search s rawbufs ~var_vals:[] 1 device in
           is_true (P.shape_len result >= 1));
       slow "accepts compact raw buffers for sparse parameter slots" (fun () ->
           let device = cpu "beam-sparse-slots" in
@@ -192,7 +192,7 @@ let beam_search_tests =
           let rawbufs = create_bufs_for_kernel device ast in
           let input_data = List.init n (fun i -> Float.of_int i) in
           Device.Buffer.copyin (List.nth rawbufs 1) (f32_to_bytes input_data);
-          let result = Search.beam_search s rawbufs 1 device in
+          let result = Search.beam_search s rawbufs ~var_vals:[] 1 device in
           is_true (P.shape_len result >= 1));
       slow "uses explicit max shape for beam buffers" (fun () ->
           let device = cpu "beam-explicit-shape" in
@@ -203,7 +203,7 @@ let beam_search_tests =
           in
           let s = P.create ast ren in
           let rawbufs = create_bufs_for_kernel device ast in
-          let result = Search.beam_search s rawbufs 1 device in
+          let result = Search.beam_search s rawbufs ~var_vals:[] 1 device in
           is_true (P.shape_len result >= 1));
       slow "optimized kernel produces correct output" (fun () ->
           let device = cpu "beam-correct" in
@@ -213,7 +213,7 @@ let beam_search_tests =
           let rawbufs = create_bufs_for_kernel device ast in
           let input_data = List.init n (fun i -> Float.of_int i) in
           Device.Buffer.copyin (List.nth rawbufs 1) (f32_to_bytes input_data);
-          let result = Search.beam_search s rawbufs 1 device in
+          let result = Search.beam_search s rawbufs ~var_vals:[] 1 device in
           let out_buf = create_f32_buffer device n (List.init n (fun _ -> 0.0)) in
           let in_buf = create_f32_buffer device n input_data in
           let opt_ast = P.get_optimized_ast (P.copy result) in
@@ -240,7 +240,7 @@ let beam_search_tests =
           let input_data = List.init n (fun i -> Float.of_int (i + 1)) in
           Device.Buffer.copyin (List.nth rawbufs 1) (f32_to_bytes input_data);
           let input_before = read_f32_buffer (List.nth rawbufs 1) in
-          ignore (Search.beam_search s rawbufs 1 device : P.t);
+          ignore (Search.beam_search s rawbufs ~var_vals:[] 1 device : P.t);
           let input_after = read_f32_buffer (List.nth rawbufs 1) in
           List.iter2
             (fun before after ->
@@ -280,8 +280,32 @@ let beam_search_tests =
           let ast = U.sink ~kernel_info:ki [ e ] in
           let s = P.create ast ren in
           let rawbufs = create_bufs_for_kernel device ast in
-          let result = Search.beam_search s rawbufs 1 device in
+          let result = Search.beam_search s rawbufs ~var_vals:[ "v", 8 ] 1 device in
           ignore (result : P.t));
+      test "uses the supplied symbolic value during timing" (fun () ->
+          let device = cpu "beam-explicit-variable" in
+          let variable = U.variable ~name:"scale" ~min_val:(-4) ~max_val:(-1) () in
+          let ast = U.substitute
+              [ f32 2., U.cast ~src:variable ~dtype:D.float32 ]
+              (elementwise_1d_ast ~n:4) in
+          let output = create_f32_buffer device 4 [ 0.; 0.; 0.; 0. ] in
+          let input = create_f32_buffer device 4 [ 1.; 2.; 3.; 4. ] in
+          Fun.protect
+            ~finally:(fun () -> List.iter Device.Buffer.deallocate [ output; input ])
+            (fun () ->
+              List.iter (fun var_vals ->
+                  raises_match (function Invalid_argument _ -> true | _ -> false)
+                    (fun () -> Search.beam_search ~disable_cache:true
+                      (P.create ast ren) [ output; input ] ~var_vals 1 device))
+                [ []; [ "scale", -5 ]; [ "scale", 0 ] ];
+              List.iter (fun scale ->
+                  ignore (Search.beam_search ~disable_cache:true
+                    (P.create ast ren) [ output; input ] ~var_vals:[ "scale", scale ]
+                    1 device : P.t);
+                  equal (list (float 1e-6))
+                    (List.map (fun x -> Float.of_int (scale * x)) [ 1; 2; 3; 4 ])
+                    (read_f32_buffer output))
+                [ -4; -1 ]));
       (* Verify disable_cache parameter works: running beam_search twice
          with disable_cache=true should both complete (no stale cache). *)
       slow "disable_cache bypasses cache" (fun () ->
@@ -291,10 +315,10 @@ let beam_search_tests =
           let s = P.create ast ren in
           let rawbufs = create_bufs_for_kernel device ast in
           let r1 =
-            Search.beam_search ~disable_cache:true s rawbufs 1 device
+            Search.beam_search ~disable_cache:true s rawbufs ~var_vals:[] 1 device
           in
           let r2 =
-            Search.beam_search ~disable_cache:true s rawbufs 1 device
+            Search.beam_search ~disable_cache:true s rawbufs ~var_vals:[] 1 device
           in
           is_true (P.shape_len r1 >= 1);
           is_true (P.shape_len r2 >= 1));
@@ -397,7 +421,7 @@ let transient_program_lifetimes =
       (fun () ->
         let search () =
           ignore (Search.beam_search ~disable_cache:true
-            (P.create ast ren) rawbufs 1 device : P.t)
+            (P.create ast ren) rawbufs ~var_vals:[] 1 device : P.t)
         in
         (match failure with
          | Some Exit -> raises Exit search
@@ -411,6 +435,41 @@ let transient_program_lifetimes =
       test "rejected timings release programs" (check (Some (Failure "timing failed")));
       test "interrupted search releases programs" (check (Some Exit)) ]
 
+let codegen_midpoint_rounds_down () =
+  let backing = cpu "beam-midpoint" in
+  let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
+  let observed = ref [] in
+  let runtime name lib ~runtimevars =
+    let prg = Device.runtime backing name lib ~runtimevars in
+    let call bufs ~global ~local ~vals ~wait ~timeout =
+      let runtime_slots = List.map snd runtimevars in
+      observed := (Array.to_list vals
+        |> List.filteri (fun i _ -> not (List.mem i runtime_slots))) :: !observed;
+      prg.call bufs ~global ~local ~vals ~wait ~timeout
+    in
+    { prg with call }
+  in
+  let ren = Device.renderer backing in
+  let renderer_set = Device.Renderer_set.make ~device:"CPU" ~arch:"generic"
+      [ "CLANG", (fun _ -> ren) ] in
+  let device = Device.make ~name:"CPU:beam-midpoint-recording"
+      ~allocator:(Device.Buffer.allocator sample) ~renderer_set ~runtime
+      ~synchronize:(fun () -> Device.synchronize backing) () in
+  let variable = U.variable ~name:"scale" ~min_val:(-4) ~max_val:(-1) () in
+  let ast = U.substitute [ f32 2., U.cast ~src:variable ~dtype:D.float32 ]
+      (elementwise_1d_ast ~n:4) in
+  let info = Option.get (U.as_kernel_info ast) in
+  let ast = U.replace ast ~arg:(U.Arg.Kernel_info { info with beam = 1 }) () in
+  let cachelevel = Sys.getenv_opt "CACHELEVEL" in
+  Unix.putenv "CACHELEVEL" "0";
+  Fun.protect
+    ~finally:(fun () -> Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:""))
+    (fun () -> ignore (Codegen.to_program ~beam_device:device device ren ast));
+  is_true ~msg:"codegen benchmarks candidates" (!observed <> []);
+  List.iter (equal (list int64) [ -3L ]) !observed
+
 (* Entry *)
 
-let () = run __FILE__ [ beam_search_tests; search_timing_tests; transient_program_lifetimes ]
+let () = run __FILE__
+    [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
+      test "codegen rounds negative timing midpoints down" codegen_midpoint_rounds_down ]
