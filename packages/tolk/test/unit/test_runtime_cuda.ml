@@ -153,7 +153,7 @@ let schedule_graph_linear device ~to_program sink =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
   in
-  let linear = Realize.pm_compile ~device ~to_program linear in
+  let linear = Realize.compile_linear ~device ~to_program linear in
   (linear, var_vals, buffer_map)
 
 let f32_to_bytes values =

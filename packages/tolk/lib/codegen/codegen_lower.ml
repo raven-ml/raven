@@ -907,7 +907,8 @@ let supported_ops_of (ren : Renderer.t) : Decomp_op.supported_ops =
 (* Lower an optimized kernel AST to a form ready for linearization. Mirrors
    [full_rewrite_to_sink] after the [apply_opts] call. *)
 let lower (ren : Renderer.t) (sink : U.t) : U.t =
-  let rewrite ?name ?bottom_up rule = U.graph_rewrite ?name ?bottom_up rule in
+  let rewrite ?name ?bottom_up ?enter_calls rule =
+    U.graph_rewrite ?name ?bottom_up ?enter_calls rule in
   let pm pm' = PM.rewrite pm' in
 
   (* postopt symbolic:
@@ -990,7 +991,7 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
 
   (* lower index dtype: [pm_lower_index_dtype + indexing_simplify]. *)
   let sink =
-    rewrite ~name:"lower all index dtypes"
+    rewrite ~name:"lower all index dtypes" ~enter_calls:true
       (U.first_match
          [ pm (Weak.pm_lower_index_dtype ()); pm Coalesce.indexing_simplify ])
       sink

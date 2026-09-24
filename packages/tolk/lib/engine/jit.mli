@@ -51,7 +51,7 @@ val batch_graphs : device:Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     has no graph capability.
 
     {!call} applies this to its captured linear at lowering; it is exposed
-    for callers that compile with {!Realize.pm_compile} and replay through
+    for callers that compile with {!Realize.compile_linear} and replay through
     {!Realize.run_linear} directly. *)
 
 (** {1:captured Captured schedule} *)

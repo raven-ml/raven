@@ -1213,7 +1213,7 @@ let schedule_body_linear st body_sink =
       (* Batched like a compiled call's linear: each iteration replays the
          body's graphs with the rebound slot buffers patched in. *)
       Tolk.Jit.batch_graphs ~device:st.st_device
-        (Tolk.Realize.pm_compile ~device:st.st_device
+        (Tolk.Realize.compile_linear ~device:st.st_device
            ~to_program:(to_program st.st_device) body_linear)
 
 (* Schedule analyses, shared by buffer reuse at the jit boundary and inside a
@@ -3879,7 +3879,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         in
         let linear =
           let compile () =
-            Tolk.Realize.pm_compile ~device:dev ?beam
+            Tolk.Realize.compile_linear ~device:dev ?beam
               ~to_program:(to_program dev) linear
           in
           match beam_parallel with
@@ -4120,6 +4120,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         (b, Option.get !position))
       st.prefills
   in
+  let linear = Tolk.Realize.link_linear binding linear in
   List.iter (fun ((c : Nx_effect.cell), _) -> c.bound <- c.bound + 1) bound;
   let compiled =
     {

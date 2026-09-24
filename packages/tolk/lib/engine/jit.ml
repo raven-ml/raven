@@ -111,7 +111,7 @@ let create_graph_call batch =
   in
   (* Compiled PROGRAM bodies keep their internal ranges (launch axes have no
      END), so the batched call is assembled with [U.replace], like
-     {!Realize.pm_compile}, instead of re-running [U.call]'s range check. *)
+     {!Realize.compile_linear}, instead of re-running [U.call]'s range check. *)
   let call =
     U.call ~body:(U.custom_function ~name:"graph" ~srcs:[]) ~args:input_list
       ~info
@@ -225,7 +225,7 @@ let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
   in
   let linear = U.substitute ~walk:true mappings linear in
   let linear = Schedule.memory_plan_rewrite linear held_bufs in
-  let linear = Realize.pm_compile ~device ~to_program linear in
+  let linear = Realize.compile_linear ~device ~to_program linear in
   batch_graphs ~device linear
 
 (* Captured schedule *)
@@ -376,6 +376,7 @@ let call ?wait ?held_buffers t (input_uops : U.t array)
       in
       let binding = Realize.Buffers.create () in
       seed_known_buffers binding ~buffers linear;
+      let linear = Realize.link_linear binding ~input_uops linear in
       let captured =
         {
           ret;

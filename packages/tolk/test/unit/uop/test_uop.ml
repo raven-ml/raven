@@ -987,7 +987,7 @@ let binary_and_getaddr_dtypes () =
   is_true ~msg:"BINARY is uint8" (Dtype.equal (Uop.dtype bin) Dtype.uint8);
   equal (list int) ~msg:"BINARY has one shape dim per byte" [ 4 ]
     (shape_ints bin);
-  let addr = Uop.getaddr ~src:(Uop.const_int 1) in
+  let addr = Uop.getaddr ~src:(Uop.const_int 1) () in
   is_true ~msg:"GETADDR is uint64"
     (Dtype.equal (Uop.dtype addr) Dtype.uint64)
 

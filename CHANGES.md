@@ -379,6 +379,13 @@ thread.
 
 ### Tolk (new)
 
+- Separate `Realize.compile_linear` (formerly `pm_compile`) from
+  `Realize.link_linear`. Linking initializes command storage once and retains
+  allocations referenced by native addresses across replay.
+- `Uop.getaddr` accepts a target device. Generated host calls now lower
+  function-pointer loads correctly; `Tolk_cpu.link_symbol` resolves native
+  symbols for linked host programs.
+
 - Execute bulk transfers as `CALL(STORE)` and apply disk views after copying
   to the destination, avoiding temporary disk allocations. `Uop.copy` now
   rejects weak dtypes and requires explicit stores for disk destinations.

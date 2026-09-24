@@ -140,13 +140,13 @@ val program_config : unit -> string
     are interchangeable exactly when their configurations are equal, so any
     cache of compiled programs must key on it. *)
 
-val pm_compile :
+val compile_linear :
   device:Device.t ->
   ?beam:int ->
   to_program:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t
-(** [pm_compile ~device ?beam ~to_program linear] rewrites every kernel
+(** [compile_linear ~device ?beam ~to_program linear] rewrites every kernel
     {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink}
     into a call whose body is the compiled {!Tolk_uop.Ops.Program} returned by
     [to_program]. {!Tolk_uop.Ops.Store} calls are left unchanged.
@@ -276,6 +276,14 @@ val resolve : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> Device.Buffer.t
     Raises [Invalid_argument] if [node] names a multi-device buffer, and in
     the {!resolve_buffer} failure cases. *)
 
+val link_linear :
+  Buffers.t -> ?input_uops:Tolk_uop.Uop.t array -> ?allow_cache:bool ->
+  Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [link_linear binding ?input_uops ?allow_cache linear] binds a compiled
+    schedule's tagged storage placeholders and static address patches, retaining
+    their storage in the returned schedule. Call bodies remain compiled and
+    untagged parameters remain runtime-bound. See {!Link.run} for cache rules. *)
+
 (** {1:run_linear Linear execution} *)
 
 val run_linear :
@@ -294,9 +302,9 @@ val run_linear :
     [linear] in order.
 
     When [jit] is [false] (default), [linear] is first compiled with
-    {!pm_compile}, turning each kernel {!Tolk_uop.Ops.Sink} body into a
-    {!Tolk_uop.Ops.Program}; when [jit] is [true], [linear] is assumed already
-    compiled. Each call is then dispatched on its body: a
+    {!compile_linear}, turning each kernel {!Tolk_uop.Ops.Sink} body into a
+    {!Tolk_uop.Ops.Program}, then linked with {!link_linear}; when [jit] is
+    [true], [linear] is assumed already compiled and linked. Each call is then dispatched on its body: a
     {!Tolk_uop.Ops.Program} is launched with launch dimensions and scalar
     arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
     built from its compiled binary; a {!Tolk_uop.Ops.Store} transfers between its

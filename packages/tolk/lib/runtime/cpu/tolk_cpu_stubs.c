@@ -216,6 +216,13 @@ CAMLprim value caml_tolk_cpu_jit_link_symbol(value v_libs, value v_sym) {
 #endif
 
   if (addr == NULL) {
+#if defined(_WIN32)
+    addr = (void *)GetProcAddress(GetModuleHandle(NULL), sym);
+#else
+    addr = dlsym(RTLD_DEFAULT, sym);
+#endif
+  }
+  if (addr == NULL) {
     caml_failwith("link_symbol failed");
   }
   CAMLreturn(caml_copy_nativeint((intnat)addr));

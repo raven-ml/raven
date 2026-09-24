@@ -1,0 +1,129 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. ISC License.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Windtrap
+open Tolk
+open Tolk_uop
+module U = Uop
+module B = Device.Buffer
+
+let info = U.{ grad_fxn = None; name = None; precompile = false;
+  precompile_backward = false; dtype = Dtype.void; aux = None }
+
+let call args = U.call ~body:(U.custom_function ~name:"inspect" ~srcs:[]) ~args ~info
+let binding () = Realize.Buffers.create ()
+let resolve b = Realize.resolve b (Realize.exec_context ())
+let rec bare u = if U.op u = Ops.After then bare (U.src u).(0) else u
+let args linear = match U.as_call (bare (U.src linear).(0)) with
+  | Some {args; _} -> args | None -> fail "missing call"
+let placeholder device tag dtype size =
+  U.placeholder ~shape:[size] ~dtype ~slot:0 ~device:(U.Single (Device.name device)) ()
+  |> U.with_tag tag
+let initialized p bytes = U.set ~target:p ~value:(U.binary bytes) ()
+let link ?allow_cache b l = Realize.link_linear b ?allow_cache l
+
+let initialization () =
+  let device = Tolk_cpu.create "CPU:link-patches" in
+  let p = placeholder device "commands" Dtype.uint8 24 in
+  let initial = initialized p (String.make 24 '\255') in
+  let words = U.bitcast ~src:initial ~dtype:Dtype.uint32 in
+  let indices = U.stack [U.const_int 1; U.const_int 4] in
+  let values = U.stack [U.const (Const.int Dtype.uint32 17); U.const (Const.int Dtype.uint32 42)] in
+  let patch = U.store ~dst:(U.index ~ptr:words ~idxs:[indices] ()) ~value:values () in
+  let range = U.range ~size:(U.const_int 2) ~axis:0 ~kind:Axis_type.Loop () in
+  let offset = U.alu_binary ~op:Ops.Add ~lhs:range ~rhs:(U.const_int 2) in
+  let value = U.cast ~src:(U.alu_binary ~op:Ops.Add ~lhs:range ~rhs:(U.const_int 100)) ~dtype:Dtype.uint32 in
+  let store = U.store ~dst:(U.index ~ptr:words ~idxs:[offset] ()) ~value () in
+  let ready = U.after ~src:initial ~deps:[patch; U.end_ ~value:store ~ranges:[range]] in
+  let linear = U.linear [call [ready]] and b = binding () in
+  let linked = link b linear in
+  let output = resolve b (List.hd (args linked)) in
+  let contents = B.as_bytes output in
+  equal (list int32) [-1l; 17l; 100l; 101l; 42l; -1l]
+    (List.init 6 (fun i -> Bytes.get_int32_le contents (i * 4)));
+  B.copyin output (Bytes.make 24 '\000');
+  let cached = link b linear in
+  equal bool true (U.equal cached linked);
+  equal bytes (Bytes.make 24 '\000') (B.as_bytes output);
+  let independent = link ~allow_cache:false b linear in
+  let fresh = resolve b (List.hd (args independent)) in
+  equal bool false (B.id output = B.id fresh);
+  equal int32 17l (Bytes.get_int32_le (B.as_bytes fresh) 4)
+
+let addresses () =
+  let device = Tolk_cpu.create "CPU:link-addresses" in
+  let source = B.on_device ~device:(Device.name device) ~size:4 ~dtype:Dtype.uint64 () in
+  let view = U.shrink ~src:(U.from_buffer source) ~offset:(U.const_int 2) ~size:(U.const_int 1) in
+  let table = placeholder device "addresses" Dtype.uint64 1 in
+  let addr = U.getaddr ~device:(Device.name device) ~src:view () in
+  let patch = U.store ~dst:(U.index ~ptr:table ~idxs:[U.const_int 0] ()) ~value:addr () in
+  let b = binding () in
+  let linked = link b (U.linear [call [U.after ~src:table ~deps:[patch]]]) in
+  let result = resolve b (List.hd (args linked)) in
+  equal int64 (Int64.add (Int64.of_nativeint (B.addr source)) 16L)
+    (Bytes.get_int64_le (B.as_bytes result) 0);
+  equal bool true (List.exists (fun n -> match U.as_buffer n with
+      | Some {buffer = {buffer = Some [buf]; _}; _} -> B.base_id buf = B.id source
+      | _ -> false) (U.toposort ~enter_calls:false linked))
+
+let input_links () =
+  let device = Tolk_cpu.create "CPU:link-inputs" in
+  let p = placeholder device "lt_input" Dtype.int32 1 in
+  let linear = U.linear [call [p]] and b = binding () in
+  let input () = U.from_buffer (Device.create_buffer ~size:1 ~dtype:Dtype.int32 device) in
+  let a = input () and c = input () in
+  let first = Realize.link_linear b ~input_uops:[|a|] linear in
+  let second = Realize.link_linear b ~input_uops:[|c|] linear in
+  equal bool true (U.equal a (List.hd (args first)));
+  equal bool true (U.equal c (List.hd (args second)))
+
+let preserve_runtime () =
+  let device = Tolk_cpu.create "CPU:link-runtime" in
+  let p = U.param ~slot:0 ~shape:(U.const_int 1) ~dtype:Dtype.uint64 () in
+  let inside = placeholder device "kernel-local" Dtype.uint64 1 in
+  let body = U.sink [U.store ~dst:(U.index ~ptr:inside ~idxs:[U.const_int 0] ())
+      ~value:(U.const (Const.int Dtype.uint64 0)) ()] in
+  let original = U.call ~body ~args:[p] ~info in
+  let linked = link (binding ()) (U.linear [original]) in
+  equal bool true (U.equal original (U.src linked).(0))
+
+let host_call_replay () =
+  let device = Tolk_cpu.create "CPU:linked-host-call" in
+  let slot i dtype = U.param ~slot:i ~shape:(U.const_int 1) ~dtype () in
+  let out = slot 0 Dtype.int32 and fn = slot 1 Dtype.uint64 in
+  let index p = U.index ~ptr:p ~idxs:[U.const_int 0] () in
+  let n = U.variable ~param:true ~name:"n" ~min_val:(-100) ~max_val:100
+      ~dtype:Dtype.int32 () in
+  let body = U.custom_function ~name:"abs" ~srcs:[U.load ~src:(index fn) ()] in
+  let invocation = U.call ~body ~args:[n] ~info:{info with dtype = Dtype.int32} in
+  let kernel_info = U.{name = "linked_host_call"; applied_opts = [];
+    opts_to_apply = None; estimates = None; beam = 0} in
+  let sink = U.sink ~kernel_info [U.store ~dst:(index out) ~value:invocation ()] in
+  let pointer = placeholder device "abs-pointer" Dtype.uint64 1 in
+  let address = U.const (Const.int64 Dtype.uint64
+      (Int64.of_nativeint (Tolk_cpu.link_symbol "abs"))) in
+  let patch = U.store ~dst:(index pointer) ~value:address () in
+  let args = [out; U.after ~src:pointer ~deps:[patch]] in
+  let linear = U.linear [U.call ~body:sink ~args ~info] in
+  let to_program = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let compiled = Realize.compile_linear ~device ~to_program linear in
+  let b = binding () in
+  let linked = link b compiled in
+  let execute value =
+    let result = Device.create_buffer ~size:1 ~dtype:Dtype.int32 device in
+    Realize.run_linear ~device ~to_program b ~jit:true ~wait:true
+      ~input_uops:[|U.from_buffer result|] ~var_vals:["n", value] linked;
+    equal int32 (Int32.of_int (abs value)) (Bytes.get_int32_le (B.as_bytes result) 0) in
+  execute (-31);
+  Gc.full_major ();
+  execute (-9)
+
+let () = run "Engine_link" [
+  test "initializes blobs, sparse words and ranged patches once" initialization;
+  test "retains mapped addresses and byte view offsets" addresses;
+  test "does not cache link-time inputs" input_links;
+  test "preserves runtime parameters and call bodies" preserve_runtime;
+  test "executes linked host calls with rebound buffers and scalars" host_call_replay;
+]

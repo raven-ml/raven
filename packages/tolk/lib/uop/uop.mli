@@ -863,9 +863,9 @@ val stack : ?dtype:Dtype.t -> t list -> t
     by the number of sources and the resulting shape, as in tinygrad.
     Empty [srcs] produces a void empty stack. Shared. *)
 
-val getaddr : src:t -> t
-(** [getaddr ~src] is a {!Ops.Getaddr} node extracting the address of
-    [src]. Its dtype is {!Dtype.uint64}. *)
+val getaddr : ?device:string -> src:t -> unit -> t
+(** [getaddr ?device ~src ()] extracts the address of [src] in [device],
+    defaulting to its owning device. Its dtype is {!Dtype.uint64}. *)
 
 val broadcast : t -> int -> t
 (** [broadcast u n] repeats [u] into an [n]-wide {!Ops.Stack}. Returns

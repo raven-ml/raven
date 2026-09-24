@@ -27,8 +27,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   unsound: the owning buffer can be finalised while the packet being built
   still targets its memory. Needs hardware validation.
 
-- Adopt HCQ2 byte-interval dependencies and compile/link/run phases, including
-  CPU host calls and retained JIT execution. Replace the old graph APIs.
+- Adopt HCQ2 byte-interval dependencies and queue encoding on the
+  compile/link/run path, including CPU host submission and retained JIT
+  execution. Replace the old graph APIs.
 - Migrate Metal/CUDA queues. Implement CUDA peer enablement and synchronized
   cross-device transfer with unsupported-peer fallback. Port AMD queue
   descriptors, AQL/multi-XCC, race/recovery fixes and consumed firmware/register

@@ -407,9 +407,9 @@ let () =
             in
             let call_of body = U.call ~body ~args:[] ~info:(call_info None) in
             ignore
-              (Realize.pm_compile ~device ~to_program (U.linear [ call_of ast ]));
+              (Realize.compile_linear ~device ~to_program (U.linear [ call_of ast ]));
             ignore
-              (Realize.pm_compile ~device ~to_program
+              (Realize.compile_linear ~device ~to_program
                  (U.linear [ call_of tagged_ast ]));
             equal int 1 !calls);
           test "keys cached programs by exact device name" (fun () ->
@@ -425,10 +425,10 @@ let () =
             let dev0 = test_device ~name:"TEST:0" (runtime_state ()) in
             let dev1 = test_device ~name:"TEST:1" (runtime_state ()) in
             ignore
-              (Realize.pm_compile ~device:dev0 ~to_program
+              (Realize.compile_linear ~device:dev0 ~to_program
                  (U.linear [ call_of ast ]));
             ignore
-              (Realize.pm_compile ~device:dev1 ~to_program
+              (Realize.compile_linear ~device:dev1 ~to_program
                  (U.linear [ call_of ast ]));
             equal int 2 !calls);
           test "keys cached programs by selected target" (fun () ->
@@ -448,7 +448,7 @@ let () =
             let calls = ref 0 in
             let to_program body = incr calls; program_of body in
             List.iter (fun arch -> with_target ("TEST:TEST:" ^ arch) (fun () ->
-                ignore (Realize.pm_compile ~device ~to_program linear)))
+                ignore (Realize.compile_linear ~device ~to_program linear)))
               [ "first"; "second"; "first" ];
             equal int 2 !calls);
           test "rewrites CALL(SINK) to CALL(PROGRAM) with source and binary"
@@ -462,7 +462,7 @@ let () =
               in
               let call = U.call ~body ~args:[] ~info:(call_info None) in
               let compiled =
-                Realize.pm_compile ~device ~to_program (U.linear [ call ])
+                Realize.compile_linear ~device ~to_program (U.linear [ call ])
               in
               match U.children compiled with
               | [ c ] -> (

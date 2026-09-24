@@ -11,10 +11,14 @@
     native object code via an external C compiler, loads them into executable
     memory, and executes each kernel synchronously on the calling domain.
 
-    The single entry point is {!val-create}, which returns a {!Tolk.Device.t}
-    ready for use with the tolk runtime. *)
+    {!val-create} returns a {!Tolk.Device.t} ready for use with the runtime. *)
 
 (** {1:device Device creation} *)
+
+val link_symbol : ?libs:string list -> string -> nativeint
+(** [link_symbol ?libs name] resolves [name] in the current process or [libs].
+    Loaded libraries stay resident while generated host calls can address them.
+    Raises [Failure] if the symbol cannot be found. *)
 
 val create : ?aligned:bool -> string -> Tolk.Device.t
 (** [create name] is a CPU device named [name].

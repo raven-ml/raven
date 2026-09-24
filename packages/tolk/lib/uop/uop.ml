@@ -954,8 +954,9 @@ let stack ?dtype:dtype_opt srcs =
       | _ -> cast ~src:u ~dtype:dt) srcs in
   mk ~op:Ops.Stack ~dtype:dt ~src:(Array.of_list src) ~arg:Arg.Empty
 
-let getaddr ~src =
-  mk ~op:Ops.Getaddr ~dtype:Dtype.uint64 ~src:[| src |] ~arg:Arg.Empty
+let getaddr ?device ~src () =
+  let arg = match device with None -> Arg.Empty | Some d -> Arg.Device (Single d) in
+  mk ~op:Ops.Getaddr ~dtype:Dtype.uint64 ~src:[| src |] ~arg
 
 let broadcast u n =
   if n <= 1 then u

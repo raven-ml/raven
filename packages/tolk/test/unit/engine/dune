@@ -1,6 +1,6 @@
 (tests
- (names test_realize test_jit test_jit_capture test_schedule)
- (modules test_realize test_jit test_jit_capture test_schedule)
+ (names test_realize test_jit test_jit_capture test_schedule test_link)
+ (modules test_realize test_jit test_jit_capture test_schedule test_link)
  (package tolk)
  (libraries unix tolk tolk.uop tolk.cpu windtrap))
 

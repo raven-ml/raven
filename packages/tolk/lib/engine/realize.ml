@@ -206,7 +206,7 @@ let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
    semantic key. Bulk STORE calls pass through unchanged. [beam] stamps
    sinks that carry no beam width of their own; kernel_info is part of the
    semantic key, so a stamped sink gets its own cache entry. *)
-let pm_compile ~device ?beam ~to_program linear =
+let compile_linear ~device ?beam ~to_program linear =
   let module U = Tolk_uop.Uop in
   let stamp body =
     match beam with
@@ -412,6 +412,15 @@ let resolve binding ctx node =
            "resolve: %a names a multi-device buffer in a single-device \
             context"
            Tolk_uop.Uop.pp node)
+
+let link_linear binding ?(input_uops = [||]) ?allow_cache linear =
+  let ctx = exec_context ~input_uops () in
+  Link.run ~resolve:(resolve binding ctx) ?allow_cache linear
+
+let rec without_after u =
+  if Tolk_uop.Uop.op u = Tolk_uop.Ops.After then
+    without_after (Tolk_uop.Uop.src u).(0)
+  else u
 
 (* Execution device for a resolved buffer: the ambient device when the names
    agree, the registry's device for the buffer's placement otherwise. *)
@@ -1147,6 +1156,7 @@ let exec_loop_graph binding ctx ~device ~iteration call =
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
    executor, which replays a compiled sub-linear per iteration. *)
 let rec dispatch_call binding ctx ~device call =
+  let call = without_after call in
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body; _ } -> (
@@ -1291,7 +1301,8 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
     ?(input_uops = [||]) ?(update_stats = true) ?(jit = false) ?(wait = false)
     (linear : Tolk_uop.Uop.t) =
   let module U = Tolk_uop.Uop in
-  let linear = if jit then linear else pm_compile ~device ~to_program linear in
+  let linear = if jit then linear else
+    link_linear binding ~input_uops (compile_linear ~device ~to_program linear) in
   let ctx =
     exec_context ~var_vals ~input_uops ~update_stats ~jit
       ~wait:(wait || debug >= 2) ()
@@ -1333,4 +1344,5 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
              && U.Arg.as_string (U.arg body) = Some "loop" ->
           exec_loop binding ctx ~device call
       | _ -> dispatch_call binding ctx ~device call)
-    (U.children linear)
+    (U.children linear);
+  keep_alive linear
