@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Recompiling a kernel produces the same structural name regardless of earlier
+  compilations, preserving source-cache reuse and stable program identities.
+
 - Metal kernels use one typed argument structure for dispatch and replay,
   preserving 64-bit scalar values and buffer view addresses and allowing more
   than 31 buffer arguments. Older compiled-program exports are invalidated.

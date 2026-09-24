@@ -13,10 +13,12 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   require exact source parity for supported renderers. Reconcile FP8 `sm_80`
   and CPU exponent-reduction fixtures (`rangeify`, `moe_gather_block`,
   `softmax_sink`, `swiglu_clamped`, `topk_rounds`) with the target, including
-  kernel naming, intermediate GROUP cleanup and remaining ordering differences.
-  Reconcile threadless CPU cases `wide_reduce_thread`, `two_sum`,
-  `upcast_lane_load`, `upcast_lane_store` and `lorenz_fold` (names and ordering),
-  and the intermediate GROUP in `multi_output`.
+  intermediate GROUP cleanup and remaining ordering differences.
+  Reconcile threadless CPU ordering in `wide_reduce_thread`,
+  `upcast_lane_store` and `lorenz_fold`, and the intermediate GROUP in
+  `multi_output`. Align the Llama attention-score driver with the target graph:
+  its manually staged kernel gets the structural name `E_2`, whereas the
+  target tensor graph gets `r_2_2_2_2_2`; remove the remaining staging shortcuts.
 - Reconcile Metal source ordering in `lorenz_fold`, `tc_matmul_32`,
   `banded_causal_mask`, `expert_gather_packed`, the RNN and MXFP4 matmul cases,
   and vector-lane extraction in `vectorize_index`.

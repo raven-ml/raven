@@ -259,21 +259,6 @@ let colored_shape t =
        (fun rng color -> strf "%4s:%s" (render_size (range_size rng)) color)
        (rngs t) (colors t))
 
-(* Sanitise a kernel name to a valid identifier. *)
-let to_function_name s =
-  let buf = Buffer.create (String.length s) in
-  String.iter
-    (fun c ->
-      match c with
-      | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> Buffer.add_char buf c
-      | _ -> Buffer.add_string buf (strf "%02X" (Char.code c)))
-    s;
-  Buffer.contents buf
-
-let kernel_cnt : (string, int) Hashtbl.t = Hashtbl.create 16
-(* Guarded: beam search can generate kernel names from parallel domains. *)
-let kernel_cnt_mutex = Mutex.create ()
-
 (* Apply [flatten_range] locally: toposort-reorder range children of
    Reduce/Store/End nodes.  Inline port of [Simplify.pm_flatten_range]
    since the tolk_uop-based simplifier lives in a different library. *)
@@ -314,8 +299,8 @@ let reorder_range_node node =
 
 let pm_flatten_range root = U.graph_rewrite reorder_range_node root
 
-(* Build a debug kernel name from the schedule's special and range sizes,
-   deduplicating against previously generated names. *)
+(* Kernel names depend only on the schedule, so recompilation preserves both
+   source-cache keys and program identity. *)
 let make_kernel_name t =
   let k_type = if reduceop t <> None then "r" else "E" in
   let special_cmp a b =
@@ -334,21 +319,9 @@ let make_kernel_name t =
   let rng_strs = List.map (fun r -> render_size (range_size r)) (rngs t) in
   (* Reference builds ['_'.join([''] + parts)]: no separator at all when the
      kernel has no dims, so a dimensionless kernel is named plain "E"/"r". *)
-  let raw =
-    k_type
-    ^ String.concat ""
-        (List.map (fun s -> "_" ^ s) (special_strs @ rng_strs))
-  in
-  let fn = to_function_name raw in
-  let cnt =
-    Mutex.protect kernel_cnt_mutex (fun () ->
-        let cnt =
-          1 + Option.value ~default:0 (Hashtbl.find_opt kernel_cnt fn)
-        in
-        Hashtbl.replace kernel_cnt fn cnt;
-        cnt)
-  in
-  raw ^ if cnt > 1 then strf "n%d" (cnt - 1) else ""
+  k_type
+  ^ String.concat ""
+      (List.map (fun s -> "_" ^ s) (special_strs @ rng_strs))
 
 (* Finalize the kernel: generate a debug name, flatten ranges, and attach
    updated kernel_info with a tag marking it as optimized. *)

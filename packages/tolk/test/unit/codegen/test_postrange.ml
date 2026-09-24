@@ -790,6 +790,16 @@ let integration_tests =
         let ki = sink_kernel_info result in
         equal int 1 (List.length ki.applied_opts);
         is_true (U.node_tag result <> None));
+      test "kernel identity does not depend on earlier compilations" (fun () ->
+        let ast = elementwise_ast ~s0:13 ~s1:7 in
+        let renderer = cpu_renderer () in
+        let compile ast = P.get_optimized_ast (P.create ast renderer) in
+        let first = compile ast in
+        ignore (compile (elementwise_ast ~s0:4 ~s1:8));
+        let second = compile ast in
+        equal string "E_13_7" (sink_kernel_info first).name;
+        equal string "E_13_7" (sink_kernel_info second).name;
+        equal string (U.semantic_key first) (U.semantic_key second));
       (* Name generation: "r_" for reduce, "E_" for elementwise *)
       test "get_optimized_ast name generation" (fun () ->
         let ast_r = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in

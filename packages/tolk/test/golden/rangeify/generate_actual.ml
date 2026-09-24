@@ -375,7 +375,7 @@ let build_llama_norm_linear ~out_dim b =
   |> fun x -> linear b ~x ~weight ~out_dim ~in_dim:8
   |> fun u -> wrap_sink b [ u ]
 
-let build_llama_attention_scores ?(kernel_name = "") b =
+let build_llama_attention_scores b =
   let out = mk_ptr_param b ~slot:0 8 in
   let q = mk_ptr_param b ~slot:1 16 in
   let freqs = mk_ptr_param b ~slot:2 64 in
@@ -430,7 +430,7 @@ let build_llama_attention_scores ?(kernel_name = "") b =
   let dst = U.index ~ptr:out ~idxs:[ base + lane_ofs ] () in
   let value = U.stack [ score00; score01; score10; score11 ] in
   U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r ]
-  |> scheduled_kernel ~name:kernel_name [ out; q; freqs; k ]
+  |> scheduled_kernel [ out; q; freqs; k ]
 
 let build_llama_attention_max b =
   let score = mk_param b ~slot:0 [ 4; 2 ] in
@@ -543,23 +543,13 @@ let build_llama_ffn_output b =
   let ff = linear b ~x:hidden ~weight ~out_dim:8 ~in_dim:16 in
   wrap_sink b [ U.alu_binary ~op:Ops.Add ~lhs:residual ~rhs:ff ]
 
-let llama_attention_scores_name renderer =
-  match Renderer.name renderer with
-  | "clang" -> "r_2_2_2_2_2"
-  | "cuda" -> "r_2_2_2_2_2n1"
-  | "metal" -> "r_2_2_2_2_2n2"
-  | "opencl" -> "r_2_2_2_2_2n3"
-  | _ -> "r_2_2_2_2_2"
-
 let llama_forward_from_embedding_source renderer =
   [
     ("rmsnorm", build_llama_rmsnorm);
     ("norm_linear_8", build_llama_norm_linear ~out_dim:8);
     ("norm_linear_4_q", build_llama_norm_linear ~out_dim:4);
     ("norm_linear_4_k", build_llama_norm_linear ~out_dim:4);
-    ( "attention_scores",
-      build_llama_attention_scores
-        ~kernel_name:(llama_attention_scores_name renderer) );
+    ("attention_scores", build_llama_attention_scores);
     ("attention_max", build_llama_attention_max);
     ("attention_sum", build_llama_attention_sum);
     ("attention_context", build_llama_attention_context);
