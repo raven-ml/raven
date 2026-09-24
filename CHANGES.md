@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- On Metal, a compiled `Nx_quant.apply ~ids` over many routes groups them by
+  expert, reading each expert once per block of its routes. gpt-oss-20b's
+  512-token prompt takes 1.09 s on an M1 Max, against 5.5 s before.
 - Compiled `Nx.argsort` and the indices of `Nx.sort` no longer cost n² work for
   dtypes of up to 32 bits: a float32 argsort of 131072 entries on Metal drops
   from 61 ms to 12 ms. 64-bit dtypes keep the quadratic path.

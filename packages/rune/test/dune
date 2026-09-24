@@ -62,7 +62,7 @@
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries rune nx nx.quant tolk windtrap))
+ (libraries unix rune nx nx.quant tolk windtrap))
 
 (tests
  (names test_jit_alignment)

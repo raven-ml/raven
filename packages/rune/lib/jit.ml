@@ -1997,7 +1997,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                   (F.Op.quant_matmul ?ids:(Option.map go ids) (go x) ~codes
                      ~scales)
               in
-              Some { Quant.device = st.st_device; quant_matmul }
+              let block_matmul ~transpose x w ~ids =
+                traced st (dt x)
+                  (F.Op.block_matmul ~transpose (go x) (go w) ~ids:(go ids))
+              in
+              Some { Quant.device = st.st_device; quant_matmul; block_matmul }
         in
         Some
           (fun k ->

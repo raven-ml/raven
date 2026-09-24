@@ -134,12 +134,12 @@ let product (type b) c (x : (float, b) Nx.t) : (float, b) Nx.t =
 (* Law 2, for the [x] the product receives, at a dtype whose unit roundoff is
    [u]: within a float32 sum of [k] terms, each product and decoded weight
    possibly rounded to [x]'s dtype, and the result rounded to it once (an
-   absolute [tiny] for float16's subnormal results); NaN exactly where the
-   reference is; exact zeros where no expert is selected. A device that flushes
-   subnormal float32 loses, per term, a scale byte 0's whole group (values up to
-   6 * 2^-127 = 3 * 2^-126, each times |x|), a product below 2^-126 and a
-   running sum below 2^-126: [k * 2^-126 * (3 * max |x| + 2)] for an [x] with no
-   subnormal values. *)
+   absolute [tiny] for each of those [k + 1] roundings that lands on a float16
+   subnormal); NaN exactly where the reference is; exact zeros where no expert
+   is selected. A device that flushes subnormal float32 loses, per term, a scale
+   byte 0's whole group (values up to 6 * 2^-127 = 3 * 2^-126, each times |x|),
+   a product below 2^-126 and a running sum below 2^-126: [k * 2^-126 * (3 * max
+   |x| + 2)] for an [x] with no subnormal values. *)
 let law2 ~msg ~u ~tiny ~flush c x actual =
   let expected, bound, valid = reference c x in
   equal ~msg:(msg ^ ", shape") (array int) (Nx.shape expected) (Nx.shape actual);
@@ -173,7 +173,7 @@ let law2 ~msg ~u ~tiny ~flush c x actual =
           (2.0 *. k *. eps *. b)
           +. (u *. b)
           +. (u *. Float.abs e)
-          +. tiny
+          +. ((k +. 1.0) *. tiny)
           +. if flush then k *. least *. ((3.0 *. largest) +. 2.0) else 0.0
         in
         if not (Float.abs (a -. e) <= tol) then wrong ())
@@ -296,24 +296,84 @@ let test_gathered () =
        (weight [| 2; 3; 8; 64 |])
        (floats [| 3; 2; 2; 1; 64 |]))
 
-(* As many positions as experts or more: every expert is decoded once. *)
-let test_every () =
-  let w = weight [| 4; 8; 64 |] in
-  let ids = ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |] in
-  battery (case ~ids w (floats [| 3; 1; 1; 64 |]));
+(* As many positions as experts or more, and several rows per position or too
+   few routes of one row to group (rule 2: 3 routes over 3 experts): every
+   expert is decoded once and each position is its own block of rows. *)
+let test_instances () =
+  let w = weight [| 3; 8; 64 |] in
+  let ids = ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |] in
+  battery (case ~ids w (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 3; 64 |])));
+  battery (case ~ids w (floats [| 3; 1; 8; 64 |]));
   battery
-    (case ~ids w (poison ~at:[ [ 1; 0 ]; [ 2; 0 ] ] (floats [| 3; 2; 1; 64 |])));
-  battery (case ~ids:(ints [| 5 |] [| 1; 0; 7; 1; 2 |]) w (floats [| 64 |]));
+    (case ~transpose:true ~ids w
+       (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 2; 8 |])));
+  let few = ints [| 3; 1 |] [| 2; -1; 0 |] in
+  battery (case ~ids:few w (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 1; 1; 64 |])));
+  battery (case ~ids:(ints [| 3 |] [| 1; 7; 1 |]) w (floats [| 64 |]));
   battery
     (case ~lanes:1
-       ~ids:(ints [| 2; 4 |] [| 0; 2; -1; 2; 1; 1; 3; 0 |])
+       ~ids:(ints [| 2; 3 |] [| 0; 2; -1; 2; 1; 1 |])
        (weight [| 2; 3; 8; 64 |])
-       (floats [| 2; 4; 1; 64 |]));
+       (floats [| 2; 3; 1; 64 |]));
   battery
     (case ~lanes:1
-       ~ids:(ints [| 2; 4 |] [| 2; 0; -1; 0; 1; 1; 2; 5 |])
+       ~ids:(ints [| 2; 3 |] [| 2; 0; -1; 1; 1; 5 |])
        (weight [| 1; 3; 8; 64 |])
-       (floats [| 4; 2; 64 |]))
+       (floats [| 3; 2; 64 |]))
+
+(* Enough routes of one row each that grouping pays (rule 2, with 4 experts from
+   5 routes): routes ranked by expert fill blocks that read their expert once.
+   Within the kernel's row bound the blocks take the kernel, past it the block
+   kernel; which depends on the device and dtype (rule 3). *)
+let test_grouped () =
+  let w = weight [| 4; 8; 64 |] in
+  let ids =
+    ints [| 8; 2 |] [| 0; 3; -1; 2; 4; 3; 1; 1; 3; -5; 0; 2; 2; 2; 1; 0 |]
+  in
+  battery (case ~ids w (floats [| 8; 1; 1; 64 |]));
+  battery
+    (case ~ids w
+       (poison ~at:[ [ 1; 0 ]; [ 2; 0 ]; [ 4; 1 ] ] (floats [| 8; 2; 1; 64 |])));
+  battery (case ~ids:(Nx.reshape [| 16 |] ids) w (floats [| 64 |]));
+  battery (case ~ids w (floats [| 3; 8; 2; 1; 64 |]));
+  battery
+    (case ~lanes:1
+       ~ids:
+         (ints [| 2; 12 |]
+            (Array.init 24 (fun i -> if i mod 7 = 3 then -1 else i * 5 mod 3)))
+       (weight [| 2; 3; 8; 64 |])
+       (floats [| 2; 12; 1; 64 |]));
+  battery
+    (case ~lanes:1
+       ~ids:(ints [| 2; 12 |] (Array.init 24 (fun i -> i * 7 mod 4)))
+       (weight [| 1; 3; 8; 64 |])
+       (floats [| 12; 1; 64 |]));
+  (* Past the kernel's row bound on every device, the blocks are decoded and
+     take the block kernel, 64 rows each. *)
+  battery
+    (case
+       ~ids:(ints [| 160 |] (Array.init 160 (fun i -> (i * 7 mod 5) - 1)))
+       (weight [| 2; 8; 64 |])
+       (floats [| 160; 1; 64 |]));
+  (* Many rows per expert take blocks of more than 8 rows, and a skewed routing
+     gives one expert most of the blocks. *)
+  battery
+    (case
+       ~ids:
+         (ints [| 40 |] (Array.init 40 (fun i -> if i mod 9 = 4 then 1 else 0)))
+       (weight [| 2; 8; 64 |])
+       (floats [| 40; 1; 64 |]));
+  (* One lane of eight: the lane holds 4 of 32 experts, and the routes of the
+     other 28 are -1. *)
+  battery
+    (case
+       ~ids:
+         (ints [| 64 |]
+            (Array.init 64 (fun i ->
+                 let expert = i * 11 mod 32 in
+                 if expert < 4 then expert else -1)))
+       w
+       (floats [| 64; 1; 64 |]))
 
 (* Tolk's kernel, which a product takes while its matrix meets at most the
    device's row bound of rows (64 on the CPU and 32 on Metal at bfloat16, 2 and
@@ -388,7 +448,12 @@ let test_transposed () =
     (case ~transpose:true
        ~ids:(ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |])
        w
-       (floats [| 3; 2; 1; 8 |]))
+       (floats [| 3; 2; 1; 8 |]));
+  battery
+    (case ~transpose:true
+       ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 3 mod 6) - 1)))
+       w
+       (poison ~at:[ [ 0; 0 ] ] (floats [| 8; 2; 1; 8 |])))
 
 (* The largest finite scale bytes, on inputs small enough that no float32 sum
    overflows. *)
@@ -444,6 +509,11 @@ let test_float16 () =
        ~ids:(ints [| 2; 1 |] [| 3; -1 |])
        w
        (floats [| 2; 1; 1; 8 |]));
+  battery
+    (case
+       ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)))
+       w
+       (floats [| 8; 1; 1; 64 |]));
   (* Decoded values beyond float16's range, on an [x] small enough that the
      results are inside it: the decode must run at float32. *)
   let large =
@@ -630,6 +700,11 @@ let rule_cases () =
         ~ids:(ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |])
         w
         (floats [| 3; 1; 1; 64 |]) );
+    ( "grouped",
+      case
+        ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)))
+        w
+        (floats [| 8; 1; 1; 64 |]) );
     ( "lanes",
       case ~lanes:1
         ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
@@ -678,12 +753,15 @@ let test_jvp () =
       let y', dy' = Rune.jvp' (dense c) c.x tangent in
       close ~msg:(name ^ ", primal") y' y;
       close ~msg:(name ^ ", tangent") dy' dy;
-      close
-        ~msg:(name ^ ", tangent, compiled")
-        dy'
-        (Rune.jit' ~device:"CPU"
-           (fun x -> snd (Rune.jvp' (product c) x tangent))
-           c.x))
+      List.iter
+        (fun device ->
+          close
+            ~msg:(name ^ ", tangent, " ^ device)
+            dy'
+            (Rune.jit' ~device
+               (fun x -> snd (Rune.jvp' (product c) x tangent))
+               c.x))
+        devices)
     (rule_cases ())
 
 (* A part computed from a differentiated value is refused, for [apply] and
@@ -778,6 +856,130 @@ let test_vmap () =
        (Rune.vmap (module Nx_quant) (fun w -> Nx_quant.apply ~ids:one w x))
        ws)
 
+(* pmap: a program over several devices multiplies the blocks by their gathered
+   matrices and groups no routes. *)
+let test_pmap () =
+  let w = weight ~scale:moderate [| 4; 8; 64 |] in
+  let routed (ids, x) = Nx_quant.apply ~ids w x in
+  List.iter
+    (fun (msg, ids, x) ->
+      close ~msg
+        (routed (ids, x))
+        (Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ]
+           (module Inputs)
+           routed (ids, x)))
+    [
+      ("gathered", ints [| 2; 1 |] [| 3; -1 |], floats [| 2; 1; 1; 64 |]);
+      ( "several rows per position",
+        ints [| 2; 2 |] [| 3; -1; 0; 1 |],
+        floats [| 2; 2; 2; 64 |] );
+      ( "many routes",
+        ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)),
+        floats [| 8; 2; 1; 64 |] );
+    ]
+
+(* The form each product takes, as [RUNE_JIT_DEBUG=1] logs it, in a child
+   process that reads the variable fresh. On Metal, 16 routes over 4 experts
+   group, forward and transposed; 40 routes over 40 experts do not, as each
+   block would be one row. The CPU groups nothing, and pmap takes the dense
+   form. *)
+let form_role = "RUNE_QUANT_FORM_ROLE"
+
+let form_cases () =
+  let device = if List.mem "METAL" devices then "METAL" else "CPU" in
+  let w = weight ~scale:moderate [| 4; 8; 64 |] in
+  let ids = ints [| 8; 2 |] (Array.init 16 (fun i -> i mod 4)) in
+  let wide = weight ~scale:moderate [| 40; 8; 64 |] in
+  let distinct = ints [| 40 |] (Array.init 40 Fun.id) in
+  let apply ?(transpose = false) w ids x =
+    Rune.jit' ~device
+      (fun x ->
+        Nx_quant.Effect.perform w (Apply { ids = Some ids; x; transpose }))
+      x
+  in
+  [
+    ("sixteen routes", fun () -> apply w ids (floats [| 8; 1; 1; 64 |]));
+    ( "sixteen routes, transposed",
+      fun () -> apply ~transpose:true w ids (floats [| 8; 2; 1; 8 |]) );
+    ( "one route per expert",
+      fun () -> apply wide distinct (floats [| 40; 1; 64 |]) );
+    ( "sixteen routes under pmap",
+      fun () ->
+        Rune.pmap ~devices:[ "CPU:1"; "CPU:2" ]
+          (module Inputs)
+          (fun (ids, x) -> Nx_quant.apply ~ids w x)
+          (ids, floats [| 8; 2; 1; 64 |]) );
+  ]
+
+let run_form_role () =
+  List.iter
+    (fun (name, f) ->
+      Printf.eprintf "case %s\n%!" name;
+      ignore (Nx.to_array (f ())))
+    (form_cases ());
+  exit 0
+
+let drain fd =
+  let buf = Buffer.create 256 and chunk = Bytes.create 4096 in
+  let rec loop () =
+    let n = Unix.read fd chunk 0 (Bytes.length chunk) in
+    if n > 0 then begin
+      Buffer.add_subbytes buf chunk 0 n;
+      loop ()
+    end
+  in
+  loop ();
+  Unix.close fd;
+  Buffer.contents buf
+
+let test_forms () =
+  let env =
+    Array.append
+      (Array.of_list
+         (List.filter
+            (fun b ->
+              not
+                (String.starts_with ~prefix:"RUNE_JIT_DEBUG=" b
+                || String.starts_with ~prefix:(form_role ^ "=") b))
+            (Array.to_list (Unix.environment ()))))
+      [| "RUNE_JIT_DEBUG=1"; form_role ^ "=1" |]
+  in
+  let err_read, err_write = Unix.pipe ~cloexec:false () in
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process_env exe [| exe |] env Unix.stdin Unix.stdout err_write
+  in
+  Unix.close err_write;
+  let lines = String.split_on_char '\n' (drain err_read) in
+  (match Unix.waitpid [] pid with
+  | _, Unix.WEXITED 0 -> ()
+  | _ -> fail ("child failed:\n" ^ String.concat "\n" lines));
+  let forms = Hashtbl.create 4 and case = ref "" in
+  let prefix = "rune.jit: quantised product: " in
+  List.iter
+    (fun line ->
+      if String.starts_with ~prefix:"case " line then
+        case := String.sub line 5 (String.length line - 5)
+      else if String.starts_with ~prefix line then
+        Hashtbl.add forms !case
+          (String.sub line (String.length prefix)
+             (String.length line - String.length prefix)))
+    lines;
+  let grouped name =
+    List.exists
+      (String.starts_with ~prefix:"grouped")
+      (Hashtbl.find_all forms name)
+  in
+  let metal = List.mem "METAL" devices in
+  equal ~msg:"sixteen routes group on Metal" bool metal
+    (grouped "sixteen routes");
+  equal ~msg:"transposed, they group on Metal" bool metal
+    (grouped "sixteen routes, transposed");
+  is_false ~msg:"one route per expert does not group"
+    (grouped "one route per expert");
+  equal ~msg:"pmap takes the dense form" (list string) [ "dense" ]
+    (Hashtbl.find_all forms "sixteen routes under pmap")
+
 (* debug *)
 
 let test_debug () =
@@ -807,13 +1009,15 @@ let test_debug () =
   close ~msg:"the transposed product's result" t' t
 
 let () =
+  if Sys.getenv_opt form_role <> None then run_form_role ();
   run "rune quant"
     [
       group "Law 2"
         [
           slow "without ids" test_without_ids;
           slow "fewer positions than experts" test_gathered;
-          slow "as many positions as experts or more" test_every;
+          slow "as many positions as experts or more" test_instances;
+          slow "grouped" test_grouped;
           slow "transposed" test_transposed;
           slow "the largest scales" test_large_scales;
           test "empty" test_empty;
@@ -823,6 +1027,7 @@ let () =
           slow "the kernel" test_kernel;
           slow "past the row bound" test_past_the_bound;
           test "the row bound chooses the kernel" test_rule;
+          test "grouping chooses its routes" test_forms;
         ];
       group "placement"
         [ test "place splits at the format's blocks" test_place ];
@@ -834,6 +1039,7 @@ let () =
           test "the weight is never differentiated"
             test_weight_not_differentiated;
           test "vmap" test_vmap;
+          test "pmap" test_pmap;
           test "debug" test_debug;
         ];
     ]
