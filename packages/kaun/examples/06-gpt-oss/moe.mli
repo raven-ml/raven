@@ -22,9 +22,9 @@
 (** The type for the weights of one projection of every expert. *)
 type 'a weight =
   | Float of 'a  (** [[| experts; inputs; outputs |]]. *)
-  | Mxfp4 of { blocks : Mxfp4.blocks; scales : Mxfp4.scales }
-      (** The checkpoint's packed form, [blocks] of shape
-          [[| experts; outputs; inputs / 32; 16 |]]. *)
+  | Quant of Nx_quant.t
+      (** The checkpoint's packed form, of shape
+          [[| experts; outputs; inputs |]]. *)
 
 type 'a t = {
   gate_up : 'a weight;  (** Model width to [2 * intermediate]. *)

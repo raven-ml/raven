@@ -32,10 +32,11 @@
    Run eagerly, the block's dense form dequantises the 32 experts of a
    projection in one expression whose float32 temporaries are all alive at once:
    19 GB at the 20b widths, whatever the number of tokens. [--experts-by-one]
-   dequantises a block's experts one expert at a time with the same
-   [Mxfp4.dequant] and gives the block the same values as float weights, in the
-   layout the packed path gives its product. Every check prints the same error
-   either way, and the peak of a whole run is 9.3 GB, the float32 head included.
+   dequantises a block's experts with [Nx_quant.dequant], whose peak does not
+   grow with the weight, and gives the block the same values as float weights,
+   in the layout the packed path gives its product. Every check prints the same
+   error either way, and the peak of a whole run is 6.6 GB on an M1 Max, the
+   float32 head included.
 
    Usage: validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT]
    [--tol X] [--experts-by-one]. With [--blocks] only the first [N] blocks run
@@ -183,17 +184,11 @@ let routing ~k ~margin recorded experts =
       "experts: %d of %d tokens differ as sets, %d in order, margin %.1e" !sets
       tokens (!orders - !sets) margin )
 
-(* A packed projection as float weights, one expert at a time: the values and
-   the transposed layout of [Moe]'s dense form. *)
+(* A packed projection as float weights: the values and the transposed layout of
+   [Moe]'s dense form. *)
 let by_one dt = function
   | Moe.Float w -> Moe.Float w
-  | Moe.Mxfp4 { blocks; scales } ->
-      let expert e =
-        let one t = Nx.slice [ R (e, e + 1) ] t in
-        Nx.contiguous (Mxfp4.dequant (one blocks) (one scales) dt)
-      in
-      let all = Nx.concatenate ~axis:0 (List.init (Nx.dim 0 blocks) expert) in
-      Moe.Float (Nx.matrix_transpose all)
+  | Moe.Quant w -> Moe.Float (Nx.matrix_transpose (Nx_quant.dequant dt w))
 
 let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~experts_by_one fx
     (dt : (float, c) Nx.dtype) =

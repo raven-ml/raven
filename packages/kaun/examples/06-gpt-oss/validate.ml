@@ -12,10 +12,11 @@
    scales are tiny, so its cases are also recorded with a constant added to
    every scale byte.
 
-   The building blocks, at float32: [Mxfp4.dequant] against the reference
-   dequantiser, bit for bit; the router's logits, experts and weights, and what
-   it selects among equal logits; the MoE block in both formulations on a batch,
-   on a ragged pair and on an input scaled until the activation clamps.
+   The building blocks, at float32: [Mxfp4.dequant], and eagerly
+   [Nx_quant.dequant], against the reference dequantiser, bit for bit; the
+   router's logits, experts and weights, and what it selects among equal logits;
+   the MoE block in both formulations on a batch, on a ragged pair and on an
+   input scaled until the activation clamps.
 
    The whole model, recorded with a sliding window of 4 so that the window binds
    on the 12-token prompt: the rotary tables and the sinks; each attention layer
@@ -166,13 +167,22 @@ let moe_params ckpt ~layer ~weight =
 
 let float_weight ckpt name = Moe.Float (tensor ckpt name)
 
+(* The checkpoint's [[| ...; groups; 16 |]] blocks as [[| ...; inputs / 2 |]]
+   codes. *)
+let mxfp4 ~scales blocks =
+  let s = Nx.shape blocks in
+  let r = Array.length s in
+  Nx_quant.mxfp4 ~scales
+    (Nx.reshape
+       (Array.append (Array.sub s 0 (r - 2)) [| s.(r - 2) * 16 |])
+       blocks)
+
 let packed_weight ckpt ~offset name =
   let scales = bytes ckpt (name ^ "_scales") in
-  Moe.Mxfp4
-    {
-      blocks = bytes ckpt (name ^ "_blocks");
-      scales = Nx.add scales (Nx.scalar Nx.uint8 offset);
-    }
+  Moe.Quant
+    (mxfp4
+       ~scales:(Nx.add scales (Nx.scalar Nx.uint8 offset))
+       (bytes ckpt (name ^ "_blocks")))
 
 (* Checks *)
 
@@ -190,6 +200,7 @@ let dequant ~device fx =
       let scales =
         uint8 (Array.sub shape 0 (Array.length shape - 1)) scale_bytes
       in
+      let weight b = mxfp4 ~scales b in
       let expected = floats (mem "values" case) in
       let flushed i =
         device = Some "METAL"
@@ -199,14 +210,23 @@ let dequant ~device fx =
         (Printf.sprintf "dequant %s, float32" name)
         expected
         (flat
-           (compiled device (fun b -> Mxfp4.dequant b scales Nx.float32) blocks));
+           (compiled device
+              (fun b -> Mxfp4.dequant (weight b) Nx.float32)
+              blocks));
       identical ~flushed
         (Printf.sprintf "dequant %s, bfloat16" name)
         expected
         (flat
            (compiled device
-              (fun b -> Nx.cast Nx.float32 (Mxfp4.dequant b scales Nx.bfloat16))
+              (fun b ->
+                Nx.cast Nx.float32 (Mxfp4.dequant (weight b) Nx.bfloat16))
               blocks));
+      (* Rune does not lower [Nx_quant.dequant] yet: it runs eagerly only. *)
+      if device = None then
+        identical
+          (Printf.sprintf "dequant %s, Nx_quant, float32" name)
+          expected
+          (flat (Nx_quant.dequant Nx.float32 (weight blocks)));
       let rows = Nx.dim 0 blocks in
       let per_row = Array.length expected / rows in
       let picks = Array.init (rows + 1) (fun i -> (rows - i) mod rows) in
@@ -220,13 +240,13 @@ let dequant ~device fx =
         (Array.init ((rows + 1) * per_row) (fun i -> expected.(source i)))
         (flat
            (compiled device
-              (fun b -> Mxfp4.dequant_rows b scales ids Nx.float32)
+              (fun b -> Mxfp4.dequant_rows (weight b) ids Nx.float32)
               blocks)))
     (members (mem "dequant" fx));
-  let nan_scale = uint8 [| 1 |] [| 255 |] in
+  let nan_scale = uint8 [| 1; 1 |] [| 255 |] in
   let group =
     compiled device
-      (fun b -> Mxfp4.dequant b nan_scale Nx.float32)
+      (fun b -> Mxfp4.dequant (Nx_quant.mxfp4 ~scales:nan_scale b) Nx.float32)
       (uint8 [| 1; 16 |] (Array.make 16 0x21))
   in
   check "dequant, the scale byte 255 is NaN"
@@ -335,8 +355,11 @@ let ids_tensor rows =
 let with_scale_offset offset (p : _ Gpt_oss.params) =
   let shift = function
     | Moe.Float w -> Moe.Float w
-    | Moe.Mxfp4 { blocks; scales } ->
-        Moe.Mxfp4 { blocks; scales = Nx.add scales (Nx.scalar Nx.uint8 offset) }
+    | Moe.Quant (Nx_quant.Mxfp4 { codes; scales }) ->
+        Moe.Quant
+          (Nx_quant.mxfp4
+             ~scales:(Nx.add scales (Nx.scalar Nx.uint8 offset))
+             codes)
   in
   let block (b : _ Gpt_oss.block) =
     let moe =

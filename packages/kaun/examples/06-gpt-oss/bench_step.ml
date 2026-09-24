@@ -82,13 +82,11 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
   in
   let packed ~inputs ~outputs =
     let groups = inputs / 32 in
-    Moe.Mxfp4
-      {
-        blocks =
-          place
-            (random_bytes [| c.Gpt_oss.experts; outputs; groups; 16 |] 0 256);
-        scales = place (random_bytes [| c.experts; outputs; groups |] 118 6);
-      }
+    let scales = random_bytes [| c.Gpt_oss.experts; outputs; groups |] 118 6 in
+    Moe.Quant
+      (Nx_quant.map place
+         (Nx_quant.mxfp4 ~scales
+            (random_bytes [| c.experts; outputs; inputs / 2 |] 0 256)))
   in
   let gamma () = { Rms_norm.gamma = f ~scale:1.0 [| c.dim |] } in
   let q_dim = c.n_heads * c.head_dim and kv = c.n_kv_heads * c.head_dim in

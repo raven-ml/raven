@@ -31,15 +31,14 @@ let random_floats ~scale shape =
 
 let packed ~inputs ~outputs =
   let groups = inputs / 32 in
-  Moe.Mxfp4
-    {
-      blocks =
-        random_bytes [| experts; outputs; groups; 16 |] (fun () ->
-            Random.bits () land 255);
-      scales =
-        random_bytes [| experts; outputs; groups |] (fun () ->
-            118 + Random.int 6);
-    }
+  let scales =
+    random_bytes [| experts; outputs; groups |] (fun () -> 118 + Random.int 6)
+  in
+  Moe.Quant
+    (Nx_quant.mxfp4 ~scales
+       (random_bytes
+          [| experts; outputs; inputs / 2 |]
+          (fun () -> Random.bits () land 255)))
 
 let seconds f =
   let t0 = Unix.gettimeofday () in

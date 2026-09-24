@@ -10,8 +10,8 @@
     YaRN rotary positions; layers alternate between a sliding window and full
     attention, the first one sliding, over one {!Kaun.Cache_index}. {!attention}
     composes kaun's attention pieces with the sinks and YaRN's score scale.
-    Expert weights stay packed as the checkpoint stores them ({!Mxfp4}) and are
-    dequantised inside the forward pass.
+    Expert weights stay packed as the checkpoint stores them ({!Nx_quant.t}) and
+    are dequantised inside the forward pass ({!Mxfp4}).
 
     The model is written on the decode contract: {!hidden}, {!cached} and
     {!logits} are its forward passes. *)
@@ -71,7 +71,7 @@ val ptree : unit -> (module Nx.Ptree.S with type t = (float, 'b) Nx.t params)
 (** [ptree ()] is the parameter tree the transformations take: every tensor of
     the model, the packed uint8 ones included, in the order [tok], the blocks
     ([attn_norm], [attn], [sinks], [ffn_norm], then the router, [gate_up], its
-    bias, [down], its bias, a packed weight being [blocks] then [scales]),
+    bias, [down], its bias, a packed weight being its codes then its scales),
     [norm], [head]. *)
 
 val block_ptree :
@@ -197,9 +197,9 @@ val of_hf :
 (** [of_hf cfg dt ckpt] is the model of the HuggingFace gpt-oss checkpoint
     [ckpt], with its float leaves at [dt]. Each entry is read by its name in the
     file with the shape [cfg] gives it. Projections are transposed to
-    [inputs × outputs], a view. Experts stored as [_blocks] and [_scales] stay
-    packed uint8 tensors, whatever [dt]. At the file's own dtype nothing is
-    copied; at another one each float leaf is cast.
+    [inputs × outputs], a view. Experts stored as [_blocks] and [_scales] are an
+    {!Nx_quant.mxfp4} weight over the file's bytes, whatever [dt]. At the file's
+    own dtype nothing is copied; at another one each float leaf is cast.
 
     With [placement], each leaf, float or uint8, is placed with
     [Nx.place (placement role ~axis)] as it is built (see {!role}), so a

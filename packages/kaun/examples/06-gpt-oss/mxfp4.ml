@@ -3,11 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type blocks = (int, Nx.uint8_elt) Nx.t
-type scales = (int, Nx.uint8_elt) Nx.t
-
-let group_bytes = 16
-
 (* Values are computed at float32, where every product of a code and a scale is
    exact, and cast once: bfloat16 arithmetic is emulated on the CPU device. *)
 
@@ -33,29 +28,26 @@ let code_values codes =
   let sign = Nx.cast Nx.float32 (Nx.rshift codes 3) in
   Nx.mul magnitude (Nx.rsub_s 1.0 (Nx.mul_s sign 2.0))
 
-let dequant blocks scales dt =
-  let shape = Nx.shape blocks in
+let decode codes scales dt =
+  let shape = Nx.shape codes in
   let rank = Array.length shape in
-  if rank < 2 || shape.(rank - 1) <> group_bytes then
-    invalid_arg "Mxfp4.dequant: blocks must have shape [...; groups; 16]";
-  if Nx.shape scales <> Array.sub shape 0 (rank - 1) then
-    invalid_arg
-      "Mxfp4.dequant: scales must have the shape of blocks without its last \
-       axis";
+  let blocks = Nx.reshape (Array.append (Nx.shape scales) [| 16 |]) codes in
   let low = Nx.bitwise_and blocks (Nx.scalar Nx.uint8 15) in
   let high = Nx.rshift blocks 4 in
   let values = code_values (Nx.stack ~axis:(-1) [ low; high ]) in
   let scale =
     Nx.reshape (Array.append (Nx.shape scales) [| 1; 1 |]) (group_scales scales)
   in
-  let out = Array.sub shape 0 (rank - 1) in
-  out.(rank - 2) <- shape.(rank - 2) * group_bytes * 2;
+  let out = Array.copy shape in
+  out.(rank - 1) <- 2 * shape.(rank - 1);
   Nx.reshape out (Nx.cast dt (Nx.mul values scale))
+
+let dequant (Nx_quant.Mxfp4 { codes; scales }) dt = decode codes scales dt
 
 let take_rows ids t =
   let rows = Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] ids) t in
   let rest = Array.sub (Nx.shape t) 1 (Nx.ndim t - 1) in
   Nx.reshape (Array.append (Nx.shape ids) rest) rows
 
-let dequant_rows blocks scales ids dt =
-  dequant (take_rows ids blocks) (take_rows ids scales) dt
+let dequant_rows (Nx_quant.Mxfp4 { codes; scales }) ids dt =
+  decode (take_rows ids codes) (take_rows ids scales) dt

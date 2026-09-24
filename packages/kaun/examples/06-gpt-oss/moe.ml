@@ -5,9 +5,7 @@
 
 open Kaun
 
-type 'a weight =
-  | Float of 'a
-  | Mxfp4 of { blocks : Mxfp4.blocks; scales : Mxfp4.scales }
+type 'a weight = Float of 'a | Quant of Nx_quant.t
 
 type 'a t = {
   gate_up : 'a weight;
@@ -18,9 +16,7 @@ type 'a t = {
 
 type form = Gather | Dense
 
-let map_weight f = function
-  | Float w -> Float (f w)
-  | Mxfp4 { blocks; scales } -> Mxfp4 { blocks; scales }
+let map_weight f = function Float w -> Float (f w) | Quant w -> Quant w
 
 let map f p =
   let gate_up = map_weight f p.gate_up in
@@ -55,8 +51,7 @@ let take_rows ids t =
 
 let all_rows dt = function
   | Float w -> w
-  | Mxfp4 { blocks; scales } ->
-      Nx.matrix_transpose (Nx.contiguous (Mxfp4.dequant blocks scales dt))
+  | Quant w -> Nx.matrix_transpose (Nx.contiguous (Mxfp4.dequant w dt))
 
 (* Dequantised rows, the activation and the dense form's expert outputs are
    materialised. A product of two buffers is what the kernel heuristics take for
@@ -66,9 +61,7 @@ let all_rows dt = function
 
 let selected_rows dt ids = function
   | Float w -> Nx.contiguous (take_rows ids w)
-  | Mxfp4 { blocks; scales } ->
-      Nx.matrix_transpose
-        (Nx.contiguous (Mxfp4.dequant_rows blocks scales ids dt))
+  | Quant w -> Nx.matrix_transpose (Nx.contiguous (Mxfp4.dequant_rows w ids dt))
 
 let experts ~limit ~gate_up ~gate_up_bias ~down ~down_bias x =
   let h = Nx.add (Nx.matmul x gate_up) gate_up_bias in

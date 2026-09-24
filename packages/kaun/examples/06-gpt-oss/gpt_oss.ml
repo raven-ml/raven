@@ -70,10 +70,7 @@ let block_ptree (type b) () :
 
     let map_weight (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) = function
       | Moe.Float w -> Moe.Float (f w)
-      | Moe.Mxfp4 { blocks; scales } ->
-          let blocks = f blocks in
-          let scales = f scales in
-          Moe.Mxfp4 { blocks; scales }
+      | Moe.Quant w -> Moe.Quant (Nx_quant.map f w)
 
     let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) b =
       let attn_norm = Rms_norm.map f b.attn_norm in
@@ -92,10 +89,7 @@ let block_ptree (type b) () :
         w w' =
       match (w, w') with
       | Moe.Float w, Moe.Float w' -> Moe.Float (f w w')
-      | Moe.Mxfp4 w, Moe.Mxfp4 w' ->
-          let blocks = f w.blocks w'.blocks in
-          let scales = f w.scales w'.scales in
-          Moe.Mxfp4 { blocks; scales }
+      | Moe.Quant w, Moe.Quant w' -> Moe.Quant (Nx_quant.map2 f w w')
       | _ ->
           invalid_arg
             "Gpt_oss.block_ptree: one block packs its experts, one does not"
@@ -116,9 +110,7 @@ let block_ptree (type b) () :
 
     let iter_weight (f : 'a 'c. ('a, 'c) Nx.t -> unit) = function
       | Moe.Float w -> f w
-      | Moe.Mxfp4 { blocks; scales } ->
-          f blocks;
-          f scales
+      | Moe.Quant w -> Nx_quant.iter f w
 
     let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) b =
       Rms_norm.iter f b.attn_norm;
@@ -349,18 +341,18 @@ let of_hf ?placement cfg dt ckpt =
              (float ~shape:[| cfg.experts; inputs; outputs |] name))
     | Some _ ->
         let groups = inputs / 32 in
-        let bytes ~shape name =
-          place Experts ~axis:0 (Checkpoint.to_tensor ~shape Nx.uint8 name ckpt)
+        let bytes ~shape name = Checkpoint.to_tensor ~shape Nx.uint8 name ckpt in
+        let codes =
+          bytes ~shape:[| cfg.experts; outputs; groups; 16 |] (name ^ "_blocks")
         in
-        Moe.Mxfp4
-          {
-            blocks =
-              bytes
-                ~shape:[| cfg.experts; outputs; groups; 16 |]
-                (name ^ "_blocks");
-            scales =
-              bytes ~shape:[| cfg.experts; outputs; groups |] (name ^ "_scales");
-          }
+        Moe.Quant
+          (Nx_quant.map (fun x -> place Experts ~axis:0 x)
+             (Nx_quant.mxfp4
+                ~scales:
+                  (bytes
+                     ~shape:[| cfg.experts; outputs; groups |]
+                     (name ^ "_scales"))
+                (Nx.reshape [| cfg.experts; outputs; inputs / 2 |] codes)))
   in
   let q_dim = cfg.n_heads * cfg.head_dim in
   let kv_dim = cfg.n_kv_heads * cfg.head_dim in
