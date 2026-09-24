@@ -1166,6 +1166,13 @@ thread.
 
 ### Nx
 
+- `Nx.top_k` with `k` above 8 no longer takes one entry per pass, and over an
+  axis longer than 2048 no longer sorts it: a radix select on the bits of each
+  entry finds the `k`th greatest and only the `k` entries kept are ordered.
+  Compiled on Metal, 40 of 50257 float32 take 2 ms instead of 890 ms and 512
+  of 32768 0.9 ms instead of 3.7 ms; eagerly it costs about 2.5 times the old
+  sort at sampling sizes, and 64 rows of 131072 peak at about 480 MB instead
+  of 200 MB. Compiled, NaN now comes last as documented.
 - Add `Nx.bitcast`, which reads each element's bits as another dtype of the
   same width without converting it, NaN payloads and subnormals included. It
   compiles under `Rune.jit`, except to or from float8, which the compiler

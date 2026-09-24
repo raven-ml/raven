@@ -1985,10 +1985,198 @@ module Make (B : Backend_intf.S) = struct
     in
     B.argmin ~axis ~keepdims x'
 
-  (* Above this many entries the selection rounds of [top_k] give way to a full
-     sort: each round is a pass over the axis that waits on the one before
-     it. *)
-  let top_k_rounds = 16
+  (* Above this many entries [top_k] stops taking one greatest entry per pass
+     over the axis, each pass waiting on the one before it, and selects them by
+     radix instead. *)
+  let top_k_rounds = 8
+
+  (* Up to this many entries along the axis, [top_k] sorts the keys instead of
+     selecting them. Compiled on Metal (M1 Max, float32, 1 and 64 rows, k from
+     64 to 512), sorting 2048 entries costs 0.55 to 1.2 ms per call and
+     selecting 0.65 to 1.1 ms; from 4096 on, selection wins, 2.5 to 5 times at
+     64 rows. Eagerly a sort is one C call and cheaper at every length: 0.3 ms
+     against 2.9 ms for 512 of 4096, 3.5 against 10.5 for 512 of 32768. *)
+  let top_k_sorted = 2048
+
+  (* Up to this many comparisons, [k * k] per row, the selected entries are
+     ordered by counting, for each, the entries that precede it: one pass, where
+     a sort is a network of them. Beyond, an eager backend would hold too many
+     at once, and they are sorted. *)
+  let top_k_counted = 1 lsl 24
+
+  (* A radix round decides [radix_bits] bits of the threshold's key at once,
+     with one count per nonzero digit, all held at once by an eager backend:
+     2^bits - 1 counts per entry. Rows of up to [radix_wide] entries in all take
+     4 bits, 8 rounds for a 32-bit key; more take 2, 16 rounds, with a fifth of
+     the counts. On Metal (M1 Max, float32, k = 512) the two cost the same
+     within noise at 64 rows of 32768 (1.9 to 2.2 ms) and of 131072 (9.0 ms);
+     eagerly, 64 rows of 131072 peak at 476 MB instead of 860 MB and take 90 ms
+     instead of 128 ms for 64 rows of 32768. What remains of the peak is the
+     compaction's, about 36 bytes per entry held at once (the keys, the masks,
+     the running counts, the slots and the scatter's template and output); the
+     2-bit counts take about 9. *)
+  let radix_wide = 1 lsl 20
+  let radix_bits ~entries = if entries <= radix_wide then 4 else 2
+
+  (* The rounds count entries per chunk of this many, reduced across chunks
+     first: neighbouring lanes then read neighbouring entries. *)
+  let radix_chunk = 512
+
+  (* The element of a signed key dtype that an int64 in its range stands for. *)
+  let key_of_int64 (type c d) (dt : (c, d) Dtype.t) (v : int64) : c =
+    match dt with
+    | Dtype.Int8 -> Int64.to_int v
+    | Dtype.Int16 -> Int64.to_int v
+    | Dtype.Int32 -> Int64.to_int32 v
+    | Dtype.Int64 -> v
+    | _ -> invalid_arg "key_of_int64: not a signed key dtype"
+
+  (* [radix_select ~k keys] is the positions of the [k] greatest entries of each
+     row of the signed integer [keys], shaped [b; n] with [n] above
+     [top_k_sorted], in the order of a stable descending sort.
+
+     The threshold, the [k]th greatest key, is found by radix select: each round
+     extends its known prefix by the [radix_bits] greatest bits that leave at
+     least [k] keys at or above. The keys above the threshold and the first of
+     those equal to it fill the [k] slots, compacted in order by a running count
+     and a scatter, and are then put in order. *)
+  let radix_select (type c d) ~k (keys : (c, d) t) =
+    let ctx = B.context keys in
+    let kd = dtype keys in
+    let b = dim 0 keys and n = dim 1 keys in
+    let width = 8 * Dtype.itemsize kd in
+    let kk = scalar ctx Dtype.int32 (Int32.of_int k) in
+    let rows =
+      let g = (n + radix_chunk - 1) / radix_chunk in
+      (* Padding holds the least key, which only a count every key already
+         passes can include. *)
+      pad [| (0, 0); (0, (g * radix_chunk) - n) |] (Dtype.min_value kd) keys
+      |> reshape [| b; 1; g; radix_chunk |]
+    in
+    let radix_bits = radix_bits ~entries:(b * n) in
+    let digits = (1 lsl radix_bits) - 1 in
+    let lowest = Int64.shift_left (-1L) (width - 1) in
+    let constants values =
+      create ctx kd [| 1; digits |] (Array.map (key_of_int64 kd) values)
+    in
+    let rec search prefix top =
+      if top = 0 then prefix
+      else
+        let shift = top - radix_bits in
+        let offsets =
+          Array.init digits (fun j ->
+              Int64.shift_left (Int64.of_int (j + 1)) shift)
+        in
+        let trials =
+          if top = width then constants (Array.map (Int64.add lowest) offsets)
+          else add prefix (constants offsets)
+        in
+        let above =
+          greater_equal rows (reshape [| -1; digits; 1; 1 |] trials)
+        in
+        (* A chunk lane counts at most one key per chunk, so its count fits
+           int16 below 32768 chunks: half what int32 would hold at once. *)
+        let count (type p q) (dt : (p, q) Dtype.t) =
+          sum ~axes:[ 2 ] (cast dt above)
+          |> contiguous |> cast Dtype.int32 |> sum ~axes:[ 2 ] |> contiguous
+        in
+        let counts =
+          if dim 2 rows < 32768 then count Dtype.int16 else count Dtype.int32
+        in
+        let kept = where (greater_equal counts kk) trials prefix in
+        search (max ~axes:[ 1 ] ~keepdims:true kept) shift
+    in
+    let threshold =
+      search (full ctx kd [| b; 1 |] (Dtype.min_value kd)) width
+    in
+    let above = greater keys threshold and at = equal keys threshold in
+    let n_above = sum ~axes:[ 1 ] ~keepdims:true (cast Dtype.int32 above) in
+    let room = sub kk n_above in
+    (* One running count carries both, as [above + k * at]: fewer than [k] keys
+       are above. *)
+    let running (type p q) (dt : (p, q) Dtype.t) =
+      let base = full ctx dt [||] (Dtype.of_float dt (float_of_int k)) in
+      let packed = add (cast dt above) (mul (cast dt at) base) in
+      let running = cumsum ~axis:1 packed in
+      (cast Dtype.int32 (mod_ running base), cast Dtype.int32 (div running base))
+    in
+    let before_above, before_at =
+      if k * (n + 1) <= Int32.to_int Int32.max_int then running Dtype.int32
+      else running Dtype.int64
+    in
+    let position =
+      broadcast_to [| b; n |]
+        (reshape [| 1; n |] (arange ctx Dtype.int32 0 n 1))
+    in
+    (* A stable partition: the keys above, then the keys taken at the threshold,
+       then the rest, each in position order. *)
+    let slot =
+      where above (sub_s before_above 1l)
+        (where
+           (logical_and at (less_equal before_at room))
+           (add n_above (sub_s before_at 1l))
+           (add_s
+              (sub (sub position before_above) (minimum before_at room))
+              (Int32.of_int k)))
+    in
+    let chosen =
+      scatter ~unique_indices:true ~axis:1 ~indices:slot ~values:position
+        (zeros ctx Dtype.int32 [| b; n |])
+      |> shrink [| (0, b); (0, k) |]
+    in
+    let chosen_keys = take_along_axis ~axis:1 ~indices:chosen keys in
+    if b * k * k > top_k_counted then
+      take_along_axis ~axis:1
+        ~indices:(argsort ~descending:true ~axis:1 chosen_keys)
+        chosen
+    else
+      (* A key's place is the number of keys before it: greater ones, and equal
+         ones in an earlier slot. *)
+      let mine = reshape [| b; 1; k |] chosen_keys in
+      let other = reshape [| b; k; 1 |] chosen_keys in
+      let slots = arange ctx Dtype.int32 0 k 1 in
+      let earlier =
+        less (reshape [| k; 1 |] slots) (reshape [| 1; k |] slots)
+      in
+      let precedes =
+        logical_or (greater other mine) (logical_and earlier (equal other mine))
+      in
+      let place = sum ~axes:[ 1 ] (cast Dtype.int32 precedes) in
+      scatter ~unique_indices:true ~axis:1 ~indices:place ~values:chosen
+        (zeros ctx Dtype.int32 [| b; k |])
+
+  (* [select ~k keys] is [radix_select ~k keys], or the first [k] positions of a
+     stable descending sort of [keys] when their rows are short. *)
+  let select (type c d) ~k (keys : (c, d) t) =
+    if dim 1 keys <= top_k_sorted then
+      shrink
+        [| (0, dim 0 keys); (0, k) |]
+        (argsort ~descending:true ~axis:1 keys)
+    else radix_select ~k keys
+
+  (* The key of a float, a signed integer of its width that orders as a
+     descending sort does: the bits, with the other bits of a negative float
+     flipped, both zeros one key, and NaN below every number. *)
+  let float_key (type a b c d) (kd : (c, d) Dtype.t) (x : (a, b) t) =
+    let bits = bitcast kd x in
+    let least = full_like bits (Dtype.min_value kd) in
+    (* The zeros merge on the bits: -0's are the least key's. Merging them on
+       the values would pass subnormals through float arithmetic, which a GPU
+       may flush. *)
+    let bits = where (equal bits least) (zeros_like bits) bits in
+    let flipped =
+      where
+        (less bits (zeros_like bits))
+        (bitwise_xor bits (full_like bits (Dtype.max_value kd)))
+        bits
+    in
+    where (isnan x) least flipped
+
+  (* The key of an unsigned integer: its bits with the top one flipped, read
+     signed. *)
+  let unsigned_key (type a b c d) (kd : (c, d) Dtype.t) (top : a) (x : (a, b) t)
+      =
+    bitcast kd (bitwise_xor x (full_like x top))
 
   let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
     let r = ndim x in
@@ -2000,13 +2188,43 @@ module Make (B : Backend_intf.S) = struct
     if k < 1 || k > n then err "top_k" "k = %d is outside [1, %d]" k n;
     let dt = dtype x in
     if Dtype.is_complex dt then err "top_k" "complex numbers are not ordered";
+    let ctx = B.context x in
     let indices =
-      if k > top_k_rounds then (
-        let bounds = Array.map (fun d -> (0, d)) (shape x) in
-        bounds.(axis) <- (0, k);
-        shrink bounds (argsort ~descending:true ~axis x))
+      if k > top_k_rounds then begin
+        let last = contiguous (moveaxis axis (-1) x) in
+        let batch = Array.sub (shape last) 0 (r - 1) in
+        let b = Array.fold_left ( * ) 1 batch in
+        let rows = reshape [| b; n |] last in
+        let chosen : (int32, Dtype.int32_elt) t =
+          if b = 0 then zeros ctx Dtype.int32 [| 0; k |]
+          else
+            match dt with
+            | Dtype.Float16 -> select ~k (float_key Dtype.int16 rows)
+            | Dtype.BFloat16 -> select ~k (float_key Dtype.int16 rows)
+            | Dtype.Float32 -> select ~k (float_key Dtype.int32 rows)
+            | Dtype.Float64 -> select ~k (float_key Dtype.int64 rows)
+            | Dtype.Float8_e4m3 ->
+                select ~k (float_key Dtype.int16 (cast Dtype.float16 rows))
+            | Dtype.Float8_e5m2 ->
+                select ~k (float_key Dtype.int16 (cast Dtype.float16 rows))
+            | Dtype.Int4 -> select ~k (cast Dtype.int8 rows)
+            | Dtype.Int8 -> select ~k rows
+            | Dtype.Int16 -> select ~k rows
+            | Dtype.Int32 -> select ~k rows
+            | Dtype.Int64 -> select ~k rows
+            | Dtype.UInt4 | Dtype.Bool ->
+                select ~k (unsigned_key Dtype.int8 0x80 (cast Dtype.uint8 rows))
+            | Dtype.UInt8 -> select ~k (unsigned_key Dtype.int8 0x80 rows)
+            | Dtype.UInt16 -> select ~k (unsigned_key Dtype.int16 0x8000 rows)
+            | Dtype.UInt32 ->
+                select ~k (unsigned_key Dtype.int32 Int32.min_int rows)
+            | Dtype.UInt64 ->
+                select ~k (unsigned_key Dtype.int64 Int64.min_int rows)
+            | Dtype.Complex64 | Dtype.Complex128 -> assert false
+        in
+        moveaxis (-1) axis (reshape (Array.append batch [| k |]) chosen)
+      end
       else begin
-        let ctx = B.context x in
         let along = Array.make r 1 in
         along.(axis) <- n;
         let position = reshape along (arange ctx Dtype.int32 0 n 1) in

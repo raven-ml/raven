@@ -479,3 +479,24 @@ let check_bitcast_matches_eager ?device () =
          0; 0x8000; 0x7F80; 0xFF80; 0x7FC0; 0x7F81; 0xFFC3; 1; 0x807F; 0x3F80;
        |])
     Nx.bfloat16
+
+(* A row long enough for 2-bit rounds, and k * (n + 1) past int32, so the
+   running count is int64: all but about a thousand entries tie at the
+   threshold, more than 2^20 of them, so their count times k passes 2^31 along
+   the row. Compiled, as eagerly, the first k of a stable descending sort. *)
+let check_top_k_long_row ?device () =
+  let n = (1 lsl 20) + 8192 and k = 2048 in
+  let st = Random.State.make [| 4 |] in
+  let x =
+    Nx.init f32 [| 1; n |] (fun _ ->
+        if Random.State.int st 1024 = 0 then Random.State.float st 1. +. 1.
+        else 0.)
+  in
+  let expected =
+    Nx.to_array
+      (Nx.shrink [| (0, 1); (0, k) |] (Nx.argsort ~descending:true ~axis:1 x))
+  in
+  let f x = snd (Nx.top_k ~k x) in
+  equal ~msg:"eager" (array int32) expected (Nx.to_array (f x));
+  equal ~msg:"compiled" (array int32) expected
+    (Nx.to_array (Rune.jit' ?device f x))

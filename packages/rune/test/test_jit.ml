@@ -1484,6 +1484,83 @@ let test_top_k_matches_eager () =
     (to_arr (along_rows scores))
     (Rune.jit' along_rows scores)
 
+(* Selection compiles to the positions eager computes: rows of repeated values,
+   NaN, both zeros and both infinities, in every dtype family, cut at [k]
+   through a run of ties, along either axis; rows long enough to select by
+   radix, and a short one sorted on the same keys. *)
+let test_top_k_radix_matches_eager () =
+  let st = Random.State.make [| 5 |] in
+  let pool = [| Float.nan; -0.; 0.; Float.infinity; Float.neg_infinity; 1. |] in
+  let data =
+    Nx.init f64 [| 3; 2100 |] (fun _ ->
+        match Random.State.int st 4 with
+        | 0 -> pool.(Random.State.int st (Array.length pool))
+        | 1 -> float_of_int (Random.State.int st 5)
+        | _ -> Random.State.float st 8. -. 4.)
+  in
+  let check (type a b) ?(ks = [ 17; 512 ]) name (x : (a, b) Nx.t) =
+    List.iter
+      (fun k ->
+        let indices x = Nx.cast f32 (snd (Nx.top_k ~k x)) in
+        check_arr
+          ~msg:(Printf.sprintf "%s top %d" name k)
+          (to_arr (indices x))
+          (Rune.jit' indices x))
+      ks
+  in
+  check ~ks:[ 17; 512; 2100 ] "float32" (Nx.cast f32 data);
+  check "float32, short rows"
+    (Nx.contiguous (Nx.slice [ Nx.A; Nx.R (0, 1000) ] (Nx.cast f32 data)));
+  check "bfloat16" (Nx.cast Nx.bfloat16 data);
+  check "float16" (Nx.cast Nx.float16 data);
+  let ints =
+    Nx.init Nx.int32 [| 3; 2100 |] (fun _ ->
+        Int32.of_int (Random.State.int st 256 - 128))
+  in
+  check "int32" ints;
+  check "int8" (Nx.cast Nx.int8 ints);
+  check "uint8" (Nx.cast Nx.uint8 ints);
+  let short x = Nx.contiguous (Nx.slice [ Nx.A; Nx.R (0, 1000) ] x) in
+  let both name x =
+    check name x;
+    check (name ^ ", short rows") (short x)
+  in
+  both "float64" data;
+  (* 64-bit keys need 64-bit constants: every int64 below zero, and uint64 at
+     and above 2^63, whose top bit a signed reading takes for a sign. *)
+  let int64s f =
+    Nx.init Nx.int64 [| 3; 2100 |] (fun _ ->
+        match Random.State.int st 5 with
+        | 0 -> f Int64.min_int
+        | 1 -> f (Int64.of_int (Random.State.int st 3))
+        | _ -> f (Random.State.int64 st Int64.max_int))
+  in
+  both "int64, all negative" (int64s (fun v -> Int64.sub (-1L) v));
+  both "uint64 at and above 2^63"
+    (Nx.cast Nx.uint64 (int64s (fun v -> Int64.logor Int64.min_int v)));
+  (* The compiler reads float8 through float16 and flushes its subnormals, so
+     every other pattern is drawn. *)
+  let float8 (type b) (dt : (float, b) Nx.dtype) ~subnormal =
+    let patterns =
+      Array.of_list
+        (List.filter (fun p -> not (subnormal p)) (List.init 256 Fun.id))
+    in
+    Nx.bitcast dt
+      (Nx.init Nx.uint8 [| 3; 2100 |] (fun _ ->
+           patterns.(Random.State.int st (Array.length patterns))))
+  in
+  both "float8_e4m3"
+    (float8 Nx.float8_e4m3 ~subnormal:(fun p ->
+         p land 0x78 = 0 && p land 7 <> 0));
+  both "float8_e5m2"
+    (float8 Nx.float8_e5m2 ~subnormal:(fun p ->
+         p land 0x7c = 0 && p land 3 <> 0));
+  let columns = Nx.transpose (Nx.cast f32 data) in
+  let along_rows x = Nx.cast f32 (snd (Nx.top_k ~k:40 ~axis:0 x)) in
+  check_arr ~msg:"top 40 along axis 0"
+    (to_arr (along_rows columns))
+    (Rune.jit' along_rows columns)
+
 let test_grad_of_top_k () =
   let scores =
     Nx.create f32 [| 2; 5 |] [| 3.; 9.; 1.; 7.; 5.; 4.; 2.; 8.; 6.; 0. |]
@@ -3323,7 +3400,10 @@ let tests =
         test "take over a large table matches eager"
           test_take_large_table_matches_eager;
         slow "sort matches eager" test_sort_matches_eager;
-        test "top_k matches eager" test_top_k_matches_eager;
+        slow "top_k matches eager" test_top_k_matches_eager;
+        slow "top_k radix select matches eager" test_top_k_radix_matches_eager;
+        slow "top_k over a row of 2^20 entries"
+          (check_top_k_long_row ?device:None);
         test "gradient of top_k" test_grad_of_top_k;
         test "diag matches eager" test_diag_matches_eager;
       ];

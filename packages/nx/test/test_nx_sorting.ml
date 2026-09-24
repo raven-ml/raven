@@ -236,6 +236,124 @@ let test_top_k_is_a_sorted_prefix () =
         (Nx.to_array indices = Nx.to_array expected))
     [ 1; 5; 16; 17; n ]
 
+(* The first [k] positions of a stable descending sort along [axis]. *)
+let sorted_prefix ~k ~axis t =
+  let bounds = Array.map (fun d -> (0, d)) (Nx.shape t) in
+  bounds.(axis) <- (0, k);
+  Nx.shrink bounds (Nx.argsort ~descending:true ~axis t)
+
+let check_sorted_prefix ~msg ~k ?(axis = -1) t =
+  let axis = if axis < 0 then axis + Nx.ndim t else axis in
+  check_nx msg (sorted_prefix ~k ~axis t) (snd (Nx.top_k ~k ~axis t))
+
+(* Rows long enough to pad the radix counts' chunks, of values drawn from a pool
+   that repeats: every [k] cuts through a run of ties. *)
+let scores dtype pool =
+  let st = Random.State.make [| 7 |] in
+  let pool = Array.of_list pool in
+  Nx.cast dtype
+    (Nx.init Nx.float64 [| 3; 2500 |] (fun _ ->
+         if Random.State.int st 3 = 0 then
+           pool.(Random.State.int st (Array.length pool))
+         else Random.State.float st 8. -. 4.))
+
+let check_every_k ~msg t =
+  List.iter
+    (fun k -> check_sorted_prefix ~msg:(Printf.sprintf "%s, k = %d" msg k) ~k t)
+    [ 17; 100; 512; 513; 2500 ];
+  (* A short axis is sorted, on the same keys. *)
+  let short = Nx.slice [ Nx.A; Nx.R (0, 1000) ] t in
+  List.iter
+    (fun k ->
+      check_sorted_prefix
+        ~msg:(Printf.sprintf "%s, short, k = %d" msg k)
+        ~k short)
+    [ 17; 1000 ]
+
+let test_top_k_radix_floats () =
+  let special =
+    [ Float.nan; -0.; 0.; Float.infinity; Float.neg_infinity; 1.; -1.; 2.5 ]
+  in
+  check_every_k ~msg:"float32" (scores Nx.float32 special);
+  check_every_k ~msg:"float64" (scores Nx.float64 special);
+  check_every_k ~msg:"float16" (scores Nx.float16 (6e-8 :: special));
+  check_every_k ~msg:"bfloat16" (scores Nx.bfloat16 special);
+  check_every_k ~msg:"float8_e4m3" (scores Nx.float8_e4m3 [ Float.nan; 448. ]);
+  check_every_k ~msg:"float8_e5m2" (scores Nx.float8_e5m2 special);
+  check_every_k ~msg:"float32 subnormals"
+    (scores Nx.float32 [ 1e-45; -1e-45; 1e-40; -0.; Float.min_float ])
+
+(* Integers draw from the whole range of their dtype, its ends included:
+   unsigned ones get the upper half of the range from wrapped negatives. *)
+let test_top_k_radix_ints () =
+  let ints dtype lo hi =
+    let st = Random.State.make [| 11 |] in
+    Nx.cast dtype
+      (Nx.init Nx.int64 [| 3; 2500 |] (fun _ ->
+           match Random.State.int st 8 with
+           | 0 -> lo
+           | 1 -> hi
+           | 2 -> Int64.of_int (Random.State.int st 5)
+           | _ -> Random.State.int64 st hi))
+  in
+  let each_sign dtype width =
+    let hi = Int64.pred (Int64.shift_left 1L (width - 1)) in
+    ints dtype (Int64.neg (Int64.succ hi)) hi
+  in
+  check_every_k ~msg:"int8" (each_sign Nx.int8 8);
+  check_every_k ~msg:"int16" (each_sign Nx.int16 16);
+  check_every_k ~msg:"int32" (each_sign Nx.int32 32);
+  check_every_k ~msg:"int64" (ints Nx.int64 Int64.min_int Int64.max_int);
+  check_every_k ~msg:"uint8" (each_sign Nx.uint8 8);
+  check_every_k ~msg:"uint16" (each_sign Nx.uint16 16);
+  check_every_k ~msg:"uint32" (each_sign Nx.uint32 32);
+  check_every_k ~msg:"uint64" (ints Nx.uint64 Int64.min_int Int64.max_int);
+  check_every_k ~msg:"bool" (ints Nx.bool 0L 1L)
+
+(* Fewer than [k] numbers: every number, then the NaN in position order. *)
+let test_top_k_radix_mostly_nan () =
+  let t =
+    Nx.init Nx.float32 [| 2; 2600 |] (fun i ->
+        if i.(1) * 7 mod 5 = 0 then float_of_int (i.(1) mod 3) else Float.nan)
+  in
+  check_sorted_prefix ~msg:"NaN fill the last places" ~k:1300 t;
+  let t = Nx.full Nx.float32 [| 1; 40 |] Float.nan in
+  check_sorted_prefix ~msg:"all NaN" ~k:20 t
+
+let test_top_k_radix_ties () =
+  check_sorted_prefix ~msg:"one value" ~k:17 (Nx.full Nx.int32 [| 2; 2300 |] 4l);
+  let t =
+    Nx.init Nx.float32 [| 2; 2300 |] (fun i ->
+        if i.(1) mod 2 = 0 then 1. else 0.)
+  in
+  check_sorted_prefix ~msg:"two values" ~k:1200 t
+
+(* Ties this many, taken this many times, count past int32; so many selected
+   entries are sorted. *)
+let test_top_k_radix_long_axis () =
+  let t =
+    Nx.init Nx.float32 [| 1; 50_000 |] (fun i ->
+        if i.(1) mod 1000 = 0 then 1. else 0.)
+  in
+  check_sorted_prefix ~msg:"k = n = 50000" ~k:50_000 t
+
+let test_top_k_radix_axes () =
+  let st = Random.State.make [| 3 |] in
+  let t =
+    Nx.init Nx.float32 [| 4; 2100; 3 |] (fun _ ->
+        float_of_int (Random.State.int st 50))
+  in
+  check_sorted_prefix ~msg:"middle axis" ~k:40 ~axis:1 t;
+  check_sorted_prefix ~msg:"first axis" ~k:3 ~axis:0 (Nx.transpose t);
+  let rows =
+    Nx.init Nx.float32 [| 2; 4; 2500 |] (fun _ ->
+        float_of_int (Random.State.int st 50))
+  in
+  check_sorted_prefix ~msg:"rows of a view" ~k:40
+    (Nx.slice [ Nx.A; Nx.R (0, 3); Nx.A ] rows);
+  let _, indices = Nx.top_k ~k:20 (Nx.zeros Nx.float32 [| 0; 40 |]) in
+  check_shape "empty batch" [| 0; 20 |] indices
+
 let test_top_k_invalid () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   check_invalid_arg "top_k k = 0" "top_k: k = 0 is outside [1, 3]" (fun () ->
@@ -324,6 +442,12 @@ let top_k_tests =
     test "top_k entries at the least value" test_top_k_least_values;
     test "top_k NaN" test_top_k_nan;
     test "top_k is a sorted prefix" test_top_k_is_a_sorted_prefix;
+    test "top_k radix select, floats" test_top_k_radix_floats;
+    test "top_k radix select, integers" test_top_k_radix_ints;
+    test "top_k radix select, mostly NaN" test_top_k_radix_mostly_nan;
+    test "top_k radix select, ties" test_top_k_radix_ties;
+    test "top_k radix select, a long axis" test_top_k_radix_long_axis;
+    test "top_k radix select, axes" test_top_k_radix_axes;
     test "top_k invalid arguments" test_top_k_invalid;
   ]
 

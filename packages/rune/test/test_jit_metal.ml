@@ -646,6 +646,43 @@ let test_scatter_duplicates_on_metal () =
       check_arr ~msg:name (to_arr (f t)) (Rune.jit' ~device:"METAL" f t))
     [ ("set", `Set); ("add", `Add) ]
 
+(* Radix selection on the GPU picks the positions eager does, NaN, both zeros
+   and both infinities included, with a run of ties at the threshold. *)
+let test_top_k_on_metal () =
+  let st = Random.State.make [| 9 |] in
+  let pool = [| Float.nan; -0.; 0.; Float.infinity; Float.neg_infinity |] in
+  let data =
+    Nx.init Nx.float64 [| 2; 4096 |] (fun _ ->
+        match Random.State.int st 4 with
+        | 0 -> pool.(Random.State.int st (Array.length pool))
+        | 1 -> float_of_int (Random.State.int st 5)
+        | _ -> Random.State.float st 8. -. 4.)
+  in
+  let check (type a b) name (x : (a, b) Nx.t) =
+    List.iter
+      (fun k ->
+        let indices x = Nx.cast f32 (snd (Nx.top_k ~k x)) in
+        check_arr
+          ~msg:(Printf.sprintf "%s top %d" name k)
+          (to_arr (indices x))
+          (Rune.jit' ~device:"METAL" indices x))
+      [ 17; 512; 2000 ]
+  in
+  check "float32" (Nx.cast f32 data);
+  check "bfloat16" (Nx.cast Nx.bfloat16 data);
+  check "int32"
+    (Nx.init Nx.int32 [| 2; 4096 |] (fun _ ->
+         Int32.of_int (Random.State.int st 200 - 100)));
+  (* The GPU flushes subnormals in arithmetic; the keys never pass through it,
+     so rows of zeros and subnormals rank as eagerly. *)
+  let tiny = [| 0.; -0.; 1e-45; -1e-45; 1e-40; 6e-8; 1e-39 |] in
+  let subnormals =
+    Nx.init Nx.float64 [| 2; 4096 |] (fun _ ->
+        tiny.(Random.State.int st (Array.length tiny)))
+  in
+  check "float32 subnormals" (Nx.cast f32 subnormals);
+  check "bfloat16 subnormals" (Nx.cast Nx.bfloat16 subnormals)
+
 (* Reading a strided view of a placed value copies bits: a signalling NaN and
    its payload survive the read, as they do for a contiguous one. *)
 let test_placed_view_keeps_nan_bits () =
@@ -668,6 +705,10 @@ let tests =
           test_scatter_duplicates_on_metal;
         test "bitcast reads on the GPU the bits eager reads"
           (check_bitcast_matches_eager ~device:"METAL");
+        slow "top_k over a row of 2^20 entries on the GPU"
+          (check_top_k_long_row ~device:"METAL");
+        slow "top_k selects on the GPU what it selects eagerly"
+          test_top_k_on_metal;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "multi-kernel traces replay as device graphs"
           test_graph_batched_replay;
