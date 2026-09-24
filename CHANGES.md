@@ -974,6 +974,10 @@ thread.
 
 ### Nx
 
+- Fix `Nx_io.load_safetensors` and `save_safetensors` corrupting Unicode and
+  control characters in tensor names. Decode JSON Unicode escapes and surrogate
+  pairs, emit valid JSON escapes, and reject malformed string escapes.
+
 - Add `Nx.Ptree.leaf`, the structure that is one tensor, for every dtype.
   Pass it for the single-tensor roles of a transformation that takes several
   structures, instead of writing a one-leaf module per tensor type.

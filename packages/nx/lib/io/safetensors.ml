@@ -26,12 +26,31 @@ module Json = struct
 
   (* Serialization *)
 
+  let quote s =
+    let buf = Buffer.create (String.length s + 2) in
+    Buffer.add_char buf '"';
+    String.iter
+      (function
+        | '"' -> Buffer.add_string buf "\\\""
+        | '\\' -> Buffer.add_string buf "\\\\"
+        | '\b' -> Buffer.add_string buf "\\b"
+        | '\012' -> Buffer.add_string buf "\\f"
+        | '\n' -> Buffer.add_string buf "\\n"
+        | '\r' -> Buffer.add_string buf "\\r"
+        | '\t' -> Buffer.add_string buf "\\t"
+        | c when Char.code c < 0x20 ->
+            Buffer.add_string buf (strf "\\u%04x" (Char.code c))
+        | c -> Buffer.add_char buf c)
+      s;
+    Buffer.add_char buf '"';
+    Buffer.contents buf
+
   let rec to_string = function
-    | `String s -> strf "\"%s\"" (String.escaped s)
+    | `String s -> quote s
     | `Int i -> string_of_int i
     | `List l -> "[" ^ String.concat ", " (List.map to_string l) ^ "]"
     | `Assoc kv ->
-        let pair (k, v) = strf "\"%s\": %s" (String.escaped k) (to_string v) in
+        let pair (k, v) = strf "%s: %s" (quote k) (to_string v) in
         "{" ^ String.concat ", " (List.map pair kv) ^ "}"
 
   (* Parsing *)
@@ -61,6 +80,40 @@ module Json = struct
     | Some ch -> raise (Parse_error (strf "expected '%c' got '%c'" c ch))
     | None -> raise (Parse_error (strf "expected '%c' got EOF" c))
 
+  let take p c =
+    match peek p with
+    | Some ch when ch = c -> advance p
+    | _ -> raise (Parse_error (strf "expected '%c'" c))
+
+  let hex4 p =
+    let value = ref 0 in
+    for i = 0 to 3 do
+      let digit =
+        match peek p with
+        | Some ('0' .. '9' as c) -> Char.code c - Char.code '0'
+        | Some ('a' .. 'f' as c) -> Char.code c - Char.code 'a' + 10
+        | Some ('A' .. 'F' as c) -> Char.code c - Char.code 'A' + 10
+        | _ -> raise (Parse_error (strf "invalid Unicode escape digit %d" (i + 1)))
+      in
+      value := (!value lsl 4) lor digit;
+      advance p
+    done;
+    !value
+
+  let unicode p =
+    let first = hex4 p in
+    if first >= 0xd800 && first <= 0xdbff then begin
+      take p '\\';
+      take p 'u';
+      let second = hex4 p in
+      if second < 0xdc00 || second > 0xdfff then
+        raise (Parse_error "invalid surrogate pair");
+      Uchar.of_int (0x10000 + ((first - 0xd800) lsl 10) + second - 0xdc00)
+    end
+    else if first >= 0xdc00 && first <= 0xdfff then
+      raise (Parse_error "unpaired low surrogate")
+    else Uchar.of_int first
+
   let parse_string p =
     expect p '"';
     let buf = Buffer.create 16 in
@@ -74,14 +127,21 @@ module Json = struct
           advance p;
           (match peek p with
           | None -> raise (Parse_error "unterminated escape")
-          | Some 'n' -> Buffer.add_char buf '\n'
-          | Some 'r' -> Buffer.add_char buf '\r'
-          | Some 't' -> Buffer.add_char buf '\t'
-          | Some (('"' | '\\') as c) -> Buffer.add_char buf c
-          | Some c -> Buffer.add_char buf c);
-          advance p;
+          | Some c ->
+              advance p;
+              match c with
+              | '"' | '\\' | '/' -> Buffer.add_char buf c
+              | 'b' -> Buffer.add_char buf '\b'
+              | 'f' -> Buffer.add_char buf '\012'
+              | 'n' -> Buffer.add_char buf '\n'
+              | 'r' -> Buffer.add_char buf '\r'
+              | 't' -> Buffer.add_char buf '\t'
+              | 'u' -> Buffer.add_utf_8_uchar buf (unicode p)
+              | _ -> raise (Parse_error "invalid escape"));
           loop ()
       | Some c ->
+          if Char.code c < 0x20 then
+            raise (Parse_error "unescaped control character");
           Buffer.add_char buf c;
           advance p;
           loop ()

@@ -1052,6 +1052,51 @@ let txt_tests =
     test "Load numpy-generated file" test_txt_load_numpy_fixture;
   ]
 
+let with_safetensors_header header f =
+  let path = temp_file "test_safetensors_header_" ".safetensors" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+      let prefix = Bytes.create 8 in
+      Bytes.set_int64_le prefix 0 (Int64.of_int (String.length header));
+      write_file_bytes path (Bytes.to_string prefix ^ header ^ "\042");
+      f path)
+
+let test_safetensors_json_escapes () =
+  let header =
+    {|{"\u0061\u00e9\uD83D\uDE80\"\\\/\b\f\r\n\t":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
+  in
+  with_safetensors_header header (fun path ->
+      let archive = Nx_io.load_safetensors path in
+      let name = "aé🚀\"\\/\b\012\r\n\t" in
+      equal (list string) [ name ] (Hashtbl.to_seq_keys archive |> List.of_seq);
+      let tensor = Hashtbl.find archive name |> Nx_io.to_typed Nx.uint8 in
+      equal (array int) [| 42 |] (Nx.to_array tensor))
+
+let test_safetensors_json_encoding () =
+  let path = temp_file "test_safetensors_unicode_" ".safetensors" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+      let name = "é🚀\000\001\b\012\r\n\t\"\\" in
+      Nx_io.save_safetensors path
+        [ (name, Nx_io.P (Nx.create Nx.uint8 [| 1 |] [| 42 |])) ];
+      let contents = read_file_bytes path in
+      let length = Int64.to_int (String.get_int64_le contents 0) in
+      let header = String.sub contents 8 length |> String.trim in
+      equal string
+        {|{"é🚀\u0000\u0001\b\f\r\n\t\"\\": {"dtype": "U8", "shape": [1], "data_offsets": [0, 1]}}|}
+        header;
+      let archive = Nx_io.load_safetensors path in
+      equal (list string) [ name ] (Hashtbl.to_seq_keys archive |> List.of_seq))
+
+let test_safetensors_invalid_json_strings () =
+  List.iter
+    (fun name ->
+      let header =
+        "{\"" ^ name ^ "\":{\"dtype\":\"U8\",\"shape\":[1],\"data_offsets\":[0,1]}}"
+      in
+      with_safetensors_header header (fun path ->
+          expect_failure (Printf.sprintf "invalid JSON string %S" name) (fun () ->
+              Nx_io.load_safetensors path)))
+    [ {|\ud800|}; {|\udc00|}; {|\ud800\u0041|}; {|\u12xz|}; {|\q|}; "a\001b" ]
+
 let test_safetensors_save_load () =
   let weights, embeddings =
     Nx.Rng.with_key (Nx.Rng.key 10) (fun () ->
@@ -1793,6 +1838,9 @@ let () =
         ];
       group "safetensors"
         [
+          test "Decode JSON string escapes" test_safetensors_json_escapes;
+          test "Encode Unicode and control characters" test_safetensors_json_encoding;
+          test "Reject invalid JSON strings" test_safetensors_invalid_json_strings;
           test "Save/load tensors" test_safetensors_save_load;
           test "Different dtypes" test_safetensors_different_dtypes;
           test "Float16 round-trip" test_safetensors_float16_roundtrip;
