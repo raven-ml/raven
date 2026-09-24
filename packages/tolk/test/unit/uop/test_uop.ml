@@ -2302,6 +2302,26 @@ let broadcast_shape_symbolic_and_raising () =
   in
   is_true ~msg:"distinct symbolic dims raise" raises_sym
 
+let inferred_broadcast_shapes_are_checked () =
+  let param slot dims = Uop.param ~slot ~dtype:Dtype.float32
+      ~shape:(Uop.stack dims) () in
+  let sum a b = Uop.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
+  let two = Uop.const_int 2 and three = Uop.const_int 3 in
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> ignore (Uop.shape
+      (sum (param 812 [ two ]) (param 813 [ three ]))));
+  let n = Uop.variable ~name:"shape_n" ~min_val:1 ~max_val:8 () in
+  let m = Uop.variable ~name:"shape_m" ~min_val:1 ~max_val:8 () in
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> ignore (Uop.shape
+      (sum (param 814 [ n ]) (param 815 [ m ]))));
+  let same = sum (param 814 [ n ]) (param 816 [ n ]) in
+  is_true (List.for_all2 Uop.equal [ n ] (Uop.shape same));
+  let empty = sum (param 817 [ Uop.const_int 0 ])
+      (param 818 [ Uop.const_int 1 ]) in
+  equal (list int) [ 0 ] (List.map (fun d -> Option.get (Uop.const_int_value d))
+      (Uop.shape empty))
+
 let unbind_splits_bound_variables () =
   let v = Uop.variable ~name:"sint_u" ~min_val:0 ~max_val:10 () in
   let bound = Uop.bind ~var:v ~value:(Uop.const_int 7) in
@@ -2474,6 +2494,7 @@ let () =
           test "smax/smin fold when bounds decide"
             smax_smin_fold_when_bounds_decide;
           test "sprod simplifies" sprod_simplifies;
+          test "Inferred broadcast shapes are checked" inferred_broadcast_shapes_are_checked;
           test "broadcast_shape handles symbolic dims and raises"
             broadcast_shape_symbolic_and_raising;
           test "unbind splits bound variables"

@@ -1977,40 +1977,22 @@ let require_shrink op src_shape offsets sizes =
         invalid_shape op "slice extends past the input shape")
     src_shape (List.combine offsets sizes)
 
-(* Lenient variant used by shape inference on elementwise nodes: never raises
-   on incompatible dimensions, keeping the first candidate instead. The
-   checked, raising variant lives below as [broadcast_shape]. *)
-let rec lenient_broadcast_shape shapes =
-  let rec last = function
-  | [] -> None
-  | [ x ] -> Some x
-  | _ :: xs -> last xs
+let broadcast_shape shapes =
+  let rank = List.fold_left (fun rank shape -> max rank (List.length shape)) 0 shapes in
+  let shapes = List.map (fun shape ->
+      List.init (rank - List.length shape) (fun _ -> dim_one) @ shape) shapes in
+  let same_dim a b =
+    equal a b || match const_int_value a, const_int_value b with
+    | Some x, Some y -> x = y
+    | _ -> false
   in
-  let rec drop_last = function
-  | [] | [ _ ] -> []
-  | x :: xs -> x :: drop_last xs
-  in
-  match List.filter (( <> ) []) shapes with
-  | [] -> []
-  | shapes ->
-    let tails = List.filter_map last shapes in
-    let dim =
-      List.fold_left
-        (fun acc d ->
-          match acc with
-          | None -> Some d
-          | Some a when equal a d -> Some a
-          | Some a when dim_is_one a -> Some d
-          | Some a when dim_is_one d -> Some a
-          | Some a -> Some a)
-        None tails
-    in
-    let prefixes = List.map drop_last shapes in
-    let prefix =
-      if List.for_all (( = ) []) prefixes then []
-      else lenient_broadcast_shape prefixes
-    in
-    match dim with None -> prefix | Some d -> prefix @ [ d ]
+  List.init rank (fun axis ->
+      List.fold_left (fun chosen shape ->
+          let dim = List.nth shape axis in
+          if dim_is_one chosen then dim
+          else if dim_is_one dim || same_dim chosen dim then chosen
+          else invalid_arg "Uop.broadcast_shape: shapes cannot be broadcast")
+        dim_one shapes)
 
 let as_shape u =
   match op u with
@@ -2096,7 +2078,7 @@ and compute_shape_opt u =
       if Dtype.equal (dtype u) void_dtype then None
       else
         let shapes = Array.to_list srcs |> List.filter_map shape_opt in
-        if shapes = [] then None else Some (lenient_broadcast_shape shapes)
+        if shapes = [] then None else Some (broadcast_shape shapes)
   | Ops.Noop ->
       if Array.length srcs = 0 then None else shape_opt srcs.(0)
   | Ops.Gettuple ->
@@ -2176,7 +2158,7 @@ and compute_shape_opt u =
         match (shape_opt srcs.(0), shape_opt srcs.(1), shape_opt srcs.(2)) with
         | Some s0, Some s1, Some s2 when s2 <> [] ->
             Some
-              (lenient_broadcast_shape
+              (broadcast_shape
                  [ drop_last s0; drop_last s1; drop_last s2 ]
               @ [ List.nth s2 (List.length s2 - 1) ])
         | _ -> None
@@ -2277,8 +2259,7 @@ and compute_shape_opt u =
   | op when Ops.Group.is_unary op || op = Ops.Cast || op = Ops.Load ->
       first_shape ()
   | op when Ops.Group.is_broadcastable op ->
-      let shapes = Array.to_list srcs |> List.filter_map shape_opt in
-      if shapes = [] then None else Some (lenient_broadcast_shape shapes)
+      Some (broadcast_shape (Array.to_list srcs |> List.map shape))
   | _ -> None
 
 (* A reshape to [src]'s own shape is [src]. Indexing through the no-op node
@@ -3007,27 +2988,6 @@ let smin = function
               (neg x) xs))
 
 let sprod dims = simplify (dim_prod dims)
-
-let broadcast_shape shapes =
-  let max_dim = List.fold_left (fun a s -> max a (List.length s)) 0 shapes in
-  let aligned =
-    List.map
-      (fun s -> List.init (max_dim - List.length s) (fun _ -> dim_one) @ s)
-      shapes
-  in
-  List.init max_dim (fun idx ->
-      let col = List.map (fun s -> List.nth s idx) aligned in
-      let dim =
-        if List.exists (fun d -> const_int_value d = Some 0) col then
-          const_int 0
-        else smax col
-      in
-      List.iter
-        (fun s ->
-          if not (equal s dim || dim_is_one s) then
-            invalid_arg "Uop.broadcast_shape: shapes cannot be broadcast")
-        col;
-      dim)
 
 let unbind u =
   match op u, src u with

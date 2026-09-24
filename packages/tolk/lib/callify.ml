@@ -35,17 +35,12 @@ let shape_node dims =
   match List.map index_ dims with [ d ] -> d | ds -> U.stack ds
 
 let concrete_shape n =
-  try
-    let dims = U.shape n in
-    let rec loop acc = function
-      | [] -> Some (List.rev acc)
-      | dim :: dims -> (
-          match U.const_int_value dim with
-          | Some d -> loop (d :: acc) dims
-          | None -> None)
-    in
-    loop [] dims
-  with Invalid_argument _ -> None
+  let rec loop acc = function
+    | [] -> Some (List.rev acc)
+    | dim :: dims ->
+        Option.bind (U.const_int_value dim) (fun d -> loop (d :: acc) dims)
+  in
+  Option.bind (U.shape_opt n) (loop [])
 
 (* Address space of an input buffer replaced by a PARAM: the node's own
    address space, defaulting to global for nodes that carry none (a BIND, a
@@ -103,9 +98,6 @@ let shrink_pairs n =
        | _ -> None)
   | _ -> None
 
-let map_order xs order =
-  try Some (List.map (List.nth xs) order) with Failure _ -> None
-
 (* Follow movement ops (not MULTI, not DETACH) plus DETACH to the
    underlying node.  Equivalent to tinygrad's UOp.multibase. *)
 let rec multibase x =
@@ -127,79 +119,14 @@ let dont_realize = function
   | Ops.Const | Ops.Buffer | Ops.Param | Ops.Bind | Ops.After -> true
   | _ -> false
 
-let compute_shapes root =
-  let cache = U.Ref_tbl.create 64 in
-  let rec shape n =
-    match U.Ref_tbl.find_opt cache n with
-    | Some s -> s
-    | None ->
-        let s =
-          match U.op n with
-          | Ops.Buffer ->
-              (match (U.as_buffer n : U.buffer_view option) with
-               | Some { shape; _ } ->
-                   (match const_ints shape with
-                    | Some _ as s -> s
-                    | None -> None)
-               | _ -> None)
-          | Ops.Param ->
-              (match (U.as_param n : U.param_view option) with
-               | Some { shape; _ } ->
-                   (match const_ints shape with
-                    | Some _ as s -> s
-                    | None -> None)
-               | _ -> None)
-          | Ops.Slice ->
-              Option.map (fun (v : U.slice_view) -> [ v.size ]) (U.as_slice n)
-          | Ops.Reshape ->
-              (match src1 n with Some sh -> const_ints sh | None -> None)
-          | Ops.Expand ->
-              (* EXPAND's argument is the leading axes it prepends, not the
-                 whole shape: the full shape is [arg_dims @ source_dims]. *)
-              (match src1 n, Option.bind (src0 n) shape with
-               | Some sh, Some src_dims ->
-                   Option.map (fun prepend -> prepend @ src_dims) (const_ints sh)
-               | _ -> None)
-          | Ops.Pad ->
-              (match U.children n with
-               | [ _src; _offset; size ] -> const_ints size
-               | _ -> None)
-          | Ops.Shrink ->
-              (match shrink_pairs n with
-               | Some pairs -> Some (List.map snd pairs)
-               | None -> Option.bind (src0 n) shape)
-          | Ops.Permute ->
-              let order = match U.arg n with U.Arg.Ints i -> i | _ -> [] in
-              Option.bind (Option.bind (src0 n) shape) (fun s ->
-                map_order s order)
-          | Ops.Flip ->
-              Option.bind (src0 n) shape
-          | Ops.Unshard ->
-              (* A MULTI presents the global shape: [U.shape] multiplies the
-                 shard axis of its per-shard source back up by the device
-                 count, whatever form the source takes (a symbolic
-                 [_device_num] view or a per-shard buffer). *)
-              concrete_shape n
-          | Ops.Detach | Ops.Contiguous | Ops.Contiguous_backward
-          | Ops.After ->
-              Option.bind (src0 n) shape
-          | _ -> concrete_shape n
-        in
-        U.Ref_tbl.add cache n s;
-        s
-  in
-  ignore (shape root);
-  shape
-
 (* Shrink [src] to [target_shape].  Each dimension is kept from 0 to
    the target size — a no-op when shapes already match. *)
-let shrink_to shapes src target_shape =
-  match shapes src with
-  | Some s when s = target_shape -> src
-  | _ ->
-      let before = shape_node (List.map (fun _ -> 0) target_shape) in
-      let size = shape_node target_shape in
-      U.shrink ~src ~offset:before ~size
+let shrink_to src target_shape =
+  if List.equal U.equal (U.shape src) target_shape then src
+  else
+    let offset = shape_node (List.map (fun _ -> 0) target_shape) in
+    let size = match target_shape with [ d ] -> d | ds -> U.stack ds in
+    U.shrink ~src ~offset ~size
 
 (* If movement ops on [src] collapse to a contiguous range backed by a
    buffer, return the element offset.  Returns [None] when the view is
@@ -326,10 +253,7 @@ let buffer_like ctx src dtype =
   | None ->
       (* Symbolic shape: allocate at the maximum size and shrink the view
          down to the symbolic shape. *)
-      let dims =
-        try U.shape src
-        with Invalid_argument _ -> failwith "buffer_like: unknown shape"
-      in
+      let dims = U.shape src in
       let dev = match ctx.devices src with
         | Some d -> d | None -> failwith "buffer_like: unknown device" in
       let max_shape = List.map (fun dim -> Bound.to_int (U.vmax dim)) dims in
@@ -363,7 +287,7 @@ let buffer_like ctx src dtype =
   in
   (* Shrink to actual shard shape when it differs from max shard shape.
      For evenly divisible axes this is a no-op. *)
-  let buf = shrink_to ctx.shapes buf shard_shape in
+  let buf = shrink_to buf (List.map index_ shard_shape) in
   match axis with
   | Some ax when ndev > 1 -> U.multi ~src:buf ~axis:ax
   | _ -> buf
@@ -507,8 +431,8 @@ let contig_to_store_after ctx node =
       let has_dev = ctx.devices src <> None in
       if not has_dev then None
       else
-        let shape = match ctx.shapes src with Some s -> s | None -> [] in
-        if shape_prod shape = 0 then Some src
+        if List.exists (fun dim -> U.const_int_value dim = Some 0) (U.shape src)
+        then Some src
         else begin
           let dtype = U.commit_dtype node in
           let buf = buffer_like ctx src dtype in
@@ -540,9 +464,7 @@ let pm_finalize ctx node =
            let replace_uop = base_through_after node in
            List.iter (fun t ->
              let original = Hashtbl.find ctx.uop_tbl t in
-             let original_shape =
-               match ctx.shapes original with Some s -> s | None -> [] in
-             let buf = shrink_to ctx.shapes replace_uop original_shape in
+             let buf = shrink_to replace_uop (U.shape original) in
              Hashtbl.replace ctx.buffer_map (U.tag original) buf)
              tag_indices
        | None -> ());
@@ -613,7 +535,7 @@ let pm_replace_buf ctx node =
 (* Entry point *)
 
 let transform_to_call (big_sink : U.t) : U.t * (int, U.t) Hashtbl.t =
-  let shapes = compute_shapes big_sink in
+  let shapes = concrete_shape in
   let devices = U.device_of in
   let bases = Hashtbl.create 16 in
   (match U.op big_sink with

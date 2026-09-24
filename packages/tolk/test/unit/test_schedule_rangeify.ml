@@ -1119,11 +1119,27 @@ let symbolic_variable_tests =
           equal (list string) [ "start_pos" ] var_names);
     ]
 
+let shape_queries_release_graphs () =
+  let weak = Stdlib.Weak.create 1 in
+  let[@inline never] populate () =
+    let p = U.param ~slot:898127 ~dtype:D.float32
+        ~shape:(U.stack [ U.const_int 4; U.const_int 8 ]) () in
+    let view = U.permute ~src:p ~order:[ 1; 0 ] in
+    ignore (Rangeify.detect_expanded view);
+    Stdlib.Weak.set weak 0 (Some view)
+  in
+  populate ();
+  Gc.full_major ();
+  Gc.full_major ();
+  is_false ~msg:"shape queries do not retain the tensor graph"
+    (Stdlib.Weak.check weak 0)
+
 (* Main *)
 
 let () =
   run "Schedule.Rangeify"
     [
+      test "Shape queries release graphs" shape_queries_release_graphs;
       is_always_contiguous_tests;
       new_range_tests;
       range_helper_tests;

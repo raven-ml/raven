@@ -118,6 +118,14 @@ let bitcast_tests =
 let reduce_tests =
   group "reduce"
     [
+      test "padding an empty slice preserves its rank" (fun () ->
+          let empty = Mv.shrink (vec [| 7. |]) [ (0, 0) ] in
+          check_floats [| 0.; 0.; 0. |] (Mv.pad empty [ (1, 2) ]));
+      test "reducing an empty axis preserves the remaining axes" (fun () ->
+          let empty = Mv.shrink (fa ~shape:[ 1; 2 ] [| 7.; 8. |])
+              [ (0, 0); (0, 2) ] in
+          check_floats [| 0.; 0.; 0.; 0. |]
+            (Mv.pad (Rd.sum ~axis:[ 0 ] empty) [ (1, 1) ]));
       test "weak reductions preserve values beyond int32" (fun () ->
           let large = 1 lsl 40 in
           let input = Mv.expand (Mv.reshape (T.i large) [ 1 ]) [ 3 ] in

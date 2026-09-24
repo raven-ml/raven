@@ -120,8 +120,7 @@ let shape_expr_of ?shape_exprs ~shapes u =
   let fallback () =
     match shapes u with
     | Some sh -> Some (List.map idx sh)
-    | None ->
-        try Some (U.shape u) with Invalid_argument _ -> None
+    | None -> U.shape_opt u
   in
   match shape_exprs with
   | Some shape_exprs ->
@@ -141,10 +140,7 @@ type indexing_context = {
   mutable range_idx : int;
 }
 
-let default_shape_exprs u =
-  try Some (U.shape u) with Invalid_argument _ -> None
-
-let create_context ?(shape_exprs = default_shape_exprs) () = {
+let create_context ?(shape_exprs = U.shape_opt) () = {
   realize_map = Hashtbl.create 256;
   non_removable = Hashtbl.create 16;
   range_map = Hashtbl.create 256;

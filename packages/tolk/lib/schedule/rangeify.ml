@@ -46,215 +46,16 @@ let movement_src u =
 
 let is_movement u = Option.is_some (movement_src u)
 
-let rec shape_of_node n =
-  match U.op n with
-  | Ops.Const ->
-      (match U.arg n with
-       | U.Arg.Value v ->
-           (match Const.view v with
-            | Const.Int i -> Some [ Z.to_int i ]
-            | _ -> None)
-       | _ -> None)
-  | Ops.Stack ->
-      let rec collect = function
-        | [] -> Some []
-        | x :: xs ->
-            (match shape_of_node x with
-             | Some [ v ] -> Option.map (fun r -> v :: r) (collect xs)
-             | _ -> None)
-      in
-      collect (src_list n)
-  | _ -> None
+let shape_expr_of = U.shape_opt
 
-let shape_expr_of_node n =
-  match U.op n with
-  | Ops.Const ->
-      (match U.const_int_value n with Some _ -> Some [ n ] | None -> None)
-  | Ops.Stack -> Some (U.children n)
-  (* A symbolic integer expression is a rank-1 shape argument. *)
-  | _ -> if Dtype.is_int (U.dtype n) then Some [ n ] else None
-
-let map_order shape order =
-  if List.length shape < List.length order then None
-  else
-    try Some (List.map (List.nth shape) order) with Failure _ -> None
-
-let combine_same_rank a b =
-  if List.length a = List.length b then Some (List.combine a b) else None
-
-let broadcast_shape shapes =
-  let shapes = List.filter (fun s -> s <> []) shapes in
-  match shapes with
-  | [] -> Some []
-  | first :: rest ->
-      let rank =
-        List.fold_left
-          (fun acc s -> max acc (List.length s))
-          (List.length first) rest
-      in
-      let align s = List.init (rank - List.length s) (fun _ -> 1) @ s in
-      let shapes = List.map align shapes in
-      Some
-        (List.init rank (fun i ->
-             List.fold_left
-               (fun acc s ->
-                 let d = List.nth s i in
-                 if d = 0 then 0
-                 else if acc = 1 then d
-                 else if d = 1 || d = acc then acc
-                 else max acc d)
-               1 shapes))
-
-let is_one_expr u = match U.const_int_value u with Some 1 -> true | _ -> false
-
-let broadcast_shape_expr shapes =
-  let shapes = List.filter (fun s -> s <> []) shapes in
-  match shapes with
-  | [] -> Some []
-  | first :: rest ->
-      let rank =
-        List.fold_left
-          (fun acc s -> max acc (List.length s))
-          (List.length first) rest
-      in
-      let align s = List.init (rank - List.length s) (fun _ -> int_ 1) @ s in
-      let shapes = List.map align shapes in
-      Some
-        (List.init rank (fun i ->
-             List.fold_left
-               (fun acc s ->
-                 let d = List.nth s i in
-                 if is_one_expr acc then d
-                 else if is_one_expr d || U.equal d acc then acc
-                 else d)
-               (int_ 1) shapes))
-
-(* [shape_of] and [shape_expr_of] recurse into every child, so on a shared DAG
-   a naive walk re-descends the same subgraph once per path and blows up
-   exponentially. Both are pure functions of a hash-consed node, so memoise on
-   node identity — mirroring the node-keyed caches in [Uop]. *)
-let shape_of_cache : int list option U.Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> U.Ref_tbl.create 256)
-
-let rec shape_of n =
-  let shape_of_cache = Domain.DLS.get shape_of_cache in
-  match U.Ref_tbl.find_opt shape_of_cache n with
-  | Some r -> r
-  | None ->
-      let r = compute_shape_of n in
-      U.Ref_tbl.add shape_of_cache n r;
-      r
-
-and compute_shape_of n =
-  match U.op n with
-  | Ops.Param | Ops.Buffer ->
-      (match U.children n with shape :: _ -> shape_of_node shape | [] -> None)
-  | Ops.Reshape -> shape_of_node (U.src n).(1)
-  | Ops.Expand ->
-      (* EXPAND prepends its argument dims to the source shape. *)
-      (match shape_of_node (U.src n).(1), shape_of (src0 n) with
-       | Some prepend, Some src -> Some (prepend @ src)
-       | _ -> None)
-  | Ops.Pad | Ops.Shrink ->
-      (* The result shape is the size argument alone: the offset only says
-         where the window sits, so a symbolic one (a shard offset, say) leaves
-         the shape fully determined. *)
-      (match shape_of (src0 n), shape_of_node (U.src n).(2) with
-       | Some _, (Some _ as size) -> size
-       | _ -> None)
-  | Ops.Permute ->
-      let order = match U.arg n with U.Arg.Ints i -> i | _ -> [] in
-      Option.bind (shape_of (src0 n)) (fun s -> map_order s order)
-  | Ops.Flip -> shape_of (src0 n)
-  | Ops.Reduce ->
-      (* Reduced axes are permuted to the front, so the output shape drops
-         the leading [num_axes]. *)
-      (match U.as_reduce n, shape_of (src0 n) with
-       | Some { num_axes; _ }, Some s ->
-           Some (List.filteri (fun i _ -> i >= num_axes) s)
-       | _ -> None)
-  | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
-  | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End
-  | Ops.Mselect | Ops.Mstack | Ops.Allreduce ->
-      if Array.length (U.src n) = 0 then None else shape_of (src0 n)
-  | Ops.Unshard ->
-      (* The sharding axis covers all devices: inner size times device
-         count. *)
-      let ndev =
-        match U.device_of n with
-        | Some (Multi ds) -> List.length ds
-        | _ -> 1
-      in
-      let axis = match U.arg n with U.Arg.Int a -> a | _ -> 0 in
-      Option.map
-        (List.mapi (fun i s -> if i = axis then s * ndev else s))
-        (shape_of (src0 n))
-  | Ops.Const -> Some []
-  | op when Ops.Group.is_elementwise op ->
-      (* An operand whose shape is unknown makes the result unknown. Dropping
-         it and broadcasting the rest would report the surviving operand's
-         shape, which is a confident answer to a question this pass could not
-         answer. *)
-      let child_shapes = List.map shape_of (U.children n) in
-      if List.exists Option.is_none child_shapes then None
-      else broadcast_shape (List.filter_map Fun.id child_shapes)
-  | _ ->
-      (* Ops with no rule above — a LOAD, an INDEX, the ranges under them —
-         still carry a shape on the node itself. *)
-      (try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape n)) with Invalid_argument _ -> None)
-
-let shape_expr_of_cache : U.t list option U.Ref_tbl.t = U.Ref_tbl.create 256
-
-let rec shape_expr_of n =
-  match U.Ref_tbl.find_opt shape_expr_of_cache n with
-  | Some r -> r
-  | None ->
-      let r = compute_shape_expr_of n in
-      U.Ref_tbl.add shape_expr_of_cache n r;
-      r
-
-and compute_shape_expr_of n =
-  match U.op n with
-  | Ops.Param | Ops.Buffer ->
-      (match U.children n with
-       | shape :: _ -> shape_expr_of_node shape
-       | [] -> None)
-  | Ops.Reshape -> shape_expr_of_node (U.src n).(1)
-  | Ops.Expand ->
-      (* EXPAND prepends its argument dims to the source shape. *)
-      (match shape_expr_of_node (U.src n).(1), shape_expr_of (src0 n) with
-       | Some prepend, Some src -> Some (prepend @ src)
-       | _ -> None)
-  | Ops.Pad | Ops.Shrink ->
-      (match shape_expr_of (src0 n), shape_expr_of_node (U.src n).(2) with
-       | Some _, (Some _ as size) -> size
-       | _ -> None)
-  | Ops.Permute ->
-      let order = match U.arg n with U.Arg.Ints i -> i | _ -> [] in
-      Option.bind (shape_expr_of (src0 n)) (fun s -> map_order s order)
-  | Ops.Flip -> shape_expr_of (src0 n)
-  | Ops.Reduce ->
-      (match U.as_reduce n, shape_expr_of (src0 n) with
-       | Some { num_axes; _ }, Some s ->
-           Some (List.filteri (fun i _ -> i >= num_axes) s)
-       | _ -> None)
-  | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
-  | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End
-  | Ops.Mstack | Ops.Mselect | Ops.Allreduce ->
-      if Array.length (U.src n) = 0 then None else shape_expr_of (src0 n)
-  | op when Ops.Group.is_elementwise op ->
-      (* As in [compute_shape_of]: unknown in, unknown out. *)
-      let child_shapes = List.map shape_expr_of (U.children n) in
-      if List.exists Option.is_none child_shapes then None
-      else broadcast_shape_expr (List.filter_map Fun.id child_shapes)
-  | _ -> (
-      match shape_of n with
-      | Some sh -> Some (List.map int_ sh)
-      | None -> (
-          (* Symbolic dimensions (e.g. a SHRINK sized by a variable) are
-             invisible to the concrete [shape_of]; fall back to the
-             expression-level shape. *)
-          try Some (U.shape n) with Invalid_argument _ -> None))
+let shape_of n =
+  let rec concrete = function
+    | [] -> Some []
+    | dim :: rest ->
+        Option.bind (U.const_int_value dim) (fun value ->
+            Option.map (fun dims -> value :: dims) (concrete rest))
+  in
+  Option.bind (U.shape_opt n) concrete
 
 let argsort order =
   List.map snd (List.sort compare (List.mapi (fun i o -> (o, i)) order))
@@ -755,6 +556,10 @@ let expand_bitcast bc =
       Some (U.bitcast ~src:repacked ~dtype:(U.dtype bc))
 
 let earliest_rewrites =
+  let shaped_const n value =
+    let dims = match U.shape n with [ d ] -> d | ds -> U.stack ds in
+    U.expand ~src:(U.const value) ~dims
+  in
   U.first_match
     [ pm_mop_through_index;
       pm_mop_past_after; pm_mop_past_end;
@@ -901,14 +706,14 @@ let earliest_rewrites =
          | Some { src; op; _ } ->
              (match shape_of src, shape_of n with
               | Some s, Some t when List.mem 0 s && not (List.mem 0 t) ->
-                  Some (U.const (identity_of op (U.dtype n)))
+                  Some (shaped_const n (identity_of op (U.dtype n)))
               | _ -> None)
          | None -> None);
       (fun n ->
         if U.op n = Ops.Sink then None
         else match shape_of n with
           | Some s when List.mem 0 s ->
-              Some (U.const (Const.zero (U.dtype n)))
+              Some (shaped_const n (Const.zero (U.dtype n)))
           | _ -> None);
     ]
 

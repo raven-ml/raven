@@ -379,6 +379,12 @@ thread.
 
 ### Tolk (new)
 
+- Scheduling uses `Uop.shape_opt` for shape inference, preserving symbolic
+  extents and bitcast sizes. Incompatible broadcast dimensions raise an error
+  instead of silently selecting an operand’s dimension.
+- Empty slices and reductions preserve their output shape during scheduling,
+  so padding and ring allreduce can consume zero-sized chunks.
+
 - `Uop.call_info.dtype` declares a call’s scalar return type. C renderers
   support indirect host calls with typed arguments and preserve calls inside
   their enclosing loops.

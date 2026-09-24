@@ -34,7 +34,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   UNSHARD and the corresponding COPY/CALL/WMMA spec rules with their producers.
 - Port final weak commitment/lowering and remaining symbolic rules.
 - Centralize shape, numel, range and backward-slice properties. Remove parallel
-  reconstruction and silent guesses in broadcast, callify, indexing, stage
+  reconstruction and silent guesses in view offsets, stage
   buffer sizes, renderer widths, range metadata and OS detection.
 - Measure rewrite performance and long-lived memory use with weak node caches.
 
