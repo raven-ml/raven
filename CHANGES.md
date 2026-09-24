@@ -379,6 +379,9 @@ thread.
 
 ### Tolk (new)
 
+- Backends that emulate 64-bit integers reject unsupported scalar runtime
+  variables by name instead of silently narrowing their bindings to 32 bits.
+
 - `Device.Buffer.allocate` refuses a buffer with no bytes with
   `Invalid_argument`. Metal raised "Metal OOM while allocating buffer" for it.
 - Add `Op.block_matmul`: each block of rows times the matrix of a stack its id

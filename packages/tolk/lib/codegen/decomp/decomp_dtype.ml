@@ -376,6 +376,12 @@ let rule_long_defines =
     let n = bs $ "n" in
     let dt = Uop.dtype n in
     if not (is_long_dtype dt) then None
+    else if Uop.addrspace n = Some Dtype.Alu then
+      let name = match Uop.arg n with
+        | Uop.Arg.Param_arg { name = Some name; _ } -> name
+        | _ -> "<unnamed>" in
+      invalid_arg (Printf.sprintf
+        "long decomposition of variable %S is unsupported" name)
     else
       let narrow = long_to_int_dtype dt in
       let arg =

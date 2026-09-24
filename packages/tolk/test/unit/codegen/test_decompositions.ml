@@ -136,6 +136,21 @@ let rewrite_long_half tag u =
     (Upat.Pattern_matcher.rewrite Decomp_dtype.pm_long_decomp)
     (Uop.with_tag tag u)
 
+let emulation_renderer unsupported =
+  Renderer.make ~name:"emulation" ~device:"TEST" ~has_local:false
+    ~has_shared:false ~shared_max:0
+    ~supports_dtype:(fun dtype -> not (List.mem dtype unsupported))
+    ~render:(fun ?name:_ _ -> "") ()
+
+let long_scalar_variables_are_rejected () =
+  List.iter (fun dtype ->
+      let variable = Uop.variable ~name:"length" ~min_val:0
+          ~max_val:4294967297 ~dtype () in
+      let renderer = emulation_renderer [ Dtype.int64; Dtype.uint64 ] in
+      raises (Invalid_argument "long decomposition of variable \"length\" is unsupported")
+        (fun () -> ignore (Decomp_dtype.do_dtype_decomps renderer variable)))
+    [ Dtype.int64; Dtype.uint64 ]
+
 let mul_long_decomposes () =
   let a = Uop.const (Const.int64 Dtype.int64 0x1234567890abcdefL) in
   let b = Uop.const (Const.int64 Dtype.int64 0xfedcba9876543210L) in
@@ -176,7 +191,7 @@ let cast_long_to_int_decomposes () =
 
 let bitcast_long_to_long_decomposes () =
   let a =
-    Uop.variable ~name:"a" ~min_val:0 ~max_val:100 ~dtype:Dtype.int64 ()
+    Uop.const (Const.int64 Dtype.int64 0x123456789L)
   in
   let b = Uop.bitcast ~src:a ~dtype:Dtype.uint64 in
   let half tag =
@@ -304,7 +319,7 @@ let float_to_long_high_half_uses_reciprocal () =
 
 let long_variable_shl_uses_native_shift () =
   let x =
-    Uop.variable ~name:"x" ~min_val:0 ~max_val:100 ~dtype:Dtype.int64 ()
+    Uop.const (Const.int64 Dtype.int64 0x123456789L)
   in
   let s =
     Uop.variable ~name:"s" ~min_val:0 ~max_val:31 ~dtype:Dtype.int32 ()
@@ -316,7 +331,7 @@ let long_variable_shl_uses_native_shift () =
 
 let long_variable_shr_uses_native_shift () =
   let x =
-    Uop.variable ~name:"x" ~min_val:0 ~max_val:100 ~dtype:Dtype.int64 ()
+    Uop.const (Const.int64 Dtype.int64 0x123456789L)
   in
   let s =
     Uop.variable ~name:"s" ~min_val:0 ~max_val:31 ~dtype:Dtype.int32 ()
@@ -818,7 +833,9 @@ let () =
       group "prng"
         [ test "threefry2x32 is uint64" threefry_produces_uint64 ];
       group "long decomposition"
-        [ test "MUL lowers" mul_long_decomposes;
+        [ test "scalar variables fail instead of narrowing their binding"
+            long_scalar_variables_are_rejected;
+          test "MUL lowers" mul_long_decomposes;
           test "IDIV lowers" idiv_long_decomposes;
           test "MOD lowers" mod_long_decomposes;
           test "CAST float->long lowers" cast_float_to_long_decomposes;

@@ -63,8 +63,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   Preserve WARP dimensions and symbolic extents.
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
   Preserve access flags and volatile metadata during coalescing.
-- Port spec-safe long and compact-float load/store emulation, long scalar
-  variable rejection and weak-constant splitting. Use float32 arithmetic for
+- Port spec-safe long and compact-float load/store emulation and weak-constant
+  splitting. Use float32 arithmetic for
   FP8 emulation and port the remaining division/modulo and transcendental fixes
   under live spec verification; remove superseded casts at the owning pass.
 - Render host-call ABI, volatile parameters, void loops and final constants.
