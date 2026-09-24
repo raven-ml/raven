@@ -6,75 +6,85 @@
 (** Gradient-descent optimizers.
 
     Vega is the optimizer layer of the Raven ecosystem. Its primary surface is
-    {e structural}: optimizers step whole parameter structures — any type
-    implementing {!Nx.Ptree.S}. Optimizer state has the shape of the parameters
+    {e structural}: optimizers step whole parameter structures, any value with
+    an {!Nx.Ptree.t}. Optimizer state has the shape of the parameters
     themselves: each algorithm keeps its per-parameter accumulators as values of
     the user's own structure type, in a small record the training loop threads
-    explicitly ({!type:sgd_state}, {!type:adam_state}). Steps are pure
-    traversals — a step consumes a state and returns the next one — so a
-    training step is an ordinary function of [(params, state)], and
-    checkpointing an optimizer means saving a record of parameter-shaped values.
+    explicitly ({!type:sgd_state}, {!type:adam_state}). Steps are pure: a step
+    takes a state and returns the next one, so a training step is an ordinary
+    function of [(params, state)], and checkpointing an optimizer means saving a
+    record of parameter-shaped values.
 
     There is no optimizer object; composition is function application. Transform
     gradients before the step (for example {!clip_by_global_norm}) and derive
     the step's learning rate from the state's step counter with a schedule
-    ({!Schedule}). Because optimizer state is itself a parameter tree
-    ({!Adam_state}, {!Sgd_state}), a whole training step — forward, backward and
-    update — is an ordinary function of [(params, state)] that threads both
-    through one {!Rune.val-jit} call, so the step compiles into a single program
-    on any device and the state rides it as ordinary input and output leaves:
+    ({!Schedule}). Each state record is a structure itself ({!adam_ptree},
+    {!sgd_ptree}), so a whole training step (forward, backward and update) is
+    one function of [(params, state)] that one {!Rune.val-jit} call compiles
+    into a single program on any device, the state riding it as ordinary
+    argument and result leaves:
 
     {[
-    module Opt = Vega.Adam_state (Model)
-
-    module State = struct
-      type t = { params : Model.t; opt : Opt.t; loss : Nx.float32_t }
-
-      (* map/map2/iter: one-line delegations to [Model] and [Opt] over the
-         fields — or [@@deriving ptree] with ppx_ptree. [Batch] carries [inputs]
-         and [targets] the same way. *)
-    end
-
+    let model = Nx.Ptree.instantiate (module Model)
+    let state = Nx.Ptree.pair model (Vega.adam_ptree model)
     let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
 
-    let train_step { Batch.inputs; targets } { State.params; opt; loss = _ } =
-      let loss, grads =
-        Rune.value_and_grad model (objective inputs targets) params
-      in
-      let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
-      let params, opt =
-        Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
-      in
-      { State.params; opt; loss }
-
-    (* The step reads the batch and consumes the state: it hands the previous
-       generation's device buffers back to the allocator once the call
-       completes; the loop never reads the pre-step state, so they are safe to
-       release. *)
-    let step = Rune.jit_step (module Batch) (module State) train_step
+    let step =
+      Rune.jit
+        Nx.Ptree.(
+          tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
+        (fun inputs targets (params, opt) ->
+          let loss, grads =
+            Rune.value_and_grad model (objective inputs targets) params
+          in
+          let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
+          let params, opt =
+            Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
+          in
+          (loss, (params, opt)))
     ]}
 
     Hyperparameters that do not change across steps ([b1], [b2], [eps],
     [weight_decay], [max_norm]) are compile-time constants. Everything that does
-    — the moments, the step counter, the learning rate — is a tensor leaf or
+    (the moments, the step counter, the learning rate) is a tensor leaf or
     derived from one, so the compiled program replays correctly on every call:
-    no data transfers, no retracing. Consuming the state keeps the
-    state-to-state loop at about two generations of device buffers instead of
-    one per call awaiting collection; it consumes the handles it frees — reading
-    the pre-step state after the call raises — so compile with {!Rune.jit2}
-    while a loop still inspects the state it feeds in. On the CPU device it
-    changes nothing: outputs are host tensors there. Steps are pure traversals —
-    a step consumes a state and returns the next one — so checkpointing an
-    optimizer means saving a record of parameter-shaped values plus a step
-    counter leaf.
+    no data transfers, no retracing. The step consumes the state it is given and
+    returns the next one beside the loss, which stays readable after later
+    calls.
 
-    {b Non-parameter leaves.} A structure may carry leaves that are not
-    parameters — an {!Nx.Rng.key} threaded through a compiled step, a counter, a
-    batch of indices. {!Rune.val-grad} does not differentiate them, and the
-    structural optimizers here do not update them: every step passes a non-float
-    leaf through unchanged. So one structure can serve the objective, the
-    gradient and the update without splitting the values that must reach a
-    compiled step from the values being trained. *)
+    Every structural function takes the structure of the parameters first, a
+    ['p Nx.Ptree.t] built with [Nx.Ptree.instantiate]; see {!section-structures}
+    for what it checks. The per-tensor tier ({!section-chains}) is an
+    Optax-style alternative over single tensors. *)
+
+(** {1:structures Parameters and states}
+
+    A structural function walks its values with the parameters' structure [p].
+    Three rules hold:
+
+    - {b One skeleton.} The parameters, the gradients and each part of a state
+      that has the parameters' shape visit the same leaves and reports under [p]
+      (the same {!Nx.Ptree.visits}) and have equal dtypes leaf by leaf.
+      {!sgd_step}, {!adam_step} and {!adamw_step} raise [Invalid_argument]
+      naming themselves, the first path at which a value differs from the
+      parameters, and what the value and the parameters hold there, for example
+      ["Vega.adam_step: the root: length 1 in the gradients, length 2 in the
+       parameters"] or
+      ["Vega.adam_step: w: float32 in the gradients, float64 in the parameters"].
+      A skeleton mismatch raises before any tensor is computed; a dtype mismatch
+      raises at its leaf. The other functions that take two values raise as
+      {!Nx.Ptree.map2} does.
+    - {b Non-parameter leaves.} A structure may carry tensors that are not
+      parameters: an {!Nx.Rng.key} threaded through a compiled step, a counter,
+      a batch of indices. {!Rune.val-grad} does not differentiate them, and a
+      step passes every leaf whose dtype is not a float through unchanged, in
+      the parameters and in the state. So one structure serves the objective,
+      the gradient and the update.
+    - {b States are structures.} {!sgd_ptree}, {!adam_ptree} and {!lbfgs_ptree}
+      are a state's structure over [p]. A state's leaf paths are its field name
+      followed by the parameter's path ([mu.blocks.0.w]), and [step] for the
+      counter, so a state is named in a compiled step's signature and saved with
+      its paths as checkpoint names. *)
 
 (** {1:schedules Learning-Rate Schedules}
 
@@ -93,13 +103,12 @@ module Schedule = Schedule
     Pure functions on gradient structures, applied between the backward pass and
     the optimizer step. *)
 
-val global_norm : (module Nx.Ptree.S with type t = 'p) -> 'p -> float
-(** [global_norm (module P) grads] is the L2 norm of all leaves of [grads] taken
+val global_norm : 'p Nx.Ptree.t -> 'p -> float
+(** [global_norm p grads] is the L2 norm of all leaves of [grads] taken
     together: [sqrt (sum of every element squared)]. *)
 
-val clip_by_global_norm :
-  (module Nx.Ptree.S with type t = 'p) -> max_norm:float -> 'p -> 'p
-(** [clip_by_global_norm (module P) ~max_norm grads] scales [grads] so that its
+val clip_by_global_norm : 'p Nx.Ptree.t -> max_norm:float -> 'p -> 'p
+(** [clip_by_global_norm p ~max_norm grads] scales [grads] so that its
     {!global_norm} does not exceed [max_norm]. Gradients within the bound
     (including all-zero gradients) are returned unchanged; larger ones are
     scaled by [max_norm /. norm], preserving their direction.
@@ -111,26 +120,22 @@ val clip_by_global_norm :
 
     Raises [Invalid_argument] if [max_norm <= 0.]. *)
 
-val clip_by_value :
-  (module Nx.Ptree.S with type t = 'p) -> max:float -> 'p -> 'p
-(** [clip_by_value (module P) ~max grads] clips every gradient element to the
-    interval \[[-. max];[max]\].
+val clip_by_value : 'p Nx.Ptree.t -> max:float -> 'p -> 'p
+(** [clip_by_value p ~max grads] clips every gradient element to the interval
+    \[[-. max];[max]\].
 
     Raises [Invalid_argument] if [max <= 0.]. *)
 
 val global_dot :
-  (module Nx.Ptree.S with type t = 'p) ->
-  (float, 'v) Nx.dtype ->
-  'p ->
-  'p ->
-  (float, 'v) Nx.t
-(** [global_dot (module P) dt a b] is the inner product of [a] and [b] over all
-    their float leaves taken together, as a scalar tensor: every leaf's product
-    is summed at the leaf's dtype, then cast to [dt] and accumulated. Non-float
+  'p Nx.Ptree.t -> (float, 'v) Nx.dtype -> 'p -> 'p -> (float, 'v) Nx.t
+(** [global_dot p dt a b] is the inner product of [a] and [b] over all their
+    float leaves taken together, as a scalar tensor: every leaf's product is
+    summed at the leaf's dtype, then cast to [dt] and accumulated. Non-float
     leaves contribute nothing. Tensor arithmetic with no host read, so it traces
     under {!Rune.val-jit}; [dt] sets the precision of the accumulation.
 
-    Raises [Invalid_argument] if [a] and [b] are not structurally equal. *)
+    Raises [Invalid_argument], naming the first path at which they differ, if
+    [a] and [b] differ in their paths, reports or dtypes. *)
 
 (** {1:loss_scaling Loss Scaling}
 
@@ -145,12 +150,12 @@ val global_dot :
     {[
       let step (params, ls) =
         let objective p = Vega.Loss_scale.scale ls (loss p) in
-        let sloss, grads = value_and_grad (module Model) objective params in
-        let grads = Vega.Loss_scale.unscale (module Model) ls grads in
-        let finite = Vega.Loss_scale.grads_finite (module Model) grads in
+        let sloss, grads = Rune.value_and_grad model objective params in
+        let grads = Vega.Loss_scale.unscale model ls grads in
+        let finite = Vega.Loss_scale.grads_finite model grads in
         let params' = (* optimizer step on [grads] *) in
         let params =
-          Model.map2 (fun p p' -> Nx.where finite p' p) params params'
+          Nx.Ptree.map2 model (fun _ p p' -> Nx.where finite p' p) params params'
         in
         ((params, Vega.Loss_scale.adjust ls ~finite), sloss)
     ]}
@@ -163,10 +168,9 @@ module Loss_scale : sig
   type t = { scale : Nx.float32_t; good_steps : Nx.int32_t }
   (** The type for loss scales: the current scale factor and the number of
       consecutive finite steps since it last changed, both scalar tensors.
-      Tensors, not floats — threaded through a {!Rune.jit2} (or pmap) step as
-      ordinary input and output leaves, the state updates across compiled calls,
-      whereas a captured float would be burned into the trace as a constant.
-      [good_steps] is [-1] for a {!static} scale. *)
+      [good_steps] is [-1] for a {!static} scale. Both are tensors so that a
+      compiled step takes them as arguments and returns them ({!ptree}); a
+      captured float would be a constant of the program. *)
 
   val static : float -> t
   (** [static s] is the fixed scale [s]: {!adjust} returns it unchanged.
@@ -184,19 +188,18 @@ module Loss_scale : sig
   (** [scale ls x] is [x] times the current scale, at [x]'s dtype. Apply it to
       the loss, inside the differentiated objective. *)
 
-  val unscale : (module Nx.Ptree.S with type t = 'p) -> t -> 'p -> 'p
-  (** [unscale (module P) ls grads] divides every leaf of [grads] by the current
-      scale, at the leaf's dtype. Apply it to the gradients before any gradient
+  val unscale : 'p Nx.Ptree.t -> t -> 'p -> 'p
+  (** [unscale p ls grads] divides every leaf of [grads] by the current scale,
+      at the leaf's dtype. Apply it to the gradients before any gradient
       transformation or optimizer step. *)
 
-  val grads_finite :
-    (module Nx.Ptree.S with type t = 'p) -> 'p -> (bool, Nx.bool_elt) Nx.t
-  (** [grads_finite (module P) grads] is a scalar boolean tensor: [true] iff
-      every element of every leaf of [grads] is finite (no NaN or infinity).
-      Feed it to {!adjust} and use it to skip the parameter update of an
-      overflowed step (select between updated and previous parameters with
-      {!Nx.where}, as in the module preamble — tensor arithmetic, so the step
-      still traces under jit). *)
+  val grads_finite : 'p Nx.Ptree.t -> 'p -> (bool, Nx.bool_elt) Nx.t
+  (** [grads_finite p grads] is a scalar boolean tensor: [true] iff every
+      element of every leaf of [grads] is finite (no NaN or infinity). Feed it
+      to {!adjust} and use it to skip the parameter update of an overflowed step
+      (select between updated and previous parameters with {!Nx.where}, as in
+      the module preamble — tensor arithmetic, so the step still traces under
+      jit). *)
 
   val adjust :
     ?growth_interval:int ->
@@ -216,22 +219,9 @@ module Loss_scale : sig
       Raises [Invalid_argument] if [growth_interval], [growth_factor] or
       [backoff_factor] is not positive. *)
 
-  (** {2:traversals Traversals}
-
-      Plain traversals over the two state tensors, in the order [scale] then
-      [good_steps]; with them a training step's input and output structures can
-      carry the loss scale as leaves. They satisfy the {!Nx.Ptree.S} contract.
-  *)
-
-  val map : ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t
-  (** [map f ls] is [ls] with [f] applied to both state tensors. *)
-
-  val map2 :
-    ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t -> t
-  (** [map2 f ls ls'] combines [ls] and [ls'] leafwise with [f]. *)
-
-  val iter : ('a 'b. ('a, 'b) Nx.t -> unit) -> t -> unit
-  (** [iter f ls] applies [f] to both state tensors. *)
+  val ptree : t Nx.Ptree.t
+  (** [ptree] is the structure of a loss scale. It visits the fixed tensors
+      [scale] then [good_steps], at those paths, and reports nothing. *)
 end
 
 (** {1:lr Learning Rates}
@@ -255,44 +245,36 @@ type 'p sgd_state = { velocity : 'p; step : Nx.int32_t }
     structural state carries its counter, so a {!Schedule} applies to [st.step]
     whichever optimizer is stepping. *)
 
-(** [Sgd_state (P)] is the state over the parameter tree [P] as a parameter tree
-    itself: its [t] is [P.t sgd_state] and its traversals walk the state's
-    leaves through [P]. Bind it once per model and embed it in a jitted step's
-    input/output records, whose traversals delegate to it field by field (by
-    hand, or with [ppx_ptree]'s [@@deriving ptree]):
+module Sgd_state : Nx.Ptree.S with type 'p t = 'p sgd_state
+(** The structure of SGD states. Its [walk] visits [velocity] at the field
+    ["velocity"] as a position of the parameter, then [step] at ["step"] as a
+    fixed [int32] tensor. Use it with {!Nx.Ptree.Payload} and {!Nx.Ptree.cast};
+    transformations take {!sgd_ptree}. *)
+
+val sgd_ptree : 'p Nx.Ptree.t -> 'p sgd_state Nx.Ptree.t
+(** [sgd_ptree p] is [Nx.Ptree.nest (module Sgd_state) p], the structure of an
+    SGD state over parameters of structure [p]. It visits [velocity.]{e path}
+    for each of [p]'s visits, in [p]'s order, then [step]. A compiled step names
+    it beside the parameters:
 
     {[
-    module Opt = Vega.Sgd_state (Model)
+    let state = Nx.Ptree.pair model (Vega.sgd_ptree model)
+    ]} *)
 
-    module Step_in = struct
-      type t = { params : Model.t; opt : Opt.t; x : Nx.float32_t }
-
-      let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) s =
-        { params = Model.map f s.params; opt = Opt.map f s.opt; x = f s.x }
-
-      (* map2 and iter: the same one-liners. *)
-    end
-    ]}
-
-    The resulting leaf order — every leaf of [velocity], in [P]'s order, then
-    [step] — is part of a compiled step's leaf signature and is fixed for good.
-*)
-module Sgd_state (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t sgd_state
-
-val sgd_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p sgd_state
-(** [sgd_init (module P) params] is the initial state for optimizing [params]:
-    an all-zero velocity of [params]' shape and [step = 0]. *)
+val sgd_init : 'p Nx.Ptree.t -> 'p -> 'p sgd_state
+(** [sgd_init p params] is the initial state for optimizing [params]: an
+    all-zero velocity of [params]' shape and [step = 0]. *)
 
 val sgd_step :
-  (module Nx.Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   lr:(float, 'b) Nx.t ->
   ?momentum:float ->
   'p sgd_state ->
   params:'p ->
   grads:'p ->
   'p * 'p sgd_state
-(** [sgd_step (module P) ~lr st ~params ~grads] is [(params', st')] after one
-    step of gradient descent with heavy-ball momentum. Per element:
+(** [sgd_step p ~lr st ~params ~grads] is [(params', st')] after one step of
+    gradient descent with heavy-ball momentum. Per element:
 
     {v
     v' = momentum * v + g
@@ -302,7 +284,11 @@ val sgd_step :
     [lr] is a scalar tensor ({!lr}); [momentum] defaults to [0.], plain gradient
     descent: the velocity is then the last gradient, and the input velocity is
     not read at all. The counter advances by one. The whole step is tensor
-    arithmetic over [(params, st)] — it traces under {!Rune.val-jit}. *)
+    arithmetic over [(params, st)], so it traces under {!Rune.val-jit}.
+
+    Raises [Invalid_argument] as {!section-structures} states if [grads], or
+    [st.velocity] when [momentum] is not [0.], does not have [params]' skeleton.
+*)
 
 (** {1:adam Adam and AdamW} *)
 
@@ -320,18 +306,23 @@ type 'p adam_state = {
           schedules take. *)
 }
 
-(** [Adam_state (P)] is the state over the parameter tree [P] as a parameter
-    tree itself — see {!Sgd_state}. The leaf order — every leaf of [mu] in [P]'s
-    order, every leaf of [nu], then [step] — is part of a compiled step's leaf
-    signature and is fixed for good. *)
-module Adam_state (P : Nx.Ptree.S) : Nx.Ptree.S with type t = P.t adam_state
+module Adam_state : Nx.Ptree.S with type 'p t = 'p adam_state
+(** The structure of Adam states. Its [walk] visits [mu] then [nu] at those
+    fields as positions of the parameter, then [step] at ["step"] as a fixed
+    [int32] tensor. Transformations take {!adam_ptree}. *)
 
-val adam_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p adam_state
-(** [adam_init (module P) params] is the initial state for optimizing [params]:
-    all-zero moments and [step = 0]. *)
+val adam_ptree : 'p Nx.Ptree.t -> 'p adam_state Nx.Ptree.t
+(** [adam_ptree p] is [Nx.Ptree.nest (module Adam_state) p], the structure of an
+    Adam state over parameters of structure [p]. It visits [mu.]{e path} for
+    each of [p]'s visits, in [p]'s order, then [nu.]{e path} likewise, then
+    [step]. *)
+
+val adam_init : 'p Nx.Ptree.t -> 'p -> 'p adam_state
+(** [adam_init p params] is the initial state for optimizing [params]: all-zero
+    moments and [step = 0]. *)
 
 val adam_step :
-  (module Nx.Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   lr:(float, 'b) Nx.t ->
   ?b1:float ->
   ?b2:float ->
@@ -340,8 +331,8 @@ val adam_step :
   params:'p ->
   grads:'p ->
   'p * 'p adam_state
-(** [adam_step (module P) ~lr st ~params ~grads] is [(params', st')] after one
-    Adam step (Kingma and Ba, 2015). Per element, with [t = st.step + 1]:
+(** [adam_step p ~lr st ~params ~grads] is [(params', st')] after one Adam step
+    (Kingma and Ba, 2015). Per element, with [t = st.step + 1]:
 
     {v
     mu' = b1 * mu + (1 - b1) * g
@@ -353,14 +344,17 @@ val adam_step :
     [lr] is a scalar tensor ({!lr}). [b1] defaults to [0.9], [b2] to [0.999],
     [eps] to [1e-8]; they are compile-time constants, safe captures under
     {!Rune.val-jit}. The bias corrections are derived from the state's counter
-    per leaf, at the leaf's dtype, in tensor arithmetic — so the whole step
-    traces, and the returned state feeds the next call. *)
+    per leaf, at the leaf's dtype, in tensor arithmetic, so the whole step
+    traces and the returned state feeds the next call.
 
-val adamw_init : (module Nx.Ptree.S with type t = 'p) -> 'p -> 'p adam_state
+    Raises [Invalid_argument] as {!section-structures} states if [grads],
+    [st.mu] or [st.nu] does not have [params]' skeleton. *)
+
+val adamw_init : 'p Nx.Ptree.t -> 'p -> 'p adam_state
 (** [adamw_init] is {!adam_init}: AdamW shares Adam's state. *)
 
 val adamw_step :
-  (module Nx.Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   lr:(float, 'b) Nx.t ->
   ?b1:float ->
   ?b2:float ->
@@ -370,16 +364,18 @@ val adamw_step :
   params:'p ->
   grads:'p ->
   'p * 'p adam_state
-(** [adamw_step (module P) ~lr st ~params ~grads] is like {!adam_step} with
-    decoupled weight decay (Loshchilov and Hutter, 2019): with [d] Adam's
-    bias-corrected direction, the parameter update becomes
+(** [adamw_step p ~lr st ~params ~grads] is like {!adam_step} with decoupled
+    weight decay (Loshchilov and Hutter, 2019): with [d] Adam's bias-corrected
+    direction, the parameter update becomes
 
     {v p' = p - lr * (d + weight_decay * p) v}
 
     The decay applies to the parameters directly rather than through the
     adaptive scaling, so its effective strength does not depend on the gradient
     history. [weight_decay] defaults to [0.01]; with [weight_decay = 0.] the
-    step is exactly {!adam_step}. *)
+    step is exactly {!adam_step}.
+
+    Raises [Invalid_argument] as {!adam_step} does. *)
 
 (** {1:lbfgs L-BFGS}
 
@@ -405,7 +401,7 @@ val adamw_step :
     The state carries the current point with its value and gradient, so an
     iteration costs the line search's trials and nothing more, and the history
     at a fixed memory size, so it is a parameter tree of static shape
-    ({!Lbfgs_state}). Every scalar the method keeps — the value, the curvature
+    ({!lbfgs_ptree}). Every scalar the method keeps — the value, the curvature
     weights, the inner products of the two-loop recursion — is at the
     objective's dtype: a [float64] objective drives a [float64] line search.
 
@@ -427,54 +423,39 @@ type ('p, 'v) lbfgs_state = {
   step : Nx.int32_t;  (** Completed steps, a scalar tensor. *)
 }
 
-(** [Lbfgs_state (P) (V)] is the state over the parameter tree [P] and the
-    objective's element type [V.t] as a parameter tree itself — see
-    {!Sgd_state}:
-
-    {[
-    module Opt =
-      Vega.Lbfgs_state
-        (Model)
-        (struct
-          type t = Nx.float32_elt
-        end)
-    ]}
-
-    The leaf order — [params] in [P]'s order, [value], [grads], [s], [y], [rho],
-    then [step] — is part of a compiled step's leaf signature and is fixed for
-    good. *)
-module Lbfgs_state
-    (P : Nx.Ptree.S)
-    (V : sig
-      type t
-    end) : Nx.Ptree.S with type t = (P.t, V.t) lbfgs_state
+val lbfgs_ptree : 'p Nx.Ptree.t -> ('p, 'v) lbfgs_state Nx.Ptree.t
+(** [lbfgs_ptree p] is the structure of an L-BFGS state over parameters of
+    structure [p], for an objective of element type ['v]. It visits
+    [params.]{e path} for each of [p]'s visits, [value], [grads.]{e path},
+    [s.]{e path}, [y.]{e path}, [rho], then [step]. The state has no module of
+    its own, since {!Nx.Ptree.S} has one type parameter and the state two. *)
 
 val lbfgs_init :
-  (module Nx.Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   ?history:int ->
   ('p -> (float, 'v) Nx.t * 'p) ->
   'p ->
   ('p, 'v) lbfgs_state
-(** [lbfgs_init (module P) f params] is the initial state for minimizing [f]
-    from [params]: it evaluates [f params] once and holds an empty history of
+(** [lbfgs_init p f params] is the initial state for minimizing [f] from
+    [params]: it evaluates [f params] once and holds an empty history of
     [history] pairs (default [10]).
 
     Raises [Invalid_argument] if [history < 1]. *)
 
 val lbfgs_step :
-  (module Nx.Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   ?lr:(float, 'b) Nx.t ->
   ?max_linesearch_steps:int ->
   ('p -> (float, 'v) Nx.t * 'p) ->
   ('p, 'v) lbfgs_state ->
   ('p, 'v) lbfgs_state
-(** [lbfgs_step (module P) f st] is the state after one L-BFGS step. The
-    direction [d] is the two-loop recursion of Nocedal (1980) over the stored
-    pairs applied to the negated gradient, with the initial inverse Hessian
-    scaled by [(s . y) / (y . y)] of the newest pair; then the step moves to
-    [p + a * d], evaluates [f] there, and pushes the new pair, dropping the
-    oldest. A pair whose curvature [y . s] is not positive is kept out of the
-    direction (its weight is [0]).
+(** [lbfgs_step p f st] is the state after one L-BFGS step. The direction [d] is
+    the two-loop recursion of Nocedal (1980) over the stored pairs applied to
+    the negated gradient, with the initial inverse Hessian scaled by
+    [(s . y) / (y . y)] of the newest pair; then the step moves to [p + a * d],
+    evaluates [f] there, and pushes the new pair, dropping the oldest. A pair
+    whose curvature [y . s] is not positive is kept out of the direction (its
+    weight is [0]).
 
     Without [~lr], [a] satisfies the strong Wolfe conditions ([c1 = 1e-4],
     [c2 = 0.9]), found by bracketing from [a = 1] and zooming, with at most
@@ -487,7 +468,9 @@ val lbfgs_step :
     This is the form for training loops, preconditioning a fixed rate rather
     than searching a length.
 
-    Raises [Invalid_argument] if [max_linesearch_steps < 1]. *)
+    Raises [Invalid_argument] if [max_linesearch_steps < 1], or, naming the
+    first differing path as {!Nx.Ptree.map2} does, if a gradient [f] returns
+    does not have [st.params]' skeleton. *)
 
 type status =
   | Converged  (** A tolerance of {!minimize} was met. *)
@@ -497,7 +480,7 @@ type status =
           precision limit of [f], or the gradient is inconsistent with it. *)
 
 val minimize :
-  (module Nx.Ptree.S with type t = 'p) ->
+  'p Nx.Ptree.t ->
   ?history:int ->
   ?max_iter:int ->
   ?gtol:float ->
@@ -506,19 +489,19 @@ val minimize :
   ('p -> (float, 'v) Nx.t * 'p) ->
   'p ->
   ('p, 'v) lbfgs_state * status
-(** [minimize (module P) f params] runs {!lbfgs_step} from
-    [lbfgs_init (module P) f params] until a tolerance is met and returns the
-    final state — its [params], [value] and [grads] are the result and its
-    [step] the number of iterations — with the reason it stopped. It stops with
-    {!Converged} when every gradient component is at most [gtol] in absolute
-    value (default [1e-5]), checked before each step, or when a step decreases
-    the value by no more than [ftol] relative to [max (|f|, |f'|, 1.)] (default
-    [1e-9]); with {!Max_iter_reached} after [max_iter] steps (default [1000]);
-    with {!Line_search_failed} when a step makes no progress. [history] and
-    [max_linesearch_steps] are those of {!lbfgs_init} and {!lbfgs_step}.
+(** [minimize p f params] runs {!lbfgs_step} from [lbfgs_init p f params] until
+    a tolerance is met and returns the final state — its [params], [value] and
+    [grads] are the result and its [step] the number of iterations — with the
+    reason it stopped. It stops with {!Converged} when every gradient component
+    is at most [gtol] in absolute value (default [1e-5]), checked before each
+    step, or when a step decreases the value by no more than [ftol] relative to
+    [max (|f|, |f'|, 1.)] (default [1e-9]); with {!Max_iter_reached} after
+    [max_iter] steps (default [1000]); with {!Line_search_failed} when a step
+    makes no progress. [history] and [max_linesearch_steps] are those of
+    {!lbfgs_init} and {!lbfgs_step}.
 
-    Raises [Invalid_argument] if [history < 1] or [max_iter < 0], or if [gtol]
-    or [ftol] is negative. *)
+    Raises [Invalid_argument] if [history < 1] or [max_iter < 0], if [gtol] or
+    [ftol] is negative, or as {!lbfgs_step} does. *)
 
 (** {1:chains Per-Tensor Transformation Chains}
 

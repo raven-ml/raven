@@ -120,5 +120,5 @@ let tx =
 | Weight decay rate | Float | `Schedule.t` (dynamic decay) |
 | Noise eta | Float | `Schedule.t` (dynamic noise) |
 | Gradient clipping | Global norm across all params | Per-tensor `clip_by_norm`; structural `clip_by_global_norm` |
-| Parameter trees | Built-in (JAX pytrees) | Structural steps (`adam_step`, ...) over any `Nx.Ptree.S` structure |
+| Parameter trees | Built-in (JAX pytrees) | Structural steps (`adam_step`, ...) over any structure, an `Nx.Ptree.t` |
 | `centralize` | Function call `centralize()` | Value `centralize` (no arguments) |

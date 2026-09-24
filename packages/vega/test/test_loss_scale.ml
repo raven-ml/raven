@@ -18,15 +18,17 @@ let steps_of ls = Nx.item [] ls.Ls.good_steps
 module Pair = struct
   type t = { a : Nx.float32_t; b : Nx.float32_t }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { a; b } =
-    { a = f a; b = f b }
+  module Walked = struct
+    type nonrec _ t = t
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-    { a = f p.a q.a; b = f p.b q.b }
+    let walk c { a; b } =
+      let open Nx.Ptree.Walk in
+      let a = field c "a" tensor a in
+      let b = field c "b" tensor b in
+      { a; b }
+  end
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { a; b } =
-    f a;
-    f b
+  let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
 end
 
 let finite = Nx.scalar Nx.bool true
@@ -55,7 +57,7 @@ let test_scale_unscale_round_trip () =
     (Nx.item [] (Ls.scale ls loss));
   let grads = { Pair.a = vec [| 1.0; -0.5 |]; b = vec [| 0.25 |] } in
   let scaled = { Pair.a = Ls.scale ls grads.Pair.a; b = Ls.scale ls grads.b } in
-  let back = Ls.unscale (module Pair) ls scaled in
+  let back = Ls.unscale Pair.ptree ls scaled in
   (* Powers of two scale exactly. *)
   equal ~msg:"round-trip leaf a" (array float_exact) [| 1.0; -0.5 |]
     (Nx.to_array back.Pair.a);
@@ -74,14 +76,22 @@ let test_scale_half_dtype () =
 
 let test_grads_finite () =
   let ok = { Pair.a = vec [| 1.0; 2.0 |]; b = vec [| 3.0 |] } in
-  is_true ~msg:"finite gradients"
-    (Nx.item [] (Ls.grads_finite (module Pair) ok));
+  is_true ~msg:"finite gradients" (Nx.item [] (Ls.grads_finite Pair.ptree ok));
   let inf = { ok with Pair.b = vec [| Float.infinity |] } in
   is_false ~msg:"an infinity in any leaf"
-    (Nx.item [] (Ls.grads_finite (module Pair) inf));
+    (Nx.item [] (Ls.grads_finite Pair.ptree inf));
   let nan = { ok with Pair.a = vec [| 1.0; Float.nan |] } in
   is_false ~msg:"a nan in any leaf"
-    (Nx.item [] (Ls.grads_finite (module Pair) nan))
+    (Nx.item [] (Ls.grads_finite Pair.ptree nan))
+
+(* Structure *)
+
+let test_visits () =
+  equal ~msg:"leaf paths" (list string)
+    [ "scale: a leaf"; "good_steps: a leaf" ]
+    (List.map
+       (Format.asprintf "%a" Nx.Ptree.pp_visit)
+       (Nx.Ptree.visits Ls.ptree (Ls.dynamic ())))
 
 (* Adjustment *)
 
@@ -150,6 +160,7 @@ let tests =
         test "scale at half dtype" test_scale_half_dtype;
       ];
     group "finiteness" [ test "grads_finite" test_grads_finite ];
+    group "structure" [ test "visits" test_visits ];
     group "adjust"
       [
         test "overflow backs off" test_adjust_backoff;

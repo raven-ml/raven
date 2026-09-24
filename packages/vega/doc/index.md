@@ -6,8 +6,8 @@ Vega provides composable gradient-based optimizers for OCaml. Each optimizer is 
 
 - **Optimizer aliases** — `adam`, `adamw`, `sgd`, `rmsprop`, `adagrad`, `lamb`, `lion`, `radam`, `lars`, `adan`, `adafactor`
 - **Composable primitives** — `scale_by_adam`, `trace`, `add_decayed_weights`, `clip_by_norm`, and more, combined via `chain`
-- **Structural steps** — `sgd_step`, `adam_step`, `adamw_step` over any `Nx.Ptree.S` parameter structure; the state is a parameter tree too (`Sgd_state`, `Adam_state`)
-- **Jit-compilable steps** — every time-varying scalar is a tensor leaf, so a whole training step compiles as one `Rune.jit2` program
+- **Structural steps** — `sgd_step`, `adam_step`, `adamw_step` and L-BFGS over any parameter structure, an `Nx.Ptree.t`; each state has a structure too (`sgd_ptree`, `adam_ptree`, `lbfgs_ptree`)
+- **Jit-compilable steps** — every time-varying scalar is a tensor leaf, so a whole training step compiles as one `Rune.jit` program
 - **Learning rate schedules** — `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, `piecewise_constant`, `join` — tensor arithmetic over a step counter, so one family serves eager and compiled loops alike
 - **Gradient processing** — clipping, centralization, noise injection
 - **Robustness** — `apply_if_finite` skips NaN/Inf updates automatically
@@ -38,42 +38,52 @@ let () =
 
 ## Jit-Compiled Training Steps
 
-The structural optimizers' state is a parameter tree like the parameters themselves: `Vega.Adam_state (Model)` is the Adam state over your model as an `Nx.Ptree.S`, one field of a compiled step's input and output records. Everything that changes across steps — the moments, the step counter, the learning rate — is a tensor leaf or derived from one; everything fixed (`b1`, `b2`, `eps`, `weight_decay`) is an ordinary float the compiler captures as a constant. So the forward pass, the backward pass and the update compile into a single program with no host round-trips:
+The structural optimizers take the parameters' structure, an `Nx.Ptree.t` that
+`Nx.Ptree.instantiate` builds from the model's module. A state's structure is
+built from it: `Vega.adam_ptree model` is the structure of an Adam state over
+`model`, with leaf paths `mu.…`, `nu.…` and `step`. Everything that changes
+across steps (the moments, the step counter, the learning rate) is a tensor
+leaf or derived from one. Everything fixed (`b1`, `b2`, `eps`, `weight_decay`)
+is a float the compiler captures as a constant. So the forward pass, the
+backward pass and the update compile into one program.
+
+The example below is a fragment: `Model`, `objective`, `inputs` and `targets`
+are the reader's, and it needs rune's `Rune.jit` on signatures.
 
 <!-- $MDX skip -->
 ```ocaml
-module Opt = Vega.Adam_state (Model)
-
-module State = struct
-  type t = { params : Model.t; opt : Opt.t; loss : Nx.float32_t }
-
-  (* map/map2/iter: one-line delegations to Model and Opt over the fields —
-     or [@@deriving ptree] with ppx_ptree. Batch carries inputs and targets
-     the same way. *)
-end
-
+let model = Nx.Ptree.instantiate (module Model)
+let state = Nx.Ptree.pair model (Vega.adam_ptree model)
 let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
 
-let train_step { Batch.inputs; targets } { State.params; opt; loss = _ } =
-  let loss, grads =
-    Rune.value_and_grad model (objective inputs targets) params
-  in
-  let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
-  let params, opt =
-    Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
-  in
-  { State.params; opt; loss }
-
-(* The step reads the batch and consumes the state: the previous generation's
-   device buffers are released once the call completes — this loop never reads
-   the pre-step state. *)
 let step =
-  Rune.jit_step (module Batch) (module State) train_step
+  Rune.jit
+    Nx.Ptree.(tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
+    (fun inputs targets (params, opt) ->
+      let loss, grads =
+        Rune.value_and_grad model (objective inputs targets) params
+      in
+      let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
+      let params, opt =
+        Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
+      in
+      (loss, (params, opt)))
 ```
 
-Looping `step` over batches compiles once and replays: the state flows out and back in as leaves, the loss among them, and the schedule derives from the state's own counter inside the program. Consuming the state keeps the loop at about two generations of device buffers instead of one per call awaiting collection — it consumes the handles it frees, so compile with `Rune.jit2` while the loop still reads the state it feeds in (on the CPU device it changes nothing). The same fields work for data-parallel `Rune.pmap2` in one record — replicate the parameters and the state, shard the batch.
+Looping `step` over batches compiles once and replays. Each call consumes the
+state it is given and returns the next one beside the loss, and the schedule
+reads the state's own counter inside the program. The loss is a fresh result,
+readable after later calls.
 
-Schedules are tensor arithmetic over the counter, so the same schedule drives an eager loop; `Schedule.eval` reads one at a host step number for logging.
+A step checks that the parameters, the gradients and the state share one
+skeleton, and raises `Invalid_argument` naming the first path at which they
+differ, for example
+`Vega.adam_step: the root: length 1 in the gradients, length 2 in the parameters`.
+A structure may carry leaves that are not floats (an RNG key, a counter); a
+step passes them through unchanged.
+
+Schedules are tensor arithmetic over the counter, so the same schedule drives an
+eager loop; `Schedule.eval` reads one at a host step number for logging.
 
 ## Next Steps
 

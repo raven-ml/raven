@@ -745,58 +745,87 @@ let state_of_tensors tx ~count tensors =
          expected got);
   { prims; count; tensors }
 
-(* Structural optimizers over parameter structures (Nx.Ptree.S). Optimizer state
-   is itself parameter-shaped: updates are pure map2 compositions, fully typed,
-   with no positional pairing. Every scalar that changes across steps — the bias
-   corrections, the step counter — is a tensor leaf, so a training step is a
-   pure function of (params, state) that traces under Rune.jit. *)
+(* Structural optimizers over parameter structures (Nx.Ptree.t). Optimizer state
+   is itself parameter-shaped, and every scalar that changes across steps — the
+   bias corrections, the step counter — is a tensor leaf, so a training step is
+   a pure function of (params, state) that traces under Rune.jit. *)
+
+(* Values that share the parameters' skeleton. A step flattens the parameters
+   and every other value once, checks that each has the parameters' skeleton,
+   then walks the parameters, taking one tensor of each other value per leaf. *)
+
+let describe path =
+  match Nx.Ptree.Path.segments path with
+  | [] -> "the root"
+  | _ -> Nx.Ptree.Path.to_string path
+
+let aligned fn p skeleton name x =
+  let leaves, k = Nx.Ptree.flatten p x in
+  match
+    Nx.Ptree.Skeleton.diff ~this:("in " ^ name) k ~that:"in the parameters"
+      skeleton
+  with
+  | None -> leaves
+  | Some m -> invalid_arg (fn ^ ": " ^ m)
+
+let take (type a b) fn name path (x : (a, b) Nx.t) rest : (a, b) Nx.t =
+  match !rest with
+  | [] -> invalid_arg (fn ^ ": the structure's walk visited one value two ways")
+  | Nx.P y :: tail -> (
+      rest := tail;
+      match Dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
+      | Some Equal -> y
+      | None ->
+          invalid_argf "%s: %s: %s in %s, %s in the parameters" fn
+            (describe path)
+            (Dtype.to_string (Nx.dtype y))
+            name
+            (Dtype.to_string (Nx.dtype x)))
 
 (* Gradient transformations *)
 
-let global_norm (type p) (module P : Nx.Ptree.S with type t = p) (grads : P.t) :
-    float =
-  let acc = ref 0.0 in
-  P.iter
-    (fun g ->
-      acc := !acc +. Nx.item [] (Nx.sum (Nx.square (Nx.cast Nx.float64 g))))
-    grads;
-  Stdlib.sqrt !acc
+let global_norm p grads =
+  let sum =
+    Nx.Ptree.fold p
+      (fun _ g acc ->
+        acc +. Nx.item [] (Nx.sum (Nx.square (Nx.cast Nx.float64 g))))
+      grads 0.0
+  in
+  Stdlib.sqrt sum
 
-let clip_by_global_norm (type p) (module P : Nx.Ptree.S with type t = p)
-    ~max_norm (grads : P.t) : P.t =
+let clip_by_global_norm p ~max_norm grads =
   validate_positive "Vega.clip_by_global_norm" "max_norm" max_norm;
   (* The norm and the scale factor stay in tensor arithmetic — no [Nx.item] — so
      the transform traces under jit. The accumulation is float32: every device
      computes it, unlike [global_norm]'s float64 host read. *)
-  let sq = ref (Nx.scalar Nx.float32 0.0) in
-  P.iter
-    (fun g -> sq := Nx.add !sq (Nx.sum (Nx.square (Nx.cast Nx.float32 g))))
-    grads;
-  let norm = Nx.sqrt !sq in
+  let sq =
+    Nx.Ptree.fold p
+      (fun _ g acc -> Nx.add acc (Nx.sum (Nx.square (Nx.cast Nx.float32 g))))
+      grads (Nx.scalar Nx.float32 0.0)
+  in
+  let norm = Nx.sqrt sq in
   let factor =
     Nx.where
       (Nx.greater_s norm max_norm)
       (Nx.rdiv_s max_norm norm) (Nx.scalar Nx.float32 1.0)
   in
-  P.map (fun g -> Nx.mul g (Nx.cast (Nx.dtype g) factor)) grads
+  Nx.Ptree.map p (fun _ g -> Nx.mul g (Nx.cast (Nx.dtype g) factor)) grads
 
-let clip_by_value (type p) (module P : Nx.Ptree.S with type t = p) ~max
-    (grads : P.t) : P.t =
+let clip_by_value p ~max grads =
   validate_positive "Vega.clip_by_value" "max" max;
-  P.map
-    (fun g ->
+  Nx.Ptree.map p
+    (fun _ g ->
       let of_float = Dtype.of_float (Nx.dtype g) in
       Nx.clamp ~min:(of_float (-.max)) ~max:(of_float max) g)
     grads
 
-(* [Ptree.S] has no [iter2]; the leafwise walk is a [map2] whose result is
-   dropped, so the leaves of [a] are returned untouched. *)
-let global_dot (type p v) (module P : Nx.Ptree.S with type t = p)
-    (dt : (float, v) Nx.dtype) (a : P.t) (b : P.t) : (float, v) Nx.t =
+(* The leafwise walk is a [map2] whose result is dropped, so the leaves of [a]
+   are returned untouched. *)
+let global_dot p (dt : (float, 'v) Nx.dtype) a b : (float, 'v) Nx.t =
   let acc = ref (Nx.scalar dt 0.0) in
   ignore
-    (P.map2
-       (fun x y ->
+    (Nx.Ptree.map2 p
+       (fun _ x y ->
          if updates x then acc := Nx.add !acc (Nx.cast dt (Nx.sum (Nx.mul x y)));
          x)
        a b);
@@ -820,27 +849,26 @@ module Loss_scale = struct
     validate_positive "Vega.Loss_scale.dynamic" "init" init;
     { scale = Nx.scalar Nx.float32 init; good_steps = Nx.scalar Nx.int32 0l }
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { scale; good_steps } =
-    { scale = f scale; good_steps = f good_steps }
+  module Walked = struct
+    type nonrec _ t = t
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t t' =
-    { scale = f t.scale t'.scale; good_steps = f t.good_steps t'.good_steps }
+    let walk c { scale; good_steps } =
+      let open Nx.Ptree.Walk in
+      let scale = field c "scale" tensor scale in
+      let good_steps = field c "good_steps" tensor good_steps in
+      { scale; good_steps }
+  end
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { scale; good_steps } =
-    f scale;
-    f good_steps
-
+  let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
   let scale t x = Nx.mul x (Nx.cast (Nx.dtype x) t.scale)
 
-  let unscale (type p) (module P : Nx.Ptree.S with type t = p) t (grads : P.t) :
-      P.t =
-    P.map (fun g -> Nx.div g (Nx.cast (Nx.dtype g) t.scale)) grads
+  let unscale p t grads =
+    Nx.Ptree.map p (fun _ g -> Nx.div g (Nx.cast (Nx.dtype g) t.scale)) grads
 
-  let grads_finite (type p) (module P : Nx.Ptree.S with type t = p)
-      (grads : P.t) =
-    let acc = ref (Nx.scalar Nx.bool true) in
-    P.iter (fun g -> acc := Nx.logical_and !acc (Nx.all (Nx.isfinite g))) grads;
-    !acc
+  let grads_finite p grads =
+    Nx.Ptree.fold p
+      (fun _ g acc -> Nx.logical_and acc (Nx.all (Nx.isfinite g)))
+      grads (Nx.scalar Nx.bool true)
 
   let adjust ?(growth_interval = 2000) ?(growth_factor = 2.0)
       ?(backoff_factor = 0.5) t ~finite =
@@ -871,152 +899,138 @@ let lr v = Nx.scalar Nx.float32 v
 
 type 'p sgd_state = { velocity : 'p; step : Nx.int32_t }
 
-module Sgd_state (P : Nx.Ptree.S) = struct
-  type t = P.t sgd_state
+module Sgd_state = struct
+  type 'p t = 'p sgd_state
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (st : t) : t =
-    { velocity = P.map f st.velocity; step = f st.step }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
-      (b : t) : t =
-    { velocity = P.map2 f a.velocity b.velocity; step = f a.step b.step }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (st : t) : unit =
-    P.iter f st.velocity;
-    f st.step
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let velocity = field c "velocity" leaf st.velocity in
+    let step = field c "step" tensor st.step in
+    { velocity; step }
 end
 
-let sgd_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) :
-    P.t sgd_state =
+let sgd_ptree p = Nx.Ptree.nest (module Sgd_state) p
+
+let sgd_init p params =
   {
-    velocity = P.map (fun leaf -> Nx.zeros_like leaf) params;
+    velocity = Nx.Ptree.map p (fun _ leaf -> Nx.zeros_like leaf) params;
     step = Nx.scalar Nx.int32 0l;
   }
 
-let sgd_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr
-    ?(momentum = 0.0) (st : P.t sgd_state) ~(params : P.t) ~(grads : P.t) :
-    P.t * P.t sgd_state =
-  let velocity =
+let descend (type a b) ~lr (p : (a, b) Nx.t) (v : (a, b) Nx.t) =
+  if updates p then Nx.sub p (Nx.mul v (Nx.cast (Nx.dtype p) lr)) else p
+
+let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
+  let fn = "Vega.sgd_step" in
+  let skeleton = snd (Nx.Ptree.flatten p params) in
+  let aligned name x = ref (aligned fn p skeleton name x) in
+  let grads' = aligned "the gradients" grads in
+  if momentum = 0.0 then
     (* Plain gradient descent: the velocity is exactly the gradient. Skipping
        the [momentum * v + g] arithmetic avoids touching (and, under [jit],
        capturing) the velocity tensors at all. *)
-    if momentum = 0.0 then grads
-    else
-      P.map2
-        (fun v g ->
-          if updates v then Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g
-          else v)
-        st.velocity grads
-  in
-  let params =
-    P.map2
-      (fun p v ->
-        if updates p then Nx.sub p (Nx.mul v (Nx.cast (Nx.dtype p) lr)) else p)
-      params velocity
-  in
-  (params, { velocity; step = Nx.add_s st.step 1l })
+    let update path x = descend ~lr x (take fn "the gradients" path x grads') in
+    ( Nx.Ptree.map p update params,
+      { velocity = grads; step = Nx.add_s st.step 1l } )
+  else
+    let velocity = aligned "the velocity" st.velocity in
+    let velocity' = ref [] in
+    let update path x =
+      let g = take fn "the gradients" path x grads' in
+      let v = take fn "the velocity" path x velocity in
+      let v =
+        if updates v then Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g
+        else v
+      in
+      velocity' := Nx.P v :: !velocity';
+      descend ~lr x v
+    in
+    let params = Nx.Ptree.map p update params in
+    let velocity = Nx.Ptree.rebuild p ~like:st.velocity (List.rev !velocity') in
+    (params, { velocity; step = Nx.add_s st.step 1l })
 
 (* Adam and AdamW *)
 
 type 'p adam_state = { mu : 'p; nu : 'p; step : Nx.int32_t }
 
-module Adam_state (P : Nx.Ptree.S) = struct
-  type t = P.t adam_state
+module Adam_state = struct
+  type 'p t = 'p adam_state
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (st : t) : t =
-    { mu = P.map f st.mu; nu = P.map f st.nu; step = f st.step }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
-      (b : t) : t =
-    { mu = P.map2 f a.mu b.mu; nu = P.map2 f a.nu b.nu; step = f a.step b.step }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (st : t) : unit =
-    P.iter f st.mu;
-    P.iter f st.nu;
-    f st.step
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let mu = field c "mu" leaf st.mu in
+    let nu = field c "nu" leaf st.nu in
+    let step = field c "step" tensor st.step in
+    { mu; nu; step }
 end
 
-let adam_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) :
-    P.t adam_state =
-  let zeros () = P.map (fun leaf -> Nx.zeros_like leaf) params in
+let adam_ptree p = Nx.Ptree.nest (module Adam_state) p
+
+let adam_init p params =
+  let zeros () = Nx.Ptree.map p (fun _ leaf -> Nx.zeros_like leaf) params in
   { mu = zeros (); nu = zeros (); step = Nx.scalar Nx.int32 0l }
 
-(* Advances the moments and computes the bias-corrected update direction shared
-   by [adam_step] and [adamw_step]. The bias corrections [1 - b^t] are derived
-   from the counter per leaf, at the leaf's dtype like every other scalar in the
-   step — tensor arithmetic with a constant base, which compiles to [exp2] on
-   every device — so the whole step traces under jit and the state carries
-   nothing the counter does not already determine. *)
-let adam_direction (type p) (module P : Nx.Ptree.S with type t = p) ~b1 ~b2 ~eps
-    (st : P.t adam_state) ~(grads : P.t) : P.t * P.t adam_state =
+(* One Adam step over every leaf, shared by [adam_step] and [adamw_step]: [apply
+   p d] is the new parameter from the old one and the bias-corrected direction.
+   The bias corrections [1 - b^t] are derived from the counter per leaf, at the
+   leaf's dtype like every other scalar in the step — tensor arithmetic with a
+   constant base, which compiles to [exp2] on every device — so the whole step
+   traces under jit and the state carries nothing the counter does not already
+   determine. *)
+let adam_update fn p ~b1 ~b2 ~eps
+    ~(apply : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) st ~params
+    ~grads =
+  let skeleton = snd (Nx.Ptree.flatten p params) in
+  let aligned name x = ref (aligned fn p skeleton name x) in
+  let grads = aligned "the gradients" grads in
+  let mu = aligned "mu" st.mu and nu = aligned "nu" st.nu in
   let step = Nx.add_s st.step 1l in
-  let mu =
-    P.map2
-      (fun m g ->
-        let dt = Nx.dtype m in
-        if updates m then
+  let mu' = ref [] and nu' = ref [] in
+  let update path x =
+    let g = take fn "the gradients" path x grads in
+    let m = take fn "mu" path x mu and n = take fn "nu" path x nu in
+    let m, n, x =
+      if updates x then
+        let dt = Nx.dtype x in
+        let m =
           Nx.add (Nx.mul m (scalar dt b1)) (Nx.mul g (scalar dt (1.0 -. b1)))
-        else m)
-      st.mu grads
-  in
-  let nu =
-    P.map2
-      (fun n g ->
-        let dt = Nx.dtype n in
-        if updates n then
+        in
+        let n =
           Nx.add
             (Nx.mul n (scalar dt b2))
             (Nx.mul (Nx.mul g g) (scalar dt (1.0 -. b2)))
-        else n)
-      st.nu grads
+        in
+        let t = Nx.cast dt step in
+        let c1 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b1) t) in
+        let c2 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b2) t) in
+        let mu_hat = Nx.div m c1 in
+        let nu_hat = Nx.div n c2 in
+        (m, n, apply x (Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps))))
+      else (m, n, x)
+    in
+    mu' := Nx.P m :: !mu';
+    nu' := Nx.P n :: !nu';
+    x
   in
-  let direction =
-    P.map2
-      (fun m n ->
-        let dt = Nx.dtype m in
-        if updates m then
-          let t = Nx.cast dt step in
-          let c1 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b1) t) in
-          let c2 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b2) t) in
-          let mu_hat = Nx.div m c1 in
-          let nu_hat = Nx.div n c2 in
-          Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps))
-        else m)
-      mu nu
-  in
-  (direction, { mu; nu; step })
+  let params = Nx.Ptree.map p update params in
+  let mu = Nx.Ptree.rebuild p ~like:st.mu (List.rev !mu') in
+  let nu = Nx.Ptree.rebuild p ~like:st.nu (List.rev !nu') in
+  (params, { mu; nu; step })
 
-let adam_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr ?(b1 = 0.9)
-    ?(b2 = 0.999) ?(eps = 1e-8) (st : P.t adam_state) ~(params : P.t)
-    ~(grads : P.t) : P.t * P.t adam_state =
-  let direction, st = adam_direction (module P) ~b1 ~b2 ~eps st ~grads in
-  let params =
-    P.map2
-      (fun p d ->
-        if updates p then Nx.sub p (Nx.mul d (Nx.cast (Nx.dtype p) lr)) else p)
-      params direction
-  in
-  (params, st)
+let adam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
+  let apply x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr)) in
+  adam_update "Vega.adam_step" p ~b1 ~b2 ~eps ~apply st ~params ~grads
 
-let adamw_init (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t) :
-    P.t adam_state =
-  adam_init (module P) params
+let adamw_init = adam_init
 
-let adamw_step (type p) (module P : Nx.Ptree.S with type t = p) ~lr ?(b1 = 0.9)
-    ?(b2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.01) (st : P.t adam_state)
-    ~(params : P.t) ~(grads : P.t) : P.t * P.t adam_state =
-  let direction, st = adam_direction (module P) ~b1 ~b2 ~eps st ~grads in
-  let params =
-    P.map2
-      (fun p d ->
-        let dt = Nx.dtype p in
-        if updates p then
-          let decayed = Nx.add d (Nx.mul p (scalar dt weight_decay)) in
-          Nx.sub p (Nx.mul decayed (Nx.cast dt lr))
-        else p)
-      params direction
+let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
+    ?(weight_decay = 0.01) st ~params ~grads =
+  let apply x d =
+    let dt = Nx.dtype x in
+    let decayed = Nx.add d (Nx.mul x (scalar dt weight_decay)) in
+    Nx.sub x (Nx.mul decayed (Nx.cast dt lr))
   in
-  (params, st)
+  adam_update "Vega.adamw_step" p ~b1 ~b2 ~eps ~apply st ~params ~grads
 
 (* L-BFGS *)
 
@@ -1030,56 +1044,30 @@ type ('p, 'v) lbfgs_state = {
   step : Nx.int32_t;
 }
 
-module Lbfgs_state
-    (P : Nx.Ptree.S)
-    (V : sig
-      type t
-    end) =
-struct
-  type t = (P.t, V.t) lbfgs_state
+let lbfgs_ptree (type v) p : (_, v) lbfgs_state Nx.Ptree.t =
+  let module Walked = struct
+    type 'p t = ('p, v) lbfgs_state
 
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (st : t) : t =
-    {
-      params = P.map f st.params;
-      value = f st.value;
-      grads = P.map f st.grads;
-      s = P.map f st.s;
-      y = P.map f st.y;
-      rho = f st.rho;
-      step = f st.step;
-    }
+    let walk c st =
+      let open Nx.Ptree.Walk in
+      let params = field c "params" leaf st.params in
+      let value = field c "value" tensor st.value in
+      let grads = field c "grads" leaf st.grads in
+      let s = field c "s" leaf st.s in
+      let y = field c "y" leaf st.y in
+      let rho = field c "rho" tensor st.rho in
+      let step = field c "step" tensor st.step in
+      { params; value; grads; s; y; rho; step }
+  end in
+  Nx.Ptree.nest (module Walked) p
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
-      (b : t) : t =
-    {
-      params = P.map2 f a.params b.params;
-      value = f a.value b.value;
-      grads = P.map2 f a.grads b.grads;
-      s = P.map2 f a.s b.s;
-      y = P.map2 f a.y b.y;
-      rho = f a.rho b.rho;
-      step = f a.step b.step;
-    }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (st : t) : unit =
-    P.iter f st.params;
-    f st.value;
-    P.iter f st.grads;
-    P.iter f st.s;
-    P.iter f st.y;
-    f st.rho;
-    f st.step
-end
-
-let lbfgs_init (type p v) (module P : Nx.Ptree.S with type t = p)
-    ?(history = 10) (f : P.t -> (float, v) Nx.t * P.t) (params : P.t) :
-    (P.t, v) lbfgs_state =
+let lbfgs_init p ?(history = 10) f params =
   if history < 1 then
     invalid_argf "Vega.lbfgs_init: expected history >= 1, got %d" history;
   let value, grads = f params in
   let memory () =
-    P.map
-      (fun leaf ->
+    Nx.Ptree.map p
+      (fun _ leaf ->
         Nx.zeros (Nx.dtype leaf) (Array.append [| history |] (Nx.shape leaf)))
       params
   in
@@ -1105,17 +1093,15 @@ let push x memory =
 
 (* [move params d a] is [params + a * d] on the float leaves, [a] a scalar
    tensor cast to each leaf's dtype; [axpy a x y] is [y + a * x] likewise. *)
-let move (type p) (module P : Nx.Ptree.S with type t = p) (params : P.t)
-    (d : P.t) a : P.t =
-  P.map2
-    (fun x d ->
+let move p params d a =
+  Nx.Ptree.map2 p
+    (fun _ x d ->
       if updates x then Nx.add x (Nx.mul d (Nx.cast (Nx.dtype x) a)) else x)
     params d
 
-let axpy (type p) (module P : Nx.Ptree.S with type t = p) a (x : P.t) (y : P.t)
-    : P.t =
-  P.map2
-    (fun x y ->
+let axpy p a x y =
+  Nx.Ptree.map2 p
+    (fun _ x y ->
       if updates x then Nx.add y (Nx.mul x (Nx.cast (Nx.dtype x) a)) else y)
     x y
 
@@ -1125,14 +1111,13 @@ let axpy (type p) (module P : Nx.Ptree.S with type t = p) a (x : P.t) (y : P.t)
    nothing to either loop, so no fill count is kept. Every scalar is a tensor at
    the objective's dtype and every index is static, so the direction traces
    under jit. *)
-let lbfgs_direction (type p v) (module P : Nx.Ptree.S with type t = p)
-    (st : (P.t, v) lbfgs_state) : P.t =
+let lbfgs_direction p st =
   let dt = Nx.dtype st.value in
   let m = (Nx.shape st.rho).(0) in
-  let dot = global_dot (module P) dt in
+  let dot = global_dot p dt in
   let pair i =
-    ( P.map (fun m -> slot i m) st.s,
-      P.map (fun m -> slot i m) st.y,
+    ( Nx.Ptree.map p (fun _ m -> slot i m) st.s,
+      Nx.Ptree.map p (fun _ m -> slot i m) st.y,
       Nx.get [ i ] st.rho )
   in
   let alphas = Array.make m (Nx.scalar dt 0.0) in
@@ -1141,9 +1126,10 @@ let lbfgs_direction (type p v) (module P : Nx.Ptree.S with type t = p)
     let s, y, rho = pair i in
     let alpha = Nx.mul rho (dot s !q) in
     alphas.(i) <- alpha;
-    q := axpy (module P) (Nx.neg alpha) y !q
+    q := axpy p (Nx.neg alpha) y !q
   done;
-  let y0 = P.map (fun m -> slot 0 m) st.y and rho0 = Nx.get [ 0 ] st.rho in
+  let y0 = Nx.Ptree.map p (fun _ m -> slot 0 m) st.y
+  and rho0 = Nx.get [ 0 ] st.rho in
   let gamma =
     Nx.where (Nx.greater_s rho0 0.0)
       (Nx.div (Nx.scalar dt 1.0) (Nx.mul rho0 (dot y0 y0)))
@@ -1151,17 +1137,17 @@ let lbfgs_direction (type p v) (module P : Nx.Ptree.S with type t = p)
   in
   let r =
     ref
-      (P.map
-         (fun q ->
+      (Nx.Ptree.map p
+         (fun _ q ->
            if updates q then Nx.mul q (Nx.cast (Nx.dtype q) gamma) else q)
          !q)
   in
   for i = m - 1 downto 0 do
     let s, y, rho = pair i in
     let beta = Nx.mul rho (dot y !r) in
-    r := axpy (module P) (Nx.sub alphas.(i) beta) s !r
+    r := axpy p (Nx.sub alphas.(i) beta) s !r
   done;
-  P.map (fun r -> if updates r then Nx.neg r else r) !r
+  Nx.Ptree.map p (fun _ r -> if updates r then Nx.neg r else r) !r
 
 (* A point of the line search: [params + alpha * d], the objective and gradient
    there, and [phi alpha], [phi' alpha] read to the host. *)
@@ -1181,11 +1167,9 @@ type ('p, 'v) trial = {
    when [budget] evaluations are spent, the lowest trial that decreased the
    value, or [None] if none did. A [nan] objective fails every acceptance test,
    so a trial that overflowed only shrinks the bracket. *)
-let line_search (type p v) (module P : Nx.Ptree.S with type t = p) ~budget
-    (f : P.t -> (float, v) Nx.t * P.t) (st : (P.t, v) lbfgs_state) (d : P.t) :
-    (P.t, v) trial option =
+let line_search p ~budget f st d =
   let dt = Nx.dtype st.value in
-  let dot = global_dot (module P) dt in
+  let dot = global_dot p dt in
   let c1 = 1e-4 and c2 = 0.9 in
   let origin =
     {
@@ -1200,7 +1184,7 @@ let line_search (type p v) (module P : Nx.Ptree.S with type t = p) ~budget
   let armijo t = t.phi <= origin.phi +. (c1 *. t.alpha *. origin.dphi) in
   let curvature t = Float.abs t.dphi <= -.c2 *. origin.dphi in
   let probe alpha =
-    let point = move (module P) st.params d (Nx.scalar dt alpha) in
+    let point = move p st.params d (Nx.scalar dt alpha) in
     let objective, gradient = f point in
     let phi = Nx.item [] objective and dphi = Nx.item [] (dot gradient d) in
     { point; objective; gradient; alpha; phi; dphi }
@@ -1246,18 +1230,18 @@ let line_search (type p v) (module P : Nx.Ptree.S with type t = p) ~budget
   in
   if origin.dphi >= 0.0 then None else bracket origin 1.0 None budget
 
-let lbfgs_step (type p v) (module P : Nx.Ptree.S with type t = p) ?lr
-    ?(max_linesearch_steps = 20) (f : P.t -> (float, v) Nx.t * P.t)
-    (st : (P.t, v) lbfgs_state) : (P.t, v) lbfgs_state =
+let lbfgs_step p ?lr ?(max_linesearch_steps = 20) f st =
   if max_linesearch_steps < 1 then
     invalid_argf "Vega.lbfgs_step: expected max_linesearch_steps >= 1, got %d"
       max_linesearch_steps;
   let dt = Nx.dtype st.value in
-  let d = lbfgs_direction (module P) st in
+  let d = lbfgs_direction p st in
   let advance point objective gradient =
-    let difference = P.map2 (fun a b -> if updates a then Nx.sub a b else a) in
+    let difference =
+      Nx.Ptree.map2 p (fun _ a b -> if updates a then Nx.sub a b else a)
+    in
     let s = difference point st.params and y = difference gradient st.grads in
-    let ys = global_dot (module P) dt y s in
+    let ys = global_dot p dt y s in
     let rho =
       Nx.where (Nx.greater_s ys 0.0) (Nx.rdiv_s 1.0 ys) (Nx.scalar dt 0.0)
     in
@@ -1265,48 +1249,44 @@ let lbfgs_step (type p v) (module P : Nx.Ptree.S with type t = p) ?lr
       params = point;
       value = objective;
       grads = gradient;
-      s = P.map2 push s st.s;
-      y = P.map2 push y st.y;
+      s = Nx.Ptree.map2 p (fun _ x m -> push x m) s st.s;
+      y = Nx.Ptree.map2 p (fun _ x m -> push x m) y st.y;
       rho = push rho st.rho;
       step = Nx.add_s st.step 1l;
     }
   in
   match lr with
   | Some lr ->
-      let point = move (module P) st.params d lr in
+      let point = move p st.params d lr in
       let objective, gradient = f point in
       advance point objective gradient
   | None -> (
-      match line_search (module P) ~budget:max_linesearch_steps f st d with
+      match line_search p ~budget:max_linesearch_steps f st d with
       | Some t -> advance t.point t.objective t.gradient
       | None -> st)
 
 type status = Converged | Max_iter_reached | Line_search_failed
 
-let minimize (type p v) (module P : Nx.Ptree.S with type t = p) ?history
-    ?(max_iter = 1000) ?(gtol = 1e-5) ?(ftol = 1e-9) ?max_linesearch_steps
-    (f : P.t -> (float, v) Nx.t * P.t) (params : P.t) :
-    (P.t, v) lbfgs_state * status =
+let minimize p ?history ?(max_iter = 1000) ?(gtol = 1e-5) ?(ftol = 1e-9)
+    ?max_linesearch_steps f params =
   if max_iter < 0 then
     invalid_argf "Vega.minimize: expected max_iter >= 0, got %d" max_iter;
   validate_non_negative "Vega.minimize" "gtol" gtol;
   validate_non_negative "Vega.minimize" "ftol" ftol;
-  let grad_max (st : (P.t, v) lbfgs_state) =
-    let acc = ref 0.0 in
-    P.iter
-      (fun g ->
+  let grad_max st =
+    Nx.Ptree.fold p
+      (fun _ g acc ->
         if updates g then
           let dt = Nx.dtype g in
-          acc :=
-            Float.max !acc (float_of_scalar dt (Nx.item [] (Nx.max (Nx.abs g)))))
-      st.grads;
-    !acc
+          Float.max acc (float_of_scalar dt (Nx.item [] (Nx.max (Nx.abs g))))
+        else acc)
+      st.grads 0.0
   in
-  let rec loop (st : (P.t, v) lbfgs_state) k =
+  let rec loop st k =
     if grad_max st <= gtol then (st, Converged)
     else if k = max_iter then (st, Max_iter_reached)
     else
-      let st' = lbfgs_step (module P) ?max_linesearch_steps f st in
+      let st' = lbfgs_step p ?max_linesearch_steps f st in
       if Nx.item [] st'.step = Nx.item [] st.step then (st, Line_search_failed)
       else
         let before = Nx.item [] st.value and after = Nx.item [] st'.value in
@@ -1316,4 +1296,4 @@ let minimize (type p v) (module P : Nx.Ptree.S with type t = p) ?history
         if before -. after <= ftol *. scale then (st', Converged)
         else loop st' (k + 1)
   in
-  loop (lbfgs_init (module P) ?history f params) 0
+  loop (lbfgs_init p ?history f params) 0
