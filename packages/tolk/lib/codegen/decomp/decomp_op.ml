@@ -189,10 +189,15 @@ type supported_ops = {
   force_transcendental : bool;
 }
 (* Reads an integer constant out of a [Uop.t] that is a scalar [Const]. *)
-let const_int64_value node =
+let const_integer node =
   match Uop.op node, Uop.arg node with
   | Ops.Const, Uop.Arg.Value v ->
-      (match Const.view v with Const.Int n when Z.fits_int64 n -> Some (Z.to_int64 n) | _ -> None)
+      (match Const.view v with Const.Int n -> Some n | _ -> None)
+  | _ -> None
+
+let const_int64_value node =
+  match const_integer node with
+  | Some n when Z.fits_int64 n -> Some (Z.to_int64 n)
   | _ -> None
 
 let const_bool_value node =
@@ -281,8 +286,8 @@ let rule_threefry (ops : supported_ops) node =
     | _ -> None
 
 let floor_same_as_trunc a b =
-  (Bound.le Bound.zero (Uop.vmin a) && Bound.lt Bound.zero (Uop.vmin b))
-  || (Bound.le (Uop.vmax a) Bound.zero && Bound.lt (Uop.vmax b) Bound.zero)
+  (Bound.le Bound.zero (Uop.vmin a) && Bound.le Bound.zero (Uop.vmin b))
+  || (Bound.le (Uop.vmax a) Bound.zero && Bound.le (Uop.vmax b) Bound.zero)
 
 let floor_fixup_condition a b r =
   let zero_a = Uop.const_like a 0 in
@@ -291,6 +296,19 @@ let floor_fixup_condition a b r =
   let has_remainder = Uop.O.(ne r zero_r) in
   let sign_diff = Uop.O.(ne (a < zero_a) (b < zero_b)) in
   Uop.alu_binary ~op:Ops.And ~lhs:has_remainder ~rhs:sign_diff
+
+(* Arithmetic right shift is floor division for either sign. Run this
+   before introducing the truncating quotient and remainder correction. *)
+let rule_floordiv_to_shr (ops : supported_ops) node =
+  if not ops.has_shr then None
+  else match Uop.op node, Uop.dtype node, Uop.src node with
+    | Ops.Floordiv, dtype, [| x; divisor |] when Dtype.is_int dtype ->
+        (match const_integer divisor with
+         | Some d when Z.compare d Z.one > 0 && Z.popcount d = 1 ->
+             Some (Uop.alu_binary ~op:Ops.Shr ~lhs:x
+                     ~rhs:(Uop.const (Const.int dtype (Z.trailing_zeros d))))
+         | _ -> None)
+    | _ -> None
 
 (* FLOORDIV a b -> CDIV a b, with a one-step correction when floor and
    truncating division differ. *)
@@ -313,11 +331,11 @@ let rule_floormod_and (ops : supported_ops) node =
   if not ops.has_and then None
   else match Uop.op node, Uop.dtype node, Uop.src node with
     | Ops.Floormod, dt, [| x; c |] when Dtype.is_int dt ->
-        (match const_int64_value c with
-         | Some cv when is_power_of_two cv ->
+        (match const_integer c with
+         | Some cv when Z.sign cv > 0 && Z.popcount cv = 1 ->
              Some
                (Uop.alu_binary ~op:Ops.And ~lhs:x
-                  ~rhs:(Uop.const (Const.int64 dt (Int64.sub cv 1L))))
+                  ~rhs:(Uop.const (Const.integer dt (Z.pred cv))))
          | _ -> None)
     | _ -> None
 
@@ -354,8 +372,8 @@ let rule_max (ops : supported_ops) node =
 let get_simplifying_rewrite_patterns (ops : supported_ops) (node : Uop.t) :
     Uop.t option =
   let rules =
-    [ rule_floordiv_to_idiv; rule_floormod_and; rule_floormod_to_mod;
-      rule_threefry; rule_max ]
+    [ rule_floordiv_to_shr; rule_floordiv_to_idiv;
+      rule_floormod_and; rule_floormod_to_mod; rule_threefry ]
   in
   let rec try_rules = function
     | [] -> None
@@ -465,12 +483,7 @@ let rule_sdiv_to_shr (ops : supported_ops) node =
     | _ -> None
 
 let fast_idiv_const ops x d =
-  match Uop.op d, Uop.arg d with
-  | Ops.Const, Uop.Arg.Value value ->
-      (match Const.view value with
-       | Const.Int divisor -> fast_idiv ~supports_dtype:ops.supports_dtype x divisor
-       | _ -> None)
-  | _ -> None
+  Option.bind (const_integer d) (fast_idiv ~supports_dtype:ops.supports_dtype x)
 
 (* Constant division only rewrites when a supported width can hold the product. *)
 let rule_fast_idiv_late (ops : supported_ops) node =
@@ -701,7 +714,7 @@ let rule_mul_recip_to_fdiv (ops : supported_ops) node =
    [get_late_rewrite_patterns] block. *)
 let get_late_rewrite_patterns (ops : supported_ops) (node : Uop.t) : Uop.t option =
   let rules =
-    [ rule_de_morgan;
+    [ rule_max; rule_de_morgan;
       rule_mul_to_shl; rule_udiv_to_shr; rule_sdiv_to_shr;
       rule_fast_idiv_late; rule_mod_from_idiv;
       rule_mul_neg_one; rule_add_neg_to_sub;

@@ -8,8 +8,10 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 
 - Migrate every Python reference driver to the target API and generate the
   complete corpus separately. Attribute every changed expectation to its owner;
-  require exact source parity for supported renderers. Reconcile the FP8
-  `sm_80` stage-5/source fixtures with float32 emulation and target kernel naming.
+  require exact source parity for supported renderers. Reconcile FP8 `sm_80`
+  and CPU exponent-reduction fixtures (`rangeify`, `moe_gather_block`,
+  `softmax_sink`, `swiglu_clamped`, `topk_rounds`) with the target, including
+  kernel naming and remaining ordering differences.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -65,8 +67,7 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Canonicalize image coordinates across producer, gater, coalescer and renderer.
   Preserve access flags and volatile metadata during coalescing.
 - Finish recursive integer word splitting under live spec verification and
-  remove superseded casts at the owning pass. Preserve `MAX` bounds until late
-  lowering; port early power-of-two floor division and final sign-bound rules.
+  remove superseded casts at the owning pass.
 - Render host-call ABI, volatile parameters, void loops and final constants.
   Coordinate Metal's argument-struct ABI with its runtime binding.
 

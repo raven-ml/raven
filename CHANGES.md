@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Integer floor division by powers of two lowers directly to arithmetic
+  shifts, including negative inputs. `MAX` keeps its bounds until late
+  lowering so subsequent compiler passes can use them.
+
 - Constant integer division computes multiplier bounds exactly, avoiding host
   integer overflow. Metal uses the same proven multiply-shift rewrites; modulo
   stays native when no supported replacement exists.

@@ -548,15 +548,44 @@ let late_div_by_one_is_not_shifted () =
   let got = Decomp_op.get_late_rewrite_patterns (supported_ops ()) div in
   is_true ~msg:"x / 1 is not rewritten to x >> 0" (got = None)
 
-let late_rewrite_does_not_lower_max () =
-  let x = Uop.const_float 1.0 in
-  let y = Uop.const_float 2.0 in
-  let max_ = Uop.alu_binary ~op:Ops.Max ~lhs:x ~rhs:y in
-  let got =
-    Decomp_op.get_late_rewrite_patterns
-      (supported_ops ~has_max:false ~has_cmplt:true ()) max_
-  in
-  is_true ~msg:"Max lowering belongs to simplifying rewrites" (got = None)
+let max_bounds_survive_early_lowering () =
+  let x = Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.int32 () in
+  let max_ = Uop.alu_binary ~op:Ops.Max ~lhs:x ~rhs:(Uop.const_like x 0) in
+  let ops = supported_ops ~has_max:false ~has_cmplt:true () in
+  let early = Uop.graph_rewrite (Decomp_op.get_simplifying_rewrite_patterns ops) max_ in
+  is_true ~msg:"early lowering retains Max's nonnegative bound"
+    (Uop.op early = Ops.Max && Bound.equal (Uop.vmin early) Bound.zero);
+  match Decomp_op.get_late_rewrite_patterns ops early with
+  | Some lowered -> is_true ~msg:"late lowering emits the supported selection" (Uop.op lowered = Ops.Where)
+  | None -> failwith "late Max lowering did not fire"
+
+let floor_power_of_two_lowers_before_truncation () =
+  let x = Uop.variable ~name:"x" ~min_val:(-10) ~max_val:10 ~dtype:Dtype.int32 () in
+  let q = Uop.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:(Uop.const_like x 8) in
+  let rewrite = Decomp_op.get_simplifying_rewrite_patterns (supported_ops ()) in
+  (match rewrite q with
+   | Some result -> is_true ~msg:"floor division lowers directly to a signed shift"
+       (Uop.op result = Ops.Shr && not (contains_op Ops.Cmod result))
+   | None -> failwith "floor shift lowering did not fire");
+  let wide = Uop.variable ~name:"wide" ~min_val:0 ~max_val:max_int ~dtype:Dtype.uint64 () in
+  let divisor = Uop.const (Const.integer Dtype.uint64 (Z.shift_left Z.one 63)) in
+  List.iter (fun (op, expected) ->
+      match rewrite (Uop.alu_binary ~op ~lhs:wide ~rhs:divisor) with
+      | Some result -> is_true ~msg:"unsigned power-of-two divisors retain all 64 bits"
+          (Uop.op result = expected)
+      | None -> failwith "wide floor lowering did not fire")
+    [ Ops.Floordiv, Ops.Shr; Ops.Floormod, Ops.And ]
+
+let same_sign_divisor_bounds_can_include_zero () =
+  List.iter (fun (lo, hi) ->
+      let a = Uop.variable ~name:"a" ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 () in
+      let b = Uop.variable ~name:"b" ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 () in
+      List.iter (fun (op, expected) ->
+          let result = Decomp_op.get_simplifying_rewrite_patterns (supported_ops ())
+              (Uop.alu_binary ~op ~lhs:a ~rhs:b) in
+          is_true ~msg:"same-sign bounds do not need remainder correction"
+            (match result with Some u -> Uop.op u = expected | None -> false))
+        [ Ops.Floordiv, Ops.Cdiv; Ops.Floormod, Ops.Cmod ]) [ 0, 3; -3, 0 ]
 
 let threefry_rewrite_requires_uint64 () =
   let x = Uop.const (Const.int Dtype.uint32 42) in
@@ -964,8 +993,11 @@ let () =
             late_mul_by_one_is_not_shifted;
           test "late Cdiv by one is not shifted"
             late_div_by_one_is_not_shifted;
-          test "late rewrite does not lower Max"
-            late_rewrite_does_not_lower_max;
+          test "Max bounds survive early lowering" max_bounds_survive_early_lowering;
+          test "floor powers of two lower before truncation"
+            floor_power_of_two_lowers_before_truncation;
+          test "same-sign divisor bounds may include zero"
+            same_sign_divisor_bounds_can_include_zero;
           test "Threefry rewrite requires uint64"
             threefry_rewrite_requires_uint64;
           test "early Floordiv by zero raises before trunc lowering"

@@ -1561,8 +1561,11 @@ let constant_integer_division () =
           List.iter (fun divisor ->
               let d = T.i divisor in
               check_ints (Array.map (fun x -> x / divisor) values) (El.cdiv input d);
-              check_ints (Array.map (fun x -> x mod divisor) values) (El.fmod input d))
-            [ 3; 6; 7; 19; 65537; 2147483647 ])
+              check_ints (Array.map (fun x -> x mod divisor) values) (El.fmod input d);
+              let quotient x = x / divisor - (if x mod divisor < 0 then 1 else 0) in
+              check_ints (Array.map quotient values) (El.floordiv input d);
+              check_ints (Array.map (fun x -> x - divisor * quotient x) values) (El.mod_ input d))
+            [ 2; 3; 4; 6; 7; 8; 19; 65537; 2147483647 ])
         [ D.uint32, [| 0; 1; 2; 3; 6; 7; 18; 19; 20; 65536; 65537;
                        2147483647; 2147483648; 4294967294; 4294967295 |];
           D.int32, [| -2147483648; -65537; -20; -19; -7; -1; 0; 1; 7; 2147483647 |] ])
