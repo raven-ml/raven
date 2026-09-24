@@ -52,27 +52,25 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- **Breaking:** structural functions take `'p Nx.Ptree.t` in place of a module;
+  `sgd_ptree`, `adam_ptree`, `lbfgs_ptree` and `Loss_scale.ptree` replace the
+  state functors. A step raises naming the first path where its values differ.
 - Add L-BFGS to the structural tier for deterministic objectives: full-batch
   fits, MAP estimates, calibration, the second stage of training a PINN.
-  `Vega.minimize (module P) f params` runs it from `params` until a gradient
-  or value tolerance is met and returns the final state with a `status`;
-  `lbfgs_init` and `lbfgs_step` are the step it loops, `Vega.Lbfgs_state (P)
-  (V)` the state's `Nx.Ptree.S`. The objective returns its value and gradient
-  at once, the type `Rune.value_and_grad (module P) loss` has, so an analytic
+  `Vega.minimize p f params` runs it from `params` until a gradient or value
+  tolerance is met and returns the final state with a `status`; `lbfgs_init`
+  and `lbfgs_step` are the step it loops. The objective returns its value and
+  gradient at once, the type `Rune.value_and_grad p loss` has, so an analytic
   gradient serves as well. Without `~lr` a step chooses its length by a
   strong-Wolfe line search (eager); with `~lr` it preconditions a fixed rate
   and traces under `Rune.jit`. Every scalar the method keeps is at the
   objective's dtype, so a `float64` objective drives a `float64` search.
-- Add `Vega.global_dot (module P) dt a b`, the inner product of two parameter
+- Add `Vega.global_dot p dt a b`, the inner product of two parameter
   trees over all their float leaves as a scalar tensor accumulated at `dt`,
   in tensor arithmetic so it traces under `Rune.jit`.
-- Optimizer state now compiles. The structural states are parameter trees —
-  `Vega.Sgd_state (P)` and `Vega.Adam_state (P)` are the `Nx.Ptree.S` for the
-  state over a parameter tree `P` — so the state is one field of a
-  `Rune.jit2`/`pmap2` step's input and output records (whose traversals
-  delegate to it, by hand or via `ppx_ptree`), threaded across compiled
-  calls as ordinary leaves. The leaf order (payload leaves, then the counter) is part
-  of a compiled step's leaf signature and is fixed.
+- Optimizer state now compiles: every scalar that changes across steps is a
+  tensor leaf of the state, so the state threads across compiled calls as
+  ordinary leaves.
 - **Breaking:** `sgd_state` is `{ velocity; step }` — every structural state
   now carries its step counter, a scalar `int32` tensor, so a schedule
   applies to `st.step` whichever optimizer is stepping; without it an SGD
@@ -1697,10 +1695,6 @@ thread.
   carrying an `Nx.Rng.key` alongside its parameters survives a step. Adam is
   where it showed: its direction runs each leaf through a square root and a
   division.
-- The structural functions take their parameter-tree module as
-  `(module Nx.Ptree.S with type t = 'p)`, so a first-class module value —
-  e.g. the result of `Nx.Ptree.instantiate` — can be bound once and passed
-  to the optimizer steps and gradient transformations.
 - Add `Loss_scale` for float16 training: static and dynamic loss scales
   with `scale`/`unscale`/`grads_finite`/`adjust`; all state is scalar
   tensors updated by `Nx.where` arithmetic, so it threads through
@@ -1713,7 +1707,7 @@ thread.
 - The primary surface is structural: `sgd_init`/`sgd_step`,
   `adam_init`/`adam_step`, `adamw_init`/`adamw_step`, `global_norm`,
   `clip_by_global_norm`, and `clip_by_value` step whole parameter
-  structures — any type implementing `Nx.Ptree.S` — with optimizer state
+  structures, any value with an `Nx.Ptree.t`, with optimizer state
   shaped like the parameters themselves.
 - Below it, the per-tensor tier composes Optax-style gradient
   transformations on single tensors via `Vega.chain` (RMSprop, Adagrad,
