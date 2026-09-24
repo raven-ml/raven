@@ -201,6 +201,27 @@ let renderer_selection_tests =
               raises (Failure "unavailable") (fun () -> Device.renderer device));
           with_target "TEST:MISSING" (fun () ->
               raises (Invalid_argument "TEST has no renderer \"MISSING\"") (fun () -> Device.renderer device)));
+      test "compilation preserves the requested device and optimization metadata" (fun () ->
+          let renderer = Renderer.with_compiler
+              (Compiler.make ~name:"METADATA_TEST" ~compile:Bytes.of_string ()) test_renderer in
+          let renderers = Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const renderer ] in
+          let first = test_device ~name:"TEST:cache-first" ~renderer_set:renderers (runtime_state ()) in
+          let second = test_device ~name:"TEST:cache-second" ~renderer_set:renderers (runtime_state ()) in
+          ignore (Device.compile_program first ~name:"metadata_cache" []);
+          let opts = [ U.Opt.Upcast { axis = 0; amount = 4 } ] in
+          let spec = Device.compile_program second ~name:"metadata_cache" ~applied_opts:opts [] in
+          equal string "TEST:cache-second" (Program_spec.device spec);
+          equal (list string) (List.map U.Opt.to_string opts)
+            (List.map U.Opt.to_string (Program_spec.applied_opts spec)));
+      test "compilation without a compiler cache key remains uncached" (fun () ->
+          let calls = ref 0 in
+          let compile src = incr calls; Bytes.of_string src in
+          let renderer = Renderer.with_compiler (Compiler.make ~name:"UNCACHED_TEST" ~compile ()) test_renderer in
+          let renderers = Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const renderer ] in
+          let device = test_device ~name:"TEST:uncached" ~renderer_set:renderers (runtime_state ()) in
+          ignore (Device.compile_program device ~name:"uncached" []);
+          ignore (Device.compile_program device ~name:"uncached" []);
+          equal int 2 !calls);
       test "compilation caches distinguish target architectures" (fun () ->
           let create target =
             let render ?name program = ignore name; ignore program; target.Target.arch in

@@ -457,14 +457,14 @@ val compile_program :
   ?estimates:Program_spec.Estimates.t ->
   Program_spec.program ->
   Program_spec.t
-(** [compile_program d ?name ?estimates program] renders and compiles [program]
-    for [d], returning a prepared {!Program.t}.
+(** [compile_program d ?name ?applied_opts ?estimates program] renders and
+    compiles [program] for [d], returning its {!Program_spec.t} description.
 
-    Results are cached by device name, compiler name, kernel content digest,
-    renderer context, entry name, and estimates. Cached programs are cloned
-    (entry address and cleanup cleared) before being returned.
+    Compiled bytes use {!Compiler.compile_cached}, keyed by the actual source
+    and the compiler's cache key. Device, optimization and execution metadata
+    are built from this call's arguments.
 
-    [name] defaults to ["kern"]. [estimates] defaults to
+    [name] defaults to ["kern"], [applied_opts] to [[]], and [estimates] to
     {!Program_spec.Estimates.zero}. *)
 
 val create_buffer :

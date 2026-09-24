@@ -154,11 +154,31 @@ let imported_program_runs () =
    - the no-core_id/global>1 dispatch guard (threads forced to 1) is not
      observable through the compile path, which emits global>1 only alongside a
      core_id variable. *)
+let test_compilation_preserves_alignment () =
+  let param slot =
+    U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int 4)
+      ~addrspace:Dtype.Global () in
+  let src = param 0 and dst = param 1 in
+  let zero = U.const (Const.int Dtype.int32 0) in
+  let window p = U.shrink ~src:p ~offset:zero ~size:(U.const_int 4) in
+  let input = window src and output = window dst in
+  let value = U.load ~src:input () in
+  let program = [ src; dst; zero; input; output; value; U.store ~dst:output ~value () ] in
+  let compile aligned name =
+    let device = Tolk_cpu.create ~aligned ("CPU:" ^ name) in
+    let renderer = Device.renderer device in
+    let expected = Renderer.render renderer ~name:"alignment_cache" program in
+    let spec = Device.compile_program device ~name:"alignment_cache" program in
+    equal string expected (Program_spec.src spec) in
+  compile true "aligned-cache";
+  compile false "unaligned-cache"
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "compilation preserves the selected buffer alignment" test_compilation_preserves_alignment;
           test "compile and run one kernel" (fun () ->
             let device = cpu "run-one" in
             let spec =

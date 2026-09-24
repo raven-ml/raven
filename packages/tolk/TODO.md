@@ -72,10 +72,8 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
 - Port HCQ2 queue construction, byte-interval dependency tracking, compile/link/
   run phases and retained JIT execution. Replace old graph APIs instead of
   implementing the deleted upstream graph architecture.
-- Move generic compilation/cache ownership out of Device. Include renderer
-  settings such as Clang alignment in cache identity. Distinguish ordinary
-  runtime caches from transient timing links and modules; release transient
-  resources deterministically after queued work completes.
+- Distinguish ordinary runtime caches from transient timing links and modules;
+  release transient resources deterministically after queued work completes.
 - Migrate CPU host calls and threadless tensor kernels; port ELF/TinyELF and
   x86 out-of-range relocation trampolines. Rebaseline CPU matmul performance.
 - Migrate Metal/CUDA queues and argument bindings; implement CUDA peer enablement

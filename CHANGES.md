@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Device.compile_program` preserves the selected renderer's alignment and
+  each call's device and optimization metadata. It uses the source-based
+  compiler cache, avoiding unsafe reuse of aligned kernels for unaligned inputs.
+
 - `DEV` selects lazy renderer factories and exact compiler architectures,
   including CPU tuning and feature flags. Program caches distinguish targets;
   CUDA compilation uses the exact GPU architecture instead of a rendering tier.
