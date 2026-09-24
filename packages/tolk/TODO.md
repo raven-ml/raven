@@ -96,8 +96,6 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   with Nx and model/state ownership with Kaun, avoiding duplicate codecs and
   additional JSON dependencies.
 
-- Support symbolic scalar and slice-bound indices in `getitem`, and advanced
-  indexing with symbolic dimensions outside the indexed axes.
 - Revalidate scan, scatter and external-buffer contracts under the new call
   and storage protocol.
 - Review the audited Rune residency, uploads, memory planning and symbolic

@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Op.getitem` preserves symbolic dimensions outside advanced-index axes and
+  accepts symbolically sized index tensors. Both combined and separate index
+  axes retain their logical shapes through gathering and masking.
+
 - `Op.getitem` supports symbolic axis lengths and negative slice bounds.
   `Movement.parsed` and `parse_view_index` now carry symbolic sizes and bounds;
   symbolic slices require a unit step and a provably non-negative length.

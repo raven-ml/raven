@@ -724,22 +724,29 @@ let rec getitem t indices =
   | [] -> x
   | _ ->
       let dims = List.map fst tops and tensors = List.map snd tops in
-      let big_shape = T.broadcast_shape (List.map T.shape tensors) in
+      let big_shape = Uop.broadcast_shape (List.map T.symbolic_shape tensors) in
       let bshape_len = List.length big_shape in
       let d0 = List.hd dims in
       let dlast = List.nth dims (List.length dims - 1) in
       let consecutive = dims = List.init (List.length dims) (fun i -> d0 + i) in
-      let xshape = T.shape x in
+      let xshape = T.symbolic_shape x in
+      let axis_size d =
+        match Uop.const_int_value (List.nth xshape d) with
+        | Some n -> n
+        | None ->
+            invalid_arg "Op.getitem: advanced indexing needs a concrete axis size"
+      in
       if List.length dims > 1 && consecutive then (
         (* Consecutive integer-tensor indices: one linear gather over the
            flattened block instead of a mask per axis. *)
-        let ishp = List.map (fun d -> List.nth xshape d) dims in
+        let ishp = List.map axis_size dims in
         let strides = List.mapi (fun i _ -> prod (drop (i + 1) ishp)) ishp in
         let linear_idx =
           match
             List.map2
               (fun tn s ->
-                Elementwise.mul (Movement.broadcast_to tn big_shape) (T.i s))
+                Elementwise.mul
+                  (Movement.symbolic_broadcast_to tn big_shape) (T.i s))
               tensors strides
           with
           | h :: tl -> Elementwise.usum h tl
@@ -758,18 +765,21 @@ let rec getitem t indices =
           | [] -> assert false
         in
         let pre = take d0 xshape and post = drop (dlast + 1) xshape in
-        let flat = Movement.reshape x (pre @ [ prod ishp ] @ post) in
+        let flat =
+          Movement.symbolic_reshape x
+            (pre @ [ Uop.const_int (prod ishp) ] @ post)
+        in
         let gathered =
           getitem flat
             (List.init (List.length pre) (fun _ -> Movement.All)
             @ [ Movement.T (Elementwise.where valid linear_idx (T.i 0)) ])
         in
         let valid_shape =
-          List.init (List.length pre) (fun _ -> 1)
+          List.init (List.length pre) (fun _ -> Uop.const_int 1)
           @ big_shape
-          @ List.init (List.length post) (fun _ -> 1)
+          @ List.init (List.length post) (fun _ -> Uop.const_int 1)
         in
-        Elementwise.where (Movement.reshape valid valid_shape) gathered
+        Elementwise.where (Movement.symbolic_reshape valid valid_shape) gathered
           (T.i 0))
       else
         let xndim = T.ndim x in
@@ -779,23 +789,25 @@ let rec getitem t indices =
             List.map2
               (fun d tn ->
                 let i =
-                  Movement.expand
-                    (Movement.reshape tn
-                       (T.shape tn @ List.init (xndim - d0) (fun _ -> 1)))
+                  Movement.symbolic_broadcast_to
+                    (Movement.symbolic_reshape tn
+                       (T.symbolic_shape tn
+                        @ List.init (xndim - d0) (fun _ -> Uop.const_int 1)))
                     pre_reduce_shape
                 in
-                one_hot_along_dim ~dim:(d - xndim) i (List.nth xshape d))
+                one_hot_along_dim ~dim:(d - xndim) i (axis_size d))
               dims tensors
           with
           | h :: tl -> Elementwise.uprod h tl
           | [] -> assert false
         in
         let reshape_arg =
-          take d0 xshape @ List.init bshape_len (fun _ -> 1) @ drop d0 xshape
+          take d0 xshape @ List.init bshape_len (fun _ -> Uop.const_int 1)
+          @ drop d0 xshape
         in
         let sum_axis = List.map (fun d -> d + bshape_len) dims in
         let x =
-          let reshaped = Movement.reshape x reshape_arg in
+          let reshaped = Movement.symbolic_reshape x reshape_arg in
           Reduce.sum ~axis:sum_axis ~dtype:(T.val_dtype x)
             (Elementwise.where mask reshaped (T.i 0))
         in

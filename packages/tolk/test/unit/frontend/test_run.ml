@@ -952,6 +952,48 @@ let plus1 u = U.O.(u + U.const_int 1)
 let symbolic_tests =
   group "symbolic"
     [
+      test "advanced indexing retains symbolic unindexed dimensions" (fun () ->
+          let index values = Mv.T (Run.of_int_array ~shape:[ 2 ] values) in
+          List.iter
+            (fun length ->
+              let bound = bound_var "advanced_len" ~min_val:1 ~max_val:3 length in
+              let matrix =
+                fa ~shape:[ 3; 4 ] (Array.init 12 (fun i -> float_of_int (i + 1)))
+              in
+              let matrix = Mv.symbolic_shrink matrix
+                  [ Some (U.const_int 0, bound); None ] in
+              let columns = Op.getitem matrix [ Mv.All; index [| 2; 0 |] ] in
+              check_floats [| float_of_int (4 * length * length) |] (Rd.sum columns);
+              let cube () =
+                fa ~shape:[ 2; 3; 3 ] (Array.init 18 (fun i -> float_of_int (i + 1)))
+              in
+              let middle = Mv.symbolic_shrink (cube ())
+                  [ None; Some (U.const_int 0, bound); None ] in
+              let separated = Op.getitem middle
+                  [ index [| 1; 0 |]; Mv.All; index [| 2; 0 |] ] in
+              check_floats [| float_of_int (3 * length * length + 10 * length) |]
+                (Rd.sum separated);
+              let trailing = Mv.symbolic_shrink (cube ())
+                  [ None; None; Some (U.const_int 0, bound) ] in
+              let consecutive =
+                Op.getitem trailing [ index [| 1; 0 |]; index [| 2; 0 |] ]
+              in
+              check_floats [| float_of_int (length * length + 16 * length) |]
+                (Rd.sum consecutive))
+            [ 1; 2; 3 ]);
+      test "advanced index tensors can have a symbolic length" (fun () ->
+          List.iter
+            (fun (length, expected) ->
+              let bound =
+                bound_var "index_tensor_len" ~min_val:1 ~max_val:3 length
+              in
+              let index = Run.of_int_array ~shape:[ 3 ] [| -1; 0; 2 |] in
+              let index =
+                Mv.symbolic_shrink index [ Some (U.const_int 0, bound) ]
+              in
+              let result = Op.getitem (vec [| 1.; 2.; 3.; 4. |]) [ Mv.T index ] in
+              check_floats [| expected |] (Rd.sum result))
+            [ 1, 4.; 2, 5.; 3, 8. ]);
       test "integer getitem resolves against a symbolic axis" (fun () ->
           List.iter
             (fun length ->

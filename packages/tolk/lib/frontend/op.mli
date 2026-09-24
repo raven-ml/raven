@@ -133,11 +133,13 @@ val getitem : Tensor.t -> Movement.index list -> Tensor.t
     fills the unaddressed axes. Axis lengths may be symbolic. A slice whose
     bounds remain symbolic requires a unit step and a provably non-negative
     length; negative integer bounds count from the symbolic axis length.
+    Use {!Movement.symbolic_shrink} for explicit symbolic bound expressions.
 
     An integer-tensor index ({!Movement.T}) performs advanced indexing: its
     elements gather positions along the axis, and several such indices broadcast
-    against each other into a shared leading block of axes. Out-of-bounds
-    gathered positions read as [0].
+    against each other into a shared leading block of axes. Index-tensor
+    shapes and unindexed axes may be symbolic; indexed axes must have concrete
+    lengths. Out-of-bounds gathered positions read as [0].
 
     @raise Invalid_argument
       if the indices are malformed for the rank of [t] (see

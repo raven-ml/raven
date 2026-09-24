@@ -6,6 +6,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Symbolic index expressions use `Movement.symbolic_shrink`**, composed with
+  `Movement.squeeze` for a scalar selection. `Movement.index` keeps integer
+  bounds; `Op.getitem` supports symbolic axis lengths and index-tensor shapes.
+  This keeps dimension expressions in the existing typed bounds API. Consumers:
+  GPT-2 token lookup, KV-cache updates and position selection in
+  `examples/gpt2/main.ml`. Coverage: the frontend symbolic indexing/cache tests
+  and GPT-2 execution suite. Reconsider if a consumer needs mixed symbolic and
+  advanced indexing that cannot be composed from these operations.
+
 - **Host-scalar `bitcast` stays in `symbolic.ml`**, upstream moved it to
   `dtype.ml` (`67dc02d7e`). Forced by layering: `Const` depends on `Dtype`.
   The only would-be consumer is host-side rand arithmetic, and
