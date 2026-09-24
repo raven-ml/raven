@@ -934,6 +934,9 @@ thread.
 
 ### Nx
 
+- Add `Nx.Ptree.leaf`, the structure that is one tensor, for every dtype.
+  Pass it for the single-tensor roles of a transformation that takes several
+  structures, instead of writing a one-leaf module per tensor type.
 - Add `Nx_buffer.register_file` and `Nx_buffer.file_range`. A buffer whose
   memory lies inside a recorded file mapping, views and reinterpretations
   included, answers with the file and the byte offset of its first element, so

@@ -174,8 +174,26 @@ let test_unpack_at_path () =
       | _ -> false)
     (fun () -> ignore (Nx.Ptree.unpack ~at:"model.layer.w" Nx.float64 p))
 
+(* One [leaf] value walks a single tensor of any dtype. *)
+let test_leaf_is_one_tensor () =
+  let walk (type a b) (module P : Nx.Ptree.S with type t = (a, b) Nx.t)
+      (x : (a, b) Nx.t) =
+    let n = ref 0 in
+    P.iter (fun _ -> incr n) x;
+    (!n, P.map (fun t -> Nx.add t t) x)
+  in
+  let n, doubled = walk Nx.Ptree.leaf (Nx.create f32 [| 2 |] [| 1.0; 2.5 |]) in
+  equal ~msg:"float32 leaves" int 1 n;
+  check ~msg:"float32 map" [| 2.0; 5.0 |] (raw doubled);
+  let n, doubled =
+    walk Nx.Ptree.leaf (Nx.create Nx.int32 [| 2 |] [| 3l; 4l |])
+  in
+  equal ~msg:"int32 leaves" int 1 n;
+  equal ~msg:"int32 map" (array int32) [| 6l; 8l |] (Nx.to_array doubled)
+
 let tests =
   [
+    group "leaf" [ test "one leaf of any dtype" test_leaf_is_one_tensor ];
     group "Ptree.S bridge"
       [
         test "map preserves structure" test_map_preserves_structure;

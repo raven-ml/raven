@@ -138,6 +138,16 @@ val instantiate :
     walker. Checkpointing also names leaves, and names come from the structure's
     shape, so it takes the structure's module itself (see [Kaun.Checkpoint]). *)
 
+val leaf : (module S with type t = ('a, 'b) Nx_effect.t)
+(** [leaf] is the structure that is one tensor: its only leaf is the tensor
+    itself. It serves every dtype, so one value stands wherever a transformation
+    takes several structures and one of them is a single tensor, as for the rows
+    and outputs of a scan over a structured state:
+
+    {[
+    Rune.scan (module State) Nx.Ptree.leaf Nx.Ptree.leaf ~f ~init xs
+    ]} *)
+
 val unpack :
   ?at:string -> ('a, 'b) Nx_core.Dtype.t -> tensor -> ('a, 'b) Nx_effect.t
 (** [unpack ?at dt p] unpacks the packed tensor [p] and returns it with the
