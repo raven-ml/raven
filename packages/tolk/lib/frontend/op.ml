@@ -65,7 +65,7 @@ let reduced_count t ?axis () =
 
 let mean ?axis ?(keepdim = false) t =
   let out_dt = if Dtype_ops.is_floating_point t then T.dtype t else D.float32 in
-  let acc = D.sum_acc_dtype (T.val_dtype t) in
+  let acc = D.sum_acc_dtype (Uop.commit_dtype (T.uop t)) in
   let numerator = Reduce.sum ?axis ~keepdim (Dtype_ops.cast t acc) in
   let denom = reduced_count t ?axis () in
   Dtype_ops.cast (Elementwise.div numerator (T.i denom)) out_dt

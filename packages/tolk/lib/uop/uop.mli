@@ -1466,6 +1466,16 @@ val vmin : t -> Bound.t
 val vmax : t -> Bound.t
 (** [vmax u] is the upper bound symmetric to {!vmin}. *)
 
+val commit_dtype : ?default_int:Dtype.t -> t -> Dtype.t
+(** [commit_dtype u] is the concrete dtype for storing [u]. Concrete dtypes
+    are unchanged and [weakfloat] becomes {!Dtype.default_float}. For
+    [weakint], it selects the first of [default_int] (default:
+    {!Dtype.default_int}), [int32], [int64], and [uint64] containing both
+    bounds. [default_int] must be a concrete integer dtype.
+
+    An unresolved interval that fits no candidate uses [int64]. Raises
+    [Invalid_argument] if an exact integer fits neither [int64] nor [uint64]. *)
+
 val const_int_value : t -> int option
 (** [const_int_value u] is [Some n] when [u] is a scalar integer
     {!Ops.Const} of value [n] that fits in OCaml's native [int], and

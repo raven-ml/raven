@@ -65,6 +65,21 @@ let elementwise_tests =
 let reduce_tests =
   group "reduce"
     [
+      test "weak reductions preserve values beyond int32" (fun () ->
+          let large = 1 lsl 40 in
+          let input = Mv.expand (Mv.reshape (T.i large) [ 1 ]) [ 3 ] in
+          let check expected tensor =
+            let bytes = Run.data tensor in
+            equal int 8 (Bytes.length bytes);
+            equal int64 (Int64.of_int expected) (Bytes.get_int64_le bytes 0)
+          in
+          check (3 * large) (Rd.sum input);
+          check large (Rd.max input);
+          check large (Rd.prod (Mv.reshape (T.i large) [ 1 ])));
+      test "weak integer mean preserves values beyond int32" (fun () ->
+          let large = 1 lsl 40 in
+          let input = Mv.expand (Mv.reshape (T.i large) [ 1 ]) [ 3 ] in
+          check_floats [| float_of_int large |] (Op.mean input));
       test "sum all" (fun () ->
           check_floats [| 21. |] (Rd.sum (fa ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 4.; 5.; 6. |])));
       test "sum axis 0" (fun () ->

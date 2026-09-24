@@ -97,7 +97,6 @@ to `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences belong in
   with Nx and model/state ownership with Kaun, avoiding duplicate codecs and
   additional JSON dependencies.
 
-- Port final weak-reduction commitment rules.
 - Complete symbolic getitem/negative slices, shape-changing bitcasts, half
   random generation and fresh-storage clone/random/dropout behavior.
 - Revalidate scan, scatter and external-buffer contracts under the new call

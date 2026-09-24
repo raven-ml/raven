@@ -36,7 +36,7 @@ let rop t op axis =
 
 let reduce t op ?axis ?(keepdim = false) () =
   (* A reduction accumulates, so its input needs a committed width. *)
-  let t = Dtype_ops.cast t (D.strong_dtype (T.dtype t)) in
+  let t = Dtype_ops.cast t (U.commit_dtype (T.uop t)) in
   let axes = match axis with None -> List.init (T.ndim t) Fun.id | Some l -> l in
   let axes = List.map (T.resolve_dim t) axes in
   let axes = if T.ndim t = 0 then [] else axes in
@@ -54,7 +54,7 @@ let is_narrow_float dt =
 
 let sum ?axis ?(keepdim = false) ?dtype t =
   let src_dt = T.val_dtype t in
-  let acc = match dtype with Some d -> d | None -> D.sum_acc_dtype src_dt in
+  let acc = match dtype with Some d -> d | None -> D.sum_acc_dtype (U.commit_dtype (T.uop t)) in
   let ret = reduce (Dtype_ops.cast t acc) Ops.Add ?axis ~keepdim () in
   if dtype = None && is_narrow_float src_dt then Dtype_ops.cast ret (T.dtype t)
   else ret

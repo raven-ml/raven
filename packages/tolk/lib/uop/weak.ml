@@ -14,18 +14,7 @@ let weak_pat =
                    Upat.exact_dtype Dtype.weakfloat ]
 
 (* The width a weak node takes when nothing else demands one. *)
-let select_dtype u =
-  if Dtype.equal (U.dtype u) Dtype.weakfloat then Dtype.default_float
-  else
-    let lo = U.vmin u and hi = U.vmax u in
-    if Bound.equal lo hi &&
-       (Bound.lt lo (Dtype.min Dtype.int64) || Bound.lt (Dtype.max Dtype.uint64) hi)
-    then invalid_arg "Weak.select_dtype: integer does not fit any storage dtype";
-    match List.find_opt (fun dt ->
-        Bound.le (Dtype.min dt) lo && Bound.le hi (Dtype.max dt))
-        [ Dtype.int32; Dtype.int64; Dtype.uint64 ] with
-    | Some dt -> dt
-    | None -> Dtype.int64
+let select_dtype u = U.commit_dtype ~default_int:Dtype.int32 u
 
 (* Casting every source of [u] to [dt] gives the node itself [dt], except for
    comparisons, which are boolean whatever their operands are. *)

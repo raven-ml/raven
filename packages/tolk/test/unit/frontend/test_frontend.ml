@@ -262,6 +262,32 @@ let elementwise_tests =
 let reduce_tests =
   group "reduce"
     [
+      test "weak reductions choose a width from the input bounds" (fun () ->
+          let dtype = Testable.make ~pp:D.pp ~equal:D.equal in
+          let check input expected =
+            List.iter (fun reduce -> equal dtype expected (T.dtype (reduce input)))
+              [ (fun t -> Rd.sum t); (fun t -> Rd.prod t); (fun t -> Rd.max t) ]
+          in
+          List.iter (fun input ->
+              check input D.int64;
+              check (Mv.expand (Mv.reshape input [ 1 ]) [ 3 ]) D.int64)
+            [ T.i (1 lsl 40); T.i (-1 lsl 40) ];
+          check (T.i 3) D.default_int;
+          check (T.f 1.5) D.default_float;
+          let wide = T.of_uop (U.const (Tolk_uop.Const.of_view D.weakint
+              (Tolk_uop.Const.view (Tolk_uop.Const.max_value D.uint64)))) in
+          check wide D.uint64);
+      test "weak reductions honor an explicit accumulation dtype" (fun () ->
+          let input = Mv.expand (Mv.reshape (T.i (1 lsl 40)) [ 1 ]) [ 3 ] in
+          let dtype = Testable.make ~pp:D.pp ~equal:D.equal in
+          equal dtype D.float64 (T.dtype (Rd.sum ~dtype:D.float64 input));
+          equal dtype D.float64 (T.dtype (Rd.prod ~dtype:D.float64 input)));
+      test "weak reductions reject an exact value without a storage width" (fun () ->
+          let input = El.mul (T.i (1 lsl 32)) (T.i (1 lsl 32)) in
+          List.iter (fun reduce ->
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> reduce input))
+            [ (fun t -> Rd.sum t); (fun t -> Rd.prod t); (fun t -> Rd.max t) ]);
       test "sum all reduces to scalar" (fun () ->
           equal (list int) [] (shape (Rd.sum (ones_f [ 2; 3 ]))));
       test "sum axis removes axis" (fun () ->

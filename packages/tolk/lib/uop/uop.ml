@@ -1825,6 +1825,19 @@ and compute_min_max u =
 let vmin u = fst (min_max u)
 let vmax u = snd (min_max u)
 
+let commit_dtype ?(default_int = Dtype.default_int) u =
+  if not (Dtype.equal (dtype u) Dtype.weakint) then Dtype.strong_dtype (dtype u)
+  else
+    let lo, hi = min_max u in
+    if Bound.equal lo hi &&
+       (Bound.lt lo (Dtype.min Dtype.int64) || Bound.lt (Dtype.max Dtype.uint64) hi)
+    then invalid_arg "Uop.commit_dtype: integer does not fit any storage dtype";
+    match List.find_opt (fun dt ->
+        Bound.le (Dtype.min dt) lo && Bound.le hi (Dtype.max dt))
+        [ default_int; Dtype.int32; Dtype.int64; Dtype.uint64 ] with
+    | Some dt -> dt
+    | None -> Dtype.int64
+
 let const_int_value u =
   match op u, arg u with
   | Ops.Const, Arg.Value c ->

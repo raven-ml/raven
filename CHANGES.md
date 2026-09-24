@@ -294,6 +294,10 @@ thread.
 
 ### Tolk (new)
 
+- `Reduce.sum`, `Reduce.prod`, `Reduce.max`, and `Op.mean` preserve weak integer
+  inputs beyond `int32` by choosing a storage dtype from their bounds. Exact values
+  beyond all integer storage types are rejected before accumulation.
+
 - `Uop.max_numel` rejects overflowing element counts and handles zero-sized
   shapes with large dimensions exactly. Large shape products no longer cause
   gated buffer indices to narrow incorrectly to `int32`.

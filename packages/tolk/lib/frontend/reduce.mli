@@ -10,7 +10,12 @@
     Each reduction collapses one or more axes. [axis] selects the axes to
     reduce (default: all of them) and accepts negative indices. With
     [~keepdim:true] the reduced axes are kept as size [1] instead of being
-    removed. *)
+    removed.
+
+    Weak inputs commit to a concrete dtype before reduction: weak floats use
+    the default float dtype, and weak integers use an integer dtype containing
+    their input bounds. Exact integers outside all storage dtypes raise
+    [Invalid_argument]. An explicit [dtype] on {!sum} or {!prod} takes priority. *)
 
 val sum :
   ?axis:int list -> ?keepdim:bool -> ?dtype:Tolk_uop.Dtype.t -> Tensor.t ->
