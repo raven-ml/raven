@@ -1844,6 +1844,21 @@ let moved p shape m =
           p (Nx_effect.Grid.cuts p)
     | _ -> q
 
+(* [tt], a value at [p] in [st]'s program over several devices, at [q]: a split
+   value is gathered by a copy to every device, and a copy is split by each
+   device keeping its slice (tolk's copy and shard nodes). *)
+let reshard st p q tt =
+  let names = List.map Nx.Device.name st.st_devices in
+  let whole =
+    if Nx_effect.Grid.cuts p = [] then tt
+    else
+      F.Tensor.of_uop (U.copy ~src:(F.Tensor.uop tt) ~device:(U.Multi names) ())
+  in
+  match Nx_effect.Grid.cuts q with
+  | [] -> whole
+  | [ (axis, _) ] -> F.Creation.shard ~axis ~devices:names whole
+  | _ -> unsupported "a value cut along several axes"
+
 (* Where the result of the operation performing [eff] lives in [st]'s program:
    raises [Invalid_argument] as nx does when its operands cannot meet. *)
 let result_placement : type c. state -> c Effect.t -> Nx.Placement.t =
@@ -2478,11 +2493,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               (Effect.Deep.match_with
                  (fun () -> Quant.lower kernels w op)
                  () (handler st)))
-    (* A placement inside a program: the identity at the value's own placement.
-       Over several devices a split value is gathered to a copy on each device
-       by a copy to them all, and a copy is split by keeping each device its
-       slice (tolk's copy and shard nodes). A program runs on its devices, so
-       any other target raises. *)
+    (* A placement inside a program: the identity at the value's own placement,
+       a [reshard] to another placement over the program's devices; any other
+       target raises. *)
     | E_place { placement = q; t_in } ->
         Some
           (fun k ->
@@ -2501,23 +2514,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                            %a; place it outside the compiled function"
                           pp_devices st.st_devices Nx.Placement.pp q))
                 else
-                  let names = List.map Nx.Device.name st.st_devices in
-                  let tt = go t_in in
-                  let whole =
-                    if Nx_effect.Grid.cuts p = [] then tt
-                    else
-                      F.Tensor.of_uop
-                        (U.copy ~src:(F.Tensor.uop tt) ~device:(U.Multi names)
-                           ())
-                  in
-                  let tt =
-                    match Nx_effect.Grid.cuts q with
-                    | [] -> whole
-                    | [ (axis, _) ] ->
-                        F.Creation.shard ~axis ~devices:names whole
-                    | _ -> unsupported "a value cut along several axes"
-                  in
-                  continue k (traced st q (dt t_in) tt))
+                  continue k (traced st q (dt t_in) (reshard st p q (go t_in))))
     (* A traced value lives where its operation put it, which is what the
        gradient of a placement asks of its primal. *)
     | E_placement x when is_traced x ->
@@ -4368,7 +4365,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   (* One placeholder and one input record per leaf visit, in traversal order, so
      replay pairs current leaves positionally: a tensor behind two leaves is two
      inputs, equal on this call and free to differ on the next. *)
-  let inputs = ref [] and placeholders = ref [] in
+  let inputs = ref [] and placeholders = ref [] and tensors = ref [] in
   let pos = ref 0 in
   Array.iter
     (fun (Nx.P leaf) ->
@@ -4404,6 +4401,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           (Node { trace = st.st_id; tensor = tt; place })
       in
       placeholders := Nx.P ph :: !placeholders;
+      tensors := tt :: !tensors;
       Hashtbl.replace st.input_tags (U.tag node) !pos;
       inputs :=
         {
@@ -4466,8 +4464,101 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   in
   let out_anch =
     List.map
-      (fun (key, (Packed (dt, _) as pk), tt) -> (key, pk, anchor dt tt))
+      (fun (key, (Packed (dt, ph) as pk), tt) ->
+        (key, pk, anchor dt tt, placement_in st ph))
       outs
+  in
+  (* RFC 0006's rule 5 pairing, once per program: the consumed leaf each result
+     continues, each leaf paired with at most one result, of its dtype and byte
+     size. First each result an indexed write lands in takes the leaf it starts
+     from; then, in walk order, each result that derives from a consumed leaf at
+     its own index takes the first such leaf still free. Lending writes a paired
+     result over its leaf's storage where the schedule allows (see Lending), and
+     over several devices a paired result keeps its leaf's placement. *)
+  let pairing =
+    let pairing = Hashtbl.create 8 in
+    let carried =
+      Array.of_list
+        (List.filter consumed (List.init (Array.length leaves) Fun.id))
+    in
+    if carried <> [||] then begin
+      let taken = Array.make (Array.length leaves) false in
+      let fits i (Packed (dt, ph)) =
+        let (Nx.P leaf) = leaves.(i) in
+        (not taken.(i))
+        && String.equal (ND.to_string (Nx_effect.dtype leaf)) (ND.to_string dt)
+        && numel (shape_of leaf) = numel (shape_of ph)
+      in
+      let pair key i =
+        taken.(i) <- true;
+        Hashtbl.replace pairing key i
+      in
+      List.iter
+        (fun (key, pk, tt, _) ->
+          match written_buffer (F.Tensor.uop tt) with
+          | Some v -> (
+              match
+                List.find_opt (fun (b, _) -> U.buf_uop v == b) st.prefills
+              with
+              | Some (_, input) ->
+                  let i = Hashtbl.find st.input_tags (U.tag input) in
+                  if consumed i && fits i pk then pair key i
+              | None -> ())
+          | None -> ())
+        out_anch;
+      let tensors = Array.of_list (List.rev !tensors) in
+      let table =
+        derivations
+          (List.map (fun (_, _, tt, _) -> F.Tensor.uop tt) out_anch)
+          (Array.map (fun i -> F.Tensor.uop tensors.(i)) carried)
+      in
+      List.iter
+        (fun (key, pk, tt, _) ->
+          if not (Hashtbl.mem pairing key) then
+            let reach, moved =
+              Option.value ~default:(bits_empty, bits_empty)
+                (Hashtbl.find_opt table (U.tag (F.Tensor.uop tt)))
+            in
+            match
+              List.find_opt
+                (fun b ->
+                  bits_mem reach b
+                  && (not (bits_mem moved b))
+                  && fits carried.(b) pk)
+                (List.init (Array.length carried) Fun.id)
+            with
+            | Some b -> pair key carried.(b)
+            | None -> ())
+        out_anch
+    end;
+    pairing
+  in
+  (* Over several devices a paired result of its leaf's shape keeps the leaf's
+     placement: where nx's rules put it elsewhere, the program reshards it at
+     its end, so a consumed carry keeps its placement from call to call, and one
+     that starts on the host stays a copy on each device. *)
+  let out_anch =
+    if not multi then out_anch
+    else
+      List.map
+        (fun ((key, (Packed (_, ph) as pk), tt, place) as out) ->
+          match Hashtbl.find_opt pairing key with
+          | Some i ->
+              let (Nx.P leaf) = leaves.(i) in
+              let q = placements.(i) in
+              if shape_of leaf <> shape_of ph || Nx.Placement.equal place q then
+                out
+              else begin
+                if Lazy.force jit_debug >= 1 then
+                  Printf.eprintf "rune.jit: %s\n%!"
+                    (Format.asprintf
+                       "the result paired with the argument at %s is resharded \
+                        from %a to %a"
+                       info.names.(i) Nx.Placement.pp place Nx.Placement.pp q);
+                (key, pk, reshard st place q tt, q)
+              end
+          | None -> out)
+        out_anch
   in
   (* Canonicalize sharding before allocation: rewrite the multi-device rules
      over the whole output graph now, so every split value reaching a sink is a
@@ -4475,7 +4566,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
      (copies allocate full-size on every device). Scheduling reapplies the same
      rules; the rewrite is idempotent. *)
   let out_uops =
-    let outs_u = List.map (fun (_, _, tt) -> F.Tensor.uop tt) out_anch in
+    let outs_u = List.map (fun (_, _, tt, _) -> F.Tensor.uop tt) out_anch in
     match multi with
     | false ->
         (* Only an output can be given its starting value by replay. An indexed
@@ -4542,7 +4633,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
      view of that buffer, which no output node stands for. *)
   let out_conts =
     List.map2
-      (fun (key, pk, _) u ->
+      (fun (key, pk, _, tracked) u ->
         let c =
           match written_buffer u with
           | Some v -> v
@@ -4552,12 +4643,11 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
                    (F.Tensor.uop (F.Creation.clone (F.Tensor.of_uop u))))
           | None -> U.contiguous ~src:u ()
         in
-        let (Packed (_, ph)) = pk in
         let place = place_of u in
-        if not (Nx.Placement.equal (placement_in st ph) place) then
+        if not (Nx.Placement.equal tracked place) then
           err "Rune.jit: a result lands at %s where nx's rules put it at %s"
             (Format.asprintf "%a" Nx.Placement.pp place)
-            (Format.asprintf "%a" Nx.Placement.pp (placement_in st ph));
+            (Format.asprintf "%a" Nx.Placement.pp tracked);
         (key, pk, u, place, c))
       out_anch out_uops
   in
@@ -4841,51 +4931,26 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
         lends :=
           { l_otag = otag; l_input = i; l_result = first_result.(k) } :: !lends
       in
-      (* The outputs of an indexed write take the input they start from. *)
+      (* The pairing's outputs take their partner where the schedule allows: an
+         output of an indexed write only when the kernel writing it reads the
+         partner at no other index, and an output that returns its partner
+         unchanged always. *)
       List.iter
         (fun (k, otag, v, _) ->
-          match Hashtbl.find_opt starts_from otag with
-          | Some itag -> (
-              match Hashtbl.find_opt position itag with
-              | Some i
-                when lendable i v
-                     && (not (Hashtbl.mem returned itag))
-                     && allows m ~strict:true ~itag ~otag ->
-                  pair k otag i
-              | _ -> ())
+          match Hashtbl.find_opt pairing k with
+          | Some i ->
+              let itag = U.tag cp_inputs.(i).i_node in
+              let returns_it = Hashtbl.find_opt position otag = Some i in
+              if
+                lendable i v
+                && (returns_it
+                   || (not (Hashtbl.mem returned itag))
+                      && (not (Hashtbl.mem reserved otag))
+                      && allows m
+                           ~strict:(Hashtbl.mem starts_from otag)
+                           ~itag ~otag)
+              then pair k otag i
           | None -> ())
-        candidates;
-      (* The outputs that derive from a consumed input at their own index take
-         the first such input. *)
-      let inodes = Array.map (fun i -> cp_inputs.(i).i_node) consumed_inputs in
-      let table =
-        derivations (List.map (fun (_, _, _, u) -> u) candidates) inodes
-      in
-      List.iter
-        (fun (k, otag, v, u) ->
-          if not (Hashtbl.mem paired otag || Hashtbl.mem starts_from otag) then
-            match Hashtbl.find_opt position otag with
-            | Some i -> if lendable i v then pair k otag i
-            | None when not (Hashtbl.mem reserved otag) ->
-                let reach, moved =
-                  Option.value ~default:(bits_empty, bits_empty)
-                    (Hashtbl.find_opt table (U.tag u))
-                in
-                let rec first b =
-                  if b < Array.length consumed_inputs then
-                    let i = consumed_inputs.(b) in
-                    let itag = U.tag cp_inputs.(i).i_node in
-                    if
-                      bits_mem reach b
-                      && (not (bits_mem moved b))
-                      && lendable i v
-                      && (not (Hashtbl.mem returned itag))
-                      && allows m ~strict:false ~itag ~otag
-                    then pair k otag i
-                    else first (b + 1)
-                in
-                first 0
-            | None -> ())
         candidates;
       (* The rest, in increasing order of their first write, take the free input
          read last longest ago. *)

@@ -3946,6 +3946,50 @@ let test_place_inside_a_program () =
     (Nx.placement g);
   check_arr ~msg:"gradient" (Nx.to_array (Nx.mul_s x 2.0)) g
 
+(* A consumed carry keeps its placement: one that starts on the host enters as a
+   copy on each device and comes back there, though its update meets a split
+   batch, so the next call runs the same program. *)
+let test_a_consumed_carry_keeps_its_placement () =
+  let rows = Nx.Placement.sharded ~axis:0 cpus in
+  let traces = ref 0 in
+  let step =
+    Rune.jit
+      Nx.Ptree.(tensor @-> consumes tensor @@ returns tensor)
+      (fun x s ->
+        incr traces;
+        Nx.add s x)
+  in
+  let x = Nx.place rows (rows86 ()) in
+  let s = step x (Nx.zeros Nx.float32 [| 8; 6 |]) in
+  equal ~msg:"a host carry comes back a copy on each device" placement
+    (Nx.Placement.replicated cpus)
+    (Nx.placement s);
+  let s = step x s in
+  equal ~msg:"the second call runs the first program" int 1 !traces;
+  equal ~msg:"value" (array float_exact)
+    (Nx.to_array (Nx.mul_s (rows86 ()) 2.0))
+    (Nx.to_array s);
+  let s = step x (Nx.place rows (Nx.zeros Nx.float32 [| 8; 6 |])) in
+  equal ~msg:"a split carry stays split" placement rows (Nx.placement s);
+  (* Two carries feed both results: each keeps its own placement. *)
+  let traces = ref 0 in
+  let both =
+    Rune.jit
+      Nx.Ptree.(consumes (pair tensor tensor) @@ returns (pair tensor tensor))
+      (fun (s, r) ->
+        incr traces;
+        (Nx.add s r, Nx.add r s))
+  in
+  let copies = Nx.Placement.replicated cpus in
+  let s, r = both (Nx.place copies (rows86 ()), Nx.place rows (rows86 ())) in
+  equal ~msg:"the copy stays a copy" placement copies (Nx.placement s);
+  equal ~msg:"the split stays split" placement rows (Nx.placement r);
+  let s, r = both (s, r) in
+  equal ~msg:"one program" int 1 !traces;
+  equal ~msg:"values" (array float_exact)
+    (Nx.to_array (Nx.mul_s (rows86 ()) 8.0))
+    (Nx.to_array (Nx.add s r))
+
 (* A split upload from a mapped file uploads each device's window once, read
    from the file. *)
 let test_split_upload_from_a_file () =
@@ -4564,6 +4608,8 @@ let tests =
           test_views_of_split_values_are_read_in_place;
         test "operands that cannot meet raise" test_split_operands_raise;
         test "placing inside a program" test_place_inside_a_program;
+        test "a consumed carry keeps its placement"
+          test_a_consumed_carry_keeps_its_placement;
       ];
     group "bound captures"
       [

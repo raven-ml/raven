@@ -561,12 +561,18 @@ val jit :
     it with {!Nx.place}, which gathers a split value to a copy on each device or
     splits a copy, over the program's devices. A cut of one whole slice of a
     split axis is copied to every device, and one strictly inside a slice
-    raises. Only a split value orders the devices, which decides the slice each
-    holds: the first split leaf, else a split capture, while copies list them as
-    a set, and [devices] fixes the order; a split leaf or capture in another
-    order raises. A call returns once its work is queued on every device, and a
-    read waits for it. Storage reuse, staged scans and in-place indexed writes
-    apply on one device only, for now: a consumed carry keeps two generations.
+    raises. A consumed leaf's placement goes to the result paired with it, the
+    first in walk order that derives from it at its own index, each leaf to one
+    result (as for storage, under Lending): where nx's rules put that result
+    elsewhere, the program reshards it at its end, which [RUNE_JIT_DEBUG=1]
+    reports, so a carry keeps its placement from call to call and one that
+    starts on the host stays a copy on each device. Only a split value orders
+    the devices, which decides the slice each holds: the first split leaf, else
+    a split capture, while copies list them as a set, and [devices] fixes the
+    order; a split leaf or capture in another order raises. A call returns once
+    its work is queued on every device, and a read waits for it. Storage reuse,
+    staged scans and in-place indexed writes apply on one device only, for now:
+    a consumed carry keeps two generations.
 
     {b Captures.} The compilation cache lives in the partial application
     [jit s f]: apply [jit] once and reuse the returned function. Tensors [f]

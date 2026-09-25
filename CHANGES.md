@@ -160,6 +160,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A consumed carry of `Rune.jit` over several devices keeps its placement:
+  a result derived from it that lands elsewhere is resharded at the end of the
+  program, so a carry that starts on the host stays a copy on each device and
+  the next call reuses the program.
 - **Breaking:** inside `Rune.jit` over several devices, values live where
   nx's rules put them, and operands split differently (a row-split matrix
   times a column-split one), an operation along a split axis, or a movement
