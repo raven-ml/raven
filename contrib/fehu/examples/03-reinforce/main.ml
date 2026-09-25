@@ -51,35 +51,25 @@ let sparkline values =
             values))
 
 (* Network: Linear(4 -> 64) -> ReLU -> Linear(64 -> 2), as a plain record of
-   Linear layers with hand-written traversals (the Nx.Ptree.S contract). *)
+   Linear layers with a hand-written [walk] (the Nx.Ptree.S contract). *)
 
 module Policy = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    let l1 = Linear.map f l1 in
-    let l2 = Linear.map f l2 in
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
     { l1; l2 }
-
-  let map2 f p q =
-    let l1 = Linear.map2 f p.l1 q.l1 in
-    let l2 = Linear.map2 f p.l2 q.l2 in
-    { l1; l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
 
   (* Forward pass: obs [batch; 4] -> logits [batch; 2] *)
   let apply p obs = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))
 end
 
-let policy_tree = Kaun.ptree (module Policy)
+let policy_tree = Nx.Ptree.instantiate (module Policy)
 
 let count_parameters params =
-  let n = ref 0 in
-  Policy.iter (fun t -> n := !n + Nx.numel t) params;
-  !n
+  Nx.Ptree.fold policy_tree (fun _ t n -> n + Nx.numel t) params 0
 
 (* Main *)
 
