@@ -273,13 +273,13 @@ let random_products () =
     on_every (make ~scale:small ?ids ~ix ~m ~n ~k ~e ()) ()
   done
 
-(* No inputs: a sum of no terms. Metal cannot bind a zero-size buffer, so this
-   runs on the CPU. *)
+(* No inputs: a sum of no terms. Only the nonempty output needs storage. *)
 let no_inputs () =
-  if devices = [ "CPU" ] then
-    check ~device:"CPU"
-      ("float32", D.float32, 0.0, 0.0)
-      (make ~ix:2 ~m:3 ~n:8 ~k:0 ~e:2 ())
+  List.iter
+    (fun device ->
+      check ~device ("float32", D.float32, 0.0, 0.0)
+        (make ~ix:2 ~m:3 ~n:8 ~k:0 ~e:2 ()))
+    devices
 
 (* Code per renderer *)
 
@@ -293,7 +293,11 @@ let renderer_device name ren =
           free = (fun _ _ _ -> ());
           copyin = (fun _ _ -> ());
           copyout = (fun _ _ -> ());
-          addr = (fun _ -> Nativeint.zero);
+          addr = None;
+          host = (fun _ -> None);
+          kind = Type.Id.make ();
+          mapping = None;
+          synchronize = (fun () -> ());
           offset = None;
           transfer = None;
           supports_transfer = false;
@@ -305,7 +309,7 @@ let renderer_device name ren =
       Tolk.Device.make ~name:canonical ~allocator
         ~renderer_set:
           (Tolk.Device.Renderer_set.make ~device:name [ (name, Fun.const ren) ])
-        ~runtime:(fun _ _ ~runtimevars:_ ->
+        ~runtime:(fun _ ->
           {
             Tolk.Device.call =
               (fun _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ -> None);

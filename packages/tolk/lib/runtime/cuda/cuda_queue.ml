@@ -81,4 +81,3 @@ let encode name u = match U.op u, U.arg u, U.children u with
           | _ -> invalid_arg "CUDA queue: unsupported instruction") (U.children linear);
       Some !previous
   | _ -> None
-

@@ -2754,10 +2754,9 @@ let contiguous_view u =
         if Array.length srcs = 0 then None
         else
           (match walk srcs.(0), shape_arg srcs 1 with
-           | Some (base, base_off, current), Some target
-             when List.length current = List.length target
-                  && List.for_all2 same_dim current target ->
-               Some (base, base_off, target)
+           | Some (base, base_off, current), Some leading
+             when List.for_all (fun dim -> exact_int dim = Some 1) leading ->
+               Some (base, base_off, leading @ current)
            | _ -> None)
     | Ops.Pad ->
         let srcs = src node in

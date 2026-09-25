@@ -186,7 +186,11 @@ let render_only prefix ren =
           free = (fun _ _ _ -> ());
           copyin = (fun _ _ -> ());
           copyout = (fun _ _ -> ());
-          addr = (fun _ -> Nativeint.zero);
+          addr = None;
+          host = (fun _ -> None);
+          kind = Type.Id.make ();
+          mapping = None;
+          synchronize = (fun () -> ());
           offset = None;
           transfer = None;
           supports_transfer = false;
@@ -198,7 +202,7 @@ let render_only prefix ren =
       Device.make ~name ~allocator
         ~renderer_set:
           (Device.Renderer_set.make ~device:prefix [ (prefix, Fun.const ren) ])
-        ~runtime:(fun _ _ ~runtimevars:_ -> failwith "render only")
+        ~runtime:(fun _ -> failwith "render only")
         ~synchronize:ignore ())
 
 let renderers =

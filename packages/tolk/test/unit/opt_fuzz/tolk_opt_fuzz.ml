@@ -163,11 +163,9 @@ let quant_matmul ?ids name =
     ids = None
     ||
     match opt with
-    | Upcast { axis; _ } | Local { axis; _ } | Thread { axis; _ }
-    | Padto { axis; _ } ->
-        axis <> 0
+    | Split { axis; _ } | Padto { axis; _ } -> axis <> 0
     | Swap { axis; with_axis } -> axis <> 0 && with_axis <> 0
-    | Tc _ | Unroll _ | Group _ | Grouptop _ | Nolocals -> true
+    | Tc _ -> true
   in
   { name; sink; fill; allowed }
 
@@ -200,11 +198,9 @@ let block_matmul ~transpose name =
   in
   let allowed (opt : U.Opt.t) =
     match opt with
-    | Upcast { axis; _ } | Local { axis; _ } | Thread { axis; _ }
-    | Padto { axis; _ } ->
-        axis <> 0
+    | Split { axis; _ } | Padto { axis; _ } -> axis <> 0
     | Swap { axis; with_axis } -> axis <> 0 && with_axis <> 0
-    | Tc _ | Unroll _ | Group _ | Grouptop _ | Nolocals -> true
+    | Tc _ -> true
   in
   { name; sink; fill; allowed }
 

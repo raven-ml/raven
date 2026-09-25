@@ -389,6 +389,14 @@ thread.
 
 ### Tolk (new)
 
+- `Op.quant_matmul` and `Op.block_matmul` use the migrated optimizer and storage
+  APIs. Quantized kernels count dynamic reduction axes when choosing splits,
+  preserving gated products across CPU and GPU renderers.
+
+- Broadcast dimensions in contiguous-view detection no longer mistake repeated
+  input rows for adjacent storage. Quantized products with no inputs create
+  their zero output directly on the selected device.
+
 - AMD PCI initialization disables PCIe link power saving before reading MMIO,
   avoiding unstable register reads on links with retimers.
 
@@ -882,8 +890,6 @@ thread.
 - Backends that emulate 64-bit integers reject unsupported scalar runtime
   variables by name instead of silently narrowing their bindings to 32 bits.
 
-- `Device.Buffer.allocate` refuses a buffer with no bytes with
-  `Invalid_argument`. Metal raised "Metal OOM while allocating buffer" for it.
 - Add `Op.block_matmul`: each block of rows times the matrix of a stack its id
   addresses, read in place. A block whose id is out of range is exactly zero,
   and on a GPU it runs no multiply-adds.

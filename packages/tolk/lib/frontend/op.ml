@@ -777,11 +777,12 @@ let quant_row_bound ren dtype ~n ~k =
    [quant_matmul] refuses such options. *)
 let splits_axis0 (opt : Uop.Opt.t) =
   match opt with
-  | Upcast { axis; _ } | Local { axis; _ } | Thread { axis; _ }
-  | Padto { axis; _ } ->
-      axis = 0
+  | Split { axis; _ } | Padto { axis; _ } -> axis = 0
   | Swap { axis; with_axis } -> axis = 0 || with_axis = 0
-  | Tc _ | Unroll _ | Group _ | Grouptop _ | Nolocals -> false
+  | Tc _ -> false
+
+let split_opt axis amount kind =
+  Uop.Opt.Split { axis; amount; kind; top = false }
 
 let quant_matmul ?ids x ~codes ~scales =
   let xs = T.shape x and cs = T.shape codes and ss = T.shape scales in
@@ -838,7 +839,7 @@ let quant_matmul ?ids x ~codes ~scales =
   let out = Creation.empty ~dtype ~device [ i; m; n ] in
   if i * m * n = 0 then out
   else if k = 0 then
-    Creation.clone ~device (Creation.zeros ~dtype [ i; m; n ])
+    Creation.clone ~device (Creation.zeros ~dtype ~buffer:false [ i; m; n ])
   else begin
     let gpu = Tolk.Renderer.has_local ren in
     let groups = k / 32 and gated = Option.is_some ids in
@@ -872,23 +873,26 @@ let quant_matmul ?ids x ~codes ~scales =
     let exists size = if size > 1 then 1 else 0 in
     let col_axis = exists positions + exists m
     and row_axis = exists positions in
-    let unrollable = (if bounded then 0 else exists outer) + exists group in
-    let group_axis = if bounded || outer > 1 then 1 else 0 in
+    (* Split axes index every live range, including the id-bounded reduce.
+       Unrolling removes the word axis without moving the earlier axes. *)
+    let globals = exists positions + exists m + exists cols in
+    let unrollable = globals + exists outer + exists group in
+    let group_axis = globals + exists outer in
     let opts =
       List.concat
         [
-          [ Uop.Opt.Unroll { axis = unrollable; amount = 4 } ];
+          [ split_opt unrollable 4 Unroll ];
           (if group > 1 then
-             [ Uop.Opt.Group { axis = group_axis; amount = group } ]
+             [ split_opt group_axis group Local ]
            else []);
           (if o.local > 1 && gpu then
-             [ Uop.Opt.Local { axis = col_axis; amount = o.local } ]
+             [ split_opt col_axis o.local Local ]
            else []);
           (if o.upcast > 1 then
-             [ Uop.Opt.Upcast { axis = col_axis; amount = o.upcast } ]
+             [ split_opt col_axis o.upcast Upcast ]
            else []);
           (if o.tile > 1 then
-             [ Uop.Opt.Upcast { axis = row_axis; amount = o.tile } ]
+             [ split_opt row_axis o.tile Upcast ]
            else []);
         ]
     in
@@ -1044,8 +1048,6 @@ let quant_matmul ?ids x ~codes ~scales =
         ~kernel_info:
           {
             Uop.name = Printf.sprintf "quant_matmul_%d_%d_%d_%d" i m n k;
-            axis_types = [];
-            dont_use_locals = false;
             applied_opts = [];
             opts_to_apply = Some opts;
             estimates = None;
@@ -1141,9 +1143,9 @@ let block_options ren ~dtype ~nb ~m ~n ~k =
       let col = first + if rows / ur > 1 then 1 else 0 in
       let opt amount o = if amount > 1 then [ o ] else [] in
       (Uop.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }
-      :: opt ur (Uop.Opt.Upcast { axis = first; amount = ur }))
-      @ opt uc (Uop.Opt.Upcast { axis = col; amount = uc })
-      @ opt lc (Uop.Opt.Local { axis = col; amount = lc })
+      :: opt ur (split_opt first ur Upcast))
+      @ opt uc (split_opt col uc Upcast)
+      @ opt lc (split_opt col lc Local)
     else []
   in
   (depth, opts)
@@ -1257,8 +1259,6 @@ let block_matmul ?(transpose = false) x w ~ids =
                     Printf.sprintf "block_matmul%s_%d_%d_%d_%d_%d"
                       (if transpose then "_t" else "")
                       nb m n k e;
-                  axis_types = [];
-                  dont_use_locals = false;
                   applied_opts = [];
                   opts_to_apply = Some opts;
                   estimates = None;

@@ -42,4 +42,3 @@ let device () =
       Tolk.Device.get target.device
   | _ -> Lazy.force default_device
 let device_name () = Tolk.Device.name (device ())
-

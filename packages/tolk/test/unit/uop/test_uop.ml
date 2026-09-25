@@ -1041,6 +1041,21 @@ let prepend_expand () =
   is_true ~msg:"empty EXPAND dims is identity"
     (Uop.expand ~src:base ~dims:(Uop.stack []) == base)
 
+let contiguous_prepend_expand () =
+  let base = Uop.buffer ~slot:0 ~dtype:Dtype.int32
+      ~shape:(Uop.const_int 2) () in
+  let repeated = Uop.expand ~src:base ~dims:(Uop.const_int 2) in
+  is_true ~msg:"a matching leading dimension still broadcasts the storage"
+    (byte_offset repeated = None);
+  let singleton = Uop.expand ~src:base ~dims:(Uop.const_int 1) in
+  is_true ~msg:"a leading singleton preserves contiguous storage"
+    (byte_offset singleton = Some 0);
+  let tail = Uop.shrink ~src:singleton
+      ~offset:(Uop.stack [Uop.const_int 0; Uop.const_int 1])
+      ~size:(Uop.stack [Uop.const_int 1; Uop.const_int 1]) in
+  is_true ~msg:"a shrink after a leading singleton retains its byte offset"
+    (byte_offset tail = Some 4)
+
 let bitcast_size_change () =
   let bytes3 =
     Uop.buffer ~slot:0 ~dtype:Dtype.int8
@@ -2535,6 +2550,7 @@ let () =
           test "void and value op shapes" void_and_value_op_shapes;
           test "STACK prepends a leading dim" stack_prepends_leading_dim;
           test "EXPAND prepends leading dims" prepend_expand;
+          test "EXPAND contiguous views respect leading dimensions" contiguous_prepend_expand;
           test "BITCAST size change" bitcast_size_change;
           test "child_ops reports the child op set"
             child_ops_reports_child_op_set;

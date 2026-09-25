@@ -160,4 +160,3 @@ let to_string (tc : t) =
   let n, m, k = tc.dims in
   strf "WMMA_%d_%d_%d_%s_%s" n m k (dtype_name tc.dtype_in)
     (dtype_name tc.dtype_out)
-
