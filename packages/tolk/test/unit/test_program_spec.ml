@@ -38,7 +38,6 @@ let wmma ~dims ~threads =
     {
       dims;
       dtype_in = Dtype.float16;
-      device = "CUDA";
       threads;
       tc_upcast_axes = None;
     }

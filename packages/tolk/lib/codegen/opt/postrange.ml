@@ -339,7 +339,7 @@ let shift_to ?(top = false) ?input_new_rng t rng amount new_kind =
     | None ->
         let axis = t.opt_range in
         t.opt_range <- t.opt_range + 1;
-        U.range ~size:(U.const_int amount) ~axis ~kind:new_kind ~dtype:(U.dtype rng) ()
+        U.range ~size:(U.const (Const.int (U.dtype rng) amount)) ~axis ~kind:new_kind ()
   in
   let replaced_rng = U.replace rng ~src:[| old_sz |] () in
   let open U.O in
@@ -454,7 +454,7 @@ let build_wmma_node t (tc : Tc.t) axes coordinates =
     | [ a; b; c ] -> a, b, c
     | _ -> assert false in
   let info : U.wmma_info =
-    { dims = tc.dims; dtype_in = tc.dtype_in; device = Renderer.device t.ren;
+    { dims = tc.dims; dtype_in = tc.dtype_in;
       threads = tc.threads; tc_upcast_axes = Some (ua, ub, uc) } in
   let a, b = match inputs with [ a; b ] -> a, b | _ -> assert false in
   let wmma = U.wmma ~a ~b

@@ -137,7 +137,12 @@ let reduce_arg_ok u =
 
 let copy_arg_device u =
   match Uop.arg u with
-  | Uop.Arg.Device device -> valid_device_payload device
+  | Uop.Arg.Device device ->
+      valid_device_payload device
+      && not (match device with
+          | Uop.Single d -> String.starts_with ~prefix:"DISK" d
+          | Uop.Multi ds -> List.exists (String.starts_with ~prefix:"DISK") ds
+          | Uop.Index _ -> false)
   | _ -> false
 
 let copy_ok u x = same_dtype u x && copy_arg_device u
@@ -215,8 +220,9 @@ let shared_spec : t =
     =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
 
     op ~allow_any_len:true
-      ~src:[ op ~src:[ any ] Ops.Custom_function ] Ops.Call
-    =?> (fun u _ -> call_info_arg u);
+      ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Store;
+                   Ops.Custom_function ] ] Ops.Call
+    =?> (fun u _ -> call_ok u (Uop.src u).(0));
 
     (* Invalid is the lattice bottom and lives at bool. *)
     op ~src:[] Ops.Const
@@ -332,7 +338,10 @@ let shared_spec : t =
       is_bool (bs $ "gate")
       && Validate.validate_index_source ~gate:(bs $ "gate") (bs $ "idx"));
 
-    op ~dtype:Dtype.void ~src:[ any; any ] Ops.Store =?> (fun _ _ -> true);
+    op ~dtype:Dtype.void ~src:[ var "dst"; any ] Ops.Store =?> (fun _ bs ->
+      match Uop.op (Uop.storage_base (bs $ "dst")) with
+      | Ops.Buffer | Ops.Alloc | Ops.Param | Ops.Stage -> true
+      | _ -> false);
 
     op ~src:[ any; any; any ] Ops.Wmma
     =?> (fun u _ -> Option.is_some (Uop.as_wmma u));
@@ -356,14 +365,6 @@ let tensor_spec : t =
 
     op Ops.Buffer =??> (fun u _ ->
       if valid_global_buffer u || Uop.is_variable u then Some true else None);
-
-    op ~allow_any_len:true
-      ~src:[ ops [ Ops.Sink; Ops.Linear; Ops.Program; Ops.Store;
-                   Ops.Custom_function ] ]
-      Ops.Call
-    =?> (fun u _ ->
-      let srcs = Uop.src u in
-      Array.length srcs > 0 && call_ok u srcs.(0));
 
     op ~src:[ var "x" ] Ops.Special
     =?> (fun u bs ->
@@ -391,7 +392,7 @@ let tensor_spec : t =
     op ~allow_any_len:true ~src:[ any ] Ops.Reduce
     =?> (fun u _ -> reduce_arg_ok u);
 
-    op ~allow_any_len:true ~src:[ var "x" ] Ops.Copy
+    op ~src:[ var "x" ] Ops.Copy
     =?> (fun u bs -> copy_ok u (bs $ "x"));
 
     op ~src:[ var "x" ] Ops.Allreduce
@@ -439,9 +440,12 @@ let program_spec : t =
     ops Ops.Group.all =??> (fun u _ ->
       if is_weak u && Uop.op u <> Ops.Const then Some false else None);
 
-    op ~src:[ ops [ Ops.Param; Ops.Buffer; Ops.After ]; any; op Ops.Const ]
-      Ops.Shrink
-    =?> (fun _ _ -> true);
+    op ~src:[ var "buffer"; any; var "size" ] Ops.Shrink
+    =?> (fun _ bs ->
+      let buffer = bs $ "buffer" in
+      let buffer = if Uop.op buffer = Ops.Bitcast then (Uop.src buffer).(0) else buffer in
+      List.mem (Uop.op buffer) [Ops.Param; Ops.Buffer; Ops.After]
+      && Option.is_some (Uop.const_int_value (bs $ "size")));
 
     ops Ops.Group.movement =?> (fun _ _ -> false);
 

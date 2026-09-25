@@ -381,14 +381,14 @@ let float_vec scalar count value =
   U.stack ~dtype:scalar
     (List.init count (fun _ -> const (Const.float scalar value)))
 
-let make_wmma ?(device = "AMD") ?(threads = 64)
+let make_wmma ?(threads = 64)
     ?(upcast_axes = ([], [], [])) ~dims ~dtype_in ~dtype_out ~a_count
     ~b_count ~c_count () =
   let a = float_vec dtype_in a_count 1.0 in
   let b = float_vec dtype_in b_count 1.0 in
   let c = float_vec dtype_out c_count 0.0 in
   let info : U.wmma_info =
-    { dims; dtype_in; device; threads; tc_upcast_axes = Some upcast_axes }
+    { dims; dtype_in; threads; tc_upcast_axes = Some upcast_axes }
   in
   U.toposort (U.wmma ~a ~b ~c ~info ~dtype:dtype_out)
 
@@ -1147,7 +1147,7 @@ let () =
               (render (Cstyle.cuda Gpu_target.SM80) prog) "cuda_fp16");
           test "CUDA WMMA helper follows tinygrad asm preamble" (fun () ->
             let prog =
-              make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
+              make_wmma ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
                 ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
@@ -1159,7 +1159,7 @@ let () =
               "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32");
           test "CUDA WMMA helper is emitted once per signature" (fun () ->
             let one =
-              make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
+              make_wmma ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
                 ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
@@ -1176,7 +1176,7 @@ let () =
           test "CUDA WMMA declares the accumulator width, not the operand width"
             (fun () ->
               let prog =
-                make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
+                make_wmma ~threads:32 ~dims:(8, 16, 16)
                   ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
                   ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                   ~a_count:8 ~b_count:4 ~c_count:4 ()
@@ -1188,7 +1188,7 @@ let () =
             assert_contains "metal stdlib" (render metal_renderer f32_1) "metal_stdlib");
           test "Metal WMMA helper follows tinygrad simdgroup preamble" (fun () ->
             let prog =
-              make_wmma ~device:"METAL" ~threads:32 ~dims:(8, 8, 8)
+              make_wmma ~threads:32 ~dims:(8, 8, 8)
                 ~dtype_in:Dtype.Float32 ~dtype_out:Dtype.Float32
                 ~upcast_axes:([ ([ 0 ], 2) ], [ ([ 0 ], 2) ], [ ([ 0 ], 2) ])
                 ~a_count:2 ~b_count:2 ~c_count:2 ()
@@ -1280,7 +1280,6 @@ let () =
               {
                 dims = (16, 16, 32);
                 dtype_in = Dtype.Fp8e4m3;
-                device = "AMD";
                 threads = 64;
                 tc_upcast_axes = Some ([], [], []);
               }
@@ -1328,7 +1327,7 @@ let () =
             equal ~msg:"default device" text "CUDA" (Renderer.device cuda);
             equal ~msg:"overridden device" text "NV" (Renderer.device nv);
             let wmma =
-              make_wmma ~device:"CUDA" ~threads:32 ~dims:(8, 16, 16)
+              make_wmma ~threads:32 ~dims:(8, 16, 16)
                 ~dtype_in:Dtype.Float16 ~dtype_out:Dtype.Float32
                 ~upcast_axes:([ ([ 0 ], 8) ], [ ([ 0 ], 4) ], [ ([ 0 ], 4) ])
                 ~a_count:8 ~b_count:4 ~c_count:4 ()
@@ -1505,7 +1504,7 @@ let () =
               let a = float_vec dtype 8 1. and b = float_vec dtype 8 2. in
               let c = float_vec Dtype.Float32 4 0. in
               let info : U.wmma_info = { dims = (16, 16, 32); dtype_in = dtype;
-                device = "AMD"; threads = 64; tc_upcast_axes = Some ([], [], []) } in
+                threads = 64; tc_upcast_axes = Some ([], [], []) } in
               let renderer = Cstyle.amd Gpu_target.CDNA3 in
               let wmma = U.wmma ~a ~b ~c ~info ~dtype:Dtype.float32 in
               (match apply_extra_matcher renderer wmma with

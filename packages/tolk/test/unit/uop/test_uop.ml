@@ -267,6 +267,11 @@ let arithmetic_helpers_tinygrad_parity () =
   is_true ~msg:"named floor helpers build floor ops"
     (Uop.op (floordiv x y) = Ops.Floordiv
      && Uop.op (floormod x y) = Ops.Floormod);
+  let typed = Uop.const (Const.int Dtype.int32 8) in
+  equal int 8 (Uop.const_factor typed);
+  let quotient = Option.get (Uop.divides typed 2) in
+  equal (option int) (Some 4) (Uop.const_int_value quotient);
+  is_true (Dtype.equal (Uop.dtype quotient) Dtype.int32);
   let stack = Uop.stack [ x * int_ 2; y * int_ 4 ] in
   equal int ~msg:"empty STACK const_factor follows math.gcd()"
     0 (Uop.const_factor (Uop.stack []));

@@ -386,6 +386,12 @@ thread.
 
 ### Tolk (new)
 
+- IR verification rejects invalid COPY operands and non-storage STORE targets,
+  while accepting opaque calls and cast-sized buffer slices at the proper
+  stages. Integer range splitting preserves explicitly typed widths.
+- `Uop.wmma_info` no longer carries a device name; the selected renderer
+  determines the target, avoiding conflicting tensor-core metadata.
+
 - Launch dimensions and program signatures recognize symbolic `BUFFER`
   variables as scalar arguments, fixing missing values and unsupported-op
   errors after the variable representation change.

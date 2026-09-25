@@ -45,8 +45,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   failure unwinding across KFD/NVK/PCI. Validate host/device placement,
   host/peer mappings and CPU mapping cleanup on large-BAR and small-BAR hardware.
   Preserve tinygrad's default PCI selection.
-- Complete COPY/CALL/WMMA specs with their producers. Reconcile the extra
-  slice-copy kernels in `multi_allreduce_ring`.
+- Reconcile the extra slice-copy kernels in `multi_allreduce_ring`.
 - Move Rune staged-scan, indexed-scatter, residency, uploads, memory planning,
   symbolic placeholders and external-buffer contracts onto the new protocol.
   Preserve their correctness/lifetime regressions and revalidate the one-hot

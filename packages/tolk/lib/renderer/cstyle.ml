@@ -2129,7 +2129,6 @@ let cuda_wmma_helpers lang uops =
          ( info.dims,
            info.dtype_in,
            dtype_out,
-           info.device,
            info.threads,
            widths ))
   |> List.map (fun ((info : U.wmma_info), dtype_out, (wa, wb, wc)) ->

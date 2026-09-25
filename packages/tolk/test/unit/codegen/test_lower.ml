@@ -63,7 +63,7 @@ let () =
           let row = range [ 0 ] and col = range [ 1 ] in
           let axes a b = [ ([ 7; 0 ], a); ([ 7; 1 ], b) ] in
           let info : U.wmma_info =
-            { dims = (8, 8, 8); dtype_in = Dtype.float16; device = "METAL"; threads = 32;
+            { dims = (8, 8, 8); dtype_in = Dtype.float16; threads = 32;
               tc_upcast_axes = Some (axes 2 1, axes 1 2, axes 2 1) } in
           let zero = U.const (Const.float Dtype.float32 0.) in
           let value = U.wmma ~a:(U.cast ~src:row ~dtype:Dtype.float16)

@@ -339,7 +339,7 @@ let copy_rejects_device_source_layout () =
   in
   is_true ~msg:"copy with extra source rejected" (rejected Spec.tensor_spec c)
 
-let copy_accepts_lowered_range_sources () =
+let copy_rejects_lowered_range_sources () =
   let src = i32 1 in
   let r =
     Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Global
@@ -349,8 +349,8 @@ let copy_accepts_lowered_range_sources () =
     Uop.replace (Uop.copy ~src ~device:(Uop.Single "CPU") ())
       ~src:[| src; r |] ()
   in
-  is_true ~msg:"Copy accepts lowered range sources"
-    (accepts Spec.tensor_spec c)
+  is_true ~msg:"Copy must be eliminated before range indexing"
+    (rejected Spec.tensor_spec c)
 
 let copy_rejects_bad_device_or_dtype () =
   raises (Invalid_argument "Uop.copy: storage requires a concrete dtype")
@@ -361,6 +361,11 @@ let copy_rejects_bad_device_or_dtype () =
   let copy = Uop.copy ~src ~device:(Uop.Single "CPU") () in
   is_true ~msg:"Copy result dtype must match source"
     (Dtype.equal (Uop.dtype copy) Dtype.int32);
+  List.iter (fun device ->
+      let disk = Uop.replace copy ~arg:(Uop.Arg.Device device) () in
+      is_true ~msg:"Copy spec rejects disk destinations"
+        (rejected Spec.tensor_spec disk))
+    [Uop.Single "DISK:weights"; Uop.Multi ["CPU"; "DISK:weights"]];
   let bad_index = Uop.copy ~src ~device:(Uop.Index 0) () in
   is_true ~msg:"Copy rejects positional device selector"
     (rejected Spec.tensor_spec bad_index);
@@ -372,6 +377,8 @@ let call_reject_bad_layouts () =
   let info = call_info "f" in
   let arg = Uop.const_int 2 in
   let call = Uop.call ~body:(Uop.sink []) ~args:[ arg ] ~info in
+  is_true ~msg:"opaque calls are valid in the shared spec"
+    (accepts Spec.shared_spec call);
   let missing_info = Uop.replace call ~arg:Uop.Arg.Empty () in
   is_true ~msg:"Call requires Call_info"
     (rejected Spec.tensor_spec missing_info);
@@ -855,7 +862,10 @@ let program_accepts_plain_store () =
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let st = Uop.store ~dst:idx ~value:(i32 1) () in
   Spec.verify_list Spec.program_spec [ idx; st ];
-  is_true ~msg:"plain store accepted" true
+  is_true ~msg:"plain store accepted" true;
+  let value = Uop.alu_binary ~op:Ops.Add ~lhs:(i32 1) ~rhs:(i32 2) in
+  is_true ~msg:"a computed value is not a storage destination"
+    (rejected Spec.shared_spec (Uop.store ~dst:value ~value:(i32 3) ()))
 
 let program_oob_disabled_accepts_out_of_bounds_load () =
   let p = global_i32_param ~size:16 () in
@@ -1257,8 +1267,8 @@ let () =
             tensor_accepts_global_buffer;
           test "Copy matching dtype" copy_matching_dtype;
           test "Copy device source rejected" copy_rejects_device_source_layout;
-          test "Copy accepts lowered range sources"
-            copy_accepts_lowered_range_sources;
+          test "Copy must be eliminated before range indexing"
+            copy_rejects_lowered_range_sources;
           test "Copy bad device or dtype rejected"
             copy_rejects_bad_device_or_dtype;
           test "Call bad layouts rejected"

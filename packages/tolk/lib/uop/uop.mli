@@ -327,7 +327,6 @@ type wmma_info = {
   dtype_in : Dtype.t;
       (** Input operand scalar type. Carried rather than read off [src.(0)],
           which bitcast rewrites are free to retype. *)
-  device : string;  (** Target device name. *)
   threads : int;  (** Warp thread count. *)
   tc_upcast_axes :
     ((int list * int) list * (int list * int) list * (int list * int) list) option;

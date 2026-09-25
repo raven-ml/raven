@@ -350,7 +350,7 @@ let validation_tests =
             equal int 0 (List.length (P.applied_opts t)))
           [ 1, Ak.Upcast; -2, Ak.Local; 2, Ak.Reduce; 2, Ak.Warp; 2, Ak.Global ]);
       test "shift_to validates source kinds and preserves index dtype" (fun () ->
-        let r = U.range ~size:(idx 8) ~axis:0 ~kind:Ak.Global ~dtype:D.int32 () in
+        let r = U.range ~size:(U.const (Const.int D.int32 8)) ~axis:0 ~kind:Ak.Global () in
         let t = P.create (wrap_sink [ r ]) (gpu_renderer ()) in
         raises_opt_error (fun () -> ignore (P.shift_to t r 2 Ak.Unroll));
         let _, lane = P.shift_to t r 2 Ak.Local in

@@ -321,7 +321,6 @@ and wmma_info_debug_string (w : wmma_info) =
       tuple_string
         (List.map string_of_int (let x, y, z = w.dims in [ x; y; z ]));
       dtype_debug_string w.dtype_in;
-      python_quote w.device;
       string_of_int w.threads;
       option_string
         (fun (a, b, c) -> tuple_string [ pairs a; pairs b; pairs c ])

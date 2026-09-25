@@ -118,7 +118,6 @@ and program_info = {
 and wmma_info = {
   dims : int * int * int;
   dtype_in : Dtype.t;
-  device : string;
   threads : int;
   tc_upcast_axes :
     ((int list * int) list * (int list * int) list * (int list * int) list) option;
@@ -2898,9 +2897,9 @@ let rec const_of_dtype ?shape:target_shape dtype value =
       else expand ~src:ret ~dims:target_arg
 
 let rec const_factor u =
-  match op u with
-  | Ops.Const ->
-      (match const_int_value u with Option.Some n -> n | Option.None -> 1)
+  match const_int_value u with
+  | Some n -> n
+  | None -> match op u with
   | Ops.Stack ->
       let srcs = src u in
       if Array.length srcs = 0 then 0
@@ -2925,11 +2924,9 @@ let rec const_factor u =
 
 let rec divides u n =
   if n = 1 then Option.Some u
-  else match op u with
-  | Ops.Const ->
-      (match const_int_value u with
-       | Option.Some m when m mod n = 0 -> Option.Some (const_like u (m / n))
-       | _ -> Option.None)
+  else match const_int_value u with
+  | Some m -> if m mod n = 0 then Some (const_like u (m / n)) else None
+  | None -> match op u with
   | Ops.Stack ->
       let divided =
         Array.map (fun s -> divides s n) (src u)
@@ -3664,7 +3661,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 28
+let export_version = 29
 
 type serialized_node = {
   serialized_op : Ops.t;
