@@ -502,8 +502,8 @@ delete it rather than registering it.
   consumer does not fuse into a gather: a gather to one device followed by a
   reduction holds the gathered value, where the reference's sum of padded
   shards held the n-1 received pieces; write it as a reduce-scatter.
-  Outputs are forwarded again after `multi_pm` (`schedule/prepare.ml`
-  `prepare_rangeify`; the reference forwards only before it), and allreduces
+  Outputs are forwarded after `multi_pm` (`schedule/prepare.ml`
+  `prepare_rangeify`; the reference forwards before it), and allreduces
   become calls just before that, where the reference makes them among the
   earliest rewrites, so a realized gather or allreduce writes the result's
   storage instead of a fresh allocation it then copies. Consumer: every

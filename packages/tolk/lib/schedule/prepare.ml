@@ -305,8 +305,7 @@ let forward_call_outputs sink =
             then Some (U.storage_base target)
             else if U.op src = Ops.Stage && U.arg src = U.Arg.Empty then
               Some (U.after ~src:target ~deps:[U.store ~dst:target ~value:(U.src src).(0) ()])
-            else if (U.op src = Ops.Buffer || U.op src = Ops.Unshard)
-                    && U.has_buffer_identity src && U.has_buffer_identity target then Some target
+            else if U.op src = Ops.Buffer && U.has_buffer_identity target then Some target
             else None in
           match replacement with
           | Some replacement ->
@@ -740,15 +739,14 @@ let earliest_rewrites =
     ]
 
 let prepare_rangeify root =
-  let root = forward_call_outputs root in
   let root = U.graph_rewrite ~name:"multi_pm" Multi.multi_pm root in
   (* Every collective is a call from here on: multi_pm lowers the gathers,
      and the allreduces it leaves become allreduce or reduce-scatter calls
-     now. The tinygrad counterpart turns an allreduce into its call among the
-     earliest rewrites, and forwards outputs only before multi_pm. The calls
-     allocate their results, so outputs are forwarded again: a realized
-     collective writes the result's storage instead of an allocation it then
-     copies. *)
+     now. Outputs are forwarded once all of them are: the calls allocate
+     their results, and a realized collective then writes the result's
+     storage instead of an allocation it copies. The tinygrad counterpart
+     forwards outputs before multi_pm and turns an allreduce into its call
+     among the earliest rewrites. *)
   let root = Multi.lower_allreduces root in
   let root = forward_call_outputs root in
   let root = U.graph_rewrite ~name:"inline calls"
