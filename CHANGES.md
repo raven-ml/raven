@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Compiled batches wait for earlier foreign accesses that their queue timelines
+  do not cover, preventing races when separate device groups share host memory.
+  Already ordered device accesses retain asynchronous submission.
+
 - AMD compiled transfers use distinct SDMA rings and distribute all-to-all
   copies according to `ALL2ALL` and `HCQ_NUM_SDMA`, allowing independent
   transfers to overlap.

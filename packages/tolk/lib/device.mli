@@ -200,6 +200,14 @@ val depend_on : t -> t -> unit
     retain only the latest completion for each source.
     Raises [Invalid_argument] if a distinct [source] has no queue. *)
 
+val wait_dependencies : t -> ordered:string list -> unit
+(** [wait_dependencies owner ~ordered] waits for recorded foreign memory
+    accesses whose submitting devices are absent from [ordered]. Queue
+    submissions use this before accessing [owner] memory when their encoded
+    timeline waits cover only [ordered]. Names must be canonical. Covered
+    accesses remain pending for subsequent host synchronization. Failed waits
+    retain their records for retry. This does not synchronize [owner] itself. *)
+
 val profile : t -> Profile.event list
 (** [profile d] synchronizes [d] and returns the collected profiling events,
     removing them from [d]. [PROFILE=1] enables collection for queue calls.

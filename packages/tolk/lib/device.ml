@@ -223,6 +223,21 @@ let record_timing d ~name ~queue ~buffer ~first ~last =
       Hashtbl.replace d.pending_timings (Buffer.id buffer, first)
         {buffer; first; last; label = name; queue_name = queue})
 
+let wait_dependencies d ~ordered = Mutex.protect d.synchronize_lock (fun () ->
+  let accesses = with_pending_lock d (fun () ->
+      let accesses = Hashtbl.to_seq d.pending_accesses |> List.of_seq
+        |> List.filter (fun (source, _) -> not (List.mem source ordered)) in
+      List.iter (fun (source, _) -> Hashtbl.remove d.pending_accesses source) accesses;
+      accesses) in
+  try List.iter (fun (_, wait) -> wait ()) accesses
+  with exn ->
+    let backtrace = Printexc.get_raw_backtrace () in
+    with_pending_lock d (fun () ->
+        List.iter (fun (source, wait) ->
+            if not (Hashtbl.mem d.pending_accesses source) then
+              Hashtbl.add d.pending_accesses source wait) accesses);
+    Printexc.raise_with_backtrace exn backtrace)
+
 let synchronize d = Mutex.protect d.synchronize_lock (fun () ->
   let pending, accesses = with_pending_lock d (fun () ->
       let pending = Hashtbl.to_seq_values d.pending_timings |> List.of_seq in

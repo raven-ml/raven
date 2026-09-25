@@ -442,6 +442,20 @@ let compiled_host_submission () =
   let completed_before = !completions in
   Device.synchronize owner;
   equal (list int64) (Int64.succ before :: completed_before) !completions;
+  let waited = ref false in
+  let timeline_before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
+  let completion () () =
+    equal ~msg:"foreign host writer must retire before the new submission" int64
+      timeline_before (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+    waited := true in
+  let outsider = Device.make ~name:"OUTSIDE:writer" ~allocator ~renderer_set
+      ~runtime:(Device.runtime host) ~synchronize:(fun () -> fail "must wait only captured work")
+      ~queue:{queue with completion} () in
+  Device.depend_on owner outsider;
+  Realize.run_linear ~device ~to_program binding ~jit:true
+    ~input_uops:(Array.map U.from_buffer [|foreign; middle; output|]) transfer;
+  is_true ~msg:"queue execution waits for uncovered host dependencies" !waited;
+  Device.synchronize owner;
   let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
   let compiled = Realize.compile_linear ~device ~to_program
       (U.linear [U.store_call ~dst ~src]) in

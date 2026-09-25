@@ -84,9 +84,12 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   direct dispatch; host reads/writes and native buffer transfers also wait for
   importing devices. Address binding itself does not wait. Compiled host
   submissions use `Device.queue_runtime` and their encoded fences, so replay
-  does not accidentally drain every device. Coverage: storage mapping/transfer
+  does not accidentally drain every device. They wait for recorded foreign
+  accesses outside their own timelines, including separate groups sharing host
+  memory. Coverage: storage mapping/transfer
   lifetime tests, CPU direct-binding waits, host queue replay with zero implicit
-  owner waits, and real Metal host-view dispatch. Reconsider when all direct
+  owner waits, uncovered host-writer retirement before submission, and real
+  Metal host-view dispatch. Reconsider when all direct
   dispatch participates in the same byte-interval dependency protocol.
 
 - **Staging slots belong to a prepared schedule.** The frozen target caches

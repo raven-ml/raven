@@ -462,7 +462,27 @@ let foreign_completion_dependencies () =
   Device.synchronize owner;
   equal (list int) [11; 9; 9; 5] !waited;
   Device.synchronize owner;
-  equal (list int) [11; 9; 9; 5] !waited
+  equal (list int) [11; 9; 9; 5] !waited;
+  submitted := 13;
+  Device.depend_on owner source;
+  Device.wait_dependencies owner ~ordered:[name];
+  equal (list int) [11; 9; 9; 5] !waited;
+  Device.wait_dependencies owner ~ordered:[];
+  equal (list int) [13; 11; 9; 9; 5] !waited;
+  Device.synchronize owner;
+  equal (list int) [13; 11; 9; 9; 5] !waited;
+  submitted := 17;
+  Device.depend_on owner source;
+  fail_wait := true;
+  during_wait := (fun () -> submitted := 19; Device.depend_on owner source);
+  raises (Failure "pending access failed")
+    (fun () -> Device.wait_dependencies owner ~ordered:[]);
+  during_wait := (fun () -> ());
+  fail_wait := false;
+  Device.wait_dependencies owner ~ordered:[name];
+  equal (list int) [17; 13; 11; 9; 9; 5] !waited;
+  Device.synchronize owner;
+  equal (list int) [19; 17; 13; 11; 9; 9; 5] !waited
 
 let () = run __FILE__ [ copy_from_tests;
   test "foreign access completion is captured, coalesced and retried" foreign_completion_dependencies;
