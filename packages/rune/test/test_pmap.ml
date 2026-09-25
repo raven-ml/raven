@@ -344,6 +344,38 @@ let test_split_output_into_jit_raises () =
       | _ -> false)
     (fun () -> Rune.jit' (fun x -> Nx.add_s x 1.0) y)
 
+(* A movement of a split output is a view of every shard: its elements are the
+   host movement's, read through per-shard views with offsets, negative strides
+   and zero strides. *)
+let test_moved_split_output () =
+  let g =
+    Rune.pmap ~devices:devs4
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.add x x)
+  in
+  let x = m86 () in
+  let y = g x and h = Nx.add x x in
+  let split axis = Nx.Placement.sharded ~axis devs4 in
+  let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal in
+  List.iter
+    (fun (what, move, p) ->
+      let m = move y in
+      equal ~msg:(what ^ ": placement") placement p (Nx.placement m);
+      check_arr ~eps:0.0 ~msg:what (to_arr (move h)) m)
+    [
+      ("transpose", (fun t -> Nx.transpose t), split 1);
+      ("reshape", Nx.reshape [| 4; 2; 6 |], split 0);
+      ("whole rows", Nx.slice [ Nx.A; Nx.R (1, 4) ], split 0);
+      ("flipped columns", Nx.flip ~axes:[ 1 ], split 0);
+      ( "broadcast",
+        (fun t -> Nx.broadcast_to [| 8; 3; 6 |] (Nx.reshape [| 8; 1; 6 |] t)),
+        split 0 );
+      ( "reversed window of the transpose",
+        (fun t ->
+          Nx.flip ~axes:[ 0 ] (Nx.transpose (Nx.slice [ Nx.A; Nx.R (2, 5) ] t))),
+        split 1 );
+    ]
+
 (* A value on one device of a split storage, which nx makes from a cut inside
    one shard, views that device's shard: it reads that shard, enters a
    replicated input by value rather than as the whole storage, and cannot be
@@ -841,6 +873,7 @@ let tests =
         test "a placed capture is read back and replicated"
           test_placed_capture_is_replicated;
         test "a split output into jit raises" test_split_output_into_jit_raises;
+        test "a moved split output" test_moved_split_output;
         test "one shard of a split storage" test_one_shard_of_a_split_storage;
       ];
     group "consumption"

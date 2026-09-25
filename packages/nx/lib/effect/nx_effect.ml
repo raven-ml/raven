@@ -755,17 +755,124 @@ let binary_op op eff host_op a b =
         let r = route2 op a b in
         settle r (host_op (host_of a) (host_of b)))
 
-(* A movement of a placed value is view arithmetic over the same storage, the
-   same on every replica. *)
-let movement_op eff host_op view_op t_in arg =
+(* Movements
+
+   A movement of a placed value is view arithmetic over the same storage, the
+   same on every device. A split value moves shard by shard, so the movement
+   must leave every element on its device: the split axis may move, stay whole,
+   or be reshaped with the whole axes before it, but it is never cut, flipped or
+   windowed. These are the rules tolk applies to a compiled program over split
+   values (schedule/multi.ml), so a value moved eagerly has the placement the
+   same movement has in a compiled program. *)
+
+type movement =
+  | Reshape of int array
+  | Expand of int array
+  | Permute of int array
+  | Shrink of (int * int) array
+  | Flip of bool array
+  | Sliding_window of { axis : int; window : int; step : int }
+
+let move_view v = function
+  | Reshape shape -> View.reshape v shape
+  | Expand shape -> View.expand v shape
+  | Permute order -> View.permute v order
+  | Shrink limits -> View.shrink v limits
+  | Flip dims -> View.flip v dims
+  | Sliding_window { axis; window; step } ->
+      View.sliding_window v ~axis ~window ~step
+
+(* What a movement does to one split axis: the axis stays split, at an index, or
+   the movement keeps a single shard. *)
+type split_axis = Split of int | Shard of int
+
+(* [split_axis ~axis ~n shape m] is what [m] does to a value of shape [shape]
+   split in [n] shards along [axis], with [m] as it applies to one shard. A
+   value split along several axes would apply it once per axis. Raises
+   [Invalid_argument] if [m] would move elements between shards. *)
+let split_axis ~axis ~n shape m =
+  let k = shape.(axis) / n in
+  let across what =
+    invalid_arg
+      (Printf.sprintf
+         "Nx: a %s of the split axis %d of shape %s would move elements \
+          between devices; place the value replicated or on one device first"
+         what axis (Shape.to_string shape))
+  in
+  match m with
+  | Permute order ->
+      let a = ref 0 in
+      Array.iteri (fun i o -> if o = axis then a := i) order;
+      (Split !a, m)
+  | Expand target ->
+      (* The split axis spans at least two shards, so it is never broadcast. *)
+      let local = Array.copy target in
+      if axis < Array.length local && local.(axis) = shape.(axis) then
+        local.(axis) <- k;
+      (Split axis, Expand local)
+  | Reshape target ->
+      (* The split axis becomes the last axis whose leading extents multiply to
+         those of the split axis; its extent must divide over the shards. *)
+      let lead = ref 1 in
+      for d = 0 to axis - 1 do
+        lead := !lead * shape.(d)
+      done;
+      let a = ref (-1) and acc = ref 1 in
+      Array.iteri
+        (fun i d ->
+          if !acc = !lead then a := i;
+          acc := !acc * d)
+        target;
+      if !acc <> Array.fold_left ( * ) 1 shape then
+        invalid_arg
+          (Printf.sprintf "Nx.reshape: cannot reshape %s to %s"
+             (Shape.to_string shape) (Shape.to_string target));
+      if !a < 0 || target.(!a) mod n <> 0 then across "reshape";
+      let local = Array.copy target in
+      local.(!a) <- target.(!a) / n;
+      (Split !a, Reshape local)
+  | Shrink limits ->
+      let lo, hi = limits.(axis) and local = Array.copy limits in
+      if lo = 0 && hi = shape.(axis) then begin
+        local.(axis) <- (0, k);
+        (Split axis, Shrink local)
+      end
+      else if lo / k = (hi - 1) / k then begin
+        let j = lo / k in
+        local.(axis) <- (lo - (j * k), hi - (j * k));
+        (Shard j, Shrink local)
+      end
+      else across "cut"
+  | Flip dims -> if dims.(axis) then across "flip" else (Split axis, m)
+  | Sliding_window { axis = a; _ } ->
+      if a = axis then across "window" else (Split axis, m)
+
+(* A cut of the split axis that stays inside one shard. *)
+exception One_shard
+
+(* [split_view p v m] is the placement and per-shard view of a value at [p]
+   whose per-shard view is [v], moved by [m]. *)
+let split_view p v m =
+  match p with
+  | Device _ | Replicated _ -> (p, move_view v m)
+  | Sharded { axis; devices } -> (
+      let n = List.length devices in
+      let shape = Array.copy (View.shape v) in
+      shape.(axis) <- shape.(axis) * n;
+      match split_axis ~axis ~n shape m with
+      | Split a, m -> (Sharded { axis = a; devices }, move_view v m)
+      | Shard _, _ -> raise One_shard)
+
+let movement_op eff host_op movement t_in arg =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (host_op t arg)
-    | Placed ({ r_placement = Device _ | Replicated _; _ } as r) ->
-        Placed { r with r_id = fresh_id (); r_view = view_op r.r_view arg }
-    | Placed ({ r_placement = Sharded _; _ } as r) ->
-        Host (host_op (read_host r) arg)
+    | Placed r -> (
+        match split_view r.r_placement r.r_view (movement arg) with
+        | r_placement, r_view ->
+            Placed { r with r_id = fresh_id (); r_placement; r_view }
+        | exception One_shard -> Host (host_op (read_host r) arg))
     | Traced _ -> outside_trace ())
 
 (* Binary operations *)
@@ -920,33 +1027,43 @@ let argsort ~axis ~descending t_in =
 let reshape t_in new_shape =
   movement_op
     (fun () -> E_reshape { t_in; new_shape })
-    Nx_backend.reshape View.reshape t_in new_shape
+    Nx_backend.reshape
+    (fun s -> Reshape s)
+    t_in new_shape
 
 let expand t_in new_target_shape =
   movement_op
     (fun () -> E_expand { t_in; new_target_shape })
-    Nx_backend.expand View.expand t_in new_target_shape
+    Nx_backend.expand
+    (fun s -> Expand s)
+    t_in new_target_shape
 
 let permute t_in axes =
   movement_op
     (fun () -> E_permute { t_in; axes })
-    Nx_backend.permute View.permute t_in axes
+    Nx_backend.permute
+    (fun o -> Permute o)
+    t_in axes
 
 let shrink t_in limits =
   movement_op
     (fun () -> E_shrink { t_in; limits })
-    Nx_backend.shrink View.shrink t_in limits
+    Nx_backend.shrink
+    (fun l -> Shrink l)
+    t_in limits
 
 let flip t_in dims_to_flip =
   movement_op
     (fun () -> E_flip { t_in; dims_to_flip })
-    Nx_backend.flip View.flip t_in dims_to_flip
+    Nx_backend.flip
+    (fun d -> Flip d)
+    t_in dims_to_flip
 
 let sliding_window t_in ~axis ~window ~step =
   movement_op
     (fun () -> E_sliding_window { t_in; axis; window; step })
     (fun t () -> Nx_backend.sliding_window t ~axis ~window ~step)
-    (fun v () -> View.sliding_window v ~axis ~window ~step)
+    (fun () -> Sliding_window { axis; window; step })
     t_in ()
 
 let pad t_in padding_config fill_value =

@@ -256,7 +256,19 @@ val to_array : ('a, 'b) t -> 'a array
     the host join them, and operands on two different placements raise. A read
     ({!item}, {!to_array}, {!to_buffer}, {!pp}, a save) copies the elements it
     reads and leaves the value where it is. A value's storage is released when
-    no value reaches it. *)
+    no value reaches it.
+
+    A movement ({!reshape}, {!transpose}, {!slice} by indices and unit-step
+    ranges, {!flip}, {!broadcast_to}, {!sliding_window}) of a placed value is a
+    view of the same storage: it copies nothing and stays on the same devices. A
+    split value moves shard by shard and stays split: its split axis follows a
+    transpose, is kept by a slice of the other axes, and survives a reshape that
+    keeps the product of the extents before it, when its new extent divides over
+    the devices. A movement that would move elements between devices raises
+    [Invalid_argument]: any other reshape, a cut of the split axis across
+    shards, a flip of it, or windows along it. Functions built from movements
+    ({!roll}, {!flatten}, {!diagonal}, {!array_split}) raise the same way. Place
+    the value replicated or on one device first. *)
 
 (** Devices. *)
 module Device : sig

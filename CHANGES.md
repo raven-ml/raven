@@ -1807,6 +1807,15 @@ thread.
 
 ### Nx
 
+- Moving a value split over several devices (`Nx.transpose`, `reshape`,
+  `slice` by indices and unit-step ranges, `flip`, `broadcast_to`,
+  `sliding_window`) keeps it split and copies nothing, where it read the value
+  to the host; a movement that would cross devices raises `Invalid_argument`.
+- **Breaking:** so do `Nx.roll` along the split axis, `Nx.array_split` and
+  `split` across shards, and `Nx.flatten`, `ravel`, `diagonal` or
+  `reshape [| -1 |]` of a value split on a later axis; the error names the
+  refused movement (a reshape, cut, flip or window of the split axis). Read the
+  value with `Nx.to_array`, or place it on one device first.
 - `Nx.repeat` along an axis copies once instead of concatenating a slice per
   index: 1024x256 twice along axis 0 allocates 840 words, where it allocated
   313,496.

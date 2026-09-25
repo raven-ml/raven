@@ -111,6 +111,8 @@ and place : type a b.
 
 let dev1 = Nx_effect.Device.make "TEST:1" engine
 let dev2 = Nx_effect.Device.make "TEST:2" engine
+let dev3 = Nx_effect.Device.make "TEST:3" engine
+let dev4 = Nx_effect.Device.make "TEST:4" engine
 let other = Nx_effect.Device.make "OTHER" { engine with place = engine.place }
 let on1 = Nx.Placement.device dev1
 let on2 = Nx.Placement.device dev2
@@ -252,10 +254,8 @@ let test_several_devices () =
     (Nx.shape (Nx.transpose r));
   equal ~msg:"a split value is read whole" (array float_exact) (Nx.to_array x)
     (Nx.to_array s);
-  let t = Nx.transpose s and d = Nx.add r r in
-  equal ~msg:"moving a split value reads it to the host" placement
-    Nx.Placement.host (Nx.placement t);
-  equal ~msg:"so does an operation on several devices" placement
+  let d = Nx.add r r in
+  equal ~msg:"an operation on several devices reads to the host" placement
     Nx.Placement.host (Nx.placement d);
   equal ~msg:"its result" (array float_exact)
     [| 2.; 4.; 6.; 8.; 10.; 12. |]
@@ -294,6 +294,122 @@ let test_pp_split_on_axis_one () =
   equal ~msg:"pp reads the elements in C order" string (Nx.to_string x)
     (Nx.to_string s)
 
+(* Moving split values *)
+
+let x86 () = Nx.create Nx.float32 [| 8; 6 |] (Array.init 48 float_of_int)
+
+let over_four ~axis x =
+  Nx.place (Nx.Placement.sharded ~axis [ dev1; dev2; dev3; dev4 ]) x
+
+let split ~axis = Nx.Placement.sharded ~axis [ dev1; dev2; dev3; dev4 ]
+
+let raises_across ~what ~axis ~shape f =
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          msg
+          = Printf.sprintf
+              "Nx: a %s of the split axis %d of shape %s would move elements \
+               between devices; place the value replicated or on one device \
+               first"
+              what axis shape
+      | _ -> false)
+    f
+
+let test_split_values_move_as_views () =
+  let x = x86 () in
+  let s = over_four ~axis:0 x in
+  let uploaded = !uploads in
+  elements_read := 0;
+  let moved =
+    [
+      ("transpose", Nx.transpose s, Nx.transpose x, split ~axis:1);
+      ( "reshape [4;2;6]",
+        Nx.reshape [| 4; 2; 6 |] s,
+        Nx.reshape [| 4; 2; 6 |] x,
+        split ~axis:0 );
+      ( "reshape [48]",
+        Nx.reshape [| 48 |] s,
+        Nx.reshape [| 48 |] x,
+        split ~axis:0 );
+      ( "reshape [1;8;6]",
+        Nx.reshape [| 1; 8; 6 |] s,
+        Nx.reshape [| 1; 8; 6 |] x,
+        split ~axis:1 );
+      ( "whole rows, two columns",
+        Nx.slice [ Nx.R (0, 8); Nx.R (1, 3) ] s,
+        Nx.slice [ Nx.R (0, 8); Nx.R (1, 3) ] x,
+        split ~axis:0 );
+      ( "flip columns",
+        Nx.flip ~axes:[ 1 ] s,
+        Nx.flip ~axes:[ 1 ] x,
+        split ~axis:0 );
+      ( "windows along columns",
+        Nx.sliding_window ~axis:1 ~window:2 s,
+        Nx.sliding_window ~axis:1 ~window:2 x,
+        split ~axis:0 );
+      ( "reversed columns of the transpose",
+        Nx.flip ~axes:[ 0 ] (Nx.transpose (Nx.slice [ Nx.A; Nx.R (2, 5) ] s)),
+        Nx.flip ~axes:[ 0 ] (Nx.transpose (Nx.slice [ Nx.A; Nx.R (2, 5) ] x)),
+        split ~axis:1 );
+    ]
+  in
+  equal ~msg:"no movement uploads" int uploaded !uploads;
+  equal ~msg:"or reads" int 0 !elements_read;
+  List.iter
+    (fun (what, m, h, p) ->
+      equal ~msg:(what ^ ": placement") placement p (Nx.placement m);
+      is_true ~msg:(what ^ ": the source's cell") (cell_of m == cell_of s);
+      equal ~msg:(what ^ ": shape") (array int) (Nx.shape h) (Nx.shape m);
+      equal ~msg:(what ^ ": elements") (array float_exact) (Nx.to_array h)
+        (Nx.to_array m))
+    moved;
+  equal ~msg:"printed in C order" string
+    (Nx.to_string (Nx.transpose x))
+    (Nx.to_string (Nx.transpose s))
+
+let test_split_axis_one () =
+  let x = x86 () in
+  let s = Nx.place (Nx.Placement.sharded ~axis:1 [ dev1; dev2 ]) x in
+  let t = Nx.reshape [| 8; 6; 1 |] s in
+  equal ~msg:"a trailing unit axis keeps the split" placement
+    (Nx.Placement.sharded ~axis:1 [ dev1; dev2 ])
+    (Nx.placement t);
+  equal ~msg:"its elements" (array float_exact) (Nx.to_array x) (Nx.to_array t);
+  let row = Nx.create Nx.float32 [| 1; 8 |] (Array.init 8 float_of_int) in
+  let e = Nx.broadcast_to [| 3; 8 |] (over_four ~axis:1 row) in
+  equal ~msg:"a broadcast keeps the split" placement (split ~axis:1)
+    (Nx.placement e);
+  equal ~msg:"and repeats the row" (array float_exact)
+    (Nx.to_array (Nx.broadcast_to [| 3; 8 |] row))
+    (Nx.to_array e)
+
+let test_moves_across_devices_raise () =
+  let s = over_four ~axis:0 (x86 ()) in
+  raises_across ~what:"reshape" ~axis:1 ~shape:"[6,8]" (fun () ->
+      Nx.reshape [| 48 |] (Nx.transpose s));
+  raises_across ~what:"reshape" ~axis:0 ~shape:"[8,6]" (fun () ->
+      Nx.reshape [| 2; 24 |] s);
+  raises_across ~what:"cut" ~axis:0 ~shape:"[8,6]" (fun () ->
+      Nx.slice [ Nx.R (3, 5) ] s);
+  raises_across ~what:"flip" ~axis:0 ~shape:"[8,6]" (fun () ->
+      Nx.flip ~axes:[ 0 ] s);
+  raises_across ~what:"window" ~axis:0 ~shape:"[8,6]" (fun () ->
+      Nx.sliding_window ~axis:0 ~window:2 s)
+
+let test_moved_views_of_a_consumed_split () =
+  let s = over_four ~axis:0 (x86 ()) in
+  let views =
+    [
+      Nx.transpose s;
+      Nx.reshape [| 48 |] s;
+      Nx.slice [ Nx.A; Nx.R (1, 3) ] s;
+      Nx.flip ~axes:[ 1 ] s;
+    ]
+  in
+  (cell_of s).state <- Consumed { path = "0" };
+  List.iter (fun v -> raises_invalid (fun () -> Nx.to_array v)) views
+
 let test_consumed_value_does_not_move () =
   let p = Nx.place on1 (m23 ()) in
   (cell_of p).state <- Consumed { path = "2.keys" };
@@ -324,6 +440,11 @@ let tests =
         test "several devices" test_several_devices;
         test "repeat a split value" test_repeat_a_split_value;
         test "pp of a value split on axis 1" test_pp_split_on_axis_one;
+        test "split values move as views" test_split_values_move_as_views;
+        test "a value split on axis 1 moves as a view" test_split_axis_one;
+        test "a move across devices raises" test_moves_across_devices_raise;
+        test "moved views of a consumed split value"
+          test_moved_views_of_a_consumed_split;
         test "a consumed value is not placed" test_consumed_value_does_not_move;
       ];
   ]
