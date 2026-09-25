@@ -15,7 +15,13 @@ with their rationale and validation; commit count is not an acceptance metric.
 ## 2. Migrate storage, execution and existing consumers
 
 - Port the target's distinction between one-shot linker ring allocations and
-  retained command storage. Share NV code images within a compiled schedule
+  retained command storage. Public links and `allow_cache:false` links can
+  remain unpublished or replay repeatedly; neither setting permits ring reuse.
+  Measure large eager linking first. Any transient optimization must be scoped
+  to eager link-and-execute, reserve a whole link before writing, drain through
+  `Device.synchronize` before wrap (including profiles), and retain backing after
+  failed completion. Cover unpublished, oversized and independently retained
+  links before adopting it. Share NV code images within a compiled schedule
   and use one QMD/argument arena per run. Measure allocation counts and
   test independent retained links, descriptor alignment and replay patching.
 - Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
@@ -123,6 +129,15 @@ acceptance requirement; skipped tests are not execution evidence.
   `Uop.load`, `reduce`, `wmma` and `noop`, updating callers and contracts. Port
   remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
+- Consolidate symbolic launch evaluation on the exact shared evaluator.
+  `Uop.infer_int` and `Program_spec.launch_dims` duplicate `Uop.sym_infer`
+  using wrapping host arithmetic, and disagree on signed shifts. Cover launch
+  expressions whose intermediate products exceed host integers while their
+  final launch dimensions fit, plus casts and negative shift operands.
+- Keep `Op.arange` endpoint, length and offset arithmetic exact until the
+  output dtype is committed. `start - step` currently wraps for a two-element
+  int64 range starting at OCaml `min_int`, producing positive values instead.
+  Add a paired target execution regression at both host-integer boundaries.
 - Replace `Uop.contiguous_view`'s separate movement interpreter with the
   target's flattened-index proof using shared movement and symbolic rewrites.
   Cover cancelling transposes, leading dimensions, symbolic bounds and byte
