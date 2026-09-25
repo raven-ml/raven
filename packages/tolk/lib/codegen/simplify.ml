@@ -395,7 +395,7 @@ let as_lowered_add_reduce u =
   | _ -> None
 
 (* sum over r in [0,N) of [lower <= r < upper] * val collapses to
-   [clamp(min(upper,N) - max(lower,0), 0, N) * val]. *)
+   [max(min(upper,N) - max(lower,0), 0) * val]. *)
 let clamp_count ?lower ?upper r =
   let open U.Promoting in
   let n = range_size r in
@@ -404,22 +404,15 @@ let clamp_count ?lower ?upper r =
   let lo =
     match lower with Some l -> maximum l zero | None -> U.const_like r 0
   in
-  minimum (maximum (hi - lo) zero) n
+  maximum (hi - lo) zero
 
-(* [(x + y).or_casted < c -> x < (c - y)] when [y] and [c] carry no
-   ranges. *)
+(* [x + y < c -> x < (c - y)] when [y] and [c] carry no ranges. *)
 let rule_lift_add_lt =
   let open Upat in
   let x = var "x" and y = var "y" and c = var "c" in
-  let add = O.(x + y) in
-  let body bs =
-    let y = bs $ "y" and c = bs $ "c" in
-    if no_range y && no_range c then
-      let x = bs $ "x" in
-      Some U.Promoting.(x < c - y)
-    else None
-  in
-  [ O.(add < c) => body; O.(cast add < c) => body ]
+  O.(x + y < c) => fun bs ->
+    let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
+    if no_range y && no_range c then Some U.Promoting.(x < c - y) else None
 
 (* [x * y < c -> x < (c + y - 1) // y] when [y] and [c] carry no ranges,
    [y]'s dtype is integral, and [y.vmin > 0]. *)
@@ -558,8 +551,8 @@ let pm_reduce_collapse =
   Upat.Pattern_matcher.(
     pm_reduce_unparented
     ++ make
-         (rule_lift_add_lt
-         @ [
+         ([
+             rule_lift_add_lt;
              rule_lift_mul_lt;
              rule_reduce_fold_lower;
              rule_reduce_fold_between;

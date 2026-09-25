@@ -698,6 +698,50 @@ let reduce_simplify_tests =
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0;
           equal (option (float 1e-9)) (Some 10.0) (float_const result));
+      test "lt lift matches a bare sum, not a cast of one" (fun () ->
+          let r =
+            U.range ~size:(U.const (C.int D.int32 10)) ~axis:0 ~kind:Ak.Weak
+              ~dtype:D.int32 ()
+          in
+          let open U.O in
+          let sum = r + idx 2 in
+          List.iter
+            (fun (msg, cond, ranges) ->
+              let src = where cond (f32 2.0) (U.const_float 0.0) in
+              let red =
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+              in
+              equal ~msg int ranges
+                (count_ranges (Simplify.reduce_simplify_all red)))
+            [
+              ("bare", sum < idx 7, 0);
+              ("cast", cast D.weakint sum < idx 7, 1);
+            ]);
+      (* The count is [max(min(upper, n) - max(lower, 0), 0)], with no clamp
+         to [n] on top; the MAX counts are the reference's output for these
+         inputs once symbolic drops the bounds it can decide. *)
+      test "reduce-fold counts clamp only at zero" (fun () ->
+          let r = symbolic_range ~axis:0 in
+          let lower = i32_var "l" and upper = i32_var "u" in
+          let open U.O in
+          let zero = U.const_float 0.0 in
+          let between = U.alu_binary ~op:Ops.And ~lhs:(not_ (r < lower))
+              ~rhs:(r < upper) in
+          List.iter
+            (fun (msg, src, maxes) ->
+              let red =
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+              in
+              let result = Simplify.reduce_simplify_all red in
+              equal ~msg int maxes
+                (List.length
+                   (List.filter (fun n -> U.op n = Ops.Max)
+                      (U.toposort result))))
+            [
+              ("upper", where (r < upper) (f32 2.0) zero, 1);
+              ("lower", where (r < lower) zero (f32 2.0), 1);
+              ("between", where between (f32 2.0) zero, 2);
+            ]);
       test "collapses a range-bounded conditional sum" (fun () ->
           (* Summing [where(r < 5, 1, 0)] over [r] counts the in-bound
              iterations, a constant, so the pass eliminates the range. *)
