@@ -1605,12 +1605,18 @@ let graph_rewrite ?loc ?(name = "") ?(enter_calls = false) ?(bottom_up = false)
     Ref_tbl.remove chains u;
     if not (u == r) then on_rebuild ~old_n:u ~new_n:r
   in
-  (* A call or function body is pinned to itself, so that no path reaching it
-     is rewritten -- not merely the one through this node. *)
+  (* A separate program body is pinned on every path. Native callees instead
+     contain a pointer expression in the caller scope, including any ordering
+     dependencies, and must be rewritten with the arguments. *)
   let pin_body u =
     if
       (not enter_calls)
-      && match op u with Ops.Call -> true | _ -> false
+      && match op u with
+         | Ops.Call ->
+             let body = (src u).(0) in
+             not (op body = Ops.Custom_function && Array.length (src body) = 1
+               && Dtype.equal (dtype (src body).(0)) Dtype.uint64)
+         | _ -> false
     then
       let body = (src u).(0) in
       Ref_tbl.replace results body body

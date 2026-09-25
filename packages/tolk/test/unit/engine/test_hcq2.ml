@@ -113,9 +113,16 @@ let compiled_host_submission () =
     | Ops.Custom_function, U.Arg.String "submit_cpu_copy", [linear; dependency] ->
         let trace = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
             ~device:(U.Single name) () |> U.with_tag "trace" in
+        let arena = U.placeholder ~shape:[8] ~dtype:Dtype.uint8 ~slot:7
+            ~device:(U.Single name) () |> U.with_tag "argument_arena" in
+        let patched = Hcq2.patch ~after:[dependency] arena
+            [0, U.alu_binary ~op:Ops.Add
+              ~lhs:(U.load ~src:(U.index ~ptr:(Hcq2.timeline name)
+                ~idxs:[U.const_int 1] ()) ())
+              ~rhs:(U.const (Const.int Dtype.uint64 1))] in
         let observe = Hcq2.ccall ~after:[dependency] ~name:"memcpy" ~dtype:Dtype.uint64
             [U.getaddr ~device:name ~src:trace ();
-             U.getaddr ~device:name ~src:(slice (Hcq2.timeline name) 1 1) ();
+             U.getaddr ~device:name ~src:patched ();
              U.const (Const.int Dtype.uint64 8)] in
         let previous = ref [observe] in
         let nodes = List.map (fun op ->

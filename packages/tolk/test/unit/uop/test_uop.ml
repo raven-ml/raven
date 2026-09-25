@@ -2215,6 +2215,20 @@ let graph_rewrite_pins_call_body_on_every_path () =
       ignore srcs;
       is_true ~msg:"sink keeps the call and the body" false
 
+let graph_rewrite_enters_native_callee () =
+  let dependency = Uop.const_int 1 in
+  let pointer = Uop.after ~src:(Uop.const (Const.int Dtype.uint64 8)) ~deps:[dependency] in
+  let body = Uop.custom_function ~name:"native" ~srcs:[pointer] in
+  let call = Uop.call ~body ~args:[]
+      ~info:{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; dtype = Dtype.void; aux = None} in
+  let rewrite u = if u == dependency then Some (Uop.const_int 2) else None in
+  let result = Uop.graph_rewrite rewrite (Uop.sink [call; dependency]) in
+  let call = (Uop.src result).(0) in
+  let pointer = (Uop.src (Uop.src call).(0)).(0) in
+  is_true ~msg:"native callee dependencies share the caller rewrite"
+    ((Uop.src pointer).(1) == (Uop.src result).(1))
+
 let swap_one_and_two u =
   match Uop.const_int_value u with
   | Some 1 -> Some (Uop.const_int 2)
@@ -2600,6 +2614,8 @@ let () =
             graph_rewrite_bottom_up_gate_skips_post_and_children;
           test "walk Bottom_up_gate skips post and children"
             graph_rewrite_walk_bottom_up_gate_skips_post_and_children;
+          test "graph rewrite enters native callee expressions"
+            graph_rewrite_enters_native_callee;
           test "graph rewrite skips call bodies by default"
             graph_rewrite_skips_call_body_by_default;
           test "graph rewrite pins call bodies on every path"

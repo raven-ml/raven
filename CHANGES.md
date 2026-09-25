@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- Compiled queue submissions preserve argument-buffer patches when linking
+  their addresses and rewrite native callee dependencies consistently, avoiding
+  stale replay arguments and spurious control-flow cycles.
+
 - AMD and NV bind host and peer buffers through shared storage mappings,
   preserving view offsets and freeing imports before their source allocation.
   NV PCI allocations retain their actual owner and backing pages.

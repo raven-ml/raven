@@ -1430,7 +1430,10 @@ val graph_rewrite :
     {ul
     {- [loc] is optional source-position context for cycle diagnostics.}
     {- [name] defaults to [""]. It is included in cycle diagnostics.}
-    {- [enter_calls] defaults to [false]; when [false], {!Ops.Call} bodies ([src.(0)]) are not rewritten.}
+    {- [enter_calls] defaults to [false]; when [false], {!Ops.Call}
+       program bodies ([src.(0)]) are not rewritten. Native callees represented
+       by {!Ops.Custom_function} contain caller-scope pointer expressions and
+       are always rewritten.}
     {- [bottom_up] defaults to [false]. When [false], [f] is applied to
        each rewritten node after its children have been rewritten and
        [bpm] is an optional pre-matcher. When [true], [f] is used as a

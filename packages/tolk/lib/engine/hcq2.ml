@@ -219,6 +219,16 @@ let lower_call queue devices calls sink =
       end in
   let sink = U.graph_rewrite ~name:"encode queues" queue.Device.encode sink in
   let sink = U.graph_rewrite ~name:"lower queue accesses" queue.lower sink in
+  (* Address-table substitution must retain the writes that prepare pointed-to
+     storage. The address itself is static even when its contents are patched
+     on every submission. *)
+  let address_dependencies u = match U.op u, U.children u with
+    | Ops.Getaddr, [source] when U.op source = Ops.After ->
+        Some (U.after ~src:(U.replace u ~src:[| (U.src source).(0) |] ())
+          ~deps:(List.tl (U.children source)))
+    | _ -> None in
+  let sink = U.graph_rewrite ~name:"retain address dependencies" ~enter_calls:true
+      address_dependencies sink in
   let sink = U.graph_rewrite ~name:"hoist link patches" ~enter_calls:true hoist sink in
   let addresses = U.toposort ~enter_calls:true sink |> List.filter (fun u -> U.op u = Ops.Getaddr) in
   let runtime, linked = List.partition (fun g -> not (link_value g)) addresses in
