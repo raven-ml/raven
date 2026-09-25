@@ -1112,19 +1112,18 @@ module Make (B : Backend_intf.S) = struct
       let repeated = expand [| count |] (reshape [| 1 |] x) in
       if axis = None then repeated else reshape (shape x) repeated
     else
-      let axis_size = t_shape.(ax_idx) in
-      let slices = ref [] in
-      for i = axis_size - 1 downto 0 do
-        let slice =
-          Array.init t_ndim (fun dim ->
-              if dim = ax_idx then (i, i + 1) else (0, t_shape.(dim)))
-        in
-        let sv = B.shrink x slice in
-        for _ = 1 to count do
-          slices := sv :: !slices
-        done
-      done;
-      cat_tensors ~axis:ax_idx !slices
+      (* Each element along the axis, broadcast [count] times on a new axis
+         after it, then merged into it. *)
+      let wide =
+        Array.init (t_ndim + 1) (fun d ->
+            if d <= ax_idx then t_shape.(d)
+            else if d = ax_idx + 1 then count
+            else t_shape.(d - 1))
+      in
+      let merged = Array.copy t_shape in
+      merged.(ax_idx) <- t_shape.(ax_idx) * count;
+      reshape merged
+        (contiguous (expand wide (unsqueeze ~axes:[ ax_idx + 1 ] x)))
 
   (* ───── Concatenation and Stacking ───── *)
 

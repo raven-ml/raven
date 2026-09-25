@@ -274,6 +274,20 @@ let test_several_devices () =
     [| 4.; 5.; 6.; 1.; 2.; 3. |]
     (Nx.to_array (Nx.slice [ Nx.L [ 1; 0 ] ] s))
 
+let test_repeat_a_split_value () =
+  let x = m23 () in
+  let s = Nx.place (Nx.Placement.sharded ~axis:0 [ dev1; dev2 ]) x in
+  List.iter
+    (fun (what, f) ->
+      equal ~msg:what (array float_exact)
+        (Nx.to_array (f x))
+        (Nx.to_array (f s)))
+    [
+      ("along the split axis", Nx.repeat ~axis:0 2);
+      ("along the other axis", Nx.repeat ~axis:1 3);
+      ("flattened", Nx.repeat 2);
+    ]
+
 let test_pp_split_on_axis_one () =
   let x = Nx.create Nx.float32 [| 2; 4 |] (Array.init 8 float_of_int) in
   let s = Nx.place (Nx.Placement.sharded ~axis:1 [ dev1; dev2 ]) x in
@@ -308,6 +322,7 @@ let tests =
         test "a read copies what it reads" test_a_read_copies_what_it_reads;
         test "views share their cell" test_views_share_the_cell;
         test "several devices" test_several_devices;
+        test "repeat a split value" test_repeat_a_split_value;
         test "pp of a value split on axis 1" test_pp_split_on_axis_one;
         test "a consumed value is not placed" test_consumed_value_does_not_move;
       ];
