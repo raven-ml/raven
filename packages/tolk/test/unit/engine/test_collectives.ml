@@ -10,10 +10,8 @@
    run.
 
    Transfer counts follow from the collective alone, so the traffic tests pin
-   today's lowering and name the target beside it; a lowering that moves fewer
-   bytes updates them. Peaks also move with scheduling and memory planning, so
-   the fully sharded step asserts its target bound instead, marked as an
-   expected failure until the lowering meets it. *)
+   exact bytes. Peaks also move with scheduling and memory planning, so the
+   fully sharded step asserts its bound. *)
 
 open Windtrap
 open Tolk
@@ -701,43 +699,222 @@ let gather_tests =
             [ U.Single "CPU:1"; U.Multi devices ]);
     ]
 
-(* Today the reshard of an allreduce to split rows allreduces the whole value
-   and each device keeps its rows. Target: a reduce-scatter, in which each
-   device sends (n-1)/n of its partial. *)
-let reshard_tests =
-  cases "allreduce resharded to rows sends an allreduce's bytes" ~name:fst
-    [ strategy "naive"; strategy "ring"; strategy "all2all" ]
-    (fun ((name, _) as strategy) ->
-      with_strategy strategy @@ fun () ->
-      let ndev = 4 and rows = 64 and cols = 1024 in
-      let devices = devices ndev in
-      let data = spread (ndev * rows * cols) in
-      let partials =
-        C.shard ~axis:0 ~devices (host ~shape:[ ndev; rows; cols ] data)
-      in
-      Run.realize_many [ partials ];
-      let shards, flows =
-        traffic (fun () ->
-            device_bytes
-              (C.shard ~axis:0 ~devices (Rd.sum ~axis:[ 0 ] partials)))
-      in
-      let partial = rows * cols * 4 in
-      let per_device =
-        if name = "naive" then (ndev - 1) * partial
-        else 2 * (ndev - 1) * partial / ndev
-      in
-      equal (list int)
-        (List.init ndev (fun _ -> per_device))
-        (List.map (fun d -> sent d flows) devices);
-      let sums = column_sums ~rows:ndev ~cols:(rows * cols) data in
-      let block = rows / ndev * cols in
-      List.iteri
-        (fun j shard ->
-          check_sums
-            ~msg:(Printf.sprintf "rows of device %d" (j + 1))
-            (Array.sub sums (j * block) block)
-            shard)
-        shards)
+(* An allreduce resharded to rows is a reduce-scatter: each device receives its
+   rows of every other device's partial and folds them in device order. *)
+
+(* Each device's rows of the sum over axis 0 of [ndev; rows; cols] partials,
+   reduce-scattered under [under], and a naive allreduce's replica of the whole
+   sum. *)
+let scattered_and_replica ~under ~ndev ~rows ~cols data =
+  let devices = devices ndev in
+  let partials =
+    C.shard ~axis:0 ~devices (host ~shape:[ ndev; rows; cols ] data)
+  in
+  Run.realize_many [ partials ];
+  let blocks =
+    with_strategy under @@ fun () ->
+    device_bytes (C.shard ~axis:0 ~devices (Rd.sum ~axis:[ 0 ] partials))
+  in
+  let replica =
+    with_strategy (strategy "naive") @@ fun () ->
+    List.hd (device_bytes (Rd.sum ~axis:[ 0 ] partials))
+  in
+  (blocks, replica)
+
+let reduce_scatter_tests =
+  group "reduce-scatter"
+    [
+      test "a reshard of an allreduce lowers to one call named reducescatter"
+        (fun () ->
+          let devices = devices 2 in
+          let partials =
+            C.shard ~axis:0 ~devices (host ~shape:[ 2; 4; 4 ] (spread 32))
+          in
+          let lowered =
+            Multi.lower_allreduces
+              (U.graph_rewrite Multi.multi_pm
+                 (T.uop
+                    (C.shard ~axis:0 ~devices (Rd.sum ~axis:[ 0 ] partials))))
+          in
+          match (U.op lowered, U.sharding lowered) with
+          | Ops.Unshard, [ (0, _) ] -> (
+              match U.children (U.src lowered).(0) with
+              | [ output; call ] -> (
+                  match U.as_call call with
+                  | Some
+                      {
+                        info =
+                          { name = Some "reducescatter"; precompile = true; _ };
+                        args = [ dst; _ ];
+                        _;
+                      } ->
+                      is_true ~msg:"the call writes the output's storage"
+                        (U.storage_base output == dst);
+                      equal (list int) ~msg:"each device holds its rows"
+                        [ 2; 4 ] (U.max_shape output)
+                  | _ -> fail "the AFTER does not wait on a reducescatter call")
+              | _ -> fail "the blocks are not an AFTER of one call")
+          | _ -> fail "the reshard is not split on axis 0");
+      cases "blocks equal a naive allreduce's rows bit for bit" ~name:fst
+        strategies (fun strategy ->
+          List.iter
+            (fun ndev ->
+              let rows = 24 and cols = 256 in
+              let blocks, replica =
+                scattered_and_replica ~under:strategy ~ndev ~rows ~cols
+                  (spread (ndev * rows * cols))
+              in
+              let block = rows / ndev * cols * 4 in
+              List.iteri
+                (fun j bytes ->
+                  is_true
+                    ~msg:(Printf.sprintf "%d devices, device %d" ndev (j + 1))
+                    (Bytes.equal (Bytes.sub replica (j * block) block) bytes))
+                blocks)
+            [ 2; 3; 4; 6; 8 ]);
+      cases "each device sends (n-1)/n of its partial" ~name:fst strategies
+        (fun strategy ->
+          with_strategy strategy @@ fun () ->
+          List.iter
+            (fun ndev ->
+              let rows = 64 and cols = 1024 in
+              let devices = devices ndev in
+              let partials =
+                C.shard ~axis:0 ~devices
+                  (host ~shape:[ ndev; rows; cols ]
+                     (uniform ~seed:[| ndev |] (ndev * rows * cols)))
+              in
+              Run.realize_many [ partials ];
+              let _, flows =
+                traffic (fun () ->
+                    device_bytes
+                      (C.shard ~axis:0 ~devices (Rd.sum ~axis:[ 0 ] partials)))
+              in
+              equal
+                ~msg:(Printf.sprintf "%d devices" ndev)
+                (list int)
+                (List.init ndev (fun _ -> (ndev - 1) * rows * cols * 4 / ndev))
+                (List.map (fun d -> sent d flows) devices))
+            [ 4; 8 ]);
+      (* The reshard slices the replica the whole use needs anyway, so the naive
+         allreduce's n-1 partials are all a device sends. *)
+      test "an allreduce also used whole is reduced once" (fun () ->
+          with_strategy (strategy "naive") @@ fun () ->
+          let ndev = 4 and rows = 64 and cols = 1024 in
+          let devices = devices ndev in
+          let partials =
+            C.shard ~axis:0 ~devices
+              (host ~shape:[ ndev; rows; cols ]
+                 (uniform ~seed:[| ndev; rows |] (ndev * rows * cols)))
+          in
+          Run.realize_many [ partials ];
+          let s = Rd.sum ~axis:[ 0 ] partials in
+          let _, flows =
+            traffic (fun () ->
+                Run.realize_many
+                  [ C.shard ~axis:0 ~devices s; El.mul s (T.f 2.0) ])
+          in
+          equal ~msg:"bytes sent per device" (list int)
+            (List.init ndev (fun _ -> (ndev - 1) * rows * cols * 4))
+            (List.map (fun d -> sent d flows) devices));
+      (* No frontend path puts an ALLREDUCE in a call body, so the call is built
+         by hand. *)
+      test "an allreduce in a call body raises" (fun () ->
+          let device = U.Multi (devices 2) in
+          let tensor slot =
+            U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int 4) ~device ()
+          in
+          let body =
+            U.sink
+              [
+                U.store ~dst:(tensor 0)
+                  ~value:(U.allreduce ~src:(tensor 1) ~device ~op:Ops.Add)
+                  ();
+              ]
+          in
+          let buffer slot =
+            U.buffer ~slot ~dtype:Dtype.float32 ~shape:(U.const_int 4) ~device
+              ()
+          in
+          let info : U.call_info =
+            {
+              grad_fxn = None;
+              name = Some "step";
+              precompile = false;
+              precompile_backward = false;
+              aux = None;
+              dtype = Dtype.void;
+            }
+          in
+          let call = U.call ~body ~args:[ buffer 0; buffer 1 ] ~info in
+          raises
+            (Invalid_argument
+               "multi: ALLREDUCE in the body of call step; collectives in call \
+                bodies are not lowered") (fun () ->
+              ignore (Multi.lower_allreduces (U.sink [ call ]))));
+      (* The blocks land in a split buffer, as a gradient lands in its
+         storage. *)
+      test "each device holds its partial and (n-1)/n of it more" (fun () ->
+          let ndev = 4 and rows = 64 and cols = 1024 in
+          let devices = devices ndev in
+          let partials =
+            C.shard ~axis:0 ~devices
+              (host ~shape:[ ndev; rows; cols ]
+                 (uniform ~seed:[| rows; cols |] (ndev * rows * cols)))
+          and g =
+            C.shard ~axis:0 ~devices
+              (host ~shape:[ rows; cols ] (Array.make (rows * cols) 0.0))
+          in
+          Run.realize_many [ partials; g ];
+          let partial = rows * cols * 4 in
+          ignore
+            (Op.assign g
+               (C.shard ~axis:0 ~devices
+                  (Rd.sum ~axis:[ 0 ] (El.add partials (T.f 1.0)))));
+          let _, peaks = peak_over devices (fun () -> Run.realize_many [ g ]) in
+          List.iter
+            (fun (device, peak) ->
+              satisfies ~msg:device
+                ~claim:
+                  (Printf.sprintf "at most %d bytes"
+                     (partial + ((ndev - 1) * partial / ndev)))
+                int
+                (fun peak -> peak <= partial + ((ndev - 1) * partial / ndev))
+                peak)
+            peaks);
+      test "float16 partials reduce-scatter in float16 under ALLREDUCE_CAST"
+        (fun () ->
+          let ndev = 4 and rows = 8 and cols = 64 in
+          let devices = devices ndev in
+          let data =
+            Array.init (ndev * rows * cols) (fun i -> float_of_int (i mod 13))
+          in
+          let partials =
+            Tolk_frontend.Dtype_ops.cast
+              (C.shard ~axis:0 ~devices (host ~shape:[ ndev; rows; cols ] data))
+              Dtype.float16
+          in
+          Run.realize_many [ partials ];
+          let wide = Tolk_frontend.Dtype_ops.cast partials Dtype.float32 in
+          let blocks, flows =
+            traffic (fun () ->
+                device_bytes
+                  (C.shard ~axis:0 ~devices (Rd.sum ~axis:[ 0 ] wide)))
+          and replica =
+            with_strategy (strategy "naive") @@ fun () ->
+            List.hd (device_bytes (Rd.sum ~axis:[ 0 ] wide))
+          in
+          equal ~msg:"float16 blocks cross devices" (list int)
+            (List.init ndev (fun _ -> (ndev - 1) * rows * cols * 2 / ndev))
+            (List.map (fun d -> sent d flows) devices);
+          let block = rows / ndev * cols * 4 in
+          List.iteri
+            (fun j bytes ->
+              is_true
+                ~msg:(Printf.sprintf "device %d" (j + 1))
+                (Bytes.equal (Bytes.sub replica (j * block) block) bytes))
+            blocks);
+    ]
 
 (* A tensor-parallel MLP, [relu (x @ W1) @ W2] with [W1] split on its columns
    and [W2] on its rows, moves nothing between devices but the allreduce of its
@@ -934,8 +1111,7 @@ let in_layers layer =
 
 (* Fully sharded training fits when every device stays within two gathered
    layers plus its saved activations above its share of parameters, gradients
-   and optimizer state. Today's lowering misses that bound because the gradient
-   is allreduced whole before each device keeps its rows. *)
+   and optimizer state. *)
 let fully_sharded (name, ndev, dims) =
   let batch = 64 and layers = Array.length dims - 1 in
   let layer_bytes = Array.init layers (fun l -> dims.(l) * dims.(l + 1) * 4) in
@@ -961,28 +1137,26 @@ let fully_sharded (name, ndev, dims) =
           List.iter
             (fun (device, held) -> equal ~msg:device int share held)
             (run ()).state);
-      (* Each weight is gathered twice, (n-1) layers each, and its gradient
-         allreduced, 2(n-1) layers. Target: (n-1) for the gradient too, once it
-         reduce-scatters. *)
-      test "gathers move (n-1) layers and gradients 2(n-1)" (fun () ->
-          equal int (4 * (ndev - 1) * weight_bytes) (run ()).peer_bytes);
-      xfail ~reason:"gradients are allreduced whole before the reshard"
-        (test "each device holds at most two layers and activations over state"
-           (fun () ->
-             let device, over =
-               List.fold_left
-                 (fun worst (device, over) ->
-                   if over > snd worst then (device, over) else worst)
-                 ("", min_int) (run ()).over_state
-             in
-             satisfies
-               ~msg:(Printf.sprintf "worst device, %s" device)
-               ~claim:
-                 (Printf.sprintf "at most %.3f layers"
-                    (float_of_int bound /. float_of_int layer))
-               (in_layers layer)
-               (fun over -> over <= bound)
-               over));
+      (* Each weight is gathered twice and its gradient reduce-scattered, each
+         collective moving (n-1) layers between devices. *)
+      test "each collective moves (n-1) layers between devices" (fun () ->
+          equal int (3 * (ndev - 1) * weight_bytes) (run ()).peer_bytes);
+      test "each device holds at most two layers and activations over state"
+        (fun () ->
+          let device, over =
+            List.fold_left
+              (fun worst (device, over) ->
+                if over > snd worst then (device, over) else worst)
+              ("", min_int) (run ()).over_state
+          in
+          satisfies
+            ~msg:(Printf.sprintf "worst device, %s" device)
+            ~claim:
+              (Printf.sprintf "at most %.3f layers"
+                 (float_of_int bound /. float_of_int layer))
+            (in_layers layer)
+            (fun over -> over <= bound)
+            over);
     ]
 
 let () =
@@ -1046,7 +1220,7 @@ let () =
       allreduce_tests;
       copy_tests;
       gather_tests;
-      reshard_tests;
+      reduce_scatter_tests;
       group "tensor-parallel MLP moves only its allreduce"
         [
           tensor_parallel ~batch:8 "naive";

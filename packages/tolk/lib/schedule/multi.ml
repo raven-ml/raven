@@ -98,6 +98,105 @@ let allgather multi device =
               U.store ~dst:(U.shrink ~src:replica ~offset:(window j) ~size:(emit local)) ~value ())
             sources) targets))
 
+(* Reduce-scatter: [shrink], keeping each device's own block of an
+   allreduce along one axis and the allreduce's only consumer, becomes the
+   reduction of just that block. [only_consumer c u] says [c] is all that
+   consumes [u]. Device k receives block k of every other device's partial
+   and folds the partials in device order, the order the naive allreduce
+   folds them in, so the result equals the naive allreduce's block bit for
+   bit. The allreduce may sit between the casts [reduce_multi] adds under
+   ALLREDUCE_CAST. The collective is a precompiled call named
+   "reducescatter" over (dst, src).
+
+   No tinygrad counterpart: the reference allreduces the whole value and
+   each device keeps its rows, which sends 2(n-1)/n of the value per device
+   under ring and n-1 whole partials under naive, and holds a whole replica,
+   against (n-1)/n sent and one block held here. *)
+let reducescatter ~only_consumer shrink =
+  let value = (U.src shrink).(0) in
+  let reduced, cast =
+    match U.op value with
+    | Ops.Cast when U.op (U.src value).(0) = Ops.Allreduce ->
+        (U.src value).(0), Some (U.dtype value)
+    | _ -> value, None
+  in
+  match U.as_allreduce reduced with
+  | Some { op; device = U.Multi targets as device; src }
+    when only_consumer shrink value
+         && (U.equal value reduced || only_consumer value reduced) ->
+      let sources = match U.device_of src with
+        | Some (U.Multi ds) -> ds | _ -> [] in
+      let offsets = U.as_shape (U.src shrink).(1)
+      and sizes = U.as_shape (U.src shrink).(2) in
+      let split = List.filter (fun (_, offset) -> not (eq offset zero))
+          (List.mapi (fun i offset -> i, offset) offsets) in
+      let device_ranges = List.filter (fun r ->
+          match U.as_range r with
+          | Some { kind = Axis_type.Device; _ } -> true | _ -> false)
+          (U.toposort (U.src shrink).(1)) in
+      (match split, device_ranges with
+       | [ (axis, offset) ], [ rng ]
+         when count rng = List.length targets && sources <> []
+              && eq offset (mul rng (List.nth sizes axis))
+              && List.for_all Fun.id (List.mapi (fun i (size, dim) ->
+                  i = axis || eq size dim) (List.combine sizes (U.shape value))) ->
+           let block_of k u =
+             U.shrink ~src:u ~offset:(subst_device_num (U.src shrink).(1) k)
+               ~size:(subst_device_num (U.src shrink).(2) k) in
+           let like = U.shrink ~src:reduced ~offset:(U.src shrink).(1)
+               ~size:(U.src shrink).(2) in
+           let blocks =
+             Allreduce.collective ~name:"reducescatter" ~device ~like src
+               (fun ~dst ~src ->
+                 List.mapi (fun k target ->
+                     let parts = List.mapi (fun j source ->
+                         let part = block_of k (U.mselect ~src ~index:j) in
+                         if source = target then part
+                         else U.copy ~src:part ~device:(U.Single target) ())
+                         sources in
+                     U.store ~dst:(U.mselect ~src:dst ~index:k)
+                       ~value:(Allreduce.fold_reduce op parts) ())
+                   targets)
+           in
+           Some (match cast with
+               | Some dtype -> U.cast ~src:blocks ~dtype | None -> blocks)
+       | _ -> None)
+  | _ -> None
+
+(* The allreduces multi_pm leaves become calls, once every consumer is
+   known: a reduce-scatter when a reshard is all that consumes one, else an
+   allreduce whose consumers slice or use its replica. A shared allreduce
+   is reduced once. multi_pm alone cannot decide this: it meets the
+   reshard's UNSHARD without the allreduce's other consumers.
+
+   Only allreduces outside call bodies become calls. Custom-kernel bodies
+   see single-device placeholders and a store's body is a bare STORE, so
+   no ALLREDUCE reaches a call body today; one that does raises rather than
+   reaching the kernels unlowered. *)
+let lower_allreduces root =
+  let consumers = Hashtbl.create 256 in
+  List.iter (fun u -> Array.iter (fun s -> Hashtbl.add consumers (U.tag s) u) (U.src u))
+    (U.toposort ~enter_calls:false root);
+  let only_consumer c u = List.for_all (U.equal c) (Hashtbl.find_all consumers (U.tag u)) in
+  let lower node =
+    match U.op node with
+    | Ops.Allreduce ->
+        let {U.op; device; src} = Option.get (U.as_allreduce node) in
+        Allreduce.create_allreduce_function src ~device ~op
+    | Ops.Call ->
+        let {U.body; info; _} = Option.get (U.as_call node) in
+        if not info.precompile && U.op body = Ops.Sink && Option.is_none (U.as_kernel_info body)
+           && List.exists (fun u -> U.op u = Ops.Allreduce) (U.toposort body) then
+          let name = Option.value info.name ~default:"(unnamed)" in
+          invalid_arg (Printf.sprintf "multi: ALLREDUCE in the body of call %s; \
+              collectives in call bodies are not lowered" name)
+        else None
+    | _ -> None
+  in
+  U.graph_rewrite ~name:"allreduce calls"
+    ~bpm:(fun n -> if U.op n = Ops.Shrink then reducescatter ~only_consumer n else None)
+    lower root
+
 let shard_srcs children axis rng =
   let shape = U.broadcast_shape (List.map U.shape children) in
   let rank = List.length shape in

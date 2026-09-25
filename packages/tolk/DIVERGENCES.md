@@ -512,6 +512,28 @@ delete it rather than registering it.
   `test/unit/engine/test_collectives.ml` "all-gather" and
   `test/unit/engine/test_multi.ml`.
 
+- **A reshard of an allreduce is a reduce-scatter** (`schedule/multi.ml`
+  `lower_allreduces`, `schedule/prepare.ml` `forward_call_outputs`). The
+  reference allreduces the whole value and each device keeps its rows:
+  2(n-1)/n of the value sent per device under ring, n-1 whole partials under
+  naive, and a whole replica held. After `multi_pm`, once every consumer of an
+  allreduce is known, tolk lowers one whose only consumer is a shrink keeping
+  each device's own block along one axis by the device range (through the
+  casts ALLREDUCE_CAST adds) to one precompiled call named `reducescatter`
+  over (dst, src): device k receives block k of every other device's partial,
+  read in place as a window, and folds the partials in device order. That is
+  the naive allreduce's order, so the blocks equal its rows bit for bit, under
+  every strategy: the reduce-scatter is direct whatever RING, ALL2ALL and
+  ALLREDUCE_NODE_NDEVS say, sending (n-1)/n of the partial per device and
+  holding (n-1)/n of it in received blocks. A ring variant (2/n held) is not
+  built. An allreduce with any other consumer stays one allreduce, and its
+  reshard slices the replica. With LATE_ALLREDUCE=0 `multi_pm` expands every
+  allreduce before its consumers are seen, so no reduce-scatter is built and a
+  reshard moves the allreduce's bytes. Outputs are forwarded through a split
+  output's UNSHARD, so blocks assigned into a split buffer, as a gradient is,
+  are written there directly. Coverage: `test/unit/engine/test_collectives.ml`
+  "reduce-scatter" and "fully sharded step".
+
 - **An allreduce lays its reduced chunks back together by selection**
   (`schedule/allreduce.ml` `assemble`). The reference reassembles the ring,
   all-to-all and hierarchical results by summing the chunks zero-padded into

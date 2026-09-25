@@ -277,38 +277,46 @@ let returned_after n =
 let forward_call_outputs sink =
   let placed = U.Ref_tbl.create 16 in
   let rec peel u = if U.op u = Ops.After then peel (U.src u).(0) else u in
-  let items = List.map (fun item ->
-      let store = match U.op item, U.src item with
-        | Ops.After, [|target; st|] when U.op st = Ops.Store && (U.src st).(0) == target -> st
-        | _ -> item in
-      match U.as_store store with
-      | Some {dst = target; value; gate = None} ->
-          let src = peel value in
-          let base = U.storage_base src in
-          let key = if U.op base = Ops.Alloc then base else src in
-          if (item != store && U.op base <> Ops.Alloc)
-             || U.Ref_tbl.mem placed key
-             || List.exists (( == ) (U.storage_base target)) (U.toposort ~enter_calls:false value)
-          then item
-          else begin
-            let replacement =
-              if U.op base = Ops.Alloc && U.has_buffer_identity src
-                 && U.has_buffer_identity target
-                 && U.max_numel base = U.max_numel (U.storage_base target)
-              then Some (U.storage_base target)
-              else if U.op src = Ops.Stage && U.arg src = U.Arg.Empty then
-                Some (U.after ~src:target ~deps:[U.store ~dst:target ~value:(U.src src).(0) ()])
-              else if (U.op src = Ops.Buffer || U.op src = Ops.Unshard)
-                      && U.has_buffer_identity src && U.has_buffer_identity target then Some target
-              else None in
-            match replacement with
-            | Some replacement ->
-                U.Ref_tbl.add placed key replacement;
-                if item != store then U.Ref_tbl.add placed item value;
-                value
-            | None -> U.after ~src:target ~deps:[store]
-          end
-      | _ -> item) (U.children sink) in
+  (* A split output is its per-device store under an UNSHARD. *)
+  let rec forward item =
+    if U.op item = Ops.Unshard then begin
+      let src = Array.copy (U.src item) in
+      src.(0) <- forward src.(0);
+      U.replace item ~src ()
+    end else forward_store item
+  and forward_store item =
+    let store = match U.op item, U.src item with
+      | Ops.After, [|target; st|] when U.op st = Ops.Store && (U.src st).(0) == target -> st
+      | _ -> item in
+    match U.as_store store with
+    | Some {dst = target; value; gate = None} ->
+        let src = peel value in
+        let base = U.storage_base src in
+        let key = if U.op base = Ops.Alloc then base else src in
+        if (item != store && U.op base <> Ops.Alloc)
+           || U.Ref_tbl.mem placed key
+           || List.exists (( == ) (U.storage_base target)) (U.toposort ~enter_calls:false value)
+        then item
+        else begin
+          let replacement =
+            if U.op base = Ops.Alloc && U.has_buffer_identity src
+               && U.has_buffer_identity target
+               && U.max_numel base = U.max_numel (U.storage_base target)
+            then Some (U.storage_base target)
+            else if U.op src = Ops.Stage && U.arg src = U.Arg.Empty then
+              Some (U.after ~src:target ~deps:[U.store ~dst:target ~value:(U.src src).(0) ()])
+            else if (U.op src = Ops.Buffer || U.op src = Ops.Unshard)
+                    && U.has_buffer_identity src && U.has_buffer_identity target then Some target
+            else None in
+          match replacement with
+          | Some replacement ->
+              U.Ref_tbl.add placed key replacement;
+              if item != store then U.Ref_tbl.add placed item value;
+              value
+          | None -> U.after ~src:target ~deps:[store]
+        end
+    | _ -> item in
+  let items = List.map forward (U.children sink) in
   let mappings = U.Ref_tbl.fold (fun key value mappings -> (key, value) :: mappings) placed [] in
   U.substitute ~walk:true mappings (U.sink items)
 
@@ -735,16 +743,13 @@ let prepare_rangeify root =
   let root = forward_call_outputs root in
   let root = U.graph_rewrite ~name:"multi_pm" Multi.multi_pm root in
   (* Every collective is a call from here on: multi_pm lowers the gathers,
-     and the allreduces it leaves become calls now.
-     The tinygrad counterpart turns an allreduce into its call among the
+     and the allreduces it leaves become allreduce or reduce-scatter calls
+     now. The tinygrad counterpart turns an allreduce into its call among the
      earliest rewrites, and forwards outputs only before multi_pm. The calls
      allocate their results, so outputs are forwarded again: a realized
      collective writes the result's storage instead of an allocation it then
      copies. *)
-  let root = U.graph_rewrite ~name:"allreduce calls" (fun n ->
-      match U.as_allreduce n with
-      | Some { src; device; op } -> Allreduce.create_allreduce_function src ~device ~op
-      | None -> None) root in
+  let root = Multi.lower_allreduces root in
   let root = forward_call_outputs root in
   let root = U.graph_rewrite ~name:"inline calls"
       (U.first_match [movement_ops; inline_call; returned_after; disk_copy]) root in

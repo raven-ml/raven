@@ -35,6 +35,10 @@ val handle_allreduce :
     {- {e Ring} when [RING >= 2], or [RING >= 1] and the size
        exceeds the threshold with [> 2] devices.}} *)
 
+val fold_reduce : Tolk_uop.Ops.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
+(** [fold_reduce op xs] combines [xs] with [op] from the left, in list
+    order. Raises [Failure] on an empty list. *)
+
 val collective :
   name:string ->
   device:Tolk_uop.Uop.device ->

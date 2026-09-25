@@ -532,6 +532,13 @@ thread.
 
 ### Tolk (new)
 
+- Resharding an allreduced tensor to split rows (`Creation.shard ~axis` of a
+  sum over a split axis) is a reduce-scatter when nothing else uses the sum:
+  each device sends (n-1)/n of its partial and keeps only its rows, bit-equal
+  to the naive allreduce's. It allreduced the whole value first. A fully
+  sharded training step now stays within its share of state plus two layers
+  and its activations.
+
 - An allreduced tensor that a realization returns is written straight into its
   storage. It was reduced into an intermediate buffer and then copied, which
   held one more copy of the tensor on each device.
