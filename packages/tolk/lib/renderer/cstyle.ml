@@ -615,7 +615,9 @@ let render_image_store ctx dst value gate =
 
 let bitcast_passthrough_for_pointer_addrspace (ctx : ctx) (x : U.t) =
   match U.addrspace x, U.src x with
-  | Some (Dtype.Global | Dtype.Local), [| src |] -> Some (lookup ctx src)
+  | Some (Dtype.Global | Dtype.Local as addrspace), [| src |] ->
+      Some (strf "((%s)(%s))"
+        (render_dtype_c ctx.lang ~addrspace (U.dtype x)) (lookup ctx src))
   | _ -> None
 
 (* Base rewrite rules *)
@@ -1225,7 +1227,7 @@ let should_inline ~expand_ssa ~child_count (u : U.t) : bool =
         (* A register load is only free to repeat at one use site; past that,
            name it so the read happens once. *)
         U.addrspace (U.src u).(0) = Some Dtype.Reg && cc = 1
-    | Ops.Cast
+    | Ops.Cast | Ops.Bitcast
       when U.addrspace u = Some Dtype.Global || U.addrspace u = Some Dtype.Local
       ->
         true
@@ -1303,6 +1305,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
         when Array.length (U.src u) = 0
              && Dtype.equal (U.dtype u) (Dtype.void) ->
           ()
+      | Ops.After when Dtype.equal (U.dtype u) Dtype.void -> ()
       | Ops.After ->
           let srcs = U.src u in
           if Array.length srcs > 0 then

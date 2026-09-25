@@ -10,13 +10,13 @@ open Windtrap
 open Rune_test_support.Support
 
 (* A virtual GPU, such as a CI runner's paravirtual device, runs every kernel
-   but offers no graph capability, so compiled calls replay kernel by kernel
-   there. Graph dispatch is checked only where the device has it. *)
-let metal_graphs =
-  lazy (Option.is_some (Tolk.Device.graph (Tolk.Device.get "METAL")))
+   but offers no queue capability, so compiled calls replay kernel by kernel
+   there. Batched submission is checked only where the device has it. *)
+let metal_queues =
+  lazy (Option.is_some (Tolk.Device.queue (Tolk.Device.get "METAL")))
 
-let graphs_used ~msg dispatched =
-  if Lazy.force metal_graphs then is_true ~msg dispatched
+let queues_used ~msg dispatched =
+  if Lazy.force metal_queues then is_true ~msg dispatched
 
 let test_elementwise_on_metal () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
@@ -42,11 +42,11 @@ let test_matmul_grad_on_metal () =
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through metal jit" (to_arr (Rune.grad' f x)) (g x)
 
-(* Multi-kernel compiled traces replay as batched device graphs: the kernels are
+(* Multi-kernel compiled traces replay as batched compiled queues: the kernels are
    recorded into an indirect command buffer on the first call and later calls
    patch the rebound buffers (fresh outputs, resident inputs) into it instead of
    launching each kernel individually. *)
-let test_graph_batched_replay () =
+let test_queue_batched_replay () =
   let w1 =
     Nx.create f32 [| 4; 4 |]
       (Array.init 16 (fun i -> (float_of_int (i mod 5) /. 4.0) -. 0.5))
@@ -70,17 +70,17 @@ let test_graph_batched_replay () =
       Array.init 8 (fun i -> float_of_int (7 - i));
       Array.make 8 (-0.25);
     ];
-  graphs_used ~msg:"every call dispatched a device graph"
+  queues_used ~msg:"every call dispatched a compiled queue"
     (!Tolk.Realize.graph_launches - launches0 >= 3);
   let x = Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i)) in
   check_arr ~msg:"a resident output feeds the next call"
     (to_arr (f (f x)))
     (g (g x))
 
-(* A staged scan's body replays as one device graph per iteration, the slot
+(* A staged scan's body replays as one compiled queue per iteration, the slot
    buffers rebound between iterations patched into it, instead of launching its
    kernels one by one. *)
-let test_scan_body_replays_as_a_graph () =
+let test_scan_body_replays_as_a_queue () =
   let w =
     Nx.create f32 [| 4; 4 |]
       (Array.init 16 (fun i -> (float_of_int (i mod 5) /. 4.0) -. 0.5))
@@ -105,12 +105,12 @@ let test_scan_body_replays_as_a_graph () =
   check_arr ~msg:"first call" (to_arr (f xs)) (g xs);
   let launches0 = !Tolk.Realize.graph_launches in
   check_arr ~msg:"replay" (to_arr (f xs)) (g xs);
-  graphs_used ~msg:"one graph launch per iteration"
+  queues_used ~msg:"one queue submission per iteration"
     (!Tolk.Realize.graph_launches - launches0 >= 6)
 
-(* A recorded graph keeps its intermediates' buffers alive, so it must not
+(* A linked queue keeps its intermediates' buffers alive, so it must not
    outlive the compiled function it belongs to. *)
-let test_graph_released_with_its_function () =
+let test_command_storage_released_with_its_function () =
   let run c =
     let g =
       Rune.jit' ~device:"METAL" (fun x ->
@@ -120,17 +120,18 @@ let test_graph_released_with_its_function () =
     ignore (to_arr (g x));
     ignore (to_arr (g x))
   in
+  run 0.;
   full_major ();
-  let base = Tolk.Realize.graph_runners () in
+  let base = !Tolk.Device.Buffer.mem_used in
   let launches0 = !Tolk.Realize.graph_launches in
   for i = 1 to 4 do
     run (float_of_int i)
   done;
-  graphs_used ~msg:"the calls recorded device graphs"
+  queues_used ~msg:"the calls recorded compiled queues"
     (!Tolk.Realize.graph_launches - launches0 >= 8);
   full_major ();
-  equal ~msg:"no recorded graph outlives its function" int base
-    (Tolk.Realize.graph_runners ())
+  equal ~msg:"no command storage outlives its function" int base
+    !Tolk.Device.Buffer.mem_used
 
 (* Placed weights. The compiled trace binds their buffers as its constants, and
    the batched replay reads them on every call with nothing uploaded. *)
@@ -163,7 +164,7 @@ let test_placed_weights_bind () =
       equal ~msg:"only the input is uploaded" int (Nx.nbytes x) up;
       check_arr ~msg:"matches eager" (to_arr (f w1 w2 x)) y)
     [ 0.5; -1.0; 2.0 ];
-  graphs_used ~msg:"the calls replayed as device graphs"
+  queues_used ~msg:"the calls replayed as compiled queues"
     (!Tolk.Realize.graph_launches - launches0 >= 3);
   check_arr ~msg:"a bound weight reads back" (to_arr w1) p1;
   is_true ~msg:"and keeps its buffer" (bound_by 1 p1);
@@ -431,7 +432,7 @@ let test_two_programs_alternate () =
   check_arr ~eps:1e-3 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v
 
 (* Programs run in turn share the device's arena. A program recorded as a device
-   graph over a smaller arena is re-patched onto the grown one, and a second
+   queue over a smaller arena is re-patched onto the grown one, and a second
    program of the same size allocates no arena of its own. *)
 let test_programs_share_an_arena () =
   let program ~n act =
@@ -749,12 +750,12 @@ let tests =
           test_top_k_on_metal;
         slow "sort matches eager" test_sort_matches_eager;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
-        test "multi-kernel traces replay as device graphs"
-          test_graph_batched_replay;
-        test "a staged scan body replays as a device graph"
-          test_scan_body_replays_as_a_graph;
-        test "a recorded graph is released with its function"
-          test_graph_released_with_its_function;
+        test "multi-kernel traces replay as compiled queues"
+          test_queue_batched_replay;
+        test "a staged scan body replays as a compiled queue"
+          test_scan_body_replays_as_a_queue;
+        test "command storage is released with its function"
+          test_command_storage_released_with_its_function;
         test "a read after a call waits for it" test_read_after_call_waits;
         test "programs run in turn share an arena" test_programs_share_an_arena;
         test "two programs alternate on one consumed state"
@@ -768,7 +769,7 @@ let tests =
         test "a placed view is read bit for bit" test_placed_view_keeps_nan_bits;
         test "a dtype Metal cannot hold raises at placement"
           test_unsupported_dtype_raises_at_placement;
-        test "placed weights bind and replay as device graphs"
+        test "placed weights bind and replay as compiled queues"
           test_placed_weights_bind;
         test "a bound input is not consumed by donation"
           test_bound_input_is_not_donated;

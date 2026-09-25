@@ -379,6 +379,10 @@ thread.
 
 ### Tolk (new)
 
+- Compile Metal batches into host submission programs shared by eager execution
+  and JIT replay. Command storage is linked once and fenced before runtime
+  address, scalar and launch-size updates; the old Metal graph API is removed.
+
 - Track graph dependencies over byte views instead of their entire backing
   allocations, allowing disjoint views to remain independent while preserving
   ordering for overlapping reads and writes.

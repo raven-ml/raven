@@ -44,10 +44,10 @@ exception Jit_error of string
 let call_arg_uops args = List.filter (fun s -> not (U.is_bound_var s)) args
 
 let call_args call =
-  match U.as_call call with Some { args; _ } -> args | None -> []
+  match U.as_call (U.without_after call) with Some { args; _ } -> args | None -> []
 
 let call_body call =
-  match U.as_call call with Some { body; _ } -> Some body | None -> None
+  match U.as_call (U.without_after call) with Some { body; _ } -> Some body | None -> None
 
 (* Validation token: inputs must keep their size, dtype, and device across
    replays. *)
@@ -168,14 +168,15 @@ let graph_split_rewrite ~device linear ~max_batch_size =
       match call_body si with
       | Some body ->
           let can_graph =
-            (match graph with
-            | Some g ->
+            (match graph, U.arg (U.without_after si) with
+            | _, U.Arg.Call_info {aux = Some _; _} -> false
+            | Some g, _ ->
                 (is_op Ops.Program body
                 || (is_op Ops.Store body && g.Device.Graph.supports_copy))
                 && (match g.Device.Graph.max_buffer_offset with
                    | Some max_offset -> view_offsets_within max_offset si
                    | None -> true)
-            | None -> false)
+            | None, _ -> false)
             &&
             match call_device_prefixes si with
             | Some prefixes ->

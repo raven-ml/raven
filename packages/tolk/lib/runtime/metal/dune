@@ -5,7 +5,7 @@
  (public_name tolk.metal)
  (enabled_if
   (= %{system} macosx))
- (libraries tolk tolk_uop threads)
+ (libraries tolk tolk_uop tolk_cpu threads)
  (c_library_flags
   (-framework Metal -framework Foundation -framework CoreGraphics))
  (foreign_stubs

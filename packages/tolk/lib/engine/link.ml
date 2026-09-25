@@ -31,7 +31,7 @@ let word_bytes c =
     | _ -> invalid_arg "link: command words must be integers" in
   Bytes.init n (fun i -> Char.chr (Z.to_int (Z.extract value (8 * i) 8)))
 
-let run ~resolve ?(allow_cache = true) linear =
+let rec run ~resolve ?(allow_cache = true) linear =
   match if allow_cache then U.Weak_tbl.find_opt cache linear else None with
   | Some linked -> linked
   | None ->
@@ -78,7 +78,8 @@ let run ~resolve ?(allow_cache = true) linear =
         | _ -> None in
       let rec rewrite u =
         match U.op u with
-        | Ops.Param when U.node_tag u <> None ->
+        | Ops.Param when U.node_tag u <> None
+            || (match U.as_param u with Some {param; _} -> param.allocation <> None | None -> false) ->
             let buf =
               if U.node_tag u = Some "lt_input" then begin
                 can_cache := false;
@@ -87,13 +88,32 @@ let run ~resolve ?(allow_cache = true) linear =
                 let device = match U.device_of u with
                   | Some (U.Single d) -> d
                   | _ -> invalid_arg "link: placeholder needs one device" in
+                let owner = Device.get device in
+                match Device.bufferize owner u with
+                | Some buf -> buf
+                | None ->
                 let volatile = match U.as_param u with
+                  | Some {param = {allocation = Some (kind, _); _}; _} ->
+                      invalid_arg ("link: unsupported allocation " ^ kind ^ " on " ^ device)
                   | Some {param; _} -> param.volatile | None -> assert false in
                 let spec = {B.Buffer_spec.default with host = volatile;
                   cpu_access = true; uncached = volatile} in
                 Device.create_buffer ~size:(max 1 (U.max_numel u))
-                  ~dtype:(U.dtype u) ~spec (Device.get device) in
+                  ~dtype:(U.dtype u) ~spec owner in
             Some (U.from_buffer buf)
+        | Ops.Call ->
+            (match U.as_call u with
+             | Some {body; _} when U.op body = Ops.Custom_function
+                 && U.Arg.as_string (U.arg body) = Some "loop" ->
+                 let src = Array.copy (U.src body) in
+                 let linked = run ~resolve ~allow_cache src.(0) in
+                 if U.equal linked src.(0) then None else begin
+                   src.(0) <- linked;
+                   let args = Array.copy (U.src u) in
+                   args.(0) <- U.replace body ~src ();
+                   Some (U.replace u ~src:args ())
+                 end
+             | _ -> None)
         | Ops.Getaddr ->
             let source = (U.src u).(0) in
             (* Ordinary input parameters remain runtime-bound. *)

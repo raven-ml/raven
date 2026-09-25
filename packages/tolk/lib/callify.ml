@@ -88,7 +88,10 @@ let transform_to_call sink =
       | Ops.After when U.is_bound_var u -> replace_input u
       | _ -> None) body in
   let body = U.graph_rewrite ~enter_calls:true (fun u ->
-      match U.node_tag u with None -> None | Some _ -> Some (U.replace u ~node_tag:None ())) body in
+      match U.op u, U.node_tag u with
+      | _, None -> None
+      | Ops.Param, Some tag when tag <> "" -> None
+      | _ -> Some (U.replace u ~node_tag:None ())) body in
   let info : U.call_info =
     {grad_fxn = None; name = None; precompile = true;
      precompile_backward = false; dtype = Dtype.void; aux = None} in

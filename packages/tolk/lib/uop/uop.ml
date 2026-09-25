@@ -64,7 +64,17 @@ type param_arg = {
   device : device option;
   volatile : bool;
   bind_on_realize : bool;
+  allocation : (string * string) option;
   buffer : Storage.t list option;
+}
+
+type queue_info = {
+  devices : string list;
+  host : string;
+  table : int;
+  inputs : (int * string) list;
+  outputs : int list;
+  kernels : int;
 }
 
 type reduce_arg = { op : Ops.t; num_axes : int }
@@ -88,7 +98,7 @@ and call_info = {
   name : string option;
   precompile : bool;
   precompile_backward : bool;
-  aux : string option;
+  aux : queue_info option;
   dtype : Dtype.t;
 }
 
@@ -377,7 +387,7 @@ let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
 let default_param_arg ~dtype ?size ?image ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Dtype.Global) ?axis ?device ?(volatile = false) slot =
   { slot; dtype; size; image; vmin_vmax; multiple_of; name; addrspace; axis;
-    device; volatile; bind_on_realize = false; buffer = None }
+    device; volatile; bind_on_realize = false; buffer = None; allocation = None }
 
 let sanitize_function_name name =
   let len = String.length name in
@@ -731,6 +741,9 @@ let after ~src:s ~deps =
   else
     mk ~op:Ops.After ~dtype:(dtype s)
       ~src:(Array.of_list (s :: deps)) ~arg:Arg.Empty
+
+let rec without_after u =
+  if op u = Ops.After then without_after (src u).(0) else u
 
 let noop ?src ~dtype () =
   let srcs = match src with Option.None -> [||] | Option.Some s -> [| s |] in
@@ -1772,9 +1785,9 @@ let remove_all_tags root =
           else Some (with_metadata md rebuilt))
     root
 
-let substitute ?(walk = false) mappings root =
+let substitute ?(walk = false) ?(enter_calls = false) mappings root =
   let f u = List.assq_opt u mappings in
-  graph_rewrite ~bottom_up:true ~walk f root
+  graph_rewrite ~bottom_up:true ~walk ~enter_calls f root
 
 (* Analysis *)
 
@@ -2522,7 +2535,7 @@ let call_with_outputs ?output_pos ~values ~args ~info () =
 (* Placeholders and custom kernels *)
 
 let placeholder ~shape:dims ~dtype ~slot ?(addrspace = Dtype.Global) ?device
-    ?volatile () =
+    ?volatile ?allocation () =
   let dtype = Dtype.strong_dtype dtype in
   let flat = const_int (List.fold_left ( * ) 1 dims) in
   let base =
@@ -2535,6 +2548,10 @@ let placeholder ~shape:dims ~dtype ~slot ?(addrspace = Dtype.Global) ?device
         buffer ~slot ~dtype ~shape:flat ~addrspace ()
     | Dtype.Alu -> invalid_arg "Uop.placeholder: alu address space"
   in
+  let base = match allocation, arg base with
+    | Some _, Arg.Param_arg p when p.addrspace = Dtype.Global -> replace base ~arg:(Arg.Param_arg {p with allocation}) ()
+    | None, _ -> base
+    | _ -> invalid_arg "Uop.placeholder: allocation requires a global parameter" in
   if List.length dims > 1 then
     reshape ~src:base ~shape:(shape_arg (List.map const_int dims))
   else base
@@ -3605,7 +3622,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 25
+let export_version = 26
 
 type serialized_node = {
   serialized_op : Ops.t;

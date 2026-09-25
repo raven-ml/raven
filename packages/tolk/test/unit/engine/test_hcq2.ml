@@ -92,10 +92,81 @@ let peers_and_timestamps () =
   let offsets = List.map (fun n -> (Deps_tracker.uop (U.src n).(0)).start) stamps in
   equal (list int) [32; 48] offsets
 
+let compiled_host_submission () =
+  let host = Tolk_cpu.create "CPU" in
+  let name = "CPU:queue-test" in
+  let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let timeline = Device.Buffer.create ~device:name ~size:2 ~dtype:Dtype.uint64 allocator in
+  Device.Buffer.ensure_allocated timeline;
+  Device.Buffer.copyin timeline (Bytes.make 16 '\000');
+  let observed = Device.Buffer.create ~device:name ~size:1 ~dtype:Dtype.uint64 allocator in
+  let encode u = match U.op u, U.arg u, U.children u with
+    | Ops.Custom_function, U.Arg.String "submit_cpu_copy", [linear; dependency] ->
+        let trace = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
+            ~device:(U.Single name) () |> U.with_tag "trace" in
+        let observe = Hcq2.ccall ~after:[dependency] ~name:"memcpy" ~dtype:Dtype.uint64
+            [U.getaddr ~device:name ~src:trace ();
+             U.getaddr ~device:name ~src:(slice (Hcq2.timeline name) 1 1) ();
+             U.const (Const.int Dtype.uint64 8)] in
+        let previous = ref [observe] in
+        let nodes = List.map (fun op ->
+            let node = match U.as_call op, U.arg op with
+              | Some {args = [dst; src]; _}, _ ->
+                  Hcq2.ccall ~after:!previous ~name:"memcpy" ~dtype:Dtype.uint64
+                    [U.getaddr ~device:name ~src:dst (); U.getaddr ~device:name ~src ();
+                     U.const (Const.int Dtype.uint64 (U.max_numel src * Dtype.itemsize (U.dtype src)))]
+              | _, U.Arg.Typed ("store", _) ->
+                  U.store ~dst:(U.index ~ptr:(U.after ~src:(U.src op).(0) ~deps:!previous) ~idxs:[U.const_int 0] ())
+                    ~value:(U.src op).(1) ()
+              | _, U.Arg.Typed (("wait" | "barrier"), _) -> U.noop ~dtype:Dtype.void ()
+              | _ -> fail "unexpected host queue instruction" in
+            if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
+        Some (U.group nodes)
+    | _ -> None in
+  let queue = Device.{host = "CPU"; copy = true; encode; lower = (fun _ -> None);
+    compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+  let renderer_set = Device.Renderer_set.make ~device:name
+      ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
+  let device = Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime host)
+      ~synchronize:(fun () -> ()) ~queue
+      ~bufferize:(fun p -> match U.node_tag p with
+        | Some "timeline" -> Some timeline | Some "trace" -> Some observed | _ -> None) () in
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) ~device:(U.Single name) () in
+  let linear = U.linear [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
+                         U.store_call ~dst:(ptr 2) ~src:(ptr 1)] in
+  let to_program = Codegen.to_program host (Device.renderer host) in
+  let compiled = Realize.compile_linear ~device ~to_program linear in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let buffer value =
+    let b = Device.create_buffer ~size:1 ~dtype:Dtype.int32 device in
+    Device.Buffer.ensure_allocated b;
+    let bytes = Bytes.create 4 in
+    Bytes.set_int32_le bytes 0 value;
+    Device.Buffer.copyin b bytes; b in
+  List.iter (fun value ->
+      let src = buffer value and mid = buffer 0l and dst = buffer 0l in
+      Realize.run_linear ~device ~to_program binding ~jit:true ~wait:true
+        ~input_uops:(Array.map U.from_buffer [|src; mid; dst|]) linked;
+      equal int32 value (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0)) [42l; 71l];
+  equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+  equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes observed) 0);
+  let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
+  let compiled = Realize.compile_linear ~device ~to_program
+      (U.linear [U.store_call ~dst ~src]) in
+  let linked = Realize.link_linear binding compiled in
+  Realize.run_linear ~device ~to_program binding ~jit:true linked;
+  let replacement = buffer 91l and output = buffer 0l in
+  Realize.Buffers.seed binding src replacement;
+  Realize.Buffers.seed binding dst output;
+  Realize.run_linear ~device ~to_program binding ~jit:true linked;
+  equal int32 91l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0)
+
 let () = run "Engine_hcq2" [
   test "byte intervals match a per-byte dependency model" byte_dependencies;
   test "owned aliases and device lanes preserve allocation identity" region_identity;
   test "only overlapping accesses wait across queues" overlap_waits;
   test "NV cross-queue waits close the previous compute chain" nv_chain;
   test "peer epilogues and profiling slots participate in timelines" peers_and_timestamps;
+  test "compiled host submission patches addresses and replays through timelines" compiled_host_submission;
 ]

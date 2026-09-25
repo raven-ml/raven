@@ -1266,6 +1266,7 @@ type scheduled = Kernel of U.t | Opaque of U.t
 let rec schedule_calls linear =
   List.concat_map
     (fun call ->
+      let call = U.without_after call in
       match U.as_call call with
       | Some { body; _ } when U.op body = Tolk_uop.Ops.Custom_function -> (
           match (U.Arg.as_string (U.arg body), U.src body) with

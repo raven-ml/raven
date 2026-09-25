@@ -236,7 +236,7 @@ let compile_linear ~device ?beam ~to_program linear =
           ()
     | _ -> call
   in
-  U.linear (List.map compile_call (U.children linear))
+  Hcq2.compile (U.linear (List.map compile_call (U.children linear)))
 
 let program_args (info : Tolk_uop.Uop.program_info) args =
   let args = Array.of_list args in
@@ -417,11 +417,6 @@ let link_linear binding ?(input_uops = [||]) ?allow_cache linear =
   let ctx = exec_context ~input_uops () in
   Link.run ~resolve:(resolve binding ctx) ?allow_cache linear
 
-let rec without_after u =
-  if Tolk_uop.Uop.op u = Tolk_uop.Ops.After then
-    without_after (Tolk_uop.Uop.src u).(0)
-  else u
-
 (* Execution device for a resolved buffer: the ambient device when the names
    agree, the registry's device for the buffer's placement otherwise. *)
 let device_for ~device buf =
@@ -588,7 +583,9 @@ let track_stats ctx call ~device bufs var_vals run =
     in
     let estimates = estimate_uop call in
     let op_est = infer estimates.ops and mem_est = infer estimates.mem in
-    incr G.kernel_count;
+    let kernels = match U.arg call with
+      | U.Arg.Call_info {aux = Some info; _} -> info.kernels | _ -> 1 in
+    G.kernel_count := !G.kernel_count + kernels;
     G.global_ops := !G.global_ops + op_est;
     G.global_mem := !G.global_mem + mem_est;
     Option.iter (fun t -> G.time_sum_s := !G.time_sum_s +. t) et;
@@ -1091,16 +1088,56 @@ let exec_loop_graph binding ctx ~device ~iteration call =
       launch_graph binding ctx ~device call rt
   | None -> invalid_arg "exec_loop_graph: expected CALL"
 
+let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) =
+  let module U = Tolk_uop.Uop in
+  match U.as_call call with
+  | Some {body; args} ->
+      let args = Array.of_list (call_arg_uops args) in
+      let buffers = Array.map (resolve binding ctx) args in
+      if submission.inputs <> [] then begin
+        if submission.table < 0 || submission.table >= Array.length buffers then
+          invalid_arg "exec_hcq: missing runtime address table";
+        let bytes = Bytes.create (8 * List.length submission.inputs) in
+        List.iteri (fun i (slot, device) ->
+            let address = Device.Buffer.addr ~device buffers.(slot) in
+            Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint address)) submission.inputs;
+        let table = Device.Buffer.view buffers.(submission.table)
+            ~size:(Bytes.length bytes) ~dtype:Tolk_uop.Dtype.uint8 ~offset:0 in
+        Device.Buffer.ensure_allocated table;
+        Device.Buffer.copyin table bytes
+      end;
+      let host = Device.get submission.host in
+      let info = match U.as_program_info body with
+        | Some info -> info | None -> invalid_arg "exec_hcq: expected PROGRAM" in
+      let prg = get_runtime ~device:host body in
+      let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
+      let vals = U.program_vals info ~var_vals:ctx.var_vals |> List.map Int64.of_int |> Array.of_list in
+      let run () =
+        let started = if ctx.wait then Unix.gettimeofday () else 0. in
+        ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
+        incr graph_launches;
+        if ctx.wait then begin
+          List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
+          Some (Unix.gettimeofday () -. started)
+        end else None in
+      ignore (track_stats ctx call ~device:(Device.get (List.hd submission.devices))
+        (Array.to_list buffers) ctx.var_vals run);
+      keep_alive buffers
+  | None -> invalid_arg "exec_hcq: expected CALL"
+
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
    executor, which replays a compiled sub-linear per iteration. *)
 let rec dispatch_call binding ctx ~device call =
-  let call = without_after call in
+  let call = Tolk_uop.Uop.without_after call in
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body; _ } -> (
       match U.op body with
       | Tolk_uop.Ops.Store -> exec_copy binding ctx ~device call
-      | Tolk_uop.Ops.Program -> exec_kernel binding ctx ~device call
+      | Tolk_uop.Ops.Program ->
+          (match U.arg call with
+           | U.Arg.Call_info {aux = Some submission; _} -> exec_hcq binding ctx call submission
+           | _ -> exec_kernel binding ctx ~device call)
       | Tolk_uop.Ops.Custom_function
         when U.Arg.as_string (U.arg body) = Some "graph" ->
           exec_graph binding ctx ~device call
@@ -1249,7 +1286,7 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
     let names =
       List.map
         (fun call ->
-          match U.as_call call with
+          match U.as_call (U.without_after call) with
           | Some { body; _ } when U.op body = Tolk_uop.Ops.Program -> "kernel"
           | Some { body; _ }
             when U.op body = Tolk_uop.Ops.Custom_function

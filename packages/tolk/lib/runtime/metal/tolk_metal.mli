@@ -11,10 +11,11 @@
     Apple Metal GPUs. Construct a device with {!create} and interact with it
     through the {!Tolk.Device} interface.
 
-    The device carries a {!Tolk.Device.Graph} capability: a recorded call
-    sequence is encoded once into a Metal indirect command buffer ({!Icb}) and
-    each replay submits it as a single command buffer. Paravirtualized devices
-    (see {!State.is_virtual}) carry no graph capability.
+    {!Tolk.Realize.compile_linear} encodes kernel batches into indirect
+    command buffers and compiles their host submission. Linking allocates the
+    commands and resolves native functions; replay fences the previous use
+    before updating buffer addresses, scalar arguments and dispatch sizes.
+    Paravirtualized devices (see {!State.is_virtual}) use individual dispatches.
 
     {1:compilation Kernel compilation}
 
@@ -28,7 +29,7 @@
     - [METAL_FAST_MATH] — when set to a non-zero integer, enables fast-math mode
       for runtime source compilation (the fallback path). Defaults to [0]
       (disabled).
-    - [FIX_METAL_ICB] — whether graph replays issue an empty dispatch per
+    - [FIX_METAL_ICB] — whether queue submissions issue an empty dispatch per
       pipeline before executing the indirect command buffer, which pre-M3 GPUs
       need to not crash. Defaults to [1] on those GPUs and [0] elsewhere. *)
 
@@ -71,7 +72,7 @@ module State : sig
 
   val is_virtual : t -> bool
   (** [is_virtual t] is [true] iff the device name contains ["virtual"],
-      indicating a paravirtualized Metal device (e.g. macOS VM). ICB-based graph
+      indicating a paravirtualized Metal device (e.g. macOS VM). ICB-based queue
       execution is unreliable on virtual devices. *)
 end
 

@@ -322,63 +322,6 @@ static uint8_t* metal_argument_destination(tolk_metal_program* prog,
   return (uint8_t*)[buf contents] + off;
 }
 
-CAMLprim value caml_tolk_metal_program_args_size(value v_prog) {
-  CAMLparam1(v_prog);
-  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
-  CAMLreturn(Val_long(prog->args_size));
-}
-
-CAMLprim value caml_tolk_metal_program_write_args(value v_prog, value v_args,
-                                                value v_offset, value v_buffers,
-                                                value v_offsets, value v_vals) {
-  CAMLparam5(v_prog, v_args, v_offset, v_buffers, v_offsets);
-  CAMLxparam1(v_vals);
-  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
-  metal_check_args(prog, v_buffers, v_offsets, v_vals);
-  uint8_t* dst = metal_argument_destination(prog, v_args, v_offset);
-  metal_pack_args(prog, dst, v_buffers, v_offsets, v_vals);
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_metal_program_write_args_bc(value* argv, int argc) {
-  (void)argc;
-  return caml_tolk_metal_program_write_args(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
-}
-
-CAMLprim value caml_tolk_metal_program_set_buffer(value v_prog, value v_args,
-                                                value v_offset, value v_slot,
-                                                value v_buffer, value v_buf_offset) {
-  CAMLparam5(v_prog, v_args, v_offset, v_slot, v_buffer);
-  CAMLxparam1(v_buf_offset);
-  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
-  intnat slot = Long_val(v_slot);
-  if (slot < 0 || (size_t)slot >= prog->nbufs)
-    caml_invalid_argument("Metal: buffer argument slot is out of range");
-  uint8_t* dst = metal_argument_destination(prog, v_args, v_offset);
-  uint64_t address = metal_buffer_address(v_buffer, v_buf_offset);
-  memcpy(dst + prog->arg_offsets[slot], &address, sizeof(address));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_metal_program_set_buffer_bc(value* argv, int argc) {
-  (void)argc;
-  return caml_tolk_metal_program_set_buffer(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
-}
-
-CAMLprim value caml_tolk_metal_program_set_value(value v_prog, value v_args,
-                                               value v_offset, value v_index, value v_value) {
-  CAMLparam5(v_prog, v_args, v_offset, v_index, v_value);
-  tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
-  intnat index = Long_val(v_index);
-  if (index < 0 || (size_t)index >= prog->nvals)
-    caml_invalid_argument("Metal: scalar argument slot is out of range");
-  size_t slot = prog->nbufs + index;
-  uint8_t* dst = metal_argument_destination(prog, v_args, v_offset);
-  uint64_t bits = (uint64_t)Int64_val(v_value);
-  memcpy(dst + prog->arg_offsets[slot], &bits, prog->arg_widths[slot]);
-  CAMLreturn(Val_unit);
-}
-
 CAMLprim value caml_tolk_metal_program_dispatch(value v_queue, value v_prog,
                                            value v_buffers, value v_offsets,
                                            value v_args, value v_global,
@@ -963,4 +906,144 @@ CAMLprim value caml_tolk_metal_compile(value v_src) {
     Store_field(v_some, 0, v_bytes);
     CAMLreturn(v_some);
   }
+}
+
+/* The compiled host program calls these ordinary C entry points. They never
+   touch OCaml values and may execute while the OCaml runtime is released. */
+#include <pthread.h>
+typedef struct {
+  id<MTLCommandQueue> queue;
+  id<MTLSharedEvent> event;
+  id<MTLFence> fence;
+  id<MTLResource>* resources;
+  size_t count, capacity;
+  pthread_mutex_t lock;
+} tolk_metal_hcq;
+
+static uint64_t tolk_metal_hcq_poll(uint64_t address) {
+  tolk_metal_hcq* ctx = (tolk_metal_hcq*)(uintptr_t)address;
+  return ctx->event.signaledValue;
+}
+
+static void tolk_metal_hcq_update(uint64_t icb_address, uint64_t index,
+                                  const uint64_t* sizes) {
+  @autoreleasepool {
+    id<MTLIndirectCommandBuffer> icb = (id<MTLIndirectCommandBuffer>)(uintptr_t)icb_address;
+    id<MTLIndirectComputeCommand> command = [icb indirectComputeCommandAtIndex:index];
+    [command concurrentDispatchThreadgroups:MTLSizeMake(sizes[0], sizes[1], sizes[2])
+                     threadsPerThreadgroup:MTLSizeMake(sizes[3], sizes[4], sizes[5])];
+  }
+}
+
+static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t value) {
+  tolk_metal_hcq* ctx = (tolk_metal_hcq*)(uintptr_t)address;
+  @autoreleasepool {
+    if (header[2] != 0) [(id<MTLCommandBuffer>)(uintptr_t)header[2] release];
+    id<MTLCommandBuffer> command = [ctx->queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+    [encoder waitForFence:ctx->fence];
+    pthread_mutex_lock(&ctx->lock);
+    if (ctx->count != 0)
+      [encoder useResources:ctx->resources count:ctx->count
+                      usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+    pthread_mutex_unlock(&ctx->lock);
+    if (header[3]) {
+      for (uint64_t i = 0; i < header[4]; i++) {
+        tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)header[5 + i];
+        [encoder setComputePipelineState:program->pipeline];
+        [encoder dispatchThreadgroups:MTLSizeMake(0, 0, 0)
+                 threadsPerThreadgroup:MTLSizeMake(0, 0, 0)];
+      }
+    }
+    [encoder executeCommandsInBuffer:(id<MTLIndirectCommandBuffer>)(uintptr_t)header[0]
+                           withRange:NSMakeRange(0, header[1])];
+    [encoder updateFence:ctx->fence];
+    [encoder endEncoding];
+    [command encodeSignalEvent:ctx->event value:value];
+    [command retain];
+    header[2] = (uint64_t)(uintptr_t)command;
+    [command commit];
+  }
+}
+
+CAMLprim value caml_tolk_metal_hcq_create(value v_queue, value v_event) {
+  CAMLparam2(v_queue, v_event);
+  CAMLlocal1(result);
+  result = caml_copy_nativeint(0);
+  tolk_metal_hcq* ctx = calloc(1, sizeof(*ctx));
+  if (ctx == NULL) caml_raise_out_of_memory();
+  ctx->queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
+  ctx->event = (id<MTLSharedEvent>)Nativeint_val(v_event);
+  ctx->fence = [ctx->queue.device newFence];
+  if (ctx->fence == nil || pthread_mutex_init(&ctx->lock, NULL) != 0) {
+    [ctx->fence release]; free(ctx); caml_failwith("Metal HCQ context creation failed");
+  }
+  Nativeint_val(result) = (intnat)ctx;
+  CAMLreturn(result);
+}
+
+CAMLprim value caml_tolk_metal_hcq_release(value v_ctx) {
+  CAMLparam1(v_ctx);
+  tolk_metal_hcq* ctx = (tolk_metal_hcq*)Nativeint_val(v_ctx);
+  pthread_mutex_destroy(&ctx->lock);
+  [ctx->fence release];
+  free(ctx->resources);
+  free(ctx);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_metal_hcq_resource(value v_ctx, value v_buffer, value v_add) {
+  CAMLparam3(v_ctx, v_buffer, v_add);
+  tolk_metal_hcq* ctx = (tolk_metal_hcq*)Nativeint_val(v_ctx);
+  id<MTLResource> resource = (id<MTLResource>)Nativeint_val(v_buffer);
+  pthread_mutex_lock(&ctx->lock);
+  if (Bool_val(v_add)) {
+    if (ctx->count == ctx->capacity) {
+      size_t capacity = ctx->capacity == 0 ? 32 : 2 * ctx->capacity;
+      id<MTLResource>* resources = realloc(ctx->resources, capacity * sizeof(*resources));
+      if (resources == NULL) {
+        pthread_mutex_unlock(&ctx->lock); caml_raise_out_of_memory();
+      }
+      ctx->resources = resources;
+      ctx->capacity = capacity;
+    }
+    ctx->resources[ctx->count++] = resource;
+  } else {
+    for (size_t i = 0; i < ctx->count; i++) {
+      if (ctx->resources[i] == resource) {
+        ctx->resources[i] = ctx->resources[--ctx->count];
+        break;
+      }
+    }
+  }
+  pthread_mutex_unlock(&ctx->lock);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_metal_hcq_wait(value v_ctx, value v_value) {
+  CAMLparam2(v_ctx, v_value);
+  tolk_metal_hcq* ctx = (tolk_metal_hcq*)Nativeint_val(v_ctx);
+  uint64_t target = (uint64_t)Int64_val(v_value);
+  caml_release_runtime_system();
+  BOOL done = [ctx->event waitUntilSignaledValue:target timeoutMS:30000];
+  caml_acquire_runtime_system();
+  if (!done) caml_failwith("Metal queue timeline wait timed out");
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_metal_hcq_symbol(value v_name) {
+  CAMLparam1(v_name);
+  const char* name = String_val(v_name);
+  uintptr_t address = 0;
+  if (strcmp(name, "tolk_metal_hcq_poll") == 0) address = (uintptr_t)&tolk_metal_hcq_poll;
+  else if (strcmp(name, "tolk_metal_hcq_update") == 0) address = (uintptr_t)&tolk_metal_hcq_update;
+  else if (strcmp(name, "tolk_metal_hcq_submit") == 0) address = (uintptr_t)&tolk_metal_hcq_submit;
+  else caml_invalid_argument("unknown Metal host function");
+  CAMLreturn(caml_copy_nativeint((intnat)address));
+}
+
+CAMLprim value caml_tolk_metal_buffer_address(value v_buf) {
+  CAMLparam1(v_buf);
+  id<MTLBuffer> buffer = (id<MTLBuffer>)Nativeint_val(v_buf);
+  CAMLreturn(caml_copy_nativeint((intnat)buffer.gpuAddress));
 }

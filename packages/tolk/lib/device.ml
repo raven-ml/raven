@@ -78,6 +78,14 @@ type prog = {
 
 type runtime = Tolk_uop.Tiny_elf.t -> prog
 
+type queue = {
+  host : string;
+  copy : bool;
+  encode : Uop.t -> Uop.t option;
+  lower : Uop.t -> Uop.t option;
+  compile : Uop.t -> Uop.t;
+}
+
 (* Batched dispatch graphs *)
 
 module Graph = struct
@@ -157,6 +165,8 @@ type t = {
   synchronize : unit -> unit;
   invalidate_caches_fn : (unit -> unit) option;
   graph : Graph.t option;
+  queue : queue option;
+  bufferize : Uop.t -> Buffer.t option;
 }
 
 type device = t
@@ -178,9 +188,9 @@ let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
 let opened : (string, t) Hashtbl.t = Hashtbl.create 8
 
 let make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches ?graph () =
+    ?invalidate_caches ?graph ?queue ?(bufferize = fun _ -> None) () =
   let device = { name; allocator; renderer_set; runtime; synchronize;
-    invalidate_caches_fn = invalidate_caches; graph } in
+    invalidate_caches_fn = invalidate_caches; graph; queue; bufferize } in
   Hashtbl.replace opened (canonicalize name) device;
   device
 
@@ -208,6 +218,8 @@ let runtime d (obj : Tolk_uop.Tiny_elf.t) =
   { prg with call }
 let synchronize d = d.synchronize ()
 let graph d = d.graph
+let queue d = d.queue
+let bufferize d = d.bufferize
 
 let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
   let module U = Tolk_uop.Uop in

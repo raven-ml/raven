@@ -307,7 +307,9 @@ val run_linear :
     [true], [linear] is assumed already compiled and linked. Each call is then dispatched on its body: a
     {!Tolk_uop.Ops.Program} is launched with launch dimensions and scalar
     arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
-    built from its compiled binary; a {!Tolk_uop.Ops.Store} transfers between its
+    built from its compiled binary. A program carrying queue metadata refreshes
+    its address table and submits through its host device; [wait] also waits for
+    the submitted devices. A {!Tolk_uop.Ops.Store} transfers between its
     resolved buffers; a {!Tolk_uop.Ops.Custom_function} named ["graph"] records
     its LINEAR body into the device's {!Device.Graph} on first execution and
     replays that graph afterwards, patching per run every buffer argument

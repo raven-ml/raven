@@ -46,19 +46,6 @@ module Ffi = struct
     nativeint
     = "caml_tolk_metal_program_dispatch_bc" "caml_tolk_metal_program_dispatch"
 
-  external program_args_size : nativeint -> int = "caml_tolk_metal_program_args_size"
-
-  external program_write_args :
-    nativeint -> nativeint -> int -> nativeint array -> int array -> int64 array -> unit
-    = "caml_tolk_metal_program_write_args_bc" "caml_tolk_metal_program_write_args"
-
-  external program_set_buffer :
-    nativeint -> nativeint -> int -> int -> nativeint -> int -> unit
-    = "caml_tolk_metal_program_set_buffer_bc" "caml_tolk_metal_program_set_buffer"
-
-  external program_set_value : nativeint -> nativeint -> int -> int -> int64 -> unit
-    = "caml_tolk_metal_program_set_value"
-
   external command_buffer_wait : nativeint -> unit
     = "caml_tolk_metal_command_buffer_wait"
 
@@ -111,6 +98,13 @@ module Ffi = struct
 
   external device_name : nativeint -> string = "caml_tolk_metal_device_name"
   external device_arch : nativeint -> string = "caml_tolk_metal_device_arch"
+  external hcq_create : nativeint -> nativeint -> nativeint = "caml_tolk_metal_hcq_create"
+  external hcq_release : nativeint -> unit = "caml_tolk_metal_hcq_release"
+  external hcq_resource : nativeint -> nativeint -> bool -> unit = "caml_tolk_metal_hcq_resource"
+  external hcq_wait : nativeint -> int64 -> unit = "caml_tolk_metal_hcq_wait"
+  external hcq_symbol : string -> nativeint = "caml_tolk_metal_hcq_symbol"
+  external buffer_address : nativeint -> nativeint = "caml_tolk_metal_buffer_address"
+
 end
 
 module Metal_buffer = struct
@@ -136,9 +130,10 @@ module State = struct
     device : nativeint;
     queue : nativeint;
     shared_event : nativeint;
-    mutable timeline_value : int;
+    context : nativeint;
+    mutable timeline : Device.Buffer.t option;
+    mutable context_buffer : Device.Buffer.t option;
     mutable in_flight : nativeint list;
-    mutable synchronizations : int;
     mutable closed : bool;
     needs_icb_fix : bool;
     device_name : string;
@@ -159,9 +154,10 @@ module State = struct
             device;
             queue;
             shared_event;
-            timeline_value = 0;
+            context = Ffi.hcq_create queue shared_event;
+            timeline = None;
+            context_buffer = None;
             in_flight = [];
-            synchronizations = 0;
             closed = false;
             needs_icb_fix;
             device_name;
@@ -185,12 +181,17 @@ module State = struct
           Ffi.command_buffer_wait cmd;
           drain rest
     in
-    t.synchronizations <- t.synchronizations + 1;
-    drain t.in_flight
+    if not t.closed then begin
+      drain t.in_flight;
+      Option.iter (fun timeline ->
+          let value = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 8 in
+          Ffi.hcq_wait t.context value) t.timeline
+    end
 
   let shutdown t =
     if not t.closed then (
       synchronize t;
+      Ffi.hcq_release t.context;
       Ffi.release_shared_event t.shared_event;
       Ffi.release_command_queue t.queue;
       Ffi.release_device t.device;
@@ -214,9 +215,16 @@ module Allocator = struct
         | Some ptr -> ptr
         | None -> Ffi.buffer_alloc state.State.device size
       in
+      (try Ffi.hcq_resource state.State.context handle true
+       with exn ->
+         if spec.Device.Buffer_spec.external_ptr = None then Ffi.buffer_free handle;
+         raise exn);
       Metal_buffer.{handle; size; offset = 0}
     in
     let free buf _size spec =
+      State.synchronize state;
+      if not state.State.closed then
+        Ffi.hcq_resource state.State.context buf.Metal_buffer.handle false;
       match spec.Device.Buffer_spec.external_ptr with
       | Some _ -> ()
       | None -> Ffi.buffer_free buf.Metal_buffer.handle
@@ -259,7 +267,8 @@ module Allocator = struct
       free;
       copyin;
       copyout;
-      addr = None;
+      addr = Some (fun buf -> Nativeint.add (Ffi.buffer_address buf.Metal_buffer.handle)
+          (Nativeint.of_int buf.offset));
       offset = Some offset;
       transfer = Some transfer;
       supports_transfer = true;
@@ -332,158 +341,170 @@ module Icb = struct
   let release t = Ffi.icb_release t.handle
 end
 
-module Graph = struct
-  (* Batched replay through an indirect command buffer: every kernel launch is
-     encoded once as an indirect compute command, and a replay submits the
-     whole sequence in a single command buffer. Commands are separated by
-     barriers, so they run in recording order and node dependencies need no
-     encoding. Each command binds one argument structure in a shared arena;
-     signature slots locate its full GPU addresses and typed scalar values. *)
-  let build state (nodes : Device.Graph.node array) =
-    let count = Array.length nodes in
-    let kernels =
-      Array.map
-        (function
-          | Device.Graph.Kernel { handle; global; local; bufs; vals; _ } ->
-              (handle, global, local, bufs, vals)
-          | Device.Graph.Copy _ ->
-              invalid_arg "Metal graph: unsupported COPY node")
-        nodes
-    in
-    let arg_offsets = Array.make (count + 1) 0 in
-    Array.iteri
-      (fun j (program, _, _, _, _) ->
-        let size = Ffi.program_args_size program in
-        arg_offsets.(j + 1) <- arg_offsets.(j) + ((size + 255) / 256 * 256))
-      kernels;
-    let arg_buf = Ffi.buffer_alloc state.State.device (max 8 arg_offsets.(count)) in
-    let program j = let handle, _, _, _, _ = kernels.(j) in handle in
-    let write_val j i v =
-      Ffi.program_set_value (program j) arg_buf arg_offsets.(j) i (Int64.of_int v)
-    in
-    let icb =
-      try Icb.create state ~count
-      with exn -> Ffi.buffer_free arg_buf; raise exn in
-    (* Referenced buffer resources are retained across replay and refreshed
-       when an argument's GPU address is patched. *)
-    let bound =
-      try Array.mapi
-        (fun j (program, global, local, buffers, vals) ->
-          let buffers, offsets = Metal_buffer.resolve_array buffers in
-          Ffi.program_write_args program arg_buf arg_offsets.(j) buffers offsets
-            (Array.map Int64.of_int vals);
-          Icb.encode icb ~index:j ~program ~arg_buf ~arg_offset:arg_offsets.(j)
-            ~global ~local;
-          buffers)
-        kernels
-      with exn ->
-        Icb.release icb;
-        Ffi.buffer_free arg_buf;
-        raise exn
-    in
-    let dedup handles =
-      let seen = Hashtbl.create 64 in
-      List.filter
-        (fun h ->
-          h <> Nativeint.zero && not (Hashtbl.mem seen h)
-          && (Hashtbl.replace seen h ();
-              true))
-        handles
-      |> Array.of_list
-    in
-    let fix_icb =
-      Helpers.getenv "FIX_METAL_ICB" (Bool.to_int state.State.needs_icb_fix)
-      <> 0
-    in
-    let pipelines =
-      if fix_icb then
-        dedup
-          (Array.to_list
-             (Array.map (fun (program, _, _, _, _) -> program) kernels))
-      else [||]
-    in
-    let resources () =
-      dedup
-        (arg_buf :: List.concat_map Array.to_list (Array.to_list bound))
-    in
-    let all_resources = ref (resources ()) in
-    let rebound = ref false in
-    let last = ref None in
-    (* The recorded commands and argument arena are read by the GPU until
-       the previous replay completes, so it is awaited before either is
-       patched or resubmitted. A synchronize since that replay has already
-       awaited and released its command buffer, whose address a later command
-       buffer may reuse. *)
-    let settle () =
-      match !last with
-      | Some (cmd, at)
-        when at = state.State.synchronizations
-             && List.mem cmd state.State.in_flight ->
-          state.State.in_flight <-
-            List.filter (fun c -> c <> cmd) state.State.in_flight;
-          last := None;
-          Ffi.command_buffer_wait cmd
-      | _ -> last := None
-    in
-    let launch ~wait =
-      settle ();
-      if !rebound then begin
-        all_resources := resources ();
-        rebound := false
-      end;
-      let cmd =
-        Ffi.icb_execute state.State.queue icb.Icb.handle count !all_resources
-          pipelines
-      in
-      if wait then Some (Ffi.command_buffer_wait_time cmd)
-      else begin
-        state.State.in_flight <- cmd :: state.State.in_flight;
-        last := Some (cmd, state.State.synchronizations);
-        None
-      end
-    in
-    let exec =
-      {
-        Device.Graph.set_buf =
-          (fun node pos buf ->
-            settle ();
-            let buffer = Metal_buffer.get buf in
-            Ffi.program_set_buffer (program node) arg_buf arg_offsets.(node) pos
-              buffer.handle buffer.offset;
-            bound.(node).(pos) <- buffer.handle;
-            rebound := true);
-        set_val =
-          (fun node idx v ->
-            settle ();
-            write_val node idx v);
-        set_launch_dims =
-          (fun node ~global ~local ->
-            settle ();
-            Icb.update_dispatch icb ~index:node ~global ~local);
-        set_params = (fun _ -> ());
-        launch;
-      }
-    in
-    (* A finaliser can run inside any allocation, including one that [settle]
-       or [launch] makes while updating the in-flight list, so it leaves that
-       list alone. It need not await the last replay: command buffers retain
-       what they reference, so a replay in flight holds the ICB and the
-       resources it declared. *)
-    Gc.finalise
-      (fun (_ : Device.Graph.exec) ->
-        if not state.State.closed then begin
-          Icb.release icb;
-          Ffi.buffer_free arg_buf
-        end)
-      exec;
-    exec
+module Queue = struct
+  open Tolk_uop
+  module U = Uop
+  module B = Device.Buffer
 
-  let create state =
-    {
-      Device.Graph.supports_copy = false;
-      max_buffer_offset = None;
-      build = build state;
-    }
+  type command = { object_ : Tiny_elf.t; global : int array; local : int array; offset : int }
+  type descriptor = { commands : command list; header : int }
+
+  let host_buffer ?(bytes = Bytes.empty) size =
+    let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+    let b = B.create ~device:"CPU" ~size ~dtype:Dtype.uint64 allocator in
+    B.ensure_allocated b;
+    B.copyin b (if Bytes.length bytes = 0 then Bytes.make (size * 8) '\000' else bytes);
+    b
+
+  let word value =
+    let bytes = Bytes.create 8 in
+    Bytes.set_int64_le bytes 0 (Int64.of_nativeint value);
+    host_buffer ~bytes 1
+
+  let context name = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
+      ~device:(U.Single name) ~allocation:("metal_context", "") ()
+  let index p i = U.index ~ptr:p ~idxs:[U.const_int i] ()
+  let load p i = U.load ~src:(index p i) ()
+  let call name ?after fn dtype args = Hcq2.ccall ~host:name ?after ~name:fn ~dtype args
+
+  let bufferize state name u = match U.as_param u with
+    | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
+        let libs, symbol = (Marshal.from_string data 0 : string list * string) in
+        if libs <> [] then invalid_arg "Metal host helpers do not load libraries";
+        Some (word (Ffi.hcq_symbol symbol))
+    | Some {param = {allocation = Some ("metal_context", _); _}; _} ->
+        let buffer = match state.State.context_buffer with
+          | Some b -> b | None -> let b = word state.context in state.context_buffer <- Some b; b in
+        Some buffer
+    | Some {param = {allocation = Some ("metal_icb", data); _}; _} ->
+        let desc = (Marshal.from_string data 0 : descriptor) in
+        let allocator = Allocator.raw state in
+        let live = ref None in
+        let alloc size spec =
+          let raw = allocator.alloc size spec in
+          let programs = ref [] and icb = ref None in
+          (try
+             Ffi.buffer_copyin raw.Metal_buffer.handle 0 (Bytes.make size '\000');
+             let commands = Array.of_list desc.commands in
+             let indirect = Icb.create state ~count:(Array.length commands) in
+             icb := Some indirect;
+             Array.iteri (fun i c ->
+                 let program = Program.runtime state c.object_ in
+                 programs := program :: !programs;
+                 Icb.encode indirect ~index:i ~program:program.Device.handle
+                   ~arg_buf:raw.handle ~arg_offset:c.offset ~global:c.global ~local:c.local) commands;
+             let programs = List.rev !programs in
+             let values = [indirect.handle; Nativeint.of_int indirect.count; 0n;
+               Nativeint.of_int (Helpers.getenv "FIX_METAL_ICB" (Bool.to_int state.State.needs_icb_fix));
+               Nativeint.of_int (List.length programs)] @ List.map (fun p -> p.Device.handle) programs in
+             let bytes = Bytes.create (8 * List.length values) in
+             List.iteri (fun i v -> Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint v)) values;
+             Ffi.buffer_copyin raw.handle desc.header bytes;
+             live := Some (indirect, programs);
+             raw
+           with exn ->
+             Option.iter Icb.release !icb;
+             List.iter (fun p -> p.Device.free ()) !programs;
+             allocator.free raw size spec;
+             raise exn) in
+        let free raw size spec =
+          State.synchronize state;
+          let bytes = Bytes.create 8 in
+          Ffi.buffer_copyout bytes raw.Metal_buffer.handle (desc.header + 16);
+          let command = Int64.to_nativeint (Bytes.get_int64_le bytes 0) in
+          if command <> 0n then Ffi.command_buffer_wait command;
+          Option.iter (fun (icb, programs) -> Icb.release icb;
+              List.iter (fun p -> p.Device.free ()) programs) !live;
+          live := None;
+          allocator.free raw size spec in
+        let spec = {Device.Buffer_spec.default with nolru = true; cpu_access = true} in
+        Some (B.create ~device:name ~size:(U.max_numel u) ~dtype:(U.dtype u) ~spec
+          (Device.Allocator.Pack {allocator with alloc; free}))
+    | Some _ when U.node_tag u = Some "timeline" ->
+        let buffer = match state.State.timeline with
+          | Some b -> b | None -> let b = host_buffer 2 in state.timeline <- Some b; b in
+        Some buffer
+    | _ -> None
+
+  let lower name u = match U.as_load u with
+    | Some {src; _} ->
+        (match U.as_index src with
+         | Some {ptr; idxs = [i]} when U.const_int_value i = Some 0
+             && U.node_tag (U.buf_uop ptr) = Some "timeline" ->
+             let deps = if U.op ptr = Ops.After then List.tl (U.children ptr) else [] in
+             Some (call name ~after:deps "tolk_metal_hcq_poll" Dtype.uint64 [load (context name) 0])
+         | _ -> None)
+    | _ -> None
+
+  let encode name u = match U.op u, U.arg u, U.children u with
+    | Ops.Custom_function, U.Arg.String "submit_metal_compute", [linear; dependency] ->
+        let commands = ref [] and rows = ref [] and sizes = ref [] and used = ref 0 in
+        let signal = ref None in
+        let align n a = (n + a - 1) / a * a in
+        List.iter (fun node -> match U.as_call node, U.arg node with
+            | Some {body; args}, _ when U.op body = Ops.Program ->
+                let info = Option.get (U.as_program_info body) in
+                let buffers = List.filter (fun a -> not (U.is_bound_var a)) args in
+                let bound = List.filter_map (fun a -> match U.as_bind a with
+                    | Some {var; value} -> Option.map (fun n -> n, value) (U.program_var_name var)
+                    | None -> None) args in
+                let variables = List.map (fun v -> match U.program_var_name v with
+                    | Some n -> Option.value (List.assoc_opt n bound) ~default:v | None -> v) info.vars in
+                let actuals = List.map (fun i -> U.getaddr ~device:name ~src:(List.nth buffers i) ()) info.globals @ variables in
+                let object_ = U.to_elf body in
+                let fields = Tiny_elf.layout object_.signature in
+                let offset = align !used 256 in
+                let end_ = ref (offset + 8) in
+                List.iter (fun (field : Tiny_elf.field) ->
+                    let value = List.nth actuals field.argument.slot in
+                    let dtype = if field.argument.addrspace = Dtype.Alu then field.argument.dtype else Dtype.uint64 in
+                    rows := (offset + field.offset, U.cast ~src:value ~dtype) :: !rows;
+                    end_ := max !end_ (offset + field.offset + field.size)) fields;
+                used := !end_;
+                let dims = info.global_size @ info.local_size in
+                let initial = List.map (function U.Launch_int n -> n | U.Launch_float f -> int_of_float f | U.Launch_sym _ -> 1) dims in
+                let pad xs = Array.init 3 (fun i -> if i < List.length xs then List.nth xs i else 1) in
+                let global = pad (List.filteri (fun i _ -> i < List.length info.global_size) initial) in
+                let local = pad (List.filteri (fun i _ -> i >= List.length info.global_size) initial) in
+                if List.exists (function U.Launch_sym _ -> true | _ -> false) dims then begin
+                  let at = align !used 8 in
+                  let values ds = List.init 3 (fun i ->
+                      if i >= List.length ds then U.const (Const.int Dtype.uint64 1) else
+                      match List.nth ds i with
+                      | U.Launch_int n -> U.const (Const.int Dtype.uint64 n)
+                      | U.Launch_float f -> U.const (Const.int Dtype.uint64 (int_of_float f))
+                      | U.Launch_sym v -> U.cast ~src:v ~dtype:Dtype.uint64) in
+                  List.iteri (fun i v -> rows := (at + 8 * i, v) :: !rows)
+                    (values info.global_size @ values info.local_size);
+                  sizes := (List.length !commands, at) :: !sizes;
+                  used := at + 48
+                end;
+                commands := !commands @ [{object_; global; local; offset}]
+            | _, U.Arg.Typed ("store", _) -> signal := Some (U.src node).(1)
+            | _, U.Arg.Typed (("barrier" | "wait"), _) -> ()
+            | _ -> invalid_arg "Metal queue: unsupported instruction") (U.children linear);
+        let header = align !used 8 in
+        let size = header + 8 * (5 + List.length !commands) in
+        let desc = {commands = !commands; header} in
+        let buffer = U.placeholder ~shape:[size] ~dtype:Dtype.uint8 ~slot:0
+            ~device:(U.Single name) ~volatile:true
+            ~allocation:("metal_icb", Marshal.to_string desc []) () in
+        let patched = Hcq2.patch ~after:[dependency] buffer (List.rev !rows) in
+        let header_ptr = index patched header in
+        let header_words = U.bitcast ~src:(U.shrink ~src:patched ~offset:(U.const_int header)
+            ~size:(U.const_int (size - header))) ~dtype:Dtype.uint64 in
+        let previous = ref [dependency; patched] in
+        List.iter (fun (command, at) ->
+            previous := [call name ~after:!previous "tolk_metal_hcq_update" Dtype.void
+              [load header_words 0; U.const (Const.int Dtype.uint64 command); index patched at]]) (List.rev !sizes);
+        Some (call name ~after:!previous "tolk_metal_hcq_submit" Dtype.void
+          [load (context name) 0; header_ptr; Option.get !signal])
+    | _ -> None
+
+  let create state device_name =
+    let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
+    Device.{host = Device.name host; copy = false; encode = encode device_name; lower = lower device_name;
+      compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
 end
 
 let create name =
@@ -499,7 +520,6 @@ let create name =
           Renderer.with_compiler (Compiler.create ()) (Cstyle.metal arch)) ] in
   let runtime = Program.runtime state in
   let synchronize () = State.synchronize state in
-  let graph =
-    if State.is_virtual state then None else Some (Graph.create state)
-  in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ?graph ()
+  let queue, bufferize = Queue.create state name in
+  let queue = if State.is_virtual state then None else Some queue in
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ?queue ~bufferize ()

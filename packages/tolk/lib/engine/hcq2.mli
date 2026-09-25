@@ -25,3 +25,19 @@ val plan : ?profile:bool -> call list -> plan
     emits necessary signals and waits, and advances each device timeline after
     its queues and peers finish. Same-queue calls use FIFO order. [profile]
     adds two timestamp instructions per call and defaults to [false]. *)
+
+val ccall :
+  ?host:string -> ?libs:string list -> ?after:Tolk_uop.Uop.t list -> name:string -> dtype:Tolk_uop.Dtype.t ->
+  Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
+(** [ccall ?host ?libs ?after ~name ~dtype args] calls a C symbol resolved at link time.
+    [host] defaults to ["CPU"]. [after] sequences effects before the call. *)
+
+val patch :
+  ?blob:string -> ?after:Tolk_uop.Uop.t list -> Tolk_uop.Uop.t -> (int * Tolk_uop.Uop.t) list -> Tolk_uop.Uop.t
+(** [patch ?blob ?after buffer rows] sequences byte initialization and typed word
+    stores at the byte offsets in [rows]. Static stores move to link time.
+    Runtime stores wait for [after] before modifying command storage. *)
+
+val compile : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [compile linear] encodes calls supported by their device's queue hooks into
+    host programs. Other calls remain individual dispatches. *)

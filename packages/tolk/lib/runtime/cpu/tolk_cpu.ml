@@ -106,4 +106,15 @@ let create ?aligned name =
     Device.Allocator.Pack
       (Device.Lru_allocator.wrap (Tolk_uop.Storage.Host_allocator.make ~synchronize))
   in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()
+  let bufferize u = match Tolk_uop.Uop.as_param u with
+    | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
+        let libs, symbol = (Marshal.from_string data 0 : string list * string) in
+        let address = link_symbol ~libs symbol in
+        let buffer = Device.Buffer.create ~device:name ~size:1 ~dtype:Tolk_uop.Dtype.uint64 allocator in
+        Device.Buffer.ensure_allocated buffer;
+        let bytes = Bytes.create 8 in
+        Bytes.set_int64_le bytes 0 (Int64.of_nativeint address);
+        Device.Buffer.copyin buffer bytes;
+        Some buffer
+    | _ -> None in
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ~bufferize ()

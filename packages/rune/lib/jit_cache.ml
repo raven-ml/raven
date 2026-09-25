@@ -263,7 +263,8 @@ let rebind entry args =
       U.graph_rewrite ~name:"jitcache_args" ~walk:true
         (fun node ->
           match U.as_param node with
-          | Some { param = { slot; _ }; _ } when slot >= 0 && slot < n ->
+          | Some { param = { slot; allocation = None; _ }; _ }
+            when U.node_tag node = None && slot >= 0 && slot < n ->
               Some args_a.(slot)
           | _ -> None)
         linear

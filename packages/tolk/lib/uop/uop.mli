@@ -160,6 +160,8 @@ type param_arg = {
           Defaults to [false]; does not provide atomicity or synchronization. *)
   bind_on_realize : bool;
       (** Bind this ALLOC to persistent tensor storage during bufferization. *)
+  allocation : (string * string) option;
+      (** Backend name and serialized allocation descriptor, interpreted at link time. *)
   buffer : Storage.t list option;
       (** Storage owned by a global BUFFER, one buffer per device. Parameters
           and kernel-local buffers do not own runtime storage. *)
@@ -229,6 +231,16 @@ type grad_fxn = grad_output:t -> call:t -> t option list
     (or [None] for non-differentiable positions) per call argument, in
     positional order. *)
 
+type queue_info = {
+  devices : string list; (** Devices submitted by the host program. *)
+  host : string; (** Device executing the host program. *)
+  table : int; (** Call argument containing runtime addresses, or [-1]. *)
+  inputs : (int * string) list; (** Source argument and target address space per table row. *)
+  outputs : int list; (** Written arguments of the original calls. *)
+  kernels : int; (** Original dispatch count. *)
+}
+(** Metadata for compiled hardware-queue submission. *)
+
 type call_info = {
   grad_fxn : grad_fxn option;  (** Custom gradient callback, if any. *)
   name : string option;  (** Optional callable name for debugging. *)
@@ -236,7 +248,7 @@ type call_info = {
       (** [true] to precompile the forward callee. *)
   precompile_backward : bool;
       (** [true] to precompile the backward callee. *)
-  aux : string option;  (** Auxiliary call payload for cache/runtime users. *)
+  aux : queue_info option;  (** Compiled queue submission metadata. *)
   dtype : Dtype.t;  (** Scalar return dtype, or {!Dtype.void} for effects. *)
 }
 (** Result type and scheduling attributes of a {!Ops.Call} node. *)
@@ -271,6 +283,9 @@ val sanitize_function_name : string -> string
 val kernel_function_name : kernel_info -> string
 (** [kernel_function_name info] is [info.name] sanitized for backend
     function emission. *)
+
+val program_var_name : t -> string option
+(** [program_var_name u] is the name carried by a parameter or buffer, if any. *)
 
 val program_function_name : t -> string
 (** [program_function_name program] is the name of its kernel, sanitized for
@@ -636,6 +651,9 @@ val after : src:t -> deps:t list -> t
 (** [after ~src ~deps] sequences [src] after [deps] as an ordering
     dependency. Returns [src] unchanged when [deps] is empty. Dtype is
     inherited from [src]. Shared. *)
+
+val without_after : t -> t
+(** [without_after u] removes outer {!Ops.After} dependency wrappers. *)
 
 val noop : ?src:t -> dtype:Dtype.t -> unit -> t
 (** [noop ?src ~dtype ()] is a pass-through scheduling marker with
@@ -1108,14 +1126,15 @@ val set : target:t -> value:t -> ?extras:t list -> unit -> t
 
 val placeholder :
   shape:int list -> dtype:Dtype.t -> slot:int -> ?addrspace:Dtype.addr_space ->
-  ?device:device -> ?volatile:bool -> unit -> t
-(** [placeholder ~shape ~dtype ~slot ?addrspace ?device ?volatile ()] is storage for
+  ?device:device -> ?volatile:bool -> ?allocation:(string * string) -> unit -> t
+(** [placeholder ~shape ~dtype ~slot ?addrspace ?device ?volatile ?allocation ()] is storage for
     [shape] elements of [dtype] that a kernel body addresses before any buffer
     is bound to it. The storage is flat, holding the product of [shape], and a
     {!reshape} restores a [shape] of rank above one. A weak [dtype] commits to
     its default width. [addrspace] defaults to {!Dtype.Global}, which gives a
     {!Ops.Param}; {!Dtype.Local} and {!Dtype.Reg} give an {!Ops.Buffer}.
     [volatile] defaults to [false] and applies to global parameters.
+    [allocation] carries a backend allocation descriptor for the link phase.
 
     @raise Invalid_argument
       if [addrspace] is {!Dtype.Alu}, or if [device] is given for a local or
@@ -1434,11 +1453,11 @@ val remove_all_tags : t -> t
     operations, dtypes, payloads, side {!metadata}, and children modulo
     tag-stripped rebuilding. *)
 
-val substitute : ?walk:bool -> (t * t) list -> t -> t
-(** [substitute ?walk mappings root] rewrites [root] replacing every
+val substitute : ?walk:bool -> ?enter_calls:bool -> (t * t) list -> t -> t
+(** [substitute ?walk ?enter_calls mappings root] rewrites [root] replacing every
     occurrence of the first component of each pair with the second.
-    Bottom-up; performed via {!graph_rewrite} with the default
-    no-enter-calls traversal. Lookup in [mappings] uses physical
+    Bottom-up; performed via {!graph_rewrite}. [enter_calls] defaults to
+    [false], keeping callee bodies opaque. Lookup in [mappings] uses physical
     equality. [walk] defaults to [false]; when [true] replacement
     values are final: they are not traversed by the same pass, so a
     value may contain its own key without cycling. *)

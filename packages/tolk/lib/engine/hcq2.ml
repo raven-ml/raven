@@ -127,3 +127,224 @@ let plan ?(profile = false) calls =
   { queues = List.map (fun (d, q) -> d, q, List.rev (Hashtbl.find commands (d, q))) !order;
     timelines = List.map (fun d -> slot d (List.length (Hashtbl.find queues d))) !devices;
     signals = List.concat_map (fun d -> List.map (fun q -> signal (d, q)) (Hashtbl.find queues d)) !devices }
+
+let ccall ?(host = "CPU") ?(libs = []) ?(after = []) ~name ~dtype args =
+  let ptr = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
+      ~device:(U.Single host) ~allocation:("cfunc", Marshal.to_string (libs, name) [Marshal.No_sharing]) () in
+  let fxn = U.load ~src:(U.index ~ptr ~idxs:[U.const_int 0] ()) () in
+  let fxn, args = match args with
+    | first :: rest -> fxn, U.after ~src:first ~deps:after :: rest
+    | [] -> U.after ~src:fxn ~deps:after, [] in
+  U.call ~body:(U.custom_function ~name ~srcs:[fxn]) ~args
+    ~info:{grad_fxn = None; name = None; precompile = false;
+      precompile_backward = false; aux = None; dtype}
+
+let tagged u = U.node_tag u <> None || match U.as_param u with
+  | Some {param; _} -> param.allocation <> None | None -> false
+
+let rec link_value u =
+  match U.op u with
+  | Ops.Getaddr -> List.for_all (fun p -> U.op p <> Ops.Param || tagged p)
+      (U.toposort ~enter_calls:false (U.src u).(0))
+  | Ops.Param -> tagged u
+  | Ops.Buffer -> U.addrspace u = Some Dtype.Global
+  | Ops.Load | Ops.After -> false
+  | _ when U.is_variable u -> false
+  | _ -> List.for_all link_value (U.children u)
+
+let patch ?blob ?(after = []) buf rows =
+  let initialized = match blob with
+    | None -> buf
+    | Some bytes -> U.set ~target:buf ~value:(U.binary bytes) () in
+  let stores = List.map (fun (offset, value) ->
+      (* Byte words already use the storage width; reinterpret the value so
+         signed bytes do not turn the storage view into an elementwise cast. *)
+      let value = if Dtype.itemsize (U.dtype value) = 1
+        then U.bitcast ~src:value ~dtype:Dtype.uint8 else value in
+      let dtype = U.dtype value in
+      let target = if link_value value then initialized
+        else U.after ~src:initialized ~deps:after in
+      let ptr = U.bitcast ~src:(view target offset (Dtype.itemsize dtype)) ~dtype in
+      U.store ~dst:(U.index ~ptr ~idxs:[U.const_int 0] ()) ~value ()) rows in
+  U.after ~src:initialized ~deps:stores
+
+let fence devices plan =
+  let last = ref [] in
+  List.iter2 (fun device slot ->
+      let initialized = patch ~blob:(String.make (U.max_numel slot * 8) '\000') slot [] in
+      let at b i = U.index ~ptr:b ~idxs:[U.const_int i] () in
+      let timeline = timeline device in
+      let old = timeline_value device in
+      let target = U.load ~src:(at (U.after ~src:initialized ~deps:(!last @ [old])) 0) () in
+      let loop = U.loop ~axis:(U.fresh_buffer_slot ()) in
+      let done_ = U.load ~src:(at (U.after ~src:timeline ~deps:[target; loop]) 0) () in
+      let wait = U.backedge ~body:done_ ~loop
+          ~cond:(U.alu_binary ~op:Ops.Cmplt ~lhs:done_ ~rhs:target) in
+      let next = U.alu_binary ~op:Ops.Add ~lhs:old ~rhs:(uint 1) in
+      let bump = U.store ~dst:(at (U.after ~src:timeline ~deps:[wait]) 1) ~value:next () in
+      last := [U.store ~dst:(at (U.after ~src:initialized ~deps:[bump]) 0) ~value:next ()])
+    devices plan.timelines;
+  List.iter (fun signal ->
+      last := [U.store ~dst:(U.index ~ptr:(U.after ~src:signal ~deps:!last)
+          ~idxs:[U.const_int 0] ()) ~value:(uint 0) ()]) plan.signals;
+  U.group !last
+
+let storage_views u =
+  match U.op u, U.children u with
+  | Ops.Bitcast, [view] when U.op view = Ops.Shrink ->
+      let src = U.src view in
+      let base = src.(0) in
+      let old_width = Dtype.itemsize (U.dtype base) and width = Dtype.itemsize (U.dtype u) in
+      (match U.const_int_value src.(1), U.const_int_value src.(2) with
+       | Some offset, Some size ->
+           let bytes n = Bound.(to_int (mul (int n) (int old_width))) in
+           let offset = bytes offset and size = bytes size in
+           if offset mod width <> 0 || size mod width <> 0
+              || bytes (U.max_numel base) mod width <> 0 then None
+           else Some (U.shrink ~src:(U.bitcast ~src:base ~dtype:(U.dtype u))
+             ~offset:(U.const_int (offset / width))
+             ~size:(U.const_int (size / width)))
+       | _ -> None)
+  | _ -> None
+
+let lower_call queue devices calls sink =
+  let patches = ref [] in
+  let hoist u =
+    if U.op u <> Ops.After then None else
+      let links, rest = List.partition (fun s ->
+          List.mem (U.op s) [Ops.Store; Ops.End] && link_value s) (List.tl (U.children u)) in
+      if links = [] then None else begin
+        patches := !patches @ links;
+        Some (U.after ~src:(U.src u).(0) ~deps:rest)
+      end in
+  let sink = U.graph_rewrite ~name:"encode queues" queue.Device.encode sink in
+  let sink = U.graph_rewrite ~name:"lower queue accesses" queue.lower sink in
+  let sink = U.graph_rewrite ~name:"hoist link patches" ~enter_calls:true hoist sink in
+  let addresses = U.toposort ~enter_calls:true sink |> List.filter (fun u -> U.op u = Ops.Getaddr) in
+  let runtime, linked = List.partition (fun g -> not (link_value g)) addresses in
+  let addresses = runtime @ linked in
+  let table = U.placeholder ~shape:[max 1 (List.length addresses)] ~dtype:Dtype.uint64
+      ~slot:0 ~device:(U.Single queue.host) () |> U.with_tag "inputs" in
+  let mappings = List.mapi (fun i addr ->
+      addr, U.load ~src:(U.index ~ptr:table ~idxs:[U.const_int i] ()) ()) addresses in
+  let sink = U.substitute ~walk:true ~enter_calls:true mappings sink in
+  List.iteri (fun i addr ->
+      patches := !patches @ [U.store ~dst:(U.index ~ptr:table
+          ~idxs:[U.const_int (List.length runtime + i)] ()) ~value:addr ()]) linked;
+  let parameters = U.toposort ~enter_calls:true sink |> List.filter (fun u -> U.op u = Ops.Param) in
+  let bufs, vals = List.partition (fun p -> U.addrspace p <> Some Dtype.Alu) parameters in
+  let buffer_params = List.mapi (fun slot p ->
+      let volatile = match U.as_param p with Some {param; _} -> param.volatile | None -> false in
+      p, U.param ~slot ~dtype:(U.dtype p) ~shape:(U.const_int (U.max_numel p))
+        ~device:(U.Single queue.host) ~volatile ()) bufs in
+  let names = List.fold_left (fun acc p ->
+      let name = Option.get (U.program_var_name p) in
+      if List.mem name acc then acc else acc @ [name]) [] vals in
+  let val_params = List.map (fun p -> match U.arg p with
+      | U.Arg.Param_arg param -> p, U.replace p ~arg:(U.Arg.Param_arg
+          {param with slot = List.length bufs +
+            Option.get (List.find_index (( = ) (Option.get (U.program_var_name p))) names)}) ()
+      | _ -> assert false) vals in
+  let sink = U.substitute ~walk:true ~enter_calls:true (buffer_params @ val_params) sink in
+  let sink = U.graph_rewrite ~name:"queue storage views" ~enter_calls:true storage_views sink in
+  let program = queue.compile sink in
+  let rec position i u = function
+    | n :: _ when U.equal n u -> i
+    | _ :: rest -> position (i + 1) u rest
+    | [] -> -1 in
+  let dedup xs = List.fold_left (fun acc u ->
+      if List.exists (U.equal u) acc then acc else acc @ [u]) [] xs in
+  let originals = List.concat_map (fun c -> fst (arguments c.call)) calls in
+  let sources = List.map (fun g -> (U.src g).(0)) runtime in
+  let args = dedup (bufs @ originals @ sources) in
+  let written = List.concat_map (fun c ->
+      let buffers, writes = arguments c.call in List.map (List.nth buffers) writes) calls |> dedup in
+  let inputs = List.map (fun g ->
+      let device = match U.arg g with
+        | U.Arg.Device (U.Single d) -> d
+        | _ -> (match U.device_of (U.src g).(0) with Some (U.Single d) -> d
+                | _ -> invalid_arg "Hcq2.lower_call: address needs one device") in
+      position 0 (U.src g).(0) args, device) runtime in
+  let aux = U.{devices; host = queue.host; table = position 0 table bufs;
+    inputs; outputs = List.map (fun u -> position 0 u args) written; kernels = List.length calls} in
+  let call = U.call ~body:program ~args
+      ~info:{grad_fxn = None; name = Some "hcq_submit"; precompile = false;
+        precompile_backward = false; dtype = Dtype.void; aux = Some aux} in
+  U.after ~src:call ~deps:!patches
+
+let compile_batch calls =
+  let plan = plan calls in
+  let devices = List.fold_left (fun ds (d, _, _) ->
+      if List.mem d ds then ds else ds @ [d]) [] plan.queues in
+  let first = Device.get (List.hd devices) in
+  let queue = Option.get (Device.queue first) in
+  let fence = fence devices plan in
+  let previous = ref [fence] in
+  let submits = List.map (fun (device, kind, commands) ->
+      let prefix = String.lowercase_ascii (List.hd (String.split_on_char ':' device)) in
+      let kind = String.lowercase_ascii (List.hd (String.split_on_char ':' kind)) in
+      let submit = U.custom_function ~name:("submit_" ^ prefix ^ "_" ^ kind)
+          ~srcs:[U.linear commands; U.group !previous] in
+      previous := [submit]; submit) plan.queues in
+  let module E = Program_spec.Estimates in
+  let estimates = List.fold_left (fun total c ->
+      let cost = match U.as_call c.call with
+        | Some {body; args} when U.op body = Ops.Store ->
+            let dst = List.hd args in
+            let nbytes = Bound.(to_int (mul (int (U.max_numel dst)) (int (Dtype.itemsize (U.dtype dst))))) in
+            E.{ops = Int 0; lds = Int nbytes; mem = Int nbytes}
+        | Some {body; _} ->
+            (match U.children body with
+             | sink :: _ -> (match U.as_kernel_info sink with
+                 | Some {estimates = Some e; _} -> E.of_uop e | _ -> E.zero)
+             | _ -> E.zero)
+        | None -> E.zero in
+      E.(total + cost)) E.zero calls in
+  let kernel_info = U.{name = "hcq_submit"; applied_opts = []; opts_to_apply = None;
+    estimates = Some (E.to_uop estimates); beam = 0} in
+  (* Owned arguments can still be rebound by a consumer. Encode against
+     parameters, then restore the original argument nodes outside the host
+     program so execution resolves their current bindings on every call. The
+     dependency plan above keeps the original allocation alias information. *)
+  let nodes = U.toposort ~enter_calls:false (U.linear (List.map (fun c -> c.call) calls)) in
+  let slot = List.fold_left (fun slot u -> match U.as_param u with
+      | Some {param; _} -> max slot (param.slot + 1) | None -> slot) 0 nodes in
+  let mappings = nodes |> List.filter (fun u ->
+      U.op u = Ops.Buffer && U.addrspace u = Some Dtype.Global)
+    |> List.mapi (fun i u -> u, U.param ~slot:(slot + i) ~dtype:(U.dtype u)
+        ~shape:(U.const_int (U.max_numel u)) ?device:(U.device_of u) ()) in
+  let substitute = U.substitute ~walk:true mappings in
+  let calls = List.map (fun c -> {c with call = substitute c.call}) calls in
+  let sink = substitute (U.sink ~kernel_info submits) in
+  let lowered = lower_call queue devices calls sink in
+  U.substitute ~walk:true (List.map (fun (a, b) -> b, a) mappings) lowered
+
+let compile linear =
+  let result = ref [] and batch = ref [] and group = ref None in
+  let flush () =
+    if !batch <> [] then result := compile_batch (List.rev !batch) :: !result;
+    batch := []; group := None in
+  let enqueue call = match U.as_call call with
+    | Some {body; args} when (U.op body = Ops.Program || U.op body = Ops.Store)
+        && (match U.arg call with U.Arg.Call_info {aux = None; _} -> true | _ -> false)
+        && not (List.exists (fun u -> match U.device_of u with Some (U.Multi _) -> true | _ -> false) args) ->
+        let args = List.filter (fun u -> not (U.is_bound_var u)) args in
+        let args = if U.op body = Ops.Store then List.rev args else args in
+        List.find_map (fun arg -> match U.device_of arg with
+            | Some (U.Single device) ->
+                let dev = Device.get device in
+                (match Device.queue dev with
+                 | Some q when U.op body = Ops.Program || q.copy ->
+                     Some {call; device = Device.name dev;
+                       queue = if U.op body = Ops.Program then "COMPUTE:0" else "COPY:0"}
+                 | _ -> None)
+            | _ -> None) args
+    | _ -> None in
+  List.iter (fun call -> match enqueue call with
+      | None -> flush (); result := call :: !result
+      | Some c ->
+          (* Peer groups will extend this boundary when backend peer mapping is ported. *)
+          if !group <> Some c.device then flush ();
+          group := Some c.device; batch := c :: !batch) (U.children linear);
+  flush ();
+  U.linear (List.rev !result)

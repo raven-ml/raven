@@ -94,6 +94,18 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 (** [runtime obj] creates a dispatch handle for [obj]. Scalar arguments use
     the order declared by its signature. *)
 
+type queue = {
+  host : string; (** Host device executing submission programs. *)
+  copy : bool; (** Whether the device can enqueue bulk stores. *)
+  encode : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option;
+      (** Rewrites a device submit function into host operations. *)
+  lower : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option;
+      (** Lowers device-specific host accesses, such as timeline polling. *)
+  compile : Tolk_uop.Uop.t -> Tolk_uop.Uop.t;
+      (** Compiles the final host sink to a PROGRAM. *)
+}
+(** Device hooks for compiling queue submission through the shared UOp protocol. *)
+
 (** {1:graph Batched dispatch graphs} *)
 
 (** Backend interface for batched replay of a fixed call sequence.
@@ -186,10 +198,12 @@ val make :
   synchronize:(unit -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
   ?graph:Graph.t ->
+  ?queue:queue ->
+  ?bufferize:(Tolk_uop.Uop.t -> Buffer.t option) ->
   unit ->
   t
 (** [make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches ?graph ()] is a device runtime, registered under its
+    ?invalidate_caches ?graph ?queue ?bufferize ()] is a device runtime, registered under its
     canonical [name] for graph-owned buffers to resolve their allocator.
 
     [runtime obj] loads a compiled binary and returns a dispatch handle.
@@ -197,7 +211,10 @@ val make :
     [synchronize ()] blocks until all pending work on the device completes.
 
     [graph] is the batched-dispatch capability, or absent when the backend
-    cannot replay call sequences as a single dispatch. *)
+    cannot replay call sequences as a single dispatch.
+
+    [queue] supplies host compilation hooks. [bufferize] resolves backend
+    allocation descriptors during linking, returning [None] for generic storage. *)
 
 val name : t -> string
 (** [name d] is [d]'s device name. *)
@@ -217,6 +234,12 @@ val synchronize : t -> unit
 
 val graph : t -> Graph.t option
 (** [graph d] is [d]'s batched-dispatch capability, if any. *)
+
+val queue : t -> queue option
+(** [queue d] is [d]'s compiled submission capability, if any. *)
+
+val bufferize : t -> Tolk_uop.Uop.t -> Buffer.t option
+(** [bufferize d placeholder] resolves a backend storage descriptor at link time. *)
 
 val compile_program :
   t ->

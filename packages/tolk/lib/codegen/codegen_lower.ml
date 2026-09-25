@@ -741,7 +741,10 @@ let pm_add_loads =
       ops ~name:"x" (Ops.Group.elementwise @ [ Ops.Reduce; Ops.Wmma; Ops.Stack ])
       => (fun bs ->
            let x = bs $ "x" in
-           Some (U.replace x ~src:(Array.map maybe_load (U.src x)) ()));
+           if U.op x = Ops.Bitcast
+              && not (List.equal U.equal (U.shape x) (U.shape (U.src x).(0)))
+           then None
+           else Some (U.replace x ~src:(Array.map maybe_load (U.src x)) ()));
       ( op ~name:"x" Ops.Store => fun bs ->
         let x = bs $ "x" in
         match U.as_store x with

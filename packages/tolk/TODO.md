@@ -32,7 +32,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   execution. Replace the old graph APIs. Validate replay inputs whose alias
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
-- Migrate Metal/CUDA queues. Implement CUDA peer enablement and synchronized
+- Complete queue timestamp collection and eager submission-template caching.
+  Migrate CUDA queues. Implement CUDA peer enablement and synchronized
   cross-device transfer with unsupported-peer fallback. Port AMD queue
   descriptors, AQL/multi-XCC, race/recovery fixes and consumed firmware/register
   tables. Port NV channel/descriptor, semaphore, GSP and compute submission
@@ -45,6 +46,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   `multi_allreduce_ring`; complete the narrow frontend sharding surface.
 - Move Rune staged-scan, indexed-scatter, residency, uploads, memory planning,
   symbolic placeholders and external-buffer contracts onto the new protocol.
+  Reconcile indexed-write prefills and scan-carry allocation remapping, and
+  fix the BF16 scatter cycle in the final lowering rewrite.
   Preserve their correctness/lifetime regressions and revalidate the one-hot
   gather guard at the split threshold. Add custom-kernel sharding, source,
   reshape/flip/slice, invalid-store, assignment and gradient cases.
