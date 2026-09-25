@@ -189,6 +189,8 @@
   (ocaml
    (>= 5.2))
   dune
+  (nx
+   (= :version))
   zarith
   (windtrap :with-test)
   (thumper :with-test))

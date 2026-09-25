@@ -152,6 +152,42 @@ module Scalar = struct
     | Bool -> "bool"
 
   let equal (a : t) b = a = b
+
+  external encode_bits :
+    (int[@untagged]) -> (float[@unboxed]) -> (int[@untagged])
+    = "caml_nx_dtype_encode_byte" "caml_nx_dtype_encode"
+  [@@noalloc]
+
+  external decode_bits :
+    (int[@untagged]) -> (int[@untagged]) -> (float[@unboxed])
+    = "caml_nx_dtype_decode_byte" "caml_nx_dtype_decode"
+  [@@noalloc]
+
+  (* The formats in the order of the C stubs' switch. *)
+  let codec op s =
+    match s with
+    | Float16 -> 0
+    | BFloat16 -> 1
+    | Float8_e4m3 -> 2
+    | Float8_e5m2 -> 3
+    | Float8_e4m3fnuz -> 4
+    | Float8_e5m2fnuz -> 5
+    | _ ->
+        invalid_arg
+          (Printf.sprintf
+             "Nx_dtype.Scalar.%s: %s is not a float format narrower than \
+              float32"
+             op (to_string s))
+
+  let encode s x = encode_bits (codec "encode" s) x
+
+  let decode s c =
+    let format = codec "decode" s in
+    if c < 0 || c lsr bitsize s <> 0 then
+      invalid_arg
+        (Printf.sprintf "Nx_dtype.Scalar.decode: %#x is not a %s code" c
+           (to_string s));
+    decode_bits format c
 end
 
 (* Properties *)

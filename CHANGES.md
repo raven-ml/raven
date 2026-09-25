@@ -1914,6 +1914,11 @@ thread.
 
 ### Nx
 
+- Add `Nx_dtype.Scalar.encode` and `decode`, the bits of a float in float16,
+  bfloat16 and the float8 formats, fnuz variants included, rounded once to
+  nearest even. nx's stores round the same way, except a `float` stored into
+  `float16`, which rounds through `float32` first. tolk folds constants with
+  them.
 - **Breaking:** dtypes move to a new library, `nx.dtype`, which depends on
   nothing: `Nx_core.Dtype` is `Nx_dtype`, and `Nx_buffer`'s kinds are its
   dtypes. `('a, 'b) Nx_buffer.kind` is `('a, 'b) Nx_dtype.t`,

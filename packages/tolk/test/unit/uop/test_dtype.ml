@@ -249,72 +249,88 @@ let sum_acc () =
 
 let fp16_conversion () =
   let eq = equal float_exact in
-  eq 1.0 (Dtype.float_to_fp16 1.0);
-  eq (-1.0) (Dtype.float_to_fp16 (-1.0));
-  eq 0.0 (Dtype.float_to_fp16 0.0);
-  eq (-0.0) (Dtype.float_to_fp16 (-0.0));
-  eq 65504.0 (Dtype.float_to_fp16 65504.0);
-  eq infinity (Dtype.float_to_fp16 65520.0);
-  eq neg_infinity (Dtype.float_to_fp16 (-65520.0));
-  eq 0.0 (Dtype.float_to_fp16 1e-8);
+  eq 1.0 (Dtype.truncate_float Dtype.float16 1.0);
+  eq (-1.0) (Dtype.truncate_float Dtype.float16 (-1.0));
+  eq 0.0 (Dtype.truncate_float Dtype.float16 0.0);
+  eq (-0.0) (Dtype.truncate_float Dtype.float16 (-0.0));
+  eq 65504.0 (Dtype.truncate_float Dtype.float16 65504.0);
+  eq infinity (Dtype.truncate_float Dtype.float16 65520.0);
+  eq neg_infinity (Dtype.truncate_float Dtype.float16 (-65520.0));
+  eq 0.0 (Dtype.truncate_float Dtype.float16 1e-8);
   (* Half the smallest subnormal 2^-24 is a tie and rounds to even, zero;
      anything above it rounds up to 2^-24. *)
-  eq 0.0 (Dtype.float_to_fp16 0x1p-25);
-  eq 0x1p-24 (Dtype.float_to_fp16 (Float.succ 0x1p-25));
-  eq 0x1p-24 (Dtype.float_to_fp16 3e-8);
-  eq (-0x1p-24) (Dtype.float_to_fp16 (-0x1.8p-25));
-  eq infinity (Dtype.float_to_fp16 infinity);
-  eq neg_infinity (Dtype.float_to_fp16 neg_infinity);
-  is_true (Float.is_nan (Dtype.float_to_fp16 Float.nan))
+  eq 0.0 (Dtype.truncate_float Dtype.float16 0x1p-25);
+  eq 0x1p-24 (Dtype.truncate_float Dtype.float16 (Float.succ 0x1p-25));
+  eq 0x1p-24 (Dtype.truncate_float Dtype.float16 3e-8);
+  eq (-0x1p-24) (Dtype.truncate_float Dtype.float16 (-0x1.8p-25));
+  eq infinity (Dtype.truncate_float Dtype.float16 infinity);
+  eq neg_infinity (Dtype.truncate_float Dtype.float16 neg_infinity);
+  is_true (Float.is_nan (Dtype.truncate_float Dtype.float16 Float.nan))
 
 let bf16_conversion () =
   let eq = equal float_exact in
-  eq 1.0 (Dtype.float_to_bf16 1.0);
-  eq 0.0 (Dtype.float_to_bf16 0.0);
-  eq 128.0 (Dtype.float_to_bf16 128.0);
-  eq 1232.0 (Dtype.float_to_bf16 1234.0);
-  eq infinity (Dtype.float_to_bf16 infinity);
-  eq neg_infinity (Dtype.float_to_bf16 neg_infinity);
-  is_true (Float.is_nan (Dtype.float_to_bf16 Float.nan));
+  eq 1.0 (Dtype.truncate_float Dtype.bfloat16 1.0);
+  eq 0.0 (Dtype.truncate_float Dtype.bfloat16 0.0);
+  eq 128.0 (Dtype.truncate_float Dtype.bfloat16 128.0);
+  eq 1232.0 (Dtype.truncate_float Dtype.bfloat16 1234.0);
+  eq infinity (Dtype.truncate_float Dtype.bfloat16 infinity);
+  eq neg_infinity (Dtype.truncate_float Dtype.bfloat16 neg_infinity);
+  is_true (Float.is_nan (Dtype.truncate_float Dtype.bfloat16 Float.nan));
   (* Just above the tie between 1 and 1 + 2^-7: rounding to float32 first
      would land on the tie and round it down. *)
-  eq 1.0078125 (Dtype.float_to_bf16 (Float.succ 1.00390625));
-  eq infinity (Dtype.float_to_bf16 1e39)
+  eq 1.0078125 (Dtype.truncate_float Dtype.bfloat16 (Float.succ 1.00390625));
+  eq infinity (Dtype.truncate_float Dtype.bfloat16 1e39)
 
 let fp8_conversion () =
   let eq = equal float_exact in
-  equal int 0 (Dtype.float_to_fp8 Dtype.fp8e4m3 0.0);
-  equal int 0 (Dtype.float_to_fp8 Dtype.fp8e5m2 0.0);
-  eq 0.0 (Dtype.fp8_to_float Dtype.fp8e4m3 0);
-  eq 0.0 (Dtype.fp8_to_float Dtype.fp8e5m2 0);
+  let code dt x =
+    match Dtype.to_storage_scalar dt (`Float x) with
+    | `Int n -> Int64.to_int n
+    | _ -> assert false
+  in
+  equal int 0 (code Dtype.fp8e4m3 0.0);
+  equal int 0 (code Dtype.fp8e5m2 0.0);
   (* Past the largest finite value a result is the format's infinity of its
      sign, or NaN where the format has none, as for an infinity. *)
-  let rt dt x = Dtype.fp8_to_float dt (Dtype.float_to_fp8 dt x) in
+  let rt = Dtype.truncate_float in
   eq 448.0 (rt Dtype.fp8e4m3 448.0);
   eq 448.0 (rt Dtype.fp8e4m3 464.0);
   is_true (Float.is_nan (rt Dtype.fp8e4m3 infinity));
   is_true (Float.is_nan (rt Dtype.fp8e4m3 500.0));
-  equal int 0xff (Dtype.float_to_fp8 Dtype.fp8e4m3 (-1e6));
-  equal int 0x80 (Dtype.float_to_fp8 Dtype.fp8e4m3fnuz 1e6);
+  equal int 0xff (code Dtype.fp8e4m3 (-1e6));
+  equal int 0x80 (code Dtype.fp8e4m3fnuz 1e6);
   eq 57344.0 (rt Dtype.fp8e5m2 57344.0);
   eq 57344.0 (rt Dtype.fp8e5m2 57343.0);
   eq infinity (rt Dtype.fp8e5m2 61440.0);
-  eq infinity
-    (Dtype.fp8_to_float Dtype.fp8e5m2
-       (Dtype.float_to_fp8 Dtype.fp8e5m2 infinity));
-  equal int 0x7f (Dtype.float_to_fp8 Dtype.fp8e5m2 Float.nan);
+  eq infinity (rt Dtype.fp8e5m2 infinity);
+  equal int 0x7f (code Dtype.fp8e5m2 Float.nan);
   let neg_nan =
     Int64.float_of_bits (Int64.logor Int64.min_int 0x7FF8000000000000L)
   in
-  equal int 0xff (Dtype.float_to_fp8 Dtype.fp8e5m2 neg_nan);
-  is_true
-    (Float.is_nan
-       (Dtype.fp8_to_float Dtype.fp8e5m2
-          (Dtype.float_to_fp8 Dtype.fp8e5m2 Float.nan)));
-  is_true ~msg:"float_to_fp8 rejects non-fp8"
-    (raises_invalid (fun () -> Dtype.float_to_fp8 Dtype.int8 1.0));
-  is_true ~msg:"fp8_to_float rejects non-fp8"
-    (raises_invalid (fun () -> Dtype.fp8_to_float Dtype.int8 0))
+  equal int 0xff (code Dtype.fp8e5m2 neg_nan);
+  is_true (Float.is_nan (rt Dtype.fp8e5m2 Float.nan))
+
+let storage_format_mapping () =
+  let all =
+    Dtype.
+      [
+        void; bool; int8; int16; int32; int64; uint8; uint16; uint32; uint64;
+        float16; bfloat16; float32; float64; fp8e4m3; fp8e5m2; fp8e4m3fnuz;
+        fp8e5m2fnuz; weakint; weakfloat;
+      ]
+  in
+  List.iter
+    (fun dt ->
+      let msg = Dtype.to_string dt in
+      match Dtype.to_scalar dt with
+      | None -> is_true ~msg (dt = Dtype.void || Dtype.is_weak dt)
+      | Some s ->
+          equal ~msg int (max 8 (Dtype.bitsize dt))
+            (Nx_dtype.Scalar.bitsize s);
+          equal ~msg (option dtype) (Some dt) (Dtype.of_scalar s))
+    all;
+  equal (option dtype) None (Dtype.of_scalar Nx_dtype.Scalar.Int4);
+  equal (option dtype) None (Dtype.of_scalar Nx_dtype.Scalar.Complex64)
 
 (* Integer truncation *)
 
@@ -322,7 +338,6 @@ let int_dtypes =
   Dtype.[ bool; int8; int16; int32; uint8; uint16; uint32 ]
 
 let int_dtype = Gen.with_pp Dtype.pp (Gen.of_list int_dtypes)
-let fp8_byte = Gen.int_range 0 255
 
 (* Every IEEE 754 bit pattern — NaNs and infinities included, which
    [Gen.float] rejects and the conversion claims below must cover. *)
@@ -564,18 +579,17 @@ let properties =
     (* [float_exact] equates every NaN, so a NaN result round-trips like any
        other value and needs no branch of its own. *)
     prop "fp16 idempotent" ~examples:float_specials float_any (fun x ->
-        let r = Dtype.float_to_fp16 x in
-        equal float_exact r (Dtype.float_to_fp16 r));
+        let r = Dtype.truncate_float Dtype.float16 x in
+        equal float_exact r (Dtype.truncate_float Dtype.float16 r));
     prop "bf16 idempotent" ~examples:float_specials float_any (fun x ->
-        let r = Dtype.float_to_bf16 x in
-        equal float_exact r (Dtype.float_to_bf16 r));
-    prop "fp8 byte round-trip stable" fp8_byte (fun byte ->
+        let r = Dtype.truncate_float Dtype.bfloat16 x in
+        equal float_exact r (Dtype.truncate_float Dtype.bfloat16 r));
+    prop "fp8 idempotent" ~examples:float_specials float_any (fun x ->
         List.iter
-          (fun s ->
-            let f = Dtype.fp8_to_float s byte in
-            equal float_exact f
-              (Dtype.fp8_to_float s (Dtype.float_to_fp8 s f)))
-          Dtype.[ fp8e4m3; fp8e5m2 ]);
+          (fun dt ->
+            let r = Dtype.truncate_float dt x in
+            equal float_exact r (Dtype.truncate_float dt r))
+          Dtype.[ fp8e4m3; fp8e5m2; fp8e4m3fnuz; fp8e5m2fnuz ]);
     prop "truncate_int idempotent"
       Gen.(pair int_dtype int)
       (fun (dt, x) ->
@@ -609,6 +623,7 @@ let tests =
         test "fp16" fp16_conversion;
         test "bf16" bf16_conversion;
         test "fp8" fp8_conversion;
+        test "storage formats" storage_format_mapping;
       ];
     group "Integer Truncation" [ test "boundaries" integer_truncation ];
     group "Storage"

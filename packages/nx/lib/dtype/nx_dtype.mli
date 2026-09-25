@@ -292,4 +292,30 @@ module Scalar : sig
 
   val equal : t -> t -> bool
   (** [equal s0 s1] is [true] iff [s0] and [s1] are the same format. *)
+
+  (** {1:encoding Encoding}
+
+      The float formats narrower than binary32, {!Float16}, {!BFloat16} and the
+      four float8 formats, have no OCaml type. Their values are read as [float]s
+      and stored as the bits these functions give. The C header [nx_dtype.h],
+      which nx.dtype installs, holds the same encoders, and [Nx]'s element
+      stores and casts use them, except a store of a [float] into float16, which
+      rounds to binary32 first. *)
+
+  val encode : t -> float -> int
+  (** [encode s x] is the bits of [x] in format [s], rounded once to nearest,
+      ties to even. A finite [x] past the largest finite value of [s] encodes as
+      the infinity of its sign, or as NaN in the formats with no infinity:
+      {!Float8_e4m3} and the fnuz formats. A NaN keeps its sign, except in the
+      fnuz formats, whose one NaN is [0x80]; which payload bits it keeps is
+      unspecified.
+
+      Raises [Invalid_argument] if [s] is not one of the formats above. *)
+
+  val decode : t -> int -> float
+  (** [decode s c] is the value of the bits [c] in format [s]. Every finite
+      value is exact.
+
+      Raises [Invalid_argument] if [s] is not one of the formats above, or if
+      [c] is not in \[[0];[2{^n} - 1]\] where [n] is [bitsize s]. *)
 end

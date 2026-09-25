@@ -274,7 +274,7 @@ let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.floa
     Array.iteri (fun i v -> match dtype with
       | Dtype.Float32 -> Bytes.set_int32_le bytes (i * 4) (Int32.bits_of_float v)
       | Dtype.Bfloat16 -> Bytes.set_uint16_le bytes (i * 2)
-          (Int32.to_int (Int32.shift_right_logical (Int32.bits_of_float (Dtype.float_to_bf16 v)) 16))
+          (Nx_dtype.Scalar.encode BFloat16 v)
       | _ -> invalid_arg "tensor-core test dtype") values;
     Device.Buffer.ensure_allocated buf;
     Device.Buffer.copyin buf bytes;
@@ -288,7 +288,8 @@ let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.floa
     for j = 0 to n - 1 do
       let expected = ref 0. in
       for r = 0 to k - 1 do expected := !expected +. a.(i * k + r) *. b.(r * n + j) done;
-      if dtype_out = Dtype.Bfloat16 then expected := Dtype.float_to_bf16 !expected;
+      if dtype_out = Dtype.Bfloat16 then
+        expected := Dtype.truncate_float Dtype.bfloat16 !expected;
       let actual = match dtype_out with
         | Dtype.Float32 -> Int32.float_of_bits (Bytes.get_int32_le bytes ((i * n + j) * 4))
         | Dtype.Bfloat16 -> Int32.float_of_bits (Int32.shift_left

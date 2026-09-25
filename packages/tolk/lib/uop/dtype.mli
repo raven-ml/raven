@@ -277,48 +277,34 @@ val addr_space_to_string : addr_space -> string
 val pp_addr_space : Format.formatter -> addr_space -> unit
 (** [pp_addr_space] formats an address space. *)
 
-(** {1:fp_conv Floating-point conversion}
+(** {1:scalar Storage formats}
 
-    Bit-exact precision-narrowing utilities used for constant folding. Rounding
-    is round-to-nearest-even for all formats; conversions are implemented
-    directly rather than delegated to hardware so results are reproducible
-    across backends. *)
+    Buffers hold nx's storage formats, {!Nx_dtype.Scalar.t}. *)
 
-val float_to_fp16 : float -> float
-(** [float_to_fp16 x] rounds [x] to IEEE 754 binary16 (half) precision using
-    round-to-nearest-even. The result is a [float] holding a value exactly
-    representable in half precision. Overflow produces an infinity; underflow
-    produces zero or a subnormal; infinities pass through; NaNs produce a NaN
-    (bit pattern not preserved). *)
+val to_scalar : t -> Nx_dtype.Scalar.t option
+(** [to_scalar dt] is [Some s] if [dt]'s values are stored in format [s], and
+    [None] for {!Void}, {!Weakint} and {!Weakfloat}, which are never stored.
+    {!Bool} is stored in a byte, as [Nx_dtype.Scalar.Bool].
 
-val float_to_bf16 : float -> float
-(** [float_to_bf16 x] rounds [x] once to bfloat16 precision using
-    round-to-nearest-even. Overflow produces an infinity; non-finite values
-    pass through unchanged. *)
+    See also {!of_scalar}. *)
 
-val float_to_fp8 : t -> float -> int
-(** [float_to_fp8 dt x] encodes [x] as an fp8 byte value in [0..255], rounding
-    once to nearest even. A finite [x] that rounds past the largest finite
-    value encodes as an infinity of its sign, which is NaN in formats without
-    one ({!fp8e4m3} and the fnuz formats), as infinities do. A NaN keeps its
-    sign, except in the fnuz formats, whose only NaN is [0x80].
+val of_scalar : Nx_dtype.Scalar.t -> t option
+(** [of_scalar s] is [Some dt] if format [s] stores the values of [dt], and
+    [None] for [Int4], [UInt4], [Complex64] and [Complex128], which tolk does
+    not compute in. [of_scalar s = Some dt] iff [to_scalar dt = Some s]. *)
 
-    Raises [Invalid_argument] if [dt] is not an fp8 dtype.
+(** {1:rounding Rounding}
 
-    See also {!fp8_to_float}. *)
-
-val fp8_to_float : t -> int -> float
-(** [fp8_to_float dt byte] decodes the fp8 [byte] into a [float].
-
-    Raises [Invalid_argument] if [dt] is not an fp8 dtype.
-
-    See also {!float_to_fp8}. *)
+    Bit-exact narrowing for constant folding with {!Nx_dtype.Scalar.encode},
+    which rounds once from the [float]. A folded constant is the value nx
+    stores for the same [float], except in {!Float16}, where nx's store rounds
+    to binary32 first. *)
 
 val truncate_float : t -> float -> float
 (** [truncate_float dt x] rounds [x] to the precision of floating-point dtype
     [dt]. {!Float64} and {!Weakfloat} are the identity. {!Float32} round-trips
-    through [Int32.bits_of_float]. Narrower types delegate to {!float_to_fp16},
-    {!float_to_bf16}, or the fp8 conversion pair.
+    through [Int32.bits_of_float]. Narrower types round once to nearest even
+    with {!Nx_dtype.Scalar.encode}, whose rules for overflow and NaN apply.
 
     Raises [Invalid_argument] if [dt] is not floating-point.
 

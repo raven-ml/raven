@@ -4,7 +4,10 @@
   ---------------------------------------------------------------------------*/
 
 /* Encodings of the float formats narrower than binary32: bfloat16, float16
-   and the float8 formats e4m3 and e5m2. */
+   and the float8 formats e4m3, e5m2 and their fnuz variants. Every encoder
+   rounds once to nearest, ties to even, from its argument's width. A finite
+   value past the largest finite one encodes as the format's infinity, or as
+   NaN where the format has none. */
 
 #ifndef NX_DTYPE_H
 #define NX_DTYPE_H
@@ -125,132 +128,121 @@ static inline float half_to_float(uint16_t h) {
   return u.f;
 }
 
-/* FP8 E4M3 conversions (OCP "fn" variant: no infinities, S.1111.111 is NaN,
-   exponent 15 is otherwise normal up to the max finite 448, subnormals scale
-   by 2^-6). Finite overflow and infinities convert to NaN, matching the
-   ml_dtypes and PyTorch e4m3fn casts; saturate before casting if clamping is
-   wanted. */
+/* Float8. Each format has [m] fraction bits and exponent bias [bias], and its
+   least normal exponent is 1 - bias. A code's low seven bits are its
+   magnitude, which orders the finite values, and its top bit is the sign. */
+
+/* The magnitude code of the finite binary32 [f], rounded to nearest, ties to
+   even; a code past the format's largest finite one means [f] overflows. */
+static inline uint32_t nx_fp8_round(float f, int m, int bias) {
+  union {
+    float f;
+    uint32_t i;
+  } u = {.f = f};
+  int exp = (int)((u.i >> 23) & 0xFF) - 127;
+  uint32_t sig = u.i & 0x7FFFFF;
+  uint32_t base = 0;
+  int shift = 23 - m;
+  if (exp >= 1 - bias) {
+    base = (uint32_t)(exp + bias) << m;
+  } else {
+    /* Subnormal or zero: denormalize to the 2^(1-bias) scale, keeping all
+       shifted-out bits for the rounding decision. */
+    sig |= 0x800000; /* Implicit one */
+    shift += 1 - bias - exp;
+    if (shift > 24) return 0; /* Below half the least subnormal */
+  }
+  uint32_t q = sig >> shift;
+  uint32_t rem = sig & ((1u << shift) - 1);
+  uint32_t half = 1u << (shift - 1);
+  if (rem > half || (rem == half && (q & 1))) q++;
+  /* A rounding carry propagates into the exponent field, and a subnormal
+     that rounds up to 2^m is the least normal: the bit patterns line up. */
+  return base + q;
+}
+
+/* The value of the finite magnitude code [q]. */
+static inline float nx_fp8_value(uint32_t q, int m, int bias) {
+  uint32_t exp = q >> m;
+  uint32_t frac = q & ((1u << m) - 1);
+  if (exp == 0) return ldexpf((float)frac, 1 - bias - m);
+  return ldexpf((float)(frac | (1u << m)), (int)exp - bias - m);
+}
+
+/* E4M3 (the OCP "fn" variant): no infinities, S.1111.111 is NaN and exponent
+   15 is otherwise normal, up to the largest finite value 448. Finite overflow
+   and infinities convert to NaN, matching the ml_dtypes and PyTorch e4m3fn
+   casts; saturate before casting if clamping is wanted. */
 static inline uint8_t float_to_fp8_e4m3(float f) {
-  if (isnan(f) || isinf(f)) return signbit(f) ? 0xFF : 0x7F;
-
-  union {
-    float f;
-    uint32_t i;
-  } u = {.f = f};
-  uint32_t sign = (u.i >> 31) << 7;
-  int exp = ((u.i >> 23) & 0xFF) - 127;
-
-  if (exp >= -6) { /* Normal range */
-    uint32_t sig = u.i & 0x7FFFFF;
-    /* Round the 23-bit significand to 3 bits, nearest, ties to even. */
-    uint32_t q = sig >> 20;
-    uint32_t rem = sig & 0xFFFFF;
-    if (rem > 0x80000 || (rem == 0x80000 && (q & 1))) q++;
-    /* A rounding carry propagates into the exponent field. */
-    uint32_t bits = ((uint32_t)(exp + 7) << 3) + q;
-    if (bits >= 0x7F) return sign | 0x7F; /* Overflow past 448 to NaN */
-    return sign | bits;
-  }
-
-  /* Subnormal or zero: denormalize to the 2^-6 scale, keeping all shifted-out
-     bits for the rounding decision. */
-  uint32_t sig = (u.i & 0x7FFFFF) | 0x800000; /* Implicit one */
-  int shift = 20 + (-6 - exp);
-  if (shift > 24) return sign; /* Below half the min subnormal 2^-9 */
-  uint32_t q = sig >> shift;
-  uint32_t rem = sig & ((1u << shift) - 1);
-  uint32_t half = 1u << (shift - 1);
-  if (rem > half || (rem == half && (q & 1))) q++;
-  /* q == 8 after rounding is the min normal; the bit pattern lines up. */
-  return sign | q;
+  uint8_t sign = signbit(f) ? 0x80 : 0;
+  if (!isfinite(f)) return sign | 0x7F;
+  uint32_t q = nx_fp8_round(f, 3, 7);
+  return sign | (q >= 0x7F ? 0x7F : q);
 }
 
-static inline float fp8_e4m3_to_float(uint8_t fp8) {
-  bool negative = (fp8 & 0x80) != 0;
-  uint32_t exp = (fp8 >> 3) & 0xF;
-  uint32_t mant = fp8 & 0x7;
-
-  /* No infinities: exponent 15 is normal except S.1111.111. */
-  if (exp == 0xF && mant == 0x7) return NAN;
-
-  float v;
-  if (exp == 0) {
-    v = ldexpf((float)mant, -9); /* Subnormal: mant/8 * 2^-6 */
-  } else {
-    v = ldexpf(1.0f + (float)mant / 8.0f, (int)exp - 7);
-  }
-  return negative ? -v : v;
+static inline float fp8_e4m3_to_float(uint8_t c) {
+  if ((c & 0x7F) == 0x7F) return NAN;
+  float v = nx_fp8_value(c & 0x7F, 3, 7);
+  return (c & 0x80) ? -v : v;
 }
 
-/* FP8 E5M2 conversions (IEEE-like: has infinities and subnormals). Finite
-   overflow rounds to infinity. */
+/* E5M2: IEEE-like, with infinities. Finite overflow rounds to infinity. */
 static inline uint8_t float_to_fp8_e5m2(float f) {
-  if (isnan(f)) return signbit(f) ? 0xFF : 0x7F;
-  if (isinf(f)) return signbit(f) ? 0xFC : 0x7C;
-
-  union {
-    float f;
-    uint32_t i;
-  } u = {.f = f};
-  uint32_t sign = (u.i >> 31) << 7;
-  int exp = ((u.i >> 23) & 0xFF) - 127;
-
-  if (exp >= -14) { /* Normal range */
-    uint32_t sig = u.i & 0x7FFFFF;
-    /* Round the 23-bit significand to 2 bits, nearest, ties to even. */
-    uint32_t q = sig >> 21;
-    uint32_t rem = sig & 0x1FFFFF;
-    if (rem > 0x100000 || (rem == 0x100000 && (q & 1))) q++;
-    /* A rounding carry propagates into the exponent field. */
-    uint32_t bits = ((uint32_t)(exp + 15) << 2) + q;
-    if (bits >= 0x7C) return sign | 0x7C; /* Overflow to Inf */
-    return sign | bits;
-  }
-
-  /* Subnormal or zero: denormalize to the 2^-14 scale, keeping all
-     shifted-out bits for the rounding decision. */
-  uint32_t sig = (u.i & 0x7FFFFF) | 0x800000; /* Implicit one */
-  int shift = 21 + (-14 - exp);
-  if (shift > 24) return sign; /* Below half the min subnormal 2^-16 */
-  uint32_t q = sig >> shift;
-  uint32_t rem = sig & ((1u << shift) - 1);
-  uint32_t half = 1u << (shift - 1);
-  if (rem > half || (rem == half && (q & 1))) q++;
-  /* q == 4 after rounding is the min normal; the bit pattern lines up. */
-  return sign | q;
+  uint8_t sign = signbit(f) ? 0x80 : 0;
+  if (isnan(f)) return sign | 0x7F;
+  if (isinf(f)) return sign | 0x7C;
+  uint32_t q = nx_fp8_round(f, 2, 15);
+  return sign | (q >= 0x7C ? 0x7C : q);
 }
 
-static inline float fp8_e5m2_to_float(uint8_t fp8) {
-  bool negative = (fp8 & 0x80) != 0;
-  uint32_t exp = (fp8 >> 2) & 0x1F;
-  uint32_t mant = fp8 & 0x3;
+static inline float fp8_e5m2_to_float(uint8_t c) {
+  uint32_t q = c & 0x7F;
+  if (q > 0x7C) return NAN;
+  float v = q == 0x7C ? INFINITY : nx_fp8_value(q, 2, 15);
+  return (c & 0x80) ? -v : v;
+}
 
-  if (exp == 0x1F) { /* Inf/NaN */
-    if (mant == 0) return negative ? -INFINITY : INFINITY;
-    return NAN;
-  }
+/* The fnuz formats: no infinities and no negative zero, and 0x80 is their
+   one NaN. Finite overflow and infinities convert to NaN. */
+static inline uint8_t nx_fp8_fnuz(float f, int m, int bias) {
+  if (!isfinite(f)) return 0x80;
+  uint32_t q = nx_fp8_round(f, m, bias);
+  if (q > 0x7F) return 0x80;
+  if (q == 0) return 0;
+  return (signbit(f) ? 0x80 : 0) | q;
+}
 
-  float value;
-  if (exp == 0) {
-    if (mant == 0) return negative ? -0.0f : 0.0f;
-    /* Subnormal: mantissa has no implicit leading 1 */
-    float frac = (float)mant / 4.0f;
-    value = ldexpf(frac, 1 - 15); /* 2^(1-bias) */
-  } else {
-    float frac = 1.0f + (float)mant / 4.0f;
-    value = ldexpf(frac, (int)exp - 15);
-  }
+static inline float nx_fp8_fnuz_value(uint8_t c, int m, int bias) {
+  if (c == 0x80) return NAN;
+  float v = nx_fp8_value(c & 0x7F, m, bias);
+  return (c & 0x80) ? -v : v;
+}
 
-  return negative ? -value : value;
+/* E4M3 fnuz: exponent bias 8, largest finite value 240. */
+static inline uint8_t float_to_fp8_e4m3fnuz(float f) {
+  return nx_fp8_fnuz(f, 3, 8);
+}
+
+static inline float fp8_e4m3fnuz_to_float(uint8_t c) {
+  return nx_fp8_fnuz_value(c, 3, 8);
+}
+
+/* E5M2 fnuz: exponent bias 16, largest finite value 57344. */
+static inline uint8_t float_to_fp8_e5m2fnuz(float f) {
+  return nx_fp8_fnuz(f, 2, 16);
+}
+
+static inline float fp8_e5m2fnuz_to_float(uint8_t c) {
+  return nx_fp8_fnuz_value(c, 2, 16);
 }
 
 /* Encoders from binary64. A double narrows to binary32 by rounding to odd
    (truncating, then setting the last bit if a discarded bit was set), and the
    binary32 encoder rounds that to nearest even. Binary32's grid is at least
-   four times finer than bfloat16's or float8's at every magnitude, so the odd
-   last bit stands for the discarded bits without creating or breaking a tie:
-   the result is the double rounded once. Casting to float first would round
-   twice and move a value next to a tie onto it. */
+   four times finer than float16's, bfloat16's or float8's at every
+   magnitude, so the odd last bit stands for the discarded bits without
+   creating or breaking a tie: the result is the double rounded once. Casting
+   to float first would round twice and move a value next to a tie onto it. */
 static inline float double_to_float_odd(double x) {
   union {
     float f;
@@ -264,6 +256,10 @@ static inline float double_to_float_odd(double x) {
   return u.f;
 }
 
+static inline uint16_t double_to_half(double x) {
+  return float_to_half(double_to_float_odd(x));
+}
+
 static inline uint16_t double_to_bfloat16(double x) {
   return float_to_bfloat16(double_to_float_odd(x));
 }
@@ -274,6 +270,14 @@ static inline uint8_t double_to_fp8_e4m3(double x) {
 
 static inline uint8_t double_to_fp8_e5m2(double x) {
   return float_to_fp8_e5m2(double_to_float_odd(x));
+}
+
+static inline uint8_t double_to_fp8_e4m3fnuz(double x) {
+  return float_to_fp8_e4m3fnuz(double_to_float_odd(x));
+}
+
+static inline uint8_t double_to_fp8_e5m2fnuz(double x) {
+  return float_to_fp8_e5m2fnuz(double_to_float_odd(x));
 }
 
 #endif /* NX_DTYPE_H */

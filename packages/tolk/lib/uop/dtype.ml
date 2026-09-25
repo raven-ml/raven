@@ -87,8 +87,6 @@ let is_fp8 = function
   | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz -> true
   | _ -> false
 
-let is_fp8_fnuz = function Fp8e4m3fnuz | Fp8e5m2fnuz -> true | _ -> false
-
 let is_int = function
   | Int8 | Int16 | Int32 | Int64
   | Uint8 | Uint16 | Uint32 | Uint64 | Weakint -> true
@@ -351,274 +349,62 @@ let addr_space_to_string = function
 
 let pp_addr_space fmt a = Format.pp_print_string fmt (addr_space_to_string a)
 
-(* FP conversion.
+(* Storage formats *)
 
-   These routines round binary64 values to narrower IEEE-754 encodings
-   (fp16, bfloat16, fp8e4m3, fp8e5m2) using round-to-nearest-even. They
-   walk the exponent and mantissa bit-by-bit rather than delegating to a
-   hardware conversion because (a) not every host supports every format
-   and (b) constant folding must be bit-identical across backends. *)
+let to_scalar : t -> Nx_dtype.Scalar.t option = function
+  | Bool -> Some Bool
+  | Int8 -> Some Int8
+  | Int16 -> Some Int16
+  | Int32 -> Some Int32
+  | Int64 -> Some Int64
+  | Uint8 -> Some UInt8
+  | Uint16 -> Some UInt16
+  | Uint32 -> Some UInt32
+  | Uint64 -> Some UInt64
+  | Fp8e4m3 -> Some Float8_e4m3
+  | Fp8e5m2 -> Some Float8_e5m2
+  | Fp8e4m3fnuz -> Some Float8_e4m3fnuz
+  | Fp8e5m2fnuz -> Some Float8_e5m2fnuz
+  | Float16 -> Some Float16
+  | Bfloat16 -> Some BFloat16
+  | Float32 -> Some Float32
+  | Float64 -> Some Float64
+  | Void | Weakint | Weakfloat -> None
 
-let float_to_fp16 x =
-  if Float.is_nan x then Float.nan
-  else if Float.is_infinite x then x
-  else if x = 0.0 then x
-  else
-    let bits = Int64.bits_of_float x in
-    let sign = Int64.logand (Int64.shift_right_logical bits 63) 1L in
-    let exp =
-      Int64.to_int (Int64.logand (Int64.shift_right_logical bits 52) 0x7FFL)
-    in
-    let mant = Int64.logand bits 0xFFFFFFFFFFFFFL in
-    let unbiased = exp - 1023 in
-    if unbiased > 15 then
-      if sign = 1L then Float.neg Float.infinity else Float.infinity
-    else if unbiased < -25 then if sign = 1L then -0.0 else 0.0
-    else
-      let fp16_sign = Int64.shift_left sign 15 in
-      let fp16_bits =
-        if unbiased < -14 then begin
-          let shift = -14 - unbiased in
-          let full_mant = Int64.logor mant 0x10000000000000L in
-          let total_shift = 42 + shift in
-          let shifted = Int64.shift_right_logical full_mant total_shift in
-          let round_bit =
-            Int64.to_int
-              (Int64.logand
-                 (Int64.shift_right_logical full_mant (total_shift - 1))
-                 1L)
-          in
-          let sticky =
-            let mask = Int64.sub (Int64.shift_left 1L (total_shift - 1)) 1L in
-            if Int64.logand full_mant mask <> 0L then 1 else 0
-          in
-          let rounded =
-            if round_bit = 1 && (sticky = 1 || Int64.logand shifted 1L <> 0L)
-            then Int64.add shifted 1L
-            else shifted
-          in
-          Int64.logor fp16_sign rounded
-        end
-        else begin
-          let biased16 = unbiased + 15 in
-          let shifted_mant = Int64.shift_right_logical mant 42 in
-          let round_bit =
-            Int64.to_int (Int64.logand (Int64.shift_right_logical mant 41) 1L)
-          in
-          let sticky =
-            if Int64.logand mant 0x1FFFFFFFFFFL <> 0L then 1 else 0
-          in
-          let rounded =
-            if
-              round_bit = 1 && (sticky = 1 || Int64.logand shifted_mant 1L <> 0L)
-            then Int64.add shifted_mant 1L
-            else shifted_mant
-          in
-          let final_exp, final_mant =
-            if rounded > 0x3FFL then (biased16 + 1, 0L) else (biased16, rounded)
-          in
-          if final_exp > 30 then Int64.logor fp16_sign 0x7C00L
-          else
-            Int64.logor fp16_sign
-              (Int64.logor (Int64.of_int (final_exp lsl 10)) final_mant)
-        end
-      in
-      let fp16_exp =
-        Int64.to_int
-          (Int64.logand (Int64.shift_right_logical fp16_bits 10) 0x1FL)
-      in
-      let fp16_mant = Int64.logand fp16_bits 0x3FFL in
-      let f =
-        if fp16_exp = 0x1F then
-          if fp16_mant = 0L then Float.infinity else Float.nan
-        else if fp16_exp = 0 then Float.ldexp (Int64.to_float fp16_mant) (-24)
-        else
-          Float.ldexp
-            (Int64.to_float (Int64.logor fp16_mant 0x400L))
-            (fp16_exp - 25)
-      in
-      if sign = 1L then Float.neg f else f
+let of_scalar : Nx_dtype.Scalar.t -> t option = function
+  | Bool -> Some Bool
+  | Int8 -> Some Int8
+  | Int16 -> Some Int16
+  | Int32 -> Some Int32
+  | Int64 -> Some Int64
+  | UInt8 -> Some Uint8
+  | UInt16 -> Some Uint16
+  | UInt32 -> Some Uint32
+  | UInt64 -> Some Uint64
+  | Float8_e4m3 -> Some Fp8e4m3
+  | Float8_e5m2 -> Some Fp8e5m2
+  | Float8_e4m3fnuz -> Some Fp8e4m3fnuz
+  | Float8_e5m2fnuz -> Some Fp8e5m2fnuz
+  | Float16 -> Some Float16
+  | BFloat16 -> Some Bfloat16
+  | Float32 -> Some Float32
+  | Float64 -> Some Float64
+  | Int4 | UInt4 | Complex64 | Complex128 -> None
 
-let float_to_bf16 x =
-  if not (Float.is_finite x) then x
-  else
-    (* Round to odd at binary32 first: its 16 extra bits keep the rounding
-       below the only one. *)
-    let u = Int32.bits_of_float x in
-    let f = Int32.float_of_bits u in
-    let u = if Float.abs f > Float.abs x then Int32.pred u else u in
-    let u = if f <> x then Int32.logor u 1l else u in
-    let u =
-      Int32.logand
-        (Int32.add u
-           (Int32.add 0x7FFFl
-              (Int32.logand (Int32.shift_right_logical u 16) 1l)))
-        0xFFFF_0000l
-    in
-    Int32.float_of_bits u
+let scalar dt =
+  match to_scalar dt with
+  | Some s -> s
+  | None -> invalid_arg (strf "%s has no storage format" (to_string dt))
 
-type fp8_params = {
-  exp_bias : int; sig_bits : int; mantissa_mask : int;
-  mindenorm_o2 : int64; overflow_threshold : int64; minnorm : int64;
-}
-
-let fp8e4m3_params =
-  { exp_bias = 7; sig_bits = 4; mantissa_mask = 0x7;
-    mindenorm_o2 = 0x3F50000000000000L; overflow_threshold = 0x407D000000000000L;
-    minnorm = 0x3F90000000000000L }
-
-let fp8e5m2_params =
-  { exp_bias = 15; sig_bits = 3; mantissa_mask = 0x3;
-    mindenorm_o2 = 0x3EE0000000000000L;
-    overflow_threshold = Int64.sub 0x40EE000000000000L 1L;
-    minnorm = 0x3F10000000000000L }
-
-let fp8e4m3fnuz_params =
-  { exp_bias = 8; sig_bits = 4; mantissa_mask = 0x7;
-    mindenorm_o2 = 0x3F40000000000000L;
-    overflow_threshold = Int64.sub 0x406F000000000000L 1L;
-    minnorm = 0x3F80000000000000L }
-
-let fp8e5m2fnuz_params =
-  { exp_bias = 16; sig_bits = 3; mantissa_mask = 0x3;
-    mindenorm_o2 = 0x3ED0000000000000L;
-    overflow_threshold = Int64.sub 0x40EE000000000000L 1L;
-    minnorm = 0x3F00000000000000L }
-
-(* Pack a binary64 into an fp8 byte. Signs, subnormals, overflow, and
-   round-to-nearest-even are handled case-by-case. A finite value that rounds
-   past the largest finite one encodes as the infinity of its sign. *)
-let rec float_to_fp8 dt x =
-  match dt with
-  | (Fp8e4m3fnuz | Fp8e5m2fnuz) when not (Float.is_finite x) -> 0x80
-  | (Fp8e4m3fnuz | Fp8e5m2fnuz) when x = 0.0 -> 0x00
-  | Fp8e4m3 when not (Float.is_finite x) ->
-      if Float.copy_sign 1.0 x > 0.0 then 0x7f else 0xff
-  | Fp8e5m2 when not (Float.is_finite x) ->
-      let sign = if Float.copy_sign 1.0 x > 0.0 then 0 else 0x80 in
-      sign lor if Float.is_infinite x then 0x7c else 0x7f
-  | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      let p = match dt with
-        | Fp8e4m3 -> fp8e4m3_params
-        | Fp8e5m2 -> fp8e5m2_params
-        | Fp8e4m3fnuz -> fp8e4m3fnuz_params
-        | _ -> fp8e5m2fnuz_params
-      in
-      let xbits = Int64.bits_of_float x in
-      let half_ulp = Int64.shift_left 1L (53 - p.sig_bits - 1) in
-      let sign =
-        Int64.to_int (Int64.logand (Int64.shift_right_logical xbits 63) 1L)
-        lsl 7
-      in
-      let raw_exp =
-        Int64.to_int (Int64.logand (Int64.shift_right_logical xbits 52) 0x7FFL)
-      in
-      let exp = raw_exp - 1023 + p.exp_bias in
-      let mantissa =
-        Int64.to_int
-          (Int64.logand
-             (Int64.shift_right_logical xbits (53 - p.sig_bits))
-             (Int64.of_int p.mantissa_mask))
-      in
-      let absx = Int64.logand xbits 0x7FFFFFFFFFFFFFFFL in
-      let res =
-        if Int64.compare absx p.mindenorm_o2 <= 0 then 0
-        else if Int64.compare absx p.overflow_threshold > 0 then
-          float_to_fp8 dt (Float.copy_sign Float.infinity x)
-        else if Int64.compare absx p.minnorm >= 0 then begin
-          let base = (exp lsl (p.sig_bits - 1)) lor mantissa in
-          let round_mask = Int64.sub (Int64.shift_left half_ulp 1) 1L in
-          let round_bits = Int64.logand xbits round_mask in
-          if Int64.compare round_bits half_ulp > 0
-             || (round_bits = half_ulp && mantissa land 1 <> 0)
-          then base + 1 else base
-        end
-        else begin
-          let shift = 1 - exp in
-          let mant_with_implicit = mantissa lor (1 lsl (p.sig_bits - 1)) in
-          let base = mant_with_implicit asr shift in
-          let round_bits =
-            Int64.logand
-              (Int64.logor xbits (Int64.shift_left 1L 52))
-              (Int64.sub (Int64.shift_left half_ulp (shift + 1)) 1L)
-          in
-          let threshold = Int64.shift_left half_ulp shift in
-          if Int64.compare round_bits threshold > 0
-             || (round_bits = threshold && base land 1 <> 0)
-          then base + 1 else base
-        end
-      in
-      (* fnuz types have no negative zero. *)
-      if is_fp8_fnuz dt && res = 0 then 0 else res lor sign
-  | _ -> invalid_arg "float_to_fp8: not an fp8 dtype"
-
-let fp8_to_float dt x =
-  match dt with
-  | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      if x = 0x80 then Float.nan
-      else if x land 0x7F = 0 then 0.0
-      else
-        let p = match dt with
-          | Fp8e4m3fnuz -> fp8e4m3fnuz_params | _ -> fp8e5m2fnuz_params
-        in
-        let mant_bits = p.sig_bits - 1 in
-        let exp_bits = 8 - p.sig_bits in
-        let exp_max = (1 lsl exp_bits) - 1 in
-        let mant_max = (1 lsl mant_bits) - 1 in
-        let sign = (x lsr 7) land 1 in
-        let exp = (x lsr mant_bits) land exp_max in
-        let mantissa = x land mant_max in
-        let frac = Float.of_int mantissa /. Float.of_int (mant_max + 1) in
-        let v =
-          if exp = 0 then frac *. (2. ** Float.of_int (1 - p.exp_bias))
-          else (1. +. frac) *. (2. ** Float.of_int (exp - p.exp_bias))
-        in
-        if sign = 1 then Float.neg v else v
-  | Fp8e4m3 | Fp8e5m2 ->
-      let ur = x lsl 8 in
-      let ur =
-        if dt = Fp8e5m2 && ur land 0x7FFF > 0x7C00 then 0x7FFF
-        else if dt = Fp8e4m3 then begin
-          let sign = ur land 0x8000 in
-          let exponent = ((ur land 0x7800) asr 1) + 0x2000 in
-          let mantissa_init = (ur land 0x0700) asr 1 in
-          let absx = x land 0x7F in
-          if absx = 0x7F then 0x7FFF
-          else if exponent = 0x2000 then begin
-            if mantissa_init <> 0 then begin
-              let rec normalize m e =
-                if m land 0x0400 <> 0 then (m, e)
-                else normalize (m lsl 1) (e - 0x0400)
-              in
-              let m, e = normalize (mantissa_init lsl 1) exponent in
-              sign lor e lor (m land 0x03FF)
-            end
-            else sign
-          end
-          else sign lor exponent lor mantissa_init
-        end
-        else ur
-      in
-      let fp16_sign = (ur asr 15) land 1 in
-      let fp16_exp = (ur asr 10) land 0x1F in
-      let fp16_mant = ur land 0x3FF in
-      let f =
-        if fp16_exp = 0x1F then
-          if fp16_mant = 0 then Float.infinity else Float.nan
-        else if fp16_exp = 0 then Float.ldexp (Float.of_int fp16_mant) (-24)
-        else Float.ldexp (Float.of_int (fp16_mant + 1024)) (fp16_exp - 25)
-      in
-      if fp16_sign = 1 then Float.neg f else f
-  | _ -> invalid_arg "fp8_to_float: not an fp8 dtype"
+(* Rounding *)
 
 let truncate_float (dt : t) x =
   match dt with
   | Float64 | Weakfloat -> x
   | Float32 -> Int32.float_of_bits (Int32.bits_of_float x)
-  | Float16 -> float_to_fp16 x
-  | Bfloat16 -> float_to_bf16 x
-  | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      fp8_to_float dt (float_to_fp8 dt x)
+  | Float16 | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
+      let s = scalar dt in
+      Nx_dtype.Scalar.decode s (Nx_dtype.Scalar.encode s x)
   | _ -> invalid_arg "truncate_float: not a floating-point dtype"
 
 let truncate_int (dt : t) x =
@@ -697,15 +483,9 @@ let truncate_int64 (dt : t) x =
 let to_storage_scalar (dt : t) x =
   match dt with
   | Bool -> `Bool (storage_bool x)
-  | Float16 -> `Float (float_to_fp16 (storage_float x))
-  | Bfloat16 ->
-      let bits = Int32.bits_of_float (float_to_bf16 (storage_float x)) in
-      `Int
-        (Int64.of_int
-           (Int32.to_int
-              (Int32.logand (Int32.shift_right_logical bits 16) 0xFFFFl)))
-  | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      `Int (Int64.of_int (float_to_fp8 dt (storage_float x)))
+  | Float16 -> `Float (truncate_float dt (storage_float x))
+  | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
+      `Int (Int64.of_int (Nx_dtype.Scalar.encode (scalar dt) (storage_float x)))
   | Float32 | Float64 | Weakfloat -> `Float (storage_float x)
   | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
   | Weakint -> `Int (storage_int64 x)
@@ -714,11 +494,10 @@ let to_storage_scalar (dt : t) x =
 let from_storage_scalar x (dt : t) =
   match dt with
   | Bool -> `Bool (storage_bool x)
-  | Bfloat16 ->
-      let lo = Int64.to_int (Int64.logand (storage_int64 x) 0xFFFFL) in
-      `Float (Int32.float_of_bits (Int32.shift_left (Int32.of_int lo) 16))
-  | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      `Float (fp8_to_float dt (Int64.to_int (storage_int64 x)))
+  | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
+      let mask = Int64.pred (Int64.shift_left 1L (bitsize dt)) in
+      let bits = Int64.to_int (Int64.logand (storage_int64 x) mask) in
+      `Float (Nx_dtype.Scalar.decode (scalar dt) bits)
   | Float16 | Float32 | Float64 | Weakfloat -> `Float (storage_float x)
   | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
   | Weakint -> `Int (storage_int64 x)

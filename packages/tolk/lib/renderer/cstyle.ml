@@ -146,19 +146,6 @@ let workitem_name name =
 
 let const_view_of_uop = U.as_const
 
-(* Upper 16 bits of float32 encoding after round-to-nearest-even. *)
-let float_to_bf16_bits (f : float) =
-  let bits = Int32.bits_of_float f in
-  if not (Float.is_finite f) then
-    Int32.to_int (Int32.shift_right_logical bits 16)
-  else
-    let rounded =
-      Int32.add bits
-        (Int32.add 0x7fffl
-           (Int32.logand (Int32.shift_right_logical bits 16) 1l))
-    in
-    Int32.to_int (Int32.shift_right_logical rounded 16)
-
 (* C-style language config and per-render context. *)
 
 (* code_for_op dispatches are keyed by Ops.t. Some ops are unary, some binary,
@@ -1808,7 +1795,8 @@ let opencl_bf16_const_rule : ctx rule =
       match const_view_of_uop x with
       | Some c when Dtype.equal (U.dtype x) Dtype.bfloat16 -> (
           match Const.view c with
-          | Const.Float f -> Some (strf "%uu" (float_to_bf16_bits f))
+          | Const.Float f ->
+              Some (strf "%uu" (Nx_dtype.Scalar.encode BFloat16 f))
           | _ -> None)
       | _ -> None )
 

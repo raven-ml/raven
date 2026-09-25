@@ -267,18 +267,19 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## Numerics
 
-- **Float constants fold as nx encodes them.** The reference saturates a
-  finite float8 value past the largest finite one and rounds a bfloat16
-  constant through binary32 (`struct.pack('f')`), rounding twice. tolk rounds
-  once from binary64 (`Dtype.float_to_fp8`, `float_to_bf16`), and a result
-  past the largest finite value becomes the format's infinity, or NaN in the
-  formats without one, as nx does for eager values. RFC 0005's Law 1 lets a
-  compiled result differ from the eager one only by the engine's rounding,
+- **Float constants fold with nx's codec.** The reference saturates a finite
+  float8 value past the largest finite one and rounds a bfloat16 constant
+  through binary32 (`struct.pack('f')`), rounding twice. tolk folds with
+  `Nx_dtype.Scalar.encode`, the encoder nx's eager stores use, which rounds
+  once from binary64, and a result past the largest finite value becomes the
+  format's infinity, or NaN in the formats without one. RFC 0005's Law 1 lets
+  a compiled result differ from the eager one only by the engine's rounding,
   and a constant is not rounded by the engine. Consumers: `Const` and `Bound`
-  folding in every compiled graph. Coverage: `test_dtype`'s float8 and
-  bfloat16 cases; rune's `test_float_codecs`, which checks both codecs against
-  an exact reference over every float8 code and float32 and float64 sweeps.
-  Reconsider only if rune stops running eager code on nx.
+  folding in every compiled graph, through `Dtype.truncate_float`. Coverage:
+  `test_dtype`'s float8 and bfloat16 cases; nx's `test_float_codecs`, which
+  checks the codec against an exact reference over every float8 code and
+  float32 and float64 sweeps. Reconsider only if rune stops running eager code
+  on nx.
 
 ## Validation dependencies
 

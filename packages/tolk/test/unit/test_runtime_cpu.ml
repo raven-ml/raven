@@ -505,7 +505,8 @@ let test_emulated_fp8_loads () =
         let expected =
           if fnuz && bits = 128 then Float.nan
           else if exponent = 0 then (if bits land 128 = 0 then 0.0 else -0.0)
-          else Dtype.fp8_to_float dtype bits in
+          else
+            Nx_dtype.Scalar.decode (Option.get (Dtype.to_scalar dtype)) bits in
         let actual = Int32.float_of_bits (Bytes.get_int32_le bytes (4 * bits)) in
         let msg = Printf.sprintf "%s 0x%02x" (Dtype.to_string dtype) bits in
         if Float.is_nan expected then is_true ~msg (Float.is_nan actual)
@@ -516,8 +517,8 @@ let test_emulated_fp8_loads () =
 let test_emulated_compact_float_storage () =
   let device = cpu "emulated-compact-float-storage" in
   let fp8_cases = List.map (fun dtype ->
-      dtype, List.map (Dtype.float_to_fp8 dtype) [ 1.0; -1.0; 2.0; 0.5; 4.0 ],
-      Dtype.float_to_fp8 dtype 1.5, Dtype.float_to_fp8 dtype 0.25)
+      let code = Nx_dtype.Scalar.encode (Option.get (Dtype.to_scalar dtype)) in
+      dtype, List.map code [ 1.0; -1.0; 2.0; 0.5; 4.0 ], code 1.5, code 0.25)
       [ Dtype.fp8e4m3; Dtype.fp8e5m2; Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz ] in
   let cases =
     (Dtype.float16, [ 0x3c00; 0xbc00; 0x4000; 0x3800; 0x4400 ], 0x3e00, 0x3400)

@@ -26,7 +26,7 @@
   test_runtime_search
   test_lru_allocator)
  (package tolk)
- (libraries unix tolk tolk.uop tolk.cpu windtrap))
+ (libraries unix nx.dtype tolk tolk.uop tolk.cpu windtrap))
 
 ; Exhaustive differential sweep over the beam action set: minutes, not
 ; seconds, so it runs under its own alias rather than @runtest.
@@ -77,7 +77,7 @@
  (package tolk)
  (build_if
   (= %{system} macosx))
- (libraries unix tolk tolk.uop tolk.metal tolk.cpu windtrap))
+ (libraries unix nx.dtype tolk tolk.uop tolk.metal tolk.cpu windtrap))
 
 (tests
  (names test_runtime_cuda test_cuda_queue)

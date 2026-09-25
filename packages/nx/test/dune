@@ -31,7 +31,8 @@
   test_nx_support
   test_nx_io
   test_nx_quant
-  test_oxcaml_backend)
+  test_oxcaml_backend
+  test_float_codecs)
  (libraries nx.dtype nx.buffer nx nx.core nx.effect windtrap test_nx_support))
 
 (test
@@ -64,3 +65,9 @@
  (libraries nx nx.dtype nx.buffer nx.core nx.io unix windtrap)
  (deps
   (glob_files fixtures/*)))
+
+(test
+ (name test_float_codecs)
+ (package nx)
+ (modules test_float_codecs)
+ (libraries nx nx.dtype nx.buffer windtrap))

@@ -60,28 +60,12 @@ let unsupported op =
      function"
     op
 
-(* Dtype bridges *)
+(* Dtypes *)
 
-let tolk_dtype : type a b. (a, b) ND.t -> TD.t = function
-  | ND.Float16 -> TD.float16
-  | ND.Float32 -> TD.float32
-  | ND.Float64 -> TD.float64
-  | ND.BFloat16 -> TD.bfloat16
-  | ND.Float8_e4m3 -> TD.fp8e4m3
-  | ND.Float8_e5m2 -> TD.fp8e5m2
-  | ND.Int8 -> TD.int8
-  | ND.UInt8 -> TD.uint8
-  | ND.Int16 -> TD.int16
-  | ND.UInt16 -> TD.uint16
-  | ND.Int32 -> TD.int32
-  | ND.UInt32 -> TD.uint32
-  | ND.Int64 -> TD.int64
-  | ND.UInt64 -> TD.uint64
-  | ND.Bool -> TD.bool
-  | ND.Int4 -> unsupported "an int4 tensor"
-  | ND.UInt4 -> unsupported "a uint4 tensor"
-  | ND.Complex64 -> unsupported "a complex tensor"
-  | ND.Complex128 -> unsupported "a complex tensor"
+let tolk_dtype dt =
+  match TD.of_scalar (ND.Scalar.of_dtype dt) with
+  | Some tdt -> tdt
+  | None -> unsupported ("a tensor of " ^ ND.to_string dt)
 
 (* [v] as the scalar eager stores at [dt]: an integer outside the range wraps,
    so 256 is 0 in uint8 and 200 is -56 in int8. *)
@@ -110,11 +94,11 @@ let scalar_of : type a b. (a, b) ND.t -> a -> F.Tensor.scalar =
 
 (* Whether [dev]'s programs can load, store and compute [dt], natively or by
    emulation. *)
-let holds : type a b. Tolk.Device.t -> (a, b) ND.t -> bool =
- fun dev dt ->
-  match tolk_dtype dt with
-  | tdt -> Tolk.Decomp_dtype.is_dtype_supported (Tolk.Device.renderer dev) tdt
-  | exception Jit_error _ -> false
+let holds dev dt =
+  match TD.of_scalar (ND.Scalar.of_dtype dt) with
+  | Some tdt ->
+      Tolk.Decomp_dtype.is_dtype_supported (Tolk.Device.renderer dev) tdt
+  | None -> false
 
 (* Identity-keyed tables over tensors, as in [Tensor_map]. *)
 module Tbl = Hashtbl.Make (struct
