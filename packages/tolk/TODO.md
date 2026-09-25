@@ -76,9 +76,10 @@ acceptance requirement; skipped tests are not execution evidence.
   in addition to the code/descriptor checks in the real AMD fixture.
 
 - Make a `Bitcast` to or from an emulated float8 act on the stored byte. Today
-  the float decomposition decodes the element through float16 and back, which
+  the float decomposition decodes the element through float32 and back, which
   flushes subnormals and clamps infinities, so rune refuses a compiled float8
-  `Nx.bitcast`.
+  `Nx.bitcast`. Check raw bitcasts for all 256 encodings; exhaustive load
+  conversion tests do not establish bit preservation.
 
 - Migrate every Python driver to the target API and generate the complete
   corpus separately, including AMD/NV queue drivers. Eight NV signal/timestamp
@@ -159,6 +160,13 @@ acceptance requirement; skipped tests are not execution evidence.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
   correctness fixes; measure accelerator candidates on supported hardware.
+- Preserve source placement and sharding in `Rand.rand_like` and dropout;
+  generating fresh mask storage on the default device does not preserve the
+  source's device. Cover nondefault devices and per-shard generation.
+  Make `Creation.clone` allocate per-shard extents and preserve shard axes,
+  including symbolic views and independently mutable output storage. Match the
+  target's early DISK-clone rejection and assignment-axis compatibility checks.
+  Cover mismatched sharding axes before constructing STORE effects.
 - Measure search cost, selected-kernel latency, JIT replay, allocations and
   handle counts on consumer workloads.
 - At the reference pin move, `find_bufs`' read/write cycle check keys on the
