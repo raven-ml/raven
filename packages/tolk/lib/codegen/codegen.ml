@@ -151,3 +151,15 @@ and to_program ?(optimize = true) ?beam_device dev ren sink =
   in
   U.program ~sink:full_sink ~linear:(U.linear program) ~source:(U.source src)
     ~binary:(U.binary (Bytes.to_string lib)) ~info ()
+
+(* Copy submission needs lowering, so install it at the existing compiler
+   boundary rather than introduce another execution path in storage. *)
+let () =
+  Device.Buffer.install_copy_runner (fun ~dst ~src ->
+      Device.Buffer.ensure_allocated dst;
+      Device.Buffer.ensure_allocated src;
+      let device = Device.get (Device.Buffer.device dst) in
+      let call = U.store_call ~dst:(U.from_buffer dst) ~src:(U.from_buffer src) in
+      Realize.run_linear ~device
+        ~to_program:(fun dev -> to_program dev (Device.renderer dev))
+        ~update_stats:false (U.linear [call]))

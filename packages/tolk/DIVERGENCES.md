@@ -54,6 +54,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   read-only/disjoint bindings. Reconsider
   when dependencies can be recompiled automatically for a changed alias layout.
 
+- **Provably overlapping copies use the bounded host fallback.** Native DMA
+  and parallel byte-copy kernels need not preserve overlapping input. Tolk
+  retains its existing directional-copy behavior for views sharing a root or
+  overlapping addresses in the same canonical device address space. Queue
+  preflight checks original STORE calls before publication and falls back in
+  order. Coverage: bounded forward/backward copies and shared-submission tests
+  using both views and independent external-pointer wrappers. Reconsider when
+  native overlap-safe copies are available; unrelated device address spaces
+  are not assumed to alias.
+
 - **Peer regrouping respects cross-group byte dependencies.** The frozen
   target groups a whole queue-compatible run by peer group. Tolk combines
   interleaved groups only when doing so preserves preceding reads and writes;

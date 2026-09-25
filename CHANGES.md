@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- `Buffer.copy_from` now uses scheduled `STORE` submissions, sharing queue
+  dependencies and transfers with normal execution. Provably overlapping
+  copies preserve their contents through the existing bounded host fallback.
+
 - Remove the obsolete `Realize.Compiled_runner` API. Compiled kernels and
   optimizer candidates execute through shared `CALL` submissions and
   `Realize.time_call` instead of a separate direct-dispatch adapter.

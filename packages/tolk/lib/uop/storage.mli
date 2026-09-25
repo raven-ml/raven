@@ -305,7 +305,7 @@ val copy_from : dst:t -> src:t -> unit
 
 val install_copy_runner : (dst:t -> src:t -> unit) -> unit
 (** [install_copy_runner f] provides the implementation used by {!copy_from}.
-    The execution engine installs it once during initialization; until then
+    The code generator installs it once during initialization; until then
     {!copy_from} raises [Invalid_argument]. Not for application use. *)
 
 val find_mapping : 'a Type.Id.t -> t -> 'a option

@@ -41,6 +41,32 @@ end
 
 (* Buffer copy *)
 
+let intervals_overlap (space_a, start_a, size_a) (space_b, start_b, size_b) =
+  space_a = space_b && size_a <> 0 && size_b <> 0
+  && if Nativeint.unsigned_compare start_a start_b <= 0 then
+    Nativeint.unsigned_compare (Nativeint.sub start_b start_a)
+      (Nativeint.of_int size_a) < 0
+  else Nativeint.unsigned_compare (Nativeint.sub start_a start_b)
+      (Nativeint.of_int size_b) < 0
+
+let native_interval buf =
+  let module B = Device.Buffer in
+  let Device.Allocator.Pack allocator = B.allocator buf in
+  if Option.is_none allocator.addr then None else
+  let owner = Device.canonicalize (B.device buf) in
+  let owner = if String.starts_with ~prefix:"CPU" owner then "CPU" else owner in
+  Some (owner, B.addr buf, B.nbytes buf)
+
+let buffers_overlap a b =
+  let module B = Device.Buffer in
+  if B.nbytes a = 0 || B.nbytes b = 0 then false
+  else if B.base_id a = B.base_id b then
+    intervals_overlap ("", Nativeint.of_int (B.offset a), B.nbytes a)
+      ("", Nativeint.of_int (B.offset b), B.nbytes b)
+  else match native_interval a, native_interval b with
+    | Some a, Some b -> intervals_overlap a b
+    | _ -> false
+
 let copy_via_host ~device dest src =
   let module B = Device.Buffer in
   B.ensure_allocated dest;
@@ -100,7 +126,8 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
                      (Device.Buffer.dtype dest) (Device.Buffer.dtype src))
         then invalid_arg "buffer copy: size or dtype mismatch";
         let st = Unix.gettimeofday () in
-        let transferred = Device.Buffer.transfer ~dst:dest ~src in
+        let transferred = not (buffers_overlap dest src)
+          && Device.Buffer.transfer ~dst:dest ~src in
         if not transferred then copy_via_host ~device dest src;
         if wait then begin
           Device.synchronize device;
@@ -115,23 +142,6 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
 (* Disk/TINYFS fast paths in tinygrad require a disk-backed allocator boundary.
    Tolk currently has no disk buffer runtime, so host bounce remains the
    fallback when allocator transfer is unavailable. *)
-
-(* [Device.Buffer.copy_from] is the host/device copy entry point the device and
-   frontend layers call. The device layer keeps no executor of its own to avoid
-   depending on the engine; the executor is installed here once when this module
-   initializes, routing those copies through the same path as scheduled STORE
-   calls. *)
-let () =
-  Device.Buffer.install_copy_runner (fun ~dst ~src ->
-    Device.Buffer.ensure_allocated dst;
-    Device.Buffer.ensure_allocated src;
-    let device = Device.get (Device.Buffer.device dst) in
-    let runner =
-      buffer_copy ~device ~total_sz:(Device.Buffer.nbytes dst)
-        ~dest_device:(Device.Buffer.device dst)
-        ~src_device:(Device.Buffer.device src)
-    in
-    ignore (Runner.call runner [ dst; src ] [] ~wait:false ~timeout:None))
 
 (* XXX: EncDec — hardware encode/decode (HEVC).  Out of scope. *)
 
@@ -796,20 +806,16 @@ let validate_queue_aliases buffers (submission : Tolk_uop.Uop.queue_info) =
   let interval slot = match Hashtbl.find_opt addresses slot with
     | Some value -> value
     | None ->
-        let b = buffers.(slot) in
-        let start = B.addr b in
-        let owner = Device.canonicalize (B.device b) in
-        let owner = if String.starts_with ~prefix:"CPU" owner then "CPU" else owner in
-        let value = owner, start, Nativeint.add start (Nativeint.of_int (B.nbytes b)) in
+        let value = match native_interval buffers.(slot) with
+          | Some interval -> interval
+          | None -> invalid_arg "buffer storage has no native address" in
         Hashtbl.add addresses slot value;
         value in
   List.iter (fun (a, b) ->
-      if B.nbytes buffers.(a) <> 0 && B.nbytes buffers.(b) <> 0 then begin
-        let da, sa, ea = interval a and db, sb, eb = interval b in
-        if da = db && Nativeint.unsigned_compare sa eb < 0
-           && Nativeint.unsigned_compare sb ea < 0 then
-          invalid_arg "queue replay: bindings introduce an untracked writable alias"
-      end) submission.independent_accesses
+      if B.nbytes buffers.(a) <> 0 && B.nbytes buffers.(b) <> 0 then
+        if intervals_overlap (interval a) (interval b) then
+          invalid_arg "queue replay: bindings introduce an untracked writable alias")
+    submission.independent_accesses
   end
 
 let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
@@ -819,7 +825,13 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
       let args = Array.of_list (call_arg_uops args) in
       let buffers = Array.map (resolve ctx) args in
       validate_queue_aliases buffers submission;
-      let addresses = try
+      let fallback_ctx = lazy {ctx with input_uops = Array.map U.from_buffer buffers} in
+      let overlapping_copy = List.exists (fun call -> match U.as_call call with
+          | Some {body; args = [dst; src]} when U.op body = Tolk_uop.Ops.Store ->
+              let fallback_ctx = Lazy.force fallback_ctx in
+              buffers_overlap (resolve fallback_ctx dst) (resolve fallback_ctx src)
+          | _ -> false) submission.fallback in
+      let addresses = if overlapping_copy then None else try
         let bytes = Bytes.create (8 * List.length submission.inputs) in
         List.iteri (fun i (slot, device) ->
             let address = Device.Buffer.addr ~device buffers.(slot) in
@@ -827,7 +839,7 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
         Some bytes
       with Tolk_uop.Storage.Mapping_unavailable _ when submission.fallback <> [] -> None in
       (match addresses with
-      | None -> fallback buffers
+      | None -> fallback ~stage:(not overlapping_copy) buffers
       | Some bytes ->
         if submission.inputs <> [] then begin
           if submission.table < 0 || submission.table >= Array.length buffers then
@@ -904,9 +916,9 @@ let rec dispatch_call ctx ~device ~to_program call =
       | Tolk_uop.Ops.Program ->
           (match U.arg call with
            | U.Arg.Call_info {aux = Some submission; _} ->
-               exec_hcq ctx call submission ~fallback:(fun buffers ->
+               exec_hcq ctx call submission ~fallback:(fun ~stage buffers ->
                    let ctx = {ctx with input_uops = Array.map U.from_buffer buffers} in
-                   match staged_queue ~to_program ctx call submission buffers with
+                   match (if stage then staged_queue ~to_program ctx call submission buffers else None) with
                    | Some staged -> List.concat_map (dispatch_call ctx ~device ~to_program) (U.children staged)
                    | None -> List.concat_map (dispatch_call {ctx with wait = true} ~device ~to_program) submission.fallback)
            | _ -> exec_kernel ctx ~device call)

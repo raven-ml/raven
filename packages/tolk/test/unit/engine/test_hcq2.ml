@@ -371,6 +371,35 @@ let compiled_host_submission () =
   let src = buffer 12l and dst = buffer 0l in
   replay linked [|src; src; dst|];
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0);
+  let submissions = !(Realize.queue_submissions) in
+  let kernels = !(Helpers.Global_counters.kernel_count) in
+  Device.Buffer.copy_from ~dst ~src;
+  equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0);
+  equal int (submissions + 1) !(Realize.queue_submissions);
+  equal int kernels !(Helpers.Global_counters.kernel_count);
+  (* Overlap must be detected from each invocation's storage before publishing
+     a parallel copy, including separately wrapped external addresses. *)
+  let overlap ~external_ ~backwards =
+    let root = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
+    let bytes = Bytes.create 16 in
+    List.iteri (fun i n -> Bytes.set_int32_le bytes (4 * i) n) [1l; 2l; 3l; 4l];
+    Device.Buffer.ensure_allocated root;
+    Device.Buffer.copyin root bytes;
+    let view offset = if external_ then
+        Device.create_buffer ~size:3 ~dtype:Dtype.int32
+          ~spec:{Device.Buffer_spec.default with external_ptr =
+            Some (Nativeint.add (Device.Buffer.addr root) (Nativeint.of_int offset))} device
+      else Device.Buffer.view root ~size:3 ~dtype:Dtype.int32 ~offset in
+    let src = view (if backwards then 0 else 4)
+    and dst = view (if backwards then 4 else 0) in
+    let before = !(Realize.queue_submissions) in
+    Device.Buffer.copy_from ~dst ~src;
+    let bytes = Device.Buffer.as_bytes root in
+    equal (list int32) (if backwards then [1l; 1l; 2l; 3l] else [2l; 3l; 4l; 4l])
+      (List.init 4 (fun i -> Bytes.get_int32_le bytes (4 * i)));
+    equal int before !(Realize.queue_submissions) in
+  List.iter (fun external_ -> List.iter (fun backwards -> overlap ~external_ ~backwards)
+      [false; true]) [false; true];
   (* The host queue executes both kinds as copies; PROGRAM selects COMPUTE
      so the real planner must distinguish FIFO, waits and independent calls. *)
   let compute dst src =

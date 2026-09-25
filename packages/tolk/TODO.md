@@ -20,9 +20,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   duplicate command builders, direct argument arenas and handoff bookkeeping
   once their callers migrate. Separate Metal/CUDA loaded-program ownership
   from direct launch wrappers; remove unused Metal `Icb.execute` and dispatch
-  update APIs while retaining allocator blit ownership. Route
-  `Buffer.copy_from` through scheduled STORE at the existing compiler boundary,
-  and establish NV raw-INS compilation before deleting bootstrap submissions.
+  update APIs while retaining allocator blit ownership. Establish NV raw-INS
+  compilation before deleting bootstrap submissions.
   Preserve bounded waits and retirement for
   independently linked submissions; these are separate safety requirements.
 - Port the target's distinction between one-shot linker ring allocations and

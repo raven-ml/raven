@@ -5,13 +5,13 @@
 
 (* Fail-loud half of the [Device.Buffer.copy_from] contract.
 
-   copy_from delegates to a runner the realize engine installs at
+   copy_from delegates to a runner the code generator installs at
    initialization. Until then it must fail loudly rather than silently drop the
    copy. This executable deliberately never references the engine, so the
    installer never runs and copy_from stays unbacked, letting us observe the
    pre-install behaviour that test_device (which links the engine) cannot.
 
-   The guarantee rests on this executable not linking [Realize]: if a future
+   The guarantee rests on this executable not linking [Codegen]: if a future
    change makes it reference the engine — directly or through a helper — the
    installer runs, copy_from succeeds, and the assertion below fails. That is a
    signal to move this test, not to relax it. The delegation half is in
@@ -38,8 +38,8 @@ let fail_loud_tests =
           let dst = allocated_i32 4 and src = allocated_i32 4 in
           raises
             (Invalid_argument
-               "Device.Buffer.copy_from: no copy runner installed; link the \
-                realize engine to route buffer copies") (fun () ->
+               "Device.Buffer.copy_from: no copy runner installed; link Codegen \
+                to route buffer copies") (fun () ->
               Device.Buffer.copy_from ~dst ~src));
     ]
 

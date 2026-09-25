@@ -473,15 +473,15 @@ module Host_allocator = struct
 end
 
 (* Buffer-to-buffer copy is a scheduled device operation, not a device-layer
-   primitive: the executor lives in the engine, which installs it here once
+   primitive: the compiler installs the shared executor here once
    at initialization.  Keeping a single installer avoids a cyclic dependency
    between this module and the engine while letting [copy_from] present a
    stable contract. *)
 let copy_runner : (dst:t -> src:t -> unit) ref =
   ref (fun ~dst:_ ~src:_ ->
     invalid_arg
-      "Device.Buffer.copy_from: no copy runner installed; link the realize \
-       engine to route buffer copies")
+      "Device.Buffer.copy_from: no copy runner installed; link Codegen \
+       to route buffer copies")
 
 let install_copy_runner f = copy_runner := f
 

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Contract tests for [Device.Buffer.copy_from], the canonical buffer-to-buffer
-   move. The device layer keeps no executor of its own: the realize engine
+   move. The device layer keeps no executor of its own: the code generator
    installs one at initialization through [install_copy_runner], and copy_from
    delegates to it. These tests exercise that installed delegation on CPU
    buffers. The complementary fail-loud half — copy_from raising before any
@@ -17,12 +17,12 @@ open Tolk
 open Tolk_uop
 module D = Dtype
 
-(* Referencing the realize engine forces its top-level installer to run in this
+(* Referencing the code generator forces its top-level installer to run in this
    executable, registering the canonical copy runner. Without a reference the
-   linker would drop [Realize] and copy_from would stay unbacked. The installed
+   linker would drop [Codegen] and copy_from would stay unbacked. The installed
    runner resolves the destination device by name, so the CPU opener must be
    registered too. *)
-let () = ignore (Sys.opaque_identity Realize.queue_submissions)
+let () = ignore (Sys.opaque_identity (Some Codegen.to_program))
 let () = Device.register "CPU" Tolk_cpu.create
 
 let device = Device.get "CPU:device-test"
@@ -87,7 +87,7 @@ let copy_from_tests =
 
 (* The fail-loud half of the contract — copy_from raising [Invalid_argument]
    before any runner is installed — cannot be observed here. The delegation
-   tests above require the realize engine, and linking it runs the installer at
+   tests above require the code generator, and linking it runs the installer at
    module-initialization time, before [main], so the uninstalled state is gone
    by the time any test runs. test_device_no_engine covers that half in a
    separate executable that never references the engine. *)
