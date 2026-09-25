@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD compiled SDMA queues support typed writes with patched 32/64-bit replay
+  values. Copy chunk limits now follow the full SDMA revision, including the
+  1 GiB limit introduced at 4.4.2.
+
 - Symbolic kernel estimates count repeated loop contributions correctly and
   simplify final FLOP expressions. Equal symbolic terms previously lost an
   addend, understating beam-search costs.

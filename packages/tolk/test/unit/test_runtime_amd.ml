@@ -398,6 +398,35 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)] else [call] in
   Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
 
+let compiled_sdma_write () =
+  let open Tolk in
+  let open Tolk_uop in
+  let _, device, _, buffers, submission = queue_fixture ~copies:false () in
+  let name = Device.name device in
+  let dst = i32_buf device [0; 0; 0] in
+  let narrow = U.variable ~param:true ~name:"write32" ~min_val:0 ~max_val:0xffffffff ~dtype:D.uint32 () in
+  let wide = U.variable ~param:true ~name:"write64" ~min_val:0 ~max_val:Int.max_int ~dtype:D.uint64 () in
+  let write = U.ins ~mnemonic:"write" ~operands:[U.from_buffer dst; narrow; wide] () in
+  let submit = U.custom_function ~name:"submit_amd_copy_0" ~srcs:[U.linear [write]; U.group []] in
+  let kernel_info = U.{name = "sdma_write"; applied_opts = []; opts_to_apply = None; estimates = None; beam = 0} in
+  let call = Hcq2.lower_call ~devices:[name] (U.sink ~kernel_info [submit]) in
+  let linked = Realize.link_linear (U.linear [call]) in
+  let get tag = Hashtbl.find buffers tag in
+  let module S = (val (gfx1100 ()).Tolk_amd.sdma) in
+  List.iteri (fun replay (a, b) ->
+      Realize.run_linear ~device ~jit:true ~var_vals:["write32", a; "write64", b]
+        ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) linked;
+      Submission.check submission;
+      let ring = Device.Buffer.as_bytes (get "ring_copy_0") in
+      let stream = Bytes.sub ring (replay * 28) 28 in
+      equal int32 (Int32.of_int S.sdma_op_write) (Bytes.get_int32_le stream 0);
+      equal int64 (Int64.of_nativeint (Device.Buffer.addr dst)) (Bytes.get_int64_le stream 4);
+      equal int32 2l (Bytes.get_int32_le stream 12);
+      equal int32 (Int64.to_int32 a) (Bytes.get_int32_le stream 16);
+      equal int64 b (Bytes.get_int64_le stream 20);
+      Device.Buffer.copyin (get "read_ptr_copy_0") (Device.Buffer.as_bytes (get "write_ptr_copy_0")))
+    [0x89abcdefL, 0x1122334455667788L; 0x12345678L, 0x3766554433221100L]
+
 let compile_queue ~copies =
   let compiled, _, _, _, _ = queue_fixture ~copies () in compiled
 
@@ -677,6 +706,7 @@ let () =
         [test "compiled single-XCC packets wrap in dispatch units" (fun () -> execute_aql_queue ~multi:false);
          test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true)];
       group "Compiled queues" [
+        test "SDMA writes patch mixed-width values on replay" compiled_sdma_write;
         test "profiling timestamps bracket the compiled dispatch" compiled_profile_packets;
         test "PM4 compute dies use disjoint scratch slices" compiled_pm4_scratch_slices;
         test "upload and download publish to independent SDMA rings" execute_split_copy_queues;
@@ -1116,6 +1146,14 @@ let () =
         ];
       group "Copy_queue"
         [
+          test "copy limits follow the full SDMA revision" (fun () ->
+              List.iter (fun (sdma_version, expected) ->
+                  let dev = amd_dev ~target:(11, 0, 0) ~xccs:1 ~gc_version:(11, 0, 0)
+                      ~nbio_version:(4, 3, 0) ~sdma_version () in
+                  equal int expected dev.Tolk_amd.max_copy_size)
+                [(4, 4, 1), 0x400000; (4, 4, 2), 0x40000000;
+                 (4, 9, 0), 0x40000000;
+                 (6, 0, 0), 0x40000000]);
           test "copy chunks at the copy-size cap" (fun () ->
               let module Cp = Tolk_amd.Copy_queue in
               let dev = gfx1100 () in

@@ -202,7 +202,8 @@ let device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
       Ip.create
         ~name:(if major target < 12 then "nbio" else "nbif")
         ~version:nbio_version ~bases:nbio_bases;
-    max_copy_size = (if major sdma_version >= 5 then 0x40000000 else 0x400000);
+    max_copy_size = (if ((4, 4, 2) <= sdma_version && sdma_version < (5, 0, 0))
+        || sdma_version >= (5, 2, 0) then 0x40000000 else 0x400000);
     sqtt_enabled;
     tmpring_size;
     scratch;
@@ -1047,6 +1048,14 @@ module Encoded_queue = struct
                    u32 (size - 1); u32 0; add (addr name src) (u64 !offset); add (addr name dst) (u64 !offset)];
                 offset := !offset + size
               done
+          | _, U.Arg.Typed ("write", _) when not compute ->
+              (match U.children node with
+               | dst :: values ->
+                   let count = List.fold_left (fun n value ->
+                       n + if D.itemsize (U.dtype value) = 8 then 2 else 1) 0 values in
+                   (* WRITE_LINEAR is sub-op zero on every supported SDMA generation. *)
+                   q ([u32 S.sdma_op_write; addr name dst; u32 (count - 1)] @ values)
+               | [] -> invalid_arg "AMD queue: write requires a destination")
           | _, U.Arg.Typed ("barrier", _) -> if compute then append_static Compute_queue.memory_barrier
           | _, U.Arg.Typed ("wait", _) ->
               let args = U.src node in
