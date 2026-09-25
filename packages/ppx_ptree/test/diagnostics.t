@@ -27,6 +27,11 @@ to write instead.
   ppx_ptree: field [count] is an int; report it with [@ptree.int] if a compiled program depends on it, or leave it out with [@ptree.skip]
   == cases/constraints.ml
   ppx_ptree: type [t] has constraints, which a derived walk does not support
+  == cases/constructor_attribute.ml
+  ppx_ptree: [@ptree.int] on constructor [C], which has 2 arguments; put it on an argument's type, as in [C of (int [@ptree.int]) * ...]
+  == cases/declaration_attribute.ml
+  ppx_ptree: [@@ptree.skip] on type [t]: put the attribute on a field or a part
+  ppx_ptree: field [name] is a string, which has no walk; leave it out with [@ptree.skip], or hold data a compiled program depends on in a tensor
   == cases/dtype.ml
   ppx_ptree: field [dtype] is a dtype, which is data; leave it out with [@ptree.skip]
   == cases/duplicate_attribute.ml

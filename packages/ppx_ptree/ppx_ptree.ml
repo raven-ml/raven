@@ -26,7 +26,32 @@ let walk_label =
   Attribute.declare "@ptree.walk" Attribute.Context.label_declaration
     Ast_pattern.__ Fun.id
 
+let int_constructor =
+  Attribute.declare_flag "@ptree.int" Attribute.Context.constructor_declaration
+
+let skip_constructor =
+  Attribute.declare_flag "@ptree.skip" Attribute.Context.constructor_declaration
+
+let walk_constructor =
+  Attribute.declare "@ptree.walk" Attribute.Context.constructor_declaration
+    Ast_pattern.__ Fun.id
+
+let int_declaration =
+  Attribute.declare_flag "@ptree.int" Attribute.Context.type_declaration
+
+let skip_declaration =
+  Attribute.declare_flag "@ptree.skip" Attribute.Context.type_declaration
+
+let walk_declaration =
+  Attribute.declare "@ptree.walk" Attribute.Context.type_declaration
+    Ast_pattern.__ Fun.id
+
 type annotation = Int | Skip | Walk of expression
+
+let attribute_label = function
+  | Int -> "ptree.int"
+  | Skip -> "ptree.skip"
+  | Walk _ -> "ptree.walk"
 
 (* Errors are collected and emitted as located error nodes, so one expansion
    reports all of them. *)
@@ -85,6 +110,14 @@ let core_annotation env ty =
 let label_annotation env ld =
   annotation env ~loc:ld.pld_loc ~int:int_label ~skip:skip_label
     ~walk:walk_label ld
+
+let constructor_annotation env cd =
+  annotation env ~loc:cd.pcd_loc ~int:int_constructor ~skip:skip_constructor
+    ~walk:walk_constructor cd
+
+let declaration_annotation env td =
+  annotation env ~loc:td.ptype_loc ~int:int_declaration ~skip:skip_declaration
+    ~walk:walk_declaration td
 
 (* Names *)
 
@@ -501,6 +534,22 @@ let variant env ~loc cds =
         "constructor [%s] has a GADT type, which a derived walk cannot rebuild \
          at another parameter"
         name;
+    let annot = constructor_annotation env cd in
+    let misplaced =
+      match (annot, cd.pcd_args) with
+      | None, _ | Some _, Pcstr_tuple [ _ ] -> false
+      | Some a, args ->
+          error env ~loc
+            "[@%s] on constructor [%s], which has %s; put it on an argument's \
+             type, as in [%s of (int [@%s]) * ...]"
+            (attribute_label a) name
+            (match args with
+            | Pcstr_record _ -> "a record argument"
+            | Pcstr_tuple [] -> "no argument"
+            | Pcstr_tuple l -> Printf.sprintf "%d arguments" (List.length l))
+            name (attribute_label a);
+          true
+    in
     let tag =
       B.eapply ~loc (walk_fn ~loc "case")
         [ ident ~loc cursor; B.estring ~loc name ]
@@ -508,17 +557,27 @@ let variant env ~loc cds =
     let lid = { loc; txt = Longident.Lident name } in
     let pat, body =
       match cd.pcd_args with
+      | _ when misplaced -> (None, B.pexp_construct ~loc lid None)
       | Pcstr_tuple [] -> (None, B.pexp_construct ~loc lid None)
       | Pcstr_tuple [ ty ] ->
           let part = Printf.sprintf "the argument of [%s]" name in
+          let walk w =
+            B.eapply ~loc w [ ident ~loc cursor; ident ~loc (var 0) ]
+          in
+          let walked =
+            match annot with
+            | Some Skip ->
+                check_skip env ~loc part ty;
+                ident ~loc (var 0)
+            | Some (Walk e) -> walk e
+            | Some Int ->
+                check_int env ~loc part ty;
+                walk (walker env ~ints:true part ty)
+            | None -> walk (walker env ~ints:false part ty)
+          in
           ( Some (B.pvar ~loc (var 0)),
             sequence ~loc
-              [
-                ( var 0,
-                  B.eapply ~loc
-                    (walker env ~ints:false part ty)
-                    [ ident ~loc cursor; ident ~loc (var 0) ] );
-              ]
+              [ (var 0, walked) ]
               (B.pexp_construct ~loc lid (Some (ident ~loc (var 0)))) )
       | Pcstr_tuple tys ->
           let names = List.mapi (fun i _ -> var i) tys in
@@ -673,6 +732,15 @@ let errors extension env =
       extension ~loc (Location.Error.to_extension e) [])
     env.errors
 
+(* An attribute on the declaration itself belongs to one of its parts. *)
+let check_declaration env td =
+  Option.iter
+    (fun a ->
+      error env ~loc:td.ptype_loc
+        "[@@@@%s] on type [%s]: put the attribute on a field or a part"
+        (attribute_label a) td.ptype_name.txt)
+    (declaration_annotation env td)
+
 let generate_impl ~ctxt (rec_flag, tds) =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
   let locals =
@@ -689,6 +757,7 @@ let generate_impl ~ctxt (rec_flag, tds) =
         in
         let env = { env with param } in
         let bad_parameters = env.errors <> [] in
+        check_declaration env td;
         if td.ptype_private = Private then
           error env ~loc:td.ptype_loc
             "private type [%s] cannot be rebuilt by a derived walk"
@@ -757,6 +826,7 @@ let generate_intf ~ctxt:_ (_, tds) =
     (fun td ->
       let env = { param = None; locals = []; errors = [] } in
       ignore (parameter env td);
+      check_declaration env td;
       match env.errors with
       | _ :: _ -> errors B.psig_extension env
       | [] ->

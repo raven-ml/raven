@@ -154,6 +154,8 @@ let test_diagnostic_locations () =
       ("class.ml", [ 1 ]);
       ("conflicting_attributes.ml", [ 1; 1 ]);
       ("constraints.ml", [ 1 ]);
+      ("constructor_attribute.ml", [ 1 ]);
+      ("declaration_attribute.ml", [ 1; 1 ]);
       ("dtype.ml", [ 1 ]);
       ("duplicate_attribute.ml", [ 1; 1 ]);
       ("existential.ml", [ 1; 1 ]);

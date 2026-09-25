@@ -91,8 +91,11 @@ at the part's type, for example with `Unbound value M.walk`.
 
 ## Attributes
 
-An attribute goes after a record field, or on a type to annotate a nested
-part: `(int [@ptree.int]) list`. A part takes at most one.
+An attribute goes after a record field, after a constructor's single
+argument (`Frozen of Nx.float32_t [@ptree.skip]`), or on a type to annotate a
+nested part: `(int [@ptree.int]) list`. A part takes at most one. On a
+constructor with no argument or several, or on the type declaration, it is an
+error.
 
 - `[@ptree.int]` reports the part's integers and bools. A compiled program is
   cached per reported value: mark an integer that changes what a program

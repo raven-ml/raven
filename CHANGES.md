@@ -424,6 +424,11 @@ All notable changes to this project will be documented in this file.
 
 ### Ppx_ptree (new)
 
+- `[@ptree.int]`, `[@ptree.skip]` and `[@ptree.walk f]` after a constructor's
+  single argument apply to it. They were ignored there, so
+  `Frozen of Nx.float32_t [@ptree.skip]` still walked the tensor. On a
+  constructor with no argument or several, and on a type declaration, they
+  are errors.
 - Add the `ppx_ptree` deriver: `[@@deriving ptree]` writes a type's `walk`,
   the one function of `Nx.Ptree.S`, and a type without a parameter's
   structure, `ptree`. `[@ptree.int]` marks an integer a compiled program

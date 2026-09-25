@@ -88,8 +88,10 @@
 
     {1:attributes Attributes}
 
-    An attribute goes after a record field, or on a type to annotate a nested
-    part, as in [(int [@ptree.int]) list]. A part takes at most one.
+    An attribute goes after a record field, after a constructor's single
+    argument, or on a type to annotate a nested part, as in
+    [(int [@ptree.int]) list]. A part takes at most one. On a constructor with
+    no argument or several, or on the type declaration, it is an error.
     - [[@ptree.int]] reports the part's [int]s and [bool]s. A compiled program
       is cached per reported value, so mark an integer that changes what a
       program computes (a window, a block size, a layer kind), and hold a value

@@ -302,6 +302,46 @@ let test_variant () =
       ("constant constructor", Weight.Tied);
     ]
 
+(* An attribute after a constructor's single argument applies to it. *)
+
+module Marked = struct
+  type 'a t =
+    | Plain of 'a
+    | Window of int [@ptree.int]
+    | Frozen of Nx.float32_t [@ptree.skip]
+  [@@deriving ptree]
+end
+
+module Marked_hand = struct
+  type 'a t = 'a Marked.t
+
+  let walk c : _ t -> _ t =
+    let open Nx.Ptree.Walk in
+    function
+    | Plain x ->
+        case c "Plain";
+        Plain (leaf c x)
+    | Window n ->
+        case c "Window";
+        Window (int c n)
+    | Frozen x ->
+        case c "Frozen";
+        Frozen x
+end
+
+let test_constructor_attributes () =
+  List.iter
+    (fun (msg, x) ->
+      same ~msg
+        ~hand:(Nx.Ptree.instantiate (module Marked_hand))
+        (Nx.Ptree.instantiate (module Marked))
+        x)
+    [
+      ("an argument", Marked.Plain (vec [| 1. |]));
+      ("[@ptree.int] on a constructor", Marked.Window 4);
+      ("[@ptree.skip] on a constructor", Marked.Frozen (vec [| 2. |]));
+    ]
+
 (* Recursive types, arrays and aliases. *)
 
 module Tree = struct
@@ -407,6 +447,7 @@ let () =
           test "[@ptree.walk]" test_walk_attribute;
           test "[@ptree.int] and [@ptree.skip]" test_data;
           test "variants" test_variant;
+          test "attributes on constructors" test_constructor_attributes;
           test "recursive types" test_recursive;
           test "arrays" test_array;
           test "aliases" test_alias;
