@@ -6,6 +6,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **PCI cleanup releases owned system-memory virtual ranges and the CPU
+  view's address.** The frozen reference frees only device-memory ranges and
+  assumes the GPU address is the CPU mapping address. BAR mappings can differ;
+  retaining either allocation leaks page tables or host mappings. Consumers:
+  AMD/NV pinned staging and CPU-visible queue storage. Coverage: repeated
+  system/peer mapping release in `test_memory` and hardware-gated AMD CPU-map
+  release. Remove this ruling when upstream releases both resources correctly.
+
 - **CPU kernels expose an entry taking buffer and scalar arrays.** The Clang
   wrapper casts each scalar to its declared type, so OCaml can call arbitrary
   kernel arities through one native stub without an FFI dependency. `Tiny_elf`

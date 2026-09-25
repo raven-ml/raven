@@ -426,9 +426,11 @@ let valloc t size ?(align = 0x1000) ?(uncached = false) ?(contiguous = false) ()
   end
 
 let vfree t vm =
-  if Helpers.getenv "GMMU" 1 = 0 then pfree t (fst (List.hd vm.paddrs)) ()
+  if vm.aspace = Phys && Helpers.getenv "GMMU" 1 = 0 then
+    pfree t (fst (List.hd vm.paddrs)) ()
   else begin
     unmap_range t ~vaddr:vm.va_addr ~size:vm.size;
     Tlsf.free t.va_allocator vm.va_addr;
-    List.iter (fun (paddr, _) -> pfree t paddr ()) vm.paddrs
+    if vm.aspace = Phys then
+      List.iter (fun (paddr, _) -> pfree t paddr ()) vm.paddrs
   end

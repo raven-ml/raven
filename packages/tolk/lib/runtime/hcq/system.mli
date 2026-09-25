@@ -302,9 +302,9 @@ module Pci_iface_base : sig
       uncached memory. [uncached] requests uncached device memory;
       [cpu_access] host-visible memory — the buffer carries a CPU view
       exactly when the memory is host-backed or [cpu_access] is set.
-      Uncached host-visible requests are served from system memory (as
-      is everything CPU-visible on a small-BAR device) unless
-      [force_devmem] insists on device memory; [contiguous] makes
+      CPU-visible requests on a small-BAR device use system memory unless
+      [force_devmem] insists on device memory. Large-BAR devices retain
+      device memory even for uncached CPU-visible requests. [contiguous] makes
       host-backed memory physically contiguous. All default to
       [false].
 
@@ -316,8 +316,9 @@ module Pci_iface_base : sig
       pinned. *)
 
   val free : ('impl, 'pt) t -> ('impl, 'pt) meta Hcq.Buffer.t -> unit
-  (** [free t b] releases [b]: an allocation of [t] returns its device
-      memory and CPU mapping; one owned by a peer interface is only
+  (** [free t b] releases [b]: an allocation of [t] returns its virtual
+      range, device memory and CPU mapping, whose address may differ from
+      the GPU address; one owned by a peer interface is only
       unmapped from [t]'s page tables. *)
 
   val map : ('impl, 'pt) t -> ('impl, 'pt) meta Hcq.Buffer.t -> ('impl, 'pt) meta Hcq.Buffer.t

@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- PCI allocations release system-memory virtual ranges and the actual CPU
+  mapping, preventing leaks when BAR addresses differ from GPU addresses.
+  Large-BAR GPUs keep uncached CPU-visible allocations in device memory.
+
 - Remove `Device.Graph` and `Jit.batch_graphs`; queue submission is compiled
   by `Realize.compile_linear` for both eager execution and JIT replay.
   `Realize.queue_submissions` replaces the old graph launch counter.

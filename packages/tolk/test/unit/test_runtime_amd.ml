@@ -1580,6 +1580,33 @@ let () =
         ];
       group "Device"
         [
+          test "deallocation releases host and BAR CPU mappings" (fun () ->
+              let device = amd_device () in
+              let mapped address =
+                In_channel.with_open_text "/proc/self/maps" (fun ic ->
+                    let rec loop () =
+                      match In_channel.input_line ic with
+                      | None -> false
+                      | Some line ->
+                          let bounds = List.hd (String.split_on_char ' ' line) in
+                          match String.split_on_char '-' bounds with
+                          | [lo; hi] ->
+                              let lo = Nativeint.of_string ("0x" ^ lo) in
+                              let hi = Nativeint.of_string ("0x" ^ hi) in
+                              (lo <= address && address < hi) || loop ()
+                          | _ -> fail "invalid /proc/self/maps entry"
+                    in loop ()) in
+              List.iter (fun host ->
+                  let spec = {Tolk.Device.Buffer_spec.default with
+                    host; cpu_access = true; uncached = true; nolru = true} in
+                  let buffer = Tolk.Device.create_buffer device ~size:4096
+                      ~dtype:D.uint8 ~spec in
+                  let address = match Tolk.Device.Buffer.host_addr buffer with
+                    | Some address -> address
+                    | None -> fail "CPU-visible allocation has no host mapping" in
+                  is_true (mapped address);
+                  Tolk.Device.Buffer.deallocate buffer;
+                  is_false (mapped address)) [true; false]);
           test "create opens the device and synchronize completes" (fun () ->
               let device = amd_device () in
               equal string "AMD" (Tolk.Device.name device);

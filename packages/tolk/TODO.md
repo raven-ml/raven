@@ -29,7 +29,9 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 - Adopt HCQ2 byte-interval dependencies and queue encoding on the
   compile/link/run path, including CPU host submission and retained JIT
-  execution. Validate replay inputs whose alias
+  execution. Share mapped submitted/completed timeline state with direct
+  dispatch and transfers; retire the independent OCaml counters and define
+  rollover/recovery for retained submissions. Validate replay inputs whose alias
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection and eager submission-template caching.
@@ -40,7 +42,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   tables. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
 - Fix PCI host/multi-die mappings and NV per-interface storage metadata, peer
-  mapping and ring placement. Preserve tinygrad's default PCI selection.
+  mapping and ring placement. Validate host/device placement and CPU mapping
+  cleanup on large-BAR and small-BAR hardware.
+  Preserve tinygrad's default PCI selection.
 - Port sorted-axis UNSHARD and final sharding/indexing/allreduce ownership,
   COPY/CALL/WMMA specs and hierarchical allreduce with their producers. Cover
   symbolic maximum sizes, call slots and the extra slice-copy kernels in

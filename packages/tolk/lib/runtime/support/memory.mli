@@ -231,8 +231,10 @@ val valloc :
     partially allocated ranges are released. *)
 
 val vfree : 'pt t -> virt_mapping -> unit
-(** [vfree t vm] unmaps [vm] and releases its virtual range and
-    backing physical memory. *)
+(** [vfree t vm] unmaps [vm] and releases its virtual range, which must
+    have been reserved by {!alloc_vaddr} or {!valloc}. Physical device
+    pages are returned to [t]; system and peer pages remain caller-owned.
+    Use {!unmap_range} for mappings whose virtual range is not owned by [t]. *)
 
 (** {1:physical Physical memory} *)
 

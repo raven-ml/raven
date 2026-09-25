@@ -424,6 +424,17 @@ let () =
         ];
       group "Vfree"
         [
+          test "releases owned virtual ranges over external system and peer pages" (fun () ->
+              List.iter (fun aspace ->
+                  let fx = make_fixture ~va_size:0x2000 () in
+                  for i = 0 to 15 do
+                    let va = Memory.alloc_vaddr fx.mm 0x1000 () in
+                    equal ~msg:(Printf.sprintf "virtual range after release %d" i) int 0 va;
+                    let mapping = Memory.map_range fx.mm ~vaddr:va ~size:0x1000
+                        [0x40000000, 0x1000] aspace () in
+                    Memory.vfree fx.mm mapping;
+                    equal (array int64) (Array.make 16 0L) (slice fx 0 16)
+                  done) [Memory.Sys; Memory.Peer]);
           test "returns virtual and physical space for reuse" (fun () ->
               let fx = make_fixture () in
               let vm = Memory.valloc fx.mm 0x2000 () in

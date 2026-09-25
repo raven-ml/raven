@@ -574,8 +574,7 @@ module Pci_iface_base = struct
       ?(contiguous = false) ?(force_devmem = false) size =
     let should_use_sysmem =
       host
-      || (if is_bar_small t then cpu_access else uncached && cpu_access)
-         && not force_devmem
+      || (cpu_access && is_bar_small t && not force_devmem)
     in
     (* Align size to huge pages for large allocations, otherwise the
        unaligned tail falls back to 4KB pages, increasing TLB
@@ -626,10 +625,12 @@ module Pci_iface_base = struct
       Memory.unmap_range t.mm
         ~vaddr:(Nativeint.to_int (Hcq.Buffer.va b))
         ~size:(round_up (Hcq.Buffer.size b) 0x1000);
-    if meta.owner == t && meta.mapping.Memory.aspace = Memory.Phys then
+    if meta.owner == t then
       Memory.vfree t.mm meta.mapping;
-    if meta.owner == t && meta.has_cpu_mapping then
-      File_io.munmap (Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b)
+    if meta.owner == t && meta.has_cpu_mapping then begin
+      let view = Hcq.Buffer.cpu_view b in
+      File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view)
+    end
 
   (* system.py:288 PCIIfaceBase.p2p_paddrs: peers address this device's
      memory through its memory BAR on the bus. *)
