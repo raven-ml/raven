@@ -318,9 +318,11 @@ let vfio_container =
        if not (Sys.file_exists "/sys/module/vfio") then
          ignore (Sys.command "sudo modprobe vfio-pci disable_idle_d3=1" : int);
        write_str "/sys/module/vfio/parameters/enable_unsafe_noiommu_mode" "1";
-       let fd = File_io.openfile "/dev/vfio/vfio" ~flags:File_io.o_rdwr in
-       Ffi.vfio_check_extension fd;
-       Some fd
+       with_rollback (fun rollback ->
+           let fd = File_io.openfile "/dev/vfio/vfio" ~flags:File_io.o_rdwr in
+           rollback (fun () -> File_io.close fd);
+           Ffi.vfio_check_extension fd;
+           Some fd)
      with Failure _ | Sys_error _ -> None)
 
 let flock_acquire name =
@@ -359,80 +361,86 @@ module Pci_device = struct
   let lock_fd t = t.lock_fd
 
   let create ?(sysfs = "/sys") ~devpref pcibus =
-    let lock_fd =
-      flock_acquire
-        (String.lowercase_ascii devpref ^ "_" ^ String.lowercase_ascii pcibus
-       ^ ".lock")
-    in
-    let dev_path = sysfs ^ "/bus/pci/devices/" ^ pcibus in
-    (match File_io.openfile (dev_path ^ "/enable") ~flags:File_io.o_rdwr with
-    | fd -> File_io.close fd
-    | exception Failure msg ->
-        if
-          has_substring msg "Permission denied"
-          || has_substring msg "Operation not permitted"
-        then
-          failwith
-            (Printf.sprintf
-               "Cannot access PCI device %s: run as root or grant the process \
-                CAP_SYS_ADMIN with setcap"
-               pcibus)
-        else failwith msg);
-    if Sys.file_exists (dev_path ^ "/driver") then
-      write_str (dev_path ^ "/driver/unbind") pcibus;
-    if Sys.file_exists (dev_path ^ "/driver") then
-      failwith ("Driver is bound to " ^ pcibus);
-    for fn = 1 to 7 do
-      let sib =
-        Printf.sprintf "%s/bus/pci/devices/%s%d" sysfs
-          (String.sub pcibus 0 (String.length pcibus - 1))
-          fn
+    with_rollback (fun rollback ->
+      let lock_fd =
+        flock_acquire
+          (String.lowercase_ascii devpref ^ "_" ^ String.lowercase_ascii pcibus
+         ^ ".lock")
       in
-      if Sys.file_exists sib then write_str (sib ^ "/remove") "1"
-    done;
-    (* system.py:172: with VFIO=1 and a usable container, bind the
-       vfio-pci driver and route the device's MSI vector to an eventfd
-       so waits can sleep on interrupts; otherwise plain sysfs enable *)
-    let vfio =
-      match
-        if Tolk.Helpers.getenv "VFIO" 0 <> 0 then Lazy.force vfio_container
-        else None
-      with
-      | None ->
-          write_str (dev_path ^ "/enable") "1";
-          None
-      | Some container ->
-          write_str (dev_path ^ "/driver_override") "vfio-pci";
-          write_str (sysfs ^ "/bus/pci/drivers_probe") pcibus;
-          let group =
-            Filename.basename (Ffi.readlink (dev_path ^ "/iommu_group"))
-          in
-          let group_fd =
-            File_io.openfile
-              ("/dev/vfio/noiommu-" ^ group)
-              ~flags:File_io.o_rdwr
-          in
-          Ffi.vfio_group_set_container group_fd container;
-          (* setting the iommu mode works only once per container *)
-          ignore (Ffi.vfio_set_iommu container : bool);
-          let dev_fd = Ffi.vfio_group_get_device_fd group_fd pcibus in
-          let irq_fd = Ffi.eventfd 0 in
-          Ffi.vfio_set_irq_eventfd dev_fd irq_fd;
-          Some (group_fd, dev_fd, irq_fd)
-    in
-    let cfg_fd =
-      File_io.openfile (dev_path ^ "/config")
-        ~flags:(File_io.o_rdwr lor o_sync)
-    in
-    {
-      pcibus;
-      dev_path;
-      lock_fd;
-      cfg_fd;
-      bar_fds = Hashtbl.create 4;
-      bar_infos = Hashtbl.create 4;
-      vfio;
-    }
+      rollback (fun () -> File_io.close lock_fd);
+      let dev_path = sysfs ^ "/bus/pci/devices/" ^ pcibus in
+      (match File_io.openfile (dev_path ^ "/enable") ~flags:File_io.o_rdwr with
+      | fd -> File_io.close fd
+      | exception Failure msg ->
+          if
+            has_substring msg "Permission denied"
+            || has_substring msg "Operation not permitted"
+          then
+            failwith
+              (Printf.sprintf
+                 "Cannot access PCI device %s: run as root or grant the process \
+                  CAP_SYS_ADMIN with setcap"
+                 pcibus)
+          else failwith msg);
+      if Sys.file_exists (dev_path ^ "/driver") then
+        write_str (dev_path ^ "/driver/unbind") pcibus;
+      if Sys.file_exists (dev_path ^ "/driver") then
+        failwith ("Driver is bound to " ^ pcibus);
+      for fn = 1 to 7 do
+        let sib =
+          Printf.sprintf "%s/bus/pci/devices/%s%d" sysfs
+            (String.sub pcibus 0 (String.length pcibus - 1))
+            fn
+        in
+        if Sys.file_exists sib then write_str (sib ^ "/remove") "1"
+      done;
+      (* system.py:172: with VFIO=1 and a usable container, bind the
+         vfio-pci driver and route the device's MSI vector to an eventfd
+         so waits can sleep on interrupts; otherwise plain sysfs enable *)
+      let vfio =
+        match
+          if Tolk.Helpers.getenv "VFIO" 0 <> 0 then Lazy.force vfio_container
+          else None
+        with
+        | None ->
+            write_str (dev_path ^ "/enable") "1";
+            None
+        | Some container ->
+            write_str (dev_path ^ "/driver_override") "vfio-pci";
+            write_str (sysfs ^ "/bus/pci/drivers_probe") pcibus;
+            let group =
+              Filename.basename (Ffi.readlink (dev_path ^ "/iommu_group"))
+            in
+            let group_fd =
+              File_io.openfile
+                ("/dev/vfio/noiommu-" ^ group)
+                ~flags:File_io.o_rdwr
+            in
+            rollback (fun () -> File_io.close group_fd);
+            Ffi.vfio_group_set_container group_fd container;
+            (* setting the iommu mode works only once per container *)
+            ignore (Ffi.vfio_set_iommu container : bool);
+            let dev_fd = Ffi.vfio_group_get_device_fd group_fd pcibus in
+            rollback (fun () -> File_io.close dev_fd);
+            let irq_fd = Ffi.eventfd 0 in
+            rollback (fun () -> File_io.close irq_fd);
+            Ffi.vfio_set_irq_eventfd dev_fd irq_fd;
+            Some (group_fd, dev_fd, irq_fd)
+      in
+      let cfg_fd =
+        File_io.openfile (dev_path ^ "/config")
+          ~flags:(File_io.o_rdwr lor o_sync)
+      in
+      rollback (fun () -> File_io.close cfg_fd);
+      {
+        pcibus;
+        dev_path;
+        lock_fd;
+        cfg_fd;
+        bar_fds = Hashtbl.create 4;
+        bar_infos = Hashtbl.create 4;
+        vfio;
+      })
 
   let alloc_sysmem ?(vaddr = 0n) ?(contiguous = false) size =
     if contiguous && size > 2 lsl 20 then

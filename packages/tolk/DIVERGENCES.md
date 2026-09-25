@@ -182,7 +182,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   handles acquired by failed setup, and closes NVK temporary mapping file
   descriptors. A failed page-table rollback retains backing storage and
   virtual reservations because the device may still address them.
-  Bootstrap failures release descriptors and per-device KFD
+  Failed PCI claims release their lock and acquired descriptors so they can
+  be retried. Bootstrap failures release descriptors and per-device KFD
   events. KFD's process-wide event page remains cached; an ambiguous registration
   failure is latched because the kernel may already retain that page. Failed
   KFD/NVK and booted PCI device construction retire queues before releasing
@@ -197,8 +198,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   allocation retries and long-lived accelerator sessions. Coverage:
   `test_memory` allocation, zeroing, entry-write and flush failures, including
   adjacent mappings and precreated tables; `test_amd_system` covers reverse
-  rollback order, acquisition failures, cleanup failures, descriptor release
-  and buffer finalizers after successful or failed queue retirement;
+  rollback order, acquisition failures, cleanup failures, descriptor release,
+  PCI claim retries and buffer finalizers after successful or failed queue retirement;
   `test_nv_tables` covers 570/580/610 unregister layouts; `test_amd_amdev`
   injects a register failure after enabling an SDMA ring and checks teardown.
   Driver fault injection and hardware

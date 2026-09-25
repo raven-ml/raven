@@ -645,6 +645,9 @@ thread.
 
 ### Tolk (new)
 
+- Failed PCI device claims release their lock and descriptors, allowing a
+  retry after fixing permissions or device configuration.
+
 - Failed AMD/NV PCI runtime setup stops queues before releasing their buffers
   and mappings. Partially programmed AMD copy queues are included in teardown;
   failed retirement retains storage and disables later shutdown callbacks.

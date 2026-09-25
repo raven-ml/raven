@@ -161,6 +161,8 @@ module Pci_device : sig
       ["/sys"]). Raises [Failure] if the device is inaccessible (with
       root and capability guidance on permission errors), if the driver
       cannot be unbound, or if another process holds the device lock.
+      Failed acquisition closes its descriptors and releases its lock;
+      driver unbinding and sibling removal are not undone.
 
       With [VFIO=1] in the environment and a usable [vfio] kernel
       module, the device is bound to the [vfio-pci] driver in no-iommu

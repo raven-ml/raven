@@ -322,6 +322,20 @@ let () =
         ];
       group "Pci_device"
         [
+          test "failed claims release their lock for retry" (fun () ->
+              List.iter (fun missing -> with_fake_root (fun root ->
+                  let pcibus = "0000:03:00.0" in
+                  let devpref = "tolktest" ^ uid () in
+                  add_full_dev root pcibus;
+                  let path = dev_dir root pcibus // missing in
+                  let content = read_file path in
+                  Sys.remove path;
+                  raises_match is_failure (fun () ->
+                      Pci_device.create ~sysfs:root ~devpref pcibus);
+                  write_file path content;
+                  let device = Pci_device.create ~sysfs:root ~devpref pcibus in
+                  equal string pcibus (Pci_device.pcibus device)))
+                ["enable"; "config"]);
           test "create enables the device" (fun () ->
               with_fake_root (fun root ->
                   add_full_dev root "0000:03:00.0";

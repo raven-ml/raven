@@ -37,7 +37,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   operations against the existing AMD device scope; justify any retained gap.
   Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
-- Complete PCI multi-die mappings. Complete rollback of PCI claim and firmware
+- Complete PCI multi-die mappings: export AMD hive memory through XGMI peer
+  addresses instead of its PCI BAR, and select BAR or fabric addresses according
+  to the receiving device. Check mixed-vendor and cross-hive reachability.
+  Complete rollback of firmware
   bootstrap failures before a booted interface exists. Validate post-boot
   AMD/NV queue/runtime rollback with injected hardware failures, including
   faulted queue retirement and doorbell mappings; inject driver mapping
