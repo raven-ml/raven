@@ -112,6 +112,8 @@
   dune
   (nx
    (= :version))
+  (tolk
+   (= :version))
   (windtrap :with-test)
   (thumper :with-test))
  (tags
