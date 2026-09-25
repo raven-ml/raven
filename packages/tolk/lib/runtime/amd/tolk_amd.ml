@@ -2274,7 +2274,7 @@ module Queue = struct
       | Some {args; _} -> List.for_all (fun arg ->
           U.device_of arg = Some (U.Single state.State.name)) args
       | None -> false in
-    Device.{prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+    Device.{timestamp_divider = 100.; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
       encode = Encoded_queue.encode state.State.hw ~props:state.State.iface.Iface.props
         ~name:state.State.name ~compute_ring_size:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
         ~copy_ring_size:(Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) state.State.sdma_queue);

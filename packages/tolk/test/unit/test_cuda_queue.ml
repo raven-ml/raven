@@ -24,17 +24,17 @@ let program_call () =
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = None}
 
-let compile calls =
+let compile ?(profile = false) calls =
   let host = Tolk_cpu.create "CPU" in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let renderer_set = Device.Renderer_set.make ~device:device_name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-  let queue = Device.{prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
+  let queue = Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
     encode = Queue.encode device_name; lower = Queue.lower device_name;
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
   ignore (Device.make ~name:device_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
     ~synchronize:(fun () -> ()) ~queue ());
-  Hcq2.compile (U.linear calls)
+  Hcq2.compile ~profile (U.linear calls)
 
 let submission linear = match U.as_call (U.without_after (List.hd (U.children linear))) with
   | Some call -> call.body
@@ -58,6 +58,13 @@ let () = run "CUDA queue compilation" [
       let scalars = List.filter_map (fun (a : Tiny_elf.argument) ->
           if a.addrspace = Dtype.Alu then Some a.dtype else None) object_.signature in
       equal (list string) ["i64"; "i8"] (List.map Dtype.to_string scalars |> List.sort String.compare));
+  test "profiles compute and copy calls with native host callbacks" (fun () ->
+      let compiled = compile ~profile:true [program_call ();
+          U.store_call ~dst:(parameter 2) ~src:(parameter 0)] in
+      is_true (List.mem "tolk_cuda_hcq_timestamp" (symbols compiled));
+      match U.arg (U.without_after (List.hd (U.children compiled))) with
+      | U.Arg.Call_info {aux = Some info; _} -> equal int 2 (List.length info.timings)
+      | _ -> fail "queue lost timestamp metadata");
   test "compiles dependencies crossing compute and copy queues" (fun () ->
       let compiled = compile [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
         program_call (); U.store_call ~dst:(parameter 2) ~src:(parameter 0)] in

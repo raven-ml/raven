@@ -10,6 +10,7 @@ module U = Uop
 type call = { call : U.t; device : string; queue : string }
 type plan = {
   queues : (string * string * U.t list) list;
+  timestamps : (string * U.t * U.t) list;
   timelines : U.t list;
   independent_accesses : (U.t * U.t) list;
   signals : U.t list;
@@ -162,7 +163,10 @@ let plan ?(profile = false) calls =
       let waits = List.map (fun key -> ins "wait" [signal key; uint (Hashtbl.find last key + 1)]) (others @ foreign) in
       let value = U.alu_binary ~op:Ops.Add ~lhs:(timeline_value device) ~rhs:(uint 1) in
       append (device, queue) (waits @ [ins "store" [timeline device; value]])) !devices;
-  { independent_accesses = independent_accesses calls predecessors; queues = List.map (fun (d, q) -> d, q, List.rev (Hashtbl.find commands (d, q))) !order;
+  let timestamps = if not profile then [] else Array.to_list calls |> List.mapi (fun tag c ->
+      let first = List.length (Hashtbl.find queues c.device) + 1 + 2 * tag in
+      c.device, slot c.device first, slot c.device (first + 1)) in
+  { timestamps; independent_accesses = independent_accesses calls predecessors; queues = List.map (fun (d, q) -> d, q, List.rev (Hashtbl.find commands (d, q))) !order;
     timelines = List.map (fun d -> slot d (List.length (Hashtbl.find queues d))) !devices;
     signals = List.concat_map (fun d -> List.map (fun q -> signal (d, q)) (Hashtbl.find queues d)) !devices }
 
@@ -251,7 +255,7 @@ let storage_views u =
        | _ -> None)
   | _ -> None
 
-let lower_call queue devices calls independent_accesses sink =
+let lower_call queue devices calls independent_accesses timestamps sink =
   let patches = ref [] in
   let hoist u =
     if U.op u <> Ops.After then None else
@@ -310,7 +314,8 @@ let lower_call queue devices calls independent_accesses sink =
       if List.exists (U.equal u) acc then acc else acc @ [u]) [] xs in
   let originals = List.concat_map (fun c -> fst (arguments c.call)) calls in
   let sources = List.map (fun g -> (U.src g).(0)) runtime in
-  let args = dedup (bufs @ originals @ sources) in
+  let timestamp_buffers = List.map (fun (_, start, _) -> U.buf_uop start) timestamps in
+  let args = dedup (bufs @ originals @ sources @ timestamp_buffers) in
   let written = List.concat_map (fun c ->
       let buffers, writes = arguments c.call in List.map (List.nth buffers) writes) calls |> dedup in
   let inputs = List.map (fun g ->
@@ -320,6 +325,9 @@ let lower_call queue devices calls independent_accesses sink =
                 | _ -> invalid_arg "Hcq2.lower_call: address needs one device") in
       position 0 (U.src g).(0) args, device) runtime in
   let aux = U.{devices; host = queue.host; table = position 0 table bufs;
+    timings = List.map (fun (device, start, finish) ->
+      device, position 0 (U.buf_uop start) args,
+      (Deps_tracker.uop start).start / 8 + 1, (Deps_tracker.uop finish).start / 8 + 1) timestamps;
     independent_accesses = List.map (fun (a, b) -> position 0 a args, position 0 b args) independent_accesses;
     inputs; outputs = List.map (fun u -> position 0 u args) written;
     accesses = List.map (fun c -> List.map (fun u -> position 0 u args)
@@ -329,8 +337,8 @@ let lower_call queue devices calls independent_accesses sink =
         precompile_backward = false; dtype = Dtype.void; aux = Some aux} in
   U.after ~src:call ~deps:!patches
 
-let compile_batch calls =
-  let plan = plan calls in
+let compile_batch ~profile calls =
+  let plan = plan ~profile calls in
   let devices = List.fold_left (fun ds (d, _, _) ->
       if List.mem d ds then ds else ds @ [d]) [] plan.queues in
   let first = Device.get (List.hd devices) in
@@ -374,13 +382,14 @@ let compile_batch calls =
   let calls = List.map (fun c -> {c with call = substitute c.call}) calls in
   let sink = substitute (U.sink ~kernel_info submits) in
   let independent_accesses = List.map (fun (a, b) -> substitute a, substitute b) plan.independent_accesses in
-  let lowered = lower_call queue devices calls independent_accesses sink in
+  let timestamps = List.map (fun (d, a, b) -> d, substitute a, substitute b) plan.timestamps in
+  let lowered = lower_call queue devices calls independent_accesses timestamps sink in
   U.substitute ~walk:true (List.map (fun (a, b) -> b, a) mappings) lowered
 
-let compile linear =
+let compile ?(profile = false) linear =
   let result = ref [] and batch = ref [] and group = ref None in
   let flush () =
-    if !batch <> [] then result := compile_batch (List.rev !batch) :: !result;
+    if !batch <> [] then result := compile_batch ~profile (List.rev !batch) :: !result;
     batch := []; group := None in
   let enqueue call = match U.as_call call with
     | Some {body; args} when (U.op body = Ops.Program || U.op body = Ops.Store)

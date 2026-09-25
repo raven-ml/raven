@@ -11,6 +11,8 @@ type call = { call : Tolk_uop.Uop.t; device : string; queue : string }
 type plan = {
   queues : (string * string * Tolk_uop.Uop.t list) list;
       (** Device, queue and ordered instructions, in first-use submission order. *)
+  timestamps : (string * Tolk_uop.Uop.t * Tolk_uop.Uop.t) list;
+      (** Per-call device and start/end signal slots when profiling. *)
   timelines : Tolk_uop.Uop.t list;
       (** Per-batch timeline slots to fence before reusing command storage. *)
   independent_accesses : (Tolk_uop.Uop.t * Tolk_uop.Uop.t) list;
@@ -40,6 +42,6 @@ val patch :
     stores at the byte offsets in [rows]. Static stores move to link time.
     Runtime stores wait for [after] before modifying command storage. *)
 
-val compile : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [compile linear] encodes calls supported by their device's queue hooks into
+val compile : ?profile:bool -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [compile ?profile linear] encodes calls supported by their device's queue hooks into
     host programs. Other calls remain individual dispatches. *)

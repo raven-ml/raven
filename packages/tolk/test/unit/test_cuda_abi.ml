@@ -20,6 +20,7 @@ external launch :
 external function_ : nativeint -> nativeint = "caml_tolk_cuda_program_function"
 external submit : nativeint -> bytes -> unit = "caml_test_cuda_abi_submit"
 external handoffs : unit -> int = "caml_test_cuda_abi_handoffs"
+external timestamp : unit -> int64 = "caml_test_cuda_timestamp"
 external init : unit -> unit = "caml_tolk_cuda_init"
 external init_counts : unit -> int * int = "caml_test_cuda_init_counts"
 external shutdown_setup : bool -> nativeint = "caml_test_cuda_shutdown_setup"
@@ -106,7 +107,9 @@ let typed_arguments () =
 
 let () =
   run "CUDA native ABI"
-    [ test "concurrent initialization publishes a complete driver table" concurrent_initialization;
+    [ test "timestamp callback runs only while the queue is healthy" (fun () ->
+        is_true (timestamp () > 0L));
+      test "concurrent initialization publishes a complete driver table" concurrent_initialization;
       test "missing driver symbols stay failed across callers" failed_initialization;
       test "direct and compiled submission preserve typed arguments and handoffs" typed_arguments;
       test "shutdown releases all resources after synchronization failure" shutdown_after_failure ]

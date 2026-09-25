@@ -127,12 +127,15 @@ let queue_call device spec slots =
     ~info:{grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None; dtype = Dtype.void}
 
-let compile_queue device calls =
+let compile_queue ?(profile = false) device calls =
   let to_program device = Codegen.to_program device (Device.renderer device) in
-  let compiled = Realize.compile_linear ~device ~to_program (U.linear calls) in
+  let compiled = Realize.compile_linear ~device ~profile ~to_program (U.linear calls) in
   is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
       match U.arg (U.without_after call) with
       | U.Arg.Call_info {aux = Some _; _} -> true | _ -> false) (U.children compiled));
+  let timings = List.concat_map (fun call -> match U.arg (U.without_after call) with
+      | U.Arg.Call_info {aux = Some info; _} -> info.timings | _ -> []) (U.children compiled) in
+  equal int (if profile then List.length calls else 0) (List.length timings);
   let binding = Realize.Buffers.create () in
   let linked = Realize.link_linear binding compiled in
   fun ?(wait = false) ?(vars = []) inputs ->
@@ -478,6 +481,19 @@ let () =
             equal (list int) [44] (read_i32 a);
             equal (list int) [42] (read_i32 b);
             equal (list int) [43] (read_i32 c));
+          test "collects GPU timestamps across profiled replay" (fun () ->
+            let device = metal_device () in
+            let spec = compile_incr device "metal_queue_profile" in
+            let a = i32_buf device [0] and b = i32_buf device [0] in
+            let run = compile_queue ~profile:true device
+                [queue_call device spec [1; 0]; queue_call device spec [0; 1]] in
+            for _ = 1 to 10 do run [|a; b|] done;
+            let before = !(Helpers.Global_counters.time_sum_s) in
+            run ~wait:true [|a; b|];
+            is_true ~msg:"completed command buffers supply positive GPU time"
+              (!(Helpers.Global_counters.time_sum_s) > before);
+            equal (list int) [22] (read_i32 a);
+            equal (list int) [21] (read_i32 b));
           test "relaunches without an intervening synchronize" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_queue_relaunch" in

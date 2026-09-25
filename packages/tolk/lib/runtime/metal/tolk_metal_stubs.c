@@ -911,18 +911,22 @@ CAMLprim value caml_tolk_metal_compile(value v_src) {
 /* The compiled host program calls these ordinary C entry points. They never
    touch OCaml values and may execute while the OCaml runtime is released. */
 #include <pthread.h>
+#include <stdatomic.h>
+#include <time.h>
 typedef struct {
   id<MTLCommandQueue> queue;
   id<MTLSharedEvent> event;
   id<MTLFence> fence;
   id<MTLResource>* resources;
   size_t count, capacity;
+  atomic_uint pending_timestamps;
   pthread_mutex_t lock;
 } tolk_metal_hcq;
 
 static uint64_t tolk_metal_hcq_poll(uint64_t address) {
   tolk_metal_hcq* ctx = (tolk_metal_hcq*)(uintptr_t)address;
-  return ctx->event.signaledValue;
+  return atomic_load_explicit(&ctx->pending_timestamps, memory_order_acquire) == 0
+    ? ctx->event.signaledValue : 0;
 }
 
 static void tolk_metal_hcq_update(uint64_t icb_address, uint64_t index,
@@ -935,34 +939,49 @@ static void tolk_metal_hcq_update(uint64_t icb_address, uint64_t index,
   }
 }
 
-static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t value) {
+static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t value, uint64_t profile) {
   tolk_metal_hcq* ctx = (tolk_metal_hcq*)(uintptr_t)address;
   @autoreleasepool {
     if (header[2] != 0) [(id<MTLCommandBuffer>)(uintptr_t)header[2] release];
-    id<MTLCommandBuffer> command = [ctx->queue commandBuffer];
-    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
-    [encoder waitForFence:ctx->fence];
-    pthread_mutex_lock(&ctx->lock);
-    if (ctx->count != 0)
-      [encoder useResources:ctx->resources count:ctx->count
-                      usage:MTLResourceUsageRead | MTLResourceUsageWrite];
-    pthread_mutex_unlock(&ctx->lock);
-    if (header[3]) {
-      for (uint64_t i = 0; i < header[4]; i++) {
-        tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)header[5 + i];
-        [encoder setComputePipelineState:program->pipeline];
-        [encoder dispatchThreadgroups:MTLSizeMake(0, 0, 0)
-                 threadsPerThreadgroup:MTLSizeMake(0, 0, 0)];
+    uint64_t batches = profile ? header[1] : 1;
+    for (uint64_t batch = 0; batch < batches; batch++) {
+      id<MTLCommandBuffer> command = [ctx->queue commandBuffer];
+      id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+      [encoder waitForFence:ctx->fence];
+      pthread_mutex_lock(&ctx->lock);
+      if (ctx->count != 0)
+        [encoder useResources:ctx->resources count:ctx->count
+                        usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+      pthread_mutex_unlock(&ctx->lock);
+      if (header[3]) {
+        for (uint64_t i = 0; i < header[4]; i++) {
+          tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)header[5 + i];
+          [encoder setComputePipelineState:program->pipeline];
+          [encoder dispatchThreadgroups:MTLSizeMake(0, 0, 0)
+                   threadsPerThreadgroup:MTLSizeMake(0, 0, 0)];
+        }
       }
+      [encoder executeCommandsInBuffer:(id<MTLIndirectCommandBuffer>)(uintptr_t)header[0]
+                             withRange:NSMakeRange(profile ? batch : 0, profile ? 1 : header[1])];
+      [encoder updateFence:ctx->fence];
+      [encoder endEncoding];
+      if (profile) {
+        uint64_t* start = (uint64_t*)(uintptr_t)header[5 + header[4] + 2 * batch];
+        uint64_t* finish = (uint64_t*)(uintptr_t)header[6 + header[4] + 2 * batch];
+        atomic_fetch_add_explicit(&ctx->pending_timestamps, 1, memory_order_relaxed);
+        [command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+          *start = (uint64_t)(completed.GPUStartTime * 1e9);
+          *finish = (uint64_t)(completed.GPUEndTime * 1e9);
+          atomic_fetch_sub_explicit(&ctx->pending_timestamps, 1, memory_order_release);
+        }];
+      }
+      if (batch + 1 == batches) {
+        [command encodeSignalEvent:ctx->event value:value];
+        [command retain];
+        header[2] = (uint64_t)(uintptr_t)command;
+      }
+      [command commit];
     }
-    [encoder executeCommandsInBuffer:(id<MTLIndirectCommandBuffer>)(uintptr_t)header[0]
-                           withRange:NSMakeRange(0, header[1])];
-    [encoder updateFence:ctx->fence];
-    [encoder endEncoding];
-    [command encodeSignalEvent:ctx->event value:value];
-    [command retain];
-    header[2] = (uint64_t)(uintptr_t)command;
-    [command commit];
   }
 }
 
@@ -972,6 +991,7 @@ CAMLprim value caml_tolk_metal_hcq_create(value v_queue, value v_event) {
   result = caml_copy_nativeint(0);
   tolk_metal_hcq* ctx = calloc(1, sizeof(*ctx));
   if (ctx == NULL) caml_raise_out_of_memory();
+  atomic_init(&ctx->pending_timestamps, 0);
   ctx->queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
   ctx->event = (id<MTLSharedEvent>)Nativeint_val(v_event);
   ctx->fence = [ctx->queue.device newFence];
@@ -1026,6 +1046,11 @@ CAMLprim value caml_tolk_metal_hcq_wait(value v_ctx, value v_value) {
   uint64_t target = (uint64_t)Int64_val(v_value);
   caml_release_runtime_system();
   BOOL done = [ctx->event waitUntilSignaledValue:target timeoutMS:30000];
+  struct timespec pause = {.tv_sec = 0, .tv_nsec = 1000000};
+  for (int i = 0; done && atomic_load_explicit(&ctx->pending_timestamps, memory_order_acquire) != 0; i++) {
+    if (i == 30000) { done = NO; break; }
+    nanosleep(&pause, NULL);
+  }
   caml_acquire_runtime_system();
   if (!done) caml_failwith("Metal queue timeline wait timed out");
   CAMLreturn(Val_unit);

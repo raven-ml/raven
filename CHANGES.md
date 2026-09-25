@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- `Realize.compile_linear ~profile:true` records per-call queue timestamps;
+  waited replay sums them instead of host submission overhead. `DEBUG=2`
+  enables this by default, including CUDA callbacks and Metal GPU timings.
+
 - Reject queue replay bindings that introduce writable overlaps between
   unordered calls, including overlapping external pointers. Ordered buffer
   donation, read-only aliases and disjoint views remain valid.

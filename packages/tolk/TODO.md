@@ -30,7 +30,8 @@ with their rationale and validation; commit count is not an acceptance metric.
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
   submissions. Validate NV FIFO occupancy across independently linked batches
   and direct dispatches; Ampere control pages do not expose a consumer pointer.
-- Complete queue timestamp collection.
+- Collect asynchronous queue profiling records at synchronization and export
+  them through the profiling trace path.
   Bring CUDA host and peer copies onto the queue path with runtime mapping
   eligibility and unsupported-mapping fallback. Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.

@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if !defined(_WIN32)
 #include <unistd.h>
 #endif
@@ -60,6 +61,7 @@ static CUresult (*p_cuMemcpyAsync)(CUdeviceptr, CUdeviceptr, size_t, CUstream);
 static CUresult (*p_cuModuleLoadData)(CUmodule *, const void *);
 static CUresult (*p_cuModuleGetFunction)(CUfunction *, CUmodule, const char *);
 static CUresult (*p_cuModuleUnload)(CUmodule);
+static CUresult (*p_cuLaunchHostFunc)(CUstream, void (*)(void *), void *);
 static CUresult (*p_cuLaunchKernel)(CUfunction, unsigned int, unsigned int,
                                     unsigned int, unsigned int, unsigned int,
                                     unsigned int, unsigned int, CUstream,
@@ -126,6 +128,7 @@ static void load_cuda(void) {
   LOAD_CUDA(p_cuModuleGetFunction, "cuModuleGetFunction");
   LOAD_CUDA(p_cuModuleUnload, "cuModuleUnload");
   LOAD_CUDA(p_cuLaunchKernel, "cuLaunchKernel");
+  LOAD_CUDA(p_cuLaunchHostFunc, "cuLaunchHostFunc");
   LOAD_CUDA(p_cuGetErrorString, "cuGetErrorString");
   LOAD_CUDA(p_cuEventCreate, "cuEventCreate");
   LOAD_CUDA(p_cuEventRecord, "cuEventRecord");
@@ -244,6 +247,28 @@ static void tolk_cuda_hcq_signal(tolk_cuda_queue *q, uint64_t stream,
   pthread_mutex_unlock(&q->lock);
 }
 
+/* CUDA orders this native callback with the stream. No OCaml state is
+   touched on the driver thread; pinned slot storage survives synchronization. */
+static void tolk_cuda_host_stamp(void *slot) {
+#if defined(_WIN32)
+  LARGE_INTEGER tick, frequency;
+  QueryPerformanceCounter(&tick);
+  QueryPerformanceFrequency(&frequency);
+  *(uint64_t *)slot = (uint64_t)((double)tick.QuadPart * 1e9 / (double)frequency.QuadPart);
+#else
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  *(uint64_t *)slot = (uint64_t)now.tv_sec * 1000000000ULL + (uint64_t)now.tv_nsec;
+#endif
+}
+
+static void tolk_cuda_hcq_timestamp(tolk_cuda_queue *q, uint64_t stream, uint64_t address) {
+  pthread_mutex_lock(&q->lock);
+  if (q->status == 0)
+    queue_status(q, p_cuLaunchHostFunc(q->streams[stream], tolk_cuda_host_stamp, (void *)(uintptr_t)address));
+  pthread_mutex_unlock(&q->lock);
+}
+
 static uint64_t tolk_cuda_hcq_poll(tolk_cuda_queue *q, volatile uint64_t *signal) {
   pthread_mutex_lock(&q->lock);
   if (q->status == 0) queue_status(q, p_cuCtxSetCurrent(q->context));
@@ -343,6 +368,7 @@ CAMLprim value caml_tolk_cuda_hcq_symbol(value v_name) {
   HCQ_SYMBOL(tolk_cuda_hcq_copy);
   HCQ_SYMBOL(tolk_cuda_hcq_wait);
   HCQ_SYMBOL(tolk_cuda_hcq_signal);
+  HCQ_SYMBOL(tolk_cuda_hcq_timestamp);
   HCQ_SYMBOL(tolk_cuda_hcq_poll);
 #undef HCQ_SYMBOL
   if (symbol == NULL) caml_invalid_argument("Unknown CUDA submission helper");

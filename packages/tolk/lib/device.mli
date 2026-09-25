@@ -95,6 +95,7 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
     the order declared by its signature. *)
 
 type queue = {
+  timestamp_divider : float; (** Clock ticks per microsecond. *)
   prepare : unit -> unit;
       (** Prepares shared runtime state before each compiled submission. *)
   host : string; (** Host device executing submission programs. *)

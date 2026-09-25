@@ -143,16 +143,20 @@ val program_config : unit -> string
 val compile_linear :
   device:Device.t ->
   ?beam:int ->
+  ?profile:bool ->
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t
-(** [compile_linear ~device ?beam ~to_program linear] rewrites every kernel
+(** [compile_linear ~device ?beam ?profile ~to_program linear] rewrites every kernel
     {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink}
     into a call whose body is the compiled {!Tolk_uop.Ops.Program} returned by
     [to_program execution_device sink]. The execution device comes from the
     call arguments, falling back to [device] for a kernel without placed
     arguments. The program cache uses that device and its selected renderer.
     {!Tolk_uop.Ops.Store} calls are left unchanged.
+
+    [profile] records queue timestamps, collected when executing with [wait].
+    It defaults to whether [DEBUG >= 2].
 
     When [beam] is [b >= 1], every kernel sink that does not already carry a
     beam width (its {!Tolk_uop.Uop.kernel_info} has [beam = 0]) is stamped with [b]

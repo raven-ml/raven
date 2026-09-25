@@ -207,7 +207,7 @@ let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
    semantic key. Bulk STORE calls pass through unchanged. [beam] stamps
    sinks that carry no beam width of their own; kernel_info is part of the
    semantic key, so a stamped sink gets its own cache entry. *)
-let compile_linear_cached ~cache ~device ?beam ~to_program linear =
+let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2) ~to_program linear =
   let module U = Tolk_uop.Uop in
   let stamp body =
     match beam with
@@ -248,7 +248,7 @@ let compile_linear_cached ~cache ~device ?beam ~to_program linear =
   let linear = U.linear (List.map compile_call (U.children linear)) in
   if not cache || List.exists (fun n ->
       U.op n = Tolk_uop.Ops.Buffer && U.addrspace n = Some Tolk_uop.Dtype.Global)
-      (U.toposort ~enter_calls:true linear) then Hcq2.compile linear
+      (U.toposort ~enter_calls:true linear) then Hcq2.compile ~profile linear
   else
     let hosts = U.toposort ~enter_calls:false linear
         |> List.filter_map (fun n -> match U.device_of n with
@@ -260,18 +260,18 @@ let compile_linear_cached ~cache ~device ?beam ~to_program linear =
     (* Link-time tags are semantic here: a runtime table and a captured input
        must never share a linked template. Keep the hash-consed key alive. *)
     let key = Marshal.to_string
-        (cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
+        (profile, cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
          List.map (fun host -> cache_key ~device:host ~ast_key:"") hosts) [] in
     let templates = Domain.DLS.get queue_template_cache in
     match Hashtbl.find_opt templates key with
     | Some (_, compiled) -> compiled
     | None ->
-        let compiled = Hcq2.compile linear in
+        let compiled = Hcq2.compile ~profile linear in
         Hashtbl.add templates key (linear, compiled);
         compiled
 
-let compile_linear ~device ?beam ~to_program linear =
-  compile_linear_cached ~cache:false ~device ?beam ~to_program linear
+let compile_linear ~device ?beam ?profile ~to_program linear =
+  compile_linear_cached ~cache:false ~device ?beam ?profile ~to_program linear
 
 let program_args (info : Tolk_uop.Uop.program_info) args =
   let args = Array.of_list args in
@@ -863,7 +863,20 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) =
         incr queue_submissions;
         if ctx.wait then begin
           List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
-          Some (Unix.gettimeofday () -. started)
+          if submission.timings = [] then Some (Unix.gettimeofday () -. started)
+          else begin
+            let snapshots = Hashtbl.create (List.length submission.devices) in
+            Some (List.fold_left (fun total (device, slot, first, last) ->
+              let bytes = match Hashtbl.find_opt snapshots slot with
+                | Some bytes -> bytes
+                | None -> let bytes = Device.Buffer.as_bytes buffers.(slot) in
+                    Hashtbl.add snapshots slot bytes; bytes in
+              let start = Bytes.get_int64_le bytes (8 * first)
+              and finish = Bytes.get_int64_le bytes (8 * last) in
+              let ticks = Int64.sub finish start in
+              let divider = (Option.get (Device.queue (Device.get device))).timestamp_divider in
+              total +. Int64.to_float ticks /. divider /. 1e6) 0. submission.timings)
+          end
         end else None in
       ignore (track_stats ctx call ~device:(Device.get (List.hd submission.devices))
         (Array.to_list buffers) ctx.var_vals run);

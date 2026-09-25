@@ -134,3 +134,27 @@ CAMLprim value caml_test_cuda_shutdown_steps(value unit) {
   (void)unit;
   return Val_int(destroy_steps);
 }
+
+static unsigned stamp_callbacks;
+static CUresult fake_host_stamp(CUstream stream, void (*callback)(void *), void *data) {
+  assert(stream == (CUstream)0x12);
+  stamp_callbacks++;
+  callback(data);
+  return 0;
+}
+CAMLprim value caml_test_cuda_timestamp(value unit) {
+  CAMLparam1(unit);
+  uint64_t stamp = 0;
+  queue.streams[1] = (CUstream)0x12;
+  queue.status = 0;
+  stamp_callbacks = 0;
+  p_cuLaunchHostFunc = fake_host_stamp;
+  tolk_cuda_hcq_timestamp(&queue, 1, (uint64_t)(uintptr_t)&stamp);
+  assert(stamp_callbacks == 1);
+  assert(stamp > 0);
+  queue.status = 719;
+  tolk_cuda_hcq_timestamp(&queue, 1, (uint64_t)(uintptr_t)&stamp);
+  assert(stamp_callbacks == 1);
+  queue.status = 0;
+  CAMLreturn(caml_copy_int64((int64_t)stamp));
+}

@@ -73,6 +73,10 @@ let encode name u = match U.op u, U.arg u, U.children u with
               let args = U.src node in
               emit (if kind = "wait" then "tolk_cuda_hcq_wait" else "tolk_cuda_hcq_signal")
                 [stream; U.getaddr ~device:name ~src:args.(0) (); args.(1)]
+          | _, U.Arg.Typed ("timestamp", _) ->
+              let timestamp = U.shrink ~src:(U.src node).(0) ~offset:(U.const_int 1)
+                  ~size:(U.const_int 1) in
+              emit "tolk_cuda_hcq_timestamp" [stream; U.getaddr ~device:"CPU" ~src:timestamp ()]
           | _, U.Arg.Typed ("barrier", _) -> ()
           | _ -> invalid_arg "CUDA queue: unsupported instruction") (U.children linear);
       Some !previous

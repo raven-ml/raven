@@ -2356,7 +2356,7 @@ module Queue = struct
       | Some {args; _} -> List.for_all (fun arg ->
           U.device_of arg = Some (U.Single state.State.name)) args
       | None -> false in
-    Device.{prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+    Device.{timestamp_divider = 1000.; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
       encode = Encoded_queue.encode state.State.hw ~name:state.State.name
         ~compute_entries:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring / 8)
         ~copy_entries:(Hcq.Mmio.size state.State.dma_queue.Queue_desc.ring / 8)

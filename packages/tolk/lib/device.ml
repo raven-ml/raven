@@ -79,6 +79,7 @@ type prog = {
 type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 type queue = {
+  timestamp_divider : float;
   prepare : unit -> unit;
   host : string;
   copy : Tolk_uop.Uop.t -> bool;

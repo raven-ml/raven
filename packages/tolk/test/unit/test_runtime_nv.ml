@@ -551,7 +551,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
   let call = U.call ~body:program ~args:[parameter 0]
       ~info:{grad_fxn = None; name = None; precompile = false; precompile_backward = false;
         dtype = D.void; aux = None} in
-  let queue = Device.{prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
+  let queue = Device.{timestamp_divider = 1000.; prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
     host = "CPU"; copy = (fun _ -> true);
     encode = Tolk_nv.Encoded_queue.encode (nv_dev ~compute_class m) ~name:device_name
         ~compute_entries:8 ~copy_entries:8 ~compute_token:0x123 ~copy_token:0x456;

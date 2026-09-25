@@ -439,7 +439,7 @@ module Queue = struct
   let encode name u = match U.op u, U.arg u, U.children u with
     | Ops.Custom_function, U.Arg.String "submit_metal_compute", [linear; dependency] ->
         let commands = ref [] and rows = ref [] and sizes = ref [] and used = ref 0 in
-        let signal = ref None in
+        let signal = ref None and stamps = ref [] in
         let align n a = (n + a - 1) / a * a in
         List.iter (fun node -> match U.as_call node, U.arg node with
             | Some {body; args}, _ when U.op body = Ops.Program ->
@@ -480,11 +480,21 @@ module Queue = struct
                   used := at + 48
                 end;
                 commands := !commands @ [{object_; global; local; offset}]
+            | _, U.Arg.Typed ("timestamp", _) ->
+                let timestamp = U.shrink ~src:(U.src node).(0) ~offset:(U.const_int 1)
+                    ~size:(U.const_int 1) in
+                stamps := U.getaddr ~device:"CPU" ~src:timestamp () :: !stamps
             | _, U.Arg.Typed ("store", _) -> signal := Some (U.src node).(1)
             | _, U.Arg.Typed (("barrier" | "wait"), _) -> ()
             | _ -> invalid_arg "Metal queue: unsupported instruction") (U.children linear);
         let header = align !used 8 in
-        let size = header + 8 * (5 + List.length !commands) in
+        let profile = !stamps <> [] in
+        if profile && List.length !stamps <> 2 * List.length !commands then
+          invalid_arg "Metal queue: timestamps must bracket each command";
+        let stamp_offset = header + 8 * (5 + List.length !commands) in
+        List.iteri (fun i stamp -> rows := (stamp_offset + 8 * i, stamp) :: !rows)
+          (List.rev !stamps);
+        let size = stamp_offset + 8 * List.length !stamps in
         let desc = {commands = !commands; header} in
         let buffer = U.placeholder ~shape:[size] ~dtype:Dtype.uint8 ~slot:0
             ~device:(U.Single name) ~volatile:true
@@ -498,12 +508,13 @@ module Queue = struct
             previous := [call name ~after:!previous "tolk_metal_hcq_update" Dtype.void
               [load header_words 0; U.const (Const.int Dtype.uint64 command); index patched at]]) (List.rev !sizes);
         Some (call name ~after:!previous "tolk_metal_hcq_submit" Dtype.void
-          [load (context name) 0; header_ptr; Option.get !signal])
+          [load (context name) 0; header_ptr; Option.get !signal;
+           U.const (Const.int Dtype.uint64 (Bool.to_int profile))])
     | _ -> None
 
   let create state device_name =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
-    Device.{prepare = (fun () -> ()); host = Device.name host; copy = (fun _ -> false); encode = encode device_name; lower = lower device_name;
+    Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = Device.name host; copy = (fun _ -> false); encode = encode device_name; lower = lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
 end
 

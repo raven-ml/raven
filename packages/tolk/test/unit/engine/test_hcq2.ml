@@ -137,7 +137,7 @@ let compiled_host_submission () =
             [U.getaddr ~device:name ~src:trace ();
              U.getaddr ~device:name ~src:patched ();
              U.const (Const.int Dtype.uint64 8)] in
-        let previous = ref [observe] in
+        let previous = ref [observe] and stamp = ref 0 in
         let nodes = List.map (fun op ->
             let node = match U.as_call op, U.arg op with
               | Some {args = [dst; src]; _}, _ ->
@@ -147,6 +147,10 @@ let compiled_host_submission () =
               | _, U.Arg.Typed ("store", _) ->
                   U.store ~dst:(U.index ~ptr:(U.after ~src:(U.src op).(0) ~deps:!previous) ~idxs:[U.const_int 0] ())
                     ~value:(U.src op).(1) ()
+              | _, U.Arg.Typed ("timestamp", _) ->
+                  stamp := !stamp + 10;
+                  U.store ~dst:(U.index ~ptr:(U.after ~src:(U.src op).(0) ~deps:!previous)
+                    ~idxs:[U.const_int 1] ()) ~value:(U.const (Const.int Dtype.uint64 !stamp)) ()
               | _, U.Arg.Typed (("wait" | "barrier"), _) -> U.noop ~dtype:Dtype.void ()
               | _ -> fail "unexpected host queue instruction" in
             if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
@@ -158,7 +162,7 @@ let compiled_host_submission () =
     let program = Codegen.to_program ~optimize:false host (Device.renderer host) sink in
     Spec.type_verify Spec.program_spec (U.src program).(0);
     program in
-  let queue = Device.{prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
+  let queue = Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
     compile} in
   let renderer_set = Device.Renderer_set.make ~device:name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
@@ -205,7 +209,7 @@ let compiled_host_submission () =
     U.call ~body ~args:[dst; src]
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = None} in
-  let compile calls = U.linear calls |> Realize.compile_linear ~device ~to_program
+  let compile ?(profile = false) calls = U.linear calls |> Realize.compile_linear ~device ~profile ~to_program
       |> Realize.link_linear binding in
   let independent = compile [U.store_call ~dst:(ptr 2) ~src:(ptr 0);
       compute (ptr 3) (ptr 1)] in
@@ -241,6 +245,12 @@ let compiled_host_submission () =
       compute (ptr 2) (ptr 1)] in
   replay ordered [|src; dst1; src|];
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes src) 0);
+  let timed = compile ~profile:true [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
+      compute (ptr 2) (ptr 1)] in
+  let before = !(Helpers.Global_counters.time_sum_s) in
+  replay timed [|src; dst1; dst2|];
+  equal (float 1e-15) 2e-8 (!(Helpers.Global_counters.time_sum_s) -. before);
+  equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst2) 0);
   ignore (Sys.opaque_identity root);
   let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
   let compiled = Realize.compile_linear ~device ~to_program
