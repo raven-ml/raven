@@ -5,6 +5,10 @@
 (rule
  (package tolk)
  (targets
+  sdma_copy_exact_gfx1100.actual
+  sdma_copy_exact_gfx942.actual
+  sdma_copy_over_cap_gfx1100.actual
+  sdma_copy_over_cap_gfx942.actual
   exec_gfx1100.actual
   memory_barrier_gfx1100.actual
   memory_barrier_gfx942.actual
@@ -36,6 +40,10 @@
  (package tolk)
  (action
   (progn
+   (diff sdma_copy_exact_gfx1100.expected sdma_copy_exact_gfx1100.actual)
+   (diff sdma_copy_exact_gfx942.expected sdma_copy_exact_gfx942.actual)
+   (diff sdma_copy_over_cap_gfx1100.expected sdma_copy_over_cap_gfx1100.actual)
+   (diff sdma_copy_over_cap_gfx942.expected sdma_copy_over_cap_gfx942.actual)
    (diff exec_gfx1100.expected exec_gfx1100.actual)
    (diff memory_barrier_gfx1100.expected memory_barrier_gfx1100.actual)
    (diff memory_barrier_gfx942.expected memory_barrier_gfx942.actual)

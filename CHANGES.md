@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Remove the obsolete AMD/NV `Compute_queue`, `Copy_queue` and raw program
+  APIs. Queue execution uses `Encoded_queue`; static setup and cache packets
+  remain private to the runtimes.
+
 - Committed stack indexes remain explicit until lowering, preserving vector
   lane rendering. Bare constant stack indexes follow tuple indexing, and
   diagnostic expressions print committed constants by value.

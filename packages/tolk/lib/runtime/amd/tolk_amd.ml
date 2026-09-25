@@ -44,7 +44,6 @@ let indirect_header =
     lsl Amd_hsa_defs.hsa_packet_header_type) lor (1 lsl 16)
 
 let event_index_partial_flush = 4
-let wait_reg_mem_function_eq = 3
 let wait_reg_mem_function_geq = 5
 
 (* Kernel-driver ioctls. The numeric ABI constants are pinned against the
@@ -172,18 +171,14 @@ type 'meta device = {
   gc : Ip.t;
   nbio : Ip.t;
   max_copy_size : int;
-  sqtt_enabled : bool;
   mutable tmpring_size : int;
   mutable scratch : 'meta Hcq.Buffer.t;
   mutable max_private_segment_size : int;
   is_am : bool;
-  queue_event_mailbox_ptr : nativeint;
-  queue_event : queue_event;
 }
 
 let device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
-    ?(sqtt_enabled = false) ?(is_aql = false) ~tmpring_size ~scratch ~is_am
-    ~queue_event_mailbox_ptr ~queue_event () =
+    ?(is_aql = false) ~tmpring_size ~scratch ~is_am () =
   let gfx9 = major target = 9 in
   let gc_bases, nbio_bases =
     if gfx9 then
@@ -204,13 +199,10 @@ let device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
         ~version:nbio_version ~bases:nbio_bases;
     max_copy_size = (if ((4, 4, 2) <= sdma_version && sdma_version < (5, 0, 0))
         || sdma_version >= (5, 2, 0) then 0x40000000 else 0x400000);
-    sqtt_enabled;
     tmpring_size;
     scratch;
     max_private_segment_size = 0;
     is_am;
-    queue_event_mailbox_ptr;
-    queue_event;
   }
 
 let scratch_layout (dev : 'meta device) ~props private_segment_size =
@@ -240,23 +232,6 @@ let ensure_has_local_memory (dev : 'meta device) ~props ~alloc ~free private_seg
     if Hcq.Buffer.size previous > 0 then free previous
   end
 
-(* Programs *)
-
-type 'meta program = {
-  dev : 'meta device;
-  prog_addr : nativeint;
-  kernel_object : nativeint;
-  group_segment_size : int;
-  private_segment_size : int;
-  rsrc1 : int;
-  rsrc2 : int;
-  rsrc3 : int;
-  wave32 : bool;
-  enable_private_segment_sgpr : bool;
-  enable_dispatch_ptr : bool;
-}
-
-(* Queue descriptors *)
 
 module Queue_desc = struct
   type aql = {
@@ -350,9 +325,6 @@ end
 module Compute_queue = struct
   type 'meta t = { dev : 'meta device; q : Q.t }
 
-  let wait_reg_mem_function_eq = wait_reg_mem_function_eq
-  let wait_reg_mem_function_geq = wait_reg_mem_function_geq
-
   let create dev = { dev; q = Q.create () }
   let q t = t.q
 
@@ -362,52 +334,6 @@ module Compute_queue = struct
     for i = 0 to Array.length payload - 1 do
       Q.push t.q (Array.unsafe_get payload i)
     done
-
-  let wreg t (reg : Reg.t) vals =
-    let module P = (val t.dev.pm4) in
-    let set_packet, set_packet_start =
-      if
-        P.packet3_set_sh_reg_start <= reg.addr
-        && reg.addr < P.packet3_set_sh_reg_end
-      then (P.packet3_set_sh_reg, P.packet3_set_sh_reg_start)
-      else if
-        P.packet3_set_uconfig_reg_start <= reg.addr
-        && reg.addr < P.packet3_set_uconfig_reg_start + 0xffff
-      then (P.packet3_set_uconfig_reg, P.packet3_set_uconfig_reg_start)
-      else
-        invalid_arg
-          (Printf.sprintf "cannot set %s (0x%x) via a pm4 packet" reg.name
-             reg.addr)
-    in
-    Q.push t.q (P.packet3 set_packet (Array.length vals));
-    Q.push t.q (reg.addr - set_packet_start);
-    for i = 0 to Array.length vals - 1 do
-      Q.push t.q (Array.unsafe_get vals i)
-    done
-
-  let wreg_fields t reg fields = wreg t reg [| Reg.encode reg fields |]
-
-  (* Predication brackets a run of commands: [pred_open] emits the packet and
-     returns the stream position its body starts at (or -1 on single-die
-     devices, where no packet is emitted), and [pred_close] back-patches the
-     packet with the number of dwords it predicates, known only once the body
-     has been emitted. *)
-  let pred_open t ~xcc_mask =
-    if t.dev.xccs > 1 then begin
-      let module P = (val t.dev.pm4) in
-      pkt3 t P.packet3_pred_exec [| xcc_mask lsl 24 |];
-      Q.length t.q
-    end
-    else -1
-
-  let pred_close t start =
-    if start >= 0 then
-      Q.set t.q (start - 1) (Q.get t.q (start - 1) lor (Q.length t.q - start))
-
-  let pred_exec t ~xcc_mask f =
-    let start = pred_open t ~xcc_mask in
-    f ();
-    pred_close t start
 
   let wait_reg_mem t ?(mask = 0xffffffff) ?mem ?(reg = 0) ?(reg_done = 0)
       ?(op = wait_reg_mem_function_geq) value =
@@ -514,244 +440,8 @@ module Compute_queue = struct
     wait_reg_mem t ~reg:req.addr ~reg_done:done_.addr 0xffffffff;
     acquire_mem t ()
 
-  let exec t (prg : 'meta program) ~kernargs ~global_size:(gx, gy, gz)
-      ~local_size:(lx, ly, lz) =
-    if prg.enable_dispatch_ptr && Hcq.Buffer.size kernargs < Amd_hsa_defs.Kernel_dispatch_packet.size then
-      invalid_arg "Compute_queue.exec: dispatch packet missing from kernargs";
-    if prg.dev.sqtt_enabled then
-      invalid_arg "Compute_queue.exec: thread-trace capture is not supported";
-    if prg.enable_private_segment_sgpr && t.dev.xccs <> 1 then
-      invalid_arg
-        "Compute_queue.exec: architected flat scratch requires a single xcc";
 
-    acquire_mem t ~gli:0 ~gl2:0 ();
-
-    let kernarg = va64 (Hcq.Buffer.va kernargs) in
-    let user_regs =
-      if prg.enable_private_segment_sgpr then begin
-        let scratch = va64 (Hcq.Buffer.va prg.dev.scratch) in
-        (* flat-scratch descriptor: word1 bit 31 enables swizzling; word3 is
-           0x14 << 12 | 2 << 28 | 2 << 21 | 1 << 23 *)
-        [|
-          lo32 scratch;
-          hi32 scratch lor (1 lsl 31);
-          0xffffffff;
-          0x20c14000;
-        |]
-      end
-      else [||]
-    in
-    let dispatch = if prg.enable_dispatch_ptr then
-        let address = Int64.add kernarg (Int64.of_int
-            (Hcq.Buffer.size kernargs - Amd_hsa_defs.Kernel_dispatch_packet.size)) in
-        [|lo32 address; hi32 address|] else [||] in
-    let user_regs = Array.concat [user_regs; dispatch; [|lo32 kernarg; hi32 kernarg|]] in
-
-    let gc = t.dev.gc in
-    let prog_addr = Int64.shift_right_logical (va64 prg.prog_addr) 8 in
-    wreg t (Ip.reg gc "regCOMPUTE_PGM_LO") [| lo32 prog_addr; hi32 prog_addr |];
-    wreg t (Ip.reg gc "regCOMPUTE_PGM_RSRC1") [| prg.rsrc1; prg.rsrc2 |];
-    wreg t (Ip.reg gc "regCOMPUTE_PGM_RSRC3") [| prg.rsrc3 |];
-    wreg t (Ip.reg gc "regCOMPUTE_TMPRING_SIZE") [| prg.dev.tmpring_size |];
-
-    (* architected flat scratch: each die takes its own slice of the scratch
-       buffer *)
-    for xcc_id = 0 to t.dev.xccs - 1 do
-      let start = pred_open t ~xcc_mask:(1 lsl xcc_id) in
-      let scratch_base =
-        Int64.shift_right_logical
-          (Int64.add
-             (va64 (Hcq.Buffer.va prg.dev.scratch))
-             (Int64.of_int
-                (Hcq.Buffer.size prg.dev.scratch / t.dev.xccs * xcc_id)))
-          8
-      in
-      wreg t
-        (Ip.reg gc "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO")
-        [| lo32 scratch_base; hi32 scratch_base |];
-      pred_close t start
-    done;
-
-    wreg t (Ip.reg gc "regCOMPUTE_RESTART_X") [| 0; 0; 0 |];
-    wreg t (Ip.reg gc "regCOMPUTE_USER_DATA_0") user_regs;
-    wreg_fields t
-      (Ip.reg gc "regCOMPUTE_RESOURCE_LIMITS")
-      [ ("waves_per_sh", Tolk.Helpers.getenv "WAVES_PER_SH" 0) ];
-    wreg t (Ip.reg gc "regCOMPUTE_START_X") [| 0; 0; 0; lx; ly; lz; 0; 0 |];
-
-    let module P = (val t.dev.pm4) in
-    let initiator =
-      Reg.encode
-        (Ip.reg gc "regCOMPUTE_DISPATCH_INITIATOR")
-        (("force_start_at_000", 1) :: ("compute_shader_en", 1)
-        ::
-        (if major prg.dev.target <> 9 then
-           [ ("cs_w32_en", if prg.wave32 then 1 else 0) ]
-         else []))
-    in
-    pkt3 t P.packet3_dispatch_direct [| gx; gy; gz; initiator |];
-
-    let module Soc = (val t.dev.soc) in
-    pkt3 t P.packet3_event_write
-      [|
-        P.event_type Soc.cs_partial_flush
-        lor P.event_index event_index_partial_flush;
-      |]
-
-  let wait t ?(value = 0) sg =
-    let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
-    wait_reg_mem t ~mem:(Hcq.Signal.value_addr sg) ~mask:0xffffffff value
-
-  let timestamp t sg =
-    let module P = (val t.dev.pm4) in
-    pred_exec t ~xcc_mask:0b1 (fun () ->
-        (* all prior writes must retire before the clock is sampled *)
-        release_mem t ();
-        release_mem t
-          ~address:(Hcq.Signal.timestamp_addr sg)
-          ~data_sel:P.data_sel__mec_release_mem__send_gpu_clock_counter
-          ~int_sel:P.int_sel__mec_release_mem__none ();
-        (* the timestamp write must land before any later read observes it *)
-        acquire_mem t ())
-
-  let write t ?(b64 = false) buf value =
-    let module P = (val t.dev.pm4) in
-    let data_sel =
-      if b64 then P.data_sel__mec_release_mem__send_64_bit_data
-      else P.data_sel__mec_release_mem__send_32_bit_low
-    in
-    release_mem t ~address:(Hcq.Buffer.va buf) ~value ~data_sel
-      ~int_sel:P.int_sel__mec_release_mem__none ()
-
-  let poll_bit t buf ~value ~mask =
-    wait_reg_mem t ~mem:(Hcq.Buffer.va buf) ~mask ~op:wait_reg_mem_function_eq
-      value
-
-  let signal t ?(value = 0) sg =
-    let module P = (val t.dev.pm4) in
-    pred_exec t ~xcc_mask:0b1 (fun () ->
-        (* the end-of-pipe event goes through the queue's EOP buffer; queues
-           must be created with one *)
-        release_mem t
-          ~address:(Hcq.Signal.value_addr sg)
-          ~value:(Int64.of_int value)
-          ~data_sel:P.data_sel__mec_release_mem__send_32_bit_low
-          ~int_sel:P.int_sel__mec_release_mem__none ~cache_flush:true ();
-        match Hcq.Signal.owner sg with
-        | Some dev when Hcq.Signal.is_timeline sg && not dev.is_am ->
-            release_mem t ~address:dev.queue_event_mailbox_ptr
-              ~value:(Int64.of_int dev.queue_event.event_id)
-              ~data_sel:P.data_sel__mec_release_mem__send_32_bit_low
-              ~int_sel:
-                P.int_sel__mec_release_mem__send_interrupt_after_write_confirm
-              ~ctxid:dev.queue_event.event_id ()
-        | _ -> ())
 end
-
-(* Copy queue *)
-
-module Copy_queue = struct
-  type 'meta t = {
-    dev : 'meta device;
-    q : Q.t;
-    max_copy_size : int;
-  }
-
-  let create ?max_copy_size (dev : 'meta device) =
-    let max_copy_size =
-      match max_copy_size with Some s -> s | None -> dev.max_copy_size
-    in
-    { dev; q = Q.create (); max_copy_size }
-
-  let q t = t.q
-
-  let cmd t payload =
-    for i = 0 to Array.length payload - 1 do
-      Q.push t.q (Array.unsafe_get payload i)
-    done
-
-  let copy t ~dest ~src size =
-    let module S = (val t.dev.sdma) in
-    let copy_commands = (size + t.max_copy_size - 1) / t.max_copy_size in
-    let copied = ref 0 in
-    for _ = 1 to copy_commands do
-      let step = min (size - !copied) t.max_copy_size in
-      let s = Int64.add (va64 (Hcq.Buffer.va src)) (Int64.of_int !copied) in
-      let d = Int64.add (va64 (Hcq.Buffer.va dest)) (Int64.of_int !copied) in
-      cmd t
-        [|
-          S.sdma_op_copy
-          lor S.sdma_pkt_copy_linear_header_sub_op S.sdma_subop_copy_linear;
-          S.sdma_pkt_copy_linear_count_count (step - 1);
-          0;
-          lo32 s;
-          hi32 s;
-          lo32 d;
-          hi32 d;
-        |];
-      copied := !copied + step
-    done
-
-  let fence_flags t =
-    let module S = (val t.dev.sdma) in
-    if major t.dev.target <> 9 then
-      S.sdma_op_fence lor Amd_sdma_defs.V6_0_0.sdma_pkt_fence_header_mtype 3
-    else S.sdma_op_fence
-
-  let signal t ?(value = 0) sg =
-    let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
-    let module S = (val t.dev.sdma) in
-    let va = va64 (Hcq.Signal.value_addr sg) in
-    cmd t [| fence_flags t; lo32 va; hi32 va; value |];
-    match Hcq.Signal.owner sg with
-    | Some dev when Hcq.Signal.is_timeline sg && not dev.is_am ->
-        let mb = va64 dev.queue_event_mailbox_ptr in
-        cmd t [| fence_flags t; lo32 mb; hi32 mb; dev.queue_event.event_id |];
-        cmd t
-          [|
-            S.sdma_op_trap;
-            S.sdma_pkt_trap_int_context_int_context dev.queue_event.event_id;
-          |]
-    | _ -> ()
-
-  let wait t ?(value = 0) sg =
-    let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
-    let module S = (val t.dev.sdma) in
-    let va = va64 (Hcq.Signal.value_addr sg) in
-    cmd t
-      [|
-        S.sdma_op_poll_regmem
-        lor S.sdma_pkt_poll_regmem_header_func wait_reg_mem_function_geq
-        lor S.sdma_pkt_poll_regmem_header_mem_poll 1;
-        lo32 va;
-        hi32 va;
-        value;
-        0xffffffff;
-        S.sdma_pkt_poll_regmem_dw5_interval 0x04
-        lor S.sdma_pkt_poll_regmem_dw5_retry_count 0xfff;
-      |]
-
-  let timestamp t sg =
-    let module S = (val t.dev.sdma) in
-    let ta = va64 (Hcq.Signal.timestamp_addr sg) in
-    cmd t
-      [|
-        S.sdma_op_timestamp
-        lor S.sdma_pkt_timestamp_get_header_sub_op
-              S.sdma_subop_timestamp_get_global;
-        lo32 ta;
-        hi32 ta;
-      |]
-
-  let write t ?(b64 = false) buf value =
-    let module S = (val t.dev.sdma) in
-    let va = va64 (Hcq.Buffer.va buf) in
-    if b64 then
-      cmd t [| S.sdma_op_write; lo32 va; hi32 va; 1; lo32 value; hi32 value |]
-    else cmd t [| S.sdma_op_write; lo32 va; hi32 va; 0; lo32 value |]
-end
-
-(* Programs *)
 
 module Program = struct
   type data = {
@@ -2203,9 +1893,7 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
   let hw =
     device ~target ~xccs ~is_aql ~gc_version:ip.gc ~nbio_version:ip.nbif
       ~sdma_version:ip.sdma ~tmpring_size:0
-      ~scratch:iface.Iface.empty_scratch ~is_am:iface.Iface.is_am
-      ~queue_event_mailbox_ptr:iface.Iface.queue_event_mailbox_ptr
-      ~queue_event:iface.Iface.queue_event ()
+      ~scratch:iface.Iface.empty_scratch ~is_am:iface.Iface.is_am ()
   in
   let pool =
     Hcq.Signal.Pool.create ~alloc_page:(fun () ->

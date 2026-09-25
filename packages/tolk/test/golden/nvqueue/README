@@ -16,9 +16,11 @@ Output is mandatory and no expected/actual files are read. Review the independen
 output before replacing expectations. Format: one lowercase eight-digit dword
 per line, little-endian byte interpretation, trailing newline.
 
-The 40 cases cover setup, local-memory setup, barriers, waits, releases,
+The 58 cases cover setup, local-memory setup, barriers, waits, releases,
 timestamps, copy chunking, program descriptors and chained execution on Ada
-and Blackwell. Program metadata comes from the committed simple_add_sm89.cubin
+and Blackwell. Wait/barrier between launches and exhaustion of both descriptor
+release slots also compare the resulting method streams and both QMDs.
+Program metadata comes from the committed simple_add_sm89.cubin
 fixture rather than a copied NVProgram template. Using that binary to inspect a
 Blackwell descriptor does not assert that the sm89 code executes on Blackwell.
 Image/QMD/signal addresses are 0x100000/0x300000/0x400000. The three arguments

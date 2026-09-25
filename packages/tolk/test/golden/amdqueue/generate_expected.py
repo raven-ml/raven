@@ -136,6 +136,8 @@ def streams(dev):
     build("wait", AMDComputeQueue, lambda q: q.wait(SIGNAL, c32(0x42)))
     build("timestamp", AMDComputeQueue, lambda q: q.timestamp(SIGNAL))
     build("memory_barrier", AMDComputeQueue, lambda q: q.memory_barrier())
+    build("sdma_copy_exact", AMDSDMAQueue, lambda q: q.copy(DST, SRC, dev.max_copy_size))
+    build("sdma_copy_over_cap", AMDSDMAQueue, lambda q: q.copy(DST, SRC, dev.max_copy_size + 1))
     build("sdma_copy_small", AMDSDMAQueue, lambda q: q.copy(DST, SRC, 0x1000))
     build("sdma_copy_large", AMDSDMAQueue, lambda q: q.copy(DST, SRC, 2 * dev.max_copy_size + 0x400))
     build("sdma_signal", AMDSDMAQueue, lambda q: q.signal(SIGNAL, c32(0x42)))

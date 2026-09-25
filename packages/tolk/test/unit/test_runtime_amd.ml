@@ -47,7 +47,7 @@ let slot_buf ?va m =
   let va = match va with Some v -> v | None -> Mmio.addr m in
   Buffer.make ~va ~size:16 ~view:(Mmio.view m ~off:0 ~size:16 ()) ~meta:() ()
 
-let amd_dev ~target ~xccs ~gc_version ~nbio_version ~sdma_version ?sqtt_enabled
+let amd_dev ~target ~xccs ~gc_version ~nbio_version ~sdma_version
     ?scratch () =
   let scratch =
     match scratch with
@@ -55,13 +55,11 @@ let amd_dev ~target ~xccs ~gc_version ~nbio_version ~sdma_version ?sqtt_enabled
     | None -> Buffer.make ~va:0x200000n ~size:0x80000 ~meta:() ()
   in
   Tolk_amd.device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
-    ?sqtt_enabled ~tmpring_size:0x00200008 ~scratch ~is_am:false
-    ~queue_event_mailbox_ptr:0x500000n
-    ~queue_event:{ Tolk_amd.event_id = 0x2a } ()
+    ~tmpring_size:0x00200008 ~scratch ~is_am:false ()
 
-let gfx1100 ?sqtt_enabled ?scratch () =
+let gfx1100 ?scratch () =
   amd_dev ~target:(11, 0, 0) ~xccs:1 ~gc_version:(11, 0, 0)
-    ~nbio_version:(4, 3, 0) ~sdma_version:(6, 0, 0) ?sqtt_enabled ?scratch ()
+    ~nbio_version:(4, 3, 0) ~sdma_version:(6, 0, 0) ?scratch ()
 
 let gfx942 ?scratch () =
   amd_dev ~target:(9, 4, 2) ~xccs:8 ~gc_version:(9, 4, 3)
@@ -74,30 +72,6 @@ let gfx1200 ?scratch () =
 (* An empty scratch buffer: the state of a freshly created device, before
    the first scratch sizing. *)
 let no_scratch () = Buffer.make ~va:0n ~size:0 ~meta:() ()
-
-let amd_prog ?(private_segment = false) ?(dispatch_ptr = false) dev =
-  {
-    Tolk_amd.dev;
-    prog_addr = 0x100000n;
-    kernel_object = 0x100040n;
-    group_segment_size = 0;
-    private_segment_size = 0;
-    rsrc1 = 0;
-    rsrc2 = 0;
-    rsrc3 = 0;
-    wave32 = true;
-    enable_private_segment_sgpr = private_segment;
-    enable_dispatch_ptr = dispatch_ptr;
-  }
-
-let reg ~addr =
-  {
-    Tolk_amd.Amd_tables.Reg.name = "regTEST";
-    offset = 0;
-    segment = 0;
-    fields = [||];
-    addr;
-  }
 
 let set16 b off v = Bytes.set_uint16_le b off v
 let set32 b off v = Bytes.set_int32_le b off (Int32.of_int v)
@@ -456,20 +430,17 @@ let compiled_profile_packets () =
   let bytes = Device.Buffer.as_bytes (get "cmdbuf_compute") in
   let words = Array.init (Bytes.length bytes / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le bytes (4 * i)) land 0xffffffff) in
-  let position expected =
-    let found = ref None in
-    for i = 0 to Array.length words - Array.length expected do
-      if Array.sub words i (Array.length expected) = expected then found := Some i
-    done;
-    match !found with Some at -> at | None -> fail "timestamp packet missing" in
   let module P = (val (gfx1100 ()).Tolk_amd.pm4) in
   let stamp index =
-    let address = Nativeint.add (Device.Buffer.addr timing) (Nativeint.of_int (8 * index)) in
-    let queue = Tolk_amd.Compute_queue.create (gfx1100 ()) in
-    Tolk_amd.Compute_queue.release_mem queue ~address
-      ~data_sel:P.data_sel__mec_release_mem__send_gpu_clock_counter
-      ~int_sel:P.int_sel__mec_release_mem__none ();
-    position (Q.dwords (Tolk_amd.Compute_queue.q queue)) in
+    let address = Int64.of_nativeint (Nativeint.add (Device.Buffer.addr timing) (Nativeint.of_int (8 * index))) in
+    let found = ref None in
+    for i = 0 to Array.length words - 8 do
+      if words.(i) = P.packet3 P.packet3_release_mem 6
+         && words.(i + 3) = Int64.to_int (Int64.logand address 0xffffffffL)
+         && words.(i + 4) = Int64.to_int (Int64.shift_right_logical address 32) then
+        found := Some i
+    done;
+    match !found with Some at -> at | None -> fail "timestamp packet missing" in
   let before = stamp first and after = stamp last in
   let dispatch = ref None in
   for i = 0 to Array.length words - 1 do
@@ -1087,64 +1058,7 @@ let () =
                       Timeline.guarded_wait tl (fun () ->
                           failwith "HW fault: reset_type=1"))));
         ];
-      group "Compute_queue"
-        [
-          test "wreg routes by register range" (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              let q = Cq.create (gfx1100 ()) in
-              Cq.wreg q (reg ~addr:0x2c00) [| 0xAB |];
-              Cq.wreg q (reg ~addr:0xc000) [| 0xCD |];
-              equal (array int)
-                [| 0xC0017600; 0x0; 0xAB; 0xC0017900; 0x0; 0xCD |]
-                (Q.dwords (Cq.q q)));
-          test "wreg rejects registers outside both ranges" (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              let q = Cq.create (gfx1100 ()) in
-              raises_match is_invalid_arg (fun () ->
-                  Cq.wreg q (reg ~addr:0x3000) [| 0 |]);
-              raises_match is_invalid_arg (fun () ->
-                  Cq.wreg q (reg ~addr:(0xc000 + 0xffff)) [| 0 |]);
-              (* the last register of each range still routes *)
-              Cq.wreg q (reg ~addr:0x2fff) [| 0 |];
-              Cq.wreg q (reg ~addr:(0xc000 + 0xfffe)) [| 0 |];
-              equal int 6 (Q.length (Cq.q q)));
-          test "exec rejects unsupported programs and missing dispatch packets" (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              let kernargs = Buffer.make ~va:0x300000n ~size:24 ~meta:() () in
-              let exec dev prg =
-                Cq.exec (Cq.create dev) prg ~kernargs ~global_size:(1, 1, 1)
-                  ~local_size:(1, 1, 1)
-              in
-              let dev = gfx1100 () in
-              raises_match is_invalid_arg (fun () ->
-                  exec dev (amd_prog ~dispatch_ptr:true dev));
-              let sqtt_dev = gfx1100 ~sqtt_enabled:true () in
-              raises_match is_invalid_arg (fun () ->
-                  exec sqtt_dev (amd_prog sqtt_dev));
-              let multi_xcc = gfx942 () in
-              raises_match is_invalid_arg (fun () ->
-                  exec multi_xcc (amd_prog ~private_segment:true multi_xcc)));
-          test "timeline epochs keep GPU waits and SDMA fences in one dword" (fun () ->
-              with_map 4096 (fun m ->
-                  let signal = Signal.make ~is_timeline:true (slot_buf ~va:0x400000n m) in
-                  let compute = Tolk_amd.Compute_queue.create (gfx1100 ()) in
-                  Tolk_amd.Compute_queue.wait compute ~value:0x100000005 signal;
-                  equal int 5 (Q.dwords (Tolk_amd.Compute_queue.q compute)).(4);
-                  let copy = Tolk_amd.Copy_queue.create (gfx1100 ()) in
-                  Tolk_amd.Copy_queue.wait copy ~value:0x100000005 signal;
-                  Tolk_amd.Copy_queue.signal copy ~value:0x100000006 signal;
-                  let words = Q.dwords (Tolk_amd.Copy_queue.q copy) in
-                  equal int 5 words.(3);
-                  equal int 6 words.(9)));
-          test "a command value wider than 32 bits is rejected" (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              with_map 4096 (fun m ->
-                  let s = Signal.make (slot_buf ~va:0x400000n m) in
-                  let q = Cq.create (gfx1100 ()) in
-                  raises_match is_invalid_arg (fun () ->
-                      Cq.wait q ~value:0x100000000 s)));
-        ];
-      group "Copy_queue"
+      group "SDMA revision"
         [
           test "copy limits follow the full SDMA revision" (fun () ->
               List.iter (fun (sdma_version, expected) ->
@@ -1154,25 +1068,6 @@ let () =
                 [(4, 4, 1), 0x400000; (4, 4, 2), 0x40000000;
                  (4, 9, 0), 0x40000000;
                  (6, 0, 0), 0x40000000]);
-          test "copy chunks at the copy-size cap" (fun () ->
-              let module Cp = Tolk_amd.Copy_queue in
-              let dev = gfx1100 () in
-              let src = Buffer.make ~va:0x10000000n ~size:0 ~meta:() () in
-              let dst = Buffer.make ~va:0x20000000n ~size:0 ~meta:() () in
-              let exact = Cp.create ~max_copy_size:0x1000 dev in
-              Cp.copy exact ~dest:dst ~src 0x1000;
-              equal int 7 (Q.length (Cp.q exact));
-              equal int 0xfff (Q.get (Cp.q exact) 1);
-              let split = Cp.create ~max_copy_size:0x1000 dev in
-              Cp.copy split ~dest:dst ~src 0x1001;
-              equal int 14 (Q.length (Cp.q split));
-              let q = Cp.q split in
-              equal int 0xfff (Q.get q 1);
-              (* the second chunk copies the single remaining byte at
-                 +0x1000 *)
-              equal int 0 (Q.get q 8);
-              equal int 0x10001000 (Q.get q 10);
-              equal int 0x20001000 (Q.get q 12));
         ];
       group "Program"
         [

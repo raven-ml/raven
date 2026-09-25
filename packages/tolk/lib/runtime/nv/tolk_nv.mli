@@ -7,21 +7,10 @@
 
 (** NVIDIA GPU runtime.
 
-    Building blocks for driving NVIDIA GPUs through their hardware
-    command queues: generic queue machinery ({!Hcq}), the generated
-    driver tables ({!Nv_tables}), kernel launch descriptors ({!Qmd}),
-    the command-stream builders ({!Compute_queue}, {!Copy_queue}) that
-    translate work into the method streams the compute and copy engines
-    execute, the driver interface ({!Nv_iface}) with its kernel-driver
-    implementation ({!Nvk_iface}), and kernel loading and dispatch
-    ({!Program}).
-
-    The builders are pure: they read a {!type-device} description,
-    append dwords to an in-memory {!Hcq.Q.t}, and patch launch
-    descriptors through their CPU mappings. Their [submit] functions
-    stage the accumulated stream in the device's command buffer, point
-    a channel ring entry ({!Queue_desc}) at it, and ring the
-    work-submission doorbell. *)
+    {!Program} prepares kernel images and descriptors ({!Qmd}). {!Encoded_queue}
+    translates shared calls into compute and DMA submissions. {!Nv_tables}
+    provides hardware tables; {!Nv_iface} allocates memory and creates mapped
+    channels ({!Queue_desc}). *)
 
 module Hcq = Tolk_hcq.Hcq
 module Nv_tables = Nv_tables
@@ -127,22 +116,6 @@ val device :
     device description over the given engine classes and mappings.
     [slm_per_thread] defaults to [0] and [shader_local_mem] starts absent. *)
 
-(** {1:programs Programs} *)
-
-type 'meta program = {
-  dev : 'meta device;  (** Device the program was loaded on. *)
-  qmd : Qmd.t;
-      (** Launch descriptor template: the geometry-independent fields,
-          filled at load time. {!Compute_queue.exec} copies it behind
-          the staged arguments and patches the per-launch fields into
-          the copy. *)
-  cbuf0_size : int;
-      (** Size of the kernel's first constant buffer in bytes. Kernel
-          arguments are staged in it, and the descriptor copy lands at
-          the next 256-byte boundary after it. *)
-}
-(** The launch parameters of a loaded kernel. *)
-
 (** {1:queue_desc Mapped queues} *)
 
 (** Hardware channels mapped into the process.
@@ -167,141 +140,6 @@ module Queue_desc : sig
             doorbell. *)
   }
   (** The type for mapped channels. *)
-end
-
-(** {1:queues Queue builders} *)
-
-(** Compute-engine command streams.
-
-    Each function appends one logical command to the queue's dword
-    stream; {!Compute_queue.q} exposes the accumulated stream for
-    submission. Values that do not fit their 32-bit dword raise
-    [Invalid_argument] (see {!Hcq.Q.push}).
-
-    Successive launches coalesce: while a launch is pending, the next
-    {!Compute_queue.exec} links itself into the pending descriptor as
-    its dependent instead of appending stream methods, and
-    {!Compute_queue.signal} rides in a free release slot of the
-    pending descriptor instead of appending a semaphore method.
-    {!Compute_queue.wait}, {!Compute_queue.write},
-    {!Compute_queue.poll_bit} and {!Compute_queue.memory_barrier} end
-    the pending launch, so later commands go back to the stream. *)
-module Compute_queue : sig
-  type 'meta t
-  (** The type for compute command streams under construction. *)
-
-  val create : 'meta device -> 'meta t
-  (** [create dev] is an empty stream for [dev]. *)
-
-  val q : 'meta t -> Hcq.Q.t
-  (** [q t] is the underlying dword stream. *)
-
-  val setup :
-    'meta t ->
-    ?compute_class:int ->
-    ?local_mem_window:nativeint ->
-    ?shared_mem_window:nativeint ->
-    ?local_mem:nativeint ->
-    ?local_mem_tpc_bytes:int ->
-    unit ->
-    unit
-  (** [setup t ()] appends the engine set-up methods for each argument
-      given: bind the compute class to the channel, set the two
-      virtual-address windows, and point the engine at the
-      local-memory backing store and its per-TPC size. *)
-
-  val exec :
-    'meta t ->
-    'meta program ->
-    kernargs:'a Hcq.Buffer.t ->
-    global_size:int * int * int ->
-    local_size:int * int * int ->
-    unit
-  (** [exec t prg ~kernargs ~global_size ~local_size] launches [prg]
-      over a [global_size] grid of [local_size] blocks, with the
-      kernel arguments staged at the start of [kernargs]. The launch
-      descriptor is copied into [kernargs] at the 256-byte boundary
-      after the argument bytes ([prg.cbuf0_size]) and its geometry and
-      constant-buffer-0 address are patched into the copy, so
-      [kernargs] must be CPU-mapped and have room for the descriptor.
-
-      Raises [Invalid_argument] if the descriptor's device address
-      does not fit in 40 bits, or if a dimension does not fit its
-      field (32 bits per grid dimension, 16 bits for the first two
-      block dimensions, 8 bits for the third). *)
-
-  val signal : 'meta t -> ?value:int -> ('a, 'meta device) Hcq.Signal.t -> unit
-  (** [signal t sg] writes [value] (defaults to [0]) to [sg]'s value
-      slot once all prior work retired. After a launch, the release is
-      carried by the launch descriptor when one of its two release
-      slots is free; otherwise a semaphore-release method is appended,
-      which also stamps [sg]'s timestamp and raises a non-stalling
-      interrupt. *)
-
-  val wait : 'meta t -> ?value:int -> ('a, 'meta device) Hcq.Signal.t -> unit
-  (** [wait t sg] stalls the channel until [sg]'s value reaches
-      [value] (defaults to [0]), comparing 64-bit values with
-      wrap-around. *)
-
-  val timestamp : 'meta t -> ('a, 'meta device) Hcq.Signal.t -> unit
-  (** [timestamp t sg] releases [sg] with value [0], stamping its
-      timestamp slot. *)
-
-  val write : 'meta t -> ?b64:bool -> 'a Hcq.Buffer.t -> int64 -> unit
-  (** [write t buf v] writes [v] to the start of [buf] once all prior
-      work retired: the full 64 bits when [b64] is [true], the low 32
-      otherwise (defaults to [false]). *)
-
-  val poll_bit : 'meta t -> 'a Hcq.Buffer.t -> value:int -> mask:int -> unit
-  (** [poll_bit t buf ~value ~mask] stalls the channel until the bits
-      selected by [mask] in the first dword of [buf] are all set
-      ([value = mask]) or all clear ([value = 0]). *)
-
-  val memory_barrier : 'meta t -> unit
-  (** [memory_barrier t] invalidates the engine's instruction, global
-      data, and constant caches, making prior memory writes visible to
-      subsequent launches. *)
-
-end
-
-(** Copy-engine command streams.
-
-    Each function appends one logical command to the queue's dword
-    stream; {!Copy_queue.q} exposes the accumulated stream for
-    submission. *)
-module Copy_queue : sig
-  type 'meta t
-  (** The type for copy command streams under construction. *)
-
-  val create : 'meta device -> 'meta t
-  (** [create dev] is an empty stream for [dev]. *)
-
-  val q : 'meta t -> Hcq.Q.t
-  (** [q t] is the underlying dword stream. *)
-
-  val setup : 'meta t -> ?copy_class:int -> unit -> unit
-  (** [setup t ()] binds [copy_class], when given, to the channel. *)
-
-  val copy :
-    'meta t -> dest:'a Hcq.Buffer.t -> src:'b Hcq.Buffer.t -> int -> unit
-  (** [copy t ~dest ~src size] copies [size] bytes from the start of
-      [src] to the start of [dest], split into transfers of at most
-      2 GiB. *)
-
-  val signal : 'meta t -> ?value:int -> ('a, 'meta device) Hcq.Signal.t -> unit
-  (** [signal t sg] writes [value] (defaults to [0]) to [sg]'s value
-      slot once prior transfers completed, stamping its timestamp
-      slot. *)
-
-  val wait : 'meta t -> ?value:int -> ('a, 'meta device) Hcq.Signal.t -> unit
-  (** [wait t sg] stalls the channel until [sg]'s value reaches
-      [value] (defaults to [0]), comparing 64-bit values with
-      wrap-around. *)
-
-  val timestamp : 'meta t -> ('a, 'meta device) Hcq.Signal.t -> unit
-  (** [timestamp t sg] releases [sg] with value [0], stamping its
-      timestamp slot. *)
-
 end
 
 (** {1:iface Driver interfaces} *)

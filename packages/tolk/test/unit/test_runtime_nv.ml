@@ -13,8 +13,6 @@ module Timeline = Tolk_hcq.Hcq.Timeline
 module Tables = Tolk_nv.Nv_tables
 module Defs = Tolk_nv.Nv_tables.Defs
 module Qmd = Tolk_nv.Qmd
-module Compute_queue = Tolk_nv.Compute_queue
-module Copy_queue = Tolk_nv.Copy_queue
 module Nv_iface = Tolk_nv.Nv_iface
 module Nvk_iface = Tolk_nv.Nvk_iface
 module Pci_iface = Tolk_nv.Pci_iface
@@ -36,9 +34,7 @@ let with_map size f =
 
 (* One 0x8000-byte anonymous mapping backs everything a test touches:
    the usermode register region at
-   0x1000, ring and put pointer at 0x2000, a signal slot at 0x3000, two
-   kernel-argument areas at 0x4000 and 0x5000, and template descriptor
-   storage at 0x6000. Device addresses are made up and distinct from
+   0x1000 and template descriptor storage at 0x6000. Device addresses are made up and distinct from
    the CPU mapping. *)
 let with_fixture f = with_map 0x8000 f
 
@@ -50,37 +46,11 @@ let nv_dev ?(compute_class = Defs.ada_compute_a)
     ~gpu_mmio:(Mmio.view m ~off:0x1000 ~size:0x1000 ())
     ()
 
-let signal m =
-  Signal.make
-    (Buffer.make ~va:0x200000010n ~size:16
-       ~view:(Mmio.view m ~off:0x3000 ~size:16 ())
-       ~meta:() ())
-
-let kernarg1 m =
-  Buffer.make ~va:0x30000000n ~size:0x1000
-    ~view:(Mmio.view m ~off:0x4000 ~size:0x1000 ())
-    ~meta:() ()
-
-let kernarg2 m =
-  Buffer.make ~va:0x40000000n ~size:0x1000
-    ~view:(Mmio.view m ~off:0x5000 ~size:0x1000 ())
-    ~meta:() ()
-
 let template_qmd ~compute_class m =
   Qmd.create
     ~view:
       (Mmio.view m ~off:0x6000 ~size:(Qmd.sizeof ~compute_class) ())
     ~compute_class
-
-let nv_prog ?(cbuf0_size = 0x160) (dev : unit Tolk_nv.device) m =
-  {
-    Tolk_nv.dev;
-    qmd = template_qmd ~compute_class:dev.Tolk_nv.compute_class m;
-    cbuf0_size;
-  }
-
-let dwords cq = Q.dwords (Compute_queue.q cq)
-let copy_dwords cq = Q.dwords (Copy_queue.q cq)
 
 (* Wire-format tests compare structures as hex strings so a mismatch
    shows the whole layout. *)
@@ -115,15 +85,6 @@ let nvk_iface =
           cached := Some i;
           i
         with Failure msg -> skip ~reason:msg ())
-
-(* The kernel-argument area's descriptor copy: cbuf0_size 0x160 rounds
-   up to 0x200. *)
-let exec_qmd ~compute_class m ~kernarg_off =
-  Qmd.create
-    ~view:
-      (Mmio.view m ~off:(kernarg_off + 0x200) ~size:(Qmd.sizeof ~compute_class)
-         ())
-    ~compute_class
 
 let set16 b off v = Bytes.set_uint16_le b off v
 let set32 b off v = Bytes.set_int32_le b off (Int32.of_int v)
@@ -1083,301 +1044,6 @@ let () =
                     (Qmd.read q5 "constant_buffer_addr_lower_shifted6_0");
                   equal int 0
                     (Qmd.read q5 "constant_buffer_addr_upper_shifted6_0")));
-        ];
-      group "compute stream"
-        [
-          test "wait" (fun () ->
-              with_fixture (fun m ->
-                  let cq = Compute_queue.create (nv_dev m) in
-                  Compute_queue.wait cq ~value:5 (signal m);
-                  equal (array int)
-                    [| 0x20050017; 0x10; 2; 5; 0; 0x01000003 |]
-                    (dwords cq)));
-          test "signal without a pending launch" (fun () ->
-              with_fixture (fun m ->
-                  let cq = Compute_queue.create (nv_dev m) in
-                  Compute_queue.signal cq ~value:7 (signal m);
-                  equal (array int)
-                    [|
-                      0x20050017; 0x10; 2; 7; 0; 0x01100001; 0x20010008; 0;
-                    |]
-                    (dwords cq)));
-          test "timestamp captures the clock without a completion interrupt" (fun () ->
-              with_fixture (fun m ->
-                  let cq = Compute_queue.create (nv_dev m) in
-                  Compute_queue.timestamp cq (signal m);
-                  equal (array int)
-                    [|
-                      0x20050017; 0x10; 2; 0; 0; 0x03100001;
-                    |]
-                    (dwords cq)));
-          test "memory_barrier" (fun () ->
-              with_fixture (fun m ->
-                  let cq = Compute_queue.create (nv_dev m) in
-                  Compute_queue.memory_barrier cq;
-                  equal (array int) [| 0x200125a6; 0x1011 |] (dwords cq)));
-          test "write selects the payload size" (fun () ->
-              with_fixture (fun m ->
-                  let buf = Buffer.make ~va:0x50000000n ~size:16 ~meta:() () in
-                  let cq = Compute_queue.create (nv_dev m) in
-                  Compute_queue.write cq ~b64:true buf 0x100000002L;
-                  Compute_queue.write cq buf 5L;
-                  equal (array int)
-                    [|
-                      0x20050017; 0x50000000; 0; 2; 1; 0x01100001;
-                      0x20050017; 0x50000000; 0; 5; 0; 0x00100001;
-                    |]
-                    (dwords cq)));
-          test "poll_bit waits for set or clear bits" (fun () ->
-              with_fixture (fun m ->
-                  let buf = Buffer.make ~va:0x50000000n ~size:16 ~meta:() () in
-                  let cq = Compute_queue.create (nv_dev m) in
-                  Compute_queue.poll_bit cq buf ~value:0x8 ~mask:0x8;
-                  Compute_queue.poll_bit cq buf ~value:0 ~mask:0x8;
-                  equal (array int)
-                    [|
-                      0x20050017; 0x50000000; 0; 0x8; 0; 0x4;
-                      0x20050017; 0x50000000; 0; 0xfffffff7; 0; 0x5;
-                    |]
-                    (dwords cq)));
-          test "setup emits one method per argument" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.setup cq ~compute_class:dev.Tolk_nv.compute_class
-                    ~local_mem_window:dev.Tolk_nv.local_mem_window
-                    ~shared_mem_window:dev.Tolk_nv.shared_mem_window
-                    ~local_mem:0x123400000n ~local_mem_tpc_bytes:0x8000 ();
-                  equal (array int)
-                    [|
-                      0x20012000; 0xc9c0;
-                      0x200221ec; 0x7293; 0;
-                      0x200220a8; 0x7294; 0;
-                      0x200221e4; 0x1; 0x23400000;
-                      0x200320b9; 0; 0x8000; 0xff;
-                    |]
-                    (dwords cq)));
-        ];
-      group "copy stream"
-        [
-          test "setup binds the copy class" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let cq = Copy_queue.create dev in
-                  Copy_queue.setup cq ~copy_class:dev.Tolk_nv.dma_class ();
-                  equal (array int) [| 0x20018000; 0xc7b5 |] (copy_dwords cq)));
-          test "copy" (fun () ->
-              with_fixture (fun m ->
-                  let src = Buffer.make ~va:0x50000000n ~size:0x1000 ~meta:() ()
-                  and dest =
-                    Buffer.make ~va:0x60000000n ~size:0x1000 ~meta:() ()
-                  in
-                  let cq = Copy_queue.create (nv_dev m) in
-                  Copy_queue.copy cq ~dest ~src 0x1000;
-                  equal (array int)
-                    [|
-                      0x20048100; 0; 0x50000000; 0; 0x60000000;
-                      0x20018106; 0x1000;
-                      0x200180c0; 0x182;
-                    |]
-                    (copy_dwords cq)));
-          test "a copy beyond 2 GiB chunks" (fun () ->
-              with_fixture (fun m ->
-                  let src = Buffer.make ~va:0x50000000n ~size:0 ~meta:() ()
-                  and dest = Buffer.make ~va:0x160000000n ~size:0 ~meta:() () in
-                  let cq = Copy_queue.create (nv_dev m) in
-                  Copy_queue.copy cq ~dest ~src ((1 lsl 31) + 0x100);
-                  equal (array int)
-                    [|
-                      0x20048100; 0; 0x50000000; 0x1; 0x60000000;
-                      0x20018106; 0x80000000;
-                      0x200180c0; 0x182;
-                      0x20048100; 0; 0xd0000000; 0x1; 0xe0000000;
-                      0x20018106; 0x100;
-                      0x200180c0; 0x182;
-                    |]
-                    (copy_dwords cq)));
-          test "signal flushes through a semaphore release" (fun () ->
-              with_fixture (fun m ->
-                  let cq = Copy_queue.create (nv_dev m) in
-                  Copy_queue.signal cq ~value:3 (signal m);
-                  equal (array int)
-                    [| 0x20038090; 2; 0x10; 3; 0x200180c0; 0x0c |]
-                    (copy_dwords cq)));
-          test "copy completion writes the low word of a timeline epoch" (fun () ->
-              with_fixture (fun m ->
-                  let timeline = Signal.make ~is_timeline:true (Signal.buf (signal m)) in
-                  let cq = Copy_queue.create (nv_dev m) in
-                  Copy_queue.signal cq ~value:0x100000003 timeline;
-                  equal (array int)
-                    [|0x20038090; 2; 0x10; 3; 0x200180c0; 0x0c|]
-                    (copy_dwords cq)));
-          test "timestamp uses four words while completion preserves adjacent state" (fun () ->
-              with_fixture (fun m ->
-                  let cq = Copy_queue.create (nv_dev m) in
-                  Copy_queue.timestamp cq (signal m);
-                  equal (array int)
-                    [|0x20038090; 2; 0x10; 0; 0x200180c0; 0x14|]
-                    (copy_dwords cq)));
-          test "wait matches the compute encoding" (fun () ->
-              with_fixture (fun m ->
-                  let cq = Copy_queue.create (nv_dev m) in
-                  Copy_queue.wait cq ~value:5 (signal m);
-                  equal (array int)
-                    [| 0x20050017; 0x10; 2; 5; 0; 0x01000003 |]
-                    (copy_dwords cq)));
-        ];
-      group "launch chaining"
-        [
-          test "exec copies the template and patches the geometry" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let prg = nv_prog dev m in
-                  Qmd.write prg.qmd [ ("barrier_count", 3) ];
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.exec cq prg ~kernargs:(kernarg1 m)
-                    ~global_size:(0x30003, 5, 3) ~local_size:(33, 7, 2);
-                  (* descriptor address 0x30000200 shifted right by 8 *)
-                  equal (array int)
-                    [| 0x200120ad; 0x300002; 0x200120b0; 9 |]
-                    (dwords cq);
-                  let q =
-                    exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
-                      ~kernarg_off:0x4000
-                  in
-                  equal int 3 (Qmd.read q "barrier_count");
-                  equal int 0x30003 (Qmd.read q "cta_raster_width");
-                  equal int 5 (Qmd.read q "cta_raster_height");
-                  equal int 3 (Qmd.read q "cta_raster_depth");
-                  equal int 33 (Qmd.read q "cta_thread_dimension0");
-                  equal int 7 (Qmd.read q "cta_thread_dimension1");
-                  equal int 2 (Qmd.read q "cta_thread_dimension2");
-                  equal int 0x30000000
-                    (Qmd.read q "constant_buffer_addr_lower_0");
-                  equal int 0 (Qmd.read q "constant_buffer_addr_upper_0")));
-          test "exec uses the version-5 layout on Blackwell" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev ~compute_class:Defs.blackwell_compute_b m in
-                  let prg = nv_prog dev m in
-                  Qmd.write prg.qmd [ ("register_count", 42) ];
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.exec cq prg ~kernargs:(kernarg1 m)
-                    ~global_size:(0x30003, 5, 3) ~local_size:(33, 7, 2);
-                  let q =
-                    exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
-                      ~kernarg_off:0x4000
-                  in
-                  equal int 0x30003 (Qmd.read q "grid_width");
-                  equal int 5 (Qmd.read q "grid_height");
-                  equal int 3 (Qmd.read q "grid_depth");
-                  equal int 33 (Qmd.read q "cta_thread_dimension0");
-                  equal int 2 (Qmd.read q "cta_thread_dimension2");
-                  (* the byte after the third dimension holds the register
-                     count: the single-byte store must not clobber it *)
-                  equal int 42 (Qmd.read q "register_count");
-                  equal int (0x30000000 lsr 6)
-                    (Qmd.read q "constant_buffer_addr_lower_shifted6_0")));
-          test "a descriptor address above 40 bits is rejected" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let prg = nv_prog dev m in
-                  let kernargs =
-                    Buffer.make ~va:0x10000000000n ~size:0x1000
-                      ~view:(Mmio.view m ~off:0x4000 ~size:0x1000 ())
-                      ~meta:() ()
-                  in
-                  let cq = Compute_queue.create dev in
-                  raises_match is_invalid_arg (fun () ->
-                      Compute_queue.exec cq prg ~kernargs
-                        ~global_size:(1, 1, 1) ~local_size:(1, 1, 1))));
-          test "a second exec chains instead of launching" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let prg = nv_prog dev m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.exec cq prg ~kernargs:(kernarg1 m)
-                    ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
-                  Compute_queue.exec cq prg ~kernargs:(kernarg2 m)
-                    ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
-                  (* no new stream methods for the chained launch *)
-                  equal int 4 (Q.length (Compute_queue.q cq));
-                  let q1 =
-                    exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
-                      ~kernarg_off:0x4000
-                  in
-                  equal int 1 (Qmd.read q1 "dependent_qmd0_enable");
-                  equal int 1 (Qmd.read q1 "dependent_qmd0_action");
-                  equal int 1 (Qmd.read q1 "dependent_qmd0_prefetch");
-                  (* second descriptor at 0x40000200, shifted right by 8 *)
-                  equal int 0x400002 (Qmd.read q1 "dependent_qmd0_pointer")));
-          test "wait, write, poll_bit and memory_barrier end the launch"
-            (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let prg = nv_prog dev m in
-                  let buf = Buffer.make ~va:0x50000000n ~size:16 ~meta:() () in
-                  let break_with name f =
-                    let cq = Compute_queue.create dev in
-                    Compute_queue.exec cq prg ~kernargs:(kernarg1 m)
-                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
-                    let before = Q.length (Compute_queue.q cq) in
-                    f cq;
-                    let between = Q.length (Compute_queue.q cq) in
-                    Compute_queue.exec cq prg ~kernargs:(kernarg2 m)
-                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
-                    equal ~msg:name int (between + 4)
-                      (Q.length (Compute_queue.q cq));
-                    let q1 =
-                      exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
-                        ~kernarg_off:0x4000
-                    in
-                    equal ~msg:name int 0 (Qmd.read q1 "dependent_qmd0_enable");
-                    is_true ~msg:name (between > before)
-                  in
-                  break_with "wait" (fun cq ->
-                      Compute_queue.wait cq (signal m));
-                  break_with "write" (fun cq -> Compute_queue.write cq buf 1L);
-                  break_with "poll_bit" (fun cq ->
-                      Compute_queue.poll_bit cq buf ~value:0 ~mask:1);
-                  break_with "memory_barrier" (fun cq ->
-                      Compute_queue.memory_barrier cq)));
-          test "signal rides the pending descriptor's release slots"
-            (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let prg = nv_prog dev m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.exec cq prg ~kernargs:(kernarg1 m)
-                    ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
-                  Compute_queue.signal cq ~value:9 (signal m);
-                  (* nothing appended: the release is in the descriptor *)
-                  equal int 4 (Q.length (Compute_queue.q cq));
-                  let q1 =
-                    exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
-                      ~kernarg_off:0x4000
-                  in
-                  equal int 1 (Qmd.read q1 "release0_enable");
-                  let qview = Mmio.view m ~off:0x4200 ~size:0x100 () in
-                  (* address 0x200000010: low word at RELEASE0_ADDRESS_LOWER
-                     (byte 96); its top nibble lands in the next word
-                     without clobbering the enable bit set just before *)
-                  equal int32 0x10l (Mmio.read32 qview 96);
-                  equal int32 0xa0800002l (Mmio.read32 qview 100);
-                  equal int 2 (Qmd.read q1 "release0_structure_size");
-                  equal int 1 (Qmd.read q1 "release0_payload64b");
-                  equal int32 9l (Mmio.read32 qview 104);
-                  equal int32 0l (Mmio.read32 qview 108);
-                  (* a second signal takes the second slot, a third falls
-                     back to the stream and ends the launch *)
-                  Compute_queue.signal cq ~value:10 (signal m);
-                  equal int 4 (Q.length (Compute_queue.q cq));
-                  equal int 1 (Qmd.read q1 "release1_enable");
-                  Compute_queue.signal cq ~value:11 (signal m);
-                  equal int 12 (Q.length (Compute_queue.q cq));
-                  Compute_queue.exec cq prg ~kernargs:(kernarg2 m)
-                    ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
-                  equal int 16 (Q.length (Compute_queue.q cq));
-                  equal int 0 (Qmd.read q1 "dependent_qmd0_enable")));
         ];
       group "iface wire formats"
         [

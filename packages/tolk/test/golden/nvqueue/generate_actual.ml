@@ -79,6 +79,14 @@ let run chip compute_class dma_class sass_version =
       descriptor "exec_chained_qmd1" 1 2 chain;
       descriptor "signal_after_exec_qmd" 0 1 (build "signal_after_exec" true
         [call; U.ins ~mnemonic:"store" ~operands:[signal; u64 0x100000042] ()]);
+      List.iter (fun (label, between) ->
+          let encoded = build label true (call :: between @ [call]) in
+          descriptor (label ^ "_qmd0") 0 2 encoded;
+          descriptor (label ^ "_qmd1") 1 2 encoded)
+        ["exec_wait_exec", [U.ins ~mnemonic:"wait" ~operands:[signal; u64 0x42] ()];
+         "exec_barrier_exec", [U.ins ~mnemonic:"barrier" ~operands:[] ()];
+         "exec_release_overflow", List.map (fun n ->
+             U.ins ~mnemonic:"store" ~operands:[signal; u64 n] ()) [9;10;11]];
       let data = Program.image ~name:"simple_add" binary in
       dev.slm_per_thread <- max dev.slm_per_thread ((data.lcmem_usage + 31) / 32 * 32);
       let qmd, _ = Program.template dev data in

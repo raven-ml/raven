@@ -12,7 +12,7 @@ Reproduce from the repository root:
     --tinygrad _plans/tinygrad-a83c6f801 --output _plans/goldens-a83/amdqueue
 
 The output directory is mandatory; no expected/actual output is used as input.
-The reference emits 24 files on gfx1100 and gfx942. Dune checks 23: gfx942 PM4
+The reference emits 28 files on gfx1100 and gfx942. Dune checks 27: gfx942 PM4
 exec has an explicitly documented scratch-partition divergence (DIVERGENCES.md).
 Tolk reserves resident-wave backing per XCC; the target offsets each XCC by
 private_segment_size/xccs. The target output remains reproducible, but its words
@@ -42,6 +42,8 @@ real ELF and the target scratch calculation, rather than manually copied fields.
 Retired compute write32/write64/poll_bit cases (six files), owner-specific
 signal_timeline/sdma_signal_timeline cases (four files), and synthetic
 exec_scratch_gfx1100 are removed: the target no longer exposes those methods.
+Exact-cap and cap-plus-one shared copy cases preserve chunk-boundary coverage
+when the obsolete raw Copy_queue API is removed.
 The shared SDMA write instruction remains supported, including mixed 32/64-bit
 patches and replay. Its payloads are generated with the target AMDSDMAQueue.write,
 not the retired direct Copy_queue.write helper. Existing AQL/dispatch-pointer and

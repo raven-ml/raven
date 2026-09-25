@@ -5,6 +5,24 @@
 (rule
  (package tolk)
  (targets
+  exec_wait_exec_ada.actual
+  exec_wait_exec_blackwell.actual
+  exec_wait_exec_qmd0_ada.actual
+  exec_wait_exec_qmd0_blackwell.actual
+  exec_wait_exec_qmd1_ada.actual
+  exec_wait_exec_qmd1_blackwell.actual
+  exec_barrier_exec_ada.actual
+  exec_barrier_exec_blackwell.actual
+  exec_barrier_exec_qmd0_ada.actual
+  exec_barrier_exec_qmd0_blackwell.actual
+  exec_barrier_exec_qmd1_ada.actual
+  exec_barrier_exec_qmd1_blackwell.actual
+  exec_release_overflow_ada.actual
+  exec_release_overflow_blackwell.actual
+  exec_release_overflow_qmd0_ada.actual
+  exec_release_overflow_qmd0_blackwell.actual
+  exec_release_overflow_qmd1_ada.actual
+  exec_release_overflow_qmd1_blackwell.actual
   dma_copy_large_ada.actual
   dma_copy_large_blackwell.actual
   dma_copy_small_ada.actual
@@ -53,6 +71,24 @@
  (package tolk)
  (action
   (progn
+   (diff exec_wait_exec_ada.expected exec_wait_exec_ada.actual)
+   (diff exec_wait_exec_blackwell.expected exec_wait_exec_blackwell.actual)
+   (diff exec_wait_exec_qmd0_ada.expected exec_wait_exec_qmd0_ada.actual)
+   (diff exec_wait_exec_qmd0_blackwell.expected exec_wait_exec_qmd0_blackwell.actual)
+   (diff exec_wait_exec_qmd1_ada.expected exec_wait_exec_qmd1_ada.actual)
+   (diff exec_wait_exec_qmd1_blackwell.expected exec_wait_exec_qmd1_blackwell.actual)
+   (diff exec_barrier_exec_ada.expected exec_barrier_exec_ada.actual)
+   (diff exec_barrier_exec_blackwell.expected exec_barrier_exec_blackwell.actual)
+   (diff exec_barrier_exec_qmd0_ada.expected exec_barrier_exec_qmd0_ada.actual)
+   (diff exec_barrier_exec_qmd0_blackwell.expected exec_barrier_exec_qmd0_blackwell.actual)
+   (diff exec_barrier_exec_qmd1_ada.expected exec_barrier_exec_qmd1_ada.actual)
+   (diff exec_barrier_exec_qmd1_blackwell.expected exec_barrier_exec_qmd1_blackwell.actual)
+   (diff exec_release_overflow_ada.expected exec_release_overflow_ada.actual)
+   (diff exec_release_overflow_blackwell.expected exec_release_overflow_blackwell.actual)
+   (diff exec_release_overflow_qmd0_ada.expected exec_release_overflow_qmd0_ada.actual)
+   (diff exec_release_overflow_qmd0_blackwell.expected exec_release_overflow_qmd0_blackwell.actual)
+   (diff exec_release_overflow_qmd1_ada.expected exec_release_overflow_qmd1_ada.actual)
+   (diff exec_release_overflow_qmd1_blackwell.expected exec_release_overflow_qmd1_blackwell.actual)
    (diff dma_copy_large_ada.expected dma_copy_large_ada.actual)
    (diff dma_copy_large_blackwell.expected dma_copy_large_blackwell.actual)
    (diff dma_copy_small_ada.expected dma_copy_small_ada.actual)

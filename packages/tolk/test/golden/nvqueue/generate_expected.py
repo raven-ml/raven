@@ -107,6 +107,14 @@ def streams(dev):
         out[f"exec_chained_qmd{i}"] = words(qmd.mv, qmd.patches.items())[:QMD(dev).sz]
     q = build("signal_after_exec", NVComputeQueue, lambda q: (q.exec(CALL, PROGRAM), q.signal(SIGNAL, c64(SIGNAL_VALUE))))
     out["signal_after_exec_qmd"] = words(q.qmds[0].mv, q.qmds[0].patches.items())[:QMD(dev).sz]
+    for label, between in [
+        ("exec_wait_exec", lambda q: q.wait(SIGNAL, c64(0x42))),
+        ("exec_barrier_exec", lambda q: q.memory_barrier()),
+        ("exec_release_overflow", lambda q: [q.signal(SIGNAL, c64(v)) for v in (9, 10, 11)]),
+    ]:
+        q = build(label, NVComputeQueue, lambda q: (q.exec(CALL, PROGRAM), between(q), q.exec(CALL, PROGRAM)))
+        for i, qmd in enumerate(q.qmds):
+            out[f"{label}_qmd{i}"] = words(qmd.mv, qmd.patches.items())[:QMD(dev).sz]
     data, _ = nv_build_program(dev, PROGRAM, DEVS)
     out["qmd_init"] = words(data.qmd.mv, data.qmd.patches.items())
     build("dma_setup", NVCopyQueue, lambda q: q.q(*nvm(4, nv_gpu.NVC6C0_SET_OBJECT, dev.iface.dma_class)))

@@ -15,7 +15,7 @@ let run chip target xccs gc_version nbio_version sdma_version =
     "simd_per_cu",4; "array_count",2*xccs; "simd_arrays_per_engine",1] in
   let dev = device ~target ~xccs ~gc_version ~nbio_version ~sdma_version ~is_aql:false
       ~tmpring_size:0 ~scratch:(Hcq.Buffer.make ~va:0x200000n ~size:0x80000 ~meta:() ())
-      ~is_am:false ~queue_event_mailbox_ptr:0x500000n ~queue_event:{event_id=0x2a} () in
+      ~is_am:false () in
   let ptr tag dtype size address = F.pointer ~device:name ~tag ~dtype ~size ~address in
   let signal = ptr "signal" D.uint64 2 0x400000 in
   let write = ptr "write" D.uint32 2 0x600000 in
@@ -42,7 +42,8 @@ let run chip target xccs gc_version nbio_version sdma_version =
   List.iter (fun (label,size) ->
       let shrink buf = U.shrink ~src:buf ~offset:(F.int 0) ~size:(F.int size) in
       build label false [U.store_call ~dst:(shrink dst) ~src:(shrink src)])
-    ["sdma_copy_small",0x1000; "sdma_copy_large",copy_size];
+    ["sdma_copy_small",0x1000; "sdma_copy_large",copy_size;
+     "sdma_copy_exact",dev.max_copy_size; "sdma_copy_over_cap",dev.max_copy_size + 1];
   operation "sdma_signal" false "store" [signal; u32 0x42];
   operation "sdma_wait" false "wait" [signal; u32 0x42];
   operation "sdma_timestamp" false "timestamp" [signal];
