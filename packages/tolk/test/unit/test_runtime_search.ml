@@ -452,8 +452,79 @@ let codegen_midpoint_rounds_down () =
   is_true ~msg:"codegen benchmarks candidates" (!observed <> []);
   List.iter (equal (list int64) [ -3L ]) !observed
 
+let parallel_failure_joins_workers () =
+  let backing = cpu "beam-worker-ownership" in
+  let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
+  let started = Atomic.make 0 and finished = Atomic.make 0 in
+  let returned = Atomic.make false and release = Atomic.make false in
+  let timed_out = Atomic.make false in
+  let await predicate =
+    let deadline = Unix.gettimeofday () +. 5. in
+    while not (predicate ()) && Unix.gettimeofday () < deadline do
+      Unix.sleepf 0.001
+    done;
+    if not (predicate ()) then Atomic.set timed_out true
+  in
+  let compile src =
+    ignore src;
+    let worker = Atomic.fetch_and_add started 1 in
+    Fun.protect
+      ~finally:(fun () -> ignore (Atomic.fetch_and_add finished 1))
+      (fun () ->
+        if worker = 0 then await (fun () -> Atomic.get started >= 2)
+        else await (fun () -> Atomic.get release);
+        raise Stack_overflow)
+  in
+  let ren = Renderer.with_compiler
+      (Compiler.make ~name:"BEAM_WORKER_OWNERSHIP" ~compile ()) ren in
+  let renderer_set = Device.Renderer_set.make ~device:"CPU" ~arch:"generic"
+      ["CLANG", Fun.const ren] in
+  let device = Device.make ~name:"CPU:beam-worker-ownership"
+      ~allocator:(Device.Buffer.allocator sample) ~renderer_set
+      ~runtime:(fun _ -> failwith "failed compilation must never execute")
+      ~synchronize:(fun timeout -> ignore timeout) () in
+  let ast = elementwise_1d_ast ~n:64 in
+  let rawbufs = create_bufs_for_kernel device ast in
+  (* The second worker cannot finish until either search has already returned
+     (the bug), or the coordinator releases it while search is joining it. *)
+  let coordinator = Domain.spawn (fun () ->
+      await (fun () -> Atomic.get started >= 2);
+      let deadline = Unix.gettimeofday () +. 0.1 in
+      while not (Atomic.get returned) && Unix.gettimeofday () < deadline do
+        Unix.sleepf 0.001
+      done;
+      Atomic.set release true) in
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.set returned true;
+      Atomic.set release true;
+      Domain.join coordinator;
+      await (fun () -> Atomic.get finished = Atomic.get started);
+      List.iter Device.Buffer.deallocate rawbufs)
+    (fun () ->
+      let outcome =
+        try
+          Helpers.Context_var.with_context [B (Search.beam_parallel, 2)] (fun () ->
+              ignore (Search.beam_search ~to_program ~disable_cache:true
+                (P.create ast ren) rawbufs ~var_vals:[] 1 device));
+          None
+        with exn -> Some exn in
+      let completed_at_return = Atomic.get finished in
+      Atomic.set returned true;
+      equal int 2 (Atomic.get started);
+      equal ~msg:"all started workers finish before search propagates failure"
+        int 2 completed_at_return;
+      is_false ~msg:"worker coordination completed within its deadline"
+        (Atomic.get timed_out);
+      match outcome with
+      | Some Stack_overflow -> ()
+      | Some exn -> raise exn
+      | None -> failwith "search swallowed the worker exception")
+
 (* Entry *)
 
 let () = run __FILE__
     [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
+      test "parallel compilation joins workers before propagating failure"
+        parallel_failure_joins_workers;
       test "codegen rounds negative timing midpoints down" codegen_midpoint_rounds_down ]

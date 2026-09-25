@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- Beam search waits for every started compilation worker before reporting a
+  worker or spawn failure, preventing work from escaping its compilation context.
+
 - Changing `TC_SELECT` or `TC_OPT` now selects a program compiled for that
   tensor-core policy instead of reusing one cached under a previous setting.
 

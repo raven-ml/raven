@@ -152,8 +152,7 @@ acceptance requirement; skipped tests are not execution evidence.
   plus device-aware compilation and dynamic cache policy. Share bounded workers
   with lowering, with context snapshots, cancellation/timeouts, errors,
   affinity/container limits, nested-context audits and concurrent-cache
-  coverage. Join every started compilation domain before propagating a worker
-  or spawn failure, so restored contexts cannot race with abandoned workers.
+  coverage.
   Synchronize device opening and runtime caches; concurrent callers
   currently mutate the shared registry and execution Hashtbls without locking.
   Isolate schedule capture hooks and Rune's shared upload scratch across

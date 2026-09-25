@@ -231,18 +231,32 @@ let compile_candidates ~device ~nworkers candidates =
     let nworkers = min nworkers (min 16 n) in
     let cands = Array.of_list candidates in
     let chunk = (n + nworkers - 1) / nworkers in
-    let workers =
-      List.init nworkers (fun w ->
+    let workers = ref [] and failure = ref None in
+    let record_failure exn =
+      match !failure with
+      | None -> failure := Some (exn, Printexc.get_raw_backtrace ())
+      | Some _ -> ()
+    in
+    (try
+      for w = 0 to nworkers - 1 do
           let lo = w * chunk in
           let hi = min ((w + 1) * chunk) n in
-          Domain.spawn (fun () ->
+          let worker = Domain.spawn (fun () ->
               for i = lo to hi - 1 do
                 compiled.(i) <-
                   snd (try_compile ~use_timeout:false (i, cands.(i)) device)
-              done))
-    in
-    List.iter Domain.join workers;
-    compiled
+              done) in
+          workers := worker :: !workers
+      done
+    with exn -> record_failure exn);
+    (* A failed spawn or join must not let another worker outlive the search
+       scope and observe its caller's restored compilation context. *)
+    List.iter (fun worker ->
+        try Domain.join worker with exn -> record_failure exn)
+      (List.rev !workers);
+    match !failure with
+    | None -> compiled
+    | Some (exn, backtrace) -> Printexc.raise_with_backtrace exn backtrace
   end
 
 (* Timing *)
