@@ -563,6 +563,54 @@ let scatter t ~dim index src =
   let src, mask = pre_scatter t ~dim index src in
   masked_merge t src mask [ -1 ]
 
+(* Kernels over split operands
+
+   No tinygrad counterpart: the reference builds its custom kernels over one
+   device's placeholders. A custom kernel whose operands are split across
+   devices runs once per device over each device's slices (the multi rewrite
+   passes the call through), so it is built from the extents of the slices,
+   which its placeholders carry. A split result is an unwritten buffer of one
+   slice per device. An index along an axis split across devices is offset by
+   the first position the running device holds, which the device range gives.
+   A kernel that contracts or selects along a split axis leaves each device a
+   partial result, which a sum across the devices completes. *)
+
+(* The axis [t] is split along across devices, if any. *)
+let split_axis t =
+  match T.device t with Some (Uop.Multi _) -> Uop.axis (T.uop t) | _ -> None
+
+(* The extents of the slice of [t] each device holds. *)
+let slices t = Uop.max_shard_shape (T.uop t)
+
+let device_count = function Uop.Multi ds -> List.length ds | _ -> 1
+
+(* The position of the device running a kernel among [n]. *)
+let device_position n =
+  Uop.range ~size:(Uop.const_int n) ~axis:(-1) ~kind:Axis_type.Device ()
+
+(* Where a kernel's result lives over split operands: whole on each device,
+   split along one of its axes, or as a partial on each device. *)
+type result = Whole | Split of int | Partial
+
+(* The unwritten storage of a kernel's result of [shape] and [dtype] at
+   [result], and the result once the kernel has written it. Partials are
+   float32, summed across the devices and rounded once. *)
+let result_storage ~dtype ~device result shape =
+  let split ~dtype a shape =
+    let n = device_count device in
+    let local = List.mapi (fun i d -> if i = a then d / n else d) shape in
+    T.of_uop
+      (Uop.unshard
+         ~src:(T.uop (Creation.empty ~dtype ~device local))
+         ~axes:[ a ] ())
+  in
+  match result with
+  | Whole -> (Creation.empty ~dtype ~device shape, Fun.id)
+  | Split a -> (split ~dtype a shape, Fun.id)
+  | Partial ->
+      ( split ~dtype:D.float32 0 (device_count device :: shape),
+        fun t -> Dtype_ops.cast (Reduce.sum ~axis:[ 0 ] t) dtype )
+
 (* Indexed scatter
 
    No tinygrad counterpart. [scatter] and [scatter_reduce] range over the
@@ -576,7 +624,12 @@ let scatter t ~dim index src =
    device. [unique] is the caller's promise that no two updates of a lane
    share an index, never inferred: it frees the index range too, and leaves
    the kernel's layout to the optimizer; built as is, it would run one thread
-   per workgroup. An index outside the axis gates the store off. *)
+   per workgroup. An index outside the axis gates the store off.
+
+   Over a [t] split across devices each device writes its own slice: the
+   lanes of a split axis off [dim] are the device's, with [index] and [src]
+   split alike, and along a split [dim] every device reads every update and
+   keeps those that land in its rows. *)
 
 let scatter_indexed t ~dim index src ~mode ~unique =
   let src =
@@ -605,18 +658,47 @@ let scatter_indexed t ~dim index src ~mode ~unique =
         invalid_arg
           (Printf.sprintf "Op.scatter_indexed: shape mismatch on axis %d" d))
     tsh;
-  let count = List.nth ish dim and extent = List.nth tsh dim in
-  if count = 0 || prod tsh = 0 then t
+  let split = split_axis t in
+  List.iter
+    (fun (name, x) ->
+      let aligned =
+        match (split, split_axis x) with
+        | None, None -> true
+        | Some a, Some b -> a = b && a <> dim
+        | Some a, None -> a = dim || List.nth (T.shape x) a = 1
+        | None, Some _ -> false
+      in
+      if not aligned then
+        invalid_arg
+          (Printf.sprintf
+             "Op.scatter_indexed: %s must be split like self off dim and \
+              whole along dim"
+             name))
+    [ ("index", index); ("src", src) ];
+  if List.nth ish dim = 0 || prod tsh = 0 then t
   else begin
     let expanded = Tolk.Prepare.detect_expanded (T.uop index) in
     let index =
       if List.length expanded <> rank then index
       else
         Movement.shrink_to index
-          (List.mapi (fun d e -> if d <> dim && e then Some 1 else None)
+          (List.mapi
+             (fun d e ->
+               if d <> dim && e && split_axis index <> Some d then Some 1
+               else None)
              expanded)
     in
-    let ish = T.shape index in
+    let tsh = slices t and ish = slices index and ssh = slices src in
+    let count = List.nth ish dim and extent = List.nth tsh dim in
+    let first_row =
+      match (split, T.device t) with
+      | Some a, Some device when a = dim ->
+          Some
+            (Uop.alu_binary ~op:Ops.Mul
+               ~lhs:(device_position (device_count device))
+               ~rhs:(Uop.const_int extent))
+      | _ -> None
+    in
     let fxn = function
       | [ out; index; src ] ->
           let open Uop.O in
@@ -651,6 +733,11 @@ let scatter_indexed t ~dim index src ~mode ~unique =
             Uop.load ~src:(Uop.index ~ptr ~idxs:[ address sh coords ] ()) ()
           in
           let row = read index ish in
+          let row =
+            match first_row with
+            | None -> row
+            | Some first -> Uop.cast ~src:row ~dtype:D.weakint - first
+          in
           let bound n = Uop.const (Const.int (Uop.dtype row) n) in
           let in_bounds =
             Uop.alu_binary ~op:Ops.And
@@ -861,10 +948,55 @@ let quant_matmul ?ids x ~codes ~scales =
     | Uop.Multi [] | Uop.Index _ ->
         invalid_arg "Op.quant_matmul: no device name"
   in
-  let out = Creation.empty ~dtype ~device [ i; m; n ] in
-  if i * m * n = 0 then out
-  else if k = 0 then
+  (* Over split operands each device multiplies its own instances, rows or
+     columns. Whole instances over matrices split along their first axis, or
+     over split inputs, leave each device a partial product: ids name matrices
+     by their position in the whole, and a device offsets them by its first
+     matrix. Without ids, instance [t] is matrix [t], so both split alike.
+     Instances of one block of [x] stay on one device. *)
+  let parts = split_axis codes in
+  if split_axis scales <> parts then
+    invalid_arg "Op.quant_matmul: codes and scales split differently";
+  let instances =
+    match ids with Some ids -> split_axis ids | None -> parts
+  in
+  let result =
+    match (split_axis x, instances, parts) with
+    | None, None, None -> Whole
+    | Some 0, Some 0, None -> Split 0
+    | None, Some 0, None when ix = 1 -> Split 0
+    | Some 0, Some 0, Some 0 when Option.is_none ids -> Split 0
+    | None, Some 0, Some 0 when Option.is_none ids && ix = 1 -> Split 0
+    | Some 1, None, None -> Split 1
+    | None, None, Some 1 -> Split 2
+    | None, None, Some 0 when Option.is_some ids -> Partial
+    | Some 2, None, Some 2 -> Partial
+    | _ ->
+        invalid_arg
+          "Op.quant_matmul: operands split other than by instances, rows, \
+           columns, matrices or inputs"
+  in
+  let out, finish = result_storage ~dtype ~device result [ i; m; n ] in
+  let zeros () =
     Creation.clone ~device (Creation.zeros ~dtype ~buffer:false [ i; m; n ])
+  in
+  let ix, m, k =
+    match slices x with [ ix; m; k ] -> (ix, m, k) | _ -> assert false
+  in
+  let e, n =
+    match slices codes with [ e; n; _ ] -> (e, n) | _ -> assert false
+  in
+  let i = match ids with Some ids -> List.hd (slices ids) | None -> e in
+  let first =
+    if Option.is_some ids && parts = Some 0 then
+      Some
+        (Uop.alu_binary ~op:Ops.Mul
+           ~lhs:(device_position (device_count device))
+           ~rhs:(Uop.const_int e))
+    else None
+  in
+  if i * m * n = 0 then finish out
+  else if k = 0 then zeros ()
   else begin
     let gpu = Tolk.Renderer.has_local ren in
     let groups = k / 32 and gated = Option.is_some ids in
@@ -975,6 +1107,11 @@ let quant_matmul ?ids x ~codes ~scales =
         | None -> (None, pos)
         | Some ids ->
             let id = at (flat ids i) pos in
+            let id =
+              match first with
+              | None -> id
+              | Some first -> Uop.cast ~src:id ~dtype:D.weakint - first
+            in
             let bound v = Uop.const (Const.int (Uop.dtype id) v) in
             let selects = bits Ops.And (not_ (id < bound 0)) (id < bound e) in
             let id = if bounded then id else where selects id (bound 0) in
@@ -1063,7 +1200,7 @@ let quant_matmul ?ids x ~codes ~scales =
           ~dst:
             (at out
                (if merged then col else (((pos * int m) + row) * int n) + col))
-          ~value:(Uop.cast ~src:acc ~dtype) ()
+          ~value:(Uop.cast ~src:acc ~dtype:(Uop.dtype out)) ()
       in
       Uop.sink
         ~kernel_info:
@@ -1086,7 +1223,7 @@ let quant_matmul ?ids x ~codes ~scales =
     let srcs =
       match ids with None -> srcs | Some ids -> srcs @ [ stored ids ]
     in
-    List.hd (T.custom_kernel ~fxn srcs)
+    finish (List.hd (T.custom_kernel ~fxn srcs))
   end
 
 (* Block matrix product
@@ -1231,8 +1368,45 @@ let block_matmul ?(transpose = false) x w ~ids =
     | Uop.Multi [] | Uop.Index _ ->
         invalid_arg "Op.block_matmul: no device name"
   in
-  let out = Creation.empty ~dtype ~device [ nb; m; n ] in
-  if nb * m * n = 0 then out
+  (* Over split operands each device multiplies its own blocks, rows or
+     columns. Whole blocks over matrices split along their first axis, or over
+     split inputs, leave each device a partial product: ids name matrices by
+     their position in the whole, and a device offsets them by its first
+     matrix. *)
+  let columns = if transpose then 1 else 2
+  and inputs = if transpose then 2 else 1 in
+  let result =
+    match (split_axis x, split_axis ids, split_axis w) with
+    | None, None, None -> Whole
+    | Some 0, Some 0, None -> Split 0
+    | Some 1, None, None -> Split 1
+    | None, None, Some c when c = columns -> Split 2
+    | None, None, Some 0 -> Partial
+    | Some 2, None, Some c when c = inputs -> Partial
+    | _ ->
+        invalid_arg
+          "Op.block_matmul: operands split other than by blocks, rows, \
+           columns, matrices or inputs"
+  in
+  let out, finish = result_storage ~dtype ~device result [ nb; m; n ] in
+  let nb, m, k =
+    match slices x with [ nb; m; k ] -> (nb, m, k) | _ -> assert false
+  in
+  let e, n =
+    match slices w with
+    | [ e; _; n ] when not transpose -> (e, n)
+    | [ e; n; _ ] -> (e, n)
+    | _ -> assert false
+  in
+  let first =
+    if split_axis w = Some 0 then
+      Some
+        (Uop.alu_binary ~op:Ops.Mul
+           ~lhs:(device_position (device_count device))
+           ~rhs:(Uop.const_int e))
+    else None
+  in
+  if nb * m * n = 0 then finish out
   else begin
     let depth, opts = block_options ren ~nb ~m ~n ~k in
     let bounded = Tolk.Renderer.has_local ren && k / depth > 1 in
@@ -1254,6 +1428,11 @@ let block_matmul ?(transpose = false) x w ~ids =
             Uop.load ~src:(Uop.index ~ptr ~idxs:[ idx ] ()) ()
           in
           let id = load ids block in
+          let id =
+            match first with
+            | None -> id
+            | Some first -> Uop.cast ~src:id ~dtype:D.weakint - first
+          in
           let bound v = Uop.const (Const.int (Uop.dtype id) v) in
           let selects =
             Uop.alu_binary ~op:Ops.And
@@ -1295,7 +1474,9 @@ let block_matmul ?(transpose = false) x w ~ids =
             Uop.index ~ptr:out ~idxs:[ (((block *: m) + row) *: n) + col ] ()
           in
           let store =
-            Uop.store ~dst:cell ~value:(Uop.cast ~src:acc ~dtype) ()
+            Uop.store ~dst:cell
+              ~value:(Uop.cast ~src:acc ~dtype:(Uop.dtype out))
+              ()
           in
           let body =
             Uop.end_ ~value:store
@@ -1327,7 +1508,8 @@ let block_matmul ?(transpose = false) x w ~ids =
     let stored t =
       if Option.is_some (T.device t) then t else Creation.clone ~device t
     in
-    List.hd (T.custom_kernel ~fxn [ out; stored x; stored w; stored ids ])
+    finish
+      (List.hd (T.custom_kernel ~fxn [ out; stored x; stored w; stored ids ]))
   end
 
 (* Indexing *)

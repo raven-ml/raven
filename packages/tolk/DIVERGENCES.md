@@ -499,6 +499,13 @@ delete it rather than registering it.
   `Set` and an unspecified value under `Add`; every other position stays
   exact. Consumer: `Nx.top_k`, whose compaction is a permutation.
 
+  Over a destination split across devices each device writes its own slice
+  (the reference builds its custom kernels over one device's placeholders).
+  Split along the scattered axis, every device reads every update and keeps
+  those in its rows: the loaded index, widened to the index type, is offset by
+  the device's first row, taken from the device range. Coverage: test_multi's
+  "Kernels over split storage".
+
 - **A gate clause on a loaded value survives a reshape** (`uop/symbolic.ml`
   `pm_drop_and_clauses`). The reference keeps, on each axis of a reshape, only
   the clauses over that axis's ranges; its index gates bound addresses, and
@@ -526,7 +533,11 @@ delete it rather than registering it.
   anywhere, it reads matrix 0 and a select zeroes its store, since gating each
   load on the id made clang spill the narrow-input unpacking.
   Consumer: rune's lowering of `Nx_quant.apply` (RFC 0004), which takes it
-  within `quant_row_bound`'s rows. Coverage:
+  within `quant_row_bound`'s rows. Over operands split across devices each
+  device multiplies its own slices; whole instances over matrices split along
+  their first axis, or over split inputs, leave each device a float32 partial,
+  its ids offset by its first matrix, which a sum across the devices (an
+  allreduce) completes. Coverage:
   `test/unit/frontend/test_quant_matmul.ml` (a host reference on the default
   device, and per renderer that every float multiply lies in the id-bounded
   loop on a GPU and that no loop reads memory on the CPU), the opt-correctness
@@ -575,7 +586,11 @@ delete it rather than registering it.
   each renderer's loop bounds) and the opt-correctness workloads `block_matmul`
   and `block_matmul_t`, under every action that leaves the block axis whole.
   Consumer: rune's lowering of `Nx_quant` products over expert ids, grouped or
-  one block per position.
+  one block per position. Over operands split across devices, as for the
+  quantised product: each device multiplies its own slices, and whole blocks
+  over matrices split along their first axis, or over split inputs, leave a
+  float32 partial per device that an allreduce sums (test_multi's "Kernels
+  over split storage").
 
 - **A narrow-in, float32-out tensor core takes widened operands**
   (`codegen/opt/postrange.ml` `tc_operand`). The reference's matcher takes a

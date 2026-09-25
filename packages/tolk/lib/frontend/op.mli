@@ -232,9 +232,15 @@ val scatter_indexed :
     indices, as a new tensor, at a cost in the size of [t] times the number of
     updates.
 
+    When [t] is split across devices, each device writes its own slice. Split
+    off [dim], [index] and [src] are split along the same axis, or [index] has
+    extent one there; split along [dim], they are whole on every device, and
+    each device keeps the updates that land in its rows.
+
     @raise Invalid_argument
-      if [t] is not storage, if ranks or extents disagree as above, if [src]
-      does not have the dtype of [t], or if [index] is not an integer
+      if [t] is not storage, if ranks or extents disagree as above, if [index]
+      or [src] is split otherwise than [t] allows, if [src] does not have the
+      dtype of [t], or if [index] is not an integer
       tensor. *)
 
 val quant_matmul :
@@ -260,8 +266,21 @@ val quant_matmul :
     id and nothing else, and runs no multiply-adds; elsewhere it reads matrix
     0 and its result is zeroed.
 
+    Over operands split across devices, each device computes its own slice of
+    the result, which is split alike: instances split along the first axis of
+    [ids] (or of [codes] without ids) and of [x] (unless [ix] is one), rows
+    along [x]'s second axis, or columns along the second axis of [codes] and
+    [scales]. Whole instances over matrices split along the first axis of
+    [codes] and [scales], or over inputs split along [x]'s last axis and the
+    last axis of [codes] and [scales], leave each device a partial product,
+    which the result sums across the devices at float32 before rounding once:
+    ids name matrices by their position in the whole, and each device
+    multiplies the instances whose matrix it holds. Without [ids], instances
+    split along the first axis of [x] may read matrices split alike.
+
     @raise Invalid_argument
-      if the shapes disagree as above, if [k] is not a multiple of 32, if
+      if the shapes disagree as above, if the operands are split otherwise, if
+      [k] is not a multiple of 32, if
       [codes] or [scales] is not uint8, if [x]'s dtype is not one of the
       three, if [ids] is not an integer tensor, or if no operand is placed on
       a device. *)
@@ -302,8 +321,18 @@ val block_matmul :
     2, a block whose id is out of range reads its id and nothing else and runs
     no multiply-adds; with one input its load is gated instead.
 
+    Over operands split across devices, each device computes its own slice of
+    the result, which is split alike: blocks split along the first axis of [x]
+    and [ids], rows along [x]'s second axis, or columns along [w]'s output
+    axis. Whole blocks over [w] split along its first axis, or over inputs split
+    along [x]'s last axis and [w]'s input axis, leave each device a partial
+    product, which the result sums across the devices at float32 before
+    rounding once: ids name matrices by their position in the whole, and each
+    device multiplies the blocks whose matrix it holds.
+
     @raise Invalid_argument
-      if the shapes disagree as above, if [x] and [w] differ in dtype or are
+      if the shapes disagree as above, if the operands are split otherwise, if
+      [x] and [w] differ in dtype or are
       not floats of at most 32 bits, if [ids] is not an integer tensor, or if
       no operand is placed on a device. *)
 

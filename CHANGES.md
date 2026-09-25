@@ -610,6 +610,13 @@ thread.
 
 ### Tolk (new)
 
+- `Op.scatter_indexed`, `Op.block_matmul` and `Op.quant_matmul` take operands
+  split across devices: each device runs the kernel over its own slices and
+  writes its slice of the result, or its partial product when the matrices or
+  inputs are split, which the result sums. Built from the whole value's
+  extents, they failed to build over split operands (`block_matmul`,
+  `quant_matmul`) or wrote out of their slice (`scatter_indexed`).
+
 - **Breaking:** `Op.quant_row_bound` takes only the renderer: the bound is one
   measured value per device, at every dtype and shape.
 

@@ -142,6 +142,83 @@ let forced_strategies =
       [ B (Helpers.allreduce_node_ndevs, 2) ];
       [ B (Helpers.allreduce_node_ndevs, 4) ] ]
 
+(* [data] of [shape] split along [axis] over [devices], in storage of its own:
+   what an indexed write lands in. *)
+let split_storage devices shape axis data =
+  let n = List.length devices in
+  let local = List.mapi (fun i d -> if i = axis then d / n else d) shape in
+  let dst =
+    U.unshard
+      ~src:
+        (Tolk_frontend.Tensor.uop
+           (Tolk_frontend.Creation.empty ~dtype:Dtype.float32
+              ~device:(U.Multi devices) local))
+      ~axes:[ axis ] ()
+  in
+  let value = sharded (input "CPU" shape data) shape devices axis in
+  Tolk_frontend.Tensor.of_uop
+    (U.after ~src:dst ~deps:[ U.store ~dst ~value () ])
+
+let ints shape values =
+  let n = Array.length values in
+  let buf = Device.create_buffer ~size:n ~dtype:Dtype.int32 (Device.get "CPU") in
+  Device.Buffer.ensure_allocated buf;
+  let bytes = Bytes.create (n * 4) in
+  Array.iteri (fun i v -> Bytes.set_int32_le bytes (i * 4) (Int32.of_int v)) values;
+  Device.Buffer.copyin buf bytes;
+  U.reshape ~src:(U.from_buffer buf) ~shape:(shape_node shape)
+
+let broadcast u shape =
+  Tolk_frontend.Tensor.uop
+    (Tolk_frontend.Movement.expand (Tolk_frontend.Tensor.of_uop u) shape)
+
+(* [t] gathered to the host device and read. *)
+let gathered t =
+  let out =
+    realize (U.copy ~src:(Tolk_frontend.Tensor.uop t) ~device:(U.Single "CPU") ())
+  in
+  read_f32 (List.hd (device_buffers out))
+
+(* Rows [rows] of the [r] by [c] matrix [data] replaced by [values]. *)
+let with_rows ~c data rows values =
+  let out = Array.copy data in
+  List.iteri
+    (fun i r -> Array.blit values (i * c) out (r * c) c)
+    rows;
+  out
+
+let bytes_node shape bytes =
+  let buf =
+    Device.create_buffer ~size:(Bytes.length bytes) ~dtype:Dtype.uint8
+      (Device.get "CPU")
+  in
+  Device.Buffer.ensure_allocated buf;
+  Device.Buffer.copyin buf bytes;
+  U.reshape ~src:(U.from_buffer buf) ~shape:(shape_node shape)
+
+(* [u], on the host device, split along [axis] over [devs4], or a copy on each
+   of them. *)
+let spread ?axis shape u =
+  Tolk_frontend.Tensor.of_uop
+    (match axis with
+    | Some axis -> sharded u shape devs4 axis
+    | None -> U.copy ~src:u ~device:(U.Multi devs4) ())
+
+let wave n = Array.init n (fun i -> Float.of_int ((i * 7 mod 11) - 5) /. 8.)
+
+(* Each block of the [nb; m; k] [xs] times the [k; n] matrix of [ws] its id
+   names, or zeros. *)
+let block_reference ~m ~n ~k xs ws ids =
+  Array.init (Array.length ids * m * n) (fun o ->
+      let b = o / (m * n) and r = o / n mod m and c = o mod n in
+      if ids.(b) < 0 then 0.
+      else
+        let acc = ref 0. in
+        for j = 0 to k - 1 do
+          acc := !acc +. (xs.((((b * m) + r) * k) + j) *. ws.((((ids.(b) * k) + j) * n) + c))
+        done;
+        !acc)
+
 let local_range size axis = U.range ~size:(int_ size) ~axis ~kind:Axis_type.Local ()
 let alu op lhs rhs = Symbolic.simplify (U.alu_binary ~op ~lhs ~rhs)
 let rewrite = U.graph_rewrite Tolk.Multi.multi_pm
@@ -383,6 +460,167 @@ let () =
               in
               (* Row sums of [[1..4]; [5..8]]. *)
               equal (array (float 1e-6)) [| 10.; 26. |] got);
+        ];
+      group "Kernels over split storage"
+        [
+          test "an indexed write lands in each device's rows" (fun () ->
+              let data = iota 24 and values = Array.map (fun v -> 100. +. v) (iota 9) in
+              let rows = [ 6; 1; 3 ] in
+              let t = split_storage devs4 [ 8; 3 ] 0 data in
+              let index = broadcast (ints [ 3; 1 ] (Array.of_list rows)) [ 3; 3 ] in
+              let on_each u = U.copy ~src:u ~device:(U.Multi devs4) () in
+              let written =
+                Tolk_frontend.Op.scatter_indexed t ~dim:0
+                  (Tolk_frontend.Tensor.of_uop (on_each index))
+                  (Tolk_frontend.Tensor.of_uop (on_each (input "CPU" [ 3; 3 ] values)))
+                  ~mode:`Set ~unique:true
+              in
+              equal (array float_exact) (with_rows ~c:3 data rows values)
+                (gathered written));
+          test "an indexed write off the split axis writes each device's lanes"
+            (fun () ->
+              let data = iota 32 and values = Array.map (fun v -> 100. +. v) (iota 16) in
+              let rows = [ 3; 0 ] in
+              let t = split_storage devs4 [ 4; 8 ] 1 data in
+              let index =
+                sharded (broadcast (ints [ 2; 1 ] (Array.of_list rows)) [ 2; 8 ])
+                  [ 2; 8 ] devs4 1
+              in
+              let src = sharded (input "CPU" [ 2; 8 ] values) [ 2; 8 ] devs4 1 in
+              let written =
+                Tolk_frontend.Op.scatter_indexed t ~dim:0
+                  (Tolk_frontend.Tensor.of_uop index)
+                  (Tolk_frontend.Tensor.of_uop src) ~mode:`Set ~unique:true
+              in
+              equal (array float_exact) (with_rows ~c:8 data rows values)
+                (gathered written));
+          test "split blocks over split experts raise" (fun () ->
+              (* A block's expert may live on another device, where its own
+                 device cannot read it. *)
+              let nb, m, k, e, n = (8, 2, 16, 8, 4) in
+              raises_match
+                (function Invalid_argument _ -> true | _ -> false)
+                (fun () ->
+                  ignore
+                    (Tolk_frontend.Op.block_matmul
+                       (spread ~axis:0 [ nb; m; k ]
+                          (input "CPU" [ nb; m; k ] (wave (nb * m * k))))
+                       (spread ~axis:0 [ e; k; n ]
+                          (input "CPU" [ e; k; n ] (wave (e * k * n))))
+                       ~ids:(spread ~axis:0 [ nb ] (ints [ nb ] (Array.make nb 0))))));
+          test "each device multiplies its blocks, or its columns" (fun () ->
+              let nb, m, k, e, n = (8, 2, 16, 3, 8) in
+              let xs = wave (nb * m * k) and ws = wave (e * k * n) in
+              let ids = [| 2; 0; 1; -1; 1; 2; 0; 0 |] in
+              let expected = block_reference ~m ~n ~k xs ws ids in
+              let x = input "CPU" [ nb; m; k ] xs and w = input "CPU" [ e; k; n ] ws in
+              let ids = ints [ nb ] ids in
+              let blocks =
+                Tolk_frontend.Op.block_matmul
+                  (spread ~axis:0 [ nb; m; k ] x) (spread [ e; k; n ] w)
+                  ~ids:(spread ~axis:0 [ nb ] ids)
+              in
+              equal ~msg:"blocks" (array (float 1e-5)) expected (gathered blocks);
+              let columns =
+                Tolk_frontend.Op.block_matmul (spread [ nb; m; k ] x)
+                  (spread ~axis:2 [ e; k; n ] w) ~ids:(spread [ nb ] ids)
+              in
+              equal ~msg:"columns" (array (float 1e-5)) expected (gathered columns));
+          test "whole blocks sum each device's partial product" (fun () ->
+              let nb, m, k, e, n = (8, 2, 16, 8, 4) in
+              let xs = wave (nb * m * k) and ws = wave (e * k * n) in
+              let ids = [| 1; 0; 3; -1; 4; 5; 7; 2 |] in
+              let expected = block_reference ~m ~n ~k xs ws ids in
+              let x = input "CPU" [ nb; m; k ] xs and w = input "CPU" [ e; k; n ] ws in
+              let ids = spread [ nb ] (ints [ nb ] ids) in
+              let matrices =
+                Tolk_frontend.Op.block_matmul (spread [ nb; m; k ] x)
+                  (spread ~axis:0 [ e; k; n ] w) ~ids
+              in
+              equal ~msg:"split matrices" (array (float 1e-5)) expected
+                (gathered matrices);
+              let inputs =
+                Tolk_frontend.Op.block_matmul (spread ~axis:2 [ nb; m; k ] x)
+                  (spread ~axis:1 [ e; k; n ] w) ~ids
+              in
+              equal ~msg:"split inputs" (array (float 1e-5)) expected
+                (gathered inputs));
+          test "each device decodes and multiplies its own matrices" (fun () ->
+              let i, m, k, e, n = (8, 1, 32, 8, 4) in
+              let xs = wave (i * m * k) in
+              let codes =
+                Bytes.init (e * n * k / 2) (fun b -> Char.chr ((b * 37) land 255))
+              and scales = Bytes.init (e * n * k / 32) (fun b -> Char.chr (126 + (b mod 3))) in
+              let ids = [| 1; 0; 3; -1; 4; 5; 7; 7 |] in
+              let value c =
+                let v = [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. |].(c land 7) in
+                if c land 8 = 0 then v else -.v
+              in
+              let weight id o j =
+                let byte = Char.code (Bytes.get codes ((((id * n) + o) * k / 2) + (j / 2))) in
+                let code = if j land 1 = 0 then byte land 15 else byte lsr 4 in
+                let s = Char.code (Bytes.get scales ((((id * n) + o) * k / 32) + (j / 32))) in
+                value code *. Float.ldexp 1. (s - 127)
+              in
+              let expected =
+                Array.init (i * m * n) (fun q ->
+                    let t = q / (m * n) and r = q / n mod m and o = q mod n in
+                    if ids.(t) < 0 then 0.
+                    else
+                      let acc = ref 0. in
+                      for j = 0 to k - 1 do
+                        acc := !acc +. (xs.((((t * m) + r) * k) + j) *. weight ids.(t) o j)
+                      done;
+                      !acc)
+              in
+              let product ?axis () =
+                Tolk_frontend.Op.quant_matmul
+                  ~ids:(spread ?axis [ i ] (ints [ i ] ids))
+                  (spread ?axis [ i; m; k ] (input "CPU" [ i; m; k ] xs))
+                  ~codes:(spread ~axis:0 [ e; n; k / 2 ] (bytes_node [ e; n; k / 2 ] codes))
+                  ~scales:(spread ~axis:0 [ e; n; k / 32 ] (bytes_node [ e; n; k / 32 ] scales))
+              in
+              equal ~msg:"whole instances" (array (float 1e-4)) expected
+                (gathered (product ()));
+              raises_match ~msg:"split instances"
+                (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> ignore (product ~axis:0 ())));
+          test "a narrow index into a split axis past its range" (fun () ->
+              (* A uint8 row into 512 rows over two devices: the second
+                 device's first row, 256, does not fit the index's type. *)
+              let devs = devs2 in
+              let t = split_storage devs [ 512; 1 ] 0 (Array.make 512 0.0) in
+              let on_each u = U.copy ~src:u ~device:(U.Multi devs) () in
+              let row =
+                let buf =
+                  Device.create_buffer ~size:1 ~dtype:Dtype.uint8
+                    (Device.get "CPU")
+                in
+                Device.Buffer.ensure_allocated buf;
+                Device.Buffer.copyin buf (Bytes.make 1 (Char.chr 5));
+                U.reshape ~src:(U.from_buffer buf) ~shape:(shape_node [ 1; 1 ])
+              in
+              let written =
+                Tolk_frontend.Op.scatter_indexed t ~dim:0
+                  (Tolk_frontend.Tensor.of_uop (on_each row))
+                  (Tolk_frontend.Tensor.of_uop
+                     (on_each (input "CPU" [ 1; 1 ] [| 100.0 |])))
+                  ~mode:`Set ~unique:true
+              in
+              let expected = Array.make 512 0.0 in
+              expected.(5) <- 100.0;
+              equal (array float_exact) expected (gathered written));
+          test "updates split unlike their destination raise" (fun () ->
+              let t = split_storage devs4 [ 4; 8 ] 1 (iota 32) in
+              let index = broadcast (ints [ 2; 1 ] [| 3; 0 |]) [ 2; 8 ] in
+              raises_match
+                (function Invalid_argument _ -> true | _ -> false)
+                (fun () ->
+                  ignore
+                    (Tolk_frontend.Op.scatter_indexed t ~dim:0
+                       (Tolk_frontend.Tensor.of_uop index)
+                       (Tolk_frontend.Tensor.of_uop (input "CPU" [ 2; 8 ] (iota 16)))
+                       ~mode:`Set ~unique:true)));
         ];
       group "Collectives"
         [
