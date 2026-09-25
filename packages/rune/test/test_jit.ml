@@ -1178,6 +1178,29 @@ let test_half_sums_accumulate_wide () =
   check "bfloat16" Nx.bfloat16;
   check "float16" Nx.float16
 
+(* A half-precision product multiplies at float32 and rounds once, as the eager
+   one does. Rounding after every factor drifted: 256 values just under 1
+   multiplied to 0.3633 at bfloat16 on the CPU and 0.3594 on Metal, against
+   0.3672 eager. *)
+let test_half_products_multiply_wide () =
+  let check (type b) name (dtype : (float, b) Nx.dtype) =
+    let x =
+      Nx.create dtype [| 256 |]
+        (Array.init 256 (fun i -> 1.0 -. (float_of_int (i mod 5) /. 512.0)))
+    in
+    let value t = Nx.item [] (Nx.cast f32 t) in
+    List.iter
+      (fun device ->
+        equal
+          ~msg:(Printf.sprintf "%s prod, %s" name device)
+          float_exact
+          (value (Nx.prod x))
+          (value (Rune.jit' ~device (fun x -> Nx.prod x) x)))
+      devices
+  in
+  check "bfloat16" Nx.bfloat16;
+  check "float16" Nx.float16
+
 (* Cumulative reductions *)
 
 (* A sum over int8 or int16 accumulates in int32; the compiled scan hands back
@@ -3460,6 +3483,8 @@ let tests =
       [
         test "half-precision sums accumulate wide"
           test_half_sums_accumulate_wide;
+        test "half-precision products multiply wide"
+          test_half_products_multiply_wide;
       ];
     group "cumulative reductions"
       [

@@ -109,6 +109,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.prod` of `bfloat16` or `float16` values multiplies at
+  `float32` and rounds once, as the eager one does. Rounding after every factor
+  drifted: 256 bfloat16 values just under 1 multiplied to 0.3633 on the CPU
+  against 0.3672 eager.
 - A compiled `Nx.sum` or `Nx.mean` of `bfloat16` or `float16` values
   accumulates at `float32`, as the eager one does. It accumulated at the input's
   precision: 4096 bfloat16 ones summed to 1024 on the CPU and 16384 to 4096 on

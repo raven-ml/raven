@@ -1665,9 +1665,20 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             let t = go t_in in
+            let axis = Array.to_list axes in
+            (* A half-precision product multiplies at float32 and rounds once,
+               as the eager one does. *)
+            let narrow =
+              ND.is_float (dt t_in) && TD.itemsize (F.Tensor.dtype t) < 4
+            in
             ret k (dt t_in)
-              (F.Reduce.prod ~axis:(Array.to_list axes) ~keepdim:false
-                 ~dtype:(F.Tensor.val_dtype t) t))
+              (if narrow then
+                 F.Dtype_ops.cast
+                   (F.Reduce.prod ~axis ~keepdim:false ~dtype:TD.float32 t)
+                   (F.Tensor.dtype t)
+               else
+                 F.Reduce.prod ~axis ~keepdim:false
+                   ~dtype:(F.Tensor.val_dtype t) t))
     | E_reduce_max { t_in; axes } ->
         Some
           (fun k ->
