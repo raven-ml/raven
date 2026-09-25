@@ -3,7 +3,10 @@
 - Status: discussion
 - Date: 2026-09-24
 - Amended by: RFC 0006 (§Compiled functions, the cell state `Donated`,
-  host storage, the cache key)
+  host storage, the cache key); stage 2's amendment, 2026-09-25 (an abstract
+  `Placement.t` over a grid, cuts inside one tile, eager results over split
+  operands, local reads, engines per backend, the withdrawal of §Fully sharded
+  training, the stage 2 budget)
 - Packages: nx (`Nx.Device`, `Nx.Placement`, `place`, `placement`, the tensor
   representation, routing and reads), rune (devices, the device engine, `jit`
   placement), tolk (ports), kaun (example importers)
@@ -12,9 +15,10 @@
 
 Where a tensor lives is a value nx can name. A device is a run-time value that
 rune opens (`Rune.device "METAL"`) and that carries the engine holding memory
-on it; the host is a device too, `Nx.Device.host`. A placement is one device,
-a list of devices holding full copies, or a list of devices holding equal
-slices along one axis. `Nx.place p x` moves a value and leaves its source
+on it; the host is a device too, `Nx.Device.host`. A placement is an abstract
+value built as one device, a list of devices holding full copies, or a list of
+devices holding equal slices along one axis, and taken apart as the window
+each device holds. `Nx.place p x` moves a value and leaves its source
 where it was; `Nx.placement x` says where a value lives. The result of an
 operation lives where its operands live, so eager code over values on a GPU
 keeps its results there; a read copies the elements it reads and moves
@@ -89,7 +93,10 @@ let rp = Nx.Placement.replicated gpus       (* a full copy on each *)
 A device has one name, tinygrad's: `"METAL"`, `"CUDA:3"`, never `":0"`.
 `Nx.Device.host` is the host, named `"CPU"`; `Rune.device "CPU"` returns it,
 and `Nx.Placement.host` is `Nx.Placement.device Nx.Device.host`. A placement
-over one device is that device.
+over one device is that device. A placement is abstract: `Nx.Placement.devices
+p` lists its devices, `Nx.Placement.window p shape d` is the window, as
+`(start, stop)` per axis, of a value of that shape that device `d` holds, and
+two placements are equal when every device holds the same window.
 
 ### Placing and reading
 
@@ -104,7 +111,7 @@ let _ = Nx.add y (Nx.place (Nx.Placement.device (Rune.device "CUDA")) y)
 ```
 
 The result of an operation lives where its placed operands live. A host
-operand joins them. Operands on two different device lists raise. An
+operand joins them. Operands on two different device sets raise. An
 operation or dtype the device cannot take (float64 on Metal, an
 eigendecomposition tolk cannot lower) raises at the operation and names the
 device. A read (`item`, `to_array`, `pp`, a save) copies the elements of the
@@ -112,6 +119,10 @@ viewed window and leaves the value where it is. Storage is released when no
 value reaches it, or when a compiled call it was donated to completes.
 
 ### Compiled functions
+
+RFC 0006 replaces `jit_step` with one `jit` whose signature marks consumed
+arguments with `consumes`; the examples keep this RFC's original spelling
+(Reference, §Compiled functions).
 
 ```ocaml
 (* gpt-oss-20b: the weights are placed as the importer builds them *)
@@ -214,15 +225,18 @@ module Device : sig
 end
 
 module Placement : sig
-  type t = private
-    | Device of Device.t
-    | Replicated of Device.t list                          (* two or more *)
-    | Sharded of { axis : int; devices : Device.t list }   (* two or more *)
-  val host : t
-  val device : Device.t -> t
-  val replicated : Device.t list -> t
-  val sharded : axis:int -> Device.t list -> t
-  val equal : t -> t -> bool
+  type t                                      (* abstract *)
+  val host : t                  (* device Device.host, the default backend *)
+  val device : ?backend:Backend.t -> Device.t -> t
+  val replicated : ?backend:Backend.t -> Device.t list -> t
+  val sharded : ?backend:Backend.t -> axis:int -> Device.t list -> t
+  val devices : t -> Device.t list
+  val backend : t -> Backend.t
+  val window : t -> int array -> Device.t -> (int * int) array
+  (* [window p shape d]: the window of a value of [shape] that [d] holds, as
+     [(start, stop)] per axis, stop exclusive, as [shrink] takes it; raises
+     [Invalid_argument] if [d] is not in [devices p] *)
+  val equal : t -> t -> bool   (* the same backend and window on every device *)
   val pp : Format.formatter -> t -> unit
 end
 
@@ -230,16 +244,42 @@ val place : Placement.t -> ('a, 'b) t -> ('a, 'b) t
 val placement : ('a, 'b) t -> Placement.t
 ```
 
-- **Normal forms by construction.** The type is private: callers match on it,
-  and only its constructors build it. `replicated [d]` and `sharded ~axis [d]`
-  are `device d`. An empty list, a repeated device, devices of two engines or a
-  negative axis raise `Invalid_argument`, so `placement (place p x)` is `p`.
-  `place` raises when the axis does not divide evenly. A mesh would be a new
-  case that every match must handle.
+- **Abstract, over a grid.** Callers build a placement with its four
+  constructors and take it apart with `devices`, `backend`, `window` and
+  `equal`; nothing outside `nx.effect` matches on its representation. Inside
+  `nx.effect` a placement is one device or a grid: distinct devices in
+  row-major order over the grid's extents, and for each cut tensor axis the
+  grid axes that cut it, a grid axis that cuts nothing holding copies. Only
+  one-dimensional grids have constructors: `replicated ds` is the grid over
+  `ds` with no cut, and `sharded ~axis ds` the same grid cutting `axis`. A
+  mesh constructor would add grids of more dimensions and change no caller,
+  since no caller matches. Per-shard code in nx and rune takes a device's
+  window from `window`, never from `shape.(axis) / n`.
+- **A placement carries one backend.** `device`, `replicated` and `sharded`
+  take `?backend`, which defaults to host compute, the host's kernels, which
+  is stage 1's routing for devices with no backend of their own; another
+  backend on the host is `device ~backend Nx.Device.host`. RFC 0007 defines
+  devices as hardware and backends as values; RFC 0008 defines
+  `Nx.Backend.t`'s shape. Operands on two different device sets, or with two
+  different backends, raise under the mixed-placements rule (Routing).
+- **Normal forms by construction.** `replicated [d]` and `sharded ~axis
+  [d]` are `device d`, and a grid drops extents of 1 and merges adjacent grid
+  axes when no cut names either or one cut names both in order, so a grid
+  used flatly is the flat grid. An empty list, a repeated device, devices of
+  two engines or a negative axis raise `Invalid_argument`. `place` raises when
+  a cut does not divide its axis evenly. So `placement (place p x)` equals
+  `p`.
+- **Equality is the device-to-window map.** `equal p q` holds when `p` and
+  `q` have the same backend and every device holds the same window under
+  both, for every shape; it takes
+  time proportional to the devices times the cut axes. A node × GPU grid
+  cutting axis 0 over both of its axes, which no constructor builds yet,
+  would equal `sharded ~axis:0` over the same 16 devices in the same order,
+  and code written against the flat split would serve it unchanged.
 - **Identity.** `Device.equal` is identity of the value, and rune returns one
-  value per canonical name. A placement's devices are an ordered list, which
-  decides which slice lands where; two placements share devices when their
-  lists are equal. All devices of a placement share one engine.
+  value per canonical name. A placement's devices are an ordered list
+  (`devices p`), which decides which window lands where. All devices of a
+  placement share one engine.
 - **`placement` performs an effect,** as `view` does, so `vmap` answers for a
   batched value with the split axis shifted into the unbatched view. It
   raises when the mapped axis is the split axis: a lane of a map over devices
@@ -329,17 +369,30 @@ and node = ..                     (* rune adds its trace's id and the tolk tenso
   so `Nx.shape` is global (Law 1); the strides and offset are each shard's, and
   `contiguous` and donation test the per-shard view against each shard's
   storage. Movement keeps the split axis when it survives whole: `permute`
-  moves it, `expand` shifts it, `reshape` keeps it when every shard boundary
-  survives, and `shrink`, `pad` and `flip` apply per shard when they leave it
-  whole. A `shrink` that selects exactly one shard raises like any other cut:
-  tolk's rewrite copies that shard to every device of the list
-  (`schedule/multi.ml:500-509`), which a movement may not do (RFC 0001 Law 5);
-  place the value on that shard's device first. Any other cut of the split
-  axis (a partial `shrink`, `pad` or `flip` along it, `cat` along it, a
-  reshape that moves elements between shards) raises `Invalid_argument`,
-  naming the axis: place the value replicated or on one device first. This is
-  what tolk's `MULTI` rewrite can lower (`schedule/multi.ml:424-520`), except
-  the one-shard shrink.
+  moves it, `expand` keeps it at its index, `reshape` keeps it when every
+  shard boundary survives (tolk's `reshape_multi` rule), and `shrink`, `pad`,
+  `flip` and `sliding_window` apply per shard when they leave it whole. A cut
+  that stays inside one tile is a view of that tile's storage, placed on the
+  devices that hold the tile and sharing the cell: on a one-dimensional split,
+  the one device holding that shard. It copies nothing, so `Nx.item` or
+  `Nx.get` on a split value reads one element; it does not cover its storage,
+  so consuming it raises by RFC 0006's rule 4, naming the leaf and `Nx.copy`.
+  Any other cut of the split axis (a `shrink` spanning tiles, a `pad`, `flip`
+  or `sliding_window` along it, `cat` along it, a reshape that moves elements
+  between shards) raises `Invalid_argument` naming the operation, the split
+  axis and the value's shape: place the value replicated or on one device
+  first. These are the rules of tolk's multi-device rewrite
+  (`schedule/multi.ml:242-318`, over its `Unshard` node), except for cuts
+  within one shard. There, tolk copies a cut of exactly one whole shard to
+  every device of the list (`schedule/multi.ml:201-205`) and raises on a cut
+  strictly inside one shard (`:206`), `Nx.item`'s included. A compiled
+  program keeps tolk's rule, since placement inside a program is the
+  compiler's, so the cut inside one shard is where eager and compiled
+  placements differ. From stage 2, rune checks split movements at trace
+  time: a cut that nx refuses, or one strictly inside one shard, raises nx's
+  message there, naming the operation, the split axis and the shape (for the
+  second, the remedy is to place the value on one device first), and a
+  whole-shard cut keeps tolk's copy.
 - **Contexts.** `type context = Host of Nx_backend.context | On of Device.t
   list`. The frontend builds constants in its operand's context, at 81 sites,
   so a value created in `On ds` (a constant, a buffer, a host array, an index)
@@ -357,10 +410,26 @@ and node = ..                     (* rune adds its trace's id and the tolk tenso
 
 Every fallback in `nx_effect` routes by its operands, and creation effects by
 their context: all on the host, the link-time engine; placed operands on one
-device list, that list's engine; anything else raises. Because every
-transformation re-performs its operations into that fallback, eager `grad`,
-`jvp` and `vmap` over placed values keep their results placed, with no change
-to their rules.
+device set, that set's engine; anything else raises. Routing compares device
+sets, so one list in two orders routes as one. Whole-shard views of one value
+join as copies on the value's full device list, as compiled code places them:
+the sum of two whole shards of a value split over four devices lands as copies
+on all four, as `pmap` does. A roll by one shard is no such combination, since
+one of its pieces spans shards, and it raises, eagerly and compiled. Because
+every transformation re-performs its operations into that fallback, eager
+`grad`, `jvp` and `vmap` over placed values keep their results placed, with no
+change to their rules.
+
+Over split operands, an eager result takes the placement tolk's multi-device
+rewrite gives the same operation in a program (`schedule/multi.ml:128-171`),
+so eager and compiled placements agree on every operation but a cut inside
+one shard (Split values), and stage 3 changes none of them. An
+elementwise operation keeps its operands' split; a replicated or host operand
+takes that split; operands split differently raise `Invalid_argument` ("place
+them alike first"), as compiled code does from M3. A reduction over
+the split axis gives a result replicated over the list, and a reduction over
+other axes keeps the split. Movement follows Split values. Operands whose
+placements have different device sets raise, as above.
 
 Until devices compute (stage 3), the engine runs an operation on the host: it
 reads its placed operands' windows, runs the host engine, and places the
@@ -384,20 +453,28 @@ which returns a placed value itself only when its view covers its whole
 storage (C order, offset 0, `numel` elements) and otherwise copies the window
 into fresh storage on the same placement. They then read that storage with the
 backend's `to_host`, and `item` and `pp` index it from 0. One element of a
-placed 10 GB tensor copies one element. A read of a split value gathers the
-shards in global order; a replicated value reads one replica held by this
-process. Replicas are meant to be equal bit for bit: tolk's allreduce either
-reduces each chunk on one device and copies it to the others, or folds the
-shards in the same order on every device (`schedule/allreduce.ml`), and the
-second agrees only where every device runs the same compiled fold. Stage 2's
-probe checks it. A compiled call's output covers its storage, so reading an
-engine's sampled ids copies the ids and nothing else. Nothing is memoised.
-`Nx.data` of a placed value raises `Invalid_argument` ("a placed value has no
-host storage; read it with to_buffer, or place it on the host"), because its
-contract is the storage that `offset` and `strides` index; `Nx.data` checks
-first, so readers inside the frontend call `B.to_host`, not `data`. Host-only
-consumers take their input to the host once at their boundary: talon's column
-constructors, hugin's data preparation, kaun's `Metric`.
+placed 10 GB tensor copies one element. Reads are local and moves may
+communicate: a read copies from devices this process holds and runs no
+collective, and `place` is the call that moves data between devices. A read of
+a split value gathers the shards in global order; a replicated value reads one
+replica held by this process, and a tile held by several devices is read from
+one of them. Replicas are meant to be equal bit for bit: tolk's allreduce
+either reduces each chunk on one device and copies it to the others, or folds
+the shards in the same order on every device (`schedule/allreduce.ml`), and
+the second agrees only where every device runs the same compiled fold. Stage
+2's probe found replicas equal under every strategy tolk picks by default, on
+two to eight devices; the hierarchical strategy folded in a different order on
+different devices at three or more boxes, and now folds in one order
+everywhere (a tolk divergence). The probe ran float32 on `CPU:k` devices; the
+half-precision path (`ALLREDUCE_CAST`) and the rented node's GPUs are not yet
+measured. A compiled call's output covers its storage, so reading an engine's
+sampled ids copies the ids and nothing else. Nothing is memoised. `Nx.data` of
+a placed value raises `Invalid_argument` ("a placed value has no host storage;
+read it with to_buffer, or place it on the host"), because its contract is the
+storage that `offset` and `strides` index; `Nx.data` checks first, so readers
+inside the frontend call `B.to_host`, not `data`. Host-only consumers take
+their input to the host once at their boundary: talon's column constructors,
+hugin's data preparation, kaun's `Metric`.
 
 ### Moving
 
@@ -405,7 +482,7 @@ constructors, hugin's data preparation, kaun's `Metric`.
 |---|---|
 | already at `p` | `x` |
 | the host, or a mapped file | RFC 0003's chunked upload; under a split placement each device reads only its own slice of the file |
-| a device of the same engine | the view's window, made contiguous on its source when it is not, then tolk's `transfer` for each shard that changes device, or a host bounce where the allocator has none (the CPU device) |
+| a device of the same engine | the view's window, then tolk's `transfer` for each shard that changes device, or a host bounce where the allocator has none (the CPU device); a strided window bounces through the host in rune until stage 3 compiles a contiguous copy on its source device |
 | another engine | a host bounce, in chunks |
 | the host, from a device | a read of the whole value, gathering shards |
 
@@ -427,7 +504,7 @@ host buffer it wraps until it completes. Donation state lives on the cell, and
 captures keep RFC 0003's Laws 8 and 9, and its Law 10 reads: an upload from a
 mapped file bypasses the allocator cache, so a dropped model does not stay
 allocated in it; every other allocation goes through the cache, which tolk
-empties before an allocation fails (`device.ml:60-69`). An allocation that
+empties before an allocation fails (`device.ml:48-56`). An allocation that
 still fails after the engine drains its queue, collects and retries once
 raises `Nx.Device.Out_of_memory`; a call that raises has consumed no donated
 input. The collection budget counts every device allocation since the last
@@ -435,6 +512,23 @@ major collection, eager results and per-step uploads included, 4 GiB by
 default; placing Llama 3.1 70B then runs about 35 collections.
 
 ### Compiled functions
+
+RFC 0006's amendment replaces `jit_step`, its positional pairing and
+`?donate` with one `jit` over a signature, and where this section differs,
+RFC 0006's rules govern. Where this section says a leaf of `'s` or donation,
+read a leaf of a `consumes` argument. Three of its sentences change:
+
+- a cell reached from two leaves, or from a leaf and a capture, makes the
+  call raise (its rule 4), where this section reads it;
+- a consumed host leaf is dead like any other (its Law 6, once host cells
+  land), where this section keeps it usable;
+- a result keeps the placement of the consumed input it derives from (its
+  rule 5), where this section pairs by position.
+
+Lending follows its rule 5 per shard (equal dtype, byte size and placement),
+results are fresh (its rule 2), and the key is its rule 1's with this
+section's placement and view clauses, a host leaf counting as replicated over
+the program's devices.
 
 ```ocaml
 val Rune.jit_step :
@@ -488,20 +582,23 @@ stop condition), the offset joins the key instead; that is the case for a
 byte offset not aligned to 16, which tolk refuses and CUDA's vector loads
 fault on.
 
-Split leaves lower to a per-shard buffer node under tolk's `MULTI`, with
-`Unshard` giving each output its placement, and with what today's
-single-device lowering has applied per shard: storage reuse under donation,
-indexed scatter and window writes, and staged scans. Today's `pmap` has none
+Split leaves lower to a buffer on the device list under tolk's `Unshard`
+node, which records each cut axis and its range over the devices; rune seeds
+those ranges from the placement's grid and reads each output's placement back
+from its ranges, never from `Uop.axis`, which raises on more than one cut
+(`uop.ml:2420-2422`). The lowering applies, per shard, what today's
+single-device lowering applies: storage reuse under donation, indexed scatter
+and window writes, and staged scans. Today's `pmap` has none
 of them: it reuses no storage (`jit.ml:2922`), writes by a one-hot scatter
 over the whole destination (`jit.ml:1165-1181,1210-1212`), and unrolls scans
 (`jit.ml:1136-1152`); a tensor-parallel decode step lowered that way holds two
 copies of its cache and rewrites every row of every pool each step. Inside
 `jit` over split inputs, `Nx.Rng.fold_in_axis` folds nothing: a global-view
 program has one lane, so its value does not depend on how many devices hold
-it. The per-device-index tests under `pmap` move to `vmap` over a split axis,
-where `fold_in_axis` folds the lane index. `E_place` under `jit` is the
-identity when its target is the program's placement; lowering it to copy and
-shard nodes comes with device lists.
+it. The per-device-index tests under `pmap` move to `vmap` over a split
+axis, where `fold_in_axis` folds the lane index. `E_place` under `jit`
+is the identity when its target is the program's placement; lowering it to
+copy and shard nodes comes with device lists.
 
 A call waits for its work before it returns until the second half of stage 1,
 as today. From then it returns once its work is submitted: a read waits for the
@@ -510,26 +607,28 @@ last submission and never for the whole device, and donated storage is
 released in queue order (Law 4). The layer loop loses 10 ms of a 132 ms
 gpt-oss decode step to the wait at 26 calls, measured in its design pass.
 Metal's upload synchronises the device before it copies
-(`tolk_metal.ml:279-281`, as tinygrad's does), so once calls return without
+(`tolk_metal.ml:233-235`, as tinygrad's does), so once calls return without
 waiting, each per-step upload still drains the queue once, and the host
 cannot prepare the next step while the device runs this one. How much of the
 10 ms that drain keeps is measured first. If it matters, the upload becomes a
 copy ordered on the queue: tolk's Metal allocator records each buffer's last
 command buffer and waits on that alone, a divergence with its own
-`DIVERGENCES.md` entry. tolk's AMD and NV allocators return a buffer to the
-driver without waiting for the work that uses it (`tolk_amd.ml:1659-1660`,
-`tolk_nv.ml:1937-1938`), where tinygrad's synchronises every device that maps
-the buffer first (`runtime/support/hcq.py:567-568`); the port restores that
-wait before any call returns without waiting.
+`DIVERGENCES.md` entry. tolk's AMD and NV allocators returned a buffer to the
+driver without waiting for the work that uses it, where tinygrad's
+synchronises every device that maps the buffer first
+(`runtime/support/hcq.py:567-568`); stage 1 restored that wait
+(`tolk_amd.ml:2170-2173`, `tolk_nv.ml:2394-2397`).
 
 ### `pmap` and expert parallelism
 
-`pmap` is `jit` over split inputs and is removed, with `in_axes`, in the stage
-that brings `jit` over device lists; until then it keeps its meaning. A
-function that must act per device maps over an axis split one slice per
-device, as the Guide's expert example does: `vmap` over it runs each lane on
-its own device, `Nx.arange` over it gives each lane's index, `Nx.sum` over it
-is an allreduce. Stacked `[devices; per_device; ...]`, experts are gathered
+`pmap` is `jit` over split inputs and is removed, with `in_axes`, in stage
+2's M3, which brings `jit` over device lists: every caller migrates to `jit`
+over placed values in the same change, with no bridge. Until then it keeps its
+meaning. A function that must
+act per device maps over an axis split one slice per device, as the Guide's
+expert example does: `vmap` over it runs each lane on its own device,
+`Nx.arange` over it gives each lane's index, `Nx.sum` over it is an
+allreduce. Stacked `[devices; per_device; ...]`, experts are gathered
 along the local axis, inside each shard, and a route marked with an id outside
 `[0, e)` contributes zero and reads nothing (RFC 0004). Over experts split on
 their leading axis, RFC 0004's product runs once per shard, built from shard
@@ -537,7 +636,8 @@ shapes, with no gather across shards, and its result is split on the lane
 axis; any other layout falls back to decode-then-matmul, which
 `RUNE_JIT_DEBUG` reports and which saves nothing on routes that select no
 expert. RFC 0004 designs that per-shard product for the stage that brings
-`jit` over device lists, so it is unmeasured until then. On its kernel and
+`jit` over device lists; stage 2's probe measured it through tolk (below),
+and that stage measures it through rune. On its kernel and
 grouped paths a foreign route reads nothing and multiplies nothing. When the
 product groups routes by expert, a device reads each distinct local expert its
 tokens chose once per block of its routes. It multiplies its own routes plus
@@ -561,16 +661,24 @@ all 32 as the batch grows. A gather along the split axis itself would reduce
 gathered weights across devices, which the stacking avoids. Whether the
 example compiles to the per-shard product is measured in stage 2; if tolk's
 rewrite gathers across shards, a per-device map with an explicit lane comes
-back as its own RFC.
+back as its own RFC. Stage 2's probe measured it through tolk on
+`CPU:1`..`CPU:4`, with a block kernel built from shard shapes: the
+lane-stacked gather, the block product and the whole grouped form move no
+expert bytes between devices, and only the output's lane sum crosses them, so
+the per-device map is not needed. `Op.block_matmul` takes its shapes from the
+global tensor and raises at graph build on split operands today; stage 2
+builds it, and `Op.quant_matmul`, from each shard's shape.
 
 ### Fully sharded training
 
 Parameters, gradients and optimiser state split on axis 0, and each weight
 gathered where it is used with `Nx.place (Nx.Placement.replicated gpus) w`
-inside the step, which lowers to an all-gather. Without that gather, tolk's
+inside the step, which tolk lowers today as an allreduce of zero-padded
+shards (`schedule/multi.ml:105-113`), twice an all-gather's bytes. Without
+that gather, tolk's
 rewrite reshards to the last split axis among an operation's operands
-(`multi.ml:172-181`): for a split batch times a weight split on its input
-axis, it gathers the batch. The memory saving needs three things of the
+(`schedule/multi.ml:139-143`): for a split batch times a weight split on its
+input axis, it gathers the batch. The memory saving needs three things of the
 execution: each layer's gathered weights freed after its use, gradients
 reduce-scattered rather than allreduced then sliced, and the next layer's
 gather overlapped with the current layer's compute. The first comes from
@@ -584,6 +692,26 @@ placement with program boundaries does not express fully sharded training:
 this RFC's amendment is withdrawn, and the roadmap's position that it is a
 rune transformation stands.
 
+**Withdrawn** (stage 2's probe, 2026-09-25). The probe ran eight layers of
+`relu (h @ W)`, with 4 MiB weights, parameters, gradients and Adam's moments
+split over `CPU:1`..`CPU:4`, and one tolk realize per layer. The worst
+device's peak over its share of the state was 2.66 layers at best, above the
+bound of 2.14 (two layers plus 0.14 of activations). It was 3.66 under tolk's
+default lowering, 8.16 under the naive one, and 2.89 with both collectives
+written out by hand. Three causes: a gather to a device list lowers to an
+allreduce of zero-padded shards, which moves twice an all-gather's bytes;
+gradients are allreduced and then sliced, since there is no reduce-scatter;
+and every copy source is staged in its own buffer. An all-gather into slices,
+a reduce-scatter rewrite, copies from views and the backward in two programs
+per layer would each address one cause. None is built, and they were not
+measured together. They are tolk collectives work, planned as its own stream
+(all-gather, reduce-scatter, copies from views, hierarchical variants) for
+the two-node training gate. Fully sharded training returns through placement
+and `jit` if this probe, re-run after that stream and stage 2's M4, holds the
+bound; until then this section stays withdrawn. Its throughput gate (90% of
+torch) further needs gathers overlapped with compute, without which it
+reaches about 88%.
+
 ### Engines, and what belongs where
 
 | Layer | Owns |
@@ -592,14 +720,26 @@ rune transformation stands.
 | host engine (`nx.backend`: nx.c, nx-oxcaml) | host memory and kernels; one per executable, unchanged |
 | device engine (a value) | storage, uploads, reads, transfers, and from stage 3 one-operation programs |
 | rune | `device`, `devices`, `default_device`, opener registration; the engine over tolk; `jit` and `jit_step`; binding and budgets |
-| tolk | runtimes, buffers, allocators, transfers, graphs, `MULTI`, allreduce; `Tolk_frontend` and `Tolk_nn` |
+| tolk | runtimes, buffers, allocators, transfers, graphs, `Unshard` and its rewrite, allreduce; `Tolk_frontend` and `Tolk_nn` |
 
-The engine record is in the representation above: `read` and `place`.
-The engine attaches finalisers to the cells it creates. Stage 3 adds `run :
-'r. 'r Effect.t -> 'r`, with one function over nx's effect vocabulary that
-lists an effect's tensor operands; an engine raises `Invalid_argument` naming
-any effect it does not implement, and nx's conformance tests run against every
-engine. `Device.make` lives in `nx.effect`.
+The engine record is in the representation above: `read` and `place`. The
+engine attaches finalisers to the cells it creates. rune makes one engine
+value per tolk backend, shared by that backend's devices, so a placement over
+devices of two backends (`[METAL; CPU:1]`) raises by the rule that a
+placement's devices share one engine, with no check of its own; Metal, with
+one device, never enters a list of several. The engine moves split and
+replicated values shard by shard: chunked uploads from the host, a mapped file
+giving each device only its window, tolk's transfer between devices of its
+backend (a host bounce on `CPU:k`), a chunked host bounce between backends
+written in tolk, and `Out_of_memory` naming the device that failed. It gains
+no field for this; `place` carries every move. Transfer code lives in tolk,
+with one exception: a strided device-to-device copy bounces through the host
+in rune until stage 3 compiles a contiguous copy on the source device. Stage 3
+adds `run : 'r. 'r Effect.t -> 'r`, with one function over nx's effect
+vocabulary that lists an effect's tensor operands; an engine raises
+`Invalid_argument` naming any effect it does not implement, and nx's
+conformance tests run against every engine. `Device.make` lives in
+`nx.effect`.
 
 **An nx CUDA or Metal backend is a device engine,** not another implementation
 of the virtual `nx.backend`. The link-time seam allows one engine per
@@ -617,7 +757,7 @@ devices out of `nx.backend` become "devices are engines carried by values;
 this seam selects the host engine".
 
 **Nothing moves from tolk into nx.** Runtimes, buffers, allocators, transfers,
-graphs, `MULTI` and allreduce are ports of tinygrad's `device.py`, `runtime/`
+graphs, `Unshard` and allreduce are ports of tinygrad's `device.py`, `runtime/`
 and `schedule/`; nx would link drivers and a compiler to hold memory it has no
 kernels for. `Tolk_frontend` is rune's lowering vocabulary, and `Tolk_nn` a
 port used by tolk's tests. What moves goes the other way: rune takes its
@@ -681,22 +821,32 @@ then placed: a transient of one layer's experts, 3.4 GB for V4-Flash.
      median within 2% of the pre-stage baseline build, with identical ids.
 2. **Several devices in one process,** after the layer loop and the probe on
    `CPU:1`..`CPU:4`: a tensor-parallel MLP (column then row, captured split
-   weights) equals one device, uploads only its batch per call, and moves at
-   most 1.1 times the allreduce volume between devices; the fully sharded step
-   above; the expert example, equal to one device on `CPU:1`..`CPU:4`, where
-   each device reads only the local experts its tokens chose, and on the
-   rented node, where each device multiplies only its own routes and the
-   grouping's padding: its expert product at DeepSeek V4-Flash's shapes with
-   random weights within 1.5 times the same product over its own routes'
-   positions (RFC 0004's one-lane row); and a tensor-parallel decode step over
-   an RFC 0002 cache split on its kv-heads axis, which reports storage reuse
-   for every pool on every device and writes bytes proportional to the call's
-   tokens. Then: replicated and split placements, split `place` from the host,
-   bound split captures, `jit` over device lists with storage reuse, indexed
-   writes and staged scans per shard, the removal of `pmap`. Acceptance: the
-   probe, including replicas of an allreduced value equal bit for bit on every
-   device, then Llama 3.1 70B tensor-parallel decode with its paged cache on a
-   rented node of eight 80 GB GPUs, budgeted before the stage starts.
+   weights) equals one device, uploads only its batch per call (once per
+   device, `ndev` times the batch's bytes), and moves at most 1.1 times the
+   allreduce volume between devices; the expert example, equal to one device
+   on `CPU:1`..`CPU:4`, where each device reads only the local experts its
+   tokens chose, and on the rented node, where each device multiplies only its
+   own routes and the grouping's padding: its expert product at DeepSeek
+   V4-Flash's shapes with random weights within 1.5 times the same product
+   over its own routes' positions (RFC 0004's one-lane row); and a
+   tensor-parallel decode step over an RFC 0002 cache split on its kv-heads
+   axis, which reports storage reuse for every pool on every device and writes
+   bytes proportional to the call's tokens. Then: the abstract placement over
+   a grid, replicated and split placements, split `place` from the host, eager
+   results over split operands (Routing), bound split captures, `jit` over
+   device lists with storage reuse, indexed writes and staged scans per shard,
+   and the removal of `pmap` with `jit` over device lists (M3), with every
+   caller migrated to `jit` over placed values and no bridge. Acceptance: the
+   probe, including replicas of an allreduced value equal bit for bit on
+   every device, then Llama 3.1 70B tensor-parallel decode with its paged
+   cache on a rented node of eight 80 GB GPUs (tolk.cuda). Budget, re-derived before the stage started: about 42
+   engineer-days and about 3,210 inserted source lines over seven milestones
+   (M0 probes, M1 movement of split values, M2 placing on device lists, M3
+   `jit` over device lists, M4 per-shard lowering, M5 CPU acceptance, M6 the
+   rented node), the grid representation's 1.5 days and 160 lines included,
+   and the rented node's bring-up time-boxed at 6 of those days. Stop at 48 engineer-days or
+   3,700 inserted source lines; then ship what landed through the CPU
+   acceptance and open the hardware gate as a tolk item.
 3. **Devices compute:** the engine's `run`, eager operations that do not wait,
    tolk's transfer ports; DeepSeek V4-Flash on one node.
 
@@ -710,21 +860,26 @@ then placed: a transient of one layer's experts, 3.4 GB for V4-Flash.
    result's type, shape or dtype. Amends RFC 0003's Law 7. Prevents
    device-typed tensors, and code whose shapes depend on where it runs.
 2. **A result lives where its placed operands live.** Host operands join; two
-   device lists raise. Where the arithmetic runs is the engine's affair.
-   Prevents silent copies between device lists and a guessed device; within
-   one list, moving data between shards is the compiler's, reported by
-   `RUNE_JIT_DEBUG`.
-3. **A read moves nothing.** It copies the elements of its window. Prevents a
-   print or a save evicting a model, and a read of one element costing the
-   whole storage.
+   device sets raise. Where the arithmetic runs is the engine's affair.
+   Prevents silent copies between device sets and a guessed device; within
+   one set, moving data between shards follows Routing, and `RUNE_JIT_DEBUG`
+   reports it in a compiled program.
+3. **A read moves nothing.** It copies the elements of its window from
+   devices this process holds and runs no collective; reads are local, and
+   moves may communicate. Prevents a print or a save evicting a model, and a
+   read of one element costing the whole storage.
 4. **Storage is released only by unreachability or donation, and only after
    the work that uses it completes.** Moving preserves its source. Prevents a
    move freeing weights on another device, use after release through views and
    bound captures, and a buffer reused under a running kernel.
-5. **A placement has one normal form:** one engine, a flat list of distinct
-   devices, at most one split axis that divides evenly, a list of one device
-   being that device; movement keeps a value in this form or raises. Prevents
-   placements tolk's `MULTI` cannot express, and one device keyed twice.
+5. **A placement has one normal form:** one engine and one backend; distinct
+   devices in row-major order over a grid whose extents are at least 2 and
+   whose adjacent axes merge when used flatly; each cut tensor axis divided
+   evenly by the grid axes that cut it; a grid of one device being that
+   device. Two placements are equal exactly when their backends are equal and
+   every device holds the same window under both, and movement keeps a value
+   in this form or raises. Prevents placements tolk cannot lower, two
+   spellings of one placement keyed apart, and one device keyed twice.
 6. **The link-time engine is the host's; devices are values, and nx keeps no
    registry.** Prevents a link-time choice excluding host and device values
    from one process.
@@ -743,10 +898,12 @@ being read back or replicated.
 
 ## Drawbacks
 
-- A breaking sweep: `Rune.to_device` and `?donate` go in stage 1 and `pmap`
-  in stage 2, and `?device` becomes `?devices`; every caller moves with them.
-  `?donate` alone has 89 lines in 20 files (tests, examples, benches,
-  docs, `vega.mli` and `attention.mli`).
+- A breaking sweep: `Rune.to_device` and `?donate` go in stage 1, and
+  `?device` becomes `?devices`; every caller moves with them. `pmap` goes in
+  stage 2's M3, its callers migrated to `jit` over placed values with no
+  bridge. `?donate` alone has 89
+  lines in 20 files (tests, examples, benches, docs, `vega.mli` and
+  `attention.mli`).
 - A state-to-state loop names a module for what it reads beside its state,
   and a loss or sampled ids become fields of the state.
 - Until devices compute, an eager operation on placed operands runs on the
@@ -790,8 +947,9 @@ idea survives: an engine per device, as a value.
 **A per-device `pmap` with `psum` and `axis_index`** (JAX's `shard_map`). It
 is `vmap` over an axis split one slice per device, so it would add a name, a
 lane, a `psum` rule for `vmap` and a new lowering for what the composition
-expresses. It comes back as its own RFC if the stage 2 measurement shows tolk
-cannot keep the gather local, or when a model needs all-to-all dispatch.
+expresses. Stage 2's probe showed tolk keeps the lane-stacked gather local,
+so it comes back as its own RFC only when a model needs all-to-all
+dispatch.
 
 **All-to-all dispatch for expert-parallel prefill.** Sending each route's row
 to the device that holds its expert moves six rows per token each way per
@@ -826,31 +984,45 @@ fallback composes in any order.
 **Lazy evaluation as API** (a realise call, or a graph the user manages). Law 7
 already lets an engine defer and fuse work until a read, a `place` or a
 compiled call; the API fixes only where errors surface. **Named meshes and
-partition specs now** (JAX): every goal post up to one node fits a flat list
-and one axis, tolk's `MULTI` has one axis as tinygrad's frontend does, and a
-mesh would be a new constructor. **Evicting reads:** they made a save during
-training evict the state and a move release its source. **Moving tolk's
-runtimes into nx** ends the port and puts a compiler under the array library.
-**An explicit `free`** is a use-after-release mode that donation and
-unreachability cover.
+partition specs now** (JAX): every 1.0 gate fits a flat list cut on one axis:
+the single-node deployments need no more, and state sharded 16 ways over two
+nodes of eight is the flat 16-way split whatever grid spells it (that gate's
+90% throughput needs gathers overlapped with compute, without which it reaches
+about 88% of torch, and a mesh does not change that); the grid representation
+makes a mesh a later constructor that no caller matches; and axis names as
+identity would keep grids that differ only in names from joining. **A public
+variant with a mesh case added later:** every caller that matches would break,
+and stage 2's per-shard code would be written against one axis and derived
+again; the abstract type costs stage 2 about 1.5 days and 160 lines.
+**Evicting reads:** they made a save during training evict the state and a
+move release its source. **Moving tolk's runtimes into nx** ends the port and
+puts a compiler under the array library. **An explicit `free`** is a
+use-after-release mode that donation and unreachability cover.
 
 RFC 0003 shipped `to_device` as extensible by optional arguments. This RFC
 replaces it instead, because a placement is a value nx must name. The roadmap's
-position that fully sharded training is a rune transformation stays open until
-the probe above; its other positions stand: collectives are tolk graph
+position that fully sharded training is a rune transformation stands for
+now: under tolk's current collectives, placement with program boundaries does
+not express it. It returns through placement and `jit` if the probe holds
+its bound after tolk's collectives stream and stage 2's M4 (§Fully sharded
+training). Its other positions stand: collectives are tolk graph
 operations ported from tinygrad, and sharded checkpoints and data live in
 kaun.
 
 ## Non-goals
 
 - Multi-node execution: the controller model, remote devices, the launcher and
-  the transport, in their own RFC. This RFC keeps its door open: a device's
-  identity may include a process, a placement may span processes, a read of
-  a shard held by another process raises (the multi-node RFC's amendment to
-  Law 3), every process makes the same calls in the same order, and a process
-  reads a replicated value from its own replica, which is equal to every
-  other bit for bit (Reads).
-- Named meshes.
+  the transport. A later multi-node RFC chooses the controller model by
+  measurement and may extend device identity accordingly; `Nx.Device.t` is
+  abstract, so that extension breaks no caller. Replicas are meant to be
+  equal bit for bit under any model (Reads). Stage 2 keeps any model open:
+  devices compare with `Device.equal` and are never looked up by name, shard
+  storage is indexed by grid position, collectives stay tolk graph nodes of
+  device-to-device copies, and compile and cache keys name no process.
+- Meshes: placements over grids of more than one dimension. The
+  representation is a grid already, so a mesh constructor adds grids that no
+  caller matches, with tolk's collectives over one grid axis, when a goal post
+  needs one.
 - A per-device map with explicit collectives, and all-to-all dispatch.
 - Implicit moves between device lists, and an explicit release of memory.
 - Sharded checkpoint files.
@@ -861,10 +1033,6 @@ During implementation:
 - The cost of a one-operation program on Metal and CUDA, first compile
   included, which decides when stage 3's engine replaces host-speed
   operations.
-- Whether the expert example compiles to RFC 0004's per-shard product on
-  every device, and whether tolk's `MULTI` rewrite keeps the grouped form's
-  sorting, gathers and block kernels inside each shard (stage 2's probe).
-- The probe's per-device peak for a fully sharded step.
 - Program arenas. An engine keeps many programs alive (prefill buckets, a
   block per layer kind, encoders, a sampler), each holding its own arena today;
   two gpt-oss prefill programs held 19.4 GB where one held 16.0 GB in the
@@ -877,8 +1045,8 @@ During implementation:
 
 A no-copy Metal buffer over a page-aligned mapping, a tolk divergence, which
 would bring placing gpt-oss-20b from 7.3 s to near zero on Apple machines; a
-mesh as a `Placement` case; an upload of a list of entries into one buffer, if
-a load-time measurement shows the per-layer stack matters; a per-shard
-checkpoint writer; moving vmap's and autodiff's identity tables onto `Traced`
-payloads, as jit's are here. Nothing listed here is a reason to accept this or
-a later RFC.
+mesh constructor over the grid representation; an upload of a list of entries
+into one buffer, if a load-time measurement shows the per-layer stack matters;
+a per-shard checkpoint writer; moving vmap's and autodiff's identity tables
+onto `Traced` payloads, as jit's are here. Nothing listed here is a reason to
+accept this or a later RFC.
