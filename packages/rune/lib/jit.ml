@@ -203,6 +203,15 @@ let decided_by p =
   if Nx_effect.Grid.cuts p = [] then (List.sort Nx.Device.compare ds, Unordered)
   else (ds, Ordered)
 
+let pp_devices ppf = function
+  | [ d ] -> Nx.Device.pp ppf d
+  | ds ->
+      Format.fprintf ppf "[%a]"
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+           Nx.Device.pp)
+        ds
+
 (* A leaf's placement in a program over [ds]: its own, or a copy on each device
    for a host value. *)
 let leaf_placement : type a b.
@@ -520,16 +529,23 @@ let check_capture : type a b. state -> (a, b) Nx_effect.t -> unit =
                     Nx.Placement.pp p Nx.Placement.pp q)))
   | _ -> ()
 
-(* A traced tensor's payload: the trace that made it and its node. *)
-type Nx_effect.node += Node of { trace : int; tensor : F.Tensor.t }
+(* A traced tensor's payload: the trace that made it, its node, and where it
+   lives in the program. *)
+type Nx_effect.node +=
+  | Node of { trace : int; tensor : F.Tensor.t; place : Nx.Placement.t }
 
 let trace_counter = ref 0
 
-(* A fresh traced tensor of [st]'s trace standing for [tt], of [tt]'s shape. *)
-let traced st dt tt =
+(* Where the program runs: its device, or a copy on each of its devices. *)
+let here st = Nx.Placement.replicated st.st_devices
+
+(* A fresh traced tensor of [st]'s trace standing for [tt], of [tt]'s shape, at
+   [place]. *)
+let traced st place dt tt =
   check_dtype st dt "a value the function computes";
   let shape = Array.of_list (F.Tensor.shape tt) in
-  Nx_effect.traced st.st_ctx dt shape (Node { trace = st.st_id; tensor = tt })
+  Nx_effect.traced st.st_ctx dt shape
+    (Node { trace = st.st_id; tensor = tt; place })
 
 let is_traced = function Nx_effect.Traced _ -> true | _ -> false
 
@@ -571,6 +587,14 @@ let const_placement : type a b. state -> (a, b) Nx_effect.t -> Nx.Placement.t =
   match x with
   | Placed { r_placement = p; _ } when over st.st_devices p -> p
   | _ -> Nx.Placement.replicated st.st_devices
+
+(* Where [x] lives in the program: a traced value where its operation put it, a
+   constant where it is bound. *)
+let placement_in : type a b. state -> (a, b) Nx_effect.t -> Nx.Placement.t =
+ fun st x ->
+  match x with
+  | Nx_effect.Traced { t_node = Node { place; _ }; _ } -> place
+  | _ -> const_placement st x
 
 (* Bind a tensor whose bytes exist outside the traced computation (a closure
    capture, or a host constant created while tracing) as a compile-time
@@ -797,7 +821,7 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
   | [] -> ()
   | fs -> List.iter (fun h -> h.hook x) fs);
   match x with
-  | Nx_effect.Traced { t_node = Node { trace; tensor }; _ }
+  | Nx_effect.Traced { t_node = Node { trace; tensor; _ }; _ }
     when trace = st.st_id ->
       tensor
   | Nx_effect.Traced _ ->
@@ -1757,7 +1781,9 @@ let body_slots st ?(row = false) leaves =
       in
       let dt = tolk_dtype (Nx_effect.dtype leaf) in
       let node = make_node st dt (numel shape) in
-      let ph = traced st (Nx_effect.dtype leaf) (buffer_tensor node shape) in
+      let ph =
+        traced st (here st) (Nx_effect.dtype leaf) (buffer_tensor node shape)
+      in
       { s_ph = Nx.P ph; s_node = node; s_dt = dt; s_shape = shape })
     leaves
 
@@ -1770,35 +1796,79 @@ let placeholders st leaves values =
     (fun (Nx.P leaf) (shape, value) ->
       Nx.P
         (Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
-           (Node { trace = st.st_id; tensor = value })))
+           (Node { trace = st.st_id; tensor = value; place = here st })))
     leaves values
 
 let same_shapes leaves slots =
   List.for_all2 (fun (Nx.P l) s -> shape_of l = s.s_shape) leaves slots
+
+(* Placements in a program over several devices
+
+   Every value of such a program lives where nx's rules put it
+   ([Nx_effect.routing], [Nx_effect.result]), decided as the function traces: an
+   operation over operands split differently raises as it does eagerly, instead
+   of the compiler resharding them, and so does a movement that would move
+   elements between devices. A cut of the split axis within one slice is where
+   compiled and eager code differ: tolk copies a whole slice to every device,
+   and a cut strictly inside one would place it on one device, which a program
+   over several devices cannot hold. *)
+
+(* Where a value at [p] of [shape] lives once moved by [m]: where eager movement
+   puts it ([Nx_effect.moved_placement]), unless that keeps fewer devices. A cut
+   of one whole slice of a split axis is then copied to every device, as tolk
+   lowers it; one strictly inside a slice raises. *)
+let moved p shape m =
+  let q = Nx_effect.moved_placement p shape m in
+  if List.compare_lengths (Nx.Placement.devices q) (Nx.Placement.devices p) = 0
+  then q
+  else
+    let slice =
+      Nx.Placement.window p shape (List.hd (Nx.Placement.devices q))
+    in
+    match m with
+    | Nx_effect.Shrink limits ->
+        List.fold_left
+          (fun q' (axis, _) ->
+            if List.mem_assoc axis (Nx_effect.Grid.cuts q) then q'
+            else if limits.(axis) = slice.(axis) then
+              Nx_effect.Grid.uncut q' ~axis
+            else
+              invalid_arg
+                (Printf.sprintf
+                   "Nx: a cut inside one slice of the split axis %d of shape \
+                    %s would place it on one device, which a compiled program \
+                    over several devices cannot; place the value on one device \
+                    first"
+                   axis
+                   (Nx_core.Shape.to_string shape)))
+          p (Nx_effect.Grid.cuts p)
+    | _ -> q
+
+(* Where the result of the operation performing [eff] lives in [st]'s program:
+   raises [Invalid_argument] as nx does when its operands cannot meet. *)
+let result_placement : type c. state -> c Effect.t -> Nx.Placement.t =
+ fun st eff ->
+  if not (multi st) then here st
+  else
+    match Nx_effect.routing eff with
+    | Some (op, rule, xs) ->
+        Nx_effect.result op rule
+          (List.map
+             (fun (Nx.P x) ->
+               (Some (placement_in st x), Array.length (shape_of x)))
+             xs)
+    | None -> (
+        match Nx_effect.movement_of eff with
+        | Some (Nx.P x, m) -> moved (placement_in st x) (shape_of x) m
+        | None -> here st)
 
 (* Handler *)
 
 let rec handler : type r. state -> (r, r) Effect.Deep.handler =
  fun st ->
   let open Effect.Deep in
-  (* Answer an intercepted operation: record the graph node and continue with a
-     fresh placeholder carrying the result's shape and dtype. *)
-  let ret : type a b r.
-      ((a, b) Nx_effect.t, r) continuation -> (a, b) ND.t -> F.Tensor.t -> r =
-   fun k dt tt -> continue k (traced st dt tt)
-  in
   let dt x = Nx_effect.dtype x in
   let go x = tolk_of st x in
-  (* Like [ret] for a two-result operation: one placeholder per result, both
-     carrying the operation's shared dtype (qr's factors, e.g.). *)
-  let ret2 : type a b r.
-      ((a, b) Nx_effect.t * (a, b) Nx_effect.t, r) continuation ->
-      (a, b) ND.t ->
-      F.Tensor.t ->
-      F.Tensor.t ->
-      r =
-   fun k dt tq tr -> continue k (traced st dt tq, traced st dt tr)
-  in
   let refuse k op =
     discontinue k
       (Jit_error
@@ -1809,6 +1879,29 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   in
   let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
    fun eff ->
+    (* Answer an intercepted operation: record the graph node and continue with
+       a fresh placeholder carrying the result's shape, dtype and placement.
+       Operands that cannot meet raise into the function. *)
+    let ret : type a b r.
+        ((a, b) Nx_effect.t, r) continuation -> (a, b) ND.t -> F.Tensor.t -> r =
+     fun k dt tt ->
+      match result_placement st eff with
+      | p -> continue k (traced st p dt tt)
+      | exception (Invalid_argument _ as e) -> discontinue k e
+    in
+    (* Like [ret] for a two-result operation: one placeholder per result, both
+       carrying the operation's shared dtype (qr's factors, e.g.). *)
+    let ret2 : type a b r.
+        ((a, b) Nx_effect.t * (a, b) Nx_effect.t, r) continuation ->
+        (a, b) ND.t ->
+        F.Tensor.t ->
+        F.Tensor.t ->
+        r =
+     fun k dt tq tr ->
+      match result_placement st eff with
+      | p -> continue k (traced st p dt tq, traced st p dt tr)
+      | exception (Invalid_argument _ as e) -> discontinue k e
+    in
     match eff with
     (* Metadata reads fall back to the placeholder, whose view is the
        result's. *)
@@ -2176,7 +2269,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                      if U.op s <> Tolk_uop.Ops.After then Nx.P v
                      else
                        Nx.P
-                         (traced st (dt v)
+                         (traced st (placement_in st v) (dt v)
                             (F.Tensor.of_uop
                                (reroot s
                                   (fun s -> U.after ~src:s ~deps)
@@ -2369,12 +2462,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               in
               let codes = part "codes" codes
               and scales = part "scales" scales in
-              traced st (dt x)
+              traced st (here st) (dt x)
                 (F.Op.quant_matmul ?ids:(Option.map go ids) (go x) ~codes
                    ~scales)
             in
             let block_matmul ~transpose x w ~ids =
-              traced st (dt x)
+              traced st (here st) (dt x)
                 (F.Op.block_matmul ~transpose (go x) (go w) ~ids:(go ids))
             in
             Some { Quant.device = st.st_device; quant_matmul; block_matmul }
@@ -2385,36 +2478,50 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               (Effect.Deep.match_with
                  (fun () -> Quant.lower kernels w op)
                  () (handler st)))
-    (* A placement inside a program is the compiler's: placing a value where the
-       program runs is the identity, and a program moves nothing between devices
-       yet. *)
-    | E_place { placement; t_in } -> (
-        match st.st_devices with
-        | [ d ] when Nx.Placement.equal (Nx.Placement.device d) placement ->
-            Some (fun k -> continue k t_in)
-        | _ ->
-            Some
-              (fun k ->
-                discontinue k
-                  (Jit_error
-                     (Format.asprintf
-                        "Rune.jit: a compiled program cannot place a value on \
-                         %a"
-                        Nx.Placement.pp placement))))
-    (* A traced value lives where the program runs, which is what the gradient
-       of a placement asks of its primal. Several devices are the compiler's to
-       split. *)
-    | E_placement x when is_traced x -> (
-        match st.st_devices with
-        | [ d ] -> Some (fun k -> continue k (Nx.Placement.device d))
-        | _ ->
-            Some
-              (fun k ->
-                discontinue k
-                  (Jit_error
-                     "Rune.jit: placement inside a program over several \
-                      devices is the compiler's; query it outside the jitted \
-                      function")))
+    (* A placement inside a program: the identity at the value's own placement.
+       Over several devices a split value is gathered to a copy on each device
+       by a copy to them all, and a copy is split by keeping each device its
+       slice (tolk's copy and shard nodes). A program runs on its devices, so
+       any other target raises. *)
+    | E_place { placement = q; t_in } ->
+        Some
+          (fun k ->
+            let p = placement_in st t_in in
+            match
+              Nx_effect.Placement.check_shape "Nx.place" q (shape_of t_in)
+            with
+            | exception (Invalid_argument _ as e) -> discontinue k e
+            | () ->
+                if Nx.Placement.equal p q then continue k t_in
+                else if not (multi st && over st.st_devices q) then
+                  discontinue k
+                    (Jit_error
+                       (Format.asprintf
+                          "Rune.jit: a program on %a cannot place a value on \
+                           %a; place it outside the compiled function"
+                          pp_devices st.st_devices Nx.Placement.pp q))
+                else
+                  let names = List.map Nx.Device.name st.st_devices in
+                  let tt = go t_in in
+                  let whole =
+                    if Nx_effect.Grid.cuts p = [] then tt
+                    else
+                      F.Tensor.of_uop
+                        (U.copy ~src:(F.Tensor.uop tt) ~device:(U.Multi names)
+                           ())
+                  in
+                  let tt =
+                    match Nx_effect.Grid.cuts q with
+                    | [] -> whole
+                    | [ (axis, _) ] ->
+                        F.Creation.shard ~axis ~devices:names whole
+                    | _ -> unsupported "a value cut along several axes"
+                  in
+                  continue k (traced st q (dt t_in) tt))
+    (* A traced value lives where its operation put it, which is what the
+       gradient of a placement asks of its primal. *)
+    | E_placement x when is_traced x ->
+        Some (fun k -> continue k (placement_in st x))
     | E_placement _ -> None
     (* Random bits compile only from a key that depends on the traced inputs. A
        constant key (implicit RNG such as [Nx.rand], or a captured key) would
@@ -3013,7 +3120,9 @@ and stage_scan_bwd : type r.
     List.map2
       (fun (Nx.P g, g_shape, _, _, _, _, _) pair ->
         let after = written_by call (final_carry ~n pair) in
-        let ph = traced st (Nx_effect.dtype g) (buffer_tensor after g_shape) in
+        let ph =
+          traced st (here st) (Nx_effect.dtype g) (buffer_tensor after g_shape)
+        in
         Scan.Closed_ctan (g, ph))
       g_outs g_pairs
   in
@@ -4149,15 +4258,6 @@ let same_sig a b =
   && Nx.Placement.equal a.l_place b.l_place
   && a.l_layout = b.l_layout
 
-let pp_devices ppf = function
-  | [ d ] -> Nx.Device.pp ppf d
-  | ds ->
-      Format.fprintf ppf "[%a]"
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-           Nx.Device.pp)
-        ds
-
 let describe_leaf l =
   Format.asprintf "%s [%s]%s%s" l.l_dtype
     (String.concat "; " (Array.to_list (Array.map string_of_int l.l_shape)))
@@ -4301,7 +4401,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       in
       let ph =
         Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
-          (Node { trace = st.st_id; tensor = tt })
+          (Node { trace = st.st_id; tensor = tt; place })
       in
       placeholders := Nx.P ph :: !placeholders;
       Hashtbl.replace st.input_tags (U.tag node) !pos;
@@ -4452,7 +4552,13 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
                    (F.Tensor.uop (F.Creation.clone (F.Tensor.of_uop u))))
           | None -> U.contiguous ~src:u ()
         in
-        (key, pk, u, place_of u, c))
+        let (Packed (_, ph)) = pk in
+        let place = place_of u in
+        if not (Nx.Placement.equal (placement_in st ph) place) then
+          err "Rune.jit: a result lands at %s where nx's rules put it at %s"
+            (Format.asprintf "%a" Nx.Placement.pp place)
+            (Format.asprintf "%a" Nx.Placement.pp (placement_in st ph));
+        (key, pk, u, place, c))
       out_anch out_uops
   in
   let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in

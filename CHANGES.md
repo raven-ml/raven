@@ -160,6 +160,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** inside `Rune.jit` over several devices, values live where
+  nx's rules put them, and operands split differently (a row-split matrix
+  times a column-split one), an operation along a split axis, or a movement
+  across devices raise as the function traces, as they do eagerly, instead of
+  the compiler moving data silently. `Nx.place` inside the function gathers or
+  splits a value, and `Nx.placement` answers there.
 - `Rune.jit` runs over several devices: where its split or replicated leaves
   and captures live, or on `?devices`, which now takes any list of one
   backend. Host leaves enter as a copy on each device, placed leaves and

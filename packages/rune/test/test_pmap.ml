@@ -18,12 +18,11 @@ let m46 () = Nx.create f32 [| 4; 6 |] (arange 24)
 let m86 () = Nx.create f32 [| 8; 6 |] (arange 48)
 
 (* An elementwise + matmul + reduce chain over one tensor. The matmul combines
-   the batch-sharded value with its own transpose (mismatched shard axes),
-   exercising the cross-device realignment path on top of the plain
-   allreduce. *)
-let chain x =
+   the batch-split value with its own transpose, gathered to every device first
+   ([gather]), on top of the plain allreduce. *)
+let chain ?(gather = Fun.id) x =
   let y = Nx.tanh (Nx.add (Nx.mul x x) x) in
-  let z = Nx.matmul y (Nx.transpose y) in
+  let z = Nx.matmul y (gather (Nx.transpose y)) in
   Nx.sum z ~axes:[ 1 ]
 
 (* Numerics vs jit *)
@@ -31,14 +30,22 @@ let chain x =
 let test_matches_jit_2dev () =
   let x = m46 () in
   let expect = Rune.jit' chain x in
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) chain in
+  let g =
+    Rune.pmap ~devices:devs2
+      Nx.Ptree.(tensor @-> returns tensor)
+      (chain ~gather:(Nx.place (Nx.Placement.replicated devs2)))
+  in
   check_arr ~msg:"first call" (to_arr expect) (g x);
   check_arr ~msg:"replay" (to_arr expect) (g x)
 
 let test_matches_jit_4dev () =
   let x = m86 () in
   let expect = Rune.jit' chain x in
-  let g = Rune.pmap ~devices:devs4 Nx.Ptree.(tensor @-> returns tensor) chain in
+  let g =
+    Rune.pmap ~devices:devs4
+      Nx.Ptree.(tensor @-> returns tensor)
+      (chain ~gather:(Nx.place (Nx.Placement.replicated devs4)))
+  in
   check_arr ~msg:"4 devices" (to_arr expect) (g x)
 
 (* No cross-device reduce: each device computes its shard independently, so the

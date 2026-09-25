@@ -3868,6 +3868,84 @@ let test_views_of_split_values_are_read_in_place () =
       ("the rows of one shard", Nx.slice [ Nx.R (4, 6) ]);
     ]
 
+(* Operands on placements that cannot meet raise as the function traces, with
+   nx's message, instead of the compiler moving one of them. *)
+let test_split_operands_raise () =
+  let rows = Nx.Placement.sharded ~axis:0 cpus
+  and cols = Nx.Placement.sharded ~axis:1 cpus in
+  let x = Nx.reshape [| 8; 8 |] (Nx.arange Nx.float32 0 64 1) in
+  let pair = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+  let raises_with suffix f =
+    raises_match
+      (function
+        | Invalid_argument msg -> String.ends_with ~suffix msg | _ -> false)
+      f
+  in
+  raises_with "are split differently; place them alike first" (fun () ->
+      Rune.jit pair Nx.add (Nx.place rows x) (Nx.place cols x));
+  let w = Nx.reshape [| 8; 4 |] (Nx.arange Nx.float32 0 32 1) in
+  raises_with "are split differently; place them alike first" (fun () ->
+      Rune.jit pair Nx.matmul (Nx.place rows x) (Nx.place cols w));
+  equal ~msg:"a copy meets a split" (array float_exact)
+    (Nx.to_array (Nx.add x x))
+    (Nx.to_array
+       (Rune.jit pair Nx.add (Nx.place rows x)
+          (Nx.place (Nx.Placement.replicated cpus) x)));
+  raises_with "place the value replicated or on one device first" (fun () ->
+      Rune.jit' (Nx.cumsum ~axis:0) (Nx.place rows x));
+  raises_with "place the value replicated or on one device first" (fun () ->
+      Rune.jit'
+        (fun x -> Nx.reshape [| 64 |] (Nx.transpose x))
+        (Nx.place rows x));
+  raises_with "place the value on one device first" (fun () ->
+      Rune.jit' (Nx.slice [ Nx.I 5 ]) (Nx.place rows x));
+  let shard = Rune.jit' (Nx.slice [ Nx.R (4, 6) ]) (Nx.place rows x) in
+  equal ~msg:"a whole slice is copied to every device" placement
+    (Nx.Placement.replicated cpus)
+    (Nx.placement shard);
+  equal ~msg:"its elements" (array float_exact)
+    (Nx.to_array (Nx.slice [ Nx.R (4, 6) ] x))
+    (Nx.to_array shard)
+
+(* Inside a program over several devices, a value is placed as the program says:
+   gathered to a copy on each device, or split from one, and its placement is
+   where its operation put it. *)
+let test_place_inside_a_program () =
+  let rows = Nx.Placement.sharded ~axis:0 cpus
+  and cols = Nx.Placement.sharded ~axis:1 cpus
+  and copies = Nx.Placement.replicated cpus in
+  let x = Nx.reshape [| 8; 8 |] (Nx.arange Nx.float32 0 64 1) in
+  let seen = ref [] in
+  let f target x =
+    let y = Nx.place target (Nx.mul_s x 2.0) in
+    seen := Nx.placement y :: !seen;
+    Nx.add_s y 1.0
+  in
+  List.iter
+    (fun (msg, source, target) ->
+      let y = Rune.jit' (f target) (Nx.place source x) in
+      equal ~msg:(msg ^ ": inside") placement target (List.hd !seen);
+      equal ~msg:(msg ^ ": placement") placement target (Nx.placement y);
+      equal ~msg (array float_exact)
+        (Nx.to_array (Nx.add_s (Nx.mul_s x 2.0) 1.0))
+        (Nx.to_array y))
+    [
+      ("rows gathered", rows, copies);
+      ("copies split", copies, cols);
+      ("rows to columns", rows, cols);
+    ];
+  raises_match
+    (function Rune.Jit_error _ -> true | _ -> false)
+    (fun () ->
+      Rune.jit'
+        (Nx.place (Nx.Placement.device (List.hd cpus)))
+        (Nx.place rows x));
+  let loss w = Nx.sum (Nx.mul (Nx.place copies w) (Nx.place copies w)) in
+  let g = Rune.jit' (Rune.grad Nx.Ptree.tensor loss) (Nx.place rows x) in
+  equal ~msg:"a cotangent goes back to its primal's placement" placement rows
+    (Nx.placement g);
+  check_arr ~msg:"gradient" (Nx.to_array (Nx.mul_s x 2.0)) g
+
 (* A split upload from a mapped file uploads each device's window once, read
    from the file. *)
 let test_split_upload_from_a_file () =
@@ -4484,6 +4562,8 @@ let tests =
         test "a split capture is bound" test_split_capture_is_bound;
         test "views of split values are read in place"
           test_views_of_split_values_are_read_in_place;
+        test "operands that cannot meet raise" test_split_operands_raise;
+        test "placing inside a program" test_place_inside_a_program;
       ];
     group "bound captures"
       [

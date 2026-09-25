@@ -549,18 +549,24 @@ val jit :
     {b Several devices.} Over several devices the function sees global shapes,
     and each leaf stays where it lives: a split leaf is one slice on each device
     ({!Nx.Placement.sharded}), a copy or a host leaf the whole value on each.
-    Results come back placed over the same devices, split or copied as the
-    compiler lowers them: an elementwise operation keeps its operands' split,
-    and a reduction over a split axis is an allreduce whose result is a copy on
-    each device, so the gradient of a loss over a batch split across devices is
-    summed across them. Only a split value orders the devices, which decides the
-    slice each holds: the first split leaf, else a split capture, while copies
-    list them as a set, and [devices] fixes the order; a split leaf or capture
-    in another order raises. A call returns once its work is queued on every
-    device, and a read waits for it. {!Nx.placement} of a value the function
-    computes raises: placement inside such a program is the compiler's. Storage
-    reuse, staged scans and in-place indexed writes apply on one device only,
-    for now: a consumed carry keeps two generations.
+    Every value the function computes lives where nx's rules put it, decided as
+    it traces ({!Nx.placement} answers), and results come back there: an
+    elementwise operation keeps its operands' split, and a reduction over a
+    split axis is an allreduce whose result is a copy on each device, so the
+    gradient of a loss over a batch split across devices is summed across them.
+    Operands split differently (a row-split matrix times a column-split one
+    included), an operation along a split axis, and a movement that would move
+    elements between devices raise [Invalid_argument] as the function traces,
+    with nx's message: nothing moves between devices unless the function places
+    it with {!Nx.place}, which gathers a split value to a copy on each device or
+    splits a copy, over the program's devices. A cut of one whole slice of a
+    split axis is copied to every device, and one strictly inside a slice
+    raises. Only a split value orders the devices, which decides the slice each
+    holds: the first split leaf, else a split capture, while copies list them as
+    a set, and [devices] fixes the order; a split leaf or capture in another
+    order raises. A call returns once its work is queued on every device, and a
+    read waits for it. Storage reuse, staged scans and in-place indexed writes
+    apply on one device only, for now: a consumed carry keeps two generations.
 
     {b Captures.} The compilation cache lives in the partial application
     [jit s f]: apply [jit] once and reuse the returned function. Tensors [f]
