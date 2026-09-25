@@ -253,12 +253,28 @@ static void tolk_hcq_publish(volatile uint64_t *state,
   *doorbell = next - lag;
 }
 
+/* Ampere control pages expose GPPut, not GPGet. Replays fence their own
+   command storage through the shared timeline before reusing it. */
+static void tolk_hcq_gpfifo(volatile uint64_t *state, volatile uint64_t *ring,
+                            volatile uint32_t *put, volatile uint32_t *doorbell,
+                            uint64_t entry, uint32_t token, uint32_t capacity) {
+  if (state[1]) return;
+  if (capacity < 2 || (capacity & (capacity - 1))) { state[1] = 2; return; }
+  uint32_t p = *put;
+  ring[p & (capacity - 1)] = entry;
+  atomic_thread_fence(memory_order_seq_cst);
+  *put = (p + 1) & (capacity - 1);
+  atomic_thread_fence(memory_order_seq_cst);
+  *doorbell = token;
+}
+
 CAMLprim value caml_tolk_hcq_submission_symbol(value name) {
   CAMLparam1(name);
   void *symbol;
   if (!strcmp(String_val(name), "tolk_hcq_poll")) symbol = (void *)tolk_hcq_poll;
   else if (!strcmp(String_val(name), "tolk_hcq_reserve")) symbol = (void *)tolk_hcq_reserve;
   else if (!strcmp(String_val(name), "tolk_hcq_publish")) symbol = (void *)tolk_hcq_publish;
+  else if (!strcmp(String_val(name), "tolk_hcq_gpfifo")) symbol = (void *)tolk_hcq_gpfifo;
   else caml_invalid_argument("unknown HCQ submission helper");
   CAMLreturn(caml_copy_nativeint((intnat)symbol));
 }

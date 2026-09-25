@@ -17,6 +17,13 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   remains open. Reconsider when upstream provides equivalent bounds and
   backpressure.
 
+- **NV host waits are bounded and preserve in-flight command storage after
+  timeout.** The generated host program shares AMD’s latched failure state and
+  masks dependent writes, preventing a failed replay fence from corrupting the
+  QMD or its arguments. Coverage: NV host-executed stalled replay checks the
+  timeline, signal slots, descriptor and command bytes. Hardware recovery remains
+  open. Reconsider when upstream provides equivalent timeout ownership rules.
+
 - **AMD/NV submissions read the mapped producer position and retain timeline
   addresses across rollover.** Direct `Device.prog` launches coexist with
   compiled submissions, so a second host counter can overwrite unread ring

@@ -27,9 +27,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   unsound: the owning buffer can be finalised while the packet being built
   still targets its memory. Needs hardware validation.
 
-- Complete NV queue encoding on the shared compile/link/run path, including
-  bounded host waits and retained JIT execution. Complete AMD/NV fault-reporting
-  and recovery handoffs for retained submissions. Validate replay inputs whose alias
+- Complete AMD/NV fault-reporting and recovery handoffs for retained
+  submissions. Validate NV FIFO occupancy across independently linked batches
+  and direct dispatches; Ampere control pages do not expose a consumer pointer.
+  Validate replay inputs whose alias
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection and eager submission-template caching.

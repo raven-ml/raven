@@ -20,6 +20,7 @@ module Nv_iface = Tolk_nv.Nv_iface
 module Nvk_iface = Tolk_nv.Nvk_iface
 module Pci_iface = Tolk_nv.Pci_iface
 module Program = Tolk_nv.Program
+module Submission = Tolk_hcq.Hcq.Submission
 
 let argument_layout nbufs dtypes =
   let open Tolk_uop in
@@ -525,9 +526,197 @@ let with_fake_sysfs devices f =
   in
   Fun.protect ~finally:(fun () -> rm_tree root) (fun () -> f root)
 
+let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies m =
+  let open Tolk in
+  let open Tolk_uop in
+  let device_name = "NV:queue-compilation" in
+  let timeline = ref None in
+  let submission = Submission.create () in
+  let host = Tolk_cpu.create "CPU" in
+  let parameter slot = U.param ~slot ~dtype:D.int32 ~shape:(U.const_int 16)
+      ~device:(U.Single device_name) () in
+  let output = U.param ~slot:0 ~dtype:D.int32 ~shape:(U.const_int 16) () in
+  let small = U.variable ~param:true ~name:"small" ~min_val:(-128) ~max_val:127 ~dtype:D.int8 () in
+  let count = U.variable ~param:true ~name:"count" ~min_val:1 ~max_val:16 ~dtype:D.int64 () in
+  let value = U.cast ~src:small ~dtype:D.int32 in
+  let store = U.store ~dst:(U.index ~ptr:output ~idxs:[U.const_int 0] ()) ~value () in
+  let lib = cubin_fixture () in
+  let spec = Program_spec.of_program ~name:"k" ~src:"" ~device:device_name ~lib
+      [output; small; count; value; store] in
+  let info = {(Program_spec.program_info spec) with global_size = [U.Launch_sym count];
+    local_size = [U.Launch_int 1]} in
+  let kernel_info = U.{name = "k"; applied_opts = []; opts_to_apply = None; estimates = None; beam = 0} in
+  let program = U.program ~sink:(U.sink ~kernel_info [store]) ~linear:(U.linear (Program_spec.program spec))
+      ~source:(U.source "") ~binary:(U.binary (Bytes.to_string lib)) ~info () in
+  let call = U.call ~body:program ~args:[parameter 0]
+      ~info:{grad_fxn = None; name = None; precompile = false; precompile_backward = false;
+        dtype = D.void; aux = None} in
+  let queue = Device.{prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
+    host = "CPU"; copy = (fun _ -> true);
+    encode = Tolk_nv.Encoded_queue.encode (nv_dev ~compute_class m) ~name:device_name
+        ~compute_entries:8 ~copy_entries:8 ~compute_token:0x123 ~copy_token:0x456;
+    lower = Tolk_nv.Encoded_queue.lower device_name;
+    compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+  let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let renderer_set = Device.Renderer_set.make ~device:device_name
+      ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
+  let buffers = Hashtbl.create 16 in
+  let bufferize u = match U.as_param u with
+    | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
+        Some (Submission.buffer submission)
+    | _ ->
+    let buffer = Device.Buffer.create ~device:device_name ~size:(U.max_numel u)
+        ~dtype:(U.dtype u) allocator in
+    Device.Buffer.ensure_allocated buffer;
+    Option.iter (fun tag -> Hashtbl.add buffers tag buffer) (U.node_tag u);
+    if U.node_tag u = Some "timeline" then begin
+      let address = Device.Buffer.addr buffer in
+      let view = Mmio.make ~addr:address ~size:16 in
+      let raw = Tolk_hcq.Hcq.Buffer.make ~va:address ~size:16 ~view ~meta:() () in
+      timeline := Some {Timeline.timeline = Signal.make ~is_timeline:true raw;
+        error_state = None; bounce = [||]; bounce_timeline = [||]; bounce_next = 0;
+        on_hang = (fun () -> fail "unexpected fixture hang")}
+    end;
+    (match U.as_param u with
+     | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
+         let libs, symbol = (Marshal.from_string data 0 : string list * string) in
+         equal (list string) [] libs;
+         let bytes = Bytes.create 8 in
+         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Submission.symbol symbol));
+         Device.Buffer.copyin buffer bytes
+     | _ -> ());
+    Some buffer in
+  let device = Device.make ~name:device_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
+      ~synchronize:(fun () -> ()) ~queue ~bufferize () in
+  let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
+      call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)]
+    else if chain then [call; U.replace call ~src:[|program; parameter 1|] ()] else [call] in
+  Hcq2.compile (U.linear calls), device, host, buffers, submission
+
+let execute_queue ~compute_class ~copies m =
+  let open Tolk in
+  let compiled, device, host, buffers, submission = queue_fixture ~compute_class ~copies m in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let get tag = Hashtbl.find buffers tag in
+  let set32 tag value =
+    let bytes = Bytes.create 4 in
+    Bytes.set_int32_le bytes 0 (Int32.of_int value);
+    Device.Buffer.copyin (get tag) bytes in
+  let word tag = Int32.to_int (Bytes.get_int32_le (Device.Buffer.as_bytes (get tag)) 0) in
+  set32 "gpput_compute" 7;
+  if copies then set32 "gpput_copy" 7;
+  let to_program = Codegen.to_program host (Device.renderer host) in
+  List.iteri (fun replay (small, count) ->
+      let inputs = Array.init (if copies then 3 else 1) (fun _ ->
+          Device.create_buffer ~size:16 ~dtype:D.int32 device) in
+      Realize.run_linear ~device ~to_program binding ~jit:true
+        ~var_vals:["small", small; "count", count] ~input_uops:(Array.map U.from_buffer inputs) linked;
+      Submission.check submission;
+      equal int replay (word "gpput_compute");
+      let qmd_buffer = get "qmd" in
+      let qmd_bytes = Device.Buffer.as_bytes qmd_buffer in
+      let qmd = Qmd.create ~compute_class
+          ~view:(Mmio.make ~addr:(Device.Buffer.addr qmd_buffer) ~size:(Bytes.length qmd_bytes)) in
+      let qmd_size = if Qmd.version qmd < 4 then 256 else 512 in
+      let at = qmd_size + (if Qmd.version qmd < 4 then 88 else 224) * 4 in
+      equal int small (Bytes.get_int8 qmd_bytes (at + 8));
+      equal int64 (Int64.of_int count) (Bytes.get_int64_le qmd_bytes (at + 16));
+      equal int64 (Int64.of_nativeint (Device.Buffer.addr ~device:(Device.name device) inputs.(0)))
+        (Bytes.get_int64_le qmd_bytes at);
+      equal int count (Qmd.read qmd (if Qmd.version qmd < 4 then "cta_raster_width" else "grid_width"));
+      equal int 1 (Qmd.read qmd "cta_thread_dimension0");
+      equal int 1 (Qmd.read qmd "release0_enable");
+      let image = Hashtbl.find buffers "program" in
+      let image_addr = Int64.of_nativeint (Device.Buffer.addr image) in
+      let shifted = Qmd.version qmd >= 4 in
+      let address lower upper shift =
+        Int64.shift_left (Int64.logor (Int64.of_int (Qmd.read qmd lower))
+          (Int64.shift_left (Int64.of_int (Qmd.read qmd upper)) 32)) shift in
+      let suffix = if shifted then "_shifted4" else "" in
+      equal int64 (Int64.add image_addr 0x2000L)
+        (address ("program_address_lower" ^ suffix) ("program_address_upper" ^ suffix)
+          (if shifted then 4 else 0));
+      let suffix = if shifted then "_shifted6_0" else "_0" in
+      equal int64 (Int64.add (Int64.of_nativeint (Device.Buffer.addr qmd_buffer)) (Int64.of_int qmd_size))
+        (address ("constant_buffer_addr_lower" ^ suffix) ("constant_buffer_addr_upper" ^ suffix)
+          (if shifted then 6 else 0));
+      equal int64 (Int64.add image_addr 0x12010L)
+        (Bytes.get_int64_le (Device.Buffer.as_bytes image) 0x2100);
+      let stream = get "cmdbuf_compute" in
+      let ring = Device.Buffer.as_bytes (get "ring_compute") in
+      let entry = Int64.logor (Int64.of_nativeint (Device.Buffer.addr stream))
+          (Int64.of_int (((Device.Buffer.nbytes stream / 4) lsl 42) lor (1 lsl 41))) in
+      let actual = Bytes.get_int64_le ring (if replay = 0 then 56 else 0) in
+      equal int64 entry actual;
+      equal int (Device.Buffer.nbytes stream / 4) (Int64.to_int (Int64.shift_right_logical actual 42));
+      if copies then equal int replay (word "gpput_copy");
+      equal int 0x123 (word "doorbell");
+      (* Execute the generated host program, then model GPU completion. *)
+      let timeline = Device.Buffer.as_bytes (get "timeline") in
+      Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
+      Device.Buffer.copyin (get "timeline") timeline) [(-17, 3); (29, 11)]
+
+let queue_chain ~compute_class m =
+  let open Tolk in
+  let compiled, device, host, buffers, submission = queue_fixture ~chain:true ~compute_class ~copies:false m in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let inputs = Array.init 2 (fun _ -> Device.create_buffer ~size:16 ~dtype:D.int32 device) in
+  Realize.run_linear ~device ~to_program:(Codegen.to_program host (Device.renderer host))
+    binding ~jit:true ~var_vals:["small", 4; "count", 2]
+    ~input_uops:(Array.map U.from_buffer inputs) linked;
+  Submission.check submission;
+  let descriptors = Hashtbl.find_all buffers "qmd" |> List.map (fun b -> b,
+      Qmd.create ~compute_class ~view:(Mmio.make ~addr:(Device.Buffer.addr b) ~size:(Device.Buffer.nbytes b))) in
+  equal int 2 (List.length descriptors);
+  let first = List.find (fun (_, d) -> Qmd.read d "dependent_qmd0_enable" = 1) descriptors in
+  let last = List.find (fun (_, d) -> Qmd.read d "dependent_qmd0_enable" = 0) descriptors in
+  equal int (Nativeint.to_int (Device.Buffer.addr (fst last)) lsr 8 land 0xffffffff)
+    (Qmd.read (snd first) "dependent_qmd0_pointer");
+  equal int 1 (Qmd.read (snd first) "dependent_qmd0_action");
+  equal int 1 (Qmd.read (snd first) "dependent_qmd0_prefetch");
+  equal int 0 (Qmd.read (snd first) "release0_enable");
+  equal int 1 (Qmd.read (snd last) "release0_enable");
+  let stream = Device.Buffer.as_bytes (Hashtbl.find buffers "cmdbuf_compute") in
+  (* One cache barrier, one six-dword wait, and one four-dword launch. *)
+  equal int 48 (Bytes.length stream)
+
+let queue_timeout m =
+  let open Tolk in
+  let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
+  let run () = Realize.run_linear ~device
+      ~to_program:(Codegen.to_program host (Device.renderer host)) binding ~jit:true
+      ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked in
+  run ();
+  let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "gpput_compute") in
+  let published = doorbell () in
+  let protected = List.map (fun tag -> tag, Device.Buffer.as_bytes (Hashtbl.find buffers tag))
+      ["timeline"; "slots"; "qmd"; "cmdbuf_compute"] in
+  run ();
+  raises_match (Exn.failure ~substring:"HCQ submission timed out")
+    (fun () -> Submission.check submission);
+  equal bytes published (doorbell ());
+  List.iter (fun (tag, before) -> equal ~msg:tag bytes before
+      (Device.Buffer.as_bytes (Hashtbl.find buffers tag))) protected;
+  raises_match (Exn.failure ~substring:"HCQ submission timed out") run
+
 let () =
   run "Nv_runtime"
     [
+      group "compiled queues"
+        [test "Ada descriptors chain launches and release only the tail" (fun () ->
+             with_fixture (queue_chain ~compute_class:Defs.ada_compute_a));
+         test "Blackwell descriptors chain launches and release only the tail" (fun () ->
+             with_fixture (queue_chain ~compute_class:Defs.blackwell_compute_b));
+         test "stalled replay times out and latches submission failure" (fun () -> with_fixture queue_timeout);
+         test "Ada compute replay patches arguments and wraps the shared FIFO" (fun () ->
+             with_fixture (execute_queue ~compute_class:Defs.ada_compute_a ~copies:false));
+         test "Blackwell compute and DMA share ordered retained submissions" (fun () ->
+             with_fixture (execute_queue ~compute_class:Defs.blackwell_compute_b ~copies:true))];
       group "qmd"
         [
           test "layout follows the compute class" (fun () ->
@@ -1304,7 +1493,7 @@ let () =
                     ~tl ~queue:qd 0x80;
                   equal int 1 (List.length !allocs);
                   equal int 1 (Timeline.submitted tl)));
-          test "out of memory reallocates the old size and restores the state"
+          test "failed growth preserves the existing store and rejects the request"
             (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev m in
@@ -1327,35 +1516,16 @@ let () =
                       ~max_warps_per_sm:48 ~tl ~queue:qd required
                   in
                   ensure 0x100;
+                  let old = Option.get dev.Tolk_nv.shader_local_mem in
                   fail_next := true;
-                  ensure 0x200;
-                  (* the grow to 0x900000 failed: the old 0x480000 store
-                     is reallocated and the sizing state restored *)
-                  equal (list int)
-                    [ 0x480000; 0x900000; 0x480000 ]
-                    (List.rev !allocs);
-                  equal (list int) [ 0x480000 ] !frees;
+                  raises_match (function Nv_iface.Out_of_memory _ -> true | _ -> false)
+                    (fun () -> ensure 0x200);
+                  equal (list int) [0x480000; 0x900000] (List.rev !allocs);
+                  equal (list int) [] !frees;
                   equal int 0x100 dev.Tolk_nv.slm_per_thread;
-                  (match dev.Tolk_nv.shader_local_mem with
-                  | Some b -> equal int 0x480000 (Buffer.size b)
-                  | None -> fail "expected a backing store");
-                  (* the engine is still repointed, with the attempted
-                     per-TPC size *)
-                  equal int 2 (Timeline.submitted tl);
-                  equal int 2 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0));
-                  let expected =
-                    let cq = Compute_queue.create dev in
-                    Compute_queue.wait cq ~value:1 tl.Timeline.timeline;
-                    Compute_queue.setup cq ~local_mem:0x60000000n
-                      ~local_mem_tpc_bytes:0x180000 ();
-                    Compute_queue.signal cq ~value:2 tl.Timeline.timeline;
-                    Q.dwords (Compute_queue.q cq)
-                  in
-                  let first_len = 21 * 4 in
-                  equal (array int) expected
-                    (staged_dwords m
-                       ~off:((first_len + 15) / 16 * 16)
-                       (Array.length expected))));
+                  is_true (Option.get dev.Tolk_nv.shader_local_mem == old);
+                  equal int 1 (Timeline.submitted tl);
+                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
           test "out of memory without a fallback propagates" (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev m in
@@ -1370,7 +1540,7 @@ let () =
                         ~free:(fun _ -> fail "nothing to free")
                         ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
                         ~max_warps_per_sm:48 ~tl ~queue:qd 0x10);
-                  equal int 0x20 dev.Tolk_nv.slm_per_thread;
+                  equal int 0 dev.Tolk_nv.slm_per_thread;
                   is_true (Option.is_none dev.Tolk_nv.shader_local_mem);
                   equal int 0 (Timeline.submitted tl);
                   equal int 0 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));

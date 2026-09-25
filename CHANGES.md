@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- NV compute and DMA queues use compiled host submissions with retained kernel
+  images, typed arguments and chained Ada/Blackwell launch descriptors. Timed-out
+  replays preserve in-flight storage; failed local-memory growth preserves the old store.
+
 - Timed-out AMD queue replays preserve the timeline, command buffers and
   arguments still owned by in-flight work, and reject further submissions.
 

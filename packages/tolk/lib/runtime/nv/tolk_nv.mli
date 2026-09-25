@@ -688,6 +688,19 @@ module Program : sig
       its slot. *)
 end
 
+module Encoded_queue : sig
+  val encode :
+    'meta device -> name:string -> compute_entries:int -> copy_entries:int ->
+    compute_token:int -> copy_token:int -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+  (** [encode dev ~name ~compute_entries ~copy_entries ~compute_token ~copy_token u]
+      lowers a queue submission to relocatable command storage and host calls.
+      Device placement and executable addresses are resolved when linked. *)
+
+  val lower : string -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+  (** [lower name u] bounds host timeline polling with the device's submission
+      deadline and latches failures for synchronization to report. *)
+end
+
 val ensure_has_local_memory :
   'meta device ->
   alloc:(int -> 'meta Hcq.Buffer.t) ->
@@ -707,15 +720,11 @@ val ensure_has_local_memory :
     to 32 bytes, in [dev.slm_per_thread]. Does nothing when the store
     already covers [size].
 
-    Growing frees the old buffer through [free] and allocates the new
-    one through [alloc], sized from the chip topology (its GPC count,
-    TPCs per GPC, SMs per TPC and warps per SM), then submits a stream
-    to [queue] that waits for the device's previously submitted work,
-    points the engine at the new store, and advances the timeline
-    [tl]. When [alloc] raises {!Nv_iface.Out_of_memory} for the grown
-    size, the old size is allocated again and the sizing state is
-    restored, so the device stays usable; the exception propagates when
-    there is no previous size to fall back to. *)
+    Growing allocates the new store before retiring the previous allocation,
+    then submits a stream to [queue] that waits for prior work and points the
+    engine at the new store. [free] must synchronize before releasing the old
+    allocation. Allocation failure propagates with the old backing and sizing
+    state unchanged; an undersized store cannot satisfy the request. *)
 
 (** {1:runtime Device runtime} *)
 

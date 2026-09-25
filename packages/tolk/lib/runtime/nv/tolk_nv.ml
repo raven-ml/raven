@@ -245,6 +245,7 @@ let submit_to_gpfifo (dev : 'meta device) q (qd : Queue_desc.t) =
   Hcq.Mmio.write64 qd.ring
     (put mod entries * 8)
     (Int64.of_int (((cmdq_addr / 4) lsl 2) lor (n lsl 42) lor (1 lsl 41)));
+  Hcq.Mmio.fence ();
   Hcq.Mmio.write32 qd.gpput 0 (Int32.of_int ((put + 1) mod entries));
   Hcq.Mmio.fence ();
   Hcq.Mmio.write32 dev.gpu_mmio 0x90 (Int32.of_int qd.token)
@@ -1677,31 +1678,244 @@ end
 
 (* Local-memory sizing *)
 
+module Encoded_queue = struct
+  open Tolk_uop
+  module U = Uop
+  module D = Dtype
+
+  let u32 n = U.const (Const.int D.uint32 n)
+  let u64 n = U.const (Const.int D.uint64 n)
+  let cast dtype src = U.cast ~src ~dtype
+  let op op lhs rhs = U.alu_binary ~op ~lhs ~rhs
+  let add = op Ops.Add
+  let shr = op Ops.Shr
+  let bor = op Ops.Or
+  let band = op Ops.And
+  let addr name src = U.getaddr ~device:name ~src ()
+  let index ptr = U.index ~ptr ~idxs:[U.const_int 0] ()
+  let placeholder ?allocation ?(volatile = false) name tag dtype size =
+    U.placeholder ~shape:[size] ~dtype ~slot:0 ~device:(U.Single name)
+      ?allocation ~volatile () |> U.with_tag tag
+  let context name = U.placeholder ~shape:[2] ~dtype:D.uint64 ~slot:0
+      ~device:(U.Single name) ~volatile:true ~allocation:("hcq_submission", "") ()
+  let words value =
+    if D.itemsize (U.dtype value) = 8 then
+      [cast D.uint32 value; cast D.uint32 (shr value (u64 32))]
+    else [cast D.uint32 value]
+  let hilo value = [cast D.uint32 (shr value (u64 32)); cast D.uint32 value]
+
+  (* Merge symbolic fields by dword. Descriptor fields share words, and
+     several span a boundary, so independently storing fields would clobber
+     their neighbours. Link patches stay naturally aligned. *)
+  type descriptor = { qmd : Qmd.t; words : (int, U.t) Hashtbl.t;
+    buffer : U.t; blob : bytes; mutable releases : int }
+
+  let field t name value =
+    let hi, lo = Qmd.range t.qmd name in
+    for word = lo / 32 to hi / 32 do
+      let start = max lo (word * 32) and finish = min hi (word * 32 + 31) in
+      let width = finish - start + 1 in
+      let mask = ((1 lsl width) - 1) lsl (start mod 32) in
+      let old = match Hashtbl.find_opt t.words word with
+        | Some old -> old
+        | None -> u32 (Int32.to_int (Bytes.get_int32_le t.blob (word * 4)) land 0xffffffff) in
+      let value = cast D.uint32 (shr (cast D.uint64 value) (u64 (start - lo))) in
+      let value = op Ops.Shl value (u32 (start mod 32)) in
+      Hashtbl.replace t.words word (bor (band old (u32 (0xffffffff lxor mask)))
+        (band value (u32 mask)))
+    done
+
+  let lower = Hcq.Submission.lower
+
+  let encode (dev : 'meta device) ~name ~compute_entries ~copy_entries
+      ~compute_token ~copy_token u =
+    match U.op u, U.arg u, U.children u with
+    | Ops.Custom_function, U.Arg.String ("submit_nv_compute" | "submit_nv_copy" as kind),
+        [linear; dependency] ->
+        let compute = kind = "submit_nv_compute" in
+        let commands = ref [] and descriptors = ref [] and previous = ref None in
+        let q xs = commands := List.rev_append xs !commands in
+        let nvm subchannel method_ xs =
+          let xs = List.concat_map words xs in
+          q (u32 ((2 lsl 28) lor (List.length xs lsl 16) lor (subchannel lsl 13)
+            lor (method_ lsr 2)) :: xs) in
+        let sem signal value flags = nvm 0 Defs.nvc56f_sem_addr_lo
+            [addr name signal; cast D.uint64 value;
+             u32 (flags lor bits Defs.nvc56f_sem_execute_payload_size
+                Defs.nvc56f_sem_execute_payload_size_64bit)] in
+        let release ~timestamp signal value =
+          match !previous with
+          | Some d when d.releases < 2 ->
+              let i = d.releases in
+              d.releases <- i + 1;
+              let v3 = Qmd.version d.qmd < 4 in
+              let set fmt v = field d (Printf.sprintf fmt i) v in
+              set "release%d_enable" (u32 1);
+              set (if v3 then "release%d_structure_size" else "release_structure_size_%d")
+                (u32 (if timestamp then 0 else 2));
+              if v3 then set "release%d_payload64b" (u32 1);
+              let address = addr name signal in
+              set (if v3 then "release%d_address_lower" else "release_semaphore%d_addr_lower") address;
+              set (if v3 then "release%d_address_upper" else "release_semaphore%d_addr_upper") (shr address (u64 32));
+              set (if v3 then "release%d_payload_lower" else "release_semaphore%d_payload_lower") value;
+              set (if v3 then "release%d_payload_upper" else "release_semaphore%d_payload_upper") (shr (cast D.uint64 value) (u64 32))
+          | _ ->
+              previous := None;
+              sem signal value (bits Defs.nvc56f_sem_execute_operation Defs.nvc56f_sem_execute_operation_release
+                lor bits Defs.nvc56f_sem_execute_release_wfi Defs.nvc56f_sem_execute_release_wfi_en
+                lor bits Defs.nvc56f_sem_execute_release_timestamp
+                  (if timestamp then Defs.nvc56f_sem_execute_release_timestamp_en else 0));
+              if not timestamp then nvm 0 Defs.nvc56f_non_stall_interrupt [u32 0] in
+        let dims xs = List.init 3 (fun i -> if i >= List.length xs then u32 1 else
+            match List.nth xs i with
+            | U.Launch_int n -> u32 n | U.Launch_float f -> u32 (int_of_float f)
+            | U.Launch_sym v -> cast D.uint32 v) in
+        List.iter (fun node -> match U.as_call node, U.arg node with
+          | Some {body; args}, _ when U.op body = Ops.Program && compute ->
+              let info = Option.get (U.as_program_info body) in
+              let object_ = U.to_elf body in
+              let data = Program.image ~name:object_.name object_.lib in
+              let template_dev = {dev with slm_per_thread = max dev.slm_per_thread (round_up data.lcmem_usage 32)} in
+              let qmd, prefix = Program.template template_dev data in
+              let image = U.placeholder ~shape:[Bytes.length data.image] ~dtype:D.uint8
+                  ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name)
+                  ~allocation:("nv_image", string_of_int data.lcmem_usage) () |> U.with_tag "program" in
+              let relocations = List.concat_map (fun (offset, target, width, shift) ->
+                  let address = shr (add (addr name image) (u64 target)) (u64 shift) in
+                  if width = 8 then [offset, cast D.uint32 address;
+                    offset + 4, cast D.uint32 (shr address (u64 32))]
+                  else [offset, cast D.uint32 address]) data.relocations in
+              let image = Tolk.Hcq2.patch ~blob:(Bytes.to_string data.image) image relocations in
+              let layout = Tiny_elf.layout object_.signature in
+              let qmd_size = round_up (Qmd.sizeof ~compute_class:dev.compute_class) 256 in
+              let at = qmd_size + Array.length prefix * 4 in
+              let size = round_up (max (qmd_size + snd (List.assoc 0 data.constbufs))
+                  (at + List.fold_left (fun n (f : Tiny_elf.field) -> max n (f.offset + f.size)) 0 layout)) 256 in
+              let buffer = U.placeholder ~shape:[size] ~dtype:D.uint8 ~slot:(U.fresh_buffer_slot ())
+                  ~device:(U.Single name) () |> U.with_tag "qmd" in
+              let blob = Bytes.make size '\000' in
+              let template = Qmd.to_bytes qmd in
+              Bytes.blit template 0 blob 0 (Bytes.length template);
+              Array.iteri (fun i word -> Bytes.set_int32_le blob (qmd_size + i * 4) (Int32.of_int word)) prefix;
+              let d = {qmd; words = Hashtbl.create 32; buffer; blob; releases = 0} in
+              let address = addr name buffer in
+              let check_dims limits values = List.iteri (fun i dim ->
+                  let value = match dim with U.Launch_int n -> Some n
+                    | U.Launch_float f -> Some (int_of_float f) | U.Launch_sym _ -> None in
+                  Option.iter (fun n -> if n < 1 || n > List.nth limits i then
+                    invalid_arg "NV queue: invalid launch dimensions") value) values in
+              check_dims [2147483647; 65535; 65535] info.global_size;
+              check_dims [1024; 1024; 64] info.local_size;
+              let local = dims info.local_size and global = dims info.global_size in
+              let max_threads = 65536 / round_up (max 1 data.regs_usage * 32) 256 / 4 * 4 * 32 in
+              let threads = List.fold_left (fun n dim -> n * Bound.to_int (U.vmax dim)) 1 local in
+              if threads > min 1024 max_threads then
+                invalid_arg "NV queue: too many threads for the kernel's register allocation";
+              let grid = if Qmd.version qmd < 4 then
+                  ["cta_raster_width"; "cta_raster_height"; "cta_raster_depth"]
+                else ["grid_width"; "grid_height"; "grid_depth"] in
+              List.iter2 (field d) grid global;
+              List.iteri (fun i v -> field d ("cta_thread_dimension" ^ string_of_int i) v) local;
+              let program_address = add (addr name image) (u64 data.prog_offset) in
+              let suffix, shift = if Qmd.version qmd < 4 then "", 0 else "_shifted4", 4 in
+              field d ("program_address_lower" ^ suffix) (shr program_address (u64 shift));
+              field d ("program_address_upper" ^ suffix) (shr program_address (u64 (32 + shift)));
+              field d "program_prefetch_addr_lower_shifted" (shr program_address (u64 8));
+              field d "program_prefetch_addr_upper_shifted" (shr program_address (u64 40));
+              List.iter (fun (i, (offset, _)) ->
+                  let address = if i = 0 then add address (u64 qmd_size)
+                    else add (addr name image) (u64 offset) in
+                  let suffix, shift = if Qmd.version qmd < 4 then "", 0 else "_shifted6", 6 in
+                  field d (Printf.sprintf "constant_buffer_addr_lower%s_%d" suffix i) (shr address (u64 shift));
+                  field d (Printf.sprintf "constant_buffer_addr_upper%s_%d" suffix i) (shr address (u64 (32 + shift)))) data.constbufs;
+              let buffers = List.filter (fun a -> not (U.is_bound_var a)) args in
+              let bound = List.filter_map (fun a -> match U.as_bind a with
+                  | Some {var; value} -> Option.map (fun n -> n, value) (U.program_var_name var)
+                  | None -> None) args in
+              let vars = List.map (fun v -> match U.program_var_name v with
+                  | Some n -> Option.value (List.assoc_opt n bound) ~default:v | None -> v) info.vars in
+              let actuals = List.map (fun i -> addr name (List.nth buffers i)) info.globals @ vars in
+              let rows = List.map (fun (f : Tiny_elf.field) ->
+                  let dtype = if f.argument.addrspace = D.Alu then f.argument.dtype else D.uint64 in
+                  at + f.offset, cast dtype (List.nth actuals f.argument.slot)) layout in
+              (match !previous with
+               | None -> nvm 1 Defs.nvc6c0_send_pcas_a [cast D.uint32 (shr address (u64 8))];
+                   nvm 1 Defs.nvc6c0_send_signaling_pcas2_b [u32 9]
+               | Some prev -> field prev "dependent_qmd0_pointer" (shr address (u64 8));
+                   List.iter (fun key -> field prev key (u32 1))
+                     ["dependent_qmd0_action"; "dependent_qmd0_prefetch"; "dependent_qmd0_enable"]);
+              previous := Some d;
+              descriptors := (d, rows) :: !descriptors
+          | Some {body; args = [dst; src]}, _ when U.op body = Ops.Store && not compute ->
+              let bytes = U.max_numel dst * D.itemsize (U.dtype dst) in
+              let offset = ref 0 in
+              while !offset < bytes do
+                let size = min (1 lsl 31) (bytes - !offset) in
+                nvm 4 Defs.nvc6b5_offset_in_upper
+                  (hilo (add (addr name src) (u64 !offset)) @ hilo (add (addr name dst) (u64 !offset)));
+                nvm 4 Defs.nvc6b5_line_length_in [u32 size];
+                nvm 4 Defs.nvc6b5_launch_dma [u32 (bits Defs.nvc6b5_launch_dma_data_transfer_type
+                  Defs.nvc6b5_launch_dma_data_transfer_type_non_pipelined lor
+                  bits Defs.nvc6b5_launch_dma_src_memory_layout Defs.nvc6b5_launch_dma_src_memory_layout_pitch lor
+                  bits Defs.nvc6b5_launch_dma_dst_memory_layout Defs.nvc6b5_launch_dma_dst_memory_layout_pitch)];
+                offset := !offset + size
+              done
+          | _, U.Arg.Typed ("barrier", _) ->
+              previous := None;
+              if compute then begin
+                let cq = Compute_queue.create dev in
+                Compute_queue.memory_barrier cq;
+                q (Array.to_list (Q.dwords (Compute_queue.q cq)) |> List.map u32)
+              end
+          | _, U.Arg.Typed ("wait", _) ->
+              previous := None;
+              let args = U.src node in
+              sem args.(0) args.(1) (bits Defs.nvc56f_sem_execute_operation Defs.nvc56f_sem_execute_operation_acq_circ_geq)
+          | _, U.Arg.Typed (("store" | "timestamp" as kind), _) ->
+              let timestamp = kind = "timestamp" in
+              let args = U.src node in
+              let value = if timestamp then u64 0 else args.(1) in
+              if compute then release ~timestamp args.(0) value else begin
+                nvm 4 Defs.nvc6b5_set_semaphore_a (hilo (addr name args.(0)) @ [cast D.uint32 value]);
+                nvm 4 Defs.nvc6b5_launch_dma [u32 (bits Defs.nvc6b5_launch_dma_flush_enable 1 lor
+                    bits Defs.nvc6b5_launch_dma_semaphore_type (if timestamp then 2 else 1))]
+              end
+          | _ -> invalid_arg "NV queue: unsupported instruction") (U.children linear);
+        let patches = List.rev_map (fun (d, rows) ->
+            let fields = Hashtbl.fold (fun word value rows -> (word * 4, value) :: rows) d.words []
+                |> List.sort (fun (a, _) (b, _) -> Int.compare a b) in
+            Tolk.Hcq2.patch ~blob:(Bytes.to_string d.blob) ~after:[dependency] d.buffer (fields @ rows)) !descriptors in
+        let commands = List.rev !commands in
+        let size = List.length commands * 4 in
+        if size / 4 > 0x1fffff then invalid_arg "NV command stream exceeds its FIFO entry";
+        let suffix = if compute then "compute" else "copy" in
+        let buffer = U.placeholder ~shape:[size] ~dtype:D.uint8 ~slot:(U.fresh_buffer_slot ())
+            ~device:(U.Single name) () |> U.with_tag ("cmdbuf_" ^ suffix) in
+        let buffer = Tolk.Hcq2.patch ~blob:(String.make size '\000') ~after:(dependency :: patches)
+            buffer (List.mapi (fun i value -> i * 4, value) commands) in
+        let entries = if compute then compute_entries else copy_entries in
+        let ring = placeholder ~volatile:true name ("ring_" ^ suffix) D.uint64 entries in
+        let put = placeholder ~volatile:true name ("gpput_" ^ suffix) D.uint32 1 in
+        let doorbell = placeholder ~volatile:true name "doorbell" D.uint32 1 in
+        let entry = bor (addr name buffer) (u64 (((size / 4) lsl 42) lor (1 lsl 41))) in
+        Some (Tolk.Hcq2.ccall ~host:name ~after:[buffer] ~name:"tolk_hcq_gpfifo" ~dtype:D.void
+          [index (context name); index ring; index put; index doorbell; entry;
+           u32 (if compute then compute_token else copy_token); u32 entries])
+    | _ -> None
+end
+
 let ensure_has_local_memory (dev : 'meta device) ~alloc ~free ~num_gpcs
     ~num_tpc_per_gpc ~num_sm_per_tpc ~max_warps_per_sm ~tl ~queue required =
   if dev.slm_per_thread < required then begin
-    let old_slm_per_thread = dev.slm_per_thread in
-    dev.slm_per_thread <- round_up required 32;
+    Hcq.Timeline.prepare tl;
+    let slm_per_thread = round_up required 32 in
     let bytes_per_tpc =
-      round_up
-        (round_up (dev.slm_per_thread * 32) 0x200
-        * max_warps_per_sm * num_sm_per_tpc)
-        0x8000
-    in
+      round_up (round_up (slm_per_thread * 32) 0x200
+        * max_warps_per_sm * num_sm_per_tpc) 0x8000 in
     let old = dev.shader_local_mem in
-    Option.iter free old;
     let shader_local_mem =
-      match
-        alloc (round_up (bytes_per_tpc * num_tpc_per_gpc * num_gpcs) 0x20000)
-      with
-      | buf -> buf
-      | exception Nv_iface.Out_of_memory _ when Option.is_some old ->
-          (* out of memory: reallocate the old size so the device stays
-             usable, and restore the sizing state *)
-          let buf = alloc (Hcq.Buffer.size (Option.get old)) in
-          dev.slm_per_thread <- old_slm_per_thread;
-          buf
-    in
+      alloc (round_up (bytes_per_tpc * num_tpc_per_gpc * num_gpcs) 0x20000) in
+    dev.slm_per_thread <- slm_per_thread;
     dev.shader_local_mem <- Some shader_local_mem;
     let cq = Compute_queue.create dev in
     Compute_queue.wait cq
@@ -1713,7 +1927,8 @@ let ensure_has_local_memory (dev : 'meta device) ~alloc ~free ~num_gpcs
     Compute_queue.signal cq
       ~value:(Hcq.Timeline.next_timeline tl)
       tl.Hcq.Timeline.timeline;
-    Compute_queue.submit cq queue
+    Compute_queue.submit cq queue;
+    Option.iter free old
   end
 
 (* Device runtime *)
@@ -1899,6 +2114,7 @@ module State = struct
     kernargs : 'mem Hcq.Kernargs.t;
     pool : 'mem Hcq.Signal.Pool.t;
     tl : ('mem, 'mem device) Timeline.t;
+    submission : Hcq.Submission.t;
     num_gpcs : int;
     num_tpc_per_gpc : int;
     num_sm_per_tpc : int;
@@ -1908,6 +2124,19 @@ module State = struct
     mutable allocator :
       'mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
   }
+
+  let check_submission t =
+    Timeline.guarded_wait t.tl (fun () -> Hcq.Submission.check t.submission)
+
+  let prepare t =
+    check_submission t;
+    Timeline.prepare t.tl;
+    Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
+      t.submission
+
+  let synchronize t =
+    check_submission t;
+    Timeline.synchronize t.tl
 
   let invalidate_caches t =
     if Nv_iface.is_nvd t.iface then
@@ -1931,7 +2160,7 @@ module Allocator = struct
      submitted work, append the packets of [build], advance the timeline. *)
   let submit_copy state build =
     let tl = state.State.tl in
-    Timeline.prepare tl;
+    State.prepare state;
     let cp = Copy_queue.create state.State.hw in
     Copy_queue.wait cp
       ~value:(Timeline.submitted tl)
@@ -1947,7 +2176,7 @@ module Allocator = struct
     Timeline.copyin state.State.tl ~submit_chunk:(submit_chunk state) buf bytes
 
   let copyout state bytes buf =
-    Timeline.synchronize state.State.tl;
+    State.synchronize state;
     Timeline.copyout state.State.tl ~submit_chunk:(submit_chunk state) bytes
       buf
 
@@ -1968,7 +2197,7 @@ module Allocator = struct
     in
     (* A queued kernel may still use the memory. *)
     let free buf _size (_ : Tolk.Device.Buffer_spec.t) =
-      Timeline.synchronize state.State.tl;
+      State.synchronize state;
       state.State.iface.Nv_iface.free buf
     in
     let offset buf size byte_offset =
@@ -1979,10 +2208,10 @@ module Allocator = struct
       host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
       mapping = Some {
         map = state.State.iface.Nv_iface.map;
-        unmap = (fun b -> Timeline.synchronize state.State.tl;
+        unmap = (fun b -> State.synchronize state;
           state.State.iface.Nv_iface.unmap b);
       };
-      synchronize = (fun () -> Timeline.synchronize state.State.tl);
+      synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
       copyin = copyin state;
@@ -2005,6 +2234,7 @@ module Runtime = struct
   (* Local-memory backing goes through the LRU allocator so resizes reuse
      freed device memory. *)
   let ensure_local_memory state size =
+    State.check_submission state;
     let allocator = Option.get state.State.allocator in
     ensure_has_local_memory state.State.hw
       ~alloc:(fun size ->
@@ -2036,6 +2266,7 @@ module Runtime = struct
           | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
       let local = Option.value local ~default:default_local in
       let tl = state.State.tl in
+      State.check_submission state;
       let timeline_value = Timeline.next_timeline tl in
       let launch ?timing () =
         Program.call prg ~layout ~kernargs:state.State.kernargs
@@ -2062,6 +2293,77 @@ module Runtime = struct
     in
     let free () = Program.free ~free:state.State.iface.Nv_iface.free prg in
     { Tolk.Device.call; free; handle = 0n }
+end
+
+module Queue = struct
+  open Tolk
+  open Tolk_uop
+  module U = Uop
+  module B = Device.Buffer
+
+  let bufferize state u =
+    let name = state.State.name in
+    let size = U.max_numel u and dtype = U.dtype u in
+    let borrow_view view =
+      let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> State.synchronize state) in
+      let spec = {Device.Buffer_spec.default with external_ptr = Some (Hcq.Mmio.addr view); nolru = true} in
+      B.create ~device:"CPU" ~size ~dtype ~spec (Device.Allocator.Pack allocator) in
+    let borrowed raw =
+      let allocator = { (Allocator.raw state) with
+        alloc = (fun _ _ -> raw); free = (fun _ _ _ -> State.synchronize state) } in
+      B.create ~device:name ~size ~dtype
+        ~spec:{Device.Buffer_spec.default with nolru = true} (Device.Allocator.Pack allocator) in
+    let allocate ?(host = false) ?(cpu_access = true) () =
+      let spec = {Device.Buffer_spec.default with host; cpu_access; nolru = true} in
+      B.create ~device:name ~size ~dtype ~spec (Device.Allocator.Pack (Allocator.raw state)) in
+    match U.as_param u with
+    | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
+        Some (Hcq.Submission.buffer state.State.submission)
+    | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
+        let libs, symbol = (Marshal.from_string data 0 : string list * string) in
+        if libs <> [] then invalid_arg "NV host helpers do not load libraries";
+        let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+        let b = B.create ~device:"CPU" ~size:1 ~dtype:Dtype.uint64 (Device.Allocator.Pack allocator) in
+        let bytes = Bytes.create 8 in
+        Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Hcq.Submission.symbol symbol));
+        B.ensure_allocated b; B.copyin b bytes; Some b
+    | Some {param = {allocation = Some ("nv_image", requested); _}; _} ->
+        Runtime.ensure_local_memory state (int_of_string requested);
+        Some (allocate ())
+    | Some _ ->
+        (match U.node_tag u with
+         | Some "timeline" -> Some (borrowed (Hcq.Signal.buf state.State.tl.Timeline.timeline))
+         | Some "slots" -> Some (allocate ~host:true ())
+         | Some ("qmd" | "cmdbuf_compute" | "cmdbuf_copy") -> Some (allocate ())
+         | Some "doorbell" -> Some (borrow_view (Hcq.Mmio.view state.State.hw.gpu_mmio ~off:0x90 ~size:4 ()))
+         | Some tag ->
+             let descriptor, suffix = if Filename.check_suffix tag "_compute" then
+                 Some state.State.compute_queue, "_compute"
+               else if Filename.check_suffix tag "_copy" then Some state.State.dma_queue, "_copy"
+               else None, "" in
+             Option.bind descriptor (fun q ->
+                 let field = String.sub tag 0 (String.length tag - String.length suffix) in
+                 Option.map borrow_view (match field with
+                   | "ring" -> Some q.Queue_desc.ring
+                   | "gpput" -> Some q.Queue_desc.gpput
+                   | _ -> None))
+         | None -> None)
+    | None -> None
+
+  let create state =
+    let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
+    let copy call = match U.as_call call with
+      | Some {args; _} -> List.for_all (fun arg ->
+          U.device_of arg = Some (U.Single state.State.name)) args
+      | None -> false in
+    Device.{prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+      encode = Encoded_queue.encode state.State.hw ~name:state.State.name
+        ~compute_entries:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring / 8)
+        ~copy_entries:(Hcq.Mmio.size state.State.dma_queue.Queue_desc.ring / 8)
+        ~compute_token:state.State.compute_queue.Queue_desc.token
+        ~copy_token:state.State.dma_queue.Queue_desc.token;
+      lower = Encoded_queue.lower state.State.name;
+      compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
 end
 
 (* The shared device open path over the selected interface: everything from
@@ -2185,6 +2487,7 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
   let state =
     {
       State.name = name;
+      submission = Hcq.Submission.create ();
       iface;
       hw;
       subdevice;
@@ -2233,7 +2536,7 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
   at_exit (fun () ->
       (* finalize even when the device faulted, so shutdown still reaches
          the driver *)
-      (try Timeline.synchronize state.State.tl
+      (try State.synchronize state
        with e ->
          Printf.eprintf "%s synchronization failed before finalizing: %s\n%!"
            name (Printexc.to_string e));
@@ -2249,9 +2552,9 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
             (Tolk.Cstyle.cuda ~device:"NV" arch)) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~runtime:(Runtime.runtime state)
-    ~synchronize:(fun () -> Timeline.synchronize state.State.tl)
+    ~synchronize:(fun () -> State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
-    ()
+    ~queue:(Queue.create state) ~bufferize:(Queue.bufferize state) ()
 
 let create name =
   let device_id =
