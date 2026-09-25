@@ -2444,12 +2444,17 @@ and compute_axis u =
       | _ -> invalid_arg "Uop.axis: multiple sharded axes; use sharding")
   | Ops.Param -> None
   | op when Ops.Group.is_alu op ->
+      (* An operand of lower rank broadcasts along the leading axes, which
+         shifts its axis up, as the multi rewrite aligns it. *)
+      let rank = List.length (shape u) in
       let axes =
         Array.fold_left
           (fun acc s ->
             match axis s with
             | None -> acc
-            | Some a -> if List.mem a acc then acc else a :: acc)
+            | Some a ->
+                let a = a + rank - List.length (shape s) in
+                if List.mem a acc then acc else a :: acc)
           [] srcs
       in
       (match axes with [] -> None | a :: _ -> Some a)

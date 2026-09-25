@@ -610,6 +610,12 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.axis` of an operation whose operand of lower rank is split counts the
+  operand's axis from where it broadcasts, as the multi rewrite does. It kept
+  the operand's own index, so a matrix product over a column-split weight
+  reported its split on the wrong axis, and a custom kernel over such a value
+  failed to build ("reshape moved items between shards").
+
 - `Op.scatter_indexed`, `Op.block_matmul` and `Op.quant_matmul` take operands
   split across devices: each device runs the kernel over its own slices and
   writes its slice of the result, or its partial product when the matrices or

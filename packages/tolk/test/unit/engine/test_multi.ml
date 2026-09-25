@@ -269,6 +269,16 @@ let () =
               let result = rewrite (U.alu_binary ~op:Ops.Add ~lhs:u ~rhs:whole) in
               equal (list int) [4; 12] (U.max_shape result);
               equal (list int) [2; 4] (U.max_shape (U.src result).(0)));
+          test "an operand of lower rank keeps its axis where it broadcasts"
+            (fun () ->
+              let w =
+                U.unshard ~src:(fragment [ 8; 2 ]) ~axes:[ 1 ]
+                  ~ranges:[ local_range 4 0 ] ()
+              in
+              let x = fragment [ 3; 1; 8 ] in
+              let product = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:w in
+              equal (list int) [ 3; 8; 8 ] (U.max_shape product);
+              equal (option int) (Some 2) (U.axis product));
           test "permutation keeps the owning range with its axis" (fun () ->
               let a = local_range 2 0 and b = local_range 3 1 in
               let u = U.unshard ~src:(fragment [2; 4]) ~axes:[0; 1] ~ranges:[a; b] () in
