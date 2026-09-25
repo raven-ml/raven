@@ -610,7 +610,8 @@ let scripted_registration fd t =
   let resetup_ran = ref 0 in
   let qd =
     {
-      Queue_desc.ring = view 0x1f10000 0x100;
+      Queue_desc.aql = None;
+      ring = view 0x1f10000 0x100;
       read_ptr = view 0x1f10100 8;
       write_ptr = view 0x1f10108 8;
       doorbell = view 0x1f10110 8;

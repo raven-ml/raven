@@ -36,6 +36,7 @@ type queue_event = { event_id : int }
 
 type queue_type =
   | Compute  (** A compute-engine queue fed with type-3 packets. *)
+  | Compute_aql  (** A compute-engine queue fed with HSA dispatch packets. *)
   | Sdma  (** A DMA-engine queue fed with byte-granular packets. *)
       (** The type for hardware queue flavors. *)
 
@@ -49,6 +50,7 @@ type ip_versions = {
 type 'meta device = {
   target : int * int * int;  (** Target graphics version, e.g. [(11, 0, 0)]. *)
   xccs : int;  (** Number of accelerated-compute dies; 1 on consumer chips. *)
+  is_aql : bool; (** Whether compute uses HSA dispatch packets. *)
   soc : (module Amd_tables.Soc);  (** Event ids for the generation. *)
   pm4 : (module Amd_tables.Pm4);  (** Compute-packet constants. *)
   sdma : (module Amd_tables.Sdma);  (** DMA-packet constants. *)
@@ -82,6 +84,7 @@ val device :
   nbio_version:int * int * int ->
   sdma_version:int * int * int ->
   ?sqtt_enabled:bool ->
+  ?is_aql:bool ->
   tmpring_size:int ->
   scratch:'meta Hcq.Buffer.t ->
   is_am:bool ->
@@ -122,6 +125,9 @@ val ensure_has_local_memory :
 type 'meta program = {
   dev : 'meta device;  (** Device the program was loaded on. *)
   prog_addr : nativeint;  (** Machine-code address, 256-byte aligned. *)
+  kernel_object : nativeint; (** Device address of the HSA kernel descriptor. *)
+  group_segment_size : int; (** Workgroup memory bytes. *)
+  private_segment_size : int; (** Private memory bytes per thread. *)
   rsrc1 : int;  (** COMPUTE_PGM_RSRC1 register value. *)
   rsrc2 : int;  (** COMPUTE_PGM_RSRC2 register value. *)
   rsrc3 : int;  (** COMPUTE_PGM_RSRC3 register value. *)
@@ -130,8 +136,7 @@ type 'meta program = {
       (** The kernel expects a flat-scratch descriptor in its first user
           registers. *)
   enable_dispatch_ptr : bool;
-      (** The kernel expects a dispatch-packet pointer; not supported
-          yet. *)
+      (** The kernel expects a dispatch-packet pointer. *)
 }
 (** The launch parameters of a loaded kernel. *)
 
@@ -145,13 +150,21 @@ type 'meta program = {
     arrived. Descriptors come from {!Kfd_iface.create_queue}; tests may
     build them over any mapped memory. *)
 module Queue_desc : sig
+  type aql = {
+    descriptor : Hcq.Mmio.t;
+    commands : Hcq.Mmio.t;
+    address : nativeint;
+    allocator : Tolk.Bump.t;
+  }
+  (** Mapped queue descriptor and indirect command staging for direct AQL submission. *)
   type t = {
     ring : Hcq.Mmio.t;  (** The command ring. *)
+    aql : aql option; (** AQL staging; absent on PM4 and DMA queues. *)
     read_ptr : Hcq.Mmio.t;
         (** 64-bit consumer position, advanced by the device. *)
     write_ptr : Hcq.Mmio.t;
         (** 64-bit producer position shared by direct and compiled submission:
-            a dword count for PM4 rings, a byte count for DMA rings. *)
+            a dword count for PM4, a packet count for AQL and a byte count for DMA. *)
     doorbell : Hcq.Mmio.t;  (** 64-bit doorbell slot of the queue. *)
     hdp_flush : Hcq.Mmio.t option;
         (** Flushes the host-data-path write buffer, run before every
@@ -167,7 +180,8 @@ module Queue_desc : sig
   val signal_doorbell : t -> int -> unit
   (** [signal_doorbell t value] publishes [value] to the device: it writes
       the write pointer, fences so all prior ring stores are visible,
-      writes the [hdp_flush] register when present, then writes the doorbell. *)
+      writes the [hdp_flush] register when present, then writes the doorbell.
+      AQL doorbells identify the last packet, one less than the producer count. *)
 end
 
 (** {1:iface Device interfaces}
@@ -281,7 +295,8 @@ module Compute_queue : sig
 
       Raises [Invalid_argument] if the dispatch packet is missing, if [prg]
       wants thread-trace capture (unsupported), or if it wants a
-      private-segment descriptor on a multi-die device. *)
+      private-segment descriptor on a multi-die PM4 queue. AQL dispatches
+      use the kernel descriptor and the queue’s scratch configuration. *)
 
   val signal : 'meta t -> ?value:int -> ('a, 'meta device) Hcq.Signal.t -> unit
   (** [signal t sg] flushes caches and writes [value] (defaults to [0])
@@ -317,7 +332,11 @@ module Compute_queue : sig
       then advances the write pointer and rings the doorbell. The stream is kept:
       submitting again replays it.
 
-      On multi-die devices the stream is placed behind an in-ring
+      AQL queues stage PM4 runs in their indirect-command allocation and
+      interleave vendor packets with kernel dispatch packets. Their producer
+      counts 64-byte packets.
+
+      On multi-die PM4 devices the stream is placed behind an in-ring
       indirect-buffer packet, padded so its body never straddles the
       wrap point, because predication only takes effect inside indirect
       buffers. *)

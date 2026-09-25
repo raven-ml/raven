@@ -28,13 +28,20 @@ let prop props name =
   match List.assoc_opt name props with
   | Some v -> v
   | None -> failwith ("missing device property " ^ name)
-let dispatch_header =
+let aql_header =
   let open Amd_hsa_defs in
   (1 lsl hsa_packet_header_barrier)
   lor (hsa_fence_scope_system lsl hsa_packet_header_scacquire_fence_scope)
   lor (hsa_fence_scope_system lsl hsa_packet_header_screlease_fence_scope)
-  lor (hsa_packet_type_kernel_dispatch lsl hsa_packet_header_type)
+
+let dispatch_header =
+  let open Amd_hsa_defs in
+  aql_header lor (hsa_packet_type_kernel_dispatch lsl hsa_packet_header_type)
   lor (3 lsl (16 + hsa_kernel_dispatch_packet_setup_dimensions))
+
+let indirect_header =
+  aql_header lor (Amd_hsa_defs.hsa_packet_type_vendor_specific
+    lsl Amd_hsa_defs.hsa_packet_header_type) lor (1 lsl 16)
 
 let event_index_partial_flush = 4
 let wait_reg_mem_function_eq = 3
@@ -130,6 +137,7 @@ module Kfd = struct
   let alloc_mem_flags_executable = 1 lsl 30
   let alloc_mem_flags_writable = 1 lsl 31
   let queue_type_compute = 0x0
+  let queue_type_compute_aql = 0x2
   let queue_type_sdma = 0x1
   let event_type_signal = 0
   let event_type_hw_exception = 3
@@ -140,7 +148,7 @@ end
 (* Devices *)
 
 type queue_event = { event_id : int }
-type queue_type = Compute | Sdma
+type queue_type = Compute | Compute_aql | Sdma
 
 type ip_versions = {
   gc : int * int * int;
@@ -151,6 +159,7 @@ type ip_versions = {
 type 'meta device = {
   target : int * int * int;
   xccs : int;
+  is_aql : bool;
   soc : (module Amd_tables.Soc);
   pm4 : (module Amd_tables.Pm4);
   sdma : (module Amd_tables.Sdma);
@@ -167,7 +176,7 @@ type 'meta device = {
 }
 
 let device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
-    ?(sqtt_enabled = false) ~tmpring_size ~scratch ~is_am
+    ?(sqtt_enabled = false) ?(is_aql = false) ~tmpring_size ~scratch ~is_am
     ~queue_event_mailbox_ptr ~queue_event () =
   let gfx9 = major target = 9 in
   let gc_bases, nbio_bases =
@@ -178,6 +187,7 @@ let device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
   {
     target;
     xccs;
+    is_aql;
     soc = Amd_tables.soc ~target_major:(major target);
     pm4 = Amd_tables.pm4 ~gfx9;
     sdma = Amd_tables.sdma ~version:sdma_version;
@@ -228,6 +238,9 @@ let ensure_has_local_memory (dev : 'meta device) ~props ~alloc ~free private_seg
 type 'meta program = {
   dev : 'meta device;
   prog_addr : nativeint;
+  kernel_object : nativeint;
+  group_segment_size : int;
+  private_segment_size : int;
   rsrc1 : int;
   rsrc2 : int;
   rsrc3 : int;
@@ -239,14 +252,50 @@ type 'meta program = {
 (* Queue descriptors *)
 
 module Queue_desc = struct
+  type aql = {
+    descriptor : Hcq.Mmio.t;
+    commands : Hcq.Mmio.t;
+    address : nativeint;
+    allocator : Tolk.Bump.t;
+  }
   type t = {
     ring : Hcq.Mmio.t;
+    aql : aql option;
     read_ptr : Hcq.Mmio.t;
     write_ptr : Hcq.Mmio.t;
     doorbell : Hcq.Mmio.t;
     hdp_flush : Hcq.Mmio.t option;
     resetup : (unit -> unit) option;
   }
+
+  let initialize_aql ~descriptor ~commands ~cu_count ~waves_per_cu =
+    let module A = Amd_hsa_defs.Amd_queue in
+    Hcq.Mmio.blit_bytes descriptor ~off:0 (Bytes.make A.size '\000');
+    let put off value = Hcq.Mmio.write32 descriptor off (Int32.of_int value) in
+    put A.queue_properties (Amd_hsa_defs.amd_queue_properties_is_ptr64
+      lor Amd_hsa_defs.amd_queue_properties_enable_profiling);
+    put A.read_dispatch_id_field_base_byte_offset A.read_dispatch_id;
+    put A.max_cu_id (cu_count - 1);
+    put A.max_wave_id (waves_per_cu - 1);
+    {descriptor; commands = Hcq.Buffer.cpu_view commands; address = Hcq.Buffer.va commands;
+      allocator = Tolk.Bump.create ~size:(Hcq.Buffer.size commands) ~wrap:true ()}
+
+  let update_scratch (dev : 'meta device) t =
+    let module A = Amd_hsa_defs.Amd_queue in
+    let module R = Amd_hsa_defs.Scratch_resource in
+    let swizzle, format = match major dev.target with
+      | 9 -> R.gfx9_swizzle, R.gfx9_format
+      | 11 -> R.gfx11_swizzle, R.gfx11_format
+      | 12 -> R.gfx12_swizzle, R.gfx12_format
+      | _ -> invalid_arg "AQL scratch: unsupported target" in
+    let base = va64 (Hcq.Buffer.va dev.scratch) in
+    let put off value = Hcq.Mmio.write32 t.descriptor off (Int32.of_int value) in
+    Hcq.Mmio.write64 t.descriptor A.scratch_backing_memory_location base;
+    put A.scratch_wave64_lane_byte_size dev.max_private_segment_size;
+    Array.iteri (fun i value -> put (A.scratch_resource_descriptor + i * 4) value)
+      [|lo32 base; hi32 base lor swizzle; Hcq.Buffer.size dev.scratch / dev.xccs; format|];
+    put A.compute_tmpring_size dev.tmpring_size;
+    Hcq.Mmio.fence ()
 
   let signal_doorbell t value =
     Hcq.Mmio.fence ();
@@ -257,7 +306,8 @@ module Queue_desc = struct
     (* ops_amd.py:680-683: driver-less queues also flush the host data
        path, so host writes to device memory reach the engines *)
     Option.iter (fun view -> Hcq.Mmio.write32 view 0 0l) t.hdp_flush;
-    Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int value)
+    Hcq.Mmio.fence ();
+    Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int (value - if Option.is_some t.aql then 1 else 0))
 end
 
 (* The interface seam: the device runtime drives the GPU through one of
@@ -306,11 +356,17 @@ end
 (* Compute queue *)
 
 module Compute_queue = struct
-  type 'meta t = { dev : 'meta device; q : Q.t }
+  type packet = Indirect of int * int | Dispatch of int array
+  type 'meta t = { dev : 'meta device; q : Q.t;
+    mutable packets : packet list; mutable run_start : int }
 
   let wait_reg_mem_function_eq = wait_reg_mem_function_eq
   let wait_reg_mem_function_geq = wait_reg_mem_function_geq
-  let create dev = { dev; q = Q.create () }
+  let create dev = { dev; q = Q.create (); packets = []; run_start = 0 }
+  let close_run t =
+    let stop = Q.length t.q in
+    if stop > t.run_start then t.packets <- Indirect (t.run_start, stop - t.run_start) :: t.packets;
+    t.run_start <- stop
   let q t = t.q
 
   let pkt3 t op payload =
@@ -473,6 +529,16 @@ module Compute_queue = struct
 
   let exec t (prg : 'meta program) ~kernargs ~global_size:(gx, gy, gz)
       ~local_size:(lx, ly, lz) =
+    if t.dev.is_aql then begin
+      close_run t;
+      List.iter (fun (global, local) ->
+          if global < 1 || local < 1 || local > 0xffff || global > 0xffffffff / local then
+            invalid_arg "Compute_queue.exec: launch dimensions exceed AQL fields") [gx,lx; gy,ly; gz,lz];
+      let object_ = va64 prg.kernel_object and args = va64 (Hcq.Buffer.va kernargs) in
+      t.packets <- Dispatch [|dispatch_header; lx lor (ly lsl 16); lz;
+        gx * lx; gy * ly; gz * lz; prg.private_segment_size; prg.group_segment_size;
+        lo32 object_; hi32 object_; lo32 args; hi32 args; 0; 0; 0; 0|] :: t.packets
+    end else begin
     if prg.enable_dispatch_ptr && Hcq.Buffer.size kernargs < Amd_hsa_defs.Kernel_dispatch_packet.size then
       invalid_arg "Compute_queue.exec: dispatch packet missing from kernargs";
     if prg.dev.sqtt_enabled then
@@ -555,6 +621,8 @@ module Compute_queue = struct
         lor P.event_index event_index_partial_flush;
       |]
 
+    end
+
   let wait t ?(value = 0) sg =
     let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
     wait_reg_mem t ~mem:(Hcq.Signal.value_addr sg) ~mask:0xffffffff value
@@ -585,6 +653,7 @@ module Compute_queue = struct
       value
 
   let signal t ?(value = 0) sg =
+    if t.dev.is_aql then close_run t;
     let module P = (val t.dev.pm4) in
     pred_exec t ~xcc_mask:0b1 (fun () ->
         (* the end-of-pipe event goes through the queue's EOP buffer; queues
@@ -605,6 +674,32 @@ module Compute_queue = struct
         | _ -> ())
 
   let submit t (qd : Queue_desc.t) =
+    if Q.length t.q = 0 && t.packets = [] then ()
+    else if t.dev.is_aql then begin
+      close_run t;
+      let staging = match qd.aql with Some aql -> aql
+        | None -> invalid_arg "Compute_queue.submit: missing AQL staging" in
+      let bytes = Q.length t.q * 4 in
+      let offset = Tolk.Bump.alloc staging.allocator bytes ~align:256 () in
+      for i = 0 to Q.length t.q - 1 do
+        Hcq.Mmio.write32 staging.commands (offset + i * 4) (Int32.of_int (Q.get t.q i))
+      done;
+      let module P = (val t.dev.pm4) in
+      let packet = function
+        | Dispatch words -> words
+        | Indirect (start, count) ->
+            let address = Int64.add (va64 staging.address) (Int64.of_int (offset + start * 4)) in
+            [|indirect_header; P.packet3 P.packet3_indirect_buffer 2; lo32 address; hi32 address;
+              count lor P.indirect_buffer_valid; 10; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0|] in
+      let put = Int64.to_int (Hcq.Mmio.read64 qd.write_ptr 0) in
+      let entries = Hcq.Mmio.size qd.ring / 64 in
+      let packets = List.rev t.packets in
+      if List.length packets >= entries then invalid_arg "AQL submission exceeds ring capacity";
+      List.iteri (fun i p -> Array.iteri (fun j value ->
+          Hcq.Mmio.write32 qd.ring (((put + i) mod entries) * 64 + j * 4) (Int32.of_int value))
+          (packet p)) packets;
+      Queue_desc.signal_doorbell qd (put + List.length packets)
+    end else begin
     let put = Int64.to_int (Hcq.Mmio.read64 qd.write_ptr 0) in
     let cmds = Q.dwords t.q in
     let ring_len = Hcq.Mmio.size qd.ring / 4 in
@@ -643,6 +738,7 @@ module Compute_queue = struct
         (Int32.of_int (Array.unsafe_get cmds i))
     done;
     Queue_desc.signal_doorbell qd (put + Array.length cmds)
+    end
 end
 
 (* Copy queue *)
@@ -901,6 +997,9 @@ module Program = struct
       params = {
         dev;
         prog_addr = Nativeint.add (Hcq.Buffer.va lib_gpu) (Nativeint.of_int data.entry_offset);
+        kernel_object = Nativeint.add (Hcq.Buffer.va lib_gpu) (Nativeint.of_int data.desc_offset);
+        group_segment_size = data.group_segment_size;
+        private_segment_size = data.private_segment_size;
         rsrc1 = data.rsrc1; rsrc2 = data.rsrc2; rsrc3 = data.rsrc3;
         wave32 = data.wave32;
         enable_private_segment_sgpr = data.enable_private_segment_sgpr;
@@ -1039,7 +1138,18 @@ module Encoded_queue = struct
         let compute = kind = "submit_amd_compute" in
         let module P = (val dev.pm4) in
         let module S = (val dev.sdma) in
-        let commands = ref [] in
+        let commands = ref [] and aql_packets = ref [] and run_start = ref 0 in
+        let command_address = U.variable ~name:"amd_command_address" ~min_val:0
+            ~max_val:((1 lsl 48) - 1) ~dtype:D.uint64 () in
+        let aql xs = aql_packets := List.rev_append (List.concat_map words xs) !aql_packets in
+        let close_run () =
+          let stop = List.length !commands * 4 in
+          if stop > !run_start then
+            aql ([u32 indirect_header; u32 (P.packet3 P.packet3_indirect_buffer 2);
+              add command_address (u64 !run_start);
+              u32 ((stop - !run_start) / 4 lor P.indirect_buffer_valid); u32 10]
+              @ List.init 10 (fun _ -> u32 0));
+          run_start := stop in
         let q xs = commands := List.rev_append (List.concat_map words xs) !commands in
         let pkt cmd xs =
           let xs = List.concat_map words xs in
@@ -1065,22 +1175,23 @@ module Encoded_queue = struct
           let packet = Q.dwords (Compute_queue.q cq) in
           let address = add (addr name signal) (u64 (if timestamp then 8 else 0)) in
           let args = [u32 packet.(1); u32 packet.(2); address; cast D.uint64 value; u32 packet.(7)] in
+          if dev.xccs > 1 then pkt P.packet3_pred_exec [u32 ((1 lsl 24) lor 8)];
           pkt P.packet3_release_mem args in
         let dims xs = List.init 3 (fun i -> if i >= List.length xs then u32 1 else
             match List.nth xs i with
             | U.Launch_int n -> u32 n | U.Launch_float f -> u32 (int_of_float f)
             | U.Launch_sym v -> cast D.uint32 v) in
-        let dispatch_packet (data : Program.data) info =
+        let dispatch_packet ?(kernel_object = u64 0) ?(kernargs = u64 0) (data : Program.data) info =
           let local = dims info.U.local_size and global = dims info.U.global_size in
           [u32 dispatch_header; bor (List.nth local 0) (op Ops.Shl (List.nth local 1) (u32 16));
            List.nth local 2] @ List.map2 mul global local @
           [u32 data.private_segment_size; u32 data.group_segment_size;
-           u64 0; u64 0; u64 0; u64 0] in
+           kernel_object; kernargs; u64 0; u64 0] in
         let kernargs body args =
           let info = Option.get (U.as_program_info body) in
           let object_ = U.to_elf body in
           let data, image = Program.image ~target:dev.target ~props object_.lib in
-          let program = placeholder ~allocation:("amd_image", Bytes.to_string image)
+          let program = placeholder ~allocation:("amd_image", Marshal.to_string (data.private_segment_size, Bytes.to_string image) [])
               name "program" D.uint8 (Bytes.length image) in
           let buffers = List.filter (fun a -> not (U.is_bound_var a)) args in
           let bound = List.filter_map (fun a -> match U.as_bind a with
@@ -1104,6 +1215,11 @@ module Encoded_queue = struct
         List.iter (fun node -> match U.as_call node, U.arg node with
           | Some {body; args}, _ when U.op body = Ops.Program && compute ->
               let data, program, arena, info = kernargs body args in
+              if dev.is_aql then begin
+                close_run ();
+                aql (dispatch_packet data info ~kernel_object:(add (addr name program) (u64 data.desc_offset))
+                  ~kernargs:(addr name arena))
+              end else begin
               let local = dims info.local_size and global = dims info.global_size in
               let size, tmpring_size = scratch_layout dev ~props data.private_segment_size in
               let scratch = placeholder ~allocation:("amd_scratch", string_of_int data.private_segment_size)
@@ -1130,6 +1246,7 @@ module Encoded_queue = struct
               pkt P.packet3_dispatch_direct (global @ [u32 initiator]);
               let module Soc = (val dev.soc) in
               pkt P.packet3_event_write [u32 (P.event_type Soc.cs_partial_flush lor P.event_index event_index_partial_flush)]
+              end
           | Some {body; args = [dst; src]}, _ when U.op body = Ops.Store && not compute ->
               let bytes = U.max_numel dst * D.itemsize (U.dtype dst) in
               let offset = ref 0 in
@@ -1150,7 +1267,10 @@ module Encoded_queue = struct
                 u32 0xffffffff; u32 (S.sdma_pkt_poll_regmem_dw5_interval 4 lor S.sdma_pkt_poll_regmem_dw5_retry_count 0xfff)]
           | _, U.Arg.Typed ("store", _) ->
               let args = U.src node in
-              if compute then release ~timestamp:false args.(0) args.(1)
+              if compute then begin
+                if dev.is_aql then close_run ();
+                release ~timestamp:false args.(0) args.(1)
+              end
               else q [u32 (S.sdma_op_fence lor (if major dev.target = 9 then 0 else
                     Amd_sdma_defs.V6_0_0.sdma_pkt_fence_header_mtype 3));
                   addr name args.(0); cast D.uint32 args.(1); u32 S.sdma_op_trap; u32 0]
@@ -1160,10 +1280,17 @@ module Encoded_queue = struct
               else q [u32 (S.sdma_op_timestamp lor S.sdma_pkt_timestamp_get_header_sub_op
                   S.sdma_subop_timestamp_get_global); add (addr name signal) (u64 8)]
           | _ -> invalid_arg "AMD queue: unsupported instruction") (U.children linear);
+        if compute && dev.is_aql then close_run ();
         let stream = buffer ~name:(if compute then name else "CPU")
             ~tag:(if compute then "cmdbuf_compute" else "cmdbuf_copy")
             ~after:[dependency] (List.rev !commands) in
-        if compute then begin
+        if compute && dev.is_aql then begin
+          let packets = List.rev !aql_packets |> List.map (U.substitute ~walk:true
+              [command_address, addr name stream]) in
+          let aql = buffer ~name:"CPU" ~tag:"aql_compute" ~after:[stream] packets in
+          Some (push ~name ~kind:"compute" ~ring_size:compute_ring_size ~is_am:dev.is_am
+            ~dependency:stream aql ~unit:64 ~lag:1)
+        end else if compute then begin
           let ib = buffer ~name:"CPU" ~tag:"ib_compute" ~after:[stream]
               [u32 (P.packet3 P.packet3_indirect_buffer 2); addr name stream;
                u32 (U.max_numel stream / 4 lor P.indirect_buffer_valid)] in
@@ -1487,6 +1614,7 @@ module Kfd_iface = struct
         ~queue_type:
           (match queue_type with
           | Compute -> Kfd.queue_type_compute
+          | Compute_aql -> Kfd.queue_type_compute_aql
           | Sdma -> Kfd.queue_type_sdma)
         ~queue_percentage:(Kfd.max_queue_percentage lor (xcc_id lsl 8))
         ~queue_priority:(Tolk.Helpers.getenv "AMD_KFD_QUEUE_PRIORITY" 7)
@@ -1515,7 +1643,8 @@ module Kfd_iface = struct
           (base, addr)
     in
     {
-      Queue_desc.ring =
+      Queue_desc.aql = None;
+      ring =
         Hcq.Mmio.make ~addr:(Hcq.Buffer.va ring) ~size:(Hcq.Buffer.size ring);
       read_ptr = Hcq.Mmio.make ~addr:rptr_addr ~size:8;
       write_ptr = Hcq.Mmio.make ~addr:wptr_addr ~size:8;
@@ -1720,7 +1849,7 @@ module Pci_iface = struct
           fun () ->
             Am_ip.Sdma.setup_ring boot.Am_boot.sdma ~ring_addr ~ring_size
               ~rptr_addr ~wptr_addr ~idx:0
-      | Compute ->
+      | Compute | Compute_aql ->
           let eop =
             match eop_buffer with
             | Some eop -> eop
@@ -1732,11 +1861,12 @@ module Pci_iface = struct
             Am_ip.Gfx.setup_ring boot.Am_boot.gfx ~ring_addr ~ring_size
               ~rptr_addr ~wptr_addr
               ~eop_addr:(Nativeint.to_int (Hcq.Buffer.va eop))
-              ~eop_size:(Hcq.Buffer.size eop) ~idx:0 ~aql:false
+              ~eop_size:(Hcq.Buffer.size eop) ~idx:0 ~aql:(queue_type = Compute_aql)
     in
     let doorbell_index = setup () in
     {
-      Queue_desc.ring = Hcq.Buffer.cpu_view ring;
+      Queue_desc.aql = None;
+      ring = Hcq.Buffer.cpu_view ring;
       read_ptr = Hcq.Mmio.view (Hcq.Buffer.cpu_view gart) ~off:rptr ~size:8 ();
       write_ptr = Hcq.Mmio.view (Hcq.Buffer.cpu_view gart) ~off:wptr ~size:8 ();
       doorbell =
@@ -2004,6 +2134,8 @@ module Runtime = struct
      current scratch drops only its reference, so older programs keep valid
      addresses until their links are released. *)
   let ensure_scratch state size =
+    if state.State.hw.is_aql && state.State.hw.max_private_segment_size < max size 128 then
+      State.synchronize state;
     let owner = ref None in
     ensure_has_local_memory state.State.hw ~props:state.State.iface.Iface.props
       ~alloc:(fun size ->
@@ -2016,7 +2148,9 @@ module Runtime = struct
         owner := Some buffer;
         raw)
       ~free:ignore size;
-    Option.iter (fun buffer -> state.State.scratch <- Some buffer) !owner
+    Option.iter (fun buffer ->
+        state.State.scratch <- Some buffer;
+        Option.iter (Queue_desc.update_scratch state.State.hw) state.State.compute_queue.Queue_desc.aql) !owner
 
   let default_local = [| 1; 1; 1 |]
 
@@ -2104,7 +2238,9 @@ module Queue = struct
         let bytes = Bytes.create 8 in
         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Hcq.Submission.symbol symbol));
         B.ensure_allocated b; B.copyin b bytes; Some b
-    | Some {param = {allocation = Some ("amd_image", image); _}; _} ->
+    | Some {param = {allocation = Some ("amd_image", data); _}; _} ->
+        let requested, image = (Marshal.from_string data 0 : int * string) in
+        Runtime.ensure_scratch state requested;
         let b = allocate () in
         B.ensure_allocated b; B.copyin b (Bytes.of_string image); Some b
     | Some {param = {allocation = Some ("amd_scratch", requested); _}; _} ->
@@ -2160,11 +2296,7 @@ let open_device ~name iface =
   let xccs =
     match List.assoc_opt "num_xcc" props with Some n -> n | None -> 1
   in
-  if xccs > 1 then
-    failwith
-      (arch
-     ^ ": multi-die devices need the AQL queue format, which is not supported \
-        yet");
+  let is_aql = Tolk.Helpers.getenv "AMD_AQL" (Bool.to_int (xccs > 1)) <> 0 in
   let se_cnt =
     prop props "array_count" / prop props "simd_arrays_per_engine" / xccs
   in
@@ -2207,9 +2339,9 @@ let open_device ~name iface =
   let create_queue queue_type ~ring_size ?(eop_buffer_size = 0)
       ?(ctx_save_restore_size = 0) ?(ctl_stack_size = 0) () =
     let ring =
-      iface.Iface.alloc ~uncached:true ~cpu_access:true ring_size
+      iface.Iface.alloc ~host:true ~uncached:true ~cpu_access:true ring_size
     in
-    let gart = iface.Iface.alloc ~uncached:true ~cpu_access:true 0x100 in
+    let gart = iface.Iface.alloc ~host:true ~uncached:true ~cpu_access:true 0x100 in
     let eop_buffer =
       if eop_buffer_size = 0 then None
       else Some (iface.Iface.alloc eop_buffer_size)
@@ -2225,17 +2357,23 @@ let open_device ~name iface =
     in
     (* The queue's pointers live at the dispatch-id slots of an HSA queue
        descriptor laid out in the gart buffer. *)
-    iface.Iface.create_queue queue_type ~ring ~gart
+    let aql = if queue_type = Compute_aql then
+        let commands = iface.Iface.alloc ~cpu_access:true (16 lsl 20) in
+        Some (Queue_desc.initialize_aql ~descriptor:(Hcq.Buffer.cpu_view gart) ~commands
+          ~cu_count:(cu_cnt * xccs) ~waves_per_cu)
+      else None in
+    let queue = iface.Iface.create_queue queue_type ~ring ~gart
       ~rptr:Amd_hsa_defs.Amd_queue.read_dispatch_id
       ~wptr:Amd_hsa_defs.Amd_queue.write_dispatch_id ?eop_buffer ?cwsr_buffer
-      ~ctx_save_restore_size ~ctl_stack_size ()
+      ~ctx_save_restore_size ~ctl_stack_size () in
+    {queue with Queue_desc.aql}
   in
   let compute_queue =
     (* driver-less devices carry no compute-wave save/restore state *)
-    create_queue Compute ~ring_size:(16 lsl 20) ~eop_buffer_size:0x1000
+    create_queue (if is_aql then Compute_aql else Compute) ~ring_size:(16 lsl 20) ~eop_buffer_size:0x1000
       ~ctx_save_restore_size:
         (if iface.Iface.is_am then 0 else wg_data_size + ctl_stack_size)
-      ~ctl_stack_size ()
+      ~ctl_stack_size:(if iface.Iface.is_am then 0 else ctl_stack_size) ()
   in
   let sdma_queue =
     if Tolk.Helpers.getenv "AMD_DISABLE_SDMA" 0 <> 0 then None
@@ -2245,7 +2383,7 @@ let open_device ~name iface =
       | exception Failure _ -> None
   in
   let hw =
-    device ~target ~xccs ~gc_version:ip.gc ~nbio_version:ip.nbif
+    device ~target ~xccs ~is_aql ~gc_version:ip.gc ~nbio_version:ip.nbif
       ~sdma_version:ip.sdma ~tmpring_size:0
       ~scratch:iface.Iface.empty_scratch ~is_am:iface.Iface.is_am
       ~queue_event_mailbox_ptr:iface.Iface.queue_event_mailbox_ptr

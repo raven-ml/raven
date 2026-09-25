@@ -29,7 +29,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   compiled submissions, so a second host counter can overwrite unread ring
   entries. Before the low timeline dword reaches its comparison limit, Tolk
   drains work and advances the high-word epoch at the same address. Retained
-  host fences remain monotonic while GPU dword waits restart safely. Coverage:
+  host fences remain monotonic while GPU dword waits restart safely. AQL scratch
+  updates touch only scratch fields, preserving live dispatch counters. Coverage:
   mapped producer tests, two epoch transitions and compiled AMD host replay
   across rollover. Hardware acceptance remains in TODO. Reconsider when direct
   dispatch is removed or upstream provides an equivalent rollover protocol.

@@ -168,8 +168,15 @@ DISPATCH_PACKET_FIELDS = [
     "kernarg_address",
     "completion_signal",
 ]
-AMD_QUEUE_FIELDS = ["read_dispatch_id", "write_dispatch_id"]
+AMD_QUEUE_FIELDS = [
+    "read_dispatch_id", "write_dispatch_id", "queue_properties",
+    "read_dispatch_id_field_base_byte_offset", "max_cu_id", "max_wave_id",
+    "scratch_resource_descriptor", "scratch_backing_memory_location",
+    "scratch_wave64_lane_byte_size", "compute_tmpring_size",
+]
 HSA_INTS = [
+    "AMD_QUEUE_PROPERTIES_IS_PTR64",
+    "AMD_QUEUE_PROPERTIES_ENABLE_PROFILING",
     "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
     "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR",
     "HSA_PACKET_HEADER_TYPE",
@@ -577,10 +584,24 @@ def gen_hsa():
     lines.append("")
     lines.append("(* amd_queue_t: byte offsets. *)")
     lines.append("module Amd_queue = struct")
+    lines.append(f"  let size = {ml_int(ctypes.sizeof(hsa.amd_queue_t))}")
     lines += [
         f"  let {nm} = {ml_int(getattr(hsa.amd_queue_t, nm).offset)}"
         for nm in AMD_QUEUE_FIELDS
     ]
+    lines.append("end")
+    lines.append("")
+    lines.append("(* Scratch resource descriptors: fixed format and address swizzle bits. *)")
+    lines.append("module Scratch_resource = struct")
+    for major in (9, 11, 12):
+        word1 = getattr(hsa, "union_SQ_BUF_RSRC_WORD1" + ("" if major == 9 else "_GFX11") + "_bitfields")
+        word3 = getattr(hsa, "union_SQ_BUF_RSRC_WORD3" + ("" if major == 9 else f"_GFX{major}") + "_bitfields")
+        fmt = dict(NUM_FORMAT=hsa.BUF_NUM_FORMAT_UINT, DATA_FORMAT=hsa.BUF_DATA_FORMAT_32,
+                   ELEMENT_SIZE=1, INDEX_STRIDE=3) if major == 9 else dict(FORMAT=hsa.BUF_FORMAT_32_UINT, OOB_SELECT=2)
+        value = word3(DST_SEL_X=hsa.SQ_SEL_X, DST_SEL_Y=hsa.SQ_SEL_Y, DST_SEL_Z=hsa.SQ_SEL_Z,
+                      DST_SEL_W=hsa.SQ_SEL_W, ADD_TID_ENABLE=1, TYPE=hsa.SQ_RSRC_BUF, **fmt)
+        lines.append(f"  let gfx{major}_swizzle = {ml_int(int.from_bytes(bytes(word1(SWIZZLE_ENABLE=1)), 'little'))}")
+        lines.append(f"  let gfx{major}_format = {ml_int(int.from_bytes(bytes(value), 'little'))}")
     lines.append("end")
     lines.append("")
     lines.append("(* COMPUTE_TMPRING_SIZE bitfields as (shift, width), per target generation. *)")

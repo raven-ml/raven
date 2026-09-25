@@ -88,6 +88,9 @@ let amd_prog ?(private_segment = false) ?(dispatch_ptr = false) dev =
   {
     Tolk_amd.dev;
     prog_addr = 0x100000n;
+    kernel_object = 0x100040n;
+    group_segment_size = 0;
+    private_segment_size = 0;
     rsrc1 = 0;
     rsrc2 = 0;
     rsrc3 = 0;
@@ -110,7 +113,8 @@ let reg ~addr =
 let queue_desc ~ring_dwords m =
   let ring_bytes = ring_dwords * 4 in
   {
-    Tolk_amd.Queue_desc.ring = Mmio.view m ~off:0 ~size:ring_bytes ();
+    Tolk_amd.Queue_desc.aql = None;
+    ring = Mmio.view m ~off:0 ~size:ring_bytes ();
     read_ptr = Mmio.view m ~off:ring_bytes ~size:8 ();
     write_ptr = Mmio.view m ~off:(ring_bytes + 8) ~size:8 ();
     doorbell = Mmio.view m ~off:(ring_bytes + 16) ~size:8 ();
@@ -335,7 +339,7 @@ let read_i32 buf =
   List.init (Bytes.length bytes / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
 
-let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ~copies () =
+let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ?(aql = false) ?(multi = false) ~copies () =
   let open Tolk in
   let open Tolk_uop in
   let device_name = "AMD:queue-compilation" in
@@ -361,9 +365,11 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
         dtype = D.void; aux = None} in
   let props = ["lds_size_in_kb", 64; "simd_count", 192; "simd_per_cu", 2;
     "array_count", 12; "simd_arrays_per_engine", 2; "max_slots_scratch_cu", 32] in
+  let hw = if multi then gfx942 () else gfx1100 () in
+  let hw = {hw with Tolk_amd.is_aql = aql} in
   let queue = Device.{prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
     host = "CPU"; copy = (fun _ -> true);
-    encode = Tolk_amd.Encoded_queue.encode (gfx1100 ()) ~props ~name:device_name
+    encode = Tolk_amd.Encoded_queue.encode hw ~props ~name:device_name
         ~compute_ring_size:4096 ~copy_ring_size:(Some 4096);
     lower = Tolk_amd.Encoded_queue.lower device_name;
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
@@ -394,7 +400,9 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
          let bytes = Bytes.create 8 in
          Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Submission.symbol symbol));
          Device.Buffer.copyin buffer bytes
-     | Some {param = {allocation = Some ("amd_image", image); _}; _} ->
+     | Some {param = {allocation = Some ("amd_image", data); _}; _} ->
+         let requested, image = (Marshal.from_string data 0 : int * string) in
+         equal int scratch requested;
          Device.Buffer.copyin buffer (Bytes.of_string image)
      | _ -> ());
     Some buffer in
@@ -466,6 +474,82 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
       if copies then set_word "read_ptr_copy" (word "write_ptr_copy")) [(-17, 3); (29, 11)];
   is_true (Hashtbl.mem buffers "scratch")
 
+let execute_aql_queue ~multi =
+  let open Tolk in
+  let compiled, device, host, buffers, submission = queue_fixture ~aql:true ~multi ~copies:false () in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let get tag = Hashtbl.find buffers tag in
+  let put tag value =
+    let bytes = Bytes.create 8 in
+    Bytes.set_int64_le bytes 0 (Int64.of_int value);
+    Device.Buffer.copyin (get tag) bytes in
+  put "write_ptr_compute" 62;
+  put "read_ptr_compute" 62;
+  let input = i32_buf device (List.init 16 Fun.id) in
+  Realize.run_linear ~device ~to_program:(Codegen.to_program host (Device.renderer host)) binding
+    ~jit:true ~var_vals:["small", -17; "count", 3] ~input_uops:[|U.from_buffer input|] linked;
+  Submission.check submission;
+  let word tag = Int64.to_int (Bytes.get_int64_le (Device.Buffer.as_bytes (get tag)) 0) in
+  equal int 65 (word "write_ptr_compute");
+  equal int 64 (word "doorbell_compute");
+  let ring = Device.Buffer.as_bytes (get "ring_compute") in
+  equal int32 0x11500l (Bytes.get_int32_le ring (62 * 64));
+  equal int32 0x31502l (Bytes.get_int32_le ring (63 * 64));
+  equal int32 0x11500l (Bytes.get_int32_le ring 0);
+  let packet = 63 * 64 in
+  equal int32 0x10001l (Bytes.get_int32_le ring (packet + 4));
+  equal int32 3l (Bytes.get_int32_le ring (packet + 12));
+  equal int32 256l (Bytes.get_int32_le ring (packet + 24));
+  equal int64 (Int64.add (Int64.of_nativeint (Device.Buffer.addr (get "program"))) 0x40L)
+    (Bytes.get_int64_le ring (packet + 32));
+  equal int64 (Int64.of_nativeint (Device.Buffer.addr (get "kernargs")))
+    (Bytes.get_int64_le ring (packet + 40));
+  let arena = Device.Buffer.as_bytes (get "kernargs") in
+  equal int (-17) (Bytes.get_int8 arena 8);
+  let stream = Device.Buffer.as_bytes (get "cmdbuf_compute") in
+  if multi then equal int32 0x1000008l (Bytes.get_int32_le stream (Bytes.length stream - 36));
+  let timeline = Device.Buffer.as_bytes (get "timeline") in
+  Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
+  Device.Buffer.copyin (get "timeline") timeline;
+  let rebound = i32_buf device (List.init 16 (fun i -> i + 1)) in
+  Realize.run_linear ~device ~to_program:(Codegen.to_program host (Device.renderer host)) binding
+    ~jit:true ~var_vals:["small", 5; "count", 9] ~input_uops:[|U.from_buffer rebound|] linked;
+  Submission.check submission;
+  equal int 68 (word "write_ptr_compute");
+  equal int 67 (word "doorbell_compute");
+  equal int32 9l (Bytes.get_int32_le (Device.Buffer.as_bytes (get "ring_compute")) (2 * 64 + 12));
+  let args = Device.Buffer.as_bytes (get "kernargs") in
+  equal int 5 (Bytes.get_int8 args 8);
+  equal int64 (Int64.of_nativeint (Device.Buffer.addr rebound)) (Bytes.get_int64_le args 0)
+
+let direct_aql_queue () =
+  with_map 0x3000 (fun m ->
+      let dev = { (gfx1100 ()) with Tolk_amd.is_aql = true } in
+      let base = queue_desc ~ring_dwords:128 m in
+      let aql = Tolk_amd.Queue_desc.{descriptor = Mmio.view m ~off:0x300 ~size:0x100 ();
+        commands = Mmio.view m ~off:0x1000 ~size:0x1000 (); address = 0xabcdef000n;
+        allocator = Tolk.Bump.create ~size:0x1000 ~wrap:true ()} in
+      let queue = {base with Tolk_amd.Queue_desc.aql = Some aql} in
+      Mmio.write64 queue.write_ptr 0 7L;
+      let cq = Tolk_amd.Compute_queue.create dev in
+      let sg = Signal.make (Buffer.make ~va:0x987000n ~size:16
+        ~view:(Mmio.view m ~off:0x500 ~size:16 ()) ~meta:() ()) in
+      Tolk_amd.Compute_queue.wait cq ~value:7 sg;
+      let args = Buffer.make ~va:0x777000n ~size:32 ~meta:() () in
+      Tolk_amd.Compute_queue.exec cq (amd_prog dev) ~kernargs:args ~global_size:(3,2,1) ~local_size:(2,1,1);
+      Tolk_amd.Compute_queue.signal cq ~value:8 sg;
+      Tolk_amd.Compute_queue.submit cq queue;
+      equal int64 10L (Mmio.read64 queue.write_ptr 0);
+      equal int64 9L (Mmio.read64 queue.doorbell 0);
+      equal int32 0x11500l (Mmio.read32 queue.ring (7 * 64));
+      equal int64 0xabcdef000L (Mmio.read64 queue.ring (7 * 64 + 8));
+      equal int32 0x31502l (Mmio.read32 queue.ring 0);
+      equal int32 6l (Mmio.read32 queue.ring 12);
+      equal int64 0x100040L (Mmio.read64 queue.ring 32);
+      equal int64 0x777000L (Mmio.read64 queue.ring 40);
+      equal int32 0x11500l (Mmio.read32 queue.ring 64))
+
 let queue_timeout () =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
@@ -510,7 +594,10 @@ let queue_full () =
 
 let () =
   run "Amd_runtime"
-    [
+    [ group "AQL"
+        [test "compiled single-XCC packets wrap in dispatch units" (fun () -> execute_aql_queue ~multi:false);
+         test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true);
+         test "direct packets use GPU indirect addresses and the shared producer" direct_aql_queue];
       group "Compiled queues" [
         test "a replay timeout suppresses publication and latches failure" queue_timeout;
         test "a full ring times out without overwriting unread commands" queue_full;

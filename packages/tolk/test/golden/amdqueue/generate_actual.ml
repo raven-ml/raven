@@ -69,6 +69,9 @@ let compute_streams chip dev =
     {
       dev;
       prog_addr;
+      kernel_object = 0x100040n;
+      group_segment_size = 0;
+      private_segment_size = 0;
       rsrc1;
       rsrc2;
       rsrc3;

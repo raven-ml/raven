@@ -21,8 +21,27 @@ end
 
 (* amd_queue_t: byte offsets. *)
 module Amd_queue = struct
+  let size = 0x100
   let read_dispatch_id = 0x80
   let write_dispatch_id = 0x38
+  let queue_properties = 0xb4
+  let read_dispatch_id_field_base_byte_offset = 0x88
+  let max_cu_id = 0x48
+  let max_wave_id = 0x4c
+  let scratch_resource_descriptor = 0x90
+  let scratch_backing_memory_location = 0xa0
+  let scratch_wave64_lane_byte_size = 0xb0
+  let compute_tmpring_size = 0x8c
+end
+
+(* Scratch resource descriptors: fixed format and address swizzle bits. *)
+module Scratch_resource = struct
+  let gfx9_swizzle = 0x80000000
+  let gfx9_format = 0xea4fac
+  let gfx11_swizzle = 0x40000000
+  let gfx11_format = 0x20814fac
+  let gfx12_swizzle = 0x40000000
+  let gfx12_format = 0x20814fac
 end
 
 (* COMPUTE_TMPRING_SIZE bitfields as (shift, width), per target generation. *)
@@ -35,6 +54,8 @@ module Compute_tmpring_size = struct
   let gfx12_wavesize = (12, 18)
 end
 
+let amd_queue_properties_is_ptr64 = 2
+let amd_queue_properties_enable_profiling = 8
 let amd_kernel_code_properties_enable_sgpr_private_segment_buffer = 1
 let amd_kernel_code_properties_enable_sgpr_dispatch_ptr = 2
 let hsa_packet_header_type = 0

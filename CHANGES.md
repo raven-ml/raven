@@ -386,6 +386,12 @@ thread.
 
 ### Tolk (new)
 
+- AMD uses AQL queues by default on multi-XCC devices, matching tinygrad. Direct
+  launches and compiled submissions share HSA dispatch packets, queue-owned
+  scratch configuration and the mapped producer counter.
+- AMD PCI queue initialization omits the kernel-driver control stack; passing
+  that unsupported parameter previously caused queue creation to fail.
+
 - NV compute and DMA queues use compiled host submissions with retained kernel
   images, typed arguments and chained Ada/Blackwell launch descriptors. Timed-out
   replays preserve in-flight storage; failed local-memory growth preserves the old store.
