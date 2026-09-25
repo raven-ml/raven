@@ -1285,6 +1285,42 @@ let simplify_valid_tests =
           | None -> fail "expected simplify_valid to fire");
     ]
 
+(* [uop_given_valid] leaves loads opaque. A rendered load runs before the
+   gated access that consumes its value, so a valid that implies the load's own
+   gate must not fold that gate away; a clause bounding the loaded value still
+   applies. *)
+let given_valid_tests =
+  let gated_load () =
+    let x = var "x" 0 100 in
+    let inside = U.alu_binary ~op:Ops.And ~lhs:U.O.(idx 29 < x) ~rhs:U.O.(x < idx 80) in
+    let p = U.param ~slot:0 ~dtype:D.int32 ~addrspace:D.Global () in
+    let address = U.O.where inside U.O.(x + idx (-30)) (U.invalid ()) in
+    (inside, U.cast ~src:(U.load ~src:(U.index ~ptr:p ~idxs:[ address ] ()) ()) ~dtype:D.weakint)
+  in
+  let is_invalid u =
+    match U.arg u with
+    | U.Arg.Value c -> C.view c = C.Invalid
+    | _ -> false
+  in
+  group "uop_given_valid"
+    [
+      test "a load keeps its own gate" (fun () ->
+          let inside, value = gated_load () in
+          let got = Symbolic.uop_given_valid inside U.O.(value * idx 2) in
+          is_true
+            ~msg:(Format.asprintf "the load's gate survives, got %a" U.pp got)
+            (List.exists is_invalid (U.toposort got)));
+      test "a clause on a loaded value still applies" (fun () ->
+          let inside, value = gated_load () in
+          let valid =
+            U.alu_binary ~op:Ops.And ~lhs:inside
+              ~rhs:(U.alu_binary ~op:Ops.And ~lhs:U.O.(idx (-1) < value)
+                      ~rhs:U.O.(value < idx 100))
+          in
+          equal ~msg:"value mod 100 is value" uop value
+            (Symbolic.uop_given_valid valid U.O.(value mod idx 100)));
+    ]
+
 let masked_div_tests =
   group "masked_div"
     [
@@ -1450,6 +1486,7 @@ let () =
          invalid_where_tests;
          sigmoid_tests;
          simplify_valid_tests;
+         given_valid_tests;
          masked_div_tests;
          unpack_u64_tests;
          mop_tests;

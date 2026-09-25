@@ -584,3 +584,20 @@ delete it rather than registering it.
   rune's jit cache key. Coverage: `test_jit_cache` "program settings".
   Reconsider if tolk's getenv becomes process-constant and rune's cache keys
   the environment itself.
+
+- **Simplifying under a valid leaves loads opaque** (`uop/symbolic.ml`
+  `uop_given_valid`). The reference simplifies an address under its access's
+  gate right through the loads inside it. A gather's index load sits in the
+  address of the gathered load, and a padded or concatenated piece gates both
+  by the same clauses: given them, the index load's own gate folds away, and
+  the kernel loads the index unconditionally, before the gated access that
+  uses it, out of bounds wherever the gate is false. The reference at
+  baa614806 and tolk both render `val0 = *(data2_50+(Lidx1+-30))` for a gather
+  between two pieces of a concatenation. tolk replaces each load by a variable
+  of its bounds, in the valid and the expression alike, and restores it
+  afterwards: a clause bounding a loaded value still applies, and the kernel
+  reads the index once, gated. Every golden and parity output is unchanged.
+  Coverage: `test_symbolic` "uop_given_valid", and `test_run` "a padded
+  gather loads its indices under the pad's gate" and "a gather between other
+  pieces loads its indices under their gate", which check every index load
+  of the lowered kernel.

@@ -298,16 +298,49 @@ let getitem_tests =
             (Op.getitem (base ()) [ Mv.T (Run.of_int_array ~shape:[ 2 ] [| 2; 0 |]) ]));
     ]
 
+(* The lowered kernel of [t] loads int32 indices, each under a gate. *)
+let check_index_loads_gated t =
+  let graph =
+    Tolk.Rangeify.get_kernel_graph (U.sink [ U.contiguous ~src:(T.uop t) () ])
+  in
+  let kernel =
+    List.find_map
+      (fun u ->
+        match U.as_call u with Some { body; _ } -> Some body | None -> None)
+      (U.toposort graph)
+    |> Option.get
+  in
+  let program =
+    Tolk.Linearizer.linearize
+      (Tolk.Codegen.full_rewrite_to_sink
+         (Tolk.Cstyle.clang_no_abi Tolk.Gpu_target.X86_64)
+         kernel)
+  in
+  let index_loads =
+    List.filter_map
+      (fun u ->
+        match U.as_load u with
+        | Some { gate; _ }
+          when Tolk_uop.Dtype.equal (U.dtype u) Tolk_uop.Dtype.int32 ->
+            Some (Option.is_some gate)
+        | _ -> None)
+      program
+  in
+  is_true ~msg:"the kernel loads the indices" (index_loads <> []);
+  is_true ~msg:"every index load is gated" (List.for_all Fun.id index_loads)
+
+let param slot dtype dims =
+  T.of_uop
+    (U.param ~slot ~dtype ~shape:(T.shape_uop dims) ~device:(U.Single "CPU") ())
+
+let gather_params () =
+  (param 0 Tolk_uop.Dtype.float32 [ 100 ], param 1 Tolk_uop.Dtype.int32 [ 50 ])
+
 let large_gather_tests =
   let rows = 65_536 in
   group "large gather"
     [
       test "gather over 65536 rows schedules to one kernel" (fun () ->
-          let param slot dtype dims =
-            T.of_uop
-              (U.param ~slot ~dtype ~shape:(T.shape_uop dims)
-                 ~device:(U.Single "CPU") ())
-          in
           let table = param 0 Tolk_uop.Dtype.float32 [ rows; 4 ] in
           let index = param 1 Tolk_uop.Dtype.int32 [ 8; 4 ] in
           equal int 1 (count_kernels (Op.gather table ~dim:0 index)));
@@ -339,6 +372,20 @@ let large_gather_tests =
           in
           check_floats [| 0.; 71.; 0.; 3.; 246.; 537. |]
             (Op.gather table ~dim:0 index));
+      (* The index load sits in the address of the gathered load, and both
+         are gated by where the gather lands. Simplified under the gathered
+         load's gate, the index load lost its own and read the indices
+         outside: a sort's compiled join of values segfaulted there. *)
+      test "a padded gather loads its indices under the pad's gate" (fun () ->
+          let table, index = gather_params () in
+          check_index_loads_gated
+            (Mv.pad (Op.gather table ~dim:0 index) [ (10, 10) ]));
+      test "a gather between other pieces loads its indices under their gate"
+        (fun () ->
+          let table, index = gather_params () in
+          let a = param 2 Tolk_uop.Dtype.float32 [ 30 ] in
+          check_index_loads_gated
+            (Op.cat a [ Op.gather table ~dim:0 index; a ]));
     ]
 
 let conv_tests =

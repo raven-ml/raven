@@ -160,6 +160,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled gather inside a padded or concatenated value reads its indices
+  under their guard. It read them unconditionally, out of bounds wherever the
+  guard was false, which could crash the process.
 - A compiled `float64` sort returns its input's elements, `-0.` and NaN bits
   included, and a compiled argsort of 64-bit keys sorts their two 32-bit halves
   instead of matching values n×n: 65536 `float64` entries take 6 ms, not 4 s.

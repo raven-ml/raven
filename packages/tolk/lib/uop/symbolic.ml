@@ -1843,8 +1843,16 @@ let fake_var ~index ~lo ~hi ~(dtype : Dtype.t) () =
 
    For [Ops.Stack] with two sources, independently accept a branch
    that collapses one lane. Finally, substitute every [X] in the bounds
-   map with its whole-clause fake and simplify. *)
-let uop_given_valid ?(try_simplex = true) valid u =
+   map with its whole-clause fake and simplify.
+
+   A load stays opaque. Its address and gate hold whether or not [valid]
+   does, since a rendered load runs before the select or gated access that
+   consumes it: simplified under [valid], the gate of a gather's index load
+   inside an address folds away and the load reads out of bounds. The
+   tinygrad counterpart simplifies through loads. Each load becomes a
+   variable of its bounds, in [valid] and [u] alike so that a clause on a
+   loaded value still applies, and is restored at the end. *)
+let given_valid ~try_simplex valid u =
   let clauses = Uop.split_uop valid Ops.And in
   let bounds = Uop.Tbl.create 8 in
   let order = ref [] in
@@ -1956,6 +1964,24 @@ let uop_given_valid ?(try_simplex = true) valid u =
     else
       let reverse = List.map (fun (a, b) -> (b, a)) final_subs in
       Uop.simplify (Uop.substitute reverse (Uop.simplify s_uop))
+
+let uop_given_valid ?(try_simplex = true) valid u =
+  let loads =
+    List.filter (fun x -> Uop.op x = Ops.Load || Uop.op x = Ops.Index)
+      (Uop.toposort (Uop.sink [ valid; u ]))
+  in
+  let opaque =
+    List.mapi
+      (fun i x ->
+        ( x,
+          Uop.param ~slot:(-1) ~name:(Printf.sprintf "load%d" i)
+            ~dtype:(Uop.dtype x) ~shape:(Uop.stack [])
+            ~vmin_vmax:(Uop.vmin x, Uop.vmax x) ~addrspace:Dtype.Alu () ))
+      loads
+  in
+  let restore = List.map (fun (x, v) -> (v, x)) opaque in
+  let valid = Uop.substitute opaque valid and u = Uop.substitute opaque u in
+  Uop.substitute restore (given_valid ~try_simplex valid u)
 
 (* [_valid_priority v slices] is the sort key used by {!simplify_valid},
    where [slices] holds the backward slice of each clause as a membership
