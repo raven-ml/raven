@@ -63,54 +63,40 @@ let shard_subview full multi =
     U.expand ~src:(inner full) ~dims:(emit (U.shape (inner multi)))
   else List.fold_left (fun value (axis, rng) -> shard value axis rng) full (U.sharding multi)
 
-let cat axis pieces =
-  let first = List.hd pieces in
-  let shape = U.shape first in
-  let total = List.fold_left (fun size p -> bin Ops.Add size (List.nth (U.shape p) axis)) zero pieces in
-  let full = List.mapi (fun i d -> if i = axis then total else d) shape in
-  let offset = ref zero in
-  let pieces = List.map (fun piece ->
-      let start = !offset in
-      offset := bin Ops.Add start (List.nth (U.shape piece) axis);
-      U.pad ~src:piece ~offset:(emit (List.mapi (fun i _ -> if i = axis then start else zero) shape))
-        ~size:(emit full)) pieces in
-  U.usum pieces
+(* All-gather: [multi], split over its devices, whole on [device], one device
+   or several. Each target gets one buffer holding the whole value, and each
+   shard is written once into its window of that buffer: a copy from another
+   device, or a store on the device that holds it. The collective is a
+   precompiled call named "allgather" over (dst, src), so the scheduler and a
+   backend see one unit.
 
-let copy_multi multi device =
-  let sharding = U.sharding multi in
-  match device with
-  | U.Single _ ->
-      let devices = match device_exn multi with U.Multi ds -> ds
-        | _ -> invalid_arg "multi: gather requires multiple devices" in
-      let pieces = List.mapi (fun i _ ->
-          let coords = List.map (fun (_, rng) ->
-              let index = subst_device_num rng i in
-              match U.const_int_value index with
-              | Some index -> index
-              | None -> invalid_arg "multi: gather shard index is not concrete") sharding in
-          let piece = U.mselect ~src:(inner multi) ~index:i in
-          let piece = if U.device_of piece = Some device then piece else U.copy ~src:piece ~device () in
-          coords, piece) devices in
-      let pieces = List.fold_right (fun (axis, _) pieces ->
-          let groups = List.fold_left (fun groups (coords, piece) ->
-              let rev = List.rev coords in
-              let index, key = List.hd rev, List.rev (List.tl rev) in
-              let values = Option.value (List.assoc_opt key groups) ~default:[] in
-              (key, (index, piece) :: values) :: List.remove_assoc key groups) [] pieces in
-          List.sort (fun (a, _) (b, _) -> compare a b) groups
-          |> List.map (fun (key, values) ->
-              let values = List.sort (fun (a, _) (b, _) -> Int.compare a b) values in
-              key, cat axis (List.map snd values))) sharding pieces in
-      snd (List.hd pieces)
-  | _ ->
-      let padded = List.fold_left (fun src (axis, rng) ->
-          let shape = U.shape src in
-          let size = List.nth shape axis in
-          U.pad ~src
-            ~offset:(emit (List.mapi (fun i _ -> if i = axis then mul size rng else zero) shape))
-            ~size:(emit (List.mapi (fun i d -> if i = axis then mul size (int_ (count rng)) else d) shape)))
-          (inner multi) sharding in
-      U.allreduce ~src:padded ~device ~op:Ops.Add
+   The tinygrad counterpart concatenates padded shards with a sum kernel for
+   one device, and for several it allreduces the padded shards, which moves
+   2(n-1)/n of the value per device under ring and n-1 full buffers under
+   naive, against (n-1)/n here. *)
+let allgather multi device =
+  let sources = match device_exn multi with
+    | U.Multi ds -> ds | _ -> invalid_arg "multi: gather requires multiple devices" in
+  let targets = match device with
+    | U.Single d -> [d] | U.Multi ds -> ds
+    | U.Index _ -> invalid_arg "multi: gather to an indexed device" in
+  let local = U.shape (inner multi) in
+  let window j =
+    let coords = List.map (fun (axis, rng) ->
+        match U.const_int_value (subst_device_num rng j) with
+        | Some c -> axis, c
+        | None -> invalid_arg "multi: gather shard index is not concrete") (U.sharding multi) in
+    emit (List.mapi (fun axis size -> match List.assoc_opt axis coords with
+        | Some c -> mul (int_ c) size | None -> zero) local) in
+  Allreduce.collective ~name:"allgather" ~device ~like:multi (inner multi) (fun ~dst ~src ->
+      List.concat (List.mapi (fun k target ->
+          let replica = match device with U.Multi _ -> U.mselect ~src:dst ~index:k | _ -> dst in
+          List.mapi (fun j source ->
+              let shard = U.mselect ~src ~index:j in
+              let value = if source = target then shard
+                else U.copy ~src:shard ~device:(U.Single target) () in
+              U.store ~dst:(U.shrink ~src:replica ~offset:(window j) ~size:(emit local)) ~value ())
+            sources) targets))
 
 let shard_srcs children axis rng =
   let shape = U.broadcast_shape (List.map U.shape children) in
@@ -121,7 +107,7 @@ let shard_srcs children axis rng =
       match U.sharding src with
       | [a, r] when a = src_axis && U.equal r rng -> inner src
       | sharding ->
-          let full = if sharding = [] then src else copy_multi src (device_exn src) in
+          let full = if sharding = [] then src else allgather src (device_exn src) in
           if src_axis < 0 || eq (List.nth src_shape src_axis) (int_ 1) then full
           else shard full src_axis rng) children
 
@@ -271,7 +257,7 @@ let rec multi_pm node =
   | Ops.Shrink when first_multi -> Some (shrink_multi node srcs.(0))
   | Ops.Shrink when U.op srcs.(0) = Ops.Mstack -> Some (mstack_shrink node srcs.(0))
   | Ops.Index when first_multi -> Some (index_multi node srcs.(0))
-  | Ops.Copy when first_multi -> Some (copy_multi srcs.(0) (device_exn node))
+  | Ops.Copy when first_multi -> Some (allgather srcs.(0) (device_exn node))
   | Ops.Copy -> (match U.device_of srcs.(0), U.device_of node with
       | Some (U.Single _), Some (U.Multi devices) ->
           let simple = simp srcs.(0) in

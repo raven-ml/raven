@@ -431,6 +431,35 @@ delete it rather than registering it.
   reference's either way. Consumer: rune's CPU device, which binds host memory
   it did not allocate (slices, mapped files) and passes `~aligned:false`.
 
+- **A gather is an all-gather of pure copies** (`schedule/multi.ml`
+  `allgather`, `schedule/prepare.ml` `storage_window`, `engine/schedule.ml`
+  `copy_kernel_params`). The reference lowers a copy of a split value to
+  several devices as an allreduce of zero-padded shards, and to one device as
+  a sum of padded shards. Tolk lowers both to one precompiled call named
+  `allgather` over (dst, src): each target gets one buffer, and each shard is
+  written once into its window of it, by a transfer from another device or a
+  store on its own. Each device receives (n-1)/n of the value, where the
+  reference's ring and naive allreduces move 2(n-1)/n and n-1 full buffers,
+  and no padded shard or sum is materialized. The windows need two
+  extensions: prepare drops a copy into a contiguous window of a parameter or
+  buffer with a concrete shape (the reference only into a whole buffer, so a
+  window gets a staging buffer), and a copy kernel storing
+  `dst[i + a] <- src[i + b]` becomes a transfer between byte views. The
+  reference forbids offset copies because SDMA cannot do them; tolk's copy
+  paths take them: Realize resolves the SHRINK to a `Device.Buffer.view`,
+  `Deps_tracker.uop` keys byte intervals by view offset, and the AMD SDMA
+  `COPY_LINEAR` path (`tolk_amd.ml`) takes byte addresses with no alignment
+  requirement. Unverified on SDMA, CUDA and NV queues until the node runs.
+  Symbolic windows keep the staging buffer. Each collective call writes a
+  fresh allocation, so a realized gather is copied once more into the
+  result's storage; for a gather to one device that holds a shard this is
+  new (its peak rises from (n-1)/n + 1 to 2 values). Inner-axis windows are
+  not contiguous and stage every foreign shard. Consumer: every copy of a
+  split value (`Creation.clone`, `U.copy` to a device list, resharding in
+  `multi_pm`).
+  Coverage: `test/unit/engine/test_collectives.ml` "all-gather" and
+  `test/unit/engine/test_multi.ml`.
+
 - **A collective call takes its whole output allocation**
   (`schedule/allreduce.ml` `collective`). The reference's
   `create_allreduce_function` passes the output's view (a SHRINK of a RESHAPE

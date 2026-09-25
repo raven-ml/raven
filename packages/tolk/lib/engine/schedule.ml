@@ -640,39 +640,62 @@ let simplify_copy_kernel ast =
   in
   loop ast
 
-(* [PARAM dst[i] <- PARAM src[i]] for one range [i] closed by the kernel's
-   only END, or for the constant index 0: the parameters of a transfer. *)
+(* [PARAM dst[i + a] <- PARAM src[i + b]] for one range [i] closed by the
+   kernel's only END, or for constant indices: the parameters of a transfer of
+   [n] elements, with the constant element offsets [a] and [b]. *)
 let copy_kernel_params ast =
-  let flat_store value =
+  let offset r idx =
+    if U.equal idx r then Some 0
+    else match U.op idx, U.children idx with
+      | Ops.Add, [ x; c ] when U.equal x r -> U.const_int_value c
+      | Ops.Add, [ c; x ] when U.equal x r -> U.const_int_value c
+      | _ -> None
+  in
+  let store value =
     match U.as_store value with
     | Some { dst; value; gate = None } -> (
         match U.as_index dst, U.as_index value with
         | Some { ptr = dst; idxs = [ i ] }, Some { ptr = src; idxs = [ j ] }
-          when is_op Ops.Param dst && is_op Ops.Param src && U.equal i j ->
-            Some (dst, src, i)
+          when is_op Ops.Param dst && is_op Ops.Param src ->
+            Some (dst, i, src, j)
         | _ -> None)
     | _ -> None
   in
   match U.children ast with
   | [ e ] -> (
       match U.as_end e with
-      | Some { value; ranges = [ r ] } -> (
-          match flat_store value with
-          | Some (dst, src, i) when is_op Ops.Range r && U.equal i r ->
-              Some (dst, src)
-          | _ -> None)
+      | Some { value; ranges = [ r ] } when is_op Ops.Range r -> (
+          match store value with
+          | Some (dst, i, src, j) -> (
+              match offset r i, offset r j with
+              | Some a, Some b -> Some (dst, a, src, b, Bound.to_int (U.vmax r) + 1)
+              | _ -> None)
+          | None -> None)
       | Some _ -> None
       | None -> (
-          match flat_store e with
-          | Some (dst, src, i) when U.const_int_value i = Some 0 ->
-              Some (dst, src)
-          | _ -> None))
+          match store e with
+          | Some (dst, i, src, j) -> (
+              match U.const_int_value i, U.const_int_value j with
+              | Some a, Some b -> Some (dst, a, src, b, 1)
+              | _ -> None)
+          | None -> None))
   | _ -> None
 
-(* The kernel graph carries every COPY as a kernel storing one flat buffer
-   into another. A kernel whose two buffers live on different devices is
-   simplified and, when it is such a store, becomes a bulk STORE call; any
-   other kernel must keep to one device. *)
+(* [n] elements of a call argument from element [offset], as a view the
+   transfer reads or writes; the whole argument when that is all of it. *)
+let transfer_view arg ~offset n =
+  if offset = 0 && U.max_numel arg = n then arg
+  else
+    let flat = match U.shape arg with
+      | [ _ ] -> arg
+      | _ -> U.reshape ~src:arg ~shape:(U.const_int (U.max_numel arg)) in
+    U.shrink ~src:flat ~offset:(U.const_int offset) ~size:(U.const_int n)
+
+(* The kernel graph carries every COPY as a kernel storing one flat buffer, or a
+   contiguous window of it, into another. A kernel whose two buffers live on
+   different devices is simplified and, when it is such a store, becomes a bulk
+   STORE call between byte views of its arguments; any other kernel must keep
+   to one device. *)
 let copy_from_store call =
   match U.as_call call with
   | Some { body; args; info } when is_op Ops.Sink body -> (
@@ -687,9 +710,12 @@ let copy_from_store call =
       let body' = if cross_device then simplify_copy_kernel body else body in
       let transfer =
         match copy_kernel_params body' with
-        | Some (dst, src) -> (
+        | Some (dst, a, src, b, n) -> (
             match U.device_of dst, U.device_of src with
             | Some d, Some s when d <> s ->
+                let arg param = List.nth args (Option.get (U.as_param param)).param.slot in
+                let args = [ transfer_view (arg dst) ~offset:a n;
+                             transfer_view (arg src) ~offset:b n ] in
                 Some (U.call ~body:(U.store ~dst ~value:src ()) ~args ~info)
             | _ -> None)
         | None -> None

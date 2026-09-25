@@ -511,6 +511,12 @@ thread.
 
 ### Tolk (new)
 
+- Copying a split tensor to a list of devices moves each shard once into its
+  place: every device receives (n-1)/n of the tensor. The copy was an
+  allreduce of zero-padded shards, which moved 2(n-1)/n per device under ring
+  and n-1 whole tensors under the naive strategy, and held a padded copy of
+  each shard. Gathering on one device moves the same bytes as before.
+
 - A precompiled call or custom kernel that stores into an argument which is a
   view, not storage, raises `Invalid_argument` naming the call. The view was
   scheduled as a copy of its values, so the writes were silently lost.

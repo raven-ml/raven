@@ -583,13 +583,29 @@ let stage_to_store stage =
           ~size:(dims_node dims) in
     Some (U.after ~src:view ~deps:[U.store ~dst:view ~value:input ()])
 
+(* A store target a copy can write directly: a buffer, or a contiguous
+   window of one with a concrete shape, which the copy reaches as a byte
+   view. The tinygrad counterpart takes whole buffers only, so a copy into a
+   window lands in a staging buffer that a kernel then copies again.
+
+   A symbolic window keeps the staging buffer: a cross-device store of a
+   symbolic value is staged by [stage_to_store] into a SHRINK of a fresh
+   buffer, which has no buffer identity, so the third rule below would stage
+   it again, without end. *)
+let storage_window dst =
+  U.has_buffer_identity ~after_ok:true dst
+  || List.for_all (fun d -> Option.is_some (U.const_int_value d)) (U.shape dst)
+     && match U.contiguous_view dst with
+        | Some (base, _) -> U.has_buffer_identity ~after_ok:true base
+        | None -> false
+
 let materialize n =
   match U.op n with
   | Ops.Store -> (
       match U.as_store n with
       | Some { dst; value; gate = None }
         when U.op value = Ops.Copy && U.device_of dst = U.device_of value
-          && U.has_buffer_identity ~after_ok:true dst ->
+          && storage_window dst ->
           Some (U.store ~dst ~value:(src0 value) ())
       | Some { dst; value; gate = None }
         when U.op dst = Ops.Reshape && U.op value = Ops.Reshape

@@ -241,8 +241,7 @@ let strategies =
 let with_strategy (_, bindings) f = Helpers.Context_var.with_context bindings f
 let strategy name = (name, List.assoc name strategies)
 
-(* Today a copy of a split value to its own device list is an allreduce of
-   zero-padded shards. *)
+(* A copy of a split value to a device list: an all-gather. *)
 let gather devices w =
   T.of_uop (U.copy ~src:(T.uop w) ~device:(U.Multi devices) ())
 
@@ -397,6 +396,31 @@ let gathered ~ndev ~rows ~cols data =
   Run.realize_many [ w ];
   traffic (fun () -> device_bytes (gather devices w))
 
+(* The peak of a 256 KiB value split on [axis] over 4 devices, gathered to them
+   and summed. *)
+let check_gather_peak ~axis =
+  let ndev = 4 and rows = 64 and cols = 1024 in
+  let devices = devices ndev in
+  let w =
+    C.shard ~axis ~devices
+      (host ~shape:[ rows; cols ]
+         (uniform ~seed:[| rows; cols |] (rows * cols)))
+  in
+  Run.realize_many [ w ];
+  let _, peaks =
+    peak_over devices (fun () ->
+        device_bytes (Rd.sum ~axis:[ 0; 1 ] (gather devices w)))
+  in
+  let value = rows * cols * 4 in
+  List.iter
+    (fun (device, peak) ->
+      satisfies ~msg:device
+        ~claim:(Printf.sprintf "at most %d bytes" (value + (value / ndev)))
+        int
+        (fun peak -> peak <= value + (value / ndev))
+        peak)
+    peaks
+
 let gather_tests =
   group "all-gather"
     [
@@ -414,29 +438,144 @@ let gather_tests =
                     (Bytes.equal (f32_bytes data) replica))
                 replicas)
             [ 2; 3; 4; 8 ]);
-      (* Target: (n-1)/n of the value per device, each shard copied once into
-         its window of every replica. *)
-      cases "each device receives an allreduce's bytes" ~name:fst
-        [ strategy "naive"; strategy "ring"; strategy "all2all" ]
-        (fun ((name, _) as strategy) ->
+      test "tiles on two axes reach every device" (fun () ->
+          let devices = devices 6 and data = spread 48 in
+          let alu op lhs rhs = Symbolic.simplify (U.alu_binary ~op ~lhs ~rhs) in
+          let r =
+            U.range ~size:(U.const_int 6) ~axis:(-1) ~kind:Axis_type.Device ()
+          in
+          let a = alu Ops.Floordiv r (U.const_int 3)
+          and b = alu Ops.Floormod r (U.const_int 3) in
+          let copied =
+            U.copy
+              ~src:(T.uop (host ~shape:[ 4; 12 ] data))
+              ~device:(U.Multi devices) ()
+          in
+          let tile =
+            U.shrink ~src:copied
+              ~offset:
+                (U.stack
+                   [
+                     alu Ops.Mul a (U.const_int 2);
+                     alu Ops.Mul b (U.const_int 4);
+                   ])
+              ~size:(T.shape_uop [ 2; 4 ])
+          in
+          let tiled =
+            T.of_uop (U.unshard ~src:tile ~axes:[ 0; 1 ] ~ranges:[ a; b ] ())
+          in
+          List.iteri
+            (fun i replica ->
+              is_true
+                ~msg:(Printf.sprintf "replica %d" (i + 1))
+                (Bytes.equal (f32_bytes data) replica))
+            (device_bytes (gather devices tiled)));
+      cases "each device receives (n-1)/n of the value" ~name:fst strategies
+        (fun strategy ->
           with_strategy strategy @@ fun () ->
           List.iter
             (fun ndev ->
-              let value = 64 * 1024 * 4 in
-              let per_device =
-                if name = "naive" then (ndev - 1) * value
-                else 2 * (ndev - 1) * value / ndev
-              in
+              let value = 48 * 256 * 4 in
               let _, flows =
-                gathered ~ndev ~rows:64 ~cols:1024
-                  (uniform ~seed:[| ndev |] (64 * 1024))
+                gathered ~ndev ~rows:48 ~cols:256
+                  (uniform ~seed:[| ndev |] (48 * 256))
               in
               equal
                 ~msg:(Printf.sprintf "%d devices" ndev)
                 (list int)
-                (List.init ndev (fun _ -> per_device))
+                (List.init ndev (fun _ -> (ndev - 1) * value / ndev))
                 (List.map (fun d -> received d flows) (devices ndev)))
-            [ 4; 8 ]);
+            [ 2; 3; 4; 8 ]);
+      test "a gather lowers to one call named allgather" (fun () ->
+          let devices = devices 2 in
+          let w = C.shard ~axis:0 ~devices (host ~shape:[ 4; 4 ] (spread 16)) in
+          let lowered =
+            U.graph_rewrite Multi.multi_pm
+              (U.copy ~src:(T.uop w) ~device:(U.Multi devices) ())
+          in
+          match (U.op lowered, U.children lowered) with
+          | Ops.After, [ output; call ] -> (
+              match U.as_call call with
+              | Some
+                  {
+                    info = { name = Some "allgather"; precompile = true; _ };
+                    args = [ dst; _ ];
+                    _;
+                  } ->
+                  is_true ~msg:"the call writes the output's storage"
+                    (U.storage_base output == dst);
+                  is_true ~msg:"on the target devices"
+                    (U.device_of dst = Some (U.Multi devices))
+              | _ -> fail "the AFTER does not wait on an allgather call")
+          | _ -> fail "the gather is not an AFTER of one call");
+      test "a gather of a symbolic slice keeps its values" (fun () ->
+          let devices = devices 4 and data = Array.init 56 float_of_int in
+          let w = C.shard ~axis:0 ~devices (host ~shape:[ 8; 7 ] data) in
+          Run.realize_many [ w ];
+          let cols = U.variable ~name:"gather_cols" ~min_val:1 ~max_val:7 () in
+          List.iter
+            (fun n ->
+              let expected = ref 0.0 in
+              for r = 0 to 7 do
+                for c = 0 to n - 1 do
+                  expected := !expected +. data.((r * 7) + c)
+                done
+              done;
+              List.iter
+                (fun device ->
+                  let sliced =
+                    U.shrink ~src:(T.uop w)
+                      ~offset:(T.shape_uop [ 0; 0 ])
+                      ~size:
+                        (U.stack
+                           [
+                             U.const_int 8;
+                             U.bind ~var:cols ~value:(U.const_int n);
+                           ])
+                  in
+                  let gathered = T.of_uop (U.copy ~src:sliced ~device ()) in
+                  equal
+                    ~msg:(Printf.sprintf "%d columns" n)
+                    (array float_exact) [| !expected |]
+                    (Run.to_float_array
+                       (C.clone ~device:(U.Single "CPU")
+                          (Rd.sum ~axis:[ 0; 1 ] gathered))))
+                [ U.Single "CPU:1"; U.Multi devices ])
+            [ 3; 7 ]);
+      (* The gather feeds a sum, as a gathered weight feeds a product. *)
+      test "a row-split gather holds the value and at most one shard more"
+        (fun () -> check_gather_peak ~axis:0);
+      xfail ~reason:"inner-axis windows stage every foreign shard at once"
+        (test "a column-split gather holds the value and at most one shard more"
+           (fun () -> check_gather_peak ~axis:1));
+      xfail
+        ~reason:
+          "a realized gather is copied from the call's buffer into the result's"
+        (test "a realized gather holds one value per device" (fun () ->
+             let devices = devices 4 and rows = 64 and cols = 1024 in
+             let w =
+               C.shard ~axis:0 ~devices
+                 (host ~shape:[ rows; cols ]
+                    (uniform ~seed:[| rows; cols |] (rows * cols)))
+             in
+             Run.realize_many [ w ];
+             List.iter
+               (fun device ->
+                 let _, peaks =
+                   peak_over devices (fun () ->
+                       device_bytes
+                         (T.of_uop (U.copy ~src:(T.uop w) ~device ())))
+                 in
+                 List.iter
+                   (fun (d, peak) ->
+                     satisfies ~msg:d
+                       ~claim:
+                         (Printf.sprintf "at most %d bytes" (rows * cols * 4))
+                       int
+                       (fun peak -> peak <= rows * cols * 4)
+                       peak)
+                   peaks)
+               [ U.Single "CPU:1"; U.Multi devices ]));
     ]
 
 (* Today the reshard of an allreduce to split rows allreduces the whole value
@@ -672,10 +811,9 @@ let in_layers layer =
 
 (* Fully sharded training fits when every device stays within two gathered
    layers plus its saved activations above its share of parameters, gradients
-   and optimizer state. Today's lowering misses that bound for three reasons: a
-   gather is an allreduce of zero-padded shards, the gradient is allreduced
-   whole before each device keeps its rows, and every copy source is staged in
-   its own buffer. *)
+   and optimizer state. Today's lowering misses that bound for two reasons: the
+   gradient is allreduced whole before each device keeps its rows, and every
+   copy source is staged in its own buffer. *)
 let fully_sharded (name, ndev, dims) =
   let batch = 64 and layers = Array.length dims - 1 in
   let layer_bytes = Array.init layers (fun l -> dims.(l) * dims.(l + 1) * 4) in
@@ -701,14 +839,14 @@ let fully_sharded (name, ndev, dims) =
           List.iter
             (fun (device, held) -> equal ~msg:device int share held)
             (run ()).state);
-      (* Target: (n-1) layers per collective, once gathers copy into windows and
-         gradients reduce-scatter. *)
-      test "each collective moves 2(n-1) layers between devices" (fun () ->
-          equal int (3 * 2 * (ndev - 1) * weight_bytes) (run ()).peer_bytes);
+      (* Each weight is gathered twice, (n-1) layers each, and its gradient
+         allreduced, 2(n-1) layers. Target: (n-1) for the gradient too, once it
+         reduce-scatters. *)
+      test "gathers move (n-1) layers and gradients 2(n-1)" (fun () ->
+          equal int (4 * (ndev - 1) * weight_bytes) (run ()).peer_bytes);
       xfail
         ~reason:
-          "gathers allreduce padded shards, gradients allreduce before the \
-           reshard, copies stage their sources"
+          "gradients allreduce before the reshard, copies stage their sources"
         (test "each device holds at most two layers and activations over state"
            (fun () ->
              let device, over =
