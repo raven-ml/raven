@@ -574,6 +574,7 @@ type gc_info =
 type discovery = {
   ip_ver : (int * (int * int * int)) list;
   regs_offset : (int * (int * int array) list) list;
+  harvested : (int * int list) list;
   gc_info : gc_info;
 }
 
@@ -670,7 +671,23 @@ let parse_discovery blob =
           }
     | v -> failwith (Printf.sprintf "unsupported gc info version %d" v)
   in
-  { ip_ver; regs_offset; gc_info }
+  let harvested =
+    let offset = table_offset Am.table_harvest in
+    if offset = 0 then []
+    else if offset > Bytes.length blob - 4 then failwith "truncated harvest table"
+    else if Am.g32 blob offset <> Am.harvest_table_signature then []
+    else begin
+      if offset > Bytes.length blob - (8 + 32 * 4) then failwith "truncated harvest table";
+      let entries = List.init 32 (fun i ->
+          let at = offset + 8 + i * 4 in
+          Am.g16 blob at, Am.g8 blob (at + 2)) in
+      List.filter_map (fun (hwip, hwid) ->
+          let instances = List.filter_map (fun (id, inst) ->
+              if id = hwid then Some inst else None) entries |> List.sort_uniq Int.compare in
+          if instances = [] then None else Some (hwip, instances)) Am.hw_id_map
+      |> List.sort compare
+    end in
+  { ip_ver; regs_offset; harvested; gc_info }
 
 (* Devices: amdev.py AMDev (without the boot state machine) *)
 
@@ -731,6 +748,19 @@ let xgmi2paddr t xgmi_paddr = xgmi_paddr - t.paddr_base
 let rreg t r = t.rreg r
 let wreg t r v = t.wreg r v
 let reg t ?(inst = 0) name = t.reg inst name
+
+let live_instances t hwip =
+  let harvested = Option.value (List.assoc_opt hwip t.discovery.harvested) ~default:[] in
+  Option.value (List.assoc_opt hwip t.discovery.regs_offset) ~default:[]
+  |> List.filter_map (fun (inst, _) -> if List.mem inst harvested then None else Some inst)
+
+let aids t =
+  let live = live_instances t Am.sdma0_hwip in
+  let maximum = List.fold_left (fun m inst -> max m (inst lsr 2)) 0 live in
+  0 :: (List.init maximum (fun i -> i + 1) |> List.filter (fun aid ->
+      let mask = List.fold_left (fun mask inst ->
+          if inst lsr 2 = aid then mask lor (1 lsl (inst land 3)) else mask) 0 live in
+      List.mem mask [0xf; 0x3; 0xc]))
 
 let wreg_pair t ?(inst = 0) base ~lo ~hi v =
   Am_register.write (reg t ~inst (base ^ lo)) ~value:(v land 0xffffffff) [];

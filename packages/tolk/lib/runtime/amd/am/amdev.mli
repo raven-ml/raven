@@ -202,6 +202,9 @@ type discovery = {
   regs_offset : (int * (int * int array) list) list;
       (** Hardware-IP id to per-instance register address-space segment
           bases, ids and instance numbers in increasing order. *)
+  harvested : (int * int list) list;
+      (** Disabled instances from the optional harvest table, grouped by
+          hardware-IP id with sorted, unique instance numbers. *)
   gc_info : gc_info;  (** Graphics-core geometry. *)
 }
 (** The type for parsed IP discovery tables. *)
@@ -210,9 +213,10 @@ val parse_discovery : bytes -> discovery
 (** [parse_discovery blob] parses the IP discovery table [blob], the
     10KB block located 64KB before the end of VRAM: the die headers and
     their IP entries, each carrying one IP instance's version and
-    register-aperture base addresses, plus the graphics-core geometry
-    table. Raises [Failure] if a signature does not match or the
-    geometry table has an unknown major version. *)
+    register-aperture base addresses, plus graphics-core geometry and optional
+    harvest information. Raises [Failure] if a required signature does not
+    match, the geometry table has an unknown major version, or a present
+    harvest table is truncated. Unknown harvest signatures are ignored. *)
 
 (** {1:devices Devices} *)
 
@@ -284,6 +288,14 @@ val pci_dev : t -> Tolk_hcq.System.Pci_device.t option
 
 val devfmt : t -> string
 (** [devfmt t] is the device's PCI bus address, for messages. *)
+
+val live_instances : t -> int -> int list
+(** [live_instances t hwip] lists discovered instances of [hwip] excluding
+    entries disabled by the harvest table, in increasing order. *)
+
+val aids : t -> int list
+(** [aids t] lists live accelerator I/O dies: die zero and each additional
+    die whose four SDMA instances have live mask [0xf], [0x3] or [0xc]. *)
 
 val vram : t -> Tolk_hcq.Hcq.Mmio.t
 (** [vram t] is the mapping of the VRAM BAR. It covers all of VRAM only

@@ -142,18 +142,19 @@ module Soc = struct
         match List.assoc_opt src srcs with Some name -> name | None -> "")
 
   (* ip.py:30 AM_SOC.init_hw *)
-  let init_hw t ~vmhubs =
+  let init_hw t =
     let adev = t.adev in
     (if List.mem (Amdev.ip_ver adev Am.nbio_hwip) [ (7, 9, 0); (7, 9, 1) ]
      then begin
        let fence = Amdev.reg adev "regXCC_DOORBELL_FENCE" in
-       Am_register.write fence ~value:0x0 [];
-       for aid = 1 to vmhubs - 1 do
+       let live = List.fold_left (fun mask inst ->
+           if inst < 8 then mask lor (1 lsl inst) else mask) 0 (Amdev.live_instances adev Am.gc_hwip) in
+       Am_register.write fence ~value:(0xff land lnot live) [];
+       List.iter (fun aid -> if aid <> 0 then
          Amdev.indirect_wreg_pcie adev ~aid
            (Am_register.reg fence).Amd_tables.Reg.addr
            (Amd_tables.Reg.encode (Am_register.reg fence)
-              [ ("shub_slv_mode", 1) ])
-       done;
+              [ ("shub_slv_mode", 1) ])) (Amdev.aids adev);
        Am_register.write
          (Amdev.reg adev "regBIFC_GFX_INT_MONITOR_MASK")
          ~value:0x7ff [];
@@ -212,6 +213,7 @@ module Gmc = struct
   type t = {
     adev : Amdev.t;
     vmhubs : int;
+    mm_insts : int list;
     fb_base : int;
     fb_end : int;
     vm_base : int;
@@ -255,6 +257,8 @@ module Gmc = struct
     {
       adev;
       vmhubs;
+      mm_insts = (if List.mem (Amdev.ip_ver adev Am.nbio_hwip) [(7, 9, 0); (7, 9, 1)]
+          then Amdev.aids adev else Amdev.live_instances adev Am.mmhub_hwip);
       fb_base;
       fb_end;
       vm_base;
@@ -290,7 +294,7 @@ module Gmc = struct
     (* Can't issue TLB invalidation if the hub isn't initialized. *)
     if hub_initted t hub then begin
       let pref = hub_pref hub in
-      for inst = 0 to (match hub with Mm -> t.vmhubs | Gc -> xccs) - 1 do
+      List.iter (fun inst ->
         (if hub = Mm then
            wait_cond adev ~value:1 ~msg:"mm flush_tlb timeout" (fun () ->
                Am_register.read (Amdev.reg adev ~inst "regMMVM_INVALIDATE_ENG17_SEM")
@@ -326,7 +330,7 @@ module Gmc = struct
             (Am_register.read
                (Amdev.reg adev ~inst "regMMVM_L2_BANK_SELECT_RESERVED_CID2"))
         end
-      done
+      ) (match hub with Mm -> t.mm_insts | Gc -> List.init xccs Fun.id)
     end
 
   (* ip.py:107 enable_vm_addressing *)
@@ -362,11 +366,11 @@ module Gmc = struct
         ])
 
   (* ip.py:117 init_hub *)
-  let init_hub t ~soc hub ~inst_cnt =
+  let init_hub t ~soc hub ~insts =
     let adev = t.adev in
     let pref = hub_pref hub in
     let pair name = Printf.sprintf "reg%s%s" pref name in
-    for inst = 0 to inst_cnt - 1 do
+    List.iter (fun inst ->
       let r name = Amdev.reg adev ~inst (Printf.sprintf "reg%s%s" pref name) in
       (* Init system apertures *)
       Am_register.write (r "MC_VM_AGP_BASE") ~value:0 [];
@@ -440,13 +444,13 @@ module Gmc = struct
           (Printf.sprintf "reg%sVM_INVALIDATE_ENG%d_ADDR_RANGE" pref eng_i)
           ~lo:"_LO32" ~hi:"_HI32" 0x1fffffffff
       done
-    done;
+    ) insts;
     match hub with
     | Mm -> t.mm_hub_initted <- true
     | Gc -> t.gc_hub_initted <- true
 
   (* ip.py:83 AM_GMC.init_hw *)
-  let init_hw t ~soc = init_hub t ~soc Mm ~inst_cnt:t.vmhubs
+  let init_hw t ~soc = init_hub t ~soc Mm ~insts:t.mm_insts
 end
 
 (* Smu: ip.py AM_SMU *)
@@ -1132,7 +1136,7 @@ module Gfx = struct
                (Am_register.read_bitfields
                   (Amdev.reg adev "regRLC_RLCS_BOOTLOAD_STATUS"))
              = 0));
-    Gmc.init_hub gmc ~soc Gmc.Gc ~inst_cnt:t.xccs;
+    Gmc.init_hub gmc ~soc Gmc.Gc ~insts:(List.init t.xccs Fun.id);
     if partial_boot then reset_mec t ~fw
     else begin
       config_mec t ~fw;
@@ -1669,7 +1673,7 @@ module Sdma = struct
     done;
     if List.mem (Amdev.ip_ver adev Am.nbio_hwip) [ (7, 9, 0); (7, 9, 1) ]
     then
-      for aid_id = 0 to 3 do
+      List.iter (fun aid_id ->
         List.iteri
           (fun dev_inst (port, awid, offset, awaddr) ->
             let entry = dev_inst + 1 + (4 * aid_id) in
@@ -1686,7 +1690,7 @@ module Sdma = struct
               ~offset ~size:4 ~aid:aid_id ())
           [ (1, 0xe, 0xe, 0x1); (2, 0x8, 0x8, 0x2); (5, 0x9, 0x9, 0x8);
             (6, 0xa, 0xa, 0x9) ]
-      done
+      ) (Amdev.aids adev)
     else
       Soc.doorbell_enable soc ~port:2 ~awid:0xe ~awaddr_31_28_value:0x3
         ~offset:(Am.amdgpu_navi10_doorbell_sdma_engine0 * 2) ~size:4 ()

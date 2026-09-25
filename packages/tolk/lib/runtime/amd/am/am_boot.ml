@@ -137,7 +137,7 @@ let init t =
     set_bus_master t true;
     init_hw t
       [
-        ("Soc", fun () -> Am_ip.Soc.init_hw t.soc ~vmhubs:(Am_ip.Gmc.vmhubs t.gmc));
+        ("Soc", fun () -> Am_ip.Soc.init_hw t.soc);
         ("Gmc", fun () -> Am_ip.Gmc.init_hw t.gmc ~soc:t.soc);
         ("Ih", fun () -> Am_ip.Ih.init_hw t.ih);
         ("Psp", fun () -> Am_ip.Psp.init_hw t.psp);

@@ -53,7 +53,7 @@ let add_ip ~base64 b pos ~hw_id ~inst ~ver:(ma, mi, rv) bases =
     bases;
   pos + 8 + ((if base64 then 8 else 4) * List.length bases)
 
-let discovery_blob ?(base64 = false) ips =
+let discovery_blob ?(base64 = false) ?(harvested = []) ips =
   let b = Bytes.make 0x800 '\x00' in
   s32 b 0 Am.binary_signature;
   s16 b
@@ -83,6 +83,11 @@ let discovery_blob ?(base64 = false) ips =
   s32 b (0x400 + 0x3c) 16;
   s32 b (0x400 + 0x40) 32;
   s32 b (0x400 + 0x44) 64;
+  if harvested <> [] then begin
+    s16 b (Am.Binary_header.table_list_offset + Am.table_harvest * Am.Table_info.sizeof) 0x600;
+    s32 b 0x600 Am.harvest_table_signature;
+    List.iteri (fun i (hwid, inst) -> s16 b (0x608 + 4 * i) hwid; s8 b (0x60a + 4 * i) inst) harvested
+  end;
   b
 
 let sample_ips =
@@ -344,7 +349,7 @@ let dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys =
     (0x29, 0, (6, 0, 0), [ 0xa000 ]);
     (0x2a, 0, sdma, [ 0xb000 ]);
     (0x22, 0, mmhub, [ mmhub_base ]);
-    (0x6c, 0, bif, [ 0x40000; 0x41000; 0x42000; 0x43000; 0x44000; 0x45000 ]);
+    (0x6c, 0, bif, List.init 9 (fun i -> 0x40000 + i * 0x1000));
     (0xff, 0, mp0, [ mp0_base; 0x11000 ]);
     (1, 0, mp1, [ mp1_base ]);
     (0x28, 0, osssys, [ 0xc000 ]);
@@ -361,7 +366,8 @@ type fake_dev = {
 
 let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
     ?(mp1 = (13, 0, 10)) ?(mmhub = (3, 0, 0)) ?(sdma = (6, 0, 2))
-    ?(bif = (4, 3, 0)) ?(osssys = (6, 0, 0)) ?(extra_ips = []) ?(pre = fun _ -> ()) f =
+    ?(bif = (4, 3, 0)) ?(osssys = (6, 0, 0)) ?(extra_ips = [])
+    ?(harvested = []) ?(pre = fun _ -> ()) f =
   with_fake_vram 0x2000000 (fun vram ->
       let store = Hashtbl.create 16 in
       let reads = Hashtbl.create 16 in
@@ -411,7 +417,7 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
           ~vram_size:(Mmio.size vram) ~large_bar:true ~reserved_vram_size:0
           ~discovery:
             (Amdev.parse_discovery
-               (discovery_blob (dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys @ extra_ips)))
+               (discovery_blob ~harvested (dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys @ extra_ips)))
           ~mm ~devfmt:"test"
           ~now_ms:(fun () ->
             incr clock;
@@ -646,6 +652,15 @@ let () =
     [
       group "ip discovery"
         [
+          test "harvest entries are optional, canonical and bounded" (fun () ->
+              let blob = discovery_blob ~harvested:[0x2a, 5; 0xb, 1; 0x2a, 5; 0xeeee, 2] sample_ips in
+              let parsed = Amdev.parse_discovery blob in
+              equal (list (pair int (list int))) [Am.gc_hwip, [1]; Am.sdma0_hwip, [5]] parsed.harvested;
+              s32 blob 0x600 0;
+              equal (list (pair int (list int))) [] (Amdev.parse_discovery blob).harvested;
+              s32 blob 0x600 Am.harvest_table_signature;
+              raises_match (Exn.failure ~substring:"truncated harvest")
+                (fun () -> Amdev.parse_discovery (Bytes.sub blob 0 0x680)));
           test "parses versions and per-instance bases" (fun () ->
               let d = Amdev.parse_discovery (discovery_blob sample_ips) in
               equal
@@ -1474,10 +1489,40 @@ let () =
         ];
       group "soc"
         [
+          test "harvested I/O dies receive no indirect routes or hub waits" (fun () ->
+              let extra_ips = List.init 15 (fun i -> 0x2a, i + 1, (4, 4, 2), [0xb000 + (i + 1) * 0x1000])
+                @ List.init 3 (fun i -> 0x22, i + 1, (3, 0, 0), [0x60000 + i * 0x1000])
+                @ [0xb, 1, (9, 4, 3), [0x68000; 0x69000]] in
+              let harvested = (0xb, 1) :: List.map (fun i -> 0x2a, i) [4; 5; 6; 7; 10; 11; 13; 14; 15] in
+              with_fake_dev ~gc:(9, 4, 3) ~sdma:(4, 4, 2) ~bif:(7, 9, 0) ~extra_ips ~harvested (fun fd ->
+                  equal (list int) [0; 2] (Amdev.aids fd.dev);
+                  let soc = Soc.create fd.dev and gmc = Gmc.create fd.dev and sdma = Sdma.create fd.dev in
+                  Soc.init_hw soc;
+                  equal int 0xfe (rstore fd "regXCC_DOORBELL_FENCE");
+                  Sdma.init_hw sdma ~soc;
+                  let indirect_hi = raddr fd.dev "regBIF_BX0_PCIE_INDEX2_HI" in
+                  equal (list int) [6] (List.filter_map (fun (addr, value) ->
+                      if addr = indirect_hi && value <> 0 then Some value else None) !(fd.log)
+                    |> List.sort_uniq Int.compare);
+                  for entry = 1 to 16 do
+                    let present = Hashtbl.mem fd.store (raddr fd.dev (Printf.sprintf "regDOORBELL0_CTRL_ENTRY_%d" entry)) in
+                    equal bool (entry <= 4 || entry >= 9 && entry <= 12) present
+                  done;
+                  Gmc.init_hw gmc ~soc;
+                  for inst = 0 to 3 do
+                    let reg name = Amdev.reg fd.dev ~inst name in
+                    let addr name = (Amdev.Am_register.reg (reg name)).Reg.addr in
+                    let live = inst = 0 || inst = 2 in
+                    equal bool live (Hashtbl.mem fd.store (addr "regMMVM_CONTEXT0_CNTL"));
+                    List.iter (fun name -> Hashtbl.replace fd.reads (addr name)
+                        (fun () -> if live then 1 else fail "accessed a dead memory hub"))
+                      ["regMMVM_INVALIDATE_ENG17_SEM"; "regMMVM_INVALIDATE_ENG17_ACK"]
+                  done;
+                  Gmc.flush_tlb gmc ~xccs:2 Gmc.Mm ~vmid:0));
           test "init_hw opens the doorbell aperture" (fun () ->
               with_fake_dev (fun fd ->
                   let soc = Soc.create fd.dev in
-                  Soc.init_hw soc ~vmhubs:1;
+                  Soc.init_hw soc;
                   equal
                     (list (pair int int))
                     [

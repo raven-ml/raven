@@ -12,8 +12,10 @@ let s32 b p v = Bytes.set_int32_le b p (Int32.of_int v)
 (* IP discovery: signatures, table ids, hardware ids. *)
 let binary_signature = 0x28211407
 let discovery_table_signature = 0x53445049
+let harvest_table_signature = 0x56524148
 let table_ip_discovery = 0
 let table_gc = 1
+let table_harvest = 2
 let gc_hwip = 1
 let hdp_hwip = 2
 let sdma0_hwip = 3

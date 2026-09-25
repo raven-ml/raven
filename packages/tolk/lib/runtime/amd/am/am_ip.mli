@@ -47,12 +47,12 @@ module Soc : sig
       interrupt naming tables. Raises [Invalid_argument] when the
       graphics-core generation is unknown. *)
 
-  val init_hw : t -> vmhubs:int -> unit
-  (** [init_hw t ~vmhubs] enables doorbell routing for the device:
+  val init_hw : t -> unit
+  (** [init_hw t] enables doorbell routing for the device:
       opens the doorbell aperture and, per generation, either lifts
       the function's soft-reset strap or programs the multi-die
-      doorbell fences of each of the [vmhubs] dies (see
-      {!Gmc.vmhubs}). *)
+      doorbell fences of its live I/O dies, masking harvested compute dies.
+      Dead I/O dies are never accessed through the indirect window. *)
 
   val set_clockgating_state : t -> unit
   (** [set_clockgating_state t] enables the host-data-path memory
@@ -124,11 +124,11 @@ module Gmc : sig
       discovered (one per die). *)
 
   val init_hw : t -> soc:Soc.t -> unit
-  (** [init_hw t ~soc] programs the memory hub on every die: see
+  (** [init_hw t ~soc] programs the memory hub on every live die: see
       {!init_hub}. *)
 
-  val init_hub : t -> soc:Soc.t -> hub -> inst_cnt:int -> unit
-  (** [init_hub t ~soc hub ~inst_cnt] programs [inst_cnt] instances of
+  val init_hub : t -> soc:Soc.t -> hub -> insts:int list -> unit
+  (** [init_hub t ~soc hub ~insts] programs the selected instances of
       [hub]: the system and AGP apertures, the fault default pages,
       the translation caches, the level-2 cache geometry, address
       translation over the device's root page table for VM context 0,
@@ -141,8 +141,8 @@ module Gmc : sig
 
   val flush_tlb : t -> ?flush_type:int -> xccs:int -> hub -> vmid:int -> unit
   (** [flush_tlb t ~xccs hub ~vmid] invalidates the translation caches
-      of [hub] for the VM context [vmid] on every instance ({!vmhubs}
-      of them for [Mm], [xccs] — see {!Gfx.xccs} — for [Gc]), after a
+      of [hub] for the VM context [vmid] on each live memory-hub instance
+      for [Mm], or [xccs] instances — see {!Gfx.xccs} — for [Gc], after a
       host-data-path flush. A hub whose {!init_hub} has not run yet is
       skipped. [flush_type] defaults to [0]. This is the flush boot
       installs as the memory manager's after-mapping hook (see

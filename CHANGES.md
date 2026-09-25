@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI initialization reads harvest information and selects live I/O dies,
+  avoiding dead memory-hub waits and indirect doorbell routes that can stall
+  the fabric. Harvested compute dies are fenced off from doorbells.
+
 - AMD PCI multi-die setup programs each memory hub and compute die separately,
   including TLB acknowledgements, AQL descriptors, engine reset and clock
   gating. These paths previously repeated writes to instance zero.
