@@ -109,6 +109,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx.max`, `Nx.min`, `Nx.argmax` and `Nx.argmin` of floats return
+  NaN (the first NaN's index) when any element is NaN, as eager does; a NaN was
+  ignored unless it came first, and Metal flushed subnormals. Compiled `max`
+  and `min` of -0 and +0 give +0 and -0 (IEEE).
 - Fix staged `Rune.scan` compilation on Metal by expressing the loop as an
   effect on its output buffers. Nested scans and their gradients use the same
   call protocol as other compiled schedules.

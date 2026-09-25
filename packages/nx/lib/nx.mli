@@ -2114,8 +2114,10 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [max ?axes ?keepdims t] is the maximum along [axes]. NaN propagates.
-    [keepdims] defaults to [false].
+(** [max ?axes ?keepdims t] is the maximum along [axes]. NaN propagates. When
+    the result is a zero and both signs occur, the eager result takes the sign
+    of the first zero it meets, and a compiled one ({!Rune.val-jit}) is [0.]
+    (IEEE maximum). [keepdims] defaults to [false].
 
     {@ocaml[
       # create float32 [| 2; 3 |]
@@ -2125,8 +2127,10 @@ val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [min ?axes ?keepdims t] is the minimum along [axes]. NaN propagates.
-    [keepdims] defaults to [false]. *)
+(** [min ?axes ?keepdims t] is the minimum along [axes]. NaN propagates. When
+    the result is a zero and both signs occur, the eager result takes the sign
+    of the first zero it meets, and a compiled one ({!Rune.val-jit}) is [-0.]
+    (IEEE minimum). [keepdims] defaults to [false]. *)
 
 val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [prod ?axes ?keepdims t] is the product along [axes]. [keepdims] defaults to
@@ -2225,7 +2229,8 @@ val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
 (** [argmax ?axis ?keepdims t] is the index of the maximum along [axis]. Returns
-    the first occurrence for ties. When [axis] is omitted, operates on the
+    the first occurrence for ties. A NaN counts as the maximum: the result is
+    the index of the first NaN. When [axis] is omitted, operates on the
     flattened tensor. [keepdims] defaults to [false].
 
     Raises [Invalid_argument] if [axis] is out of bounds.
@@ -2240,7 +2245,8 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
 
 val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
 (** [argmin ?axis ?keepdims t] is the index of the minimum along [axis]. Returns
-    the first occurrence for ties. When [axis] is omitted, operates on the
+    the first occurrence for ties. A NaN counts as the minimum: the result is
+    the index of the first NaN. When [axis] is omitted, operates on the
     flattened tensor. [keepdims] defaults to [false].
 
     Raises [Invalid_argument] if [axis] is out of bounds.
