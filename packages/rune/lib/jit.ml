@@ -2651,6 +2651,12 @@ and stage_scan_bwd : type r.
 
 let itemsize dt = Nx_buffer.kind_size_in_bytes dt
 
+(* A buffer with no bytes is never allocated: a device has no storage of size
+   zero, and a program never reads a value without elements. *)
+let ensure_storage buf =
+  if Tolk.Device.Buffer.nbytes buf > 0 then
+    Tolk.Device.Buffer.ensure_allocated buf
+
 (* Wrap host memory as a device buffer without copying. The caller must keep the
    memory's owner reachable while the buffer can still be read or written. *)
 let wrap_ptr dev dtolk n ptr =
@@ -2659,7 +2665,7 @@ let wrap_ptr dev dtolk n ptr =
       ~spec:{ Tolk.Device.Buffer_spec.default with external_ptr = Some ptr }
       dev
   in
-  Tolk.Device.Buffer.ensure_allocated buf;
+  ensure_storage buf;
   buf
 
 (* Wrap a tensor's memory, or [None] when its elements are not a contiguous
@@ -2943,7 +2949,7 @@ let rec copyin_at : type a b.
 
 (* Copy a tensor's logical contents into a device buffer. *)
 let copyin_tensor sc dev buf x =
-  Tolk.Device.Buffer.ensure_allocated buf;
+  ensure_storage buf;
   copyin_at sc dev buf ~off:0
     (match x with
     | Nx_effect.Placed _ -> Nx_effect.Host (Nx_effect.host_of x)

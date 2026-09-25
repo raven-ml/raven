@@ -702,6 +702,26 @@ let test_sort_matches_eager () =
   check_sort_pieces f32 pieces Nx.bfloat16;
   check_sort_pieces f32 pieces Nx.int32
 
+(* A value with no elements has no storage: an empty input, output or capture
+   compiles and replays on Metal, next to values that do have elements. *)
+let test_empty_values () =
+  let v = vec32 [| 1.0; 2.0; 3.0 |] in
+  let empty = Nx.zeros f32 [| 0 |] in
+  let check name f x =
+    let g = Rune.jit' ~device:"METAL" f in
+    for call = 1 to 2 do
+      let msg = Printf.sprintf "%s, call %d" name call in
+      check_arr ~msg (to_arr (f x)) (g x)
+    done
+  in
+  check "an empty output" (fun v -> Nx.mul_s (Nx.slice [ Nx.R (1, 1) ] v) 2.0) v;
+  check "an empty input" (fun x -> Nx.mul_s x 2.0) empty;
+  check "an empty input returned" Fun.id empty;
+  check "an empty capture returned" (fun _ -> empty) v;
+  check "a sum over an empty slice"
+    (fun x -> Nx.add (Nx.sum (Nx.slice [ Nx.R (1, 1) ] x)) x)
+    v
+
 let tests =
   [
     group "metal device"
@@ -729,6 +749,7 @@ let tests =
         test "two programs alternate on one consumed state"
           test_two_programs_alternate;
         test "sort keeps subnormals" test_sort_keeps_subnormals;
+        test "empty values have no storage" test_empty_values;
       ];
     group "placed weights"
       [

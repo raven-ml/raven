@@ -465,14 +465,18 @@ let test_large_scales () =
   battery (case ~ids:(ints [| 2; 2 |] [| 2; 0; 1; 1 |]) w x);
   battery (case ~ids:(ints [| 1; 2 |] [| 2; 0 |]) w x)
 
-(* Empty inputs give empty results. Metal cannot bind a zero-size input, so
-   these compile on the CPU only. *)
+(* Empty inputs give empty results, on every device. *)
 let test_empty () =
   let w = weight [| 4; 8; 64 |] in
   let check msg c shape =
     equal ~msg:(msg ^ ", eager") (array int) shape (Nx.shape (product c c.x));
-    equal ~msg:(msg ^ ", CPU") (array int) shape
-      (Nx.shape (compiled ~device:"CPU" c c.x))
+    List.iter
+      (fun device ->
+        equal
+          ~msg:(msg ^ ", " ^ device)
+          (array int) shape
+          (Nx.shape (compiled ~device c c.x)))
+      devices
   in
   check "no tokens"
     (case ~ids:(ints [| 0; 4 |] [||]) w (floats [| 0; 1; 1; 64 |]))
@@ -483,8 +487,11 @@ let test_empty () =
   check "no rows" (case (weight [| 8; 64 |]) (floats [| 0; 64 |])) [| 0; 8 |];
   let c = case (weight [| 8; 0 |]) (floats [| 2; 0 |]) in
   check "no inputs" c [| 2; 8 |];
-  law2 ~msg:"no inputs, CPU" ~u:0.0 ~tiny:0.0 ~flush:false c c.x
-    (compiled ~device:"CPU" c c.x)
+  List.iter
+    (fun device ->
+      law2 ~msg:("no inputs, " ^ device) ~u:0.0 ~tiny:0.0 ~flush:false c c.x
+        (compiled ~device c c.x))
+    devices
 
 (* float16 [x], with scales that keep every result inside float16's range. *)
 let test_float16 () =
