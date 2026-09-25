@@ -135,6 +135,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.sort` of floats returns the input's elements at its
+  indices: -0 stays -0 and a NaN keeps its sign and payload. A values-only
+  sort costs up to 1.8x more (131k bfloat16, CPU). `float64` still returns
+  -0 as +0 and every NaN as one positive NaN.
 - A compiled integer constant outside its dtype's range, such as
   `Nx.add_s x 256` on uint8, takes the wrapped value as eager does. Folding
   used it unwrapped: `x + 256 < 5` gave false and `x / 257` gave 0.

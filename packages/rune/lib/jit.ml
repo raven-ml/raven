@@ -919,11 +919,14 @@ let bit_length n =
   let rec go n acc = if n = 0 then acc else go (n lsr 1) (acc + 1) in
   go n 0
 
-(* [x] sorted along [dim]. Only the values are demanded, so Tolk's recovery of
-   positions is never computed. *)
-let sort_graph ~dim ~descending x =
-  let keys, values = sort_keys ~descending x in
-  values (fst (F.Op.sort ~dim ~descending keys))
+(* Whether [keys] and their positions along [dim] fit together in a non-negative
+   int64 (see [argsort_graph]). *)
+let packs_positions ~packs ~dim keys =
+  let shape = F.Tensor.shape keys in
+  let dim = if dim < 0 then dim + List.length shape else dim in
+  packs
+  && TD.bitsize (F.Tensor.dtype keys) + bit_length (List.nth shape dim - 1)
+     <= 63
 
 (* The stable positions that sort [x] along [dim]. Tolk's network sorts values
    and recovers each position by an n×n match of sorted values to inputs. When a
@@ -945,7 +948,7 @@ let argsort_graph ~packs ~dim ~descending x =
   let dim = if dim < 0 then dim + List.length shape else dim in
   let n = List.nth shape dim in
   let low_bits = bit_length (n - 1) in
-  if not (packs && TD.bitsize key_dtype + low_bits <= 63) then
+  if not (packs_positions ~packs ~dim keys) then
     snd (F.Op.sort ~dim ~descending keys)
   else
     let open F.Elementwise in
@@ -968,6 +971,18 @@ let argsort_graph ~packs ~dim ~descending x =
     in
     let sorted = fst (F.Op.sort ~dim ~descending (contiguous packed)) in
     complement (bitwise_and sorted (int sorted low))
+
+(* [x] sorted along [dim]. A float sort returns [x]'s elements at the stable
+   positions that sort it, so a -0 or a NaN keeps its bits; mapped back from the
+   keys, every zero would come back as +0 and every NaN as one NaN (see
+   [order_keys]). Where the positions do not pack, recovering them costs n^2
+   operations, so the keys map back instead. An integer is its own key. *)
+let sort_graph ~packs ~dim ~descending x =
+  let keys, values = sort_keys ~descending x in
+  if TD.is_float (F.Tensor.dtype x) && packs_positions ~packs ~dim keys then
+    F.Op.gather x ~dim
+      (F.Dtype_ops.cast (argsort_graph ~packs ~dim ~descending x) TD.int32)
+  else values (fst (F.Op.sort ~dim ~descending keys))
 
 (* Whether [u]'s graph reaches an input buffer node. Constants lifted during the
    trace (captures, host arrays) are buffers too, but only input nodes are in
@@ -1855,7 +1870,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_sort { t_in; axis; descending } ->
         Some
           (fun k ->
-            ret k (dt t_in) (sort_graph ~dim:axis ~descending (go t_in)))
+            ret k (dt t_in)
+              (sort_graph ~packs:(packs st) ~dim:axis ~descending (go t_in)))
     | E_argsort { t_in; axis; descending } ->
         Some
           (fun k ->

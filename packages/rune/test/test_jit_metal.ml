@@ -541,7 +541,8 @@ let test_place_from_a_mapped_file () =
 
 (* Metal flushes float32 subnormals to zero when it compares floats. A compiled
    sort keeps them, in order, as eager does, and -0 ties with 0. Adding 0 on the
-   host clears the sign of zero, which the compiled values do not keep. *)
+   host clears the sign of zero: eager's value sort leaves the order of -0 and
+   +0 unspecified. *)
 let test_sort_keeps_subnormals () =
   let x =
     vec32
@@ -844,6 +845,8 @@ let tests =
           (check_bitcast_matches_eager ~devices:[ Rune.device "METAL" ]);
         test "gathers keep -0 on the GPU"
           (check_gathers_keep_negative_zero ~devices:[ Rune.device "METAL" ]);
+        slow "sorted values are the input's elements on the GPU"
+          (check_sort_values_are_elements ~devices:[ Rune.device "METAL" ]);
         slow "top_k over a row of 2^20 entries on the GPU"
           (check_top_k_long_row ~devices:[ Rune.device "METAL" ]);
         slow "top_k selects on the GPU what it selects eagerly"

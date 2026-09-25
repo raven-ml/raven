@@ -586,9 +586,66 @@ let sort_pieces out pieces x =
            [ false; true ])
        pieces)
 
+(* A compiled sort returns the input's elements at the positions eager's argsort
+   gives, bit for bit: both zeros, and NaNs of either sign with payloads, along
+   a short axis and one of 600. The values are compared as bits, widened to
+   int32, outside the compiled function, where a float8 bitcast is allowed. *)
+let check_sort_values_are_elements ?devices () =
+  let nan_of bits = Int64.float_of_bits bits in
+  let short =
+    [|
+      1.;
+      -0.;
+      Float.nan;
+      0.;
+      -2.;
+      nan_of 0xFFF8000000000123L;
+      -0.;
+      0.;
+      3.;
+      nan_of 0x7FF4000000000001L;
+    |]
+  in
+  let long =
+    Array.init 1200 (fun i ->
+        match i mod 11 with
+        | 1 -> -0.
+        | 2 -> 0.
+        | 3 -> nan_of 0xFFF8000000000123L
+        | 5 -> Float.nan
+        | _ -> float_of_int (i mod 7))
+  in
+  let check (type b c d) name (dtype : (float, b) Nx.dtype)
+      (bits : (c, d) Nx.dtype) =
+    let bits_of t = Nx.to_array (Nx.cast Nx.int32 (Nx.bitcast bits t)) in
+    List.iter
+      (fun (shape, row) ->
+        let x = Nx.cast dtype (Nx.create f64 shape row) in
+        let axis = Array.length shape - 1 in
+        List.iter
+          (fun descending ->
+            let msg =
+              Printf.sprintf "%s, %d along the axis, %s" name shape.(axis)
+                (if descending then "descending" else "ascending")
+            in
+            let indices = snd (Nx.sort ~descending ~axis x) in
+            let values x = fst (Nx.sort ~descending ~axis x) in
+            equal ~msg (array int32)
+              (bits_of (Nx.take_along_axis ~axis ~indices x))
+              (bits_of (Rune.jit' ?devices values x)))
+          [ false; true ])
+      [ ([| 10 |], short); ([| 2; 600 |], long) ]
+  in
+  check "float32" Nx.float32 Nx.int32;
+  check "float16" Nx.float16 Nx.int16;
+  check "bfloat16" Nx.bfloat16 Nx.int16;
+  check "float8_e4m3" Nx.float8_e4m3 Nx.uint8;
+  check "float8_e5m2" Nx.float8_e5m2 Nx.uint8
+
 (* Compiled [sort_pieces] of a [sort_input] against eager, segment by segment. A
-   zero compares without its sign: compiled sorted values give +0 where eager
-   may give -0, and eager's sorted values are not stable across signed zeros. *)
+   zero compares without its sign: eager's value sort leaves the order of -0 and
+   +0 unspecified ([check_sort_values_are_elements] checks the compiled
+   bits). *)
 let check_sort_pieces (type a b) ?infinities out pieces
     (dtype : (a, b) Nx.dtype) =
   let size shape = Array.fold_left ( * ) 1 shape in
