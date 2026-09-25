@@ -428,6 +428,17 @@ delete it rather than registering it.
   reference's either way. Consumer: rune's CPU device, which binds host memory
   it did not allocate (slices, mapped files) and passes `~aligned:false`.
 
+- **`Creation.shard` splits a replicated value where it lives**
+  (`frontend/creation.ml` `shard`). The reference raises on any multi-device
+  source. A value replicated on exactly the target devices is split without a
+  copy: each device keeps its own shard of its replica, as the graph
+  `Unshard(Shrink by the DEVICE range)`. That graph is the reshard from
+  replicated to split which a fully sharded gradient needs and which a
+  reduce-scatter lowering matches, and this is its one constructor. Any other
+  multi-device source still raises. Consumer: `test/unit/engine/test_collectives.ml`
+  (the fully sharded step's gradient and the reshard traffic test). Coverage:
+  `test/unit/frontend/test_run.ml` "a replicated tensor splits where it lives".
+
 - **Composed QR, Cholesky and triangular solves** (`frontend/linalg.ml`).
   Rune's `E_qr`, `E_cholesky` and `E_solve_triangular` handlers use these
   shape-unrolled graphs to compile linear algebra and its gradients. Coverage:

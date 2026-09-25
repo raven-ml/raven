@@ -44,11 +44,13 @@ val shard : ?axis:int -> devices:string list -> Tensor.t -> Tensor.t
     be provably divisible by the device count.
 
     A single device moves the whole tensor there. Device-less values are
-    unchanged. Use {!clone} with a single destination device to gather a
-    sharded result.
+    unchanged. If [t] is already replicated on [devices], no data moves: each
+    device keeps its own shard of its replica. Use {!clone} with a single
+    destination device to gather a sharded result.
 
-    @raise Invalid_argument if [devices] is empty, [t] already has multiple
-    devices, or the axis is invalid or cannot be divided evenly. *)
+    @raise Invalid_argument if [devices] is empty, [t] has multiple devices
+    and is not replicated on exactly [devices], or the axis is invalid or
+    cannot be divided evenly. *)
 
 val full :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> int list -> Tensor.scalar ->

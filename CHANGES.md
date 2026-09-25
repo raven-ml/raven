@@ -468,6 +468,10 @@ thread.
 
 ### Tolk (new)
 
+- `Creation.shard ~axis` accepts a tensor already replicated on the target
+  devices and splits it without copying: each device keeps its own shard of its
+  replica. Other multi-device sources still raise.
+
 - `Run.realize` and `Run.realize_many` accept sharded and replicated tensors.
   They ran the schedule, then raised while reading back a buffer that a
   multi-device tensor does not have.

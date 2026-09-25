@@ -1675,7 +1675,24 @@ let sharding_tests =
           invalid (fun () -> ignore (Creation.shard ~devices:[] input));
           invalid (fun () -> ignore (Creation.shard ~axis:1 ~devices input));
           invalid (fun () -> ignore (Creation.shard ~axis:0 ~devices input));
-          invalid (fun () -> ignore (Creation.shard ~devices (Creation.shard ~devices input))));
+          let replicated = Creation.shard ~devices input in
+          invalid (fun () ->
+              ignore (Creation.shard ~devices:(Run.device_name () :: devices) replicated));
+          let split = Creation.shard ~axis:0 ~devices (fa ~shape:[2; 2] [|1.; 2.; 3.; 4.|]) in
+          invalid (fun () -> ignore (Creation.shard ~axis:0 ~devices split)));
+      test "a replicated tensor splits where it lives" (fun () ->
+          let device = Run.device_name () in
+          let devices = [device; device] in
+          let replicated =
+            Creation.shard ~devices (fa ~shape:[2; 4] [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|]) in
+          is_true (Creation.shard ~devices replicated == replicated);
+          let split = Creation.shard ~axis:0 ~devices replicated in
+          equal (list int) [2; 4] (T.shape split);
+          equal (list int) [1; 4] (U.max_shard_shape (T.uop split));
+          let shrink = (U.src (T.uop split)).(0) in
+          is_true ~msg:"each device shrinks its own replica" ((U.src shrink).(0) == T.uop replicated);
+          check_floats [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|]
+            (Creation.clone ~device:(U.Single device) split));
     ]
 
 let () =
