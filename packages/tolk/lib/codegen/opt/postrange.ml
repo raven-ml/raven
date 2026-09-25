@@ -559,35 +559,26 @@ let apply_swap t r with_axis =
 
 (* Mutual recursion: apply_opt <-> apply_tc_opt <-> pad_tc_axes *)
 
-exception Tc_candidate_miss
-
-(* Pad each TC axis to a multiple of tc.dims.(i).  Returns false on
-   PADTO failure. *)
+(* Pad each TC axis to a multiple of tc.dims.(i). *)
 let rec pad_tc_axes t axes (tc : Tc.t) tc_opt =
-  (try
-     for i = 0 to 2 do
-       let a = axes.(i) in
-       let idx =
-         match List.find_index (fun r -> r == a) (rngs t) with
-         | Some j -> j
-    | None -> raise (Opt_error err_range_missing)
-       in
-       let dim =
-         let n, m, k = tc.dims in
-         [| n; m; k |].(i)
-       in
-       if range_max_extent a mod dim <> 0 then begin
-         if tc_opt < 2 then raise Tc_candidate_miss;
-         (try
-            ignore
-              (apply_opt ~append_opt:false t
-                 (U.Opt.Padto { axis = idx; amount = dim }))
-          with Opt_error _ -> raise Tc_candidate_miss);
-         axes.(i) <- List.nth (rngs t) idx
-       end
-     done;
-     true
-   with Tc_candidate_miss -> false)
+  for i = 0 to 2 do
+    let a = axes.(i) in
+    let idx =
+      match List.find_index (fun r -> r == a) (rngs t) with
+      | Some j -> j
+      | None -> raise (Opt_error err_range_missing)
+    in
+    let dim =
+      let n, m, k = tc.dims in
+      [| n; m; k |].(i)
+    in
+    if range_max_extent a mod dim <> 0 then begin
+      check (tc_opt >= 2) "tc padding requires tc_opt >= 2";
+      ignore (apply_opt ~append_opt:false t
+          (U.Opt.Padto { axis = idx; amount = dim }));
+      axes.(i) <- List.nth (rngs t) idx
+    end
+  done
 
 (* Apply tensor core optimisation.  Returns [Some axes] on success,
    [None] if no matching TC was found. *)
@@ -671,13 +662,18 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
                           let r = List.nth (rngs t) i in r == axes.(0) || r == axes.(1))
                           (reduce_axes t)))
                       "tensor core X/Y axes cannot be contracted";
-                    if not (pad_tc_axes t axes tc tc_opt) then None
-                    else begin
-                      let ne = apply_tc_shifts t axes tc in
-                      if use_tc <> 2 then build_wmma_node t tc axes ne;
-                      t.tensor_core <- Some tc;
-                      Some (Array.to_list axes)
-                    end
+                    let coordinates =
+                      try
+                        pad_tc_axes t axes tc tc_opt;
+                        Some (apply_tc_shifts t axes tc)
+                      with Opt_error _ -> None
+                    in
+                    match coordinates with
+                    | None -> None
+                    | Some ne ->
+                        if use_tc <> 2 then build_wmma_node t tc axes ne;
+                        t.tensor_core <- Some tc;
+                        Some (Array.to_list axes)
                 end
             in
             if Option.is_none result then restore t snap;

@@ -182,6 +182,21 @@ let matmul_widened_global_ast ?(acc = D.float32) ~dtype ~m ~n ~k () =
   in
   wrap_sink [ U.end_ ~value:st ~ranges:[ r_m; r_n ] ]
 
+let matmul_f16_symbolic_k_ast () =
+  let n = U.variable ~name:"tc_k" ~min_val:1 ~max_val:2 () in
+  let m = global_range ~axis:0 32 and col = global_range ~axis:1 32 in
+  let k = U.range ~size:U.O.(n * idx 8) ~axis:2 ~kind:Ak.Reduce () in
+  let a = U.param ~slot:0 ~dtype:D.float16 ~shape:(idx 512) () in
+  let b = U.param ~slot:1 ~dtype:D.float16 ~shape:(idx 512) () in
+  let out = U.param ~slot:2 ~dtype:D.float32 ~shape:(idx 1024) () in
+  let a = U.index ~ptr:a ~idxs:[ U.O.(m * idx 16 + k) ] () in
+  let b = U.index ~ptr:b ~idxs:[ U.O.(k * idx 32 + col) ] () in
+  let product = U.cast ~src:(U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b)
+      ~dtype:D.float32 in
+  let value = U.reduce ~op:Ops.Add ~src:product ~ranges:[ k ] in
+  let dst = U.index ~ptr:out ~idxs:[ U.O.(m * idx 32 + col) ] () in
+  wrap_sink [ U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ m; col ] ]
+
 (* Simple elementwise kernel (no reduce — for testing TC rejection) *)
 let elementwise_global_ast ~s0 ~s1 =
   let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
@@ -522,6 +537,32 @@ let () =
 
       group "apply_tc_opt triggering"
         [
+          test "TC retries smaller tiles after symbolic split rejection" (fun () ->
+            let ast = matmul_f16_symbolic_k_ast () in
+            let renderer = tc_renderer Tc.cuda_sm80 in
+            let selected = P.create ast renderer and explicit = P.create ast renderer in
+            let apply t tc_select = ignore (P.apply_opt t
+                (U.Opt.Tc { axis = 0; tc_select; tc_opt = 0; use_tc = 2 })) in
+            apply selected (-1);
+            let tc = Option.get (P.tensor_core selected) in
+            equal (triple int int int) (8, 16, 8) tc.dims;
+            apply explicit 3;
+            equal string (U.semantic_key (P.ast explicit))
+              (U.semantic_key (P.ast selected)));
+          test "TC split rejection restores state before another action" (fun () ->
+            let ast = matmul_f16_symbolic_k_ast () in
+            let renderer = tc_renderer Tc.cuda_sm80 in
+            let retried = P.create ast renderer and fresh = P.create ast renderer in
+            let apply t tc_select = ignore (P.apply_opt t
+                (U.Opt.Tc { axis = 0; tc_select; tc_opt = 0; use_tc = 2 })) in
+            raises_opt_error (fun () -> apply retried 0);
+            is_true ~msg:"failed tile preserves the original AST" (U.equal ast (P.ast retried));
+            equal (list string) [] (List.map U.Opt.to_string (P.applied_opts retried));
+            is_true ~msg:"failed tile does not select a tensor core" (P.tensor_core retried = None);
+            apply retried 3;
+            apply fresh 3;
+            equal string (U.semantic_key (P.ast fresh))
+              (U.semantic_key (P.ast retried)));
           (* use_tc=2 tests TC matching and shift_to without WMMA construction *)
           test "TC triggers on f32 8x8x8 matmul with metal tc (use_tc=2)" (fun () ->
             let ast = matmul_f32_global_ast ~m:8 ~n:8 ~k:8 in

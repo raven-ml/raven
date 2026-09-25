@@ -654,6 +654,9 @@ thread.
 
 ### Tolk (new)
 
+- Tensor-core selection now tries smaller valid tiles after a symbolic split
+  rejects an earlier candidate, restoring the optimizer before retrying.
+
 - Fix Metal compilation of four-lane `int8`, `uint8`, `uint16` and `uint64`
   accesses by using native vector type names.
 
