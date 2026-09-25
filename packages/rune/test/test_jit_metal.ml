@@ -863,6 +863,8 @@ let tests =
           test_scatter_duplicates_on_metal;
         test "bitcast reads on the GPU the bits eager reads"
           (check_bitcast_matches_eager ~devices:[ Rune.device "METAL" ]);
+        test "bitcast outputs retain their own dtype"
+          (check_bitcast_output_ownership ~devices:[ Rune.device "METAL" ]);
         test "gathers keep -0 on the GPU"
           (check_gathers_keep_negative_zero ~devices:[ Rune.device "METAL" ]);
         test "concatenation keeps every bit on the GPU"

@@ -4770,15 +4770,16 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   let rec moves u =
     match U.op u with
     | Tolk_uop.Ops.Buffer -> true
-    | op when Tolk_uop.Ops.Group.is_movement op ->
+    | op when Tolk_uop.Ops.Group.is_movement op || op = Tolk_uop.Ops.Bitcast ->
         Array.length (U.src u) > 0 && moves (U.src u).(0)
     | _ -> false
   in
   (* A buffer after the effects that wrote it is already the result: it is sunk
      as it stands, under no reshape, since a [contiguous] over it would copy it
-     out. Any other movement of a buffer (a shrink of an input, say) is copied
+     out. Any other movement or bitcast of a buffer is copied
      into an output of its own: the schedule would leave a [contiguous] of it a
-     view of that buffer, which no output node stands for. *)
+     view of that buffer, which no output node stands for. A bitcast also needs
+     its own output node so the input's storage dtype cannot replace its dtype. *)
   let out_conts =
     List.map2
       (fun (key, pk, _, tracked) u ->

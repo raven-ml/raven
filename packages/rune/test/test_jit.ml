@@ -4458,6 +4458,8 @@ let tests =
         test "zeros keep their sign" (check_signed_zeros ?devices:None);
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
+        test "bitcast outputs retain their own dtype"
+          (check_bitcast_output_ownership ~devices:[ Nx.Device.host ]);
         test "a compiled float8 bitcast is refused"
           test_float8_bitcast_is_refused;
         test "replay reads fresh input data" test_replay_reads_fresh_inputs;

@@ -723,6 +723,34 @@ let check_pow ?devices () =
    both zeros, infinities, quiet and signalling NaN with payloads, subnormals.
    The bits leave and enter the compiled function as stored, and an eager
    bitcast, which is a view, reads them. *)
+let check_bitcast_output_ownership ?devices () =
+  let check (type a b c d) name scalar (bits : (a, b) Nx.t)
+      (float : (c, d) Nx.dtype) =
+    let int = Nx.dtype bits in
+    let expected = Nx.to_array bits in
+    let to_float x = Nx.bitcast float x in
+    let to_bits x = Nx.bitcast int x in
+    equal ~msg:(name ^ " direct bitcast") (array scalar) expected
+      (Nx.to_array (to_bits (Rune.jit' ?devices to_float bits)));
+    equal ~msg:(name ^ " reverse bitcast") (array scalar) expected
+      (Nx.to_array (Rune.jit' ?devices to_bits (to_float bits)));
+    let compiled =
+      Rune.jit ?devices Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+        (fun x -> (x, to_float x))
+    in
+    let original, cast = compiled bits in
+    equal ~msg:(name ^ " tuple input") (array scalar) expected (Nx.to_array original);
+    equal ~msg:(name ^ " tuple bitcast") (array scalar) expected
+      (Nx.to_array (to_bits cast))
+  in
+  check "float32" int32
+    (Nx.create Nx.int32 [| 6 |]
+       [| 0l; Int32.min_int; 0x7F800000l; 0x7FC00123l; 1l; -1l |]) Nx.float32;
+  check "float16" int
+    (Nx.create Nx.uint16 [| 6 |] [| 0; 0x8000; 0x7C00; 0x7E23; 1; 0xFFFF |]) Nx.float16;
+  check "bfloat16" int
+    (Nx.create Nx.uint16 [| 6 |] [| 0; 0x8000; 0x7F80; 0x7FC3; 1; 0xFFFF |]) Nx.bfloat16
+
 let check_bitcast_matches_eager ?devices () =
   let check (type a b c d) name (bits : (a, b) Nx.t) (float : (c, d) Nx.dtype) =
     let int = Nx.dtype bits in

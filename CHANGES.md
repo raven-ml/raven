@@ -167,6 +167,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Fix `Rune.jit` outputs that directly bitcast an input, including a tuple
+  returning both: each result now retains its own storage dtype.
+
 - `jit ~beam:0` disables default autotuning under a nonzero `BEAM` context,
   and the persistent cache key uses that explicit choice.
 
