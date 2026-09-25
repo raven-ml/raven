@@ -644,14 +644,21 @@ let () =
                 Device.create_buffer ~size:256 ~dtype:Dtype.float32
                   (Device.get "CPU:1")
               in
-              let before = (usage "CPU:1").live in
+              (* Tolk's own count also holds buffers the harness does not see,
+                 such as the linked-symbol slots the inner device allocates, so
+                 the two are compared as changes. *)
+              let counts () =
+                ( (usage "CPU:1").live,
+                  Option.value ~default:0
+                    (Hashtbl.find_opt Storage.mem_used_per_device "CPU:1") )
+              in
+              let before = counts () in
               Device.Buffer.ensure_allocated buf;
-              equal int (before + 1024) (usage "CPU:1").live;
-              equal ~msg:"tolk's own count" int
-                (Hashtbl.find Storage.mem_used_per_device "CPU:1")
-                (usage "CPU:1").live;
+              let live, used = counts () in
+              equal int (fst before + 1024) live;
+              equal ~msg:"tolk's own count" int (snd before + 1024) used;
               Device.Buffer.deallocate buf;
-              equal int before (usage "CPU:1").live);
+              equal (pair int int) before (counts ()));
           test "a copy between devices records its bytes" (fun () ->
               let data = uniform ~seed:[| 256 |] 256 in
               let x =
