@@ -13,8 +13,20 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   boundary. Explicit release still reports errors. Coverage: `test_device`
   finalization during device calls and failed teardown, allocator tests, and
   Metal lifetime checks. This scope is not cross-domain or systhread locking;
-  concurrency and uncertain failed-owner reclamation remain open in TODO.
+  concurrency remains open in TODO.
   Reconsider if native ownership makes automatic teardown non-reentrant.
+
+- **Failed automatic teardown retains its owner until process exit.** An
+  allocator may release only part of a mapping or native object before raising;
+  retrying can double-free it, while dropping its owner can release backing still
+  reachable by the device. A later successful synchronization proves completion,
+  not which teardown effects happened. The allocator contract has no general
+  recovery or device-destruction acknowledgement, so uncertain owners remain
+  retained and the original exception is propagated. This trades storage after
+  a teardown failure for explicit lifetime safety, without another cleanup
+  protocol. Coverage: `test_device` reports the failure once, keeps the owner
+  alive through collection, and never retries. Reconsider when a concrete
+  backend recovery consumer can prove complete destruction of those resources.
 
 - **Metal publishes completion after checking command status and timestamps.**
   The target polls a GPU event and collects command buffers separately. Tolk's

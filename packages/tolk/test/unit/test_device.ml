@@ -690,10 +690,14 @@ let finalizers_wait_for_device_operations () =
    and retain the owner without retrying an uncertain teardown. *)
 let failed_finalizer_is_not_retried () =
   let frees = ref 0 in
+  let backing = Stdlib.Weak.create 1 in
   let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
   let allocator = Device.Allocator.Pack {host with
-      alloc = (fun _ _ -> 0n);
-      free = (fun _ _ _ -> incr frees; failwith "teardown failed")} in
+      alloc = (fun _ _ -> Nativeint.of_int (Sys.opaque_identity 1));
+      free = (fun raw _ _ ->
+        Stdlib.Weak.set backing 0 (Some raw);
+        incr frees;
+        failwith "teardown failed")} in
   let abandon () =
     let buf = Device.Buffer.create ~device:"FAILED_FINALIZER" ~size:1
         ~dtype:D.uint8 allocator in
@@ -705,7 +709,9 @@ let failed_finalizer_is_not_retried () =
           equal ~msg:"release waits for the operation" int 0 !frees));
   equal int 1 !frees;
   Storage.with_operation (fun () -> Gc.full_major (); Gc.full_major ());
-  equal ~msg:"uncertain teardown is not retried" int 1 !frees
+  equal ~msg:"uncertain teardown is not retried" int 1 !frees;
+  is_true ~msg:"uncertain native backing survives collection"
+    (Stdlib.Weak.check backing 0)
 
 let () = run __FILE__ [ copy_from_tests;
   test "failed buffer finalizers are reported without retrying teardown" failed_finalizer_is_not_retried;

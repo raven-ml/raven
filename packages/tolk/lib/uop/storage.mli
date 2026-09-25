@@ -185,8 +185,9 @@ val with_operation : (unit -> 'a) -> 'a
     around setup, dispatch and submission.
 
     If [f] raises, pending releases wait for a later successful operation.
-    A deferred release failure is propagated and its storage retained without
-    retrying teardown. Calls on different domains are not serialized. *)
+    A deferred release failure is propagated and its storage retained until
+    process exit, without retrying uncertain teardown. Calls on different
+    domains are not serialized. *)
 
 (** {1:allocation Allocation} *)
 

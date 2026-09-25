@@ -33,11 +33,6 @@ with their rationale and validation; commit count is not an acceptance metric.
   overlap. Such batches currently reject before any submission; copy-only
   batches retain the bounded overlap-safe fallback. Keep unsupported foreign
   kernel mappings explicit instead of falling through to a removed launcher.
-- Give uncertain failed teardown an explicit ownership policy: finalizer
-  failures currently retain closures process-wide with no reclamation after
-  confirmed device retirement. Justify that limit or attach retained owners
-  to the existing device retirement mechanism; do not retry uncertain unmaps.
-
 - Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
   `LRU=0`, forcing GC during allocation, mapped-buffer teardown, direct dispatch,
   compiled submission, signal reservation and kernarg reuse. Verify that waits
