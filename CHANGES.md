@@ -386,6 +386,9 @@ thread.
 
 ### Tolk (new)
 
+- Fix a compilation rewrite cycle in BF16 arithmetic, including half-width
+  random draws and Rune gradients, by preserving literal widths during late
+  float emulation.
 - IR verification rejects invalid COPY operands and non-storage STORE targets,
   while accepting opaque calls and cast-sized buffer slices at the proper
   stages. Integer range splitting preserves explicitly typed widths.

@@ -208,6 +208,16 @@ let final_constants_state_width_on_each_edge () =
   is_true ~msg:"final commitment is stable"
     (U.equal result (rewrite Weak.pm_cast_const result))
 
+let late_simplification_preserves_committed_literals () =
+  let x = U.variable ~name:"bf16" ~min_val:0 ~max_val:10 ~dtype:D.bfloat16 () in
+  let literal = U.const (C.float D.bfloat16 1.5) in
+  let sum = U.O.(x + literal) in
+  is_true ~msg:"late decomposition keeps the emulated operand width"
+    (U.equal sum (rewrite Symbolic.symbolic_simple sum));
+  let early = rewrite Symbolic.symbolic sum in
+  is_true ~msg:"full symbolic still exposes literals for folding"
+    (Array.exists (fun s -> U.op s = Ops.Const) (U.src early))
+
 let () =
   run "tolk.uop.weak"
     [
@@ -242,6 +252,7 @@ let () =
         ];
       group "literal edges"
         [ test "uncasting preserves both derived types" uncast_preserves_operand_and_result_types;
+          test "late simplification preserves committed literals" late_simplification_preserves_committed_literals;
           test "final constants state edge widths" final_constants_state_width_on_each_edge ];
       group "whole pass"
         [

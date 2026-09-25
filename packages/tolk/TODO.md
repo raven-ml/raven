@@ -48,6 +48,7 @@ with their rationale and validation; commit count is not an acceptance metric.
 - Reconcile the extra slice-copy kernels in `multi_allreduce_ring`.
 - Move Rune staged-scan, indexed-scatter, residency, uploads, memory planning,
   symbolic placeholders and external-buffer contracts onto the new protocol.
+  Fix Metal staged-scan's value-producing CALL.
   Preserve their correctness/lifetime regressions and revalidate the one-hot
   gather guard at the split threshold. Add custom-kernel sharding, source,
   reshape/flip/slice, invalid-store, assignment and gradient cases.
@@ -90,6 +91,8 @@ acceptance requirement; skipped tests are not execution evidence.
   renderer widths, view offsets, stage buffer sizes and range metadata. Port
   remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
+  Restore gated reduction/load collapse and multiple-of folding for symbolic
+  BUFFERs; migrate low-level fixtures to flat storage and typed literals.
 - Add deterministic beam coverage for reconsidering candidates rejected by
   the per-step compute filter. Measure search cost and selected kernels at
   the upstream stopping threshold. Port remaining heuristics, device-aware

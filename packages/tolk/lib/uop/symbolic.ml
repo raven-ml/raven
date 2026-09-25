@@ -731,7 +731,7 @@ let fold_mul_zero x =
 
 let symbolic_simple : Upat.Pattern_matcher.t =
   let open Upat in
-  Pattern_matcher.(pm_data_invalid ++ Weak.pm_uncast_const ++ make [
+  Pattern_matcher.(pm_data_invalid ++ make [
     (* x + 0 -> x *)
     rewrite1 (fun x -> O.(x + zero)) (fun x -> Some x);
     (let x = var "x" and c = cvar ~name:"c" () in
@@ -1776,7 +1776,10 @@ let symbolic : Upat.Pattern_matcher.t =
   let base =
     Pattern_matcher.(symbolic_simple ++ make phase_2_rules)
   in
-  Pattern_matcher.(base ++ Divandmod.div_and_mod_symbolic)
+  (* Late decomposition and float emulation commit literal widths. Only the
+     full symbolic pass may erase those casts; doing so in [symbolic_simple]
+     would undo the renderer's first step on every final-rewrite iteration. *)
+  Pattern_matcher.(base ++ Divandmod.div_and_mod_symbolic ++ Weak.pm_uncast_const)
 
 (* phase 3 (symbolic 2.0) *)
 
