@@ -17,8 +17,8 @@ let lr = 0.001
 
 (* Conv(1 -> 16, 3x3, same) -> ReLU -> MaxPool(2x2) -> Conv(16 -> 32, 3x3, same)
    -> ReLU -> MaxPool(2x2) -> Flatten -> Linear(32*7*7 -> 128) -> ReLU ->
-   Linear(128 -> 10), as a plain record of layers with hand-written traversals
-   (the Nx.Ptree.S contract plus checkpoint names). *)
+   Linear(128 -> 10), as a plain record of layers with a hand-written [walk],
+   the Nx.Ptree.S contract that also names checkpoint entries. *)
 
 module Cnn = struct
   type 'a t = {
@@ -28,45 +28,13 @@ module Cnn = struct
     l2 : 'a Linear.t;
   }
 
-  let map f { c1; c2; l1; l2 } =
-    let c1 = Conv.map f c1 in
-    let c2 = Conv.map f c2 in
-    let l1 = Linear.map f l1 in
-    let l2 = Linear.map f l2 in
+  let walk c { c1; c2; l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let c1 = field c "c1" Conv.walk c1 in
+    let c2 = field c "c2" Conv.walk c2 in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
     { c1; c2; l1; l2 }
-
-  let map2 f p q =
-    let c1 = Conv.map2 f p.c1 q.c1 in
-    let c2 = Conv.map2 f p.c2 q.c2 in
-    let l1 = Linear.map2 f p.l1 q.l1 in
-    let l2 = Linear.map2 f p.l2 q.l2 in
-    { c1; c2; l1; l2 }
-
-  let iter f { c1; c2; l1; l2 } =
-    Conv.iter f c1;
-    Conv.iter f c2;
-    Linear.iter f l1;
-    Linear.iter f l2
-
-  let fold f acc { c1; c2; l1; l2 } =
-    let acc = Conv.fold (fun p -> f ("c1." ^ p)) acc c1 in
-    let acc = Conv.fold (fun p -> f ("c2." ^ p)) acc c2 in
-    let acc = Linear.fold (fun p -> f ("l1." ^ p)) acc l1 in
-    Linear.fold (fun p -> f ("l2." ^ p)) acc l2
-
-  let fold2 f acc p q =
-    let acc = Conv.fold2 (fun s -> f ("c1." ^ s)) acc p.c1 q.c1 in
-    let acc = Conv.fold2 (fun s -> f ("c2." ^ s)) acc p.c2 q.c2 in
-    let acc = Linear.fold2 (fun s -> f ("l1." ^ s)) acc p.l1 q.l1 in
-    Linear.fold2 (fun s -> f ("l2." ^ s)) acc p.l2 q.l2
-
-  let names p =
-    {
-      c1 = Conv.map (( ^ ) "c1.") (Conv.names p.c1);
-      c2 = Conv.map (( ^ ) "c2.") (Conv.names p.c2);
-      l1 = Linear.map (( ^ ) "l1.") (Linear.names p.l1);
-      l2 = Linear.map (( ^ ) "l2.") (Linear.names p.l2);
-    }
 
   let apply p x =
     let x = Fn.relu (Conv.apply ~padding:`Same p.c1 x) in
@@ -77,7 +45,7 @@ module Cnn = struct
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let cnn = Kaun.ptree (module Cnn)
+let cnn = Nx.Ptree.instantiate (module Cnn)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -183,7 +151,7 @@ let () =
   let checkpoint_path =
     Filename.concat (Munin.Session.dir session) "model.safetensors"
   in
-  Checkpoint.save checkpoint_path (Checkpoint.of_params (module Cnn) !params);
+  Checkpoint.save checkpoint_path (Checkpoint.of_value cnn !params);
   ignore
     (Munin.Session.log_artifact session ~name:"mnist-cnn" ~kind:`Checkpoint
        ~path:checkpoint_path

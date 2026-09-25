@@ -7,7 +7,7 @@
 
     Trains the same CNN as [x-kaun-mnist], but the whole training step —
     forward, backward, and SGD update — compiles into one program with
-    [Rune.jit2] and runs on Metal (the default; pass [--device CPU] or
+    [Rune.jit] and runs on Metal (the default; pass [--device CPU] or
     [--device CUDA]). Parameters stay resident on the device between steps: only
     the scalar loss is read back each step. Metrics stream to munin; watch the
     run live with:
@@ -41,8 +41,8 @@ let speclist =
 
 (* Conv(1 -> 16, 3x3, same) -> ReLU -> MaxPool(2x2) -> Conv(16 -> 32, 3x3, same)
    -> ReLU -> MaxPool(2x2) -> Flatten -> Linear(32*7*7 -> 128) -> ReLU ->
-   Linear(128 -> 10), as a plain record of layers with hand-written traversals
-   (the Nx.Ptree.S contract plus checkpoint names). *)
+   Linear(128 -> 10), as a plain record of layers with a hand-written [walk],
+   the Nx.Ptree.S contract that also names checkpoint entries. *)
 
 module Cnn = struct
   type 'a t = {
@@ -52,45 +52,13 @@ module Cnn = struct
     l2 : 'a Linear.t;
   }
 
-  let map f { c1; c2; l1; l2 } =
-    let c1 = Conv.map f c1 in
-    let c2 = Conv.map f c2 in
-    let l1 = Linear.map f l1 in
-    let l2 = Linear.map f l2 in
+  let walk c { c1; c2; l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let c1 = field c "c1" Conv.walk c1 in
+    let c2 = field c "c2" Conv.walk c2 in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
     { c1; c2; l1; l2 }
-
-  let map2 f p q =
-    let c1 = Conv.map2 f p.c1 q.c1 in
-    let c2 = Conv.map2 f p.c2 q.c2 in
-    let l1 = Linear.map2 f p.l1 q.l1 in
-    let l2 = Linear.map2 f p.l2 q.l2 in
-    { c1; c2; l1; l2 }
-
-  let iter f { c1; c2; l1; l2 } =
-    Conv.iter f c1;
-    Conv.iter f c2;
-    Linear.iter f l1;
-    Linear.iter f l2
-
-  let fold f acc { c1; c2; l1; l2 } =
-    let acc = Conv.fold (fun p -> f ("c1." ^ p)) acc c1 in
-    let acc = Conv.fold (fun p -> f ("c2." ^ p)) acc c2 in
-    let acc = Linear.fold (fun p -> f ("l1." ^ p)) acc l1 in
-    Linear.fold (fun p -> f ("l2." ^ p)) acc l2
-
-  let fold2 f acc p q =
-    let acc = Conv.fold2 (fun s -> f ("c1." ^ s)) acc p.c1 q.c1 in
-    let acc = Conv.fold2 (fun s -> f ("c2." ^ s)) acc p.c2 q.c2 in
-    let acc = Linear.fold2 (fun s -> f ("l1." ^ s)) acc p.l1 q.l1 in
-    Linear.fold2 (fun s -> f ("l2." ^ s)) acc p.l2 q.l2
-
-  let names p =
-    {
-      c1 = Conv.map (( ^ ) "c1.") (Conv.names p.c1);
-      c2 = Conv.map (( ^ ) "c2.") (Conv.names p.c2);
-      l1 = Linear.map (( ^ ) "l1.") (Linear.names p.l1);
-      l2 = Linear.map (( ^ ) "l2.") (Linear.names p.l2);
-    }
 
   let apply p x =
     let x = Fn.relu (Conv.apply ~padding:`Same p.c1 x) in
@@ -101,54 +69,7 @@ module Cnn = struct
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let cnn = Kaun.ptree (module Cnn)
-
-(* What the jitted step reads: the batch, an input like the parameters it
-   consumes — values that change between calls must be inputs, never
-   captures. *)
-module Batch = struct
-  type t = { x : (float, Nx.float32_elt) Nx.t; y : (int32, Nx.int32_elt) Nx.t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { x = f t.x; y = f t.y }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { x = f a.x b.x; y = f a.y b.y }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    f t.x;
-    f t.y
-end
-
-(* What the jitted step consumes and returns: the parameters and the loss of the
-   last step. *)
-module State = struct
-  type t = { params : Nx.float32_t Cnn.t; loss : (float, Nx.float32_elt) Nx.t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { params = Cnn.map f t.params; loss = f t.loss }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { params = Cnn.map2 f a.params b.params; loss = f a.loss b.loss }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    Cnn.iter f t.params;
-    f t.loss
-end
-
-module Eval_in = struct
-  type t = { params : Nx.float32_t Cnn.t; x : (float, Nx.float32_elt) Nx.t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
-    { params = Cnn.map f t.params; x = f t.x }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    { params = Cnn.map2 f a.params b.params; x = f a.x b.x }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
-    Cnn.iter f t.params;
-    f t.x
-end
+let cnn = Nx.Ptree.instantiate (module Cnn)
 
 let () =
   Arg.parse speclist
@@ -168,12 +89,7 @@ let () =
       }
   in
   let state = Vega.sgd_init cnn !params in
-  let n_params =
-    let n = ref 0 in
-    let count : 'a 'b. ('a, 'b) Nx.t -> unit = fun t -> n := !n + Nx.numel t in
-    Cnn.iter count !params;
-    !n
-  in
+  let n_params = Nx.Ptree.fold cnn (fun _ t n -> n + Nx.numel t) !params 0 in
 
   (* Start a tracked run. *)
   let session =
@@ -213,35 +129,31 @@ let () =
   let n_train = (Nx.shape x_train).(0) in
   Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
-  (* The whole training step — forward, backward, SGD update — compiles into one
-     program. Parameters flow out and back in as unread device-resident tensors,
-     so training never round-trips them through the host. *)
-  let train_step { Batch.x; y } { State.params; loss = _ } =
+  (* The whole training step (forward, backward, SGD update) compiles into one
+     program, which reads the batch and consumes the parameters: it writes the
+     updated parameters over their storage and returns the loss beside them, so
+     training never round-trips them through the host. Values that change
+     between calls are arguments, never captures. *)
+  let train_step x y params =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let loss, grads = Rune.value_and_grad cnn loss_fn params in
-    let params, _ = Vega.sgd_step cnn ~lr:(Vega.lr !lr) state ~params ~grads in
-    { State.params; loss }
+    (loss, fst (Vega.sgd_step cnn ~lr:(Vega.lr !lr) state ~params ~grads))
   in
-  (* The step consumes the parameters: it releases the previous generation's
-     device buffers once each call completes — the loop reads only the fresh
-     loss, never the pre-step state, so the resident loop turns over about two
-     generations of buffers. *)
+  let devices = [ Rune.device !device ] in
   let step =
-    Rune.jit_step ~device:!device (module Batch) (module State) train_step
+    Rune.jit ~devices
+      Nx.Ptree.(tensor @-> tensor @-> consumes cnn @@ returns (pair tensor cnn))
+      train_step
   in
-  let last_loss = ref (Nx.zeros Nx.float32 [||]) in
   let forward =
-    Rune.jit ~device:!device
-      (module Eval_in)
-      (fun { Eval_in.params; x } -> Cnn.apply params x)
+    Rune.jit ~devices Nx.Ptree.(cnn @-> tensor @-> returns tensor) Cnn.apply
   in
-
   let evaluate params =
     let correct, total =
       Data.batches2 ~batch_size:500 (x_test, y_test)
       |> Seq.fold_left
            (fun (correct, total) (x, y) ->
-             let acc = Metric.accuracy (forward { Eval_in.params; x }) y in
+             let acc = Metric.accuracy (forward params x) y in
              let n = (Nx.shape x).(0) in
              (correct +. (acc *. float_of_int n), total + n))
            (0., 0)
@@ -263,14 +175,11 @@ let () =
         incr global_step;
         let s = !global_step in
         let t0 = Unix.gettimeofday () in
-        let out =
-          step { Batch.x; y } { State.params = !params; loss = !last_loss }
-        in
-        params := out.State.params;
-        last_loss := out.State.loss;
+        let loss, next = step x y !params in
+        params := next;
         (* Reading the loss is the step's only device-to-host transfer and its
            synchronization point, so [dt] covers the full step. *)
-        let loss = Nx.item [] out.State.loss in
+        let loss = Nx.item [] loss in
         let dt = Unix.gettimeofday () -. t0 in
         loss_sum := !loss_sum +. loss;
         incr loss_count;
@@ -310,7 +219,7 @@ let () =
   let checkpoint_path =
     Filename.concat (Munin.Session.dir session) "model.safetensors"
   in
-  Checkpoint.save checkpoint_path (Checkpoint.of_params (module Cnn) !params);
+  Checkpoint.save checkpoint_path (Checkpoint.of_value cnn !params);
   ignore
     (Munin.Session.log_artifact session ~name:"mnist-cnn-jit" ~kind:`Checkpoint
        ~path:checkpoint_path
