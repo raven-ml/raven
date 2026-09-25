@@ -80,6 +80,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- `sgd_step`, `adam_step` and `adamw_step` raise `Invalid_argument` on a
+  momentum or `b1`/`b2` outside `[0, 1)`, a non-positive `eps` or a negative
+  `weight_decay`, where `b1 = 1.` used to divide by zero and return NaNs.
 - Add `lion_step`, `radam_step`, `lamb_step`, `lars_step`, `adafactor_step`,
   `adan_step`, `rmsprop_step` and `adagrad_step`, each with its `*_init` and a
   state whose structure lets it ride a `Rune.jit`-compiled step as arguments.

@@ -381,6 +381,20 @@ let test_adamw_converges () =
   in
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
 
+let test_steps_validate () =
+  let params = vec [| 1.0 |] in
+  let lr = Vega.lr 0.1 and p = Vec.ptree in
+  let rejects name f =
+    raises_match ~msg:name Exn.invalid_arg (fun () ->
+        ignore (f ~params ~grads:params : Vec.t * _))
+  in
+  rejects "sgd momentum"
+    (Vega.sgd_step p ~lr ~momentum:1.0 (Vega.sgd_init p params));
+  rejects "adam b1" (Vega.adam_step p ~lr ~b1:1.0 (Vega.adam_init p params));
+  rejects "adam eps" (Vega.adam_step p ~lr ~eps:0.0 (Vega.adam_init p params));
+  rejects "adamw weight_decay"
+    (Vega.adamw_step p ~lr ~weight_decay:(-0.1) (Vega.adamw_init p params))
+
 (* A parameter structure may carry leaves that are not parameters. The canonical
    one is an RNG key, which has to sit in the structure to reach a compiled step
    as an input but is not something to optimize. Rune leaves its gradient slot
@@ -1207,6 +1221,8 @@ let tests =
         test "zero gradients decay weights geometrically"
           test_adamw_decays_weights;
         test "converges on a quadratic bowl" test_adamw_converges;
+        test "sgd, adam and adamw reject bad hyperparameters"
+          test_steps_validate;
       ];
     group "trajectories"
       [

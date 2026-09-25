@@ -972,6 +972,7 @@ let sgd_init p params =
 
 let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
   let fn = "Vega.sgd_step" in
+  validate_unit_interval fn "momentum" momentum;
   let step = Nx.add_s st.step 1l in
   if momentum = 0.0 then
     (* Plain gradient descent: the velocity is exactly the gradient. Skipping
@@ -1059,30 +1060,35 @@ let adam_update fn p ~b1 ~b2
   in
   (params, { mu = parts.(0); nu = parts.(1); step })
 
+let validate_adam fn ~b1 ~b2 ~eps =
+  validate_unit_interval fn "b1" b1;
+  validate_unit_interval fn "b2" b2;
+  validate_positive fn "eps" eps
+
 (* Adam's direction from the bias-corrected moments. *)
 let adam_direction ~eps mu_hat nu_hat =
   Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar (Nx.dtype mu_hat) eps))
 
 let adam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
+  let fn = "Vega.adam_step" in
+  validate_adam fn ~b1 ~b2 ~eps;
   let apply _ x mu_hat nu_hat =
     descend ~lr x (adam_direction ~eps mu_hat nu_hat)
   in
-  adam_update "Vega.adam_step" p ~b1 ~b2 ~apply st ~params ~grads
+  adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
 let adamw_init = adam_init
 
 let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
     ?(weight_decay = 0.01) st ~params ~grads =
+  let fn = "Vega.adamw_step" in
+  validate_adam fn ~b1 ~b2 ~eps;
+  validate_non_negative fn "weight_decay" weight_decay;
   let apply _ x mu_hat nu_hat =
     let d = adam_direction ~eps mu_hat nu_hat in
     descend ~lr x (Nx.add d (Nx.mul x (scalar (Nx.dtype x) weight_decay)))
   in
-  adam_update "Vega.adamw_step" p ~b1 ~b2 ~apply st ~params ~grads
-
-let validate_adam fn ~b1 ~b2 ~eps =
-  validate_unit_interval fn "b1" b1;
-  validate_unit_interval fn "b2" b2;
-  validate_positive fn "eps" eps
+  adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
 let radam_init = adam_init
 

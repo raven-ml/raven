@@ -287,9 +287,9 @@ val sgd_step :
     not read at all. The counter advances by one. The whole step is tensor
     arithmetic over [(params, st)], so it traces under {!Rune.val-jit}.
 
-    Raises [Invalid_argument] as {!section-structures} states if [grads], or
-    [st.velocity] when [momentum] is not [0.], does not have [params]' skeleton.
-*)
+    Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), or as
+    {!section-structures} states if [grads], or [st.velocity] when [momentum] is
+    not [0.], does not have [params]' skeleton. *)
 
 (** {1:lars LARS} *)
 
@@ -384,8 +384,9 @@ val adam_step :
     per leaf, at the leaf's dtype, in tensor arithmetic, so the whole step
     traces and the returned state feeds the next call.
 
-    Raises [Invalid_argument] as {!section-structures} states if [grads],
-    [st.mu] or [st.nu] does not have [params]' skeleton. *)
+    Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\) or [eps] is
+    not positive, or as {!section-structures} states if [grads], [st.mu] or
+    [st.nu] does not have [params]' skeleton. *)
 
 val adamw_init : 'p Nx.Ptree.t -> 'p -> 'p adam_state
 (** [adamw_init] is {!adam_init}: AdamW shares Adam's state. *)
@@ -412,7 +413,8 @@ val adamw_step :
     history. [weight_decay] defaults to [0.01]; with [weight_decay = 0.] the
     step is exactly {!adam_step}.
 
-    Raises [Invalid_argument] as {!adam_step} does. *)
+    Raises [Invalid_argument] if [weight_decay] is negative, or as {!adam_step}
+    does. *)
 
 (** {1:radam RAdam} *)
 
@@ -451,8 +453,7 @@ val radam_step :
     two forms is a tensor [where] on the counter, so the step traces under
     {!Rune.val-jit}.
 
-    Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\) or [eps] is
-    not positive, or as {!adam_step} does. *)
+    Raises [Invalid_argument] as {!adam_step} does. *)
 
 (** {1:lamb LAMB} *)
 
@@ -483,8 +484,7 @@ val lamb_step :
 
     Defaults are {!adam_step}'s, and [weight_decay] defaults to [0.01].
 
-    Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\), [eps] is
-    not positive or [weight_decay] is negative, or as {!adam_step} does. *)
+    Raises [Invalid_argument] as {!adamw_step} does. *)
 
 (** {1:rmsprop RMSprop} *)
 
