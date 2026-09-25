@@ -397,6 +397,40 @@ let test_moves_across_devices_raise () =
   raises_across ~what:"window" ~axis:0 ~shape:"[8,6]" (fun () ->
       Nx.sliding_window ~axis:0 ~window:2 s)
 
+let test_a_cut_inside_one_shard () =
+  let x = x86 () in
+  let s = over_four ~axis:0 x in
+  let uploaded = !uploads in
+  let row = Nx.slice [ Nx.I 5 ] s in
+  equal ~msg:"no upload" int uploaded !uploads;
+  equal ~msg:"on the shard's device" placement (Nx.Placement.device dev3)
+    (Nx.placement row);
+  is_true ~msg:"a view of the split storage" (cell_of row == cell_of s);
+  equal ~msg:"its elements" (array float_exact)
+    (Nx.to_array (Nx.slice [ Nx.I 5 ] x))
+    (Nx.to_array row);
+  elements_read := 0;
+  equal ~msg:"item" float_exact 32.0 (Nx.item [ 5; 2 ] s);
+  equal ~msg:"reads one element" int 1 !elements_read;
+  let window = Nx.slice [ Nx.R (4, 6); Nx.R (1, 4) ] s in
+  equal ~msg:"a whole shard's window" placement (Nx.Placement.device dev3)
+    (Nx.placement window);
+  equal ~msg:"its elements" (array float_exact)
+    (Nx.to_array (Nx.slice [ Nx.R (4, 6); Nx.R (1, 4) ] x))
+    (Nx.to_array window);
+  (* Nx.to_array reads 2k until contiguous copies on the device (M2). *)
+  elements_read := 0;
+  ignore (Nx_effect.to_host window);
+  equal ~msg:"a read of it reads its six elements" int 6 !elements_read;
+  let t =
+    Nx.transpose (Nx.place (Nx.Placement.sharded ~axis:1 [ dev1; dev2 ]) x)
+  in
+  equal ~msg:"a column of a value split by columns" (array float_exact)
+    (Nx.to_array (Nx.slice [ Nx.I 4 ] (Nx.transpose x)))
+    (Nx.to_array (Nx.slice [ Nx.I 4 ] t));
+  equal ~msg:"lives on the second device" placement (Nx.Placement.device dev2)
+    (Nx.placement (Nx.slice [ Nx.I 4 ] t))
+
 let test_moved_views_of_a_consumed_split () =
   let s = over_four ~axis:0 (x86 ()) in
   let views =
@@ -405,6 +439,7 @@ let test_moved_views_of_a_consumed_split () =
       Nx.reshape [| 48 |] s;
       Nx.slice [ Nx.A; Nx.R (1, 3) ] s;
       Nx.flip ~axes:[ 1 ] s;
+      Nx.slice [ Nx.I 5 ] s;
     ]
   in
   (cell_of s).state <- Consumed { path = "0" };
@@ -443,6 +478,7 @@ let tests =
         test "split values move as views" test_split_values_move_as_views;
         test "a value split on axis 1 moves as a view" test_split_axis_one;
         test "a move across devices raises" test_moves_across_devices_raise;
+        test "a cut inside one shard" test_a_cut_inside_one_shard;
         test "moved views of a consumed split value"
           test_moved_views_of_a_consumed_split;
         test "a consumed value is not placed" test_consumed_value_does_not_move;

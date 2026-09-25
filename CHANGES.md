@@ -1807,6 +1807,9 @@ thread.
 
 ### Nx
 
+- A slice of a split value inside one shard (`Nx.slice [ I i ]`, `Nx.item`) is
+  a view of that shard on its device: `Nx.item` reads one element where it read
+  the whole value, and `Rune.jit` refuses to consume it (pass `Nx.copy` of it).
 - Moving a value split over several devices (`Nx.transpose`, `reshape`,
   `slice` by indices and unit-step ranges, `flip`, `broadcast_to`,
   `sliding_window`) keeps it split and copies nothing, where it read the value

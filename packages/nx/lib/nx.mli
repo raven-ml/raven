@@ -268,7 +268,9 @@ val to_array : ('a, 'b) t -> 'a array
     [Invalid_argument]: any other reshape, a cut of the split axis across
     shards, a flip of it, or windows along it. Functions built from movements
     ({!roll}, {!flatten}, {!diagonal}, {!array_split}) raise the same way. Place
-    the value replicated or on one device first. *)
+    the value replicated or on one device first. A cut inside one shard (a row
+    of a value split by rows, {!item}) is a view of that shard on its device
+    alone, so {!item} reads one element. *)
 
 (** Devices. *)
 module Device : sig

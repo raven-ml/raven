@@ -760,10 +760,13 @@ let binary_op op eff host_op a b =
    A movement of a placed value is view arithmetic over the same storage, the
    same on every device. A split value moves shard by shard, so the movement
    must leave every element on its device: the split axis may move, stay whole,
-   or be reshaped with the whole axes before it, but it is never cut, flipped or
-   windowed. These are the rules tolk applies to a compiled program over split
-   values (schedule/multi.ml), so a value moved eagerly has the placement the
-   same movement has in a compiled program. *)
+   or be reshaped with the whole axes before it, but it is never flipped,
+   windowed or cut across shards. A cut inside one shard is a view of that
+   shard, on its device alone. These are the rules tolk applies to a compiled
+   program over split values (schedule/multi.ml), so a value moved eagerly has
+   the placement the same movement has in a compiled program, except for a cut
+   inside one shard: tolk copies a whole shard to every device and refuses a
+   part of one. *)
 
 type movement =
   | Reshape of int array
@@ -847,9 +850,6 @@ let split_axis ~axis ~n shape m =
   | Sliding_window { axis = a; _ } ->
       if a = axis then across "window" else (Split axis, m)
 
-(* A cut of the split axis that stays inside one shard. *)
-exception One_shard
-
 (* [split_view p v m] is the placement and per-shard view of a value at [p]
    whose per-shard view is [v], moved by [m]. *)
 let split_view p v m =
@@ -861,18 +861,18 @@ let split_view p v m =
       shape.(axis) <- shape.(axis) * n;
       match split_axis ~axis ~n shape m with
       | Split a, m -> (Sharded { axis = a; devices }, move_view v m)
-      | Shard _, _ -> raise One_shard)
+      | Shard j, m -> (Device (List.nth devices j), move_view v m))
 
 let movement_op eff host_op movement t_in arg =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (host_op t arg)
-    | Placed r -> (
-        match split_view r.r_placement r.r_view (movement arg) with
-        | r_placement, r_view ->
-            Placed { r with r_id = fresh_id (); r_placement; r_view }
-        | exception One_shard -> Host (host_op (read_host r) arg))
+    | Placed r ->
+        let r_placement, r_view =
+          split_view r.r_placement r.r_view (movement arg)
+        in
+        Placed { r with r_id = fresh_id (); r_placement; r_view }
     | Traced _ -> outside_trace ())
 
 (* Binary operations *)

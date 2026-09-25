@@ -374,12 +374,15 @@ let test_moved_split_output () =
         (fun t ->
           Nx.flip ~axes:[ 0 ] (Nx.transpose (Nx.slice [ Nx.A; Nx.R (2, 5) ] t))),
         split 1 );
+      ( "a row inside one shard",
+        (fun t -> Nx.slice [ Nx.I 5; Nx.R (1, 5) ] t),
+        Nx.Placement.device (List.nth devs4 2) );
     ]
 
-(* A value on one device of a split storage, which nx makes from a cut inside
-   one shard, views that device's shard: it reads that shard, enters a
-   replicated input by value rather than as the whole storage, and cannot be
-   consumed, which would release every shard. *)
+(* A cut inside one shard of a split value is a view of that shard on its
+   device: it reads that shard, enters a replicated input by value rather than
+   as the whole storage, and cannot be consumed, which would release every
+   shard. *)
 let test_one_shard_of_a_split_storage () =
   let g =
     Rune.pmap ~devices:devs4
@@ -388,16 +391,16 @@ let test_one_shard_of_a_split_storage () =
   in
   let x = m86 () in
   let y = g x in
-  let v =
-    match y with
-    | Nx_effect.Placed r ->
-        Nx_effect.placed
-          (Nx.Placement.device (List.nth devs4 1))
-          f32 r.r_view r.r_cell
-    | _ -> fail "expected a placed value"
-  in
+  let v = Nx.slice [ Nx.R (2, 4) ] y in
+  is_true ~msg:"on its shard's device"
+    (Nx.Placement.equal
+       (Nx.Placement.device (List.nth devs4 1))
+       (Nx.placement v));
   let rows = Nx.slice [ Nx.R (2, 4) ] (Nx.add x x) in
   check_arr ~eps:0.0 ~msg:"reads its device's shard" (to_arr rows) v;
+  equal ~msg:"item" float_exact
+    (Nx.item [ 5; 2 ] (Nx.add x x))
+    (Nx.item [ 5; 2 ] y);
   let h =
     Rune.pmap ~devices:devs4 ~in_axes:[ None ]
       Nx.Ptree.(tensor @-> returns tensor)
