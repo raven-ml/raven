@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI initialization disables PCIe link power saving before reading MMIO,
+  avoiding unstable register reads on links with retimers.
+
 - AMD PCI boots reserve the firmware-reported trusted memory region at a stable
   address across sessions. The boot layout now uses the target protocol stamp;
   GC 9.5 keeps resident fabric state after an unclean matching session.

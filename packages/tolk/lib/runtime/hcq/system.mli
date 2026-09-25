@@ -207,6 +207,12 @@ module Pci_device : sig
       followed by a read of the same range, forcing the write to reach
       the device before returning. *)
 
+  val disable_aspm : t -> unit
+  (** [disable_aspm t] clears L0s/L1 power-management bits in the PCIe link
+      control register, preserving other bits and flushing the write. Missing
+      PCIe capabilities and cyclic capability lists leave configuration intact.
+      Raises [Failure] if configuration access fails. *)
+
   val bar_info : t -> int -> int * int
   (** [bar_info t bar] is the bus address and byte size of the device's
       BAR number [bar]. Raises [Failure] if the device does not expose

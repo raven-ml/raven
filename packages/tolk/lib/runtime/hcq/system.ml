@@ -516,6 +516,18 @@ module Pci_device = struct
         Hashtbl.add t.bar_fds bar fd;
         fd
 
+  let disable_aspm t =
+    let rec walk seen cap =
+      if cap <> 0 && not (List.mem cap seen) then
+        if read_config t ~offset:cap ~size:1 = 0x10 then begin
+          let offset = cap + 0x10 in
+          let value = read_config t ~offset ~size:2 land lnot 3 in
+          write_config_flush t ~offset ~value ~size:2
+        end
+        else walk (cap :: seen) (read_config t ~offset:(cap + 1) ~size:1 land 0xfc)
+    in
+    walk [] (read_config t ~offset:0x34 ~size:1 land 0xfc)
+
   let bar_info t bar =
     match Hashtbl.find_opt t.bar_infos bar with
     | Some info -> info

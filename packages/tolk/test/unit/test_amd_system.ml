@@ -382,6 +382,35 @@ let () =
                     ~size:2;
                   equal int 0x1234 (Pci_device.read_config t ~offset:12 ~size:2);
                   equal int 0x0F (Pci_device.read_config t ~offset:15 ~size:1)));
+          test "ASPM disable walks capabilities and preserves other link bits" (fun () ->
+              with_fake_root (fun root ->
+                  let bus = "0000:09:01.0" in
+                  add_full_dev root bus;
+                  let config = Bytes.make 256 '\000' in
+                  Bytes.set_uint8 config 0x34 0x41;
+                  Bytes.set_uint8 config 0x40 5;
+                  Bytes.set_uint8 config 0x41 0x63;
+                  Bytes.set_uint8 config 0x60 0x10;
+                  Bytes.set_uint16_le config 0x70 0xa5ff;
+                  write_file (dev_dir root bus // "config") (Bytes.to_string config);
+                  Pci_device.disable_aspm (create_dev root bus);
+                  Bytes.set_uint16_le config 0x70 0xa5fc;
+                  equal string (Bytes.to_string config)
+                    (read_file (dev_dir root bus // "config"))));
+          test "missing and cyclic PCIe capabilities leave config unchanged" (fun () ->
+              List.iter (fun mode -> with_fake_root (fun root ->
+                  let bus = "0000:09:02.0" in
+                  add_full_dev root bus;
+                  let config = Bytes.make 256 (if mode = 2 then '\xff' else '\000') in
+                  if mode = 1 then begin
+                    Bytes.set_uint8 config 0x34 0x40;
+                    Bytes.set_uint8 config 0x41 0x60;
+                    Bytes.set_uint8 config 0x61 0x40
+                  end;
+                  write_file (dev_dir root bus // "config") (Bytes.to_string config);
+                  Pci_device.disable_aspm (create_dev root bus);
+                  equal string (Bytes.to_string config)
+                    (read_file (dev_dir root bus // "config")))) [0; 1; 2]);
           test "bar_info parses resource lines" (fun () ->
               with_fake_root (fun root ->
                   add_full_dev root "0000:0a:00.0";

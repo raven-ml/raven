@@ -948,6 +948,7 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
   }
 
 let create pci_dev =
+  System.Pci_device.disable_aspm pci_dev;
   let vram = System.Pci_device.map_bar pci_dev 0 in
   let doorbell64 = System.Pci_device.map_bar pci_dev 2 in
   let mmio = System.Pci_device.map_bar pci_dev 5 in
