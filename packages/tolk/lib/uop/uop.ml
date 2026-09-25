@@ -60,7 +60,6 @@ type param_arg = {
   multiple_of : int option;
   name : string option;
   addrspace : Dtype.addr_space;
-  axis : int option;
   device : device option;
   volatile : bool;
   bind_on_realize : bool;
@@ -385,8 +384,8 @@ let intern_node (node : node) =
 let side_metadata : metadata list Weak_tbl.t = Weak_tbl.create 64
 
 let default_param_arg ~dtype ?size ?image ?vmin_vmax ?multiple_of ?name
-    ?(addrspace = Dtype.Global) ?axis ?device ?(volatile = false) slot =
-  { slot; dtype; size; image; vmin_vmax; multiple_of; name; addrspace; axis;
+    ?(addrspace = Dtype.Global) ?device ?(volatile = false) slot =
+  { slot; dtype; size; image; vmin_vmax; multiple_of; name; addrspace;
     device; volatile; bind_on_realize = false; buffer = None; allocation = None }
 
 let sanitize_function_name name =
@@ -1051,8 +1050,27 @@ let allreduce ~src ~device ~op =
   mk ~op:Ops.Allreduce ~dtype:(dtype src)
     ~src:[| src |] ~arg:(Arg.Op_device (op, device))
 
-let multi ~src ~axis =
-  mk ~op:Ops.Unshard ~dtype:(dtype src) ~src:[| src |] ~arg:(Arg.Int axis)
+let unshard ?ranges ~src ~axes () =
+  let ranges = match ranges with
+    | Some ranges -> ranges
+    | None -> (match device_of src with
+        | Some (Multi devices) when devices <> [] ->
+            [range ~size:(const_int (List.length devices)) ~axis:(-1)
+               ~kind:Axis_type.Device ()]
+        | _ -> invalid_arg "Uop.unshard: explicit ranges required without devices") in
+  if axes = [] || List.length axes <> List.length ranges
+     || List.length (List.sort_uniq Int.compare axes) <> List.length axes
+     || List.exists (fun axis -> axis < 0) axes then
+    invalid_arg "Uop.unshard: expected distinct axes and one range per axis";
+  let sharding = List.sort (fun (a, _) (b, _) -> Int.compare a b) (List.combine axes ranges) in
+  mk ~op:Ops.Unshard ~dtype:(dtype src)
+    ~src:(Array.of_list (src :: List.map snd sharding))
+    ~arg:(Arg.Ints (List.map fst sharding))
+
+let sharding u =
+  match op u, arg u with
+  | Ops.Unshard, Arg.Ints axes -> List.combine axes (Array.to_list (src u) |> List.tl)
+  | _ -> []
 
 let mstack srcs =
   let dt = match srcs with
@@ -1421,6 +1439,7 @@ and ended_ranges u =
   | Ops.End ->
       Array.to_list children |> List.tl
       |> List.filter (fun r -> op r = Ops.Range)
+  | Ops.Unshard -> Array.to_list children |> List.tl
   | Ops.Barrier -> Array.to_list children |> List.concat_map ended_ranges
   | Ops.After ->
       let ret = ref [] in
@@ -2265,15 +2284,11 @@ and compute_shape_opt u =
            Some ps
        | ps, _ -> ps)
   | Ops.Unshard ->
-      (match first_shape (), Arg.as_int (arg u), device_of u with
-       | Some ps, Some axis, Some (Multi devs) ->
-           Some
-             (List.mapi
-                (fun i d ->
-                  if i = axis then dim_mul d (const_int (List.length devs))
-                  else d)
-                ps)
-       | ps, _, _ -> ps)
+      Option.map (List.mapi (fun axis dim ->
+          match List.assoc_opt axis (sharding u) with
+          | None -> dim
+          | Some rng -> dim_mul dim (const_int (Bound.to_int (vmax rng) + 1))))
+        (first_shape ())
   | op when Ops.Group.is_unary op || op = Ops.Cast || op = Ops.Load ->
       first_shape ()
   | op when Ops.Group.is_broadcastable op ->
@@ -2311,22 +2326,45 @@ let view_as node dims =
       else shrink ~src:node ~offset:(shape_arg (List.map (fun _ -> const_int 0) dims))
           ~size:(shape_arg dims)
 
+let simplify_ref : (t -> t) ref = ref (fun u -> u)
+let simplify u = !simplify_ref u
+
+let sharded_dims dims axis device =
+  match axis, device with
+  | None, _ -> dims
+  | Some axis, Some (Multi devices) when devices <> [] && axis >= 0 && axis < List.length dims ->
+      List.mapi (fun i dim ->
+          if i <> axis then dim else
+          let count = const_int (List.length devices) in
+          if not (match const_int_value dim with
+              | Some n -> n mod List.length devices = 0
+              | None -> equal (simplify (alu_binary ~op:Ops.Floormod ~lhs:dim ~rhs:count)) (const_int 0)) then
+            invalid_arg "Uop: shape is not divisible by the shard count";
+          simplify (dim_div dim count)) dims
+  | _ -> invalid_arg "Uop: sharding requires an axis within the shape and multiple devices"
+
+let sharded_view node dims axis =
+  let view = view_as node dims in
+  match axis with None -> view | Some axis -> unshard ~src:view ~axes:[axis] ()
+
 let param ~slot ~dtype ?shape:shape_arg ?image ?device ?vmin_vmax ?multiple_of ?name
     ?addrspace ?axis ?volatile () =
   let dims = match shape_arg with None -> [] | Some shape when op shape = Ops.Noop -> [] | Some shape -> as_shape shape in
+  let dims = sharded_dims dims axis device in
   let size = match image with
     | None -> storage_size dims
     | Some (h, w) -> storage_size [const_int h; const_int w; const_int 4]
   in
   let p = default_param_arg ~dtype ?size ?image ?vmin_vmax ?multiple_of ?name
-      ?addrspace ?axis ?device ?volatile slot in
+      ?addrspace ?device ?volatile slot in
   let node = mk ~op:Ops.Param ~dtype ~src:[||] ~arg:(Arg.Param_arg p) in
-  if Option.is_some image then node else view_as node dims
+  if Option.is_some image then node else sharded_view node dims axis
 
 let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatile () =
   let dims = match shape_arg with None -> [] | Some shape when op shape = Ops.Noop -> [] | Some shape -> as_shape shape in
+  let dims = sharded_dims dims axis device in
   let size = storage_size dims in
-  let p = default_param_arg ~dtype ?size ?name ?addrspace ?axis ?device ?volatile slot in
+  let p = default_param_arg ~dtype ?size ?name ?addrspace ?device ?volatile slot in
   let devices = match p.addrspace, device with
     | Dtype.Global, Some (Single device) -> Some [device]
     | Dtype.Global, Some (Multi devices) -> Some devices
@@ -2336,7 +2374,7 @@ let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatil
       if devices = [] then invalid_arg "Uop.buffer: empty device placement";
       List.map (fun device -> Storage.on_device ~device ~size:(Option.value size ~default:1) ~dtype ()) devices)
       devices in
-  view_as (mk ~op:Ops.Buffer ~dtype ~src:[||] ~arg:(Arg.Param_arg { p with buffer })) dims
+  sharded_view (mk ~op:Ops.Buffer ~dtype ~src:[||] ~arg:(Arg.Param_arg { p with buffer })) dims axis
 
 let alloc ~slot ~dtype ?shape:shape_arg ?device ?(bind_on_realize = false) () =
   if Dtype.is_weak dtype then invalid_arg "Uop.alloc: dtype must be concrete";
@@ -2370,11 +2408,10 @@ and compute_axis u =
   let srcs = src u in
   match op u with
   | Ops.Copy -> None
-  | Ops.Unshard -> Arg.as_int (arg u)
-  | Ops.Param ->
-      (match Arg.as_param_arg (arg u) with
-       | Some param -> param.axis
-       | None -> None)
+  | Ops.Unshard -> (match sharding u with
+      | [axis, _] -> Some axis
+      | _ -> invalid_arg "Uop.axis: multiple sharded axes; use sharding")
+  | Ops.Param -> None
   | op when Ops.Group.is_alu op ->
       let axes =
         Array.fold_left
@@ -2458,6 +2495,7 @@ and compute_axis u =
   | _ -> axis srcs.(0)
 
 let shard_shape u =
+  if op u = Ops.Unshard then shape (src u).(0) else
   match device_of u, axis u with
   | Some (Multi devs), Some ax ->
       List.mapi
@@ -2488,7 +2526,7 @@ let param_like u ~slot =
         | Some p -> p.volatile | None -> false in
       let p = param ~slot ~dtype:(dtype u) ~shape:(shape_arg dims) ?device ~volatile () in
       match device, axis u with
-      | Some (Multi _), Some axis -> multi ~src:p ~axis
+      | Some (Multi _), Some axis -> unshard ~src:p ~axes:[axis] ()
       | _ -> p
 
 let store_call ~dst ~src =
@@ -2527,7 +2565,7 @@ let call_with_outputs ?output_pos ~values ~args ~info () =
           ~shape:(const_int size) ?device () in
       let view = if dims = [] then reshape ~src:storage ~shape:(shape_arg []) else view_as storage dims in
       match device, axis value with
-      | Some (Multi _), Some axis -> multi ~src:view ~axis
+      | Some (Multi _), Some axis -> unshard ~src:view ~axes:[axis] ()
       | _ -> view) values in
   List.iter2 (fun slot output -> actuals.(slot) <- Some output) positions outputs;
   let body = sink (List.map2 (fun value slot ->
@@ -2589,7 +2627,8 @@ let bounds u =
         if Array.length srcs = 0 then u else srcs.(0)
       in
       let shard = List.nth (shape source) ax in
-      List.init (List.length devs) (fun i ->
+      let count = if op u = Ops.Unshard then Bound.to_int (vmax (src u).(1)) + 1 else List.length devs in
+      List.init count (fun i ->
           let lo = dim_mul shard (const_int i) in
           let hi = dim_mul shard (const_int (i + 1)) in
           lo, hi)
@@ -3052,9 +3091,6 @@ let gcd = function
         let common = common_product_factors term_factors in
         let g = List.fold_left gcd_int 0 factors in
         product_like (List.hd xs) g common
-
-let simplify_ref : (t -> t) ref = ref (fun u -> u)
-let simplify u = !simplify_ref u
 
 (* Symbolic variables of [u], as (node, name, vmin, vmax). *)
 let symbolic_vars u =
@@ -3628,7 +3664,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 27
+let export_version = 28
 
 type serialized_node = {
   serialized_op : Ops.t;

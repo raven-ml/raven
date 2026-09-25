@@ -106,7 +106,7 @@ let buffer_rejects_alu_addrspace () =
         (Uop.Arg.Param_arg
            { slot = 0; dtype = Dtype.int32; size = None; image = None; vmin_vmax = None;
              multiple_of = None; name = None; addrspace = Dtype.Alu;
-             axis = None; device = None; volatile = false; bind_on_realize = false; buffer = None; allocation = None })
+             device = None; volatile = false; bind_on_realize = false; buffer = None; allocation = None })
       ()
   in
   is_true ~msg:"Buffer with ALU addrspace rejected"
@@ -485,7 +485,7 @@ let multi_device_selection_layouts () =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape ~axis:0
       ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
   in
-  let multi = Uop.multi ~src:sharded ~axis:0 in
+  let multi = Uop.unshard ~src:sharded ~axes:[0] () in
   let selected = Uop.mselect ~src:multi ~index:1 in
   is_true ~msg:"Mselect accepts tuple-device source"
     (accepts Spec.tensor_spec selected);
@@ -536,7 +536,7 @@ let multi_device_stack_layouts () =
     Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:(Uop.stack [ Uop.const_int 4 ])
       ~axis:0 ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
   in
-  let bad_multi = Uop.mstack [ Uop.multi ~src:multi_src ~axis:0 ] in
+  let bad_multi = Uop.mstack [ Uop.unshard ~src:multi_src ~axes:[0] () ] in
   is_true ~msg:"Mstack rejects already-multi sources"
     (rejected Spec.tensor_spec bad_multi);
   is_true ~msg:"Mstack result dtype must match sources"
@@ -548,19 +548,19 @@ let multi_device_multi_layouts () =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape ~axis:1
       ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
   in
-  let ok = Uop.multi ~src:sharded ~axis:1 in
+  let ok = Uop.unshard ~src:sharded ~axes:[1] () in
   is_true ~msg:"Multi accepts in-range sharding axis"
     (accepts Spec.tensor_spec ok);
-  let negative = Uop.multi ~src:sharded ~axis:(-1) in
+  let negative = Uop.replace ok ~arg:(Uop.Arg.Ints [-1]) () in
   is_true ~msg:"Multi rejects negative sharding axis"
     (rejected Spec.tensor_spec negative);
-  let out_of_range = Uop.multi ~src:sharded ~axis:2 in
+  let out_of_range = Uop.unshard ~src:sharded ~axes:[2] () in
   is_true ~msg:"Multi rejects out-of-range sharding axis"
     (rejected Spec.tensor_spec out_of_range);
   is_true ~msg:"Multi result dtype must match source"
     (Dtype.equal (Uop.dtype ok) Dtype.int32);
   let unplaced = Uop.buffer ~slot:1 ~dtype:Dtype.int32 ~shape () in
-  let no_device = Uop.multi ~src:unplaced ~axis:0 in
+  let no_device = Uop.replace ok ~src:[|unplaced|] () in
   is_true ~msg:"Multi rejects sources without multi-device placement"
     (rejected Spec.tensor_spec no_device);
   let empty_group =
@@ -569,7 +569,7 @@ let multi_device_multi_layouts () =
     Uop.replace base
       ~arg:(Uop.Arg.Param_arg { param with device = Some (Uop.Multi []) }) ()
   in
-  let empty_multi = Uop.multi ~src:empty_group ~axis:0 in
+  let empty_multi = Uop.replace ok ~src:[|empty_group|] () in
   is_true ~msg:"Multi rejects empty multi-device placement"
     (rejected Spec.tensor_spec empty_multi)
 

@@ -50,16 +50,6 @@ let valid_multi_device_payload = function
   | Uop.Multi devs -> devs <> []
   | Uop.Single _ | Uop.Index _ -> false
 
-let valid_sharding_axis shape axis device =
-  match axis with
-  | None -> true
-  | Some axis ->
-      axis >= 0
-      &&
-      match device with
-      | Some (Uop.Multi devs) when devs <> [] ->
-          axis < List.length (Uop.as_shape shape)
-      | _ -> false
 
 let valid_shape_child u =
   is_int u
@@ -82,7 +72,6 @@ let valid_global_buffer u =
       && buffer.addrspace = Dtype.Global
       && option_for_all valid_device_payload buffer.device
       && valid_shape_child shape
-      && valid_sharding_axis shape buffer.axis buffer.device
       && is_weakint shape
 
 let is_const_invalid u =
@@ -209,16 +198,13 @@ let mstack_ok u =
   all_single || all_same_none
 
 let multi_ok u =
-  match Uop.Arg.as_int (Uop.arg u), Uop.src u with
-  | Some axis, [| src |] ->
-      axis >= 0
-      && same_dtype u src
-      &&
-      (match Uop.device_of u with
-       | Some (Uop.Multi devs) when devs <> [] ->
-           (try axis < List.length (Uop.shape src) with
-            | Invalid_argument _ -> false)
-       | _ -> false)
+  match Uop.arg u, Uop.src u with
+  | Uop.Arg.Ints axes, srcs when Array.length srcs = List.length axes + 1 ->
+      axes <> [] && axes = List.sort_uniq Int.compare axes
+      && same_dtype u srcs.(0)
+      && (try List.for_all (fun axis -> axis >= 0 && axis < List.length (Uop.shape srcs.(0))) axes
+          with Invalid_argument _ -> false)
+      && tail_srcs (fun rng -> Dtype.is_weak (Uop.dtype rng)) u
   | _ -> false
 
 (* Shared spec — rules valid at every stage. *)

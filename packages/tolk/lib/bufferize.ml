@@ -60,7 +60,7 @@ let run sink =
                    let buffer = U.reshape ~src:buffer ~shape:(dims_node (List.map U.const_int dims)) in
                    let buffer = shrink_to buffer (U.shard_shape src) in
                    let buffer = match U.device_of src, U.axis src with
-                     | Some (U.Multi _), Some axis -> U.multi ~src:buffer ~axis
+                     | Some (U.Multi _), Some axis -> U.unshard ~src:buffer ~axes:[axis] ()
                      | _ -> buffer in
                    U.after ~src:buffer ~deps:[U.store ~dst:buffer ~value:src ()])
         | _ -> u in

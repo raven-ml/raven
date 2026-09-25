@@ -39,7 +39,7 @@ let shard_axis0 src ~rows ~cols =
       ~offset:(U.stack [ off; U.const_int 0 ])
       ~size:(U.stack [ U.const_int sz; U.const_int cols ])
   in
-  U.multi ~src:sharded ~axis:0
+  U.unshard ~src:sharded ~axes:[0] ()
 
 let build () =
   let a = shard_axis0 (Helpers.mk_param ~idx:0 [ 16; 8 ]) ~rows:16 ~cols:8 in

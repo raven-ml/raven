@@ -648,10 +648,10 @@ let property_helpers_parity () =
     Uop.param ~slot:0 ~dtype:Dtype.int32 ~shape:shape2
       ~axis:0 ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
   in
-  is_true ~msg:"Param axis comes from ParamArg" (Uop.axis param = Some 0);
-  equal (list int) ~msg:"Param shape decodes shape child"
+  is_true ~msg:"Sharded parameter carries an UNSHARD axis" (Uop.axis param = Some 0);
+  equal (list int) ~msg:"Sharded parameter retains its logical shape"
     [ 2; 4 ] (shape_ints param);
-  let multi = Uop.multi ~src:param ~axis:0 in
+  let multi = Uop.unshard ~src:param ~axes:[0] () in
   is_true ~msg:"Multi axis comes from arg" (Uop.axis multi = Some 0);
   equal (list int) ~msg:"Multi shape expands sharded axis"
     [ 4; 4 ] (shape_ints multi);

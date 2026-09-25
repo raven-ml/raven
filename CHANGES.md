@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- Sharded parameters now allocate only their local storage. `Uop.unshard`
+  carries sorted axes and explicit ranges, preserving symbolic sizes and
+  supporting per-thread fragment indexing and multi-axis device gathering.
+
 - AMD uses AQL queues by default on multi-XCC devices, matching tinygrad. Direct
   launches and compiled submissions share HSA dispatch packets, queue-owned
   scratch configuration and the mapped producer counter.

@@ -778,19 +778,7 @@ let earliest_rewrites =
 
 let prepare_rangeify root =
   let root = forward_call_outputs root in
-  (* Sharding rewrites see the graph's own shapes with every symbolic
-     dimension maxed to its bound, so a shard sized by a variable still
-     reports the size it is allocated at. *)
-  let multi_shapes n =
-    match U.max_shape n with
-    | s -> Some s
-    | exception Invalid_argument _ -> None
-  in
-  let root =
-    U.graph_rewrite ~name:"multi_pm"
-      (Multi.multi_pm ~shapes:multi_shapes ~devices:U.device_of)
-      root
-  in
+  let root = U.graph_rewrite ~name:"multi_pm" Multi.multi_pm root in
   let root = U.graph_rewrite ~name:"inline calls"
       (U.first_match [movement_ops; inline_call; returned_after; disk_copy]) root in
   let root =

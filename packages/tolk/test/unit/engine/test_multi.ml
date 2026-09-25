@@ -89,7 +89,7 @@ let shard_shrink shape ndev src axis =
 
 let sharded x shape devices axis =
   let copied = U.copy ~src:x ~device:(U.Multi devices) () in
-  U.multi ~src:(shard_shrink shape (List.length devices) copied axis) ~axis
+  U.unshard ~src:(shard_shrink shape (List.length devices) copied axis) ~axes:[axis] ()
 
 (* Schedule and execute a sink, as the frontend realize does. *)
 
@@ -138,9 +138,116 @@ let run_sharded ?(host = "CPU") ~devices ~shape ~axis data op =
 
 let iota n = Array.init n (fun i -> float_of_int (i + 1))
 
+let local_range size axis = U.range ~size:(int_ size) ~axis ~kind:Axis_type.Local ()
+let alu op lhs rhs = Symbolic.simplify (U.alu_binary ~op ~lhs ~rhs)
+let rewrite = U.graph_rewrite Tolk.Multi.multi_pm
+let fragment shape = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
+    ~shape:(shape_node shape) ~addrspace:Dtype.Reg ()
+
 let () =
   run "Multi_device"
     [
+      group "Ownership"
+        [
+          test "flat sharded params allocate only their local maximum" (fun () ->
+              let n = U.variable ~name:"sharded_n" ~min_val:1 ~max_val:5 () in
+              let full = alu Ops.Mul n (int_ 2) in
+              let p = U.param ~slot:0 ~dtype:Dtype.float32
+                  ~shape:(emit [full; int_ 4]) ~axis:0 ~device:(U.Multi devs2) () in
+              equal (list int) [10; 4] (U.max_shape p);
+              equal (list int) [5; 4] (U.max_shard_shape p);
+              let storage = U.storage_base p in
+              equal int 0 (Array.length (U.src storage));
+              let arg = Option.get (U.Arg.as_param_arg (U.arg storage)) in
+              equal (option int) (Some 20) arg.size;
+              let lowered = rewrite (U.alu_binary ~op:Ops.Add ~lhs:p ~rhs:p) in
+              is_true (U.op lowered = Ops.Unshard);
+              is_true (U.equal (Symbolic.simplify (List.hd (U.shape lowered))) full));
+          test "axes sort with ranges and close their scope" (fun () ->
+              let a = local_range 2 0 and b = local_range 3 1 in
+              let value = U.expand ~src:(U.cast ~src:(alu Ops.Add a b) ~dtype:Dtype.float32)
+                  ~dims:(shape_node [2; 4]) in
+              let u = U.unshard ~src:value ~axes:[1; 0] ~ranges:[b; a] () in
+              equal (list int) [0; 1] (List.map fst (U.sharding u));
+              is_true (List.map snd (U.sharding u) = [a; b]);
+              equal (list int) [4; 12] (U.max_shape u);
+              equal int 0 (List.length (U.ranges u));
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> ignore (U.axis u)));
+          test "reshape divides each axis by its own range count" (fun () ->
+              let a = local_range 2 0 and b = local_range 3 1 in
+              let u = U.unshard ~src:(fragment [2; 4]) ~axes:[0; 1] ~ranges:[a; b] () in
+              let reshaped = rewrite (U.reshape ~src:u ~shape:(shape_node [4; 3; 4])) in
+              equal (list int) [4; 3; 4] (U.max_shape reshaped);
+              equal (list int) [2; 1; 4] (U.max_shape (U.src reshaped).(0));
+              equal (list int) [0; 1] (List.map fst (U.sharding reshaped)));
+          test "multi-axis ALU slices whole tiles locally" (fun () ->
+              let ranges = [local_range 2 0; local_range 3 1] in
+              let u = U.unshard ~src:(fragment [2; 4]) ~axes:[0; 1] ~ranges () in
+              let whole = fragment [4; 12] in
+              let result = rewrite (U.alu_binary ~op:Ops.Add ~lhs:u ~rhs:whole) in
+              equal (list int) [4; 12] (U.max_shape result);
+              equal (list int) [2; 4] (U.max_shape (U.src result).(0)));
+          test "permutation keeps the owning range with its axis" (fun () ->
+              let a = local_range 2 0 and b = local_range 3 1 in
+              let u = U.unshard ~src:(fragment [2; 4]) ~axes:[0; 1] ~ranges:[a; b] () in
+              let result = rewrite (U.permute ~src:u ~order:[1; 0]) in
+              is_true (List.map snd (U.sharding result) = [b; a]);
+              equal (list int) [12; 4] (U.max_shape result));
+          test "own-shard shrink resolves one axis at a time" (fun () ->
+              let a = local_range 2 0 and b = local_range 3 1 in
+              let u = U.unshard ~src:(fragment [2; 4]) ~axes:[0; 1] ~ranges:[a; b] () in
+              let sliced = rewrite (U.shrink ~src:u ~offset:(emit [alu Ops.Mul a (int_ 2); int_ 0])
+                  ~size:(shape_node [2; 12])) in
+              equal (list int) [1] (List.map fst (U.sharding sliced));
+              equal (list int) [2; 12] (U.max_shape sliced));
+          test "thread indices resolve only their owned shard" (fun () ->
+              let r = local_range 4 0 and i = local_range 4 1 in
+              let value = fragment [4] in
+              let u = U.unshard ~src:value ~axes:[0] ~ranges:[r] () in
+              List.iter (fun index ->
+                  let result = rewrite (U.index ~ptr:u ~idxs:[index] ()) in
+                  let view = Option.get (U.as_index result) in
+                  is_true (view.ptr == value);
+                  is_true (List.for_all2 U.equal [i] view.idxs))
+                [alu Ops.Add (alu Ops.Mul r (int_ 4)) i;
+                 alu Ops.Add r (alu Ops.Mul i (int_ 4))];
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> ignore (rewrite (U.index ~ptr:u ~idxs:[int_ 0] ()))));
+          test "unsharded stores select each fragment's destination" (fun () ->
+              let r = local_range 2 0 in
+              let value = fragment [4] in
+              let u = U.unshard ~src:value ~axes:[0] ~ranges:[r] () in
+              let destination = fragment [8] in
+              let result = rewrite (U.store ~dst:destination ~value:u ()) in
+              let store = Option.get (U.as_store result) in
+              equal (list int) [4] (U.max_shape store.dst);
+              is_true (store.value == value);
+              is_true (U.op store.dst = Ops.Shrink));
+          test "two-axis device gather preserves every tile" (fun () ->
+              let device = Lazy.force cpu in
+              let devices = List.init 6 (fun i -> "CPU:" ^ string_of_int (i + 1)) in
+              let data = iota 48 in
+              let input = f32_buffer_node "CPU" [4; 12] in
+              let copied = U.copy ~src:input ~device:(U.Multi devices) () in
+              let r = U.range ~size:(int_ 6) ~axis:(-1) ~kind:Axis_type.Device () in
+              let a = alu Ops.Floordiv r (int_ 3) and b = alu Ops.Floormod r (int_ 3) in
+              let local = U.shrink ~src:copied
+                  ~offset:(emit [alu Ops.Mul a (int_ 2); alu Ops.Mul b (int_ 4)])
+                  ~size:(shape_node [2; 4]) in
+              let tiled = U.unshard ~src:local ~axes:[0; 1] ~ranges:[a; b] () in
+              let result = U.alu_binary ~op:Ops.Add ~lhs:tiled ~rhs:tiled in
+              let out = U.contiguous ~src:(U.copy ~src:result ~device:(U.Single "CPU") ()) () in
+              let binding = Realize.Buffers.create () in
+              Realize.Buffers.seed binding (U.buf_uop input) (f32_buf device data);
+              let map = realize ~device ~binding (U.sink [out]) in
+              equal (array (float 1e-6)) (Array.map (fun x -> x *. 2.) data) (output_f32 binding map out));
+          test "partial multi-axis allreduce is rejected" (fun () ->
+              let ranges = [local_range 2 0; local_range 3 1] in
+              let u = U.unshard ~src:(fragment [2; 4]) ~axes:[0; 1] ~ranges () in
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> ignore (rewrite (U.reduce_axis ~src:u ~op:Ops.Add ~axes:[0]))));
+        ];
       group "Resolution"
         [
           test "mstack joins and mselect indexes seeded shards" (fun () ->

@@ -6,6 +6,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Multi-axis reshapes use each axis's own shard count.** The frozen target
+  reuses the last range's count while constructing all local dimensions, so a
+  `[2; 4]` tile sharded 2-by-3 cannot reshape its `[4; 12]` logical shape to
+  `[4; 3; 4]`. Tolk keeps the owning range with each axis and produces a local
+  `[2; 1; 4]` view. Consumer: per-thread fragments and multi-axis device tiles.
+  Coverage: `test_multi` unequal-count reshape and six-device tiled gather.
+  Reconsider when upstream fixes the range lookup.
+
 - **Compiled AMD submission bounds polling and reserves ring space before
   writing commands.** The frozen target can spin forever or overwrite unread
   packets when producers outrun a queue. Native helpers latch failures while

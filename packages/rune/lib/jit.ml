@@ -3655,7 +3655,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
               U.reshape ~src:node ~shape:(F.Tensor.shape_uop shard_shape)
             in
             ( node,
-              F.Tensor.of_uop (U.multi ~src:inner ~axis:a),
+              F.Tensor.of_uop (U.unshard ~src:inner ~axes:[a] ()),
               List.map
                 (fun d -> Tolk.Device.create_buffer ~size:per ~dtype:dtolk d)
                 spec.md_devs )
@@ -3749,14 +3749,9 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
           U.children
             (U.substitute ~walk:true (List.map filled copied) (U.sink outs_u))
     | Some _ ->
-        let shapes n =
-          match U.max_shape n with
-          | s -> Some s
-          | exception Invalid_argument _ -> None
-        in
         let pre = U.sink outs_u in
         let pre =
-          U.graph_rewrite (Tolk.Multi.multi_pm ~shapes ~devices:U.device_of) pre
+          U.graph_rewrite Tolk.Multi.multi_pm pre
         in
         U.children pre
   in

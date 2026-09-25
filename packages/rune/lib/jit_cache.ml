@@ -239,7 +239,7 @@ let rebind entry args =
                   U.buffer
                     ~slot:(Tolk.Schedule.fresh_internal_buffer_slot ())
                     ~dtype:(U.dtype n) ~shape ?name:buffer.name
-                    ~addrspace:buffer.addrspace ?axis:buffer.axis
+                    ~addrspace:buffer.addrspace
                     ?device:buffer.device () )
           | _ -> None)
         (U.toposort ~enter_calls:true linear)

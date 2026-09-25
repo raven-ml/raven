@@ -153,7 +153,6 @@ type param_arg = {
   addrspace : Dtype.addr_space;
       (** Memory address space. Defaults to {!Dtype.Global}.
           {!Dtype.Alu} denotes ALU symbolic parameters. *)
-  axis : int option;  (** Sharding axis, when applicable. *)
   device : device option;  (** Concrete or multi-device placement. *)
   volatile : bool;
       (** Preserve individual memory accesses and emit volatile parameters.
@@ -677,6 +676,8 @@ val param :
     ?addrspace ?axis ?volatile ()]
     is a flat {!Ops.Param} with no shape child, viewed at [shape]. Multidimensional
     shapes add a reshape; symbolic extents shrink the maximum-sized storage.
+    With [axis], [shape] is the full logical shape; storage holds a single
+    shard and an UNSHARD view carries the device range.
     Omitting [shape] creates a scalar. [image] creates an image parameter with
     explicit height and width. Shared. *)
 
@@ -696,7 +697,8 @@ val buffer :
   ?volatile:bool -> unit -> t
 (** [buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device ?volatile ()] is a
     flat {!Ops.Buffer} viewed at [shape]. Its maximum storage size lives in
-    {!param_arg}; placed global buffers own their storage directly. Tensor. *)
+    {!param_arg}; placed global buffers own their storage directly. With [axis],
+    [shape] is the full logical shape and each device owns a single shard. Tensor. *)
 
 val alloc :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device ->
@@ -989,9 +991,16 @@ val allreduce : src:t -> device:device -> op:Ops.t -> t
 
 (** {2:ctors_multi Sharding} *)
 
-val multi : src:t -> axis:int -> t
-(** [multi ~src ~axis] distributes [src] along [axis] for multi-device
-    execution. Dtype is inherited from [src]. Tensor. *)
+val unshard : ?ranges:t list -> src:t -> axes:int list -> unit -> t
+(** [unshard ~src ~axes ?ranges ()] assembles the logical shape of [src]'s
+    shards. Axes are sorted together with their ranges. Each range's maximum
+    plus one determines its shard count. Without [ranges], a single axis uses
+    a DEVICE range over [src]'s devices.
+    @raise Invalid_argument if axes repeat or their count differs from ranges. *)
+
+val sharding : t -> (int * t) list
+(** [sharding u] is the sorted list of axes and their owning ranges for an
+    UNSHARD, or the empty list for another operation. *)
 
 val mstack : t list -> t
 (** [mstack srcs] stacks per-device shards into a multi-device tensor.
@@ -1394,8 +1403,8 @@ val max_shard_numel : t -> int
     {!max_numel}. *)
 
 val axis : t -> int option
-(** [axis u] is [u]'s sharding axis. {!Ops.Param} reads [param_arg.axis],
-    {!Ops.Unshard} reads its integer arg, {!Ops.Copy} clears the axis,
+(** [axis u] is [u]'s sharding axis. {!Ops.Param} has no axis;
+    a single-axis {!Ops.Unshard} reads its axis tuple, {!Ops.Copy} clears the axis,
     ALU ops use the last
     non-[None] source axis, and movement/reduction ops remap or clear the
     axis using tinygrad's shape rules. *)
