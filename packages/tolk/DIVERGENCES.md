@@ -484,22 +484,20 @@ delete it rather than registering it.
   collective needs. Coverage: `test/unit/engine/test_collectives.ml` "a
   realized allreduce of a symbolic slice keeps its values".
 
-- **A call that stores into a view argument raises**
-  (`schedule/indexing.ml` `check_written_args`, called from
-  `realize_custom_kernel_srcs` and from `engine/schedule.ml`
-  `lower_sink_to_linear`). In the realize map, an argument that is not
-  storage (an `always_contiguous` node, possibly reshaped) is scheduled as a
-  fresh buffer holding a copy of its values: right for an input, but a call
-  that stores into it writes the copy. A precompiled call built before
-  scheduling reaches the realize map with its body already lowered, and a
-  non-contiguous view argument reaches it as the flat bytes from the view's
-  offset, the wrong layout. The reference does both silently. Tolk raises
-  `Invalid_argument` naming the call: in the realize map for any view, where
-  a body is lowered for a non-contiguous one (a contiguous view is a valid
-  byte range, as a realization's own outputs are). The collectives pass their
-  whole allocation. Coverage:
-  `test/unit/engine/test_collectives.ml` "a call storing into a view argument
-  raises".
+- **Every call's arguments are realized under one rule**
+  (`schedule/indexing.ml` `realize_call_args`, `engine/schedule.ml`
+  `call_arg_node`). A call's argument is storage: a buffer, or a contiguous
+  window of one, which reaches the call as a byte view. Any other argument
+  the call only reads is realized into a copy; one it stores into raises
+  `Invalid_argument` naming the call. The rule holds for every call,
+  whatever its body. The reference realizes the non-buffer arguments of
+  bodies still to be lowered only, written or not, so a write through a view
+  was lost; and its `create_schedule` rebuilds every call's arguments as
+  their base buffers, relying on those copies, so a window reached a lowered
+  body as the base buffer from offset 0. Tolk's `create_schedule` keeps a
+  window over part of its buffer as the argument. The collectives pass their
+  whole allocation. Coverage: `test/unit/engine/test_schedule.ml` "call
+  arguments".
 
 - **`Creation.shard` splits a replicated value where it lives**
   (`frontend/creation.ml` `shard`). The reference raises on any multi-device

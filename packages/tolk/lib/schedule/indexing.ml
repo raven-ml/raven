@@ -222,31 +222,53 @@ let data_srcs op (srcs : U.t array) =
 let mark_non_contiguous ctx s =
   if not (always_contiguous (U.op (U.base s))) then realize_set ctx s Marked
 
-(* The parameter slots a call body stores into. *)
-let written_slots body =
-  let rec param u =
-    match U.op u with
-    | Ops.Param -> U.as_param u
-    | Ops.Mselect | Ops.After | Ops.Bitcast | Ops.Unshard -> param (U.src u).(0)
-    | op when Ops.Group.is_movement op -> param (U.src u).(0)
-    | _ -> None
-  in
-  List.filter_map (fun n ->
-      match U.as_store n with
-      | Some { dst; _ } ->
-          Option.map (fun (p : U.param_view) -> p.param.slot) (param dst)
-      | None -> None)
-    (U.toposort ~enter_calls:false body)
+let rec strip_reshapes s =
+  if U.op s = Ops.Reshape then strip_reshapes (U.src s).(0) else s
 
-let rec strip_reshapes s = if U.op s = Ops.Reshape then strip_reshapes (U.src s).(0) else s
+(* The parameter a node addresses: a PARAM through indexing, movement ops and
+   the views of buffers. *)
+let rec viewed_param u =
+  match U.op u with
+  | Ops.Param -> U.as_param u
+  | Ops.Index | Ops.Mselect | Ops.After | Ops.Bitcast | Ops.Unshard ->
+      viewed_param (U.src u).(0)
+  | op when Ops.Group.is_movement op -> viewed_param (U.src u).(0)
+  | _ -> None
 
-let check_written_args ~views c =
+(* The parameter slots a call body stores into. A lowered body stores through
+   its calls: a call's written slot names one of its arguments, which views
+   one of the body's parameters. *)
+let rec written_slots body =
+  let slot u = Option.map (fun (p : U.param_view) -> p.param.slot) (viewed_param u) in
+  match U.op body with
+  | Ops.Linear ->
+      List.concat_map (fun call ->
+          match U.as_call (U.without_after call) with
+          | Some { body; args; _ } ->
+              List.filter_map (fun s -> Option.bind (List.nth_opt args s) slot)
+                (written_slots body)
+          | None -> [])
+        (U.children body)
+  | _ ->
+      List.filter_map (fun n ->
+          match U.as_store n with
+          | Some { dst; _ } -> slot dst
+          | None -> None)
+        (U.toposort ~enter_calls:false body)
+
+(* Realize the arguments of a call. A call's argument is storage: a buffer,
+   or a contiguous window of one, which reaches the call as a byte view. Any
+   other argument the call only reads is realized into a copy; one it stores
+   into raises, since the call would write the copy. The tinygrad counterpart
+   realizes every argument that is not a buffer, written or not, and only of
+   bodies still to be lowered. *)
+let realize_call_args ctx c =
   let src = U.src c in
-  let storage s =
-    always_contiguous (U.op (strip_reshapes s))
-    || (views && Option.is_some (U.contiguous_view s))
+  let passes a =
+    always_contiguous (U.op (strip_reshapes a))
+    || Option.is_some (U.contiguous_view a)
   in
-  let views = List.filter (fun slot -> not (storage src.(slot + 1)))
+  let views = List.filter (fun slot -> not (passes src.(slot + 1)))
       (List.init (Array.length src - 1) Fun.id) in
   if views <> [] then begin
     let written = written_slots src.(0) in
@@ -254,37 +276,22 @@ let check_written_args ~views c =
         if List.mem slot written then
           invalid_arg
             (Printf.sprintf
-               "%s: the call stores into argument %d, which is not storage; \
-                pass its storage and view it in the body"
+               "%s: the call stores into argument %d, which is a view; pass \
+                its storage and view it in the body"
                (match U.as_call c with
                 | Some { info = { name = Some name; _ }; _ } -> name
                 | _ -> "call")
-               slot)) views
+               slot);
+        let s = strip_reshapes src.(slot + 1) in
+        realize_set ctx s Marked;
+        Hashtbl.replace ctx.non_removable (U.tag s) ())
+      views
   end
-
-(* Realize the inputs of custom kernel calls. The tinygrad counterpart also
-   realizes an argument the call stores into, into a copy that the call then
-   writes in vain; tolk raises instead. *)
-let realize_custom_kernel_srcs ctx c =
-  check_written_args ~views:false c;
-  Array.iteri (fun i s ->
-      if i > 0 then begin
-        let s = strip_reshapes s in
-        if not (always_contiguous (U.op s)) then begin
-          realize_set ctx s Marked;
-          Hashtbl.replace ctx.non_removable (U.tag s) ()
-        end
-      end)
-    (U.src c)
 
 let generate_realize_map ctx root =
   List.iter (fun n ->
     (match U.op n with
-     | Ops.Call
-       when (match U.op (U.src n).(0) with
-             | Ops.Sink | Ops.Program -> true
-             | _ -> false) ->
-         realize_custom_kernel_srcs ctx n
+     | Ops.Call -> realize_call_args ctx n
      | _ -> ());
     (match U.op n with
      | Ops.Stage | Ops.Store -> realize_set ctx n Marked

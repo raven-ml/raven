@@ -73,7 +73,20 @@ let rec unwrap_src (node : U.t) : U.t =
       | src :: _ -> unwrap_src src
       | [] -> node
 
-let call_arg_buffer_node node = U.buf_uop (unwrap_src node)
+(* A call's argument as its storage: the buffer it resolves to, or, for a
+   contiguous window of part of that buffer, the window over the buffer,
+   which the executor resolves to a byte view. The tinygrad counterpart
+   always takes the buffer and relies on the realize map having copied any
+   window first. *)
+let call_arg_node node =
+  let base = unwrap_src node in
+  if base == node then U.buf_uop base
+  else
+    let bytes u = U.max_numel u * Dtype.itemsize (U.dtype u) in
+    match U.contiguous_view node with
+    | Some (b, offset) when offset <> 0 || bytes node <> bytes b ->
+        U.substitute [ (base, U.buf_uop base) ] node
+    | _ -> U.buf_uop base
 
 (* Unwrap a kernel input to the buffer states (After, Buffer, or Param) it
    resolves to. Mselect/Mstack join per-device states, A bound variable is not a buffer
@@ -229,7 +242,7 @@ let create_schedule (sink : U.t) : U.t =
          (match U.as_call k with
           | Some { body; args; info } ->
               let buf_nodes = call_arg_uops args in
-              let buf_nodes = List.map call_arg_buffer_node buf_nodes in
+              let buf_nodes = List.map call_arg_node buf_nodes in
               let new_call = U.call ~body ~args:buf_nodes ~info in
               linearized := new_call :: !linearized
           | None ->
@@ -554,7 +567,6 @@ let lower_sink_to_linear ~get_kernel_graph call : U.t option =
   match U.as_call call with
   | Some {body = sink; args; info} when info.precompile && U.op sink = Ops.Sink
       && Option.is_none (U.as_kernel_info sink) ->
-      Indexing.check_written_args ~views:true call;
       let st = Unix.gettimeofday () in
       let cache_key = schedule_cache_key sink in
       let cache_hit = ref false in

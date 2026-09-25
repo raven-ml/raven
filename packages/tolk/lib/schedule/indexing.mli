@@ -34,18 +34,6 @@ val always_contiguous : Tolk_uop.Ops.t -> bool
     Const, Mselect, Mstack, Param, Alloc, Load, Call).  Their consumers can index directly without
     realization. *)
 
-val check_written_args : views:bool -> Tolk_uop.Uop.t -> unit
-(** [check_written_args ~views call] checks that every argument [call]'s body
-    stores into is storage: an {!always_contiguous} node, possibly reshaped,
-    or with [views] also a contiguous view of one. The realize map passes
-    [~views:false]: it schedules any other argument as a fresh buffer holding
-    a copy of its values, so writes into a view would land in the copy. Where
-    a precompiled call's body is lowered, [~views:true]: a contiguous view
-    reaches the call as its byte range, but another view arrives as the flat
-    bytes from its offset, the wrong layout.
-
-    Raises [Invalid_argument], naming the call, if one is not. *)
-
 (** {1:context Indexing context} *)
 
 type realize_state =

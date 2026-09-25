@@ -299,6 +299,115 @@ let nested_scalar_bindings_are_lexical () =
   equal (list (pair string int)) [("inner", 7); ("outer", 3)]
     (List.sort compare vars)
 
+(* Call arguments: a precompiled call over [4; 4] storage on CPU:1, whose
+   body stores its argument 1 into its argument 0. Either argument can be a
+   column view, [4; 2] of the [4; 4], which is not a window, or rows 2..4,
+   which are. *)
+
+module T = Tolk_frontend.Tensor
+module C = Tolk_frontend.Creation
+module Rd = Tolk_frontend.Reduce
+module Run = Tolk_frontend.Run
+
+let on_cpu f =
+  Helpers.Context_var.with_context
+    [ Helpers.Context_var.B (Helpers.dev, [ Target.of_string "CPU" ]) ]
+    f
+
+let columns storage =
+  U.shrink
+    ~src:(U.reshape ~src:storage ~shape:(U.stack [ U.const_int 4; U.const_int 4 ]))
+    ~offset:(U.stack [ U.const_int 0; U.const_int 0 ])
+    ~size:(U.stack [ U.const_int 4; U.const_int 2 ])
+
+let rows storage =
+  U.shrink
+    ~src:(U.reshape ~src:storage ~shape:(U.stack [ U.const_int 4; U.const_int 4 ]))
+    ~offset:(U.stack [ U.const_int 2; U.const_int 0 ])
+    ~size:(U.stack [ U.const_int 2; U.const_int 4 ])
+
+(* What a call storing [src] into [dst] leaves in [result], on the host. *)
+let copy_call ~dst ~src ~result =
+  let info = { (call_info "copy_call") with precompile = true } in
+  let dst_param = U.param_like dst ~slot:0 in
+  let shape = U.stack (List.map U.const_int (U.max_shape src)) in
+  let store =
+    U.store ~dst:(U.reshape ~src:dst_param ~shape)
+      ~value:(U.param_like src ~slot:1) ()
+  in
+  let body = U.sink [ U.after ~src:dst_param ~deps:[ store ] ] in
+  let call = U.call ~body ~args:[ dst; src ] ~info in
+  C.clone ~device:(U.Single "CPU") (T.of_uop (U.after ~src:result ~deps:[ call ]))
+
+let copy_call_sum ~dst ~src ~result =
+  Run.to_float_array (Rd.sum ~axis:[ 0; 1 ] (copy_call ~dst ~src ~result))
+  |> fun sum -> sum.(0)
+
+(* [x + 1] for x = 0..15, staged on CPU:1: computed in the same realize. *)
+let staged_sum () =
+  let x =
+    C.clone ~device:(U.Single "CPU:1")
+      (Run.of_float_array ~shape:[ 4; 4 ] (Array.init 16 float_of_int))
+  in
+  Run.realize_many [ x ];
+  U.contiguous ~src:(T.uop (Tolk_frontend.Elementwise.add x (T.f 1.0))) ()
+
+let a_window_a_call_reads_keeps_its_offset () =
+  on_cpu @@ fun () ->
+  let alloc =
+    U.alloc ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single "CPU:1")
+      ~dtype:Dtype.float32 ~shape:(U.const_int 8) ()
+  in
+  equal (float 1e-6) 100.0
+    (copy_call_sum ~dst:alloc ~src:(rows (staged_sum ()))
+       ~result:(U.reshape ~src:alloc ~shape:(U.stack [ U.const_int 2; U.const_int 4 ])))
+
+let a_window_a_call_writes_keeps_its_offset () =
+  on_cpu @@ fun () ->
+  let y = staged_sum () in
+  let src =
+    C.clone ~device:(U.Single "CPU:1")
+      (Run.of_float_array ~shape:[ 2; 4 ] (Array.make 8 (-1.0)))
+  in
+  Run.realize_many [ src ];
+  equal (array (float 1e-6))
+    (Array.append (Array.init 8 (fun i -> float_of_int (i + 1))) (Array.make 8 (-1.0)))
+    (Run.to_float_array (copy_call ~dst:(rows y) ~src:(T.uop src) ~result:y))
+
+let a_read_view_is_copied_in () =
+  on_cpu @@ fun () ->
+  let full =
+    C.clone ~device:(U.Single "CPU:1")
+      (Run.of_float_array ~shape:[ 4; 4 ] (Array.init 16 float_of_int))
+  in
+  Run.realize_many [ full ];
+  let alloc =
+    U.alloc ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single "CPU:1")
+      ~dtype:Dtype.float32 ~shape:(U.const_int 8) ()
+  in
+  equal (float 1e-6) 52.0
+    (copy_call_sum ~dst:alloc ~src:(columns (T.uop full))
+       ~result:(U.reshape ~src:alloc ~shape:(U.stack [ U.const_int 4; U.const_int 2 ])))
+
+let a_written_view_raises () =
+  on_cpu @@ fun () ->
+  let x =
+    C.clone ~device:(U.Single "CPU:1")
+      (Run.of_float_array ~shape:[ 4; 2 ] (Array.init 8 float_of_int))
+  in
+  Run.realize_many [ x ];
+  let alloc =
+    U.alloc ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single "CPU:1")
+      ~dtype:Dtype.float32 ~shape:(U.const_int 16) ()
+  in
+  raises_match
+    (function
+      | Invalid_argument message -> String.starts_with ~prefix:"copy_call:" message
+      | _ -> false)
+    (fun () ->
+      ignore
+        (copy_call_sum ~dst:(columns alloc) ~src:(T.uop x) ~result:(columns alloc)))
+
 let () =
   run "Engine_schedule"
     [
@@ -327,5 +436,14 @@ let () =
             memory_plans_internal_buffers_when_not_capturing;
           test "hands the unplanned schedule to an active capturer"
             capture_hands_unplanned_schedule_to_capturer;
+        ];
+      group "call arguments"
+        [
+          test "a view a call reads is copied in" a_read_view_is_copied_in;
+          test "a view a call stores into raises" a_written_view_raises;
+          test "a window a call reads keeps its offset"
+            a_window_a_call_reads_keeps_its_offset;
+          test "a window a call writes keeps its offset"
+            a_window_a_call_writes_keeps_its_offset;
         ];
     ]

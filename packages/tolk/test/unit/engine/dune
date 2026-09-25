@@ -2,7 +2,7 @@
  (names test_realize test_jit test_jit_capture test_schedule test_link test_hcq2)
  (modules test_realize test_jit test_jit_capture test_schedule test_link test_hcq2)
  (package tolk)
- (libraries unix tolk tolk.uop tolk.cpu windtrap))
+ (libraries unix tolk tolk.uop tolk.cpu tolk.frontend windtrap))
 
 (test
  (name test_symbolic)

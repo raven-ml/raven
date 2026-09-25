@@ -520,6 +520,13 @@ thread.
 
 ### Tolk (new)
 
+- A precompiled call reading a view argument read the wrong elements: a
+  non-contiguous view as the flat bytes from its offset, and a window of a
+  value computed in the same realization from the start of that value, with
+  its writes landing there too. A window of storage now reaches the call in
+  place, another view that the call reads is copied in, and storing into
+  one raises, naming the call.
+
 - A gathered tensor that a realization returns is written straight into its
   storage. It was written to an intermediate buffer and then copied, which
   held two copies of the tensor on each device.
