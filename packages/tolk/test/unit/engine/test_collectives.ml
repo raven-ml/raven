@@ -89,7 +89,7 @@ let create name =
             (Storage.Host_allocator.make ~synchronize:ignore)))
   in
   Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime cpu)
-    ~synchronize:(fun () -> Device.synchronize cpu)
+    ~synchronize:(fun timeout -> Device.synchronize ?timeout cpu)
     ~bufferize:(Device.bufferize cpu) ()
 
 let () = Device.register "CPU" create
@@ -173,9 +173,7 @@ let device_bytes t =
   in
   Run.realize_many [ t ];
   match
-    Realize.resolve_buffer
-      (Realize.Buffers.create ())
-      (Realize.exec_context ()) (T.uop t)
+    Realize.resolve_buffer (Realize.exec_context ()) (T.uop t)
   with
   | Realize.Single buf -> [ bytes_of buf ]
   | Realize.Multi bufs -> List.map bytes_of (Device.Multi_buffer.bufs bufs)

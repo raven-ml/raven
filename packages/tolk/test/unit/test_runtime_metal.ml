@@ -136,11 +136,10 @@ let compile_queue ?(profile = false) ?(queued = true) device calls =
   let timings = List.concat_map (fun call -> match U.arg (U.without_after call) with
       | U.Arg.Call_info {aux = Some info; _} -> info.timings | _ -> []) (U.children compiled) in
   equal int (if profile then List.length calls else 0) (List.length timings);
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   fun ?(wait = false) ?(vars = []) inputs ->
     Realize.run_linear ~device ~to_program ~jit:true ~wait ~var_vals:vars
-      ~input_uops:(Array.map U.from_buffer inputs) binding linked
+      ~input_uops:(Array.map U.from_buffer inputs) linked
 
 let test_mixed_scalar_widths () =
   let device = metal_device () in

@@ -12,10 +12,10 @@
    whole computation into a single graph.
 
    Compiling: the graph is lowered through Tolk's pipeline (allocations,
-   scheduling, kernel codegen) into a compiled linear schedule with a persistent
-   buffer binding. Compilation happens once per key: the device, the arguments'
-   skeleton (every leaf's path and every report of their walks) and each leaf's
-   dtype, shape and layout. A call with a new key retraces.
+   scheduling, kernel codegen) into a compiled linear schedule with explicit
+   parameters and owned constants. Compilation happens once per key: the device,
+   the arguments' skeleton (every leaf's path and every report of their walks)
+   and each leaf's dtype, shape and layout. A call with a new key retraces.
 
    Replaying: every call binds the current input leaves to the compiled
    program's buffers and runs the schedule. On the CPU device, contiguous inputs
@@ -412,6 +412,7 @@ type seed =
 
 type input = {
   i_node : U.t;
+      (* a BUFFER while tracing, its explicit PARAM after compilation *)
   i_place : Nx.Placement.t;
   i_bufs : Tolk.Device.Buffer.t list; (* one per device of the program *)
   i_dtype : string;
@@ -1390,16 +1391,14 @@ let reserve_slots_of linear =
           U.reserve_buffer_slots (slot + 1)
       | _ -> ())
 
-(* Schedule the traced body sink as its own compiled linear. Captured unplanned,
-   so the loop's slot buffers stay intact (the memory planner would rewrite them
-   into arenas); body PARAMs are substituted with the body call's argument
-   nodes, which the loop executor rebinds per iteration. *)
-let schedule_body_linear st body_sink =
+(* Schedule the traced body sink unplanned, so slot identities remain available
+   for the carry analysis. Its call parameters are substituted with argument
+   nodes here; [loop_call] introduces the final local parameter scope before
+   compiling kernels and queues. *)
+let schedule_body_linear body_sink =
   let body_sink, buffer_map = Tolk.Bufferize.run body_sink in
-  let resolve_node node =
-    U.buf_uop
-      (Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node)
-  in
+  let resolve_node node = U.buf_uop
+      (Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node) in
   let body_call = Tolk.Callify.transform_to_call body_sink in
   let captured = ref None in
   Tolk.Realize.capturing :=
@@ -1435,8 +1434,7 @@ let schedule_body_linear st body_sink =
         | None -> assert false
       in
       reserve_slots_of body_linear;
-      ( Tolk.Realize.compile_linear ~device:st.st_device ~to_program body_linear,
-        resolve_node )
+      body_linear, resolve_node
 
 (* Schedule analyses, shared by buffer reuse at the jit boundary and inside a
    staged loop's body. *)
@@ -1658,26 +1656,46 @@ let final_carry ~n = function
   | In_place b -> b
   | Pair (b0, b1) -> if n mod 2 = 0 then b0 else b1
 
-let loop_call l ~body_linear ~resolve_node ~reversed ~n =
+let loop_call st l ~body_linear ~resolve_node ~reversed ~n =
   let cint v = U.const (Tolk_uop.Const.int Tolk_uop.Dtype.weakint v) in
+  let ins = List.rev l.ins and outs = List.rev l.outs in
+  let targets = List.map (fun s -> resolve_node s.node) (ins @ outs)
+    |> List.sort_uniq U.compare in
+  let args = ref (List.rev l.args) in
+  (* Captures cross the same CALL argument boundary as row and carry storage.
+     Nested bodies retain their own PARAM namespace. *)
+  let captures =
+    U.toposort ~enter_calls:false body_linear
+    |> List.filter (fun node ->
+        U.op node = Tolk_uop.Ops.Buffer
+        && U.addrspace node = Some TD.Global
+        && not (List.exists (U.equal node) targets))
+    |> List.map (fun node ->
+        let slot = match List.find_index (U.equal node) !args with
+          | Some slot -> slot
+          | None ->
+              let slot = List.length !args in
+              args := !args @ [node];
+              slot in
+        node, U.param_like node ~slot) in
+  let bindings = List.mapi (fun i node ->
+      node, U.param_like node ~slot:(List.length !args + i)) targets in
+  let body_linear = U.substitute ~walk:true (captures @ bindings) body_linear in
+  let body_linear = Tolk.Realize.compile_linear ~device:st.st_device
+      ~to_program body_linear in
   let slots ss =
     cint (List.length ss)
     :: List.concat_map
          (fun s ->
-           [
-             resolve_node s.node;
-             cint s.pos0;
-             cint s.pos1;
-             cint s.size;
-             cint s.stride;
-           ])
-         (List.rev ss)
+           [ List.assq (resolve_node s.node) bindings;
+             cint s.pos0; cint s.pos1; cint s.size; cint s.stride ])
+         ss
   in
   let payload =
     U.custom_function ~name:"loop"
       ~srcs:
         ([ body_linear; cint n; cint (if reversed then 1 else 0) ]
-        @ slots l.ins @ slots l.outs)
+        @ slots ins @ slots outs)
   in
   let info =
     {
@@ -1691,7 +1709,7 @@ let loop_call l ~body_linear ~resolve_node ~reversed ~n =
   in
   (* Assembled with [replace], like the graph batcher's calls: the compiled body
      carries its launch ranges, which [U.call]'s range check rejects. *)
-  match List.rev l.args with
+  match !args with
   | [] -> assert false
   | hd :: _ as args ->
       U.replace
@@ -2897,7 +2915,7 @@ and stage_scan : type r.
         if copied = [] then sink
         else U.substitute ~walk:true (List.map fill copied) sink
       in
-      (modes, schedule_body_linear st sink)
+      (modes, schedule_body_linear sink)
     in
     let rec settle ~copied ~same_index =
       let modes, (linear, resolve_node) = body ~copied ~same_index in
@@ -2984,7 +3002,7 @@ and stage_scan : type r.
         (if req_record then c_slots else [])
         stack_outs
     in
-    let call = loop_call l ~body_linear ~resolve_node ~reversed:false ~n in
+    let call = loop_call st l ~body_linear ~resolve_node ~reversed:false ~n in
     (* Register the carry stacks as outputs of the forward loop: the backward
        loop reads them, and only a graph-visible dependency keeps the forward
        loop reachable (and so scheduled) when the scan's declared outputs are
@@ -3178,7 +3196,7 @@ and stage_scan_bwd : type r.
                 ])
           g_outs)
   in
-  let body_linear, resolve_node = schedule_body_linear st body_sink in
+  let body_linear, resolve_node = schedule_body_linear body_sink in
   let l = loop () in
   List.iter2
     (fun s (stack, stride, _) ->
@@ -3217,7 +3235,7 @@ and stage_scan_bwd : type r.
           (F.Creation.zeros ~buffer:false ~dtype:gdt (Array.to_list g_shape)))
       g_outs
   in
-  let call = loop_call l ~body_linear ~resolve_node ~reversed:true ~n in
+  let call = loop_call st l ~body_linear ~resolve_node ~reversed:true ~n in
   let br_carry =
     placeholders st bwd_carry
       (List.map2
@@ -4112,7 +4130,9 @@ type 'q compiled = {
   cp_ctx : Nx_effect.context;
   cp_linear : U.t;
   cp_vars : (string * int) list;
-  cp_binding : Tolk.Realize.Buffers.t;
+  cp_input_uops : U.t array;
+      (* default storage for the schedule's PARAM slots; replay copies this
+         array and supplies its input, output and shared-arena owners *)
   cp_inputs : input array; (* one per leaf visit, in traversal order *)
   cp_consumed : bool array;
       (* per input position, whether a call consumes it: its storage is marked
@@ -4147,20 +4167,56 @@ type 'q compiled = {
       (* the consumed inputs whose storage an output may take, chosen once when
          the program compiles (see Lending below) *)
   cp_prefills : (U.t * int) list;
-      (* output buffer node -> traversal position of the input leaf whose value
+      (* output PARAM -> traversal position of the input leaf whose value
          the output starts from: an indexed write lands in it, and the program
          never copies the input into it *)
   cp_reserved : (int, unit) Hashtbl.t;
-      (* tags of input and constant buffer nodes: outputs must not reseed
-         them *)
+      (* tags of input arguments and owned constants: pass-through outputs
+         copy their value or take a consumed input's storage *)
   cp_arenas : U.t list;
-      (* the memory planner's arena buffer nodes, bound at every call to their
+      (* the memory planner's arena PARAMs, supplied at every call with their
          devices' shared arenas (see [shared_arena]) *)
   cp_skeleton : 'q; (* the traced result, the template results are rebuilt in *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
 
 module Ops = Tolk_uop.Ops
+
+let owned_uop node bufs =
+  match U.device_of node, bufs with
+  | Some (U.Multi _), _ -> U.mstack (List.map U.from_buffer bufs)
+  | _, [buf] -> U.from_buffer buf
+  | _ -> invalid_arg "Rune.jit: buffer placement disagrees with its graph node"
+
+let argument_slot node =
+  match U.as_param node with
+  | Some {param; _} -> param.slot
+  | None -> invalid_arg "Rune.jit: replay storage must be a PARAM"
+
+(* Planned arenas are byte buffers reached through views, excluding storage
+   held by the caller. Their owners can grow between calls to different JITs. *)
+let arena_nodes bound linear =
+    let seen = U.Tbl.create 4 in
+    List.iter (fun node -> U.Tbl.replace seen node ()) bound;
+    U.toposort ~enter_calls:true linear
+    |> List.filter_map (fun u ->
+        match U.contiguous_view u with
+        | Some (src, _)
+          when U.op src = Ops.Buffer && TD.equal (U.dtype src) TD.int8
+               && not (U.Tbl.mem seen src) ->
+            U.Tbl.add seen src ();
+            Some src
+        | _ -> None)
+
+let parameterize nodes =
+  let seen = U.Tbl.create (List.length nodes) in
+  List.filter_map (fun node ->
+      if U.Tbl.mem seen node then None
+      else begin
+        let param = U.param_like node ~slot:(U.Tbl.length seen) in
+        U.Tbl.add seen node ();
+        Some (node, param)
+      end) nodes
 
 (* Lending: writing an output over a consumed input's storage.
 
@@ -4455,16 +4511,6 @@ type leaf_info = {
   consumptions : Nx_effect.consumption array;
   names : string array;
 }
-
-(* Bind [node] to [bufs], one per device of the program, as the node's device
-   says: one buffer, or one per device of a list. *)
-let seed_node binding node bufs =
-  match (U.device_of node, bufs) with
-  | Some (U.Multi _), bufs ->
-      Tolk.Realize.Buffers.seed_multi binding node
-        (Tolk.Device.Multi_buffer.of_bufs bufs)
-  | _, [ buf ] -> Tolk.Realize.Buffers.seed binding node buf
-  | _ -> invalid_arg "Rune.jit: several buffers for a node on one device"
 
 (* [trace_compile ~devices f params leaves] traces and compiles [f] for a call
    over [devices], each leaf seeding the program at its placement in
@@ -4820,6 +4866,15 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   let output_nodes =
     Array.to_list cp_outputs |> List.filter_map (fun o -> o.o_node)
   in
+  let input_nodes = List.map (fun inp -> inp.i_node) (List.rev !inputs) in
+  let constant_nodes = List.map (fun (node, _, _) -> node) st.consts
+      @ List.map (fun (node, _, _) -> node) st.bound_consts in
+  let held = input_nodes @ constant_nodes @ output_nodes in
+  let replay_nodes arenas =
+    input_nodes
+    @ List.filter (fun node -> not (List.exists (U.equal node) constant_nodes))
+        output_nodes
+    @ arenas in
   (* Persistent compile cache: a hit replaces scheduling and kernel compilation
      with an import of the stored compiled linear, rebound to this trace's fresh
      buffer nodes. Programs over several devices are not cached. *)
@@ -4858,23 +4913,24 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           | None -> err "Rune.jit: scheduling captured no computation"
         in
         let linear =
-          let bound =
-            List.map (fun inp -> inp.i_node) !inputs
-            @ List.map (fun (node, _, _) -> node) st.consts
-            @ List.map (fun (node, _, _) -> node) st.bound_consts
-            @ output_nodes
-          in
-          Tolk.Schedule.memory_plan_rewrite linear (held_buffers bound linear)
+          Tolk.Schedule.memory_plan_rewrite linear (held_buffers held linear)
         in
         let linear =
+          let parameters = parameterize
+              (replay_nodes (arena_nodes held linear)) in
+          let linear = U.substitute ~walk:true parameters linear in
           let compile () =
             Tolk.Realize.compile_linear ~device:dev ?beam ~to_program linear
           in
-          match beam_parallel with
-          | None -> compile ()
-          | Some n ->
-              Tolk.Helpers.Context_var.(
-                with_context [ B (Tolk.Search.beam_parallel, n) ] compile)
+          let compiled = match beam_parallel with
+            | None -> compile ()
+            | Some n ->
+                Tolk.Helpers.Context_var.(
+                  with_context [ B (Tolk.Search.beam_parallel, n) ] compile) in
+          (* Persistent serialization normalizes this trace's external names;
+             queue compilation already saw their PARAM semantics. *)
+          U.substitute ~walk:true
+            (List.map (fun (node, param) -> param, node) parameters) compiled
         in
         (* The scheduler's internal buffer slots come from a counter local to
            this schedule; reserve them globally so later traces (and scan
@@ -4885,43 +4941,22 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           cache_key;
         (linear, var_vals)
   in
-  (* The planner's arenas are the int8 buffers its slices view; every other
-     buffer a slice views is an input, a constant or an output. *)
-  let cp_arenas =
-    let bound = Hashtbl.create 16 in
-    List.iter
-      (fun n -> Hashtbl.replace bound (U.tag n) ())
-      (List.map (fun inp -> inp.i_node) !inputs
-      @ List.map (fun (node, _, _) -> node) st.consts
-      @ List.map (fun (node, _, _) -> node) st.bound_consts
-      @ output_nodes);
-    let seen = Hashtbl.create 4 and acc = ref [] in
-    List.iter
-      (fun u ->
-        match U.contiguous_view u with
-        | Some (src, _)
-          when U.op src = Ops.Buffer
-               && TD.equal (U.dtype src) TD.int8
-               && (not (Hashtbl.mem bound (U.tag src)))
-               && not (Hashtbl.mem seen (U.tag src)) ->
-            Hashtbl.replace seen (U.tag src) ();
-            acc := src :: !acc
-        | _ -> ())
-      (U.toposort ~enter_calls:true linear);
-    List.rev !acc
-  in
-  let binding = Tolk.Realize.Buffers.create () in
-  let seed = seed_node binding in
+  let cp_arenas = arena_nodes held linear in
+  let parameters = parameterize (replay_nodes cp_arenas) in
+  let cp_input_uops = Array.of_list (List.map fst parameters) in
+  let constants = ref [] in
+  let own node bufs = constants := (node, owned_uop node bufs) :: !constants in
   let reserved = Hashtbl.create 16 in
   List.iter
     (fun inp ->
       Hashtbl.replace reserved (U.tag inp.i_node) ();
-      seed inp.i_node inp.i_bufs)
+      let param = List.assq inp.i_node parameters in
+      cp_input_uops.(argument_slot param) <- owned_uop inp.i_node inp.i_bufs)
     !inputs;
-  (* Bind each constant once, at compile time: alias its memory when the device
+  (* Give each constant an owner at compile time: alias its memory when the device
      shares host memory and the tensor is contiguous, copy each device its slice
-     otherwise. The staging of these one-time uploads is dropped with this
-     table. *)
+     otherwise. The staging of these one-time uploads is dropped after
+     compilation. *)
   let scratch = Hashtbl.create 8 in
   let wrapped = ref [] in
   List.iter
@@ -4929,7 +4964,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       Hashtbl.replace reserved (U.tag node) ();
       match if zero_copy then wrap_tensor dev src else None with
       | Some (buf, keep) ->
-          Tolk.Realize.Buffers.seed binding node buf;
+          own node [buf];
           wrapped := (pk, keep) :: !wrapped
       | None ->
           (* One device copy of a capture serves every signature of the closure:
@@ -4951,9 +4986,9 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
                 Tensor_map.Tbl.replace const_cache (Key src) bufs;
                 bufs
           in
-          seed node bufs)
+          own node bufs)
     st.consts;
-  (* A bound capture seeds its constant with the resident buffers themselves:
+  (* A bound capture owns the resident buffers through its constant:
      reads leave storage in place, and the value is reachable from the trace. *)
   let views = ref [] in
   let bound =
@@ -4964,10 +4999,10 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
         | Range { cell; bufs; lo; span; _ } ->
             let bufs = List.map (fun buf -> buffer_range buf ~lo ~span) bufs in
             views := bufs @ !views;
-            seed node bufs;
+            own node bufs;
             (cell, pk)
         | Whole { cell; bufs } ->
-            seed node bufs;
+            own node bufs;
             (cell, pk)
         | Copy -> assert false (* only a seeded capture is bound *))
       st.bound_consts
@@ -5126,7 +5161,24 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
              true))
       results
   in
-  let linear = Tolk.Realize.link_linear binding linear in
+  let mappings = parameters @ !constants in
+  let mapped node = Option.value (List.assq_opt node mappings) ~default:node in
+  let linear = U.substitute ~walk:true mappings linear in
+  let linear = Tolk.Realize.link_linear
+      ~ctx:(Tolk.Realize.exec_context ~input_uops:cp_input_uops ()) linear in
+  let cp_inputs = Array.map
+      (fun inp -> {inp with i_node = mapped inp.i_node}) cp_inputs in
+  let cp_outputs = Array.map
+      (fun output -> {output with o_node = Option.map mapped output.o_node})
+      cp_outputs in
+  let cp_lends = List.map (fun lend ->
+      let node = List.find (fun node -> U.tag node = lend.l_otag) output_nodes in
+      {lend with l_otag = U.tag (mapped node)}) cp_lends in
+  let cp_prefills = List.map (fun (node, input) -> mapped node, input) cp_prefills in
+  let cp_arenas = List.map mapped cp_arenas in
+  let reserved = Hashtbl.create (List.length input_nodes + List.length constant_nodes) in
+  List.iter (fun node -> Hashtbl.replace reserved (U.tag (mapped node)) ())
+    (input_nodes @ constant_nodes);
   List.iter (fun ((c : Nx_effect.cell), _) -> c.bound <- c.bound + 1) bound;
   let cp_captures =
     Array.of_list
@@ -5144,7 +5196,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       cp_ctx = st.st_ctx;
       cp_linear = linear;
       cp_vars = var_vals;
-      cp_binding = binding;
+      cp_input_uops;
       cp_inputs;
       cp_consumed = info.consumed;
       cp_consumptions = info.consumptions;
@@ -5184,6 +5236,11 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
 let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
     (leaves : Nx.packed array) (seeds : seed array) : q =
   drain_releases ();
+  let input_uops = Array.copy c.cp_input_uops in
+  let context = Tolk.Realize.exec_context ~input_uops () in
+  let supply node bufs =
+    input_uops.(argument_slot node) <- owned_uop node bufs
+  in
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
   (* Seed the inputs. A leaf placed on this device seeds its input node with
      its buffer directly — no transfer, and the value stays resident (inputs
@@ -5267,9 +5324,9 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   let names = List.map Tolk.Device.name devs in
   List.iteri
     (fun k node ->
-      let nbytes = List.fold_left ( * ) 1 (U.max_shape node) in
+      let nbytes = U.max_numel node in
       let seed dev =
-        Tolk.Realize.Buffers.seed c.cp_binding node (shared_arena dev k nbytes)
+        supply node [shared_arena dev k nbytes]
       in
       match (U.device_of node, devs) with
       | Some (U.Single _), [ dev ] -> seed dev
@@ -5287,12 +5344,10 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
               view
             end
           in
-          Tolk.Realize.Buffers.seed_multi c.cp_binding node
-            (Tolk.Device.Multi_buffer.of_bufs (List.map exactly devs))
+          supply node (List.map exactly devs)
       | _ -> invalid_arg "Rune.jit: an arena off the program's devices")
     c.cp_arenas;
   let keep = ref [] in
-  let seed = seed_node c.cp_binding in
   Array.iteri
     (fun i (Nx.P leaf) ->
       let inp = c.cp_inputs.(i) in
@@ -5300,21 +5355,21 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       | Whole { cell; bufs } ->
           keep := Obj.repr leaf :: !keep;
           seed_entry.(i) <- Some (cell, bufs);
-          seed inp.i_node bufs
+          supply inp.i_node bufs
       | Range { lo; span; bufs; _ } ->
           keep := Obj.repr leaf :: !keep;
           let range = List.map (fun buf -> buffer_range buf ~lo ~span) bufs in
           ranges := range @ !ranges;
-          seed inp.i_node range
+          supply inp.i_node range
       | Copy -> (
           match
             if c.cp_zero_copy then wrap_tensor c.cp_device leaf else None
           with
           | Some (buf, ka) ->
               keep := ka :: !keep;
-              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf
+              supply inp.i_node [buf]
           | None ->
-              seed inp.i_node inp.i_bufs;
+              supply inp.i_node inp.i_bufs;
               upload_windows c.cp_scratch inp.i_place leaf c.cp_devices
                 inp.i_bufs))
     leaves;
@@ -5373,19 +5428,19 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                 wrap_ptr c.cp_device (tolk_dtype odt) n
                   (Nx_buffer.unsafe_data_ptr host)
               in
-              Tolk.Realize.Buffers.seed c.cp_binding node buf;
+              supply node [buf];
               Hashtbl.add out_hosts tag (Host (odt, host))
             end
             end
           else if not (Hashtbl.mem out_bufs tag) then
             match Hashtbl.find_opt claims tag with
             | Some (_, _, bufs) ->
-                if not reserved then seed node bufs;
+                if not reserved then supply node bufs;
                 Hashtbl.add out_bufs tag bufs
             | None ->
                 let bufs = fresh odt ph place in
                 if reserved then copies := (node, bufs) :: !copies
-                else seed node bufs;
+                else supply node bufs;
                 Hashtbl.add out_bufs tag bufs))
     c.cp_outputs;
   (* Storage of its own for each result leaf that repeats an earlier leaf's
@@ -5406,7 +5461,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
      that input's storage already holds the value; any other is given it by a
      copy. *)
   let node_bufs node =
-    match Tolk.Realize.Buffers.buffer_of_node c.cp_binding node with
+    match Tolk.Realize.resolve_buffer context node with
     | Tolk.Realize.Single b -> [ b ]
     | Tolk.Realize.Multi m -> Tolk.Device.Multi_buffer.bufs m
   in
@@ -5442,7 +5497,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       marked
   in
   (match
-     Tolk.Realize.run_linear ~device:c.cp_device ~to_program c.cp_binding
+     Tolk.Realize.run_linear ~device:c.cp_device ~to_program ~input_uops
        ~var_vals:c.cp_vars ~jit:true c.cp_linear
    with
   | () -> ()
@@ -5518,7 +5573,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                | None -> (
                    if c.cp_zero_copy then
                      let buf =
-                       Tolk.Realize.Buffers.of_buffer_node c.cp_binding node
+                       Tolk.Realize.resolve context node
                      in
                      Nx.P (read_out c.cp_scratch c.cp_ctx dt shape buf)
                    else

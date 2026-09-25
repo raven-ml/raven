@@ -11,7 +11,7 @@
     executable operations: compiled kernels and buffer copies.
     {!Compiled_runner} compiles kernel programs and creates runners.
     {!run_linear} executes a {!Tolk_uop.Ops.Linear} node, resolving each
-    call's buffer arguments through a {!Buffers.t} binding.
+    call's buffer arguments through owned storage and parameter slots.
 
     See also {!Device.prog} for the low-level device dispatch
     handle. *)
@@ -204,60 +204,6 @@ type buffer =
       (** One buffer per device of a multi-device placement. *)
 (** The type for concrete buffers named by call arguments. *)
 
-(** Resolves graph-owned buffers and caller-supplied bindings.
-
-    A placed {!Tolk_uop.Ops.Buffer} retains its own storage across execution
-    contexts. Seeding explicitly overrides that storage for the binding.
-    Unowned nodes require an explicit binding; execution never allocates owners. *)
-module Buffers : sig
-  type t
-  (** The type for buffer bindings. *)
-
-  val create : unit -> t
-  (** [create ()] is an empty set of caller-supplied buffer bindings. *)
-
-  val seed : t -> Tolk_uop.Uop.t -> Device.Buffer.t -> unit
-  (** [seed t node buf] binds [node] to [buf], overriding lazy allocation. *)
-
-  val seed_multi : t -> Tolk_uop.Uop.t -> Device.Multi_buffer.t -> unit
-  (** [seed_multi t node mbuf] binds [node] to the multi-device buffer [mbuf],
-      overriding lazy allocation. *)
-
-  val remove : t -> Tolk_uop.Uop.t -> unit
-  (** [remove t node] drops [node]'s binding, if any. *)
-
-  val mem : t -> Tolk_uop.Uop.t -> bool
-  (** [mem t node] is [true] iff [node] is bound. *)
-
-  val find_buffer : t -> Tolk_uop.Uop.t -> buffer option
-  (** [find_buffer t node] is the buffer bound to [node], if any. *)
-
-  val find_opt : t -> Tolk_uop.Uop.t -> Device.Buffer.t option
-  (** [find_opt t node] is the single-device buffer bound to [node], if any.
-
-      Raises [Invalid_argument] if [node] is bound to a multi-device
-      buffer. *)
-
-  val buffer_of_node : t -> Tolk_uop.Uop.t -> buffer
-  (** [buffer_of_node t node] is the buffer backing the {!Tolk_uop.Ops.Buffer}
-      [node], taken from an explicit binding or the node's storage owner.
-
-      @raise Invalid_argument if neither exists. *)
-
-  val of_buffer_node : t -> Tolk_uop.Uop.t -> Device.Buffer.t
-  (** [of_buffer_node t node] is {!buffer_of_node} for a node backed by a
-      single-device buffer.
-
-      Raises [Invalid_argument] if [node] is backed by a multi-device
-      buffer. *)
-
-  val iter : t -> (buffer -> unit) -> unit
-  (** [iter t f] applies [f] to every bound buffer. *)
-
-  val clear : t -> unit
-  (** [clear t] drops all bindings. *)
-end
-
 type exec_context = {
   var_vals : (string * int) list;
   input_uops : Tolk_uop.Uop.t array;
@@ -287,12 +233,12 @@ val exec_context :
     milliseconds. [cache=false] releases each dispatch handle after its
     synchronous sample; failed drains retain the handle. *)
 
-val resolve_buffer : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> buffer
-(** [resolve_buffer binding ctx node] is the concrete buffer named by call
+val resolve_buffer : exec_context -> Tolk_uop.Uop.t -> buffer
+(** [resolve_buffer ctx node] is the concrete buffer named by call
     argument [node]: a {!Tolk_uop.Ops.Param} resolves through
     [ctx.input_uops]; contiguous movement and bitcast views alias their
     resolved storage at the byte offset from {!Tolk_uop.Uop.contiguous_view} (per underlying device when the source is multi-device);
-    a {!Tolk_uop.Ops.Buffer} is resolved through [binding]; a
+    a {!Tolk_uop.Ops.Buffer} supplies its owned storage; a
     {!Tolk_uop.Ops.Mselect} indexes one shard of its multi-device source; a
     {!Tolk_uop.Ops.Mstack} joins its per-device sources into a multi-device
     buffer.
@@ -300,17 +246,17 @@ val resolve_buffer : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> buffer
     Raises [Invalid_argument] on an unbound parameter, a symbolic slice offset,
     or a node that does not name a buffer. *)
 
-val resolve : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> Device.Buffer.t
-(** [resolve binding ctx node] is {!resolve_buffer} for a node that names a
+val resolve : exec_context -> Tolk_uop.Uop.t -> Device.Buffer.t
+(** [resolve ctx node] is {!resolve_buffer} for a node that names a
     single-device buffer.
 
     Raises [Invalid_argument] if [node] names a multi-device buffer, and in
     the {!resolve_buffer} failure cases. *)
 
 val link_linear :
-  Buffers.t -> ?input_uops:Tolk_uop.Uop.t array -> ?allow_cache:bool ->
+  ?ctx:exec_context -> ?allow_cache:bool ->
   Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [link_linear binding ?input_uops ?allow_cache linear] binds a compiled
+(** [link_linear ?ctx ?allow_cache linear] binds a compiled
     schedule's tagged storage placeholders and static address patches, retaining
     their storage in the returned schedule. Call bodies remain compiled and
     untagged parameters remain runtime-bound. See {!Link.run} for cache rules. *)
@@ -320,7 +266,6 @@ val link_linear :
 val run_linear :
   device:Device.t ->
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  Buffers.t ->
   ?var_vals:(string * int) list ->
   ?input_uops:Tolk_uop.Uop.t array ->
   ?update_stats:bool ->
@@ -328,7 +273,7 @@ val run_linear :
   ?wait:bool ->
   Tolk_uop.Uop.t ->
   unit
-(** [run_linear ~device ~to_program binding ?var_vals ?input_uops ?update_stats
+(** [run_linear ~device ~to_program ?var_vals ?input_uops ?update_stats
     ?jit ?wait linear] executes each {!Tolk_uop.Ops.Call} in the {!Tolk_uop.Ops.Linear}
     [linear] in order.
 

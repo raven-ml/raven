@@ -138,5 +138,5 @@ let call ?(vars = [||]) t tensors =
   Fun.protect
     ~finally:(fun () -> t.current <- None)
     (fun () ->
-      Tolk.Jit.call jit input_uops var_vals ~buffers:Run.buffer_of_node
+      Tolk.Jit.call jit input_uops var_vals
         ~held_buffers)

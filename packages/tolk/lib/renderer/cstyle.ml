@@ -815,7 +815,7 @@ let base_rewrite : ctx rule list =
         let rendered = ctx.lang.code_for_op xop args dt in
         if List.mem xop [ Ops.Add; Ops.Sub; Ops.Mul; Ops.Neg; Ops.Shl; Ops.Cdiv ]
            && Dtype.is_int dt && Dtype.itemsize dt < 4
-           && render_numel ctx x = 1
+           && U.max_numel x = 1
         then Some (strf "(%s)" (render_cast ctx dt (strip_parens rendered)))
         else Some rendered );
     (* CUSTOM / CUSTOMI: format the arg as a template with src strings. *)

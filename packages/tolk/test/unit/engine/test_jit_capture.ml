@@ -142,12 +142,11 @@ let sum_to_scalar_kernel name ~size =
 
 (* JIT driver. The function builds the CALL(LINEAR) form allocations emits —
    scheduled kernels whose call-level PARAM slots index the outer buffer
-   arguments — schedules it, seeds every registered buffer argument, and
-   executes. [body_calls] builds the per-kernel calls; the outer arguments are
-   the output node followed by the current input node. Returns a driver that
-   registers a fresh input buffer and runs the JIT on it. *)
-let schedule_jit ~registry ~out_node ~body_calls =
-  let buffers node = Hashtbl.find_opt registry (U.tag node) in
+   arguments — schedules it and executes its owned buffers. [body_calls] builds
+   the per-kernel calls; the outer arguments are the output node followed by
+   the current input node. Returns a driver that
+   owns a fresh input buffer and runs the JIT on it. *)
+let schedule_jit ~out_node ~body_calls =
   let fxn input_uops _var_vals =
     let big =
       U.call
@@ -158,36 +157,20 @@ let schedule_jit ~registry ~out_node ~body_calls =
     let linear, var_vals =
       Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big
     in
-    let binding = Realize.Buffers.create () in
-    List.iter
-      (fun call ->
-        match U.as_call call with
-        | Some { args; _ } ->
-            List.iter
-              (fun arg ->
-                match buffers arg with
-                | Some buf -> Realize.Buffers.seed binding arg buf
-                | None -> ())
-              args
-        | None -> ())
-      (U.children linear);
-    Realize.run_linear ~device ~to_program binding ~var_vals ~wait:true linear
+    Realize.run_linear ~device ~to_program ~var_vals ~wait:true linear
   in
   let tjit = Jit.create ~device ~to_program ~fxn () in
   fun values ->
-    let node = buffer_node ~size:(List.length values) () in
-    Hashtbl.replace registry (U.tag node) (make_buffer values);
+    let node = U.from_buffer (make_buffer values) in
     Jit.call tjit [| node |] [] ~wait:true
       ~held_buffers:(fun () -> [ out_node ])
-      ~buffers
 
 (* A single-kernel JIT: one output, one external input. *)
-let single_kernel_jit ~sink ~out_buf ~out_node =
-  let registry : (int, Device.Buffer.t) Hashtbl.t = Hashtbl.create 8 in
-  Hashtbl.replace registry (U.tag out_node) out_buf;
+let single_kernel_jit ~sink ~out_buf =
+  let out_node = U.from_buffer out_buf in
   let cp_out = U.param ~slot:0 ~dtype:Dtype.int32 () in
   let cp_in = U.param ~slot:1 ~dtype:Dtype.int32 () in
-  schedule_jit ~registry ~out_node
+  schedule_jit ~out_node
     ~body_calls:
       [ U.call ~body:sink ~args:[ cp_out; cp_in ] ~info:(call_info "k") ]
 
@@ -204,7 +187,6 @@ let () =
                 single_kernel_jit
                   ~sink:(double_kernel "mul_two" ~size)
                   ~out_buf
-                  ~out_node:(buffer_node ~size ())
               in
               (* warmup executes eagerly *)
               run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
@@ -225,7 +207,6 @@ let () =
               single_kernel_jit
                 ~sink:(running_sum_kernel "running_sum" ~size)
                 ~out_buf
-                ~out_node:(buffer_node ~size ())
             in
             run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
             run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
@@ -241,7 +222,6 @@ let () =
               single_kernel_jit
                 ~sink:(sum_to_scalar_kernel "sum_scalar" ~size)
                 ~out_buf
-                ~out_node:(buffer_node ~size:1 ())
             in
             run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
             run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
@@ -254,13 +234,9 @@ let () =
           test "two chained kernels: double then add-ten through a planned \
                 intermediate" (fun () ->
             let size = 4 in
-            let out_node = buffer_node ~size () in
             let tmp_node = buffer_node ~size () in
             let out_buf = zero_buffer size in
-            let registry : (int, Device.Buffer.t) Hashtbl.t =
-              Hashtbl.create 8
-            in
-            Hashtbl.replace registry (U.tag out_node) out_buf;
+            let out_node = U.from_buffer out_buf in
             let k1 = double_kernel "mul_two" ~size in
             let k2 = add_const_kernel "add_ten" ~size ~addend:10 in
             let cp_out = U.param ~slot:0 ~dtype:Dtype.int32 () in
@@ -268,7 +244,7 @@ let () =
             (* [tmp_node] is internal to the schedule: it is never registered
                nor held, so the capture folds it into an arena. *)
             let run =
-              schedule_jit ~registry ~out_node
+              schedule_jit ~out_node
                 ~body_calls:
                   [
                     U.call ~body:k1 ~args:[ tmp_node; cp_in ]

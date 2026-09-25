@@ -666,13 +666,9 @@ let test_sparse_program_arguments () =
       applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.store ~dst:(index output) ~value:sum () ] in
   let program = Codegen.to_program ~optimize:false device (Device.renderer device) sink in
-  let binding = Realize.Buffers.create () in
   let bind values =
     let buffer = create_i32_buffer device values in
-    let node = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.int32
-        ~shape:(U.const_int 1) ~device:(U.Single (Device.name device)) () in
-    Realize.Buffers.seed binding node buffer;
-    node, buffer in
+    U.from_buffer buffer, buffer in
   let output_node, output_buffer = bind [ 0 ] in
   let input_node, input_buffer = bind [ 41 ] in
   let unused = ptr 999 in
@@ -682,7 +678,7 @@ let test_sparse_program_arguments () =
       precompile_backward = false; aux = None; dtype = Dtype.void } in
   let call = U.call ~body:program ~args ~info in
   Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-    binding ~var_vals:[ "increment", 1 ] (U.linear [ call ]);
+    ~var_vals:[ "increment", 1 ] (U.linear [ call ]);
   equal (list int) [ 42 ] (read_i32_buffer output_buffer);
   equal (list int) [ 41 ] (read_i32_buffer input_buffer);
   let obj = U.to_elf program in

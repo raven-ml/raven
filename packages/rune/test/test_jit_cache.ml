@@ -56,10 +56,37 @@ let child_devices () =
   if e <> a then failwith "the result over two devices differs from one device";
   print_result got
 
+let child_nested_scan () =
+  let weight = Nx.scalar f32 0.5 in
+  let f xs =
+    let bias = Nx.sum xs in
+    let carry, ys = Rune.scan'
+        ~f:(fun carry row ->
+          let carry, inner = Rune.scan'
+              ~f:(fun carry x ->
+                let carry = Nx.add carry (Nx.add (Nx.mul weight x) bias) in
+                carry, carry)
+              ~init:carry row in
+          let carry = Nx.add carry (Nx.sum inner) in
+          carry, carry)
+        ~init:(Nx.scalar f32 0.) xs in
+    Nx.add (Nx.add carry (Nx.sum ys)) bias
+  in
+  let compiled = Rune.jit' f in
+  for replay = 1 to 2 do
+    let xs = Nx.create f32 [| 2; 3 |]
+        (Array.init 6 (fun i -> float_of_int (i + replay) /. 8.)) in
+    let actual = compiled xs in
+    if to_arr actual <> to_arr (f xs) then
+      failwith "cached nested scan differs from eager execution";
+    print_result actual
+  done
+
 let run_role = function
   | "once" -> child_once ()
   | "twice" -> child_twice ()
   | "devices" -> child_devices ()
+  | "nested_scan" -> child_nested_scan ()
   | role -> failwith ("unknown role: " ^ role)
 
 (* Parent side *)
@@ -188,6 +215,21 @@ let corrupt_entry_is_a_miss_and_rewritten () =
   close_in ic;
   is_true ~msg:"entry rewritten" (size > String.length "not a marshalled entry")
 
+let nested_scan_preserves_parameter_scopes () =
+  let cache = fresh_dir () in
+  let cold_out, cold_events = run_child ~cache "nested_scan" in
+  equal (list string) ~msg:"cold nested scan compiles once"
+    ["miss"; "store"] cold_events;
+  (match String.split_on_char '\n' (String.trim cold_out) with
+   | [first; second] ->
+       is_true ~msg:"each replay reads its own input" (first <> second)
+   | _ -> fail "expected two nested-scan results");
+  let warm_out, warm_events = run_child ~cache "nested_scan" in
+  equal (list string) ~msg:"nested scan imports in a fresh process"
+    ["hit"] warm_events;
+  equal string ~msg:"local loop slots and captured owners survive import"
+    cold_out warm_out
+
 (* The key digests the executable, so the same trace compiled by a different
    binary must miss. Append a byte to a copy of this executable: same code runs,
    different fingerprint. *)
@@ -261,6 +303,8 @@ let () =
             [
               test "cold process misses, warm process hits, bytes identical"
                 cold_miss_then_warm_hit;
+              test "nested scan imports preserve parameter scopes and fresh inputs"
+                nested_scan_preserves_parameter_scopes;
               test "corrupt entry is a silent miss and is rewritten"
                 corrupt_entry_is_a_miss_and_rewritten;
               test "a different executable fingerprint misses"

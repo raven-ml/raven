@@ -120,11 +120,10 @@ let compile_queue device calls =
   is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
       match U.arg (U.without_after call) with
       | U.Arg.Call_info {aux = Some _; _} -> true | _ -> false) (U.children compiled));
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   fun ?(wait = false) ?(vars = []) inputs ->
     Realize.run_linear ~device ~to_program ~jit:true ~wait ~var_vals:vars
-      ~input_uops:(Array.map U.from_buffer inputs) binding linked
+      ~input_uops:(Array.map U.from_buffer inputs) linked
 
 let schedule_queue_linear device ~to_program sink =
   let call, buffer_map = bufferized_call sink in
@@ -190,21 +189,14 @@ let f16_buf device data =
   Device.Buffer.copyin buf (f16_to_bytes data);
   buf
 
-let f16_buffer_node device_name n =
-  U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float16
-    ~shape:(U.const_int n) ~device:(U.Single device_name) ()
-
 let mk_shape dims =
   match List.map (fun s -> U.const_int s) dims with
   | [ d ] -> d
   | ds -> U.stack ds
 
-let output_buffer binding buffer_map out =
+let output_buffer buffer_map out =
   match Hashtbl.find_opt buffer_map (U.tag out) with
-  | Some node -> (
-      match Realize.Buffers.find_opt binding (U.buf_uop node) with
-      | Some buf -> buf
-      | None -> fail "output buffer was not bound")
+  | Some node -> Realize.resolve (Realize.exec_context ()) (U.buf_uop node)
   | None -> fail "output was not scheduled to a buffer"
 
 let test_mixed_scalar_widths () =
@@ -442,8 +434,8 @@ let () =
                     let r, c = (i / n, i mod n) in
                     float_of_int ((((3 * r) + c) mod 5) - 2) *. 0.5)
               in
-              let a_node = f16_buffer_node "CUDA" (m * k) in
-              let b_node = f16_buffer_node "CUDA" (k * n) in
+              let a_node = U.from_buffer (f16_buf device a_data) in
+              let b_node = U.from_buffer (f16_buf device b_data) in
               (* dot: a.reshape(M,1,K) * b.permute(1,0).reshape(1,N,K),
                  summed over K. *)
               let ae =
@@ -491,11 +483,8 @@ let () =
               in
               is_true ~msg:"kernel uses the tensor core"
                 (List.exists (fun src -> contains src "mma.sync") sources);
-              let binding = Realize.Buffers.create () in
-              let linear = Realize.link_linear binding linear in
-              Realize.Buffers.seed binding a_node (f16_buf device a_data);
-              Realize.Buffers.seed binding b_node (f16_buf device b_data);
-              Realize.run_linear ~device ~to_program binding linear;
+              let linear = Realize.link_linear linear in
+              Realize.run_linear ~device ~to_program linear;
               Device.synchronize device;
               let expected =
                 Array.init (m * n) (fun i ->
@@ -507,7 +496,7 @@ let () =
                     done;
                     !acc)
               in
-              let buf = output_buffer binding buffer_map out in
+              let buf = output_buffer buffer_map out in
               equal (array (float 1e-6)) expected (read_f32 buf));
         ];
       group "Queue engine"
@@ -522,7 +511,7 @@ let () =
               in
               let data = [| 1.0; 2.0; 4.0; 8.0; 16.0; 32.0; 64.0; 128.0 |] in
               let n = Array.length data in
-              let buf_node = f32_buffer_node "CUDA" n in
+              let buf_node = U.from_buffer (f32_buf device data) in
               let v =
                 U.variable ~name:"start_pos" ~min_val:1 ~max_val:(n - 1) ()
               in
@@ -537,15 +526,13 @@ let () =
               let linear, _var_vals, buffer_map =
                 schedule_queue_linear device ~to_program (U.sink [ out ])
               in
-              let binding = Realize.Buffers.create () in
-              let linear = Realize.link_linear binding linear in
-              Realize.Buffers.seed binding buf_node (f32_buf device data);
+              let linear = Realize.link_linear linear in
               let check value =
-                Realize.run_linear ~device ~to_program binding
+                Realize.run_linear ~device ~to_program
                   ~var_vals:[ ("start_pos", value) ]
                   ~jit:true linear;
                 Device.synchronize device;
-                let buf = output_buffer binding buffer_map out in
+                let buf = output_buffer buffer_map out in
                 let got = Array.sub (read_f32 buf) 0 (value + 1) in
                 let expected =
                   Array.map (fun x -> -.x) (Array.sub data 0 (value + 1))
@@ -583,27 +570,20 @@ let () =
               let linear =
                 U.substitute ~walk:true [ (buf_node, param) ] linear
               in
-              let binding = Realize.Buffers.create () in
-              let linear = Realize.link_linear binding linear in
-              let check node data =
-                Realize.Buffers.seed binding node (f32_buf device data);
-                Realize.run_linear ~device ~to_program binding
+              let linear = Realize.link_linear linear in
+              let check data =
+                let node = U.from_buffer (f32_buf device data) in
+                Realize.run_linear ~device ~to_program
                   ~input_uops:[| node |] ~jit:true linear;
                 Device.synchronize device;
-                Realize.Buffers.remove binding node;
-                let buf = output_buffer binding buffer_map out in
+                let buf = output_buffer buffer_map out in
                 equal (array (float 1e-6))
                   (Array.map (fun x -> -.x) data)
                   (read_f32 buf)
               in
-              let node1 = f32_buffer_node "CUDA" n in
-              let node2 = f32_buffer_node "CUDA" n in
-              check node1 data1;
-              check node2 data2);
-          (* Buffer nodes reseeded in the binding between replays (no PARAM
-             slots): rune's jit reseeds its input nodes and binds a fresh
-             output buffer on every call, so the submission must repatch both. *)
-          test "queue call replays with reseeded buffer nodes" (fun () ->
+              check data1;
+              check data2);
+          test "queue call replays with rebound input and output slots" (fun () ->
               let device = cuda_device () in
               let to_program device body =
                 Codegen.to_program device (Device.renderer device) body
@@ -623,12 +603,14 @@ let () =
                 | Some node -> U.buf_uop node
                 | None -> fail "output was not scheduled to a buffer"
               in
-              let binding = Realize.Buffers.create () in
-              let linear = Realize.link_linear binding linear in
+              let param slot node = U.param ~slot ~dtype:(U.dtype node)
+                  ?device:(U.device_of node) () in
+              let linear = U.substitute ~walk:true
+                  [in_node, param 0 in_node; out_node, param 1 out_node] linear
+                  |> Realize.link_linear in
               let run in_buf out_buf =
-                Realize.Buffers.seed binding in_node in_buf;
-                Realize.Buffers.seed binding out_node out_buf;
-                Realize.run_linear ~device ~to_program binding ~jit:true linear;
+                Realize.run_linear ~device ~to_program ~jit:true
+                  ~input_uops:(Array.map U.from_buffer [|in_buf; out_buf|]) linear;
                 Device.synchronize device
               in
               let neg = Array.map (fun x -> -.x) in
@@ -637,7 +619,7 @@ let () =
               (* First submission binds [in1]/[out1]. *)
               run in1 out1;
               equal (array (float 1e-6)) (neg data1) (read_f32 out1);
-              (* Reseeding both nodes must repatch the recorded addresses:
+              (* Rebinding both slots must repatch the recorded addresses:
                  the second run reads [in2] and writes [out2], leaving [out1]
                  untouched. *)
               let in2 = f32_buf device data2 in

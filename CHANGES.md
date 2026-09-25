@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Execution and JIT replay now use owned `BUFFER` nodes and explicit `PARAM`
+  arguments. Remove `Realize.Buffers` and the `Jit.call` buffer resolver; Rune
+  inputs, arenas and nested loops use per-invocation parameter scopes.
+
 - C-style rendering uses IR shapes for vector types and memory accesses,
   fixing size-changing bitcasts and vector casts. Rendered graphs can now be
   collected instead of remaining in a permanent expression-width cache.

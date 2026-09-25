@@ -24,9 +24,9 @@
        input buffer nodes as [input_uops] and the per-call variable values as
        [var_vals].}}
 
-    Non-input buffers (weights, outputs, held buffers) are bound once at
-    capture through the caller's buffer resolver; planned intermediates live
-    in arena buffers owned by the capture's persistent binding. *)
+    Non-input buffers (weights, outputs, held buffers) retain their storage
+    directly in the captured graph. Planned intermediates live in arena
+    buffers owned by that graph. *)
 
 (** {1:exceptions Exceptions} *)
 
@@ -37,7 +37,7 @@ exception Jit_error of string
 (** {1:captured Captured schedule} *)
 
 type 'a captured_jit
-(** A compiled linear together with the buffer binding it replays through. *)
+(** A compiled linear owning its retained storage. *)
 
 (** {1:tiny_jit TinyJit} *)
 
@@ -81,23 +81,18 @@ val call :
   'a tiny_jit ->
   Tolk_uop.Uop.t array ->
   (string * int) list ->
-  buffers:(Tolk_uop.Uop.t -> Device.Buffer.t option) ->
   'a
-(** [call ?wait ?held_buffers t input_uops var_vals ~buffers] runs [t] with
+(** [call ?wait ?held_buffers t input_uops var_vals] runs [t] with
     the input buffer nodes [input_uops] and variable values [var_vals].
 
     {ul
     {- {e Warmup} (cnt=0): calls the wrapped function eagerly.}
     {- {e Capture} (cnt=1): calls the function under the capture handler,
-       lowers the combined recorded schedule for replay, binds the non-input
-       buffers it references through [buffers], and replays.}
+       lowers the combined recorded schedule for replay and replays.}
     {- {e Exec} (cnt>=2): validates inputs against the capture and replays
        with the current [input_uops] and [var_vals].}}
 
-    [buffers] maps buffer nodes to their concrete device buffers. At capture
-    it binds the non-input buffers of the recorded schedule; at every replay
-    it resolves the current [input_uops], so each input node must have a
-    backing buffer when [call] runs.
+    Input nodes and captured buffers must own their concrete storage.
 
     [held_buffers], evaluated once when capture completes, lists the buffer
     nodes that outlive the jitted computation — external outputs, and any

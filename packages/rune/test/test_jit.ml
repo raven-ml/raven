@@ -729,6 +729,35 @@ let test_grad_through_scan_captured_weight () =
     (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
+let test_nested_scans_rebind_inputs () =
+  let weight = Nx.scalar f32 0.5 in
+  let f xs =
+    let bias = Nx.sum xs in
+    let carry, ys = Rune.scan'
+        ~f:(fun carry row ->
+          let carry, inner = Rune.scan'
+              ~f:(fun carry x ->
+                let carry = Nx.add carry (Nx.add (Nx.mul x weight) bias) in
+                carry, Nx.mul carry x)
+              ~init:carry row in
+          let carry = Nx.add carry (Nx.sum inner) in
+          carry, carry)
+        ~init:(Nx.scalar f32 0.) xs in
+    (* The outer input remains valid after both loop scopes finish. *)
+    Nx.add (Nx.add carry (Nx.sum ys)) (Nx.sum xs)
+  in
+  List.iter (fun device ->
+      let compiled = Rune.jit' ~devices:[Rune.device device] f in
+      for replay = 1 to 3 do
+        let xs = Nx.create f32 [| 3; 2 |]
+            (Array.init 6 (fun i -> float_of_int (i + replay) /. 8.)) in
+        Gc.full_major ();
+        check_arr ~eps:1e-3
+          ~msg:(Printf.sprintf "%s nested replay %d" device replay)
+          (to_arr (f xs)) (compiled xs)
+      done)
+    ["CPU"; "CPU:1"]
+
 let test_grad_through_scan_vector_carry () =
   let loss xs =
     let c, ys =
@@ -2834,8 +2863,8 @@ let device_bytes name =
   Option.value ~default:0
     (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device name)
 
-(* Not inlined: once it returns, only [g]'s binding refers to the window's range
-   of storage, through a buffer view the call made. *)
+(* Not inlined: once it returns, the caller no longer holds the window or its
+   storage, while [g] itself remains alive. *)
 let[@inline never] read_a_window g n =
   let x = place (Nx.create f32 [| n + 1 |] (Array.make (n + 1) 1.0)) in
   check_arr ~msg:"the window" (Array.make n 2.0)
@@ -4467,6 +4496,8 @@ let tests =
         test "shape-unstable carry unrolls instead of staging"
           test_scan_shape_unstable_carry_unrolls;
         test "grad through nested scans" test_grad_through_scan_nested;
+        test "nested scans rebind inputs without changing the outer scope"
+          test_nested_scans_rebind_inputs;
         test "grad through a scan with a captured weight"
           test_grad_through_scan_captured_weight;
         test "grad through a scan with a vector carry"

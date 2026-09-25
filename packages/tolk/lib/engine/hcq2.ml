@@ -391,28 +391,9 @@ let compile_batch ~profile ~original_calls ~reordered_accesses calls =
       E.(total + cost)) E.zero calls in
   let kernel_info = U.{name = "hcq_submit"; applied_opts = []; opts_to_apply = None;
     estimates = Some (E.to_uop estimates); beam = 0} in
-  (* Owned arguments can still be rebound by a consumer. Encode against
-     parameters, then restore the original argument nodes outside the host
-     program so execution resolves their current bindings on every call. The
-     dependency plan above keeps the original allocation alias information. *)
-  let nodes = U.toposort ~enter_calls:false (U.group
-      (List.map (fun c -> c.call) calls
-       @ List.concat_map (fun (a, b) -> [a; b]) reordered_accesses)) in
-  let slot = List.fold_left (fun slot u -> match U.as_param u with
-      | Some {param; _} -> max slot (param.slot + 1) | None -> slot) 0 nodes in
-  let mappings = nodes |> List.filter (fun u ->
-      U.op u = Ops.Buffer && U.addrspace u = Some Dtype.Global)
-    |> List.mapi (fun i u -> u, U.param ~slot:(slot + i) ~dtype:(U.dtype u)
-        ~shape:(U.const_int (U.max_numel u)) ?device:(U.device_of u) ()) in
-  let substitute = U.substitute ~walk:true mappings in
-  let calls = List.map (fun c -> {c with call = substitute c.call}) calls in
-  let sink = substitute (U.sink ~kernel_info submits) in
-  let independent_accesses = List.map (fun (a, b) -> substitute a, substitute b)
-      (plan.independent_accesses @ reordered_accesses) in
-  let timestamps = List.map (fun (d, a, b) -> d, substitute a, substitute b) plan.timestamps in
-  let original_calls = List.map substitute original_calls in
-  let lowered = lower_call queue devices calls original_calls independent_accesses timestamps sink in
-  U.substitute ~walk:true (List.map (fun (a, b) -> b, a) mappings) lowered
+  lower_call queue devices calls original_calls
+    (plan.independent_accesses @ reordered_accesses) plan.timestamps
+    (U.sink ~kernel_info submits)
 
 let enqueue call = match U.as_call call with
   | Some {body; args} when (U.op body = Ops.Program || U.op body = Ops.Store)

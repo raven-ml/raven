@@ -213,21 +213,18 @@ let interleaved_kernel_formals () =
 let node_owned_storage () =
   let node = Uop.buffer ~slot:(Uop.fresh_buffer_slot ()) ~dtype:i32
       ~shape:(Uop.const_int 4) ~device:(Uop.Single (Device.name device)) () in
-  let first = Realize.Buffers.create () in
-  let second = Realize.Buffers.create () in
-  let a = Realize.Buffers.of_buffer_node first node in
-  let b = Realize.Buffers.of_buffer_node second node in
+  let a = Realize.resolve (Realize.exec_context ()) node in
+  let b = Realize.resolve (Realize.exec_context ()) node in
   equal int (Device.Buffer.id a) (Device.Buffer.id b);
   is_false (Device.Buffer.is_allocated a);
   Device.Buffer.ensure_allocated a;
   Device.Buffer.copyin a (i32_to_bytes [1; 2; 3; 4]);
-  Realize.Buffers.clear first;
   Gc.full_major ();
   equal (list int) [1; 2; 3; 4] (read_i32 b);
   let imported = Uop.from_buffer a in
   is_true (imported == Uop.from_buffer a);
   equal int (Device.Buffer.id a)
-    (Device.Buffer.id (Realize.Buffers.of_buffer_node second imported))
+    (Device.Buffer.id (Realize.resolve (Realize.exec_context ()) imported))
 
 let storage_serialization () =
   let base = filled_i32 [10; 20; 30; 40] in
@@ -236,11 +233,10 @@ let storage_serialization () =
   let graph = Uop.sink [Uop.from_buffer base; Uop.from_buffer view] in
   let restored = Uop.import (Uop.export graph) in
   equal string (Uop.semantic_key graph) (Uop.semantic_key restored);
-  let binding = Realize.Buffers.create () in
   match Uop.children restored with
   | [base_node; view_node] ->
-      let base' = Realize.Buffers.of_buffer_node binding base_node in
-      let view' = Realize.Buffers.of_buffer_node binding view_node in
+      let base' = Realize.resolve (Realize.exec_context ()) base_node in
+      let view' = Realize.resolve (Realize.exec_context ()) view_node in
       equal (list int) [10; 20; 30; 40] (read_i32 base');
       equal (list int) [20; 30] (read_i32 view');
       equal int (Device.Buffer.id base') (Device.Buffer.base_id view');
@@ -257,10 +253,9 @@ let external_storage_serialization () =
   let external_buffer = Device.create_buffer ~size:2 ~dtype:i32 ~spec device in
   Device.Buffer.ensure_allocated external_buffer;
   let node = Uop.from_buffer external_buffer in
-  let binding = Realize.Buffers.create () in
   equal int (Device.Buffer.id external_buffer)
-    (Device.Buffer.id (Realize.Buffers.of_buffer_node binding node));
-  let restored = Realize.Buffers.of_buffer_node binding (Uop.import (Uop.export node)) in
+    (Device.Buffer.id (Realize.resolve (Realize.exec_context ()) node));
+  let restored = Realize.resolve (Realize.exec_context ()) (Uop.import (Uop.export node)) in
   is_true (Option.is_none (Device.Buffer.spec restored).external_ptr);
   equal (list int) [6; 7] (read_i32 restored);
   Device.Buffer.copyin restored (i32_to_bytes [8; 9]);

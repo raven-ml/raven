@@ -67,17 +67,12 @@ let realize_output device ~to_program ~buf_node ~value =
   equal ~msg:"extracted bind value" (list (pair string int))
     [ ("start_pos", value) ]
     var_vals;
-  let binding = Realize.Buffers.create () in
-  Realize.Buffers.seed binding buf_node (input_buffer device float_data);
-  Realize.run_linear ~device ~to_program binding ~var_vals linear;
+  Realize.run_linear ~device ~to_program ~var_vals linear;
   Device.synchronize device;
   match Hashtbl.find_opt buffer_map (U.tag out) with
-  | Some node -> (
-      match
-        Realize.Buffers.find_opt binding (U.buf_uop node)
-      with
-      | Some buf -> (read_f32 buf).(0)
-      | None -> fail "output buffer was not bound")
+  | Some node ->
+      let buf = Realize.resolve (Realize.exec_context ()) (U.buf_uop node) in
+      (read_f32 buf).(0)
   | None -> fail "output was not scheduled to a buffer"
 
 (* NEG(SHRINK(buf, (0, start_pos+1))): an elementwise kernel whose launch
@@ -98,26 +93,19 @@ let realize_neg_output device ~to_program ~buf_node ~value =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
   in
-  let binding = Realize.Buffers.create () in
-  Realize.Buffers.seed binding buf_node (input_buffer device float_data);
-  Realize.run_linear ~device ~to_program binding ~var_vals linear;
+  Realize.run_linear ~device ~to_program ~var_vals linear;
   Device.synchronize device;
   match Hashtbl.find_opt buffer_map (U.tag out) with
-  | Some node -> (
-      match Realize.Buffers.find_opt binding (U.buf_uop node) with
-      | Some buf -> Array.sub (read_f32 buf) 0 (value + 1)
-      | None -> fail "output buffer was not bound")
+  | Some node ->
+      let buf = Realize.resolve (Realize.exec_context ()) (U.buf_uop node) in
+      Array.sub (read_f32 buf) 0 (value + 1)
   | None -> fail "output was not scheduled to a buffer"
 
-let symbolic_launch_matches_concrete device_name device =
+let symbolic_launch_matches_concrete device =
   let to_program device body =
     Codegen.to_program device (Device.renderer device) body
   in
-  let buf_node =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
-      ~shape:(U.const_int (Array.length float_data))
-      ~device:(U.Single device_name) ()
-  in
+  let buf_node = U.from_buffer (input_buffer device float_data) in
   List.iter
     (fun value ->
       let got = realize_neg_output device ~to_program ~buf_node ~value in
@@ -128,17 +116,13 @@ let symbolic_launch_matches_concrete device_name device =
         (array (float 1e-6)) expected got)
     [ 2; 6 ]
 
-let symbolic_reduce_matches_concrete device_name device =
+let symbolic_reduce_matches_concrete device =
   let compiles = ref 0 in
   let to_program device body =
     incr compiles;
     Codegen.to_program device (Device.renderer device) body
   in
-  let buf_node =
-    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
-      ~shape:(U.const_int (Array.length float_data))
-      ~device:(U.Single device_name) ()
-  in
+  let buf_node = U.from_buffer (input_buffer device float_data) in
   List.iter
     (fun value ->
       let got = realize_output device ~to_program ~buf_node ~value in
@@ -153,20 +137,20 @@ let () =
   run "Engine_symbolic"
     [
       test "symbolic shrink+sum runs for several bind values on CPU" (fun () ->
-          symbolic_reduce_matches_concrete "CPU" (Tolk_cpu.create "CPU"));
+          symbolic_reduce_matches_concrete (Tolk_cpu.create "CPU"));
       test "symbolic shrink+sum runs for several bind values on CUDA"
         (fun () ->
           let device =
             try Tolk_cuda.create "CUDA"
             with Failure msg -> skip ~reason:msg ()
           in
-          symbolic_reduce_matches_concrete "CUDA" device);
+          symbolic_reduce_matches_concrete device);
       test "symbolic launch dims run on CPU" (fun () ->
-          symbolic_launch_matches_concrete "CPU" (Tolk_cpu.create "CPU"));
+          symbolic_launch_matches_concrete (Tolk_cpu.create "CPU"));
       test "symbolic launch dims run on CUDA" (fun () ->
           let device =
             try Tolk_cuda.create "CUDA"
             with Failure msg -> skip ~reason:msg ()
           in
-          symbolic_launch_matches_concrete "CUDA" device);
+          symbolic_launch_matches_concrete device);
     ]

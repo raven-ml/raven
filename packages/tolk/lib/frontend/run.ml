@@ -126,24 +126,22 @@ let execute ts =
     Tolk.Schedule.create_linear_with_vars
       ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call
   in
-  let binding = Tolk.Realize.Buffers.create () in
-  Tolk.Realize.run_linear ~device:dev ~to_program binding ~var_vals linear;
+  Tolk.Realize.run_linear ~device:dev ~to_program ~var_vals linear;
   List.iter2 (fun t out ->
       match Hashtbl.find_opt buffer_map (U.tag out) with
       | Some node -> T.set_uop t node
-      | None -> ()) ts outs;
-  binding
+      | None -> ()) ts outs
 
 (* The single-device buffer of each realized tensor, for reading back. *)
 let realize_buffers ts =
-  let binding = execute ts in
+  execute ts;
   List.map (fun t ->
       match view_buffer (T.uop t) with
       | Some buffer -> Some buffer
       | None ->
           let node = U.buf_uop (T.uop t) in
           if U.op node = Ops.Buffer then
-            Some (Tolk.Realize.Buffers.of_buffer_node binding node)
+            Some (Tolk.Realize.resolve (Tolk.Realize.exec_context ()) node)
           else None) ts
 
 let has_empty_shape t =

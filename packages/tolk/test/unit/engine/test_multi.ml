@@ -337,19 +337,14 @@ let () =
         ];
       group "Resolution"
         [
-          test "mstack joins and mselect indexes seeded shards" (fun () ->
+          test "mstack joins and mselect indexes owned shards" (fun () ->
               let data1 = [| 1.; 2.; 3.; 4. |] in
               let data2 = [| 10.; 20.; 30.; 40. |] in
-              let a = f32_buffer_node "CPU:1" [ 4 ] in
-              let b = f32_buffer_node "CPU:2" [ 4 ] in
-              let binding = Realize.Buffers.create () in
-              Realize.Buffers.seed binding a
-                (f32_buf (Device.get "CPU:1") data1);
-              Realize.Buffers.seed binding b
-                (f32_buf (Device.get "CPU:2") data2);
+              let a = U.from_buffer (f32_buf (Device.get "CPU:1") data1) in
+              let b = U.from_buffer (f32_buf (Device.get "CPU:2") data2) in
               let ctx = Realize.exec_context () in
               let ms = U.mstack [ a; b ] in
-              (match Realize.resolve_buffer binding ctx ms with
+              (match Realize.resolve_buffer ctx ms with
               | Realize.Multi m ->
                   equal ~msg:"mstack shard devices" (list string)
                     [ "CPU:1"; "CPU:2" ]
@@ -357,7 +352,7 @@ let () =
                        (Device.Multi_buffer.bufs m))
               | Realize.Single _ -> fail "MSTACK resolved to a single buffer");
               let second =
-                Realize.resolve binding ctx (U.mselect ~src:ms ~index:1)
+                Realize.resolve ctx (U.mselect ~src:ms ~index:1)
               in
               equal ~msg:"mselect shard contents" (array (float 1e-6)) data2
                 (read_f32 second);
@@ -365,15 +360,14 @@ let () =
                 (function Invalid_argument _ -> true | _ -> false)
                 (fun () ->
                   ignore
-                    (Realize.resolve binding ctx (U.mselect ~src:a ~index:0))));
+                    (Realize.resolve ctx (U.mselect ~src:a ~index:0))));
           test "multi buffer node allocates one shard per device" (fun () ->
               let node =
                 U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
                   ~shape:(shape_node [ 4 ]) ~device:(U.Multi devs2) ()
               in
-              let binding = Realize.Buffers.create () in
               let ctx = Realize.exec_context () in
-              match Realize.resolve_buffer binding ctx node with
+              match Realize.resolve_buffer ctx node with
               | Realize.Multi m ->
                   equal ~msg:"shard devices" (list string) devs2
                     (List.map Device.Buffer.device
@@ -383,7 +377,7 @@ let () =
                     storage_view ~src:node ~offset:(U.const_int 1) ~size:2
                       ~dtype:Dtype.float32
                   in
-                  (match Realize.resolve_buffer binding ctx sliced with
+                  (match Realize.resolve_buffer ctx sliced with
                   | Realize.Multi v ->
                       List.iter2
                         (fun view base ->

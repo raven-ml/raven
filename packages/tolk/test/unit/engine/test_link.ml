@@ -13,8 +13,7 @@ let info = U.{ grad_fxn = None; name = None; precompile = false;
   precompile_backward = false; dtype = Dtype.void; aux = None }
 
 let call args = U.call ~body:(U.custom_function ~name:"inspect" ~srcs:[]) ~args ~info
-let binding () = Realize.Buffers.create ()
-let resolve b = Realize.resolve b (Realize.exec_context ())
+let resolve = Realize.resolve (Realize.exec_context ())
 let rec bare u = if U.op u = Ops.After then bare (U.src u).(0) else u
 let args linear = match U.as_call (bare (U.src linear).(0)) with
   | Some {args; _} -> args | None -> fail "missing call"
@@ -22,16 +21,15 @@ let placeholder device tag dtype size =
   U.placeholder ~shape:[size] ~dtype ~slot:0 ~device:(U.Single (Device.name device)) ()
   |> U.with_tag tag
 let initialized p bytes = U.set ~target:p ~value:(U.binary bytes) ()
-let link ?allow_cache b l = Realize.link_linear b ?allow_cache l
+let link ?allow_cache l = Realize.link_linear ?allow_cache l
 
 let allocation_specs () =
   let device = Tolk_cpu.create "CPU:link-allocation-specs" in
-  let b = binding () in
   List.iter (fun (tag, volatile, host, uncached) ->
       let p = U.placeholder ~shape:[16] ~dtype:Dtype.uint8 ~slot:0
           ~device:(U.Single (Device.name device)) ~volatile () |> U.with_tag tag in
-      let linked = link b (U.linear [call [p]]) in
-      let spec = B.spec (resolve b (List.hd (args linked))) in
+      let linked = link (U.linear [call [p]]) in
+      let spec = B.spec (resolve (List.hd (args linked))) in
       equal ~msg:(tag ^ " host") bool host spec.host;
       equal ~msg:(tag ^ " uncached") bool uncached spec.uncached;
       equal ~msg:(tag ^ " CPU access") bool true spec.cpu_access)
@@ -55,18 +53,18 @@ let initialization () =
   let value = U.cast ~src:(U.alu_binary ~op:Ops.Add ~lhs:range ~rhs:(U.const_int 100)) ~dtype:Dtype.uint32 in
   let store = U.store ~dst:(U.index ~ptr:words ~idxs:[offset] ()) ~value () in
   let ready = U.after ~src:initial ~deps:[patch; U.end_ ~value:store ~ranges:[range]] in
-  let linear = U.linear [call [ready]] and b = binding () in
-  let linked = link b linear in
-  let output = resolve b (List.hd (args linked)) in
+  let linear = U.linear [call [ready]] in
+  let linked = link linear in
+  let output = resolve (List.hd (args linked)) in
   let contents = B.as_bytes output in
   equal (list int32) [-1l; 17l; 100l; 101l; 42l; -1l]
     (List.init 6 (fun i -> Bytes.get_int32_le contents (i * 4)));
   B.copyin output (Bytes.make 24 '\000');
-  let cached = link b linear in
+  let cached = link linear in
   equal bool true (U.equal cached linked);
   equal bytes (Bytes.make 24 '\000') (B.as_bytes output);
-  let independent = link ~allow_cache:false b linear in
-  let fresh = resolve b (List.hd (args independent)) in
+  let independent = link ~allow_cache:false linear in
+  let fresh = resolve (List.hd (args independent)) in
   equal bool false (B.id output = B.id fresh);
   equal int32 17l (Bytes.get_int32_le (B.as_bytes fresh) 4)
 
@@ -82,9 +80,8 @@ let cast_patches () =
   let byte = U.bitcast ~dtype:Dtype.uint8
       ~src:(U.cast ~src:(U.alu_unary ~op:Ops.Neg ~src:(U.const_int 17)) ~dtype:Dtype.int8) in
   let ready = Hcq2.patch ~blob:(String.make 12 '\000') p [0, lower; 4, upper; 8, byte] in
-  let b = binding () in
-  let linked = link b (U.linear [call [ready]]) in
-  let contents = B.as_bytes (resolve b (List.hd (args linked))) in
+  let linked = link (U.linear [call [ready]]) in
+  let contents = B.as_bytes (resolve (List.hd (args linked))) in
   equal int64 0x12345678abcdef01L (Bytes.get_int64_le contents 0);
   equal int 239 (Bytes.get_uint8 contents 8)
 
@@ -95,9 +92,8 @@ let addresses () =
   let table = placeholder device "addresses" Dtype.uint64 1 in
   let addr = U.getaddr ~device:(Device.name device) ~src:view () in
   let patch = U.store ~dst:(U.index ~ptr:table ~idxs:[U.const_int 0] ()) ~value:addr () in
-  let b = binding () in
-  let linked = link b (U.linear [call [U.after ~src:table ~deps:[patch]]]) in
-  let result = resolve b (List.hd (args linked)) in
+  let linked = link (U.linear [call [U.after ~src:table ~deps:[patch]]]) in
+  let result = resolve (List.hd (args linked)) in
   equal int64 (Int64.add (Int64.of_nativeint (B.addr source)) 16L)
     (Bytes.get_int64_le (B.as_bytes result) 0);
   equal bool true (List.exists (fun n -> match U.as_buffer n with
@@ -107,11 +103,11 @@ let addresses () =
 let input_links () =
   let device = Tolk_cpu.create "CPU:link-inputs" in
   let p = placeholder device "lt_input" Dtype.int32 1 in
-  let linear = U.linear [call [p]] and b = binding () in
+  let linear = U.linear [call [p]] in
   let input () = U.from_buffer (Device.create_buffer ~size:1 ~dtype:Dtype.int32 device) in
   let a = input () and c = input () in
-  let first = Realize.link_linear b ~input_uops:[|a|] linear in
-  let second = Realize.link_linear b ~input_uops:[|c|] linear in
+  let first = Realize.link_linear ~ctx:(Realize.exec_context ~input_uops:[|a|] ()) linear in
+  let second = Realize.link_linear ~ctx:(Realize.exec_context ~input_uops:[|c|] ()) linear in
   equal bool true (U.equal a (List.hd (args first)));
   equal bool true (U.equal c (List.hd (args second)))
 
@@ -122,7 +118,7 @@ let preserve_runtime () =
   let body = U.sink [U.store ~dst:(U.index ~ptr:inside ~idxs:[U.const_int 0] ())
       ~value:(U.const (Const.int Dtype.uint64 0)) ()] in
   let original = U.call ~body ~args:[p] ~info in
-  let linked = link (binding ()) (U.linear [original]) in
+  let linked = link (U.linear [original]) in
   equal bool true (U.equal original (U.src linked).(0))
 
 let host_call_replay () =
@@ -145,11 +141,10 @@ let host_call_replay () =
   let linear = U.linear [U.call ~body:sink ~args ~info] in
   let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~to_program linear in
-  let b = binding () in
-  let linked = link b compiled in
+  let linked = link compiled in
   let execute value =
     let result = Device.create_buffer ~size:1 ~dtype:Dtype.int32 device in
-    Realize.run_linear ~device ~to_program b ~jit:true ~wait:true
+    Realize.run_linear ~device ~to_program ~jit:true ~wait:true
       ~input_uops:[|U.from_buffer result|] ~var_vals:["n", value] linked;
     equal int32 (Int32.of_int (abs value)) (Bytes.get_int32_le (B.as_bytes result) 0) in
   execute (-31);

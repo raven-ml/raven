@@ -607,8 +607,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
 let execute_queue ~compute_class ~copies m =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~compute_class ~copies m in
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   let get tag = Hashtbl.find buffers tag in
   let set32 tag value =
     let bytes = Bytes.create 4 in
@@ -621,7 +620,7 @@ let execute_queue ~compute_class ~copies m =
   List.iteri (fun replay (small, count) ->
       let inputs = Array.init (if copies then 3 else 1) (fun _ ->
           Device.create_buffer ~size:16 ~dtype:D.int32 device) in
-      Realize.run_linear ~device ~to_program binding ~jit:true
+      Realize.run_linear ~device ~to_program ~jit:true
         ~var_vals:["small", small; "count", count] ~input_uops:(Array.map U.from_buffer inputs) linked;
       Submission.check submission;
       equal int replay (word "gpput_compute");
@@ -676,11 +675,10 @@ let execute_queue ~compute_class ~copies m =
 let queue_chain ~compute_class m =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~chain:true ~compute_class ~copies:false m in
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   let inputs = Array.init 2 (fun _ -> Device.create_buffer ~size:16 ~dtype:D.int32 device) in
   Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-    binding ~jit:true ~var_vals:["small", 4; "count", 2]
+    ~jit:true ~var_vals:["small", 4; "count", 2]
     ~input_uops:(Array.map U.from_buffer inputs) linked;
   Submission.check submission;
   let descriptors = Hashtbl.find_all buffers "qmd" |> List.map (fun b -> b,
@@ -701,11 +699,10 @@ let queue_chain ~compute_class m =
 let queue_timeout m =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run () = Realize.run_linear ~device
-      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) binding ~jit:true
+      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) ~jit:true
       ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked in
   run ();
   let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "gpput_compute") in
@@ -726,11 +723,11 @@ let queue_capacity ~copies ~resume m =
     queue_fixture ~timeout_ms:100 ~compute_class:Defs.ada_compute_a ~copies m in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run () =
-    let binding = Realize.Buffers.create () in
-    let linked = Realize.link_linear binding ~allow_cache:false compiled in
+
+    let linked = Realize.link_linear ~allow_cache:false compiled in
     Realize.run_linear ~device
       ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-      binding ~jit:true ~var_vals:["small", 7; "count", 3]
+      ~jit:true ~var_vals:["small", 7; "count", 3]
       ~input_uops:(Array.make (if copies then 3 else 1) (U.from_buffer input)) linked
   in
   for i = 1 to 7 do
@@ -769,8 +766,7 @@ let queue_counter_rollover m =
   let open Tolk in
   let compiled, device, host, buffers, submission =
     queue_fixture ~timeout_ms:100 ~compute_class:Defs.ada_compute_a ~copies:false m in
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   let progress = Hashtbl.find buffers "progress_compute" in
   let data = Bytes.make 16 '\000' in
   Bytes.set_int64_le data 0 0xfffffffeL;
@@ -780,7 +776,7 @@ let queue_counter_rollover m =
   List.iter (fun expected ->
       Realize.run_linear ~device
         ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-        binding ~jit:true ~var_vals:["small", 7; "count", 3]
+        ~jit:true ~var_vals:["small", 7; "count", 3]
         ~input_uops:[|U.from_buffer input|] linked;
       Submission.check submission;
       let data = Device.Buffer.as_bytes progress in
@@ -799,12 +795,11 @@ let queue_retirement_timeout m =
   let open Tolk in
   let compiled, device, host, buffers, submission =
     queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run small = Realize.run_linear ~device
       ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-      binding ~jit:true ~var_vals:["small", small; "count", 3]
+      ~jit:true ~var_vals:["small", small; "count", 3]
       ~input_uops:[|U.from_buffer input|] linked in
   run 7;
   (* The kernel timeline may finish before the channel consumes its tail. *)

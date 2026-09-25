@@ -192,8 +192,8 @@ let peer_group_batches () =
   equal int 4 (List.length (U.children separated));
   let imported = U.import (U.export linear) in
   equal string (U.semantic_key linear) (U.semantic_key imported);
-  let device = List.hd devices and binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding imported in
+  let device = List.hd devices in
+  let linked = Realize.link_linear imported in
   let buffers = Array.init 6 (fun _ ->
       let buffer = Device.create_buffer ~size:32 ~dtype:Dtype.int32 host in
       Device.Buffer.ensure_allocated buffer; buffer) in
@@ -201,7 +201,7 @@ let peer_group_batches () =
      kernel arguments would miss this runtime alias introduced by reordering. *)
   buffers.(5) <- buffers.(3);
   raises (Invalid_argument "queue replay: bindings introduce an untracked writable alias")
-    (fun () -> Realize.run_linear ~device ~to_program binding ~jit:true
+    (fun () -> Realize.run_linear ~device ~to_program ~jit:true
       ~input_uops:(Array.map U.from_buffer buffers) linked);
   equal int 0 !prepared
 
@@ -345,8 +345,7 @@ let compiled_host_submission () =
     generated := program :: !generated;
     program in
   let compiled = Realize.compile_linear ~device ~to_program linear in
-  let binding = Realize.Buffers.create () in
-  let linked = Realize.link_linear binding compiled in
+  let linked = Realize.link_linear compiled in
   let buffer value =
     let b = Device.create_buffer ~size:1 ~dtype:Dtype.int32 device in
     Device.Buffer.ensure_allocated b;
@@ -355,19 +354,19 @@ let compiled_host_submission () =
     Device.Buffer.copyin b bytes; b in
   List.iter (fun value ->
       let src = buffer value and mid = buffer 0l and dst = buffer 0l in
-      Realize.run_linear ~device ~to_program binding ~jit:true ~wait:true
+      Realize.run_linear ~device ~to_program ~jit:true ~wait:true
         ~input_uops:(Array.map U.from_buffer [|src; mid; dst|]) linked;
       equal int32 value (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0)) [42l; 71l];
   equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
   equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes observed) 0);
   let inputs = Array.map U.from_buffer [|buffer 12l; buffer 0l; buffer 0l|] in
-  let enqueue () = Realize.run_linear ~device ~to_program binding ~jit:true
+  let enqueue () = Realize.run_linear ~device ~to_program ~jit:true
       ~input_uops:inputs linked in
   enqueue ();
   let before = !implicit_waits in
   enqueue ();
   equal ~msg:"bound queue replay must not synchronize storage owners" int before !implicit_waits;
-  let replay linear inputs = Realize.run_linear ~device ~to_program binding
+  let replay linear inputs = Realize.run_linear ~device ~to_program
       ~jit:true ~wait:true ~input_uops:(Array.map U.from_buffer inputs) linear in
   let src = buffer 12l and dst = buffer 0l in
   replay linked [|src; src; dst|];
@@ -386,7 +385,7 @@ let compiled_host_submission () =
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = None} in
   let compile ?profile calls = U.linear calls |> Realize.compile_linear ~device ?profile ~to_program
-      |> Realize.link_linear binding in
+      |> Realize.link_linear in
   let independent = compile [U.store_call ~dst:(ptr 2) ~src:(ptr 0);
       compute (ptr 3) (ptr 1)] in
   let rejected inputs =
@@ -442,7 +441,7 @@ let compiled_host_submission () =
       let profiled = compile [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
           compute (ptr 2) (ptr 1)] in
       (* Profiling adds timestamps by default, but does not force a wait. *)
-      let run () = Realize.run_linear ~device ~to_program binding ~jit:true
+      let run () = Realize.run_linear ~device ~to_program ~jit:true
           ~input_uops:(Array.map U.from_buffer [|src; dst1; dst2|]) profiled in
       run (); run ();
       let events = Device.profile device in
@@ -468,7 +467,7 @@ let compiled_host_submission () =
    | U.Arg.Call_info {aux = Some info; _} ->
        equal (list (pair string string)) [("CPU:unmappable", name)] info.host_deps
    | _ -> fail "import lost host dependencies");
-  let transfer = Realize.link_linear binding imported in
+  let transfer = Realize.link_linear imported in
   let middle = buffer 0l and output = buffer 0l in
   let before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
   import_mode := `Reject;
@@ -488,7 +487,7 @@ let compiled_host_submission () =
     Device.Buffer.copyin rebound bytes;
     let weak = Stdlib.Weak.create 1 in
     Stdlib.Weak.set weak 0 (Some rebound);
-    Realize.run_linear ~device ~to_program binding ~jit:true
+    Realize.run_linear ~device ~to_program ~jit:true
       ~input_uops:(Array.map U.from_buffer [|rebound; middle; output|]) transfer;
     weak in
   equal int32 811l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
@@ -519,25 +518,24 @@ let compiled_host_submission () =
       ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout; fail "must wait only captured work")
       ~queue:{queue with completion} () in
   Device.depend_on owner outsider;
-  Realize.run_linear ~device ~to_program binding ~jit:true
+  Realize.run_linear ~device ~to_program ~jit:true
     ~input_uops:(Array.map U.from_buffer [|foreign; middle; output|]) transfer;
   is_true ~msg:"queue execution waits for uncovered host dependencies" !waited;
   Device.synchronize owner;
-  let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
+  let param slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~device:(U.Single (Device.name device)) () in
   let compiled = Realize.compile_linear ~device ~to_program
-      (U.linear [U.store_call ~dst ~src]) in
-  let linked = Realize.link_linear binding compiled in
-  Realize.run_linear ~device ~to_program binding ~jit:true linked;
+      (U.linear [U.store_call ~dst:(param 1) ~src:(param 0)]) in
+  let linked = Realize.link_linear compiled in
+  replay linked [|buffer 19l; buffer 0l|];
   let replacement = buffer 91l and output = buffer 0l in
-  Realize.Buffers.seed binding src replacement;
-  Realize.Buffers.seed binding dst output;
-  Realize.run_linear ~device ~to_program binding ~jit:true linked;
+  replay linked [|replacement; output|];
   equal int32 91l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
   let run_eager src mid dst =
     let src = U.from_buffer src and mid = U.from_buffer mid and dst_node = U.from_buffer dst in
     let linear = U.linear [U.store_call ~dst:mid ~src;
         U.store_call ~dst:dst_node ~src:mid] in
-    Realize.run_linear ~device ~to_program (Realize.Buffers.create ()) ~wait:true linear;
+    Realize.run_linear ~device ~to_program ~wait:true linear;
     Device.Buffer.ensure_allocated dst;
     Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0 in
   let run_separate value = run_eager (buffer value) (buffer 0l) (buffer 0l) in

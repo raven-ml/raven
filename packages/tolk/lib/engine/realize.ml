@@ -367,76 +367,13 @@ let capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref =
 
 (* Buffer binding
 
-   Placed BUFFER nodes own storage directly. Caller bindings can override
-   that storage; a PARAM resolves through [input_uops], and contiguous
+   Placed BUFFER nodes own storage directly. A PARAM resolves through
+   [input_uops], and contiguous
    movements resolve as byte-offset views. Execution never creates owners. *)
 
 type buffer =
   | Single of Device.Buffer.t
   | Multi of Device.Multi_buffer.t
-
-module Buffers = struct
-  type t = {
-    tbl : (int, buffer) Hashtbl.t;
-    seeded : (int, unit) Hashtbl.t;
-        (* Tags ever bound through [seed]: their resolution may change between
-           runs, unlike lazily allocated intermediates. Sticky across
-           [remove], so graph replay keeps repatching a node that is reseeded
-           per call. *)
-  }
-
-  let create () =
-    { tbl = Hashtbl.create 64; seeded = Hashtbl.create 16 }
-
-  let seed t node buf =
-    let tag = Tolk_uop.Uop.tag node in
-    Hashtbl.replace t.tbl tag (Single buf);
-    Hashtbl.replace t.seeded tag ()
-
-  let seed_multi t node mbuf =
-    let tag = Tolk_uop.Uop.tag node in
-    Hashtbl.replace t.tbl tag (Multi mbuf);
-    Hashtbl.replace t.seeded tag ()
-
-  let seeded t node = Hashtbl.mem t.seeded (Tolk_uop.Uop.tag node)
-  let remove t node = Hashtbl.remove t.tbl (Tolk_uop.Uop.tag node)
-  let owned_buffer node =
-    match Tolk_uop.Uop.op node,
-          Tolk_uop.Uop.Arg.as_param_arg (Tolk_uop.Uop.arg node) with
-    | Tolk_uop.Ops.Buffer, Some { buffer = Some [buf]; _ } -> Some (Single buf)
-    | Tolk_uop.Ops.Buffer, Some { buffer = Some bufs; _ } ->
-        Some (Multi (Device.Multi_buffer.of_bufs bufs))
-    | _ -> None
-
-  let find_buffer t node =
-    match Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node) with
-    | Some _ as buf -> buf
-    | None -> owned_buffer node
-
-  let mem t node = Option.is_some (find_buffer t node)
-
-  let find_opt t node =
-    match find_buffer t node with
-    | Some (Single buf) -> Some buf
-    | Some (Multi _) ->
-        invalid_arg "Buffers.find_opt: node is bound to a multi-device buffer"
-    | None -> None
-
-  let buffer_of_node t node =
-    match find_buffer t node with
-    | Some buf -> buf
-    | None -> invalid_arg "Buffers: graph node has no storage or explicit binding"
-
-  let of_buffer_node t node =
-    match buffer_of_node t node with
-    | Single buf -> buf
-    | Multi _ ->
-        invalid_arg
-          "Buffers.of_buffer_node: node is backed by a multi-device buffer"
-
-  let iter t f = Hashtbl.iter (fun _ b -> f b) t.tbl
-  let clear t = Hashtbl.clear t.tbl
-end
 
 (* Execution context threaded through a LINEAR run: symbolic variable values,
    the input buffers PARAM slots index into, and the JIT/wait flags. *)
@@ -466,47 +403,47 @@ let with_runtime ?(queue = false) ctx ~device program f =
       ~finally:(fun () -> Device.synchronize device; prg.free ())
       (fun () -> f prg)
 
-(* Resolve a call argument UOp to the concrete buffer it names. A seeded node
-   resolves to its bound buffer directly; otherwise resolution is structural.
+(* Resolve a call argument UOp structurally to the concrete buffer it names.
    MSELECT indexes one shard out of a multi-device source; MSTACK joins
    per-device sources into a multi-device buffer. *)
-let rec resolve_buffer binding ctx node =
+let rec resolve_buffer ctx node =
   let module U = Tolk_uop.Uop in
-  match Buffers.find_buffer binding node with
-  | Some buf -> buf
-  | None -> (
   match U.op node with
   | Tolk_uop.Ops.Param -> (
       match U.as_param node with
       | Some { param = { slot; _ }; _ }
         when slot >= 0 && slot < Array.length ctx.input_uops ->
-          resolve_buffer binding ctx ctx.input_uops.(slot)
+          resolve_buffer ctx ctx.input_uops.(slot)
       | _ ->
           invalid_arg
             (Format.asprintf "resolve: unbound PARAM %a" U.pp node))
   | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Detach | Tolk_uop.Ops.After
   | Tolk_uop.Ops.Unshard | Tolk_uop.Ops.Contiguous_backward ->
-      resolve_buffer binding ctx (U.src node).(0)
+      resolve_buffer ctx (U.src node).(0)
   | op when Tolk_uop.Ops.Group.is_movement op || op = Tolk_uop.Ops.Bitcast ->
       (match U.contiguous_view node with
        | None -> invalid_arg "resolve: non-contiguous storage view"
        | Some (base, offset) ->
            let size = U.max_numel node and dtype = U.dtype node in
-           match resolve_buffer binding ctx base with
+           match resolve_buffer ctx base with
            | Single buffer -> Single (Device.Buffer.view buffer ~size ~dtype ~offset)
            | Multi buffer -> Multi (Device.Multi_buffer.view buffer ~size ~dtype ~offset))
-  | Tolk_uop.Ops.Buffer -> Buffers.buffer_of_node binding node
+  | Tolk_uop.Ops.Buffer ->
+      (match U.Arg.as_param_arg (U.arg node) with
+       | Some {buffer = Some [buf]; _} -> Single buf
+       | Some {buffer = Some bufs; _} -> Multi (Device.Multi_buffer.of_bufs bufs)
+       | _ -> invalid_arg "resolve: BUFFER has no storage owner")
   | Tolk_uop.Ops.Mselect -> (
       match U.children node, U.Arg.as_int (U.arg node) with
       | [ src ], Some index -> (
-          match resolve_buffer binding ctx src with
+          match resolve_buffer ctx src with
           | Multi m -> Single (List.nth (Device.Multi_buffer.bufs m) index)
           | Single _ ->
               invalid_arg "resolve: MSELECT of a single-device buffer")
       | _ -> invalid_arg "resolve: malformed MSELECT")
   | Tolk_uop.Ops.Mstack ->
       let shard s =
-        match resolve_buffer binding ctx s with
+        match resolve_buffer ctx s with
         | Single buf -> buf
         | Multi _ ->
             invalid_arg "resolve: MSTACK of a multi-device buffer"
@@ -514,10 +451,10 @@ let rec resolve_buffer binding ctx node =
       Multi (Device.Multi_buffer.of_bufs (List.map shard (U.children node)))
   | _ ->
       invalid_arg
-        (Format.asprintf "resolve: cannot resolve %a to a buffer" U.pp node))
+        (Format.asprintf "resolve: cannot resolve %a to a buffer" U.pp node)
 
-let resolve binding ctx node =
-  match resolve_buffer binding ctx node with
+let resolve ctx node =
+  match resolve_buffer ctx node with
   | Single buf -> buf
   | Multi _ ->
       invalid_arg
@@ -526,14 +463,13 @@ let resolve binding ctx node =
             context"
            Tolk_uop.Uop.pp node)
 
-let link_linear binding ?(input_uops = [||]) ?allow_cache linear =
-  let ctx = exec_context ~input_uops () in
-  Link.run ~resolve:(resolve binding ctx) ?allow_cache linear
+let link_linear ?(ctx = exec_context ()) ?allow_cache linear =
+  Link.run ~resolve:(resolve ctx) ?allow_cache linear
 
 (* Eager templates name root allocations, preserving byte views and duplicate
    arguments. Only the invocation owns actual buffers; cached command storage
    contains runtime table slots (or link-time inputs for large schedules). *)
-let eager_template binding ~input_uops linear =
+let eager_template ~input_uops linear =
   let module U = Tolk_uop.Uop in
   let module D = Tolk_uop.Dtype in
   if List.exists (fun call -> match U.arg (U.without_after call) with
@@ -581,7 +517,7 @@ let eager_template binding ~input_uops linear =
       | (Tolk_uop.Ops.Buffer | Tolk_uop.Ops.Param),
         Some {addrspace = D.Global; allocation = None; _}
         when U.Tbl.mem required node ->
-          Some (match resolve_buffer binding ctx node with
+          Some (match resolve_buffer ctx node with
             | Single buffer -> buffer_view buffer
             | Multi buffers -> U.mstack (List.map buffer_view (Device.Multi_buffer.bufs buffers)))
       | _ -> None) linear in
@@ -624,7 +560,7 @@ let unwrap_multi bufs =
    Executes a scheduled LINEAR by dispatching each CALL on its callee: kernel
    SINKs are compiled and launched,
    and STORE bodies transfer between buffers. Buffer arguments are resolved
-   through the binding and PARAM slots through [input_uops]. *)
+   from their BUFFER owners and PARAM slots through [input_uops]. *)
 
 (* Keep only the buffer arguments: bound scalar values and ALU symbolic variables are
    delivered through [var_vals], not as buffers. *)
@@ -791,7 +727,7 @@ let track_stats ctx call ~device bufs var_vals run =
   end;
   et
 
-let exec_kernel binding ctx ~device call =
+let exec_kernel ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body = program; args; _ } ->
@@ -801,7 +737,7 @@ let exec_kernel binding ctx ~device call =
         | None -> invalid_arg "exec_kernel: expected CALL(PROGRAM)"
       in
       let resolved =
-        List.map (resolve_buffer binding ctx)
+        List.map (resolve_buffer ctx)
           (program_args info (call_arg_uops args))
       in
       (* One compiled program; on a multi-device call, one launch per device
@@ -855,7 +791,7 @@ let exec_kernel binding ctx ~device call =
             groups)
   | None -> invalid_arg "exec_kernel: expected CALL"
 
-let exec_copy binding ctx ~device call =
+let exec_copy ctx ~device call =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { args; _ } -> (
@@ -882,8 +818,8 @@ let exec_copy binding ctx ~device call =
                 : float option)
           in
           (match
-             ( resolve_buffer binding ctx dest_node,
-               resolve_buffer binding ctx src_node )
+             ( resolve_buffer ctx dest_node,
+               resolve_buffer ctx src_node )
            with
           | Single dest, Single src ->
               copy ~device:(device_for ~device dest) dest src
@@ -901,7 +837,7 @@ let exec_copy binding ctx ~device call =
 let queue_submissions = ref 0
 let staged_queue_cache = Domain.DLS.new_key (fun () -> Tolk_uop.Uop.Weak_tbl.create 16)
 
-let staged_queue ~to_program binding ctx call submission buffers =
+let staged_queue ~to_program ctx call submission buffers =
   let module U = Tolk_uop.Uop in
   let shape = Array.map (fun b ->
       Device.Buffer.device b, Device.Buffer.nbytes b, Device.Buffer.dtype b) buffers in
@@ -909,11 +845,11 @@ let staged_queue ~to_program binding ctx call submission buffers =
   match U.Weak_tbl.find_opt cache call with
   | Some (cached_shape, staged) when cached_shape = shape -> Some staged
   | _ ->
-      match Hcq2.stage_copies ~resolve:(resolve binding ctx) (U.linear submission.U.fallback) with
+      match Hcq2.stage_copies ~resolve:(resolve ctx) (U.linear submission.U.fallback) with
       | None -> None
       | Some staged ->
           let compiled = Hcq2.compile ~to_program ~profile:(submission.U.timings <> []) staged in
-          let linked = link_linear binding ~input_uops:ctx.input_uops compiled in
+          let linked = link_linear ~ctx compiled in
           U.Weak_tbl.replace cache call (shape, linked);
           Some linked
 
@@ -943,12 +879,12 @@ let validate_queue_aliases buffers (submission : Tolk_uop.Uop.queue_info) =
       end) submission.independent_accesses
   end
 
-let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
+let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some {body; args} ->
       let args = Array.of_list (call_arg_uops args) in
-      let buffers = Array.map (resolve binding ctx) args in
+      let buffers = Array.map (resolve ctx) args in
       validate_queue_aliases buffers submission;
       let addresses = try
         let bytes = Bytes.create (8 * List.length submission.inputs) in
@@ -1025,26 +961,26 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
 
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
    executor, which replays a compiled sub-linear per iteration. *)
-let rec dispatch_call binding ctx ~device ~to_program call =
+let rec dispatch_call ctx ~device ~to_program call =
   let call = Tolk_uop.Uop.without_after call in
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some { body; _ } -> (
       match U.op body with
-      | Tolk_uop.Ops.Store -> exec_copy binding ctx ~device call
+      | Tolk_uop.Ops.Store -> exec_copy ctx ~device call
       | Tolk_uop.Ops.Program ->
           (match U.arg call with
            | U.Arg.Call_info {aux = Some submission; _} ->
-               exec_hcq binding ctx call submission ~fallback:(fun buffers ->
+               exec_hcq ctx call submission ~fallback:(fun buffers ->
                    let ctx = {ctx with input_uops = Array.map U.from_buffer buffers} in
-                   match staged_queue ~to_program binding ctx call submission buffers with
-                   | Some staged -> List.concat_map (dispatch_call binding ctx ~device ~to_program) (U.children staged)
-                   | None -> List.concat_map (dispatch_call binding {ctx with wait = true} ~device ~to_program) submission.fallback)
-           | _ -> exec_kernel binding ctx ~device call)
+                   match staged_queue ~to_program ctx call submission buffers with
+                   | Some staged -> List.concat_map (dispatch_call ctx ~device ~to_program) (U.children staged)
+                   | None -> List.concat_map (dispatch_call {ctx with wait = true} ~device ~to_program) submission.fallback)
+           | _ -> exec_kernel ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function
         when U.Arg.as_string (U.arg body) = Some "loop" ->
-          exec_loop binding ctx ~device ~to_program call
+          exec_loop ctx ~device ~to_program call
       | _ ->
           invalid_arg
             (Format.asprintf "run_linear: unexpected call body %a" U.pp body))
@@ -1069,18 +1005,18 @@ let rec dispatch_call binding ctx ~device ~to_program call =
 
    - child 0: the body's LINEAR (pre-compiled: its CALL(SINK) bodies are
      already CALL(PROGRAM), including queue submissions. Each iteration
-     rebinds the body’s slot buffers);
+     supplies the body's local PARAM arguments);
    - child 1: the trip count;
    - child 2: 1 for a reversed (backward) loop, 0 otherwise;
    - child 3: the number of input slots, then per slot five entries:
-     [node; pos0; pos1; size; stride] where [node] is the body's input buffer
-     node (seeded per iteration), [pos0]/[pos1] index the loop call's buffer
+     [node; pos0; pos1; size; stride] where [node] is the body's input PARAM
+     (supplied per iteration), [pos0]/[pos1] index the loop call's buffer
      arguments (two positions = a buffer pair alternated by the iteration
      counter; [pos1] = -1 for a single buffer), [size] the slot's element
      count, and [stride] the per-iteration element offset (0 = the whole
      buffer, no offset);
    - the number of output slots, then per slot the same five entries, with
-     the node seeded per iteration to the buffer the body writes (a pair's
+     the PARAM supplied per iteration with the buffer the body writes (a pair's
      output uses the other position: iteration [j] writes
      pos (j+1) mod 2).
 
@@ -1090,12 +1026,14 @@ let rec dispatch_call binding ctx ~device ~to_program call =
    to a view of its argument buffer at the data-index offset. The body's
    kernels assume an aligned base pointer, so a stride must be a whole number
    of 16 bytes (the widest vector access, float4 or half8): the loop's builder
-   pads rows to it.
+   pads rows to it. The body's initial PARAM slots name the CALL arguments;
+   the remaining slots name iteration views. Each invocation owns this input
+   array, so nested loops cannot change their caller's parameter scope.
 
    A loop over several devices binds each slot to a view of every device's
    buffer, at the same offset: the sizes and strides are one device's, whose
    body runs over its slice of every value. *)
-and exec_loop binding ctx ~device ~to_program call =
+and exec_loop ctx ~device ~to_program call =
   let module U = Tolk_uop.Uop in
   let int_child children i =
     match U.const_int_value (List.nth children i) with
@@ -1114,13 +1052,15 @@ and exec_loop binding ctx ~device ~to_program call =
         let n = int_child children !idx in
         incr idx;
         List.init n (fun _ ->
-            let node = List.nth children !idx in
+            let slot = match U.as_param (List.nth children !idx) with
+              | Some {param; _} -> param.slot
+              | None -> invalid_arg "exec_loop: a loop slot must be a PARAM" in
             let pos0 = int_child children (!idx + 1) in
             let pos1 = int_child children (!idx + 2) in
             let size = int_child children (!idx + 3) in
             let stride = int_child children (!idx + 4) in
             idx := !idx + 5;
-            (node, pos0, pos1, size, stride))
+            (slot, pos0, pos1, size, stride))
       in
       let in_slots = decode_slots () in
       let out_slots = decode_slots () in
@@ -1129,8 +1069,7 @@ and exec_loop binding ctx ~device ~to_program call =
         | Multi m -> Device.Multi_buffer.bufs m
       in
       let bufs =
-        Array.of_list
-          (List.map (resolve_buffer binding ctx) (call_arg_uops args))
+        Array.of_list (List.map (resolve_buffer ctx) (call_arg_uops args))
       in
       let buf i =
         if i < 0 || i >= Array.length bufs then
@@ -1138,13 +1077,24 @@ and exec_loop binding ctx ~device ~to_program call =
             (Format.asprintf "exec_loop: argument %d out of range" i);
         bufs.(i)
       in
+      let input_count = List.fold_left (fun count (slot, _, _, _, _) ->
+          if slot < Array.length bufs then
+            invalid_arg "exec_loop: iteration slots must follow CALL arguments";
+          max count (slot + 1)) (Array.length bufs) (in_slots @ out_slots) in
+      let owned = function
+        | Single b -> U.from_buffer b
+        | Multi m -> U.mstack (List.map U.from_buffer (Device.Multi_buffer.bufs m)) in
+      let input_uops = Array.make input_count (owned (buf 0)) in
+      Array.iteri (fun i b -> input_uops.(i) <- owned b) bufs;
+      let body_ctx = {ctx with input_uops} in
+      let views = ref [] in
       List.iter
         (fun (_, pos0, _, _, stride) ->
           let dtype = Device.Buffer.dtype (List.hd (shards (buf pos0))) in
           if stride * Tolk_uop.Dtype.itemsize dtype mod 16 <> 0 then
             invalid_arg "exec_loop: a slot stride is not 16-byte aligned")
         (in_slots @ out_slots);
-      let bind ~next j (node, pos0, pos1, size, stride) =
+      let bind ~next j (slot, pos0, pos1, size, stride) =
         let b =
           if pos1 < 0 then buf pos0
           else buf (if (j + next) mod 2 = 0 then pos0 else pos1)
@@ -1152,18 +1102,15 @@ and exec_loop binding ctx ~device ~to_program call =
         let i = if reversed then trip - 1 - j else j in
         let row b =
           let dt = Device.Buffer.dtype b in
-          Device.Buffer.view b ~size ~dtype:dt
-            ~offset:(i * stride * Tolk_uop.Dtype.itemsize dt)
-        in
-        match b with
-        | Single b ->
-            Buffers.seed binding node (if stride = 0 then b else row b)
-        | Multi m ->
-            Buffers.seed_multi binding node
-              (if stride = 0 then m
-               else
-                 Device.Multi_buffer.of_bufs
-                   (List.map row (Device.Multi_buffer.bufs m)))
+          let view = Device.Buffer.view b ~size ~dtype:dt
+              ~offset:(i * stride * Tolk_uop.Dtype.itemsize dt) in
+          views := view :: !views;
+          U.from_buffer view in
+        input_uops.(slot) <-
+          if stride = 0 then owned b
+          else match b with
+            | Single b -> row b
+            | Multi m -> U.mstack (List.map row (Device.Multi_buffer.bufs m))
       in
       if debug >= 2 then
         Printf.eprintf "exec_loop: %d iterations, reversed=%b\n%!" trip
@@ -1172,7 +1119,7 @@ and exec_loop binding ctx ~device ~to_program call =
         List.iter (bind ~next:0 j) in_slots;
         List.iter (bind ~next:1 j) out_slots;
         List.iter (fun call ->
-            ignore (dispatch_call binding ctx ~device ~to_program call : float option list))
+            ignore (dispatch_call body_ctx ~device ~to_program call : float option list))
           (U.children body_linear)
       done;
       (* The body's launches are asynchronous. Block until they complete so
@@ -1180,16 +1127,18 @@ and exec_loop binding ctx ~device ~to_program call =
       List.iter
         (fun b -> Device.synchronize (device_for ~device b))
         (shards (buf 0));
+      keep_alive !views;
+      keep_alive input_uops;
       []
   | None -> invalid_arg "exec_loop: expected CALL"
 
-let rec run_linear ~device ~to_program binding ?(var_vals = [])
+let rec run_linear ~device ~to_program ?(var_vals = [])
     ?(input_uops = [||]) ?(update_stats = true) ?(jit = false) ?(wait = false)
     (linear : Tolk_uop.Uop.t) =
   let module U = Tolk_uop.Uop in
   let linear, input_uops = if jit then linear, input_uops else
-    let linear, input_uops = eager_template binding ~input_uops linear in
-    link_linear binding ~input_uops
+    let linear, input_uops = eager_template ~input_uops linear in
+    link_linear ~ctx:(exec_context ~input_uops ())
       (compile_linear_cached ~cache:true ~device ~to_program linear), input_uops in
   let ctx =
     exec_context ~var_vals ~input_uops ~update_stats ~jit
@@ -1222,7 +1171,7 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
         in
         Printf.eprintf "run_linear: dispatch %s\n%!" name
       end;
-      ignore (dispatch_call binding ctx ~device ~to_program call : float option list))
+      ignore (dispatch_call ctx ~device ~to_program call : float option list))
     (U.children linear);
   keep_alive linear
 
@@ -1230,15 +1179,14 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
 let time_call ~device ~to_program ?(var_vals = []) ?timeout
     ?(clear_l2 = false) call f =
   let module U = Tolk_uop.Uop in
-  let binding = Buffers.create () in
   let compiled = compile_linear ~device ~to_program ~beam:0 ~profile:true
       (U.linear [call]) in
-  let linked = link_linear binding ~allow_cache:false compiled in
+  let linked = link_linear ~allow_cache:false compiled in
   let ctx = exec_context ~var_vals ~update_stats:false ~wait:true ?timeout
       ~cache:false () in
   let sample () =
     if clear_l2 then Device.invalidate_caches device;
-    let times = List.concat_map (dispatch_call binding ctx ~device ~to_program)
+    let times = List.concat_map (dispatch_call ctx ~device ~to_program)
         (U.children linked) in
     List.fold_left (fun longest -> function
         | Some elapsed -> max longest elapsed | None -> longest) 0. times in

@@ -23,7 +23,6 @@
 
 open Tolk_uop
 module U = Uop
-module B = Device.Buffer
 
 let debug = Helpers.getenv "DEBUG" 0
 
@@ -31,12 +30,6 @@ let jit_level = Helpers.getenv "JIT" 1
 let is_op op n = Ops.equal (U.op n) op
 
 exception Jit_error of string
-
-(* Buffer arguments of a scheduled call, dropping symbolic binds. *)
-let call_arg_uops args = List.filter (fun s -> not (U.is_bound_var s)) args
-
-let call_args call =
-  match U.as_call (U.without_after call) with Some { args; _ } -> args | None -> []
 
 (* Validation token: inputs must keep their size, dtype, and device across
    replays. *)
@@ -83,25 +76,8 @@ type 'a captured_jit = {
   linear : U.t;
   device : Device.t;
   to_program : Device.t -> U.t -> U.t;
-  binding : Realize.Buffers.t;
   expected_input_info : input_info array;
 }
-
-(* Bind every non-input buffer argument the resolver knows to its concrete
-   buffer, once at capture: weights, outputs, and held buffers keep their
-   storage across replays. Planned intermediates are slices of arena buffers
-   the binding allocates lazily; input PARAMs resolve per call. *)
-let seed_known_buffers binding ~buffers linear =
-  List.iter
-    (fun call ->
-      List.iter
-        (fun arg ->
-          let node = U.buf_uop arg in
-          match buffers node with
-            | Some buf -> Realize.Buffers.seed binding node buf
-            | None -> ())
-        (call_arg_uops (call_args call)))
-    (U.children linear)
 
 let validate_inputs t (input_uops : U.t array) =
   let n = Array.length t.expected_input_info in
@@ -125,27 +101,11 @@ let validate_inputs t (input_uops : U.t array) =
                 (Dtype.to_string info.ii_dtype))))
     t.expected_input_info
 
-(* Replay the captured LINEAR: bind the current inputs, run with PARAM slots
-   resolving through them, then release the input bindings so stale input
-   buffers do not stay reachable. *)
-let exec_captured ?(wait = false) t (input_uops : U.t array) var_vals ~buffers
-    =
+(* Inputs are explicit PARAM arguments; the captured graph owns other storage. *)
+let exec_captured ?(wait = false) t (input_uops : U.t array) var_vals =
   validate_inputs t input_uops;
-  Array.iter
-    (fun u ->
-      match buffers u with
-      | Some buf -> Realize.Buffers.seed t.binding u buf
-      | None ->
-          raise
-            (Jit_error
-               (Format.asprintf "input %a has no backing buffer" U.pp u)))
-    input_uops;
-  Fun.protect
-    ~finally:(fun () ->
-      Array.iter (fun u -> Realize.Buffers.remove t.binding u) input_uops)
-    (fun () ->
-      Realize.run_linear ~device:t.device ~to_program:t.to_program t.binding
-        ~var_vals ~input_uops ~jit:true ~wait t.linear);
+  Realize.run_linear ~device:t.device ~to_program:t.to_program
+    ~var_vals ~input_uops ~jit:true ~wait t.linear;
   t.ret
 
 (* TinyJit *)
@@ -179,7 +139,7 @@ let combine_linears linears =
        linears)
 
 let call ?wait ?held_buffers t (input_uops : U.t array)
-    (var_vals : (string * int) list) ~(buffers : U.t -> B.t option) =
+    (var_vals : (string * int) list) =
   let ret =
     if jit_level = 0 || t.cnt = 0 then
       (* Warmup: execute eagerly. *)
@@ -207,25 +167,23 @@ let call ?wait ?held_buffers t (input_uops : U.t array)
         jit_lower ~device:t.device ~to_program:t.to_program
           (combine_linears linears) held_bufs input_uops
       in
-      let binding = Realize.Buffers.create () in
-      seed_known_buffers binding ~buffers linear;
-      let linear = Realize.link_linear binding ~input_uops linear in
+      let linear = Realize.link_linear
+          ~ctx:(Realize.exec_context ~input_uops ()) ~allow_cache:false linear in
       let captured =
         {
           ret;
           linear;
           device = t.device;
           to_program = t.to_program;
-          binding;
           expected_input_info = Array.map input_info_of_uop input_uops;
         }
       in
       t.captured <- Some captured;
-      exec_captured ?wait captured input_uops var_vals ~buffers
+      exec_captured ?wait captured input_uops var_vals
     end
     else
       (* Exec: replay the captured schedule. *)
-      exec_captured ?wait (Option.get t.captured) input_uops var_vals ~buffers
+      exec_captured ?wait (Option.get t.captured) input_uops var_vals
   in
   t.cnt <- t.cnt + 1;
   ret

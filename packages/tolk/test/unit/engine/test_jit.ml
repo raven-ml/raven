@@ -113,8 +113,6 @@ let make_kernel_jit ?(body = U.sink ~kernel_info:(kernel_info "jit_k") [])
     ?(binds = fun _ -> []) () =
   let state = runtime_state () in
   let dev = make_device ~state () in
-  let registry : (int, Device.Buffer.t) Hashtbl.t = Hashtbl.create 8 in
-  let buffers node = Hashtbl.find_opt registry (U.tag node) in
   let out_node = buffer_node () in
   let cp_out = U.param ~slot:0 ~dtype:Dtype.int32 () in
   let cp_in = U.param ~slot:1 ~dtype:Dtype.int32 () in
@@ -130,25 +128,19 @@ let make_kernel_jit ?(body = U.sink ~kernel_info:(kernel_info "jit_k") [])
     let linear, vv =
       Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big
     in
-    let binding = Realize.Buffers.create () in
-    Realize.run_linear ~device:dev ~to_program binding ~var_vals:vv linear;
+    Realize.run_linear ~device:dev ~to_program ~var_vals:vv linear;
     "ran"
   in
   let tjit = Jit.create ~device:dev ~to_program ~fxn () in
   let run ?(var_vals = []) ?(dtype = Dtype.int32) () =
-    let node = buffer_node ~dtype () in
-    let buf = Device.create_buffer ~size:4 ~dtype dev in
-    Hashtbl.replace registry (U.tag node) buf;
+    let node = U.from_buffer (Device.create_buffer ~size:4 ~dtype dev) in
     Jit.call tjit [| node |] var_vals
       ~held_buffers:(fun () -> [ out_node ])
-      ~buffers
   in
   (state, run)
 
 let raises_jit_error fn =
   raises_match (function Jit.Jit_error _ -> true | _ -> false) fn
-
-let no_buffers _ = None
 
 let () =
   run "Engine_jit"
@@ -173,9 +165,9 @@ let () =
                   ~fxn:(fun _ _ -> "ok")
                   ()
               in
-              equal string "ok" (Jit.call t [||] [] ~buffers:no_buffers);
+              equal string "ok" (Jit.call t [||] []);
               raises_jit_error (fun () ->
-                  ignore (Jit.call t [||] [] ~buffers:no_buffers));
+                  ignore (Jit.call t [||] []));
               is_true ~msg:"capture registry cleared"
                 (match !Realize.capturing with [] -> true | _ -> false));
         ];
