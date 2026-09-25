@@ -32,6 +32,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   shape, and driver module loads OOM without triggering the allocator's
   failure flush.
 
+- **The refusal of a zero-byte allocation sits in `Device.Buffer.allocate`;
+  the reference asserts it in `Allocator.alloc`.** Tolk's allocators are
+  records with no shared entry point like tinygrad's base class, so the check
+  covers every buffer allocation, external pointers and LRU-wrapped allocators
+  included, but not a runtime calling its allocator directly: the CUDA, AMD and
+  NV staging copies, all of positive size. Reconsider if allocators gain a
+  shared entry point.
+
 ## Validation dependencies
 
 - **Scalar out-of-bounds validation has no SMT solver fallback.** Keep Tolk's
