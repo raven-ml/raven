@@ -287,119 +287,23 @@ let render_buffer (ctx : ctx) (u : U.t) =
        (render_dtype ctx (U.dtype u))
        (lookup ctx u) (U.max_numel u))
 
-let render_index (ctx : ctx) ~ptr ~idxs =
-  let flat_index_string () =
-    let ptr_shape =
-      try U.shape ptr with
-      | Invalid_argument msg ->
-          let node_summary u =
-            let shape =
-              try
-                U.shape u
-                |> List.map (fun s ->
-                       match U.const_int_value s with
-                       | Some n -> string_of_int n
-                       | None -> Ops.name (U.op s))
-                |> String.concat "x"
-              with Invalid_argument e -> "!" ^ e
-            in
-            Printf.sprintf "%s/%s/tag=%d/shape=%s" (Ops.name (U.op u))
-              (Dtype.to_string (U.dtype u)) (U.tag u) shape
-          in
-          invalid_arg
-            (Printf.sprintf
-               "render_index: pointer shape failed: %s ptr=%s srcs=[%s] idx_bounds=%s"
-               msg (node_summary ptr)
-               (U.children ptr
-                |> List.map (fun s ->
-                       Printf.sprintf "%s srcs=[%s]" (node_summary s)
-                         (U.children s
-                          |> List.map node_summary |> String.concat ";"))
-                |> String.concat ",")
-               (idxs
-                |> List.map (fun idx -> string_of_int (Bound.to_int (Bound.succ (U.vmax idx))))
-                |> String.concat ","))
-    in
-    let used_shape =
-      if List.length ptr_shape >= List.length idxs then
-        List.filteri (fun i _ -> i < List.length idxs) ptr_shape |> List.map (fun dim -> Bound.to_int (U.vmax dim))
-      else
-        match ptr_shape with
-        | [ flat ] ->
-            let flat = Bound.to_int (U.vmax flat) in
-            let first_dim =
-              match idxs with idx :: _ -> Bound.to_int (Bound.succ (U.vmax idx)) | [] -> 1
-            in
-            if first_dim = flat then [ flat ]
-            else
-            let dims = List.map (fun idx -> Bound.to_int (Bound.succ (U.vmax idx))) idxs in
-            let prod = List.fold_left ( * ) 1 dims in
-            if prod = flat then dims
-            else
-              invalid_arg
-                (Printf.sprintf
-                   "render_index: cannot infer %d logical dims from flat size %d bounds=%s"
-                   (List.length idxs) flat
-                   (String.concat ","
-                      (List.map (fun idx -> string_of_int (Bound.to_int (Bound.succ (U.vmax idx)))) idxs)))
-        | _ ->
-            invalid_arg
-              (Printf.sprintf "render_index: rank mismatch, got %d idxs for rank %d"
-                 (List.length idxs) (List.length ptr_shape))
-    in
-    let terms =
-      let used_idxs =
-        List.filteri (fun i _ -> i < List.length used_shape) idxs
-        |> List.map (lookup ctx)
-      in
-      let rec go_strings stride acc rev_idxs rev_shape =
-        match rev_idxs, rev_shape with
-        | [], [] -> acc
-        | idx :: idxs, dim :: shape ->
-            let term =
-              if stride = 1 then idx else strf "(%s*%d)" idx stride
-            in
-            go_strings (stride * dim) (term :: acc) idxs shape
-        | _ -> acc
-      in
-      go_strings 1 [] (List.rev used_idxs) (List.rev used_shape)
-    in
-    match terms with
-    | [] -> "0"
-    | term :: terms -> List.fold_left (fun acc t -> strf "(%s+%s)" acc t) term terms
-  in
-  let idx_is_zero =
-    match idxs with [ idx ] -> U.const_int_value idx = Some 0 | _ -> false
-  in
-  let idx =
-    match idxs with
-    | [ idx ] -> lookup ctx idx
-    | _ -> flat_index_string ()
-  in
-  if U.addrspace ptr = Some Dtype.Alu then begin
-    match idxs with
-    | [ idx ] -> (
-        match const_view_of_uop idx with
-        | Some c -> (
-            match Const.view c with
-            | Const.Int i ->
-                let i = Z.to_int i in
-                let base = lookup ctx ptr in
-                if U.max_numel ptr > ctx.lang.gep_arr_threshold then
-                  strf "%s[%d]" base i
-                else strf "%s.%s" base (vec_elem_letter i)
-            (* Non-constant lane access is C array subscript on the value. *)
-            | _ -> strf "(%s)[%s]" (lookup ctx ptr) (lookup ctx idx))
-        | None -> strf "(%s)[%s]" (lookup ctx ptr) (lookup ctx idx))
-    | _ -> invalid_arg "render_index: ALU index must be scalar"
-  end else
-    let base = lookup ctx ptr in
-    if
-      idx_is_zero
-      && String.length base > 0
-      && base.[0] = '('
-    then base
-    else strf "(%s+%s)" base idx
+let render_index (ctx : ctx) ~ptr ~idx =
+  let base = lookup ctx ptr in
+  if addrspace_of ptr = Dtype.Alu then
+    match const_view_of_uop idx with
+    | Some c -> (
+        match Const.view c with
+        | Const.Int i ->
+            let i = Z.to_int i in
+            if U.max_numel ptr = 1 then base
+            else if U.max_numel ptr > ctx.lang.gep_arr_threshold then
+              strf "%s[%d]" base i
+            else strf "%s.%s" base (vec_elem_letter i)
+        | _ -> strf "(%s)[%s]" base (lookup ctx idx))
+    | None -> strf "(%s)[%s]" base (lookup ctx idx)
+  else if U.const_int_value idx = Some 0
+          && String.length base > 0 && base.[0] = '(' then base
+  else strf "(%s+%s)" base (lookup ctx idx)
 
 (* Qualifying access casts has no tinygrad counterpart: dropping the
    parameter qualifier here would permit volatile vector reads to be removed. *)
@@ -708,37 +612,33 @@ let base_rewrite : ctx rule list =
           | Some c -> Some (lookup ctx c)
           | None -> None
     );
-    (* INDEX/SHRINK: pointer arithmetic or value-lane extraction. *)
-	    ( ops [ Ops.Index; Ops.Shrink ] ~name:"x",
-	      fun ctx bs _ ->
-	        let x = bs $ "x" in
-	        let rec uniform_const_base n =
-	          match U.op n with
-	          | Ops.Const when U.max_numel n = 1 -> Some n
-	          | Ops.Reshape | Ops.Expand | Ops.Permute ->
-	              uniform_const_base (U.src n).(0)
-	          | _ -> None
-	        in
-	        match U.op x, U.as_index x, U.src x with
-	        | Ops.Index, Some { ptr; idxs = [ idx ] }, _
-	          when U.addrspace ptr = Some Dtype.Alu -> (
-	            match U.const_int_value idx with
-	            | None -> None
-	            | Some i ->
-	                let base = lookup ctx ptr in
-	                if U.max_numel ptr = 1 then
-	                  Some base
-	                else if U.max_numel ptr > ctx.lang.gep_arr_threshold then
-	                  Some (strf "%s[%d]" base i)
-	                else Some (strf "%s.%s" base (vec_elem_letter i)))
-	        | Ops.Index, Some v, _ -> (
-	            match uniform_const_base v.ptr with
-	            | Some c -> Some (lookup ctx c)
-            | None ->
-                Some (render_index ctx ~ptr:v.ptr ~idxs:v.idxs))
-	        | Ops.Shrink, _, [| ptr; idx; _ |] ->
-	            Some (render_index ctx ~ptr ~idxs:[ idx ])
-	        | _ -> None );
+    (* INDEX/SHRINK: canonical pointer arithmetic or value-lane extraction.
+       OpenCL images retain their separate two-coordinate address form. *)
+    ( ops [ Ops.Index; Ops.Shrink ] ~name:"x",
+      fun ctx bs _ ->
+        let x = bs $ "x" in
+        let rec uniform_const_base n =
+          match U.op n with
+          | Ops.Const when U.max_numel n = 1 -> Some n
+          | Ops.Reshape | Ops.Expand | Ops.Permute ->
+              uniform_const_base (U.src n).(0)
+          | _ -> None
+        in
+        match U.op x, U.as_index x, U.src x with
+        | Ops.Index, Some {ptr; idxs = [idx]}, _ -> (
+            match uniform_const_base ptr with
+            | Some c -> Some (lookup ctx c)
+            | None -> Some (render_index ctx ~ptr ~idx))
+        | Ops.Index, Some {ptr; idxs = [y; x]}, _
+          when is_image_shape (U.shape_opt ptr) ->
+            check_image_support ctx;
+            Some (strf "IMAGE<%s, %s, %s>"
+                (lookup ctx ptr) (lookup ctx y) (lookup ctx x))
+        | Ops.Index, Some _, _ ->
+            invalid_arg "render_index: expected one flat index"
+        | Ops.Shrink, _, [| ptr; idx; _ |] ->
+            Some (render_index ctx ~ptr ~idx)
+        | _ -> None );
     (* Image LOAD: read_imagef(buf, smp, (int2)(x,y)) *)
     ( op ~name:"x" Ops.Load,
       fun ctx bs _ ->

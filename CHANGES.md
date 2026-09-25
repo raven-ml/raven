@@ -667,6 +667,10 @@ thread.
 
 ### Tolk (new)
 
+- Render dynamic vector lane indexes as element access instead of vector
+  addition. C renderers now require canonical flat memory indexes, rejecting
+  malformed multidimensional indexes instead of guessing strides.
+
 - Keep beam-search trial launches within the size budget when symbolic
   dimensions multiply beyond host integer limits; timing scales now preserve
   the full launch size.

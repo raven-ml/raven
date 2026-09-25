@@ -945,6 +945,51 @@ let () =
         ];
       group "Vectorize and Index"
         [
+          test "ordinary final indexes require one flat coordinate" (fun () ->
+            List.iter (fun row_max ->
+                let ptr = U.param ~slot:0 ~dtype:dt ~shape:(U.const_int 16) () in
+                let scalar slot upper = U.param ~slot ~dtype:Dtype.int32
+                    ~addrspace:Dtype.Alu ~vmin_vmax:(Bound.int 0, Bound.int upper) () in
+                let row = scalar 1 row_max and col = scalar 2 3 in
+                (* Deliberately malformed final IR: the renderer must not infer
+                   strides from bounds, or discard the second coordinate. *)
+                let index = U.replace (ptr_index ptr row ())
+                    ~src:[|ptr; row; col|] () in
+                let program = U.toposort (load index) in
+                for_each_renderer all_renderers (fun _ renderer ->
+                    raises (Invalid_argument "render_index: expected one flat index")
+                      (fun () -> ignore (render renderer program))))
+              [3; 15]);
+          test "flat indexes preserve a symbolic stride" (fun () ->
+            let ptr = U.param ~slot:0 ~dtype:dt ~shape:(U.const_int 32) () in
+            let scalar slot lower upper = U.param ~slot ~dtype:Dtype.int32
+                ~addrspace:Dtype.Alu ~vmin_vmax:(Bound.int lower, Bound.int upper) () in
+            let row = scalar 1 0 3 and stride = scalar 2 4 8 and col = scalar 3 0 3 in
+            let index = U.alu_binary ~op:Ops.Add
+                ~lhs:(U.alu_binary ~op:Ops.Mul ~lhs:row ~rhs:stride) ~rhs:col in
+            let program = U.toposort (load (ptr_index ptr index ())) in
+            for_each_renderer all_renderers (fun name renderer ->
+                let source = render renderer program in
+                assert_contains (name ^ " uses the stride argument") source "data1_*data2_";
+                assert_contains (name ^ " includes the column argument") source "+data3_"));
+          test "Clang renders a dynamic value lane index" (fun () ->
+            let dst = U.param ~slot:0 ~dtype:dt ~shape:(U.const_int 1) () in
+            let lane = U.param ~slot:1 ~dtype:Dtype.int32 ~addrspace:Dtype.Alu
+                ~vmin_vmax:(Bound.int 0, Bound.int 3) () in
+            let values = U.stack (List.map (fun x -> const (float_c dt x)) [1.; 2.; 3.; 4.]) in
+            let value = U.index ~ptr:values ~idxs:[lane] () in
+            let output = store (ptr_index dst (c0_i32 ()) ()) value in
+            let source = render clang_renderer (U.toposort output) in
+            assert_contains "dynamic lane uses C value indexing" source "[data1_]";
+            assert_contains "lane source retains its vector type" source "float4");
+          test "OpenCL image indexes keep separate coordinates" (fun () ->
+            let image = image_param 0 in
+            let y = const (int32_c 1) and x = const (int32_c 2) in
+            let index = U.replace (ptr_index image y ()) ~src:[|image; y; x|] () in
+            let source = render opencl_renderer (U.toposort (load index)) in
+            assert_contains "image coordinate order" source "(int2)(2,1)";
+            assert_contains "image access" source "read_imagef(";
+            assert_not_contains "image coordinates are not a flat pointer" source "IMAGE<");
           test "vector cast uses the resulting shape" (fun () ->
             let src =
               U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 2)
