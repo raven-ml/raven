@@ -118,7 +118,7 @@ let emit b instr =
     | Param { slot; dtype } ->
         Uop.param ~slot ~dtype ~shape:(Uop.const_int (-1)) ()
     | Const { value; dtype } ->
-        if Dtype.equal (Const.dtype value) dtype then Uop.const value
+        if Dtype.equal (Const.dtype value) dtype then Uop.cconst value dtype
         else
           invalid_dtype "Const" (Dtype.to_string dtype)
             (Dtype.to_string (Const.dtype value))

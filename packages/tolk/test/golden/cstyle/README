@@ -1,0 +1,25 @@
+C-style renderer fixtures
+=========================
+
+Generate independently against tinygrad a83c6f8011863c17ef4e9c24c59e521be3c754d3:
+  python3 packages/tolk/test/golden/cstyle/generate_expected.py \
+    --tinygrad _plans/tinygrad-a83c6f801 --output _plans/goldens-a83/cstyle
+
+The explicit output directory permits review before expectations are replaced.
+All 78 fixtures invoke the actual target renderer. CUDA/HIP compiler construction
+is stubbed because rendering does not compile source; renderer initialization
+and matchers run unchanged. No copied HIP renderer matcher remains.
+
+These deliberately ordered linear programs exercise renderer syntax, not the
+full lowering pipeline or hardware compilation. Their existing (-1,) parameter
+shapes are symbolic render-only names. Required weak CONST sources are inserted
+before committed CAST constants, preserving the fixture order and use counts.
+
+Compared with the previous corpus, all 16 Metal files gain the argument-buffer
+structure introduced by upstream 277cb9846. Metal/OpenCL/AMD vectorize_index
+now exercises an actual committed constant lane index. The old weak literal
+was simplified to a scalar load before rendering; it did not test vector lane
+syntax. The constructor migration follows the target's inferred-dtype UOp API
+and committed constants introduced by 68b4407fe/955037870/a7df1a1ac. Other
+expectations remain byte-identical. The generator fails instead of skipping
+missing renderers or unsupported fixtures.

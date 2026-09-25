@@ -202,7 +202,7 @@ let make_special_dims () =
   let ptr = dt in
   let b = B.create () in
   let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let c32 = B.emit b (Const { value = Const.int Dtype.int32 32; dtype = Dtype.int32 }) in
+  let c32 = Uop.const_int 32 in
   let gid = B.emit b (Special { dim = Gpu_dim.Group_id 0; size = c32; dtype = Dtype.int32 }) in
   let lid = B.emit b (Special { dim = Gpu_dim.Local_id 0; size = c32; dtype = Dtype.int32 }) in
   let sum = B.emit b (Binary { op = `Add; lhs = gid; rhs = lid; dtype = Dtype.int32 }) in

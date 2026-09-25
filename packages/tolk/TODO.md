@@ -77,10 +77,8 @@ acceptance requirement; skipped tests are not execution evidence.
   counts and WMMA products. Cap symbolic memory traffic by the buffer footprint
   and preserve exact evaluation through beam ranking and runtime statistics.
 - Migrate the remaining Python drivers to the target API and generate the
-  complete corpus separately. Update the C-style fixture builder to emit
-  committed constants (`cconst`); its bare boolean CONST currently renders an
-  empty condition. Attribute every changed expectation; require exact source
-  parity for supported renderers.
+  complete corpus separately. Attribute every changed expectation; require
+  exact source parity for supported renderers.
 - Reconcile remaining intermediate IR/GROUP and source differences in FP8
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
   `topk_rounds` and `multi_output`. Reconcile CPU/Metal `lorenz_fold` ordering
