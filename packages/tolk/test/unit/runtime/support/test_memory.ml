@@ -41,7 +41,8 @@ let encode ~paddr ~table ~uncached ~aspace ~snooped ~frag ~valid =
 let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
     ?(reserve_ptable = false)
     ?(fail_zero = fun () -> false)
-    ?(fail_write = fun () -> false) ?(fail_flush = fun () -> false)
+    ?(fail_write = fun () -> false) ?(fail_clear = fun () -> false)
+    ?(fail_flush = fun () -> false)
     ?(palloc_ranges = [ (0x8000, 0x8000); (0x1000, 0x1000) ])
     ?(va_size = 0x200000) ?(smi_dev = false) () =
   let vram = Array.make (vram_size / 8) 0L in
@@ -59,7 +60,8 @@ let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
              ?(aspace = Memory.Phys) ?(snooped = false) ?(frag = 0) ~valid () ->
           vram.((pt.paddr / 8) + idx) <-
             encode ~paddr ~table ~uncached ~aspace ~snooped ~frag ~valid;
-          if valid && fail_write () then failwith "page write failed");
+          if valid && fail_write () then failwith "page write failed";
+          if not valid && fail_clear () then failwith "page clear failed");
       entry = word;
       valid = (fun pt idx -> Int64.logand (word pt idx) 1L <> 0L);
       address =
@@ -329,6 +331,14 @@ let () =
         ];
       group "Alloc_vaddr"
         [
+          test "failed backing setup can release an unmapped reservation" (fun () ->
+              let fx = make_fixture ~va_size:0x4000 () in
+              let first = Memory.alloc_vaddr fx.mm 0x1000 () in
+              let second = Memory.alloc_vaddr fx.mm 0x1000 () in
+              Memory.free_vaddr fx.mm first;
+              Memory.free_vaddr fx.mm second;
+              equal int first (Memory.alloc_vaddr fx.mm 0x2000 ()));
+
           test "aligns naturally to the request size" (fun () ->
               let fx = make_fixture ~va_base:0x200000 () in
               equal int 0x200000 (Memory.alloc_vaddr fx.mm 0x1000 ());
@@ -436,6 +446,14 @@ let () =
                   (0xF000, 0x1000);
                 ]
                 (vm_paddrs vm));
+          test "failed entry rollback retains physical and virtual ownership" (fun () ->
+              let fx = make_fixture ~va_size:0x2000
+                  ~fail_write:(fun () -> true) ~fail_clear:(fun () -> true) () in
+              raises_match (function Fun.Finally_raised _ -> true | _ -> false)
+                (fun () -> Memory.valloc fx.mm 0x1000 ());
+              raises_match oom (fun () -> Memory.alloc_vaddr fx.mm 0x1000 ());
+              let next = Memory.palloc fx.mm 0x1000 () in
+              is_true (next <> 0x10000));
           test "releases partial allocations when memory runs out" (fun () ->
               let fx =
                 make_fixture ~vram_size:0xA000 ~boot_size:0x8000

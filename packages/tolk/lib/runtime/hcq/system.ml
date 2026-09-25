@@ -459,14 +459,16 @@ module Pci_device = struct
         in
         failwith (msg ^ hint)
     in
-    let paddrs = system_paddrs ~vaddr:va size in
-    let paddrs_4k =
-      List.concat_map
-        (fun p -> List.init (page_size / 0x1000) (fun i -> p + (i * 0x1000)))
-        paddrs
-    in
-    ( Hcq.Mmio.make ~addr:va ~size,
-      List.filteri (fun i _ -> i < ceildiv size 0x1000) paddrs_4k )
+    with_rollback (fun rollback ->
+        rollback (fun () -> File_io.munmap va ~size);
+        let paddrs = system_paddrs ~vaddr:va size in
+        let paddrs_4k =
+          List.concat_map
+            (fun p -> List.init (page_size / 0x1000) (fun i -> p + (i * 0x1000)))
+            paddrs
+        in
+        ( Hcq.Mmio.make ~addr:va ~size,
+          List.filteri (fun i _ -> i < ceildiv size 0x1000) paddrs_4k ))
 
   let reset t =
     ignore
@@ -551,8 +553,10 @@ module Pci_device = struct
           lor if addr <> 0n then File_io.map_fixed else 0)
         ~fd ~offset:(Int64.of_int off)
     in
-    Ffi.madvise_dontfork loc sz;
-    Hcq.Mmio.make ~addr:loc ~size:sz
+    with_rollback (fun rollback ->
+        rollback (fun () -> File_io.munmap loc ~size:sz);
+        Ffi.madvise_dontfork loc sz;
+        Hcq.Mmio.make ~addr:loc ~size:sz)
 
   let resize_bar t bar =
     let rpath = Printf.sprintf "%s/resource%d_resize" t.dev_path bar in
@@ -647,34 +651,47 @@ module Pci_iface_base = struct
     in
     if should_use_sysmem then begin
       let vaddr = Memory.alloc_vaddr t.mm size ~align:page_size () in
-      let view, paddrs =
-        Pci_device.alloc_sysmem ~vaddr:(Nativeint.of_int vaddr) ~contiguous size
-      in
-      let mapping =
-        Memory.map_range t.mm ~vaddr ~size
-          (List.map (fun paddr -> (paddr, 0x1000)) paddrs)
-          Memory.Sys ~snooped:true ~uncached:true ()
-      in
-      Hcq.Buffer.make ~va:(Nativeint.of_int vaddr) ~size ~view
-        ~meta:
-          (Allocation { mapping; has_cpu_mapping = true; owner = t })
-        ()
+      let view = ref None and mapping = ref None and safe = ref true in
+      with_rollback (fun rollback ->
+          rollback (fun () ->
+              if !safe then begin
+                (match !mapping with
+                | Some mapping -> Memory.vfree t.mm mapping
+                | None -> Memory.free_vaddr t.mm vaddr);
+                Option.iter (fun view ->
+                    File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view)) !view
+              end);
+          let cpu_view, paddrs =
+            Pci_device.alloc_sysmem ~vaddr:(Nativeint.of_int vaddr) ~contiguous size in
+          view := Some cpu_view;
+          let mapped = match Memory.map_range t.mm ~vaddr ~size
+              (List.map (fun paddr -> paddr, 0x1000) paddrs)
+              Memory.Sys ~snooped:true ~uncached:true () with
+            | mapping -> mapping
+            | exception (Fun.Finally_raised _ as error) ->
+                (* Entry rollback itself failed; the GPU may still address
+                   the host pages, so preserve both reservations. *)
+                safe := false;
+                raise error in
+          mapping := Some mapped;
+          Hcq.Buffer.make ~va:(Nativeint.of_int vaddr) ~size ~view:cpu_view
+            ~meta:(Allocation {mapping = mapped; has_cpu_mapping = true; owner = t}) ())
     end
     else begin
       let mapping = Memory.valloc t.mm size ~uncached ~contiguous:cpu_access () in
-      let paddr = fst (List.hd mapping.Memory.paddrs) in
-      let view =
-        if cpu_access then
-          Some
-            (Pci_device.map_bar t.pci_dev ~off:paddr ~size:mapping.Memory.size
-               t.vram_bar)
-        else None
-      in
-      Hcq.Buffer.make
-        ~va:(Nativeint.of_int mapping.Memory.va_addr)
-        ~size ?view
-        ~meta:(Allocation { mapping; has_cpu_mapping = cpu_access; owner = t })
-        ()
+      let view = ref None in
+      with_rollback (fun rollback ->
+          rollback (fun () ->
+              Memory.vfree t.mm mapping;
+              Option.iter (fun view ->
+                  File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view)) !view);
+          let paddr = fst (List.hd mapping.Memory.paddrs) in
+          if cpu_access then
+            view := Some (Pci_device.map_bar t.pci_dev ~off:paddr ~size:mapping.Memory.size
+                t.vram_bar);
+          Hcq.Buffer.make ~va:(Nativeint.of_int mapping.Memory.va_addr)
+            ~size ?view:!view
+            ~meta:(Allocation {mapping; has_cpu_mapping = cpu_access; owner = t}) ())
     end
 
   let unmap t b = match Hcq.Buffer.meta (Hcq.Buffer.base b) with

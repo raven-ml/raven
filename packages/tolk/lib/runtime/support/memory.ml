@@ -405,6 +405,8 @@ let alloc_vaddr t size ?(align = 0x1000) () =
     ~align:(max (1 lsl (bit_length size - 1)) align)
     ()
 
+let free_vaddr t address = Tlsf.free t.va_allocator address
+
 let identity_va t ~uncached =
   match List.assoc_opt uncached t.identity_vas with
   | Some va -> va
@@ -416,6 +418,7 @@ let identity_va t ~uncached =
           Phys ~uncached ()
        with
        | _ -> ()
+       | exception (Fun.Finally_raised _ as error) -> raise error
        | exception exn ->
            let backtrace = Printexc.get_raw_backtrace () in
            Tlsf.free t.va_allocator va;
@@ -430,6 +433,7 @@ let valloc t size ?(align = 0x1000) ?(uncached = false) ?(contiguous = false) ()
     let paddr = palloc t size ~align ~zero:false () in
     let base = match identity_va t ~uncached with
       | base -> base
+      | exception (Fun.Finally_raised _ as error) -> raise error
       | exception exn ->
           let backtrace = Printexc.get_raw_backtrace () in
           pfree t paddr ();
@@ -485,6 +489,7 @@ let valloc t size ?(align = 0x1000) ?(uncached = false) ?(contiguous = false) ()
           Printexc.raise_with_backtrace exn backtrace in
     match map_range t ~vaddr:va ~size paddrs Phys ~uncached () with
     | mapping -> mapping
+    | exception (Fun.Finally_raised _ as error) -> raise error
     | exception exn ->
         let backtrace = Printexc.get_raw_backtrace () in
         List.iter (fun (paddr, _) -> pfree t paddr ()) paddrs;

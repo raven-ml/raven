@@ -130,9 +130,11 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 - **Failed buffer setup unwinds acquired resources.** The frozen target does
   not consistently roll back allocation and mapping failures. Tolk returns
-  PCI virtual/physical reservations and new page tables, releases KFD/NVK
+  PCI virtual/physical reservations, CPU mappings and new page tables, releases KFD/NVK
   handles acquired by failed setup, and closes NVK temporary mapping file
-  descriptors. Bootstrap failures release descriptors and per-device KFD
+  descriptors. A failed page-table rollback retains backing storage and
+  virtual reservations because the device may still address them.
+  Bootstrap failures release descriptors and per-device KFD
   events. KFD's process-wide event page remains cached; an ambiguous registration
   failure is latched because the kernel may already retain that page. Failed
   KFD/NVK device construction retires queues before releasing their buffers;

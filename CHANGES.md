@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed PCI host-page discovery and BAR mapping release CPU mappings and
+  GPU memory reservations. If page-table rollback itself fails, backing
+  storage stays reserved so the device cannot access reused memory.
+
 - Failed NVIDIA NVK device construction unregisters channels before releasing
   queue storage, then unwinds UVM registrations, control mappings and device
   objects. Cleanup uses the installed driver's channel-unregister layout.

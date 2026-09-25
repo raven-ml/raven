@@ -190,8 +190,10 @@ val map_range :
     fragment hint are recorded in the entries. [boot] allocates
     intermediate page tables from the boot region. If allocation, entry
     writing or the mapping callback raises, new entries and intermediate
-    tables are released; pre-existing mappings remain unchanged. Rollback
-    requires that clearing entries succeeds.
+    tables are released; pre-existing mappings remain unchanged. If clearing
+    entries during rollback fails, [Fun.Finally_raised] propagates and callers
+    must retain the backing pages and virtual reservation: hardware may still
+    address them.
 
     Raises [Invalid_argument] if the sizes don't add up or any page
     of the range is already mapped. *)
@@ -215,6 +217,12 @@ val alloc_vaddr : 'pt t -> int -> ?align:int -> unit -> int
     Raises {!Tlsf.Out_of_memory} if the virtual address space is
     exhausted. *)
 
+val free_vaddr : 'pt t -> int -> unit
+(** [free_vaddr t address] releases a virtual reservation returned by
+    {!alloc_vaddr}. The caller must first remove any mappings in that range.
+    This also releases a reservation when backing allocation or mapping fails
+    before a {!virt_mapping} exists. It does not free physical pages. *)
+
 val valloc :
   'pt t ->
   int ->
@@ -232,7 +240,8 @@ val valloc :
 
     Raises {!Tlsf.Out_of_memory} if physical or virtual memory is exhausted.
     Allocation, zeroing and mapping failures release the request's physical
-    and virtual reservations, subject to {!map_range}'s rollback requirement. *)
+    and virtual reservations. If entry rollback itself fails, both are
+    retained as described by {!map_range}. *)
 
 val vfree : 'pt t -> virt_mapping -> unit
 (** [vfree t vm] unmaps [vm] and releases its virtual range, which must
