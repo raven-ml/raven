@@ -1121,11 +1121,14 @@ let () =
                   equal bool false (Amdev.is_hive fd.dev);
                   equal int 0x10000123 (Amdev.paddr2mc fd.dev 0x123);
                   equal int 0x123 (Amdev.paddr2xgmi fd.dev 0x123));
-              with_fake_dev ~mmhub:(1, 8, 0)
+              with_fake_dev ~gc:(9, 4, 3) ~mmhub:(1, 8, 0)
                 ~pre:(fun store ->
-                  (* pf_lfb_region = 2, pf_lfb_size = 0x40 *)
-                  Hashtbl.replace store (mmhub_base + 0xc97) 2;
-                  Hashtbl.replace store (mmhub_base + 0xc98) 0x40)
+                  (* The compute hub owns fabric topology. Give the memory
+                     hub different values so selecting it cannot pass. *)
+                  Hashtbl.replace store (0x8000 + 0x957) 2;
+                  Hashtbl.replace store (0x8000 + 0x958) 0x40;
+                  Hashtbl.replace store (mmhub_base + 0xc97) 3;
+                  Hashtbl.replace store (mmhub_base + 0xc98) 0x20)
                 (fun fd ->
                   equal bool true (Amdev.is_hive fd.dev);
                   equal int 0x80000123 (Amdev.paddr2xgmi fd.dev 0x123);

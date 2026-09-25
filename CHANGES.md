@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI XGMI address conversion reads fabric topology from the compute hub,
+  preventing device-local memory from being assigned the wrong peer aperture.
+
 - AMD PCI initialization reads harvest information and selects live I/O dies,
   avoiding dead memory-hub waits and indirect doorbell routes that can stall
   the fabric. Harvested compute dies are fenced off from doorbells.

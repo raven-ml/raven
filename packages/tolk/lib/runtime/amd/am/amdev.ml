@@ -907,8 +907,8 @@ let gmc_state reg =
     | r -> List.assoc field (Am_register.read_bitfields r)
     | exception Invalid_argument _ -> 0
   in
-  let xgmi_phys_id = bitfield "regMMMC_VM_XGMI_LFB_CNTL" "pf_lfb_region" in
-  let xgmi_seg_sz = bitfield "regMMMC_VM_XGMI_LFB_SIZE" "pf_lfb_size" lsl 24 in
+  let xgmi_phys_id = bitfield "regGCMC_VM_XGMI_LFB_CNTL" "pf_lfb_region" in
+  let xgmi_seg_sz = bitfield "regGCMC_VM_XGMI_LFB_SIZE" "pf_lfb_size" lsl 24 in
   let paddr_base = xgmi_phys_id * xgmi_seg_sz in
   let fb_base =
     (Am_register.read (reg "regMMMC_VM_FB_LOCATION_BASE") land 0xFFFFFF)
