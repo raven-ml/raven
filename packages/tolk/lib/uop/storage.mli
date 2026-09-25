@@ -292,6 +292,13 @@ val install_copy_runner : (dst:t -> src:t -> unit) -> unit
     The execution engine installs it once during initialization; until then
     {!copy_from} raises [Invalid_argument]. Not for application use. *)
 
+val find_mapping : 'a Type.Id.t -> t -> 'a option
+(** [find_mapping kind b] is an existing import of [b] with representation
+    [kind], if any. It does not allocate or synchronize. Mapping callbacks
+    use it to reuse a driver registration shared by several devices; the
+    source owner retains imports and releases them in reverse creation order.
+    Views preserve their byte offsets. The caller must retain [b]. *)
+
 val get : ?device:string -> 'a Type.Id.t -> t -> 'a option
 (** [get ?device kind b] initializes [b] and returns its backend buffer, or
     [None] for empty storage. [device] defaults to [b]'s device. Another device
@@ -342,7 +349,7 @@ module Host_allocator : sig
   (** [kind] identifies shared host-address storage. *)
 
   val make : synchronize:(unit -> unit) -> nativeint Allocator.t
-  (** [make ~synchronize] allocates aligned host memory and maps CPU-accessible
-      storage without copying. It accepts external pointers and byte views;
+  (** [make ~synchronize] allocates zeroed, page-backed host memory and maps
+      CPU-accessible storage without copying. It accepts external pointers and byte views;
       host reads, writes and frees wait for [synchronize]. *)
 end

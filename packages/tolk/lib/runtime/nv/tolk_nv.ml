@@ -502,7 +502,6 @@ end
 module Nv_iface = struct
   exception Out_of_memory of string
 
-  type mem = { h_memory : int; owner_id : int }
   type nvdev = ..
 
   type usermode = {
@@ -513,7 +512,7 @@ module Nv_iface = struct
     gpfifo_class : int;
   }
 
-  type t = {
+  type 'mem t = {
     root : int;
     gpu_instance : int;
     count : int;
@@ -529,9 +528,12 @@ module Nv_iface = struct
       ?map_flags:int ->
       ?cpu_addr:nativeint ->
       int ->
-      mem Hcq.Buffer.t;
-    free : mem Hcq.Buffer.t -> unit;
-    map : mem Hcq.Buffer.t -> mem Hcq.Buffer.t;
+      'mem Hcq.Buffer.t;
+    free : 'mem Hcq.Buffer.t -> unit;
+    kind : 'mem Hcq.Buffer.t Type.Id.t;
+    hmemory : 'mem Hcq.Buffer.t -> int;
+    map : Tolk.Device.Buffer.t -> 'mem Hcq.Buffer.t;
+    unmap : 'mem Hcq.Buffer.t -> unit;
     setup_usermode : unit -> usermode;
     setup_vm : vaspace:int -> unit;
     setup_gpfifo_vm : gpfifo:int -> unit;
@@ -540,12 +542,17 @@ module Nv_iface = struct
     nvdev : nvdev option;
   }
 
+  type packed = Pack : 'mem t -> packed
+
   let is_nvd t = t.nvdev <> None
 end
 
 (* Kernel-driver interface *)
 
 module Nvk_iface = struct
+  type ownership = Owned | Registered | Imported
+  type mem = { h_memory : int; ownership : ownership }
+  let kind : mem Hcq.Buffer.t Type.Id.t = Type.Id.make ()
   module File_io = Hcq.File_io
 
   type gpu = { gpu_id : int; minor_number : int }
@@ -903,7 +910,7 @@ module Nvk_iface = struct
       ~fd ~offset:0L
 
   let gpu_uvm_map st t ~va ~size ~mem_handle ?(create_range = true)
-      ?(has_cpu_mapping = false) ?owner_id () =
+      ?(has_cpu_mapping = false) ?(ownership = Owned) () =
     if create_range then begin
       let module C = Defs.Uvm_create_external_range_params in
       let cb = Nv_tables.create_blob C.sizeof in
@@ -940,8 +947,7 @@ module Nvk_iface = struct
         (if has_cpu_mapping then Some (Hcq.Mmio.make ~addr:va ~size) else None)
       ~meta:
         {
-          Nv_iface.h_memory = mem_handle;
-          owner_id = Option.value owner_id ~default:t.device_id;
+          h_memory = mem_handle; ownership;
         }
       ()
 
@@ -995,7 +1001,8 @@ module Nvk_iface = struct
       if status <> 0 then
         failwith ("host alloc returned " ^ error_str st.defs status);
       let mem_handle = Nv_tables.get_field b P.hobjectnew in
-      gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:true ()
+      gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:true
+        ~ownership:(if alloced then Owned else Registered) ()
     end
     else begin
       let cls, params =
@@ -1015,16 +1022,16 @@ module Nvk_iface = struct
   let free st t buf =
     let buf = Hcq.Buffer.base buf in
     let meta = Hcq.Buffer.meta buf in
-    if meta.Nv_iface.owner_id = t.device_id then begin
+    if meta.ownership <> Imported then begin
       (* a handle above the enumerator came from the driver: release its
          physical memory; host objects only unregister through the
          address-range free below *)
-      if meta.Nv_iface.h_memory > !host_object_enumerator then begin
+      if meta.h_memory > !host_object_enumerator then begin
         let module P = Defs.Nvos00_parameters in
         let b = Nv_tables.create_blob P.sizeof in
         Nv_tables.set_field b P.hroot st.root;
         Nv_tables.set_field b P.hobjectparent t.nvdevice;
-        Nv_tables.set_field b P.hobjectold meta.Nv_iface.h_memory;
+        Nv_tables.set_field b P.hobjectold meta.h_memory;
         escape st.fd_ctl ~nr:Defs.nv_esc_rm_free b;
         let status = Nv_tables.get_field b P.status in
         if status <> 0 then
@@ -1040,9 +1047,9 @@ module Nvk_iface = struct
         fp.length;
       uvm st ~cmd:Defs.uvm_free ~rmstatus:fp.rmstatus b;
       match Hcq.Buffer.view buf with
-      | Some _ ->
-          File_io.munmap (Hcq.Buffer.va buf) ~size:(Hcq.Buffer.size buf)
-      | None -> ()
+      | Some view when meta.ownership = Owned ->
+          File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view)
+      | Some _ | None -> ()
     end
 
   (* An import maps an already-created range: no new range or physical
@@ -1050,8 +1057,24 @@ module Nvk_iface = struct
   let map st t buf =
     let meta = Hcq.Buffer.meta buf in
     gpu_uvm_map st t ~va:(Hcq.Buffer.va buf) ~size:(Hcq.Buffer.size buf)
-      ~mem_handle:meta.Nv_iface.h_memory ~create_range:false
-      ~owner_id:meta.Nv_iface.owner_id ()
+      ~mem_handle:meta.h_memory ~create_range:false
+      ~ownership:Imported ()
+
+  let map_storage st t source =
+    let module B = Tolk.Device.Buffer in
+    let Tolk.Device.Allocator.Pack allocator = B.allocator source in
+    let existing = match Type.Id.provably_equal kind allocator.kind with
+      | Some Type.Equal -> B.get kind source
+      | None -> B.find_mapping kind source in
+    match existing with
+    | Some raw -> map st t raw
+    | None ->
+        let address = match B.host_addr source with
+          | Some address -> address
+          | None -> invalid_arg "NVK map requires NVK or host-accessible storage" in
+        if Nativeint.logand address 0xfffn <> 0n then
+          invalid_arg "NVK host mapping requires page alignment";
+        alloc st t ~host:true ~cpu_addr:address (B.nbytes source)
 
   (* Channel set-up *)
 
@@ -1143,7 +1166,7 @@ module Nvk_iface = struct
     Nv_tables.set_field b P.length 0x4000000;
     uvm st ~cmd:Defs.uvm_register_channel ~rmstatus:P.rmstatus b
 
-  let iface ~device_id : Nv_iface.t =
+  let iface ~device_id : mem Nv_iface.t =
     let st = init_root () in
     let t = create st ~device_id in
     {
@@ -1165,7 +1188,10 @@ module Nvk_iface = struct
           alloc st t ?host ?uncached ?cpu_access ?contiguous ?map_flags
             ?cpu_addr size);
       free = (fun buf -> free st t buf);
-      map = (fun buf -> map st t buf);
+      kind;
+      hmemory = (fun b -> (Hcq.Buffer.meta b).h_memory);
+      map = (fun source -> map_storage st t source);
+      unmap = (fun buf -> free st t buf);
       setup_usermode = (fun () -> setup_usermode st t);
       setup_vm = (fun ~vaspace -> setup_vm st t ~vaspace);
       setup_gpfifo_vm = (fun ~gpfifo -> setup_gpfifo_vm st t ~gpfifo);
@@ -1189,10 +1215,6 @@ module Pci_iface = struct
   type t = {
     base : (nv_boot, Nvdev.Nv_page_table.t) Base.t;
     root : int;
-    (* the runtime carries the fixed {!Nv_iface.mem} metadata on its
-       buffers, so the base allocations are kept here, keyed by virtual
-       address, for free and map to reach *)
-    buffers : (int, (nv_boot, Nvdev.Nv_page_table.t) Base.meta Hcq.Buffer.t) Hashtbl.t;
   }
 
   type Nv_iface.nvdev += Nv_pci of nv_boot
@@ -1268,7 +1290,7 @@ module Pci_iface = struct
         ~mm:(fun impl -> Nvdev.mm impl.nvdev)
         ()
     in
-    let t = { base; root = 0xc1000000; buffers = Hashtbl.create 64 } in
+    let t = { base; root = 0xc1000000 } in
     (* ops_nv.py:564: register the client with the driver *)
     let (_ : int) =
       Ip.Gsp.rpc_rm_alloc (impl t).gsp ~hparent:0 ~hclass:Defs.nv01_root
@@ -1276,38 +1298,6 @@ module Pci_iface = struct
         ~client:t.root ()
     in
     t
-
-  (* The runtime's buffers carry the fixed metadata type; keep the base
-     allocation so free and map can reach the memory manager. *)
-  let adapt t base_buf =
-    Hashtbl.replace t.buffers (Nativeint.to_int (Hcq.Buffer.va base_buf)) base_buf;
-    let meta = Hcq.Buffer.meta base_buf in
-    Hcq.Buffer.make
-      ~va:(Hcq.Buffer.va base_buf)
-      ~size:(Hcq.Buffer.size base_buf)
-      ?view:(Hcq.Buffer.view base_buf)
-      ~meta:{ Nv_iface.h_memory = meta.Base.hmemory; owner_id = 0 }
-      ()
-
-  let alloc t ?host ?uncached ?cpu_access ?contiguous size =
-    adapt t (Base.alloc t.base ?host ?uncached ?cpu_access ?contiguous size)
-
-  let free t buf =
-    let va = Nativeint.to_int (Hcq.Buffer.va (Hcq.Buffer.base buf)) in
-    match Hashtbl.find_opt t.buffers va with
-    | Some base_buf ->
-        Base.free t.base base_buf;
-        Hashtbl.remove t.buffers va
-    | None -> ()
-
-  let map t buf =
-    let va = Nativeint.to_int (Hcq.Buffer.va buf) in
-    match Hashtbl.find_opt t.buffers va with
-    | Some base_buf -> adapt t (Base.map t.base base_buf)
-    | None ->
-        failwith
-          "Pci_iface.map: peer mapping across driver-less devices is not \
-           supported"
 
   (* ops_nv.py:570 setup_usermode: the work-submission doorbell lives in a
      fixed window of BAR0; the engine classes come from the GSP. *)
@@ -1329,7 +1319,7 @@ module Pci_iface = struct
     Ip.Gsp.drain_responses (impl t).gsp;
     if Nvdev.is_err_state (impl t).nvdev then failwith "Device fault detected"
 
-  let iface t : Nv_iface.t =
+  let iface t : Base.mem Nv_iface.t =
     let g = (impl t).gsp in
     {
       Nv_iface.root = t.root;
@@ -1348,9 +1338,12 @@ module Pci_iface = struct
       alloc =
         (fun ?host ?uncached ?cpu_access ?contiguous ?map_flags:_ ?cpu_addr:_
              size ->
-          alloc t ?host ?uncached ?cpu_access ?contiguous size);
-      free = (fun buf -> free t buf);
-      map = (fun buf -> map t buf);
+          Base.alloc t.base ?host ?uncached ?cpu_access ?contiguous size);
+      free = Base.free t.base;
+      kind = Base.kind;
+      hmemory = Base.hmemory;
+      map = Base.map t.base;
+      unmap = Base.unmap t.base;
       setup_usermode = (fun () -> setup_usermode t);
       (* the driver-less path sets the vaspace page directory in rm_alloc *)
       setup_vm = (fun ~vaspace:_ -> ());
@@ -1709,7 +1702,7 @@ let arch_of_sm_version sm_version =
 let sass_of_sm_version sm_version =
   ((sm_version land 0xf00) lsr 4) lor (sm_version land 0xf)
 
-let query_gpu_info (iface : Nv_iface.t) ~subdevice indices =
+let query_gpu_info (iface : 'mem Nv_iface.t) ~subdevice indices =
   match iface.Nv_iface.nvdev with
   | Some _ ->
       (* an interface programming the hardware directly answers from the
@@ -1751,7 +1744,7 @@ let query_gpu_info (iface : Nv_iface.t) ~subdevice indices =
    work-submission token, and the memory-manager registration. The compute
    channel also creates the debugger objects fault reports are read
    through; their handles are returned alongside the descriptor. *)
-let new_gpfifo (iface : Nv_iface.t) ~(usermode : Nv_iface.usermode) ~nvdevice
+let new_gpfifo (iface : 'mem Nv_iface.t) ~(usermode : Nv_iface.usermode) ~nvdevice
     ~gpfifo_area ~ctxshare ~channel_group ~offset ~entries ~compute =
   let notifier = iface.Nv_iface.alloc ~uncached:true (48 lsl 20) in
   let open Nv_defs_versions in
@@ -1762,11 +1755,11 @@ let new_gpfifo (iface : Nv_iface.t) ~(usermode : Nv_iface.usermode) ~nvdevice
   Nv_tables.set_field b p.gpfifoentries entries;
   Nv_tables.set_field b p.hcontextshare ctxshare;
   Nv_tables.set_field b p.hobjecterror
-    (Hcq.Buffer.meta notifier).Nv_iface.h_memory;
+    (iface.Nv_iface.hmemory notifier);
   Nv_tables.set_field b p.hobjectbuffer
-    (Hcq.Buffer.meta gpfifo_area).Nv_iface.h_memory;
+    (iface.Nv_iface.hmemory gpfifo_area);
   Nv_tables.set_field b p.huserdmemory
-    (Hcq.Buffer.meta gpfifo_area).Nv_iface.h_memory;
+    (iface.Nv_iface.hmemory gpfifo_area);
   Nv_tables.set_field b p.userdoffset ((entries * 8) + offset);
   Nv_tables.set_field b p.enginetype 0;
   let gpfifo =
@@ -1817,7 +1810,7 @@ let new_gpfifo (iface : Nv_iface.t) ~(usermode : Nv_iface.usermode) ~nvdevice
 (* Fault reports: the per-SM error states read through the debugger, and
    when they record an MMU fault, its address, type and access decoded by
    name. *)
-let on_device_hang (iface : Nv_iface.t) ~debugger ~debug_channel () =
+let on_device_hang (iface : 'mem Nv_iface.t) ~debugger ~debug_channel () =
   let report = ref [] in
   let add line = report := line :: !report in
   let module P = Defs.Nv83de_ctrl_debug_read_all_sm_error_states_params in
@@ -1864,15 +1857,16 @@ let on_device_hang (iface : Nv_iface.t) ~debugger ~debug_channel () =
   failwith (String.concat "\n" (List.rev !report))
 
 module State = struct
-  type t = {
-    iface : Nv_iface.t;
-    hw : Nv_iface.mem device;
+  type 'mem t = {
+    name : string;
+    iface : 'mem Nv_iface.t;
+    hw : 'mem device;
     subdevice : int;
     compute_queue : Queue_desc.t;
     dma_queue : Queue_desc.t;
-    kernargs : Nv_iface.mem Hcq.Kernargs.t;
-    pool : Nv_iface.mem Hcq.Signal.Pool.t;
-    tl : (Nv_iface.mem, Nv_iface.mem device) Timeline.t;
+    kernargs : 'mem Hcq.Kernargs.t;
+    pool : 'mem Hcq.Signal.Pool.t;
+    tl : ('mem, 'mem device) Timeline.t;
     num_gpcs : int;
     num_tpc_per_gpc : int;
     num_sm_per_tpc : int;
@@ -1880,7 +1874,7 @@ module State = struct
     (* The device's LRU-wrapped allocator; set right after creation and used
        for local-memory sizing. *)
     mutable allocator :
-      Nv_iface.mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
+      'mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
   }
 
   let invalidate_caches t =
@@ -1900,7 +1894,6 @@ module State = struct
     end
 end
 
-let buffer_kind : Nv_iface.mem Hcq.Buffer.t Type.Id.t = Type.Id.make ()
 module Allocator = struct
   (* One DMA stream ordered against the device timeline: wait for the last
      submitted work, append the packets of [build], advance the timeline. *)
@@ -1949,9 +1942,13 @@ module Allocator = struct
       Hcq.Buffer.offset buf ~off:byte_offset ~size ()
     in
     {
-      Tolk.Device.Allocator.kind = buffer_kind;
+      Tolk.Device.Allocator.kind = state.State.iface.Nv_iface.kind;
       host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
-      mapping = None;
+      mapping = Some {
+        map = state.State.iface.Nv_iface.map;
+        unmap = (fun b -> Timeline.synchronize state.State.tl;
+          state.State.iface.Nv_iface.unmap b);
+      };
       synchronize = (fun () -> Timeline.synchronize state.State.tl);
       alloc;
       free;
@@ -2002,7 +1999,7 @@ module Runtime = struct
     in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       let bufs = Array.map (fun buf ->
-          match Tolk.Device.Buffer.get buffer_kind buf with
+          match Tolk.Device.Buffer.get ~device:state.State.name state.State.iface.Nv_iface.kind buf with
           | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
       let local = Option.value local ~default:default_local in
       let tl = state.State.tl in
@@ -2037,7 +2034,7 @@ end
 (* The shared device open path over the selected interface: everything from
    object allocation through channel set-up and renderer wiring is
    interface-independent. *)
-let open_device ~name (iface : Nv_iface.t) =
+let open_device ~name (iface : 'mem Nv_iface.t) =
   let module D = Defs.Nv0080_alloc_parameters in
   let db = Nv_tables.create_blob D.sizeof in
   Nv_tables.set_field db D.deviceid iface.Nv_iface.gpu_instance;
@@ -2154,7 +2151,8 @@ let open_device ~name (iface : Nv_iface.t) =
   let bounce_count = 32 and bounce_size = 2 lsl 20 in
   let state =
     {
-      State.iface;
+      State.name = name;
+      iface;
       hw;
       subdevice;
       compute_queue;
@@ -2233,8 +2231,8 @@ let create name =
         | None -> invalid_arg (Printf.sprintf "invalid NV device %S" name))
     | None -> 0
   in
-  let nvk () = Nvk_iface.iface ~device_id in
-  let pci () = Pci_iface.iface (Pci_iface.create ~device_id) in
-  let iface = Tolk.Helpers.select_interface ~device:name
+  let nvk () = Nv_iface.Pack (Nvk_iface.iface ~device_id) in
+  let pci () = Nv_iface.Pack (Pci_iface.iface (Pci_iface.create ~device_id)) in
+  let Nv_iface.Pack iface = Tolk.Helpers.select_interface ~device:name
       [ "NVK", nvk; "PCI", pci ] in
   open_device ~name iface

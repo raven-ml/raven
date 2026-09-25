@@ -335,12 +335,6 @@ module Nv_iface : sig
       memory is available, so allocation caches can be flushed and the
       allocation retried. Any other driver error raises [Failure]. *)
 
-  type mem = {
-    h_memory : int;  (** Driver handle of the backing memory. *)
-    owner_id : int;  (** Index of the device that allocated it. *)
-  }
-  (** The type for driver metadata carried by device-memory buffers. *)
-
   type nvdev = ..
   (** The type for driver-less device implementations. An interface
       that programs the hardware directly carries its implementation
@@ -358,7 +352,7 @@ module Nv_iface : sig
   (** The result of [setup_usermode]: the mapped doorbell region and
       the engine classes probed from the device. *)
 
-  type t = {
+  type 'mem t = {
     root : int;  (** Handle of the client every driver object hangs off. *)
     gpu_instance : int;  (** Driver instance index of the device. *)
     count : int;
@@ -393,7 +387,7 @@ module Nv_iface : sig
       ?map_flags:int ->
       ?cpu_addr:nativeint ->
       int ->
-      mem Hcq.Buffer.t;
+      'mem Hcq.Buffer.t;
         (** [alloc size] allocates [size] bytes of device-visible
             memory, rounded up to the allocation page size, and maps
             them at a fresh virtual address. [host] registers CPU
@@ -406,14 +400,18 @@ module Nv_iface : sig
             instead of reserving a fresh range. All default to [false],
             [0] or absent. Raises {!Out_of_memory} and [Failure] as
             [rm_alloc]. *)
-    free : mem Hcq.Buffer.t -> unit;
-        (** [free buf] releases [buf]'s physical memory, virtual range
-            and CPU mapping. A buffer allocated by another device's
-            interface is left untouched. *)
-    map : mem Hcq.Buffer.t -> mem Hcq.Buffer.t;
-        (** [map buf] maps a buffer allocated by another device's
-            interface into this device's address space at the same
-            virtual address. The result keeps the original owner. *)
+    free : 'mem Hcq.Buffer.t -> unit;
+        (** [free buf] releases an allocation made by this interface,
+            including its virtual range and any owned CPU mapping.
+            Use [unmap] for imported storage. *)
+    kind : 'mem Hcq.Buffer.t Type.Id.t;
+        (** Identity shared by interfaces with compatible raw storage. *)
+    hmemory : 'mem Hcq.Buffer.t -> int;
+        (** Backing handle or physical address for channel setup. *)
+    map : Tolk.Device.Buffer.t -> 'mem Hcq.Buffer.t;
+        (** Maps source storage without taking ownership of its allocation. *)
+    unmap : 'mem Hcq.Buffer.t -> unit;
+        (** Releases an import's GPU mapping or host registration. *)
     setup_usermode : unit -> usermode;
         (** [setup_usermode ()] probes the device's engine classes and
             maps the usermode register region. *)
@@ -436,7 +434,7 @@ module Nv_iface : sig
   }
   (** The type for the driver interface of one device. *)
 
-  val is_nvd : t -> bool
+  val is_nvd : 'mem t -> bool
   (** [is_nvd t] is [true] if [t] programs the hardware directly rather
       than going through the kernel driver. *)
 end
@@ -455,7 +453,10 @@ end
     virtual-address allocator are pure and run anywhere, so tests can
     pin the wire formats without a device. *)
 module Nvk_iface : sig
-  val iface : device_id:int -> Nv_iface.t
+  type mem
+  (** Kernel-driver allocation and import metadata. *)
+
+  val iface : device_id:int -> mem Nv_iface.t
   (** [iface ~device_id] is the kernel-driver interface of the
       [device_id]th visible device. The first call opens the driver:
       it creates the root client, detects the driver generation,
@@ -570,7 +571,7 @@ module Pci_iface : sig
       has that index, when the device cannot be claimed, or on a firmware
       or boot failure. *)
 
-  val iface : t -> Nv_iface.t
+  val iface : t -> Tolk_hcq.System.Pci_iface_base.mem Nv_iface.t
   (** [iface t] is the runtime interface over [t]: object and control
       calls as GSP remote procedure calls, memory through the device's
       memory manager, the work-submission doorbell in BAR0, and status
@@ -731,7 +732,7 @@ val sass_of_sm_version : int -> int
     descriptors carry for the reported SM version [v]: the generation
     nibbles over the revision nibble, so [0x809] is [0x89]. *)
 
-val query_gpu_info : Nv_iface.t -> subdevice:int -> int list -> int list
+val query_gpu_info : 'mem Nv_iface.t -> subdevice:int -> int list -> int list
 (** [query_gpu_info iface ~subdevice indices] is the value of each
     graphics-engine information row in [indices], in order, queried
     from the device behind [subdevice]. An interface that programs the
@@ -739,7 +740,7 @@ val query_gpu_info : Nv_iface.t -> subdevice:int -> int list -> int list
     instead of the driver query. *)
 
 val on_device_hang :
-  Nv_iface.t -> debugger:int -> debug_channel:int -> unit -> unit
+  'mem Nv_iface.t -> debugger:int -> debug_channel:int -> unit -> unit
 (** [on_device_hang iface ~debugger ~debug_channel ()] reads the per-SM
     error states of the compute channel [debug_channel] through the
     [debugger] object and raises [Failure] carrying the fault report:

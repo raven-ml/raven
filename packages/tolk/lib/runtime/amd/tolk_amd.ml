@@ -290,6 +290,9 @@ module Iface = struct
       ?host:bool -> ?uncached:bool -> ?cpu_access:bool -> int ->
       'mem Hcq.Buffer.t;
     free : 'mem Hcq.Buffer.t -> unit;
+    kind : 'mem Hcq.Buffer.t Type.Id.t;
+    map : Tolk.Device.Buffer.t -> 'mem Hcq.Buffer.t;
+    unmap : 'mem Hcq.Buffer.t -> unit;
     empty_scratch : 'mem Hcq.Buffer.t;
     create_queue :
       queue_type ->
@@ -937,7 +940,9 @@ end
 (* Kernel-driver interface *)
 
 module Kfd_iface = struct
-  type mem = { handle : int64; owner : int }
+  type ownership = Owned | Registered | Imported
+  type mem = { handle : int64; owner : int; ownership : ownership }
+  let kind : mem Hcq.Buffer.t Type.Id.t = Type.Id.make ()
 
   type t = {
     gpu_id : int;
@@ -1021,6 +1026,8 @@ module Kfd_iface = struct
 
   let alloc_raw ~kfd ~drm_fd ~gpu_id ?(host = false) ?(uncached = false)
       ?(cpu_access = false) ?cpu_addr size =
+    if Option.is_some cpu_addr && (not host || uncached) then
+      invalid_arg "KFD cpu_addr requires host registration";
     let flags =
       Kfd.alloc_mem_flags_writable lor Kfd.alloc_mem_flags_executable
       lor Kfd.alloc_mem_flags_no_substitute
@@ -1082,7 +1089,8 @@ module Kfd_iface = struct
           if cpu_access || host then Some (Hcq.Mmio.make ~addr ~size) else None
         in
         let b =
-          Hcq.Buffer.make ~va:addr ~size ?view ~meta:{ handle; owner = gpu_id }
+          Hcq.Buffer.make ~va:addr ~size ?view ~meta:{ handle; owner = gpu_id;
+            ownership = (if cpu_addr = None then Owned else Registered) }
             ()
         in
         map_to_gpu ~kfd ~gpu_id b;
@@ -1169,9 +1177,11 @@ module Kfd_iface = struct
     let kfd, _ = scan () in
     let b = Hcq.Buffer.base b in
     let meta = Hcq.Buffer.meta b in
+    if meta.ownership <> Imported && meta.owner <> t.gpu_id then
+      invalid_arg "KFD free requires the owning interface";
     Kfd.unmap_memory_from_gpu kfd ~handle:meta.handle ~gpu_ids:[| t.gpu_id |];
-    if meta.owner = t.gpu_id then begin
-      if Hcq.Buffer.va b <> 0n then
+    if meta.ownership <> Imported then begin
+      if meta.ownership = Owned && Hcq.Buffer.va b <> 0n then
         Hcq.File_io.munmap (Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b);
       Kfd.free_memory_of_gpu kfd ~handle:meta.handle
     end
@@ -1180,7 +1190,21 @@ module Kfd_iface = struct
     let kfd, _ = scan () in
     map_to_gpu ~kfd ~gpu_id:t.gpu_id b;
     Hcq.Buffer.make ~va:(Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b)
-      ~meta:(Hcq.Buffer.meta b) ()
+      ~meta:{ (Hcq.Buffer.meta b) with ownership = Imported } ()
+
+  let map_storage t source =
+    let module B = Tolk.Device.Buffer in
+    let Tolk.Device.Allocator.Pack allocator = B.allocator source in
+    match Type.Id.provably_equal kind allocator.kind with
+    | Some Type.Equal -> map t (Option.get (B.get kind source))
+    | None ->
+        let address = match B.host_addr source with
+          | Some address -> address
+          | None -> invalid_arg "KFD map requires KFD or host-accessible storage" in
+        if Nativeint.logand address 0xfffn <> 0n then
+          invalid_arg "KFD host mapping requires page alignment";
+        alloc t ~host:true ~cpu_access:true ~cpu_addr:address
+          (round_up (B.nbytes source) 0x1000)
 
   let create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
       ?cwsr_buffer ?(ctl_stack_size = 0) ?(ctx_save_restore_size = 0)
@@ -1298,8 +1322,12 @@ module Kfd_iface = struct
         (fun ?host ?uncached ?cpu_access size ->
           alloc t ?host ?uncached ?cpu_access size);
       free = free t;
+      kind;
+      map = map_storage t;
+      unmap = free t;
       empty_scratch =
-        Hcq.Buffer.make ~va:0n ~size:0 ~meta:{ handle = 0L; owner = 0 } ();
+        Hcq.Buffer.make ~va:0n ~size:0
+          ~meta:{ handle = 0L; owner = 0; ownership = Imported } ();
       create_queue =
         (fun queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer ?cwsr_buffer
              ?ctl_stack_size ?ctx_save_restore_size () ->
@@ -1322,7 +1350,7 @@ module Pci_iface = struct
   module Base = System.Pci_iface_base
   module Am_defs = Amd_tables.Am_defs
 
-  type mem = (Am_boot.t, Amdev.Am_page_table.t) Base.meta
+  type mem = Base.mem
 
   type t = {
     base : (Am_boot.t, Amdev.Am_page_table.t) Base.t;
@@ -1541,24 +1569,10 @@ module Pci_iface = struct
         (fun ?host ?uncached ?cpu_access size ->
           alloc t ?host ?uncached ?cpu_access size);
       free = free t;
-      empty_scratch =
-        Hcq.Buffer.make ~va:0n ~size:0
-          ~meta:
-            {
-              Base.mapping =
-                {
-                  Tolk.Memory.va_addr = 0;
-                  size = 0;
-                  paddrs = [];
-                  aspace = Tolk.Memory.Sys;
-                  uncached = false;
-                  snooped = false;
-                };
-              has_cpu_mapping = false;
-              hmemory = 0;
-              owner = t.base;
-            }
-          ();
+      kind = Base.kind;
+      map = Base.map t.base;
+      unmap = Base.unmap t.base;
+      empty_scratch = Base.empty;
       create_queue =
         (fun queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer ?cwsr_buffer
              ?ctl_stack_size ?ctx_save_restore_size () ->
@@ -1579,6 +1593,7 @@ end
 
 module State = struct
   type 'mem t = {
+    name : string;
     buffer_kind : 'mem Hcq.Buffer.t Type.Id.t;
     iface : 'mem Iface.t;
     hw : 'mem device;
@@ -1681,7 +1696,10 @@ module Allocator = struct
     {
       Tolk.Device.Allocator.kind = state.State.buffer_kind;
       host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
-      mapping = None;
+      mapping = Some {
+        map = state.State.iface.Iface.map;
+        unmap = (fun b -> State.synchronize state; state.State.iface.Iface.unmap b);
+      };
       synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
@@ -1730,7 +1748,7 @@ module Runtime = struct
     ensure_scratch state prg.Program.private_segment_size;
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       let bufs = Array.map (fun buf ->
-          match Tolk.Device.Buffer.get state.State.buffer_kind buf with
+          match Tolk.Device.Buffer.get ~device:state.State.name state.State.buffer_kind buf with
           | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
       let local = Option.value local ~default:default_local in
       let tl = state.State.tl in
@@ -1881,7 +1899,8 @@ let open_device ~name iface =
   let bounce_count = 32 and bounce_size = 2 lsl 20 in
   let state =
     {
-      State.buffer_kind = Type.Id.make ();
+      State.name = name;
+      buffer_kind = iface.Iface.kind;
       iface;
       hw;
       compute_queue;

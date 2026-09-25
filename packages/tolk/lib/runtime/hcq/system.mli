@@ -226,19 +226,19 @@ module Pci_iface_base : sig
   (** The type for interface bases over a device implementation
       ['impl] whose memory manager writes ['pt] page tables. *)
 
-  type ('impl, 'pt) meta = {
-    mapping : Tolk.Memory.virt_mapping;
-        (** The allocation's GPU mapping on its owner. *)
-    has_cpu_mapping : bool;
-        (** The process holds a CPU mapping of the memory, released
-            with the allocation. *)
-    hmemory : int;
-        (** The allocation's backing physical address: the first host
-            page for host memory, the device-local address
-            otherwise. *)
-    owner : ('impl, 'pt) t;  (** The interface that allocated it. *)
-  }
-  (** The type for the driver metadata of an allocation. *)
+  type mem
+  (** Allocation or import metadata. Allocations retain their owning memory
+      manager independently of its vendor and page-table representation. *)
+
+  val kind : mem Hcq.Buffer.t Type.Id.t
+  (** [kind] identifies raw PCI storage across device interfaces. *)
+
+  val empty : mem Hcq.Buffer.t
+  (** [empty] is the zero-sized scratch placeholder. It owns no memory. *)
+
+  val hmemory : mem Hcq.Buffer.t -> int
+  (** [hmemory b] is the first backing physical address of an allocation,
+      used by NV channel setup. Raises [Invalid_argument] for an import. *)
 
   val create :
     name:string ->
@@ -295,7 +295,7 @@ module Pci_iface_base : sig
     ?contiguous:bool ->
     ?force_devmem:bool ->
     int ->
-    ('impl, 'pt) meta Hcq.Buffer.t
+    mem Hcq.Buffer.t
   (** [alloc t size] allocates [size] bytes for the device and is the
       mapped region. Device memory is the default; [host] allocates
       pinned system pages instead, mapped into the GPU as coherent
@@ -315,19 +315,23 @@ module Pci_iface_base : sig
       Raises [Failure] when memory is exhausted or pages cannot be
       pinned. *)
 
-  val free : ('impl, 'pt) t -> ('impl, 'pt) meta Hcq.Buffer.t -> unit
-  (** [free t b] releases [b]: an allocation of [t] returns its virtual
+  val free : ('impl, 'pt) t -> mem Hcq.Buffer.t -> unit
+  (** [free t b] releases an allocation of [t], including its virtual
       range, device memory and CPU mapping, whose address may differ from
-      the GPU address; one owned by a peer interface is only
-      unmapped from [t]'s page tables. *)
+      the GPU address. Imports are only unmapped from [t]'s page tables.
+      Raises [Invalid_argument] for an allocation owned by another interface. *)
 
-  val map : ('impl, 'pt) t -> ('impl, 'pt) meta Hcq.Buffer.t -> ('impl, 'pt) meta Hcq.Buffer.t
-  (** [map t b] maps the peer allocation [b] into [t]'s page tables at
-      its existing virtual address and is the buffer as [t] sees it.
-      Host-backed memory maps by its system pages; device memory
-      through the owner's memory BAR (see {!p2p_paddrs}). Raises
-      [Failure] when the owner's BAR does not expose its whole memory
-      (see {!is_bar_small}). *)
+  val map : ('impl, 'pt) t -> Tolk.Device.Buffer.t -> mem Hcq.Buffer.t
+  (** [map t b] maps the source allocation into [t]. PCI device memory is
+      reached through its owner's BAR; host storage is pinned and mapped by
+      its physical pages. Host addresses must be page aligned and fit the
+      GPU address range. Raises [Invalid_argument] for unsupported storage
+      or a peer with a small BAR. The caller must retain [b] until unmapping. *)
+
+  val unmap : ('impl, 'pt) t -> mem Hcq.Buffer.t -> unit
+  (** [unmap t b] releases an import's page tables without releasing the
+      source allocation or its CPU mapping. Raises [Invalid_argument] for
+      an owned allocation. *)
 
   val p2p_paddrs :
     ('impl, 'pt) t -> (int * int) list -> (int * int) list * Tolk.Memory.addr_space

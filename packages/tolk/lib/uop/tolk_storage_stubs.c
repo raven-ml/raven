@@ -4,10 +4,11 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
-#include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
-#include <malloc.h>
+#include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 
 CAMLprim value caml_tolk_host_alloc(value v_size) {
@@ -16,29 +17,29 @@ CAMLprim value caml_tolk_host_alloc(value v_size) {
   result = caml_copy_nativeint(0);
   size_t size = (size_t)Long_val(v_size);
 #if defined(_WIN32)
-  void *ptr = _aligned_malloc(size, 64);
+  void *ptr = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
   if (ptr == NULL) {
     caml_failwith("host allocation failed");
   }
-  memset(ptr, 0, size);
 #else
-  void *ptr = NULL;
-  if (posix_memalign(&ptr, 64, size == 0 ? 64 : size) != 0) {
+  void *ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANON, -1, 0);
+  if (ptr == MAP_FAILED) {
     caml_failwith("host allocation failed");
   }
-  memset(ptr, 0, size);
 #endif
   Nativeint_val(result) = (intnat)ptr;
   CAMLreturn(result);
 }
 
-CAMLprim value caml_tolk_host_free(value v_ptr) {
-  CAMLparam1(v_ptr);
+CAMLprim value caml_tolk_host_free(value v_ptr, value v_size) {
+  CAMLparam2(v_ptr, v_size);
   void *ptr = (void *)Nativeint_val(v_ptr);
 #if defined(_WIN32)
-  _aligned_free(ptr);
+  if (!VirtualFree(ptr, 0, MEM_RELEASE)) caml_failwith("host release failed");
 #else
-  free(ptr);
+  if (munmap(ptr, (size_t)Long_val(v_size)) != 0)
+    caml_failwith("host release failed");
 #endif
   CAMLreturn(Val_unit);
 }

@@ -529,12 +529,20 @@ module Pci_iface_base = struct
     mm : 'pt Memory.t;
   }
 
-  and ('impl, 'pt) meta = {
-    mapping : Memory.virt_mapping;
-    has_cpu_mapping : bool;
-    hmemory : int;
-    owner : ('impl, 'pt) t;
-  }
+  type mem =
+    | Allocation : {
+        mapping : Memory.virt_mapping;
+        has_cpu_mapping : bool;
+        owner : ('impl, 'pt) t;
+      } -> mem
+    | Mapping of { vaddr : int; size : int }
+
+  let kind : mem Hcq.Buffer.t Type.Id.t = Type.Id.make ()
+  let empty = Hcq.Buffer.make ~va:0n ~size:0
+      ~meta:(Mapping {vaddr = 0; size = 0}) ()
+  let hmemory b = match Hcq.Buffer.meta b with
+    | Allocation a -> fst (List.hd a.mapping.Memory.paddrs)
+    | Mapping _ -> invalid_arg "PCI mapping has no allocation handle"
 
   let pci_dev t = t.pci_dev
   let dev_impl t = t.dev_impl
@@ -597,7 +605,7 @@ module Pci_iface_base = struct
       in
       Hcq.Buffer.make ~va:(Nativeint.of_int vaddr) ~size ~view
         ~meta:
-          { mapping; has_cpu_mapping = true; hmemory = List.hd paddrs; owner = t }
+          (Allocation { mapping; has_cpu_mapping = true; owner = t })
         ()
     end
     else begin
@@ -613,24 +621,27 @@ module Pci_iface_base = struct
       Hcq.Buffer.make
         ~va:(Nativeint.of_int mapping.Memory.va_addr)
         ~size ?view
-        ~meta:{ mapping; has_cpu_mapping = cpu_access; hmemory = paddr; owner = t }
+        ~meta:(Allocation { mapping; has_cpu_mapping = cpu_access; owner = t })
         ()
     end
 
-  (* system.py:283 PCIIfaceBase.free *)
+  let unmap t b = match Hcq.Buffer.meta (Hcq.Buffer.base b) with
+    | Mapping {vaddr; size} ->
+        if size <> 0 then Memory.unmap_range t.mm ~vaddr ~size
+    | Allocation _ -> invalid_arg "PCI unmap requires an imported mapping"
+
   let free t b =
     let b = Hcq.Buffer.base b in
-    let meta = Hcq.Buffer.meta b in
-    if meta.owner != t then
-      Memory.unmap_range t.mm
-        ~vaddr:(Nativeint.to_int (Hcq.Buffer.va b))
-        ~size:(round_up (Hcq.Buffer.size b) 0x1000);
-    if meta.owner == t then
-      Memory.vfree t.mm meta.mapping;
-    if meta.owner == t && meta.has_cpu_mapping then begin
-      let view = Hcq.Buffer.cpu_view b in
-      File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view)
-    end
+    match Hcq.Buffer.meta b with
+    | Mapping _ -> unmap t b
+    | Allocation a ->
+        if a.owner.pci_dev != t.pci_dev then
+          invalid_arg "PCI free requires the owning interface";
+        Memory.vfree a.owner.mm a.mapping;
+        if a.has_cpu_mapping then begin
+          let view = Hcq.Buffer.cpu_view b in
+          File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view)
+        end
 
   (* system.py:288 PCIIfaceBase.p2p_paddrs: peers address this device's
      memory through its memory BAR on the bus. *)
@@ -638,23 +649,40 @@ module Pci_iface_base = struct
     let bar_base = fst (Pci_device.bar_info t.pci_dev t.vram_bar) in
     (List.map (fun (paddr, size) -> (bar_base + paddr, size)) paddrs, Memory.Sys)
 
-  (* system.py:292 PCIIfaceBase.map *)
-  let map t b =
-    let meta = Hcq.Buffer.meta b in
-    let owner = meta.owner in
-    if is_bar_small owner then
-      failwith "P2P mapping not supported for small bar devices";
-    let uncached = meta.mapping.Memory.uncached in
-    let paddrs, aspace =
-      match meta.mapping.Memory.aspace with
-      | Memory.Sys -> (meta.mapping.Memory.paddrs, Memory.Sys)
-      | Memory.Phys | Memory.Peer -> p2p_paddrs owner meta.mapping.Memory.paddrs
+  let map t source =
+    let module B = Tolk.Device.Buffer in
+    let Tolk.Device.Allocator.Pack allocator = B.allocator source in
+    let lo, size, paddrs, aspace, uncached =
+      match Type.Id.provably_equal kind allocator.kind with
+      | Some Type.Equal ->
+          let b = Option.get (B.get kind source) in
+          (match Hcq.Buffer.meta b with
+          | Mapping _ -> invalid_arg "PCI map requires source allocation metadata"
+          | Allocation a ->
+              if is_bar_small a.owner then
+                invalid_arg "P2P mapping not supported for small bar devices";
+              let paddrs, aspace = match a.mapping.Memory.aspace with
+                | Memory.Sys -> a.mapping.paddrs, Memory.Sys
+                | Memory.Phys | Memory.Peer -> p2p_paddrs a.owner a.mapping.paddrs in
+              Nativeint.to_int (Hcq.Buffer.va b), a.mapping.size,
+              paddrs, aspace, a.mapping.uncached)
+      | None ->
+          let address = match B.host_addr source with
+            | Some address -> address
+            | None -> invalid_arg "PCI map requires PCI or host-accessible storage" in
+          let lo = Nativeint.to_int address in
+          if lo land 0xfff <> 0 then invalid_arg "PCI host mapping requires page alignment";
+          let size = round_up (B.nbytes source) 0x1000 in
+          let base = Memory.va_base t.mm and bits = Memory.va_bits t.mm in
+          if lo < base || size > (1 lsl bits) || lo - base > (1 lsl bits) - size then
+            invalid_arg "PCI host address is outside the GPU virtual address range";
+          lock_memory ~addr:address ~size;
+          let paddrs = List.map (fun paddr -> paddr, 0x1000)
+              (system_paddrs ~vaddr:address size) in
+          lo, size, paddrs, Memory.Sys, true
     in
-    ignore
-      (Memory.map_range t.mm
-         ~vaddr:(Nativeint.to_int (Hcq.Buffer.va b))
-         ~size:(round_up (Hcq.Buffer.size b) 0x1000)
-         paddrs aspace ~snooped:true ~uncached ()
-        : Memory.virt_mapping);
-    Hcq.Buffer.make ~va:(Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b) ~meta ()
+    ignore (Memory.map_range t.mm ~vaddr:lo ~size paddrs aspace
+        ~snooped:true ~uncached () : Memory.virt_mapping);
+    Hcq.Buffer.make ~va:(Nativeint.of_int lo) ~size
+      ~meta:(Mapping {vaddr = lo; size}) ()
 end

@@ -386,6 +386,12 @@ thread.
 
 ### Tolk (new)
 
+- AMD and NV bind host and peer buffers through shared storage mappings,
+  preserving view offsets and freeing imports before their source allocation.
+  NV PCI allocations retain their actual owner and backing pages.
+- CPU storage uses zeroed pages suitable for GPU registration. Host access
+  waits for devices that mapped the buffer, so pending GPU writes are visible.
+
 - PCI allocations release system-memory virtual ranges and the actual CPU
   mapping, preventing leaks when BAR addresses differ from GPU addresses.
   Large-BAR GPUs keep uncached CPU-visible allocations in device memory.

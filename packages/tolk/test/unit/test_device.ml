@@ -345,7 +345,9 @@ let mappings_follow_storage_ownership () =
       kind = target_kind; host = Fun.const None;
       mapping = Some {
         map = (fun source -> record (name ^ " map");
-            Option.get (Device.Buffer.get source_kind source), 0);
+            match Device.Buffer.find_mapping target_kind source with
+            | Some mapped -> record (name ^ " reuse"); mapped
+            | None -> Option.get (Device.Buffer.get source_kind source), 0);
         unmap = (fun (_, offset) -> equal int 0 offset; record (name ^ " unmap"));
       };
       synchronize = (fun () -> record (name ^ " sync"));
@@ -353,7 +355,8 @@ let mappings_follow_storage_ownership () =
       free = (fun _ _ _ -> fail "mapping must not free source through target");
       copyin = (fun (data, offset) src -> Bytes.blit src 0 data offset (Bytes.length src));
       copyout = (fun dst (data, offset) -> Bytes.blit data offset dst 0 (Bytes.length dst));
-      addr = None; offset = Some (fun (raw, base) _ offset -> raw, base + offset);
+      addr = Some (fun (_, offset) -> Nativeint.of_int (0x1000 + offset));
+      offset = Some (fun (raw, base) _ offset -> raw, base + offset);
       transfer = None; supports_transfer = false;
       copy_from_disk = None; supports_copy_from_disk = false;
     } in
@@ -363,6 +366,7 @@ let mappings_follow_storage_ownership () =
       ~runtime:(fun _ -> fail "mapping test does not execute code")
       ~synchronize:allocator.synchronize () in
   let first = target "MAP_TARGET:1" and second = target "MAP_TARGET:2" in
+  is_true (Option.is_none (Device.Buffer.find_mapping target_kind source));
   let get device buf = Option.get (Device.Buffer.get ~device:(Device.name device) target_kind buf) in
   let data, offset = get first source in
   equal int 0 offset;
@@ -373,14 +377,24 @@ let mappings_follow_storage_ownership () =
   equal int 4 view_offset;
   ignore (get first source);
   ignore (get second view);
+  let cached_data, cached_offset = Option.get (Device.Buffer.find_mapping target_kind view) in
+  is_true (cached_data == data);
+  equal int 4 cached_offset;
+  events := "address lookup" :: !events;
+  equal nativeint 0x1004n (Device.Buffer.addr ~device:(Device.name second) view);
+  equal string "source sync" (List.hd !events);
   let count event = List.length (List.filter (String.equal event) !events) in
   equal int 1 (count "MAP_TARGET:1 map");
   equal int 1 (count "MAP_TARGET:2 map");
+  equal int 1 (count "MAP_TARGET:2 reuse");
+  let syncs = count "MAP_TARGET:1 sync" in
   equal (list int) [0; 42; 0; 0] (read_i32 source);
+  equal int (syncs + 1) (count "MAP_TARGET:1 sync");
   Device.Buffer.deallocate view;
   equal int 0 (count "MAP_TARGET:1 unmap");
   events := [];
   Device.Buffer.deallocate source;
+  is_true (Option.is_none (Device.Buffer.find_mapping target_kind source));
   equal (list string)
     ["MAP_TARGET:2 sync"; "MAP_TARGET:2 unmap";
      "MAP_TARGET:1 sync"; "MAP_TARGET:1 unmap"; "source free"]
@@ -389,6 +403,14 @@ let mappings_follow_storage_ownership () =
   equal int 1 (count "MAP_TARGET:1 map")
 
 let () = run __FILE__ [ copy_from_tests;
+  test "host storage owns zeroed pages suitable for GPU registration" (fun () ->
+      List.iter (fun size ->
+          let b = Device.create_buffer device ~size ~dtype:D.uint8
+              ~spec:{Device.Buffer_spec.default with nolru = true} in
+          let address = Option.get (Device.Buffer.host_addr b) in
+          equal nativeint 0n (Nativeint.logand address 0xfffn);
+          equal bytes (Bytes.make size '\000') (Device.Buffer.as_bytes b);
+          Device.Buffer.deallocate b) [1; 4096; 4097]);
   test "per-device mappings share base ownership and release before storage" mappings_follow_storage_ownership;
   test "opaque storage dispatch and transfers require a type identity" typed_storage_identity;
   test "BUFFER owns storage across execution contexts" node_owned_storage;

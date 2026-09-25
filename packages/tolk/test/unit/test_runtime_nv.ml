@@ -400,7 +400,10 @@ let fake_iface ?nvdev
       (fun ?host:_ ?uncached:_ ?cpu_access:_ ?contiguous:_ ?map_flags:_
            ?cpu_addr:_ _ -> fail "unscripted alloc");
     free = (fun _ -> fail "unscripted free");
+    kind = Type.Id.make ();
+    hmemory = (fun _ -> fail "unscripted hmemory");
     map = (fun _ -> fail "unscripted map");
+    unmap = (fun _ -> fail "unscripted unmap");
     setup_usermode = (fun () -> fail "unscripted setup_usermode");
     setup_vm = (fun ~vaspace:_ -> fail "unscripted setup_vm");
     setup_gpfifo_vm = (fun ~gpfifo:_ -> fail "unscripted setup_gpfifo_vm");
@@ -1750,6 +1753,28 @@ let () =
               let device = nv_device () in
               equal string "NV" (Tolk.Device.name device);
               Tolk.Device.synchronize device);
+          test "dispatch maps a host view and preserves the external CPU allocation" (fun () ->
+              let device = nv_device () in
+              with_map 4096 (fun mapping ->
+                  Mmio.write32 mapping 4 41l;
+                  let allocator = Tolk_uop.Storage.Host_allocator.make
+                      ~synchronize:(fun () -> ()) in
+                  let spec = {Tolk.Device.Buffer_spec.default with
+                    external_ptr = Some (Mmio.addr mapping)} in
+                  let base = Tolk.Device.Buffer.create ~device:"CPU" ~size:1024
+                      ~dtype:D.int32 ~spec (Tolk.Device.Allocator.Pack allocator) in
+                  let view = Tolk.Device.Buffer.view base ~size:1 ~dtype:D.int32 ~offset:4 in
+                  let dst = i32_buf device [0] in
+                  let spec = Tolk.Device.compile_program device ~name:"nv_mapped_host"
+                      (increment_program ()) in
+                  let runner = Tolk.Realize.Compiled_runner.create ~device spec in
+                  ignore (Tolk.Realize.Compiled_runner.call runner [dst; view] []
+                    ~wait:true ~timeout:None);
+                  equal (list int) [42] (read_i32 dst);
+                  Tolk.Device.Buffer.deallocate view;
+                  Tolk.Device.Buffer.deallocate base;
+                  Mmio.write32 mapping 4 99l;
+                  equal int32 99l (Mmio.read32 mapping 4)));
           test "compiles and runs one kernel" (fun () ->
               let device = nv_device () in
               let spec =

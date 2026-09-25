@@ -219,8 +219,15 @@ let ensure_size buf bytes =
       (Printf.sprintf "buffer size mismatch: got %d bytes, expected %d"
          (Bytes.length bytes) expected)
 
+let synchronize_mappings ?except buf =
+  let root = match buf.base with Some root -> root | None -> buf in
+  List.iter (fun (target, Backing (alloc, _)) ->
+      if not (Option.fold ~none:false ~some:(fun except -> target == except) except) then
+        alloc.synchronize ()) root.mappings
+
 let copyin buf bytes =
   ensure_size buf bytes;
+  synchronize_mappings buf;
   match buf.storage with
   | Unallocated -> invalid_arg "buffer is not allocated"
   | Empty -> ()
@@ -228,6 +235,7 @@ let copyin buf bytes =
 
 let copyout buf bytes =
   ensure_size buf bytes;
+  synchronize_mappings buf;
   match buf.storage with
   | Unallocated -> invalid_arg "buffer is not allocated"
   | Empty -> ()
@@ -291,6 +299,11 @@ let generation buf =
 
 let rec mapped_backing target buf =
   ensure_allocated buf;
+  synchronize_mappings ~except:target buf;
+  if target != allocator buf then begin
+    let Allocator.Pack source = allocator buf in
+    source.synchronize ()
+  end;
   match buf.storage with
   | Empty -> None
   | Unallocated -> assert false
@@ -321,16 +334,27 @@ let rec mapped_backing target buf =
 let target_allocator device buf =
   match device with None -> allocator buf | Some device -> !allocator_resolver device
 
+let find_mapping : type a. a Type.Id.t -> t -> a option = fun kind buf ->
+  let root = match buf.base with Some root -> root | None -> buf in
+  let rec find : (allocator_pack * backing) list -> a option = function
+    | [] -> None
+    | (_, Backing (alloc, raw)) :: rest ->
+        match Type.Id.provably_equal kind alloc.kind with
+        | None -> find rest
+        | Some Type.Equal ->
+            if root == buf then Some raw
+            else match alloc.offset with
+              | Some offset -> Some (offset raw (nbytes buf) buf.offset)
+              | None -> invalid_arg "mapped allocator does not support views"
+  in
+  find root.mappings
+
 let get : type a. ?device:string -> a Type.Id.t -> t -> a option =
   fun ?device kind buf ->
   let target = target_allocator device buf in
   let Allocator.Pack alloc = target in
   if Option.is_none (Type.Id.provably_equal kind alloc.kind) then
     invalid_arg "buffer storage belongs to a different backend";
-  if target != allocator buf then begin
-    let Allocator.Pack source = allocator buf in
-    source.synchronize ()
-  end;
   match mapped_backing target buf with
   | Some (Backing (alloc, raw)) ->
       (match Type.Id.provably_equal kind alloc.kind with
@@ -340,6 +364,7 @@ let get : type a. ?device:string -> a Type.Id.t -> t -> a option =
 
 let host_addr buf =
   ensure_allocated buf;
+  synchronize_mappings buf;
   match buf.storage with
   | Allocated (Backing (alloc, raw)) -> alloc.synchronize (); alloc.host raw
   | Empty -> Some Nativeint.zero
@@ -356,7 +381,7 @@ let addr ?device buf =
 module Host_allocator = struct
   let kind : nativeint Type.Id.t = Type.Id.make ()
   external alloc : int -> nativeint = "caml_tolk_host_alloc"
-  external free : nativeint -> unit = "caml_tolk_host_free"
+  external free : nativeint -> int -> unit = "caml_tolk_host_free"
   external copyin : nativeint -> bytes -> unit = "caml_tolk_host_copyin"
   external copyout : bytes -> nativeint -> unit = "caml_tolk_host_copyout"
 
@@ -364,9 +389,8 @@ module Host_allocator = struct
     let alloc size spec = match spec.Buffer_spec.external_ptr with
       | Some ptr -> ptr | None -> alloc size in
     let free buf size spec =
-      ignore size;
       synchronize ();
-      if Option.is_none spec.Buffer_spec.external_ptr then free buf in
+      if Option.is_none spec.Buffer_spec.external_ptr then free buf size in
     let offset buf size byte_offset =
       ignore size;
       Nativeint.add buf (Nativeint.of_int byte_offset) in

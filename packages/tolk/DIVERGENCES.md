@@ -6,6 +6,13 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Host access and direct cross-device binding wait for existing importers.**
+  Tolk still exposes asynchronous `Device.prog` dispatch outside compiled queue
+  dependencies. Waiting for the importing devices prevents CPU reads or writes
+  from racing a kernel that holds mapped storage. Coverage: the storage mapping
+  lifetime test and hardware-gated host-view dispatch tests. Reconsider when all
+  direct dispatch participates in the same byte-interval dependency protocol.
+
 - **PCI cleanup releases owned system-memory virtual ranges and the CPU
   view's address.** The frozen reference frees only device-memory ranges and
   assumes the GPU address is the CPU mapping address. BAR mappings can differ;

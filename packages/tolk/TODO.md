@@ -41,9 +41,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   descriptors, AQL/multi-XCC, race/recovery fixes and consumed firmware/register
   tables. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
-- Fix PCI host/multi-die mappings and NV per-interface storage metadata, peer
-  mapping and ring placement. Validate host/device placement and CPU mapping
-  cleanup on large-BAR and small-BAR hardware.
+- Complete PCI multi-die mappings and NV ring placement. Audit allocation-
+  failure unwinding across KFD/NVK/PCI. Validate host/device placement,
+  host/peer mappings and CPU mapping cleanup on large-BAR and small-BAR hardware.
   Preserve tinygrad's default PCI selection.
 - Port sorted-axis UNSHARD and final sharding/indexing/allreduce ownership,
   COPY/CALL/WMMA specs and hierarchical allreduce with their producers. Cover

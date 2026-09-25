@@ -206,6 +206,12 @@ module Iface : sig
         (** Allocates mapped device memory (see {!Kfd_iface.alloc} for
             the flags). *)
     free : 'mem Hcq.Buffer.t -> unit;  (** Releases an allocation. *)
+    kind : 'mem Hcq.Buffer.t Type.Id.t;
+        (** Shared identity of this interface's raw storage representation. *)
+    map : Tolk.Device.Buffer.t -> 'mem Hcq.Buffer.t;
+        (** Maps source storage while its owner retains the allocation. *)
+    unmap : 'mem Hcq.Buffer.t -> unit;
+        (** Releases only an import's mapping or registration. *)
     empty_scratch : 'mem Hcq.Buffer.t;
         (** The zero-sized placeholder a fresh device's scratch starts
             as, before the first sizing. *)
@@ -696,7 +702,7 @@ end
     otherwise. The device runtime uses it when explicitly selected or
     when kernel-driver interface initialization fails (see {!create}). *)
 module Pci_iface : sig
-  type mem = (Am_boot.t, Amdev.Am_page_table.t) System.Pci_iface_base.meta
+  type mem = System.Pci_iface_base.mem
   (** The type for driver metadata of an allocation. *)
 
   type t
