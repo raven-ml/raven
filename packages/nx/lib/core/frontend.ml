@@ -1953,19 +1953,22 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Sorting and Searching ───── *)
 
+  let sort_axis op x axis =
+    let r = ndim x in
+    let axis = if axis < 0 then axis + r else axis in
+    if axis < 0 || axis >= r then
+      err op "axis %d out of bounds for %dD tensor" axis r;
+    axis
+
   let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
     if ndim x = 0 then (x, scalar (B.context x) Nx_dtype.int32 0l)
     else
-      let r = ndim x in
-      let axis = if axis < 0 then axis + r else axis in
-      if axis < 0 || axis >= r then
-        err "sort" "axis %d out of bounds for %dD tensor" axis r;
-      let out_sorted = B.sort ~axis ~descending x in
-      let out_indices = B.argsort ~axis ~descending x in
-      (out_sorted, out_indices)
+      let axis = sort_axis "sort" x axis in
+      (B.sort ~axis ~descending x, B.argsort ~axis ~descending x)
 
   let argsort ?(descending = false) ?(axis = -1) x =
-    snd (sort ~descending ~axis x)
+    if ndim x = 0 then scalar (B.context x) Nx_dtype.int32 0l
+    else B.argsort ~axis:(sort_axis "argsort" x axis) ~descending x
 
   let argmax ?axis ?(keepdims = false) x =
     let x', axis =
