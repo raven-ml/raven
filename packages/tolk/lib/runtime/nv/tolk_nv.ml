@@ -484,6 +484,7 @@ module Copy_queue = struct
     done
 
   let release t ~value ~timestamp sg =
+    let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
     let a = va64 (Hcq.Signal.value_addr sg) in
     nvm t.q 4 Defs.nvc6b5_set_semaphore_a [| hi32 a; lo32 a; value |];
     nvm t.q 4 Defs.nvc6b5_launch_dma

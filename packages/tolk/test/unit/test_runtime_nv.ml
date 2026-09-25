@@ -738,6 +738,14 @@ let () =
                   equal (array int)
                     [| 0x20038090; 2; 0x10; 3; 0x200180c0; 0x0c |]
                     (copy_dwords cq)));
+          test "copy completion writes the low word of a timeline epoch" (fun () ->
+              with_fixture (fun m ->
+                  let timeline = Signal.make ~is_timeline:true (Signal.buf (signal m)) in
+                  let cq = Copy_queue.create (nv_dev m) in
+                  Copy_queue.signal cq ~value:0x100000003 timeline;
+                  equal (array int)
+                    [|0x20038090; 2; 0x10; 3; 0x200180c0; 0x0c|]
+                    (copy_dwords cq)));
           test "timestamp uses four words while completion preserves adjacent state" (fun () ->
               with_fixture (fun m ->
                   let cq = Copy_queue.create (nv_dev m) in

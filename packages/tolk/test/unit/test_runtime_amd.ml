@@ -1029,9 +1029,9 @@ let () =
               Cq.wreg q (reg ~addr:0x2fff) [| 0 |];
               Cq.wreg q (reg ~addr:(0xc000 + 0xfffe)) [| 0 |];
               equal int 6 (Q.length (Cq.q q)));
-          test "exec rejects unsupported programs" (fun () ->
+          test "exec rejects unsupported programs and missing dispatch packets" (fun () ->
               let module Cq = Tolk_amd.Compute_queue in
-              let kernargs = Buffer.make ~va:0x300000n ~size:64 ~meta:() () in
+              let kernargs = Buffer.make ~va:0x300000n ~size:24 ~meta:() () in
               let exec dev prg =
                 Cq.exec (Cq.create dev) prg ~kernargs ~global_size:(1, 1, 1)
                   ~local_size:(1, 1, 1)
@@ -1045,6 +1045,18 @@ let () =
               let multi_xcc = gfx942 () in
               raises_match is_invalid_arg (fun () ->
                   exec multi_xcc (amd_prog ~private_segment:true multi_xcc)));
+          test "timeline epochs keep GPU waits and SDMA fences in one dword" (fun () ->
+              with_map 4096 (fun m ->
+                  let signal = Signal.make ~is_timeline:true (slot_buf ~va:0x400000n m) in
+                  let compute = Tolk_amd.Compute_queue.create (gfx1100 ()) in
+                  Tolk_amd.Compute_queue.wait compute ~value:0x100000005 signal;
+                  equal int 5 (Q.dwords (Tolk_amd.Compute_queue.q compute)).(4);
+                  let copy = Tolk_amd.Copy_queue.create (gfx1100 ()) in
+                  Tolk_amd.Copy_queue.wait copy ~value:0x100000005 signal;
+                  Tolk_amd.Copy_queue.signal copy ~value:0x100000006 signal;
+                  let words = Q.dwords (Tolk_amd.Copy_queue.q copy) in
+                  equal int 5 words.(3);
+                  equal int 6 words.(9)));
           test "a command value wider than 32 bits is rejected" (fun () ->
               let module Cq = Tolk_amd.Compute_queue in
               with_map 4096 (fun m ->
@@ -1599,12 +1611,12 @@ let () =
                   in
                   equal (array int) expected
                     (ring_dwords m (Array.length expected))));
-          test "call rejects dispatch-pointer programs before staging"
+          test "call stages the dispatch pointer and HSA packet"
             (fun () ->
               with_map 4096 (fun m ->
                   let dev = gfx1100 () in
-                  let qd = queue_desc ~ring_dwords:16 m in
-                  let aux = (16 * 4) + 24 in
+                  let qd = queue_desc ~ring_dwords:256 m in
+                  let aux = (256 * 4) + 24 in
                   let tl =
                     Signal.make
                       (Buffer.make ~va:0x400000n ~size:16
@@ -1613,8 +1625,8 @@ let () =
                   in
                   let kernargs =
                     Kernargs.create
-                      (Buffer.make ~va:0x300000n ~size:64
-                         ~view:(Mmio.view m ~off:(aux + 16) ~size:64 ())
+                      (Buffer.make ~va:0x300000n ~size:128
+                         ~view:(Mmio.view m ~off:(aux + 16) ~size:128 ())
                          ~meta:() ())
                   in
                   let prog params kernargs_alloc_size =
@@ -1629,16 +1641,27 @@ let () =
                       kernargs_alloc_size;
                     }
                   in
-                  raises_match is_invalid_arg (fun () ->
-                      Program.call ~layout:[]
-                        (prog (amd_prog ~dispatch_ptr:true dev) 88)
-                        ~kernargs ~queue:qd ~timeline:tl ~timeline_value:1
-                        ~bufs:[||] ~vals:[||] ~global_size:(1, 1, 1)
-                        ~local_size:(1, 1, 1) ());
-                  (* nothing was staged or submitted *)
-                  equal nativeint 0x300000n
-                    (Buffer.va (Kernargs.alloc kernargs 8));
-                  equal int 0 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
+                  ignore (Program.call ~layout:[]
+                    (prog (amd_prog ~dispatch_ptr:true dev) 88)
+                    ~kernargs ~queue:qd ~timeline:tl ~timeline_value:1
+                    ~bufs:[||] ~vals:[||] ~global_size:(2, 3, 4)
+                    ~local_size:(8, 4, 2) ());
+                  let packet = Mmio.view m ~off:(aux + 16 + 24) ~size:64 () in
+                  equal int32 0x31502l (Mmio.read32 packet 0);
+                  equal int32 0x40008l (Mmio.read32 packet 4);
+                  equal int32 2l (Mmio.read32 packet 8);
+                  equal int32 16l (Mmio.read32 packet 12);
+                  equal int32 12l (Mmio.read32 packet 16);
+                  equal int32 8l (Mmio.read32 packet 20);
+                  let words = ring_dwords m (Int64.to_int
+                    (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0)) in
+                  let pointer_pair = ref false in
+                  for i = 0 to Array.length words - 4 do
+                    if Array.sub words i 4 = [|0x300018; 0; 0x300000; 0|] then
+                      pointer_pair := true
+                  done;
+                  is_true ~msg:"dispatch pointer precedes the kernarg pointer" !pointer_pair;
+                  equal nativeint 0x300058n (Buffer.va (Kernargs.alloc kernargs 8));
                   (* the timeline wait needs a value to wait on *)
                   raises_match is_invalid_arg (fun () ->
                       Program.call ~layout:[]

@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- Direct AMD launches support kernels requiring an HSA dispatch-packet pointer.
+  AMD waits and AMD/NV DMA completion packets preserve timeline epochs by
+  encoding only the low word in hardware dword fields.
+
 - AMD uses compiled host submission for PM4 kernels, SDMA copies and retained
   replay. Polling and ring backpressure are bounded; a stalled submission
   preserves unread commands and reports its failure at synchronization.

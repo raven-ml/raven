@@ -36,7 +36,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   Bring CUDA host and peer copies onto the queue path with runtime mapping
   eligibility and unsupported-mapping fallback. Audit CUDA context/stream
   destruction and concurrent driver initialization. Complete AMD AQL/multi-XCC,
-  direct dispatch-pointer support, race/recovery fixes and consumed firmware/register
+  race/recovery fixes and consumed firmware/register
   tables. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
 - Complete PCI multi-die mappings and NV ring placement. Audit allocation-

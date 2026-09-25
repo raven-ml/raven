@@ -28,6 +28,14 @@ let prop props name =
   match List.assoc_opt name props with
   | Some v -> v
   | None -> failwith ("missing device property " ^ name)
+let dispatch_header =
+  let open Amd_hsa_defs in
+  (1 lsl hsa_packet_header_barrier)
+  lor (hsa_fence_scope_system lsl hsa_packet_header_scacquire_fence_scope)
+  lor (hsa_fence_scope_system lsl hsa_packet_header_screlease_fence_scope)
+  lor (hsa_packet_type_kernel_dispatch lsl hsa_packet_header_type)
+  lor (3 lsl (16 + hsa_kernel_dispatch_packet_setup_dimensions))
+
 let event_index_partial_flush = 4
 let wait_reg_mem_function_eq = 3
 let wait_reg_mem_function_geq = 5
@@ -488,8 +496,8 @@ module Compute_queue = struct
 
   let exec t (prg : 'meta program) ~kernargs ~global_size:(gx, gy, gz)
       ~local_size:(lx, ly, lz) =
-    if prg.enable_dispatch_ptr then
-      invalid_arg "Compute_queue.exec: dispatch-pointer programs are not supported";
+    if prg.enable_dispatch_ptr && Hcq.Buffer.size kernargs < Amd_hsa_defs.Kernel_dispatch_packet.size then
+      invalid_arg "Compute_queue.exec: dispatch packet missing from kernargs";
     if prg.dev.sqtt_enabled then
       invalid_arg "Compute_queue.exec: thread-trace capture is not supported";
     if prg.enable_private_segment_sgpr && t.dev.xccs <> 1 then
@@ -509,12 +517,15 @@ module Compute_queue = struct
           hi32 scratch lor (1 lsl 31);
           0xffffffff;
           0x20c14000;
-          lo32 kernarg;
-          hi32 kernarg;
         |]
       end
-      else [| lo32 kernarg; hi32 kernarg |]
+      else [||]
     in
+    let dispatch = if prg.enable_dispatch_ptr then
+        let address = Int64.add kernarg (Int64.of_int
+            (Hcq.Buffer.size kernargs - Amd_hsa_defs.Kernel_dispatch_packet.size)) in
+        [|lo32 address; hi32 address|] else [||] in
+    let user_regs = Array.concat [user_regs; dispatch; [|lo32 kernarg; hi32 kernarg|]] in
 
     let gc = t.dev.gc in
     let prog_addr = Int64.shift_right_logical (va64 prg.prog_addr) 8 in
@@ -568,6 +579,7 @@ module Compute_queue = struct
       |]
 
   let wait t ?(value = 0) sg =
+    let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
     wait_reg_mem t ~mem:(Hcq.Signal.value_addr sg) ~mask:0xffffffff value
 
   let timestamp t sg =
@@ -712,6 +724,7 @@ module Copy_queue = struct
     else S.sdma_op_fence
 
   let signal t ?(value = 0) sg =
+    let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
     let module S = (val t.dev.sdma) in
     let va = va64 (Hcq.Signal.value_addr sg) in
     cmd t [| fence_flags t; lo32 va; hi32 va; value |];
@@ -727,6 +740,7 @@ module Copy_queue = struct
     | _ -> ()
 
   let wait t ?(value = 0) sg =
+    let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
     let module S = (val t.dev.sdma) in
     let va = va64 (Hcq.Signal.value_addr sg) in
     cmd t
@@ -927,10 +941,26 @@ module Program = struct
 
   let call t ~layout ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms
       ~bufs ~vals ~global_size ~local_size () =
-    if t.params.enable_dispatch_ptr then
-      invalid_arg "Program.call: dispatch-pointer programs are not supported";
+    let packet = if t.params.enable_dispatch_ptr then begin
+        let module P = Amd_hsa_defs.Kernel_dispatch_packet in
+        let packet = Bytes.make P.size '\000' in
+        Bytes.set_int32_le packet P.header (Int32.of_int dispatch_header);
+        let gx, gy, gz = global_size and lx, ly, lz = local_size in
+        List.iter (fun (group, local, group_offset, local_offset) ->
+            if group < 1 || local < 1 || local > 0xffff || group > 0xffffffff / local then
+              invalid_arg "Program.call: launch dimensions exceed dispatch packet fields";
+            Bytes.set_uint16_le packet local_offset local;
+            Bytes.set_int32_le packet group_offset (Int32.of_int (group * local)))
+          [gx, lx, P.grid_size_x, P.workgroup_size_x;
+           gy, ly, P.grid_size_y, P.workgroup_size_y;
+           gz, lz, P.grid_size_z, P.workgroup_size_z];
+        Bytes.set_int32_le packet P.private_segment_size (Int32.of_int t.private_segment_size);
+        Bytes.set_int32_le packet P.group_segment_size (Int32.of_int t.group_segment_size);
+        Some packet
+      end else None in
     let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size in
     Hcq.Kernargs.write_args layout slot ~bufs ~vals;
+    Option.iter (Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view slot) ~off:t.kernargs_segment_size) packet;
     let cq = Compute_queue.create t.params.dev in
     Compute_queue.wait cq ~value:(timeline_value - 1) timeline;
     Compute_queue.memory_barrier cq;
@@ -1076,14 +1106,8 @@ module Encoded_queue = struct
             | U.Launch_int n -> u32 n | U.Launch_float f -> u32 (int_of_float f)
             | U.Launch_sym v -> cast D.uint32 v) in
         let dispatch_packet (data : Program.data) info =
-          let open Amd_hsa_defs in
-          let header = (1 lsl hsa_packet_header_barrier)
-            lor (hsa_fence_scope_system lsl hsa_packet_header_scacquire_fence_scope)
-            lor (hsa_fence_scope_system lsl hsa_packet_header_screlease_fence_scope)
-            lor (hsa_packet_type_kernel_dispatch lsl hsa_packet_header_type)
-            lor (3 lsl (16 + hsa_kernel_dispatch_packet_setup_dimensions)) in
           let local = dims info.U.local_size and global = dims info.U.global_size in
-          [u32 header; bor (List.nth local 0) (op Ops.Shl (List.nth local 1) (u32 16));
+          [u32 dispatch_header; bor (List.nth local 0) (op Ops.Shl (List.nth local 1) (u32 16));
            List.nth local 2] @ List.map2 mul global local @
           [u32 data.private_segment_size; u32 data.group_segment_size;
            u64 0; u64 0; u64 0; u64 0] in

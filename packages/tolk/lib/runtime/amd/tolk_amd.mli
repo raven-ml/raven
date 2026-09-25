@@ -279,12 +279,13 @@ module Compute_queue : sig
     unit
   (** [exec t prg ~kernargs ~global_size ~local_size] launches [prg]
       over a [global_size] grid of [local_size] workgroups, with the
-      kernel arguments staged at [kernargs]. The launch invalidates
+      kernel arguments staged at [kernargs]. For dispatch-pointer programs,
+      its final 64 bytes contain the HSA dispatch packet. The launch invalidates
       stale caches first and drains the pipeline afterwards, so
       successive launches see each other's writes.
 
-      Raises [Invalid_argument] if [prg] wants a dispatch pointer or
-      thread-trace capture (neither is supported), or if it wants a
+      Raises [Invalid_argument] if the dispatch packet is missing, if [prg]
+      wants thread-trace capture (unsupported), or if it wants a
       private-segment descriptor on a multi-die device. *)
 
   val signal : 'meta t -> ?value:int -> ('a, 'meta device) Hcq.Signal.t -> unit
@@ -317,8 +318,8 @@ module Compute_queue : sig
 
   val submit : 'meta t -> Queue_desc.t -> unit
   (** [submit t qd] copies the accumulated stream into [qd]'s ring at
-      [put_value], wrapping dword by dword at the ring end, then
-      advances [put_value] and rings the doorbell. The stream is kept:
+      its mapped write position, wrapping dword by dword at the ring end,
+      then advances the write pointer and rings the doorbell. The stream is kept:
       submitting again replays it.
 
       On multi-die devices the stream is placed behind an in-ring
@@ -451,8 +452,8 @@ module Copy_queue : sig
 
   val submit : 'meta t -> Queue_desc.t -> unit
   (** [submit t qd] copies the accumulated packets into [qd]'s ring at
-      [put_value], advances [put_value] (in bytes) and rings the
-      doorbell. The engine fetches packets as units, so a packet never
+      its mapped write position, advances the write pointer in bytes and
+      rings the doorbell. The engine fetches packets as units, so a packet never
       straddles the ring end: when the next packet would, the remaining
       tail is zero-filled and the stream continues at the ring start.
       Blocks until the device has consumed enough of the ring for the
@@ -552,9 +553,9 @@ module Program : sig
       returns the seconds elapsed between the two captures. Otherwise
       the call returns [None] without blocking.
 
-      Raises [Invalid_argument] if [t] expects a dispatch-packet pointer
-      (not supported), or from the argument and queue builders when a
-      value does not fit its slot. *)
+      Dispatch-pointer programs append an HSA packet after their arguments.
+      Raises [Invalid_argument] if launch dimensions exceed its fields, or
+      from the argument and queue builders when a value does not fit its slot. *)
 end
 
 (** Compiled host submission over AMD packet templates. *)
