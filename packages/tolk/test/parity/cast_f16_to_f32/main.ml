@@ -10,8 +10,8 @@ let kernel () =
   let from_ptr = from_dt in
   let to_ptr = to_dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = from_ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = to_ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = from_ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = to_ptr; size = 1 }) in
   let c0 =
     B.emit b
       (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })

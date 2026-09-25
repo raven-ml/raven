@@ -1,13 +1,13 @@
-__kernel void parallel_reduce(__global float* data0_-1, __global float* data1_-1, __global float* data2_-1) {
+__kernel void parallel_reduce(__global float* data0_128, __global float* data1_1, __global float* data2_1) {
   float buf0[1];
   float buf1[1];
   *(buf0+0) = 0.0f;
   *(buf1+0) = 0.0f;
   for (int Ridx0 = 0; Ridx0 < 128; Ridx0++) {
-    float val0 = (*(data0_-1+Ridx0));
+    float val0 = (*(data0_128+Ridx0));
     *(buf0+0) = ((*(buf0+0))+val0);
     *(buf1+0) = ((*(buf1+0))+(val0*val0));
   }
-  *(data1_-1+0) = (*(buf0+0));
-  *(data2_-1+0) = (*(buf1+0));
+  *(data1_1+0) = (*(buf0+0));
+  *(data2_1+0) = (*(buf1+0));
 }

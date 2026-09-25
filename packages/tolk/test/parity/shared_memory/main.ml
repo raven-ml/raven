@@ -8,7 +8,7 @@ let kernel () =
   let dt = Dtype.float32 in
   let gptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = gptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = gptr; size = 1 }) in
   let dl =
     B.emit b
       (Buffer { slot = Some 0; size = 256; dtype = dt; addrspace = Dtype.Local })

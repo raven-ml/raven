@@ -1,11 +1,11 @@
-__kernel void elementwise_cast_f16(__global ushort* data0_-1, __global float* data1_-1, __global float* data2_-1) {
+__kernel void elementwise_cast_f16(__global ushort* data0_256, __global float* data1_256, __global float* data2_256) {
   int gidx0 = get_group_id(0); /* 256 */
-  ushort val0 = (*(data0_-1+gidx0));
-  float val1 = (*(data1_-1+gidx0));
+  ushort val0 = (*(data0_256+gidx0));
+  float val1 = (*(data1_256+gidx0));
   uint cast0 = ((uint)((val0&((ushort)(32767u)))));
   uint alu0 = (cast0<<13u);
   uint alu1 = (cast0>>10u);
   uint alu2 = ((alu1==31u)?(alu0|2139095040u):(alu0+939524096u));
   uint alu3 = ((alu1==0u)?0u:alu2);
-  *(data2_-1+gidx0) = (as_float((uint)(((((uint)((val0&((ushort)(32768u)))))<<16u)|alu3)))+val1);
+  *(data2_256+gidx0) = (as_float((uint)(((((uint)((val0&((ushort)(32768u)))))<<16u)|alu3)))+val1);
 }

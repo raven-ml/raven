@@ -13,7 +13,7 @@ from tinygrad.dtype import dtypes, AddrSpace  # noqa: E402
 
 def kernel():
     sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
-    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    a = UOp.param(0, dtypes.float32, shape=(1,))
     temp = UOp.placeholder((256,), dtypes.float32, 0, AddrSpace.LOCAL)
     idx = UOp.cconst(0, dtypes.int)
     zero = UOp.cconst(0.0, dtypes.float32)

@@ -7,7 +7,10 @@ Missing or unexpected files fail generation, even if a driver exits zero.
 
 Example:
     python packages/tolk/test/generate_reference.py --revision HEAD \
-        --output _reference/baseline
+        --output _reference/baseline --check-cpu-sources
+
+The optional CPU source check requires clang and compiles each rendered C
+translation unit without linking or executing it.
 """
 
 import argparse
@@ -40,7 +43,38 @@ def git(reference, *args):
     return subprocess.check_output(["git", "-C", str(reference), *args])
 
 
-def generate(reference, revision, output, suite):
+def check_cpu_sources(output, compiler, env):
+    """Compile CPU source fixtures, preserving separate tensor-kernel units."""
+    version = subprocess.check_output(
+        [compiler, "--version"], env=env, text=True, stderr=subprocess.STDOUT,
+    ).strip()
+    command = [compiler, "-x", "c", "-fsyntax-only", "-"]
+    sources = sorted(output.glob("parity/*/stage7_cpu.expected"))
+    sources += sorted(output.glob("golden/codegen/clang_*.expected"))
+    files = {}
+    for source in sources:
+        name = source.relative_to(output).as_posix()
+        # helpers.stage7_tensor joins independently compiled kernels with this
+        # delimiter. Do not combine their repeated names or typedefs into one TU.
+        units = source.read_text().split("\n---\n")
+        results = []
+        for index, unit in enumerate(units):
+            result = subprocess.run(
+                command, input=unit, env=env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            results.append({
+                "unit": index, "exit_code": result.returncode,
+                "diagnostics": result.stdout,
+            })
+        files[name] = results
+    return {"command": command, "compiler_version": version, "files": files}
+
+
+def generate(reference, revision, output, suite, check_cpu=False):
+    compiler = shutil.which("clang") if check_cpu else None
+    if check_cpu and compiler is None:
+        raise RuntimeError("--check-cpu-sources requires clang on PATH")
     revision = git(reference, "rev-parse", f"{revision}^{{commit}}").decode().strip()
     drivers = []
     if suite in ("all", "golden"):
@@ -128,6 +162,15 @@ def generate(reference, revision, output, suite):
                 failures.append(
                     f"{name}: exit={result.returncode}, missing={missing}, unexpected={extra}"
                 )
+    if check_cpu:
+        checks = check_cpu_sources(output, compiler, env)
+        manifest["cpu_source_checks"] = checks
+        for name, units in checks["files"].items():
+            for result in units:
+                if result["exit_code"]:
+                    failures.append(
+                        f"{name}: CPU source unit {result['unit']} failed clang syntax checking"
+                    )
     manifest["complete"] = not failures
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     if failures:
@@ -142,8 +185,11 @@ def main():
     parser.add_argument("--revision", default="HEAD")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--suite", choices=("all", "golden", "parity"), default="all")
+    parser.add_argument("--check-cpu-sources", action="store_true",
+                        help="require clang syntax checking of rendered CPU sources")
     args = parser.parse_args()
-    generate(args.reference.resolve(), args.revision, args.output.resolve(), args.suite)
+    generate(args.reference.resolve(), args.revision, args.output.resolve(), args.suite,
+             check_cpu=args.check_cpu_sources)
 
 
 if __name__ == "__main__":

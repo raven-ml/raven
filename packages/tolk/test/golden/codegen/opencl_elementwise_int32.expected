@@ -1,6 +1,6 @@
-__kernel void elementwise_int32(__global int* data0_-1, __global int* data1_-1, __global int* data2_-1) {
+__kernel void elementwise_int32(__global int* data0_256, __global int* data1_256, __global int* data2_256) {
   int gidx0 = get_group_id(0); /* 256 */
-  int val0 = (*(data0_-1+gidx0));
-  int val1 = (*(data1_-1+gidx0));
-  *(data2_-1+gidx0) = (val0+val1);
+  int val0 = (*(data0_256+gidx0));
+  int val1 = (*(data1_256+gidx0));
+  *(data2_256+gidx0) = (val0+val1);
 }

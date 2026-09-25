@@ -13,8 +13,8 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def kernel():
     sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
-    a = UOp.param(0, dtypes.float32, shape=(-1,))
-    b = UOp.param(1, dtypes.float32, shape=(-1,))
+    a = UOp.param(0, dtypes.float32, shape=(4,))
+    b = UOp.param(1, dtypes.float32, shape=(1,))
     idx0 = UOp.cconst(0, dtypes.int)
     idx1 = UOp.cconst(1, dtypes.int)
     idx2 = UOp.cconst(2, dtypes.int)
@@ -38,8 +38,8 @@ def kernel():
 
 def kernel_scalarized():
     sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
-    a = UOp.param(0, dtypes.float32, shape=(-1,))
-    b = UOp.param(1, dtypes.float32, shape=(-1,))
+    a = UOp.param(0, dtypes.float32, shape=(4,))
+    b = UOp.param(1, dtypes.float32, shape=(1,))
     idx0 = UOp.cconst(0, dtypes.int)
     idx1 = UOp.cconst(1, dtypes.int)
     idx2 = UOp.cconst(2, dtypes.int)

@@ -14,7 +14,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def kernel():
     sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
-    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    a = UOp.param(0, dtypes.float32, shape=(2,))
     idx0 = UOp.cconst(0, dtypes.int)
     idx1 = UOp.cconst(1, dtypes.int)
     inf_val = UOp.cconst(math.inf, dtypes.float32)

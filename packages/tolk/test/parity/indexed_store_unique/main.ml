@@ -15,10 +15,10 @@ let updates = 5
 
 let kernel () =
   let open U.O in
-  let param slot dtype = U.param ~slot ~dtype ~shape:(U.const_int (-1)) () in
-  let dst = param 0 Dtype.float32 in
-  let idx = param 1 Dtype.int32 in
-  let src = param 2 Dtype.float32 in
+  let param slot dtype size = U.param ~slot ~dtype ~shape:(U.const_int size) () in
+  let dst = param 0 Dtype.float32 Stdlib.(rows * cols) in
+  let idx = param 1 Dtype.int32 updates in
+  let src = param 2 Dtype.float32 Stdlib.(updates * cols) in
   let j = U.range ~size:(U.const_int cols) ~axis:0 ~kind:Axis_type.Weak () in
   let k =
     U.range ~size:(U.const_int updates) ~axis:1 ~kind:Axis_type.Weak ()

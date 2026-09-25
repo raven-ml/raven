@@ -111,9 +111,9 @@ def ki(name="test", **kwargs):
 
 def build_elementwise_add():
     """c[i] = a[i] + b[i], 1 Global range."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(256,))
+    p2 = UOp.param(2, dtypes.float32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
@@ -125,8 +125,8 @@ def build_elementwise_add():
 
 def build_sum_reduce():
     """b[0] = sum(a[i]), 1 Reduce range."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(1,))
     r0 = UOp.range(256, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
     red = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.ADD, 0))
@@ -137,8 +137,8 @@ def build_sum_reduce():
 
 def build_max_reduce():
     """b[0] = max(a[i]), 1 Reduce range."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(64,))
+    p1 = UOp.param(1, dtypes.float32, shape=(1,))
     r0 = UOp.range(64, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
     red = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.MAX, 0))
@@ -149,9 +149,9 @@ def build_max_reduce():
 
 def build_dot_product():
     """c[0] = sum_k(a[k] * b[k]), 1 Reduce range."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(128,))
+    p1 = UOp.param(1, dtypes.float32, shape=(128,))
+    p2 = UOp.param(2, dtypes.float32, shape=(1,))
     r0 = UOp.range(128, 0, AxisType.REDUCE)
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
@@ -165,9 +165,9 @@ def build_dot_product():
 def build_matmul_small():
     """C[i*4+j] = sum_k(A[i*4+k] * B[k*4+j]), M=N=K=4."""
     M, N, K = 4, 4, 4
-    pA = UOp.param(0, dtypes.float32, shape=(-1,))
-    pB = UOp.param(1, dtypes.float32, shape=(-1,))
-    pC = UOp.param(2, dtypes.float32, shape=(-1,))
+    pA = UOp.param(0, dtypes.float32, shape=(16,))
+    pB = UOp.param(1, dtypes.float32, shape=(16,))
+    pC = UOp.param(2, dtypes.float32, shape=(16,))
     ri = UOp.range(M, 0, AxisType.GLOBAL)
     rj = UOp.range(N, 1, AxisType.GLOBAL)
     rk = UOp.range(K, 2, AxisType.REDUCE)
@@ -191,9 +191,9 @@ def build_matmul_small():
 def build_elementwise_2d():
     """c[i*16+j] = a[i*16+j] + b[i*16+j], 2 Global ranges."""
     ROWS, COLS = 8, 16
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(128,))
+    p1 = UOp.param(1, dtypes.float32, shape=(128,))
+    p2 = UOp.param(2, dtypes.float32, shape=(128,))
     ri = UOp.range(ROWS, 0, AxisType.GLOBAL)
     rj = UOp.range(COLS, 1, AxisType.GLOBAL)
     flat = ri * COLS + rj
@@ -210,8 +210,8 @@ def build_elementwise_2d():
 def build_reduce_rows():
     """b[i] = sum_j(a[i*32+j]), 1 Global + 1 Reduce range."""
     ROWS, COLS = 8, 32
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(8,))
     ri = UOp.range(ROWS, 0, AxisType.GLOBAL)
     rj = UOp.range(COLS, 1, AxisType.REDUCE)
     flat = ri * COLS + rj
@@ -226,9 +226,9 @@ def build_reduce_rows():
 
 def build_multi_output():
     """b[i] = a[i] + 1.0; c[i] = a[i] * 2.0, 1 Global range, 2 stores."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(256,))
+    p2 = UOp.param(2, dtypes.float32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     st1 = p1.index(r0).store(ld_a + UOp.const(1.0, dtypes.float32))
@@ -239,9 +239,9 @@ def build_multi_output():
 
 def build_gated_store():
     """c[i] = a[i] + b[i] with store gated by i < 200, range size=256."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(256,))
+    p2 = UOp.param(2, dtypes.float32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
@@ -262,9 +262,9 @@ GPU_RENDERERS = ["cuda", "metal", "opencl", "amd"]
 
 def build_no_optimize():
     """Same as elementwise_add but with optimize=false and unique name."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(256,))
+    p2 = UOp.param(2, dtypes.float32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
@@ -276,8 +276,8 @@ def build_no_optimize():
 
 def build_elementwise_where():
     """c[i] = (a[i] > 0) ? a[i] : 0.0 (ReLU pattern), 1 Global range."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld = p0.index(r0).load()
     zero = UOp.const(0.0, dtypes.float32)
@@ -290,9 +290,9 @@ def build_elementwise_where():
 
 def build_elementwise_cast_f16():
     """c[i] = (float32)a_f16[i] + b[i], 1 Global range, mixed dtypes."""
-    p0 = UOp.param(0, dtypes.half, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.half, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(256,))
+    p2 = UOp.param(2, dtypes.float32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     cast_a = ld_a.cast(dtypes.float32)
@@ -305,8 +305,8 @@ def build_elementwise_cast_f16():
 
 def build_elementwise_sqrt():
     """c[i] = sqrt(a[i]), 1 Global range, exercises unary SQRT through pipeline."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld = p0.index(r0).load()
     sq = UOp(Ops.SQRT, src=(ld,))
@@ -317,9 +317,9 @@ def build_elementwise_sqrt():
 
 def build_parallel_reduce():
     """b[0] = sum(a[i]); c[0] = sum(a[i]*a[i]), 1 Reduce range, 2 stores."""
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(128,))
+    p1 = UOp.param(1, dtypes.float32, shape=(1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(1,))
     r0 = UOp.range(128, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
     red1 = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.ADD, 0))
@@ -332,9 +332,9 @@ def build_parallel_reduce():
 
 def build_elementwise_int32():
     """c[i] = a[i] + b[i] (all int32), 1 Global range."""
-    p0 = UOp.param(0, dtypes.int32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.int32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.int32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.int32, shape=(256,))
+    p1 = UOp.param(1, dtypes.int32, shape=(256,))
+    p2 = UOp.param(2, dtypes.int32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
@@ -347,10 +347,10 @@ def build_elementwise_int32():
 def build_lorenz_fold():
     """Short Euler Lorenz fold. Reuses a constant-scaled difference that the
     next step negates, exercising the negation/const-fold canonicalization."""
-    px = UOp.param(0, dtypes.float32, shape=(-1,))
-    py = UOp.param(1, dtypes.float32, shape=(-1,))
-    pz = UOp.param(2, dtypes.float32, shape=(-1,))
-    po = UOp.param(3, dtypes.float32, shape=(-1,))
+    px = UOp.param(0, dtypes.float32, shape=(16,))
+    py = UOp.param(1, dtypes.float32, shape=(16,))
+    pz = UOp.param(2, dtypes.float32, shape=(16,))
+    po = UOp.param(3, dtypes.float32, shape=(16,))
     r0 = UOp.range(16, 0, AxisType.GLOBAL)
     x = px.index(r0).load()
     y = py.index(r0).load()

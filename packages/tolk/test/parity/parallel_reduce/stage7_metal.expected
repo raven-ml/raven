@@ -1,15 +1,17 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void parallel_reduce(device float* data0_-1, device float* data1_-1, device float* data2_-1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_128; device float* data1_1; device float* data2_1; };
+kernel void parallel_reduce(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_128 = args.data0_128; device float* data1_1 = args.data1_1; device float* data2_1 = args.data2_1;
   float buf0[1];
   float buf1[1];
   *(buf0+0) = 0.0f;
   *(buf1+0) = 0.0f;
   for (int Ridx0 = 0; Ridx0 < 128; Ridx0++) {
-    float val0 = (*(data0_-1+Ridx0));
+    float val0 = (*(data0_128+Ridx0));
     *(buf0+0) = ((*(buf0+0))+val0);
     *(buf1+0) = ((*(buf1+0))+(val0*val0));
   }
-  *(data1_-1+0) = (*(buf0+0));
-  *(data2_-1+0) = (*(buf1+0));
+  *(data1_1+0) = (*(buf0+0));
+  *(data2_1+0) = (*(buf1+0));
 }

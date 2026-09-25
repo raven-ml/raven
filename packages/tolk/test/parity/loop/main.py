@@ -13,7 +13,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def kernel():
     sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
-    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    a = UOp.param(0, dtypes.float32, shape=(10,))
     ten = UOp.cconst(10, dtypes.int)
     ridx = UOp(Ops.RANGE, src=(ten,), arg=(0, AxisType.WEAK))
     idx_ld = a.index(ridx)

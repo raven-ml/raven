@@ -13,7 +13,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def kernel():
     sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
-    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    a = UOp.param(0, dtypes.float32, shape=(1,))
     idx = UOp.cconst(0, dtypes.int)
     cond = UOp.cconst(True, dtypes.bool)
     if_op = UOp(Ops.IF, src=(cond,))

@@ -74,14 +74,9 @@ acceptance requirement; skipped tests are not execution evidence.
 - Attribute every changed expectation in the separately generated reference
   corpus; require exact source parity for supported renderers, apart from
   explicitly justified divergences.
-- Replace negative unknown pointer extents in paired hand-built kernel fixtures
-  with their actual shapes. Names such as `data0_-1` currently make those
-  render-only cases unsuitable for source-compilation acceptance; preserve
-  paired graph intent and add compilation checks for the corrected fixtures.
 - Reconcile remaining intermediate IR/GROUP and source differences in FP8
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
-  `topk_rounds` and `multi_output`. Reconcile Metal `vectorize_index` after
-  the constant representation is migrated.
+  `topk_rounds` and `multi_output`.
 - Minimize strict-OOB rejections observed in 19 frontend cases and three
   Metal tensor-core cases (padded contraction and BF16 accumulation). Distinguish
   incomplete relational proofs from incorrect fixture extents; preserve strict

@@ -12,9 +12,9 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
-    p0 = UOp.param(0, dtypes.int32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.int32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.int32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.int32, shape=(256,))
+    p1 = UOp.param(1, dtypes.int32, shape=(256,))
+    p2 = UOp.param(2, dtypes.int32, shape=(256,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()

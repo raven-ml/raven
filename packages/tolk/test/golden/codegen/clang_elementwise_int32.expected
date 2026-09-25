@@ -1,7 +1,7 @@
-void elementwise_int32(int* restrict data0_-1, int* restrict data1_-1, int* restrict data2_-1) {
+void elementwise_int32(int* restrict data0_256, int* restrict data1_256, int* restrict data2_256) {
   for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {
-    int val0 = (*(data0_-1+Lidx0));
-    int val1 = (*(data1_-1+Lidx0));
-    *(data2_-1+Lidx0) = (val0+val1);
+    int val0 = (*(data0_256+Lidx0));
+    int val1 = (*(data1_256+Lidx0));
+    *(data2_256+Lidx0) = (val0+val1);
   }
 }

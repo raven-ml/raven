@@ -12,8 +12,8 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(256,))
+    p1 = UOp.param(1, dtypes.float32, shape=(1,))
     r0 = UOp.range(256, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
     red = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.ADD, 0))

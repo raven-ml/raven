@@ -51,9 +51,9 @@ let pipeline_to_source ?(optimize = true) ren sink =
 (* ── Kernel AST builders ── *)
 
 let make_elementwise_add () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
@@ -63,8 +63,8 @@ let make_elementwise_add () =
   U.sink ~kernel_info:(kernel_info "elementwise_add") [ e ]
 
 let make_sum_reduce () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 1) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] in
@@ -74,8 +74,8 @@ let make_sum_reduce () =
   U.sink ~kernel_info:(kernel_info "sum_reduce") [ st ]
 
 let make_max_reduce () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 64) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 1) () in
   let r0 = U.range ~size:(U.const_int 64) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
   let red =
@@ -87,9 +87,9 @@ let make_max_reduce () =
   U.sink ~kernel_info:(kernel_info "max_reduce") [ st ]
 
 let make_dot_product () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 128) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 128) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 1) () in
   let r0 = U.range ~size:(U.const_int 128) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
@@ -102,9 +102,9 @@ let make_dot_product () =
 
 let make_matmul_small () =
   let m, n, k = (4, 4, 4) in
-  let pA = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let pB = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let pC = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let pA = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 16) () in
+  let pB = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 16) () in
+  let pC = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 16) () in
   let ri = U.range ~size:(U.const_int m) ~axis:0 ~kind:Axis_type.Global () in
   let rj = U.range ~size:(U.const_int n) ~axis:1 ~kind:Axis_type.Global () in
   let rk = U.range ~size:(U.const_int k) ~axis:2 ~kind:Axis_type.Reduce () in
@@ -128,9 +128,9 @@ let make_matmul_small () =
 
 let make_elementwise_2d () =
   let rows, cols = (8, 16) in
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 128) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 128) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 128) () in
   let ri = U.range ~size:(U.const_int rows) ~axis:0 ~kind:Axis_type.Global () in
   let rj = U.range ~size:(U.const_int cols) ~axis:1 ~kind:Axis_type.Global () in
   let open U.O in
@@ -150,8 +150,8 @@ let make_elementwise_2d () =
 
 let make_reduce_rows () =
   let rows, cols = (8, 32) in
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 8) () in
   let ri = U.range ~size:(U.const_int rows) ~axis:0 ~kind:Axis_type.Global () in
   let rj = U.range ~size:(U.const_int cols) ~axis:1 ~kind:Axis_type.Reduce () in
   let open U.O in
@@ -169,9 +169,9 @@ let make_reduce_rows () =
     [ e ]
 
 let make_no_optimize () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
@@ -181,9 +181,9 @@ let make_no_optimize () =
   U.sink ~kernel_info:(kernel_info "no_optimize") [ e ]
 
 let make_multi_output () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let one = U.const (Const.float Dtype.float32 1.0) in
@@ -202,9 +202,9 @@ let make_multi_output () =
   U.sink ~kernel_info:(kernel_info "multi_output") [ end_ ]
 
 let make_gated_store () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
@@ -220,8 +220,8 @@ let make_gated_store () =
   U.sink ~kernel_info:(kernel_info "gated_store") [ e ]
 
 let make_elementwise_where () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let zero = U.const (Const.float Dtype.float32 0.0) in
@@ -234,9 +234,9 @@ let make_elementwise_where () =
 let make_elementwise_cast_f16 () =
   (* c[i] = (float32)a_f16[i] + b[i]. Param order: 0=f16, 1=f32, 2=out_f32.
      Build the Add as cast(ld_f16) + ld_f32 to match the reference load ordering. *)
-  let p0 = U.param ~slot:0 ~dtype:Dtype.float16 ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:Dtype.float16 ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let cast_a = U.cast ~src:ld_a ~dtype:Dtype.float32 in
@@ -247,8 +247,8 @@ let make_elementwise_cast_f16 () =
   U.sink ~kernel_info:(kernel_info "elementwise_cast_f16") [ e ]
 
 let make_elementwise_sqrt () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let sq = U.alu_unary ~op:Ops.Sqrt ~src:ld in
@@ -257,9 +257,9 @@ let make_elementwise_sqrt () =
   U.sink ~kernel_info:(kernel_info "elementwise_sqrt") [ e ]
 
 let make_parallel_reduce () =
-  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 128) () in
+  let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 1) () in
+  let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 1) () in
   let r0 = U.range ~size:(U.const_int 128) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let red1 = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] in
@@ -275,9 +275,9 @@ let make_parallel_reduce () =
   U.sink ~kernel_info:(kernel_info "parallel_reduce") [ st1; st2 ]
 
 let make_elementwise_int32 () =
-  let p0 = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int (-1)) () in
-  let p2 = U.param ~slot:2 ~dtype:Dtype.int32 ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 256) () in
+  let p2 = U.param ~slot:2 ~dtype:Dtype.int32 ~shape:(U.const_int 256) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
@@ -291,10 +291,10 @@ let make_elementwise_int32 () =
    fold the negation into the constant factor (keeping the un-scaled difference
    shared) rather than negating the scaled product. *)
 let make_lorenz_fold () =
-  let px = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let py = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let pz = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
-  let po = U.param ~slot:3 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let px = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 16) () in
+  let py = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 16) () in
+  let pz = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int 16) () in
+  let po = U.param ~slot:3 ~dtype:global_fptr ~shape:(U.const_int 16) () in
   let r0 = U.range ~size:(U.const_int 16) ~axis:0 ~kind:Axis_type.Global () in
   let load p = U.load ~src:(U.index ~ptr:p ~idxs:[ r0 ] ()) () in
   let f v = U.const (Const.float Dtype.float32 v) in

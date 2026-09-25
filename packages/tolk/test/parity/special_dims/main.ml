@@ -8,7 +8,7 @@ let kernel () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 63 }) in
   let c32 =
     B.emit b
       (Const { value = Const.int Dtype.int32 32; dtype = Dtype.int32 })

@@ -13,9 +13,9 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def kernel():
     ROWS, COLS = 8, 16
-    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
-    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
-    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
+    p0 = UOp.param(0, dtypes.float32, shape=(128,))
+    p1 = UOp.param(1, dtypes.float32, shape=(128,))
+    p2 = UOp.param(2, dtypes.float32, shape=(128,))
     ri = UOp.range(ROWS, 0, AxisType.GLOBAL)
     rj = UOp.range(COLS, 1, AxisType.GLOBAL)
     flat = ri * COLS + rj

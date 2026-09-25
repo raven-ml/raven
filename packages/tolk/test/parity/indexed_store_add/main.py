@@ -20,9 +20,9 @@ N, D, K = 16, 8, 5
 
 
 def kernel():
-    dst = UOp.param(0, dtypes.float32, shape=(-1,))
-    idx = UOp.param(1, dtypes.int32, shape=(-1,))
-    src = UOp.param(2, dtypes.float32, shape=(-1,))
+    dst = UOp.param(0, dtypes.float32, shape=(128,))
+    idx = UOp.param(1, dtypes.int32, shape=(5,))
+    src = UOp.param(2, dtypes.float32, shape=(40,))
     j = UOp.range(D, 0, AxisType.WEAK)
     k = UOp.range(K, 1, AxisType.REDUCE)
     row = idx.index(k).load()

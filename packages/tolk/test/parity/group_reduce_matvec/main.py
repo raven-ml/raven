@@ -23,9 +23,9 @@ BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k in ("cuda", "opencl")}
 
 def kernel():
     N, K = 256, 64
-    pW = UOp.param(0, dtypes.float32, shape=(-1,))
-    pX = UOp.param(1, dtypes.float32, shape=(-1,))
-    pY = UOp.param(2, dtypes.float32, shape=(-1,))
+    pW = UOp.param(0, dtypes.float32, shape=(16384,))
+    pX = UOp.param(1, dtypes.float32, shape=(64,))
+    pY = UOp.param(2, dtypes.float32, shape=(256,))
     rj = UOp.range(N, 0, AxisType.GLOBAL)
     rk = UOp.range(K, 1, AxisType.REDUCE)
     ld_w = pW.index(rj * K + rk).load()

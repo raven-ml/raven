@@ -4,8 +4,8 @@ open Tolk_uop
 module U = Uop
 
 let kernel () =
-  let p0 = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
-  let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
+  let p0 = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int 256) () in
+  let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int 1) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] in

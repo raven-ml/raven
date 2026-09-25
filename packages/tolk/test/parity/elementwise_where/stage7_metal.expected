@@ -1,8 +1,10 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void elementwise_where(device float* data0_-1, device float* data1_-1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_256; device float* data1_256; };
+kernel void elementwise_where(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_256 = args.data0_256; device float* data1_256 = args.data1_256;
   int gidx0 = gid.x; /* 256 */
-  float val0 = (*(data0_-1+gidx0));
+  float val0 = (*(data0_256+gidx0));
   float alu0 = ((0.0f<val0)?val0:0.0f);
-  *(data1_-1+gidx0) = alu0;
+  *(data1_256+gidx0) = alu0;
 }

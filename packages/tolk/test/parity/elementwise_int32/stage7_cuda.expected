@@ -2,9 +2,9 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(1) elementwise_int32(int* data0_-1, int* data1_-1, int* data2_-1) {
+extern "C" __global__ void __launch_bounds__(1) elementwise_int32(int* data0_256, int* data1_256, int* data2_256) {
   int gidx0 = blockIdx.x; /* 256 */
-  int val0 = (*(data0_-1+gidx0));
-  int val1 = (*(data1_-1+gidx0));
-  *(data2_-1+gidx0) = (val0+val1);
+  int val0 = (*(data0_256+gidx0));
+  int val1 = (*(data1_256+gidx0));
+  *(data2_256+gidx0) = (val0+val1);
 }

@@ -1,8 +1,8 @@
-__kernel void lorenz_fold(__global float* data0_-1, __global float* data1_-1, __global float* data2_-1, __global float* data3_-1) {
+__kernel void lorenz_fold(__global float* data0_16, __global float* data1_16, __global float* data2_16, __global float* data3_16) {
   int gidx0 = get_group_id(0); /* 16 */
-  float val0 = (*(data0_-1+gidx0));
-  float val1 = (*(data1_-1+gidx0));
-  float val2 = (*(data2_-1+gidx0));
+  float val0 = (*(data0_16+gidx0));
+  float val1 = (*(data1_16+gidx0));
+  float val2 = (*(data2_16+gidx0));
   float alu0 = (val1-val0);
   float alu1 = (val0+(alu0*0.625f));
   float alu2 = ((val0*(28.0f-val2))-val1);
@@ -18,5 +18,5 @@ __kernel void lorenz_fold(__global float* data0_-1, __global float* data1_-1, __
   float alu12 = ((alu1*(28.0f+alu7))+alu11);
   float alu13 = (alu3+(0.0625f*alu12));
   float alu14 = (alu5+(0.0625f*alu6));
-  *(data3_-1+gidx0) = (alu10+((alu13+alu8+(alu9*-0.625f))*0.625f)+alu13+(0.0625f*((alu10*(28.0f+alu7+(alu6*-0.0625f)))+alu11+(alu12*-0.0625f)))+alu14+(0.0625f*((alu10*alu13)+(alu14*-2.5f))));
+  *(data3_16+gidx0) = (alu10+((alu13+alu8+(alu9*-0.625f))*0.625f)+alu13+(0.0625f*((alu10*(28.0f+alu7+(alu6*-0.0625f)))+alu11+(alu12*-0.0625f)))+alu14+(0.0625f*((alu10*alu13)+(alu14*-2.5f))));
 }

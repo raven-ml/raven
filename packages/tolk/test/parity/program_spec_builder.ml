@@ -12,7 +12,7 @@ type op = [
 ]
 
 type instr =
-  | Param of { slot : int; dtype : Dtype.t }
+  | Param of { slot : int; dtype : Dtype.t; size : int }
   | Const of { value : Const.t; dtype : Dtype.t }
   | Index of {
       ptr : node;
@@ -115,8 +115,8 @@ let scalar_index = function
 let emit b instr =
   let node =
     match instr with
-    | Param { slot; dtype } ->
-        Uop.param ~slot ~dtype ~shape:(Uop.const_int (-1)) ()
+    | Param { slot; dtype; size } ->
+        Uop.param ~slot ~dtype ~shape:(Uop.const_int size) ()
     | Const { value; dtype } ->
         if Dtype.equal (Const.dtype value) dtype then Uop.cconst value dtype
         else

@@ -1,5 +1,7 @@
-void no_optimize(float* restrict data0_-1, float* restrict data1_-1, float* restrict data2_-1, const int data3_) {
-  float val0 = (*(data0_-1+data3_));
-  float val1 = (*(data1_-1+data3_));
-  *(data2_-1+data3_) = (val0+val1);
+void no_optimize(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256) {
+  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {
+    float val0 = (*(data0_256+Lidx0));
+    float val1 = (*(data1_256+Lidx0));
+    *(data2_256+Lidx0) = (val0+val1);
+  }
 }

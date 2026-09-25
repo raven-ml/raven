@@ -2,15 +2,15 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(1) indexed_store_add(float* data0_-1, int* data1_-1, float* data2_-1) {
+extern "C" __global__ void __launch_bounds__(1) indexed_store_add(float* data0_128, int* data1_5, float* data2_40) {
   int gidx0 = blockIdx.x; /* 8 */
   for (int Ridx1 = 0; Ridx1 < 5; Ridx1++) {
-    int val0 = (*(data1_-1+Ridx1));
+    int val0 = (*(data1_5+Ridx1));
     bool alu0 = ((-1<val0)&(val0<16));
-    float val1 = (alu0?*(data0_-1+(gidx0+(val0<<3))):0.0f);
-    float val2 = (*(data2_-1+(gidx0+(Ridx1<<3))));
+    float val1 = (alu0?*(data0_128+(gidx0+(val0<<3))):0.0f);
+    float val2 = (*(data2_40+(gidx0+(Ridx1<<3))));
     if (alu0) {
-      *(data0_-1+(gidx0+(val0<<3))) = (val1+val2);
+      *(data0_128+(gidx0+(val0<<3))) = (val1+val2);
     }
   }
 }

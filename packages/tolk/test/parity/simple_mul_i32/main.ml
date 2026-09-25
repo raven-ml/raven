@@ -8,9 +8,9 @@ let kernel () =
   let dt = Dtype.int32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
-  let p2 = B.emit b (Param { slot = 2; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
+  let p2 = B.emit b (Param { slot = 2; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int dt 0; dtype = dt }) in
   let idx0 =
     B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr })

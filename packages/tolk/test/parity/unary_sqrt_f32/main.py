@@ -13,8 +13,8 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def kernel():
     sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
-    a = UOp.param(0, dtypes.float32, shape=(-1,))
-    b = UOp.param(1, dtypes.float32, shape=(-1,))
+    a = UOp.param(0, dtypes.float32, shape=(1,))
+    b = UOp.param(1, dtypes.float32, shape=(1,))
     idx = UOp.cconst(0, dtypes.int)
     idx_a = a.index(idx)
     ld = UOp(Ops.LOAD, src=(idx_a,))
