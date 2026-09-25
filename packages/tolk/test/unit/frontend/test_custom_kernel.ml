@@ -247,7 +247,7 @@ let tests =
     ]
 
 let call_info precompile : U.call_info =
-  {grad_fxn = None; name = Some "outputs"; precompile;
+  {grad_fxn = None; name = Some (U.Label "outputs"); precompile;
    precompile_backward = false; dtype = D.void; aux = None}
 
 let explicit_call_outputs precompile () =

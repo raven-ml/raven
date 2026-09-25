@@ -492,12 +492,13 @@ delete it rather than registering it.
 - **A gather is an all-gather of pure copies** (`schedule/multi.ml`
   `allgather`). The reference lowers a copy of a split value to several
   devices as an allreduce of zero-padded shards, and to one device as a sum
-  of padded shards. Tolk lowers both to one precompiled call named
-  `allgather` over (dst, src): each target gets one buffer, and each shard is
-  written once into its window of it, by a transfer from another device or a
-  store on its own (see the window copies above). Each device receives
-  (n-1)/n of the value, where the reference's ring and naive allreduces move
-  2(n-1)/n and n-1 full buffers, and no padded shard or sum is materialized.
+  of padded shards. Tolk lowers both to one precompiled call implementing
+  `Allgather axes` over (dst, src): each target gets one buffer, and each
+  shard is written once into its window of it, by a transfer from another
+  device or a store on its own (see the window copies above). Each device
+  receives (n-1)/n of the value, where the reference's ring and naive
+  allreduces move 2(n-1)/n and n-1 full buffers, and no padded shard or sum
+  is materialized.
   Inner-axis windows are not contiguous and stage every foreign shard. A
   consumer does not fuse into a gather: a gather to one device followed by a
   reduction holds the gathered value, where the reference's sum of padded
@@ -519,20 +520,21 @@ delete it rather than registering it.
   naive, and a whole replica held. After `multi_pm`, once every consumer of an
   allreduce is known, tolk lowers one whose only consumer is a shrink keeping
   each device's own block along one axis by the device range (through the
-  casts ALLREDUCE_CAST adds) to one precompiled call named `reducescatter`
-  over (dst, src): device k receives block k of every other device's partial,
-  read in place as a window, and folds the partials in device order. That is
-  the naive allreduce's order, so the blocks equal its rows bit for bit, under
-  every strategy: the reduce-scatter is direct whatever RING, ALL2ALL and
-  ALLREDUCE_NODE_NDEVS say, sending (n-1)/n of the partial per device and
-  holding (n-1)/n of it in received blocks. A ring variant (2/n held) is not
-  built. An allreduce with any other consumer stays one allreduce, and its
-  reshard slices the replica. With LATE_ALLREDUCE=0 `multi_pm` expands every
-  allreduce before its consumers are seen, so no reduce-scatter is built and a
-  reshard moves the allreduce's bytes. Outputs are forwarded through a split
-  output's UNSHARD, so blocks assigned into a split buffer, as a gradient is,
-  are written there directly. Coverage: `test/unit/engine/test_collectives.ml`
-  "reduce-scatter" and "fully sharded step".
+  casts ALLREDUCE_CAST adds) to one precompiled call implementing
+  `Reducescatter (op, axis)` over (dst, src): device k receives block k of
+  every other device's partial, read in place as a window, and folds the
+  partials in device order. That is the naive allreduce's order, so the blocks
+  equal its rows bit for bit, under every strategy: the reduce-scatter is
+  direct whatever RING, ALL2ALL and ALLREDUCE_NODE_NDEVS say, sending (n-1)/n
+  of the partial per device and holding (n-1)/n of it in received blocks. A
+  ring variant (2/n held) is not built. An allreduce with any other consumer
+  stays one allreduce, and its reshard slices the replica. With
+  LATE_ALLREDUCE=0 `multi_pm` expands every allreduce before its consumers are
+  seen, so no reduce-scatter is built and a reshard moves the allreduce's
+  bytes. Outputs are forwarded through a split output's UNSHARD, so blocks
+  assigned into a split buffer, as a gradient is, are written there directly.
+  Coverage: `test/unit/engine/test_collectives.ml` "reduce-scatter" and "fully
+  sharded step".
 
 - **An allreduce lays its reduced chunks back together by selection**
   (`schedule/allreduce.ml` `assemble`). The reference reassembles the ring,

@@ -216,7 +216,12 @@ and kernel_info_debug_string (k : kernel_info) =
 and call_info_debug_string (c : call_info) =
   Printf.sprintf "CallInfo(%s, %s, %s, %s%s)"
     (if Option.is_some c.grad_fxn then "<function>" else "None")
-    (option_string python_quote c.name)
+    (option_string python_quote
+       (Option.map
+          (function
+            | Label name -> name
+            | Collective collective -> Uop.collective_name collective)
+          c.name))
     (python_bool c.precompile)
     (python_bool c.precompile_backward)
     (if Dtype.equal c.dtype Dtype.void then ""

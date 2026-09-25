@@ -96,9 +96,16 @@ and queue_info = {
   accesses : int list list;
 }
 
+and collective =
+  | Allreduce of Ops.t
+  | Allgather of int list
+  | Reducescatter of Ops.t * int
+
+and call_name = Label of string | Collective of collective
+
 and call_info = {
   grad_fxn : grad_fxn option;
-  name : string option;
+  name : call_name option;
   precompile : bool;
   precompile_backward : bool;
   aux : queue_info option;
@@ -452,6 +459,11 @@ let sanitize_function_name name =
   Buffer.contents buf
 
 let kernel_function_name (info : kernel_info) = sanitize_function_name info.name
+
+let collective_name = function
+  | Allreduce _ -> "allreduce"
+  | Allgather _ -> "allgather"
+  | Reducescatter _ -> "reducescatter"
 
 (* Accessors *)
 

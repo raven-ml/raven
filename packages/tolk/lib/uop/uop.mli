@@ -244,12 +244,32 @@ type queue_info = {
 }
 (** Metadata for compiled hardware-queue submission. *)
 
+(** The collective a precompiled call implements over its (dst, src)
+    arguments, with what a backend needs to replace its body. *)
+type collective =
+  | Allreduce of Ops.t
+      (** Every device's [dst] is the reduction with the op of every
+          device's [src]. *)
+  | Allgather of int list
+      (** Every target's [dst] is the whole value whose shards the source
+          devices' [src] hold, split along these axes in device order. *)
+  | Reducescatter of Ops.t * int
+      (** Device k's [dst] is block k, along the axis, of the reduction with
+          the op of every device's [src]. *)
+
+val collective_name : collective -> string
+(** [collective_name c] is [c]'s name: ["allreduce"], ["allgather"] or
+    ["reducescatter"]. *)
+
+(** What names a call: a free label, or the collective a precompiled call
+    implements. *)
+type call_name =
+  | Label of string  (** A callable name for debugging. *)
+  | Collective of collective  (** The collective the call implements. *)
+
 type call_info = {
   grad_fxn : grad_fxn option;  (** Custom gradient callback, if any. *)
-  name : string option;
-      (** Optional callable name. A precompiled call that implements a
-          collective carries the collective's name, ["allreduce"] or
-          ["allgather"], over its (dst, src) arguments. *)
+  name : call_name option;  (** What names the call, if anything. *)
   precompile : bool;
       (** [true] to precompile the forward callee. *)
   precompile_backward : bool;

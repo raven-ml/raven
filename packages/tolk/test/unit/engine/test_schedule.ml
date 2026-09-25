@@ -12,7 +12,7 @@ module U = Uop
 let call_info name : U.call_info =
   {
     grad_fxn = None;
-    name = Some name;
+    name = Some (U.Label name);
     precompile = false;
     precompile_backward = false;
     dtype = Dtype.void;

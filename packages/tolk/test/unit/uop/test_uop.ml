@@ -609,7 +609,7 @@ let call_constructor_parity () =
   let info =
     {
       Uop.grad_fxn = None;
-      name = Some "call";
+      name = Some (Uop.Label "call");
       precompile = false;
       precompile_backward = false;
       dtype = Dtype.void;
@@ -900,7 +900,7 @@ let property_helpers_parity () =
   let info =
     {
       Uop.grad_fxn = None;
-      name = Some "shape_fn";
+      name = Some (Uop.Label "shape_fn");
       precompile = false;
       precompile_backward = false;
       dtype = Dtype.void;
@@ -1398,7 +1398,7 @@ let cache_info_semantic_key_parity () =
   let call_info ?aux () : Uop.call_info =
     {
       grad_fxn = None;
-      name = Some "fn";
+      name = Some (Uop.Label "fn");
       precompile = false;
       precompile_backward = false;
       dtype = Dtype.void;
@@ -1717,7 +1717,7 @@ let debug_prints_rich_args_dataclass_style () =
   let info =
     {
       Uop.grad_fxn = None;
-      name = Some "fn";
+      name = Some (Uop.Label "fn");
       precompile = true;
       precompile_backward = false;
       dtype = Dtype.void;

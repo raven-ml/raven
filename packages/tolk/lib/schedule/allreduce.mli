@@ -40,14 +40,15 @@ val fold_reduce : Tolk_uop.Ops.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
     order. Raises [Failure] on an empty list. *)
 
 val collective :
-  name:string ->
+  Tolk_uop.Uop.collective ->
   device:Tolk_uop.Uop.device ->
   like:Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t ->
   (dst:Tolk_uop.Uop.t -> src:Tolk_uop.Uop.t -> Tolk_uop.Uop.t list) ->
   Tolk_uop.Uop.t
-(** [collective ~name ~device ~like src body] is the value, of [like]'s shape
-    and dtype on [device], that a precompiled [CALL] named [name] computes
+(** [collective kind ~device ~like src body] is the value, of [like]'s shape
+    and dtype on [device], that a precompiled [CALL] implementing [kind]
+    computes
     from [src]. The call's two arguments are storage: a fresh allocation for
     the result, and the storage [src] views, or [src] made contiguous when it
     is not a view of storage. [body ~dst ~src] gives the stores into [dst], a
@@ -60,7 +61,7 @@ val create_allreduce_function :
   op:Tolk_uop.Ops.t ->
   device:Tolk_uop.Uop.device ->
   Tolk_uop.Uop.t option
-(** [create_allreduce_function buf ~op ~device] is the {!collective} named
-    ["allreduce"] whose body is {!handle_allreduce} over [buf].
+(** [create_allreduce_function buf ~op ~device] is the {!collective}
+    [Allreduce op] whose body is {!handle_allreduce} over [buf].
 
     Returns [None] if [buf] is not on a multi-device. *)

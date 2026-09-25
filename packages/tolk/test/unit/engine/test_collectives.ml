@@ -610,7 +610,7 @@ let gather_tests =
             (list (pair string int))
             (List.map (fun d -> (d, 0)) devices)
             peaks);
-      test "a gather lowers to one call named allgather" (fun () ->
+      test "a gather lowers to one allgather call" (fun () ->
           let devices = devices 2 in
           let w = C.shard ~axis:0 ~devices (host ~shape:[ 4; 4 ] (spread 16)) in
           let lowered =
@@ -622,7 +622,12 @@ let gather_tests =
               match U.as_call call with
               | Some
                   {
-                    info = { name = Some "allgather"; precompile = true; _ };
+                    info =
+                      {
+                        name = Some (U.Collective (U.Allgather [ 0 ]));
+                        precompile = true;
+                        _;
+                      };
                     args = [ dst; _ ];
                     _;
                   } ->
@@ -724,7 +729,7 @@ let scattered_and_replica ~under ~ndev ~rows ~cols data =
 let reduce_scatter_tests =
   group "reduce-scatter"
     [
-      test "a reshard of an allreduce lowers to one call named reducescatter"
+      test "a reshard of an allreduce lowers to one reducescatter call"
         (fun () ->
           let devices = devices 2 in
           let partials =
@@ -744,7 +749,12 @@ let reduce_scatter_tests =
                   | Some
                       {
                         info =
-                          { name = Some "reducescatter"; precompile = true; _ };
+                          {
+                            name =
+                              Some (U.Collective (U.Reducescatter (Ops.Add, 0)));
+                            precompile = true;
+                            _;
+                          };
                         args = [ dst; _ ];
                         _;
                       } ->
@@ -839,7 +849,7 @@ let reduce_scatter_tests =
           let info : U.call_info =
             {
               grad_fxn = None;
-              name = Some "step";
+              name = Some (U.Label "step");
               precompile = false;
               precompile_backward = false;
               aux = None;

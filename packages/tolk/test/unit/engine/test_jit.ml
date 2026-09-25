@@ -120,12 +120,12 @@ let make_kernel_jit ?(body = U.sink ~kernel_info:(kernel_info "jit_k") [])
   let cp_in = U.param ~slot:1 ~dtype:Dtype.int32 () in
   let fxn input_uops var_vals =
     let body_call =
-      U.call ~body ~args:[ cp_out; cp_in ] ~info:(call_info (Some "jit_k"))
+      U.call ~body ~args:[ cp_out; cp_in ] ~info:(call_info (Some (U.Label "jit_k")))
     in
     let big =
       U.call ~body:(U.linear [ body_call ])
         ~args:(binds var_vals @ [ out_node; input_uops.(0) ])
-        ~info:(call_info (Some "jit"))
+        ~info:(call_info (Some (U.Label "jit")))
     in
     let linear, vv =
       Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big

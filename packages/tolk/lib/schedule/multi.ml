@@ -67,8 +67,8 @@ let shard_subview full multi =
    or several. Each target gets one buffer holding the whole value, and each
    shard is written once into its window of that buffer: a copy from another
    device, or a store on the device that holds it. The collective is a
-   precompiled call named "allgather" over (dst, src), so the scheduler and a
-   backend see one unit.
+   precompiled call implementing [Allgather] over (dst, src), so the scheduler
+   and a backend see one unit.
 
    The tinygrad counterpart concatenates padded shards with a sum kernel for
    one device, and for several it allreduces the padded shards, which moves
@@ -88,7 +88,8 @@ let allgather multi device =
         | None -> invalid_arg "multi: gather shard index is not concrete") (U.sharding multi) in
     emit (List.mapi (fun axis size -> match List.assoc_opt axis coords with
         | Some c -> mul (int_ c) size | None -> zero) local) in
-  Allreduce.collective ~name:"allgather" ~device ~like:multi (inner multi) (fun ~dst ~src ->
+  Allreduce.collective (U.Allgather (List.map fst (U.sharding multi))) ~device ~like:multi
+    (inner multi) (fun ~dst ~src ->
       List.concat (List.mapi (fun k target ->
           let replica = match device with U.Multi _ -> U.mselect ~src:dst ~index:k | _ -> dst in
           List.mapi (fun j source ->
@@ -105,8 +106,8 @@ let allgather multi device =
    and folds the partials in device order, the order the naive allreduce
    folds them in, so the result equals the naive allreduce's block bit for
    bit. The allreduce may sit between the casts [reduce_multi] adds under
-   ALLREDUCE_CAST. The collective is a precompiled call named
-   "reducescatter" over (dst, src).
+   ALLREDUCE_CAST. The collective is a precompiled call implementing
+   [Reducescatter] over (dst, src).
 
    No tinygrad counterpart: the reference allreduces the whole value and
    each device keeps its rows, which sends 2(n-1)/n of the value per device
@@ -146,7 +147,7 @@ let reducescatter ~only_consumer shrink =
            let like = U.shrink ~src:reduced ~offset:(U.src shrink).(1)
                ~size:(U.src shrink).(2) in
            let blocks =
-             Allreduce.collective ~name:"reducescatter" ~device ~like src
+             Allreduce.collective (U.Reducescatter (op, axis)) ~device ~like src
                (fun ~dst ~src ->
                  List.mapi (fun k target ->
                      let parts = List.mapi (fun j source ->
@@ -187,7 +188,10 @@ let lower_allreduces root =
         let {U.body; info; _} = Option.get (U.as_call node) in
         if not info.precompile && U.op body = Ops.Sink && Option.is_none (U.as_kernel_info body)
            && List.exists (fun u -> U.op u = Ops.Allreduce) (U.toposort body) then
-          let name = Option.value info.name ~default:"(unnamed)" in
+          let name = match info.name with
+            | Some (U.Label name) -> name
+            | Some (U.Collective c) -> U.collective_name c
+            | None -> "(unnamed)" in
           invalid_arg (Printf.sprintf "multi: ALLREDUCE in the body of call %s; \
               collectives in call bodies are not lowered" name)
         else None

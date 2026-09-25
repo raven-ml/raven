@@ -532,6 +532,11 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.call_info.name` is a `Uop.call_name`: `Label` for a callable's name,
+  or `Collective` for the collective a precompiled call implements
+  (`Allreduce op`, `Allgather axes`, `Reducescatter (op, axis)`), which no
+  longer passes as a string.
+
 - Resharding an allreduced tensor to split rows (`Creation.shard ~axis` of a
   sum over a split axis) is a reduce-scatter when nothing else uses the sum:
   each device sends (n-1)/n of its partial and keeps only its rows, bit-equal

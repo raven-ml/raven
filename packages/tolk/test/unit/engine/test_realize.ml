@@ -577,7 +577,7 @@ let () =
             let info : U.call_info =
               {
                 grad_fxn = None;
-                name = Some "rl_kernel";
+                name = Some (U.Label "rl_kernel");
                 precompile = false;
                 precompile_backward = false;
                 dtype = Dtype.void;
@@ -601,7 +601,7 @@ let () =
             let info : U.call_info =
               {
                 grad_fxn = None;
-                name = Some "rl_param";
+                name = Some (U.Label "rl_param");
                 precompile = false;
                 precompile_backward = false;
                 dtype = Dtype.void;

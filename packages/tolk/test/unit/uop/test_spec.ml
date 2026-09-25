@@ -57,7 +57,7 @@ let copy_current ~src ~device =
 let call_info name : Uop.call_info =
   {
     Uop.grad_fxn = None;
-    name = Some name;
+    name = Some (Uop.Label name);
     precompile = false;
     precompile_backward = false;
     dtype = Dtype.void;

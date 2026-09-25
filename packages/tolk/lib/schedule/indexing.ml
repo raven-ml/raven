@@ -279,7 +279,9 @@ let realize_call_args ctx c =
                "%s: the call stores into argument %d, which is a view; pass \
                 its storage and view it in the body"
                (match U.as_call c with
-                | Some { info = { name = Some name; _ }; _ } -> name
+                | Some { info = { name = Some (Collective collective); _ }; _ } ->
+                    U.collective_name collective
+                | Some { info = { name = Some (Label name); _ }; _ } -> name
                 | _ -> "call")
                slot);
         let s = strip_reshapes src.(slot + 1) in

@@ -81,7 +81,7 @@ let kernel_info name : U.kernel_info =
 let call_info name : U.call_info =
   {
     grad_fxn = None;
-    name = Some name;
+    name = Some (U.Label name);
     precompile = false;
     precompile_backward = false;
     dtype = Dtype.void;

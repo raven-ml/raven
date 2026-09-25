@@ -357,7 +357,7 @@ let lower_call queue devices calls original_calls independent_accesses timestamp
     accesses = List.map (fun c -> List.map (fun u -> position 0 u args)
         (fst (arguments c.call))) calls} in
   let call = U.call ~body:program ~args
-      ~info:{grad_fxn = None; name = Some "hcq_submit"; precompile = false;
+      ~info:{grad_fxn = None; name = Some (Label "hcq_submit"); precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = Some aux} in
   U.after ~src:call ~deps:!patches
 
