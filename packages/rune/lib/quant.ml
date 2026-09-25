@@ -157,23 +157,10 @@ type kernels = {
     (float, 'b) Nx.t;
 }
 
-(* [x]'s dtype in tolk, for the kernels' measured options. *)
-let tolk_dtype (type b) (x : (float, b) Nx.t) =
-  match Nx.dtype x with
-  | Nx.Float32 -> Some Tolk_uop.Dtype.float32
-  | Nx.BFloat16 -> Some Tolk_uop.Dtype.bfloat16
-  | Nx.Float16 -> Some Tolk_uop.Dtype.float16
-  | _ -> None
-
 let renderer kernels = Tolk.Device.renderer kernels.device
 
-(* The most rows one [n] by [k] matrix may meet in the kernel, for [x]'s
-   dtype. *)
-let row_bound kernels x ~n ~k =
-  match tolk_dtype x with
-  | Some dtype ->
-      Tolk_frontend.Op.quant_row_bound (renderer kernels) dtype ~n ~k
-  | None -> 0
+(* The most rows a matrix may meet in the kernel, rules 1 and 3 alike. *)
+let row_bound kernels = Tolk_frontend.Op.quant_row_bound (renderer kernels)
 
 (* [x] as the kernel's [[| ix; m; k |]] for a product whose batch is [batch]:
    its batch axes must be a prefix of [batch] followed by units, or it is
@@ -213,7 +200,7 @@ let by_kernel kernels ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
     let rows = if vector then [| n |] else [| m; n |] in
     Some (Nx.reshape (Array.append batch rows) y)
   in
-  let rows_fit r = r > 0 && n > 0 && r <= row_bound kernels x ~n ~k in
+  let rows_fit r = r > 0 && n > 0 && r <= row_bound kernels in
   let parts e =
     (Nx.reshape [| e; n; k / 2 |] codes, Nx.reshape [| e; n; k / 32 |] scales)
   in
@@ -505,7 +492,7 @@ let grouped kernels ~transpose ~p ~e ids codes scales x =
   let r = count ob in
   let n = Nx.dim (-2) codes in
   let per_expert = (r + d - 1) / d in
-  let bound = if transpose then 0 else row_bound kernels x ~n ~k:cols in
+  let bound = if transpose then 0 else row_bound kernels in
   let on_kernel = bound > 0 && per_expert <= bound in
   let b =
     if on_kernel then kernel_rows kernels ~per_expert

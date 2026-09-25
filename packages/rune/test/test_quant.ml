@@ -353,12 +353,12 @@ let test_grouped () =
        (floats [| 64; 1; 64 |]))
 
 (* Tolk's kernel, which a product takes while its matrix meets at most the
-   device's row bound of rows (64 on the CPU and 32 on Metal at bfloat16, 2 and
-   16 at float32): one group per row, which a GPU gates at its loads; rows that
-   no row tile divides, and two full tiles of 8; an [x] shared by the positions
-   of a token, and one broadcast along another axis; a stack against one shared
-   row; and no id selecting an expert. At float32 on the CPU (bound 2) only the
-   one-row cases reach the kernel; tolk's own tests cover its row tile there. *)
+   device's row bound of rows (64 on the CPU, 8 on Metal): one group per row,
+   where an id selecting no matrix reads matrix 0 and is zeroed; rows that no
+   row tile divides, and two full tiles of 8; an [x] shared by the positions of
+   a token, and one broadcast along another axis; a stack against one shared
+   row; and no id selecting an expert. On Metal the 16 rows take the block
+   kernel. *)
 let test_kernel () =
   let dtypes = [ float32; bfloat16; float16 ] in
   let scale _ =

@@ -742,45 +742,57 @@ let largest_divisor n ~at_most =
   go (max 1 (min n at_most))
 
 (* The options measured on a device for [m] rows of [n] outputs over [k]
-   inputs at [dtype], and the most rows a matrix may meet there. On the M1
-   Max, one row of gpt-oss's 5760 by 2880 expert reads its packed bytes at
-   180 GB/s and each further row costs about 20 us, bound by the reloads of x
-   from the cache; a thread holds all 32 inputs of a group for each of its
-   rows, so columns per thread times rows beyond 4 spill registers and run
-   ten times slower. Decoding and multiplying on tensor cores costs about
-   0.56 ms at one row and 0.74 ms at 32 at bfloat16, and less than the kernel
-   from 16 rows at float32. On its CPU the same expert takes 5.0 ms at one row
-   and 119 ms at 64 at bfloat16, against 6.6 and 135 ms decoded; at float32
-   the decoded product is faster from 4 rows. A device without measured
-   options runs the kernel unoptimised and serves no rows. *)
+   inputs. On the M1 Max, one row of gpt-oss's 5760 by 2880 expert reads its
+   packed bytes at 180 GB/s and each further row costs about 20 us, bound by
+   the reloads of x from the cache; a thread holds all 32 inputs of a group for
+   each of its rows, so columns per thread times rows beyond 4 spill registers
+   and run ten times slower. A device without measured options runs the kernel
+   unoptimised and serves no rows. *)
 let quant_row_tile ren =
   match Tolk.Renderer.device ren with "METAL" | "CPU" -> 8 | _ -> 1
 
-let quant_options ren ~dtype ~m ~n ~k =
+let quant_options ren ~m ~n ~k =
   let groups = k / 32 in
   match Tolk.Renderer.device ren with
   | "METAL" ->
       let local = largest_divisor n ~at_most:4 in
       let tile = largest_divisor m ~at_most:(quant_row_tile ren) in
-      ( {
-          group = largest_divisor groups ~at_most:15;
-          local;
-          upcast = largest_divisor (n / local) ~at_most:(max 1 (4 / tile));
-          tile;
-        },
-        if D.equal dtype D.float32 then 16 else 32 )
+      {
+        group = largest_divisor groups ~at_most:15;
+        local;
+        upcast = largest_divisor (n / local) ~at_most:(max 1 (4 / tile));
+        tile;
+      }
   | "CPU" ->
-      ( {
-          group = 1;
-          local = 1;
-          upcast = largest_divisor n ~at_most:4;
-          tile = largest_divisor m ~at_most:(quant_row_tile ren);
-        },
-        if D.equal dtype D.float32 then 2 else 64 )
-  | _ -> ({ group = 1; local = 1; upcast = 1; tile = 1 }, 0)
+      {
+        group = 1;
+        local = 1;
+        upcast = largest_divisor n ~at_most:4;
+        tile = largest_divisor m ~at_most:(quant_row_tile ren);
+      }
+  | _ -> { group = 1; local = 1; upcast = 1; tile = 1 }
 
-let quant_row_bound ren dtype ~n ~k =
-  snd (quant_options ren ~dtype ~m:1 ~n ~k)
+(* The row bound: one value per device, the most rows a matrix may meet in the
+   kernel before decoding it, or every expert of a grouped product once, and
+   multiplying with the block kernel costs less. It is measured on one
+   gpt-oss gate_up expert (5760 by 2880) against decoding it, and on
+   gpt-oss-20b's MoE block with routes grouped by expert against decoding
+   every expert, at float32 and bfloat16, rows by powers of two; where the two
+   products disagree it is the count whose largest loss over both, at both
+   dtypes, is smallest. On the M1 Max's GPU both products agree: the kernel
+   won up to 8 rows (per expert, grouped) and lost from 16, except one
+   bfloat16 matrix, 4% faster in the kernel at 16. On its CPU the grouped
+   kernel won through 64 rows per expert (bfloat16 1.9 times faster at 64,
+   float32 4%), while one matrix decoded faster from 32 rows at float32 (by
+   11% at 32, 33% at 64) and from 128 at bfloat16: 64, whose largest loss is
+   float32's 33% at 64 rows of one matrix, where 32 would cost grouped
+   bfloat16 1.9 times at 64 rows per expert. Both lie within the read model:
+   decoding costs [p + 2q] for [p] packed and [q] decoded bytes, and the kernel
+   reads [p] once per tile of 8 rows, so it never pays past the largest [r]
+   with [ceil (r / 8) p <= p + 2q]: 64 rows at 16-bit dtypes, where the CPU's
+   bound sits, and 128 at float32. *)
+let quant_row_bound ren =
+  match Tolk.Renderer.device ren with "METAL" -> 8 | "CPU" -> 64 | _ -> 0
 
 (* An option splitting the first axis. With several positions that axis is
    theirs, whose loop bound must stay one value per work group, so
@@ -859,7 +871,7 @@ let quant_matmul ?ids x ~codes ~scales =
     let merged = (not gated) && m = 1 in
     let positions = if merged then 1 else i
     and cols = if merged then i * n else n in
-    let o, _ = quant_options ren ~dtype ~m ~n:cols ~k in
+    let o = quant_options ren ~m ~n:cols ~k in
     (* The id bounds the outer loop on a GPU only while that loop has two
        iterations or more. In a loop of at most one, every use of the index
        folds to 0, and the reduce over it, left unparented, is rewritten to

@@ -163,6 +163,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled mxfp4 products weigh tolk's kernel against decoding by one row
+  bound per device, the same for one matrix and for routes grouped by expert:
+  8 rows on Metal and 64 on the CPU, at every dtype. It was 32 at bfloat16
+  and 16 at float32 on Metal, 64 and 2 on the CPU. On Metal grouped products
+  of 9 to 32 rows per expert now decode (1024 routes at bfloat16: 38 against
+  52-55 ms); on the CPU a float32 matrix keeps the kernel up to 64 rows (8
+  rows: 10-12 against 21 ms).
 - Compiled mxfp4 products that decode on one device multiply with tolk's
   block kernel, without ids and with fewer positions than experts as with
   more, each position's rows padded to the kernel's tile: exact products at
@@ -568,6 +575,9 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- **Breaking:** `Op.quant_row_bound` takes only the renderer: the bound is one
+  measured value per device, at every dtype and shape.
 
 - `Op.quant_matmul` with ids on the CPU reads matrix 0 for an id outside the
   matrices, and zeroes its result, instead of gating every load on the id,

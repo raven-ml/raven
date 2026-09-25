@@ -266,12 +266,11 @@ val quant_matmul :
       three, if [ids] is not an integer tensor, or if no operand is placed on
       a device. *)
 
-val quant_row_bound :
-  Tolk.Renderer.t -> Tolk_uop.Dtype.t -> n:int -> k:int -> int
-(** [quant_row_bound ren dtype ~n ~k] is the most rows of an [x] at [dtype]
-    that one [n] by [k] matrix of {!quant_matmul} should meet on a device
-    rendering with [ren]: beyond it, decoding the matrix and multiplying costs
-    less. It is [0] on a device whose options are not measured. *)
+val quant_row_bound : Tolk.Renderer.t -> int
+(** [quant_row_bound ren] is the most rows a matrix of {!quant_matmul} should
+    meet on a device rendering with [ren]: beyond it, decoding the matrix and
+    multiplying it with {!block_matmul} costs less. One value per device, at
+    every dtype; [0] on a device whose options are not measured. *)
 
 val quant_row_tile : Tolk.Renderer.t -> int
 (** [quant_row_tile ren] is the most rows of [x] {!quant_matmul} reads per load

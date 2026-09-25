@@ -270,19 +270,28 @@ loop.
 
 rune's jit chooses a form from static shapes, per lane (an index of `w'`'s
 leading `b` axes). Let `m` be `x`'s rows per matrix instance and `i` the
-instances; with `ids`, `i` counts the positions of `ids`, `R = i · m` the
-routes and `d` is `w`'s expert extent `e`; without, each matrix of `w` meets
-`r` rows, `m` times the instances that share it. Let `p` and `q` be one
-matrix's packed and decoded bytes. The kernel's options give its row tile
-`M`, the rows of `x` it multiplies per load of a group, and its row bound
-`ρ`: the largest `r` with `⌈r/M⌉ · p ≤ p + 2q`, lowered to where the
-kernel's arithmetic, which runs without tensor cores, starts to cost more
-than its reads. The options are a total function of the device and the
-shape, measured; a shape with no valid options, a symbolic dimension, and
-every device not yet measured have `ρ = 0`. `ρ` is set per device and `x`
-dtype, measured at gpt-oss's `gate_up` expert against decode-then-matmul: 32
-on Metal at bfloat16 and float16 and 16 at float32, where the two forms tie;
-64 on the CPU at bfloat16 and 2 at float32.
+instances; with `ids`, `i` counts the positions of `ids`, `R = i · m` the routes
+and `d` is `w`'s expert extent `e`; without, each matrix of `w` meets `r` rows,
+`m` times the instances that share it. Let `p` and `q` be one matrix's packed
+and decoded bytes. The kernel's options give its row tile `M`, the rows of `x`
+it multiplies per load of a group, and its row bound `ρ`: at most the read
+model's cap, the largest `r` with `⌈r/M⌉ · p ≤ p + 2q` (64 rows at 16-bit dtypes
+and 128 at float32 for gpt-oss's matrices), the power of two whose largest
+measured loss is smallest (below). The options are a total function of the
+device and the shape, measured; a shape with no valid options, a symbolic
+dimension, and every device not yet measured have `ρ = 0`. `ρ` is one value per
+device, rules 1 and 3 alike, measured against decode-then-matmul, which on one
+device multiplies with the block kernel: on one `gate_up` expert of gpt-oss, and
+on gpt-oss-20b's MoE block with its routes grouped by expert, at float32 and
+bfloat16, rows by powers of two. Where the two products disagree it is the count
+whose largest loss over both, at both dtypes, is smallest. On the M1 Max's GPU
+both cross between 8 and 16 rows (per expert, grouped), and `ρ = 8`; one
+bfloat16 matrix alone was 4% faster in the kernel at 16. On its CPU the grouped
+kernel won through 64 rows per expert (bfloat16 1.9 times faster at 64, float32
+4%), while one float32 matrix decoded faster from 32 rows (11% at 32, 33% at 64)
+and one bfloat16 matrix from 128: `ρ = 64`, where 32 would cost grouped bfloat16
+1.9 times at 64 rows per expert. Both values lie within the read model's cap;
+the CPU's sits on it at 16-bit dtypes.
 
 1. **Without `ids`,** a matrix that meets `r ≤ ρ` rows takes the kernel, which
    reads it `⌈r/M⌉` times. Otherwise it takes decode-then-matmul. A stack of
