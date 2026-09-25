@@ -87,6 +87,188 @@ let test_sort_stable () =
   (* For stable sort, original order should be preserved for equal elements *)
   check_t "sort stable indices" [| 6 |] [| 1l; 3l; 2l; 5l; 0l; 4l |] indices
 
+let test_sort_signed_zeros () =
+  let t = Nx.create Nx.float32 [| 5 |] [| -0.; 1.; 0.; -0.; 0. |] in
+  let signs t = Array.map Float.sign_bit (Nx.to_array (fst t)) in
+  equal ~msg:"ascending" (array bool)
+    [| true; false; true; false; false |]
+    (signs (Nx.sort t));
+  equal ~msg:"descending" (array bool)
+    [| false; true; false; true; false |]
+    (signs (Nx.sort ~descending:true t))
+
+(* Sort's values are the input's elements at its indices, bit for bit, so equal
+   elements that differ in bits, -0 and 0 or NaNs of either sign, keep their
+   input order. The long rows run zeros and NaNs through the partitioning, and
+   along axis 0 the slices are strided. *)
+let stability_cases =
+  let neg_nan = Int64.float_of_bits 0xFFF8000000000000L in
+  let short =
+    [| 1.; -0.; Float.nan; 0.; -2.; neg_nan; -0.; 0.; 3.; Float.nan |]
+  in
+  let long =
+    Array.init 1200 (fun i ->
+        match i mod 11 with
+        | 1 -> -0.
+        | 2 -> 0.
+        | 3 -> neg_nan
+        | 5 -> Float.nan
+        | _ -> float_of_int ((i mod 7) - 3))
+  in
+  [ ([| 10 |], 0, short); ([| 2; 600 |], 1, long); ([| 600; 2 |], 0, long) ]
+
+let check_stable ~name ~bits_of x =
+  List.iter
+    (fun (shape, axis, row) ->
+      let x = x shape row in
+      List.iter
+        (fun descending ->
+          let values, indices = Nx.sort ~descending ~axis x in
+          let msg =
+            Printf.sprintf "%s, [%s] along %d, %s" name
+              (String.concat "; "
+                 (Array.to_list (Array.map string_of_int shape)))
+              axis
+              (if descending then "descending" else "ascending")
+          in
+          equal ~msg (array int64)
+            (bits_of (Nx.take_along_axis ~axis ~indices x))
+            (bits_of values))
+        [ false; true ])
+    stability_cases
+
+let check_stable_float (type b c d) name (dtype : (float, b) Nx.dtype)
+    (bits : (c, d) Nx.dtype) =
+  check_stable ~name
+    ~bits_of:(fun t -> Nx.to_array (Nx.cast Nx.int64 (Nx.bitcast bits t)))
+    (fun shape row -> Nx.cast dtype (Nx.create Nx.float64 shape row))
+
+(* A complex element has a zero in each part that can differ in sign. *)
+let check_stable_complex (type b) name (dtype : (Complex.t, b) Nx.dtype) =
+  check_stable ~name
+    ~bits_of:(fun t ->
+      let a = Nx.to_array t in
+      Array.init
+        (2 * Array.length a)
+        (fun i ->
+          let c : Complex.t = a.(i / 2) in
+          Int64.bits_of_float (if i mod 2 = 0 then c.re else c.im)))
+    (fun shape row ->
+      Nx.create dtype shape
+        (Array.mapi
+           (fun i re -> { Complex.re; im = (if i mod 3 = 0 then -0. else 0.) })
+           row))
+
+let test_sort_stable_bits () =
+  check_stable_float "float16" Nx.float16 Nx.int16;
+  check_stable_float "bfloat16" Nx.bfloat16 Nx.int16;
+  check_stable_float "float32" Nx.float32 Nx.int32;
+  check_stable_float "float64" Nx.float64 Nx.int64;
+  check_stable_float "float8_e4m3" Nx.float8_e4m3 Nx.uint8;
+  check_stable_float "float8_e5m2" Nx.float8_e5m2 Nx.uint8;
+  check_stable_complex "complex64" Nx.complex64;
+  check_stable_complex "complex128" Nx.complex128
+
+(* Argsort against a stable sort of the elements with NaN last, for every dtype,
+   at lengths either side of the switch from insertion sort to radix sort, along
+   a contiguous and a strided axis. The elements repeat, so most of them tie. *)
+let check_against_stable_sort (type a b) name (dtype : (a, b) Nx.dtype)
+    ~(compare : a -> a -> int) ?(is_nan = fun _ -> false) gen =
+  let st = Random.State.make [| 13 |] in
+  List.iter
+    (fun n ->
+      let x =
+        Nx.create dtype [| 3; n |] (Array.init (3 * n) (fun _ -> gen st))
+      in
+      let data = Nx.to_array x in
+      List.iter
+        (fun descending ->
+          let order i j =
+            match (is_nan i, is_nan j) with
+            | true, true -> 0
+            | true, false -> 1
+            | false, true -> -1
+            | false, false -> if descending then compare j i else compare i j
+          in
+          let expected =
+            Array.concat
+              (List.init 3 (fun r ->
+                   let row = Array.init n Fun.id in
+                   Array.stable_sort
+                     (fun i j -> order data.((r * n) + i) data.((r * n) + j))
+                     row;
+                   Array.map Int32.of_int row))
+          in
+          let msg =
+            Printf.sprintf "%s, %d, %s" name n
+              (if descending then "descending" else "ascending")
+          in
+          equal ~msg (array int32) expected
+            (Nx.to_array (Nx.argsort ~descending x));
+          equal ~msg:(msg ^ ", strided") (array int32) expected
+            (Nx.to_array
+               (Nx.transpose (Nx.argsort ~descending ~axis:0 (Nx.transpose x)))))
+        [ false; true ])
+    [ 1; 2; 17; 63; 64; 65; 300; 5000 ]
+
+let pick st pool = pool.(Random.State.int st (Array.length pool))
+
+let floats ?(infinities = true) st =
+  if Random.State.int st 3 = 0 then
+    pick st
+      (Array.append
+         [| Float.nan; -.Float.nan; -0.; 0.; 1.; -1. |]
+         (if infinities then [| Float.infinity; Float.neg_infinity |] else [||]))
+  else Float.round (Random.State.float st 64. -. 32.) /. 4.
+
+let test_sort_matches_stable_sort () =
+  let ints lo hi st =
+    if Random.State.int st 4 = 0 then pick st [| lo; hi; 0; 1 |]
+    else lo + Random.State.int st (hi - lo + 1)
+  in
+  check_against_stable_sort "int8" Nx.int8 ~compare:Int.compare
+    (ints (-128) 127);
+  check_against_stable_sort "uint8" Nx.uint8 ~compare:Int.compare (ints 0 255);
+  check_against_stable_sort "int16" Nx.int16 ~compare:Int.compare
+    (ints (-32768) 32767);
+  check_against_stable_sort "uint16" Nx.uint16 ~compare:Int.compare
+    (ints 0 65535);
+  let int32s st =
+    if Random.State.int st 4 = 0 then
+      pick st [| Int32.min_int; Int32.max_int; 0l; -1l |]
+    else Int32.of_int (Random.State.int st 1000 - 500)
+  in
+  check_against_stable_sort "int32" Nx.int32 ~compare:Int32.compare int32s;
+  check_against_stable_sort "uint32" Nx.uint32 ~compare:Int32.unsigned_compare
+    int32s;
+  let int64s st =
+    if Random.State.int st 4 = 0 then
+      pick st [| Int64.min_int; Int64.max_int; 0L; -1L; 1L |]
+    else Random.State.int64 st Int64.max_int
+  in
+  check_against_stable_sort "int64" Nx.int64 ~compare:Int64.compare int64s;
+  check_against_stable_sort "uint64" Nx.uint64 ~compare:Int64.unsigned_compare
+    int64s;
+  check_against_stable_sort "bool" Nx.bool ~compare:Bool.compare
+    Random.State.bool;
+  let float_case name dtype infinities =
+    check_against_stable_sort name dtype ~compare:Float.compare
+      ~is_nan:Float.is_nan (floats ~infinities)
+  in
+  float_case "float16" Nx.float16 true;
+  float_case "bfloat16" Nx.bfloat16 true;
+  float_case "float32" Nx.float32 true;
+  float_case "float64" Nx.float64 true;
+  float_case "float8_e4m3" Nx.float8_e4m3 false;
+  float_case "float8_e5m2" Nx.float8_e5m2 true;
+  let complex st = { Complex.re = floats st; im = floats st } in
+  let compare (a : Complex.t) (b : Complex.t) =
+    match Float.compare a.re b.re with 0 -> Float.compare a.im b.im | c -> c
+  in
+  let is_nan (c : Complex.t) = Float.is_nan c.re || Float.is_nan c.im in
+  check_against_stable_sort "complex64" Nx.complex64 ~compare ~is_nan complex;
+  check_against_stable_sort "complex128" Nx.complex128 ~compare ~is_nan complex
+
 (* ───── Argsort Tests ───── *)
 
 let test_argsort_1d () =
@@ -436,6 +618,9 @@ let sort_tests =
     test "sort invalid axis" test_sort_invalid_axis;
     test "sort NaN handling" test_sort_nan_handling;
     test "sort stable" test_sort_stable;
+    test "sort keeps the order of -0 and 0" test_sort_signed_zeros;
+    test "sort values are the elements at its indices" test_sort_stable_bits;
+    test "sort matches a stable sort, every dtype" test_sort_matches_stable_sort;
   ]
 
 let sort_regression_tests =

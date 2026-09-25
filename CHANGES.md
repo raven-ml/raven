@@ -1914,6 +1914,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx.sort` and `Nx.argsort` share one stable radix sort: sort's values
+  are its input's elements at its indices, bit for bit, where a descending sort
+  reversed runs of `-0.` and `0.`. `Nx.sort` of 2^20 float32 takes 15 ms, not 145.
 - Add `Nx_dtype.Scalar.encode` and `decode`, the bits of a float in float16,
   bfloat16 and the float8 formats, fnuz variants included, rounded once to
   nearest even. nx's stores round the same way, except a `float` stored into

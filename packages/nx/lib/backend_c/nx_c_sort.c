@@ -12,367 +12,245 @@
    raisers (nx_c_raise / nx_c_raise_status) raise, so this file includes neither
    caml/fail.h nor caml/threads.h.
 
-   The comparator is a per-dtype
-   `static inline` inlined into a specialized introsort at compile time — one sort
-   kernel per compute dtype, generated over NX_C_FOR_EACH_COMPUTE_DTYPE. NaN is not
-   a comparator branch: NaN-class elements are pre-partitioned to the slice tail,
-   the finite prefix is sorted with a NaN-free comparator, and NaN stays last in
-   both directions by construction.
+   One kernel serves both ops. Each element becomes an unsigned integer key that
+   orders like it, paired with its position, and the pairs are sorted by a
+   stable LSD radix sort (a stable insertion sort on short slices). Argsort
+   writes the positions; sort copies the input's elements at those positions,
+   bit for bit. Stability comes from the algorithm, so equal elements keep their
+   input order in either direction, -0 and +0 and NaNs included, and sort's
+   values are exactly the input's elements at argsort's indices.
 
-   Each slice is gathered into a contiguous per-thread scratch, sorted, and
-   scattered to the (C-contiguous) output — never sorted through strides, so the
-   comparator never chases a stride.
+   Each slice is read once through its stride into contiguous per-thread
+   scratch, sorted there, and written to the (C-contiguous) output.
 
    Threading: independent slices are split across the engine pool via
    nx_c_parallel_for (NX_C_COST_HEAVY), with a private scratch slot per worker; the
    engine owns the runtime-lock handshake, so this file touches neither
    caml/threads.h nor caml/fail.h. A single huge slice stays serial (HEAVY gives
-   one thread for one run); parallel single-slice sort is a possible future
-   benchmark-gated change. */
+   one thread for one run). */
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
 #include "nx_c_engine.h"
 
-/* argsort indices are int32 (backend_intf), so a sorted axis longer than INT32
+/* Positions are int32 (backend_intf), so a sorted axis longer than INT32_MAX
    cannot be indexed; reject up front rather than truncate. Maps to Failure. */
-#define NX_C_ERR_SORT_CAP "argsort axis length exceeds INT32_MAX"
+#define NX_C_ERR_SORT_CAP "sort axis length exceeds INT32_MAX"
 
-/* ── Per-dtype total order (finite domain) ─────────────────────────────────
+/* ── Keys ──────────────────────────────────────────────────────────────────
 
-   The comparators the sort inlines, one set per dtype category. NaN never
-   reaches them (pre-partitioned away), so the float/complex orders need no
-   NaN branch. Complex is lexicographic (real, then imaginary), matching the
-   NaN-last-both-directions contract once NaN-class elements are removed.
-   __real__/__imag__ are type-generic over both complex compute widths. */
+   A key is one or more unsigned words of the element's storage width, the last
+   word most significant, whose unsigned order is the element order:
+   - an unsigned integer or bool is its own key;
+   - a signed integer flips its sign bit;
+   - a float's bits map through nx_c_fkey: -0 takes +0's key, a negative value
+     complements its bits and a positive one sets its sign bit;
+   - a complex value is two words, its real part's float key above its
+     imaginary part's, which orders lexicographically.
+   A descending sort complements the key. Every NaN, and every complex value
+   with a NaN part, takes the greatest key in either direction, so NaNs tie at
+   the end; no number takes that key (its complement would be all ones, a NaN's
+   bits). The NaN test reads the element through the dtype's load, so every
+   float format, fp8 included, is recognised by its own rules. */
 
-#define NX_C_LT_NX_C_CAT_SINT(a, b) ((a) < (b))
-#define NX_C_LT_NX_C_CAT_UINT(a, b) ((a) < (b))
-#define NX_C_LT_NX_C_CAT_BOOL(a, b) ((a) < (b))
-#define NX_C_LT_NX_C_CAT_FLOAT(a, b) ((a) < (b))
-#define NX_C_LT_NX_C_CAT_COMPLEX(a, b)                                           \
-  (__real__(a) < __real__(b) ||                                                \
-   (__real__(a) == __real__(b) && __imag__(a) < __imag__(b)))
-
-#define NX_C_EQ_NX_C_CAT_SINT(a, b) ((a) == (b))
-#define NX_C_EQ_NX_C_CAT_UINT(a, b) ((a) == (b))
-#define NX_C_EQ_NX_C_CAT_BOOL(a, b) ((a) == (b))
-#define NX_C_EQ_NX_C_CAT_FLOAT(a, b) ((a) == (b))
-#define NX_C_EQ_NX_C_CAT_COMPLEX(a, b)                                           \
-  (__real__(a) == __real__(b) && __imag__(a) == __imag__(b))
-
-#define NX_C_NAN_NX_C_CAT_SINT(x) (0)
-#define NX_C_NAN_NX_C_CAT_UINT(x) (0)
-#define NX_C_NAN_NX_C_CAT_BOOL(x) (0)
-#define NX_C_NAN_NX_C_CAT_FLOAT(x) (isnan(x))
-#define NX_C_NAN_NX_C_CAT_COMPLEX(x) (isnan(__real__(x)) || isnan(__imag__(x)))
-
-/* NaN-class test plus the two "sorts before" predicates, per dtype.
-
-   The value predicate is direction-FREE (ascending "x before y"): descending is
-   a reverse of the sorted finite prefix (value sort's equal elements are
-   indistinguishable), which keeps the hottest comparison — the 1M-element value
-   sort — a single branch-free compare rather than a per-comparison direction
-   branch. The argsort predicate cannot reverse (that would flip tie order), so
-   it carries `desc` and breaks value ties by original index (first index first);
-   the result is a TOTAL order, so the sort is stable by construction and the
-   tie-break is direction-independent (ties keep the first index either way). */
-#define NX_C_GEN_PRED(sfx, kind, storage, compute, ld, st, cat)                 \
-  static inline int nx_c_isnan_##sfx(compute x) {                               \
-    (void)x;                                                                   \
-    return NX_C_NAN_##cat(x);                                                   \
-  }                                                                            \
-  static inline int nx_c_vlt_##sfx(compute x, compute y, const void *kctx,      \
-                                  int desc) {                                  \
-    (void)kctx;                                                                \
-    (void)desc;                                                                \
-    return NX_C_LT_##cat(x, y);                                                 \
-  }                                                                            \
-  static inline int nx_c_abefore_##sfx(int32_t i, int32_t j, const void *kctx,  \
-                                      int desc) {                              \
-    const compute *keys = (const compute *)kctx;                              \
-    compute x = keys[i], y = keys[j];                                          \
-    if (NX_C_EQ_##cat(x, y)) return i < j;                                      \
-    return desc ? NX_C_LT_##cat(y, x) : NX_C_LT_##cat(x, y);                     \
+#define NX_C_DEFINE_FKEY(W)                                                     \
+  static inline uint##W##_t nx_c_fkey##W(uint##W##_t b) {                       \
+    const uint##W##_t sign = (uint##W##_t)((uint##W##_t)1 << (W - 1));        \
+    if ((uint##W##_t)(b << 1) == 0) return sign;                               \
+    return b & sign ? (uint##W##_t)~b : (uint##W##_t)(b | sign);                \
   }
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_GEN_PRED)
-#undef NX_C_GEN_PRED
+NX_C_DEFINE_FKEY(8)
+NX_C_DEFINE_FKEY(16)
+NX_C_DEFINE_FKEY(32)
+NX_C_DEFINE_FKEY(64)
+#undef NX_C_DEFINE_FKEY
 
-/* ── Introsort skeleton ────────────────────────────────────────────────────
-
-   One generator stamps an introsort per (dtype, mode): median-of-3 quicksort with
-   a BRANCHLESS Lomuto partition, insertion sort under a small threshold, and a
-   heapsort fallback when the recursion depth exceeds 2·floor(log2 n) — so the
-   worst case (including adversarial and all-equal inputs) is O(n log n), never
-   quadratic. The branchless partition is the performance point: on random input a
-   branchy Hoare scan mispredicts ~50% and runs ~3x slower than a tuned std::sort;
-   the unconditional-swap Lomuto loop removes that branch and matches it. Skeleton
-   otherwise follows libstdc++'s introsort_loop + final insertion sort.
-
-   CMP(x, y, kctx, desc) is a per-dtype inlined predicate ("element x sorts before
-   element y") returning 0/1 — the value drives the branchless boundary. ELT is the
-   array element: the value itself for a value sort, or an int32 index (with
-   kctx = the key array) for an argsort — so the same skeleton serves both without
-   a function-pointer comparator. `kctx`/`desc` thread through the recursion; the
-   compiler inlines CMP, leaving a tight NaN-free inner loop. */
-
-#define NX_C_SORT_THRESHOLD 16
-
-#define NX_C_DEFINE_INTROSORT(NAME, ELT, CMP)                                   \
-  static void NAME##_sift(ELT *a, int64_t first, int64_t n, int64_t root,      \
-                          const void *kctx, int desc) {                        \
-    for (;;) {                                                                 \
-      int64_t child = 2 * root + 1;                                            \
-      if (child >= n) break;                                                   \
-      if (child + 1 < n &&                                                     \
-          CMP(a[first + child], a[first + child + 1], kctx, desc))             \
-        child++;                                                               \
-      if (!CMP(a[first + root], a[first + child], kctx, desc)) break;          \
-      ELT t = a[first + root];                                                 \
-      a[first + root] = a[first + child];                                      \
-      a[first + child] = t;                                                    \
-      root = child;                                                            \
+/* NX_C_KEY_<cat>(sfx, W, p, flip, key) writes the key of the element at p into
+   key[]; flip is all ones for a descending sort and 0 otherwise. */
+#define NX_C_KEY_NX_C_CAT_BOOL(sfx, W, p, flip, key)                            \
+  NX_C_KEY_NX_C_CAT_UINT(sfx, W, p, flip, key)
+#define NX_C_KEY_NX_C_CAT_UINT(sfx, W, p, flip, key)                            \
+  do {                                                                         \
+    uint##W##_t b;                                                             \
+    memcpy(&b, p, sizeof b);                                                   \
+    key[0] = b ^ flip;                                                         \
+  } while (0)
+#define NX_C_KEY_NX_C_CAT_SINT(sfx, W, p, flip, key)                            \
+  do {                                                                         \
+    uint##W##_t b;                                                             \
+    memcpy(&b, p, sizeof b);                                                   \
+    key[0] = b ^ (uint##W##_t)((uint##W##_t)1 << (W - 1)) ^ flip;              \
+  } while (0)
+#define NX_C_KEY_NX_C_CAT_FLOAT(sfx, W, p, flip, key)                           \
+  do {                                                                         \
+    uint##W##_t b;                                                             \
+    memcpy(&b, p, sizeof b);                                                   \
+    key[0] = isnan(nx_c_ld_##sfx(p)) ? (uint##W##_t)~(uint##W##_t)0             \
+                                    : (uint##W##_t)(nx_c_fkey##W(b) ^ flip);   \
+  } while (0)
+#define NX_C_KEY_NX_C_CAT_COMPLEX(sfx, W, p, flip, key)                         \
+  do {                                                                         \
+    uint##W##_t re, im;                                                        \
+    memcpy(&re, p, sizeof re);                                                 \
+    memcpy(&im, (const char *)(p) + sizeof re, sizeof im);                     \
+    if (isnan(__real__ nx_c_ld_##sfx(p)) || isnan(__imag__ nx_c_ld_##sfx(p))) \
+      key[1] = key[0] = (uint##W##_t)~(uint##W##_t)0;                          \
+    else {                                                                     \
+      key[1] = (uint##W##_t)(nx_c_fkey##W(re) ^ flip);                         \
+      key[0] = (uint##W##_t)(nx_c_fkey##W(im) ^ flip);                         \
     }                                                                          \
+  } while (0)
+
+/* ── Slice kernel ──────────────────────────────────────────────────────────
+
+   NX_C_SORT_KERNEL(sfx, W, NW, cat) stamps one dtype's kernel: its (key,
+   position) pair of NW words of W bits, the order of a slice's pairs, and the
+   slice kernel. The radix sort takes one 8-bit digit per pass, least significant
+   first, from histograms of every digit built in one read of the pairs, and
+   skips a pass whose digit is the same for every pair (the high bytes of small
+   integers, the shared exponent bits of floats of one scale). Each pass
+   scatters the pairs in order into the other half of the scratch slot, so it is
+   stable, and a stable pass over each digit sorts by the whole key.
+
+   Each pass costs a scan of its 256 counts whatever the slice's length, so a
+   short slice takes a stable insertion sort instead: below 16 pairs per digit,
+   where the two cost about the same (measured single-threaded on random u8,
+   i32, f32 and f64 rows). */
+
+#define NX_C_SORT_RADIX_MIN_PER_DIGIT 16
+
+#define NX_C_SORT_DIGIT(pair, d, W)                                             \
+  ((uint8_t)((pair).key[(d) / ((W) / 8)] >> (8 * ((d) % ((W) / 8)))))
+
+#define NX_C_SORT_KERNEL(sfx, W, NW, cat)                                       \
+  typedef struct {                                                             \
+    uint##W##_t key[NW];                                                       \
+    int32_t pos;                                                               \
+  } nx_c_pair_##sfx;                                                            \
+  static inline int nx_c_before_##sfx(const nx_c_pair_##sfx *x,                 \
+                                     const nx_c_pair_##sfx *y) {                \
+    for (int w = (NW) - 1; w > 0; w--)                                         \
+      if (x->key[w] != y->key[w]) return x->key[w] < y->key[w];                \
+    return x->key[0] < y->key[0];                                              \
   }                                                                            \
-  static void NAME##_heap(ELT *a, int64_t first, int64_t last,                 \
-                          const void *kctx, int desc) {                        \
-    int64_t n = last - first;                                                  \
-    for (int64_t i = n / 2 - 1; i >= 0; i--)                                   \
-      NAME##_sift(a, first, n, i, kctx, desc);                                 \
-    for (int64_t i = n - 1; i > 0; i--) {                                      \
-      ELT t = a[first];                                                        \
-      a[first] = a[first + i];                                                 \
-      a[first + i] = t;                                                        \
-      NAME##_sift(a, first, i, 0, kctx, desc);                                 \
-    }                                                                          \
-  }                                                                            \
-  static void NAME##_median(ELT *a, int64_t r, int64_t b, int64_t c,           \
-                            int64_t d, const void *kctx, int desc) {           \
-    if (CMP(a[b], a[c], kctx, desc)) {                                         \
-      if (CMP(a[c], a[d], kctx, desc)) {                                       \
-        ELT t = a[r];                                                          \
-        a[r] = a[c];                                                           \
-        a[c] = t;                                                              \
-      } else if (CMP(a[b], a[d], kctx, desc)) {                                \
-        ELT t = a[r];                                                          \
-        a[r] = a[d];                                                           \
-        a[d] = t;                                                              \
-      } else {                                                                 \
-        ELT t = a[r];                                                          \
-        a[r] = a[b];                                                           \
-        a[b] = t;                                                              \
-      }                                                                        \
-    } else if (CMP(a[b], a[d], kctx, desc)) {                                  \
-      ELT t = a[r];                                                            \
-      a[r] = a[b];                                                             \
-      a[b] = t;                                                                \
-    } else if (CMP(a[c], a[d], kctx, desc)) {                                  \
-      ELT t = a[r];                                                            \
-      a[r] = a[d];                                                             \
-      a[d] = t;                                                                \
-    } else {                                                                   \
-      ELT t = a[r];                                                            \
-      a[r] = a[c];                                                             \
-      a[c] = t;                                                                \
-    }                                                                          \
-  }                                                                            \
-  static void NAME##_loop(ELT *a, int64_t first, int64_t last, int depth,      \
-                          const void *kctx, int desc) {                        \
-    while (last - first > NX_C_SORT_THRESHOLD) {                                \
-      if (depth == 0) {                                                        \
-        NAME##_heap(a, first, last, kctx, desc);                              \
-        return;                                                                \
-      }                                                                        \
-      depth--;                                                                 \
-      int64_t mid = first + ((last - first) >> 1);                             \
-      NAME##_median(a, first, first + 1, mid, last - 1, kctx, desc);           \
-      /* Branchless Lomuto partition of (first, last) around the median at              \
-         a[first]: each element is swapped unconditionally and the boundary k           \
-         advances by the 0/1 comparison result, so the hot loop carries no              \
-         data-dependent branch — this is the change that closes the gap to a            \
-         tuned std::sort on random input (a branchy Hoare scan mispredicts ~50%).       \
-         Elements EQUAL to the pivot fall right; a long run of equal keys is            \
-         bounded to O(n log n) by the depth-limit heapsort, not partitioned away. */    \
-      ELT pivot = a[first];                                                    \
-      int64_t k = first + 1;                                                   \
-      for (int64_t i = first + 1; i < last; i++) {                             \
-        ELT v = a[i];                                                          \
-        int sm = CMP(v, pivot, kctx, desc);                                    \
-        a[i] = a[k];                                                           \
-        a[k] = v;                                                              \
-        k += sm;                                                               \
-      }                                                                        \
-      int64_t p = k - 1;                                                       \
-      ELT t = a[first];                                                        \
-      a[first] = a[p];                                                         \
-      a[p] = t;                                                                \
-      NAME##_loop(a, p + 1, last, depth, kctx, desc);                          \
-      last = p;                                                                \
-    }                                                                          \
-  }                                                                            \
-  static void NAME##_gins(ELT *a, int64_t lo, int64_t hi, const void *kctx,    \
-                          int desc) {                                          \
-    for (int64_t i = lo + 1; i < hi; i++) {                                    \
-      ELT v = a[i];                                                            \
+  static void nx_c_insert_##sfx(nx_c_pair_##sfx *a, int64_t n) {               \
+    for (int64_t i = 1; i < n; i++) {                                          \
+      nx_c_pair_##sfx v = a[i];                                                 \
       int64_t j = i;                                                           \
-      while (j > lo && CMP(v, a[j - 1], kctx, desc)) {                         \
-        a[j] = a[j - 1];                                                       \
-        j--;                                                                   \
-      }                                                                        \
+      for (; j > 0 && nx_c_before_##sfx(&v, &a[j - 1]); j--) a[j] = a[j - 1];   \
       a[j] = v;                                                                \
     }                                                                          \
   }                                                                            \
-  static void NAME(ELT *a, int64_t n, const void *kctx, int desc) {            \
-    if (n < 2) return;                                                         \
-    int lg = 0;                                                                \
-    while ((n >> (lg + 1)) > 0) lg++;                                          \
-    NAME##_loop(a, 0, n, 2 * lg, kctx, desc);                                  \
-    /* introsort_loop leaves the array THRESHOLD-sorted: every element is                \
-       within THRESHOLD of its place and the global minimum is in the first                \
-       block. Sort that block guarded, then the rest unguarded — the min at                \
-       a[0] stops every leftward scan, so the inner loop drops its bound test. */          \
-    if (n > NX_C_SORT_THRESHOLD) {                                              \
-      NAME##_gins(a, 0, NX_C_SORT_THRESHOLD, kctx, desc);                       \
-      for (int64_t i = NX_C_SORT_THRESHOLD; i < n; i++) {                       \
-        ELT v = a[i];                                                          \
-        int64_t j = i;                                                         \
-        while (CMP(v, a[j - 1], kctx, desc)) {                                 \
-          a[j] = a[j - 1];                                                     \
-          j--;                                                                 \
-        }                                                                      \
-        a[j] = v;                                                              \
-      }                                                                        \
-    } else {                                                                   \
-      NAME##_gins(a, 0, n, kctx, desc);                                        \
+  /* Sorts the n pairs at a, using b as much again; returns whichever of the   \
+     two holds the result. */                                                  \
+  static const nx_c_pair_##sfx *nx_c_order_##sfx(nx_c_pair_##sfx *a,             \
+                                                nx_c_pair_##sfx *b, int64_t n) { \
+    enum { digits = (NW) * (W) / 8 };                                          \
+    if (n < NX_C_SORT_RADIX_MIN_PER_DIGIT * digits) {                          \
+      nx_c_insert_##sfx(a, n);                                                  \
+      return a;                                                                \
     }                                                                          \
-  }
-
-/* Byte offset of the argsort index array within a scratch slot: the compute-typed
-   key gather rounded up so the trailing int32 indices are naturally aligned. Used
-   by both the kernel (to place idx) and the driver (to size the slot). */
-static inline int64_t nx_c_argsort_keys_bytes(int64_t n, int64_t csize) {
-  return (n * csize + 7) & ~(int64_t)7;
-}
-
-/* ── Per-dtype slice kernels ───────────────────────────────────────────────
-
-   Both gather the strided input slice into contiguous scratch (converting to the
-   compute type — so f16/bf16/fp8 sort in float, and u32/u64 in unsigned 64-bit
-   with correct high-bit order), pre-partition NaN-class elements to the tail,
-   sort the finite prefix, and scatter to the C-contiguous output.
-
-   Value sort scatters the sorted values. Order among values that compare equal is
-   unobservable, so an unstable sort — and the descending reversal — is sound; the
-   one equal-yet-bit-distinct case is IEEE ±0.0, whose relative order is left
-   unspecified (numpy's sort does the same). NaN-class elements are pre-partitioned
-   to the tail; their payload bits survive for native float/complex but are
-   re-quieted for the converted dtypes (f16/bf16/fp8) by the storage round-trip —
-   The backend contract requires NaN-last, not payload preservation. Argsort instead scatters a
-   permutation of indices and MUST be stable; its comparator's index tie-break
-   gives that (and determinism) without a stable-merge algorithm. */
-
-#define NX_C_GEN_VSORT(sfx, kind, storage, compute, ld, st, cat)                \
-  NX_C_DEFINE_INTROSORT(nx_c_vintro_##sfx, compute, nx_c_vlt_##sfx)               \
+    uint32_t count[digits][256];                                               \
+    memset(count, 0, sizeof count);                                            \
+    for (int64_t i = 0; i < n; i++)                                            \
+      for (int d = 0; d < digits; d++)                                         \
+        count[d][NX_C_SORT_DIGIT(a[i], d, W)]++;                                \
+    for (int d = 0; d < digits; d++) {                                         \
+      uint32_t *at = count[d];                                                 \
+      if (at[NX_C_SORT_DIGIT(a[0], d, W)] == (uint32_t)n) continue;             \
+      uint32_t sum = 0;                                                        \
+      for (int v = 0; v < 256; v++) {                                          \
+        uint32_t c = at[v];                                                    \
+        at[v] = sum;                                                           \
+        sum += c;                                                              \
+      }                                                                        \
+      for (int64_t i = 0; i < n; i++) {                                        \
+        nx_c_pair_##sfx p = a[i];                                               \
+        b[at[NX_C_SORT_DIGIT(p, d, W)]++] = p;                                  \
+      }                                                                        \
+      nx_c_pair_##sfx *t = a;                                                   \
+      a = b;                                                                   \
+      b = t;                                                                   \
+    }                                                                          \
+    return a;                                                                  \
+  }                                                                            \
   static void nx_c_sort_slice_##sfx(char *o, int64_t os, const char *in,        \
-                                   int64_t is, int64_t n, int desc,            \
+                                   int64_t is, int64_t n, int desc, int arg,   \
                                    void *scr) {                                \
-    compute *a = (compute *)scr;                                               \
-    for (int64_t k = 0; k < n; k++) a[k] = nx_c_ld_##sfx(in + k * is);          \
-    int64_t nf = 0;                                                            \
-    for (int64_t k = 0; k < n; k++)                                            \
-      if (!nx_c_isnan_##sfx(a[k])) {                                            \
-        if (k != nf) {                                                         \
-          compute t = a[k];                                                    \
-          a[k] = a[nf];                                                        \
-          a[nf] = t;                                                           \
-        }                                                                      \
-        nf++;                                                                  \
-      }                                                                        \
-    nx_c_vintro_##sfx(a, nf, NULL, 0);                                          \
-    if (desc)                                                                  \
-      for (int64_t i = 0, j = nf - 1; i < j; i++, j--) {                       \
-        compute t = a[i];                                                      \
-        a[i] = a[j];                                                           \
-        a[j] = t;                                                              \
-      }                                                                        \
-    for (int64_t k = 0; k < n; k++) nx_c_st_##sfx(o + k * os, a[k]);            \
+    nx_c_pair_##sfx *a = (nx_c_pair_##sfx *)scr;                                 \
+    const uint##W##_t flip = desc ? (uint##W##_t)~(uint##W##_t)0 : 0;          \
+    for (int64_t k = 0; k < n; k++) {                                          \
+      NX_C_KEY_##cat(sfx, W, in + k * is, flip, a[k].key);                      \
+      a[k].pos = (int32_t)k;                                                   \
+    }                                                                          \
+    const nx_c_pair_##sfx *s = nx_c_order_##sfx(a, a + n, n);                   \
+    if (arg)                                                                   \
+      for (int64_t k = 0; k < n; k++) *(int32_t *)(o + k * os) = s[k].pos;     \
+    else                                                                       \
+      for (int64_t k = 0; k < n; k++)                                          \
+        memcpy(o + k * os, in + (int64_t)s[k].pos * is, (NW) * (W) / 8);       \
   }
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_GEN_VSORT)
-#undef NX_C_GEN_VSORT
 
-#define NX_C_GEN_ASORT(sfx, kind, storage, compute, ld, st, cat)                \
-  NX_C_DEFINE_INTROSORT(nx_c_aintro_##sfx, int32_t, nx_c_abefore_##sfx)           \
-  static void nx_c_argsort_slice_##sfx(char *o, int64_t os, const char *in,     \
-                                      int64_t is, int64_t n, int desc,         \
-                                      void *scr) {                             \
-    compute *keys = (compute *)scr;                                            \
-    for (int64_t k = 0; k < n; k++) keys[k] = nx_c_ld_##sfx(in + k * is);       \
-    int32_t *idx = (int32_t *)((char *)scr +                                   \
-                               nx_c_argsort_keys_bytes(n, (int64_t)sizeof(compute))); \
-    int64_t f = 0;                                                             \
-    for (int64_t k = 0; k < n; k++)                                            \
-      if (!nx_c_isnan_##sfx(keys[k])) idx[f++] = (int32_t)k;                    \
-    int64_t tail = f;                                                          \
-    for (int64_t k = 0; k < n; k++)                                            \
-      if (nx_c_isnan_##sfx(keys[k])) idx[tail++] = (int32_t)k;                  \
-    nx_c_aintro_##sfx(idx, f, keys, desc);                                      \
-    for (int64_t k = 0; k < n; k++) *(int32_t *)(o + k * os) = idx[k];         \
-  }
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_GEN_ASORT)
-#undef NX_C_GEN_ASORT
+NX_C_SORT_KERNEL(f16, 16, 1, NX_C_CAT_FLOAT)
+NX_C_SORT_KERNEL(f32, 32, 1, NX_C_CAT_FLOAT)
+NX_C_SORT_KERNEL(f64, 64, 1, NX_C_CAT_FLOAT)
+NX_C_SORT_KERNEL(bf16, 16, 1, NX_C_CAT_FLOAT)
+NX_C_SORT_KERNEL(f8e4m3, 8, 1, NX_C_CAT_FLOAT)
+NX_C_SORT_KERNEL(f8e5m2, 8, 1, NX_C_CAT_FLOAT)
+NX_C_SORT_KERNEL(i8, 8, 1, NX_C_CAT_SINT)
+NX_C_SORT_KERNEL(u8, 8, 1, NX_C_CAT_UINT)
+NX_C_SORT_KERNEL(i16, 16, 1, NX_C_CAT_SINT)
+NX_C_SORT_KERNEL(u16, 16, 1, NX_C_CAT_UINT)
+NX_C_SORT_KERNEL(i32, 32, 1, NX_C_CAT_SINT)
+NX_C_SORT_KERNEL(u32, 32, 1, NX_C_CAT_UINT)
+NX_C_SORT_KERNEL(i64, 64, 1, NX_C_CAT_SINT)
+NX_C_SORT_KERNEL(u64, 64, 1, NX_C_CAT_UINT)
+NX_C_SORT_KERNEL(c32, 32, 2, NX_C_CAT_COMPLEX)
+NX_C_SORT_KERNEL(c64, 64, 2, NX_C_CAT_COMPLEX)
+NX_C_SORT_KERNEL(bool_, 8, 1, NX_C_CAT_BOOL)
+#undef NX_C_SORT_KERNEL
 
 /* ── Dispatch tables ───────────────────────────────────────────────────────
 
-   Indexed by nx_c_dtype; packed (int4/uint4) and any op-unsupported slot is NULL
-   (the compute iterator skips packed rows). The driver is the single reader that
-   turns NULL into a status before doing any work — kernels never index here. */
+   Indexed by nx_c_dtype; packed (int4/uint4) slots are NULL (the compute
+   iterator skips packed rows), and a compute dtype without a kernel above fails
+   to compile. The driver is the single reader that turns NULL into a status
+   before doing any work — kernels never index here. The pair size sizes the
+   scratch. */
 
 typedef void nx_c_sort_slice_fn(char *o, int64_t os, const char *in, int64_t is,
-                               int64_t n, int desc, void *scr);
-typedef struct {
-  nx_c_sort_slice_fn *fn[NX_C_DTYPE_COUNT];
-} nx_c_sort_table;
+                               int64_t n, int desc, int arg, void *scr);
 
-static const nx_c_sort_table nx_c_sort_vtable = {
-    .fn = {
+static nx_c_sort_slice_fn *const nx_c_sort_fn[NX_C_DTYPE_COUNT] = {
 #define NX_C_ROW(sfx, kind, storage, compute, ld, st, cat)                      \
   [NX_C_DTYPE_##sfx] = nx_c_sort_slice_##sfx,
-        NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ROW)
+    NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ROW)
 #undef NX_C_ROW
-    }};
+};
 
-static const nx_c_sort_table nx_c_argsort_vtable = {
-    .fn = {
+static const int64_t nx_c_sort_pair_size[NX_C_DTYPE_COUNT] = {
 #define NX_C_ROW(sfx, kind, storage, compute, ld, st, cat)                      \
-  [NX_C_DTYPE_##sfx] = nx_c_argsort_slice_##sfx,
-        NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ROW)
-#undef NX_C_ROW
-    }};
-
-/* Compute-type byte size per dtype (differs from storage: f16 stores 2, computes
-   in 4). The driver sizes scratch from this; packed rows stay 0 (never reached —
-   the NULL dispatch slot is rejected first). */
-static const int64_t nx_c_sort_csize[NX_C_DTYPE_COUNT] = {
-#define NX_C_ROW(sfx, kind, storage, compute, ld, st, cat)                      \
-  [NX_C_DTYPE_##sfx] = (int64_t)sizeof(compute),
+  [NX_C_DTYPE_##sfx] = (int64_t)sizeof(nx_c_pair_##sfx),
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ROW)
 #undef NX_C_ROW
 };
 
 /* ── Driver ────────────────────────────────────────────────────────────────
    Sort each 1-D slice along `axis`; the non-axis dims index independent slices,
-   parallelized across the engine pool (NX_C_COST_HEAVY). Scratch is one contiguous
-   gather buffer PER THREAD, allocated once per call and indexed by `worker` — no
+   parallelized across the engine pool (NX_C_COST_HEAVY). Scratch is one slot of
+   2n pairs PER THREAD, allocated once per call and indexed by `worker` — no
    per-slice malloc, no sharing between threads. A single huge slice stays serial
    (HEAVY returns one thread for one run). Returns a status; the stub raises. */
 
 typedef struct {
   nx_c_sort_slice_fn *fn;
   int desc;
+  int arg;                 /* write positions (argsort) or elements (sort) */
   int64_t n;               /* axis length */
   int64_t axis_in_stride;  /* byte */
   int64_t axis_out_stride; /* byte */
@@ -401,26 +279,28 @@ static void nx_c_sort_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       ip += c * e->k_in_stride[d];
       op += c * e->k_out_stride[d];
     }
-    e->fn(op, e->axis_out_stride, ip, e->axis_in_stride, e->n, e->desc, scr);
+    e->fn(op, e->axis_out_stride, ip, e->axis_in_stride, e->n, e->desc, e->arg,
+          scr);
   }
 }
 
-static nx_c_status nx_c_sort_drive(const nx_c_sort_table *tbl, nx_c_dtype dt,
-                                 const nx_c_ndarray *in, int64_t in_elem,
-                                 const nx_c_ndarray *out, int64_t out_elem,
-                                 int axis, int desc, int is_arg) {
-  nx_c_sort_slice_fn *fn = tbl->fn[dt];
+static nx_c_status nx_c_sort_drive(nx_c_dtype dt, const nx_c_ndarray *in,
+                                 int64_t in_elem, const nx_c_ndarray *out,
+                                 int64_t out_elem, int axis, int desc,
+                                 int is_arg) {
+  nx_c_sort_slice_fn *fn = nx_c_sort_fn[dt];
   if (fn == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
   if (axis < 0 || axis >= in->ndim) return NX_C_ERR_AXIS;
   if (out->ndim != in->ndim) return NX_C_ERR_OUT_RANK;
 
   int64_t n = in->shape[axis];
-  if (is_arg && n > INT32_MAX) return NX_C_ERR_SORT_CAP;
+  if (n > INT32_MAX) return NX_C_ERR_SORT_CAP;
 
   nx_c_sort_exec e;
   e.fn = fn;
   e.desc = desc;
+  e.arg = is_arg;
   e.n = n;
   e.in_base = (char *)in->data + in->offset * in_elem;
   e.out_base = (char *)out->data + out->offset * out_elem;
@@ -448,13 +328,9 @@ static nx_c_status nx_c_sort_drive(const nx_c_sort_table *tbl, nx_c_dtype dt,
   for (int a = 0; a < in->ndim; a++)
     if (in->shape[a] > 1 && out->strides[a] == 0) return NX_C_ERR_OUT_ALIASED;
 
-  int64_t csize = nx_c_sort_csize[dt];
-  int64_t slot_bytes =
-      is_arg ? nx_c_argsort_keys_bytes(n, csize) + n * (int64_t)sizeof(int32_t)
-             : n * csize;
-  /* Round each slot to 16 bytes so every thread's slice base stays aligned for
-     any compute type (complex64 wants 16) when the slots are laid end to end. */
-  slot_bytes = (slot_bytes + 15) & ~(int64_t)15;
+  /* Round each slot to 16 bytes so every thread's pairs stay aligned when the
+     slots are laid end to end. */
+  int64_t slot_bytes = (2 * n * nx_c_sort_pair_size[dt] + 15) & ~(int64_t)15;
   e.slot_bytes = slot_bytes;
 
   /* Policy first: it sizes the scratch. HEAVY parallelizes once there is more
@@ -480,8 +356,8 @@ static nx_c_status nx_c_sort_drive(const nx_c_sort_table *tbl, nx_c_dtype dt,
    neither caml/fail.h nor caml/threads.h — it reaches the funnel raisers
    (nx_c.h) which the engine implements. */
 
-static void nx_c_sort_stub(const char *op, const nx_c_sort_table *tbl, value vout,
-                          value vin, int axis, int desc, int is_arg) {
+static void nx_c_sort_stub(const char *op, value vout, value vin, int axis,
+                          int desc, int is_arg) {
   nx_c_ndarray in, out;
   nx_c_status s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise(op, s);
@@ -494,21 +370,19 @@ static void nx_c_sort_stub(const char *op, const nx_c_sort_table *tbl, value vou
   if (in_elem == 0) nx_c_raise(op, NX_C_ERR_PACKED);
   int64_t out_elem = is_arg ? (int64_t)sizeof(int32_t) : in_elem;
 
-  s = nx_c_sort_drive(tbl, dt, &in, in_elem, &out, out_elem, axis, desc, is_arg);
+  s = nx_c_sort_drive(dt, &in, in_elem, &out, out_elem, axis, desc, is_arg);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
 }
 
 CAMLprim value caml_nx_c_sort(value vout, value vin, value vaxis, value vdesc) {
   CAMLparam4(vout, vin, vaxis, vdesc);
-  nx_c_sort_stub("sort", &nx_c_sort_vtable, vout, vin, Int_val(vaxis),
-                Bool_val(vdesc), 0);
+  nx_c_sort_stub("sort", vout, vin, Int_val(vaxis), Bool_val(vdesc), 0);
   CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_nx_c_argsort(value vout, value vin, value vaxis,
                                 value vdesc) {
   CAMLparam4(vout, vin, vaxis, vdesc);
-  nx_c_sort_stub("argsort", &nx_c_argsort_vtable, vout, vin, Int_val(vaxis),
-                Bool_val(vdesc), 1);
+  nx_c_sort_stub("argsort", vout, vin, Int_val(vaxis), Bool_val(vdesc), 1);
   CAMLreturn(Val_unit);
 }
