@@ -160,6 +160,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Reading a value on Metal or `CPU:k` that nothing else holds (the operand
+  of an eager operation, say) no longer reads freed memory: the collector
+  could release its buffer during the copy, which crashed when the buffer came
+  from a mapped file.
 - A compiled `Nx.matmul` of `bfloat16`, `float16` or float8 values multiplies
   and sums at `float32` and rounds once, as eager does. Rounding each product
   moved greedy gpt-oss-20b off its `float32` ids at the fifth token.

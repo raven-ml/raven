@@ -3364,26 +3364,34 @@ let gather_view : type a b.
       | 8 -> as_words ND.Int64 1
       | n -> as_words ND.Int64 (n / 8))
 
-(* The elements of [buf]'s storage from [lo] to [hi] on the host: borrowed from
-   the buffer's memory when the host addresses it, copied otherwise. *)
-let storage_range : type a b.
+(* [with_storage_range dt buf ~lo ~hi f] is [f src how], [src] the elements of
+   [buf]'s storage from [lo] to [hi] on the host: [`Borrowed] from the buffer's
+   memory when the host addresses it, [`Copied] otherwise. A buffer's finaliser
+   frees its memory, so [buf] stays reachable until [f] returns, and a borrowed
+   [src] must not outlive [f]. *)
+let with_storage_range : type a b c.
     (a, b) ND.t ->
     Tolk.Device.Buffer.t ->
     lo:int ->
     hi:int ->
-    (a, b) Nx_buffer.t * [ `Borrowed | `Copied ] =
- fun dt buf ~lo ~hi ->
+    ((a, b) Nx_buffer.t -> [ `Borrowed | `Copied ] -> c) ->
+    c =
+ fun dt buf ~lo ~hi f ->
   let item = ND.itemsize dt in
   match Tolk.Device.Buffer.as_buffer buf with
   | Some mem ->
       let bytes = Bigarray.Array1.sub mem (lo * item) ((hi - lo) * item) in
-      (Nx_buffer.reinterpret dt (Nx_buffer.of_bigarray1 bytes), `Borrowed)
+      let r =
+        f (Nx_buffer.reinterpret dt (Nx_buffer.of_bigarray1 bytes)) `Borrowed
+      in
+      ignore (Sys.opaque_identity buf);
+      r
   | None ->
       let host = Nx_buffer.create dt (hi - lo) in
       with_window buf ~off:(lo * item)
         ~len:((hi - lo) * item)
         (fun w -> copyout_into (Hashtbl.create 1) w ~dst_off:0 host);
-      (host, `Copied)
+      f host `Copied
 
 (* The elements of view [v] of one buffer's storage. *)
 let read_window : type a b.
@@ -3393,7 +3401,7 @@ let read_window : type a b.
   if n = 0 then Nx_buffer.create dt 0
   else
     let lo, hi = extent v in
-    let src, how = storage_range dt buf ~lo ~hi in
+    with_storage_range dt buf ~lo ~hi @@ fun src how ->
     if how = `Borrowed then
       bytes_from_device := !bytes_from_device + (n * ND.itemsize dt);
     if NV.is_c_contiguous v && how = `Copied then src

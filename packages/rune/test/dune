@@ -87,6 +87,20 @@
    METAL
    (run %{dep:test_remat_memory.exe}))))
 
+; A plain executable: whether a temporary is dead at the copy it checks
+; depends on how its caller is compiled.
+
+(test
+ (name test_read_lifetime)
+ (modules test_read_lifetime)
+ (package rune)
+ (action
+  (setenv
+   DEV
+   CPU
+   (run %{test})))
+ (libraries rune nx nx.buffer nx.dtype unix))
+
 (tests
  (names test_jit_cache)
  (modules test_jit_cache)
