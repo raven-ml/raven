@@ -601,3 +601,14 @@ delete it rather than registering it.
   gather loads its indices under the pad's gate" and "a gather between other
   pieces loads its indices under their gate", which check every index load
   of the lowered kernel.
+
+- **A select becomes a gated load's alternative only when its value survives
+  the load's dtype** (`codegen/late/gater.ml` `alt_in_load_dtype`). The
+  reference folds `where(gate, cast(load), a)` into the load and casts `a` to
+  the load's dtype. A load narrower than the select rounds `a`: with a
+  bfloat16 load widened to float64, an index 257 on the other branch came
+  back 256. tolk folds when the alternative is Invalid, has the load's dtype,
+  is a cast from the load's dtype, or is a constant that comes back bit for
+  bit through the load's dtype; otherwise the select stays. Every golden and
+  parity output is unchanged. Coverage: `test_lower` "gater folds a select
+  into a load only when its value survives".

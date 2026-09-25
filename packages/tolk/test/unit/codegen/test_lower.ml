@@ -159,6 +159,38 @@ let () =
                   (has_invalid_const src)
             | _ -> failwith "expected gated load");
             is_true ~msg:"load unchanged" (U.equal load lowered));
+          test "gater folds a select into a load only when its value survives"
+            (fun () ->
+            (* A select between a widened bfloat16 load and another value
+               becomes the load's alternative only if that value comes back
+               unchanged through bfloat16: -0 and 1 do; 257 and a float64
+               variable are rounded. *)
+            let p =
+              U.param ~slot:0 ~dtype:Dtype.bfloat16 ~addrspace:Dtype.Global ()
+            in
+            let gate =
+              U.param ~slot:(-1) ~dtype:Dtype.bool ~name:"gate"
+                ~addrspace:Dtype.Alu ()
+            in
+            let load =
+              U.load ~src:(U.index ~ptr:p ~idxs:[ U.const_int 0 ] ())
+                ~alt:(U.const (Const.zero Dtype.bfloat16)) ~gate ()
+            in
+            let select other =
+              U.O.where gate (U.cast ~src:load ~dtype:Dtype.float64) other
+            in
+            let folds other =
+              U.op (Gater.pm_move_gates_from_index (select other)) = Ops.Cast
+            in
+            let f64 x = U.const (Const.float Dtype.float64 x) in
+            is_true ~msg:"-0 folds" (folds (f64 (-0.)));
+            is_true ~msg:"1 folds" (folds (f64 1.));
+            is_true ~msg:"257 stays" (not (folds (f64 257.)));
+            is_true ~msg:"a float64 variable stays"
+              (not
+                 (folds
+                    (U.param ~slot:(-1) ~dtype:Dtype.float64 ~name:"other"
+                       ~addrspace:Dtype.Alu ()))));
           test "gater strips both image indexes with same invalid gate"
             (fun () ->
             let p = global_ptr () in

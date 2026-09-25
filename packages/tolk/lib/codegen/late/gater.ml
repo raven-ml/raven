@@ -66,18 +66,40 @@ let gated_mop mop idx =
   src.(1) <- idx;
   U.replace mop ~src ()
 
-(* The alternative the load falls back to when the gate is false. An Invalid
-   alternative carries no value and is bool-typed, so it cannot be cast into
-   the load's dtype; it becomes a zero of the load's own width. *)
-let strip_alt_cast load alt =
-  if is_invalid_const alt then vzero_like load
+(* Whether constant [c] comes back bit for bit through [dtype], converted as
+   a cast converts it. An integer outside [dtype]'s range would wrap, which
+   the constant conversion does not model, so it does not come back. *)
+let survives c dtype =
+  match Const.of_view dtype (Const.view c) with
+  | exception (Z.Overflow | Invalid_argument _) -> false
+  | there ->
+      let in_range =
+        match (Const.view there, Dtype.min dtype, Dtype.max dtype) with
+        | Const.Int n, `Int lo, `Int hi -> Z.leq lo n && Z.leq n hi
+        | _ -> true
+      in
+      in_range
+      && Const.equal (Const.of_view (Const.dtype c) (Const.view there)) c
+
+(* The alternative the load falls back to when the gate is false, in the
+   load's dtype. An Invalid alternative carries no value and is bool-typed, so
+   it cannot be cast into the load's dtype; it becomes a zero of the load's own
+   width. A value of another dtype must come back unchanged through the load's
+   dtype: it is a cast from the load's dtype, or a constant that comes back
+   bit for bit. Converting any other value can change it (a bfloat16 load
+   rounds a float64 alternative, a conversion quiets a signalling NaN), and
+   then the select stays. The tinygrad counterpart casts every
+   alternative. *)
+let alt_in_load_dtype load alt =
+  let dtype = U.dtype load in
+  if is_invalid_const alt then Some (vzero_like load)
+  else if Dtype.equal (U.dtype alt) dtype then Some alt
   else
-    match U.op alt, U.src alt with
-    | Ops.Cast, [| inner |] when Dtype.equal (U.dtype inner) (U.dtype load) ->
-        inner
-    | _ ->
-        if Dtype.equal (U.dtype alt) (U.dtype load) then alt
-        else U.cast ~src:alt ~dtype:(U.dtype load)
+    match U.op alt, U.src alt, U.as_const alt with
+    | Ops.Cast, [| inner |], _ when Dtype.equal (U.dtype inner) dtype ->
+        Some inner
+    | _, _, Some c when survives c dtype -> Some (U.cast ~src:alt ~dtype)
+    | _ -> None
 
 let load_node u =
   match U.op u, U.src u with
@@ -86,11 +108,9 @@ let load_node u =
   | _ -> if Option.is_some (U.as_load u) then Some u else None
 
 let rebuild_load load alt target_dtype =
-  match U.as_load load with
-  | Some { src; alt = Some _; gate = Some gate } ->
-      let load =
-        U.replace load ~src:[| src; strip_alt_cast load alt; gate |] ()
-      in
+  match U.as_load load, alt_in_load_dtype load alt with
+  | Some { src; alt = Some _; gate = Some gate }, Some alt ->
+      let load = U.replace load ~src:[| src; alt; gate |] () in
       Some (U.cast ~src:load ~dtype:target_dtype)
   | _ -> None
 
