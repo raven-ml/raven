@@ -121,10 +121,6 @@ acceptance requirement; skipped tests are not execution evidence.
   using wrapping host arithmetic, and disagree on signed shifts. Cover launch
   expressions whose intermediate products exceed host integers while their
   final launch dimensions fit, plus casts and negative shift operands.
-- Keep `Op.arange` endpoint, length and offset arithmetic exact until the
-  output dtype is committed. `start - step` currently wraps for a two-element
-  int64 range starting at OCaml `min_int`, producing positive values instead.
-  Add a paired target execution regression at both host-integer boundaries.
 - Replace `Uop.contiguous_view`'s separate movement interpreter with the
   target's flattened-index proof using shared movement and symbolic rewrites.
   Cover cancelling transposes, leading dimensions, symbolic bounds and byte

@@ -925,6 +925,13 @@ let creation2_tests =
           let descending = Op.arange ~stop:(-big) ~step:(-1) 0 in
           is_true (is_dtype descending D.int64);
           equal (list int) [ big ] (shape descending));
+      test "arange computes lengths beyond host integer intermediates" (fun () ->
+          equal (list int) [ 3 ]
+            (shape (Op.arange ~stop:max_int ~step:max_int min_int));
+          equal (list int) [ 0 ] (shape (Op.arange ~stop:min_int max_int));
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Op.arange ~stop:max_int min_int));
       test "arange rejects a range its explicit dtype cannot hold" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)

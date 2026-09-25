@@ -1659,6 +1659,13 @@ let numerical_edge_tests =
             (Op.scatter_reduce (int64s [| hi; hi; hi |]) ~dim:0
                (Run.of_int_array ~shape:[ 1 ] [| 1 |])
                (int64s [| Int64.sub hi 2L |]) ~reduce:`Amin ~include_self:false ()));
+      test "arange preserves values across host integer boundaries" (fun () ->
+          check_int64s [| Int64.of_int min_int; Int64.of_int (min_int + 1) |]
+            (Op.arange ~stop:(min_int + 2) min_int);
+          check_int64s [| Int64.of_int max_int; Int64.of_int (max_int - 1) |]
+            (Op.arange ~stop:(max_int - 2) ~step:(-1) max_int);
+          check_int64s [| Int64.of_int min_int; -1L; Int64.of_int (max_int - 1) |]
+            (Op.arange ~stop:max_int ~step:max_int min_int));
       test "small-dtype arange accumulates before narrowing" (fun () ->
           let module D = Tolk_uop.Dtype in
           List.iter

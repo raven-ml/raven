@@ -327,24 +327,22 @@ let cumprod ?(axis = 0) t = split_cumalu t axis Ops.Mul
 
 (* Ranges *)
 
-let fdiv a b =
-  if a mod b <> 0 && a < 0 <> (b < 0) then (a / b) - 1 else a / b
-
-let iceildiv a b = -fdiv (-a) b
-
 (* Whether the endpoints of [[lo, hi]] fit the numeric limits of [dt]. *)
 let range_fits dt lo hi =
   match (D.min dt, D.max dt) with
   | `Int dlo, `Int dhi ->
-      Z.compare (Z.of_int lo) dlo >= 0 && Z.compare (Z.of_int hi) dhi <= 0
+      Z.compare lo dlo >= 0 && Z.compare hi dhi <= 0
   | `Float dlo, `Float dhi ->
-      float_of_int lo >= dlo && float_of_int hi <= dhi
+      Z.to_float lo >= dlo && Z.to_float hi <= dhi
   | _, _ -> true
 
 let arange ?stop ?(step = 1) ?dtype start =
   if step = 0 then invalid_arg "Op.arange: step must be non-zero";
   let start, stop = match stop with None -> (0, start) | Some s -> (start, s) in
-  let lo, hi = if step > 0 then (start, stop - step) else (stop - step, start) in
+  let first = Z.of_int start and last = Z.of_int stop and stride = Z.of_int step in
+  let lo, hi =
+    if step > 0 then (first, Z.sub last stride) else (Z.sub last stride, first)
+  in
   let dt =
     match dtype with
     | Some d -> d
@@ -355,15 +353,19 @@ let arange ?stop ?(step = 1) ?dtype start =
     invalid_arg
       (Printf.sprintf "Op.arange: [%d, %d) is not representable in %s" start stop
          (D.to_string dt));
-  let output_len = iceildiv (stop - start) step in
-  if output_len <= 0 then Creation.full ~dtype:dt ~buffer:false [ 0 ] (T.Sint 0)
-  else
+  let output_len = Z.cdiv (Z.sub last first) stride in
+  if Z.sign output_len <= 0 then Creation.full ~dtype:dt ~buffer:false [ 0 ] (T.Sint 0)
+  else begin
+    if not (Z.fits_int output_len) then
+      invalid_arg "Op.arange: length exceeds the host integer range";
     let acc_dtype =
       if D.is_float dt then D.least_upper_dtype [ dt; D.float32 ] else dt
     in
-    let base = Creation.full ~dtype:acc_dtype ~buffer:false [ output_len ] (T.Sint step) in
+    let base = Creation.full ~dtype:acc_dtype ~buffer:false [ Z.to_int output_len ] (T.Sint step) in
     let scan = cumalu base 0 Ops.Add in
-    Dtype_ops.cast (Elementwise.add scan (T.i (start - step))) dt
+    let offset = T.of_uop (Uop.const (Const.integer D.weakint (Z.sub first stride))) in
+    Dtype_ops.cast (Elementwise.add scan offset) dt
+  end
 
 let linspace ?dtype start stop steps =
   if steps < 0 then invalid_arg "Op.linspace: steps must be non-negative";

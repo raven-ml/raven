@@ -438,7 +438,12 @@ val arange :
 (** [arange start] is the 1-D tensor [\[0; 1; ...; start-1\]]. [arange start
     ~stop] ranges over [\[start, stop)], and [~step] sets the spacing (which
     may be negative). The length is [ceil((stop - start) / step)], clamped to
-    zero. [dtype] defaults to the default integer type. *)
+    zero. [dtype] defaults to the default integer type, or [int64] when the
+    endpoints require it. Intermediate endpoint and length calculations are
+    exact.
+
+    @raise Invalid_argument if [step] is zero, the range is not representable
+    in [dtype], or its length exceeds [max_int]. *)
 
 val linspace :
   ?dtype:Tolk_uop.Dtype.t -> float -> float -> int -> Tensor.t

@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- `Op.arange` preserves values and lengths at OCaml integer boundaries.
+  Exact endpoint and offset arithmetic prevents sign changes and empty ranges
+  caused by overflowing intermediate calculations.
+
 - Failed AMD/NV PCI discovery releases constructor-owned BAR mappings.
   Address-space reservation now precedes PCI claiming, so a reservation failure
   cannot strand a device claim; uncertain hardware state keeps its claim held.
