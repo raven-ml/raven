@@ -70,9 +70,9 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
         in
         Rune.jit ~devices:[ device ]
           Nx.Ptree.(
-            tensor @-> Cache_index.ptree @-> tensor @-> sampling
+            tensor @-> Cache_index.ptree @-> Nx.Rng.ptree @-> sampling
             @-> consumes caches
-            @@ returns (pair (pair tensor tensor) caches))
+            @@ returns (pair (pair tensor Nx.Rng.ptree) caches))
           step
   in
   let n0 = Array.length prompt in

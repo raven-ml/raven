@@ -27,7 +27,7 @@
 val apply :
   rate:float ->
   training:bool ->
-  ?key:Nx.Rng.key ->
+  ?key:Nx.Rng.t ->
   (float, 'b) Nx.t ->
   (float, 'b) Nx.t
 (** [apply ~rate ~training ?key x] is [x] with dropout applied.

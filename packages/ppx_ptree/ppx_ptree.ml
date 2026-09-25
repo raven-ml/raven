@@ -156,7 +156,6 @@ let containers = [ "ref"; "lazy_t"; "result"; "format4"; "format6" ]
 let is_tensor lid args =
   match (lid, args) with
   | Longident.Ldot (Lident "Nx", "t"), _ -> true
-  | Ldot (Ldot (Lident "Nx", "Rng"), "key"), _ -> true
   | (Ldot (Lident "Nx", n) | Lident n), _ -> List.mem n nx_aliases
   | _ -> false
 

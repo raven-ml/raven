@@ -1827,7 +1827,7 @@ thread.
 
 - The structural optimizers (`sgd_step`, `adam_step`, `adamw_step`) pass
   non-float leaves through unchanged instead of updating them, so a structure
-  carrying an `Nx.Rng.key` alongside its parameters survives a step. Adam is
+  carrying an `Nx.Rng.t` alongside its parameters survives a step. Adam is
   where it showed: its direction runs each leaf through a square root and a
   division.
 - Add `Loss_scale` for float16 training: static and dynamic loss scales
@@ -1849,6 +1849,13 @@ thread.
 
 ### Nx
 
+- **Breaking:** the key type `Nx.Rng.key` is now `Nx.Rng.t`, a private type
+  that only `Nx.Rng` builds (`Rng.key seed` still makes one), so arithmetic or
+  slicing on a key, or an arbitrary int32 tensor, no longer type-checks as
+  one. `(k :> Nx.int32_t)` reads a key's words, `Rng.of_tensor` turns loaded
+  words back into a key, and `Rng.ptree` walks a key in a structure or a
+  compiled function's signature, as `[@@deriving ptree]` does for a part of
+  type `Nx.Rng.t`.
 - Add `Nx.Rng.split_batch ~n key`: the keys of `split ~n key` as one batch,
   whose lanes each see one key under `Rune.vmap`. It replaces stacking split
   keys into an `[n; 2]` tensor by hand.
@@ -2546,7 +2553,7 @@ thread.
   persistent compile-cache key, so tuned and untuned compilations of the same
   trace do not collide.
 - A parameter structure may now hold leaves that are not parameters — an
-  `Nx.Rng.key` threaded through a compiled step, a step counter, a batch of
+  `Nx.Rng.t` threaded through a compiled step, a step counter, a batch of
   indices. `grad`, `value_and_grad` and `vjp` carry them instead of raising:
   they are not tracked, and their slot in the gradient structure holds zeros.
   One structure can therefore serve both `grad` and `jit`, where before a key
@@ -2893,7 +2900,7 @@ thread.
   forward pass it now covers an SGD train step, a small CNN train step
   (conv + max-pool blocks with `Conv`/`Pool`), and a single `Linear` layer
   forward and forward+backward in isolation.
-- `Dropout.apply` takes an optional `?key:Rune.Rng.key`: the mask becomes a
+- `Dropout.apply` takes an optional `?key:Nx.Rng.t`: the mask becomes a
   pure function of the key and the input's shape, so dropout composes with
   `Rune.jit` (pass the key as an input leaf; keyless dropout under jit
   raises `Jit_error`) and with `vmap` via per-lane keys.

@@ -172,7 +172,7 @@ let test_init_compiles_under_jit () =
   let check name (init : Nx.float32_elt Init.t) =
     let f =
       Rune.jit
-        Nx.Ptree.(tensor @-> returns tensor)
+        Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
         (fun key ->
           Nx.Rng.with_key key @@ fun () ->
           init ~fan_in:8 ~fan_out:8 Nx.float32 [| 8; 8 |])

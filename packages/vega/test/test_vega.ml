@@ -340,7 +340,7 @@ let test_steps_validate () =
    at zero; the optimizers must leave the value alone. Adam is where it would
    show: its direction runs each leaf through a square root and a division. *)
 module Stepper = struct
-  type t = { w : Nx.float64_t; key : Nx.Rng.key }
+  type t = { w : Nx.float64_t; key : Nx.Rng.t }
 
   module Walked = struct
     type nonrec _ t = t
@@ -348,7 +348,7 @@ module Stepper = struct
     let walk c t =
       let open Nx.Ptree.Walk in
       let w = field c "w" tensor t.w in
-      let key = field c "key" tensor t.key in
+      let key = field c "key" (structure Nx.Rng.ptree) t.key in
       { w; key }
   end
 
@@ -367,10 +367,10 @@ let test_optimizers_carry_a_non_parameter_leaf () =
     Stepper.
       {
         w = Nx.create Nx.float64 [| 3 |] [| 2.0; -4.0; 6.0 |];
-        key = Nx.zeros Nx.int32 [| 2 |];
+        key = Nx.Rng.of_tensor (Nx.zeros Nx.int32 [| 2 |]);
       }
   in
-  let key_before = Nx.to_array params.Stepper.key in
+  let key_before = Nx.to_array (params.Stepper.key :> Nx.int32_t) in
   let check name (updated : Stepper.t) =
     is_true
       ~msg:(name ^ " moves the weight")
@@ -378,7 +378,7 @@ let test_optimizers_carry_a_non_parameter_leaf () =
     equal
       ~msg:(name ^ " leaves the key alone")
       (array int32) key_before
-      (Nx.to_array updated.Stepper.key)
+      (Nx.to_array (updated.Stepper.key :> Nx.int32_t))
   in
   let sgd, _ =
     Vega.sgd_step Stepper.ptree ~lr:(Vega.lr 0.1)
@@ -1032,14 +1032,18 @@ let test_lbfgs_carries_a_non_parameter_leaf () =
   in
   let objective (p : Stepper.t) =
     ( Nx.sum (Nx.square p.w),
-      Stepper.{ w = Nx.mul_s p.w 2.0; key = Nx.zeros Nx.int32 [| 2 |] } )
+      Stepper.
+        {
+          w = Nx.mul_s p.w 2.0;
+          key = Nx.Rng.of_tensor (Nx.zeros Nx.int32 [| 2 |]);
+        } )
   in
   let st, status = Vega.minimize Stepper.ptree objective params in
   is_true ~msg:"converged" (status = Vega.Converged);
   check_vec ~msg:"weight minimized" ~eps:1e-4 [| 0.0; 0.0; 0.0 |] st.params.w;
   equal ~msg:"key left alone" (array int32)
-    (Nx.to_array params.Stepper.key)
-    (Nx.to_array st.params.Stepper.key)
+    (Nx.to_array (params.Stepper.key :> Nx.int32_t))
+    (Nx.to_array (st.params.Stepper.key :> Nx.int32_t))
 
 let test_lbfgs_state_is_a_ptree () =
   let opt = Vega.lbfgs_ptree Pair.ptree in

@@ -6,8 +6,8 @@
 open Nx
 open Windtrap
 
-(* A key is a transparent [|2|] int32 tensor; compare keys by their words. *)
-let key_words k = Nx.to_array k
+(* Compare keys by their words. *)
+let key_words (k : Rng.t) = Nx.to_array (k :> int32_t)
 
 (* A scalar distribution parameter, broadcast to the draw's shape. *)
 let param dtype shape v = broadcast_to shape (scalar dtype v)
@@ -42,14 +42,49 @@ let test_key_splitting () =
 let test_split_batch_rows_are_split () =
   let key = Rng.key 42 in
   let batch = Rng.split_batch ~n:5 key in
-  equal ~msg:"a batch of 5 keys" (array int) [| 5; 2 |] (Nx.shape batch);
+  equal ~msg:"a batch of 5 keys" (array int) [| 5; 2 |]
+    (Nx.shape (batch :> int32_t));
   Array.iteri
     (fun i k ->
       equal
         ~msg:(Printf.sprintf "row %d is key %d" i i)
         (array int32) (key_words k)
-        (Nx.to_array (Nx.slice [ I i ] batch)))
+        (Nx.to_array (Nx.slice [ I i ] (batch :> int32_t))))
     (Rng.split ~n:5 key)
+
+let test_of_tensor_checks_the_words_axis () =
+  let words = Nx.to_array (Rng.key 7 :> int32_t) in
+  equal ~msg:"of_tensor of a key's words is that key" (array int32) words
+    (key_words (Rng.of_tensor (Nx.create Nx.int32 [| 2 |] words)));
+  ignore (Rng.of_tensor (Nx.zeros Nx.int32 [| 3; 4; 2 |]));
+  raises
+    (Invalid_argument
+       "Nx.Rng.of_tensor: a key is an int32 tensor of shape [2], and a batch \
+        of keys one of shape [...; 2]; got shape [3]") (fun () ->
+      Rng.of_tensor (Nx.zeros Nx.int32 [| 3 |]));
+  raises
+    (Invalid_argument
+       "Nx.Rng.of_tensor: a key is an int32 tensor of shape [2], and a batch \
+        of keys one of shape [...; 2]; got shape []") (fun () ->
+      Rng.of_tensor (Nx.scalar Nx.int32 0l))
+
+(* A batch reaches a sampler only outside the map it was built for. A map that
+   turns a key into something else fails at the rebuild. *)
+let test_samplers_take_one_key () =
+  let batch = Rng.split_batch ~n:4 (Rng.key 0) in
+  raises
+    (Invalid_argument
+       "Nx.Rng.bits: expected one key, got a batch of keys of shape [4; 2]; \
+        map over a batch with Rune.vmap") (fun () -> Rng.bits batch [| 3 |]);
+  raises
+    (Invalid_argument
+       "Nx.Rng.fold_in: expected one key, got a batch of keys of shape [4; 2]; \
+        map over a batch with Rune.vmap") (fun () -> Rng.fold_in batch 1);
+  raises
+    (Invalid_argument
+       "Nx.Rng.of_tensor: a key is an int32 tensor of shape [2], and a batch \
+        of keys one of shape [...; 2]; got shape []") (fun () ->
+      Ptree.map Rng.ptree (fun _ t -> Nx.sum t) (Rng.key 0))
 
 let test_fold_in () =
   let key = Rng.key 42 in
@@ -974,6 +1009,9 @@ let () =
           test "splitting" test_key_splitting;
           test "fold_in" test_fold_in;
           test "split_batch rows are split" test_split_batch_rows_are_split;
+          test "of_tensor checks the words axis"
+            test_of_tensor_checks_the_words_axis;
+          test "samplers take one key" test_samplers_take_one_key;
         ];
       group "sampling"
         [

@@ -45,6 +45,10 @@ module Rng = struct
 
   let fold_in_axis k =
     F.Rng.fold_in_tensor k (Nx_effect.axis_index (Nx_effect.context k))
+
+  type t = key
+
+  let ptree = Ptree.iso of_tensor Fun.id Ptree.tensor
 end
 
 (* Re-export extended type aliases *)

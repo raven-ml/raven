@@ -29,7 +29,7 @@ If you already use JAX, this should be enough to become productive in rune quick
 | Control flow | `lax.scan`, `lax.cond`, `lax.while_loop` (required under `jit`) | `scan`, `cond`, `while_loop` (optional, staging-ready) plus ordinary OCaml control flow |
 | Gradient stopping | `jax.lax.stop_gradient` | `detach`, `no_grad` |
 | Gradient checking | `jax.test_util.check_grads` | `check_grads` |
-| Randomness | Explicit splittable keys (`jax.random`) | Implicit scoped RNG (`Nx.Rng.with_key`) |
+| Randomness | Typed splittable keys (`jax.random.key`) | Keys of a private type (`Nx.Rng.t`), or a scope (`Nx.Rng.with_key`) |
 | JIT compilation | `jax.jit` | `jit` — traces once per key (every tensor's path, dtype and shape, and what its structure reports); CPU, CUDA, or Metal |
 | Devices | `jax.device_put`, GPU/TPU | `Nx.place` with `Rune.device`; compiled functions run on CPU, CUDA, Metal |
 
@@ -312,15 +312,27 @@ Both compare autodiff against finite differences along directions rather than el
 
 ## 11. Randomness
 
-JAX threads explicit splittable keys. Rune uses Nx's implicit scoped RNG: wrap the program in `Nx.Rng.with_key` for reproducibility, and `Nx.rand`/`Nx.randn` draw from the ambient scope:
+JAX threads typed splittable keys, and so does Nx: `Nx.Rng.t` is a private type that only `Nx.Rng` builds, so arithmetic on a key does not type-check. `Nx.Rng.split` and `Nx.Rng.fold_in` derive keys, and each distribution has a keyed sampler. Nx adds a scope: inside `Nx.Rng.with_key`, `Nx.rand` and `Nx.randn` draw successive subkeys of its root.
 
 ```ocaml
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
-  ignore (Nx.randn Nx.float32 [| 3 |])
+  let keys = Nx.Rng.split (Nx.Rng.key 0) in
+  ignore (Nx.Rng.normal keys.(0) Nx.float32 [| 3 |]);
+  Nx.Rng.with_key keys.(1) @@ fun () -> ignore (Nx.randn Nx.float32 [| 3 |])
 ```
 
-The trade-off surfaces under `vmap`: with explicit keys you would pass one key per lane; with the implicit scope, in-function draws are identical across lanes, so per-lane randomness must be a mapped input.
+Under `vmap`, the counterpart of mapping over `jax.random.split(key, n)` is mapping over `Nx.Rng.split_batch ~n key`, walked with `Nx.Rng.ptree`; each lane sees one key. A key or a scope that the mapped function closes over draws identical values in every lane.
+
+```ocaml
+let () =
+  let noise =
+    Rune.vmap
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+      (fun k -> Nx.Rng.normal k Nx.float32 [| 3 |])
+      (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 0))
+  in
+  assert (Nx.shape noise = [| 4; 3 |])
+```
 
 ---
 

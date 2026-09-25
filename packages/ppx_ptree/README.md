@@ -72,7 +72,7 @@ arguments: one argument at the constructor's path, several at indices `0`,
 | Part's type | Walk |
 |---|---|
 | the parameter `'a` | `Walk.leaf` |
-| `('x, 'y) Nx.t`, `Nx.float32_t` and the other aliases, `Nx.Rng.key` | `Walk.tensor` |
+| `('x, 'y) Nx.t`, `Nx.float32_t` and the other aliases | `Walk.tensor` |
 | `ty option`, `ty list` | `Walk.option`, `Walk.list` |
 | `ty array` | length reported with `Walk.int`, then each element at its index |
 | a tuple | each component with `Walk.index` |

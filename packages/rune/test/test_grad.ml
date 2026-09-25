@@ -244,13 +244,13 @@ let test_grad_rejects_integer_leaves () =
    grad refused the whole structure and the key had to be captured in a closure
    and the parameters kept in a second structure. *)
 module Stepper = struct
-  type stepper = { w : Nx.float32_t; key : Nx.Rng.key }
+  type stepper = { w : Nx.float32_t; key : Nx.Rng.t }
   type _ t = stepper
 
   let walk c { w; key } =
     let open Nx.Ptree.Walk in
     let w = field c "w" tensor w in
-    let key = field c "key" tensor key in
+    let key = field c "key" (structure Nx.Rng.ptree) key in
     { w; key }
 end
 
@@ -269,7 +269,7 @@ let test_grad_carries_a_key_leaf () =
   check_arr ~msg:"the float leaf differentiates" [| 2.0; -4.0; 6.0 |]
     g.Stepper.w;
   equal ~msg:"the key's gradient is zero" (array int32) [| 0l; 0l |]
-    (Nx.to_array g.Stepper.key)
+    (Nx.to_array (g.Stepper.key :> Nx.int32_t))
 
 (* One tensor behind both leaves. A structure is positional: each leaf is its
    own parameter with its own gradient (and, in forward mode, its own tangent),

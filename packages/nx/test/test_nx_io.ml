@@ -1092,6 +1092,26 @@ let test_safetensors_invalid_json_strings () =
             (fun () -> Nx_io.load_safetensors path)))
     [ {|\ud800|}; {|\udc00|}; {|\ud800\u0041|}; {|\u12xz|}; {|\q|}; "a\001b" ]
 
+(* A key is saved as its words and loaded back with [Rng.of_tensor]: the loaded
+   key draws what the saved one drew, and a batch keeps its rows. *)
+let test_safetensors_keys_round_trip () =
+  let key = Nx.Rng.fold_in (Nx.Rng.key 3) 17 in
+  let batch = Nx.Rng.split_batch ~n:4 key in
+  let path = temp_file "test_safetensors_keys_" ".safetensors" in
+  Nx_io.save_safetensors path
+    [ ("key", Nx.P (key :> Nx.int32_t)); ("batch", Nx.P (batch :> Nx.int32_t)) ];
+  let archive = Nx_io.load_safetensors path in
+  let load name =
+    Nx.Rng.of_tensor (Nx.unpack Nx.int32 (Hashtbl.find archive name))
+  in
+  let words (k : Nx.Rng.t) = Nx.to_array (k :> Nx.int32_t) in
+  equal ~msg:"key words" (array int32) (words key) (words (load "key"));
+  equal ~msg:"batch words" (array int32) (words batch) (words (load "batch"));
+  equal ~msg:"the loaded key draws what the saved one drew" (array int32)
+    (Nx.to_array (Nx.Rng.bits key [| 5 |]))
+    (Nx.to_array (Nx.Rng.bits (load "key") [| 5 |]));
+  remove_loaded path
+
 let test_safetensors_save_load () =
   let weights, embeddings =
     Nx.Rng.with_key (Nx.Rng.key 10) (fun () ->
@@ -1834,6 +1854,7 @@ let () =
           test "Reject invalid JSON strings"
             test_safetensors_invalid_json_strings;
           test "Save/load tensors" test_safetensors_save_load;
+          test "Save/load keys" test_safetensors_keys_round_trip;
           test "Different dtypes" test_safetensors_different_dtypes;
           test "Float16 round-trip" test_safetensors_float16_roundtrip;
           test "Float16 bit exact" test_safetensors_float16_bit_exact;

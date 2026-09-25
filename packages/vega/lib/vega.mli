@@ -79,11 +79,11 @@
       raises at its leaf. The other functions that take two values raise as
       {!Nx.Ptree.map2} does.
     - {b Non-parameter leaves.} A structure may carry tensors that are not
-      parameters: an {!Nx.Rng.key} threaded through a compiled step, a counter,
-      a batch of indices. {!Rune.val-grad} does not differentiate them, and a
-      step passes every leaf whose dtype is not a float through unchanged, in
-      the parameters and in the state. So one structure serves the objective,
-      the gradient and the update.
+      parameters: an {!Nx.Rng.t} threaded through a compiled step, a counter, a
+      batch of indices. {!Rune.val-grad} does not differentiate them, and a step
+      passes every leaf whose dtype is not a float through unchanged, in the
+      parameters and in the state. So one structure serves the objective, the
+      gradient and the update.
     - {b States are structures.} {!sgd_ptree}, {!adam_ptree}, {!rmsprop_ptree},
       {!adagrad_ptree}, {!adan_ptree}, {!lion_ptree}, {!adafactor_ptree} and
       {!lbfgs_ptree} are a state's structure over [p]. A state's leaf paths are

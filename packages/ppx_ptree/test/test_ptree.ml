@@ -73,7 +73,8 @@ module Tensors = struct
   type t = {
     scale : Nx.float32_t;
     shift : (float, Nx.float64_elt) Nx.t;
-    key : Nx.Rng.key;
+    key : Nx.Rng.t;
+    opened : Rng.t;
     count : int32_t;
   }
   [@@deriving ptree]
@@ -86,9 +87,10 @@ module Tensors_hand = struct
     let open Nx.Ptree.Walk in
     let scale = field c "scale" tensor x.scale in
     let shift = field c "shift" tensor x.shift in
-    let key = field c "key" tensor x.key in
+    let key = field c "key" (structure Nx.Rng.ptree) x.key in
+    let opened = field c "opened" (structure Nx.Rng.ptree) x.opened in
     let count = field c "count" tensor x.count in
-    { scale; shift; key; count }
+    { scale; shift; key; opened; count }
 end
 
 let tensors =
@@ -97,6 +99,7 @@ let tensors =
       scale = vec [| 1. |];
       shift = Nx.create Nx.float64 [| 1 |] [| 2. |];
       key = Nx.Rng.key 0;
+      opened = Nx.Rng.key 1;
       count = ints [| 3l |];
     }
 

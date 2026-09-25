@@ -59,9 +59,9 @@ val grad : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
     of their gradients.
 
     Gradients are defined for real and complex tensors. A structure may hold
-    others (an {!Nx.Rng.key} threaded through a compiled step, a counter, a
-    batch of indices), and they are {e carried}: nothing accumulates into them
-    and their gradient is zero. One structure then serves both [grad] and
+    others (an {!Nx.Rng.t} threaded through a compiled step, a counter, a batch
+    of indices), and they are {e carried}: nothing accumulates into them and
+    their gradient is zero. One structure then serves both [grad] and
     {!val-jit}, which needs such values as inputs, and Vega's optimizers leave
     them alone in turn.
 
@@ -184,12 +184,12 @@ val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     Composes with the other transformations: [vmap] of {!grad} computes
     per-example gradients, and {!grad} of [vmap] differentiates through the map.
 
-    {b Note.} Randomness a lane captures (an {!Nx.Rng.key}, or [Nx.rand] under a
+    {b Note.} Randomness a lane captures (an {!Nx.Rng.t}, or [Nx.rand] under a
     scope the map captures) draws {e identical} values for every lane: it is a
     constant of the map. Decorrelate them either by folding the lane index into
     one key with {!Nx.Rng.fold_in_axis}, or by mapping over a batch of keys from
-    {!Nx.Rng.split_batch}: each lane sees one key. Reading a batched tensor's
-    value inside the mapped function raises.
+    {!Nx.Rng.split_batch}, walked with {!Nx.Rng.ptree}: each lane sees one key.
+    Reading a batched tensor's value inside the mapped function raises.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
     ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
@@ -352,15 +352,15 @@ val check_grads :
 
     Random number generation lives entirely in {!Nx.Rng}: keys, the keyed
     samplers ({!Nx.Rng.uniform}, {!Nx.Rng.normal}, …) and the scope
-    ({!Nx.Rng.with_key}). A key is an ordinary [[|2|]] int32 tensor, so it
-    traces, batches and shards like any tensor — thread it as an input of a
-    jitted function and derive per-call keys with {!Nx.Rng.split} or
-    {!Nx.Rng.fold_in}. The transforms answer the generator's effects but add no
-    RNG vocabulary of their own. A sampler's distribution parameters are tensors
-    too ({!Nx.Rng.bernoulli}'s probability, {!Nx.Rng.poisson}'s rate), so a
-    parameter that is a jitted function's input or a mapped axis traces or
-    batches the draw with it, where a host float would have been frozen into the
-    program.
+    ({!Nx.Rng.with_key}). A key is an [[|2|]] int32 tensor that only {!Nx.Rng}
+    builds, walked with {!Nx.Rng.ptree}, so it traces, batches and shards like
+    any tensor — thread it as an input of a jitted function and derive per-call
+    keys with {!Nx.Rng.split} or {!Nx.Rng.fold_in}. The transforms answer the
+    generator's effects but add no RNG vocabulary of their own. A sampler's
+    distribution parameters are tensors too ({!Nx.Rng.bernoulli}'s probability,
+    {!Nx.Rng.poisson}'s rate), so a parameter that is a jitted function's input
+    or a mapped axis traces or batches the draw with it, where a host float
+    would have been frozen into the program.
 
     Under a transform, what matters is where the key comes from, not which
     front-end draws from it. A traced or mapped key works either way: passed to
@@ -414,7 +414,7 @@ exception Jit_error of string
 (** Raised when a function cannot be compiled: it read the value of a traced
     tensor (for example [Nx.item] on a value that depends on the inputs, or a
     data-dependent branch), it drew random values from a key that does not
-    depend on the inputs (a captured {!Nx.Rng.key}, or a scope opened with
+    depend on the inputs (a captured {!Nx.Rng.t}, or a scope opened with
     [Nx.Rng.with_key] on a constant key — the draw would be a compile-time
     constant replayed on every call; pass the key as an input instead), or it
     used an operation the compiler does not support (FFT, the SVD and

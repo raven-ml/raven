@@ -62,7 +62,7 @@
     part decides its walk:
     - the type's parameter ['a]: [Nx.Ptree.Walk.leaf];
     - a tensor type, [('x, 'y) Nx.t], [Nx.float32_t] and Nx's other tensor
-      aliases (qualified or opened), or [Nx.Rng.key]: [Nx.Ptree.Walk.tensor];
+      aliases (qualified or opened): [Nx.Ptree.Walk.tensor];
     - [ty option] and [ty list]: [Nx.Ptree.Walk.option] and
       [Nx.Ptree.Walk.list]; [ty array]: its length reported with
       [Nx.Ptree.Walk.int], then each element at its index;

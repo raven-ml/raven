@@ -106,6 +106,19 @@ let test_int_round_trip () =
   Checkpoint.save path (Checkpoint.of_int "step" 12345);
   equal int 12345 (Checkpoint.to_int "step" (Checkpoint.load path))
 
+(* A key saved with its training state resumes the same stream: the loaded key
+   is the saved one, word for word. *)
+let test_key_round_trip () =
+  with_ckpt_file @@ fun path ->
+  let key = Nx.Rng.fold_in (Nx.Rng.key 5) 3 in
+  Checkpoint.save path (Checkpoint.of_value ~prefix:"rng" Nx.Rng.ptree key);
+  let loaded =
+    Checkpoint.to_value ~prefix:"rng" Nx.Rng.ptree ~like:(Nx.Rng.key 0)
+      (Checkpoint.load path)
+  in
+  let words (k : Nx.Rng.t) = Nx.to_array (k :> Nx.int32_t) in
+  equal ~msg:"key words" (array int32) (words key) (words loaded)
+
 (* Resume training *)
 
 let xs = Nx.create f32 [| 4; 2 |] [| 0.0; 1.0; 1.0; 0.0; 1.0; 1.0; 0.5; -0.5 |]
@@ -465,6 +478,7 @@ let () =
           test "save and load preserve values" test_round_trip;
           test "save and load preserve dtypes" test_round_trip_dtypes;
           test "of_int and to_int round-trip through a file" test_int_round_trip;
+          test "a key round-trips through a file" test_key_round_trip;
         ];
       group "training"
         [

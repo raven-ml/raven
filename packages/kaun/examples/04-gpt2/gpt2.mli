@@ -101,7 +101,7 @@ val cache :
 
 val cached :
   config ->
-  ?dropout:float * Nx.Rng.key ->
+  ?dropout:float * Nx.Rng.t ->
   (float, 'b) Nx.t params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
@@ -128,7 +128,7 @@ val cached :
 
 val hidden :
   config ->
-  ?dropout:float * Nx.Rng.key ->
+  ?dropout:float * Nx.Rng.t ->
   (float, 'b) Nx.t params ->
   (int32, Nx.int32_elt) Nx.t ->
   (float, 'b) Nx.t

@@ -339,7 +339,7 @@ let test_dropout_keyless_jit_raises () =
 let test_dropout_keyless_scope_jit_compiles () =
   let f =
     Rune.jit
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       (fun key ->
         Nx.Rng.with_key key @@ fun () ->
         Dropout.apply ~rate:0.5 ~training:true (Nx.ones Nx.float32 [| 64 |]))
@@ -349,13 +349,13 @@ let test_dropout_keyless_scope_jit_compiles () =
   equal ~msg:"and replays for the same key" (array float_exact) (at 1) (at 1)
 
 module Keyed_x = struct
-  type keyed_x = { x : Nx.float32_t; key : Nx.Rng.key }
+  type keyed_x = { x : Nx.float32_t; key : Nx.Rng.t }
   type _ t = keyed_x
 
   let walk c { x; key } =
     let open Nx.Ptree.Walk in
     let x = field c "x" tensor x in
-    let key = field c "key" tensor key in
+    let key = field c "key" (structure Nx.Rng.ptree) key in
     { x; key }
 end
 
@@ -391,12 +391,12 @@ module Mlp = struct
 end
 
 module Mlp_in = struct
-  type 'a t = { p : 'a Mlp.t; key : Nx.Rng.key }
+  type 'a t = { p : 'a Mlp.t; key : Nx.Rng.t }
 
   let walk c { p; key } =
     let open Nx.Ptree.Walk in
     let p = field c "p" Mlp.walk p in
-    let key = field c "key" tensor key in
+    let key = field c "key" (structure Nx.Rng.ptree) key in
     { p; key }
 end
 

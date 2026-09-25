@@ -630,29 +630,47 @@ module Rng : sig
       open a scope when you want the draws in a region decorrelated and would
       rather not thread a subkey to each one. *)
 
-  type key = (int32, int32_elt) t
-  (** The type for keys: a transparent [[|2|]] int32 tensor holding the
-      generator's state. Being an ordinary tensor, a key goes wherever tensors
-      go — a leaf of a parameter structure, an input of a jitted function, a
-      mapped axis of {!Rune.val-vmap}. Read its words with {!to_array}. *)
+  type ('a, 'b) tensor := ('a, 'b) t
+
+  type t = private (int32, int32_elt) tensor
+  (** The type for keys and batches of keys. A key is the generator: its whole
+      state, two 32-bit words held in an int32 tensor of shape [[|2|]], from
+      which every draw is a pure function. A batch of keys, from {!split_batch},
+      puts axes before the words, as in [[|n; 2|]], and each lane of a
+      {!Rune.val-vmap} over it sees one key. The samplers take one key.
+
+      Only this module builds keys: arithmetic or slicing on a key gives a
+      tensor, which no sampler takes. A key coerces to its tensor,
+      [(k :> Nx.int32_t)], to read its words or save them, and {!of_tensor}
+      turns saved words back into a key. A key in a structure, a jitted
+      function's argument or a mapped argument of {!Rune.val-vmap} is walked
+      with {!ptree}. *)
 
   (** {1:keys Keys} *)
 
-  val key : int -> key
+  val key : int -> t
   (** [key seed] is the key for [seed]. Equal seeds give equal keys. *)
 
-  val split : ?n:int -> key -> key array
+  val of_tensor : (int32, int32_elt) tensor -> t
+  (** [of_tensor t] is the key, or the batch of keys, whose words are [t]: the
+      inverse of the coercion [(k :> Nx.int32_t)], for words that were saved or
+      loaded.
+
+      Raises [Invalid_argument] if [t]'s last axis does not have length [2]. *)
+
+  val split : ?n:int -> t -> t array
   (** [split ?n k] is [n] independent subkeys derived from [k] ([n] defaults to
       [2]). Deterministic, and the subkeys are independent of each other; derive
       one subkey per consumer instead of reusing [k]. *)
 
-  val split_batch : n:int -> key -> key
+  val split_batch : n:int -> t -> t
   (** [split_batch ~n k] is [split ~n k] as one batch of keys, of shape
       [[|n; 2|]]: row [i] holds the words of [(split ~n k).(i)]. It is the
       argument that gives each lane of a {!Rune.val-vmap} its own key:
 
       {v
-      Rune.vmap'
+      Rune.vmap
+        Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
         (fun k -> Nx.Rng.normal k Nx.float32 [| 3 |])
         (Nx.Rng.split_batch ~n:8 key)
       v}
@@ -661,12 +679,12 @@ module Rng : sig
 
       Raises [Invalid_argument] if [n < 1]. *)
 
-  val fold_in : key -> int -> key
+  val fold_in : t -> int -> t
   (** [fold_in k data] is the subkey of [k] indexed by [data]: distinct [data]
       values give independent keys. Use it to derive per-step keys from a root
       key and a loop counter. *)
 
-  val fold_in_tensor : key -> (int32, int32_elt) t -> key
+  val fold_in_tensor : t -> (int32, int32_elt) tensor -> t
   (** [fold_in_tensor k data] is {!fold_in} for a [data] known only at run time
       — a step counter carried through a compiled loop, a device index. [data]
       is a scalar [int32] tensor, and the result agrees with [fold_in k i]
@@ -676,12 +694,16 @@ module Rng : sig
       the subkey tracks a traced counter instead of freezing whatever value it
       held at trace time. *)
 
-  val fold_in_axis : key -> key
+  val fold_in_axis : t -> t
   (** [fold_in_axis k] folds the current mapped-axis index into [k], giving one
       independent key per lane under {!Rune.val-vmap} or per device under
       {!Rune.pmap}. Outside a transform there is a single lane and it is
       [fold_in k 0]. Decorrelates lanes from a key the map captures, where
       {!split_batch} decorrelates them from a key the map is given. *)
+
+  val ptree : t Ptree.t
+  (** [ptree] is the structure of a key or a batch of keys: one [int32] tensor,
+      at the root path. Rebuilding it checks the tensor as {!of_tensor} does. *)
 
   (** {1:samplers Explicit samplers}
 
@@ -705,24 +727,25 @@ module Rng : sig
       Float draws are computed at float64 for float64 parameters and at float32
       otherwise, then returned at the parameters' dtype. *)
 
-  val bits : key -> int array -> int32_t
+  val bits : t -> int array -> int32_t
   (** [bits k shape] is a tensor of uniformly random 32-bit words, the raw
       output of the generator that every sampler here is built from. For a
       distribution this module does not provide: build it on [bits] and it is as
       pure and as transform-safe as the rest. [uniform] at float32 is the low 24
       bits of these words scaled by [2 ** -24]. *)
 
-  val uniform : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  val uniform : t -> (float, 'b) dtype -> int array -> (float, 'b) tensor
   (** [uniform k dtype shape] samples uniformly from [\[0, 1)].
 
       A draw is a multiple of [2 ** -p], where [p] is the significand width of
       [dtype] and never more than [24]; [1] itself is unreachable. *)
 
-  val normal : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  val normal : t -> (float, 'b) dtype -> int array -> (float, 'b) tensor
   (** [normal k dtype shape] samples the standard normal distribution (mean 0,
       variance 1) via the Box-Muller transform over two {!uniform} draws. *)
 
-  val randint : key -> ?low:int -> high:int -> int array -> (int32, int32_elt) t
+  val randint :
+    t -> ?low:int -> high:int -> int array -> (int32, int32_elt) tensor
   (** [randint k ~high shape] samples integers uniformly from [\[low, high)].
       [low] defaults to [0]. The result is [int32], the type Nx indexes with;
       cast it for a wider or narrower integer.
@@ -733,12 +756,13 @@ module Rng : sig
       Raises [Invalid_argument] if [low >= high], or if either bound falls
       outside [int32]. *)
 
-  val bernoulli : key -> (float, 'b) t -> (bool, bool_elt) t
+  val bernoulli : t -> (float, 'b) tensor -> (bool, bool_elt) tensor
   (** [bernoulli k p] samples booleans that are [true] with probability [p],
       elementwise. The comparison runs at 24 random bits unless [p] is float64.
       A [p] above [1] is always [true]; below [0], or NaN, always [false]. *)
 
-  val truncated_normal : key -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+  val truncated_normal :
+    t -> (float, 'b) tensor -> (float, 'b) tensor -> (float, 'b) tensor
   (** [truncated_normal k lower upper] samples the standard normal distribution
       conditioned on landing in [[lower, upper]], elementwise; the bounds
       broadcast against each other and may be given in either order.
@@ -749,7 +773,7 @@ module Rng : sig
       in both bounds. At float64 the draw carries double precision; at narrower
       dtypes about seven digits, the precision of {!erfinv} there. *)
 
-  val gumbel : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  val gumbel : t -> (float, 'b) dtype -> int array -> (float, 'b) tensor
   (** [gumbel k dtype shape] samples the standard Gumbel distribution, the
       limiting distribution of a maximum.
 
@@ -757,11 +781,11 @@ module Rng : sig
       the distribution they describe, which is what {!categorical} does; a
       softmax in place of the argmax gives the relaxed, differentiable form. *)
 
-  val exponential : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  val exponential : t -> (float, 'b) dtype -> int array -> (float, 'b) tensor
   (** [exponential k dtype shape] samples the exponential distribution with rate
       1. Scale by [1 /. rate] for another rate. *)
 
-  val gamma : key -> (float, 'b) t -> (float, 'b) t
+  val gamma : t -> (float, 'b) tensor -> (float, 'b) tensor
   (** [gamma k concentration] samples the gamma distribution with the given
       concentration (the shape parameter, named to avoid colliding with the
       tensor shape) and unit rate, elementwise; [concentration] must be
@@ -779,14 +803,14 @@ module Rng : sig
       [concentration] flows through the accepted proposal alone, without the
       acceptance correction, so it is a biased estimator. *)
 
-  val beta : key -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+  val beta : t -> (float, 'b) tensor -> (float, 'b) tensor -> (float, 'b) tensor
   (** [beta k a b] samples the beta distribution on [[0, 1]] with concentrations
       [a] and [b], in that order (Beta(a, b) is the mirror image of Beta(b, a)),
       elementwise; the two broadcast against each other and must be positive.
       Built from two {!gamma} draws, whose approximation and biased derivative
       it inherits. *)
 
-  val dirichlet : key -> (float, 'b) t -> (float, 'b) t
+  val dirichlet : t -> (float, 'b) tensor -> (float, 'b) tensor
   (** [dirichlet k concentration] samples the Dirichlet distribution whose
       components are the last axis of [concentration], one draw per row; the
       result has the shape of [concentration] and every row sums to one. The
@@ -798,7 +822,7 @@ module Rng : sig
       Raises [Invalid_argument] if the last axis of [concentration] has fewer
       than two components. *)
 
-  val poisson : key -> (float, 'b) t -> int32_t
+  val poisson : t -> (float, 'b) tensor -> int32_t
   (** [poisson k rate] samples the Poisson distribution with the given rate,
       elementwise, at any rate; [rate] must be positive and finite, and a rate
       of zero, a negative rate or NaN gives a count of [0].
@@ -814,7 +838,7 @@ module Rng : sig
       device. Float32 places the proposals exactly up to a rate of about [1e5];
       give a float64 rate beyond that. *)
 
-  val categorical : key -> ?axis:int -> (float, 'a) t -> int32_t
+  val categorical : t -> ?axis:int -> (float, 'a) tensor -> int32_t
   (** [categorical k logits] samples category indices from unnormalised
       log-probabilities: one index per row of [logits] along [axis], which
       defaults to [-1] (the last axis). The result has the shape of [logits]
@@ -823,12 +847,12 @@ module Rng : sig
       Raises [Invalid_argument] if [logits] is a float8 type or [axis] is out of
       bounds. *)
 
-  val permutation : key -> int -> int32_t
+  val permutation : t -> int -> int32_t
   (** [permutation k n] is a random permutation of \[[0], [n-1]\].
 
       Raises [Invalid_argument] if [n <= 0]. *)
 
-  val shuffle : key -> ('a, 'b) t -> ('a, 'b) t
+  val shuffle : t -> ('a, 'b) tensor -> ('a, 'b) tensor
   (** [shuffle k t] is [t] with its first axis randomly permuted. Scalars are
       returned unchanged. *)
 
@@ -850,7 +874,7 @@ module Rng : sig
       What a scope gives up against passing keys explicitly is
       order-independence: inserting a draw shifts every draw after it. *)
 
-  val with_key : key -> (unit -> 'a) -> 'a
+  val with_key : t -> (unit -> 'a) -> 'a
   (** [with_key k f] runs [f] in a scope rooted at [k]. The keyless samplers
       inside [f] draw successive subkeys of [k], so the same [k] and the same
       draw sequence give the same values. Scopes nest: an inner one replaces the
@@ -861,7 +885,7 @@ module Rng : sig
       The scope is an effect handler, so it is per-fiber and per-domain: a draw
       on a domain spawned inside [f] does not see it. *)
 
-  val next_key : unit -> key
+  val next_key : unit -> t
   (** [next_key ()] draws a fresh subkey from the current scope. Two calls
       always return different keys. This is what the keyless samplers call.
 

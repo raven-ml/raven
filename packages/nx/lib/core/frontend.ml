@@ -2407,21 +2407,38 @@ module Make (B : Backend_intf.S) = struct
      explicit samplers below take a key and are pure functions of it
      (order-independent, transform-safe), and the keyless [rand]/[randn]/… draw
      a fresh subkey from the ambient scope and call the same samplers. A key is
-     a transparent [|2|] int32 tensor, so it flows wherever tensors go — a
-     parameter-tree leaf, a jit input, a mapped axis. *)
+     a [|2|] int32 tensor and a batch of keys adds leading axes; [Nx] makes the
+     type private, so only this module builds one, and it coerces back to the
+     tensor that flows wherever tensors go — a structure's leaf, a jit input, a
+     mapped axis. *)
   module Rng = struct
     type key = (int32, int32_elt) t
 
     let shape_string s =
-      String.concat "," (Array.to_list (Array.map string_of_int s))
+      String.concat "; " (Array.to_list (Array.map string_of_int s))
 
+    (* A key's type guarantees its last axis holds the two words, so the only
+       wrong shape a sampler can be given is a batch: [split_batch] outside the
+       [vmap] whose lanes it was built for. *)
     let check_key name k =
       if shape k <> [| 2 |] then
         invalid_arg
           (Printf.sprintf
-             "Nx.Rng.%s: a key is an int32 tensor of shape [2], got shape [%s]"
+             "Nx.Rng.%s: expected one key, got a batch of keys of shape [%s]; \
+              map over a batch with Rune.vmap"
              name
              (shape_string (shape k)))
+
+    let of_tensor t =
+      let s = shape t in
+      let r = Array.length s in
+      if r = 0 || s.(r - 1) <> 2 then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.Rng.of_tensor: a key is an int32 tensor of shape [2], and a \
+              batch of keys one of shape [...; 2]; got shape [%s]"
+             (shape_string s));
+      t
 
     let check_shape name shape' =
       if Array.exists (fun d -> d < 0) shape' then

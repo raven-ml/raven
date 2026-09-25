@@ -694,7 +694,7 @@ let test_pmap_dropout_grad_decorrelates () =
   in
   let g =
     Rune.pmap ~devices:devs2 ~in_axes:[ Some 0; None ]
-      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      Nx.Ptree.(tensor @-> Nx.Rng.ptree @-> returns tensor)
       mask_grad
   in
   let masks = g (Nx.ones f32 [| 2; 16 |]) key in

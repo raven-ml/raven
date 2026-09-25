@@ -26,9 +26,9 @@
 
    [--dropout RATE] (default 0, the reference protocol's dropout-free graph)
    enables the GPT-2 dropout sites in [Gpt2.hidden]. The per-step mask key is an
-   int32 argument of the compiled step (keys must be inputs, never captures),
-   derived as [Nx.Rng.fold_in root step] from [--seed], so a run is reproducible
-   from its seed alone.
+   argument of the compiled step (keys must be inputs, never captures), derived
+   as [Nx.Rng.fold_in root step] from [--seed], so a run is reproducible from
+   its seed alone.
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
    value), wall-clock ms, and fingerprints of six designated weights in the
@@ -164,10 +164,10 @@ let train_step objective params =
   let state = Vega.sgd_init gpt2_tree params in
   (loss, fst (Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) state ~params ~grads))
 
-(* The step's dropout key is an optional int32 argument: [Some key] when
-   [--dropout] is positive, [None] otherwise. [None] holds no tensor, so
-   dropout-free runs trace the exact reference graph. *)
-let key = Nx.Ptree.(option tensor)
+(* The step's dropout key is an optional argument: [Some key] when [--dropout]
+   is positive, [None] otherwise. [None] holds no tensor, so dropout-free runs
+   trace the exact reference graph. *)
+let key = Nx.Ptree.option Nx.Rng.ptree
 
 (* Float16 compute needs loss scaling: float16 gradients underflow below 2^-24.
    The scale state is consumed and returned by the jitted step as tensor leaves,

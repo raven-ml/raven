@@ -80,12 +80,15 @@ let test_sampler_argument_errors () =
   raises_match Exn.invalid_arg (fun () ->
       ignore (Nx.Rng.split ~n:0 (Nx.Rng.key 0)));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (Nx.Rng.uniform (Nx.zeros Nx.int32 [| 3 |]) f32 [| 4 |]))
+      ignore (Nx.Rng.of_tensor (Nx.zeros Nx.int32 [| 3 |])));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore
+        (Nx.Rng.uniform (Nx.Rng.split_batch ~n:3 (Nx.Rng.key 0)) f32 [| 4 |]))
 
 (* Key derivation *)
 
 let test_split_is_deterministic () =
-  let sub i = Nx.to_array (Nx.Rng.split (Nx.Rng.key 42)).(i) in
+  let sub i = Nx.to_array ((Nx.Rng.split (Nx.Rng.key 42)).(i) :> Nx.int32_t) in
   is_true ~msg:"splitting twice gives the same subkeys" (sub 0 = sub 0);
   is_true ~msg:"subkeys differ" (sub 0 <> sub 1)
 
@@ -134,7 +137,7 @@ let test_scope_matches_explicit_draw () =
 let test_jit_uniform_bit_parity () =
   let f key = Nx.Rng.uniform key Nx.float32 [| 1000 |] in
   let k = Nx.Rng.key 42 in
-  let g = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
+  let g = Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f in
   check_bits ~msg:"eager == jit, bitwise" (f k) (g k);
   check_bits ~msg:"replay" (f k) (g k)
 
@@ -143,16 +146,16 @@ let test_jit_bits_parity () =
   let k = Nx.Rng.key 8 in
   is_true ~msg:"bits are identical under jit"
     (Nx.to_array (f k)
-    = Nx.to_array (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k))
+    = Nx.to_array (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f k))
 
 let test_jit_int_samplers_bit_parity () =
   let k = Nx.Rng.key 9 in
   let fr key = Nx.cast f32 (Nx.Rng.randint key ~low:3 ~high:9 [| 64 |]) in
   check_bits ~msg:"randint" (fr k)
-    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) fr k);
+    (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) fr k);
   let fb key = Nx.cast f32 (Nx.Rng.bernoulli key (param [| 64 |] 0.3)) in
   check_bits ~msg:"bernoulli" (fb k)
-    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) fb k)
+    (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) fb k)
 
 (* A parameter is data, traced through jit like the key: a jitted step can take
    its dropout probability or its rates as an input, and the compiled program
@@ -160,7 +163,7 @@ let test_jit_int_samplers_bit_parity () =
    compiled agree bit for bit. *)
 let test_jit_traced_parameter () =
   let f (p, key) = Nx.cast f32 (Nx.Rng.bernoulli key p) in
-  let g = Rune.jit Nx.Ptree.(pair tensor tensor @-> returns tensor) f in
+  let g = Rune.jit Nx.Ptree.(pair tensor Nx.Rng.ptree @-> returns tensor) f in
   let k = Nx.Rng.key 11 in
   let p = Nx.Rng.uniform (Nx.Rng.key 3) f32 [| 64 |] in
   check_bits ~msg:"bernoulli with a traced p" (f (p, k)) (g (p, k));
@@ -176,7 +179,7 @@ let test_jit_normal_matches_eager () =
   let k = Nx.Rng.key 42 in
   check_arr ~msg:"normal"
     (to_arr (f k))
-    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)
+    (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f k)
 
 let test_jit_split_derived_key_traces () =
   let f key =
@@ -187,13 +190,13 @@ let test_jit_split_derived_key_traces () =
   in
   let k = Nx.Rng.key 11 in
   check_bits ~msg:"keys split inside the trace" (f k)
-    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)
+    (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f k)
 
 let test_jit_fold_in_driven_steps () =
   let root = Nx.Rng.key 3 in
   let g =
     Rune.jit
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       (fun key -> Nx.Rng.uniform key f32 [| 8 |])
   in
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
@@ -229,7 +232,7 @@ let test_fold_in_tensor_matches_the_host_form () =
 let test_jit_fold_in_tensor_tracks_a_traced_step () =
   let g =
     Rune.jit
-      Nx.Ptree.(pair tensor tensor @-> returns tensor)
+      Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns tensor)
       (fun (key, step) ->
         Nx.Rng.uniform (Nx.Rng.fold_in_tensor key step) f32 [| 8 |])
   in
@@ -252,11 +255,11 @@ let test_jit_truncated_normal_compiles () =
   let k = Nx.Rng.key 31 in
   check_arr ~msg:"eager == jit"
     (to_arr (f k))
-    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k);
+    (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f k);
   is_true ~msg:"compiled draws respect the bounds"
     (Array.for_all
        (fun v -> v >= -2.0 && v <= 2.0)
-       (to_arr (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)))
+       (to_arr (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f k)))
 
 (* Both of these replace a rejection loop with something of fixed shape — gamma
    with a fixed round count, poisson with a cumulative product — for the sole
@@ -265,7 +268,7 @@ let test_jit_truncated_normal_compiles () =
 let test_jit_gamma_and_poisson_compile () =
   let g_gamma =
     Rune.jit
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       (fun key -> Nx.Rng.gamma key (param [| 256 |] 2.5))
   in
   let a = to_arr (g_gamma (Nx.Rng.key 1)) in
@@ -275,7 +278,7 @@ let test_jit_gamma_and_poisson_compile () =
     (a <> to_arr (g_gamma (Nx.Rng.key 2)));
   let g_poisson =
     Rune.jit
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       (fun key -> Nx.cast f32 (Nx.Rng.poisson key (param [| 256 |] 4.0)))
   in
   let b = to_arr (g_poisson (Nx.Rng.key 1)) in
@@ -298,7 +301,7 @@ let test_jit_scope_rooted_at_input_key_traces () =
   let k = Nx.Rng.key 17 in
   check_arr ~msg:"eager == jit"
     (to_arr (f k))
-    (Rune.jit Nx.Ptree.(tensor @-> returns tensor) f k)
+    (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f k)
 
 (* Each call recomputes from the key it is given, so feeding fresh keys gives
    fresh values and the same key replays. A frozen draw would fail both. *)
@@ -306,7 +309,7 @@ let test_jit_scope_recomputes_per_key () =
   let root = Nx.Rng.key 5 in
   let g =
     Rune.jit
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       (fun key -> Nx.Rng.with_key key (fun () -> Nx.rand f32 [| 8 |]))
   in
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
@@ -325,7 +328,7 @@ let test_jit_scope_recomputes_per_key () =
 let test_jit_scope_draws_are_decorrelated () =
   let g =
     Rune.jit
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       (fun key ->
         Nx.Rng.with_key key (fun () ->
             Nx.stack ~axis:0 [ Nx.rand f32 [| 64 |]; Nx.rand f32 [| 64 |] ]))
@@ -393,12 +396,20 @@ let test_grad_dropout_mask_is_constant () =
 
 (* Vmap: per-lane keys decorrelate lanes *)
 
+let over_keys f = Rune.vmap Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f
+
+(* The keys of [split], stacked by hand into one batch. *)
+let stacked ks =
+  Nx.Rng.of_tensor
+    (Nx.stack ~axis:0
+       (Array.to_list (Array.map (fun k -> (k : Nx.Rng.t :> Nx.int32_t)) ks)))
+
 let test_vmap_per_lane_keys () =
   let ks = Nx.Rng.split ~n:4 (Nx.Rng.key 42) in
-  let draw = Rune.vmap' (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |]) in
+  let draw = over_keys (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |]) in
   let out = draw (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 42)) in
   check_bits ~msg:"split_batch maps as the stacked split does"
-    (draw (Nx.stack ~axis:0 (Array.to_list ks)))
+    (draw (stacked ks))
     out;
   equal ~msg:"one row per lane" int 4 (Nx.shape out).(0);
   (* Each lane draws what its key draws unbatched, and lanes differ. *)
@@ -449,7 +460,7 @@ let test_vmap_scope_rooted_at_mapped_key () =
   let ks = Nx.Rng.split ~n:4 (Nx.Rng.key 42) in
   let draw () = Nx.rand Nx.float32 [| 8 |] in
   let out =
-    Rune.vmap'
+    over_keys
       (fun key -> Nx.Rng.with_key key draw)
       (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 42))
   in
@@ -474,7 +485,7 @@ let test_pmap_fold_in_axis_decorrelates () =
     let n = List.length devices in
     let g =
       Rune.pmap ~devices ~in_axes:[ Some 0; None ]
-        Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+        Nx.Ptree.(tensor @-> Nx.Rng.ptree @-> returns tensor)
         (fun rows key ->
           Nx.mul rows (Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f32 [| n; 8 |]))
     in

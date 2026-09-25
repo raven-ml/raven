@@ -385,7 +385,7 @@ let test_rng_uniform_bit_parity_on_cuda () =
   let g =
     Rune.jit
       ~devices:[ Rune.device "CUDA" ]
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       f
   in
   check_bits ~msg:"eager == cuda jit, bitwise" (f k) (g k);
@@ -398,7 +398,7 @@ let test_rng_int_samplers_bit_parity_on_cuda () =
   check_bits ~msg:"randint" (fr k)
     (Rune.jit
        ~devices:[ Rune.device "CUDA" ]
-       Nx.Ptree.(tensor @-> returns tensor)
+       Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
        fr k);
   let fb key =
     Nx.cast f32
@@ -407,7 +407,7 @@ let test_rng_int_samplers_bit_parity_on_cuda () =
   check_bits ~msg:"bernoulli" (fb k)
     (Rune.jit
        ~devices:[ Rune.device "CUDA" ]
-       Nx.Ptree.(tensor @-> returns tensor)
+       Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
        fb k)
 
 (* The threefry bits agree exactly; Box-Muller's cos/log/sqrt land within
@@ -420,7 +420,7 @@ let test_rng_normal_matches_eager_on_cuda () =
     (to_arr (f k))
     (Rune.jit
        ~devices:[ Rune.device "CUDA" ]
-       Nx.Ptree.(tensor @-> returns tensor)
+       Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
        f k)
 
 let test_rng_fold_in_driven_steps_on_cuda () =
@@ -429,7 +429,7 @@ let test_rng_fold_in_driven_steps_on_cuda () =
   let g =
     Rune.jit
       ~devices:[ Rune.device "CUDA" ]
-      Nx.Ptree.(tensor @-> returns tensor)
+      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
       (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |])
   in
   let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
