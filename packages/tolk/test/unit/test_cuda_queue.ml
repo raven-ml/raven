@@ -67,11 +67,16 @@ let () = run "CUDA queue compilation" [
           equal int 3 (List.length info.accesses);
           equal int 0 (List.length info.host_deps)
       | _ -> fail "peers were not batched");
-  test "incompatible groups and ordinary calls retain batch boundaries" (fun () ->
+  test "independent groups regroup without crossing ordinary calls" (fun () ->
       let first = U.store_call ~dst:(parameter 1) ~src:(parameter 0)
       and second = U.store_call ~dst:(peer 3) ~src:(peer 2) in
       let compiled = compile ~peer_group:"separate" [first; second; first] in
-      equal int 3 (List.length (U.children compiled));
+      equal int 2 (List.length (U.children compiled));
+      let groups = List.map (fun call ->
+          match U.arg (U.without_after call) with
+          | U.Arg.Call_info {aux = Some info; _} -> info.devices
+          | _ -> fail "expected a queue submission") (U.children compiled) in
+      equal (list (list string)) [[device_name]; ["CUDA:queue-peer"]] groups;
       let ordinary = U.store_call
           ~dst:(U.param ~slot:4 ~dtype:Dtype.int32 ~shape:(U.const_int 16) ~device:(U.Single "CPU") ())
           ~src:(U.param ~slot:5 ~dtype:Dtype.int32 ~shape:(U.const_int 16) ~device:(U.Single "CPU") ()) in
