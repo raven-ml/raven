@@ -15,3 +15,9 @@
  (modules test_multi)
  (package tolk)
  (libraries tolk tolk.uop tolk.cpu tolk.cuda tolk.frontend windtrap))
+
+(test
+ (name test_collectives)
+ (modules test_collectives)
+ (package tolk)
+ (libraries tolk tolk.uop tolk.cpu tolk.frontend windtrap))

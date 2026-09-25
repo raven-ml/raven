@@ -135,26 +135,6 @@ let schedule_reduction ~devices ~shape =
   fst (Schedule.create_linear_with_vars
          ~get_kernel_graph:Rangeify.get_kernel_graph call)
 
-(* Floats over 40 binades with mixed signs, so a sum's rounding depends on the
-   order it folds them in. *)
-let spread n =
-  Array.init n (fun i ->
-      let v = Float.ldexp (1.0 +. float_of_int (i * 37 mod 64) /. 64.0) (i * 13 mod 40 - 20) in
-      if i mod 3 = 0 then -.v else v)
-
-(* The buffers holding each device's replica of a sum over the split axis of
-   a [devices; cols] value. *)
-let allreduce_replicas ~devices ~cols =
-  let shape = [ List.length devices; cols ] in
-  let data = spread (List.length devices * cols) in
-  let xs = sharded (input "CPU" shape data) shape devices 0 in
-  let replicas =
-    device_buffers (realize (U.reduce_axis ~src:xs ~op:Ops.Add ~axes:[ 0 ]))
-  in
-  equal ~msg:"one replica per device" int (List.length devices)
-    (List.length replicas);
-  List.map Device.Buffer.as_bytes replicas
-
 let forced_strategies =
   Helpers.Context_var.
     [ [ B (Helpers.ring, 2) ];
@@ -448,19 +428,6 @@ let () =
                   let got = run_sharded ~devices:devs4 ~shape:[4; 7] ~axis:0 data
                       (fun x -> U.reduce_axis ~src:x ~op:Ops.Max ~axes:[0]) in
                   equal (array (float 1e-6)) (Array.sub data 0 7) got));
-          test "hierarchical replicas agree bit for bit across three or more boxes" (fun () ->
-              List.iter (fun (ndev, per_box) ->
-                  Helpers.Context_var.with_context
-                    [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, per_box)] (fun () ->
-                      let devices = List.init ndev (fun i -> "CPU:" ^ string_of_int (i + 1)) in
-                      match allreduce_replicas ~devices ~cols:64 with
-                      | first :: rest ->
-                          List.iteri (fun i replica ->
-                              is_true ~msg:(Printf.sprintf "%d devices, %d per box: replica %d"
-                                  ndev per_box (i + 1))
-                                (Bytes.equal first replica)) rest
-                      | [] -> fail "no replicas"))
-                [ (6, 1); (6, 2); (8, 1); (8, 2) ]);
           test "symbolic allreduce retains logical sizes under forced ring" (fun () ->
               Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.ring, 2)] (fun () ->
                   let v = U.variable ~name:"collective_size" ~min_val:1 ~max_val:7 () in
