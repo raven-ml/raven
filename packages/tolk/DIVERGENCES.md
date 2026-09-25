@@ -443,6 +443,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_symbolic`, frontend alias tests and `test_hcq2`. Reconsider the proof
   differences when upstream handles these cases without materializing copies.
 
+- **Frontend JIT return traversal is explicit.** `Jit.create ~outputs` uses a
+  typed function to enumerate tensors in a returned record or container;
+  tinygrad inspects Python structures dynamically. This keeps arbitrary OCaml
+  values opaque while refreshing symbolic views after replay. Consumers: GPT-2,
+  runtime benchmarks and structured tensor results. Coverage: frontend JIT
+  tests for nested results, fixed inner bindings and reset. Reconsider if the
+  frontend adopts one canonical tensor-tree result type.
+
 - **Symbolic index expressions use `Movement.symbolic_shrink`**, composed with
   `Movement.squeeze` for a scalar selection. `Movement.index` keeps integer
   bounds; `Op.getitem` supports symbolic axis lengths and index-tensor shapes.

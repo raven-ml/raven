@@ -22,12 +22,14 @@
        it wants computed (see {!Run.realize}) before returning: on replay
        only the recorded kernels run, so work left lazy at capture never
        executes again.}
-    {- {e Same signature every call.} Inputs must keep their element count,
-       dtype, and device across calls, and the same variables must be bound
-       in the same order. {!Jit_error} is raised on mismatch.}
+    {- {e Same signature every call.} Inputs must keep their normalized
+       movement views, symbolic variable declarations, dtype, and device
+       across calls. Equivalent compositions of movement operations are
+       accepted. Bound variable values may vary; the order of explicit
+       [vars] does not matter. {!Jit_error} is raised on mismatch.}
     {- {e Everything that varies flows through arguments.} Values that change
-       between calls must enter either as input tensor data or as [vars]
-       values; anything else the function reads is frozen into the capture.
+       between calls must enter as input tensor data, symbolic bindings in
+       input views, or [vars] values; anything else the function reads is frozen into the capture.
        Tensors the function closes over (weights, caches) keep their storage
        across calls, and in-place assignments to them replay against that
        same storage.}
@@ -51,8 +53,8 @@ val create :
     [outputs] enumerates the tensors in the returned value, including tensors
     nested in records or containers. For a single tensor result, pass
     [(fun tensor -> [tensor])]. Their symbolic views are rebound to the current
-    [vars] after replay; variables bound only inside [fxn] keep their captured
-    values.
+    input-view bindings and [vars] after replay; variables bound only inside
+    [fxn] keep their captured values.
 
     [fxn] receives the
     input tensors and the [vars] array of the current call unchanged; it
@@ -65,8 +67,10 @@ val call : ?vars:Tolk_uop.Uop.t array -> 'a t -> Tensor.t array -> 'a
 
     Each element of [vars] must be a {!Tolk_uop.Uop.bind} of a named
     {!Tolk_uop.Uop.variable} to an integer constant; the bound values are
-    passed to the replayed kernels, so variable names and bounds must not
-    change across calls. [vars] defaults to no variables.
+    passed to the replayed kernels. Bindings in symbolic input views are
+    extracted automatically and merged with [vars]; conflicting values for
+    the same name raise {!Jit_error}. Input-view variable names and bounds
+    must not change across calls. [vars] defaults to no explicit bindings.
 
     Unrealized input tensors are realized first. Each input must then be
     backed by its own buffer; on replay the current buffers are substituted

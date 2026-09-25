@@ -1428,6 +1428,40 @@ let mop_tests =
   in
   group "mop_cleanup"
     [
+      test "adjacent scalar SHRINKs return the scalar" (fun () ->
+          let base = U.param ~slot:0 ~dtype:D.int32 () in
+          let empty = U.stack [] in
+          let shrink src = U.shrink ~src ~offset:empty ~size:empty in
+          match mop (shrink (shrink base)) with
+          | Some result -> is_true (result == base)
+          | None -> fail "expected empty SHRINKs to disappear");
+      test "adjacent SHRINKs compose every axis offset" (fun () ->
+          let base = U.buffer ~slot:0 ~dtype:D.int32 ~addrspace:D.Global
+              ~shape:(U.stack [idx 8; idx 10]) () in
+          let inner = U.shrink ~src:base ~offset:(U.stack [idx 1; idx 2])
+              ~size:(U.stack [idx 6; idx 7]) in
+          let outer = U.shrink ~src:inner ~offset:(U.stack [idx 2; idx 3])
+              ~size:(U.stack [idx 2; idx 4]) in
+          match mop outer with
+          | Some result ->
+              is_true (src result 0 == base);
+              equal (list int) [3; 5] (List.map const_int (U.as_shape (src result 1)));
+              equal (list int) [2; 4] (U.max_shape result)
+          | None -> fail "expected adjacent SHRINKs to merge");
+      test "adjacent SHRINKs retain symbolic offsets and sizes" (fun () ->
+          let base = ptr_buffer 0 in
+          let offset = U.variable ~name:"offset" ~min_val:0 ~max_val:4 () in
+          let size = U.variable ~name:"size" ~min_val:1 ~max_val:3 () in
+          let inner = U.shrink ~src:base ~offset ~size:(idx 8) in
+          let outer = U.shrink ~src:inner ~offset:(idx 2) ~size in
+          match mop outer with
+          | Some result ->
+              is_true (src result 0 == base);
+              is_true (src result 2 == size);
+              List.iter (fun value ->
+                  equal int (value + 2)
+                    (U.sym_infer (src result 1) ["offset", Int64.of_int value])) [0; 2; 4]
+          | None -> fail "expected symbolic SHRINKs to merge");
       test "INDEX on INDEX chains scalar coordinates" (fun () ->
           let buf = ptr_buffer 0 in
           let inner = raw_index ~ptr:buf ~idxs:[ idx 3 ] in

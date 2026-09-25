@@ -9,6 +9,19 @@ let mop_cleanup : Upat.Pattern_matcher.t =
   let open Upat in
   Pattern_matcher.make
     [
+      (* A slice of a slice adds offsets and keeps the outer extents. *)
+      (op ~name:"outer" ~src:[ op ~name:"inner" Ops.Shrink; any; any ] Ops.Shrink
+      => fun bs ->
+        let outer = bs $ "outer" and inner = bs $ "inner" in
+        let offsets = List.map2 (fun a b -> Uop.simplify Uop.O.(a + b))
+            (Uop.as_shape (Uop.src inner).(1))
+            (Uop.as_shape (Uop.src outer).(1)) in
+        match offsets with
+        | [] -> Some (Uop.src inner).(0)
+        | _ ->
+            let offset = match offsets with [offset] -> offset | _ -> Uop.stack offsets in
+            Some (Uop.shrink ~src:(Uop.src inner).(0) ~offset
+                    ~size:(Uop.src outer).(2)));
       (* Merge adjacent reshapes: the outer reshape keeps its own target
          shape but reads through the inner reshape's input. *)
       (op ~name:"x" ~src:[ op ~name:"x2" Ops.Reshape; any ] Ops.Reshape

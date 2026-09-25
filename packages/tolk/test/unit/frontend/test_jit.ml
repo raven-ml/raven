@@ -253,5 +253,88 @@ let error_tests =
                 (Jit.call jit ~vars:[| U.const_int 3 |] [| vec [| 1.; 2. |] |])));
     ]
 
+let input_view_tests =
+  group "input views"
+    [
+      test "same-sized different input layouts are rejected" (fun () ->
+          List.iter (fun changed ->
+              let jit = Jit.create ~outputs:(fun tensor -> [tensor])
+                  (fun inputs ~vars:_ -> Run.realize (Rd.sum inputs.(0))) in
+              let input () = Mv.reshape (vec [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|]) [2; 4] in
+              ignore (Jit.call jit [|input ()|]);
+              ignore (Jit.call jit [|input ()|]);
+              raises_match is_jit_error (fun () ->
+                  ignore (Jit.call jit [|changed (input ())|])))
+            [ (fun t -> Mv.reshape t [4; 2]);
+              (fun t -> Mv.permute t [1; 0]) ]);
+      test "equivalent composed input views replay" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor])
+              (fun inputs ~vars:_ -> incr traces; Run.realize (Rd.sum inputs.(0))) in
+          for i = 0 to 3 do
+            let input = vec (Array.init 8 (fun n -> Float.of_int (i + n))) in
+            let input = if i < 2 then Mv.reshape input [2; 4]
+              else Mv.reshape (Mv.reshape input [4; 2]) [2; 4] in
+            check_floats [|Float.of_int (8 * i + 28)|] (Jit.call jit [|input|])
+          done;
+          equal int 2 !traces);
+      test "equivalent nested slices replay" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor])
+              (fun inputs ~vars:_ -> incr traces; Run.realize (Rd.sum inputs.(0))) in
+          for i = 0 to 3 do
+            let input = vec (Array.init 8 (fun n -> Float.of_int (i + n + 1))) in
+            let input = if i < 2 then Mv.shrink input [3, 5]
+              else Mv.shrink (Mv.shrink input [1, 7]) [2, 4] in
+            check_floats [|Float.of_int (2 * i + 9)|] (Jit.call jit [|input|])
+          done;
+          equal int 2 !traces);
+      test "input-only symbolic bindings vary on replay" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor])
+              (fun inputs ~vars:_ -> incr traces; Run.realize (Rd.sum inputs.(0))) in
+          let variable = U.variable ~name:"input_size" ~min_val:1 ~max_val:8 () in
+          List.iter (fun n ->
+              let input = vec [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|] in
+              let bound = U.bind ~var:variable ~value:(U.const_int n) in
+              let input = Mv.symbolic_shrink input [Some (U.const_int 0, bound)] in
+              check_floats [|Float.of_int (n * (n + 1) / 2)|]
+                (Jit.call jit [|input|])) [2; 3; 5; 1; 8];
+          equal int 2 !traces);
+      test "input bindings also refresh returned symbolic views" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor])
+              (fun inputs ~vars:_ ->
+                incr traces;
+                Run.realize (El.add inputs.(0) (T.f 1.))) in
+          let variable = U.variable ~name:"input_size" ~min_val:1 ~max_val:8 () in
+          List.iter (fun n ->
+              let input = vec [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|] in
+              let bound = U.bind ~var:variable ~value:(U.const_int n) in
+              let input = Mv.symbolic_shrink input [Some (U.const_int 0, bound)] in
+              let output = Jit.call jit [|input|] in
+              let node = T.uop output in
+              let bindings = List.filter_map (fun u ->
+                  match U.as_bind u with
+                  | Some {value; _} -> Some (u, value)
+                  | None -> None) (U.toposort node) in
+              let output = T.of_uop (U.substitute ~walk:true bindings node) in
+              equal (list int) [n] (T.shape output);
+              check_floats (Array.init n (fun i -> Float.of_int (i + 2))) output)
+            [2; 3; 5; 1; 8];
+          equal int 2 !traces);
+      test "input and explicit symbolic bindings cannot conflict" (fun () ->
+          let variable = U.variable ~name:"input_size" ~min_val:1 ~max_val:8 () in
+          let bind n = U.bind ~var:variable ~value:(U.const_int n) in
+          let input = Mv.symbolic_shrink (vec [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|])
+              [Some (U.const_int 0, bind 2)] in
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor])
+              (fun inputs ~vars:_ -> incr traces; Run.realize (Rd.sum inputs.(0))) in
+          raises_match is_jit_error (fun () ->
+              ignore (Jit.call jit ~vars:[|bind 3|] [|input|]));
+          equal int 0 !traces);
+    ]
+
 let () =
-  run "Tolk_frontend_jit" [ elementwise_tests; symbolic_tests; error_tests ]
+  run "Tolk_frontend_jit" [ elementwise_tests; symbolic_tests; error_tests; input_view_tests ]

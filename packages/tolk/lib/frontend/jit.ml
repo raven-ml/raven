@@ -24,6 +24,7 @@ type 'a t = {
   fxn : T.t array -> vars:U.t array -> 'a;
   outputs : 'a -> T.t list;
   mutable symbolic_outputs : (T.t * U.t * (U.t * int64) list) list option;
+  mutable expected_inputs : (U.t * U.t list * Dtype.t) array option;
   mutable inner : 'a Tolk.Jit.tiny_jit option;
   mutable current : (T.t array * U.t array) option;
       (* Arguments of the in-flight call, read by the engine-facing function
@@ -31,7 +32,8 @@ type 'a t = {
 }
 
 let create ~outputs fxn =
-  { fxn; outputs; symbolic_outputs = None; inner = None; current = None }
+  { fxn; outputs; symbolic_outputs = None; expected_inputs = None;
+    inner = None; current = None }
 
 (* The engine JIT is created on first call so that constructing a JIT does
    not open the execution device. *)
@@ -62,7 +64,8 @@ let captured t =
 let reset t =
   (match t.inner with Some jit -> Tolk.Jit.reset jit | None -> ());
   t.current <- None;
-  t.symbolic_outputs <- None
+  t.symbolic_outputs <- None;
+  t.expected_inputs <- None
 
 let is_realized tensor =
   match U.runtime_realization_state (T.uop tensor) with
@@ -95,30 +98,43 @@ let prepare_inputs tensors vars =
         raise (Jit_error "duplicate inputs to JIT");
       Hashtbl.add seen (U.tag node) ())
     input_uops;
-  let var_vals =
-    Array.fold_left
-      (fun acc bind ->
-        let var, value =
-          match U.as_bind bind with
-          | Some _ -> U.unbind bind
-          | None -> raise (Jit_error "JIT vars must be bound variables")
-        in
-        let name =
-          match U.Arg.as_param_arg (U.arg var) with
-          | Some { name = Some name; _ } -> name
-          | _ -> raise (Jit_error "JIT vars must bind named variables")
-        in
-        (match List.assoc_opt name acc with
-        | Some prev when prev <> value ->
-            raise
-              (Jit_error
-                 (Printf.sprintf "conflicting values for JIT var %s: %Ld and %Ld"
-                    name prev value))
-        | _ -> ());
-        (name, value) :: acc)
-      [] vars
+  let var_name var =
+    match U.Arg.as_param_arg (U.arg var) with
+    | Some { name = Some name; _ } -> name
+    | _ -> raise (Jit_error "JIT vars must bind named variables")
   in
-  (input_uops, List.rev var_vals)
+  let var_vals = ref [] in
+  let add_binding (var, value) =
+    let name = var_name var in
+    match List.assoc_opt name !var_vals with
+    | Some prev when prev <> value ->
+        raise
+          (Jit_error
+             (Printf.sprintf "conflicting values for JIT var %s: %Ld and %Ld"
+                name prev value))
+    | Some _ -> ()
+    | None -> var_vals := (name, value) :: !var_vals
+  in
+  let input_info = Array.map (fun tensor ->
+      let node = T.uop tensor in
+      let view = U.substitute [U.base node, U.noop ()] node
+        |> U.graph_rewrite
+             (Upat.Pattern_matcher.rewrite Tolk_uop.Movement.mop_cleanup) in
+      let bindings = List.filter_map (fun bound ->
+          if U.is_bound_var bound then Some (bound, U.unbind bound)
+          else None) (U.toposort view) in
+      List.iter (fun (_, binding) -> add_binding binding) bindings;
+      let variables = List.map (fun (_, (var, _)) -> var) bindings
+        |> List.sort_uniq U.compare
+        |> List.sort (fun a b -> String.compare (var_name a) (var_name b)) in
+      let view = U.substitute ~walk:true
+          (List.map (fun (bound, (var, _)) -> bound, var) bindings) view in
+      view, variables, U.dtype node) tensors in
+  Array.iter (fun bind ->
+      if not (U.is_bound_var bind) then
+        raise (Jit_error "JIT vars must be bound variables");
+      add_binding (U.unbind bind)) vars;
+  (input_uops, List.rev !var_vals, input_info)
 
 (* Buffers that must survive replay with their own storage: every buffer node
    with concrete device storage, plus every buffer node still reachable from
@@ -163,12 +179,24 @@ let refresh_outputs t ret var_vals =
       T.set_uop tensor (U.substitute ~walk:true replacements node)) symbolic
 
 let call ?(vars = [||]) t tensors =
-  let input_uops, var_vals = prepare_inputs tensors vars in
+  let input_uops, var_vals, input_info = prepare_inputs tensors vars in
+  (match t.expected_inputs with
+  | Some expected when not (Array.equal
+      (fun (view, variables, dtype) (other_view, other_variables, other_dtype) ->
+        U.equal view other_view && List.equal U.equal variables other_variables
+        && Dtype.equal dtype other_dtype)
+      expected input_info) ->
+      raise (Jit_error "input view or symbolic variable mismatch with JIT capture")
+  | _ -> ());
   let jit = inner t in
   t.current <- Some (tensors, vars);
   Fun.protect
     ~finally:(fun () -> t.current <- None)
     (fun () ->
       let ret = Tolk.Jit.call jit input_uops var_vals ~held_buffers in
-      if captured t then refresh_outputs t ret var_vals;
+      if captured t then begin
+        if Option.is_none t.expected_inputs then
+          t.expected_inputs <- Some input_info;
+        refresh_outputs t ret var_vals
+      end;
       ret)

@@ -679,6 +679,10 @@ thread.
 
 ### Tolk (new)
 
+- `Jit.call` rejects changed input layouts and reads symbolic bindings carried
+  by input views. Equivalent composed reshapes and slices share a capture;
+  conflicting input and explicit bindings fail before execution.
+
 - `Jit.call` refreshes symbolic output views with each replay binding instead
   of retaining capture-time extents. `Jit.create ~outputs` explicitly identifies
   tensors inside structured return values; inner fixed bindings remain fixed.
