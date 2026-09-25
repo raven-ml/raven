@@ -13,16 +13,16 @@ type context = { pool : Parallel.pool }
 let create_context () = { pool = Parallel.get_or_setup_pool () }
 
 type 'b buffer =
-  | Float64 : float# array -> Dtype.float64_elt buffer
-  | Float32 : float32# array -> Dtype.float32_elt buffer
-  | Int8 : int8# array -> Dtype.int8_elt buffer
-  | Int16 : int16# array -> Dtype.int16_elt buffer
-  | Int32 : int32# array -> Dtype.int32_elt buffer
-  | Int64 : int64# array -> Dtype.int64_elt buffer
-  | Bool : bool array -> Dtype.bool_elt buffer
+  | Float64 : float# array -> Nx_dtype.float64_elt buffer
+  | Float32 : float32# array -> Nx_dtype.float32_elt buffer
+  | Int8 : int8# array -> Nx_dtype.int8_elt buffer
+  | Int16 : int16# array -> Nx_dtype.int16_elt buffer
+  | Int32 : int32# array -> Nx_dtype.int32_elt buffer
+  | Int64 : int64# array -> Nx_dtype.int64_elt buffer
+  | Bool : bool array -> Nx_dtype.bool_elt buffer
 
 type ('a, 'b) t = {
-  dtype : ('a, 'b) Dtype.t;
+  dtype : ('a, 'b) Nx_dtype.t;
   buffer : 'b buffer;
   view : View.t;
   context : context;
@@ -44,34 +44,34 @@ let to_host (type a b) (t : (a, b) t) :
     (a, b) Nx_buffer.t =
   let n = numel t.view in
   match t.dtype with
-  | Dtype.Float64 ->
+  | Nx_dtype.Float64 ->
     (match t.buffer with
      | Float64 arr -> of_bigarray1 (Array.unboxed_float64_to_ba arr n)
      | _ -> assert false)
-  | Dtype.Float32 ->
+  | Nx_dtype.Float32 ->
     (match t.buffer with
      | Float32 arr -> of_bigarray1 (Array.unboxed_float32_to_ba arr n)
      | _ -> assert false)
-  | Dtype.Int64 ->
+  | Nx_dtype.Int64 ->
     (match t.buffer with
      | Int64 arr -> of_bigarray1 (Array.unboxed_int64_to_ba arr n)
      | _ -> assert false)
-  | Dtype.Int32 ->
+  | Nx_dtype.Int32 ->
     (match t.buffer with
      | Int32 arr -> of_bigarray1 (Array.unboxed_int32_to_ba arr n)
      | _ -> assert false)
-  | Dtype.Int8 ->
+  | Nx_dtype.Int8 ->
     (match t.buffer with
      | Int8 arr -> of_bigarray1 (Array.unboxed_int8_to_ba arr n)
      | _ -> assert false)
-  | Dtype.Int16 ->
+  | Nx_dtype.Int16 ->
     (match t.buffer with
      | Int16 arr -> of_bigarray1 (Array.unboxed_int16_to_ba arr n)
      | _ -> assert false)
-  | Dtype.Bool ->
+  | Nx_dtype.Bool ->
     (match t.buffer with
      | Bool arr ->
-       let ba = Nx_buffer.create Nx_buffer.Bool n in
+       let ba = Nx_buffer.create Nx_dtype.Bool n in
        for i = 0 to n - 1 do
          Nx_buffer.unsafe_set ba i arr.(i)
        done;
@@ -79,40 +79,40 @@ let to_host (type a b) (t : (a, b) t) :
      | _ -> assert false)
   | _ -> invalid_arg "to_host: unsupported dtype"
 
-let buffer (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array) :
+let buffer (type a b) context (dtype : (a, b) Nx_dtype.t) (shape_arr : int array) :
     (a, b) t =
   let size = Stdlib.Array.fold_left ( * ) 1 shape_arr in
   let view = View.create shape_arr in
   match dtype with
-  | Dtype.Float64 ->
+  | Nx_dtype.Float64 ->
       let buffer = Array.make_float64 size in
       { dtype; buffer = Float64 buffer; view; context }
-  | Dtype.Float32 ->
+  | Nx_dtype.Float32 ->
       let buffer = Array.make_float32 size in
       { dtype; buffer = Float32 buffer; view; context }
-  | Dtype.Int8 ->
+  | Nx_dtype.Int8 ->
       let buffer = Array.make_int8 size in
       { dtype; buffer = Int8 buffer; view; context }
-  | Dtype.Int16 ->
+  | Nx_dtype.Int16 ->
       let buffer = Array.make_int16 size in
       { dtype; buffer = Int16 buffer; view; context }
-  | Dtype.Int32 ->
+  | Nx_dtype.Int32 ->
       let buffer = Array.make_int32 size in
       { dtype; buffer = Int32 buffer; view; context }
-  | Dtype.Int64 ->
+  | Nx_dtype.Int64 ->
       let buffer = Array.make_int64 size in
       { dtype; buffer = Int64 buffer; view; context }
-  | Dtype.Bool ->
+  | Nx_dtype.Bool ->
       let buffer = Array.make size false in
       { dtype; buffer = Bool buffer; view; context }
   | _ -> invalid_arg "buffer: unsupported dtype"
 
-let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
+let full (type a b) context (dtype : (a, b) Nx_dtype.t) (shape_arr : int array)
     (value : a) : (a, b) t =
   let t = buffer context dtype shape_arr in
   let size = Stdlib.Array.fold_left ( * ) 1 shape_arr in
-  (match (dtype : (a, b) Dtype.t) with
-  | Dtype.Float64 ->
+  (match (dtype : (a, b) Nx_dtype.t) with
+  | Nx_dtype.Float64 ->
       (match t.buffer with
        | Float64 arr ->
          let v = Float_u.of_float value in
@@ -120,7 +120,7 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
            Array.unsafe_set arr i v
          done
        | _ -> assert false)
-  | Dtype.Float32 ->
+  | Nx_dtype.Float32 ->
       (match t.buffer with
        | Float32 arr ->
          let v = Float32_u.of_float (Float_u.of_float value) in
@@ -128,7 +128,7 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
            Array.unsafe_set arr i v
          done
        | _ -> assert false)
-  | Dtype.Int8 ->
+  | Nx_dtype.Int8 ->
       (match t.buffer with
        | Int8 arr ->
          let v = Int8_u.of_int value in
@@ -136,7 +136,7 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
            Array.unsafe_set arr i v
          done
        | _ -> assert false)
-  | Dtype.Int16 ->
+  | Nx_dtype.Int16 ->
       (match t.buffer with
        | Int16 arr ->
          let v = Int16_u.of_int value in
@@ -144,7 +144,7 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
            Array.unsafe_set arr i v
          done
        | _ -> assert false)
-  | Dtype.Int32 ->
+  | Nx_dtype.Int32 ->
       (match t.buffer with
        | Int32 arr ->
          let v = Int32_u.of_int32 value in
@@ -152,7 +152,7 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
            Array.unsafe_set arr i v
          done
        | _ -> assert false)
-  | Dtype.Int64 ->
+  | Nx_dtype.Int64 ->
       (match t.buffer with
        | Int64 arr ->
          let v = Int64_u.of_int64 value in
@@ -160,7 +160,7 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
            Array.unsafe_set arr i v
          done
        | _ -> assert false)
-  | Dtype.Bool ->
+  | Nx_dtype.Bool ->
       (match t.buffer with
        | Bool arr ->
          for i = 0 to size - 1 do
@@ -293,8 +293,8 @@ let pow (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
       invalid_arg "pow: not implemented for unboxed ints");
   out
 
-let cmpeq (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
-  let out = buffer a.context Dtype.Bool (shape a.view) in
+let cmpeq (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_dtype.bool_elt) t =
+  let out = buffer a.context Nx_dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
@@ -311,8 +311,8 @@ let cmpeq (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) 
   | _ -> invalid_arg "buffer: unsupported dtype");
   out
 
-let cmpne (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
-  let out = buffer a.context Dtype.Bool (shape a.view) in
+let cmpne (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_dtype.bool_elt) t =
+  let out = buffer a.context Nx_dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
@@ -329,8 +329,8 @@ let cmpne (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) 
   | _ -> invalid_arg "buffer: unsupported dtype");
   out
 
-let cmplt (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
-  let out = buffer a.context Dtype.Bool (shape a.view) in
+let cmplt (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_dtype.bool_elt) t =
+  let out = buffer a.context Nx_dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
@@ -347,8 +347,8 @@ let cmplt (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) 
   | _ -> invalid_arg "buffer: unsupported dtype");
   out
 
-let cmple (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
-  let out = buffer a.context Dtype.Bool (shape a.view) in
+let cmple (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_dtype.bool_elt) t =
+  let out = buffer a.context Nx_dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
@@ -807,7 +807,7 @@ let erf (type a b) (a : (a, b) t) : (a, b) t =
   | _ -> invalid_arg "erf: not implemented for unboxed ints");
   out
 
-let where (type a b) (cond : (bool, Nx_buffer.bool_elt) t)
+let where (type a b) (cond : (bool, Nx_dtype.bool_elt) t)
     (if_true : (a, b) t) (if_false : (a, b) t) : (a, b) t =
   let out = buffer if_true.context if_true.dtype (shape if_true.view) in
   let vout = out.view in
@@ -943,7 +943,7 @@ let associative_scan (type a b) ~(axis : int)
   in
   let unsupported_for_dtype dtype =
     err "associative_scan" "%s not supported for dtype %s" op_name
-      (Dtype.to_string dtype)
+      (Nx_dtype.to_string dtype)
   in
   (match (out.buffer, x.buffer) with
   | Float64 out_arr, Float64 in_arr ->
@@ -968,9 +968,9 @@ let associative_scan (type a b) ~(axis : int)
   | _ -> invalid_arg "associative_scan: unsupported dtype");
   out
 
-let argmax (type a b) ~axis ~keepdims (x : (a, b) t) : (int32, Dtype.int32_elt) t =
+let argmax (type a b) ~axis ~keepdims (x : (a, b) t) : (int32, Nx_dtype.int32_elt) t =
   let out_shape = Shape.reduce_output_shape (shape x.view) [| axis |] keepdims in
-  let out = buffer x.context Dtype.Int32 out_shape in
+  let out = buffer x.context Nx_dtype.Int32 out_shape in
   let vout = out.view in
   let va = x.view in
   (match (out.buffer, x.buffer) with
@@ -989,9 +989,9 @@ let argmax (type a b) ~axis ~keepdims (x : (a, b) t) : (int32, Dtype.int32_elt) 
   | _ -> invalid_arg "argmax: unsupported dtype");
   out
 
-let argmin (type a b) ~axis ~keepdims (x : (a, b) t) : (int32, Dtype.int32_elt) t =
+let argmin (type a b) ~axis ~keepdims (x : (a, b) t) : (int32, Nx_dtype.int32_elt) t =
   let out_shape = Shape.reduce_output_shape (shape x.view) [| axis |] keepdims in
-  let out = buffer x.context Dtype.Int32 out_shape in
+  let out = buffer x.context Nx_dtype.Int32 out_shape in
   let vout = out.view in
   let va = x.view in
   (match (out.buffer, x.buffer) with
@@ -1028,8 +1028,8 @@ let sort (type a b) ~axis ~descending (x : (a, b) t) : (a, b) t =
   | _ -> invalid_arg "sort: unsupported dtype");
   out
 
-let argsort (type a b) ~axis ~descending (x : (a, b) t) : (int32, Dtype.int32_elt) t =
-  let out = buffer x.context Dtype.Int32 (shape x.view) in
+let argsort (type a b) ~axis ~descending (x : (a, b) t) : (int32, Nx_dtype.int32_elt) t =
+  let out = buffer x.context Nx_dtype.Int32 (shape x.view) in
   (match (out.buffer, x.buffer) with
   | Int32 out_arr, Float64 a_arr ->
       Op_sort.argsort_float64 out.context.pool ~out_arr ~a_arr ~va:x.view
@@ -1048,43 +1048,43 @@ let argsort (type a b) ~axis ~descending (x : (a, b) t) : (int32, Dtype.int32_el
 
 let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
     (a, b) t =
-  let dtype = Nx_buffer.kind array in
+  let dtype = Nx_buffer.dtype array in
   let size = Nx_buffer.length array in
   let view = View.create [| size |] in
   (* [to_bigarray1] raises for extended kinds, so view lazily inside the
      standard-kind arms. *)
   match dtype with
-  | Dtype.Float64 ->
+  | Nx_dtype.Float64 ->
     let unboxed_array =
       Array.ba_to_unboxed_float_array (Nx_buffer.to_bigarray1 array)
     in
     { context = ctx; dtype; buffer = Float64 unboxed_array; view }
-  | Dtype.Float32 ->
+  | Nx_dtype.Float32 ->
     let unboxed_array =
       Array.ba_to_unboxed_float32_array (Nx_buffer.to_bigarray1 array)
     in
     { context = ctx; dtype; buffer = Float32 unboxed_array; view }
-  | Dtype.Int64 ->
+  | Nx_dtype.Int64 ->
     let unboxed_array =
       Array.ba_to_unboxed_int64_array (Nx_buffer.to_bigarray1 array)
     in
     { context = ctx; dtype; buffer = Int64 unboxed_array; view }
-  | Dtype.Int32 ->
+  | Nx_dtype.Int32 ->
     let unboxed_array =
       Array.ba_to_unboxed_int32_array (Nx_buffer.to_bigarray1 array)
     in
     { context = ctx; dtype; buffer = Int32 unboxed_array; view }
-  | Dtype.Int8 ->
+  | Nx_dtype.Int8 ->
     let unboxed_array =
       Array.ba_to_unboxed_int8_array (Nx_buffer.to_bigarray1 array)
     in
     { context = ctx; dtype; buffer = Int8 unboxed_array; view }
-  | Dtype.Int16 ->
+  | Nx_dtype.Int16 ->
     let unboxed_array =
       Array.ba_to_unboxed_int16_array (Nx_buffer.to_bigarray1 array)
     in
     { context = ctx; dtype; buffer = Int16 unboxed_array; view }
-  | Dtype.Bool ->
+  | Nx_dtype.Bool ->
     let unboxed_array = Array.make size false in
     for i = 0 to size - 1 do
       unboxed_array.(i) <- Nx_buffer.unsafe_get array i
@@ -1123,7 +1123,7 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
   let in_strides = View.strides in_view in
   let out_strides = View.strides out_view in
   match x with
-  | { dtype = Dtype.Float64; buffer = Float64 in_arr; context; _ } ->
+  | { dtype = Nx_dtype.Float64; buffer = Float64 in_arr; context; _ } ->
     let fill_value = Float_u.of_float fill_value in
     let out_arr = Array.make_float64 out_numel in
     for i = 0 to out_numel - 1 do
@@ -1131,8 +1131,8 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     done;
     Op_pad.pad_float64 in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
-    { dtype = Dtype.Float64; buffer = Float64 out_arr; view = out_view; context }
-  | { dtype = Dtype.Float32; buffer = Float32 in_arr; context; _ } ->
+    { dtype = Nx_dtype.Float64; buffer = Float64 out_arr; view = out_view; context }
+  | { dtype = Nx_dtype.Float32; buffer = Float32 in_arr; context; _ } ->
     let fill_value = Float32_u.of_float (Float_u.of_float fill_value) in
     let out_arr = Array.make_float32 out_numel in
     for i = 0 to out_numel - 1 do
@@ -1140,8 +1140,8 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     done;
     Op_pad.pad_float32 in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
-    { dtype = Dtype.Float32; buffer = Float32 out_arr; view = out_view; context }
-  | { dtype = Dtype.Int8; buffer = Int8 in_arr; context; _ } ->
+    { dtype = Nx_dtype.Float32; buffer = Float32 out_arr; view = out_view; context }
+  | { dtype = Nx_dtype.Int8; buffer = Int8 in_arr; context; _ } ->
     let fill_value = Int8_u.of_int fill_value in
     let out_arr = Array.make_int8 out_numel in
     for i = 0 to out_numel - 1 do
@@ -1149,8 +1149,8 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     done;
     Op_pad.pad_int8 in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
-    { dtype = Dtype.Int8; buffer = Int8 out_arr; view = out_view; context }
-  | { dtype = Dtype.Int16; buffer = Int16 in_arr; context; _ } ->
+    { dtype = Nx_dtype.Int8; buffer = Int8 out_arr; view = out_view; context }
+  | { dtype = Nx_dtype.Int16; buffer = Int16 in_arr; context; _ } ->
     let fill_value = Int16_u.of_int fill_value in
     let out_arr = Array.make_int16 out_numel in
     for i = 0 to out_numel - 1 do
@@ -1158,8 +1158,8 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     done;
     Op_pad.pad_int16 in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
-    { dtype = Dtype.Int16; buffer = Int16 out_arr; view = out_view; context }
-  | { dtype = Dtype.Int32; buffer = Int32 in_arr; context; _ } ->
+    { dtype = Nx_dtype.Int16; buffer = Int16 out_arr; view = out_view; context }
+  | { dtype = Nx_dtype.Int32; buffer = Int32 in_arr; context; _ } ->
     let fill_value = Int32_u.of_int32 fill_value in
     let out_arr = Array.make_int32 out_numel in
     for i = 0 to out_numel - 1 do
@@ -1167,8 +1167,8 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     done;
     Op_pad.pad_int32 in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
-    { dtype = Dtype.Int32; buffer = Int32 out_arr; view = out_view; context }
-  | { dtype = Dtype.Int64; buffer = Int64 in_arr; context; _ } ->
+    { dtype = Nx_dtype.Int32; buffer = Int32 out_arr; view = out_view; context }
+  | { dtype = Nx_dtype.Int64; buffer = Int64 in_arr; context; _ } ->
     let fill_value = Int64_u.of_int64 fill_value in
     let out_arr = Array.make_int64 out_numel in
     for i = 0 to out_numel - 1 do
@@ -1176,12 +1176,12 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     done;
     Op_pad.pad_int64 in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
-    { dtype = Dtype.Int64; buffer = Int64 out_arr; view = out_view; context }
-  | { dtype = Dtype.Bool; buffer = Bool in_arr; context; _ } ->
+    { dtype = Nx_dtype.Int64; buffer = Int64 out_arr; view = out_view; context }
+  | { dtype = Nx_dtype.Bool; buffer = Bool in_arr; context; _ } ->
     let out_arr = Array.make out_numel fill_value in
     Op_pad.pad_bool in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
-    { dtype = Dtype.Bool; buffer = Bool out_arr; view = out_view; context }
+    { dtype = Nx_dtype.Bool; buffer = Bool out_arr; view = out_view; context }
   | _ -> assert false
 
 let cat (type a b) (xs : (a, b) t list) ~(axis : int) : (a, b) t =
@@ -1254,7 +1254,7 @@ let cat (type a b) (xs : (a, b) t list) ~(axis : int) : (a, b) t =
     | _ -> assert false);
     out
 
-let cast (type a b c d) ~(dtype : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
+let cast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t =
   let in_view = x.view in
   let in_shape = shape in_view in
   let n = numel in_view in
@@ -1465,7 +1465,7 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
 
 (* The unboxed arrays hold one element type each, so the bits cross through
    host storage, where a buffer can be read at another kind. *)
-let bitcast (type a b c d) ~(dtype : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t
+let bitcast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
     =
   let host = to_host (contiguous x) in
   let out = from_host x.context (Nx_buffer.reinterpret dtype host) in
@@ -1494,8 +1494,8 @@ let copy (type a b) (t : (a, b) t) : (a, b) t =
   | _ -> invalid_arg "copy: unsupported dtype");
   out
 
-let threefry (key : (int32, Dtype.int32_elt) t)
-    (counter : (int32, Dtype.int32_elt) t) : (int32, Dtype.int32_elt) t =
+let threefry (key : (int32, Nx_dtype.int32_elt) t)
+    (counter : (int32, Nx_dtype.int32_elt) t) : (int32, Nx_dtype.int32_elt) t =
   let key_shape = shape key.view in
   let ctr_shape = shape counter.view in
   if key_shape <> ctr_shape then
@@ -1507,7 +1507,7 @@ let threefry (key : (int32, Dtype.int32_elt) t)
   let last_dim = rank - 1 in
   if key_shape.(last_dim) <> 2 then
     invalid_arg "threefry: shape, last dimension must be 2 for Threefry2x32";
-  let out = buffer key.context Dtype.Int32 key_shape in
+  let out = buffer key.context Nx_dtype.Int32 key_shape in
   (match (out.buffer, key.buffer, counter.buffer) with
   | Int32 out_arr, Int32 key_arr, Int32 ctr_arr ->
       Op_threefry.threefry_int32 out.context.pool ~out_arr ~key_arr ~ctr_arr
@@ -1517,7 +1517,7 @@ let threefry (key : (int32, Dtype.int32_elt) t)
   out
 
 let gather (type a b) (data : (a, b) t)
-    (indices : (int32, Dtype.int32_elt) t) ~(axis : int) : (a, b) t =
+    (indices : (int32, Nx_dtype.int32_elt) t) ~(axis : int) : (a, b) t =
   let dshape = shape data.view in
   let ishape = shape indices.view in
   if Array.length dshape <> Array.length ishape then
@@ -1561,7 +1561,7 @@ let gather (type a b) (data : (a, b) t)
 
 let scatter (type a b) ~(mode : [ `Set | `Add ]) ~(unique_indices : bool)
     (data_template : (a, b) t)
-    ~(indices : (int32, Dtype.int32_elt) t)
+    ~(indices : (int32, Nx_dtype.int32_elt) t)
     ~(updates : (a, b) t)
     ~(axis : int) : (a, b) t =
   let tshape = shape data_template.view in
@@ -1618,7 +1618,7 @@ let scatter (type a b) ~(mode : [ `Set | `Add ]) ~(unique_indices : bool)
 
 (* The window write: a fresh copy of [t], then [v] written element by element
    through the strides of [out]'s window and [v]'s own. *)
-let update (type a b) (t : (a, b) t) ~(starts : (int32, Dtype.int32_elt) t)
+let update (type a b) (t : (a, b) t) ~(starts : (int32, Nx_dtype.int32_elt) t)
     (v : (a, b) t) : (a, b) t =
   let out = copy t in
   let rank = Stdlib.Array.length (shape t.view) in

@@ -928,18 +928,18 @@ static const nx_c_map_table nx_c_where_table = {
 
 /* Local float->f16/bf16 converters for the contiguous cast fast path.
 
-   The buffer layer's float_to_half / float_to_bfloat16 (nx_buffer_stubs.h) are
-   correct but branchy: a call inside the store loop blocks auto-vectorization
-   (the loop cannot become SIMD across a branchy body), so a contiguous f32->f16
-   cast ran at scalar speed. These are branchless/hardware forms that the
-   vectorizer turns into packed converts. They are a DELIBERATE, TESTED copy of
-   the buffer converters: they MUST produce bit-identical results for EVERY input
+   nx_dtype.h's float_to_half / float_to_bfloat16 are correct but branchy: a
+   call inside the store loop blocks auto-vectorization (the loop cannot become
+   SIMD across a branchy body), so a contiguous f32->f16 cast ran at scalar
+   speed. These are branchless/hardware forms that the vectorizer turns into
+   packed converts. They are a DELIBERATE, TESTED copy of the nx_dtype.h
+   converters: they MUST produce bit-identical results for EVERY input
    (rounding mode, NaN quieting, subnormals, overflow) — pinned by the
    nx_c_cast_convert_selfcheck gate, which sweeps all 65536 f16 patterns plus
    NaN/inf/subnormal/overflow f32 edges against the canonical converters. If a
    future edit here diverges, that test fails; do not "fix" it by loosening the
-   gate. The buffer layer stays the single owner of the storage format; this is
-   only a vectorizable restatement used nowhere but the cast fast path. */
+   gate. nx_dtype.h stays the single owner of the storage format; this is only
+   a vectorizable restatement used nowhere but the cast fast path. */
 
 /* Branchless f32 -> IEEE binary16, round-to-nearest-even. All three exponent
    regimes are computed and the result selected; the subnormal shift is masked so
@@ -1366,7 +1366,7 @@ CAMLprim value caml_nx_c_cast(value vout, value va) {
 /* Equivalence gate for the local cast-fast-path converters. Returns the number
    of inputs where nx_c_f32_to_f16 (both the portable and, where compiled, the
    active hardware form) or nx_c_f32_to_bf16 disagree by even one bit with the
-   canonical nx_buffer_stubs.h converters — MUST be 0. Covers all 65536 f16 bit
+   canonical nx_dtype.h converters — MUST be 0. Covers all 65536 f16 bit
    patterns round-tripped through half_to_float, a dense sweep of the rounding
    band (every 13-bit round/sticky decision at representative magnitudes and both
    signs), and the NaN/inf/subnormal/overflow f32 edges. Pure C, no allocation;

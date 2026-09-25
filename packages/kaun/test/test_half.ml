@@ -26,7 +26,7 @@ let close ?msg ~tol expected actual =
   let ft = if tol = 0. then float_exact else float tol in
   equal ?msg (array ft) (to_arr expected) (to_arr actual)
 
-let dtype_is ?msg dt t = is_true ?msg (Nx_core.Dtype.equal (Nx.dtype t) dt)
+let dtype_is ?msg dt t = is_true ?msg (Nx_dtype.equal (Nx.dtype t) dt)
 
 (* Exactly representable at half precision: multiples of 0.25 in a small
    range. *)

@@ -34,7 +34,7 @@ let uint8_pixels img =
         failwith (err_bad_dims (Array.length s) dims)
   in
   let buf = Nx.to_buffer img in
-  match Nx_buffer.kind buf with
+  match Nx_buffer.dtype buf with
   | UInt8 -> (h, w, c, Nx_buffer.to_bigarray1 buf)
   | _ -> failwith "expected uint8 tensor"
 

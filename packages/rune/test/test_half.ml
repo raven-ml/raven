@@ -44,7 +44,7 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   (* The gradient carries the parameter dtype, not the compute dtype. *)
   is_true
     ~msg:(name ^ " grad dtype is float32")
-    (Nx_core.Dtype.equal_witness (Nx.dtype g) f32 <> None);
+    (Nx_dtype.equal_witness (Nx.dtype g) f32 <> None);
   let v_ref, g_ref = Rune.value_and_grad' (reference_loss x) w in
   check_arr ~eps:tol ~msg:(name ^ " loss vs fp32 reference") (to_arr v_ref) v;
   check_arr ~eps:tol ~msg:(name ^ " grad vs fp32 reference") (to_arr g_ref) g

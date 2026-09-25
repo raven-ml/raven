@@ -117,7 +117,7 @@ let test_roundtrips () =
 (* Result dtypes *)
 
 let test_result_dtypes () =
-  let dtype_name t = Nx_core.Dtype.to_string (Nx.dtype t) in
+  let dtype_name t = Nx_dtype.to_string (Nx.dtype t) in
   let z64 = input64 () and z128 = input128 () in
   equal ~msg:"magnitude complex64 dtype" string "float32"
     (dtype_name (Nx.magnitude Nx.float32 z64));

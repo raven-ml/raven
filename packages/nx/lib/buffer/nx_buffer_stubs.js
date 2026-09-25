@@ -16,7 +16,7 @@
    The implementation extends the standard Ml_Bigarray class with
    Ml_Nx_buffer to handle get/set/fill operations for these types.
 
-   The numeric conversions mirror nx_buffer_stubs.h bit for bit (round to
+   The numeric conversions mirror nx_dtype.h bit for bit (round to
    nearest, ties to even; NaN and saturation handling) so that programs
    compute the same values under js_of_ocaml as natively, except for a NaN's
    sign and payload bits, which JavaScript does not reliably preserve. */
@@ -24,7 +24,7 @@
 //Provides: caml_nx_float32_odd_bits
 function caml_nx_float32_odd_bits(num) {
   /* The float32 bits of num rounded to odd, as double_to_float_odd in
-     nx_buffer_stubs.h: the encoders below then round the number once. */
+     nx_dtype.h: the encoders below then round the number once. */
   var view = new DataView(new ArrayBuffer(4));
   view.setFloat32(0, num, false);
   var bits = view.getUint32(0, false);
@@ -529,7 +529,7 @@ function caml_nx_buffer_unsafe_set(ba, i, v) {
 //Requires: caml_failwith
 function caml_nx_buffer_kind(ba) {
   /* Map runtime bigarray kind to the GADT constructor index. Pinned to the
-     declaration order of [Nx_buffer.kind] (19 constructors) and mirrored by
+     declaration order of [Nx_dtype.t] (19 constructors) and mirrored by
      the C stub. The js_of_ocaml runtime numbers kinds like the C runtime:
      0=Float32, 1=Float64, 2=Int8s, 3=Uint8, 4=Int16s, 5=Uint16, 6=Int32,
      7=Int64, 8=Int, 9=Nativeint, 10=Complex32, 11=Complex64, 12=Char,
@@ -563,7 +563,7 @@ function caml_nx_buffer_kind(ba) {
 //Requires: caml_nx_buffer_create_data, caml_nx_buffer_create_unsafe
 //Requires: caml_nx_buffer_size_per_element, caml_invalid_argument
 function caml_nx_buffer_reinterpret(kind_index, ba, len, size) {
-  /* Runtime kind of each [Nx_buffer.kind] constructor, in declaration order:
+  /* Runtime kind of each [Nx_dtype.t] constructor, in declaration order:
      the inverse of caml_nx_buffer_kind. */
   var kinds = [13, 0, 1, 14, 18, 19, 16, 17, 2, 3, 4, 5, 6, 20, 7, 21, 10, 11,
                15];

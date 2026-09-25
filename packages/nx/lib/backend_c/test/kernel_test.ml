@@ -52,8 +52,8 @@ let test_cast_converters () =
     (cast_convert_selfcheck ())
 
 let test_sort_rejects_aliased_output () =
-  let input = buffer Buf.float64 [| 3.; 1.; 2.; 4. |] in
-  let output = Buf.create Buf.float64 4 in
+  let input = buffer Nx_dtype.float64 [| 3.; 1.; 2.; 4. |] in
+  let output = Buf.create Nx_dtype.float64 4 in
   raises ~msg:"zero-stride output"
     (Invalid_argument "sort: output has a broadcast (zero) stride") (fun () ->
       sort
@@ -69,8 +69,8 @@ let test_sort_worker_scratch () =
   let strides = row_major shape in
   Random.init 777;
   let values = Array.init (rows * cols) (fun _ -> Random.float 1.) in
-  let input = buffer Buf.float64 values in
-  let sorted = Buf.create Buf.float64 (rows * cols) in
+  let input = buffer Nx_dtype.float64 values in
+  let sorted = Buf.create Nx_dtype.float64 (rows * cols) in
   sort (ffi ~shape ~strides sorted) (ffi ~shape ~strides input) 1 false;
   for row = 0 to rows - 1 do
     let base = row * cols in
@@ -79,7 +79,7 @@ let test_sort_worker_scratch () =
         (Buf.get sorted (base + col - 1) <= Buf.get sorted (base + col))
     done
   done;
-  let indices = Buf.create Buf.int32 (rows * cols) in
+  let indices = Buf.create Nx_dtype.int32 (rows * cols) in
   argsort (ffi ~shape ~strides indices) (ffi ~shape ~strides input) 1 false;
   let seen = Array.make cols false in
   for row = 0 to rows - 1 do

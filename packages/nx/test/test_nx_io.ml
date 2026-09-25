@@ -1615,12 +1615,12 @@ let with_safetensors contents f =
 
 let stored_bytes (Nx.P t) =
   let buffer = Nx.to_buffer (Nx.reshape [| Nx.numel t |] (Nx.contiguous t)) in
-  let size = Nx_buffer.kind_size_in_bytes (Nx_buffer.kind buffer) in
+  let size = Nx_dtype.itemsize (Nx_buffer.dtype buffer) in
   let bytes = Bytes.create (Nx_buffer.length buffer * size) in
   Nx_buffer.blit_to_bytes buffer bytes;
   Bytes.to_string bytes
 
-let dtype_name (Nx.P t) = Nx_core.Dtype.to_string (Nx.dtype t)
+let dtype_name (Nx.P t) = Nx_dtype.to_string (Nx.dtype t)
 let packed_shape (Nx.P t) = Nx.shape t
 
 let pattern n seed =

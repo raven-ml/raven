@@ -19,6 +19,7 @@
   quant
   structure)
  (libraries
+  nx.dtype
   nx.core
   nx
   nx.quant

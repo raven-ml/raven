@@ -428,7 +428,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   limits
               in
               pull1 k out t_in (fun g ->
-                  pad g pads (Nx_core.Dtype.zero (dtype t_in))))
+                  pad g pads (Nx_dtype.zero (dtype t_in))))
       | E_flip { t_in; dims_to_flip } ->
           Some
             (fun k ->
@@ -586,7 +586,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   | `Prod ->
                       let prefix_exclusive axis x =
                         let shape = T.shape x in
-                        let one = Nx_core.Dtype.one (T.dtype x) in
+                        let one = Nx_dtype.one (T.dtype x) in
                         let padded = pad_axis axis (1, 0) one x in
                         let slice_specs =
                           Array.map (fun dim -> T.R (0, dim)) shape
@@ -597,7 +597,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                       in
                       let suffix_exclusive axis x =
                         let shape = T.shape x in
-                        let one = Nx_core.Dtype.one (T.dtype x) in
+                        let one = Nx_dtype.one (T.dtype x) in
                         let flipped = T.flip x ~axes:[ axis ] in
                         let suffix_inclusive =
                           T.flip (T.cumprod ~axis flipped) ~axes:[ axis ]
@@ -615,17 +615,15 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                       in
                       let divide_no_nan num denom =
                         let dt = T.dtype denom in
-                        let zero_mask =
-                          T.equal_s denom (Nx_core.Dtype.zero dt)
-                        in
+                        let zero_mask = T.equal_s denom (Nx_dtype.zero dt) in
                         let safe_denom =
                           T.where zero_mask
-                            (T.scalar_like denom (Nx_core.Dtype.one dt))
+                            (T.scalar_like denom (Nx_dtype.one dt))
                             denom
                         in
                         let base = T.div num safe_denom in
                         T.where zero_mask
-                          (T.scalar_like base (Nx_core.Dtype.zero dt))
+                          (T.scalar_like base (Nx_dtype.zero dt))
                           base
                       in
                       let reverse_cumsum x axis =
@@ -645,8 +643,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                       let dt = dtype t_in in
                       let boundary =
                         match op with
-                        | `Max -> Nx_core.Dtype.min_value dt
-                        | _ -> Nx_core.Dtype.max_value dt
+                        | `Max -> Nx_dtype.min_value dt
+                        | _ -> Nx_dtype.max_value dt
                       in
                       let padded = pad_axis axis_norm (1, 0) boundary out in
                       let slice_specs =
@@ -939,7 +937,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   let p =
                     (* Strict lower + half diagonal. *)
                     let diag_c = T.diagonal c in
-                    let two = Nx_core.Dtype.of_float (T.dtype diag_c) 2.0 in
+                    let two = Nx_dtype.of_float (T.dtype diag_c) 2.0 in
                     T.sub (T.tril c) (Derivs.diag_matrix (T.div_s diag_c two))
                   in
                   let z =

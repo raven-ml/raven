@@ -210,7 +210,7 @@ let () =
   in
   Printf.printf "weights: %.0f MB at %s\n%!"
     (float_of_int bytes /. 1e6)
-    (Nx_core.Dtype.to_string dt);
+    (Nx_dtype.to_string dt);
   let t0 = Unix.gettimeofday () in
   let toks = generate ?device cfg params dt ~max_tokens:!count ids in
   let dt = Unix.gettimeofday () -. t0 in

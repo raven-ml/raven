@@ -4,11 +4,12 @@
 open Windtrap
 module B = Nx_backend
 module F = Nx_core.Make_frontend (B)
-module Dtype = Nx_core.Dtype
 
 external dtype_tag : ('a, 'b) Nx_buffer.t -> int = "caml_nx_c_dtype_tag"
 
 let ctx = B.create_context ()
+
+type dtype = Dtype : ('a, 'b) Nx_dtype.t -> dtype
 
 let fexact =
   Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%g" x) ~equal:( = )
@@ -28,13 +29,35 @@ let tests =
           equal ~msg:"neg over strided offset view" (array fexact) expected
             (F.to_array (B.neg input)));
       test "kind-to-tag" (fun () ->
-          List.iter
-            (fun (Dtype.Pack dt as packed) ->
+          (* In [Nx_dtype.t]'s constructor order, which the tag follows. *)
+          List.iteri
+            (fun tag (Dtype dt) ->
               let buffer = Nx_buffer.create dt 1 in
               equal
-                ~msg:(Printf.sprintf "%s tag" (Dtype.Packed.to_string packed))
-                int (Dtype.Packed.tag packed) (dtype_tag buffer))
-            Dtype.Packed.all);
+                ~msg:(Printf.sprintf "%s tag" (Nx_dtype.to_string dt))
+                int tag (dtype_tag buffer))
+            Nx_dtype.
+              [
+                Dtype float16;
+                Dtype float32;
+                Dtype float64;
+                Dtype bfloat16;
+                Dtype float8_e4m3;
+                Dtype float8_e5m2;
+                Dtype int4;
+                Dtype uint4;
+                Dtype int8;
+                Dtype uint8;
+                Dtype int16;
+                Dtype uint16;
+                Dtype int32;
+                Dtype uint32;
+                Dtype int64;
+                Dtype uint64;
+                Dtype complex64;
+                Dtype complex128;
+                Dtype bool;
+              ]);
       test "linalg-error-translation" (fun () ->
           let raises_linalg kind thunk =
             match thunk () with

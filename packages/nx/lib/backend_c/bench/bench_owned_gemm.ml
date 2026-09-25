@@ -24,7 +24,7 @@ let row_major shape =
 
 let make shape =
   let elements = Array.fold_left ( * ) 1 shape in
-  let buffer = Buffer.create Buffer.float32 elements in
+  let buffer = Buffer.create Nx_dtype.float32 elements in
   for index = 0 to elements - 1 do
     Buffer.set buffer index
       (Float.sin (float_of_int (index * 17 mod 1021)) *. 0.25)

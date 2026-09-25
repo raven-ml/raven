@@ -16,9 +16,7 @@ open Windtrap
 (* One buffer per device of the cell's placement, in its order: a split value's
    shards, a replicated value's copies. *)
 type Nx_effect.storage +=
-  | Mem :
-      ('a, 'b) Nx_core.Dtype.t * ('a, 'b) Nx_buffer.t list
-      -> Nx_effect.storage
+  | Mem : ('a, 'b) Nx_dtype.t * ('a, 'b) Nx_buffer.t list -> Nx_effect.storage
 
 let elements_read = ref 0
 let uploads = ref 0
@@ -27,7 +25,7 @@ let uploads = ref 0
 let gather (type a b) (mem : (a, b) Nx_buffer.t) v : (a, b) Nx_buffer.t =
   let shape = Nx_core.View.shape v and strides = Nx_core.View.strides v in
   let n = Nx_core.View.numel v in
-  let dst = Nx_buffer.create (Nx_buffer.kind mem) n in
+  let dst = Nx_buffer.create (Nx_buffer.dtype mem) n in
   for i = 0 to n - 1 do
     let idx = Nx_core.Shape.unravel_index i shape in
     let off = ref (Nx_core.View.offset v) in
@@ -43,7 +41,7 @@ let rec engine =
       (fun (type a b) (r : (a, b) Nx_effect.resident) : (a, b) Nx_buffer.t ->
         match r.r_cell.state with
         | Live (Mem (dt, shards)) -> (
-            match Nx_core.Dtype.equal_witness dt r.r_dtype with
+            match Nx_dtype.equal_witness dt r.r_dtype with
             | Some Type.Equal ->
                 let shape =
                   Nx_effect.global r.r_placement (Nx_core.View.shape r.r_view)

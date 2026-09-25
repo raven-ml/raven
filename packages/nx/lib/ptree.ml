@@ -284,7 +284,7 @@ let rebuild (type s) (s : s t) ~(like : s) (leaves : Nx_effect.packed list) : s
         rest := tail;
         incr taken;
         match
-          Nx_core.Dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
+          Nx_dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
         with
         | Some Type.Equal -> y
         | None ->
@@ -292,8 +292,8 @@ let rebuild (type s) (s : s t) ~(like : s) (leaves : Nx_effect.packed list) : s
               (Printf.sprintf
                  "Nx.Ptree.rebuild: %s: %s in the template, %s given"
                  (Path.describe path)
-                 (Nx_core.Dtype.to_string (Nx_effect.dtype x))
-                 (Nx_core.Dtype.to_string (Nx_effect.dtype y))))
+                 (Nx_dtype.to_string (Nx_effect.dtype x))
+                 (Nx_dtype.to_string (Nx_effect.dtype y))))
   in
   let v = s.walk { tensor; report = ignore_report } Path.Root like in
   match !rest with
@@ -331,15 +331,15 @@ let map2 (type s) (s : s t)
     | Recorded_leaf (p, Nx_effect.P y) :: rest when Path.equal p path -> (
         expected := rest;
         match
-          Nx_core.Dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
+          Nx_dtype.equal_witness (Nx_effect.dtype x) (Nx_effect.dtype y)
         with
         | Some Type.Equal -> f path x y
         | None ->
             invalid_arg
               (Printf.sprintf "%s: %s: %s in the first value, %s in the second"
                  fn (Path.describe path)
-                 (Nx_core.Dtype.to_string (Nx_effect.dtype x))
-                 (Nx_core.Dtype.to_string (Nx_effect.dtype y))))
+                 (Nx_dtype.to_string (Nx_effect.dtype x))
+                 (Nx_dtype.to_string (Nx_effect.dtype y))))
     | _ -> raise_notrace Mismatch
   in
   let report path r =
@@ -372,9 +372,9 @@ let fold (type s) (s : s t)
 
 (* Walks at any payload *)
 
-let cast_tensor (type a b c d) (dt : (c, d) Nx_core.Dtype.t) (x : (a, b) tensor)
-    : (c, d) tensor =
-  match Nx_core.Dtype.equal_witness (Nx_effect.dtype x) dt with
+let cast_tensor (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) tensor) :
+    (c, d) tensor =
+  match Nx_dtype.equal_witness (Nx_effect.dtype x) dt with
   | Some Type.Equal -> x
   | None -> Nx_effect.cast ~dtype:dt x
 
@@ -431,6 +431,6 @@ module Payload = struct
     U.walk { env = { ops = keep; leaf }; path = Path.Root } x
 end
 
-let cast (module U : S) (dt : ('c, 'd) Nx_core.Dtype.t)
-    (x : ('a, 'b) tensor U.t) : ('c, 'd) tensor U.t =
+let cast (module U : S) (dt : ('c, 'd) Nx_dtype.t) (x : ('a, 'b) tensor U.t) :
+    ('c, 'd) tensor U.t =
   Payload.map (module U) (fun _ x -> cast_tensor dt x) x

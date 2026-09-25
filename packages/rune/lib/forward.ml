@@ -275,7 +275,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
             (fun k ->
               (* The fill value is a constant: the tangent pads with zero. *)
               lift1 k (pad t_in padding_config fill_value) t_in (fun dx ->
-                  pad dx padding_config (Nx_core.Dtype.zero (dtype t_in))))
+                  pad dx padding_config (Nx_dtype.zero (dtype t_in))))
       | E_shrink { t_in; limits } ->
           Some
             (fun k ->
@@ -383,8 +383,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                       let dt = dtype t_in in
                       let boundary =
                         match op with
-                        | `Max -> Nx_core.Dtype.min_value dt
-                        | _ -> Nx_core.Dtype.max_value dt
+                        | `Max -> Nx_dtype.min_value dt
+                        | _ -> Nx_dtype.max_value dt
                       in
                       let pad_left =
                         Array.mapi
@@ -528,7 +528,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   let phi =
                     (* Strict lower + half diagonal. *)
                     let diag_m = T.diagonal m in
-                    let two = Nx_core.Dtype.of_float (T.dtype diag_m) 2.0 in
+                    let two = Nx_dtype.of_float (T.dtype diag_m) 2.0 in
                     T.sub (T.tril m) (Derivs.diag_matrix (T.div_s diag_m two))
                   in
                   let dl_lower = T.matmul l_lower phi in

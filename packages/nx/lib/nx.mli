@@ -33,29 +33,29 @@ type ('a, 'b) t = ('a, 'b) Nx_effect.t
     Witnesses for the buffer element representation. Used as the second type
     parameter of {!type-t}. *)
 
-type float16_elt = Nx_buffer.float16_elt
-type float32_elt = Nx_buffer.float32_elt
-type float64_elt = Nx_buffer.float64_elt
-type bfloat16_elt = Nx_buffer.bfloat16_elt
-type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
-type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
-type int4_elt = Nx_buffer.int4_elt
-type uint4_elt = Nx_buffer.uint4_elt
-type int8_elt = Nx_buffer.int8_elt
-type uint8_elt = Nx_buffer.uint8_elt
-type int16_elt = Nx_buffer.int16_elt
-type uint16_elt = Nx_buffer.uint16_elt
-type int32_elt = Nx_buffer.int32_elt
-type uint32_elt = Nx_buffer.uint32_elt
-type int64_elt = Nx_buffer.int64_elt
-type uint64_elt = Nx_buffer.uint64_elt
-type complex32_elt = Nx_buffer.complex32_elt
-type complex64_elt = Nx_buffer.complex64_elt
-type bool_elt = Nx_buffer.bool_elt
+type float16_elt = Nx_dtype.float16_elt
+type float32_elt = Nx_dtype.float32_elt
+type float64_elt = Nx_dtype.float64_elt
+type bfloat16_elt = Nx_dtype.bfloat16_elt
+type float8_e4m3_elt = Nx_dtype.float8_e4m3_elt
+type float8_e5m2_elt = Nx_dtype.float8_e5m2_elt
+type int4_elt = Nx_dtype.int4_elt
+type uint4_elt = Nx_dtype.uint4_elt
+type int8_elt = Nx_dtype.int8_elt
+type uint8_elt = Nx_dtype.uint8_elt
+type int16_elt = Nx_dtype.int16_elt
+type uint16_elt = Nx_dtype.uint16_elt
+type int32_elt = Nx_dtype.int32_elt
+type uint32_elt = Nx_dtype.uint32_elt
+type int64_elt = Nx_dtype.int64_elt
+type uint64_elt = Nx_dtype.uint64_elt
+type complex32_elt = Nx_dtype.complex32_elt
+type complex64_elt = Nx_dtype.complex64_elt
+type bool_elt = Nx_dtype.bool_elt
 
 (** {2:dtype Data types} *)
 
-type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
+type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Float16 : (float, float16_elt) dtype
   | Float32 : (float, float32_elt) dtype
   | Float64 : (float, float64_elt) dtype

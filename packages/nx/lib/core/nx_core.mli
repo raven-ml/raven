@@ -8,9 +8,6 @@
     This module re-exports core building blocks used by backends and the
     high-level [Nx] frontend. *)
 
-module Dtype = Dtype
-(** Tensor element dtypes. *)
-
 module Shape = Shape
 (** Concrete shape operations. *)
 

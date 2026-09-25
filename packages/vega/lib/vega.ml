@@ -4,12 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 module Schedule = Schedule
-module Dtype = Nx_core.Dtype
 
 (* Helpers *)
 
-let scalar (type a b) (dt : (a, b) Dtype.t) x =
-  Nx.scalar dt (Dtype.of_float dt x)
+let scalar (type a b) (dt : (a, b) Nx_dtype.t) x =
+  Nx.scalar dt (Nx_dtype.of_float dt x)
 
 (* A parameter structure may carry leaves that are not parameters: an RNG key
    threaded through a compiled step, a step counter, a batch of indices. Rune
@@ -17,16 +16,16 @@ let scalar (type a b) (dt : (a, b) Dtype.t) x =
    zeros — and an optimizer must not update them either. Adam's square root over
    an integer leaf is meaningless, and even plain descent would round its step
    into the value. Carry them instead. *)
-let updates (type a b) (p : (a, b) Nx.t) = Dtype.is_float (Nx.dtype p)
+let updates (type a b) (p : (a, b) Nx.t) = Nx_dtype.is_float (Nx.dtype p)
 
-let float_of_scalar (type a b) (dt : (a, b) Dtype.t) (v : a) : float =
+let float_of_scalar (type a b) (dt : (a, b) Nx_dtype.t) (v : a) : float =
   match dt with
-  | Dtype.Float16 -> (v : float)
-  | Dtype.Float32 -> (v : float)
-  | Dtype.Float64 -> (v : float)
-  | Dtype.BFloat16 -> (v : float)
-  | Dtype.Float8_e4m3 -> (v : float)
-  | Dtype.Float8_e5m2 -> (v : float)
+  | Nx_dtype.Float16 -> (v : float)
+  | Nx_dtype.Float32 -> (v : float)
+  | Nx_dtype.Float64 -> (v : float)
+  | Nx_dtype.BFloat16 -> (v : float)
+  | Nx_dtype.Float8_e4m3 -> (v : float)
+  | Nx_dtype.Float8_e5m2 -> (v : float)
   | _ -> invalid_arg "Vega: expected floating-point dtype"
 
 (* Validation *)
@@ -73,14 +72,14 @@ let take (type a b) fn name path (x : (a, b) Nx.t) rest : (a, b) Nx.t =
   | [] -> invalid_arg (fn ^ ": the structure's walk visited one value two ways")
   | Nx.P y :: tail -> (
       rest := tail;
-      match Dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
+      match Nx_dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
       | Some Equal -> y
       | None ->
           invalid_argf "%s: %s: %s in %s, %s in the parameters" fn
             (describe path)
-            (Dtype.to_string (Nx.dtype y))
+            (Nx_dtype.to_string (Nx.dtype y))
             name
-            (Dtype.to_string (Nx.dtype x)))
+            (Nx_dtype.to_string (Nx.dtype x)))
 
 (* A step computes at float32, or at float64 for a float64 leaf, and returns
    each leaf at its own dtype. Float16 and bfloat16 leaves round once, when the
@@ -125,7 +124,7 @@ let leafwise fn p ~params ~grads parts
       in
       (Nx.cast dt x, Array.map (Nx.cast dt) s)
     in
-    match dt with Dtype.Float64 -> run F64 | _ -> run F32
+    match dt with Nx_dtype.Float64 -> run F64 | _ -> run F32
   in
   let update path x =
     let g = take fn "the gradients" path x grads in
@@ -194,7 +193,7 @@ let clip_by_value p ~max grads =
   validate_positive "Vega.clip_by_value" "max" max;
   Nx.Ptree.map p
     (fun _ g ->
-      let of_float = Dtype.of_float (Nx.dtype g) in
+      let of_float = Nx_dtype.of_float (Nx.dtype g) in
       Nx.clamp ~min:(of_float (-.max)) ~max:(of_float max) g)
     grads
 

@@ -3,140 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Element types *)
-
-type float16_elt = Bigarray.float16_elt
-type float32_elt = Bigarray.float32_elt
-type float64_elt = Bigarray.float64_elt
-type int8_elt = Bigarray.int8_signed_elt
-type uint8_elt = Bigarray.int8_unsigned_elt
-type int16_elt = Bigarray.int16_signed_elt
-type uint16_elt = Bigarray.int16_unsigned_elt
-type int32_elt = Bigarray.int32_elt
-type int64_elt = Bigarray.int64_elt
-type complex32_elt = Bigarray.complex32_elt
-type complex64_elt = Bigarray.complex64_elt
-type bfloat16_elt = |
-type bool_elt = |
-type int4_elt = |
-type uint4_elt = |
-type float8_e4m3_elt = |
-type float8_e5m2_elt = |
-type uint32_elt = |
-type uint64_elt = |
-
-(* Kind GADT. The constructor order is pinned by [caml_nx_buffer_kind] in the C
-   and JavaScript stubs; keep the three in sync. *)
-
-type ('a, 'b) kind =
-  | Float16 : (float, float16_elt) kind
-  | Float32 : (float, float32_elt) kind
-  | Float64 : (float, float64_elt) kind
-  | BFloat16 : (float, bfloat16_elt) kind
-  | Float8_e4m3 : (float, float8_e4m3_elt) kind
-  | Float8_e5m2 : (float, float8_e5m2_elt) kind
-  | Int4 : (int, int4_elt) kind
-  | UInt4 : (int, uint4_elt) kind
-  | Int8 : (int, int8_elt) kind
-  | UInt8 : (int, uint8_elt) kind
-  | Int16 : (int, int16_elt) kind
-  | UInt16 : (int, uint16_elt) kind
-  | Int32 : (int32, int32_elt) kind
-  | UInt32 : (int32, uint32_elt) kind
-  | Int64 : (int64, int64_elt) kind
-  | UInt64 : (int64, uint64_elt) kind
-  | Complex64 : (Complex.t, complex32_elt) kind
-  | Complex128 : (Complex.t, complex64_elt) kind
-  | Bool : (bool, bool_elt) kind
-
-(* Kind values *)
-
-let float16 = Float16
-let float32 = Float32
-let float64 = Float64
-let bfloat16 = BFloat16
-let float8_e4m3 = Float8_e4m3
-let float8_e5m2 = Float8_e5m2
-let int4 = Int4
-let uint4 = UInt4
-let int8 = Int8
-let uint8 = UInt8
-let int16 = Int16
-let uint16 = UInt16
-let int32 = Int32
-let uint32 = UInt32
-let int64 = Int64
-let uint64 = UInt64
-let complex64 = Complex64
-let complex128 = Complex128
-let bool = Bool
-
-(* Kind properties *)
-
-let kind_name : type a b. (a, b) kind -> string = function
-  | Float16 -> "float16"
-  | Float32 -> "float32"
-  | Float64 -> "float64"
-  | BFloat16 -> "bfloat16"
-  | Float8_e4m3 -> "float8_e4m3"
-  | Float8_e5m2 -> "float8_e5m2"
-  | Int4 -> "int4"
-  | UInt4 -> "uint4"
-  | Int8 -> "int8"
-  | UInt8 -> "uint8"
-  | Int16 -> "int16"
-  | UInt16 -> "uint16"
-  | Int32 -> "int32"
-  | UInt32 -> "uint32"
-  | Int64 -> "int64"
-  | UInt64 -> "uint64"
-  | Complex64 -> "complex64"
-  | Complex128 -> "complex128"
-  | Bool -> "bool"
-
-let kind_size_in_bytes : type a b. (a, b) kind -> int = function
-  | Float16 -> 2
-  | Float32 -> 4
-  | Float64 -> 8
-  | BFloat16 -> 2
-  | Float8_e4m3 -> 1
-  | Float8_e5m2 -> 1
-  | Int4 -> 1
-  | UInt4 -> 1
-  | Int8 -> 1
-  | UInt8 -> 1
-  | Int16 -> 2
-  | UInt16 -> 2
-  | Int32 -> 4
-  | UInt32 -> 4
-  | Int64 -> 8
-  | UInt64 -> 8
-  | Complex64 -> 8
-  | Complex128 -> 16
-  | Bool -> 1
-
-let to_stdlib_kind : type a b. (a, b) kind -> (a, b) Bigarray.kind option =
-  function
-  | Float16 -> Some Bigarray.Float16
-  | Float32 -> Some Bigarray.Float32
-  | Float64 -> Some Bigarray.Float64
-  | Int8 -> Some Bigarray.Int8_signed
-  | UInt8 -> Some Bigarray.Int8_unsigned
-  | Int16 -> Some Bigarray.Int16_signed
-  | UInt16 -> Some Bigarray.Int16_unsigned
-  | Int32 -> Some Bigarray.Int32
-  | Int64 -> Some Bigarray.Int64
-  | Complex64 -> Some Bigarray.Complex32
-  | Complex128 -> Some Bigarray.Complex64
-  | BFloat16 -> None
-  | Bool -> None
-  | Int4 -> None
-  | UInt4 -> None
-  | Float8_e4m3 -> None
-  | Float8_e5m2 -> None
-  | UInt32 -> None
-  | UInt64 -> None
-
 (* Buffer type *)
 
 type ('a, 'b) t = ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -178,7 +44,7 @@ external create_uint64_genarray :
 (* Extended-kind genarray creation *)
 
 let genarray_create : type a b c.
-    (a, b) kind ->
+    (a, b) Nx_dtype.t ->
     c Bigarray.layout ->
     int array ->
     (a, b, c) Bigarray.Genarray.t =
@@ -193,7 +59,7 @@ let genarray_create : type a b c.
   | UInt32 -> create_uint32_genarray layout dims
   | UInt64 -> create_uint64_genarray layout dims
   | _ -> (
-      match to_stdlib_kind kind with
+      match Nx_dtype.to_bigarray_kind kind with
       | Some k -> Bigarray.Genarray.create k layout dims
       | None -> assert false)
 
@@ -208,7 +74,8 @@ external genarray_set :
 
 (* Not [@@noalloc]: the stub raises on kinds buffers do not support (char, int,
    nativeint). *)
-external genarray_kind_ext : ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b) kind
+external genarray_dtype :
+  ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b) Nx_dtype.t
   = "caml_nx_buffer_kind"
 
 external genarray_blit_ext :
@@ -235,7 +102,7 @@ let create kind n =
 
 (* Buffer properties *)
 
-let kind buf = genarray_kind_ext (Bigarray.genarray_of_array1 buf)
+let dtype buf = genarray_dtype (Bigarray.genarray_of_array1 buf)
 let length buf = Bigarray.Array1.dim buf
 
 (* Element access *)
@@ -254,35 +121,35 @@ external unsafe_data_ptr :
   ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> nativeint
   = "caml_nx_buffer_data_ptr"
 
-let is_int4 : type a b. (a, b) kind -> bool =
+let is_int4 : type a b. (a, b) Nx_dtype.t -> bool =
  fun k -> match k with Int4 | UInt4 -> true | _ -> false
 
 (* Byte count for a span of elements, accounting for int4 packing *)
 let elts_to_bytes k n =
-  if is_int4 k then (n + 1) / 2 else n * kind_size_in_bytes k
+  if is_int4 k then (n + 1) / 2 else n * Nx_dtype.itemsize k
 
 (* Byte offset of element [off]; int4 offsets must be even (checked by the
    callers) so the element starts a byte. *)
 let elt_off_to_bytes k off =
-  if is_int4 k then off / 2 else off * kind_size_in_bytes k
+  if is_int4 k then off / 2 else off * Nx_dtype.itemsize k
 
 (* Reinterpretation *)
 
 external unsafe_reinterpret :
-  ('a, 'b) kind -> ('c, 'd) t -> int -> int -> ('a, 'b) t
+  ('a, 'b) Nx_dtype.t -> ('c, 'd) t -> int -> int -> ('a, 'b) t
   = "caml_nx_buffer_reinterpret"
 
 let reinterpret k buf =
-  if is_int4 k || is_int4 (kind buf) then
+  if is_int4 k || is_int4 (dtype buf) then
     invalid_arg "Nx_buffer.reinterpret: int4 and uint4 pack two elements a byte";
-  let bytes = length buf * kind_size_in_bytes (kind buf) in
-  let size = kind_size_in_bytes k in
+  let bytes = length buf * Nx_dtype.itemsize (dtype buf) in
+  let size = Nx_dtype.itemsize k in
   if bytes mod size <> 0 then
     invalid_arg
       (Printf.sprintf
          "Nx_buffer.reinterpret: %d bytes is not a multiple of the %d-byte %s \
           element"
-         bytes size (kind_name k));
+         bytes size (Nx_dtype.to_string k));
   unsafe_reinterpret k buf (bytes / size) size
 
 (* Mapped files *)
@@ -318,7 +185,7 @@ let blit ~src ~dst =
     (Bigarray.genarray_of_array1 dst)
 
 let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes buf =
-  let k = kind buf in
+  let k = dtype buf in
   let buf_len = length buf in
   let len = match len with Some l -> l | None -> buf_len - dst_off in
   if src_off < 0 then invalid_arg "blit_from_bytes: negative src_off";
@@ -345,7 +212,7 @@ let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes buf =
     dst_byte_off byte_len
 
 let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len buf bytes =
-  let k = kind buf in
+  let k = dtype buf in
   let buf_len = length buf in
   let len = match len with Some l -> l | None -> buf_len - src_off in
   if src_off < 0 then invalid_arg "blit_to_bytes: negative src_off";
@@ -381,11 +248,12 @@ let of_bigarray1 buf =
   buf
 
 let to_bigarray1 buf =
-  match to_stdlib_kind (kind buf) with
+  match Nx_dtype.to_bigarray_kind (dtype buf) with
   | Some _ -> buf
   | None ->
       invalid_arg
-        ("Nx_buffer.to_bigarray1: no bigarray kind for " ^ kind_name (kind buf))
+        ("Nx_buffer.to_bigarray1: no bigarray kind for "
+        ^ Nx_dtype.to_string (dtype buf))
 
 let to_genarray buf shape =
   Bigarray.reshape (Bigarray.genarray_of_array1 buf) shape
@@ -398,9 +266,6 @@ let of_genarray ga =
   Bigarray.array1_of_genarray (Bigarray.reshape ga [| size |])
 
 (* Genarray utilities *)
-
-let genarray_kind : type a b c. (a, b, c) Bigarray.Genarray.t -> (a, b) kind =
- fun ga -> genarray_kind_ext ga
 
 let genarray_dims ga = Bigarray.Genarray.dims ga
 

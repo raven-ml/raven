@@ -25,7 +25,7 @@ let run_transform f x handler =
    them alone; see Vega. *)
 let differentiable_leaf leaf =
   let dt = Nx.dtype leaf in
-  Nx_core.Dtype.is_float dt || Nx_core.Dtype.is_complex dt
+  Nx_dtype.is_float dt || Nx_dtype.is_complex dt
 
 (* The single-tensor forms have no structure to carry a non-differentiable value
    in, so there the dtype is simply wrong. *)
@@ -36,7 +36,7 @@ let require_float_leaf name leaf =
          "%s: cannot differentiate a %s tensor; gradients are defined for real \
           and complex dtypes"
          name
-         (Nx_core.Dtype.to_string (Nx.dtype leaf)))
+         (Nx_dtype.to_string (Nx.dtype leaf)))
 
 (* Reverse mode *)
 

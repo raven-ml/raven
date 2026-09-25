@@ -369,9 +369,7 @@ val pp_visit : Format.formatter -> visit -> unit
 
 val cast :
   (module U : S) ->
-  ('c, 'd) Nx_core.Dtype.t ->
-  ('a, 'b) Nx_effect.t U.t ->
-  ('c, 'd) Nx_effect.t U.t
+  ('c, 'd) Nx_dtype.t -> ('a, 'b) Nx_effect.t U.t -> ('c, 'd) Nx_effect.t U.t
 (** [cast (module U) dtype x] is [x] with each tensor at a position of [U]'s
     parameter cast to [dtype], as {!Nx.cast} does. Fixed tensors are kept. *)
 

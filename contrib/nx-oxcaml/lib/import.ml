@@ -3,7 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Dtype = Nx_core.Dtype
 module View = Nx_core.View
 module Shape = Nx_core.Shape
 module Array1 = Bigarray.Array1

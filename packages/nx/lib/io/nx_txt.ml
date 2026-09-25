@@ -68,7 +68,7 @@ module type SPEC = sig
   type elt
   type kind
 
-  val kind : (elt, kind) Nx_buffer.kind
+  val kind : (elt, kind) Nx_dtype.t
   val print : out_channel -> elt -> unit
   val parse : string -> (elt, error) result
 end
@@ -190,9 +190,9 @@ let parse_i64 name token =
 
 let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
     (module SPEC with type elt = a and type kind = b) option =
-  let name = Nx_core.Dtype.to_string dtype in
+  let name = Nx_dtype.to_string dtype in
   let kind = dtype in
-  let open Nx_core.Dtype in
+  let open Nx_dtype in
   match dtype with
   | Float16 ->
       Some

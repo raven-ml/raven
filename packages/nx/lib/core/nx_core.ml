@@ -3,7 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Dtype = Dtype
 module Shape = Shape
 module View = View
 module Backend_intf = Backend_intf

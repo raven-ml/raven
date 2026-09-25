@@ -8,7 +8,7 @@
    reduce_sum), so they all differentiate. *)
 
 (* A float constant in [x]'s element type, for the [_s] scalar operations. *)
-let const x v = Nx_core.Dtype.of_float (Nx.dtype x) v
+let const x v = Nx_dtype.of_float (Nx.dtype x) v
 let relu = Nx.relu
 let sigmoid = Nx.sigmoid
 let tanh = Nx.tanh

@@ -33,7 +33,7 @@ let swap_16 buf n =
 
 (* Loading *)
 
-type kind = K : ('a, 'b) Nx_buffer.kind -> kind
+type kind = K : ('a, 'b) Nx_dtype.t -> kind
 
 (* A dtype nx lacks is handed out as its bytes. *)
 let kind_of_dtype : Safetensors.dtype -> kind = function
@@ -56,8 +56,8 @@ let kind_of_dtype : Safetensors.dtype -> kind = function
 (* [tensor mapping kind shape ~off ~len] is the entry of [len] bytes at byte
    [off] of [mapping]. It is a view of [mapping] when its address suits [kind],
    and a copy in the machine's byte order otherwise. *)
-let tensor (type a b) mapping (kind : (a, b) Nx_buffer.kind) shape ~off ~len =
-  let size = Nx_buffer.kind_size_in_bytes kind in
+let tensor (type a b) mapping (kind : (a, b) Nx_dtype.t) shape ~off ~len =
+  let size = Nx_dtype.itemsize kind in
   let bytes = Nx_buffer.of_bigarray1 (Bigarray.Array1.sub mapping off len) in
   let aligned =
     let mask = Nativeint.of_int (size - 1) in
@@ -202,7 +202,7 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
     done;
     Bytes.unsafe_to_string bytes
   in
-  match Nx_buffer.kind buf with
+  match Nx_buffer.dtype buf with
   | Float32 ->
       let get i = Int32.bits_of_float (Nx_buffer.unsafe_get buf i) in
       (Safetensors.F32, le32 get)
@@ -226,7 +226,7 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
       (Safetensors.BOOL, le8 get)
   | Float8_e4m3 | Float8_e5m2 ->
       let tag =
-        match Nx_buffer.kind buf with
+        match Nx_buffer.dtype buf with
         | Float8_e4m3 -> Safetensors.F8_E4M3
         | _ -> Safetensors.F8_E5M2
       in
@@ -235,7 +235,7 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
       (tag, Bytes.unsafe_to_string bytes)
   | Float16 | BFloat16 ->
       let tag =
-        match Nx_buffer.kind buf with
+        match Nx_buffer.dtype buf with
         | Float16 -> Safetensors.F16
         | _ -> Safetensors.BF16
       in
@@ -245,7 +245,7 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
       (tag, Bytes.unsafe_to_string bytes)
   | _ ->
       fail_msg "unsupported dtype for safetensors: %s"
-        (Nx_buffer.kind_name (Nx_buffer.kind buf))
+        (Nx_dtype.to_string (Nx_buffer.dtype buf))
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;

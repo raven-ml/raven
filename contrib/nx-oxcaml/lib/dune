@@ -25,4 +25,4 @@
  (foreign_stubs
   (language c)
   (names nx_oxcaml_stubs simd_stubs))
- (libraries nx.core nx.buffer stdlib_stable stdlib_upstream_compatible))
+ (libraries nx.dtype nx.core nx.buffer stdlib_stable stdlib_upstream_compatible))

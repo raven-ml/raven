@@ -69,7 +69,7 @@ let test_scale_half_dtype () =
   let loss = Nx.scalar Nx.float16 2.0 in
   let scaled = Ls.scale ls loss in
   is_true ~msg:"scale keeps the input dtype"
-    (Nx_core.Dtype.equal (Nx.dtype scaled) Nx.float16);
+    (Nx_dtype.equal (Nx.dtype scaled) Nx.float16);
   equal ~msg:"scaled value" float_exact 16.0 (Nx.item [] scaled)
 
 (* Finiteness *)

@@ -91,11 +91,11 @@ let nx_value kind x =
 let nx_code kind x =
   let b = B.create kind 1 in
   B.set b 0 x;
-  B.get (B.reinterpret B.uint8 b) 0
+  B.get (B.reinterpret Nx_dtype.uint8 b) 0
 
 let nx_decode kind code =
   let b = B.create kind 1 in
-  B.set (B.reinterpret B.uint8 b) 0 code;
+  B.set (B.reinterpret Nx_dtype.uint8 b) 0 code;
   B.get b 0
 
 let tolk_fp8 dt x = D.fp8_to_float dt (D.float_to_fp8 dt x)
@@ -185,13 +185,13 @@ let check_float8 f kind dt inputs () =
   agree ~msg:(f.name ^ " tolk") inputs (reference f) (tolk_fp8 dt)
 
 let check_bf16 inputs () =
-  agree ~msg:"bfloat16 nx" inputs (reference bf16) (nx_value B.bfloat16);
+  agree ~msg:"bfloat16 nx" inputs (reference bf16) (nx_value Nx_dtype.bfloat16);
   agree ~msg:"bfloat16 tolk" inputs (reference bf16) D.float_to_bf16
 
 let check_f16 inputs ~wide () =
   let exact = reference f16 in
   let nx = if wide then fun x -> exact (to_f32 x) else exact in
-  agree ~msg:"float16 nx" inputs nx (nx_value B.float16);
+  agree ~msg:"float16 nx" inputs nx (nx_value Nx_dtype.float16);
   agree ~msg:"float16 tolk" inputs exact D.float_to_fp16
 
 (* nx's casts encode through its kernels, not through element stores. *)
@@ -242,21 +242,27 @@ let () =
     [
       group "float8 codes"
         [
-          test "e4m3" (check_codes B.float8_e4m3 D.fp8e4m3 ~is_nan:e4m3_nan);
-          test "e5m2" (check_codes B.float8_e5m2 D.fp8e5m2 ~is_nan:e5m2_nan);
+          test "e4m3"
+            (check_codes Nx_dtype.float8_e4m3 D.fp8e4m3 ~is_nan:e4m3_nan);
+          test "e5m2"
+            (check_codes Nx_dtype.float8_e5m2 D.fp8e5m2 ~is_nan:e5m2_nan);
         ];
       group "from float32"
         [
-          test "e4m3" (check_float8 e4m3 B.float8_e4m3 D.fp8e4m3 f32_sweep);
-          test "e5m2" (check_float8 e5m2 B.float8_e5m2 D.fp8e5m2 f32_sweep);
+          test "e4m3"
+            (check_float8 e4m3 Nx_dtype.float8_e4m3 D.fp8e4m3 f32_sweep);
+          test "e5m2"
+            (check_float8 e5m2 Nx_dtype.float8_e5m2 D.fp8e5m2 f32_sweep);
           test "bfloat16" (check_bf16 f32_sweep);
           test "float16" (check_f16 f32_sweep ~wide:false);
           test "nx casts" (check_casts f32_sweep ~src:Nx.float32);
         ];
       group "from float64"
         [
-          test "e4m3" (check_float8 e4m3 B.float8_e4m3 D.fp8e4m3 f64_sweep);
-          test "e5m2" (check_float8 e5m2 B.float8_e5m2 D.fp8e5m2 f64_sweep);
+          test "e4m3"
+            (check_float8 e4m3 Nx_dtype.float8_e4m3 D.fp8e4m3 f64_sweep);
+          test "e5m2"
+            (check_float8 e5m2 Nx_dtype.float8_e5m2 D.fp8e5m2 f64_sweep);
           test "bfloat16" (check_bf16 f64_sweep);
           test "float16" (check_f16 f64_sweep ~wide:true);
           test "nx casts" (check_casts f64_sweep ~src:Nx.float64);

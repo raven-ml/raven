@@ -675,7 +675,7 @@ let test_poisson_matches_the_pmf () =
       /. len
     in
     let label =
-      Printf.sprintf "poisson(%g) at %s" rate (Nx_core.Dtype.to_string dtype)
+      Printf.sprintf "poisson(%g) at %s" rate (Nx_dtype.to_string dtype)
     in
     equal ~msg:(label ^ " mean") (float (0.03 *. Stdlib.sqrt rate)) rate mean;
     equal ~msg:(label ^ " variance") (float (0.1 *. rate)) rate var;

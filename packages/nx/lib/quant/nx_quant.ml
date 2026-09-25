@@ -118,17 +118,8 @@ let decode codes scales =
 let chunk = 1 lsl 22
 let rows_per_chunk k = max 1 (chunk / k)
 
-let buffer_kind : type b. (float, b) Nx.dtype -> (float, b) Nx_buffer.kind =
-  function
-  | Nx.Float16 -> Nx_buffer.float16
-  | Nx.Float32 -> Nx_buffer.float32
-  | Nx.Float64 -> Nx_buffer.float64
-  | Nx.BFloat16 -> Nx_buffer.bfloat16
-  | Nx.Float8_e4m3 -> Nx_buffer.float8_e4m3
-  | Nx.Float8_e5m2 -> Nx_buffer.float8_e5m2
-
 let bytes buf =
-  Nx_buffer.to_bigarray1 (Nx_buffer.reinterpret Nx_buffer.uint8 buf)
+  Nx_buffer.to_bigarray1 (Nx_buffer.reinterpret Nx_dtype.uint8 buf)
 
 (* Matrices and chunks. [matrix lead t j] is the matrix [j] of the part [t]
    whose leading axes are [lead], a view. [chunks n k f] calls [f r0 r] on the
@@ -168,10 +159,9 @@ let decode_all (type b) (dt : (float, b) Nx.dtype) codes scales :
   let count = Array.fold_left ( * ) 1 lead in
   if count * n * k = 0 then Nx.zeros dt s
   else begin
-    let kind = buffer_kind dt in
-    let out = Nx_buffer.create kind (count * n * k) in
+    let out = Nx_buffer.create dt (count * n * k) in
     let dst = bytes out in
-    let item = Nx_buffer.kind_size_in_bytes kind in
+    let item = Nx_dtype.itemsize dt in
     for j = 0 to count - 1 do
       let codes = matrix lead codes j and scales = matrix lead scales j in
       chunks n k (fun r0 r ->
@@ -335,7 +325,7 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
         filled := !filled + List.length group)
       members;
     let slots = !filled + if Array.mem (-1) slot then 1 else 0 in
-    let y = Nx_buffer.create Nx_buffer.float32 (slots * m * outputs) in
+    let y = Nx_buffer.create Nx_dtype.float32 (slots * m * outputs) in
     let dst = Nx_buffer.to_bigarray1 y in
     if slots > !filled then
       Bigarray.Array1.fill

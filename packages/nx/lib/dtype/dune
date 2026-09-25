@@ -1,0 +1,5 @@
+(library
+ (name nx_dtype)
+ (public_name nx.dtype)
+ (install_c_headers nx_dtype)
+ (libraries))

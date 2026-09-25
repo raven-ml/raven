@@ -41,7 +41,7 @@
  (libraries
   rune
   nx
-  nx.core
+  nx.dtype
   nx.buffer
   nx.effect
   tolk
@@ -64,7 +64,7 @@
  (name test_float_codecs)
  (modules test_float_codecs)
  (package rune)
- (libraries nx nx.buffer tolk.uop windtrap))
+ (libraries nx nx.dtype nx.buffer tolk.uop windtrap))
 
 (tests
  (names test_jit_alignment)
@@ -113,7 +113,7 @@
    DEV
    METAL
    (run %{test})))
- (libraries rune nx nx.core nx.buffer tolk unix windtrap rune_test_support))
+ (libraries rune nx nx.dtype nx.buffer tolk unix windtrap rune_test_support))
 
 (tests
  (names test_jit_cuda)

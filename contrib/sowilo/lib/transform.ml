@@ -162,5 +162,5 @@ let pad : type a b.
   let padding = Array.make rank (0, 0) in
   padding.(h_ax) <- (top, bottom);
   padding.(w_ax) <- (left, right);
-  let fill : a = Nx_core.Dtype.of_float (Nx.dtype img) value in
+  let fill : a = Nx_dtype.of_float (Nx.dtype img) value in
   Nx.pad padding fill img

@@ -59,13 +59,13 @@ let map2 fn s ~this ~that
           invalid_arg (fn ^ ": the structure's walk visited one value two ways")
       | Nx.P u :: tail -> (
           rest := tail;
-          match Nx_core.Dtype.equal_witness (Nx.dtype t) (Nx.dtype u) with
+          match Nx_dtype.equal_witness (Nx.dtype t) (Nx.dtype u) with
           | Some Type.Equal -> f path t u
           | None ->
               invalid_argf "%s: %s: %s in %s, %s in %s" fn (describe path)
-                (Nx_core.Dtype.to_string (Nx.dtype t))
+                (Nx_dtype.to_string (Nx.dtype t))
                 this
-                (Nx_core.Dtype.to_string (Nx.dtype u))
+                (Nx_dtype.to_string (Nx.dtype u))
                 that))
     x
 

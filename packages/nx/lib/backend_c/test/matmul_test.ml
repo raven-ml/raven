@@ -65,7 +65,8 @@ let ffi ?(offset = 0) buf shape strides =
    row-major (strides cols,1); trans=true stores column-major (strides 1,rows) —
    a transposed view the pack must resolve for free. off shifts the data
    base. *)
-let mk_real (type b) (kind : (float, b) Buf.kind) ~rows ~cols ~trans ~off fill =
+let mk_real (type b) (kind : (float, b) Nx_dtype.t) ~rows ~cols ~trans ~off fill
+    =
   let rs, cs = if trans then (1, rows) else (cols, 1) in
   let buf = Buf.create kind (off + (rows * cols)) in
   for i = 0 to rows - 1 do
@@ -75,8 +76,8 @@ let mk_real (type b) (kind : (float, b) Buf.kind) ~rows ~cols ~trans ~off fill =
   done;
   (buf, rs, cs)
 
-let test_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol_rel ~tol_abs ~m
-    ~k ~n ?(a_trans = false) ?(b_trans = false) ?(a_off = 0) ?(b_off = 0)
+let test_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol_rel ~tol_abs
+    ~m ~k ~n ?(a_trans = false) ?(b_trans = false) ?(a_off = 0) ?(b_off = 0)
     ?(c_off = 0) ?(scale = 1.0) ~modes () =
   let fa i p = sin (float_of_int (((i * k) + p) * 13 mod 1009)) *. scale in
   let fb p j = cos (float_of_int (((p * n) + j) * 7 mod 1013)) *. scale in
@@ -142,7 +143,7 @@ let test_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol_rel ~tol_abs ~m
    a tolerance rather than bitwise (an exact test would be hostage to that
    contraction). A real bug moves the result by orders of magnitude, far outside
    tol. *)
-let test_diff (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~k ~n () =
+let test_diff (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~m ~k ~n () =
   let fa i p = sin (float_of_int (((i * k) + p) * 13 mod 4099)) in
   let fb p j = cos (float_of_int (((p * n) + j) * 7 mod 4093)) in
   let abuf, ars, acs = mk_real kind ~rows:m ~cols:k ~trans:false ~off:0 fa in
@@ -177,7 +178,7 @@ let test_diff (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~k ~n () =
    the blocked KC path (mode 0 policy, mode 1 forced-1t) and direct (mode 2,
    also compute-typed); a and b are chosen so the panel partial (KC·ab) is NOT
    f16-representable, so the leak actually rounds. *)
-let test_kc_cancel (type b) ~(kind : (float, b) Buf.kind) ~name ~m ~k ~n () =
+let test_kc_cancel (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~m ~k ~n () =
   let a = 1.3 and b = 1.5 in
   let abuf = Buf.create kind (m * k) in
   for i = 0 to m - 1 do
@@ -228,7 +229,7 @@ let test_kc_cancel (type b) ~(kind : (float, b) Buf.kind) ~name ~m ~k ~n () =
    compute-typed f32/f64. Run at k > MM_KC_FULLK_MAX so the wrapper's Cacc-alloc
    branch (size query + sub-slot handoff) executes; a mis-sized/mis-offset
    scratch or wrong Cacc pointer would move the result far outside tol. *)
-let test_ws (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~k ~n () =
+let test_ws (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~m ~k ~n () =
   let fa i p = sin (float_of_int (((i * k) + p) * 13 mod 4099)) in
   let fb p j = cos (float_of_int (((p * n) + j) * 7 mod 4093)) in
   let abuf, _, _ = mk_real kind ~rows:m ~cols:k ~trans:false ~off:0 fa in
@@ -259,7 +260,7 @@ let test_ws (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~k ~n () =
    forced-owned is BIT-identical to the owned policy path. When the hook is
    unavailable (off macOS) every route is owned, so (2)/(3) hold as
    owned-vs-owned and the suite stays green everywhere. *)
-let test_accel_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~k ~n
+let test_accel_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~m ~k ~n
     () =
   let fa i p = sin (float_of_int (((i * k) + p) * 13 mod 4099)) in
   let fb p j = cos (float_of_int (((p * n) + j) * 7 mod 4093)) in
@@ -293,8 +294,8 @@ let test_accel_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~k ~n
   cmp "accel-vs-oracle" tol forced_on oracle;
   cmp "optout-eq-owned" 0.0 forced_off owned
 
-let test_accel_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~m
-    ~k ~n () =
+let test_accel_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~tol
+    ~m ~k ~n () =
   let fa i p =
     {
       Complex.re = sin (float_of_int (((i * k) + p) mod 97));
@@ -356,17 +357,19 @@ let test_accel () =
     (accel_enabled () = if avail then 1 else 0);
   List.iter
     (fun (m, k, n) ->
-      test_accel_real ~kind:Buf.float32 ~name:"f32-accel" ~tol:2e-3 ~m ~k ~n ();
-      test_accel_real ~kind:Buf.float64 ~name:"f64-accel" ~tol:1e-9 ~m ~k ~n ();
-      test_accel_complex ~kind:Buf.complex64 ~name:"c32-accel" ~tol:2e-3 ~m ~k
+      test_accel_real ~kind:Nx_dtype.float32 ~name:"f32-accel" ~tol:2e-3 ~m ~k
         ~n ();
-      test_accel_complex ~kind:Buf.complex128 ~name:"c64-accel" ~tol:1e-9 ~m ~k
-        ~n ())
+      test_accel_real ~kind:Nx_dtype.float64 ~name:"f64-accel" ~tol:1e-9 ~m ~k
+        ~n ();
+      test_accel_complex ~kind:Nx_dtype.complex64 ~name:"c32-accel" ~tol:2e-3 ~m
+        ~k ~n ();
+      test_accel_complex ~kind:Nx_dtype.complex128 ~name:"c64-accel" ~tol:1e-9
+        ~m ~k ~n ())
     [ (128, 128, 128); (256, 200, 192); (129, 300, 65) ]
 
 (* ── Batch broadcast ──────────────────────────────────────────────────────*)
 
-let test_batch_real (type b) ~(kind : (float, b) Buf.kind) ~name () =
+let test_batch_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name () =
   (* A:[G,m,k] B:[k,n] (broadcast over batch) C:[G,m,n]. Plus a both-batched
      case with a size-1 (stride-0) broadcast dim on B. *)
   let g = 3 and m = 5 and k = 4 and n = 6 in
@@ -425,7 +428,7 @@ let wrap_signed bits x =
 
 let wrap_unsigned bits x = x land ((1 lsl bits) - 1)
 
-let test_int_small (type b) ~(kind : (int, b) Buf.kind) ~name ~wrap ~m ~k ~n
+let test_int_small (type b) ~(kind : (int, b) Nx_dtype.t) ~name ~wrap ~m ~k ~n
     ~vlo ~vhi ~modes () =
   let span = vhi - vlo + 1 in
   let fa i p = vlo + (((((i * k) + p) * 7) + 3) mod span) in
@@ -474,13 +477,13 @@ let test_int_small (type b) ~(kind : (int, b) Buf.kind) ~name ~wrap ~m ~k ~n
 let test_i32 ~name ~m ~k ~n () =
   let fa i p = Int32.of_int ((((((i * k) + p) * 7) + 3) mod 21) - 10) in
   let fb p j = Int32.of_int ((((((p * n) + j) * 5) + 1) mod 21) - 10) in
-  let abuf = Buf.create Buf.int32 (m * k) in
+  let abuf = Buf.create Nx_dtype.int32 (m * k) in
   for i = 0 to m - 1 do
     for p = 0 to k - 1 do
       Buf.set abuf ((i * k) + p) (fa i p)
     done
   done;
-  let bbuf = Buf.create Buf.int32 (k * n) in
+  let bbuf = Buf.create Nx_dtype.int32 (k * n) in
   for p = 0 to k - 1 do
     for j = 0 to n - 1 do
       Buf.set bbuf ((p * n) + j) (fb p j)
@@ -502,7 +505,7 @@ let test_i32 ~name ~m ~k ~n () =
       refc.((i * n) + j) <- Int64.to_int32 !s
     done
   done;
-  let cbuf = Buf.create Buf.int32 (m * n) in
+  let cbuf = Buf.create Nx_dtype.int32 (m * n) in
   mm (ffi cbuf [| m; n |] [| n; 1 |]) a_ffi b_ffi;
   let bad = ref 0 in
   for t = 0 to (m * n) - 1 do
@@ -513,13 +516,13 @@ let test_i32 ~name ~m ~k ~n () =
 let test_i64 ~name ~m ~k ~n () =
   let fa i p = Int64.of_int ((((((i * k) + p) * 7) + 3) mod 21) - 10) in
   let fb p j = Int64.of_int ((((((p * n) + j) * 5) + 1) mod 21) - 10) in
-  let abuf = Buf.create Buf.int64 (m * k) in
+  let abuf = Buf.create Nx_dtype.int64 (m * k) in
   for i = 0 to m - 1 do
     for p = 0 to k - 1 do
       Buf.set abuf ((i * k) + p) (fa i p)
     done
   done;
-  let bbuf = Buf.create Buf.int64 (k * n) in
+  let bbuf = Buf.create Nx_dtype.int64 (k * n) in
   for p = 0 to k - 1 do
     for j = 0 to n - 1 do
       Buf.set bbuf ((p * n) + j) (fb p j)
@@ -541,7 +544,7 @@ let test_i64 ~name ~m ~k ~n () =
       refc.((i * n) + j) <- !s
     done
   done;
-  let cbuf = Buf.create Buf.int64 (m * n) in
+  let cbuf = Buf.create Nx_dtype.int64 (m * n) in
   mm (ffi cbuf [| m; n |] [| n; 1 |]) a_ffi b_ffi;
   let bad = ref 0 in
   for t = 0 to (m * n) - 1 do
@@ -576,11 +579,11 @@ let test_i64_wrap ~name ~m ~k ~n () =
     in
     Int64.logxor z (Int64.shift_right_logical z 31)
   in
-  let abuf = Buf.create Buf.int64 (m * k) in
+  let abuf = Buf.create Nx_dtype.int64 (m * k) in
   for t = 0 to (m * k) - 1 do
     Buf.set abuf t (sm64 ())
   done;
-  let bbuf = Buf.create Buf.int64 (k * n) in
+  let bbuf = Buf.create Nx_dtype.int64 (k * n) in
   for t = 0 to (k * n) - 1 do
     Buf.set bbuf t (sm64 ())
   done;
@@ -611,7 +614,7 @@ let test_i64_wrap ~name ~m ~k ~n () =
   let b_ffi = ffi bbuf [| k; n |] [| n; 1 |] in
   List.iter
     (fun mode ->
-      let cbuf = Buf.create Buf.int64 (m * n) in
+      let cbuf = Buf.create Nx_dtype.int64 (m * n) in
       mm_ex (ffi cbuf [| m; n |] [| n; 1 |]) a_ffi b_ffi mode;
       let bad = ref 0 in
       for t = 0 to (m * n) - 1 do
@@ -626,13 +629,13 @@ let test_i64_wrap ~name ~m ~k ~n () =
    MAX^2 + MIN^2 = (2^126 - 2^64 + 1) + 2^126 == 1 (mod 2^64). m=1 < MR forces
    the direct path (MM_MAC). *)
 let test_i64_wrap_fixture () =
-  let abuf = Buf.create Buf.int64 2 in
+  let abuf = Buf.create Nx_dtype.int64 2 in
   Buf.set abuf 0 Int64.max_int;
   Buf.set abuf 1 Int64.min_int;
-  let bbuf = Buf.create Buf.int64 2 in
+  let bbuf = Buf.create Nx_dtype.int64 2 in
   Buf.set bbuf 0 Int64.max_int;
   Buf.set bbuf 1 Int64.min_int;
-  let cbuf = Buf.create Buf.int64 1 in
+  let cbuf = Buf.create Nx_dtype.int64 1 in
   mm
     (ffi cbuf [| 1; 1 |] [| 1; 1 |])
     (ffi abuf [| 1; 2 |] [| 2; 1 |])
@@ -644,11 +647,11 @@ let test_i64_wrap_fixture () =
 (* u32/u64: small non-negative values, unambiguous in the int32/int64
    storage. *)
 let test_u32 ~m ~k ~n () =
-  let abuf = Buf.create Buf.uint32 (m * k) in
+  let abuf = Buf.create Nx_dtype.uint32 (m * k) in
   for t = 0 to (m * k) - 1 do
     Buf.set abuf t (Int32.of_int (t * 3 mod 11))
   done;
-  let bbuf = Buf.create Buf.uint32 (k * n) in
+  let bbuf = Buf.create Nx_dtype.uint32 (k * n) in
   for t = 0 to (k * n) - 1 do
     Buf.set bbuf t (Int32.of_int (t * 5 mod 7))
   done;
@@ -666,7 +669,7 @@ let test_u32 ~m ~k ~n () =
       refc.((i * n) + j) <- !s
     done
   done;
-  let cbuf = Buf.create Buf.uint32 (m * n) in
+  let cbuf = Buf.create Nx_dtype.uint32 (m * n) in
   mm
     (ffi cbuf [| m; n |] [| n; 1 |])
     (ffi abuf [| m; k |] [| k; 1 |])
@@ -678,11 +681,11 @@ let test_u32 ~m ~k ~n () =
   ok (Printf.sprintf "u32 %dx%dx%d (bad=%d)" m k n !bad) (!bad = 0)
 
 let test_u64 ~m ~k ~n () =
-  let abuf = Buf.create Buf.uint64 (m * k) in
+  let abuf = Buf.create Nx_dtype.uint64 (m * k) in
   for t = 0 to (m * k) - 1 do
     Buf.set abuf t (Int64.of_int (t * 3 mod 11))
   done;
-  let bbuf = Buf.create Buf.uint64 (k * n) in
+  let bbuf = Buf.create Nx_dtype.uint64 (k * n) in
   for t = 0 to (k * n) - 1 do
     Buf.set bbuf t (Int64.of_int (t * 5 mod 7))
   done;
@@ -700,7 +703,7 @@ let test_u64 ~m ~k ~n () =
       refc.((i * n) + j) <- !s
     done
   done;
-  let cbuf = Buf.create Buf.uint64 (m * n) in
+  let cbuf = Buf.create Nx_dtype.uint64 (m * n) in
   mm
     (ffi cbuf [| m; n |] [| n; 1 |])
     (ffi abuf [| m; k |] [| k; 1 |])
@@ -713,8 +716,8 @@ let test_u64 ~m ~k ~n () =
 
 (* ── Complex dtypes ───────────────────────────────────────────────────────*)
 
-let test_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~m ~k ~n
-    ~modes () =
+let test_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~tol ~m ~k
+    ~n ~modes () =
   let fa i p =
     {
       Complex.re = sin (float_of_int (((i * k) + p) mod 97));
@@ -780,7 +783,7 @@ let test_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~m ~k ~n
 
 let test_bool_unsupported () =
   let m = 4 and k = 4 and n = 4 in
-  let mkbool sz = Buf.create Buf.bool sz in
+  let mkbool sz = Buf.create Nx_dtype.bool sz in
   let a = mkbool (m * k) and b = mkbool (k * n) and c = mkbool (m * n) in
   let raised =
     try
@@ -796,7 +799,7 @@ let test_bool_unsupported () =
 (* ── int4/uint4: packed, no compute kernel — must raise (not corrupt nibbles)
    ─*)
 
-let test_packed_unsupported (type b) ~(kind : (int, b) Buf.kind) ~name () =
+let test_packed_unsupported (type b) ~(kind : (int, b) Nx_dtype.t) ~name () =
   let m = 4 and k = 4 and n = 4 in
   let a = Buf.create kind (m * k)
   and b = Buf.create kind (k * n)
@@ -828,11 +831,11 @@ let test_maintenance_paths () =
     (fun s ->
       List.iter
         (fun (at, bt) ->
-          test_real ~kind:Buf.float32 ~name:"f32" ~tol_rel:1e-3 ~tol_abs:1e-3
-            ~m:s ~k:s ~n:s ~a_trans:at ~b_trans:bt
+          test_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol_rel:1e-3
+            ~tol_abs:1e-3 ~m:s ~k:s ~n:s ~a_trans:at ~b_trans:bt
             ~modes:[ `Prod; `St; `Direct ] ();
-          test_real ~kind:Buf.float64 ~name:"f64" ~tol_rel:1e-9 ~tol_abs:1e-9
-            ~m:s ~k:s ~n:s ~a_trans:at ~b_trans:bt
+          test_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol_rel:1e-9
+            ~tol_abs:1e-9 ~m:s ~k:s ~n:s ~a_trans:at ~b_trans:bt
             ~modes:[ `Prod; `St; `Direct ] ())
         [ (false, false); (true, false); (false, true); (true, true) ])
     sizes;
@@ -840,10 +843,10 @@ let test_maintenance_paths () =
   (* rectangular shapes (non-square m,k,n), edge tile fractions *)
   List.iter
     (fun (m, k, n) ->
-      test_real ~kind:Buf.float32 ~name:"f32" ~tol_rel:1e-3 ~tol_abs:1e-3 ~m ~k
-        ~n ~modes:[ `Prod; `Direct ] ();
-      test_real ~kind:Buf.float64 ~name:"f64" ~tol_rel:1e-9 ~tol_abs:1e-9 ~m ~k
-        ~n ~modes:[ `Prod; `Direct ] ())
+      test_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol_rel:1e-3 ~tol_abs:1e-3
+        ~m ~k ~n ~modes:[ `Prod; `Direct ] ();
+      test_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol_rel:1e-9 ~tol_abs:1e-9
+        ~m ~k ~n ~modes:[ `Prod; `Direct ] ())
     [
       (1, 200, 1);
       (200, 1, 200);
@@ -854,23 +857,23 @@ let test_maintenance_paths () =
     ];
 
   (* offsets on all three operands *)
-  test_real ~kind:Buf.float32 ~name:"f32" ~tol_rel:1e-3 ~tol_abs:1e-3 ~m:40
+  test_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol_rel:1e-3 ~tol_abs:1e-3 ~m:40
     ~k:40 ~n:40 ~a_off:5 ~b_off:7 ~c_off:3 ~modes:[ `Prod; `Direct ] ();
-  test_real ~kind:Buf.float64 ~name:"f64" ~tol_rel:1e-9 ~tol_abs:1e-9 ~m:130
-    ~k:70 ~n:90 ~a_off:11 ~b_off:0 ~c_off:9 ~a_trans:true
+  test_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol_rel:1e-9 ~tol_abs:1e-9
+    ~m:130 ~k:70 ~n:90 ~a_off:11 ~b_off:0 ~c_off:9 ~a_trans:true
     ~modes:[ `Prod; `Direct ] ();
 
   (* larger sizes: blocked-vs-naive differential (no OCaml reference) + one
      ref *)
   List.iter
     (fun s ->
-      test_diff ~kind:Buf.float32 ~name:"f32" ~tol:1e-4 ~m:s ~k:s ~n:s ();
-      test_diff ~kind:Buf.float64 ~name:"f64" ~tol:1e-10 ~m:s ~k:s ~n:s ())
+      test_diff ~kind:Nx_dtype.float32 ~name:"f32" ~tol:1e-4 ~m:s ~k:s ~n:s ();
+      test_diff ~kind:Nx_dtype.float64 ~name:"f64" ~tol:1e-10 ~m:s ~k:s ~n:s ())
     [ 200; 256; 384 ];
-  test_real ~kind:Buf.float32 ~name:"f32" ~tol_rel:2e-3 ~tol_abs:2e-3 ~m:512
-    ~k:512 ~n:512 ~modes:[ `Prod; `Owned ] ();
-  test_real ~kind:Buf.float64 ~name:"f64" ~tol_rel:1e-9 ~tol_abs:1e-9 ~m:300
-    ~k:300 ~n:300 ~modes:[ `Prod; `Owned ] ();
+  test_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol_rel:2e-3 ~tol_abs:2e-3
+    ~m:512 ~k:512 ~n:512 ~modes:[ `Prod; `Owned ] ();
+  test_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol_rel:1e-9 ~tol_abs:1e-9
+    ~m:300 ~k:300 ~n:300 ~modes:[ `Prod; `Owned ] ();
 
   (* Large-k KC blocking: k > MM_KC_FULLK_MAX drives the contraction sub-block
      path, summing many KC panels into a compute-typed accumulator. The witness:
@@ -881,20 +884,20 @@ let test_maintenance_paths () =
      1t forces the KC path single-threaded (the panel path, small m/n). *)
   List.iter
     (fun (m, k, n) ->
-      test_real ~kind:Buf.float32 ~name:"f32-largek" ~tol_rel:1e-3 ~tol_abs:1e-3
-        ~m ~k ~n ~modes:[ `Prod; `St; `Direct ] ();
-      test_real ~kind:Buf.float64 ~name:"f64-largek" ~tol_rel:1e-9 ~tol_abs:1e-9
-        ~m ~k ~n ~modes:[ `Prod; `St; `Direct ] ();
-      test_real ~kind:Buf.float16 ~name:"f16-largek" ~tol_rel:2e-2 ~tol_abs:2e-2
-        ~m ~k ~n ~scale:0.5 ~modes:[ `Prod; `St; `Direct ] ())
+      test_real ~kind:Nx_dtype.float32 ~name:"f32-largek" ~tol_rel:1e-3
+        ~tol_abs:1e-3 ~m ~k ~n ~modes:[ `Prod; `St; `Direct ] ();
+      test_real ~kind:Nx_dtype.float64 ~name:"f64-largek" ~tol_rel:1e-9
+        ~tol_abs:1e-9 ~m ~k ~n ~modes:[ `Prod; `St; `Direct ] ();
+      test_real ~kind:Nx_dtype.float16 ~name:"f16-largek" ~tol_rel:2e-2
+        ~tol_abs:2e-2 ~m ~k ~n ~scale:0.5 ~modes:[ `Prod; `St; `Direct ] ())
     [ (16, 4096, 16); (24, 5000, 40); (8, 8192, 12) ];
   (* The sharp storage-precision detector (cancellation, true answer = 0): a
      storage-typed Cacc leaves a large residual, a compute-typed one stays ~0.
      f16 and bf16 (bf16's 8-bit mantissa makes the leak even larger). *)
   List.iter
     (fun (m, k, n) ->
-      test_kc_cancel ~kind:Buf.float16 ~name:"f16" ~m ~k ~n ();
-      test_kc_cancel ~kind:Buf.bfloat16 ~name:"bf16" ~m ~k ~n ())
+      test_kc_cancel ~kind:Nx_dtype.float16 ~name:"f16" ~m ~k ~n ();
+      test_kc_cancel ~kind:Nx_dtype.bfloat16 ~name:"bf16" ~m ~k ~n ())
     [ (16, 4096, 16); (32, 6144, 24) ];
 
   (* Large-k over the non-float compute microkernels, so the
@@ -905,10 +908,10 @@ let test_maintenance_paths () =
     (fun (m, k, n) ->
       test_i64 ~name:"i64-largek" ~m ~k ~n ();
       test_u64 ~m ~k ~n ();
-      test_complex ~kind:Buf.complex64 ~name:"c32-largek" ~tol:1e-3 ~m ~k ~n
-        ~modes:[ `Prod; `Direct ] ();
-      test_complex ~kind:Buf.complex128 ~name:"c64-largek" ~tol:1e-9 ~m ~k ~n
-        ~modes:[ `Prod; `Direct ] ())
+      test_complex ~kind:Nx_dtype.complex64 ~name:"c32-largek" ~tol:1e-3 ~m ~k
+        ~n ~modes:[ `Prod; `Direct ] ();
+      test_complex ~kind:Nx_dtype.complex128 ~name:"c64-largek" ~tol:1e-9 ~m ~k
+        ~n ~modes:[ `Prod; `Direct ] ())
     [ (16, 2100, 16); (24, 4096, 20) ];
 
   (* Modular-wrap differential: full-range + MIN/MAX-salted i64, blocked full-k
@@ -927,8 +930,8 @@ let test_maintenance_paths () =
      reconstruct the full product. *)
   List.iter
     (fun (m, k, n) ->
-      test_diff ~kind:Buf.float32 ~name:"f32-msplit" ~tol:1e-4 ~m ~k ~n ();
-      test_diff ~kind:Buf.float64 ~name:"f64-msplit" ~tol:1e-10 ~m ~k ~n ())
+      test_diff ~kind:Nx_dtype.float32 ~name:"f32-msplit" ~tol:1e-4 ~m ~k ~n ();
+      test_diff ~kind:Nx_dtype.float64 ~name:"f64-msplit" ~tol:1e-10 ~m ~k ~n ())
     [
       (2048, 256, 128);
       (4096, 128, 64);
@@ -942,8 +945,8 @@ let test_maintenance_paths () =
      Cacc-alloc branch, vs the direct oracle. *)
   List.iter
     (fun (m, k, n) ->
-      test_ws ~kind:Buf.float32 ~name:"f32-ws" ~tol:1e-4 ~m ~k ~n ();
-      test_ws ~kind:Buf.float64 ~name:"f64-ws" ~tol:1e-10 ~m ~k ~n ())
+      test_ws ~kind:Nx_dtype.float32 ~name:"f32-ws" ~tol:1e-4 ~m ~k ~n ();
+      test_ws ~kind:Nx_dtype.float64 ~name:"f64-ws" ~tol:1e-10 ~m ~k ~n ())
     [ (96, 300, 80); (64, 2100, 48); (128, 4096, 96) ];
 
   (* Accelerate hook (macOS default-on): platform reflection, the hook-vs-owned
@@ -952,40 +955,40 @@ let test_maintenance_paths () =
   test_accel ();
 
   (* batch broadcast *)
-  test_batch_real ~kind:Buf.float32 ~name:"f32" ();
-  test_batch_real ~kind:Buf.float64 ~name:"f64" ();
+  test_batch_real ~kind:Nx_dtype.float32 ~name:"f32" ();
+  test_batch_real ~kind:Nx_dtype.float64 ~name:"f64" ();
 
   (* low precision through-pack: f16 bf16 fp8 (small k, generous tol) *)
   List.iter
     (fun s ->
-      test_real ~kind:Buf.float16 ~name:"f16" ~tol_rel:2e-2 ~tol_abs:2e-2 ~m:s
-        ~k:s ~n:s ~scale:0.5 ~modes:[ `Prod; `Direct ] ();
-      test_real ~kind:Buf.bfloat16 ~name:"bf16" ~tol_rel:6e-2 ~tol_abs:6e-2 ~m:s
-        ~k:s ~n:s ~scale:0.5 ~modes:[ `Prod; `Direct ] ())
+      test_real ~kind:Nx_dtype.float16 ~name:"f16" ~tol_rel:2e-2 ~tol_abs:2e-2
+        ~m:s ~k:s ~n:s ~scale:0.5 ~modes:[ `Prod; `Direct ] ();
+      test_real ~kind:Nx_dtype.bfloat16 ~name:"bf16" ~tol_rel:6e-2 ~tol_abs:6e-2
+        ~m:s ~k:s ~n:s ~scale:0.5 ~modes:[ `Prod; `Direct ] ())
     [ 8; 16; 33; 64 ];
   List.iter
     (fun s ->
-      test_real ~kind:Buf.float8_e4m3 ~name:"fp8e4m3" ~tol_rel:0.2 ~tol_abs:0.3
-        ~m:s ~k:s ~n:s ~scale:0.4 ~modes:[ `Prod; `Direct ] ();
-      test_real ~kind:Buf.float8_e5m2 ~name:"fp8e5m2" ~tol_rel:0.35 ~tol_abs:0.4
-        ~m:s ~k:s ~n:s ~scale:0.4 ~modes:[ `Prod; `Direct ] ())
+      test_real ~kind:Nx_dtype.float8_e4m3 ~name:"fp8e4m3" ~tol_rel:0.2
+        ~tol_abs:0.3 ~m:s ~k:s ~n:s ~scale:0.4 ~modes:[ `Prod; `Direct ] ();
+      test_real ~kind:Nx_dtype.float8_e5m2 ~name:"fp8e5m2" ~tol_rel:0.35
+        ~tol_abs:0.4 ~m:s ~k:s ~n:s ~scale:0.4 ~modes:[ `Prod; `Direct ] ())
     [ 8; 16; 32 ];
   (* transposed low-precision, to exercise the strided pack path *)
-  test_real ~kind:Buf.float16 ~name:"f16" ~tol_rel:2e-2 ~tol_abs:2e-2 ~m:40
+  test_real ~kind:Nx_dtype.float16 ~name:"f16" ~tol_rel:2e-2 ~tol_abs:2e-2 ~m:40
     ~k:40 ~n:40 ~a_trans:true ~b_trans:true ~scale:0.5 ~modes:[ `Prod; `Direct ]
     ();
 
   (* integers: exact modular reference, incl. edge sizes *)
   List.iter
     (fun s ->
-      test_int_small ~kind:Buf.int8 ~name:"i8" ~wrap:(wrap_signed 8) ~m:s ~k:s
-        ~n:s ~vlo:(-4) ~vhi:4 ~modes:[ `Prod; `Direct ] ();
-      test_int_small ~kind:Buf.uint8 ~name:"u8" ~wrap:(wrap_unsigned 8) ~m:s
-        ~k:s ~n:s ~vlo:0 ~vhi:5 ~modes:[ `Prod; `Direct ] ();
-      test_int_small ~kind:Buf.int16 ~name:"i16" ~wrap:(wrap_signed 16) ~m:s
-        ~k:s ~n:s ~vlo:(-9) ~vhi:9 ~modes:[ `Prod; `Direct ] ();
-      test_int_small ~kind:Buf.uint16 ~name:"u16" ~wrap:(wrap_unsigned 16) ~m:s
-        ~k:s ~n:s ~vlo:0 ~vhi:12 ~modes:[ `Prod; `Direct ] ())
+      test_int_small ~kind:Nx_dtype.int8 ~name:"i8" ~wrap:(wrap_signed 8) ~m:s
+        ~k:s ~n:s ~vlo:(-4) ~vhi:4 ~modes:[ `Prod; `Direct ] ();
+      test_int_small ~kind:Nx_dtype.uint8 ~name:"u8" ~wrap:(wrap_unsigned 8)
+        ~m:s ~k:s ~n:s ~vlo:0 ~vhi:5 ~modes:[ `Prod; `Direct ] ();
+      test_int_small ~kind:Nx_dtype.int16 ~name:"i16" ~wrap:(wrap_signed 16)
+        ~m:s ~k:s ~n:s ~vlo:(-9) ~vhi:9 ~modes:[ `Prod; `Direct ] ();
+      test_int_small ~kind:Nx_dtype.uint16 ~name:"u16" ~wrap:(wrap_unsigned 16)
+        ~m:s ~k:s ~n:s ~vlo:0 ~vhi:12 ~modes:[ `Prod; `Direct ] ())
     [ 3; 8; 33; 64 ];
   List.iter
     (fun s ->
@@ -996,26 +999,26 @@ let test_maintenance_paths () =
     [ 8; 40 ];
 
   (* i8/i16 modular wrap: partial sums overflow the storage width *)
-  test_int_small ~kind:Buf.int8 ~name:"i8-wrap" ~wrap:(wrap_signed 8) ~m:4 ~k:20
-    ~n:4 ~vlo:10 ~vhi:12 ~modes:[ `Prod; `Direct ] ();
-  test_int_small ~kind:Buf.uint8 ~name:"u8-wrap" ~wrap:(wrap_unsigned 8) ~m:4
-    ~k:20 ~n:4 ~vlo:10 ~vhi:15 ~modes:[ `Prod; `Direct ] ();
-  test_int_small ~kind:Buf.int16 ~name:"i16-wrap" ~wrap:(wrap_signed 16) ~m:4
-    ~k:64 ~n:4 ~vlo:200 ~vhi:250 ~modes:[ `Prod; `Direct ] ();
+  test_int_small ~kind:Nx_dtype.int8 ~name:"i8-wrap" ~wrap:(wrap_signed 8) ~m:4
+    ~k:20 ~n:4 ~vlo:10 ~vhi:12 ~modes:[ `Prod; `Direct ] ();
+  test_int_small ~kind:Nx_dtype.uint8 ~name:"u8-wrap" ~wrap:(wrap_unsigned 8)
+    ~m:4 ~k:20 ~n:4 ~vlo:10 ~vhi:15 ~modes:[ `Prod; `Direct ] ();
+  test_int_small ~kind:Nx_dtype.int16 ~name:"i16-wrap" ~wrap:(wrap_signed 16)
+    ~m:4 ~k:64 ~n:4 ~vlo:200 ~vhi:250 ~modes:[ `Prod; `Direct ] ();
 
   (* complex: 3M-free direct complex microkernel vs complex reference *)
   List.iter
     (fun s ->
-      test_complex ~kind:Buf.complex64 ~name:"c32" ~tol:1e-3 ~m:s ~k:s ~n:s
+      test_complex ~kind:Nx_dtype.complex64 ~name:"c32" ~tol:1e-3 ~m:s ~k:s ~n:s
         ~modes:[ `Prod; `Direct ] ();
-      test_complex ~kind:Buf.complex128 ~name:"c64" ~tol:1e-9 ~m:s ~k:s ~n:s
-        ~modes:[ `Prod; `Direct ] ())
+      test_complex ~kind:Nx_dtype.complex128 ~name:"c64" ~tol:1e-9 ~m:s ~k:s
+        ~n:s ~modes:[ `Prod; `Direct ] ())
     [ 3; 8; 33; 64 ];
 
   (* bool + packed int4/uint4 unsupported *)
   test_bool_unsupported ();
-  test_packed_unsupported ~kind:Buf.int4 ~name:"i4" ();
-  test_packed_unsupported ~kind:Buf.uint4 ~name:"u4" ()
+  test_packed_unsupported ~kind:Nx_dtype.int4 ~name:"i4" ();
+  test_packed_unsupported ~kind:Nx_dtype.uint4 ~name:"u4" ()
 
 let () =
   Windtrap.run "nx C backend matmul"

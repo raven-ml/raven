@@ -4,7 +4,7 @@
 (executable
  (name bench_owned_gemm)
  (modules bench_owned_gemm)
- (libraries nx_c nx_buffer thumper)
+ (libraries nx_c nx_dtype nx_buffer thumper)
  (link_flags -linkall)
  (foreign_stubs
   (language c)

@@ -7,4 +7,4 @@
   (names nx_buffer_stubs))
  (js_of_ocaml
   (javascript_files nx_buffer_stubs.js))
- (libraries))
+ (libraries nx_dtype))

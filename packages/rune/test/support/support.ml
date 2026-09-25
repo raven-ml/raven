@@ -63,10 +63,10 @@ let check_arr ?(eps = 1e-5) ~msg expected actual =
 
 let scalar_like (type a b) (t : (a, b) Nx.t) (v : float) : (a, b) Nx.t =
   let dt = Nx.dtype t in
-  Nx.full dt [||] (Nx_core.Dtype.of_float dt v)
+  Nx.full dt [||] (Nx_dtype.of_float dt v)
 
 let as_f32 (type a b) (x : (a, b) Nx.t) : Nx.float32_t =
-  match Nx_core.Dtype.equal_witness (Nx.dtype x) f32 with
+  match Nx_dtype.equal_witness (Nx.dtype x) f32 with
   | Some Type.Equal -> x
   | None -> failwith "expected a float32 leaf"
 
@@ -539,7 +539,7 @@ let check_top_k_long_row ?devices () =
    integer one. *)
 let sort_input (type a b) ?(infinities = true) (dtype : (a, b) Nx.dtype) n :
     (a, b) Nx.t =
-  let is_float = Nx_core.Dtype.is_float dtype in
+  let is_float = Nx_dtype.is_float dtype in
   let x =
     Nx.cast dtype
       (Nx.create f64 [| n |]
@@ -560,8 +560,8 @@ let sort_input (type a b) ?(infinities = true) (dtype : (a, b) Nx.dtype) n :
     in
     let full v = Nx.full dtype [| n |] v in
     Nx.where (at 3)
-      (full (Nx_core.Dtype.max_value dtype))
-      (Nx.where (at 8) (full (Nx_core.Dtype.min_value dtype)) x)
+      (full (Nx_dtype.max_value dtype))
+      (Nx.where (at 8) (full (Nx_dtype.min_value dtype)) x)
 
 (* One vector cut into [pieces], each a shape sorted along an axis in both
    directions, so that one compiled program covers every case of a dtype. The

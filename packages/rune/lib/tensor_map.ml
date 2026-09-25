@@ -14,7 +14,7 @@ module Tbl = Hashtbl.Make (struct
   let hash (Key x) = Nx_effect.identity_hash x
 end)
 
-type entry = Entry : ('a, 'b) Nx_core.Dtype.t * ('a, 'b) Nx.t -> entry
+type entry = Entry : ('a, 'b) Nx_dtype.t * ('a, 'b) Nx.t -> entry
 type t = entry Tbl.t
 
 let create () = Tbl.create 64
@@ -25,7 +25,7 @@ let find (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t option =
   | Some (Entry (dt, v)) -> (
       (* Entries are stored under the key of the tensor whose dtype they record,
          so the witness always matches. *)
-      match Nx_core.Dtype.equal_witness dt (Nx.dtype x) with
+      match Nx_dtype.equal_witness dt (Nx.dtype x) with
       | Some Type.Equal -> Some v
       | None -> assert false)
 

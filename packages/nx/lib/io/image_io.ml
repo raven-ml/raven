@@ -59,7 +59,7 @@ let load_image ~grayscale path =
   let width, height = probe src in
   let channels = if grayscale then 1 else 3 in
   let length = checked_pixels width height channels in
-  let buffer = Nx_buffer.create Nx_buffer.UInt8 length in
+  let buffer = Nx_buffer.create Nx_dtype.UInt8 length in
   let dst = Nx_buffer.to_bigarray1 buffer in
   decode src dst grayscale;
   let shape =

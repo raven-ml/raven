@@ -13,12 +13,12 @@ module Make
 struct
   open Windtrap
   module F = Nx_core.Make_frontend (B)
-  module Dtype = Nx_core.Dtype
   module View = Nx_core.View
 
   let ctx = C.create_context ()
 
   type expectation = Pass
+  type dtype = Dtype : ('a, 'b) Nx_dtype.t -> dtype
 
   (* ───── Numeric helpers ───── *)
 
@@ -111,7 +111,7 @@ struct
 
   type fdt =
     | FDT : {
-        dt : (float, 'b) Dtype.t;
+        dt : (float, 'b) Nx_dtype.t;
         name : string;
         pool : float array;
         a_rel : float;
@@ -195,7 +195,7 @@ struct
 
   type idt =
     | IDT : {
-        dt : ('a, 'b) Dtype.t;
+        dt : ('a, 'b) Nx_dtype.t;
         name : string;
         bits : int;
         signed : bool;
@@ -419,7 +419,7 @@ struct
      only backend primitives trusted to build the oracle input are contiguous
      construction and readback — the same ones used to read results. *)
 
-  let layouts (type a b) (dt : (a, b) Dtype.t) (pool : a array) :
+  let layouts (type a b) (dt : (a, b) Nx_dtype.t) (pool : a array) :
       (string * (a, b) B.t * a array * int array) list =
     let mk shape data = F.create ctx dt shape data in
     let stored t = F.to_array t in
@@ -475,7 +475,7 @@ struct
   type bin = { b2 : 'a 'b. ('a, 'b) B.t -> ('a, 'b) B.t -> ('a, 'b) B.t }
 
   type cmp = {
-    c2 : 'a 'b. ('a, 'b) B.t -> ('a, 'b) B.t -> (bool, Dtype.bool_elt) B.t;
+    c2 : 'a 'b. ('a, 'b) B.t -> ('a, 'b) B.t -> (bool, Nx_dtype.bool_elt) B.t;
   }
 
   let case classify path name body =
@@ -551,7 +551,7 @@ struct
      Both operands vary in layout independently, over shape [3;4], to exercise
      mixed-stride combinations feeding one kernel. *)
 
-  let float_bin_cases (type b) (dt : (float, b) Dtype.t) poolA poolB =
+  let float_bin_cases (type b) (dt : (float, b) Nx_dtype.t) poolA poolB =
     let mk shape data = F.create ctx dt shape data in
     let stored t = F.to_array t in
     (* B draws from a shifted slice so the two operands differ even when the two
@@ -627,7 +627,7 @@ struct
 
   (* ───── Elementwise: integer arithmetic and bitwise ───── *)
 
-  let int_bin_cases (type a b) (dt : (a, b) Dtype.t) (poolA : a array)
+  let int_bin_cases (type a b) (dt : (a, b) Nx_dtype.t) (poolA : a array)
       (poolB : a array) =
     let mk shape data = F.create ctx dt shape data in
     let stored t = F.to_array t in
@@ -852,7 +852,7 @@ struct
   let axes_count shape axes =
     Array.fold_left (fun acc ax -> acc * shape.(ax)) 1 axes
 
-  let reduce_layouts (type a b) (dt : (a, b) Dtype.t) pool =
+  let reduce_layouts (type a b) (dt : (a, b) Nx_dtype.t) pool =
     List.filter
       (fun (n, _, _, _) -> n <> "scalar" && n <> "empty")
       (layouts dt pool)
@@ -1033,7 +1033,10 @@ struct
   type arg = {
     ag :
       'a 'b.
-      axis:int -> keepdims:bool -> ('a, 'b) B.t -> (int32, Dtype.int32_elt) B.t;
+      axis:int ->
+      keepdims:bool ->
+      ('a, 'b) B.t ->
+      (int32, Nx_dtype.int32_elt) B.t;
   }
 
   let argreduce_group classify path name (op : arg) ~is_max =
@@ -1629,16 +1632,16 @@ struct
      signalling NaN with payloads, subnormals. Each width's unsigned integer
      carries the patterns in and reads them back out. *)
 
-  let bitcast_round_trips (type a b) classify path (carrier : (a, b) Dtype.t)
-      (bits : a array) (members : Dtype.packed list) =
+  let bitcast_round_trips (type a b) classify path (carrier : (a, b) Nx_dtype.t)
+      (bits : a array) (members : dtype list) =
     let source = F.create ctx carrier [| Array.length bits |] bits in
     List.concat_map
-      (fun (Dtype.Pack first) ->
+      (fun (Dtype first) ->
         List.map
-          (fun (Dtype.Pack second) ->
+          (fun (Dtype second) ->
             let name =
-              Printf.sprintf "%s->%s" (Dtype.to_string first)
-                (Dtype.to_string second)
+              Printf.sprintf "%s->%s" (Nx_dtype.to_string first)
+                (Nx_dtype.to_string second)
             in
             case classify path name (fun () ->
                 let back =
@@ -1719,17 +1722,19 @@ struct
         (known
         @ bitcast_round_trips classify path F.uint8 (Array.init 256 Fun.id)
             [
-              Dtype.Pack F.int8;
-              Pack F.uint8;
-              Pack F.float8_e4m3;
-              Pack F.float8_e5m2;
+              Dtype F.int8;
+              Dtype F.uint8;
+              Dtype F.float8_e4m3;
+              Dtype F.float8_e5m2;
             ]
         @ bitcast_round_trips classify path F.uint16 (Array.init 65536 Fun.id)
-            [ Pack F.int16; Pack F.uint16; Pack F.float16; Pack F.bfloat16 ]
+            [ Dtype F.int16; Dtype F.uint16; Dtype F.float16; Dtype F.bfloat16 ]
         @ bitcast_round_trips classify path F.uint32 bits32
-            [ Pack F.int32; Pack F.uint32; Pack F.float32 ]
+            [ Dtype F.int32; Dtype F.uint32; Dtype F.float32 ]
         @ bitcast_round_trips classify path F.uint64 bits64
-            [ Pack F.int64; Pack F.uint64; Pack F.float64; Pack F.complex64 ]);
+            [
+              Dtype F.int64; Dtype F.uint64; Dtype F.float64; Dtype F.complex64;
+            ]);
     ]
 
   (* ───── Threefry ─────
@@ -2496,7 +2501,7 @@ struct
 
   (* The last field is a component big enough that [re² + im²] saturates the
      dtype's float range, so a naive modulus would return infinity. *)
-  type cdt = CDT : (Complex.t, 'b) Dtype.t * string * float * float -> cdt
+  type cdt = CDT : (Complex.t, 'b) Nx_dtype.t * string * float * float -> cdt
 
   let cpool =
     Array.init 18 (fun i ->

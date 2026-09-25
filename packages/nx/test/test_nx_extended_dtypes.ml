@@ -11,160 +11,160 @@ open Test_nx_support
 (* ───── BFloat16 Tests ───── *)
 
 let test_create_bfloat16 () =
-  let t = Nx.create Nx_core.Dtype.bfloat16 [| 3 |] [| 1.0; 2.0; 3.0 |] in
+  let t = Nx.create Nx_dtype.bfloat16 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   check_t ~eps:0.01 "create bfloat16" [| 3 |] [| 1.0; 2.0; 3.0 |] t
 
 let test_scalar_bfloat16 () =
-  let t = Nx.scalar Nx_core.Dtype.bfloat16 42.5 in
+  let t = Nx.scalar Nx_dtype.bfloat16 42.5 in
   check_t ~eps:0.01 "scalar bfloat16" [||] [| 42.5 |] t
 
 let test_zeros_bfloat16 () =
-  let t = Nx.zeros Nx_core.Dtype.bfloat16 [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.bfloat16 [| 2; 2 |] in
   check_t ~eps:0.01 "zeros bfloat16" [| 2; 2 |] [| 0.0; 0.0; 0.0; 0.0 |] t
 
 let test_ones_bfloat16 () =
-  let t = Nx.ones Nx_core.Dtype.bfloat16 [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.bfloat16 [| 2; 2 |] in
   check_t ~eps:0.01 "ones bfloat16" [| 2; 2 |] [| 1.0; 1.0; 1.0; 1.0 |] t
 
 let test_arange_bfloat16 () =
-  let t = Nx.arange Nx_core.Dtype.bfloat16 0 5 1 in
+  let t = Nx.arange Nx_dtype.bfloat16 0 5 1 in
   check_t ~eps:0.01 "arange bfloat16" [| 5 |] [| 0.0; 1.0; 2.0; 3.0; 4.0 |] t
 
 (* ───── Bool Tests ───── *)
 
 let test_create_bool () =
-  let t = Nx.create Nx_core.Dtype.bool [| 4 |] [| false; true; false; true |] in
+  let t = Nx.create Nx_dtype.bool [| 4 |] [| false; true; false; true |] in
   check_t "create bool" [| 4 |] [| false; true; false; true |] t
 
 let test_scalar_bool () =
-  let t = Nx.scalar Nx_core.Dtype.bool true in
+  let t = Nx.scalar Nx_dtype.bool true in
   check_t "scalar bool" [||] [| true |] t
 
 let test_zeros_bool () =
-  let t = Nx.zeros Nx_core.Dtype.bool [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.bool [| 2; 2 |] in
   check_t "zeros bool" [| 2; 2 |] [| false; false; false; false |] t
 
 let test_ones_bool () =
-  let t = Nx.ones Nx_core.Dtype.bool [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.bool [| 2; 2 |] in
   check_t "ones bool" [| 2; 2 |] [| true; true; true; true |] t
 
 (* ───── Int4 Tests ───── *)
 
 let test_create_int4 () =
-  let t = Nx.create Nx_core.Dtype.int4 [| 4 |] [| -8; -1; 0; 7 |] in
+  let t = Nx.create Nx_dtype.int4 [| 4 |] [| -8; -1; 0; 7 |] in
   check_t "create int4" [| 4 |] [| -8; -1; 0; 7 |] t
 
 let test_scalar_int4 () =
-  let t = Nx.scalar Nx_core.Dtype.int4 5 in
+  let t = Nx.scalar Nx_dtype.int4 5 in
   check_t "scalar int4" [||] [| 5 |] t
 
 let test_zeros_int4 () =
-  let t = Nx.zeros Nx_core.Dtype.int4 [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.int4 [| 2; 2 |] in
   check_t "zeros int4" [| 2; 2 |] [| 0; 0; 0; 0 |] t
 
 let test_ones_int4 () =
-  let t = Nx.ones Nx_core.Dtype.int4 [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.int4 [| 2; 2 |] in
   check_t "ones int4" [| 2; 2 |] [| 1; 1; 1; 1 |] t
 
 let test_arange_int4 () =
-  let t = Nx.arange Nx_core.Dtype.int4 (-3) 4 1 in
+  let t = Nx.arange Nx_dtype.int4 (-3) 4 1 in
   check_t "arange int4" [| 7 |] [| -3; -2; -1; 0; 1; 2; 3 |] t
 
 (* ───── UInt4 Tests ───── *)
 
 let test_create_uint4 () =
-  let t = Nx.create Nx_core.Dtype.uint4 [| 4 |] [| 0; 5; 10; 15 |] in
+  let t = Nx.create Nx_dtype.uint4 [| 4 |] [| 0; 5; 10; 15 |] in
   check_t "create uint4" [| 4 |] [| 0; 5; 10; 15 |] t
 
 let test_scalar_uint4 () =
-  let t = Nx.scalar Nx_core.Dtype.uint4 12 in
+  let t = Nx.scalar Nx_dtype.uint4 12 in
   check_t "scalar uint4" [||] [| 12 |] t
 
 let test_zeros_uint4 () =
-  let t = Nx.zeros Nx_core.Dtype.uint4 [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.uint4 [| 2; 2 |] in
   check_t "zeros uint4" [| 2; 2 |] [| 0; 0; 0; 0 |] t
 
 let test_ones_uint4 () =
-  let t = Nx.ones Nx_core.Dtype.uint4 [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.uint4 [| 2; 2 |] in
   check_t "ones uint4" [| 2; 2 |] [| 1; 1; 1; 1 |] t
 
 let test_arange_uint4 () =
-  let t = Nx.arange Nx_core.Dtype.uint4 0 8 2 in
+  let t = Nx.arange Nx_dtype.uint4 0 8 2 in
   check_t "arange uint4" [| 4 |] [| 0; 2; 4; 6 |] t
 
 (* ───── UInt32 Tests ───── *)
 
 let test_create_uint32 () =
-  let t = Nx.create Nx_core.Dtype.uint32 [| 3 |] [| 0l; 1l; 42l |] in
+  let t = Nx.create Nx_dtype.uint32 [| 3 |] [| 0l; 1l; 42l |] in
   check_t "create uint32" [| 3 |] [| 0l; 1l; 42l |] t
 
 let test_scalar_uint32 () =
-  let t = Nx.scalar Nx_core.Dtype.uint32 7l in
+  let t = Nx.scalar Nx_dtype.uint32 7l in
   check_t "scalar uint32" [||] [| 7l |] t
 
 let test_zeros_uint32 () =
-  let t = Nx.zeros Nx_core.Dtype.uint32 [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.uint32 [| 2; 2 |] in
   check_t "zeros uint32" [| 2; 2 |] [| 0l; 0l; 0l; 0l |] t
 
 let test_ones_uint32 () =
-  let t = Nx.ones Nx_core.Dtype.uint32 [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.uint32 [| 2; 2 |] in
   check_t "ones uint32" [| 2; 2 |] [| 1l; 1l; 1l; 1l |] t
 
 (* ───── UInt64 Tests ───── *)
 
 let test_create_uint64 () =
-  let t = Nx.create Nx_core.Dtype.uint64 [| 3 |] [| 0L; 1L; 42L |] in
+  let t = Nx.create Nx_dtype.uint64 [| 3 |] [| 0L; 1L; 42L |] in
   check_t "create uint64" [| 3 |] [| 0L; 1L; 42L |] t
 
 let test_scalar_uint64 () =
-  let t = Nx.scalar Nx_core.Dtype.uint64 7L in
+  let t = Nx.scalar Nx_dtype.uint64 7L in
   check_t "scalar uint64" [||] [| 7L |] t
 
 let test_zeros_uint64 () =
-  let t = Nx.zeros Nx_core.Dtype.uint64 [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.uint64 [| 2; 2 |] in
   check_t "zeros uint64" [| 2; 2 |] [| 0L; 0L; 0L; 0L |] t
 
 let test_ones_uint64 () =
-  let t = Nx.ones Nx_core.Dtype.uint64 [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.uint64 [| 2; 2 |] in
   check_t "ones uint64" [| 2; 2 |] [| 1L; 1L; 1L; 1L |] t
 
 (* ───── Float8_e4m3 Tests ───── *)
 
 let test_create_float8_e4m3 () =
-  let t = Nx.create Nx_core.Dtype.float8_e4m3 [| 3 |] [| 1.0; 2.0; 3.0 |] in
+  let t = Nx.create Nx_dtype.float8_e4m3 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   check_t ~eps:0.1 "create float8_e4m3" [| 3 |] [| 1.0; 2.0; 3.0 |] t
 
 let test_scalar_float8_e4m3 () =
   (* Test with a value that can be exactly represented in Float8_e4m3. With a
      3-bit mantissa, we can represent 1.000 through 1.111 in binary. For
      example: 11.0 = 1.011 × 2^3 is exactly representable. *)
-  let t = Nx.scalar Nx_core.Dtype.float8_e4m3 11.0 in
+  let t = Nx.scalar Nx_dtype.float8_e4m3 11.0 in
   check_t ~eps:0.1 "scalar float8_e4m3" [||] [| 11.0 |] t
 
 let test_zeros_float8_e4m3 () =
-  let t = Nx.zeros Nx_core.Dtype.float8_e4m3 [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.float8_e4m3 [| 2; 2 |] in
   check_t ~eps:0.1 "zeros float8_e4m3" [| 2; 2 |] [| 0.0; 0.0; 0.0; 0.0 |] t
 
 let test_ones_float8_e4m3 () =
-  let t = Nx.ones Nx_core.Dtype.float8_e4m3 [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.float8_e4m3 [| 2; 2 |] in
   check_t ~eps:0.1 "ones float8_e4m3" [| 2; 2 |] [| 1.0; 1.0; 1.0; 1.0 |] t
 
 (* ───── Float8_e5m2 Tests ───── *)
 
 let test_create_float8_e5m2 () =
-  let t = Nx.create Nx_core.Dtype.float8_e5m2 [| 3 |] [| 1.0; 2.0; 3.0 |] in
+  let t = Nx.create Nx_dtype.float8_e5m2 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   check_t ~eps:0.1 "create float8_e5m2" [| 3 |] [| 1.0; 2.0; 3.0 |] t
 
 let test_scalar_float8_e5m2 () =
-  let t = Nx.scalar Nx_core.Dtype.float8_e5m2 20.0 in
+  let t = Nx.scalar Nx_dtype.float8_e5m2 20.0 in
   check_t ~eps:0.1 "scalar float8_e5m2" [||] [| 20.0 |] t
 
 let test_zeros_float8_e5m2 () =
-  let t = Nx.zeros Nx_core.Dtype.float8_e5m2 [| 2; 2 |] in
+  let t = Nx.zeros Nx_dtype.float8_e5m2 [| 2; 2 |] in
   check_t ~eps:0.1 "zeros float8_e5m2" [| 2; 2 |] [| 0.0; 0.0; 0.0; 0.0 |] t
 
 let test_ones_float8_e5m2 () =
-  let t = Nx.ones Nx_core.Dtype.float8_e5m2 [| 2; 2 |] in
+  let t = Nx.ones Nx_dtype.float8_e5m2 [| 2; 2 |] in
   check_t ~eps:0.1 "ones float8_e5m2" [| 2; 2 |] [| 1.0; 1.0; 1.0; 1.0 |] t
 
 (* ───── Half-precision (float16 / bfloat16) numerics ───── *)
@@ -192,7 +192,7 @@ let check_quantize name dt cases =
 (* bfloat16: 7 stored mantissa bits, step 2^-7 near 1.0. Round to nearest, ties
    to even mantissa. *)
 let test_bfloat16_rne () =
-  check_quantize "bfloat16" Nx_core.Dtype.bfloat16
+  check_quantize "bfloat16" Nx_dtype.bfloat16
     [
       (1.0, 1.0);
       (* exactly representable *)
@@ -212,7 +212,7 @@ let test_bfloat16_rne () =
 
 (* float16: 10 stored mantissa bits, step 2^-10 near 1.0. *)
 let test_float16_rne () =
-  check_quantize "float16" Nx_core.Dtype.float16
+  check_quantize "float16" Nx_dtype.float16
     [
       (1.0, 1.0);
       (1.0009765625, 1.0009765625);
@@ -231,7 +231,7 @@ let test_float16_rne () =
 (* float16 subnormals: min normal 2^-14, subnormal step 2^-24. Casting small
    float32 values must produce subnormals, not flush to zero. *)
 let test_float16_subnormals () =
-  check_quantize "float16 subnormal" Nx_core.Dtype.float16
+  check_quantize "float16 subnormal" Nx_dtype.float16
     [
       (Float.ldexp 1.0 (-14), Float.ldexp 1.0 (-14));
       (* min normal *)
@@ -249,9 +249,9 @@ let test_float16_subnormals () =
 
 let test_float16_overflow_to_inf () =
   equal ~msg:"float16 overflow" float_exact Float.infinity
-    (via_cast Nx_core.Dtype.float16 65536.0);
+    (via_cast Nx_dtype.float16 65536.0);
   equal ~msg:"float16 negative overflow" float_exact Float.neg_infinity
-    (via_cast Nx_core.Dtype.float16 (-65536.0))
+    (via_cast Nx_dtype.float16 (-65536.0))
 
 let test_half_cast_roundtrip (type b) name (dt : (float, b) Nx.dtype) () =
   (* Values exactly representable at the half dtype survive f32 -> half -> f32
@@ -312,11 +312,11 @@ let test_wide_casts_round_once () =
 (* Binary ops compute wide and round the result back to the half dtype. *)
 let test_half_binary_rounding () =
   (* bfloat16: 256 + 1 ties between 256 and 258 -> 256. *)
-  let bf16 = Nx_core.Dtype.bfloat16 in
+  let bf16 = Nx_dtype.bfloat16 in
   let r = Nx.add (Nx.scalar bf16 256.0) (Nx.scalar bf16 1.0) in
   equal ~msg:"bfloat16 256+1" float_exact 256.0 (Nx.item [] r);
   (* float16: 2048 + 1 ties between 2048 and 2050 -> 2048. *)
-  let f16 = Nx_core.Dtype.float16 in
+  let f16 = Nx_dtype.float16 in
   let r = Nx.add (Nx.scalar f16 2048.0) (Nx.scalar f16 1.0) in
   equal ~msg:"float16 2048+1" float_exact 2048.0 (Nx.item [] r);
   (* mul: (1 + 2^-7)^2 = 1 + 2^-6 + 2^-14 rounds to 1 + 2^-6 at bfloat16. *)
@@ -340,10 +340,10 @@ let test_half_binary_exact (type b) name (dt : (float, b) Nx.dtype) () =
    gives exactly 4096 (a naive float16 accumulator stalls at 2048 because 2048 +
    1 rounds back to 2048); same construction for bfloat16. *)
 let test_half_sum_accumulates_wide () =
-  let f16 = Nx_core.Dtype.float16 in
+  let f16 = Nx_dtype.float16 in
   let s = Nx.sum (Nx.ones f16 [| 4096 |]) in
   equal ~msg:"float16 sum of 4096 ones" float_exact 4096.0 (Nx.item [] s);
-  let bf16 = Nx_core.Dtype.bfloat16 in
+  let bf16 = Nx_dtype.bfloat16 in
   let s = Nx.sum (Nx.ones bf16 [| 1024 |]) in
   equal ~msg:"bfloat16 sum of 1024 ones" float_exact 1024.0 (Nx.item [] s)
 
@@ -398,106 +398,85 @@ let test_half_compare_where (type b) name (dt : (float, b) Nx.dtype) () =
 
 let test_dtype_properties () =
   (* Test is_float *)
-  equal ~msg:"bfloat16 is_float" bool true
-    (Nx_core.Dtype.is_float Nx_core.Dtype.bfloat16);
+  equal ~msg:"bfloat16 is_float" bool true (Nx_dtype.is_float Nx_dtype.bfloat16);
   equal ~msg:"float8_e4m3 is_float" bool true
-    (Nx_core.Dtype.is_float Nx_core.Dtype.float8_e4m3);
+    (Nx_dtype.is_float Nx_dtype.float8_e4m3);
   equal ~msg:"float8_e5m2 is_float" bool true
-    (Nx_core.Dtype.is_float Nx_core.Dtype.float8_e5m2);
-  equal ~msg:"bool is_float" bool false
-    (Nx_core.Dtype.is_float Nx_core.Dtype.bool);
+    (Nx_dtype.is_float Nx_dtype.float8_e5m2);
+  equal ~msg:"bool is_float" bool false (Nx_dtype.is_float Nx_dtype.bool);
 
   (* Test is_complex *)
   equal ~msg:"complex64 is_complex" bool true
-    (Nx_core.Dtype.is_complex Nx_core.Dtype.complex64);
+    (Nx_dtype.is_complex Nx_dtype.complex64);
   equal ~msg:"complex128 is_complex" bool true
-    (Nx_core.Dtype.is_complex Nx_core.Dtype.complex128);
+    (Nx_dtype.is_complex Nx_dtype.complex128);
   equal ~msg:"bfloat16 is_complex" bool false
-    (Nx_core.Dtype.is_complex Nx_core.Dtype.bfloat16);
+    (Nx_dtype.is_complex Nx_dtype.bfloat16);
 
   (* Test is_int *)
-  equal ~msg:"int4 is_int" bool true (Nx_core.Dtype.is_int Nx_core.Dtype.int4);
-  equal ~msg:"uint4 is_int" bool true (Nx_core.Dtype.is_int Nx_core.Dtype.uint4);
-  equal ~msg:"uint32 is_int" bool true
-    (Nx_core.Dtype.is_int Nx_core.Dtype.uint32);
-  equal ~msg:"uint64 is_int" bool true
-    (Nx_core.Dtype.is_int Nx_core.Dtype.uint64);
-  equal ~msg:"bool is_int" bool false (Nx_core.Dtype.is_int Nx_core.Dtype.bool);
+  equal ~msg:"int4 is_int" bool true (Nx_dtype.is_int Nx_dtype.int4);
+  equal ~msg:"uint4 is_int" bool true (Nx_dtype.is_int Nx_dtype.uint4);
+  equal ~msg:"uint32 is_int" bool true (Nx_dtype.is_int Nx_dtype.uint32);
+  equal ~msg:"uint64 is_int" bool true (Nx_dtype.is_int Nx_dtype.uint64);
+  equal ~msg:"bool is_int" bool false (Nx_dtype.is_int Nx_dtype.bool);
 
   (* Test is_uint *)
-  equal ~msg:"uint4 is_uint" bool true
-    (Nx_core.Dtype.is_uint Nx_core.Dtype.uint4);
-  equal ~msg:"uint32 is_uint" bool true
-    (Nx_core.Dtype.is_uint Nx_core.Dtype.uint32);
-  equal ~msg:"uint64 is_uint" bool true
-    (Nx_core.Dtype.is_uint Nx_core.Dtype.uint64);
-  equal ~msg:"int4 is_uint" bool false
-    (Nx_core.Dtype.is_uint Nx_core.Dtype.int4);
+  equal ~msg:"uint4 is_uint" bool true (Nx_dtype.is_uint Nx_dtype.uint4);
+  equal ~msg:"uint32 is_uint" bool true (Nx_dtype.is_uint Nx_dtype.uint32);
+  equal ~msg:"uint64 is_uint" bool true (Nx_dtype.is_uint Nx_dtype.uint64);
+  equal ~msg:"int4 is_uint" bool false (Nx_dtype.is_uint Nx_dtype.int4);
 
   (* Test itemsize *)
-  equal ~msg:"bfloat16 itemsize" int 2
-    (Nx_core.Dtype.itemsize Nx_core.Dtype.bfloat16);
-  equal ~msg:"bool itemsize" int 1 (Nx_core.Dtype.itemsize Nx_core.Dtype.bool);
-  equal ~msg:"int4 itemsize" int 1 (Nx_core.Dtype.itemsize Nx_core.Dtype.int4);
-  equal ~msg:"uint4 itemsize" int 1 (Nx_core.Dtype.itemsize Nx_core.Dtype.uint4);
+  equal ~msg:"bfloat16 itemsize" int 2 (Nx_dtype.itemsize Nx_dtype.bfloat16);
+  equal ~msg:"bool itemsize" int 1 (Nx_dtype.itemsize Nx_dtype.bool);
+  equal ~msg:"int4 itemsize" int 1 (Nx_dtype.itemsize Nx_dtype.int4);
+  equal ~msg:"uint4 itemsize" int 1 (Nx_dtype.itemsize Nx_dtype.uint4);
   equal ~msg:"float8_e4m3 itemsize" int 1
-    (Nx_core.Dtype.itemsize Nx_core.Dtype.float8_e4m3);
+    (Nx_dtype.itemsize Nx_dtype.float8_e4m3);
   equal ~msg:"float8_e5m2 itemsize" int 1
-    (Nx_core.Dtype.itemsize Nx_core.Dtype.float8_e5m2);
-  equal ~msg:"uint32 itemsize" int 4
-    (Nx_core.Dtype.itemsize Nx_core.Dtype.uint32);
-  equal ~msg:"uint64 itemsize" int 8
-    (Nx_core.Dtype.itemsize Nx_core.Dtype.uint64);
-  equal ~msg:"complex64 itemsize" int 8
-    (Nx_core.Dtype.itemsize Nx_core.Dtype.complex64);
+    (Nx_dtype.itemsize Nx_dtype.float8_e5m2);
+  equal ~msg:"uint32 itemsize" int 4 (Nx_dtype.itemsize Nx_dtype.uint32);
+  equal ~msg:"uint64 itemsize" int 8 (Nx_dtype.itemsize Nx_dtype.uint64);
+  equal ~msg:"complex64 itemsize" int 8 (Nx_dtype.itemsize Nx_dtype.complex64);
   equal ~msg:"complex128 itemsize" int 16
-    (Nx_core.Dtype.itemsize Nx_core.Dtype.complex128);
+    (Nx_dtype.itemsize Nx_dtype.complex128);
 
   (* Test to_string *)
   equal ~msg:"bfloat16 to_string" string "bfloat16"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.bfloat16);
-  equal ~msg:"bool to_string" string "bool"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.bool);
-  equal ~msg:"int4 to_string" string "int4"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.int4);
+    (Nx_dtype.to_string Nx_dtype.bfloat16);
+  equal ~msg:"bool to_string" string "bool" (Nx_dtype.to_string Nx_dtype.bool);
+  equal ~msg:"int4 to_string" string "int4" (Nx_dtype.to_string Nx_dtype.int4);
   equal ~msg:"uint4 to_string" string "uint4"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.uint4);
+    (Nx_dtype.to_string Nx_dtype.uint4);
   equal ~msg:"float8_e4m3 to_string" string "float8_e4m3"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.float8_e4m3);
+    (Nx_dtype.to_string Nx_dtype.float8_e4m3);
   equal ~msg:"float8_e5m2 to_string" string "float8_e5m2"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.float8_e5m2);
+    (Nx_dtype.to_string Nx_dtype.float8_e5m2);
   equal ~msg:"uint32 to_string" string "uint32"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.uint32);
+    (Nx_dtype.to_string Nx_dtype.uint32);
   equal ~msg:"uint64 to_string" string "uint64"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.uint64);
+    (Nx_dtype.to_string Nx_dtype.uint64);
   equal ~msg:"complex64 to_string" string "complex64"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.complex64);
+    (Nx_dtype.to_string Nx_dtype.complex64);
   equal ~msg:"complex128 to_string" string "complex128"
-    (Nx_core.Dtype.to_string Nx_core.Dtype.complex128)
+    (Nx_dtype.to_string Nx_dtype.complex128)
 
 let test_dtype_min_max_values () =
   (* Test min_value *)
-  equal ~msg:"int4 min_value" int (-8)
-    (Nx_core.Dtype.min_value Nx_core.Dtype.int4);
-  equal ~msg:"uint4 min_value" int 0
-    (Nx_core.Dtype.min_value Nx_core.Dtype.uint4);
-  equal ~msg:"bool min_value" bool false
-    (Nx_core.Dtype.min_value Nx_core.Dtype.bool);
-  equal ~msg:"uint32 min_value" int32 0l
-    (Nx_core.Dtype.min_value Nx_core.Dtype.uint32);
-  equal ~msg:"uint64 min_value" int64 0L
-    (Nx_core.Dtype.min_value Nx_core.Dtype.uint64);
+  equal ~msg:"int4 min_value" int (-8) (Nx_dtype.min_value Nx_dtype.int4);
+  equal ~msg:"uint4 min_value" int 0 (Nx_dtype.min_value Nx_dtype.uint4);
+  equal ~msg:"bool min_value" bool false (Nx_dtype.min_value Nx_dtype.bool);
+  equal ~msg:"uint32 min_value" int32 0l (Nx_dtype.min_value Nx_dtype.uint32);
+  equal ~msg:"uint64 min_value" int64 0L (Nx_dtype.min_value Nx_dtype.uint64);
 
   (* Test max_value *)
-  equal ~msg:"int4 max_value" int 7 (Nx_core.Dtype.max_value Nx_core.Dtype.int4);
-  equal ~msg:"uint4 max_value" int 15
-    (Nx_core.Dtype.max_value Nx_core.Dtype.uint4);
-  equal ~msg:"bool max_value" bool true
-    (Nx_core.Dtype.max_value Nx_core.Dtype.bool);
+  equal ~msg:"int4 max_value" int 7 (Nx_dtype.max_value Nx_dtype.int4);
+  equal ~msg:"uint4 max_value" int 15 (Nx_dtype.max_value Nx_dtype.uint4);
+  equal ~msg:"bool max_value" bool true (Nx_dtype.max_value Nx_dtype.bool);
   equal ~msg:"uint32 max_value" int32 (Int32.lognot 0l)
-    (Nx_core.Dtype.max_value Nx_core.Dtype.uint32);
+    (Nx_dtype.max_value Nx_dtype.uint32);
   equal ~msg:"uint64 max_value" int64 (Int64.lognot 0L)
-    (Nx_core.Dtype.max_value Nx_core.Dtype.uint64)
+    (Nx_dtype.max_value Nx_dtype.uint64)
 
 (* ───── Test Suite Setup ───── *)
 
@@ -559,34 +538,32 @@ let suite =
         test "float16 subnormals" test_float16_subnormals;
         test "float16 overflow to inf" test_float16_overflow_to_inf;
         test "float16 cast roundtrip"
-          (test_half_cast_roundtrip "float16" Nx_core.Dtype.float16);
+          (test_half_cast_roundtrip "float16" Nx_dtype.float16);
         test "bfloat16 cast roundtrip"
-          (test_half_cast_roundtrip "bfloat16" Nx_core.Dtype.bfloat16);
+          (test_half_cast_roundtrip "bfloat16" Nx_dtype.bfloat16);
         test "float16 special values"
-          (test_half_special_values "float16" Nx_core.Dtype.float16);
+          (test_half_special_values "float16" Nx_dtype.float16);
         test "bfloat16 special values"
-          (test_half_special_values "bfloat16" Nx_core.Dtype.bfloat16);
+          (test_half_special_values "bfloat16" Nx_dtype.bfloat16);
         test "wide casts round once" test_wide_casts_round_once;
         test "binary op rounding" test_half_binary_rounding;
         test "float16 binary exact"
-          (test_half_binary_exact "float16" Nx_core.Dtype.float16);
+          (test_half_binary_exact "float16" Nx_dtype.float16);
         test "bfloat16 binary exact"
-          (test_half_binary_exact "bfloat16" Nx_core.Dtype.bfloat16);
+          (test_half_binary_exact "bfloat16" Nx_dtype.bfloat16);
         test "sum accumulates wide" test_half_sum_accumulates_wide;
         test "float16 reductions"
-          (test_half_reductions "float16" Nx_core.Dtype.float16
-             ~mean:0.91650390625);
+          (test_half_reductions "float16" Nx_dtype.float16 ~mean:0.91650390625);
         test "bfloat16 reductions"
-          (test_half_reductions "bfloat16" Nx_core.Dtype.bfloat16
-             ~mean:0.91796875);
+          (test_half_reductions "bfloat16" Nx_dtype.bfloat16 ~mean:0.91796875);
         test "float16 matmul"
-          (test_half_matmul "float16" Nx_core.Dtype.float16 ~eps:0.01);
+          (test_half_matmul "float16" Nx_dtype.float16 ~eps:0.01);
         test "bfloat16 matmul"
-          (test_half_matmul "bfloat16" Nx_core.Dtype.bfloat16 ~eps:0.07);
+          (test_half_matmul "bfloat16" Nx_dtype.bfloat16 ~eps:0.07);
         test "float16 compare and where"
-          (test_half_compare_where "float16" Nx_core.Dtype.float16);
+          (test_half_compare_where "float16" Nx_dtype.float16);
         test "bfloat16 compare and where"
-          (test_half_compare_where "bfloat16" Nx_core.Dtype.bfloat16);
+          (test_half_compare_where "bfloat16" Nx_dtype.bfloat16);
       ];
   ]
 

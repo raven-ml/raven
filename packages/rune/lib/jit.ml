@@ -47,7 +47,7 @@ open Nx_effect
 module F = Tolk_frontend
 module U = Tolk_uop.Uop
 module TD = Tolk_uop.Dtype
-module ND = Nx_core.Dtype
+module ND = Nx_dtype
 module NV = Nx_core.View
 
 exception Jit_error of string
@@ -1099,7 +1099,7 @@ let window_indices ~spatial_padded ~kernel_size ~stride ~dilation =
   for d = k - 2 downto 0 do
     sp_strides.(d) <- sp_strides.(d + 1) * spatial_padded.(d + 1)
   done;
-  let idx = Nx_buffer.create Nx_buffer.int32 (kernel_prod * nwin) in
+  let idx = Nx_buffer.create ND.int32 (kernel_prod * nwin) in
   let k_pos = Array.make k 0 in
   let w_pos = Array.make k 0 in
   let bump pos limits =
@@ -2913,8 +2913,6 @@ and stage_scan_bwd : type r.
 
 (* Host transfers *)
 
-let itemsize dt = Nx_buffer.kind_size_in_bytes dt
-
 (* A buffer with no bytes is never allocated: a device has no storage of size
    zero, and a program never reads a value without elements. *)
 let ensure_storage buf =
@@ -2951,7 +2949,7 @@ let wrap_tensor : type a b.
     let ptr =
       Nativeint.add
         (Nx_buffer.unsafe_data_ptr host)
-        (Nativeint.of_int (NV.offset v * itemsize dt))
+        (Nativeint.of_int (NV.offset v * ND.itemsize dt))
     in
     Some (wrap_ptr dev (tolk_dtype dt) (numel (NV.shape v)) ptr, Obj.repr host)
 
@@ -3112,7 +3110,7 @@ let read_base : type a b.
       with_file_source host @@ fun read ->
       Option.bind read @@ fun read ->
       let dt = Nx_effect.dtype x in
-      let item = itemsize dt in
+      let item = ND.itemsize dt in
       let n = numel shape in
       let run = Nx_buffer.create dt n in
       let chunk = chunk_bytes / item in
@@ -3147,7 +3145,7 @@ let rec copyin_at : type a b.
  fun sc dev buf ~off x ->
   let v = Nx_effect.view x in
   let shape = NV.shape v in
-  let item = itemsize (Nx_effect.dtype x) in
+  let item = ND.itemsize (Nx_effect.dtype x) in
   let nbytes = numel shape * item in
   if nbytes = 0 then ()
   else if NV.is_c_contiguous v then begin
@@ -3221,7 +3219,7 @@ let copyout_into : type a b.
     scratch -> Tolk.Device.Buffer.t -> dst_off:int -> (a, b) Nx_buffer.t -> unit
     =
  fun sc buf ~dst_off host ->
-  let item = itemsize (Nx_buffer.kind host) in
+  let item = ND.itemsize (Nx_buffer.dtype host) in
   let n = Tolk.Device.Buffer.nbytes buf / item in
   let chunk = chunk_bytes / item in
   let pos = ref 0 in
@@ -3342,7 +3340,7 @@ let gather_words : type a b.
 let gather_view : type a b.
     (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t -> unit =
  fun src ~base v dst ->
-  let as_words (type c d) (word : (c, d) Nx_buffer.kind) w =
+  let as_words (type c d) (word : (c, d) ND.t) w =
     let shape = NV.shape v and strides = NV.strides v in
     let words =
       if w = 1 then v
@@ -3357,15 +3355,15 @@ let gather_view : type a b.
       ~base:(base * w) words
       (Nx_buffer.reinterpret word dst)
   in
-  match Nx_buffer.kind src with
-  | Nx_buffer.Int4 | Nx_buffer.UInt4 -> gather_elements src ~base v dst
+  match Nx_buffer.dtype src with
+  | ND.Int4 | ND.UInt4 -> gather_elements src ~base v dst
   | kind -> (
-      match Nx_buffer.kind_size_in_bytes kind with
-      | 1 -> as_words Nx_buffer.Int8 1
-      | 2 -> as_words Nx_buffer.Int16 1
-      | 4 -> as_words Nx_buffer.Int32 1
-      | 8 -> as_words Nx_buffer.Int64 1
-      | n -> as_words Nx_buffer.Int64 (n / 8))
+      match ND.itemsize kind with
+      | 1 -> as_words ND.Int8 1
+      | 2 -> as_words ND.Int16 1
+      | 4 -> as_words ND.Int32 1
+      | 8 -> as_words ND.Int64 1
+      | n -> as_words ND.Int64 (n / 8))
 
 (* The elements of [buf]'s storage from [lo] to [hi] on the host: borrowed from
    the buffer's memory when the host addresses it, copied otherwise. *)
@@ -3376,7 +3374,7 @@ let storage_range : type a b.
     hi:int ->
     (a, b) Nx_buffer.t * [ `Borrowed | `Copied ] =
  fun dt buf ~lo ~hi ->
-  let item = itemsize dt in
+  let item = ND.itemsize dt in
   match Tolk.Device.Buffer.as_buffer buf with
   | Some mem ->
       let bytes = Bigarray.Array1.sub mem (lo * item) ((hi - lo) * item) in
@@ -3398,7 +3396,7 @@ let read_window : type a b.
     let lo, hi = extent v in
     let src, how = storage_range dt buf ~lo ~hi in
     if how = `Borrowed then
-      bytes_from_device := !bytes_from_device + (n * itemsize dt);
+      bytes_from_device := !bytes_from_device + (n * ND.itemsize dt);
     if NV.is_c_contiguous v && how = `Copied then src
     else begin
       let dst = Nx_buffer.create dt n in
@@ -3526,7 +3524,7 @@ let transfer : type a b.
  fun sc r s devs windows bufs ->
   let q = r.r_placement and dt = r.r_dtype in
   let shape = Nx_effect.global q (NV.shape r.r_view) in
-  let item = itemsize dt in
+  let item = ND.itemsize dt in
   (* The source's distinct tiles, each with the buffers holding it. *)
   let tiles =
     List.fold_left
@@ -4596,7 +4594,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
         List.mapi
           (fun i d ->
             let buf = Tolk.Device.create_buffer ~size:1 ~dtype:TD.int32 d in
-            let idx = Nx_buffer.create Nx_buffer.int32 1 in
+            let idx = Nx_buffer.create ND.int32 1 in
             Nx_buffer.unsafe_set idx 0 (Int32.of_int i);
             copyin_tensor scratch d buf (Nx_effect.from_host st.st_ctx idx);
             buf)

@@ -12,14 +12,14 @@ let ln2 = 0.693147180559945309417
 let two_over_sqrt_pi = 1.12837916709551257390
 
 let float_scalar_like (type a b) (x : (a, b) T.t) (v : float) : (a, b) T.t =
-  T.full (T.dtype x) [||] (Nx_core.Dtype.of_float (T.dtype x) v)
+  T.full (T.dtype x) [||] (Nx_dtype.of_float (T.dtype x) v)
 
 (* The real part of [x], staying in [x]'s dtype: the cast down to float keeps
    the real component, and the cast back sets a zero imaginary one. Rules need
    it where an operation's value is real but its dtype is not. On real dtypes it
    is the identity, and the guard spares them the round trip. *)
 let real_part (type a b) (x : (a, b) T.t) : (a, b) T.t =
-  if Nx_core.Dtype.is_complex (T.dtype x) then
+  if Nx_dtype.is_complex (T.dtype x) then
     T.cast (T.dtype x) (T.cast T.float64 x)
   else x
 
@@ -29,7 +29,7 @@ let diag_matrix (type a b) (d : (a, b) T.t) : (a, b) T.t =
   T.mul (T.eye (T.dtype d) (T.dim (-1) d)) (T.unsqueeze ~axes:[ -2 ] d)
 
 (* The scalar one in x's element type, for the [_s] operations. *)
-let one_like (type a b) (x : (a, b) T.t) : a = Nx_core.Dtype.one (T.dtype x)
+let one_like (type a b) (x : (a, b) T.t) : a = Nx_dtype.one (T.dtype x)
 
 (* d/dx sqrt(x) = 1 / (2 * sqrt(x)), expressed with the primal output. *)
 let sqrt' sqrt_x =

@@ -101,13 +101,11 @@ let counting reads =
   {
     Nx_effect.read =
       (fun (type a b) (r : (a, b) Nx_effect.resident) : (a, b) Nx_buffer.t ->
-        match
-          (r.r_cell.state, Nx_core.Dtype.equal_witness r.r_dtype Nx.uint8)
-        with
+        match (r.r_cell.state, Nx_dtype.equal_witness r.r_dtype Nx.uint8) with
         | Live (Bytes _), Some Type.Equal ->
             let n = Nx_core.View.numel r.r_view in
             reads := !reads + n;
-            Nx_buffer.create Nx_buffer.uint8 n
+            Nx_buffer.create Nx_dtype.uint8 n
         | _ -> assert false);
     place = (fun _ _ -> invalid_arg "the counting device places nothing");
   }
@@ -121,7 +119,7 @@ let deferred shape =
     Nx_effect.cell
       ~placement:(Nx.Placement.device device)
       ~length:n
-      (Bytes (Nx_buffer.create Nx_buffer.uint8 n))
+      (Bytes (Nx_buffer.create Nx_dtype.uint8 n))
   in
   ( Nx_effect.placed
       (Nx.Placement.device device)
@@ -245,7 +243,7 @@ let check_apply msg w x =
   close msg ~k expected bound y;
   let y16 = Nx_quant.apply w (Nx.cast Nx.bfloat16 x) in
   equal ~msg:(msg ^ ", bfloat16 dtype") string "bfloat16"
-    (Nx_core.Dtype.to_string (Nx.dtype y16));
+    (Nx_dtype.to_string (Nx.dtype y16));
   close ~relative:(Float.ldexp 1.0 (-8)) (msg ^ ", bfloat16") ~k
     (fst
        (reference_product (Nx.cast Nx.bfloat16 x)
@@ -534,7 +532,7 @@ let test_effect () =
           (Nx.to_array (Nx.cast Nx.float32 x'));
         Nx.full (Nx.dtype x') [| 7 |] 42.0
     | Dequant dt ->
-        seen := Nx_core.Dtype.to_string dt :: !seen;
+        seen := Nx_dtype.to_string dt :: !seen;
         Nx.full dt [| 5 |] 7.0
   in
   let handled f =
@@ -593,7 +591,7 @@ let test_visits () =
        (Nx.Ptree.visits Nx_quant.ptree w));
   let parts =
     Nx.Ptree.fold Nx_quant.ptree
-      (fun _ t acc -> (Nx.shape t, Nx_core.Dtype.to_string (Nx.dtype t)) :: acc)
+      (fun _ t acc -> (Nx.shape t, Nx_dtype.to_string (Nx.dtype t)) :: acc)
       w []
   in
   equal ~msg:"each part keeps its dtype"

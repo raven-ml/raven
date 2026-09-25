@@ -16,7 +16,7 @@ let read_error fmt =
   Printf.ksprintf (fun message -> raise (Read_error message)) fmt
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
-type packed_kind = K : ('a, 'b) Nx_buffer.kind -> packed_kind
+type packed_kind = K : ('a, 'b) Nx_dtype.t -> packed_kind
 
 type header = {
   kind : packed_kind;
@@ -236,20 +236,20 @@ let parse_dictionary text =
     required "shape" !shape )
 
 let kind_of_code = function
-  | "f2" -> K Nx_buffer.Float16
-  | "f4" -> K Nx_buffer.Float32
-  | "f8" -> K Nx_buffer.Float64
-  | "i1" -> K Nx_buffer.Int8
-  | "i2" -> K Nx_buffer.Int16
-  | "i4" -> K Nx_buffer.Int32
-  | "i8" -> K Nx_buffer.Int64
-  | "u1" -> K Nx_buffer.UInt8
-  | "u2" -> K Nx_buffer.UInt16
-  | "u4" -> K Nx_buffer.UInt32
-  | "u8" -> K Nx_buffer.UInt64
-  | "c8" -> K Nx_buffer.Complex64
-  | "c16" -> K Nx_buffer.Complex128
-  | "b1" -> K Nx_buffer.Bool
+  | "f2" -> K Nx_dtype.Float16
+  | "f4" -> K Nx_dtype.Float32
+  | "f8" -> K Nx_dtype.Float64
+  | "i1" -> K Nx_dtype.Int8
+  | "i2" -> K Nx_dtype.Int16
+  | "i4" -> K Nx_dtype.Int32
+  | "i8" -> K Nx_dtype.Int64
+  | "u1" -> K Nx_dtype.UInt8
+  | "u2" -> K Nx_dtype.UInt16
+  | "u4" -> K Nx_dtype.UInt32
+  | "u8" -> K Nx_dtype.UInt64
+  | "c8" -> K Nx_dtype.Complex64
+  | "c16" -> K Nx_dtype.Complex128
+  | "b1" -> K Nx_dtype.Bool
   | code -> read_error "unsupported NPY dtype %S" code
 
 let decode_descr descr =
@@ -257,7 +257,7 @@ let decode_descr descr =
   let endian = descr.[0] in
   let kind = kind_of_code (String.sub descr 1 (String.length descr - 1)) in
   let (K concrete) = kind in
-  let element_size = Nx_buffer.kind_size_in_bytes concrete in
+  let element_size = Nx_dtype.itemsize concrete in
   let swap_endian =
     match endian with
     | '|' ->
@@ -370,7 +370,7 @@ let read_copy path =
   then read_error "NPY payload size does not match its shape and dtype";
   materialize header (Stored { src; off = header.data_offset }) |> fst
 
-let code_of_kind : type a b. (a, b) Nx_buffer.kind -> string = function
+let code_of_kind : type a b. (a, b) Nx_dtype.t -> string = function
   | Float16 -> "f2"
   | Float32 -> "f4"
   | Float64 -> "f8"
@@ -389,7 +389,7 @@ let code_of_kind : type a b. (a, b) Nx_buffer.kind -> string = function
       invalid_arg "dtype has no standard NPY representation"
 
 let descr_of_kind kind =
-  let size = Nx_buffer.kind_size_in_bytes kind in
+  let size = Nx_dtype.itemsize kind in
   let endian = if size = 1 then '|' else if Sys.big_endian then '>' else '<' in
   Printf.sprintf "%c%s" endian (code_of_kind kind)
 
@@ -425,10 +425,9 @@ let encode_header kind shape =
   magic ^ String.make 1 (Char.chr version) ^ "\x00" ^ length_bytes ^ header
 
 let encode (P (buffer, shape)) =
-  let kind = Nx_buffer.kind buffer in
+  let kind = Nx_buffer.dtype buffer in
   let data_size =
-    checked_mul "NPY payload" (Nx_buffer.length buffer)
-      (Nx_buffer.kind_size_in_bytes kind)
+    checked_mul "NPY payload" (Nx_buffer.length buffer) (Nx_dtype.itemsize kind)
   in
   E
     {

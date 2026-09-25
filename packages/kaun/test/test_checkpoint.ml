@@ -93,7 +93,7 @@ let test_round_trip_dtypes () =
   let ckpt = Checkpoint.load path in
   let dtype_of name =
     match Checkpoint.get name ckpt with
-    | Nx.P x -> Nx_core.Dtype.to_string (Nx.dtype x)
+    | Nx.P x -> Nx_dtype.to_string (Nx.dtype x)
   in
   equal ~msg:"w" string "float32" (dtype_of "w");
   equal ~msg:"scale" string "float64" (dtype_of "scale");

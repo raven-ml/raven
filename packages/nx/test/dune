@@ -32,13 +32,13 @@
   test_nx_io
   test_nx_quant
   test_oxcaml_backend)
- (libraries nx.buffer nx nx.core nx.effect windtrap test_nx_support))
+ (libraries nx.dtype nx.buffer nx nx.core nx.effect windtrap test_nx_support))
 
 (test
  (name test_backend_contract)
  (package nx)
  (modules backend_contract test_backend_contract)
- (libraries nx.buffer nx.c nx.core windtrap))
+ (libraries nx.dtype nx.buffer nx.c nx.core windtrap))
 
 (test
  (name test_oxcaml_backend)
@@ -55,12 +55,12 @@
  (name test_nx_quant)
  (package nx)
  (modules test_nx_quant)
- (libraries nx nx.buffer nx.core nx.effect nx.quant windtrap))
+ (libraries nx nx.dtype nx.buffer nx.core nx.effect nx.quant windtrap))
 
 (test
  (name test_nx_io)
  (package nx)
  (modules test_nx_io)
- (libraries nx nx.buffer nx.core nx.io unix windtrap)
+ (libraries nx nx.dtype nx.buffer nx.core nx.io unix windtrap)
  (deps
   (glob_files fixtures/*)))

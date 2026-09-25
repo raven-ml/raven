@@ -87,7 +87,7 @@ let make_spd n =
   done;
   a
 
-let test_chol_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~n ~upper
+let test_chol_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~n ~upper
     () =
   let a = make_spd n in
   let ain = Buf.create kind (n * n) in
@@ -156,7 +156,7 @@ let make_hpd n =
   done;
   a
 
-let test_chol_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~n
+let test_chol_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~tol ~n
     ~upper () =
   let a = make_hpd n in
   let ain = Buf.create kind (n * n) in
@@ -205,13 +205,13 @@ let test_chol_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~n
 let test_chol_batched ~n ~batch () =
   (* independent PD matrices per batch element (scale each by 1+b) *)
   let a = Array.init batch (fun _ -> make_spd n) in
-  let ain = Buf.create Buf.float64 (batch * n * n) in
+  let ain = Buf.create Nx_dtype.float64 (batch * n * n) in
   for b = 0 to batch - 1 do
     for t = 0 to (n * n) - 1 do
       Buf.set ain ((b * n * n) + t) (a.(b).(t) *. float_of_int (1 + b))
     done
   done;
-  let out = Buf.create Buf.float64 (batch * n * n) in
+  let out = Buf.create Nx_dtype.float64 (batch * n * n) in
   cholesky
     (ffi out [| batch; n; n |] (contig [| batch; n; n |]))
     (ffi ain [| batch; n; n |] (contig [| batch; n; n |]))
@@ -244,14 +244,14 @@ let test_chol_batched ~n ~batch () =
 let test_chol_not_pd () =
   let n = 4 in
   (* a matrix that is symmetric but indefinite: diagonal of -1 *)
-  let ain = Buf.create Buf.float64 (n * n) in
+  let ain = Buf.create Nx_dtype.float64 (n * n) in
   for t = 0 to (n * n) - 1 do
     Buf.set ain t 0.0
   done;
   for i = 0 to n - 1 do
     Buf.set ain ((i * n) + i) (-1.0)
   done;
-  let out = Buf.create Buf.float64 (n * n) in
+  let out = Buf.create Nx_dtype.float64 (n * n) in
   let raised =
     try
       cholesky
@@ -263,7 +263,7 @@ let test_chol_not_pd () =
   in
   ok "chol non-PD raises Failure" raised;
   (* all-zeros: first pivot is 0, also not PD *)
-  let z = Buf.create Buf.float64 (n * n) in
+  let z = Buf.create Nx_dtype.float64 (n * n) in
   let raised0 =
     try
       cholesky
@@ -286,7 +286,7 @@ let flags ~upper ~transpose ~unit =
   lor (if transpose then 2 else 0)
   lor if unit then 4 else 0
 
-let test_trsm_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~n ~nrhs
+let test_trsm_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~n ~nrhs
     ~upper ~transpose ~unit () =
   let a = Array.make (n * n) 0.0 in
   for i = 0 to n - 1 do
@@ -334,7 +334,7 @@ let test_trsm_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~n ~nrhs
        nrhs upper transpose unit !err)
     (!err <= tol)
 
-let test_trsm_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~n
+let test_trsm_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~tol ~n
     ~upper ~transpose () =
   let a = Array.make (n * n) Complex.zero in
   for i = 0 to n - 1 do
@@ -398,7 +398,7 @@ let test_trsm_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~n
 
 let test_trsm_singular () =
   let n = 4 in
-  let ain = Buf.create Buf.float64 (n * n) in
+  let ain = Buf.create Nx_dtype.float64 (n * n) in
   for i = 0 to n - 1 do
     for k = 0 to n - 1 do
       if k <= i then Buf.set ain ((i * n) + k) (if i = k then 1.0 else 0.5)
@@ -406,11 +406,11 @@ let test_trsm_singular () =
   done;
   Buf.set ain ((2 * n) + 2) 0.0;
   (* zero pivot *)
-  let bin = Buf.create Buf.float64 n in
+  let bin = Buf.create Nx_dtype.float64 n in
   for t = 0 to n - 1 do
     Buf.set bin t 1.0
   done;
-  let out = Buf.create Buf.float64 n in
+  let out = Buf.create Nx_dtype.float64 n in
   let raised =
     try
       trsm
@@ -446,17 +446,17 @@ let test_trsm_batched () =
       done
     done
   done;
-  let ain = Buf.create Buf.float64 (batch * n * n) in
+  let ain = Buf.create Nx_dtype.float64 (batch * n * n) in
   for bb = 0 to batch - 1 do
     for t = 0 to (n * n) - 1 do
       Buf.set ain ((bb * n * n) + t) a.(t)
     done
   done;
-  let bin = Buf.create Buf.float64 (batch * n * nrhs) in
+  let bin = Buf.create Nx_dtype.float64 (batch * n * nrhs) in
   for t = 0 to (batch * n * nrhs) - 1 do
     Buf.set bin t bmat.(t)
   done;
-  let out = Buf.create Buf.float64 (batch * n * nrhs) in
+  let out = Buf.create Nx_dtype.float64 (batch * n * nrhs) in
   trsm
     (ffi out [| batch; n; nrhs |] (contig [| batch; n; nrhs |]))
     (ffi ain [| batch; n; n |] (contig [| batch; n; n |]))
@@ -474,7 +474,7 @@ let test_trsm_batched () =
    Property gate: ‖A − QR‖/‖A‖ small, QᴴQ = I (orthonormal columns), R upper
    triangular. Covers reduced/full and tall/wide/square. *)
 
-let test_qr_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~n
+let test_qr_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~m ~n
     ~reduced () =
   let a =
     Array.init (m * n) (fun idx ->
@@ -534,8 +534,8 @@ let test_qr_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~n
        m n reduced recon !orth !rlow)
     (recon <= tol && !orth <= tol && !rlow <= tol)
 
-let test_qr_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~m ~n
-    ~reduced () =
+let test_qr_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~tol ~m
+    ~n ~reduced () =
   let a =
     Array.init (m * n) (fun idx ->
         {
@@ -597,13 +597,13 @@ let test_qr_batched () =
       (batch * m * n)
       (fun idx -> sin (float_of_int (idx * 11 mod 263)))
   in
-  let ain = Buf.create Buf.float64 (batch * m * n) in
+  let ain = Buf.create Nx_dtype.float64 (batch * m * n) in
   for t = 0 to (batch * m * n) - 1 do
     Buf.set ain t a.(t)
   done;
   let k = min m n in
-  let qb = Buf.create Buf.float64 (batch * m * k)
-  and rb = Buf.create Buf.float64 (batch * k * n) in
+  let qb = Buf.create Nx_dtype.float64 (batch * m * k)
+  and rb = Buf.create Nx_dtype.float64 (batch * k * n) in
   qr
     (ffi qb [| batch; m; k |] (contig [| batch; m; k |]))
     (ffi rb [| batch; k; n |] (contig [| batch; k; n |]))
@@ -640,7 +640,7 @@ let test_qr_batched () =
 let test_chol_batched_fail () =
   let batch = 20 and n = 6 in
   let a = make_spd n in
-  let ain = Buf.create Buf.float64 (batch * n * n) in
+  let ain = Buf.create Nx_dtype.float64 (batch * n * n) in
   for b = 0 to batch - 1 do
     for t = 0 to (n * n) - 1 do
       Buf.set ain ((b * n * n) + t) a.(t)
@@ -648,7 +648,7 @@ let test_chol_batched_fail () =
   done;
   (* corrupt element 13: negate its (0,0) pivot → first pivot < 0 → not PD *)
   Buf.set ain ((13 * n * n) + 0) (-.Buf.get ain ((13 * n * n) + 0));
-  let out = Buf.create Buf.float64 (batch * n * n) in
+  let out = Buf.create Nx_dtype.float64 (batch * n * n) in
   let raised =
     try
       cholesky
@@ -662,7 +662,7 @@ let test_chol_batched_fail () =
 
 let test_trsm_batched_fail () =
   let batch = 20 and n = 5 in
-  let ain = Buf.create Buf.float64 (batch * n * n) in
+  let ain = Buf.create Nx_dtype.float64 (batch * n * n) in
   for b = 0 to batch - 1 do
     for i = 0 to n - 1 do
       for k = 0 to i do
@@ -672,11 +672,11 @@ let test_trsm_batched_fail () =
   done;
   (* element 7: zero a diagonal → singular *)
   Buf.set ain ((7 * n * n) + (2 * n) + 2) 0.0;
-  let bin = Buf.create Buf.float64 (batch * n) in
+  let bin = Buf.create Nx_dtype.float64 (batch * n) in
   for t = 0 to (batch * n) - 1 do
     Buf.set bin t 1.0
   done;
-  let out = Buf.create Buf.float64 (batch * n) in
+  let out = Buf.create Nx_dtype.float64 (batch * n) in
   let raised =
     try
       trsm
@@ -696,15 +696,15 @@ let test_trsm_batched_fail () =
 let test_trsm_conj_fixture () =
   let c re im = { Complex.re; im } in
   let n = 2 in
-  let ain = Buf.create Buf.complex128 (n * n) in
+  let ain = Buf.create Nx_dtype.complex128 (n * n) in
   Buf.set ain 0 (c 1.0 1.0);
   Buf.set ain 1 Complex.zero;
   Buf.set ain 2 (c 2.0 (-1.0));
   Buf.set ain 3 (c 1.0 2.0);
-  let bin = Buf.create Buf.complex128 n in
+  let bin = Buf.create Nx_dtype.complex128 n in
   Buf.set bin 0 (c 1.0 0.0);
   Buf.set bin 1 (c 4.0 0.0);
-  let out = Buf.create Buf.complex128 n in
+  let out = Buf.create Nx_dtype.complex128 n in
   trsm
     (ffi out [| n; 1 |] (contig [| n; 1 |]))
     (ffi ain [| n; n |] (contig [| n; n |]))
@@ -730,13 +730,13 @@ let test_qr_zerocol ?(m = 6) ?(n = 4) ?(zc = 2) () =
       if j <> zc then a.((i * n) + j) <- sin (float_of_int (((i * n) + j) * 5))
     done
   done;
-  let ain = Buf.create Buf.float64 (m * n) in
+  let ain = Buf.create Nx_dtype.float64 (m * n) in
   for t = 0 to (m * n) - 1 do
     Buf.set ain t a.(t)
   done;
   let k = min m n in
-  let qb = Buf.create Buf.float64 (m * k)
-  and rb = Buf.create Buf.float64 (k * n) in
+  let qb = Buf.create Nx_dtype.float64 (m * k)
+  and rb = Buf.create Nx_dtype.float64 (k * n) in
   qr
     (ffi qb [| m; k |] (contig [| m; k |]))
     (ffi rb [| k; n |] (contig [| k; n |]))
@@ -776,7 +776,7 @@ let test_qr_zerocol ?(m = 6) ?(n = 4) ?(zc = 2) () =
 
 (* n=0 empty matrices are no-ops (must not raise or crash). *)
 let test_zero_dim () =
-  let e0 = Buf.create Buf.float64 0 in
+  let e0 = Buf.create Nx_dtype.float64 0 in
   let raised =
     try
       cholesky
@@ -812,7 +812,7 @@ let test_zero_dim () =
    Property gate: ‖A − V diag(w) Vᴴ‖/‖A‖ small, VᴴV = I, w ascending and real. A
    is built symmetric/Hermitian; the C reads the lower triangle only. *)
 
-let test_eigh_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~n () =
+let test_eigh_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~n () =
   let m =
     Array.init (n * n) (fun idx -> sin (float_of_int (idx * 13 mod 251)))
   in
@@ -826,7 +826,7 @@ let test_eigh_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~n () =
   for t = 0 to (n * n) - 1 do
     Buf.set ain t a.(t)
   done;
-  let wout = Buf.create Buf.float64 n and vout = Buf.create kind (n * n) in
+  let wout = Buf.create Nx_dtype.float64 n and vout = Buf.create kind (n * n) in
   eigh (ffi wout [| n |] [| 1 |])
     (ffi vout [| n; n |] (contig [| n; n |]))
     (ffi ain [| n; n |] (contig [| n; n |]))
@@ -865,7 +865,7 @@ let test_eigh_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~n () =
        !orth !asc)
     (recon <= tol && !orth <= tol && !asc)
 
-let test_eigh_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~n
+let test_eigh_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~tol ~n
     () =
   let mre idx = sin (float_of_int (idx * 13 mod 251)) in
   let mim idx = cos (float_of_int (idx * 7 mod 241)) in
@@ -882,7 +882,7 @@ let test_eigh_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~n
   for t = 0 to (n * n) - 1 do
     Buf.set ain t a.(t)
   done;
-  let wout = Buf.create Buf.float64 n and vout = Buf.create kind (n * n) in
+  let wout = Buf.create Nx_dtype.float64 n and vout = Buf.create kind (n * n) in
   eigh (ffi wout [| n |] [| 1 |])
     (ffi vout [| n; n |] (contig [| n; n |]))
     (ffi ain [| n; n |] (contig [| n; n |]))
@@ -939,13 +939,13 @@ let test_eigh_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~n
 let test_eigh_diag () =
   let vals = [| 5.0; 2.0; 8.0; 1.0; 2.0 |] in
   let n = Array.length vals in
-  let ain = Buf.create Buf.float64 (n * n) in
+  let ain = Buf.create Nx_dtype.float64 (n * n) in
   Buf.fill ain 0.0;
   for i = 0 to n - 1 do
     Buf.set ain ((i * n) + i) vals.(i)
   done;
-  let wout = Buf.create Buf.float64 n
-  and vout = Buf.create Buf.float64 (n * n) in
+  let wout = Buf.create Nx_dtype.float64 n
+  and vout = Buf.create Nx_dtype.float64 (n * n) in
   eigh (ffi wout [| n |] [| 1 |])
     (ffi vout [| n; n |] (contig [| n; n |]))
     (ffi ain [| n; n |] (contig [| n; n |]))
@@ -970,16 +970,17 @@ let test_eigh_novec ~n () =
       a.((i * n) + j) <- m.((i * n) + j) +. m.((j * n) + i)
     done
   done;
-  let ain = Buf.create Buf.float64 (n * n) in
+  let ain = Buf.create Nx_dtype.float64 (n * n) in
   for t = 0 to (n * n) - 1 do
     Buf.set ain t a.(t)
   done;
-  let w1 = Buf.create Buf.float64 n and vout = Buf.create Buf.float64 (n * n) in
+  let w1 = Buf.create Nx_dtype.float64 n
+  and vout = Buf.create Nx_dtype.float64 (n * n) in
   eigh (ffi w1 [| n |] [| 1 |])
     (ffi vout [| n; n |] (contig [| n; n |]))
     (ffi ain [| n; n |] (contig [| n; n |]))
     true;
-  let w2 = Buf.create Buf.float64 n in
+  let w2 = Buf.create Nx_dtype.float64 n in
   let ain_ffi = ffi ain [| n; n |] (contig [| n; n |]) in
   eigh (ffi w2 [| n |] [| 1 |]) ain_ffi ain_ffi false;
   (* re-pass values in the v slot *)
@@ -1005,14 +1006,14 @@ let test_eigh_batched () =
         done;
         a)
   in
-  let ain = Buf.create Buf.float64 (batch * n * n) in
+  let ain = Buf.create Nx_dtype.float64 (batch * n * n) in
   for b = 0 to batch - 1 do
     for t = 0 to (n * n) - 1 do
       Buf.set ain ((b * n * n) + t) mats.(b).(t)
     done
   done;
-  let wout = Buf.create Buf.float64 (batch * n)
-  and vout = Buf.create Buf.float64 (batch * n * n) in
+  let wout = Buf.create Nx_dtype.float64 (batch * n)
+  and vout = Buf.create Nx_dtype.float64 (batch * n * n) in
   eigh
     (ffi wout [| batch; n |] (contig [| batch; n |]))
     (ffi vout [| batch; n; n |] (contig [| batch; n; n |]))
@@ -1054,16 +1055,17 @@ let test_eigh_batched () =
 
 let test_eigh_crosscheck ~name ~n ~build ~tol ?(orth_c = 128.0) () =
   let a = build n in
-  let ain = Buf.create Buf.float64 (n * n) in
+  let ain = Buf.create Nx_dtype.float64 (n * n) in
   for t = 0 to (n * n) - 1 do
     Buf.set ain t a.(t)
   done;
   let ffi_a () = ffi ain [| n; n |] (contig [| n; n |]) in
-  let w_dc = Buf.create Buf.float64 n and v = Buf.create Buf.float64 (n * n) in
+  let w_dc = Buf.create Nx_dtype.float64 n
+  and v = Buf.create Nx_dtype.float64 (n * n) in
   eigh (ffi w_dc [| n |] [| 1 |])
     (ffi v [| n; n |] (contig [| n; n |]))
     (ffi_a ()) true;
-  let w_ql = Buf.create Buf.float64 n in
+  let w_ql = Buf.create Nx_dtype.float64 n in
   let fa = ffi_a () in
   (* tql2 is the independent oracle where it converges; on a spectrum too graded
      for the QL iteration (the very case D&C exists for) it caps out, and the
@@ -1211,8 +1213,8 @@ let build_random n =
    A = U diag(S) Vᴴ via the Jordan–Wielandt embedding. Gates: ‖A−U S Vᴴ‖/‖A‖,
    UᴴU=I, Vᴴ(Vᴴ)ᴴ=I, S descending ≥0, and (fixtures) S matches an offline numpy
    np.linalg.svd oracle. *)
-let test_svd_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~n ~full
-    ?a ?expect_s () =
+let test_svd_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~m ~n
+    ~full ?a ?expect_s () =
   let a =
     match a with
     | Some x -> x
@@ -1228,7 +1230,7 @@ let test_svd_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~n ~full
     Buf.set abuf t a.(t)
   done;
   let ubuf = Buf.create kind (m * ncu)
-  and sbuf = Buf.create Buf.float64 k
+  and sbuf = Buf.create Nx_dtype.float64 k
   and vtbuf = Buf.create kind (nrv * n) in
   svd
     (ffi ubuf [| m; ncu |] (contig [| m; ncu |]))
@@ -1296,8 +1298,8 @@ let test_svd_real (type b) ~(kind : (float, b) Buf.kind) ~name ~tol ~m ~n ~full
        n full recon !uo !vo !sok smatch)
     (recon <= tol && !uo <= tol && !vo <= tol && !sok && smatch)
 
-let test_svd_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~m ~n
-    ?(full = false) () =
+let test_svd_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~tol ~m
+    ~n ?(full = false) () =
   let a =
     Array.init (m * n) (fun i ->
         {
@@ -1313,7 +1315,7 @@ let test_svd_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~m ~n
     Buf.set abuf t a.(t)
   done;
   let ubuf = Buf.create kind (m * ncu)
-  and sbuf = Buf.create Buf.float64 k
+  and sbuf = Buf.create Nx_dtype.float64 k
   and vtbuf = Buf.create kind (nrv * n) in
   svd
     (ffi ubuf [| m; ncu |] (contig [| m; ncu |]))
@@ -1383,11 +1385,11 @@ let test_svd_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~tol ~m ~n
    floor) to high RELATIVE accuracy — the property the eigh-embedding lacked. *)
 let test_svd_relacc ~name ~m ~n ~a ~es ~reltol ~abstol () =
   let k = min m n in
-  let abuf = Buf.create Buf.float64 (m * n) in
+  let abuf = Buf.create Nx_dtype.float64 (m * n) in
   Array.iteri (fun t v -> Buf.set abuf t v) a;
-  let ubuf = Buf.create Buf.float64 (m * k)
-  and sbuf = Buf.create Buf.float64 k
-  and vtbuf = Buf.create Buf.float64 (k * n) in
+  let ubuf = Buf.create Nx_dtype.float64 (m * k)
+  and sbuf = Buf.create Nx_dtype.float64 k
+  and vtbuf = Buf.create Nx_dtype.float64 (k * n) in
   svd
     (ffi ubuf [| m; k |] (contig [| m; k |]))
     (ffi sbuf [| k |] [| 1 |])
@@ -2032,11 +2034,11 @@ let svd_bd_wilk41_s =
    compare S, U, Vᴴ to the numpy literals. *)
 let test_svd_usv ~name ~a ~s ~u ~vh ~jmax ~m ~n ~tol () =
   let k = min m n in
-  let abuf = Buf.create Buf.float64 (m * n) in
+  let abuf = Buf.create Nx_dtype.float64 (m * n) in
   Array.iteri (fun t v -> Buf.set abuf t v) a;
-  let ubuf = Buf.create Buf.float64 (m * k)
-  and sbuf = Buf.create Buf.float64 k
-  and vtbuf = Buf.create Buf.float64 (k * n) in
+  let ubuf = Buf.create Nx_dtype.float64 (m * k)
+  and sbuf = Buf.create Nx_dtype.float64 k
+  and vtbuf = Buf.create Nx_dtype.float64 (k * n) in
   svd
     (ffi ubuf [| m; k |] (contig [| m; k |]))
     (ffi sbuf [| k |] [| 1 |])
@@ -2071,11 +2073,11 @@ let test_svd_usv ~name ~a ~s ~u ~vh ~jmax ~m ~n ~tol () =
    bug left, which reconstruction alone can miss when U/Vᴴ stay orthonormal). *)
 let test_svd_idir2 ~name ~a ~m ~n ~tol () =
   let k = min m n in
-  let abuf = Buf.create Buf.float64 (m * n) in
+  let abuf = Buf.create Nx_dtype.float64 (m * n) in
   Array.iteri (fun t v -> Buf.set abuf t v) a;
-  let ubuf = Buf.create Buf.float64 (m * k)
-  and sbuf = Buf.create Buf.float64 k
-  and vtbuf = Buf.create Buf.float64 (k * n) in
+  let ubuf = Buf.create Nx_dtype.float64 (m * k)
+  and sbuf = Buf.create Nx_dtype.float64 k
+  and vtbuf = Buf.create Nx_dtype.float64 (k * n) in
   svd
     (ffi ubuf [| m; k |] (contig [| m; k |]))
     (ffi sbuf [| k |] [| 1 |])
@@ -2136,11 +2138,11 @@ let test_svd_dc ~name ~tol ~m ~n ?(full = false) ?a ?expect_s () =
   let k = min m n in
   let ncu = if full then m else k in
   let nrv = if full then n else k in
-  let abuf = Buf.create Buf.float64 (m * n) in
+  let abuf = Buf.create Nx_dtype.float64 (m * n) in
   Array.iteri (fun t v -> Buf.set abuf t v) a;
-  let ubuf = Buf.create Buf.float64 (m * ncu)
-  and sbuf = Buf.create Buf.float64 k
-  and vtbuf = Buf.create Buf.float64 (nrv * n) in
+  let ubuf = Buf.create Nx_dtype.float64 (m * ncu)
+  and sbuf = Buf.create Nx_dtype.float64 k
+  and vtbuf = Buf.create Nx_dtype.float64 (nrv * n) in
   svd
     (ffi ubuf [| m; ncu |] (contig [| m; ncu |]))
     (ffi sbuf [| k |] [| 1 |])
@@ -2246,11 +2248,11 @@ let test_svd_dc_c ~name ~tol ~m ~n () =
         })
   in
   let k = min m n in
-  let abuf = Buf.create Buf.complex128 (m * n) in
+  let abuf = Buf.create Nx_dtype.complex128 (m * n) in
   Array.iteri (fun t v -> Buf.set abuf t v) a;
-  let ubuf = Buf.create Buf.complex128 (m * k)
-  and sbuf = Buf.create Buf.float64 k
-  and vtbuf = Buf.create Buf.complex128 (k * n) in
+  let ubuf = Buf.create Nx_dtype.complex128 (m * k)
+  and sbuf = Buf.create Nx_dtype.float64 k
+  and vtbuf = Buf.create Nx_dtype.complex128 (k * n) in
   svd
     (ffi ubuf [| m; k |] (contig [| m; k |]))
     (ffi sbuf [| k |] [| 1 |])
@@ -2310,13 +2312,13 @@ let test_svd_dc_batched ~m ~n ~batch () =
             sin (float_of_int ((i + (37 * b)) * 13 mod 251))
             +. (0.1 *. cos (float_of_int (i + b)))))
   in
-  let abuf = Buf.create Buf.float64 (batch * m * n) in
+  let abuf = Buf.create Nx_dtype.float64 (batch * m * n) in
   Array.iteri
     (fun b ab -> Array.iteri (fun t v -> Buf.set abuf ((b * m * n) + t) v) ab)
     a;
-  let ubuf = Buf.create Buf.float64 (batch * m * k)
-  and sbuf = Buf.create Buf.float64 (batch * k)
-  and vtbuf = Buf.create Buf.float64 (batch * k * n) in
+  let ubuf = Buf.create Nx_dtype.float64 (batch * m * k)
+  and sbuf = Buf.create Nx_dtype.float64 (batch * k)
+  and vtbuf = Buf.create Nx_dtype.float64 (batch * k * n) in
   svd
     (ffi ubuf [| batch; m; k |] (contig [| batch; m; k |]))
     (ffi sbuf [| batch; k |] (contig [| batch; k |]))
@@ -2361,13 +2363,13 @@ let test_svd_dc_batched ~m ~n ~batch () =
    the diagonal as-is), so the bidiagonal SVD's 2x2 la_lasv2 deflation sees
    h=-0.0 and its ssmin copysign yields an exact -0.0 — the pre-fix S was [sqrt
    2, -0.0]. The 1/s sign probe has teeth: 1/(-0.) is -infinity. *)
-let test_svd_signed_zero (type b) ~(kind : (float, b) Buf.kind) ~name () =
+let test_svd_signed_zero (type b) ~(kind : (float, b) Nx_dtype.t) ~name () =
   let n = 2 in
   let a = [| 1.0; 1.0; 0.0; -0.0 |] in
   let abuf = Buf.create kind (n * n) in
   Array.iteri (fun t v -> Buf.set abuf t v) a;
   let ubuf = Buf.create kind (n * n)
-  and sbuf = Buf.create Buf.float64 n
+  and sbuf = Buf.create Nx_dtype.float64 n
   and vtbuf = Buf.create kind (n * n) in
   svd
     (ffi ubuf [| n; n |] (contig [| n; n |]))
@@ -2386,20 +2388,24 @@ let test_internal_branches () =
     (fun n ->
       List.iter
         (fun upper ->
-          test_chol_real ~kind:Buf.float64 ~name:"f64" ~tol:1e-10 ~n ~upper ();
-          test_chol_real ~kind:Buf.float32 ~name:"f32" ~tol:1e-3 ~n ~upper ();
-          test_chol_complex ~kind:Buf.complex128 ~name:"c64" ~tol:1e-10 ~n
+          test_chol_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol:1e-10 ~n ~upper
+            ();
+          test_chol_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol:1e-3 ~n ~upper
+            ();
+          test_chol_complex ~kind:Nx_dtype.complex128 ~name:"c64" ~tol:1e-10 ~n
             ~upper ();
-          test_chol_complex ~kind:Buf.complex64 ~name:"c32" ~tol:1e-3 ~n ~upper
-            ())
+          test_chol_complex ~kind:Nx_dtype.complex64 ~name:"c32" ~tol:1e-3 ~n
+            ~upper ())
         [ false; true ])
     (* n>=128 forces the trailing update through nx_c_gemm2d_ct's BLOCKED path
        (64x64x64 >= the 48^3 direct cutoff) — the integration gap the linalg
        reviewer flagged (cholesky's only exercise of the blocked GEMM entry). *)
     [ 1; 2; 3; 5; 8; 16; 33; 64; 100; 128; 200 ];
   (* low precision upcast path (store L in f16 → looser tol) *)
-  test_chol_real ~kind:Buf.float16 ~name:"f16" ~tol:5e-2 ~n:16 ~upper:false ();
-  test_chol_real ~kind:Buf.bfloat16 ~name:"bf16" ~tol:1e-1 ~n:16 ~upper:false ();
+  test_chol_real ~kind:Nx_dtype.float16 ~name:"f16" ~tol:5e-2 ~n:16 ~upper:false
+    ();
+  test_chol_real ~kind:Nx_dtype.bfloat16 ~name:"bf16" ~tol:1e-1 ~n:16
+    ~upper:false ();
 
   test_chol_batched ~n:8 ~batch:5 ();
   test_chol_batched ~n:40 ~batch:9 ();
@@ -2408,9 +2414,9 @@ let test_internal_branches () =
     (fun n ->
       List.iter
         (fun (upper, transpose, unit) ->
-          test_trsm_real ~kind:Buf.float64 ~name:"f64" ~tol:1e-9 ~n ~nrhs:3
+          test_trsm_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol:1e-9 ~n ~nrhs:3
             ~upper ~transpose ~unit ();
-          test_trsm_real ~kind:Buf.float32 ~name:"f32" ~tol:1e-3 ~n ~nrhs:3
+          test_trsm_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol:1e-3 ~n ~nrhs:3
             ~upper ~transpose ~unit ())
         [
           (false, false, false);
@@ -2426,33 +2432,34 @@ let test_internal_branches () =
     [ 1; 2; 5; 16; 40; 63; 65; 128 ];
   List.iter
     (fun (upper, transpose) ->
-      test_trsm_complex ~kind:Buf.complex128 ~name:"c64" ~tol:1e-9 ~n:20 ~upper
-        ~transpose ();
-      test_trsm_complex ~kind:Buf.complex64 ~name:"c32" ~tol:1e-3 ~n:20 ~upper
-        ~transpose ();
+      test_trsm_complex ~kind:Nx_dtype.complex128 ~name:"c64" ~tol:1e-9 ~n:20
+        ~upper ~transpose ();
+      test_trsm_complex ~kind:Nx_dtype.complex64 ~name:"c32" ~tol:1e-3 ~n:20
+        ~upper ~transpose ();
       (* complex crossover just above LA_TRSM_NB *)
-      test_trsm_complex ~kind:Buf.complex128 ~name:"c64" ~tol:1e-9 ~n:65 ~upper
-        ~transpose ())
+      test_trsm_complex ~kind:Nx_dtype.complex128 ~name:"c64" ~tol:1e-9 ~n:65
+        ~upper ~transpose ())
     [ (false, false); (true, false); (false, true); (true, true) ];
   (* Wide RHS so the trailing update clears the GEMM direct cutoff — exercises
      the blocked nx_c_gemm2d_ct_ws path inside TRSM, not just the block
      decomposition. *)
-  test_trsm_real ~kind:Buf.float64 ~name:"f64-wide" ~tol:1e-9 ~n:192 ~nrhs:256
-    ~upper:false ~transpose:false ~unit:false ();
-  test_trsm_real ~kind:Buf.float64 ~name:"f64-wide" ~tol:1e-9 ~n:192 ~nrhs:256
-    ~upper:true ~transpose:true ~unit:false ();
+  test_trsm_real ~kind:Nx_dtype.float64 ~name:"f64-wide" ~tol:1e-9 ~n:192
+    ~nrhs:256 ~upper:false ~transpose:false ~unit:false ();
+  test_trsm_real ~kind:Nx_dtype.float64 ~name:"f64-wide" ~tol:1e-9 ~n:192
+    ~nrhs:256 ~upper:true ~transpose:true ~unit:false ();
   test_trsm_batched ();
 
   List.iter
     (fun (m, n) ->
       List.iter
         (fun reduced ->
-          test_qr_real ~kind:Buf.float64 ~name:"f64" ~tol:1e-10 ~m ~n ~reduced
-            ();
-          test_qr_real ~kind:Buf.float32 ~name:"f32" ~tol:1e-3 ~m ~n ~reduced ();
-          test_qr_complex ~kind:Buf.complex128 ~name:"c64" ~tol:1e-10 ~m ~n
+          test_qr_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol:1e-10 ~m ~n
             ~reduced ();
-          test_qr_complex ~kind:Buf.complex64 ~name:"c32" ~tol:1e-3 ~m ~n
+          test_qr_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol:1e-3 ~m ~n
+            ~reduced ();
+          test_qr_complex ~kind:Nx_dtype.complex128 ~name:"c64" ~tol:1e-10 ~m ~n
+            ~reduced ();
+          test_qr_complex ~kind:Nx_dtype.complex64 ~name:"c32" ~tol:1e-3 ~m ~n
             ~reduced ())
         [ true; false ])
     (* k=min(m,n): with the raised unblocked crossover LA_QR_UNB=128, everything
@@ -2480,17 +2487,17 @@ let test_internal_branches () =
 
   List.iter
     (fun n ->
-      test_eigh_real ~kind:Buf.float64 ~name:"f64" ~tol:1e-9 ~n ();
-      test_eigh_real ~kind:Buf.float32 ~name:"f32" ~tol:1e-3 ~n ();
-      test_eigh_complex ~kind:Buf.complex128 ~name:"c64" ~tol:1e-9 ~n ();
-      test_eigh_complex ~kind:Buf.complex64 ~name:"c32" ~tol:1e-3 ~n ())
+      test_eigh_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol:1e-9 ~n ();
+      test_eigh_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol:1e-3 ~n ();
+      test_eigh_complex ~kind:Nx_dtype.complex128 ~name:"c64" ~tol:1e-9 ~n ();
+      test_eigh_complex ~kind:Nx_dtype.complex64 ~name:"c32" ~tol:1e-3 ~n ())
     (* 33/64 straddle LA_EIGH_NB=32 (one latrd panel + tail, then two); 100/129
        force several panels. Recon + orthonormality gates prove the rank-2k GEMM
        trailing update matches the unblocked two-sided reduction, and that the
        real-β subdiagonal (hence tql2's feed) is preserved. *)
     [ 1; 2; 3; 5; 8; 16; 33; 64; 100; 129 ];
-  test_eigh_real ~kind:Buf.float16 ~name:"f16" ~tol:5e-2 ~n:16 ();
-  test_eigh_real ~kind:Buf.bfloat16 ~name:"bf16" ~tol:1e-1 ~n:16 ();
+  test_eigh_real ~kind:Nx_dtype.float16 ~name:"f16" ~tol:5e-2 ~n:16 ();
+  test_eigh_real ~kind:Nx_dtype.bfloat16 ~name:"bf16" ~tol:1e-1 ~n:16 ();
   test_eigh_diag ();
   test_eigh_novec ~n:12 ();
   test_eigh_batched ();
@@ -2508,18 +2515,20 @@ let test_internal_branches () =
       test_eigh_crosscheck ~name:"random" ~n ~tol:1e-9 ~build:build_random ())
     [ 26; 33; 50; 64; 100; 128; 200; 500 ];
   (* complex Hermitian rides the real D&C + the complex Q back-multiply *)
-  test_eigh_complex ~kind:Buf.complex128 ~name:"c64-dc" ~tol:1e-9 ~n:40 ();
-  test_eigh_complex ~kind:Buf.complex128 ~name:"c64-dc" ~tol:1e-9 ~n:100 ();
-  test_eigh_complex ~kind:Buf.complex64 ~name:"c32-dc" ~tol:1e-3 ~n:64 ();
+  test_eigh_complex ~kind:Nx_dtype.complex128 ~name:"c64-dc" ~tol:1e-9 ~n:40 ();
+  test_eigh_complex ~kind:Nx_dtype.complex128 ~name:"c64-dc" ~tol:1e-9 ~n:100 ();
+  test_eigh_complex ~kind:Nx_dtype.complex64 ~name:"c32-dc" ~tol:1e-3 ~n:64 ();
   (* odd n forces the recursion's unequal split; several tear levels *)
-  test_eigh_real ~kind:Buf.float64 ~name:"f64-dc" ~tol:1e-9 ~n:257 ();
+  test_eigh_real ~kind:Nx_dtype.float64 ~name:"f64-dc" ~tol:1e-9 ~n:257 ();
 
   List.iter
     (fun (m, n) ->
       List.iter
         (fun full ->
-          test_svd_real ~kind:Buf.float64 ~name:"f64" ~tol:1e-9 ~m ~n ~full ();
-          test_svd_real ~kind:Buf.float32 ~name:"f32" ~tol:1e-3 ~m ~n ~full ())
+          test_svd_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol:1e-9 ~m ~n ~full
+            ();
+          test_svd_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol:1e-3 ~m ~n ~full
+            ())
         [ false; true ])
     [ (1, 1); (3, 3); (5, 3); (3, 5); (6, 4); (4, 6); (8, 8) ];
   (* Blocked bidiagonalization crossover: min(m,n) straddles LA_SVD_NB=32 (33/48
@@ -2531,42 +2540,46 @@ let test_internal_branches () =
     (fun (m, n) ->
       List.iter
         (fun full ->
-          test_svd_real ~kind:Buf.float64 ~name:"f64" ~tol:1e-9 ~m ~n ~full ();
-          test_svd_real ~kind:Buf.float32 ~name:"f32" ~tol:1e-3 ~m ~n ~full ())
+          test_svd_real ~kind:Nx_dtype.float64 ~name:"f64" ~tol:1e-9 ~m ~n ~full
+            ();
+          test_svd_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol:1e-3 ~m ~n ~full
+            ())
         [ false; true ])
     [ (33, 33); (48, 48); (64, 40); (40, 64); (100, 100); (129, 96) ];
-  test_svd_complex ~kind:Buf.complex128 ~name:"c64-blk" ~tol:1e-9 ~m:48 ~n:48 ();
-  test_svd_complex ~kind:Buf.complex128 ~name:"c64-blk-wide" ~tol:1e-9 ~m:40
-    ~n:70 ();
-  test_svd_complex ~kind:Buf.complex64 ~name:"c32-blk" ~tol:1e-3 ~m:64 ~n:50 ();
+  test_svd_complex ~kind:Nx_dtype.complex128 ~name:"c64-blk" ~tol:1e-9 ~m:48
+    ~n:48 ();
+  test_svd_complex ~kind:Nx_dtype.complex128 ~name:"c64-blk-wide" ~tol:1e-9
+    ~m:40 ~n:70 ();
+  test_svd_complex ~kind:Nx_dtype.complex64 ~name:"c32-blk" ~tol:1e-3 ~m:64
+    ~n:50 ();
   (* offline np.linalg.svd oracles: graded (1e2..1e-6), clustered, tall *)
-  test_svd_real ~kind:Buf.float64 ~name:"graded" ~tol:1e-6 ~m:5 ~n:5 ~full:false
-    ~a:svd_fix_graded5
+  test_svd_real ~kind:Nx_dtype.float64 ~name:"graded" ~tol:1e-6 ~m:5 ~n:5
+    ~full:false ~a:svd_fix_graded5
     ~expect_s:[| 100.; 1.; 0.01; 1e-4; 1e-6 |]
     ();
-  test_svd_real ~kind:Buf.float64 ~name:"clustered" ~tol:1e-9 ~m:4 ~n:4
+  test_svd_real ~kind:Nx_dtype.float64 ~name:"clustered" ~tol:1e-9 ~m:4 ~n:4
     ~full:false ~a:svd_fix_clustered4 ~expect_s:[| 2.; 2.; 2.; 0.5 |] ();
-  test_svd_real ~kind:Buf.float64 ~name:"tall" ~tol:1e-9 ~m:6 ~n:3 ~full:true
-    ~a:svd_fix_tall63
+  test_svd_real ~kind:Nx_dtype.float64 ~name:"tall" ~tol:1e-9 ~m:6 ~n:3
+    ~full:true ~a:svd_fix_tall63
     ~expect_s:[| 2.895986520101071; 1.911860947586696; 1.163883857289863 |]
     ();
-  test_svd_complex ~kind:Buf.complex128 ~name:"c64" ~tol:1e-9 ~m:5 ~n:5 ();
-  test_svd_complex ~kind:Buf.complex64 ~name:"c32" ~tol:1e-3 ~m:4 ~n:6 ();
+  test_svd_complex ~kind:Nx_dtype.complex128 ~name:"c64" ~tol:1e-9 ~m:5 ~n:5 ();
+  test_svd_complex ~kind:Nx_dtype.complex64 ~name:"c32" ~tol:1e-3 ~m:4 ~n:6 ();
   (* Golub–Kahan + Demmel–Kahan additions: hand-checkable 2×2 (σ = φ, 1/φ), n=1
      edges (thin & full m<n), extreme dynamic range and clustered/tiny with
      scale-aware relative accuracy, rank-deficient exact zero, tightened graded
      relative accuracy (the zero-shift win over the embedding's
      absolute-only). *)
-  test_svd_real ~kind:Buf.float64 ~name:"phi2" ~tol:1e-12 ~m:2 ~n:2 ~full:false
-    ~a:[| 1.; 1.; 0.; 1. |]
+  test_svd_real ~kind:Nx_dtype.float64 ~name:"phi2" ~tol:1e-12 ~m:2 ~n:2
+    ~full:false ~a:[| 1.; 1.; 0.; 1. |]
     ~expect_s:[| 1.618033988749895; 0.6180339887498949 |]
     ();
-  test_svd_real ~kind:Buf.float64 ~name:"col1" ~tol:1e-12 ~m:2 ~n:1 ~full:false
-    ~a:[| 3.; 4. |] ~expect_s:[| 5. |] ();
-  test_svd_real ~kind:Buf.float64 ~name:"row1" ~tol:1e-12 ~m:1 ~n:3 ~full:false
-    ~a:[| 3.; 4.; 0. |] ~expect_s:[| 5. |] ();
-  test_svd_real ~kind:Buf.float64 ~name:"row1" ~tol:1e-12 ~m:1 ~n:3 ~full:true
-    ~a:[| 3.; 4.; 0. |] ~expect_s:[| 5. |] ();
+  test_svd_real ~kind:Nx_dtype.float64 ~name:"col1" ~tol:1e-12 ~m:2 ~n:1
+    ~full:false ~a:[| 3.; 4. |] ~expect_s:[| 5. |] ();
+  test_svd_real ~kind:Nx_dtype.float64 ~name:"row1" ~tol:1e-12 ~m:1 ~n:3
+    ~full:false ~a:[| 3.; 4.; 0. |] ~expect_s:[| 5. |] ();
+  test_svd_real ~kind:Nx_dtype.float64 ~name:"row1" ~tol:1e-12 ~m:1 ~n:3
+    ~full:true ~a:[| 3.; 4.; 0. |] ~expect_s:[| 5. |] ();
   (* Pure-relative gate (abstol=0): asserts the RELATIVE bound directly on the
      small σ — 1e-6 at ‖A‖≈100 to 1e-7 relative — the zero-shift accuracy that
      the embedding lacked, with no absolute floor masking it. *)
@@ -2601,8 +2614,8 @@ let test_internal_branches () =
   test_svd_usv ~name:"wide35" ~a:usv_wide35_a ~s:usv_wide35_s ~u:usv_wide35_u
     ~vh:usv_wide35_vh ~jmax:usv_wide35_jmax ~m:3 ~n:5 ~tol:1e-9 ();
   (* complex m<n full_matrices + unitarity (previously recon-only) *)
-  test_svd_complex ~kind:Buf.complex128 ~name:"c64-wide-full" ~tol:1e-9 ~m:3
-    ~n:5 ~full:true ();
+  test_svd_complex ~kind:Nx_dtype.complex128 ~name:"c64-wide-full" ~tol:1e-9
+    ~m:3 ~n:5 ~full:true ();
 
   test_svd_dc ~name:"dc40" ~tol:1e-9 ~m:40 ~n:40 ~expect_s:svd_dc40_s ();
   test_svd_dc ~name:"dc40-full" ~tol:1e-9 ~m:40 ~n:40 ~full:true ();
@@ -2665,19 +2678,19 @@ let test_internal_branches () =
   test_svd_dc_c ~name:"c64-dc" ~tol:1e-9 ~m:40 ~n:40 ();
   test_svd_dc_c ~name:"c64-dc-wide" ~tol:1e-9 ~m:30 ~n:50 ();
   (* f32 rides the double core through the f32 lift/back-multiply *)
-  test_svd_real ~kind:Buf.float32 ~name:"f32-dc" ~tol:1e-3 ~m:40 ~n:40
+  test_svd_real ~kind:Nx_dtype.float32 ~name:"f32-dc" ~tol:1e-3 ~m:40 ~n:40
     ~full:false ();
   test_svd_dc_batched ~m:40 ~n:30 ~batch:3 ();
 
   test_chol_batched ~n:128 ~batch:3 ();
   (* batched blocked-GEMM trailing update *)
-  test_trsm_real ~kind:Buf.float16 ~name:"f16" ~tol:5e-2 ~n:16 ~nrhs:2
+  test_trsm_real ~kind:Nx_dtype.float16 ~name:"f16" ~tol:5e-2 ~n:16 ~nrhs:2
     ~upper:false ~transpose:false ~unit:false ();
-  test_trsm_real ~kind:Buf.bfloat16 ~name:"bf16" ~tol:1e-1 ~n:16 ~nrhs:2
+  test_trsm_real ~kind:Nx_dtype.bfloat16 ~name:"bf16" ~tol:1e-1 ~n:16 ~nrhs:2
     ~upper:false ~transpose:false ~unit:false ();
-  test_qr_real ~kind:Buf.float16 ~name:"f16" ~tol:5e-2 ~m:16 ~n:16 ~reduced:true
-    ();
-  test_qr_real ~kind:Buf.bfloat16 ~name:"bf16" ~tol:1e-1 ~m:16 ~n:16
+  test_qr_real ~kind:Nx_dtype.float16 ~name:"f16" ~tol:5e-2 ~m:16 ~n:16
+    ~reduced:true ();
+  test_qr_real ~kind:Nx_dtype.bfloat16 ~name:"bf16" ~tol:1e-1 ~m:16 ~n:16
     ~reduced:true ();
   test_qr_zerocol ();
   (* zero column on the UNBLOCKED path (k<=LA_QR_UNB=128): tau=0 must skip the
@@ -2690,8 +2703,8 @@ let test_internal_branches () =
   test_qr_zerocol ~m:150 ~n:140 ~zc:70 ();
   test_trsm_conj_fixture ();
   test_zero_dim ();
-  test_svd_signed_zero ~kind:Buf.float64 ~name:"f64" ();
-  test_svd_signed_zero ~kind:Buf.float32 ~name:"f32" ();
+  test_svd_signed_zero ~kind:Nx_dtype.float64 ~name:"f64" ();
+  test_svd_signed_zero ~kind:Nx_dtype.float32 ~name:"f32" ();
 
   test_chol_not_pd ();
   test_trsm_singular ();

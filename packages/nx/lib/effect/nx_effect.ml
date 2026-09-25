@@ -267,7 +267,7 @@ type ('a, 'b) t =
 and ('a, 'b) resident = {
   r_id : int; (* fresh per value; identity tables key by it *)
   r_placement : placement; (* never the host *)
-  r_dtype : ('a, 'b) Dtype.t;
+  r_dtype : ('a, 'b) Nx_dtype.t;
   r_view : View.t; (* per shard, the same on every shard *)
   r_cell : cell; (* one per storage, shared by all its views *)
 }
@@ -288,7 +288,7 @@ and consumption = { path : string }
 and ('a, 'b) traced = {
   t_id : int; (* fresh; identity tables key by it *)
   t_context : device context_of;
-  t_dtype : ('a, 'b) Dtype.t;
+  t_dtype : ('a, 'b) Nx_dtype.t;
   t_view : View.t; (* C-contiguous over the tensor's shape *)
   t_node : node; (* the tracer's payload *)
 }
@@ -312,7 +312,7 @@ type context = device context_of
 (* A value of one element that nx holds itself: a scalar created in a device
    context, or a one-element result. It allocates nothing on the device; an
    engine passes it to a program as it passes a host value. *)
-type storage += Held : ('a, 'b) Dtype.t * 'a -> storage
+type storage += Held : ('a, 'b) Nx_dtype.t * 'a -> storage
 
 let id_counter = ref 0
 
@@ -345,7 +345,7 @@ let read_elements (type a b) (r : (a, b) resident) : (a, b) Nx_buffer.t =
   | Consumed k -> consumed k
   | Live (Held (dt, v)) -> (
       let buf = Nx_buffer.create r.r_dtype (View.numel r.r_view) in
-      match Dtype.equal_witness dt r.r_dtype with
+      match Nx_dtype.equal_witness dt r.r_dtype with
       | Some Type.Equal ->
           Nx_buffer.fill buf v;
           buf
@@ -562,7 +562,7 @@ let blit_box (type a b) (src : (a, b) Nx_buffer.t) box
   let box, into, at =
     if Array.length box = 0 then ([| 1 |], [| 1 |], [| 0 |]) else (box, into, at)
   in
-  let words (type c d) (word : (c, d) Nx_buffer.kind) w =
+  let words (type c d) (word : (c, d) Nx_dtype.t) w =
     let scale a =
       let a = Array.copy a in
       let r = Array.length a - 1 in
@@ -578,8 +578,8 @@ let blit_box (type a b) (src : (a, b) Nx_buffer.t) box
           (Bigarray.Array1.sub s src_off run)
           (Bigarray.Array1.sub d dst_off run))
   in
-  match Nx_buffer.kind src with
-  | Nx_buffer.Int4 | Nx_buffer.UInt4 ->
+  match Nx_buffer.dtype src with
+  | Nx_dtype.Int4 | Nx_dtype.UInt4 ->
       let run = box.(Array.length box - 1) in
       iter_rows box ~into ~at (fun src_off dst_off ->
           for i = 0 to run - 1 do
@@ -587,12 +587,12 @@ let blit_box (type a b) (src : (a, b) Nx_buffer.t) box
               (Nx_buffer.unsafe_get src (src_off + i))
           done)
   | kind -> (
-      match Nx_buffer.kind_size_in_bytes kind with
-      | 1 -> words Nx_buffer.Int8 1
-      | 2 -> words Nx_buffer.Int16 1
-      | 4 -> words Nx_buffer.Int32 1
-      | 8 -> words Nx_buffer.Int64 1
-      | n -> words Nx_buffer.Int64 (n / 8))
+      match Nx_dtype.itemsize kind with
+      | 1 -> words Nx_dtype.Int8 1
+      | 2 -> words Nx_dtype.Int16 1
+      | 4 -> words Nx_dtype.Int32 1
+      | 8 -> words Nx_dtype.Int64 1
+      | n -> words Nx_dtype.Int64 (n / 8))
 
 (* The box two windows share, [None] when they share no element. *)
 let intersect a b =
@@ -660,7 +660,7 @@ let identity_hash : type a b. (a, b) t -> int = function
 
 (* Traced constructor *)
 
-let traced (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
+let traced (type a b) (ctx : context) (dtype : (a, b) Nx_dtype.t)
     (shape : int array) (node : node) : (a, b) t =
   Traced
     {
@@ -685,14 +685,14 @@ type _ Effect.t +=
   | E_view : ('a, 'b) t -> View.t Effect.t
   | E_buffer : {
       context : context;
-      dtype : ('a, 'b) Dtype.t;
+      dtype : ('a, 'b) Nx_dtype.t;
       size_in_elements : int;
     }
       -> ('a, 'b) t Effect.t
   | E_const_scalar : {
       context : context;
       value : 'a;
-      dtype : ('a, 'b) Dtype.t;
+      dtype : ('a, 'b) Nx_dtype.t;
     }
       -> ('a, 'b) t Effect.t
   | E_from_host : {
@@ -717,22 +717,22 @@ type _ Effect.t +=
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (bool, Dtype.bool_elt) t Effect.t
+      -> (bool, Nx_dtype.bool_elt) t Effect.t
   | E_cmpne : {
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (bool, Dtype.bool_elt) t Effect.t
+      -> (bool, Nx_dtype.bool_elt) t Effect.t
   | E_cmplt : {
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (bool, Dtype.bool_elt) t Effect.t
+      -> (bool, Nx_dtype.bool_elt) t Effect.t
   | E_cmple : {
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (bool, Dtype.bool_elt) t Effect.t
+      -> (bool, Nx_dtype.bool_elt) t Effect.t
   | E_neg : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_sin : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_sqrt : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
@@ -755,7 +755,7 @@ type _ Effect.t +=
   | E_round : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_erf : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_where : {
-      condition : (bool, Dtype.bool_elt) t;
+      condition : (bool, Nx_dtype.bool_elt) t;
       if_true : ('a, 'b) t;
       if_false : ('a, 'b) t;
     }
@@ -785,13 +785,13 @@ type _ Effect.t +=
       axis : int;
       keepdims : bool;
     }
-      -> (int32, Dtype.int32_elt) t Effect.t
+      -> (int32, Nx_dtype.int32_elt) t Effect.t
   | E_argmin : {
       t_in : ('a, 'b) t;
       axis : int;
       keepdims : bool;
     }
-      -> (int32, Dtype.int32_elt) t Effect.t
+      -> (int32, Nx_dtype.int32_elt) t Effect.t
   | E_sort : {
       t_in : ('a, 'b) t;
       axis : int;
@@ -803,7 +803,7 @@ type _ Effect.t +=
       axis : int;
       descending : bool;
     }
-      -> (int32, Dtype.int32_elt) t Effect.t
+      -> (int32, Nx_dtype.int32_elt) t Effect.t
   | E_associative_scan : {
       t_in : ('a, 'b) t;
       axis : int;
@@ -847,30 +847,30 @@ type _ Effect.t +=
   | E_cat : { t_list : ('a, 'b) t list; axis : int } -> ('a, 'b) t Effect.t
   | E_cast : {
       t_in : ('a, 'b) t;
-      target_dtype : ('c, 'd) Dtype.t;
+      target_dtype : ('c, 'd) Nx_dtype.t;
     }
       -> ('c, 'd) t Effect.t
   | E_bitcast : {
       t_in : ('a, 'b) t;
-      target_dtype : ('c, 'd) Dtype.t;
+      target_dtype : ('c, 'd) Nx_dtype.t;
     }
       -> ('c, 'd) t Effect.t
   | E_contiguous : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_copy : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_threefry : {
-      key : (int32, Dtype.int32_elt) t;
-      ctr : (int32, Dtype.int32_elt) t;
+      key : (int32, Nx_dtype.int32_elt) t;
+      ctr : (int32, Nx_dtype.int32_elt) t;
     }
-      -> (int32, Dtype.int32_elt) t Effect.t
+      -> (int32, Nx_dtype.int32_elt) t Effect.t
   | E_gather : {
       data : ('a, 'b) t;
-      indices : (int32, Dtype.int32_elt) t;
+      indices : (int32, Nx_dtype.int32_elt) t;
       axis : int;
     }
       -> ('a, 'b) t Effect.t
   | E_scatter : {
       data_template : ('a, 'b) t;
-      indices : (int32, Dtype.int32_elt) t;
+      indices : (int32, Nx_dtype.int32_elt) t;
       updates : ('a, 'b) t;
       axis : int;
       mode : [ `Set | `Add ];
@@ -879,7 +879,7 @@ type _ Effect.t +=
       -> ('a, 'b) t Effect.t
   | E_update : {
       t_in : ('a, 'b) t;
-      starts : (int32, Dtype.int32_elt) t;
+      starts : (int32, Nx_dtype.int32_elt) t;
       v : ('a, 'b) t;
     }
       -> ('a, 'b) t Effect.t
@@ -919,19 +919,19 @@ type _ Effect.t +=
       -> (Complex.t, 'b) t Effect.t
   | E_rfft : {
       t : (float, 'b) t;
-      dtype : (Complex.t, 'c) Dtype.t;
+      dtype : (Complex.t, 'c) Nx_dtype.t;
       axes : int array;
     }
       -> (Complex.t, 'c) t Effect.t
   | E_irfft : {
       t : (Complex.t, 'b) t;
-      dtype : (float, 'c) Dtype.t;
+      dtype : (float, 'c) Nx_dtype.t;
       axes : int array;
       s : int array option;
     }
       -> (float, 'c) t Effect.t
   | E_psum : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_axis_index : (int32, Dtype.int32_elt) t Effect.t
+  | E_axis_index : (int32, Nx_dtype.int32_elt) t Effect.t
   | E_cholesky : { t_in : ('a, 'b) t; upper : bool } -> ('a, 'b) t Effect.t
   | E_qr : {
       t_in : ('a, 'b) t;
@@ -942,22 +942,25 @@ type _ Effect.t +=
       t_in : ('a, 'b) t;
       full_matrices : bool;
     }
-      -> (('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t) Effect.t
+      -> (('a, 'b) t * (float, Nx_dtype.float64_elt) t * ('a, 'b) t) Effect.t
   | E_eigvals : {
       t_in : ('a, 'b) t;
     }
-      -> (Complex.t, Dtype.complex64_elt) t Effect.t
+      -> (Complex.t, Nx_dtype.complex64_elt) t Effect.t
   | E_eig : {
       t_in : ('a, 'b) t;
     }
-      -> ((Complex.t, Dtype.complex64_elt) t
-         * (Complex.t, Dtype.complex64_elt) t)
+      -> ((Complex.t, Nx_dtype.complex64_elt) t
+         * (Complex.t, Nx_dtype.complex64_elt) t)
          Effect.t
-  | E_eigvalsh : { t_in : ('a, 'b) t } -> (float, Dtype.float64_elt) t Effect.t
+  | E_eigvalsh : {
+      t_in : ('a, 'b) t;
+    }
+      -> (float, Nx_dtype.float64_elt) t Effect.t
   | E_eigh : {
       t_in : ('a, 'b) t;
     }
-      -> ((float, Dtype.float64_elt) t * ('a, 'b) t) Effect.t
+      -> ((float, Nx_dtype.float64_elt) t * ('a, 'b) t) Effect.t
   | E_solve_triangular : {
       a : ('a, 'b) t;
       b : ('a, 'b) t;
@@ -993,7 +996,7 @@ let view (type a b) (x : (a, b) t) : View.t =
     | Placed r -> whole_view r
     | Traced t -> t.t_view)
 
-let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
+let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
   | Host t -> Nx_backend.dtype t
   | Placed r -> r.r_dtype
   | Traced t -> t.t_dtype
@@ -1722,7 +1725,8 @@ let cat t_list ~axis =
 
 (* Cast *)
 
-let cast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) : (c, d) t =
+let cast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
+    (c, d) t =
   let target_dtype = dtype in
   try Effect.perform (E_cast { t_in; target_dtype })
   with Effect.Unhandled _ -> (
@@ -1730,7 +1734,7 @@ let cast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) : (c, d) t =
     | Host t -> Host (Nx_backend.cast ~dtype:target_dtype t)
     | _ -> routed1 "cast" Elementwise t_in (Nx_backend.cast ~dtype:target_dtype))
 
-let bitcast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) :
+let bitcast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
     (c, d) t =
   let target_dtype = dtype in
   try Effect.perform (E_bitcast { t_in; target_dtype })
@@ -1795,7 +1799,7 @@ let threefry key ctr =
    a key to decorrelate lanes. *)
 let axis_index ctx =
   try Effect.perform E_axis_index
-  with Effect.Unhandled _ -> const_scalar ctx 0l Dtype.int32
+  with Effect.Unhandled _ -> const_scalar ctx 0l Nx_dtype.int32
 
 (* Window operations *)
 
@@ -1854,8 +1858,8 @@ let ifft t ~axes =
     | Host h -> Host (Nx_backend.ifft h ~axes)
     | _ -> routed1 "ifft" (Along (Array.to_list axes)) t (Nx_backend.ifft ~axes))
 
-let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes :
-    (Complex.t, c) t =
+let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Nx_dtype.t)
+    ~axes : (Complex.t, c) t =
   try Effect.perform (E_rfft { t; dtype; axes })
   with Effect.Unhandled _ -> (
     match t with
@@ -1866,7 +1870,7 @@ let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes :
           t
           (Nx_backend.rfft ~dtype ~axes))
 
-let irfft (type a c) ?s (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
+let irfft (type a c) ?s (t : (Complex.t, a) t) ~(dtype : (float, c) Nx_dtype.t)
     ~axes : (float, c) t =
   try Effect.perform (E_irfft { t; dtype; axes; s })
   with Effect.Unhandled _ -> (

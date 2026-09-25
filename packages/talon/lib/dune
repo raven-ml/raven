@@ -1,4 +1,4 @@
 (library
  (name talon)
  (public_name talon)
- (libraries nx nx_core))
+ (libraries nx nx.dtype))

@@ -1914,6 +1914,16 @@ thread.
 
 ### Nx
 
+- **Breaking:** dtypes move to a new library, `nx.dtype`, which depends on
+  nothing: `Nx_core.Dtype` is `Nx_dtype`, and `Nx_buffer`'s kinds are its
+  dtypes. `('a, 'b) Nx_buffer.kind` is `('a, 'b) Nx_dtype.t`,
+  `Nx_buffer.kind` and `genarray_kind` are `Nx_buffer.dtype` and
+  `genarray_dtype`, `kind_name` and `kind_size_in_bytes` are
+  `Nx_dtype.to_string` and `itemsize`, and `to_stdlib_kind` is
+  `Nx_dtype.to_bigarray_kind`, which returns an option. `Nx_dtype.Scalar`
+  names storage formats without type parameters, for code that moves or
+  compiles bytes. `Nx_core.Dtype.packed`, `pack` and `Packed` are gone.
+  `Nx.dtype` is unchanged.
 - Encoding a NaN as `float8_e4m3` or `float8_e5m2` keeps its sign, as
   infinities, overflow and the other float dtypes already did; it was always
   `0x7f`.

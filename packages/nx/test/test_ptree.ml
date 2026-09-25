@@ -141,7 +141,7 @@ let paths s x =
 let key_lines s x = List.map (Format.asprintf "%a" P.pp_visit) (P.visits s x)
 
 let same_tensor (Nx.P a) (Nx.P b) =
-  match Nx_core.Dtype.equal_witness (Nx.dtype a) (Nx.dtype b) with
+  match Nx_dtype.equal_witness (Nx.dtype a) (Nx.dtype b) with
   | Some Type.Equal -> a == b
   | None -> false
 

@@ -42,7 +42,7 @@ let test_pullback_shape_mismatch () =
   in
   raises_match Exn.invalid_arg (fun () -> ignore (pullback (vec64 [| 1.0 |])))
 
-let dtype_name x = Nx_core.Dtype.to_string (Nx.dtype x)
+let dtype_name x = Nx_dtype.to_string (Nx.dtype x)
 
 let test_jacobians_float64 () =
   let jf = Rune.jacfwd' jacobian_fn (v3 ()) in

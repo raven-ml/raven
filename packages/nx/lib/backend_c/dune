@@ -1,7 +1,7 @@
 ; The default native CPU implementation of nx.backend.
 ;
-; The include path for nx_buffer_stubs.h comes from the nx_buffer dependency
-; (install_c_headers). No OpenMP and no -ffast-math: the engine owns its own
+; The include paths for nx_buffer_stubs.h and nx_dtype.h come from the
+; nx_buffer and nx_dtype dependencies (install_c_headers). No OpenMP and no -ffast-math: the engine owns its own
 ; thread pool and honors IEEE semantics. -fwrapv is passed EXPLICITLY,
 ; not left to :standard: signed integer wrap is defined behavior the backend
 ; relies on (modular int stores, i64 reduction accumulation), and that must not
@@ -9,8 +9,9 @@
 ; no explicit link flag — the OCaml 5 runtime already links it for its domain
 ; support, which satisfies the engine pool's pthread_create/mutex/cond symbols.
 ;
-; Nx_backend implements Nx_core.Backend_intf.S (t, View, Dtype, Shape), so
-; nx_core joins nx_buffer. The C needs just nx_c.h + nx_buffer_stubs.h.
+; Nx_backend implements Nx_core.Backend_intf.S (t, View, Shape) over Nx_dtype,
+; so nx_core joins nx_buffer. The C needs just nx_c.h, nx_buffer_stubs.h and
+; nx_dtype.h.
 ;
 ; -Werror is a development/CI gate, not a release constraint: "warnings are
 ; defects" is only policy until the build fails on them (the -Wstring-compare
@@ -24,7 +25,7 @@
  (name nx_c)
  (public_name nx.c)
  (implements nx.backend)
- (libraries nx_buffer nx_core)
+ (libraries nx_dtype nx_buffer nx_core)
  (foreign_stubs
   (language c)
   (names

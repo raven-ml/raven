@@ -527,7 +527,7 @@ let test_place_from_a_mapped_file () =
         mapping;
       let w =
         Nx.of_buffer
-          (Nx_buffer.reinterpret Nx_buffer.Float32 mapping)
+          (Nx_buffer.reinterpret Nx_dtype.Float32 mapping)
           ~shape:[| 64; 64 |]
       in
       let placed = on_metal (Nx.matrix_transpose w) in

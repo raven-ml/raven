@@ -1,4 +1,4 @@
 (test
  (name test_nx_buffer)
  (package nx)
- (libraries nx_buffer unix windtrap))
+ (libraries nx_dtype nx_buffer unix windtrap))

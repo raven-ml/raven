@@ -580,21 +580,21 @@ let test_rfft_dtypes () =
   (* float32 input stays in single precision *)
   let spectrum32 = Nx.rfft Nx.complex64 f32 in
   equal ~msg:"rfft complex64 dtype" string "complex64"
-    (Nx_core.Dtype.to_string (Nx.dtype spectrum32));
+    (Nx_dtype.to_string (Nx.dtype spectrum32));
   check_t ~eps:1e-5 "rfft complex64 values" spectrum_shape expected32 spectrum32;
   let roundtrip32 = Nx.irfft Nx.float32 spectrum32 ~n in
   equal ~msg:"irfft float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype roundtrip32));
+    (Nx_dtype.to_string (Nx.dtype roundtrip32));
   check_t ~eps:1e-5 "rfft/irfft float32 roundtrip" shape signal32 roundtrip32;
 
   (* float64 input keeps the double-precision behaviour *)
   let spectrum64 = Nx.rfft Nx.complex128 f64 in
   equal ~msg:"rfft complex128 dtype" string "complex128"
-    (Nx_core.Dtype.to_string (Nx.dtype spectrum64));
+    (Nx_dtype.to_string (Nx.dtype spectrum64));
   check_t ~eps:1e-10 "rfft complex128 values" spectrum_shape expected spectrum64;
   let roundtrip64 = Nx.irfft Nx.float64 spectrum64 ~n in
   equal ~msg:"irfft float64 dtype" string "float64"
-    (Nx_core.Dtype.to_string (Nx.dtype roundtrip64));
+    (Nx_dtype.to_string (Nx.dtype roundtrip64));
   check_t ~eps:1e-10 "rfft/irfft float64 roundtrip" shape signal roundtrip64;
 
   (* The output dtype is independent of the input precision. Against a reference
@@ -603,27 +603,27 @@ let test_rfft_dtypes () =
      narrowed to complex64. *)
   let widened = Nx.rfft Nx.complex128 f32 in
   equal ~msg:"rfft float32 to complex128 dtype" string "complex128"
-    (Nx_core.Dtype.to_string (Nx.dtype widened));
+    (Nx_dtype.to_string (Nx.dtype widened));
   check_t ~eps:1e-12 "rfft float32 to complex128 values" spectrum_shape
     expected32 widened;
   let narrowed = Nx.rfft Nx.complex64 f64 in
   equal ~msg:"rfft float64 to complex64 dtype" string "complex64"
-    (Nx_core.Dtype.to_string (Nx.dtype narrowed));
+    (Nx_dtype.to_string (Nx.dtype narrowed));
   check_t ~eps:1e-5 "rfft float64 to complex64 values" spectrum_shape expected
     narrowed;
   let narrowed_real = Nx.irfft Nx.float32 spectrum64 ~n in
   equal ~msg:"irfft complex128 to float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype narrowed_real));
+    (Nx_dtype.to_string (Nx.dtype narrowed_real));
   check_t ~eps:1e-5 "irfft complex128 to float32 values" shape signal
     narrowed_real;
 
   (* Hermitian pair at single precision *)
   let ihfft32 = Nx.ihfft Nx.complex64 f32 ~n in
   equal ~msg:"ihfft complex64 dtype" string "complex64"
-    (Nx_core.Dtype.to_string (Nx.dtype ihfft32));
+    (Nx_dtype.to_string (Nx.dtype ihfft32));
   let hfft32 = Nx.hfft Nx.float32 ihfft32 ~n in
   equal ~msg:"hfft float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype hfft32));
+    (Nx_dtype.to_string (Nx.dtype hfft32));
   check_t ~eps:1e-5 "hfft/ihfft float32 roundtrip" shape signal hfft32
 
 let test_rfft_dtypes_nd () =
@@ -644,17 +644,17 @@ let test_rfft_dtypes_nd () =
 
   let wide = Nx.rfft2 Nx.complex128 f32 in
   equal ~msg:"rfft2 complex128 dtype" string "complex128"
-    (Nx_core.Dtype.to_string (Nx.dtype wide));
+    (Nx_dtype.to_string (Nx.dtype wide));
   check_t ~eps:1e-10 "rfft2 complex128 values" spectrum_shape expected wide;
 
   let narrow = Nx.rfft2 Nx.complex64 f32 in
   equal ~msg:"rfft2 complex64 dtype" string "complex64"
-    (Nx_core.Dtype.to_string (Nx.dtype narrow));
+    (Nx_dtype.to_string (Nx.dtype narrow));
   check_t ~eps:1e-4 "rfft2 complex64 values" spectrum_shape expected narrow;
 
   let back = Nx.irfft2 Nx.float32 narrow ~s:[ rows; columns ] in
   equal ~msg:"irfft2 float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype back));
+    (Nx_dtype.to_string (Nx.dtype back));
   check_t ~eps:1e-5 "rfft2/irfft2 float32 roundtrip" shape signal32 back;
 
   (* N-D over a subset of axes, batched over the leading one. *)
@@ -669,7 +669,7 @@ let test_rfft_dtypes_nd () =
   let nd = Nx.create Nx.float32 nd_shape nd_signal in
   let spectrum_nd = Nx.rfftn Nx.complex64 nd ~axes:[ 1; 2 ] in
   equal ~msg:"rfftn complex64 dtype" string "complex64"
-    (Nx_core.Dtype.to_string (Nx.dtype spectrum_nd));
+    (Nx_dtype.to_string (Nx.dtype spectrum_nd));
   equal ~msg:"rfftn complex64 shape" (array int)
     [| batch; rows; (columns / 2) + 1 |]
     (Nx.shape spectrum_nd);
@@ -677,7 +677,7 @@ let test_rfft_dtypes_nd () =
     Nx.irfftn Nx.float32 spectrum_nd ~axes:[ 1; 2 ] ~s:[ rows; columns ]
   in
   equal ~msg:"irfftn float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype back_nd));
+    (Nx_dtype.to_string (Nx.dtype back_nd));
   check_t ~eps:1e-5 "rfftn/irfftn float32 roundtrip" nd_shape nd_signal32
     back_nd
 
@@ -732,13 +732,13 @@ let test_fftfreq_dtypes () =
   let expected = [| 0.0; 0.25; -0.5; -0.25 |] in
   let freq32 = Nx.fftfreq Nx.float32 n in
   equal ~msg:"fftfreq float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype freq32));
+    (Nx_dtype.to_string (Nx.dtype freq32));
   check_t ~eps:1e-7 "fftfreq float32 values" shape expected freq32;
 
   let rexpected = [| 0.0; 0.25; 0.5 |] in
   let rfreq32 = Nx.rfftfreq Nx.float32 n in
   equal ~msg:"rfftfreq float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype rfreq32));
+    (Nx_dtype.to_string (Nx.dtype rfreq32));
   check_t ~eps:1e-7 "rfftfreq float32 values" spectrum_shape rexpected rfreq32;
 
   (* The point of the dtype argument: a single-precision spectrum and its
@@ -898,13 +898,13 @@ let test_real_transform_dtypes () =
   let f32 = Nx.create Nx.float32 [| 4 |] data in
   let f64 = Nx.create Nx.float64 [| 4 |] data in
   equal ~msg:"dct float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dct f32)));
+    (Nx_dtype.to_string (Nx.dtype (Nx.dct f32)));
   equal ~msg:"dst float32 dtype" string "float32"
-    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dst f32)));
+    (Nx_dtype.to_string (Nx.dtype (Nx.dst f32)));
   equal ~msg:"dct float64 dtype" string "float64"
-    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dct f64)));
+    (Nx_dtype.to_string (Nx.dtype (Nx.dct f64)));
   equal ~msg:"dst float64 dtype" string "float64"
-    (Nx_core.Dtype.to_string (Nx.dtype (Nx.dst f64)));
+    (Nx_dtype.to_string (Nx.dtype (Nx.dst f64)));
   check_t ~eps:1e-5 "dct float32 values" [| 4 |]
     (reference_real_transform ~family:`Dct ~inverse:false ~type_:2 ~norm:`Ortho
        data)

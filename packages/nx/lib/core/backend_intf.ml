@@ -97,7 +97,7 @@ module type S = sig
   (** [view t] returns the strided view metadata describing [t]'s logical layout
       (shape, strides, offset) over its underlying buffer. *)
 
-  val dtype : ('a, 'b) t -> ('a, 'b) Dtype.t
+  val dtype : ('a, 'b) t -> ('a, 'b) Nx_dtype.t
   (** [dtype t] returns the element type of [t]. *)
 
   val context : ('a, 'b) t -> context
@@ -117,7 +117,7 @@ module type S = sig
 
   (** {1 Tensor Creation} *)
 
-  val buffer : context -> ('a, 'b) Dtype.t -> int array -> ('a, 'b) t
+  val buffer : context -> ('a, 'b) Nx_dtype.t -> int array -> ('a, 'b) t
   (** [buffer ctx dtype shape] allocates an uninitialized tensor.
 
       Contents are undefined. Used internally by backends to allocate output
@@ -126,7 +126,7 @@ module type S = sig
       {b Backend must:} return a tensor with the given shape and dtype whose
       view is C-contiguous. *)
 
-  val full : context -> ('a, 'b) Dtype.t -> int array -> 'a -> ('a, 'b) t
+  val full : context -> ('a, 'b) Nx_dtype.t -> int array -> 'a -> ('a, 'b) t
   (** [full ctx dtype shape value] creates a tensor where every element is
       [value].
 
@@ -194,16 +194,16 @@ module type S = sig
 
       Comparison operations produce boolean tensors. *)
 
-  val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, Nx_dtype.bool_elt) t
   (** [cmpeq a b] is the element-wise equality test of [a] and [b]. *)
 
-  val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, Nx_dtype.bool_elt) t
   (** [cmpne a b] is the element-wise inequality test of [a] and [b]. *)
 
-  val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, Nx_dtype.bool_elt) t
   (** [cmplt a b] is the element-wise less-than test of [a] and [b]. *)
 
-  val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, Nx_dtype.bool_elt) t
   (** [cmple a b] is the element-wise less-or-equal test of [a] and [b]. *)
 
   (** {2 Min/Max} *)
@@ -330,7 +330,8 @@ module type S = sig
 
   (** {1 Ternary Operations} *)
 
-  val where : (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  val where :
+    (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [where cond if_true if_false] selects elements: [if_true.{i}] where
       [cond.{i}] is true, [if_false.{i}] otherwise.
 
@@ -357,14 +358,14 @@ module type S = sig
       so the backend never handles [keepdims]. *)
 
   val argmax :
-    axis:int -> keepdims:bool -> ('a, 'b) t -> (int32, Dtype.int32_elt) t
+    axis:int -> keepdims:bool -> ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t
   (** [argmax ~axis ~keepdims x] returns int32 indices of maximum values of [x]
       along [axis]. For ties, returns the first occurrence.
 
       {b Frontend guarantees:} [axis] is valid and non-negative. *)
 
   val argmin :
-    axis:int -> keepdims:bool -> ('a, 'b) t -> (int32, Dtype.int32_elt) t
+    axis:int -> keepdims:bool -> ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t
   (** [argmin ~axis ~keepdims x] returns int32 indices of minimum values of [x]
       along [axis]. For ties, returns the first occurrence.
 
@@ -387,7 +388,7 @@ module type S = sig
       are placed at the end regardless of sort direction. *)
 
   val argsort :
-    axis:int -> descending:bool -> ('a, 'b) t -> (int32, Dtype.int32_elt) t
+    axis:int -> descending:bool -> ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t
   (** [argsort ~axis ~descending x] returns int32 indices that would sort
       elements of [x] along [axis]. *)
 
@@ -462,7 +463,7 @@ module type S = sig
 
   (** {1 Type Conversion and Memory} *)
 
-  val cast : dtype:('c, 'd) Dtype.t -> ('a, 'b) t -> ('c, 'd) t
+  val cast : dtype:('c, 'd) Nx_dtype.t -> ('a, 'b) t -> ('c, 'd) t
   (** [cast ~dtype x] converts elements of [x] to [dtype].
 
       Float-to-int truncates toward zero. Int-to-float may lose precision for
@@ -474,7 +475,7 @@ module type S = sig
       built on both directions, so a backend that instead cast complex through
       its modulus would silently change their results. *)
 
-  val bitcast : dtype:('c, 'd) Dtype.t -> ('a, 'b) t -> ('c, 'd) t
+  val bitcast : dtype:('c, 'd) Nx_dtype.t -> ('a, 'b) t -> ('c, 'd) t
   (** [bitcast ~dtype x] reads the bits of each element of [x] as an element of
       [dtype], without conversion.
 
@@ -503,9 +504,9 @@ module type S = sig
   (** {1 Random Number Generation} *)
 
   val threefry :
-    (int32, Dtype.int32_elt) t ->
-    (int32, Dtype.int32_elt) t ->
-    (int32, Dtype.int32_elt) t
+    (int32, Nx_dtype.int32_elt) t ->
+    (int32, Nx_dtype.int32_elt) t ->
+    (int32, Nx_dtype.int32_elt) t
   (** [threefry key counter] applies the Threefry-2x32 counter-based hash.
 
       This is normative, not merely illustrative: the algorithm is Threefry-2x32
@@ -525,7 +526,7 @@ module type S = sig
       therefore unsupported, and the limit is not checked. *)
 
   val gather :
-    ('a, 'b) t -> (int32, Dtype.int32_elt) t -> axis:int -> ('a, 'b) t
+    ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t -> axis:int -> ('a, 'b) t
   (** [gather data indices ~axis] selects elements from [data] along [axis]
       using [indices].
 
@@ -539,7 +540,7 @@ module type S = sig
     mode:[ `Set | `Add ] ->
     unique_indices:bool ->
     ('a, 'b) t ->
-    indices:(int32, Dtype.int32_elt) t ->
+    indices:(int32, Nx_dtype.int32_elt) t ->
     updates:('a, 'b) t ->
     axis:int ->
     ('a, 'b) t
@@ -566,7 +567,10 @@ module type S = sig
       touching memory outside the result. *)
 
   val update :
-    ('a, 'b) t -> starts:(int32, Dtype.int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+    ('a, 'b) t ->
+    starts:(int32, Nx_dtype.int32_elt) t ->
+    ('a, 'b) t ->
+    ('a, 'b) t
   (** [update t ~starts v] is [t] with [v] at the window whose corner is
       [starts] and whose extent is [shape v]. [starts] is a rank-1 tensor of
       length [rank t], read at execution time.
@@ -648,7 +652,7 @@ module type S = sig
 
   val rfft :
     (float, 'a) t ->
-    dtype:(Complex.t, 'b) Dtype.t ->
+    dtype:(Complex.t, 'b) Nx_dtype.t ->
     axes:int array ->
     (Complex.t, 'b) t
   (** [rfft t ~dtype ~axes] computes the real-input DFT along [axes].
@@ -659,7 +663,7 @@ module type S = sig
   val irfft :
     ?s:int array ->
     (Complex.t, 'a) t ->
-    dtype:(float, 'b) Dtype.t ->
+    dtype:(float, 'b) Nx_dtype.t ->
     axes:int array ->
     (float, 'b) t
   (** [irfft ?s t ~dtype ~axes] computes the inverse real-input DFT along
@@ -713,7 +717,7 @@ module type S = sig
   val svd :
     full_matrices:bool ->
     ('a, 'b) t ->
-    ('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t
+    ('a, 'b) t * (float, Nx_dtype.float64_elt) t * ('a, 'b) t
   (** [svd ~full_matrices t] returns [(U, S, Vᴴ)]. [S] is a 1D float64 vector of
       singular values in descending order. [full_matrices = false] returns thin
       SVD.
@@ -721,7 +725,7 @@ module type S = sig
       May raise {!Linalg_error} with kind [`No_convergence] if the underlying
       routine does not converge. *)
 
-  val eigvals : ('a, 'b) t -> (Complex.t, Dtype.complex64_elt) t
+  val eigvals : ('a, 'b) t -> (Complex.t, Nx_dtype.complex64_elt) t
   (** [eigvals t] computes the eigenvalues of a general square matrix. Returns
       complex64 results.
 
@@ -733,14 +737,15 @@ module type S = sig
 
   val eig :
     ('a, 'b) t ->
-    (Complex.t, Dtype.complex64_elt) t * (Complex.t, Dtype.complex64_elt) t
+    (Complex.t, Nx_dtype.complex64_elt) t
+    * (Complex.t, Nx_dtype.complex64_elt) t
   (** [eig t] computes the eigenvalues and eigenvectors of a general square
       matrix, returned as [(values, vectors)]. Both are complex64.
 
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)
 
-  val eigvalsh : ('a, 'b) t -> (float, Dtype.float64_elt) t
+  val eigvalsh : ('a, 'b) t -> (float, Nx_dtype.float64_elt) t
   (** [eigvalsh t] computes the eigenvalues of a symmetric/Hermitian matrix.
       Eigenvalues are float64.
 
@@ -750,7 +755,7 @@ module type S = sig
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)
 
-  val eigh : ('a, 'b) t -> (float, Dtype.float64_elt) t * ('a, 'b) t
+  val eigh : ('a, 'b) t -> (float, Nx_dtype.float64_elt) t * ('a, 'b) t
   (** [eigh t] computes the eigenvalues and eigenvectors of a
       symmetric/Hermitian matrix, returned as [(values, vectors)]. Eigenvalues
       are float64; eigenvectors carry the input dtype.

@@ -31,13 +31,12 @@ let check_shape ~op name ~shape x =
 let typed (type a b) ~op ~shape (dtype : (a, b) Nx.dtype) name t : (a, b) Nx.t =
   let (Nx.P x) = entry ~op name t in
   check_shape ~op name ~shape x;
-  match Nx_core.Dtype.equal_witness (Nx.dtype x) dtype with
+  match Nx_dtype.equal_witness (Nx.dtype x) dtype with
   | Some Type.Equal -> x
   | None ->
       invalid_argf "Checkpoint.%s: dtype mismatch for %S: expected %s, got %s"
-        op name
-        (Nx_core.Dtype.to_string dtype)
-        (Nx_core.Dtype.to_string (Nx.dtype x))
+        op name (Nx_dtype.to_string dtype)
+        (Nx_dtype.to_string (Nx.dtype x))
 
 let empty = String_map.empty
 
@@ -94,8 +93,7 @@ let to_float (type b) ~shape (dtype : (float, b) Nx.dtype) name t :
   (match dtype with
   | Float8_e4m3 | Float8_e5m2 ->
       invalid_argf "Checkpoint.%s: %S cannot be cast to %s, which needs scales"
-        op name
-        (Nx_core.Dtype.to_string dtype)
+        op name (Nx_dtype.to_string dtype)
   | Float16 | BFloat16 | Float32 | Float64 -> ());
   let (Nx.P x) = entry ~op name t in
   check_shape ~op name ~shape x;
@@ -106,11 +104,11 @@ let to_float (type b) ~shape (dtype : (float, b) Nx.dtype) name t :
         "Checkpoint.%s: %S is a %s entry, whose scales live in other entries: \
          read it with to_tensor"
         op name
-        (Nx_core.Dtype.to_string (Nx.dtype x))
+        (Nx_dtype.to_string (Nx.dtype x))
   | source ->
       invalid_argf "Checkpoint.%s: %S is not a floating-point entry (dtype %s)"
         op name
-        (Nx_core.Dtype.to_string source)
+        (Nx_dtype.to_string source)
 
 let to_value ?prefix s ~like t =
   let op = "to_value" in
@@ -130,14 +128,14 @@ let to_value ?prefix s ~like t =
             op name
             (shape_to_string (Nx.shape x))
             (shape_to_string (Nx.shape leaf));
-        match Nx_core.Dtype.equal_witness (Nx.dtype x) (Nx.dtype leaf) with
+        match Nx_dtype.equal_witness (Nx.dtype x) (Nx.dtype leaf) with
         | Some Type.Equal -> x
         | None ->
             invalid_argf
               "Checkpoint.%s: %s: %s in the checkpoint, %s in the template" op
               name
-              (Nx_core.Dtype.to_string (Nx.dtype x))
-              (Nx_core.Dtype.to_string (Nx.dtype leaf)))
+              (Nx_dtype.to_string (Nx.dtype x))
+              (Nx_dtype.to_string (Nx.dtype leaf)))
   in
   Nx.Ptree.map s load like
 
@@ -148,12 +146,12 @@ let to_int name t =
       if Nx.numel x <> 1 then
         invalid_argf "Checkpoint.to_int: %S is not a scalar (shape %s)" name
           (shape_to_string (Nx.shape x));
-      match Nx_core.Dtype.equal_witness (Nx.dtype x) Nx.int32 with
+      match Nx_dtype.equal_witness (Nx.dtype x) Nx.int32 with
       | Some Type.Equal -> Int32.to_int (Nx.item [] (Nx.reshape [||] x))
       | None ->
           invalid_argf "Checkpoint.to_int: %S is not an int32 entry (dtype %s)"
             name
-            (Nx_core.Dtype.to_string (Nx.dtype x)))
+            (Nx_dtype.to_string (Nx.dtype x)))
 
 let save path t = Nx_io.save_safetensors path (String_map.bindings t)
 

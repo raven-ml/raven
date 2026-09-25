@@ -13,27 +13,27 @@ module Make (B : Backend_intf.S) = struct
 
   type ('a, 'b) t = ('a, 'b) B.t
   type context = B.context
-  type float16_elt = Nx_buffer.float16_elt
-  type float32_elt = Nx_buffer.float32_elt
-  type float64_elt = Nx_buffer.float64_elt
-  type bfloat16_elt = Nx_buffer.bfloat16_elt
-  type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
-  type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
-  type int4_elt = Nx_buffer.int4_elt
-  type uint4_elt = Nx_buffer.uint4_elt
-  type int8_elt = Nx_buffer.int8_elt
-  type uint8_elt = Nx_buffer.uint8_elt
-  type int16_elt = Nx_buffer.int16_elt
-  type uint16_elt = Nx_buffer.uint16_elt
-  type int32_elt = Nx_buffer.int32_elt
-  type uint32_elt = Nx_buffer.uint32_elt
-  type int64_elt = Nx_buffer.int64_elt
-  type uint64_elt = Nx_buffer.uint64_elt
-  type complex32_elt = Nx_buffer.complex32_elt
-  type complex64_elt = Nx_buffer.complex64_elt
-  type bool_elt = Nx_buffer.bool_elt
+  type float16_elt = Nx_dtype.float16_elt
+  type float32_elt = Nx_dtype.float32_elt
+  type float64_elt = Nx_dtype.float64_elt
+  type bfloat16_elt = Nx_dtype.bfloat16_elt
+  type float8_e4m3_elt = Nx_dtype.float8_e4m3_elt
+  type float8_e5m2_elt = Nx_dtype.float8_e5m2_elt
+  type int4_elt = Nx_dtype.int4_elt
+  type uint4_elt = Nx_dtype.uint4_elt
+  type int8_elt = Nx_dtype.int8_elt
+  type uint8_elt = Nx_dtype.uint8_elt
+  type int16_elt = Nx_dtype.int16_elt
+  type uint16_elt = Nx_dtype.uint16_elt
+  type int32_elt = Nx_dtype.int32_elt
+  type uint32_elt = Nx_dtype.uint32_elt
+  type int64_elt = Nx_dtype.int64_elt
+  type uint64_elt = Nx_dtype.uint64_elt
+  type complex32_elt = Nx_dtype.complex32_elt
+  type complex64_elt = Nx_dtype.complex64_elt
+  type bool_elt = Nx_dtype.bool_elt
 
-  type ('a, 'b) dtype = ('a, 'b) Dtype.t =
+  type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
     | Float16 : (float, float16_elt) dtype
     | Float32 : (float, float32_elt) dtype
     | Float64 : (float, float64_elt) dtype
@@ -97,14 +97,14 @@ module Make (B : Backend_intf.S) = struct
     | A
     | M of (bool, bool_elt) t
     | N
-    | D of (int32, Dtype.int32_elt) t * int
+    | D of (int32, Nx_dtype.int32_elt) t * int
 
   (* ───── Tensor Properties ───── *)
 
   let data x = B.to_host x
   let shape x = View.shape (B.view x)
   let dtype x = B.dtype x
-  let itemsize x = Dtype.itemsize (B.dtype x)
+  let itemsize x = Nx_dtype.itemsize (B.dtype x)
 
   let strides x =
     let view = B.view x in
@@ -133,7 +133,7 @@ module Make (B : Backend_intf.S) = struct
   module IntSet = Set.Make (Int)
 
   (* 2^shift_val for integer dtypes, used by lshift/rshift. *)
-  let power_of_two : type a b. (a, b) Dtype.t -> int -> a =
+  let power_of_two : type a b. (a, b) Nx_dtype.t -> int -> a =
    fun dtype shift_val ->
     if shift_val < 0 then
       err "power_of_two" "shift_val must be >= 0, got %d" shift_val;
@@ -148,15 +148,15 @@ module Make (B : Backend_intf.S) = struct
     | UInt64 -> Int64.shift_left Int64.one shift_val
     | _ ->
         err "power_of_two" "dtype %s, not an integer type"
-          (Dtype.to_string dtype)
+          (Nx_dtype.to_string dtype)
 
   let ensure_float_dtype fname x =
-    if not (Dtype.is_float (dtype x)) then
+    if not (Nx_dtype.is_float (dtype x)) then
       err fname "dtype %s, expected float type (Float16, Float32, or Float64)"
-        (Dtype.to_string (dtype x))
+        (Nx_dtype.to_string (dtype x))
 
   let ensure_int_dtype fname x =
-    if not (Dtype.is_int (dtype x)) then
+    if not (Nx_dtype.is_int (dtype x)) then
       invalid_arg (fname ^ ": dtype must be an integer type")
 
   let resolve_axis ?ndim_opt x (axis_opt : int option) =
@@ -321,33 +321,35 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Type Conversion and Tensor Creation ───── *)
 
-  let cast (type a b c d) (dt : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
-    match Dtype.equal_witness (dtype x) dt with
+  let cast (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t =
+    match Nx_dtype.equal_witness (dtype x) dt with
     | Some Equal -> x
     | None -> B.cast ~dtype:dt x
 
   let astype dt x = cast dt x
 
-  let bitcast (type a b c d) (dt : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
+  let bitcast (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
+      =
     let src = dtype x in
     let refuse reason =
-      err "bitcast" "cannot reinterpret %s as %s, %s" (Dtype.to_string src)
-        (Dtype.to_string dt) reason
+      err "bitcast" "cannot reinterpret %s as %s, %s" (Nx_dtype.to_string src)
+        (Nx_dtype.to_string dt) reason
     in
-    let unfit (type e f) (d : (e, f) Dtype.t) =
+    let unfit (type e f) (d : (e, f) Nx_dtype.t) =
       match d with
-      | Dtype.Bool -> Some "bool holds only 0 and 1"
-      | Dtype.Int4 | Dtype.UInt4 -> Some "4-bit elements are packed in pairs"
+      | Nx_dtype.Bool -> Some "bool holds only 0 and 1"
+      | Nx_dtype.Int4 | Nx_dtype.UInt4 ->
+          Some "4-bit elements are packed in pairs"
       | _ -> None
     in
     (match (unfit src, unfit dt) with
     | Some reason, _ | None, Some reason -> refuse reason
     | None, None -> ());
-    if Dtype.itemsize src <> Dtype.itemsize dt then
+    if Nx_dtype.itemsize src <> Nx_dtype.itemsize dt then
       refuse
         (Printf.sprintf "their widths differ (%d and %d bits)"
-           (8 * Dtype.itemsize src)
-           (8 * Dtype.itemsize dt));
+           (8 * Nx_dtype.itemsize src)
+           (8 * Nx_dtype.itemsize dt));
     B.bitcast ~dtype:dt x
 
   let contiguous x = B.contiguous x
@@ -374,8 +376,11 @@ module Make (B : Backend_intf.S) = struct
   let scalar ctx dt value = B.full ctx dt [||] value
   let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
   let empty ctx dtype shape_arr = B.buffer ctx dtype shape_arr
-  let zeros ctx dtype shape_arr = B.full ctx dtype shape_arr (Dtype.zero dtype)
-  let ones ctx dtype shape_arr = B.full ctx dtype shape_arr (Dtype.one dtype)
+
+  let zeros ctx dtype shape_arr =
+    B.full ctx dtype shape_arr (Nx_dtype.zero dtype)
+
+  let ones ctx dtype shape_arr = B.full ctx dtype shape_arr (Nx_dtype.one dtype)
 
   let full ctx dt target_shape fill_value =
     B.full ctx dt target_shape fill_value
@@ -388,9 +393,9 @@ module Make (B : Backend_intf.S) = struct
   let full_like x_ref fill_value =
     create_like x_ref (fun ctx dt sh -> full ctx dt sh fill_value)
 
-  let zeros_like x = full_like x (Dtype.zero (B.dtype x))
+  let zeros_like x = full_like x (Nx_dtype.zero (B.dtype x))
   let fill value x = full_like x value
-  let ones_like x = full_like x (Dtype.one (B.dtype x))
+  let ones_like x = full_like x (Nx_dtype.one (B.dtype x))
 
   let to_buffer x =
     let t =
@@ -401,9 +406,10 @@ module Make (B : Backend_intf.S) = struct
     data t
 
   let to_bigarray x =
-    let buf = to_buffer x in
-    let _ = Dtype.to_bigarray_kind (B.dtype x) in
-    let ga = Nx_buffer.to_genarray buf (shape x) in
+    if Option.is_none (Nx_dtype.to_bigarray_kind (B.dtype x)) then
+      err "to_bigarray" "Bigarray has no %s kind"
+        (Nx_dtype.to_string (B.dtype x));
+    let ga = Nx_buffer.to_genarray (to_buffer x) (shape x) in
     (Obj.magic ga : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t)
 
   let of_buffer ctx ~shape buf = reshape shape (B.from_host ctx buf)
@@ -442,7 +448,8 @@ module Make (B : Backend_intf.S) = struct
   let div a b =
     let a', b' = broadcasted a b in
     let dt = B.dtype a' in
-    if Dtype.is_int dt || Dtype.is_uint dt then B.idiv a' b' else B.fdiv a' b'
+    if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then B.idiv a' b'
+    else B.fdiv a' b'
 
   let div_s t s = div t (scalar_like t s)
   let rdiv_s s t = div (scalar_like t s) t
@@ -469,9 +476,9 @@ module Make (B : Backend_intf.S) = struct
   let logical_not (type a b) (x : (a, b) t) : (a, b) t =
     let dt = dtype x in
     match dt with
-    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 ->
-        binop B.xor x (scalar_like x (Dtype.one dt))
-    | _ -> rsub_s (Dtype.one dt) x
+    | Nx_dtype.UInt8 | Nx_dtype.Bool | Nx_dtype.UInt4 ->
+        binop B.xor x (scalar_like x (Nx_dtype.one dt))
+    | _ -> rsub_s (Nx_dtype.one dt) x
 
   let cmpeq a b = cmpop B.cmpeq a b
   let cmpne a b = cmpop B.cmpne a b
@@ -501,7 +508,7 @@ module Make (B : Backend_intf.S) = struct
     let dt = dtype x in
     binop B.xor x
       (broadcast_to (shape x)
-         (B.full (B.context x) dt [||] (Dtype.minus_one dt)))
+         (B.full (B.context x) dt [||] (Nx_dtype.minus_one dt)))
 
   let sin x = unaryop B.sin x
   let cos x = unaryop B.cos x
@@ -515,26 +522,27 @@ module Make (B : Backend_intf.S) = struct
     mul (log x)
       (broadcast_to (shape x)
          (scalar (B.context x) (dtype x)
-            (Dtype.of_float (dtype x) (1.0 /. Stdlib.log 2.0))))
+            (Nx_dtype.of_float (dtype x) (1.0 /. Stdlib.log 2.0))))
 
   let exp2 x =
     exp
       (mul x
          (broadcast_to (shape x)
             (scalar (B.context x) (dtype x)
-               (Dtype.of_float (dtype x) (Stdlib.log 2.0)))))
+               (Nx_dtype.of_float (dtype x) (Stdlib.log 2.0)))))
 
   let tan x = unaryop B.tan x
   let square x = mul x x
   let sign x = unaryop B.sign x
-  let relu x = maximum_s x (Dtype.zero (dtype x))
+  let relu x = maximum_s x (Nx_dtype.zero (dtype x))
 
   let sigmoid x =
     let dt = dtype x in
     let neg_one_over_log2 =
-      B.full (B.context x) dt [||] (Dtype.of_float dt (-1.0 /. Stdlib.log 2.0))
+      B.full (B.context x) dt [||]
+        (Nx_dtype.of_float dt (-1.0 /. Stdlib.log 2.0))
     in
-    recip (add_s (exp2 (mul x neg_one_over_log2)) (Dtype.one dt))
+    recip (add_s (exp2 (mul x neg_one_over_log2)) (Nx_dtype.one dt))
 
   let rsqrt x = recip (sqrt x)
   let asin x = unaryop B.asin x
@@ -546,18 +554,18 @@ module Make (B : Backend_intf.S) = struct
 
   let asinh x =
     let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) (Dtype.one dt) in
+    let one_x = full (B.context x) dt (shape x) (Nx_dtype.one dt) in
     log (add x (sqrt (add (square x) one_x)))
 
   let acosh x =
     let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) (Dtype.one dt) in
+    let one_x = full (B.context x) dt (shape x) (Nx_dtype.one dt) in
     log (add x (sqrt (sub (square x) one_x)))
 
   let atanh x =
     let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) (Dtype.one dt) in
-    let two_x = full (B.context x) dt (shape x) (Dtype.two dt) in
+    let one_x = full (B.context x) dt (shape x) (Nx_dtype.one dt) in
+    let two_x = full (B.context x) dt (shape x) (Nx_dtype.two dt) in
     div (log (div (add one_x x) (sub one_x x))) two_x
 
   let trunc x = unaryop B.trunc x
@@ -566,28 +574,29 @@ module Make (B : Backend_intf.S) = struct
   let round x = unaryop B.round x
 
   let isinf x =
-    if not (Dtype.is_float (dtype x)) then
-      zeros (B.context x) Dtype.bool (shape x)
+    if not (Nx_dtype.is_float (dtype x)) then
+      zeros (B.context x) Nx_dtype.bool (shape x)
     else
       let dt = dtype x in
       let pos_inf =
         broadcast_to (shape x)
-          (B.full (B.context x) dt [||] (Dtype.of_float dt Float.infinity))
+          (B.full (B.context x) dt [||] (Nx_dtype.of_float dt Float.infinity))
       in
       let neg_inf =
         broadcast_to (shape x)
-          (B.full (B.context x) dt [||] (Dtype.of_float dt Float.neg_infinity))
+          (B.full (B.context x) dt [||]
+             (Nx_dtype.of_float dt Float.neg_infinity))
       in
       logical_or (cmpeq x pos_inf) (cmpeq x neg_inf)
 
   let isnan x =
-    if not (Dtype.is_float (dtype x)) then
-      zeros (B.context x) Dtype.bool (shape x)
+    if not (Nx_dtype.is_float (dtype x)) then
+      zeros (B.context x) Nx_dtype.bool (shape x)
     else cmpne x x
 
   let isfinite x =
-    if not (Dtype.is_float (dtype x)) then
-      ones (B.context x) Dtype.bool (shape x)
+    if not (Nx_dtype.is_float (dtype x)) then
+      ones (B.context x) Nx_dtype.bool (shape x)
     else logical_not (logical_or (isinf x) (isnan x))
 
   let lerp start_tensor end_tensor weight =
@@ -595,8 +604,8 @@ module Make (B : Backend_intf.S) = struct
 
   let shift_op ~op ~apply x shift_val =
     let dt = dtype x in
-    if not (Dtype.is_int dt) then
-      err op "dtype %s, expected integer type" (Dtype.to_string dt);
+    if not (Nx_dtype.is_int dt) then
+      err op "dtype %s, expected integer type" (Nx_dtype.to_string dt);
     if shift_val < 0 then err op "shift_val must be >= 0, got %d" shift_val;
     if shift_val = 0 then x
     else
@@ -637,12 +646,12 @@ module Make (B : Backend_intf.S) = struct
     let min_val = minimum x_abs y_abs in
     let both_zero =
       logical_and
-        (equal_s x_abs (Dtype.zero dt))
-        (equal_s y_abs (Dtype.zero dt))
+        (equal_s x_abs (Nx_dtype.zero dt))
+        (equal_s y_abs (Nx_dtype.zero dt))
     in
-    let zero = scalar_like x' (Dtype.zero dt) in
+    let zero = scalar_like x' (Nx_dtype.zero dt) in
     let ratio = where both_zero zero (div min_val max_val) in
-    let result = mul max_val (sqrt (add_s (square ratio) (Dtype.one dt))) in
+    let result = mul max_val (sqrt (add_s (square ratio) (Nx_dtype.one dt))) in
     where both_zero zero result
 
   (* ───── Reduction Operations ───── *)
@@ -713,7 +722,7 @@ module Make (B : Backend_intf.S) = struct
     let divisor =
       broadcast_to (shape s)
         (scalar (B.context x) dt
-           (Dtype.of_float dt (float_of_int (Stdlib.max 1 n))))
+           (Nx_dtype.of_float dt (float_of_int (Stdlib.max 1 n))))
     in
     div s divisor
 
@@ -725,7 +734,7 @@ module Make (B : Backend_intf.S) = struct
     let n_corr = float_of_int (Stdlib.max 0 (n - ddof)) in
     let divisor =
       broadcast_to (shape sum_sq)
-        (scalar (B.context x) dt (Dtype.of_float dt n_corr))
+        (scalar (B.context x) dt (Nx_dtype.of_float dt n_corr))
     in
     div sum_sq divisor
 
@@ -733,7 +742,7 @@ module Make (B : Backend_intf.S) = struct
     sqrt (var ?axes ~keepdims ~ddof x)
 
   let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
-    let bool_t = not_equal_s x (Dtype.zero (dtype x)) in
+    let bool_t = not_equal_s x (Nx_dtype.zero (dtype x)) in
     let input_shape = shape bool_t in
     let rank = Array.length input_shape in
     let axes_to_reduce =
@@ -744,7 +753,7 @@ module Make (B : Backend_intf.S) = struct
       |> Array.of_list
     in
     if Array.exists (fun axis -> input_shape.(axis) = 0) axes_to_reduce then
-      full (B.context x) Dtype.bool
+      full (B.context x) Nx_dtype.bool
         (Shape.reduce_output_shape input_shape axes_to_reduce keepdims)
         identity
     else
@@ -768,7 +777,7 @@ module Make (B : Backend_intf.S) = struct
         true
       with _ -> false
     in
-    if not can_broadcast then zeros (B.context x) Dtype.bool [||]
+    if not can_broadcast then zeros (B.context x) Nx_dtype.bool [||]
     else all (equal x y)
 
   (* ───── Shape Manipulation ───── *)
@@ -1132,10 +1141,10 @@ module Make (B : Backend_intf.S) = struct
     List.iter
       (fun x ->
         let d = dtype x in
-        if not (Dtype.equal first_dtype d) then
+        if not (Nx_dtype.equal first_dtype d) then
           err op "expected dtype %s, got %s"
-            (Dtype.to_string first_dtype)
-            (Dtype.to_string d))
+            (Nx_dtype.to_string first_dtype)
+            (Nx_dtype.to_string d))
       (List.tl ts)
 
   let concatenate ~axis ts =
@@ -1212,15 +1221,15 @@ module Make (B : Backend_intf.S) = struct
     if rows <= 0 || cols <= 0 || k_val >= cols || k_val <= -rows then
       zeros ctx dtype [| rows; cols |]
     else
-      let arr = Array.make (rows * cols) (Dtype.zero dtype) in
-      let one = Dtype.one dtype in
+      let arr = Array.make (rows * cols) (Nx_dtype.zero dtype) in
+      let one = Nx_dtype.one dtype in
       for i = 0 to Stdlib.min rows cols - 1 do
         let col = i + k_val in
         if col >= 0 && col < cols then arr.((i * cols) + col) <- one
       done;
       create ctx dtype [| rows; cols |] arr
 
-  let arange (type a b) ctx (dtype : (a, b) Dtype.t) start stop step =
+  let arange (type a b) ctx (dtype : (a, b) Nx_dtype.t) start stop step =
     if start >= stop && step > 0 then
       err "arange"
         "range [%d, %d), empty with step=%d, ensure start < stop for positive \
@@ -1242,29 +1251,29 @@ module Make (B : Backend_intf.S) = struct
       let f_init idx_arr : a =
         let i = idx_arr.(0) in
         match dtype with
-        | Dtype.Float16 -> float_at i
-        | Dtype.Float32 -> float_at i
-        | Dtype.Float64 -> float_at i
-        | Dtype.BFloat16 -> float_at i
-        | Dtype.Float8_e4m3 -> float_at i
-        | Dtype.Float8_e5m2 -> float_at i
-        | Dtype.Int8 -> int_at i
-        | Dtype.UInt8 -> int_at i
-        | Dtype.Int16 -> int_at i
-        | Dtype.UInt16 -> int_at i
-        | Dtype.Int4 -> int_at i
-        | Dtype.UInt4 -> int_at i
-        | Dtype.Bool -> i <> 0
-        | Dtype.Int32 ->
+        | Nx_dtype.Float16 -> float_at i
+        | Nx_dtype.Float32 -> float_at i
+        | Nx_dtype.Float64 -> float_at i
+        | Nx_dtype.BFloat16 -> float_at i
+        | Nx_dtype.Float8_e4m3 -> float_at i
+        | Nx_dtype.Float8_e5m2 -> float_at i
+        | Nx_dtype.Int8 -> int_at i
+        | Nx_dtype.UInt8 -> int_at i
+        | Nx_dtype.Int16 -> int_at i
+        | Nx_dtype.UInt16 -> int_at i
+        | Nx_dtype.Int4 -> int_at i
+        | Nx_dtype.UInt4 -> int_at i
+        | Nx_dtype.Bool -> i <> 0
+        | Nx_dtype.Int32 ->
             Int32.(add (of_int start) (mul (of_int i) (of_int step)))
-        | Dtype.UInt32 ->
+        | Nx_dtype.UInt32 ->
             Int32.(add (of_int start) (mul (of_int i) (of_int step)))
-        | Dtype.Int64 ->
+        | Nx_dtype.Int64 ->
             Int64.(add (of_int start) (mul (of_int i) (of_int step)))
-        | Dtype.UInt64 ->
+        | Nx_dtype.UInt64 ->
             Int64.(add (of_int start) (mul (of_int i) (of_int step)))
-        | Dtype.Complex64 -> { Complex.re = float_at i; im = 0. }
-        | Dtype.Complex128 -> { Complex.re = float_at i; im = 0. }
+        | Nx_dtype.Complex64 -> { Complex.re = float_at i; im = 0. }
+        | Nx_dtype.Complex128 -> { Complex.re = float_at i; im = 0. }
       in
       init ctx dtype [| num_elements |] f_init
 
@@ -1294,12 +1303,13 @@ module Make (B : Backend_intf.S) = struct
     if count < 0 then
       err "linspace" "count %d, negative count, use count >= 0" count;
     if count = 0 then empty ctx dtype [| 0 |]
-    else if count = 1 then full ctx dtype [| 1 |] (Dtype.of_float dtype start_f)
+    else if count = 1 then
+      full ctx dtype [| 1 |] (Nx_dtype.of_float dtype start_f)
     else
       let div_factor = float_of_int (if endpoint then count - 1 else count) in
       let step = (stop_f -. start_f) /. div_factor in
       init ctx dtype [| count |] (fun idx ->
-          Dtype.of_float dtype (start_f +. (float_of_int idx.(0) *. step)))
+          Nx_dtype.of_float dtype (start_f +. (float_of_int idx.(0) *. step)))
 
   let logspace ctx dtype ?(endpoint = true) ?(base = 10.0) start_exp stop_exp
       count =
@@ -1367,7 +1377,7 @@ module Make (B : Backend_intf.S) = struct
           mask
       else mask
     in
-    where mask x (scalar_like x (Dtype.zero (dtype x)))
+    where mask x (scalar_like x (Nx_dtype.zero (dtype x)))
 
   let tril ?k x = triangular_mask ~op:"tril" ~cmp:greater_equal ?k x
   let triu ?k x = triangular_mask ~op:"triu" ~cmp:less_equal ?k x
@@ -1429,7 +1439,7 @@ module Make (B : Backend_intf.S) = struct
     | Squeeze of { idx : int }
     | Gather of int array
     | New_axis
-    | Window of { start : (int32, Dtype.int32_elt) t; len : int }
+    | Window of { start : (int32, Nx_dtype.int32_elt) t; len : int }
 
   let normalize_slice_spec ~axis dim_size = function
     | I idx ->
@@ -1489,8 +1499,8 @@ module Make (B : Backend_intf.S) = struct
         let start = reshape [||] start in
         let start =
           minimum
-            (maximum start (scalar ctx Dtype.int32 0l))
-            (scalar ctx Dtype.int32 (Int32.of_int (dim_size - len)))
+            (maximum start (scalar ctx Nx_dtype.int32 0l))
+            (scalar ctx Nx_dtype.int32 (Int32.of_int (dim_size - len)))
         in
         Window { start; len }
 
@@ -1522,7 +1532,7 @@ module Make (B : Backend_intf.S) = struct
     let ops = parse_specs specs (shape x) in
     let gather_axis axis indices t =
       let idx_t =
-        init (B.context t) Dtype.int32
+        init (B.context t) Nx_dtype.int32
           [| Array.length indices |]
           (fun i -> Int32.of_int indices.(i.(0)))
       in
@@ -1534,7 +1544,7 @@ module Make (B : Backend_intf.S) = struct
           (Array.mapi
              (fun i dim -> if i = axis then (start, stop) else (0, dim))
              (shape t))
-      else take ~axis ~indices:(empty (B.context t) Dtype.int32 [| 0 |]) t
+      else take ~axis ~indices:(empty (B.context t) Nx_dtype.int32 [| 0 |]) t
     in
     let rec apply current axis sq_axes = function
       | [] -> (current, sq_axes)
@@ -1551,7 +1561,7 @@ module Make (B : Backend_intf.S) = struct
             if len = 0 then shrink_axis axis 0 0 current
             else
               let idx =
-                add (arange (B.context current) Dtype.int32 0 len 1) start
+                add (arange (B.context current) Nx_dtype.int32 0 len 1) start
               in
               take ~axis ~indices:idx current
           in
@@ -1734,7 +1744,7 @@ module Make (B : Backend_intf.S) = struct
                 (function `Int _ -> true | `Tensor _ -> false)
                 corners
             then
-              create ctx Dtype.int32 [| nd |]
+              create ctx Nx_dtype.int32 [| nd |]
                 (Array.of_list
                    (List.map
                       (function
@@ -1744,7 +1754,7 @@ module Make (B : Backend_intf.S) = struct
               stack ~axis:0
                 (List.map
                    (function
-                     | `Int i -> scalar ctx Dtype.int32 (Int32.of_int i)
+                     | `Int i -> scalar ctx Nx_dtype.int32 (Int32.of_int i)
                      | `Tensor s -> s)
                    corners)
           in
@@ -1764,9 +1774,9 @@ module Make (B : Backend_intf.S) = struct
             List.map
               (function
                 | Squeeze { idx } ->
-                    (true, scalar ctx Dtype.int32 (Int32.of_int idx))
+                    (true, scalar ctx Nx_dtype.int32 (Int32.of_int idx))
                 | View { start; stop; step; _ } ->
-                    (false, arange ctx Dtype.int32 start stop step)
+                    (false, arange ctx Nx_dtype.int32 start stop step)
                 | Gather indices ->
                     let seen = Hashtbl.create (Array.length indices) in
                     Array.iter
@@ -1776,11 +1786,11 @@ module Make (B : Backend_intf.S) = struct
                         Hashtbl.replace seen i ())
                       indices;
                     ( false,
-                      create ctx Dtype.int32
+                      create ctx Nx_dtype.int32
                         [| Array.length indices |]
                         (Array.map Int32.of_int indices) )
                 | Window { start; len } ->
-                    (false, add (arange ctx Dtype.int32 0 len 1) start)
+                    (false, add (arange ctx Nx_dtype.int32 0 len 1) start)
                 | New_axis -> assert false)
               axis_ops
           in
@@ -1791,14 +1801,14 @@ module Make (B : Backend_intf.S) = struct
                  dims_info)
           in
           let target_rank = Array.length target_shape in
-          let flat_idx = ref (scalar ctx Dtype.int32 0l) in
+          let flat_idx = ref (scalar ctx Nx_dtype.int32 0l) in
           let tdim = ref 0 in
           List.iteri
             (fun i (squeezed, idx_t) ->
               let stride = Int32.of_int strides.(i) in
               let weighted =
                 if stride = 1l then idx_t
-                else mul idx_t (scalar ctx Dtype.int32 stride)
+                else mul idx_t (scalar ctx Nx_dtype.int32 stride)
               in
               if squeezed then flat_idx := add !flat_idx weighted
               else begin
@@ -1944,7 +1954,7 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Sorting and Searching ───── *)
 
   let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
-    if ndim x = 0 then (x, scalar (B.context x) Dtype.int32 0l)
+    if ndim x = 0 then (x, scalar (B.context x) Nx_dtype.int32 0l)
     else
       let r = ndim x in
       let axis = if axis < 0 then axis + r else axis in
@@ -1971,7 +1981,7 @@ module Make (B : Backend_intf.S) = struct
     B.argmax ~axis ~keepdims x'
 
   let argmin (type a b) ?axis ?(keepdims = false) (x : (a, b) t) :
-      (int32, Dtype.int32_elt) t =
+      (int32, Nx_dtype.int32_elt) t =
     let x', axis =
       match axis with
       | None -> (flatten x, 0)
@@ -2022,12 +2032,12 @@ module Make (B : Backend_intf.S) = struct
   let radix_chunk = 512
 
   (* The element of a signed key dtype that an int64 in its range stands for. *)
-  let key_of_int64 (type c d) (dt : (c, d) Dtype.t) (v : int64) : c =
+  let key_of_int64 (type c d) (dt : (c, d) Nx_dtype.t) (v : int64) : c =
     match dt with
-    | Dtype.Int8 -> Int64.to_int v
-    | Dtype.Int16 -> Int64.to_int v
-    | Dtype.Int32 -> Int64.to_int32 v
-    | Dtype.Int64 -> v
+    | Nx_dtype.Int8 -> Int64.to_int v
+    | Nx_dtype.Int16 -> Int64.to_int v
+    | Nx_dtype.Int32 -> Int64.to_int32 v
+    | Nx_dtype.Int64 -> v
     | _ -> invalid_arg "key_of_int64: not a signed key dtype"
 
   (* [radix_select ~k keys] is the positions of the [k] greatest entries of each
@@ -2043,13 +2053,13 @@ module Make (B : Backend_intf.S) = struct
     let ctx = B.context keys in
     let kd = dtype keys in
     let b = dim 0 keys and n = dim 1 keys in
-    let width = 8 * Dtype.itemsize kd in
-    let kk = scalar ctx Dtype.int32 (Int32.of_int k) in
+    let width = 8 * Nx_dtype.itemsize kd in
+    let kk = scalar ctx Nx_dtype.int32 (Int32.of_int k) in
     let rows =
       let g = (n + radix_chunk - 1) / radix_chunk in
       (* Padding holds the least key, which only a count every key already
          passes can include. *)
-      pad [| (0, 0); (0, (g * radix_chunk) - n) |] (Dtype.min_value kd) keys
+      pad [| (0, 0); (0, (g * radix_chunk) - n) |] (Nx_dtype.min_value kd) keys
       |> reshape [| b; 1; g; radix_chunk |]
     in
     let radix_bits = radix_bits ~entries:(b * n) in
@@ -2075,37 +2085,39 @@ module Make (B : Backend_intf.S) = struct
         in
         (* A chunk lane counts at most one key per chunk, so its count fits
            int16 below 32768 chunks: half what int32 would hold at once. *)
-        let count (type p q) (dt : (p, q) Dtype.t) =
+        let count (type p q) (dt : (p, q) Nx_dtype.t) =
           sum ~axes:[ 2 ] (cast dt above)
-          |> contiguous |> cast Dtype.int32 |> sum ~axes:[ 2 ] |> contiguous
+          |> contiguous |> cast Nx_dtype.int32 |> sum ~axes:[ 2 ] |> contiguous
         in
         let counts =
-          if dim 2 rows < 32768 then count Dtype.int16 else count Dtype.int32
+          if dim 2 rows < 32768 then count Nx_dtype.int16
+          else count Nx_dtype.int32
         in
         let kept = where (greater_equal counts kk) trials prefix in
         search (max ~axes:[ 1 ] ~keepdims:true kept) shift
     in
     let threshold =
-      search (full ctx kd [| b; 1 |] (Dtype.min_value kd)) width
+      search (full ctx kd [| b; 1 |] (Nx_dtype.min_value kd)) width
     in
     let above = greater keys threshold and at = equal keys threshold in
-    let n_above = sum ~axes:[ 1 ] ~keepdims:true (cast Dtype.int32 above) in
+    let n_above = sum ~axes:[ 1 ] ~keepdims:true (cast Nx_dtype.int32 above) in
     let room = sub kk n_above in
     (* One running count carries both, as [above + k * at]: fewer than [k] keys
        are above. *)
-    let running (type p q) (dt : (p, q) Dtype.t) =
-      let base = full ctx dt [||] (Dtype.of_float dt (float_of_int k)) in
+    let running (type p q) (dt : (p, q) Nx_dtype.t) =
+      let base = full ctx dt [||] (Nx_dtype.of_float dt (float_of_int k)) in
       let packed = add (cast dt above) (mul (cast dt at) base) in
       let running = cumsum ~axis:1 packed in
-      (cast Dtype.int32 (mod_ running base), cast Dtype.int32 (div running base))
+      ( cast Nx_dtype.int32 (mod_ running base),
+        cast Nx_dtype.int32 (div running base) )
     in
     let before_above, before_at =
-      if k * (n + 1) <= Int32.to_int Int32.max_int then running Dtype.int32
-      else running Dtype.int64
+      if k * (n + 1) <= Int32.to_int Int32.max_int then running Nx_dtype.int32
+      else running Nx_dtype.int64
     in
     let position =
       broadcast_to [| b; n |]
-        (reshape [| 1; n |] (arange ctx Dtype.int32 0 n 1))
+        (reshape [| 1; n |] (arange ctx Nx_dtype.int32 0 n 1))
     in
     (* A stable partition: the keys above, then the keys taken at the threshold,
        then the rest, each in position order. *)
@@ -2120,7 +2132,7 @@ module Make (B : Backend_intf.S) = struct
     in
     let chosen =
       scatter ~unique_indices:true ~axis:1 ~indices:slot ~values:position
-        (zeros ctx Dtype.int32 [| b; n |])
+        (zeros ctx Nx_dtype.int32 [| b; n |])
       |> shrink [| (0, b); (0, k) |]
     in
     let chosen_keys = take_along_axis ~axis:1 ~indices:chosen keys in
@@ -2133,16 +2145,16 @@ module Make (B : Backend_intf.S) = struct
          ones in an earlier slot. *)
       let mine = reshape [| b; 1; k |] chosen_keys in
       let other = reshape [| b; k; 1 |] chosen_keys in
-      let slots = arange ctx Dtype.int32 0 k 1 in
+      let slots = arange ctx Nx_dtype.int32 0 k 1 in
       let earlier =
         less (reshape [| k; 1 |] slots) (reshape [| 1; k |] slots)
       in
       let precedes =
         logical_or (greater other mine) (logical_and earlier (equal other mine))
       in
-      let place = sum ~axes:[ 1 ] (cast Dtype.int32 precedes) in
+      let place = sum ~axes:[ 1 ] (cast Nx_dtype.int32 precedes) in
       scatter ~unique_indices:true ~axis:1 ~indices:place ~values:chosen
-        (zeros ctx Dtype.int32 [| b; k |])
+        (zeros ctx Nx_dtype.int32 [| b; k |])
 
   (* [select ~k keys] is [radix_select ~k keys], or the first [k] positions of a
      stable descending sort of [keys] when their rows are short. *)
@@ -2156,9 +2168,9 @@ module Make (B : Backend_intf.S) = struct
   (* The key of a float, a signed integer of its width that orders as a
      descending sort does: the bits, with the other bits of a negative float
      flipped, both zeros one key, and NaN below every number. *)
-  let float_key (type a b c d) (kd : (c, d) Dtype.t) (x : (a, b) t) =
+  let float_key (type a b c d) (kd : (c, d) Nx_dtype.t) (x : (a, b) t) =
     let bits = bitcast kd x in
-    let least = full_like bits (Dtype.min_value kd) in
+    let least = full_like bits (Nx_dtype.min_value kd) in
     (* The zeros merge on the bits: -0's are the least key's. Merging them on
        the values would pass subnormals through float arithmetic, which a GPU
        may flush. *)
@@ -2166,15 +2178,15 @@ module Make (B : Backend_intf.S) = struct
     let flipped =
       where
         (less bits (zeros_like bits))
-        (bitwise_xor bits (full_like bits (Dtype.max_value kd)))
+        (bitwise_xor bits (full_like bits (Nx_dtype.max_value kd)))
         bits
     in
     where (isnan x) least flipped
 
   (* The key of an unsigned integer: its bits with the top one flipped, read
      signed. *)
-  let unsigned_key (type a b c d) (kd : (c, d) Dtype.t) (top : a) (x : (a, b) t)
-      =
+  let unsigned_key (type a b c d) (kd : (c, d) Nx_dtype.t) (top : a)
+      (x : (a, b) t) =
     bitcast kd (bitwise_xor x (full_like x top))
 
   let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
@@ -2186,7 +2198,7 @@ module Make (B : Backend_intf.S) = struct
     let n = dim axis x in
     if k < 1 || k > n then err "top_k" "k = %d is outside [1, %d]" k n;
     let dt = dtype x in
-    if Dtype.is_complex dt then err "top_k" "complex numbers are not ordered";
+    if Nx_dtype.is_complex dt then err "top_k" "complex numbers are not ordered";
     let ctx = B.context x in
     let indices =
       if k > top_k_rounds then begin
@@ -2194,42 +2206,46 @@ module Make (B : Backend_intf.S) = struct
         let batch = Array.sub (shape last) 0 (r - 1) in
         let b = Array.fold_left ( * ) 1 batch in
         let rows = reshape [| b; n |] last in
-        let chosen : (int32, Dtype.int32_elt) t =
-          if b = 0 then zeros ctx Dtype.int32 [| 0; k |]
+        let chosen : (int32, Nx_dtype.int32_elt) t =
+          if b = 0 then zeros ctx Nx_dtype.int32 [| 0; k |]
           else
             match dt with
-            | Dtype.Float16 -> select ~k (float_key Dtype.int16 rows)
-            | Dtype.BFloat16 -> select ~k (float_key Dtype.int16 rows)
-            | Dtype.Float32 -> select ~k (float_key Dtype.int32 rows)
-            | Dtype.Float64 -> select ~k (float_key Dtype.int64 rows)
-            | Dtype.Float8_e4m3 ->
-                select ~k (float_key Dtype.int16 (cast Dtype.float16 rows))
-            | Dtype.Float8_e5m2 ->
-                select ~k (float_key Dtype.int16 (cast Dtype.float16 rows))
-            | Dtype.Int4 -> select ~k (cast Dtype.int8 rows)
-            | Dtype.Int8 -> select ~k rows
-            | Dtype.Int16 -> select ~k rows
-            | Dtype.Int32 -> select ~k rows
-            | Dtype.Int64 -> select ~k rows
-            | Dtype.UInt4 | Dtype.Bool ->
-                select ~k (unsigned_key Dtype.int8 0x80 (cast Dtype.uint8 rows))
-            | Dtype.UInt8 -> select ~k (unsigned_key Dtype.int8 0x80 rows)
-            | Dtype.UInt16 -> select ~k (unsigned_key Dtype.int16 0x8000 rows)
-            | Dtype.UInt32 ->
-                select ~k (unsigned_key Dtype.int32 Int32.min_int rows)
-            | Dtype.UInt64 ->
-                select ~k (unsigned_key Dtype.int64 Int64.min_int rows)
-            | Dtype.Complex64 | Dtype.Complex128 -> assert false
+            | Nx_dtype.Float16 -> select ~k (float_key Nx_dtype.int16 rows)
+            | Nx_dtype.BFloat16 -> select ~k (float_key Nx_dtype.int16 rows)
+            | Nx_dtype.Float32 -> select ~k (float_key Nx_dtype.int32 rows)
+            | Nx_dtype.Float64 -> select ~k (float_key Nx_dtype.int64 rows)
+            | Nx_dtype.Float8_e4m3 ->
+                select ~k
+                  (float_key Nx_dtype.int16 (cast Nx_dtype.float16 rows))
+            | Nx_dtype.Float8_e5m2 ->
+                select ~k
+                  (float_key Nx_dtype.int16 (cast Nx_dtype.float16 rows))
+            | Nx_dtype.Int4 -> select ~k (cast Nx_dtype.int8 rows)
+            | Nx_dtype.Int8 -> select ~k rows
+            | Nx_dtype.Int16 -> select ~k rows
+            | Nx_dtype.Int32 -> select ~k rows
+            | Nx_dtype.Int64 -> select ~k rows
+            | Nx_dtype.UInt4 | Nx_dtype.Bool ->
+                select ~k
+                  (unsigned_key Nx_dtype.int8 0x80 (cast Nx_dtype.uint8 rows))
+            | Nx_dtype.UInt8 -> select ~k (unsigned_key Nx_dtype.int8 0x80 rows)
+            | Nx_dtype.UInt16 ->
+                select ~k (unsigned_key Nx_dtype.int16 0x8000 rows)
+            | Nx_dtype.UInt32 ->
+                select ~k (unsigned_key Nx_dtype.int32 Int32.min_int rows)
+            | Nx_dtype.UInt64 ->
+                select ~k (unsigned_key Nx_dtype.int64 Int64.min_int rows)
+            | Nx_dtype.Complex64 | Nx_dtype.Complex128 -> assert false
         in
         moveaxis (-1) axis (reshape (Array.append batch [| k |]) chosen)
       end
       else begin
         let along = Array.make r 1 in
         along.(axis) <- n;
-        let position = reshape along (arange ctx Dtype.int32 0 n 1) in
-        let low = full_like x (Dtype.min_value dt) in
+        let position = reshape along (arange ctx Nx_dtype.int32 0 n 1) in
+        let low = full_like x (Nx_dtype.min_value dt) in
         let real =
-          if Dtype.is_float dt then Some (logical_not (isnan x)) else None
+          if Nx_dtype.is_float dt then Some (logical_not (isnan x)) else None
         in
         (* One round picks the first free entry that a descending sort would
            place next: the greatest number, and a NaN once no number is free.
@@ -2246,7 +2262,7 @@ module Make (B : Backend_intf.S) = struct
             | None -> best
             | Some _ -> where (any ~axes:[ axis ] ~keepdims:true live) best free
           in
-          argmax ~axis ~keepdims:true (cast Dtype.int32 chosen)
+          argmax ~axis ~keepdims:true (cast Nx_dtype.int32 chosen)
         in
         let rec rounds i free acc =
           if i = k then concatenate ~axis (List.rev acc)
@@ -2256,7 +2272,7 @@ module Make (B : Backend_intf.S) = struct
               (logical_and free (not_equal position index))
               (index :: acc)
         in
-        rounds 0 (ones ctx Dtype.bool (shape x)) []
+        rounds 0 (ones ctx Nx_dtype.bool (shape x)) []
       end
     in
     (take_along_axis ~axis ~indices x, indices)
@@ -2337,7 +2353,7 @@ module Make (B : Backend_intf.S) = struct
     let guess = mul x (where (cmplt w (lit 5.0)) central tail) in
     let refined =
       match dtype x with
-      | Dtype.Float64 ->
+      | Nx_dtype.Float64 ->
           (* Below 2 in |y|, Newton on erf from the guess. The residual comes
              from the series whose terms are all positive, so nothing cancels;
              80 terms carry it to double precision there. *)
@@ -2449,7 +2465,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* The low and high 32-bit words of [seed] as the key's two lanes. *)
     let key ctx seed =
-      create ctx Dtype.int32 [| 2 |]
+      create ctx Nx_dtype.int32 [| 2 |]
         [| Int32.of_int (seed asr 32); Int32.of_int seed |]
 
     (* One Threefry application over [n] independent blocks: the key broadcast
@@ -2460,7 +2476,7 @@ module Make (B : Backend_intf.S) = struct
       check_key name k;
       let ctx = B.context k in
       let kb = broadcast_to [| n; 2 |] (reshape [| 1; 2 |] k) in
-      let ctr = reshape [| n; 2 |] (arange ctx Dtype.int32 0 (2 * n) 1) in
+      let ctr = reshape [| n; 2 |] (arange ctx Nx_dtype.int32 0 (2 * n) 1) in
       B.threefry kb ctr
 
     let split ?(n = 2) k =
@@ -2478,7 +2494,7 @@ module Make (B : Backend_intf.S) = struct
       check_key "fold_in" k;
       let ctx = B.context k in
       let ctr =
-        create ctx Dtype.int32 [| 2 |]
+        create ctx Nx_dtype.int32 [| 2 |]
           [| Int32.of_int (data asr 32); Int32.of_int data |]
       in
       B.threefry (contiguous k) ctr
@@ -2490,12 +2506,12 @@ module Make (B : Backend_intf.S) = struct
     let fold_in_tensor k idx =
       check_key "fold_in_tensor" k;
       let ctx = B.context k in
-      let template = create ctx Dtype.int32 [| 2 |] [| 0l; 1l |] in
-      let ctr = mul template (cast Dtype.int32 idx) in
+      let template = create ctx Nx_dtype.int32 [| 2 |] [| 0l; 1l |] in
+      let ctr = mul template (cast Nx_dtype.int32 idx) in
       B.threefry (contiguous k) ctr
 
     (* Significand width of [dtype], the leading bit included. *)
-    let significand_bits : type b. (float, b) Dtype.t -> int = function
+    let significand_bits : type b. (float, b) Nx_dtype.t -> int = function
       | Float8_e5m2 -> 3
       | Float8_e4m3 -> 4
       | BFloat16 -> 8
@@ -2508,9 +2524,9 @@ module Make (B : Backend_intf.S) = struct
        dtype, then return at the parameters' own dtype; [at] moves a tensor
        between the two without the copy [cast] makes when nothing changes, and
        [pair] broadcasts two parameters against each other. *)
-    let at (type a b) (target : (float, a) Dtype.t) (x : (float, b) t) :
+    let at (type a b) (target : (float, a) Nx_dtype.t) (x : (float, b) t) :
         (float, a) t =
-      match Dtype.equal_witness (dtype x) target with
+      match Nx_dtype.equal_witness (dtype x) target with
       | Some Equal -> x
       | None -> cast target x
 
@@ -2535,19 +2551,20 @@ module Make (B : Backend_intf.S) = struct
     let bits k shape =
       check_shape "bits" shape;
       let n = array_prod shape in
-      if n = 0 then zeros (B.context k) Dtype.int32 shape
+      if n = 0 then zeros (B.context k) Nx_dtype.int32 shape
       else
         reshape shape
           (shrink [| (0, n) |] (flatten (blocks "bits" k ((n + 1) / 2))))
 
-    let uniform (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
+    let uniform (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t
+        =
       check_shape "uniform" shape;
       let ctx = B.context k in
       let n = array_prod shape in
       if n = 0 then zeros ctx dtype shape
       else
         match dtype with
-        | Dtype.Float64 ->
+        | Nx_dtype.Float64 ->
             (* One row per draw: [(hi, lo)] contributes 21 + 32 bits. *)
             let words = blocks "uniform" k n in
             let word col =
@@ -2555,28 +2572,32 @@ module Make (B : Backend_intf.S) = struct
                 (contiguous (shrink [| (0, n); (col, col + 1) |] words))
             in
             let top =
-              cast Dtype.float64
-                (bitwise_and (word 0) (scalar ctx Dtype.int32 0x1F_FFFFl))
+              cast Nx_dtype.float64
+                (bitwise_and (word 0) (scalar ctx Nx_dtype.int32 0x1F_FFFFl))
             in
             let bottom =
-              cast Dtype.float64
+              cast Nx_dtype.float64
                 (bitwise_and
-                   (cast Dtype.int64 (word 1))
-                   (scalar ctx Dtype.int64 0xFFFF_FFFFL))
+                   (cast Nx_dtype.int64 (word 1))
+                   (scalar ctx Nx_dtype.int64 0xFFFF_FFFFL))
             in
             let u =
               mul
-                (add (mul top (scalar ctx Dtype.float64 4294967296.0)) bottom)
-                (scalar ctx Dtype.float64 (Float.ldexp 1.0 (-53)))
+                (add
+                   (mul top (scalar ctx Nx_dtype.float64 4294967296.0))
+                   bottom)
+                (scalar ctx Nx_dtype.float64 (Float.ldexp 1.0 (-53)))
             in
             reshape shape u
         | _ ->
             let p = significand_bits dtype in
-            let mask = scalar ctx Dtype.int32 (Int32.of_int ((1 lsl p) - 1)) in
+            let mask =
+              scalar ctx Nx_dtype.int32 (Int32.of_int ((1 lsl p) - 1))
+            in
             let u =
               mul
-                (cast Dtype.float32 (bitwise_and (bits k shape) mask))
-                (scalar ctx Dtype.float32 (Float.ldexp 1.0 (-p)))
+                (cast Nx_dtype.float32 (bitwise_and (bits k shape) mask))
+                (scalar ctx Nx_dtype.float32 (Float.ldexp 1.0 (-p)))
             in
             cast dtype u
 
@@ -2590,14 +2611,14 @@ module Make (B : Backend_intf.S) = struct
        do. [u1] can be exactly 0, so it is floored before the log — at 2^-p, the
        smallest positive value the uniform can take, so the floor rewrites zero
        and nothing else. *)
-    let normal (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
+    let normal (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
       check_shape "normal" shape;
       let ctx = B.context k in
       let n = array_prod shape in
       if n = 0 then zeros ctx dtype shape
       else
         let pairs = (n + 1) / 2 in
-        let box_muller (type c) (compute : (float, c) Dtype.t) =
+        let box_muller (type c) (compute : (float, c) Nx_dtype.t) =
           let u = uniform k compute [| 2; pairs |] in
           let u1 = contiguous (slice [ I 0 ] u) in
           let u2 = contiguous (slice [ I 1 ] u) in
@@ -2614,17 +2635,17 @@ module Make (B : Backend_intf.S) = struct
           cast dtype (reshape shape (shrink [| (0, n) |] z))
         in
         match dtype with
-        | Dtype.Float64 -> box_muller Dtype.float64
-        | _ -> box_muller Dtype.float32
+        | Nx_dtype.Float64 -> box_muller Nx_dtype.float64
+        | _ -> box_muller Nx_dtype.float32
 
     (* Gumbel(0, 1) by inverse CDF: -log (-log u). The double logarithm has a
        pole at each end of the unit interval. The draw never reaches 1, and the
        floor at 2^-p — the smallest value a uniform can take — moves the single
        draw that would land on the other pole and leaves every other alone. *)
-    let gumbel (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
+    let gumbel (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
       check_shape "gumbel" shape;
       let ctx = B.context k in
-      let draw (type c) (compute : (float, c) Dtype.t) =
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
         let u = uniform k compute shape in
         let smallest =
           scalar ctx compute (Float.ldexp 1.0 (-significand_bits compute))
@@ -2632,22 +2653,22 @@ module Make (B : Backend_intf.S) = struct
         cast dtype (neg (log (neg (log (maximum u smallest)))))
       in
       match dtype with
-      | Dtype.Float64 -> draw Dtype.float64
-      | _ -> draw Dtype.float32
+      | Nx_dtype.Float64 -> draw Nx_dtype.float64
+      | _ -> draw Nx_dtype.float32
 
     (* Exponential(1) by inverse CDF. Built from [1 - u] rather than [u]: the
        draw can be exactly 0, where a logarithm diverges, but never 1. *)
-    let exponential (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t
-        =
+    let exponential (type b) k (dtype : (float, b) Nx_dtype.t) shape :
+        (float, b) t =
       check_shape "exponential" shape;
       let ctx = B.context k in
-      let draw (type c) (compute : (float, c) Dtype.t) =
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
         let u = uniform k compute shape in
         cast dtype (neg (log (sub (scalar ctx compute 1.0) u)))
       in
       match dtype with
-      | Dtype.Float64 -> draw Dtype.float64
-      | _ -> draw Dtype.float32
+      | Nx_dtype.Float64 -> draw Nx_dtype.float64
+      | _ -> draw Nx_dtype.float32
 
     (* Marsaglia-Tsang (2000). At a concentration of 1 or more, a normal draw is
        squeezed through v = (1 + cx)^3 and accepted against a uniform;
@@ -2666,7 +2687,7 @@ module Make (B : Backend_intf.S) = struct
       let ctx = B.context k in
       let target = dtype concentration in
       let shape = shape concentration in
-      let draw (type c) (compute : (float, c) Dtype.t) =
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
         let lit v = scalar ctx compute v in
         let tiny = lit (Float.ldexp 1.0 (-significand_bits compute)) in
         let a = at compute concentration in
@@ -2711,8 +2732,8 @@ module Make (B : Backend_intf.S) = struct
         where below_one shifted !acc
       in
       match target with
-      | Dtype.Float64 -> at target (draw Dtype.float64)
-      | _ -> at target (draw Dtype.float32)
+      | Nx_dtype.Float64 -> at target (draw Nx_dtype.float64)
+      | _ -> at target (draw Nx_dtype.float32)
 
     (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas of unit rate.
        Both draws inherit {!gamma}'s bounded-rejection approximation. The sum is
@@ -2844,7 +2865,7 @@ module Make (B : Backend_intf.S) = struct
     let poisson (type b) k (rate : (float, b) t) =
       let ctx = B.context k in
       let shape = shape rate in
-      let draw (type c) (compute : (float, c) Dtype.t) =
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
         let rate = at compute rate in
         let lit v = scalar ctx compute v in
         let ks = split k in
@@ -2858,7 +2879,7 @@ module Make (B : Backend_intf.S) = struct
               v
           in
           let count =
-            along_rounds (cast compute (arange ctx Dtype.int32 0 rounds 1))
+            along_rounds (cast compute (arange ctx Nx_dtype.int32 0 rounds 1))
           in
           let log_fact =
             let acc = ref 0.0 in
@@ -2930,11 +2951,11 @@ module Make (B : Backend_intf.S) = struct
           done;
           where !settled !acc !last
         in
-        cast Dtype.int32 (where small inversion rejection)
+        cast Nx_dtype.int32 (where small inversion rejection)
       in
       match dtype rate with
-      | Dtype.Float64 -> draw Dtype.float64
-      | _ -> draw Dtype.float32
+      | Nx_dtype.Float64 -> draw Nx_dtype.float64
+      | _ -> draw Nx_dtype.float32
 
     (* The draw is built and returned in int32, so the range must fit there:
        [Int32.of_int] would otherwise wrap a wide bound into a valid-looking
@@ -2954,23 +2975,23 @@ module Make (B : Backend_intf.S) = struct
     let randint k ?(low = 0) ~high shape =
       check_range "Rng.randint" ~low ~high;
       let ctx = B.context k in
-      let u = uniform k Dtype.float32 shape in
+      let u = uniform k Nx_dtype.float32 shape in
       (* [u * (high - low)] is non-negative, so the cast's truncation is a
          floor; shifting by [low] afterwards keeps it one, where folding [low]
          in first would truncate towards zero and both drop [low] and double the
          count of 0 for a negative [low]. *)
-      let span = scalar ctx Dtype.float32 (float_of_int (high - low)) in
+      let span = scalar ctx Nx_dtype.float32 (float_of_int (high - low)) in
       add
-        (cast Dtype.int32 (mul u span))
-        (scalar ctx Dtype.int32 (Int32.of_int low))
+        (cast Nx_dtype.int32 (mul u span))
+        (scalar ctx Nx_dtype.int32 (Int32.of_int low))
 
     let bernoulli (type b) k (p : (float, b) t) =
-      let draw (type c) (compute : (float, c) Dtype.t) =
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
         cmplt (uniform k compute (shape p)) (at compute p)
       in
       match dtype p with
-      | Dtype.Float64 -> draw Dtype.float64
-      | _ -> draw Dtype.float32
+      | Nx_dtype.Float64 -> draw Nx_dtype.float64
+      | _ -> draw Nx_dtype.float32
 
     (* Inverse-CDF truncation: a standard normal restricted to [lo, hi] is [sqrt
        2 * erfinv u] for [u] uniform over the images of the bounds under [erf].
@@ -2981,7 +3002,7 @@ module Make (B : Backend_intf.S) = struct
       let lower, upper = pair lower upper in
       let ctx = B.context k in
       let target = dtype lower in
-      let draw (type c) (compute : (float, c) Dtype.t) =
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
         let lit v = scalar ctx compute v in
         let lower = at compute lower and upper = at compute upper in
         (* [erfinv] is infinite at +/-1, which infinite bounds would reach; back
@@ -3003,8 +3024,8 @@ module Make (B : Backend_intf.S) = struct
         minimum (maximum x (minimum lower upper)) (maximum lower upper)
       in
       match target with
-      | Dtype.Float64 -> at target (draw Dtype.float64)
-      | _ -> at target (draw Dtype.float32)
+      | Nx_dtype.Float64 -> at target (draw Nx_dtype.float64)
+      | _ -> at target (draw Nx_dtype.float32)
 
     (* Order [n] random sort keys. The keys are 64 bits wide, built from a
        Threefry row per element, rather than a [uniform] draw: a uniform carries
@@ -3018,16 +3039,16 @@ module Make (B : Backend_intf.S) = struct
       let ctx = B.context k in
       let words = blocks "permutation" k n in
       let word col =
-        cast Dtype.int64
+        cast Nx_dtype.int64
           (reshape [| n |]
              (contiguous (shrink [| (0, n); (col, col + 1) |] words)))
       in
-      let low_32 = scalar ctx Dtype.int64 0xFFFF_FFFFL in
+      let low_32 = scalar ctx Nx_dtype.int64 0xFFFF_FFFFL in
       let sort_key =
         add
           (mul
              (bitwise_and (word 0) low_32)
-             (scalar ctx Dtype.int64 0x1_0000_0000L))
+             (scalar ctx Nx_dtype.int64 0x1_0000_0000L))
           (bitwise_and (word 1) low_32)
       in
       argsort sort_key ~axis:0 ~descending:false
@@ -3053,15 +3074,15 @@ module Make (B : Backend_intf.S) = struct
       let noise compute = astype logits_dtype (gumbel k compute logits_shape) in
       let g =
         match logits_dtype with
-        | Float64 -> noise Dtype.float64
-        | Float32 | Float16 | BFloat16 -> noise Dtype.float32
+        | Float64 -> noise Nx_dtype.float64
+        | Float32 | Float16 | BFloat16 -> noise Nx_dtype.float32
         | Float8_e4m3 | Float8_e5m2 ->
             invalid_arg "Nx.Rng.categorical: float8 logits are not supported"
         | _ ->
             invalid_arg
               "Nx.Rng.categorical: logits requires floating point dtype"
       in
-      astype Dtype.int32 (argmax (add logits g) ~axis ~keepdims:false)
+      astype Nx_dtype.int32 (argmax (add logits g) ~axis ~keepdims:false)
 
     (* The scope: [next_key] performs [E_next_key]; [with_key] answers it by
        [fold_in root counter] with an incrementing counter — the same [fold_in]
@@ -3119,22 +3140,22 @@ module Make (B : Backend_intf.S) = struct
   end
 
   let validate_random_float_params op dtype shape =
-    if not (Dtype.is_float dtype) then
+    if not (Nx_dtype.is_float dtype) then
       err op
         "dtype %s, not a float type, rand/randn only support Float16, Float32, \
          Float64"
-        (Dtype.to_string dtype);
+        (Nx_dtype.to_string dtype);
     if Array.exists (fun x -> x < 0) shape then
       err op "invalid shape %s, dimensions must be non-negative"
         (Shape.to_string shape)
 
   (* Sample at [dtype] rather than at float32 and narrow: rounding a float32
      draw down to a narrower dtype can land on 1. *)
-  let rand ctx (type b) (dtype : (float, b) Dtype.t) shape =
+  let rand ctx (type b) (dtype : (float, b) Nx_dtype.t) shape =
     validate_random_float_params "rand" dtype shape;
     Rng.uniform (Rng.next_key ctx) dtype shape
 
-  let randn ctx (type b) (dtype : (float, b) Dtype.t) shape =
+  let randn ctx (type b) (dtype : (float, b) Nx_dtype.t) shape =
     validate_random_float_params "randn" dtype shape;
     Rng.normal (Rng.next_key ctx) dtype shape
 
@@ -3252,9 +3273,9 @@ module Make (B : Backend_intf.S) = struct
       let idx =
         add
           (mul
-             (arange ctx Dtype.int32 0 diag_len 1)
-             (scalar ctx Dtype.int32 (Int32.of_int step)))
-          (scalar ctx Dtype.int32 (Int32.of_int start))
+             (arange ctx Nx_dtype.int32 0 diag_len 1)
+             (scalar ctx Nx_dtype.int32 (Int32.of_int step)))
+          (scalar ctx Nx_dtype.int32 (Int32.of_int start))
       in
       take ~axis:(nd - 2) ~indices:idx x_flat
 
@@ -3272,7 +3293,7 @@ module Make (B : Backend_intf.S) = struct
     if n = 0 then zeros ctx dt [| s; s |]
     else
       let template = zeros ctx dt [| s; s |] in
-      let i = arange ctx Dtype.int32 0 n 1 in
+      let i = arange ctx Nx_dtype.int32 0 n 1 in
       (* [B.scatter] needs [indices]' non-axis dimensions to match the
          template's, so [s - n] dummy rows/columns ride along scattering zeros —
          every written cell is distinct, and the dummies land where the template
@@ -3285,9 +3306,9 @@ module Make (B : Backend_intf.S) = struct
         (* [v_i] at [i, i+k]: one index per row along axis 1. *)
         B.scatter ~mode:`Set ~unique_indices:true template
           ~indices:
-            (extend ~axis:0 ~dtype:Dtype.int32 [| pad; 1 |]
+            (extend ~axis:0 ~dtype:Nx_dtype.int32 [| pad; 1 |]
                (reshape [| n; 1 |]
-                  (add i (scalar ctx Dtype.int32 (Int32.of_int k)))))
+                  (add i (scalar ctx Nx_dtype.int32 (Int32.of_int k)))))
           ~updates:
             (extend ~axis:0 ~dtype:dt [| pad; 1 |] (reshape [| n; 1 |] v))
           ~axis:1
@@ -3295,9 +3316,9 @@ module Make (B : Backend_intf.S) = struct
         (* [v_j] at [j+|k|, j]: one index per column along axis 0. *)
         B.scatter ~mode:`Set ~unique_indices:true template
           ~indices:
-            (extend ~axis:1 ~dtype:Dtype.int32 [| 1; pad |]
+            (extend ~axis:1 ~dtype:Nx_dtype.int32 [| 1; pad |]
                (reshape [| 1; n |]
-                  (add i (scalar ctx Dtype.int32 (Int32.of_int (-k))))))
+                  (add i (scalar ctx Nx_dtype.int32 (Int32.of_int (-k))))))
           ~updates:
             (extend ~axis:1 ~dtype:dt [| 1; pad |] (reshape [| 1; n |] v))
           ~axis:0
@@ -3340,7 +3361,7 @@ module Make (B : Backend_intf.S) = struct
       (* [re - (z - re)] rather than [2·re - z]: the doubling would overflow for
          components above half the dtype maximum. The float64 hop is exact for
          both complex dtypes. *)
-      let re = cast (dtype z) (cast Dtype.float64 z) in
+      let re = cast (dtype z) (cast Nx_dtype.float64 z) in
       sub re (sub z re)
     in
     match dtype x with
@@ -4162,10 +4183,10 @@ module Make (B : Backend_intf.S) = struct
           max (sum (abs x) ~axes:[ ndim x - 2 ] ~keepdims) ~keepdims
         else
           let p_t =
-            full (B.context x) (dtype x) [||] (Dtype.of_float (dtype x) p)
+            full (B.context x) (dtype x) [||] (Nx_dtype.of_float (dtype x) p)
           in
           let inv_p =
-            div (full (B.context x) (dtype x) [||] (Dtype.one (dtype x))) p_t
+            div (full (B.context x) (dtype x) [||] (Nx_dtype.one (dtype x))) p_t
           in
           pow (sum (pow (abs x) p_t) ?axes ~keepdims) inv_p
     | _ -> invalid_arg "norm: this combination of ord and axis not implemented"
@@ -4175,8 +4196,8 @@ module Make (B : Backend_intf.S) = struct
     check_float_or_complex ~op:"slogdet" a;
     let dtype_a = dtype a in
     let is_complex =
-      Dtype.equal dtype_a Dtype.complex64
-      || Dtype.equal dtype_a Dtype.complex128
+      Nx_dtype.equal dtype_a Nx_dtype.complex64
+      || Nx_dtype.equal dtype_a Nx_dtype.complex128
     in
     let sh = shape a in
     let rank = Array.length sh in
@@ -4187,18 +4208,18 @@ module Make (B : Backend_intf.S) = struct
       let a12 = slice_internal (prefix @ [ I 0; I 1 ]) a in
       let a21 = slice_internal (prefix @ [ I 1; I 0 ]) a in
       let a22 = slice_internal (prefix @ [ I 1; I 1 ]) a in
-      let det64 = sub (mul a11 a22) (mul a12 a21) |> cast Dtype.float64 in
-      let z = zeros (B.context det64) Dtype.float64 (shape det64) in
+      let det64 = sub (mul a11 a22) (mul a12 a21) |> cast Nx_dtype.float64 in
+      let z = zeros (B.context det64) Nx_dtype.float64 (shape det64) in
       let sign_float =
         sub
-          (cast Dtype.float32 (cast Dtype.float64 (greater det64 z)))
-          (cast Dtype.float32 (cast Dtype.float64 (less det64 z)))
+          (cast Nx_dtype.float32 (cast Nx_dtype.float64 (greater det64 z)))
+          (cast Nx_dtype.float32 (cast Nx_dtype.float64 (less det64 z)))
       in
       let abs_det = abs det64 in
       let logdet =
-        cast Dtype.float32
+        cast Nx_dtype.float32
           (where (cmpeq abs_det z)
-             (full (B.context det64) Dtype.float64 (shape det64)
+             (full (B.context det64) Nx_dtype.float64 (shape det64)
                 Float.neg_infinity)
              (log abs_det))
       in
@@ -4211,12 +4232,12 @@ module Make (B : Backend_intf.S) = struct
         if ndim signs > 1 then prod signs ~axes:[ -1 ] ~keepdims:false
         else prod signs
       in
-      let sign_float = cast Dtype.float32 (cast Dtype.float64 sign_det) in
-      let abs_f64 = cast Dtype.float64 (abs r_diag) in
-      let z = zeros (B.context abs_f64) Dtype.float64 (shape abs_f64) in
+      let sign_float = cast Nx_dtype.float32 (cast Nx_dtype.float64 sign_det) in
+      let abs_f64 = cast Nx_dtype.float64 (abs r_diag) in
+      let z = zeros (B.context abs_f64) Nx_dtype.float64 (shape abs_f64) in
       let log_abs =
         where (cmpeq abs_f64 z)
-          (full (B.context abs_f64) Dtype.float64 (shape abs_f64)
+          (full (B.context abs_f64) Nx_dtype.float64 (shape abs_f64)
              Float.neg_infinity)
           (log abs_f64)
       in
@@ -4224,7 +4245,7 @@ module Make (B : Backend_intf.S) = struct
         if ndim log_abs > 1 then sum log_abs ~axes:[ -1 ] ~keepdims:false
         else sum log_abs
       in
-      (sign_float, cast Dtype.float32 logdet64)
+      (sign_float, cast Nx_dtype.float32 logdet64)
 
   and det a =
     check_square ~op:"det" a;
@@ -4246,9 +4267,13 @@ module Make (B : Backend_intf.S) = struct
     let n = sh.(Array.length sh - 1) in
     let eps =
       let dt = dtype a in
-      if Dtype.equal dt Dtype.float32 || Dtype.equal dt Dtype.complex64 then
-        1.2e-7
-      else if Dtype.equal dt Dtype.float64 || Dtype.equal dt Dtype.complex128
+      if
+        Nx_dtype.equal dt Nx_dtype.float32
+        || Nx_dtype.equal dt Nx_dtype.complex64
+      then 1.2e-7
+      else if
+        Nx_dtype.equal dt Nx_dtype.float64
+        || Nx_dtype.equal dt Nx_dtype.complex128
       then 2.2e-16
       else 1e-15
     in
@@ -4278,7 +4303,7 @@ module Make (B : Backend_intf.S) = struct
     check_square ~op a;
     check_float_or_complex ~op a;
     check_float_or_complex ~op b;
-    if not (Dtype.equal (dtype a) (dtype b)) then
+    if not (Nx_dtype.equal (dtype a) (dtype b)) then
       err op "a and b must have the same dtype";
     let sh_a = shape a in
     let n = sh_a.(Array.length sh_a - 1) in
@@ -4328,11 +4353,13 @@ module Make (B : Backend_intf.S) = struct
        the check in the graph: the triangular solve then reports [`Singular]
        itself, and a compiled program yields infinities instead. *)
     let r =
-      let r_diag = diagonal r |> cast Dtype.float64 in
+      let r_diag = diagonal r |> cast Nx_dtype.float64 in
       let m = dim (-2) a in
-      let eps = if Dtype.equal (dtype a) Dtype.float32 then 1e-6 else 1e-12 in
+      let eps =
+        if Nx_dtype.equal (dtype a) Nx_dtype.float32 then 1e-6 else 1e-12
+      in
       let tol_t =
-        full (B.context r_diag) Dtype.float64 (shape r_diag)
+        full (B.context r_diag) Nx_dtype.float64 (shape r_diag)
           (eps *. float_of_int m)
       in
       where (expand_dims [ -1 ] (less (abs r_diag) tol_t)) (zeros_like r) r
@@ -4356,11 +4383,12 @@ module Make (B : Backend_intf.S) = struct
     let dtype_a = dtype a in
     let eps =
       if
-        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex64
+        Nx_dtype.equal dtype_a Nx_dtype.float32
+        || Nx_dtype.equal dtype_a Nx_dtype.complex64
       then 1.2e-7
       else if
-        Dtype.equal dtype_a Dtype.float64
-        || Dtype.equal dtype_a Dtype.complex128
+        Nx_dtype.equal dtype_a Nx_dtype.float64
+        || Nx_dtype.equal dtype_a Nx_dtype.complex128
       then 2.2e-16
       else 1e-15
     in
@@ -4381,14 +4409,14 @@ module Make (B : Backend_intf.S) = struct
         |> cast dtype_a
       in
       let v =
-        if Dtype.is_complex dtype_a then matrix_transpose (conjugate vh)
+        if Nx_dtype.is_complex dtype_a then matrix_transpose (conjugate vh)
         else matrix_transpose vh
       in
       (* Scale V's columns. The singleton belongs immediately before the
          singular-value axis so batched factors [..., n, k] and [..., k]
          broadcast as [..., n, k]. *)
       let vs = mul v (expand_dims [ -2 ] s_inv) in
-      if Dtype.is_complex dtype_a then
+      if Nx_dtype.is_complex dtype_a then
         matmul vs (matrix_transpose (conjugate u))
       else matmul vs (matrix_transpose u)
     in
@@ -4405,7 +4433,7 @@ module Make (B : Backend_intf.S) = struct
         let z = zeros (B.context vals) (dtype vals) (shape vals) in
         let sign_fixed = where (cmpeq sign_vals z) o sign_vals in
         let vecs_h =
-          if Dtype.is_complex dtype_a then matrix_transpose (conjugate vecs)
+          if Nx_dtype.is_complex dtype_a then matrix_transpose (conjugate vecs)
           else matrix_transpose vecs
         in
         let vh = mul (expand_dims [ -1 ] (cast dtype_a sign_fixed)) vecs_h in
@@ -4423,8 +4451,8 @@ module Make (B : Backend_intf.S) = struct
       | Some v -> v
       | None ->
           let eps =
-            if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
-            else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
+            if Nx_dtype.equal (dtype a) Nx_dtype.float32 then 1.2e-7
+            else if Nx_dtype.equal (dtype a) Nx_dtype.float64 then 2.2e-16
             else 1e-15
           in
           float_of_int (Stdlib.max m n)
@@ -4506,8 +4534,8 @@ module Make (B : Backend_intf.S) = struct
         let mx = max s in
         let max_v = mx |> unsafe_get [] in
         let eps =
-          if Dtype.equal ds Dtype.float32 then 1.2e-7
-          else if Dtype.equal ds Dtype.float64 then 2.2e-16
+          if Nx_dtype.equal ds Nx_dtype.float32 then 1.2e-7
+          else if Nx_dtype.equal ds Nx_dtype.float64 then 2.2e-16
           else 1e-15
         in
         let tol_t = scalar (B.context x) ds (eps *. max_v) in
@@ -4627,7 +4655,7 @@ module Make (B : Backend_intf.S) = struct
             if target > cur then (
               let pad_config = Array.make (ndim !acc) (0, 0) in
               pad_config.(ax) <- (0, target - cur);
-              acc := B.pad !acc pad_config (Dtype.zero (dtype !acc)))
+              acc := B.pad !acc pad_config (Nx_dtype.zero (dtype !acc)))
             else if target < cur then
               acc :=
                 B.shrink !acc
@@ -4856,21 +4884,23 @@ module Make (B : Backend_intf.S) = struct
       if n mod 2 = 0 then
         concatenate ~axis:0
           [
-            cast dt (arange ctx Dtype.int32 0 (n / 2) 1);
-            cast dt (arange ctx Dtype.int32 (-(n / 2)) 0 1);
+            cast dt (arange ctx Nx_dtype.int32 0 (n / 2) 1);
+            cast dt (arange ctx Nx_dtype.int32 (-(n / 2)) 0 1);
           ]
       else
         concatenate ~axis:0
           [
-            cast dt (arange ctx Dtype.int32 0 ((n + 1) / 2) 1);
-            cast dt (arange ctx Dtype.int32 (-((n - 1) / 2)) 0 1);
+            cast dt (arange ctx Nx_dtype.int32 0 ((n + 1) / 2) 1);
+            cast dt (arange ctx Nx_dtype.int32 (-((n - 1) / 2)) 0 1);
           ]
     in
     mul_s freqs v
 
   let rfftfreq ctx dt ?(d = 1.0) n =
     let v = 1.0 /. (float_of_int n *. d) in
-    mul (cast dt (arange ctx Dtype.int32 0 ((n / 2) + 1) 1)) (scalar ctx dt v)
+    mul
+      (cast dt (arange ctx Nx_dtype.int32 0 ((n / 2) + 1) 1))
+      (scalar ctx dt v)
 
   let fftshift ?axes x =
     let sh = shape x in
@@ -4939,7 +4969,7 @@ module Make (B : Backend_intf.S) = struct
             window;
         w
 
-  let stft (cdt : (Complex.t, 'c) Dtype.t) ~window ?step ?win x :
+  let stft (cdt : (Complex.t, 'c) Nx_dtype.t) ~window ?step ?win x :
       (Complex.t, 'c) t =
     let step = stft_step ~window step in
     let r = ndim x in
@@ -4953,7 +4983,7 @@ module Make (B : Backend_intf.S) = struct
     let frames = B.sliding_window x ~axis:(r - 1) ~window ~step in
     rfft cdt (mul frames w) ~axis:(-1)
 
-  let istft (dt : (float, 'a) Dtype.t) ~window ?step ?win ?length z :
+  let istft (dt : (float, 'a) Nx_dtype.t) ~window ?step ?win ?length z :
       (float, 'a) t =
     let step = stft_step ~window step in
     let r = ndim z in
@@ -5000,8 +5030,8 @@ module Make (B : Backend_intf.S) = struct
        honest 0 rather than a NaN. *)
     let denom =
       where
-        (equal envelope (scalar_like envelope (Dtype.zero dt)))
-        (scalar_like envelope (Dtype.one dt))
+        (equal envelope (scalar_like envelope (Nx_dtype.zero dt)))
+        (scalar_like envelope (Nx_dtype.one dt))
         envelope
     in
     let y = div signal denom in
@@ -5019,7 +5049,7 @@ module Make (B : Backend_intf.S) = struct
           pad
             (Array.init rank (fun i ->
                  if i = rank - 1 then (0, l - out_len) else (0, 0)))
-            (Dtype.zero dt) y
+            (Nx_dtype.zero dt) y
         else y
 
   (* Discrete cosine and sine transforms. These are expressed in terms of the
@@ -5044,22 +5074,22 @@ module Make (B : Backend_intf.S) = struct
         mul_s (real_transform_slice_last (R (n - 1, n)) x) factor;
       ]
 
-  let real_transform_alternating_signs (type a) (dtype : (float, a) Dtype.t) ctx
-      n =
-    let indices = arange ctx Dtype.int32 0 n 1 in
+  let real_transform_alternating_signs (type a) (dtype : (float, a) Nx_dtype.t)
+      ctx n =
+    let indices = arange ctx Nx_dtype.int32 0 n 1 in
     let even = equal_s (mod_s indices 2l) 0l in
     where even (ones ctx dtype [| n |]) (full ctx dtype [| n |] (-1.0))
 
-  let real_transform_phase (type a b) (float_dtype : (float, a) Dtype.t)
-      (complex_dtype : (Complex.t, b) Dtype.t) ctx n =
-    let indices = cast float_dtype (arange ctx Dtype.int32 0 n 1) in
+  let real_transform_phase (type a b) (float_dtype : (float, a) Nx_dtype.t)
+      (complex_dtype : (Complex.t, b) Nx_dtype.t) ctx n =
+    let indices = cast float_dtype (arange ctx Nx_dtype.int32 0 n 1) in
     let angles = mul_s indices (-.Float.pi /. (2.0 *. float_of_int n)) in
     add
       (cast complex_dtype (cos angles))
       (mul_s (cast complex_dtype (sin angles)) Complex.{ re = 0.0; im = 1.0 })
 
-  let dct_raw_last (type a b) ~type_ (float_dtype : (float, a) Dtype.t)
-      (complex_dtype : (Complex.t, b) Dtype.t) (x : (float, a) t) =
+  let dct_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)
+      (complex_dtype : (Complex.t, b) Nx_dtype.t) (x : (float, a) t) =
     let ctx = B.context x in
     let n = dim (-1) x in
     let dct_2 x =
@@ -5083,7 +5113,7 @@ module Make (B : Backend_intf.S) = struct
         concatenate ~axis:(-1) [ x; zeros ctx float_dtype zero_shape; tail ]
       in
       let spectrum = fft (cast complex_dtype extended) in
-      let odd_indices = arange ctx Dtype.int32 1 (2 * n) 2 in
+      let odd_indices = arange ctx Nx_dtype.int32 1 (2 * n) 2 in
       cast float_dtype (take spectrum ~axis:(-1) ~indices:odd_indices)
     in
     match type_ with
@@ -5105,11 +5135,11 @@ module Make (B : Backend_intf.S) = struct
         in
         let transformed = dct_2 padded in
         take transformed ~axis:(-1)
-          ~indices:(arange ctx Dtype.int32 1 (2 * n) 2)
+          ~indices:(arange ctx Nx_dtype.int32 1 (2 * n) 2)
     | _ -> assert false
 
-  let dst_raw_last (type a b) ~type_ (float_dtype : (float, a) Dtype.t)
-      (complex_dtype : (Complex.t, b) Dtype.t) (x : (float, a) t) =
+  let dst_raw_last (type a b) ~type_ (float_dtype : (float, a) Nx_dtype.t)
+      (complex_dtype : (Complex.t, b) Nx_dtype.t) (x : (float, a) t) =
     let ctx = B.context x in
     let n = dim (-1) x in
     let signs = real_transform_alternating_signs float_dtype ctx n in
@@ -5140,7 +5170,7 @@ module Make (B : Backend_intf.S) = struct
     | Float32 | Float64 -> ()
     | dtype ->
         err op "dtype, expected float32 or float64, got %s"
-          (Dtype.to_string dtype));
+          (Nx_dtype.to_string dtype));
     if type_ < 1 || type_ > 4 then
       err op "type_, expected one of 1, 2, 3, or 4, got %d" type_
 
@@ -5289,7 +5319,7 @@ module Make (B : Backend_intf.S) = struct
     let dt = dtype x in
     let shifted =
       if scale = 1.0 then sub x max_x
-      else mul (scalar_like x (Dtype.of_float dt scale)) (sub x max_x)
+      else mul (scalar_like x (Nx_dtype.of_float dt scale)) (sub x max_x)
     in
     let e = exp shifted in
     div e (sum e ~axes:axes_norm ~keepdims:true)
@@ -5303,7 +5333,7 @@ module Make (B : Backend_intf.S) = struct
       let dt = dtype x in
       let scaled =
         if scale = 1.0 then shifted
-        else mul (scalar_like shifted (Dtype.of_float dt scale)) shifted
+        else mul (scalar_like shifted (Nx_dtype.of_float dt scale)) shifted
       in
       let log_den = log (sum (exp scaled) ~axes:axes_norm ~keepdims:true) in
       sub scaled log_den
@@ -5336,7 +5366,7 @@ module Make (B : Backend_intf.S) = struct
         sub log_sum
           (log
              (scalar_like log_sum
-                (Dtype.of_float (dtype x) (float_of_int count))))
+                (Nx_dtype.of_float (dtype x) (float_of_int count))))
       in
       if keepdims then log_mean else squeeze ~axes:(List.rev axes_norm) log_mean
 
@@ -5384,7 +5414,7 @@ module Make (B : Backend_intf.S) = struct
     div (sub x mean_tensor)
       (sqrt
          (add variance_tensor
-            (scalar_like x (Dtype.of_float (dtype x) epsilon))))
+            (scalar_like x (Nx_dtype.of_float (dtype x) epsilon))))
 
   let erf x = unaryop B.erf x
 
@@ -5490,9 +5520,9 @@ module Make (B : Backend_intf.S) = struct
 
   let one_hot ~num_classes index_tensor =
     let dt = dtype index_tensor in
-    if not (Dtype.is_int dt || Dtype.is_uint dt) then
+    if not (Nx_dtype.is_int dt || Nx_dtype.is_uint dt) then
       err "one_hot" "dtype %s, indices must be integer type"
-        (Dtype.to_string dt);
+        (Nx_dtype.to_string dt);
     let idx_exp = unsqueeze index_tensor ~axes:[ ndim index_tensor ] in
     let nd_exp = ndim idx_exp in
     let s = Array.make nd_exp 1 in
@@ -5500,12 +5530,12 @@ module Make (B : Backend_intf.S) = struct
     let arange_b =
       reshape s (arange (B.context index_tensor) dt 0 num_classes 1)
     in
-    cast Dtype.uint8 (cmpeq idx_exp arange_b)
+    cast Nx_dtype.uint8 (cmpeq idx_exp arange_b)
 
   (* ───── Display and Formatting ───── *)
 
   let pp_shape = Shape.pp
-  let pp_dtype ppf dtype = Format.pp_print_string ppf (Dtype.to_string dtype)
+  let pp_dtype ppf dtype = Format.pp_print_string ppf (Nx_dtype.to_string dtype)
 
   let pp (type a b) fmt (x : (a, b) t) =
     let open Format in

@@ -36,7 +36,8 @@
 #include <caml/bigarray.h>
 #include <caml/mlvalues.h>
 
-#include "nx_buffer_stubs.h" /* extended kinds + f16/bf16/fp8 converters */
+#include "nx_buffer_stubs.h" /* extended kinds */
+#include "nx_dtype.h"        /* f16/bf16/fp8 converters */
 
 /* Prefixed to avoid colliding with backend_c's unprefixed complex typedefs
    should a translation unit ever pull in both backends' headers. */
@@ -106,15 +107,15 @@ static inline void nx_c_aligned_free(void *p) {
 
    The one place a dtype is described. Adding a dtype is exactly one new row.
 
-   ONE table in Dtype.t declaration order, so the generated enum values equal
-   Dtype.Packed.tag (0=Float16 … 18=Bool) and NX_C_DTYPE_COUNT falls out as the
-   trailing enumerator — the correspondence is pinned by a _Static_assert below
-   and by the binding's kind->tag test, never by hand. Two iterators project the
-   single table: NX_C_FOR_EACH_DTYPE walks all 19 rows (enum, kind switch, class,
-   size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the compute rows (load/store,
-   float->int, kernel dispatch tables) — packed rows expand to nothing via the
-   `sel` selector, so no compute code is ever emitted for int4/uint4 and no
-   second list exists to drift.
+   ONE table in Nx_dtype.t declaration order, so the generated enum values
+   equal its constructor indices (0=Float16 … 18=Bool) and NX_C_DTYPE_COUNT
+   falls out as the trailing enumerator — the correspondence is pinned by a
+   _Static_assert below and by the binding's kind->tag test, never by hand. Two
+   iterators project the single table: NX_C_FOR_EACH_DTYPE walks all 19 rows
+   (enum, kind switch, class, size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the
+   compute rows (load/store, float->int, kernel dispatch tables) — packed rows
+   expand to nothing via the `sel` selector, so no compute code is ever
+   emitted for int4/uint4 and no second list exists to drift.
 
    Row: X(A, suffix, kind, storage, compute, load, store, cat, sel)
      A        threaded generator (supplied by the iterator, not by callers).
@@ -126,8 +127,8 @@ static inline void nx_c_aligned_free(void *p) {
      compute  C type kernels compute in. Small ints widen so wrap-on-store
               gives modular semantics and reductions gain headroom; f16/bf16/
               fp8 compute in float. `void` on packed rows (never instantiated).
-     load     storage-value -> compute-value converter (NX_C_ID, a
-              nx_buffer_stubs.h converter, or the bool normalizer). Never
+     load     storage-value -> compute-value converter (NX_C_ID, an
+              nx_dtype.h converter, or the bool normalizer). Never
               redefine the buffer converters.
      store    compute-value -> storage-value converter.
      cat      category as a BARE token (not a macro, so it survives argument
@@ -227,13 +228,13 @@ typedef enum {
       NX_C_DTYPE_COUNT
 } nx_c_dtype;
 
-/* nx_c_dtype must equal Dtype.Packed.tag; pin the anchors (and the packed
-   boundary, the likeliest drift point) at compile time. The binding's per-
-   dtype kind->tag test pins the rest. */
+/* nx_c_dtype must equal Nx_dtype.t's constructor index; pin the anchors (and
+   the packed boundary, the likeliest drift point) at compile time. The
+   binding's per-dtype kind->tag test pins the rest. */
 _Static_assert(NX_C_DTYPE_f16 == 0 && NX_C_DTYPE_f8e5m2 == 5 && NX_C_DTYPE_i4 == 6 &&
                    NX_C_DTYPE_u4 == 7 && NX_C_DTYPE_i8 == 8 && NX_C_DTYPE_u64 == 15 &&
                    NX_C_DTYPE_bool_ == 18 && NX_C_DTYPE_COUNT == 19,
-               "nx_c_dtype must equal Dtype.Packed.tag");
+               "nx_c_dtype must equal Nx_dtype.t's constructor index");
 
 /* ── Per-dtype load/store and saturating float->int (compute dtypes only) ──
 

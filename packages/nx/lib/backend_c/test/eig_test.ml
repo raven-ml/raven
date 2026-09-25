@@ -123,15 +123,15 @@ let conj_sym ~got ~tol =
 
 (* ── Runners ───────────────────────────────────────────────────────────────*)
 
-let run_real (type b) ~(kind : (float, b) Buf.kind) ~n (a : float array)
+let run_real (type b) ~(kind : (float, b) Nx_dtype.t) ~n (a : float array)
     ~vectors =
   let ain = Buf.create kind (n * n) in
   for t = 0 to (n * n) - 1 do
     Buf.set ain t a.(t)
   done;
-  let wout = Buf.create Buf.complex128 n in
+  let wout = Buf.create Nx_dtype.complex128 n in
   if vectors then (
-    let vout = Buf.create Buf.complex128 (n * n) in
+    let vout = Buf.create Nx_dtype.complex128 (n * n) in
     eig_ext (ffi wout [| n |] [| 1 |])
       (ffi vout [| n; n |] (contig [| n; n |]))
       (ffi ain [| n; n |] (contig [| n; n |]))
@@ -147,14 +147,14 @@ let run_real (type b) ~(kind : (float, b) Buf.kind) ~n (a : float array)
     let w = Array.init n (fun i -> Buf.get wout i) in
     (w, None))
 
-let run_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~n
+let run_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~n
     (a : Complex.t array) =
   let ain = Buf.create kind (n * n) in
   for t = 0 to (n * n) - 1 do
     Buf.set ain t a.(t)
   done;
-  let wout = Buf.create Buf.complex128 n in
-  let vout = Buf.create Buf.complex128 (n * n) in
+  let wout = Buf.create Nx_dtype.complex128 n in
+  let vout = Buf.create Nx_dtype.complex128 (n * n) in
   eig_ext (ffi wout [| n |] [| 1 |])
     (ffi vout [| n; n |] (contig [| n; n |]))
     (ffi ain [| n; n |] (contig [| n; n |]))
@@ -166,27 +166,27 @@ let run_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~n
 (* Eigenvalues only (vectors=false): the C never touches the v slot, so a
    complex128 placeholder (wout) is passed there. Used for the self-consistency
    gate — the values must agree with the vectors=true path. *)
-let run_complex_vals (type b) ~(kind : (Complex.t, b) Buf.kind) ~n
+let run_complex_vals (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~n
     (a : Complex.t array) =
   let ain = Buf.create kind (n * n) in
   for t = 0 to (n * n) - 1 do
     Buf.set ain t a.(t)
   done;
-  let wout = Buf.create Buf.complex128 n in
+  let wout = Buf.create Nx_dtype.complex128 n in
   eig_ext (ffi wout [| n |] [| 1 |]) (ffi wout [| n |] [| 1 |])
     (ffi ain [| n; n |] (contig [| n; n |]))
     false;
   Array.init n (fun i -> Buf.get wout i)
 
 let run_real_batched ~b ~n (mats : float array array) =
-  let ain = Buf.create Buf.float64 (b * n * n) in
+  let ain = Buf.create Nx_dtype.float64 (b * n * n) in
   for bi = 0 to b - 1 do
     for t = 0 to (n * n) - 1 do
       Buf.set ain ((bi * n * n) + t) mats.(bi).(t)
     done
   done;
-  let wout = Buf.create Buf.complex128 (b * n) in
-  let vout = Buf.create Buf.complex128 (b * n * n) in
+  let wout = Buf.create Nx_dtype.complex128 (b * n) in
+  let vout = Buf.create Nx_dtype.complex128 (b * n * n) in
   eig_ext
     (ffi wout [| b; n |] (contig [| b; n |]))
     (ffi vout [| b; n; n |] (contig [| b; n; n |]))
@@ -199,8 +199,8 @@ let run_real_batched ~b ~n (mats : float array array) =
 
 (* ── Checkers ───────────────────────────────────────────────────────────────*)
 
-let check_real (type b) ~(kind : (float, b) Buf.kind) ~name ~n ~tol_res ~tol_ev
-    ~a ~expected () =
+let check_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~n ~tol_res
+    ~tol_ev ~a ~expected () =
   let w, vo = run_real ~kind ~n a ~vectors:true in
   let v = match vo with Some v -> v | None -> assert false in
   let ac = ac_of_real n a in
@@ -211,7 +211,7 @@ let check_real (type b) ~(kind : (float, b) Buf.kind) ~name ~n ~tol_res ~tol_ev
     (Printf.sprintf "%s res=%.2e evset=%.2e conj=%b" name res evm cs)
     (res <= tol_res && evm <= tol_ev && cs)
 
-let check_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~n ~tol_res
+let check_complex (type b) ~(kind : (Complex.t, b) Nx_dtype.t) ~name ~n ~tol_res
     ~tol_ev ~a ~expected () =
   let w, v = run_complex ~kind ~n a in
   let res = residual n a w v in
@@ -225,7 +225,7 @@ let check_complex (type b) ~(kind : (Complex.t, b) Buf.kind) ~name ~n ~tol_res
 (* [[0,-1],[1,0]]: characteristic λ²+1 ⇒ eigenvalues ±i. Real input, purely
    imaginary spectrum — the smallest complex-from-real case. *)
 let () =
-  check_real ~kind:Buf.float64 ~name:"rot90 (±i)" ~n:2 ~tol_res:1e-9
+  check_real ~kind:Nx_dtype.float64 ~name:"rot90 (±i)" ~n:2 ~tol_res:1e-9
     ~tol_ev:1e-9 ~a:[| 0.; -1.; 1.; 0. |]
     ~expected:[| c 0. 1.; c 0. (-1.) |]
     ()
@@ -236,8 +236,8 @@ let () =
    eigenvector matrix is intentionally rank-deficient — documented, not a bug.
    Per-pair residual still holds. *)
 let () =
-  check_real ~kind:Buf.float64 ~name:"jordan defective (2,2)" ~n:2 ~tol_res:1e-9
-    ~tol_ev:1e-9 ~a:[| 2.; 1.; 0.; 2. |]
+  check_real ~kind:Nx_dtype.float64 ~name:"jordan defective (2,2)" ~n:2
+    ~tol_res:1e-9 ~tol_ev:1e-9 ~a:[| 2.; 1.; 0.; 2. |]
     ~expected:[| c 2. 0.; c 2. 0. |]
     ()
 
@@ -246,8 +246,8 @@ let () =
    {1,2,3} but wrecks the row/column norms — balancing must recover it. A = [[0,
    1e8, 0], [0, 0, 1e8], [6e-16, -1.1e-7, 6]]. *)
 let () =
-  check_real ~kind:Buf.float64 ~name:"graded scaling (1,2,3)" ~n:3 ~tol_res:1e-9
-    ~tol_ev:1e-5
+  check_real ~kind:Nx_dtype.float64 ~name:"graded scaling (1,2,3)" ~n:3
+    ~tol_res:1e-9 ~tol_ev:1e-5
     ~a:[| 0.; 1e8; 0.; 0.; 0.; 1e8; 6e-16; -1.1e-7; 6. |]
     ~expected:[| c 1. 0.; c 2. 0.; c 3. 0. |]
     ()
@@ -256,7 +256,7 @@ let () =
    near-equal real roots stress deflation. Coefficients: x³ − 3x² + 2.999999x −
    0.999999. *)
 let () =
-  check_real ~kind:Buf.float64 ~name:"clustered (~1)" ~n:3 ~tol_res:1e-9
+  check_real ~kind:Nx_dtype.float64 ~name:"clustered (~1)" ~n:3 ~tol_res:1e-9
     ~tol_ev:1e-6
     ~a:[| 0.; 1.; 0.; 0.; 0.; 1.; 0.999999; -2.999999; 3. |]
     ~expected:[| c 0.999 0.; c 1.0 0.; c 1.001 0. |]
@@ -266,7 +266,7 @@ let () =
    2·e^{±iπ/4} = √2 ± i√2. *)
 let () =
   let r = sqrt 2.0 in
-  check_real ~kind:Buf.float64 ~name:"rotation+scale (√2±i√2)" ~n:2
+  check_real ~kind:Nx_dtype.float64 ~name:"rotation+scale (√2±i√2)" ~n:2
     ~tol_res:1e-9 ~tol_ev:1e-9 ~a:[| r; -.r; r; r |]
     ~expected:[| c r r; c r (-.r) |]
     ()
@@ -274,8 +274,8 @@ let () =
 (* Mixed real+complex spectrum: companion of (x−2)(x²+1) ⇒ eigenvalues 2, ±i. x³
    − 2x² + x − 2 ⇒ companion [[0,1,0],[0,0,1],[2,-1,2]]. *)
 let () =
-  check_real ~kind:Buf.float64 ~name:"mixed spectrum (2,±i)" ~n:3 ~tol_res:1e-9
-    ~tol_ev:1e-9
+  check_real ~kind:Nx_dtype.float64 ~name:"mixed spectrum (2,±i)" ~n:3
+    ~tol_res:1e-9 ~tol_ev:1e-9
     ~a:[| 0.; 1.; 0.; 0.; 0.; 1.; 2.; -1.; 2. |]
     ~expected:[| c 2. 0.; c 0. 1.; c 0. (-1.) |]
     ()
@@ -284,7 +284,7 @@ let () =
    poly λ³−7λ²+18λ−16 = (λ−2)(λ²−5λ+8) ⇒ 2, 2.5 ± i·√7/2. *)
 let () =
   let s7 = sqrt 7.0 /. 2.0 in
-  check_real ~kind:Buf.float64 ~name:"conformance eig-general" ~n:3
+  check_real ~kind:Nx_dtype.float64 ~name:"conformance eig-general" ~n:3
     ~tol_res:1e-9 ~tol_ev:1e-9
     ~a:[| 2.; -1.; 0.; 1.; 3.; -1.; 0.; 1.; 2. |]
     ~expected:[| c 2. 0.; c 2.5 s7; c 2.5 (-.s7) |]
@@ -296,7 +296,7 @@ let () =
    √2±i√2 by ~1e-7, well inside the loosened tolerances. *)
 let () =
   let r = sqrt 2.0 in
-  check_real ~kind:Buf.float32 ~name:"rotation+scale upcast f32" ~n:2
+  check_real ~kind:Nx_dtype.float32 ~name:"rotation+scale upcast f32" ~n:2
     ~tol_res:1e-4 ~tol_ev:1e-4 ~a:[| r; -.r; r; r |]
     ~expected:[| c r r; c r (-.r) |]
     ()
@@ -304,7 +304,7 @@ let () =
 (* Complex input, upper triangular: eigenvalues are the diagonal 1+i, 3−i, 2.
    Exercises the complex single-shift path (dispatch on c64). *)
 let () =
-  check_complex ~kind:Buf.complex128 ~name:"complex triangular" ~n:3
+  check_complex ~kind:Nx_dtype.complex128 ~name:"complex triangular" ~n:3
     ~tol_res:1e-9 ~tol_ev:1e-9
     ~a:
       [|
@@ -324,7 +324,7 @@ let () =
 (* Complex input, non-triangular: [[1,i],[i,1]] ⇒ trace 2, det 1−i²=2, λ²−2λ+2=0
    ⇒ 1 ± i. Full complex QR + eigenvectors. *)
 let () =
-  check_complex ~kind:Buf.complex128 ~name:"complex 2x2 (1±i)" ~n:2
+  check_complex ~kind:Nx_dtype.complex128 ~name:"complex 2x2 (1±i)" ~n:2
     ~tol_res:1e-9 ~tol_ev:1e-9
     ~a:[| c 1. 0.; c 0. 1.; c 0. 1.; c 1. 0. |]
     ~expected:[| c 1. 1.; c 1. (-1.) |]
@@ -333,7 +333,7 @@ let () =
 (* Complex input through the single-precision (complex64) path, upcast to
    double-complex for the factorization. *)
 let () =
-  check_complex ~kind:Buf.complex64 ~name:"complex 2x2 upcast c32" ~n:2
+  check_complex ~kind:Nx_dtype.complex64 ~name:"complex 2x2 upcast c32" ~n:2
     ~tol_res:1e-4 ~tol_ev:1e-4
     ~a:[| c 1. 0.; c 0. 1.; c 0. 1.; c 1. 0. |]
     ~expected:[| c 1. 1.; c 1. (-1.) |]
@@ -351,8 +351,8 @@ let () =
   let half = c 0.5 0.0 in
   let l1 = Complex.mul half (Complex.add Complex.one disc) in
   let l2 = Complex.mul half (Complex.sub Complex.one disc) in
-  check_complex ~kind:Buf.complex128 ~name:"complex non-Hessenberg (complex τ)"
-    ~n:3 ~tol_res:1e-9 ~tol_ev:1e-9
+  check_complex ~kind:Nx_dtype.complex128
+    ~name:"complex non-Hessenberg (complex τ)" ~n:3 ~tol_res:1e-9 ~tol_ev:1e-9
     ~a:
       [|
         c 0. 0.;
@@ -382,9 +382,9 @@ let () =
           (sin (float_of_int (idx * 13 mod 251) -. 3.0))
           (cos (float_of_int (idx * 7 mod 241) -. 2.0)))
   in
-  let w, v = run_complex ~kind:Buf.complex128 ~n a in
+  let w, v = run_complex ~kind:Nx_dtype.complex128 ~n a in
   let res = residual n a w v in
-  let w2 = run_complex_vals ~kind:Buf.complex128 ~n a in
+  let w2 = run_complex_vals ~kind:Nx_dtype.complex128 ~n a in
   let self = evals_match ~n ~expected:w ~got:w2 in
   ok
     (Printf.sprintf "complex random n=24 res=%.2e self=%.2e" res self)
@@ -414,7 +414,7 @@ let () =
 (* vectors=false: eigenvalues only, no eigenvector slot touched. *)
 let () =
   let w, vo =
-    run_real ~kind:Buf.float64 ~n:3
+    run_real ~kind:Nx_dtype.float64 ~n:3
       [| 0.; 1.; 0.; 0.; 0.; 1.; 2.; -1.; 2. |]
       ~vectors:false
   in
@@ -425,7 +425,7 @@ let () =
 
 (* n=1: the trivial 1×1 case — eigenvalue is the sole entry, eigenvector [1]. *)
 let () =
-  let w, vo = run_real ~kind:Buf.float64 ~n:1 [| 7. |] ~vectors:true in
+  let w, vo = run_real ~kind:Nx_dtype.float64 ~n:1 [| 7. |] ~vectors:true in
   let v = match vo with Some v -> v | None -> assert false in
   ok "n=1 eigenvalue" (Complex.norm (Complex.sub w.(0) (c 7. 0.)) <= 1e-12);
   ok "n=1 eigenvector unit" (abs_float (Complex.norm v.(0) -. 1.0) <= 1e-12)

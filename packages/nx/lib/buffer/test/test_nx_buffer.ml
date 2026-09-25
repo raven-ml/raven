@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Nx_dtype
 open Nx_buffer
 open Windtrap
 
@@ -18,7 +19,7 @@ let test_create_bfloat16 () =
   equal ~msg:"bfloat16 get" (float 0.1) 2.5 (get buf 5)
 
 let test_create_bool () =
-  let buf = create Nx_buffer.bool 8 in
+  let buf = create Nx_dtype.bool 8 in
   equal ~msg:"bool buffer size" int 8 (length buf);
   set buf 0 true;
   set buf 1 false;
@@ -71,7 +72,7 @@ let test_create_float8_e5m2 () =
 let test_genarray_creation () =
   let dims = [| 2; 3; 4 |] in
   let ga_bf16 = genarray_create bfloat16 Bigarray.c_layout dims in
-  let ga_bool = genarray_create Nx_buffer.bool Bigarray.c_layout dims in
+  let ga_bool = genarray_create Nx_dtype.bool Bigarray.c_layout dims in
   let ga_fp8 = genarray_create float8_e4m3 Bigarray.c_layout dims in
   equal ~msg:"Genarray bfloat16 dims" int 3
     (Array.length (Bigarray.Genarray.dims ga_bf16));
@@ -84,49 +85,49 @@ let test_genarray_creation () =
   equal ~msg:"Genarray dim 2" int 4 (Bigarray.Genarray.nth_dim ga_bf16 2)
 
 (* The C stub maps storage flag bits back to GADT constructor indices by
-   declaration order; a mismatch shows up as [kind] returning the wrong
+   declaration order; a mismatch shows up as [dtype] returning the wrong
    constructor. Check the round-trip for every constructor. *)
-let test_kind_roundtrip () =
-  let check : type a b. (a, b) kind -> unit =
+let test_dtype_roundtrip () =
+  let check : type a b. (a, b) Nx_dtype.t -> unit =
    fun k ->
     equal
-      ~msg:(kind_name k ^ " kind round-trip")
+      ~msg:(Nx_dtype.to_string k ^ " dtype round-trip")
       bool true
-      (kind (create k 2) = k)
+      (dtype (create k 2) = k)
   in
-  check Nx_buffer.float16;
-  check Nx_buffer.float32;
-  check Nx_buffer.float64;
-  check Nx_buffer.bfloat16;
-  check Nx_buffer.float8_e4m3;
-  check Nx_buffer.float8_e5m2;
-  check Nx_buffer.int4;
-  check Nx_buffer.uint4;
-  check Nx_buffer.int8;
-  check Nx_buffer.uint8;
-  check Nx_buffer.int16;
-  check Nx_buffer.uint16;
-  check Nx_buffer.int32;
-  check Nx_buffer.uint32;
-  check Nx_buffer.int64;
-  check Nx_buffer.uint64;
-  check Nx_buffer.complex64;
-  check Nx_buffer.complex128;
-  check Nx_buffer.bool
+  check Nx_dtype.float16;
+  check Nx_dtype.float32;
+  check Nx_dtype.float64;
+  check Nx_dtype.bfloat16;
+  check Nx_dtype.float8_e4m3;
+  check Nx_dtype.float8_e5m2;
+  check Nx_dtype.int4;
+  check Nx_dtype.uint4;
+  check Nx_dtype.int8;
+  check Nx_dtype.uint8;
+  check Nx_dtype.int16;
+  check Nx_dtype.uint16;
+  check Nx_dtype.int32;
+  check Nx_dtype.uint32;
+  check Nx_dtype.int64;
+  check Nx_dtype.uint64;
+  check Nx_dtype.complex64;
+  check Nx_dtype.complex128;
+  check Nx_dtype.bool
 
-(* Test kind_size_in_bytes *)
-let test_kind_sizes () =
-  equal ~msg:"bfloat16 size" int 2 (kind_size_in_bytes bfloat16);
-  equal ~msg:"bool size" int 1 (kind_size_in_bytes Nx_buffer.bool);
-  equal ~msg:"int4 size" int 1 (kind_size_in_bytes int4);
-  equal ~msg:"uint4 size" int 1 (kind_size_in_bytes uint4);
-  equal ~msg:"float8_e4m3 size" int 1 (kind_size_in_bytes float8_e4m3);
-  equal ~msg:"float8_e5m2 size" int 1 (kind_size_in_bytes float8_e5m2);
-  equal ~msg:"uint32 size" int 4 (kind_size_in_bytes uint32);
-  equal ~msg:"uint64 size" int 8 (kind_size_in_bytes uint64);
-  equal ~msg:"float32 size" int 4 (kind_size_in_bytes float32);
-  equal ~msg:"float64 size" int 8 (kind_size_in_bytes float64);
-  equal ~msg:"int32 size" int 4 (kind_size_in_bytes Nx_buffer.int32)
+(* Test itemsize *)
+let test_itemsize () =
+  equal ~msg:"bfloat16 size" int 2 (Nx_dtype.itemsize bfloat16);
+  equal ~msg:"bool size" int 1 (Nx_dtype.itemsize Nx_dtype.bool);
+  equal ~msg:"int4 size" int 1 (Nx_dtype.itemsize int4);
+  equal ~msg:"uint4 size" int 1 (Nx_dtype.itemsize uint4);
+  equal ~msg:"float8_e4m3 size" int 1 (Nx_dtype.itemsize float8_e4m3);
+  equal ~msg:"float8_e5m2 size" int 1 (Nx_dtype.itemsize float8_e5m2);
+  equal ~msg:"uint32 size" int 4 (Nx_dtype.itemsize uint32);
+  equal ~msg:"uint64 size" int 8 (Nx_dtype.itemsize uint64);
+  equal ~msg:"float32 size" int 4 (Nx_dtype.itemsize float32);
+  equal ~msg:"float64 size" int 8 (Nx_dtype.itemsize float64);
+  equal ~msg:"int32 size" int 4 (Nx_dtype.itemsize Nx_dtype.int32)
 
 (* Test blit *)
 let test_blit () =
@@ -332,21 +333,21 @@ let test_genarray_roundtrip () =
   equal ~msg:"genarray roundtrip[0]" (float 1e-6) 0.0 (get buf2 0);
   equal ~msg:"genarray roundtrip[5]" (float 1e-6) 5.0 (get buf2 5)
 
-(* Extended kinds have no faithful Bigarray.kind: viewing one as a bigarray
+(* Extended dtypes have no faithful Bigarray.kind: viewing one as a bigarray
    would let stdlib operations misread it. *)
 let test_to_bigarray1_extended_raises () =
   let buf = create bfloat16 4 in
   raises_match ~msg:"to_bigarray1 on bfloat16" invalid_argument (fun () ->
       to_bigarray1 buf)
 
-(* Extended-kind genarrays stay usable through the genarray bridge. *)
+(* Extended-dtype genarrays stay usable through the genarray bridge. *)
 let test_genarray_extended_roundtrip () =
   let buf = create bfloat16 6 in
   for i = 0 to 5 do
     set buf i (float_of_int i)
   done;
   let ga = to_genarray buf [| 2; 3 |] in
-  equal ~msg:"extended genarray kind" bool true (genarray_kind ga = BFloat16);
+  equal ~msg:"extended genarray dtype" bool true (genarray_dtype ga = BFloat16);
   let buf2 = of_genarray ga in
   equal ~msg:"extended genarray roundtrip[5]" (float 1e-6) 5.0 (get buf2 5)
 
@@ -363,9 +364,9 @@ let test_of_bigarray1_unsupported_raises () =
 
 (* Reinterpretation *)
 
-type any_kind = K : ('a, 'b) kind -> any_kind
+type any_dtype = K : ('a, 'b) Nx_dtype.t -> any_dtype
 
-let byte_kinds =
+let byte_dtypes =
   [
     K Float16;
     K Float32;
@@ -396,10 +397,10 @@ let pattern_buffer () =
 let test_reinterpret_bit_exact () =
   List.iter
     (fun (K k) ->
-      let name = kind_name k in
-      let n = Bytes.length pattern / kind_size_in_bytes k in
+      let name = Nx_dtype.to_string k in
+      let n = Bytes.length pattern / Nx_dtype.itemsize k in
       let view = reinterpret k (pattern_buffer ()) in
-      equal ~msg:(name ^ " kind") string name (kind_name (kind view));
+      equal ~msg:(name ^ " dtype") string name (Nx_dtype.to_string (dtype view));
       equal ~msg:(name ^ " length") int n (length view);
       let stored = Bytes.create (Bytes.length pattern) in
       blit_to_bytes view stored;
@@ -414,7 +415,7 @@ let test_reinterpret_bit_exact () =
       let back = Bytes.create (Bytes.length pattern) in
       blit_to_bytes (reinterpret UInt8 view) back;
       equal ~msg:(name ^ " back to bytes") bytes pattern back)
-    byte_kinds
+    byte_dtypes
 
 let test_reinterpret_aliases () =
   let source = pattern_buffer () in
@@ -607,8 +608,8 @@ let () =
       group "genarray" [ test "genarray creation" test_genarray_creation ];
       group "properties"
         [
-          test "kind round-trip" test_kind_roundtrip;
-          test "kind sizes" test_kind_sizes;
+          test "dtype round-trip" test_dtype_roundtrip;
+          test "itemsize" test_itemsize;
         ];
       group "semantics"
         [
@@ -640,7 +641,7 @@ let () =
         ];
       group "reinterpret"
         [
-          test "bit exact at every kind" test_reinterpret_bit_exact;
+          test "bit exact at every dtype" test_reinterpret_bit_exact;
           test "aliases its source" test_reinterpret_aliases;
           test "raises" test_reinterpret_raises;
           test "keeps a mapped file alive" test_reinterpret_mapped_lifetime;

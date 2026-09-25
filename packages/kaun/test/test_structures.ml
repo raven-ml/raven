@@ -99,7 +99,7 @@ let test_cast () =
   let dtypes =
     Nx.Ptree.fold
       (Nx.Ptree.instantiate (module Attention))
-      (fun _ x acc -> Nx_core.Dtype.to_string (Nx.dtype x) :: acc)
+      (fun _ x acc -> Nx_dtype.to_string (Nx.dtype x) :: acc)
       half []
   in
   equal ~msg:"every projection is cast" (list string)

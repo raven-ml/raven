@@ -3426,7 +3426,7 @@ let mapped_int32 ~byte n =
   Nx_buffer.register_file
     { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
     mapping;
-  ( Nx.of_buffer (Nx_buffer.reinterpret Nx_buffer.Int32 mapping) ~shape:[| n |],
+  ( Nx.of_buffer (Nx_buffer.reinterpret Nx_dtype.Int32 mapping) ~shape:[| n |],
     path )
 
 let first_byte i = Char.chr (i * 7 land 0xff)

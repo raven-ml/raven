@@ -20,6 +20,7 @@
   hugin.vg.svg
   hugin.vg.pdf
   nx
+  nx.dtype
   nx.core
   nx.buffer
   nx.effect

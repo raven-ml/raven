@@ -1361,7 +1361,7 @@ let to_nx ?columns dtype t =
     match get_column_exn t name with
     | Col.P (_, tensor, None) -> Nx.cast dtype tensor
     | Col.P (_, tensor, Some mask) ->
-        if not (Nx_core.Dtype.is_float dtype) then
+        if not (Nx_dtype.is_float dtype) then
           invalid_arg
             (Printf.sprintf
                "to_nx: column %S has nulls, which only a float dtype can hold"

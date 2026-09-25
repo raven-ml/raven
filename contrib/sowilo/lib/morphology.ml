@@ -68,8 +68,8 @@ let morph_op (type a b) ~op ~kernel (img : (a, b) Nx.t) : (a, b) Nx.t =
      dilation, pad with min (zeros). *)
   let pad_val : a =
     match op with
-    | `Max -> Nx_core.Dtype.zero dt
-    | `Min -> Nx_core.Dtype.max_value dt
+    | `Max -> Nx_dtype.zero dt
+    | `Min -> Nx_dtype.max_value dt
   in
   Helpers.with_batch
     (fun img ->

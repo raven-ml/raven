@@ -445,7 +445,7 @@ CAMLprim value caml_nx_buffer_kind(value vb) {
   int kind = nx_buffer_get_kind(b);
 
   /* Map to GADT constructor index. Pinned to the declaration order of
-     [Nx_buffer.kind] (19 constructors) and mirrored by the JavaScript stub;
+     [Nx_dtype.t] (19 constructors) and mirrored by the JavaScript stub;
      the OCaml test suite checks the round-trip for every constructor. */
   switch (kind) {
     case CAML_BA_FLOAT16:    return Val_int(0);
@@ -476,7 +476,7 @@ CAMLprim value caml_nx_buffer_kind(value vb) {
    Reinterpretation
   ---------------------------------------------------------------------------*/
 
-/* Runtime kind of each [Nx_buffer.kind] constructor, in declaration order:
+/* Runtime kind of each [Nx_dtype.t] constructor, in declaration order:
    the inverse of [caml_nx_buffer_kind]. */
 static const int nx_buffer_kind_of_constructor[] = {
     CAML_BA_FLOAT16, CAML_BA_FLOAT32,   CAML_BA_FLOAT64,   NX_BA_BFLOAT16,

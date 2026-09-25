@@ -38,7 +38,7 @@ type ('a, 'b) t = {
   shape : int array;
   strides : int array;
   offset : int;
-  dtype : ('a, 'b) Dtype.t;
+  dtype : ('a, 'b) Nx_dtype.t;
   context : context;
 }
 
@@ -73,7 +73,7 @@ let full ctx dtype shape value =
   t
 
 let from_host ctx buf =
-  let dtype = Nx_buffer.kind buf in
+  let dtype = Nx_buffer.dtype buf in
   let n = Nx_buffer.length buf in
   {
     buffer = buf;
@@ -190,23 +190,23 @@ external caml_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_and"
 
 external caml_cmpeq :
-  (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_cmpeq"
 
 external caml_cmpne :
-  (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_cmpne"
 
 external caml_cmplt :
-  (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_cmplt"
 
 external caml_cmple :
-  (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_cmple"
 
 external caml_where :
-  ('a, 'b) t -> (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  ('a, 'b) t -> (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_where"
 
 external caml_cast : ('c, 'd) t -> ('a, 'b) t -> unit = "caml_nx_c_cast"
@@ -222,7 +222,7 @@ let binary caml_op x y =
   out
 
 let comparison caml_op x y =
-  let out = create_tensor x.context Dtype.Bool x.shape in
+  let out = create_tensor x.context Nx_dtype.Bool x.shape in
   caml_op out x y;
   out
 
@@ -305,10 +305,12 @@ external caml_reduce_max : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
 external caml_reduce_min : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
   = "caml_nx_c_reduce_min"
 
-external caml_argmax : (int32, Dtype.int32_elt) t -> ('a, 'b) t -> int -> unit
+external caml_argmax :
+  (int32, Nx_dtype.int32_elt) t -> ('a, 'b) t -> int -> unit
   = "caml_nx_c_argmax"
 
-external caml_argmin : (int32, Dtype.int32_elt) t -> ('a, 'b) t -> int -> unit
+external caml_argmin :
+  (int32, Nx_dtype.int32_elt) t -> ('a, 'b) t -> int -> unit
   = "caml_nx_c_argmin"
 
 external caml_cumsum : ('a, 'b) t -> ('a, 'b) t -> int -> unit
@@ -356,7 +358,7 @@ let argreduce op caml_op ~axis ~keepdims x =
   if x.shape.(axis) = 0 then
     invalid_arg (op ^ ": argument reduction over an empty axis");
   let out =
-    create_tensor x.context Dtype.Int32
+    create_tensor x.context Nx_dtype.Int32
       (Shape.reduce_output_shape x.shape [| axis |] keepdims)
   in
   caml_op out x axis;
@@ -383,7 +385,7 @@ external caml_sort : ('a, 'b) t -> ('a, 'b) t -> int -> bool -> unit
   = "caml_nx_c_sort"
 
 external caml_argsort :
-  (int32, Dtype.int32_elt) t -> ('a, 'b) t -> int -> bool -> unit
+  (int32, Nx_dtype.int32_elt) t -> ('a, 'b) t -> int -> bool -> unit
   = "caml_nx_c_argsort"
 
 let sort ~axis ~descending x =
@@ -392,7 +394,7 @@ let sort ~axis ~descending x =
   out
 
 let argsort ~axis ~descending x =
-  let out = create_tensor x.context Dtype.Int32 x.shape in
+  let out = create_tensor x.context Nx_dtype.Int32 x.shape in
   caml_argsort out x axis descending;
   out
 
@@ -453,7 +455,7 @@ let cat tensors ~axis =
       out
 
 external caml_gather :
-  ('a, 'b) t -> ('a, 'b) t -> (int32, Dtype.int32_elt) t -> int -> unit
+  ('a, 'b) t -> ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t -> int -> unit
   = "caml_nx_c_gather"
 
 let gather data indices ~axis =
@@ -462,8 +464,12 @@ let gather data indices ~axis =
   out
 
 external caml_scatter :
-  ('a, 'b) t -> (int32, Dtype.int32_elt) t -> ('a, 'b) t -> int -> int -> unit
-  = "caml_nx_c_scatter"
+  ('a, 'b) t ->
+  (int32, Nx_dtype.int32_elt) t ->
+  ('a, 'b) t ->
+  int ->
+  int ->
+  unit = "caml_nx_c_scatter"
 
 let scatter ~mode ~unique_indices:_ template ~indices ~updates ~axis =
   let out = copy template in
@@ -478,7 +484,8 @@ let scatter ~mode ~unique_indices:_ template ~indices ~updates ~axis =
    nibbles: packed dtypes are refused here. *)
 let update (type a b) (t : (a, b) t) ~starts (v : (a, b) t) =
   (match t.dtype with
-  | Dtype.Int4 | Dtype.UInt4 -> invalid_arg "update: packed dtypes unsupported"
+  | Nx_dtype.Int4 | Nx_dtype.UInt4 ->
+      invalid_arg "update: packed dtypes unsupported"
   | _ -> ());
   let out = copy t in
   let corner =
@@ -542,13 +549,13 @@ let fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
 (* random family (nx_c_random.c): threefry hashes the counter, keeping its shape
    and int32 dtype. *)
 external caml_threefry :
-  (int32, Dtype.int32_elt) t ->
-  (int32, Dtype.int32_elt) t ->
-  (int32, Dtype.int32_elt) t ->
+  (int32, Nx_dtype.int32_elt) t ->
+  (int32, Nx_dtype.int32_elt) t ->
+  (int32, Nx_dtype.int32_elt) t ->
   unit = "caml_nx_c_threefry"
 
 let threefry key counter =
-  let out = create_tensor counter.context Dtype.Int32 counter.shape in
+  let out = create_tensor counter.context Nx_dtype.Int32 counter.shape in
   caml_threefry out key counter;
   out
 
@@ -646,7 +653,7 @@ external caml_qr : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> bool -> unit
    The stub extracts the eigenvector slot only when vectors=true, so
    vectors=false passes the input there again — no dummy allocation. *)
 external caml_eigh :
-  (float, Dtype.float64_elt) t -> ('a, 'b) t -> ('a, 'b) t -> bool -> unit
+  (float, Nx_dtype.float64_elt) t -> ('a, 'b) t -> ('a, 'b) t -> bool -> unit
   = "caml_nx_c_eigh"
 
 (* Numeric linalg failures cross the FFI as [Failure "<op>: <reason>"] from the
@@ -714,7 +721,7 @@ let eigh_values x =
   let nd = Array.length s in
   let n = s.(nd - 1) in
   (* eigenvalues drop the trailing matrix dim: batch... x n. *)
-  create_tensor x.context Dtype.Float64
+  create_tensor x.context Nx_dtype.Float64
     (Array.append (Array.sub s 0 (nd - 2)) [| n |])
 
 let eigvalsh x =
@@ -732,8 +739,11 @@ let eigh x =
    encoded in the U/Vᴴ shapes the binding allocates (no separate C argument):
    thin gives U m×k, Vᴴ k×n; full gives U m×m, Vᴴ n×n; k = min(m, n). *)
 external caml_svd :
-  ('a, 'b) t -> (float, Dtype.float64_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  = "caml_nx_c_svd"
+  ('a, 'b) t ->
+  (float, Nx_dtype.float64_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  unit = "caml_nx_c_svd"
 
 let svd ~full_matrices x =
   let sh = x.shape in
@@ -748,7 +758,9 @@ let svd ~full_matrices x =
     Array.append batch (if full_matrices then [| n; n |] else [| k; n |])
   in
   let u = create_tensor x.context x.dtype u_shape in
-  let s = create_tensor x.context Dtype.Float64 (Array.append batch [| k |]) in
+  let s =
+    create_tensor x.context Nx_dtype.Float64 (Array.append batch [| k |])
+  in
   let vt = create_tensor x.context x.dtype vt_shape in
   reraise_linalg ~op:"svd" (fun () -> caml_svd u s vt x);
   (u, s, vt)
@@ -759,8 +771,8 @@ let svd ~full_matrices x =
    eigvals passes vectors=false and reuses w in that slot — the stub never
    touches it. *)
 external caml_eig :
-  (Complex.t, Dtype.complex64_elt) t ->
-  (Complex.t, Dtype.complex64_elt) t ->
+  (Complex.t, Nx_dtype.complex64_elt) t ->
+  (Complex.t, Nx_dtype.complex64_elt) t ->
   ('a, 'b) t ->
   bool ->
   unit = "caml_nx_c_eig"
@@ -769,7 +781,7 @@ let eig_values x =
   let sh = x.shape in
   let nd = Array.length sh in
   let n = sh.(nd - 1) in
-  create_tensor x.context Dtype.Complex128
+  create_tensor x.context Nx_dtype.Complex128
     (Array.append (Array.sub sh 0 (nd - 2)) [| n |])
 
 let eigvals x =
@@ -779,6 +791,6 @@ let eigvals x =
 
 let eig x =
   let w = eig_values x in
-  let v = create_tensor x.context Dtype.Complex128 x.shape in
+  let v = create_tensor x.context Nx_dtype.Complex128 x.shape in
   reraise_linalg ~op:"eig" (fun () -> caml_eig w v x true);
   (w, v)

@@ -28,7 +28,7 @@
  (modules
   (:standard \ test_cache_index_metal))
  (package kaun)
- (libraries kaun rune vega nx nx.core windtrap unix))
+ (libraries kaun rune vega nx nx.dtype windtrap unix))
 
 (tests
  (names test_cache_index_metal)

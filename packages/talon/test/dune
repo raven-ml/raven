@@ -2,7 +2,7 @@
  (name test_talon)
  (package talon)
  (modules test_talon placed)
- (libraries talon windtrap nx nx.core nx.buffer nx.effect))
+ (libraries talon windtrap nx nx.dtype nx.core nx.buffer nx.effect))
 
 (test
  (name test_talon_csv)

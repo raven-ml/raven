@@ -214,7 +214,7 @@ let fill_nulls_p (type a b) (dtype : (a, b) Nx.dtype) tensor mask_opt
 let fill_nulls col ~value =
   match (col, value) with
   | P (dtype, t, m), P (vdtype, vt, _) -> (
-      match Nx_core.Dtype.equal_witness dtype vdtype with
+      match Nx_dtype.equal_witness dtype vdtype with
       | Some Type.Equal -> fill_nulls_p dtype t m (Nx.to_array vt)
       | None ->
           invalid_arg "Col.fill_nulls: value type doesn't match column type")
@@ -251,7 +251,7 @@ let cast dtype col =
 let to_tensor (type a b) (dtype : (a, b) Nx.dtype) col =
   match col with
   | P (col_dtype, tensor, _) -> (
-      match Nx_core.Dtype.equal_witness dtype col_dtype with
+      match Nx_dtype.equal_witness dtype col_dtype with
       | Some Type.Equal -> Some (tensor : (a, b) Nx.t)
       | None -> None)
   | _ -> None

@@ -5,8 +5,8 @@
 
 (** Flat buffers for tensor storage.
 
-    Flat, C-layout, one-dimensional buffers with support for both standard
-    Bigarray element types and extended types (bfloat16, bool, int4, float8,
+    Flat, C-layout, one-dimensional buffers of every {!Nx_dtype.t}: the standard
+    Bigarray element types and the extended ones (bfloat16, bool, int4, float8,
     uint32, uint64).
 
     The buffer type {!t} is abstract in this interface. Conversions to and from
@@ -14,113 +14,8 @@
     {!of_genarray}, and {!to_genarray}.
 
     {b Warning.} Buffers must not be marshalled. Marshalling silently loses the
-    extended kind (a bfloat16 buffer round-trips as float16) and reads out of
-    bounds for int4 kinds. *)
-
-(** {1:elt Element types}
-
-    Standard element types are aliases from {!Bigarray}. Extended types are
-    defined here. *)
-
-type float16_elt = Bigarray.float16_elt
-type float32_elt = Bigarray.float32_elt
-type float64_elt = Bigarray.float64_elt
-type int8_elt = Bigarray.int8_signed_elt
-type uint8_elt = Bigarray.int8_unsigned_elt
-type int16_elt = Bigarray.int16_signed_elt
-type uint16_elt = Bigarray.int16_unsigned_elt
-type int32_elt = Bigarray.int32_elt
-type int64_elt = Bigarray.int64_elt
-type complex32_elt = Bigarray.complex32_elt
-type complex64_elt = Bigarray.complex64_elt
-
-type bfloat16_elt
-(** Brain floating-point 16-bit. *)
-
-type bool_elt
-(** Boolean stored as a byte. *)
-
-type int4_elt
-(** Signed 4-bit integer (two values packed per byte). *)
-
-type uint4_elt
-(** Unsigned 4-bit integer (two values packed per byte). *)
-
-type float8_e4m3_elt
-(** 8-bit float with 4 exponent and 3 mantissa bits. *)
-
-type float8_e5m2_elt
-(** 8-bit float with 5 exponent and 2 mantissa bits. *)
-
-type uint32_elt
-(** Unsigned 32-bit integer. *)
-
-type uint64_elt
-(** Unsigned 64-bit integer. *)
-
-(** {1:kind Kind GADT} *)
-
-(** The type for element kinds. Nineteen constructors covering standard Bigarray
-    kinds and extended types.
-
-    The first parameter is the OCaml value type and the second parameter is the
-    element type. The constructor order is pinned by the C and JavaScript stubs
-    ([caml_nx_buffer_kind]); reordering constructors requires updating both. *)
-type ('a, 'b) kind =
-  | Float16 : (float, float16_elt) kind
-  | Float32 : (float, float32_elt) kind
-  | Float64 : (float, float64_elt) kind
-  | BFloat16 : (float, bfloat16_elt) kind
-  | Float8_e4m3 : (float, float8_e4m3_elt) kind
-  | Float8_e5m2 : (float, float8_e5m2_elt) kind
-  | Int4 : (int, int4_elt) kind
-  | UInt4 : (int, uint4_elt) kind
-  | Int8 : (int, int8_elt) kind
-  | UInt8 : (int, uint8_elt) kind
-  | Int16 : (int, int16_elt) kind
-  | UInt16 : (int, uint16_elt) kind
-  | Int32 : (int32, int32_elt) kind
-  | UInt32 : (int32, uint32_elt) kind
-  | Int64 : (int64, int64_elt) kind
-  | UInt64 : (int64, uint64_elt) kind
-  | Complex64 : (Complex.t, complex32_elt) kind
-  | Complex128 : (Complex.t, complex64_elt) kind
-  | Bool : (bool, bool_elt) kind
-
-(** {2:kind_values Kind values} *)
-
-val float16 : (float, float16_elt) kind
-val float32 : (float, float32_elt) kind
-val float64 : (float, float64_elt) kind
-val bfloat16 : (float, bfloat16_elt) kind
-val float8_e4m3 : (float, float8_e4m3_elt) kind
-val float8_e5m2 : (float, float8_e5m2_elt) kind
-val int4 : (int, int4_elt) kind
-val uint4 : (int, uint4_elt) kind
-val int8 : (int, int8_elt) kind
-val uint8 : (int, uint8_elt) kind
-val int16 : (int, int16_elt) kind
-val uint16 : (int, uint16_elt) kind
-val int32 : (int32, int32_elt) kind
-val uint32 : (int32, uint32_elt) kind
-val int64 : (int64, int64_elt) kind
-val uint64 : (int64, uint64_elt) kind
-val complex64 : (Complex.t, complex32_elt) kind
-val complex128 : (Complex.t, complex64_elt) kind
-val bool : (bool, bool_elt) kind
-
-(** {2:kind_props Kind properties} *)
-
-val kind_name : ('a, 'b) kind -> string
-(** [kind_name k] is the stable lowercase name of [k], e.g. ["float32"]. *)
-
-val kind_size_in_bytes : ('a, 'b) kind -> int
-(** [kind_size_in_bytes k] is the storage size in bytes per element for kind
-    [k]. For [Int4] and [UInt4] this is [1] (two values packed per byte). *)
-
-val to_stdlib_kind : ('a, 'b) kind -> ('a, 'b) Bigarray.kind option
-(** [to_stdlib_kind k] is the standard {!Bigarray.kind} for [k], or [None] for
-    extended types. *)
+    extended dtype (a bfloat16 buffer round-trips as float16) and reads out of
+    bounds for int4 dtypes. *)
 
 (** {1:buf Buffer type and operations} *)
 
@@ -129,14 +24,14 @@ type ('a, 'b) t
 
 (** {2:create Creation} *)
 
-val create : ('a, 'b) kind -> int -> ('a, 'b) t
-(** [create kind n] allocates a buffer of [n] elements. Its contents are
+val create : ('a, 'b) Nx_dtype.t -> int -> ('a, 'b) t
+(** [create dtype n] allocates a buffer of [n] elements. Its contents are
     unspecified: write every element, or {!fill} it, before reading. *)
 
 (** {2:props Properties} *)
 
-val kind : ('a, 'b) t -> ('a, 'b) kind
-(** [kind buf] is the element kind of [buf]. *)
+val dtype : ('a, 'b) t -> ('a, 'b) Nx_dtype.t
+(** [dtype buf] is the dtype of [buf]'s elements. *)
 
 val length : ('a, 'b) t -> int
 (** [length buf] is the number of elements in [buf]. *)
@@ -168,10 +63,10 @@ val unsafe_data_ptr : ('a, 'b) t -> nativeint
 
 (** {2:reinterpret Reinterpretation} *)
 
-val reinterpret : ('a, 'b) kind -> ('c, 'd) t -> ('a, 'b) t
-(** [reinterpret kind buf] is [buf]'s memory read as elements of [kind], without
-    a copy. Its length is [buf]'s size in bytes divided by
-    [kind_size_in_bytes kind]. Elements are read in the machine's byte order.
+val reinterpret : ('a, 'b) Nx_dtype.t -> ('c, 'd) t -> ('a, 'b) t
+(** [reinterpret dtype buf] is [buf]'s memory read as elements of [dtype],
+    without a copy. Its length is [buf]'s size in bytes divided by
+    [Nx_dtype.itemsize dtype]. Elements are read in the machine's byte order.
 
     The result and [buf] share their storage, as the results of
     {!Bigarray.Array1.sub} do: a write through either is seen through the other,
@@ -179,12 +74,12 @@ val reinterpret : ('a, 'b) kind -> ('c, 'd) t -> ('a, 'b) t
     until both are unreachable. Over memory some other owner manages, the owner
     stays the caller's concern.
 
-    This is the only way to view existing memory at an extended kind, such as
+    This is the only way to view existing memory at an extended dtype, such as
     the bytes of a mapped file as [bfloat16].
 
     Raises [Invalid_argument] if [buf]'s size in bytes is not a multiple of
-    [kind_size_in_bytes kind], if [buf]'s address is not a multiple of it, or if
-    [kind] or [buf]'s kind is [Int4] or [UInt4]. *)
+    [Nx_dtype.itemsize dtype], if [buf]'s address is not a multiple of it, or if
+    [dtype] or [buf]'s dtype is [Int4] or [UInt4]. *)
 
 (** {2:files Mapped files}
 
@@ -203,7 +98,7 @@ type file = {
     later: before reading through [path], check that the file opened has this
     size, modification time and inode. *)
 
-val register_file : file -> (int, uint8_elt) t -> unit
+val register_file : file -> (int, Nx_dtype.uint8_elt) t -> unit
 (** [register_file file buf] records that [buf] is a mapping of the whole of
     [file], from its first byte: [buf] is the result of [Unix.map_file] at
     position [0], before any sub-array or other view of it was made. From then
@@ -255,8 +150,8 @@ val blit_to_bytes :
 
 (** {1:ba Bigarray conversions}
 
-    Only standard kinds can be viewed as one-dimensional bigarrays: an
-    extended-kind buffer has no faithful {!Bigarray.kind}, so exposing one would
+    Only buffers of standard dtypes can be viewed as one-dimensional bigarrays:
+    an extended dtype has no faithful {!Bigarray.kind}, so exposing one would
     let standard bigarray operations misread its contents. *)
 
 val of_bigarray1 : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> ('a, 'b) t
@@ -268,17 +163,17 @@ val of_bigarray1 : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> ('a, 'b) t
 val to_bigarray1 : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
 (** [to_bigarray1 buf] is [buf] viewed as a one-dimensional bigarray. Zero-copy.
 
-    Raises [Invalid_argument] if [buf]'s kind is an extended type
-    ([to_stdlib_kind (kind buf) = None]). *)
+    Raises [Invalid_argument] if [buf]'s dtype has no {!Bigarray.kind}
+    ([Nx_dtype.to_bigarray_kind (dtype buf) = None]). *)
 
 val to_genarray :
   ('a, 'b) t -> int array -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
 (** [to_genarray buf shape] reshapes [buf] into a genarray with [shape]. The
     product of [shape] must equal [length buf]. Zero-copy.
 
-    For an extended-kind buffer, the resulting genarray carries [buf]'s kind in
-    storage flags that only the functions of this module understand; see the
-    {{!section:ga}genarray bridge}. *)
+    For a buffer of an extended dtype, the resulting genarray carries [buf]'s
+    dtype in storage flags that only the functions of this module understand;
+    see the {{!section:ga}genarray bridge}. *)
 
 val of_genarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
 (** [of_genarray ga] flattens [ga] into a one-dimensional buffer.
@@ -288,31 +183,33 @@ val of_genarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
 
 (** {1:ga Genarray bridge}
 
-    Operations on {!Bigarray.Genarray.t} that handle extended kinds. Used by I/O
-    modules (npy, safetensors, images).
+    Operations on {!Bigarray.Genarray.t} that handle extended dtypes. Used by
+    I/O modules (npy, safetensors, images).
 
     A genarray obtained from {!to_genarray} or {!genarray_create} with an
-    extended kind is only meaningful to the functions below and to
+    extended dtype is only meaningful to the functions below and to
     {!of_genarray}; standard {!Bigarray} operations misread its contents (and
-    read out of bounds for int4 kinds). Keep such values inside I/O plumbing. *)
+    read out of bounds for int4 dtypes). Keep such values inside I/O plumbing.
+*)
 
 val genarray_create :
-  ('a, 'b) kind ->
+  ('a, 'b) Nx_dtype.t ->
   'c Bigarray.layout ->
   int array ->
   ('a, 'b, 'c) Bigarray.Genarray.t
-(** [genarray_create kind layout dims] allocates a genarray. Handles both
-    standard and extended kinds. *)
+(** [genarray_create dtype layout dims] allocates a genarray of [dtype]'s
+    elements. *)
 
-val genarray_kind : ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b) kind
-(** [genarray_kind ga] is the kind of [ga], including extended kinds. *)
+val genarray_dtype : ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b) Nx_dtype.t
+(** [genarray_dtype ga] is the dtype of [ga]'s elements, extended dtypes
+    included. *)
 
 val genarray_dims : ('a, 'b, 'c) Bigarray.Genarray.t -> int array
 (** [genarray_dims ga] is the dimensions of [ga]. *)
 
 val genarray_blit :
   ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b, 'c) Bigarray.Genarray.t -> unit
-(** [genarray_blit src dst] copies [src] to [dst]. Handles extended kinds. *)
+(** [genarray_blit src dst] copies [src] to [dst]. Handles extended dtypes. *)
 
 val genarray_change_layout :
   ('a, 'b, 'c) Bigarray.Genarray.t ->
