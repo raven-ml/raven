@@ -1405,7 +1405,7 @@ let cache_info_semantic_key_parity () =
     (Uop.semantic_key raw_space <> Uop.semantic_key raw_hex);
   let call_without_aux = Uop.call ~body:sink ~args:[] ~info:(call_info ()) in
   let call_with_aux =
-    Uop.call ~body:sink ~args:[] ~info:(call_info ~aux:{devices = ["NV"]; host = "CPU"; table = -1; inputs = []; outputs = []; timings = []; independent_accesses = []; accesses = [[]]} ())
+    Uop.call ~body:sink ~args:[] ~info:(call_info ~aux:{fallback = []; devices = ["NV"]; host = "CPU"; table = -1; inputs = []; outputs = []; timings = []; independent_accesses = []; accesses = [[]]} ())
   in
   is_true ~msg:"CallInfo.aux keeps constructor identity distinct"
     (not (Uop.equal call_without_aux call_with_aux));

@@ -343,6 +343,42 @@ let () =
         ];
       group "Queues"
         [
+          test "queues mapped host copies and falls back for unaligned imports" (fun () ->
+              let device = cuda_device () in
+              let host = Tolk_cpu.create "CPU" in
+              let pinned () = Device.create_buffer ~size:16 ~dtype:Dtype.int32
+                  ~spec:{Device.Buffer_spec.default with host = true} device in
+              let source_owner = pinned () and output_owner = pinned () in
+              let source_addr = Option.get (Device.Buffer.host_addr source_owner)
+              and output_addr = Option.get (Device.Buffer.host_addr output_owner) in
+              let wrap address = Device.create_buffer ~size:1 ~dtype:Dtype.int32
+                  ~spec:{Device.Buffer_spec.default with external_ptr = Some address} host in
+              let p slot dev = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+                  ~device:(U.Single dev) () in
+              let input = p 0 "CPU" and middle = p 1 (Device.name device) and output = p 2 "CPU" in
+              let replay = compile_queue device [U.store_call ~dst:middle ~src:input;
+                  U.store_call ~dst:output ~src:middle] in
+              List.iter (fun offset ->
+                  let source = wrap (Nativeint.add source_addr (Nativeint.of_int offset))
+                  and output = wrap output_addr in
+                  Device.Buffer.copyin source (int32_to_bytes [347]);
+                  let before = !(Realize.queue_submissions) in
+                  replay ~wait:true [|source; i32_buf device [0]; output|];
+                  equal (list int) [347] (read_i32 output);
+                  equal int (before + if offset = 0 then 1 else 0) !(Realize.queue_submissions)) [0; 1];
+              ignore (Sys.opaque_identity (source_owner, output_owner)));
+          test "queued peer copies preserve views with mapping fallback" (fun () ->
+              let first = cuda_device () in
+              let second = try Tolk_cuda.create "CUDA:1" with
+                | Failure msg -> skip ~reason:("Second CUDA device unavailable: " ^ msg) () in
+              let source = i32_view (i32_buf first [1; 2; 3; 4]) ~offset:4 ~size:2 in
+              let base = i32_buf second [0; 0; 0; 0] in
+              let output = i32_view base ~offset:8 ~size:2 in
+              let p slot dev = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 2)
+                  ~device:(U.Single (Device.name dev)) () in
+              let replay = compile_queue first [U.store_call ~dst:(p 1 second) ~src:(p 0 first)] in
+              replay ~wait:true [|source; output|];
+              equal (list int) [0; 0; 2; 3] (read_i32 base));
           test "replays a multi-kernel chain" (fun () ->
               let device = cuda_device () in
               let spec = compile_incr device "cuda_queue_chain" in

@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- CUDA queues accept host and peer copies, checking mappings before submission
+  and falling back to ordinary execution when imports are unsupported. Peer
+  timeline work now uses each device's own encoder and context.
+
 - `Realize.compile_linear ~profile:true` records per-call queue timestamps;
   waited replay sums them instead of host submission overhead. `DEBUG=2`
   enables this by default, including CUDA callbacks and Metal GPU timings.

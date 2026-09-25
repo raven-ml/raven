@@ -30,7 +30,7 @@ module Ffi = struct
   external mem_host_alloc : int -> nativeint = "caml_tolk_cuda_mem_host_alloc"
   external mem_free_host : nativeint -> unit = "caml_tolk_cuda_mem_free_host"
 
-  external mem_host_register : nativeint -> int -> bool = "caml_tolk_cuda_mem_host_register"
+  external mem_host_register : nativeint -> int -> int = "caml_tolk_cuda_mem_host_register"
   external mem_host_unregister : nativeint -> unit = "caml_tolk_cuda_mem_host_unregister"
   external enable_peer : int -> int -> nativeint -> bool = "caml_tolk_cuda_enable_peer"
   external memcpy_peer : nativeint -> nativeint -> nativeint -> nativeint -> int -> unit
@@ -229,15 +229,17 @@ module Allocator = struct
       | Some owner ->
           let raw = Option.get (Device.Buffer.get buffer_kind source) in
           if not (raw.host || State.enable_peer state owner) then
-            invalid_arg "CUDA peer storage is not accessible";
+            raise (Tolk_uop.Storage.Mapping_unavailable "CUDA peer storage is not accessible");
           {raw with registered = false}
       | None ->
           (match Device.Buffer.host_addr source with
-           | None -> invalid_arg "CUDA mapping requires host-accessible storage"
+           | None -> raise (Tolk_uop.Storage.Mapping_unavailable "CUDA mapping requires host-accessible storage")
            | Some address ->
                Ffi.ctx_set_current state.State.context;
-               let registered = Ffi.mem_host_register address (Device.Buffer.nbytes source) in
-               {address; host = true; registered})
+               let registration = Ffi.mem_host_register address (Device.Buffer.nbytes source) in
+               if registration < 0 then
+                 raise (Tolk_uop.Storage.Mapping_unavailable "CUDA cannot register this host range");
+               {address; host = true; registered = registration = 1})
     in
     let unmap raw =
       if not state.State.closed then begin
@@ -343,7 +345,10 @@ module Queue = struct
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
     let copy call = match U.as_call call with
       | Some {args; _} -> List.for_all (fun arg ->
-          U.device_of arg = Some (U.Single state.State.name)) args
+          match U.device_of arg with
+          | Some (U.Single name) ->
+              List.mem (List.hd (String.split_on_char ':' name)) ["CUDA"; "CPU"]
+          | _ -> false) args
       | None -> false in
     Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = Device.name host; copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}

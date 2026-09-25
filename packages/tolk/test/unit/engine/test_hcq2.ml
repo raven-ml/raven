@@ -117,7 +117,18 @@ let peers_and_timestamps () =
 let compiled_host_submission () =
   let host = Tolk_cpu.create "CPU" in
   let name = "CPU:queue-test" in
-  let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let import_mode = ref `Accept in
+  let raw = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let mapping = Option.get raw.mapping in
+  let map source =
+    if Device.Buffer.device source = "CPU:unmappable" then begin
+      match !import_mode with
+      | `Reject -> raise (Storage.Mapping_unavailable "test import is unsupported")
+      | `Fault -> failwith "test import hardware fault"
+      | `Accept -> ()
+    end;
+    mapping.map source in
+  let allocator = Device.Allocator.Pack {raw with mapping = Some {mapping with map}} in
   let timeline = Device.Buffer.create ~device:name ~size:2 ~dtype:Dtype.uint64 allocator in
   Device.Buffer.ensure_allocated timeline;
   Device.Buffer.copyin timeline (Bytes.make 16 '\000');
@@ -202,10 +213,13 @@ let compiled_host_submission () =
   (* The host queue executes both kinds as copies; PROGRAM selects COMPUTE
      so the real planner must distinguish FIFO, waits and independent calls. *)
   let compute dst src =
-    let sink = U.sink [] in
-    let info = { (U.program_info_from_sink sink) with globals = [0; 1]; outs = [0]; ins = [1] } in
-    let body = U.program ~sink ~linear:(U.linear []) ~source:(U.source "")
-        ~binary:(U.binary "") ~info () in
+    let p slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+    let at ptr = U.index ~ptr ~idxs:[U.const_int 0] () in
+    let store = U.store ~dst:(at (p 0)) ~value:(U.load ~src:(at (p 1)) ()) () in
+    let kernel_info = U.{name = "host_queue_copy"; applied_opts = []; opts_to_apply = Some [];
+      estimates = None; beam = 0} in
+    let body = Codegen.to_program ~optimize:false host (Device.renderer host)
+        (U.sink ~kernel_info [store]) in
     U.call ~body ~args:[dst; src]
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = None} in
@@ -252,6 +266,33 @@ let compiled_host_submission () =
   equal (float 1e-15) 2e-8 (!(Helpers.Global_counters.time_sum_s) -. before);
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst2) 0);
   ignore (Sys.opaque_identity root);
+  let owner = Tolk_cpu.create "CPU:unmappable" in
+  let foreign = Device.create_buffer ~size:1 ~dtype:Dtype.int32 owner in
+  Device.Buffer.ensure_allocated foreign;
+  let bytes = Bytes.create 4 in
+  Bytes.set_int32_le bytes 0 347l;
+  Device.Buffer.copyin foreign bytes;
+  let input = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~device:(U.Single "CPU:unmappable") () in
+  let template = Realize.compile_linear ~device ~to_program
+      (U.linear [U.store_call ~dst:(ptr 1) ~src:input;
+                 compute (ptr 2) (ptr 1)]) in
+  let imported = U.import (U.export template) in
+  equal string (U.semantic_key template) (U.semantic_key imported);
+  let transfer = Realize.link_linear binding imported in
+  let middle = buffer 0l and output = buffer 0l in
+  let before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
+  import_mode := `Reject;
+  replay transfer [|foreign; middle; output|];
+  equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
+  equal int64 before (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+  import_mode := `Fault;
+  raises (Failure "test import hardware fault") (fun () -> replay transfer [|foreign; middle; output|]);
+  equal int64 before (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+  import_mode := `Accept;
+  replay transfer [|foreign; middle; output|];
+  equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
+  equal int64 (Int64.succ before) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
   let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
   let compiled = Realize.compile_linear ~device ~to_program
       (U.linear [U.store_call ~dst ~src]) in

@@ -20,6 +20,8 @@ external launch :
 external function_ : nativeint -> nativeint = "caml_tolk_cuda_program_function"
 external submit : nativeint -> bytes -> unit = "caml_test_cuda_abi_submit"
 external handoffs : unit -> int = "caml_test_cuda_abi_handoffs"
+external registration_status : int -> unit = "caml_test_cuda_registration_status"
+external register_host : nativeint -> int -> int = "caml_tolk_cuda_mem_host_register"
 external timestamp : unit -> int64 = "caml_test_cuda_timestamp"
 external init : unit -> unit = "caml_tolk_cuda_init"
 external init_counts : unit -> int * int = "caml_test_cuda_init_counts"
@@ -112,4 +114,11 @@ let () =
       test "concurrent initialization publishes a complete driver table" concurrent_initialization;
       test "missing driver symbols stay failed across callers" failed_initialization;
       test "direct and compiled submission preserve typed arguments and handoffs" typed_arguments;
+      test "host registration separates unsupported mappings from driver faults" (fun () ->
+        List.iter (fun (status, expected) -> registration_status status;
+            equal int expected (register_host 0x10000n 16)) [0, 1; 712, 0; 1, -1; 801, -1];
+        equal int (-1) (register_host 0x10001n 16);
+        registration_status 2;
+        raises (Failure "CUDA Error 2, injected synchronization failure")
+          (fun () -> ignore (register_host 0x10000n 16)));
       test "shutdown releases all resources after synchronization failure" shutdown_after_failure ]

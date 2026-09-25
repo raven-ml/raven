@@ -10,6 +10,9 @@
 type t
 (** The type for device buffers and their owned storage. *)
 
+exception Mapping_unavailable of string
+(** A storage import is unsupported; callers may use an ordinary copy. *)
+
 module Buffer_spec : sig
   type t = {
     uncached : bool;  (** [true] to request uncached memory. *)
@@ -46,7 +49,9 @@ module Allocator : sig
 
   type 'buf mapping = {
     map : buffer -> 'buf;
-        (** [map source] maps the source allocation into this allocator's device. *)
+        (** [map source] maps the source allocation into this allocator's device.
+            Raises {!Mapping_unavailable} when that storage cannot be imported.
+            Other failures report allocation or device errors. *)
     unmap : 'buf -> unit;
         (** [unmap mapped] releases mapping metadata, without freeing source storage. *)
   }

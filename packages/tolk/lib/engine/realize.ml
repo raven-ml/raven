@@ -830,57 +830,65 @@ let validate_queue_aliases buffers (submission : Tolk_uop.Uop.queue_info) =
       end) submission.independent_accesses
   end
 
-let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) =
+let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some {body; args} ->
       let args = Array.of_list (call_arg_uops args) in
       let buffers = Array.map (resolve binding ctx) args in
       validate_queue_aliases buffers submission;
-      if submission.inputs <> [] then begin
-        if submission.table < 0 || submission.table >= Array.length buffers then
-          invalid_arg "exec_hcq: missing runtime address table";
+      let addresses = try
         let bytes = Bytes.create (8 * List.length submission.inputs) in
         List.iteri (fun i (slot, device) ->
             let address = Device.Buffer.addr ~device buffers.(slot) in
             Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint address)) submission.inputs;
-        let table = Device.Buffer.view buffers.(submission.table)
-            ~size:(Bytes.length bytes) ~dtype:Tolk_uop.Dtype.uint8 ~offset:0 in
-        Device.Buffer.ensure_allocated table;
-        Device.Buffer.copyin table bytes
-      end;
-      let host = Device.get submission.host in
-      let info = match U.as_program_info body with
-        | Some info -> info | None -> invalid_arg "exec_hcq: expected PROGRAM" in
-      let prg = get_runtime ~device:host body in
-      let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
-      let vals = U.program_vals info ~var_vals:ctx.var_vals |> List.map Int64.of_int |> Array.of_list in
-      let run () =
-        List.iter (fun d -> Option.iter (fun q -> q.Device.prepare ())
-            (Device.queue (Device.get d))) submission.devices;
-        let started = if ctx.wait then Unix.gettimeofday () else 0. in
-        ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
-        incr queue_submissions;
-        if ctx.wait then begin
+        Some bytes
+      with Tolk_uop.Storage.Mapping_unavailable _ when submission.fallback <> [] -> None in
+      (match addresses with
+      | None ->
           List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
-          if submission.timings = [] then Some (Unix.gettimeofday () -. started)
-          else begin
-            let snapshots = Hashtbl.create (List.length submission.devices) in
-            Some (List.fold_left (fun total (device, slot, first, last) ->
-              let bytes = match Hashtbl.find_opt snapshots slot with
-                | Some bytes -> bytes
-                | None -> let bytes = Device.Buffer.as_bytes buffers.(slot) in
-                    Hashtbl.add snapshots slot bytes; bytes in
-              let start = Bytes.get_int64_le bytes (8 * first)
-              and finish = Bytes.get_int64_le bytes (8 * last) in
-              let ticks = Int64.sub finish start in
-              let divider = (Option.get (Device.queue (Device.get device))).timestamp_divider in
-              total +. Int64.to_float ticks /. divider /. 1e6) 0. submission.timings)
-          end
-        end else None in
-      ignore (track_stats ctx call ~device:(Device.get (List.hd submission.devices))
-        (Array.to_list buffers) ctx.var_vals run);
-      keep_alive buffers
+          fallback buffers
+      | Some bytes ->
+        if submission.inputs <> [] then begin
+          if submission.table < 0 || submission.table >= Array.length buffers then
+            invalid_arg "exec_hcq: missing runtime address table";
+          let table = Device.Buffer.view buffers.(submission.table)
+              ~size:(Bytes.length bytes) ~dtype:Tolk_uop.Dtype.uint8 ~offset:0 in
+          Device.Buffer.ensure_allocated table;
+          Device.Buffer.copyin table bytes
+        end;
+        let host = Device.get submission.host in
+        let info = match U.as_program_info body with
+          | Some info -> info | None -> invalid_arg "exec_hcq: expected PROGRAM" in
+        let prg = get_runtime ~device:host body in
+        let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
+        let vals = U.program_vals info ~var_vals:ctx.var_vals |> List.map Int64.of_int |> Array.of_list in
+        let run () =
+          List.iter (fun d -> Option.iter (fun q -> q.Device.prepare ())
+              (Device.queue (Device.get d))) submission.devices;
+          let started = if ctx.wait then Unix.gettimeofday () else 0. in
+          ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
+          incr queue_submissions;
+          if ctx.wait then begin
+            List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
+            if submission.timings = [] then Some (Unix.gettimeofday () -. started)
+            else begin
+              let snapshots = Hashtbl.create (List.length submission.devices) in
+              Some (List.fold_left (fun total (device, slot, first, last) ->
+                let bytes = match Hashtbl.find_opt snapshots slot with
+                  | Some bytes -> bytes
+                  | None -> let bytes = Device.Buffer.as_bytes buffers.(slot) in
+                      Hashtbl.add snapshots slot bytes; bytes in
+                let start = Bytes.get_int64_le bytes (8 * first)
+                and finish = Bytes.get_int64_le bytes (8 * last) in
+                let ticks = Int64.sub finish start in
+                let divider = (Option.get (Device.queue (Device.get device))).timestamp_divider in
+                total +. Int64.to_float ticks /. divider /. 1e6) 0. submission.timings)
+            end
+          end else None in
+        ignore (track_stats ctx call ~device:(Device.get (List.hd submission.devices))
+          (Array.to_list buffers) ctx.var_vals run);
+        keep_alive buffers)
   | None -> invalid_arg "exec_hcq: expected CALL"
 
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
@@ -894,7 +902,10 @@ let rec dispatch_call binding ctx ~device call =
       | Tolk_uop.Ops.Store -> exec_copy binding ctx ~device call
       | Tolk_uop.Ops.Program ->
           (match U.arg call with
-           | U.Arg.Call_info {aux = Some submission; _} -> exec_hcq binding ctx call submission
+           | U.Arg.Call_info {aux = Some submission; _} ->
+               exec_hcq binding ctx call submission ~fallback:(fun buffers ->
+                   let ctx = {ctx with input_uops = Array.map U.from_buffer buffers; wait = true} in
+                   List.iter (dispatch_call binding ctx ~device) submission.fallback)
            | _ -> exec_kernel binding ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function

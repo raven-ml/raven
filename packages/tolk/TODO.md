@@ -31,9 +31,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   submissions. Validate NV FIFO occupancy across independently linked batches
   and direct dispatches; Ampere control pages do not expose a consumer pointer.
 - Collect asynchronous queue profiling records at synchronization and export
-  them through the profiling trace path.
-  Bring CUDA host and peer copies onto the queue path with runtime mapping
-  eligibility and unsupported-mapping fallback. Validate AMD AQL/multi-XCC
+  them through the profiling trace path. Port bounded copy staging for
+  unsupported imports; ordinary fallback still allocates a full-size host bounce.
+  Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register
   tables. Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission

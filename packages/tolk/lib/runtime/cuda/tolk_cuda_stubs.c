@@ -456,11 +456,12 @@ CAMLprim value caml_tolk_cuda_mem_host_register(value v_ptr, value v_size) {
   size_t page_size = (size_t)system_page_size;
 #endif
   if ((uintptr_t)Nativeint_val(v_ptr) % page_size != 0)
-    caml_invalid_argument("CUDA mapping requires page-aligned host storage");
+    CAMLreturn(Val_int(-1));
   CUresult status = p_cuMemHostRegister((void *)Nativeint_val(v_ptr),
                                       (size_t)Long_val(v_size), 0);
+  if (status == 1 || status == 801) CAMLreturn(Val_int(-1)); /* unsupported host range */
   if (status != 712) cuda_check(status); /* already registered */
-  CAMLreturn(Val_bool(status == 0));
+  CAMLreturn(Val_int(status == 0));
 }
 
 CAMLprim value caml_tolk_cuda_mem_host_unregister(value v_ptr) {

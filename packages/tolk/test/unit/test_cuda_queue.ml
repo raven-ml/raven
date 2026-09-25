@@ -27,13 +27,15 @@ let program_call () =
 let compile ?(profile = false) calls =
   let host = Tolk_cpu.create "CPU" in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
-  let renderer_set = Device.Renderer_set.make ~device:device_name
-      ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-  let queue = Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
-    encode = Queue.encode device_name; lower = Queue.lower device_name;
-    compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
-  ignore (Device.make ~name:device_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
-    ~synchronize:(fun () -> ()) ~queue ());
+  let register queue_name =
+    let renderer_set = Device.Renderer_set.make ~device:queue_name
+        ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
+    let queue = Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
+      encode = Queue.encode queue_name; lower = Queue.lower queue_name;
+      compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+    ignore (Device.make ~name:queue_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
+      ~synchronize:(fun () -> ()) ~queue ()) in
+  List.iter register [device_name; "CUDA:queue-peer"];
   Hcq2.compile ~profile (U.linear calls)
 
 let submission linear = match U.as_call (U.without_after (List.hd (U.children linear))) with
@@ -58,6 +60,24 @@ let () = run "CUDA queue compilation" [
       let scalars = List.filter_map (fun (a : Tiny_elf.argument) ->
           if a.addrspace = Dtype.Alu then Some a.dtype else None) object_.signature in
       equal (list string) ["i64"; "i8"] (List.map Dtype.to_string scalars |> List.sort String.compare));
+  test "peer timelines use each device's own context" (fun () ->
+      let peer = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 16)
+          ~device:(U.Single "CUDA:queue-peer") () in
+      let compiled = compile [U.store_call ~dst:peer ~src:(parameter 0)] in
+      let contexts = U.toposort ~enter_calls:true compiled |> List.filter_map (fun u ->
+          match U.as_param u with
+          | Some {param = {allocation = Some ("cuda_context", _); device = Some (U.Single d); _}; _} -> Some d
+          | _ -> None) |> List.sort_uniq String.compare in
+      equal (list string) [device_name; "CUDA:queue-peer"] contexts);
+  test "host copies retain an ordinary execution fallback" (fun () ->
+      let host = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 16)
+          ~device:(U.Single "CPU") () in
+      let compiled = compile [U.store_call ~dst:(parameter 0) ~src:host] in
+      match U.arg (U.without_after (List.hd (U.children compiled))) with
+      | U.Arg.Call_info {aux = Some info; _} ->
+          equal int 1 (List.length info.fallback);
+          is_true (List.for_all (fun (_, d) -> d = device_name) info.inputs)
+      | _ -> fail "host copy was not enqueued");
   test "profiles compute and copy calls with native host callbacks" (fun () ->
       let compiled = compile ~profile:true [program_call ();
           U.store_call ~dst:(parameter 2) ~src:(parameter 0)] in

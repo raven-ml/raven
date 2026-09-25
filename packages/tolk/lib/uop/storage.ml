@@ -5,6 +5,8 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
+exception Mapping_unavailable of string
+
 module Buffer_spec = struct
   type t = {
     uncached : bool;

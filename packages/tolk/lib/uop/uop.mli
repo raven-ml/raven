@@ -231,6 +231,7 @@ type grad_fxn = grad_output:t -> call:t -> t option list
     positional order. *)
 
 type queue_info = {
+  fallback : t list; (** Original calls, parameterized by the submission arguments. *)
   devices : string list; (** Devices submitted by the host program. *)
   host : string; (** Device executing the host program. *)
   table : int; (** Call argument containing runtime addresses, or [-1]. *)

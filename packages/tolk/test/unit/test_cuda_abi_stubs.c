@@ -158,3 +158,16 @@ CAMLprim value caml_test_cuda_timestamp(value unit) {
   queue.status = 0;
   CAMLreturn(caml_copy_int64((int64_t)stamp));
 }
+
+static CUresult registration_status;
+static CUresult fake_register(void *ptr, size_t size, unsigned flags) {
+  assert(ptr == (void *)0x10000); assert(size == 16); assert(flags == 0);
+  return registration_status;
+}
+CAMLprim value caml_test_cuda_registration_status(value status) {
+  CAMLparam1(status);
+  registration_status = Int_val(status);
+  p_cuMemHostRegister = fake_register;
+  p_cuGetErrorString = fake_error;
+  CAMLreturn(Val_unit);
+}

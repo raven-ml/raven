@@ -265,8 +265,18 @@ let lower_call queue devices calls independent_accesses timestamps sink =
         patches := !patches @ links;
         Some (U.after ~src:(U.src u).(0) ~deps:rest)
       end in
-  let sink = U.graph_rewrite ~name:"encode queues" queue.Device.encode sink in
-  let sink = U.graph_rewrite ~name:"lower queue accesses" queue.lower sink in
+  let hooks name = Option.value (Device.queue (Device.get name)) ~default:queue in
+  let encode u = match U.op u, U.children u with
+    | Ops.Custom_function, linear :: _ ->
+        (match U.arg linear with
+         | U.Arg.Device (U.Single name) -> (hooks name).Device.encode u
+         | _ -> queue.Device.encode u)
+    | _ -> queue.Device.encode u in
+  let lower u = match U.device_of u with
+    | Some (U.Single name) -> (hooks name).Device.lower u
+    | _ -> queue.Device.lower u in
+  let sink = U.graph_rewrite ~name:"encode queues" encode sink in
+  let sink = U.graph_rewrite ~name:"lower queue accesses" lower sink in
   (* Address-table substitution must retain the writes that prepare pointed-to
      storage. The address itself is static even when its contents are patched
      on every submission. *)
@@ -324,7 +334,13 @@ let lower_call queue devices calls independent_accesses timestamps sink =
         | _ -> (match U.device_of (U.src g).(0) with Some (U.Single d) -> d
                 | _ -> invalid_arg "Hcq2.lower_call: address needs one device") in
       position 0 (U.src g).(0) args, device) runtime in
-  let aux = U.{devices; host = queue.host; table = position 0 table bufs;
+  let fallback = List.map (fun c ->
+      let original = Option.get (U.as_call c.call) in
+      let actuals = List.map (fun arg ->
+          let slot = position 0 arg args in
+          if slot < 0 then arg else U.param_like arg ~slot) original.args in
+      U.replace c.call ~src:(Array.of_list (original.body :: actuals)) ()) calls in
+  let aux = U.{fallback; devices; host = queue.host; table = position 0 table bufs;
     timings = List.map (fun (device, start, finish) ->
       device, position 0 (U.buf_uop start) args,
       (Deps_tracker.uop start).start / 8 + 1, (Deps_tracker.uop finish).start / 8 + 1) timestamps;
@@ -349,7 +365,7 @@ let compile_batch ~profile calls =
       let prefix = String.lowercase_ascii (List.hd (String.split_on_char ':' device)) in
       let kind = String.lowercase_ascii (List.hd (String.split_on_char ':' kind)) in
       let submit = U.custom_function ~name:("submit_" ^ prefix ^ "_" ^ kind)
-          ~srcs:[U.linear commands; U.group !previous] in
+          ~srcs:[U.replace (U.linear commands) ~arg:(U.Arg.Device (U.Single device)) (); U.group !previous] in
       previous := [submit]; submit) plan.queues in
   let module E = Program_spec.Estimates in
   let estimates = List.fold_left (fun total c ->

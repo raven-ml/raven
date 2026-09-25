@@ -67,17 +67,6 @@ type param_arg = {
   buffer : Storage.t list option;
 }
 
-type queue_info = {
-  devices : string list;
-  host : string;
-  table : int;
-  inputs : (int * string) list;
-  outputs : int list;
-  timings : (string * int * int * int) list;
-  independent_accesses : (int * int) list;
-  accesses : int list list;
-}
-
 type reduce_arg = { op : Ops.t; num_axes : int }
 
 type estimate = Int of int | Sym of t
@@ -93,6 +82,18 @@ and kernel_info = {
 }
 
 and grad_fxn = grad_output:t -> call:t -> t option list
+
+and queue_info = {
+  fallback : t list;
+  devices : string list;
+  host : string;
+  table : int;
+  inputs : (int * string) list;
+  outputs : int list;
+  timings : (string * int * int * int) list;
+  independent_accesses : (int * int) list;
+  accesses : int list list;
+}
 
 and call_info = {
   grad_fxn : grad_fxn option;
@@ -232,7 +233,10 @@ module Arg = struct
         && x.name = y.name
         && x.precompile = y.precompile
         && x.precompile_backward = y.precompile_backward
-        && x.aux = y.aux
+        && Option.equal (fun a b ->
+             {a with fallback = []} = {b with fallback = []}
+             && List.equal (fun x y -> x.Hashcons.tag = y.Hashcons.tag) a.fallback b.fallback)
+             x.aux y.aux
         && Dtype.equal x.dtype y.dtype
     | Program_info x, Program_info y -> x = y
     | Wmma_info x, Wmma_info y -> x = y
@@ -242,6 +246,9 @@ module Arg = struct
     | Param_arg p ->
         (Param_arg { p with buffer = None },
          Option.map (List.map Storage.id) p.buffer)
+    | Call_info ({aux = Some info; _} as call) ->
+        (Call_info {call with aux = Some {info with fallback = []}},
+         Some (List.map (fun u -> u.Hashcons.tag) info.fallback))
     | arg -> (arg, None)
 
   let compare a b = Stdlib.compare (identity a) (identity b)
@@ -3519,10 +3526,11 @@ let program_vals (info : program_info) ~var_vals =
 
 (* Uops embedded in node arguments are graph edges just like [src] entries:
    serialization and re-interning must traverse them. The embedding points
-   are exactly [Kernel_info] estimates ([Sym]), [Program_info] variables,
-   and symbolic [Program_info] launch dimensions ([Launch_sym]); every
+   are [Call_info] fallback calls, [Kernel_info] estimates ([Sym]),
+   [Program_info] variables and symbolic launch dimensions ([Launch_sym]); every
    other argument payload is pure data. *)
 let arg_uops = function
+  | Arg.Call_info {aux = Some info; _} -> info.fallback
   | Arg.Kernel_info { estimates = Option.Some { ops; lds; mem }; _ } ->
       let sym acc (e : estimate) =
         match e with Sym u -> u :: acc | Int _ -> acc
@@ -3538,6 +3546,8 @@ let arg_uops = function
   | _ -> []
 
 let map_arg_uops f = function
+  | Arg.Call_info ({aux = Some info; _} as call) ->
+      Arg.Call_info {call with aux = Some {info with fallback = List.map f info.fallback}}
   | Arg.Kernel_info ({ estimates = Option.Some e; _ } as ki) ->
       let est (x : estimate) : estimate =
         match x with Sym u -> Sym (f u) | Int _ as x -> x
@@ -3663,7 +3673,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 31
+let export_version = 32
 
 type serialized_node = {
   serialized_op : Ops.t;
