@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- PCI peer imports reject source addresses outside the receiving GPU’s virtual
+  address range before editing page tables, allowing shared execution to stage
+  unsupported transfers.
+
 - AMD `Program.image` zero-pads relocated binaries to a four-byte boundary,
   matching the reference contract for program uploads.
 

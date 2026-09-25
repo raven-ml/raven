@@ -361,10 +361,11 @@ module Pci_iface_base : sig
   val map : ('impl, 'pt) t -> Tolk.Device.Buffer.t -> mem Hcq.Buffer.t
   (** [map t b] maps the source allocation into [t]. PCI device memory is
       reached through its owner's BAR; host storage is pinned and mapped by
-      its physical pages. Host addresses must be page aligned and fit the
-      GPU address range. System-memory allocations remain importable when
+      its physical pages. The source range must fit the receiver's GPU
+      address range; host addresses must also be page aligned.
+      System-memory allocations remain importable when
       their owner has a small BAR. Raises {!Tolk_uop.Storage.Mapping_unavailable}
-      for unsupported storage, an incompatible host address, or device memory
+      for unsupported storage, an incompatible source address, or device memory
       behind a small BAR. Driver failures propagate. The caller must retain
       [b] until unmapping. *)
 

@@ -37,8 +37,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   addresses instead of its PCI BAR, and select BAR or fabric addresses according
   to the receiving device. Establish raw-PCI fabric identity and reachability;
   region index/count alone cannot prove a shared hive, and driver sysfs state
-  cannot be assumed after takeover. Check mixed-vendor/cross-hive mappings and
-  reject imports outside the receiver's virtual-address aperture.
+  cannot be assumed after takeover. Validate mixed-vendor/cross-hive mappings
+  and receiver-aperture rejection, including NV-to-AMD staged fallback on raw
+  PCI hardware.
   Inject combined setup/cleanup failures in KFD/NVK: GPU map then driver free,
   UVM/RM map then UVM range free, and successful range cleanup then RM free.
   Verify owned host mappings remain after failed retirement, borrowed sources

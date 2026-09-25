@@ -246,6 +246,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   resident-wave regions. Hardware validation remains in TODO. Reconsider when
   upstream computes the offset from resident-wave storage.
 
+- **PCI imports validate every source against the receiver's address range.**
+  The target only checks host imports; a normal NV allocation can sit below
+  AMD's virtual-address base and reach page-table indexing with a negative
+  relative address. Native and host imports share the same preflight check and
+  report `Mapping_unavailable` before mapping, enabling shared staged fallback.
+  Consumer: mixed-vendor PCI transfers. Existing system/memory suites pass;
+  direct native-import and staged-fallback execution remain hardware acceptance
+  in TODO. Reconsider when the target applies the same receiver-side check.
+
 - **PCI peers can import system memory owned by small-BAR devices.** Host
   timelines and queue signals use system physical pages, not the owner's BAR.
   The frozen target rejects them together with inaccessible device memory,
