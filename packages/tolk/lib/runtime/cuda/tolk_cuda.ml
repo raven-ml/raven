@@ -344,13 +344,15 @@ module Queue = struct
 
   let create state device_name =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
-    let copy call = match U.as_call call with
+    let copy call =
+      let supported = match U.as_call call with
       | Some {args; _} -> List.for_all (fun arg ->
           match U.device_of arg with
           | Some (U.Single name) ->
               List.mem (List.hd (String.split_on_char ':' name)) ["CUDA"; "CPU"]
           | _ -> false) args
       | None -> false in
+      if supported then Some "COPY:0" else None in
     let completion () =
       match state.State.timeline with
       | None -> fun () -> ()

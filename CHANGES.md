@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD without SDMA keeps bulk copies in compiled submissions by using a
+  byte-copy kernel, including staged imports. `Device.queue.copy` now selects
+  the copy or compute queue for each transfer.
+
 - Unsupported queue copy imports use two 64 MiB staging slots with dependencies
   before reuse, retaining asynchronous replay and rebinding. PCI host signals
   remain importable on small-BAR devices; device and allocation faults propagate.

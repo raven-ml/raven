@@ -130,7 +130,7 @@ let staged_peer_dependencies () =
            | `Fault -> failwith "host mapping fault");
           mapping.map source)}} in
     let queue = Device.{timestamp_divider = 1.; completion = (fun () () -> ());
-      prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
+      prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some "COPY:0");
       encode = (fun _ -> None); lower = (fun _ -> None);
       compile = (fun _ -> fail "staging plan should not compile")} in
     Device.make ~name ~allocator
@@ -221,6 +221,7 @@ let compiled_host_submission () =
             if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
         Some (U.group nodes)
     | _ -> None in
+  let copy_queue = ref "COPY:0" and generated = ref [] in
   let completions = ref [] in
   let completion () =
     let value = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 8 in
@@ -231,7 +232,7 @@ let compiled_host_submission () =
     let program = Codegen.to_program ~optimize:false host (Device.renderer host) sink in
     Spec.type_verify Spec.program_spec (U.src program).(0);
     program in
-  let queue = Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
+  let queue = Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some !copy_queue); encode; lower = (fun _ -> None);
     compile} in
   let renderer_set = Device.Renderer_set.make ~device:name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
@@ -246,7 +247,10 @@ let compiled_host_submission () =
   let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) ~device:(U.Single name) () in
   let linear = U.linear [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
                          U.store_call ~dst:(ptr 2) ~src:(ptr 1)] in
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device sink =
+    let program = Codegen.to_program device (Device.renderer device) sink in
+    generated := program :: !generated;
+    program in
   let compiled = Realize.compile_linear ~device ~to_program linear in
   let binding = Realize.Buffers.create () in
   let linked = Realize.link_linear binding compiled in
@@ -448,7 +452,50 @@ let compiled_host_submission () =
       equal int32 654l (run_separate 654l);
       equal int32 321l (run_separate 321l));
   equal int (before + 3) !compilations;
-  equal int (linked_before + 4) !links
+  equal int (linked_before + 4) !links;
+  copy_queue := "COMPUTE:0";
+  let byte slot = U.param ~slot ~dtype:Dtype.uint8 ~shape:(U.const_int 37)
+      ~device:(U.Single name) () in
+  let linear = compile ~profile:true [U.store_call ~dst:(byte 1) ~src:(byte 0)] in
+  let program = List.hd !generated in
+  (match U.arg (U.without_after (List.hd (U.children linear))) with
+   | U.Arg.Call_info {aux = Some info; _} ->
+       equal int 1 (List.length info.fallback);
+       is_true ~msg:"compute copy retains bulk-store fallback for later staging"
+         (U.op (Option.get (U.as_call (List.hd info.fallback))).body = Ops.Store)
+   | _ -> fail "compute copy was not queued");
+  let source_bytes = Bytes.init 47 (fun i -> Char.chr ((i * 113 + 17) land 255)) in
+  let destination_bytes = Bytes.make 45 '\x55' in
+  let raw bytes =
+    let b = Device.create_buffer ~size:(Bytes.length bytes) ~dtype:Dtype.uint8 device in
+    Device.Buffer.ensure_allocated b; Device.Buffer.copyin b bytes; b in
+  let source = raw source_bytes and destination = raw destination_bytes in
+  let src = Device.Buffer.view source ~size:37 ~dtype:Dtype.uint8 ~offset:4
+  and dst = Device.Buffer.view destination ~size:37 ~dtype:Dtype.uint8 ~offset:3 in
+  let kernel = Device.runtime host (U.to_elf program) in
+  Fun.protect ~finally:kernel.free (fun () ->
+      ignore (kernel.call [|dst; src|] ~global:[|1; 1; 1|] ~local:None
+        ~vals:[||] ~wait:true ~timeout:None : float option));
+  Bytes.blit source_bytes 4 destination_bytes 3 37;
+  equal Windtrap.bytes destination_bytes (Device.Buffer.as_bytes destination);
+  Fun.protect ~finally:(fun () -> Unix.putenv "PROFILE" (Option.value old_profile ~default:"0")) (fun () ->
+      Unix.putenv "PROFILE" "1";
+      replay linear [|src; dst|];
+      let events = Device.profile device in
+      equal (list string) ["COMPUTE:0"] (List.map (fun e -> e.Profile.queue) events));
+  (* A compute-only device must still insert staging on runtime import failure. *)
+  import_mode := `Reject;
+  let staged_compute = compile [U.store_call ~dst:(ptr 1) ~src:input] in
+  replay staged_compute [|foreign; middle|];
+  equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes middle) 0);
+  let empty slot = U.param ~slot ~dtype:Dtype.uint8 ~shape:(U.const_int 0)
+      ~device:(U.Single name) () in
+  let empty_copy = compile [U.store_call ~dst:(empty 1) ~src:(empty 0)] in
+  let src = Device.create_buffer ~size:0 ~dtype:Dtype.uint8 device
+  and dst = Device.create_buffer ~size:0 ~dtype:Dtype.uint8 device in
+  let before = !Realize.queue_submissions in
+  replay empty_copy [|src; dst|];
+  equal int before !Realize.queue_submissions
 
 let () = run "Engine_hcq2" [
   test "staging alternates bounded slots with read-before-reuse dependencies" staged_peer_dependencies;

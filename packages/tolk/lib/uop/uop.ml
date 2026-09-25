@@ -90,7 +90,7 @@ and queue_info = {
   table : int;
   inputs : (int * string) list;
   outputs : int list;
-  timings : (string * int * int * int) list;
+  timings : (string * string * int * int * int) list;
   independent_accesses : (int * int) list;
   host_deps : (string * string) list;
   accesses : int list list;
@@ -3674,7 +3674,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 33
+let export_version = 34
 
 type serialized_node = {
   serialized_op : Ops.t;

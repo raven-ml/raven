@@ -12,7 +12,7 @@ let fixture synchronize =
   let renderer_set = Device.Renderer_set.make ~device:"CPU:profile"
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
   let queue = Device.{timestamp_divider = 10.; completion = (fun () () -> ()); prepare = (fun () -> ()); host = Device.name host;
-    copy = (fun _ -> false); encode = (fun _ -> None); lower = (fun _ -> None);
+    copy = (fun _ -> None); encode = (fun _ -> None); lower = (fun _ -> None);
     compile = (fun _ -> fail "no compilation expected")} in
   let device = Device.make ~name:"CPU:profile" ~allocator ~renderer_set
       ~runtime:(Device.runtime host) ~synchronize ~queue () in

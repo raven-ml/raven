@@ -103,7 +103,9 @@ type queue = {
   prepare : unit -> unit;
       (** Prepares shared runtime state before each compiled submission. *)
   host : string; (** Host device executing submission programs. *)
-  copy : Tolk_uop.Uop.t -> bool; (** [copy call] whether this bulk-store call can use the device queue. *)
+  copy : Tolk_uop.Uop.t -> string option;
+      (** [copy call] selects the queue for a bulk store, or [None] for ordinary
+          dispatch. A [COMPUTE:] queue lowers the store to a byte-copy kernel. *)
   encode : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option;
       (** Rewrites a device submit function into host operations. *)
   lower : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option;

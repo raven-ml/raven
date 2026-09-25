@@ -83,7 +83,7 @@ type queue = {
   completion : unit -> (unit -> unit);
   prepare : unit -> unit;
   host : string;
-  copy : Tolk_uop.Uop.t -> bool;
+  copy : Tolk_uop.Uop.t -> string option;
   encode : Uop.t -> Uop.t option;
   lower : Uop.t -> Uop.t option;
   compile : Uop.t -> Uop.t;

@@ -255,7 +255,7 @@ let storage_views u =
        | _ -> None)
   | _ -> None
 
-let lower_call queue devices calls independent_accesses timestamps sink =
+let lower_call queue devices calls original_calls independent_accesses timestamps sink =
   let patches = ref [] in
   let hoist u =
     if U.op u <> Ops.After then None else
@@ -322,7 +322,8 @@ let lower_call queue devices calls independent_accesses timestamps sink =
     | [] -> -1 in
   let dedup xs = List.fold_left (fun acc u ->
       if List.exists (U.equal u) acc then acc else acc @ [u]) [] xs in
-  let originals = List.concat_map (fun c -> fst (arguments c.call)) calls in
+  let originals = List.concat_map (fun c -> fst (arguments c.call)) calls
+      @ List.concat_map (fun call -> fst (arguments call)) original_calls in
   let sources = List.map (fun g -> (U.src g).(0)) runtime in
   let timestamp_buffers = List.map (fun (_, start, _) -> U.buf_uop start) timestamps in
   let args = dedup (bufs @ originals @ sources @ timestamp_buffers) in
@@ -334,16 +335,16 @@ let lower_call queue devices calls independent_accesses timestamps sink =
         | _ -> (match U.device_of (U.src g).(0) with Some (U.Single d) -> d
                 | _ -> invalid_arg "Hcq2.lower_call: address needs one device") in
       position 0 (U.src g).(0) args, device) runtime in
-  let fallback = List.map (fun c ->
-      let original = Option.get (U.as_call c.call) in
+  let fallback = List.map (fun call ->
+      let original = Option.get (U.as_call call) in
       let actuals = List.map (fun arg ->
           let slot = position 0 arg args in
           if slot < 0 then arg else U.param_like arg ~slot) original.args in
-      U.replace c.call ~src:(Array.of_list (original.body :: actuals)) ()) calls in
+      U.replace call ~src:(Array.of_list (original.body :: actuals)) ()) original_calls in
   let aux = U.{fallback; devices; host = queue.host; table = position 0 table bufs;
-    timings = List.map (fun (device, start, finish) ->
-      device, position 0 (U.buf_uop start) args,
-      (Deps_tracker.uop start).start / 8 + 1, (Deps_tracker.uop finish).start / 8 + 1) timestamps;
+    timings = (if timestamps = [] then [] else List.map2 (fun (device, start, finish) (c : call) ->
+      device, c.queue, position 0 (U.buf_uop start) args,
+      (Deps_tracker.uop start).start / 8 + 1, (Deps_tracker.uop finish).start / 8 + 1) timestamps calls);
     independent_accesses = List.map (fun (a, b) -> position 0 a args, position 0 b args) independent_accesses;
     host_deps = List.concat_map (fun (c : call) ->
         fst (arguments c.call) |> List.filter_map (fun arg ->
@@ -359,7 +360,7 @@ let lower_call queue devices calls independent_accesses timestamps sink =
         precompile_backward = false; dtype = Dtype.void; aux = Some aux} in
   U.after ~src:call ~deps:!patches
 
-let compile_batch ~profile calls =
+let compile_batch ~profile ~original_calls calls =
   let plan = plan ~profile calls in
   let devices = List.fold_left (fun ds (d, _, _) ->
       if List.mem d ds then ds else ds @ [d]) [] plan.queues in
@@ -405,11 +406,13 @@ let compile_batch ~profile calls =
   let sink = substitute (U.sink ~kernel_info submits) in
   let independent_accesses = List.map (fun (a, b) -> substitute a, substitute b) plan.independent_accesses in
   let timestamps = List.map (fun (d, a, b) -> d, substitute a, substitute b) plan.timestamps in
-  let lowered = lower_call queue devices calls independent_accesses timestamps sink in
+  let original_calls = List.map substitute original_calls in
+  let lowered = lower_call queue devices calls original_calls independent_accesses timestamps sink in
   U.substitute ~walk:true (List.map (fun (a, b) -> b, a) mappings) lowered
 
 let enqueue call = match U.as_call call with
   | Some {body; args} when (U.op body = Ops.Program || U.op body = Ops.Store)
+      && (U.op body <> Ops.Store || match args with dst :: _ -> U.max_numel dst <> 0 | [] -> false)
       && (match U.arg call with U.Arg.Call_info {aux = None; _} -> true | _ -> false)
       && not (List.exists (fun u -> match U.device_of u with Some (U.Multi _) -> true | _ -> false) args) ->
       let args = List.filter (fun u -> not (U.is_bound_var u)) args in
@@ -418,10 +421,10 @@ let enqueue call = match U.as_call call with
           | Some (U.Single device) ->
               let dev = Device.get device in
               (match Device.queue dev with
-               | Some q when U.op body = Ops.Program || q.copy call ->
-                   Some {call; device = Device.name dev;
-                     queue = if U.op body = Ops.Program then "COMPUTE:0" else "COPY:0"}
-               | _ -> None)
+               | Some q ->
+                   let queue = if U.op body = Ops.Program then Some "COMPUTE:0" else q.copy call in
+                   Option.map (fun queue -> {call; device = Device.name dev; queue}) queue
+               | None -> None)
           | _ -> None) args
   | _ -> None
 
@@ -473,16 +476,40 @@ let stage_copies ~resolve linear =
     if !changed then Some (U.linear calls) else None
   with Storage.Mapping_unavailable _ -> None
 
-let compile ?(profile = false) linear =
+let compile_copy ~to_program c = match U.as_call c.call with
+  | Some {body; args = [dst; src]} when U.op body = Ops.Store
+      && String.starts_with ~prefix:"COMPUTE:" c.queue ->
+      let device = Device.get c.device in
+      let bytes arg = U.bitcast ~src:arg ~dtype:Dtype.uint8 in
+      let dst = bytes dst and src = bytes src in
+      let size = U.max_numel src in
+      if U.max_numel dst <> size then invalid_arg "queue copy: buffer sizes differ";
+      let ptr slot = U.param ~slot ~dtype:Dtype.uint8 ~shape:(U.const_int size)
+          ~device:(U.Single c.device) () in
+      let range = U.range ~size:(U.const_int size) ~axis:0 ~kind:Axis_type.Weak () in
+      let index ptr = U.index ~ptr ~idxs:[range] () in
+      let store = U.store ~dst:(index (ptr 0)) ~value:(U.load ~src:(index (ptr 1)) ()) () in
+      let kernel_info = U.{name = "copy"; applied_opts = []; opts_to_apply = None;
+        estimates = None; beam = 0} in
+      let body = to_program device
+          (U.sink ~kernel_info [U.end_ ~value:store ~ranges:[range]]) in
+      {c with call = U.replace c.call ~src:[|body; dst; src|] ()}
+  | _ -> c
+
+let compile ~to_program ?(profile = false) linear =
   let result = ref [] and batch = ref [] and group = ref None in
   let flush () =
-    if !batch <> [] then result := compile_batch ~profile (List.rev !batch) :: !result;
+    if !batch <> [] then begin
+      let calls, original_calls = List.split (List.rev !batch) in
+      result := compile_batch ~profile ~original_calls calls :: !result
+    end;
     batch := []; group := None in
   List.iter (fun call -> match enqueue call with
       | None -> flush (); result := call :: !result
       | Some c ->
+          let c = compile_copy ~to_program c in
           let peer_group = Device.peer_group (Device.get c.device) in
           if !group <> Some peer_group then flush ();
-          group := Some peer_group; batch := c :: !batch) (U.children linear);
+          group := Some peer_group; batch := (c, call) :: !batch) (U.children linear);
   flush ();
   U.linear (List.rev !result)

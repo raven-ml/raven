@@ -372,7 +372,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
       | None -> fun () -> ()
       | Some tl -> let value = Timeline.submitted tl in
           fun () -> Timeline.guarded_wait tl (fun () -> Signal.wait tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
-    host = "CPU"; copy = (fun _ -> true);
+    host = "CPU"; copy = (fun _ -> Some "COPY:0");
     encode = Tolk_amd.Encoded_queue.encode hw ~props ~name:device_name
         ~compute_ring_size:4096 ~copy_ring_size:(Some 4096);
     lower = Tolk_amd.Encoded_queue.lower device_name;
@@ -414,7 +414,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
       ~synchronize:(fun () -> ()) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)] else [call] in
-  Hcq2.compile (U.linear calls), device, host, buffers, submission
+  Hcq2.compile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
 
 let compile_queue ~copies =
   let compiled, _, _, _, _ = queue_fixture ~copies () in compiled

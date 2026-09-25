@@ -2280,7 +2280,8 @@ module Queue = struct
 
   let create state =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
-    let copy call = Option.is_some state.State.sdma_queue && match U.as_call call with
+    let copy call =
+      let supported = match U.as_call call with
       | Some {args; _} -> List.for_all (fun arg ->
           match U.device_of arg with
           | Some (U.Single name) ->
@@ -2288,6 +2289,7 @@ module Queue = struct
               || Device.peer_group (Device.get name) = Device.peer_group (Device.get state.State.name)
           | _ -> false) args
       | None -> false in
+      if supported then Some (if Option.is_some state.State.sdma_queue then "COPY:0" else "COMPUTE:0") else None in
     let completion () =
       let timeline = state.State.tl in
       let value = Timeline.submitted timeline in

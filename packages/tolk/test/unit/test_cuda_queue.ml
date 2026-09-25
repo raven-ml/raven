@@ -30,14 +30,15 @@ let compile ?(profile = false) ?peer_group calls =
   let register queue_name =
     let renderer_set = Device.Renderer_set.make ~device:queue_name
         ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-    let queue = Device.{timestamp_divider = 1000.; completion = (fun () () -> ()); prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
+    let queue = Device.{timestamp_divider = 1000.; completion = (fun () () -> ()); prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some "COPY:0");
       encode = Queue.encode queue_name; lower = Queue.lower queue_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
     let peer_group = if queue_name = device_name then None else peer_group in
     ignore (Device.make ?peer_group ~name:queue_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
       ~synchronize:(fun () -> ()) ~queue ()) in
   List.iter register [device_name; "CUDA:queue-peer"];
-  Hcq2.compile ~profile (U.linear calls)
+  Hcq2.compile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    ~profile (U.linear calls)
 
 let submission linear = match U.as_call (U.without_after (List.hd (U.children linear))) with
   | Some call -> call.body

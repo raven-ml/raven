@@ -50,7 +50,10 @@ val stage_copies :
     Returns [None] if no copy needs staging or staging cannot be imported.
     Other allocation and device failures propagate. *)
 
-val compile : ?profile:bool -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [compile ?profile linear] encodes calls supported by their device's queue hooks into
+val compile :
+  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
+  ?profile:bool -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [compile ~to_program ?profile linear] encodes calls supported by their device's queue hooks into
     host programs, combining adjacent calls from the same peer group. Other
-    calls remain individual dispatches. *)
+    calls remain individual dispatches. [to_program device sink] compiles byte-copy
+    kernels for stores assigned to compute queues. *)

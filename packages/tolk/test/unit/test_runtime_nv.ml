@@ -558,7 +558,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
       | None -> fun () -> ()
       | Some tl -> let value = Timeline.submitted tl in
           fun () -> Timeline.guarded_wait tl (fun () -> Signal.wait tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
-    host = "CPU"; copy = (fun _ -> true);
+    host = "CPU"; copy = (fun _ -> Some "COPY:0");
     encode = Tolk_nv.Encoded_queue.encode (nv_dev ~compute_class m) ~name:device_name
         ~compute_entries:8 ~copy_entries:8 ~compute_token:0x123 ~copy_token:0x456;
     lower = Tolk_nv.Encoded_queue.lower device_name;
@@ -602,7 +602,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)]
     else if chain then [call; U.replace call ~src:[|program; parameter 1|] ()] else [call] in
-  Hcq2.compile (U.linear calls), device, host, buffers, submission
+  Hcq2.compile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
 
 let execute_queue ~compute_class ~copies m =
   let open Tolk in

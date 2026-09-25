@@ -284,7 +284,7 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2 || Helpers
   let linear = U.linear (List.map compile_call (U.children linear)) in
   if not cache || List.exists (fun n ->
       U.op n = Tolk_uop.Ops.Buffer && U.addrspace n = Some Tolk_uop.Dtype.Global)
-      (U.toposort ~enter_calls:true linear) then Hcq2.compile ~profile linear
+      (U.toposort ~enter_calls:true linear) then Hcq2.compile ~to_program ~profile linear
   else
     let hosts = U.toposort ~enter_calls:false linear
         |> List.filter_map (fun n -> match U.device_of n with
@@ -302,7 +302,7 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2 || Helpers
     match Hashtbl.find_opt templates key with
     | Some (_, compiled) -> compiled
     | None ->
-        let compiled = Hcq2.compile ~profile linear in
+        let compiled = Hcq2.compile ~to_program ~profile linear in
         Hashtbl.add templates key (linear, compiled);
         compiled
 
@@ -860,7 +860,7 @@ let exec_copy binding ctx ~device call =
 let queue_submissions = ref 0
 let staged_queue_cache = Domain.DLS.new_key (fun () -> Tolk_uop.Uop.Weak_tbl.create 16)
 
-let staged_queue binding ctx call submission buffers =
+let staged_queue ~to_program binding ctx call submission buffers =
   let module U = Tolk_uop.Uop in
   let shape = Array.map (fun b ->
       Device.Buffer.device b, Device.Buffer.nbytes b, Device.Buffer.dtype b) buffers in
@@ -871,7 +871,7 @@ let staged_queue binding ctx call submission buffers =
       match Hcq2.stage_copies ~resolve:(resolve binding ctx) (U.linear submission.U.fallback) with
       | None -> None
       | Some staged ->
-          let compiled = Hcq2.compile ~profile:(submission.U.timings <> []) staged in
+          let compiled = Hcq2.compile ~to_program ~profile:(submission.U.timings <> []) staged in
           let linked = link_linear binding ~input_uops:ctx.input_uops compiled in
           U.Weak_tbl.replace cache call (shape, linked);
           Some linked
@@ -942,13 +942,13 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
           List.iter (fun (owner, source) ->
               Device.depend_on (Device.get owner) (Device.get source)) submission.host_deps;
           if Helpers.getenv "PROFILE" 0 <> 0 then
-            List.iteri (fun i (device, slot, first, last) ->
-                let name, queue = match List.nth_opt submission.fallback i with
+            List.iteri (fun i (device, queue, slot, first, last) ->
+                let name = match List.nth_opt submission.fallback i with
                   | Some call -> (match U.as_call call with
-                      | Some {body; _} when U.op body = Tolk_uop.Ops.Program -> U.program_function_name body, "COMPUTE:0"
-                      | Some {body; _} when U.op body = Tolk_uop.Ops.Store -> "copy", "COPY:0"
-                      | _ -> "queue operation", "COMPUTE:0")
-                  | None -> "queue operation", "COMPUTE:0" in
+                      | Some {body; _} when U.op body = Tolk_uop.Ops.Program -> U.program_function_name body
+                      | Some {body; _} when U.op body = Tolk_uop.Ops.Store -> "copy"
+                      | _ -> "queue operation")
+                  | None -> "queue operation" in
                 Device.record_timing (Device.get device) ~name ~queue ~buffer:buffers.(slot) ~first ~last)
               submission.timings;
           if ctx.wait then begin
@@ -956,7 +956,7 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
             if submission.timings = [] then Some (Unix.gettimeofday () -. started)
             else begin
               let snapshots = Hashtbl.create (List.length submission.devices) in
-              Some (List.fold_left (fun total (device, slot, first, last) ->
+              Some (List.fold_left (fun total (device, _, slot, first, last) ->
                 let bytes = match Hashtbl.find_opt snapshots slot with
                   | Some bytes -> bytes
                   | None -> let bytes = Device.Buffer.as_bytes buffers.(slot) in
@@ -975,7 +975,7 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
 
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
    executor, which replays a compiled sub-linear per iteration. *)
-let rec dispatch_call binding ctx ~device call =
+let rec dispatch_call binding ctx ~device ~to_program call =
   let call = Tolk_uop.Uop.without_after call in
   let module U = Tolk_uop.Uop in
   match U.as_call call with
@@ -987,14 +987,14 @@ let rec dispatch_call binding ctx ~device call =
            | U.Arg.Call_info {aux = Some submission; _} ->
                exec_hcq binding ctx call submission ~fallback:(fun buffers ->
                    let ctx = {ctx with input_uops = Array.map U.from_buffer buffers} in
-                   match staged_queue binding ctx call submission buffers with
-                   | Some staged -> List.iter (dispatch_call binding ctx ~device) (U.children staged)
-                   | None -> List.iter (dispatch_call binding {ctx with wait = true} ~device) submission.fallback)
+                   match staged_queue ~to_program binding ctx call submission buffers with
+                   | Some staged -> List.iter (dispatch_call binding ctx ~device ~to_program) (U.children staged)
+                   | None -> List.iter (dispatch_call binding {ctx with wait = true} ~device ~to_program) submission.fallback)
            | _ -> exec_kernel binding ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function
         when U.Arg.as_string (U.arg body) = Some "loop" ->
-          exec_loop binding ctx ~device call
+          exec_loop binding ctx ~device ~to_program call
       | _ ->
           invalid_arg
             (Format.asprintf "run_linear: unexpected call body %a" U.pp body))
@@ -1041,7 +1041,7 @@ let rec dispatch_call binding ctx ~device call =
    kernels assume an aligned base pointer, so a stride must be a whole number
    of 16 bytes (the widest vector access, float4 or half8): the loop's builder
    pads rows to it. *)
-and exec_loop binding ctx ~device call =
+and exec_loop binding ctx ~device ~to_program call =
   let module U = Tolk_uop.Uop in
   let int_child children i =
     match U.const_int_value (List.nth children i) with
@@ -1106,7 +1106,7 @@ and exec_loop binding ctx ~device call =
       for j = 0 to trip - 1 do
         List.iter (bind ~next:0 j) in_slots;
         List.iter (bind ~next:1 j) out_slots;
-        List.iter (dispatch_call binding ctx ~device)
+        List.iter (dispatch_call binding ctx ~device ~to_program)
           (U.children body_linear)
       done;
       (* The body's launches are asynchronous. Block until they complete so
@@ -1157,7 +1157,7 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
       | Some { body; _ }
         when U.op body = Tolk_uop.Ops.Custom_function
              && U.Arg.as_string (U.arg body) = Some "loop" ->
-          exec_loop binding ctx ~device call
-      | _ -> dispatch_call binding ctx ~device call)
+          exec_loop binding ctx ~device ~to_program call
+      | _ -> dispatch_call binding ctx ~device ~to_program call)
     (U.children linear);
   keep_alive linear

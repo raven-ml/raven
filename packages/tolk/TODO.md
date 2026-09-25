@@ -32,9 +32,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   batches and direct dispatches on hardware, including kernel-argument arena
   reuse during long asynchronous batches.
 - Calibrate GPU and CPU profiling clocks for cross-device trace alignment.
-  Lower bulk copies to compute kernels when AMD SDMA is unavailable.
   Regroup interleaved peer groups without weakening cross-group dependencies.
   Validate staged peer transfers and shared host signals on small-BAR devices.
+  Support AMD's selected SDMA queue count and all-to-all queue assignment.
   Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register
