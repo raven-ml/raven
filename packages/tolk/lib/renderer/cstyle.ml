@@ -876,7 +876,10 @@ let base_rewrite : ctx rule list =
     (* ALU: dispatch to code_for_op. C groups a chain of one operator from
        the left, so an operand of the same operator loses its parentheses on
        the left always and on the right only where the operator is
-       associative: float addition and multiplication are not. *)
+       associative: float addition and multiplication are not. C computes
+       on char and short in int, where a sum, difference, product, negation,
+       left shift or quotient can leave the narrow range: such a scalar result
+       is cast back, so a rendered value always has its node's value. *)
     ( ops Ops.Group.alu ~name:"x",
       fun ctx bs _ ->
         let x = bs $ "x" in
@@ -884,7 +887,8 @@ let base_rewrite : ctx rule list =
         let assoc_strip =
           List.mem xop [ Ops.Add; Ops.Mul; Ops.Xor; Ops.Or; Ops.And ]
         in
-        let regroups = not (Dtype.is_float (U.dtype x)) in
+        let dt = U.dtype x in
+        let regroups = not (Dtype.is_float dt) in
         let args =
           Array.to_list (U.src x)
           |> List.mapi (fun i s ->
@@ -893,7 +897,12 @@ let base_rewrite : ctx rule list =
                  then strip_parens rendered
                  else rendered)
         in
-        Some (ctx.lang.code_for_op xop args (U.dtype x)) );
+        let rendered = ctx.lang.code_for_op xop args dt in
+        if List.mem xop [ Ops.Add; Ops.Sub; Ops.Mul; Ops.Neg; Ops.Shl; Ops.Cdiv ]
+           && Dtype.is_int dt && Dtype.itemsize dt < 4
+           && render_numel ctx x = 1
+        then Some (strf "(%s)" (render_cast ctx dt (strip_parens rendered)))
+        else Some rendered );
     (* CUSTOM / CUSTOMI: format the arg as a template with src strings. *)
     ( ops [ Ops.Custom; Ops.Customi ] ~name:"x",
       fun ctx bs _ ->

@@ -302,6 +302,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   and products keep their grouping". Remove this ruling when upstream keeps
   the association.
 
+- **A narrow integer result is cast back to its dtype.** C computes on
+  `char` and `short` in `int`, and the reference leaves the result
+  unnarrowed: `uint8` `x - 1 < x` renders as
+  `((val0+((unsigned char)(-1u)))<val0)`, which at x = 1 compares 256 with 1
+  where the program compares 0 with 1. Tolk casts a scalar sum, difference,
+  product, negation, left shift or quotient of an 8- or 16-bit integer dtype
+  back to that dtype, the operations whose `int` result can leave its range;
+  vector types do not promote and keep their spelling. Coverage: rune
+  `test_jit` and `test_jit_metal` "integer comparisons read wrapped values".
+  Remove this ruling when upstream narrows its results.
+
 - **Pointer casts preserve volatile qualifiers.** The frozen reference qualifies
   parameters but its `CStyleLanguage.render_ptr` drops the qualifier when casting
   a vector access. Tolk keeps it so explicit vector accesses to polling or shared

@@ -163,6 +163,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled 8- or 16-bit integer sum, difference, product, negation, left
+  shift or quotient wraps at its width before it is read: C computed it in
+  `int`, so `uint8` `x - 1 < x` was false at every x where eager is true
+  from x = 1.
 - A compiled float sum or product of tensors groups as the program does:
   `c + (a + b)` was computed as `(c + a) + b`, 0 instead of 1 for a = 1e8,
   b = -1e8, c = 1 in `float32`. Unrolled reductions add their lanes' sum to

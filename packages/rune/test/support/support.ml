@@ -450,6 +450,42 @@ let check_float_association ?devices () =
         [| 1e20; 1e20; 1e-30 |] );
     ]
 
+(* Integer arithmetic wraps at its dtype's width before a comparison reads it,
+   as eager's does: uint8 0 - 1 is 255, int8 127 + 1 is -128, and uint16 256 *
+   256 is 0. *)
+let check_wrapping_comparisons ?devices () =
+  let cases (type a b) (one : a) (two : a) :
+      (string * ((a, b) Nx.t -> (bool, Nx.bool_elt) Nx.t)) list =
+    [
+      ("x - 1 < x", fun x -> Nx.less (Nx.sub_s x one) x);
+      ("x - 2 >= x", fun x -> Nx.greater_equal (Nx.sub_s x two) x);
+      ("x + 1 > x", fun x -> Nx.greater (Nx.add_s x one) x);
+      ("x * x < x", fun x -> Nx.less (Nx.mul x x) x);
+    ]
+  in
+  let check name x cases =
+    let f x = Nx.stack (List.map (fun (_, case) -> case x) cases) in
+    let eager = f x and compiled = Rune.jit' ?devices f x in
+    List.iteri
+      (fun i (case, _) ->
+        equal
+          ~msg:(name ^ " " ^ case)
+          (array bool)
+          (Nx.to_array (Nx.get [ i ] eager))
+          (Nx.to_array (Nx.get [ i ] compiled)))
+      cases
+  in
+  check "uint8" (Nx.create Nx.uint8 [| 5 |] [| 0; 1; 2; 200; 255 |]) (cases 1 2);
+  check "uint16"
+    (Nx.create Nx.uint16 [| 5 |] [| 0; 1; 256; 300; 65535 |])
+    (cases 1 2);
+  check "uint32"
+    (Nx.create Nx.uint32 [| 5 |] [| 0l; 1l; 2l; 65536l; -1l |])
+    (cases 1l 2l);
+  check "int8"
+    (Nx.create Nx.int8 [| 5 |] [| -128; -1; 0; 12; 127 |])
+    (cases 1 2)
+
 (* Bitcast compiles to the bits eager reads, both ways, from a transposed view:
    both zeros, infinities, quiet and signalling NaN with payloads, subnormals.
    The bits leave and enter the compiled function as stored, and an eager

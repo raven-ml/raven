@@ -893,6 +893,8 @@ let tests =
         test "scans keep subnormals" test_scans_keep_subnormals;
         test "float sums and products keep their grouping"
           (check_float_association ~devices:[ Rune.device "METAL" ]);
+        test "integer comparisons read wrapped values"
+          (check_wrapping_comparisons ~devices:[ Rune.device "METAL" ]);
         test "a 17-argument kernel between queued work matches eager"
           test_many_argument_kernel;
       ];
