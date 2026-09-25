@@ -237,7 +237,7 @@ type queue_info = {
   table : int; (** Call argument containing runtime addresses, or [-1]. *)
   inputs : (int * string) list; (** Source argument and target address space per table row. *)
   outputs : int list; (** Written arguments of the original calls. *)
-  kernels : int; (** Original dispatch count. *)
+  accesses : int list list; (** Argument slots touched by each original dispatch, in order. *)
 }
 (** Metadata for compiled hardware-queue submission. *)
 

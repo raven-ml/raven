@@ -584,7 +584,7 @@ let track_stats ctx call ~device bufs var_vals run =
     let estimates = estimate_uop call in
     let op_est = infer estimates.ops and mem_est = infer estimates.mem in
     let kernels = match U.arg call with
-      | U.Arg.Call_info {aux = Some info; _} -> info.kernels | _ -> 1 in
+      | U.Arg.Call_info {aux = Some info; _} -> List.length info.accesses | _ -> 1 in
     G.kernel_count := !G.kernel_count + kernels;
     G.global_ops := !G.global_ops + op_est;
     G.global_mem := !G.global_mem + mem_est;

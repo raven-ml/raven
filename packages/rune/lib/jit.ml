@@ -1174,7 +1174,9 @@ let reserve_slots_of linear =
    into arenas); body PARAMs are substituted with the body call's argument
    nodes, which the loop executor rebinds per iteration. *)
 let schedule_body_linear st body_sink =
-  let body_sink, _ = Tolk.Bufferize.run body_sink in
+  let body_sink, buffer_map = Tolk.Bufferize.run body_sink in
+  let resolve_node node = U.buf_uop
+      (Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node) in
   let body_call = Tolk.Callify.transform_to_call body_sink in
   let captured = ref None in
   Tolk.Realize.capturing :=
@@ -1214,7 +1216,7 @@ let schedule_body_linear st body_sink =
          body's graphs with the rebound slot buffers patched in. *)
       Tolk.Jit.batch_graphs ~device:st.st_device
         (Tolk.Realize.compile_linear ~device:st.st_device
-           ~to_program:(to_program st.st_device) body_linear)
+           ~to_program:(to_program st.st_device) body_linear), resolve_node
 
 (* Schedule analyses, shared by buffer reuse at the jit boundary and inside a
    staged loop's body. *)
@@ -1261,18 +1263,23 @@ let same_index_paths ~(inode : U.t) (u : U.t) =
 (* The schedule's calls in execution order, descending into batched graph calls.
    [Opaque] marks a call whose inner order is unknown (a staged loop): it may
    read and write its arguments in any order. *)
-type scheduled = Kernel of U.t | Opaque of U.t
+type scheduled = Kernel of U.t list | Opaque of U.t
 
 let rec schedule_calls linear =
   List.concat_map
     (fun call ->
       let call = U.without_after call in
       match U.as_call call with
-      | Some { body; _ } when U.op body = Tolk_uop.Ops.Custom_function -> (
-          match (U.Arg.as_string (U.arg body), U.src body) with
-          | Some "graph", [| inner |] -> schedule_calls inner
-          | _ -> [ Opaque call ])
-      | _ -> [ Kernel call ])
+      | Some {body; args} ->
+          (match U.arg call with
+           | U.Arg.Call_info {aux = Some info; _} ->
+               List.map (fun slots -> Kernel (List.map (List.nth args) slots)) info.accesses
+           | _ when U.op body = Tolk_uop.Ops.Custom_function ->
+               (match U.Arg.as_string (U.arg body), U.children body with
+                | Some "graph", [inner] -> schedule_calls inner
+                | _ -> [Opaque call])
+           | _ -> [Kernel args])
+      | None -> [])
     (U.children linear)
 
 (* No kernel reads the buffer [itag] after the first kernel that writes [otag],
@@ -1280,22 +1287,20 @@ let rec schedule_calls linear =
    [itag] itself when it writes each element where it read it. An indexed write
    does not, so under [indexed] it must not read [itag] either. *)
 let schedule_allows ?(indexed = false) ~linear ~itag ~otag () =
-  let mentions call tag =
-    match U.as_call call with
-    | Some { args; _ } ->
-        List.exists
-          (fun a ->
-            match U.op a with
-            | _ when U.is_bound_var a || U.is_variable a -> false
-            | _ -> U.tag (U.buf_uop a) = tag)
-          args
-    | None -> false
+  let mentions args tag =
+    List.exists (fun a ->
+        not (U.is_bound_var a || U.is_variable a)
+        && U.tag (U.buf_uop a) = tag) args
   in
   let calls = schedule_calls linear in
   let opaque_touch =
     List.exists
       (function
-        | Opaque c -> mentions c itag || mentions c otag | Kernel _ -> false)
+        | Opaque c ->
+            (match U.as_call c with
+             | Some {args; _} -> mentions args itag || mentions args otag
+             | None -> false)
+        | Kernel _ -> false)
       calls
   in
   if opaque_touch then false
@@ -1407,13 +1412,13 @@ let final_carry ~n = function
   | In_place b -> b
   | Pair (b0, b1) -> if n mod 2 = 0 then b0 else b1
 
-let loop_call l ~body_linear ~reversed ~n =
+let loop_call l ~body_linear ~resolve_node ~reversed ~n =
   let cint v = U.const (Tolk_uop.Const.int Tolk_uop.Dtype.weakint v) in
   let slots ss =
     cint (List.length ss)
     :: List.concat_map
          (fun s ->
-           [ s.node; cint s.pos0; cint s.pos1; cint s.size; cint s.stride ])
+           [ resolve_node s.node; cint s.pos0; cint s.pos1; cint s.size; cint s.stride ])
          (List.rev ss)
   in
   let payload =
@@ -2407,9 +2412,9 @@ and stage_scan : type r.
       (modes, schedule_body_linear st sink)
     in
     let rec settle ~copied ~same_index =
-      let modes, linear = body ~copied ~same_index in
+      let modes, (linear, resolve_node) = body ~copied ~same_index in
       let allows ?indexed (s : body_slot) o =
-        schedule_allows ?indexed ~linear ~itag:(U.tag s.s_node) ~otag:(U.tag o)
+        schedule_allows ?indexed ~linear ~itag:(U.tag s.s_node) ~otag:(U.tag (resolve_node o))
           ()
       in
       let failed_writes =
@@ -2430,7 +2435,7 @@ and stage_scan : type r.
             | `Written _ | `Pair _ -> [])
           (List.combine c_slots modes)
       in
-      if failed_writes = [] && failed_updates = [] then (modes, linear)
+      if failed_writes = [] && failed_updates = [] then (modes, linear, resolve_node)
       else
         settle ~copied:(failed_writes @ copied)
           ~same_index:
@@ -2448,7 +2453,7 @@ and stage_scan : type r.
         (fun es -> if List.length es > 1 then es else [])
         slot_writes
     in
-    let modes, body_linear = settle ~copied ~same_index in
+    let modes, body_linear, resolve_node = settle ~copied ~same_index in
     let l = loop () in
     List.iter2
       (fun s (Scan.Packed_t x) ->
@@ -2484,7 +2489,7 @@ and stage_scan : type r.
         (if req_record then c_slots else [])
         stack_outs
     in
-    let call = loop_call l ~body_linear ~reversed:false ~n in
+    let call = loop_call l ~body_linear ~resolve_node ~reversed:false ~n in
     (* Register the carry stacks as outputs of the forward loop: the backward
        loop reads them, and only a graph-visible dependency keeps the forward
        loop reachable (and so scheduled) when the scan's declared outputs are
@@ -2663,7 +2668,7 @@ and stage_scan_bwd : type r.
                 ])
           g_outs)
   in
-  let body_linear = schedule_body_linear st body_sink in
+  let body_linear, resolve_node = schedule_body_linear st body_sink in
   let l = loop () in
   List.iter2
     (fun s (stack, stride) ->
@@ -2704,7 +2709,7 @@ and stage_scan_bwd : type r.
           (F.Creation.zeros ~dtype:gdt [ gn ]))
       g_outs
   in
-  let call = loop_call l ~body_linear ~reversed:true ~n in
+  let call = loop_call l ~body_linear ~resolve_node ~reversed:true ~n in
   let br_carry =
     placeholders st bwd_carry
       (List.map2
@@ -3813,6 +3818,9 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
   in
   let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
   let sink, buffer_map = Tolk.Bufferize.run sink in
+  st.prefills <- List.map (fun (node, input) ->
+      let node = Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node in
+      U.buf_uop node, input) st.prefills;
   let call = Tolk.Callify.transform_to_call sink in
   let resolve what u c =
     let unwrap node = U.buf_uop node in

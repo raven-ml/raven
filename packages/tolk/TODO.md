@@ -46,8 +46,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   `multi_allreduce_ring`; complete the narrow frontend sharding surface.
 - Move Rune staged-scan, indexed-scatter, residency, uploads, memory planning,
   symbolic placeholders and external-buffer contracts onto the new protocol.
-  Reconcile indexed-write prefills and scan-carry allocation remapping, and
-  fix the BF16 scatter cycle in the final lowering rewrite.
+  Fix the BF16 scatter cycle in the final lowering rewrite.
   Preserve their correctness/lifetime regressions and revalidate the one-hot
   gather guard at the split threshold. Add custom-kernel sharding, source,
   reshape/flip/slice, invalid-store, assignment and gradient cases.

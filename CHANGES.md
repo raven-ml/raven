@@ -109,6 +109,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Preserve donated storage for indexed writes and in-place `Rune.scan` carries
+  after Tolk materializes their allocations. Queue batching retains kernel
+  access order so donation cannot overwrite an input before its last reader.
+
 - Compiled `Nx.cummax` and `Nx.cummin` order subnormals correctly on Metal,
   where they compared as zero; compile for 8-bit floats along an axis longer
   than 512, where the C and Metal compilers failed; and keep the first of equal

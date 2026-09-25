@@ -74,7 +74,7 @@ type queue_info = {
   table : int;
   inputs : (int * string) list;
   outputs : int list;
-  kernels : int;
+  accesses : int list list;
 }
 
 type reduce_arg = { op : Ops.t; num_axes : int }
@@ -3622,7 +3622,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 26
+let export_version = 27
 
 type serialized_node = {
   serialized_op : Ops.t;

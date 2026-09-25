@@ -266,7 +266,9 @@ let lower_call queue devices calls sink =
                 | _ -> invalid_arg "Hcq2.lower_call: address needs one device") in
       position 0 (U.src g).(0) args, device) runtime in
   let aux = U.{devices; host = queue.host; table = position 0 table bufs;
-    inputs; outputs = List.map (fun u -> position 0 u args) written; kernels = List.length calls} in
+    inputs; outputs = List.map (fun u -> position 0 u args) written;
+    accesses = List.map (fun c -> List.map (fun u -> position 0 u args)
+        (fst (arguments c.call))) calls} in
   let call = U.call ~body:program ~args
       ~info:{grad_fxn = None; name = Some "hcq_submit"; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = Some aux} in
