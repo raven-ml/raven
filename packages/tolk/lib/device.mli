@@ -212,8 +212,9 @@ module Buffer : sig
       base buffer is allocated first, then creates the offset view via the
       allocator.
 
-      Raises [Invalid_argument] if [b] is already allocated, or if [b] is a view
-      and the allocator does not support {!Allocator.offset}. *)
+      Raises [Invalid_argument] if [b] is already allocated, if [b] is a base
+      buffer with no bytes (no device has storage of size zero), or if [b] is a
+      view and the allocator does not support {!Allocator.offset}. *)
 
   val ensure_allocated : t -> unit
   (** [ensure_allocated b] calls {!allocate} if [b] is not yet initialised.

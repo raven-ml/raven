@@ -366,6 +366,8 @@ thread.
 
 ### Tolk (new)
 
+- `Device.Buffer.allocate` refuses a buffer with no bytes with
+  `Invalid_argument`. Metal raised "Metal OOM while allocating buffer" for it.
 - Add `Op.block_matmul`: each block of rows times the matrix of a stack its id
   addresses, read in place. A block whose id is out of range is exactly zero,
   and on a GPU it runs no multiply-adds.

@@ -85,6 +85,16 @@ let copy_from_tests =
           equal (list int) [ 1; 2; 5; 6 ] (read_i32 dst));
     ]
 
+let allocate_tests =
+  group "Buffer.allocate"
+    [
+      test "refuses a buffer with no bytes" (fun () ->
+          let buf = Device.create_buffer ~size:0 ~dtype:i32 device in
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Device.Buffer.allocate buf));
+    ]
+
 (* The fail-loud half of the contract — copy_from raising [Invalid_argument]
    before any runner is installed — cannot be observed here. The delegation
    tests above require the realize engine, and linking it runs the installer at
@@ -92,4 +102,4 @@ let copy_from_tests =
    by the time any test runs. test_device_no_engine covers that half in a
    separate executable that never references the engine. *)
 
-let () = run __FILE__ [ copy_from_tests ]
+let () = run __FILE__ [ copy_from_tests; allocate_tests ]

@@ -152,6 +152,10 @@ module Buffer = struct
     if Option.is_some buf.buf then invalid_arg "buffer already allocated";
     match buf.base with
     | None ->
+        if nbytes t <= 0 then
+          invalid_arg
+            (Printf.sprintf "Device.Buffer.allocate: size must be positive, got %d"
+               (nbytes t));
         buf.buf <- Some (buf.allocator.alloc (nbytes t) buf.spec);
         if counts_as_used buf then
           Helpers.Global_counters.add_mem_used buf.device (nbytes t)
