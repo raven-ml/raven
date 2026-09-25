@@ -44,7 +44,10 @@
 
     let linear = Nx.Ptree.instantiate (module Linear)
     let zeros = Nx.Ptree.map linear (fun _ x -> Nx.zeros_like x) params
-    ]} *)
+    ]}
+
+    See doc/06-structures.md for writing a structure, masks by path, payload
+    maps and testing a structure with {!visits}. *)
 
 (** {1:paths Paths} *)
 
