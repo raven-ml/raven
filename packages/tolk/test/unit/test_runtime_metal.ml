@@ -487,13 +487,23 @@ let () =
             let a = i32_buf device [0] and b = i32_buf device [0] in
             let run = compile_queue ~profile:true device
                 [queue_call device spec [1; 0]; queue_call device spec [0; 1]] in
+            let old = Sys.getenv_opt "PROFILE" in
+            Fun.protect ~finally:(fun () -> Unix.putenv "PROFILE" (Option.value old ~default:"0")) (fun () ->
+            Unix.putenv "PROFILE" "1";
             for _ = 1 to 10 do run [|a; b|] done;
+            let events = Device.profile device in
+            equal int 2 (List.length events);
+            List.iter (fun e ->
+                equal string "metal_queue_profile" e.Profile.name;
+                is_true (e.Profile.duration_us > 0.)) events;
+            equal int 0 (List.length (Device.profile device));
             let before = !(Helpers.Global_counters.time_sum_s) in
             run ~wait:true [|a; b|];
             is_true ~msg:"completed command buffers supply positive GPU time"
               (!(Helpers.Global_counters.time_sum_s) > before);
             equal (list int) [22] (read_i32 a);
-            equal (list int) [21] (read_i32 b));
+            equal (list int) [21] (read_i32 b);
+            equal int 2 (List.length (Device.profile device))));
           test "relaunches without an intervening synchronize" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_queue_relaunch" in

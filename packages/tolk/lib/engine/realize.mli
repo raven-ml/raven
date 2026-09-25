@@ -158,8 +158,9 @@ val compile_linear :
     arguments. The program cache uses that device and its selected renderer.
     {!Tolk_uop.Ops.Store} calls are left unchanged.
 
-    [profile] records queue timestamps, collected when executing with [wait].
-    It defaults to whether [DEBUG >= 2].
+    [profile] adds queue timestamps and defaults to [true] when [DEBUG >= 2]
+    or [PROFILE=1]. [wait] uses them for elapsed time; [PROFILE=1] also retains
+    asynchronous timestamp records for {!Device.profile}.
 
     When [beam] is [b >= 1], every kernel sink that does not already carry a
     beam width (its {!Tolk_uop.Uop.kernel_info} has [beam = 0]) is stamped with [b]

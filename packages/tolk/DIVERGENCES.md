@@ -104,6 +104,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   system/peer mapping release in `test_memory` and hardware-gated AMD CPU-map
   release. Remove this ruling when upstream releases both resources correctly.
 
+- **Profiles export immutable events as Chrome trace JSON.** The target
+  serializes Python objects for its visualizer; Tolk's OCaml consumers can
+  inspect `Device.profile` events or use `Profile.output` without adding a
+  serialization dependency. Pending repeated slots coalesce until synchronization
+  as in the target. Coverage: collector lifetime/failure tests, escaped trace
+  output, host queue replay and real Metal asynchronous replay. Cross-device
+  clock calibration remains open in TODO; exports currently normalize each
+  device independently. Reconsider the format if Raven gains a shared profiling
+  artifact protocol needed by these consumers.
+
 - **CPU kernels expose an entry taking buffer and scalar arrays.** The Clang
   wrapper casts each scalar to its declared type, so OCaml can call arbitrary
   kernel arities through one native stub without an FFI dependency. `Tiny_elf`

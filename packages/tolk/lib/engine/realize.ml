@@ -243,7 +243,7 @@ let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
    semantic key. Bulk STORE calls pass through unchanged. [beam] stamps
    sinks that carry no beam width of their own; kernel_info is part of the
    semantic key, so a stamped sink gets its own cache entry. *)
-let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2) ~to_program linear =
+let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2 || Helpers.getenv "PROFILE" 0 <> 0) ~to_program linear =
   let module U = Tolk_uop.Uop in
   let stamp body =
     match beam with
@@ -905,6 +905,16 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
           let started = if ctx.wait then Unix.gettimeofday () else 0. in
           ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
           incr queue_submissions;
+          if Helpers.getenv "PROFILE" 0 <> 0 then
+            List.iteri (fun i (device, slot, first, last) ->
+                let name, queue = match List.nth_opt submission.fallback i with
+                  | Some call -> (match U.as_call call with
+                      | Some {body; _} when U.op body = Tolk_uop.Ops.Program -> U.program_function_name body, "COMPUTE:0"
+                      | Some {body; _} when U.op body = Tolk_uop.Ops.Store -> "copy", "COPY:0"
+                      | _ -> "queue operation", "COMPUTE:0")
+                  | None -> "queue operation", "COMPUTE:0" in
+                Device.record_timing (Device.get device) ~name ~queue ~buffer:buffers.(slot) ~first ~last)
+              submission.timings;
           if ctx.wait then begin
             List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
             if submission.timings = [] then Some (Unix.gettimeofday () -. started)

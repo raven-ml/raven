@@ -125,6 +125,8 @@ module Renderer_set = struct
         renderer)
 end
 
+type pending_timing = { buffer : Buffer.t; first : int; last : int; label : string; queue_name : string }
+
 type t = {
   name : string;
   allocator : Allocator.packed;
@@ -134,6 +136,9 @@ type t = {
   invalidate_caches_fn : (unit -> unit) option;
   queue : queue option;
   bufferize : Uop.t -> Buffer.t option;
+  profile_lock : Mutex.t;
+  pending_timings : (int * int, pending_timing) Hashtbl.t;
+  mutable profile_events : Profile.event list;
 }
 
 type device = t
@@ -157,7 +162,9 @@ let opened : (string, t) Hashtbl.t = Hashtbl.create 8
 let make ~name ~allocator ~renderer_set ~runtime ~synchronize
     ?invalidate_caches ?queue ?(bufferize = fun _ -> None) () =
   let device = { name; allocator; renderer_set; runtime; synchronize;
-    invalidate_caches_fn = invalidate_caches; queue; bufferize } in
+    invalidate_caches_fn = invalidate_caches; queue; bufferize;
+    profile_lock = Mutex.create (); pending_timings = Hashtbl.create 0;
+    profile_events = [] } in
   Hashtbl.replace opened (canonicalize name) device;
   device
 
@@ -183,7 +190,58 @@ let runtime d (obj : Tolk_uop.Tiny_elf.t) =
     prg.call bufs ~global ~local ~vals ~wait ~timeout
   in
   { prg with call }
-let synchronize d = d.synchronize ()
+let with_profile_lock d f =
+  Mutex.lock d.profile_lock;
+  Fun.protect ~finally:(fun () -> Mutex.unlock d.profile_lock) f
+
+let record_timing d ~name ~queue ~buffer ~first ~last =
+  if first < 0 || last < 0 || max first last >= Buffer.nbytes buffer / 8 then
+    invalid_arg "Device.record_timing: timestamp outside storage";
+  if Option.is_none d.queue then invalid_arg "Device.record_timing: device has no queue";
+  with_profile_lock d (fun () ->
+      Hashtbl.replace d.pending_timings (Buffer.id buffer, first)
+        {buffer; first; last; label = name; queue_name = queue})
+
+let synchronize d =
+  let pending = with_profile_lock d (fun () ->
+      let pending = Hashtbl.to_seq_values d.pending_timings |> List.of_seq in
+      Hashtbl.clear d.pending_timings;
+      pending) in
+  let events = try
+    d.synchronize ();
+    match pending with
+    | [] -> []
+    | _ ->
+        let snapshots = Hashtbl.create 4 in
+        let divider = (Option.get d.queue).timestamp_divider in
+        List.map (fun entry ->
+            let id = Buffer.id entry.buffer in
+            let bytes = match Hashtbl.find_opt snapshots id with
+              | Some bytes -> bytes
+              | None -> let bytes = Buffer.as_bytes entry.buffer in
+                  Hashtbl.add snapshots id bytes; bytes in
+            let start = Bytes.get_int64_le bytes (8 * entry.first)
+            and finish = Bytes.get_int64_le bytes (8 * entry.last) in
+            Profile.{device = d.name; queue = entry.queue_name; name = entry.label;
+              start_us = Int64.to_float start /. divider;
+              duration_us = Int64.to_float (Int64.sub finish start) /. divider}) pending
+  with exn ->
+    let backtrace = Printexc.get_raw_backtrace () in
+    with_profile_lock d (fun () -> List.iter (fun entry ->
+        let key = Buffer.id entry.buffer, entry.first in
+        if not (Hashtbl.mem d.pending_timings key) then
+          Hashtbl.add d.pending_timings key entry) pending);
+    Printexc.raise_with_backtrace exn backtrace in
+  if events <> [] then
+    with_profile_lock d (fun () -> d.profile_events <- List.rev_append events d.profile_events)
+
+let profile d =
+  synchronize d;
+  with_profile_lock d (fun () ->
+      let events = List.rev d.profile_events in
+      d.profile_events <- [];
+      events)
+
 let queue d = d.queue
 let bufferize d = d.bufferize
 

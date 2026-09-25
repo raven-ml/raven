@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- `PROFILE=1` collects asynchronous queue timings at synchronization.
+  `Device.profile` drains completed events, and `Profile.output` exports
+  Chrome trace JSON with separate compute/copy lanes and per-device clocks.
+
 - Direct AMD/NV launches wait before wrapping their kernel-argument arenas,
   preserving in-flight arguments and descriptors. `Hcq.Kernargs.alloc` now
   requires a retirement callback and preserves its cursor if that wait fails.

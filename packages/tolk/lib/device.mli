@@ -169,7 +169,24 @@ val runtime : t -> runtime
     buffers followed by scalars. *)
 
 val synchronize : t -> unit
-(** [synchronize d] blocks until all pending work on [d] completes. *)
+(** [synchronize d] blocks until all pending work on [d] completes, then
+    collects registered queue timestamps. Failed synchronization retains
+    pending records for a later retry. *)
+
+val profile : t -> Profile.event list
+(** [profile d] synchronizes [d] and returns the collected profiling events,
+    removing them from [d]. [PROFILE=1] enables collection for queue calls.
+    Replaying a batch before synchronization retains only the latest timestamps
+    for each reused slot, as in the reference. Separate batches retain separate
+    records. Events use [d]'s clock and have no guaranteed list order. *)
+
+val record_timing :
+  t -> name:string -> queue:string -> buffer:Buffer.t -> first:int -> last:int -> unit
+(** [record_timing d ~name ~queue ~buffer ~first ~last] retains the timestamp buffer of
+    a submitted queue operation until the next successful synchronization.
+    Offsets count 64-bit words. Repeated registration of the same buffer and
+    start word replaces the pending entry. This function does not wait.
+    Raises [Invalid_argument] if offsets exceed the buffer or [d] has no queue. *)
 
 val queue : t -> queue option
 (** [queue d] is [d]'s compiled submission capability, if any. *)

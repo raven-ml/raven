@@ -223,7 +223,7 @@ let compiled_host_submission () =
     U.call ~body ~args:[dst; src]
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = None} in
-  let compile ?(profile = false) calls = U.linear calls |> Realize.compile_linear ~device ~profile ~to_program
+  let compile ?profile calls = U.linear calls |> Realize.compile_linear ~device ?profile ~to_program
       |> Realize.link_linear binding in
   let independent = compile [U.store_call ~dst:(ptr 2) ~src:(ptr 0);
       compute (ptr 3) (ptr 1)] in
@@ -265,6 +265,20 @@ let compiled_host_submission () =
   replay timed [|src; dst1; dst2|];
   equal (float 1e-15) 2e-8 (!(Helpers.Global_counters.time_sum_s) -. before);
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst2) 0);
+  let old_profile = Sys.getenv_opt "PROFILE" in
+  Fun.protect ~finally:(fun () -> Unix.putenv "PROFILE" (Option.value old_profile ~default:"0")) (fun () ->
+      Unix.putenv "PROFILE" "1";
+      let profiled = compile [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
+          compute (ptr 2) (ptr 1)] in
+      (* Profiling adds timestamps by default, but does not force a wait. *)
+      let run () = Realize.run_linear ~device ~to_program binding ~jit:true
+          ~input_uops:(Array.map U.from_buffer [|src; dst1; dst2|]) profiled in
+      run (); run ();
+      let events = Device.profile device in
+      equal (list string) ["copy"; "host_queue_copy"]
+        (List.map (fun e -> e.Profile.name) events |> List.sort String.compare);
+      List.iter (fun e -> equal (float 1e-15) 0.01 e.Profile.duration_us) events;
+      equal int 0 (List.length (Device.profile device)));
   ignore (Sys.opaque_identity root);
   let owner = Tolk_cpu.create "CPU:unmappable" in
   let foreign = Device.create_buffer ~size:1 ~dtype:Dtype.int32 owner in
