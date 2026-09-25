@@ -191,6 +191,12 @@ let fence devices plan =
 
 let storage_views u =
   match U.op u, U.children u with
+  | Ops.After, load :: deps when U.op load = Ops.Load ->
+      (* Address-table substitution can turn an ordered address into a load.
+         Keep the ordering on storage so the load executes after its deps. *)
+      let src = Array.copy (U.src load) in
+      src.(0) <- U.after ~src:src.(0) ~deps;
+      Some (U.replace load ~src ())
   | Ops.Bitcast, [view] when U.op view = Ops.Shrink ->
       let src = U.src view in
       let base = src.(0) in

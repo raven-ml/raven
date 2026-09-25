@@ -389,6 +389,8 @@ thread.
 
 ### Tolk (new)
 
+- Compiled host submissions preserve address-load ordering in verified IR,
+  allowing Metal queue replay with `SPEC=1` without relaxing validation.
 - Gated reductions and indexed loads collapse again with typed constants,
   avoiding unnecessary loops. Divisibility folding now handles symbolic
   variables before and after conversion to kernel parameters.
