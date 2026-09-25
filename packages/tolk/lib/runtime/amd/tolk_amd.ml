@@ -1244,9 +1244,14 @@ module Kfd_iface = struct
           ~flags:(F.map_private lor F.map_anonymous lor F.map_noreserve)
           ~fd:(-1) ~offset:0L
     in
-    let complete = ref false in
+    let handle = ref None and complete = ref false in
     Fun.protect
-      ~finally:(fun () -> if not !complete && cpu_addr = None then F.munmap addr ~size)
+      ~finally:(fun () -> if not !complete then begin
+        (* The driver may still pin a userptr or use the virtual range when
+           freeing its handle fails. Do not release that backing afterwards. *)
+        Option.iter (fun handle -> Kfd.free_memory_of_gpu kfd ~handle) !handle;
+        if cpu_addr = None then F.munmap addr ~size
+      end)
       (fun () ->
         let mmap_offset = if userptr then Int64.of_nativeint addr else 0L in
         match Kfd.alloc_memory_of_gpu kfd ~va:addr ~size ~gpu_id ~flags ~mmap_offset with
@@ -1261,30 +1266,28 @@ module Kfd_iface = struct
               | Kfd.Enomem ->
                   Printf.sprintf "Cannot allocate %d bytes: no memory is available."
                     size)
-        | Ok (handle, mmap_offset) ->
-            Fun.protect
-              ~finally:(fun () -> if not !complete then Kfd.free_memory_of_gpu kfd ~handle)
-              (fun () ->
-                if not userptr then begin
-                  let mapped =
-                    F.mmap ~addr ~size
-                      ~prot:(F.prot_read lor F.prot_write)
-                      ~flags:(F.map_shared lor F.map_fixed)
-                      ~fd:drm_fd ~offset:mmap_offset
-                  in
-                  assert (mapped = addr)
-                end;
-                let view =
-                  if cpu_access || host then Some (Hcq.Mmio.make ~addr ~size) else None
-                in
-                let b =
-                  Hcq.Buffer.make ~va:addr ~size ?view ~meta:{ handle; owner = gpu_id;
-                    ownership = (if cpu_addr = None then Owned else Registered) }
-                    ()
-                in
-                map_to_gpu ~kfd ~gpu_id b;
-                complete := true;
-                b))
+        | Ok (memory, mmap_offset) ->
+            handle := Some memory;
+            if not userptr then begin
+              let mapped =
+                F.mmap ~addr ~size
+                  ~prot:(F.prot_read lor F.prot_write)
+                  ~flags:(F.map_shared lor F.map_fixed)
+                  ~fd:drm_fd ~offset:mmap_offset
+              in
+              assert (mapped = addr)
+            end;
+            let view =
+              if cpu_access || host then Some (Hcq.Mmio.make ~addr ~size) else None
+            in
+            let b =
+              Hcq.Buffer.make ~va:addr ~size ?view ~meta:{ handle = memory; owner = gpu_id;
+                ownership = (if cpu_addr = None then Owned else Registered) }
+                ()
+            in
+            map_to_gpu ~kfd ~gpu_id b;
+            complete := true;
+            b)
 
   let create ~device_id =
     let kfd, gpus = scan () in
@@ -1375,9 +1378,9 @@ module Kfd_iface = struct
       invalid_arg "KFD free requires the owning interface";
     Kfd.unmap_memory_from_gpu kfd ~handle:meta.handle ~gpu_ids:[| t.gpu_id |];
     if meta.ownership <> Imported then begin
+      Kfd.free_memory_of_gpu kfd ~handle:meta.handle;
       if meta.ownership = Owned && Hcq.Buffer.va b <> 0n then
-        Hcq.File_io.munmap (Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b);
-      Kfd.free_memory_of_gpu kfd ~handle:meta.handle
+        Hcq.File_io.munmap (Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b)
     end
 
   let map t b =

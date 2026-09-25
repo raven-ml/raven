@@ -1008,14 +1008,14 @@ module Nvk_iface = struct
       | Some a -> a
       | None -> alloc_gpu_vaddr ~alignment:page_size ~force_low:cpu_access size
     in
-    let memory = ref None and mapping = ref None and complete = ref false in
+    let memory = ref None and mapping = ref None and release = ref true in
     Fun.protect
-      ~finally:(fun () -> if not !complete then
-        Fun.protect
-          ~finally:(fun () -> Option.iter (fun addr -> File_io.munmap addr ~size) !mapping)
-          (fun () -> Option.iter (free_object st ~parent:t.nvdevice) !memory))
+      ~finally:(fun () -> if !release then begin
+        Option.iter (free_object st ~parent:t.nvdevice) !memory;
+        Option.iter (fun addr -> File_io.munmap addr ~size) !mapping
+      end)
       (fun () ->
-        let buffer =
+        match
           if host then begin
             let va =
               if alloced then
@@ -1069,9 +1069,16 @@ module Nvk_iface = struct
             in
             if cpu_access then mapping := Some va;
             gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:cpu_access ()
-          end in
-        complete := true;
-        buffer)
+          end
+        with
+        | buffer -> release := false; buffer
+        | exception (Fun.Finally_raised _ as error) ->
+            let backtrace = Printexc.get_raw_backtrace () in
+            (* Failed range retirement leaves the allocation reachable by the
+               driver. Preserve its object and host mapping, and let imported
+               storage propagate the same uncertain-cleanup signal. *)
+            release := false;
+            Printexc.raise_with_backtrace error backtrace)
 
   let free st t buf =
     let buf = Hcq.Buffer.base buf in

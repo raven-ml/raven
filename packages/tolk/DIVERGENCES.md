@@ -236,7 +236,9 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   not consistently roll back allocation and mapping failures. Tolk returns
   PCI virtual/physical reservations, CPU mappings and new page tables, releases KFD/NVK
   handles acquired by failed setup, and closes NVK temporary mapping file
-  descriptors. A failed page-table rollback retains backing storage and
+  descriptors. Dependent releases stop when driver-object or range retirement
+  fails, preserving owned host mappings and physical backing. A failed
+  page-table rollback retains backing storage and
   virtual reservations because the device may still address them. Failed import
   rollback also retains the source, blocks explicit deallocation and propagates
   the original error; neither successful unrelated work nor GC authorizes retry.

@@ -51,9 +51,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   region index/count alone cannot prove a shared hive, and driver sysfs state
   cannot be assumed after takeover. Check mixed-vendor/cross-hive mappings and
   reject imports outside the receiver's virtual-address aperture.
-  Sequence KFD/NVK allocation rollback so failed driver-object
-  retirement cannot release host mappings or physical backing; inject both
-  setup and cleanup failures.
+  Inject combined setup/cleanup failures in KFD/NVK: GPU map then driver free,
+  UVM/RM map then UVM range free, and successful range cleanup then RM free.
+  Verify owned host mappings remain after failed retirement, borrowed sources
+  are retained, and successful cleanup releases each owned mapping once.
   Complete rollback of firmware
   bootstrap failures before a booted interface exists. Validate post-boot
   AMD/NV queue/runtime rollback with injected hardware failures, including

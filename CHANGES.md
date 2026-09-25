@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- KFD and NVK retain host backing when driver-memory retirement fails during
+  cleanup, preventing failed allocation rollback from unmapping live storage.
+
 - Buffers remain allocated when a failed import rollback may leave device
   mappings live. Explicit deallocation reports the original failure instead
   of freeing memory that the receiving device can still address.
