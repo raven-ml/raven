@@ -51,7 +51,10 @@ module Allocator : sig
     map : buffer -> 'buf;
         (** [map source] maps the source allocation into this allocator's device.
             Raises {!Mapping_unavailable} when that storage cannot be imported.
-            Other failures report allocation or device errors. *)
+            Raises [Fun.Finally_raised error] if rollback could not establish
+            that the receiver no longer maps the source. This permanently
+            retains the source allocation; explicit {!deallocate} also raises
+            that exception. Other failures must leave no receiver mapping. *)
     unmap : 'buf -> unit;
         (** [unmap mapped] releases mapping metadata, without freeing source storage. *)
   }
@@ -207,7 +210,9 @@ val deallocate : t -> unit
 (** [deallocate b] releases backing storage if allocated. For base buffers,
     frees via the allocator. For views, detaches from the base buffer. No-op
     if already deallocated. Live views become stale when their base is freed
-    and refresh on their next access; they do not prevent deallocation. *)
+    and refresh on their next access; they do not prevent deallocation.
+    If an import rollback failed, re-raises its exception and keeps the source
+    allocated, including through finalization. There is no automatic retry. *)
 
 val supports_offset : t -> bool
 (** [supports_offset b] is [true] iff [b]'s allocator provides offset views.

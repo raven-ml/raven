@@ -166,6 +166,68 @@ let sparse n entries = Array.init n (fun i -> Option.value ~default:0L (List.ass
 let oom = function Tlsf.Out_of_memory _ -> true | _ -> false
 let vm_paddrs vm = vm.Memory.paddrs
 
+let import_rollback_ownership ~fail_clear () =
+  let fx = make_fixture ~fail_flush:(fun () -> true)
+      ~fail_clear:(fun () -> fail_clear) () in
+  let frees = ref 0 in
+  let source_kind = Type.Id.make () and target_kind = Type.Id.make () in
+  let source_allocator : int Device.Allocator.t = {
+    kind = source_kind; host = Fun.const None; mapping = None;
+    synchronize = (fun () -> ());
+    alloc = (fun size spec -> ignore spec; equal int 0x2000 size; 0x800000);
+    free = (fun raw size spec -> ignore spec; equal int 0x800000 raw;
+        equal int 0x2000 size; incr frees);
+    addr = Some Nativeint.of_int; offset = None;
+  } in
+  let target_allocator : int Device.Allocator.t = {
+    source_allocator with kind = target_kind;
+    mapping = Some {
+      map = (fun source ->
+          let physical = Option.get (Device.Buffer.get source_kind source) in
+          ignore (Memory.map_range fx.mm ~vaddr:0 ~size:0x2000
+              [physical, 0x2000] Memory.Sys () : Memory.virt_mapping);
+          0);
+      unmap = (fun addr -> Memory.unmap_range fx.mm ~vaddr:addr ~size:0x2000);
+    };
+  } in
+  let name = if fail_clear then "UNCERTAIN_IMPORT" else "ROLLED_BACK_IMPORT" in
+  let device = Device.make ~name ~allocator:(Device.Allocator.Pack target_allocator)
+      ~renderer_set:(Device.Renderer_set.make ~device:name [])
+      ~synchronize:(fun timeout -> ignore timeout) () in
+  let weak = Weak.create 1 in
+  let error = ref None in
+  let create_source () =
+    let source = Device.Buffer.create ~device:"IMPORT_SOURCE" ~size:0x2000
+        ~dtype:Tolk_uop.Dtype.uint8 (Device.Allocator.Pack source_allocator) in
+    Weak.set weak 0 (Some source);
+    (match Device.Buffer.get ~device:(Device.name device) target_kind source with
+     | _ -> fail "mapping flush must fail"
+     | exception exn -> error := Some exn);
+    let original = Option.get !error in
+    if fail_clear then begin
+      (match original with Fun.Finally_raised (Failure message) -> equal string "page clear failed" message
+       | _ -> fail "expected failed entry rollback");
+      is_true ~msg:"an earlier leaf survives the failed rollback"
+        (Array.exists (fun entry -> Int64.logand entry (-0x1000L) = 0x800000L
+            && Int64.logand entry 1L <> 0L) fx.vram);
+      raises_match (fun exn -> exn == original) (fun () -> Device.Buffer.deallocate source);
+      is_true (Device.Buffer.is_allocated source);
+      equal int 0 !frees
+    end else begin
+      (match original with Failure message -> equal string "flush failed" message
+       | _ -> fail "expected the original mapping failure");
+      Device.Buffer.deallocate source;
+      equal int 1 !frees
+    end in
+  create_source ();
+  Gc.full_major ();
+  Gc.full_major ();
+  if fail_clear then begin
+    equal int 0 !frees;
+    is_true ~msg:"uncertain imports remain retained after the caller drops the source"
+      (Weak.check weak 0)
+  end else equal int 1 !frees
+
 let () =
   run "Memory"
     [
@@ -456,6 +518,10 @@ let () =
                   (0xF000, 0x1000);
                 ]
                 (vm_paddrs vm));
+          test "failed import rollback prevents explicit and GC source release"
+            (import_rollback_ownership ~fail_clear:true);
+          test "successful import rollback permits source release"
+            (import_rollback_ownership ~fail_clear:false);
           test "failed entry rollback retains physical and virtual ownership" (fun () ->
               let fx = make_fixture ~va_size:0x2000
                   ~fail_write:(fun () -> true) ~fail_clear:(fun () -> true) () in

@@ -51,9 +51,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   region index/count alone cannot prove a shared hive, and driver sysfs state
   cannot be assumed after takeover. Check mixed-vendor/cross-hive mappings and
   reject imports outside the receiver's virtual-address aperture.
-  Cover failed import rollback that leaves receiver page-table entries live;
-  retain and prevent explicit deallocation of the source until retirement is
-  established. Sequence KFD/NVK allocation rollback so failed driver-object
+  Sequence KFD/NVK allocation rollback so failed driver-object
   retirement cannot release host mappings or physical backing; inject both
   setup and cleanup failures.
   Complete rollback of firmware

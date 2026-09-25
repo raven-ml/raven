@@ -771,8 +771,9 @@ module Pci_iface_base = struct
               (system_paddrs ~vaddr:address size) in
           lo, size, paddrs, Memory.Sys, true
     in
+    let mapped = Hcq.Buffer.make ~va:(Nativeint.of_int lo) ~size
+      ~meta:(Mapping {vaddr = lo; size}) () in
     ignore (Memory.map_range t.mm ~vaddr:lo ~size paddrs aspace
         ~snooped:true ~uncached () : Memory.virt_mapping);
-    Hcq.Buffer.make ~va:(Nativeint.of_int lo) ~size
-      ~meta:(Mapping {vaddr = lo; size}) ()
+    mapped
 end

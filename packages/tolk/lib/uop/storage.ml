@@ -36,6 +36,7 @@ type t = {
   mutable storage : allocation;
   mutable base_storage : allocation;
   mutable mappings : (allocator_pack * backing) list;
+  mutable mapping_error : (exn * Printexc.raw_backtrace) option;
   base : t option;
   offset : int;
   mutable uop_refcount : int;
@@ -202,6 +203,8 @@ let deallocate buf =
     | _, Unallocated -> ()
     | _, Empty -> buf.storage <- Unallocated
     | None, Allocated (Backing (alloc, raw)) ->
+        Option.iter (fun (error, backtrace) ->
+            Printexc.raise_with_backtrace error backtrace) buf.mapping_error;
         let rec unmap () = match buf.mappings with
           | [] -> ()
           | (_, Backing (mapped_alloc, mapped)) :: rest ->
@@ -236,7 +239,7 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
   let buf = {
     id = fresh_id (); device; size; dtype; spec; allocator;
     storage = Unallocated; base_storage = Unallocated;
-    mappings = []; base = None; offset = 0;
+    mappings = []; mapping_error = None; base = None; offset = 0;
     uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise finalize buf;
@@ -293,7 +296,7 @@ let view buf ~size ~dtype ~offset =
   let v = {
     id = fresh_id (); device = root.device; size; dtype; spec = root.spec;
     allocator = root.allocator; storage = Unallocated; base_storage = Unallocated;
-    mappings = []; base = Some root;
+    mappings = []; mapping_error = None; base = Some root;
     offset = buf.offset + offset; uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise finalize v;
@@ -335,7 +338,18 @@ let rec mapped_backing target buf =
               let mapping = match alloc.mapping with
                 | Some mapping -> mapping
                 | None -> invalid_arg "allocator cannot map this buffer" in
-              let raw = Backing (alloc, mapping.map buf) in
+              Option.iter (fun (error, backtrace) ->
+                  Printexc.raise_with_backtrace error backtrace) buf.mapping_error;
+              let mapped = match mapping.map buf with
+                | mapped -> mapped
+                | exception (Fun.Finally_raised _ as error) ->
+                    let backtrace = Printexc.get_raw_backtrace () in
+                    (* A failed rollback may leave receiver mappings live. Keep
+                       the source, and block explicit deallocation as well as GC. *)
+                    buf.mapping_error <- Some (error, backtrace);
+                    push failed_releases (fun () -> deallocate buf);
+                    Printexc.raise_with_backtrace error backtrace in
+              let raw = Backing (alloc, mapped) in
               buf.mappings <- (target, raw) :: buf.mappings;
               Some raw
 

@@ -237,7 +237,9 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   PCI virtual/physical reservations, CPU mappings and new page tables, releases KFD/NVK
   handles acquired by failed setup, and closes NVK temporary mapping file
   descriptors. A failed page-table rollback retains backing storage and
-  virtual reservations because the device may still address them.
+  virtual reservations because the device may still address them. Failed import
+  rollback also retains the source, blocks explicit deallocation and propagates
+  the original error; neither successful unrelated work nor GC authorizes retry.
   Failed PCI claims release their lock and acquired descriptors so they can
   be retried. Bootstrap failures release descriptors and per-device KFD
   events. KFD's process-wide event page remains cached; an ambiguous registration
@@ -253,7 +255,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   Borrowed host mappings remain owned by the caller. Consumers:
   allocation retries and long-lived accelerator sessions. Coverage:
   `test_memory` allocation, zeroing, entry-write and flush failures, including
-  adjacent mappings and precreated tables; `test_amd_system` covers reverse
+  adjacent mappings, precreated tables and source retention after failed import
+  rollback; `test_amd_system` covers reverse
   rollback order, acquisition failures, cleanup failures, descriptor release,
   PCI claim retries and buffer finalizers after successful or failed queue retirement;
   `test_nv_tables` covers 570/580/610 unregister layouts; `test_amd_amdev`

@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- Buffers remain allocated when a failed import rollback may leave device
+  mappings live. Explicit deallocation reports the original failure instead
+  of freeing memory that the receiving device can still address.
+
 - Buffer byte transfers now use synchronized host access or bounded owned
   staging through shared submissions. Remove allocator copy callbacks and
   unused eager AMD/NV staging pools, saving at least 64 MiB per device.
