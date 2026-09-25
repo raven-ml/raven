@@ -1180,6 +1180,29 @@ let () =
                   equal int64 0x110010L (Mmio.read64 v 0x2100);
                   equal int 0x110010 (u32 0x2204);
                   equal int 0 (u32 0x2304)));
+          test "load initializes the instruction prefetch guard" (fun () ->
+              with_fixture (fun m ->
+                  let alloc, sizes = lib_alloc () in
+                  let dirty_alloc size =
+                    let buffer = alloc size in
+                    Mmio.blit_bytes (Buffer.cpu_view buffer) ~off:0 (Bytes.make size '\255');
+                    buffer in
+                  let prg = Program.load (nv_dev ~slm_per_thread:0x400 m)
+                      ~alloc:dirty_alloc ~ensure_local_memory:(fun _ -> ())
+                      ~name:"k" (cubin_fixture ()) in
+                  equal (list int) [0x1c000] !sizes;
+                  equal bytes (Bytes.make 4096 '\000')
+                    (Mmio.read_bytes (Buffer.cpu_view prg.Program.lib_gpu) ~off:0x1b000 ~len:4096)));
+          test "invalid code objects fail before allocation or local-memory changes" (fun () ->
+              with_fixture (fun m ->
+                  let allocations = ref 0 and changes = ref 0 in
+                  let alloc size = incr allocations; Buffer.make ~va:0n ~size ~meta:() () in
+                  raises_match (failure_with "unknown NV reloc 55") (fun () ->
+                      Program.load (nv_dev m) ~alloc
+                        ~ensure_local_memory:(fun _ -> incr changes)
+                        ~name:"k" (cubin_fixture ~reloc0:0x37 ()));
+                  equal int 0 !allocations;
+                  equal int 0 !changes));
           test "the descriptor template matches the qmd_init goldens"
             (fun () ->
               with_fixture (fun m ->

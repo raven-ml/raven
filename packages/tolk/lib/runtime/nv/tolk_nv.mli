@@ -35,9 +35,9 @@ module Ip = Ip
     The compute engine consumes launches as fixed-size descriptors of
     packed bitfields: grid and block geometry, program and constant
     buffer addresses, dependency links, and release semaphores. A
-    descriptor is a lens over caller-provided mapped bytes, either a
-    program's long-lived template or the per-launch copy the engine
-    fetches from device memory; fields are addressed by the names of
+    program template lives in managed host bytes; each launch copies it
+    into mapped device memory. A descriptor accesses either backing through
+    fields addressed by the names of
     the generated tables ({!Nv_tables.Defs}). *)
 module Qmd : sig
   type t
@@ -645,8 +645,7 @@ module Program : sig
 
   val free : free:('meta Hcq.Buffer.t -> unit) -> 'meta t -> unit
   (** [free ~free t] releases the device memory holding [t]'s image
-      through [free], and the descriptor template's backing bytes. [t]
-      must have no launches in flight. *)
+      through [free]. [t] must have no launches in flight. *)
 
   val call :
     'meta t ->

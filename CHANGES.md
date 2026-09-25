@@ -386,6 +386,9 @@ thread.
 
 ### Tolk (new)
 
+- NV initializes the instruction-prefetch guard after each loaded kernel and
+  rejects invalid relocations before allocating device memory.
+
 - AMD direct launches and retained queues share owned scratch storage with
   tinygrad's minimum sizing. Resizing preserves backing captured by older
   replays; allocation failure rejects larger launches without discarding it.

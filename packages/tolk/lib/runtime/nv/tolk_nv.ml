@@ -42,10 +42,11 @@ let write_u8 view off v =
 (* Launch descriptors *)
 
 module Qmd = struct
+  type storage = Host of bytes | Mapped of Hcq.Mmio.t
   type t = {
     ver : int;
     size : int;
-    view : Hcq.Mmio.t;
+    storage : storage;
     fields : (string, int * int) Hashtbl.t;
   }
 
@@ -71,7 +72,21 @@ module Qmd = struct
       invalid_arg
         (Printf.sprintf "Qmd.create: view holds %d bytes, the descriptor %d"
            (Hcq.Mmio.size view) size);
-    { ver; size; view; fields = Lazy.force fields }
+    { ver; size; storage = Mapped view; fields = Lazy.force fields }
+
+  let empty ~compute_class =
+    let ver, size, fields = layout ~compute_class in
+    {ver; size; storage = Host (Bytes.make size '\000'); fields = Lazy.force fields}
+
+  let read_bytes t ~off ~len = match t.storage with
+    | Host bytes -> Bytes.sub bytes off len
+    | Mapped view -> Hcq.Mmio.read_bytes view ~off ~len
+  let blit_bytes t ~off bytes = match t.storage with
+    | Host target -> Bytes.blit bytes 0 target off (Bytes.length bytes)
+    | Mapped view -> Hcq.Mmio.blit_bytes view ~off bytes
+  let mapped_view t = match t.storage with
+    | Mapped view -> view
+    | Host _ -> invalid_arg "Qmd: descriptor has no mapped view"
 
   let version t = t.ver
 
@@ -87,7 +102,7 @@ module Qmd = struct
   let read t name =
     let hi, lo = range t name in
     let first = lo / 8 in
-    let b = Hcq.Mmio.read_bytes t.view ~off:first ~len:((hi / 8) - first + 1) in
+    let b = read_bytes t ~off:first ~len:((hi / 8) - first + 1) in
     let num = ref 0 in
     for i = Bytes.length b - 1 downto 0 do
       num := (!num lsl 8) lor Char.code (Bytes.unsafe_get b i)
@@ -101,7 +116,7 @@ module Qmd = struct
       invalid_arg (Printf.sprintf "Qmd: 0x%x does not fit in field %s" v name);
     let first = lo / 8 in
     let len = (hi / 8) - first + 1 in
-    let b = Hcq.Mmio.read_bytes t.view ~off:first ~len in
+    let b = read_bytes t ~off:first ~len in
     let num = ref 0 in
     for i = len - 1 downto 0 do
       num := (!num lsl 8) lor Char.code (Bytes.unsafe_get b i)
@@ -111,7 +126,7 @@ module Qmd = struct
     for i = 0 to len - 1 do
       Bytes.unsafe_set b i (Char.unsafe_chr ((num lsr (8 * i)) land 0xff))
     done;
-    Hcq.Mmio.blit_bytes t.view ~off:first b
+    blit_bytes t ~off:first b
 
   let write t fields = List.iter (fun (name, v) -> write_field t name v) fields
 
@@ -131,7 +146,7 @@ module Qmd = struct
           (Printf.sprintf "constant_buffer_addr_lower_shifted6_%d" i, lo32 a);
         ]
 
-  let to_bytes t = Hcq.Mmio.read_bytes t.view ~off:0 ~len:t.size
+  let to_bytes t = read_bytes t ~off:0 ~len:t.size
 end
 
 (* Devices *)
@@ -346,7 +361,7 @@ module Compute_queue = struct
       | None -> false
       | Some qmd ->
           let v3 = Qmd.version qmd < 4 in
-          let view = qmd.Qmd.view in
+          let view = Qmd.mapped_view qmd in
           let rec claim i =
             if i > 1 then false
             else if Qmd.read qmd (Printf.sprintf "release%d_enable" i) <> 0
@@ -1380,6 +1395,18 @@ module Program = struct
     kernargs_alloc_size : int;
   }
 
+  type data = {
+    image : bytes;
+    relocations : (int * int * int * int) list;
+    prog_offset : int;
+    prog_size : int;
+    regs_usage : int;
+    shmem_usage : int;
+    lcmem_usage : int;
+    constbufs : (int * (int * int)) list;
+    cbuf0_size : int;
+  }
+
   let r_cuda_64 = 2
 
   (* ".nv.constant<N>" or ".nv.constant<N>.<kernel>" names carry the
@@ -1420,20 +1447,16 @@ module Program = struct
       off := !off + (if typ = 4 then sz else 0) + 4
     done
 
-  let load (dev : 'meta device) ~alloc ~ensure_local_memory ~name lib =
+  let image ~name lib =
     let elf = Tolk.Elf.load ~force_section_align:128 lib in
     let image = Tolk.Elf.image elf in
     let sections = Tolk.Elf.sections elf in
-    (* at least 4 KiB of guard space after the image mitigates prefetch
-       memory faults *)
-    let lib_gpu = alloc (round_up (Bytes.length image) 0x1000 + 0x1000) in
-    let va = Nativeint.to_int (Hcq.Buffer.va lib_gpu) in
     let regs_usage = ref 0
     and shmem_usage = ref 0x400
     and lcmem_usage = ref 0x240
     and cbuf0_size = ref 0 in
-    let prog_addr = ref va and prog_sz = ref (Bytes.length image) in
-    let constbufs = ref [ (0, (0n, 0x160)) ] in
+    let prog_addr = ref 0 and prog_sz = ref (Bytes.length image) in
+    let constbufs = ref [ (0, (0, 0x160)) ] in
     let set_constbuf i entry =
       if List.mem_assoc i !constbufs then
         constbufs :=
@@ -1447,12 +1470,12 @@ module Program = struct
         if s.name = ".nv.shared." ^ name then
           shmem_usage := round_up (0x400 + s.size) 128;
         if s.name = ".text." ^ name then begin
-          prog_addr := va + s.addr;
+          prog_addr := s.addr;
           prog_sz := s.size
         end
         else
           match constant_index s.name with
-          | Some i -> set_constbuf i (Nativeint.of_int (va + s.addr), s.size)
+          | Some i -> set_constbuf i (s.addr, s.size)
           | None ->
               if String.starts_with ~prefix:".nv.info" s.name then
                 iter_info s (fun param data ->
@@ -1468,45 +1491,33 @@ module Program = struct
                     else if s.name = ".nv.info" && param = 0x2f then
                       regs_usage := u32le s.content (data + 4)))
       sections;
-    List.iter
-      (fun (r : Tolk.Elf.reloc) ->
+    let relocations = List.map (fun (r : Tolk.Elf.reloc) ->
         if r.symbol.shndx = 0 then
-          failwith
-            ("Attempting to relocate against an undefined symbol "
-           ^ r.symbol.name);
-        let target = va + sections.(r.symbol.shndx).addr + r.symbol.value in
-        if r.r_type = r_cuda_64 then
-          Bytes.set_int64_le image r.offset (Int64.of_int target)
-        else if r.r_type = 0x38 then
-          Bytes.set_int32_le image (r.offset + 4)
-            (Int32.of_int (target land 0xffffffff))
-        else if r.r_type = 0x39 then
-          Bytes.set_int32_le image (r.offset + 4) (Int32.of_int (target lsr 32))
-        else failwith (Printf.sprintf "unknown NV reloc %d" r.r_type))
-      (Tolk.Elf.relocs elf);
+          failwith ("Attempting to relocate against an undefined symbol " ^ r.symbol.name);
+        let target = sections.(r.symbol.shndx).addr + r.symbol.value in
+        let offset, width, shift =
+          if r.r_type = r_cuda_64 then r.offset, 8, 0
+          else if r.r_type = 0x38 then r.offset + 4, 4, 0
+          else if r.r_type = 0x39 then r.offset + 4, 4, 32
+          else failwith (Printf.sprintf "unknown NV reloc %d" r.r_type) in
+        if offset < 0 || offset > Bytes.length image - width then
+          invalid_arg "NV relocation extends beyond the image";
+        offset, target, width, shift) (Tolk.Elf.relocs elf) in
+    let padded = Bytes.make (round_up (Bytes.length image) 0x1000 + 0x1000) '\000' in
+    Bytes.blit image 0 padded 0 (Bytes.length image);
+    {image = padded; relocations; prog_offset = !prog_addr; prog_size = !prog_sz;
+     regs_usage = !regs_usage; shmem_usage = !shmem_usage;
+     lcmem_usage = !lcmem_usage; constbufs = !constbufs; cbuf0_size = !cbuf0_size}
+
+  let template (dev : 'meta device) (data : data) =
     (* driver parameters occupy constant-buffer-0 entries up to index
        223 on Blackwell, up to 11 before *)
     let min_cbuf0_entries =
       if dev.compute_class >= Defs.blackwell_compute_a then 224 else 12
     in
-    let cbuf_0 = Array.make (max (!cbuf0_size / 4) min_cbuf0_entries) 0 in
-    ensure_local_memory !lcmem_usage;
-    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
+    let cbuf_0 = Array.make (max (data.cbuf0_size / 4) min_cbuf0_entries) 0 in
     let compute_class = dev.compute_class in
-    let qmd_size = Qmd.sizeof ~compute_class in
-    (* the template's backing bytes belong to the program; [free]
-       releases them *)
-    let qmd_addr =
-      Hcq.File_io.mmap ~addr:0n ~size:qmd_size
-        ~prot:(Hcq.File_io.prot_read lor Hcq.File_io.prot_write)
-        ~flags:(Hcq.File_io.map_private lor Hcq.File_io.map_anonymous)
-        ~fd:(-1) ~offset:0L
-    in
-    let qmd =
-      Qmd.create
-        ~view:(Hcq.Mmio.make ~addr:qmd_addr ~size:qmd_size)
-        ~compute_class
-    in
+    let qmd = Qmd.empty ~compute_class in
     let sw = va64 dev.shared_mem_window and lw = va64 dev.local_mem_window in
     let version_fields =
       if compute_class >= Defs.blackwell_compute_a then begin
@@ -1515,14 +1526,11 @@ module Program = struct
         cbuf_0.(190) <- lo32 lw;
         cbuf_0.(191) <- hi32 lw;
         cbuf_0.(223) <- 0xfffdc0;
-        let pa4 = !prog_addr lsr 4 in
         [
           ("qmd_major_version", 5);
           ("qmd_type", Defs.nvcec0_qmdv05_00_qmd_type_grid_cta);
-          ("program_address_upper_shifted4", pa4 lsr 32);
-          ("program_address_lower_shifted4", pa4 land 0xffffffff);
-          ("register_count", !regs_usage);
-          ("shared_memory_size_shifted7", !shmem_usage lsr 7);
+          ("register_count", data.regs_usage);
+          ("shared_memory_size_shifted7", data.shmem_usage lsr 7);
           ("shader_local_memory_high_size_shifted4", dev.slm_per_thread lsr 4);
         ]
       end
@@ -1535,24 +1543,22 @@ module Program = struct
         [
           ("qmd_major_version", 3);
           ("sm_global_caching_enable", 1);
-          ("program_address_upper", !prog_addr lsr 32);
-          ("program_address_lower", !prog_addr land 0xffffffff);
-          ("shared_memory_size", !shmem_usage);
-          ("register_count_v", !regs_usage);
+          ("shared_memory_size", data.shmem_usage);
+          ("register_count_v", data.regs_usage);
           ("shader_local_memory_high_size", dev.slm_per_thread);
         ]
       end
     in
     let smem_cfg =
       match
-        List.find_opt (fun c -> c * 1024 >= !shmem_usage) [ 32; 64; 100 ]
+        List.find_opt (fun c -> c * 1024 >= data.shmem_usage) [ 32; 64; 100 ]
       with
       | Some c -> (c * 1024 / 4096) + 1
       | None ->
           failwith
             (Printf.sprintf
                "shared memory size 0x%x exceeds the largest configuration"
-               !shmem_usage)
+               data.shmem_usage)
     in
     Qmd.write qmd
       (version_fields
@@ -1571,44 +1577,63 @@ module Program = struct
           ("min_sm_config_shared_mem_size", smem_cfg);
           ("target_sm_config_shared_mem_size", smem_cfg);
           ("max_sm_config_shared_mem_size", 0x1a);
-          ("program_prefetch_size", min (!prog_sz lsr 8) 0x1ff);
+          ("program_prefetch_size", min (data.prog_size lsr 8) 0x1ff);
           ("sass_version", dev.sass_version);
-          ("program_prefetch_addr_upper_shifted", !prog_addr lsr 40);
-          ("program_prefetch_addr_lower_shifted", !prog_addr lsr 8);
         ]);
     List.iter
-      (fun (i, (addr, sz)) ->
-        Qmd.set_constant_buf_addr qmd i addr;
+      (fun (i, (offset, sz)) ->
+        ignore offset;
         Qmd.write qmd
           [
             (Printf.sprintf "constant_buffer_size_shifted4_%d" i, sz);
             (Printf.sprintf "constant_buffer_valid_%d" i, 1);
           ])
-      !constbufs;
+      data.constbufs;
+    qmd, cbuf_0
+
+  let load (dev : 'meta device) ~alloc ~ensure_local_memory ~name lib =
+    let data = image ~name lib in
+    ensure_local_memory data.lcmem_usage;
+    let qmd, cbuf_0 = template dev data in
+    (* A guard page after the image mitigates instruction prefetch faults. *)
+    let lib_gpu = alloc (Bytes.length data.image) in
+    let va = Nativeint.to_int (Hcq.Buffer.va lib_gpu) in
+    let prog_addr = va + data.prog_offset in
+    let constbufs = List.map (fun (i, (offset, size)) ->
+        i, (Nativeint.of_int (va + offset), size)) data.constbufs in
+    let image = Bytes.copy data.image in
+    List.iter (fun (offset, target, width, shift) ->
+        let address = Int64.shift_right_logical (Int64.of_int (va + target)) shift in
+        if width = 8 then Bytes.set_int64_le image offset address
+        else Bytes.set_int32_le image offset (Int64.to_int32 address)) data.relocations;
+    List.iter (fun (i, (address, _)) -> Qmd.set_constant_buf_addr qmd i address) constbufs;
+    let address = if Qmd.version qmd < 4 then prog_addr else prog_addr lsr 4 in
+    let suffix = if Qmd.version qmd < 4 then "" else "_shifted4" in
+    Qmd.write qmd ["program_address_upper" ^ suffix, address lsr 32;
+      "program_address_lower" ^ suffix, address land 0xffffffff;
+      "program_prefetch_addr_upper_shifted", prog_addr lsr 40;
+      "program_prefetch_addr_lower_shifted", prog_addr lsr 8];
+    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
     (* register allocation granularity is 256 per warp, warp allocation
        granularity is 4, register file size 65536 *)
     let max_threads =
-      65536 / round_up (max 1 !regs_usage * 32) 256 / 4 * 4 * 32
+      65536 / round_up (max 1 data.regs_usage * 32) 256 / 4 * 4 * 32
     in
-    let cbuf0_bytes = snd (List.assoc 0 !constbufs) in
+    let cbuf0_bytes = snd (List.assoc 0 constbufs) in
     {
       params = { dev; qmd; cbuf0_size = cbuf0_bytes };
       name;
       lib_gpu;
-      regs_usage = !regs_usage;
-      shmem_usage = !shmem_usage;
-      lcmem_usage = !lcmem_usage;
-      constbufs = !constbufs;
+      regs_usage = data.regs_usage;
+      shmem_usage = data.shmem_usage;
+      lcmem_usage = data.lcmem_usage;
+      constbufs = constbufs;
       cbuf_0;
       max_threads;
       kernargs_alloc_size = round_up cbuf0_bytes 256 + 0x800;
     }
 
-  let free ~free:release t =
-    release t.lib_gpu;
-    Hcq.File_io.munmap
-      (Hcq.Mmio.addr t.params.qmd.Qmd.view)
-      ~size:t.params.qmd.Qmd.size
+  let free ~free:release t = release t.lib_gpu
 
   let call t ~layout ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms ~bufs
       ~vals ~global_size ~local_size () =
