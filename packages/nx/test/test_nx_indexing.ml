@@ -149,9 +149,7 @@ let test_set_slice_mask_broadcast () =
   let mask = Nx.create Nx.bool [| 4 |] [| true; false; true; false |] in
   let value = Nx.create Nx.float32 [| 2 |] [| 7.; 8. |] in
   let t = Nx.set [ Nx.M mask ] value t in
-  check_t "set mask broadcast" [| 4; 2 |]
-    [| 7.; 8.; 0.; 0.; 7.; 8.; 0.; 0. |]
-    t
+  check_t "set mask broadcast" [| 4; 2 |] [| 7.; 8.; 0.; 0.; 7.; 8.; 0.; 0. |] t
 
 let test_set_new_axis_with_gather () =
   let t = Nx.zeros Nx.float32 [| 3; 2 |] in
@@ -163,8 +161,9 @@ let test_set_new_axis_with_gather () =
 
 let test_set_duplicate_list_raises () =
   let t = Nx.zeros Nx.float32 [| 4 |] in
-  raises ~msg:"repeated position" (Invalid_argument "set: index 1 is listed twice")
-    (fun () -> ignore (Nx.set [ Nx.L [ 1; 1 ] ] (Nx.scalar Nx.float32 1.) t))
+  raises ~msg:"repeated position"
+    (Invalid_argument "set: index 1 is listed twice") (fun () ->
+      ignore (Nx.set [ Nx.L [ 1; 1 ] ] (Nx.scalar Nx.float32 1.) t))
 
 let test_set_window_dynamic () =
   let t = Nx.zeros Nx.float32 [| 2; 6 |] in
@@ -246,13 +245,11 @@ let test_take_out_of_range_raises () =
   let t = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
   raises ~msg:"past the end"
     (Invalid_argument
-       "gather: index out of bounds for the gathered/scattered axis")
-    (fun () ->
+       "gather: index out of bounds for the gathered/scattered axis") (fun () ->
       ignore (Nx.take ~indices:(Nx.create Nx.int32 [| 1 |] [| 3l |]) t));
   raises ~msg:"negative"
     (Invalid_argument
-       "gather: index out of bounds for the gathered/scattered axis")
-    (fun () ->
+       "gather: index out of bounds for the gathered/scattered axis") (fun () ->
       ignore (Nx.take ~indices:(Nx.create Nx.int32 [| 1 |] [| -1l |]) t))
 
 (* ───── Take_along_axis Tests ───── *)
@@ -508,9 +505,7 @@ let take_tests =
     test "take empty indices" test_take_empty_indices;
   ]
 
-let put_tests =
-  [
-  ]
+let put_tests = []
 
 let scatter_tests =
   [

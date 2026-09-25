@@ -1892,7 +1892,8 @@ struct
                  transposed view so both operands' strides are exercised *)
               let t = F.create ctx F.float64 [| 3; 4 |] (Array.make 12 0.0) in
               let v =
-                B.permute (F.create ctx F.float64 [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
+                B.permute
+                  (F.create ctx F.float64 [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
                   [| 1; 0 |]
               in
               let starts = F.create ctx F.int32 [| 2 |] [| 1l; 1l |] in
