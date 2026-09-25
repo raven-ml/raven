@@ -102,13 +102,15 @@ acceptance requirement; skipped tests are not execution evidence.
   coverage. Synchronize device opening and runtime caches; concurrent callers
   currently mutate the shared registry and execution Hashtbls without locking.
   Isolate schedule capture hooks and Rune's shared upload scratch across
-  concurrent callers as part of that audit.
+  concurrent callers as part of that audit. Cover finalizers registered on
+  another domain and systhreads sharing a domain: operation scopes currently
+  prevent only same-domain GC re-entry and do not serialize device callers.
+  Run the concurrent runtime and cache coverage under TSan.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
   correctness fixes; measure accelerator candidates on supported hardware.
-- Update the TSan workspace's OCaml 5.4 pin for the current dependency set and
-  run runtime/lifetime stress tests. Measure search cost, selected-kernel
-  latency, JIT replay, allocations and handle counts on consumer workloads.
+- Measure search cost, selected-kernel latency, JIT replay, allocations and
+  handle counts on consumer workloads.
 - At the reference pin move, `find_bufs`' read/write cycle check keys on the
   pointer node (upstream `read_from.setdefault(buf, state:=idx.src[0]) is not
   state`), where the pin and tolk key on its op. Rune's remat barrier reads a
