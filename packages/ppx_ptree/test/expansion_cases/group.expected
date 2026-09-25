@@ -12,8 +12,9 @@ include
     let _ = fun (_ : 'a tree) -> ()
     let _ = fun (_ : 'a t) -> ()
     let _ = fun (_ : state) -> ()
-    let rec walk_tree :
-      'a 'b . ('a, 'b) Nx.Ptree.Walk.cursor -> 'a tree -> 'b tree =
+    let rec walk_tree : type ptree_a ptree_b.
+      (ptree_a, ptree_b) Nx.Ptree.Walk.cursor -> ptree_a tree -> ptree_b tree
+      =
       fun ptree__c ->
         function
         | Leaf ptree__0 ->
@@ -24,7 +25,8 @@ include
             (Nx.Ptree.Walk.case ptree__c "Node";
              (let ptree__0 = Nx.Ptree.Walk.list walk_tree ptree__c ptree__0 in
               Node ptree__0))
-    and walk : 'a 'b . ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t =
+    and walk : type ptree_a ptree_b.
+      (ptree_a, ptree_b) Nx.Ptree.Walk.cursor -> ptree_a t -> ptree_b t =
       fun ptree__c ptree__x ->
         let ptree__f_root =
           Nx.Ptree.Walk.field ptree__c "root" walk_tree ptree__x.root in
@@ -32,15 +34,16 @@ include
           Nx.Ptree.Walk.field ptree__c "window"
             (Nx.Ptree.Walk.option Nx.Ptree.Walk.int) ptree__x.window in
         { root = ptree__f_root; window = ptree__f_window }
-    and walk_state : 'a 'b . ('a, 'b) Nx.Ptree.Walk.cursor -> state -> state
-      =
+    and walk_state : type ptree_a ptree_b.
+      (ptree_a, ptree_b) Nx.Ptree.Walk.cursor -> state -> state =
       fun ptree__c ptree__x ->
         let ptree__f_steps =
           Nx.Ptree.Walk.field ptree__c "steps" Nx.Ptree.Walk.tensor
             ptree__x.steps in
         let ptree__f_index =
           Nx.Ptree.Walk.field ptree__c "index"
-            (Nx.Ptree.Walk.structure Cache_index.ptree) ptree__x.index in
+            (Nx.Ptree.Walk.structure
+               (Cache_index.ptree : Cache_index.t Nx.Ptree.t)) ptree__x.index in
         { steps = ptree__f_steps; index = ptree__f_index }
     let _ = walk_tree
     and _ = walk

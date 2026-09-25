@@ -413,6 +413,34 @@ let test_alias () =
     (Nx.Ptree.instantiate (module Alias))
     (Kaun.Linear.init ~inputs:1 ~outputs:1, vec [| 1. |])
 
+(* A fixed instance of a module's [t] over a type derived before it. *)
+
+module Earlier = struct
+  type state = { scale : Nx.float32_t } [@@deriving ptree]
+  type 'a t = { w : 'a; frozen : state Kaun.Linear.t } [@@deriving ptree]
+end
+
+module Earlier_hand = struct
+  type 'a t = 'a Earlier.t
+
+  let walk c (x : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf x.w in
+    let frozen =
+      field c "frozen"
+        (structure (Nx.Ptree.nest (module Kaun.Linear) Earlier.ptree_state))
+        x.frozen
+    in
+    { w; frozen }
+end
+
+let test_earlier_payload () =
+  let state = { Earlier.scale = vec [| 1. |] } in
+  same ~msg:"earlier payload"
+    ~hand:(Nx.Ptree.instantiate (module Earlier_hand))
+    (Nx.Ptree.instantiate (module Earlier))
+    { Earlier.w = vec [| 2. |]; frozen = { w = state; b = Some state } }
+
 (* A type whose parameter is anonymous is a module of [Nx.Ptree.S]. *)
 
 module Phantom = struct
@@ -451,6 +479,7 @@ let () =
           test "recursive types" test_recursive;
           test "arrays" test_array;
           test "aliases" test_alias;
+          test "a fixed instance over an earlier type" test_earlier_payload;
           test "an anonymous parameter" test_phantom;
         ];
       group "transformations" [ test "grad" test_grad ];

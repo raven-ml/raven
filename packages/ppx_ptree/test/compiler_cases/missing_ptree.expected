@@ -1,4 +1,4 @@
-File "compiler_cases/missing_ptree.ml", line 17, characters 30-39:
-17 | type 'a t = { w : 'a; index : Missing.t } [@@deriving ptree]
+File "compiler_cases/missing_ptree.ml", line 19, characters 30-39:
+19 | type 'a t = { w : 'a; index : Missing.t } [@@deriving ptree]
                                    ^^^^^^^^^
 Error: Unbound value Missing.ptree

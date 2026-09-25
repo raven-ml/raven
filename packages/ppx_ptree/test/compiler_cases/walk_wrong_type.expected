@@ -1,0 +1,9 @@
+File "compiler_cases/walk_wrong_type.ml", line 17, characters 52-70:
+17 | type 'a t = { w : 'a; x : Nx.float32_t [@ptree.walk Nx.Ptree.Walk.leaf] }
+                                                         ^^^^^^^^^^^^^^^^^^
+Error: The value Nx.Ptree.Walk.leaf has type
+         (ptree_a, ptree_b) Nx.Ptree.Walk.cursor -> ptree_a -> ptree_b
+       but an expression was expected of type
+         (ptree_a, ptree_b) Nx.Ptree.Walk.cursor ->
+         Nx.float32_t -> Nx.float32_t
+       Type ptree_a is not compatible with type Nx.float32_t = float array

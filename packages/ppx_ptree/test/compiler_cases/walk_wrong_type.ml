@@ -1,4 +1,6 @@
 module Nx = struct
+  type float32_t = float array
+
   module Ptree = struct
     type _ t = Structure
 
@@ -12,8 +14,5 @@ module Nx = struct
   end
 end
 
-module Missing = struct
-  type t = int
-end
-
-type 'a t = { w : 'a; index : Missing.t } [@@deriving ptree]
+type 'a t = { w : 'a; x : Nx.float32_t [@ptree.walk Nx.Ptree.Walk.leaf] }
+[@@deriving ptree]

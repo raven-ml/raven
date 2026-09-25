@@ -81,13 +81,15 @@ arguments: one argument at the constructor's path, several at indices `0`,
 | `M.t`, `M.name` | `Walk.structure M.ptree`, `Walk.structure M.ptree_name` |
 | `name` of the declaration group | `walk_name` |
 | `name` defined before it | `Walk.structure ptree_name` |
-| `Nx.float32_t M.t`, a fixed instance of a module's `t` | `Walk.structure (Nx.Ptree.nest (module M) Nx.Ptree.tensor)` |
+| `Nx.float32_t M.t`, `state M.t`: a fixed instance of a module's `t` | `Walk.structure (Nx.Ptree.nest (module M) s)`, with `s` the payload's structure: `Nx.Ptree.tensor`, `ptree_state`, ... |
 | `int`, `bool` under `[@ptree.int]` | `Walk.int` |
 
 A qualified type without arguments is taken to be a structure at one type
 named by the `ptree` convention, as `Kaun.Cache_index.ptree` and
 `Nx_quant.ptree` are. A type that follows neither convention fails to compile
-at the part's type, for example with `Unbound value M.walk`.
+at the part's type, for example with `Unbound value M.walk`. A `ptree` of
+another type, or an `[@ptree.walk f]` whose `f` does not walk the part's type,
+is reported at the part too.
 
 ## Attributes
 

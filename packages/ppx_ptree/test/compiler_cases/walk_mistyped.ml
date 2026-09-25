@@ -1,5 +1,7 @@
 module Nx = struct
   module Ptree = struct
+    type _ t = Structure
+
     module Walk = struct
       type ('a, 'b) cursor = Cursor
 

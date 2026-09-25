@@ -72,7 +72,12 @@
   (and
    (<> %{system} mingw64)
    (<> %{system} win64)))
- (targets missing_walk.actual missing_ptree.actual walk_mistyped.actual)
+ (targets
+  missing_walk.actual
+  missing_ptree.actual
+  walk_mistyped.actual
+  walk_wrong_type.actual
+  ptree_other_type.actual)
  (deps
   (:pp pp.exe))
  (action
@@ -119,6 +124,36 @@
       %{dep:compiler_cases/walk_mistyped.ml}
       -o
       walk_mistyped.cmo)))
+   (with-stderr-to
+    walk_wrong_type.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/walk_wrong_type.ml}
+      -o
+      walk_wrong_type.cmo)))
+   (with-stderr-to
+    ptree_other_type.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/ptree_other_type.ml}
+      -o
+      ptree_other_type.cmo)))
    (diff compiler_cases/missing_walk.expected missing_walk.actual)
    (diff compiler_cases/missing_ptree.expected missing_ptree.actual)
-   (diff compiler_cases/walk_mistyped.expected walk_mistyped.actual))))
+   (diff compiler_cases/walk_mistyped.expected walk_mistyped.actual)
+   (diff compiler_cases/walk_wrong_type.expected walk_wrong_type.actual)
+   (diff compiler_cases/ptree_other_type.expected ptree_other_type.actual))))

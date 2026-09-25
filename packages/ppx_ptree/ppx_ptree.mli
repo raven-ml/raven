@@ -5,9 +5,9 @@
 
 (** [[@@deriving ptree]]: the walk of a structure, derived from its type.
 
-    A structure ({!Nx.Ptree.S}) is a type ['a t] with one function, [walk], that
-    walks the parts of a value with a {!Nx.Ptree.Walk.cursor}. The deriver
-    writes that function from the type's definition:
+    A structure ([Nx.Ptree.S]) is a type ['a t] with one function, [walk], that
+    walks the parts of a value with a [Nx.Ptree.Walk.cursor]. The deriver writes
+    that function from the type's definition:
 
     {[
     type 'a t = {
@@ -18,7 +18,7 @@
     [@@deriving ptree]
     ]}
 
-    generates
+    derives a walk equivalent to
 
     {[
     let walk c x =
@@ -32,9 +32,9 @@
 
     so the enclosing module is a structure, and
     [Nx.Ptree.instantiate (module M)] makes it a value. The derived walk keeps
-    {!Nx.Ptree.S}'s contract: it walks every part once, in declaration order,
-    and reports every case, length, presence and marked integer. A hand-written
-    walk and a derived one are interchangeable.
+    [Nx.Ptree.S]'s contract: it walks every part once, in declaration order, and
+    reports every case, length, presence and marked integer. A hand-written walk
+    and a derived one are interchangeable.
 
     {1:generated Generated values}
 
@@ -48,25 +48,25 @@
       [Nx.Ptree.instantiate (module M)] builds where the dtype is known.
 
     A type [type _ t] with an anonymous parameter is a structure whose parts are
-    all fixed: its module is a {!Nx.Ptree.S}, and it gets no [ptree].
+    all fixed: its module is a [Nx.Ptree.S], and it gets no [ptree].
 
     In an interface, [[@@deriving ptree]] declares the same values.
 
     {1:rules How a part is walked}
 
     A record walks its fields in declaration order, each with
-    {!Nx.Ptree.Walk.field} at the field's name. A variant reports the
-    constructor's name with {!Nx.Ptree.Walk.case}, then walks a single argument
-    at the constructor's path, several arguments with {!Nx.Ptree.Walk.index} at
+    [Nx.Ptree.Walk.field] at the field's name. A variant reports the
+    constructor's name with [Nx.Ptree.Walk.case], then walks a single argument
+    at the constructor's path, several arguments with [Nx.Ptree.Walk.index] at
     their positions, and an inline record's fields by name. The type of each
     part decides its walk:
-    - the type's parameter ['a]: {!Nx.Ptree.Walk.leaf};
+    - the type's parameter ['a]: [Nx.Ptree.Walk.leaf];
     - a tensor type, [('x, 'y) Nx.t], [Nx.float32_t] and Nx's other tensor
-      aliases (qualified or opened), or [Nx.Rng.key]: {!Nx.Ptree.Walk.tensor};
-    - [ty option] and [ty list]: {!Nx.Ptree.Walk.option} and
-      {!Nx.Ptree.Walk.list}; [ty array]: its length reported with
-      {!Nx.Ptree.Walk.int}, then each element at its index;
-    - a tuple: each component with {!Nx.Ptree.Walk.index} at its position;
+      aliases (qualified or opened), or [Nx.Rng.key]: [Nx.Ptree.Walk.tensor];
+    - [ty option] and [ty list]: [Nx.Ptree.Walk.option] and
+      [Nx.Ptree.Walk.list]; [ty array]: its length reported with
+      [Nx.Ptree.Walk.int], then each element at its index;
+    - a tuple: each component with [Nx.Ptree.Walk.index] at its position;
     - ['a M.t] and ['a M.name]: [M.walk] and [M.walk_name]; ['a name] of the
       same declaration group, or defined before it: [walk_name];
     - [M.t] and [M.name] without argument: [Nx.Ptree.Walk.structure M.ptree] and
@@ -77,14 +77,17 @@
       [Nx.Ptree.Walk.structure (Nx.Ptree.nest (module M) s)], where [s] is
       [ty]'s structure at one type, built from [Nx.Ptree.tensor],
       [Nx.Ptree.unit], [Nx.Ptree.option], [Nx.Ptree.list], [Nx.Ptree.pair],
-      [N.ptree] and [Nx.Ptree.nest];
-    - [int] and [bool] under [[@ptree.int]]: {!Nx.Ptree.Walk.int}, a bool as [0]
+      [N.ptree], [ptree_name] of a type defined before and [Nx.Ptree.nest];
+    - [int] and [bool] under [[@ptree.int]]: [Nx.Ptree.Walk.int], a bool as [0]
       or [1].
 
     A qualified or earlier type without argument is taken to be a structure at
     one type named by the [ptree] convention, as [Kaun.Cache_index.ptree] and
     [Nx_quant.ptree] are. A type that follows neither convention is a compile
-    error at the part's type, such as [Unbound value M.walk].
+    error at the part's type, such as [Unbound value M.walk]. Each [ptree] the
+    deriver names is constrained to the part's type, and each [[@ptree.walk f]]
+    to a walk of it, so a structure of another type or a mistyped [f] is
+    reported where it is written.
 
     {1:attributes Attributes}
 

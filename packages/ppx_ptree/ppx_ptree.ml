@@ -8,50 +8,36 @@ module B = Ast_builder.Default
 
 (* Attributes *)
 
-let int_core = Attribute.declare_flag "@ptree.int" Attribute.Context.core_type
+type 'a attributes = {
+  int : 'a Attribute.flag;
+  skip : 'a Attribute.flag;
+  walk : ('a, payload) Attribute.t;
+}
 
-let int_label =
-  Attribute.declare_flag "@ptree.int" Attribute.Context.label_declaration
+let attributes context =
+  {
+    int = Attribute.declare_flag "@ptree.int" context;
+    skip = Attribute.declare_flag "@ptree.skip" context;
+    walk = Attribute.declare "@ptree.walk" context Ast_pattern.__ Fun.id;
+  }
 
-let skip_core = Attribute.declare_flag "@ptree.skip" Attribute.Context.core_type
+let core_attributes = attributes Attribute.Context.core_type
+let label_attributes = attributes Attribute.Context.label_declaration
 
-let skip_label =
-  Attribute.declare_flag "@ptree.skip" Attribute.Context.label_declaration
+let constructor_attributes =
+  attributes Attribute.Context.constructor_declaration
 
-let walk_core =
-  Attribute.declare "@ptree.walk" Attribute.Context.core_type Ast_pattern.__
-    Fun.id
+let declaration_attributes = attributes Attribute.Context.type_declaration
 
-let walk_label =
-  Attribute.declare "@ptree.walk" Attribute.Context.label_declaration
-    Ast_pattern.__ Fun.id
-
-let int_constructor =
-  Attribute.declare_flag "@ptree.int" Attribute.Context.constructor_declaration
-
-let skip_constructor =
-  Attribute.declare_flag "@ptree.skip" Attribute.Context.constructor_declaration
-
-let walk_constructor =
-  Attribute.declare "@ptree.walk" Attribute.Context.constructor_declaration
-    Ast_pattern.__ Fun.id
-
-let int_declaration =
-  Attribute.declare_flag "@ptree.int" Attribute.Context.type_declaration
-
-let skip_declaration =
-  Attribute.declare_flag "@ptree.skip" Attribute.Context.type_declaration
-
-let walk_declaration =
-  Attribute.declare "@ptree.walk" Attribute.Context.type_declaration
-    Ast_pattern.__ Fun.id
-
-type annotation = Int | Skip | Walk of expression
+(* [Invalid]: an attribute error was reported, and the part reports nothing
+   else. *)
+type annotation = Int | Skip | Walk of expression | Invalid
 
 let attribute_label = function
   | Int -> "ptree.int"
   | Skip -> "ptree.skip"
   | Walk _ -> "ptree.walk"
+  | Invalid -> "ptree"
 
 (* Errors are collected and emitted as located error nodes, so one expansion
    reports all of them. *)
@@ -69,55 +55,43 @@ let error env ~loc fmt =
         Location.Error.make ~loc ("ppx_ptree: " ^ msg) ~sub:[] :: env.errors)
     fmt
 
-let catch env f =
-  try f ()
-  with exn -> (
-    match Location.Error.of_exn exn with
-    | Some e ->
-        env.errors <- e :: env.errors;
-        None
-    | None -> raise exn)
-
-let annotation env ~loc ~int ~skip ~walk node =
-  let flag a = catch env (fun () -> Some (Attribute.has_flag a node)) in
+let annotation env ~loc attrs node =
+  let failed = ref false in
+  let catch f =
+    try f ()
+    with exn -> (
+      match Location.Error.of_exn exn with
+      | Some e ->
+          env.errors <- e :: env.errors;
+          failed := true;
+          None
+      | None -> raise exn)
+  in
+  let flag a = catch (fun () -> Some (Attribute.has_flag a node)) in
   let found =
     List.concat
       [
-        (if flag int = Some true then [ Int ] else []);
-        (if flag skip = Some true then [ Skip ] else []);
-        (match catch env (fun () -> Attribute.get walk node) with
+        (if flag attrs.int = Some true then [ Int ] else []);
+        (if flag attrs.skip = Some true then [ Skip ] else []);
+        (match catch (fun () -> Attribute.get attrs.walk node) with
         | Some (PStr [ { pstr_desc = Pstr_eval (e, _); _ } ]) -> [ Walk e ]
         | Some _ ->
             error env ~loc
               "[@ptree.walk] takes the walk as an expression, as in \
                [@ptree.walk M.walk]";
+            failed := true;
             []
         | None -> []);
       ]
   in
   match found with
+  | _ when !failed -> Some Invalid
   | [] -> None
   | [ a ] -> Some a
   | _ ->
       error env ~loc
         "a part takes one of [@ptree.int], [@ptree.skip] and [@ptree.walk]";
-      None
-
-let core_annotation env ty =
-  annotation env ~loc:ty.ptyp_loc ~int:int_core ~skip:skip_core ~walk:walk_core
-    ty
-
-let label_annotation env ld =
-  annotation env ~loc:ld.pld_loc ~int:int_label ~skip:skip_label
-    ~walk:walk_label ld
-
-let constructor_annotation env cd =
-  annotation env ~loc:cd.pcd_loc ~int:int_constructor ~skip:skip_constructor
-    ~walk:walk_constructor cd
-
-let declaration_annotation env td =
-  annotation env ~loc:td.ptype_loc ~int:int_declaration ~skip:skip_declaration
-    ~walk:walk_declaration td
+      Some Invalid
 
 (* Names *)
 
@@ -126,6 +100,10 @@ let ptree_name = function "t" -> "ptree" | n -> "ptree_" ^ n
 let cursor = "ptree__c"
 let value = "ptree__x"
 let var i = "ptree__" ^ string_of_int i
+
+(* The locally abstract types of a walk's input and output payloads. *)
+let type_a = "ptree_a"
+let type_b = "ptree_b"
 let ident ~loc name = B.pexp_ident ~loc { loc; txt = Longident.parse name }
 let walk_fn ~loc name = ident ~loc ("Nx.Ptree.Walk." ^ name)
 let ptree_fn ~loc name = ident ~loc ("Nx.Ptree." ^ name)
@@ -207,11 +185,51 @@ let rec mentions env ty =
 let is_param env ty =
   match ty.ptyp_desc with Ptyp_var v -> env.param = Some v | _ -> false
 
-let unsupported env ~loc what =
+(* [at env x ty] is [ty] without attributes, with the parameter replaced by the
+   type [x]. *)
+let at env x ty =
+  object
+    inherit Ast_traverse.map as super
+
+    method! core_type ty =
+      let ty = super#core_type { ty with ptyp_attributes = [] } in
+      match ty.ptyp_desc with
+      | Ptyp_var v when env.param = Some v ->
+          B.ptyp_constr ~loc:ty.ptyp_loc
+            { loc = ty.ptyp_loc; txt = Longident.Lident x }
+            []
+      | _ -> ty
+  end
+    #core_type
+    ty
+
+let cursor_type ~loc a b =
+  B.ptyp_constr ~loc
+    { loc; txt = Longident.parse "Nx.Ptree.Walk.cursor" }
+    [ a; b ]
+
+(* [walk_of env ~loc ty e] is [e] constrained to walk [ty], at [e]'s location,
+   so a mistyped walk is reported where it is written. *)
+let walk_of env ty e =
+  let loc = e.pexp_loc in
+  let abstract x = B.ptyp_constr ~loc { loc; txt = Longident.Lident x } [] in
+  B.pexp_constraint ~loc e
+    (B.ptyp_arrow ~loc Nolabel
+       (cursor_type ~loc (abstract type_a) (abstract type_b))
+       (B.ptyp_arrow ~loc Nolabel (at env type_a ty) (at env type_b ty)))
+
+(* [structure_of env ~loc ty e] is [e] constrained to be [ty]'s structure. *)
+let structure_of env ~loc ty e =
+  B.pexp_constraint ~loc e
+    (B.ptyp_constr ~loc
+       { loc; txt = Longident.parse "Nx.Ptree.t" }
+       [ at env type_a ty ])
+
+let unsupported env ~loc part what =
   error env ~loc
-    "%s have no derived walk; walk the part with [@ptree.walk f] or leave it \
-     out with [@ptree.skip]"
-    what
+    "%s is %s, which has no derived walk; walk it with [@ptree.walk f] or \
+     leave it out with [@ptree.skip]"
+    part what
 
 (* [lambda ~loc pat body] is [fun ptree__c pat -> body]. *)
 let lambda ~loc pat body =
@@ -239,9 +257,13 @@ let rec has_int ty =
   | _ -> false
 
 let check_int env ~loc part ty =
-  if not (has_int ty) then
+  let ok = has_int ty in
+  if not ok then
     error env ~loc "[@ptree.int] on %s, whose type %s has no int or bool" part
-      (show ty)
+      (show ty);
+  ok
+
+let placeholder ~loc = walk_fn ~loc "leaf"
 
 (* [walker env ~ints part ty] is an expression of type [('a, 'b)
    Nx.Ptree.Walk.cursor -> ty -> ty'] that walks a value of [ty], where [ty'] is
@@ -249,17 +271,24 @@ let check_int env ~loc part ty =
    [ints] is [true] under [@ptree.int]. *)
 let rec walker env ~ints part ty =
   let loc = ty.ptyp_loc in
-  match core_annotation env ty with
-  | Some (Walk e) -> e
+  annotated env ~ints part ty (annotation env ~loc core_attributes ty)
+    ~default:(fun ~ints -> shape env ~ints part ty)
+
+(* [annotated env ~ints part ty annot ~default] is the walker of the part [part]
+   of type [ty] under the attribute [annot], and [default ~ints] without one. *)
+and annotated env ~ints part ty annot ~default =
+  let loc = ty.ptyp_loc in
+  match annot with
+  | Some (Walk e) -> walk_of env ty e
   | Some Skip ->
       check_skip env ~loc part ty;
-      let x = B.pvar ~loc value in
       B.pexp_fun ~loc Nolabel None (B.ppat_any ~loc)
-        (B.pexp_fun ~loc Nolabel None x (ident ~loc value))
+        (B.pexp_fun ~loc Nolabel None (B.pvar ~loc value) (ident ~loc value))
   | Some Int ->
-      check_int env ~loc part ty;
-      shape env ~ints:true part ty
-  | None -> shape env ~ints part ty
+      if check_int env ~loc part ty then default ~ints:true
+      else placeholder ~loc
+  | Some Invalid -> placeholder ~loc
+  | None -> default ~ints
 
 and shape env ~ints part ty =
   let loc = ty.ptyp_loc in
@@ -268,7 +297,7 @@ and shape env ~ints part ty =
   | Ptyp_var v ->
       error env ~loc "type variable '%s at %s is not the structure's parameter"
         v part;
-      walk_fn ~loc "leaf"
+      placeholder ~loc
   | Ptyp_tuple tys ->
       let lets =
         List.mapi
@@ -288,42 +317,47 @@ and shape env ~ints part ty =
       lambda ~loc
         (B.ppat_tuple ~loc (List.map (B.pvar ~loc) names))
         (sequence ~loc lets (B.pexp_tuple ~loc (List.map (ident ~loc) names)))
-  | Ptyp_constr ({ txt = lid; loc = lid_loc }, args) ->
-      constr env ~ints part ty lid lid_loc args
+  | Ptyp_constr ({ txt = lid; _ }, args) -> constr env ~ints part ty lid args
   | Ptyp_any ->
-      error env ~loc "the wildcard _ at %s has no walk" part;
-      walk_fn ~loc "leaf"
+      error env ~loc "%s is the wildcard _, which has no walk" part;
+      placeholder ~loc
   | Ptyp_arrow _ ->
-      unsupported env ~loc "Functions";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "a function";
+      placeholder ~loc
   | Ptyp_object _ ->
-      unsupported env ~loc "Object types";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "an object type";
+      placeholder ~loc
   | Ptyp_class _ ->
-      unsupported env ~loc "Class types";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "a class type";
+      placeholder ~loc
   | Ptyp_variant _ ->
-      unsupported env ~loc "Polymorphic variants";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "a polymorphic variant";
+      placeholder ~loc
   | Ptyp_package _ ->
-      unsupported env ~loc "First-class modules";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "a first-class module";
+      placeholder ~loc
   | Ptyp_poly _ ->
-      unsupported env ~loc "Polymorphic types";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "a polymorphic type";
+      placeholder ~loc
   | Ptyp_alias _ ->
-      unsupported env ~loc "Aliases [ty as 'a]";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "an alias [ty as 'a]";
+      placeholder ~loc
   | Ptyp_open _ ->
-      unsupported env ~loc "Locally opened types";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "a locally opened type";
+      placeholder ~loc
   | Ptyp_extension _ ->
-      unsupported env ~loc "Extension nodes";
-      walk_fn ~loc "leaf"
+      unsupported env ~loc part "an extension node";
+      placeholder ~loc
 
-and constr env ~ints part ty lid lid_loc args =
+and constr env ~ints part ty lid args =
   let loc = ty.ptyp_loc in
-  let leaf () = walk_fn ~loc "leaf" in
+  let refuse fmt =
+    Format.kasprintf
+      (fun why ->
+        error env ~loc "%s has type %s; %s" part (show ty) why;
+        placeholder ~loc)
+      fmt
+  in
   let rec applies = function
     | Longident.Lident _ -> false
     | Ldot (m, _) -> applies m
@@ -331,26 +365,20 @@ and constr env ~ints part ty lid lid_loc args =
   in
   match (lid, args) with
   | lid, _ when applies lid ->
-      error env ~loc:lid_loc "functor applications in type paths have no walk";
-      leaf ()
+      refuse "functor applications in type paths have no walk"
   | Longident.Ldot (Lident "Nx", "dtype"), _ ->
-      error env ~loc
-        "%s is a dtype, which is data; leave it out with [@ptree.skip]" part;
-      leaf ()
-  | lid, args when is_tensor lid args ->
-      (match (lid, args) with
-      | Ldot (Lident "Nx", "t"), [ _; _ ] -> ()
-      | Ldot (Lident "Nx", "t"), _ ->
-          error env ~loc "Nx.t takes two type arguments"
-      | _, [] -> ()
-      | lid, _ ->
-          error env ~loc "%s takes no type argument" (Longident.name lid));
-      if mentions env ty then
-        error env ~loc
-          "%s is a tensor of type %s, which mentions the parameter; the \
-           parameter is a position of its own, walked as a leaf"
-          part (show ty);
-      walk_fn ~loc "tensor"
+      refuse "a dtype is data; leave it out with [@ptree.skip]"
+  | lid, args when is_tensor lid args -> (
+      match (lid, args) with
+      | Ldot (Lident "Nx", "t"), ([] | [ _ ] | _ :: _ :: _ :: _) ->
+          refuse "Nx.t takes two type arguments"
+      | Ldot (Lident "Nx", "t"), _ | _, [] ->
+          if mentions env ty then
+            refuse
+              "a tensor type cannot mention the parameter, which is a position \
+               of its own, walked as a leaf"
+          else walk_fn ~loc "tensor"
+      | lid, _ -> refuse "%s takes no type argument" (Longident.name lid))
   | Lident (("option" | "list" | "array") as c), args -> (
       match args with
       | [ elt ] -> (
@@ -358,9 +386,7 @@ and constr env ~ints part ty lid lid_loc args =
           match c with
           | "array" -> array ~loc w
           | c -> B.eapply ~loc (walk_fn ~loc c) [ w ])
-      | _ ->
-          error env ~loc "%s takes one type argument" c;
-          leaf ())
+      | _ -> refuse "%s takes one type argument" c)
   | Lident "int", [] ->
       if not ints then
         error env ~loc
@@ -389,72 +415,79 @@ and constr env ~ints part ty lid lid_loc args =
              B.eint ~loc 0;
            ])
   | Lident n, _ when List.mem n containers ->
-      error env ~loc
-        "%s has type %s, which has no derived walk; walk it with [@ptree.walk \
-         f] or leave it out with [@ptree.skip]"
-        part (show ty);
-      leaf ()
+      refuse
+        "%s has no derived walk; walk it with [@ptree.walk f] or leave it out \
+         with [@ptree.skip]"
+        n
   | Lident n, _ when List.mem n data ->
       error env ~loc
         "%s is a %s, which has no walk; leave it out with [@ptree.skip], or \
          hold data a compiled program depends on in a tensor"
         part n;
-      leaf ()
+      placeholder ~loc
   | Lident n, [] when List.mem n env.locals -> ident ~loc (walk_name n)
   | Lident n, [ a ] when List.mem n env.locals && is_param env a ->
       ident ~loc (walk_name n)
   | Lident n, _ when List.mem n env.locals ->
-      error env ~loc
-        "[%s] is applied to %s; a type of this declaration is walked at the \
-         parameter only"
+      refuse
+        "[%s] is a type of this declaration, which is walked at the parameter \
+         only"
         n
-        (String.concat ", " (List.map show args));
-      leaf ()
   | Lident n, [] ->
-      B.eapply ~loc (walk_fn ~loc "structure") [ ident ~loc (ptree_name n) ]
+      B.eapply ~loc (walk_fn ~loc "structure")
+        [ structure_of env ~loc ty (ident ~loc (ptree_name n)) ]
   | Lident n, [ a ] when is_param env a -> ident ~loc (walk_name n)
   | Ldot (m, n), [] ->
       B.eapply ~loc (walk_fn ~loc "structure")
-        [ in_module ~loc m (ptree_name n) ]
+        [ structure_of env ~loc ty (in_module ~loc m (ptree_name n)) ]
   | Ldot (m, n), [ a ] when is_param env a -> in_module ~loc m (walk_name n)
-  | Ldot (m, "t"), [ a ] when not (mentions env a) ->
-      B.eapply ~loc (walk_fn ~loc "structure")
-        [
-          B.eapply ~loc (ptree_fn ~loc "nest")
-            [
-              B.pexp_pack ~loc (B.pmod_ident ~loc { loc; txt = m }); fixed env a;
-            ];
-        ]
+  | Ldot (_, "t"), [ a ] when not (mentions env a) -> (
+      match fixed env part ty with
+      | Some s -> B.eapply ~loc (walk_fn ~loc "structure") [ s ]
+      | None -> placeholder ~loc)
   | _ ->
-      error env ~loc
-        "%s has type %s; a derived walk applies a structure to the parameter \
-         alone, or a module's [t] to a type without the parameter"
-        part (show ty);
-      leaf ()
+      refuse
+        "a derived walk applies a structure to the parameter alone, or a \
+         module's [t] to a type without the parameter"
 
-(* [fixed env ty] is the structure at one type of [ty], a type without the
-   parameter, for [Walk.structure]. *)
-and fixed env ty =
+(* [fixed env part ty] is the structure at one type of [ty], a type without the
+   parameter, for [Walk.structure], or [None] after an error. *)
+and fixed env part ty =
   let loc = ty.ptyp_loc in
-  match ty.ptyp_desc with
-  | Ptyp_constr ({ txt = lid; _ }, args) when is_tensor lid args ->
-      ptree_fn ~loc "tensor"
-  | Ptyp_constr ({ txt = Lident "unit"; _ }, []) -> ptree_fn ~loc "unit"
-  | Ptyp_constr ({ txt = Lident (("option" | "list") as c); _ }, [ a ]) ->
-      B.eapply ~loc (ptree_fn ~loc c) [ fixed env a ]
-  | Ptyp_tuple [ a; b ] ->
-      B.eapply ~loc (ptree_fn ~loc "pair") [ fixed env a; fixed env b ]
-  | Ptyp_constr ({ txt = Ldot (m, n); _ }, []) ->
-      in_module ~loc m (ptree_name n)
-  | Ptyp_constr ({ txt = Ldot (m, "t"); _ }, [ a ]) ->
-      B.eapply ~loc (ptree_fn ~loc "nest")
-        [ B.pexp_pack ~loc (B.pmod_ident ~loc { loc; txt = m }); fixed env a ]
-  | _ ->
-      error env ~loc
-        "%s has no structure at one type to nest; walk the part with \
-         [@ptree.walk f]"
-        (show ty);
-      ptree_fn ~loc "tensor"
+  let sub a = fixed env part a in
+  let apply f args =
+    if List.mem None args then None
+    else Some (B.eapply ~loc f (List.map Option.get args))
+  in
+  let s =
+    match ty.ptyp_desc with
+    | Ptyp_constr ({ txt = lid; _ }, args) when is_tensor lid args ->
+        Some (ptree_fn ~loc "tensor")
+    | Ptyp_constr ({ txt = Lident "unit"; _ }, []) ->
+        Some (ptree_fn ~loc "unit")
+    | Ptyp_constr ({ txt = Lident (("option" | "list") as c); _ }, [ a ]) ->
+        apply (ptree_fn ~loc c) [ sub a ]
+    | Ptyp_tuple [ a; b ] -> apply (ptree_fn ~loc "pair") [ sub a; sub b ]
+    | Ptyp_constr ({ txt = Ldot (m, n); _ }, []) ->
+        Some (in_module ~loc m (ptree_name n))
+    | Ptyp_constr ({ txt = Lident n; _ }, [])
+      when not
+             (List.mem n env.locals || List.mem n data || List.mem n containers
+            || n = "int" || n = "bool") ->
+        Some (ident ~loc (ptree_name n))
+    | Ptyp_constr ({ txt = Ldot (m, "t"); _ }, [ a ]) ->
+        apply (ptree_fn ~loc "nest")
+          [
+            Some (B.pexp_pack ~loc (B.pmod_ident ~loc { loc; txt = m })); sub a;
+          ]
+    | _ ->
+        error env ~loc
+          "%s holds %s, which has no structure at one type to nest; walk the \
+           part with [@ptree.walk f]"
+          part (show ty);
+        None
+  in
+  Option.map (structure_of env ~loc ty) s
 
 (* [Walk] has no array walker: an array reports its length with [int] and walks
    its elements at their indices. *)
@@ -497,18 +530,14 @@ let record env ~loc lds ~get ~build =
         let part = field_part name in
         let current = get ~loc name in
         let e =
-          match label_annotation env ld with
+          match annotation env ~loc label_attributes ld with
           | Some Skip ->
               check_skip env ~loc part ty;
               current
           | annot ->
               let w =
-                match annot with
-                | Some (Walk e) -> e
-                | Some Int ->
-                    check_int env ~loc part ty;
-                    walker env ~ints:true part ty
-                | Some Skip | None -> walker env ~ints:false part ty
+                annotated env ~ints:false part ty annot ~default:(fun ~ints ->
+                    walker env ~ints part ty)
               in
               B.eapply ~loc (walk_fn ~loc "field")
                 [ ident ~loc cursor; B.estring ~loc name; w; current ]
@@ -529,15 +558,16 @@ let record env ~loc lds ~get ~build =
 let variant env ~loc cds =
   let case cd =
     let loc = cd.pcd_loc and name = cd.pcd_name.txt in
-    if cd.pcd_res <> None || cd.pcd_vars <> [] then
+    let gadt = cd.pcd_res <> None || cd.pcd_vars <> [] in
+    if gadt then
       error env ~loc
         "constructor [%s] has a GADT type, which a derived walk cannot rebuild \
          at another parameter"
         name;
-    let annot = constructor_annotation env cd in
+    let annot = annotation env ~loc constructor_attributes cd in
     let misplaced =
       match (annot, cd.pcd_args) with
-      | None, _ | Some _, Pcstr_tuple [ _ ] -> false
+      | (None | Some Invalid), _ | Some _, Pcstr_tuple [ _ ] -> false
       | Some a, args ->
           error env ~loc
             "[@%s] on constructor [%s], which has %s; put it on an argument's \
@@ -557,23 +587,20 @@ let variant env ~loc cds =
     let lid = { loc; txt = Longident.Lident name } in
     let pat, body =
       match cd.pcd_args with
-      | _ when misplaced -> (None, B.pexp_construct ~loc lid None)
+      | _ when gadt || misplaced -> (None, B.pexp_construct ~loc lid None)
       | Pcstr_tuple [] -> (None, B.pexp_construct ~loc lid None)
       | Pcstr_tuple [ ty ] ->
           let part = Printf.sprintf "the argument of [%s]" name in
-          let walk w =
-            B.eapply ~loc w [ ident ~loc cursor; ident ~loc (var 0) ]
-          in
           let walked =
             match annot with
             | Some Skip ->
                 check_skip env ~loc part ty;
                 ident ~loc (var 0)
-            | Some (Walk e) -> walk e
-            | Some Int ->
-                check_int env ~loc part ty;
-                walk (walker env ~ints:true part ty)
-            | None -> walk (walker env ~ints:false part ty)
+            | annot ->
+                B.eapply ~loc
+                  (annotated env ~ints:false part ty annot
+                     ~default:(fun ~ints -> walker env ~ints part ty))
+                  [ ident ~loc cursor; ident ~loc (var 0) ]
           in
           ( Some (B.pvar ~loc (var 0)),
             sequence ~loc
@@ -673,21 +700,26 @@ let parameter env td =
         td.ptype_name.txt (List.length params);
       `Anonymous
 
-let walk_type ~loc td =
-  let name = td.ptype_name.txt in
-  let lid = { loc; txt = Longident.Lident name } in
-  let cursor =
-    B.ptyp_constr ~loc
-      { loc; txt = Longident.parse "Nx.Ptree.Walk.cursor" }
-      [ B.ptyp_var ~loc "a"; B.ptyp_var ~loc "b" ]
-  in
-  let self v =
+(* An attribute on the declaration itself belongs to one of its parts. *)
+let check_declaration env td =
+  match annotation env ~loc:td.ptype_loc declaration_attributes td with
+  | None | Some Invalid -> ()
+  | Some a ->
+      error env ~loc:td.ptype_loc
+        "[@@@@%s] on type [%s]: put the attribute on a field or a part"
+        (attribute_label a) td.ptype_name.txt
+
+(* [walk_type ~loc td a b] is [(a, b) Nx.Ptree.Walk.cursor -> a t -> b t], or
+   [... -> t -> t] for a type without parameter. *)
+let walk_type ~loc td a b =
+  let lid = { loc; txt = Longident.Lident td.ptype_name.txt } in
+  let self x =
     match td.ptype_params with
     | [] -> B.ptyp_constr ~loc lid []
-    | _ -> B.ptyp_constr ~loc lid [ B.ptyp_var ~loc v ]
+    | _ -> B.ptyp_constr ~loc lid [ x ]
   in
-  B.ptyp_arrow ~loc Nolabel cursor
-    (B.ptyp_arrow ~loc Nolabel (self "a") (self "b"))
+  B.ptyp_arrow ~loc Nolabel (cursor_type ~loc a b)
+    (B.ptyp_arrow ~loc Nolabel (self a) (self b))
 
 let ptree_type ~loc td =
   B.ptyp_constr ~loc
@@ -725,21 +757,33 @@ let ptree_binding ~loc td =
          (ptree_fn ~loc "instantiate")
          [ B.pexp_pack ~loc structure ])
 
+(* [let walk : type ptree_a ptree_b. (ptree_a, ptree_b) cursor -> ptree_a t ->
+   ptree_b t = body], so that a mistyped part is reported at the part. *)
+let walk_binding ~loc td body =
+  let var x = B.ptyp_var ~loc x in
+  let abstract x = B.ptyp_constr ~loc { loc; txt = Longident.Lident x } [] in
+  let poly =
+    B.ptyp_poly ~loc
+      [ { loc; txt = type_a }; { loc; txt = type_b } ]
+      (walk_type ~loc td (var type_a) (var type_b))
+  in
+  let expr =
+    B.pexp_newtype ~loc { loc; txt = type_a }
+      (B.pexp_newtype ~loc { loc; txt = type_b }
+         (B.pexp_constraint ~loc body
+            (walk_type ~loc td (abstract type_a) (abstract type_b))))
+  in
+  B.value_binding ~loc
+    ~pat:
+      (B.ppat_constraint ~loc (B.pvar ~loc (walk_name td.ptype_name.txt)) poly)
+    ~expr
+
 let errors extension env =
   List.rev_map
     (fun e ->
       let loc = Location.Error.get_location e in
       extension ~loc (Location.Error.to_extension e) [])
     env.errors
-
-(* An attribute on the declaration itself belongs to one of its parts. *)
-let check_declaration env td =
-  Option.iter
-    (fun a ->
-      error env ~loc:td.ptype_loc
-        "[@@@@%s] on type [%s]: put the attribute on a field or a part"
-        (attribute_label a) td.ptype_name.txt)
-    (declaration_annotation env td)
 
 let generate_impl ~ctxt (rec_flag, tds) =
   let loc = Expansion_context.Deriver.derived_item_loc ctxt in
@@ -775,20 +819,7 @@ let generate_impl ~ctxt (rec_flag, tds) =
               else B.ppat_any ~loc
             in
             let body = B.pexp_fun ~loc Nolabel None c body in
-            let typ =
-              B.ptyp_poly ~loc
-                [ { loc; txt = "a" }; { loc; txt = "b" } ]
-                (walk_type ~loc td)
-            in
-            Some
-              (Ok
-                 ( td,
-                   B.value_binding ~loc
-                     ~pat:
-                       (B.ppat_constraint ~loc
-                          (B.pvar ~loc (walk_name td.ptype_name.txt))
-                          typ)
-                     ~expr:body ))
+            Some (Ok (td, walk_binding ~loc td body))
         | _ -> Some (Error env))
       tds
   in
@@ -835,7 +866,10 @@ let generate_intf ~ctxt:_ (_, tds) =
             B.psig_value ~loc
               (B.value_description ~loc
                  ~name:{ loc; txt = walk_name td.ptype_name.txt }
-                 ~type_:(walk_type ~loc td) ~prim:[])
+                 ~type_:
+                   (walk_type ~loc td (B.ptyp_var ~loc "a")
+                      (B.ptyp_var ~loc "b"))
+                 ~prim:[])
           in
           if td.ptype_params = [] then
             [

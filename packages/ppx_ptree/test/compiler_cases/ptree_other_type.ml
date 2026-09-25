@@ -12,8 +12,10 @@ module Nx = struct
   end
 end
 
-module Missing = struct
-  type t = int
+module Config = struct
+  type t = { depth : int }
+
+  let ptree : int Nx.Ptree.t = Nx.Ptree.Structure
 end
 
-type 'a t = { w : 'a; index : Missing.t } [@@deriving ptree]
+type 'a t = { w : 'a; cfg : Config.t } [@@deriving ptree]

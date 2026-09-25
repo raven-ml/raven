@@ -424,6 +424,10 @@ All notable changes to this project will be documented in this file.
 
 ### Ppx_ptree (new)
 
+- A mistyped `[@ptree.walk f]` and a `ptree` of another type are reported at
+  the part instead of at the declaration or a generated name. Every
+  diagnostic names its part, and a fixed instance can nest a type derived
+  earlier in the module (`state Kaun.Linear.t` with `ptree_state`).
 - `[@ptree.int]`, `[@ptree.skip]` and `[@ptree.walk f]` after a constructor's
   single argument apply to it. They were ignored there, so
   `Frozen of Nx.float32_t [@ptree.skip]` still walked the tensor. On a

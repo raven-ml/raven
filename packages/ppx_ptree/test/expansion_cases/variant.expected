@@ -8,7 +8,8 @@ type 'a t =
 include
   struct
     let _ = fun (_ : 'a t) -> ()
-    let walk : 'a 'b . ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t =
+    let walk : type ptree_a ptree_b.
+      (ptree_a, ptree_b) Nx.Ptree.Walk.cursor -> ptree_a t -> ptree_b t =
       fun ptree__c ->
         function
         | Float ptree__0 ->
