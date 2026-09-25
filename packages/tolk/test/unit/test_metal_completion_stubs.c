@@ -118,3 +118,70 @@ CAMLprim value caml_test_metal_completion_cleanup(value v_ctx) {
   pthread_mutex_unlock(&ctx->queue.lock);
   CAMLreturn(caml_tolk_metal_hcq_release(v_ctx));
 }
+
+/* Observe the actual shared encoder's command order without submitting a GPU
+   command. Launch sizes are changed in the owned argument storage between calls. */
+@interface TolkTestArguments : NSObject {
+@public
+  uint64_t sizes[6];
+}
+@end
+@implementation TolkTestArguments
+- (void*)contents { return sizes; }
+@end
+
+@interface TolkTestDispatchEncoder : NSObject
+@property(nonatomic, retain) NSMutableString* trace;
+@end
+@implementation TolkTestDispatchEncoder
+- (void)executeCommandsInBuffer:(id)buffer withRange:(NSRange)range {
+  (void)buffer;
+  [_trace appendFormat:@"I%lu:%lu;", (unsigned long)range.location, (unsigned long)range.length];
+}
+- (void)memoryBarrierWithScope:(MTLBarrierScope)scope {
+  (void)scope;
+  [_trace appendString:@"B;"];
+}
+- (void)setComputePipelineState:(id)pipeline { (void)pipeline; }
+- (void)setBuffer:(id)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index {
+  (void)buffer;
+  [_trace appendFormat:@"A%lu:%lu;", (unsigned long)offset, (unsigned long)index];
+}
+- (void)dispatchThreadgroups:(MTLSize)global threadsPerThreadgroup:(MTLSize)local {
+  [_trace appendFormat:@"D%lu/%lu;", (unsigned long)global.width, (unsigned long)local.width];
+}
+- (void)dealloc { [_trace release]; [super dealloc]; }
+@end
+
+CAMLprim value caml_test_metal_shared_encode(value v_profile) {
+  CAMLparam1(v_profile);
+  CAMLlocal1(result);
+  @autoreleasepool {
+    TolkTestArguments* arguments = [TolkTestArguments new];
+    uint64_t initial[6] = {7, 1, 1, 2, 1, 1};
+    memcpy(arguments->sizes, initial, sizeof(initial));
+    TolkTestDispatchEncoder* encoder = [TolkTestDispatchEncoder new];
+    encoder.trace = [NSMutableString string];
+    tolk_metal_program program = {0};
+    uint64_t header[5 + 1 + 4 * 6] = {0, 6, 0, 1, (uint64_t)(uintptr_t)arguments};
+    uint64_t counts[6] = {15, 15, 16, 29, 15, 15};
+    header[5] = (uint64_t)(uintptr_t)&program;
+    for (int i = 0; i < 6; i++) {
+      header[6 + 4 * i] = (uint64_t)(uintptr_t)&program;
+      header[7 + 4 * i] = counts[i];
+      header[8 + 4 * i] = 256 * i;
+      header[9 + 4 * i] = 0;
+    }
+    for (int replay = 0; replay < 2; replay++) {
+      if (replay) { [encoder.trace appendString:@"|"]; arguments->sizes[0] = 11; }
+      if (Bool_val(v_profile)) {
+        for (int i = 0; i < 6; i++)
+          tolk_metal_hcq_encode_commands((id<MTLComputeCommandEncoder>)encoder, header, i, 1);
+      } else tolk_metal_hcq_encode_commands((id<MTLComputeCommandEncoder>)encoder, header, 0, 6);
+    }
+    result = caml_copy_string(encoder.trace.UTF8String);
+    [encoder release];
+    [arguments release];
+  }
+  CAMLreturn(result);
+}

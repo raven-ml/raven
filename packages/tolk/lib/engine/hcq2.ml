@@ -417,6 +417,27 @@ let enqueue call = match U.as_call call with
           | _ -> None) args
   | _ -> None
 
+(* Queue backends encode one device per CALL. Expand multi-device arguments
+   before batching, sharing single-device arguments across lanes as upstream. *)
+let unwrap_call call = match U.as_call call with
+  | Some {body; args} when List.exists (fun arg ->
+      match U.device_of arg with Some (U.Multi _) -> true | _ -> false) args ->
+      let count = List.fold_left (fun n arg -> match U.device_of arg with
+          | Some (U.Multi devices) -> max n (List.length devices) | _ -> n) 1 args in
+      let select lane arg =
+        if U.is_bound_var arg then arg else match U.op arg, U.device_of arg with
+        | Ops.Mstack, _ -> (U.src arg).(lane)
+        | _, Some (U.Multi _) -> U.mselect ~src:arg ~index:lane
+        | _ -> arg in
+      let dnum = U.variable ~name:"_device_num" ~min_val:0 ~max_val:(count - 1)
+          ~dtype:Dtype.int32 () in
+      let lane i = U.replace call ~src:(Array.of_list
+          (body :: List.map (select i) args @ [U.bind ~var:dnum ~value:(U.const_int i)])) () in
+      let first = lane 0 in
+      if Option.is_none (enqueue first) then [call]
+      else first :: List.init (count - 1) (fun i -> lane (i + 1))
+  | _ -> [call]
+
 (* A failed peer import becomes two ordinary queue legs through host memory.
    Allocate per prepared schedule: independent linked batches must not race
    over shared staging slots before either batch's retirement fence. *)
@@ -486,6 +507,7 @@ let compile_copy ~to_program c = match U.as_call c.call with
   | _ -> c
 
 let compile ~to_program ?(profile = false) linear =
+  let linear = U.linear (List.concat_map unwrap_call (U.children linear)) in
   let peers = U.children linear |> List.concat_map (fun call -> match U.as_call call with
       | Some {body; args} when U.op body = Ops.Store ->
           List.filter_map (fun arg -> match U.device_of arg with

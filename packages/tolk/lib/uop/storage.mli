@@ -96,11 +96,6 @@ module Allocator : sig
             not support offset views. *)
     transfer : 'buf transfer option;
         (** Device-to-device transfer, or [None] if unsupported. *)
-    supports_transfer : bool;  (** [true] iff {!field-transfer} is [Some _]. *)
-    copy_from_disk : ('buf -> 'buf -> int -> unit) option;
-        (** Direct disk-to-device copy, or [None] if unsupported. *)
-    supports_copy_from_disk : bool;
-        (** [true] iff {!field-copy_from_disk} is [Some _]. *)
   }
   (** The type for backend allocators parameterised by the buffer representation
       ['buf]. *)
@@ -198,32 +193,33 @@ val with_operation : (unit -> 'a) -> 'a
 val allocate : t -> unit
 (** [allocate b] materialises backing storage for [b]. For views, ensures the
     base buffer is allocated first, then creates the offset view via the
-    allocator. Empty buffers and views acquire a storage identity without
+    allocator. A view whose base was deallocated is refreshed against its
+    current storage. Empty buffers and views acquire a storage identity without
     calling the allocator or retaining a native allocation.
 
     Raises [Invalid_argument] if [b] is already allocated, or if [b] is a
     nonempty view and the allocator does not support {!Allocator.offset}. *)
 
 val ensure_allocated : t -> unit
-(** [ensure_allocated b] calls {!allocate} if [b] is not yet initialised.
-    No-op otherwise. *)
+(** [ensure_allocated b] calls {!allocate} if [b] is not yet initialised or
+    its base storage has changed. No-op otherwise. *)
 
 val is_allocated : t -> bool
-(** [is_allocated b] is [true] iff [b] has its own storage initialized,
-    including empty storage without a pointer. An unallocated view remains
-    unallocated when only its base has storage. *)
+(** [is_allocated b] is [true] iff [b] has initialized storage and, for a
+    nonempty view, it belongs to the base's current allocation. Empty storage
+    has no pointer. An unallocated view remains unallocated when only its base
+    has storage. *)
 
 val allocated_views : t -> int
-(** [allocated_views b] is the number of nonempty allocated views of [b]'s
-    root base buffer. {!deallocate} refuses a base buffer while it is positive. *)
+(** [allocated_views b] is the number of initialized nonempty views of [b]'s
+    root base buffer, including views awaiting refresh after base deallocation.
+    Refreshing a view leaves this count unchanged. *)
 
 val deallocate : t -> unit
 (** [deallocate b] releases backing storage if allocated. For base buffers,
     frees via the allocator. For views, detaches from the base buffer. No-op
-    if already deallocated.
-
-    Raises [Invalid_argument] if [b] is a base buffer that still has allocated
-    views. *)
+    if already deallocated. Live views become stale when their base is freed
+    and refresh on their next access; they do not prevent deallocation. *)
 
 val supports_offset : t -> bool
 (** [supports_offset b] is [true] iff [b]'s allocator provides offset views.
@@ -258,16 +254,20 @@ val copyin : t -> bytes -> unit
     its allocator. Low-level host-to-device primitive; application code should
     move data with {!copy_from}.
 
-    Raises [Invalid_argument] if [Bytes.length src <> nbytes b] or if [b] is
-    not allocated. *)
+    A previously initialized view refreshes if its base storage has changed.
+
+    Raises [Invalid_argument] if [Bytes.length src <> nbytes b] or if [b] has
+    no initialized storage. *)
 
 val copyout : t -> bytes -> unit
 (** [copyout b dst] reads the raw bytes of [b] from its backing store into
     [dst] through its allocator. Low-level device-to-host primitive;
     application code should move data with {!copy_from}.
 
-    Raises [Invalid_argument] if [Bytes.length dst <> nbytes b] or if [b] is
-    not allocated. *)
+    A previously initialized view refreshes if its base storage has changed.
+
+    Raises [Invalid_argument] if [Bytes.length dst <> nbytes b] or if [b] has
+    no initialized storage. *)
 
 val as_buffer : t -> Allocator.host_view option
 (** [as_buffer b] is [b]'s bytes as host memory, without a copy, when its
@@ -276,7 +276,9 @@ val as_buffer : t -> Allocator.host_view option
     work that writes [b] before reading, and the view must not outlive [b]'s
     allocation.
 
-    Raises [Invalid_argument] if [b] is not allocated. *)
+    A previously initialized view refreshes if its base storage has changed.
+
+    Raises [Invalid_argument] if [b] has no initialized storage. *)
 
 val as_bytes : t -> bytes
 (** [as_bytes b] is a fresh [bytes] value containing the contents of [b].

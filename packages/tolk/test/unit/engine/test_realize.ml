@@ -86,9 +86,6 @@ let test_allocator ?(transfer = false) stats =
         addr = None;
         offset = Some offset;
         transfer = transfer_fn;
-        supports_transfer = transfer;
-        copy_from_disk = None;
-        supports_copy_from_disk = false;
       }
 
 let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
@@ -218,8 +215,7 @@ let bounded_copy ~source_offset ~dest_offset ~external_alias =
         | None -> ()
         | Some p -> Hashtbl.replace marks (offset + p) (); insert (p + 1) in
       insert 0);
-    transfer = None; supports_transfer = false;
-    copy_from_disk = None; supports_copy_from_disk = false;
+    transfer = None;
   } in
   let device = Device.make ~name:"TEST:bounded" ~allocator
       ~renderer_set:(Device.Renderer_set.make ~device:"TEST" ["TEST", Fun.const test_renderer])

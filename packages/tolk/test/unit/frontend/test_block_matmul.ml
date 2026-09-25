@@ -248,9 +248,6 @@ let render_only prefix ren =
           synchronize = (fun () -> ());
           offset = None;
           transfer = None;
-          supports_transfer = false;
-          copy_from_disk = None;
-          supports_copy_from_disk = false;
         }
   in
   Device.register prefix (fun name ->

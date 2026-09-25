@@ -14,26 +14,25 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
-- Move GPU standalone calls, raw channel setup, local-memory growth, cache
+- Move AMD/NV standalone calls, raw channel setup, local-memory growth, cache
   invalidation, profiling calibration and allocator transfers onto shared
   submissions. Delete the obsolete GPU `Device.prog` paths,
   duplicate command builders, direct argument arenas and handoff bookkeeping
-  once their callers migrate. Separate Metal/CUDA loaded-program ownership
-  from direct launch wrappers; remove unused Metal `Icb.execute` and dispatch
-  update APIs while retaining allocator blit ownership. Establish NV raw-INS
-  compilation before deleting bootstrap submissions.
+  once their callers migrate. Move native allocator transfers onto shared
+  submissions while preserving their ownership and ordering. Establish NV
+  raw-INS compilation before deleting bootstrap submissions.
   Preserve bounded waits and retirement for
   independently linked submissions; these are separate safety requirements.
 - Port the target's distinction between one-shot linker ring allocations and
   retained command storage. Share NV code images within a compiled schedule
-  and use one QMD/argument arena per run. Audit cross-schedule code-image cache
-  ownership before adding any persistent cache. Measure allocation counts and
+  and use one QMD/argument arena per run. Deduplicate Metal pipelines and CUDA
+  functions as the target does, auditing cross-schedule ownership before
+  adding device-level caches. Measure allocation counts and
   test independent retained links, descriptor alignment and replay patching.
-- Reconcile base/view allocation policy with the target: Tolk forbids base
-  teardown while allocated views exist; the target refreshes stale views after
-  reallocation. Review this together with Rune arena retirement and queued
-  foreign users. Remove unused allocator capability fields (`copy_from_disk`,
-  its flag, and the redundant transfer flag) rather than preserve dead APIs.
+- Resolve ordered fallback for mixed kernel/copy batches whose runtime bindings
+  overlap. Such batches currently reject before any submission; copy-only
+  batches retain the bounded overlap-safe fallback. Keep unsupported foreign
+  kernel mappings explicit instead of falling through to a removed launcher.
 - Give uncertain failed teardown an explicit ownership policy: finalizer
   failures currently retain closures process-wide with no reclamation after
   confirmed device retirement. Justify that limit or attach retained owners
@@ -43,12 +42,6 @@ with their rationale and validation; commit count is not an acceptance metric.
   `LRU=0`, forcing GC during allocation, mapped-buffer teardown, direct dispatch,
   compiled submission, signal reservation and kernarg reuse. Verify that waits
   target submitted work and PCI allocator/page-table operations cannot re-enter.
-- Diagnose intermittent Metal shared-arena corruption: Rune's
-  `programs run in turn share an arena` test produced incorrect outputs around
-  element 210, followed once by an `Impacting Interactivity` GPU error. Repeated
-  isolated and full-suite runs also pass; establish the cause before accepting
-  Metal lifetime stress.
-
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
   submissions, including failures during direct publication and timed dispatch.
   Validate NV channel retirement across independently linked

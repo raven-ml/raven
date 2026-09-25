@@ -30,21 +30,10 @@ module Ffi = struct
   external buffer_copyout : bytes -> nativeint -> int -> unit
     = "caml_tolk_metal_buffer_copyout"
 
-  external program_create : nativeint -> string -> bytes -> int -> int array -> nativeint
+  external program_create : nativeint -> string -> bytes -> int -> nativeint
     = "caml_tolk_metal_program_create"
 
   external program_free : nativeint -> unit = "caml_tolk_metal_program_free"
-
-  external program_dispatch :
-    nativeint ->
-    nativeint ->
-    nativeint array ->
-    int array ->
-    int64 array ->
-    int array ->
-    int array ->
-    nativeint
-    = "caml_tolk_metal_program_dispatch_bc" "caml_tolk_metal_program_dispatch"
 
   external command_buffer_wait : nativeint -> unit
     = "caml_tolk_metal_command_buffer_wait"
@@ -58,19 +47,6 @@ module Ffi = struct
     nativeint -> int -> nativeint -> nativeint -> int -> int array -> int array -> unit
     = "caml_tolk_metal_icb_encode_bc" "caml_tolk_metal_icb_encode"
 
-  external icb_update_dispatch :
-    nativeint -> int -> int array -> int array -> unit
-    = "caml_tolk_metal_icb_update_dispatch_bc"
-      "caml_tolk_metal_icb_update_dispatch"
-
-  external icb_execute :
-    nativeint ->
-    nativeint ->
-    int ->
-    nativeint array ->
-    nativeint array ->
-    nativeint = "caml_tolk_metal_icb_execute"
-
   external icb_release : nativeint -> unit = "caml_tolk_metal_icb_release"
   external needs_icb_fix : nativeint -> bool = "caml_tolk_metal_needs_icb_fix"
 
@@ -78,13 +54,6 @@ module Ffi = struct
     nativeint -> nativeint -> int -> nativeint -> int -> int -> nativeint
     = "caml_tolk_metal_blit_copy_bc" "caml_tolk_metal_blit_copy"
 
-  external command_buffer_gpu_time : nativeint -> float * float
-    = "caml_tolk_metal_command_buffer_gpu_time"
-
-  external command_buffer_wait_time : nativeint -> float
-    = "caml_tolk_metal_command_buffer_wait_time"
-
-  external device_name : nativeint -> string = "caml_tolk_metal_device_name"
   external device_arch : nativeint -> string = "caml_tolk_metal_device_arch"
   external hcq_create : nativeint -> nativeint = "caml_tolk_metal_hcq_create"
   external hcq_release : nativeint -> unit = "caml_tolk_metal_hcq_release"
@@ -99,19 +68,6 @@ end
 module Metal_buffer = struct
   type t = { handle : nativeint; size : int; offset : int }
   let kind : t Type.Id.t = Type.Id.make ()
-  let get buf =
-    Option.value (Device.Buffer.get kind buf)
-      ~default:{ handle = 0n; size = 0; offset = 0 }
-  let resolve_array buffers =
-    let len = Array.length buffers in
-    let handles = Array.make len Nativeint.zero in
-    let offsets = Array.make len 0 in
-    for i = 0 to len - 1 do
-      let buffer = get buffers.(i) in
-      handles.(i) <- buffer.handle;
-      offsets.(i) <- buffer.offset
-    done;
-    handles, offsets
 end
 
 module State = struct
@@ -124,7 +80,6 @@ module State = struct
     mutable in_flight : nativeint list;
     mutable closed : bool;
     needs_icb_fix : bool;
-    device_name : string;
     arch : string;
   }
 
@@ -134,7 +89,6 @@ module State = struct
       let queue = Ffi.create_command_queue device in
       try
         let needs_icb_fix = Ffi.needs_icb_fix device in
-        let device_name = Ffi.device_name device in
         let arch = Ffi.device_arch device in
         {
           device;
@@ -145,7 +99,6 @@ module State = struct
           in_flight = [];
           closed = false;
           needs_icb_fix;
-          device_name;
           arch;
         }
       with exn ->
@@ -177,15 +130,6 @@ module State = struct
       Ffi.release_command_queue t.queue;
       Ffi.release_device t.device;
       t.closed <- true)
-
-  let is_virtual t =
-    let name = String.lowercase_ascii t.device_name in
-    let rec has_substring s sub i =
-      if i + String.length sub > String.length s then false
-      else if String.sub s i (String.length sub) = sub then true
-      else has_substring s sub (i + 1)
-    in
-    has_substring name "virtual" 0
 end
 
 module Allocator = struct
@@ -252,9 +196,6 @@ module Allocator = struct
           (Nativeint.of_int buf.offset));
       offset = Some offset;
       transfer = Some transfer;
-      supports_transfer = true;
-      copy_from_disk = None;
-      supports_copy_from_disk = false;
     }
 
   let create state =
@@ -273,30 +214,13 @@ module Compiler = struct
 end
 
 module Program = struct
-  let runtime state (obj : Tolk_uop.Tiny_elf.t) =
-    let entry_name = obj.name and lib = obj.lib in
-    let fields = Tolk_uop.Tiny_elf.layout obj.signature in
-    let layout = Array.of_list (List.concat_map (fun (field : Tolk_uop.Tiny_elf.field) ->
-        [ field.argument.slot; field.offset; field.size ]) fields) in
-    let nbufs = List.fold_left (fun n (arg : Tolk_uop.Tiny_elf.argument) ->
-        if arg.addrspace = Tolk_uop.Dtype.Alu then n else n + 1) 0 obj.signature in
-    let handle = Ffi.program_create state.State.device entry_name lib nbufs layout in
-    let local_dims = [| 1; 1; 1 |] in
-    let call bufs ~global ~local ~vals ~wait ~timeout:_ =
-      let local = Option.value local ~default:local_dims in
-      let bufs, buf_offsets = Metal_buffer.resolve_array bufs in
-      let cmd =
-        Ffi.program_dispatch state.State.queue handle bufs buf_offsets
-          vals global local
-      in
-      if wait then Some (Ffi.command_buffer_wait_time cmd)
-      else begin
-        state.State.in_flight <- cmd :: state.State.in_flight;
-        None
-      end
-    in
-    let free () = Ffi.program_free handle in
-    Device.{ call; free; handle }
+  let load state (obj : Tolk_uop.Tiny_elf.t) =
+    let args_size = List.fold_left (fun size (field : Tolk_uop.Tiny_elf.field) ->
+        max size ((field.offset + field.size + 7) / 8 * 8)) 8
+        (Tolk_uop.Tiny_elf.layout obj.signature) in
+    Ffi.program_create state.State.device obj.name obj.lib args_size
+
+  let free = Ffi.program_free
 end
 
 module Icb = struct
@@ -309,16 +233,6 @@ module Icb = struct
   let encode t ~index ~program ~arg_buf ~arg_offset ~global ~local =
     Ffi.icb_encode t.handle index program arg_buf arg_offset global local
 
-  let update_dispatch t ~index ~global ~local =
-    Ffi.icb_update_dispatch t.handle index global local
-
-  let execute state t ~resources ~pipelines =
-    let fix_pipelines = if state.State.needs_icb_fix then pipelines else [||] in
-    let cmd =
-      Ffi.icb_execute state.State.queue t.handle t.count resources fix_pipelines
-    in
-    state.State.in_flight <- cmd :: state.State.in_flight
-
   let release t = Ffi.icb_release t.handle
 end
 
@@ -327,7 +241,8 @@ module Queue = struct
   module U = Uop
   module B = Device.Buffer
 
-  type command = { object_ : Tiny_elf.t; global : int array; local : int array; offset : int }
+  type command = { object_ : Tiny_elf.t; global : int array; local : int array;
+    offset : int; sizes : int }
   type descriptor = { commands : command list; header : int }
 
   let host_buffer ?(bytes = Bytes.empty) size =
@@ -370,14 +285,25 @@ module Queue = struct
              let indirect = Icb.create state ~count:(Array.length commands) in
              icb := Some indirect;
              Array.iteri (fun i c ->
-                 let program = Program.runtime state c.object_ in
+                 let program = Program.load state c.object_ in
                  programs := program :: !programs;
-                 Icb.encode indirect ~index:i ~program:program.Device.handle
+                 Icb.encode indirect ~index:i ~program
                    ~arg_buf:raw.handle ~arg_offset:c.offset ~global:c.global ~local:c.local) commands;
              let programs = List.rev !programs in
+             Array.iter (fun c ->
+                 let dimensions = Array.append c.global c.local in
+                 let bytes = Bytes.create 48 in
+                 Array.iteri (fun i n -> Bytes.set_int64_le bytes (8 * i) (Int64.of_int n)) dimensions;
+                 Ffi.buffer_copyin raw.handle c.sizes bytes) commands;
+             let records = List.map2 (fun program c ->
+                 [program; Nativeint.of_int (List.length c.object_.signature);
+                  Nativeint.of_int c.offset; Nativeint.of_int c.sizes]) programs desc.commands
+                 |> List.concat in
+             (* Header: ICB, count, workaround, pipelines, argument buffer;
+                pipeline handles; program/count/argument offset/size offset per command. *)
              let values = [indirect.handle; Nativeint.of_int indirect.count;
                Nativeint.of_int (Helpers.getenv "FIX_METAL_ICB" (Bool.to_int state.State.needs_icb_fix));
-               Nativeint.of_int (List.length programs)] @ List.map (fun p -> p.Device.handle) programs in
+               Nativeint.of_int (List.length programs); raw.handle] @ programs @ records in
              let bytes = Bytes.create (8 * List.length values) in
              List.iteri (fun i v -> Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint v)) values;
              Ffi.buffer_copyin raw.handle desc.header bytes;
@@ -385,13 +311,13 @@ module Queue = struct
              raw
            with exn ->
              Option.iter Icb.release !icb;
-             List.iter (fun p -> p.Device.free ()) !programs;
+             List.iter Program.free !programs;
              allocator.free raw size spec;
              raise exn) in
         let free raw size spec =
           State.synchronize state;
           Option.iter (fun (icb, programs) -> Icb.release icb;
-              List.iter (fun p -> p.Device.free ()) programs) !live;
+              List.iter Program.free programs) !live;
           live := None;
           allocator.free raw size spec in
         let spec = {Device.Buffer_spec.default with nolru = true; cpu_access = true} in
@@ -443,8 +369,9 @@ module Queue = struct
                 let pad xs = Array.init 3 (fun i -> if i < List.length xs then List.nth xs i else 1) in
                 let global = pad (List.filteri (fun i _ -> i < List.length info.global_size) initial) in
                 let local = pad (List.filteri (fun i _ -> i >= List.length info.global_size) initial) in
+                let at = align !used 8 in
+                used := at + 48;
                 if List.exists (function U.Launch_sym _ -> true | _ -> false) dims then begin
-                  let at = align !used 8 in
                   let values ds = List.init 3 (fun i ->
                       if i >= List.length ds then U.const (Const.int Dtype.uint64 1) else
                       match List.nth ds i with
@@ -453,10 +380,9 @@ module Queue = struct
                       | U.Launch_sym v -> U.cast ~src:v ~dtype:Dtype.uint64) in
                   List.iteri (fun i v -> rows := (at + 8 * i, v) :: !rows)
                     (values info.global_size @ values info.local_size);
-                  sizes := (List.length !commands, at) :: !sizes;
-                  used := at + 48
+                  sizes := (List.length !commands, at) :: !sizes
                 end;
-                commands := !commands @ [{object_; global; local; offset}]
+                commands := !commands @ [{object_; global; local; offset; sizes = at}]
             | _, U.Arg.Typed ("timestamp", _) ->
                 let timestamp = U.shrink ~src:(U.src node).(0) ~offset:(U.const_int 1)
                     ~size:(U.const_int 1) in
@@ -468,7 +394,7 @@ module Queue = struct
         let profile = !stamps <> [] in
         if profile && List.length !stamps <> 2 * List.length !commands then
           invalid_arg "Metal queue: timestamps must bracket each command";
-        let stamp_offset = header + 8 * (4 + List.length !commands) in
+        let stamp_offset = header + 8 * (5 + 5 * List.length !commands) in
         List.iteri (fun i stamp -> rows := (stamp_offset + 8 * i, stamp) :: !rows)
           (List.rev !stamps);
         let size = stamp_offset + 8 * List.length !stamps in
@@ -496,11 +422,10 @@ module Queue = struct
         | None -> 0L
         | Some timeline -> Bytes.get_int64_le (B.as_bytes timeline) 8 in
       fun timeout -> ignore timeout; Ffi.hcq_wait state.State.context value in
-    (* An M1 Max computes wrong values for a kernel of 16 to 29 arguments that
-       runs from an indirect command buffer, and correct ones when the same
-       kernel is dispatched directly. *)
+    (* The shared encoder dispatches kernels above 15 arguments directly;
+       all calls still use the same queue, timeline and resource ownership. *)
     Device.{timestamp_divider = 1000.; profile_offset = (fun () -> Profile.calibrate (fun () -> Ffi.profile_clock));
-      completion; prepare = (fun () -> Ffi.hcq_wait state.State.context 0L); host = Device.name host; max_kernel_bindings = Some 15; config = (fun () -> "");
+      completion; prepare = (fun () -> Ffi.hcq_wait state.State.context 0L); host = Device.name host; max_kernel_bindings = None; config = (fun () -> "ICB_MAX_BINDINGS=15");
       copy = (fun _ -> None); encode = encode device_name; lower = lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
 end
@@ -516,8 +441,6 @@ let create name =
             | Some arch -> arch
             | None -> invalid_arg ("unsupported Metal architecture: " ^ target.arch) in
           Renderer.with_compiler (Compiler.create ()) (Cstyle.metal arch)) ] in
-  let runtime = Program.runtime state in
   let synchronize () = State.synchronize state in
   let queue, bufferize = Queue.create state name in
-  let queue = if State.is_virtual state then None else Some queue in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize:(fun timeout -> ignore timeout; synchronize ()) ?queue ~bufferize ()
+  Device.make ~name ~allocator ~renderer_set ~synchronize:(fun timeout -> ignore timeout; synchronize ()) ~queue ~bufferize ()

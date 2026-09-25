@@ -136,7 +136,7 @@ type t = {
   peer_group : string;
   allocator : Allocator.packed;
   renderer_set : Renderer_set.t;
-  runtime : runtime;
+  runtime : runtime option;
   synchronize : int option -> unit;
   invalidate_caches_fn : (unit -> unit) option;
   queue : queue option;
@@ -166,7 +166,7 @@ let canonicalize device =
 let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
 let opened : (string, t) Hashtbl.t = Hashtbl.create 8
 
-let make ~name ~allocator ~renderer_set ~runtime ~synchronize
+let make ~name ~allocator ~renderer_set ?runtime ~synchronize
     ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None) () =
   let queue = Option.map (fun (q : queue) -> {q with
       prepare = (fun () -> Storage.with_operation q.prepare);
@@ -198,7 +198,10 @@ let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
            || ((a.addrspace = Tolk_uop.Dtype.Alu) <> (a.slot >= nbufs)) then
           invalid_arg (Printf.sprintf "program %S: invalid argument slot %d" obj.name a.slot);
         seen.(a.slot) <- true) obj.signature;
-    let prg = d.runtime obj in
+    let runtime = match d.runtime with
+      | Some runtime -> runtime
+      | None -> invalid_arg (Printf.sprintf "%s requires compiled queue submission" d.name) in
+    let prg = runtime obj in
     let name = obj.name in
     let call bufs ~global ~local ~vals ~wait ~timeout =
       Storage.with_operation (fun () ->

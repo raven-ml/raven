@@ -71,9 +71,6 @@ let test_allocator =
         addr = Some addr;
         offset = None;
         transfer = None;
-        supports_transfer = false;
-        copy_from_disk = None;
-        supports_copy_from_disk = false;
       }
 
 let test_device =

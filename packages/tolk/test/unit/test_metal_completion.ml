@@ -80,7 +80,18 @@ let context_retirement () = with_context (fun context ->
   wait context 1L;
   equal ~msg:"successful wait retires native command ownership" int 1 (released context))
 
+external shared_encode : bool -> string = "caml_test_metal_shared_encode"
+
+let shared_encode_order profile () =
+  let icb_before, icb_after = if profile then "I0:1;I1:1;", "I4:1;I5:1;"
+    else "I0:2;", "I4:2;" in
+  let pass extent = Printf.sprintf "%sB;A512:0;D%d/2;B;B;A768:0;D%d/2;B;%s"
+      icb_before extent extent icb_after in
+  equal string (pass 7 ^ "|" ^ pass 11) (shared_encode profile)
+
 let () = run __FILE__ [
+  test "shared submission keeps ICB and direct dispatch order" (shared_encode_order false);
+  test "profiled direct dispatch reads updated launch sizes" (shared_encode_order true);
   test "host waits observe completion and profiling writes" successful_completion;
   test "completed work does not wait for later profiling" completed_before_later_profile;
   test "completion is collected in submission order" ordered_collection;

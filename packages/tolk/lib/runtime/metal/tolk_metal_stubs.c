@@ -36,11 +36,7 @@ typedef struct {
   // Cached to avoid repeated ObjC message sends (tinygrad: "cache these msg
   // calls"). Used to validate local threadgroup size before dispatch.
   uint64_t max_total_threads;
-  char* name;
-  NSString* label; // cached NSString for command buffer labeling
-  size_t nbufs, nvals, args_size;
-  size_t* arg_offsets;
-  uint8_t* arg_widths;
+  size_t args_size;
 } tolk_metal_program;
 
 static void fail_with_nserror(NSError* error, const char* fallback) {
@@ -169,24 +165,10 @@ CAMLprim value caml_tolk_metal_buffer_copyout(value v_bytes, value v_buf,
 }
 
 CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,
-                                         value v_lib, value v_nbufs, value v_layout) {
-  CAMLparam5(v_device, v_name, v_lib, v_nbufs, v_layout);
-  size_t count = Wosize_val(v_layout) / 3;
-  intnat nbufs = Long_val(v_nbufs);
-  if (Wosize_val(v_layout) % 3 || nbufs < 0 || (size_t)nbufs > count)
-    caml_invalid_argument("Metal: invalid argument signature");
-  size_t args_size = 8;
-  for (size_t i = 0; i < count; ++i) {
-    intnat slot = Long_val(Field(v_layout, 3*i));
-    intnat offset = Long_val(Field(v_layout, 3*i+1));
-    intnat width = Long_val(Field(v_layout, 3*i+2));
-    if (slot < 0 || (size_t)slot >= count || offset < 0 ||
-        (width != 1 && width != 2 && width != 4 && width != 8) ||
-        (slot < nbufs && width != 8) || offset > Max_long - width - 7)
-      caml_invalid_argument("Metal: invalid argument layout");
-    size_t end = ((size_t)offset + width + 7) & ~(size_t)7;
-    if (end > args_size) args_size = end;
-  }
+                                           value v_lib, value v_args_size) {
+  CAMLparam4(v_device, v_name, v_lib, v_args_size);
+  intnat args_size = Long_val(v_args_size);
+  if (args_size < 8) caml_invalid_argument("Metal: invalid argument storage size");
   @autoreleasepool {
     id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
     const char* name = String_val(v_name);
@@ -254,31 +236,19 @@ CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,
       [library release];
       fail_with_nserror(error, "Metal pipeline creation failed");
     }
-    tolk_metal_program* prog = calloc(1, sizeof(tolk_metal_program) +
-        count * (sizeof(size_t) + sizeof(uint8_t)));
+    tolk_metal_program* prog = calloc(1, sizeof(tolk_metal_program));
     if (prog == NULL) {
       [pipeline release];
       [function release];
       [library release];
       caml_failwith("Metal program allocation failed");
     }
-    prog->nbufs = (size_t)nbufs;
-    prog->nvals = count - nbufs;
-    prog->args_size = args_size;
-    prog->arg_offsets = (size_t*)(prog + 1);
-    prog->arg_widths = (uint8_t*)(prog->arg_offsets + count);
-    for (size_t i = 0; i < count; ++i) {
-      size_t slot = Long_val(Field(v_layout, 3*i));
-      prog->arg_offsets[slot] = Long_val(Field(v_layout, 3*i+1));
-      prog->arg_widths[slot] = Long_val(Field(v_layout, 3*i+2));
-    }
+    prog->args_size = (size_t)args_size;
     prog->library = library;
     prog->function = function;
     prog->pipeline = pipeline;
     prog->max_total_threads =
         (uint64_t)[pipeline maxTotalThreadsPerThreadgroup];
-    prog->name = strdup(name);
-    prog->label = [[NSString stringWithUTF8String:name] retain];
     CAMLreturn(caml_copy_nativeint((intnat)prog));
   }
 }
@@ -291,36 +261,9 @@ CAMLprim value caml_tolk_metal_program_free(value v_prog) {
       [prog->pipeline release];
       [prog->function release];
       [prog->library release];
-      if (prog->label != nil) [prog->label release];
-      free(prog->name);
       free(prog);
     }
     CAMLreturn(Val_unit);
-  }
-}
-
-static void metal_check_args(tolk_metal_program* prog, value buffers,
-                             value offsets, value vals) {
-  if (Wosize_val(buffers) != prog->nbufs || Wosize_val(offsets) != prog->nbufs ||
-      Wosize_val(vals) != prog->nvals)
-    caml_invalid_argument("Metal: argument count does not match the binary signature");
-}
-
-static uint64_t metal_buffer_address(value buffer, value offset) {
-  id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(buffer);
-  return (uint64_t)[buf gpuAddress] + (uint64_t)Long_val(offset);
-}
-
-static void metal_pack_args(tolk_metal_program* prog, uint8_t* dst,
-                            value buffers, value offsets, value vals) {
-  for (size_t i = 0; i < prog->nbufs; ++i) {
-    uint64_t address = metal_buffer_address(Field(buffers, i), Field(offsets, i));
-    memcpy(dst + prog->arg_offsets[i], &address, sizeof(address));
-  }
-  for (size_t i = 0; i < prog->nvals; ++i) {
-    uint64_t bits = (uint64_t)Int64_val(Field(vals, i));
-    size_t slot = prog->nbufs + i;
-    memcpy(dst + prog->arg_offsets[slot], &bits, prog->arg_widths[slot]);
   }
 }
 
@@ -332,68 +275,6 @@ static uint8_t* metal_argument_destination(tolk_metal_program* prog,
       prog->args_size > [buf length] - (uint64_t)off)
     caml_invalid_argument("Metal: argument storage is too small");
   return (uint8_t*)[buf contents] + off;
-}
-
-CAMLprim value caml_tolk_metal_program_dispatch(value v_queue, value v_prog,
-                                           value v_buffers, value v_offsets,
-                                           value v_args, value v_global,
-                                           value v_local) {
-  CAMLparam5(v_queue, v_prog, v_buffers, v_offsets, v_args);
-  CAMLxparam2(v_global, v_local);
-  @autoreleasepool {
-    id<MTLCommandQueue> queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
-    tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
-    mlsize_t buf_count = Wosize_val(v_buffers);
-    metal_check_args(prog, v_buffers, v_offsets, v_args);
-    if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3) {
-      caml_failwith("Metal dispatch expects 3D sizes");
-    }
-    int gx = Int_val(Field(v_global, 0));
-    int gy = Int_val(Field(v_global, 1));
-    int gz = Int_val(Field(v_global, 2));
-    int lx = Int_val(Field(v_local, 0));
-    int ly = Int_val(Field(v_local, 1));
-    int lz = Int_val(Field(v_local, 2));
-    uint64_t local_threads = (uint64_t)lx * (uint64_t)ly * (uint64_t)lz;
-    if (local_threads > prog->max_total_threads) {
-      caml_failwith("Metal local size exceeds max threads per threadgroup");
-    }
-
-    id<MTLCommandBuffer> cmd = [queue commandBuffer];
-    if (cmd == nil) caml_failwith("Metal command buffer creation failed");
-    id<MTLComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
-    if (encoder == nil) caml_failwith("Metal compute encoder creation failed");
-    [encoder setComputePipelineState:prog->pipeline];
-
-    id<MTLBuffer> args = [[queue device] newBufferWithLength:prog->args_size
-                                                   options:MTLResourceStorageModeShared];
-    if (args == nil) caml_failwith("Metal argument buffer allocation failed");
-    metal_pack_args(prog, (uint8_t*)[args contents], v_buffers, v_offsets, v_args);
-    [encoder setBuffer:args offset:0 atIndex:0];
-    [args release];
-    for (mlsize_t i = 0; i < buf_count; ++i) {
-      id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(Field(v_buffers, i));
-      if (buf != nil) [encoder useResource:buf usage:MTLResourceUsageRead | MTLResourceUsageWrite];
-    }
-
-    MTLSize global =
-        MTLSizeMake((NSUInteger)gx, (NSUInteger)gy, (NSUInteger)gz);
-    MTLSize local = MTLSizeMake((NSUInteger)lx, (NSUInteger)ly, (NSUInteger)lz);
-    [encoder dispatchThreadgroups:global threadsPerThreadgroup:local];
-    [encoder endEncoding];
-
-    if (prog->label != nil) [cmd setLabel:prog->label];
-    [cmd commit];
-    [cmd retain];
-    CAMLreturn(caml_copy_nativeint((intnat)cmd));
-  }
-}
-
-CAMLprim value caml_tolk_metal_program_dispatch_bc(value* argv, int argc) {
-  (void)argc;
-  // Bytecode stub for the 7-arg native entrypoint.
-  return caml_tolk_metal_program_dispatch(argv[0], argv[1], argv[2], argv[3],
-                                     argv[4], argv[5], argv[6]);
 }
 
 CAMLprim value caml_tolk_metal_icb_create(value v_device, value v_count) {
@@ -470,92 +351,6 @@ CAMLprim value caml_tolk_metal_icb_encode_bc(value* argv, int argc) {
                               argv[5], argv[6]);
 }
 
-CAMLprim value caml_tolk_metal_icb_update_dispatch(value v_icb, value v_index,
-                                             value v_global, value v_local) {
-  CAMLparam3(v_icb, v_index, v_global);
-  CAMLxparam1(v_local);
-  @autoreleasepool {
-    id<MTLIndirectCommandBuffer> icb =
-        (id<MTLIndirectCommandBuffer>)Nativeint_val(v_icb);
-    NSUInteger index = (NSUInteger)Int_val(v_index);
-    if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3) {
-      caml_failwith("Metal ICB expects 3D sizes");
-    }
-    int gx = Int_val(Field(v_global, 0));
-    int gy = Int_val(Field(v_global, 1));
-    int gz = Int_val(Field(v_global, 2));
-    int lx = Int_val(Field(v_local, 0));
-    int ly = Int_val(Field(v_local, 1));
-    int lz = Int_val(Field(v_local, 2));
-
-    id<MTLIndirectComputeCommand> cmd =
-        [icb indirectComputeCommandAtIndex:index];
-    MTLSize global =
-        MTLSizeMake((NSUInteger)gx, (NSUInteger)gy, (NSUInteger)gz);
-    MTLSize local = MTLSizeMake((NSUInteger)lx, (NSUInteger)ly, (NSUInteger)lz);
-    [cmd concurrentDispatchThreadgroups:global threadsPerThreadgroup:local];
-    CAMLreturn(Val_unit);
-  }
-}
-
-CAMLprim value caml_tolk_metal_icb_update_dispatch_bc(value* argv, int argc) {
-  (void)argc;
-  return caml_tolk_metal_icb_update_dispatch(argv[0], argv[1], argv[2], argv[3]);
-}
-
-CAMLprim value caml_tolk_metal_icb_execute(value v_queue, value v_icb,
-                                     value v_count, value v_resources,
-                                     value v_pipelines) {
-  CAMLparam5(v_queue, v_icb, v_count, v_resources, v_pipelines);
-  @autoreleasepool {
-    id<MTLCommandQueue> queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
-    id<MTLIndirectCommandBuffer> icb =
-        (id<MTLIndirectCommandBuffer>)Nativeint_val(v_icb);
-    NSUInteger count = (NSUInteger)Long_val(v_count);
-    mlsize_t res_count = Wosize_val(v_resources);
-    mlsize_t pipeline_count = Wosize_val(v_pipelines);
-
-    id<MTLCommandBuffer> cmd = [queue commandBuffer];
-    if (cmd == nil) caml_failwith("Metal command buffer creation failed");
-    id<MTLComputeCommandEncoder> encoder = [cmd computeCommandEncoder];
-    if (encoder == nil) caml_failwith("Metal compute encoder creation failed");
-
-    if (res_count > 0) {
-      id<MTLResource>* resources =
-          (id<MTLResource>*)malloc(sizeof(id<MTLResource>) * res_count);
-      if (resources == NULL) caml_failwith("Metal resource allocation failed");
-      for (mlsize_t i = 0; i < res_count; ++i) {
-        id<MTLBuffer> buf =
-            (id<MTLBuffer>)Nativeint_val(Field(v_resources, i));
-        resources[i] = buf;
-      }
-      [encoder useResources:resources
-                      count:res_count
-                      usage:MTLResourceUsageRead | MTLResourceUsageWrite];
-      free(resources);
-    }
-
-    // M1/M2 workaround: dummy dispatch with each pipeline to mark them as used.
-    // Without this, ICB execution can crash on AGXG<15 (pre-M3) GPUs.
-    for (mlsize_t i = 0; i < pipeline_count; ++i) {
-      tolk_metal_program* prog =
-          (tolk_metal_program*)Nativeint_val(Field(v_pipelines, i));
-      [encoder setComputePipelineState:prog->pipeline];
-      [encoder dispatchThreadgroups:MTLSizeMake(0, 0, 0)
-           threadsPerThreadgroup:MTLSizeMake(0, 0, 0)];
-    }
-
-    NSRange range = NSMakeRange(0, count);
-    [encoder executeCommandsInBuffer:icb withRange:range];
-    [encoder endEncoding];
-    [cmd setLabel:[NSString stringWithFormat:@"batched %lu",
-                                             (unsigned long)count]];
-    [cmd commit];
-    [cmd retain];
-    CAMLreturn(caml_copy_nativeint((intnat)cmd));
-  }
-}
-
 CAMLprim value caml_tolk_metal_icb_release(value v_icb) {
   CAMLparam1(v_icb);
   @autoreleasepool {
@@ -615,53 +410,6 @@ CAMLprim value caml_tolk_metal_blit_copy_bc(value* argv, int argc) {
   (void)argc;
   return caml_tolk_metal_blit_copy(argv[0], argv[1], argv[2], argv[3], argv[4],
                               argv[5]);
-}
-
-CAMLprim value caml_tolk_metal_command_buffer_gpu_time(value v_cmd) {
-  CAMLparam1(v_cmd);
-  CAMLlocal1(v_pair);
-  id<MTLCommandBuffer> cmd = (id<MTLCommandBuffer>)Nativeint_val(v_cmd);
-  double start = [cmd GPUStartTime];
-  double end = [cmd GPUEndTime];
-  v_pair = caml_alloc(2 * Double_wosize, Double_array_tag);
-  Store_double_field(v_pair, 0, start);
-  Store_double_field(v_pair, 1, end);
-  CAMLreturn(v_pair);
-}
-
-CAMLprim value caml_tolk_metal_command_buffer_wait_time(value v_cmd) {
-  CAMLparam1(v_cmd);
-  id<MTLCommandBuffer> cmd = (id<MTLCommandBuffer>)Nativeint_val(v_cmd);
-
-  caml_release_runtime_system();
-  [cmd waitUntilCompleted];
-  caml_acquire_runtime_system();
-
-  @autoreleasepool {
-    NSError* error = [cmd error];
-    if (error != nil) {
-      NSString* desc = [error localizedDescription];
-      const char* msg =
-          desc != nil ? [desc UTF8String] : "Metal command buffer failed";
-      char buf[512];
-      snprintf(buf, sizeof(buf), "%s", msg);
-      [cmd release];
-      caml_failwith(buf);
-    }
-    double elapsed = [cmd GPUEndTime] - [cmd GPUStartTime];
-    [cmd release];
-    CAMLreturn(caml_copy_double(elapsed));
-  }
-}
-
-CAMLprim value caml_tolk_metal_device_name(value v_device) {
-  CAMLparam1(v_device);
-  @autoreleasepool {
-    id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
-    NSString* name = [device name];
-    const char* str = name != nil ? [name UTF8String] : "unknown";
-    CAMLreturn(caml_copy_string(str));
-  }
 }
 
 CAMLprim value caml_tolk_metal_device_arch(value v_device) {
@@ -964,6 +712,32 @@ static void tolk_metal_hcq_update(uint64_t icb_address, uint64_t index,
   }
 }
 
+/* Wide kernels are affected by an Apple7 ICB compiler/driver fault. Keep
+   them in the same shared submission but encode ordinary dispatches between
+   contiguous ICB ranges. The argument arena and pipelines retain one owner. */
+static void tolk_metal_hcq_encode_commands(id<MTLComputeCommandEncoder> encoder,
+                                         uint64_t* header, uint64_t first, uint64_t count) {
+  id<MTLIndirectCommandBuffer> icb = (id<MTLIndirectCommandBuffer>)(uintptr_t)header[0];
+  id<MTLBuffer> arguments = (id<MTLBuffer>)(uintptr_t)header[4];
+  const uint64_t* records = header + 5 + header[3];
+  uint64_t begin = first, end = first + count;
+  for (uint64_t i = first; i < end; i++) {
+    const uint64_t* entry = records + 4 * i;
+    if (entry[1] <= 15) continue;
+    if (i != begin) [encoder executeCommandsInBuffer:icb withRange:NSMakeRange(begin, i - begin)];
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)entry[0];
+    const uint64_t* sizes = (const uint64_t*)((const uint8_t*)[arguments contents] + entry[3]);
+    [encoder setComputePipelineState:program->pipeline];
+    [encoder setBuffer:arguments offset:entry[2] atIndex:0];
+    [encoder dispatchThreadgroups:MTLSizeMake(sizes[0], sizes[1], sizes[2])
+             threadsPerThreadgroup:MTLSizeMake(sizes[3], sizes[4], sizes[5])];
+    [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    begin = i + 1;
+  }
+  if (begin != end) [encoder executeCommandsInBuffer:icb withRange:NSMakeRange(begin, end - begin)];
+}
+
 static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t value, uint64_t profile) {
   tolk_metal_hcq* ctx = (tolk_metal_hcq*)(uintptr_t)address;
   @autoreleasepool {
@@ -984,18 +758,17 @@ static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t v
                         usage:MTLResourceUsageRead | MTLResourceUsageWrite];
       if (header[2]) {
         for (uint64_t i = 0; i < header[3]; i++) {
-          tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)header[4 + i];
+          tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)header[5 + i];
           [encoder setComputePipelineState:program->pipeline];
           [encoder dispatchThreadgroups:MTLSizeMake(0, 0, 0)
                    threadsPerThreadgroup:MTLSizeMake(0, 0, 0)];
         }
       }
-      [encoder executeCommandsInBuffer:(id<MTLIndirectCommandBuffer>)(uintptr_t)header[0]
-                             withRange:NSMakeRange(profile ? batch : 0, profile ? 1 : header[1])];
+      tolk_metal_hcq_encode_commands(encoder, header, profile ? batch : 0, profile ? 1 : header[1]);
       [encoder updateFence:ctx->fence];
       [encoder endEncoding];
-      uint64_t* start = profile ? (uint64_t*)(uintptr_t)header[4 + header[3] + 2 * batch] : NULL;
-      uint64_t* finish = profile ? (uint64_t*)(uintptr_t)header[5 + header[3] + 2 * batch] : NULL;
+      uint64_t* start = profile ? (uint64_t*)(uintptr_t)header[5 + header[3] + 4 * header[1] + 2 * batch] : NULL;
+      uint64_t* finish = profile ? (uint64_t*)(uintptr_t)header[6 + header[3] + 4 * header[1] + 2 * batch] : NULL;
       uint64_t signal = batch + 1 == batches ? value : 0;
       if (!tolk_metal_hcq_enqueue(ctx, command, signal, start, finish)) break;
       [command commit];

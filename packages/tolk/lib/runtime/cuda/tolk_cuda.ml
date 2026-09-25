@@ -9,8 +9,6 @@ open Tolk
 
 type storage = { address : nativeint; host : bool; registered : bool }
 let buffer_kind : storage Type.Id.t = Type.Id.make ()
-let buffer_address ~device buf = match Device.Buffer.get ~device buffer_kind buf with
-  | Some storage -> storage.address | None -> 0n
 
 module Ffi = struct
   external init : unit -> unit = "caml_tolk_cuda_init"
@@ -53,22 +51,10 @@ module Ffi = struct
 
   external module_load : bytes -> nativeint = "caml_tolk_cuda_module_load"
 
-  external program_create : nativeint -> string -> int -> int array -> nativeint
-    = "caml_tolk_cuda_program_create"
-
-  external program_free : nativeint -> unit = "caml_tolk_cuda_program_free"
+  external module_function : nativeint -> string -> nativeint
+    = "caml_tolk_cuda_module_function"
 
   external module_unload : nativeint -> unit = "caml_tolk_cuda_module_unload"
-
-  external launch_kernel :
-    nativeint ->
-    nativeint ->
-    nativeint array ->
-    int64 array ->
-    int array ->
-    int array ->
-    bool ->
-    float option = "caml_tolk_cuda_launch_kernel_bc" "caml_tolk_cuda_launch_kernel"
 
   external hcq_create : nativeint -> nativeint = "caml_tolk_cuda_hcq_create"
   external hcq_destroy : nativeint -> unit = "caml_tolk_cuda_hcq_destroy"
@@ -76,7 +62,6 @@ module Ffi = struct
   external hcq_synchronize : nativeint -> unit = "caml_tolk_cuda_hcq_synchronize"
   external hcq_symbol : string -> nativeint = "caml_tolk_cuda_hcq_symbol"
   external profile_clock : unit -> float = "caml_tolk_cuda_profile_clock"
-  external program_function : nativeint -> nativeint = "caml_tolk_cuda_program_function"
 
 end
 
@@ -255,47 +240,12 @@ module Allocator = struct
       synchronize = (fun () -> State.synchronize_system ());
       alloc; free; copyin; copyout;
       addr = Some (fun buf -> buf.address); offset = Some offset;
-      transfer = Some transfer; supports_transfer = true;
-      copy_from_disk = None; supports_copy_from_disk = false}
+      transfer = Some transfer }
 
   let create state =
     let allocator = Device.Lru_allocator.wrap (raw state) in
     state.State.allocator <- Some allocator;
     Device.Allocator.Pack allocator
-end
-
-module Program = struct
-  let runtime state (obj : Tolk_uop.Tiny_elf.t) =
-    let entry_name = obj.name and lib = obj.lib in
-    let fields = Tolk_uop.Tiny_elf.layout obj.signature in
-    let nbufs = List.fold_left (fun n (arg : Tolk_uop.Tiny_elf.argument) ->
-        n + if arg.addrspace = Tolk_uop.Dtype.Alu then 0 else 1) 0 obj.signature in
-    let layout = Array.of_list (List.concat_map (fun (field : Tolk_uop.Tiny_elf.field) ->
-        [ field.argument.slot; field.offset; field.size ]) fields) in
-    Ffi.ctx_set_current state.State.context;
-    let module_ = Ffi.module_load lib in
-    let func = try Ffi.program_create module_ entry_name nbufs layout
-      with exn -> Ffi.module_unload module_; raise exn in
-    let default_local = [| 1; 1; 1 |] in
-    let unloaded = ref false in
-    let call bufs ~global ~local ~vals ~wait ~timeout:_ =
-      let bufs = Array.map (buffer_address ~device:state.State.name) bufs in
-      if !unloaded then invalid_arg "CUDA program has been unloaded";
-      let local = Option.value local ~default:default_local in
-      Ffi.ctx_set_current state.State.context;
-      Ffi.launch_kernel state.queue func bufs vals global local
-        wait
-    in
-    let free () =
-      if not !unloaded then begin
-        unloaded := true;
-        Fun.protect ~finally:(fun () -> Ffi.program_free func)
-          (fun () -> if not state.State.closed then begin
-            Ffi.ctx_set_current state.State.context;
-            Ffi.module_unload module_
-          end)
-      end in
-    Device.{ call; free; handle = func }
 end
 
 module Queue = struct
@@ -327,10 +277,23 @@ module Queue = struct
         Some b
     | Some {param = {allocation = Some ("cuda_function", data); _}; _} ->
         let object_ = (Marshal.from_string data 0 : Tiny_elf.t) in
-        let program = Program.runtime state object_ in
-        (try Some (word (Ffi.program_function program.handle)
-            ~release:(fun () -> State.synchronize state; program.free ()))
-         with exn -> program.free (); raise exn)
+        Ffi.ctx_set_current state.State.context;
+        let module_ = Ffi.module_load object_.lib in
+        let unloaded = ref false in
+        let release () =
+          if not !unloaded then begin
+            unloaded := true;
+            if not state.State.closed then begin
+              Ffi.ctx_set_current state.State.context;
+              Ffi.module_unload module_
+            end
+          end in
+        (try Some (word (Ffi.module_function module_ object_.name)
+            ~release:(fun () -> State.synchronize state; release ()))
+         with exn ->
+           let backtrace = Printexc.get_raw_backtrace () in
+           release ();
+           Printexc.raise_with_backtrace exn backtrace)
     | Some _ when U.node_tag u = Some "timeline" ->
         let b = match state.State.timeline with
           | Some b -> b
@@ -392,9 +355,8 @@ let create name =
               | None -> invalid_arg ("unsupported CUDA architecture: " ^ target.arch) in
             let compiler = Tolk_nvrtc.Compiler_nvrtc.create ~cache_key:"cuda" target.arch in
             Renderer.with_compiler compiler (Cstyle.cuda arch)) ] in
-    let runtime = Program.runtime state in
     let synchronize () = State.synchronize state in
-    let device = Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize:(fun timeout -> ignore timeout; synchronize ())
+    let device = Device.make ~name ~allocator ~renderer_set ~synchronize:(fun timeout -> ignore timeout; synchronize ())
       ~queue:(Queue.create state name) ~bufferize:(Queue.bufferize state name) () in
     at_exit (fun () -> State.shutdown state);
     device

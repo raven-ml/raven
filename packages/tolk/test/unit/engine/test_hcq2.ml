@@ -415,6 +415,26 @@ let compiled_host_submission () =
         precompile_backward = false; dtype = Dtype.void; aux = None} in
   let compile ?profile calls = U.linear calls |> Realize.compile_linear ~device ?profile ~to_program
       |> Realize.link_linear in
+  let copy_ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 3)
+      ~device:(U.Single name) () in
+  let overlapping = compile [U.store_call ~dst:(copy_ptr 1) ~src:(copy_ptr 0);
+      compute (ptr 3) (ptr 2)] in
+  let overlap_root = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
+  Device.Buffer.ensure_allocated overlap_root;
+  let overlap_bytes = Bytes.create 16 in
+  List.iteri (fun i value -> Bytes.set_int32_le overlap_bytes (4 * i) value) [1l; 2l; 3l; 4l];
+  Device.Buffer.copyin overlap_root overlap_bytes;
+  let overlap_src = Device.Buffer.view overlap_root ~size:3 ~dtype:Dtype.int32 ~offset:0
+  and overlap_dst = Device.Buffer.view overlap_root ~size:3 ~dtype:Dtype.int32 ~offset:4 in
+  let untouched = buffer (-7l) in
+  let overlap_timeline = Device.Buffer.as_bytes timeline in
+  let submissions = !(Realize.queue_submissions) in
+  raises (Invalid_argument "queue replay: overlapping copies mixed with kernels require separate submissions")
+    (fun () -> replay overlapping [|overlap_src; overlap_dst; buffer 23l; untouched|]);
+  equal bytes overlap_bytes (Device.Buffer.as_bytes overlap_root);
+  equal int32 (-7l) (Bytes.get_int32_le (Device.Buffer.as_bytes untouched) 0);
+  equal bytes overlap_timeline (Device.Buffer.as_bytes timeline);
+  equal int submissions !(Realize.queue_submissions);
   let independent = compile [U.store_call ~dst:(ptr 2) ~src:(ptr 0);
       compute (ptr 3) (ptr 1)] in
   let rejected inputs =
@@ -500,6 +520,19 @@ let compiled_host_submission () =
   let middle = buffer 0l and output = buffer 0l in
   let before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
   import_mode := `Reject;
+  let foreign_input = U.param ~slot:2 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~device:(U.Single "CPU:unmappable") () in
+  let unsupported_kernel = compile [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
+      compute (ptr 3) foreign_input] in
+  let copy_output = buffer (-11l) and kernel_output = buffer (-13l) in
+  let failed_timeline = Device.Buffer.as_bytes timeline in
+  let submissions = !(Realize.queue_submissions) in
+  raises (Storage.Mapping_unavailable "test import is unsupported")
+    (fun () -> replay unsupported_kernel [|buffer 29l; copy_output; foreign; kernel_output|]);
+  equal int32 (-11l) (Bytes.get_int32_le (Device.Buffer.as_bytes copy_output) 0);
+  equal int32 (-13l) (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
+  equal Windtrap.bytes failed_timeline (Device.Buffer.as_bytes timeline);
+  equal int submissions !(Realize.queue_submissions);
   replay transfer [|foreign; middle; output|];
   equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
   equal int64 (Int64.succ before) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);

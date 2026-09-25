@@ -273,15 +273,10 @@ let release_store s =
       (* Deallocation returns each buffer to its device's LRU pool, where only
          work queued after the kernels that use it can take it. A buffer that
          bypasses the pool returns to the system, so the work that may still
-         read it is awaited first. A base buffer with a still-allocated
-         transient view (a kernel-argument slice not yet collected) cannot be
-         deallocated; those are reclaimed by the buffer's own GC finalizer
-         instead. *)
+         read it is awaited first. Transient kernel-argument views can outlive
+         the call; freeing their base makes them stale. *)
       if s.s_nolru then List.iter Tolk.Device.synchronize s.s_devices;
-      List.iter
-        (fun buf ->
-          try Tolk.Device.Buffer.deallocate buf with Invalid_argument _ -> ())
-        bufs
+      List.iter Tolk.Device.Buffer.deallocate bufs
 
 (* Arenas
 
@@ -289,35 +284,18 @@ let release_store s =
    [held_buffers]). They live and die inside one call, and a device runs the
    calls of all programs in queue order, so the programs a device runs share its
    arenas: a program's [k]th arena is bound, at every call, to the device's
-   [k]th shared buffer, on each of its devices, which grows to the largest arena
-   bound to it. The buffer a slot outgrows is retired until its views are
-   released and the device has finished the work that may use it. *)
+   [k]th shared buffer, on each of its devices. An outgrown buffer is freed
+   after the device has finished its work, independently of view collection. *)
 
 let arenas : (Tolk.Device.t * (int, Tolk.Device.Buffer.t) Hashtbl.t) list ref =
   ref []
 
-let retired_arenas : (Tolk.Device.t * Tolk.Device.Buffer.t) list ref = ref []
-
-let free_retired_arenas () =
-  retired_arenas :=
-    List.filter
-      (fun (dev, buf) ->
-        Tolk.Device.Buffer.allocated_views buf > 0
-        || begin
-          Tolk.Device.synchronize dev;
-          Tolk.Device.Buffer.deallocate buf;
-          false
-        end)
-      !retired_arenas
-
 (* Buffer views over a range of a value's storage that a finished call or a
    dropped program bound (see [seed_of]). They go at the next safe point, before
-   any storage does: a base buffer with a view still allocated cannot be
-   freed. *)
+   their owning stores. *)
 let pending_views : Tolk.Device.Buffer.t list ref = ref []
 
 let drain_releases () =
-  if !retired_arenas <> [] then free_retired_arenas ();
   (match !pending_views with
   | [] -> ()
   | views ->
@@ -371,9 +349,6 @@ let shared_arena dev k nbytes =
   match Hashtbl.find_opt slots k with
   | Some buf when Tolk.Device.Buffer.nbytes buf >= nbytes -> buf
   | outgrown ->
-      Option.iter
-        (fun buf -> retired_arenas := (dev, buf) :: !retired_arenas)
-        outgrown;
       let buf =
         Tolk.Device.create_buffer ~size:nbytes ~dtype:TD.int8
           ~spec:{ Tolk.Device.Buffer_spec.default with nolru = true }
@@ -384,6 +359,11 @@ let shared_arena dev k nbytes =
          Gc.major ();
          drain_releases ();
          Tolk.Device.Buffer.ensure_allocated buf);
+      Option.iter
+        (fun old ->
+          Tolk.Device.synchronize dev;
+          Tolk.Device.Buffer.deallocate old)
+        outgrown;
       Hashtbl.replace slots k buf;
       buf
 

@@ -2438,9 +2438,6 @@ module Allocator = struct
       addr = Some Hcq.Buffer.va;
       offset = Some offset;
       transfer = Some (transfer state);
-      supports_transfer = true;
-      copy_from_disk = None;
-      supports_copy_from_disk = false;
     }
 
   let create state =

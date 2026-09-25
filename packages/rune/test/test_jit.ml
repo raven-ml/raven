@@ -2923,8 +2923,6 @@ let test_a_grown_arena_frees_the_old () =
   check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
   let n = 1024 in
   let g, g', y = arena_program ~n Nx.sin in
-  (* Collect the views earlier tests' programs left of the old buffer. *)
-  full_major ();
   let before = device_bytes "CPU:1" in
   check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
   is_true ~msg:"the outgrown buffer is freed"

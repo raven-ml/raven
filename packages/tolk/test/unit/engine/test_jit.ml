@@ -50,9 +50,6 @@ let allocator =
           (fun raw nbytes byte_offset ->
             Raw.{ data = raw.data; offset = raw.offset + byte_offset; nbytes });
       transfer = None;
-      supports_transfer = false;
-      copy_from_disk = None;
-      supports_copy_from_disk = false;
     }
 
 let make_device ?(name = "TEST:0") ?(state = runtime_state ()) () =

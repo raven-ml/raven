@@ -2219,9 +2219,6 @@ module Allocator = struct
       addr = Some Hcq.Buffer.va;
       offset = Some offset;
       transfer = (if has_sdma then Some (transfer state) else None);
-      supports_transfer = has_sdma;
-      copy_from_disk = None;
-      supports_copy_from_disk = false;
     }
 
   let create state =

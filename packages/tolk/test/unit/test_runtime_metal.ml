@@ -130,10 +130,10 @@ let call_spec device spec bufs var_vals =
 
 let run_spec device spec bufs = ignore (call_spec device spec bufs [])
 
-let compile_queue ?(profile = false) ?(queued = true) device calls =
+let compile_queue ?(profile = false) device calls =
   let to_program device = Codegen.to_program device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~profile ~to_program (U.linear calls) in
-  equal ~msg:"queue compilation produces a host submission" bool queued (List.exists (fun call ->
+  is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
       match U.arg (U.without_after call) with
       | U.Arg.Call_info {aux = Some _; _} -> true | _ -> false) (U.children compiled));
   let timings = List.concat_map (fun call -> match U.arg (U.without_after call) with
@@ -193,14 +193,15 @@ let test_many_buffer_arguments count () =
   let linear = params @ [ zero ] @ List.rev !nodes @
       [ dst; U.store ~dst ~value:!sum () ] in
   let spec = Device.compile_program device ~name:"metal_many_arguments" linear in
+  List.iter (fun profile ->
   let buffers = Array.init count (fun i -> i32_buf device [ i ]) in
   let sum = count * (count - 1) / 2 in
   run_spec device spec (Array.to_list buffers);
   equal (list int) [ sum ] (read_i32 buffers.(0));
   let second = i32_buf device [ 0 ] in
   let slots = List.init count Fun.id in
-  (* A kernel of more than 15 arguments stays out of Metal queues. *)
-  let run = compile_queue ~queued:(count <= 15) device
+  (* Wide commands dispatch directly inside the same shared submission. *)
+  let run = compile_queue ~profile device
       [queue_call device spec slots; queue_call device spec (count :: List.tl slots)] in
   let inputs = Array.append buffers [|second|] in
   run inputs;
@@ -208,7 +209,7 @@ let test_many_buffer_arguments count () =
   inputs.(1) <- replacement;
   run ~wait:true inputs;
   equal (list int) [sum + 99] (read_i32 buffers.(0));
-  equal (list int) [sum + 99] (read_i32 second)
+  equal (list int) [sum + 99] (read_i32 second)) [false; true]
 
 let test_thread_reduction kind width expected () =
   let device = metal_device () in
@@ -358,12 +359,46 @@ let beam_timings_use_compiled_queues () =
           equal (list int) (List.init n (fun i -> 2 * (i + offset))) (read_i32 dst))
         [0; 37])
 
+let multi_device_calls_use_queues () =
+  let device = metal_device () in
+  let name = Device.name device in
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+  let at ptr = U.index ~ptr ~idxs:[U.const_int 0] () in
+  let dnum = U.variable ~param:true ~name:"_device_num" ~min_val:0 ~max_val:1
+      ~dtype:Dtype.int32 () in
+  let value = U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:(at (ptr 1)) ()) ~rhs:dnum in
+  let store = U.store ~dst:(at (ptr 0)) ~value () in
+  let info = U.{name = "metal_multi_lane"; applied_opts = []; opts_to_apply = Some [];
+    estimates = None; beam = 0} in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let program = to_program device (U.sink ~kernel_info:info [store]) in
+  let output = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~device:(U.Multi [name; name]) () in
+  let input = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~device:(U.Single name) () in
+  let call = U.call ~body:program ~args:[output; input]
+      ~info:{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; aux = None; dtype = Dtype.void} in
+  let compiled = Realize.compile_linear ~device ~to_program (U.linear [call])
+      |> Realize.link_linear in
+  List.iter (fun value ->
+      let a = i32_buf device [0] and b = i32_buf device [0] in
+      let input = i32_buf device [value] in
+      let before = !(Realize.queue_submissions) in
+      let input_uops = [|U.mstack [U.from_buffer a; U.from_buffer b]; U.from_buffer input|] in
+      Realize.run_linear ~device ~to_program ~input_uops ~jit:true ~wait:true compiled;
+      is_true (!(Realize.queue_submissions) > before);
+      equal (list int) [value] (read_i32 a);
+      equal (list int) [value + 1] (read_i32 b)) [10; 73]
+
 let () =
   run "Metal_runtime"
     [
       group "Execution"
         [
           test "beam timing replays compiled Metal queues" beam_timings_use_compiled_queues;
+          test "multi-device calls share inputs and bind each lane in compiled queues"
+            multi_device_calls_use_queues;
           test "CPU kernels map Metal storage and byte views without copying"
             cpu_maps_metal_storage;
           test "tensor cores retain warp lanes across four local dimensions"
@@ -387,6 +422,8 @@ let () =
             (test_many_buffer_arguments 15);
           test "an argument structure of 16 buffers dispatches directly and rebinds"
             (test_many_buffer_arguments 16);
+          test "an argument structure of 29 buffers dispatches directly and rebinds"
+            (test_many_buffer_arguments 29);
           test "an argument structure of 33 buffers dispatches directly and rebinds"
             (test_many_buffer_arguments 33);
           test "compile and run one kernel" (fun () ->

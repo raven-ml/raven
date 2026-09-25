@@ -69,8 +69,6 @@ static CUresult (*p_cuLaunchKernel)(CUfunction, unsigned int, unsigned int,
 static CUresult (*p_cuGetErrorString)(CUresult, const char **);
 static CUresult (*p_cuEventCreate)(CUevent *, unsigned int);
 static CUresult (*p_cuEventRecord)(CUevent, CUstream);
-static CUresult (*p_cuEventSynchronize)(CUevent);
-static CUresult (*p_cuEventElapsedTime)(float *, CUevent, CUevent);
 static CUresult (*p_cuEventDestroy)(CUevent);
 static CUresult (*p_cuStreamCreate)(CUstream *, unsigned int);
 static CUresult (*p_cuStreamDestroy)(CUstream);
@@ -132,8 +130,6 @@ static void load_cuda(void) {
   LOAD_CUDA(p_cuGetErrorString, "cuGetErrorString");
   LOAD_CUDA(p_cuEventCreate, "cuEventCreate");
   LOAD_CUDA(p_cuEventRecord, "cuEventRecord");
-  LOAD_CUDA(p_cuEventSynchronize, "cuEventSynchronize");
-  LOAD_CUDA(p_cuEventElapsedTime, "cuEventElapsedTime");
   LOAD_CUDA(p_cuEventDestroy, "cuEventDestroy_v2");
   LOAD_CUDA(p_cuStreamCreate, "cuStreamCreate");
   LOAD_CUDA(p_cuStreamDestroy, "cuStreamDestroy_v2");
@@ -609,159 +605,29 @@ CAMLprim value caml_tolk_cuda_memcpy_async(value v_queue, value v_dst,
 
 CAMLprim value caml_tolk_cuda_module_load(value v_lib) {
   CAMLparam1(v_lib);
+  CAMLlocal1(v_module);
+  v_module = caml_copy_nativeint(0);
   CUmodule module = NULL;
   /* OCaml strings carry a terminating NUL byte, so the PTX image is always
      NUL-terminated as cuModuleLoadData requires. */
   cuda_check(p_cuModuleLoadData(&module, String_val(v_lib)));
-  CAMLreturn(caml_copy_nativeint((intnat)module));
+  Nativeint_val(v_module) = (intnat)module;
+  CAMLreturn(v_module);
 }
 
-typedef struct { size_t offset, width; } tolk_cuda_arg;
-
-typedef struct {
-  CUfunction func;
-  size_t nbufs, nvals, args_size;
-  tolk_cuda_arg args[];  /* Indexed by compact dispatch slot. */
-} tolk_cuda_program;
-
-static tolk_cuda_program *program_val(value v) {
-  return (tolk_cuda_program *)Nativeint_val(v);
-}
-
-CAMLprim value caml_tolk_cuda_program_create(value v_module, value v_name,
-                                             value v_nbufs, value v_layout) {
-  CAMLparam4(v_module, v_name, v_nbufs, v_layout);
-  CAMLlocal1(v_program);
-  size_t nargs = Wosize_val(v_layout) / 3;
-  intnat nbufs = Long_val(v_nbufs);
-  if (Wosize_val(v_layout) % 3 || nbufs < 0 || (size_t)nbufs > nargs)
-    caml_invalid_argument("CUDA program argument layout is invalid");
-  v_program = caml_copy_nativeint(0);
-  tolk_cuda_program *prg = calloc(1, sizeof(*prg) + nargs * sizeof(*prg->args));
-  if (prg == NULL) caml_raise_out_of_memory();
-  prg->nbufs = nbufs;
-  prg->nvals = nargs - nbufs;
-  for (size_t i = 0; i < nargs; ++i) {
-    intnat slot = Long_val(Field(v_layout, i * 3));
-    intnat off = Long_val(Field(v_layout, i * 3 + 1));
-    intnat width = Long_val(Field(v_layout, i * 3 + 2));
-    if (slot < 0 || (size_t)slot >= nargs || off < 0 ||
-        !(width == 1 || width == 2 || width == 4 || width == 8) ||
-        (slot < nbufs && width != 8) || prg->args[slot].width != 0) {
-      free(prg);
-      caml_invalid_argument("CUDA program argument field is invalid");
-    }
-    prg->args[slot] = (tolk_cuda_arg){(size_t)off, (size_t)width};
-    if ((size_t)off + width > prg->args_size) prg->args_size = off + width;
-  }
-  CUresult status = p_cuModuleGetFunction(&prg->func,
-      (CUmodule)Nativeint_val(v_module), String_val(v_name));
-  if (status != 0) { free(prg); cuda_check(status); }
-  Nativeint_val(v_program) = (intnat)prg;
-  CAMLreturn(v_program);
-}
-
-CAMLprim value caml_tolk_cuda_program_free(value v_program) {
-  CAMLparam1(v_program);
-  free(program_val(v_program));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_program_function(value v_program) {
-  CAMLparam1(v_program);
-  CAMLreturn(caml_copy_nativeint((intnat)program_val(v_program)->func));
-}
-
-static void write_arg(char *args, tolk_cuda_arg field, uint64_t bits) {
-  for (size_t i = 0; i < field.width; ++i)
-    args[field.offset + i] = (char)(bits >> (8 * i));
-}
-
-static void check_args(const tolk_cuda_program *prg, value bufs, value vals) {
-  if (Wosize_val(bufs) != prg->nbufs || Wosize_val(vals) != prg->nvals)
-    caml_invalid_argument("CUDA argument counts do not match the signature");
-}
-
-static void pack_args(const tolk_cuda_program *prg, char *args,
-                      value bufs, value vals) {
-  for (size_t i = 0; i < prg->nbufs; ++i)
-    write_arg(args, prg->args[i], (uint64_t)Nativeint_val(Field(bufs, i)));
-  for (size_t i = 0; i < prg->nvals; ++i)
-    write_arg(args, prg->args[prg->nbufs + i], (uint64_t)Int64_val(Field(vals, i)));
+CAMLprim value caml_tolk_cuda_module_function(value v_module, value v_name) {
+  CAMLparam2(v_module, v_name);
+  CAMLlocal1(v_function);
+  v_function = caml_copy_nativeint(0);
+  CUfunction function = NULL;
+  cuda_check(p_cuModuleGetFunction(&function,
+      (CUmodule)Nativeint_val(v_module), String_val(v_name)));
+  Nativeint_val(v_function) = (intnat)function;
+  CAMLreturn(v_function);
 }
 
 CAMLprim value caml_tolk_cuda_module_unload(value v_module) {
   CAMLparam1(v_module);
   cuda_check(p_cuModuleUnload((CUmodule)Nativeint_val(v_module)));
   CAMLreturn(Val_unit);
-}
-
-/* Launch a kernel. The binary signature determines argument slots, widths
-   and alignment in the CU_LAUNCH_PARAM_BUFFER_POINTER structure.
-   When [wait] is true, the launch is timed
-   with a pair of events and the elapsed GPU time in seconds is returned. */
-CAMLprim value caml_tolk_cuda_launch_kernel(value v_queue, value v_func, value v_bufs,
-                                            value v_vals, value v_global,
-                                            value v_local, value v_wait) {
-  CAMLparam5(v_queue, v_func, v_bufs, v_vals, v_global);
-  CAMLxparam2(v_local, v_wait);
-  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
-  CAMLlocal2(v_time, v_some);
-  tolk_cuda_program *prg = program_val(v_func);
-  CUfunction func = prg->func;
-  check_args(prg, v_bufs, v_vals);
-  if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3)
-    caml_failwith("CUDA launch expects 3D sizes");
-  unsigned int gx = (unsigned int)Long_val(Field(v_global, 0));
-  unsigned int gy = (unsigned int)Long_val(Field(v_global, 1));
-  unsigned int gz = (unsigned int)Long_val(Field(v_global, 2));
-  unsigned int lx = (unsigned int)Long_val(Field(v_local, 0));
-  unsigned int ly = (unsigned int)Long_val(Field(v_local, 1));
-  unsigned int lz = (unsigned int)Long_val(Field(v_local, 2));
-  int wait = Bool_val(v_wait);
-
-  size_t args_size = prg->args_size;
-  char *c_args = calloc(args_size > 0 ? args_size : 1, 1);
-  if (c_args == NULL) caml_raise_out_of_memory();
-  pack_args(prg, c_args, v_bufs, v_vals);
-  void *config[5] = {CU_LAUNCH_PARAM_BUFFER_POINTER, c_args,
-                     CU_LAUNCH_PARAM_BUFFER_SIZE, &args_size,
-                     CU_LAUNCH_PARAM_END};
-
-  CUevent start = NULL, stop = NULL;
-  pthread_mutex_lock(&q->lock);
-  CUresult status = before_direct(q);
-  if (wait && status == 0) {
-    status = p_cuEventCreate(&start, 0);
-    if (status == 0) status = p_cuEventCreate(&stop, 0);
-    if (status == 0) status = p_cuEventRecord(start, q->streams[0]);
-  }
-  if (status == 0)
-    status = p_cuLaunchKernel(func, gx, gy, gz, lx, ly, lz, 0, q->streams[0], NULL,
-                              config);
-  if (wait && status == 0) status = p_cuEventRecord(stop, q->streams[0]);
-  pthread_mutex_unlock(&q->lock);
-  free(c_args);
-
-  float elapsed_ms = 0.0f;
-  if (wait && status == 0) {
-    caml_release_runtime_system();
-    status = p_cuEventSynchronize(stop);
-    caml_acquire_runtime_system();
-    if (status == 0) status = p_cuEventElapsedTime(&elapsed_ms, start, stop);
-  }
-  if (start != NULL) p_cuEventDestroy(start);
-  if (stop != NULL) p_cuEventDestroy(stop);
-  cuda_check(status);
-
-  if (!wait) CAMLreturn(Val_none);
-  v_time = caml_copy_double((double)elapsed_ms * 1e-3);
-  v_some = caml_alloc_some(v_time);
-  CAMLreturn(v_some);
-}
-
-CAMLprim value caml_tolk_cuda_launch_kernel_bc(value *argv, int argc) {
-  (void)argc;
-  return caml_tolk_cuda_launch_kernel(argv[0], argv[1], argv[2], argv[3],
-                                      argv[4], argv[5], argv[6]);
 }

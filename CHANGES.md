@@ -167,6 +167,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Release outgrown JIT arenas after queued work completes, without waiting
+  for temporary buffer views to be garbage-collected.
+
 - A compiled float sum of -0s, the negation of a zero sum, and `c ? t : 0 +
   c ? 0 : f` keep eager's sign of zero: a sum of -0s was -0 and `-(x + 3)` at
   x = -3 was +0.
@@ -644,6 +647,12 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- Metal and CUDA kernels execute exclusively through compiled queues;
+  linked command storage owns their loaded programs. Multi-device calls share
+  this path, and unsupported mappings fail before fallback copies execute.
+- Buffer views refresh after their base storage is reallocated. Remove the
+  unused allocator disk-copy hook and redundant capability flags.
 
 - Preserve exact dimensions in padding, repeats, pooling and bitcasts. Large
   lazy shapes no longer wrap to empty tensors, and invalid reshapes and slices

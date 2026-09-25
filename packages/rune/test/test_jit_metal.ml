@@ -460,7 +460,10 @@ let test_programs_share_an_arena () =
   let f, f', x = program ~n:256 Nx.tanh in
   check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
   check_arr ~eps:1e-2 ~msg:"small, replayed" (to_arr (f (x 2))) (f' (x 2));
-  let n = 1024 in
+  (* Bound the cost of the fused cubic reduction. The 1024 case can trigger
+     an interactivity abort with the frozen tinygrad kernel too;
+     512 still grows the arena fourfold and exercises its later rebinding. *)
+  let n = 512 in
   let g, g', y = program ~n Nx.sin in
   check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
   check_arr ~eps:1e-2 ~msg:"small, on the grown arena"

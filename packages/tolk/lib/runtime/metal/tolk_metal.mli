@@ -15,7 +15,6 @@
     command buffers and compiles their host submission. Linking allocates the
     commands and resolves native functions; replay fences the previous use
     before updating buffer addresses, scalar arguments and dispatch sizes.
-    Paravirtualized devices (see {!State.is_virtual}) use individual dispatches.
 
     {1:compilation Kernel compilation}
 
@@ -71,85 +70,4 @@ module State : sig
       and device). Subsequent calls are no-ops. Raises [Failure] if
       synchronization fails; resources remain retained in that case. *)
 
-  val is_virtual : t -> bool
-  (** [is_virtual t] is [true] iff the device name contains ["virtual"],
-      indicating a paravirtualized Metal device (e.g. macOS VM). ICB-based queue
-      execution is unreliable on virtual devices. *)
-end
-
-(** {1:icb Indirect command buffers}
-
-    An indirect command buffer (ICB) pre-encodes a fixed sequence of compute
-    dispatches that can be replayed with a single GPU submission. Buffers and
-    dispatch dimensions can be updated between replays without re-encoding the
-    full command sequence.
-
-    Typical usage:
-    + {!Icb.create} to allocate the ICB.
-    + {!Icb.encode} for each kernel in the batch.
-    + {!Icb.execute} to submit.
-    + Update the argument storage or use {!Icb.update_dispatch}, then
-      {!Icb.execute} for subsequent iterations.
-    + {!Icb.release} when done. *)
-
-module Icb : sig
-  type t
-  (** The type for indirect command buffers. *)
-
-  val create : State.t -> count:int -> t
-  (** [create state ~count] allocates an ICB with capacity for [count] compute
-      commands.
-
-      Raises [Failure] if Metal cannot allocate the ICB. *)
-
-  val encode :
-    t ->
-    index:int ->
-    program:nativeint ->
-    arg_buf:nativeint ->
-    arg_offset:int ->
-    global:int array ->
-    local:int array ->
-    unit
-  (** [encode t ~index ~program ~arg_buf ~arg_offset ~global ~local] encodes
-      [program] at command [index]. [arg_buf] holds the kernel's packed
-      argument structure at byte offset [arg_offset], using its {!Tolk_uop.Tiny_elf}
-      signature. Buffer fields contain full GPU addresses, including view
-      offsets. Both dispatch dimension arrays must have length three.
-
-      A memory barrier after the dispatch orders commands. Argument storage
-      must remain live and unchanged until the previous execution completes.
-      [program] must remain live while the ICB uses it.
-
-      Raises [Failure] if [local] exceeds the pipeline's maximum.
-      Raises [Invalid_argument] if [arg_offset] exceeds the ICB's 32-bit arena
-      offset or the argument structure does not fit in [arg_buf]. *)
-
-  val update_dispatch :
-    t -> index:int -> global:int array -> local:int array -> unit
-  (** [update_dispatch t ~index ~global ~local] updates the threadgroup
-      dimensions for command [index]. Both arrays must have length 3. *)
-
-  val execute :
-    State.t ->
-    t ->
-    resources:nativeint array ->
-    pipelines:nativeint array ->
-    unit
-  (** [execute state t ~resources ~pipelines] submits the ICB for GPU execution.
-
-      [resources] are Metal buffer handles marked for read and write access by
-      the GPU. Every buffer referenced by encoded commands must appear here.
-
-      [pipelines] are pipeline handles for the M1/M2 ICB workaround: on pre-M3
-      GPUs (AGXG family < 15), a zero-size dummy dispatch is issued per pipeline
-      before executing the ICB to prevent
-      [kIOGPUCommandBufferCallbackErrorInvalidResource] crashes. On M3+ the
-      array is ignored.
-
-      The resulting command buffer is appended to the in-flight list and is
-      waited by {!State.synchronize}. *)
-
-  val release : t -> unit
-  (** [release t] frees the underlying Metal ICB. *)
 end

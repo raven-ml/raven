@@ -105,9 +105,8 @@ let failed_view_allocation_preserves_ownership () =
       addr = Some (fun () -> Nativeint.one);
       offset = Some (fun () _ _ ->
           incr attempts;
-          if !attempts = 1 then failwith "offset failed");
-      transfer = None; supports_transfer = false;
-      copy_from_disk = None; supports_copy_from_disk = false;
+          if !attempts = 1 || !attempts = 3 then failwith "offset failed");
+      transfer = None;
     } in
   let base = Device.Buffer.create ~device:"VIEW_TEST" ~size:4 ~dtype:i32 allocator in
   let view = Device.Buffer.view base ~size:2 ~dtype:i32 ~offset:4 in
@@ -116,10 +115,81 @@ let failed_view_allocation_preserves_ownership () =
   is_false (Device.Buffer.is_allocated view);
   Device.Buffer.ensure_allocated view;
   equal int 1 (Device.Buffer.allocated_views base);
+  Device.Buffer.deallocate base;
+  is_false (Device.Buffer.is_allocated view);
+  equal int 1 (Device.Buffer.allocated_views base);
+  (* The allocator returns the same raw value, but the allocation is new. *)
+  Device.Buffer.ensure_allocated base;
+  is_false (Device.Buffer.is_allocated view);
+  raises (Failure "offset failed") (fun () -> Device.Buffer.ensure_allocated view);
+  is_false (Device.Buffer.is_allocated view);
+  equal int 1 (Device.Buffer.allocated_views base);
+  Device.Buffer.ensure_allocated view;
+  is_true (Device.Buffer.is_allocated view);
+  equal int 1 (Device.Buffer.allocated_views base);
   Device.Buffer.deallocate view;
   equal int 0 (Device.Buffer.allocated_views base);
   Device.Buffer.deallocate base;
-  equal int 1 !frees
+  equal int 2 !frees
+
+let stale_views_refresh_on_access () =
+  let base = filled_i32 [1; 2; 3; 4] in
+  let view = Device.Buffer.view base ~size:2 ~dtype:i32 ~offset:4 in
+  raises (Invalid_argument "buffer is not allocated")
+    (fun () -> Device.Buffer.copyin view (i32_to_bytes [7; 8]));
+  raises (Invalid_argument "buffer is not allocated")
+    (fun () -> Device.Buffer.copyout view (Bytes.create 8));
+  raises (Invalid_argument "buffer is not allocated")
+    (fun () -> Device.Buffer.as_buffer view);
+  Device.Buffer.ensure_allocated view;
+  let replace values =
+    Device.Buffer.deallocate base;
+    is_false (Device.Buffer.is_allocated view);
+    Device.Buffer.ensure_allocated base;
+    Device.Buffer.copyin base (i32_to_bytes values)
+  in
+  replace [10; 20; 30; 40];
+  equal (list int) [20; 30] (read_i32 view);
+  replace [11; 21; 31; 41];
+  Device.Buffer.copyin view (i32_to_bytes [7; 8]);
+  equal (list int) [11; 7; 8; 41] (read_i32 base);
+  replace [12; 22; 32; 42];
+  let bytes = Option.get (Device.Buffer.as_buffer view) in
+  equal int 22 (Bigarray.Array1.get bytes 0);
+  equal int 32 (Bigarray.Array1.get bytes 4);
+  replace [13; 23; 33; 43];
+  Device.Buffer.ensure_allocated view;
+  equal int 1 (Device.Buffer.allocated_views base);
+  let destination = empty_i32 2 in
+  Device.Buffer.copy_from ~dst:destination ~src:view;
+  equal (list int) [23; 33] (read_i32 destination);
+  (* The shared executor resolves another temporary view. Its collection must
+     not be required to release the base, and it must not remain retained. *)
+  Device.Buffer.deallocate base;
+  is_false (Device.Buffer.is_allocated base);
+  is_false (Device.Buffer.is_allocated view);
+  Device.Buffer.deallocate view;
+  Gc.full_major ();
+  Storage.with_operation (fun () -> ());
+  equal int 0 (Device.Buffer.allocated_views base);
+  Device.Buffer.deallocate destination
+
+let external_views_refresh_without_freeing_owner () =
+  let owner = filled_i32 [1; 2; 3; 4] in
+  let address = Device.Buffer.addr owner in
+  let spec = {Device.Buffer_spec.default with external_ptr = Some address} in
+  let external_buffer = Device.create_buffer ~size:4 ~dtype:i32 ~spec device in
+  let view = Device.Buffer.view external_buffer ~size:2 ~dtype:i32 ~offset:4 in
+  Device.Buffer.ensure_allocated view;
+  Device.Buffer.deallocate external_buffer;
+  Device.Buffer.copyin owner (i32_to_bytes [10; 20; 30; 40]);
+  equal nativeint (Nativeint.add address 4n) (Device.Buffer.addr view);
+  equal (list int) [20; 30] (read_i32 view);
+  equal int 1 (Device.Buffer.allocated_views external_buffer);
+  Device.Buffer.deallocate external_buffer;
+  Device.Buffer.deallocate view;
+  equal (list int) [10; 20; 30; 40] (read_i32 owner);
+  Device.Buffer.deallocate owner
 
 
 let empty_storage () =
@@ -134,8 +204,7 @@ let empty_storage () =
       copyin = (fun () _ -> unexpected "copyin");
       copyout = (fun _ () -> unexpected "copyout");
       addr = Some (fun () -> unexpected "addr");
-      offset = None; transfer = None; supports_transfer = false;
-      copy_from_disk = None; supports_copy_from_disk = false;
+      offset = None; transfer = None;
     } in
   let create () = Device.Buffer.create ~device:"EMPTY" ~size:0 ~dtype:i32 allocator in
   let src = create () and dst = create () in
@@ -289,9 +358,6 @@ let typed_storage_identity () =
         equal string "OPAQUE" dest_device;
         equal string "OPAQUE" src_device;
         incr transfers; Bytes.blit src 0 dest 0 size; true);
-    supports_transfer = true;
-    copy_from_disk = None;
-    supports_copy_from_disk = false;
   } in
   let create alloc = Device.Buffer.create ~device:"OPAQUE" ~size:1 ~dtype:i32
       (Device.Allocator.Pack alloc) in
@@ -315,13 +381,19 @@ let typed_storage_identity () =
 let mappings_follow_storage_ownership () =
   let source_kind : bytes Type.Id.t = Type.Id.make () in
   let target_kind : (bytes * int) Type.Id.t = Type.Id.make () in
+  let fail_source_free = ref false and fail_first_sync = ref false in
   let events = ref [] in
   let record event = events := event :: !events in
   let source_allocator : bytes Device.Allocator.t = {
     kind = source_kind; host = Fun.const None; mapping = None;
     synchronize = (fun () -> record "source sync");
     alloc = (fun n _ -> Bytes.make n '\000');
-    free = (fun _ _ _ -> record "source free");
+    free = (fun _ _ _ ->
+        record "source free";
+        if !fail_source_free then begin
+          fail_source_free := false;
+          failwith "source free failed"
+        end);
     copyin = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length src));
     copyout = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length dst));
     addr = None; offset = Some (fun raw _ _ -> raw);
@@ -331,8 +403,6 @@ let mappings_follow_storage_ownership () =
         record "native transfer";
         Bytes.blit src 0 dest 0 nbytes;
         true);
-    supports_transfer = true;
-    copy_from_disk = None; supports_copy_from_disk = false;
   } in
   let source = Device.Buffer.create ~device:"MAP_SOURCE" ~size:4 ~dtype:i32
       (Device.Allocator.Pack source_allocator) in
@@ -346,15 +416,19 @@ let mappings_follow_storage_ownership () =
             | None -> Option.get (Device.Buffer.get source_kind source), 0);
         unmap = (fun (_, offset) -> equal int 0 offset; record (name ^ " unmap"));
       };
-      synchronize = (fun () -> record (name ^ " sync"));
+      synchronize = (fun () ->
+          record (name ^ " sync");
+          if name = "MAP_TARGET:1" && !fail_first_sync then begin
+            fail_first_sync := false;
+            failwith "import wait failed"
+          end);
       alloc = (fun _ _ -> fail "mapping must not allocate target storage");
       free = (fun _ _ _ -> fail "mapping must not free source through target");
       copyin = (fun (data, offset) src -> Bytes.blit src 0 data offset (Bytes.length src));
       copyout = (fun dst (data, offset) -> Bytes.blit data offset dst 0 (Bytes.length dst));
       addr = Some (fun (_, offset) -> Nativeint.of_int (0x1000 + offset));
       offset = Some (fun (raw, base) _ offset -> raw, base + offset);
-      transfer = None; supports_transfer = false;
-      copy_from_disk = None; supports_copy_from_disk = false;
+      transfer = None;
     } in
     Device.make ~name ~allocator:(Device.Allocator.Pack allocator)
       ~renderer_set:(Device.Renderer_set.make ~device:name
@@ -396,7 +470,6 @@ let mappings_follow_storage_ownership () =
   equal string "native transfer" (List.hd !events);
   equal (list int) [0; 42; 0; 0] (read_i32 destination);
   Device.Buffer.deallocate destination;
-  Device.Buffer.deallocate view;
   equal int 0 (count "MAP_TARGET:1 unmap");
   events := [];
   Device.Buffer.deallocate source;
@@ -405,8 +478,33 @@ let mappings_follow_storage_ownership () =
     ["MAP_TARGET:2 sync"; "MAP_TARGET:2 unmap";
      "MAP_TARGET:1 sync"; "MAP_TARGET:1 unmap"; "source free"]
     (List.rev !events);
-  ignore (get first source);
-  equal int 1 (count "MAP_TARGET:1 map")
+  is_false (Device.Buffer.is_allocated view);
+  let new_data, new_offset = get first view in
+  is_false (new_data == data);
+  equal int 4 new_offset;
+  equal int 1 (Device.Buffer.allocated_views source);
+  equal int 1 (count "MAP_TARGET:1 map");
+  ignore (get second view);
+  fail_first_sync := true;
+  raises (Failure "import wait failed") (fun () -> Device.Buffer.deallocate source);
+  (* The second import was retired before waiting for the first failed. Its
+     view must derive a fresh import even though the source allocation lives. *)
+  let maps = count "MAP_TARGET:2 map" in
+  let partial_data, partial_offset = get second view in
+  is_true (partial_data == new_data);
+  equal int 4 partial_offset;
+  equal int (maps + 1) (count "MAP_TARGET:2 map");
+  fail_source_free := true;
+  raises (Failure "source free failed") (fun () -> Device.Buffer.deallocate source);
+  is_true (Option.is_none (Device.Buffer.find_mapping target_kind source));
+  let maps = count "MAP_TARGET:1 map" in
+  let retained_data, retained_offset = get first view in
+  is_true (retained_data == new_data);
+  equal int 4 retained_offset;
+  equal int (maps + 1) (count "MAP_TARGET:1 map");
+  Device.Buffer.deallocate source;
+  Device.Buffer.deallocate view;
+  equal int 0 (Device.Buffer.allocated_views source)
 
 let foreign_completion_dependencies () =
   let owner = Tolk_cpu.create "CPU:pending-owner" in
@@ -626,4 +724,6 @@ let () = run __FILE__ [ copy_from_tests;
   test "BUFFER owns storage across execution contexts" node_owned_storage;
   test "serialization preserves bytes and shared view ownership" storage_serialization;
   test "serialization copies external storage into an independent owner" external_storage_serialization;
-  test "serialization keeps unopened storage lazy" lazy_storage_serialization; test "buffer byte ranges reject overflow" buffer_byte_ranges; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership ]
+  test "serialization keeps unopened storage lazy" lazy_storage_serialization; test "buffer byte ranges reject overflow" buffer_byte_ranges; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership;
+  test "stale views refresh on every storage access" stale_views_refresh_on_access;
+  test "external views refresh without freeing their owner" external_views_refresh_without_freeing_owner ]

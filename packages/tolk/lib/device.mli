@@ -154,7 +154,7 @@ val make :
   name:string ->
   allocator:Allocator.packed ->
   renderer_set:Renderer_set.t ->
-  runtime:runtime ->
+  ?runtime:runtime ->
   synchronize:(int option -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
   ?peer_group:string ->
@@ -162,11 +162,12 @@ val make :
   ?bufferize:(Tolk_uop.Uop.t -> Buffer.t option) ->
   unit ->
   t
-(** [make ~name ~allocator ~renderer_set ~runtime ~synchronize
+(** [make ~name ~allocator ~renderer_set ?runtime ~synchronize
     ?invalidate_caches ?peer_group ?queue ?bufferize ()] is a device runtime, registered under its
     canonical [name] for graph-owned buffers to resolve their allocator.
 
     [runtime obj] loads a compiled binary and returns a dispatch handle.
+    Devices that execute exclusively through compiled queues omit it.
 
     [synchronize timeout] blocks until all pending work on the device completes.
     Recoverable backends honor [Some milliseconds]; other backends use their
@@ -192,14 +193,16 @@ val runtime : t -> runtime
     scalar argument counts and waits for foreign owners and importers before
     entering the backend. Work on [d] uses the backend's own dispatch order.
 
-    Raises [Invalid_argument] if signature slots are not a permutation of
-    buffers followed by scalars. *)
+    Raises [Invalid_argument] if [d] only supports compiled queue submission,
+    or signature slots are not a permutation of buffers followed by scalars. *)
 
 val queue_runtime : t -> runtime
 (** [queue_runtime d obj] loads a host submission program whose compiled
     dependencies order every buffer access. It validates argument counts as
     {!runtime} does, but binding existing mappings does not synchronize other
-    devices. Only queue programs with complete dependency fences may use it. *)
+    devices. Only queue programs with complete dependency fences may use it.
+
+    Raises [Invalid_argument] if [d] only supports compiled queue submission. *)
 
 val synchronize : ?timeout:int -> t -> unit
 (** [synchronize ?timeout d] blocks until all pending work on [d] completes, then

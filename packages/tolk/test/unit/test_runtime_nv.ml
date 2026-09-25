@@ -738,14 +738,14 @@ let queue_capacity ~copies ~resume m =
   let open Tolk in
   let compiled, device, host, buffers, submission =
     queue_fixture ~timeout_ms:100 ~compute_class:Defs.ada_compute_a ~copies m in
-  let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
+  let inputs = Array.init (if copies then 3 else 1) (fun _ ->
+      U.from_buffer (Device.create_buffer ~size:16 ~dtype:D.int32 device)) in
   let run () =
-
     let linked = Realize.link_linear ~allow_cache:false compiled in
     Realize.run_linear ~device
       ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
       ~jit:true ~var_vals:["small", 7; "count", 3]
-      ~input_uops:(Array.make (if copies then 3 else 1) (U.from_buffer input)) linked
+      ~input_uops:inputs linked
   in
   for i = 1 to 7 do
     run ();

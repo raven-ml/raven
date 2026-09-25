@@ -22,7 +22,10 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   retirement, so it collects commands in submission order before advancing its
   timeline. Failed commands latch an error and retain uncertain backing.
   Coverage: native completion ordering, timestamp visibility, failure and
-  retirement tests, plus real Metal queue replay. Reconsider when event
+  retirement tests, plus real Metal queue replay. The target's fused 1024-row
+  matrix-product reduction was also observed returning partial values after
+  an `Impacting Interactivity` command failure; successful event waits do not
+  establish successful execution. Reconsider when event
   signaling alone provides the same failure and lifetime guarantees.
 
 - **AMD queue retirement propagates HQD dequeue timeouts.** The target can
@@ -81,14 +84,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   tolk or tinygrad code reproduces it, with the arguments bound as buffers or
   as fields of one argument buffer; GPU shader validation hides it, and the
   target's pre-M3 empty dispatch does not help. The target returns wrong
-  values for a `cat` of 16 tensors. Tolk's queue capability
-  `max_kernel_bindings` is `Some 15` on Metal, and `Hcq2.enqueue` leaves a
-  kernel above it to an ordinary dispatch between batches. At the time of the
+  values for a `cat` of 16 tensors. Tolk's shared Metal submission encoder
+  dispatches kernels above 15 arguments directly between indirect ranges,
+  with buffer barriers and the same resource ownership and completion fence.
+  The private threshold participates in the queue configuration. At the time of the
   ruling, no kernel of the rune Metal tests (apart from this coverage) or of
   the tiny gpt-oss validation exceeded 10 arguments. Coverage: Rune's
   `test_jit_metal` concatenation of 16 sorts between queued kernels, and the
-  Metal runtime's argument structures of 15 buffers (queued), 16 and 33
-  (direct), which rebind between calls. Reconsider when Apple fixes the
+  Metal runtime's argument structures of 15 buffers (indirect), 16, 29 and 33
+  (direct), which rebind between calls with and without profiling. Reconsider when Apple fixes the
   driver, and measure Apple8 and later, which were not available.
 
 - **Multi-axis reshapes use each axis's own shard count.** The frozen target
@@ -272,8 +276,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 - **CUDA submission calls ordinary C helpers instead of Python-callable driver
   objects.** Generated host code runs with the OCaml runtime released, so
   helpers retain the first submission failure for synchronization to report.
-  Consumers: compiled submission and JIT replay. The remaining direct-launch
-  and allocator-upload handoffs are transitional work to remove in TODO. Coverage: driver-independent submission
+  Consumers: compiled submission and JIT replay. Allocator-upload handoffs
+  remain transitional work in TODO. Coverage: driver-independent submission
   compilation and CUDA runtime replay/transfer cases (hardware acceptance is
   still open in TODO). Reconsider the helper boundary if a native driver
   binding can provide the same calling convention and failure lifetime.

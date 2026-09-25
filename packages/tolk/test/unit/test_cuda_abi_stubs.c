@@ -45,14 +45,39 @@ static void capture(void **extra) {
   assert(captured_size <= sizeof(captured));
   memcpy(captured, extra[1], captured_size);
 }
+static int live_modules;
+static CUresult fake_load(CUmodule *module, const void *image) {
+  assert(strcmp(image, "ptx") == 0);
+  *module = (CUmodule)0xbeef;
+  live_modules++;
+  return 0;
+}
+static CUresult fake_unload(CUmodule module) {
+  assert(module == (CUmodule)0xbeef);
+  assert(live_modules == 1);
+  live_modules--;
+  return 0;
+}
 static CUresult fake_get(CUfunction *f, CUmodule module, const char *name) {
-  (void)module; (void)name; *f = (CUfunction)0xcafe; return 0;
+  assert(module == (CUmodule)0xbeef);
+  assert(strcmp(name, "typed") == 0);
+  assert(live_modules == 1);
+  *f = (CUfunction)0xcafe;
+  return 0;
+}
+static CUresult fake_copy(CUdeviceptr dst, const void *src, size_t size, CUstream stream) {
+  assert(dst == 0x100002000ULL);
+  assert(src == (void *)0x300004000ULL);
+  assert(size == 40);
+  (void)stream;
+  return 0;
 }
 static CUresult fake_launch(CUfunction f, unsigned gx, unsigned gy, unsigned gz,
     unsigned lx, unsigned ly, unsigned lz, unsigned shared, CUstream stream,
     void **params, void **extra) {
   (void)gx; (void)gy; (void)gz; (void)lx; (void)ly; (void)lz;
   (void)shared; (void)stream; assert(params == NULL); assert(f == (CUfunction)0xcafe);
+  assert(live_modules == 1);
   capture(extra); return 0;
 }
 static tolk_cuda_queue queue = {.lock = PTHREAD_MUTEX_INITIALIZER};
@@ -66,7 +91,10 @@ static CUresult fake_wait(CUstream stream, CUevent event, unsigned flags) {
 }
 CAMLprim value caml_test_cuda_abi_setup(value unit) {
   CAMLparam1(unit);
+  p_cuModuleLoadData = fake_load;
+  p_cuModuleUnload = fake_unload;
   p_cuModuleGetFunction = fake_get;
+  p_cuMemcpyHtoDAsync = fake_copy;
   p_cuLaunchKernel = fake_launch;
   p_cuCtxSetCurrent = fake_context;
   p_cuEventRecord = fake_record;
@@ -74,7 +102,12 @@ CAMLprim value caml_test_cuda_abi_setup(value unit) {
   queue.status = 0;
   queue.direct_pending = queue.queue_pending = 0;
   handoffs = 0;
+  live_modules = 0;
   CAMLreturn(caml_copy_nativeint((intnat)&queue));
+}
+CAMLprim value caml_test_cuda_live_modules(value unit) {
+  CAMLparam1(unit);
+  CAMLreturn(Val_int(live_modules));
 }
 CAMLprim value caml_test_cuda_abi_submit(value function, value arguments) {
   CAMLparam2(function, arguments);

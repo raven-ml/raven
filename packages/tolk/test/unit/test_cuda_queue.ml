@@ -34,7 +34,7 @@ let compile ?(profile = false) ?peer_group calls =
       encode = Queue.encode queue_name; lower = Queue.lower queue_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
     let peer_group = if queue_name = device_name then None else peer_group in
-    ignore (Device.make ?peer_group ~name:queue_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
+    ignore (Device.make ?peer_group ~name:queue_name ~allocator ~renderer_set
       ~synchronize:(fun timeout -> ignore timeout; ()) ~queue ()) in
   List.iter register [device_name; "CUDA:queue-peer"];
   Hcq2.compile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))

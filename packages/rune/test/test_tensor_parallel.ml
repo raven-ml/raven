@@ -51,7 +51,7 @@ let create name =
   in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~runtime:(Tolk.Device.runtime cpu)
-    ~synchronize:(fun () -> Tolk.Device.synchronize cpu)
+    ~synchronize:(fun timeout -> Tolk.Device.synchronize ?timeout cpu)
     ~bufferize:(Tolk.Device.bufferize cpu)
     ()
 

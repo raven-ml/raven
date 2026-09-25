@@ -30,9 +30,6 @@ let numbering () =
       synchronize = (fun () -> ());
       offset = None;
       transfer = None;
-      supports_transfer = false;
-      copy_from_disk = None;
-      supports_copy_from_disk = false;
     }
   in
   (Device.Lru_allocator.wrap raw, fail, freed)

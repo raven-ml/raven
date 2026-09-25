@@ -34,6 +34,7 @@ type t = {
   spec : Buffer_spec.t;
   allocator : allocator_pack Lazy.t;
   mutable storage : allocation;
+  mutable base_storage : allocation;
   mutable mappings : (allocator_pack * backing) list;
   base : t option;
   offset : int;
@@ -54,9 +55,6 @@ and 'buf allocator = {
   addr : ('buf -> nativeint) option;
   offset : ('buf -> int -> int -> 'buf) option;
   transfer : (dest:'buf -> src:'buf -> dest_device:string -> src_device:string -> int -> bool) option;
-  supports_transfer : bool;
-  copy_from_disk : ('buf -> 'buf -> int -> unit) option;
-  supports_copy_from_disk : bool;
 }
 and allocator_pack = Pack : 'buf allocator -> allocator_pack
 and backing = Backing : 'buf allocator * 'buf -> backing
@@ -80,9 +78,6 @@ module Allocator = struct
     addr : ('buf -> nativeint) option;
     offset : ('buf -> int -> int -> 'buf) option;
     transfer : 'buf transfer option;
-    supports_transfer : bool;
-    copy_from_disk : ('buf -> 'buf -> int -> unit) option;
-    supports_copy_from_disk : bool;
   }
   type packed = allocator_pack = Pack : 'buf t -> packed
 end
@@ -166,7 +161,13 @@ let add_ref buf cnt =
   buf
 
 let is_allocated buf =
-  match buf.storage with Unallocated -> false | Empty | Allocated _ -> true
+  match buf.storage with
+  | Unallocated -> false
+  | Empty -> true
+  | Allocated _ ->
+      match buf.base with
+      | None -> true
+      | Some root -> buf.base_storage == root.storage
 let allocated_views buf = (base buf).allocated_views
 
 let counts_as_used buf =
@@ -192,8 +193,12 @@ let rec allocate buf =
               | None -> invalid_arg "allocator offset is required for buffer views"
             in
             let view = offset raw (nbytes buf) buf.offset in
-            buf.storage <- Allocated (Backing (alloc, view));
-            root.allocated_views <- root.allocated_views + 1
+            let storage = Allocated (Backing (alloc, view)) in
+            let first_allocation = buf.storage == Unallocated in
+            buf.storage <- storage;
+            buf.base_storage <- root.storage;
+            if first_allocation then
+              root.allocated_views <- root.allocated_views + 1
         | Unallocated | Empty -> assert false)
 
 and ensure_allocated buf = if not (is_allocated buf) then allocate buf
@@ -204,18 +209,21 @@ let deallocate buf =
     | _, Unallocated -> ()
     | _, Empty -> buf.storage <- Unallocated
     | None, Allocated (Backing (alloc, raw)) ->
-        if buf.allocated_views <> 0 then
-          invalid_arg "base buffer still has allocated views";
-        List.iter (fun (_, Backing (mapped_alloc, mapped)) ->
-            mapped_alloc.synchronize ();
-            (Option.get mapped_alloc.mapping).unmap mapped) buf.mappings;
-        buf.mappings <- [];
+        let rec unmap () = match buf.mappings with
+          | [] -> ()
+          | (_, Backing (mapped_alloc, mapped)) :: rest ->
+              mapped_alloc.synchronize ();
+              (Option.get mapped_alloc.mapping).unmap mapped;
+              buf.mappings <- rest;
+              unmap ()
+        in
+        unmap ();
         alloc.free raw (nbytes buf) buf.spec;
         if counts_as_used buf then add_mem_used buf.device (-nbytes buf);
         buf.storage <- Unallocated
     | Some root, Allocated _ ->
-        buf.mappings <- [];
         buf.storage <- Unallocated;
+        buf.base_storage <- Unallocated;
         root.allocated_views <- root.allocated_views - 1)
 
 let finalize buf =
@@ -234,7 +242,8 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
   ignore (checked_nbytes size dtype : int);
   let buf = {
     id = fresh_id (); device; size; dtype; spec; allocator;
-    storage = Unallocated; mappings = []; base = None; offset = 0;
+    storage = Unallocated; base_storage = Unallocated;
+    mappings = []; base = None; offset = 0;
     uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise finalize buf;
@@ -266,7 +275,7 @@ let supports_transfer dst src =
   let Allocator.Pack alloc = allocator dst in
   let Allocator.Pack source = allocator src in
   Option.is_some (Type.Id.provably_equal alloc.kind source.kind)
-  && alloc.supports_transfer && Option.is_some alloc.transfer
+  && Option.is_some alloc.transfer
   && same_backend dst.device src.device
 
 let ensure_size buf bytes =
@@ -285,6 +294,8 @@ let synchronize_mappings ?except buf =
 let copyin buf bytes =
   with_operation (fun () ->
     ensure_size buf bytes;
+    if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
+    ensure_allocated buf;
     synchronize_mappings buf;
     match buf.storage with
     | Unallocated -> invalid_arg "buffer is not allocated"
@@ -294,6 +305,8 @@ let copyin buf bytes =
 let copyout buf bytes =
   with_operation (fun () ->
     ensure_size buf bytes;
+    if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
+    ensure_allocated buf;
     synchronize_mappings buf;
     match buf.storage with
     | Unallocated -> invalid_arg "buffer is not allocated"
@@ -303,6 +316,8 @@ let copyout buf bytes =
 external host_view : nativeint -> int -> Allocator.host_view = "caml_tolk_host_view"
 
 let as_buffer buf =
+  if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
+  ensure_allocated buf;
   match buf.storage with
   | Unallocated -> invalid_arg "buffer is not allocated"
   | Empty -> None
@@ -349,7 +364,8 @@ let view buf ~size ~dtype ~offset =
     invalid_arg "buffer view exceeds base buffer";
   let v = {
     id = fresh_id (); device = root.device; size; dtype; spec = root.spec;
-    allocator = root.allocator; storage = Unallocated; mappings = []; base = Some root;
+    allocator = root.allocator; storage = Unallocated; base_storage = Unallocated;
+    mappings = []; base = Some root;
     offset = buf.offset + offset; uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise finalize v;
@@ -374,27 +390,26 @@ let rec mapped_backing target buf =
   | Unallocated -> assert false
   | Allocated raw when target == allocator buf -> Some raw
   | Allocated _ ->
-      (match List.find_opt (fun (key, _) -> key == target) buf.mappings with
-       | Some (_, raw) -> Some raw
-       | None ->
-           let raw = match buf.base with
-             | Some root ->
-                 (match mapped_backing target root with
-                  | Some (Backing (alloc, raw)) ->
-                      let offset = match alloc.offset with
-                        | Some offset -> offset
-                        | None -> invalid_arg "mapped allocator does not support views" in
-                      Backing (alloc, offset raw (nbytes buf) buf.offset)
-                  | None -> assert false)
-             | None ->
-                 let Allocator.Pack alloc = target in
-                 let mapping = match alloc.mapping with
-                   | Some mapping -> mapping
-                   | None -> invalid_arg "allocator cannot map this buffer" in
-                 Backing (alloc, mapping.map buf)
-           in
-           buf.mappings <- (target, raw) :: buf.mappings;
-           Some raw)
+      match buf.base with
+      | Some root ->
+          (match mapped_backing target root with
+           | Some (Backing (alloc, raw)) ->
+               let offset = match alloc.offset with
+                 | Some offset -> offset
+                 | None -> invalid_arg "mapped allocator does not support views" in
+               Some (Backing (alloc, offset raw (nbytes buf) buf.offset))
+           | None -> assert false)
+      | None ->
+          match List.find_opt (fun (key, _) -> key == target) buf.mappings with
+          | Some (_, raw) -> Some raw
+          | None ->
+              let Allocator.Pack alloc = target in
+              let mapping = match alloc.mapping with
+                | Some mapping -> mapping
+                | None -> invalid_arg "allocator cannot map this buffer" in
+              let raw = Backing (alloc, mapping.map buf) in
+              buf.mappings <- (target, raw) :: buf.mappings;
+              Some raw
 
 let find_mapping : type a. a Type.Id.t -> t -> a option = fun kind buf ->
   with_operation (fun () ->
@@ -467,9 +482,7 @@ module Host_allocator = struct
       copyin = (fun buf bytes -> synchronize (); copyin buf bytes);
       copyout = (fun bytes buf -> synchronize (); copyout bytes buf);
       host = Option.some; addr = Some Fun.id; offset = Some offset;
-      mapping = Some {map; unmap = ignore}; transfer = None;
-      supports_transfer = false; copy_from_disk = None;
-      supports_copy_from_disk = false }
+      mapping = Some {map; unmap = ignore}; transfer = None }
 end
 
 (* Buffer-to-buffer copy is a scheduled device operation, not a device-layer

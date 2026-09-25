@@ -480,23 +480,17 @@ let device_for ~device buf =
    plain buffers when no argument is multi-device, otherwise one group per
    device position, zipping the shards of every argument. *)
 let unwrap_multi bufs =
-  if List.for_all (function Single _ -> true | Multi _ -> false) bufs then
-    [ List.map (function Single b -> b | Multi _ -> assert false) bufs ]
-  else
-    let shards =
-      List.map
-        (function
-          | Multi m -> Device.Multi_buffer.bufs m
-          | Single _ ->
-              invalid_arg "unwrap_multi: mixed single and multi-device buffers")
-        bufs
-    in
-    let ndev =
-      match shards with s :: _ -> List.length s | [] -> 0
-    in
-    if List.exists (fun s -> List.length s <> ndev) shards then
-      invalid_arg "unwrap_multi: multi-device buffers disagree on device count";
-    List.init ndev (fun j -> List.map (fun s -> List.nth s j) shards)
+  let count = List.fold_left (fun n -> function
+      | Single _ -> n
+      | Multi m -> max n (List.length (Device.Multi_buffer.bufs m))) 1 bufs in
+  let shards = List.map (function
+      | Single b -> List.init count (fun _ -> b)
+      | Multi m ->
+          let bufs = Device.Multi_buffer.bufs m in
+          if List.length bufs <> count then
+            invalid_arg "unwrap_multi: multi-device buffers disagree on device count";
+          bufs) bufs in
+  List.init count (fun j -> List.map (fun bs -> List.nth bs j) shards)
 
 (* Run linear
 
@@ -831,16 +825,22 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
               let fallback_ctx = Lazy.force fallback_ctx in
               buffers_overlap (resolve fallback_ctx dst) (resolve fallback_ctx src)
           | _ -> false) submission.fallback in
-      let addresses = if overlapping_copy then None else try
+      if overlapping_copy && List.exists (fun call -> match U.as_call call with
+          | Some {body; _} -> U.op body = Tolk_uop.Ops.Program | None -> false)
+          submission.fallback then
+        invalid_arg "queue replay: overlapping copies mixed with kernels require separate submissions";
+      let addresses = if overlapping_copy then Error None else try
         let bytes = Bytes.create (8 * List.length submission.inputs) in
         List.iteri (fun i (slot, device) ->
             let address = Device.Buffer.addr ~device buffers.(slot) in
             Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint address)) submission.inputs;
-        Some bytes
-      with Tolk_uop.Storage.Mapping_unavailable _ when submission.fallback <> [] -> None in
+        Ok bytes
+      with Tolk_uop.Storage.Mapping_unavailable _ as error when submission.fallback <> [] ->
+        let backtrace = Printexc.get_raw_backtrace () in
+        Error (Some (error, backtrace)) in
       (match addresses with
-      | None -> fallback ~stage:(not overlapping_copy) buffers
-      | Some bytes ->
+      | Error mapping_error -> fallback ~mapping_error ~stage:(not overlapping_copy) buffers
+      | Ok bytes ->
         if submission.inputs <> [] then begin
           if submission.table < 0 || submission.table >= Array.length buffers then
             invalid_arg "exec_hcq: missing runtime address table";
@@ -916,11 +916,17 @@ let rec dispatch_call ctx ~device ~to_program call =
       | Tolk_uop.Ops.Program ->
           (match U.arg call with
            | U.Arg.Call_info {aux = Some submission; _} ->
-               exec_hcq ctx call submission ~fallback:(fun ~stage buffers ->
+               exec_hcq ctx call submission ~fallback:(fun ~mapping_error ~stage buffers ->
                    let ctx = {ctx with input_uops = Array.map U.from_buffer buffers} in
                    match (if stage then staged_queue ~to_program ctx call submission buffers else None) with
                    | Some staged -> List.concat_map (dispatch_call ctx ~device ~to_program) (U.children staged)
-                   | None -> List.concat_map (dispatch_call {ctx with wait = true} ~device ~to_program) submission.fallback)
+                   | None ->
+                       (match mapping_error with
+                        | Some (error, backtrace) when List.exists (fun call -> match U.as_call call with
+                            | Some {body; _} -> U.op body = Tolk_uop.Ops.Program | None -> false)
+                            submission.fallback -> Printexc.raise_with_backtrace error backtrace
+                        | _ -> ());
+                       List.concat_map (dispatch_call {ctx with wait = true} ~device ~to_program) submission.fallback)
            | _ -> exec_kernel ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function
