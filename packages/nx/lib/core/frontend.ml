@@ -3189,23 +3189,6 @@ module Make (B : Backend_intf.S) = struct
         b_contract a_contract b_contract;
     B.matmul a b
 
-  let dot x w =
-    let x_shape = shape x and w_shape = shape w in
-    let x_ndim = Array.length x_shape and w_ndim = Array.length w_shape in
-    if not (x_ndim > 0 && w_ndim > 0) then
-      invalid_arg "dot: tensors, both must be at least 1D";
-    match (x_ndim, w_ndim) with
-    | 1, 1 -> sum (mul x w)
-    | 1, _ ->
-        let x = unsqueeze ~axes:[ 0 ] x in
-        let r = matmul_with_alloc (Array.append [| 1 |] x_shape) w_shape x w in
-        squeeze ~axes:[ ndim r - 2 ] r
-    | _, 1 ->
-        let w = unsqueeze ~axes:[ 1 ] w in
-        let r = matmul_with_alloc x_shape (Array.append w_shape [| 1 |]) x w in
-        squeeze ~axes:[ ndim r - 1 ] r
-    | _ -> matmul_with_alloc x_shape w_shape x w
-
   let matmul a_orig b_orig =
     let a_shape = shape a_orig and b_shape = shape b_orig in
     let a_ndim = Array.length a_shape and b_ndim = Array.length b_shape in
@@ -3236,6 +3219,14 @@ module Make (B : Backend_intf.S) = struct
       if a_ndim = 1 && b_ndim = 1 then squeeze r
       else if a_ndim = 1 then squeeze ~axes:[ ndim r - 2 ] r
       else squeeze ~axes:[ ndim r - 1 ] r
+
+  (* A vector operand makes [dot] the matrix product. *)
+  let dot x w =
+    let x_ndim = ndim x and w_ndim = ndim w in
+    if not (x_ndim > 0 && w_ndim > 0) then
+      invalid_arg "dot: tensors, both must be at least 1D";
+    if x_ndim = 1 || w_ndim = 1 then matmul x w
+    else matmul_with_alloc (shape x) (shape w) x w
 
   let diagonal ?(offset = 0) ?axis1 ?axis2 x =
     let nd = ndim x in
@@ -3386,17 +3377,24 @@ module Make (B : Backend_intf.S) = struct
     if numel fa <> numel fb then
       invalid_arg "vdot: different number of elements";
     match dtype a with
-    | (Complex64 | Complex128) when dtype a = dtype b ->
-        sum (mul (conjugate fa) fb)
-    | _ -> sum (mul fa fb)
+    | (Complex64 | Complex128) when dtype a = dtype b -> dot (conjugate fa) fb
+    | _ -> dot fa fb
 
+  (* Each pair of vectors along [axis] is a row times a column, so the broadcast
+     operands contract as a batch of matrix products. *)
   let vecdot ?axis x1 x2 =
     let ax =
       match axis with
       | None -> ndim x1 - 1
       | Some a -> if a < 0 then ndim x1 + a else a
     in
-    sum ~axes:[ ax ] ~keepdims:false (mul x1 x2)
+    let target = Shape.broadcast (shape x1) (shape x2) in
+    let n = Array.length target in
+    let ax = ax + n - ndim x1 in
+    let x1 = broadcast_to target x1 and x2 = broadcast_to target x2 in
+    let row = unsqueeze ~axes:[ n - 1 ] (moveaxis ax (-1) x1) in
+    let column = unsqueeze ~axes:[ n ] (moveaxis ax (-1) x2) in
+    squeeze ~axes:[ n - 1; n ] (matmul row column)
 
   let inner a b =
     if (shape a).(ndim a - 1) <> (shape b).(ndim b - 1) then
@@ -3755,7 +3753,7 @@ module Make (B : Backend_intf.S) = struct
       let n_ops = Array.length operands in
       if n_ops = 0 then invalid_arg "einsum: no input operands";
       match (subscripts, n_ops) with
-      | "i,i->", 2 -> sum (mul operands.(0) operands.(1))
+      | "i,i->", 2 -> dot operands.(0) operands.(1)
       | "ij,jk->ik", 2 -> matmul operands.(0) operands.(1)
       | "ij->ji", 1 -> transpose operands.(0)
       | _ ->

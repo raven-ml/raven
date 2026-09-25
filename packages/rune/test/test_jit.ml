@@ -1303,6 +1303,56 @@ let test_narrow_matmuls_multiply_exactly () =
   check "float8_e4m3" Nx.float8_e4m3 ~step:(1.0 /. 8.0);
   check "float8_e5m2" Nx.float8_e5m2 ~step:(1.0 /. 8.0)
 
+(* Every product of vectors is a matrix product: [dot], [vdot], [inner],
+   [vecdot] and einsum's ["i,i->"] compute at [matmul]'s precision, eager and
+   compiled. With [p] fraction bits, [(1 + 2^-p)^2] rounds to [1 + 2^(1-p)] in
+   the dtype, and adding [2^-(p+1)] lands a rounded sum on a tie that goes down
+   to even, while the exact sum, [2^-2p] above it, rounds up to [1 + 3 * 2^-p].
+   [dot] of two vectors rounded each product and gave [1 + 2^(1-p)]. *)
+let test_vector_products_are_matmuls () =
+  let check (type b) name (dtype : (float, b) Nx.dtype) ~p =
+    let ulp = Float.ldexp 1.0 (-p) in
+    let x = Nx.create dtype [| 2 |] [| 1.0 +. ulp; ulp /. 2.0 |]
+    and w = Nx.create dtype [| 2 |] [| 1.0 +. ulp; 1.0 |] in
+    let values t = Nx.to_array (Nx.cast f32 t) in
+    let agree what expected f x w =
+      equal
+        ~msg:(Printf.sprintf "%s %s, eager" name what)
+        (array float_exact) expected
+        (values (f x w));
+      List.iter
+        (fun device ->
+          equal
+            ~msg:(Printf.sprintf "%s %s, %s" name what device)
+            (array float_exact) expected
+            (values (Rune.jit' ~devices:[ Rune.device device ] (f x) w)))
+        devices
+    in
+    let exact = 1.0 +. (3.0 *. ulp) in
+    List.iter
+      (fun (what, f) -> agree what [| exact |] f x w)
+      [
+        ("matmul", Nx.matmul);
+        ("dot", Nx.dot);
+        ("vdot", Nx.vdot);
+        ("inner", Nx.inner);
+        ("vecdot", fun x w -> Nx.vecdot x w);
+        ("einsum", fun x w -> Nx.einsum "i,i->" [| x; w |]);
+      ];
+    let rows = Nx.broadcast_to [| 3; 2 |] x
+    and cols = Nx.broadcast_to [| 3; 2 |] w in
+    let exact = Array.make 3 exact in
+    agree "rows of inner" exact Nx.inner rows cols;
+    agree "rows of vecdot" exact (fun x w -> Nx.vecdot x w) rows cols;
+    agree "columns of vecdot" exact
+      (fun x w -> Nx.vecdot ~axis:0 x w)
+      (Nx.transpose rows) (Nx.transpose cols)
+  in
+  check "bfloat16" Nx.bfloat16 ~p:7;
+  check "float16" Nx.float16 ~p:10;
+  check "float8_e4m3" Nx.float8_e4m3 ~p:3;
+  check "float8_e5m2" Nx.float8_e5m2 ~p:2
+
 (* Compiled max and min are NaN when any element is NaN, as eager's, and of -0
    and +0 give the greater for a maximum and the lesser for a minimum, as IEEE
    orders them, where eager keeps the first; [ieee] is that reference. Compiled
@@ -4129,6 +4179,8 @@ let tests =
           test_half_products_multiply_wide;
         test "narrow matrix products multiply exactly"
           test_narrow_matmuls_multiply_exactly;
+        test "vector products are matrix products"
+          test_vector_products_are_matmuls;
         slow "extremes" test_extremes;
       ];
     group "cumulative reductions"

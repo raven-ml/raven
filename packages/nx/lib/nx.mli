@@ -2431,7 +2431,7 @@ val dot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       followed by those of [b].
 
     {b Note.} Unlike {!matmul}, [dot] does {e not} broadcast batch dimensions—it
-    concatenates them.
+    concatenates them. It computes at {!matmul}'s precision.
 
     Raises [Invalid_argument] if contraction axes differ in size or either input
     is 0-D.
@@ -2495,7 +2495,8 @@ val matrix_transpose : ('a, 'b) t -> ('a, 'b) t
 
 val vdot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [vdot a b] is the dot product of two vectors. Both inputs are flattened; for
-    complex dtypes, [a] is conjugated first. Always returns a scalar.
+    complex dtypes, [a] is conjugated first. Always returns a scalar. It
+    computes at {!matmul}'s precision.
 
     Raises [Invalid_argument] if the inputs have different numbers of elements.
 
@@ -2503,14 +2504,15 @@ val vdot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 val vecdot : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [vecdot ?axis a b] is the dot product of [a] and [b] along [axis] with
-    broadcasting. [axis] defaults to [-1].
+    broadcasting. [axis] defaults to [-1]. It computes at {!matmul}'s precision.
 
     Raises [Invalid_argument] if the specified axis dimensions differ.
 
     See also {!vdot}, {!dot}. *)
 
 val inner : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [inner a b] is the inner product over the last axes of [a] and [b].
+(** [inner a b] is the inner product over the last axes of [a] and [b]. It
+    computes at {!matmul}'s precision.
 
     Raises [Invalid_argument] if the last dimensions differ.
 

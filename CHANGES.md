@@ -1949,6 +1949,9 @@ thread.
 
 ### Nx
 
+- `Nx.dot`, `Nx.vdot`, `Nx.inner`, `Nx.vecdot` and `einsum "i,i->"` of vectors
+  compute as `Nx.matmul` does, so every product of the same vectors gives one
+  answer. At `float16`, `bfloat16` and float8 they rounded each product first.
 - Eager `Nx.argsort` runs the backend argsort alone. It sorted the values too
   and discarded them: 2^20 float32 entries take 7 ms, not 15.
 - Eager `Nx.sort` and `Nx.argsort` share one stable radix sort: sort's values
