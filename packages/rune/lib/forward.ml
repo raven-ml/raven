@@ -71,7 +71,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
 
   let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
    fun eff ->
-    if not !Gate.enabled then None
+    if not (Gate.enabled ()) then None
     else
       match eff with
       (* Constants: creation, RNG, metadata. Fresh outputs are inactive. *)

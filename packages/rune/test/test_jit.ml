@@ -3864,7 +3864,7 @@ let test_split_capture_is_bound () =
   let x = Nx.place rows (rows86 ()) in
   let y, up, _ = delta (fun () -> g x) in
   equal ~msg:"binding a split capture uploads nothing" int 0 up;
-  equal ~msg:"the program counts the binding" int 1 (cell_of w).bound;
+  equal ~msg:"the program counts the binding" int 1 (Atomic.get (cell_of w).bound);
   equal ~msg:"value" (array float_exact)
     (Nx.to_array (Nx.mul_s (rows86 ()) 1.5))
     (Nx.to_array y);
@@ -4062,8 +4062,51 @@ let test_bound_capture_is_shared () =
         check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x))
   in
   equal ~msg:"only the inputs are uploaded" int 24 up;
-  equal ~msg:"one storage, bound by both functions" int 2 (cell_of w).bound;
+  equal ~msg:"one storage, bound by both functions" int 2 (Atomic.get (cell_of w).bound);
   ignore (Sys.opaque_identity (g1, g2, w))
+
+(* Each worker owns its compiled functions; only the immutable capture's cell
+   is shared. Return one owner so the others can be finalized on another domain. *)
+let[@inline never] compile_independent_shared_captures w =
+  let ready = Atomic.make 0 in
+  let domains = 4 and programs = 8 in
+  let workers =
+    Array.init domains (fun worker ->
+        Domain.spawn (fun () ->
+            let first = 4 * worker in
+            let capture = Nx.slice [ Nx.R (first, first + 8) ] w in
+            let input = vec32 (Array.make 8 2.) in
+            ignore (Atomic.fetch_and_add ready 1);
+            while Atomic.get ready <> domains do Domain.cpu_relax () done;
+            Array.init programs (fun i ->
+                let scale = float_of_int (i + 1) in
+                let compiled =
+                  Rune.jit' ~devices:[ cpu1 ] (fun x ->
+                      Nx.add (Nx.mul_s x scale) capture)
+                in
+                check_arr ~msg:"each graph reads its own captured slice"
+                  (Array.init 8 (fun j -> float_of_int (first + j) +. (2. *. scale)))
+                  (compiled input);
+                compiled)))
+  in
+  let owners = Array.map Domain.join workers in
+  equal ~msg:"all independent program bindings are counted" int
+    (domains * programs) (Atomic.get (cell_of w).bound);
+  ignore (Sys.opaque_identity owners);
+  owners.(0).(0)
+
+let test_independent_shared_captures () =
+  let w = place (vec32 (Array.init 32 float_of_int)) in
+  let surviving = compile_independent_shared_captures w in
+  Domain.join (Domain.spawn full_major);
+  equal ~msg:"collected bindings retire while the surviving graph stays bound"
+    int 1 (Atomic.get (cell_of w).bound);
+  check_arr ~msg:"the surviving graph still reads its captured view"
+    (Array.init 8 (fun i -> float_of_int i +. 3.))
+    (surviving (vec32 (Array.make 8 3.)));
+  check_arr ~msg:"sharing captures leaves the original storage readable"
+    (Array.init 32 float_of_int) w;
+  ignore (Sys.opaque_identity (surviving, w))
 
 let test_bound_value_survives_a_read () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
@@ -4665,6 +4708,8 @@ let tests =
           test_bound_capture_moves_no_bytes;
         test "two compiled functions share one buffer"
           test_bound_capture_is_shared;
+        test "independent graphs share capture ownership across domains"
+          test_independent_shared_captures;
         test "a bound value keeps its buffer across a read"
           test_bound_value_survives_a_read;
         test "a read leaves an unbound value placed"

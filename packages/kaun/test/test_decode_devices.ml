@@ -215,13 +215,13 @@ let written_bytes len =
       (Nx.ones Nx.float32 [| 1; kv_dim / head_dim; len; head_dim |])
   in
   let kv = write index k k (cache ~place:(Nx.place kv_heads) ~slots ()) in
-  let before = !Tolk.Helpers.Global_counters.global_mem in
+  let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
   ignore (write index k k kv);
-  !Tolk.Helpers.Global_counters.global_mem - before
+  Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before
 
 let test_writes_scale_with_tokens () =
   let one = written_bytes 1 and many = written_bytes 64 in
-  let ratio = float_of_int many /. float_of_int one in
+  let ratio = Z.to_float many /. Z.to_float one in
   is_true
     ~msg:
       (Printf.sprintf "64 tokens write 64 times one token's bytes (%.2f)" ratio)

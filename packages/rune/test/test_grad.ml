@@ -465,8 +465,78 @@ let test_set_grad_both_operands () =
   check_arr ~msg:"dt through a run-time start" [| 1.0; 2.0; 0.0; 0.0 |]
     (Rune.grad' by_t_at t)
 
+let test_no_grad_is_domain_local () =
+  let square x = Nx.mul x x in
+  let derivatives () =
+    let x = Nx.scalar f32 3. in
+    let reverse = Rune.grad' square x in
+    let _, forward = Rune.jvp' square x (Nx.scalar f32 1.) in
+    reverse, forward
+  in
+  (* Joining inside the scope guarantees both worker transformations run while
+     the parent has tracing disabled. No timing or scheduler assumption is used. *)
+  let reverse, forward =
+    Rune.no_grad (fun () -> Domain.join (Domain.spawn derivatives))
+  in
+  check_arr ~msg:"no_grad in another domain leaves reverse-mode tracing enabled"
+    [|6.|] reverse;
+  check_arr ~msg:"no_grad in another domain leaves forward-mode tracing enabled"
+    [|6.|] forward;
+  let reverse, forward = Rune.no_grad derivatives in
+  check_arr ~msg:"the caller's reverse-mode scope remains disabled" [|0.|] reverse;
+  check_arr ~msg:"the caller's forward-mode scope remains disabled" [|0.|] forward;
+  let reverse, forward = derivatives () in
+  check_arr ~msg:"reverse-mode tracing is restored after the scope" [|6.|] reverse;
+  check_arr ~msg:"forward-mode tracing is restored after the scope" [|6.|] forward;
+  let nested x = Nx.add (square x) (Rune.no_grad (fun () -> square x)) in
+  let x = Nx.scalar f32 3. in
+  check_arr ~msg:"an inner no_grad scope stops only its own reverse-mode path"
+    [|6.|] (Rune.grad' nested x);
+  let _, tangent = Rune.jvp' nested x (Nx.scalar f32 1.) in
+  check_arr ~msg:"an inner no_grad scope stops only its own forward-mode path"
+    [|6.|] tangent
+
+let test_no_grad_is_thread_local () =
+  let result = ref None in
+  Rune.no_grad (fun () ->
+      let worker =
+        Thread.create
+          (fun () ->
+            result := Some (try
+                let x = Nx.scalar f32 3. in
+                let square x = Nx.mul x x in
+                let reverse = Rune.grad' square x in
+                let _, forward = Rune.jvp' square x (Nx.scalar f32 1.) in
+                Ok (reverse, forward)
+              with exn -> Error (exn, Printexc.get_raw_backtrace ())))
+          ()
+      in
+      Thread.join worker);
+  let reverse, forward =
+    match Option.get !result with
+    | Ok result -> result
+    | Error (exn, backtrace) -> Printexc.raise_with_backtrace exn backtrace
+  in
+  check_arr ~msg:"another systhread's no_grad leaves reverse-mode tracing enabled"
+    [|6.|] reverse;
+  check_arr ~msg:"another systhread's no_grad leaves forward-mode tracing enabled"
+    [|6.|] forward;
+  let square x = Nx.mul x x in
+  let x = Nx.scalar f32 3. in
+  let suppressed =
+    Rune.no_grad (fun () ->
+        (try Rune.no_grad (fun () -> raise Exit) with Exit -> ());
+        Rune.grad' square x)
+  in
+  check_arr ~msg:"unwinding an inner scope preserves the outer no_grad" [|0.|]
+    suppressed;
+  check_arr ~msg:"unwinding no_grad restores the calling thread" [|6.|]
+    (Rune.grad' square x)
+
 let tests =
   [
+    test "no_grad scopes are independent across domains" test_no_grad_is_domain_local;
+    test "no_grad scopes are independent across systhreads" test_no_grad_is_thread_local;
     group "grad over records"
       [
         test "aliased leaves are separate parameters"

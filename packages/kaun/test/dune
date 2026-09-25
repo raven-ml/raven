@@ -44,4 +44,4 @@
  (name test_decode_devices)
  (modules test_decode_devices)
  (package kaun)
- (libraries kaun rune nx tolk windtrap))
+ (libraries kaun rune nx tolk zarith windtrap))

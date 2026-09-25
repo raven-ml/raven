@@ -875,7 +875,60 @@ let program_storage_is_device_owned () =
   is_false ~msg:"program storage is owned by each device" (buffer == separate);
   equal int 4 (Atomic.get allocations)
 
+let independent_views_share_one_root () =
+  let root = filled_i32 [10; 20; 30; 40] in
+  let domains = 4 and per_domain = 128 in
+  let ready = Atomic.make 0 in
+  let workers =
+    Array.init domains (fun worker ->
+        Domain.spawn (fun () ->
+            ignore (Atomic.fetch_and_add ready 1);
+            while Atomic.get ready <> domains do Domain.cpu_relax () done;
+            Array.init per_domain (fun _ ->
+                let view =
+                  Device.Buffer.view root ~size:1 ~dtype:i32
+                    ~offset:(worker * D.itemsize i32)
+                in
+                Device.Buffer.ensure_allocated view;
+                equal (list int) [(worker + 1) * 10] (read_i32 view);
+                view)))
+  in
+  let views = Array.map Domain.join workers in
+  equal ~msg:"all independently initialized views are counted" int
+    (domains * per_domain) (Device.Buffer.allocated_views root);
+  Atomic.set ready 0;
+  let workers =
+    Array.map
+      (fun owned ->
+        Domain.spawn (fun () ->
+            ignore (Atomic.fetch_and_add ready 1);
+            while Atomic.get ready <> domains do Domain.cpu_relax () done;
+            Array.iter Device.Buffer.deallocate owned))
+      views
+  in
+  Array.iter Domain.join workers;
+  equal ~msg:"independent view retirement balances the root count" int 0
+    (Device.Buffer.allocated_views root);
+  let[@inline never] drop_views () =
+    let views =
+      Array.init per_domain (fun _ ->
+          let view = Device.Buffer.view root ~size:1 ~dtype:i32 ~offset:0 in
+          Device.Buffer.ensure_allocated view;
+          view)
+    in
+    equal int per_domain (Device.Buffer.allocated_views root);
+    ignore (Sys.opaque_identity views)
+  in
+  drop_views ();
+  Domain.join (Domain.spawn (fun () ->
+      for _ = 1 to 3 do Gc.full_major () done));
+  equal ~msg:"cross-domain collection balances the remaining view count" int 0
+    (Device.Buffer.allocated_views root);
+  equal (list int) [10; 20; 30; 40] (read_i32 root);
+  Device.Buffer.deallocate root
+
 let () = run __FILE__ [ copy_from_tests;
+  test "independent views share root ownership across domains" independent_views_share_one_root;
   test "program storage belongs to the device across links" program_storage_is_device_owned;
   test "device bootstrap registration rolls back failed initialization" device_initialization_registration;
   test "concurrent device lookup runs one opener" concurrent_device_opening;

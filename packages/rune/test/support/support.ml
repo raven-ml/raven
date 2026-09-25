@@ -30,7 +30,7 @@ let cell_of (type a b) (x : (a, b) Nx.t) =
    live. *)
 let bound_by n x =
   let c = cell_of x in
-  c.bound = n && match c.state with Live _ -> true | Consumed _ -> false
+  Atomic.get c.bound = n && match c.state with Live _ -> true | Consumed _ -> false
 
 let[@inline never] raise_exit () = raise Exit
 

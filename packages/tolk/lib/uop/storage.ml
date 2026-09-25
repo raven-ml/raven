@@ -39,7 +39,7 @@ type t = {
   mutable mapping_error : (exn * Printexc.raw_backtrace) option;
   base : t option;
   offset : int;
-  mutable allocated_views : int;
+  allocated_views : int Atomic.t;
 }
 
 and 'buf mapping = { map : t -> 'buf; unmap : 'buf -> unit }
@@ -174,7 +174,7 @@ let is_allocated buf =
       match buf.base with
       | None -> true
       | Some root -> buf.base_storage == root.storage
-let allocated_views buf = (base buf).allocated_views
+let allocated_views buf = Atomic.get (base buf).allocated_views
 
 let counts_as_used buf =
   not (String.starts_with ~prefix:"DISK" buf.device)
@@ -204,7 +204,7 @@ let rec allocate buf =
             buf.storage <- storage;
             buf.base_storage <- root.storage;
             if first_allocation then
-              root.allocated_views <- root.allocated_views + 1
+              ignore (Atomic.fetch_and_add root.allocated_views 1)
         | Unallocated | Empty -> assert false)
 
 and ensure_allocated buf = if not (is_allocated buf) then allocate buf
@@ -232,7 +232,7 @@ let deallocate buf =
     | Some root, Allocated _ ->
         buf.storage <- Unallocated;
         buf.base_storage <- Unallocated;
-        root.allocated_views <- root.allocated_views - 1)
+        ignore (Atomic.fetch_and_add root.allocated_views (-1)))
 
 let finalize buf =
   let state = Domain.DLS.get operation in
@@ -252,7 +252,7 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
     id = fresh_id (); device; size; dtype; spec; allocator;
     storage = Unallocated; base_storage = Unallocated;
     mappings = []; mapping_error = None; base = None; offset = 0;
-    allocated_views = 0;
+    allocated_views = Atomic.make 0;
   } in
   Gc.finalise finalize buf;
   buf
@@ -309,7 +309,7 @@ let view buf ~size ~dtype ~offset =
     id = fresh_id (); device = root.device; size; dtype; spec = root.spec;
     allocator = root.allocator; storage = Unallocated; base_storage = Unallocated;
     mappings = []; mapping_error = None; base = Some root;
-    offset = buf.offset + offset; allocated_views = 0;
+    offset = buf.offset + offset; allocated_views = Atomic.make 0;
   } in
   Gc.finalise finalize v;
   v

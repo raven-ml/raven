@@ -90,11 +90,12 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Establish ownership of shared Rune storage, capture counts and mutable
-  compiled-instance caches across callers. Cover finalizers registered on
-  another domain and systhreads sharing a domain: operation scopes currently
-  prevent only same-domain GC re-entry and do not serialize device callers.
-  Run the concurrent runtime and cache coverage under TSan.
+  Establish ownership of mutable compiled instances and destructive donation
+  of shared Rune storage across callers. Cover overlapping fibers and device
+  finalizers registered on another domain or systhreads sharing a domain:
+  operation scopes currently prevent only same-domain GC re-entry and do not
+  serialize device callers. Complete TSan acceptance, including the runtime
+  weak-reference/GC warnings reproduced independently of Raven.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
   correctness fixes; measure accelerator candidates on supported hardware.

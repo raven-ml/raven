@@ -276,7 +276,7 @@ and cell = {
   placement : placement; (* where the storage lives, whichever views it *)
   length : int; (* elements of the storage, per shard *)
   mutable state : state;
-  mutable bound : int; (* reachable programs that bind the storage *)
+  bound : int Atomic.t; (* reachable program bindings to the storage *)
 }
 
 and state = Live of storage | Consumed of consumption
@@ -504,7 +504,7 @@ end
    engine owns it. The engine attaches the finaliser that releases the
    storage. *)
 let cell ~placement ~length storage =
-  { placement; length; state = Live storage; bound = 0 }
+  { placement; length; state = Live storage; bound = Atomic.make 0 }
 
 let placed placement dtype view cell =
   if Placement.is_host placement then

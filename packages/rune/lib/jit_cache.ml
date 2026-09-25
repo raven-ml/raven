@@ -52,7 +52,8 @@ let log event key =
 (* Scheduling and code generation live in this binary: any change to it can
    change what a key would compile to, so the executable's digest versions every
    entry. Computed once per process. *)
-let exe_digest = lazy (Digest.to_hex (Digest.file Sys.executable_name))
+let exe_digest =
+  Lazy.Mutexed.from_fun (fun () -> Digest.to_hex (Digest.file Sys.executable_name))
 
 (* One entry per (key). [e_slots] validates the fresh CALL's arguments against
    the saving trace's before the graph is imported; [e_linear] is [Uop.export]
@@ -133,7 +134,7 @@ let key ~device ~beam call =
                 (String.concat "\x00"
                    [
                      string_of_int format_version;
-                     Lazy.force exe_digest;
+                     Lazy.Mutexed.force exe_digest;
                      Tolk.Device.name device;
                      compiler_id;
                      knobs;

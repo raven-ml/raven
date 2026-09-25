@@ -47,6 +47,7 @@
   tolk
   zarith
   unix
+  threads
   windtrap
   rune_test_support))
 

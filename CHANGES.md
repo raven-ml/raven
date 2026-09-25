@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Independent `jit` callers can share read-only captures without losing their
+  ownership counts or racing first-time cache initialization. `no_grad` and
+  transformation scopes no longer leak across domains or system threads.
+
 - Keep placed storage alive until `Nx.to_buffer` finishes reading it.
   Collected values now hand ownership to one deferred-release path; failed
   allocator cleanup retains its backing without losing other queued releases.
@@ -666,6 +670,9 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- Concurrent scheduling now protects its shared cache, and independent buffer
+  views retain accurate ownership counts through allocation and retirement.
 
 - `Uop.shape` reports reserved maximum extents for symbolic `STAGE` nodes.
   Lowering preserves active dimensions such as `[n; 3]` instead of shrinking

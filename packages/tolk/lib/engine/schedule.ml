@@ -540,6 +540,7 @@ let memory_plan_rewrite linear held_bufs =
 (* Schedule cache *)
 
 let schedule_cache : (string, U.t) Hashtbl.t = Hashtbl.create 64
+let schedule_cache_mutex = Mutex.create ()
 
 let config () =
   let context =
@@ -569,14 +570,16 @@ let lower_sink_to_linear ~get_kernel_graph call : U.t option =
       let cache_hit = ref false in
       let linear =
         if scache_enabled <> 0 then
-          match Hashtbl.find_opt schedule_cache cache_key with
+          match Mutex.protect schedule_cache_mutex (fun () ->
+              Hashtbl.find_opt schedule_cache cache_key) with
           | Some cached ->
               cache_hit := true;
               cached
           | None ->
               let kernel_graph = get_kernel_graph sink in
               let r = create_schedule kernel_graph in
-              Hashtbl.replace schedule_cache cache_key r;
+              Mutex.protect schedule_cache_mutex (fun () ->
+                  Hashtbl.replace schedule_cache cache_key r);
               r
         else
           create_schedule (get_kernel_graph sink)

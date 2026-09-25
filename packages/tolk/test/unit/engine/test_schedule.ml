@@ -384,11 +384,30 @@ let a_written_view_raises () =
       ignore
         (copy_call_sum ~dst:(columns alloc) ~src:(T.uop x) ~result:(columns alloc)))
 
+let schedule_cache_allows_reentrant_lowering () =
+  let request name =
+    let body = U.sink [U.variable ~name ~min_val:0 ~max_val:1 ()] in
+    U.call ~body ~args:[] ~info:{(call_info name) with precompile = true} in
+  let inner = request "cache_reentrant_inner" in
+  let outer = request "cache_reentrant_outer" in
+  let calls = ref 0 in
+  let get_kernel_graph sink =
+    ignore sink;
+    incr calls;
+    is_true (Option.is_some (Schedule.lower_sink_to_linear
+        ~get_kernel_graph:(fun sink -> ignore sink; U.sink []) inner));
+    U.sink [] in
+  is_true (Option.is_some (Schedule.lower_sink_to_linear ~get_kernel_graph outer));
+  equal int 1 !calls;
+  is_true (Option.is_some (Schedule.lower_sink_to_linear ~get_kernel_graph outer));
+  equal ~msg:"the published schedule is reused" int 1 !calls
+
 let () =
   run "Engine_schedule"
     [
       group "create_schedule"
         [
+          test "cache callbacks can lower another schedule" schedule_cache_allows_reentrant_lowering;
           test "partitions AFTER dependencies like tinygrad"
             after_partition_orders_nested_after_dependencies;
           test "orders a reader before a superseding writer (WAR)"

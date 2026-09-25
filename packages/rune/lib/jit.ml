@@ -134,7 +134,7 @@ let env_int name default =
   | Some s -> ( match int_of_string_opt s with Some v -> v | None -> default)
   | None -> default
 
-let jit_debug = lazy (env_int "RUNE_JIT_DEBUG" 0)
+let jit_debug = Lazy.Mutexed.from_fun (fun () -> env_int "RUNE_JIT_DEBUG" 0)
 
 (* Transfer accounting. Cumulative byte counters for host-to-device and
    device-to-host copies made by compiled traces; the zero-copy CPU path moves
@@ -2544,7 +2544,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         let quant_matmul ?ids x ~codes ~scales =
           let part name t =
             let tt = go t in
-            if Lazy.force jit_debug >= 1 && not (is_storage tt) then
+            if Lazy.Mutexed.force jit_debug >= 1 && not (is_storage tt) then
               Printf.eprintf
                 "rune.jit: quantised product: %s is a view, copied on every call\n\
                  %!"
@@ -4024,15 +4024,15 @@ let devices name =
    first backend that opens, in the order of [backends], the host last. *)
 let default_device =
   let chosen =
-    lazy
-      (match Tolk.Helpers.Context_var.get Tolk.Helpers.dev with
+    Lazy.Mutexed.from_fun (fun () ->
+      match Tolk.Helpers.Context_var.get Tolk.Helpers.dev with
       | target :: _ when target.Tolk_uop.Target.device <> "" ->
           device target.device
       | _ ->
           Tolk.Helpers.select_first_inited ~message:"Rune: no usable device"
             (List.map (fun b () -> device b) backends))
   in
-  fun () -> Lazy.force chosen
+  fun () -> Lazy.Mutexed.force chosen
 
 let create_fresh_buffer d dev dtolk n =
   let buf = Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev in
@@ -4643,7 +4643,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
             if shape_of leaf <> shape_of ph || Nx.Placement.equal place q then
               out
             else begin
-              if Lazy.force jit_debug >= 1 then
+              if Lazy.Mutexed.force jit_debug >= 1 then
                 Printf.eprintf "rune.jit: %s\n%!"
                   (Format.asprintf
                      "the result paired with the argument at %s is resharded \
@@ -5084,7 +5084,9 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   let reserved = Hashtbl.create (List.length input_nodes + List.length constant_nodes) in
   List.iter (fun node -> Hashtbl.replace reserved (U.tag (mapped node)) ())
     (input_nodes @ constant_nodes);
-  List.iter (fun ((c : Nx_effect.cell), _) -> c.bound <- c.bound + 1) bound;
+  List.iter
+    (fun ((c : Nx_effect.cell), _) -> ignore (Atomic.fetch_and_add c.bound 1))
+    bound;
   let cp_captures =
     Array.of_list
       (List.map fst bound
@@ -5126,9 +5128,9 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
     (fun () ->
       List.iter
         (fun ((cell : Nx_effect.cell), store) ->
-          cell.bound <- cell.bound - 1;
+          let previous = Atomic.fetch_and_add cell.bound (-1) in
           match (cell.state, store) with
-          | Consumed _, Some s when cell.bound = 0 ->
+          | Consumed _, Some s when previous = 1 ->
               enqueue_release s
           | _ -> ())
         cells)
@@ -5244,7 +5246,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   List.iter
     (fun { l_otag; l_input; _ } ->
       match seed_entry.(l_input) with
-      | Some ((e : Nx_effect.cell), bufs) when e.bound = 0 -> (
+      | Some ((e : Nx_effect.cell), bufs) when Atomic.get e.bound = 0 -> (
           match store_of e with
           | Some s ->
               let reused = List.fold_left
@@ -5357,7 +5359,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   let release () =
     List.iter
       (fun (_, (cell : Nx_effect.cell), s) ->
-        match s with Some s when cell.bound = 0 -> release_store s | _ -> ())
+        match s with Some s when Atomic.get cell.bound = 0 -> release_store s | _ -> ())
       marked
   in
   (match
@@ -5472,10 +5474,10 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       | Some s when claimed cell ->
           s.s_bufs <- [];
           account s (-1)
-      | Some s when cell.Nx_effect.bound = 0 -> release_store s
+      | Some s when Atomic.get cell.Nx_effect.bound = 0 -> release_store s
       | _ -> ())
     marked;
-  if Lazy.force jit_debug >= 1 then begin
+  if Lazy.Mutexed.force jit_debug >= 1 then begin
     let after = Atomic.get transfer_stats in
     Printf.eprintf
       "rune.jit: replay on %s: %d bytes to device, %d bytes from device, %d \
@@ -5500,7 +5502,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
             Printf.eprintf "rune.jit: %s consumed, %s\n%!" c.cp_names.(i)
               (match s with
               | None -> "held by nx"
-              | Some _ when cell.Nx_effect.bound > 0 ->
+              | Some _ when Atomic.get cell.Nx_effect.bound > 0 ->
                   "kept for the programs that bind it"
               | Some _ -> "storage released"))
       marked
@@ -5668,7 +5670,7 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
         | None ->
             let key = key_of ds ~hash skeleton leaves shapes seeds in
             let info = leaf_info ~roles args v in
-            (if Lazy.force jit_debug >= 1 then
+            (if Lazy.Mutexed.force jit_debug >= 1 then
                match !previous with
                | Some prev ->
                    Printf.eprintf "rune.jit: retrace: %s\n%!"
