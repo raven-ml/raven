@@ -1,6 +1,6 @@
 # Layers and Models
 
-Kaun has no layer abstraction. A layer is a plain record of tensors with an `apply` function; a model is a record of layers with hand-written one-line traversals. This guide covers the built-in layers, the model-as-record pattern, and stateful layers.
+Kaun has no layer abstraction. A layer is a plain record of tensors with an `apply` function; a model is a record of layers with a hand-written `walk`, one line per field. This guide covers the built-in layers, the model-as-record pattern, and stateful layers.
 
 ## The Layer Pattern
 
@@ -9,7 +9,7 @@ Every parameterized layer module follows the same shape, with `Linear` as the re
 - a parameter record with a payload hole — `'a Linear.t` is `{ w; b }`, at tensor payloads `w : [| inputs; outputs |]` and an optional bias;
 - constructors — `Linear.init ~inputs ~outputs` for the float32 defaults, `Linear.make` for initializer, bias, and dtype control;
 - an `apply` function — `Linear.apply p x` is `x @ p.w + p.b`, treating leading axes as batch axes;
-- traversals — `map`, `map2`, `iter`, `fold`, `fold2`, `names` satisfying `Nx.Ptree.Uniform`.
+- a structure — one `walk` over the record's fields with an `Nx.Ptree.Walk` cursor, satisfying `Nx.Ptree.S`.
 
 ```ocaml
 open Kaun
@@ -49,33 +49,25 @@ Every `apply` is differentiable through rune, in both reverse and forward mode.
 
 ## Models Are Records of Layers
 
-Records nest into records, and the traversals delegate field by field, prefixing each leaf's path with the field name:
+Records nest into records. A model's `walk` visits each field with the field's own `walk`, under the field's name, so each leaf's path is the field name followed by the layer's path:
 
 ```ocaml
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
-
-  let names { l1; l2 } =
-    {
-      l1 = Linear.map (( ^ ) "l1.") (Linear.names l1);
-      l2 = Linear.map (( ^ ) "l2.") (Linear.names l2);
-    }
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; l2 }
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
+
+let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
-The `map`/`map2`/`iter` trio, instantiated by `Kaun.ptree`, is what `Rune.grad`, `Vega.adam_step`, and friends consume; `names` (with `fold`/`fold2`, one-liners of the same shape) is what `Checkpoint` needs — together the `Nx.Ptree.Uniform` contract, which `[@@deriving ptree]` derives in one line. This scales without new concepts: a transformer block is a record of five layers, a transformer is a record with a `block list` field traversed with `List.map`/`List.map2`/`List.iter`. [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) defines all of GPT-2 this way in ~150 lines.
+`mlp` is what `Rune.grad`, `Vega.adam_step`, `Checkpoint.of_value` and friends take; its leaves are at `l1.w`, `l1.b`, `l2.w` and `l2.b`, which are also their checkpoint names. This scales without new concepts: a transformer block is a record of five layers, and a transformer is a record with a `block list` field, walked with `Nx.Ptree.Walk.list`. [`examples/04-gpt2`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/04-gpt2) defines all of GPT-2 this way in ~150 lines.
 
 A CNN mixes parameterized and stateless pieces freely, since a forward pass is just function composition:
 
@@ -83,20 +75,12 @@ A CNN mixes parameterized and stateless pieces freely, since a forward pass is j
 module Cnn = struct
   type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; fc : 'a Linear.t }
 
-  let map f { c1; c2; fc } =
-    { c1 = Conv.map f c1; c2 = Conv.map f c2; fc = Linear.map f fc }
-
-  let map2 f p q =
-    {
-      c1 = Conv.map2 f p.c1 q.c1;
-      c2 = Conv.map2 f p.c2 q.c2;
-      fc = Linear.map2 f p.fc q.fc;
-    }
-
-  let iter f { c1; c2; fc } =
-    Conv.iter f c1;
-    Conv.iter f c2;
-    Linear.iter f fc
+  let walk c { c1; c2; fc } =
+    let open Nx.Ptree.Walk in
+    let c1 = field c "c1" Conv.walk c1 in
+    let c2 = field c "c2" Conv.walk c2 in
+    let fc = field c "fc" Linear.walk fc in
+    { c1; c2; fc }
 
   let apply p ~training x =
     let n = (Nx.shape x).(0) in
@@ -157,7 +141,7 @@ let () =
 
 `?mask` says which keys each query may see; `causal_mask ~seq ?valid ()` builds the causal triangle, optionally hiding padded keys. A query that sees no key, a padded one for instance, yields zero and never `nan`. `?rope` takes a `Rope.t` schedule and rotates queries and keys by position.
 
-For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Cache_index.t` says where the call's tokens sit: each token's position and the slot holding each position of each sequence. One contiguous run per sequence (`Cache_index.rows`), paged allocation and a prefix shared by two sequences are all values of a cache index, and the layer is the same for each. Over `Cache_index.whole`, which reads and keeps nothing, the same function is plain causal attention, so a model has one forward pass for training and decoding. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; with `Rune.jit_step`, which consumes it, the cache is written in its own storage. A prompt fed whole, in chunks or token by token gives the same outputs.
+For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Cache_index.t` says where the call's tokens sit: each token's position and the slot holding each position of each sequence. One contiguous run per sequence (`Cache_index.rows`), paged allocation and a prefix shared by two sequences are all values of a cache index, and the layer is the same for each. Over `Cache_index.whole`, which reads and keeps nothing, the same function is plain causal attention, so a model has one forward pass for training and decoding. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; compiled with `Rune.jit` on a signature that consumes the caches, `Nx.Ptree.(tensor @-> Cache_index.ptree @-> consumes caches @@ returns (pair tensor caches))`, each cache is written in its own storage. A prompt fed whole, in chunks or token by token gives the same outputs.
 
 ## Stateful Layers: Batch_norm
 
@@ -169,20 +153,12 @@ For autoregressive decoding, `Attention.cached` runs causal self-attention of a 
 module Net = struct
   type 'a t = { l1 : 'a Linear.t; bn : 'a Batch_norm.t; l2 : 'a Linear.t }
 
-  let map f { l1; bn; l2 } =
-    { l1 = Linear.map f l1; bn = Batch_norm.map f bn; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    {
-      l1 = Linear.map2 f p.l1 q.l1;
-      bn = Batch_norm.map2 f p.bn q.bn;
-      l2 = Linear.map2 f p.l2 q.l2;
-    }
-
-  let iter f { l1; bn; l2 } =
-    Linear.iter f l1;
-    Batch_norm.iter f bn;
-    Linear.iter f l2
+  let walk c { l1; bn; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let bn = field c "bn" Batch_norm.walk bn in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; bn; l2 }
 
   let forward p stats ~training x =
     let h = Linear.apply p.l1 x in
@@ -190,7 +166,7 @@ module Net = struct
     (Linear.apply p.l2 (Fn.relu h), stats)
 end
 
-let net = Kaun.ptree (module Net)
+let net = Nx.Ptree.instantiate (module Net)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
@@ -233,9 +209,9 @@ let () =
   Format.printf "eval predictions: %a@." Nx.pp_shape (Nx.shape pred)
 ```
 
-The statistics update inside `apply` is detached, so no gradient flows through `stats'` — that is what makes the auxiliary channel safe. Statistics have their own traversals and `names` (`Batch_norm.Stats` satisfies `Nx.Ptree.Uniform` itself), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained.md).
+The statistics update inside `apply` is detached, so no gradient flows through `stats'` — that is what makes the auxiliary channel safe. Statistics have their own `walk` (`Batch_norm.Stats` satisfies `Nx.Ptree.S` itself), so they checkpoint like parameters under their own prefix; see [Checkpoints](04-checkpoints-and-pretrained.md).
 
-`Batch_norm.init` builds float32 parameters (cast with `map (Nx.cast dt)` for other precisions); `apply` is generic over float dtypes, like the other layers' `make`, computing half- and quarter-precision statistics in a float32 island.
+`Batch_norm.init` builds float32 parameters (cast with `Nx.Ptree.cast (module Batch_norm) dt` for other precisions); `apply` is generic over float dtypes, like the other layers' `make`, computing half- and quarter-precision statistics in a float32 island.
 
 ## Initializers
 
@@ -257,4 +233,4 @@ The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.var
 ## Next Steps
 
 - [Training](03-training.md) — the composable training step, data, and metrics
-- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — `names`, safetensors, the Hub
+- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md) — names, safetensors, the Hub

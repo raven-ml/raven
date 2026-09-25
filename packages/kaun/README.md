@@ -8,7 +8,7 @@ checkpoints — as plain records and pure functions. There is no layer
 object and no trainer: a model is a typed record you write, and a
 training step is a few lines you own end to end.
 
-The glue is `Nx.Ptree`, the traversal interface from [nx](../nx/):
+The glue is `Nx.Ptree`, the structures of [nx](../nx/):
 [rune](../rune/) (transformations) and [vega](../vega/)
 (optimizers) each sit on nx independently, kaun's library depends
 only on nx and rune, and the three compose in your code through
@@ -16,11 +16,11 @@ the one record type you define.
 
 ## The Core Idea
 
-A model is a record of layer records with a payload hole, made
-traversable by one-line traversals (hand-written or
-`[@@deriving ptree]`); `Kaun.ptree` instantiates it at its tensor
-type. The same traversals serve differentiation (`Rune`),
-optimization (`Vega`), and checkpointing (`Checkpoint`):
+A model is a record of layer records with a payload hole and one
+function, `walk`, that visits each field with the field's own `walk`;
+`Nx.Ptree.instantiate` makes it a structure at its tensor type. The
+same structure serves differentiation (`Rune`), optimization (`Vega`),
+and checkpointing (`Checkpoint`):
 
 ```ocaml
 open Kaun
@@ -28,20 +28,16 @@ open Kaun
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; l2 }
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let mlp = Kaun.ptree (module Mlp)
+let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
 A training step composes `value_and_grad` with one optimizer update —
@@ -52,7 +48,7 @@ let step (params, ostate) (x, y) =
   let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
   let l, grads = Rune.value_and_grad mlp loss params in
   let params, ostate =
-    Vega.adamw_step mlp ~lr:1e-3 ostate ~params ~grads
+    Vega.adamw_step mlp ~lr:(Vega.lr 1e-3) ostate ~params ~grads
   in
   ((params, ostate), Nx.item [] l)
 ```
@@ -190,18 +186,19 @@ weights, and generates text through a key-value cache.
 ## Scope and Limitations
 
 - Eager execution runs on CPU through [Nx](../nx/). For GPU, compile a
-  step with [`Rune.jit`](../rune/) and pass `~device:"METAL"` or
-  `~device:"CUDA"`; the `04-gpt2` example does this behind a `--device`
-  flag. `jit` compiles `Rune.scan` as a loop, so a recurrence's compile
-  time is independent of its sequence length.
+  step with [`Rune.jit`](../rune/) and pass
+  `~devices:[ Rune.device "METAL" ]` or `~devices:[ Rune.device "CUDA" ]`;
+  the `04-gpt2` example does this behind a `--jit` flag. `jit` compiles
+  `Rune.scan` as a loop, so a recurrence's compile time is independent of its
+  sequence length.
 - Layer coverage is deliberately small: no recurrent layers; `Attention`
   covers grouped queries, rotary positions and cached decoding, and no
   sliding windows or cross-attention layer (write those from the
   `scaled_dot_product_attention` core). `Conv` is
   im2col-based and not tuned for large inputs.
 - `Batch_norm.init` builds float32 parameters (cast with
-  `map (Nx.cast dt)` for other precisions); `apply` is generic over
-  float dtypes, like the other layers.
+  `Nx.Ptree.cast (module Batch_norm) dt` for other precisions); `apply` is
+  generic over float dtypes, like the other layers.
 - `Metric.auc_roc` and macro-averaged scores do not decompose over
   batches — compute them on the full evaluation set (see the `Metric`
   docs).

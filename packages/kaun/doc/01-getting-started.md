@@ -30,7 +30,7 @@ Note the layering: kaun's library depends only on nx and rune. Optimizers come f
 
 ## A Model Is a Record
 
-A kaun layer is a plain record with a payload hole and an `apply` function; `'a Linear.t` holds a weight matrix and an optional bias. A model is a record of layers, made traversable by three one-liners that delegate to each field (hand-written here; `[@@deriving ptree]` derives them). `Kaun.ptree` instantiates the model at its tensor type into the `Nx.Ptree.S` walker shared by the whole Raven ecosystem:
+A kaun layer is a plain record with a payload hole and an `apply` function; `'a Linear.t` holds a weight matrix and an optional bias. A model is a record of layers with one function, `walk`, that visits each field with the field's own `walk` and names it. `Nx.Ptree.instantiate` turns the module into a structure at its tensor type, which every Raven transformation, optimizer and checkpoint takes:
 
 ```ocaml
 open Kaun
@@ -38,23 +38,19 @@ open Kaun
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; l2 }
 
   let apply p x = Linear.apply p.l2 (Nx.tanh (Linear.apply p.l1 x))
 end
 
-let mlp = Kaun.ptree (module Mlp)
+let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
-`apply` is just a function — no base class, no forward method, no parameter registry. The traversals are what let `Rune` differentiate your parameter values, `Vega` step them, and `Checkpoint` save them.
+`apply` is just a function — no base class, no forward method, no parameter registry. `walk` is what lets `Rune` differentiate your parameter values, `Vega` step them, and `Checkpoint` save them under the names it gives (`l1.w`, `l1.b`, `l2.w`, `l2.b`). [Writing structures](../../nx/doc/06-structures.md) covers `walk` in full.
 
 ## Initialize Parameters
 
@@ -112,7 +108,7 @@ This is the complete program — it is [`examples/01-xor`](https://github.com/ra
 
 - **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `Nx.float32_t Mlp.t` values you can print, inspect, checkpoint, or swap.
 - **The step is yours.** Want gradient clipping? Insert `Vega.clip_by_global_norm mlp ~max_norm:1.0 grads` before the update. A learning-rate schedule? Evaluate one at your step counter. Nothing is hidden behind a trainer.
-- **`Kaun.ptree (module Mlp)` is the only plumbing.** Bind the walker once; it drives differentiation and optimization, while `Checkpoint` takes `(module Mlp)` itself, since leaf names come from the structure.
+- **`Nx.Ptree.instantiate (module Mlp)` is the only plumbing.** Bind the structure once; it drives differentiation, optimization and checkpoints.
 
 ## Scaling Up: Minibatches
 

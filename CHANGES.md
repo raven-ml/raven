@@ -9,6 +9,32 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- **Breaking:** a structure of tensors is a module with `type 'a t` and one
+  `walk` over an `Nx.Ptree.Walk` cursor (RFC 0006), and transformations,
+  optimizers and checkpoints take it as an `'s Nx.Ptree.t` value. Each deleted
+  value and its replacement:
+  - `Nx.Ptree.S`'s `map`, `map2` and `iter`, `Uniform`, `Traverse`, `Make`,
+    `leaf` and `Tree` are one `walk` with `Nx.Ptree.instantiate (module M)`,
+    `nest`, `pair`, `list`, `option`, `iso`, `Nx.Ptree.map`, `map2`, `fold`,
+    `cast` and `Payload`. The type `Nx.Ptree.tensor` and `Nx_io.P` are
+    `Nx.packed`, and `Nx.Ptree.unpack` is `Nx.unpack`.
+  - `Rune.grad (module P) f` is `Rune.grad p f`, and likewise for every
+    transformation; `vjp2`, `jvp2` and `vmap2` are `vjp p q`, `jvp p q` and
+    `vmap` on a signature; `?in_axes` and `?out_axis` are a capture and
+    `Nx.moveaxis`; `Rune.Ptree` is `Nx.Ptree`.
+  - `jit (module P) f` is `jit Nx.Ptree.(p @-> returns tensor) f`,
+    `jit2 p q f` is `jit Nx.Ptree.(p @-> returns q) f`, `jit_step r s f` is
+    `jit Nx.Ptree.(r @-> consumes s @@ returns s) f`, `?donate` is
+    `consumes`, `pmap2` is `pmap` on a signature, and `?device` is
+    `?devices`.
+  - `Vega.Sgd_state`, `Adam_state` and `Lbfgs_state` applied to a module are
+    `Vega.sgd_ptree p`, `adam_ptree p` and `lbfgs_ptree p`.
+  - `Kaun.ptree (module M)` is `Nx.Ptree.instantiate (module M)`,
+    `Attention.Cache.List` is
+    `Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))`,
+    `Checkpoint.of_params (module P)` and `of_packed` are `of_value p`,
+    `to_params` and `to_packed` are `to_value p`, and `Vega.Loss_scale`'s
+    traversals are `Vega.Loss_scale.ptree`.
 - `fehu`, `sowilo`, `norn`, and `nx-oxcaml` move to `contrib/`. Each is its own
   dune project with its own version, builds against `main`, and sits outside
   the 1.0 API commitment. Changes to `fehu`, `sowilo`, and `norn` are now
@@ -268,8 +294,6 @@ All notable changes to this project will be documented in this file.
   on Metal goes from 60 ms to 18 ms.
 - A compiled call on a GPU returns without waiting for its kernels; reads wait.
   Twenty-six chained small calls on Metal take 2.9 ms instead of 10.8 ms.
-- `?donate` leaves `jit`, `jit2` and `jit'`: a compiled function consumes the
-  arguments its signature marks with `Nx.Ptree.consumes`.
 - Tracing a function under `Rune.jit` no longer allocates a buffer for every
   traced value. Each placeholder was an uninitialised tensor of the result's
   full size; the pages were never touched, but OCaml counted the bytes and ran
@@ -296,12 +320,11 @@ All notable changes to this project will be documented in this file.
   its own device binds the value's buffer as its constant: nothing is uploaded,
   and every compiled function over the same weights shares one device copy,
   where each used to upload its own. A bound value keeps its buffer for as long
-  as it is reachable: a host read copies it out and leaves the buffer in place,
-  and a `~donate:true` call that takes it as an input does not consume it.
+  as it is reachable: a host read copies it out and leaves the buffer in place.
 - Add `Rune.to_device ?device x`, `x` with its bytes held by a device. The
   result has `x`'s type and value and is resident like an unread output of a
   compiled call: feeding it to a compiled function on that device moves no
-  bytes, `~donate:true` consumes it, and a host read brings it back. Its buffer
+  bytes, and a host read brings it back. Its buffer
   bypasses the allocator's cache. On the CPU device it is `Nx.contiguous x`,
   and inside `jit`, `grad`, `jvp` and `vmap` it is `x`.
 - Copies between host and device move 64 MiB at a time. `Rune.jit` staged each
@@ -330,19 +353,19 @@ All notable changes to this project will be documented in this file.
   forward one.
 - `Nx.set` with a run-time window start (`Nx.D`) under `Rune.jit` costs the
   window instead of the destination: it compiles to a store at the window's
-  flat positions, in place on a donated tensor. A one-row write into a
+  flat positions, in place on a consumed tensor. A one-row write into a
   1048576x64 cache takes 0.26 ms on Metal, the same as into 4096 rows, where
   it took 3.4 ms.
 - Fix `Rune.grad` through `Nx.scatter` in `` `Set `` mode with repeated indices:
   every update aimed at a position received the cotangent, where only the
   last one reaches the output. Shadowed updates now get zero.
-- `Rune.jit ~donate:true` writes a scatter over the donated destination's
-  storage, so `Nx.scatter` into a donated tensor costs its updates alone: a
-  64-row write into a 131072x8x64 pool takes 0.35 ms on Metal, the same as
-  into 4096 rows. Compiled with donation, the program never copies a
-  destination that is an input: the write lands in the output's buffer, which
-  takes the donated storage or, on a call that cannot donate, is given the
-  input's value by one device copy. `reused_bytes` counts the pool.
+- A compiled call writes a scatter over the storage of a consumed destination,
+  so `Nx.scatter` into a consumed tensor costs its updates alone: a 64-row
+  write into a 131072x8x64 pool takes 0.35 ms on Metal, the same as into 4096
+  rows. The program never copies a destination that is an input: the write
+  lands in the output's buffer, which takes the consumed storage or, on a call
+  that cannot lend it, is given the input's value by one device copy.
+  `reused_bytes` counts the pool.
 - `Nx.scatter` under `Rune.jit` costs the number of updates plus one copy of
   the destination, instead of destination size times update count. The
   gradient of `Nx.take` and `Nx.take_along_axis` is such a scatter: an
@@ -364,12 +387,12 @@ All notable changes to this project will be documented in this file.
   could hand out the same slot, so a resident input fed to a later call had
   its bytes overwritten by that call's output. Rune now draws every slot from
   tolk's process-wide counter.
-- `Rune.jit ~donate:true` writes an output over the donated input it derives
-  from when every path between them stays at the same element and no later
-  kernel reads the input, so a jitted training step or decode step holds one
+- A compiled call writes an output over the consumed input it derives from
+  when every path between them stays at the same element and no later kernel
+  reads the input, so a jitted training step or decode step holds one
   generation of state on the device instead of two. `jit_stats` counts the
-  bytes reused in `reused_bytes`, and `RUNE_JIT_DEBUG=1` reports per donated
-  leaf whether its storage was reused or copied.
+  bytes reused in `reused_bytes`, and `RUNE_JIT_DEBUG=1` reports per consumed
+  leaf whether its storage was reused or released.
 - `Nx.set` with a `D` window follows every transform: `grad` differentiates
   both operands, a mapped start under `vmap` writes each example at its own
   clamped position, and a window on `pmap`'s mapped axis is written shard by
@@ -377,7 +400,7 @@ All notable changes to this project will be documented in this file.
 - **Breaking**: with tensors as values (RFC 0001) there is no in-place
   update to replay. `Rune.jit` no longer writes an assigned input leaf back
   to the host on every call, and `grad`, `jvp` and `vmap` have nothing to
-  refuse; carry state by returning it, as the `jit2` example shows.
+  refuse; carry state by returning it, as `Rune.jit`'s example shows.
 - `jit_stats` retires the outputs that were dropped unread and collected
   before it reports, so `resident_bytes` counts only reachable handles. Their
   buffers used to wait for the next compiled call, which made the counter
@@ -431,7 +454,7 @@ commit, command line, and system info are captured automatically. The
 `munin.sys` sub-library adds opt-in CPU and memory monitoring in a background
 thread.
 
-- Add `x-kaun-mnist-jit`, an example tracking a `Rune.jit2`-compiled CNN
+- Add `x-kaun-mnist-jit`, an example tracking a `Rune.jit`-compiled CNN
   training run (forward, backward, and SGD update in one compiled program,
   Metal by default) with live `munin watch` monitoring.
 
@@ -2401,18 +2424,18 @@ thread.
   Cholesky pullbacks (and the triangular-solve JVP rule) form the diagonal
   terms from the identity instead.
 
-- **Breaking:** when `~device` is omitted, `Rune.jit`, `jit2`, and `jit'` now
+- **Breaking:** when `~devices` is omitted, `Rune.jit` and `jit'` now
   run on the best available backend — the `DEV` environment variable selects
   one by name, otherwise METAL, AMD, NV, CUDA are probed in order with CPU as
-  the fallback — instead of always CPU. Pass `~device:"CPU"` or set `DEV=CPU`
-  to keep the old behavior.
+  the fallback — instead of always CPU. Pass `~devices:[ Rune.device "CPU" ]`
+  or set `DEV=CPU` to keep the old behavior.
 
-- `Rune.jit` and `Rune.pmap` accept `~device:"NV"` — NVIDIA GPUs driven on
+- `Rune.jit` and `Rune.pmap` run on `Rune.device "NV"` — NVIDIA GPUs driven on
   the kernel driver's hardware queues (Linux), with kernels compiled straight
   to cubin. `"CUDA"` keeps selecting the userspace CUDA driver API backend.
 
-- `Rune.jit` and `Rune.pmap` accept `~device:"AMD"` (`"AMD:n"` for a specific
-  GPU), running compiled programs on AMD GPUs on Linux. Previously the device
+- `Rune.jit` and `Rune.pmap` run on `Rune.device "AMD"` (`"AMD:n"` for a
+  specific GPU), running compiled programs on AMD GPUs on Linux. Previously the device
   factory rejected the name with `Invalid_argument: unknown device AMD:0`
   even though the runtime had landed; an AMD device that cannot open now
   reports `device AMD:0 unavailable` with the reason, like CUDA.
@@ -2429,12 +2452,12 @@ thread.
   are linear, so each rule is an exact transpose — and `vmap` batches all four
   FFT transforms (`fft`, `ifft`, `rfft`, `irfft`), so spectral losses built on
   real FFTs train end to end.
-- `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` take `?beam_parallel`: the
+- `jit`, `jit'` and `pmap` take `?beam_parallel`: the
   number of domains compiling a beam-search round's candidates, scoping the
   `BEAM_PARALLEL` setting to one compiled function. It only changes compile
   time, never the compiled code.
 
-- `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` take `?beam`: beam-search
+- `jit`, `jit'` and `pmap` take `?beam`: beam-search
   autotuning of the compiled function's kernels, equivalent to compiling under
   `BEAM=n` but scoped to that one function. The width is part of the
   persistent compile-cache key, so tuned and untuned compilations of the same
@@ -2471,7 +2494,7 @@ thread.
   implicit float64 specialization. Forward-mode Jacobians keep the output
   dtype, reverse-mode Jacobians keep the input dtype, and both evaluate the
   differentiated function only once.
-- `pmap` now decorrelates per-device randomness: under `Rune.pmap`/`pmap2`,
+- `pmap` now decorrelates per-device randomness: under `Rune.pmap`,
   `Nx.Rng.fold_in_axis key` folds each device's own index into the key, so a
   replicated key yields an independent draw per device (device `i` draws
   `Nx.Rng.fold_in key i`). Data-parallel dropout masks now differ across
@@ -2501,20 +2524,13 @@ thread.
 - `pmap` now differentiates through `~keepdims:true` reductions
   (`max`/`sum`/`mean`), unblocking softmax, layer norm, attention, and the
   stock losses in data-parallel training.
-- `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` gain `?donate` (default
-  `false`): the call consumes device-resident input handles, releasing
-  their buffers to the allocator once it completes, so a state-to-state
-  loop holds ~2 generations of device memory instead of one per call
-  awaiting GC (9x lower peak on a 512 MB synthetic state loop). Reading a
-  donated handle raises `Invalid_argument`; host tensors and handles
-  already read are unaffected.
-- Add `pmap` and `pmap2`: compile a function to run in parallel across a
-  device tuple. `in_axes` shards or replicates each input leaf; the function
+- Add `pmap`: compile a function to run in parallel across a device tuple.
+  `in_axes` shards or replicates each argument; the function
   observes global shapes and reductions over a sharded axis become
   cross-device allreduces automatically, so differentiating a mean loss
   inside `pmap` yields data-parallel gradients. Outputs stay resident per
   device and feed back into matching placements with no transfer.
-- Fix `jit`/`jit2` raising `Jit_error` ("not scheduled to a buffer") when a
+- Fix `jit` raising `Jit_error` ("not scheduled to a buffer") when a
   function returned an input leaf of rank 2 or higher unchanged.
 - `jit` compiled programs now replay through device execution graphs (CUDA
   graphs): consecutive kernels batch into single graph launches, honoring
@@ -2553,16 +2569,16 @@ thread.
   still re-read each call, so in-place state carries across calls). Jitted
   functions capturing large weights no longer pay a full re-upload per call.
   CPU behavior is unchanged.
-- `jit` accepts `~device:"CUDA"`: jitted programs compile through NVRTC and
+- `jit` runs on `Rune.device "CUDA"`: jitted programs compile through NVRTC and
   run on NVIDIA GPUs.
-- `jit` takes a `?device` argument selecting where kernels compile and run:
-  `"CPU"` (the default) or `"METAL"` on macOS.
+- `jit` takes a `?devices` argument selecting where kernels compile and run:
+  the CPU device (the default) or Metal on macOS.
 - On the CPU device, jitted programs now run on the tensors' own memory:
   contiguous inputs and captured tensors are read in place and outputs are
   computed directly into the returned tensors' storage, removing the byte
   copies previously made on every call. Non-contiguous tensors and other
   devices still go through copies.
-- Add just-in-time compilation: `jit`, `jit2`, and `jit'` trace a function
+- Add just-in-time compilation: `jit` and `jit'` trace a function
   once per input signature (leaf dtypes and shapes), compile the trace into
   fused native kernels through the Tolk compiler, and replay the compiled
   program on subsequent calls. Differentiating inside a jitted function
@@ -2718,11 +2734,11 @@ thread.
   addresses nothing everywhere, and the last row is a scratch row that
   receives such writes and is never observed, so the cache write is one
   `Nx.scatter ~unique_indices:true` over the call's tokens with no pass over
-  the pool. Under `Rune.jit ~donate:true` on Metal a two-layer decode step at
-  a context of 256 takes 3.6 ms over 4096 slots and 3.8 ms over 131072, where
-  it took 3.8 ms and 24.6 ms; the GPT-2 124M shaped step of
-  `kaun/bench/decode` takes 8.4 ms and 8.7 ms at caches of 256 and 1024
-  against 9.1 ms and 10.3 ms.
+  the pool. On Metal, a two-layer decode step compiled with `Rune.jit` and
+  consuming its caches takes 3.6 ms at a context of 256 over 4096 slots and
+  3.8 ms over 131072, where it took 3.8 ms and 24.6 ms; the GPT-2 124M shaped
+  step of `kaun/bench/decode` takes 8.4 ms and 8.7 ms at caches of 256 and
+  1024 against 9.1 ms and 10.3 ms.
 - Attention is total. A query whose mask hides every key yields zero from
   `Attention.scaled_dot_product_attention`, `Attention.apply` and
   `Attention.cached`, with zero gradients, where it yielded `nan`.
@@ -2753,8 +2769,8 @@ thread.
   `Attention.cached ~head_dim ?rope p cache route x` replaces `apply_cached`
   and its single scalar position. A cache is a flat pool of slots with no
   batch axis, so `Attention.Cache.make ~slots ~kv_heads ~head_dim` replaces
-  `?batch ~num_heads ~head_dim ~len`, and `Attention.Cache.List` traverses a
-  model's per-block caches. An `Attention.Span.t` (`make`, `rows`, `advance`,
+  `?batch ~num_heads ~head_dim ~len`, and a model's per-block caches are a
+  list of them. An `Attention.Span.t` (`make`, `rows`, `advance`,
   `positions`) carries each token's position and the slot holding each
   position of each row's sequence, and `Attention.route ~slots span` resolves
   it once per call for every block. Rows at different positions share a
@@ -2813,7 +2829,7 @@ thread.
 - `Batch_norm` is now dtype-generic (`'b params`, `'b Stats.stats`) like the
   other layers; `Batch_norm.t` and `Stats.t` remain the float32 aliases.
 - The GPT-2 training example gains `--devices` for data-parallel training
-  through `Rune.pmap2` — a CPU device count (`--devices 4`) or an explicit
+  through `Rune.pmap` — a CPU device count (`--devices 4`) or an explicit
   tuple (`--devices CUDA:0,CUDA:1`). Parameters replicate, the batch shards
   on axis 0, gradients allreduce automatically; per-step losses match the
   single-device step within fp32 reduction order.
@@ -2821,10 +2837,10 @@ thread.
   one-hot matmul, cutting the per-step update from O(len*seq*head_dim) to
   O(len*head_dim).
 - **Breaking.** The attention KV cache moved into an `Attention.Cache`
-  submodule: `Attention.cache`/`map_cache`/`map2_cache`/`iter_cache` are now
-  `Attention.Cache.make`/`map`/`map2`/`iter` on `'b Attention.Cache.t`.
+  submodule: `Attention.cache` and `map_cache` are now `Attention.Cache.make`
+  and `Attention.Cache.walk` on `'b Attention.Cache.t`.
 - New GPT-2 training example (`examples/04-gpt2/train.ml`): jitted
-  forward+backward+SGD via `Rune.jit2` and `Vega.sgd_step` with the tied
+  forward+backward+SGD via `Rune.jit` and `Vega.sgd_step` with the tied
   `wte` LM head, exporting per-step metrics and final weights as
   safetensors.
 - Add key-value cache decoding to `Attention`: `cache`, `apply_cached`, and

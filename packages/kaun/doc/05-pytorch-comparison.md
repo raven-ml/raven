@@ -17,7 +17,7 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Language | Python, dynamic | OCaml, statically typed |
 | Model definition | `nn.Module` subclass with `forward` | plain record + `apply` function |
 | Parameter storage | mutable attributes, auto-registered | fields of your record |
-| Parameter traversal | `model.parameters()` (reflection) | `map`/`map2`/`iter` — one-liners you write (or `[@@deriving ptree]`) |
+| Parameter traversal | `model.parameters()` (reflection) | one `walk` you write, a line per field |
 | Forward pass | `model(x)` (stateful method) | `Model.apply params x` (pure function) |
 | Autograd | dynamic tape on tensors (`loss.backward()`) | `Rune.value_and_grad` (effect handlers) |
 | Gradients | `.grad` attributes, mutated in place | a fresh value of your record type |
@@ -28,7 +28,7 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Checkpointing | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Checkpoint` |
 | Pretrained models | `from_pretrained` per architecture | `kaun.hf` + an importer you write with `Checkpoint.to_float` |
 | RNG | global `torch.manual_seed` | scoped `Nx.Rng.with_key` |
-| Device | `model.to("cuda")` | eager on CPU; GPU via `Rune.jit ~device` |
+| Device | `model.to("cuda")` | eager on CPU; GPU via `Rune.jit ~devices` |
 
 ---
 
@@ -59,20 +59,16 @@ open Kaun
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; l2 }
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let mlp = Kaun.ptree (module Mlp)
+let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
@@ -86,7 +82,7 @@ let () =
   ignore y
 ```
 
-Where `nn.Module` registers parameters by reflection on attribute assignment, kaun asks you to write the traversal by hand (or derive it with `[@@deriving ptree]`) — mechanical one-liners per record, instantiated once by `Kaun.ptree`. That is the entire cost, and it buys full typing: `model.l1.w` is a tensor field you can read directly, gradients of a model value have the model's own record type, and there is no string-keyed parameter store to drift out of sync.
+Where `nn.Module` registers parameters by reflection on attribute assignment, kaun asks you to write the record's `walk` by hand, one line per field, instantiated once by `Nx.Ptree.instantiate`. That is the entire cost, and it buys full typing: `model.l1.w` is a tensor field you can read directly, gradients of a model value have the model's own record type, and there is no string-keyed parameter store to drift out of sync.
 
 One deliberate difference: layer *hyper*-parameters that do not change the parameter shapes are arguments of `apply`, not stored configuration — `Attention.apply ~head_dim:64 ~mask`, `Layer_norm.apply ~eps:1e-5`.
 
@@ -191,25 +187,23 @@ ckpt = torch.load(path)
 model.load_state_dict(ckpt["model"])
 ```
 
-**kaun** — `state_dict()` becomes `Checkpoint.of_params` over your model's `Nx.Ptree.Uniform` module (the same traversals; `names` supplies the leaf paths), and files are safetensors, not pickles:
+**kaun** — `state_dict()` becomes `Checkpoint.of_value` over your model's structure, which names each tensor by its path, and files are safetensors:
 
 <!-- $MDX skip -->
 ```ocaml
 Checkpoint.save path
   (Checkpoint.concat
      [
-       Checkpoint.of_params (module Mlp) ~prefix:"model" params;
-       Checkpoint.of_params (module Mlp) ~prefix:"optim.mu" ostate.mu;
-       Checkpoint.of_params (module Mlp) ~prefix:"optim.nu" ostate.nu;
-       Checkpoint.of_int "optim.step" ostate.step;
+       Checkpoint.of_value ~prefix:"model" mlp params;
+       Checkpoint.of_value ~prefix:"optim" (Vega.adam_ptree mlp) ostate;
      ]);
 
 let params =
   Checkpoint.load path
-  |> Checkpoint.to_params (module Mlp) ~prefix:"model" ~like:template
+  |> Checkpoint.to_value ~prefix:"model" mlp ~like:template
 ```
 
-`load_state_dict`'s in-place mutation becomes template-based extraction: `~like` supplies structure, names, dtypes, and shapes, and a fresh value comes back. Nothing is converted on the way: a dtype mismatch raises. The optimizer state checkpoints with the model's own module because it has the model's shape. See [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md).
+`load_state_dict`'s in-place mutation becomes template-based extraction: `~like` supplies structure, names, dtypes, and shapes, and a fresh value comes back. Nothing is converted on the way: a dtype mismatch raises. The optimizer state's structure, `Vega.adam_ptree mlp`, nests the model's, so its entries are named after the model's paths. See [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained.md).
 
 ---
 
@@ -237,10 +231,10 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 
 | PyTorch feature | Status in kaun |
 | --- | --- |
-| GPU / `model.to("cuda")` | Eager execution is CPU-only; compile a step with `Rune.jit` and pass `~device:"CUDA"` or `~device:"METAL"`. |
+| GPU / `model.to("cuda")` | Eager execution is CPU-only; compile a step with `Rune.jit` and pass `~devices:[ Rune.device "CUDA" ]` or `~devices:[ Rune.device "METAL" ]`. |
 | `torch.compile` / JIT | `Rune.jit` compiles a step, and a `Rune.scan` in it as a loop. |
 | Layer coverage | Deliberately small: no recurrent layers; `Attention` covers grouped queries, rotary embeddings (`Rope`) and cached decoding (`Attention.cached`) and nothing beyond, no sliding windows or cross-attention layer; `Conv` is im2col-based and not tuned for large inputs. |
-| Mixed precision / AMP | Manual: cast with `map (Nx.cast dt)` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |
+| Mixed precision / AMP | Manual: cast with `Nx.Ptree.cast (module M) dt` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |
 | `DataLoader` workers | No; data is in-memory tensors and a `Seq.t`. |
 | Distributed (`DDP`) | Not available. |
 
@@ -261,8 +255,8 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 | Train mode | `model.train()` | `~training:true` arguments |
 | Running stats | hidden buffers | explicit `Stats.t` + `value_and_grad_aux` |
 | Batches | `DataLoader` | `Data.batches2` |
-| Save | `torch.save(model.state_dict())` | `Checkpoint.save` + `of_params` |
-| Load | `load_state_dict` | `Checkpoint.to_params ~like` |
+| Save | `torch.save(model.state_dict())` | `Checkpoint.save` + `of_value` |
+| Load | `load_state_dict` | `Checkpoint.to_value ~like` |
 | Pretrained | `from_pretrained("gpt2")` | `Kaun_hf.load_checkpoint` + `Checkpoint.to_float` per entry |
 | Seed | `torch.manual_seed(42)` | `Nx.Rng.with_key (Nx.Rng.key 42)` |
-| Per-sample grads | `torch.func.vmap(grad(...))` | `Rune.vmap2` of `Rune.grad` |
+| Per-sample grads | `torch.func.vmap(grad(...))` | `Rune.vmap` of `Rune.grad` |

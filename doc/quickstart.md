@@ -81,7 +81,7 @@ let () =
 
 ## Step 3: Training with Kaun
 
-Kaun provides layers, losses, and initializers built on Rune. A model is a plain record with hand-written one-line traversals, instantiated by `Kaun.ptree`; the training step is `value_and_grad` plus one Vega optimizer update, and the loop is a plain for loop — no trainer, no layer type.
+Kaun provides layers, losses, and initializers built on Rune. A model is a plain record with a hand-written `walk`, one line per field, instantiated by `Nx.Ptree.instantiate`; the training step is `value_and_grad` plus one Vega optimizer update, and the loop is a plain for loop — no trainer, no layer type.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -90,20 +90,16 @@ open Kaun
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; l2 }
 
   let apply p x = Linear.apply p.l2 (Nx.tanh (Linear.apply p.l1 x))
 end
 
-let mlp = Kaun.ptree (module Mlp)
+let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
@@ -125,7 +121,7 @@ let () =
   let step (params, ostate) =
     let l, grads = Rune.value_and_grad mlp loss params in
     let params, ostate =
-      Vega.adam_step mlp ~lr:0.05 ostate ~params ~grads
+      Vega.adam_step mlp ~lr:(Vega.lr 0.05) ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in

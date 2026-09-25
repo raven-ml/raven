@@ -4,7 +4,7 @@ A checkpoint is an immutable collection of tensors keyed by distinct, non-empty 
 
 ## Named Structures
 
-`Checkpoint` consumes the structure's `Nx.Ptree.Uniform` module — the same traversals the model already has, whose `fold`/`fold2`/`names` give each tensor leaf a stable path. Leaves are named after record fields, with nested structures joined by `"."`:
+`Checkpoint` takes the model's structure, the same `Nx.Ptree.instantiate (module Mlp)` value that the transformations and optimizers take. Each tensor's name is its path, the fields that lead to it joined by `"."`:
 
 ```ocaml
 open Kaun
@@ -12,39 +12,23 @@ open Kaun
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
-
-  let fold f acc { l1; l2 } =
-    let acc = Linear.fold (fun s -> f ("l1." ^ s)) acc l1 in
-    Linear.fold (fun s -> f ("l2." ^ s)) acc l2
-
-  let fold2 f acc p q =
-    let acc = Linear.fold2 (fun s -> f ("l1." ^ s)) acc p.l1 q.l1 in
-    Linear.fold2 (fun s -> f ("l2." ^ s)) acc p.l2 q.l2
-
-  let names { l1; l2 } =
-    {
-      l1 = Linear.map (( ^ ) "l1.") (Linear.names l1);
-      l2 = Linear.map (( ^ ) "l2.") (Linear.names l2);
-    }
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; l2 }
 
   let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
+
+let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
-Each layer module ships its own traversals (`Linear.names p` is `{ w = "w"; b = Some "b" }`, with `b` absent when the layer has no bias), so a model's `fold`/`fold2`/`names` are one-liners of the same shape as its `map` — or one `[@@deriving ptree]`. Structures with mixed leaf dtypes hold packed leaves and go through `of_packed`/`to_packed` instead; for the stock dynamic tree `Rune.Ptree.t`, pass `(module Rune.Ptree.Tree)`, which names leaves by dict keys and list positions from the root.
+Each layer's `walk` names its own fields (`w`, and `b` when the layer has a bias), so `mlp`'s leaves are `l1.w`, `l1.b`, `l2.w` and `l2.b`. A list element adds its index, so a model's third block is under `blocks.2`. Leaves may have different dtypes: each entry keeps its own, and loading checks it. A tensor of a fixed type in a structure, walked with `Nx.Ptree.Walk.tensor`, is an entry like the others.
 
 ## Saving and Loading
 
-`of_params` turns a structure into named entries; `save` writes them. Reading them back takes a value of the structure, which a restart already holds: `to_params ~like` replaces its values with the file's entries of the same names. The template supplies structure, names, dtypes and shapes, and its values are discarded:
+`of_value` turns a value of a structure into named entries; `save` writes them. Reading them back takes a value of the structure, which a restart already holds: `to_value ~like` replaces its values with the file's entries of the same names. The template supplies structure, names, dtypes and shapes, and its values are discarded:
 
 ```ocaml
 let () =
@@ -59,15 +43,13 @@ let () =
 
   let path = Filename.temp_file "kaun-doc" ".safetensors" in
   Checkpoint.save path
-    (Checkpoint.of_params (module Mlp) ~prefix:"model" params);
+    (Checkpoint.of_value ~prefix:"model" mlp params);
 
   let ckpt = Checkpoint.load path in
   List.iter print_endline (Checkpoint.names ckpt);
   (* model.l1.b, model.l1.w, model.l2.b, model.l2.w *)
 
-  let restored =
-    Checkpoint.to_params (module Mlp) ~prefix:"model" ~like:(init ()) ckpt
-  in
+  let restored = Checkpoint.to_value ~prefix:"model" mlp ~like:(init ()) ckpt in
 
   (* The restored parameters equal the saved ones. *)
   let x = Nx.randn Nx.float32 [| 2; 4 |] in
@@ -85,7 +67,7 @@ Loading reads the file's header and maps the file. Each entry is a view of it, a
 
 ## One File, Several Sections
 
-Because extraction ignores unnamed entries, one file holds model parameters, parameter-shaped optimizer state, and counters side by side, each under its own prefix. Saving and restoring full training state:
+Because extraction ignores unnamed entries, one file holds model parameters and optimizer state side by side, each under its own prefix. An optimizer state is a structure too, `Vega.adam_ptree mlp`, whose leaves are `mu.l1.w`, ..., `nu.l2.b` and `step`. Saving and restoring full training state:
 
 ```ocaml
 let () =
@@ -97,38 +79,32 @@ let () =
     }
   in
   let params = init () in
-  let ostate = Vega.adam_init (Kaun.ptree (module Mlp)) params in
+  let adam = Vega.adam_ptree mlp in
+  let ostate = Vega.adam_init mlp params in
 
   let path = Filename.temp_file "kaun-doc" ".safetensors" in
   Checkpoint.save path
     (Checkpoint.concat
        [
-         Checkpoint.of_params (module Mlp) ~prefix:"model" params;
-         Checkpoint.of_params (module Mlp) ~prefix:"optim.mu" ostate.mu;
-         Checkpoint.of_params (module Mlp) ~prefix:"optim.nu" ostate.nu;
-         Checkpoint.of_tensor "optim.step" ostate.step;
+         Checkpoint.of_value ~prefix:"model" mlp params;
+         Checkpoint.of_value ~prefix:"optim" adam ostate;
        ]);
 
   (* Resuming: extract each section with its own prefix. *)
   let ckpt = Checkpoint.load path in
   let like = init () in
-  let params =
-    Checkpoint.to_params (module Mlp) ~prefix:"model" ~like ckpt
-  in
+  let params = Checkpoint.to_value ~prefix:"model" mlp ~like ckpt in
   let ostate =
-    {
-      Vega.mu = Checkpoint.to_params (module Mlp) ~prefix:"optim.mu" ~like ckpt;
-      nu = Checkpoint.to_params (module Mlp) ~prefix:"optim.nu" ~like ckpt;
-      step = Nx.Ptree.unpack Nx.int32 (Checkpoint.get "optim.step" ckpt);
-    }
+    Checkpoint.to_value ~prefix:"optim" adam
+      ~like:(Vega.adam_init mlp like) ckpt
   in
   ignore params;
   Printf.printf "resumed at step %d\n" (Int32.to_int (Nx.item [] ostate.step))
 ```
 
-The optimizer moments checkpoint with the *model's* module because they have the model's shape — one more payoff of parameter-shaped state. `Batch_norm` running statistics work the same way, under their own prefix with `(module Batch_norm.Stats)`.
+The optimizer moments are named after the model's paths because their structure nests the model's. `Batch_norm` running statistics work the same way, under their own prefix with `Nx.Ptree.instantiate (module Batch_norm.Stats)`. A training state saved as one value is a module whose `walk` visits each part with `Nx.Ptree.Walk.structure`, so its paths are `params.…` and `opt.mu.…`; see [Writing structures](../../nx/doc/06-structures.md).
 
-To load a file into a partially different model — a new head on a pretrained backbone, say — extract each sub-structure with its own module and prefix; entries for the parts you replace are simply never asked for.
+To load a file into a partially different model (a new head on a pretrained backbone, say), extract each sub-structure with its own structure and prefix; entries for the parts you replace are never asked for.
 
 ## Pretrained Checkpoints
 
@@ -244,4 +220,4 @@ There is no per-architecture loader in the library. [`examples/05-llama`](https:
 ## Next Steps
 
 - [PyTorch Comparison](05-pytorch-comparison.md): `state_dict`, `torch.save`, and `from_pretrained` in kaun terms
-- [Layers and Models](02-layers-and-models.md) — where `names` comes from
+- [Layers and Models](02-layers-and-models.md): where the names come from

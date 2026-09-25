@@ -63,22 +63,18 @@ leaves — no special layer type:
 module Model = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
 
-  let map f { l1; l2 } =
-    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
-
-  let map2 f p q =
-    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
-
-  let iter f { l1; l2 } =
-    Linear.iter f l1;
-    Linear.iter f l2
+  let walk c { l1; l2 } =
+    let open Nx.Ptree.Walk in
+    let l1 = field c "l1" Linear.walk l1 in
+    let l2 = field c "l2" Linear.walk l2 in
+    { l1; l2 }
 
   let apply p x =
     let x = Nx.reshape [| (Nx.shape x).(0); 784 |] x in
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let model = Kaun.ptree (module Model)
+let model = Nx.Ptree.instantiate (module Model)
 ```
 
 <!-- quill:cell id="c_mnist_trainer_text" -->
@@ -124,7 +120,7 @@ let () =
             (fun p -> Loss.softmax_cross_entropy_sparse (Model.apply p x) y)
             params
         in
-        st := Vega.adam_step model ~lr:0.001 ostate ~params ~grads;
+        st := Vega.adam_step model ~lr:(Vega.lr 0.001) ostate ~params ~grads;
         incr step;
         Printf.printf "\r  epoch %d  batch %d/%d  loss: %.4f%!" epoch !step
           num_batches (Nx.item [] loss));

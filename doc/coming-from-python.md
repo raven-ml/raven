@@ -103,13 +103,14 @@ grads = params.grad
 <!-- $MDX skip -->
 ```ocaml
 (* Rune: JAX-style functional transforms over your own typed record *)
-let grads = Rune.grad (module Params) loss_fn params
+let params_ptree = Nx.Ptree.instantiate (module Params)
+let grads = Rune.grad params_ptree loss_fn params
 
 (* Or compute value and gradient together *)
-let loss, grads = Rune.value_and_grad (module Params) loss_fn params
+let loss, grads = Rune.value_and_grad params_ptree loss_fn params
 ```
 
-Where JAX registers pytrees, Rune takes a first-class module: `Params` implements `Nx.Ptree.S` (three one-line traversals over your record's tensor leaves), and gradients come back with the same type as the parameters.
+Where JAX registers pytrees, Rune takes a structure: `Params` implements `Nx.Ptree.S` with one function, `walk`, over your record's fields, `Nx.Ptree.instantiate` makes it a value, and gradients come back with the same type as the parameters.
 
 ### Module-Based Layers
 
