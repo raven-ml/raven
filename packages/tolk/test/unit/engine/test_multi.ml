@@ -30,8 +30,6 @@ module U = Uop
 let () = Device.register "CPU" Tolk_cpu.create
 let () = Device.register "CUDA" Tolk_cuda.create
 
-let cpu = lazy (Device.get "CPU")
-
 let cuda_available =
   lazy (match Device.get "CUDA" with _ -> true | exception _ -> false)
 
@@ -91,28 +89,25 @@ let sharded x shape devices axis =
   let copied = U.copy ~src:x ~device:(U.Multi devices) () in
   U.unshard ~src:(shard_shrink shape (List.length devices) copied axis) ~axes:[axis] ()
 
-(* Schedule and execute a sink, as the frontend realize does. *)
+(* Realize a graph through the frontend, with [host] compiling the schedule,
+   and return the realized node. *)
+let realize ?(host = "CPU") u =
+  let t = Tolk_frontend.Tensor.of_uop u in
+  Helpers.Context_var.with_context
+    [ Helpers.Context_var.B (Helpers.dev, [ Target.of_string host ]) ]
+    (fun () -> Tolk_frontend.Run.realize_many [ t ]);
+  Tolk_frontend.Tensor.uop t
 
-let realize ~device ~binding sink =
-  let to_program device = Codegen.to_program device (Device.renderer device) in
-  let call, buffer_map = bufferized_call sink in
-  let linear, var_vals =
-    Schedule.create_linear_with_vars
-      ~get_kernel_graph:Rangeify.get_kernel_graph call
-  in
-  Realize.run_linear ~device ~to_program binding ~var_vals linear;
-  buffer_map
+(* The storage of a realized node, one buffer per device. *)
+let device_buffers node =
+  match U.Arg.as_param_arg (U.arg (U.buf_uop node)) with
+  | Some { buffer = Some bufs; _ } -> bufs
+  | _ -> fail "node did not realize to storage"
 
-let output_node buffer_map out =
-  match Hashtbl.find_opt buffer_map (U.tag out) with
-  | Some node -> node
-  | None -> fail "output was not scheduled to a buffer"
-
-let output_f32 binding buffer_map out =
-  let node = output_node buffer_map out in
-  match Realize.Buffers.find_opt binding (U.buf_uop node) with
-  | Some buf -> read_f32 buf
-  | None -> fail "output buffer was not bound"
+(* [data] in a fresh buffer on [device], viewed at [dims]. *)
+let input device dims data =
+  U.reshape ~src:(U.from_buffer (f32_buf (Device.get device) data))
+    ~shape:(shape_node dims)
 
 let devs2 = [ "CPU:1"; "CPU:2" ]
 let devs4 = [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
@@ -123,18 +118,9 @@ let devs4 = [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
    shard devices must share its backend, as one schedule compiles with one
    renderer. *)
 let run_sharded ?(host = "CPU") ~devices ~shape ~axis data op =
-  let device = Device.get host in
-  let x = f32_buffer_node host [ Array.length data ] in
-  let xs =
-    sharded (U.reshape ~src:x ~shape:(shape_node shape)) shape devices axis
-  in
-  let out =
-    U.contiguous ~src:(U.copy ~src:(op xs) ~device:(U.Single host) ()) ()
-  in
-  let binding = Realize.Buffers.create () in
-  Realize.Buffers.seed binding x (f32_buf device data);
-  let buffer_map = realize ~device ~binding (U.sink [ out ]) in
-  output_f32 binding buffer_map out
+  let xs = sharded (input host shape data) shape devices axis in
+  let out = realize ~host (U.copy ~src:(op xs) ~device:(U.Single host) ()) in
+  read_f32 (List.hd (device_buffers out))
 
 let iota n = Array.init n (fun i -> float_of_int (i + 1))
 
@@ -159,21 +145,15 @@ let spread n =
 (* The buffers holding each device's replica of a sum over the split axis of
    a [devices; cols] value. *)
 let allreduce_replicas ~devices ~cols =
-  let device = Lazy.force cpu in
   let shape = [ List.length devices; cols ] in
   let data = spread (List.length devices * cols) in
-  let x = f32_buffer_node "CPU" [ Array.length data ] in
-  let xs = sharded (U.reshape ~src:x ~shape:(shape_node shape)) shape devices 0 in
-  let out = U.contiguous ~src:(U.reduce_axis ~src:xs ~op:Ops.Add ~axes:[ 0 ]) () in
-  let binding = Realize.Buffers.create () in
-  Realize.Buffers.seed binding x (f32_buf device data);
-  let buffer_map = realize ~device ~binding (U.sink [ out ]) in
-  match
-    Realize.resolve_buffer binding (Realize.exec_context ())
-      (U.buf_uop (output_node buffer_map out))
-  with
-  | Realize.Multi m -> List.map Device.Buffer.as_bytes (Device.Multi_buffer.bufs m)
-  | Realize.Single _ -> fail "replicated output is not a multi buffer"
+  let xs = sharded (input "CPU" shape data) shape devices 0 in
+  let replicas =
+    device_buffers (realize (U.reduce_axis ~src:xs ~op:Ops.Add ~axes:[ 0 ]))
+  in
+  equal ~msg:"one replica per device" int (List.length devices)
+    (List.length replicas);
+  List.map Device.Buffer.as_bytes replicas
 
 let forced_strategies =
   Helpers.Context_var.
@@ -269,11 +249,9 @@ let () =
               is_true (store.value == value);
               is_true (U.op store.dst = Ops.Shrink));
           test "two-axis device gather preserves every tile" (fun () ->
-              let device = Lazy.force cpu in
               let devices = List.init 6 (fun i -> "CPU:" ^ string_of_int (i + 1)) in
               let data = iota 48 in
-              let input = f32_buffer_node "CPU" [4; 12] in
-              let copied = U.copy ~src:input ~device:(U.Multi devices) () in
+              let copied = U.copy ~src:(input "CPU" [4; 12] data) ~device:(U.Multi devices) () in
               let r = U.range ~size:(int_ 6) ~axis:(-1) ~kind:Axis_type.Device () in
               let a = alu Ops.Floordiv r (int_ 3) and b = alu Ops.Floormod r (int_ 3) in
               let local = U.shrink ~src:copied
@@ -281,11 +259,9 @@ let () =
                   ~size:(shape_node [2; 4]) in
               let tiled = U.unshard ~src:local ~axes:[0; 1] ~ranges:[a; b] () in
               let result = U.alu_binary ~op:Ops.Add ~lhs:tiled ~rhs:tiled in
-              let out = U.contiguous ~src:(U.copy ~src:result ~device:(U.Single "CPU") ()) () in
-              let binding = Realize.Buffers.create () in
-              Realize.Buffers.seed binding (U.buf_uop input) (f32_buf device data);
-              let map = realize ~device ~binding (U.sink [out]) in
-              equal (array (float 1e-6)) (Array.map (fun x -> x *. 2.) data) (output_f32 binding map out));
+              let out = realize (U.copy ~src:result ~device:(U.Single "CPU") ()) in
+              equal (array (float 1e-6)) (Array.map (fun x -> x *. 2.) data)
+                (read_f32 (List.hd (device_buffers out))));
           test "partial multi-axis allreduce is rejected" (fun () ->
               let ranges = [local_range 2 0; local_range 3 1] in
               let u = U.unshard ~src:(fragment [2; 4]) ~axes:[0; 1] ~ranges () in
@@ -367,31 +343,20 @@ let () =
               in
               equal (array (float 1e-6)) data got);
           test "copy to device tuple replicates" (fun () ->
-              let device = Lazy.force cpu in
               let data = iota 8 in
-              let x = f32_buffer_node "CPU" [ 8 ] in
-              let out =
-                U.contiguous ~src:(U.copy ~src:x ~device:(U.Multi devs2) ()) ()
+              let bufs =
+                device_buffers
+                  (realize
+                     (U.copy ~src:(input "CPU" [ 8 ] data)
+                        ~device:(U.Multi devs2) ()))
               in
-              let binding = Realize.Buffers.create () in
-              Realize.Buffers.seed binding x (f32_buf device data);
-              let buffer_map = realize ~device ~binding (U.sink [ out ]) in
-              let node = output_node buffer_map out in
-              match
-                Realize.resolve_buffer binding (Realize.exec_context ())
-                  (U.buf_uop node)
-              with
-              | Realize.Multi m ->
-                  let bufs = Device.Multi_buffer.bufs m in
-                  equal ~msg:"shard devices" (list string) devs2
-                    (List.map Device.Buffer.device bufs);
-                  List.iter
-                    (fun buf ->
-                      equal ~msg:"replicated shard contents"
-                        (array (float 1e-6)) data (read_f32 buf))
-                    bufs
-              | Realize.Single _ ->
-                  fail "replicated output is not a multi buffer");
+              equal ~msg:"shard devices" (list string) devs2
+                (List.map Device.Buffer.device bufs);
+              List.iter
+                (fun buf ->
+                  equal ~msg:"replicated shard contents"
+                    (array (float 1e-6)) data (read_f32 buf))
+                bufs);
           test "elementwise on sharded tensors" (fun () ->
               let data = iota 8 in
               let got =

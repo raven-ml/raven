@@ -14,4 +14,4 @@
  (name test_multi)
  (modules test_multi)
  (package tolk)
- (libraries tolk tolk.uop tolk.cpu tolk.cuda windtrap))
+ (libraries tolk tolk.uop tolk.cpu tolk.cuda tolk.frontend windtrap))
