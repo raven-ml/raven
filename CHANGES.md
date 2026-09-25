@@ -468,6 +468,11 @@ thread.
 
 ### Tolk (new)
 
+- Replicas of a hierarchical allreduce (`ALLREDUCE_NODE_NDEVS`) are now equal
+  bit for bit on every device. With three or more boxes, devices summed the
+  boxes' partials in different orders and their replicas differed in the last
+  bits.
+
 - Changing a setting that scheduling reads (the allreduce strategy settings,
   `SPLIT_REDUCEOP` and its thresholds, `FLOAT16`, `PCONTIG`,
   `MAX_KERNEL_BUFFERS`, `OPENPILOT_HACKS`) between realizations now takes

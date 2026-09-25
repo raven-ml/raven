@@ -80,6 +80,20 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   value test runs each of them. Reconsider when upstream keys its cache on
   these settings.
 
+- **Hierarchical allreduce folds boxes in one order on every device.** The
+  frozen target sums a chunk on each box's device starting from its own
+  partial, then the other boxes' in index order, and each device takes the
+  chunk from its own box. With three or more boxes the devices fold in
+  different orders and their replicas differ in the last bits. Tolk folds the
+  partials in box order on every device and stores each partial first. The
+  stored partial works around the C renderer, which prints a nested sum as one
+  flat expression and so reassociates a partial fused into the fold. Traffic
+  is unchanged. Consumer: RFC 0005's replicated values, which readers take
+  from any one device. Coverage: `test_multi` hierarchical replicas on 6 and 8
+  devices with 1 and 2 devices per box. Reconsider when upstream fixes the
+  fold order; the `contiguous` can go when the renderer keeps the graph's
+  association.
+
 - **Compiled AMD submission bounds polling and reserves ring space before
   writing commands.** The frozen target can spin forever or overwrite unread
   packets when producers outrun a queue. Native helpers latch failures while

@@ -67,15 +67,18 @@ let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
   let flat = reshape buf [numel] in
   let chunks = Array.init hdev (fun k -> numel * k / hdev, numel * (k + 1) / hdev) in
   let fold = fold_reduce op in
+  (* Replicas must agree bit for bit, so every device folds the boxes' partial
+     sums of a chunk in box order, over stored partials: a partial fused into
+     that fold renders as one flat sum with the copies, which C reassociates. *)
   let owned = Array.init ndev (fun i ->
       let k = i mod hdev and box = i / hdev * hdev in
-      fold (List.init hdev (fun j ->
+      U.contiguous ~src:(fold (List.init hdev (fun j ->
           let shard = U.mselect ~src:flat ~index:(box + j) in
-          copy_to_device (shrink shard [chunks.(k)]) devs.(i)))) in
+          copy_to_device (shrink shard [chunks.(k)]) devs.(i)))) ()) in
   let summed = Array.init ndev (fun i ->
-      let peers = List.init (ndev / hdev) (fun box -> box * hdev + i mod hdev)
-        |> List.filter (fun j -> j <> i) in
-      fold (owned.(i) :: List.map (fun j -> copy_to_device owned.(j) devs.(i)) peers)) in
+      fold (List.init (ndev / hdev) (fun box ->
+          let j = box * hdev + i mod hdev in
+          if j = i then owned.(i) else copy_to_device owned.(j) devs.(i)))) in
   let gathered = Array.init hdev (fun k ->
       match device with
       | U.Single target -> copy_to_device summed.(k) target
