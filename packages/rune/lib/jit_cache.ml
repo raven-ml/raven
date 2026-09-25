@@ -24,9 +24,9 @@
 
    Symbolic variables: a stored entry records the names of the bound variables
    whose values the schedule needs, and [load] re-extracts the values from the
-   fresh CALL's scalar bindings. Rune traces have no symbolic shapes today,
-   so the list is always empty; the code handles them anyway
-   so the entry format does not change when they appear. *)
+   fresh CALL's scalar bindings. Rune traces have no symbolic shapes today, so
+   the list is always empty; the code handles them anyway so the entry format
+   does not change when they appear. *)
 
 module U = Tolk_uop.Uop
 module TD = Tolk_uop.Dtype
@@ -61,7 +61,8 @@ let exe_digest = lazy (Digest.to_hex (Digest.file Sys.executable_name))
    re-extracted from the fresh CALL's scalar bindings. *)
 
 type slot_desc = {
-  sd_numel : int; (* -1 when the argument has no tensor shape (a scalar binding) *)
+  sd_numel : int;
+      (* -1 when the argument has no tensor shape (a scalar binding) *)
   sd_dtype : TD.t;
   sd_device : U.device option;
   sd_is_bind : bool;
@@ -209,9 +210,10 @@ let vars_of_args names args =
         (fun u ->
           match U.as_bind u with
           | Some { var; value } -> (
-              match (U.Arg.as_param_arg (U.arg var), U.const_int_value value) with
-              | Some { name = Some name; _ }, Some n ->
-                  Some (name, n)
+              match
+                (U.Arg.as_param_arg (U.arg var), U.const_int_value value)
+              with
+              | Some { name = Some name; _ }, Some n -> Some (name, n)
               | _ -> None)
           | None -> None)
         args
@@ -240,8 +242,7 @@ let rebind entry args =
                   U.buffer
                     ~slot:(Tolk.Schedule.fresh_internal_buffer_slot ())
                     ~dtype:(U.dtype n) ~shape ?name:buffer.name
-                    ~addrspace:buffer.addrspace
-                    ?device:buffer.device () )
+                    ~addrspace:buffer.addrspace ?device:buffer.device () )
           | _ -> None)
         (U.toposort ~enter_calls:true linear)
     in
