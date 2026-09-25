@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `grad` and `jvp` now handle products containing zeros and share extrema
+  derivatives among tied values. Half-precision extrema count ties in float32
+  so large reductions do not overflow their gradient normalization.
+
 - Independent `jit` callers can share read-only captures without losing their
   ownership counts or racing first-time cache initialization. `no_grad` and
   transformation scopes no longer leak across domains or system threads.

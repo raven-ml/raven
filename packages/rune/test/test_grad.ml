@@ -533,8 +533,45 @@ let test_no_grad_is_thread_local () =
   check_arr ~msg:"unwinding no_grad restores the calling thread" [|6.|]
     (Rune.grad' square x)
 
+let test_reduction_gradients_at_zeros_and_ties () =
+  let input = Nx.create f32 [|3; 3|] [|2.; 3.; 4.; 2.; 0.; 4.; 0.; 0.; 4.|] in
+  let prod x = Nx.sum (Nx.prod ~axes:[1] x) in
+  let expected = [|12.; 8.; 6.; 0.; 8.; 0.; 0.; 0.; 0.|] in
+  check_arr ~msg:"products retain derivatives at exactly one zero" expected
+    (Rune.grad' prod input);
+  check_arr ~msg:"compiled product derivatives retain zero multiplicity" expected
+    (Rune.jit' ~device:"CPU" (Rune.grad' prod) input);
+  let _, tangent = Rune.jvp' prod input (Nx.ones_like input) in
+  check_arr ~msg:"forward products use the same zero-safe derivative" [|34.|] tangent;
+  let input = Nx.create f32 [|2; 3|] [|2.; 2.; 0.; -1.; -1.; 3.|] in
+  let tangent = Nx.create f32 [|2; 3|] [|1.; 3.; 5.; 2.; 4.; 6.|] in
+  List.iter (fun (name, reduce, expected) ->
+      let loss x = Nx.sum (reduce x) in
+      check_arr ~msg:(name ^ " shares the derivative among ties") expected
+        (Rune.grad' loss input);
+      check_arr ~msg:(name ^ " compiled tie derivative") expected
+        (Rune.jit' ~device:"CPU" (Rune.grad' loss) input);
+      let _, derivative = Rune.jvp' loss input tangent in
+      check_arr ~msg:(name ^ " averages tied tangents") [|8.|] derivative)
+    ["max", (fun x -> Nx.max ~axes:[1] x), [|0.5; 0.5; 0.; 0.; 0.; 1.|];
+     "min", (fun x -> Nx.min ~axes:[1] x), [|0.; 0.; 1.; 0.5; 0.5; 0.|]]
+
+let test_half_reduction_ties () =
+  let n = 65536 in
+  let x = Nx.ones f32 [|n|] in
+  let loss x = Nx.cast f32 (Nx.max (Nx.cast Nx.float16 x)) in
+  let expected = Array.make n (1. /. float_of_int n) in
+  check_arr ~eps:1e-7 ~msg:"tie counts exceed half precision without overflowing"
+    expected (Rune.grad' loss x);
+  check_arr ~eps:1e-7 ~msg:"compiled half reduction retains its tie count"
+    expected (Rune.jit' ~device:"CPU" (Rune.grad' loss) x);
+  let _, tangent = Rune.jvp' loss x (Nx.ones_like x) in
+  check_arr ~msg:"all tied directions shift the maximum by one" [|1.|] tangent
+
 let tests =
   [
+    test "reduction derivatives preserve zeros and ties" test_reduction_gradients_at_zeros_and_ties;
+    test "half reduction derivatives count ties without overflow" test_half_reduction_ties;
     test "no_grad scopes are independent across domains" test_no_grad_is_domain_local;
     test "no_grad scopes are independent across systhreads" test_no_grad_is_thread_local;
     group "grad over records"

@@ -514,51 +514,26 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   in
                   T.broadcast_to shape_in (T.reshape kept g)))
       | E_reduce_max { t_in; axes } ->
-          Some
-            (fun k ->
+          Some (fun k ->
               let out = reduce ~op:`Max ~axes t_in in
-              let shape_in = T.shape t_in in
-              let broadcast_kept x =
-                let kept =
-                  T.shape (T.max t_in ~axes:(Array.to_list axes) ~keepdims:true)
-                in
-                T.broadcast_to shape_in (T.reshape kept x)
-              in
+              let axes = Array.to_list axes in
               pull1 k out t_in (fun g ->
-                  let mask =
-                    T.cast (dtype out) (T.equal t_in (broadcast_kept out))
-                  in
-                  T.mul (broadcast_kept g) mask))
+                  T.mul (Derivs.reduction_kept ~axes t_in g)
+                    (Derivs.extrema' ~axes t_in out)))
       | E_reduce_min { t_in; axes } ->
-          Some
-            (fun k ->
+          Some (fun k ->
               let out = reduce ~op:`Min ~axes t_in in
-              let shape_in = T.shape t_in in
-              let broadcast_kept x =
-                let kept =
-                  T.shape (T.min t_in ~axes:(Array.to_list axes) ~keepdims:true)
-                in
-                T.broadcast_to shape_in (T.reshape kept x)
-              in
+              let axes = Array.to_list axes in
               pull1 k out t_in (fun g ->
-                  let mask =
-                    T.cast (dtype out) (T.equal t_in (broadcast_kept out))
-                  in
-                  T.mul (broadcast_kept g) mask))
+                  T.mul (Derivs.reduction_kept ~axes t_in g)
+                    (Derivs.extrema' ~axes t_in out)))
       | E_reduce_prod { t_in; axes } ->
-          Some
-            (fun k ->
+          Some (fun k ->
               let out = reduce ~op:`Prod ~axes t_in in
-              let shape_in = T.shape t_in in
-              let broadcast_kept x =
-                let kept =
-                  T.shape
-                    (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
-                in
-                T.broadcast_to shape_in (T.reshape kept x)
-              in
+              let axes = Array.to_list axes in
               pull1 k out t_in (fun g ->
-                  T.mul (broadcast_kept g) (T.div (broadcast_kept out) t_in)))
+                  T.mul (Derivs.reduction_kept ~axes t_in g)
+                    (Derivs.prod' ~axes t_in out)))
       (* Sorting: a sort is a gather at the argsort indices. *)
       | E_sort { t_in; axis; descending } ->
           Some

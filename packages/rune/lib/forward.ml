@@ -312,48 +312,23 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
               lift1 k (reduce ~op:`Sum ~axes t_in) t_in (fun dx ->
                   T.sum dx ~axes:(Array.to_list axes)))
       | E_reduce_max { t_in; axes } ->
-          Some
-            (fun k ->
+          Some (fun k ->
               let out = reduce ~op:`Max ~axes t_in in
+              let axes = Array.to_list axes in
               lift1 k out t_in (fun dx ->
-                  let shape_in = T.shape t_in in
-                  let out_bc =
-                    let kept =
-                      T.max t_in ~axes:(Array.to_list axes) ~keepdims:true
-                    in
-                    T.broadcast_to shape_in kept
-                  in
-                  let mask = T.cast (dtype out) (T.equal t_in out_bc) in
-                  T.sum (T.mul dx mask) ~axes:(Array.to_list axes)))
+                  T.sum ~axes (T.mul dx (Derivs.extrema' ~axes t_in out))))
       | E_reduce_min { t_in; axes } ->
-          Some
-            (fun k ->
+          Some (fun k ->
               let out = reduce ~op:`Min ~axes t_in in
+              let axes = Array.to_list axes in
               lift1 k out t_in (fun dx ->
-                  let shape_in = T.shape t_in in
-                  let out_bc =
-                    let kept =
-                      T.min t_in ~axes:(Array.to_list axes) ~keepdims:true
-                    in
-                    T.broadcast_to shape_in kept
-                  in
-                  let mask = T.cast (dtype out) (T.equal t_in out_bc) in
-                  T.sum (T.mul dx mask) ~axes:(Array.to_list axes)))
+                  T.sum ~axes (T.mul dx (Derivs.extrema' ~axes t_in out))))
       | E_reduce_prod { t_in; axes } ->
-          Some
-            (fun k ->
+          Some (fun k ->
               let out = reduce ~op:`Prod ~axes t_in in
+              let axes = Array.to_list axes in
               lift1 k out t_in (fun dx ->
-                  let shape_in = T.shape t_in in
-                  let out_bc =
-                    let kept =
-                      T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true
-                    in
-                    T.broadcast_to shape_in kept
-                  in
-                  T.sum
-                    (T.mul (T.div out_bc t_in) dx)
-                    ~axes:(Array.to_list axes)))
+                  T.sum ~axes (T.mul dx (Derivs.prod' ~axes t_in out))))
       (* Sorting: a sort is a gather at the argsort indices. *)
       | E_sort { t_in; axis; descending } ->
           Some

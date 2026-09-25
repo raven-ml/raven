@@ -64,3 +64,31 @@ let pow_wrt_base base exp = T.mul exp (T.pow base (T.sub_s exp (one_like exp)))
 let pow_wrt_exp base result =
   let ln_base = T.mul (T.log2 base) (float_scalar_like base ln2) in
   T.mul result ln_base
+
+(* Restore the singleton reduction axes without recomputing the primal. *)
+let reduction_kept ~axes x out =
+  let shape = Array.copy (T.shape x) in
+  List.iter (fun axis -> shape.(axis) <- 1) axes;
+  T.reshape shape out
+
+(* Ties share one derivative. Count and divide before narrowing a half mask. *)
+let extrema' (type a b) ~axes (x : (a, b) T.t) out : (a, b) T.t =
+  let mask = T.equal x (reduction_kept ~axes x out) in
+  let normalize (type c) (dtype : (float, c) T.dtype) =
+    let mask = T.cast dtype mask in
+    T.cast (T.dtype x) (T.div mask (T.sum ~axes ~keepdims:true mask)) in
+  match T.dtype x with
+  | Nx_core.Dtype.Float64 -> normalize T.float64
+  | _ -> normalize T.float32
+
+(* The derivative at a single zero is the product of the other inputs;
+   multiple zeros annihilate every first derivative. Avoid dividing by zero
+   even in an unselected branch, so eager and compiled arithmetic agree. *)
+let prod' ~axes x out =
+  let out = reduction_kept ~axes x out in
+  let zero = T.equal x (T.zeros_like x) in
+  let safe = T.where zero (T.ones_like x) x in
+  let count = T.sum ~axes ~keepdims:true (T.cast T.int32 zero) in
+  let at_zero = T.where (T.equal count (T.ones_like count))
+      (T.prod ~axes ~keepdims:true safe) (T.zeros_like out) in
+  T.where zero at_zero (T.div out safe)
