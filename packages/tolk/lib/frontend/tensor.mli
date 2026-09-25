@@ -75,7 +75,8 @@ val ndim : t -> int
 val numel : t -> int
 (** [numel t] is the total number of elements of [t].
 
-    @raise Invalid_argument if any dimension is symbolic. *)
+    @raise Invalid_argument if any dimension is symbolic or the product
+      exceeds the host integer range. *)
 
 val resolve_dim : ?extra:bool -> t -> int -> int
 (** [resolve_dim t d] normalises axis index [d] against [ndim t], mapping a

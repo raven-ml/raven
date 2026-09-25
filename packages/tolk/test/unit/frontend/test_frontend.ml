@@ -44,6 +44,18 @@ let creation_tests =
           List.iter (fun dtype ->
               raises_match (function Invalid_argument _ -> true | _ -> false)
                 (fun () -> Cr.empty ~dtype [ 2 ])) [ D.weakint; D.weakfloat ]);
+      test "numel checks concrete products without bounding symbolic shapes" (fun () ->
+          let expanded dims = T.of_uop
+              (U.expand ~src:(U.const_int 1) ~dims:(U.stack dims)) in
+          let huge = U.const_int (1 lsl 32) in
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> T.numel (expanded [huge; huge]));
+          equal int 0 (T.numel (expanded [huge; huge; U.const_int 0]));
+          equal int 1 (T.numel (T.i 1));
+          equal int 6 (T.numel (expanded [U.const_int 2; U.const_int 3]));
+          let n = U.variable ~name:"numel_n" ~min_val:1 ~max_val:8 () in
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> T.numel (expanded [n])));
       test "zeros shape and dtype" (fun () ->
           let t = Cr.zeros [ 2; 3 ] in
           equal (list int) [ 2; 3 ] (shape t);

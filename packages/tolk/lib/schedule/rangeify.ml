@@ -72,9 +72,6 @@ let pm_early_rangeify n =
 let shape_for_store u =
   try Some (U.shape u) with Invalid_argument _ -> None
 
-let shape_numel dims =
-  List.fold_left (fun acc d -> acc * (Bound.to_int (U.vmax d))) 1 dims
-
 let same_shape a b =
   List.length a = List.length b && List.for_all2 U.equal a b
 
@@ -83,7 +80,7 @@ let pm_add_ranges_to_store ctr n =
   | Some { dst; value; _ } ->
       (match shape_for_store dst, shape_for_store value with
        | Some [], _ | _, Some [] -> None
-       | Some d_sh, Some v_sh when shape_numel d_sh = 1 && shape_numel v_sh = 1
+       | Some _, Some _ when U.max_numel dst = 1 && U.max_numel value = 1
          ->
            None
        | Some d_sh, Some v_sh ->

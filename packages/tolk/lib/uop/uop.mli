@@ -1167,7 +1167,8 @@ val placeholder :
 
     @raise Invalid_argument
       if [addrspace] is {!Dtype.Alu}, or if [device] is given for a local or
-      register placeholder. *)
+      register placeholder, or if the shape product exceeds the host integer
+      range. *)
 
 val placeholder_like : t -> slot:int -> ?addrspace:Dtype.addr_space -> unit -> t
 (** [placeholder_like u ~slot ?addrspace ()] is a {!placeholder} with [u]'s

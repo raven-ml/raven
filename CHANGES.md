@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.placeholder` and `Tensor.numel` reject element counts that exceed the
+  host integer range instead of wrapping; zero-sized shapes remain empty even
+  when preceding dimensions have a large product.
+
 - Constant folding preserves tensor shapes, including symbolic dimensions and
   conditions reused through views, so JIT `top_k` and comparison/permute graphs
   remain valid during shared view analysis.

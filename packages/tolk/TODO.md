@@ -97,9 +97,8 @@ acceptance requirement; skipped tests are not execution evidence.
 - Remove remaining parallel property reconstruction and silent guesses in
   renderer widths, view offsets, stage buffer sizes and range metadata. Remove
   the C renderer's independent multidimensional stride reconstruction in
-  favor of canonical flat indexes. Use checked central numel in placeholders, frontend
-  tensors and rangeify. Port remaining symbolic rules and measure rewrite performance and long-lived
-  memory use with weak node caches.
+  favor of canonical flat indexes. Port remaining symbolic rules and measure
+  rewrite performance and long-lived memory use with weak node caches.
 - Compare symbolic `STAGE` extent end to end: Tolk uses the active symbolic
   size, while the target reserves its maximum extent. Establish allocation and
   indexing requirements with a paired execution case before changing it.

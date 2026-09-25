@@ -476,6 +476,16 @@ let max_numel_checks_host_range () =
     (fun () -> Uop.param ~slot:0 ~dtype:Dtype.float32
         ~shape:(Uop.stack [ dim; dim ]) ())
 
+let placeholder_checks_shape_product () =
+  List.iter (fun addrspace ->
+      raises_match (function Invalid_argument _ -> true | _ -> false)
+        (fun () -> Uop.placeholder ~shape:[1 lsl 32; 1 lsl 32]
+            ~dtype:Dtype.float32 ~slot:0 ~addrspace ());
+      let empty = Uop.placeholder ~shape:[1 lsl 32; 1 lsl 32; 0]
+          ~dtype:Dtype.float32 ~slot:0 ~addrspace () in
+      equal int 0 (Uop.max_numel empty))
+    [Dtype.Global; Dtype.Local; Dtype.Reg]
+
 let max_numel_handles_zero_after_large_dimensions () =
   let huge = Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one 100)) in
   let buffer = Uop.param ~slot:0 ~dtype:Dtype.float32
@@ -2543,6 +2553,7 @@ let () =
           test "tinygrad CAST bounds parity" cast_bounds_parity;
           test "flat storage parameters retain symbolic views" flat_storage_parameters;
           test "backward slices track shared dependencies" backward_slice_tracks_shared_dependencies;
+          test "placeholder checks shape product" placeholder_checks_shape_product;
           test "max_numel checks host range" max_numel_checks_host_range;
           test "max_numel handles zero after large dimensions"
             max_numel_handles_zero_after_large_dimensions;

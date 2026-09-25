@@ -2596,7 +2596,8 @@ let call_with_outputs ?output_pos ~values ~args ~info () =
 let placeholder ~shape:dims ~dtype ~slot ?(addrspace = Dtype.Global) ?device
     ?volatile ?allocation () =
   let dtype = Dtype.strong_dtype dtype in
-  let flat = const_int (List.fold_left ( * ) 1 dims) in
+  let dims = List.map const_int dims in
+  let flat = const_int (max_shape_numel dims) in
   let base =
     match addrspace with
     | Dtype.Global -> param ~slot ~dtype ~shape:flat ~addrspace ?device ?volatile ()
@@ -2612,7 +2613,7 @@ let placeholder ~shape:dims ~dtype ~slot ?(addrspace = Dtype.Global) ?device
     | None, _ -> base
     | _ -> invalid_arg "Uop.placeholder: allocation requires a global parameter" in
   if List.length dims > 1 then
-    reshape ~src:base ~shape:(shape_arg (List.map const_int dims))
+    reshape ~src:base ~shape:(shape_arg dims)
   else base
 
 let placeholder_like u ~slot ?(addrspace = Dtype.Global) () =

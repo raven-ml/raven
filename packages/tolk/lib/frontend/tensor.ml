@@ -96,7 +96,11 @@ let shape t =
     (symbolic_shape t)
 
 let ndim t = List.length (symbolic_shape t)
-let numel t = List.fold_left ( * ) 1 (shape t)
+let numel t =
+  if List.exists (fun dim -> Option.is_none (U.const_int_value dim))
+      (symbolic_shape t) then
+    invalid_arg "Tensor.numel: symbolic dimension";
+  U.max_numel t.uop
 
 let resolve_dim ?(extra = false) t dim =
   let total = ndim t + if extra then 1 else 0 in
