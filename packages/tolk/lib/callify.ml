@@ -14,14 +14,32 @@ let is_store_after u =
       U.op (U.base src.(0)) <> Ops.Alloc || U.op src.(1) = Ops.Store
   | _ -> false
 
-let contiguous_view u =
+let rec contiguous_view u =
   let rec has_effect u =
     match U.op u with
     | Ops.After -> true
     | op when Ops.Group.is_movement op || op = Ops.Bitcast -> has_effect (U.src u).(0)
     | _ -> false in
+  (* A view of a split buffer is a view of each shard when multi_pm lowers
+     it to one: that view, split the same way. The tinygrad counterpart
+     declines when the view feeds a copy to one device, and drops a copy to
+     a device list for the view itself; tolk keeps the copy in both cases,
+     which reads the per-shard views in place. *)
+  let split () =
+    match U.device_of u with
+    | Some (U.Multi _) ->
+        let lowered = U.graph_rewrite ~name:"multi buffer view" Multi.multi_pm u in
+        if U.op lowered = Ops.Unshard then Some lowered else None
+    | _ -> None
+  in
   if has_effect u then None
-  else match U.contiguous_view u with
+  else match split () with
+  | Some lowered ->
+      Option.map (fun view ->
+          U.unshard ~src:view ~axes:(List.map fst (U.sharding lowered))
+            ~ranges:(List.map snd (U.sharding lowered)) ())
+        (contiguous_view (U.src lowered).(0))
+  | None -> match U.contiguous_view u with
     | Some (base, offset) when U.op base = Ops.Buffer ->
         let bytes = U.bitcast ~src:base ~dtype:Dtype.int8 in
         let bytes = U.shrink ~src:bytes ~offset:(U.const_int offset)

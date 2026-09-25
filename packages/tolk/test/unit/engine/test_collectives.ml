@@ -163,12 +163,20 @@ let held devices f =
   settle ();
   (result, List.map (fun (d, live) -> (d, (usage d).live - live)) before)
 
-(* Each device's bytes of a realized tensor. *)
+(* Each device's bytes of a realized tensor, which may be a view. *)
 let device_bytes t =
+  let bytes_of buf =
+    Device.Buffer.ensure_allocated buf;
+    Device.Buffer.as_bytes buf
+  in
   Run.realize_many [ t ];
-  match U.Arg.as_param_arg (U.arg (U.buf_uop (T.uop t))) with
-  | Some { buffer = Some bufs; _ } -> List.map Device.Buffer.as_bytes bufs
-  | _ -> fail "tensor did not realize to storage"
+  match
+    Realize.resolve_buffer
+      (Realize.Buffers.create ())
+      (Realize.exec_context ()) (T.uop t)
+  with
+  | Realize.Single buf -> [ bytes_of buf ]
+  | Realize.Multi bufs -> List.map bytes_of (Device.Multi_buffer.bufs bufs)
 
 (* Data *)
 
@@ -562,6 +570,26 @@ let gather_tests =
           equal ~msg:"each device holds only the gathered value"
             (list (pair string int))
             (List.map (fun d -> (d, 2 * 2 * 64 * 4)) devices)
+            peaks);
+      test "a realized slice of a split buffer is a view of it" (fun () ->
+          let devices = devices 2 and data = spread (2 * 4 * 64) in
+          let w = C.shard ~axis:0 ~devices (host ~shape:[ 2; 4; 64 ] data) in
+          Run.realize_many [ w ];
+          let sliced = Mv.shrink w [ (0, 2); (1, 3); (0, 64) ] in
+          let parts, peaks =
+            peak_over devices (fun () -> device_bytes sliced)
+          in
+          List.iteri
+            (fun j part ->
+              is_true
+                ~msg:(Printf.sprintf "part %d" j)
+                (Bytes.equal
+                   (f32_bytes (Array.sub data ((j * 256) + 64) 128))
+                   part))
+            parts;
+          equal ~msg:"nothing is allocated"
+            (list (pair string int))
+            (List.map (fun d -> (d, 0)) devices)
             peaks);
       test "a gather lowers to one call named allgather" (fun () ->
           let devices = devices 2 in

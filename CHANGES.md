@@ -520,6 +520,10 @@ thread.
 
 ### Tolk (new)
 
+- Realizing a slice of a split tensor whose part on each device is a
+  contiguous window of that device's shard gives a view of the shards:
+  nothing is allocated or copied. Each part was copied into a new buffer.
+
 - Gathering a slice of a split tensor whose part on each device is contiguous
   reads each part in place. Each device first copied its part into a buffer
   of its own.

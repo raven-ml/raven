@@ -115,6 +115,12 @@ acceptance requirement; skipped tests are not execution evidence.
   one op today, two states under the new check. `test_grad`'s remat group and
   `test_remat_memory` would then raise "cycle detected while indexing buffer";
   the barrier needs another form before the pin moves.
+- Port the reference's `CallifyCtx.views` into `Callify.transform_to_call`:
+  the reference records the byte views its copy fold creates, and
+  `replace_input` replaces only those. Tolk's `replace_input` tries
+  `contiguous_view` on every concrete SHRINK or BITCAST of the body, which
+  for one over a split buffer now runs a `multi_pm` rewrite that returns
+  `None`: correct, but work the reference skips.
 - Remove closed divergence rulings. Give retained differences a current
   consumer, test and reconsideration criterion. Update the reference pin and
   expectations only when drivers and implementation agree.
