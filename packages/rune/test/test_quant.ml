@@ -521,7 +521,24 @@ let test_float16 () =
   in
   let x = Nx.mul_s (floats [| 2; 2; 1; 32 |]) (Float.ldexp 1.0 (-12)) in
   battery (case large (Nx.reshape [| 4; 32 |] x));
-  battery (case ~ids:(ints [| 2; 2 |] [| 2; 0; 1; -1 |]) large x)
+  battery (case ~ids:(ints [| 2; 2 |] [| 2; 0; 1; -1 |]) large x);
+  (* The forms that decode at float32 for a float16 [x]: grouped blocks past the
+     row bound, the grouped transposed product, and a block per position. *)
+  battery
+    (case
+       ~ids:(ints [| 160 |] (Array.init 160 (fun i -> (i * 7 mod 5) - 1)))
+       (weight ~scale [| 2; 8; 64 |])
+       (floats [| 160; 1; 64 |]));
+  battery
+    (case ~transpose:true
+       ~ids:(ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 3 mod 6) - 1)))
+       w
+       (poison ~at:[ [ 0; 0 ] ] (floats [| 8; 2; 1; 8 |])));
+  battery
+    (case
+       ~ids:(ints [| 3; 2 |] [| 0; 3; -1; 2; 4; 3 |])
+       w
+       (floats [| 3; 2; 65; 64 |]))
 
 (* Compiled [dequant] gives the format's values bit for bit at float32 and
    bfloat16, where every value is exact, except that a flushing device zeroes a
