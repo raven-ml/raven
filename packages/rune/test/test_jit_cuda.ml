@@ -223,20 +223,21 @@ let test_half_sandwich_grad_on_cuda (type b) name (dt : (float, b) Nx.dtype)
     (to_arr (Rune.grad' reference w))
     (jitted w)
 
-(* pmap on a duplicated CUDA device tuple: both shards run on the one GPU, so
-   the whole multi-device path (per-shard uploads, per-device launches with
-   [_device_num] bound, allreduce, gather on read) is exercised without a second
-   device. *)
+(* A program over two CUDA devices: per-slice uploads, per-device launches, the
+   allreduce and a gathered read. It needs two GPUs; a placement names distinct
+   devices, so one GPU cannot stand for two. *)
 
-let cuda2 () =
-  let d = Rune.device "CUDA" in
-  [ d; d ]
-
-let test_pmap_matches_jit_on_cuda () =
+let cuda_rows () =
   require_cuda ();
-  let chain x =
+  match Rune.devices "CUDA" with
+  | a :: b :: _ -> Nx.Placement.sharded ~axis:0 [ a; b ]
+  | _ -> skip ~reason:"one CUDA device; a program over two needs two" ()
+
+let test_split_matches_jit_on_cuda () =
+  let rows = cuda_rows () in
+  let chain ?(gather = Fun.id) x =
     let y = Nx.tanh (Nx.add (Nx.mul x x) x) in
-    let z = Nx.matmul y (Nx.transpose y) in
+    let z = Nx.matmul y (gather (Nx.transpose y)) in
     Nx.sum z ~axes:[ 1 ]
   in
   let x =
@@ -244,47 +245,42 @@ let test_pmap_matches_jit_on_cuda () =
   in
   let expect = Rune.jit' ~devices:[ Rune.device "CUDA" ] chain x in
   let g =
-    Rune.pmap ~devices:(cuda2 ()) Nx.Ptree.(tensor @-> returns tensor) chain
+    Rune.jit'
+      (chain
+         ~gather:
+           (Nx.place (Nx.Placement.replicated (Nx.Placement.devices rows))))
   in
-  check_arr ~msg:"first call" (to_arr expect) (g x);
-  check_arr ~msg:"replay" (to_arr expect) (g x)
+  check_arr ~msg:"first call" (to_arr expect) (g (Nx.place rows x));
+  check_arr ~msg:"replay" (to_arr expect) (g (Nx.place rows x))
 
-let test_pmap_grad_allreduce_on_cuda () =
-  require_cuda ();
+let test_split_grad_allreduce_on_cuda () =
+  let rows = cuda_rows () in
   let w = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let loss x = Nx.mean (Nx.matmul x w) in
   let grads x = Rune.grad' loss x in
   let x = Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> float_of_int i)) in
   let expect = Rune.jit' ~devices:[ Rune.device "CUDA" ] grads x in
-  let g =
-    Rune.pmap ~devices:(cuda2 ()) Nx.Ptree.(tensor @-> returns tensor) grads
-  in
-  check_arr ~msg:"grad inside pmap on cuda" (to_arr expect) (g x)
+  check_arr ~msg:"grad over two devices" (to_arr expect)
+    (Rune.jit' grads (Nx.place rows x))
 
-(* Reducing over the sharded axis allreduces at bfloat16: each shard's partial
-   sum is rounded to bfloat16 before the combine, so allow a couple of ulps
-   against the single-device result. *)
-let test_pmap_bf16_allreduce_on_cuda () =
-  require_cuda ();
+(* Reducing over the split axis allreduces at bfloat16: each slice's partial sum
+   is rounded to bfloat16 before the combine, so allow a couple of ulps against
+   the single-device result. *)
+let test_split_bf16_allreduce_on_cuda () =
+  let rows = cuda_rows () in
   let f x = Nx.sum x ~axes:[ 0 ] in
   let x = half_mat Nx.bfloat16 4 6 sin_data in
   let expect = Rune.jit' ~devices:[ Rune.device "CUDA" ] f x in
-  let g =
-    Rune.pmap ~devices:(cuda2 ()) Nx.Ptree.(tensor @-> returns tensor) f
-  in
+  let g = Rune.jit' f in
   check_arr ~eps:0.0625 ~msg:"bf16 allreduce vs single device" (to_arr expect)
-    (g x);
-  check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g x)
+    (g (Nx.place rows x));
+  check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g (Nx.place rows x))
 
-let test_pmap_feedback_on_cuda () =
-  require_cuda ();
-  let g =
-    Rune.pmap ~devices:(cuda2 ())
-      Nx.Ptree.(tensor @-> returns tensor)
-      (fun x -> Nx.add x x)
-  in
+let test_split_feedback_on_cuda () =
+  let rows = cuda_rows () in
+  let g = Rune.jit' (fun x -> Nx.add x x) in
   let x = vec32 (Array.init 8 float_of_int) in
-  let y1 = g x in
+  let y1 = g (Nx.place rows x) in
   let y2, up, _ = delta (fun () -> g y1) in
   equal ~msg:"feedback moves no bytes to device" int 0 up;
   check_arr ~msg:"gathered result"
@@ -360,15 +356,13 @@ let test_read_before_consumption_on_cuda () =
   ignore (g h);
   raises_consumed (fun () -> to_arr h)
 
-let test_pmap_consume_on_cuda () =
-  require_cuda ();
+let test_split_consume_on_cuda () =
+  let rows = cuda_rows () in
   let g =
-    Rune.pmap ~devices:(cuda2 ())
-      Nx.Ptree.(consumes tensor @@ returns tensor)
-      (fun x -> Nx.add x x)
+    Rune.jit Nx.Ptree.(consumes tensor @@ returns tensor) (fun x -> Nx.add x x)
   in
   let x = vec32 (Array.init 8 float_of_int) in
-  let y1 = g x in
+  let y1 = g (Nx.place rows x) in
   let y2, up, _ = delta (fun () -> g y1) in
   equal ~msg:"consumed feedback still moves no bytes to device" int 0 up;
   raises_consumed (fun () -> to_arr y1);
@@ -502,14 +496,14 @@ let tests =
         test "bfloat16 sandwich grad is fp32"
           (test_half_sandwich_grad_on_cuda "bfloat16" Nx.bfloat16 ~tol:0.02);
       ];
-    group "cuda pmap"
+    group "cuda device lists"
       [
-        test "duplicated device tuple matches jit" test_pmap_matches_jit_on_cuda;
-        test "grad inside pmap allreduces on one gpu"
-          test_pmap_grad_allreduce_on_cuda;
+        test "a split input matches one device" test_split_matches_jit_on_cuda;
+        test "grad over two devices allreduces"
+          test_split_grad_allreduce_on_cuda;
         test "bf16 allreduce matches single device"
-          test_pmap_bf16_allreduce_on_cuda;
-        test "feedback moves no bytes" test_pmap_feedback_on_cuda;
+          test_split_bf16_allreduce_on_cuda;
+        test "feedback moves no bytes" test_split_feedback_on_cuda;
       ];
     group "cuda rng"
       [
@@ -530,7 +524,7 @@ let tests =
           test_consumed_handle_raises_on_cuda;
         test "a handle read before the call is consumed by it"
           test_read_before_consumption_on_cuda;
-        test "pmap consumes the sharded state" test_pmap_consume_on_cuda;
+        test "a program consumes the split state" test_split_consume_on_cuda;
       ];
   ]
 

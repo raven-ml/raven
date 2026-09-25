@@ -19,7 +19,7 @@
   test_stateful
   test_attention
   test_data
-  test_pmap_dp
+  test_data_parallel
   test_jit_state
   test_half
   test_rope

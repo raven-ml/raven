@@ -876,19 +876,26 @@ let test_vmap () =
           (fun w -> Nx_quant.apply ~ids:one w x))
        ws)
 
-(* pmap: a program over several devices multiplies the blocks by their gathered
+(* Routes and rows split by rows over CPU:1 and CPU:2. *)
+let split_rows (ids, x) =
+  let rows =
+    Nx.Placement.sharded ~axis:0 [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+  in
+  (Nx.place rows ids, Nx.place rows x)
+
+(* A program over several devices multiplies the blocks by their gathered
    matrices and groups no routes. *)
-let test_pmap () =
+let test_over_devices () =
   let w = weight ~scale:moderate [| 4; 8; 64 |] in
   let routed (ids, x) = Nx_quant.apply ~ids w x in
   List.iter
     (fun (msg, ids, x) ->
       close ~msg
         (routed (ids, x))
-        (Rune.pmap
-           ~devices:[ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+        (Rune.jit
            Nx.Ptree.(inputs () @-> returns tensor)
-           routed (ids, x)))
+           routed
+           (split_rows (ids, x))))
     [
       ("gathered", ints [| 2; 1 |] [| 3; -1 |], floats [| 2; 1; 1; 64 |]);
       ( "several rows per position",
@@ -902,8 +909,8 @@ let test_pmap () =
 (* The form each product takes, as [RUNE_JIT_DEBUG=1] logs it, in a child
    process that reads the variable fresh. On Metal, 16 routes over 4 experts
    group, forward and transposed; 40 routes over 40 experts do not, as each
-   block would be one row. The CPU groups none of them (τ = 1024), and pmap
-   takes the dense form. *)
+   block would be one row. The CPU groups none of them (τ = 1024), and a program
+   over several devices takes the dense form. *)
 let form_role = "RUNE_QUANT_FORM_ROLE"
 
 let form_cases () =
@@ -925,13 +932,12 @@ let form_cases () =
       fun () -> apply ~transpose:true w ids (floats [| 8; 2; 1; 8 |]) );
     ( "one route per expert",
       fun () -> apply wide distinct (floats [| 40; 1; 64 |]) );
-    ( "sixteen routes under pmap",
+    ( "sixteen routes over two devices",
       fun () ->
-        Rune.pmap
-          ~devices:[ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+        Rune.jit
           Nx.Ptree.(inputs () @-> returns tensor)
           (fun (ids, x) -> Nx_quant.apply ~ids w x)
-          (ids, floats [| 8; 2; 1; 64 |]) );
+          (split_rows (ids, floats [| 8; 2; 1; 64 |])) );
   ]
 
 let run_form_role () =
@@ -1000,8 +1006,8 @@ let test_forms () =
     (grouped "sixteen routes, transposed");
   is_false ~msg:"one route per expert does not group"
     (grouped "one route per expert");
-  equal ~msg:"pmap takes the dense form" (list string) [ "dense" ]
-    (Hashtbl.find_all forms "sixteen routes under pmap")
+  equal ~msg:"over two devices, the dense form" (list string) [ "dense" ]
+    (Hashtbl.find_all forms "sixteen routes over two devices")
 
 (* debug *)
 
@@ -1062,7 +1068,7 @@ let () =
           test "the weight is never differentiated"
             test_weight_not_differentiated;
           test "vmap" test_vmap;
-          test "pmap" test_pmap;
+          test "over two devices" test_over_devices;
           test "debug" test_debug;
         ];
     ]

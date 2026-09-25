@@ -13,8 +13,8 @@
    the state's own counter. The counter is a tensor leaf advanced inside the
    compiled program, so the jitted trajectory matches the eager one and the
    counter reads [n] after [n] compiled calls — a host-int counter would burn
-   the step into the trace and replay it stale. A [pmap] run with the state
-   replicated and the batch split matches the single-device one.
+   the step into the trace and replay it stale. A run over a batch split across
+   two devices, the state a copy on each, matches the single-device one.
 
    Deterministic init (no RNG) so every run sees identical weights and data. *)
 
@@ -22,7 +22,10 @@ open Windtrap
 open Kaun
 
 let dev = Rune.device "CPU"
-let devs2 = [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+
+let rows =
+  Nx.Placement.sharded ~axis:0 [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+
 let batch = 8
 let inputs = 8
 let hidden = 16
@@ -169,21 +172,21 @@ let test_state_advances_across_compiled_calls () =
     (Vega.Schedule.eval sched steps)
     (Nx.item [] (sched opt.step))
 
-let test_pmap_matches_jit () =
+let test_split_batch_matches_jit () =
   let jit =
     run_traj
       ~step0:(Rune.jit ~devices:[ dev ] step_signature train_step)
       steps (init ())
   in
-  (* The state replicated, the batch split on axis 0. *)
-  let pmapped =
+  (* The state enters from the host as a copy on each device, the batch split on
+     axis 0. *)
+  let split =
+    let step = Rune.jit step_signature train_step in
     run_traj
-      ~step0:
-        (Rune.pmap ~devices:devs2 ~in_axes:[ None; Some 0; Some 0 ]
-           step_signature train_step)
+      ~step0:(fun s x y -> step s (Nx.place rows x) (Nx.place rows y))
       steps (init ())
   in
-  check_trajectory ~msg:"pmap adam" 1e-5 jit pmapped
+  check_trajectory ~msg:"adam over a split batch" 1e-5 jit split
 
 (* L-BFGS at a fixed rate. Its state carries the point, so the step reads the
    state and the batch and returns the state itself; the objective evaluates
@@ -252,7 +255,8 @@ let tests =
         test "jit step matches the eager trajectory" test_jit_matches_eager;
         test "counter and schedule advance across compiled calls"
           test_state_advances_across_compiled_calls;
-        test "pmap with replicated state matches jit" test_pmap_matches_jit;
+        test "a batch split over two devices matches one"
+          test_split_batch_matches_jit;
         slow "jit lbfgs at a fixed rate matches the eager trajectory"
           test_lbfgs_jit_matches_eager;
         test "jit refuses a line-searching lbfgs step"

@@ -3,20 +3,23 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Data-parallel training through [Rune.pmap] on kaun layers: a tiny causal
-   attention + linear stack trained for a few SGD steps with parameters
-   replicated and the batch sharded over two CPU devices. The loss trajectory
-   and final weights must match the single-device [Rune.jit] step up to fp32
-   reduction order (the cross-device gradient allreduce reorders the batch sum).
-   Momentum runs thread a real SGD state through the step — the state is a
-   structure over the model's ([Vega.sgd_ptree model]) whose leaves replicate
-   like the parameters — and the pmapped trajectory must match the jitted one.
-   Runs on CPU device instances; no pretrained weights involved. *)
+(* Data-parallel training through [Rune.jit] over a batch split across two CPU
+   devices, on kaun layers: a tiny causal attention + linear stack trained for a
+   few SGD steps, the parameters entering from the host as a copy on each
+   device. The loss trajectory and final weights must match the single-device
+   step up to fp32 reduction order (the cross-device gradient allreduce reorders
+   the batch sum). Momentum runs thread a real SGD state through the step — the
+   state is a structure over the model's ([Vega.sgd_ptree model]) whose leaves
+   are copies like the parameters — and the split trajectory must match the
+   single-device one. Runs on CPU device instances; no pretrained weights
+   involved. *)
 
 open Windtrap
 open Kaun
 
-let devs2 = [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+let rows =
+  Nx.Placement.sharded ~axis:0 [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+
 let batch = 8
 let seq = 4
 let dim = 8
@@ -80,8 +83,8 @@ let loss_fn x tgt m =
   Loss.softmax_cross_entropy_sparse (Linear.apply m.head h) tgt
 
 (* The step's state: the parameters and the optimizer state, a structure over
-   the model's. A step reads the state, which replicates, and the batch, which
-   splits on axis 0, as separate arguments. *)
+   the model's. A step reads the state, a copy on each device, and the batch,
+   split on axis 0, as separate arguments. *)
 
 module State = struct
   type state = {
@@ -103,10 +106,10 @@ let state = Nx.Ptree.instantiate (module State)
 let step_signature =
   Nx.Ptree.(state @-> tensor @-> tensor @-> returns (pair state tensor))
 
-(* One SGD step: value_and_grad inside the (jitted or pmapped) function, so
-   under pmap the gradients allreduce across devices before the update. With
-   momentum 0 the velocity is never read; with momentum the state advances from
-   the replicated leaves on every device, identically. *)
+(* One SGD step: value_and_grad inside the compiled function, so over a split
+   batch the gradients allreduce across devices before the update. With momentum
+   0 the velocity is never read; with momentum the state advances from the
+   copied leaves on every device, identically. *)
 let train_step ~momentum { State.m; opt } x tgt =
   let loss, grads = Rune.value_and_grad model (loss_fn x tgt) m in
   let m, opt =
@@ -130,12 +133,12 @@ let run_both ~momentum ~steps =
   let jit =
     trajectory ~steps (Rune.jit step_signature (train_step ~momentum:mom))
   in
-  let pm =
-    trajectory ~steps
-      (Rune.pmap ~devices:devs2 ~in_axes:[ None; Some 0; Some 0 ] step_signature
-         (train_step ~momentum:mom))
+  let split =
+    let step = Rune.jit step_signature (train_step ~momentum:mom) in
+    trajectory ~steps (fun s x tgt ->
+        step s (Nx.place rows x) (Nx.place rows tgt))
   in
-  (jit, pm)
+  (jit, split)
 
 let check_losses (jit, pm) =
   Array.iteri
@@ -160,7 +163,9 @@ let test_dp_matches_jit () =
            Nx.item [] (Nx.cast Nx.float64 (Nx.max (Nx.abs (Nx.sub a b))))
          in
          is_true
-           ~msg:(Printf.sprintf "weight leaf %d: max |jit - pmap| = %g" !leaf d)
+           ~msg:
+             (Printf.sprintf "weight leaf %d: max |one device - two| = %g" !leaf
+                d)
            (d <= 1e-6);
          a)
        m_jit m_pm)
@@ -172,10 +177,11 @@ let tests =
   [
     group "data-parallel"
       [
-        test "2-device pmap SGD follows the jit trajectory" test_dp_matches_jit;
+        test "SGD over a batch split in two follows one device"
+          test_dp_matches_jit;
         test "replicated momentum state stays coherent"
           test_dp_momentum_matches_jit;
       ];
   ]
 
-let () = run "kaun pmap dp" tests
+let () = run "kaun data parallel" tests

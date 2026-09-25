@@ -45,24 +45,21 @@ let child_twice () =
   print_result (Rune.jit' f (input ()));
   print_result (Rune.jit' f (input ()))
 
-let child_pmap () =
+let child_devices () =
   let x = input () in
   let expect = Rune.jit' f x in
-  let g =
-    Rune.pmap
-      ~devices:[ Rune.device "CPU:1"; Rune.device "CPU:2" ]
-      Nx.Ptree.(tensor @-> returns tensor)
-      f
+  let split =
+    Nx.Placement.sharded ~axis:0 [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
   in
-  let got = g x in
+  let got = Rune.jit' f (Nx.place split x) in
   let e = to_arr expect and a = to_arr got in
-  if e <> a then failwith "pmap result differs from jit";
+  if e <> a then failwith "the result over two devices differs from one device";
   print_result got
 
 let run_role = function
   | "once" -> child_once ()
   | "twice" -> child_twice ()
-  | "pmap" -> child_pmap ()
+  | "devices" -> child_devices ()
   | role -> failwith ("unknown role: " ^ role)
 
 (* Parent side *)
@@ -245,11 +242,11 @@ let program_settings_are_part_of_the_key () =
   misses_without "MV" "0";
   misses_without "DMC" "1"
 
-let pmap_bails () =
+let devices_bail () =
   let cache = fresh_dir () in
-  let _, events = run_child ~cache "pmap" in
-  (* The single-device jit inside the role caches; the pmap compilations must
-     not. One trace -> one miss/store pair and no more. *)
+  let _, events = run_child ~cache "devices" in
+  (* The single-device jit inside the role caches; the program over two devices
+     must not. One trace -> one miss/store pair and no more. *)
   equal (list string) ~msg:"only the jit trace touches the cache"
     [ "miss"; "store" ] events;
   equal int ~msg:"one entry (the jit trace)" 1 (List.length (entry_files cache))
@@ -275,6 +272,7 @@ let () =
                 schedule_settings_are_part_of_the_key;
               test "a trace is not served under other program settings"
                 program_settings_are_part_of_the_key;
-              test "pmap compilations bail and still work" pmap_bails;
+              test "programs over several devices bail and still work"
+                devices_bail;
             ];
         ]

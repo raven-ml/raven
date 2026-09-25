@@ -342,11 +342,11 @@ let () =
 | --- | --- |
 | `jax.jit` | `jit s f` compiles to fused kernels for the signature `s`, cached per key: each tensor's path, dtype and shape, and the data the structures report (a window, a list's length). It compiles `scan` as a loop and rejects data-dependent `cond`/`while_loop` predicates. |
 | GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~devices:[ Rune.device "CUDA" ]` (or `"METAL"`) runs compiled steps on GPU. `Nx.place (Nx.Placement.device (Rune.device "METAL"))` holds a tensor's bytes on a device, and a compiled function that captures it uses that buffer with no upload. |
-| `jax.pmap` / distributed | Not implemented. |
+| `jax.pmap` / distributed | `jit` over values placed on several devices, as `jax.jit` over sharded inputs: the function sees whole values and a reduction over a split axis is an allreduce. A per-device computation is `vmap` over an axis split one slice per device; there is no `shard_map`. |
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `psum`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
 | Full op coverage under `vmap` | The decompositions raise on batched inputs. |
 | `jax.random` keys | Implicit scoped RNG instead; see §11. |
-| Donation, sharding, `pjit` | An argument marked `consumes` in `jit`'s signature is given up by the call, like `donate_argnums`, and results reuse its storage; a consumed value raises on use. No sharding or `pjit`. |
+| Donation, sharding, `pjit` | An argument marked `consumes` in `jit`'s signature is given up by the call, like `donate_argnums`, and results reuse its storage; a consumed value raises on use. Sharding is a placement (`Nx.Placement.sharded`), and operands split differently raise instead of being resharded. |
 
 Rune's failure model is deliberate: operations without a rule raise `Invalid_argument` rather than silently producing zero or wrong gradients.
 

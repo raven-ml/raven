@@ -388,7 +388,6 @@ let devices = Jit.devices
 let default_device = Jit.default_device
 let jit = Jit.jit
 let jit' = Jit.jit'
-let pmap = Jit.pmap
 
 type jit_stats = Jit.stats = {
   bytes_to_device : int;

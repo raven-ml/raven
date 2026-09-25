@@ -160,6 +160,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `Rune.pmap` and its `in_axes` are removed: place the values and
+  call `Rune.jit`. `Some a` is `Nx.place (Nx.Placement.sharded ~axis:a ds)`;
+  `None` leaves a value on the host, where it enters as a copy on each device.
+  A per-device key (`Nx.Rng.fold_in_axis`) comes from `Rune.vmap` over an axis
+  split one slice per device; a program over several devices has one lane.
 - A consumed carry of `Rune.jit` over several devices keeps its placement:
   a result derived from it that lands elsewhere is resharded at the end of the
   program, so a carry that starts on the host stays a copy on each device and

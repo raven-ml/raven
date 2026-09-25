@@ -709,9 +709,10 @@ module Rng : sig
 
   val fold_in_axis : t -> t
   (** [fold_in_axis k] folds the current mapped-axis index into [k], giving one
-      independent key per lane under {!Rune.val-vmap} or per device under
-      {!Rune.pmap}. Outside a transform there is a single lane and it is
-      [fold_in k 0]. Decorrelates lanes from a key the map captures, where
+      independent key per lane under {!Rune.val-vmap}, a map over an axis split
+      one slice per device included. Outside a map there is a single lane and it
+      is [fold_in k 0], in a compiled program over several devices too: it sees
+      whole values. Decorrelates lanes from a key the map captures, where
       {!split_batch} decorrelates them from a key the map is given. *)
 
   val ptree : t Ptree.t

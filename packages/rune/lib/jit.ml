@@ -111,8 +111,8 @@ end)
 type packed = Packed : ('a, 'b) ND.t * ('a, 'b) Nx_effect.t -> packed
 
 (* Backends. Device instances live in the shared tolk registry, one per
-   canonical name, so jit, pmap and the engine's multi-device schedules resolve
-   the same instance. rune installs its own opener for every backend when it is
+   canonical name, so jit and the engine's multi-device schedules resolve the
+   same instance. rune installs its own opener for every backend when it is
    initialised, before any device can be opened through it: the CPU is opened
    without aligned vector types, since host tensors need not be aligned, and
    unknown or unavailable names keep rune's error text. The list is the order in
@@ -440,8 +440,6 @@ type state = {
       (* reverse order, each at its placement in the program *)
   bound : F.Tensor.t Tensor_map.Tbl.t; (* resident captures bound in place *)
   mutable bound_consts : (U.t * packed * seed) list;
-  mutable axis_index : U.t option;
-      (* over several devices: the per-device index buffer, once *)
   scan_stacks : (U.t * int) list Tbl.t;
       (* staged scans: the step record's identity -> the per-leaf carry-stack
          buffer nodes the forward loop wrote, for the backward loop to read. The
@@ -2224,7 +2222,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               | None -> F.Elementwise.contiguous tt))
     | E_copy { t_in } ->
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
-    (* Staged scans. A multi-device (pmap) trace cannot stage a loop yet: it
+    (* Staged scans. A trace over several devices cannot stage a loop yet: it
        answers the probe with [false] — so reverse-mode below tapes the eager
        fold per step and never records an [E_scan_bwd] — and unrolls a directly
        performed scan into the trace, as every jit did before staging. *)
@@ -2592,29 +2590,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           (fun k ->
             discontinue k
               (Jit_error "Rune.jit: psum is only meaningful under vmap"))
-    (* The mapped-axis index. Over several devices it is the device's own index,
-       bound as a per-device scalar input buffer (each device's buffer holds its
-       index) exactly as split input slices are bound. A key folded with it
-       ([Nx.Rng.fold_in_axis]) therefore decorrelates the devices while keeping
-       the key's global (scalar-broadcast) shape, so downstream samplers are
-       unchanged. A buffer value (not a symbolic offset) survives the sharding,
-       allreduce, and grad rewrites intact. A program on one device has one
-       lane: fall through to the eager index 0. *)
-    | E_axis_index -> (
-        match st.st_devices with
-        | [ _ ] -> None
-        | _ ->
-            Some
-              (fun k ->
-                let node =
-                  match st.axis_index with
-                  | Some node -> node
-                  | None ->
-                      let node = make_node st TD.int32 1 in
-                      st.axis_index <- Some node;
-                      node
-                in
-                ret k ND.int32 (buffer_tensor node [||])))
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }
@@ -4354,7 +4329,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       consts = [];
       bound = Tensor_map.Tbl.create 16;
       bound_consts = [];
-      axis_index = None;
       scan_stacks = Tbl.create 4;
       scan_closed = Tbl.create 4;
       scan_collectors = [];
@@ -4740,7 +4714,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
             List.map (fun inp -> inp.i_node) !inputs
             @ List.map (fun (node, _, _) -> node) st.consts
             @ List.map (fun (node, _, _) -> node) st.bound_consts
-            @ Option.to_list st.axis_index
             @ output_nodes
           in
           Tolk.Schedule.memory_plan_rewrite linear (held_buffers bound linear)
@@ -4854,23 +4827,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
         | Copy -> assert false (* only a seeded capture is bound *))
       st.bound_consts
   in
-  (* The per-device axis index ([Nx.Rng.fold_in_axis] over several devices): one
-     scalar buffer per device holding that device's own index. *)
-  Option.iter
-    (fun node ->
-      Hashtbl.replace reserved (U.tag node) ();
-      let bufs =
-        List.mapi
-          (fun i d ->
-            let buf = Tolk.Device.create_buffer ~size:1 ~dtype:TD.int32 d in
-            let idx = Nx_buffer.create ND.int32 1 in
-            Nx_buffer.unsafe_set idx 0 (Int32.of_int i);
-            copyin_tensor scratch d buf (Nx_effect.from_host st.st_ctx idx);
-            buf)
-          devs
-      in
-      seed node bufs)
-    st.axis_index;
   let cp_inputs = Array.of_list (List.rev !inputs) in
   let cp_lends =
     let consumed_inputs =
@@ -5680,80 +5636,3 @@ let jit ?devices ?beam ?beam_parallel sg f =
 
 let jit' ?devices ?beam ?beam_parallel f =
   jit ?devices ?beam ?beam_parallel Nx.Ptree.(tensor @-> returns tensor) f
-
-(* pmap: [jit] over the argument leaves placed as [in_axes] says, on
-   [devices]. *)
-
-let pmap_devices devices =
-  if devices = [] then
-    invalid_arg "Rune.pmap: devices must name at least one device";
-  let names = List.map Nx.Device.name devices in
-  let p0 = backend (List.hd names) in
-  List.iter
-    (fun d ->
-      if d == Nx.Device.host then
-        invalid_arg
-          "Rune.pmap: CPU is the host, which holds no placed value; use CPU:1, \
-           CPU:2, ...";
-      if not (String.equal (backend (Nx.Device.name d)) p0) then
-        invalid_arg
-          (Printf.sprintf
-             "Rune.pmap: devices must share one backend, got %s and %s"
-             (List.hd names) (Nx.Device.name d)))
-    devices
-
-let pmap ~devices ?in_axes ?beam ?beam_parallel sg f =
-  let (Structure.Uncurried u) = Structure.signature "Rune.pmap" sg in
-  pmap_devices devices;
-  let ndev = List.length devices in
-  let axes =
-    match in_axes with
-    | None -> Array.make u.arity (Some 0)
-    | Some l ->
-        if List.length l <> u.arity then
-          invalid_arg
-            (Printf.sprintf
-               "Rune.pmap: in_axes has %d entries but the signature has %d \
-                arguments"
-               (List.length l) u.arity);
-        Array.of_list l
-  in
-  let run =
-    compile_fn ~requested:devices ?beam ?beam_parallel ~roles:u.roles u.args
-      u.result (u.apply f)
-  in
-  let call v =
-    if Gate.transforming () then u.apply f v
-    else begin
-      let leaves, _ = Nx.Ptree.flatten u.args v in
-      let info = leaf_info ~roles:u.roles u.args v in
-      let placed =
-        List.mapi
-          (fun i (Nx.P x) ->
-            match axes.(info.arguments.(i)) with
-            | None -> (
-                match x with
-                | Nx_effect.Placed r when not (over devices r.r_placement) ->
-                    Nx.P (Nx.place (Nx.Placement.replicated devices) x)
-                | _ -> Nx.P x)
-            | Some a ->
-                let shape = shape_of x in
-                if a < 0 || a >= Array.length shape then
-                  invalid_arg
-                    (Printf.sprintf
-                       "Rune.pmap: in_axes maps the argument at %s to axis %d, \
-                        but it has rank %d"
-                       info.names.(i) a (Array.length shape));
-                if shape.(a) mod ndev <> 0 then
-                  invalid_arg
-                    (Printf.sprintf
-                       "Rune.pmap: the argument at %s has dimension %d along \
-                        axis %d, which does not divide into %d equal shards"
-                       info.names.(i) shape.(a) a ndev);
-                Nx.P (Nx.place (Nx.Placement.sharded ~axis:a devices) x))
-          leaves
-      in
-      run (Nx.Ptree.rebuild u.args ~like:v placed)
-    end
-  in
-  u.curry call

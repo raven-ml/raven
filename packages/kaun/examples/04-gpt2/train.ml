@@ -19,10 +19,11 @@
    over the previous generation's storage. The loss recorded at step i is
    computed before update i.
 
-   [--devices] switches the step to data-parallel [Rune.pmap]: parameters
-   replicated on every device, the batch sharded on axis 0, gradients allreduced
-   by construction, with the same numbers as the single-device step up to fp32
-   reduction order.
+   [--devices] runs the same [Rune.jit] step data-parallel, with the batch split
+   on axis 0 across the devices: the parameters enter from the host as a copy on
+   each device and come back there, and the gradients of the mean loss sum
+   across the devices by construction, with the same numbers as the
+   single-device step up to fp32 reduction order.
 
    [--dropout RATE] (default 0, the reference protocol's dropout-free graph)
    enables the GPT-2 dropout sites in [Gpt2.hidden]. The per-step mask key is an
@@ -210,14 +211,13 @@ let train_step_scaled objective key { params; ls } =
   in
   (loss, { params; ls = Vega.Loss_scale.adjust ls ~finite })
 
-(* Data-parallel steps take the batch as arguments so [pmap] can shard it (axis
-   0) while replicating the parameters. The dropout key is replicated too, so
-   every device draws the IDENTICAL mask and the shards are decorrelated only by
-   their data; per-device mask decorrelation awaits pmap's axis-index extension
-   (a per-device lane id to fold into the key). (As of 2026-07, [--dropout] with
-   [--devices] does not compile: tolk's CPU renderer miscompiles one kernel of
-   the pmapped dropout backward, storing a 3-wide vector through a scalar float
-   pointer.) *)
+(* The data-parallel step takes the batch as arguments, split on axis 0 across
+   the devices, and the parameters as copies. The dropout key is a copy too, and
+   the step sees whole values, so it draws one mask for the whole batch, as the
+   single-device step does. (As of 2026-07, [--dropout] with [--devices] did not
+   compile: tolk's CPU renderer miscompiled one kernel of the data-parallel
+   dropout backward, storing a 3-wide vector through a scalar float pointer. Not
+   rechecked since.) *)
 
 (* [--devices] accepts a CPU device count ([--devices 2] means CPU:1,CPU:2) or
    an explicit comma-separated tuple ([--devices CUDA:0,CUDA:1]). *)
@@ -381,7 +381,7 @@ let () =
       ("--device", Arg.Set_string device, "Device to jit for (CPU or CUDA)");
       ( "--devices",
         Arg.Set_string devices,
-        "Data-parallel device tuple: a CPU count (2 = CPU:1,CPU:2) or a \
+        "Data-parallel device list: a CPU count (2 = CPU:1,CPU:2) or a \
          comma-separated list (CUDA:0,CUDA:1)" );
       ( "--compute-dtype",
         Arg.Set_string compute_dtype,
@@ -475,12 +475,12 @@ let () =
         failwith "--compute-dtype float16 does not support --devices";
       let devs = parse_devices !devices in
       device := String.concat "," devs;
-      (* The batch is sharded on axis 0; the key and the parameters are
-         replicated (identical masks on every device). *)
+      (* The batch, the same every step, is split on axis 0 once; the key and
+         the parameters start on the host and enter as a copy on each device. *)
+      let split = Nx.Placement.sharded ~axis:0 (List.map Rune.device devs) in
+      let inputs = Nx.place split inputs and targets = Nx.place split targets in
       let f =
-        Rune.pmap
-          ~devices:(List.map Rune.device devs)
-          ~in_axes:[ Some 0; Some 0; None; None ]
+        Rune.jit
           Nx.Ptree.(
             tensor @-> tensor @-> key @-> consumes gpt2_tree
             @@ returns (pair tensor gpt2_tree))

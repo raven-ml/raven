@@ -369,7 +369,7 @@ The carry the body returns must have the visits of the one it received, and each
 
 Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop over the step's pullback — the compiled program's size does not depend on the number of steps. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
 
-Staging needs the carry to keep its shapes across steps; a fold that changes them, or one reached through `vmap` or `pmap`, unrolls into the compiled program instead. Everywhere outside `jit` the scan folds eagerly and differentiating traces every step.
+Staging needs the carry to keep its shapes across steps; a fold that changes them, one reached through `vmap`, or one in a program over several devices unrolls into the compiled program instead. Everywhere outside `jit` the scan folds eagerly and differentiating traces every step.
 
 ### cond and while_loop
 

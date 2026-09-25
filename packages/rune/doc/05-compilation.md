@@ -42,7 +42,9 @@ A result takes the storage of a consumed leaf when writing it there cannot chang
 
 ## Devices and Memory
 
-A call runs where its placed arguments and captures are (`Nx.place`, `Nx.placement`), and on `Rune.default_device ()` when none is placed. `~devices:[ Rune.device "METAL" ]` names the device instead. Host arguments are copied to the device on every call; a placed argument, such as the output of an earlier call, seeds the program with no transfer. Placing a model's weights once, as the kaun examples' importers do, means no compiled function uploads them.
+A call runs where its placed arguments and captures are (`Nx.place`, `Nx.placement`), and on `Rune.default_device ()` when none is placed. `~devices` names the devices instead: `[ Rune.device "METAL" ]`, or several devices of one backend. Host arguments are copied to the device on every call; a placed argument, such as the output of an earlier call, seeds the program with no transfer. Placing a model's weights once, as the kaun examples' importers do, means no compiled function uploads them.
+
+Values placed on several devices run a program over those devices. A value split along an axis (`Nx.Placement.sharded ~axis`) is one slice on each device, and a copy (`Nx.Placement.replicated`) or a host argument is the whole value on each. The function sees whole values: an elementwise operation keeps its operands' split, and a reduction over a split axis becomes an allreduce, so the gradient of a loss over a batch split across devices is summed across them. Operands split differently raise as the function traces, as they do eagerly; `Nx.place` inside the function gathers a value to a copy on each device or splits one. A per-device computation is `vmap` over an axis split one slice per device.
 
 Outputs are values on the device: shape and dtype never transfer, and a read copies the elements it reads and leaves the output where it is. An nx operation on a placed value outside a compiled function computes on the host and places its result. A view of part of a storage is read in place: the program reads the storage the view reaches and applies a strided view's layout itself. Views that differ only by an offset that is a multiple of 16 bytes share a program, and a C-order window at such an offset shares the program of a value that covers its storage. Only views whose windows overlap (`Nx.sliding_window`) are copied.
 
@@ -50,7 +52,7 @@ Device memory that backs an output is held until the output is garbage-collected
 
 ## The Persistent Cache
 
-The first compilation of a trace writes its scheduled and compiled kernels to a disk cache under `$XDG_CACHE_HOME/tolk/rune_jit` (`XDG_CACHE_HOME` defaults to `~/.cache` on Linux and `~/Library/Caches` on macOS). A later process compiling the same trace loads them, so tracing is most of a warm start. Entries are invalidated when the executable, the device, its compiler or the code generation options change. `JITCACHE=0` disables the cache; `pmap` compilations are never persisted. Results are identical either way.
+The first compilation of a trace writes its scheduled and compiled kernels to a disk cache under `$XDG_CACHE_HOME/tolk/rune_jit` (`XDG_CACHE_HOME` defaults to `~/.cache` on Linux and `~/Library/Caches` on macOS). A later process compiling the same trace loads them, so tracing is most of a warm start. Entries are invalidated when the executable, the device, its compiler or the code generation options change. `JITCACHE=0` disables the cache; programs over several devices are never persisted. Results are identical either way.
 
 ## Beam Search
 

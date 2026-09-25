@@ -5,8 +5,8 @@
 
 (* Half-precision (float16 / bfloat16) through the transformations: the
    astype-sandwich gradient that underpins fp32-master-weight training,
-   eager-vs-jit agreement for half compute graphs, pmap with bfloat16 leaves,
-   and vmap over half tensors. *)
+   eager-vs-jit agreement for half compute graphs, bfloat16 values split over
+   two devices, and vmap over half tensors. *)
 
 open Windtrap
 open Rune_test_support.Support
@@ -87,38 +87,39 @@ let test_jit_layernorm (type b) name (dt : (float, b) Nx.dtype) ~eps () =
   check_eager_vs_jit ~eps ~msg:(name ^ " layernorm") (layernorm_graph dt)
     (half_mat dt 3 6 sin_data)
 
-(* ───── pmap with bfloat16 leaves ───── *)
+(* ───── bfloat16 split over two devices ───── *)
 
-let devs2 = [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
+let rows =
+  Nx.Placement.sharded ~axis:0 [ Rune.device "CPU:1"; Rune.device "CPU:2" ]
 
-(* Reducing over the sharded axis forces a cross-device allreduce at bfloat16.
+(* Reducing over the split axis forces a cross-device allreduce at bfloat16.
    Each device rounds its partial sum to bfloat16 before the combine, so allow a
    couple of ulps against the single-device result. *)
-let test_pmap_bf16_allreduce () =
+let test_split_bf16_allreduce () =
   let f x = Nx.sum x ~axes:[ 0 ] in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) f in
+  let g = Rune.jit' f in
   check_arr ~eps:0.0625 ~msg:"bf16 allreduce vs single device" (to_arr expect)
-    (g x);
-  check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g x)
+    (g (Nx.place rows x));
+  check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g (Nx.place rows x))
 
-(* No cross-device reduce: shards are independent, so the pmap result is
-   bit-equal to the single-device one. *)
-let test_pmap_bf16_elementwise () =
+(* No cross-device reduce: slices are independent, so the result is bit-equal to
+   the single-device one. *)
+let test_split_bf16_elementwise () =
   let f x = Nx.mul x x in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' f x in
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) f in
-  check_arr ~eps:0.0 ~msg:"bf16 elementwise byte-equal" (to_arr expect) (g x)
+  check_arr ~eps:0.0 ~msg:"bf16 elementwise byte-equal" (to_arr expect)
+    (Rune.jit' f (Nx.place rows x))
 
-let test_pmap_bf16_mean_grad () =
+let test_split_bf16_mean_grad () =
   let loss x = Nx.mean (Nx.mul x x) in
   let grads x = Rune.grad' loss x in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' grads x in
-  let g = Rune.pmap ~devices:devs2 Nx.Ptree.(tensor @-> returns tensor) grads in
-  check_arr ~eps:0.0625 ~msg:"bf16 grad allreduce" (to_arr expect) (g x)
+  check_arr ~eps:0.0625 ~msg:"bf16 grad allreduce" (to_arr expect)
+    (Rune.jit' grads (Nx.place rows x))
 
 (* ───── vmap over half tensors ───── *)
 
@@ -151,11 +152,11 @@ let tests =
         test "float16 layernorm" (test_jit_layernorm "float16" f16 ~eps:0.008);
         test "bfloat16 layernorm" (test_jit_layernorm "bfloat16" bf16 ~eps:0.06);
       ];
-    group "pmap"
+    group "two devices"
       [
-        test "bf16 allreduce matches single device" test_pmap_bf16_allreduce;
-        test "bf16 elementwise is byte-equal" test_pmap_bf16_elementwise;
-        test "bf16 grad allreduces" test_pmap_bf16_mean_grad;
+        test "bf16 allreduce matches single device" test_split_bf16_allreduce;
+        test "bf16 elementwise is byte-equal" test_split_bf16_elementwise;
+        test "bf16 grad allreduces" test_split_bf16_mean_grad;
       ];
     group "vmap"
       [

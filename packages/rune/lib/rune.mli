@@ -14,8 +14,8 @@
     - {!val-vmap} and {!remat} take the signature ({!Nx.Ptree.type-fn}) of the
       function they transform and return a function of the same type.
     - {!scan} takes the structures of its carry, rows and outputs.
-    - {!val-jit} and {!val-pmap} take the signature of the function they
-      compile, whose arguments are read or consumed ({!Nx.Ptree.consumes}).
+    - {!val-jit} takes the signature of the function it compiles, whose
+      arguments are read or consumed ({!Nx.Ptree.consumes}).
     - A function of one tensor has its own form of most of them: {!grad'},
       {!vmap'}, {!jit'}, {!scan'}, ...
 
@@ -660,32 +660,6 @@ val jit' :
 (** [jit' f] is [jit Nx.Ptree.(tensor @-> returns tensor) f]: {!val-jit} for a
     function of one tensor that reads it. *)
 
-val pmap :
-  devices:Nx.Device.t list ->
-  ?in_axes:int option list ->
-  ?beam:int ->
-  ?beam_parallel:int ->
-  ('a -> 'b) Nx.Ptree.fn ->
-  ('a -> 'b) ->
-  'a ->
-  'b
-(** [pmap ~devices s f] is {!val-jit} over [devices] with its arguments placed
-    on them first. [in_axes] gives one entry per argument of [s]: [Some a]
-    places every tensor of the argument split along axis [a]
-    ({!Nx.Placement.sharded}), and [None] leaves it where it is, a host tensor
-    entering as a copy on each device and a tensor placed elsewhere placed as a
-    copy first. It defaults to [Some 0] for every argument; another axis per
-    tensor is {!Nx.moveaxis}. A tensor already at its placement moves nothing,
-    so an output fed back seeds the program in place. [devices] share one
-    backend, and the host ({!Nx.Device.host}) is not one of them. Everything
-    else is {!val-jit}'s over several devices.
-
-    Raises [Invalid_argument] if [devices] is empty, mixes backends or holds the
-    host; if [in_axes] has more or fewer entries than [s] has arguments; or if a
-    split tensor's rank is too small or its dimension does not divide evenly
-    across the devices, naming its path. Raises {!Jit_error} when tracing fails,
-    as {!val-jit}. *)
-
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
   bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
@@ -749,9 +723,10 @@ val scan :
     carry tensor the step updates with {!Nx.set}, or reads only at the index it
     writes, is updated in place: a step that writes one row of a cache in the
     carry moves that row, not the cache. Staging needs the carry to keep its
-    shapes across steps; a fold that changes them, or one reached through
-    {!val-vmap} or {!val-pmap}, unrolls into the compiled program instead.
-    Everywhere else the scan folds eagerly, tracing every step.
+    shapes across steps; a fold that changes them, one reached through
+    {!val-vmap}, or one in a program over several devices unrolls into the
+    compiled program instead. Everywhere else the scan folds eagerly, tracing
+    every step.
 
     Raises [Invalid_argument] if [xs] has no tensor, a scalar tensor or tensors
     of different leading lengths, or if [n] is [0]; and, eagerly and under

@@ -9,7 +9,7 @@
    Also: bit-exact parity between eager and compiled execution (the C threefry
    kernel and Tolk's decomposition are the same function), the constant-key
    refusal inside jit, per-lane decorrelation with [fold_in_axis], and
-   composition with grad, vmap and pmap. *)
+   composition with grad, vmap and jit over several devices. *)
 
 open Windtrap
 open Rune_test_support.Support
@@ -474,27 +474,34 @@ let test_vmap_scope_rooted_at_mapped_key () =
   is_true ~msg:"lanes are decorrelated"
     (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
 
-(* Pmap: [fold_in_axis] folds each device's own index into the replicated key,
-   so the devices draw decorrelated streams with no manual split. Multiplying
-   the draw by a batch-sharded operand exposes every device's shard — device [i]
-   draws exactly what [fold_in key i] draws for its slice. *)
+(* Over devices: [vmap] over an axis split one slice per device runs each lane
+   on its device, and [fold_in_axis] folds the lane's index into the captured
+   key, so the devices draw decorrelated streams with no manual split: lane [i]
+   draws exactly what [fold_in key i] draws. *)
 
-let test_pmap_fold_in_axis_decorrelates () =
+let test_fold_in_axis_over_devices () =
   let key = Nx.Rng.key 42 in
   let check devices =
     let n = List.length devices in
-    let g =
-      Rune.pmap ~devices ~in_axes:[ Some 0; None ]
+    let draw =
+      Rune.jit
         Nx.Ptree.(tensor @-> Nx.Rng.ptree @-> returns tensor)
         (fun rows key ->
-          Nx.mul rows (Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f32 [| n; 8 |]))
+          Rune.vmap'
+            (fun row ->
+              Nx.mul row (Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f32 [| 8 |]))
+            rows)
     in
-    let out = g (Nx.ones f32 [| n; 8 |]) key in
+    let rows = Nx.ones f32 [| n; 8 |] in
+    let split = Nx.Placement.sharded ~axis:0 devices in
+    let out = draw (Nx.place split rows) key in
+    is_true
+      ~msg:(Printf.sprintf "%d devices: each lane stays on its device" n)
+      (Nx.Placement.equal split (Nx.placement out));
     for i = 0 to n - 1 do
       check_bits
-        ~msg:(Printf.sprintf "%d devices: device %d draws fold_in key %d" n i i)
-        (Nx.slice [ Nx.I i ]
-           (Nx.Rng.uniform (Nx.Rng.fold_in key i) f32 [| n; 8 |]))
+        ~msg:(Printf.sprintf "%d devices: lane %d draws fold_in key %d" n i i)
+        (Nx.Rng.uniform (Nx.Rng.fold_in key i) f32 [| 8 |])
         (Nx.slice [ Nx.I i ] out)
     done;
     is_true
@@ -571,8 +578,8 @@ let tests =
           test_vmap_scope_rooted_at_mapped_key;
         test "vmap fold_in_axis decorrelates lanes"
           test_vmap_fold_in_axis_decorrelates;
-        test "pmap fold_in_axis decorrelates devices"
-          test_pmap_fold_in_axis_decorrelates;
+        test "fold_in_axis decorrelates lanes over devices"
+          test_fold_in_axis_over_devices;
       ];
   ]
 

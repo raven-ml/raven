@@ -19,7 +19,7 @@
   test_jacobian
   test_control
   test_jit
-  test_pmap
+  test_device_lists
   test_rng
   test_half)
  (modules
@@ -34,7 +34,7 @@
   test_jacobian
   test_control
   test_jit
-  test_pmap
+  test_device_lists
   test_rng
   test_half)
  (package rune)

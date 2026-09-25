@@ -1888,10 +1888,10 @@ let threefry key ctr =
     | Host k, Host c -> Host (Nx_backend.threefry k c)
     | _ -> routed2 e key ctr Nx_backend.threefry)
 
-(* The index of the current lane along the innermost mapped axis. The vmap/pmap
-   handler answers with a per-lane (batched) or per-device index; with no
-   handler there is a single lane, index 0. [Nx.Rng.fold_in_axis] folds it into
-   a key to decorrelate lanes. *)
+(* The index of the current lane along the innermost mapped axis. The vmap
+   handler answers with a per-lane (batched) index; with no handler there is a
+   single lane, index 0. [Nx.Rng.fold_in_axis] folds it into a key to
+   decorrelate lanes. *)
 let axis_index ctx =
   try Effect.perform E_axis_index
   with Effect.Unhandled _ -> const_scalar ctx 0l Nx_dtype.int32

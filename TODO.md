@@ -59,7 +59,7 @@ decode contract follow-ups (rfc 0002):
   that free old columns, tree speculation (a caller-given write target and a
   token-to-token mask), packed sequences with position reset: when a model
   needs them
-- storage reuse under `pmap` per shard: inside the placement rfc
+- storage reuse per shard in programs over several devices: RFC 0005 stage 2 M4
 
 loading weights follow-ups (rfc 0003):
 - rune stages an upload in a `Bytes` it keeps per distinct leaf size for the
