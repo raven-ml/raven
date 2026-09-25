@@ -50,6 +50,13 @@ val stage_copies :
     Returns [None] if no copy needs staging or staging cannot be imported.
     Other allocation and device failures propagate. *)
 
+val lower_call : devices:string list -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [lower_call ~devices sink] lowers the explicit queue submissions in [sink]
+    to a host program call through the same encoding, linking and address-table
+    rules as {!compile}. The call has no tensor arguments or execution fallback.
+    [devices] lists the nonempty set of devices whose queues must complete.
+    The returned call must be linked before execution. *)
+
 val compile :
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   ?profile:bool -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t

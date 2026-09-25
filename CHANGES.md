@@ -648,6 +648,10 @@ thread.
 
 ### Tolk (new)
 
+- NV channel initialization and local-memory growth share kernel submission
+  ordering and retirement. Failed local-memory setup preserves the previous
+  capacity and retains storage whose completion is uncertain.
+
 - Reuse Metal pipelines and CUDA functions across independently linked
   submissions, avoiding repeated native program creation. Retiring one replay
   keeps programs used by other replays alive until device shutdown.

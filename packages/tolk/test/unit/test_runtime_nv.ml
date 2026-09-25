@@ -510,7 +510,8 @@ let with_fake_sysfs devices f =
   Fun.protect ~finally:(fun () -> rm_tree root) (fun () -> f root)
 
 let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(profile = false)
-    ?lib ?global_size ?(local_size = [U.Launch_int 1]) ?image_address
+    ?lib ?global_size ?(local_size = [U.Launch_int 1]) ?image_address ?allocator
+    ?(synchronize = fun () -> ())
     ~compute_class ~copies m =
   let open Tolk in
   let open Tolk_uop in
@@ -547,9 +548,12 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(profile = false)
     lower = Tolk_nv.Encoded_queue.lower device_name;
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
   let image_addresses = Hashtbl.create 2 in
-  let host_allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
-  let allocator = Device.Allocator.Pack {host_allocator with
-    addr = Some (fun address -> Option.value (Hashtbl.find_opt image_addresses address) ~default:address)} in
+  let allocator = match allocator with
+    | Some allocator -> allocator
+    | None ->
+        let host_allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+        Device.Allocator.Pack {host_allocator with addr = Some (fun address ->
+            Option.value (Hashtbl.find_opt image_addresses address) ~default:address)} in
   let renderer_set = Device.Renderer_set.make ~device:device_name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
   let buffers = Hashtbl.create 16 in
@@ -590,11 +594,27 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(profile = false)
      | _ -> ());
     Some buffer in
   let device = Device.make ~name:device_name ~allocator ~renderer_set
-      ~synchronize:(fun timeout -> ignore timeout; ()) ~queue ~bufferize () in
+      ~synchronize:(fun timeout -> ignore timeout; Submission.check submission; synchronize ()) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)]
     else if chain then [call; U.replace call ~src:[|program; parameter 1|] ()] else [call] in
   Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
+
+let slm_allocator ?(synchronize = fun () -> ()) () =
+  let open Tolk in
+  let allocs = ref [] and frees = ref [] and fail_next = ref false and attempts = ref [] in
+  let base = Tolk_uop.Storage.Host_allocator.make ~synchronize in
+  let alloc size (spec : Device.Buffer_spec.t) =
+    if spec.nolru then begin
+      allocs := size :: !allocs;
+      if !fail_next then raise (Nv_iface.Out_of_memory "scripted")
+    end;
+    base.alloc size spec in
+  let free raw size (spec : Device.Buffer_spec.t) =
+    if spec.nolru then attempts := size :: !attempts;
+    base.free raw size spec;
+    if spec.nolru then frees := size :: !frees in
+  Device.Allocator.Pack {base with alloc; free}, allocs, frees, fail_next, attempts
 
 let execute_queue ~compute_class ~copies m =
   let open Tolk in
@@ -663,6 +683,53 @@ let execute_queue ~compute_class ~copies m =
           Bytes.set_int32_le progress 8 (Int64.to_int32 (Bytes.get_int64_le progress 0));
           Device.Buffer.copyin (get tag) progress)
         ("progress_compute" :: if copies then ["progress_copy"] else [])) [(-17, 3); (29, 11)]
+
+let raw_submissions m =
+  let open Tolk in
+  let compiled, device, _, buffers, submission =
+    queue_fixture ~compute_class:Defs.ada_compute_a ~copies:false m in
+  let get tag = Device.Buffer.as_bytes (Hashtbl.find buffers tag) in
+  let check timeline compute copy =
+    Submission.check submission;
+    equal int64 timeline (Bytes.get_int64_le (get "timeline") 8);
+    equal int64 compute (Bytes.get_int64_le (get "progress_compute") 0);
+    if copy <> 0L then equal int64 copy (Bytes.get_int64_le (get "progress_copy") 0) in
+  let setup = [|0x20012000; Defs.ada_compute_a|] in
+  Tolk_nv.submit_commands ~device ~queue:"COMPUTE:0" setup;
+  check 1L 1L 0L;
+  equal int32 (Int32.of_int setup.(0)) (Bytes.get_int32_le (get "cmdbuf_compute") 24);
+  Tolk_nv.submit_commands ~device ~queue:"COPY:0" [|0x20018000; Defs.ampere_dma_copy_b|];
+  check 2L 1L 1L;
+  let linked = Realize.link_linear compiled in
+  let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
+  Realize.run_linear ~device
+    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    ~jit:true ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked;
+  check 3L 2L 1L;
+  Tolk_nv.submit_commands ~device ~queue:"COMPUTE:0" setup;
+  check 4L 3L 1L
+
+let raw_submission_timeout m =
+  let open Tolk in
+  let compiled, device, _, buffers, submission =
+    queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
+  let linked = Realize.link_linear compiled in
+  let progress = Hashtbl.find buffers "progress_compute" in
+  let bytes = Device.Buffer.as_bytes progress in
+  Bytes.set_int64_le bytes 0 7L;
+  Device.Buffer.copyin progress bytes;
+  let put = Hashtbl.find buffers "gpput_compute" in
+  let bytes = Bytes.create 4 in
+  Bytes.set_int32_le bytes 0 7l;
+  Device.Buffer.copyin put bytes;
+  let protected = List.map (fun tag ->
+      let buffer = Hashtbl.find buffers tag in buffer, Device.Buffer.as_bytes buffer)
+      ["timeline"; "ring_compute"; "gpput_compute"; "progress_compute"; "qmd"; "cmdbuf_compute"] in
+  raises_match (Exn.failure ~substring:"HCQ submission timed out") (fun () ->
+      Tolk_nv.submit_commands ~device ~queue:"COMPUTE:0" [|0x20012000; Defs.ada_compute_a|]);
+  raises_match (Exn.failure ~substring:"HCQ submission timed out") (fun () -> Submission.check submission);
+  List.iter (fun (buffer, before) -> equal Windtrap.bytes before (Device.Buffer.as_bytes buffer)) protected;
+  ignore (Sys.opaque_identity linked)
 
 let queue_chain ~compute_class m =
   let open Tolk in
@@ -811,7 +878,9 @@ let () =
   run "Nv_runtime"
     [
       group "compiled queues"
-        [test "Ada descriptors chain launches and release only the tail" (fun () ->
+        [test "raw setup and kernels share timeline and FIFO progress" (fun () -> with_fixture raw_submissions);
+         test "failed raw submission leaves live storage and counters unchanged" (fun () -> with_fixture raw_submission_timeout);
+         test "Ada descriptors chain launches and release only the tail" (fun () ->
              with_fixture (queue_chain ~compute_class:Defs.ada_compute_a));
          test "Blackwell descriptors chain launches and release only the tail" (fun () ->
              with_fixture (queue_chain ~compute_class:Defs.blackwell_compute_b));
@@ -1556,69 +1625,47 @@ let () =
         ];
       group "local memory"
         [
-          test "growing sizes the store from the topology" (fun () ->
+          test "growing sizes the store and submits setup through the compiled queue" (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev m in
-                  let qd = queue_desc m in
-                  let tl = timeline m in
-                  let allocs = ref [] and frees = ref [] in
-                  let alloc size =
-                    allocs := size :: !allocs;
-                    Buffer.make ~va:0x60000000n ~size ~meta:() ()
-                  in
-                  let free buf = frees := Buffer.size buf :: !frees in
-                  Tolk_nv.ensure_has_local_memory dev ~alloc ~free ~num_gpcs:2
-                    ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2 ~max_warps_per_sm:48
-                    ~tl ~queue:qd 0x100;
-                  (* 0x100 * 32 rounds to 0x2000 per warp slot; times 48
-                     warps and 2 SMs is 0xc0000 per TPC; times 6 TPCs is
-                     0x480000 *)
-                  equal int 0x100 dev.Tolk_nv.slm_per_thread;
-                  equal (list int) [ 0x480000 ] !allocs;
-                  equal (list int) [] !frees;
-                  (match dev.Tolk_nv.shader_local_mem with
-                  | Some b -> equal int 0x480000 (Buffer.size b)
-                  | None -> fail "expected a backing store");
-                  equal int 1 (Timeline.submitted tl);
-                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0));
-                  let expected =
-                    let cq = Compute_queue.create dev in
-                    Compute_queue.wait cq ~value:0 tl.Timeline.timeline;
-                    Compute_queue.setup cq ~local_mem:0x60000000n
-                      ~local_mem_tpc_bytes:0xc0000 ();
-                    Compute_queue.signal cq ~value:1 tl.Timeline.timeline;
-                    Q.dwords (Compute_queue.q cq)
-                  in
-                  equal (array int) expected
-                    (staged_dwords m ~off:0 (Array.length expected));
-                  (* a covered request changes nothing *)
-                  Tolk_nv.ensure_has_local_memory dev ~alloc ~free ~num_gpcs:2
-                    ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2 ~max_warps_per_sm:48
-                    ~tl ~queue:qd 0x80;
-                  equal int 1 (List.length !allocs);
-                  equal int 1 (Timeline.submitted tl)));
-          test "failed growth preserves the existing store and rejects the request"
-            (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let qd = queue_desc m in
-                  let tl = timeline m in
-                  let allocs = ref [] and frees = ref [] in
-                  let fail_next = ref false in
-                  let alloc size =
-                    allocs := size :: !allocs;
-                    if !fail_next then begin
-                      fail_next := false;
-                      raise (Nv_iface.Out_of_memory "scripted")
-                    end;
-                    Buffer.make ~va:0x60000000n ~size ~meta:() ()
-                  in
-                  let free buf = frees := Buffer.size buf :: !frees in
-                  let ensure required =
-                    Tolk_nv.ensure_has_local_memory dev ~alloc ~free
+                  let allocator, allocs, frees, _, _ = slm_allocator () in
+                  let _, device, _, buffers, _ = queue_fixture ~allocator
+                      ~compute_class:Defs.ada_compute_a ~copies:false m in
+                  let ensure size = Tolk_nv.ensure_has_local_memory dev
                       ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
-                      ~max_warps_per_sm:48 ~tl ~queue:qd required
-                  in
+                      ~max_warps_per_sm:48 ~device size in
+                  ensure 0x100;
+                  equal int 0x100 dev.Tolk_nv.slm_per_thread;
+                  equal (list int) [0x480000] !allocs;
+                  equal (list int) [] !frees;
+                  let backing = Option.get dev.Tolk_nv.shader_local_mem in
+                  equal int 0x480000 (Tolk.Device.Buffer.nbytes backing);
+                  let get tag = Tolk.Device.Buffer.as_bytes (Hashtbl.find buffers tag) in
+                  equal int64 1L (Bytes.get_int64_le (get "timeline") 8);
+                  equal int32 1l (Bytes.get_int32_le (get "gpput_compute") 0);
+                  let stream = get "cmdbuf_compute" in
+                  (* A six-dword timeline wait precedes the two setup packets. *)
+                  let address = Int64.of_nativeint (Tolk.Device.Buffer.addr backing) in
+                  equal int32 (Int64.to_int32 (Int64.shift_right_logical address 32))
+                    (Bytes.get_int32_le stream (7 * 4));
+                  equal int32 (Int64.to_int32 address) (Bytes.get_int32_le stream (8 * 4));
+                  equal int32 0xc0000l (Bytes.get_int32_le stream (11 * 4));
+                  ensure 0x80;
+                  equal int 1 (List.length !allocs);
+                  equal int64 1L (Bytes.get_int64_le (get "timeline") 8);
+                  ensure 0x200;
+                  equal (list int) [0x480000] !frees;
+                  equal int 0x200 dev.Tolk_nv.slm_per_thread;
+                  equal int64 2L (Bytes.get_int64_le (get "timeline") 8)));
+          test "failed growth preserves the existing store and rejects the request" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m in
+                  let allocator, allocs, frees, fail_next, _ = slm_allocator () in
+                  let _, device, _, buffers, _ = queue_fixture ~allocator
+                      ~compute_class:Defs.ada_compute_a ~copies:false m in
+                  let ensure size = Tolk_nv.ensure_has_local_memory dev
+                      ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
+                      ~max_warps_per_sm:48 ~device size in
                   ensure 0x100;
                   let old = Option.get dev.Tolk_nv.shader_local_mem in
                   fail_next := true;
@@ -1628,41 +1675,61 @@ let () =
                   equal (list int) [] !frees;
                   equal int 0x100 dev.Tolk_nv.slm_per_thread;
                   is_true (Option.get dev.Tolk_nv.shader_local_mem == old);
-                  equal int 1 (Timeline.submitted tl);
-                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
-          test "failed setup submission does not advertise unsubmitted work"
-            (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m and tl = timeline m in
-                  let queue = queue_desc ~entries:3 m in
-                  let error = Invalid_argument "NV FIFO capacity must be a power of two" in
-                  raises error (fun () ->
-                      Tolk_nv.ensure_has_local_memory dev
-                        ~alloc:(fun size -> Buffer.make ~va:0x60000000n ~size ~meta:() ())
-                        ~free:(fun _ -> fail "failed submission must retain storage")
-                        ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
-                        ~max_warps_per_sm:48 ~tl ~queue 0x100);
-                  equal int 0 (Timeline.submitted tl);
-                  equal int32 0l (Mmio.read32 queue.gpput 0);
-                  raises error (fun () -> Timeline.synchronize tl)));
-          test "out of memory without a fallback propagates" (fun () ->
+                  equal int64 1L (Bytes.get_int64_le
+                    (Tolk.Device.Buffer.as_bytes (Hashtbl.find buffers "timeline")) 8)));
+          test "failed setup completion retains old capacity and both allocations" (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev m in
-                  let qd = queue_desc m in
-                  let tl = timeline m in
-                  raises_match
-                    (function Nv_iface.Out_of_memory _ -> true | _ -> false)
-                    (fun () ->
-                      Tolk_nv.ensure_has_local_memory dev
-                        ~alloc:(fun _ ->
-                          raise (Nv_iface.Out_of_memory "scripted"))
-                        ~free:(fun _ -> fail "nothing to free")
-                        ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
-                        ~max_warps_per_sm:48 ~tl ~queue:qd 0x10);
+                  let fail_wait = ref false and faulted = ref false in
+                  let error = Failure "scripted NV completion failure" in
+                  let check () = if !faulted then raise error in
+                  let allocator, allocs, frees, _, attempts = slm_allocator ~synchronize:check () in
+                  let _, device, _, _, _ = queue_fixture ~allocator
+                      ~synchronize:(fun () ->
+                        if !fail_wait then faulted := true;
+                        check ())
+                      ~compute_class:Defs.ada_compute_a ~copies:false m in
+                  let ensure size = Tolk_nv.ensure_has_local_memory dev
+                      ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
+                      ~max_warps_per_sm:48 ~device size in
+                  ensure 0x100;
+                  let old = Option.get dev.Tolk_nv.shader_local_mem in
+                  fail_wait := true;
+                  raises error (fun () -> ensure 0x200);
+                  equal int 0x100 dev.Tolk_nv.slm_per_thread;
+                  is_true (Option.get dev.Tolk_nv.shader_local_mem == old);
+                  equal (list int) [0x480000; 0x900000] (List.rev !allocs);
+                  equal (list int) [] !frees;
+                  raises error (fun () -> Tolk.Device.synchronize device);
+                  raises error (fun () -> Tolk.Device.Buffer.deallocate old);
+                  equal (list int) [] !frees;
+                  (* Drain finalizers while the injected fault is latched. Each
+                     failed free is retained by Storage, never returned to the allocator. *)
+                  let rec collect () =
+                    match Tolk_uop.Storage.with_operation (fun () -> Gc.full_major ()) with
+                    | () -> ()
+                    | exception exn when exn = error -> collect () in
+                  collect ();
+                  is_true (List.mem 0x900000 !attempts);
+                  equal (list int) [] !frees;
+                  (* Reset only the fake allocator after checking quarantine,
+                     so unrelated later finalizers do not inherit this fault. *)
+                  faulted := false));
+          test "out of memory before initial setup does not submit" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m in
+                  let allocator, _, frees, fail_next, _ = slm_allocator () in
+                  fail_next := true;
+                  let _, device, _, buffers, _ = queue_fixture ~allocator
+                      ~compute_class:Defs.ada_compute_a ~copies:false m in
+                  raises_match (function Nv_iface.Out_of_memory _ -> true | _ -> false)
+                    (fun () -> Tolk_nv.ensure_has_local_memory dev
+                      ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
+                      ~max_warps_per_sm:48 ~device 0x10);
                   equal int 0 dev.Tolk_nv.slm_per_thread;
                   is_true (Option.is_none dev.Tolk_nv.shader_local_mem);
-                  equal int 0 (Timeline.submitted tl);
-                  equal int 0 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
+                  equal int 0 (Hashtbl.length buffers);
+                  equal (list int) [] !frees));
         ];
       group "compiled launch validation"
         [

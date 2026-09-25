@@ -95,7 +95,7 @@ type 'meta device = {
   mutable slm_per_thread : int;
       (** Per-thread local-memory bytes the device is currently sized
           for; starts at [0]. *)
-  mutable shader_local_mem : 'meta Hcq.Buffer.t option;
+  mutable shader_local_mem : Tolk.Device.Buffer.t option;
       (** Backing store for kernel local memory; absent until
           {!ensure_has_local_memory} first grows it. *)
   shared_mem_window : nativeint;
@@ -637,30 +637,34 @@ module Encoded_queue : sig
       deadline and latches failures for synchronization to report. *)
 end
 
+val submit_commands : device:Tolk.Device.t -> queue:string -> int array -> unit
+(** [submit_commands ~device ~queue commands] executes raw NV packet dwords
+    through the device's compiled queue and waits for completion. [queue] is
+    ["COMPUTE:0"] or ["COPY:0"]. The submission shares timeline, command storage
+    and FIFO retirement with compiled kernels. *)
+
 val ensure_has_local_memory :
   'meta device ->
-  alloc:(int -> 'meta Hcq.Buffer.t) ->
-  free:('meta Hcq.Buffer.t -> unit) ->
   num_gpcs:int ->
   num_tpc_per_gpc:int ->
   num_sm_per_tpc:int ->
   max_warps_per_sm:int ->
-  tl:('a, 'meta device) Hcq.Timeline.t ->
-  queue:Queue_desc.t ->
+  device:Tolk.Device.t ->
   int ->
   unit
-(** [ensure_has_local_memory dev ~alloc ~free ~num_gpcs ~num_tpc_per_gpc
-    ~num_sm_per_tpc ~max_warps_per_sm ~tl ~queue size] grows [dev]'s
+(** [ensure_has_local_memory dev ~num_gpcs ~num_tpc_per_gpc
+    ~num_sm_per_tpc ~max_warps_per_sm ~device size] grows [dev]'s
     local-memory backing store ([dev.shader_local_mem]) until it covers
     [size] bytes per thread, recording the granted amount, rounded up
     to 32 bytes, in [dev.slm_per_thread]. Does nothing when the store
     already covers [size].
 
-    Growing allocates the new store before retiring the previous allocation,
-    then submits a stream to [queue] that waits for prior work and points the
-    engine at the new store. [free] must synchronize before releasing the old
-    allocation. Allocation failure propagates with the old backing and sizing
-    state unchanged; an undersized store cannot satisfy the request. *)
+    Growing allocates owned storage with caching disabled, then submits setup
+    commands through [device]'s compiled compute queue. The backing and capacity
+    change only after confirmed completion; the previous allocation is then
+    released. Failure leaves the previous backing and capacity unchanged. If
+    completion is uncertain, normal buffer retirement retains the new allocation
+    until the device can be drained safely. *)
 
 (** {1:runtime Device runtime} *)
 

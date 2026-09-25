@@ -157,7 +157,7 @@ type 'meta device = {
   gpfifo_class : int;
   sass_version : int;
   mutable slm_per_thread : int;
-  mutable shader_local_mem : 'meta Hcq.Buffer.t option;
+  mutable shader_local_mem : Tolk.Device.Buffer.t option;
   shared_mem_window : nativeint;
   local_mem_window : nativeint;
   cmdq_page : 'meta Hcq.Buffer.t;
@@ -1956,6 +1956,16 @@ module Encoded_queue = struct
                   bits Defs.nvc6b5_launch_dma_dst_memory_layout Defs.nvc6b5_launch_dma_dst_memory_layout_pitch)];
                 offset := !offset + size
               done
+          | _, U.Arg.Typed ("nv", _) ->
+              previous := None;
+              (match U.children node with
+               | [blob] ->
+                   (match U.arg blob with
+                    | U.Arg.String bytes when U.op blob = Ops.Binary && String.length bytes mod 4 = 0 ->
+                        q (List.init (String.length bytes / 4) (fun i ->
+                            u32 (Int32.to_int (String.get_int32_le bytes (4 * i)) land 0xffffffff)))
+                    | _ -> invalid_arg "NV queue: raw commands need whole dwords")
+               | _ -> invalid_arg "NV queue: malformed raw commands")
           | _, U.Arg.Typed ("barrier", _) ->
               previous := None;
               if compute then begin
@@ -2012,30 +2022,56 @@ module Encoded_queue = struct
     | _ -> None
 end
 
-let ensure_has_local_memory (dev : 'meta device) ~alloc ~free ~num_gpcs
-    ~num_tpc_per_gpc ~num_sm_per_tpc ~max_warps_per_sm ~tl ~queue required =
+let submit_commands ~device ~queue commands =
+  let open Tolk in
+  let open Tolk_uop in
+  let module U = Uop in
+  let kind = match queue with
+    | "COMPUTE:0" -> "submit_nv_compute_0"
+    | "COPY:0" -> "submit_nv_copy_0"
+    | _ -> invalid_arg "NV raw submission requires a compute or copy queue" in
+  let name = Device.name device in
+  let timeline = Hcq2.timeline name in
+  let at ptr i = U.index ~ptr ~idxs:[U.const_int i] () in
+  let value = U.load ~src:(at timeline 1) () in
+  let next = U.alu_binary ~op:Ops.Add ~lhs:value ~rhs:(U.const (Const.int Dtype.uint64 1)) in
+  let bytes = Bytes.create (4 * Array.length commands) in
+  Array.iteri (fun i word -> Bytes.set_int32_le bytes (4 * i) (Int32.of_int word)) commands;
+  let instructions = U.linear [
+      U.ins ~mnemonic:"wait" ~operands:[timeline; value] ();
+      U.ins ~mnemonic:"nv" ~operands:[U.binary (Bytes.to_string bytes)] ();
+      U.ins ~mnemonic:"store" ~operands:[timeline; next] ()]
+    |> fun linear -> U.replace linear ~arg:(U.Arg.Device (U.Single name)) () in
+  let submit = U.custom_function ~name:kind ~srcs:[instructions; U.group []] in
+  let bump = U.store ~dst:(at (U.after ~src:timeline ~deps:[submit]) 1) ~value:next () in
+  let kernel_info = U.{name = "nv_submit"; applied_opts = []; opts_to_apply = None;
+    estimates = None; beam = 0} in
+  let call = Hcq2.lower_call ~devices:[name] (U.sink ~kernel_info [bump]) in
+  let linked = Realize.link_linear (U.linear [call]) in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  Realize.run_linear ~device ~to_program ~jit:true ~wait:true ~update_stats:false linked
+
+let ensure_has_local_memory (dev : 'meta device) ~num_gpcs
+    ~num_tpc_per_gpc ~num_sm_per_tpc ~max_warps_per_sm ~device required =
   if dev.slm_per_thread < required then begin
-    Hcq.Timeline.prepare tl;
     let slm_per_thread = round_up required 32 in
     let bytes_per_tpc =
       round_up (round_up (slm_per_thread * 32) 0x200
         * max_warps_per_sm * num_sm_per_tpc) 0x8000 in
     let old = dev.shader_local_mem in
-    let shader_local_mem =
-      alloc (round_up (bytes_per_tpc * num_tpc_per_gpc * num_gpcs) 0x20000) in
+    let shader_local_mem = Tolk.Device.create_buffer
+        ~size:(round_up (bytes_per_tpc * num_tpc_per_gpc * num_gpcs) 0x20000)
+        ~dtype:Tolk_uop.Dtype.uint8
+        ~spec:{Tolk.Device.Buffer_spec.default with nolru = true} device in
+    Tolk.Device.Buffer.ensure_allocated shader_local_mem;
+    let cq = Compute_queue.create dev in
+    Compute_queue.setup cq
+      ~local_mem:(Tolk.Device.Buffer.addr shader_local_mem)
+      ~local_mem_tpc_bytes:bytes_per_tpc ();
+    submit_commands ~device ~queue:"COMPUTE:0" (Q.dwords (Compute_queue.q cq));
     dev.slm_per_thread <- slm_per_thread;
     dev.shader_local_mem <- Some shader_local_mem;
-    let cq = Compute_queue.create dev in
-    Compute_queue.wait cq
-      ~value:(Hcq.Timeline.submitted tl)
-      tl.Hcq.Timeline.timeline;
-    Compute_queue.setup cq
-      ~local_mem:(Hcq.Buffer.va shader_local_mem)
-      ~local_mem_tpc_bytes:bytes_per_tpc ();
-    Hcq.Timeline.submit tl (fun value ->
-      Compute_queue.signal cq ~value tl.Hcq.Timeline.timeline;
-      Compute_queue.submit cq queue);
-    Option.iter free old
+    Option.iter Tolk.Device.Buffer.deallocate old
   end
 
 (* Device runtime *)
@@ -2232,10 +2268,6 @@ module State = struct
     num_tpc_per_gpc : int;
     num_sm_per_tpc : int;
     max_warps_per_sm : int;
-    (* The device's LRU-wrapped allocator; set right after creation and used
-       for local-memory sizing. *)
-    mutable allocator :
-      'mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
   }
 
   let check_submission t =
@@ -2345,28 +2377,17 @@ module Allocator = struct
     }
 
   let create state =
-    let allocator = Tolk.Device.Lru_allocator.wrap (raw state) in
-    state.State.allocator <- Some allocator;
-    Tolk.Device.Allocator.Pack allocator
+    Tolk.Device.Allocator.Pack (Tolk.Device.Lru_allocator.wrap (raw state))
 end
 
-(* Local-memory backing goes through the LRU allocator so resizes reuse
-   freed device memory. *)
 let ensure_local_memory state size =
   State.check_submission state;
-  let allocator = Option.get state.State.allocator in
   ensure_has_local_memory state.State.hw
-    ~alloc:(fun size ->
-      allocator.Tolk.Device.Allocator.alloc size
-        Tolk.Device.Buffer_spec.default)
-    ~free:(fun buf ->
-      allocator.Tolk.Device.Allocator.free buf (Hcq.Buffer.size buf)
-        Tolk.Device.Buffer_spec.default)
     ~num_gpcs:state.State.num_gpcs
     ~num_tpc_per_gpc:state.State.num_tpc_per_gpc
     ~num_sm_per_tpc:state.State.num_sm_per_tpc
-    ~max_warps_per_sm:state.State.max_warps_per_sm ~tl:state.State.tl
-    ~queue:state.State.compute_queue size
+    ~max_warps_per_sm:state.State.max_warps_per_sm
+    ~device:(Tolk.Device.get state.State.name) size
 
 module Queue = struct
   open Tolk
@@ -2623,27 +2644,8 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
       num_tpc_per_gpc;
       num_sm_per_tpc;
       max_warps_per_sm;
-      allocator = None;
     }
   in
-  (* the initial queue set-up: bind the engine classes and the memory
-     windows to the fresh channels, ordered on the timeline *)
-  let tl = state.State.tl in
-  let cq = Compute_queue.create hw in
-  Compute_queue.setup cq ~compute_class:usermode.Nv_iface.compute_class
-    ~local_mem_window:hw.local_mem_window
-    ~shared_mem_window:hw.shared_mem_window ();
-  Timeline.submit tl (fun value ->
-    Compute_queue.signal cq ~value tl.Timeline.timeline;
-    Compute_queue.submit cq compute_queue);
-  let cp = Copy_queue.create hw in
-  Copy_queue.wait cp ~value:(Timeline.submitted tl)
-    tl.Timeline.timeline;
-  Copy_queue.setup cp ~copy_class:usermode.Nv_iface.dma_class ();
-  Timeline.submit tl (fun value ->
-    Copy_queue.signal cp ~value tl.Timeline.timeline;
-    Copy_queue.submit cp dma_queue);
-  Timeline.synchronize tl;
   at_exit (fun () ->
       if is_valid () then begin
         (* finalize even when the device faulted, so shutdown still reaches
@@ -2663,7 +2665,16 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
           Tolk.Renderer.with_compiler
             (Tolk_nvrtc.Compiler_nvrtc.create ~ptx:false ~cache_key:"nv" target.arch)
             (Tolk.Cstyle.cuda ~device:"NV" arch)) ] in
-  Tolk.Device.make ~name ~allocator ~renderer_set
+  let initialize device =
+    let cq = Compute_queue.create hw in
+    Compute_queue.setup cq ~compute_class:usermode.Nv_iface.compute_class
+      ~local_mem_window:hw.local_mem_window
+      ~shared_mem_window:hw.shared_mem_window ();
+    submit_commands ~device ~queue:"COMPUTE:0" (Q.dwords (Compute_queue.q cq));
+    let cp = Copy_queue.create hw in
+    Copy_queue.setup cp ~copy_class:usermode.Nv_iface.dma_class ();
+    submit_commands ~device ~queue:"COPY:0" (Q.dwords (Copy_queue.q cp)) in
+  Tolk.Device.make ~name ~allocator ~renderer_set ~initialize
     ~peer_group:(if Option.is_some iface.Nv_iface.nvdev then "PCIDevice" else "NV")
     ~synchronize:(fun timeout -> ignore timeout; State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)

@@ -14,13 +14,18 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
-- Move AMD/NV raw channel setup, local-memory growth, cache invalidation,
-  profiling calibration and allocator transfers onto shared submissions. Delete
-  duplicate command builders and handoff bookkeeping once their callers migrate,
-  preserving transfer ownership and ordering. Establish NV raw-INS compilation
-  before deleting bootstrap submissions.
-  Preserve bounded waits and retirement for
-  independently linked submissions; these are separate safety requirements.
+- Move AMD cache invalidation, AMD/NV profiling calibration and allocator
+  transfers onto shared execution. Delete duplicate command builders and
+  handoff bookkeeping once their callers migrate, preserving transfer ownership
+  and ordering.
+  Move host-mapped initialization/readback to direct host access before routing
+  unmapped byte transfers through owned host buffers and shared STORE calls;
+  queue image/command initialization currently calls allocator copyin, so a
+  blanket shared-submission replacement would recursively link queues. Remove
+  AMD's eager 32-by-2-MiB staging pool with its obsolete transfer path. Keep
+  OCaml byte storage alive through completion without borrowing moving pointers.
+  Preserve bounded waits and retirement for independently linked submissions;
+  these are separate safety requirements.
 - Port the target's distinction between one-shot linker ring allocations and
   retained command storage. Share NV code images within a compiled schedule
   and use one QMD/argument arena per run. Measure allocation counts and

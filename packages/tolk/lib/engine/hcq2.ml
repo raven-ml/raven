@@ -255,7 +255,7 @@ let storage_views u =
        | _ -> None)
   | _ -> None
 
-let lower_call queue devices calls original_calls independent_accesses timestamps sink =
+let lower_batch queue devices calls original_calls independent_accesses timestamps sink =
   let patches = ref [] in
   let hoist u =
     if U.op u <> Ops.After then None else
@@ -361,6 +361,15 @@ let lower_call queue devices calls original_calls independent_accesses timestamp
         precompile_backward = false; dtype = Dtype.void; aux = Some aux} in
   U.after ~src:call ~deps:!patches
 
+let lower_call ~devices sink =
+  let queue = match devices with
+    | [] -> invalid_arg "Hcq2.lower_call: no submission device"
+    | device :: _ ->
+        (match Device.queue (Device.get device) with
+         | Some queue -> queue
+         | None -> invalid_arg "Hcq2.lower_call: device has no compiled queue") in
+  lower_batch queue devices [] [] [] [] sink
+
 let compile_batch ~profile ~original_calls ~reordered_accesses calls =
   let plan = plan ~profile calls in
   let devices = List.fold_left (fun ds (d, _, _) ->
@@ -391,7 +400,7 @@ let compile_batch ~profile ~original_calls ~reordered_accesses calls =
       E.(total + cost)) E.zero calls in
   let kernel_info = U.{name = "hcq_submit"; applied_opts = []; opts_to_apply = None;
     estimates = Some (E.to_uop estimates); beam = 0} in
-  lower_call queue devices calls original_calls
+  lower_batch queue devices calls original_calls
     (plan.independent_accesses @ reordered_accesses) plan.timestamps
     (U.sink ~kernel_info submits)
 
