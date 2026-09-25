@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Fix staged `Rune.scan` compilation on Metal by expressing the loop as an
+  effect on its output buffers. Nested scans and their gradients use the same
+  call protocol as other compiled schedules.
 - Route JIT output and scatter-prefill copies through Tolk’s shared executor
   so device transfer and host fallback follow the same storage protocol.
 

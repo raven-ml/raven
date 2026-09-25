@@ -1443,7 +1443,7 @@ let loop_call l ~body_linear ~resolve_node ~reversed ~n =
         ()
 
 (* The buffer [b] once the loop [call] has written it. *)
-let written_by call b = U.after ~src:b ~deps:[ U.store ~dst:b ~value:call () ]
+let written_by call b = U.after ~src:b ~deps:[ call ]
 
 (* The stacked rows of [shape] in [buf], [stride] elements apart, as an [n ::
    shape] tensor. *)

@@ -46,9 +46,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   host/peer mappings and CPU mapping cleanup on large-BAR and small-BAR hardware.
   Preserve tinygrad's default PCI selection.
 - Reconcile the extra slice-copy kernels in `multi_allreduce_ring`.
-- Move Rune staged-scan, indexed-scatter, residency, uploads, memory planning,
+- Move Rune indexed-scatter, residency, uploads, memory planning,
   symbolic placeholders and external-buffer contracts onto the new protocol.
-  Fix Metal staged-scan's value-producing CALL.
   Preserve their correctness/lifetime regressions and revalidate the one-hot
   gather guard at the split threshold. Add custom-kernel sharding, source,
   reshape/flip/slice, invalid-store, assignment and gradient cases.

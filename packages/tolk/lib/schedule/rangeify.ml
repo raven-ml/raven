@@ -9,13 +9,10 @@
    Transforms a tensor-level SINK into a kernel graph with CALL nodes
    wrapping kernel ASTs.
 
-   Two branches have no tinygrad counterpart and must survive a pin move:
-   [find_bufs] walks with [enter_calls:false], and [split_store] passes a
-   precompiled CALL value through as its own kernel. Both exist for rune's
-   staged scan (a CALL(CUSTOM_FUNCTION "loop") whose payload embeds a
-   compiled sub-linear — see engine/realize.ml's loop executor); tinygrad
-   has no cross-kernel loop construct, and neither branch can fire on a
-   graph tinygrad could produce. *)
+   [find_bufs] keeps precompiled call bodies opaque: Rune's staged scan embeds
+   a compiled sub-linear in CUSTOM_FUNCTION "loop", outside the caller's
+   kernel scope. This loop extension has no tinygrad counterpart. Its output
+   buffers depend directly on the call effect. *)
 
 open Tolk_uop
 module U = Uop
@@ -933,31 +930,6 @@ let split_store n =
                    max acc (slot + 1)
                | _ -> acc)
             ctx.slot nodes;
-        (* A precompiled call stored as the value (e.g. a staged loop) is its
-           own kernel, returned as-is below: the kernel rewrite debufs its
-           argument buffers like any other, but without the formals mapping
-           that [compact_kernel_params] applies, the fresh params would never
-           resolve back to the nodes they stand for. Capture the call's
-           original arguments here and restore them on the split result. *)
-        let precompiled_args =
-          let value =
-            match U.as_store n with
-            | Some { value; _ } -> Some value
-            | None -> (
-                match U.as_end n with
-                | Some { value; _ } -> (
-                    match U.as_store value with
-                    | Some { value = v; _ } -> Some v
-                    | None -> None)
-                | None -> None)
-          in
-          match value with
-          | Some v when U.op v = Ops.Call -> (
-              match U.as_call v with
-              | Some { args; _ } -> Some args
-              | None -> None)
-          | _ -> None
-        in
         let rewrite =
           U.first_match
             [ to_define_global ctx; Simplify.flatten_range; Prepare.movement_ops ]
@@ -1053,50 +1025,26 @@ let split_store n =
           | None -> ret
         in
         let ret = renumber_kernel_ranges ret in
-	        let stored = match U.as_store ret with
-          | Some { value; _ } -> Some value
-          | None -> (match U.as_end ret with
-              | Some { value; _ } ->
-                  (match U.as_store value with
-                   | Some { value = v; _ } -> Some v
-                   | None ->
-                       if U.op value = Ops.Call then None
-                       else failwith "split_store: END wraps non-STORE")
-              | None ->
-                  if U.op ret = Ops.Call then None
-                  else failwith "split_store: unexpected result")
+        let info : U.call_info =
+          {
+            grad_fxn = None;
+            name = None;
+            precompile = false;
+            precompile_backward = false;
+            dtype = Dtype.void;
+            aux = None;
+          }
         in
-        (match stored with
-         | None -> None
-         | Some stored when U.op stored = Ops.Call ->
-             (* A precompiled call (e.g. a staged loop) is its own kernel: it
-                replaces the STORE as the AFTER's kernel dep, so the scheduler
-                emits it once with the buffer as its write. *)
-             (match (precompiled_args, U.as_call stored) with
-              | Some args, Some { body; _ } ->
-                  Some (U.replace stored ~src:(Array.of_list (body :: args)) ())
-              | _ -> Some stored)
-         | Some _ ->
-             let info : U.call_info =
-               {
-                 grad_fxn = None;
-                 name = None;
-                 precompile = false;
-                 precompile_backward = false;
-                 dtype = Dtype.void;
-                 aux = None;
-               }
-             in
-             (* Buffers can be on different devices here: the scheduler
-                turns a kernel that is a copy into a transfer. *)
-             let body, args =
-               compact_kernel_params ctx
-                 (U.sink ~kernel_info:{
-                    name = "";
-                    applied_opts = []; opts_to_apply = None;
-                    estimates = None; beam = 0 } [ ret ])
-             in
-             Some (U.call ~body ~args ~info))
+        (* Buffers can be on different devices here: the scheduler
+           turns a kernel that is a copy into a transfer. *)
+        let body, args =
+          compact_kernel_params ctx
+            (U.sink ~kernel_info:{
+               name = "";
+               applied_opts = []; opts_to_apply = None;
+               estimates = None; beam = 0 } [ ret ])
+        in
+        Some (U.call ~body ~args ~info)
   | _ -> None
 
 (* WAR deps *)

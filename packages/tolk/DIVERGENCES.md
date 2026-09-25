@@ -137,15 +137,15 @@ delete it rather than registering it.
 
 - **`CALL(CUSTOM_FUNCTION "loop")` — the staged-scan loop**
   (`engine/realize.ml` `exec_loop`; `schedule/rangeify.ml` `find_bufs`
-  walking `enter_calls:false` and `split_store` passing a precompiled CALL
-  through as its own kernel; builder with its consumer in rune's `jit.ml`).
+  walking `enter_calls:false`; builder with its consumer in rune's `jit.ml`).
   Rune stages `Rune.scan` as one compiled body replayed per slice (the
   design is in `rune/lib/scan.ml` and `stage_scan` in `rune/lib/jit.ml`);
   the reference's answer to a recurrence is unrolling plus TinyJit, so there
   is nothing to port. The loop launches its body and nothing else: the
   schedule writes the buffers it starts from, and the body writes every
-  result. A row of a stacked argument (a layer's weights, a step's input) is
-  bound as a view at byte offset `i * stride` for iteration `i`, never
+  result. Outputs depend directly on the call effect, through the shared
+  allocation/call protocol. A row of a stacked argument (a layer's weights,
+  a step's input) is bound as a view at byte offset `i * stride` for iteration `i`, never
   copied; rows are padded to 16 bytes so every view is aligned. Loop bodies
   use the same compile/link/run protocol as other schedules; each iteration
   rebinds materialized slot buffers. The named
