@@ -109,8 +109,8 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Synchronize linked-template and staged replay caches, including shared
-  argument storage during overlapping calls. Retire obsolete device owners
+  Synchronize linked-template and staged replay cache lookup/publication.
+  Retire obsolete device owners
   from multi-device templates and retained-link caches while preserving live
   submission ownership. Make first-run bookkeeping and execution statistics
   safe for concurrent callers.

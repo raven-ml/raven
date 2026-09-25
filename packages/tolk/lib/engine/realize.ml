@@ -191,6 +191,7 @@ type device_cache = {
   programs : (string, Tolk_uop.Uop.t) Hashtbl.t;
   runtimes : (string, Device.prog) Hashtbl.t;
   lock : Mutex.t;
+  submission_lock : Mutex.t;
 }
 
 module Owner_cache = Ephemeron.K1.Make (struct
@@ -211,9 +212,42 @@ let device_cache device =
       | Some cache -> cache
       | None ->
           let cache = { programs = Hashtbl.create 64; runtimes = Hashtbl.create 64;
-            lock = Mutex.create () } in
+            lock = Mutex.create (); submission_lock = Mutex.create () } in
           Owner_cache.add owner_caches device cache;
           cache)
+(* Native command storage and timeline reservations belong to a device. The
+   scope also follows the Storage copy runner back into [run_linear], without
+   inheriting ownership in another domain or systhread. *)
+type _ Effect.t += Submission_owners : Device.t list option Effect.t
+
+let current_submission_owners () =
+  try Effect.perform Submission_owners
+  with Effect.Unhandled Submission_owners -> None
+
+let with_submission_owners names f =
+  let owners = List.map Device.get names
+      |> List.sort_uniq (fun a b -> Int.compare (Device.id a) (Device.id b)) in
+  match current_submission_owners () with
+  | Some held ->
+      if not (List.for_all (fun owner -> List.exists (( == ) owner) held) owners) then
+        invalid_arg "queue replay: submission owner was not prepared";
+      f ()
+  | None ->
+      let locks = List.map (fun owner -> (device_cache owner).submission_lock) owners in
+      let rec acquire = function
+        | [] ->
+            Effect.Deep.try_with f ()
+              {effc = (fun (type a) (request : a Effect.t) ->
+                  match request with
+                  | Submission_owners -> Some (fun (k : (a, _) Effect.Deep.continuation) ->
+                      Effect.Deep.continue k (Some owners))
+                  | _ -> None)}
+        | lock :: rest -> Mutex.protect lock (fun () -> acquire rest) in
+      Tolk_uop.Storage.with_operation (fun () -> acquire locks)
+
+let submission_owners (submission : Tolk_uop.Uop.queue_info) =
+  submission.devices @ List.concat_map (fun (owner, source) -> [owner; source]) submission.host_deps
+
 let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
 
 let profiling () = debug () >= 2 || Helpers.getenv "PROFILE" 0 <> 0
@@ -896,6 +930,28 @@ let ordered_fallback ~device ~to_program ctx submission =
       | _ -> ()) calls;
   calls
 
+let queue_owners buffers submission =
+  submission_owners submission @
+  List.map (fun (slot, device) ->
+      ignore device;
+      Device.Buffer.device buffers.(slot)) submission.Tolk_uop.Uop.inputs
+
+let fallback_owners ctx calls =
+  let module U = Tolk_uop.Uop in
+  List.concat_map (fun call ->
+      let call = U.without_after call in
+      match U.as_call call, U.arg call with
+      | Some {args; _}, U.Arg.Call_info {aux = Some info; _} ->
+          let buffers = Array.of_list (List.map (resolve ctx) (call_arg_uops args)) in
+          queue_owners buffers info
+      | Some {args; _}, _ ->
+          List.concat_map (fun node ->
+              match resolve_buffer ctx node with
+              | Single buffer -> [Device.Buffer.device buffer]
+              | Multi buffers -> List.map Device.Buffer.device (Device.Multi_buffer.bufs buffers))
+            (call_arg_uops args)
+      | None, _ -> invalid_arg "queue fallback: expected CALL") calls
+
 let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
@@ -917,14 +973,6 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
       (match addresses with
       | Error mapping_error -> fallback ~mapping_error ~stage:(not overlapping_copy) buffers
       | Ok bytes ->
-        if submission.inputs <> [] then begin
-          if submission.table < 0 || submission.table >= Array.length buffers then
-            invalid_arg "exec_hcq: missing runtime address table";
-          let table = Device.Buffer.view buffers.(submission.table)
-              ~size:(Bytes.length bytes) ~dtype:Tolk_uop.Dtype.uint8 ~offset:0 in
-          Device.Buffer.ensure_allocated table;
-          Device.Buffer.copyin table bytes
-        end;
         let host = Device.get submission.host in
         let info = match U.as_program_info body with
           | Some info -> info | None -> invalid_arg "exec_hcq: expected PROGRAM" in
@@ -932,12 +980,20 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
         let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
         let vals = U.program_vals info ~var_vals:ctx.var_vals |> Array.of_list in
         let timings = ref [] in
-        let run () =
+        let run () = with_submission_owners (queue_owners buffers submission) (fun () ->
           submission.devices @ List.map fst submission.host_deps |> List.sort_uniq String.compare
           |> List.iter (fun owner ->
               Device.wait_dependencies (Device.get owner) ~ordered:submission.devices);
           List.iter (fun d -> Option.iter (fun q -> q.Device.prepare ())
               (Device.queue (Device.get d))) submission.devices;
+          if submission.inputs <> [] then begin
+            if submission.table < 0 || submission.table >= Array.length buffers then
+              invalid_arg "exec_hcq: missing runtime address table";
+            let table = Device.Buffer.view buffers.(submission.table)
+                ~size:(Bytes.length bytes) ~dtype:Tolk_uop.Dtype.uint8 ~offset:0 in
+            Device.Buffer.ensure_allocated table;
+            Device.Buffer.copyin table bytes
+          end;
           let started = if ctx.wait then Unix.gettimeofday () else 0. in
           let host_time = prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals
               ~wait:ctx.wait ~timeout:ctx.timeout in
@@ -973,7 +1029,7 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
                 timings := Some elapsed :: !timings;
                 total +. elapsed) 0. submission.timings)
             end
-          end else None in
+          end else None) in
         ignore (track_stats ctx call ~device:(Device.get (List.hd submission.devices))
           (Array.to_list buffers) ctx.var_vals run);
         keep_alive buffers;
@@ -994,16 +1050,19 @@ let rec dispatch_call ctx ~device ~to_program call =
            | U.Arg.Call_info {aux = Some submission; _} ->
                exec_hcq ctx call submission ~fallback:(fun ~mapping_error ~stage buffers ->
                    let ctx = {ctx with input_uops = Array.map U.from_buffer buffers} in
-                   match (if stage then staged_queue ~to_program ctx call submission buffers else None) with
-                   | Some staged -> List.concat_map (dispatch_call ctx ~device ~to_program) (U.children staged)
-                   | None ->
-                       (match mapping_error with
-                        | Some (error, backtrace) when List.exists (fun call -> match U.as_call call with
-                            | Some {body; _} -> U.op body = Tolk_uop.Ops.Program | None -> false)
-                            submission.fallback -> Printexc.raise_with_backtrace error backtrace
-                        | _ -> ());
-                       let calls = ordered_fallback ~device ~to_program ctx submission in
-                       List.concat_map (dispatch_call {ctx with wait = true} ~device ~to_program) calls)
+                   let ctx, calls =
+                     match (if stage then staged_queue ~to_program ctx call submission buffers else None) with
+                     | Some staged -> ctx, U.children staged
+                     | None ->
+                         (match mapping_error with
+                          | Some (error, backtrace) when List.exists (fun call -> match U.as_call call with
+                              | Some {body; _} -> U.op body = Tolk_uop.Ops.Program | None -> false)
+                              submission.fallback -> Printexc.raise_with_backtrace error backtrace
+                          | _ -> ());
+                         {ctx with wait = true}, ordered_fallback ~device ~to_program ctx submission in
+                   let owners = queue_owners buffers submission @ fallback_owners ctx calls in
+                   with_submission_owners owners (fun () ->
+                       List.concat_map (dispatch_call ctx ~device ~to_program) calls))
            | _ -> exec_kernel ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function

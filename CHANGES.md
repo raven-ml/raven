@@ -661,6 +661,10 @@ thread.
 
 ### Tolk (new)
 
+- Prevent overlapping linked queue replays from overwriting address tables
+  or reserving the same timeline value. Failed queue preparation leaves the
+  retained address table unchanged.
+
 - Keep optimizer upcast products exact and symbolic instead of overflowing
   host integers or treating unknown extents as one. `Postrange.upcast_size`
   now returns a `Uop.t`; heuristics require proven resource bounds.

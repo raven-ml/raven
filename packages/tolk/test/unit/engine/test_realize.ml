@@ -558,9 +558,138 @@ let capture_tests =
           is_true (Option.is_none (Realize.current_capture ())));
     ]
 
+let submission_fixture device_name prepare invoke =
+  let allocator = Device.Allocator.Pack (Storage.Host_allocator.make
+      ~synchronize:(fun () -> ())) in
+  let runtime object_ =
+    ignore object_;
+    Device.{call = (fun buffers ~global ~local ~vals ~wait ~timeout ->
+        ignore (global, local, vals, wait, timeout);
+        invoke buffers.(0); None);
+      free = (fun () -> ()); handle = 0n} in
+  let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.);
+    completion = (fun () timeout -> ignore timeout); prepare; host = device_name;
+    copy = (fun buffer -> ignore buffer; None); encode = (fun node -> ignore node; None);
+    lower = (fun node -> ignore node; None);
+    compile = (fun node -> ignore node; fail "fixture is already compiled")} in
+  let device = Device.make ~name:device_name ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:"TEST" ["TEST", Fun.const test_renderer])
+      ~runtime ~queue ~synchronize:(fun timeout -> ignore timeout) () in
+  let buffer () =
+    let buffer = Device.create_buffer ~size:1 ~dtype:Dtype.uint64 device in
+    Device.Buffer.ensure_allocated buffer;
+    buffer in
+  let link () =
+    let table = Device.create_buffer ~size:1 ~dtype:Dtype.uint64 device in
+    Device.Buffer.ensure_allocated table;
+    Device.Buffer.copyin table (Bytes.make 8 '\000');
+    let formal = U.param ~slot:0 ~dtype:Dtype.uint64 ~shape:(shape_const 1) () in
+    let body = program_of (U.sink ~kernel_info:(kernel_info device_name) [formal]) in
+    let input = U.param ~slot:0 ~dtype:Dtype.uint64 ~shape:(shape_const 1)
+        ~device:(U.Single device_name) () in
+    let aux = U.{fallback = []; devices = [device_name]; host = device_name; table = 0;
+      inputs = [1, device_name]; outputs = []; timings = []; independent_accesses = [];
+      host_deps = []; accesses = []} in
+    let linear = U.linear [U.call ~body ~args:[U.from_buffer table; input]
+        ~info:{(call_info None) with aux = Some aux}] in
+    let replay buffer = Realize.run_linear ~device ~jit:true ~update_stats:false
+        ~input_uops:[|U.from_buffer buffer|]
+        ~to_program:(fun owner sink -> ignore (owner, sink); fail "fixture is compiled") linear in
+    table, replay in
+  buffer, link
+
+let serialized_submission_tables ~independent () =
+  let active = Atomic.make false and entered = Atomic.make 0 in
+  let first_ready = Atomic.make false and second_ready = Atomic.make false in
+  let observed = Array.make 2 0L and reservations = Array.make 2 0 in
+  let timeline = Atomic.make 0 in
+  let invoke table =
+    if Atomic.get active then begin
+      let index = Atomic.fetch_and_add entered 1 in
+      let previous = Atomic.get timeline in
+      if index = 0 then begin
+        Atomic.set first_ready true;
+        let deadline = Unix.gettimeofday () +. 0.1 in
+        while not (Atomic.get second_ready) && Unix.gettimeofday () < deadline do
+          Thread.yield ()
+        done
+      end else Atomic.set second_ready true;
+      Atomic.set timeline (previous + 1);
+      reservations.(index) <- previous + 1;
+      observed.(index) <- Bytes.get_int64_le (Device.Buffer.as_bytes table) 0
+    end in
+  let buffer, link = submission_fixture
+      (if independent then "TEST:independent-submissions" else "TEST:shared-submission")
+      (fun () -> ()) invoke in
+  let table, replay = link () in
+  let other_table, other_replay = if independent then link () else table, replay in
+  let first = buffer () and second = buffer () in
+  replay first; other_replay second;
+  Atomic.set active true;
+  let errors = Array.make 2 None in
+  let work index replay input () =
+    try replay input with exn -> errors.(index) <- Some (exn, Printexc.get_raw_backtrace ()) in
+  let a = Thread.create (work 0 replay first) () in
+  while not (Atomic.get first_ready) do Thread.yield () done;
+  let b = Thread.create (work 1 other_replay second) () in
+  Thread.join a; Thread.join b;
+  Array.iter (Option.iter (fun (exn, bt) -> Printexc.raise_with_backtrace exn bt)) errors;
+  equal (array int64)
+    (Array.map (fun b -> Int64.of_nativeint (Device.Buffer.addr b)) [|first; second|]) observed;
+  equal (array int) [|1; 2|] reservations;
+  ignore (Sys.opaque_identity (table, other_table))
+
+let submission_scope_reentry () =
+  let inner_called = ref false in
+  let inner_buffer, inner_link =
+    submission_fixture "TEST:unexpected-submission-owner" (fun () -> ())
+      (fun table -> ignore table; inner_called := true) in
+  let inner_table, inner_replay = inner_link () in
+  let input = inner_buffer () in
+  let depth = ref 0 and recur = ref (fun () -> ()) in
+  let buffer, link = submission_fixture "TEST:reentrant-submission"
+      (fun () -> ()) (fun table ->
+        ignore table;
+        if !depth = 0 then begin
+          incr depth;
+          !recur ();
+          raises (Invalid_argument "queue replay: submission owner was not prepared")
+            (fun () -> inner_replay input)
+        end) in
+  let table, replay = link () in
+  let outer_input = buffer () in
+  recur := (fun () -> replay outer_input);
+  replay outer_input;
+  equal int 1 !depth;
+  is_false !inner_called;
+  equal int64 0L (Bytes.get_int64_le (Device.Buffer.as_bytes inner_table) 0);
+  inner_replay input;
+  is_true !inner_called;
+  ignore (Sys.opaque_identity table)
+
+let failed_submission_prepare () =
+  let fail_prepare = ref true and calls = ref 0 in
+  let buffer, link = submission_fixture "TEST:failed-submission-prepare"
+      (fun () -> if !fail_prepare then raise Exit)
+      (fun table -> ignore table; incr calls) in
+  let table, replay = link () in
+  let input = buffer () in
+  raises Exit (fun () -> replay input);
+  equal int 0 !calls;
+  equal int64 0L (Bytes.get_int64_le (Device.Buffer.as_bytes table) 0);
+  fail_prepare := false;
+  replay input;
+  equal int 1 !calls
+
 let () =
   run "Engine_realize"
     [
+      test "concurrent submissions retain their own address tables"
+        (serialized_submission_tables ~independent:false);
+      test "independent links serialize reservations on their shared device timeline"
+        (serialized_submission_tables ~independent:true);
+      test "submission scope permits reentry and rejects unprepared owners before writes" submission_scope_reentry;
+      test "failed preparation leaves the address table unchanged and releases ownership" failed_submission_prepare;
       capture_tests;
       owner_cache_tests;
       renderer_selection_tests;

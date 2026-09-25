@@ -263,7 +263,13 @@ val run_linear :
     runtime input buffers are not retained. If staging cannot be imported,
     the original calls execute in order. Preparation happens before the
     address table is updated or queue work is published. Allocation and device
-    faults propagate. A
+    faults propagate. Queue submission serializes address-table updates and
+    timeline reservation across participating device owners. Prepared fallback
+    legs share that scope; nested transport may reuse its owners but cannot
+    introduce another owner after submission starts. The scope ends after
+    publication and any requested wait, so asynchronous device work may remain
+    in flight. Execution statistics and arbitrary recursive replay of the same
+    graph are not covered by this guarantee. A
     {!Tolk_uop.Ops.Store} transfers between its
     resolved buffers. Buffer arguments are resolved with
     {!resolve_buffer}, so {!Tolk_uop.Ops.Param} slots index into
