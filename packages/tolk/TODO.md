@@ -72,11 +72,6 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
-- Prove the remaining strict-OOB rejections in leading-axis long cumsum and
-  three Metal tensor-core cases (padded contraction and BF16 accumulation).
-  Their distributed affine indexes no longer contain the gate's bounded sum
-  as a subexpression. Preserve rejection until shared symbolic rules establish
-  safety.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Validate large WMMA accumulator ordering at optimizer/expander boundaries,

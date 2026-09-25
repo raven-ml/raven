@@ -667,6 +667,10 @@ thread.
 
 ### Tolk (new)
 
+- `CHECK_OOB=1` now verifies leading-axis long cumulative sums and padded
+  Metal tensor-core loads, including BF16 accumulation. Distributed indexes
+  previously hid the bounded expressions named by their masks.
+
 - Independent callers now receive distinct buffer identities and retain every
   live tensor handle during concurrent construction. Lost identities or registry
   entries could alias allocations or prevent graph rebinding.

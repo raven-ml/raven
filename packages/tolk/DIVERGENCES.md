@@ -679,8 +679,11 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   dependency footprint small: interval and symbolic proofs must establish
   safety, and unproved accesses are rejected under `CHECK_OOB`. Some safe
   relationally constrained indices accepted by tinygrad may therefore be
-  rejected. Coverage: the scalar/spec OOB tests. Reconsider if a concrete
-  consumer requires proofs that cannot be expressed by the existing rules.
+  rejected. Distributed affine proofs first certify native-width arithmetic,
+  then reuse weak-integer algebra and guarded quotient/remainder comparisons;
+  they never rewrite emitted memory expressions. Coverage: scalar/spec unsafe
+  controls, leading-axis cumsum and padded/BF16 Metal tensor-core execution.
+  Reconsider if a concrete consumer requires proofs beyond these rules.
 
 ## Rendering
 

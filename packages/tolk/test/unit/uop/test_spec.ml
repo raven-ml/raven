@@ -1032,6 +1032,109 @@ let program_oob_shift_component_bounds () =
   is_false ~msg:"weaker selection guard permits a negative index"
     (masked_access_accepted ~size:4 ~index ~gate:Uop.O.(i32 2 < r))
 
+let program_oob_distributed_scan_bounds () =
+  let r = Uop.variable ~param:true ~name:"scan_r" ~min_val:0 ~max_val:63
+      ~dtype:Dtype.int32 () in
+  let s = Uop.variable ~param:true ~name:"scan_s" ~min_val:0 ~max_val:255
+      ~dtype:Dtype.int32 () in
+  let col = Uop.variable ~param:true ~name:"scan_col" ~min_val:0 ~max_val:2
+      ~dtype:Dtype.int32 () in
+  let shift = Uop.alu_binary ~op:Ops.Shl ~lhs:r ~rhs:(i32 2) in
+  let subject = Uop.O.(shift + s) in
+  let index = Uop.O.(r * i32 12 + s * i32 3 + col + i32 (-969)) in
+  let gate = Uop.alu_binary ~op:Ops.And ~lhs:Uop.O.(i32 254 < subject)
+      ~rhs:Uop.O.(i32 322 < subject) in
+  is_true ~msg:"factoring the safe typed stride exposes the guarded scan coordinate"
+    (masked_access_accepted ~size:2100 ~index ~gate);
+  is_false ~msg:"a weaker affine guard admits a negative scan index"
+    (masked_access_accepted ~size:2100 ~index ~gate:Uop.O.(i32 321 < subject));
+  is_false ~msg:"the affine proof still checks the largest valid index"
+    (masked_access_accepted ~size:554 ~index ~gate)
+
+let distributed_metal_access () =
+  let l = Uop.special ~name:"lidx0" ~size:(i32 32) ~dtype:Dtype.int32 () in
+  let g = Uop.special ~name:"gidx1" ~size:(i32 2) ~dtype:Dtype.int32 () in
+  let r = Uop.range ~size:(i32 2) ~axis:2 ~kind:Axis_type.Reduce ~dtype:Dtype.int32 () in
+  let shift op lhs n = Uop.alu_binary ~op ~lhs ~rhs:(i32 n) in
+  let shr = shift Ops.Shr and shl = shift Ops.Shl in
+  let mask lhs n = Uop.alu_binary ~op:Ops.And ~lhs ~rhs:(i32 n) in
+  let high = shr l 4 and mid = mask (shr l 1) 3 in
+  let row = Uop.O.(shl high 2 + mid + shl g 3) in
+  let col = Uop.O.(shl (mask (shr l 3) 1) 2 + shl r 3 + shl (mask l 1) 1) in
+  let index = Uop.O.(high * i32 52 + mid * i32 13 + g * i32 104 + col) in
+  index, Uop.O.(row < i32 9), Uop.O.(col < i32 13)
+
+let program_oob_distributed_metal_bounds () =
+  let index, row_gate, col_gate = distributed_metal_access () in
+  let gate = Uop.alu_binary ~op:Ops.And ~lhs:row_gate ~rhs:col_gate in
+  is_true ~msg:"column bounds expose the distributed guarded row in a padded tile"
+    (masked_access_accepted ~size:117 ~index ~gate);
+  is_false ~msg:"the last valid tile element must fit in storage"
+    (masked_access_accepted ~size:116 ~index ~gate);
+  is_false ~msg:"row bounds are required for a padded tile"
+    (masked_access_accepted ~size:117 ~index ~gate:col_gate);
+  is_false ~msg:"column bounds are required for a padded tile"
+    (masked_access_accepted ~size:117 ~index ~gate:row_gate);
+  let either_gate = Uop.alu_binary ~op:Ops.Or ~lhs:row_gate ~rhs:col_gate in
+  is_false ~msg:"disjunctive bounds cannot be used as simultaneous constraints"
+    (masked_access_accepted ~size:117 ~index ~gate:either_gate);
+  let column = (Uop.src col_gate).(0) in
+  let lane_gate = Uop.alu_binary ~op:Ops.And ~lhs:row_gate
+      ~rhs:Uop.O.(column < i32 12) in
+  let lane_index = Uop.O.(index + i32 1) in
+  is_true ~msg:"retain a compound gate before comparison factoring removes it"
+    (masked_access_accepted ~size:117 ~index:lane_index ~gate:lane_gate);
+  is_false ~msg:"a later vector lane still checks its final offset"
+    (masked_access_accepted ~size:115 ~index:lane_index ~gate:lane_gate);
+  is_false ~msg:"a residual crossing the threshold remainder cannot be discarded"
+    (masked_access_accepted ~size:117 ~index:lane_index ~gate);
+  let l = Uop.special ~dtype:Dtype.int32 ~name:"lidx0" ~size:(i32 32) () in
+  let r = Uop.range ~dtype:Dtype.int32 ~size:(i32 2) ~axis:2 ~kind:Axis_type.Reduce () in
+  let half = Uop.alu_binary ~op:Ops.And
+      ~lhs:(Uop.alu_binary ~op:Ops.Shr ~lhs:l ~rhs:(i32 3)) ~rhs:(i32 1) in
+  let reduced_gate = Uop.alu_binary ~op:Ops.And ~lhs:row_gate
+      ~rhs:Uop.O.(half + r * i32 2 < i32 3) in
+  is_true ~msg:"an already factored column guard constrains distributed address terms"
+    (masked_access_accepted ~size:117 ~index:lane_index ~gate:reduced_gate);
+  is_false ~msg:"the factored guard still checks the last lane against storage"
+    (masked_access_accepted ~size:115 ~index:lane_index ~gate:reduced_gate);
+  let weaker_gate = Uop.alu_binary ~op:Ops.And ~lhs:row_gate
+      ~rhs:Uop.O.(half + r * i32 2 < i32 4) in
+  is_false ~msg:"weakening the factored gate admits an out-of-bounds lane"
+    (masked_access_accepted ~size:117 ~index:lane_index ~gate:weaker_gate)
+
+let program_oob_affine_proof_preserves_narrowing () =
+  let index, row_gate, col_gate = distributed_metal_access () in
+  let gate = Uop.alu_binary ~op:Ops.And ~lhs:row_gate ~rhs:col_gate in
+  let narrowed_row = Uop.cast ~src:Uop.O.(index + i32 128) ~dtype:Dtype.int8 in
+  is_false ~msg:"factoring cannot erase a wrapping native cast"
+    (masked_access_accepted ~size:117 ~index:narrowed_row ~gate)
+
+let program_oob_affine_proof_preserves_unsigned_overflow () =
+  List.iter (fun dtype ->
+      let shift = Dtype.bitsize dtype - 1 in
+      let scale = Z.shift_left Z.one shift in
+      let x = Uop.variable ~param:true ~name:"affine_unsigned" ~min_val:0 ~max_val:3
+          ~dtype () in
+      let scalar n = Uop.const (Const.integer dtype n) in
+      let gate = Uop.alu_binary ~op:Ops.And ~lhs:Uop.O.(scalar Z.zero < x)
+          ~rhs:Uop.O.(x < scalar (Z.of_int 3)) in
+      List.iter (fun product ->
+          let index = Uop.O.(Uop.cast ~src:product ~dtype:Dtype.int64 +
+              Uop.const (Const.integer Dtype.int64 (Z.neg scale))) in
+          is_false ~msg:"a stored unsigned product can wrap before widening"
+            (masked_access_accepted ~size:(Z.to_int (Z.succ scale)) ~index ~gate))
+        [ Uop.O.(x * scalar scale);
+          Uop.alu_binary ~op:Ops.Shl ~lhs:x ~rhs:(scalar (Z.of_int shift)) ])
+    [ Dtype.uint8; Dtype.uint16; Dtype.uint32 ]
+
+let program_oob_affine_proof_checks_committed_constants () =
+  let index, row_gate, col_gate = distributed_metal_access () in
+  let gate = Uop.alu_binary ~op:Ops.And ~lhs:row_gate ~rhs:col_gate in
+  let invalid = Uop.cconst (Const.integer Dtype.weakint (Z.of_string "4294967295")) Dtype.int32 in
+  is_false ~msg:"a committed constant cannot be treated as its weak positive payload"
+    (masked_access_accepted ~size:117 ~index:Uop.O.(index + invalid) ~gate)
+
 let program_oob_unsigned_add_can_wrap dtype () =
   let maximum = Bound.integer (Dtype.max dtype) in
   let x = Uop.param ~slot:(-1) ~name:"unsigned_wrap" ~dtype
@@ -1434,6 +1537,13 @@ let () =
             program_oob_offset_component_bounds;
           test "CHECK_OOB uses shifted component bounds"
             program_oob_shift_component_bounds;
+          test "CHECK_OOB proves distributed scan bounds" program_oob_distributed_scan_bounds;
+          test "CHECK_OOB proves distributed padded Metal bounds" program_oob_distributed_metal_bounds;
+          test "CHECK_OOB affine proof preserves narrowing" program_oob_affine_proof_preserves_narrowing;
+          test "CHECK_OOB affine proof preserves unsigned products and shifts"
+            program_oob_affine_proof_preserves_unsigned_overflow;
+          test "CHECK_OOB affine proof checks committed constants"
+            program_oob_affine_proof_checks_committed_constants;
           test "CHECK_OOB accounts for uint32 addition overflow"
             (program_oob_unsigned_add_can_wrap Dtype.uint32);
           test "CHECK_OOB accounts for uint64 addition overflow"
