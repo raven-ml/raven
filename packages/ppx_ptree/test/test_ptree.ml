@@ -441,6 +441,54 @@ let test_earlier_payload () =
     (Nx.Ptree.instantiate (module Earlier))
     { Earlier.w = vec [| 2. |]; frozen = { w = state; b = Some state } }
 
+(* The guide's example (packages/nx/doc/06-structures.md): the derived [Block]
+   visits what the hand-written one visits. *)
+
+module Guide = struct
+  module Linear = struct
+    type 'a t = { w : 'a; b : 'a option }
+
+    let walk c { w; b } =
+      let open Nx.Ptree.Walk in
+      let w = field c "w" leaf w in
+      let b = field c "b" (option leaf) b in
+      { w; b }
+  end
+
+  module Block_hand = struct
+    type 'a t = { proj : 'a Linear.t; steps : Nx.int32_t; window : int option }
+
+    let walk c { proj; steps; window } =
+      let open Nx.Ptree.Walk in
+      let proj = field c "proj" Linear.walk proj in
+      let steps = field c "steps" tensor steps in
+      let window = field c "window" (option int) window in
+      { proj; steps; window }
+  end
+
+  module Block = struct
+    type 'a t = 'a Block_hand.t = {
+      proj : 'a Linear.t;
+      steps : Nx.int32_t;
+      window : int option; [@ptree.int]
+    }
+    [@@deriving ptree]
+  end
+end
+
+let test_guide () =
+  let block =
+    {
+      Guide.Block_hand.proj = { w = vec [| 1. |]; b = Some (vec [| 2. |]) };
+      steps = Nx.zeros Nx.int32 [||];
+      window = Some 4;
+    }
+  in
+  same ~msg:"guide block"
+    ~hand:(Nx.Ptree.instantiate (module Guide.Block_hand))
+    (Nx.Ptree.instantiate (module Guide.Block))
+    block
+
 (* A type whose parameter is anonymous is a module of [Nx.Ptree.S]. *)
 
 module Phantom = struct
@@ -480,6 +528,7 @@ let () =
           test "arrays" test_array;
           test "aliases" test_alias;
           test "a fixed instance over an earlier type" test_earlier_payload;
+          test "the guide's block" test_guide;
           test "an anonymous parameter" test_phantom;
         ];
       group "transformations" [ test "grad" test_grad ];

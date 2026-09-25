@@ -248,7 +248,7 @@ module Block = struct
 end
 ```
 
-This `Block` visits what the hand-written one visits, and its test is the same. A type without a parameter also gets its structure at its one type, `ptree`. The rules, the attributes and the errors are in `packages/ppx_ptree/README.md`.
+This `Block` visits what the hand-written one visits, and its test is the same; ppx_ptree's own tests compare the two. A type without a parameter also gets its structure at its one type, `ptree`. A part whose type has a hand-written structure at one type is found by name: `M.t` by `M.ptree`, and a type `name` by `ptree_name`. Name it so, or walk the part with `[@ptree.walk Nx.Ptree.Walk.structure train]`. The rules, the attributes and the errors are in `packages/ppx_ptree/README.md`.
 
 ## Next Steps
 
