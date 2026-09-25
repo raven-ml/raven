@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Compiled signatures reject conflicting scalar declarations before dispatch,
+  preventing rendered arguments and native packing from disagreeing. Distinct
+  explicit scalar slots can still share a symbolic binding name.
+
 - Large stacked lookup tables lower to balanced selections, bounding
   conditional depth while preserving the final-element fallback for invalid
   indices, as in tinygrad.

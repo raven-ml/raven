@@ -6,6 +6,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Compiled signatures reject colliding scalar declarations.** The target
+  does not check for different formal nodes producing the same declaration
+  name. Tolk's shared ELF signature boundary rejects these programs before
+  native dispatch; different explicit slots sharing a symbolic binding name
+  remain valid. Consumer: hand-built PROGRAMs and retained native argument
+  packing. Coverage: `test_program_spec` dtype, bounds and slot/name collisions.
+  Reconsider when canonical formal identities make the mismatch impossible.
+
 - **AMD boot records an unfinished session before initializing hardware.**
   The target writes scratch REG6 only after initialization succeeds, so a failed
   partial boot can retain the previous session's clean-shutdown marker. Tolk

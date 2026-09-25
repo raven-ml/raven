@@ -3497,8 +3497,20 @@ let program_signature (info : program_info) linear =
   let slots = List.map (fun (a : Tiny_elf.argument) -> a.slot) buffers in
   if List.sort Int.compare slots <> List.init (List.length info.globals) Fun.id then
     invalid_arg "Uop.program_signature: globals and linear parameters disagree";
-  let scalars = List.mapi (fun i u -> argument (List.length info.globals + i) u)
-      info.vars in
+  (* C-style renderers emit one declaration per rendered scalar name. The
+     signature must not pack two arguments for that single declaration. *)
+  let scalar_names = Hashtbl.create 8 in
+  let scalars = List.mapi (fun i u ->
+      let name = match op u, arg u with
+        | Ops.Param, Arg.Param_arg p ->
+            if p.slot >= 0 then Printf.sprintf "data%d_" p.slot
+            else Option.value p.name ~default:(Printf.sprintf "data%d_" p.slot)
+        | _ -> invalid_arg "Uop.program_signature: expected a parameter" in
+      if Hashtbl.mem scalar_names name then
+        invalid_arg (Printf.sprintf
+          "Uop.program_signature: conflicting scalar formals render as %S" name);
+      Hashtbl.add scalar_names name ();
+      argument (List.length info.globals + i) u) info.vars in
   buffers @ scalars
 
 let program_function_name u =

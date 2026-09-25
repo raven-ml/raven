@@ -1734,7 +1734,9 @@ val program_signature : program_info -> t list -> Tiny_elf.argument list
     Symbolic dimensions use their maximum bounds.
 
     Raises [Invalid_argument] if [info.globals] and the linear buffer formals
-    disagree, or a scalar formal is not a parameter. *)
+    disagree, a scalar formal is not a parameter, or scalar formals have the
+    same rendered name. Distinct explicit scalar slots remain distinct even
+    when they share a binding name. *)
 
 val to_elf : t -> Tiny_elf.t
 (** [to_elf program] is [program]'s binary, entry point, target and signature.

@@ -98,6 +98,37 @@ let () =
             let variable = List.hd (Program_spec.vars spec) in
             is_true (Bound.equal variable.lo (Dtype.min Dtype.int64));
             is_true (Bound.equal variable.hi (Dtype.max Dtype.int64)));
+          test "conflicting scalar declarations are rejected before dispatch" (fun () ->
+            let formal ?(slot = -1) ?(dtype = Dtype.int32) ?(hi = 7) name =
+              U.param ~slot ~dtype ~addrspace:Dtype.Alu ~name
+                ~vmin_vmax:(Bound.zero, Bound.int hi) () in
+            let cases = [
+              "value", [formal "value"; formal ~dtype:Dtype.int64 "value"];
+              "value", [formal "value"; formal ~hi:8 "value"];
+              "data1_", [formal ~slot:1 "first"; formal ~slot:1 "second"];
+              "data1_", [formal ~slot:1 "first"; formal "data1_"]] in
+            List.iter (fun (name, formals) ->
+                let spec = spec_of formals |> Program_spec.with_lib Bytes.empty in
+                let error = Invalid_argument (Printf.sprintf
+                    "Uop.program_signature: conflicting scalar formals render as %S" name) in
+                raises error (fun () -> Program_spec.to_elf spec);
+                raises error (fun () ->
+                    U.program_signature (Program_spec.program_info spec) formals)) cases);
+          test "distinct scalar slots retain same-name bindings" (fun () ->
+            let formal slot dtype hi =
+              U.param ~slot ~dtype ~addrspace:Dtype.Alu ~name:"value"
+                ~vmin_vmax:(Bound.zero, Bound.int hi) () in
+            let first = formal 3 Dtype.int32 7 in
+            let second = formal 9 Dtype.int64 8 in
+            let spec = spec_of [first; second; first]
+                |> Program_spec.with_lib Bytes.empty in
+            let obj = Program_spec.to_elf spec in
+            equal (list int) [0; 1]
+              (List.map (fun (arg : Tiny_elf.argument) -> arg.slot) obj.signature);
+            is_true (List.map (fun (arg : Tiny_elf.argument) -> arg.dtype) obj.signature
+                = [Dtype.int32; Dtype.int64]);
+            equal (list string) ["value"; "value"]
+              (List.map (fun (v : Program_spec.var) -> v.name) (Program_spec.vars spec)));
           test "reads and writes are deduplicated" (fun () ->
             let p0 = param 0 Dtype.float32 in
             let p1 = param 1 Dtype.float32 in

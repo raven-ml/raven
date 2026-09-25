@@ -121,10 +121,6 @@ acceptance requirement; skipped tests are not execution evidence.
   fragments; distinguish source naming parity from fragment layout correctness.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.
-- Validate conflicting formal identities in hand-built programs. Rendered-name
-  deduplication and ABI node-identity deduplication can disagree for same-name
-  scalar parameters with different dtypes or bounds; establish one invariant
-  before native dispatch without rejecting intentional distinct slots.
 - Add deterministic beam coverage for reconsidering candidates rejected by
   the per-step compute filter. Measure search cost and selected kernels at
   the upstream stopping threshold. Port remaining heuristics, including

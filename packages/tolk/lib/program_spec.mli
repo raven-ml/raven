@@ -88,7 +88,9 @@ val with_lib : bytes -> t -> t
 
 val to_elf : t -> Tolk_uop.Tiny_elf.t
 (** [to_elf spec] is [spec]'s binary and argument signature.
-    Raises [Invalid_argument] if [spec] has no compiled binary. *)
+    Raises [Invalid_argument] if [spec] has no compiled binary or scalar
+    formals have the same rendered name. Distinct explicit scalar slots may
+    share a binding name. *)
 
 val with_estimates : Estimates.t -> t -> t
 (** [with_estimates e spec] is [spec] with estimates replaced by [e]. *)
