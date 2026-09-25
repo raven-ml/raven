@@ -416,11 +416,18 @@ let transient_program_lifetimes =
 let codegen_midpoint_rounds_down () =
   let backing = cpu "beam-midpoint" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
-  let observed = ref [] in
+  let observed = ref [] and evictions = ref 0 in
   let runtime obj =
     let prg = Device.runtime backing obj in
+    let eviction = List.for_all (fun (arg : Tiny_elf.argument) -> arg.addrspace <> D.Alu)
+        obj.signature in
     let call bufs ~global ~local ~vals ~wait ~timeout =
-      observed := Array.to_list vals :: !observed;
+      if eviction then begin
+        equal int 1 (Array.length bufs);
+        equal int (1024 * 1024 * 4) (Device.Buffer.nbytes bufs.(0));
+        equal (array int64) [||] vals;
+        incr evictions
+      end else observed := Array.to_list vals :: !observed;
       prg.call bufs ~global ~local ~vals ~wait ~timeout
     in
     { prg with call }
@@ -441,6 +448,7 @@ let codegen_midpoint_rounds_down () =
   Fun.protect
     ~finally:(fun () -> Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:""))
     (fun () -> ignore (Codegen.to_program ~beam_device:device device ren ast));
+  is_true ~msg:"codegen clears the cache before timing" (!evictions > 0);
   is_true ~msg:"codegen benchmarks candidates" (!observed <> []);
   List.iter (equal (list int64) [ -3L ]) !observed
 

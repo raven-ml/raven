@@ -167,6 +167,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `jit ~beam:0` disables default autotuning under a nonzero `BEAM` context,
+  and the persistent cache key uses that explicit choice.
+
 - Release outgrown JIT arenas after queued work completes, without waiting
   for temporary buffer views to be garbage-collected.
 
@@ -647,6 +650,10 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- Autotuning clears caches through a shared fill workload when no backend
+  hook exists. Explicit `beam:0` now disables default search even when `BEAM`
+  is set; code generation uses the kernel's resolved width.
 
 - Mixed kernel/copy replays preserve snapshot-copy semantics for overlapping
   views. Kernel mappings are checked before execution, so an unsupported later

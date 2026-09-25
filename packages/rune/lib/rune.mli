@@ -608,9 +608,10 @@ val jit :
 
     {b Tuning.} [beam] searches kernel schedules with a beam of that width,
     compiling and timing candidates on the device; compilation is much slower
-    and the kernels usually faster. When [beam] is omitted or below [1], the
-    [BEAM] environment variable gives the width, and no search runs when it is
-    unset. [beam_parallel] compiles a round's candidates on that many domains
+    and the kernels usually faster. When [beam] is omitted, the [BEAM] context
+    gives the width, initially set by the environment variable. Explicit [0]
+    disables search for kernels without their own positive beam width.
+    [beam_parallel] compiles a round's candidates on that many domains
     without changing the result, and is not part of any key; it defaults to
     [BEAM_PARALLEL] (sequential).
 

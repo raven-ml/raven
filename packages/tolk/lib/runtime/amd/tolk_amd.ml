@@ -2030,15 +2030,6 @@ module State = struct
     Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
       t.submission
 
-  let invalidate_caches t =
-    prepare t;
-    let cq = Compute_queue.create t.hw in
-    Compute_queue.memory_barrier cq;
-    Timeline.submit t.tl (fun value ->
-      Compute_queue.signal cq ~value t.tl.Timeline.timeline;
-      Compute_queue.submit cq t.compute_queue);
-    Timeline.synchronize t.tl
-
   let wait_timeout t timeout =
     if not t.iface.Iface.is_am || timeout = Some 0 then None else timeout
 
@@ -2490,7 +2481,6 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~peer_group:(if iface.Iface.is_am then "PCIDevice" else "AMD")
     ~synchronize:(fun timeout -> State.synchronize ?timeout state)
-    ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ~queue:(Queue.create state) ~bufferize:(Queue.bufferize state) ()
 
 let create name =

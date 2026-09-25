@@ -36,13 +36,14 @@ val full_rewrite_to_sink :
     When [optimize] is [true] (default) and [sink] is untagged, runs
     load collapse, range splitting, symbolic simplification, range
     tightening, and dispatches to beam search or hand-coded optimizations.
+    This block requires [sink] to carry {!Tolk_uop.Uop.kernel_info}.
     Tagged sinks skip this optimization block. When [false], skips
     directly to lowering. Post-optimization lowering parity lives in
     {!Codegen_lower}.
 
-    [beam_device] enables beam search when [BEAM >= 1] is set or the
-    kernel's beam setting is positive. Environment settings are read at the
-    point of use. [SPEC=1] output program validation is handled by
+    [beam_device] supplies the runtime for beam search when the kernel's
+    beam setting is positive. {!Realize.compile_linear} resolves the [BEAM]
+    context before calling codegen. [SPEC=1] output program validation is handled by
     {!Codegen_lower}; this module does not run an input spec check because
     Tolk has no exact tinygrad [spec_tensor] equivalent for this sink stage. *)
 

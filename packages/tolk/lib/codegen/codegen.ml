@@ -14,7 +14,6 @@ module U = Uop
 (* Environment *)
 
 let debug () = Helpers.getenv "DEBUG" 0
-let beam () = Helpers.getenv "BEAM" 0
 let beam_estimate () = Helpers.getenv "BEAM_ESTIMATE" 1
 let noopt () = Helpers.Context_var.get Helpers.noopt
 
@@ -33,11 +32,6 @@ let buffer_params ast =
            Some (param.slot, U.dtype u, prod (U.max_shape u))
        | _ -> None)
   |> List.sort (fun (a, _, _) (b, _, _) -> Int.compare a b)
-
-let beam_width sink =
-  match U.as_kernel_info sink with
-  | Some { beam = kernel_beam; _ } when kernel_beam >= 1 -> kernel_beam
-  | _ -> beam ()
 
 let has_tag u = match U.node_tag u with Some _ -> true | None -> false
 
@@ -82,6 +76,8 @@ let rec make_beam_search device beam_width =
    simplification, range tightening, and dispatches to beam search or
    hand-coded optimizations via Postrange. *)
 and full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
+  let beam = if optimize && not (has_tag sink) then
+      (kernel_info_exn "full_rewrite_to_sink" sink).beam else 0 in
   if debug () >= 5 then Format.eprintf "=== ast ===@.%a@." U.pp sink;
   let sink = U.graph_rewrite ~bottom_up:true ~name:"early movement ops"
       Prepare.movement_ops sink in
@@ -99,7 +95,6 @@ and full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
           sink
       in
       let sink = Simplify.simplify_ranges sink in
-      let beam = beam_width sink in
       let beam_search =
         if beam >= 1 then make_beam_search beam_device beam else None
       in

@@ -281,10 +281,10 @@ val create_buffer :
 
     [spec] defaults to {!Buffer_spec.default}. *)
 
-val invalidate_caches : t -> unit
-(** [invalidate_caches d] flushes device caches (e.g., L2) if the device
-    supports it. No-op if [~invalidate_caches] was not provided to {!make}.
-    Called by beam search between timing runs for consistent measurements. *)
+val invalidate_caches : t -> bool
+(** [invalidate_caches d] runs [d]'s cache-invalidation hook and returns [true].
+    Returns [false] without side effects when no hook was provided to {!make},
+    allowing timing runs to use a cache-eviction workload instead. *)
 
 (** {1:registry Device registry}
 

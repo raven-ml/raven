@@ -314,6 +314,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   before parallel compilation becomes the default; those tasks are in TODO.
   Reconsider if domain isolation cannot preserve compilation semantics.
 
+- **Cache eviction uses the device of the timed candidate.** The target's
+  fallback materializes 1024×1024 float32 ones on the frontend's default
+  device. `Realize.time_call` has an explicit device and no frontend dependency;
+  its equivalent fill runs there so a non-default candidate evicts the correct
+  cache. Coverage: `test_runtime_cpu` verifies the fill, scoped BEAM suppression,
+  and absence of capture/statistics side effects. Reconsider if the engine gains
+  a shared default-device policy that guarantees the same device selection.
+
 - **Timing buffers bypass the LRU cache (`nolru`) and are freed per kernel;
   the reference allocates them normally.** It can: refcounting frees
   promptly. Under a lazy GC the exact-size LRU cache hoards every searched

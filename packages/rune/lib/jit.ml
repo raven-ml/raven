@@ -4858,13 +4858,13 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   (* Persistent compile cache: a hit replaces scheduling and kernel compilation
      with an import of the stored compiled linear, rebound to this trace's fresh
      buffer nodes. Programs over several devices are not cached. *)
-  (* The effective beam width: the per-call override when it enables search,
-     otherwise the BEAM environment variable. Part of the persistent cache key
+  (* The effective beam width: the per-call override when supplied,
+     otherwise the BEAM context. Part of the persistent cache key
      because it changes the compiled kernels. *)
   let effective_beam =
     match beam with
-    | Some b when b >= 1 -> b
-    | Some _ | None -> env_int "BEAM" 0
+    | Some b -> b
+    | None -> Tolk.Helpers.Context_var.get Tolk.Helpers.beam
   in
   let cache_key =
     if multi then None else Jit_cache.key ~device:dev ~beam:effective_beam call

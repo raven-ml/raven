@@ -330,6 +330,32 @@ let compiled_launch_uses_fixed_workgroups () =
   Realize.run_linear ~device ~to_program:(fun device body -> ignore device; program_of body) ~var_vals:[ "n", 37 ] (U.linear [ call ]);
   equal int 1 !calls
 
+let compile_beam_policy () =
+  let device = test_device ~name:"TEST:compile-beam-policy" (runtime_state ()) in
+  Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
+    List.iteri (fun index (override, inherited, expected) ->
+      let info = { (kernel_info (Printf.sprintf "beam_policy_%d" index)) with beam = inherited } in
+      let body = U.sink ~kernel_info:info [] in
+      let call = U.call ~body ~args:[] ~info:(call_info None) in
+      let observed = ref None in
+      let to_program device body =
+        ignore device;
+        observed := Option.map (fun (info : U.kernel_info) -> info.beam) (U.as_kernel_info body);
+        program_of body in
+      ignore (Realize.compile_linear ~device ?beam:override ~to_program (U.linear [call]));
+      equal (option int) (Some expected) !observed;
+      equal int 3 (Helpers.Context_var.get Helpers.beam))
+      [None, 0, 3; Some 0, 0, 0; Some 2, 0, 2; None, 7, 7; Some 0, 7, 7]);
+  let compilations = ref 0 in
+  let body = U.sink ~kernel_info:(kernel_info "beam_policy_cache") [] in
+  let linear = U.linear [U.call ~body ~args:[] ~info:(call_info None)] in
+  List.iter (fun beam ->
+    Helpers.Context_var.with_context [B (Helpers.beam, beam)] (fun () ->
+      ignore (Realize.compile_linear ~device ~beam:0
+        ~to_program:(fun device body -> ignore device; incr compilations; program_of body)
+        linear))) [3; 5];
+  equal int 1 !compilations
+
 let scoped_timings ~dispatch_failure ~drain_failure () =
   let loaded = ref 0 and freed = ref 0 and calls = ref 0 and clears = ref 0 in
   let runtime _ =
@@ -372,6 +398,8 @@ let () =
   run "Engine_realize"
     [
       renderer_selection_tests;
+      test "compilation resolves beam context once and respects explicit zero"
+        compile_beam_policy;
       test "timing samples forward timeout and release transient runtimes"
         (scoped_timings ~dispatch_failure:false ~drain_failure:false);
       test "failed timing dispatch drains before runtime release"

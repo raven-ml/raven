@@ -210,13 +210,11 @@ let queue_config ?(profile = profiling ()) device =
    semantic key, so a stamped sink gets its own cache entry. *)
 let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_program linear =
   let module U = Tolk_uop.Uop in
+  let beam = Option.value beam ~default:(Helpers.Context_var.get Helpers.beam) in
   let stamp body =
-    match beam with
-    | Some b when b >= 1 -> (
-        match U.as_kernel_info body with
-        | Some ki when ki.U.beam = 0 ->
-            U.replace body ~arg:(U.Arg.Kernel_info { ki with U.beam = b }) ()
-        | Some _ | None -> body)
+    match U.as_kernel_info body with
+    | Some ki when beam >= 1 && ki.U.beam = 0 ->
+        U.replace body ~arg:(U.Arg.Kernel_info { ki with U.beam = beam }) ()
     | Some _ | None -> body
   in
   let compile_call call =
@@ -1166,11 +1164,46 @@ let time_call ~device ~to_program ?(var_vals = []) ?timeout
   let linked = link_linear ~allow_cache:false compiled in
   let ctx = exec_context ~var_vals ~update_stats:false ~wait:true ?timeout
       ~cache:false () in
+  let eviction = lazy (
+    let open Tolk_uop in
+    let size = 1024 * 1024 in
+    let spec = {Device.Buffer_spec.default with nolru = true} in
+    let buffer = Device.create_buffer ~size ~dtype:Dtype.float32 ~spec device in
+    let output = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:(U.const_int size) () in
+    let row = U.range ~size:(U.const_int 1024) ~axis:0 ~kind:Axis_type.Weak ()
+    and column = U.range ~size:(U.const_int 1024) ~axis:1 ~kind:Axis_type.Weak () in
+    let index = U.O.((row * U.const_int 1024) + column) in
+    let store = U.store ~dst:(U.index ~ptr:output ~idxs:[index] ())
+        ~value:(U.const (Const.float Dtype.float32 1.0)) () in
+    let kernel_info = U.{name = "clear_l2"; applied_opts = []; opts_to_apply = None;
+      estimates = None; beam = 0} in
+    let body = U.sink ~kernel_info [U.end_ ~value:store ~ranges:[row; column]] in
+    let call = U.call ~body ~args:[U.from_buffer buffer]
+        ~info:U.{grad_fxn = None; name = None; precompile = false;
+          precompile_backward = false; dtype = Dtype.void; aux = None} in
+    (* The engine has an explicit candidate device. Evict that device's cache
+       with the reference's 1024-by-1024 float32 materialization. *)
+    Helpers.Context_var.with_context [B (Helpers.beam, 0)] (fun () ->
+      let linear = compile_linear ~device ~to_program ~beam:0 ~profile:false (U.linear [call])
+          |> link_linear ~allow_cache:false in
+      linear, buffer)) in
   let sample () =
-    if clear_l2 then Device.invalidate_caches device;
+    if clear_l2 && not (Device.invalidate_caches device) then begin
+      let linear, _ = Lazy.force eviction in
+      let clear_ctx = {ctx with var_vals = []; wait = false} in
+      List.iter (fun call -> ignore (dispatch_call clear_ctx ~device ~to_program call))
+        (U.children linear)
+    end;
     let times = List.concat_map (dispatch_call ctx ~device ~to_program)
         (U.children linked) in
     List.fold_left (fun longest -> function
         | Some elapsed -> max longest elapsed | None -> longest) 0. times in
-  Fun.protect ~finally:(fun () -> Device.synchronize device; keep_alive linked)
+  Fun.protect ~finally:(fun () ->
+      Device.synchronize device;
+      keep_alive linked;
+      if Lazy.is_val eviction then begin
+        let linear, buffer = Lazy.force eviction in
+        Device.Buffer.deallocate buffer;
+        keep_alive linear
+      end)
     (fun () -> f sample)

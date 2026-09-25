@@ -127,6 +127,79 @@ let program_call spec bufs =
 
 let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device)
 
+let timing_cache_eviction () =
+  let host = cpu "eviction-host" in
+  let renderer_set = Device.Renderer_set.make ~device:"CPU"
+      ["CLANG", Fun.const (Device.renderer host)] in
+  let allocator = Device.Buffer.allocator
+      (Device.create_buffer ~size:1 ~dtype:Dtype.uint8 host) in
+  let fills = ref 0 and compilations = ref 0 in
+  let eviction_buffer = ref None in
+  let runtime object_ =
+    let program = Device.runtime host object_ in
+    let call buffers ~global ~local ~vals ~wait ~timeout =
+      let elapsed = program.Device.call buffers ~global ~local ~vals ~wait ~timeout in
+      if Array.length buffers = 1 && Device.Buffer.nbytes buffers.(0) = 1024 * 1024 * 4 then begin
+        incr fills;
+        eviction_buffer := Some buffers.(0);
+        is_true (Device.Buffer.spec buffers.(0)).nolru;
+        equal bool false wait;
+        is_true (Dtype.equal (Device.Buffer.dtype buffers.(0)) Dtype.float32);
+        let bytes = Device.Buffer.as_bytes buffers.(0) in
+        for i = 0 to 1024 * 1024 - 1 do
+          equal int32 0x3f800000l (Bytes.get_int32_le bytes (4 * i))
+        done
+      end;
+      elapsed in
+    {program with Device.call} in
+  let device = Device.make ~name:"CPU:cache-eviction" ~allocator ~renderer_set
+      ~runtime ~synchronize:(fun timeout -> Device.synchronize ?timeout host) () in
+  let spec = Device.compile_program device ~name:"eviction_candidate" (increment_program ()) in
+  let dst = create_i32_buffer device [0] and src = create_i32_buffer device [41] in
+  let compile device sink =
+    incr compilations;
+    equal int 0 (Helpers.Context_var.get Helpers.beam);
+    let ranges = U.toposort sink |> List.filter (fun u -> U.op u = Ops.Range) in
+    equal (list int) [1024; 1024]
+      (List.map (fun u -> Option.get (U.const_int_value (U.src u).(0))) ranges);
+    (* Direct codegen consumes the kernel's resolved beam policy; it must not
+       read a surrounding context again after compile_linear selected zero. *)
+    Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
+      Codegen.to_program device (Device.renderer device) sink) in
+  let kernels = !(Helpers.Global_counters.kernel_count) in
+  let capture = !Realize.capturing in
+  Fun.protect ~finally:(fun () -> Realize.capturing := capture) (fun () ->
+    Realize.capturing := [fun _ _ -> fail "cache eviction entered JIT capture"];
+    Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
+      Realize.time_call ~device ~to_program:compile ~clear_l2:true
+        (program_call spec [dst; src]) (fun sample ->
+          for _ = 1 to 2 do
+            is_true (sample () > 0.);
+            equal int 3 (Helpers.Context_var.get Helpers.beam)
+          done)));
+  equal int 1 !compilations;
+  equal int 2 !fills;
+  is_false (Device.Buffer.is_allocated (Option.get !eviction_buffer));
+  equal int kernels !(Helpers.Global_counters.kernel_count);
+  equal (list int) [42] (read_i32_buffer dst);
+  let failing_device = Device.make ~name:"CPU:cache-eviction-failure" ~allocator ~renderer_set
+      ~runtime:(Device.runtime host)
+      ~synchronize:(fun timeout -> Device.synchronize ?timeout host) () in
+  let failed_dst = create_i32_buffer failing_device [0]
+  and failed_src = create_i32_buffer failing_device [41] in
+  Helpers.Context_var.with_context [B (Helpers.beam, 5)] (fun () ->
+    raises Exit (fun () ->
+      Realize.time_call ~device:failing_device
+        ~to_program:(fun device sink ->
+          equal string "CPU:cache-eviction-failure" (Device.name device);
+          equal (option string) (Some "clear_l2")
+            (Option.map (fun (info : U.kernel_info) -> info.name) (U.as_kernel_info sink));
+          equal int 0 (Helpers.Context_var.get Helpers.beam);
+          raise Exit)
+        ~clear_l2:true (program_call spec [failed_dst; failed_src])
+        (fun sample -> ignore (sample ())));
+    equal int 5 (Helpers.Context_var.get Helpers.beam))
+
 let run_spec device spec bufs =
   Realize.run_linear ~device ~to_program ~wait:true (U.linear [program_call spec bufs])
 
@@ -246,7 +319,10 @@ let test_conditional_loop () =
   let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:next
       ~rhs:(U.const (Const.int Dtype.int32 5)) in
   let edge = U.backedge ~body:store ~loop ~cond in
-  let sink = U.sink [ edge ] |> Codegen.full_rewrite_to_sink (Device.renderer device) in
+  let kernel_info = U.{name = "conditional_loop"; applied_opts = []; opts_to_apply = None;
+    estimates = None; beam = 0} in
+  let sink = U.sink ~kernel_info [ edge ]
+      |> Codegen.full_rewrite_to_sink (Device.renderer device) in
   let program = Linearizer.linearize sink in
   Spec.verify_list Spec.program_spec program;
   let spec = Device.compile_program device ~name:"conditional_loop" program in
@@ -851,6 +927,8 @@ let main () =
                   ~vals:[||] ~wait:false ~timeout:None));
             equal (list int) [ 999_999 ] (read_i32_buffer observed);
             ignore (Sys.opaque_identity buf));
+          test "cache eviction materializes ones without beam search, stats, or capture"
+            timing_cache_eviction;
           test "wait returns positive elapsed time" (fun () ->
             (* BEAM search selects kernels by this timing; [None] would collapse
                every candidate to infinity. Assert a real, positive measurement

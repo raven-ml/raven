@@ -133,9 +133,9 @@ val compile_linear :
 
     When [beam] is [b >= 1], every kernel sink that does not already carry a
     beam width (its {!Tolk_uop.Uop.kernel_info} has [beam = 0]) is stamped with [b]
-    before compilation, enabling beam-search autotuning for it regardless of
-    the [BEAM] environment variable. When omitted or [< 1], kernels compile
-    under the ambient environment settings.
+    before compilation. Omitted [beam] uses the current [BEAM] context;
+    explicit [0] leaves default-zero kernels on heuristic optimization.
+    Kernels that already carry a positive beam width retain it.
 
     Compiled programs are cached by the kernel's semantic key, the device, and
     {!program_config}, so kernels that differ only by diagnostic tags share one

@@ -347,7 +347,9 @@ let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
 
 let invalidate_caches d = Storage.with_operation (fun () ->
-    Option.iter (fun f -> f ()) d.invalidate_caches_fn)
+    match d.invalidate_caches_fn with
+    | Some invalidate -> invalidate (); true
+    | None -> false)
 
 (* Device registry
 
