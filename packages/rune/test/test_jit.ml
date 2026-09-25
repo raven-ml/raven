@@ -1279,6 +1279,32 @@ let test_scans_propagate_nan () =
   check "long cummax" (Nx.cummax ~axis:0) long;
   check "long cummin" (Nx.cummin ~axis:0) long
 
+(* A running product of 8-bit floats along an axis longer than 512 takes the
+   chunked scan, which failed in the C and Metal compilers. The running sum is
+   checked alongside. *)
+let test_fp8_long_scans () =
+  let signs = Array.init 600 (fun i -> if i mod 97 = 0 then -1.0 else 1.0) in
+  let steps = Array.init 600 (fun i -> if i mod 2 = 0 then 1.0 else -1.0) in
+  let check (type b) name (dtype : (float, b) Nx.dtype) =
+    List.iter
+      (fun device ->
+        List.iter
+          (fun (op, f, values) ->
+            let x = Nx.cast dtype (vec32 values) in
+            equal
+              ~msg:(Printf.sprintf "%s %s, %s" name op device)
+              (array float_exact)
+              (to_arr (Nx.cast f32 (f x)))
+              (to_arr (Nx.cast f32 (Rune.jit' ~device f x))))
+          [
+            ("cumprod", Nx.cumprod ~axis:0, signs);
+            ("cumsum", Nx.cumsum ~axis:0, steps);
+          ])
+      devices
+  in
+  check "float8_e4m3" Nx.float8_e4m3;
+  check "float8_e5m2" Nx.float8_e5m2
+
 (* Indexed access *)
 
 (* An int32 narrowed from an int64 minus one, compared with a constant, then
@@ -3537,6 +3563,7 @@ let tests =
         test "long scans match eager" test_long_scans_match_eager;
         test "scans propagate NaN" test_scans_propagate_nan;
         test "scans keep the first zero" test_scans_keep_the_first_zero;
+        test "8-bit float scans along a long axis" test_fp8_long_scans;
       ];
     group "indexed access"
       [
