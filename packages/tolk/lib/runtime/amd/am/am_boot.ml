@@ -124,6 +124,9 @@ let init t =
     (Amdev.ip_ver adev Amd_tables.Am_defs.gc_hwip = (9, 5, 0)
      && Am_register.read (reg "regSCRATCH_REG7") = version) in
   t.partial_boot <- partial_boot;
+  (* A failed hardware phase must not inherit the previous session's clean
+     shutdown stamp. REG7 and the resident TMR remain intact for GC 9.5. *)
+  Am_register.write (reg "regSCRATCH_REG6") ~value:1 [];
 
   (* Init hw for the blocks where it is needed. *)
   if not partial_boot then begin
@@ -140,7 +143,10 @@ let init t =
       Am_ip.Gfx.halt_engines t.gfx;
       Am_ip.Sdma.halt_engines t.sdma;
       Amdev.sleep_ms adev 100;
-      Am_ip.Smu.mode1_reset t.smu
+      Am_ip.Smu.mode1_reset t.smu;
+      (* Reset may clear scratch registers; the next boot phase is still
+         part of this unfinished session. *)
+      Am_register.write (reg "regSCRATCH_REG6") ~value:1 []
     end;
     set_bus_master t true;
     init_hw t

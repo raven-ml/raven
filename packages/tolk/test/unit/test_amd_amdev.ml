@@ -2541,6 +2541,48 @@ let () =
                   equal bool false (wrote fd "regRLC_SPM_MC_CNTL" log);
                   equal bool true (wrote fd "regSDMA0_WATCHDOG_CNTL" log);
                   check_boot_stamps fd log));
+          test "failed partial boot remains dirty without discarding resident firmware" (fun () ->
+              List.iter (fun fail_register ->
+                  with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                      let r6 = raddr fd.dev "regSCRATCH_REG6"
+                      and r7 = raddr fd.dev "regSCRATCH_REG7"
+                      and r5 = raddr fd.dev "regSCRATCH_REG5" in
+                      Hashtbl.replace fd.store r7 Am_boot.version;
+                      Hashtbl.replace fd.store r6 0;
+                      Hashtbl.replace fd.store r5 0x120000;
+                      let t = Am_boot.create ~fw:boot_fw fd.dev in
+                      ignore (script_boot fd t);
+                      Hashtbl.replace fd.wr_hooks (raddr fd.dev fail_register)
+                        (fun _ -> failwith "boot phase failed");
+                      fd.log := [];
+                      raises (Failure "boot phase failed") (fun () -> Am_boot.init t);
+                      equal ~msg:"boot is marked dirty before hardware programming"
+                        (pair int int) (r6, 1) (List.hd (writes fd));
+                      equal int 1 (Hashtbl.find fd.store r6);
+                      equal int Am_boot.version (Hashtbl.find fd.store r7);
+                      equal int 0x120000 (Hashtbl.find fd.store r5)))
+                ["regGRBM_SOFT_RESET"; "regSDMA0_WATCHDOG_CNTL"]);
+          test "full boot restores the dirty stamp after mode1 reset" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  let s = script_boot fd t in
+                  let r6 = raddr fd.dev "regSCRATCH_REG6" in
+                  Hashtbl.replace fd.store r6 0;
+                  Hashtbl.replace fd.reads (s.r 81) (fun () -> 1);
+                  let r54 = raddr fd.dev "mmMP1_SMN_C2PMSG_54" in
+                  Hashtbl.replace fd.wr_hooks (raddr fd.dev "mmMP1_SMN_C2PMSG_75")
+                    (fun _ ->
+                      Hashtbl.replace fd.store r6 0;
+                      Hashtbl.replace fd.store r54 1);
+                  Hashtbl.replace fd.wr_hooks
+                    (raddr fd.dev "regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN")
+                    (fun _ -> failwith "post-reset boot failed");
+                  fd.log := [];
+                  raises (Failure "post-reset boot failed") (fun () -> Am_boot.init t);
+                  equal ~msg:"dirty precedes engine quiescing"
+                    (pair int int) (r6, 1) (List.hd (writes fd));
+                  equal ~msg:"successful reset cannot clear the in-progress marker"
+                    int 1 (Hashtbl.find fd.store r6)));
           test "full and partial boots reserve the same resident TMR" (fun () ->
               let fw = {boot_fw with Firmware.sos_fw =
                   (Am.psp_fw_type_psp_toc, Bytes.of_string "TOCIMAGE") :: boot_fw.sos_fw} in

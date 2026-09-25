@@ -6,6 +6,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **AMD boot records an unfinished session before initializing hardware.**
+  The target writes scratch REG6 only after initialization succeeds, so a failed
+  partial boot can retain the previous session's clean-shutdown marker. Tolk
+  writes it before the first hardware phase and again after mode1 reset, which
+  may clear it. PCI takeover uses this marker to choose the next recovery path.
+  `test_amd_amdev` injects GFX/SDMA and post-reset SoC failures while preserving
+  REG7, resident TMR and GC9.5's required partial-boot policy. Reconsider when
+  upstream marks entry to initialization or supplies equivalent phase recovery;
+  this does not establish complete bootstrap rollback or hardware recovery.
+
 - **Safetensors loading eagerly uploads each tensor.** `State.safe_load` returns
   tensors on the default device; the target returns views over DISK storage and
   transfers them when loading model state. Tolk's GPT2 example uses this loader,

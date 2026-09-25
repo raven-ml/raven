@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI boot marks the session unfinished before programming hardware and
+  restores that marker after a reset, so a failed initialization cannot leave
+  the previous session’s clean-shutdown stamp in place.
+
 - `State.load_state_dict` transfers placed checkpoint values to a parameter’s
   device and shards single-device values along a multi-device parameter’s axis;
   loading weights previously discarded that placement.
