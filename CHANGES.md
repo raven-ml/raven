@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Optimizer padding and shared-memory limits use exact arithmetic. Large
+  extents no longer wrap negative, and symbolic local sizes must prove that
+  their full storage requirement fits the device budget.
+
 - Compiled program and runtime caches synchronize concurrent misses and retire
   with replaced device owners. Live CPU executables remain usable across GC;
   unreachable executable mappings now have automatic cleanup.

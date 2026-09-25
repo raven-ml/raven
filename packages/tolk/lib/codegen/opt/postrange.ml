@@ -456,11 +456,15 @@ let check_shared_memory t axis kind amount =
   | Some red when (kind = Axis_type.Local && List.mem axis (reduce_axes t))
                   || group_for_reduces t > 0 ->
       let fs = full_shape t in
-      let lanes = prod (List.map (fun a -> const_int_or 1 (List.nth fs a))
-          (axes_of t [ Axis_type.Upcast; Axis_type.Warp; Axis_type.Local ])) in
-      let needed = amount * lanes * Dtype.itemsize (U.dtype red) in
-      check (needed <= Renderer.shared_max t.ren)
-        (strf "exceeds shared memory: needs %d, max %d" needed (Renderer.shared_max t.ren))
+      let lanes = List.fold_left (fun acc axis -> U.O.(acc * List.nth fs axis))
+          (U.const_int 1)
+          (axes_of t [ Axis_type.Upcast; Axis_type.Warp; Axis_type.Local ]) in
+      let needed = U.simplify U.O.(U.const_int amount * lanes
+          * U.const_int (Dtype.itemsize (U.dtype red))) in
+      let limit = Renderer.shared_max t.ren in
+      check (U.resolve ~default:false U.O.(not_ (U.const_int limit < needed)))
+        (strf "exceeds shared memory: needs %s, max %d"
+           (Render.expr_to_string needed) limit)
   | _ -> ()
 
 let check_reduction_split t r kind =
@@ -475,8 +479,6 @@ let check_reduction_split t r kind =
           (U.ranges (Option.get owner))))
         "cannot have a workgroup reduction inside another reduce"
   end
-
-let round_up x n = (x + n - 1) / n * n
 
 let is_invalid_const u =
   match U.op u, U.arg u with
@@ -502,18 +504,21 @@ let rec get_idx_valid u =
 (* Pad a range to a multiple of [amount]. *)
 let apply_padto t r amount =
   check (amount > 1) "pad amount must be greater than one";
-  check (Option.is_some (U.const_int_value (range_size r))) "only pad const axes";
+  let old_size = match Option.map Const.view (U.as_const (range_size r)) with
+    | Some (Const.Int size) -> size
+    | _ -> raise (Opt_error "only pad const axes") in
   let rng_kind = range_kind r in
   check
     (rng_kind <> Axis_type.Upcast && rng_kind <> Axis_type.Unroll
      && rng_kind <> Axis_type.Warp)
     "cannot pad upcasted or warp";
-  let old_size = range_int_size r in
-  let new_sz = round_up old_size amount in
-  check (old_size > new_sz / 4) "pad adds more than quadruple the work";
-  let replaced_rng = U.replace r ~src:[| U.const_int new_sz |] () in
+  let amount = Z.of_int amount in
+  let new_sz = Z.(ediv (old_size + amount - one) amount * amount) in
+  check Z.(gt old_size (ediv new_sz (of_int 4))) "pad adds more than quadruple the work";
+  let size n = U.const (Const.integer (U.dtype (range_size r)) n) in
+  let replaced_rng = U.replace r ~src:[| size new_sz |] () in
   let valid =
-    U.alu_binary ~op:Ops.Cmplt ~lhs:replaced_rng ~rhs:(U.const_int old_size)
+    U.alu_binary ~op:Ops.Cmplt ~lhs:replaced_rng ~rhs:(size old_size)
   in
   let subs =
     List.fold_left

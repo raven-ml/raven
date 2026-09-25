@@ -398,6 +398,29 @@ let validation_tests =
         raises_opt_error (fun () ->
           ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = true; axis = List.hd (P.axes_of t [ Ak.Reduce ]); amount = 32 }))));
 
+      test "shared memory products cannot overflow the host integer" (fun () ->
+        let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
+        let t = P.create ast (small_smem_renderer ()) in
+        let r = List.nth (P.rngs t) (List.hd (P.axes_of t [Ak.Global])) in
+        let local = U.range ~size:(idx (1 lsl 60)) ~axis:0 ~kind:Ak.Local () in
+        let t = P.create (U.substitute [r, local] ast) (small_smem_renderer ()) in
+        raises_opt_error (fun () -> ignore (P.apply_opt t
+          (U.Opt.Split {kind = Ak.Local; top = true;
+            axis = List.hd (P.axes_of t [Ak.Reduce]); amount = 2}))));
+      test "shared memory budgets prove symbolic local extents" (fun () ->
+        List.iter (fun (upper, fits) ->
+          let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
+          let t = P.create ast (small_smem_renderer ()) in
+          let r = List.nth (P.rngs t) (List.hd (P.axes_of t [Ak.Global])) in
+          let size = U.variable ~name:"local_extent" ~min_val:2 ~max_val:upper () in
+          let local = U.range ~size ~axis:0 ~kind:Ak.Local () in
+          let t = P.create (U.substitute [r, local] ast) (small_smem_renderer ()) in
+          let apply () = ignore (P.apply_opt t
+            (U.Opt.Split {kind = Ak.Local; top = true;
+              axis = List.hd (P.axes_of t [Ak.Reduce]); amount = 2})) in
+          if fits then apply () else raises_opt_error apply)
+          [8, true; 16, false]);
+
       test "LOCAL accepts a contracted reduction axis" (fun () ->
         let ast = reduce_global_ast ~s0:4 ~s1:4 ~sr:8 in
         let ren = gpu_renderer () in
@@ -513,6 +536,14 @@ let shift_opt_tests =
 let padto_tests =
   group "apply_opt PADTO"
     [
+      test "PADTO preserves extents beyond host integers" (fun () ->
+        let r = global_range ~axis:0 max_int in
+        let t = P.create (wrap_sink [r]) (gpu_renderer ()) in
+        ignore (P.apply_opt t (U.Opt.Padto {axis = 0; amount = 4}));
+        equal int 1 (List.length (P.rngs t));
+        let size = (U.src (List.hd (P.rngs t))).(0) in
+        equal string (Z.to_string (Z.succ (Z.of_int max_int)))
+          (Z.to_string (U.sym_infer_z size [])));
       (* Port of test_padto_matmul: PADTO pads 17 → 32 *)
       test "PADTO pads axis to next multiple" (fun () ->
         let ast = elementwise_global_ast ~s0:17 ~s1:4 in
