@@ -115,7 +115,7 @@ let queue_call device spec slots =
       precompile_backward = false; aux = None; dtype = Dtype.void}
 
 let compile_queue device calls =
-  let to_program = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~to_program (U.linear calls) in
   is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
       match U.arg (U.without_after call) with
@@ -392,7 +392,7 @@ let () =
              products and partial sums are exactly representable. *)
           test "f16 tensor-core matmul" (fun () ->
               let device = cuda_device () in
-              let to_program body =
+              let to_program device body =
                 Codegen.to_program device (Device.renderer device) body
               in
               let m, n, k = (16, 8, 16) in
@@ -481,7 +481,7 @@ let () =
              compiled queue on every replay. *)
           test "queue call replays with updated variables" (fun () ->
               let device = cuda_device () in
-              let to_program body =
+              let to_program device body =
                 Codegen.to_program device (Device.renderer device) body
               in
               let data = [| 1.0; 2.0; 4.0; 8.0; 16.0; 32.0; 64.0; 128.0 |] in
@@ -524,7 +524,7 @@ let () =
               check 4);
           test "queue call replays with rebound inputs" (fun () ->
               let device = cuda_device () in
-              let to_program body =
+              let to_program device body =
                 Codegen.to_program device (Device.renderer device) body
               in
               let data1 = [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -569,7 +569,7 @@ let () =
              output buffer on every call, so the submission must repatch both. *)
           test "queue call replays with reseeded buffer nodes" (fun () ->
               let device = cuda_device () in
-              let to_program body =
+              let to_program device body =
                 Codegen.to_program device (Device.renderer device) body
               in
               let data1 = [| 1.0; 2.0; 3.0; 4.0 |] in

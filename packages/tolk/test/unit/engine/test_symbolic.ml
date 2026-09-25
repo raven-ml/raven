@@ -110,7 +110,7 @@ let realize_neg_output device ~to_program ~buf_node ~value =
   | None -> fail "output was not scheduled to a buffer"
 
 let symbolic_launch_matches_concrete device_name device =
-  let to_program body =
+  let to_program device body =
     Codegen.to_program device (Device.renderer device) body
   in
   let buf_node =
@@ -130,7 +130,7 @@ let symbolic_launch_matches_concrete device_name device =
 
 let symbolic_reduce_matches_concrete device_name device =
   let compiles = ref 0 in
-  let to_program body =
+  let to_program device body =
     incr compiles;
     Codegen.to_program device (Device.renderer device) body
   in

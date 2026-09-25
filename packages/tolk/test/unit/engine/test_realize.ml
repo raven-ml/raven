@@ -277,7 +277,7 @@ let compiled_launch_uses_fixed_workgroups () =
   let body = U.sink ~kernel_info:(kernel_info "fixed_workgroups") [ flat; n ] in
   let call = U.call ~body:(program_of body) ~args:[] ~info:(call_info None) in
   let binding = Realize.Buffers.create () in
-  Realize.run_linear ~device ~to_program:program_of ~var_vals:[ "n", 37 ] binding (U.linear [ call ]);
+  Realize.run_linear ~device ~to_program:(fun device body -> ignore device; program_of body) ~var_vals:[ "n", 37 ] binding (U.linear [ call ]);
   equal int 1 !calls
 
 let () =
@@ -310,7 +310,8 @@ let () =
             in
             let tagged_ast = U.with_tag "diagnostic" ast in
             let calls = ref 0 in
-            let to_program body =
+            let to_program device body =
+              ignore device;
               incr calls;
               program_of body
             in
@@ -326,7 +327,8 @@ let () =
               U.sink ~kernel_info:(kernel_info "device_cache_test") []
             in
             let calls = ref 0 in
-            let to_program body =
+            let to_program device body =
+              ignore device;
               incr calls;
               program_of body
             in
@@ -355,7 +357,8 @@ let () =
             let body = U.sink ~kernel_info:(kernel_info "architecture_cache_test") [] in
             let linear = U.linear [ U.call ~body ~args:[] ~info:(call_info None) ] in
             let calls = ref 0 in
-            let to_program body = incr calls; program_of body in
+            let to_program device body =
+              ignore device; incr calls; program_of body in
             List.iter (fun arch -> with_target ("TEST:TEST:" ^ arch) (fun () ->
                 ignore (Realize.compile_linear ~device ~to_program linear)))
               [ "first"; "second"; "first" ];
@@ -364,7 +367,8 @@ let () =
             (fun () ->
               let device = test_device (runtime_state ()) in
               let body = U.sink ~kernel_info:(kernel_info "structural_test") [] in
-              let to_program body =
+              let to_program device body =
+                ignore device;
                 let info = U.program_info_from_sink body in
                 U.program ~sink:body ~linear:(U.linear [])
                   ~source:(U.source "SRC") ~binary:(U.binary "BIN") ~info ()
@@ -524,7 +528,7 @@ let () =
             let call = U.call ~body ~args:[ out; inp ] ~info in
             let binding = Realize.Buffers.create () in
             Realize.run_linear ~device
-              ~to_program:program_of
+              ~to_program:(fun device body -> ignore device; program_of body)
               binding
               (U.linear [ call ]);
             equal int 2 state.nbufs);
@@ -551,7 +555,7 @@ let () =
             let call = U.call ~body ~args:[ param ] ~info in
             let binding = Realize.Buffers.create () in
             Realize.run_linear ~device
-              ~to_program:program_of
+              ~to_program:(fun device body -> ignore device; program_of body)
               binding ~input_uops:[| input |]
               (U.linear [ call ]);
             equal int 1 state.nbufs);

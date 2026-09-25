@@ -220,15 +220,23 @@ let compile_linear_cached ~cache ~device ?beam ~to_program linear =
   in
   let compile_call call =
     match U.as_call call with
-    | Some { body; _ }
+    | Some { body; args }
       when Tolk_uop.Ops.equal (U.op body) Tolk_uop.Ops.Sink ->
+        let device =
+          match List.find_map (fun arg -> match U.device_of arg with
+              | Some (U.Single name) | Some (U.Multi (name :: _)) -> Some name
+              | _ -> None) args with
+          | Some name when Device.canonicalize name <> Device.canonicalize (Device.name device) ->
+              Device.get name
+          | Some _ | None -> device
+        in
         let body = stamp body in
         let ckey = cache_key ~device ~ast_key:(U.semantic_key body) in
         let program =
           match Hashtbl.find_opt program_cache ckey with
           | Some p -> p
           | None ->
-              let p = to_program body in
+              let p = to_program device body in
               Hashtbl.replace program_cache ckey p;
               p
         in

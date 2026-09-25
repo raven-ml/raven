@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Compile scheduled kernels for their argument devices, fixing CPU-sharded
+  custom kernels when Metal is the default. `Realize` and `Jit` compiler
+  callbacks now receive the execution device.
+
 - Eager execution reuses compiled queue templates across fresh inputs while
   preserving shared-base views. Small schedules reuse linked command storage;
   `HCQ_CACHE_THRESH` keeps larger schedules' inputs bound at link time.

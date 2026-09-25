@@ -132,12 +132,12 @@ let custom_gemm = function
           (at (U.after ~src:c ~deps:[ k ]) [ i; j ])
           (mul (at a [ i; k ]) (at b [ k; j ]))
       in
-      let c = set ~ends:[ k ] c (at c [ i; j ]) acc in
+      let writes = U.end_ ~value:(store (at c [ i; j ]) acc) ~ranges:[ k ] in
       U.sink
         ~kernel_info:
           (kernel_info ~opts_to_apply:[]
              (Printf.sprintf "custom_gemm_%d_%d_%d" rows cols inner))
-        [ U.end_ ~value:c ~ranges:[ i; j ] ]
+        [ U.end_ ~value:writes ~ranges:[ i; j ] ]
   | _ -> assert false
 
 let custom_sum = function
@@ -293,8 +293,93 @@ let symbolic_call_outputs precompile () =
       equal (array (float 1e-6)) (Array.init size (fun i -> float_of_int (i + 2)))
         (Run.to_float_array view)) [2; 4]
 
+let moved_input precompile movement () =
+  let input = Run.of_float_array ~shape:[32] (Array.init 32 float_of_int) in
+  let expected = Run.to_float_array (El.add (movement input) (T.f 1.0)) in
+  let argument =
+    if precompile then T.of_uop (U.param_like (T.uop input) ~slot:0)
+    else input
+  in
+  let view = movement argument in
+  let output = Creation.empty ~dtype:(T.dtype input) (T.shape view) in
+  let result = first (T.custom_kernel ~fxn:custom_add_one_kernel [output; view]) in
+  let result =
+    if precompile then
+      first (U.call_with_outputs ~values:[T.uop result] ~args:[T.uop input]
+        ~info:(call_info true) ()) |> T.of_uop
+    else result
+  in
+  equal (array (float 1e-6)) expected (Run.to_float_array result)
+
+let input_tests =
+  let movements = [
+    "reshape", (fun t -> Mv.reshape t [16; 2]);
+    "permute", (fun t -> Mv.permute (Mv.reshape t [4; 8]) [1; 0]);
+    "double permute", (fun t ->
+      Mv.permute (Mv.permute (Mv.reshape t [4; 8]) [1; 0]) [1; 0]);
+    "prefix slice", (fun t -> Mv.shrink t [0, 4]);
+    "padded slice", (fun t -> Mv.pad (Mv.shrink t [0, 4]) [0, 4]);
+    "flip", (fun t -> Mv.flip t [0]);
+    "offset slice", (fun t -> Mv.shrink t [4, 8]);
+    "matrix slice", (fun t -> Mv.shrink (Mv.reshape t [4; 8]) [0, 4; 2, 6]);
+    "expanded slice", (fun t ->
+      Mv.expand (Mv.shrink (Mv.reshape t [16; 2]) [0, 16; 0, 1]) [16; 2]);
+  ] in
+  group "moved custom inputs" (List.concat_map (fun (name, movement) ->
+    [test (name ^ " buffer") (moved_input false movement);
+     test (name ^ " parameter") (moved_input true movement)]) movements)
+
+let storage_tests = group "custom storage" [
+  test "duplicate arguments update shared storage" (fun () ->
+    let x = Run.of_float_array ~shape:[4] [|0.; 1.; 2.; 3.|] in
+    let output = first (T.custom_kernel ~fxn:custom_add_one_kernel [x; x]) in
+    equal (array (float 1e-6)) [|1.; 2.; 3.; 4.|] (Run.to_float_array output));
+  test "unused arguments preserve parameter positions" (fun () ->
+    let unused = Run.of_float_array ~shape:[4] [|100.; 200.; 300.; 400.|] in
+    let input = Run.of_float_array ~shape:[4] [|1.; 2.; 3.; 4.|] in
+    let output = Creation.empty [4] in
+    let fxn = function
+      | [dst; unused; src] ->
+          ignore unused;
+          custom_add_one_kernel [dst; src]
+      | _ -> assert false
+    in
+    equal (array (float 1e-6)) [|2.; 3.; 4.; 5.|]
+      (Run.to_float_array (first (T.custom_kernel ~fxn [output; unused; input]))));
+  test "sharded custom inputs use per-device shapes" (fun () ->
+    let devices = ["CPU:0"; "CPU:1"] in
+    let input = Run.of_float_array ~shape:[4; 4]
+        (Array.init 16 float_of_int) |> Creation.clone ~device:(U.Single "CPU")
+        |> Creation.shard ~devices ~axis:0 in
+    let output = Creation.empty ~device:(U.Multi devices) [2; 4] in
+    let output = T.of_uop (U.unshard ~src:(T.uop output) ~axes:[0] ()) in
+    let output = first (T.custom_kernel ~fxn:custom_add_one_kernel [output; input])
+        |> Creation.clone ~device:(U.Single "CPU") in
+    equal (array (float 1e-6)) (Array.init 16 (fun i -> float_of_int (i + 1)))
+      (Run.to_float_array output));
+  test "assignment reads a reshaped custom output" (fun () ->
+    let input = Run.of_float_array ~shape:[4] [|0.; 1.; 2.; 3.|] in
+    let output = Creation.empty [4] in
+    let result = first (T.custom_kernel ~fxn:custom_add_one_kernel [output; input]) in
+    let destination = Run.of_float_array ~shape:[2; 2] [|9.; 9.; 9.; 9.|] in
+    ignore (Op.assign destination (Mv.reshape result [2; 2]));
+    equal (array (float 1e-6)) [|1.; 2.; 3.; 4.|] (Run.to_float_array destination));
+  test "invalid partial stores preserve uncovered reads" (fun () ->
+    let input = Run.of_float_array ~shape:[4] [|10.; 20.; 30.; 40.|] in
+    let src = T.uop input in
+    let prefix = U.shrink ~src ~offset:(U.const_int 0) ~size:(U.const_int 2) in
+    let result = U.after ~src ~deps:[store prefix (U.invalid ())] |> T.of_uop in
+    equal (array (float 1e-6)) [|10.; 20.; 30.; 40.|] (Run.to_float_array result));
+  test "invalid stores retain neighboring writes" (fun () ->
+    let output = Creation.empty [4] |> T.uop in
+    let result = U.after ~src:output
+        ~deps:[store output (const_like output 5.0); store output (U.invalid ())]
+        |> T.of_uop in
+    all_floats 5.0 result);
+]
+
 let () = run "Tolk_frontend_custom_kernel"
-    [tests; group "explicit call outputs"
+    [tests; input_tests; storage_tests; group "explicit call outputs"
       [test "inline calls write outputs at explicit positions" (explicit_call_outputs false);
        test "precompiled calls write outputs at explicit positions" (explicit_call_outputs true);
        test "nested calls resolve anonymous internal storage" nested_call_internal_allocation;

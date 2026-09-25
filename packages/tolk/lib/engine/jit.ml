@@ -82,7 +82,7 @@ type 'a captured_jit = {
   ret : 'a;
   linear : U.t;
   device : Device.t;
-  to_program : U.t -> U.t;
+  to_program : Device.t -> U.t -> U.t;
   binding : Realize.Buffers.t;
   expected_input_info : input_info array;
 }
@@ -153,7 +153,7 @@ let exec_captured ?(wait = false) t (input_uops : U.t array) var_vals ~buffers
 type 'a tiny_jit = {
   fxn : (U.t array -> (string * int) list -> 'a) option;
   device : Device.t;
-  to_program : U.t -> U.t;
+  to_program : Device.t -> U.t -> U.t;
   mutable captured : 'a captured_jit option;
   mutable cnt : int;
 }

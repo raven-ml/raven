@@ -160,7 +160,7 @@ let compiled_host_submission () =
   let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) ~device:(U.Single name) () in
   let linear = U.linear [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
                          U.store_call ~dst:(ptr 2) ~src:(ptr 1)] in
-  let to_program = Codegen.to_program host (Device.renderer host) in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~to_program linear in
   let binding = Realize.Buffers.create () in
   let linked = Realize.link_linear binding compiled in

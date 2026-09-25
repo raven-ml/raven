@@ -37,7 +37,7 @@ let inner t =
   | Some jit -> jit
   | None ->
       let device = Run.device () in
-      let to_program =
+      let to_program device =
         Tolk.Codegen.to_program device (Tolk.Device.renderer device)
       in
       let jit =

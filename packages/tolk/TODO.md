@@ -48,10 +48,8 @@ with their rationale and validation; commit count is not an acceptance metric.
 - Move Rune indexed-scatter, residency, uploads, memory planning,
   symbolic placeholders and external-buffer contracts onto the new protocol.
   Preserve their correctness/lifetime regressions and revalidate the one-hot
-  gather guard at the split threshold. Add custom-kernel sharding, source,
-  reshape/flip/slice, invalid-store, assignment and gradient cases.
-  Fix the value-producing END rejected under `SPEC=1` in the custom GEMM's
-  serial accumulator loop.
+  gather guard at the split threshold. Audit custom-kernel gradient ownership
+  against Rune custom differentiation and add the applicable execution cases.
 
 Acceptance: every existing backend builds against the shared protocol and no
 consumer depends on the old graph or storage interfaces. CPU and Metal execute

@@ -19,8 +19,7 @@ module U = Uop
 
 let device_name = "CPU:jit-capture"
 let device = Tolk_cpu.create device_name
-let renderer = Device.renderer device
-let to_program body = Codegen.to_program device renderer body
+let to_program device body = Codegen.to_program device (Device.renderer device) body
 
 (* Little-endian int32 <-> bytes for buffer payloads. *)
 let int32_to_bytes values =

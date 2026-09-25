@@ -104,7 +104,7 @@ let of_bytes ~dtype ~shape data =
    frontend changelog). *)
 let realize_buffers ts =
   let dev = device () in
-  let to_program = Tolk.Codegen.to_program dev (Tolk.Device.renderer dev) in
+  let to_program dev = Tolk.Codegen.to_program dev (Tolk.Device.renderer dev) in
   (* Force each output into a materialised buffer: an unrealized ALU/movement
      expression has no store target for the scheduler to write. *)
   let outs = List.map (fun t -> U.contiguous ~src:(T.uop t) ()) ts in

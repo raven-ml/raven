@@ -94,7 +94,7 @@ let sharded x shape devices axis =
 (* Schedule and execute a sink, as the frontend realize does. *)
 
 let realize ~device ~binding sink =
-  let to_program = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
   let call, buffer_map = bufferized_call sink in
   let linear, var_vals =
     Schedule.create_linear_with_vars

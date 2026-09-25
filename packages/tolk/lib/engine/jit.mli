@@ -49,7 +49,7 @@ val captured : 'a tiny_jit -> 'a captured_jit option
 
 val create :
   device:Device.t ->
-  to_program:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
+  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   ?fxn:(Tolk_uop.Uop.t array -> (string * int) list -> 'a) ->
   ?captured:'a captured_jit ->
   ?prune:bool ->
@@ -57,7 +57,8 @@ val create :
   'a tiny_jit
 (** [create ~device ~to_program ?fxn ?captured ?prune ()] is a JIT wrapper.
 
-    [to_program] compiles a kernel {!Tolk_uop.Ops.Sink} into an on-graph
+    [to_program execution_device sink] compiles a kernel {!Tolk_uop.Ops.Sink}
+    for its argument placement into an on-graph
     {!Tolk_uop.Ops.Program}; the captured linear is compiled with it once,
     then replayed.
 

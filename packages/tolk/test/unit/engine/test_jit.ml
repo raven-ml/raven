@@ -74,7 +74,8 @@ let make_device ?(name = "TEST:0") ?(state = runtime_state ()) () =
 
 let device = make_device ()
 
-let to_program body =
+let to_program device body =
+  ignore device;
   let info = U.program_info_from_sink body in
   U.program ~sink:body ~linear:(U.linear (U.toposort body)) ~source:(U.source "")
     ~binary:(U.binary "") ~info ()

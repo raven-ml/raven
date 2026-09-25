@@ -606,7 +606,7 @@ let execute_queue ~compute_class ~copies m =
   let word tag = Int32.to_int (Bytes.get_int32_le (Device.Buffer.as_bytes (get tag)) 0) in
   set32 "gpput_compute" 7;
   if copies then set32 "gpput_copy" 7;
-  let to_program = Codegen.to_program host (Device.renderer host) in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
   List.iteri (fun replay (small, count) ->
       let inputs = Array.init (if copies then 3 else 1) (fun _ ->
           Device.create_buffer ~size:16 ~dtype:D.int32 device) in
@@ -663,7 +663,7 @@ let queue_chain ~compute_class m =
   let binding = Realize.Buffers.create () in
   let linked = Realize.link_linear binding compiled in
   let inputs = Array.init 2 (fun _ -> Device.create_buffer ~size:16 ~dtype:D.int32 device) in
-  Realize.run_linear ~device ~to_program:(Codegen.to_program host (Device.renderer host))
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
     binding ~jit:true ~var_vals:["small", 4; "count", 2]
     ~input_uops:(Array.map U.from_buffer inputs) linked;
   Submission.check submission;
@@ -689,7 +689,7 @@ let queue_timeout m =
   let linked = Realize.link_linear binding compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run () = Realize.run_linear ~device
-      ~to_program:(Codegen.to_program host (Device.renderer host)) binding ~jit:true
+      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) binding ~jit:true
       ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked in
   run ();
   let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "gpput_compute") in

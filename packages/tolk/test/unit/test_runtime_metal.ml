@@ -128,7 +128,7 @@ let queue_call device spec slots =
       precompile_backward = false; aux = None; dtype = Dtype.void}
 
 let compile_queue device calls =
-  let to_program = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~to_program (U.linear calls) in
   is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
       match U.arg (U.without_after call) with

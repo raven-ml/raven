@@ -650,7 +650,7 @@ let test_sparse_program_arguments () =
     { grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None; dtype = Dtype.void } in
   let call = U.call ~body:program ~args ~info in
-  Realize.run_linear ~device ~to_program:(Codegen.to_program device (Device.renderer device))
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
     binding ~var_vals:[ "increment", 1 ] (U.linear [ call ]);
   equal (list int) [ 42 ] (read_i32_buffer output_buffer);
   equal (list int) [ 41 ] (read_i32_buffer input_buffer);

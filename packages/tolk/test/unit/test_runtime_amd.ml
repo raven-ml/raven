@@ -432,7 +432,7 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
   if copies then begin
     set_word "write_ptr_copy" 4088; set_word "read_ptr_copy" 4088
   end;
-  let to_program = Codegen.to_program host (Device.renderer host) in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
   List.iteri (fun replay (small, count) ->
       if replay = 1 then begin
         let bytes = Bytes.make 16 '\000' in
@@ -487,7 +487,7 @@ let execute_aql_queue ~multi =
   put "write_ptr_compute" 62;
   put "read_ptr_compute" 62;
   let input = i32_buf device (List.init 16 Fun.id) in
-  Realize.run_linear ~device ~to_program:(Codegen.to_program host (Device.renderer host)) binding
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) binding
     ~jit:true ~var_vals:["small", -17; "count", 3] ~input_uops:[|U.from_buffer input|] linked;
   Submission.check submission;
   let word tag = Int64.to_int (Bytes.get_int64_le (Device.Buffer.as_bytes (get tag)) 0) in
@@ -513,7 +513,7 @@ let execute_aql_queue ~multi =
   Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
   Device.Buffer.copyin (get "timeline") timeline;
   let rebound = i32_buf device (List.init 16 (fun i -> i + 1)) in
-  Realize.run_linear ~device ~to_program:(Codegen.to_program host (Device.renderer host)) binding
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) binding
     ~jit:true ~var_vals:["small", 5; "count", 9] ~input_uops:[|U.from_buffer rebound|] linked;
   Submission.check submission;
   equal int 68 (word "write_ptr_compute");
@@ -557,7 +557,7 @@ let queue_timeout () =
   let linked = Realize.link_linear binding compiled in
   let input = i32_buf device (List.init 16 Fun.id) in
   let run () = Realize.run_linear ~device
-      ~to_program:(Codegen.to_program host (Device.renderer host)) binding ~jit:true
+      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) binding ~jit:true
       ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked in
   run ();
   let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "doorbell_compute") in
@@ -585,7 +585,7 @@ let queue_full () =
   Device.Buffer.copyin pointer initial;
   let input = i32_buf device (List.init 16 Fun.id) in
   Realize.run_linear ~device
-    ~to_program:(Codegen.to_program host (Device.renderer host)) binding ~jit:true
+    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) binding ~jit:true
     ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked;
   raises_match (Exn.failure ~substring:"HCQ submission timed out")
     (fun () -> Submission.check submission);

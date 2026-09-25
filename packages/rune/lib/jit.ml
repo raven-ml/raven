@@ -1212,7 +1212,7 @@ let schedule_body_linear st body_sink =
       in
       reserve_slots_of body_linear;
       Tolk.Realize.compile_linear ~device:st.st_device
-        ~to_program:(to_program st.st_device) body_linear, resolve_node
+        ~to_program body_linear, resolve_node
 
 (* Schedule analyses, shared by buffer reuse at the jit boundary and inside a
    staged loop's body. *)
@@ -3877,7 +3877,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
         let linear =
           let compile () =
             Tolk.Realize.compile_linear ~device:dev ?beam
-              ~to_program:(to_program dev) linear
+              ~to_program linear
           in
           match beam_parallel with
           | None -> compile ()
@@ -4394,7 +4394,7 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
       end)
     c.cp_prefills;
   Tolk.Realize.run_linear ~device:c.cp_device
-    ~to_program:(to_program c.cp_device) c.cp_binding ~var_vals:c.cp_vars
+    ~to_program c.cp_binding ~var_vals:c.cp_vars
     ~jit:true c.cp_linear;
   (* An output that is an input or a capture returned unchanged keeps its
      reserved binding; copy it into a fresh buffer on the device, so its value
