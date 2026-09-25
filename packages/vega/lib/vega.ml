@@ -204,7 +204,7 @@ let global_dot p (dt : (float, 'v) Nx.dtype) a b : (float, 'v) Nx.t =
   ignore
     (Nx.Ptree.map2 p
        (fun _ x y ->
-         if updates x then acc := Nx.add !acc (Nx.cast dt (Nx.sum (Nx.mul x y)));
+         if updates x then acc := Nx.add !acc (Nx.cast dt (Nx.vdot x y));
          x)
        a b);
   !acc

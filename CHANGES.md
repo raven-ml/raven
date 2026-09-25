@@ -80,6 +80,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- `Vega.global_dot` takes each leaf's inner product with `Nx.vdot`, so a
+  `bfloat16` or `float16` leaf's products are summed at `float32` and rounded
+  once, as every other product of vectors is. It rounded each product first.
 - `adafactor_init` gives a leaf that is not a float, such as an RNG key or a
   counter, zeros of its own shape in every part of the state, as the other
   states do. A vector leaf held a scalar zero, a value its slot's type does not

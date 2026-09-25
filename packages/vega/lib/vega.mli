@@ -141,10 +141,11 @@ val clip_by_value : 'p Nx.Ptree.t -> max:float -> 'p -> 'p
 val global_dot :
   'p Nx.Ptree.t -> (float, 'v) Nx.dtype -> 'p -> 'p -> (float, 'v) Nx.t
 (** [global_dot p dt a b] is the inner product of [a] and [b] over all their
-    float leaves taken together, as a scalar tensor: every leaf's product is
-    summed at the leaf's dtype, then cast to [dt] and accumulated. Non-float
-    leaves contribute nothing. Tensor arithmetic with no host read, so it traces
-    under {!Rune.val-jit}; [dt] sets the precision of the accumulation.
+    float leaves taken together, as a scalar tensor: every leaf's inner product
+    is {!Nx.vdot}, at {!Nx.matmul}'s precision in the leaf's dtype, then cast to
+    [dt] and accumulated. Non-float leaves contribute nothing. Tensor arithmetic
+    with no host read, so it traces under {!Rune.val-jit}; [dt] sets the
+    precision of the accumulation.
 
     Raises [Invalid_argument], naming the first path at which they differ, if
     [a] and [b] differ in their paths, reports or dtypes. *)

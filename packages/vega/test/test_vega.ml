@@ -858,7 +858,16 @@ let test_global_dot () =
   let d = Vega.global_dot Pair.ptree Nx.float64 a b in
   equal ~msg:"spans all leaves" (float 1e-12) 32.0 (Nx.item [] d);
   equal ~msg:"accumulates at the requested dtype" (float 1e-12) 32.0
-    (Nx.item [] (Vega.global_dot Pair.ptree Nx.float32 a b))
+    (Nx.item [] (Vega.global_dot Pair.ptree Nx.float32 a b));
+  (* A bfloat16 leaf's inner product is [Nx.vdot]'s: (1 + 2^-7)^2 + 2^-8 sums
+     exactly to just above a tie and rounds up once to 1 + 3 * 2^-7, where
+     rounding each product first lands on the tie and goes down to even. *)
+  let u = Float.ldexp 1.0 (-7) in
+  let x = Nx.create Nx.bfloat16 [| 2 |] [| 1.0 +. u; u /. 2.0 |]
+  and y = Nx.create Nx.bfloat16 [| 2 |] [| 1.0 +. u; 1.0 |] in
+  equal ~msg:"a bfloat16 leaf's product rounds once" float_exact
+    (1.0 +. (3.0 *. u))
+    (Nx.item [] (Vega.global_dot Nx.Ptree.tensor Nx.float32 x y))
 
 let test_lbfgs_init () =
   let params = Lazy.force bowl_start in
