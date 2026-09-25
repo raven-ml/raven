@@ -1682,14 +1682,7 @@ let symbolic : Upat.Pattern_matcher.t =
 
     (* cond.not.where(t, f) -> cond.where(f, t) when f is not Invalid. *)
     (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
-     let inner_not = op ~src:[ cond; false_ ] Ops.Cmpeq in
-     where inner_not (var "t") (var "f") => fun bs ->
-       let c = bs $ "cond" and t = bs $ "t" and f = bs $ "f" in
-       if is_invalid_const f then None
-       else Some (Uop.O.where c f t));
-    (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
-     let inner_not = op ~src:[ cond; true_ ] Ops.Cmpne in
-     where inner_not (var "t") (var "f") => fun bs ->
+     where (alu [ cond; true_ ] Ops.Cmpne) (var "t") (var "f") => fun bs ->
        let c = bs $ "cond" and t = bs $ "t" and f = bs $ "f" in
        if is_invalid_const f then None
        else Some (Uop.O.where c f t));

@@ -69,6 +69,18 @@ let not_not_folds () =
   let x = var ~name:"flag" ~lo:0 ~hi:1 ~dtype:Dtype.bool () in
   equal ~msg:"!!x is x" uop x (rewrite (Uop.O.not_ (Uop.O.not_ x)))
 
+(* !cond.where(t, f) -> cond.where(f, t), whichever side of the [<> true] the
+   condition is on. *)
+let where_not_swaps () =
+  let c = var ~name:"flag" ~lo:0 ~hi:1 ~dtype:Dtype.bool () in
+  let t = var ~name:"t" ~lo:0 ~hi:10 () and f = var ~name:"f" ~lo:0 ~hi:10 () in
+  let not_c_right = Uop.alu_binary ~op:Ops.Cmpne ~lhs:c ~rhs:(Uop.const_bool true)
+  and not_c_left = Uop.alu_binary ~op:Ops.Cmpne ~lhs:(Uop.const_bool true) ~rhs:c in
+  List.iter
+    (fun (msg, not_c) ->
+      equal ~msg uop (Uop.O.where c f t) (rewrite (Uop.O.where not_c t f)))
+    [ ("c <> true", not_c_right); ("true <> c", not_c_left) ]
+
 (* Two-stage associative: x + 3 + 4 -> x + 7. *)
 let two_stage_associative () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in
@@ -305,6 +317,7 @@ let simplify_driver_groups =
         test "x < x -> false" lt_self_folds;
         test "x | !x -> true" or_not_self_folds;
         test "!!x -> x" not_not_folds;
+        test "!c.where(t, f) -> c.where(f, t)" where_not_swaps;
       ];
     group "two-stage folding"
       [
