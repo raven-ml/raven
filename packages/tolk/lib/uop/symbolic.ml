@@ -1186,6 +1186,21 @@ let rule_two_stage_associative_for assoc_op =
 let two_stage_associative_rules =
   List.map rule_two_stage_associative_for Ops.Group.associative
 
+(* [x + c0] and [c1 - c0] take their mathematical values at [x]'s dtype:
+   neither wraps around. *)
+let offset_is_exact x c0 c1 =
+  let dt = Uop.dtype x in
+  Dtype.equal dt Dtype.weakint
+  ||
+  match const_int_v c0, const_int_v c1 with
+  | Some c0, Some c1 ->
+      let fits b = Bound.le (Dtype.min dt) b && Bound.le b (Dtype.max dt) in
+      let c0 = Bound.int c0 in
+      fits (Bound.add (Uop.vmin x) c0)
+      && fits (Bound.add (Uop.vmax x) c0)
+      && fits (Bound.sub (Bound.int c1) c0)
+  | _ -> false
+
 (* [x < c]: if [x = sum(np) + sum(p)] where each term in [np] has common
    integer factor [d > 1] dividing [c] and the [p] "residual" sum stays
    within [\[0; d)], then [sum(np)/d < c/d] is equivalent. *)
@@ -1654,12 +1669,14 @@ let symbolic : Upat.Pattern_matcher.t =
        if is_invalid_const f then None
        else Some (Uop.O.where c f t));
 
-    (* Integer (c0 + x) < c1 -> x < (c1 - c0). Float rounding prevents this. *)
+    (* Integer (c0 + x) < c1 -> x < (c1 - c0) where neither side wraps. Float
+       rounding prevents this. *)
     (let x = var "x"
      and c0 = cvar ~name:"c0" () and c1 = cvar ~name:"c1" () in
      O.((c0 + x) < c1) => fun bs ->
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       if Dtype.is_int (Uop.dtype x) then Some Uop.O.(x < (c1 - c0))
+       if Dtype.is_int (Uop.dtype x) && offset_is_exact x c0 c1 then
+         Some Uop.O.(x < (c1 - c0))
        else None);
 
     (* A range mod its own upper bound is just the range. *)

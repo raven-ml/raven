@@ -90,6 +90,19 @@ let two_stage_associative () =
     (rewrite Uop.O.(x + Uop.const_int 7))
     (rewrite e)
 
+(* c0 + x < c1 moves c0 across only where neither side wraps: over uint8 x,
+   x - 1 < 5 is false at 0, where x < 6 would be true. *)
+let offset_comparison_respects_wrap () =
+  let c n = Uop.const (Const.int Dtype.uint8 n) in
+  let x = Uop.param ~slot:0 ~dtype:Dtype.uint8 () in
+  let kept = rewrite Uop.O.(x + c (-1) < c 5) in
+  is_true ~msg:"uint8 x - 1 < 5 keeps its offset"
+    (Uop.op (Uop.src kept).(0) = Ops.Add);
+  let y = var ~dtype:Dtype.uint8 ~name:"y" ~lo:1 ~hi:9 () in
+  equal ~msg:"uint8 y - 1 < 5 over [1, 9] is y < 6" uop
+    (rewrite Uop.O.(y < c 6))
+    (rewrite Uop.O.(y + c (-1) < c 5))
+
 let int_neutral_chain_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:9 () in
   let x = Uop.cast ~src:x ~dtype:Dtype.int32 in
@@ -322,6 +335,8 @@ let simplify_driver_groups =
     group "two-stage folding"
       [
         test "associative combine" two_stage_associative;
+        test "an offset crosses a comparison only without wrapping"
+          offset_comparison_respects_wrap;
       ];
     group "constant folding and invalid propagation"
       [

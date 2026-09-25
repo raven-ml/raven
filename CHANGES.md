@@ -163,6 +163,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled comparison of an integer sum or product that may wrap no longer
+  folds as if it could not: `uint32` `x - 1 < 5` compiled to `x < 6`, true at
+  x = 0, and `uint8` `x - 1 < 255` to true. Signed 32- and 64-bit overflow
+  stays undefined in the C that CPU and Metal kernels compile to.
 - A compiled 8- or 16-bit integer sum, difference, product, negation, left
   shift or quotient wraps at its width before it is read: C computed it in
   `int`, so `uint8` `x - 1 < x` was false at every x where eager is true

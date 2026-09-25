@@ -279,6 +279,18 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   float32 and float64 sweeps. Reconsider only if rune stops running eager code
   on nx.
 
+- **Integer bounds account for wrap-around.** The reference's interval
+  arithmetic is exact: Tolk bounded `uint8` `x - 1` over [0, 255] by
+  [-1, 254], so `x - 1 < 255` folded to true though x = 0 gives 255, and the
+  rule `c0 + x < c1 -> x < c1 - c0` turned `uint32` `x - 1 < 5` into `x < 6`,
+  true at x = 0 where the program compares 4294967295 with 5. Tolk widens an
+  integer interval that reaches past its dtype's range to the whole range,
+  and applies that rule at a fixed width only when neither `x + c0` nor
+  `c1 - c0` can wrap. Index arithmetic is `weakint`, whose range no kernel
+  reaches, so it keeps every fold. Coverage: rune `test_jit` and
+  `test_jit_metal` "integer comparisons read wrapped values". Remove this
+  ruling when upstream reasons modularly.
+
 ## Validation dependencies
 
 - **Scalar out-of-bounds validation has no SMT solver fallback.** Keep Tolk's

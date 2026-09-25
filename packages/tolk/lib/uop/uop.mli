@@ -1570,8 +1570,9 @@ module Weak_tbl : Ephemeron.S with type key = t
 val vmin : t -> Bound.t
 (** [vmin u] is a conservative numeric lower bound for [u]. Integer bounds
     retain arbitrary precision; float bounds preserve infinities and exclude
-    NaN. Unknown values use the dtype's limits. Empty intervals have a lower
-    bound greater than their upper bound, as for [RANGE(0)]. Memoised. *)
+    NaN. Unknown values use the dtype's limits, as do integer values whose
+    arithmetic may wrap around their dtype's width. Empty intervals have a
+    lower bound greater than their upper bound, as for [RANGE(0)]. Memoised. *)
 
 val vmax : t -> Bound.t
 (** [vmax u] is the upper bound symmetric to {!vmin}. *)

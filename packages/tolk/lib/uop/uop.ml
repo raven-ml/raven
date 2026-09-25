@@ -1840,12 +1840,20 @@ let substitute ?(walk = false) ?(enter_calls = false) mappings root =
 let min_max_cache : (Bound.t * Bound.t) Weak_tbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> Weak_tbl.create 1024)
 
+(* Integer arithmetic wraps at its dtype's width: an interval reaching past
+   the dtype's range may hold any of its values. *)
+let wrapping_bounds dt ((lo, hi) as bounds) =
+  if Dtype.is_int dt
+     && (Bound.lt lo (Dtype.min dt) || Bound.lt (Dtype.max dt) hi)
+  then Dtype.min dt, Dtype.max dt
+  else bounds
+
 let rec min_max u =
   let cache = Domain.DLS.get min_max_cache in
   match Weak_tbl.find_opt cache u with
   | Some bounds -> bounds
   | None ->
-      let bounds = compute_min_max u in
+      let bounds = wrapping_bounds (dtype u) (compute_min_max u) in
       Weak_tbl.replace cache u bounds;
       bounds
 

@@ -431,6 +431,22 @@ let integer_bounds_parity () =
   is_true ~msg:"bind rejects int64 values outside native bounds"
     overflow_rejected
 
+(* Fixed-width integer arithmetic wraps: an interval that would leave the
+   dtype's range holds any of its values, one inside it stays exact. *)
+let wrapping_integer_bounds () =
+  let c dt n = Uop.const (Const.int dt n) in
+  let u8 = Uop.param ~slot:0 ~dtype:Dtype.uint8 () in
+  equal_bounds ~msg:"uint8 x - 1"
+    (Uop.alu_binary ~op:Ops.Add ~lhs:u8 ~rhs:(c Dtype.uint8 (-1))) (0, 255);
+  equal_bounds ~msg:"uint8 x * 2"
+    (Uop.alu_binary ~op:Ops.Mul ~lhs:u8 ~rhs:(c Dtype.uint8 2)) (0, 255);
+  let low = Uop.alu_binary ~op:Ops.And ~lhs:u8 ~rhs:(c Dtype.uint8 15) in
+  equal_bounds ~msg:"uint8 (x & 15) + 1"
+    (Uop.alu_binary ~op:Ops.Add ~lhs:low ~rhs:(c Dtype.uint8 1)) (1, 16);
+  let i8 = Uop.param ~slot:1 ~dtype:Dtype.int8 () in
+  equal_bounds ~msg:"int8 x + 1"
+    (Uop.alu_binary ~op:Ops.Add ~lhs:i8 ~rhs:(c Dtype.int8 1)) (-128, 127)
+
 let flat_storage_parameters () =
   let n = Uop.variable ~name:"extent" ~min_val:1 ~max_val:8 () in
   let dims = Uop.stack [Uop.const_int 3; n] in
@@ -2525,6 +2541,7 @@ let () =
             arithmetic_helpers_tinygrad_parity;
           test "binding requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
+          test "integer bounds wrap at a fixed width" wrapping_integer_bounds;
           test "tinygrad CAST bounds parity" cast_bounds_parity;
           test "flat storage parameters retain symbolic views" flat_storage_parameters;
           test "backward slices track shared dependencies" backward_slice_tracks_shared_dependencies;
