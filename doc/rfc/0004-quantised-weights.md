@@ -550,6 +550,33 @@ row tile is what moves it. The prefill's remaining cost is the blocks' padding,
 about 1.9 times the routes at gpt-oss's routing, and decoding every expert,
 about 10 ms per layer.
 
+Stage 1's gates were retaken together on one build, on the M1 Max at load
+averages of 4 to 28: each step against its floor in three alternating pairs,
+and each expert path read again as the step's GPU time minus the floor's, from
+waited graph batches. The table is the gates' record; it agrees with the
+paragraphs above within noise.
+
+| Row | Measured | Band |
+|---|---|---|
+| Kernel, one row | `E_1` 0.27 to 0.29 ms per layer, 0.25 in GPU time; a token in 47.7 to 48.2 ms against a floor of 41.2 to 41.3 | target |
+| Kernel, row tile | 3.54 times one row (48.9 µs) at 8 rows, 12.9 at 32 | ship |
+| Grouped, decode | `E_8` 45.7 ms per step, 113 GB/s; `E_32` 134 ms, 61 GB/s, where the ungrouped kernel takes 251 ms per step against 212 | ship; stop, shipped |
+| Grouped, prefill | expert path 0.73 s, 0.41 of `G` | ship |
+| Grouped, one lane of eight | 1.01 to 1.05 times, 0.99 to 1.02 in GPU time | target |
+
+The other gates hold. `validate_stream` passes its 228 checks at 2e-4 on the
+real 20b, its worst stream error 9.2e-5, and peaks at 3.0 GB for the whole
+run. The eager dense block, the 167-token prompt's 668 routes over 32 experts,
+holds 0.14 GB above its weights, against 18.97 GB before. At batch 1 the peak
+footprint is 15.6 to 15.9 GB, and the first call, a 12-token prefill, takes
+4.4 s with an empty compile cache and 2.0 s with a warm one; the first decode
+step then takes 2.1 and 0.3 s. Law 2's battery passes on the CPU and Metal for
+every form a single device takes, at float32, bfloat16 and float16; the CPU
+takes no grouped form. The dense form that a program over several devices
+takes is checked against the eager product at float32 only; its Law 2 rows are
+Stage 2's gate. Stage 1 built every form in its scope within the budget derived
+before it, 39 engineer-days.
+
 Each form is time-boxed: the kernel at five days from its first compile, its
 row tile at three more, and the grouped form, with the block kernel, at five.
 At the end of its time box a form in its target is done, and one in its ship
