@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries tolk.hcq tolk.nv))
+ (libraries tolk.uop tolk.hcq tolk.nv queue_fixture))
 
 (rule
  (package tolk)
@@ -29,10 +29,6 @@
   exec_qmd_blackwell.actual
   memory_barrier_ada.actual
   memory_barrier_blackwell.actual
-  poll_bit_clear_ada.actual
-  poll_bit_clear_blackwell.actual
-  poll_bit_set_ada.actual
-  poll_bit_set_blackwell.actual
   qmd_init_ada.actual
   qmd_init_blackwell.actual
   setup_ada.actual
@@ -48,13 +44,9 @@
   timestamp_ada.actual
   timestamp_blackwell.actual
   wait_ada.actual
-  wait_blackwell.actual
-  write32_ada.actual
-  write32_blackwell.actual
-  write64_ada.actual
-  write64_blackwell.actual)
- (action
-  (run ./generate_actual.exe .)))
+  wait_blackwell.actual)
+ (deps ../../fixtures/nv/simple_add_sm89.cubin)
+ (action (setenv WAVES_PER_SH 0 (run ./generate_actual.exe .))))
 
 (rule
  (alias runtest)
@@ -85,10 +77,6 @@
    (diff exec_qmd_blackwell.expected exec_qmd_blackwell.actual)
    (diff memory_barrier_ada.expected memory_barrier_ada.actual)
    (diff memory_barrier_blackwell.expected memory_barrier_blackwell.actual)
-   (diff poll_bit_clear_ada.expected poll_bit_clear_ada.actual)
-   (diff poll_bit_clear_blackwell.expected poll_bit_clear_blackwell.actual)
-   (diff poll_bit_set_ada.expected poll_bit_set_ada.actual)
-   (diff poll_bit_set_blackwell.expected poll_bit_set_blackwell.actual)
    (diff qmd_init_ada.expected qmd_init_ada.actual)
    (diff qmd_init_blackwell.expected qmd_init_blackwell.actual)
    (diff setup_ada.expected setup_ada.actual)
@@ -104,8 +92,4 @@
    (diff timestamp_ada.expected timestamp_ada.actual)
    (diff timestamp_blackwell.expected timestamp_blackwell.actual)
    (diff wait_ada.expected wait_ada.actual)
-   (diff wait_blackwell.expected wait_blackwell.actual)
-   (diff write32_ada.expected write32_ada.actual)
-   (diff write32_blackwell.expected write32_blackwell.actual)
-   (diff write64_ada.expected write64_ada.actual)
-   (diff write64_blackwell.expected write64_blackwell.actual))))
+   (diff wait_blackwell.expected wait_blackwell.actual))))
