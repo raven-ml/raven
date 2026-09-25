@@ -657,6 +657,9 @@ thread.
 
 ### Tolk (new)
 
+- `Creation.empty ~device` no longer opens the default backend while building
+  storage for an explicitly selected device.
+
 - Generated kernels avoid redundant 64-bit index arithmetic when bounds prove
   32-bit operations safe, and preserve shared floating-point expressions when
   distributing negation.

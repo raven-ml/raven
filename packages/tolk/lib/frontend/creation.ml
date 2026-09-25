@@ -24,7 +24,9 @@ let broadcast_scalar dt fill shape =
 
 let empty ?(dtype = D.default_float) ?device shape =
   if D.is_weak dtype then invalid_arg "Creation.empty: dtype must be concrete";
-  let device = Option.value device ~default:(U.Single (Backend.device_name ())) in
+  let device = match device with
+    | Some device -> device
+    | None -> U.Single (Backend.device_name ()) in
   let n = List.fold_left ( * ) 1 shape in
   let buf =
     U.alloc ~bind_on_realize:true ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])

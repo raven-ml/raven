@@ -766,9 +766,12 @@ let clone_tests =
           equal int 0
             (copies (Creation.clone ~device:(U.Single "CPU") (param "CPU"))));
       test "empty storage is placed on the device asked for" (fun () ->
-          is_true ~msg:"device"
-            (T.device (Creation.empty ~device:(U.Single "CPU") [ 2; 2 ])
-            = Some (U.Single "CPU")));
+          Tolk.Helpers.Context_var.with_context
+            [ B (Tolk.Helpers.dev, [Tolk_uop.Target.of_string "UNAVAILABLE"]) ]
+            (fun () ->
+              is_true ~msg:"explicit placement does not open the default device"
+                (T.device (Creation.empty ~device:(U.Single "CPU") [ 2; 2 ])
+                = Some (U.Single "CPU"))));
     ]
 
 let sort_tests =
