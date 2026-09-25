@@ -152,3 +152,23 @@
  (modules test_cuda_abi)
  (package tolk)
  (libraries test_cuda_abi_driver windtrap unix))
+
+; Test the real Metal completion boundary without faulting a GPU.
+(library
+ (name test_metal_completion_driver)
+ (modules)
+ (enabled_if (= %{system} macosx))
+ (foreign_stubs
+  (language c)
+  (names test_metal_completion_stubs)
+  (extra_deps ../../lib/runtime/metal/tolk_metal_stubs.c)
+  (include_dirs ../../lib/runtime/metal)
+  (flags (:standard -fblocks -x objective-c)))
+ (c_library_flags (-framework Metal -framework Foundation -framework CoreGraphics)))
+
+(test
+ (name test_metal_completion)
+ (modules test_metal_completion)
+ (package tolk)
+ (enabled_if (= %{system} macosx))
+ (libraries test_metal_completion_driver windtrap threads))

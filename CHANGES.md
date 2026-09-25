@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Metal compiled queues report GPU command failures when waiting or preparing
+  another submission. Host reads wait for checked command completion, avoiding
+  partial results from a failed command whose timeline event was signaled.
+
 - Buffer finalizers defer teardown until device operations finish, preventing
   GC from waiting on unsubmitted work or re-entering native allocators. Failed
   teardown retains its storage instead of retrying a partially completed free.

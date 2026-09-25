@@ -64,11 +64,13 @@ module State : sig
   (** [synchronize t] blocks until all in-flight command buffers complete. After
       return, the in-flight list is empty.
 
-      Raises [Failure] if any command buffer completed with an error. *)
+      Raises [Failure] if any command buffer completed with an error. Compiled
+      queues retain the first failure and reject subsequent submissions. *)
 
   val shutdown : t -> unit
   (** [shutdown t] synchronizes and releases all Metal resources (command queue,
-      shared event, device). Subsequent calls are no-ops. *)
+      shared event, device). Subsequent calls are no-ops. Raises [Failure] if
+      synchronization fails; resources remain retained in that case. *)
 
   val is_virtual : t -> bool
   (** [is_virtual t] is [true] iff the device name contains ["virtual"],

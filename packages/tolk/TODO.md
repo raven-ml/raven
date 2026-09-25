@@ -22,8 +22,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   `programs run in turn share an arena` test produced incorrect outputs around
   element 210, followed once by an `Impacting Interactivity` GPU error. Repeated
   isolated and full-suite runs also pass; establish the cause before accepting
-  Metal lifetime stress. Report compiled-queue command errors during waits,
-  rather than trusting a signaled timeline alone.
+  Metal lifetime stress.
 
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
   submissions. Validate NV channel retirement across independently linked

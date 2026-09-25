@@ -524,7 +524,7 @@ module Queue = struct
        runs from an indirect command buffer, and correct ones when the same
        kernel is dispatched directly. *)
     Device.{timestamp_divider = 1000.; profile_offset = (fun () -> Profile.calibrate (fun () -> Ffi.profile_clock));
-      completion; prepare = (fun () -> ()); host = Device.name host; max_kernel_bindings = Some 15; config = (fun () -> "");
+      completion; prepare = (fun () -> Ffi.hcq_wait state.State.context 0L); host = Device.name host; max_kernel_bindings = Some 15; config = (fun () -> "");
       copy = (fun _ -> None); encode = encode device_name; lower = lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
 end
