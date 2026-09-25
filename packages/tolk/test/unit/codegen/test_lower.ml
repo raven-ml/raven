@@ -82,7 +82,10 @@ let () =
       group "final cleanup"
         [
           test "final rewrite concretizes leftover index dtypes" (fun () ->
-            let p = global_ptr () in
+            let p =
+              U.param ~slot:0 ~dtype:Dtype.float32 ~shape:(U.const_int 8)
+                ~addrspace:Dtype.Global ()
+            in
             let r =
               U.range ~size:(U.const_int 8) ~axis:0 ~kind:Axis_type.Weak ()
             in
@@ -407,7 +410,10 @@ let () =
                  | None -> failwith "expected store index")
             | _ -> failwith "expected one gated store");
           test "range comparison invalid value becomes gated store" (fun () ->
-            let p = global_ptr () in
+            let p =
+              U.param ~slot:0 ~dtype:Dtype.float32 ~shape:(U.const_int 256)
+                ~addrspace:Dtype.Global ()
+            in
             let r =
               U.range ~size:(U.const_int 256) ~axis:0
                 ~kind:Axis_type.Global ()
