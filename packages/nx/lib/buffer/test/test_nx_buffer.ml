@@ -155,6 +155,11 @@ let store_get k v =
   set buf 0 v;
   get buf 0
 
+let store_code k v =
+  let buf = create k 1 in
+  set buf 0 v;
+  get (reinterpret uint8 buf) 0
+
 let test_bfloat16_semantics () =
   let rt = store_get bfloat16 in
   equal ~msg:"bf16 1.0" float_exact 1.0 (rt 1.0);
@@ -188,7 +193,9 @@ let test_float8_e4m3_semantics () =
   equal ~msg:"e4m3 subnormal rounds up" float_exact 0x1p-9 (rt 0x1.8p-10);
   (* Half the min subnormal ties to even: zero. *)
   equal ~msg:"e4m3 underflow" float_exact 0.0 (rt 0x1p-10);
-  equal ~msg:"e4m3 nan" bool true (Float.is_nan (rt Float.nan))
+  equal ~msg:"e4m3 nan" bool true (Float.is_nan (rt Float.nan));
+  equal ~msg:"e4m3 -nan keeps its sign" int 0xFF
+    (store_code float8_e4m3 (-.Float.nan))
 
 let test_float8_e5m2_semantics () =
   let rt = store_get float8_e5m2 in
@@ -204,7 +211,9 @@ let test_float8_e5m2_semantics () =
   equal ~msg:"e5m2 subnormal tie to even" float_exact 0x1p-15 (rt 0x1.8p-16);
   (* Half the min subnormal ties to even: zero. *)
   equal ~msg:"e5m2 underflow" float_exact 0.0 (rt 0x1p-17);
-  equal ~msg:"e5m2 nan" bool true (Float.is_nan (rt Float.nan))
+  equal ~msg:"e5m2 nan" bool true (Float.is_nan (rt Float.nan));
+  equal ~msg:"e5m2 -nan keeps its sign" int 0xFF
+    (store_code float8_e5m2 (-.Float.nan))
 
 (* A float64 rounds once. Each value lies within 2^-40 of a tie at the stored
    precision, close enough that rounding to float32 first would land on the tie

@@ -1914,6 +1914,9 @@ thread.
 
 ### Nx
 
+- Encoding a NaN as `float8_e4m3` or `float8_e5m2` keeps its sign, as
+  infinities, overflow and the other float dtypes already did; it was always
+  `0x7f`.
 - Writing a `float` into a `bfloat16` or `float8` tensor, and `Nx.cast` to
   those dtypes from wider floats or integers, round once to nearest even. They
   rounded to `float32` first, so `Nx.scalar Nx.float8_e4m3 336.00000000000006`

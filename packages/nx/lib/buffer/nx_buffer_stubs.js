@@ -18,8 +18,8 @@
 
    The numeric conversions mirror nx_buffer_stubs.h bit for bit (round to
    nearest, ties to even; NaN and saturation handling) so that programs
-   compute the same values under js_of_ocaml as natively, except for NaN
-   payload bits, which JavaScript canonicalizes. */
+   compute the same values under js_of_ocaml as natively, except for a NaN's
+   sign and payload bits, which JavaScript does not reliably preserve. */
 
 //Provides: caml_nx_float32_odd_bits
 function caml_nx_float32_odd_bits(num) {

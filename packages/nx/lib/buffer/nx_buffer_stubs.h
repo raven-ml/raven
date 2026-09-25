@@ -187,8 +187,7 @@ static inline float half_to_float(uint16_t h) {
    ml_dtypes and PyTorch e4m3fn casts; saturate before casting if clamping is
    wanted. */
 static inline uint8_t float_to_fp8_e4m3(float f) {
-  if (isnan(f)) return 0x7F;
-  if (isinf(f)) return signbit(f) ? 0xFF : 0x7F;
+  if (isnan(f) || isinf(f)) return signbit(f) ? 0xFF : 0x7F;
 
   union {
     float f;
@@ -242,7 +241,7 @@ static inline float fp8_e4m3_to_float(uint8_t fp8) {
 /* FP8 E5M2 conversions (IEEE-like: has infinities and subnormals). Finite
    overflow rounds to infinity. */
 static inline uint8_t float_to_fp8_e5m2(float f) {
-  if (isnan(f)) return 0x7F;
+  if (isnan(f)) return signbit(f) ? 0xFF : 0x7F;
   if (isinf(f)) return signbit(f) ? 0xFC : 0x7C;
 
   union {
