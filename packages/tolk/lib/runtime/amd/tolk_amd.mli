@@ -482,99 +482,43 @@ end
 
 (** {1:programs Programs} *)
 
-(** Loaded kernels.
-
-    Loading lays a compiled kernel object out in device memory and
-    derives its launch parameters; {!Program.call} then stages the
-    arguments for one launch and drives it through a mapped compute
-    queue. *)
+(** Kernel images prepared for shared queue submission. *)
 module Program : sig
-  type 'meta t = {
-    params : 'meta program;
-        (** Launch parameters, as consumed by {!Compute_queue.exec}. *)
-    name : string;  (** Kernel name, for diagnostics. *)
-    lib_gpu : 'meta Hcq.Buffer.t;
-        (** Device memory holding the kernel image. *)
+  type data = {
+    desc_offset : int;
+        (** Kernel descriptor byte offset in the image. *)
+    entry_offset : int;
+        (** Entry point byte offset in the image. *)
+    rsrc1 : int;
+    rsrc2 : int;
+    rsrc3 : int;
+        (** Compute resource registers, including architecture and LDS settings. *)
+    wave32 : bool;
+    enable_private_segment_sgpr : bool;
+    enable_dispatch_ptr : bool;
+        (** Wave size and enabled user-SGPR inputs from the kernel descriptor. *)
     group_segment_size : int;
-        (** Static workgroup-local memory, in bytes. *)
+        (** Static workgroup-local memory in bytes. *)
     private_segment_size : int;
-        (** Per-work-item scratch the kernel needs, in bytes. The
-            device's scratch must be sized for it (see
-            {!ensure_has_local_memory}) before launching. *)
+        (** Per-work-item scratch in bytes. *)
     kernargs_segment_size : int;
-        (** Kernel-argument bytes the kernel reads. *)
-    kernargs_alloc_size : int;
-        (** Bytes staged per launch: the argument segment plus space for
-            launch metadata. *)
+        (** Kernel argument segment size in bytes. *)
   }
-  (** The type for loaded kernels. *)
+  (** The descriptor fields used to encode a kernel launch. *)
 
-  val load :
-    'meta device ->
-    alloc:(int -> 'meta Hcq.Buffer.t) ->
-    props:(string * int) list ->
-    name:string ->
-    Bytes.t ->
-    'meta t
-  (** [load dev ~alloc ~props ~name lib] loads the compiled kernel
-      object [lib] (a shared object, as produced by {!Compiler_amd})
-      onto [dev]: it lays the object's sections out into a flat image,
-      resolves the object's internal relocations, copies the image into
-      device memory obtained from [alloc] (which must return a
-      CPU-mapped buffer of at least the requested size, a multiple of
-      [0x1000]), and parses the kernel descriptor at the start of the
-      object's [.rodata] section into launch parameters.
+  val image :
+    target:int * int * int ->
+    props:(string * int) list -> Bytes.t -> data * Bytes.t
+  (** [image ~target ~props lib] is the descriptor and relocated image of
+      compiled kernel object [lib], without allocating device storage.
+      Queue linking owns the image buffer and its lifetime.
 
-      [props] must carry ["lds_size_in_kb"], bounding the
-      workgroup-local memory a kernel may request.
-
+      [props] must carry ["lds_size_in_kb"], bounding workgroup-local memory.
       Raises [Failure] if the object has no [.rodata] section, uses a
-      relocation other than the 64-bit location-relative form, refers to
-      an undefined symbol, or requests more workgroup-local memory than
-      the device has; [Invalid_argument] if [lib] is not a loadable
-      object (see {!Tolk.Elf.load}). *)
-
-  val free : free:('meta Hcq.Buffer.t -> unit) -> 'meta t -> unit
-  (** [free ~free t] releases the device memory holding [t]'s image
-      through [free]. [t] must have no launches in flight. *)
-
-  val call :
-    'meta t ->
-    layout:Tolk_uop.Tiny_elf.field list ->
-    kernargs:'a Hcq.Kernargs.t ->
-    queue:Queue_desc.t ->
-    timeline:('b, 'meta device) Hcq.Signal.t ->
-    timeline_value:int ->
-    ?wait:('c, 'meta device) Hcq.Signal.t * ('d, 'meta device) Hcq.Signal.t ->
-    ?timeout_ms:int ->
-    bufs:nativeint array ->
-    vals:int64 array ->
-    global_size:int * int * int ->
-    local_size:int * int * int ->
-    unit ->
-    float option
-  (** [call t ~layout ~kernargs ~queue ~timeline ~timeline_value ~bufs ~vals
-      ~global_size ~local_size ()] enqueues one launch of [t]: it stages
-      [bufs] and [vals] according to [layout] into a fresh slot of [kernargs],
-      then submits to [queue] a stream that waits for the device's previous work
-      ([timeline] reaching [timeline_value - 1]), makes host writes
-      visible, launches the kernel over a [global_size] grid of
-      [local_size] workgroups, and signals [timeline] with
-      [timeline_value] once the launch retired. [timeline_value] must be
-      at least [1]; the caller owns the counter and submits the next
-      launch with the next value.
-
-      [wait], when given, brackets the launch with clock captures into
-      the two signals, blocks until [timeline] reaches [timeline_value]
-      ([timeout_ms] bounds the wait, see {!Hcq.Signal.wait}), and
-      returns the seconds elapsed between the two captures. Otherwise
-      the call returns [None]. Reusing the start of [kernargs] waits for
-      [timeline_value - 1] before replacing arguments, even without [wait];
-      [timeout_ms] also bounds that wait.
-
-      Dispatch-pointer programs append an HSA packet after their arguments.
-      Raises [Invalid_argument] if launch dimensions exceed its fields, or
-      from the argument and queue builders when a value does not fit its slot. *)
+      relocation other than the 64-bit location-relative form, refers to an
+      undefined symbol, or requests more workgroup-local memory than the
+      device has; [Invalid_argument] if [lib] is not a loadable object
+      (see {!Tolk.Elf.load}). *)
 end
 
 (** Compiled host submission over AMD packet templates. *)
@@ -829,8 +773,8 @@ val create : string -> Tolk.Device.t
     first usable GPU, ["AMD:n"] for the [n]th — and is its device
     runtime. Kernels are compiled with {!Compiler_amd} for the
     discovered architecture (overridable with [DEV=AMD:HIP:gfx1100])
-    and dispatched through a hardware
-    compute queue; host transfers ride the DMA engine when the device
+    and dispatched by the shared executor through compiled hardware
+    compute queues; host transfers ride the DMA engine when the device
     provides one, and fall back to host-visible device memory
     otherwise.
 

@@ -11,19 +11,10 @@ module Q = Tolk_hcq.Hcq.Q
 module Signal = Tolk_hcq.Hcq.Signal
 module Submission = Tolk_hcq.Hcq.Submission
 module Timeline = Tolk_hcq.Hcq.Timeline
-module Kernargs = Tolk_hcq.Hcq.Kernargs
 module Compiler_amd = Tolk_amd.Compiler_amd
 module Program = Tolk_amd.Program
 module Pci_iface = Tolk_amd.Pci_iface
 module Amdev = Tolk_amd.Amdev
-
-let argument_layout nbufs dtypes =
-  let open Tolk_uop in
-  let arg slot addrspace dtype : Tiny_elf.argument =
-    { name = None; slot; addrspace; dtype; shape = [] } in
-  Tiny_elf.layout
-    (List.init nbufs (fun slot -> arg slot Dtype.Global Dtype.uint8)
-     @ List.mapi (fun i dtype -> arg (nbufs + i) Dtype.Alu dtype) dtypes)
 
 let is_invalid_arg = function Invalid_argument _ -> true | _ -> false
 
@@ -232,20 +223,6 @@ let hsaco_fixture ?(rodata_name = ".rodata") ?(reloc_type = 5)
   set16 obj 62 6 (* e_shstrndx *);
   obj
 
-(* Runs [f] with a [Program.load]-ready allocator over a fresh mapping:
-   [alloc] records the sizes it served and hands out CPU-mapped buffers
-   with device address 0xA00000. *)
-let with_lib_alloc ?(capacity = 0x2000) f =
-  with_map capacity (fun m ->
-      let sizes = ref [] in
-      let alloc size =
-        sizes := size :: !sizes;
-        Buffer.make ~va:0xA00000n ~size
-          ~view:(Mmio.view m ~off:0 ~size ())
-          ~meta:() ()
-      in
-      f alloc sizes m)
-
 let lds64 = [ ("lds_size_in_kb", 64) ]
 
 (* A sysfs tree holding just the PCI files the bus scan reads, so the
@@ -356,7 +333,7 @@ let read_i32 buf =
   List.init (Bytes.length bytes / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
 
-let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ?(aql = false) ?(multi = false) ?(split_copies = false) ~copies () =
+let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ?(aql = false) ?(multi = false) ?(split_copies = false) ?(profile = false) ~copies () =
   let open Tolk in
   let open Tolk_uop in
   let device_name = "AMD:queue-compilation" in
@@ -431,14 +408,66 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
          Device.Buffer.copyin buffer (Bytes.of_string image)
      | _ -> ());
     Some buffer in
-  let device = Device.make ~name:device_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
+  let device = Device.make ~name:device_name ~allocator ~renderer_set
       ~synchronize:(fun timeout -> ignore timeout; ()) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)] else [call] in
-  Hcq2.compile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
+  Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
 
 let compile_queue ~copies =
   let compiled, _, _, _, _ = queue_fixture ~copies () in compiled
+
+let compiled_profile_packets () =
+  let open Tolk in
+  let compiled, device, _, buffers, submission =
+    queue_fixture ~profile:true ~copies:false () in
+  let linked = Realize.link_linear compiled in
+  let input = i32_buf device (List.init 16 Fun.id) in
+  let input_uops = [|U.from_buffer input|] in
+  Realize.run_linear ~device
+    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    ~jit:true ~var_vals:["small", -17; "count", 3] ~input_uops linked;
+  Submission.check submission;
+  let call = U.without_after (List.hd (U.children linked)) in
+  let args = (Option.get (U.as_call call)).args in
+  let info = match U.arg call with
+    | U.Arg.Call_info {aux = Some info; _} -> info
+    | _ -> fail "profiled queue has no timing metadata" in
+  let slot, first, last = match info.timings with
+    | [name, "COMPUTE:0", slot, first, last] ->
+        equal string (Device.name device) name;
+        slot, first, last
+    | _ -> fail "profiled kernel must have one timestamp pair" in
+  let timing = Realize.resolve (Realize.exec_context ~input_uops ()) (List.nth args slot) in
+  let get tag = Hashtbl.find buffers tag in
+  let bytes = Device.Buffer.as_bytes (get "cmdbuf_compute") in
+  let words = Array.init (Bytes.length bytes / 4) (fun i ->
+      Int32.to_int (Bytes.get_int32_le bytes (4 * i)) land 0xffffffff) in
+  let position expected =
+    let found = ref None in
+    for i = 0 to Array.length words - Array.length expected do
+      if Array.sub words i (Array.length expected) = expected then found := Some i
+    done;
+    match !found with Some at -> at | None -> fail "timestamp packet missing" in
+  let module P = (val (gfx1100 ()).Tolk_amd.pm4) in
+  let stamp index =
+    let address = Nativeint.add (Device.Buffer.addr timing) (Nativeint.of_int (8 * index)) in
+    let queue = Tolk_amd.Compute_queue.create (gfx1100 ()) in
+    Tolk_amd.Compute_queue.release_mem queue ~address
+      ~data_sel:P.data_sel__mec_release_mem__send_gpu_clock_counter
+      ~int_sel:P.int_sel__mec_release_mem__none ();
+    position (Q.dwords (Tolk_amd.Compute_queue.q queue)) in
+  let before = stamp first and after = stamp last in
+  let dispatch = ref None in
+  for i = 0 to Array.length words - 1 do
+    if words.(i) = P.packet3 P.packet3_dispatch_direct 3 then dispatch := Some i
+  done;
+  (match !dispatch with
+   | Some at -> is_true (before < at && at < after)
+   | None -> fail "profiled queue omitted dispatch");
+  let timeline = Device.Buffer.as_bytes (get "timeline") in
+  Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
+  Device.Buffer.copyin (get "timeline") timeline
 
 let execute_queue ~copies ~dispatch_ptr ~scratch =
   let open Tolk in
@@ -692,6 +721,7 @@ let () =
          test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true);
          test "direct packets use GPU indirect addresses and the shared producer" direct_aql_queue];
       group "Compiled queues" [
+        test "profiling timestamps bracket the compiled dispatch" compiled_profile_packets;
         test "PM4 compute dies use disjoint scratch slices" compiled_pm4_scratch_slices;
         test "upload and download publish to independent SDMA rings" execute_split_copy_queues;
         test "a replay timeout suppresses publication and latches failure" queue_timeout;
@@ -1129,117 +1159,6 @@ let () =
                       Timeline.guarded_wait tl (fun () ->
                           failwith "HW fault: reset_type=1"))));
         ];
-      group "Kernargs"
-        [
-          test "alloc hands out 8-byte-aligned slots" (fun () ->
-              with_map 4096 (fun m ->
-                  let root =
-                    Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
-                  in
-                  let k = Kernargs.create root in
-                  let a = Kernargs.alloc ~wait:(fun () -> ()) k 24 in
-                  equal nativeint 0x300000n (Buffer.va a);
-                  equal int 24 (Buffer.size a);
-                  let b = Kernargs.alloc ~wait:(fun () -> ()) k 8 in
-                  equal nativeint 0x300018n (Buffer.va b);
-                  let c = Kernargs.alloc ~wait:(fun () -> ()) k 4 in
-                  equal nativeint 0x300020n (Buffer.va c);
-                  let d = Kernargs.alloc ~wait:(fun () -> ()) k 8 in
-                  equal nativeint 0x300028n (Buffer.va d)));
-          test "write_args lays out addresses then values" (fun () ->
-              with_map 4096 (fun m ->
-                  let root =
-                    Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
-                  in
-                  let slot = Kernargs.alloc ~wait:(fun () -> ()) (Kernargs.create root) 24 in
-                  Kernargs.write_args (argument_layout 2 [ Tolk_uop.Dtype.int32; Tolk_uop.Dtype.int32 ]) slot ~bufs:[| 0x1000n; 0x2000n |]
-                    ~vals:[| 7L; -1L |];
-                  equal bytes
-                    (Bytes.of_string
-                       "\x00\x10\x00\x00\x00\x00\x00\x00\
-                        \x00\x20\x00\x00\x00\x00\x00\x00\
-                        \x07\x00\x00\x00\xff\xff\xff\xff")
-                    (Mmio.read_bytes m ~off:0 ~len:24)));
-          test "write_args lays a prefix before addresses and values"
-            (fun () ->
-              with_map 4096 (fun m ->
-                  let root =
-                    Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
-                  in
-                  let slot = Kernargs.alloc ~wait:(fun () -> ()) (Kernargs.create root) 32 in
-                  Kernargs.write_args (argument_layout 1 [ Tolk_uop.Dtype.int32 ]) slot
-                    ~prefix:[| 0xdeadbeef; 1 |]
-                    ~bufs:[| 0x1000n |] ~vals:[| 7L |];
-                  equal bytes
-                    (Bytes.of_string
-                       "\xef\xbe\xad\xde\x01\x00\x00\x00\
-                        \x00\x10\x00\x00\x00\x00\x00\x00\
-                        \x07\x00\x00\x00")
-                    (Mmio.read_bytes m ~off:0 ~len:20);
-                  raises_match is_invalid_arg (fun () ->
-                      Kernargs.write_args [] slot ~prefix:[| -1 |] ~bufs:[||]
-                        ~vals:[||])));
-          test "write_args checks slots and capacity before modifying memory" (fun () ->
-              with_map 4096 (fun m ->
-                  let root =
-                    Buffer.make ~va:0n ~size:4096 ~view:m ~meta:() ()
-                  in
-                  let slot = Buffer.offset root ~off:0 ~size:16 () in
-                  let before = Mmio.read_bytes m ~off:0 ~len:16 in
-                  raises_match is_invalid_arg (fun () ->
-                      Kernargs.write_args (argument_layout 3 []) slot
-                        ~bufs:[| 0x1n; 0x2n; 0x3n |]
-                        ~vals:[||]);
-                  raises_match is_invalid_arg (fun () ->
-                      Kernargs.write_args (argument_layout 1 []) slot ~bufs:[||]
-                        ~vals:[| 0x100000000L |]);
-                  let short = Buffer.make ~va:0n ~size:1 ~view:m ~meta:() () in
-                  raises_match is_invalid_arg (fun () ->
-                      Kernargs.write_args (argument_layout 0 [ Tolk_uop.Dtype.int64 ])
-                        short ~bufs:[||] ~vals:[| 1L |]);
-                  equal bytes before (Mmio.read_bytes m ~off:0 ~len:16)));
-          test "write_args preserves mixed widths after a driver prefix" (fun () ->
-              with_map 4096 (fun m ->
-                  let slot = Buffer.make ~va:0n ~size:40 ~view:(Mmio.view m ~off:0 ~size:40 ()) ~meta:() () in
-                  let open Tolk_uop in
-                  let layout = argument_layout 1 [ Dtype.int8; Dtype.int16; Dtype.int32; Dtype.int64 ] in
-                  Kernargs.write_args ~prefix:[| 0xdeadbeef; 1 |] layout slot
-                    ~bufs:[| 0x100002000n |] ~vals:[| -7L; 300L; 12345L; Int64.min_int |];
-                  equal bytes
-                    (Bytes.of_string "\xef\xbe\xad\xde\x01\x00\x00\x00\x00\x20\x00\x00\x01\x00\x00\x00\xf9\x00\x2c\x01\x39\x30\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80")
-                    (Mmio.read_bytes m ~off:0 ~len:32)));
-          test "wrap waits once and leaves the cursor unchanged on failure" (fun () ->
-              with_map 4096 (fun m ->
-                  let root = Buffer.make ~va:0x300000n ~size:64
-                      ~view:(Mmio.view m ~off:0 ~size:64 ()) ~meta:() () in
-                  let k = Kernargs.create root in
-                  let waits = ref 0 in
-                  let wait () = incr waits in
-                  ignore (Kernargs.alloc k 48 ~wait);
-                  equal int 0 !waits;
-                  raises_match (Exn.failure ~substring:"busy") (fun () ->
-                      Kernargs.alloc k 32 ~wait:(fun () -> failwith "busy"));
-                  equal nativeint 0x300030n (Buffer.va (Kernargs.alloc k 16 ~wait));
-                  equal int 0 !waits;
-                  equal nativeint 0x300000n (Buffer.va (Kernargs.alloc k 24 ~wait));
-                  equal int 1 !waits;
-                  raises_match is_invalid_arg (fun () -> Kernargs.alloc k 80 ~wait);
-                  equal nativeint 0x300018n (Buffer.va (Kernargs.alloc k 8 ~wait));
-                  equal int 1 !waits));
-          test "the region wraps when exhausted" (fun () ->
-              with_map 4096 (fun m ->
-                  let root =
-                    Buffer.make ~va:0x300000n ~size:64
-                      ~view:(Mmio.view m ~off:0 ~size:64 ())
-                      ~meta:() ()
-                  in
-                  let k = Kernargs.create root in
-                  ignore (Kernargs.alloc ~wait:(fun () -> ()) k 48);
-                  let wrapped = Kernargs.alloc ~wait:(fun () -> ()) k 32 in
-                  equal nativeint 0x300000n (Buffer.va wrapped);
-                  raises_match is_invalid_arg (fun () ->
-                      Kernargs.alloc ~wait:(fun () -> ()) k 80)));
-        ];
       group "Compute_queue"
         [
           test "wreg routes by register range" (fun () ->
@@ -1489,139 +1408,73 @@ let () =
                     | [name; value] -> Some (name, int_of_string value)
                     | _ -> None) in
               let field name = List.assoc name fields in
-              let lib = Bytes.of_string (read "hsaco") in
-              with_lib_alloc ~capacity:0x4000 (fun alloc sizes mapping ->
-                  let prg = Program.load (gfx1100 ()) ~alloc ~props:lds64
-                      ~name:"simple_add" lib in
-                  let params = prg.Program.params in
-                  List.iter (fun (name, actual) -> equal int (field name) actual)
-                    ["rsrc1", params.rsrc1; "rsrc2", params.rsrc2;
-                     "rsrc3", params.rsrc3;
-                     "group_segment_size", prg.group_segment_size;
-                     "private_segment_size", prg.private_segment_size;
-                     "kernargs_segment_size", prg.kernargs_segment_size];
-                  equal bool (field "wave32" <> 0) params.wave32;
-                  equal bool (field "enable_dispatch_ptr" <> 0)
-                    params.enable_dispatch_ptr;
-                  equal bool (field "enable_private_segment_sgpr" <> 0)
-                    params.enable_private_segment_sgpr;
-                  equal int 1 (List.length !sizes);
-                  is_true (List.hd !sizes >= field "image_size");
-                  equal nativeint
-                    (Nativeint.add 0xA00000n
-                       (Nativeint.of_int (field "entry_point_offset")))
-                    params.prog_addr;
-                  equal nativeint
-                    (Nativeint.add 0xA00000n
-                       (Nativeint.of_int (field "desc_offset")))
-                    params.kernel_object;
-                  (* NOBITS image layout is a separate open parity audit.
-                     Compare code and descriptor at the target's addresses. *)
-                  let image = read "image" in
-                  List.iter (fun (offset, size) ->
-                      equal string (String.sub image offset size)
-                        (Bytes.to_string
-                           (Mmio.read_bytes mapping ~off:offset ~len:size)))
-                    [field "code_offset", field "code_size";
-                     field "desc_offset", 64]));
-          test "load derives launch parameters from the descriptor" (fun () ->
-              with_lib_alloc (fun alloc sizes _m ->
-                  let dev = gfx1100 () in
-                  let prg =
-                    Program.load dev ~alloc ~props:lds64 ~name:"k"
-                      (hsaco_fixture ())
-                  in
-                  (* the 0x110-byte image is padded to a whole page *)
-                  equal (list int) [ 0x1000 ] !sizes;
-                  equal string "k" prg.Program.name;
-                  equal nativeint 0xA00000n (Buffer.va prg.lib_gpu);
-                  equal int 0x2000 prg.group_segment_size;
-                  equal int 256 prg.private_segment_size;
-                  equal int 24 prg.kernargs_segment_size;
-                  equal int 24 prg.kernargs_alloc_size;
-                  let p = prg.params in
-                  (* entry point: .rodata (0x40) + entry offset (0xC0) *)
-                  equal nativeint 0xA00100n p.Tolk_amd.prog_addr;
-                  (* rsrc1 gains the generation-11 privileged bit *)
-                  equal int (0x1111 lor (1 lsl 20)) p.rsrc1;
-                  (* rsrc2 gains the 512-byte lds granule count at bit 15:
-                     0x2000 bytes -> 16 granules *)
-                  equal int (0x2222 lor (0x10 lsl 15)) p.rsrc2;
-                  equal int 0x3333 p.rsrc3;
-                  is_true p.wave32;
-                  is_true (not p.enable_private_segment_sgpr);
-                  is_true (not p.enable_dispatch_ptr);
-                  is_true (p.dev == dev)));
-          test "load uploads the relocated image" (fun () ->
-              with_lib_alloc (fun alloc _sizes m ->
-                  let dev = gfx942 () in
-                  let prg =
-                    Program.load dev ~alloc ~props:lds64 ~name:"k"
-                      (hsaco_fixture ~code_props:0 ())
-                  in
-                  (* no privileged bit outside generation 11 *)
-                  equal int 0x1111 prg.Program.params.rsrc1;
-                  is_true (not prg.params.wave32);
-                  equal string "KERNCODE"
-                    (Bytes.to_string (Mmio.read_bytes m ~off:0x100 ~len:8));
-                  (* patch site .text + 8: (.rodata + 4) - site + addend *)
-                  equal int64
-                    (Int64.of_int (0x44 - 0x108 + 0x10))
-                    (Mmio.read64 m 0x108);
-                  (* the descriptor is uploaded unmodified; rsrc adjustments
-                     live only in the parsed parameters *)
-                  equal int32 0x1111l (Mmio.read32 m (0x40 + 48))));
-          test "load reads the code-property bits" (fun () ->
-              with_lib_alloc (fun alloc _sizes _m ->
-                  let dev = gfx942 () in
-                  let scratch_prg =
-                    Program.load dev ~alloc ~props:lds64 ~name:"k"
-                      (hsaco_fixture ~code_props:0x401 ())
-                  in
-                  is_true scratch_prg.Program.params.enable_private_segment_sgpr;
-                  is_true scratch_prg.params.wave32;
-                  let dp =
-                    Program.load dev ~alloc ~props:lds64 ~name:"k"
-                      (hsaco_fixture ~code_props:0x2 ())
-                  in
-                  is_true dp.Program.params.enable_dispatch_ptr;
-                  (* dispatch-pointer kernels stage a 64-byte packet after
-                     the arguments *)
-                  equal int 24 dp.kernargs_segment_size;
-                  equal int (24 + 64) dp.kernargs_alloc_size));
-          test "load fails loudly before touching device memory" (fun () ->
-              with_lib_alloc (fun alloc sizes _m ->
-                  let dev = gfx1100 () in
-                  let load ?(props = lds64) lib =
-                    Program.load dev ~alloc ~props ~name:"k" lib
-                  in
-                  raises_match
-                    (Exn.failure ~substring:".rodata section not found")
-                    (fun () -> load (hsaco_fixture ~rodata_name:".rodat" ()));
-                  raises_match (Exn.failure ~substring:"unknown AMD reloc 4")
-                    (fun () -> load (hsaco_fixture ~reloc_type:4 ()));
-                  raises_match
-                    (Exn.failure ~substring:"undefined symbol k")
-                    (fun () -> load (hsaco_fixture ~undefined_sym:true ()));
-                  equal (list int) [] !sizes;
-                  (* 16 lds granules against a 4 KiB limit (8 granules) *)
-                  raises_match
-                    (Exn.failure ~substring:"Too many resources requested")
-                    (fun () ->
-                      load
-                        ~props:[ ("lds_size_in_kb", 4) ]
-                        (hsaco_fixture ()))));
-          test "free releases the image memory" (fun () ->
-              with_lib_alloc (fun alloc _sizes _m ->
-                  let prg =
-                    Program.load (gfx1100 ()) ~alloc ~props:lds64 ~name:"k"
-                      (hsaco_fixture ())
-                  in
-                  let freed = ref [] in
-                  Program.free
-                    ~free:(fun b -> freed := Buffer.va b :: !freed)
-                    prg;
-                  equal (list nativeint) [ 0xA00000n ] !freed));
+              let data, image = Program.image ~target:(11, 0, 0) ~props:lds64
+                  (Bytes.of_string (read "hsaco")) in
+              List.iter (fun (name, actual) -> equal int (field name) actual)
+                ["rsrc1", data.rsrc1; "rsrc2", data.rsrc2;
+                 "rsrc3", data.rsrc3;
+                 "group_segment_size", data.group_segment_size;
+                 "private_segment_size", data.private_segment_size;
+                 "kernargs_segment_size", data.kernargs_segment_size;
+                 "entry_point_offset", data.entry_offset;
+                 "desc_offset", data.desc_offset];
+              equal bool (field "wave32" <> 0) data.wave32;
+              equal bool (field "enable_dispatch_ptr" <> 0) data.enable_dispatch_ptr;
+              equal bool (field "enable_private_segment_sgpr" <> 0)
+                data.enable_private_segment_sgpr;
+              (* NOBITS image layout is a separate open parity audit.
+                 Compare code and descriptor at the target's addresses. *)
+              let expected = read "image" in
+              List.iter (fun (offset, size) ->
+                  equal string (String.sub expected offset size)
+                    (Bytes.sub_string image offset size))
+                [field "code_offset", field "code_size"; field "desc_offset", 64]);
+          test "image derives launch parameters from the descriptor" (fun () ->
+              let data, image = Program.image ~target:(11, 0, 0) ~props:lds64
+                  (hsaco_fixture ()) in
+              equal int 0x110 (Bytes.length image);
+              equal int 0x2000 data.group_segment_size;
+              equal int 256 data.private_segment_size;
+              equal int 24 data.kernargs_segment_size;
+              (* Entry point: .rodata (0x40) + entry offset (0xC0). *)
+              equal int 0x100 data.entry_offset;
+              equal int 0x40 data.desc_offset;
+              equal int (0x1111 lor (1 lsl 20)) data.rsrc1;
+              equal int (0x2222 lor (0x10 lsl 15)) data.rsrc2;
+              equal int 0x3333 data.rsrc3;
+              is_true data.wave32;
+              is_false data.enable_private_segment_sgpr;
+              is_false data.enable_dispatch_ptr);
+          test "image applies internal relocations" (fun () ->
+              let data, image = Program.image ~target:(9, 4, 2) ~props:lds64
+                  (hsaco_fixture ~code_props:0 ()) in
+              equal int 0x1111 data.rsrc1;
+              is_false data.wave32;
+              equal string "KERNCODE" (Bytes.sub_string image 0x100 8);
+              equal int64 (Int64.of_int (0x44 - 0x108 + 0x10))
+                (Bytes.get_int64_le image 0x108);
+              (* Register adjustments belong to the parsed launch parameters. *)
+              equal int32 0x1111l (Bytes.get_int32_le image (0x40 + 48)));
+          test "image reads the code-property bits" (fun () ->
+              let scratch, _ = Program.image ~target:(9, 4, 2) ~props:lds64
+                  (hsaco_fixture ~code_props:0x401 ()) in
+              is_true scratch.enable_private_segment_sgpr;
+              is_true scratch.wave32;
+              let dispatch, _ = Program.image ~target:(9, 4, 2) ~props:lds64
+                  (hsaco_fixture ~code_props:0x2 ()) in
+              is_true dispatch.enable_dispatch_ptr;
+              equal int 24 dispatch.kernargs_segment_size);
+          test "image rejects unsupported objects and excessive LDS" (fun () ->
+              let image ?(props = lds64) lib =
+                Program.image ~target:(11, 0, 0) ~props lib in
+              raises_match (Exn.failure ~substring:".rodata section not found")
+                (fun () -> image (hsaco_fixture ~rodata_name:".rodat" ()));
+              raises_match (Exn.failure ~substring:"unknown AMD reloc 4")
+                (fun () -> image (hsaco_fixture ~reloc_type:4 ()));
+              raises_match (Exn.failure ~substring:"undefined symbol k")
+                (fun () -> image (hsaco_fixture ~undefined_sym:true ()));
+              raises_match (Exn.failure ~substring:"Too many resources requested")
+                (fun () -> image ~props:["lds_size_in_kb", 4] (hsaco_fixture ())));
         ];
       group "Scratch"
         [
@@ -1758,231 +1611,6 @@ let () =
                       Buffer.make ~va:0x900000n ~size ~meta:() ())
                     ~free:(fun _ -> ())
                     64));
-        ];
-      group "Dispatch"
-        [
-          test "arena wrap waits before replacing live kernel arguments" (fun () ->
-              with_map 8192 (fun m ->
-                  let dev = gfx1100 () in
-                  let qd = queue_desc ~ring_dwords:512 m in
-                  let aux = 512 * 4 + 24 in
-                  let tl = Signal.make ~is_timeline:true ~owner:dev
-                      (Buffer.make ~va:0x400000n ~size:16
-                         ~view:(Mmio.view m ~off:aux ~size:16 ()) ~meta:() ()) in
-                  let arena = Mmio.view m ~off:(aux + 16) ~size:24 () in
-                  let kernargs = Kernargs.create
-                      (Buffer.make ~va:0x300000n ~size:24 ~view:arena ~meta:() ()) in
-                  let prg = {
-                    Program.params = amd_prog dev; name = "k";
-                    lib_gpu = Buffer.make ~va:0x100000n ~size:0x1000 ~meta:() ();
-                    group_segment_size = 0; private_segment_size = 0;
-                    kernargs_segment_size = 24; kernargs_alloc_size = 24 } in
-                  let launch timeline_value value = Program.call prg
-                      ~layout:(argument_layout 2 [Tolk_uop.Dtype.int64]) ~kernargs
-                      ~queue:qd ~timeline:tl ~timeline_value ~timeout_ms:0
-                      ~bufs:[|0x1000n; 0x2000n|] ~vals:[|value|]
-                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1) () in
-                  ignore (launch 1 7L);
-                  let before = Mmio.read_bytes arena ~off:0 ~len:24 in
-                  let put = Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0 in
-                  raises_match (function Signal.Timeout _ -> true | _ -> false)
-                    (fun () -> launch 2 19L);
-                  equal bytes before (Mmio.read_bytes arena ~off:0 ~len:24);
-                  equal int64 put (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0);
-                  Signal.set_value tl 1;
-                  ignore (launch 2 19L);
-                  equal int64 19L (Mmio.read64 arena 16)));
-          test "a timed call brackets the launch and reports elapsed time"
-            (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              with_map 8192 (fun m ->
-                  let dev = gfx1100 () in
-                  let qd = queue_desc ~ring_dwords:512 m in
-                  let aux = (512 * 4) + 24 in
-                  let slot_at off va =
-                    Buffer.make ~va ~size:16
-                      ~view:(Mmio.view m ~off ~size:16 ())
-                      ~meta:() ()
-                  in
-                  let tl =
-                    Signal.make ~is_timeline:true ~owner:dev
-                      (slot_at aux 0x400000n)
-                  in
-                  let st =
-                    Signal.make ~timestamp_divider:100.
-                      (slot_at (aux + 16) 0x410000n)
-                  in
-                  let en =
-                    Signal.make ~timestamp_divider:100.
-                      (slot_at (aux + 32) 0x410010n)
-                  in
-                  let kernargs =
-                    Kernargs.create
-                      (Buffer.make ~va:0x300000n ~size:256
-                         ~view:(Mmio.view m ~off:(aux + 64) ~size:256 ())
-                         ~meta:() ())
-                  in
-                  let prg =
-                    {
-                      Program.params = amd_prog dev;
-                      name = "k";
-                      lib_gpu =
-                        Buffer.make ~va:0x100000n ~size:0x1000 ~meta:() ();
-                      group_segment_size = 0;
-                      private_segment_size = 0;
-                      kernargs_segment_size = 24;
-                      kernargs_alloc_size = 24;
-                    }
-                  in
-                  (* completion and clock captures the device would write:
-                     the timeline reaches the signaled value, and the raw
-                     100 MHz counters span 250 us *)
-                  Mmio.write64 m aux 0x43L;
-                  Mmio.write64 m (aux + 16 + 8) 10000L;
-                  Mmio.write64 m (aux + 32 + 8) 35000L;
-                  let elapsed =
-                    Program.call prg ~layout:(argument_layout 2 [ Tolk_uop.Dtype.int64 ])
-                      ~kernargs ~queue:qd ~timeline:tl
-                      ~timeline_value:0x43 ~wait:(st, en)
-                      ~bufs:[| 0x1000n; 0x2000n |] ~vals:[| 0x100000007L |]
-                      ~global_size:(4, 3, 2) ~local_size:(8, 4, 1) ()
-                  in
-                  (match elapsed with
-                  | Some dt -> equal (float 1e-12) 0.00025 dt
-                  | None -> fail "expected an execution time");
-                  equal int 0x43 (Signal.value tl);
-                  (* the argument slot: two addresses then one value *)
-                  equal bytes
-                    (Bytes.of_string
-                       "\x00\x10\x00\x00\x00\x00\x00\x00\
-                        \x00\x20\x00\x00\x00\x00\x00\x00\
-                        \x07\x00\x00\x00\x01\x00\x00\x00")
-                    (Mmio.read_bytes m ~off:(aux + 64) ~len:24);
-                  let expected =
-                    let cq = Cq.create dev in
-                    Cq.wait cq ~value:0x42 tl;
-                    Cq.memory_barrier cq;
-                    Cq.timestamp cq st;
-                    Cq.exec cq (amd_prog dev)
-                      ~kernargs:(Buffer.make ~va:0x300000n ~size:24 ~meta:() ())
-                      ~global_size:(4, 3, 2) ~local_size:(8, 4, 1);
-                    Cq.timestamp cq en;
-                    Cq.signal cq ~value:0x43 tl;
-                    Q.dwords (Cq.q cq)
-                  in
-                  equal (array int) expected
-                    (ring_dwords m (Array.length expected));
-                  equal int (Array.length expected)
-                    (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
-                  equal int64
-                    (Int64.of_int (Array.length expected))
-                    (Mmio.read64 m ((512 * 4) + 16))));
-          test "call without wait neither times nor blocks" (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              with_map 8192 (fun m ->
-                  let dev = gfx1100 () in
-                  let qd = queue_desc ~ring_dwords:512 m in
-                  let aux = (512 * 4) + 24 in
-                  let tl =
-                    Signal.make ~is_timeline:true ~owner:dev
-                      (Buffer.make ~va:0x400000n ~size:16
-                         ~view:(Mmio.view m ~off:aux ~size:16 ())
-                         ~meta:() ())
-                  in
-                  let kernargs =
-                    Kernargs.create
-                      (Buffer.make ~va:0x300000n ~size:64
-                         ~view:(Mmio.view m ~off:(aux + 16) ~size:64 ())
-                         ~meta:() ())
-                  in
-                  let prg =
-                    {
-                      Program.params = amd_prog dev;
-                      name = "k";
-                      lib_gpu =
-                        Buffer.make ~va:0x100000n ~size:0x1000 ~meta:() ();
-                      group_segment_size = 0;
-                      private_segment_size = 0;
-                      kernargs_segment_size = 24;
-                      kernargs_alloc_size = 24;
-                    }
-                  in
-                  let r =
-                    Program.call prg ~layout:[] ~kernargs ~queue:qd ~timeline:tl
-                      ~timeline_value:1 ~bufs:[||] ~vals:[||]
-                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1) ()
-                  in
-                  is_true (r = None);
-                  let expected =
-                    let cq = Cq.create dev in
-                    Cq.wait cq ~value:0 tl;
-                    Cq.memory_barrier cq;
-                    Cq.exec cq (amd_prog dev)
-                      ~kernargs:(Buffer.make ~va:0x300000n ~size:24 ~meta:() ())
-                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
-                    Cq.signal cq ~value:1 tl;
-                    Q.dwords (Cq.q cq)
-                  in
-                  equal (array int) expected
-                    (ring_dwords m (Array.length expected))));
-          test "call stages the dispatch pointer and HSA packet"
-            (fun () ->
-              with_map 4096 (fun m ->
-                  let dev = gfx1100 () in
-                  let qd = queue_desc ~ring_dwords:256 m in
-                  let aux = (256 * 4) + 24 in
-                  let tl =
-                    Signal.make
-                      (Buffer.make ~va:0x400000n ~size:16
-                         ~view:(Mmio.view m ~off:aux ~size:16 ())
-                         ~meta:() ())
-                  in
-                  let kernargs =
-                    Kernargs.create
-                      (Buffer.make ~va:0x300000n ~size:128
-                         ~view:(Mmio.view m ~off:(aux + 16) ~size:128 ())
-                         ~meta:() ())
-                  in
-                  let prog params kernargs_alloc_size =
-                    {
-                      Program.params;
-                      name = "k";
-                      lib_gpu =
-                        Buffer.make ~va:0x100000n ~size:0x1000 ~meta:() ();
-                      group_segment_size = 0;
-                      private_segment_size = 0;
-                      kernargs_segment_size = 24;
-                      kernargs_alloc_size;
-                    }
-                  in
-                  ignore (Program.call ~layout:[]
-                    (prog (amd_prog ~dispatch_ptr:true dev) 88)
-                    ~kernargs ~queue:qd ~timeline:tl ~timeline_value:1
-                    ~bufs:[||] ~vals:[||] ~global_size:(2, 3, 4)
-                    ~local_size:(8, 4, 2) ());
-                  let packet = Mmio.view m ~off:(aux + 16 + 24) ~size:64 () in
-                  equal int32 0x31502l (Mmio.read32 packet 0);
-                  equal int32 0x40008l (Mmio.read32 packet 4);
-                  equal int32 2l (Mmio.read32 packet 8);
-                  equal int32 16l (Mmio.read32 packet 12);
-                  equal int32 12l (Mmio.read32 packet 16);
-                  equal int32 8l (Mmio.read32 packet 20);
-                  let words = ring_dwords m (Int64.to_int
-                    (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0)) in
-                  let pointer_pair = ref false in
-                  for i = 0 to Array.length words - 4 do
-                    if Array.sub words i 4 = [|0x300018; 0; 0x300000; 0|] then
-                      pointer_pair := true
-                  done;
-                  is_true ~msg:"dispatch pointer precedes the kernarg pointer" !pointer_pair;
-                  equal nativeint 0x300058n (Buffer.va (Kernargs.alloc ~wait:(fun () -> ()) kernargs 8));
-                  (* the timeline wait needs a value to wait on *)
-                  raises_match is_invalid_arg (fun () ->
-                      Program.call ~layout:[]
-                        (prog (amd_prog dev) 24)
-                        ~kernargs ~queue:qd ~timeline:tl ~timeline_value:0
-                        ~bufs:[||] ~vals:[||] ~global_size:(1, 1, 1)
-                        ~local_size:(1, 1, 1) ())));
         ];
       group "Kfd_iface"
         [

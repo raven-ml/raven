@@ -14,13 +14,11 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
-- Move AMD/NV standalone calls, raw channel setup, local-memory growth, cache
-  invalidation, profiling calibration and allocator transfers onto shared
-  submissions. Delete the obsolete GPU `Device.prog` paths,
-  duplicate command builders, direct argument arenas and handoff bookkeeping
-  once their callers migrate. Move native allocator transfers onto shared
-  submissions while preserving their ownership and ordering. Establish NV
-  raw-INS compilation before deleting bootstrap submissions.
+- Move AMD/NV raw channel setup, local-memory growth, cache invalidation,
+  profiling calibration and allocator transfers onto shared submissions. Delete
+  duplicate command builders and handoff bookkeeping once their callers migrate,
+  preserving transfer ownership and ordering. Establish NV raw-INS compilation
+  before deleting bootstrap submissions.
   Preserve bounded waits and retirement for
   independently linked submissions; these are separate safety requirements.
 - Port the target's distinction between one-shot linker ring allocations and

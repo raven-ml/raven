@@ -648,6 +648,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD and NV kernels use compiled queue submissions exclusively, removing an
+  unused 16 MiB argument allocation per device and the obsolete
+  `Hcq.Kernargs` and backend direct-program APIs.
+
 - Metal and CUDA kernels execute exclusively through compiled queues;
   linked command storage owns their loaded programs. Multi-device calls share
   this path, and unsupported mappings fail before fallback copies execute.
@@ -955,10 +959,6 @@ thread.
 - `PROFILE=1` collects asynchronous queue timings at synchronization.
   `Device.profile` drains completed events, and `Profile.output` exports
   Chrome trace JSON with separate compute/copy lanes and per-device clocks.
-
-- Direct AMD/NV launches wait before wrapping their kernel-argument arenas,
-  preserving in-flight arguments and descriptors. `Hcq.Kernargs.alloc` now
-  requires a retirement callback and preserves its cursor if that wait fails.
 
 - NV asynchronous submissions wait for FIFO capacity and command-storage
   retirement, preventing long batches or independent replays from overwriting

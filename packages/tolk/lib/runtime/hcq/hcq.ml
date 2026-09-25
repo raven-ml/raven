@@ -498,31 +498,3 @@ module Timeline = struct
       off := !off + len
     done
 end
-
-module Kernargs = struct
-  type 'meta t = { buf : 'meta Buffer.t; mutable position : int }
-
-  let create buf = { buf; position = 0 }
-
-  let alloc t size ~wait =
-    if size < 0 || size > Buffer.size t.buf then
-      invalid_arg "Kernargs.alloc: size exceeds the region";
-    let off = (t.position + 7) / 8 * 8 in
-    let off = if size > Buffer.size t.buf - off then (wait (); 0) else off in
-    let slot = Buffer.offset t.buf ~off ~size () in
-    t.position <- off + size;
-    slot
-
-  let write_args ?(prefix = [||]) layout slot ~bufs ~vals =
-    let view = Buffer.cpu_view slot in
-    let args = Tolk_uop.Tiny_elf.pack layout ~bufs ~vals in
-    let base = 4 * Array.length prefix in
-    let capacity = min (Buffer.size slot) (Mmio.size view) in
-    if base > capacity || Bytes.length args > capacity - base then
-      invalid_arg "Kernargs.write_args: argument layout exceeds the slot";
-    Array.iter (fun w ->
-        if w < 0 || w > 0xFFFF_FFFF then
-          invalid_arg "Kernargs.write_args: not a 32-bit prefix word") prefix;
-    Array.iteri (fun i w -> Mmio.write32 view (4 * i) (Int32.of_int w)) prefix;
-    Mmio.blit_bytes view ~off:base args
-end

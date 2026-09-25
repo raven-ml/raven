@@ -590,117 +590,38 @@ module Pci_iface : sig
       drained on each wait. *)
 end
 
-(** {1:loading Loaded kernels} *)
+(** {1:loading Kernel images} *)
 
-(** Loaded kernels.
-
-    Loading lays a compiled kernel object out in device memory and
-    derives its launch state: the {!type-program} record with its
-    descriptor template, and the constant-buffer words staged ahead of
-    each launch's arguments. {!Program.call} then stages one launch and
-    drives it through a mapped channel. *)
+(** Cubin images and address-independent launch templates. Device storage and
+    launch arguments are owned by shared compiled submissions. *)
 module Program : sig
-  type 'meta t = {
-    params : 'meta program;
-        (** Launch parameters, as consumed by {!Compute_queue.exec}. *)
-    name : string;  (** Kernel name, for diagnostics. *)
-    lib_gpu : 'meta Hcq.Buffer.t;
-        (** Device memory holding the kernel image, with 4 KiB of guard
-            space after it. *)
-    regs_usage : int;  (** Registers each thread uses. *)
-    shmem_usage : int;  (** Shared-memory bytes each block uses. *)
-    lcmem_usage : int;
-        (** Local-memory bytes each thread needs. The device must be
-            sized for it (see {!ensure_has_local_memory}) before
-            launching. *)
-    constbufs : (int * (nativeint * int)) list;
-        (** Constant buffers by bank index: device address and size.
-            Bank [0] is rebound to the staged arguments on every
-            launch. *)
-    cbuf_0 : int array;
-        (** Driver-parameter words written at the start of every
-            launch's argument slot, ahead of the arguments. *)
-    max_threads : int;
-        (** Largest block, in threads, the kernel's register use
-            allows. *)
-    kernargs_alloc_size : int;
-        (** Bytes staged per launch: constant buffer 0, then room for
-            the descriptor copy at the next 256-byte boundary. *)
+  type data = private {
+    image : bytes; (** Section contents followed by a zeroed 4 KiB prefetch guard. *)
+    relocations : (int * int * int * int) list;
+        (** Byte offset, target image offset, byte width and right shift. *)
+    prog_offset : int; (** Code offset in [image], in bytes. *)
+    prog_size : int; (** Code size, in bytes. *)
+    regs_usage : int; (** Registers per thread. *)
+    shmem_usage : int; (** Shared-memory bytes per block. *)
+    lcmem_usage : int; (** Local-memory bytes per thread. *)
+    constbufs : (int * (int * int)) list;
+        (** Constant banks with their image offsets and byte sizes. *)
+    cbuf0_size : int; (** Driver-parameter prefix size, in bytes. *)
   }
-  (** The type for loaded kernels. *)
+  (** Parsed kernel metadata. Relocations remain relative until linking. *)
 
-  val load :
-    'meta device ->
-    alloc:(int -> 'meta Hcq.Buffer.t) ->
-    ensure_local_memory:(int -> unit) ->
-    name:string ->
-    Bytes.t ->
-    'meta t
-  (** [load dev ~alloc ~ensure_local_memory ~name lib] loads the
-      compiled kernel object [lib] (a cubin) onto [dev]: it lays the
-      object's sections out into a flat image, reads the kernel's
-      register, shared-memory, stack and argument sizes from the
-      object's [.nv.info] descriptor sections, resolves the object's
-      relocations against the image's device address, copies the image
-      into device memory obtained from [alloc] (which must return a
-      CPU-mapped buffer of at least the requested size, a multiple of
-      [0x1000]), and fills the launch-descriptor template.
+  val image : name:string -> bytes -> data
+  (** [image ~name lib] parses [name] from the cubin [lib], without allocating
+      device storage or changing local-memory backing.
 
-      [ensure_local_memory] is called with the kernel's per-thread
-      local-memory bytes before the template is filled, so the sizing
-      state the template captures is current (see
-      {!ensure_has_local_memory}).
+      Raises [Failure] for unsupported relocations, undefined symbols or unknown
+      descriptor formats, and [Invalid_argument] for malformed objects. *)
 
-      Raises [Failure] if the object uses an unsupported relocation,
-      refers to an undefined symbol, or carries a descriptor entry with
-      an unknown value format; [Invalid_argument] if [lib] is not a
-      loadable object (see {!Tolk.Elf.load}). *)
-
-  val free : free:('meta Hcq.Buffer.t -> unit) -> 'meta t -> unit
-  (** [free ~free t] releases the device memory holding [t]'s image
-      through [free]. [t] must have no launches in flight. *)
-
-  val call :
-    'meta t ->
-    layout:Tolk_uop.Tiny_elf.field list ->
-    kernargs:'a Hcq.Kernargs.t ->
-    queue:Queue_desc.t ->
-    timeline:('b, 'meta device) Hcq.Signal.t ->
-    timeline_value:int ->
-    ?wait:('c, 'meta device) Hcq.Signal.t * ('d, 'meta device) Hcq.Signal.t ->
-    ?timeout_ms:int ->
-    bufs:nativeint array ->
-    vals:int64 array ->
-    global_size:int * int * int ->
-    local_size:int * int * int ->
-    unit ->
-    float option
-  (** [call t ~layout ~kernargs ~queue ~timeline ~timeline_value ~bufs ~vals
-      ~global_size ~local_size ()] enqueues one launch of [t]: it
-      stages [t]'s driver-parameter words, [bufs] and [vals] into a
-      fresh slot of [kernargs] according to [layout], then submits to [queue]
-      a stream that waits for the device's previous work ([timeline] reaching
-      [timeline_value - 1]), makes host writes visible, launches the
-      kernel over a [global_size] grid of [local_size] blocks, and
-      signals [timeline] with [timeline_value] once the launch retired.
-      [timeline_value] must be at least [1]; the caller owns the
-      counter and submits the next launch with the next value.
-
-      [wait], when given, brackets the launch with clock captures into
-      the two signals, blocks until [timeline] reaches [timeline_value]
-      ([timeout_ms] bounds the wait, see {!Hcq.Signal.wait}), and
-      returns the seconds elapsed between the two captures. Otherwise
-      the call returns [None]. Reusing the start of [kernargs] waits for
-      [timeline_value - 1] before replacing arguments, even without [wait];
-      [timeout_ms] also bounds that wait.
-
-      Raises [Failure] if [local_size] exceeds 1024 threads, the
-      kernel's register use ([max_threads]), or the device's
-      local-memory sizing ([lcmem_usage] against [slm_per_thread]), or
-      if a dimension exceeds its limit ([2147483647, 65535, 65535] for
-      the grid, [1024, 1024, 64] for the block); [Invalid_argument]
-      from the argument and queue builders when a value does not fit
-      its slot. *)
+  val template : 'meta device -> data -> Qmd.t * int array
+  (** [template dev data] is a fresh descriptor and driver-parameter prefix for
+      [data] on [dev]. Image, constant-buffer and launch addresses remain unset;
+      the compiled queue patches them when linked. The descriptor uses
+      [dev.slm_per_thread] for local-memory sizing. *)
 end
 
 module Encoded_queue : sig
@@ -777,7 +698,7 @@ val create : string -> Tolk.Device.t
     the selected interface and is its runtime: a compute and a copy channel,
     an allocator staging host transfers through the copy engine,
     kernels compiled to the exact chip's binary format and dispatched
-    through {!Program.call}, execution timing from device clocks, and
+    through shared compiled queues, execution timing from device clocks, and
     fault reports raised through the completion timeline when the
     device hangs.
 

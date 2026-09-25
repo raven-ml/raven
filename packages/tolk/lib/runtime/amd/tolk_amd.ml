@@ -910,16 +910,6 @@ end
 (* Programs *)
 
 module Program = struct
-  type 'meta t = {
-    params : 'meta program;
-    name : string;
-    lib_gpu : 'meta Hcq.Buffer.t;
-    group_segment_size : int;
-    private_segment_size : int;
-    kernargs_segment_size : int;
-    kernargs_alloc_size : int;
-  }
-
   type data = {
     desc_offset : int;
     entry_offset : int;
@@ -995,73 +985,6 @@ module Program = struct
       private_segment_size;
       kernargs_segment_size;
     }, image)
-
-  let load (dev : 'meta device) ~alloc ~props ~name lib =
-    let data, image = image ~target:dev.target ~props lib in
-    let lib_gpu = alloc (round_up (Bytes.length image) 0x1000) in
-    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
-    {
-      params = {
-        dev;
-        prog_addr = Nativeint.add (Hcq.Buffer.va lib_gpu) (Nativeint.of_int data.entry_offset);
-        kernel_object = Nativeint.add (Hcq.Buffer.va lib_gpu) (Nativeint.of_int data.desc_offset);
-        group_segment_size = data.group_segment_size;
-        private_segment_size = data.private_segment_size;
-        rsrc1 = data.rsrc1; rsrc2 = data.rsrc2; rsrc3 = data.rsrc3;
-        wave32 = data.wave32;
-        enable_private_segment_sgpr = data.enable_private_segment_sgpr;
-        enable_dispatch_ptr = data.enable_dispatch_ptr;
-      };
-      name; lib_gpu;
-      group_segment_size = data.group_segment_size;
-      private_segment_size = data.private_segment_size;
-      kernargs_segment_size = data.kernargs_segment_size;
-      kernargs_alloc_size = data.kernargs_segment_size +
-        (if data.enable_dispatch_ptr then Amd_hsa_defs.Kernel_dispatch_packet.size else 0);
-    }
-
-  let free ~free:release t = release t.lib_gpu
-
-  let call t ~layout ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms
-      ~bufs ~vals ~global_size ~local_size () =
-    let packet = if t.params.enable_dispatch_ptr then begin
-        let module P = Amd_hsa_defs.Kernel_dispatch_packet in
-        let packet = Bytes.make P.size '\000' in
-        Bytes.set_int32_le packet P.header (Int32.of_int dispatch_header);
-        let gx, gy, gz = global_size and lx, ly, lz = local_size in
-        List.iter (fun (group, local, group_offset, local_offset) ->
-            if group < 1 || local < 1 || local > 0xffff || group > 0xffffffff / local then
-              invalid_arg "Program.call: launch dimensions exceed dispatch packet fields";
-            Bytes.set_uint16_le packet local_offset local;
-            Bytes.set_int32_le packet group_offset (Int32.of_int (group * local)))
-          [gx, lx, P.grid_size_x, P.workgroup_size_x;
-           gy, ly, P.grid_size_y, P.workgroup_size_y;
-           gz, lz, P.grid_size_z, P.workgroup_size_z];
-        Bytes.set_int32_le packet P.private_segment_size (Int32.of_int t.private_segment_size);
-        Bytes.set_int32_le packet P.group_segment_size (Int32.of_int t.group_segment_size);
-        Some packet
-      end else None in
-    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size
-        ~wait:(fun () -> Hcq.Signal.wait timeline ?timeout_ms (timeline_value - 1)) in
-    Hcq.Kernargs.write_args layout slot ~bufs ~vals;
-    Option.iter (Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view slot) ~off:t.kernargs_segment_size) packet;
-    let cq = Compute_queue.create t.params.dev in
-    Compute_queue.wait cq ~value:(timeline_value - 1) timeline;
-    Compute_queue.memory_barrier cq;
-    (match wait with
-    | Some (st, _) -> Compute_queue.timestamp cq st
-    | None -> ());
-    Compute_queue.exec cq t.params ~kernargs:slot ~global_size ~local_size;
-    (match wait with
-    | Some (_, en) -> Compute_queue.timestamp cq en
-    | None -> ());
-    Compute_queue.signal cq ~value:timeline_value timeline;
-    Compute_queue.submit cq queue;
-    match wait with
-    | None -> None
-    | Some (st, en) ->
-        Hcq.Signal.wait timeline ?timeout_ms timeline_value;
-        Some ((Hcq.Signal.timestamp en -. Hcq.Signal.timestamp st) /. 1e6)
 end
 
 (* Static packet templates, patched and submitted by compiled host code. *)
@@ -2088,7 +2011,6 @@ module State = struct
     hw : 'mem device;
     compute_queue : Queue_desc.t;
     sdma_queue : int -> Queue_desc.t option;
-    kernargs : 'mem Hcq.Kernargs.t;
     pool : 'mem Hcq.Signal.Pool.t;
     tl : ('mem, 'mem device) Timeline.t;
     submission : Hcq.Submission.t;
@@ -2130,6 +2052,28 @@ module State = struct
       Timeline.synchronize ?timeout_ms t.tl;
       Option.iter (fun after_sync -> after_sync ()) t.iface.Iface.after_sync
     end
+
+  (* Retained links own the backing they captured. Growing the device's
+     current scratch drops only its reference, so older programs keep valid
+     addresses until their links are released. *)
+  let ensure_scratch state size =
+    if state.hw.is_aql && state.hw.max_private_segment_size < max size 128 then
+      synchronize state;
+    let owner = ref None in
+    ensure_has_local_memory state.hw ~props:state.iface.Iface.props
+      ~alloc:(fun size ->
+        let spec = {Tolk.Device.Buffer_spec.default with nolru = true} in
+        let buffer = Tolk.Device.Buffer.create ~device:state.name ~size
+            ~dtype:Tolk_uop.Dtype.uint8 ~spec
+            (Tolk.Device.Allocator.Pack (Option.get state.allocator)) in
+        Tolk.Device.Buffer.ensure_allocated buffer;
+        let raw = Option.get (Tolk.Device.Buffer.get state.buffer_kind buffer) in
+        owner := Some buffer;
+        raw)
+      ~free:ignore size;
+    Option.iter (fun buffer ->
+        state.scratch <- Some buffer;
+        Option.iter (Queue_desc.update_scratch state.hw) state.compute_queue.Queue_desc.aql) !owner
 end
 
 module Allocator = struct
@@ -2227,82 +2171,6 @@ module Allocator = struct
     Tolk.Device.Allocator.Pack allocator
 end
 
-module Runtime = struct
-  (* Retained links own the backing they captured. Growing the device's
-     current scratch drops only its reference, so older programs keep valid
-     addresses until their links are released. *)
-  let ensure_scratch state size =
-    if state.State.hw.is_aql && state.State.hw.max_private_segment_size < max size 128 then
-      State.synchronize state;
-    let owner = ref None in
-    ensure_has_local_memory state.State.hw ~props:state.State.iface.Iface.props
-      ~alloc:(fun size ->
-        let spec = {Tolk.Device.Buffer_spec.default with nolru = true} in
-        let buffer = Tolk.Device.Buffer.create ~device:state.State.name ~size
-            ~dtype:Tolk_uop.Dtype.uint8 ~spec
-            (Tolk.Device.Allocator.Pack (Option.get state.State.allocator)) in
-        Tolk.Device.Buffer.ensure_allocated buffer;
-        let raw = Option.get (Tolk.Device.Buffer.get state.State.buffer_kind buffer) in
-        owner := Some buffer;
-        raw)
-      ~free:ignore size;
-    Option.iter (fun buffer ->
-        state.State.scratch <- Some buffer;
-        Option.iter (Queue_desc.update_scratch state.State.hw) state.State.compute_queue.Queue_desc.aql) !owner
-
-  let default_local = [| 1; 1; 1 |]
-
-  let runtime state (obj : Tolk_uop.Tiny_elf.t) =
-    let name = obj.name and lib = obj.lib in
-    let layout = Tolk_uop.Tiny_elf.layout obj.signature in
-    let prg =
-      Program.load state.State.hw
-        ~alloc:(fun size ->
-          state.State.iface.Iface.alloc ~cpu_access:true size)
-        ~props:state.State.iface.Iface.props ~name lib
-    in
-    (match ensure_scratch state prg.Program.private_segment_size with
-     | () -> ()
-     | exception exn ->
-         let backtrace = Printexc.get_raw_backtrace () in
-         Program.free ~free:state.State.iface.Iface.free prg;
-         Printexc.raise_with_backtrace exn backtrace);
-    let call bufs ~global ~local ~vals ~wait ~timeout:_ =
-      State.prepare state;
-      let bufs = Array.map (fun buf ->
-          match Tolk.Device.Buffer.get ~device:state.State.name state.State.buffer_kind buf with
-          | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
-      let local = Option.value local ~default:default_local in
-      let tl = state.State.tl in
-      let launch ?timing () =
-        Timeline.submit tl (fun timeline_value ->
-          Program.call prg ~layout ~kernargs:state.State.kernargs
-            ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
-            ~timeline_value ?wait:timing ~bufs ~vals
-            ~global_size:(global.(0), global.(1), global.(2))
-            ~local_size:(local.(0), local.(1), local.(2))
-            ())
-      in
-      if not wait then launch ()
-      else begin
-        (match tl.Timeline.error_state with Some e -> raise e | None -> ());
-        let st_slot = Hcq.Signal.Pool.get state.State.pool in
-        let en_slot = Hcq.Signal.Pool.get state.State.pool in
-        let st = Hcq.Signal.make ~timestamp_divider:100. st_slot in
-        let en = Hcq.Signal.make ~timestamp_divider:100. en_slot in
-        (* A failed launch may still write timestamps; retain its pool slots. *)
-        let result = launch ~timing:(st, en) () in
-        Hcq.Signal.Pool.put state.State.pool en_slot;
-        Hcq.Signal.Pool.put state.State.pool st_slot;
-        result
-      end
-    in
-    let free () =
-      Program.free ~free:state.State.iface.Iface.free prg
-    in
-    { Tolk.Device.call; free; handle = 0n }
-end
-
 module Queue = struct
   open Tolk
   open Tolk_uop
@@ -2337,11 +2205,11 @@ module Queue = struct
         B.ensure_allocated b; B.copyin b bytes; Some b
     | Some {param = {allocation = Some ("amd_image", data); _}; _} ->
         let requested, image = (Marshal.from_string data 0 : int * string) in
-        Runtime.ensure_scratch state requested;
+        State.ensure_scratch state requested;
         let b = allocate () in
         B.ensure_allocated b; B.copyin b (Bytes.of_string image); Some b
     | Some {param = {allocation = Some ("amd_scratch", requested); _}; _} ->
-        Runtime.ensure_scratch state (int_of_string requested);
+        State.ensure_scratch state (int_of_string requested);
         state.State.scratch
     | Some _ ->
         (match U.node_tag u with
@@ -2574,8 +2442,6 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
       hw;
       compute_queue;
       sdma_queue;
-      kernargs =
-        Hcq.Kernargs.create (iface.Iface.alloc ~cpu_access:true (16 lsl 20));
       pool;
       tl =
         {
@@ -2613,7 +2479,7 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
           end)
   | None -> ());
   let allocator = Allocator.create state in
-  Runtime.ensure_scratch state 128;
+  State.ensure_scratch state 128;
   let renderer_set = Tolk.Device.Renderer_set.make ~device:name ~arch
       [ "HIP", (fun target ->
           let arch = match Tolk.Gpu_target.parse_amd_arch target.Tolk_uop.Target.arch with
@@ -2623,7 +2489,6 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
             (Tolk.Cstyle.amd arch)) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~peer_group:(if iface.Iface.is_am then "PCIDevice" else "AMD")
-    ~runtime:(Runtime.runtime state)
     ~synchronize:(fun timeout -> State.synchronize ?timeout state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ~queue:(Queue.create state) ~bufferize:(Queue.bufferize state) ()

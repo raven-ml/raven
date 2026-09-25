@@ -1563,19 +1563,6 @@ end
 (* Loaded programs *)
 
 module Program = struct
-  type 'meta t = {
-    params : 'meta program;
-    name : string;
-    lib_gpu : 'meta Hcq.Buffer.t;
-    regs_usage : int;
-    shmem_usage : int;
-    lcmem_usage : int;
-    constbufs : (int * (nativeint * int)) list;
-    cbuf_0 : int array;
-    max_threads : int;
-    kernargs_alloc_size : int;
-  }
-
   type data = {
     image : bytes;
     relocations : (int * int * int * int) list;
@@ -1772,89 +1759,7 @@ module Program = struct
       data.constbufs;
     qmd, cbuf_0
 
-  let load (dev : 'meta device) ~alloc ~ensure_local_memory ~name lib =
-    let data = image ~name lib in
-    ensure_local_memory data.lcmem_usage;
-    let qmd, cbuf_0 = template dev data in
-    (* A guard page after the image mitigates instruction prefetch faults. *)
-    let lib_gpu = alloc (Bytes.length data.image) in
-    let va = Nativeint.to_int (Hcq.Buffer.va lib_gpu) in
-    let prog_addr = va + data.prog_offset in
-    let constbufs = List.map (fun (i, (offset, size)) ->
-        i, (Nativeint.of_int (va + offset), size)) data.constbufs in
-    let image = Bytes.copy data.image in
-    List.iter (fun (offset, target, width, shift) ->
-        let address = Int64.shift_right_logical (Int64.of_int (va + target)) shift in
-        if width = 8 then Bytes.set_int64_le image offset address
-        else Bytes.set_int32_le image offset (Int64.to_int32 address)) data.relocations;
-    List.iter (fun (i, (address, _)) -> Qmd.set_constant_buf_addr qmd i address) constbufs;
-    let address = if Qmd.version qmd < 4 then prog_addr else prog_addr lsr 4 in
-    let suffix = if Qmd.version qmd < 4 then "" else "_shifted4" in
-    Qmd.write qmd ["program_address_upper" ^ suffix, address lsr 32;
-      "program_address_lower" ^ suffix, address land 0xffffffff;
-      "program_prefetch_addr_upper_shifted", prog_addr lsr 40;
-      "program_prefetch_addr_lower_shifted", prog_addr lsr 8];
-    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
-    (* register allocation granularity is 256 per warp, warp allocation
-       granularity is 4, register file size 65536 *)
-    let max_threads =
-      65536 / round_up (max 1 data.regs_usage * 32) 256 / 4 * 4 * 32
-    in
-    let cbuf0_bytes = snd (List.assoc 0 constbufs) in
-    {
-      params = { dev; qmd; cbuf0_size = cbuf0_bytes };
-      name;
-      lib_gpu;
-      regs_usage = data.regs_usage;
-      shmem_usage = data.shmem_usage;
-      lcmem_usage = data.lcmem_usage;
-      constbufs = constbufs;
-      cbuf_0;
-      max_threads;
-      kernargs_alloc_size = round_up cbuf0_bytes 256 + 0x800;
-    }
 
-  let free ~free:release t = release t.lib_gpu
-
-  let call t ~layout ~kernargs ~queue ~timeline ~timeline_value ?wait ?timeout_ms ~bufs
-      ~vals ~global_size ~local_size () =
-    let gx, gy, gz = global_size and lx, ly, lz = local_size in
-    let threads = lx * ly * lz in
-    if
-      threads > 1024 || t.max_threads < threads
-      || t.lcmem_usage > t.params.dev.slm_per_thread
-    then
-      failwith
-        (Printf.sprintf
-           "Too many resources requested for launch, %d threads, max %d"
-           threads t.max_threads);
-    if
-      gx > 2147483647 || gy > 65535 || gz > 65535 || lx > 1024 || ly > 1024
-      || lz > 64
-    then
-      failwith
-        (Printf.sprintf "Invalid global/local dims (%d, %d, %d), (%d, %d, %d)"
-           gx gy gz lx ly lz);
-    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size
-        ~wait:(fun () -> Hcq.Signal.wait timeline ?timeout_ms (timeline_value - 1)) in
-    Hcq.Kernargs.write_args ~prefix:t.cbuf_0 layout slot ~bufs ~vals;
-    let cq = Compute_queue.create t.params.dev in
-    Compute_queue.wait cq ~value:(timeline_value - 1) timeline;
-    Compute_queue.memory_barrier cq;
-    (match wait with
-    | Some (st, _) -> Compute_queue.timestamp cq st
-    | None -> ());
-    Compute_queue.exec cq t.params ~kernargs:slot ~global_size ~local_size;
-    (match wait with
-    | Some (_, en) -> Compute_queue.timestamp cq en
-    | None -> ());
-    Compute_queue.signal cq ~value:timeline_value timeline;
-    Compute_queue.submit cq queue;
-    match wait with
-    | None -> None
-    | Some (st, en) ->
-        Hcq.Signal.wait timeline ?timeout_ms timeline_value;
-        Some ((Hcq.Signal.timestamp en -. Hcq.Signal.timestamp st) /. 1e6)
 end
 
 (* Local-memory sizing *)
@@ -2320,7 +2225,6 @@ module State = struct
     subdevice : int;
     compute_queue : Queue_desc.t;
     dma_queue : Queue_desc.t;
-    kernargs : 'mem Hcq.Kernargs.t;
     pool : 'mem Hcq.Signal.Pool.t;
     tl : ('mem, 'mem device) Timeline.t;
     submission : Hcq.Submission.t;
@@ -2446,69 +2350,23 @@ module Allocator = struct
     Tolk.Device.Allocator.Pack allocator
 end
 
-module Runtime = struct
-  (* Local-memory backing goes through the LRU allocator so resizes reuse
-     freed device memory. *)
-  let ensure_local_memory state size =
-    State.check_submission state;
-    let allocator = Option.get state.State.allocator in
-    ensure_has_local_memory state.State.hw
-      ~alloc:(fun size ->
-        allocator.Tolk.Device.Allocator.alloc size
-          Tolk.Device.Buffer_spec.default)
-      ~free:(fun buf ->
-        allocator.Tolk.Device.Allocator.free buf (Hcq.Buffer.size buf)
-          Tolk.Device.Buffer_spec.default)
-      ~num_gpcs:state.State.num_gpcs
-      ~num_tpc_per_gpc:state.State.num_tpc_per_gpc
-      ~num_sm_per_tpc:state.State.num_sm_per_tpc
-      ~max_warps_per_sm:state.State.max_warps_per_sm ~tl:state.State.tl
-      ~queue:state.State.compute_queue size
-
-  let default_local = [| 1; 1; 1 |]
-
-  let runtime state (obj : Tolk_uop.Tiny_elf.t) =
-    let name = obj.name and lib = obj.lib in
-    let layout = Tolk_uop.Tiny_elf.layout obj.signature in
-    let prg =
-      Program.load state.State.hw
-        ~alloc:(fun size ->
-          state.State.iface.Nv_iface.alloc ~cpu_access:true size)
-        ~ensure_local_memory:(ensure_local_memory state) ~name lib
-    in
-    let call bufs ~global ~local ~vals ~wait ~timeout:_ =
-      let bufs = Array.map (fun buf ->
-          match Tolk.Device.Buffer.get ~device:state.State.name state.State.iface.Nv_iface.kind buf with
-          | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
-      let local = Option.value local ~default:default_local in
-      let tl = state.State.tl in
-      State.check_submission state;
-      let launch ?timing () =
-        Timeline.submit tl (fun timeline_value ->
-          Program.call prg ~layout ~kernargs:state.State.kernargs
-            ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
-            ~timeline_value ?wait:timing ~bufs ~vals
-            ~global_size:(global.(0), global.(1), global.(2))
-            ~local_size:(local.(0), local.(1), local.(2))
-            ())
-      in
-      if not wait then launch ()
-      else begin
-        (match tl.Timeline.error_state with Some e -> raise e | None -> ());
-        let st_slot = Hcq.Signal.Pool.get state.State.pool in
-        let en_slot = Hcq.Signal.Pool.get state.State.pool in
-        let st = Hcq.Signal.make st_slot in
-        let en = Hcq.Signal.make en_slot in
-        (* A failed launch may still write timestamps; retain its pool slots. *)
-        let result = launch ~timing:(st, en) () in
-        Hcq.Signal.Pool.put state.State.pool en_slot;
-        Hcq.Signal.Pool.put state.State.pool st_slot;
-        result
-      end
-    in
-    let free () = Program.free ~free:state.State.iface.Nv_iface.free prg in
-    { Tolk.Device.call; free; handle = 0n }
-end
+(* Local-memory backing goes through the LRU allocator so resizes reuse
+   freed device memory. *)
+let ensure_local_memory state size =
+  State.check_submission state;
+  let allocator = Option.get state.State.allocator in
+  ensure_has_local_memory state.State.hw
+    ~alloc:(fun size ->
+      allocator.Tolk.Device.Allocator.alloc size
+        Tolk.Device.Buffer_spec.default)
+    ~free:(fun buf ->
+      allocator.Tolk.Device.Allocator.free buf (Hcq.Buffer.size buf)
+        Tolk.Device.Buffer_spec.default)
+    ~num_gpcs:state.State.num_gpcs
+    ~num_tpc_per_gpc:state.State.num_tpc_per_gpc
+    ~num_sm_per_tpc:state.State.num_sm_per_tpc
+    ~max_warps_per_sm:state.State.max_warps_per_sm ~tl:state.State.tl
+    ~queue:state.State.compute_queue size
 
 module Queue = struct
   open Tolk
@@ -2545,7 +2403,7 @@ module Queue = struct
         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Hcq.Submission.symbol symbol));
         B.ensure_allocated b; B.copyin b bytes; Some b
     | Some {param = {allocation = Some ("nv_image", requested); _}; _} ->
-        Runtime.ensure_local_memory state (int_of_string requested);
+        ensure_local_memory state (int_of_string requested);
         Some (allocate ())
     | Some _ ->
         (match U.node_tag u with
@@ -2748,9 +2606,6 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
       subdevice;
       compute_queue;
       dma_queue;
-      kernargs =
-        Hcq.Kernargs.create
-          (iface.Nv_iface.alloc ~cpu_access:true (16 lsl 20));
       pool;
       tl =
         {
@@ -2810,7 +2665,6 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
             (Tolk.Cstyle.cuda ~device:"NV" arch)) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~peer_group:(if Option.is_some iface.Nv_iface.nvdev then "PCIDevice" else "NV")
-    ~runtime:(Runtime.runtime state)
     ~synchronize:(fun timeout -> ignore timeout; State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ~queue:(Queue.create state) ~bufferize:(Queue.bufferize state) ()

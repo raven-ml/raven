@@ -12,8 +12,7 @@
     ({!File_io}), bounds-checked volatile access to mapped device memory
     ({!Mmio}), device-memory regions ({!Buffer}), command-stream
     accumulation ({!Q}), synchronization slots ({!Signal}), device
-    completion timelines ({!Timeline}) and kernel argument staging
-    ({!Kernargs}). *)
+    completion timelines ({!Timeline}). *)
 
 (** Files and memory mappings. *)
 module File_io : sig
@@ -470,39 +469,4 @@ module Timeline : sig
       ([dest]), ordered after all previously submitted work through {!submit}.
       The copy waits for the published value and blits the slot into [bytes]. Callers
       {!synchronize} first so earlier writes to [buf] have retired. *)
-end
-
-(** Kernel argument staging.
-
-    A kernargs region hands out small slots of a CPU-mapped buffer for
-    the arguments of individual kernel launches. The region recycles
-    space by wrapping, waiting for earlier users before reusing storage. *)
-module Kernargs : sig
-  type 'meta t
-  (** The type for kernel-argument regions. Mutable. *)
-
-  val create : 'meta Buffer.t -> 'meta t
-  (** [create buf] is a region handing out slots of the CPU-mapped
-      buffer [buf]. *)
-
-  val alloc : 'meta t -> int -> wait:(unit -> unit) -> 'meta Buffer.t
-  (** [alloc t size ~wait] is a fresh 8-byte-aligned slot of [size] bytes.
-      Before wrapping to the start, [wait ()] must retire every earlier
-      user of the region. If [wait] raises, the allocation position and
-      existing bytes remain unchanged.
-      Raises [Invalid_argument] if [size] is negative or exceeds the region. *)
-
-  val write_args :
-    ?prefix:int array ->
-    Tolk_uop.Tiny_elf.field list ->
-    'meta Buffer.t ->
-    bufs:nativeint array ->
-    vals:int64 array ->
-    unit
-  (** [write_args layout slot ~bufs ~vals] writes the 32-bit words of
-      [prefix] (defaults to none), followed by the typed argument structure
-      encoded by {!Tolk_uop.Tiny_elf.pack}. Argument offsets are relative to
-      the end of the prefix. Raises [Invalid_argument] before writing if the
-      layout does not fit in [slot], if a prefix word is negative or exceeds
-      [0xFFFFFFFF], if argument slots are invalid, or if [slot] has no view. *)
 end
