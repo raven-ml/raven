@@ -617,49 +617,6 @@ CAMLprim value caml_tolk_metal_blit_copy_bc(value* argv, int argc) {
                               argv[5]);
 }
 
-CAMLprim value caml_tolk_metal_create_shared_event(value v_device) {
-  CAMLparam1(v_device);
-  @autoreleasepool {
-    id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
-    id<MTLSharedEvent> event = [device newSharedEvent];
-    if (event == nil) caml_failwith("Metal shared event creation failed");
-    CAMLreturn(caml_copy_nativeint((intnat)event));
-  }
-}
-
-CAMLprim value caml_tolk_metal_release_shared_event(value v_event) {
-  CAMLparam1(v_event);
-  @autoreleasepool {
-    id<MTLSharedEvent> event = (id<MTLSharedEvent>)Nativeint_val(v_event);
-    [event release];
-    CAMLreturn(Val_unit);
-  }
-}
-
-CAMLprim value caml_tolk_metal_encode_signal_event(value v_cmd, value v_event,
-                                              value v_timeline_value) {
-  CAMLparam3(v_cmd, v_event, v_timeline_value);
-  @autoreleasepool {
-    id<MTLCommandBuffer> cmd = (id<MTLCommandBuffer>)Nativeint_val(v_cmd);
-    id<MTLEvent> event = (id<MTLEvent>)Nativeint_val(v_event);
-    uint64_t val = (uint64_t)Long_val(v_timeline_value);
-    [cmd encodeSignalEvent:event value:val];
-    CAMLreturn(Val_unit);
-  }
-}
-
-CAMLprim value caml_tolk_metal_encode_wait_event(value v_cmd, value v_event,
-                                            value v_timeline_value) {
-  CAMLparam3(v_cmd, v_event, v_timeline_value);
-  @autoreleasepool {
-    id<MTLCommandBuffer> cmd = (id<MTLCommandBuffer>)Nativeint_val(v_cmd);
-    id<MTLEvent> event = (id<MTLEvent>)Nativeint_val(v_event);
-    uint64_t val = (uint64_t)Long_val(v_timeline_value);
-    [cmd encodeWaitForEvent:event value:val];
-    CAMLreturn(Val_unit);
-  }
-}
-
 CAMLprim value caml_tolk_metal_command_buffer_gpu_time(value v_cmd) {
   CAMLparam1(v_cmd);
   CAMLlocal1(v_pair);
@@ -928,7 +885,6 @@ CAMLprim value caml_tolk_metal_compile(value v_src) {
 #include <time.h>
 typedef struct {
   id<MTLCommandQueue> queue;
-  id<MTLSharedEvent> event;
   id<MTLFence> fence;
   id<MTLResource>* resources;
   size_t count, capacity;
@@ -1016,7 +972,6 @@ static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t v
         tolk_metal_hcq_complete(ctx, completed, signal, start, finish);
       }];
       if (batch + 1 == batches) {
-        [command encodeSignalEvent:ctx->event value:value];
         [command retain];
         header[2] = (uint64_t)(uintptr_t)command;
       }
@@ -1025,8 +980,8 @@ static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t v
   }
 }
 
-CAMLprim value caml_tolk_metal_hcq_create(value v_queue, value v_event) {
-  CAMLparam2(v_queue, v_event);
+CAMLprim value caml_tolk_metal_hcq_create(value v_queue) {
+  CAMLparam1(v_queue);
   CAMLlocal1(result);
   result = caml_copy_nativeint(0);
   tolk_metal_hcq* ctx = calloc(1, sizeof(*ctx));
@@ -1035,7 +990,6 @@ CAMLprim value caml_tolk_metal_hcq_create(value v_queue, value v_event) {
   atomic_init(&ctx->completed, 0);
   atomic_init(&ctx->failed, 0);
   ctx->queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
-  ctx->event = (id<MTLSharedEvent>)Nativeint_val(v_event);
   ctx->fence = [ctx->queue.device newFence];
   if (ctx->fence == nil || pthread_mutex_init(&ctx->lock, NULL) != 0) {
     [ctx->fence release]; free(ctx); caml_failwith("Metal HCQ context creation failed");

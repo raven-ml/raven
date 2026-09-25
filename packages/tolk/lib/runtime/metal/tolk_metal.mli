@@ -42,7 +42,7 @@ val create : string -> Tolk.Device.t
     allocator with blit-based buffer transfers, and a {!Tolk.Cstyle.metal}
     renderer built from the device's Metal GPU family. An {!Stdlib.at_exit}
     handler synchronizes in-flight work and releases the underlying Metal
-    device, command queue, and shared event.
+    device and command queue.
 
     Raises [Failure] if no Metal GPU is available (e.g. running in a VM or on
     unsupported hardware). *)
@@ -52,11 +52,10 @@ val create : string -> Tolk.Device.t
 module State : sig
   type t
   (** The type for Metal device state. Holds the GPU device handle, command
-      queue, shared timeline event, and in-flight command buffer list. *)
+      queue, completion timeline, and in-flight command buffer list. *)
 
   val create : unit -> t
-  (** [create ()] initializes the system default Metal device, command queue,
-      and shared event.
+  (** [create ()] initializes the system default Metal device and command queue.
 
       Raises [Failure] if no Metal GPU is available. *)
 
@@ -68,8 +67,8 @@ module State : sig
       queues retain the first failure and reject subsequent submissions. *)
 
   val shutdown : t -> unit
-  (** [shutdown t] synchronizes and releases all Metal resources (command queue,
-      shared event, device). Subsequent calls are no-ops. Raises [Failure] if
+  (** [shutdown t] synchronizes and releases all Metal resources (command queue
+      and device). Subsequent calls are no-ops. Raises [Failure] if
       synchronization fails; resources remain retained in that case. *)
 
   val is_virtual : t -> bool

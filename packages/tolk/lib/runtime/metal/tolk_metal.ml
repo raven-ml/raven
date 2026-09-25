@@ -78,18 +78,6 @@ module Ffi = struct
     nativeint -> nativeint -> int -> nativeint -> int -> int -> nativeint
     = "caml_tolk_metal_blit_copy_bc" "caml_tolk_metal_blit_copy"
 
-  external create_shared_event : nativeint -> nativeint
-    = "caml_tolk_metal_create_shared_event"
-
-  external release_shared_event : nativeint -> unit
-    = "caml_tolk_metal_release_shared_event"
-
-  external encode_signal_event : nativeint -> nativeint -> int -> unit
-    = "caml_tolk_metal_encode_signal_event"
-
-  external encode_wait_event : nativeint -> nativeint -> int -> unit
-    = "caml_tolk_metal_encode_wait_event"
-
   external command_buffer_gpu_time : nativeint -> float * float
     = "caml_tolk_metal_command_buffer_gpu_time"
 
@@ -98,7 +86,7 @@ module Ffi = struct
 
   external device_name : nativeint -> string = "caml_tolk_metal_device_name"
   external device_arch : nativeint -> string = "caml_tolk_metal_device_arch"
-  external hcq_create : nativeint -> nativeint -> nativeint = "caml_tolk_metal_hcq_create"
+  external hcq_create : nativeint -> nativeint = "caml_tolk_metal_hcq_create"
   external hcq_release : nativeint -> unit = "caml_tolk_metal_hcq_release"
   external hcq_resource : nativeint -> nativeint -> bool -> unit = "caml_tolk_metal_hcq_resource"
   external hcq_wait : nativeint -> int64 -> unit = "caml_tolk_metal_hcq_wait"
@@ -130,7 +118,6 @@ module State = struct
   type t = {
     device : nativeint;
     queue : nativeint;
-    shared_event : nativeint;
     context : nativeint;
     mutable timeline : Device.Buffer.t option;
     mutable context_buffer : Device.Buffer.t option;
@@ -146,27 +133,21 @@ module State = struct
     try
       let queue = Ffi.create_command_queue device in
       try
-        let shared_event = Ffi.create_shared_event device in
-        try
-          let needs_icb_fix = Ffi.needs_icb_fix device in
-          let device_name = Ffi.device_name device in
-          let arch = Ffi.device_arch device in
-          {
-            device;
-            queue;
-            shared_event;
-            context = Ffi.hcq_create queue shared_event;
-            timeline = None;
-            context_buffer = None;
-            in_flight = [];
-            closed = false;
-            needs_icb_fix;
-            device_name;
-            arch;
-          }
-        with exn ->
-          Ffi.release_shared_event shared_event;
-          raise exn
+        let needs_icb_fix = Ffi.needs_icb_fix device in
+        let device_name = Ffi.device_name device in
+        let arch = Ffi.device_arch device in
+        {
+          device;
+          queue;
+          context = Ffi.hcq_create queue;
+          timeline = None;
+          context_buffer = None;
+          in_flight = [];
+          closed = false;
+          needs_icb_fix;
+          device_name;
+          arch;
+        }
       with exn ->
         Ffi.release_command_queue queue;
         raise exn
@@ -193,7 +174,6 @@ module State = struct
     if not t.closed then (
       synchronize t;
       Ffi.hcq_release t.context;
-      Ffi.release_shared_event t.shared_event;
       Ffi.release_command_queue t.queue;
       Ffi.release_device t.device;
       t.closed <- true)
