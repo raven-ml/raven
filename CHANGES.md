@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Late scalar variables, including sharded kernels' device index, receive
+  parameter slots after existing buffers so generated declarations and runtime
+  argument packing agree.
+
 - Kernel costs remain exact beyond host-integer limits, and symbolic memory
   traffic is capped by its buffer footprint. `Global_counters.global_ops` and
   `global_mem` now use `Z.t`; beam ranking converts costs only at comparison.

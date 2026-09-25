@@ -896,13 +896,16 @@ let number_params sink =
     |> ref
   in
   let rewrite_param node =
-    if U.is_variable node then Some (U.replace node ~op:Ops.Param ()) else
+    let original = node in
+    let node =
+      if U.is_variable node then U.replace node ~op:Ops.Param () else node
+    in
     match U.as_param node with
     | Some { param; _ } when param.slot = -1 ->
         let slot = !next_slot in
         incr next_slot;
         Some (U.replace node ~arg:(U.Arg.Param_arg { param with slot }) ())
-    | _ -> None
+    | _ -> if U.equal original node then None else Some node
   in
   U.graph_rewrite ~name:"number params with -1" ~walk:true rewrite_param sink
 

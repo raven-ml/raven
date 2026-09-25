@@ -436,6 +436,20 @@ let find_ranges root =
 let integration_tests =
   group "pm_add_gpudims"
     [
+      test "device axes become scalar parameters and leave END ranges" (fun () ->
+          let r = U.range ~size:(idx 2) ~axis:0 ~kind:Ak.Device () in
+          let result =
+            Gpudims.pm_add_gpudims (gpu_renderer ())
+              (wrap_sink [U.end_ ~value:(U.alu_binary ~op:Ops.Add ~lhs:r ~rhs:(idx 1)) ~ranges:[r]])
+          in
+          let params = List.filter (fun u -> U.op u = Ops.Param) (U.toposort result) in
+          equal int 1 (List.length params);
+          (match U.as_param (List.hd params) with
+          | Some {param; _} -> equal (option string) (Some "_device_num") param.name
+          | None -> failwith "expected scalar parameter");
+          is_true (List.for_all (fun u -> match U.as_end u with
+            | Some {ranges; _} -> ranges = []
+            | None -> true) (U.toposort result)));
       test "keeps the warp dimension separate while folding local axes" (fun () ->
           let ranges = List.mapi (fun axis (size, kind) ->
               U.range ~size:(idx size) ~axis:(axis - 1) ~kind ())

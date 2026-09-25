@@ -381,6 +381,12 @@ let () =
               (Some 2) (List.assoc_opt "n" named_slots);
             equal (option int) ~msg:"m follows n"
               (Some 3) (List.assoc_opt "m" named_slots));
+          test "BUFFER variables become numbered scalar formals" (fun () ->
+            let output = U.param ~slot:0 ~dtype:Dtype.int32 () in
+            let value = U.variable ~name:"late_variable" ~min_val:0 ~max_val:8 () in
+            let lowered = Codegen_lower.lower (test_renderer ()) (U.sink [output; value]) in
+            equal (option int) (Some 1)
+              (List.assoc_opt "late_variable" (named_param_slots lowered)));
           test "lowering flattens sink-like children" (fun () ->
             let a = U.const (Const.float Dtype.float32 1.0) in
             let b = U.const (Const.float Dtype.float32 2.0) in

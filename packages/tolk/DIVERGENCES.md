@@ -6,6 +6,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Numbered scalar declarations use their parameter slots.** Upstream renders
+  symbolic binding names as C identifiers; Tolk uses `data<slot>_` for numbered
+  scalars, preserving separate declarations when explicit slots share a binding
+  name. Consumer: hand-built PROGRAMs with repeated symbolic bindings. Coverage:
+  `test_program_spec` accepts distinct slots with the same binding name and
+  rejects actual declaration collisions. This source-only naming difference
+  does not change slots, argument order or binding lookup. Reconsider if the IR
+  requires every formal to have a distinct symbolic name.
+
 - **Compiled signatures reject colliding scalar declarations.** The target
   does not check for different formal nodes producing the same declaration
   name. Tolk's shared ELF signature boundary rejects these programs before

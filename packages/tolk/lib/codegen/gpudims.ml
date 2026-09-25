@@ -337,7 +337,7 @@ let device_to_var (node : U.t) : U.t option =
   | Some { kind = Axis_type.Device; _ }, _ ->
       Some
         (U.variable ~name:"_device_num" ~min_val:0 ~max_val:(Bound.to_int (U.vmax node))
-           ~dtype:(U.dtype node) ())
+           ~dtype:(U.dtype node) ~param:true ())
   | _, Some { value; ranges } when List.exists is_device_num ranges ->
       Some
         (U.replace node
