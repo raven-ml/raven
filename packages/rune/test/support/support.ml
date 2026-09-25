@@ -12,7 +12,7 @@ let f64 = Nx.float64
 let vec32 xs = Nx.create f32 [| Array.length xs |] xs
 let vec64 xs = Nx.create f64 [| Array.length xs |] xs
 let mat64 r c xs = Nx.create f64 [| r; c |] xs
-let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+let to_arr t = Nx.to_array t
 
 (* Collections that release every value no longer reachable. With backtraces
    recorded, the runtime keeps the last exception raised alive, and an
