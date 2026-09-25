@@ -167,6 +167,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Inside `Rune.jit` over several devices, `Nx.scatter` into a split value, and
+  a traced `Nx.set` window into a value split along its first axis, write each
+  device's slice with the indexed kernel one device uses, which stores each
+  update's elements once. They compared every row with every update: over 256
+  rows, 8,192 estimated operations at 2 updates and 79,872 at 16.
+
 - A compiled float `x / x`, `x * 0`, `(x * y) / y` and `-0 + 0` compute what
   they say: they folded to 1, 0, `x` and -0, wrong at 0, inf, NaN and
   overflow. `x / (1 + x)` was rewritten to `1 - 1 / (1 + x)`, which is 0 at

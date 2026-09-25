@@ -557,15 +557,16 @@ let buffer_tensor node shape =
 let store_flat dst n tt =
   U.store ~dst ~value:(F.Tensor.uop (F.Movement.reshape tt [ n ])) ()
 
+(* The devices of [st]'s program, as tolk names them. *)
+let program_device st =
+  match st.st_devices with
+  | [ _ ] -> U.Single (Tolk.Device.name st.st_device)
+  | ds -> U.Multi (List.map Nx.Device.name ds)
+
 (* A buffer of [n] elements on every device of the program. *)
 let make_node st dtolk n =
-  let device =
-    match st.st_devices with
-    | [ _ ] -> U.Single (Tolk.Device.name st.st_device)
-    | ds -> U.Multi (List.map Nx.Device.name ds)
-  in
   U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:dtolk
-    ~shape:(F.Tensor.shape_uop [ n ]) ~device ()
+    ~shape:(F.Tensor.shape_uop [ n ]) ~device:(program_device st) ()
 
 (* [local], each device's slice of a value at [p], as the whole value: under
    tolk's [Unshard] when [p] cuts an axis. *)
@@ -1138,13 +1139,16 @@ let depends_on_input st u =
    runs, by handing it the input's consumed storage or by copying. A program
    whose replays never take storage copies [t] itself: a kernel does it faster
    than replay. A [t] that is a staged loop's carry is not copied either: the
-   write lands in an empty buffer the loop fills (see [stage_scan]). [operands]
-   place the storage when [t] is a constant. *)
-let write_destination st t ~operands =
-  let device = List.find_map F.Tensor.device (t :: operands) in
+   write lands in an empty buffer the loop fills (see [stage_scan]). The storage
+   is at [place], [t]'s placement: a buffer of one slice per device when it is
+   split. *)
+let write_destination st t ~place =
   let u = F.Tensor.uop t in
+  let dtype = U.commit_dtype u in
   let empty () =
-    F.Creation.empty ~dtype:(F.Tensor.dtype t) ?device (F.Tensor.shape t)
+    whole_tensor place
+      (F.Creation.empty ~dtype ~device:(program_device st)
+         (Array.to_list (local_shape place (Array.of_list (F.Tensor.shape t)))))
   in
   let carry_writes =
     if U.has_buffer_identity u then List.assq_opt (U.buf_uop u) st.scan_writes
@@ -1171,7 +1175,11 @@ let write_destination st t ~operands =
           (U.buf_uop (F.Tensor.uop out), U.buf_uop u) :: st.prefills;
         out
       end
-      else F.Creation.clone ?device t
+      else
+        let out = F.Tensor.uop (empty ()) in
+        F.Tensor.of_uop
+          (U.after ~src:out
+             ~deps:[ U.store ~dst:out ~value:(U.cast ~src:u ~dtype) () ])
 
 (* Threefry lowering. The trace-level operation hashes int32 (key, counter)
    pairs laid out as consecutive elements; Tolk's primitive mixes uint64
@@ -1855,6 +1863,20 @@ let reshard st p q tt =
   | [ (axis, _) ] -> F.Creation.shard ~axis ~devices:names whole
   | _ -> unsupported "a value cut along several axes"
 
+(* [x] at [p] in [st]'s program, resharded there from where it lives. *)
+let resharded st p x =
+  let q = placement_in st x and tt = tolk_of st x in
+  if Nx.Placement.equal p q then tt else reshard st q p tt
+
+(* [x] as a kernel over values at [q] reads it: at [q], or as it is when it is a
+   copy on each device with one element along every axis [q] cuts. *)
+let aligned st q x =
+  if
+    Nx_effect.Grid.cuts (placement_in st x) = []
+    && List.for_all (fun (a, _) -> (shape_of x).(a) = 1) (Nx_effect.Grid.cuts q)
+  then tolk_of st x
+  else resharded st q x
+
 (* Where the result of the operation performing [eff] lives in [st]'s program:
    raises [Invalid_argument] as nx does when its operands cannot meet. *)
 let result_placement : type c. state -> c Effect.t -> Nx.Placement.t =
@@ -2295,25 +2317,23 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
       ->
         Some
           (fun k ->
-            let t = go data_template and index = go indices in
-            let src = go updates in
-            let r =
-              match (multi st, mode) with
-              | false, _ ->
-                  F.Op.scatter_indexed
-                    (write_destination st t ~operands:[ index; src ])
-                    ~dim:axis index src ~mode ~unique:unique_indices
-              | true, `Set -> F.Op.scatter t ~dim:axis index src
-              | true, `Add ->
-                  F.Op.scatter_reduce t ~dim:axis index src ~reduce:`Sum
-                    ~include_self:true ()
-            in
-            ret k (dt data_template) r)
+            (* Over a split destination each device writes its slice: the
+               updates and their positions are split alike off the write axis
+               and whole along it. *)
+            let place = placement_in st data_template in
+            let along = Nx_effect.Grid.uncut place ~axis in
+            ret k (dt data_template)
+              (F.Op.scatter_indexed
+                 (write_destination st (go data_template) ~place)
+                 ~dim:axis (aligned st along indices) (aligned st along updates)
+                 ~mode ~unique:unique_indices))
     (* The window write. A constant corner is a padded [v] selected over [t] in
        one pass. A traced corner is a scatter of [v]'s elements at their flat
        positions in [t], which are distinct and, the corner being clamped by the
-       frontend, inside [t]: its cost is [v]. Flat positions are int32, and a
-       sharded trace keeps the one-hot scatter, so beyond either the window is
+       frontend, inside [t]: its cost is [v]. Over a [t] split along its first
+       axis, the flat positions keep that split, and each device writes the
+       positions in its slice. Flat positions are int32, and a [t] split along a
+       later axis has none across its devices, so beyond either the window is
        read through a clamped gather per axis and masked. *)
     | E_update { t_in; starts; v } ->
         Some
@@ -2344,10 +2364,13 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 (F.Elementwise.where mask (F.Op.pad ~value:zero tv pads) tt)
             end
             else if
-              (not (multi st))
-              && Array.fold_left ( * ) 1 tshape <= Int32.to_int Int32.max_int
+              Array.fold_left ( * ) 1 tshape <= Int32.to_int Int32.max_int
+              && List.for_all
+                   (fun (a, _) -> a = 0)
+                   (Nx_effect.Grid.cuts (placement_in st t_in))
             then begin
-              let st_t = go starts in
+              let whole = Nx_effect.Grid.uncut (placement_in st t_in) ~axis:0 in
+              let st_t = aligned st whole starts and tv = aligned st whole v in
               let i32 n =
                 F.Creation.full ~buffer:false ~dtype:TD.int32 []
                   (F.Tensor.Sint n)
@@ -2383,7 +2406,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               let written =
                 F.Op.scatter_indexed
                   (F.Movement.reshape
-                     (write_destination st tt ~operands:[ index; src ])
+                     (write_destination st tt ~place:(placement_in st t_in))
                      [ Array.fold_left ( * ) 1 tshape ])
                   ~dim:0 index src ~mode:`Set ~unique:true
               in

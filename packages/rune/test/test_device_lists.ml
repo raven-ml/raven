@@ -195,6 +195,38 @@ let test_set_traced_window_on_the_split_axis () =
   check_window "traced window spanning both slices" (fun (w : Win.win) ->
       Nx.set [ Nx.D (w.pos, 2); Nx.A ] w.v w.x)
 
+(* A pool of [slots] rows of 4 by 2 values, split by [axis] over four devices,
+   receives rows 4 and 1 of [values]. *)
+let pool_rows ~axis =
+  let pool = Nx.create f32 [| 8; 4; 2 |] (arange 64) in
+  let slots = Nx.create Nx.int32 [| 2 |] [| 4l; 1l |] in
+  let values =
+    Nx.create f32 [| 2; 4; 2 |]
+      (Array.init 16 (fun i -> 100. +. float_of_int i))
+  in
+  let write slots values pool =
+    let indices =
+      Nx.broadcast_to [| 2; 4; 2 |] (Nx.reshape [| 2; 1; 1 |] slots)
+    in
+    Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values pool
+  in
+  let split x = Nx.place (Nx.Placement.sharded ~axis devs4) x in
+  let values = if axis = 0 then values else split values in
+  (write, split pool, slots, values)
+
+(* An indexed write into a split destination: each device writes the updates
+   that land in its slice, off the split axis and along it. *)
+let test_indexed_write_into_a_split_value () =
+  List.iter
+    (fun axis ->
+      let write, pool, slots, values = pool_rows ~axis in
+      let msg = Printf.sprintf "split along axis %d" axis in
+      let y = Rune.jit' (fun pool -> write slots values pool) pool in
+      equal ~msg:(msg ^ ": placement") placement (Nx.placement pool)
+        (Nx.placement y);
+      check_arr ~eps:0.0 ~msg (to_arr (write slots values pool)) y)
+    [ 0; 1 ]
+
 (* Residency: outputs stay on their devices; feeding an output back moves no
    bytes; reading gathers the slices. *)
 
@@ -747,6 +779,8 @@ let tests =
           test_grad_mean_keepdims;
         test "a window write on the split axis"
           test_set_window_on_the_split_axis;
+        test "an indexed write into a split value"
+          test_indexed_write_into_a_split_value;
         test "a traced window write on the split axis"
           test_set_traced_window_on_the_split_axis;
       ];
