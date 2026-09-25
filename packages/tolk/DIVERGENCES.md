@@ -16,6 +16,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   concurrency and uncertain failed-owner reclamation remain open in TODO.
   Reconsider if native ownership makes automatic teardown non-reentrant.
 
+- **Metal publishes completion after checking command status and timestamps.**
+  The target polls a GPU event and collects command buffers separately. Tolk's
+  native queue interpreter uses completion to authorize host access and storage
+  retirement, so it collects commands in submission order before advancing its
+  timeline. Failed commands latch an error and retain uncertain backing.
+  Coverage: native completion ordering, timestamp visibility, failure and
+  retirement tests, plus real Metal queue replay. Reconsider when event
+  signaling alone provides the same failure and lifetime guarantees.
+
 - **AMD queue retirement propagates HQD dequeue timeouts.** The target can
   suppress that timeout, but Tolk uses successful retirement to decide whether
   GPU-reachable backing may be freed during rollback. Reporting success without

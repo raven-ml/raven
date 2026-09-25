@@ -880,29 +880,78 @@ CAMLprim value caml_tolk_metal_compile(value v_src) {
 /* The compiled host program calls these ordinary C entry points. They never
    touch OCaml values and may execute while the OCaml runtime is released. */
 #include <pthread.h>
-#include <errno.h>
-#include <stdatomic.h>
 #include <time.h>
+typedef struct tolk_metal_pending {
+  id<MTLCommandBuffer> command;
+  uint64_t signal;
+  uint64_t *start, *finish;
+  struct tolk_metal_pending* next;
+} tolk_metal_pending;
+
 typedef struct {
   id<MTLCommandQueue> queue;
   id<MTLFence> fence;
   id<MTLResource>* resources;
   size_t count, capacity;
-  atomic_uint pending_timestamps;
-  atomic_uint_fast64_t completed;
-  atomic_int failed;
+  tolk_metal_pending *first, *last;
+  uint64_t completed;
   char error[512];
   pthread_mutex_t lock;
-  pthread_cond_t completion;
 } tolk_metal_hcq;
+
+/* All queue ownership and completion state is protected by ctx->lock. */
+static void tolk_metal_hcq_fail(tolk_metal_hcq* ctx, const char* message) {
+  if (ctx->error[0] == '\0')
+    snprintf(ctx->error, sizeof(ctx->error), "Metal queue: %s", message);
+}
+
+static void tolk_metal_hcq_collect(tolk_metal_hcq* ctx) {
+  while (ctx->first != NULL && ctx->error[0] == '\0') {
+    tolk_metal_pending* pending = ctx->first;
+    MTLCommandBufferStatus status = pending->command.status;
+    if (status == MTLCommandBufferStatusError) {
+      const char* message = pending->command.error.localizedDescription.UTF8String;
+      tolk_metal_hcq_fail(ctx, message != NULL ? message : "command buffer failed");
+      break;
+    }
+    if (status != MTLCommandBufferStatusCompleted) break;
+    if (pending->start != NULL) {
+      *pending->start = (uint64_t)(pending->command.GPUStartTime * 1e9);
+      *pending->finish = (uint64_t)(pending->command.GPUEndTime * 1e9);
+    }
+    /* Retire in submission order: readiness of a later command is not proof
+       that earlier commands or their profiling writes have been collected. */
+    if (pending->signal != 0) ctx->completed = pending->signal;
+    ctx->first = pending->next;
+    if (ctx->first == NULL) ctx->last = NULL;
+    [pending->command release];
+    free(pending);
+  }
+}
+
+static int tolk_metal_hcq_enqueue(tolk_metal_hcq* ctx, id<MTLCommandBuffer> command,
+                                  uint64_t signal, uint64_t* start, uint64_t* finish) {
+  tolk_metal_pending* pending = malloc(sizeof(*pending));
+  if (pending == NULL) {
+    tolk_metal_hcq_fail(ctx, "completion allocation failed");
+    return 0;
+  }
+  *pending = (tolk_metal_pending){[command retain], signal, start, finish, NULL};
+  if (ctx->last == NULL) ctx->first = pending;
+  else ctx->last->next = pending;
+  ctx->last = pending;
+  return 1;
+}
 
 static uint64_t tolk_metal_hcq_poll(uint64_t address) {
   tolk_metal_hcq* ctx = (tolk_metal_hcq*)(uintptr_t)address;
-  /* A GPU event can be signaled even when the command failed. Publish host
-     completion only after checking its status and collecting timestamps. */
-  if (atomic_load_explicit(&ctx->failed, memory_order_acquire)) return UINT64_MAX;
-  return atomic_load_explicit(&ctx->pending_timestamps, memory_order_acquire) == 0
-    ? atomic_load_explicit(&ctx->completed, memory_order_acquire) : 0;
+  @autoreleasepool {
+    pthread_mutex_lock(&ctx->lock);
+    tolk_metal_hcq_collect(ctx);
+    uint64_t value = ctx->error[0] != '\0' ? UINT64_MAX : ctx->completed;
+    pthread_mutex_unlock(&ctx->lock);
+    return value;
+  }
 }
 
 static void tolk_metal_hcq_update(uint64_t icb_address, uint64_t index,
@@ -915,46 +964,27 @@ static void tolk_metal_hcq_update(uint64_t icb_address, uint64_t index,
   }
 }
 
-static void tolk_metal_hcq_complete(tolk_metal_hcq* ctx, id<MTLCommandBuffer> completed,
-                                    uint64_t signal, uint64_t* start, uint64_t* finish) {
-  pthread_mutex_lock(&ctx->lock);
-  if (completed.status == MTLCommandBufferStatusError) {
-    if (!atomic_load_explicit(&ctx->failed, memory_order_relaxed)) {
-      snprintf(ctx->error, sizeof(ctx->error), "Metal queue: %s",
-               completed.error.localizedDescription.UTF8String);
-      atomic_store_explicit(&ctx->failed, 1, memory_order_release);
-    }
-  }
-  if (start != NULL) {
-    *start = (uint64_t)(completed.GPUStartTime * 1e9);
-    *finish = (uint64_t)(completed.GPUEndTime * 1e9);
-    atomic_fetch_sub_explicit(&ctx->pending_timestamps, 1, memory_order_release);
-  }
-  /* Completion handlers run in queue order. */
-  if (signal != 0) atomic_store_explicit(&ctx->completed, signal, memory_order_release);
-  pthread_cond_broadcast(&ctx->completion);
-  /* A successful host wait may release the context after this unlock. */
-  pthread_mutex_unlock(&ctx->lock);
-}
-
 static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t value, uint64_t profile) {
   tolk_metal_hcq* ctx = (tolk_metal_hcq*)(uintptr_t)address;
-  if (atomic_load_explicit(&ctx->failed, memory_order_acquire)) return;
   @autoreleasepool {
-    if (header[2] != 0) [(id<MTLCommandBuffer>)(uintptr_t)header[2] release];
+    pthread_mutex_lock(&ctx->lock);
+    tolk_metal_hcq_collect(ctx);
+    if (ctx->error[0] != '\0') { pthread_mutex_unlock(&ctx->lock); return; }
     uint64_t batches = profile ? header[1] : 1;
     for (uint64_t batch = 0; batch < batches; batch++) {
       id<MTLCommandBuffer> command = [ctx->queue commandBuffer];
       id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+      if (command == nil || encoder == nil) {
+        tolk_metal_hcq_fail(ctx, "command buffer or encoder creation failed");
+        break;
+      }
       [encoder waitForFence:ctx->fence];
-      pthread_mutex_lock(&ctx->lock);
       if (ctx->count != 0)
         [encoder useResources:ctx->resources count:ctx->count
                         usage:MTLResourceUsageRead | MTLResourceUsageWrite];
-      pthread_mutex_unlock(&ctx->lock);
-      if (header[3]) {
-        for (uint64_t i = 0; i < header[4]; i++) {
-          tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)header[5 + i];
+      if (header[2]) {
+        for (uint64_t i = 0; i < header[3]; i++) {
+          tolk_metal_program* program = (tolk_metal_program*)(uintptr_t)header[4 + i];
           [encoder setComputePipelineState:program->pipeline];
           [encoder dispatchThreadgroups:MTLSizeMake(0, 0, 0)
                    threadsPerThreadgroup:MTLSizeMake(0, 0, 0)];
@@ -964,19 +994,13 @@ static void tolk_metal_hcq_submit(uint64_t address, uint64_t* header, uint64_t v
                              withRange:NSMakeRange(profile ? batch : 0, profile ? 1 : header[1])];
       [encoder updateFence:ctx->fence];
       [encoder endEncoding];
-      uint64_t* start = profile ? (uint64_t*)(uintptr_t)header[5 + header[4] + 2 * batch] : NULL;
-      uint64_t* finish = profile ? (uint64_t*)(uintptr_t)header[6 + header[4] + 2 * batch] : NULL;
-      if (profile) atomic_fetch_add_explicit(&ctx->pending_timestamps, 1, memory_order_relaxed);
+      uint64_t* start = profile ? (uint64_t*)(uintptr_t)header[4 + header[3] + 2 * batch] : NULL;
+      uint64_t* finish = profile ? (uint64_t*)(uintptr_t)header[5 + header[3] + 2 * batch] : NULL;
       uint64_t signal = batch + 1 == batches ? value : 0;
-      [command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
-        tolk_metal_hcq_complete(ctx, completed, signal, start, finish);
-      }];
-      if (batch + 1 == batches) {
-        [command retain];
-        header[2] = (uint64_t)(uintptr_t)command;
-      }
+      if (!tolk_metal_hcq_enqueue(ctx, command, signal, start, finish)) break;
       [command commit];
     }
+    pthread_mutex_unlock(&ctx->lock);
   }
 }
 
@@ -986,17 +1010,10 @@ CAMLprim value caml_tolk_metal_hcq_create(value v_queue) {
   result = caml_copy_nativeint(0);
   tolk_metal_hcq* ctx = calloc(1, sizeof(*ctx));
   if (ctx == NULL) caml_raise_out_of_memory();
-  atomic_init(&ctx->pending_timestamps, 0);
-  atomic_init(&ctx->completed, 0);
-  atomic_init(&ctx->failed, 0);
   ctx->queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
   ctx->fence = [ctx->queue.device newFence];
   if (ctx->fence == nil || pthread_mutex_init(&ctx->lock, NULL) != 0) {
     [ctx->fence release]; free(ctx); caml_failwith("Metal HCQ context creation failed");
-  }
-  if (pthread_cond_init(&ctx->completion, NULL) != 0) {
-    pthread_mutex_destroy(&ctx->lock);
-    [ctx->fence release]; free(ctx); caml_failwith("Metal HCQ completion creation failed");
   }
   Nativeint_val(result) = (intnat)ctx;
   CAMLreturn(result);
@@ -1005,7 +1022,11 @@ CAMLprim value caml_tolk_metal_hcq_create(value v_queue) {
 CAMLprim value caml_tolk_metal_hcq_release(value v_ctx) {
   CAMLparam1(v_ctx);
   tolk_metal_hcq* ctx = (tolk_metal_hcq*)Nativeint_val(v_ctx);
-  pthread_cond_destroy(&ctx->completion);
+  pthread_mutex_lock(&ctx->lock);
+  tolk_metal_hcq_collect(ctx);
+  int pending = ctx->first != NULL || ctx->error[0] != '\0';
+  pthread_mutex_unlock(&ctx->lock);
+  if (pending) caml_failwith("Metal queue has unretired commands");
   pthread_mutex_destroy(&ctx->lock);
   [ctx->fence release];
   free(ctx->resources);
@@ -1046,21 +1067,25 @@ CAMLprim value caml_tolk_metal_hcq_wait(value v_ctx, value v_value) {
   tolk_metal_hcq* ctx = (tolk_metal_hcq*)Nativeint_val(v_ctx);
   uint64_t target = (uint64_t)Int64_val(v_value);
   caml_release_runtime_system();
-  struct timespec deadline;
-  clock_gettime(CLOCK_REALTIME, &deadline);
-  deadline.tv_sec += 30;
+  struct timespec started, now;
+  clock_gettime(CLOCK_MONOTONIC, &started);
+  int timed_out = 0;
+  while (tolk_metal_hcq_poll((uint64_t)(uintptr_t)ctx) < target) {
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if ((double)(now.tv_sec - started.tv_sec) + (double)(now.tv_nsec - started.tv_nsec) / 1e9 >= 30.0) {
+      timed_out = 1;
+      break;
+    }
+    struct timespec pause = {0, 10000};
+    nanosleep(&pause, NULL);
+  }
   pthread_mutex_lock(&ctx->lock);
-  int status = 0;
-  while (tolk_metal_hcq_poll((uint64_t)(uintptr_t)ctx) < target && status == 0)
-    status = pthread_cond_timedwait(&ctx->completion, &ctx->lock, &deadline);
-  int failed = atomic_load_explicit(&ctx->failed, memory_order_acquire);
   char error[sizeof(ctx->error)];
-  if (failed) memcpy(error, ctx->error, sizeof(error));
+  memcpy(error, ctx->error, sizeof(error));
   pthread_mutex_unlock(&ctx->lock);
   caml_acquire_runtime_system();
-  if (failed) caml_failwith(error);
-  if (status == ETIMEDOUT) caml_failwith("Metal queue completion wait timed out");
-  if (status != 0) caml_failwith("Metal queue completion wait failed");
+  if (error[0] != '\0') caml_failwith(error);
+  if (timed_out) caml_failwith("Metal queue completion wait timed out");
   CAMLreturn(Val_unit);
 }
 

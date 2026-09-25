@@ -375,7 +375,7 @@ module Queue = struct
                  Icb.encode indirect ~index:i ~program:program.Device.handle
                    ~arg_buf:raw.handle ~arg_offset:c.offset ~global:c.global ~local:c.local) commands;
              let programs = List.rev !programs in
-             let values = [indirect.handle; Nativeint.of_int indirect.count; 0n;
+             let values = [indirect.handle; Nativeint.of_int indirect.count;
                Nativeint.of_int (Helpers.getenv "FIX_METAL_ICB" (Bool.to_int state.State.needs_icb_fix));
                Nativeint.of_int (List.length programs)] @ List.map (fun p -> p.Device.handle) programs in
              let bytes = Bytes.create (8 * List.length values) in
@@ -390,10 +390,6 @@ module Queue = struct
              raise exn) in
         let free raw size spec =
           State.synchronize state;
-          let bytes = Bytes.create 8 in
-          Ffi.buffer_copyout bytes raw.Metal_buffer.handle (desc.header + 16);
-          let command = Int64.to_nativeint (Bytes.get_int64_le bytes 0) in
-          if command <> 0n then Ffi.command_buffer_wait command;
           Option.iter (fun (icb, programs) -> Icb.release icb;
               List.iter (fun p -> p.Device.free ()) programs) !live;
           live := None;
@@ -472,7 +468,7 @@ module Queue = struct
         let profile = !stamps <> [] in
         if profile && List.length !stamps <> 2 * List.length !commands then
           invalid_arg "Metal queue: timestamps must bracket each command";
-        let stamp_offset = header + 8 * (5 + List.length !commands) in
+        let stamp_offset = header + 8 * (4 + List.length !commands) in
         List.iteri (fun i stamp -> rows := (stamp_offset + 8 * i, stamp) :: !rows)
           (List.rev !stamps);
         let size = stamp_offset + 8 * List.length !stamps in

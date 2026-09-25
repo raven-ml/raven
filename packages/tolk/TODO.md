@@ -35,12 +35,6 @@ with their rationale and validation; commit count is not an acceptance metric.
   reallocation. Review this together with Rune arena retirement and queued
   foreign users. Remove unused allocator capability fields (`copy_from_disk`,
   its flag, and the redundant transfer flag) rather than preserve dead APIs.
-- Make Metal completion publication monotonic and retire callback ownership
-  safely. Verify cross-command callback ordering or collect completions in
-  submission order; an earlier completed command must remain complete while a
-  later profiled command is pending. Cover reordered callbacks, timestamp
-  visibility, sticky failures and context retirement. Account for any retained
-  difference from the target's command-buffer collection model.
 - Give uncertain failed teardown an explicit ownership policy: finalizer
   failures currently retain closures process-wide with no reclamation after
   confirmed device retirement. Justify that limit or attach retained owners

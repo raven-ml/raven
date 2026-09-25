@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Metal queue completion now collects command buffers in submission order.
+  Later pending profiling work cannot hide an earlier completion, and host
+  waits observe command failures and timestamps before publishing progress.
+
 - Beam search now times the same compiled queue submissions used for GPU
   execution, including device timestamps and supported timeout budgets.
   Temporary timing programs are released only after successful completion.

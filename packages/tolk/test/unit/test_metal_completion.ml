@@ -2,38 +2,88 @@
 
 open Windtrap
 
-external setup : bool -> nativeint = "caml_test_metal_completion_setup"
-external complete : int64 -> string -> bool -> unit = "caml_test_metal_complete"
-external poll : unit -> int64 = "caml_test_metal_completion_poll"
-external stamps : unit -> int64 * int64 = "caml_test_metal_completion_stamps"
+external setup : unit -> nativeint = "caml_test_metal_completion_setup"
+external enqueue : nativeint -> int64 -> int -> nativeint = "caml_test_metal_enqueue"
+external complete : nativeint -> nativeint -> string -> unit = "caml_test_metal_complete"
+external poll : nativeint -> int64 = "caml_test_metal_completion_poll"
+external stamps : nativeint -> int -> int64 * int64 = "caml_test_metal_completion_stamps"
+external released : nativeint -> int = "caml_test_metal_released"
 external wait : nativeint -> int64 -> unit = "caml_tolk_metal_hcq_wait"
-external failed_submit : unit -> unit = "caml_test_metal_failed_submit"
+external release : nativeint -> unit = "caml_tolk_metal_hcq_release"
+external failed_submit : nativeint -> unit = "caml_test_metal_failed_submit"
+external cleanup : nativeint -> unit = "caml_test_metal_completion_cleanup"
+
+let with_context f =
+  let context = setup () in
+  Fun.protect ~finally:(fun () -> cleanup context) (fun () -> f context)
+
+let completed_stamps = 1_000_000_000L, 2_000_000_000L
+let no_stamps = 0L, 0L
 
 let successful_completion () =
-  List.iter (fun profile ->
-      let context = setup profile in
-      equal int64 0L (poll ());
+  List.iter (fun profile -> with_context (fun context ->
+      let command = enqueue context 1L (if profile then 0 else -1) in
+      equal int64 0L (poll context);
       wait context 0L;
-      let worker = Domain.spawn (fun () -> complete 1L "" profile) in
+      let worker = Domain.spawn (fun () -> complete context command "") in
       Fun.protect ~finally:(fun () -> Domain.join worker) (fun () -> wait context 1L);
-      equal int64 1L (poll ());
-      equal (pair int64 int64)
-        (if profile then 1_000_000_000L, 2_000_000_000L else 0L, 0L)
-        (stamps ())) [false; true]
+      equal int64 1L (poll context);
+      equal (pair int64 int64) (if profile then completed_stamps else no_stamps)
+        (stamps context 0);
+      equal int 1 (released context))) [false; true]
 
-let failed_completion () =
-  let context = setup false in
+let completed_before_later_profile () = with_context (fun context ->
+  let first = enqueue context 1L (-1) in
+  complete context first "";
+  equal int64 1L (poll context);
+  let later = enqueue context 2L 0 in
+  equal ~msg:"later profiling cannot hide an already completed submission"
+    int64 1L (poll context);
+  wait context 1L;
+  equal (pair int64 int64) no_stamps (stamps context 0);
+  complete context later "";
+  equal int64 2L (poll context);
+  equal (pair int64 int64) completed_stamps (stamps context 0))
+
+let ordered_collection () = with_context (fun context ->
+  let first = enqueue context 0L 0 in
+  let last = enqueue context 1L 1 in
+  complete context last "";
+  equal ~msg:"a later ready command cannot publish the submission" int64 0L (poll context);
+  equal int 0 (released context);
+  equal (pair int64 int64) no_stamps (stamps context 1);
+  complete context first "";
+  equal int64 1L (poll context);
+  List.iter (fun slot -> equal (pair int64 int64) completed_stamps (stamps context slot)) [0; 1];
+  equal int 2 (released context))
+
+let failed_completion () = with_context (fun context ->
+  let first = enqueue context 1L 0 in
+  let later = enqueue context 2L 1 in
+  complete context later "";
+  complete context first "injected GPU fault";
   let error = Failure "Metal queue: injected GPU fault" in
-  let worker = Domain.spawn (fun () -> complete 1L "injected GPU fault" false) in
-  Fun.protect ~finally:(fun () -> Domain.join worker) (fun () ->
-      raises error (fun () -> wait context 1L));
-  equal ~msg:"native fence loops unblock on failure" int64 Int64.minus_one (poll ());
+  raises error (fun () -> wait context 1L);
+  equal ~msg:"native fence loops unblock on failure" int64 Int64.minus_one (poll context);
   raises ~msg:"preparation reports the latched error" error (fun () -> wait context 0L);
-  failed_submit ();
-  complete 2L "later error" false;
-  raises ~msg:"preserve the first fault" error (fun () -> wait context 2L)
+  failed_submit context;
+  complete context later "later error";
+  raises ~msg:"preserve the first fault" error (fun () -> wait context 2L);
+  equal ~msg:"failure retains command ownership" int 0 (released context);
+  raises (Failure "Metal queue has unretired commands") (fun () -> release context))
+
+let context_retirement () = with_context (fun context ->
+  let command = enqueue context 1L (-1) in
+  raises (Failure "Metal queue has unretired commands") (fun () -> release context);
+  equal int 0 (released context);
+  complete context command "";
+  wait context 1L;
+  equal ~msg:"successful wait retires native command ownership" int 1 (released context))
 
 let () = run __FILE__ [
   test "host waits observe completion and profiling writes" successful_completion;
-  test "GPU failures stop submissions and reach host waits" failed_completion;
+  test "completed work does not wait for later profiling" completed_before_later_profile;
+  test "completion is collected in submission order" ordered_collection;
+  test "GPU failures stop submissions and retain command ownership" failed_completion;
+  test "context retirement rejects unfinished commands" context_retirement;
 ]
