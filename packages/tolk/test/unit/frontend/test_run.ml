@@ -301,6 +301,23 @@ let large_gather_tests =
           let table = param 0 Tolk_uop.Dtype.float32 [ rows; 4 ] in
           let index = param 1 Tolk_uop.Dtype.int32 [ 8; 4 ] in
           equal int 1 (count_kernels (Op.gather table ~dim:0 index)));
+      test "gather of a comparison on a narrowed int64" (fun () ->
+          (* Reduce collapse lifted the subtraction out of the comparison and
+             back in again until it detected a rewrite cycle. *)
+          let x =
+            El.contiguous
+              (Dt.cast (Run.of_int_array ~shape:[ 2 ] [| 5; 3 |]) Tolk_uop.Dtype.int64)
+          in
+          let s =
+            Dt.cast
+              (El.sub x (Creation.const_like x (T.Sint (1 lsl 31))))
+              Tolk_uop.Dtype.int32
+          in
+          check_floats [| 0. |]
+            (Op.gather
+               (Dt.cast (El.eq s (Creation.const_like s (T.Sint 7))) Tolk_uop.Dtype.float32)
+               ~dim:0
+               (Run.of_int_array ~shape:[ 1 ] [| 1 |])));
       test "gather over 65536 rows reads the indexed rows" (fun () ->
           let table =
             fa ~shape:[ rows; 2 ]
