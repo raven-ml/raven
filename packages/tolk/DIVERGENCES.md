@@ -443,6 +443,23 @@ delete it rather than registering it.
   collective needs. Coverage: `test/unit/engine/test_collectives.ml` "a
   realized allreduce of a symbolic slice keeps its values".
 
+- **A call that stores into a view argument raises**
+  (`schedule/indexing.ml` `check_written_args`, called from
+  `realize_custom_kernel_srcs` and from `engine/schedule.ml`
+  `lower_sink_to_linear`). In the realize map, an argument that is not
+  storage (an `always_contiguous` node, possibly reshaped) is scheduled as a
+  fresh buffer holding a copy of its values: right for an input, but a call
+  that stores into it writes the copy. A precompiled call built before
+  scheduling reaches the realize map with its body already lowered, and a
+  non-contiguous view argument reaches it as the flat bytes from the view's
+  offset, the wrong layout. The reference does both silently. Tolk raises
+  `Invalid_argument` naming the call: in the realize map for any view, where
+  a body is lowered for a non-contiguous one (a contiguous view is a valid
+  byte range, as a realization's own outputs are). The collectives pass their
+  whole allocation. Coverage:
+  `test/unit/engine/test_collectives.ml` "a call storing into a view argument
+  raises".
+
 - **`Creation.shard` splits a replicated value where it lives**
   (`frontend/creation.ml` `shard`). The reference raises on any multi-device
   source. A value replicated on exactly the target devices is split without a

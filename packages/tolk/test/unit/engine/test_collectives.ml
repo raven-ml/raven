@@ -275,6 +275,58 @@ let check_replicas_equal ~msg = function
             (Bytes.equal first replica))
         rest
 
+(* A precompiled call that stores [x : [4; 2]] into the first two columns of a
+   [4; 4] allocation, the view given as its argument. *)
+let call_through_view () =
+  let x =
+    C.clone ~device:(U.Single "CPU:1")
+      (host ~shape:[ 4; 2 ] (Array.init 8 float_of_int))
+  in
+  Run.realize_many [ x ];
+  let alloc =
+    U.alloc ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single "CPU:1")
+      ~dtype:Dtype.float32 ~shape:(U.const_int 16) ()
+  in
+  let view =
+    U.shrink
+      ~src:(U.reshape ~src:alloc ~shape:(T.shape_uop [ 4; 4 ]))
+      ~offset:(T.shape_uop [ 0; 0 ])
+      ~size:(T.shape_uop [ 4; 2 ])
+  in
+  let dst = U.param_like view ~slot:0 in
+  let info : U.call_info =
+    {
+      grad_fxn = None;
+      name = Some "through_view";
+      precompile = true;
+      precompile_backward = false;
+      dtype = Dtype.void;
+      aux = None;
+    }
+  in
+  let call =
+    U.call
+      ~body:
+        (U.sink
+           [
+             U.after ~src:dst
+               ~deps:[ U.store ~dst ~value:(U.param_like (T.uop x) ~slot:1) () ];
+           ])
+      ~args:[ view; U.contiguous ~src:(T.uop x) () ]
+      ~info
+  in
+  Run.realize_many
+    [ Rd.sum ~axis:[ 0; 1 ] (T.of_uop (U.after ~src:view ~deps:[ call ])) ]
+
+let call_tests =
+  test "a call storing into a view argument raises" (fun () ->
+      raises_match
+        (function
+          | Invalid_argument message ->
+              String.starts_with ~prefix:"through_view:" message
+          | _ -> false)
+        call_through_view)
+
 let allreduce_tests =
   group "allreduce"
     [
@@ -733,6 +785,7 @@ let () =
               equal (list (pair string int)) [ ("CPU:1", 1024) ] peaks;
               Device.Buffer.deallocate kept);
         ];
+      call_tests;
       allreduce_tests;
       gather_tests;
       reshard_tests;

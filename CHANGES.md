@@ -511,6 +511,10 @@ thread.
 
 ### Tolk (new)
 
+- A precompiled call or custom kernel that stores into an argument which is a
+  view, not storage, raises `Invalid_argument` naming the call. The view was
+  scheduled as a copy of its values, so the writes were silently lost.
+
 - A realized allreduce whose result is a symbolic slice of an inner axis
   returned zeros; it now returns the sum. The reduction wrote a copy of the
   result's view instead of its storage.

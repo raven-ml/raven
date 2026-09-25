@@ -554,6 +554,7 @@ let lower_sink_to_linear ~get_kernel_graph call : U.t option =
   match U.as_call call with
   | Some {body = sink; args; info} when info.precompile && U.op sink = Ops.Sink
       && Option.is_none (U.as_kernel_info sink) ->
+      Indexing.check_written_args ~views:true call;
       let st = Unix.gettimeofday () in
       let cache_key = schedule_cache_key sink in
       let cache_hit = ref false in

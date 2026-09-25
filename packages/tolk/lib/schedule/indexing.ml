@@ -222,12 +222,54 @@ let data_srcs op (srcs : U.t array) =
 let mark_non_contiguous ctx s =
   if not (always_contiguous (U.op (U.base s))) then realize_set ctx s Marked
 
-(* Realize the inputs of custom kernel calls. *)
+(* The parameter slots a call body stores into. *)
+let written_slots body =
+  let rec param u =
+    match U.op u with
+    | Ops.Param -> U.as_param u
+    | Ops.Mselect | Ops.After | Ops.Bitcast | Ops.Unshard -> param (U.src u).(0)
+    | op when Ops.Group.is_movement op -> param (U.src u).(0)
+    | _ -> None
+  in
+  List.filter_map (fun n ->
+      match U.as_store n with
+      | Some { dst; _ } ->
+          Option.map (fun (p : U.param_view) -> p.param.slot) (param dst)
+      | None -> None)
+    (U.toposort ~enter_calls:false body)
+
+let rec strip_reshapes s = if U.op s = Ops.Reshape then strip_reshapes (U.src s).(0) else s
+
+let check_written_args ~views c =
+  let src = U.src c in
+  let storage s =
+    always_contiguous (U.op (strip_reshapes s))
+    || (views && Option.is_some (U.contiguous_view s))
+  in
+  let views = List.filter (fun slot -> not (storage src.(slot + 1)))
+      (List.init (Array.length src - 1) Fun.id) in
+  if views <> [] then begin
+    let written = written_slots src.(0) in
+    List.iter (fun slot ->
+        if List.mem slot written then
+          invalid_arg
+            (Printf.sprintf
+               "%s: the call stores into argument %d, which is not storage; \
+                pass its storage and view it in the body"
+               (match U.as_call c with
+                | Some { info = { name = Some name; _ }; _ } -> name
+                | _ -> "call")
+               slot)) views
+  end
+
+(* Realize the inputs of custom kernel calls. The tinygrad counterpart also
+   realizes an argument the call stores into, into a copy that the call then
+   writes in vain; tolk raises instead. *)
 let realize_custom_kernel_srcs ctx c =
-  let rec strip s = if U.op s = Ops.Reshape then strip (U.src s).(0) else s in
+  check_written_args ~views:false c;
   Array.iteri (fun i s ->
       if i > 0 then begin
-        let s = strip s in
+        let s = strip_reshapes s in
         if not (always_contiguous (U.op s)) then begin
           realize_set ctx s Marked;
           Hashtbl.replace ctx.non_removable (U.tag s) ()
