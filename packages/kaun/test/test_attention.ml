@@ -579,9 +579,6 @@ let cache slots = cache_at Nx.float32 slots
 let call p c index x = Attention.cached ~head_dim ~rope p c index x
 let close ~msg a b = equal ~msg (array (float 1e-5)) (flat a) (flat b)
 
-(* The slots of a cache, without its scratch row. *)
-let slots_of leaf = Nx.slice [ R (0, Nx.dim 0 leaf - 1) ] leaf
-
 let test_cached_prefill_matches_apply () =
   Nx.Rng.with_key (Nx.Rng.key 20) @@ fun () ->
   let p = layer Nx.float32 in
@@ -648,11 +645,10 @@ let test_cached_window () =
 (* A prompt fed whole, in chunks, or token by token gives the same outputs. *)
 let test_index_pool () =
   let pool = Cache_index.pool ~slots:3 Nx.int32 [| 2; 5 |] in
-  shape_is ~msg:"slots and the scratch row, then the slot's shape" [| 4; 2; 5 |]
-    pool;
+  shape_is ~msg:"slots, then the slot's shape" [| 3; 2; 5 |] pool;
   is_true ~msg:"zeros" (Array.for_all (fun v -> v = 0l) (flat pool));
-  shape_is ~msg:"no slot" [| 1 |] (Cache_index.pool ~slots:0 Nx.float32 [||]);
-  shape_is ~msg:"an attention cache is two pools" [| 4; 2; 2 |] (cache 3).keys;
+  shape_is ~msg:"no slot" [| 0 |] (Cache_index.pool ~slots:0 Nx.float32 [||]);
+  shape_is ~msg:"an attention cache is two pools" [| 3; 2; 2 |] (cache 3).keys;
   raises
     (Invalid_argument "Cache_index.pool: slots must not be negative, got -1")
     (fun () -> Cache_index.pool ~slots:(-1) Nx.float32 [| 2 |])
@@ -702,8 +698,7 @@ let numbered ~batch ~from n =
 let bools t = Array.to_list (Nx.to_array t)
 
 (* Positions 0 to 4 over a shuffled table whose column 3 is unallocated. The
-   scratch row and the slot of column 5, which no position has reached, hold
-   NaN. *)
+   slot of column 5, which no position has reached, holds NaN. *)
 let selection_fixture () =
   let slots = [| [| 3; 0; 4; -1; 2; 1 |] |] in
   let _, pool =
@@ -713,7 +708,7 @@ let selection_fixture () =
       (Cache_index.pool ~slots:5 Nx.float32 [| 1 |])
   in
   let nan = Nx.full Nx.float32 [| 1; 1 |] nan in
-  let pool = Nx.set [ Nx.R (5, 6) ] nan (Nx.set [ Nx.R (1, 2) ] nan pool) in
+  let pool = Nx.set [ Nx.R (1, 2) ] nan pool in
   (index_at ~pos:[| [| 2; 4 |] |] ~slots, pool)
 
 (* The call's tokens, at positions 2 and 4, store new values there. *)
@@ -743,9 +738,7 @@ let test_index_select () =
     [ true; false; true; false; true; false; false; true; true; true ]
     (bools (Cache_index.mask selected));
   let _, stored = Cache_index.extend index tokens_2_4 pool in
-  values_are ~msg:"what is stored does not change" ~tol:0.
-    (flat (slots_of stored))
-    (slots_of pool');
+  values_are ~msg:"what is stored does not change" ~tol:0. (flat stored) pool';
   let windowed = Cache_index.select columns (Cache_index.window 2 index) in
   let seen, _ = Cache_index.extend windowed tokens_2_4 pool in
   values_are ~msg:"under a window, a column below it reads as zero" ~tol:0.
@@ -825,6 +818,55 @@ let test_index_select_whole () =
     (bools (Cache_index.mask selected));
   is_true ~msg:"and nothing is kept" (pool == pool')
 
+(* A selection may be a broadcast view, on a whole index too. *)
+let test_index_select_broadcast () =
+  let index = Cache_index.whole ~batch:1 ~seq:3 () in
+  let columns =
+    Nx.broadcast_to [| 1; 3; 2 |] (int32s [| 1; 1; 2 |] [| 0; 2 |])
+  in
+  let selected = Cache_index.select columns index in
+  let seen, _ =
+    Cache_index.extend selected
+      (Nx.create Nx.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |])
+      (Nx.zeros Nx.float32 [| 0; 1 |])
+  in
+  values_are ~msg:"token 0 and, once seen, token 2" ~tol:0.
+    [| 1.; 0.; 1.; 0.; 1.; 3. |]
+    seen
+
+(* One slot, so the pool's slot axis has extent 1: a token that stores nothing
+   leaves the slot as a token that stores there left it, eagerly and
+   compiled. *)
+let test_index_one_slot () =
+  let stored ~pos ~table =
+    let values =
+      Nx.create Nx.float32 [| 1; 2; 2; 4 |]
+        (Array.init 16 (fun i -> if i < 8 then 10. else 20.))
+    in
+    let pool = Nx.zeros Nx.float32 [| 1; 2; 4 |] in
+    let f pos =
+      snd
+        (Cache_index.extend
+           (Cache_index.make ~pos
+              ~table:(int32s [| 1; Array.length table |] table)
+              ())
+           values pool)
+    in
+    let pos = int32s [| 1; 2 |] pos in
+    (f pos, Rune.jit Nx.Ptree.(tensor @-> returns tensor) f pos)
+  in
+  List.iter
+    (fun (msg, pos, table, expected) ->
+      let eager, compiled = stored ~pos ~table in
+      values_are ~msg:(msg ^ ", eager") ~tol:0. (Array.make 8 expected) eager;
+      values_are ~msg:(msg ^ ", compiled") ~tol:0. (Array.make 8 expected)
+        compiled)
+    [
+      ("padding after the token", [| 0; -1 |], [| 0 |], 10.);
+      ("padding before the token", [| -1; 0 |], [| 0 |], 20.);
+      ("an unallocated column before it", [| 0; 1 |], [| -1; 0 |], 20.);
+    ]
+
 (* The selection is a tensor of the index: its structure walks it, [advance]
    drops it. *)
 let test_index_select_structure () =
@@ -882,9 +924,7 @@ let test_index_select_compiled () =
     (fun columns ->
       let eager, compiled = run columns in
       values_are ~msg:"what is read" ~tol:0. (flat eager.seen) compiled.seen;
-      values_are ~msg:"what is stored" ~tol:0.
-        (flat (slots_of eager.pool))
-        (slots_of compiled.pool))
+      values_are ~msg:"what is stored" ~tol:0. (flat eager.pool) compiled.pool)
     [ [| 1; 3; 2; -1; 1; 5; 6; 0; 4; 0 |]; [| 0; 1; 2; 3; 4; 4; 3; 2; 1; 0 |] ]
 
 (* Blocks of positions. With values numbered by position, a block holds the
@@ -916,7 +956,7 @@ let test_index_every () =
     Cache_index.extend index (numbered ~batch:1 ~from:0 10) (block_pool ())
   in
   values_are ~msg:"only a block's last token stores, at the block's slot"
-    ~tol:0. [| 8.; 0.; 4. |] (slots_of pool);
+    ~tol:0. [| 8.; 0.; 4. |] pool;
   values_are ~msg:"a block is seen once closed" ~tol:0. [| 4.; 8.; 0. |] seen;
   equal ~msg:"position t sees block j when (j + 1) * 4 <= t + 1" (list bool)
     (closed ~blocks:3 from0)
@@ -940,7 +980,7 @@ let test_index_every () =
       (List.init 12 Fun.id)
   in
   values_are ~msg:"token by token stores the same blocks" ~tol:0.
-    [| 8.; 12.; 4. |] (slots_of pool);
+    [| 8.; 12.; 4. |] pool;
   (* 10 positions in 3 blocks: the last block reaches past the positions. *)
   let ten =
     Cache_index.make
@@ -957,8 +997,7 @@ let test_index_every () =
     (positions (Cache_index.every 4 ten))
 
 (* A padded token, a lane outside the table and an unallocated block store
-   nothing, and the scratch row they write is never read. Every value is
-   nonzero. *)
+   nothing. Every value is nonzero. *)
 let test_index_every_addresses () =
   let index =
     Cache_index.every 4
@@ -978,8 +1017,7 @@ let test_index_every_addresses () =
     ~msg:
       "position 3 stores block 0; block 1 is unallocated, padding and the lane \
        outside the table store nothing"
-    ~tol:0. [| 0.; 0.; 14. |] (slots_of pool);
-  is_true ~msg:"the scratch row holds a store" (Nx.item [ 3; 0 ] pool <> 0.);
+    ~tol:0. [| 0.; 0.; 14. |] pool;
   values_are ~msg:"yet an unallocated block reads as zero" ~tol:0.
     [| 14.; 0.; 0.; 0.; 0.; 0. |]
     seen
@@ -993,7 +1031,7 @@ let test_index_every_window () =
     (list bool)
     [ false; false; false; false; true; false; false; false; true ]
     (bools (Cache_index.mask window));
-  let pool = Nx.create Nx.float32 [| 4; 1 |] [| 8.; 0.; 4.; 0. |] in
+  let pool = Nx.create Nx.float32 [| 3; 1 |] [| 8.; 0.; 4. |] in
   let seen, _ =
     Cache_index.extend window
       (Nx.create Nx.float32 [| 1; 3; 1 |] [| 99.; 11.; 12. |])
@@ -1009,7 +1047,7 @@ let test_index_every_window () =
 (* A selection at stride 4 chooses blocks: a block not yet closed reads as zero
    and is masked, even where its slot holds something. *)
 let test_index_every_select () =
-  let pool = Nx.create Nx.float32 [| 4; 1 |] [| 0.; nan; 4.; nan |] in
+  let pool = Nx.create Nx.float32 [| 3; 1 |] [| 0.; nan; 4. |] in
   let columns = int32s [| 1; 2; 4 |] [| 1; 0; 2; -1; 1; 0; 2; 3 |] in
   let index =
     Cache_index.select columns (Cache_index.every 4 (blocks_at [| 5; 7 |]))
@@ -1083,7 +1121,7 @@ let test_index_every_rows () =
   in
   values_are ~msg:"sequence b's block j is slot 3 b + j" ~tol:0.
     [| 4.; 0.; 0.; 4.; 0.; 0. |]
-    (slots_of pool)
+    pool
 
 let test_index_every_rejects () =
   let rows = Cache_index.rows ~every:[ 4; 128 ] ~context:12 [| 4 |] in
@@ -1144,7 +1182,7 @@ let test_index_every_rejects () =
     Cache_index.extend unallocated (numbered ~batch:1 ~from:0 4) (block_pool ())
   in
   values_are ~msg:"map reaches the tables of blocks" ~tol:0. [| 0.; 0.; 0. |]
-    (slots_of pool);
+    pool;
   raises
     (Invalid_argument
        "Nx.Ptree.map2: every: int 4 in the first value, int 1 in the second")
@@ -1245,7 +1283,7 @@ let feed_stream ?(step = stream) calls =
         } )
       calls
   in
-  (List.rev ys, slots_of s.entries)
+  (List.rev ys, s.entries)
 
 let test_index_every_stream () =
   let expected = stream_expected (List.init 12 Fun.id) in
@@ -1429,7 +1467,7 @@ let test_cached_update_is_functional () =
       (Cache_index.rows ~context:4 [| 2 |])
       (Nx.randn Nx.float32 [| 1; 2; 8 |])
   in
-  values_are ~msg:"the argument is untouched" ~tol:0.0 (Array.make 20 0.0)
+  values_are ~msg:"the argument is untouched" ~tol:0.0 (Array.make 16 0.0)
     c.Attention.Cache.keys;
   is_true ~msg:"the result holds the new keys"
     (Array.exists (fun v -> v <> 0.0) (flat c'.Attention.Cache.keys));
@@ -1444,7 +1482,7 @@ let test_cached_addresses () =
   let slots = [| [| 0; 1; 2; 3 |] |] in
   let keys_after index =
     let _, c = call p (cache 4) index x in
-    slots_of c.Attention.Cache.keys
+    c.Attention.Cache.keys
   in
   values_are ~msg:"padding writes nothing" ~tol:0.0 (Array.make 16 0.0)
     (keys_after (index_at ~pos:[| [| -1; -1 |] |] ~slots));
@@ -1465,8 +1503,7 @@ let test_cached_addresses () =
       let y, c = call p (cache 4) (lost row) x in
       values_are
         ~msg:(Printf.sprintf "a lane of row %d writes nothing" row)
-        ~tol:0.0 (Array.make 16 0.0)
-        (slots_of c.Attention.Cache.keys);
+        ~tol:0.0 (Array.make 16 0.0) c.Attention.Cache.keys;
       is_true ~msg:"and its outputs are finite"
         (Array.for_all Float.is_finite (flat y)))
     [ -1; 2 ];
@@ -1478,12 +1515,11 @@ let test_cached_addresses () =
   let _, c' =
     call p c (Cache_index.advance full) (Nx.slice [ A; R (0, 1) ] x)
   in
-  close ~msg:"a full context is not overwritten"
-    (slots_of c.Attention.Cache.keys)
-    (slots_of c'.Attention.Cache.keys)
+  close ~msg:"a full context is not overwritten" c.Attention.Cache.keys
+    c'.Attention.Cache.keys
 
 (* A column no query of the row may see contributes exactly zero, whatever its
-   slot holds, the scratch row included. *)
+   slot holds. *)
 let test_cached_masked_columns_are_zero () =
   Nx.Rng.with_key (Nx.Rng.key 32) @@ fun () ->
   let p = layer Nx.float32 in
@@ -1492,21 +1528,21 @@ let test_cached_masked_columns_are_zero () =
   let poisoned =
     Nx.Ptree.Payload.map
       (module Attention.Cache)
-      (fun _ t ->
-        Nx.set [ Nx.R (6, 7) ] (nan 1) (Nx.set [ Nx.R (0, 2) ] (nan 2) t))
+      (fun _ t -> Nx.set [ Nx.R (0, 2) ] (nan 2) t)
       (cache 6)
   in
   (* Column 2 is allocated on a poisoned slot but past the row's positions;
-     column 3 is unallocated and reads the poisoned scratch row. *)
+     column 3 is unallocated. *)
   let index = index_at ~pos:[| [| 0; 1 |] |] ~slots:[| [| 4; 5; 1; -1 |] |] in
   let y, _ = call p poisoned index x in
   is_true ~msg:"no nan reaches the outputs"
     (Array.for_all Float.is_finite (flat y));
   let clean, _ = call p (cache 6) index x in
   close ~msg:"the outputs ignore what masked slots hold" clean y;
-  (* Unallocated columns inside the row's horizon: columns 1 and 2 read the
-     poisoned scratch row and the token at position 3 may see both. They read as
-     zero. *)
+  (* Columns inside the row's horizon that address nothing: column 1 is
+     unallocated, column 2 names a slot outside the pool, and the token at
+     position 3 may see both. They read as zero, whatever the pool's first slots
+     hold. *)
   let index = index_at ~pos:[| [| 0; 3 |] |] ~slots:[| [| 4; -1; 99; 5 |] |] in
   let y, _ = call p poisoned index x in
   is_true ~msg:"an unallocated column within the horizon reads as zero"
@@ -1703,9 +1739,9 @@ let test_cached_out_of_range_under_jit () =
       { x; index; c = cache 4 }
   in
   values_are ~msg:"nothing written, eager" ~tol:0.0 (Array.make 16 0.0)
-    (slots_of eager.c.Attention.Cache.keys);
+    eager.c.Attention.Cache.keys;
   values_are ~msg:"nothing written, compiled" ~tol:0.0 (Array.make 16 0.0)
-    (slots_of jitted.c.Attention.Cache.keys);
+    jitted.c.Attention.Cache.keys;
   close ~msg:"same outputs" eager.x jitted.x
 
 let test_cached_gradients () =
@@ -1893,8 +1929,7 @@ let test_cached_rejects_bad_geometry () =
     (fun () -> call p (cache 4) index (Nx.zeros Nx.float32 [| 1; 3; 8 |]));
   raises
     (Invalid_argument
-       "Attention.cached: the cache must have shape [slots + 1; 2; 2]")
-    (fun () ->
+       "Attention.cached: the cache must have shape [slots; 2; 2]") (fun () ->
       Attention.cached ~head_dim p
         (Attention.Cache.make ~slots:4 ~kv_heads:1 ~head_dim Nx.float32)
         index
@@ -1998,7 +2033,7 @@ let () =
           test "a whole index is causal apply and keeps nothing"
             test_cached_whole;
           test "a window bounds what a token sees" test_cached_window;
-          test "a pool is its slots and a scratch row" test_index_pool;
+          test "a pool is its slots" test_index_pool;
           test "a window is part of the index" test_index_window;
           test "a selection reads the columns each token chose"
             test_index_select;
@@ -2006,6 +2041,9 @@ let () =
             test_index_select_everything;
           test "on a whole index a chosen column is a token"
             test_index_select_whole;
+          test "a selection may be a broadcast view" test_index_select_broadcast;
+          test "a pool of one slot keeps what its token stored"
+            test_index_one_slot;
           test "a selection is a tensor of the index"
             test_index_select_structure;
           test "a compiled selection reads and stores as eager"

@@ -104,6 +104,38 @@ let test_stream_on_metal () =
     [| 42.; 10.; 26. |]
     (Array.sub (flat !s.entries) 0 3)
 
+(* One slot, so the pool's slot axis has extent 1: a token that stores nothing
+   leaves the slot as a token that stores there left it. *)
+let test_one_slot_on_metal () =
+  List.iter
+    (fun (msg, pos, table, expected) ->
+      let values =
+        Nx.create Nx.float32 [| 1; 2; 2; 4 |]
+          (Array.init 16 (fun i -> if i < 8 then 10. else 20.))
+      in
+      let pool = Nx.zeros Nx.float32 [| 1; 2; 4 |] in
+      let f pos =
+        snd
+          (Cache_index.extend
+             (Cache_index.make ~pos
+                ~table:(int32s [| 1; Array.length table |] table)
+                ())
+             values pool)
+      in
+      let step =
+        Rune.jit
+          ~devices:[ Rune.device "METAL" ]
+          Nx.Ptree.(tensor @-> returns tensor)
+          f
+      in
+      equal ~msg (array float_exact) (Array.make 8 expected)
+        (flat (step (int32s [| 1; 2 |] pos))))
+    [
+      ("padding after the token", [| 0; -1 |], [| 0 |], 10.);
+      ("padding before the token", [| -1; 0 |], [| 0 |], 20.);
+      ("an unallocated column before it", [| 0; 1 |], [| -1; 0 |], 20.);
+    ]
+
 let () =
   run "kaun cache index metal"
     [
@@ -113,5 +145,7 @@ let () =
             "a stream of blocks compiled for Metal stores and reads the \
              expected entries"
             test_stream_on_metal;
+          test "a pool of one slot keeps what its token stored"
+            test_one_slot_on_metal;
         ];
     ]

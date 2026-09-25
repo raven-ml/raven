@@ -134,9 +134,9 @@ val causal_mask :
 module Cache : sig
   type 'a t = { keys : 'a; values : 'a }
   (** The type for key-value caches over payload ['a]. At tensor payloads,
-      [keys] and [values] each have shape [[| slots + 1; kv_heads; head_dim |]]:
+      [keys] and [values] each have shape [[| slots; kv_heads; head_dim |]]:
       slot [s] holds the key and value of whatever token a cache index stored
-      there, and the last row is the scratch row (see {!Cache_index}). *)
+      there (see {!Cache_index}). *)
 
   val make :
     slots:int ->

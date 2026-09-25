@@ -223,9 +223,7 @@ let advance index =
 let lanes ~row table =
   match row with
   | None -> table
-  | Some row ->
-      let last = Int32.of_int (Nx.dim 0 table - 1) in
-      Nx.take ~axis:0 ~indices:(Nx.clamp ~min:0l ~max:last row) table
+  | Some row -> Nx.take ~axis:0 ~indices:row table
 
 (* Masks *)
 
@@ -246,6 +244,7 @@ let column ~context =
    token's position. *)
 let chosen index columns =
   let context = context index in
+  (* The clamp also materialises a broadcast [columns] before the reshape. *)
   let at = Nx.clamp ~min:0l ~max:(Int32.of_int (context - 1)) columns in
   let at =
     match index.tokens with
@@ -284,7 +283,7 @@ let mask index =
 let pool ~slots dtype shape =
   if slots < 0 then
     invalid "Cache_index.pool: slots must not be negative, got %d" slots;
-  Nx.zeros dtype (Array.append [| slots + 1 |] shape)
+  Nx.zeros dtype (Array.append [| slots |] shape)
 
 let tail pool =
   let shape = Nx.shape pool in
@@ -308,22 +307,15 @@ let own ~every pos =
     Nx.where closes (Nx.div_s pos m) (Nx.full_like pos (-1l))
 
 (* [pool] with [values] at the slot the table names at each token's column [at].
-   A token that has none writes the scratch row. *)
+   A token that has none targets [-1], whose store is dropped. *)
 let write ~at ~table values pool =
   let batch = Nx.dim 0 at and seq = Nx.dim 1 at in
   let tail = tail pool in
-  let slots = Nx.dim 0 pool - 1 and context = Nx.dim 1 table in
+  let context = Nx.dim 1 table in
   let tokens = batch * seq in
-  let slot =
-    Nx.take_along_axis ~axis:1
-      ~indices:(Nx.clamp ~min:0l ~max:(Int32.of_int (context - 1)) at)
-      table
-  in
-  let addressed =
-    Nx.logical_and (inside ~below:context at) (inside ~below:slots slot)
-  in
+  let slot = Nx.take_along_axis ~axis:1 ~indices:at table in
   let target =
-    Nx.where addressed slot (Nx.full_like slot (Int32.of_int slots))
+    Nx.where (inside ~below:context at) slot (Nx.full_like slot (-1l))
   in
   let indices =
     Nx.broadcast_to
@@ -335,14 +327,12 @@ let write ~at ~table values pool =
   in
   Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values pool
 
-(* [pool] at each lane's columns, zero at the columns no token of the lane sees
-   and at unallocated ones. *)
+(* [pool] at each lane's columns, zero at the columns no token of the lane sees.
+   An unallocated column reads zero from the gather. *)
 let read ?window ~every ~pos ~table pool =
   let tail = tail pool in
-  let slots = Nx.dim 0 pool - 1 in
   let batch = Nx.dim 0 table and context = Nx.dim 1 table in
   let column = stands ~every (column ~context) in
-  let allocated = inside ~below:slots table in
   let seen =
     let last = Nx.max ~axes:[ 1 ] ~keepdims:true pos in
     let upto = Nx.less_equal column last in
@@ -360,16 +350,9 @@ let read ?window ~every ~pos ~table pool =
         Nx.logical_and upto
           (Nx.greater column (Nx.sub_s first (Int32.of_int w)))
   in
-  let slot =
-    Nx.where allocated table (Nx.full_like table (Int32.of_int slots))
-  in
-  let live =
-    Nx.reshape
-      (Array.append [| batch * context |] (ones tail))
-      (Nx.logical_and allocated seen)
-  in
+  let live = Nx.reshape (Array.append [| batch * context |] (ones tail)) seen in
   let win =
-    Nx.take ~axis:0 ~indices:(Nx.reshape [| batch * context |] slot) pool
+    Nx.take ~axis:0 ~indices:(Nx.reshape [| batch * context |] table) pool
   in
   Nx.reshape
     (Array.append [| batch; context |] tail)
@@ -377,15 +360,15 @@ let read ?window ~every ~pos ~table pool =
 
 (* The rows a selection reads, [batch; seq; k] then [tail], zero where a token
    does not see its column. [fetch flat] is the rows at the columns [flat],
-   [batch; seq * k] and clamped to the context, as [batch; seq * k] then [tail],
-   with which of them are allocated when some may not be. *)
+   [batch; seq * k] and clamped to the context, as [batch; seq * k] then
+   [tail]. *)
 let read_chosen index columns ~tail fetch =
   let b = Nx.dim 0 columns and s = Nx.dim 1 columns and k = Nx.dim 2 columns in
   let last = Int32.of_int (context index - 1) in
+  (* The clamp also materialises a broadcast [columns] before the reshape. *)
   let flat = Nx.reshape [| b; s * k |] (Nx.clamp ~min:0l ~max:last columns) in
-  let rows, allocated = fetch flat in
+  let rows = fetch flat in
   let live = Nx.reshape [| b; s * k |] (sees_chosen index columns) in
-  let live = Option.fold ~none:live ~some:(Nx.logical_and live) allocated in
   Nx.reshape
     (Array.append [| b; s; k |] tail)
     (Nx.where
@@ -404,28 +387,21 @@ let rows_at ~tail values token =
   Nx.take_along_axis ~axis:1 ~indices values
 
 (* On a whole index, the token of each lane at the position the columns [flat],
-   [batch; n], stand at, clamped to the lane, and whether the lane holds it.
-   Lanes are padded on the left, so position [p] is token [p + pad]. *)
+   [batch; n], stand at, outside the lane when the lane does not hold it. Lanes
+   are padded on the left, so position [p] is token [p + pad]. *)
 let closing ~every ~pos flat =
   let seq = Nx.dim 1 pos in
   let last = Nx.slice [ A; R (seq - 1, seq) ] pos in
-  let token =
-    Nx.add (stands ~every flat) (Nx.rsub_s (Int32.of_int (seq - 1)) last)
-  in
-  (Nx.clamp ~min:0l ~max:(Int32.of_int (seq - 1)) token, inside ~below:seq token)
+  Nx.add (stands ~every flat) (Nx.rsub_s (Int32.of_int (seq - 1)) last)
 
 (* The rows of [pool] at the slots [table] names at the columns [flat], [batch;
-   n], as [batch; n] then [tail], and which of them are allocated. *)
+   n], as [batch; n] then [tail]: zero at an unallocated one. *)
 let from_pool ~tail ~table pool flat =
-  let slots = Nx.dim 0 pool - 1 in
   let slot = Nx.take_along_axis ~axis:1 ~indices:flat table in
-  let allocated = inside ~below:slots slot in
-  let slot = Nx.where allocated slot (Nx.full_like slot (Int32.of_int slots)) in
   let n = Nx.dim 0 flat * Nx.dim 1 flat in
-  ( Nx.reshape
-      (Array.append (Nx.shape flat) tail)
-      (Nx.take ~axis:0 ~indices:(Nx.reshape [| n |] slot) pool),
-    Some allocated )
+  Nx.reshape
+    (Array.append (Nx.shape flat) tail)
+    (Nx.take ~axis:0 ~indices:(Nx.reshape [| n |] slot) pool)
 
 let extend index values pool =
   let tail = tail pool in
@@ -439,20 +415,13 @@ let extend index values pool =
   | Whole pos, None ->
       let context = context index in
       let flat = Nx.broadcast_to [| batch index; context |] (column ~context) in
-      let token, held = closing ~every ~pos flat in
-      let held = Nx.reshape (Array.append (Nx.shape held) (ones tail)) held in
-      ( Nx.where held
-          (rows_at ~tail values token)
-          (Nx.zeros (Nx.dtype values) [| 1 |]),
-        pool )
+      (rows_at ~tail values (closing ~every ~pos flat), pool)
   | Whole pos, Some columns ->
       (* A column a token sees is one of its lane's tokens, or a block one of
          them closes. *)
       let fetch flat =
-        let token =
-          if every = 1 then flat else fst (closing ~every ~pos flat)
-        in
-        (rows_at ~tail values token, None)
+        let token = if every = 1 then flat else closing ~every ~pos flat in
+        rows_at ~tail values token
       in
       (read_chosen index columns ~tail fetch, pool)
   | Tabled { row; table; blocks; _ }, columns -> (

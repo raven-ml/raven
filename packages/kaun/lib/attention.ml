@@ -336,13 +336,13 @@ let cached ~head_dim ?rope p cache index x =
   let kv_heads = (Nx.shape p.k.Linear.w).(1) / head_dim in
   (match (Nx.shape cache.Cache.keys, Nx.shape cache.Cache.values) with
   | [| n; h; d |], [| n'; h'; d' |]
-    when n = n' && n > 0 && h = kv_heads && h' = kv_heads && d = head_dim
+    when n = n' && h = kv_heads && h' = kv_heads && d = head_dim
          && d' = head_dim ->
       ()
   | _ ->
       Printf.ksprintf invalid_arg
-        "Attention.cached: the cache must have shape [slots + 1; %d; %d]"
-        kv_heads head_dim);
+        "Attention.cached: the cache must have shape [slots; %d; %d]" kv_heads
+        head_dim);
   let q = split ~head_dim p.q x and k = split ~head_dim p.k x in
   let v = split ~head_dim p.v x in
   let q, k =

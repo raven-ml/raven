@@ -226,12 +226,10 @@ let test_chunks m call =
   close ~msg:"chunks of 1" expected ones;
   close ~msg:"chunks of 7 then 2" expected (fst (feed [ 7; 2 ]));
   close ~msg:"the whole prompt" expected whole;
-  (* The scratch row, the last, is left out: its content is unspecified. *)
   let written written =
     Nx.concatenate ~axis:0
       (Nx.Ptree.fold caches
-         (fun _ leaf acc ->
-           Nx.cast Nx.float32 (Nx.slice [ R (0, n) ] leaf) :: acc)
+         (fun _ leaf acc -> Nx.cast Nx.float32 leaf :: acc)
          written [])
   in
   close ~msg:"the written slots" (written at_once) (written by_one)
@@ -322,19 +320,16 @@ let test_ragged_batch m call =
   check 0 short 3;
   check 1 long 0
 
-(* Whatever a slot no table names holds, the scratch row included, reaches no
-   output. *)
+(* Whatever a slot no table names holds reaches no output. *)
 let test_poisoning m call =
   let n = Array.length prompt and pool = 16 in
-  (* Three columns past the prompt are unallocated: they read the scratch
-     row. *)
+  (* Three columns past the prompt are unallocated. *)
   let slots =
     Array.init (n + 3) (fun j -> if j < n then ((j * 5) + 3) mod pool else -1)
   in
   let named =
-    Nx.create Nx.bool
-      [| pool + 1; 1; 1 |]
-      (Array.init (pool + 1) (fun s -> Array.mem s slots))
+    Nx.create Nx.bool [| pool; 1; 1 |]
+      (Array.init pool (fun s -> Array.mem s slots))
   in
   let poison =
     List.map
@@ -414,7 +409,7 @@ let test_generation_matches_recomputation () =
   let index = ref (Cache_index.rows ~context [| Array.length start |]) in
   let s = ref (step (ids [| start |]) !index (cache ~slots:context)) in
   let sampled () = fst (fst !s) and sampled_from () = snd (fst !s) in
-  let leaves = 2 * layers * (context + 1) * kv_dim * 4 in
+  let leaves = 2 * layers * context * kv_dim * 4 in
   List.iteri
     (fun i (next, scores) ->
       let msg = Printf.sprintf "step %d" i in
@@ -477,8 +472,7 @@ let () =
              both "the tokens of a sequence can be lanes of one call"
                test_lanes_of_one_sequence;
              both "a ragged batch matches each row alone" test_ragged_batch;
-             both "unnamed slots and the scratch row are never observed"
-               test_poisoning;
+             both "unnamed slots are never observed" test_poisoning;
              both "a lane that addresses nothing is finite" test_empty_lane;
            ]);
       group "generation"

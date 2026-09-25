@@ -7,11 +7,16 @@
 - Implementation: commits `Make attention total` through `Group attention
   keys without copying them` on main; revision 3 in `Add Cache_index.select,
   a read of chosen columns` and `Add Cache_index.every, blocks of positions
-  under their own table`
-- Revision: 3 (2026-09-24). Extends revision 2 in place with chosen columns
-  and blocks of positions; Rationale records what revision 2 chose and why it
-  changed. Revision 2 replaced the first revision; Rationale says what that
-  one chose and why it lost.
+  under their own table`; revision 4 in `Address nothing with -1 instead of a
+  scratch row`
+- Revision: 4 (2026-09-25). Amends revision 3 in place: a pool of `slots`
+  slots has `slots` rows, and what addresses nothing is `-1` throughout, since
+  `Nx.scatter` drops a store and `Nx.take` reads zero at an index outside a
+  tensor, eagerly and compiled; the scratch row and its law go. Revision 3
+  extended revision 2 in place with chosen columns and blocks of positions;
+  Rationale records what revision 2 chose and why it changed. Revision 2
+  replaced the first revision; Rationale says what that one chose and why it
+  lost.
 
 ## Summary
 
@@ -186,24 +191,21 @@ engine's own tests can port them without model code.
 ### The cache
 
 A cache is an ordinary value of a type the model defines, whose leaves are
-pools: tensors of shape `[slots + 1; ...]` of any width and dtype, built with
+pools: tensors of shape `[slots; ...]` of any width and dtype, built with
 `Cache_index.pool ~slots dtype shape`. There is no
 batch axis; who owns a slot is the table's business. Kaun ships the record
-most models use, `Attention.Cache.t = { keys; values }` with payloads `[slots
-+ 1; kv_heads; head_dim]`, and `Cache.List`, the `Uniform` traversal of a list
+most models use, `Attention.Cache.t = { keys; values }` with payloads `[slots;
+kv_heads; head_dim]`, and `Cache.List`, the `Uniform` traversal of a list
 of them. A layer with another payload (a latent and a rotary key, a quantised
 entry beside its scales) defines its own record and uses the same cache index;
 no layer in the tree does yet.
 
-The last row of every pool is the scratch row. What addresses nothing is
-written there, and what is unallocated is read from there and replaced by
-zero, so its content is unspecified and never observed. It is last so that
-slot `s` is row `s` of every pool. Slot numbers `0` to `slots - 1` are the
-allocator's. An engine takes `slots` from whoever built the state; a leaf's
-axis 0 is one longer, and slot `slots` addresses nothing, like any slot
-outside the pool. `Cache.make ~slots` allocates the row and accepts `slots =
-0`. A pool smaller than the slots a table names is no error: those columns
-address nothing.
+Slot `s` is row `s` of every pool, and slot numbers `0` to `slots - 1` are
+the allocator's. A store at a slot that addresses nothing, `-1` or any slot
+outside the pool, is dropped, and a read of one is zero: `Nx.scatter` and
+`Nx.take` do so at an index outside a tensor, eagerly and under `Rune.jit`.
+`Cache.make ~slots` accepts `slots = 0`. A pool smaller than the slots a table
+names is no error: those columns address nothing.
 
 ### The cache index
 
@@ -240,9 +242,11 @@ Several lanes may name one sequence, which is how a flattened batch of
 one-token lanes is expressed.
 
 **`-1` addresses nothing, everywhere:** as a position, a table entry or a
-sequence, and so does any slot outside the pool. No slot number a cache index
-computes is out of range, so an eager run and a compiled run agree on every
-index. `Cache_index.positions` is the positions clamped into the positions'
+sequence, and so does any slot outside the pool. A store there is dropped and
+a read of it is zero, eagerly and compiled alike, so the two modes agree on
+every index. A value read from a table is itself an index, and a zero read
+names slot `0`, so a column outside the context is masked before its slot is
+used. `Cache_index.positions` is the positions clamped into the positions'
 table, for rotating and for indexing a table of position embeddings.
 
 A column *stands at* a position: a column of the positions' table at its
@@ -267,7 +271,7 @@ the context when `m` does not divide it. `every m index` is `index` read
 through that table: `extend` stores only the values of the tokens that close a
 block, since only they have a column that stands at their position, and a
 token at `t` sees block `j` when `j * m + m - 1 <= t`, which is
-`(j + 1) * m <= t + 1`; a token that closes no block writes the scratch row.
+`(j + 1) * m <= t + 1`; a token that closes no block stores nothing.
 `mask`, the zeroing and a window read the same rule, the window still counting
 positions. `context` is the table of blocks' width and `positions` stay the
 tokens'. On a whole index the columns are the lane's blocks by position,
@@ -308,8 +312,7 @@ last of them. A padded token sees nothing. The window is part of the index,
 `Cache_index.window w index`, and both functions read it there, so a layer
 cannot zero with one window and mask with another.
 
-A cache index holds nothing resolved: the scratch row's number is the pool's
-size, which an index does not know, and a value cached during a trace would
+A cache index holds nothing resolved: a value cached during a trace would
 outlive it. Its functions are recomputed per leaf and the compiler's
 hash-consing shares the work, as long as the slot numbers stay a lazy
 expression; forcing them with `Nx.contiguous` costs a buffer per leaf per layer,
@@ -373,7 +376,7 @@ real weights.
 | a random permutation of slots changes nothing | 1 |
 | two sequences sharing the slots of an equal prefix | 1, 10 |
 | a ragged batch: each lane equals the lane alone | 5 |
-| every slot no table names, scratch row included, and every column below a window, filled with `nan` before each call: outputs finite and equal | 4, 5 |
+| every slot no table names, and every column below a window, filled with `nan` before each call: outputs finite and equal | 4, 5 |
 | a lane of `-1` throughout, a lane whose sequence is `-1`, an all-padding call: finite outputs, pools unchanged | 3, 4 |
 | the gradient of `hidden` with a fully padded lane: finite | 3 |
 | every cache leaf reports storage reuse under donation | 6 |
@@ -480,17 +483,17 @@ engine or any caller of `Cache_index.make`.
 3. **Attention is total (K).** A query that sees no key yields zero and a zero
    gradient. Prevents `nan` from padded lanes and empty windows, in decoding
    and in training.
-4. **`-1` and any slot outside the pool address nothing, eagerly and compiled,
-   and the scratch row is never observed (K).** Prevents the two modes
-   disagreeing on a bad index, and results that depend on what an allocator
-   left in memory.
+4. **`-1` and any slot outside the pool address nothing, eagerly and compiled
+   (K).** A store there is dropped and a read of it is zero. Prevents the two
+   modes disagreeing on a bad index, and results that depend on what an
+   allocator left in memory.
 5. **A column that is unallocated, that stands past every position of its
    lane, or below every window of its lane contributes exactly zero to that
    lane, whatever its slot holds (K).** Under a selection this holds per
    chosen column, and a column the token did not choose is not read. Prevents
    one request's overflow becoming another's `nan`.
 6. **Every cache leaf is one pool, built with `Cache_index.pool`: a tensor of
-   `slots + 1` rows whose axis 0 is the slot axis, leaves in a fixed order
+   `slots` rows whose axis 0 is the slot axis, leaves in a fixed order
    (M).** No two leaves hold one tensor: a
    donated tensor seeds one leaf. Prevents an engine needing model code to
    move state, lost storage reuse, and a compiled program keyed by another
@@ -544,7 +547,7 @@ engine or any caller of `Cache_index.make`.
 - Whether a token closes a block is the index's business, so a layer computes
   an entry in every token and the index stores it only for the closing one: at
   `m = 4`, three decode steps in four read their block's positions for an
-  entry written to the scratch row.
+  entry whose store is dropped.
 
 ## Rationale and alternatives
 
@@ -595,6 +598,17 @@ written against revision 2. Rejected:
   a fork, and two lanes of one sequence in one call would both update it.
 - A gather from `extend`'s full read instead of `select`: no contract change,
   but it still reads the whole context and the gather does not fuse into it.
+
+**The scratch row, revisions 2 and 3.** Every pool had one row past its
+slots. What addressed nothing was written there, and what was unallocated was
+read from there and replaced by zero, because an index outside a tensor raised
+eagerly and did otherwise compiled, and the two modes had to agree. Once
+`Nx.scatter` dropped a store and `Nx.take` read zero at such an index in both
+modes, `-1` did the row's work. Revision 4 removes it: pools hold their slots
+and nothing else, the write and the read lose their masks against the row, the
+law that it is never observed goes, and `~unique_indices:true` is no longer
+broken at the row by design. Where a value read from a table is used as a slot,
+the column is still masked first, since the zero it reads names slot `0`.
 
 **A `decode` transformation in rune that derives the step from `hidden`.**
 Outside mixing layers a decoder acts on each token alone, and such a function

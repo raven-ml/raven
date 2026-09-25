@@ -2014,9 +2014,8 @@ thread.
 - `scatter` states what a broken `unique_indices` promise leaves: a position
   selected more than once holds an unspecified one of its updates under
   `` `Set `` and an unspecified value under `` `Add ``, and every other position
-  is exact. The whole result used to be undefined, which ruled out aiming the
-  updates one does not want at a scratch row. Eager and `Rune.jit` both keep
-  the narrower promise.
+  is exact. The whole result used to be undefined. Eager and `Rune.jit` both
+  keep the narrower promise.
 - Add `sliding_window`, a zero-copy view framing a tensor into windows of a
   given length along an axis. Framing without a copy was reachable only through
   `stft`, which bundles a taper and a transform with it; a reduction, a filter
@@ -2856,11 +2855,12 @@ thread.
   `Span`. A layer calls `Cache_index.extend index values pool`, which stores
   the call's values and returns what its tokens attend over, and attends under
   `Cache_index.mask`.
-- **Breaking**: `Attention.Cache.make ~slots` allocates `slots + 1` rows. `-1`
-  addresses nothing everywhere, and the last row is a scratch row that
-  receives such writes and is never observed, so the cache write is one
+- `-1` addresses nothing everywhere, so the cache write is one
   `Nx.scatter ~unique_indices:true` over the call's tokens with no pass over
-  the pool. On Metal, a two-layer decode step compiled with `Rune.jit` and
+  the pool: a token that stores nothing targets `-1`, whose store is dropped,
+  and an unallocated column reads zero. A pool of `slots` slots has `slots`
+  rows. On Metal, measured with an extra row after the slots that such
+  writes used to target, a two-layer decode step compiled with `Rune.jit` and
   consuming its caches takes 3.6 ms at a context of 256 over 4096 slots and
   3.8 ms over 131072, where it took 3.8 ms and 24.6 ms; the GPT-2 124M shaped
   step of `kaun/bench/decode` takes 8.4 ms and 8.7 ms at caches of 256 and

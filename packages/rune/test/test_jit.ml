@@ -1577,13 +1577,12 @@ let test_scatter_unique_indices () =
     ~values:(iota [| 2; 2 |])
     (iota [| 4; 2 |])
 
-(* The promise of unique indices broken at one row, the way a cache write aims
-   every token it does not store at a scratch row: eager and compiled, every
-   other row is exact and each element of the repeated row is one of the updates
-   aimed at it. *)
+(* The promise of unique indices broken at one row, as two tokens a cache table
+   aims at one slot break it: eager and compiled, every other row is exact and
+   each element of the repeated row is one of the updates aimed at it. *)
 let test_scatter_unique_indices_broken_at_one_row () =
-  let rows = 6 and width = 8 and scratch = 5 in
-  let targets = [| 2; scratch; 0; scratch; scratch; 3 |] in
+  let rows = 6 and width = 8 and repeated = 5 in
+  let targets = [| 2; repeated; 0; repeated; repeated; 3 |] in
   let indices = Nx.broadcast_to [| rows; width |] (i32 [| rows; 1 |] targets) in
   let values = iota [| rows; width |] in
   let f t = Nx.scatter ~unique_indices:true ~axis:0 ~indices ~values t in
@@ -1591,7 +1590,7 @@ let test_scatter_unique_indices_broken_at_one_row () =
   let check name got =
     Array.iteri
       (fun k target ->
-        if target <> scratch then
+        if target <> repeated then
           for j = 0 to width - 1 do
             equal
               ~msg:(Printf.sprintf "%s, row %d, element %d" name target j)
@@ -1601,7 +1600,7 @@ let test_scatter_unique_indices_broken_at_one_row () =
           done)
       targets;
     for j = 0 to width - 1 do
-      let v = got.((scratch * width) + j) in
+      let v = got.((repeated * width) + j) in
       let aimed k = v = float_of_int ((k * width) + j + 1) in
       is_true
         ~msg:

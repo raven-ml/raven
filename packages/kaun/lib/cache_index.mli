@@ -6,18 +6,17 @@
 (** Where a call's tokens sit in a cache.
 
     A cache is any record of {e pools}. A pool of [slots] slots is one tensor of
-    [slots + 1] rows whose axis 0 is the slot axis, with no batch axis: slot [s]
-    is row [s] of every pool, and the last row is scratch: {!pool} builds one. A
-    cache index says, for one call, which position each token holds and which
-    slots hold the positions of its sequence. One contiguous run of slots per
-    sequence ({!rows}), paged allocation, a prefix shared by two sequences and a
-    forked beam are all values of an index, and a layer is the same for each. A
-    model passes the index it was given to every layer and never looks inside; a
-    layer calls {!extend} on each of its pools and attends under {!mask}. A
-    layer that keeps one entry per block of positions reads its pools through
-    {!val-every}, and one that attends to a few columns per token through
-    {!select}. {!ptree} is an index's structure, which a compiled step's
-    signature names.
+    [slots] rows whose axis 0 is the slot axis, with no batch axis: slot [s] is
+    row [s] of every pool, and {!pool} builds one. A cache index says, for one
+    call, which position each token holds and which slots hold the positions of
+    its sequence. One contiguous run of slots per sequence ({!rows}), paged
+    allocation, a prefix shared by two sequences and a forked beam are all
+    values of an index, and a layer is the same for each. A model passes the
+    index it was given to every layer and never looks inside; a layer calls
+    {!extend} on each of its pools and attends under {!mask}. A layer that keeps
+    one entry per block of positions reads its pools through {!val-every}, and
+    one that attends to a few columns per token through {!select}. {!ptree} is
+    an index's structure, which a compiled step's signature names.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -41,18 +40,14 @@
     + {b [-1] addresses nothing.} A position of [-1] is padding, a table entry
       of [-1] is an unallocated column, and a lane whose [row] is [-1] is
       padding throughout. A slot outside the pool and a row outside the table
-      address nothing either. No index into a tensor that a cache index computes
-      is out of range, so an eager run and a compiled run agree on every cache
-      index.
-    + {b The scratch row is never observed.} What addresses nothing is written
-      to the last row of a pool, and what is unallocated is read from it and
-      replaced by zero. It is last so that slot numbers [0] to [slots - 1] are
-      the allocator's: an engine takes [slots] from whoever built the cache,
-      never from a pool's extent, and slot [slots] addresses nothing.
+      address nothing either. A store at a slot that addresses nothing is
+      dropped and a read of one is zero, as {!Nx.scatter} and {!Nx.take} do at
+      an index outside a tensor, so an eager run and a compiled run agree on
+      every cache index.
     + {b A token stores at its own column:} the slot its table names at the
       column that stands at its position. In blocks of [m] positions only a
-      block's last token has one; the others write the scratch row. A token
-      whose position is past the last column stores nothing.
+      block's last token has one; the others store nothing. A token whose
+      position is past the last column stores nothing.
     + {b Write targets are distinct.} Within a call the targets that address a
       slot are distinct, and a slot another sequence's table names is never one
       of them: a shared slot is one an earlier call wrote. Two tokens aimed at
@@ -228,16 +223,15 @@ val positions : t -> Nx.int32_t
 
 val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
 (** [pool ~slots dtype shape] is an empty pool of [slots] slots, each of shape
-    [shape]: zeros of shape [slots + 1] followed by [shape], the last row being
-    the scratch row. Every pool is built here, so nothing else knows about that
-    row. [slots] may be [0]: the pool a {!whole} call is given.
+    [shape]: zeros of shape [slots] followed by [shape]. [slots] may be [0]: the
+    pool a {!whole} call is given.
 
     Raises [Invalid_argument] if [slots] is negative. *)
 
 val extend :
   t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t
 (** [extend index values pool] is [(seen, pool')], with [pool] of shape
-    [[| slots + 1; ... |]], of any dtype and width:
+    [[| slots; ... |]], of any dtype and width:
 
     - [pool'] is [pool] with [values], of shape [[| batch; seq; ... |]], stored
       where the call's tokens sit, at the column that stands at each one's
