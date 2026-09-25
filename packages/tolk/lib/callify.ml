@@ -14,7 +14,7 @@ let is_store_after u =
       U.op (U.base src.(0)) <> Ops.Alloc || U.op src.(1) = Ops.Store
   | _ -> false
 
-let rec contiguous_view u =
+let rec contiguous_view_with_base u =
   let rec has_effect u =
     match U.op u with
     | Ops.After -> true
@@ -46,10 +46,10 @@ let rec contiguous_view u =
   if has_effect u then None
   else match split () with
   | Some lowered ->
-      Option.map (fun view ->
+      Option.map (fun (view, flat) ->
           U.unshard ~src:view ~axes:(List.map fst (U.sharding lowered))
-            ~ranges:(List.map snd (U.sharding lowered)) ())
-        (contiguous_view (U.src lowered).(0))
+            ~ranges:(List.map snd (U.sharding lowered)) (), flat)
+        (contiguous_view_with_base (U.src lowered).(0))
   | None -> match view_anchor u with
     | Some (base, offset) ->
         let bytes = U.bitcast ~src:base ~dtype:Dtype.int8 in
@@ -62,10 +62,13 @@ let rec contiguous_view u =
         let dims = U.shape u in
         let max_dims = List.map U.const_int (U.max_shape u) in
         let view = U.reshape ~src:flat ~shape:(dims_node max_dims) in
-        Some (if List.equal U.equal dims max_dims then view else
+        let view = if List.equal U.equal dims max_dims then view else
           U.shrink ~src:view ~offset:(dims_node (List.map (fun _ -> U.const_int 0) dims))
-            ~size:(dims_node dims))
+            ~size:(dims_node dims) in
+        Some (view, flat)
     | _ -> None
+
+let contiguous_view u = Option.map fst (contiguous_view_with_base u)
 
 let rec canonicalize_scope root =
   let allocs = U.Ref_tbl.create 16 in
@@ -89,14 +92,28 @@ let rec canonicalize_scope root =
       | _ -> None) root
 
 let transform_to_call sink =
+  let views = U.Ref_tbl.create 16 in
+  let materialized_view src =
+    match contiguous_view_with_base src with
+    | Some (view, flat) ->
+        U.Ref_tbl.replace views flat ();
+        Some view
+    | None -> None in
   let sink = U.graph_rewrite (fun u ->
       match U.op u, U.src u with
       | (Ops.Copy | Ops.Stage), [|src|]
         when (U.op u = Ops.Copy || U.arg u = U.Arg.Empty)
              && (Ops.Group.is_movement (U.op src) || U.op src = Ops.Bitcast) ->
-          (match contiguous_view src with
+          (match materialized_view src with
            | Some view when U.op u = Ops.Stage -> Some view
            | Some view when not (U.equal view src) -> Some (U.replace u ~src:[|view|] ())
+           | _ -> None)
+      | Ops.Store, src when Array.length src >= 2 && U.op src.(0) = Ops.Bitcast ->
+          (match materialized_view src.(0) with
+           | Some view when not (U.equal view src.(0)) ->
+               let src = Array.copy src in
+               src.(0) <- view;
+               Some (U.replace u ~src ())
            | _ -> None)
       | _ -> None) sink in
   let stores = ref [] in
@@ -112,10 +129,7 @@ let transform_to_call sink =
   let body = U.graph_rewrite ~bottom_up:true ~walk:true (fun u ->
       match U.op u with
       | Ops.Buffer when U.addrspace u = Some Dtype.Global -> replace_input u
-      | (Ops.Shrink | Ops.Bitcast)
-        when not (U.on_disk u)
-             && List.for_all (fun d -> Option.is_some (U.const_int_value d)) (U.shape u) ->
-          (match contiguous_view u with Some view -> replace_input view | None -> None)
+      | (Ops.Shrink | Ops.Bitcast) when U.Ref_tbl.mem views u -> replace_input u
       | Ops.After when U.is_bound_var u -> replace_input u
       | _ -> None) body in
   let body = U.graph_rewrite ~enter_calls:true (fun u ->

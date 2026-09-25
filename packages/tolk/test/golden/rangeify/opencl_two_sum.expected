@@ -1,4 +1,4 @@
-__kernel void r_64_16_4_64n2(__global float* data0_64, __global float* data1_4096) {
+__kernel void r_64_16_4_64(__global float* data0_64, __global float* data1_4096) {
   float buf0[1];
   float buf1[1];
   float buf2[1];

@@ -2,7 +2,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(2) r_2_8n5(float* data0_2, float* data1_16) {
+extern "C" __global__ void __launch_bounds__(2) r_2_8(float* data0_2, float* data1_16) {
   int lidx0 = threadIdx.x; /* 2 */
   int alu0 = (lidx0<<3);
   float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
@@ -14,7 +14,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(16) r_2_8_8n5(float* data0_16, float* data1_16, float* data2_2, float* data3_8, float* data4_64) {
+extern "C" __global__ void __launch_bounds__(16) r_2_8_8(float* data0_16, float* data1_16, float* data2_2, float* data3_8, float* data4_64) {
   int lidx0 = threadIdx.x; /* 2 */
   float val0 = (*(data2_2+lidx0));
   int alu0 = (lidx0<<3);
@@ -33,7 +33,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(8) r_2_4_8n2(float* data0_8, float* data1_16, float* data2_2, float* data3_8, float* data4_32) {
+extern "C" __global__ void __launch_bounds__(8) r_2_4_8(float* data0_8, float* data1_16, float* data2_2, float* data3_8, float* data4_32) {
   int lidx0 = threadIdx.x; /* 2 */
   float val0 = (*(data2_2+lidx0));
   int alu0 = (lidx0<<3);
@@ -52,7 +52,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(8) r_2_4_8n3(float* data0_8, float* data1_16, float* data2_2, float* data3_8, float* data4_32) {
+extern "C" __global__ void __launch_bounds__(8) r_2_4_8(float* data0_8, float* data1_16, float* data2_2, float* data3_8, float* data4_32) {
   int lidx0 = threadIdx.x; /* 2 */
   float val0 = (*(data2_2+lidx0));
   int alu0 = (lidx0<<3);
@@ -71,7 +71,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(2) r_2_2_2_2_2n1(float* data0_8, float* data1_16, float* data2_64, float* data3_8) {
+extern "C" __global__ void __launch_bounds__(2) r_2_2_2_2_2(float* data0_8, float* data1_16, float* data2_64, float* data3_8) {
   int lidx0 = threadIdx.x; /* 2 */
   int alu0 = (lidx0<<2);
   float4 val0 = (*((float4*)((data1_16+(alu0+8)))));
@@ -103,7 +103,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(4) r_4_2n2(float* data0_4, float* data1_8) {
+extern "C" __global__ void __launch_bounds__(4) r_4_2(float* data0_4, float* data1_8) {
   int lidx0 = threadIdx.x; /* 4 */
   float2 val0 = (*((float2*)((data1_8+(lidx0<<1)))));
   float alu0 = ((val0.x<val0.y)?val0.y:val0.x);
@@ -114,7 +114,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(4) r_4_2n3(float* data0_4, float* data1_8, float* data2_4) {
+extern "C" __global__ void __launch_bounds__(4) r_4_2(float* data0_4, float* data1_8, float* data2_4) {
   int lidx0 = threadIdx.x; /* 4 */
   float val0 = (*(data2_4+lidx0));
   float2 val1 = (*((float2*)((data1_8+(lidx0<<1)))));
@@ -125,7 +125,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(16) r_4_4_2n1(float* data0_16, float* data1_8, float* data2_4, float* data3_4, float* data4_8) {
+extern "C" __global__ void __launch_bounds__(16) r_4_4_2(float* data0_16, float* data1_8, float* data2_4, float* data3_4, float* data4_8) {
   int lidx0 = threadIdx.x; /* 4 */
   float val0 = (*(data2_4+lidx0));
   float val1 = (*(data3_4+lidx0));
@@ -140,7 +140,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(16) r_2_8_2_4n1(float* data0_16, float* data1_16, float* data2_16, float* data3_64) {
+extern "C" __global__ void __launch_bounds__(16) r_2_8_2_4(float* data0_16, float* data1_16, float* data2_16, float* data3_64) {
   float buf0[1];
   int lidx0 = threadIdx.x; /* 2 */
   int lidx1 = threadIdx.y; /* 8 */
@@ -159,7 +159,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(32) r_2_16_8_8n1(float* data0_32, float* data1_16, float* data2_2, float* data3_8, float* data4_128, float* data5_128) {
+extern "C" __global__ void __launch_bounds__(32) r_2_16_8_8(float* data0_32, float* data1_16, float* data2_2, float* data3_8, float* data4_128, float* data5_128) {
   float buf0[1];
   int lidx0 = threadIdx.x; /* 2 */
   int lidx1 = threadIdx.y; /* 16 */
@@ -188,7 +188,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(16) r_2_8_16n1(float* data0_16, float* data1_16, float* data2_32, float* data3_128) {
+extern "C" __global__ void __launch_bounds__(16) r_2_8_16(float* data0_16, float* data1_16, float* data2_32, float* data3_128) {
   float buf0[1];
   __shared__ __align__(16) float buf1[16];
   int gidx1 = blockIdx.y; /* 2 */
@@ -214,7 +214,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(4) E_2_2_4n5(float* data0_16, float* data1_16, float* data2_2, float* data3_8) {
+extern "C" __global__ void __launch_bounds__(4) E_2_2_4(float* data0_16, float* data1_16, float* data2_2, float* data3_8) {
   int lidx0 = threadIdx.x; /* 2 */
   float val0 = (*(data2_2+lidx0));
   int lidx1 = threadIdx.y; /* 2 */
@@ -230,7 +230,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(32) r_2_2_16_8n3(float* data0_64, float* data1_16, float* data2_256) {
+extern "C" __global__ void __launch_bounds__(32) r_2_2_16_8(float* data0_64, float* data1_16, float* data2_256) {
   int lidx0 = threadIdx.x; /* 2 */
   int alu0 = (lidx0<<3);
   float4 val0 = (*((float4*)((data1_16+(alu0+4)))));

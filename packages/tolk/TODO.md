@@ -84,10 +84,6 @@ acceptance requirement; skipped tests are not execution evidence.
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
   `topk_rounds` and `multi_output`. Reconcile Metal `vectorize_index` after
   the constant representation is migrated.
-  Reconcile CUDA kernel ordering in `multi_allreduce_ring`.
-  Remove the Llama driver's manual staging shortcuts: its attention-score
-  kernel is named `E_2`, whereas the target tensor graph produces
-  `r_2_2_2_2_2`.
 - Minimize strict-OOB rejections observed in 19 frontend cases and three
   Metal tensor-core cases (padded contraction and BF16 accumulation). Distinguish
   incomplete relational proofs from incorrect fixture extents; preserve strict

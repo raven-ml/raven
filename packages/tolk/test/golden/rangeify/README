@@ -1,0 +1,37 @@
+Rangeify source fixtures
+=======================
+
+The reference driver uses tinygrad a83c6f8011863c17ef4e9c24c59e521be3c754d3.
+Generate into a separate directory before comparing or promoting expectations:
+
+  DEV=CPU python3 packages/tolk/test/golden/rangeify/generate_expected.py \
+    --tinygrad _plans/tinygrad-a83c6f801 --output _plans/goldens-a83/rangeify
+  DEV=CPU _build/default/packages/tolk/test/golden/rangeify/generate_actual.exe \
+    _plans/goldens-a83/rangeify
+
+The ordinary cases compare tensor-level graph lowering and rendered source.
+The four isolated Llama cases retain individual model-derived kernel graphs.
+The full llama_forward_from_embedding case instead builds the complete tensor
+computation and lets the shared scheduler determine the kernel boundaries.
+
+That forward graph matches extra/models/llama.py's Transformer with dim=8,
+hidden_dim=16, n_heads=2, n_kv_heads=1, n_layers=1, norm_eps=1e-5,
+vocab_size=32, max_context=8, jit=False, and disable_kv_cache=True, starting
+from float32 embeddings of shape (1, 2, 8). It includes RMS normalization,
+rotary embeddings, causal grouped-query attention, residuals, the gated feed
+forward block, its output clone, and the final normalized projection. Both
+drivers schedule the logits, block output, and all model parameter tensors
+together. The reference replaces all model tensors with empty inputs,
+including freqs_cis of shape (1, 16, 1, 2, 2); the OCaml graph does the same.
+
+These are source comparisons for Clang, CUDA, Metal, and OpenCL renderers.
+They do not demonstrate numerical execution on those accelerator backends.
+
+The private Llama_fixture builder is also exercised numerically by test_llama.
+Its target CPU values use norm weights equal to 1, rotary (cos, sin) pairs
+(1, 0), all other weights ((flat_index mod 13) - 6) / 16, and embeddings
+(flat_index - 7) / 8. The test compares every element of the block output and
+final logits, with absolute tolerance 2e-5, using Tolk's normal CPU execution
+path. Run it with:
+
+  DEV=CPU _build/default/packages/tolk/test/golden/rangeify/test_llama.exe

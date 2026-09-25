@@ -31,40 +31,12 @@ let mk_param ?(dtype = D.float32) b ~slot (shape : int list) : U.t =
   let dev = U.Single "CPU" in
   U.param ~slot ~dtype ?shape:shape_id ~device:dev ()
 
-let mk_ptr_param b ~slot size : U.t =
-  U.param ~slot ~dtype:D.float32 ~shape:(mk_shape b [ size ])
-    ~device:(U.Single "CPU") ()
-
 (* Wrap source(s) in CONTIGUOUS -> SINK. *)
 let wrap_sink b (srcs : U.t list) : U.t =
   let contigs =
     List.map (fun src -> U.contiguous ~src ()) srcs
   in
   U.sink contigs
-
-let scheduled_kernel ?(name = "") ?(optimize = true) args body =
-  let kernel_info : U.kernel_info =
-    {
-      name;
-      applied_opts = [];
-      opts_to_apply = None;
-      estimates = None;
-      beam = 0;
-    }
-  in
-  let info : U.call_info =
-    {
-      grad_fxn = None;
-      name = None;
-      precompile = false;
-      precompile_backward = false;
-      dtype = Dtype.void;
-      aux = None;
-    }
-  in
-  let body = U.sink ~kernel_info [ body ] in
-  let body = if optimize then body else U.with_tag "1" body in
-  U.sink [ U.call ~body ~args ~info ]
 
 (* Extract kernel ASTs from CALL nodes in topological (id) order. *)
 let extract_kernels (root : U.t) : U.t list =
@@ -80,23 +52,20 @@ let extract_kernels (root : U.t) : U.t list =
 let name_of_sink sink =
   match U.as_kernel_info sink with Some ki -> ki.name | None -> "kernel"
 
+let kernels_to_source renderer kernels =
+  List.map
+    (fun k ->
+      let processed = Codegen.full_rewrite_to_sink ~optimize:true renderer k in
+      let name = name_of_sink processed in
+      let prog = Linearizer.linearize processed in
+      String.trim (Renderer.render renderer ~name prog))
+    kernels
+  |> String.concat "\n---\n"
+
 (* Run the full pipeline: Tensor.t -> rendered source string. *)
 let tensor_to_source renderer (build_fn : unit -> U.t) : string =
-  let program = build_fn () in
-  let kernel_graph = Rangeify.get_kernel_graph program in
-  let kernels = extract_kernels kernel_graph in
-  let sources =
-    List.map
-      (fun k ->
-        let processed =
-          Codegen.full_rewrite_to_sink ~optimize:true renderer k
-        in
-        let name = name_of_sink processed in
-        let prog = Linearizer.linearize processed in
-        String.trim (Renderer.render renderer ~name prog))
-      kernels
-  in
-  String.concat "\n---\n" sources
+  let kernel_graph = Rangeify.get_kernel_graph (build_fn ()) in
+  kernels_to_source renderer (extract_kernels kernel_graph)
 
 (* Tensor graph builders *)
 
@@ -332,237 +301,32 @@ let build_llama_output_projection b =
   let result = U.reshape ~src:red ~shape:(mk_shape b [ 2; 32 ]) in
   wrap_sink b [ result ]
 
-let f32 x = U.const (C.float D.float32 x)
-let wi x = U.const_int x
-
-let linear b ~x ~weight ~out_dim ~in_dim =
-  let x3 = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; in_dim ]) in
-  let w3 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; out_dim; in_dim ]) in
-  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape b [ 2; out_dim; in_dim ]) in
-  let w3 = U.broadcast_to ~src:w3 ~shape:(mk_shape b [ 2; out_dim; in_dim ]) in
-  let mul = U.alu_binary ~op:Ops.Mul ~lhs:x3 ~rhs:w3 in
-  let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
-  U.reshape ~src:red ~shape:(mk_shape b [ 2; out_dim ])
-
-(* [root] is the stored [sqrt(mean + eps)]; the normalisation divides by it. *)
-let rms_norm_from_root b x root weight =
-  let root = U.reshape ~src:root ~shape:(mk_shape b [ 2; 1 ]) in
-  let root = U.broadcast_to ~src:root ~shape:(mk_shape b [ 2; 8 ]) in
-  let inv = U.alu_unary ~op:Ops.Reciprocal ~src:root in
-  let weight = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 8 ]) in
-  let weight = U.broadcast_to ~src:weight ~shape:(mk_shape b [ 2; 8 ]) in
-  U.alu_binary ~op:Ops.Mul
-    ~lhs:(U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:inv)
-    ~rhs:weight
-
-let silu b x =
-  let scaled =
-    U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(f32 (-1.4426950408889634))
-  in
-  let exp = U.alu_unary ~op:Ops.Exp2 ~src:scaled in
-  let denom = U.alu_binary ~op:Ops.Add ~lhs:(f32 1.0) ~rhs:exp in
-  U.alu_binary ~op:Ops.Mul ~lhs:x
-    ~rhs:(U.alu_unary ~op:Ops.Reciprocal ~src:denom)
-
-let build_llama_norm_linear ~out_dim b =
-  let x = mk_param b ~slot:0 [ 2; 8 ] in
-  let root = mk_param b ~slot:1 [ 2 ] in
-  let norm = mk_param b ~slot:2 [ 8 ] in
-  let weight = mk_param b ~slot:3 [ out_dim; 8 ] in
-  rms_norm_from_root b x root norm
-  |> fun x -> linear b ~x ~weight ~out_dim ~in_dim:8
-  |> fun u -> wrap_sink b [ u ]
-
-let build_llama_attention_scores b =
-  let out = mk_ptr_param b ~slot:0 8 in
-  let q = mk_ptr_param b ~slot:1 16 in
-  let freqs = mk_ptr_param b ~slot:2 64 in
-  let k = mk_ptr_param b ~slot:3 8 in
-  let r = U.range ~size:(wi 2) ~axis:1 ~kind:Axis_type.Weak () in
-  let open U.O in
-  let load ptr idx = U.index ~ptr ~idxs:[ idx ] () in
-  let rope4 ptr base freq_base =
-    let x0 = load ptr base in
-    let x1 = load ptr (base + wi 1) in
-    let x2 = load ptr (base + wi 2) in
-    let x3 = load ptr (base + wi 3) in
-    let f0 = load freqs freq_base in
-    let f1 = load freqs (freq_base + wi 1) in
-    let f2 = load freqs (freq_base + wi 2) in
-    let f3 = load freqs (freq_base + wi 3) in
-    let ro0 = (x0 * f0) - (x1 * f1) in
-    let co0 = (x0 * f1) + (x1 * f0) in
-    let ro1 = (x2 * f2) - (x3 * f3) in
-    let co1 = (x2 * f3) + (x3 * f2) in
-    (ro0, co0, ro1, co1)
-  in
-  let k00, k01, k02, k03 = rope4 k (wi 0) (wi 0) in
-  let k10, k11, k12, k13 = rope4 k (wi 4) (wi 4) in
-  let scale v = v * f32 0.5 in
-  let q_scores base freq_base =
-    let x0 = load q base in
-    let x1 = load q (base + wi 1) in
-    let x2 = load q (base + wi 2) in
-    let x3 = load q (base + wi 3) in
-    let f0 = load freqs freq_base in
-    let f1 = load freqs (freq_base + wi 1) in
-    let f2 = load freqs (freq_base + wi 2) in
-    let f3 = load freqs (freq_base + wi 3) in
-    let co0 = (x0 * f1) + (x1 * f0) in
-    let ro0 = (x0 * f0) - (x1 * f1) in
-    let ro1 = (x2 * f2) - (x3 * f3) in
-    let first0 = (ro0 * k00) + (co0 * k01) + (ro1 * k02) in
-    let first1 = (ro0 * k10) + (co0 * k11) + (ro1 * k12) in
-    let co1 = (x2 * f3) + (x3 * f2) in
-    (scale (first0 + (co1 * k03)), scale (first1 + (co1 * k13)))
-  in
-  let q0_base = r * wi 4 in
-  let q1_base = q0_base + wi 8 in
-  let score10, score11 = q_scores q1_base (wi 4) in
-  let score00, score01_base = q_scores q0_base (wi 0) in
-  let score01 =
-    score01_base + f32 neg_infinity
-  in
-  let base = r * wi 4 in
-  let lane_ofs = U.stack [ wi 0; wi 1; wi 2; wi 3 ] in
-  let dst = U.index ~ptr:out ~idxs:[ base + lane_ofs ] () in
-  let value = U.stack [ score00; score01; score10; score11 ] in
-  U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r ]
-  |> scheduled_kernel [ out; q; freqs; k ]
-
-let build_llama_attention_max b =
-  let score = mk_param b ~slot:0 [ 4; 2 ] in
-  U.reduce_axis ~src:score ~op:Ops.Max ~axes:[ 1 ]
-  |> fun u -> wrap_sink b [ u ]
-
-let softmax_exp2 b ~score ~maxv =
-  let maxv = U.reshape ~src:maxv ~shape:(mk_shape b [ 4; 1 ]) in
-  let maxv = U.broadcast_to ~src:maxv ~shape:(mk_shape b [ 4; 2 ]) in
-  let diff = U.alu_binary ~op:Ops.Sub ~lhs:score ~rhs:maxv in
-  U.alu_binary ~op:Ops.Mul ~lhs:diff ~rhs:(f32 1.4426950408889634)
-  |> fun u -> U.alu_unary ~op:Ops.Exp2 ~src:u
-
-(* The softmax denominator is stored as the sum; the context kernel divides
-   by it. *)
-let build_llama_attention_sum b =
-  let score = mk_param b ~slot:0 [ 4; 2 ] in
-  let maxv = mk_param b ~slot:1 [ 4 ] in
-  softmax_exp2 b ~score ~maxv
-  |> fun exp -> U.reduce_axis ~src:exp ~op:Ops.Add ~axes:[ 1 ]
-  |> fun u -> wrap_sink b [ u ]
-
-let build_llama_attention_context b =
-  let out = mk_ptr_param b ~slot:0 16 in
-  let score = mk_ptr_param b ~slot:1 8 in
-  let maxv = mk_ptr_param b ~slot:2 4 in
-  let sum = mk_ptr_param b ~slot:3 4 in
-  let v = mk_ptr_param b ~slot:4 8 in
-  let r1 = U.range ~size:(wi 4) ~axis:1 ~kind:Axis_type.Weak () in
-  let r2 = U.range ~size:(wi 2) ~axis:2 ~kind:Axis_type.Reduce () in
-  let r3 = U.range ~size:(wi 4) ~axis:3 ~kind:Axis_type.Weak () in
-  let open U.O in
-  let score_v = U.index ~ptr:score ~idxs:[ (r1 * wi 2) + r2 ] () in
-  let max_v = U.index ~ptr:maxv ~idxs:[ r1 ] () in
-  let inv_v =
-    U.alu_unary ~op:Ops.Reciprocal ~src:(U.index ~ptr:sum ~idxs:[ r1 ] ())
-  in
-  let scaled = (score_v - max_v) * f32 1.4426950408889634 in
-  let exp = U.alu_unary ~op:Ops.Exp2 ~src:scaled in
-  let value =
-    U.alu_binary ~op:Ops.Mul
-      ~lhs:(U.alu_binary ~op:Ops.Mul ~lhs:exp ~rhs:inv_v)
-      ~rhs:(U.index ~ptr:v ~idxs:[ (r2 * wi 4) + r3 ] ())
-  in
-  let value =
-    U.reduce ~src:value ~ranges:[ r2 ] ~op:Ops.Add
-  in
-  let dst = U.index ~ptr:out ~idxs:[ (r1 * wi 4) + r3 ] () in
-  U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r1; r2; r3 ]
-  |> scheduled_kernel [ out; score; maxv; sum; v ]
-
-let build_llama_attention_output b =
-  let out = mk_ptr_param b ~slot:0 16 in
-  let residual = mk_ptr_param b ~slot:1 16 in
-  let ctx = mk_ptr_param b ~slot:2 16 in
-  let weight = mk_ptr_param b ~slot:3 64 in
-  let rred =
-    U.range ~size:(wi 2) ~axis:0 ~sub:[ 0 ] ~kind:Axis_type.Reduce ()
-  in
-  let rseq = U.range ~size:(wi 2) ~axis:1 ~kind:Axis_type.Weak () in
-  let rout = U.range ~size:(wi 8) ~axis:2 ~kind:Axis_type.Weak () in
-  let rdim =
-    U.range ~size:(wi 4) ~axis:0 ~sub:[ 0 ] ~kind:Axis_type.Reduce ()
-  in
-  let open U.O in
-  let load ptr idx = U.index ~ptr ~idxs:[ idx ] () in
-  let ctx_idx = (rred * wi 8) + (rseq * wi 4) + rdim in
-  let weight_idx = (rred * wi 4) + (rout * wi 8) + rdim in
-  let value = load ctx ctx_idx * load weight weight_idx in
-  let value =
-    U.reduce ~src:value ~ranges:[ rred; rdim ] ~op:Ops.Add
-  in
-  let idx = (rseq * wi 8) + rout in
-  let value = load residual idx + value in
-  let dst = U.index ~ptr:out ~idxs:[ idx ] () in
-  U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ rseq; rout ]
-  |> scheduled_kernel [ out; residual; ctx; weight ]
-
-let build_llama_ffn_hidden b =
-  let x = mk_param b ~slot:0 [ 2; 8 ] in
-  let root = mk_param b ~slot:1 [ 2 ] in
-  let norm = mk_param b ~slot:2 [ 8 ] in
-  let w1 = mk_param b ~slot:3 [ 16; 8 ] in
-  let w3 = mk_param b ~slot:4 [ 16; 8 ] in
-  let norm_linear weight =
-    let x = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; 8 ]) in
-    let root = U.reshape ~src:root ~shape:(mk_shape b [ 2; 1; 1 ]) in
-    let norm = U.reshape ~src:norm ~shape:(mk_shape b [ 1; 1; 8 ]) in
-    let weight = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 16; 8 ]) in
-    let x = U.broadcast_to ~src:x ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let root = U.broadcast_to ~src:root ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let inv = U.alu_unary ~op:Ops.Reciprocal ~src:root in
-    let norm = U.broadcast_to ~src:norm ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let weight = U.broadcast_to ~src:weight ~shape:(mk_shape b [ 2; 16; 8 ]) in
-    let mul = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:inv in
-    let mul = U.alu_binary ~op:Ops.Mul ~lhs:mul ~rhs:norm in
-    let mul = U.alu_binary ~op:Ops.Mul ~lhs:mul ~rhs:weight in
-    let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
-    U.reshape ~src:red ~shape:(mk_shape b [ 2; 16 ])
-  in
-  let gate = norm_linear w1 |> silu b in
-  let up = norm_linear w3 in
-  U.alu_binary ~op:Ops.Mul ~lhs:gate ~rhs:up |> fun u -> wrap_sink b [ u ]
-
-let build_llama_ffn_output b =
-  let residual = mk_param b ~slot:0 [ 2; 8 ] in
-  let hidden = mk_param b ~slot:1 [ 2; 16 ] in
-  let weight = mk_param b ~slot:2 [ 8; 16 ] in
-  let ff = linear b ~x:hidden ~weight ~out_dim:8 ~in_dim:16 in
-  wrap_sink b [ U.alu_binary ~op:Ops.Add ~lhs:residual ~rhs:ff ]
-
 let llama_forward_from_embedding_source renderer =
-  [
-    ("rmsnorm", build_llama_rmsnorm);
-    ("norm_linear_8", build_llama_norm_linear ~out_dim:8);
-    ("norm_linear_4_q", build_llama_norm_linear ~out_dim:4);
-    ("norm_linear_4_k", build_llama_norm_linear ~out_dim:4);
-    ("attention_scores", build_llama_attention_scores);
-    ("attention_max", build_llama_attention_max);
-    ("attention_sum", build_llama_attention_sum);
-    ("attention_context", build_llama_attention_context);
-    ("attention_output", build_llama_attention_output);
-    ("ffn_hidden", build_llama_ffn_hidden);
-    ("ffn_output", build_llama_ffn_output);
-    ("vector_scale", build_llama_vector_scale);
-    ("output_projection", build_llama_output_projection);
-  ]
-  |> (fun steps ->
-       match Sys.getenv_opt "LLAMA_STEP" with
-       | None -> steps
-       | Some want ->
-           List.filter (fun (name, _) -> String.equal name want) steps)
-  |> List.map (fun (_, build) -> tensor_to_source renderer build)
-  |> String.concat "\n---\n"
+  let module T = Tolk_frontend.Tensor in
+  let input _ shape =
+    Tolk_frontend.Creation.empty ~dtype:D.float32 ~device:(U.Single "CPU") shape
+  in
+  let logits, h, parameters = Llama_fixture.build input in
+  let sink = U.sink (List.map T.uop (logits :: h :: parameters)) in
+  let sink, _ = Bufferize.run sink in
+  let call = Callify.transform_to_call sink in
+  let linear, _ =
+    Schedule.create_linear_with_vars ~get_kernel_graph:Rangeify.get_kernel_graph
+      call
+  in
+  let seen = U.Tbl.create 16 in
+  let kernels =
+    List.filter_map
+      (fun call ->
+        match U.as_call call with
+        | Some { body; _ }
+          when U.op body = Ops.Sink && not (U.Tbl.mem seen body) ->
+            U.Tbl.add seen body ();
+            Some body
+        | _ -> None)
+      (U.children linear)
+  in
+  kernels_to_source renderer kernels
 
 (* Test case type *)
 

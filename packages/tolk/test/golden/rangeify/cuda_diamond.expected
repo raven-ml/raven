@@ -2,7 +2,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-extern "C" __global__ void __launch_bounds__(2) E_5_2n7(float* data0_10, float* data1_10, float* data2_10, float* data3_10, float* data4_10) {
+extern "C" __global__ void __launch_bounds__(2) E_5_2(float* data0_10, float* data1_10, float* data2_10, float* data3_10, float* data4_10) {
   int gidx0 = blockIdx.x; /* 5 */
   int lidx0 = threadIdx.x; /* 2 */
   int alu0 = (lidx0+(gidx0<<1));

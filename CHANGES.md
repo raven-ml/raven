@@ -657,6 +657,9 @@ thread.
 
 ### Tolk (new)
 
+- Ordinary tensor slices retain their base storage in compiled call signatures;
+  only explicitly materialized contiguous views become narrowed call inputs.
+
 - `Creation.empty ~device` no longer opens the default backend while building
   storage for an explicitly selected device.
 

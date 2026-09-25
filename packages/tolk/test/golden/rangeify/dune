@@ -1,6 +1,19 @@
+(library
+ (name llama_fixture)
+ (modules llama_fixture)
+ (libraries tolk.uop tolk.frontend))
+
 (executable
  (name generate_actual)
- (libraries tolk tolk.uop))
+ (modules generate_actual)
+ (libraries tolk tolk.uop tolk.frontend llama_fixture))
+
+(test
+ (name test_llama)
+ (modules test_llama)
+ (package tolk)
+ (libraries tolk.frontend llama_fixture windtrap)
+ (action (setenv DEV CPU (run %{test}))))
 
 (rule
  (package tolk)

@@ -1,4 +1,4 @@
-void E_5_2n3(float* restrict data0_10, float* restrict data1_10, float* restrict data2_10, float* restrict data3_10) {
+void E_5_2(float* restrict data0_10, float* restrict data1_10, float* restrict data2_10, float* restrict data3_10) {
   for (int Lidx0 = 0; Lidx0 < 5; Lidx0++) {
     for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
       int alu0 = ((Lidx1*5)+Lidx0);

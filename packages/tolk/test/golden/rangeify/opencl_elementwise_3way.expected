@@ -1,4 +1,4 @@
-__kernel void E_2_32_4n5(__global float* data0_256, __global float* data1_256, __global float* data2_256, __global float* data3_256) {
+__kernel void E_2_32_4(__global float* data0_256, __global float* data1_256, __global float* data2_256, __global float* data3_256) {
   int gidx0 = get_group_id(0); /* 2 */
   int lidx0 = get_local_id(0); /* 32 */
   int alu0 = ((gidx0<<7)+(lidx0<<2));
