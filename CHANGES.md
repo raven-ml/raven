@@ -645,6 +645,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD compiled PM4 dispatches give each compute die a disjoint scratch region,
+  preventing simultaneous dies from overwriting each other's private storage.
+
 - Failed PCI device claims release their lock and descriptors, allowing a
   retry after fixing permissions or device configuration.
 

@@ -510,6 +510,52 @@ let execute_split_copy_queues () =
   Device.Buffer.copyin (get "timeline") timeline;
   Device.synchronize host
 
+let compiled_pm4_scratch_slices () =
+  let open Tolk in
+  let compiled, device, _, buffers, submission =
+    queue_fixture ~multi:true ~scratch:256 ~copies:false () in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let input = i32_buf device (List.init 16 Fun.id) in
+  Realize.run_linear ~device
+    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    binding ~jit:true ~var_vals:["small", 7; "count", 3]
+    ~input_uops:[|U.from_buffer input|] linked;
+  Submission.check submission;
+  let get tag = Hashtbl.find buffers tag in
+  let timeline = Device.Buffer.as_bytes (get "timeline") in
+  Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
+  Device.Buffer.copyin (get "timeline") timeline;
+  let stream = Device.Buffer.as_bytes (get "cmdbuf_compute") in
+  let hw = gfx942 () in
+  let module P = (val hw.Tolk_amd.pm4) in
+  let reg = Tolk_amd.Amd_tables.Ip.reg hw.gc "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" in
+  let word i = Int32.to_int (Bytes.get_int32_le stream (4 * i)) land 0xffffffff in
+  let writes = ref [] and pos = ref 0 in
+  while !pos < Bytes.length stream / 4 do
+    let header = word !pos in
+    let count = ((header lsr 16) land 0x3fff) + 2 in
+    if (header lsr 8) land 0xff = P.packet3_set_sh_reg
+       && word (!pos + 1) = reg.addr - P.packet3_set_sh_reg_start then begin
+      equal int 4 count;
+      is_true ~msg:"each die's scratch write must be predicated" (!pos >= 2);
+      equal int (P.packet3 P.packet3_pred_exec 0) (word (!pos - 2));
+      let mask = word (!pos - 1) in
+      equal int 4 (mask land 0xffffff);
+      writes := (mask lsr 24, Bytes.get_int64_le stream (4 * (!pos + 2))) :: !writes
+    end;
+    pos := !pos + count
+  done;
+  let base = Int64.of_nativeint (Device.Buffer.addr (get "scratch")) in
+  (* Twelve CUs per die, 32 resident waves per CU, 64 lanes and 256 bytes
+     per lane. Every die must address a disjoint resident-wave region. *)
+  let per_die = 12 * 32 * 64 * 256 in
+  equal int (8 * per_die) (Device.Buffer.nbytes (get "scratch"));
+  equal (list (pair int int64))
+    (List.init 8 (fun die -> 1 lsl die,
+         Int64.shift_right_logical (Int64.add base (Int64.of_int (die * per_die))) 8))
+    (List.rev !writes)
+
 let execute_aql_queue ~multi =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~aql:true ~multi ~copies:false () in
@@ -635,6 +681,7 @@ let () =
          test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true);
          test "direct packets use GPU indirect addresses and the shared producer" direct_aql_queue];
       group "Compiled queues" [
+        test "PM4 compute dies use disjoint scratch slices" compiled_pm4_scratch_slices;
         test "upload and download publish to independent SDMA rings" execute_split_copy_queues;
         test "a replay timeout suppresses publication and latches failure" queue_timeout;
         test "a full ring times out without overwriting unread commands" queue_full;

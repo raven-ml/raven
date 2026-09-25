@@ -168,6 +168,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   replay rebinding and input lifetime. Reconsider when a shared staging pool
   has reservations spanning independent submissions.
 
+- **Multi-die PM4 dispatch partitions resident-wave scratch.** The frozen
+  target offsets each die by `private_segment_size / xccs`, although that field
+  is bytes per thread. Tolk uses the requested resident-wave allocation divided
+  by the die count, matching its direct dispatch layout. Every die needs room
+  for its resident CUs, waves and lanes, including the 128-byte thread minimum.
+  Consumer: multi-XCC PM4 dispatch with `AMD_AQL=0`. Coverage: the compiled
+  queue regression checks all eight predicated addresses and their disjoint
+  resident-wave regions. Hardware validation remains in TODO. Reconsider when
+  upstream computes the offset from resident-wave storage.
+
 - **PCI peers can import system memory owned by small-BAR devices.** Host
   timelines and queue signals use system physical pages, not the owner's BAR.
   The frozen target rejects them together with inaccessible device memory,

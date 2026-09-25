@@ -35,7 +35,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   Complete AMD race/recovery fixes and consumed firmware/register
   tables. Audit VF mailbox leases, gated register access and PF-only boot
   operations against the existing AMD device scope; justify any retained gap.
-  Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
+  Validate compiled PM4 scratch separation on multi-die hardware and reconcile
+  scratch growth across retained and multi-device links.
+  Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
 - Complete PCI multi-die mappings: export AMD hive memory through XGMI peer
   addresses instead of its PCI BAR, and select BAR or fabric addresses according

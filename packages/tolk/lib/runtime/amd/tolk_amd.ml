@@ -1242,7 +1242,13 @@ module Encoded_queue = struct
               wreg "regCOMPUTE_PGM_RSRC1" [u32 data.rsrc1; u32 data.rsrc2];
               wreg "regCOMPUTE_PGM_RSRC3" [u32 data.rsrc3];
               wreg "regCOMPUTE_TMPRING_SIZE" [u32 tmpring_size];
-              wreg "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" [shr scratch (u64 8)];
+              for xcc = 0 to dev.xccs - 1 do
+                (* A 64-bit register write occupies four PM4 dwords. *)
+                if dev.xccs > 1 then
+                  pkt P.packet3_pred_exec [u32 ((1 lsl xcc) lsl 24 lor 4)];
+                let base = add scratch (u64 (size / dev.xccs * xcc)) in
+                wreg "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" [shr base (u64 8)]
+              done;
               wreg "regCOMPUTE_RESTART_X" [u32 0; u32 0; u32 0];
               let user = if data.enable_private_segment_sgpr then
                   [bor scratch (U.const (Const.int64 D.uint64 Int64.min_int)); u32 0xffffffff; u32 0x20c14000]
