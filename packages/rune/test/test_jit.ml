@@ -1928,23 +1928,6 @@ let test_bitcast_matches_eager () =
     (Nx.to_array (Rune.jit' to_bits (Nx.bitcast f64 doubles))
     = Nx.to_array (Nx.transpose doubles))
 
-(* The compiler emulates float8 through a wider float, so a compiled float8
-   bitcast would change subnormal and infinite bits: it is refused, both ways,
-   while eager reads every one of the 256 patterns back. *)
-let test_float8_bitcast_is_refused () =
-  let bytes = Nx.init Nx.uint8 [| 256 |] (fun i -> i.(0)) in
-  let check (type b) name (fp : (float, b) Nx.dtype) =
-    equal ~msg:(name ^ " eager") (array int) (Nx.to_array bytes)
-      (Nx.to_array (Nx.bitcast Nx.uint8 (Nx.bitcast fp bytes)));
-    raises_jit_error (fun () ->
-        ignore (Rune.jit' (fun x -> Nx.bitcast fp x) bytes));
-    raises_jit_error (fun () ->
-        ignore
-          (Rune.jit' (fun x -> Nx.bitcast Nx.uint8 x) (Nx.bitcast fp bytes)))
-  in
-  check "float8_e4m3" Nx.float8_e4m3;
-  check "float8_e5m2" Nx.float8_e5m2
-
 (* Every sortable dtype in both directions, over axes of 1, 2 and 33, the last
    batched around it; float32 and bfloat16 also over axes of 513 and 32768.
    Dtypes of up to 32 bits sort key and position packed in one int64; 64-bit
@@ -4460,8 +4443,8 @@ let tests =
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "bitcast outputs retain their own dtype"
           (check_bitcast_output_ownership ~devices:[ Nx.Device.host ]);
-        test "a compiled float8 bitcast is refused"
-          test_float8_bitcast_is_refused;
+        test "float8 bitcasts preserve raw bytes through movements"
+          check_float8_bitcast_matches_eager;
         test "replay reads fresh input data" test_replay_reads_fresh_inputs;
         test "a new shape retraces" test_retrace_on_new_shape;
         test "zero-size outputs are empty tensors" test_zero_size_outputs;

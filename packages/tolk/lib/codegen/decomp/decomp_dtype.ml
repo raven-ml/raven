@@ -1007,6 +1007,10 @@ and f2f_clamp ?(sat = true) val_ dt =
 let storage_load rewrite x =
   let src = Array.copy (Uop.src x) in
   src.(0) <- rewrite src.(0);
+  if Array.length src = 3 then
+    src.(1) <- Uop.simplify (Uop.bitcast
+        ~src:(Uop.cast ~src:src.(1) ~dtype:(Uop.dtype x))
+        ~dtype:(Uop.dtype src.(0)));
   Uop.replace x ~src ()
 
 let f2f_load rewrite x fr to_ =
@@ -1088,14 +1092,46 @@ let rule_float_bitcast_load rewrite ctx =
              ~dtype:(Uop.dtype bc))
     | _ -> None
 
-let rule_float_bitcast_from ctx =
+(* Same-width reinterprets commute with selection, but never with arithmetic
+   or storage address calculation. Keep selectors in the raw storage domain. *)
+let rule_float_bitcast_select ctx =
+  let open Upat in
+  op ~name:"bc" Ops.Bitcast => fun bs ->
+    let bc = bs $ "bc" in
+    match Uop.src bc with
+    | [| value |]
+      when same_scalar ctx.from_dtype (Uop.dtype value)
+           && Dtype.bitsize (Uop.dtype bc) = Dtype.bitsize (Uop.dtype value) ->
+        let cast child =
+          Uop.simplify (Uop.bitcast
+              ~src:(Uop.cast ~src:child ~dtype:(Uop.dtype value))
+              ~dtype:(Uop.dtype bc)) in
+        (match Uop.op value with
+         | Ops.Stack -> Some (Uop.replace value ~src:(Array.map cast (Uop.src value)) ())
+         | Ops.Where ->
+             let src = Array.copy (Uop.src value) in
+             src.(1) <- cast src.(1);
+             src.(2) <- cast src.(2);
+             Some (Uop.replace value ~src ())
+         | Ops.Index when Uop.addrspace value = Some Dtype.Alu ->
+             let src = Array.copy (Uop.src value) in
+             src.(0) <- cast src.(0);
+             Some (Uop.replace value ~src ())
+         | _ -> None)
+    | _ -> None
+
+let rule_float_bitcast_from rewrite ctx =
   let open Upat in
   op ~name:"bc" Ops.Bitcast => fun bs ->
     let bc = bs $ "bc" in
     match Uop.src bc, Uop.dtype bc with
     | [| x |], bdt
-      when same_scalar ctx.to_dtype (Uop.dtype x)
+      when (same_scalar ctx.to_dtype (Uop.dtype x)
+            || same_scalar ctx.from_dtype (Uop.dtype x))
            && Dtype.bitsize bdt = scalar_bits ctx.from_dtype ->
+        (* This pre-order pass must promote numeric sources before encoding
+           their bits; child rewrites do not revisit the parent bitcast. *)
+        let x = rewrite x in
         Some
           (Uop.replace bc
              ~src:[| f2f
@@ -1163,20 +1199,24 @@ let rule_float_all ctx =
       Some (Uop.replace x ~src ())
     else None
 
-let rule_float_store_bitcast ctx =
+(* Storage consumes the original format's bits. Selection can keep those bits
+   raw; arithmetic still goes through the ordinary numeric conversion rules. *)
+let rule_float_store_storage rewrite ctx =
   let open Upat in
   op ~name:"st" Ops.Store => fun bs ->
     let st = bs $ "st" in
     match Uop.as_store st with
-    | Some { dst; value; gate = None }
-      when Uop.op value = Ops.Bitcast
-           && same_scalar ctx.from_dtype (Uop.dtype value)
-           && Uop.node_tag dst = Some (float_tag ctx.from_dtype) ->
-        Some
-          (Uop.replace st
-             ~src:[| dst;
-                     Uop.replace value ~arg:(Uop.Arg.Dtype (f2f_dt ctx.from_dtype)) () |]
-             ())
+    | Some { dst; value; _ }
+      when same_scalar ctx.from_dtype (Uop.dtype value)
+           && (same_scalar ctx.from_dtype (Uop.dtype dst)
+               || Uop.node_tag dst = Some (float_tag ctx.from_dtype)) ->
+        let dst = rewrite dst in
+        if not (Dtype.equal (Uop.dtype dst) (f2f_dt ctx.from_dtype)) then None
+        else
+          let src = Array.copy (Uop.src st) in
+          src.(0) <- dst;
+          src.(1) <- Uop.simplify (Uop.bitcast ~src:value ~dtype:(f2f_dt ctx.from_dtype));
+          Some (Uop.replace st ~src ())
     | Some _ | None -> None
 
 let rule_float_store ctx =
@@ -1205,12 +1245,13 @@ let pm_float_decomp (ctx : float_decomp_ctx) : Upat.Pattern_matcher.t =
       rule_float_defines_index_shrink rewrite ctx;
       rule_float_load rewrite ctx;
       rule_float_bitcast_load rewrite ctx;
-      rule_float_bitcast_from ctx;
+      rule_float_bitcast_select ctx;
+      rule_float_bitcast_from rewrite ctx;
       rule_float_bitcast_to ctx;
       rule_float_const ctx;
       rule_float_cast ctx;
       rule_float_all ctx;
-      rule_float_store_bitcast ctx;
+      rule_float_store_storage rewrite ctx;
       rule_float_store ctx;
     ]) in
   Lazy.force matcher

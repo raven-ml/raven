@@ -904,6 +904,213 @@ let compact_float_accesses_narrow_storage_first () =
     [ Dtype.float16; Dtype.bfloat16; Dtype.fp8e4m3; Dtype.fp8e5m2;
       Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz ]
 
+let compact_float_raw_copy mode () =
+  List.iter (fun dtype ->
+      let uint = if Dtype.bitsize dtype = 8 then Dtype.uint8 else Dtype.uint16 in
+      let param slot size = Uop.param ~slot ~dtype ~shape:(Uop.const_int size)
+          ~addrspace:Dtype.Global () in
+      let input = param 0 8 and output = param 1 8 in
+      let width = if mode = `Vector then 4 else 1 in
+      let read_gate = Uop.variable ~name:"read_enabled" ~min_val:0 ~max_val:1
+          ~dtype:Dtype.bool () in
+      let write_gate = Uop.variable ~name:"write_enabled" ~min_val:0 ~max_val:1
+          ~dtype:Dtype.bool () in
+      let address buffer =
+        if mode = `Vector then Uop.shrink ~src:buffer
+            ~offset:(Uop.const_int 2) ~size:(Uop.const_int width)
+        else
+          let offset = Uop.const_int 3 in
+          let offset = if mode = `Masked_index then
+              Uop.valid ~src:offset ~cond:read_gate else offset in
+          Uop.index ~ptr:buffer ~idxs:[offset] () in
+      let alt = Uop.bitcast ~src:(Uop.const (Const.int uint 1)) ~dtype in
+      let load = if mode = `Gated then Uop.load ~src:(address input)
+          ~alt ~gate:read_gate () else Uop.load ~src:(address input) () in
+      let gate = if mode = `Gated then Some write_gate else None in
+      let store = Uop.store ~dst:(address output) ~value:load ?gate () in
+      let ctx : Decomp_dtype.float_decomp_ctx =
+        {from_dtype = dtype; to_dtype = Dtype.float32} in
+      let rewritten = Uop.graph_rewrite ~bottom_up:true
+          (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_float_decomp ctx)) store in
+      Spec.type_verify Spec.full_spec rewritten;
+      let message = Dtype.to_string dtype in
+      is_false ~msg:(message ^ ": copying storage never decodes floating values")
+        (List.exists (fun u -> Dtype.is_float (Uop.dtype u)) (Uop.toposort rewritten));
+      match Uop.as_store rewritten with
+      | Some {dst; value; gate = actual_gate} ->
+          equal ~msg:(message ^ ": store gate") bool true (Option.equal Uop.equal actual_gate gate);
+          equal ~msg:(message ^ ": store width") int width (Uop.max_numel dst);
+          (match Uop.as_load value with
+           | None -> fail (message ^ ": storage copy must retain the load")
+           | Some {src; alt; gate} ->
+               equal ~msg:(message ^ ": load width") int width (Uop.max_numel src);
+               if mode = `Gated then begin
+                 equal ~msg:(message ^ ": load gate") bool true (Option.equal Uop.equal gate (Some read_gate));
+                 equal ~msg:(message ^ ": raw subnormal fallback") (option int64)
+                   (Some 1L) (Option.bind alt (fun value -> const_int64_value (Uop.simplify value)))
+               end;
+               if mode = `Masked_index then begin
+                 is_true ~msg:(message ^ ": source address keeps validity mask")
+                   (contains_op Ops.Where src);
+                 is_true ~msg:(message ^ ": destination address keeps validity mask")
+                   (contains_op Ops.Where dst)
+               end)
+      | None -> fail (message ^ ": expected a raw storage store"))
+    [Dtype.float16; Dtype.bfloat16; Dtype.fp8e4m3; Dtype.fp8e5m2;
+     Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz]
+
+let compact_float_raw_selection mode () =
+  List.iter (fun dtype ->
+      let param slot = Uop.param ~slot ~dtype ~shape:(Uop.const_int 8)
+          ~addrspace:Dtype.Global () in
+      let input = param 0 and output = param 1 in
+      let index ptr i = Uop.index ~ptr ~idxs:[Uop.const_int i] () in
+      let load i = Uop.load ~src:(index input i) () in
+      let choose = Uop.variable ~name:"choose" ~min_val:0 ~max_val:1
+          ~dtype:Dtype.bool () in
+      let lane = Uop.variable ~name:"lane" ~min_val:0 ~max_val:3
+          ~dtype:Dtype.int32 () in
+      let value = match mode with
+        | `Stack -> Uop.stack [load 0; load 2; load 4; load 6]
+        | `Where -> Uop.alu_ternary ~op:Ops.Where ~a:choose ~b:(load 2) ~c:(load 6)
+        | `Index -> Uop.index
+            ~ptr:(Uop.load ~src:(Uop.shrink ~src:input
+                ~offset:(Uop.const_int 2) ~size:(Uop.const_int 4)) ())
+            ~idxs:[lane] () in
+      let width = if mode = `Stack then 4 else 1 in
+      let dst = if width = 4 then Uop.shrink ~src:output
+          ~offset:(Uop.const_int 0) ~size:(Uop.const_int 4)
+          else index output 0 in
+      let store = Uop.store ~dst ~value () in
+      let ctx : Decomp_dtype.float_decomp_ctx =
+        {from_dtype = dtype; to_dtype = Dtype.float32} in
+      let rewritten = Uop.graph_rewrite ~bottom_up:true
+          (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_float_decomp ctx)) store in
+      Spec.type_verify Spec.full_spec rewritten;
+      let message = Dtype.to_string dtype in
+      is_false ~msg:(message ^ ": selecting storage never decodes floating values")
+        (List.exists (fun u -> Dtype.is_float (Uop.dtype u)) (Uop.toposort rewritten));
+      match Uop.as_store rewritten with
+      | Some {dst; value; _} ->
+          equal ~msg:(message ^ ": selection width") int width (Uop.max_numel dst);
+          (match mode with
+           | `Stack ->
+               equal ~msg:(message ^ ": gathered lanes") int 4 (Array.length (Uop.src value));
+               List.iteri (fun lane value ->
+                   match Uop.as_load value with
+                   | Some {src; _} ->
+                       (match Uop.as_index src with
+                        | Some {idxs = [offset]; _} -> equal (option int64)
+                            (Some (Int64.of_int (2 * lane))) (const_int64_value offset)
+                        | _ -> fail "expected a gathered source address")
+                   | None -> fail "expected a raw gathered load") (Uop.children value)
+           | `Where -> is_true ~msg:"selection predicate is preserved"
+               (Uop.op value = Ops.Where && Uop.equal (Uop.src value).(0) choose)
+           | `Index -> is_true ~msg:"value lane index is preserved"
+               (Uop.op value = Ops.Index && Uop.equal (Uop.src value).(1) lane))
+      | None -> fail (message ^ ": expected a raw selection store"))
+    [Dtype.float16; Dtype.bfloat16; Dtype.fp8e4m3; Dtype.fp8e5m2;
+     Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz]
+
+let compact_float_numeric_load_fallback where () =
+  List.iter (fun (dtype, expected) ->
+      let input = Uop.param ~slot:0 ~dtype ~shape:(Uop.const_int 1)
+          ~addrspace:Dtype.Global () in
+      let uint = if Dtype.bitsize dtype = 8 then Dtype.uint8 else Dtype.uint16 in
+      let gate = Uop.variable ~name:"enabled" ~min_val:0 ~max_val:1
+          ~dtype:Dtype.bool () in
+      let alt = Uop.const (Const.float dtype 1.5) in
+      let value = if where then
+          let offset = Uop.valid ~src:(Uop.const_int 0) ~cond:gate in
+          Uop.alu_ternary ~op:Ops.Where ~a:gate
+            ~b:(Uop.load ~src:(Uop.index ~ptr:input ~idxs:[offset] ()) ()) ~c:alt
+        else Uop.load ~src:(Uop.index ~ptr:input ~idxs:[Uop.const_int 0] ())
+            ~alt ~gate () in
+      let ctx : Decomp_dtype.float_decomp_ctx =
+        {from_dtype = dtype; to_dtype = Dtype.float32} in
+      let rewritten = Uop.graph_rewrite ~bottom_up:true
+          (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_float_decomp ctx))
+          (Uop.simplify (Uop.bitcast ~src:value ~dtype:uint)) in
+      Spec.type_verify Spec.full_spec rewritten;
+      let rewritten = Uop.simplify rewritten in
+      let alt, actual_gate = if where then
+          match Uop.src rewritten with
+          | [| actual_gate; load; alt |]
+            when Uop.op rewritten = Ops.Where && Uop.op load = Ops.Load ->
+              alt, actual_gate
+          | _ -> fail "expected raw conditional selection"
+        else match Uop.as_load rewritten with
+          | Some {alt = Some alt; gate = Some actual_gate; _} -> alt, actual_gate
+          | _ -> fail "expected a gated raw load with an encoded fallback" in
+      is_true ~msg:"numeric fallback retains the load gate" (Uop.equal gate actual_gate);
+      equal ~msg:(Dtype.to_string dtype ^ ": fallback is encoded in storage format")
+        (option int64) (Some (Int64.of_int expected))
+        (const_int64_value (Uop.simplify alt)))
+    [Dtype.float16, 0x3e00; Dtype.bfloat16, 0x3fc0;
+     Dtype.fp8e4m3, 0x3c; Dtype.fp8e5m2, 0x3e;
+     Dtype.fp8e4m3fnuz, 0x44; Dtype.fp8e5m2fnuz, 0x42]
+
+let compact_float_arithmetic_store () =
+  List.iter (fun dtype ->
+      let param slot = Uop.param ~slot ~dtype ~shape:(Uop.const_int 2)
+          ~addrspace:Dtype.Global () in
+      let input = param 0 and output = param 1 in
+      let index ptr i = Uop.index ~ptr ~idxs:[Uop.const_int i] () in
+      let value = Uop.alu_binary ~op:Ops.Add
+          ~lhs:(Uop.load ~src:(index input 0) ())
+          ~rhs:(Uop.load ~src:(index input 1) ()) in
+      let store = Uop.store ~dst:(index output 0) ~value () in
+      let ctx : Decomp_dtype.float_decomp_ctx =
+        {from_dtype = dtype; to_dtype = Dtype.float32} in
+      let rewritten = Uop.graph_rewrite ~bottom_up:true
+          (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_float_decomp ctx)) store in
+      Spec.type_verify Spec.full_spec rewritten;
+      is_true ~msg:(Dtype.to_string dtype ^ ": storage conversion retains floating arithmetic")
+        (List.exists (fun u -> Uop.op u = Ops.Add && Dtype.equal (Uop.dtype u) Dtype.float32)
+           (Uop.toposort rewritten));
+      match Uop.as_store rewritten with
+      | Some {value; _} -> is_true ~msg:"numeric result is converted to raw storage"
+          (Dtype.equal (Uop.dtype value)
+             (if Dtype.bitsize dtype = 8 then Dtype.uint8 else Dtype.uint16))
+      | None -> fail "expected an arithmetic result store")
+    [Dtype.float16; Dtype.bfloat16; Dtype.fp8e4m3; Dtype.fp8e5m2;
+     Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz]
+
+let compact_float_raw_bitcast_store after () =
+  List.iter (fun dtype ->
+      let uint = if Dtype.bitsize dtype = 8 then Dtype.uint8 else Dtype.uint16 in
+      let input = Uop.param ~slot:0 ~dtype:uint ~shape:(Uop.const_int 1)
+          ~addrspace:Dtype.Global () in
+      let output = Uop.param ~slot:1 ~dtype ~shape:(Uop.const_int 1)
+          ~addrspace:Dtype.Global () in
+      let index ptr = Uop.index ~ptr ~idxs:[Uop.const_int 0] () in
+      let barrier = Uop.barrier () in
+      let dst = if after then Uop.after ~src:(index output) ~deps:[barrier]
+          else index output in
+      let gate = if after then None else Some (Uop.variable ~name:"write_enabled"
+          ~min_val:0 ~max_val:1 ~dtype:Dtype.bool ()) in
+      let raw = Uop.load ~src:(index input) () in
+      let store = Uop.store ~dst ~value:(Uop.bitcast ~src:raw ~dtype) ?gate () in
+      let ctx : Decomp_dtype.float_decomp_ctx =
+        {from_dtype = dtype; to_dtype = Dtype.float32} in
+      let rewritten = Uop.graph_rewrite ~bottom_up:true
+          (Upat.Pattern_matcher.rewrite (Decomp_dtype.pm_float_decomp ctx)) store in
+      Spec.type_verify Spec.full_spec rewritten;
+      let message = Dtype.to_string dtype in
+      is_false ~msg:(message ^ ": storing raw bits never decodes floating values")
+        (List.exists (fun u -> Dtype.is_float (Uop.dtype u)) (Uop.toposort rewritten));
+      match Uop.as_store rewritten with
+      | Some {dst; value; gate = actual_gate} ->
+          equal ~msg:(message ^ ": store gate") bool true
+            (Option.equal Uop.equal actual_gate gate);
+          is_true ~msg:(message ^ ": original integer value is stored unchanged")
+            (Uop.equal (Uop.simplify value) raw);
+          if after then is_true ~msg:(message ^ ": destination effect is retained")
+              (List.exists (Uop.equal barrier) (Uop.toposort dst))
+      | None -> fail (message ^ ": expected a raw bitcast store"))
+    [Dtype.float16; Dtype.bfloat16; Dtype.fp8e4m3; Dtype.fp8e5m2;
+     Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz]
+
 let bf16_load_promotes_to_f32 () =
   let buf =
     Uop.param ~slot:0 ~dtype:Dtype.bfloat16 ~shape:(Uop.const_int 1)
@@ -1124,6 +1331,30 @@ let () =
         ];
       group "float decomposition"
         [
+          test "compact-float bitcast stores preserve their gate"
+            (compact_float_raw_bitcast_store false);
+          test "compact-float bitcast stores retain destination effects"
+            (compact_float_raw_bitcast_store true);
+          test "compact-float masked loads encode numeric fallbacks"
+            (compact_float_numeric_load_fallback false);
+          test "compact-float conditional loads encode weak numeric fallbacks"
+            (compact_float_numeric_load_fallback true);
+          test "compact-float arithmetic stores retain numeric conversion"
+            compact_float_arithmetic_store;
+          test "compact-float gathers preserve raw storage"
+            (compact_float_raw_selection `Stack);
+          test "compact-float conditional selection preserves raw storage"
+            (compact_float_raw_selection `Where);
+          test "compact-float value indexing preserves raw storage"
+            (compact_float_raw_selection `Index);
+          test "compact-float copies preserve raw storage"
+            (compact_float_raw_copy `Scalar);
+          test "compact-float copies preserve vector windows"
+            (compact_float_raw_copy `Vector);
+          test "compact-float copies preserve gates and raw alternatives"
+            (compact_float_raw_copy `Gated);
+          test "compact-float copies preserve address validity masks"
+            (compact_float_raw_copy `Masked_index);
           test "compact-float accesses narrow storage before reconstruction"
             compact_float_accesses_narrow_storage_first; test "bf16 load promotes to f32" bf16_load_promotes_to_f32;
           test "bf16 vector load reindexes SHRINK"

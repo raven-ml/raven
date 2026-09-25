@@ -722,6 +722,38 @@ let test_emulated_compact_float_storage () =
       equal ~msg:(Dtype.to_string dtype ^ " raw bitcast") string
         (Bytes.to_string (encode (bits @ [ 0 ]))) (Bytes.to_string (Device.Buffer.as_bytes bitcast))) cases
 
+let test_emulated_fp8_raw_bitcasts () =
+  let device = cpu "fp8-raw-bitcasts" in
+  let expected = Bytes.init 256 Char.chr in
+  List.iter (fun dtype ->
+      List.iter (fun (input_dtype, output_dtype) ->
+          let param slot dtype = U.param ~slot ~dtype ~shape:(U.const_int 256)
+              ~addrspace:Dtype.Global () in
+          let output = param 0 output_dtype and input = param 1 input_dtype in
+          let range = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Weak () in
+          let index ptr = U.index ~ptr ~idxs:[range] () in
+          let value = U.bitcast ~src:(U.load ~src:(index input) ()) ~dtype:output_dtype in
+          let sink = U.sink [U.end_ ~value:(U.store ~dst:(index output) ~value ())
+              ~ranges:[range]] in
+          let program = Codegen_lower.lower (Device.renderer device) sink
+              |> Linearizer.linearize in
+          let spec = Device.compile_program device ~name:"fp8_raw_bitcasts" program in
+          let allocate dtype =
+            let buffer = Device.create_buffer ~size:256 ~dtype device in
+            Device.Buffer.ensure_allocated buffer;
+            buffer in
+          let input = allocate input_dtype and output = allocate output_dtype in
+          Device.Buffer.copyin input expected;
+          run_spec device spec [output; input];
+          let actual = Device.Buffer.as_bytes output in
+          for i = 0 to 255 do
+            equal ~msg:(Printf.sprintf "%s -> %s encoding 0x%02x"
+                (Dtype.to_string input_dtype) (Dtype.to_string output_dtype) i)
+              int i (Bytes.get_uint8 actual i)
+          done)
+        [dtype, Dtype.uint8; Dtype.uint8, dtype])
+    [Dtype.fp8e4m3; Dtype.fp8e5m2; Dtype.fp8e4m3fnuz; Dtype.fp8e5m2fnuz]
+
 let test_software_sin_large_arguments () =
   let device = cpu "software-sin-large" in
   let values = [| 0.0; 1.0; Float.pi; 39800.0; 1.0e6; 1.0e10; 2.0 ** 31.0;
@@ -943,6 +975,7 @@ let main () =
           test "emulated compact-float storage preserves masks and bitcasts"
             test_emulated_compact_float_storage;
           test "emulated FP8 loads preserve all normal values" test_emulated_fp8_loads;
+          test "emulated FP8 raw bitcasts preserve all byte encodings" test_emulated_fp8_raw_bitcasts;
           test "emulated long division preserves quotient and remainder"
             test_emulated_long_division;
           test "emulated long buffer arithmetic preserves both words" test_emulated_long_buffer_arithmetic;

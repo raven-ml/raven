@@ -2304,20 +2304,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           (fun k ->
             ret k target_dtype
               (F.Dtype_ops.cast (go t_in) (tolk_dtype target_dtype)))
-    (* tolk emulates float8 on every device it runs, decoding each element to a
-       wider float and back, which flushes subnormals and clamps infinities: a
-       float8 bitcast would change bits. *)
     | E_bitcast { t_in; target_dtype } ->
-        let float8 (type c d) (d : (c, d) ND.t) =
-          match d with ND.Float8_e4m3 | ND.Float8_e5m2 -> true | _ -> false
-        in
-        if float8 (dt t_in) || float8 target_dtype then
-          unsupported "a bitcast to or from float8"
-        else
-          Some
-            (fun k ->
-              ret k target_dtype
-                (F.Dtype_ops.bitcast (go t_in) (tolk_dtype target_dtype)))
+        Some
+          (fun k ->
+            ret k target_dtype
+              (F.Dtype_ops.bitcast (go t_in) (tolk_dtype target_dtype)))
     (* A written buffer is contiguous storage already, and a [contiguous] over
        it would copy it out. *)
     | E_contiguous { t_in } ->

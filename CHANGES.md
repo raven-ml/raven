@@ -167,6 +167,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Support compiled `Nx.bitcast` to and from float8, preserving all byte
+  encodings through direct outputs, transposes and slices on CPU and Metal.
+
 - Fix `Rune.jit` outputs that directly bitcast an input, including a tuple
   returning both: each result now retains its own storage dtype.
 
@@ -653,6 +656,10 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- Preserve raw compact-float bits through bitcasts, copies and value selection,
+  including FP8 subnormals and NaN payloads; numeric arithmetic keeps its normal
+  conversion and masked fallback semantics.
 
 - Beam search now uses shared `PROGRAM` compilation, preserving the compiler
   callback's target, signature and profiling identity when timing candidates.

@@ -70,12 +70,6 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
-- Make a `Bitcast` to or from an emulated float8 act on the stored byte. Today
-  the float decomposition decodes the element through float32 and back, which
-  flushes subnormals and clamps infinities, so rune refuses a compiled float8
-  `Nx.bitcast`. Check raw bitcasts for all 256 encodings; exhaustive load
-  conversion tests do not establish bit preservation.
-
 - Migrate the remaining Python drivers to the target API and generate the
   complete corpus separately, including AMD queue drivers and the 40 non-release
   NV fixtures for launch/setup/copy behavior. Update the C-style fixture

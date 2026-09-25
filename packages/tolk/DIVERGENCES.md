@@ -363,6 +363,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   and GPT-2 execution suite. Reconsider if a consumer needs mixed symbolic and
   advanced indexing that cannot be composed from these operations.
 
+- **Compact-float storage movement preserves its raw representation.** The
+  frozen target decodes and re-encodes FP8 copies, losing subnormal encodings.
+  Tolk moves bitcasts through value selection before numeric promotion, so
+  copies, gathered lanes and masked choices preserve stored bits while actual
+  arithmetic still converts numerically. Consumer: compiled `Nx.bitcast` in
+  Rune. Coverage: all 256 encodings in both directions for four FP8 formats on
+  CPU, Rune CPU/Metal transpose and slice cases, and six-format masked numeric
+  and raw selection tests. Reconsider when upstream preserves the same storage
+  semantics across its emulation passes.
+
 - **Host-scalar `bitcast` stays in `symbolic.ml`**, upstream moved it to
   `dtype.ml` (`67dc02d7e`). Forced by layering: `Const` depends on `Dtype`.
   The only would-be consumer is host-side rand arithmetic, and

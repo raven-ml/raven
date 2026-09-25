@@ -723,6 +723,32 @@ let check_pow ?devices () =
    both zeros, infinities, quiet and signalling NaN with payloads, subnormals.
    The bits leave and enter the compiled function as stored, and an eager
    bitcast, which is a view, reads them. *)
+let check_float8_bitcast_matches_eager ?devices () =
+  let bytes = Nx.init Nx.uint8 [|16; 16|] (fun i -> (i.(0) * 16) + i.(1)) in
+  let check (type b) name (fp : (float, b) Nx.dtype) =
+    let values = Nx.bitcast fp bytes in
+    let expect_raw label expected actual =
+      equal ~msg:(name ^ " " ^ label) (array int) (Nx.to_array expected)
+        (Nx.to_array (Nx.bitcast Nx.uint8 actual)) in
+    let to_float x = Nx.bitcast fp x in
+    let to_bits x = Nx.bitcast Nx.uint8 x in
+    expect_raw "to float" bytes (Rune.jit' ?devices to_float bytes);
+    equal ~msg:(name ^ " from float") (array int) (Nx.to_array bytes)
+      (Nx.to_array (Rune.jit' ?devices to_bits values));
+    expect_raw "transposed store" (Nx.transpose bytes)
+      (Rune.jit' ?devices (fun x -> Nx.transpose (to_float x)) bytes);
+    equal ~msg:(name ^ "transposed load") (array int)
+      (Nx.to_array (Nx.transpose bytes))
+      (Nx.to_array (Rune.jit' ?devices (fun x -> to_bits (Nx.transpose x)) values));
+    let slice x = Nx.slice [Nx.R (1, 15); Nx.R (2, 14)] x in
+    expect_raw "sliced store" (slice bytes)
+      (Rune.jit' ?devices (fun x -> slice (to_float x)) bytes);
+    equal ~msg:(name ^ " sliced load") (array int) (Nx.to_array (slice bytes))
+      (Nx.to_array (Rune.jit' ?devices (fun x -> to_bits (slice x)) values))
+  in
+  check "float8_e4m3" Nx.float8_e4m3;
+  check "float8_e5m2" Nx.float8_e5m2
+
 let check_bitcast_output_ownership ?devices () =
   let check (type a b c d) name scalar (bits : (a, b) Nx.t)
       (float : (c, d) Nx.dtype) =
