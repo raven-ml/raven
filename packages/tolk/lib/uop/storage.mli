@@ -279,13 +279,6 @@ val transfer : dst:t -> src:t -> bool
 
     Raises [Invalid_argument] if [dst] and [src] differ in size or dtype. *)
 
-val copy_between : dst:t -> src:t -> unit
-(** [copy_between ~dst ~src] copies the contents of [src] into [dst] via a
-    host-memory bounce buffer. Both buffers are allocated if needed.
-
-    Raises [Invalid_argument] if [size dst <> size src] or
-    [dtype dst <> dtype src]. *)
-
 val copy_from : dst:t -> src:t -> unit
 (** [copy_from ~dst ~src] copies the contents of [src] into [dst], allocating
     either buffer as needed. This is the canonical way to move data between

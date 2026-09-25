@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Route JIT output and scatter-prefill copies through Tolk’s shared executor
+  so device transfer and host fallback follow the same storage protocol.
+
 - Preserve donated storage for indexed writes and in-place `Rune.scan` carries
   after Tolk materializes their allocations. Queue batching retains kernel
   access order so donation cannot overwrite an input before its last reader.
@@ -382,6 +385,10 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- CUDA buffers expose pinned host storage and mapped views to the shared
+  linker. Cross-device copies enable peer access when supported and otherwise
+  use the executor’s host fallback.
 
 - Fix BF16 scatter compilation looping during float emulation. Committed
   literals retain their width, and weak literals are rounded to their emulated

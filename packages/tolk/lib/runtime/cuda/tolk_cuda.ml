@@ -7,8 +7,10 @@
 
 open Tolk
 
-let buffer_kind : nativeint Type.Id.t = Type.Id.make ()
-let buffer_address buf = Option.value (Device.Buffer.get buffer_kind buf) ~default:0n
+type storage = { address : nativeint; host : bool; registered : bool }
+let buffer_kind : storage Type.Id.t = Type.Id.make ()
+let buffer_address buf = match Device.Buffer.get buffer_kind buf with
+  | Some storage -> storage.address | None -> 0n
 
 module Ffi = struct
   external init : unit -> unit = "caml_tolk_cuda_init"
@@ -28,6 +30,12 @@ module Ffi = struct
   external mem_host_alloc : int -> nativeint = "caml_tolk_cuda_mem_host_alloc"
   external mem_free_host : nativeint -> unit = "caml_tolk_cuda_mem_free_host"
 
+  external mem_host_register : nativeint -> int -> bool = "caml_tolk_cuda_mem_host_register"
+  external mem_host_unregister : nativeint -> unit = "caml_tolk_cuda_mem_host_unregister"
+  external enable_peer : int -> int -> nativeint -> bool = "caml_tolk_cuda_enable_peer"
+  external memcpy_peer : nativeint -> nativeint -> nativeint -> nativeint -> int -> unit
+    = "caml_tolk_cuda_memcpy_peer"
+
   external host_write : nativeint -> bytes -> unit
     = "caml_tolk_cuda_host_write"
 
@@ -40,8 +48,8 @@ module Ffi = struct
   external host_read : bytes -> nativeint -> unit
     = "caml_tolk_cuda_host_read"
 
-  external memcpy_dtod_async : nativeint -> nativeint -> int -> unit
-    = "caml_tolk_cuda_memcpy_dtod_async"
+  external memcpy_async : nativeint -> nativeint -> int -> unit
+    = "caml_tolk_cuda_memcpy_async"
 
   external module_load : bytes -> nativeint = "caml_tolk_cuda_module_load"
 
@@ -105,23 +113,27 @@ end
 
 module State = struct
   type t = {
+    name : string;
+    device : int;
     context : nativeint;
     arch : string;
-    mutable pending_copyin : (nativeint * int * Device.Buffer_spec.t) list;
+    peers : (nativeint, bool) Hashtbl.t;
+    mutable pending_copyin : (storage * int * Device.Buffer_spec.t) list;
     (* The device's LRU-wrapped allocator; set right after creation and used
        by copyin staging and pending-buffer release. *)
-    mutable allocator : nativeint Device.Allocator.t option;
+    mutable allocator : storage Device.Allocator.t option;
   }
 
   let devices : t list ref = ref []
 
-  let create device_id =
+  let create name device_id =
     Ffi.init ();
     let cu_device = Ffi.device_get device_id in
     let context = Ffi.ctx_create cu_device in
     let major, minor = Ffi.compute_capability cu_device in
     let arch = Printf.sprintf "sm_%d%d" major minor in
-    let state = { context; arch; pending_copyin = []; allocator = None } in
+    let state = { name = Device.canonicalize name; device = cu_device; context; arch;
+      peers = Hashtbl.create 4; pending_copyin = []; allocator = None } in
     devices := !devices @ [ state ];
     state
 
@@ -136,6 +148,18 @@ module State = struct
       pending
 
   let synchronize_system () = List.iter synchronize !devices
+
+  let find name = List.find_opt (fun state -> state.name = Device.canonicalize name) !devices
+
+  let enable_peer dst src =
+    if dst.context = src.context then true else
+    match Hashtbl.find_opt dst.peers src.context with
+    | Some supported -> supported
+    | None ->
+        Ffi.ctx_set_current dst.context;
+        let supported = Ffi.enable_peer dst.device src.device src.context in
+        Hashtbl.add dst.peers src.context supported;
+        supported
 end
 
 module Allocator = struct
@@ -144,83 +168,93 @@ module Allocator = struct
   let raw state =
     let alloc size spec =
       Ffi.ctx_set_current state.State.context;
-      match spec.Device.Buffer_spec.external_ptr with
-      | Some ptr -> ptr
-      | None ->
-          if spec.Device.Buffer_spec.host then Ffi.mem_host_alloc size
-          else Ffi.mem_alloc size
+      let host = spec.Device.Buffer_spec.host || spec.cpu_access in
+      let address = match spec.external_ptr with
+        | Some ptr -> ptr
+        | None -> if host then Ffi.mem_host_alloc size else Ffi.mem_alloc size in
+      {address; host; registered = false}
     in
-    let free buf _size spec =
+    let free buf size spec =
+      ignore size;
+      State.synchronize state;
       match spec.Device.Buffer_spec.external_ptr with
       | Some _ -> ()
-      | None ->
-          if spec.Device.Buffer_spec.host then Ffi.mem_free_host buf
-          else Ffi.mem_free buf
+      | None -> if buf.host then Ffi.mem_free_host buf.address else Ffi.mem_free buf.address
     in
-    (* Host-to-device copies stage through a pinned host buffer drawn from the
-       device allocator's LRU cache so the copy can be issued asynchronously;
-       the staging buffer is released back to the cache at the next
-       synchronize. *)
     let copyin buf bytes =
-      Ffi.ctx_set_current state.State.context;
-      let size = Bytes.length bytes in
-      let host =
-        (Option.get state.State.allocator).Device.Allocator.alloc size
-          host_spec
-      in
-      state.State.pending_copyin <-
-        (host, size, host_spec) :: state.State.pending_copyin;
-      Ffi.host_write host bytes;
-      Ffi.memcpy_htod_async buf host size
-    in
-    (* Device-to-host copies stage through a pinned host buffer drawn from
-       the same LRU cache as copyin staging: a synchronous copy into pinned
-       memory runs at full PCIe bandwidth where a pageable destination
-       throttles the driver, and the OCaml runtime lock can be released while
-       it blocks. The staging buffer is returned to the cache immediately —
-       the copy has completed by then. *)
-    let copyout bytes buf =
-      State.synchronize_system ();
-      Ffi.ctx_set_current state.State.context;
-      let size = Bytes.length bytes in
-      let allocator = Option.get state.State.allocator in
-      let host = allocator.Device.Allocator.alloc size host_spec in
-      Fun.protect
-        ~finally:(fun () ->
-          allocator.Device.Allocator.free host size host_spec)
-        (fun () ->
-          Ffi.memcpy_dtoh_ptr host buf size;
-          Ffi.host_read bytes host)
-    in
-    let transfer ~dest ~src ~dest_device ~src_device nbytes =
-      if Device.canonicalize dest_device <> Device.canonicalize src_device then false
-      else begin
+      if buf.host then begin
+        State.synchronize state;
+        Ffi.host_write buf.address bytes
+      end else begin
         Ffi.ctx_set_current state.State.context;
-        Ffi.memcpy_dtod_async dest src nbytes;
-        true
+        let size = Bytes.length bytes in
+        let host = (Option.get state.State.allocator).Device.Allocator.alloc size host_spec in
+        state.State.pending_copyin <- (host, size, host_spec) :: state.State.pending_copyin;
+        Ffi.host_write host.address bytes;
+        Ffi.memcpy_htod_async buf.address host.address size
       end
     in
-    let offset buf _size byte_offset =
-      if byte_offset < 0 then
-        invalid_arg "CUDA buffer offset must be non-negative";
-      Nativeint.add buf (Nativeint.of_int byte_offset)
+    let copyout bytes buf =
+      State.synchronize_system ();
+      if buf.host then Ffi.host_read bytes buf.address else begin
+        Ffi.ctx_set_current state.State.context;
+        let size = Bytes.length bytes in
+        let allocator = Option.get state.State.allocator in
+        let host = allocator.Device.Allocator.alloc size host_spec in
+        Fun.protect ~finally:(fun () -> allocator.free host size host_spec)
+          (fun () -> Ffi.memcpy_dtoh_ptr host.address buf.address size;
+                     Ffi.host_read bytes host.address)
+      end
     in
-    {
-      Device.Allocator.kind = buffer_kind;
-      host = Fun.const None;
-      mapping = None;
+    let transfer ~dest ~src ~dest_device ~src_device nbytes =
+      match State.find dest_device, State.find src_device with
+      | Some dst, Some source when State.enable_peer dst source ->
+          if dst.context = source.context then begin
+            Ffi.ctx_set_current dst.context;
+            Ffi.memcpy_async dest.address src.address nbytes
+          end else begin
+            State.synchronize source;
+            State.synchronize dst;
+            Ffi.memcpy_peer dest.address dst.context src.address source.context nbytes;
+            State.synchronize dst
+          end;
+          true
+      | _ -> false
+    in
+    let offset buf size byte_offset =
+      ignore size;
+      if byte_offset < 0 then invalid_arg "CUDA buffer offset must be non-negative";
+      {buf with address = Nativeint.add buf.address (Nativeint.of_int byte_offset);
+        registered = false}
+    in
+    let map source =
+      Ffi.ctx_set_current state.State.context;
+      match State.find (Device.Buffer.device source) with
+      | Some owner ->
+          let raw = Option.get (Device.Buffer.get buffer_kind source) in
+          if not (raw.host || State.enable_peer state owner) then
+            invalid_arg "CUDA peer storage is not accessible";
+          {raw with registered = false}
+      | None ->
+          (match Device.Buffer.host_addr source with
+           | None -> invalid_arg "CUDA mapping requires host-accessible storage"
+           | Some address ->
+               Ffi.ctx_set_current state.State.context;
+               let registered = Ffi.mem_host_register address (Device.Buffer.nbytes source) in
+               {address; host = true; registered})
+    in
+    let unmap raw =
+      State.synchronize state;
+      if raw.registered then Ffi.mem_host_unregister raw.address
+    in
+    Device.Allocator.{kind = buffer_kind;
+      host = (fun (buf : storage) -> if buf.host then Some buf.address else None);
+      mapping = Some {map; unmap};
       synchronize = (fun () -> State.synchronize_system ());
-      alloc;
-      free;
-      copyin;
-      copyout;
-      addr = Some Fun.id;
-      offset = Some offset;
-      transfer = Some transfer;
-      supports_transfer = true;
-      copy_from_disk = None;
-      supports_copy_from_disk = false;
-    }
+      alloc; free; copyin; copyout;
+      addr = Some (fun buf -> buf.address); offset = Some offset;
+      transfer = Some transfer; supports_transfer = true;
+      copy_from_disk = None; supports_copy_from_disk = false}
 
   let create state =
     let allocator = Device.Lru_allocator.wrap (raw state) in
@@ -317,7 +351,7 @@ let create name =
         | None -> invalid_arg (Printf.sprintf "invalid CUDA device %S" name))
     | None -> 0
   in
-  let state = State.create device_id in
+  let state = State.create name device_id in
   let allocator = Allocator.create state in
   let renderer_set = Device.Renderer_set.make ~device:name ~arch:state.State.arch
       [ "CUDA", (fun target ->

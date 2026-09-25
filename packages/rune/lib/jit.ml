@@ -4409,8 +4409,7 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
           Tolk.Realize.Buffers.of_buffer_node c.cp_binding
             c.cp_inputs.(i).i_node
         in
-        if not (Tolk.Device.Buffer.transfer ~dst ~src) then
-          Tolk.Device.Buffer.copy_between ~dst ~src
+        Tolk.Device.Buffer.copy_from ~dst ~src
       end)
     c.cp_prefills;
   Tolk.Realize.run_linear ~device:c.cp_device
@@ -4430,8 +4429,7 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
           | None -> begin
               let copy_to dev n src =
                 let dst = create_fresh_buffer dev (tolk_dtype odt) n in
-                if not (Tolk.Device.Buffer.transfer ~dst ~src) then
-                  Tolk.Device.Buffer.copy_between ~dst ~src;
+                Tolk.Device.Buffer.copy_from ~dst ~src;
                 dst
               in
               match Tolk.Realize.Buffers.buffer_of_node c.cp_binding node with

@@ -15,6 +15,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 /* Hand-declared subset of the CUDA driver API. The library is resolved with
    dlopen at first use so this library builds and loads on machines without
@@ -77,11 +80,16 @@ static CUresult (*p_cuMemAlloc)(CUdeviceptr *, size_t);
 static CUresult (*p_cuMemFree)(CUdeviceptr);
 static CUresult (*p_cuMemHostAlloc)(void **, size_t, unsigned int);
 static CUresult (*p_cuMemFreeHost)(void *);
+static CUresult (*p_cuMemHostRegister)(void *, size_t, unsigned int);
+static CUresult (*p_cuMemHostUnregister)(void *);
+static CUresult (*p_cuDeviceCanAccessPeer)(int *, CUdevice, CUdevice);
+static CUresult (*p_cuCtxEnablePeerAccess)(CUcontext, unsigned int);
+static CUresult (*p_cuMemcpyPeerAsync)(CUdeviceptr, CUcontext, CUdeviceptr,
+                                    CUcontext, size_t, CUstream);
 static CUresult (*p_cuMemcpyHtoDAsync)(CUdeviceptr, const void *, size_t,
                                        CUstream);
 static CUresult (*p_cuMemcpyDtoH)(void *, CUdeviceptr, size_t);
-static CUresult (*p_cuMemcpyDtoDAsync)(CUdeviceptr, CUdeviceptr, size_t,
-                                       CUstream);
+static CUresult (*p_cuMemcpyAsync)(CUdeviceptr, CUdeviceptr, size_t, CUstream);
 static CUresult (*p_cuModuleLoadData)(CUmodule *, const void *);
 static CUresult (*p_cuModuleGetFunction)(CUfunction *, CUmodule, const char *);
 static CUresult (*p_cuModuleUnload)(CUmodule);
@@ -142,9 +150,14 @@ static void ensure_cuda(void) {
   LOAD_CUDA(p_cuMemFree, "cuMemFree_v2");
   LOAD_CUDA(p_cuMemHostAlloc, "cuMemHostAlloc");
   LOAD_CUDA(p_cuMemFreeHost, "cuMemFreeHost");
+  LOAD_CUDA(p_cuMemHostRegister, "cuMemHostRegister_v2");
+  LOAD_CUDA(p_cuMemHostUnregister, "cuMemHostUnregister");
+  LOAD_CUDA(p_cuDeviceCanAccessPeer, "cuDeviceCanAccessPeer");
+  LOAD_CUDA(p_cuCtxEnablePeerAccess, "cuCtxEnablePeerAccess");
+  LOAD_CUDA(p_cuMemcpyPeerAsync, "cuMemcpyPeerAsync");
   LOAD_CUDA(p_cuMemcpyHtoDAsync, "cuMemcpyHtoDAsync_v2");
   LOAD_CUDA(p_cuMemcpyDtoH, "cuMemcpyDtoH_v2");
-  LOAD_CUDA(p_cuMemcpyDtoDAsync, "cuMemcpyDtoDAsync_v2");
+  LOAD_CUDA(p_cuMemcpyAsync, "cuMemcpyAsync");
   LOAD_CUDA(p_cuModuleLoadData, "cuModuleLoadData");
   LOAD_CUDA(p_cuModuleGetFunction, "cuModuleGetFunction");
   LOAD_CUDA(p_cuModuleUnload, "cuModuleUnload");
@@ -254,6 +267,52 @@ CAMLprim value caml_tolk_cuda_mem_free_host(value v_ptr) {
   CAMLreturn(Val_unit);
 }
 
+CAMLprim value caml_tolk_cuda_mem_host_register(value v_ptr, value v_size) {
+  CAMLparam2(v_ptr, v_size);
+#if defined(_WIN32)
+  SYSTEM_INFO system_info;
+  GetSystemInfo(&system_info);
+  size_t page_size = system_info.dwPageSize;
+#else
+  long system_page_size = sysconf(_SC_PAGESIZE);
+  if (system_page_size <= 0) caml_failwith("Cannot determine CUDA host page size");
+  size_t page_size = (size_t)system_page_size;
+#endif
+  if ((uintptr_t)Nativeint_val(v_ptr) % page_size != 0)
+    caml_invalid_argument("CUDA mapping requires page-aligned host storage");
+  CUresult status = p_cuMemHostRegister((void *)Nativeint_val(v_ptr),
+                                      (size_t)Long_val(v_size), 0);
+  if (status != 712) cuda_check(status); /* already registered */
+  CAMLreturn(Val_bool(status == 0));
+}
+
+CAMLprim value caml_tolk_cuda_mem_host_unregister(value v_ptr) {
+  CAMLparam1(v_ptr);
+  cuda_check(p_cuMemHostUnregister((void *)Nativeint_val(v_ptr)));
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_cuda_enable_peer(value v_device, value v_peer,
+                                        value v_context) {
+  CAMLparam3(v_device, v_peer, v_context);
+  int supported = 0;
+  cuda_check(p_cuDeviceCanAccessPeer(&supported, Int_val(v_device), Int_val(v_peer)));
+  if (!supported) CAMLreturn(Val_false);
+  CUresult status = p_cuCtxEnablePeerAccess((CUcontext)Nativeint_val(v_context), 0);
+  if (status == 217 || status == 711 || status == 801) CAMLreturn(Val_false);
+  if (status != 704) cuda_check(status); /* already enabled */
+  CAMLreturn(Val_true);
+}
+
+CAMLprim value caml_tolk_cuda_memcpy_peer(value v_dst, value v_dst_ctx,
+                                        value v_src, value v_src_ctx, value v_size) {
+  CAMLparam5(v_dst, v_dst_ctx, v_src, v_src_ctx, v_size);
+  cuda_check(p_cuMemcpyPeerAsync((CUdeviceptr)Nativeint_val(v_dst),
+      (CUcontext)Nativeint_val(v_dst_ctx), (CUdeviceptr)Nativeint_val(v_src),
+      (CUcontext)Nativeint_val(v_src_ctx), (size_t)Long_val(v_size), NULL));
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value caml_tolk_cuda_host_write(value v_host, value v_bytes) {
   CAMLparam2(v_host, v_bytes);
   memcpy((void *)Nativeint_val(v_host), Bytes_val(v_bytes),
@@ -294,10 +353,10 @@ CAMLprim value caml_tolk_cuda_host_read(value v_bytes, value v_host) {
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_cuda_memcpy_dtod_async(value v_dst, value v_src,
+CAMLprim value caml_tolk_cuda_memcpy_async(value v_dst, value v_src,
                                                 value v_size) {
   CAMLparam3(v_dst, v_src, v_size);
-  cuda_check(p_cuMemcpyDtoDAsync((CUdeviceptr)Nativeint_val(v_dst),
+  cuda_check(p_cuMemcpyAsync((CUdeviceptr)Nativeint_val(v_dst),
                                  (CUdeviceptr)Nativeint_val(v_src),
                                  (size_t)Long_val(v_size), NULL));
   CAMLreturn(Val_unit);

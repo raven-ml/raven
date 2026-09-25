@@ -333,6 +333,32 @@ let () =
               let src = i32_view src_base ~offset:4 ~size:1 in
               run_spec device spec [ dst; src ];
               equal (list int) [ 0; 42; 0; 0 ] (read_i32 dst_base));
+          test "pinned storage exposes its host mapping and view offsets" (fun () ->
+              let device = cuda_device () in
+              let spec = {Device.Buffer_spec.default with cpu_access = true} in
+              let base = Device.create_buffer ~spec ~size:4 ~dtype:Dtype.int32 device in
+              Device.Buffer.ensure_allocated base;
+              Device.Buffer.copyin base (int32_to_bytes [1; 2; 3; 4]);
+              let view = i32_view base ~offset:4 ~size:2 in
+              let address = Option.get (Device.Buffer.host_addr base) in
+              equal nativeint (Nativeint.add address 4n)
+                (Option.get (Device.Buffer.host_addr view));
+              let dst = i32_buf device [0; 0] in
+              Device.Buffer.copy_from ~dst ~src:view;
+              equal (list int) [2; 3] (read_i32 dst);
+              Device.Buffer.copy_from ~dst:view ~src:(i32_buf device [20; 30]);
+              equal (list int) [1; 20; 30; 4] (read_i32 base));
+          test "cross-device copy preserves views with peer or host fallback" (fun () ->
+              let first = cuda_device () in
+              let second = try Tolk_cuda.create "CUDA:1" with
+                | Failure msg -> skip ~reason:("Second CUDA device unavailable: " ^ msg) () in
+              let src = i32_view (i32_buf first [1; 2; 3; 4]) ~offset:4 ~size:2 in
+              let base = i32_buf second [0; 0; 0; 0] in
+              let dst = i32_view base ~offset:8 ~size:2 in
+              Device.Buffer.copy_from ~dst ~src;
+              equal (list int) [0; 0; 2; 3] (read_i32 base);
+              Device.Buffer.copy_from ~dst:src ~src:dst;
+              equal (list int) [2; 3] (read_i32 src));
           test "transfer respects buffer view offsets" (fun () ->
               let device = cuda_device () in
               let dst_base = i32_buf device [ 0; 0; 0; 0 ] in
