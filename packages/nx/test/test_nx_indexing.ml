@@ -241,16 +241,18 @@ let test_take_with_axis () =
   let result = Nx.take ~axis:1 ~indices t in
   check_t "take with axis" [| 3; 2 |] [| 1.; 3.; 5.; 7.; 9.; 11. |] result
 
-let test_take_out_of_range_raises () =
+(* Past the end and negative alike, per element and per row (the row copy
+   path). *)
+let test_take_out_of_range_reads_zero () =
   let t = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
-  raises ~msg:"past the end"
-    (Invalid_argument
-       "gather: index out of bounds for the gathered/scattered axis") (fun () ->
-      ignore (Nx.take ~indices:(Nx.create Nx.int32 [| 1 |] [| 3l |]) t));
-  raises ~msg:"negative"
-    (Invalid_argument
-       "gather: index out of bounds for the gathered/scattered axis") (fun () ->
-      ignore (Nx.take ~indices:(Nx.create Nx.int32 [| 1 |] [| -1l |]) t))
+  let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 1l; -1l; 7l |] in
+  check_t "elements" [| 4 |] [| 0.; 20.; 0.; 0. |] (Nx.take ~indices t);
+  let rows = Nx.create Nx.int32 [| 6 |] [| 10l; 20l; 30l; 40l; 50l; 60l |] in
+  let rows = Nx.reshape [| 3; 2 |] rows in
+  let indices = Nx.create Nx.int32 [| 3 |] [| 2l; -1l; 3l |] in
+  check_t "rows" [| 3; 2 |]
+    [| 50l; 60l; 0l; 0l; 0l; 0l |]
+    (Nx.take ~axis:0 ~indices rows)
 
 (* ───── Take_along_axis Tests ───── *)
 
@@ -266,6 +268,12 @@ let test_take_along_axis_2d () =
   let indices = Nx.argmax ~axis:1 ~keepdims:true t in
   let maxvals = Nx.take_along_axis ~axis:1 ~indices t in
   check_t "take_along_axis 2d" [| 2; 1 |] [| 4.; 6. |] maxvals
+
+let test_take_along_axis_out_of_range_reads_zero () =
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 4.; 1.; 2.; 3.; 5.; 6. |] in
+  let indices = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 3l; -1l; 0l |] in
+  check_t "take_along_axis out of range" [| 2; 2 |] [| 2.; 0.; 0.; 3. |]
+    (Nx.take_along_axis ~axis:1 ~indices t)
 
 (* ───── Scatter Tests ───── *)
 
@@ -305,6 +313,17 @@ let test_scatter_int_dtype () =
   let values = Nx.create Nx.int32 [| 2 |] [| 7l; 8l |] in
   let r = Nx.scatter ~axis:0 ~indices ~values t in
   check_t "scatter int32" [| 3 |] [| 7l; 0l; 8l |] r
+
+(* Past the end and negative alike: the update is dropped and the template shows
+   through. *)
+let test_scatter_out_of_range_dropped () =
+  let t = Nx.create Nx.float32 [| 4 |] [| 1.; 1.; 1.; 1. |] in
+  let indices = Nx.create Nx.int32 [| 4 |] [| -1l; 2l; 4l; -5l |] in
+  let values = Nx.create Nx.float32 [| 4 |] [| 10.; 20.; 30.; 40. |] in
+  check_t "set" [| 4 |] [| 1.; 1.; 20.; 1. |]
+    (Nx.scatter ~axis:0 ~indices ~values t);
+  check_t "add" [| 4 |] [| 1.; 1.; 21.; 1. |]
+    (Nx.scatter ~mode:`Add ~axis:0 ~indices ~values t)
 
 let test_scatter_shape_mismatch () =
   let t = Nx.zeros Nx.float32 [| 2; 3 |] in
@@ -499,9 +518,11 @@ let take_tests =
   [
     test "take basic" test_take_basic;
     test "take with axis" test_take_with_axis;
-    test "take out of range raises" test_take_out_of_range_raises;
+    test "take out of range reads zero" test_take_out_of_range_reads_zero;
     test "take_along_axis 1d" test_take_along_axis_1d;
     test "take_along_axis 2d" test_take_along_axis_2d;
+    test "take_along_axis out of range reads zero"
+      test_take_along_axis_out_of_range_reads_zero;
     test "take empty indices" test_take_empty_indices;
   ]
 
@@ -515,6 +536,7 @@ let scatter_tests =
     test "scatter add accumulates" test_scatter_add_accumulates;
     test "scatter broadcasts values" test_scatter_broadcast_values;
     test "scatter int dtype" test_scatter_int_dtype;
+    test "scatter out of range is dropped" test_scatter_out_of_range_dropped;
     test "scatter shape mismatch" test_scatter_shape_mismatch;
   ]
 

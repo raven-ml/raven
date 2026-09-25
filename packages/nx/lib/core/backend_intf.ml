@@ -530,7 +530,10 @@ module type S = sig
       using [indices].
 
       {b Frontend guarantees:} [rank data = rank indices]. [axis] is valid.
-      Index values are in range for [data]'s size along [axis]. *)
+
+      {b Backend must:} read zero at an index outside \[[0], [n]), with [n]
+      [data]'s size along [axis], negative included, without touching memory
+      outside [data]. *)
 
   val scatter :
     mode:[ `Set | `Add ] ->
@@ -558,7 +561,9 @@ module type S = sig
       [template] has the desired output shape.
 
       {b Backend must:} allocate and return the result tensor, initialized from
-      [template]'s data. *)
+      [template]'s data, and drop an update whose index lies outside \[[0],
+      [n]), with [n] [template]'s size along [axis], negative included, without
+      touching memory outside the result. *)
 
   val update :
     ('a, 'b) t -> starts:(int32, Dtype.int32_elt) t -> ('a, 'b) t -> ('a, 'b) t

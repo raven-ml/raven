@@ -1620,18 +1620,56 @@ let test_scatter_unique_indices_broken_at_one_row () =
   check "compiled" (to_arr (g t));
   check "replay" (to_arr (g t))
 
-(* Eager raises on an index outside the axis; compiled, the update is dropped.
-   -1 is the address a slot map gives a token that is not written. *)
-let test_scatter_out_of_range_writes_nothing () =
+(* An index outside the axis drops the update and reads zero, eagerly and
+   compiled alike. -1 is the address a slot map gives a token that is not
+   written. *)
+let check_eager_and_compiled ~msg expected f x =
+  check_arr ~msg:(msg ^ ", eager") expected (f x);
+  check_arr ~msg:(msg ^ ", compiled") expected (Rune.jit' f x)
+
+let test_scatter_out_of_range_dropped () =
   let indices = i32 [| 4; 2 |] [| -1; 4; 1; -7; 2; 1; 5; -1 |] in
   let values = iota [| 4; 2 |] in
   let f mode t = Nx.scatter ~mode ~axis:0 ~indices ~values t in
-  check_arr ~msg:"set"
+  check_eager_and_compiled ~msg:"set"
     [| 0.0; 0.0; 3.0; 6.0; 5.0; 0.0; 0.0; 0.0 |]
-    (Rune.jit' (f `Set) (Nx.zeros f32 [| 4; 2 |]));
-  check_arr ~msg:"add"
+    (f `Set)
+    (Nx.zeros f32 [| 4; 2 |]);
+  check_eager_and_compiled ~msg:"add"
     [| 1.0; 2.0; 6.0; 10.0; 10.0; 6.0; 7.0; 8.0 |]
-    (Rune.jit' (f `Add) (iota [| 4; 2 |]))
+    (f `Add)
+    (iota [| 4; 2 |])
+
+let test_gather_out_of_range_reads_zero () =
+  let table = iota [| 4; 2 |] in
+  check_eager_and_compiled ~msg:"take rows"
+    [| 5.0; 6.0; 0.0; 0.0; 0.0; 0.0 |]
+    (Nx.take ~axis:0 ~indices:(i32 [| 3 |] [| 2; -1; 4 |]))
+    table;
+  check_eager_and_compiled ~msg:"take_along_axis"
+    [| 2.0; 0.0; 0.0; 4.0; 0.0; 5.0; 0.0; 0.0 |]
+    (Nx.take_along_axis ~axis:1
+       ~indices:(i32 [| 4; 2 |] [| 1; 2; -1; 1; 9; 0; -3; 5 |]))
+    table
+
+(* A dropped update's gradient is zero, the template's is zero only where an
+   update landed, and a read of zero passes nothing back to the table. *)
+let test_grad_out_of_range_indices () =
+  let indices = i32 [| 4 |] [| -1; 2; 4; 0 |] in
+  let weights = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+  let through ~values t =
+    Nx.sum (Nx.mul weights (Nx.scatter ~axis:0 ~indices ~values t))
+  in
+  let t = Nx.zeros f32 [| 4 |] and values = vec32 [| 10.; 20.; 30.; 40. |] in
+  check_eager_and_compiled ~msg:"d/dvalues" [| 0.0; 3.0; 0.0; 1.0 |]
+    (Rune.grad' (fun values -> through ~values t))
+    values;
+  check_eager_and_compiled ~msg:"d/dtemplate" [| 0.0; 2.0; 0.0; 4.0 |]
+    (Rune.grad' (fun t -> through ~values t))
+    t;
+  check_eager_and_compiled ~msg:"d/dtable" [| 4.0; 0.0; 2.0; 0.0 |]
+    (Rune.grad' (fun table -> Nx.sum (Nx.mul weights (Nx.take ~indices table))))
+    (vec32 [| 1.0; 1.0; 1.0; 1.0 |])
 
 let test_scatter_payload_dtypes () =
   let indices = i32 [| 4 |] [| 2; 0; 2; 1 |] in
@@ -3934,7 +3972,11 @@ let tests =
         test "scatter with unique indices broken at one row"
           test_scatter_unique_indices_broken_at_one_row;
         test "scatter drops an update outside the axis"
-          test_scatter_out_of_range_writes_nothing;
+          test_scatter_out_of_range_dropped;
+        test "gathers read zero outside the axis"
+          test_gather_out_of_range_reads_zero;
+        test "gradients through indices outside the axis"
+          test_grad_out_of_range_indices;
         test "scatter carries int and bfloat16 payloads"
           test_scatter_payload_dtypes;
         test "scatter under vmap" test_scatter_under_vmap;

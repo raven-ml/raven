@@ -1851,6 +1851,22 @@ struct
               in
               equal ~msg:"shape" (array int) [| 2; 4 |] (F.shape got);
               equal ~msg:"values" (array ftst) exp (F.to_array got));
+          case classify (path ^ "/gather") "out-of-range-reads-zero" (fun () ->
+              (* past the end and negative, element-wise and as whole rows *)
+              let idx =
+                F.create ctx F.int32 [| 3; 2 |] [| 4l; 1l; -1l; 3l; 2l; 7l |]
+              in
+              equal ~msg:"elements" (array ftst)
+                [| 0.; 1.; 0.; 7.; 10.; 0. |]
+                (F.to_array (B.gather data idx ~axis:1));
+              let rows =
+                B.expand
+                  (F.create ctx F.int32 [| 3; 1 |] [| 3l; 1l; -2l |])
+                  [| 3; 4 |]
+              in
+              equal ~msg:"rows" (array ftst)
+                [| 0.; 0.; 0.; 0.; 4.; 5.; 6.; 7.; 0.; 0.; 0.; 0. |]
+                (F.to_array (B.gather data rows ~axis:0)));
         ];
     ]
 
@@ -1933,6 +1949,23 @@ struct
               in
               equal ~msg:"unique set" (array ftst) [| 10.; 5.; 20.; 30. |]
                 (F.to_array got));
+          case classify (path ^ "/scatter") "out-of-range-dropped" (fun () ->
+              (* past the end and negative: the update is dropped and the
+                 template shows through *)
+              let idx =
+                F.create ctx F.int32 [| 1; 4 |] [| -1l; 2l; 4l; -5l |]
+              in
+              let updates =
+                F.create ctx F.float64 [| 1; 4 |] [| 10.; 20.; 30.; 40. |]
+              in
+              let tmpl = F.create ctx F.float64 [| 1; 4 |] (Array.make 4 1.0) in
+              let run mode =
+                F.to_array
+                  (B.scatter ~mode ~unique_indices:false tmpl ~indices:idx
+                     ~updates ~axis:1)
+              in
+              equal ~msg:"set" (array ftst) [| 1.; 1.; 20.; 1. |] (run `Set);
+              equal ~msg:"add" (array ftst) [| 1.; 1.; 21.; 1. |] (run `Add));
         ];
     ]
 

@@ -42,12 +42,6 @@
    never exceed this. */
 #define NX_C_MAX_SPATIAL NX_C_MAX_NDIM
 
-/* Status strings this family owns (the shared set in nx_c.h/nx_c_engine.h has no
-   index-domain error). Static, never freed — the status-protocol contract. An
-   out-of-bounds gather/scatter index is a data fault, surfaced as Failure by
-   the stub, never an out-of-bounds access or abort. */
-#define NX_C_ERR_INDEX_OOB "index out of bounds for the gathered/scattered axis"
-
 /* ── Identity copy table ───────────────────────────────────────────────────
 
    One kernel per compute dtype, keyed by the dtype's STORAGE type so the copy
@@ -306,22 +300,11 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
 /* ── gather ──────────────────────────────────────────────────────────────────
 
    out[c] = data[c with axis -> indices[c]], over the output/index space (they
-   share a shape). Indices are int32 in [0, axis_len); a negative or
-   out-of-range index is an error, never wrapped. Reads
-   are all disjoint across outputs, so the copy parallelizes freely over output
-   elements. The bounds check is folded into the copy body: a worker wraps and
-   range-checks each index immediately before the read it guards, so a bad index
-   is caught before it can fault. Faults are reported through per-worker status
-   slots (race-free — each worker writes only its own) and aggregated after the
-   join. This replaces a serial pre-scan of the whole index space — pure overhead,
-   and (on a column-broadcast index) redundant by the column count, since the row
-   fast path consumes one index per row, not one per output element. */
-
-/* Per-worker fault slots live on the driver stack. MUST be >= the engine pool cap
-   NX_C_MAX_THREADS (nx_c_engine.c): a worker index reaches nthreads-1 and the pool
-   clamps nthreads to that cap. Same literal-64 bound as nx_c_linalg.c's
-   LA_MAX_WORKERS. */
-#define MOVE_MAX_WORKERS 64
+   share a shape). An index outside [0, axis_len), negative included, reads
+   zero: the transpose of scatter's dropped write, and what compiled code
+   computes. All-zero bytes are zero in every dtype this op accepts. Reads are
+   disjoint across outputs, so the copy parallelizes freely over output
+   elements. */
 
 typedef struct {
   const nx_c_ndarray *data;
@@ -329,10 +312,10 @@ typedef struct {
   const nx_c_ndarray *out;
   int axis;
   int64_t esize;
-  nx_c_status *status;
 } nx_c_gather_ctx;
 
 static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  (void)worker;
   const nx_c_gather_ctx *g = vctx;
   const nx_c_ndarray *data = g->data;
   const nx_c_ndarray *idx = g->indices;
@@ -345,34 +328,33 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     int64_t idx_off = idx->offset + nx_c_dot(nd, coord, idx->strides);
     int64_t index = *(const int32_t *)((const char *)idx->data +
                                         idx_off * (int64_t)sizeof(int32_t));
+    int64_t out_off = out->offset + nx_c_dot(nd, coord, out->strides);
+    char *o = (char *)out->data + out_off * esize;
     if (index < 0 || index >= axis_len) {
-      if (g->status[worker] == NX_C_OK) g->status[worker] = NX_C_ERR_INDEX_OOB;
-      return;
+      memset(o, 0, (size_t)esize);
+      continue;
     }
     for (int d = 0; d < nd; d++) dcoord[d] = (d == axis) ? index : coord[d];
     int64_t data_off = data->offset + nx_c_dot(nd, dcoord, data->strides);
-    int64_t out_off = out->offset + nx_c_dot(nd, coord, out->strides);
-    memcpy((char *)out->data + out_off * esize,
-           (const char *)data->data + data_off * esize, (size_t)esize);
+    memcpy(o, (const char *)data->data + data_off * esize, (size_t)esize);
   }
 }
 
 /* Fast path: axis-0 2-D gather with a column-broadcast index (indices stride 1
    == 0) over contiguous data/out — every output row is a whole source row, so
    copy rows, not elements. The stride-0 column axis makes the index constant
-   across a row, so the body reads and validates one index per row (`rows` checks,
-   not the broadcast index space). */
+   across a row, so the body reads one index per row. */
 typedef struct {
   const nx_c_ndarray *data;
   const nx_c_ndarray *indices;
   const nx_c_ndarray *out;
   int64_t esize;
   int64_t row_elems;
-  nx_c_status *status;
 } nx_c_gather_rows_ctx;
 
 static void nx_c_gather_rows_body(int64_t lo, int64_t hi, int worker,
                                  void *vctx) {
+  (void)worker;
   const nx_c_gather_rows_ctx *g = vctx;
   const nx_c_ndarray *data = g->data;
   const nx_c_ndarray *idx = g->indices;
@@ -383,14 +365,14 @@ static void nx_c_gather_rows_body(int64_t lo, int64_t hi, int worker,
     int64_t idx_off = idx->offset + i * idx->strides[0];
     int64_t index = *(const int32_t *)((const char *)idx->data +
                                        idx_off * (int64_t)sizeof(int32_t));
+    int64_t dst = out->offset + i * out->strides[0];
+    char *o = (char *)out->data + dst * g->esize;
     if (index < 0 || index >= axis_len) {
-      if (g->status[worker] == NX_C_OK) g->status[worker] = NX_C_ERR_INDEX_OOB;
-      return;
+      memset(o, 0, row_bytes);
+      continue;
     }
     int64_t src = data->offset + index * data->strides[0];
-    int64_t dst = out->offset + i * out->strides[0];
-    memcpy((char *)out->data + dst * g->esize,
-           (const char *)data->data + src * g->esize, row_bytes);
+    memcpy(o, (const char *)data->data + src * g->esize, row_bytes);
   }
 }
 
@@ -407,28 +389,19 @@ static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
   int64_t total = nx_c_prod(out->ndim, out->shape);
   if (total == 0) return NX_C_OK;
 
-  /* The bodies fault-check inline and report OOB indices through these slots; the
-     pool caps workers at MOVE_MAX_WORKERS, so every slot a body touches is
-     initialized here and read back after the join. */
-  nx_c_status status[MOVE_MAX_WORKERS];
-  for (int w = 0; w < MOVE_MAX_WORKERS; w++) status[w] = NX_C_OK;
-
   if (axis == 0 && data->ndim == 2 && indices->strides[1] == 0 &&
       data->shape[1] == out->shape[1] && nx_c_is_contiguous_off0(data) &&
       nx_c_is_contiguous_off0(out)) {
     int64_t rows = out->shape[0], row_elems = out->shape[1];
-    nx_c_gather_rows_ctx g = {data, indices, out, esize, row_elems, status};
+    nx_c_gather_rows_ctx g = {data, indices, out, esize, row_elems};
     int64_t bytes = 2 * rows * row_elems * esize;
     nx_c_move_dispatch(NX_C_COST_BANDWIDTH, rows, row_elems, bytes,
                       nx_c_gather_rows_body, &g);
   } else {
-    nx_c_gather_ctx g = {data, indices, out, axis, esize, status};
+    nx_c_gather_ctx g = {data, indices, out, axis, esize};
     int64_t bytes = 2 * total * esize;
     nx_c_move_dispatch(NX_C_COST_BANDWIDTH, total, 1, bytes, nx_c_gather_body, &g);
   }
-
-  for (int w = 0; w < MOVE_MAX_WORKERS; w++)
-    if (status[w] != NX_C_OK) return status[w];
   return NX_C_OK;
 }
 
@@ -444,8 +417,6 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
   if (dt == NX_C_DTYPE_COUNT) nx_c_raise("gather", NX_C_ERR_BAD_KIND);
   if (nx_c_dtype_is_packed(dt)) nx_c_raise("gather", NX_C_ERR_PACKED);
   s = nx_c_gather_run(&data, &indices, &out, Int_val(vaxis), nx_c_elem_size(dt));
-  if (s != NX_C_OK && strcmp(s, NX_C_ERR_INDEX_OOB) == 0)
-    nx_c_raise_invalid("gather", s);
   if (s != NX_C_OK) nx_c_raise_status("gather", s);
   CAMLreturn(Val_unit);
 }
@@ -454,11 +425,12 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
 
    out (already initialized to the template by the binding) receives updates at
    out[c with axis -> indices[c]] for each index-space point c. `Set overwrites
-   (last write in row-major scan order wins); `Add accumulates. Scatter runs
-   SERIALLY: `Set's last-wins is only well defined under a fixed order, and a
-   parallel `Add over duplicate targets is an unsynchronized read-modify-write
-   race. A serial row-major walk makes both modes
-   deterministic and race-free with no partitioning or atomics; unique_indices
+   (last write in row-major scan order wins); `Add accumulates. An update whose
+   index lies outside [0, axis_len), negative included, is dropped, as compiled
+   code drops it. Scatter runs SERIALLY: `Set's last-wins is only well defined
+   under a fixed order, and a parallel `Add over duplicate targets is an
+   unsynchronized read-modify-write race. A serial row-major walk makes both
+   modes deterministic and race-free with no partitioning or atomics; unique_indices
    could unlock a parallel path but is not needed for correctness and buys
    nothing on the ops that use scatter, so it is accepted and ignored. Add uses
    a per-dtype accumulate (compute-typed load/add/store); Set is a bit-exact
@@ -501,7 +473,6 @@ typedef struct {
   nx_c_scatter_add_fn *add; /* NULL = Set (bit-exact byte copy) */
   int axis;
   int64_t esize;
-  nx_c_status *status; /* one slot: the walk runs on a single worker */
 } nx_c_scatter_ctx;
 
 static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
@@ -518,10 +489,7 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     int64_t idx_off = indices->offset + nx_c_dot(nd, coord, indices->strides);
     int64_t index = *(const int32_t *)((const char *)indices->data +
                                         idx_off * (int64_t)sizeof(int32_t));
-    if (index < 0 || index >= axis_len) {
-      *sc->status = NX_C_ERR_INDEX_OOB;
-      return;
-    }
+    if (index < 0 || index >= axis_len) continue;
     for (int d = 0; d < nd; d++) ocoord[d] = (d == axis) ? index : coord[d];
     int64_t out_off = out->offset + nx_c_dot(nd, ocoord, out->strides);
     int64_t upd_off = updates->offset + nx_c_dot(nd, coord, updates->strides);
@@ -553,11 +521,10 @@ static nx_c_status nx_c_scatter_run(const nx_c_ndarray *out,
   if (total == 0) return NX_C_OK;
   /* ONE worker keeps the row-major order (Set last-wins, Add accumulation
      order) deterministic; nx_c_parallel_for still owns the lock handshake. */
-  nx_c_status status = NX_C_OK;
-  nx_c_scatter_ctx sc = {out, indices, updates, add, axis, esize, &status};
+  nx_c_scatter_ctx sc = {out, indices, updates, add, axis, esize};
   int64_t bytes = total * (2 * esize + (int64_t)sizeof(int32_t));
   nx_c_parallel_for(1, total, bytes, nx_c_scatter_body, &sc, NULL);
-  return status;
+  return NX_C_OK;
 }
 
 CAMLprim value caml_nx_c_scatter(value vout, value vindices, value vupdates,
@@ -573,8 +540,6 @@ CAMLprim value caml_nx_c_scatter(value vout, value vindices, value vupdates,
   if (nx_c_dtype_is_packed(dt)) nx_c_raise("scatter", NX_C_ERR_PACKED);
   s = nx_c_scatter_run(&out, &indices, &updates, Int_val(vaxis), Int_val(vmode),
                       dt, nx_c_elem_size(dt));
-  if (s != NX_C_OK && strcmp(s, NX_C_ERR_INDEX_OOB) == 0)
-    nx_c_raise_invalid("scatter", s);
   if (s != NX_C_OK) nx_c_raise_status("scatter", s);
   CAMLreturn(Val_unit);
 }

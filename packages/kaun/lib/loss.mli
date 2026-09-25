@@ -119,6 +119,11 @@ val softmax_cross_entropy_sparse :
     \[[0];[classes - 1]\]. Equivalent to one-hot targets without materializing
     them. It has the float32 island of {!softmax_cross_entropy}.
 
+    A label outside \[[0];[classes - 1]\], negative included, contributes zero
+    loss and zero gradient but still counts in [`Mean]'s denominator, as a zero
+    one-hot row would; to ignore padding, reduce with [`Sum] over a mask and
+    divide by the mask's count.
+
     Raises [Invalid_argument] if [logits] has rank [0], if its class dimension
     is empty, or if [labels]' shape is not [logits]' shape without the last
     axis. *)

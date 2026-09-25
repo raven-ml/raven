@@ -1815,6 +1815,10 @@ thread.
 
 ### Nx
 
+- **Breaking:** an index outside the axis, negative included, drops the update
+  in `Nx.scatter` and reads zero in `Nx.take` and `Nx.take_along_axis`, eagerly
+  as under `Rune.jit`. Eager calls used to raise `Invalid_argument`, so a
+  function behaved differently once compiled.
 - A slice of a split value inside one shard (`Nx.slice [ I i ]`, `Nx.item`) is
   a view of that shard on its device: `Nx.item` reads one element where it read
   the whole value, and `Rune.jit` refuses to consume it (pass `Nx.copy` of it).
@@ -2653,6 +2657,11 @@ thread.
 
 ### Kaun
 
+- **Breaking:** `Embedding.apply` returns a row of zeros for an id outside
+  `[0, vocab)`, and `Loss.softmax_cross_entropy_sparse` takes zero loss for a
+  label outside the classes (still counted by `` `Mean ``), eagerly as under
+  `Rune.jit`, following `Nx.take`. Both used to raise `Invalid_argument`
+  eagerly.
 - The GPT-2, Llama and gpt-oss examples' structures (`Params`, and gpt-oss's
   `Block` and `Moe`) are one `walk` each; their `Cache` modules and
   `Gpt_oss.map`, `ptree` and `block_ptree` go. `generate` takes one `?device`,

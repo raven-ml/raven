@@ -68,11 +68,14 @@ let gather_float64 (src : float# array) (dst : float# array) ishape dshape axis
         let idx1 =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k1)))
         in
-        if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 || idx1 < 0
-           || idx1 >= Array.unsafe_get dshape 0
-        then invalid_arg "gather: index out of bounds";
-        let v0 = Array.unsafe_get src (data_offset + idx0) in
-        let v1 = Array.unsafe_get src (data_offset + idx1) in
+        let v0 =
+          if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 then Float_u.of_int 0
+          else Array.unsafe_get src (data_offset + idx0)
+        in
+        let v1 =
+          if idx1 < 0 || idx1 >= Array.unsafe_get dshape 0 then Float_u.of_int 0
+          else Array.unsafe_get src (data_offset + idx1)
+        in
         let vec = Float64x2.set v0 v1 in
         Float64x2.Array.unsafe_set dst ~idx:(out_offset + k0) vec;
         i := k0 + 2
@@ -82,9 +85,9 @@ let gather_float64 (src : float# array) (dst : float# array) ishape dshape axis
         let idx =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k)))
         in
-        if idx < 0 || idx >= Array.unsafe_get dshape 0 then
-          invalid_arg "gather: index out of bounds";
-        Array.unsafe_set dst (out_offset + k) (Array.unsafe_get src (data_offset + idx));
+        Array.unsafe_set dst (out_offset + k)
+          (if idx < 0 || idx >= Array.unsafe_get dshape 0 then Float_u.of_int 0
+           else Array.unsafe_get src (data_offset + idx));
         incr i
       done)
     else
@@ -97,9 +100,10 @@ let gather_float64 (src : float# array) (dst : float# array) ishape dshape axis
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr !idx_lin))
         in
         if idx < 0 || idx >= Array.unsafe_get dshape axis then
-          invalid_arg "gather: index out of bounds";
-        let src_lin = !src_base + (idx * axis_stride) in
-        Array.unsafe_set dst !out_lin (Array.unsafe_get src src_lin);
+          Array.unsafe_set dst !out_lin (Float_u.of_int 0)
+        else
+          Array.unsafe_set dst !out_lin
+            (Array.unsafe_get src (!src_base + (idx * axis_stride)));
         if k + 1 < end_idx then
           advance_state md_index ishape idx_str out_strides data_strides axis
             idx_lin out_lin src_base
@@ -137,15 +141,22 @@ let gather_float32 (src : float32# array) (dst : float32# array) ishape dshape
         let idx3 =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k3)))
         in
-        if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 || idx1 < 0
-           || idx1 >= Array.unsafe_get dshape 0 || idx2 < 0
-           || idx2 >= Array.unsafe_get dshape 0 || idx3 < 0
-           || idx3 >= Array.unsafe_get dshape 0
-        then invalid_arg "gather: index out of bounds";
-        let v0 = Array.unsafe_get src (data_offset + idx0) in
-        let v1 = Array.unsafe_get src (data_offset + idx1) in
-        let v2 = Array.unsafe_get src (data_offset + idx2) in
-        let v3 = Array.unsafe_get src (data_offset + idx3) in
+        let v0 =
+          if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 then Float32_u.of_int 0
+          else Array.unsafe_get src (data_offset + idx0)
+        in
+        let v1 =
+          if idx1 < 0 || idx1 >= Array.unsafe_get dshape 0 then Float32_u.of_int 0
+          else Array.unsafe_get src (data_offset + idx1)
+        in
+        let v2 =
+          if idx2 < 0 || idx2 >= Array.unsafe_get dshape 0 then Float32_u.of_int 0
+          else Array.unsafe_get src (data_offset + idx2)
+        in
+        let v3 =
+          if idx3 < 0 || idx3 >= Array.unsafe_get dshape 0 then Float32_u.of_int 0
+          else Array.unsafe_get src (data_offset + idx3)
+        in
         let vec = Float32x4.set v0 v1 v2 v3 in
         Float32x4.Array.unsafe_set dst ~idx:(out_offset + k0) vec;
         i := k0 + 4
@@ -155,9 +166,9 @@ let gather_float32 (src : float32# array) (dst : float32# array) ishape dshape
         let idx =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k)))
         in
-        if idx < 0 || idx >= Array.unsafe_get dshape 0 then
-          invalid_arg "gather: index out of bounds";
-        Array.unsafe_set dst (out_offset + k) (Array.unsafe_get src (data_offset + idx));
+        Array.unsafe_set dst (out_offset + k)
+          (if idx < 0 || idx >= Array.unsafe_get dshape 0 then Float32_u.of_int 0
+           else Array.unsafe_get src (data_offset + idx));
         incr i
       done)
     else
@@ -170,9 +181,10 @@ let gather_float32 (src : float32# array) (dst : float32# array) ishape dshape
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr !idx_lin))
         in
         if idx < 0 || idx >= Array.unsafe_get dshape axis then
-          invalid_arg "gather: index out of bounds";
-        let src_lin = !src_base + (idx * axis_stride) in
-        Array.unsafe_set dst !out_lin (Array.unsafe_get src src_lin);
+          Array.unsafe_set dst !out_lin (Float32_u.of_int 0)
+        else
+          Array.unsafe_set dst !out_lin
+            (Array.unsafe_get src (!src_base + (idx * axis_stride)));
         if k + 1 < end_idx then
           advance_state md_index ishape idx_str out_strides data_strides axis
             idx_lin out_lin src_base
@@ -193,9 +205,10 @@ let gather_int8 (src : int8# array) (dst : int8# array) ishape dshape axis
         Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr !idx_lin))
       in
       if idx < 0 || idx >= Array.unsafe_get dshape axis then
-        invalid_arg "gather: index out of bounds";
-      let src_lin = !src_base + (idx * axis_stride) in
-      Array.unsafe_set dst !out_lin (Array.unsafe_get src src_lin);
+        Array.unsafe_set dst !out_lin #0s
+      else
+        Array.unsafe_set dst !out_lin
+          (Array.unsafe_get src (!src_base + (idx * axis_stride)));
       if k + 1 < end_idx then
         advance_state md_index ishape idx_str out_strides data_strides axis
           idx_lin out_lin src_base
@@ -216,9 +229,10 @@ let gather_int16 (src : int16# array) (dst : int16# array) ishape dshape axis
         Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr !idx_lin))
       in
       if idx < 0 || idx >= Array.unsafe_get dshape axis then
-        invalid_arg "gather: index out of bounds";
-      let src_lin = !src_base + (idx * axis_stride) in
-      Array.unsafe_set dst !out_lin (Array.unsafe_get src src_lin);
+        Array.unsafe_set dst !out_lin #0S
+      else
+        Array.unsafe_set dst !out_lin
+          (Array.unsafe_get src (!src_base + (idx * axis_stride)));
       if k + 1 < end_idx then
         advance_state md_index ishape idx_str out_strides data_strides axis
           idx_lin out_lin src_base
@@ -256,15 +270,22 @@ let gather_int32 (src : int32# array) (dst : int32# array) ishape dshape axis
         let idx3 =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k3)))
         in
-        if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 || idx1 < 0
-           || idx1 >= Array.unsafe_get dshape 0 || idx2 < 0
-           || idx2 >= Array.unsafe_get dshape 0 || idx3 < 0
-           || idx3 >= Array.unsafe_get dshape 0
-        then invalid_arg "gather: index out of bounds";
-        let v0 = Array.unsafe_get src (data_offset + idx0) in
-        let v1 = Array.unsafe_get src (data_offset + idx1) in
-        let v2 = Array.unsafe_get src (data_offset + idx2) in
-        let v3 = Array.unsafe_get src (data_offset + idx3) in
+        let v0 =
+          if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 then #0l
+          else Array.unsafe_get src (data_offset + idx0)
+        in
+        let v1 =
+          if idx1 < 0 || idx1 >= Array.unsafe_get dshape 0 then #0l
+          else Array.unsafe_get src (data_offset + idx1)
+        in
+        let v2 =
+          if idx2 < 0 || idx2 >= Array.unsafe_get dshape 0 then #0l
+          else Array.unsafe_get src (data_offset + idx2)
+        in
+        let v3 =
+          if idx3 < 0 || idx3 >= Array.unsafe_get dshape 0 then #0l
+          else Array.unsafe_get src (data_offset + idx3)
+        in
         let vec = Int32x4.set v0 v1 v2 v3 in
         Int32x4.Array.unsafe_set dst ~idx:(out_offset + k0) vec;
         i := k0 + 4
@@ -274,9 +295,9 @@ let gather_int32 (src : int32# array) (dst : int32# array) ishape dshape axis
         let idx =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k)))
         in
-        if idx < 0 || idx >= Array.unsafe_get dshape 0 then
-          invalid_arg "gather: index out of bounds";
-        Array.unsafe_set dst (out_offset + k) (Array.unsafe_get src (data_offset + idx));
+        Array.unsafe_set dst (out_offset + k)
+          (if idx < 0 || idx >= Array.unsafe_get dshape 0 then #0l
+           else Array.unsafe_get src (data_offset + idx));
         incr i
       done)
     else
@@ -289,9 +310,10 @@ let gather_int32 (src : int32# array) (dst : int32# array) ishape dshape axis
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr !idx_lin))
         in
         if idx < 0 || idx >= Array.unsafe_get dshape axis then
-          invalid_arg "gather: index out of bounds";
-        let src_lin = !src_base + (idx * axis_stride) in
-        Array.unsafe_set dst !out_lin (Array.unsafe_get src src_lin);
+          Array.unsafe_set dst !out_lin #0l
+        else
+          Array.unsafe_set dst !out_lin
+            (Array.unsafe_get src (!src_base + (idx * axis_stride)));
         if k + 1 < end_idx then
           advance_state md_index ishape idx_str out_strides data_strides axis
             idx_lin out_lin src_base
@@ -321,11 +343,14 @@ let gather_int64 (src : int64# array) (dst : int64# array) ishape dshape axis
         let idx1 =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k1)))
         in
-        if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 || idx1 < 0
-           || idx1 >= Array.unsafe_get dshape 0
-        then invalid_arg "gather: index out of bounds";
-        let v0 = Array.unsafe_get src (data_offset + idx0) in
-        let v1 = Array.unsafe_get src (data_offset + idx1) in
+        let v0 =
+          if idx0 < 0 || idx0 >= Array.unsafe_get dshape 0 then #0L
+          else Array.unsafe_get src (data_offset + idx0)
+        in
+        let v1 =
+          if idx1 < 0 || idx1 >= Array.unsafe_get dshape 0 then #0L
+          else Array.unsafe_get src (data_offset + idx1)
+        in
         let vec = Int64x2.set v0 v1 in
         Int64x2.Array.unsafe_set dst ~idx:(out_offset + k0) vec;
         i := k0 + 2
@@ -335,9 +360,9 @@ let gather_int64 (src : int64# array) (dst : int64# array) ishape dshape axis
         let idx =
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr (idx_offset + k)))
         in
-        if idx < 0 || idx >= Array.unsafe_get dshape 0 then
-          invalid_arg "gather: index out of bounds";
-        Array.unsafe_set dst (out_offset + k) (Array.unsafe_get src (data_offset + idx));
+        Array.unsafe_set dst (out_offset + k)
+          (if idx < 0 || idx >= Array.unsafe_get dshape 0 then #0L
+           else Array.unsafe_get src (data_offset + idx));
         incr i
       done)
     else
@@ -350,9 +375,10 @@ let gather_int64 (src : int64# array) (dst : int64# array) ishape dshape axis
           Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr !idx_lin))
         in
         if idx < 0 || idx >= Array.unsafe_get dshape axis then
-          invalid_arg "gather: index out of bounds";
-        let src_lin = !src_base + (idx * axis_stride) in
-        Array.unsafe_set dst !out_lin (Array.unsafe_get src src_lin);
+          Array.unsafe_set dst !out_lin #0L
+        else
+          Array.unsafe_set dst !out_lin
+            (Array.unsafe_get src (!src_base + (idx * axis_stride)));
         if k + 1 < end_idx then
           advance_state md_index ishape idx_str out_strides data_strides axis
             idx_lin out_lin src_base
@@ -373,9 +399,10 @@ let gather_bool (src : bool array) (dst : bool array) ishape dshape axis
         Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr !idx_lin))
       in
       if idx < 0 || idx >= Array.unsafe_get dshape axis then
-        invalid_arg "gather: index out of bounds";
-      let src_lin = !src_base + (idx * axis_stride) in
-      Array.unsafe_set dst !out_lin (Array.unsafe_get src src_lin);
+        Array.unsafe_set dst !out_lin false
+      else
+        Array.unsafe_set dst !out_lin
+          (Array.unsafe_get src (!src_base + (idx * axis_stride)));
       if k + 1 < end_idx then
         advance_state md_index ishape idx_str out_strides data_strides axis
           idx_lin out_lin src_base

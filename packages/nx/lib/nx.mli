@@ -1415,13 +1415,11 @@ val item : int list -> ('a, 'b) t -> 'a
 
 val take : ?axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
 (** [take ?axis ~indices t] gathers elements from [t] at [indices] along [axis].
-    When [axis] is omitted, [t] is flattened first. Indices lie in \[[0],
-    [size]): wrap them with [mod_ (add_s i n) n] or clamp them with {!clamp}
-    yourself.
-
-    Raises [Invalid_argument] if any index is out of bounds. Under [Rune.jit] no
-    check runs: an out-of-range position reads zero and never touches memory
-    outside [t].
+    When [axis] is omitted, [t] is flattened first. An index outside \[[0],
+    [size]), negative included, reads zero, eagerly and under [Rune.jit] alike;
+    wrap indices with [mod_ (add_s i n) n] or clamp them with {!clamp} yourself.
+    At an integer dtype the zero read is index [0]: mask with the index's range
+    when the gathered values are themselves positions.
 
     {@ocaml[
       # let x =
@@ -1439,8 +1437,9 @@ val take : ?axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
 val take_along_axis :
   axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
 (** [take_along_axis ~axis ~indices t] gathers values from [t] along [axis]
-    using [indices]. [indices] must match [t]'s shape except along [axis].
-    Useful for gathering from {!argmax}/{!argmin} results.
+    using [indices]. [indices] must match [t]'s shape except along [axis]. An
+    index outside \[[0], [size along axis]) reads zero, as in {!take}. Useful
+    for gathering from {!argmax}/{!argmin} results.
 
     Raises [Invalid_argument] if shapes are incompatible.
 
@@ -1470,9 +1469,10 @@ val scatter :
 (** [scatter ?mode ?unique_indices ~axis ~indices ~values t] is [t] with
     [values] placed at the positions selected by [indices] along [axis]; the
     tensor-indexed form of {!set}. [indices] must match [t]'s shape except along
-    [axis], and [values] is broadcast to [indices]' shape. Index values lie in
-    \[[0], [size along axis]): out of range raises [Invalid_argument] eagerly
-    and writes nothing under [Rune.jit].
+    [axis], and [values] is broadcast to [indices]' shape. An update whose index
+    lies outside \[[0], [size along axis]), negative included, is dropped,
+    eagerly and under [Rune.jit] alike, so [-1] addresses nothing; {!take} and
+    {!take_along_axis} read zero at such an index.
 
     [mode] controls how updates combine with [t]: [`Set] (default) overwrites,
     the last update winning at duplicate positions; [`Add] accumulates every
@@ -1482,7 +1482,8 @@ val scatter :
     unspecified one of its updates under [`Set] and an unspecified value under
     [`Add]; every other position is exact.
 
-    [scatter] differentiates with respect to both [t] and [values].
+    [scatter] differentiates with respect to both [t] and [values]; a dropped
+    update's gradient is zero.
 
     {@ocaml[
       # let x = zeros float32 [| 2; 3 |] in

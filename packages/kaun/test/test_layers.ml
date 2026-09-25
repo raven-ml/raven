@@ -180,11 +180,12 @@ let test_embedding_gradients () =
   in
   grads_ok (Rune.check_grads embedding64 loss p)
 
-let test_embedding_rejects_out_of_bounds () =
+let test_embedding_out_of_range_ids_read_zero () =
   let p = embedding_4x3 () in
-  raises_match ~msg:"id 4 is out of bounds for vocab 4"
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> Embedding.apply p (Nx.create Nx.int32 [| 1 |] [| 4l |]))
+  let ids = Nx.create Nx.int32 [| 3 |] [| 4l; 1l; -1l |] in
+  values_are ~msg:"rows of zeros around row 1" ~tol:0.0
+    [| 0.; 0.; 0.; 3.; 4.; 5.; 0.; 0.; 0. |]
+    (Embedding.apply p ids)
 
 let test_embedding_rejects_bad_geometry () =
   raises
@@ -363,8 +364,8 @@ let () =
             test_embedding_duplicate_id_gradient;
           test "gradients agree with finite differences"
             test_embedding_gradients;
-          test "out-of-bounds ids are rejected"
-            test_embedding_rejects_out_of_bounds;
+          test "out-of-range ids read zero"
+            test_embedding_out_of_range_ids_read_zero;
           test "make rejects non-positive geometry"
             test_embedding_rejects_bad_geometry;
         ];
