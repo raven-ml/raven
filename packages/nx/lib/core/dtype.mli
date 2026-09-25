@@ -205,14 +205,16 @@ val minus_one : ('a, 'b) t -> 'a
 val min_value : ('a, 'b) t -> 'a
 (** [min_value d] is the minimum value used by [d].
 
-    For floating dtypes this is [-infinity].
+    For floating dtypes this is [-infinity], except for [float8_e4m3], which has
+    no infinity: [-448].
 
     Raises [Invalid_argument] for complex dtypes. *)
 
 val max_value : ('a, 'b) t -> 'a
 (** [max_value d] is the maximum value used by [d].
 
-    For floating dtypes this is [+infinity].
+    For floating dtypes this is [+infinity], except for [float8_e4m3], which has
+    no infinity: [448].
 
     Raises [Invalid_argument] for complex dtypes. *)
 

@@ -212,6 +212,25 @@ let test_top_k_nan () =
   equal ~msg:"top_k NaN values" bool true
     (v.(0) = 9. && v.(1) = 3. && v.(2) = 1. && Float.is_nan v.(3))
 
+(* float8_e4m3 has no infinity: its least and greatest values are -448 and 448,
+   which the selection rounds must still order as entries. *)
+let test_top_k_float8_e4m3 () =
+  let t =
+    Nx.create Nx.float8_e4m3 [| 8 |]
+      [| 1.; Float.nan; -448.; 448.; -2.; 448.; 0.5; -448. |]
+  in
+  let sorted_values, sorted_indices = Nx.sort ~descending:true t in
+  List.iter
+    (fun k ->
+      let values, indices = Nx.top_k ~k t in
+      let prefix a = Nx.to_array (Nx.slice [ Nx.R (0, k) ] a) in
+      let msg what = Printf.sprintf "top %d %s" k what in
+      equal ~msg:(msg "indices") (array int32) (prefix sorted_indices)
+        (Nx.to_array indices);
+      equal ~msg:(msg "values") (array float_exact) (prefix sorted_values)
+        (Nx.to_array values))
+    [ 1; 2; 4; 7; 8 ]
+
 (* Both algorithms, either side of the switch between them, are the first [k]
    entries of a descending sort: duplicates, NaN and infinities included. *)
 let test_top_k_is_a_sorted_prefix () =
@@ -448,6 +467,7 @@ let top_k_tests =
     test "top_k radix select, ties" test_top_k_radix_ties;
     test "top_k radix select, a long axis" test_top_k_radix_long_axis;
     test "top_k radix select, axes" test_top_k_radix_axes;
+    test "top_k float8_e4m3" test_top_k_float8_e4m3;
     test "top_k invalid arguments" test_top_k_invalid;
   ]
 

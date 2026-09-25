@@ -192,7 +192,7 @@ let min_value : type a b. (a, b) t -> a = function
   | Float32 -> Float.neg_infinity
   | Float64 -> Float.neg_infinity
   | BFloat16 -> Float.neg_infinity
-  | Float8_e4m3 -> Float.neg_infinity
+  | Float8_e4m3 -> -448.0
   | Float8_e5m2 -> Float.neg_infinity
   | Int4 -> -8
   | UInt4 -> 0
@@ -213,7 +213,7 @@ let max_value : type a b. (a, b) t -> a = function
   | Float32 -> Float.infinity
   | Float64 -> Float.infinity
   | BFloat16 -> Float.infinity
-  | Float8_e4m3 -> Float.infinity
+  | Float8_e4m3 -> 448.0
   | Float8_e5m2 -> Float.infinity
   | Int4 -> 7
   | UInt4 -> 15

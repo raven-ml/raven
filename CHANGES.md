@@ -1189,6 +1189,9 @@ thread.
 
 ### Nx
 
+- `Nx.top_k` on `float8_e4m3` with `k` up to 8 returns the greatest entries.
+  It returned the first entry repeatedly: `Dtype.min_value` was `-infinity`,
+  which that dtype encodes as NaN; its bounds are now `-448` and `448`.
 - Add `Nx_quant.place`, which places a quantised weight part by part and
   refuses a split of its inputs that would cut a 32-value group.
 - Add `nx.quant`: `Nx_quant.mxfp4` builds a weight from a checkpoint's MXFP4
