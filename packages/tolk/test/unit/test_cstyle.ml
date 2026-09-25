@@ -1584,6 +1584,24 @@ let () =
             let out = render (Cstyle.amd Gpu_target.RDNA4) prog in
             assert_contains "amd rdna4 wmma macro" out
               "#define __WMMA_16_16_16___bf16___bf16 __builtin_amdgcn_wmma_bf16_16x16x16_bf16_w32_gfx12");
+          test "rdna3 int8 WMMA uses sanitized signed-char names" (fun () ->
+            let fragment dtype count value =
+              U.stack ~dtype (List.init count
+                (fun _ -> U.const (Const.int dtype value))) in
+            let a = fragment Dtype.int8 16 1 in
+            let c = fragment Dtype.int32 8 0 in
+            let info : U.wmma_info = {
+              dims = (16, 16, 16); dtype_in = Dtype.int8; threads = 32;
+              tc_upcast_axes = Some ([], [], []) } in
+            let out = render (Cstyle.amd Gpu_target.RDNA3)
+                (U.toposort (U.wmma ~a ~b:a ~c ~info)) in
+            assert_contains "signed byte fragment typedef" out
+              "typedef signed char signed_char16";
+            assert_contains "signed byte wrapper" out
+              "int8 __WMMA_16_16_16_signed_char_int(signed_char16 a, signed_char16 b, int8 c)";
+            equal int 2 (count_substring out "__WMMA_16_16_16_signed_char_int(");
+            assert_contains "packed builtin fragment" out
+              "__builtin_bit_cast(wmma_int4, a)");
           test "rdna3 half output WMMA emits wrapper" (fun () ->
             let prog =
               make_wmma ~dims:(16, 16, 16)

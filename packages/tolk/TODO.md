@@ -116,8 +116,6 @@ acceptance requirement; skipped tests are not execution evidence.
   conservative optimization difference.
 - Audit PADTO and shared-memory products at integer boundaries against
   the target's exact arithmetic.
-- Use the target's sanitized `signed_char` name for RDNA3 int8 tensor-core
-  fragments; distinguish source naming parity from fragment layout correctness.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.
 - Add deterministic beam coverage for reconsidering candidates rejected by

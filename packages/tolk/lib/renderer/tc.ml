@@ -146,7 +146,7 @@ let dtype_name = function
   | Dtype.Bfloat16 -> "__bf16"
   | Dtype.Float32 -> "float"
   | Dtype.Float64 -> "double"
-  | Dtype.Int8 -> "char"
+  | Dtype.Int8 -> "signed_char"
   | Dtype.Int32 -> "int"
   | Dtype.Fp8e4m3 -> "float8_e4m3"
   | Dtype.Fp8e5m2 -> "float8_e5m2"

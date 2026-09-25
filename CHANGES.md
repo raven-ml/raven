@@ -657,6 +657,9 @@ thread.
 
 ### Tolk (new)
 
+- RDNA3 int8 tensor-core wrappers and call sites use tinygrad’s sanitized
+  `signed_char` type name consistently.
+
 - AMD compiled SDMA queues support typed writes with patched 32/64-bit replay
   values. Copy chunk limits now follow the full SDMA revision, including the
   1 GiB limit introduced at 4.4.2.

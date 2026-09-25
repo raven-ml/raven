@@ -396,7 +396,7 @@ let () =
                 "WMMA_16_16_16_half_float";
                 "WMMA_16_16_16_half_half";
                 "WMMA_16_16_16___bf16_float";
-                "WMMA_16_16_16_char_int";
+                "WMMA_16_16_16_signed_char_int";
               ]
               (List.map Tc.to_string Tc.amd_rdna3);
             equal (list string)
