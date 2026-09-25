@@ -654,6 +654,9 @@ thread.
 
 ### Tolk (new)
 
+- Preserve closed reduction dependencies when finalizing optimizer ranges;
+  nested range extents no longer reintroduce an already closed axis.
+
 - `Prepare.contiguous_view` replaces `Uop.contiguous_view` and proves aliases
   using shared indexing rewrites, including cancelling transposes and symbolic
   leading slices while preserving byte offsets and pending effects.

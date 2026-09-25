@@ -746,6 +746,25 @@ let state_query_tests =
         in
         is_true (kind_for_axis 0 = Some Ak.Global);
         is_true (kind_for_axis 1 = Some Ak.Weak));
+      test "postrange flatten preserves closed range dependencies" (fun () ->
+        let inner = reduce_range ~axis:0 4 in
+        let extent = U.reduce ~op:Ops.Add
+            ~src:(U.cast ~src:inner ~dtype:D.int32) ~ranges:[ inner ] in
+        let outer = U.range ~size:extent ~axis:1 ~kind:Ak.Weak () in
+        let dst = U.param ~slot:0 ~dtype:D.int32 ~shape:(idx 32)
+            ~addrspace:D.Global () in
+        let store = U.store ~dst:(U.index ~ptr:dst ~idxs:[ outer ] ())
+            ~value:(U.const (Const.int D.int32 1)) () in
+        let ast = wrap_sink [ U.end_ ~value:store ~ranges:[ outer ] ] in
+        let optimized = P.get_optimized_ast ~name_override:"closed_range"
+            (P.create ast (cpu_renderer ())) in
+        let ends = List.filter_map U.as_end (U.toposort optimized) in
+        match ends with
+        | [ { ranges; _ } ] ->
+            equal (list (list int)) [ [ 1 ] ] (List.map U.axis_id ranges);
+            is_true ~msg:"the extent still contains its own closed reduction"
+              (List.exists (fun u -> U.equal u extent) (U.toposort optimized))
+        | _ -> fail "expected one enclosing END");
       test "postrange flatten does not merge through extra floor div" (fun () ->
         let r0 = global_range ~axis:0 3 in
         let r1 = global_range ~axis:1 4 in

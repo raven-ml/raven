@@ -232,46 +232,6 @@ let colored_shape t =
        (fun rng color -> strf "%4s:%s" (render_size (range_size rng)) color)
        (rngs t) (colors t))
 
-(* Apply [flatten_range] locally: toposort-reorder range children of
-   Reduce/Store/End nodes.  Inline port of [Simplify.pm_flatten_range]
-   since the tolk_uop-based simplifier lives in a different library. *)
-let rec list_take n = function
-  | _ when n <= 0 -> []
-  | [] -> []
-  | x :: xs -> x :: list_take (n - 1) xs
-
-let rec list_drop n = function
-  | l when n <= 0 -> l
-  | [] -> []
-  | _ :: xs -> list_drop (n - 1) xs
-
-let ended_ranges u =
-  match U.as_end u, U.as_reduce u with
-  | Some v, _ -> v.ranges
-  | None, Some v -> v.ranges
-  | None, None -> []
-
-let range_offset node =
-  match U.op node with
-  | Ops.Reduce | Ops.End -> Some 1
-  | _ -> None
-
-let reorder_range_node node =
-  match range_offset node with
-  | None -> None
-  | Some off ->
-      let ch = U.children node in
-      let rngs = list_drop off ch in
-      if rngs = [] then None
-      else
-        let new_rngs = List.filter is_range (U.toposort (U.sink rngs)) in
-      if List.equal U.equal new_rngs rngs then None
-      else
-        Some
-          (U.replace node ~src:(Array.of_list (list_take off ch @ new_rngs)) ())
-
-let pm_flatten_range root = U.graph_rewrite reorder_range_node root
-
 (* Kernel names depend only on the schedule, so recompilation preserves both
    source-cache keys and program identity. *)
 let make_kernel_name t =
@@ -300,7 +260,7 @@ let make_kernel_name t =
    updated kernel_info with a tag marking it as optimized. *)
 let get_optimized_ast ?name_override t =
   let name = match name_override with Some n -> n | None -> make_kernel_name t in
-  t.ast <- pm_flatten_range t.ast;
+  t.ast <- U.graph_rewrite Simplify.flatten_range t.ast;
   refresh t;
   let ki : U.kernel_info =
     {
