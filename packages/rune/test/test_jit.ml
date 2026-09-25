@@ -3486,6 +3486,131 @@ let test_file_backed_upload_after_replace () =
                  (Nx.not_equal (place m)
                     (Nx.matrix_transpose (Nx.reshape [| 256; 256 |] expected)))))))
 
+(* Device lists. CPU:1..CPU:4 each hold storage of their own, so a value placed
+   over them has one buffer per device and a move between them goes through
+   tolk's copies. *)
+
+let cpus = List.init 4 (fun i -> Rune.device (Printf.sprintf "CPU:%d" (i + 1)))
+let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
+(* Copies and slices along every axis of a [12; 12; 12] value, over one to four
+   of CPU:1..CPU:4 in several orders. *)
+let placements () =
+  let on ks = List.map (List.nth cpus) ks in
+  List.concat_map
+    (fun ds ->
+      Nx.Placement.replicated ds
+      :: List.init 3 (fun axis -> Nx.Placement.sharded ~axis ds))
+    [
+      on [ 0 ];
+      on [ 1; 0 ];
+      on [ 0; 1; 2 ];
+      on [ 3; 2; 1; 0 ];
+      on [ 0; 1; 2; 3 ];
+    ]
+
+let cube () = Nx.reshape [| 12; 12; 12 |] (Nx.arange Nx.int32 0 1728 1)
+let pp_placement = Format.asprintf "%a" Nx.Placement.pp
+
+let test_place_on_device_lists () =
+  let x = cube () in
+  let expected = Nx.to_array x in
+  List.iter
+    (fun p ->
+      let y = Nx.place p x in
+      equal ~msg:(pp_placement p ^ ": placement") placement p (Nx.placement y);
+      equal ~msg:(pp_placement p) (array int32) expected (Nx.to_array y))
+    (placements ());
+  equal ~msg:"the source stays" (array int32) expected (Nx.to_array x)
+
+(* A signalling NaN of a dtype OCaml has no bigarray for keeps its bits through
+   a split read and a strided move. *)
+let test_split_nan_bits () =
+  let bits = Nx.create Nx.int16 [| 4; 4 |] (Array.make 16 0x7F81) in
+  let x = Nx.bitcast Nx.bfloat16 bits in
+  let by_columns = Nx.place (Nx.Placement.sharded ~axis:1 cpus) x in
+  let read v = Nx.to_array (Nx.bitcast Nx.int16 v) in
+  equal ~msg:"a split read" (array int) (Nx.to_array bits) (read by_columns);
+  equal ~msg:"a strided move" (array int) (Nx.to_array bits)
+    (read (Nx.place (Nx.Placement.sharded ~axis:0 cpus) by_columns))
+
+let test_move_between_device_lists () =
+  let x = cube () in
+  let expected = Nx.to_array x in
+  let ps = placements () in
+  List.iter
+    (fun p ->
+      let y = Nx.place p x in
+      List.iter
+        (fun q ->
+          let msg = pp_placement p ^ " to " ^ pp_placement q in
+          let z = Nx.place q y in
+          equal ~msg:(msg ^ ": placement") placement q (Nx.placement z);
+          equal ~msg (array int32) expected (Nx.to_array z))
+        ps;
+      equal
+        ~msg:(pp_placement p ^ ": the source stays")
+        (array int32) expected (Nx.to_array y))
+    ps
+
+(* Views of placed values move their elements only. *)
+let test_move_views_between_device_lists () =
+  let x = cube () in
+  let split = Nx.place (Nx.Placement.sharded ~axis:0 cpus) x in
+  let copies = Nx.Placement.replicated cpus in
+  let moved v = Nx.to_array (Nx.place copies v) in
+  let host v = Nx.to_array (Nx.copy v) in
+  equal ~msg:"a transposed split value" (array int32)
+    (host (Nx.transpose ~axes:[ 2; 0; 1 ] x))
+    (moved (Nx.transpose ~axes:[ 2; 0; 1 ] split));
+  equal ~msg:"a window of every shard" (array int32)
+    (host (Nx.slice [ Nx.A; Nx.R (2, 7) ] x))
+    (moved (Nx.slice [ Nx.A; Nx.R (2, 7) ] split));
+  equal ~msg:"one shard" (array int32)
+    (host (Nx.slice [ Nx.R (3, 6) ] x))
+    (moved (Nx.slice [ Nx.R (3, 6) ] split));
+  equal ~msg:"an empty value" (array int32) [||]
+    (Nx.to_array
+       (Nx.place
+          (Nx.Placement.sharded ~axis:1 cpus)
+          (Nx.zeros Nx.int32 [| 0; 4 |])))
+
+(* A move between CPU:k devices never gathers the whole value on the host: a
+   contiguous window goes buffer to buffer through tolk, and a strided one is
+   read and uploaded once, window by window. *)
+let test_moves_do_not_gather_on_the_host () =
+  let x = cube () in
+  let n = Nx.nbytes x in
+  let by_rows = Nx.place (Nx.Placement.sharded ~axis:0 cpus) x in
+  let _, up, down =
+    delta (fun () -> Nx.place (Nx.Placement.replicated cpus) by_rows)
+  in
+  equal ~msg:"rows to copies: no upload" int 0 up;
+  equal ~msg:"rows to copies: no read" int 0 down;
+  let by_columns = Nx.place (Nx.Placement.sharded ~axis:1 cpus) x in
+  let y, up, down =
+    delta (fun () -> Nx.place (Nx.Placement.sharded ~axis:0 cpus) by_columns)
+  in
+  equal ~msg:"columns to rows: each element uploaded once" int n up;
+  equal ~msg:"columns to rows: each element read once" int n down;
+  equal ~msg:"columns to rows" (array int32) (Nx.to_array x) (Nx.to_array y)
+
+(* A split upload from a mapped file uploads each device's window once, read
+   from the file. *)
+let test_split_upload_from_a_file () =
+  let n = 1 lsl 16 in
+  let x, path = mapped_int32 ~byte:first_byte n in
+  Fun.protect
+    ~finally:(fun () -> remove_mapped path)
+    (fun () ->
+      let y, up, _ =
+        delta (fun () -> Nx.place (Nx.Placement.sharded ~axis:0 cpus) x)
+      in
+      equal ~msg:"each window once" int (Nx.nbytes x) up;
+      equal ~msg:"elements" (array int32)
+        (Nx.to_array (Nx.copy x))
+        (Nx.to_array y))
+
 (* Bound captures. A compiled function that captures a resident value on its own
    device reads that value's buffer as its constant. *)
 
@@ -4056,6 +4181,18 @@ let tests =
         slow "a mapped leaf larger than a chunk uploads from its file"
           test_file_backed_upload;
         test "a replaced file is not read" test_file_backed_upload_after_replace;
+      ];
+    group "device lists"
+      [
+        test "a value placed on device lists reads back"
+          test_place_on_device_lists;
+        test "a signalling NaN keeps its bits" test_split_nan_bits;
+        test "a value moves between device lists" test_move_between_device_lists;
+        test "views move between device lists"
+          test_move_views_between_device_lists;
+        test "moves do not gather on the host"
+          test_moves_do_not_gather_on_the_host;
+        test "a split upload from a mapped file" test_split_upload_from_a_file;
       ];
     group "bound captures"
       [

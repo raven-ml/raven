@@ -3000,21 +3000,18 @@ let scratch_bytes tbl size =
         Hashtbl.add tbl size b;
         b
 
-(* The window of [buf] that starts at byte [off] and spans [len] bytes; [buf]
-   itself when the window covers it. A window is released before its base can
-   be. *)
+(* The window of [buf] that starts at byte [off] and spans [len] bytes, as a
+   buffer of bytes, so that two windows of the same length copy into each other.
+   A window is released before its base can be. *)
 let with_window buf ~off ~len f =
-  if off = 0 && len = Tolk.Device.Buffer.nbytes buf then f buf
-  else begin
-    let w =
-      Tolk.Device.Buffer.view buf ~size:len ~dtype:Tolk_uop.Dtype.uint8
-        ~offset:off
-    in
-    Tolk.Device.Buffer.ensure_allocated w;
-    Fun.protect
-      ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
-      (fun () -> f w)
-  end
+  let w =
+    Tolk.Device.Buffer.view buf ~size:len ~dtype:Tolk_uop.Dtype.uint8
+      ~offset:off
+  in
+  Tolk.Device.Buffer.ensure_allocated w;
+  Fun.protect
+    ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
+    (fun () -> f w)
 
 (* File-backed sources
 
@@ -3308,6 +3305,37 @@ let gather_elements : type a b.
     done
   done
 
+(* [gather_elements] for words of a bigarray kind: when the view's last axis is
+   contiguous, each run along it is copied whole. *)
+let gather_words : type a b.
+    (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t -> unit =
+ fun src ~base v dst ->
+  let shape = NV.shape v and strides = NV.strides v in
+  let rank = Array.length shape in
+  if rank = 0 || strides.(rank - 1) <> 1 || Nx_buffer.length dst = 0 then
+    gather_elements src ~base v dst
+  else begin
+    let s = Nx_buffer.to_bigarray1 src and d = Nx_buffer.to_bigarray1 dst in
+    let run = shape.(rank - 1) in
+    let idx = Array.make rank 0 and off = ref (NV.offset v - base) in
+    for row = 0 to (Nx_buffer.length dst / run) - 1 do
+      Bigarray.Array1.blit
+        (Bigarray.Array1.sub s !off run)
+        (Bigarray.Array1.sub d (row * run) run);
+      let a = ref (rank - 2) in
+      while !a >= 0 do
+        idx.(!a) <- idx.(!a) + 1;
+        off := !off + strides.(!a);
+        if idx.(!a) < shape.(!a) then a := -1
+        else begin
+          off := !off - (strides.(!a) * shape.(!a));
+          idx.(!a) <- 0;
+          decr a
+        end
+      done
+    done
+  end
+
 (* [gather_elements] over the elements' bits, read as integers of their width: a
    float read into an OCaml float would quiet a signalling NaN. An element of 16
    bytes is two 8-byte words; 4-bit elements are copied as values. *)
@@ -3317,12 +3345,14 @@ let gather_view : type a b.
   let as_words (type c d) (word : (c, d) Nx_buffer.kind) w =
     let shape = NV.shape v and strides = NV.strides v in
     let words =
-      NV.create
-        ~offset:(NV.offset v * w)
-        ~strides:(Array.append (Array.map (fun s -> s * w) strides) [| 1 |])
-        (Array.append shape [| w |])
+      if w = 1 then v
+      else
+        NV.create
+          ~offset:(NV.offset v * w)
+          ~strides:(Array.append (Array.map (fun s -> s * w) strides) [| 1 |])
+          (Array.append shape [| w |])
     in
-    gather_elements
+    gather_words
       (Nx_buffer.reinterpret word src)
       ~base:(base * w) words
       (Nx_buffer.reinterpret word dst)
@@ -3448,14 +3478,133 @@ let check_holds (type a b) d dev (dt : (a, b) ND.t) =
       (Printf.sprintf "Nx.place: %s cannot hold %s" (Nx.Device.name d)
          (ND.to_string dt))
 
-(* The engine of rune's devices. [make_placed] wraps buffers already on the
-   devices as a placed value whose cell releases them when it is unreachable;
-   [place_on] uploads a value, reading it first if it is placed elsewhere. An
-   upload from a mapped file bypasses the allocator's cache, so a dropped model
-   returns to the system rather than staying parked in it. *)
-let rec engine = { Nx_effect.read; place = (fun p x -> place_on p x) }
+(* Release buffers that no cell owns yet. *)
+let release_unowned bufs = List.iter Tolk.Device.Buffer.deallocate bufs
 
-and make_placed : type a b.
+(* [allocate_all ds devs ~size dt ~nolru] is a buffer of [size] elements of [dt]
+   on each device, allocated; if one fails, those allocated before it are
+   released before the failure is raised. *)
+let allocate_all ds devs ~size dt ~nolru =
+  let made = ref [] in
+  try
+    List.map2
+      (fun d dev ->
+        let buf =
+          Tolk.Device.create_buffer ~size ~dtype:(tolk_dtype dt)
+            ~spec:{ Tolk.Device.Buffer_spec.default with nolru }
+            dev
+        in
+        allocate d buf;
+        made := buf :: !made;
+        buf)
+      ds devs
+  with e ->
+    release_unowned !made;
+    raise e
+
+(* Move the placed value [r], whose storage is [s], into [bufs], one per device
+   of [devs] holding the window of [windows]. Each window takes, from every tile
+   of the source that it meets, the elements they share, read from a device
+   holding that tile: its own device when it holds it. When every such piece is
+   a contiguous run of both storages, tolk copies it between the buffers, device
+   to device where the backend can and through the host in chunks otherwise.
+
+   A window with a piece that is not contiguous is gathered on the host a block
+   of rows at a time (at least one row, else at most a chunk) through the
+   engine's own read, and uploaded. This is the one transfer rune makes itself,
+   an exception to moves belonging to tolk: tolk copies contiguous buffers only,
+   and a strided piece needs a copy compiled on its source device first, which
+   stage 3 brings. *)
+let transfer : type a b.
+    scratch ->
+    (a, b) Nx_effect.resident ->
+    store ->
+    Tolk.Device.t list ->
+    (int * int) array list ->
+    Tolk.Device.Buffer.t list ->
+    unit =
+ fun sc r s devs windows bufs ->
+  let q = r.r_placement and dt = r.r_dtype in
+  let shape = Nx_effect.global q (NV.shape r.r_view) in
+  let item = itemsize dt in
+  (* The source's distinct tiles, each with the buffers holding it. *)
+  let tiles =
+    List.fold_left
+      (fun tiles d ->
+        let holder = buffer_on s d in
+        let w = Nx.Placement.window q shape d in
+        match List.assoc_opt w tiles with
+        | Some holders -> (w, holders @ [ holder ]) :: List.remove_assoc w tiles
+        | None -> tiles @ [ (w, [ holder ]) ])
+      [] (Nx.Placement.devices q)
+  in
+  List.iter
+    (fun (_, holders) ->
+      List.iter (fun (dev, _) -> Tolk.Device.synchronize dev) holders)
+    tiles;
+  let offset v = NV.offset v * item in
+  List.iter2
+    (fun (dev, buf) w ->
+      let local = NV.create (Nx_effect.extents w) in
+      let pieces =
+        List.filter_map
+          (fun (t, holders) ->
+            Option.map
+              (fun i ->
+                let src =
+                  match List.assq_opt dev holders with
+                  | Some b -> b
+                  | None -> snd (List.hd holders)
+                in
+                ( src,
+                  NV.shrink r.r_view (Nx_effect.within t i),
+                  NV.shrink local (Nx_effect.within w i) ))
+              (Nx_effect.intersect w t))
+          tiles
+      in
+      if
+        List.for_all
+          (fun (_, sv, dv) -> NV.is_c_contiguous sv && NV.is_c_contiguous dv)
+          pieces
+      then
+        List.iter
+          (fun (src, sv, dv) ->
+            let len = NV.numel sv * item in
+            with_window src ~off:(offset sv) ~len (fun src ->
+                with_window buf ~off:(offset dv) ~len (fun dst ->
+                    Tolk.Device.Buffer.copy_from ~dst ~src)))
+          pieces
+      else begin
+        let e = Nx_effect.extents w in
+        let row = numel e / e.(0) in
+        let rows = Int.max 1 (chunk_bytes / (row * item)) in
+        let r0 = ref 0 in
+        while !r0 < e.(0) do
+          let r1 = Int.min e.(0) (!r0 + rows) in
+          let block = Array.copy w in
+          block.(0) <- (fst w.(0) + !r0, fst w.(0) + r1);
+          let host =
+            Nx_effect.assemble r block (fun d v ->
+                read_window dt (snd (buffer_on s d)) v)
+          in
+          copyin_at sc dev buf
+            ~off:(!r0 * row * item)
+            (Nx_effect.from_host Nx_effect.host_tensor_context host);
+          r0 := r1
+        done
+      end)
+    (List.combine devs bufs) windows;
+  List.iter Tolk.Device.synchronize devs
+
+(* The engine of rune's devices, one value per tolk backend, so that nx refuses
+   a placement over two backends. [make_placed] wraps buffers already on the
+   devices as a placed value whose cell releases them when it is unreachable;
+   [place_on] puts each device's window of a value on it: from the host, an
+   upload of the window alone, read from its file when it is a mapped one; from
+   rune's devices, a [transfer]. An upload from a mapped file bypasses the
+   allocator's cache, so a dropped model returns to the system rather than
+   staying parked in it. *)
+let rec make_placed : type a b.
     Nx_effect.placement ->
     Tolk.Device.t list ->
     nolru:bool ->
@@ -3474,7 +3623,11 @@ and make_placed : type a b.
     }
   in
   account s 1;
-  let cell = Nx_effect.cell engine ~length:(NV.numel view) (Buffers s) in
+  let cell =
+    Nx_effect.cell
+      (Nx_effect.Placement.engine placement)
+      ~length:(NV.numel view) (Buffers s)
+  in
   if bufs <> [] then
     Gc.finalise
       (fun (c : Nx_effect.cell) ->
@@ -3488,35 +3641,54 @@ and make_placed : type a b.
 and place_on : type a b.
     Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
  fun p x ->
-  match Nx.Placement.devices p with
-  | _ :: _ :: _ ->
-      invalid_arg
-        (Format.asprintf
-           "Nx.place: placing a value on several devices (%a) is not supported \
-            yet"
-           Nx.Placement.pp p)
-  | [] -> assert false
-  | [ d ] ->
-      let dev = tolk_device_of d in
-      check_holds d dev (Nx_effect.dtype x);
-      let x = on_host x in
-      let dt = Nx_effect.dtype x and shape = shape_of x in
-      let n = numel shape in
-      let nolru = Nx_buffer.file_range (Nx_effect.to_host x) <> None in
-      let bufs =
-        if n = 0 then []
-        else begin
-          let buf =
-            Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype dt)
-              ~spec:{ Tolk.Device.Buffer_spec.default with nolru }
-              dev
-          in
-          allocate d buf;
-          copyin_tensor (Hashtbl.create 1) dev buf x;
-          [ buf ]
-        end
-      in
-      make_placed p [ dev ] ~nolru dt (NV.create shape) bufs
+  let ds = Nx.Placement.devices p in
+  let devs = List.map tolk_device_of ds in
+  let dt = Nx_effect.dtype x and shape = shape_of x in
+  List.iter2 (fun d dev -> check_holds d dev dt) ds devs;
+  let windows = List.map (fun d -> Nx.Placement.window p shape d) ds in
+  let local = Nx_effect.extents (List.hd windows) in
+  let source =
+    match x with
+    | Placed ({ r_cell; _ } as r) -> (
+        match store_of r_cell with
+        | Some s when s.s_bufs <> [] -> `Stored (r, s)
+        | _ -> `Host (on_host x))
+    | _ -> `Host x
+  in
+  let nolru =
+    match source with
+    | `Host h -> Nx_buffer.file_range (Nx_effect.to_host h) <> None
+    | `Stored _ -> false
+  in
+  let bufs =
+    if numel local = 0 then []
+    else allocate_all ds devs ~size:(numel local) dt ~nolru
+  in
+  if bufs <> [] then (
+    let sc = Hashtbl.create 1 in
+    try
+      match source with
+      | `Host h ->
+          List.iter2
+            (fun (dev, buf) w ->
+              copyin_tensor sc dev buf (Nx_effect.shrink h w))
+            (List.combine devs bufs) windows
+      | `Stored (r, s) -> transfer sc r s devs windows bufs
+    with e ->
+      release_unowned bufs;
+      raise e);
+  make_placed p devs ~nolru dt (NV.create local) bufs
+
+(* One engine per tolk backend. *)
+let engines : (string, Nx_effect.engine) Hashtbl.t = Hashtbl.create 4
+
+let engine_for backend =
+  match Hashtbl.find_opt engines backend with
+  | Some e -> e
+  | None ->
+      let e = { Nx_effect.read; place = place_on } in
+      Hashtbl.add engines backend e;
+      e
 
 (* Devices, opened by name *)
 
@@ -3554,7 +3726,7 @@ let device name =
             invalid_arg
               (Printf.sprintf "Rune.device: device %s unavailable: %s" name msg)
         in
-        let d = Nx_effect.Device.make name engine in
+        let d = Nx_effect.Device.make name (engine_for (backend name)) in
         Hashtbl.add by_name name (d, dev);
         d
 

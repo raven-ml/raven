@@ -160,6 +160,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.place` puts a value on several of rune's devices, `replicated` or
+  `sharded`: each device gets its window alone, uploaded from the host (from
+  the file, for a mapped one) or copied by tolk from the devices holding it.
+- **Breaking:** devices of different backends (`METAL` and `CPU:1`) have
+  different engines, so a placement over both raises.
 - A compiled `Nx.scatter` drops an update whose index is outside the axis
   when there is one update or the axis has size 1, and the gradient of a
   compiled `Nx.take` over an axis of size 1 no longer adds the cotangent of an

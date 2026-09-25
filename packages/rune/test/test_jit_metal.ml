@@ -622,6 +622,26 @@ let test_mixed_placements_raise () =
     (Nx.Placement.equal (Nx.placement p) (Nx.placement y));
   check_arr ~msg:"and the result is right" [| 2.0; 3.0 |] y
 
+(* Metal and the CPU devices have engines of their own: a placement over both
+   raises, and a value moves between them through the host, window by window. *)
+let test_moves_between_backends () =
+  let cpus = [ Rune.device "CPU:1"; Rune.device "CPU:2" ] in
+  let metal = Rune.device "METAL" in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.ends_with ~suffix:"belong to different engines" msg
+      | _ -> false)
+    (fun () -> Nx.Placement.replicated [ metal; List.hd cpus ]);
+  let x = Nx.reshape [| 4; 6 |] (Nx.arange Nx.int32 0 24 1) in
+  let split = Nx.place (Nx.Placement.sharded ~axis:1 cpus) x in
+  let on_metal = Nx.place (Nx.Placement.device metal) split in
+  equal ~msg:"CPU:1 and CPU:2 to METAL" (array int32) (Nx.to_array x)
+    (Nx.to_array on_metal);
+  let back = Nx.place (Nx.Placement.sharded ~axis:0 cpus) on_metal in
+  equal ~msg:"METAL to CPU:1 and CPU:2" (array int32) (Nx.to_array x)
+    (Nx.to_array back)
+
 let test_host_started_loop_compiles_once () =
   let traces = ref 0 in
   let step =
@@ -900,6 +920,7 @@ let tests =
         test "a move to the host keeps its source"
           test_move_to_host_keeps_its_source;
         test "mixed placements raise" test_mixed_placements_raise;
+        test "a value moves between backends" test_moves_between_backends;
         test "a loop whose state starts on the host compiles once"
           test_host_started_loop_compiles_once;
       ];
