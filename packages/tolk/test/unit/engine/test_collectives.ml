@@ -346,6 +346,30 @@ let allreduce_tests =
                 (column_sums ~rows:ndev ~cols data)
                 (List.hd replicas))
             [ 2; 3; 4; 6; 8 ]);
+      xfail ~reason:"an allreduce call is built after outputs are forwarded"
+        (test "a realized allreduce holds no more than a consumed one"
+           (fun () ->
+             let devices = devices 4 and cols = 65536 in
+             let w =
+               C.shard ~axis:0 ~devices
+                 (host ~shape:[ 4; cols ]
+                    (uniform ~seed:[| 4; cols |] (4 * cols)))
+             in
+             Run.realize_many [ w ];
+             let peaks f =
+               snd (peak_over devices (fun () -> device_bytes (f ())))
+             in
+             let consumed =
+               peaks (fun () -> Rd.sum ~axis:[ 0 ] (Rd.sum ~axis:[ 0 ] w))
+             and realized = peaks (fun () -> Rd.sum ~axis:[ 0 ] w) in
+             List.iter2
+               (fun (device, consumed) (_, realized) ->
+                 satisfies ~msg:device
+                   ~claim:(Printf.sprintf "at most %d bytes" (consumed + 4))
+                   int
+                   (fun realized -> realized <= consumed + 4)
+                   realized)
+               consumed realized));
       test "a realized allreduce of a symbolic slice keeps its values"
         (fun () ->
           let data = Array.init 112 float_of_int in
@@ -548,34 +572,31 @@ let gather_tests =
       xfail ~reason:"inner-axis windows stage every foreign shard at once"
         (test "a column-split gather holds the value and at most one shard more"
            (fun () -> check_gather_peak ~axis:1));
-      xfail
-        ~reason:
-          "a realized gather is copied from the call's buffer into the result's"
-        (test "a realized gather holds one value per device" (fun () ->
-             let devices = devices 4 and rows = 64 and cols = 1024 in
-             let w =
-               C.shard ~axis:0 ~devices
-                 (host ~shape:[ rows; cols ]
-                    (uniform ~seed:[| rows; cols |] (rows * cols)))
-             in
-             Run.realize_many [ w ];
-             List.iter
-               (fun device ->
-                 let _, peaks =
-                   peak_over devices (fun () ->
-                       device_bytes
-                         (T.of_uop (U.copy ~src:(T.uop w) ~device ())))
-                 in
-                 List.iter
-                   (fun (d, peak) ->
-                     satisfies ~msg:d
-                       ~claim:
-                         (Printf.sprintf "at most %d bytes" (rows * cols * 4))
-                       int
-                       (fun peak -> peak <= rows * cols * 4)
-                       peak)
-                   peaks)
-               [ U.Single "CPU:1"; U.Multi devices ]));
+      test "a realized gather holds one value per device" (fun () ->
+          let devices = devices 4 and rows = 64 and cols = 1024 in
+          let data = uniform ~seed:[| rows; cols |] (rows * cols) in
+          let w = C.shard ~axis:0 ~devices (host ~shape:[ rows; cols ] data) in
+          Run.realize_many [ w ];
+          List.iter
+            (fun device ->
+              let replicas, peaks =
+                peak_over devices (fun () ->
+                    device_bytes (T.of_uop (U.copy ~src:(T.uop w) ~device ())))
+              in
+              List.iter
+                (fun replica ->
+                  is_true ~msg:"replica equals the source"
+                    (Bytes.equal (f32_bytes data) replica))
+                replicas;
+              List.iter
+                (fun (d, peak) ->
+                  satisfies ~msg:d
+                    ~claim:(Printf.sprintf "at most %d bytes" (rows * cols * 4))
+                    int
+                    (fun peak -> peak <= rows * cols * 4)
+                    peak)
+                peaks)
+            [ U.Single "CPU:1"; U.Multi devices ]);
     ]
 
 (* Today the reshard of an allreduce to split rows allreduces the whole value

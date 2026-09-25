@@ -511,6 +511,10 @@ thread.
 
 ### Tolk (new)
 
+- A gathered tensor that a realization returns is written straight into its
+  storage. It was written to an intermediate buffer and then copied, which
+  held two copies of the tensor on each device.
+
 - Copying a split tensor to a list of devices moves each shard once into its
   place: every device receives (n-1)/n of the tensor. The copy was an
   allreduce of zero-padded shards, which moved 2(n-1)/n per device under ring

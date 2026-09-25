@@ -737,7 +737,11 @@ let earliest_rewrites =
 
 let prepare_rangeify root =
   let root = forward_call_outputs root in
-  let root = U.graph_rewrite ~name:"multi_pm" Multi.multi_pm root in
+  (* The tinygrad counterpart forwards outputs only before multi_pm. The
+     collectives multi_pm lowers allocate their results, so outputs are
+     forwarded again: a realized collective writes the result's storage
+     instead of an allocation it then copies. *)
+  let root = forward_call_outputs (U.graph_rewrite ~name:"multi_pm" Multi.multi_pm root) in
   let root = U.graph_rewrite ~name:"inline calls"
       (U.first_match [movement_ops; inline_call; returned_after; disk_copy]) root in
   let root =

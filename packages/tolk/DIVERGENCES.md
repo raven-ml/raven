@@ -450,11 +450,11 @@ delete it rather than registering it.
   `Deps_tracker.uop` keys byte intervals by view offset, and the AMD SDMA
   `COPY_LINEAR` path (`tolk_amd.ml`) takes byte addresses with no alignment
   requirement. Unverified on SDMA, CUDA and NV queues until the node runs.
-  Symbolic windows keep the staging buffer. Each collective call writes a
-  fresh allocation, so a realized gather is copied once more into the
-  result's storage; for a gather to one device that holds a shard this is
-  new (its peak rises from (n-1)/n + 1 to 2 values). Inner-axis windows are
-  not contiguous and stage every foreign shard. Consumer: every copy of a
+  Symbolic windows keep the staging buffer. Inner-axis windows are not
+  contiguous and stage every foreign shard. Outputs are forwarded again after
+  `multi_pm` (`schedule/prepare.ml` `prepare_rangeify`; the reference
+  forwards only before it), so a realized gather writes the result's storage
+  instead of a fresh allocation it then copies. Consumer: every copy of a
   split value (`Creation.clone`, `U.copy` to a device list, resharding in
   `multi_pm`).
   Coverage: `test/unit/engine/test_collectives.ml` "all-gather" and
