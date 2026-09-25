@@ -6,6 +6,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Rune owns custom differentiation before Tolk lowering.** The target's
+  custom-kernel gradients run in its tensor autodiff layer. Tolk retains call
+  metadata but has no separate autodiff consumer: Rune's effect handlers run
+  custom VJP/JVP rules and trace their resulting operations into Tolk. Adding
+  another gradient engine would duplicate Rune's ownership. Coverage:
+  `test_custom` compiled reverse/forward rules and duplicate-index backward
+  scatter; `test_jit_metal` backward scatter with fresh bindings and GC between
+  replays. Reconsider if a standalone Tolk consumer needs differentiation of
+  custom kernels without Rune.
+
 - **Queue replay validates writable aliases before submission.** The target
   derives dependencies from graph identities without checking whether later
   runtime bindings add overlaps. Tolk rejects new writable overlaps between
@@ -169,12 +179,11 @@ delete it rather than registering it.
   Rune's donation and staged-carry analysis must see whether a later kernel
   reads an input after an earlier kernel writes a candidate output. A host
   submission's own pointer accesses do not describe that order. Keep the
-  original dispatches' argument slots as metadata, without retaining another
-  executable graph. Rune's donation and Metal replay suites cover the
-  consumer. Remove this metadata if reuse analysis moves before queue
+  original dispatches' argument slots as metadata. Rune's donation and Metal
+  replay suites cover the consumer. Remove this metadata if reuse analysis moves before queue
   compilation or upstream exposes equivalent access information.
 
-- **`split_reduceop` leaves a one-hot sum whole** (`schedule/rangeify.ml`
+- **`split_reduceop` leaves a one-hot sum whole** (`schedule/prepare.ml`
   `is_one_hot_sum`). The reference splits any reduce whose input is 32768
   times its output, in the tensor graph, and collapses a gather's one-hot
   reduce to a gated load later, per kernel. For the 65536-row regression, the
@@ -184,10 +193,11 @@ delete it rather than registering it.
   kernels where one load would do. tolk
   declines the split for a sum over `where(c, x, 0)` when `c` compares
   integers and one side varies only along reduced axes while the other varies
-  along none of them. The reference has the same behaviour and no test above
-  the threshold (`test_arange.py` indexes 2048 rows, `test_llama_embedding` a
-  vocabulary of 10). Parity case `gather_split_threshold` holds tolk's kernel
-  to the reference's with `SPLIT_REDUCEOP=0`. Consumer: every `Op.gather` and
+  along none of them. Parity case `gather_split_threshold` holds tolk's kernel
+  to the reference's with `SPLIT_REDUCEOP=0`. The frozen target still schedules
+  one gather kernel at 16384 rows and two at 32768/65536 rows with splitting
+  enabled; Tolk's frontend regression requires one at all three sizes.
+  Consumer: every `Op.gather` and
   tensor-index `getitem` over a large axis, so rune's `take` over a
   vocabulary. Drop the guard if the reference orders the two rewrites itself.
 

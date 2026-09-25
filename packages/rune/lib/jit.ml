@@ -4149,8 +4149,8 @@ let replay (type p q) (module P : Nx.Ptree.S with type t = p)
     (module Q : Nx.Ptree.S with type t = q) (c : Q.t compiled) (params : P.t) :
     Q.t =
   drain_releases ();
-  (* Bind the arenas before the first run records a device graph over them, so
-     the graph re-patches their addresses when a shared arena grows. *)
+  (* Rebind arenas before queue replay patches their addresses: another
+     compiled function may have grown the shared storage since the last call. *)
   List.iteri
     (fun k node ->
       let nbytes = List.fold_left ( * ) 1 (U.max_shape node) in

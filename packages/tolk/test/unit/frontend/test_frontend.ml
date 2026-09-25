@@ -505,6 +505,24 @@ let scan_tests =
       test "gather preserves dtype" (fun () ->
           is_true
             (is_dtype (Op.gather (ones_i [ 2; 2 ]) ~dim:1 (ones_i [ 2; 2 ])) D.int32));
+      test "gather stays one kernel across the reduction split threshold" (fun () ->
+          Tolk.Helpers.Context_var.with_context
+            [B (Tolk.Helpers.split_reduceop, 1);
+             B (Tolk.Helpers.reduceop_split_threshold, 32768)] (fun () ->
+              List.iter (fun rows ->
+                let param slot dtype dims = U.param ~slot ~dtype
+                    ~shape:(T.shape_uop dims) ~device:(U.Single "CPU") () in
+                let table = T.of_uop (param 0 D.float32 [rows; 2]) in
+                let indices = T.of_uop (param 1 D.int32 [3])
+                    |> fun ids -> Mv.expand (Mv.reshape ids [3; 1]) [3; 2] in
+                let gathered = Op.gather table ~dim:0 indices in
+                let graph = Tolk.Rangeify.get_kernel_graph
+                    (U.sink [U.store ~dst:(param 2 D.float32 [3; 2])
+                      ~value:(T.uop gathered) ()]) in
+                let calls = U.toposort graph
+                    |> List.filter (fun u -> U.op u = Ops.Call) in
+                equal ~msg:(Printf.sprintf "%d rows" rows) int 1 (List.length calls))
+                [16384; 32768; 65536]));
       test "gather ndim mismatch raises" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)

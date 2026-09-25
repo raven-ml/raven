@@ -160,6 +160,37 @@ let test_jvp_of_vmap_of_custom_jvp () =
   let _, dy = Rune.jvp' (fun x -> Rune.vmap' my_sin_fwd x) xs v in
   check_arr ~msg:"jvp of vmapped custom" (to_arr (Nx.mul v (Nx.cos xs))) dy
 
+let test_compiled_custom_vjp () =
+  let f x = Nx.sum (Nx.mul (fake_grad_sin x) x) in
+  let compiled = Rune.jit' ~device:"CPU" (Rune.grad' f) in
+  List.iter (fun x ->
+      Gc.full_major ();
+      check_arr ~msg:"compiled custom backward uses fresh inputs"
+        (to_arr (Nx.add (Nx.mul_s x 100.) (Nx.sin x))) (compiled x))
+    [v3 (); vec64 [| -0.3; 0.4; 1.2 |]]
+
+let test_compiled_custom_jvp () =
+  let f x = snd (Rune.jvp' fake_jvp_sin x (Nx.mul_s x 2.)) in
+  let compiled = Rune.jit' ~device:"CPU" f in
+  List.iter (fun x ->
+      check_arr ~msg:"compiled custom tangent"
+        (to_arr (Nx.mul_s x 200.)) (compiled x))
+    [v3 (); vec64 [| -0.3; 0.4; 1.2 |]]
+
+let test_compiled_custom_scatter_backward () =
+  let indices = Nx.create Nx.int32 [|3|] [|2l; 0l; 2l|] in
+  let take x = Rune.custom_vjp (module Single)
+      ~fwd:(fun x -> Nx.take ~axis:0 ~indices x, Nx.mul_s x 0.)
+      ~bwd:(fun zeros ct -> Nx.scatter ~mode:`Add ~axis:0 ~indices
+        ~values:(Nx.mul_s ct 7.) zeros) x in
+  let loss x = let y = take x in Nx.sum (Nx.mul y y) in
+  let compiled = Rune.jit' ~device:"CPU" (Rune.grad' loss) in
+  check_arr ~msg:"custom scatter accumulates duplicate indices"
+    [|14.; 0.; 84.; 0.|] (compiled (vec64 [|1.; 2.; 3.; 4.|]));
+  Gc.full_major ();
+  check_arr ~msg:"custom scatter replay resets its anonymous destination"
+    [|28.; 0.; 112.; 0.|] (compiled (vec64 [|2.; 3.; 4.; 5.|]))
+
 let tests =
   [
     group "custom_vjp"
@@ -192,6 +223,12 @@ let tests =
           test_grad_of_vmap_of_custom;
         test "jvp of vmap keeps the mapped tangent shape"
           test_jvp_of_vmap_of_custom_jvp;
+      ];
+    group "compiled rules"
+      [
+        test "custom reverse rule survives compilation and replay" test_compiled_custom_vjp;
+        test "custom forward rule survives compilation and replay" test_compiled_custom_jvp;
+        test "custom backward uses indexed scatter" test_compiled_custom_scatter_backward;
       ];
   ]
 

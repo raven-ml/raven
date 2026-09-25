@@ -734,6 +734,23 @@ let test_empty_values () =
     (fun x -> Nx.add (Nx.sum (Nx.slice [ Nx.R (1, 1) ] x)) x)
     v
 
+let test_custom_backward_on_metal () =
+  let indices = Nx.create Nx.int32 [|3|] [|2l; 0l; 2l|] in
+  let take x = Rune.custom_vjp (module Single)
+      ~fwd:(fun x -> Nx.take ~axis:0 ~indices x, Nx.mul_s x 0.)
+      ~bwd:(fun zeros ct -> Nx.scatter ~mode:`Add ~axis:0 ~indices
+        ~values:(Nx.mul_s ct 7.) zeros) x in
+  let loss x = let y = take x in Nx.sum (Nx.mul y y) in
+  let compiled = Rune.jit' ~device:"METAL" (Rune.grad' loss) in
+  let before = !Tolk.Realize.queue_submissions in
+  check_arr ~msg:"custom backward scatter accumulates duplicates"
+    [|14.; 0.; 84.; 0.|] (compiled (vec32 [|1.; 2.; 3.; 4.|]));
+  Gc.full_major ();
+  check_arr ~msg:"custom backward replay resets its destination"
+    [|28.; 0.; 112.; 0.|] (compiled (vec32 [|2.; 3.; 4.; 5.|]));
+  queues_used ~msg:"custom backward uses compiled queues"
+    (!Tolk.Realize.queue_submissions > before)
+
 let tests =
   [
     group "metal device"
@@ -750,6 +767,7 @@ let tests =
           test_top_k_on_metal;
         slow "sort matches eager" test_sort_matches_eager;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
+        test "custom backward replays indexed scatter" test_custom_backward_on_metal;
         test "multi-kernel traces replay as compiled queues"
           test_queue_batched_replay;
         test "a staged scan body replays as a compiled queue"

@@ -43,11 +43,6 @@ with their rationale and validation; commit count is not an acceptance metric.
   host/peer mappings and CPU mapping cleanup on large-BAR and small-BAR hardware.
   Preserve tinygrad's default PCI selection.
 - Reconcile the extra slice-copy kernels in `multi_allreduce_ring`.
-- Move Rune indexed-scatter, residency, uploads, memory planning,
-  symbolic placeholders and external-buffer contracts onto the new protocol.
-  Preserve their correctness/lifetime regressions and revalidate the one-hot
-  gather guard at the split threshold. Audit custom-kernel gradient ownership
-  against Rune custom differentiation and add the applicable execution cases.
 
 Acceptance: every existing backend builds against the shared protocol and no
 consumer depends on the old graph or storage interfaces. CPU and Metal execute
@@ -95,6 +90,8 @@ acceptance requirement; skipped tests are not execution evidence.
   affinity/container limits, nested-context audits and concurrent-cache
   coverage. Synchronize device opening and runtime caches; concurrent callers
   currently mutate the shared registry and execution Hashtbls without locking.
+  Isolate schedule capture hooks and Rune's shared upload scratch across
+  concurrent callers as part of that audit.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
   correctness fixes; measure accelerator candidates on supported hardware.
