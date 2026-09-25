@@ -89,141 +89,145 @@ let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
 
 (* handle_allreduce *)
 
+(* The reduction with [op] of [buf]'s shards on [devs], placed on
+   [device]. *)
+let reduce_shards buf ~op ~device devs =
+  let logical_shape = U.shape buf in
+  let concrete = List.for_all (fun d -> Option.is_some (U.const_int_value d)) logical_shape in
+  let shape = U.max_shape buf in
+  let devs = Array.of_list devs in
+  let ndev = Array.length devs in
+  let numel = List.fold_left ( * ) 1 shape in
+  let threshold =
+    Helpers.Context_var.get Helpers.ring_allreduce_threshold
+  in
+  let all2all = Helpers.Context_var.get Helpers.all2all in
+  let ring = Helpers.Context_var.get Helpers.ring in
+  (* Ring allreduce doesn't benefit with <=2 nodes or <256k elements —
+     fall back to naive to save on dispatch and chunking. *)
+  let use_all2all =
+    concrete && (all2all >= 2 || (ndev > 2 && numel > threshold && all2all >= 1))
+  in
+  let use_ring =
+    concrete && (not use_all2all)
+    && (ring >= 2 || (ndev > 2 && numel > threshold && ring >= 1))
+  in
+  let padded = if concrete then buf else
+      U.pad ~src:buf ~offset:(emit_shape (List.map (fun _ -> 0) shape)) ~size:(emit_shape shape) in
+  let buf = U.contiguous ~src:padded () in
+  let hdev = Helpers.Context_var.get Helpers.allreduce_node_ndevs in
+  if concrete && hdev > 0 && ndev mod hdev = 0 then
+    hierarchical buf ~op ~device ~shape ~ndev ~hdev devs
+  else if (not use_ring) && not use_all2all then
+    (* Naive: copy every shard to the target device and reduce. *)
+    let shards =
+      List.init ndev (fun i ->
+          U.copy ~src:(U.mselect ~src:buf ~index:i) ~device ())
+    in
+    shrink_to (fold_reduce op shards) logical_shape
+  else
+    (* Divide into ndev chunks, aligned to the largest power-of-2 factor
+       (up to 32) that divides numel. Larger chunks go to earlier
+       devices. *)
+    let factor =
+      Option.value ~default:1
+        (List.find_opt (fun f -> numel mod f = 0) [ 32; 16; 8; 4; 2 ])
+    in
+    let base = numel / factor / ndev in
+    let left = numel / factor mod ndev in
+    let chunks =
+      Array.init ndev (fun i ->
+          (if i < left then base + 1 else base) * factor)
+    in
+    (* Prefix-sum to get (start, end) pairs. *)
+    let bounds =
+      let pos = ref 0 in
+      Array.map
+        (fun sz ->
+          let s = !pos in
+          pos := s + sz;
+          (s, s + sz))
+        chunks
+    in
+    (* Reduce-scatter: each device ends up with one fully-reduced chunk. *)
+    let reduced_chunks =
+      Array.mapi
+        (fun i (s, e) ->
+          if use_all2all then
+            (* All-to-all: gather chunk [s,e) from every device onto
+               device i. *)
+            let chunks_on_i =
+              List.init ndev (fun j ->
+                  let shard = U.mselect ~src:buf ~index:j in
+                  copy_to_device
+                    (shrink (reshape shard [ numel ]) [ (s, e) ])
+                    devs.(i))
+            in
+            fold_reduce op chunks_on_i
+          else
+            (* Ring: walk chunk around the ring, accumulating at each
+               hop. *)
+            let flat = reshape buf [ numel ] in
+            let chunk = shrink flat [ (s, e) ] in
+            let reduced = ref (shrink flat [ (s, e) ]) in
+            for step = 0 to ndev - 2 do
+              let src_idx = (i + step) mod ndev in
+              let dest_idx = (i + step + 1) mod ndev in
+              (* On the first step, reduced is still multi-device
+                 (inherits from buf) and needs mselect. After that it
+                 lives on a single device. *)
+              let r =
+                if step = 0 then U.mselect ~src:!reduced ~index:src_idx
+                else !reduced
+              in
+              let cp = copy_to_device r devs.(dest_idx) in
+              let ch =
+                copy_to_device
+                  (U.mselect ~src:chunk ~index:dest_idx)
+                  devs.(dest_idx)
+              in
+              reduced := reduce op cp ch
+            done;
+            !reduced)
+        bounds
+    in
+    (* Allgather: broadcast each reduced chunk to all devices. *)
+    let copied_chunks =
+      Array.mapi
+        (fun i rc ->
+          match device with
+          | Single target ->
+              (* Target is a single device — just copy there. *)
+              copy_to_device rc target
+          | _ when use_all2all ->
+              (* All-to-all: copy to every device and stack. *)
+              U.mstack
+                (List.init ndev (fun j -> copy_to_device rc devs.(j)))
+          | _ ->
+              (* Ring: chain copies around the ring, then reorder. *)
+              let chain = Array.make ndev rc in
+              let current = ref rc in
+              for step = 0 to ndev - 2 do
+                current :=
+                  copy_to_device !current devs.((i + step) mod ndev);
+                chain.(step + 1) <- !current
+              done;
+              U.mstack
+                (List.init ndev (fun j ->
+                     chain.((j - i + 1 + ndev) mod ndev))))
+        reduced_chunks
+    in
+    (* Reassemble: pad each chunk back to full size and sum. *)
+    let padded =
+      List.init ndev (fun i ->
+          let s = fst bounds.(i) in
+          pad_to_shape copied_chunks.(i) ~offset:[ s ] ~shape:[ numel ])
+    in
+    reshape (U.usum padded) shape
+
 let handle_allreduce buf ~op ~device =
   match U.device_of buf with
-  | Some (Multi devs) ->
-      let logical_shape = U.shape buf in
-      let concrete = List.for_all (fun d -> Option.is_some (U.const_int_value d)) logical_shape in
-      let shape = U.max_shape buf in
-      let devs = Array.of_list devs in
-      let ndev = Array.length devs in
-      let numel = List.fold_left ( * ) 1 shape in
-      let threshold =
-        Helpers.Context_var.get Helpers.ring_allreduce_threshold
-      in
-      let all2all = Helpers.Context_var.get Helpers.all2all in
-      let ring = Helpers.Context_var.get Helpers.ring in
-      (* Ring allreduce doesn't benefit with <=2 nodes or <256k elements —
-         fall back to naive to save on dispatch and chunking. *)
-      let use_all2all =
-        concrete && (all2all >= 2 || (ndev > 2 && numel > threshold && all2all >= 1))
-      in
-      let use_ring =
-        concrete && (not use_all2all)
-        && (ring >= 2 || (ndev > 2 && numel > threshold && ring >= 1))
-      in
-      let padded = if concrete then buf else
-          U.pad ~src:buf ~offset:(emit_shape (List.map (fun _ -> 0) shape)) ~size:(emit_shape shape) in
-      let buf = U.contiguous ~src:padded () in
-      let hdev = Helpers.Context_var.get Helpers.allreduce_node_ndevs in
-      if concrete && hdev > 0 && ndev mod hdev = 0 then
-        Some (hierarchical buf ~op ~device ~shape ~ndev ~hdev devs)
-      else if (not use_ring) && not use_all2all then
-        (* Naive: copy every shard to the target device and reduce. *)
-        let shards =
-          List.init ndev (fun i ->
-              U.copy ~src:(U.mselect ~src:buf ~index:i) ~device ())
-        in
-        Some (shrink_to (fold_reduce op shards) logical_shape)
-      else
-        (* Divide into ndev chunks, aligned to the largest power-of-2 factor
-           (up to 32) that divides numel. Larger chunks go to earlier
-           devices. *)
-        let factor =
-          Option.value ~default:1
-            (List.find_opt (fun f -> numel mod f = 0) [ 32; 16; 8; 4; 2 ])
-        in
-        let base = numel / factor / ndev in
-        let left = numel / factor mod ndev in
-        let chunks =
-          Array.init ndev (fun i ->
-              (if i < left then base + 1 else base) * factor)
-        in
-        (* Prefix-sum to get (start, end) pairs. *)
-        let bounds =
-          let pos = ref 0 in
-          Array.map
-            (fun sz ->
-              let s = !pos in
-              pos := s + sz;
-              (s, s + sz))
-            chunks
-        in
-        (* Reduce-scatter: each device ends up with one fully-reduced chunk. *)
-        let reduced_chunks =
-          Array.mapi
-            (fun i (s, e) ->
-              if use_all2all then
-                (* All-to-all: gather chunk [s,e) from every device onto
-                   device i. *)
-                let chunks_on_i =
-                  List.init ndev (fun j ->
-                      let shard = U.mselect ~src:buf ~index:j in
-                      copy_to_device
-                        (shrink (reshape shard [ numel ]) [ (s, e) ])
-                        devs.(i))
-                in
-                fold_reduce op chunks_on_i
-              else
-                (* Ring: walk chunk around the ring, accumulating at each
-                   hop. *)
-                let flat = reshape buf [ numel ] in
-                let chunk = shrink flat [ (s, e) ] in
-                let reduced = ref (shrink flat [ (s, e) ]) in
-                for step = 0 to ndev - 2 do
-                  let src_idx = (i + step) mod ndev in
-                  let dest_idx = (i + step + 1) mod ndev in
-                  (* On the first step, reduced is still multi-device
-                     (inherits from buf) and needs mselect. After that it
-                     lives on a single device. *)
-                  let r =
-                    if step = 0 then U.mselect ~src:!reduced ~index:src_idx
-                    else !reduced
-                  in
-                  let cp = copy_to_device r devs.(dest_idx) in
-                  let ch =
-                    copy_to_device
-                      (U.mselect ~src:chunk ~index:dest_idx)
-                      devs.(dest_idx)
-                  in
-                  reduced := reduce op cp ch
-                done;
-                !reduced)
-            bounds
-        in
-        (* Allgather: broadcast each reduced chunk to all devices. *)
-        let copied_chunks =
-          Array.mapi
-            (fun i rc ->
-              match device with
-              | Single target ->
-                  (* Target is a single device — just copy there. *)
-                  copy_to_device rc target
-              | _ when use_all2all ->
-                  (* All-to-all: copy to every device and stack. *)
-                  U.mstack
-                    (List.init ndev (fun j -> copy_to_device rc devs.(j)))
-              | _ ->
-                  (* Ring: chain copies around the ring, then reorder. *)
-                  let chain = Array.make ndev rc in
-                  let current = ref rc in
-                  for step = 0 to ndev - 2 do
-                    current :=
-                      copy_to_device !current devs.((i + step) mod ndev);
-                    chain.(step + 1) <- !current
-                  done;
-                  U.mstack
-                    (List.init ndev (fun j ->
-                         chain.((j - i + 1 + ndev) mod ndev))))
-            reduced_chunks
-        in
-        (* Reassemble: pad each chunk back to full size and sum. *)
-        let padded =
-          List.init ndev (fun i ->
-              let s = fst bounds.(i) in
-              pad_to_shape copied_chunks.(i) ~offset:[ s ] ~shape:[ numel ])
-        in
-        Some (reshape (U.usum padded) shape)
+  | Some (Multi devs) -> Some (reduce_shards buf ~op ~device devs)
   | _ -> None
 
 (* Collectives *)
