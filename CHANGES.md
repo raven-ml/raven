@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Large fallback copies use 64 MiB host chunks on allocators with offset views,
+  bounding temporary host and native upload memory while preserving overlapping
+  view copies.
+
 - CUDA queues accept host and peer copies, checking mappings before submission
   and falling back to ordinary execution when imports are unsupported. Peer
   timeline work now uses each device's own encoder and context.

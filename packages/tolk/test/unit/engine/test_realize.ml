@@ -187,6 +187,61 @@ let run_copy ?(dest_name = "TEST:0") ?(src_name = "TEST:1")
             ~wait:true ~timeout:None);
   dest, data, dest_stats, src_stats
 
+(* Sparse backing keeps the large-copy test's memory use equal to the bounce
+   itself. Uploads account for retained native staging until synchronization. *)
+let bounded_copy ~source_offset ~dest_offset ~external_alias =
+  let chunk = 64 lsl 20 in
+  let length = 2 * chunk + 17 in
+  let marks = Hashtbl.create 8 in
+  let points = [0; 16; chunk - 1; chunk; chunk + 16; length - 1] in
+  List.iter (fun p -> Hashtbl.add marks (source_offset + p) ()) points;
+  let pending = ref 0 and peak = ref 0 and sizes = ref [] in
+  let synchronize () = pending := 0 in
+  let kind = Type.Id.make () in
+  let allocator = Device.Allocator.Pack Device.Allocator.{
+    kind; alloc = (fun _ _ -> 0); free = (fun _ _ _ -> ());
+    host = Fun.const None; mapping = None; synchronize;
+    addr = Some Nativeint.of_int;
+    offset = Some (fun base _ offset -> base + offset);
+    copyout = (fun bytes offset ->
+      Bytes.fill bytes 0 (Bytes.length bytes) '\000';
+      Hashtbl.iter (fun p () ->
+        if p >= offset && p - offset < Bytes.length bytes then
+          Bytes.set bytes (p - offset) '\001') marks);
+    copyin = (fun offset bytes ->
+      let n = Bytes.length bytes in
+      pending := !pending + n;
+      peak := max !peak !pending;
+      sizes := n :: !sizes;
+      Hashtbl.filter_map_inplace (fun p () ->
+        if p >= offset && p - offset < n then None else Some ()) marks;
+      let rec insert i = match Bytes.index_from_opt bytes i '\001' with
+        | None -> ()
+        | Some p -> Hashtbl.replace marks (offset + p) (); insert (p + 1) in
+      insert 0);
+    transfer = None; supports_transfer = false;
+    copy_from_disk = None; supports_copy_from_disk = false;
+  } in
+  let device = Device.make ~name:"TEST:bounded" ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:"TEST" ["TEST", Fun.const test_renderer])
+      ~runtime:(fun _ -> failwith "copy must not create a runtime") ~synchronize () in
+  let root () = Device.create_buffer ~size:(length + max source_offset dest_offset)
+      ~dtype:Dtype.uint8 device in
+  let src = root () in
+  let dst = if external_alias then root () else src in
+  let src = Device.Buffer.view src ~size:length ~dtype:Dtype.uint8 ~offset:source_offset
+  and dst = Device.Buffer.view dst ~size:length ~dtype:Dtype.uint8 ~offset:dest_offset in
+  let runner = Realize.buffer_copy ~device ~total_sz:length
+      ~dest_device:"TEST:bounded" ~src_device:"TEST:bounded" in
+  ignore (Realize.Runner.call runner [dst; src] [] ~wait:false ~timeout:None);
+  equal int chunk !peak;
+  equal int 0 !pending;
+  equal int length (List.fold_left ( + ) 0 !sizes);
+  let actual = Hashtbl.to_seq_keys marks |> List.of_seq
+      |> List.filter (fun p -> p >= dest_offset && p - dest_offset < length)
+      |> List.map (fun p -> p - dest_offset) |> List.sort compare in
+  equal (list int) points actual
+
 let with_target s f =
   Helpers.Context_var.with_context [ B (Helpers.dev, [ Target.of_string s ]) ] f
 
@@ -394,6 +449,12 @@ let () =
         ];
       group "Buffer copy"
         [
+          test "bounds staging and preserves overlapping views in both directions" (fun () ->
+            bounded_copy ~source_offset:17 ~dest_offset:81 ~external_alias:false;
+            bounded_copy ~source_offset:81 ~dest_offset:17 ~external_alias:false);
+          test "preserves overlapping external allocations while streaming" (fun () ->
+            bounded_copy ~source_offset:17 ~dest_offset:81 ~external_alias:true;
+            bounded_copy ~source_offset:81 ~dest_offset:17 ~external_alias:true);
           test "uses allocator transfer for same backend devices" (fun () ->
             let dest, data, dest_stats, src_stats =
               run_copy ~dest_transfer:true ()

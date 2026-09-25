@@ -123,7 +123,10 @@ val buffer_copy :
 (** [buffer_copy ~device ~total_sz ~dest_device ~src_device] is a
     runner that copies data between buffers. It uses the destination
     allocator's native transfer hook when {!Device.Buffer.supports_transfer}
-    holds, otherwise it falls back to a host-memory bounce. [dest_device]
+    holds, otherwise it falls back to a host-memory bounce. Allocators with
+    offset views stream large copies through 64 MiB chunks and synchronize
+    each upload to bound native staging memory, preserving overlapping-view
+    copy semantics. [dest_device]
     and [src_device] are device names used in the display string.
 
     Raises [Invalid_argument] if the two buffers differ in size or

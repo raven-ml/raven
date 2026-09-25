@@ -31,8 +31,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   submissions. Validate NV FIFO occupancy across independently linked batches
   and direct dispatches; Ampere control pages do not expose a consumer pointer.
 - Collect asynchronous queue profiling records at synchronization and export
-  them through the profiling trace path. Port bounded copy staging for
-  unsupported imports; ordinary fallback still allocates a full-size host bounce.
+  them through the profiling trace path. Port asynchronous two-slot queue
+  staging for unsupported imports.
   Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register

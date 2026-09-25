@@ -108,6 +108,48 @@ end
 
 (* Buffer copy *)
 
+let copy_via_host ~device dest src =
+  let module B = Device.Buffer in
+  B.ensure_allocated dest;
+  B.ensure_allocated src;
+  let size = B.nbytes src in
+  let chunk = 64 lsl 20 in
+  if size <= chunk || not (B.supports_offset dest && B.supports_offset src) then begin
+    let bytes = Bytes.create size in
+    B.copyout src bytes;
+    B.copyin dest bytes
+  end else begin
+    (* Preserve the full-bounce copy's snapshot semantics for overlapping views,
+       including separately wrapped external addresses. Across address spaces
+       either direction is valid. *)
+    let address b =
+      let Device.Allocator.Pack a = B.allocator b in
+      if Option.is_some a.addr then Some (B.addr b) else B.host_addr b in
+    let backwards = if B.base_id dest = B.base_id src then B.offset dest > B.offset src
+      else match address dest, address src with
+        | Some dest, Some src -> Nativeint.unsigned_compare dest src > 0
+        | _ -> false in
+    let bytes = Bytes.create chunk in
+    let remaining = ref size in
+    while !remaining > 0 do
+      let length = min chunk !remaining in
+      let offset = if backwards then !remaining - length else size - !remaining in
+      let bytes = if length = chunk then bytes else Bytes.create length in
+      let dst = B.view dest ~size:length ~dtype:Tolk_uop.Dtype.uint8 ~offset
+      and src = B.view src ~size:length ~dtype:Tolk_uop.Dtype.uint8 ~offset in
+      B.ensure_allocated dst;
+      B.ensure_allocated src;
+      B.copyout src bytes;
+      B.copyin dst bytes;
+      (* Native uploads can retain their own pinned bounce. Drain it before
+         allocating the next one, even for an asynchronous caller. *)
+      Device.synchronize device;
+      B.deallocate src;
+      B.deallocate dst;
+      remaining := !remaining - length
+    done
+  end
+
 let buffer_copy ~device ~total_sz ~dest_device ~src_device =
   let sz =
     if total_sz >= 1_000_000
@@ -126,13 +168,7 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
         then invalid_arg "buffer copy: size or dtype mismatch";
         let st = Unix.gettimeofday () in
         let transferred = Device.Buffer.transfer ~dst:dest ~src in
-        if not transferred then begin
-          Device.Buffer.ensure_allocated dest;
-          Device.Buffer.ensure_allocated src;
-          let tmp = Bytes.create (Device.Buffer.nbytes src) in
-          Device.Buffer.copyout src tmp;
-          Device.Buffer.copyin dest tmp
-        end;
+        if not transferred then copy_via_host ~device dest src;
         if wait then begin
           Device.synchronize device;
           Some (Unix.gettimeofday () -. st)
