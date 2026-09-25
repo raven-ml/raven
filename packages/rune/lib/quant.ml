@@ -563,12 +563,18 @@ let grouped kernels ~transpose ~p ~e ids codes scales x =
    at gpt-oss-20b's decode step with bfloat16 activations, 32 routes over 32
    experts lost for that reason (111 against 101 ms per step) and 64 won (135
    against 150 ms; 213 against 249 ms at 128): [tau] is 16 there, its crossover
-   measured no closer, as nothing between 33 and 63 routes was run. On the CPU
-   grouping lost at every size measured, 16 to 512 routes of gpt-oss's MoE block
-   (at 512: 10.2 against 7.1 s). *)
+   measured no closer, as nothing between 33 and 63 routes was run. On the CPU,
+   in gpt-oss-20b's MoE block with the block kernel's CPU options, grouping lost
+   at 128 routes at float32 (0.98 against 0.76 s) and at bfloat16 up to 256
+   (3.24 against 3.15 s; 2.88 against 2.39 s at 192), and won at both from 384
+   (4.08 against 4.81 s at bfloat16; at 512, 1.53 against 3.04 s at float32 and
+   4.91 against 6.36 s at bfloat16): [tau] is 1024 there, which over 32 experts
+   groups from 257 routes, forgoing float32's wins at 192 and 256; nothing
+   between 257 and 383 routes was run. *)
 let tau device =
   match Tolk.Renderer.device (Tolk.Device.renderer device) with
   | "METAL" -> 16.0
+  | "CPU" -> 1024.0
   | _ -> Float.infinity
 
 let groups kernels ~ids (Nx_quant.Mxfp4 { codes; scales }) x =

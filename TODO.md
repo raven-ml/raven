@@ -14,6 +14,11 @@ perf follow-ups:
   transform_to_call)
 
 rune/jit follow-ups:
+- revisit the CPU's τ (rune quant.ml) if the block kernel comes to multiply
+  bfloat16 at float32: over 32 experts float32's crossover puts τ in [254,
+  573) and bfloat16's in [1020, 2298); rerun the grid at 128, 192, 256, 320
+  and 384 routes, and lower τ if the two ranges meet, or give τ a dtype if
+  they stay apart
 - symbolic shapes through rune (inherit tolk's symbolic shrink/assign): one
   compiled kernel set for all positions, dissolves the fixed-shape kv-cache
   masks in kaun attention and per-prompt-length signatures

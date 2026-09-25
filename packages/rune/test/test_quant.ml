@@ -297,9 +297,11 @@ let test_instances () =
        (floats [| 3; 2; 64 |]))
 
 (* Enough routes of one row each that grouping pays (rule 2, with 4 experts from
-   5 routes): routes ranked by expert fill blocks that read their expert once.
-   Within the kernel's row bound the blocks take the kernel, past it the block
-   kernel; which depends on the device and dtype (rule 3). *)
+   5 routes on Metal): routes ranked by expert fill blocks that read their
+   expert once. Within the kernel's row bound the blocks take the kernel, past
+   it the block kernel; which depends on the device and dtype (rule 3). On the
+   CPU (τ = 1024) only the 160 routes over 2 experts group, and the other cases
+   take rule 1. *)
 let test_grouped () =
   let w = weight [| 4; 8; 64 |] in
   let ids =
@@ -900,8 +902,8 @@ let test_pmap () =
 (* The form each product takes, as [RUNE_JIT_DEBUG=1] logs it, in a child
    process that reads the variable fresh. On Metal, 16 routes over 4 experts
    group, forward and transposed; 40 routes over 40 experts do not, as each
-   block would be one row. The CPU groups nothing, and pmap takes the dense
-   form. *)
+   block would be one row. The CPU groups none of them (τ = 1024), and pmap
+   takes the dense form. *)
 let form_role = "RUNE_QUANT_FORM_ROLE"
 
 let form_cases () =
