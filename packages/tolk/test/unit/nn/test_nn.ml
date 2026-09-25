@@ -219,6 +219,55 @@ let state_tests =
           let v = Run.of_float_array ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
           State.load_state_dict [ ("p", p) ] [ ("p", v) ];
           check_floats [| 1.; 2.; 3.; 4. |] p);
+      test "load_state_dict preserves the parameter device" (fun () ->
+          let module U = Tolk_uop.Uop in
+          let empty device = Tolk_frontend.Creation.empty
+              ~device:(U.Single device) [2; 2] in
+          let p = empty "CPU:1" and v = empty "CPU" in
+          State.load_state_dict ~realize:false [("p", p)] [("p", v)];
+          equal (option string) (Some "CPU:1")
+            (match T.device p with Some (U.Single d) -> Some d | _ -> None);
+          is_true ~msg:"placed checkpoint values are copied to the parameter device"
+            (U.op (T.uop p) = Tolk_uop.Ops.Copy));
+      test "load_state_dict shards checkpoint values along the parameter axis" (fun () ->
+          let module U = Tolk_uop.Uop in
+          let devices = ["CPU:1"; "CPU:2"] in
+          let empty () = Tolk_frontend.Creation.empty ~device:(U.Single "CPU") [2; 4] in
+          let p = Tolk_frontend.Creation.shard ~axis:1 ~devices (empty ()) in
+          State.load_state_dict ~realize:false [("p", p)] [("p", empty ())];
+          equal (option (list string)) (Some devices)
+            (match T.device p with Some (U.Multi ds) -> Some ds | _ -> None);
+          equal (option int) (Some 1) (U.axis (T.uop p));
+          equal (list int) [2; 2] (U.max_shard_shape (T.uop p));
+          equal (list int) [2; 4] (T.shape p));
+      test "load_state_dict retains an already sharded checkpoint" (fun () ->
+          let module U = Tolk_uop.Uop in
+          let empty () = Tolk_frontend.Creation.empty ~device:(U.Single "CPU") [4; 4] in
+          let p = Tolk_frontend.Creation.shard ~axis:1
+              ~devices:["CPU:1"; "CPU:2"] (empty ()) in
+          let v = Tolk_frontend.Creation.shard ~axis:0
+              ~devices:["CPU:3"; "CPU:4"] (empty ()) in
+          State.load_state_dict ~realize:false [("p", p)] [("p", v)];
+          is_true ~msg:"target state loading retains existing checkpoint partitioning"
+            (U.equal (T.uop p) (T.uop v)));
+      test "load_state_dict leaves device-less checkpoint values virtual" (fun () ->
+          let module U = Tolk_uop.Uop in
+          let p = Tolk_frontend.Creation.empty ~device:(U.Single "CPU:1") [2] in
+          let v = Tolk_frontend.Creation.zeros ~buffer:false [2] in
+          is_true ~msg:"checkpoint fixture has no device" (T.device v = None);
+          State.load_state_dict ~realize:false [("p", p)] [("p", v)];
+          is_true ~msg:"device-less values follow target to() semantics"
+            (U.equal (T.uop p) (T.uop v)));
+      test "load_state_dict rejects unsupported disk transfers before rebinding" (fun () ->
+          let module U = Tolk_uop.Uop in
+          let empty device = Tolk_frontend.Creation.empty
+              ~device:(U.Single device) [1] in
+          let p = empty "DISK:/unused-state-destination" and v = empty "CPU" in
+          let before = T.uop p in
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> State.load_state_dict ~realize:false [("p", p)] [("p", v)]);
+          is_true ~msg:"failed placement leaves the parameter unchanged"
+            (U.equal before (T.uop p)));
       test "load_state_dict materialises views" (fun () ->
           let p = Tolk_frontend.Creation.zeros [ 3; 2 ] in
           let v = Run.of_float_array ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 4.; 5.; 6. |] in

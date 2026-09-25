@@ -299,6 +299,20 @@ let load_state_dict ?(strict = true) ?(realize = true) model state_dict =
                   (Printf.sprintf
                      "State.load_state_dict: shape mismatch for %S" k)
             in
+            let s =
+              let module U = Tolk_uop.Uop in
+              match Tensor.device v, Tensor.device s with
+              | Some (U.Multi _), Some (U.Multi _) -> s
+              | Some (U.Multi devices), _ ->
+                  Creation.shard ?axis:(U.axis (Tensor.uop v)) ~devices s
+              | _, None -> s
+              | destination, Some source ->
+                  let destination = match destination with
+                    | Some device -> device
+                    | None -> U.Single (Run.device_name ()) in
+                  if destination = source then s
+                  else Tensor.of_uop (U.copy ~src:(Tensor.uop s) ~device:destination ())
+            in
             Tensor.set_uop v (Tensor.uop s);
             Some v)
       model

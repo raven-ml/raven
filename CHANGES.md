@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- `State.load_state_dict` transfers placed checkpoint values to a parameter’s
+  device and shards single-device values along a multi-device parameter’s axis;
+  loading weights previously discarded that placement.
+
 - `Uop.placeholder` and `Tensor.numel` reject element counts that exceed the
   host integer range instead of wrapping; zero-sized shapes remain empty even
   when preceding dimensions have a large product.

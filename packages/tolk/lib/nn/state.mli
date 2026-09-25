@@ -19,7 +19,8 @@ val safe_load : string -> (string * Tensor.t) list
     as a state dict, in header order. Each tensor's raw data is copied to the
     default device. Empty tensors need no device allocation. Names are decoded
     as UTF-8, including escaped Unicode. Metadata, shapes and data ranges are
-    validated before any tensor is uploaded. Every safetensors dtype is supported.
+    validated before any tensor is uploaded. Supports booleans, signed and
+    unsigned 8/16/32/64-bit integers, F16, BF16, F32, F64, F8_E4M3 and F8_E5M2.
 
     @raise Invalid_argument if the file is malformed.
     @raise Sys_error if the file cannot be read. *)
@@ -30,14 +31,21 @@ val load_state_dict :
 (** [load_state_dict model state_dict] rebinds every parameter tensor of
     [model] onto the value of the same name in [state_dict]: the parameter
     handle is repointed at the loaded value, so the model computes with the
-    loaded weights from then on. A scalar value and a one-element vector are
-    reconciled by reshaping the value to the parameter's shape; any other
-    shape disagreement is an error. Extra names in [state_dict] are
-    ignored. With [strict] (default [true]), a parameter with no matching
+    loaded weights from then on. Placed values move to a single-device
+    parameter's device, or to the default device for an unplaced parameter.
+    For a multi-device parameter, a single-device value is sharded across its
+    devices along its partition axis; an already multi-device value retains
+    its own placement. Device-less values remain virtual. The loaded value's
+    dtype is retained.
+
+    A scalar value and a one-element vector are reconciled by reshaping the
+    value to the parameter's shape; any other shape disagreement is an error.
+    Extra names in [state_dict] are ignored. With [strict] (default [true]), a parameter with no matching
     value is an error; otherwise it is left unchanged. [realize] (default
     [true]) materialises the bound parameters, so that any deferred
     transformation on the loaded values is computed once rather than on every
     use.
 
     @raise Invalid_argument
-      on a shape mismatch, or on a missing name when [strict]. *)
+      on a shape mismatch, on a missing name when [strict], or when a transfer
+      would require a DISK destination. *)
