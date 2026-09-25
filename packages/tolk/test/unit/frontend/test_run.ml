@@ -894,6 +894,13 @@ let cat_tests =
       test "operands are promoted to a common dtype" (fun () ->
           let a = Dt.int (vec [| 1.; 2. |]) and b = vec [| 3.5; 4.5 |] in
           check_floats [| 1.; 2.; 3.5; 4.5 |] (Op.cat a [ b ]));
+      test "unequal extents convert each operand once" (fun () ->
+          (* 16777217 rounds to float32 as 16777216; through float16 first,
+             as a join of int32 and float16 would take it, it overflows. *)
+          let i = Run.of_int_array ~shape:[ 2 ] [| 16777217; 3 |] in
+          let h = Dt.half (vec [| 1.; 2.; 4. |]) in
+          check_floats [| 16777216.; 3.; 1.; 2.; 4.; 5. |]
+            (Op.cat i [ h; vec [| 5. |] ]));
       test "shapes must match off the joined axis" (fun () ->
           let a = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
           let b = fa ~shape:[ 2; 3 ] (Array.make 6 0.) in

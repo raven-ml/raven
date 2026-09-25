@@ -126,6 +126,11 @@ let cat ?(dim = 0) t args =
       if List.length xs <> n || not (List.for_all2 Uop.equal rest (off_dim xs))
       then invalid_arg "Op.cat: shapes must match off the concatenated axis")
     args;
+  (* Every operand converts once to the dtype of the whole join; a fold over
+     the pieces would carry the first ones through the dtype of each step. *)
+  let dtype = Uop.promo_dtype (List.map T.uop (t :: args)) in
+  let t = Dtype_ops.cast t dtype in
+  let args = List.map (fun x -> Dtype_ops.cast x dtype) args in
   let extent x = List.nth (T.symbolic_shape x) dim in
   if List.for_all (fun x -> Uop.equal (extent x) (extent t)) args then
     (* Equal extents concatenate by stacking and merging the new axis into
