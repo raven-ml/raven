@@ -510,6 +510,15 @@ delete it rather than registering it.
   `test/unit/engine/test_collectives.ml` "all-gather" and
   `test/unit/engine/test_multi.ml`.
 
+- **An allreduce lays its reduced chunks back together by selection**
+  (`schedule/allreduce.ml` `assemble`). The reference reassembles the ring,
+  all-to-all and hierarchical results by summing the chunks zero-padded into
+  place, a concatenation built as a sum: every -0 in the result came back +0
+  once three or more chunks meet (two fold into one select). tolk takes each
+  chunk where its padded footprint is true. Kernel launches are unchanged.
+  Coverage: `test_collectives` "replicas keep a sum's -0", every strategy on
+  2, 3, 4 and 6 devices.
+
 - **A collective call takes whole storage for both arguments**
   (`schedule/allreduce.ml` `collective`). The reference's
   `create_allreduce_function` passes the output's view (a SHRINK of a RESHAPE

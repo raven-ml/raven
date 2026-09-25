@@ -302,6 +302,30 @@ let allreduce_tests =
                 (column_sums ~rows:ndev ~cols data)
                 (List.hd replicas))
             [ 2; 3; 4; 6; 8 ]);
+      cases "replicas keep a sum's -0" ~name:fst strategies (fun strategy ->
+          (* Every shard holds -0, so every sum is -0. A replica is laid back
+             together from reduced chunks padded into place: taking each chunk
+             keeps the sign, where adding the padded chunks gives +0. *)
+          with_strategy strategy @@ fun () ->
+          List.iter
+            (fun ndev ->
+              let cols = 4096 in
+              let x =
+                C.shard ~axis:0 ~devices:(devices ndev)
+                  (host ~shape:[ ndev; cols ] (Array.make (ndev * cols) (-0.)))
+              in
+              List.iteri
+                (fun r bytes ->
+                  let positive = ref 0 in
+                  for c = 0 to cols - 1 do
+                    if Bytes.get_int32_le bytes (4 * c) <> 0x80000000l then
+                      incr positive
+                  done;
+                  equal
+                    ~msg:(Printf.sprintf "%d devices, replica %d" ndev r)
+                    int 0 !positive)
+                (device_bytes (Rd.sum ~axis:[ 0 ] x)))
+            [ 2; 3; 4; 6 ]);
       xfail ~reason:"an allreduce call is built after outputs are forwarded"
         (test "a realized allreduce holds no more than a consumed one"
            (fun () ->

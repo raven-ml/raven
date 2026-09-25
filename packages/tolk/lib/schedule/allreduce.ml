@@ -62,6 +62,24 @@ let fold_reduce op = function
   | [] -> failwith "fold_reduce: empty list"
   | x :: xs -> List.fold_left (reduce op) x xs
 
+(* [chunks], each a [(start, end)] range of a flat [numel] vector and its
+   values, laid back into that vector: each is padded into place and taken
+   where its padded footprint is true, so every bit pattern survives. The
+   tinygrad counterpart sums the padded chunks, which turns -0 into +0 and
+   quiets a signalling NaN. *)
+let assemble numel chunks =
+  let place (s, e) x = pad_to_shape x ~offset:[ s ] ~shape:[ numel ] in
+  let footprint b =
+    place b
+      (U.broadcast_to ~src:(U.const_bool true) ~shape:(dim (snd b - fst b)))
+  in
+  match chunks with
+  | [] -> invalid_arg "assemble: no chunks"
+  | (b0, x0) :: rest ->
+      List.fold_left
+        (fun acc (b, x) -> U.O.where (footprint b) (place b x) acc)
+        (place b0 x0) rest
+
 let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
   let numel = List.fold_left ( * ) 1 shape in
   let flat = reshape buf [numel] in
@@ -83,8 +101,7 @@ let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
       match device with
       | U.Single target -> copy_to_device summed.(k) target
       | _ -> U.mstack (List.init ndev (fun j -> copy_to_device summed.(j / hdev * hdev + k) devs.(j)))) in
-  let result = U.usum (List.init hdev (fun k ->
-      pad_to_shape gathered.(k) ~offset:[fst chunks.(k)] ~shape:[numel])) in
+  let result = assemble numel (List.init hdev (fun k -> (chunks.(k), gathered.(k)))) in
   reshape result shape
 
 (* handle_allreduce *)
@@ -217,13 +234,9 @@ let reduce_shards buf ~op ~device devs =
                      chain.((j - i + 1 + ndev) mod ndev))))
         reduced_chunks
     in
-    (* Reassemble: pad each chunk back to full size and sum. *)
-    let padded =
-      List.init ndev (fun i ->
-          let s = fst bounds.(i) in
-          pad_to_shape copied_chunks.(i) ~offset:[ s ] ~shape:[ numel ])
-    in
-    reshape (U.usum padded) shape
+    reshape
+      (assemble numel (List.init ndev (fun i -> (bounds.(i), copied_chunks.(i)))))
+      shape
 
 let handle_allreduce buf ~op ~device =
   match U.device_of buf with

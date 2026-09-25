@@ -160,6 +160,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A sum over a value split across three or more devices keeps a -0 result
+  under the ring, all-to-all and hierarchical allreduces (ring is the default
+  above 256000 elements): their replicas were laid back together by adding
+  zero-padded chunks.
 - A compiled `Nx.concatenate` of pieces of unequal extent returns their
   elements bit for bit. It summed zero-padded pieces, which could turn -0 into
   +0, quiet a signalling NaN and, on Metal, flush a subnormal to zero.
