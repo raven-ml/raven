@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- Sparse compiled calls no longer try to resolve unused argument slots during
+  eager preparation, allowing programs with non-contiguous formal slots to run.
+
 - `PROFILE=1` collects asynchronous queue timings at synchronization.
   `Device.profile` drains completed events, and `Profile.output` exports
   Chrome trace JSON with separate compute/copy lanes and per-device clocks.

@@ -499,6 +499,22 @@ let eager_template binding ~input_uops linear =
   then linear, input_uops
   else
   let ctx = exec_context ~input_uops () in
+  (* Compiled programs may keep sparse call slots. Only globals actually
+     consumed by the program need storage bindings. *)
+  let required = U.Tbl.create 32 and pending = Stack.create () in
+  Stack.push linear pending;
+  while not (Stack.is_empty pending) do
+    let node = Stack.pop pending in
+    if not (U.Tbl.mem required node) then begin
+      U.Tbl.add required node ();
+      let children = match U.as_call node with
+        | Some {body; args} -> (match U.as_program_info body with
+            | Some info -> program_args info args
+            | None -> args)
+        | None -> U.children node in
+      List.iter (fun child -> Stack.push child pending) children
+    end
+  done;
   let inputs = ref [] and slots = Hashtbl.create 16 in
   let use_runtime = Array.length (U.src linear) <
       Helpers.Context_var.get Helpers.hcq_cache_thresh in
@@ -521,7 +537,8 @@ let eager_template binding ~input_uops linear =
   let linear = U.graph_rewrite ~walk:true (fun node ->
       match U.op node, U.Arg.as_param_arg (U.arg node) with
       | (Tolk_uop.Ops.Buffer | Tolk_uop.Ops.Param),
-        Some {addrspace = D.Global; allocation = None; _} ->
+        Some {addrspace = D.Global; allocation = None; _}
+        when U.Tbl.mem required node ->
           Some (match resolve_buffer binding ctx node with
             | Single buffer -> buffer_view buffer
             | Multi buffers -> U.mstack (List.map buffer_view (Device.Multi_buffer.bufs buffers)))
