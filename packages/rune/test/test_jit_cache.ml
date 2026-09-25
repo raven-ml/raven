@@ -239,6 +239,12 @@ let schedule_settings_are_part_of_the_key () =
   misses_without ~also:[ "DEBUG" ] "PROFILE" "1";
   misses_without "LATE_ALLREDUCE" "0"
 
+(* Each changes the kernels compiled from one schedule. *)
+let program_settings_are_part_of_the_key () =
+  misses_without "TC_SELECT" "0";
+  misses_without "MV" "0";
+  misses_without "DMC" "1"
+
 let pmap_bails () =
   let cache = fresh_dir () in
   let _, events = run_child ~cache "pmap" in
@@ -267,6 +273,8 @@ let () =
               test
                 "a trace is not served under other queue or schedule settings"
                 schedule_settings_are_part_of_the_key;
+              test "a trace is not served under other program settings"
+                program_settings_are_part_of_the_key;
               test "pmap compilations bail and still work" pmap_bails;
             ];
         ]

@@ -495,6 +495,11 @@ thread.
 
 ### Tolk (new)
 
+- A compiled program is no longer reused, in the process or from rune's disk
+  cache, under other values of `TC_SELECT`, `TC_OPT`, `FLOAT16`, `MV*`,
+  `OCCUPANCY_FLOOR`, `DMC`, `ALLOW_HALF8`, `EXPAND_SSA`, `ALIGNED` or the CPU
+  compiler `CC`, which change the kernels emitted.
+
 - `Creation.shard ~axis` accepts a tensor already replicated on the target
   devices and splits it without copying: each device keeps its own shard of its
   replica. Other multi-device sources still raise.

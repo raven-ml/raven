@@ -137,11 +137,16 @@ val buffer_copy :
 
 val program_config : unit -> string
 (** [program_config ()] renders the current values of the settings that change
-    the program compiled from a fixed kernel: [NOOPT], [TC],
-    [IMAGE], [DISABLE_FAST_IDIV], [TRANSCENDENTAL], [ALLOW_TF32], and the
-    default float and int dtypes. Two compilations of one kernel on one device
-    are interchangeable exactly when their configurations are equal, so any
-    cache of compiled programs must key on it. *)
+    the program compiled from a fixed kernel: [NOOPT], [TC], [TC_SELECT],
+    [TC_OPT], [IMAGE], [DISABLE_FAST_IDIV], [TRANSCENDENTAL], [ALLOW_TF32],
+    [FLOAT16], the default float and int dtypes, the heuristic's [MV],
+    [MV_BLOCKSIZE], [MV_THREADS_PER_ROW], [MV_ROWS_PER_THREAD] and
+    [OCCUPANCY_FLOOR], memory coalescing's [DMC] and the startup value of
+    [ALLOW_HALF8], and the C renderer's [EXPAND_SSA] and [ALIGNED]. Two
+    compilations of one kernel on one renderer and compiler (whose cache key
+    records the CPU's [CC]) are interchangeable exactly when their
+    configurations are equal, so any cache of compiled programs must key on
+    it. *)
 
 val queue_config : ?profile:bool -> Device.t -> string
 (** [queue_config ?profile d] renders the settings a queue compilation for [d]

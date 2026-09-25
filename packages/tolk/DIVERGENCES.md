@@ -460,3 +460,14 @@ delete it rather than registering it.
   reads its tokens and local memory through link-time patches, and if rune's
   cache stops storing compiled queues.
 
+- **`program_config` keys the plain environment settings that change a
+  program** (`engine/realize.ml` `program_config`). Besides the context
+  variables the reference keys, it keys `MV`, `MV_BLOCKSIZE`,
+  `MV_THREADS_PER_ROW`, `MV_ROWS_PER_THREAD`, `OCCUPANCY_FLOOR`, `DMC`,
+  `EXPAND_SSA` and `ALIGNED` on their raw text, and `ALLOW_HALF8` as the
+  value tolk read at startup. The reference reads them once per process
+  through a cached getenv and keys only context variables; tolk reads them per
+  call, and rune's disk cache serves programs across processes. Consumer:
+  rune's jit cache key. Coverage: `test_jit_cache` "program settings".
+  Reconsider if tolk's getenv becomes process-constant and rune's cache keys
+  the environment itself.

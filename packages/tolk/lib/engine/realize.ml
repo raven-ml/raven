@@ -215,17 +215,29 @@ let program_config () =
   let var v =
     strf "%s=%d" (Helpers.Context_var.key v) (Helpers.Context_var.get v)
   in
+  (* The raw value of a setting whose default belongs to its reader. No
+     tinygrad counterpart for these: its getenv is cached for the process,
+     where tolk reads them per call and rune serves programs across
+     processes. *)
+  let env name = name ^ "=" ^ Option.value ~default:"" (Sys.getenv_opt name) in
   String.concat ","
-    [
+    ([
       var Helpers.noopt;
       var Helpers.use_tc;
+      var Helpers.tc_select;
+      var Helpers.tc_opt;
       var Helpers.image;
       var Helpers.disable_fast_idiv;
       var Helpers.transcendental;
       var Helpers.allow_tf32;
+      var Helpers.float16;
       "DEFAULT_FLOAT=" ^ D.to_string D.default_float;
       "DEFAULT_INT=" ^ D.to_string D.default_int;
+      strf "ALLOW_HALF8=%b" Helpers.allow_half8;
     ]
+    @ List.map env
+        [ "MV"; "MV_BLOCKSIZE"; "MV_THREADS_PER_ROW"; "MV_ROWS_PER_THREAD";
+          "OCCUPANCY_FLOOR"; "DMC"; "EXPAND_SSA"; "ALIGNED" ])
 
 let cache_key ~device ~ast_key =
   let ren = Device.renderer device in

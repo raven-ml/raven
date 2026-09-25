@@ -20,6 +20,11 @@
 
 (** {1:compiling Compiling} *)
 
+val cc : unit -> string
+(** [cc ()] is the compiler executable, the current value of [CC]. It decides
+    whether the renderer takes native [__bf16] (see {!supports_bf16}), so the
+    compiler's cache key records it. *)
+
 val host_arch : unit -> string
 (** [host_arch ()] is the normalized host architecture followed by [,native],
     suitable as the default CPU target. *)

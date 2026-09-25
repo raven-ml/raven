@@ -96,8 +96,13 @@ let create ?aligned name =
                 | Some arch -> arch
                 | None -> invalid_arg ("unsupported CPU architecture: " ^ target.arch))
             | [] -> assert false in
+          (* The table name records the compiler, which decides native
+             bfloat16, as a file name. *)
+          let cc = String.map (fun c -> match c with
+              | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '.' | '-' -> c
+              | _ -> '_') (Compiler_cpu.cc ()) in
           let compiler = Compiler.make ~name:"CLANG"
-              ~cachekey:("compile_clang_jit_" ^ target.arch)
+              ~cachekey:("compile_clang_jit_" ^ cc ^ "_" ^ target.arch)
               ~compile:(Compiler_cpu.compile_clang ~arch:target.arch) () in
           Renderer.with_compiler compiler
             (Cstyle.clang ~native_bf16:(Compiler_cpu.supports_bf16 ~arch:target.arch ())
