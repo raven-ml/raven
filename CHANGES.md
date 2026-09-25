@@ -679,6 +679,9 @@ thread.
 
 ### Tolk (new)
 
+- Image stores convert non-stacked half vectors to float lane by lane,
+  preserving valid image-write types through late lowering.
+
 - Beam search follows the device's cache-invalidation capability, avoiding
   unnecessary eviction kernels during CPU timing. `Device.invalidate_caches`
   now returns the optional operation without invoking it.

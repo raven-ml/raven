@@ -364,12 +364,6 @@ let do_stack_wmma node =
     Some (U.replace node ~src:(Array.map stacked srcs) ())
   end
 
-(* Elementwise-only devectorizer (the "add images" pass). *)
-let ew_devectorizer =
-  let open Upat in
-  PM.make
-    [ ops ~name:"b" Ops.Group.elementwise => (fun bs -> do_devectorize (bs $ "b")) ]
-
 (* Local devectorizer rules; the driver prefixes movement-op cleanup and the
    movement-op pushing rule ahead of these. *)
 let devectorizer2 =
@@ -998,10 +992,10 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   (* do memory coalescing (late). *)
   let sink = Coalesce.memory_coalescing ren sink in
 
-  (* add images: [symbolic_simple + ew_devectorizer + pm_simplify_add_image]. *)
+  (* add images: [symbolic_simple + pm_simplify_add_image]. *)
   let sink =
     rewrite ~name:"add images" ~bottom_up:true
-      (pm PM.(symbolic_simple ++ ew_devectorizer ++ Coalesce.pm_simplify_add_image ren))
+      (pm PM.(symbolic_simple ++ Coalesce.pm_simplify_add_image ren))
       sink
   in
 

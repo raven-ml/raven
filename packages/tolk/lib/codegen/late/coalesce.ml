@@ -298,9 +298,9 @@ let image_float_rule node =
         | Ops.Cast, [| source |]
           when half_storage && Dtype.equal (U.dtype source) Dtype.float32 -> source
         | _ -> U.cast ~src:value ~dtype:Dtype.float32 in
-      let value = if U.op value = Ops.Stack then
-          U.stack (List.map as_float (U.children value)) else as_float value in
-      Some (U.store ~dst ~value ())
+      let lanes = if U.op value = Ops.Stack then U.children value
+        else List.init (List.hd (U.max_shape value)) (lane value) in
+      Some (U.store ~dst ~value:(U.stack (List.map as_float lanes)) ())
   | _ -> None
 
 let pm_simplify_add_image ren =

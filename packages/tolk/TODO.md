@@ -1,8 +1,8 @@
 # TODO
 
 Migrate the reference from `baa6148066f1a29f56bb870f6f139c15bb3f495f` to the
-target `a83c6f8011863c17ef4e9c24c59e521be3c754d3` (upstream HEAD verified
-on 2026-09-25). Intentional differences
+target `d0c9745274335e44b5dd7c15b8422c2b684a3ed9` (upstream HEAD verified
+on 2026-09-26). Intentional differences
 belong in [DIVERGENCES.md](DIVERGENCES.md). Remove work when its acceptance
 criteria pass. The remaining milestones below define migration completion;
 separately scoped work does not block it.
@@ -72,6 +72,8 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
+- Refresh symbolic returned views after JIT replay, including fixed bindings
+  captured inside the function and nested result containers.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Validate large WMMA accumulator ordering at optimizer/expander boundaries,

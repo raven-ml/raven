@@ -144,6 +144,42 @@ let () =
                 equal (list int) [ 1; 4; 4 ] (U.max_shape ptr)
             | None -> failwith "expected image index");
         ];
+      group "image stores"
+        [
+          test "half vectors convert to float one lane at a time" (fun () ->
+              let image = U.param ~slot:0 ~dtype:Dtype.float16 ~image:(8, 8) () in
+              let x = U.special ~name:"gidx0" ~size:(U.const_int 8) () in
+              let y = U.special ~name:"gidx1" ~size:(U.const_int 8) () in
+              let input = U.param ~slot:1 ~dtype:Dtype.float16
+                  ~shape:(U.stack [U.const_int 64; U.const_int 4]) () in
+              let value = U.index ~ptr:input ~idxs:[U.O.(y * int_ 8 + x)] () in
+              let store = U.store ~dst:(U.index ~ptr:image ~idxs:[y; x] ()) ~value () in
+              let result = run_matcher
+                  (Coalesce.pm_simplify_add_image (qcom_renderer ())) store in
+              let value = (Option.get (U.as_store result)).value in
+              is_true ~msg:"the image store receives an explicit float4" (U.op value = Ops.Stack);
+              equal int 4 (Array.length (U.src value));
+              Array.iter (fun lane ->
+                  is_true ~msg:"each conversion is scalar" (U.op lane = Ops.Cast);
+                  is_true ~msg:"image lanes are float32" (Dtype.equal (U.dtype lane) Dtype.float32);
+                  equal (list int) [] (U.max_shape lane)) (U.src value));
+          test "only half image storage absorbs float to half rounding" (fun () ->
+              let lanes = List.init 4 (fun slot ->
+                  U.param ~slot:(slot + 1) ~dtype:Dtype.float32 ~addrspace:Dtype.Alu ()) in
+              let halves = List.map (fun src -> U.cast ~src ~dtype:Dtype.float16) lanes in
+              List.iter (fun storage ->
+                  let image = U.param ~slot:0 ~dtype:storage ~image:(8, 8) () in
+                  let dst = U.index ~ptr:image ~idxs:[U.const_int 0; U.const_int 0] () in
+                  let store = U.store ~dst ~value:(U.stack halves) () in
+                  let result = run_matcher
+                      (Coalesce.pm_simplify_add_image (qcom_renderer ())) store in
+                  let value = (Option.get (U.as_store result)).value in
+                  List.iter2 (fun original converted ->
+                      let expected = if Dtype.equal storage Dtype.float16 then original
+                        else U.cast ~src:(U.cast ~src:original ~dtype:Dtype.float16) ~dtype:Dtype.float32 in
+                      is_true ~msg:"rounding follows the storage format" (U.equal expected converted))
+                    lanes (U.children value)) [Dtype.float16; Dtype.float32]);
+        ];
       group "memory coalescing"
         [
           test "adjacent float loads become coalesced load with lane indexes"
