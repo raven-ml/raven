@@ -873,27 +873,25 @@ let const_float x = const (Const.float Dtype.weakfloat x)
 let const_bool b = const (Const.bool b)
 
 let index ~ptr ~idxs () =
-  let const_int_value u =
-    match as_const u with
-    | Some c -> (
-        match Const.view c with
-        | Const.Int n
-          when Z.fits_int n -> Some (Z.to_int n)
-        | Const.Int _ | Const.Bool _ | Const.Float _ | Const.Invalid -> None)
-    | _ -> None
-  in
-  (* A buffer or vector indexes to a scalar element, whose dtype is the same
-     scalar dtype the source already carries. A constant index into a stack
-     selects the lane directly. *)
+  let node () =
+    mk ~op:Ops.Index ~dtype:(dtype ptr) ~src:(Array.of_list (ptr :: idxs))
+      ~arg:Arg.Empty in
+  (* Only a bare constant performs the constructor's tuple lookup. Committed
+     lane indices retain their INDEX until the shared simplification passes. *)
   match idxs, op ptr with
-  | [ idx ], Ops.Stack -> (
-      match const_int_value idx with
-      | Some i when i >= 0 && i < Array.length (src ptr) -> (src ptr).(i)
-      | Some _ | None ->
-          mk ~op:Ops.Index ~dtype:(dtype ptr) ~src:[| ptr; idx |] ~arg:Arg.Empty)
-  | _ ->
-      mk ~op:Ops.Index ~dtype:(dtype ptr) ~src:(Array.of_list (ptr :: idxs))
-        ~arg:Arg.Empty
+  | [ idx ], Ops.Stack when op idx = Ops.Const ->
+      (match as_const idx with
+       | Some c ->
+           (match Const.view c with
+            | Const.Int n ->
+                if not (Z.fits_int n) then invalid_arg "Uop.index: stack index out of bounds";
+                let i = Z.to_int n and n = Array.length (src ptr) in
+                let i = if i < 0 then n + i else i in
+                if i < 0 || i >= n then invalid_arg "Uop.index: stack index out of bounds";
+                (src ptr).(i)
+            | _ -> node ())
+       | None -> node ())
+  | _ -> node ()
 
 let storage_shape (p : param_arg) =
   match p.image, p.size with

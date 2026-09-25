@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Committed stack indexes remain explicit until lowering, preserving vector
+  lane rendering. Bare constant stack indexes follow tuple indexing, and
+  diagnostic expressions print committed constants by value.
+
 - RDNA3 int8 tensor-core wrappers and call sites use tinygrad’s sanitized
   `signed_char` type name consistently.
 

@@ -532,6 +532,8 @@ let expr_to_string ?(simplify = true) u =
         match arg u with
         | Arg.Value c -> const_debug_string c
         | _ -> uop_repr_debug_string u)
+    | Ops.Cast when Array.length (src u) = 1 && op (src u).(0) = Ops.Const ->
+        s0 u
     | Ops.Cast ->
         let dt = dtype_debug_string (dtype u) in
         let dt =

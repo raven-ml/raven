@@ -633,6 +633,20 @@ let uop_constructor_parity_shortcuts () =
     (Uop.bitcast ~src:buf ~dtype:(Uop.dtype buf) == buf);
   is_true ~msg:"INDEX of stack with one const lane returns lane"
     (Uop.index ~ptr:stacked ~idxs:[ Uop.const_int 1 ] () == b);
+  is_true ~msg:"committed lane indexes survive construction"
+    (Uop.op (Uop.index ~ptr:stacked ~idxs:[ Uop.cconst (Const.int Dtype.weakint 1) Dtype.int32 ] ()) = Ops.Index);
+  is_true ~msg:"negative bare stack index follows the reference tuple lookup"
+    (Uop.index ~ptr:stacked ~idxs:[ Uop.const_int (-1) ] () == b);
+  List.iter (fun i ->
+      raises (Invalid_argument "Uop.index: stack index out of bounds")
+        (fun () -> Uop.index ~ptr:stacked ~idxs:[ Uop.const_int i ] ())) [ -3; 2 ];
+  equal string ~msg:"committed constants render their value"
+    "32" (Tolk_uop.Render.expr_to_string ~simplify:false
+      (Uop.cconst (Const.int Dtype.weakint 32) Dtype.int32));
+  let v = Uop.variable ~name:"render_width" ~min_val:0 ~max_val:8 () in
+  equal string ~msg:"nonconstant casts retain their width"
+    "(int)(render_width)" (Tolk_uop.Render.expr_to_string ~simplify:false
+      (Uop.cast ~src:v ~dtype:Dtype.int32));
   is_true ~msg:"empty end returns value"
     (Uop.end_ ~value:a ~ranges:[] == a);
   let contiguous = Uop.contiguous ~src:stacked () in
