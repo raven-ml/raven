@@ -111,10 +111,24 @@ let core_id_program () =
   let store = U.store ~dst:idx ~value:core_id () in
   [ p0; core_id; idx; store ]
 
+let program_call spec bufs =
+  let info = Program_spec.program_info spec in
+  let kernel_info = U.{name = Program_spec.name spec; applied_opts = [];
+    opts_to_apply = None; estimates = None; beam = 0} in
+  let body = U.program ~sink:(U.sink ~kernel_info [U.linear (Program_spec.program spec)])
+      ~linear:(U.linear (Program_spec.program spec)) ~source:(U.source (Program_spec.src spec))
+      ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib spec)))) ~info () in
+  let selected = List.combine info.globals bufs in
+  let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->
+      match List.assoc_opt slot selected with
+      | Some buf -> U.from_buffer buf | None -> U.noop ~dtype:Dtype.void ()) in
+  U.call ~body ~args ~info:U.{grad_fxn = None; name = None; precompile = false;
+    precompile_backward = false; dtype = Dtype.void; aux = None}
+
+let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device)
+
 let run_spec device spec bufs =
-  let car = Realize.Compiled_runner.create ~device spec in
-  ignore (Realize.Compiled_runner.call car bufs [] ~wait:true ~timeout:None);
-  Device.synchronize device
+  Realize.run_linear ~device ~to_program ~wait:true (U.linear [program_call spec bufs])
 
 (* Like [increment_program] but subtracting, so no other test builds this
    graph: nodes exported by the forked child below are genuinely foreign to
@@ -738,9 +752,9 @@ let test_linear_formal_order ?(permute_slots = false) ~reverse_buffers ~reverse_
         ignore (prg.call [| inp; out |]
           ~global:[| 1; 1; 1 |] ~local:None ~vals ~wait:true ~timeout:None))
   end else begin
-    let runner = Realize.Compiled_runner.create ~device spec in
-    ignore (Realize.Compiled_runner.call runner buffers [ "z_small", 3; "a_wide", wide_value ]
-      ~wait:true ~timeout:None)
+    Realize.run_linear ~device ~to_program ~wait:true
+      ~var_vals:["z_small", 3; "a_wide", wide_value]
+      (U.linear [program_call spec buffers])
   end;
   equal int64 (Int64.of_int (wide_value + 8)) (Bytes.get_int64_le (Device.Buffer.as_bytes out) 0);
   equal int64 5L (Bytes.get_int64_le (Device.Buffer.as_bytes inp) 0)
@@ -806,9 +820,8 @@ let main () =
             let spec = Device.compile_program device ~name:"write_core_id"
                 (core_id_program ()) in
             let dst = create_i32_buffer device [ 0; 0; 0; 0; 0; 0; 0; 0 ] in
-            let runner = Realize.Compiled_runner.create ~device spec in
-            ignore (Realize.Compiled_runner.call runner [ dst ] [ "core_id", 5 ]
-                ~wait:false ~timeout:None);
+            Realize.run_linear ~device ~to_program ~var_vals:["core_id", 5]
+              (U.linear [program_call spec [dst]]);
             equal (list int) [ 0; 0; 0; 0; 0; 5; 0; 0 ] (read_i32_buffer dst));
           test "untimed calls finish before returning" (fun () ->
             let device = cpu "synchronous" in
@@ -832,9 +845,10 @@ let main () =
             let observed = Device.create_buffer ~size:1 ~dtype:Dtype.int32
                 ~spec:options observer in
             Device.Buffer.ensure_allocated observed;
-            let runner = Realize.Compiled_runner.create ~device spec in
-            is_none (Realize.Compiled_runner.call runner [ buf ] []
-                ~wait:false ~timeout:None);
+            let runtime = Device.runtime device (Program_spec.to_elf spec) in
+            Fun.protect ~finally:runtime.free (fun () ->
+                is_none (runtime.call [|buf|] ~global:[|1; 1; 1|] ~local:None
+                  ~vals:[||] ~wait:false ~timeout:None));
             equal (list int) [ 999_999 ] (read_i32_buffer observed);
             ignore (Sys.opaque_identity buf));
           test "wait returns positive elapsed time" (fun () ->
@@ -848,13 +862,9 @@ let main () =
             in
             let dst = create_i32_buffer device [ 0 ] in
             let src = create_i32_buffer device [ 41 ] in
-            let car = Realize.Compiled_runner.create ~device spec in
-            (match
-               Realize.Compiled_runner.call car [ dst; src ] [] ~wait:true
-                 ~timeout:None
-             with
-            | Some t -> is_true ~msg:"elapsed time is positive" (t > 0.)
-            | None -> fail "CPU call ~wait:true returned no timing");
+            let elapsed = Realize.time_call ~device ~to_program
+                (program_call spec [dst; src]) (fun sample -> sample ()) in
+            is_true ~msg:"elapsed time is positive" (elapsed > 0.);
             Device.synchronize device;
             equal (list int) [ 42 ] (read_i32_buffer dst));
           test "external_ptr wraps caller memory zero-copy" (fun () ->
@@ -880,7 +890,11 @@ let main () =
               Device.compile_program device ~name:"cpu_external_add_one"
                 (increment_program ())
             in
-            run_spec device prog [ external_; external_ ];
+            let runtime = Device.runtime device (Program_spec.to_elf prog) in
+            Fun.protect ~finally:runtime.free (fun () ->
+                ignore (runtime.call [|external_; external_|]
+                  ~global:[|1; 1; 1|] ~local:None ~vals:[||]
+                  ~wait:true ~timeout:None));
             equal (list int) [ 42 ] (read_i32_buffer backing);
             (* Freeing the external buffer must neither free nor cache the caller
                memory (LRU skip): the backing buffer stays valid afterwards. *)

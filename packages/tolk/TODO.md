@@ -16,7 +16,7 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 - Move GPU standalone calls, raw channel setup, local-memory growth, cache
   invalidation, profiling calibration and allocator transfers onto shared
-  submissions. Delete the obsolete GPU `Device.prog`/`Compiled_runner` paths,
+  submissions. Delete the obsolete GPU `Device.prog` paths,
   duplicate command builders, direct argument arenas and handoff bookkeeping
   once their callers migrate. Separate Metal/CUDA loaded-program ownership
   from direct launch wrappers; remove unused Metal `Icb.execute` and dispatch

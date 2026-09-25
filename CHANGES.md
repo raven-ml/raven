@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Remove the obsolete `Realize.Compiled_runner` API. Compiled kernels and
+  optimizer candidates execute through shared `CALL` submissions and
+  `Realize.time_call` instead of a separate direct-dispatch adapter.
+
 - AMD mode1 reset now waits for PCI configuration readiness before resuming
   MMIO, avoiding access to a device that has not returned from reset.
   Non-hive devices report a bounded readiness timeout.

@@ -133,23 +133,31 @@ let elementwise_2d_ast ~s0 ~s1 =
 let to_program device =
   Codegen.to_program ~optimize:false device (Device.renderer device)
 
+let program_call program bufs =
+  let info = Option.get (U.as_program_info program) in
+  let selected = List.combine info.globals bufs in
+  let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->
+      match List.assoc_opt slot selected with
+      | Some buf -> U.from_buffer buf | None -> U.noop ~dtype:D.void ()) in
+  U.call ~body:program ~args ~info:U.{grad_fxn = None; name = None;
+    precompile = false; precompile_backward = false; dtype = D.void; aux = None}
+
 let beam_search_tests =
   group "beam_search on CPU"
     [
-      slow "Lowering.compile produces correct output" (fun () ->
+      slow "selected kernel compilation produces correct output" (fun () ->
           let device = cpu "compile-test" in
           let n = 16 in
           let ast = elementwise_1d_ast ~n in
           let s = P.create ast ren in
           let opt_ast = P.get_optimized_ast (P.copy s) in
-          let program = Device.compile_program device (Linearizer.linearize (Codegen_lower.lower ren opt_ast)) in
+          let program = to_program device opt_ast in
           let out_buf = create_f32_buffer device n (List.init n (fun _ -> 0.0)) in
           let in_buf =
             create_f32_buffer device n (List.init n (fun i -> Float.of_int i))
           in
-          let car = Realize.Compiled_runner.create ~device program in
-          ignore (Realize.Compiled_runner.call car [ out_buf; in_buf ] []
-            ~wait:true ~timeout:None);
+          Realize.run_linear ~device ~to_program ~wait:true
+            (U.linear [program_call program [out_buf; in_buf]]);
           Device.synchronize device;
           let output = read_f32_buffer out_buf in
           let expected =
@@ -214,10 +222,9 @@ let beam_search_tests =
           let out_buf = create_f32_buffer device n (List.init n (fun _ -> 0.0)) in
           let in_buf = create_f32_buffer device n input_data in
           let opt_ast = P.get_optimized_ast (P.copy result) in
-          let program = Device.compile_program device (Linearizer.linearize (Codegen_lower.lower (P.ren result) opt_ast)) in
-          let car = Realize.Compiled_runner.create ~device program in
-          ignore (Realize.Compiled_runner.call car [ out_buf; in_buf ] []
-            ~wait:true ~timeout:None);
+          let program = to_program device opt_ast in
+          Realize.run_linear ~device ~to_program ~wait:true
+            (U.linear [program_call program [out_buf; in_buf]]);
           Device.synchronize device;
           let output = read_f32_buffer out_buf in
           let expected = List.map (fun x -> x +. x) input_data in
@@ -321,17 +328,9 @@ let beam_search_tests =
 
 (* Search timing *)
 
-(* Guards the CPU wait-timing contract BEAM ranking depends on.
-
-   search.ml times every candidate through
-   [Realize.Compiled_runner.call ~wait:true] and maps a [None] result to
-   [infinity] (see time_program). If CPU timing regresses to [None], every
-   candidate ties at [infinity] and BEAM can no longer order them. This drives
-   the same construction the search timing loop uses — optimize, lower,
-   linearize, compile, then time with [~wait:true] — and requires each
-   measurement be finite and positive so candidates stay rankable. The raw
-   runtime call is guarded in test_runtime_cpu; this pins the property for
-   kernels built through the beam-search codegen pipeline. *)
+(* Beam ranking needs finite positive samples through the same scoped compiled
+   execution used by Search.time_program. Sample one selected candidate several
+   times to catch missing or host-only timing results. *)
 let search_timing_tests =
   group "search timing on CPU"
     [
@@ -341,36 +340,20 @@ let search_timing_tests =
           let ast = elementwise_1d_ast ~n in
           let s = P.create ast ren in
           let opt_ast = P.get_optimized_ast (P.copy s) in
-          let program =
-            Device.compile_program device
-              (Linearizer.linearize (Codegen_lower.lower ren opt_ast))
-          in
+          let program = to_program device opt_ast in
           let out_buf =
             create_f32_buffer device n (List.init n (fun _ -> 0.0))
           in
           let in_buf =
             create_f32_buffer device n (List.init n (fun i -> Float.of_int i))
           in
-          let car = Realize.Compiled_runner.create ~device program in
-          (* Sample the cnt-style timing loop. A [None] would become [infinity]
-             in search.ml and collapse ranking, so fail loudly on it. *)
-          for _ = 1 to 3 do
-            match
-              Realize.Compiled_runner.call car [ out_buf; in_buf ] [] ~wait:true
-                ~timeout:None
-            with
-            | None ->
-                fail
-                  "CPU wait:true timing returned None; BEAM would tie every \
-                   candidate at infinity"
-            | Some t ->
-                is_true
-                  ~msg:(Printf.sprintf "CPU wait:true timing not finite: %g" t)
-                  (Float.is_finite t);
-                is_true
-                  ~msg:(Printf.sprintf "CPU wait:true timing not positive: %g" t)
-                  (t > 0.)
-          done);
+          Realize.time_call ~device ~to_program
+            (program_call program [out_buf; in_buf]) (fun sample ->
+              for _ = 1 to 3 do
+                let elapsed = sample () in
+                is_true ~msg:"CPU timing is finite" (Float.is_finite elapsed);
+                is_true ~msg:"CPU timing is positive" (elapsed > 0.)
+              done));
     ]
 
 (* Runtime handles loaded only to time a candidate must not outlive timing. *)

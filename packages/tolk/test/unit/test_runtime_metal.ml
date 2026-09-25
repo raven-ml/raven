@@ -96,21 +96,11 @@ let compile_incr device name =
 let compile_var device name =
   Device.compile_program device ~name (variable_program ())
 
-let call_spec device spec bufs var_vals =
-  let car = Realize.Compiled_runner.create ~device spec in
-  let tm =
-    Realize.Compiled_runner.call car bufs var_vals ~wait:true ~timeout:None
-  in
-  Device.synchronize device;
-  tm
-
-let run_spec device spec bufs = ignore (call_spec device spec bufs [])
-
 let queue_call device spec slots =
   let info = Program_spec.program_info spec in
   let kernel_info = U.{name = Program_spec.name spec; applied_opts = [];
     opts_to_apply = None; estimates = None; beam = 0} in
-  let program = U.program ~sink:(U.sink ~kernel_info (Program_spec.program spec))
+  let program = U.program ~sink:(U.sink ~kernel_info [U.linear (Program_spec.program spec)])
       ~linear:(U.linear (Program_spec.program spec))
       ~source:(U.source (Program_spec.src spec))
       ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib spec)))) ~info () in
@@ -126,6 +116,19 @@ let queue_call device spec slots =
   U.call ~body:program ~args
     ~info:{grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None; dtype = Dtype.void}
+
+let call_spec device spec bufs var_vals =
+  let slots = List.init (List.length bufs) Fun.id in
+  let call = Option.get (U.as_call (queue_call device spec slots)) in
+  let args = List.map (fun arg -> match U.as_param arg with
+      | Some {param = {slot; _}; _} when slot < List.length bufs ->
+          U.from_buffer (List.nth bufs slot)
+      | _ -> arg) call.args in
+  let call = U.call ~body:call.body ~args ~info:call.info in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  Realize.time_call ~device ~to_program ~var_vals call (fun sample -> sample ())
+
+let run_spec device spec bufs = ignore (call_spec device spec bufs [])
 
 let compile_queue ?(profile = false) ?(queued = true) device calls =
   let to_program device = Codegen.to_program device (Device.renderer device) in
@@ -310,11 +313,15 @@ let cpu_maps_metal_storage () =
   equal nativeint (Nativeint.add ptr 4n)
     (Device.Buffer.addr ~device:(Device.name cpu) input);
   let spec = compile_incr cpu "cpu_over_metal_storage" in
-  run_spec cpu spec [output; input];
-  equal (list int) [0; 41; 42; 0] (read_i32 base);
-  Device.Buffer.copyin input (int32_to_bytes [8]);
-  run_spec cpu spec [output; input];
-  equal (list int) [0; 8; 9; 0] (read_i32 base)
+  let runtime = Device.runtime cpu (Program_spec.to_elf spec) in
+  Fun.protect ~finally:runtime.free (fun () ->
+      let run () = ignore (runtime.call [|output; input|]
+          ~global:[|1; 1; 1|] ~local:None ~vals:[||] ~wait:true ~timeout:None) in
+      run ();
+      equal (list int) [0; 41; 42; 0] (read_i32 base);
+      Device.Buffer.copyin input (int32_to_bytes [8]);
+      run ();
+      equal (list int) [0; 8; 9; 0] (read_i32 base))
 
 let beam_timings_use_compiled_queues () =
   let device = metal_device () in
@@ -400,9 +407,8 @@ let () =
             let spec = compile_incr device "metal_timed_add_one" in
             let dst = i32_buf device [ 0 ] in
             let src = i32_buf device [ 1 ] in
-            match call_spec device spec [ dst; src ] [] with
-            | Some tm -> is_true (tm >= 0.0)
-            | None -> fail "expected Metal wait timing");
+            let elapsed = call_spec device spec [dst; src] [] in
+            is_true (Float.is_finite elapsed && elapsed > 0.0));
           test "exec is ordered" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_ordered_add_one" in

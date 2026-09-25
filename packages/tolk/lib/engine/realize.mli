@@ -7,9 +7,6 @@
 
 (** Linear execution and kernel dispatch.
 
-    A {e runner} ({!Runner.t}) is the common dispatch interface for
-    executable operations: compiled kernels and buffer copies.
-    {!Compiled_runner} compiles kernel programs and creates runners.
     {!run_linear} executes a {!Tolk_uop.Ops.Linear} node, resolving each
     call's buffer arguments through owned storage and parameter slots.
 
@@ -68,49 +65,7 @@ module Runner : sig
       [var_vals] defaults to [[]]. *)
 end
 
-(** {1:compiled_runner Compiled runner} *)
 
-(** Kernel compilation and dispatch.
-
-    A compiled runner wraps a {!Program_spec.t}, compiles it if
-    its {!Program_spec.lib} is [None], creates a {!Device.prog}
-    handle via {!Device.runtime}, and dispatches kernels through
-    it. *)
-module Compiled_runner : sig
-  type t
-  (** The type for compiled runners. *)
-
-  val create :
-    device:Device.t ->
-    ?prg:Device.prog ->
-    Program_spec.t ->
-    t
-  (** [create ~device ?prg p] is a compiled runner for [p] on
-      [device].
-
-      When {!Program_spec.lib} [p] is [None], the source is
-      compiled via the device's {!Renderer.compiler}.
-
-      [prg] overrides the {!Device.prog} handle. When [None]
-      (default), one is created via {!Device.runtime}.
-
-      Raises [Invalid_argument] if the device has no compiler and
-      [p] has no compiled binary. *)
-
-  val p : t -> Program_spec.t
-  (** [p t] is [t]'s program spec. *)
-
-  val runner : t -> Runner.t
-  (** [runner t] is [t]'s underlying runner. *)
-
-  val call :
-    t -> Device.Buffer.t list -> (string * int) list ->
-    wait:bool -> timeout:int option -> float option
-  (** [call t bufs var_vals ~wait ~timeout] dispatches the kernel
-      on [bufs] with variable bindings [var_vals].
-
-      See {!Runner.call} for the return value semantics. *)
-end
 
 (** {1:buffer_copy Buffer copy} *)
 

@@ -459,6 +459,23 @@ let increment_program () =
   let store = U.store ~dst:idx_dst ~value:sum () in
   [ p0; p1; c0; idx_src; idx_dst; l0; c1; sum; store ]
 
+let time_spec device spec bufs =
+  let open Tolk in
+  let info = Program_spec.program_info spec in
+  let kernel_info = U.{name = Program_spec.name spec; applied_opts = [];
+    opts_to_apply = None; estimates = None; beam = 0} in
+  let body = U.program ~sink:(U.sink ~kernel_info [U.linear (Program_spec.program spec)])
+      ~linear:(U.linear (Program_spec.program spec)) ~source:(U.source (Program_spec.src spec))
+      ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib spec)))) ~info () in
+  let selected = List.combine info.globals bufs in
+  let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->
+      match List.assoc_opt slot selected with
+      | Some buf -> U.from_buffer buf | None -> U.noop ~dtype:D.void ()) in
+  let call = U.call ~body ~args ~info:U.{grad_fxn = None; name = None;
+    precompile = false; precompile_backward = false; dtype = D.void; aux = None} in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  Realize.time_call ~device ~to_program call (fun sample -> sample ())
+
 let i32_buf device values =
   let buf =
     Tolk.Device.create_buffer ~size:(List.length values) ~dtype:D.int32 device
@@ -2182,9 +2199,7 @@ let () =
                   let dst = i32_buf device [0] in
                   let spec = Tolk.Device.compile_program device ~name:"nv_mapped_host"
                       (increment_program ()) in
-                  let runner = Tolk.Realize.Compiled_runner.create ~device spec in
-                  ignore (Tolk.Realize.Compiled_runner.call runner [dst; view] []
-                    ~wait:true ~timeout:None);
+                  ignore (time_spec device spec [dst; view]);
                   equal (list int) [42] (read_i32 dst);
                   Tolk.Device.Buffer.deallocate view;
                   Tolk.Device.Buffer.deallocate base;
@@ -2198,13 +2213,8 @@ let () =
               in
               let dst = i32_buf device [ 0 ] in
               let src = i32_buf device [ 41 ] in
-              let runner = Tolk.Realize.Compiled_runner.create ~device spec in
-              (match
-                 Tolk.Realize.Compiled_runner.call runner [ dst; src ] []
-                   ~wait:true ~timeout:None
-               with
-              | Some tm -> is_true (tm >= 0.0)
-              | None -> fail "expected a device execution time");
+              let elapsed = time_spec device spec [dst; src] in
+              is_true (Float.is_finite elapsed && elapsed > 0.0);
               Tolk.Device.synchronize device;
               equal (list int) [ 42 ] (read_i32 dst));
         ];

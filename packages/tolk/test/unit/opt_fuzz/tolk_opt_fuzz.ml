@@ -288,26 +288,20 @@ let seed_buffers bufs =
    buffer's contents afterwards, so an action that scribbles outside its
    output is caught alongside one that computes the wrong value. *)
 let run_kernel dev ast bufs =
-  let lowered =
-    Codegen.full_rewrite_to_sink (Device.renderer dev) ast
-  in
-  let program = Device.compile_program dev (Linearizer.linearize lowered) in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let program = Codegen.to_program dev (Device.renderer dev) ast in
+  let info = Option.get (U.as_program_info program) in
   seed_buffers bufs;
-  let args =
-    List.map
-      (fun slot ->
-        match List.find_opt (fun (s, _, _) -> s = slot) bufs with
-        | Some (_, buf, _) -> buf
-        | None ->
-            invalid_arg (Printf.sprintf "run_kernel: no buffer for slot %d" slot))
-      (Program_spec.globals program)
-  in
-  let prg = Device.runtime dev (Program_spec.to_elf program) in
-  Fun.protect ~finally:(fun () -> Device.synchronize dev; prg.free ()) (fun () ->
-      let runner = Realize.Compiled_runner.create ~device:dev ~prg program in
-      ignore (Realize.Compiled_runner.call runner args [] ~wait:true ~timeout:None);
-      Device.synchronize dev;
-      List.map (fun (slot, buf, _) -> (slot, read_f32 buf)) bufs)
+  let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->
+      match List.find_opt (fun (s, _, _) -> s = slot) bufs with
+      | Some (_, buf, _) -> U.from_buffer buf
+      | None when not (List.mem slot info.globals) -> U.noop ~dtype:Dtype.void ()
+      | None -> invalid_arg (Printf.sprintf "run_kernel: no buffer for slot %d" slot)) in
+  let call = U.call ~body:program ~args ~info:U.{grad_fxn = None; name = None;
+    precompile = false; precompile_backward = false; dtype = Dtype.void; aux = None} in
+  Realize.time_call ~device:dev ~to_program call (fun sample ->
+      ignore (sample ());
+      List.map (fun (slot, buf, _) -> slot, read_f32 buf) bufs)
 
 (* Comparison *)
 

@@ -121,10 +121,6 @@ let buffer_node ?(slot = 0) ?(size = 4) ?(dtype = Dtype.int32)
     ?(device = "TEST:0") () =
   U.buffer ~slot ~dtype ~shape:(shape_const size) ~device:(U.Single device) ()
 
-let spec_of program =
-  Program_spec.of_program ~name:"kern" ~src:"" ~device:"TEST"
-    ~lib:Bytes.empty program
-
 (* Build the empty PROGRAM the exec path dispatches on from a kernel sink. *)
 let program_of body =
   let info = U.program_info_from_sink body in
@@ -150,10 +146,12 @@ let kernel_info name : U.kernel_info =
     beam = 0;
   }
 
-let call_runner state program var_vals =
+let call_program state program var_vals =
   let device = test_device state in
-  let runner = Realize.Compiled_runner.create ~device (spec_of program) in
-  Realize.Compiled_runner.call runner [] var_vals ~wait:true ~timeout:None
+  let body = program_of (U.sink ~kernel_info:(kernel_info "kern") program) in
+  let call = U.call ~body ~args:[] ~info:(call_info None) in
+  Realize.run_linear ~device ~to_program:(fun device body -> ignore device; program_of body)
+    ~var_vals ~wait:true (U.linear [call])
 
 let payload n =
   Bytes.init n (fun i -> Char.chr ((i * 17 + 3) land 0xff))
@@ -385,21 +383,21 @@ let () =
       test "failed timing drain preserves its runtime"
         (scoped_timings ~dispatch_failure:true ~drain_failure:true);
       test "compiled launch uses fixed workgroups" compiled_launch_uses_fixed_workgroups;
-      group "Compiled_runner"
+      group "Program dispatch"
         [
           test "passes every scalar from program metadata" (fun () ->
             let state = runtime_state () in
             let n = variable "n" 0 16 in
             let core_id = variable "core_id" 0 3 in
-            ignore (call_runner state [ n; core_id ] [ "core_id", 2; "n", 7 ]);
-            equal (array int64) [| 7L; 2L |] state.vals;
+            ignore (call_program state [ n; core_id ] [ "core_id", 2; "n", 7 ]);
+            equal (array int64) [| 2L; 7L |] state.vals;
             equal (array int) [| 1; 1; 1 |] state.global;
             equal int 0 state.nbufs);
           test "requires scalar variables" (fun () ->
             let state = runtime_state () in
             let n = variable "n" 0 16 in
-            raises (Invalid_argument "program \"kern\": missing variable \"n\"") (fun () ->
-                ignore (call_runner state [ n ] [])));
+            raises (Invalid_argument "program: missing variable \"n\"") (fun () ->
+                ignore (call_program state [ n ] [])));
         ];
       group "Program cache"
         [
