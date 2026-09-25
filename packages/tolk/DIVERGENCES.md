@@ -78,12 +78,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   failed wrap wait, then retry after completion. Reconsider when direct
   dispatch uses the compiled queue's per-batch storage ownership.
 
-- **Host access and direct cross-device binding wait for existing importers.**
+- **Host access, direct calls and native transfers wait for existing importers.**
   Tolk still exposes asynchronous `Device.prog` dispatch outside compiled queue
-  dependencies. Waiting for the importing devices prevents CPU reads or writes
-  from racing a kernel that holds mapped storage. Coverage: the storage mapping
-  lifetime test and hardware-gated host-view dispatch tests. Reconsider when all
-  direct dispatch participates in the same byte-interval dependency protocol.
+  dependencies. `Device.runtime` waits for foreign owners and importers before
+  direct dispatch; host reads/writes and native buffer transfers also wait for
+  importing devices. Address binding itself does not wait. Compiled host
+  submissions use `Device.queue_runtime` and their encoded fences, so replay
+  does not accidentally drain every device. Coverage: storage mapping/transfer
+  lifetime tests, CPU direct-binding waits, host queue replay with zero implicit
+  owner waits, and real Metal host-view dispatch. Reconsider when all direct
+  dispatch participates in the same byte-interval dependency protocol.
 
 - **Failed buffer setup unwinds acquired resources.** The frozen target does
   not consistently roll back allocation and mapping failures. Tolk returns

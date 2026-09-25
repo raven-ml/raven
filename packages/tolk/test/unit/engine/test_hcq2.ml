@@ -118,7 +118,8 @@ let compiled_host_submission () =
   let host = Tolk_cpu.create "CPU" in
   let name = "CPU:queue-test" in
   let import_mode = ref `Accept in
-  let raw = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let implicit_waits = ref 0 in
+  let raw = Storage.Host_allocator.make ~synchronize:(fun () -> incr implicit_waits) in
   let mapping = Option.get raw.mapping in
   let map source =
     if Device.Buffer.device source = "CPU:unmappable" then begin
@@ -205,6 +206,13 @@ let compiled_host_submission () =
       equal int32 value (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0)) [42l; 71l];
   equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
   equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes observed) 0);
+  let inputs = Array.map U.from_buffer [|buffer 12l; buffer 0l; buffer 0l|] in
+  let enqueue () = Realize.run_linear ~device ~to_program binding ~jit:true
+      ~input_uops:inputs linked in
+  enqueue ();
+  let before = !implicit_waits in
+  enqueue ();
+  equal ~msg:"bound queue replay must not synchronize storage owners" int before !implicit_waits;
   let replay linear inputs = Realize.run_linear ~device ~to_program binding
       ~jit:true ~wait:true ~input_uops:(Array.map U.from_buffer inputs) linear in
   let src = buffer 12l and dst = buffer 0l in

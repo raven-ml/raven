@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Compiled queue replay binds cached storage mappings without synchronizing
+  their owners. Direct runtime calls and native transfers still wait for foreign
+  storage users, preserving safety while queue fences control asynchronous work.
+
 - Sparse compiled calls no longer try to resolve unused argument slots during
   eager preparation, allowing programs with non-contiguous formal slots to run.
 

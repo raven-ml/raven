@@ -261,6 +261,8 @@ let transfer ~dst ~src =
     ensure_allocated src;
     true
   end else if supports_transfer dst src then begin
+    synchronize_mappings dst;
+    synchronize_mappings src;
     ensure_allocated dst;
     ensure_allocated src;
     match dst.storage, src.storage with
@@ -299,13 +301,19 @@ let generation buf =
   ensure_allocated buf;
   buf.generation
 
-let rec mapped_backing target buf =
-  ensure_allocated buf;
+let target_allocator device buf =
+  match device with None -> allocator buf | Some device -> !allocator_resolver device
+
+let synchronize ?device buf =
+  let target = target_allocator device buf in
   synchronize_mappings ~except:target buf;
   if target != allocator buf then begin
     let Allocator.Pack source = allocator buf in
     source.synchronize ()
-  end;
+  end
+
+let rec mapped_backing target buf =
+  ensure_allocated buf;
   match buf.storage with
   | Empty -> None
   | Unallocated -> assert false
@@ -333,8 +341,6 @@ let rec mapped_backing target buf =
            buf.mappings <- (target, raw) :: buf.mappings;
            Some raw)
 
-let target_allocator device buf =
-  match device with None -> allocator buf | Some device -> !allocator_resolver device
 
 let find_mapping : type a. a Type.Id.t -> t -> a option = fun kind buf ->
   let root = match buf.base with Some root -> root | None -> buf in

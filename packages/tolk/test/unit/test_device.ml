@@ -335,7 +335,13 @@ let mappings_follow_storage_ownership () =
     copyin = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length src));
     copyout = (fun dst src -> Bytes.blit src 0 dst 0 (Bytes.length dst));
     addr = None; offset = Some (fun raw _ _ -> raw);
-    transfer = None; supports_transfer = false;
+    transfer = Some (fun ~dest ~src ~dest_device ~src_device nbytes ->
+        equal string "MAP_SOURCE" dest_device;
+        equal string "MAP_SOURCE" src_device;
+        record "native transfer";
+        Bytes.blit src 0 dest 0 nbytes;
+        true);
+    supports_transfer = true;
     copy_from_disk = None; supports_copy_from_disk = false;
   } in
   let source = Device.Buffer.create ~device:"MAP_SOURCE" ~size:4 ~dtype:i32
@@ -382,6 +388,8 @@ let mappings_follow_storage_ownership () =
   equal int 4 cached_offset;
   events := "address lookup" :: !events;
   equal nativeint 0x1004n (Device.Buffer.addr ~device:(Device.name second) view);
+  equal string "address lookup" (List.hd !events);
+  Device.Buffer.synchronize ~device:(Device.name second) view;
   equal string "source sync" (List.hd !events);
   let count event = List.length (List.filter (String.equal event) !events) in
   equal int 1 (count "MAP_TARGET:1 map");
@@ -390,6 +398,14 @@ let mappings_follow_storage_ownership () =
   let syncs = count "MAP_TARGET:1 sync" in
   equal (list int) [0; 42; 0; 0] (read_i32 source);
   equal int (syncs + 1) (count "MAP_TARGET:1 sync");
+  let destination = Device.Buffer.create ~device:"MAP_SOURCE" ~size:4 ~dtype:i32
+      (Device.Allocator.Pack source_allocator) in
+  let syncs = count "MAP_TARGET:1 sync" in
+  is_true (Device.Buffer.transfer ~dst:destination ~src:source);
+  equal int (syncs + 1) (count "MAP_TARGET:1 sync");
+  equal string "native transfer" (List.hd !events);
+  equal (list int) [0; 42; 0; 0] (read_i32 destination);
+  Device.Buffer.deallocate destination;
   Device.Buffer.deallocate view;
   equal int 0 (count "MAP_TARGET:1 unmap");
   events := [];

@@ -317,13 +317,15 @@ let program_args (info : Tolk_uop.Uop.program_info) args =
       args.(slot)) info.globals
 
 (* Device dispatch handle for a compiled PROGRAM, cached per node and device. *)
-let get_runtime ~device program =
+let get_runtime ?(queue = false) ~device program =
   let module U = Tolk_uop.Uop in
-  let ckey = cache_key ~device ~ast_key:(string_of_int (U.tag program)) in
+  let ckey = cache_key ~device ~ast_key:
+      ((if queue then "queue:" else "kernel:") ^ string_of_int (U.tag program)) in
   match Hashtbl.find_opt runtime_cache ckey with
   | Some prg -> prg
   | None ->
-      let prg = Device.runtime device (U.to_elf program) in
+      let runtime = if queue then Device.queue_runtime else Device.runtime in
+      let prg = runtime device (U.to_elf program) in
       Hashtbl.replace runtime_cache ckey prg;
       prg
 
@@ -913,7 +915,7 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
         let host = Device.get submission.host in
         let info = match U.as_program_info body with
           | Some info -> info | None -> invalid_arg "exec_hcq: expected PROGRAM" in
-        let prg = get_runtime ~device:host body in
+        let prg = get_runtime ~queue:true ~device:host body in
         let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
         let vals = U.program_vals info ~var_vals:ctx.var_vals |> List.map Int64.of_int |> Array.of_list in
         let run () =

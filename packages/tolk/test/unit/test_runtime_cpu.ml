@@ -71,6 +71,36 @@ let increment_program () =
   let store = U.store ~dst:idx_dst ~value:sum () in
   [ p0; p1; c0; idx_src; idx_dst; l0; c1; sum; store ]
 
+let direct_binding_waits_for_foreign_storage () =
+  let host = cpu "direct-binding" in
+  let syncs = ref 0 in
+  let allocator = Device.Allocator.Pack
+      (Storage.Host_allocator.make ~synchronize:(fun () -> incr syncs)) in
+  let source = Device.Buffer.create ~device:"FOREIGN:binding" ~size:16
+      ~dtype:Dtype.int32 allocator in
+  Device.Buffer.ensure_allocated source;
+  Device.Buffer.copyin source (int32_to_bytes (List.init 16 (fun i -> i + 41)));
+  let importer_syncs = ref 0 in
+  let imported_allocator = Device.Allocator.Pack
+      (Storage.Host_allocator.make ~synchronize:(fun () -> incr importer_syncs)) in
+  let importer = Device.make ~name:"CPU:binding-importer" ~allocator:imported_allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:"CPU:binding-importer"
+        ["CLANG", (fun _ -> Device.renderer host)])
+      ~runtime:(Device.runtime host) ~synchronize:(fun () -> incr importer_syncs) () in
+  ignore (Device.Buffer.get ~device:(Device.name importer) Storage.Host_allocator.kind source);
+  let output = create_i32_buffer host (List.init 16 (fun _ -> 0)) in
+  let spec = Device.compile_program host ~name:"foreign_increment" (increment_program ()) in
+  let runtime = Device.runtime host (Program_spec.to_elf spec) in
+  Fun.protect ~finally:runtime.free (fun () ->
+      let run () = ignore (runtime.call [|output; source|] ~global:[|1; 1; 1|]
+          ~local:None ~vals:[||] ~wait:false ~timeout:None) in
+      run ();
+      let before = !syncs and imported_before = !importer_syncs in
+      run ();
+      equal int (imported_before + 1) !importer_syncs;
+      equal ~msg:"direct calls still synchronize a cached foreign binding" int (before + 1) !syncs;
+      equal int 42 (List.hd (read_i32_buffer output)))
+
 let core_id_program () =
   let dt = Dtype.int32 in
   let p0 = i32_param ~slot:0 in
@@ -723,6 +753,7 @@ let main () =
     [
       group "Execution"
         [
+          test "direct binding waits for foreign storage" direct_binding_waits_for_foreign_storage;
           test "padded exponential sum uses zero for extra lanes"
             (test_padded_reduction Ops.Add
                (fun x -> U.alu_unary ~op:Ops.Exp2 ~src:x) [ 0.; 1.; 2. ] 7.);

@@ -278,7 +278,9 @@ val transfer : dst:t -> src:t -> bool
 (** [transfer ~dst ~src] copies [src] into [dst] through [dst]'s allocator
     device-to-device transfer hook when {!supports_transfer} is [true],
     returning [true] when the native transfer ran and [false] when no hook is
-    available or the hook declines this device pair. Both buffers are allocated if the transfer runs. Low-level
+    available or the hook declines this device pair. Importing devices are
+    synchronized before the native hook; both buffers are allocated if it runs.
+    Low-level
     same-backend primitive that {!copy_from} uses as a fast path; application
     code should use {!copy_from}.
 
@@ -309,11 +311,19 @@ val get : ?device:string -> 'a Type.Id.t -> t -> 'a option
     [None] for empty storage. [device] defaults to [b]'s device. Another device
     maps the base allocation once, then derives byte-offset views from that
     mapping. Mappings are retained by the source owner and unmapped before it
-    is freed; querying a foreign mapping first synchronizes the source device.
+    is freed. Binding an existing mapping does not wait for its users: direct
+    dispatch must call {!synchronize}, while compiled queues encode their own
+    dependencies. Creating a new mapping may synchronize through the allocator.
 
     Raises [Invalid_argument] if [kind] differs from the target allocator's
     identity or it cannot map [b]. The caller must retain [b] while using the
     returned backend buffer. *)
+
+val synchronize : ?device:string -> t -> unit
+(** [synchronize ?device b] waits for other importing devices and, when [device]
+    differs from [b]'s owner, for the owner as well. [device] defaults to [b]'s
+    device, whose own dispatch order must be preserved by the caller. Use this
+    before direct dispatch; compiled queue dependencies replace these waits. *)
 
 val generation : t -> int
 (** [generation b] initializes [b] and returns the identity of its current
@@ -326,7 +336,8 @@ val host_addr : t -> nativeint option
 
 val addr : ?device:string -> t -> nativeint
 (** [addr ?device b] is the device address of [b], or [0n] for empty storage.
-    Initializes [b] if needed. Raises [Invalid_argument] for opaque storage. *)
+    Initializes or maps [b] as {!get} does, without waiting on an existing
+    mapping. Raises [Invalid_argument] for opaque storage. *)
 
 (** {1:accounting Allocation accounting} *)
 

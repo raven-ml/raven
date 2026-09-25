@@ -170,7 +170,7 @@ let make ~name ~allocator ~renderer_set ~runtime ~synchronize
 
 let name d = d.name
 let renderer d = Renderer_set.select d.renderer_set
-let runtime d (obj : Tolk_uop.Tiny_elf.t) =
+let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
   let nbufs = List.fold_left (fun n (a : Tolk_uop.Tiny_elf.argument) ->
       if a.addrspace = Tolk_uop.Dtype.Alu then n else n + 1) 0 obj.signature in
   let nvals = List.length obj.signature - nbufs in
@@ -187,9 +187,14 @@ let runtime d (obj : Tolk_uop.Tiny_elf.t) =
       invalid_arg (Printf.sprintf
           "program %S: expected %d buffers and %d scalars, received %d and %d"
           name nbufs nvals (Array.length bufs) (Array.length vals));
+    if not ordered then Array.iter (Buffer.synchronize ~device:d.name) bufs;
     prg.call bufs ~global ~local ~vals ~wait ~timeout
   in
   { prg with call }
+
+let runtime d = load_runtime ~ordered:false d
+let queue_runtime d = load_runtime ~ordered:true d
+
 let with_profile_lock d f =
   Mutex.lock d.profile_lock;
   Fun.protect ~finally:(fun () -> Mutex.unlock d.profile_lock) f

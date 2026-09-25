@@ -163,10 +163,17 @@ val renderer : t -> Renderer.t
 
 val runtime : t -> runtime
 (** [runtime d obj] loads [obj] on [d]. Its dispatch handle checks buffer and
-    scalar argument counts before entering the backend.
+    scalar argument counts and waits for foreign owners and importers before
+    entering the backend. Work on [d] uses the backend's own dispatch order.
 
     Raises [Invalid_argument] if signature slots are not a permutation of
     buffers followed by scalars. *)
+
+val queue_runtime : t -> runtime
+(** [queue_runtime d obj] loads a host submission program whose compiled
+    dependencies order every buffer access. It validates argument counts as
+    {!runtime} does, but binding existing mappings does not synchronize other
+    devices. Only queue programs with complete dependency fences may use it. *)
 
 val synchronize : t -> unit
 (** [synchronize d] blocks until all pending work on [d] completes, then
