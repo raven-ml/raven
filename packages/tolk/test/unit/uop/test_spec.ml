@@ -1032,6 +1032,29 @@ let program_oob_shift_component_bounds () =
   is_false ~msg:"weaker selection guard permits a negative index"
     (masked_access_accepted ~size:4 ~index ~gate:Uop.O.(i32 2 < r))
 
+let program_oob_unsigned_add_can_wrap dtype () =
+  let maximum = Bound.integer (Dtype.max dtype) in
+  let x = Uop.param ~slot:(-1) ~name:"unsigned_wrap" ~dtype
+      ~shape:(Uop.stack [])
+      ~vmin_vmax:(`Int (Z.pred maximum), `Int maximum)
+      ~multiple_of:1 ~addrspace:Dtype.Alu () in
+  let one = Uop.const (Const.int dtype 1) in
+  let gate = Uop.O.(x + one < one) in
+  is_false ~msg:"unsigned overflow cannot prove the access gate false"
+    (masked_access_accepted ~size:16 ~index:x ~gate)
+
+let program_oob_small_unsigned_add_wraps () =
+  List.iter (fun (dtype, size) ->
+      let x = Uop.param ~slot:(-1) ~name:"unsigned_promoted" ~dtype
+          ~shape:(Uop.stack [])
+          ~vmin_vmax:(Bound.int 0, Bound.int (size - 1))
+          ~multiple_of:1 ~addrspace:Dtype.Alu () in
+      let one = Uop.const (Const.int dtype 1) in
+      is_true ~msg:"a small unsigned addition wraps inside its storage width"
+        (masked_access_accepted ~size ~index:Uop.O.(x + one)
+           ~gate:(Uop.const_bool true)))
+    [ Dtype.uint8, 256; Dtype.uint16, 65536 ]
+
 let program_oob_committed_guard_constants () =
   let x = Uop.variable ~param:true ~name:"guard_constant" ~min_val:0 ~max_val:31
       ~dtype:Dtype.int32 () in
@@ -1411,6 +1434,12 @@ let () =
             program_oob_offset_component_bounds;
           test "CHECK_OOB uses shifted component bounds"
             program_oob_shift_component_bounds;
+          test "CHECK_OOB accounts for uint32 addition overflow"
+            (program_oob_unsigned_add_can_wrap Dtype.uint32);
+          test "CHECK_OOB accounts for uint64 addition overflow"
+            (program_oob_unsigned_add_can_wrap Dtype.uint64);
+          test "CHECK_OOB retains small unsigned promotion bounds"
+            program_oob_small_unsigned_add_wraps;
           test "CHECK_OOB preserves committed guard constants"
             program_oob_committed_guard_constants;
           test "CHECK_OOB proof variables cannot alias user parameters"

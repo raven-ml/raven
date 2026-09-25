@@ -59,6 +59,16 @@ let elementwise_tests =
           check_floats [| 1.; 2.718282; 7.389056 |] (El.exp (vec [| 0.; 1.; 2. |])));
       test "pow" (fun () ->
           check_floats [| 4.; 9. |] (El.pow (vec [| 2.; 3. |]) (T.f 2.0)));
+      test "unsigned overflow keeps its comparison live" (fun () ->
+          let bytes = Bytes.create 8 in
+          Bytes.set_int32_le bytes 0 Int32.minus_one;
+          Bytes.set_int32_le bytes 4 (Int32.sub Int32.minus_one 1l);
+          let source = Run.of_bytes ~dtype:Tolk_uop.Dtype.uint32 ~shape:[ 2 ] bytes in
+          let result = El.lt (El.add source (T.i 1)) (T.i 1) in
+          let flags = Run.data result in
+          equal int 2 (Bytes.length flags);
+          equal (array int) [| 1; 0 |]
+            (Array.init 2 (Bytes.get_uint8 flags)));
       test "signed narrowing wraps loaded integers" (fun () ->
           let source = Run.of_int_array ~shape:[ 2 ] [| 128; 255 |] in
           let bytes = Run.data (Dt.cast source Tolk_uop.Dtype.int8) in

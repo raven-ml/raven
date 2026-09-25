@@ -78,8 +78,7 @@ acceptance requirement; skipped tests are not execution evidence.
   three Metal tensor-core cases (padded contraction and BF16 accumulation).
   Their distributed affine indexes no longer contain the gate's bounded sum
   as a subexpression. Preserve rejection until shared symbolic rules establish
-  safety. Audit fixed-width ALU overflow in canonical bounds, including false
-  gate proofs after unsigned wraparound.
+  safety.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
   Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -112,7 +111,10 @@ acceptance requirement; skipped tests are not execution evidence.
   Synchronize linked-template and staged replay cache lookup/publication.
   Retire obsolete device owners
   from multi-device templates and retained-link caches while preserving live
-  submission ownership. Make first-run bookkeeping and execution statistics
+  submission ownership. Reject stale retained HCQ execution after device
+  replacement, or carry its actual owner identities through dispatch: embedded
+  addresses belong to the old owner while queue lookup currently uses names.
+  Make first-run bookkeeping and execution statistics
   safe for concurrent callers.
   Establish ownership of Rune's pending release/view lists and mutable storage
   lists across callers; synchronize trace identities,

@@ -634,6 +634,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## Validation dependencies
 
+- **Integer bounds follow the emitted storage width.** An exact mathematical
+  interval can falsely prove an overflowing unsigned comparison impossible.
+  Tolk bounds wrapped results at their declared width and moves constants
+  across comparisons only after proving the intermediate arithmetic fits.
+  Coverage: UOp width/operation bounds, Spec overflow controls and native
+  CPU/Metal comparison readback. Remove this ruling when upstream models
+  emitted wraparound consistently.
+
 - **Narrowing integer CAST bounds include native wraparound.** The target
   intersects signed bounds with the destination range, assuming overflow is
   undefined. Tolk's Clang and Metal casts turn loaded int32 values 128 and 255

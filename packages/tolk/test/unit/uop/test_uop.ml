@@ -581,6 +581,50 @@ let exact_symbolic_bounds () =
   raises_match (function Invalid_argument _ -> true | _ -> false)
     (fun () -> Bound.to_int (`Int huge))
 
+let unsigned_arithmetic_bounds_cover_emission () =
+  let parameter dtype name lo hi =
+    Uop.param ~slot:(-1) ~name ~dtype ~shape:(Uop.stack [])
+      ~vmin_vmax:(`Int lo, `Int hi) ~addrspace:Dtype.Alu () in
+  List.iter (fun dtype ->
+      let maximum = Bound.integer (Dtype.max dtype) in
+      let x = parameter dtype "unsigned_bounds" Z.zero maximum in
+      let constant n = Uop.const (Const.int dtype n) in
+      let cases =
+        [ Ops.Add, 1, (fun n -> Z.succ n);
+          Ops.Sub, 1, (fun n -> Z.pred n);
+          Ops.Mul, 2, (fun n -> Z.mul n (Z.of_int 2));
+          Ops.Shl, 1, (fun n -> Z.shift_left n 1) ] in
+      List.iter (fun (op, rhs, exact) ->
+          let value = Uop.alu_binary ~op ~lhs:x ~rhs:(constant rhs) in
+          List.iter (fun input ->
+              let promoted = exact input in
+              let narrowed = Dtype.truncate_integer dtype promoted in
+              is_true
+                ~msg:(Printf.sprintf "%s %s at %s must include %s"
+                  (Dtype.to_string dtype) (Ops.name op)
+                  (Z.to_string input) (Z.to_string narrowed))
+                (Bound.le (Uop.vmin value) (`Int narrowed)
+                 && Bound.le (`Int narrowed) (Uop.vmax value)))
+            [ Z.zero; Z.one; Z.pred maximum; maximum ]) cases;
+      let narrow = parameter dtype "unsigned_in_range" (Z.of_int 2) (Z.of_int 7) in
+      equal_bounds ~msg:"nonoverflowing unsigned addition remains precise"
+        Uop.O.(narrow + constant 3) (5, 10);
+      equal_bounds ~msg:"unsigned masking retains its tight interval"
+        (Uop.alu_binary ~op:Ops.And ~lhs:x ~rhs:(constant 3)) (0, 3))
+    [ Dtype.uint8; Dtype.uint16; Dtype.uint32; Dtype.uint64 ];
+  let signed = Uop.variable ~name:"signed_exact" ~min_val:2147483646
+      ~max_val:2147483647 ~dtype:Dtype.int32 () in
+  equal_bounds ~msg:"signed overflow retains the full destination interval"
+    Uop.O.(signed + Uop.const (Const.int Dtype.int32 1))
+    (-2147483648, 2147483647);
+  let huge = Z.shift_left Z.one 90 in
+  let weak = parameter Dtype.weakint "weak_exact" huge (Z.succ huge) in
+  let result = Uop.O.(weak + Uop.const_int 1) in
+  equal string (Z.to_string (Z.succ huge))
+    (Z.to_string (Bound.integer (Uop.vmin result)));
+  equal string (Z.to_string (Z.add huge (Z.of_int 2)))
+    (Z.to_string (Bound.integer (Uop.vmax result)))
+
 let cast_bounds () =
   let fits = Uop.variable ~name:"fits" ~min_val:5 ~max_val:10 () in
   equal_bounds ~msg:"CAST to unsigned keeps exact bounds when the source fits"
@@ -2621,6 +2665,8 @@ let () =
           test "binding requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
           test "integer bounds wrap at a fixed width" wrapping_integer_bounds;
+          test "unsigned arithmetic bounds cover native emission"
+            unsigned_arithmetic_bounds_cover_emission;
           test "CAST bounds preserve representable intervals" cast_bounds;
           test "flat storage parameters retain symbolic views" flat_storage_parameters;
           test "backward slices track shared dependencies" backward_slice_tracks_shared_dependencies;
