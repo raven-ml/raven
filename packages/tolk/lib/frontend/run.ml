@@ -102,7 +102,7 @@ let of_bytes ~dtype ~shape data =
    executes once and later reads reuse the written buffer. Other shared
    subgraphs recompute on a later realize (see the deferral note in the
    frontend changelog). *)
-let realize_buffers ts =
+let execute ts =
   let dev = device () in
   let to_program dev = Tolk.Codegen.to_program dev (Tolk.Device.renderer dev) in
   (* Force each output into a materialised buffer: an unrealized ALU/movement
@@ -128,24 +128,30 @@ let realize_buffers ts =
   in
   let binding = Tolk.Realize.Buffers.create () in
   Tolk.Realize.run_linear ~device:dev ~to_program binding ~var_vals linear;
-  List.map2 (fun t out ->
-      (match Hashtbl.find_opt buffer_map (U.tag out) with
-       | Some node -> T.set_uop t node
-       | None -> ());
+  List.iter2 (fun t out ->
+      match Hashtbl.find_opt buffer_map (U.tag out) with
+      | Some node -> T.set_uop t node
+      | None -> ()) ts outs;
+  binding
+
+(* The single-device buffer of each realized tensor, for reading back. *)
+let realize_buffers ts =
+  let binding = execute ts in
+  List.map (fun t ->
       match view_buffer (T.uop t) with
       | Some buffer -> Some buffer
       | None ->
           let node = U.buf_uop (T.uop t) in
           if U.op node = Ops.Buffer then
             Some (Tolk.Realize.Buffers.of_buffer_node binding node)
-          else None) ts outs
+          else None) ts
 
 let has_empty_shape t =
   List.exists (fun dim -> U.const_int_value dim = Some 0) (T.symbolic_shape t)
 
 let realize_many ts =
   let ts = List.filter (fun t -> not (has_empty_shape t)) ts in
-  if ts <> [] then ignore (realize_buffers ts)
+  if ts <> [] then ignore (execute ts)
 
 let realize t =
   realize_many [ t ];

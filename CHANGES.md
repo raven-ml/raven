@@ -468,6 +468,10 @@ thread.
 
 ### Tolk (new)
 
+- `Run.realize` and `Run.realize_many` accept sharded and replicated tensors.
+  They ran the schedule, then raised while reading back a buffer that a
+  multi-device tensor does not have.
+
 - Replicas of a hierarchical allreduce (`ALLREDUCE_NODE_NDEVS`) are now equal
   bit for bit on every device. With three or more boxes, devices summed the
   boxes' partials in different orders and their replicas differed in the last

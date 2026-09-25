@@ -59,7 +59,8 @@ val of_bytes :
 
 val realize : Tensor.t -> Tensor.t
 (** [realize t] computes [t]'s value and rebinds [t] onto the resulting buffer,
-    returning [t]. Subsequent reads reuse the computed buffer. *)
+    returning [t]. Subsequent reads reuse the computed buffer. [t] may be
+    sharded or replicated over several devices. *)
 
 val realize_many : Tensor.t list -> unit
 (** [realize_many ts] realizes [ts] together, sharing a single schedule so that

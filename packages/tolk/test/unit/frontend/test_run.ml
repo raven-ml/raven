@@ -1645,6 +1645,17 @@ let sharding_tests =
           equal (list int) [2; 2] (U.max_shard_shape (T.uop sharded));
           let result = Rd.sum ~axis:[1] (El.mul sharded sharded) in
           check_floats [|30.; 174.|] (Creation.clone ~device:(U.Single device) result));
+      test "sharded and replicated tensors realize" (fun () ->
+          let device = Run.device_name () in
+          let devices = [device; device] in
+          let sharded = Creation.shard ~axis:0 ~devices
+              (fa ~shape:[2; 4] [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|]) in
+          let total = Rd.sum ~axis:[0] sharded in
+          Run.realize_many [sharded; total];
+          check_floats [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|]
+            (Creation.clone ~device:(U.Single device) sharded);
+          check_floats [|6.; 8.; 10.; 12.|]
+            (Creation.clone ~device:(U.Single device) total));
       test "replication preserves shape and values" (fun () ->
           let device = Run.device_name () in
           let input = vec [|1.; 2.; 3.|] in
