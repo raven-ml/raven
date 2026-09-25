@@ -18,10 +18,10 @@
     {2 Contract}
 
     {ul
-    {- {e Realize the outputs.} The wrapped function must realize everything
-       it wants computed (see {!Run.realize}) before returning: on replay
-       only the recorded kernels run, so work left lazy at capture never
-       executes again.}
+    {- {e Enumerate the outputs.} The [outputs] visitor passed to {!create}
+       must enumerate every returned tensor. These tensors are realized
+       automatically during warmup and capture; replay executes their
+       recorded kernels without calling the wrapped function again.}
     {- {e Same signature every call.} Inputs must keep their normalized
        movement views, symbolic variable declarations, dtype, and device
        across calls. Equivalent compositions of movement operations are
@@ -52,7 +52,12 @@ val create :
 (** [create ~outputs fxn] wraps [fxn] for capture and replay.
     [outputs] enumerates the tensors in the returned value, including tensors
     nested in records or containers. For a single tensor result, pass
-    [(fun tensor -> [tensor])]. Their symbolic views are rebound to the current
+    [(fun tensor -> [tensor])]. These tensors are realized before [fxn]'s
+    result is returned during warmup and capture. Duplicate tensors and
+    already-realized tensors are accepted. An empty list is valid if [fxn]
+    explicitly realizes the side effects it wants captured.
+
+    Their symbolic views are rebound to the current
     input-view bindings and [vars] after replay; variables bound only inside
     [fxn] keep their captured values.
 

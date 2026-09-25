@@ -49,7 +49,10 @@ let inner t =
         Tolk.Jit.create ~device ~to_program
           ~fxn:(fun _input_uops _var_vals ->
             match t.current with
-            | Some (tensors, vars) -> t.fxn tensors ~vars
+            | Some (tensors, vars) ->
+                let ret = t.fxn tensors ~vars in
+                Run.realize_many (t.outputs ret);
+                ret
             | None -> invalid_arg "Jit: function called outside call")
           ()
       in

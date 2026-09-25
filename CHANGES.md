@@ -679,6 +679,10 @@ thread.
 
 ### Tolk (new)
 
+- Frontend `Jit.create` automatically realizes the tensors enumerated by
+  `outputs` during warmup and capture, so lazy return values compute correctly
+  on replay without explicit `Run.realize` calls.
+
 - Cross-device `Op.assign` preserves contiguous destination slices and their
   aliases through bulk transfer lowering; noncontiguous destinations are rejected.
 

@@ -336,5 +336,79 @@ let input_view_tests =
           equal int 0 !traces);
     ]
 
+let returned_tensor_tests =
+  group "returned tensors"
+    [
+      test "lazy single outputs are captured and replayed" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor])
+              (fun inputs ~vars:_ ->
+                incr traces;
+                El.add inputs.(0) (T.f 1.)) in
+          for i = 0 to 3 do
+            let input = Array.init 4 (fun n -> Float.of_int (10 * i + n)) in
+            check_floats (Array.map (( +. ) 1.) input)
+              (Jit.call jit [|vec input|])
+          done;
+          equal int 2 !traces);
+      test "nested lazy outputs are all realized" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun (first, rest) -> first :: rest)
+              (fun inputs ~vars:_ ->
+                incr traces;
+                let plus_one = El.add inputs.(0) (T.f 1.) in
+                plus_one, [El.mul inputs.(0) (T.f 2.); Rd.sum plus_one]) in
+          for i = 0 to 3 do
+            let input = Array.init 4 (fun n -> Float.of_int (10 * i + n)) in
+            let first, rest = Jit.call jit [|vec input|] in
+            check_floats (Array.map (( +. ) 1.) input) first;
+            match rest with
+            | [doubled; sum] ->
+                check_floats (Array.map (( *. ) 2.) input) doubled;
+                check_floats [|Array.fold_left ( +. ) 4. input|] sum
+            | _ -> fail "unexpected nested outputs"
+          done;
+          equal int 2 !traces);
+      test "duplicate and already realized outputs keep their values" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:Fun.id
+              (fun inputs ~vars:_ ->
+                incr traces;
+                let first = Run.realize (El.add inputs.(0) (T.f 1.)) in
+                [first; first; El.mul first (T.f 2.)]) in
+          for i = 0 to 3 do
+            let input = Array.init 4 (fun n -> Float.of_int (10 * i + n)) in
+            match Jit.call jit [|vec input|] with
+            | [first; same; doubled] ->
+                is_true (first == same);
+                let expected = Array.map (( +. ) 1.) input in
+                check_floats expected first;
+                check_floats (Array.map (( *. ) 2.) expected) doubled
+            | _ -> fail "unexpected repeated outputs"
+          done;
+          equal int 2 !traces);
+      test "empty output visitors preserve captured side effects" (fun () ->
+          let traces = ref 0 in
+          let cache = vec [|0.; 0.; 0.; 0.|] in
+          let jit = Jit.create ~outputs:(fun () -> [])
+              (fun inputs ~vars:_ ->
+                incr traces;
+                ignore (Op.assign cache (El.add inputs.(0) (T.f 1.)));
+                ignore (Run.realize cache)) in
+          for i = 0 to 3 do
+            let input = Array.init 4 (fun n -> Float.of_int (10 * i + n)) in
+            Jit.call jit [|vec input|];
+            check_floats (Array.map (( +. ) 1.) input) cache
+          done;
+          equal int 2 !traces);
+      test "empty captures remain errors" (fun () ->
+          let traces = ref 0 in
+          let jit = Jit.create ~outputs:(fun () -> [])
+              (fun _inputs ~vars:_ -> incr traces) in
+          Jit.call jit [||];
+          raises_match is_jit_error (fun () -> Jit.call jit [||]);
+          equal int 2 !traces);
+    ]
+
 let () =
-  run "Tolk_frontend_jit" [ elementwise_tests; symbolic_tests; error_tests; input_view_tests ]
+  run "Tolk_frontend_jit" [ elementwise_tests; symbolic_tests; error_tests; input_view_tests; returned_tensor_tests ]
