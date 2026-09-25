@@ -2183,10 +2183,7 @@ and compute_shape_opt u =
       let ranges = Array.to_list srcs |> List.tl in
       let range_shape =
         List.map
-          (fun r ->
-            let rs = src r in
-            if op r = Ops.Range && Array.length rs > 0 then rs.(0)
-            else const (Bound.const Dtype.weakint (Bound.succ (vmax r))))
+          (fun r -> const (Bound.const Dtype.weakint (Bound.succ (vmax r))))
           ranges
       in
       if Array.length srcs = 0 then None else Some (range_shape @ shape srcs.(0))

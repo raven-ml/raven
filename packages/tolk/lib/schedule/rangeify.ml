@@ -481,22 +481,22 @@ let flatten_stage n =
       let flat_idx = flat_index_of_ranges ~dims:range_dims ranges in
       let flat = U.stage ~src ~ranges:[ flat_idx ] ~opts in
       let ret = U.reshape ~src:flat ~shape:(shape_node shape) in
-      let sym_shape =
-        List.map
+      let has_symbolic_range =
+        List.exists
           (fun r ->
-             match U.as_range r with
-             | Some v when U.op v.size <> Ops.Const -> Some v.size
-             | _ -> None)
+            match U.as_range r with
+            | Some range -> U.op range.size <> Ops.Const
+            | None -> false)
           ranges
       in
-      if List.for_all Option.is_none sym_shape then Some ret
+      if not has_symbolic_range then Some ret
       else
-        let sym =
-          sym_shape
-          |> List.map (function Some dim -> dim | None -> int_ 1)
-        in
-        let size = match sym with [ dim ] -> dim | dims -> U.stack dims in
-        let zeros = shape_node (List.map (fun _ -> 0) sym_shape) in
+        let active_shape = List.map (fun r ->
+            match U.as_range r with
+            | Some range -> range.size
+            | None -> int_ 1) ranges in
+        let size = match active_shape with [dim] -> dim | dims -> U.stack dims in
+        let zeros = shape_node (List.map (fun _ -> 0) ranges) in
         Some (U.shrink ~src:ret ~offset:zeros ~size)
   | _ -> None
 

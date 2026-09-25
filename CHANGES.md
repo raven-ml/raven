@@ -667,6 +667,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.shape` reports reserved maximum extents for symbolic `STAGE` nodes.
+  Lowering preserves active dimensions such as `[n; 3]` instead of shrinking
+  fixed axes to one when another axis is symbolic.
+
 - `CHECK_OOB=1` now verifies leading-axis long cumulative sums and padded
   Metal tensor-core loads, including BF16 accumulation. Distributed indexes
   previously hid the bounded expressions named by their masks.

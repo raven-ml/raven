@@ -1050,6 +1050,18 @@ let symbolic_variable_tests =
   in
   group "symbolic variables"
     [
+      test "STAGE shape reserves the maximum closed range extents" (fun () ->
+          let n = U.variable ~name:"stage_extent" ~min_val:1 ~max_val:8 ~param:true () in
+          let row = U.range ~size:n ~axis:0 ~kind:Ak.Weak () in
+          let col = U.range ~size:(weak_int 3) ~axis:1 ~kind:Ak.Weak () in
+          let value = U.O.(row * int_ 10 + col) in
+          let stage = U.stage ~src:value ~ranges:[row; col]
+              ~opts:{device = Some (U.Single "CPU"); addrspace = D.Global;
+                     removable = false} in
+          equal (option (list int)) (Some [8; 3]) (shape_of stage);
+          match U.as_range row with
+          | Some range -> is_true ~msg:"the loop retains its active bound" (range.size == n)
+          | None -> fail "expected the symbolic loop");
       test "named PARAM normalises to the canonical variable" (fun () ->
           let graph = Rangeify.get_kernel_graph (symbolic_shrink_sink ()) in
           let body = kernel_body graph in

@@ -988,11 +988,63 @@ let test_full_width_scalar_bindings () =
           equal int64 value (Bytes.get_int64_le (Device.Buffer.as_bytes buffer) 0))
         [Int64.min_int; Int64.max_int; Int64.min_int])
 
+let test_symbolic_stage_extents () =
+  let device = cpu "symbolic-stage-extents" in
+  let n = U.variable ~name:"stage_n" ~min_val:1 ~max_val:8 ~param:true () in
+  let shape = U.stack [U.const_int 8; U.const_int 3] in
+  let source = U.param ~slot:0 ~dtype:Dtype.int32 ~shape
+      ~device:(U.Single (Device.name device)) () in
+  let value = U.O.(source + U.cconst (Const.int Dtype.int32 1) Dtype.int32) in
+  let active = U.shrink ~src:value
+      ~offset:(U.stack [U.const_int 0; U.const_int 0])
+      ~size:(U.stack [n; U.const_int 3]) in
+  let intermediate = U.contiguous ~src:active () in
+  let output = U.contiguous
+      ~src:(U.reduce_axis ~src:intermediate ~op:Ops.Add ~axes:[1]) () in
+  let graph = Rangeify.get_kernel_graph (U.sink [output]) in
+  let nodes = U.toposort graph in
+  let sizes = List.filter_map (fun node ->
+      if U.op node = Ops.Alloc then Some (U.max_numel node) else None) nodes in
+  equal (list int) [8; 24] (List.sort compare sizes);
+  let kernels = List.filter_map (fun node ->
+      Option.map (fun (call : U.call_view) -> call.body) (U.as_call node)) nodes in
+  equal int 2 (List.length kernels);
+  let programs = List.mapi (fun i body ->
+      let kernel_info : U.kernel_info = {
+        name = Printf.sprintf "symbolic_stage_%d" i;
+        applied_opts = []; opts_to_apply = None; estimates = None; beam = 0} in
+      to_program device (U.sink ~kernel_info (U.children body))) kernels in
+  let input = create_i32_buffer device (List.init 24 Fun.id) in
+  let stage = create_i32_buffer device (List.init 24 (fun _ -> -777)) in
+  let result = create_i32_buffer device (List.init 8 (fun _ -> -777)) in
+  let call program buffers =
+    U.call ~body:program ~args:(List.map U.from_buffer buffers)
+      ~info:U.{grad_fxn = None; name = None; precompile = false;
+               precompile_backward = false; aux = None; dtype = Dtype.void} in
+  let linear = match programs with
+    | [write_stage; reduce_stage] ->
+        U.linear [call write_stage [stage; input]; call reduce_stage [result; stage]]
+    | _ -> fail "expected materialization and reduction kernels" in
+  for active_rows = 1 to 8 do
+    Device.Buffer.copyin stage (int32_to_bytes (List.init 24 (fun _ -> -777)));
+    Device.Buffer.copyin result (int32_to_bytes (List.init 8 (fun _ -> -777)));
+    Realize.run_linear ~device ~to_program ~wait:true ~jit:true
+      ~var_vals:["stage_n", Int64.of_int active_rows] linear;
+    equal (list int)
+      (List.init 24 (fun i -> if i < 3 * active_rows then i + 1 else -777))
+      (read_i32_buffer stage);
+    equal (list int)
+      (List.init 8 (fun i -> if i < active_rows then 9 * i + 6 else -777))
+      (read_i32_buffer result)
+  done
+
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "symbolic stages reserve maxima and execute active extents"
+            test_symbolic_stage_extents;
           test "retained execution preserves both signed int64 endpoints"
             test_full_width_scalar_bindings;
           test "direct binding waits for foreign storage" direct_binding_waits_for_foreign_storage;

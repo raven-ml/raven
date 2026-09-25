@@ -82,9 +82,6 @@ acceptance requirement; skipped tests are not execution evidence.
 - Remove remaining parallel property reconstruction and silent guesses in
   view offsets, stage buffer sizes and range metadata. Port remaining symbolic rules and measure
   rewrite performance and long-lived memory use with weak node caches.
-- Compare symbolic `STAGE` extent end to end: Tolk uses the active symbolic
-  size, while the target reserves its maximum extent. Establish allocation and
-  indexing requirements with a paired execution case before changing it.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.
 - Add deterministic beam coverage for reconsidering candidates rejected by
