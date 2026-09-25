@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- Remove unused `Buffer.uop_refcount`, `Buffer.add_ref` and
+  `Multi_buffer.add_ref`; live views and owning UOps retain storage directly.
+
 - Failed LRU cache cleanup retains uncertain backing and restores untouched
   entries, preventing a single retirement failure from losing ownership of
   every remaining cached buffer.

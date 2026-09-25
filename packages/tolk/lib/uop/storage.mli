@@ -226,15 +226,6 @@ val supports_offset : t -> bool
 val allocator : t -> Allocator.packed
 (** [allocator b] is the allocator of [b]'s base buffer. *)
 
-(** {1:refcount Reference counting} *)
-
-val uop_refcount : t -> int
-(** [uop_refcount b] is the base buffer's UOp reference count. *)
-
-val add_ref : t -> int -> t
-(** [add_ref b cnt] increments the base buffer's UOp reference count by [cnt]
-    and returns [b]. *)
-
 (** {1:data_transfer Data transfer}
 
     {!copy_from} is the canonical way to move data between buffers. The

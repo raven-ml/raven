@@ -438,10 +438,6 @@ module Multi_buffer = struct
   let size t = Buffer.size (List.hd t.bufs)
   let dtype t = Buffer.dtype (List.hd t.bufs)
 
-  let add_ref t cnt =
-    List.iter (fun buf -> ignore (Buffer.add_ref buf cnt)) t.bufs;
-    t
-
   let is_allocated t = List.for_all Buffer.is_allocated t.bufs
 
   let view t ~size ~dtype ~offset =

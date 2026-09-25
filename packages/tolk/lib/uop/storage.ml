@@ -39,7 +39,6 @@ type t = {
   mutable mapping_error : (exn * Printexc.raw_backtrace) option;
   base : t option;
   offset : int;
-  mutable uop_refcount : int;
   mutable allocated_views : int;
 }
 
@@ -146,7 +145,6 @@ let next_id = Atomic.make 0
 let fresh_id () = Atomic.fetch_and_add next_id 1
 let rec base buf = match buf.base with None -> buf | Some b -> base b
 let offset buf = buf.offset
-let uop_refcount buf = (base buf).uop_refcount
 let id buf = buf.id
 let base_id buf = (base buf).id
 let device buf = buf.device
@@ -155,11 +153,6 @@ let dtype buf = buf.dtype
 let spec buf = buf.spec
 let nbytes buf = buf.size * Dtype.itemsize buf.dtype
 let allocator buf = Lazy.force (base buf).allocator
-
-let add_ref buf cnt =
-  let root = base buf in
-  root.uop_refcount <- root.uop_refcount + cnt;
-  buf
 
 let is_allocated buf =
   match buf.storage with
@@ -247,7 +240,7 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
     id = fresh_id (); device; size; dtype; spec; allocator;
     storage = Unallocated; base_storage = Unallocated;
     mappings = []; mapping_error = None; base = None; offset = 0;
-    uop_refcount = 0; allocated_views = 0;
+    allocated_views = 0;
   } in
   Gc.finalise finalize buf;
   buf
@@ -304,7 +297,7 @@ let view buf ~size ~dtype ~offset =
     id = fresh_id (); device = root.device; size; dtype; spec = root.spec;
     allocator = root.allocator; storage = Unallocated; base_storage = Unallocated;
     mappings = []; mapping_error = None; base = Some root;
-    offset = buf.offset + offset; uop_refcount = 0; allocated_views = 0;
+    offset = buf.offset + offset; allocated_views = 0;
   } in
   Gc.finalise finalize v;
   v

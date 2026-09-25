@@ -71,10 +71,8 @@ end
     Buffers start unallocated. Call {!allocate} or {!ensure_allocated} to
     materialise backing storage. Each buffer has a globally unique {!id}
     assigned at creation. A GC finaliser calls {!deallocate} when the buffer
-    becomes unreachable.
-
-    Reference counting ({!uop_refcount}, {!add_ref}) is managed externally by
-    the compiler runtime and is not used for deallocation. *)
+    becomes unreachable. Live views and owning UOps retain their backing
+    buffers through ordinary references. *)
 module Buffer = Tolk_uop.Storage
 
 (** {1:prog Runtime program handle} *)
@@ -372,9 +370,4 @@ module Multi_buffer : sig
   val is_allocated : t -> bool
   (** [is_allocated t] is [true] iff all underlying buffers are allocated. *)
 
-  (** {1:operations Operations} *)
-
-  val add_ref : t -> int -> t
-  (** [add_ref t cnt] increments the UOp reference count on all underlying
-      buffers by [cnt] and returns [t]. *)
 end
