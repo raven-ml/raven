@@ -76,11 +76,9 @@ acceptance requirement; skipped tests are not execution evidence.
   `Nx.bitcast`. Check raw bitcasts for all 256 encodings; exhaustive load
   conversion tests do not establish bit preservation.
 
-- Migrate every Python driver to the target API and generate the complete
-  corpus separately, including AMD/NV queue drivers. Eight NV signal/timestamp
-  expectations still encode old-pin releases; the current one-/two-word signals
-  and separate timestamp release match the target. Update their generator and
-  README when regenerating, rather than copying actual output. Update the C-style fixture
+- Migrate the remaining Python drivers to the target API and generate the
+  complete corpus separately, including AMD queue drivers and the 40 non-release
+  NV fixtures for launch/setup/copy behavior. Update the C-style fixture
   builder to emit committed constants (`cconst`); its bare boolean CONST
   currently renders an empty condition. Attribute every changed
   expectation; require exact source parity for supported renderers.

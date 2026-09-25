@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Dumps the dword stream of every queue-builder method and the QMD images
-   for the two golden chip configs. The device wiring, fake constants, and
-   stream table mirror generate_expected.py exactly; see README for the
-   contract. *)
+   for the two golden chip configs. The release subset mirrors the frozen
+   target generator; other cases retain the historical raw-builder contract.
+   See README for provenance and fixed constants. *)
 
 open Tolk_nv
 module Hcq = Tolk_hcq.Hcq
@@ -14,7 +14,7 @@ module Defs = Nv_tables.Defs
 
 let out_dir = Sys.argv.(1)
 
-(* Fake constants; every value mirrors the CONFIG block of
+(* Fixed constants from README; release inputs also appear in
    generate_expected.py. *)
 let prog_addr = 0x100000
 let prog_sz = 0x1800
@@ -82,8 +82,8 @@ let bytes_dwords b =
       Int32.to_int (Bytes.get_int32_le b (4 * i)) land 0xffffffff)
 
 (* The fixed program descriptor of the goldens. This mirrors the
-   REPLICATED BLOCK of generate_expected.py (the reference program-load
-   descriptor construction); re-sync both copies together. *)
+   REPLICATED TEMPLATE of generate_expected.py for release fixtures; other
+   descriptor fixtures keep their documented historical provenance. *)
 let make_prog dev =
   let qmd =
     Qmd.create

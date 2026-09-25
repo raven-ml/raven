@@ -1,30 +1,66 @@
 NV method-stream goldens for the NV queue builders
 ==================================================
 
-Each .expected file is either the dword stream a reference (tinygrad clone
-at _tinygrad/, pinned) NVComputeQueue or NVCopyQueue accumulates in its
-internal queue (_q) after builder-method calls, or a QMD image dumped as
-dwords, driven with the stub device and fixed constants below. No device,
-driver, bind() or _submit() is involved: the builders are pure functions
-from (device config, call arguments, backed kernarg memory) to dwords, and
-these files pin that function.
+Provenance and regeneration
+---------------------------
+Eight release fixtures come from frozen tinygrad commit
+471a3aeb6924257d5e9bf321f5ff0a519163f18e:
+  dma_signal_{ada,blackwell}
+  timestamp_{ada,blackwell}
+  signal_no_qmd_{ada,blackwell}
+  signal_after_exec_qmd_{ada,blackwell}
 
-Unlike the amdqueue goldens, exec writes through memory: it copies the
-program's QMD image into the kernarg page and patches it via the CPU view,
-and a following exec or signal patches the previous QMD instead of emitting
-packets. The harness therefore backs kernarg buffers with anonymous mmap
-while their GPU VAs stay fixed fake constants, and dumps the QMD regions as
-separate *_qmd*.expected files.
+From the Raven repository root:
+  python3 packages/tolk/test/golden/nvqueue/generate_expected.py \
+    --tinygrad _tinygrad_target --output packages/tolk/test/golden/nvqueue
 
-The OCaml generate_actual.ml (lands with the port) must construct the same
-two device configs, make the same calls per stream with the same constants,
-and print its queue dwords and QMD images in the same format.
+The default source is _tinygrad_target and the default output is this directory.
+For independent review, use --output /tmp/nv-release-target. The generator
+writes exactly these eight files, never reads .actual/.expected as input, and
+requires only Python plus that tinygrad source tree. It executes the target's
+NVComputeQueue/NVCopyQueue signal and timestamp methods, HWQueue.q packet
+encoding, and QMD.set_release. Device lookup/queue allocation is bypassed;
+a signal UOp's GETADDR is bound to the fixed address below. Patch values are
+stored little-endian at their declared widths, as in linked command storage.
+No GPU, mmap, driver, submission, compiler or network access is involved.
+
+The other 40 fixtures retain the original reference provenance:
+  tinygrad baa6148066f1a29f56bb870f6f139c15bb3f495f
+  Raven generator commit 296a37964840828ce8b956d63040aaa2889b7b37
+The historical full generator is preserved in that Git commit. Those fixtures
+cover the retained raw builder's setup, polling, writes and legacy launch
+layout. They have not been regenerated against the frozen target; replacing
+that API requires a separate shared-submission fixture migration. This is not
+a claim that the full 48-case corpus follows the new HCQ protocol.
+
+The QMD release fixture deliberately retains the original synthetic program
+and launch addresses. Its base descriptor is reconstructed from the frozen
+NVProgramData template and QMD setters, then the real target release method
+patches it. It tests release fields independently of arena placement; it does
+not call NVComputeQueue.exec or validate the new QMD-first argument arena.
+Runtime NV tests cover that allocation and replay protocol separately.
+
+Why the eight expectations changed
+---------------------------------
+Upstream c84876fdd ("move nv to hcq2", #17970) separates ordinary release
+from timestamp release:
+- Compute signals disable the timestamp flag and retain the non-stall interrupt.
+- Compute timestamps enable that flag and emit no non-stall interrupt.
+- DMA signals release one word; DMA timestamps still release four words.
+- QMD signals use structure size 2; timestamp releases use structure size 0.
+  Ada also sets payload64b; both layouts retain the 64-bit payload.
+These are target-generated changes, not promotions of Tolk output. The packet
+and QMD results were independently compared with Tolk's eight actual outputs.
+
+The old generator, introduced by 296a37964, assumed timestamp was signal(0),
+that signal releases also wrote timestamps, and that exec wrote a descriptor
+after its kernargs page. Its literal NVProgram template was specialized to
+CUDA and needed manual resynchronization on pin changes. The target generator
+keeps only that documented template specialization; it no longer emulates the
+removed HCQBuffer/ArgsState queue API. 6580eb275 removed unused cmdq_page wiring
+from the OCaml fixture but did not regenerate or change these expectations.
 
 Format: one dword per line, lowercase %08x, trailing newline, no headers.
-
-Regenerate:
-  uv run python packages/tolk/test/golden/nvqueue/generate_expected.py
-Re-running is byte-identical; output depends only on the pinned clone.
 
 Chip configs
 ------------
@@ -89,9 +125,10 @@ Compute (NVComputeQueue), per chip:
                             slm-growth shape, incl. the trailing 0xff arg
   memory_barrier_<chip>     memory_barrier()
   wait_<chip>               wait(sig, WAIT_VALUE)
-  timestamp_<chip>          timestamp(sig) (= signal with value 0)
-  signal_no_qmd_<chip>      signal(sig, SIGNAL_VALUE) with no active QMD:
-                            semaphore release + non-stall interrupt
+  timestamp_<chip>          target timestamp(sig): timestamp-enabled release,
+                            no non-stall interrupt
+  signal_no_qmd_<chip>      target signal(sig, SIGNAL_VALUE), no active QMD:
+                            timestamp-disabled release + non-stall interrupt
   write32_<chip>            write(buf, WRITE32_VALUE)
   write64_<chip>            write(buf, WRITE64_VALUE, b64)
   poll_bit_set_<chip>       poll_bit(buf, POLL_MASK, POLL_MASK) (acq_and)
@@ -110,8 +147,8 @@ Compute (NVComputeQueue), per chip:
   signal_after_exec_<chip>  exec + signal(sig, SIGNAL_VALUE); the signal
                             emits NO packets (stream identical to
                             exec_<chip>)
-  signal_after_exec_qmd_<chip>  the QMD with release0 semaphore patched:
-                            enable, address, 64-bit payload
+  signal_after_exec_qmd_<chip>  target release on the fixed launched QMD:
+                            enable, address, 64-bit payload, structure size 2
   qmd_init_<chip>           the Program-built QMD image for the fixed
                             program descriptor above, before any exec
 
@@ -120,18 +157,18 @@ Copy (NVCopyQueue), per chip:
   dma_copy_small_<chip>     copy(dst, src, COPY_SMALL) -> 1 packet triple
   dma_copy_large_<chip>     copy(dst, src, COPY_LARGE) -> 3 triples
                             (2 full 1<<31 chunks + 0x400)
-  dma_signal_<chip>         signal(sig, DMA_SIGNAL_VALUE): semaphore A/B/
-                            payload + flushing LAUNCH_DMA
+  dma_signal_<chip>         target signal(sig, DMA_SIGNAL_VALUE): semaphore
+                            A/B/payload + flushing one-word LAUNCH_DMA
   dma_wait_<chip>           wait(sig, WAIT_VALUE) (host semaphore methods,
                             subchannel 0 - shared with compute)
-  dma_timestamp_<chip>      timestamp(sig) (= dma signal with value 0)
+  dma_timestamp_<chip>      historical timestamp(sig): four-word release
 
 The wait/timestamp/write/poll_bit/memory_barrier streams are identical
 across the two chips (the methods read no device state); both copies exist
 to pin exactly that.
 
-Purity contract (what the builders read; the port must need no more)
---------------------------------------------------------------------
+Historical raw-builder contract (the 40 old-pin fixtures)
+---------------------------------------------------------
 Device fields: iface.compute_class (QMD version split + setup),
 iface.dma_class (dma_setup), pma_enabled (exec; False here, so no
 PM_TRIGGER packet - it is profiler state, not builder output),
@@ -147,11 +184,10 @@ exec asserts the QMD VA fits in 40 bits.
 Env: DEBUG/VIZ/PROFILE/PMA/IOCTL/DEV scrubbed; PMA would enable the
 PM_TRIGGER packet, the rest affect imports/profiling only.
 
-The QMD image constructed for qmd_init_* replicates the reference
-Program-init block (the qmd dict, smem_cfg, QMD(...) kwargs, and the
-constbuf loop) inline in generate_expected.py, specialized to the non-NAK
-(CUDA) path. That copy must be re-synced on every _tinygrad pin move; see
-the REPLICATED BLOCK comment in the generator.
+The historical qmd_init_* fixtures replicate the old Program-init template,
+specialized to the non-NAK (CUDA) path. The current generator reconstructs
+only the base for signal_after_exec_qmd_* from the frozen target template;
+see its REPLICATED TEMPLATE comment. Recheck this specialization on pin moves.
 
 Skipped / not producible
 ------------------------
