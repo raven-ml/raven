@@ -107,6 +107,17 @@ let movement_tests =
       test "pad grows dims" (fun () ->
           equal (list int) [ 5; 3 ]
             (shape (Mv.pad (ones_f [ 2; 3 ]) [ (1, 2); (0, 0) ])));
+      test "large padding retains its exact extent" (fun () ->
+          let padded = Mv.pad (ones_f [ 2 ]) [ (max_int, max_int) ] in
+          let expected = Tolk_uop.Bound.(mul (succ (int max_int)) (int 2)) in
+          (match T.symbolic_shape padded with
+           | [ dim ] ->
+               is_true (Tolk_uop.Bound.equal (U.vmax dim) expected)
+           | _ -> fail "expected one exact padded dimension");
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> U.max_shape (T.uop padded));
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> U.max_numel (T.uop padded)));
       test "shrink trims dims" (fun () ->
           equal (list int) [ 1; 2 ]
             (shape (Mv.shrink (ones_f [ 3; 3 ]) [ (1, 2); (0, 2) ])));
@@ -134,6 +145,14 @@ let movement_tests =
             (shape (Mv.unflatten (ones_f [ 2; 6 ]) 1 [ 2; 3 ])));
       test "repeat tiles" (fun () ->
           equal (list int) [ 4; 6 ] (shape (Mv.repeat (ones_f [ 2; 3 ]) [ 2; 2 ])));
+      test "repeat retains dimensions beyond host range" (fun () ->
+          let repeated = Mv.repeat (ones_f [ 2 ]) [ max_int ] in
+          let expected = Tolk_uop.Bound.(mul (int 2) (int max_int)) in
+          (match T.symbolic_shape repeated with
+           | [ dim ] -> is_true (Tolk_uop.Bound.equal (U.vmax dim) expected)
+           | _ -> fail "expected one exact repeated dimension");
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> U.max_shape (T.uop repeated)));
       test "unfold 1d" (fun () ->
           equal (list int) [ 4; 2 ]
             (shape (Mv.unfold (ones_f [ 8 ]) 0 ~size:2 ~step:2)));
@@ -417,6 +436,12 @@ let op_tests =
 let pool_tests =
   group "pool"
     [
+      test "large windows retain exact intermediate extents" (fun () ->
+          let k = 1 lsl 40 in
+          let pooled = Mv.pool (ones_f [ (2 * k) - 1 ]) ~k:[ k ] () in
+          equal (list int) [ k; k ] (shape pooled);
+          raises_match (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> U.max_numel (T.uop pooled)));
       test "asymmetric window shape matches tinygrad" (fun () ->
           (* 1x1x6x7 input, 2x3 kernel, stride 2, dilation 2 -> (b,c,o0,o1,k0,k1) *)
           let t = ones_f [ 1; 1; 6; 7 ] in
@@ -897,7 +922,9 @@ let creation2_tests =
       test "arange widens to int64 rather than wrapping" (fun () ->
           let big = 1 lsl 40 in
           is_true (is_dtype (Op.arange ~stop:(big + 4) big) D.int64);
-          is_true (is_dtype (Op.arange ~stop:(-big) ~step:(-1) 0) D.int64));
+          let descending = Op.arange ~stop:(-big) ~step:(-1) 0 in
+          is_true (is_dtype descending D.int64);
+          equal (list int) [ big ] (shape descending));
       test "arange rejects a range its explicit dtype cannot hold" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)

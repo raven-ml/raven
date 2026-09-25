@@ -1978,12 +1978,11 @@ let commit_dtype ?(default_int = Dtype.default_int) u =
     | Some dt -> dt
     | None -> Dtype.int64
 
-let const_int_value u =
-  match as_const u with
-  | Some c -> (match Const.view c with
-      | Const.Int n when Z.fits_int n -> Some (Z.to_int n)
-      | _ -> None)
-  | None -> None
+let const_integer_value u =
+  Option.bind (as_const u) (fun c ->
+      match Const.view c with Const.Int n -> Some n | _ -> None)
+
+let const_int_value u = Option.bind (const_integer_value u) integer_as_native
 
 let shape_arg dims = match dims with [ d ] -> d | ds -> stack ds
 
@@ -1993,16 +1992,16 @@ let dim_is_one d =
   match const_int_value d with Some 1 -> true | Some _ | None -> false
 
 let dim_binary op a b =
-  match const_int_value a, const_int_value b with
+  match const_integer_value a, const_integer_value b with
   | Some x, Some y ->
       let z = match op with
-        | Ops.Add -> x + y
-        | Ops.Sub -> x - y
-        | Ops.Mul -> x * y
-        | Ops.Floordiv -> x / y
+        | Ops.Add -> Z.add x y
+        | Ops.Sub -> Z.sub x y
+        | Ops.Mul -> Z.mul x y
+        | Ops.Floordiv -> Z.fdiv x y
         | _ -> invalid_arg "Uop.dim_binary: unsupported op"
       in
-      const_int z
+      const (Const.integer Dtype.weakint z)
   | _ -> alu_binary ~op ~lhs:a ~rhs:b
 
 let dim_add a b = dim_binary Ops.Add a b
@@ -2037,11 +2036,11 @@ let require_non_negative_shape op dims =
 
 let require_reshape op src_shape target =
   require_non_negative_shape op target;
-  match const_int_value (dim_prod src_shape), const_int_value (dim_prod target) with
-  | Some src_count, Some target_count when src_count <> target_count ->
+  match const_integer_value (dim_prod src_shape), const_integer_value (dim_prod target) with
+  | Some src_count, Some target_count when not (Z.equal src_count target_count) ->
       invalid_shape op
-        (Printf.sprintf "element count changes from %d to %d" src_count
-           target_count)
+        (Printf.sprintf "element count changes from %s to %s" (Z.to_string src_count)
+           (Z.to_string target_count))
   | _ ->
       if not (equal (dim_prod src_shape) (dim_prod target)) then ()
 

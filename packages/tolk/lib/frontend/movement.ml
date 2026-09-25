@@ -102,9 +102,7 @@ let pad t padding =
     let offset = List.map (fun (before, _) -> sdim before) padding in
     let size =
       List.map2
-        (fun (before, after) s ->
-          let extra = before + after in
-          U.O.(s + sdim extra))
+        (fun (before, after) s -> U.O.(s + sdim before + sdim after))
         padding cur
     in
     T.of_uop
@@ -189,13 +187,6 @@ let unflatten t dim sizes =
   let sh = T.shape t in
   reshape t (take dim sh @ sizes @ drop (dim + 1) sh)
 
-let reshape_opt t dims =
-  let cur = T.symbolic_shape t in
-  symbolic_reshape t
-    (List.mapi
-       (fun idx d -> match d with Some n -> sdim n | None -> List.nth cur idx)
-       dims)
-
 let shrink_to t dims =
   symbolic_shrink t
     (List.map (function None -> None | Some n -> Some (sdim 0, sdim n)) dims)
@@ -212,20 +203,23 @@ let pad_to t dims =
       (U.pad ~src:(T.uop t) ~offset:(shape_arg offset)
          ~size:(T.symbolic_shape_uop size))
 
-let repeat t repeats =
-  let cur = T.shape t in
+let symbolic_repeat t repeats =
+  let cur = T.symbolic_shape t in
   let base =
-    List.init (max 0 (List.length repeats - List.length cur)) (fun _ -> 1) @ cur
+    List.init (max 0 (List.length repeats - List.length cur)) (fun _ -> sdim 1) @ cur
   in
   let pairs = List.combine repeats base in
   let unsqueezed =
-    List.concat_map (fun (r, s) -> if r = 1 then [ s ] else [ 1; s ]) pairs
+    List.concat_map (fun (r, s) -> if dim_is_one r then [ s ] else [ sdim 1; s ]) pairs
   in
   let expanded =
-    List.concat_map (fun (r, s) -> if r = 1 then [ s ] else [ r; s ]) pairs
+    List.concat_map (fun (r, s) -> if dim_is_one r then [ s ] else [ r; s ]) pairs
   in
-  let final = List.map (fun (r, s) -> r * s) pairs in
-  reshape (expand (reshape t unsqueezed) expanded) final
+  let final = List.map (fun (r, s) -> U.O.(r * s)) pairs in
+  symbolic_reshape
+    (symbolic_broadcast_to (symbolic_reshape t unsqueezed) expanded) final
+
+let repeat t repeats = symbolic_repeat t (List.map sdim repeats)
 
 let ceildiv a b = (a + b - 1) / b
 
@@ -243,36 +237,43 @@ let pool t ~k ?stride ?dilation () =
   let ndim = T.ndim t in
   if ndim < n then invalid_arg "Movement.pool: input rank smaller than kernel";
   let noop_len = ndim - n in
-  let noop = List.init noop_len (fun _ -> None) in
-  let ka = Array.of_list k
-  and sa = Array.of_list stride
-  and da = Array.of_list dilation in
-  let ia = Array.of_list (drop noop_len (T.shape t)) in
+  let noop = take noop_len (T.symbolic_shape t) in
+  let ka = Array.of_list (List.map sdim k)
+  and sa = Array.of_list (List.map sdim stride)
+  and da = Array.of_list (List.map sdim dilation) in
+  let ia = Array.of_list (drop noop_len (T.symbolic_shape t)) in
+  let one = sdim 1 in
+  let ceildiv a b = U.simplify U.O.((a + b - one) // b) in
   Array.iteri
     (fun j kj ->
-      if (da.(j) * (kj - 1)) + 1 > ia.(j) then
+      if U.resolve ~default:false U.O.(ia.(j) < da.(j) * (kj - one) + one) then
         invalid_arg "Movement.pool: kernel size exceeds input size")
     ka;
-  let o = Array.init n (fun j -> ceildiv (ia.(j) - (da.(j) * (ka.(j) - 1))) sa.(j)) in
-  let fa = Array.init n (fun j -> max 1 (ceildiv ((o.(j) * sa.(j)) - da.(j)) ia.(j))) in
-  let span j = (ia.(j) * fa.(j)) + da.(j) in
+  let o = Array.init n (fun j -> ceildiv U.O.(ia.(j) - da.(j) * (ka.(j) - one)) sa.(j)) in
+  let fa = Array.init n (fun j ->
+      U.simplify (U.alu_binary ~op:Ops.Max ~lhs:one
+          ~rhs:(ceildiv U.O.(o.(j) * sa.(j) - da.(j)) ia.(j)))) in
+  let span j = U.O.(ia.(j) * fa.(j) + da.(j)) in
   let flat f = noop @ List.concat (List.init n f) in
-  let x =
-    repeat t
-      (List.init noop_len (fun _ -> 1)
-      @ List.init n (fun j -> ceildiv (ka.(j) * span j) ia.(j)))
-  in
-  let x = shrink_to x (noop @ List.init n (fun j -> Some (ka.(j) * span j))) in
-  let x = reshape_opt x (flat (fun j -> [ Some ka.(j); Some (span j) ])) in
-  let x =
-    reshape_opt
-      (shrink_to x (flat (fun j -> [ Some ka.(j); Some (o.(j) * sa.(j)) ])))
-      (flat (fun j -> [ Some ka.(j); Some o.(j); Some sa.(j) ]))
+  let shrink_to x dims =
+    symbolic_shrink x (List.map (fun d -> Some (sdim 0, U.simplify d)) dims)
   in
   let x =
-    reshape_opt
-      (shrink_to x (flat (fun j -> [ Some ka.(j); Some o.(j); Some 1 ])))
-      (flat (fun j -> [ Some ka.(j); Some o.(j) ]))
+    symbolic_repeat t
+      (List.init noop_len (fun _ -> one)
+      @ List.init n (fun j -> ceildiv U.O.(ka.(j) * span j) ia.(j)))
+  in
+  let x = shrink_to x (noop @ List.init n (fun j -> U.O.(ka.(j) * span j))) in
+  let x = symbolic_reshape x (flat (fun j -> [ ka.(j); span j ])) in
+  let x =
+    symbolic_reshape
+      (shrink_to x (flat (fun j -> [ ka.(j); U.O.(o.(j) * sa.(j)) ])))
+      (flat (fun j -> [ ka.(j); o.(j); sa.(j) ]))
+  in
+  let x =
+    symbolic_reshape
+      (shrink_to x (flat (fun j -> [ ka.(j); o.(j); one ])))
+      (flat (fun j -> [ ka.(j); o.(j) ]))
   in
   permute x
     (List.init noop_len Fun.id

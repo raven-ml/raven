@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Preserve exact dimensions in padding, repeats, pooling and bitcasts. Large
+  lazy shapes no longer wrap to empty tensors, and invalid reshapes and slices
+  are rejected before allocation.
+
 - `Buffer.copy_from` now uses scheduled `STORE` submissions, sharing queue
   dependencies and transfers with normal execution. Provably overlapping
   copies preserve their contents through the existing bounded host fallback.

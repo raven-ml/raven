@@ -485,6 +485,36 @@ let max_numel_handles_zero_after_large_dimensions () =
   equal int 0 (Uop.max_numel buffer);
   equal int 0 (Uop.max_shard_numel buffer)
 
+let movement_dimensions_do_not_wrap () =
+  let base = Uop.param ~slot:0 ~dtype:Dtype.float32
+      ~shape:(Uop.const_int 2) () in
+  let invalid_shape f =
+    raises_match (function Invalid_argument _ -> true | _ -> false) f in
+  invalid_shape (fun () -> Uop.shape
+      (Uop.shrink ~src:base ~offset:(Uop.const_int max_int)
+         ~size:(Uop.const_int 2)));
+  invalid_shape (fun () -> Uop.shape
+      (Uop.pad ~src:base ~offset:(Uop.const_int max_int)
+         ~size:(Uop.const_int 0)));
+  let empty = Uop.param ~slot:1 ~dtype:Dtype.float32
+      ~shape:(Uop.const_int 0) () in
+  invalid_shape (fun () -> Uop.shape
+      (Uop.reshape ~src:empty
+         ~shape:(Uop.stack [ Uop.const_int (1 lsl 31); Uop.const_int (1 lsl 32) ])))
+
+let bitcast_dimensions_remain_exact_until_host_conversion () =
+  let base = Uop.param ~slot:0 ~dtype:Dtype.uint64
+      ~shape:(Uop.const_int max_int) () in
+  let bytes = Uop.bitcast ~src:base ~dtype:Dtype.uint8 in
+  let expected = Z.mul (Z.of_int max_int) (Z.of_int 8) in
+  (match Uop.shape bytes with
+   | [ dim ] -> is_true (Bound.equal (Uop.vmax dim) (`Int expected))
+   | _ -> fail "expected one exact byte dimension");
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Uop.max_shape bytes);
+  raises_match (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> Uop.max_numel bytes)
+
 let exact_symbolic_bounds () =
   let huge = Z.shift_left Z.one 200 in
   let value n = Uop.const (Const.integer Dtype.weakint n) in
@@ -2540,6 +2570,9 @@ let () =
           test "max_numel checks host range" max_numel_checks_host_range;
           test "max_numel handles zero after large dimensions"
             max_numel_handles_zero_after_large_dimensions;
+          test "movement dimensions do not wrap" movement_dimensions_do_not_wrap;
+          test "bitcast dimensions remain exact until host conversion"
+            bitcast_dimensions_remain_exact_until_host_conversion;
           test "exact symbolic bounds" exact_symbolic_bounds;
           test "Stack/Stage constructors"
             stack_stage_slice_constructors;
