@@ -470,7 +470,8 @@ module Program : sig
     props:(string * int) list -> Bytes.t -> data * Bytes.t
   (** [image ~target ~props lib] is the descriptor and relocated image of
       compiled kernel object [lib], without allocating device storage.
-      Queue linking owns the image buffer and its lifetime.
+      The image is zero-padded to a four-byte boundary. Queue linking owns
+      the image buffer and its lifetime.
 
       [props] must carry ["lds_size_in_kb"], bounding workgroup-local memory.
       Raises [Failure] if the object has no [.rodata] section, uses a

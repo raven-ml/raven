@@ -793,6 +793,36 @@ let test_padded_reduction op transform values expected () =
   is_true ~msg:(Printf.sprintf "expected %g, got %g" expected actual)
     (Float.abs (actual -. expected) < 1.e-6)
 
+let test_zero_initialized_custom_storage () =
+  let device = cpu "custom-bss" in
+  let source = {|
+    static volatile int zeroes[4];
+    void read_zeroes(const unsigned long long *bufs, const long long *vals) {
+      int *out = (int *)bufs[0];
+      for (int i = 0; i < 4; i++) out[i] = zeroes[i] + (int)vals[0];
+    }
+  |} in
+  let renderer = Device.renderer device in
+  let lib = Compiler.compile (Option.get (Renderer.compiler renderer)) source in
+  let elf = Elf.load lib in
+  let bss = Option.get (Elf.find_section elf ".bss") in
+  equal int 16 bss.size;
+  is_true ~msg:"zero storage is separate from instructions" (bss.addr >= 16);
+  let obj : Tiny_elf.t = {
+    lib; name = "read_zeroes"; target = Renderer.target renderer; profile_key = None;
+    signature = [
+      {name = None; slot = 0; dtype = Dtype.int32; shape = [4]; addrspace = Dtype.Global};
+      {name = None; slot = 1; dtype = Dtype.int32; shape = []; addrspace = Dtype.Alu}];
+  } in
+  let output = create_i32_buffer device [-1; -1; -1; -1] in
+  let program = Device.runtime device obj in
+  Fun.protect ~finally:program.free (fun () ->
+      List.iter (fun value ->
+          ignore (program.call [|output|] ~global:[|1; 1; 1|] ~local:None
+              ~vals:[|Int64.of_int value|] ~wait:false ~timeout:None);
+          equal (list int) (List.init 4 (fun _ -> value)) (read_i32_buffer output))
+        [0; 7; -3])
+
 let test_sparse_program_arguments () =
   let device = cpu "sparse-arguments" in
   let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
@@ -904,6 +934,8 @@ let main () =
             (test_linear_formal_order ~reverse_buffers:false ~reverse_scalars:true);
           test "binary signature slots select buffers and mixed-width scalars"
             (test_linear_formal_order ~permute_slots:true ~reverse_buffers:false ~reverse_scalars:true);
+          test "custom kernels read zero-initialized ELF storage"
+            test_zero_initialized_custom_storage;
           test "compiled signatures bind sparse arguments and reject wrong arities"
             test_sparse_program_arguments;
           test "software sine handles large arguments and word boundaries"

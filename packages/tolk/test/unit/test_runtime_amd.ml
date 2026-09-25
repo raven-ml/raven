@@ -1165,13 +1165,17 @@ let () =
               equal bool (field "enable_dispatch_ptr" <> 0) data.enable_dispatch_ptr;
               equal bool (field "enable_private_segment_sgpr" <> 0)
                 data.enable_private_segment_sgpr;
-              (* NOBITS image layout is a separate open parity audit.
-                 Compare code and descriptor at the target's addresses. *)
-              let expected = read "image" in
-              List.iter (fun (offset, size) ->
-                  equal string (String.sub expected offset size)
-                    (Bytes.sub_string image offset size))
-                [field "code_offset", field "code_size"; field "desc_offset", 64]);
+              (* The target ends program data at 6272, then appends its 57-byte
+                 .comment and word padding. Allocatable NOBITS sections reserve
+                 .relro_padding at 10480..12288 and __hip_cuid at 14576, moving
+                 that same comment to 14577. Compare every byte, including the
+                 reserved zero spans and final word padding. *)
+              let target_image = read "image" in
+              equal int 6332 (String.length target_image);
+              let expected = Bytes.make 14636 '\000' in
+              Bytes.blit_string target_image 0 expected 0 6272;
+              Bytes.blit_string target_image 6272 expected 14577 57;
+              equal bytes expected image);
           test "image derives launch parameters from the descriptor" (fun () ->
               let data, image = Program.image ~target:(11, 0, 0) ~props:lds64
                   (hsaco_fixture ()) in

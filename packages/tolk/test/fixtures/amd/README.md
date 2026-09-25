@@ -9,10 +9,13 @@ Its indexing assumes 64 work-items per group.
 
 `simple_add_gfx1100.fields` and `.image` come from `_amd_program_image` in the
 frozen tinygrad target `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. The required
-host test compares the uploaded code and descriptor, their addresses, argument size
-and resource fields with those outputs. It does not open a GPU or establish
-hardware execution. Whole-image layout is a separate open audit: Tolk also
-materializes allocatable NOBITS sections, which the target omits. No compiler or Python is needed to run the test.
+host test compares resource fields and the entire image against those outputs,
+with the documented NOBITS layout adjustment: Tolk reserves `.relro_padding`
+and the zero-filled `__hip_cuid` symbol, moving the unchanged comment section
+from offset 6272 to 14577. Both images end on a four-byte boundary. See
+`packages/tolk/DIVERGENCES.md` for the CPU custom-kernel consumer that requires
+zero-filled ELF storage. This test does not open a GPU or establish hardware
+execution. No compiler or Python is needed to run it.
 
 To regenerate with an AMDGPU-capable LLVM installation and that target
 extracted into `_tinygrad_target`, run from the repository root:

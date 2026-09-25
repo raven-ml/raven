@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD `Program.image` zero-pads relocated binaries to a four-byte boundary,
+  matching the reference contract for program uploads.
+
 - Late signed comparison rewrites keep proof arithmetic exact at integer
   boundaries, preventing an empty interval from wrapping into equality.
 

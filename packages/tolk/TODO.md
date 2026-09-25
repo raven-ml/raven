@@ -68,12 +68,6 @@ acceptance requirement; skipped tests are not execution evidence.
   `postrange.ml` and the other codegen rule bodies build with `U.O`, which
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
-- Audit the shared ELF loader's allocatable `NOBITS` sections against the
-  target's `PROGBITS`-only image. Linked HIP objects include a zero-filled
-  `__hip_cuid` symbol; Tolk reserves its address and the linker padding, while
-  the target omits them. Establish the actual CPU/custom-kernel consumer
-  requirement, then justify the difference or remove it. Compare whole images
-  in addition to the code/descriptor checks in the real AMD fixture.
 
 - Make a `Bitcast` to or from an emulated float8 act on the stored byte. Today
   the float decomposition decodes the element through float32 and back, which

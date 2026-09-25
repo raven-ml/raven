@@ -308,6 +308,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   Reconsider the format if Raven gains a shared profiling
   artifact protocol needed by these consumers.
 
+- **ELF images reserve allocatable zero-filled (`NOBITS`) sections.** The
+  target includes only `PROGBITS`, which can resolve a relocatable `.bss` symbol
+  to the beginning of the code instead of zero-filled storage. CPU custom
+  kernels can read these symbols through the existing binary/runtime path.
+  Coverage: execution reads a volatile zero-filled array with three scalar
+  inputs; the linked AMD fixture compares the entire image, accounting for
+  `__hip_cuid`, linker padding and the displaced comment section. This does not
+  establish writable globals on platforms with executable-memory protection.
+  Reconsider if custom binaries no longer expose zero-filled symbols or the
+  target adopts the same section layout.
+
 - **CPU kernels expose an entry taking buffer and scalar arrays.** The Clang
   wrapper casts each scalar to its declared type, so OCaml can call arbitrary
   kernel arities through one native stub without an FFI dependency. `Tiny_elf`

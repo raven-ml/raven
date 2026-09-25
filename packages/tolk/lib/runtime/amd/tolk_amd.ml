@@ -770,6 +770,12 @@ module Program = struct
   let image ~target ~props lib =
     let elf = Tolk.Elf.load lib in
     let image = Tolk.Elf.image elf in
+    let padding = (4 - Bytes.length image mod 4) mod 4 in
+    let image = if padding = 0 then image else begin
+      let padded = Bytes.extend image 0 padding in
+      Bytes.fill padded (Bytes.length image) padding '\000';
+      padded
+    end in
     let sections = Tolk.Elf.sections elf in
     let rodata =
       match Tolk.Elf.find_section elf ".rodata" with
