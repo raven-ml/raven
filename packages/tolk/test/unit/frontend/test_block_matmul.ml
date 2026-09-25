@@ -43,10 +43,10 @@ let expected ~transpose ~m ~n ~k ~e xs ws ids =
         done;
         Some (!acc, !mag))
 
-(* [v] rounded to [dtype] on the host, to [bits] significant bits and at least
-   the quantum [2^least]: tolk folds a float32 -> narrow -> float32 round trip
-   to the identity, so the device cannot round the reference's inputs. The
-   values are exact in [dtype], and the tie rule does not matter. *)
+(* [v] rounded to [dtype] on the host, to nearest with ties to even, to
+   [bits] significant bits and at least the quantum [2^least]. Inputs rounded
+   here are exact in [dtype], so the device's cast to it keeps them and the
+   reference multiplies the values the kernel reads. *)
 let rounded dtype v =
   let bits, least =
     if D.equal dtype D.float16 then (11, -24)
@@ -58,22 +58,23 @@ let rounded dtype v =
     else
       let _, e = Float.frexp x in
       let q = Float.ldexp 1.0 (max (e - bits) least) in
-      Float.round (x /. q) *. q
+      let r = x /. q in
+      let f = Float.floor r in
+      let up = r -. f > 0.5 || (r -. f = 0.5 && Float.rem f 2.0 <> 0.0) in
+      (if up then f +. 1.0 else f) *. q
   in
   Array.map round v
 
-(* The product at [dtype], whose unit roundoff is [u]: each product may round
-   to [dtype] and the float32 sum rounds once to it. At float16 each of those
-   [k + 1] roundings may also land on a subnormal, losing up to half its
-   quantum. A block that selects no matrix is exactly +0, whatever its rows
-   hold. *)
+(* The product at [dtype], whose unit roundoff is [u]: products are exact, the
+   float32 sum rounds at each term, and the result rounds once to [dtype],
+   which at float16 may land on a subnormal and lose up to half its quantum. A
+   block that selects no matrix is exactly +0, whatever its rows hold. *)
 let check ?(dtype = D.float32) ?(u = 0.0) ?(transpose = false) ?poison ~m ~n
     ~k ~e ids =
   let nb = Array.length ids in
   let round = rounded dtype in
   let tiny =
-    if D.equal dtype D.float16 then float_of_int (k + 1) *. Float.ldexp 1.0 (-25)
-    else 0.0
+    if D.equal dtype D.float16 then Float.ldexp 1.0 (-25) else 0.0
   in
   let xs = round (floats (nb * m * k)) and ws = round (floats (e * n * k)) in
   let xs =
@@ -112,11 +113,48 @@ let check ?(dtype = D.float32) ?(u = 0.0) ?(transpose = false) ?poison ~m ~n
             failf "element %d: a block with no matrix gave %h" o a
       | Some (v, mag) ->
           let tol =
-            (2.0 *. float_of_int k *. eps *. mag) +. (u *. mag)
-            +. (u *. Float.abs v) +. tiny
+            (2.0 *. float_of_int k *. eps *. mag) +. (u *. Float.abs v) +. tiny
           in
           if not (Float.abs (a -. v) <= tol) then
             failf "element %d: expected %h, got %h" o v a)
+    (expected ~transpose ~m ~n ~k ~e xs ws ids)
+
+(* Bit for bit against float32 products summed at float32, on operands whose
+   products need more bits than bfloat16 and float16 hold and whose sums
+   float32 holds exactly: multiples of 2^-8 below 1, so a product is a multiple
+   of 2^-16 below 1, and at most 256 of them sum to a multiple of 2^-16 below
+   2^8. The result is then the exact sum rounded once, whatever order the
+   device adds in, and a product rounded to [dtype] shows. *)
+let exact ?(transpose = false) ~dtype ~m ~n ~k ~e ids =
+  assert (k <= 256);
+  let nb = Array.length ids in
+  let draw count =
+    Array.init count (fun _ ->
+        float_of_int (Random.State.int rng 511 - 255) /. 256.0)
+  in
+  let xs = draw (nb * m * k) and ws = draw (e * n * k) in
+  let x = Dt.cast (Run.of_float_array ~shape:[ nb; m; k ] xs) dtype in
+  let w =
+    Dt.cast
+      (Run.of_float_array
+         ~shape:(if transpose then [ e; n; k ] else [ e; k; n ])
+         ws)
+      dtype
+  in
+  let got =
+    Run.to_float_array
+      (Dt.cast
+         (Op.block_matmul ~transpose x w
+            ~ids:(Run.of_int_array ~shape:[ nb ] ids))
+         D.float32)
+  in
+  Array.iteri
+    (fun o expect ->
+      let v = match expect with None -> 0.0 | Some (v, _) -> v in
+      let want = (rounded dtype [| v |]).(0) in
+      if Int64.bits_of_float got.(o) <> Int64.bits_of_float want then
+        failf "%s, element %d: expected %h, got %h" (D.to_string dtype) o want
+          got.(o))
     (expected ~transpose ~m ~n ~k ~e xs ws ids)
 
 let bf16 = Float.ldexp 1.0 (-8)
@@ -157,7 +195,17 @@ let value_tests =
               check ~dtype:D.bfloat16 ~u:bf16 ~transpose:true ~m:2 ~n:4 ~k
                 ~e:3 ids)
             [ 1; 2; 7; 8; 9 ]);
-      test "shapes" (fun () ->
+      test "exact products" (fun () ->
+          let ids = [| 0; -1; 2; 2; 1; 3 |] in
+          List.iter
+            (fun dtype ->
+              exact ~dtype ~m:16 ~n:24 ~k:32 ~e:3 ids;
+              exact ~dtype ~transpose:true ~m:64 ~n:48 ~k:256 ~e:3 ids;
+              exact ~dtype ~m:3 ~n:5 ~k:12 ~e:3 ids;
+              exact ~dtype ~transpose:true ~m:1 ~n:40 ~k:64 ~e:3 ids;
+              exact ~dtype ~m:2 ~n:4 ~k:1 ~e:3 ids)
+            [ D.bfloat16; D.float16 ]);
+      test "shapes and dtypes" (fun () ->
           let raises msg f = raises (Invalid_argument msg) f in
           let x = Run.of_float_array ~shape:[ 2; 3; 4 ] (floats 24) in
           let w = Run.of_float_array ~shape:[ 2; 4; 5 ] (floats 40) in
@@ -171,7 +219,14 @@ let value_tests =
           raises "Op.block_matmul: integer ids required" (fun () ->
               ignore
                 (Op.block_matmul x w
-                   ~ids:(Run.of_float_array ~shape:[ 2 ] [| 0.; 1. |]))));
+                   ~ids:(Run.of_float_array ~shape:[ 2 ] [| 0.; 1. |])));
+          List.iter
+            (fun dtype ->
+              raises "Op.block_matmul: x must be a float of at most 32 bits"
+                (fun () ->
+                  ignore
+                    (Op.block_matmul (Dt.cast x dtype) (Dt.cast w dtype) ~ids)))
+            [ D.float64; D.int32 ]);
     ]
 
 (* Code *)

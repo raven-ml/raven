@@ -1110,20 +1110,22 @@ let block_axis_kept ren kernel ~nb =
     (Tolk.Postrange.rngs k)
 
 (* The tensor cores serve a shape on Metal whose outputs and contraction are
-   tiles of 8, at a dtype they take. They multiply 8 by 8 tiles: the options
+   tiles of 8. The kernel multiplies float32, so they are the float32 ones,
+   whatever the operands' dtype. They multiply 8 by 8 tiles: the options
    upcast the rows by up to 8 tiles and the columns by 3, then split the
    columns 4 ways across a work group, measured at gpt-oss's shapes. *)
-let block_tensor_cores ren ~dtype ~n ~k =
+let block_tensor_cores ren ~n ~k =
   Tolk.Renderer.device ren = "METAL"
   && List.exists
-       (fun (tc : Tolk.Tc.t) -> D.equal tc.dtype_in dtype)
+       (fun (tc : Tolk.Tc.t) ->
+         D.equal tc.dtype_in D.float32 && D.equal tc.dtype_out D.float32)
        (Tolk.Renderer.tensor_cores ren)
   && n mod 8 = 0 && k mod 8 = 0 && k > 8
 
 let row_upcasts = [ 8; 4; 2; 1 ]
 
-let block_row_tiles ren dtype ~n ~k =
-  if block_tensor_cores ren ~dtype ~n ~k then
+let block_row_tiles ren ~n ~k =
+  if block_tensor_cores ren ~n ~k then
     List.map (fun u -> 8 * u) row_upcasts
   else []
 
@@ -1140,16 +1142,17 @@ let block_row_tiles ren dtype ~n ~k =
    AVX-512's 32 registers of 16 floats. The constants were measured on one M1
    Max core at gpt-oss's shapes (5760 outputs, 2880 inputs) against no
    options: 9 to 37 times faster at float32 from blocks of one row to 64, and
-   1.4 to 2.1 times at bfloat16, where rounding each product to bfloat16 costs
-   more than the loads the tile saves. A tile of 16 by 8 (128 accumulators)
-   and one of 4 by 8 (32) were both slower than 8 by 8. *)
-let block_options ren ~dtype ~nb ~m ~n ~k =
+   8 to 18 times at bfloat16, whose products are float32 too. A tile of 16 by
+   8 (128 accumulators) and one of 4 by 8 (32) were both slower than 8 by 8 at
+   float32; at bfloat16 the tile of 4 by 8 was 6% faster at blocks of 8 rows
+   and one of 8 columns 22% slower at one row, so one rule serves both. *)
+let block_options ren ~nb ~m ~n ~k =
   let depth = if k mod 8 = 0 && k > 8 then 8 else 1 in
   let first = if nb > 1 then 1 else 0 in
   let largest l size = List.find (fun u -> size mod u = 0) l in
   let opt amount o = if amount > 1 then [ o ] else [] in
   let opts =
-    if block_tensor_cores ren ~dtype ~n ~k && m mod 8 = 0 then
+    if block_tensor_cores ren ~n ~k && m mod 8 = 0 then
       let rows = m / 8 and cols = n / 8 in
       let ur = largest row_upcasts rows in
       let uc = largest [ 3; 2; 1 ] cols in
@@ -1193,6 +1196,8 @@ let block_matmul ?(transpose = false) x w ~ids =
   let dtype = T.dtype x in
   if not (D.equal dtype (T.dtype w)) then
     invalid_arg "Op.block_matmul: x and w must have the same dtype";
+  if not (D.is_float dtype && D.itemsize dtype <= 4) then
+    invalid_arg "Op.block_matmul: x must be a float of at most 32 bits";
   let device =
     match List.find_map T.device [ x; w; ids ] with
     | Some device -> device
@@ -1208,7 +1213,7 @@ let block_matmul ?(transpose = false) x w ~ids =
   let out = Creation.empty ~dtype ~device [ nb; m; n ] in
   if nb * m * n = 0 then out
   else begin
-    let depth, opts = block_options ren ~dtype ~nb ~m ~n ~k in
+    let depth, opts = block_options ren ~nb ~m ~n ~k in
     let bounded = Tolk.Renderer.has_local ren && k / depth > 1 in
     let fxn = function
       | [ out; x; w; ids ] ->
@@ -1255,9 +1260,9 @@ let block_matmul ?(transpose = false) x w ~ids =
               (if bounded then waddr else Uop.valid ~src:waddr ~cond:selects)
           in
           let is_range u = Uop.op u = Ops.Range in
+          let f32 v = Uop.cast ~src:v ~dtype:D.float32 in
           let acc =
-            Uop.reduce
-              ~src:(Uop.cast ~src:(xv * wv) ~dtype:D.float32)
+            Uop.reduce ~src:(f32 xv * f32 wv)
               ~ranges:(List.filter is_range [ tile; inner ])
               ~op:Ops.Add ~dtype:D.float32
           in

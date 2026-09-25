@@ -68,7 +68,7 @@ type case = {
 }
 
 let make ?ids ?(scale = fun () -> 100 + Random.State.int rng 51) ?(poison = [])
-    ~ix ~m ~n ~k ~e () =
+    ?(input = input) ~ix ~m ~n ~k ~e () =
   let x = Array.init (ix * m * k) (fun _ -> input ()) in
   List.iter
     (fun t ->
@@ -237,6 +237,70 @@ let product_tests =
                 | 2 -> 255
                 | _ -> small ())
               ~ids:[| 1; 0 |] ~ix:2 ~m:1 ~n:48 ~k:64 ~e:2 ()));
+    ]
+
+(* [v] rounded to [dtype], to nearest with ties to even. *)
+let nearest dtype v =
+  let bits, least =
+    match dtype with
+    | D.Float16 -> (11, -24)
+    | D.Bfloat16 -> (8, -133)
+    | _ -> (24, -149)
+  in
+  if v = 0.0 || not (Float.is_finite v) then v
+  else
+    let _, e = Float.frexp v in
+    let q = Float.ldexp 1.0 (max (e - bits) least) in
+    let r = v /. q in
+    let f = Float.floor r in
+    let up = r -. f > 0.5 || (r -. f = 0.5 && Float.rem f 2.0 <> 0.0) in
+    (if up then f +. 1.0 else f) *. q
+
+(* Bit for bit against float32 products summed at float32, on inputs whose
+   products with a code need more bits than bfloat16 holds and whose sums
+   float32 holds exactly: multiples of 2^-8 below 1 and scales 2^-1 to 2^1, so
+   a term is a multiple of 2^-10 below 12, and at most 1024 of them sum to a
+   multiple of 2^-10 below 2^14. The result is then the exact sum rounded once,
+   whatever order the device adds in. *)
+let exact_products c () =
+  List.iter
+    (fun (name, dtype, _, _) ->
+      let got = product dtype c in
+      for t = 0 to instances c - 1 do
+        for r = 0 to c.m - 1 do
+          for col = 0 to c.n - 1 do
+            let o = (((t * c.m) + r) * c.n) + col in
+            let want =
+              match reference c t r col with
+              | None -> 0.0
+              | Some (v, _) -> nearest dtype v
+            in
+            if Int64.bits_of_float got.(o) <> Int64.bits_of_float want then
+              fail
+                (Printf.sprintf
+                   "%s: instance %d row %d column %d: expected %h, got %h" name
+                   t r col want got.(o))
+          done
+        done
+      done)
+    dtypes
+
+let exact ?ids ~ix ~m ~n ~k ~e () =
+  assert (k <= 1024);
+  exact_products
+    (make ?ids
+       ~scale:(fun () -> 126 + Random.State.int rng 3)
+       ~input:(fun () -> float_of_int (Random.State.int rng 511 - 255) /. 256.0)
+       ~ix ~m ~n ~k ~e ())
+
+let exact_tests =
+  group "exact products"
+    [
+      slow "one row" (exact ~ix:1 ~m:1 ~n:48 ~k:1024 ~e:1 ());
+      slow "a tile of rows" (exact ~ix:1 ~m:8 ~n:40 ~k:96 ~e:1 ());
+      slow "ids" (exact ~ids:[| 2; -1; 0; 2 |] ~ix:4 ~m:1 ~n:32 ~k:128 ~e:3 ());
+      slow "ids, one group"
+        (exact ~ids:[| 1; 0 |] ~ix:2 ~m:3 ~n:48 ~k:32 ~e:2 ());
     ]
 
 (* The largest scales, 253 and 254 included, on float32 inputs small enough that
@@ -462,6 +526,7 @@ let () =
   run "Tolk_frontend_quant_matmul"
     [
       product_tests;
+      exact_tests;
       test "the largest scales" large_scales;
       slow "random products" random_products;
       test "no inputs" no_inputs;

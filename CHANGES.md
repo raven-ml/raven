@@ -558,8 +558,8 @@ thread.
   result's view instead of its storage.
 
 - `Op.block_matmul` on the CPU keeps a register tile of rows and columns and
-  unrolls the contraction: 9 to 37 times faster at float32 and 1.4 to 2.1
-  times at bfloat16 at gpt-oss's shapes, where it ran with no options.
+  unrolls the contraction: 9 to 37 times faster at float32 and 8 to 18 times
+  at bfloat16 at gpt-oss's shapes, where it ran with no options.
 
 - A compiled program is no longer reused, in the process or from rune's disk
   cache, under other values of `TC_SELECT`, `TC_OPT`, `FLOAT16`, `MV*`,
@@ -1093,7 +1093,8 @@ thread.
 
 - Add `Op.block_matmul`: each block of rows times the matrix of a stack its id
   addresses, read in place. A block whose id is out of range is exactly zero,
-  and on a GPU it runs no multiply-adds.
+  and on a GPU it runs no multiply-adds. Products and sums are float32 on every
+  device, so products of narrower floats are exact.
 
 - Add `Op.quant_matmul`, a product with MXFP4 weights that decodes them in
   registers and reads each packed byte once per tile of rows, and

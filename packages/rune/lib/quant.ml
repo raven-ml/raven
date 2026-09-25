@@ -430,8 +430,8 @@ let instances block_matmul ~transpose ~p ~e ids codes scales x =
    smallest. Where no options are pinned no size fills a tile, and a block is as
    many rows as an expert meets on average, rounded up to a power of two, at
    most 64. *)
-let block_rows kernels dtype ~n ~k ~per_expert =
-  match Tolk_frontend.Op.block_row_tiles (renderer kernels) dtype ~n ~k with
+let block_rows kernels ~n ~k ~per_expert =
+  match Tolk_frontend.Op.block_row_tiles (renderer kernels) ~n ~k with
   | [] ->
       let rec up b = if b >= per_expert || b >= 64 then b else up (2 * b) in
       up 1
@@ -488,15 +488,10 @@ let grouped kernels ~transpose ~p ~e ids codes scales x =
   let b =
     if on_kernel then kernel_rows kernels ~per_expert
     else
-      (* The block kernel's own outputs and dtype: the weight's inputs for the
-         transposed product, and float32 for a dtype decoded at float32. *)
+      (* The block kernel's own outputs: the weight's inputs for the transposed
+         product. *)
       let n = if transpose then 2 * Nx.dim (-1) codes else n in
-      let dtype =
-        match tolk_dtype x with
-        | Some dt when Tolk_uop.Dtype.equal dt Tolk_uop.Dtype.bfloat16 -> dt
-        | _ -> Tolk_uop.Dtype.float32
-      in
-      block_rows kernels dtype ~n ~k:cols ~per_expert:(r / d)
+      block_rows kernels ~n ~k:cols ~per_expert:(r / d)
   in
   report
     (Printf.sprintf

@@ -419,20 +419,31 @@ delete it rather than registering it.
   not survive them whole. The CPU runs work groups as a loop, where a bound that
   reads that loop's index miscompiles, so there the bound is constant, the
   weight's load is gated and a select zeroes the store, as for a contraction of
-  one input anywhere, whose loop of one trip folds away. The options are pinned
-  per renderer and shape: on Metal the tensor cores, rows upcast by up to 8
-  tiles, columns by 3, and a local split of 4 on the columns, measured at 6.6 to
-  7.6 TFLOPS at bfloat16 on an M1 Max for 46 filled blocks of 64 rows at
-  gpt-oss's shapes, where the heuristic's `matmul` reaches 8.2 on a dense
-  product; on the CPU at every dtype, rows upcast by up to 8, columns by up to
-  16 within 64 accumulators, and the loop over tiles unrolled by 4, timed on
-  an M1 Max at gpt-oss's shapes 9 to 37 times faster than no options at
-  float32 and 1.4 to 2.1 times at bfloat16; elsewhere none yet. Coverage:
-  `test/unit/frontend/test_block_matmul.ml` (values on the default device, and
-  each renderer's loop bounds) and the opt-correctness workloads `block_matmul`
-  and `block_matmul_t`, under every action that leaves the block axis whole.
-  Consumer: rune's lowering of `Nx_quant` products over expert ids, grouped or
-  one block per position.
+  one input anywhere, whose loop of one trip folds away. Where the reference's
+  `matmul` at bfloat16 and float16 rounds each product to the operands' dtype
+  outside tensor cores, the kernel casts both operands to float32 before
+  multiplying, so every device and path computes exact products; on Metal the
+  tensor-core option then takes the float32 tensor cores, which on an M1 Max
+  multiply 16 filled blocks of 64 rows at bfloat16 as fast as the bfloat16 ones
+  (4.34 against 4.33 ms at 5760 outputs, 2.22 ms at 2880). On CUDA and AMD this
+  form takes no narrow tensor cores, and on CUDA no float32 ones without
+  `ALLOW_TF32`: the matcher compares the multiply's operand dtypes with a tensor
+  core's input dtype, and would have to accept a widening cast of a narrow load
+  as a narrow-in, float32-out tensor core's input, which computes the same exact
+  product. No block options are pinned there yet. The options are pinned per
+  renderer and shape: on Metal the tensor cores, rows upcast by up to 8 tiles,
+  columns by 3, and a local split of 4 on the columns, measured at 6.6 to 7.6
+  TFLOPS at bfloat16 on an M1 Max for 46 filled blocks of 64 rows at gpt-oss's
+  shapes on the bfloat16 tensor cores (the float32 ones time equal), where the
+  heuristic's `matmul` reaches 8.2 on a dense product; on the CPU at every
+  dtype, rows upcast by up to 8, columns by up to 16 within 64 accumulators, and
+  the loop over tiles unrolled by 4, timed on an M1 Max at gpt-oss's shapes 9 to
+  37 times faster than no options at float32 and 8 to 18 times at bfloat16;
+  elsewhere none yet. Coverage: `test/unit/frontend/test_block_matmul.ml`
+  (values on the default device, and each renderer's loop bounds) and the
+  opt-correctness workloads `block_matmul` and `block_matmul_t`, under every
+  action that leaves the block axis whole. Consumer: rune's lowering of
+  `Nx_quant` products over expert ids, grouped or one block per position.
 
 - **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
   `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference
