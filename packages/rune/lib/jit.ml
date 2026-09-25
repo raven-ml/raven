@@ -736,58 +736,70 @@ let nan_from_first ~axis t scanned =
     (F.Creation.const_like scanned (F.Tensor.Sfloat Float.nan))
     scanned
 
-(* Integers that order like [x], and the map from sorted integers back to
-   values. Tolk's sort network keeps the smaller or larger operand by
-   comparison, which a NaN never wins, and it recovers positions by matching
-   values for equality, which a NaN never satisfies. A float axis sorts integers
-   of its width in the same order instead: its bits, with a negative value's
-   magnitude bits flipped so that the larger float is the larger integer, -0
-   read as +0, and NaN past every number in either direction. The -0 test
-   compares bits: a float comparison may flush subnormals to zero. An 8-bit
-   float sorts as its float16 widening: where it is emulated, its bits are
-   re-encoded from a wider value, which saturates infinities. The widening is
-   exact except that an emulated 8-bit float reads its subnormals as zero, as
-   every compiled 8-bit float operation does. *)
-let order_keys ~descending x =
+(* A float as the integer of its width, and the float it was read from: an 8-bit
+   float is read as its float16 widening. Where 8-bit floats are emulated,
+   bitcasting one re-encodes it from a wider value, which saturates infinities.
+   The widening is exact except that an emulated 8-bit float reads its
+   subnormals as zero, as every compiled 8-bit float operation does. *)
+let float_bits x =
+  let x =
+    if TD.itemsize (F.Tensor.dtype x) = 1 then F.Dtype_ops.cast x TD.float16
+    else x
+  in
+  let int =
+    match TD.itemsize (F.Tensor.dtype x) with
+    | 2 -> TD.int16
+    | 4 -> TD.int32
+    | _ -> TD.int64
+  in
+  (x, F.Dtype_ops.bitcast x int)
+
+(* Integers that order like [x], and the map from such integers back to values.
+   Tolk's comparisons never let a NaN win, and its sort recovers positions by
+   matching values for equality, which a NaN never satisfies. A float orders as
+   its bits (see [float_bits]), with a negative value's magnitude bits flipped
+   so that the larger float is the larger integer, and -0 read as +0 so that
+   equal zeros tie. Every NaN takes the greatest integer ([`Greatest]) or the
+   least ([`Least]); no number takes either. The -0 test compares bits: a float
+   comparison may flush subnormals to zero. A non-float [x] is its own key. *)
+let order_keys ~nan x =
   let dtype = F.Tensor.dtype x in
   if not (TD.is_float dtype) then (x, Fun.id)
   else
     let open F.Elementwise in
-    let x =
-      if TD.itemsize dtype = 1 then F.Dtype_ops.cast x TD.float16 else x
-    in
-    let int =
-      match TD.itemsize (F.Tensor.dtype x) with
-      | 2 -> TD.int16
-      | 4 -> TD.int32
-      | _ -> TD.int64
-    in
+    let x, bits = float_bits x in
+    let int = F.Tensor.dtype bits in
     let bound v = F.Tensor.of_uop (U.const v) in
     let max = bound (Tolk_uop.Const.max_value int) in
     let nan_key =
-      if descending then bound (Tolk_uop.Const.min_value int) else max
+      match nan with
+      | `Greatest -> max
+      | `Least -> bound (Tolk_uop.Const.min_value int)
     in
     let flip bits =
       where
         (lt bits (F.Creation.const_like bits (F.Tensor.Sint 0)))
         (bitwise_xor bits max) bits
     in
-    let bits = F.Dtype_ops.bitcast x int in
-    let negative_zero = bound (Tolk_uop.Const.min_value int) in
-    let keys =
-      flip
-        (where (eq bits negative_zero)
-           (F.Creation.const_like bits (F.Tensor.Sint 0))
-           bits)
+    let merged =
+      where
+        (eq bits (bound (Tolk_uop.Const.min_value int)))
+        (F.Creation.const_like bits (F.Tensor.Sint 0))
+        bits
     in
-    let values sorted =
+    let values keys =
       F.Dtype_ops.cast
-        (where (eq sorted nan_key)
+        (where (eq keys nan_key)
            (F.Creation.const_like x (F.Tensor.Sfloat Float.nan))
-           (F.Dtype_ops.bitcast (flip sorted) (F.Tensor.dtype x)))
+           (F.Dtype_ops.bitcast (flip keys) (F.Tensor.dtype x)))
         dtype
     in
-    (where (isnan x) nan_key keys, values)
+    (where (isnan x) nan_key (flip merged), values)
+
+(* The keys a sort orders: NaN after every number in either direction, and equal
+   zeros tied, so that a stable sort keeps their order. *)
+let sort_keys ~descending x =
+  order_keys ~nan:(if descending then `Least else `Greatest) x
 
 (* Whether [st]'s device computes int64 natively, which the packed sort
    needs. *)
@@ -801,7 +813,7 @@ let bit_length n =
 (* [x] sorted along [dim]. Only the values are demanded, so Tolk's recovery of
    positions is never computed. *)
 let sort_graph ~dim ~descending x =
-  let keys, values = order_keys ~descending x in
+  let keys, values = sort_keys ~descending x in
   values (fst (F.Op.sort ~dim ~descending keys))
 
 (* The stable positions that sort [x] along [dim]. Tolk's network sorts values
@@ -818,7 +830,7 @@ let sort_graph ~dim ~descending x =
    not a power of two, the positions' arange no longer folds to an index and
    costs n^2 work. *)
 let argsort_graph ~packs ~dim ~descending x =
-  let keys, _ = order_keys ~descending x in
+  let keys, _ = sort_keys ~descending x in
   let key_dtype = F.Tensor.dtype keys in
   let shape = F.Tensor.shape x in
   let dim = if dim < 0 then dim + List.length shape else dim in
