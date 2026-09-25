@@ -464,6 +464,26 @@ let () =
               (Realize.compile_linear ~device:dev1 ~to_program
                  (U.linear [ call_of ast ]));
             equal int 2 !calls);
+          test "keys cached programs by scoped tensor-core policy" (fun () ->
+            List.iter (fun policy ->
+                let key = Helpers.Context_var.key policy in
+                let device = test_device (runtime_state ()) in
+                let body = U.sink
+                    ~kernel_info:(kernel_info ("tensor_core_cache_" ^ key)) [] in
+                let linear = U.linear
+                    [U.call ~body ~args:[] ~info:(call_info None)] in
+                let compiled_policies = ref [] in
+                let to_program device body =
+                  ignore device;
+                  compiled_policies :=
+                    Helpers.Context_var.get policy :: !compiled_policies;
+                  program_of body in
+                List.iter (fun value ->
+                    Helpers.Context_var.with_context [B (policy, value)] (fun () ->
+                        ignore (Realize.compile_linear ~device ~to_program linear)))
+                  [0; 1; 0];
+                equal ~msg:key (list int) [0; 1] (List.rev !compiled_policies))
+              [Helpers.tc_select; Helpers.tc_opt]);
           test "keys cached programs by selected target" (fun () ->
             let create target =
               let render ?name program =

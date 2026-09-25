@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- Changing `TC_SELECT` or `TC_OPT` now selects a program compiled for that
+  tensor-core policy instead of reusing one cached under a previous setting.
+
 - Autotuning clears caches through a shared fill workload when no backend
   hook exists. Explicit `beam:0` now disables default search even when `BEAM`
   is set; code generation uses the kernel's resolved width.

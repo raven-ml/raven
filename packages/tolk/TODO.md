@@ -147,11 +147,14 @@ acceptance requirement; skipped tests are not execution evidence.
   fragments; distinguish source naming parity from fragment layout correctness.
 - Add deterministic beam coverage for reconsidering candidates rejected by
   the per-step compute filter. Measure search cost and selected kernels at
-  the upstream stopping threshold. Port remaining heuristics, device-aware
-  compilation and dynamic cache policy. Share bounded compilation workers
+  the upstream stopping threshold. Port remaining heuristics, including
+  `TC_MIN_GLOBALS` global-occupancy preservation and its compilation cache key,
+  plus device-aware compilation and dynamic cache policy. Share bounded workers
   with lowering, with context snapshots, cancellation/timeouts, errors,
   affinity/container limits, nested-context audits and concurrent-cache
-  coverage. Synchronize device opening and runtime caches; concurrent callers
+  coverage. Join every started compilation domain before propagating a worker
+  or spawn failure, so restored contexts cannot race with abandoned workers.
+  Synchronize device opening and runtime caches; concurrent callers
   currently mutate the shared registry and execution Hashtbls without locking.
   Isolate schedule capture hooks and Rune's shared upload scratch across
   concurrent callers as part of that audit. Cover finalizers registered on
