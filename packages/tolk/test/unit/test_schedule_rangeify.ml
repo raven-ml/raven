@@ -1085,11 +1085,39 @@ let shape_queries_release_graphs () =
   is_false ~msg:"shape queries do not retain the tensor graph"
     (Stdlib.Weak.check weak 0)
 
+let stack_selection_tests =
+  group "stack selection"
+    (List.map (fun n ->
+         test (Printf.sprintf "%d sources preserve selection and bound depth" n)
+           (fun () ->
+             let index = U.variable ~name:"table_index" ~min_val:(-1) ~max_val:n () in
+             let stack = U.stack (List.init n (fun i -> U.const_int (i * 3 + 7))) in
+             let ctx = Indexing.create_context () in
+             Hashtbl.add ctx.range_map (U.tag stack) ([], [ index ]);
+             let selected = Indexing.apply_rangeify_pass ctx stack in
+             let indices = if n <= 17 then List.init (n + 2) (fun i -> i - 1)
+               else [ -1; 0; 7; 8; 15; 16; 255; 256; 511; 512; 1015; 1016; 1023; n ] in
+             List.iter (fun i ->
+                 let expected = (if i < 0 || i >= n then n - 1 else i) * 3 + 7 in
+                 equal int expected (U.sym_infer selected [ "table_index", Int64.of_int i ]))
+               indices;
+             let depths = Hashtbl.create (n * 2) in
+             List.iter (fun node ->
+                 let depth = Array.fold_left (fun acc src ->
+                     max acc (Hashtbl.find depths (U.tag src))) 0 (U.src node) in
+                 Hashtbl.add depths (U.tag node)
+                   (depth + if op_is Ops.Where node then 1 else 0))
+               (U.toposort selected);
+             is_true ~msg:"large selections have logarithmic conditional depth"
+               (Hashtbl.find depths (U.tag selected) <= 16)))
+       [ 1; 8; 9; 17; 1024 ])
+
 (* Main *)
 
 let () =
   run "Schedule.Rangeify"
     [
+      stack_selection_tests;
       test "Shape queries release graphs" shape_queries_release_graphs;
       is_always_contiguous_tests;
       new_range_tests;

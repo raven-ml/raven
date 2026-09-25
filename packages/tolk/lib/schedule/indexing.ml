@@ -962,19 +962,26 @@ let convert_stack_to_where ctx x =
   match range_get ctx x with
   | Some (_, out_rngs)
     when (not (Dtype.equal (U.dtype x) Dtype.void)) && out_rngs <> [] ->
-      let srcs = create_stage_and_index_srcs ctx x in
+      let srcs = Array.of_list (create_stage_and_index_srcs ctx x) in
       let r0 = List.hd out_rngs in
-      (match List.rev srcs with
-       | [] -> None
-       | last :: rest_rev ->
-           let n = List.length srcs in
-           let ret, _ =
-             List.fold_left
-               (fun (acc, k) s ->
-                  (U.alu_ternary ~op:Ops.Where ~a:(eq r0 k) ~b:s ~c:acc, k - 1))
-               (last, n - 2) rest_rev
-           in
-           Some ret)
+      let where pred yes no = U.alu_ternary ~op:Ops.Where ~a:pred ~b:yes ~c:no in
+      let lt k = U.alu_binary ~op:Ops.Cmplt ~lhs:r0 ~rhs:(U.const_like r0 k) in
+      let rec select lo hi =
+        if hi - lo <= 8 then begin
+          let ret = ref srcs.(hi - 1) in
+          for k = hi - 2 downto lo do
+            ret := where (eq r0 k) srcs.(k) !ret
+          done;
+          !ret
+        end else
+          let mid = (lo + hi) / 2 in
+          where (lt mid) (select lo mid) (select mid hi)
+      in
+      let n = Array.length srcs in
+      if n = 0 then None
+      else
+        let ret = select 0 n in
+        Some (if n > 8 then where (lt 0) srcs.(n - 1) ret else ret)
   | _ -> None
 
 let fix_deviceless_stage ~device n =

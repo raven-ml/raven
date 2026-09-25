@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Large stacked lookup tables lower to balanced selections, bounding
+  conditional depth while preserving the final-element fallback for invalid
+  indices, as in tinygrad.
+
 - Anonymous allocations preserve scalar and symbolic shapes across calls and
   kernel lowering. Local and register storage stays internal to the kernel
   instead of being counted as external runtime arguments.

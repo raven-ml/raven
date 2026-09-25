@@ -71,8 +71,8 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
-- Integrate the upstream delta after `471a3aeb`: balanced large STACK selection,
-  simplified symbolic FLOP estimates, and symbolic-shift bounds validation.
+- Integrate the upstream delta after `471a3aeb`: simplified symbolic FLOP
+  estimates and symbolic-shift bounds validation.
   Audit HCQ2/NV compute changes in the video migration and GPT-OSS/AMD kernel
   changes against current consumers. Account for test relocations and removed
   buffer options when regenerating the complete corpus.
