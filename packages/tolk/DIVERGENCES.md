@@ -185,8 +185,12 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   Bootstrap failures release descriptors and per-device KFD
   events. KFD's process-wide event page remains cached; an ambiguous registration
   failure is latched because the kernel may already retain that page. Failed
-  KFD/NVK device construction retires queues before releasing their buffers;
-  a failed queue stop retains storage and suppresses late finalizers. NVK
+  KFD/NVK and booted PCI device construction retire queues before releasing
+  their buffers; a failed queue stop retains storage and suppresses late
+  finalizers. PCI teardown tracks partially programmed SDMA rings, removes
+  failed AMD interrupt registrations, releases NV doorbell mappings and
+  disables failed runtime shutdown hooks. Faulted PCI devices retain storage
+  unless queue retirement can be established. NVK
   unregisters channels with the installed driver's layout, then unwinds UVM
   registrations, control mappings and the per-device RM object tree.
   Borrowed host mappings remain owned by the caller. Consumers:
@@ -195,7 +199,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   adjacent mappings and precreated tables; `test_amd_system` covers reverse
   rollback order, acquisition failures, cleanup failures, descriptor release
   and buffer finalizers after successful or failed queue retirement;
-  `test_nv_tables` covers 570/580/610 unregister layouts.
+  `test_nv_tables` covers 570/580/610 unregister layouts; `test_amd_amdev`
+  injects a register failure after enabling an SDMA ring and checks teardown.
   Driver fault injection and hardware
   recovery remain open in TODO. Reconsider when upstream provides equivalent
   failure ownership rules.

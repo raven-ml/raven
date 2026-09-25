@@ -1380,7 +1380,6 @@ module Nvk_iface = struct
           track (interface.Nv_iface.alloc ?host ?uncached ?cpu_access ?contiguous
             ?force_devmem ?map_flags ?cpu_addr size) in
         f ~is_valid:(fun () -> !alive) {interface with Nv_iface.alloc; free})
-
 end
 
 (* Driver-less PCI interface: ops_nv.py:556-581 PCIIface *)
@@ -1396,6 +1395,7 @@ module Pci_iface = struct
   type t = {
     base : (nv_boot, Nvdev.Nv_page_table.t) Base.t;
     root : int;
+    mutable usermode_mappings : Hcq.Mmio.t list;
   }
 
   type Nv_iface.nvdev += Nv_pci of nv_boot
@@ -1471,24 +1471,27 @@ module Pci_iface = struct
         ~mm:(fun impl -> Nvdev.mm impl.nvdev)
         ()
     in
-    let t = { base; root = 0xc1000000 } in
-    (* ops_nv.py:564: register the client with the driver *)
-    let (_ : int) =
-      Ip.Gsp.rpc_rm_alloc (impl t).gsp ~hparent:0 ~hclass:Defs.nv01_root
-        ~params:(Nv_tables.create_blob Defs.Nv0000_alloc_parameters.sizeof)
-        ~client:t.root ()
-    in
-    t
+    let t = { base; root = 0xc1000000; usermode_mappings = [] } in
+    System.with_rollback (fun rollback ->
+      rollback (fun () -> fini (impl t));
+      (* ops_nv.py:564: register the client with the driver *)
+      let (_ : int) =
+        Ip.Gsp.rpc_rm_alloc (impl t).gsp ~hparent:0 ~hclass:Defs.nv01_root
+          ~params:(Nv_tables.create_blob Defs.Nv0000_alloc_parameters.sizeof)
+          ~client:t.root ()
+      in
+      t)
 
   (* ops_nv.py:570 setup_usermode: the work-submission doorbell lives in a
      fixed window of BAR0; the engine classes come from the GSP. *)
   let setup_usermode t =
     let g = (impl t).gsp in
+    let mmio = System.Pci_device.map_bar (Base.pci_dev t.base) ~off:0xbb0000
+        ~size:0x10000 0 in
+    t.usermode_mappings <- mmio :: t.usermode_mappings;
     {
       Nv_iface.handle = 0xce000000;
-      mmio =
-        System.Pci_device.map_bar (Base.pci_dev t.base) ~off:0xbb0000
-          ~size:0x10000 0;
+      mmio;
       compute_class = Ip.Gsp.compute_class g;
       dma_class = Ip.Gsp.dma_class g;
       gpfifo_class = Ip.Gsp.gpfifo_class g;
@@ -1535,6 +1538,26 @@ module Pci_iface = struct
       device_fini = (fun () -> fini (impl t));
       nvdev = Some (Nv_pci (impl t));
     }
+
+  let with_initialization t f =
+    let alive = ref true in
+    let stop () =
+      alive := false;
+      fini (impl t);
+      if Nvdev.is_err_state (impl t).nvdev then
+        failwith "NV setup rollback cannot reclaim faulted device storage" in
+    let close () =
+      List.iter (fun view ->
+          Hcq.File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view))
+        t.usermode_mappings;
+      t.usermode_mappings <- [] in
+    let interface = iface t in
+    System.with_buffer_setup ~free:interface.Nv_iface.free ~stop ~close
+      (fun ~track ~free ->
+        let alloc ?host ?uncached ?cpu_access ?contiguous ?force_devmem ?map_flags ?cpu_addr size =
+          track (interface.Nv_iface.alloc ?host ?uncached ?cpu_access ?contiguous
+            ?force_devmem ?map_flags ?cpu_addr size) in
+        f ~is_valid:(fun () -> !alive) {interface with Nv_iface.alloc; free})
 end
 
 (* Loaded programs *)
@@ -2773,13 +2796,15 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
   Copy_queue.submit cp dma_queue;
   Timeline.synchronize tl;
   at_exit (fun () ->
-      (* finalize even when the device faulted, so shutdown still reaches
-         the driver *)
-      (try State.synchronize state
-       with e ->
-         Printf.eprintf "%s synchronization failed before finalizing: %s\n%!"
-           name (Printexc.to_string e));
-      iface.Nv_iface.device_fini ());
+      if is_valid () then begin
+        (* finalize even when the device faulted, so shutdown still reaches
+           the driver *)
+        (try State.synchronize state
+         with e ->
+           Printf.eprintf "%s synchronization failed before finalizing: %s\n%!"
+             name (Printexc.to_string e));
+        iface.Nv_iface.device_fini ()
+      end);
   let allocator = Allocator.create state in
   let renderer_set = Tolk.Device.Renderer_set.make ~device:name ~arch
       [ "CUDA", (fun target ->
@@ -2812,8 +2837,9 @@ let create name =
     fun () -> Nvk_iface.with_initialization st interface
       (fun ~is_valid iface -> open_device ~is_valid ~name iface) in
   let pci () =
-    let iface = Pci_iface.iface (Pci_iface.create ~device_id) in
-    fun () -> open_device ~name iface in
+    let interface = Pci_iface.create ~device_id in
+    fun () -> Pci_iface.with_initialization interface
+      (fun ~is_valid iface -> open_device ~is_valid ~name iface) in
   let open_runtime = Tolk.Helpers.select_interface ~device:name
       [ "NVK", nvk; "PCI", pci ] in
   open_runtime ()

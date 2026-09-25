@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed AMD/NV PCI runtime setup stops queues before releasing their buffers
+  and mappings. Partially programmed AMD copy queues are included in teardown;
+  failed retirement retains storage and disables later shutdown callbacks.
+
 - AMD PCI treats a fabric segment as a multi-die hive only when the hardware
   advertises peer regions, preserving single-device boot waits and avoiding
   fabric firmware setup on standalone devices.

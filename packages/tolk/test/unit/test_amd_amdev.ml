@@ -2219,6 +2219,22 @@ let () =
                     (fun () ->
                       Sdma.setup_ring sdma ~ring_addr:0x40000 ~ring_size:0x800
                         ~rptr_addr:0x11000 ~wptr_addr:0x12000 ~idx:1)));
+          test "fini_hw disables a partially programmed SDMA queue" (fun () ->
+              with_fake_dev (fun fd ->
+                  let sdma = Sdma.create fd.dev in
+                  let fail_at = raddr fd.dev "regSDMA0_QUEUE0_IB_CNTL" in
+                  Hashtbl.add fd.wr_hooks fail_at (fun _ -> failwith "ring setup failed");
+                  raises (Failure "ring setup failed") (fun () ->
+                      ignore (Sdma.setup_ring sdma ~ring_addr:0x40000 ~ring_size:0x800
+                        ~rptr_addr:0x11000 ~wptr_addr:0x12000 ~idx:0));
+                  Hashtbl.remove fd.wr_hooks fail_at;
+                  Sdma.fini_hw sdma;
+                  List.iter (fun (name, field) ->
+                      equal ~msg:name int 0
+                        (List.assoc field (Amdev.Am_register.read_bitfields (Amdev.reg fd.dev name))))
+                    ["regSDMA0_QUEUE0_RB_CNTL", "rb_enable";
+                     "regSDMA0_QUEUE0_IB_CNTL", "ib_enable";
+                     "regSDMA0_QUEUE0_DOORBELL", "enable"]));
           test "fini_hw disables the queues and pulses the soft reset"
             (fun () ->
               with_fake_dev (fun fd ->

@@ -1795,7 +1795,6 @@ module Kfd_iface = struct
         let alloc ?host ?uncached ?cpu_access size =
           track (interface.Iface.alloc ?host ?uncached ?cpu_access size) in
         f ~is_valid:(fun () -> !alive) {interface with Iface.alloc; free})
-
 end
 
 (* Driver-less PCI interface: ops_amd.py:843-908 PCIIface *)
@@ -1870,21 +1869,23 @@ module Pci_iface = struct
         ()
     in
     let boot = Base.dev_impl base in
-    let ip_ver hwip = Amdev.ip_ver boot.Am_boot.adev hwip in
-    {
-      base;
-      props =
-        compute_props
-          ~gc_info:(Amdev.gc_info boot.Am_boot.adev)
-          ~gc_ver:(ip_ver Am_defs.gc_hwip)
-          ~xccs:(Am_ip.Gfx.xccs boot.Am_boot.gfx);
-      ip_versions =
-        {
-          gc = ip_ver Am_defs.gc_hwip;
-          sdma = ip_ver Am_defs.sdma0_hwip;
-          nbif = ip_ver Am_defs.nbif_hwip;
-        };
-    }
+    System.with_rollback (fun rollback ->
+      rollback (fun () -> Am_boot.fini boot);
+      let ip_ver hwip = Amdev.ip_ver boot.Am_boot.adev hwip in
+      {
+        base;
+        props =
+          compute_props
+            ~gc_info:(Amdev.gc_info boot.Am_boot.adev)
+            ~gc_ver:(ip_ver Am_defs.gc_hwip)
+            ~xccs:(Am_ip.Gfx.xccs boot.Am_boot.gfx);
+        ip_versions =
+          {
+            gc = ip_ver Am_defs.gc_hwip;
+            sdma = ip_ver Am_defs.sdma0_hwip;
+            nbif = ip_ver Am_defs.nbif_hwip;
+          };
+      })
 
   let alloc t ?host ?uncached ?cpu_access size =
     Base.alloc t.base ?host ?uncached ?cpu_access size
@@ -2051,6 +2052,23 @@ module Pci_iface = struct
       after_sync = Some (fun () -> collect_interrupts ~drain_only:true ());
       device_fini = Some (fun () -> Am_boot.fini (am t));
     }
+
+  let with_initialization t f =
+    let alive = ref true in
+    let stop () =
+      alive := false;
+      unregister (am t);
+      Am_boot.fini (am t);
+      (* Faulted HQD shutdown skips its inactive wait. Retain storage unless
+         the hardware has positively completed queue retirement. *)
+      if Amdev.is_err_state (am t).Am_boot.adev then
+        failwith "AMD setup rollback cannot reclaim faulted device storage" in
+    let interface = iface t in
+    System.with_buffer_setup ~free:interface.Iface.free ~stop ~close:(fun () -> ())
+      (fun ~track ~free ->
+        let alloc ?host ?uncached ?cpu_access size =
+          track (interface.Iface.alloc ?host ?uncached ?cpu_access size) in
+        f ~is_valid:(fun () -> !alive) {interface with Iface.alloc; free})
 end
 
 (* Device runtime *)
@@ -2523,7 +2541,7 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
             || (iface.Iface.is_am && ip.sdma >= (5, 0, 0) && idx > 0) then None
           else match create_queue Sdma ~ring_size:(16 lsl 20) ~idx () with
             | qd -> Some qd
-            | exception Failure _ -> None in
+            | exception Failure _ when not iface.Iface.is_am -> None in
         Hashtbl.add sdma_queues idx queue;
         queue in
   ignore (sdma_queue 0 : Queue_desc.t option);
@@ -2580,14 +2598,16 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
   (match iface.Iface.device_fini with
   | Some fini ->
       at_exit (fun () ->
-          (* finalize even when the device faulted: the shutdown records
-             the session's error flag for the next boot *)
-          (try Timeline.synchronize state.State.tl
-           with e ->
-             Printf.eprintf
-               "%s synchronization failed before finalizing: %s\n%!" name
-               (Printexc.to_string e));
-          fini ())
+          if is_valid () then begin
+            (* finalize even when the device faulted: the shutdown records
+               the session's error flag for the next boot *)
+            (try Timeline.synchronize state.State.tl
+             with e ->
+               Printf.eprintf
+                 "%s synchronization failed before finalizing: %s\n%!" name
+                 (Printexc.to_string e));
+            fini ()
+          end)
   | None -> ());
   let allocator = Allocator.create state in
   Runtime.ensure_scratch state 128;
@@ -2621,8 +2641,9 @@ let create name =
       (fun ~is_valid iface -> open_device ~is_valid ~name iface)
   in
   let pci () =
-    let iface = Pci_iface.iface (Pci_iface.create ~device_id) in
-    fun () -> open_device ~name iface
+    let interface = Pci_iface.create ~device_id in
+    fun () -> Pci_iface.with_initialization interface
+      (fun ~is_valid iface -> open_device ~is_valid ~name iface)
   in
   (* Select the interface before opening the runtime: a later compiler or
      queue error must not retry a working kernel driver through PCI. *)

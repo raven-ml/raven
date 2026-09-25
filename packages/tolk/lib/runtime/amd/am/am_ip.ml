@@ -1726,7 +1726,12 @@ module Sdma = struct
       Am.amdgpu_navi10_doorbell_sdma_engine0 + ((pipe + (queue * 4)) * 0xA)
     in
     let r name = Amdev.reg adev ~inst (reg ^ name) in
-    Am_register.write (r "_MINOR_PTR_UPDATE") ~value:0x1 [];
+    let minor_update = r "_MINOR_PTR_UPDATE" in
+    (* A later register access can fail after the ring was enabled. Keep the
+       queue visible to teardown from the first write, not only on success. *)
+    if not (List.mem (reg, inst) t.sdma_reginst) then
+      t.sdma_reginst <- t.sdma_reginst @ [reg, inst];
+    Am_register.write minor_update ~value:0x1 [];
     Amdev.wreg_pair adev ~inst (reg ^ "_RB_RPTR") ~lo:"" ~hi:"_HI" 0;
     Amdev.wreg_pair adev ~inst (reg ^ "_RB_WPTR") ~lo:"" ~hi:"_HI" 0;
     Amdev.wreg_pair adev ~inst (reg ^ "_RB_BASE") ~lo:"" ~hi:"_HI" (ring_addr lsr 8);
@@ -1747,8 +1752,6 @@ module Sdma = struct
           ("rb_size", bit_length (ring_size / 4) - 1);
         ]);
     Am_register.update (r "_IB_CNTL") [ ("ib_enable", 1) ];
-    if not (List.mem (reg, inst) t.sdma_reginst) then
-      t.sdma_reginst <- t.sdma_reginst @ [reg, inst];
     doorbell
 
   let halt_engines t =

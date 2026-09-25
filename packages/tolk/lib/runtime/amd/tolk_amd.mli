@@ -789,9 +789,9 @@ module Pci_iface : sig
       device runtime registers each device once its queues exist. *)
 
   val unregister : Am_boot.t -> unit
-  (** [unregister am] removes [am]'s registrations. Real devices stay
-      registered for the life of the process; a scripted device must
-      leave the registry before its mappings do. *)
+  (** [unregister am] removes [am]'s registrations. Failed runtime setup
+      unregisters its device before retiring queues. Scripted devices must
+      also leave the registry before their mappings do. *)
 
   val collect_interrupts : ?reset:Am_boot.t -> ?drain_only:bool -> unit -> unit
   (** [collect_interrupts ()] services the interrupt rings of every
