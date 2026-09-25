@@ -336,7 +336,7 @@ let compile linear =
             | Some (U.Single device) ->
                 let dev = Device.get device in
                 (match Device.queue dev with
-                 | Some q when U.op body = Ops.Program || q.copy ->
+                 | Some q when U.op body = Ops.Program || q.copy call ->
                      Some {call; device = Device.name dev;
                        queue = if U.op body = Ops.Program then "COMPUTE:0" else "COPY:0"}
                  | _ -> None)

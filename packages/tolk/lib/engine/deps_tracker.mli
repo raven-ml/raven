@@ -5,7 +5,7 @@
 
 (** Byte-interval dependencies shared by queue compilation and execution. *)
 
-type allocation = Graph of int | Storage of int
+type allocation = Graph of int | Parameter of int | Storage of int
 
 type region = { base : allocation; lane : int option; start : int; stop : int }
 (** A half-open byte interval of one allocation and optional device lane. *)
@@ -27,4 +27,5 @@ val buffer : Device.Buffer.t -> region
 
 val uop : Tolk_uop.Uop.t -> region
 (** [uop u] describes a storage argument before allocation, preserving its
-    base identity, device lane and contiguous byte views. *)
+    base identity, device lane and contiguous byte views. Ordinary parameters
+    identify an input slot, independently of their view shape. *)

@@ -75,6 +75,15 @@ let overlap_waits () =
   equal int 2 (List.length plan.signals);
   equal int 1 (List.length plan.timelines)
 
+let parameter_views () =
+  let small = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~device:(U.Single "NV") () in
+  let large = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 32)
+      ~device:(U.Single "NV") () in
+  let plan = Hcq2.plan [copy "NV" "COPY:0" small (slice (parameter 1) 0 1);
+      copy "NV" "COMPUTE:0" (parameter 2) large] in
+  equal (list int) [1; 1] (constant_waits (queue plan "NV" "COMPUTE:0"))
+
 let nv_chain () =
   let a = parameter 0 and b = parameter 1 and c = parameter 2 in
   let plan = Hcq2.plan [copy "NV" "COMPUTE:0" (slice c 0 8) (slice b 0 8);
@@ -123,7 +132,7 @@ let compiled_host_submission () =
             if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
         Some (U.group nodes)
     | _ -> None in
-  let queue = Device.{host = "CPU"; copy = true; encode; lower = (fun _ -> None);
+  let queue = Device.{host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
   let renderer_set = Device.Renderer_set.make ~device:name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
@@ -166,6 +175,7 @@ let () = run "Engine_hcq2" [
   test "byte intervals match a per-byte dependency model" byte_dependencies;
   test "owned aliases and device lanes preserve allocation identity" region_identity;
   test "only overlapping accesses wait across queues" overlap_waits;
+  test "parameter views retain their shared runtime slot" parameter_views;
   test "NV cross-queue waits close the previous compute chain" nv_chain;
   test "peer epilogues and profiling slots participate in timelines" peers_and_timestamps;
   test "compiled host submission patches addresses and replays through timelines" compiled_host_submission;

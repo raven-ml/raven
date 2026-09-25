@@ -9,7 +9,7 @@ open Tolk
 
 type storage = { address : nativeint; host : bool; registered : bool }
 let buffer_kind : storage Type.Id.t = Type.Id.make ()
-let buffer_address buf = match Device.Buffer.get buffer_kind buf with
+let buffer_address ~device buf = match Device.Buffer.get ~device buffer_kind buf with
   | Some storage -> storage.address | None -> 0n
 
 module Ffi = struct
@@ -24,7 +24,6 @@ module Ffi = struct
   external ctx_set_current : nativeint -> unit
     = "caml_tolk_cuda_ctx_set_current"
 
-  external ctx_synchronize : unit -> unit = "caml_tolk_cuda_ctx_synchronize"
   external mem_alloc : int -> nativeint = "caml_tolk_cuda_mem_alloc"
   external mem_free : nativeint -> unit = "caml_tolk_cuda_mem_free"
   external mem_host_alloc : int -> nativeint = "caml_tolk_cuda_mem_host_alloc"
@@ -39,7 +38,7 @@ module Ffi = struct
   external host_write : nativeint -> bytes -> unit
     = "caml_tolk_cuda_host_write"
 
-  external memcpy_htod_async : nativeint -> nativeint -> int -> unit
+  external memcpy_htod_async : nativeint -> nativeint -> nativeint -> int -> unit
     = "caml_tolk_cuda_memcpy_htod_async"
 
   external memcpy_dtoh_ptr : nativeint -> nativeint -> int -> unit
@@ -48,7 +47,7 @@ module Ffi = struct
   external host_read : bytes -> nativeint -> unit
     = "caml_tolk_cuda_host_read"
 
-  external memcpy_async : nativeint -> nativeint -> int -> unit
+  external memcpy_async : nativeint -> nativeint -> nativeint -> int -> unit
     = "caml_tolk_cuda_memcpy_async"
 
   external module_load : bytes -> nativeint = "caml_tolk_cuda_module_load"
@@ -62,6 +61,7 @@ module Ffi = struct
 
   external launch_kernel :
     nativeint ->
+    nativeint ->
     nativeint array ->
     int64 array ->
     int array ->
@@ -69,46 +69,11 @@ module Ffi = struct
     bool ->
     float option = "caml_tolk_cuda_launch_kernel_bc" "caml_tolk_cuda_launch_kernel"
 
-  external graph_create : int -> nativeint = "caml_tolk_cuda_graph_create"
+  external hcq_create : nativeint -> nativeint = "caml_tolk_cuda_hcq_create"
+  external hcq_synchronize : nativeint -> unit = "caml_tolk_cuda_hcq_synchronize"
+  external hcq_symbol : string -> nativeint = "caml_tolk_cuda_hcq_symbol"
+  external program_function : nativeint -> nativeint = "caml_tolk_cuda_program_function"
 
-  external graph_add_kernel :
-    nativeint ->
-    nativeint ->
-    int array ->
-    int array ->
-    nativeint array ->
-    int64 array ->
-    int array ->
-    int = "caml_tolk_cuda_graph_add_kernel_bc" "caml_tolk_cuda_graph_add_kernel"
-
-  external graph_add_copy :
-    nativeint ->
-    nativeint ->
-    nativeint ->
-    nativeint ->
-    int ->
-    int array ->
-    int = "caml_tolk_cuda_graph_add_copy_bc" "caml_tolk_cuda_graph_add_copy"
-
-  external graph_instantiate : nativeint -> unit
-    = "caml_tolk_cuda_graph_instantiate"
-
-  external graph_set_buf : nativeint -> int -> int -> nativeint -> unit
-    = "caml_tolk_cuda_graph_set_buf"
-
-  external graph_set_val : nativeint -> int -> int -> int64 -> unit
-    = "caml_tolk_cuda_graph_set_val"
-
-  external graph_set_launch : nativeint -> int -> int array -> int array -> unit
-    = "caml_tolk_cuda_graph_set_launch"
-
-  external graph_set_params : nativeint -> int -> unit
-    = "caml_tolk_cuda_graph_set_params"
-
-  external graph_launch : nativeint -> bool -> float option
-    = "caml_tolk_cuda_graph_launch"
-
-  external graph_destroy : nativeint -> unit = "caml_tolk_cuda_graph_destroy"
 end
 
 module State = struct
@@ -116,6 +81,9 @@ module State = struct
     name : string;
     device : int;
     context : nativeint;
+    queue : nativeint;
+    mutable timeline : Device.Buffer.t option;
+    mutable handles : Device.Buffer.t option;
     arch : string;
     peers : (nativeint, bool) Hashtbl.t;
     mutable pending_copyin : (storage * int * Device.Buffer_spec.t) list;
@@ -132,14 +100,15 @@ module State = struct
     let context = Ffi.ctx_create cu_device in
     let major, minor = Ffi.compute_capability cu_device in
     let arch = Printf.sprintf "sm_%d%d" major minor in
-    let state = { name = Device.canonicalize name; device = cu_device; context; arch;
+    let queue = Ffi.hcq_create context in
+    let state = { queue; timeline = None; handles = None; name = Device.canonicalize name; device = cu_device; context; arch;
       peers = Hashtbl.create 4; pending_copyin = []; allocator = None } in
     devices := !devices @ [ state ];
     state
 
   let synchronize t =
     Ffi.ctx_set_current t.context;
-    Ffi.ctx_synchronize ();
+    Ffi.hcq_synchronize t.queue;
     let pending = t.pending_copyin in
     t.pending_copyin <- [];
     List.iter
@@ -191,7 +160,7 @@ module Allocator = struct
         let host = (Option.get state.State.allocator).Device.Allocator.alloc size host_spec in
         state.State.pending_copyin <- (host, size, host_spec) :: state.State.pending_copyin;
         Ffi.host_write host.address bytes;
-        Ffi.memcpy_htod_async buf.address host.address size
+        Ffi.memcpy_htod_async state.queue buf.address host.address size
       end
     in
     let copyout bytes buf =
@@ -211,7 +180,7 @@ module Allocator = struct
       | Some dst, Some source when State.enable_peer dst source ->
           if dst.context = source.context then begin
             Ffi.ctx_set_current dst.context;
-            Ffi.memcpy_async dest.address src.address nbytes
+            Ffi.memcpy_async dst.queue dest.address src.address nbytes
           end else begin
             State.synchronize source;
             State.synchronize dst;
@@ -277,11 +246,11 @@ module Program = struct
     let default_local = [| 1; 1; 1 |] in
     let unloaded = ref false in
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
-      let bufs = Array.map buffer_address bufs in
+      let bufs = Array.map (buffer_address ~device:state.State.name) bufs in
       if !unloaded then invalid_arg "CUDA program has been unloaded";
       let local = Option.value local ~default:default_local in
       Ffi.ctx_set_current state.State.context;
-      Ffi.launch_kernel func bufs vals global local
+      Ffi.launch_kernel state.queue func bufs vals global local
         wait
     in
     let free () =
@@ -294,52 +263,61 @@ module Program = struct
     Device.{ call; free; handle = func }
 end
 
-module Graph = struct
-  (* Batched replay through CUDA execution graphs: kernel launches become
-     kernel nodes and buffer copies become device-to-device memcpy nodes,
-     instantiated once and relaunched with a single driver call. *)
-  let build state (nodes : Device.Graph.node array) =
-    Ffi.ctx_set_current state.State.context;
-    let g = Ffi.graph_create (Array.length nodes) in
-    (try
-       Array.iter
-         (function
-           | Device.Graph.Kernel { handle; global; local; bufs; vals; deps } ->
-               ignore (Ffi.graph_add_kernel g handle global local
-                         (Array.map buffer_address bufs)
-                         (Array.map Int64.of_int vals) deps : int)
-           | Device.Graph.Copy { dest; src; nbytes; deps } ->
-               ignore (Ffi.graph_add_copy g state.State.context
-                         (buffer_address dest)
-                         (buffer_address src) nbytes
-                         deps : int))
-         nodes;
-       Ffi.graph_instantiate g
-     with exn -> Ffi.graph_destroy g; raise exn);
-    let exec =
-      {
-        Device.Graph.set_buf = (fun node pos buf ->
-          Ffi.graph_set_buf g node pos
-            (buffer_address buf));
-        set_val = (fun node idx v -> Ffi.graph_set_val g node idx (Int64.of_int v));
-        set_launch_dims = (fun node ~global ~local ->
-          Ffi.graph_set_launch g node global local);
-        set_params = (fun node -> Ffi.graph_set_params g node);
-        launch = (fun ~wait ->
-          Ffi.ctx_set_current state.State.context;
-          Ffi.graph_launch g wait);
-      }
-    in
-    Gc.finalise (fun (_ : Device.Graph.exec) -> Ffi.graph_destroy g) exec;
-    exec
+module Queue = struct
+  open Tolk_uop
+  module U = Uop
+  module B = Device.Buffer
 
-  let create state =
-    {
-      Device.Graph.supports_copy = true;
-      max_buffer_offset = None;
-      build = build state;
-    }
+  let word ?(release = fun () -> ()) value =
+    let base = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+    let allocator = {base with free = (fun address size spec ->
+        release (); base.free address size spec)} in
+    let b = B.create ~device:"CPU" ~size:1 ~dtype:Dtype.uint64
+        (Device.Allocator.Pack allocator) in
+    let bytes = Bytes.create 8 in
+    Bytes.set_int64_le bytes 0 (Int64.of_nativeint value);
+    B.ensure_allocated b;
+    B.copyin b bytes;
+    b
+
+  let bufferize state name u = match U.as_param u with
+    | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
+        let libs, symbol = (Marshal.from_string data 0 : string list * string) in
+        if libs <> [] then invalid_arg "CUDA host helpers do not load libraries";
+        Some (word (Ffi.hcq_symbol symbol))
+    | Some {param = {allocation = Some ("cuda_context", _); _}; _} ->
+        let b = match state.State.handles with
+          | Some b -> b
+          | None -> let b = word state.queue in state.handles <- Some b; b in
+        Some b
+    | Some {param = {allocation = Some ("cuda_function", data); _}; _} ->
+        let object_ = (Marshal.from_string data 0 : Tiny_elf.t) in
+        let program = Program.runtime state object_ in
+        (try Some (word (Ffi.program_function program.handle)
+            ~release:(fun () -> State.synchronize state; program.free ()))
+         with exn -> program.free (); raise exn)
+    | Some _ when U.node_tag u = Some "timeline" ->
+        let b = match state.State.timeline with
+          | Some b -> b
+          | None ->
+              let spec = {Device.Buffer_spec.default with host = true; nolru = true} in
+              let b = B.create ~device:name ~size:2 ~dtype:Dtype.uint64 ~spec
+                  (Device.Allocator.Pack (Allocator.raw state)) in
+              B.ensure_allocated b;
+              B.copyin b (Bytes.make 16 '\000'); state.timeline <- Some b; b in
+        Some b
+    | _ -> None
+
+  let create state device_name =
+    let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
+    let copy call = match U.as_call call with
+      | Some {args; _} -> List.for_all (fun arg ->
+          U.device_of arg = Some (U.Single state.State.name)) args
+      | None -> false in
+    Device.{host = Device.name host; copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
+      compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
 end
+
 
 let create name =
   let device_id =
@@ -363,4 +341,4 @@ let create name =
   let runtime = Program.runtime state in
   let synchronize () = State.synchronize state in
   Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ~graph:(Graph.create state) ()
+    ~queue:(Queue.create state name) ~bufferize:(Queue.bufferize state name) ()

@@ -80,7 +80,7 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 type queue = {
   host : string;
-  copy : bool;
+  copy : Tolk_uop.Uop.t -> bool;
   encode : Uop.t -> Uop.t option;
   lower : Uop.t -> Uop.t option;
   compile : Uop.t -> Uop.t;

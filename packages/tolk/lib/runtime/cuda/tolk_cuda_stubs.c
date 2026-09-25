@@ -12,6 +12,7 @@
 #include <caml/threads.h>
 #include "tolk_dl.h"
 #include <stdint.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,45 +32,10 @@ typedef struct CUmod_st *CUmodule;
 typedef struct CUfunc_st *CUfunction;
 typedef struct CUstream_st *CUstream;
 typedef struct CUevent_st *CUevent;
-typedef struct CUgraph_st *CUgraph;
-typedef struct CUgraphNode_st *CUgraphNode;
-typedef struct CUgraphExec_st *CUgraphExec;
-
 #define CU_LAUNCH_PARAM_END ((void *)0x00)
 #define CU_LAUNCH_PARAM_BUFFER_POINTER ((void *)0x01)
 #define CU_LAUNCH_PARAM_BUFFER_SIZE ((void *)0x02)
 #define CU_MEMHOSTALLOC_PORTABLE 0x01
-#define CU_MEMORYTYPE_DEVICE 0x02
-
-/* Driver-ABI layouts of the graph node parameter structs, as declared in
-   cuda.h for cuGraphAddKernelNode (v1 params) and cuGraphAddMemcpyNode. */
-typedef struct {
-  CUfunction func;
-  unsigned int gridDimX, gridDimY, gridDimZ;
-  unsigned int blockDimX, blockDimY, blockDimZ;
-  unsigned int sharedMemBytes;
-  void **kernelParams;
-  void **extra;
-} CUDA_KERNEL_NODE_PARAMS_v1;
-
-typedef struct {
-  size_t srcXInBytes, srcY, srcZ, srcLOD;
-  unsigned int srcMemoryType;
-  const void *srcHost;
-  CUdeviceptr srcDevice;
-  void *srcArray;
-  void *reserved0;
-  size_t srcPitch, srcHeight;
-  size_t dstXInBytes, dstY, dstZ, dstLOD;
-  unsigned int dstMemoryType;
-  void *dstHost;
-  CUdeviceptr dstDevice;
-  void *dstArray;
-  void *reserved1;
-  size_t dstPitch, dstHeight;
-  size_t WidthInBytes, Height, Depth;
-} CUDA_MEMCPY3D_v2;
-
 static CUresult (*p_cuInit)(unsigned int);
 static CUresult (*p_cuDeviceGet)(CUdevice *, int);
 static CUresult (*p_cuDeviceComputeCapability)(int *, int *, CUdevice);
@@ -103,23 +69,12 @@ static CUresult (*p_cuEventRecord)(CUevent, CUstream);
 static CUresult (*p_cuEventSynchronize)(CUevent);
 static CUresult (*p_cuEventElapsedTime)(float *, CUevent, CUevent);
 static CUresult (*p_cuEventDestroy)(CUevent);
-static CUresult (*p_cuGraphCreate)(CUgraph *, unsigned int);
-static CUresult (*p_cuGraphAddKernelNode)(CUgraphNode *, CUgraph,
-                                          const CUgraphNode *, size_t,
-                                          const CUDA_KERNEL_NODE_PARAMS_v1 *);
-static CUresult (*p_cuGraphAddMemcpyNode)(CUgraphNode *, CUgraph,
-                                          const CUgraphNode *, size_t,
-                                          const CUDA_MEMCPY3D_v2 *, CUcontext);
-static CUresult (*p_cuGraphInstantiate)(CUgraphExec *, CUgraph, CUgraphNode *,
-                                        char *, size_t);
-static CUresult (*p_cuGraphExecKernelNodeSetParams)(
-    CUgraphExec, CUgraphNode, const CUDA_KERNEL_NODE_PARAMS_v1 *);
-static CUresult (*p_cuGraphExecMemcpyNodeSetParams)(CUgraphExec, CUgraphNode,
-                                                    const CUDA_MEMCPY3D_v2 *,
-                                                    CUcontext);
-static CUresult (*p_cuGraphLaunch)(CUgraphExec, CUstream);
-static CUresult (*p_cuGraphExecDestroy)(CUgraphExec);
-static CUresult (*p_cuGraphDestroy)(CUgraph);
+static CUresult (*p_cuStreamCreate)(CUstream *, unsigned int);
+static CUresult (*p_cuStreamDestroy)(CUstream);
+static CUresult (*p_cuStreamQuery)(CUstream);
+static CUresult (*p_cuStreamWaitEvent)(CUstream, CUevent, unsigned int);
+static CUresult (*p_cuStreamWaitValue64)(CUstream, CUdeviceptr, uint64_t, unsigned int);
+static CUresult (*p_cuStreamWriteValue64)(CUstream, CUdeviceptr, uint64_t, unsigned int);
 
 static void *cuda_handle = NULL;
 
@@ -168,15 +123,12 @@ static void ensure_cuda(void) {
   LOAD_CUDA(p_cuEventSynchronize, "cuEventSynchronize");
   LOAD_CUDA(p_cuEventElapsedTime, "cuEventElapsedTime");
   LOAD_CUDA(p_cuEventDestroy, "cuEventDestroy_v2");
-  LOAD_CUDA(p_cuGraphCreate, "cuGraphCreate");
-  LOAD_CUDA(p_cuGraphAddKernelNode, "cuGraphAddKernelNode");
-  LOAD_CUDA(p_cuGraphAddMemcpyNode, "cuGraphAddMemcpyNode");
-  LOAD_CUDA(p_cuGraphInstantiate, "cuGraphInstantiate_v2");
-  LOAD_CUDA(p_cuGraphExecKernelNodeSetParams, "cuGraphExecKernelNodeSetParams");
-  LOAD_CUDA(p_cuGraphExecMemcpyNodeSetParams, "cuGraphExecMemcpyNodeSetParams");
-  LOAD_CUDA(p_cuGraphLaunch, "cuGraphLaunch");
-  LOAD_CUDA(p_cuGraphExecDestroy, "cuGraphExecDestroy");
-  LOAD_CUDA(p_cuGraphDestroy, "cuGraphDestroy");
+  LOAD_CUDA(p_cuStreamCreate, "cuStreamCreate");
+  LOAD_CUDA(p_cuStreamDestroy, "cuStreamDestroy_v2");
+  LOAD_CUDA(p_cuStreamQuery, "cuStreamQuery");
+  LOAD_CUDA(p_cuStreamWaitEvent, "cuStreamWaitEvent");
+  LOAD_CUDA(p_cuStreamWaitValue64, "cuStreamWaitValue64_v2");
+  LOAD_CUDA(p_cuStreamWriteValue64, "cuStreamWriteValue64_v2");
 #undef LOAD_CUDA
 }
 
@@ -189,6 +141,160 @@ static void cuda_check(CUresult status) {
              error != NULL ? error : "unknown error");
     caml_failwith(buf);
   }
+}
+
+/* The generated host program calls these ordinary C functions. They never
+   enter the OCaml runtime, including when submission fails. The first error
+   remains sticky until synchronization reports it; polling also recognizes
+   asynchronous stream faults so a failed launch cannot hang a replay fence. */
+typedef struct {
+  CUcontext context;
+  pthread_mutex_t lock;
+  CUstream streams[2];
+  CUevent handoff;
+  CUresult status;
+  int direct_pending, queue_pending;
+} tolk_cuda_queue;
+
+static CUresult queue_status(tolk_cuda_queue *q, CUresult status) {
+  if (q->status == 0) q->status = status;
+  return q->status;
+}
+
+static CUresult before_direct(tolk_cuda_queue *q) {
+  if (q->status != 0) return q->status;
+  queue_status(q, p_cuCtxSetCurrent(q->context));
+  if (q->status == 0 && q->queue_pending) {
+    queue_status(q, p_cuEventRecord(q->handoff, q->streams[1]));
+    if (q->status == 0)
+      queue_status(q, p_cuStreamWaitEvent(q->streams[0], q->handoff, 0));
+    q->queue_pending = 0;
+  }
+  q->direct_pending = 1;
+  return q->status;
+}
+
+static void tolk_cuda_hcq_begin(tolk_cuda_queue *q) {
+  pthread_mutex_lock(&q->lock);
+  if (q->status == 0) {
+    queue_status(q, p_cuCtxSetCurrent(q->context));
+    if (q->status == 0 && q->direct_pending) {
+      queue_status(q, p_cuEventRecord(q->handoff, q->streams[0]));
+      if (q->status == 0)
+        queue_status(q, p_cuStreamWaitEvent(q->streams[1], q->handoff, 0));
+      q->direct_pending = 0;
+    }
+    q->queue_pending = 1;
+  }
+  pthread_mutex_unlock(&q->lock);
+}
+
+static void tolk_cuda_hcq_launch(tolk_cuda_queue *q, CUfunction function,
+    uint64_t gx, uint64_t gy, uint64_t gz, uint64_t lx, uint64_t ly, uint64_t lz,
+    void *args, uint64_t bytes) {
+  size_t size = (size_t)bytes;
+  void *extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, args,
+    CU_LAUNCH_PARAM_BUFFER_SIZE, &size, CU_LAUNCH_PARAM_END};
+  pthread_mutex_lock(&q->lock);
+  if (q->status == 0)
+    queue_status(q, p_cuLaunchKernel(function, gx, gy, gz, lx, ly, lz, 0,
+                                    q->streams[0], NULL, extra));
+  pthread_mutex_unlock(&q->lock);
+}
+
+static void tolk_cuda_hcq_copy(tolk_cuda_queue *q, uint64_t dst, uint64_t src,
+                               uint64_t bytes) {
+  pthread_mutex_lock(&q->lock);
+  if (q->status == 0)
+    queue_status(q, p_cuMemcpyAsync(dst, src, bytes, q->streams[1]));
+  pthread_mutex_unlock(&q->lock);
+}
+
+static void tolk_cuda_hcq_wait(tolk_cuda_queue *q, uint64_t stream,
+                               uint64_t address, uint64_t value) {
+  pthread_mutex_lock(&q->lock);
+  if (q->status == 0)
+    queue_status(q, p_cuStreamWaitValue64(q->streams[stream], address, value, 0));
+  pthread_mutex_unlock(&q->lock);
+}
+
+static void tolk_cuda_hcq_signal(tolk_cuda_queue *q, uint64_t stream,
+                                 uint64_t address, uint64_t value) {
+  pthread_mutex_lock(&q->lock);
+  if (q->status == 0)
+    queue_status(q, p_cuStreamWriteValue64(q->streams[stream], address, value, 0));
+  pthread_mutex_unlock(&q->lock);
+}
+
+static uint64_t tolk_cuda_hcq_poll(tolk_cuda_queue *q, volatile uint64_t *signal) {
+  pthread_mutex_lock(&q->lock);
+  if (q->status == 0) queue_status(q, p_cuCtxSetCurrent(q->context));
+  for (int i = 0; i < 2 && q->status == 0; i++) {
+    CUresult status = p_cuStreamQuery(q->streams[i]);
+    if (status != 600) queue_status(q, status); /* CUDA_ERROR_NOT_READY */
+  }
+  uint64_t value = q->status == 0 ? *signal : UINT64_MAX;
+  pthread_mutex_unlock(&q->lock);
+  return value;
+}
+
+CAMLprim value caml_tolk_cuda_hcq_create(value v_context) {
+  CAMLparam1(v_context);
+  CAMLlocal1(result);
+  result = caml_copy_nativeint(0);
+  tolk_cuda_queue *q = calloc(1, sizeof(*q));
+  if (q == NULL) caml_raise_out_of_memory();
+  if (pthread_mutex_init(&q->lock, NULL) != 0) {
+    free(q);
+    caml_failwith("CUDA queue mutex initialization failed");
+  }
+  q->context = (CUcontext)Nativeint_val(v_context);
+  CUresult status = p_cuStreamCreate(&q->streams[0], 1); /* nonblocking */
+  if (status == 0) status = p_cuStreamCreate(&q->streams[1], 1);
+  if (status == 0) status = p_cuEventCreate(&q->handoff, 2); /* no timing */
+  if (status != 0) {
+    if (q->streams[0] != NULL) p_cuStreamDestroy(q->streams[0]);
+    if (q->streams[1] != NULL) p_cuStreamDestroy(q->streams[1]);
+    pthread_mutex_destroy(&q->lock);
+    free(q);
+    cuda_check(status);
+  }
+  Nativeint_val(result) = (intnat)q;
+  CAMLreturn(result);
+}
+
+CAMLprim value caml_tolk_cuda_hcq_synchronize(value v_queue) {
+  CAMLparam1(v_queue);
+  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
+  pthread_mutex_lock(&q->lock);
+  CUresult pending = q->status;
+  pthread_mutex_unlock(&q->lock);
+  cuda_check(pending);
+  cuda_check(p_cuCtxSetCurrent(q->context));
+  caml_release_runtime_system();
+  CUresult status = p_cuCtxSynchronize();
+  caml_acquire_runtime_system();
+  pthread_mutex_lock(&q->lock);
+  status = queue_status(q, status);
+  pthread_mutex_unlock(&q->lock);
+  cuda_check(status);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_cuda_hcq_symbol(value v_name) {
+  CAMLparam1(v_name);
+  const char *name = String_val(v_name);
+  void *symbol = NULL;
+#define HCQ_SYMBOL(fn) if (strcmp(name, #fn) == 0) symbol = (void *)fn
+  HCQ_SYMBOL(tolk_cuda_hcq_begin);
+  HCQ_SYMBOL(tolk_cuda_hcq_launch);
+  HCQ_SYMBOL(tolk_cuda_hcq_copy);
+  HCQ_SYMBOL(tolk_cuda_hcq_wait);
+  HCQ_SYMBOL(tolk_cuda_hcq_signal);
+  HCQ_SYMBOL(tolk_cuda_hcq_poll);
+#undef HCQ_SYMBOL
+  if (symbol == NULL) caml_invalid_argument("Unknown CUDA submission helper");
+  CAMLreturn(caml_copy_nativeint((intnat)symbol));
 }
 
 CAMLprim value caml_tolk_cuda_init(value unit) {
@@ -227,16 +333,6 @@ CAMLprim value caml_tolk_cuda_ctx_create(value v_device) {
 CAMLprim value caml_tolk_cuda_ctx_set_current(value v_ctx) {
   CAMLparam1(v_ctx);
   cuda_check(p_cuCtxSetCurrent((CUcontext)Nativeint_val(v_ctx)));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_ctx_synchronize(value unit) {
-  CAMLparam1(unit);
-  CUresult status;
-  caml_release_runtime_system();
-  status = p_cuCtxSynchronize();
-  caml_acquire_runtime_system();
-  cuda_check(status);
   CAMLreturn(Val_unit);
 }
 
@@ -320,12 +416,17 @@ CAMLprim value caml_tolk_cuda_host_write(value v_host, value v_bytes) {
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_cuda_memcpy_htod_async(value v_dst, value v_src,
-                                                value v_size) {
-  CAMLparam3(v_dst, v_src, v_size);
-  cuda_check(p_cuMemcpyHtoDAsync((CUdeviceptr)Nativeint_val(v_dst),
-                                 (const void *)Nativeint_val(v_src),
-                                 (size_t)Long_val(v_size), NULL));
+CAMLprim value caml_tolk_cuda_memcpy_htod_async(value v_queue, value v_dst,
+                                                value v_src, value v_size) {
+  CAMLparam4(v_queue, v_dst, v_src, v_size);
+  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
+  pthread_mutex_lock(&q->lock);
+  CUresult status = before_direct(q);
+  if (status == 0) status = p_cuMemcpyHtoDAsync(
+      (CUdeviceptr)Nativeint_val(v_dst), (const void *)Nativeint_val(v_src),
+      (size_t)Long_val(v_size), q->streams[0]);
+  pthread_mutex_unlock(&q->lock);
+  cuda_check(status);
   CAMLreturn(Val_unit);
 }
 
@@ -353,12 +454,17 @@ CAMLprim value caml_tolk_cuda_host_read(value v_bytes, value v_host) {
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_cuda_memcpy_async(value v_dst, value v_src,
-                                                value v_size) {
-  CAMLparam3(v_dst, v_src, v_size);
-  cuda_check(p_cuMemcpyAsync((CUdeviceptr)Nativeint_val(v_dst),
-                                 (CUdeviceptr)Nativeint_val(v_src),
-                                 (size_t)Long_val(v_size), NULL));
+CAMLprim value caml_tolk_cuda_memcpy_async(value v_queue, value v_dst,
+                                                value v_src, value v_size) {
+  CAMLparam4(v_queue, v_dst, v_src, v_size);
+  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
+  pthread_mutex_lock(&q->lock);
+  CUresult status = before_direct(q);
+  if (status == 0) status = p_cuMemcpyAsync(
+      (CUdeviceptr)Nativeint_val(v_dst), (CUdeviceptr)Nativeint_val(v_src),
+      (size_t)Long_val(v_size), q->streams[0]);
+  pthread_mutex_unlock(&q->lock);
+  cuda_check(status);
   CAMLreturn(Val_unit);
 }
 
@@ -422,6 +528,11 @@ CAMLprim value caml_tolk_cuda_program_free(value v_program) {
   CAMLreturn(Val_unit);
 }
 
+CAMLprim value caml_tolk_cuda_program_function(value v_program) {
+  CAMLparam1(v_program);
+  CAMLreturn(caml_copy_nativeint((intnat)program_val(v_program)->func));
+}
+
 static void write_arg(char *args, tolk_cuda_arg field, uint64_t bits) {
   for (size_t i = 0; i < field.width; ++i)
     args[field.offset + i] = (char)(bits >> (8 * i));
@@ -450,11 +561,12 @@ CAMLprim value caml_tolk_cuda_module_unload(value v_module) {
    and alignment in the CU_LAUNCH_PARAM_BUFFER_POINTER structure.
    When [wait] is true, the launch is timed
    with a pair of events and the elapsed GPU time in seconds is returned. */
-CAMLprim value caml_tolk_cuda_launch_kernel(value v_func, value v_bufs,
+CAMLprim value caml_tolk_cuda_launch_kernel(value v_queue, value v_func, value v_bufs,
                                             value v_vals, value v_global,
                                             value v_local, value v_wait) {
-  CAMLparam5(v_func, v_bufs, v_vals, v_global, v_local);
-  CAMLxparam1(v_wait);
+  CAMLparam5(v_queue, v_func, v_bufs, v_vals, v_global);
+  CAMLxparam2(v_local, v_wait);
+  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
   CAMLlocal2(v_time, v_some);
   tolk_cuda_program *prg = program_val(v_func);
   CUfunction func = prg->func;
@@ -478,16 +590,18 @@ CAMLprim value caml_tolk_cuda_launch_kernel(value v_func, value v_bufs,
                      CU_LAUNCH_PARAM_END};
 
   CUevent start = NULL, stop = NULL;
-  CUresult status = 0;
-  if (wait) {
+  pthread_mutex_lock(&q->lock);
+  CUresult status = before_direct(q);
+  if (wait && status == 0) {
     status = p_cuEventCreate(&start, 0);
     if (status == 0) status = p_cuEventCreate(&stop, 0);
-    if (status == 0) status = p_cuEventRecord(start, NULL);
+    if (status == 0) status = p_cuEventRecord(start, q->streams[0]);
   }
   if (status == 0)
-    status = p_cuLaunchKernel(func, gx, gy, gz, lx, ly, lz, 0, NULL, NULL,
+    status = p_cuLaunchKernel(func, gx, gy, gz, lx, ly, lz, 0, q->streams[0], NULL,
                               config);
-  if (wait && status == 0) status = p_cuEventRecord(stop, NULL);
+  if (wait && status == 0) status = p_cuEventRecord(stop, q->streams[0]);
+  pthread_mutex_unlock(&q->lock);
   free(c_args);
 
   float elapsed_ms = 0.0f;
@@ -510,294 +624,5 @@ CAMLprim value caml_tolk_cuda_launch_kernel(value v_func, value v_bufs,
 CAMLprim value caml_tolk_cuda_launch_kernel_bc(value *argv, int argc) {
   (void)argc;
   return caml_tolk_cuda_launch_kernel(argv[0], argv[1], argv[2], argv[3],
-                                      argv[4], argv[5]);
-}
-
-/* Execution graphs. A graph is built once from a fixed sequence of kernel
-   and memcpy nodes, instantiated, and relaunched with a single call. Each
-   node keeps its parameter structs in C memory so replays can patch buffer
-   addresses, scalar values, and launch dimensions before committing them
-   with cuGraphExec*NodeSetParams. The node array is allocated at its final
-   capacity up front: kernel nodes point into their own struct (extra ->
-   config -> args), so the array must never be reallocated. */
-
-typedef struct {
-  CUgraphNode node;
-  int is_copy;
-  CUDA_KERNEL_NODE_PARAMS_v1 kparams;
-  CUDA_MEMCPY3D_v2 cparams;
-  CUcontext copy_ctx;
-  char *args;
-  tolk_cuda_arg *fields;  /* Owns one allocation containing fields and args. */
-  size_t args_size;
-  size_t nbufs;
-  size_t nvals;
-  void *config[5];
-} tolk_graph_node;
-
-typedef struct {
-  CUgraph graph;
-  CUgraphExec exec;
-  int n;
-  int cap;
-  tolk_graph_node *nodes;
-} tolk_graph;
-
-static tolk_graph *graph_val(value v) { return (tolk_graph *)Nativeint_val(v); }
-
-static tolk_graph_node *graph_node(value v_graph, value v_node) {
-  tolk_graph *g = graph_val(v_graph);
-  int i = Int_val(v_node);
-  if (i < 0 || i >= g->n) caml_failwith("CUDA graph node index out of range");
-  return &g->nodes[i];
-}
-
-/* Collect dependency handles into [deps]; returns the count. */
-static size_t graph_deps(tolk_graph *g, value v_deps, CUgraphNode *deps) {
-  mlsize_t ndeps = Wosize_val(v_deps);
-  for (mlsize_t i = 0; i < ndeps; ++i) {
-    long d = Long_val(Field(v_deps, i));
-    if (d < 0 || d >= g->n) caml_failwith("CUDA graph dependency out of range");
-    deps[i] = g->nodes[d].node;
-  }
-  return (size_t)ndeps;
-}
-
-CAMLprim value caml_tolk_cuda_graph_create(value v_count) {
-  CAMLparam1(v_count);
-  long count = Long_val(v_count);
-  if (count < 0) caml_failwith("CUDA graph node count must be non-negative");
-  tolk_graph *g = (tolk_graph *)calloc(1, sizeof(tolk_graph));
-  if (g == NULL) caml_failwith("CUDA graph allocation failed");
-  g->cap = (int)count;
-  g->nodes = (tolk_graph_node *)calloc(count > 0 ? count : 1,
-                                       sizeof(tolk_graph_node));
-  if (g->nodes == NULL) {
-    free(g);
-    caml_failwith("CUDA graph allocation failed");
-  }
-  CUresult status = p_cuGraphCreate(&g->graph, 0);
-  if (status != 0) {
-    free(g->nodes);
-    free(g);
-    cuda_check(status);
-  }
-  CAMLreturn(caml_copy_nativeint((intnat)g));
-}
-
-CAMLprim value caml_tolk_cuda_graph_add_kernel(value v_graph, value v_func,
-                                               value v_global, value v_local,
-                                               value v_bufs, value v_vals,
-                                               value v_deps) {
-  CAMLparam5(v_graph, v_func, v_global, v_local, v_bufs);
-  CAMLxparam2(v_vals, v_deps);
-  tolk_graph *g = graph_val(v_graph);
-  if (g->n >= g->cap) caml_failwith("CUDA graph node capacity exceeded");
-  if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3)
-    caml_failwith("CUDA graph kernel expects 3D sizes");
-  tolk_graph_node *node = &g->nodes[g->n];
-  tolk_cuda_program *prg = program_val(v_func);
-  check_args(prg, v_bufs, v_vals);
-  CUgraphNode deps[Wosize_val(v_deps) + 1];
-  size_t ndeps = graph_deps(g, v_deps, deps);
-  node->is_copy = 0;
-  node->nbufs = prg->nbufs;
-  node->nvals = prg->nvals;
-  node->args_size = prg->args_size;
-  size_t fields_size = (prg->nbufs + prg->nvals) * sizeof(*prg->args);
-  size_t alloc_size = fields_size + node->args_size;
-  node->fields = calloc(alloc_size > 0 ? alloc_size : 1, 1);
-  if (node->fields == NULL) caml_raise_out_of_memory();
-  memcpy(node->fields, prg->args, fields_size);
-  node->args = (char *)node->fields + fields_size;
-  pack_args(prg, node->args, v_bufs, v_vals);
-  node->config[0] = CU_LAUNCH_PARAM_BUFFER_POINTER;
-  node->config[1] = node->args;
-  node->config[2] = CU_LAUNCH_PARAM_BUFFER_SIZE;
-  node->config[3] = &node->args_size;
-  node->config[4] = CU_LAUNCH_PARAM_END;
-  node->kparams.func = prg->func;
-  node->kparams.gridDimX = (unsigned int)Long_val(Field(v_global, 0));
-  node->kparams.gridDimY = (unsigned int)Long_val(Field(v_global, 1));
-  node->kparams.gridDimZ = (unsigned int)Long_val(Field(v_global, 2));
-  node->kparams.blockDimX = (unsigned int)Long_val(Field(v_local, 0));
-  node->kparams.blockDimY = (unsigned int)Long_val(Field(v_local, 1));
-  node->kparams.blockDimZ = (unsigned int)Long_val(Field(v_local, 2));
-  node->kparams.sharedMemBytes = 0;
-  node->kparams.kernelParams = NULL;
-  node->kparams.extra = node->config;
-  CUresult status = p_cuGraphAddKernelNode(&node->node, g->graph,
-                                           ndeps > 0 ? deps : NULL, ndeps,
-                                           &node->kparams);
-  if (status != 0) {
-    free(node->fields);
-    node->fields = NULL;
-    node->args = NULL;
-    cuda_check(status);
-  }
-  g->n += 1;
-  CAMLreturn(Val_int(g->n - 1));
-}
-
-CAMLprim value caml_tolk_cuda_graph_add_kernel_bc(value *argv, int argc) {
-  (void)argc;
-  return caml_tolk_cuda_graph_add_kernel(argv[0], argv[1], argv[2], argv[3],
-                                         argv[4], argv[5], argv[6]);
-}
-
-CAMLprim value caml_tolk_cuda_graph_add_copy(value v_graph, value v_ctx,
-                                             value v_dest, value v_src,
-                                             value v_nbytes, value v_deps) {
-  CAMLparam5(v_graph, v_ctx, v_dest, v_src, v_nbytes);
-  CAMLxparam1(v_deps);
-  tolk_graph *g = graph_val(v_graph);
-  if (g->n >= g->cap) caml_failwith("CUDA graph node capacity exceeded");
-  tolk_graph_node *node = &g->nodes[g->n];
-  size_t nbytes = (size_t)Long_val(v_nbytes);
-  node->is_copy = 1;
-  node->copy_ctx = (CUcontext)Nativeint_val(v_ctx);
-  node->cparams.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-  node->cparams.srcDevice = (CUdeviceptr)Nativeint_val(v_src);
-  node->cparams.srcPitch = nbytes;
-  node->cparams.srcHeight = 1;
-  node->cparams.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-  node->cparams.dstDevice = (CUdeviceptr)Nativeint_val(v_dest);
-  node->cparams.dstPitch = nbytes;
-  node->cparams.dstHeight = 1;
-  node->cparams.WidthInBytes = nbytes;
-  node->cparams.Height = 1;
-  node->cparams.Depth = 1;
-  CUgraphNode deps[Wosize_val(v_deps) + 1];
-  size_t ndeps = graph_deps(g, v_deps, deps);
-  cuda_check(p_cuGraphAddMemcpyNode(&node->node, g->graph,
-                                    ndeps > 0 ? deps : NULL, ndeps,
-                                    &node->cparams, node->copy_ctx));
-  g->n += 1;
-  CAMLreturn(Val_int(g->n - 1));
-}
-
-CAMLprim value caml_tolk_cuda_graph_add_copy_bc(value *argv, int argc) {
-  (void)argc;
-  return caml_tolk_cuda_graph_add_copy(argv[0], argv[1], argv[2], argv[3],
-                                       argv[4], argv[5]);
-}
-
-CAMLprim value caml_tolk_cuda_graph_instantiate(value v_graph) {
-  CAMLparam1(v_graph);
-  tolk_graph *g = graph_val(v_graph);
-  CUresult status;
-  caml_release_runtime_system();
-  status = p_cuGraphInstantiate(&g->exec, g->graph, NULL, NULL, 0);
-  caml_acquire_runtime_system();
-  cuda_check(status);
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_graph_set_buf(value v_graph, value v_node,
-                                            value v_pos, value v_addr) {
-  CAMLparam4(v_graph, v_node, v_pos, v_addr);
-  tolk_graph_node *node = graph_node(v_graph, v_node);
-  CUdeviceptr addr = (CUdeviceptr)Nativeint_val(v_addr);
-  long pos = Long_val(v_pos);
-  if (node->is_copy) {
-    if (pos == 1)
-      node->cparams.srcDevice = addr;
-    else
-      node->cparams.dstDevice = addr;
-  } else {
-    if (pos < 0 || (size_t)pos >= node->nbufs)
-      caml_failwith("CUDA graph buffer position out of range");
-    write_arg(node->args, node->fields[pos], addr);
-  }
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_graph_set_val(value v_graph, value v_node,
-                                            value v_idx, value v_val) {
-  CAMLparam4(v_graph, v_node, v_idx, v_val);
-  tolk_graph_node *node = graph_node(v_graph, v_node);
-  long idx = Long_val(v_idx);
-  if (node->is_copy || idx < 0 || (size_t)idx >= node->nvals)
-    caml_failwith("CUDA graph value index out of range");
-  write_arg(node->args, node->fields[node->nbufs + idx], (uint64_t)Int64_val(v_val));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_graph_set_launch(value v_graph, value v_node,
-                                               value v_global, value v_local) {
-  CAMLparam4(v_graph, v_node, v_global, v_local);
-  tolk_graph_node *node = graph_node(v_graph, v_node);
-  if (node->is_copy)
-    caml_failwith("CUDA graph launch dims on a memcpy node");
-  if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3)
-    caml_failwith("CUDA graph launch expects 3D sizes");
-  node->kparams.gridDimX = (unsigned int)Long_val(Field(v_global, 0));
-  node->kparams.gridDimY = (unsigned int)Long_val(Field(v_global, 1));
-  node->kparams.gridDimZ = (unsigned int)Long_val(Field(v_global, 2));
-  node->kparams.blockDimX = (unsigned int)Long_val(Field(v_local, 0));
-  node->kparams.blockDimY = (unsigned int)Long_val(Field(v_local, 1));
-  node->kparams.blockDimZ = (unsigned int)Long_val(Field(v_local, 2));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_graph_set_params(value v_graph, value v_node) {
-  CAMLparam2(v_graph, v_node);
-  tolk_graph *g = graph_val(v_graph);
-  tolk_graph_node *node = graph_node(v_graph, v_node);
-  if (g->exec == NULL) caml_failwith("CUDA graph is not instantiated");
-  if (node->is_copy)
-    cuda_check(p_cuGraphExecMemcpyNodeSetParams(g->exec, node->node,
-                                                &node->cparams,
-                                                node->copy_ctx));
-  else
-    cuda_check(p_cuGraphExecKernelNodeSetParams(g->exec, node->node,
-                                                &node->kparams));
-  CAMLreturn(Val_unit);
-}
-
-/* Launch the instantiated graph. When [wait] is true, the launch is timed
-   with a pair of events and the elapsed GPU time in seconds is returned. */
-CAMLprim value caml_tolk_cuda_graph_launch(value v_graph, value v_wait) {
-  CAMLparam2(v_graph, v_wait);
-  CAMLlocal2(v_time, v_some);
-  tolk_graph *g = graph_val(v_graph);
-  int wait = Bool_val(v_wait);
-  if (g->exec == NULL) caml_failwith("CUDA graph is not instantiated");
-
-  CUevent start = NULL, stop = NULL;
-  CUresult status = 0;
-  if (wait) {
-    status = p_cuEventCreate(&start, 0);
-    if (status == 0) status = p_cuEventCreate(&stop, 0);
-    if (status == 0) status = p_cuEventRecord(start, NULL);
-  }
-  if (status == 0) status = p_cuGraphLaunch(g->exec, NULL);
-  if (wait && status == 0) status = p_cuEventRecord(stop, NULL);
-
-  float elapsed_ms = 0.0f;
-  if (wait && status == 0) {
-    caml_release_runtime_system();
-    status = p_cuEventSynchronize(stop);
-    caml_acquire_runtime_system();
-    if (status == 0) status = p_cuEventElapsedTime(&elapsed_ms, start, stop);
-  }
-  if (start != NULL) p_cuEventDestroy(start);
-  if (stop != NULL) p_cuEventDestroy(stop);
-  cuda_check(status);
-
-  if (!wait) CAMLreturn(Val_none);
-  v_time = caml_copy_double((double)elapsed_ms * 1e-3);
-  v_some = caml_alloc_some(v_time);
-  CAMLreturn(v_some);
-}
-
-CAMLprim value caml_tolk_cuda_graph_destroy(value v_graph) {
-  CAMLparam1(v_graph);
-  tolk_graph *g = graph_val(v_graph);
-  if (g->exec != NULL) p_cuGraphExecDestroy(g->exec);
-  if (g->graph != NULL) p_cuGraphDestroy(g->graph);
-  for (int i = 0; i < g->n; ++i) free(g->nodes[i].fields);
-  free(g->nodes);
-  free(g);
-  CAMLreturn(Val_unit);
+                                      argv[4], argv[5], argv[6]);
 }

@@ -4,7 +4,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-type allocation = Graph of int | Storage of int
+type allocation = Graph of int | Parameter of int | Storage of int
 
 type region = { base : allocation; lane : int option; start : int; stop : int }
 type 'a t = {
@@ -70,6 +70,8 @@ let uop u =
              | Some b -> Storage (Device.Buffer.base_id b), None,
                  add offset (Device.Buffer.offset b)
              | None -> Graph (U.tag u), lane, offset)
+        | Tolk_uop.Ops.Param, U.Arg.Param_arg {slot; allocation = None; _}
+            when U.node_tag u = None -> Parameter slot, lane, offset
         | (Tolk_uop.Ops.Param | Tolk_uop.Ops.Buffer), _ -> Graph (U.tag u), lane, offset
         | _ -> invalid_arg "Deps_tracker.uop: expected contiguous storage" in
   let base, lane, start = unwrap u None 0 in

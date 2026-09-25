@@ -386,6 +386,13 @@ thread.
 
 ### Tolk (new)
 
+- Replace CUDA graph replay with host-compiled compute and copy queues.
+  Linked kernels and argument storage survive replay; event handoffs order
+  ordinary dispatches and uploads with queued work.
+
+- Preserve queue dependencies between differently shaped views of the same
+  input parameter slot, so a copy completes before its consumer kernel.
+
 - CUDA buffers expose pinned host storage and mapped views to the shared
   linker. Cross-device copies enable peer access when supported and otherwise
   use the executor’s host fallback.

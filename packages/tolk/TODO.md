@@ -33,8 +33,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection and eager submission-template caching.
-  Migrate CUDA queues. Implement CUDA peer enablement and synchronized
-  cross-device transfer with unsupported-peer fallback. Port AMD queue
+  Bring CUDA host and peer copies onto the queue path with runtime mapping
+  eligibility and unsupported-mapping fallback. Audit CUDA context/stream
+  destruction and concurrent driver initialization. Port AMD queue
   descriptors, AQL/multi-XCC, race/recovery fixes and consumed firmware/register
   tables. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.

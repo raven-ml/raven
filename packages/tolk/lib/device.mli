@@ -96,7 +96,7 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 type queue = {
   host : string; (** Host device executing submission programs. *)
-  copy : bool; (** Whether the device can enqueue bulk stores. *)
+  copy : Tolk_uop.Uop.t -> bool; (** [copy call] whether this bulk-store call can use the device queue. *)
   encode : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option;
       (** Rewrites a device submit function into host operations. *)
   lower : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option;

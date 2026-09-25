@@ -533,6 +533,7 @@ let () =
             equal (list int) [ 24 ] (read_i32 a));
           test "copies use the device transfer path" (fun () ->
             let device = metal_device () in
-            is_false (Option.get (Device.queue device)).Device.copy);
+            let src = U.from_buffer (i32_buf device [1]) and dst = U.from_buffer (i32_buf device [0]) in
+            is_false ((Option.get (Device.queue device)).Device.copy (U.store_call ~dst ~src)));
         ];
     ]

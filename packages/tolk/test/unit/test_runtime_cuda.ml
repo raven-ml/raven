@@ -93,61 +93,37 @@ let call_spec device spec bufs var_vals =
 
 let run_spec device spec bufs = ignore (call_spec device spec bufs [])
 
-(* Graph helpers *)
+let queue_call device spec slots =
+  let info = Program_spec.program_info spec in
+  let kernel_info = U.{name = Program_spec.name spec; applied_opts = [];
+    opts_to_apply = None; estimates = None; beam = 0} in
+  let program = U.program ~sink:(U.sink ~kernel_info (Program_spec.program spec))
+      ~linear:(U.linear (Program_spec.program spec))
+      ~source:(U.source (Program_spec.src spec))
+      ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib spec)))) ~info () in
+  let args = List.mapi (fun i slot ->
+      let formal = List.find (fun u -> match U.as_param u with
+          | Some {param; _} -> param.slot = List.nth info.globals i
+          | None -> false) (Program_spec.program spec) in
+      U.param ~slot ~dtype:(U.dtype formal) ~shape:(U.const_int (U.max_numel formal))
+        ~device:(U.Single (Device.name device)) ()) slots in
+  U.call ~body:program ~args
+    ~info:{grad_fxn = None; name = None; precompile = false;
+      precompile_backward = false; aux = None; dtype = Dtype.void}
 
-let device_graph device =
-  match Device.graph device with
-  | Some g -> g
-  | None -> fail "CUDA device has no graph capability"
+let compile_queue device calls =
+  let to_program = Codegen.to_program device (Device.renderer device) in
+  let compiled = Realize.compile_linear ~device ~to_program (U.linear calls) in
+  is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
+      match U.arg (U.without_after call) with
+      | U.Arg.Call_info {aux = Some _; _} -> true | _ -> false) (U.children compiled));
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  fun ?(wait = false) ?(vars = []) inputs ->
+    Realize.run_linear ~device ~to_program ~jit:true ~wait ~var_vals:vars
+      ~input_uops:(Array.map U.from_buffer inputs) binding linked
 
-let prog_of_spec device spec =
-  let lib =
-    match Program_spec.lib spec with
-    | Some lib -> lib
-    | None ->
-        let comp = Option.get (Renderer.compiler (Device.renderer device)) in
-        Compiler.compile_cached comp (Program_spec.src spec)
-  in
-  Device.runtime device (Program_spec.to_elf (Program_spec.with_lib lib spec))
-
-let ones3 = [| 1; 1; 1 |]
-
-let kernel_node handle bufs ?(vals = [||]) ?(deps = [||]) () =
-  Device.Graph.Kernel
-    {
-      handle;
-      global = ones3;
-      local = ones3;
-      bufs;
-      vals;
-      deps;
-    }
-
-(* Engine-level graph helpers: schedule a tensor sink, compile it, and wrap
-   every call into one CUSTOM_FUNCTION "graph" call, as the JIT's graph
-   batching does. *)
-
-let graph_call_info : U.call_info =
-  {
-    grad_fxn = None;
-    name = None;
-    precompile = false;
-    precompile_backward = false;
-    dtype = Dtype.void;
-    aux = None;
-  }
-
-let wrap_graph linear =
-  let cf =
-    U.custom_function ~name:"graph" ~srcs:[ U.linear (U.children linear) ]
-  in
-  let call =
-    U.call ~body:(U.custom_function ~name:"graph" ~srcs:[]) ~args:[]
-      ~info:graph_call_info
-  in
-  U.linear [ U.replace call ~src:[| cf |] () ]
-
-let schedule_graph_linear device ~to_program sink =
+let schedule_queue_linear device ~to_program sink =
   let call, buffer_map = bufferized_call sink in
   let linear, var_vals =
     Schedule.create_linear_with_vars
@@ -253,16 +229,10 @@ let test_mixed_scalar_widths () =
     List.init 4 (fun i -> Bytes.get_int64_le bytes (8 * i)) in
   ignore (call_spec device spec [ buffer ] bindings);
   equal (list int64) [ -7L; 300L; 12345L; 0x1_0000_0002L ] (read ());
-  let prg = prog_of_spec device spec in
-  Fun.protect ~finally:prg.free (fun () ->
-      let vals = Array.of_list (List.map snd bindings) in
-      let graph = (device_graph device).build [| kernel_node prg.handle [| buffer |] ~vals () |] in
-      ignore (graph.launch ~wait:false);
-      graph.set_val 0 0 11;
-      graph.set_val 0 3 0x2_0000_0003;
-      graph.set_params 0;
-      ignore (graph.launch ~wait:true);
-      equal (list int64) [ 11L; 300L; 12345L; 0x2_0000_0003L ] (read ()))
+  let replay = compile_queue device [queue_call device spec [0]] in
+  replay ~vars:bindings [|buffer|];
+  replay ~wait:true ~vars:["small", 11; "halfword", 300; "word", 12345; "wide", 0x2_0000_0003] [|buffer|];
+  equal (list int64) [11L; 300L; 12345L; 0x2_0000_0003L] (read ())
 
 let () =
   run "Cuda_runtime"
@@ -368,96 +338,47 @@ let () =
               is_true (Device.Buffer.transfer ~dst ~src);
               equal (list int) [ 0; 3; 4; 0 ] (read_i32 dst_base));
         ];
-      group "Graph"
+      group "Queues"
         [
           test "replays a multi-kernel chain" (fun () ->
               let device = cuda_device () in
-              let prog =
-                prog_of_spec device (compile_incr device "cuda_graph_chain")
-              in
-              let a = i32_buf device [ 41 ] in
-              let b = i32_buf device [ 0 ] in
-              let c = i32_buf device [ 0 ] in
-              let exec =
-                (device_graph device).Device.Graph.build
-                  [|
-                    kernel_node prog.Device.handle [| b; a |] ();
-                    kernel_node prog.Device.handle [| c; b |] ~deps:[| 0 |] ();
-                  |]
-              in
-              ignore (exec.Device.Graph.launch ~wait:false : float option);
-              Device.synchronize device;
-              equal (list int) [ 42 ] (read_i32 b);
-              equal (list int) [ 43 ] (read_i32 c));
+              let spec = compile_incr device "cuda_queue_chain" in
+              let replay = compile_queue device
+                  [queue_call device spec [1; 0]; queue_call device spec [2; 1]] in
+              let a = i32_buf device [41] and b = i32_buf device [0] and c = i32_buf device [0] in
+              replay [|a; b; c|];
+              equal (list int) [42] (read_i32 b);
+              equal (list int) [43] (read_i32 c));
           test "patches scalar values between launches" (fun () ->
               let device = cuda_device () in
-              let prog =
-                prog_of_spec device (compile_var device "cuda_graph_var")
-              in
-              let dst = i32_buf device [ 0 ] in
-              let exec =
-                (device_graph device).Device.Graph.build
-                  [| kernel_node prog.Device.handle [| dst |] ~vals:[| 5 |] () |]
-              in
-              ignore (exec.Device.Graph.launch ~wait:false : float option);
-              Device.synchronize device;
-              equal (list int) [ 5 ] (read_i32 dst);
-              exec.Device.Graph.set_val 0 0 9;
-              exec.Device.Graph.set_params 0;
-              ignore (exec.Device.Graph.launch ~wait:false : float option);
-              Device.synchronize device;
-              equal (list int) [ 9 ] (read_i32 dst));
-          test "rebinds buffer arguments between launches" (fun () ->
+              let replay = compile_queue device [queue_call device (compile_var device "cuda_queue_var") [0]] in
+              let dst = i32_buf device [0] in
+              replay ~vars:["n", 5] [|dst|];
+              equal (list int) [5] (read_i32 dst);
+              replay ~vars:["n", 9] [|dst|];
+              equal (list int) [9] (read_i32 dst));
+          test "rebinds buffers through repeated asynchronous launches" (fun () ->
               let device = cuda_device () in
-              let prog =
-                prog_of_spec device (compile_incr device "cuda_graph_rebind")
-              in
-              let dst1 = i32_buf device [ 0 ] in
-              let src1 = i32_buf device [ 41 ] in
-              let dst2 = i32_buf device [ 0 ] in
-              let src2 = i32_buf device [ 10 ] in
-              let exec =
-                (device_graph device).Device.Graph.build
-                  [| kernel_node prog.Device.handle [| dst1; src1 |] () |]
-              in
-              ignore (exec.Device.Graph.launch ~wait:false : float option);
+              let replay = compile_queue device [queue_call device (compile_var device "cuda_queue_rebind") [0]] in
+              let outputs = Array.init 128 (fun _ -> i32_buf device [0]) in
+              Array.iteri (fun i dst -> replay ~vars:["n", i + 1] [|dst|]) outputs;
               Device.synchronize device;
-              equal (list int) [ 42 ] (read_i32 dst1);
-              exec.Device.Graph.set_buf 0 0 dst2;
-              exec.Device.Graph.set_buf 0 1 src2;
-              exec.Device.Graph.set_params 0;
-              ignore (exec.Device.Graph.launch ~wait:false : float option);
-              Device.synchronize device;
-              equal (list int) [ 42 ] (read_i32 dst1);
-              equal (list int) [ 11 ] (read_i32 dst2));
-          test "copies feed dependent kernels" (fun () ->
+              Array.iteri (fun i dst -> equal (list int) [i + 1] (read_i32 dst)) outputs);
+          test "copies feed dependent kernels and later copies" (fun () ->
               let device = cuda_device () in
-              let graph = device_graph device in
-              is_true ~msg:"CUDA graphs support copies"
-                graph.Device.Graph.supports_copy;
-              let prog =
-                prog_of_spec device (compile_incr device "cuda_graph_copy")
-              in
-              let src = i32_buf device [ 7 ] in
-              let tmp = i32_buf device [ 0 ] in
-              let dst = i32_buf device [ 0 ] in
-              let exec =
-                graph.Device.Graph.build
-                  [|
-                    Device.Graph.Copy
-                      {
-                        dest = tmp;
-                        src;
-                        nbytes = Device.Buffer.nbytes src;
-                        deps = [||];
-                      };
-                    kernel_node prog.Device.handle [| dst; tmp |]
-                      ~deps:[| 0 |] ();
-                  |]
-              in
-              ignore (exec.Device.Graph.launch ~wait:false : float option);
-              Device.synchronize device;
-              equal (list int) [ 8 ] (read_i32 dst));
+              let p slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+                  ~device:(U.Single "CUDA") () in
+              let spec = compile_incr device "cuda_queue_copy" in
+              let replay = compile_queue device [U.store_call ~dst:(p 1) ~src:(p 0);
+                  queue_call device spec [2; 1]; U.store_call ~dst:(p 3) ~src:(p 2)] in
+              let src = i32_buf device [7] and tmp = i32_buf device [0]
+              and mid = i32_buf device [0] and dst = i32_buf device [0] in
+              replay [|src; tmp; mid; dst|];
+              equal (list int) [8] (read_i32 dst);
+              Device.Buffer.copyin src (int32_to_bytes [11]);
+              replay [|src; tmp; mid; dst|];
+              run_spec device spec [src; dst];
+              equal (list int) [13] (read_i32 src));
         ];
       group "Tensor core"
         [
@@ -509,13 +430,16 @@ let () =
               let red = U.reduce_axis ~src:mulf ~op:Ops.Add ~axes:[ 2 ] in
               let out = U.contiguous ~src:red () in
               let linear, _var_vals, buffer_map =
-                schedule_graph_linear device ~to_program (U.sink [ out ])
+                schedule_queue_linear device ~to_program (U.sink [ out ])
               in
               let sources =
                 List.filter_map
                   (fun node ->
-                    if U.op node = Ops.Source then U.Arg.as_string (U.arg node)
-                    else None)
+                    match U.as_param node with
+                    | Some {param = {allocation = Some ("cuda_function", data); _}; _} ->
+                        let object_ = (Marshal.from_string data 0 : Tiny_elf.t) in
+                        Some (Bytes.to_string object_.lib)
+                    | _ -> None)
                   (U.toposort ~enter_calls:true linear)
               in
               let contains hay needle =
@@ -527,8 +451,9 @@ let () =
                 at 0
               in
               is_true ~msg:"kernel uses the tensor core"
-                (List.exists (fun src -> contains src "__WMMA_") sources);
+                (List.exists (fun src -> contains src "mma.sync") sources);
               let binding = Realize.Buffers.create () in
+              let linear = Realize.link_linear binding linear in
               Realize.Buffers.seed binding a_node (f16_buf device a_data);
               Realize.Buffers.seed binding b_node (f16_buf device b_data);
               Realize.run_linear ~device ~to_program binding linear;
@@ -546,12 +471,12 @@ let () =
               let buf = output_buffer binding buffer_map out in
               equal (array (float 1e-6)) expected (read_f32 buf));
         ];
-      group "Graph engine"
+      group "Queue engine"
         [
-          (* A symbolic kernel inside a graph call: the launch geometry and
+          (* A symbolic kernel inside a queue call: the launch geometry and
              the scalar argument both depend on [start_pos], patched into the
-             instantiated graph on every replay. *)
-          test "graph call replays with updated variables" (fun () ->
+             compiled queue on every replay. *)
+          test "queue call replays with updated variables" (fun () ->
               let device = cuda_device () in
               let to_program body =
                 Codegen.to_program device (Device.renderer device) body
@@ -571,10 +496,10 @@ let () =
                 U.contiguous ~src:(U.alu_unary ~op:Ops.Neg ~src:shr) ()
               in
               let linear, _var_vals, buffer_map =
-                schedule_graph_linear device ~to_program (U.sink [ out ])
+                schedule_queue_linear device ~to_program (U.sink [ out ])
               in
-              let linear = wrap_graph linear in
               let binding = Realize.Buffers.create () in
+              let linear = Realize.link_linear binding linear in
               Realize.Buffers.seed binding buf_node (f32_buf device data);
               let check value =
                 Realize.run_linear ~device ~to_program binding
@@ -590,12 +515,11 @@ let () =
                   ~msg:(Printf.sprintf "neg prefix for start_pos=%d" value)
                   (array (float 1e-6)) expected got
               in
-              (* The first run records the graph; later runs replay it with
-                 patched values and launch dimensions. *)
+              (* Every replay patches values and launch dimensions. *)
               check 2;
               check 6;
               check 4);
-          test "graph call replays with rebound inputs" (fun () ->
+          test "queue call replays with rebound inputs" (fun () ->
               let device = cuda_device () in
               let to_program body =
                 Codegen.to_program device (Device.renderer device) body
@@ -608,7 +532,7 @@ let () =
                 U.contiguous ~src:(U.alu_unary ~op:Ops.Neg ~src:buf_node) ()
               in
               let linear, _var_vals, buffer_map =
-                schedule_graph_linear device ~to_program (U.sink [ out ])
+                schedule_queue_linear device ~to_program (U.sink [ out ])
               in
               (* Substitute the input buffer with a slotted PARAM, as
                  [Jit.jit_lower] does, so replays resolve it through
@@ -618,9 +542,10 @@ let () =
                   ?device:(U.device_of buf_node) ()
               in
               let linear =
-                wrap_graph (U.substitute ~walk:true [ (buf_node, param) ] linear)
+                U.substitute ~walk:true [ (buf_node, param) ] linear
               in
               let binding = Realize.Buffers.create () in
+              let linear = Realize.link_linear binding linear in
               let check node data =
                 Realize.Buffers.seed binding node (f32_buf device data);
                 Realize.run_linear ~device ~to_program binding
@@ -638,8 +563,8 @@ let () =
               check node2 data2);
           (* Buffer nodes reseeded in the binding between replays (no PARAM
              slots): rune's jit reseeds its input nodes and binds a fresh
-             output buffer on every call, so the graph must repatch both. *)
-          test "graph call replays with reseeded buffer nodes" (fun () ->
+             output buffer on every call, so the submission must repatch both. *)
+          test "queue call replays with reseeded buffer nodes" (fun () ->
               let device = cuda_device () in
               let to_program body =
                 Codegen.to_program device (Device.renderer device) body
@@ -652,15 +577,15 @@ let () =
                 U.contiguous ~src:(U.alu_unary ~op:Ops.Neg ~src:in_node) ()
               in
               let linear, _var_vals, buffer_map =
-                schedule_graph_linear device ~to_program (U.sink [ out ])
+                schedule_queue_linear device ~to_program (U.sink [ out ])
               in
-              let linear = wrap_graph linear in
               let out_node =
                 match Hashtbl.find_opt buffer_map (U.tag out) with
                 | Some node -> U.buf_uop node
                 | None -> fail "output was not scheduled to a buffer"
               in
               let binding = Realize.Buffers.create () in
+              let linear = Realize.link_linear binding linear in
               let run in_buf out_buf =
                 Realize.Buffers.seed binding in_node in_buf;
                 Realize.Buffers.seed binding out_node out_buf;
@@ -670,7 +595,7 @@ let () =
               let neg = Array.map (fun x -> -.x) in
               let in1 = f32_buf device data1 in
               let out1 = f32_buf device (Array.make n 0.0) in
-              (* First run records the graph against [in1]/[out1]. *)
+              (* First submission binds [in1]/[out1]. *)
               run in1 out1;
               equal (array (float 1e-6)) (neg data1) (read_f32 out1);
               (* Reseeding both nodes must repatch the recorded addresses:

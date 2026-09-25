@@ -37,8 +37,8 @@ val create : string -> Tolk.Device.t
     ["CUDA"] defaults to device 0). The device uses an LRU-cached allocator
     over CUDA device memory with pinned host staging for host-to-device and
     device-to-host copies, a {!Tolk.Cstyle.cuda} renderer compiled through
-    NVRTC, and a {!Tolk.Device.Graph} capability that replays batched call
-    sequences as CUDA execution graphs.
+    NVRTC, and host-compiled compute and copy queues sharing the allocation,
+    timeline and replay protocol with the other backends.
 
     Raises [Failure] if no CUDA driver or GPU is available, and
     [Invalid_argument] if the suffix after [':'] is not an integer. *)

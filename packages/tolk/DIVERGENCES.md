@@ -14,6 +14,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   and typed host calls. Reconsider when adding a CPU renderer that cannot emit
   this entry convention.
 
+- **CUDA submission calls ordinary C helpers instead of Python-callable driver
+  objects.** Generated host code runs with the OCaml runtime released, so
+  helpers retain the first submission failure for synchronization to report.
+  Event handoffs also order the autotuner’s direct `Device.prog` launches and
+  allocator uploads with nonblocking queues. Consumers: compiled submission,
+  JIT replay and search timing. Coverage: driver-independent submission
+  compilation and CUDA runtime replay/transfer cases (hardware acceptance is
+  still open in TODO). Reconsider the handoffs if direct dispatch and uploads
+  move entirely into queue compilation.
+
 - **Symbolic index expressions use `Movement.symbolic_shrink`**, composed with
   `Movement.squeeze` for a scalar selection. `Movement.index` keeps integer
   bounds; `Op.getitem` supports symbolic axis lengths and index-tensor shapes.
@@ -86,7 +96,7 @@ delete it rather than registering it.
   bound as a view at byte offset `i * stride` for iteration `i`, never
   copied; rows are padded to 16 bytes so every view is aligned. Loop bodies
   use the same compile/link/run protocol as other schedules; each iteration
-  rebinds materialized slot buffers. Metal submits compiled host programs;
+  rebinds materialized slot buffers. Metal and CUDA submit compiled host programs;
   backends awaiting queue migration still use graph runners. The named
   `CUSTOM_FUNCTION` payload is the extension seam. Keep the two rangeify
   branches when updating the reference. Rune's `test_jit.ml` scan groups and

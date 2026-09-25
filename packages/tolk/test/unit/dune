@@ -78,10 +78,10 @@
  (libraries tolk tolk.uop tolk.metal tolk.cpu windtrap))
 
 (tests
- (names test_runtime_cuda)
- (modules test_runtime_cuda)
+ (names test_runtime_cuda test_cuda_queue)
+ (modules test_runtime_cuda test_cuda_queue)
  (package tolk)
- (libraries tolk tolk.uop tolk.cuda windtrap))
+ (libraries tolk tolk.uop tolk.cuda tolk.cpu windtrap))
 
 (tests
  (names test_runtime_amd)
