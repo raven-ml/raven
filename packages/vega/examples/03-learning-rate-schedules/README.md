@@ -13,7 +13,7 @@ dune exec packages/vega/examples/03-learning-rate-schedules/main.exe
 - How `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, and
   `piecewise_constant` shape the learning rate curve
 - Composing schedules end-to-end with `Schedule.join`
-- Plugging schedules into optimizers as the last positional argument
+- Deriving a step's `~lr` from the optimizer state's own counter
 
 ## Key Functions
 
@@ -45,5 +45,5 @@ dune exec packages/vega/examples/03-learning-rate-schedules/main.exe
 
 ## Further Reading
 
-- [Composing Transforms](../02-composing-transforms/) — how schedules plug
-  into the `chain` API via `scale_by_learning_rate`
+- [Training steps](../02-training-steps/) — the loop a scheduled rate plugs
+  into

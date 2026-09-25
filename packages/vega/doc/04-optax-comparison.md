@@ -1,23 +1,40 @@
 # Optax Comparison
 
 This page maps [Optax](https://github.com/google-deepmind/optax) concepts
-and API to their Vega equivalents. Both libraries share the same core idea:
-optimizers are composable gradient transformations.
+and API to their Vega equivalents. In both libraries an optimizer's state is a
+tree of arrays shaped like the parameters. Optax builds optimizers by chaining
+gradient transformations into one `GradientTransformation`; Vega gives each
+optimizer as a step function, and a training step composes them by calling
+one after the other.
 
 ## Creating Optimizers
 
+Each Optax optimizer is a Vega `*_init` and `*_step` pair, and its
+hyperparameters are the step's optional arguments. The learning rate moves to
+the step, as `~lr`.
+
 | Optax (Python) | Vega (OCaml) |
 |----------------|--------------|
-| `optax.sgd(0.1)` | `Vega.sgd (Schedule.constant 0.1)` |
-| `optax.sgd(0.1, momentum=0.9)` | `Vega.sgd ~momentum:0.9 (Schedule.constant 0.1)` |
-| `optax.adam(1e-3)` | `Vega.adam (Schedule.constant 1e-3)` |
-| `optax.adamw(1e-3, weight_decay=0.01)` | `Vega.adamw ~weight_decay:0.01 (Schedule.constant 1e-3)` |
-| `optax.rmsprop(1e-3)` | `Vega.rmsprop (Schedule.constant 1e-3)` |
-| `optax.adagrad(0.01)` | `Vega.adagrad (Schedule.constant 0.01)` |
-| `optax.lamb(1e-3)` | `Vega.lamb (Schedule.constant 1e-3)` |
-| `optax.lion(1e-4)` | `Vega.lion (Schedule.constant 1e-4)` |
-| `optax.radam(1e-3)` | `Vega.radam (Schedule.constant 1e-3)` |
-| `optax.adafactor()` | `Vega.adafactor ()` |
+| `optax.sgd(0.1)` | `Vega.sgd_step p ~lr:(Vega.lr 0.1)` |
+| `optax.sgd(0.1, momentum=0.9)` | `Vega.sgd_step p ~lr:(Vega.lr 0.1) ~momentum:0.9` |
+| `optax.adam(1e-3)` | `Vega.adam_step p ~lr:(Vega.lr 1e-3)` |
+| `optax.adamw(1e-3, weight_decay=0.01)` | `Vega.adamw_step p ~lr:(Vega.lr 1e-3) ~weight_decay:0.01` |
+| `optax.radam(1e-3)` | `Vega.radam_step p ~lr:(Vega.lr 1e-3)` |
+| `optax.lamb(1e-3)` | `Vega.lamb_step p ~lr:(Vega.lr 1e-3)` |
+| `optax.lars(0.1)` | `Vega.lars_step p ~lr:(Vega.lr 1e-4)` |
+| `optax.rmsprop(1e-3)` | `Vega.rmsprop_step p ~lr:(Vega.lr 1e-3)` |
+| `optax.adagrad(0.01)` | `Vega.adagrad_step p ~lr:(Vega.lr 0.01)` |
+| `optax.adan(1e-3)` | `Vega.adan_step p ~lr:(Vega.lr 1e-3)` |
+| `optax.lion(1e-4)` | `Vega.lion_step p ~lr:(Vega.lr 1e-4)` |
+| `optax.adafactor(1e-3)` | `Vega.adafactor_step p ~lr:(Vega.lr 1e-3)` |
+
+Defaults can differ. Vega's `lars_step` and `lamb_step` default to a weight
+decay of `0.01` and its `adan_step` to `0.02`, where Optax's default to none.
+Vega's `lars_step` has no trust coefficient: the paper's η (Optax's
+`trust_coefficient`, default `0.001`) is folded into `~lr`, hence the rate
+above. `optax.lamb` defaults to `eps=1e-6` where `lamb_step` uses `1e-8`.
+Vega's `adafactor_step` factors every leaf of two or more axes, whatever their
+sizes, and does not scale updates by the parameters' root mean square.
 
 ## Init and Update
 
@@ -36,18 +53,14 @@ params = optax.apply_updates(params, updates)
 
 <!-- $MDX skip -->
 ```ocaml
-let tx = Vega.adam (Vega.Schedule.constant 1e-3) in
-let state = Vega.init tx param in
-let updates, state = Vega.update state ~grad ~param in
-let param = Vega.apply_updates ~param ~updates
-
-(* Or use the convenience function: *)
-let param, state = Vega.step state ~grad ~param
+let state = Vega.adam_init model params in
+let params, state =
+  Vega.adam_step model ~lr:(Vega.lr 1e-3) state ~params ~grads
 ```
 
-The key difference: Optax passes `(grads, state, params)` to `tx.update`,
-while Vega passes `state ~grad ~param` — the optimizer is baked into the
-state at `init` time.
+`model` is the parameters' structure, an `Nx.Ptree.t`, the counterpart of the
+pytree structure JAX infers from the value. A step returns the new parameters
+directly, with no separate updates to apply.
 
 ## Chaining Transforms
 
@@ -56,9 +69,7 @@ state at `init` time.
 ```python
 tx = optax.chain(
     optax.clip_by_global_norm(1.0),
-    optax.scale_by_adam(),
-    optax.add_decayed_weights(0.01),
-    optax.scale_by_learning_rate(1e-3),
+    optax.adamw(1e-3, weight_decay=0.01),
 )
 ```
 
@@ -66,35 +77,22 @@ tx = optax.chain(
 
 <!-- $MDX skip -->
 ```ocaml
-let tx =
-  Vega.chain [
-    Vega.clip_by_norm 1.0;
-    Vega.scale_by_adam ();
-    Vega.add_decayed_weights ~rate:(Vega.Schedule.constant 0.01) ();
-    Vega.scale_by_learning_rate (Vega.Schedule.constant 1e-3);
-  ]
+let step (params, st) grads =
+  let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
+  Vega.adamw_step model ~lr:(Vega.lr 1e-3) ~weight_decay:0.01 st ~params ~grads
 ```
 
-## Primitives
+Transformations of the gradients are functions applied before the step.
 
-| Optax | Vega | Notes |
-|-------|------|-------|
-| `scale(s)` | `scale s` | |
-| `scale_by_adam()` | `scale_by_adam ()` | Supports `~nesterov`, `~amsgrad` |
-| `scale_by_rms()` | `scale_by_rms ()` | |
-| `scale_by_lion()` | `scale_by_lion ()` | |
-| `scale_by_radam()` | `scale_by_radam ()` | |
-| `scale_by_trust_ratio()` | `scale_by_trust_ratio ()` | |
-| `scale_by_factored_rms()` | `scale_by_adafactor ()` | Different name |
-| `trace(decay)` | `trace ~decay ()` | |
-| `add_decayed_weights(wd)` | `add_decayed_weights ~rate:(Schedule.constant wd) ()` | Vega uses a schedule |
-| `clip_by_global_norm(max)` | `clip_by_norm max` | Per-tensor, not global |
-| `clip(delta)` | `clip_by_value delta` | |
-| `centralize()` | `centralize` | Value, not function |
-| `add_noise(eta, gamma)` | `add_noise ~eta ~gamma ()` | `eta` is a schedule in Vega |
-| `apply_if_finite(tx)` | `apply_if_finite tx` | |
-| `scale_by_learning_rate(lr)` | `scale_by_learning_rate (Schedule.constant lr)` | Vega uses a schedule |
-| `scale_by_schedule(fn)` | `scale_by_schedule fn` | |
+## Gradient Transformations
+
+| Optax | Vega |
+|-------|------|
+| `clip_by_global_norm(max)` | `clip_by_global_norm p ~max_norm g` |
+| `clip(delta)` | `clip_by_value p ~max:delta g` |
+| `global_norm(g)` | `global_norm p g` (a host float) |
+| `apply_if_finite(tx)` | `Loss_scale.grads_finite p g`, then select with `Nx.where` |
+| `scale_by_schedule(fn)`, `scale_by_learning_rate(lr)` | `~lr:(sched st.step)` |
 
 ## Schedules
 
@@ -115,10 +113,8 @@ let tx =
 | Aspect | Optax | Vega |
 |--------|-------|------|
 | Language | Python/JAX | OCaml/Nx |
-| State type | PyTree of arrays | Typed `('a, 'b) state` |
-| Learning rate | Float or schedule | Always `Schedule.t` (step tensor to rate tensor) |
-| Weight decay rate | Float | `Schedule.t` (dynamic decay) |
-| Noise eta | Float | `Schedule.t` (dynamic noise) |
-| Gradient clipping | Global norm across all params | Per-tensor `clip_by_norm`; structural `clip_by_global_norm` |
-| Parameter trees | Built-in (JAX pytrees) | Structural steps (`adam_step`, ...) over any structure, an `Nx.Ptree.t` |
-| `centralize` | Function call `centralize()` | Value `centralize` (no arguments) |
+| Optimizer | A `GradientTransformation` of `init` and `update` | An `*_init` and a `*_step` function |
+| Composition | `optax.chain` | Function application |
+| State type | Pytree of arrays | A record per optimizer (`adam_state`, ...) with its structure (`adam_ptree`, ...) |
+| Learning rate | Float or schedule | Scalar tensor `~lr`: `Vega.lr v`, or a schedule at `st.step` |
+| Parameter trees | Built-in (JAX pytrees) | Any structure, an `Nx.Ptree.t` |

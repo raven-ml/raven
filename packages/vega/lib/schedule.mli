@@ -14,7 +14,7 @@
     separate host-side variant, only {!eval} to read a schedule at a host
     counter for logging or for loops that keep their own count.
 
-    Structural steps take the schedule's result as their [~lr]:
+    Optimizer steps take the schedule's result as their [~lr]:
 
     {[
       let sched =
@@ -23,27 +23,20 @@
       let step (params, st) =
         ...
         Vega.adamw_step model ~lr:(sched st.step) st ~params ~grads
-    ]}
-
-    This is the single schedule vocabulary for both of Vega's tiers: the
-    per-tensor transforms ([Vega.scale_by_schedule],
-    [Vega.scale_by_learning_rate], [Vega.add_decayed_weights]) evaluate their
-    schedule at the chain's own update count. *)
+    ]} *)
 
 type t = Nx.int32_t -> Nx.float32_t
 (** The type for learning-rate schedules.
 
     [s step] is the learning rate at the scalar counter [step], as a scalar
-    [float32] tensor. Schedules are defined for [step >= 0] and constructors
-    are at their initial value at [step = 0]. Per-tensor chains evaluate their
-    schedules at the 1-based update count (the first update evaluates at [1]);
-    structural loops evaluate at the state's number of completed steps,
-    starting at [0]. *)
+    [float32] tensor. Schedules are defined for [step >= 0] and constructors are
+    at their initial value at [step = 0]. A training loop evaluates its schedule
+    at the state's number of completed steps, starting at [0]. *)
 
 val eval : t -> int -> float
-(** [eval s step] is the schedule's value at the host counter [step], as a
-    host float. Use it for logging a schedule, plotting one, or driving an
-    eager loop from its own [int] counter. *)
+(** [eval s step] is the schedule's value at the host counter [step], as a host
+    float. Use it for logging a schedule, plotting one, or driving an eager loop
+    from its own [int] counter. *)
 
 (** {1:basic Basic} *)
 
@@ -73,8 +66,8 @@ val exponential_decay :
 (** [exponential_decay ~init_value ~decay_rate ~decay_steps] is
     [init_value * decay_rate{^ (step / decay_steps)}].
 
-    Raises [Invalid_argument] if [decay_steps] or [decay_rate] is not
-    positive. *)
+    Raises [Invalid_argument] if [decay_steps] or [decay_rate] is not positive.
+*)
 
 val polynomial_decay :
   init_value:float ->

@@ -1,44 +1,41 @@
 # Vega
 
-Vega provides composable gradient-based optimizers for OCaml. Each optimizer is built from small, typed gradient transformations that compose via `chain`. The library depends only on Nx — no autodiff framework is required.
+Vega provides gradient-based optimizers for OCaml. An optimizer steps a whole parameter structure, any value with an `Nx.Ptree.t`, and keeps its state in a record of values shaped like the parameters. The library depends only on Nx — no autodiff framework is required.
 
 ## Features
 
-- **Optimizer aliases** — `adam`, `adamw`, `sgd`, `rmsprop`, `adagrad`, `lamb`, `lion`, `radam`, `lars`, `adan`, `adafactor`
-- **Composable primitives** — `scale_by_adam`, `trace`, `add_decayed_weights`, `clip_by_norm`, and more, combined via `chain`
-- **Structural steps** — `sgd_step`, `adam_step`, `adamw_step` and L-BFGS over any parameter structure, an `Nx.Ptree.t`; each state has a structure too (`sgd_ptree`, `adam_ptree`, `lbfgs_ptree`)
+- **Optimizers** — `sgd_step`, `lars_step`, `adam_step`, `adamw_step`, `radam_step`, `lamb_step`, `rmsprop_step`, `adagrad_step`, `adan_step`, `lion_step`, `adafactor_step`, and L-BFGS (`lbfgs_step`, `minimize`), each with its `*_init`
+- **States are structures** — `sgd_ptree`, `adam_ptree`, `lbfgs_ptree` and the others name every leaf of a state by path, for checkpoints and compiled steps
 - **Jit-compilable steps** — every time-varying scalar is a tensor leaf, so a whole training step compiles as one `Rune.jit` program
 - **Learning rate schedules** — `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, `piecewise_constant`, `join` — tensor arithmetic over a step counter, so one family serves eager and compiled loops alike
-- **Gradient processing** — clipping, centralization, noise injection
-- **Robustness** — `apply_if_finite` skips NaN/Inf updates automatically
-- **Serialization** — `state_to_tensors` / `state_of_tensors` for checkpointing
+- **Gradient transformations** — `clip_by_global_norm`, `clip_by_value`, `global_norm`
+- **Loss scaling** — `Loss_scale` for float16 training
 
 ## Quick Start
 
 <!-- $MDX skip -->
 ```ocaml
-open Vega
-
 let () =
-  let lr = Schedule.constant 0.01 in
-  let tx = adam lr in
-
-  let param = ref (Nx.create Nx.float32 [| 2 |] [| 5.0; -3.0 |]) in
-  let st = ref (init tx !param) in
-
+  let p = Nx.Ptree.tensor in
+  let params = ref (Nx.create Nx.float32 [| 2 |] [| 5.0; -3.0 |]) in
+  let st = ref (Vega.adam_init p !params) in
   for i = 1 to 100 do
     (* For f(x) = 0.5 * ||x||², the gradient is x *)
-    let p, s = step !st ~grad:!param ~param:!param in
-    param := p;
-    st := s;
+    let params', st' =
+      Vega.adam_step p ~lr:(Vega.lr 0.01) !st ~params:!params ~grads:!params
+    in
+    params := params';
+    st := st';
     if i mod 25 = 0 then
-      Printf.printf "step %3d  x = %s\n" i (Nx.to_string !param)
+      Printf.printf "step %3d  x = %s\n" i (Nx.to_string !params)
   done
 ```
 
+`Nx.Ptree.tensor` is the structure of a single tensor. A model's parameters are usually a record, whose structure `Nx.Ptree.instantiate` builds from its `walk` ([Getting Started](01-getting-started.md)).
+
 ## Jit-Compiled Training Steps
 
-The structural optimizers take the parameters' structure, an `Nx.Ptree.t` that
+The optimizers take the parameters' structure, an `Nx.Ptree.t` that
 `Nx.Ptree.instantiate` builds from the model's module. A state's structure is
 built from it: `Vega.adam_ptree model` is the structure of an Adam state over
 `model`, with leaf paths `mu.…`, `nu.…` and `step`. Everything that changes
@@ -87,7 +84,7 @@ eager loop; `Schedule.eval` reads one at a host step number for logging.
 
 ## Next Steps
 
-- [Getting Started](01-getting-started.md) — installation, first optimizer, the step/update API
-- [Composing Transforms](02-composing-transforms.md) — building custom optimizers from primitives
+- [Getting Started](01-getting-started.md) — installation, parameters as a structure, your first optimizer
+- [Optimizers](02-optimizers.md) — training steps, choosing an optimizer, states as structures
 - [Learning Rate Schedules](03-schedules.md) — decay, warmup, restarts, and composition
 - [Optax Comparison](04-optax-comparison.md) — mapping from Python's Optax to Vega

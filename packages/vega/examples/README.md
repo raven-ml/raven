@@ -7,8 +7,8 @@ and work through the numbered examples in order.
 
 | Example | Concept | Key Functions |
 |---------|---------|---------------|
-| [`01-basic-optimizers`](./01-basic-optimizers/) | Minimize a quadratic with SGD, Adam, AdamW | `init`, `step`, `Schedule.constant` |
-| [`02-composing-transforms`](./02-composing-transforms/) | Build custom optimizers from primitives | `chain`, `scale_by_adam`, `clip_by_norm`, `update` |
+| [`01-basic-optimizers`](./01-basic-optimizers/) | Minimize a quadratic with SGD, Adam, AdamW | `sgd_step`, `adam_step`, `adamw_step`, `lr` |
+| [`02-training-steps`](./02-training-steps/) | A training step over a record of parameters | `clip_by_global_norm`, `adam_ptree`, `Nx.Ptree.instantiate` |
 | [`03-learning-rate-schedules`](./03-learning-rate-schedules/) | Explore warmup, cosine decay, one-cycle | `Schedule.warmup_cosine_decay`, `Schedule.one_cycle`, `Schedule.join` |
 
 ## Running Examples
@@ -30,36 +30,32 @@ dune exec packages/vega/examples/01-basic-optimizers/main.exe
 ### Basic Optimizer
 
 ```ocaml
-open Vega
-
-let lr = Schedule.constant 0.01 in
-let tx = adam lr in
-let st = ref (init tx param) in
+let p = Nx.Ptree.tensor in
+let st = ref (Vega.adam_init p !params) in
 for _ = 1 to steps do
-  let p, s = step !st ~grad ~param:!param in
-  param := p; st := s
+  let params', st' =
+    Vega.adam_step p ~lr:(Vega.lr 0.01) !st ~params:!params ~grads
+  in
+  params := params';
+  st := st'
 done
 ```
 
-### Custom Optimizer via chain
+### A Training Step
 
 ```ocaml
-let tx =
-  Vega.chain [
-    Vega.clip_by_norm 1.0;
-    Vega.scale_by_adam ();
-    Vega.add_decayed_weights ~rate:(Vega.Schedule.constant 0.01) ();
-    Vega.scale_by_learning_rate lr;
-  ]
+let step (params, st) =
+  let grads = Vega.clip_by_global_norm model ~max_norm:1.0 (gradients params) in
+  Vega.adamw_step model ~lr:(Vega.lr 1e-3) ~weight_decay:0.01 st ~params ~grads
 ```
 
 ### Learning Rate Schedule
 
 ```ocaml
-let lr =
+let sched =
   Vega.Schedule.warmup_cosine_decay
     ~init_value:0.0 ~peak_value:0.001
     ~warmup_steps:1000 ~decay_steps:9000 ()
 in
-let tx = Vega.adam lr
+Vega.adam_step model ~lr:(sched st.step) st ~params ~grads
 ```

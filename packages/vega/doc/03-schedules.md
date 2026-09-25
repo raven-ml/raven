@@ -19,25 +19,12 @@ Printf.printf "step 1:   %f\n" (Vega.Schedule.eval lr 1);    (* 0.001 *)
 Printf.printf "step 100: %f\n" (Vega.Schedule.eval lr 100)   (* 0.001 *)
 ```
 
-In the per-tensor tier, schedules are evaluated at the chain's own update
-count, starting at 1 on the first update.
-
-Schedules plug into optimizers as the last positional argument:
+A step takes the schedule's value at the state's counter as its `~lr`:
 
 <!-- $MDX skip -->
 ```ocaml
-let tx = Vega.adam lr
-```
-
-Or directly as a primitive:
-
-<!-- $MDX skip -->
-```ocaml
-let tx =
-  Vega.chain [
-    Vega.scale_by_adam ();
-    Vega.scale_by_learning_rate lr;
-  ]
+let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 () in
+Vega.adam_step model ~lr:(sched st.step) st ~params ~grads
 ```
 
 ## Basic Schedules
@@ -177,13 +164,13 @@ A step function. `values` has one more element than `boundaries`:
 Vega.Schedule.piecewise_constant
   ~boundaries:[1000; 5000]
   ~values:[0.01; 0.001; 0.0001]
-(* steps 1–1000: 0.01, steps 1001–5000: 0.001, steps 5001+: 0.0001 *)
+(* steps 0–1000: 0.01, steps 1001–5000: 0.001, steps 5001+: 0.0001 *)
 ```
 
 ### join
 
 Sequence multiple schedules end-to-end. Each `(n, schedule)` pair runs
-`schedule` for `n` steps. Step numbers restart from 1 within each segment:
+`schedule` for `n` steps. Step numbers restart from 0 within each segment:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -208,41 +195,44 @@ let step_decay : Vega.Schedule.t = fun step ->
 
 ## Using Schedules with Optimizers
 
-Schedules are passed to optimizer aliases as the last positional argument:
+Every step takes its learning rate as `~lr`, a scalar tensor. A schedule
+applied to the state's `step` counter gives one, inside the step's own
+arithmetic:
 
 <!-- $MDX skip -->
 ```ocaml
-let lr =
+let sched =
   Vega.Schedule.warmup_cosine_decay
     ~init_value:0.0 ~peak_value:1e-3
     ~warmup_steps:1000 ~decay_steps:9000 ()
 in
-let tx = Vega.adamw ~weight_decay:0.01 lr
+let step (params, st) =
+  let grads = gradients params in
+  Vega.adamw_step model ~lr:(sched st.step) ~weight_decay:0.01 st ~params ~grads
 ```
 
-When building from primitives, pass the schedule to `scale_by_learning_rate`:
+The counter is a tensor leaf of the state, so under `Rune.jit` the rate is
+computed inside the compiled program and follows the state from call to call.
+
+Any other scalar a step should vary over training is a tensor derived the same
+way. A step's `~weight_decay` is a float fixed for the program, so a scheduled
+decay is applied after the step, decoupled from the adaptive scaling as
+`adamw_step` applies its own:
 
 <!-- $MDX skip -->
 ```ocaml
-let tx =
-  Vega.chain [
-    Vega.scale_by_adam ();
-    Vega.scale_by_learning_rate lr;
-  ]
-```
-
-Other primitives accept schedules too. For instance, `add_decayed_weights`
-takes a `~rate` schedule for dynamic weight decay:
-
-<!-- $MDX skip -->
-```ocaml
-Vega.add_decayed_weights
-  ~rate:(Vega.Schedule.cosine_decay ~init_value:0.01 ~decay_steps:10000 ())
-  ()
+let wd = Vega.Schedule.cosine_decay ~init_value:0.01 ~decay_steps:10000 () in
+let lr = sched st.step in
+let params', st' = Vega.adam_step model ~lr st ~params ~grads in
+let decay = Nx.mul lr (wd st.step) in
+let params' =
+  Nx.Ptree.map2 model
+    (fun _ p' p -> Nx.sub p' (Nx.mul p (Nx.cast (Nx.dtype p) decay)))
+    params' params
 ```
 
 ## Next Steps
 
-- [Composing Transforms](02-composing-transforms.md) — building custom optimizers from primitives
-- [Getting Started](01-getting-started.md) — basic usage and optimizer aliases
+- [Optimizers](02-optimizers.md) — training steps, choosing an optimizer, states as structures
+- [Getting Started](01-getting-started.md) — parameters as a structure, your first optimizer
 - [Optax Comparison](04-optax-comparison.md) — mapping from Python's Optax to Vega

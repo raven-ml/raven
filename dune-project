@@ -198,7 +198,7 @@
  (dir packages/vega)
  (synopsis "Gradient-based optimizers for OCaml")
  (description
-  "Gradient-descent optimizers: structural optimizers over parameter structures (Adam, AdamW, SGD), Optax-style per-tensor transformation chains (RMSprop, Adagrad, Lion, ...), and learning-rate schedules. Built on Nx with no autodiff dependency.")
+  "Gradient-descent optimizers over parameter structures (SGD, Adam, AdamW, RAdam, LAMB, LARS, RMSprop, Adagrad, Adan, Lion, Adafactor, L-BFGS), whose states are structures too, and learning-rate schedules. Built on Nx with no autodiff dependency.")
  (depends
   (ocaml
    (>= 5.5.0))

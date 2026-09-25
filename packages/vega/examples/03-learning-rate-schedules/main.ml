@@ -58,20 +58,25 @@ let () =
 
   Printf.printf "\n";
 
-  (* Use warmup + cosine decay in an optimization loop *)
+  (* Use warmup + cosine decay in an optimization loop. The rate is the schedule
+     applied to the state's own step counter, a tensor, so the same code runs
+     inside a compiled step. *)
   Printf.printf "--- Adam with warmup_cosine_decay (100 steps) ---\n";
-  let lr =
+  let sched =
     S.warmup_cosine_decay ~init_value:0.0 ~peak_value:0.01 ~warmup_steps:20
       ~decay_steps:80 ()
   in
-  let tx = Vega.adam lr in
-  let param = ref (Nx.create Nx.float32 [| 2 |] [| 5.0; -3.0 |]) in
-  let st = ref (Vega.init tx !param) in
+  let p = Nx.Ptree.tensor in
+  let params = ref (Nx.create Nx.float32 [| 2 |] [| 5.0; -3.0 |]) in
+  let st = ref (Vega.adam_init p !params) in
   for i = 1 to 100 do
-    let p, s = Vega.step !st ~grad:!param ~param:!param in
-    param := p;
-    st := s;
+    let lr = sched !st.step in
+    let params', st' =
+      Vega.adam_step p ~lr !st ~params:!params ~grads:!params
+    in
+    params := params';
+    st := st';
     if i mod 20 = 0 then
-      Printf.printf "  step %3d  lr=%.6f  x = %s\n" i (S.eval lr i)
-        (Nx.to_string !param)
+      Printf.printf "  step %3d  lr=%.6f  x = %s\n" i (Nx.item [] lr)
+        (Nx.to_string !params)
   done

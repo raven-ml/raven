@@ -80,6 +80,19 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- **Breaking** (relative to earlier unreleased revisions): the per-tensor tier
+  is removed. Its state was opaque, carried its own chain and covered one
+  tensor, so it could neither be a compiled step's argument nor be saved by
+  path. `Vega.adam lr` with `init`/`step` is `adam_init p`/`adam_step p ~lr`,
+  and likewise for every alias; a chain is function application, transforming
+  the gradients (`clip_by_global_norm`, `clip_by_value`) before the step, and
+  a state is saved through its structure (`adam_ptree p`, ...) in place of
+  `state_to_tensors`. Against the old aliases, `lars_step` scales the
+  decayed gradient by its trust ratio before accumulating momentum (the
+  paper's order; the rate still scales the velocity from outside, as in
+  `sgd_step`), and `adafactor_step` takes its rate as `~lr` in place of a
+  built-in `1e-3 / sqrt t`, with `?decay_rate` for `?b2_decay` (a constant β2
+  is gone) and `?factored` moved to `adafactor_init`.
 - `sgd_step`, `adam_step` and `adamw_step` raise `Invalid_argument` on a
   momentum or `b1`/`b2` outside `[0, 1)`, a non-positive `eps` or a negative
   `weight_decay`, where `b1 = 1.` used to divide by zero and return NaNs.
@@ -128,9 +141,7 @@ All notable changes to this project will be documented in this file.
   schedule family serves eager loops and compiled steps alike, every
   schedule included (`exponential_decay`, `polynomial_decay` and
   `cosine_decay_restarts` too). `Schedule.eval` reads a schedule at a host
-  `int` for logging and eager loops that keep their own count; the
-  per-tensor tier (`scale_by_schedule`, `scale_by_learning_rate`,
-  `add_decayed_weights`, the aliases) is unchanged at its call sites.
+  `int` for logging and eager loops that keep their own count.
   `cosine_decay_restarts` now validates `t_mul >= 1` and `m_mul > 0`, and
   `exponential_decay` validates `decay_rate > 0`.
 - `clip_by_global_norm` computes its scale factor in `float32` tensor
@@ -1807,17 +1818,8 @@ thread.
   `clip_by_global_norm`, and `clip_by_value` step whole parameter
   structures, any value with an `Nx.Ptree.t`, with optimizer state
   shaped like the parameters themselves.
-- Below it, the per-tensor tier composes Optax-style gradient
-  transformations on single tensors via `Vega.chain` (RMSprop, Adagrad,
-  Lion, LAMB, RAdam, LARS, Adan, Adafactor, ...).
-- Schedules are unified across both tiers: a schedule is a plain
-  `int -> float` function; structural loops evaluate it at the step counter
-  and pass `~lr`, while per-tensor chains consume it via
-  `scale_by_learning_rate`/`scale_by_schedule`.
-- **Breaking** (relative to earlier unreleased revisions): the per-tensor
-  `clip_by_value : float -> t` transformation is renamed to `clip`; the
-  `clip_by_value` name now belongs to the structural gradient
-  transformation.
+- Schedules are plain functions of the step counter; loops evaluate one at
+  the counter and pass it as `~lr`.
 
 ### Nx
 
