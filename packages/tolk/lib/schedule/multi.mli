@@ -12,3 +12,8 @@ val multi_pm : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
     The axes and owning ranges determine shard sizes; symbolic dimensions are
     retained. CALL bodies are rewritten recursively. Returns [None] when no
     rule applies. *)
+
+val late_allreduce : int
+(** [late_allreduce] is [LATE_ALLREDUCE] as read at startup (default [1]).
+    Nonzero leaves ALLREDUCE nodes for the scheduler to expand; zero expands
+    them while lowering shards. *)

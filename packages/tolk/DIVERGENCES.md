@@ -63,6 +63,23 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   Coverage: `test_multi` unequal-count reshape and six-device tiled gather.
   Reconsider when upstream fixes the range lookup.
 
+- **The schedule cache key includes the settings scheduling reads.** The
+  frozen target keys its schedule cache on the graph alone, but scheduling
+  reads context settings after the lookup: `RING`, `ALL2ALL`,
+  `ALLREDUCE_NODE_NDEVS`, `RING_ALLREDUCE_THRESHOLD` and `ALLREDUCE_CAST` choose
+  how an allreduce expands, and `FLOAT16`, `SPLIT_REDUCEOP`,
+  `REDUCEOP_SPLIT_THRESHOLD`, `REDUCEOP_SPLIT_SIZE`, `OPENPILOT_HACKS`,
+  `PCONTIG` and `MAX_KERNEL_BUFFERS` shape the kernels. A graph scheduled again
+  under other settings replayed the first schedule. Tolk appends
+  `Schedule.config ()`, which renders those values and the startup values of
+  `LATE_ALLREDUCE` and `NO_MEMORY_PLANNER`, to the key. Consumer: rune's
+  compile cache, which stores the schedule this cache returns under a key that
+  records the same settings. Coverage: `test_engine_schedule` schedules one sum
+  with and without `SPLIT_REDUCEOP`; `test_multi` schedules one reduction under
+  four forced strategies and gets four schedules, and the forced-strategies
+  value test runs each of them. Reconsider when upstream keys its cache on
+  these settings.
+
 - **Compiled AMD submission bounds polling and reserves ring space before
   writing commands.** The frozen target can spin forever or overwrite unread
   packets when producers outrun a queue. Native helpers latch failures while

@@ -43,6 +43,16 @@ val create_schedule : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     [Buffer], [Param], [Mselect], [Mstack], or a scalar binding effect after
     source unwrapping. *)
 
+val config : unit -> string
+(** [config ()] renders every setting scheduling reads that a graph does not
+    record, as [KEY=value] pairs: the current values of [RING], [ALL2ALL],
+    [ALLREDUCE_NODE_NDEVS], [RING_ALLREDUCE_THRESHOLD], [ALLREDUCE_CAST],
+    [FLOAT16], [SPLIT_REDUCEOP], [REDUCEOP_SPLIT_THRESHOLD],
+    [REDUCEOP_SPLIT_SIZE], [OPENPILOT_HACKS], [PCONTIG] and
+    [MAX_KERNEL_BUFFERS], and the startup values of [LATE_ALLREDUCE] and
+    [NO_MEMORY_PLANNER]. One graph scheduled under equal configs gives equal
+    schedules. *)
+
 val lower_sink_to_linear :
   get_kernel_graph:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   Tolk_uop.Uop.t ->
@@ -53,7 +63,7 @@ val lower_sink_to_linear :
     with the same arguments.
 
     Returns [None] for other nodes. Body schedules are cached by
-    {!Tolk_uop.Uop.semantic_key} when [SCACHE] is enabled. *)
+    {!Tolk_uop.Uop.semantic_key} and {!config} when [SCACHE] is enabled. *)
 
 val memory_plan_rewrite :
   Tolk_uop.Uop.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t

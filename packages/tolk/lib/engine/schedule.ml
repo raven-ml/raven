@@ -531,7 +531,23 @@ let memory_plan_rewrite linear held_bufs =
 
 let schedule_cache : (string, U.t) Hashtbl.t = Hashtbl.create 64
 
-let schedule_cache_key function_ = U.semantic_key function_
+let config () =
+  let context =
+    Helpers.[ ring; all2all; allreduce_node_ndevs; ring_allreduce_threshold;
+              allreduce_cast; float16; split_reduceop; reduceop_split_threshold;
+              reduceop_split_size; openpilot_hacks; pcontig; max_kernel_buffers ]
+  in
+  let held =
+    [ ("LATE_ALLREDUCE", Multi.late_allreduce);
+      ("NO_MEMORY_PLANNER", Bool.to_int no_memory_planner) ]
+  in
+  List.map (fun v ->
+      Helpers.Context_var.key v ^ "=" ^ string_of_int (Helpers.Context_var.get v))
+    context
+  @ List.map (fun (key, value) -> key ^ "=" ^ string_of_int value) held
+  |> String.concat ","
+
+let schedule_cache_key function_ = U.semantic_key function_ ^ "," ^ config ()
 
 (* Convert a tensor-level SINK into a LINEAR node. *)
 let lower_sink_to_linear ~get_kernel_graph call : U.t option =

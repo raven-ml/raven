@@ -138,6 +138,24 @@ let run_sharded ?(host = "CPU") ~devices ~shape ~axis data op =
 
 let iota n = Array.init n (fun i -> float_of_int (i + 1))
 
+(* The linear schedule of a sum over axis 0 of [shape], sharded on that axis
+   over [devices] and gathered to the host device. *)
+let schedule_reduction ~devices ~shape =
+  let x = f32_buffer_node "CPU" [ List.fold_left ( * ) 1 shape ] in
+  let xs = sharded (U.reshape ~src:x ~shape:(shape_node shape)) shape devices 0 in
+  let sum = U.reduce_axis ~src:xs ~op:Ops.Add ~axes:[ 0 ] in
+  let out = U.contiguous ~src:(U.copy ~src:sum ~device:(U.Single "CPU") ()) () in
+  let call, _ = bufferized_call (U.sink [ out ]) in
+  fst (Schedule.create_linear_with_vars
+         ~get_kernel_graph:Rangeify.get_kernel_graph call)
+
+let forced_strategies =
+  Helpers.Context_var.
+    [ [ B (Helpers.ring, 2) ];
+      [ B (Helpers.all2all, 2) ];
+      [ B (Helpers.allreduce_node_ndevs, 2) ];
+      [ B (Helpers.allreduce_node_ndevs, 4) ] ]
+
 let local_range size axis = U.range ~size:(int_ size) ~axis ~kind:Axis_type.Local ()
 let alu op lhs rhs = Symbolic.simplify (U.alu_binary ~op ~lhs ~rhs)
 let rewrite = U.graph_rewrite Tolk.Multi.multi_pm
@@ -416,10 +434,18 @@ let () =
                       let expected = Array.init 7 (fun i ->
                           data.(i) +. data.(7+i) +. data.(14+i) +. data.(21+i)) in
                       equal (array (float 1e-6)) expected got))
-                [ [Helpers.Context_var.B (Helpers.ring, 2)];
-                  [Helpers.Context_var.B (Helpers.all2all, 2)];
-                  [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, 2)];
-                  [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, 4)] ]);
+                forced_strategies);
+          test "each forced strategy schedules its own collective" (fun () ->
+              let schedule bindings =
+                Helpers.Context_var.with_context bindings (fun () ->
+                    let calls = Array.to_list (U.src (schedule_reduction ~devices:devs4 ~shape:[4; 7])) in
+                    String.concat "," (List.map (fun call ->
+                        U.semantic_key (Option.get (U.as_call call)).body) calls)) in
+              let keys = List.map schedule forced_strategies in
+              equal ~msg:"same bindings, same schedule" string (List.hd keys)
+                (schedule (List.hd forced_strategies));
+              equal ~msg:"distinct schedules" int (List.length keys)
+                (List.length (List.sort_uniq String.compare keys)));
           test "hierarchical scalar handles empty chunks" (fun () ->
               Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, 4)] (fun () ->
                   let got = run_sharded ~devices:devs4 ~shape:[4] ~axis:0 (iota 4)

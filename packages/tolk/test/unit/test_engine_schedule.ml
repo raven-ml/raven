@@ -141,6 +141,24 @@ let schedule_cache_uses_semantic_key_not_hashcons_tag () =
   ignore (Schedule.lower_sink_to_linear ~get_kernel_graph (invoke tagged_sink));
   equal int 1 !calls
 
+(* The number of calls in the schedule of a float32 sum of [n] elements. *)
+let sum_calls n =
+  let x = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
+      ~shape:(U.const_int n) ~device:(U.Single "CPU") () in
+  let sum = U.reduce_axis ~src:x ~op:Ops.Add ~axes:[ 0 ] in
+  let call, _ = bufferized_call (U.sink [ U.contiguous ~src:sum () ]) in
+  let linear, _ =
+    Schedule.create_linear_with_vars ~get_kernel_graph:Rangeify.get_kernel_graph call
+  in
+  Array.length (U.src linear)
+
+let schedule_cache_keys_on_scheduler_settings () =
+  let no_split = [ Helpers.Context_var.B (Helpers.split_reduceop, 0) ] in
+  let n = 262144 in
+  equal ~msg:"SPLIT_REDUCEOP=0 keeps one kernel" int 1
+    (Helpers.Context_var.with_context no_split (fun () -> sum_calls n));
+  equal ~msg:"the default splits the same sum" int 2 (sum_calls n)
+
 (* Symbolic tensor graph: SUM(SHRINK(buf, (0, start_pos+1))) with
    [start_pos] bound to [value]. *)
 let symbolic_shrink_sink ~buf_node ~value =
@@ -317,6 +335,8 @@ let () =
         after_dependency_args_are_buffer_uops;
       test "schedule cache uses semantic key"
         schedule_cache_uses_semantic_key_not_hashcons_tag;
+      test "schedule cache keys on the settings scheduling reads"
+        schedule_cache_keys_on_scheduler_settings;
       test "create_linear_with_vars keeps only used binds"
         create_linear_with_vars_keeps_only_used_binds;
       test "transform_to_call keeps variable identity on bound PARAM"

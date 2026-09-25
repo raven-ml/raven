@@ -468,6 +468,12 @@ thread.
 
 ### Tolk (new)
 
+- Changing a setting that scheduling reads (the allreduce strategy settings,
+  `SPLIT_REDUCEOP` and its thresholds, `FLOAT16`, `PCONTIG`,
+  `MAX_KERNEL_BUFFERS`, `OPENPILOT_HACKS`) between realizations now takes
+  effect for a graph scheduled before. The schedule cache ignored them and
+  replayed the first schedule. `Schedule.config` lists them.
+
 - Compiled programs on Metal no longer return wrong values from kernels of 16
   to 29 arguments, such as a concatenation of 16 tensors. An M1 Max
   miscomputes them from an indirect command buffer, so they now run as direct
