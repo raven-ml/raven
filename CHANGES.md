@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- Launch dimensions and program signatures recognize symbolic `BUFFER`
+  variables as scalar arguments, fixing missing values and unsupported-op
+  errors after the variable representation change.
+
 - `Creation.shard` partitions a tensor along an axis or replicates it across
   devices. Sharded results can be gathered with `Creation.clone` on one device.
 

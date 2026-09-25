@@ -24,9 +24,8 @@ let slot_of_param (p : U.param_arg) =
 
 let slot_of_define (u : U.t) =
   match U.op u, U.arg u with
-  | Ops.Param, U.Arg.Param_arg param ->
+  | (Ops.Param | Ops.Buffer), U.Arg.Param_arg param ->
       if param.addrspace = Dtype.Alu then None else slot_of_param param
-  | Ops.Buffer, U.Arg.Param_arg param -> slot_of_param param
   | _ -> None
 
 (* Trace a pointer expression back to its originating buffer node. *)
@@ -292,7 +291,7 @@ let collect_vars (program : program) =
   let seen = U.Ref_tbl.create 8 in
   List.filter_map (fun u ->
       match U.op u, U.arg u with
-      | Ops.Param, U.Arg.Param_arg
+      | (Ops.Param | Ops.Buffer), U.Arg.Param_arg
           { name = Some name; vmin_vmax = Some (lo, hi); addrspace = Dtype.Alu; _ }
         when not (U.Ref_tbl.mem seen u) ->
           U.Ref_tbl.add seen u ();
@@ -452,8 +451,8 @@ let launch_dims t var_vals =
          | _ -> invalid_arg "launch dimension is not an integer expression")
     | _ ->
         (match U.op d, U.arg d with
-         | ( Ops.Param,
-             U.Arg.Param_arg { name = Some name; vmin_vmax = Some _; _ } )
+         | ( (Ops.Param | Ops.Buffer),
+             U.Arg.Param_arg { name = Some name; vmin_vmax = Some _; addrspace = Dtype.Alu; _ } )
            ->
              (match List.assoc_opt name var_vals with
               | Some v -> v
