@@ -796,6 +796,69 @@ let order_keys ~nan x =
     in
     (where (isnan x) nan_key (flip merged), values)
 
+(* A running maximum or minimum of [t] along [axis], as eager's: NaN from the
+   first NaN on, and the first of equal values, so that -0 and +0 keep their
+   order. Where int64 is native and a key of at most 32 bits leaves room for the
+   positions, one int64 scan orders the key, offset to be non-negative, above
+   the position, the earlier first, and the sign of a zero in the lowest bit:
+   the packed integer stays non-negative, since C and Metal leave a shift of a
+   negative integer undefined. The scanned high bits map back to the value and
+   the lowest restores a zero's sign. A float64 key, a device without int64 or a
+   longer axis scans the values and then marks NaN from its first occurrence in
+   a second scan. *)
+let running ~packs ~axis ~op t =
+  let scan = match op with `Max -> F.Op.cummax | `Min -> F.Op.cummin in
+  let dtype = F.Tensor.dtype t in
+  let n = List.nth (F.Tensor.shape t) axis in
+  let keys, values =
+    order_keys ~nan:(match op with `Max -> `Greatest | `Min -> `Least) t
+  in
+  let key_bits = TD.bitsize (F.Tensor.dtype keys) in
+  let shift = 63 - key_bits in
+  if not (TD.is_float dtype) then fst (scan ~axis t)
+  else if not (packs && key_bits <= 32 && 2 * n <= 1 lsl shift) then
+    nan_from_first ~axis t (fst (scan ~axis t))
+  else
+    let open F.Elementwise in
+    let int t v = F.Creation.const_like t (F.Tensor.Sint v) in
+    let key_dtype = F.Tensor.dtype keys in
+    let least =
+      F.Tensor.of_uop (U.const (Tolk_uop.Const.min_value key_dtype))
+    in
+    let wide, bits = float_bits t in
+    let ranks =
+      F.Movement.reshape
+        (F.Op.arange ~dtype:TD.int64 n)
+        (List.mapi (fun i _ -> if i = axis then n else 1) (F.Tensor.shape t))
+    in
+    let first =
+      match op with `Max -> sub (int ranks (n - 1)) ranks | `Min -> ranks
+    in
+    let low =
+      bitwise_or
+        (lshift first (int first 1))
+        (F.Dtype_ops.cast (eq bits least) TD.int64)
+    in
+    let offset = 1 lsl (key_bits - 1) in
+    let high = add (F.Dtype_ops.cast keys TD.int64) (int low offset) in
+    let scanned =
+      fst (scan ~axis (bitwise_or (lshift high (int high shift)) low))
+    in
+    let key =
+      F.Dtype_ops.cast
+        (sub (rshift scanned (int scanned shift)) (int scanned offset))
+        key_dtype
+    in
+    let signed_zero =
+      bitwise_and
+        (eq key (int key 0))
+        (eq (bitwise_and scanned (int scanned 1)) (int scanned 1))
+    in
+    let minus_zero =
+      F.Dtype_ops.cast (F.Dtype_ops.bitcast least (F.Tensor.dtype wide)) dtype
+    in
+    where signed_zero minus_zero (values key)
+
 (* The keys a sort orders: NaN after every number in either direction, and equal
    zeros tied, so that a stable sort keeps their order. *)
 let sort_keys ~descending x =
@@ -1731,15 +1794,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             let t = go t_in in
-            let nan_through r =
-              if ND.is_float (dt t_in) then nan_from_first ~axis t r else r
-            in
             let r =
               match op with
               | `Sum -> F.Op.cumsum ~axis t
               | `Prod -> F.Op.cumprod ~axis t
-              | `Max -> nan_through (fst (F.Op.cummax ~axis t))
-              | `Min -> nan_through (fst (F.Op.cummin ~axis t))
+              | (`Max | `Min) as op -> running ~packs:(packs st) ~axis ~op t
             in
             (* A sum over small integers accumulates wider; the scan keeps its
                input's dtype. *)

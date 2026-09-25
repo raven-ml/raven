@@ -109,6 +109,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx.cummax` and `Nx.cummin` order subnormals correctly on Metal,
+  where they compared as zero; compile for 8-bit floats along an axis longer
+  than 512, where the C and Metal compilers failed; and keep the first of equal
+  zeros, as eager does. Where int64 is native they run one scan instead of two,
+  faster on some shapes and slower on others.
 - A compiled `Nx.prod` of `bfloat16` or `float16` values multiplies at
   `float32` and rounds once, as the eager one does. Rounding after every factor
   drifted: 256 bfloat16 values just under 1 multiplied to 0.3633 on the CPU

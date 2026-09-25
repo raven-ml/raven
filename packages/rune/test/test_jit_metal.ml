@@ -702,6 +702,17 @@ let test_sort_matches_eager () =
   check_sort_pieces f32 pieces Nx.bfloat16;
   check_sort_pieces f32 pieces Nx.int32
 
+(* A running maximum or minimum compares keys, not floats, so Metal's flush of
+   subnormals in comparisons leaves them in order. *)
+let test_scans_keep_subnormals () =
+  let x = vec32 [| -1e-40; 1e-40; -2e-40; 3e-40; 0.5; -1e-45 |] in
+  List.iter
+    (fun (name, f) ->
+      equal ~msg:name (array float_exact)
+        (to_arr (f x))
+        (to_arr (Rune.jit' ~device:"METAL" f x)))
+    [ ("cummax", Nx.cummax ~axis:0); ("cummin", Nx.cummin ~axis:0) ]
+
 (* A value with no elements has no storage: an empty input, output or capture
    compiles and replays on Metal, next to values that do have elements. *)
 let test_empty_values () =
@@ -750,6 +761,7 @@ let tests =
           test_two_programs_alternate;
         test "sort keeps subnormals" test_sort_keeps_subnormals;
         test "empty values have no storage" test_empty_values;
+        test "scans keep subnormals" test_scans_keep_subnormals;
       ];
     group "placed weights"
       [
