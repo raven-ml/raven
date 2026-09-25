@@ -60,6 +60,12 @@
  (package rune)
  (libraries unix rune nx nx.quant tolk windtrap))
 
+(test
+ (name test_float_codecs)
+ (modules test_float_codecs)
+ (package rune)
+ (libraries nx nx.buffer tolk.uop windtrap))
+
 (tests
  (names test_jit_alignment)
  (modules test_jit_alignment)
