@@ -1016,17 +1016,17 @@ let create_non_native_float_pats ?(casting = true)
   let is_nn dt = List.mem dt dts in
   let cast_f32 src = U.cast ~src ~dtype:f32 in
   let dt = U.dtype node in
+  let committed =
+    if not (Ops.Group.is_alu (U.op node)) then node else
+    match Array.find_opt (fun src -> is_nn (U.dtype src)) (U.src node) with
+    | None -> node
+    | Some peer ->
+        U.replace node ~src:(Array.map (fun src ->
+            if U.op src = Ops.Const && Dtype.is_weak (U.dtype src)
+            then U.ccast ~src ~dtype:(U.dtype peer) else src) (U.src node)) () in
+  if not (U.equal committed node) then Some committed else
   match U.op node with
-  | Ops.Where when is_nn dt ->
-      let srcs = U.src node in
-      if Array.length srcs = 3 then
-        let a = srcs.(0) and b = srcs.(1) and c = srcs.(2) in
-        let w =
-          U.alu_ternary ~op:Ops.Where ~a ~b:(cast_f32 b) ~c:(cast_f32 c)
-        in
-        Some (U.cast ~src:w ~dtype:dt)
-      else None
-  | o when Ops.Group.is_alu o && is_nn dt ->
+  | o when Ops.Group.is_alu o && o <> Ops.Where && is_nn dt ->
       let new_children =
         Array.to_list (U.src node)
         |> List.map (fun c -> if is_nn (U.dtype c) then cast_f32 c else c)
@@ -1048,7 +1048,7 @@ let create_non_native_float_pats ?(casting = true)
       else
         let src = srcs.(0) in
         let sdt = U.dtype src in
-        if is_nn dt && not (Dtype.equal sdt Dtype.float32) then
+        if is_nn dt && not (Dtype.equal sdt Dtype.float32) && U.op src <> Ops.Const then
           Some (U.cast ~src:(cast_f32 src) ~dtype:dt)
         else if is_nn sdt && not (Dtype.equal dt Dtype.float32) then
           Some (U.cast ~src:(cast_f32 src) ~dtype:dt)

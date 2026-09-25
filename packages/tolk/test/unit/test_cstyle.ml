@@ -1226,6 +1226,22 @@ let () =
         [
           (* bf16 promotion is handled by extra_matcher at the Kernel level
              (during codegen), not at render time.  Verify the matcher is set. *)
+          test "emulated float literals keep their committed width" (fun () ->
+            let renderer = Cstyle.clang Gpu_target.Arm64 in
+            let literal = U.const (Const.float Dtype.bfloat16 1.0) in
+            is_true (apply_extra_matcher renderer literal = None);
+            let ptr = U.param ~slot:0 ~dtype:Dtype.bfloat16 ~shape:(U.const_int 1) () in
+            let value = U.load ~src:(U.index ~ptr ~idxs:[U.const_int 0] ()) () in
+            let bare = U.const (Const.float Dtype.weakfloat 1.00390625) in
+            let add = U.alu_binary ~op:Ops.Add ~lhs:value ~rhs:bare in
+            let committed = Option.get (apply_extra_matcher renderer add) in
+            let peer = (U.src committed).(1) in
+            is_true (Dtype.equal (U.dtype peer) Dtype.bfloat16);
+            match U.as_const peer with
+            | Some c -> (match Const.view c with
+                | Const.Float v -> equal float_exact 1. v
+                | _ -> fail "expected a floating literal")
+            | None -> fail "expected a committed literal");
           test "clang has bf16 extra_matcher" (fun () ->
             match Renderer.extra_matcher clang_renderer with
             | None -> failwith "clang should have extra_matcher for bf16 promotion"

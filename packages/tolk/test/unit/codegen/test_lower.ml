@@ -95,10 +95,11 @@ let () =
               with_spec "1" (fun () ->
                   Codegen_lower.lower (test_renderer ()) root)
             in
-            is_true ~msg:"no reachable index dtype remains"
+            is_true ~msg:"only literal payloads retain weak index dtype"
               (not
                  (List.exists
-                    (fun node -> Dtype.equal (U.dtype node) Dtype.weakint)
+                    (fun node -> U.op node <> Ops.Const
+                      && Dtype.equal (U.dtype node) Dtype.weakint)
                     (U.toposort lowered)));
             Spec.type_verify Spec.program_spec lowered);
           test "memory operands feeding ALU become explicit loads" (fun () ->

@@ -383,6 +383,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix BF16 scatter compilation looping during float emulation. Committed
+  literals retain their width, and weak literals are rounded to their emulated
+  peer's dtype before arithmetic is promoted to float32.
+
 - Compile Metal batches into host submission programs shared by eager execution
   and JIT replay. Command storage is linked once and fenced before runtime
   address, scalar and launch-size updates; the old Metal graph API is removed.
