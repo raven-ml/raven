@@ -269,6 +269,13 @@ static void tolk_cuda_hcq_timestamp(tolk_cuda_queue *q, uint64_t stream, uint64_
   pthread_mutex_unlock(&q->lock);
 }
 
+CAMLprim value caml_tolk_cuda_profile_clock(value unit) {
+  CAMLparam1(unit);
+  uint64_t stamp;
+  tolk_cuda_host_stamp(&stamp);
+  CAMLreturn(caml_copy_double((double)stamp / 1000.0));
+}
+
 static uint64_t tolk_cuda_hcq_poll(tolk_cuda_queue *q, volatile uint64_t *signal) {
   pthread_mutex_lock(&q->lock);
   if (q->status == 0) queue_status(q, p_cuCtxSetCurrent(q->context));

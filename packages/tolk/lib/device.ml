@@ -80,6 +80,7 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 type queue = {
   timestamp_divider : float;
+  profile_offset : unit -> float;
   completion : unit -> (unit -> unit);
   prepare : unit -> unit;
   host : string;
@@ -280,10 +281,14 @@ let synchronize d = Mutex.protect d.synchronize_lock (fun () ->
 
 let profile d =
   synchronize d;
-  with_pending_lock d (fun () ->
-      let events = List.rev d.profile_events in
-      d.profile_events <- [];
-      events)
+  if with_pending_lock d (fun () -> d.profile_events = []) then [] else
+    let offset = (Option.get d.queue).profile_offset () in
+    if not (Float.is_finite offset) then invalid_arg "Device.profile: invalid clock offset";
+    with_pending_lock d (fun () ->
+        let events = List.rev_map (fun event ->
+            {event with Profile.start_us = event.Profile.start_us +. offset}) d.profile_events in
+        d.profile_events <- [];
+        events)
 
 let queue d = d.queue
 let bufferize d = d.bufferize

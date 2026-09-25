@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- `Device.profile` calibrates GPU timestamps to the host clock; `Profile.output`
+  preserves timing between devices instead of starting each device at zero.
+  Operation durations retain their original device-clock measurements.
+
 - AMD PCI XGMI address conversion reads fabric topology from the compute hub,
   preventing device-local memory from being assigned the wrong peer aperture.
 

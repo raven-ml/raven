@@ -367,7 +367,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
     "array_count", 12; "simd_arrays_per_engine", 2; "max_slots_scratch_cu", 32] in
   let hw = if multi then gfx942 () else gfx1100 () in
   let hw = {hw with Tolk_amd.is_aql = aql} in
-  let queue = Device.{timestamp_divider = 100.; completion = (fun () ->
+  let queue = Device.{timestamp_divider = 100.; profile_offset = (fun () -> 0.); completion = (fun () ->
       match !timeline with
       | None -> fun () -> ()
       | Some tl -> let value = Timeline.submitted tl in

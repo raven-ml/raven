@@ -2467,6 +2467,21 @@ module Queue = struct
 
   let create state =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
+    (* Keep a dedicated slot: a failed wait may leave its timestamp write
+       pending, so it must not return to the shared pool. *)
+    let profile_stamp = lazy (Hcq.Signal.make (Hcq.Signal.Pool.get state.State.pool)) in
+    let profile_offset () =
+      let stamp = Lazy.force profile_stamp in
+      Profile.calibrate (fun () ->
+          State.prepare state;
+          let queue = Compute_queue.create state.State.hw in
+          Compute_queue.timestamp queue stamp;
+          Compute_queue.signal queue ~value:(Timeline.next_timeline state.State.tl)
+            state.State.tl.Timeline.timeline;
+          Compute_queue.submit queue state.State.compute_queue;
+          fun () ->
+            Timeline.synchronize state.State.tl;
+            Hcq.Signal.timestamp stamp) in
     let copy call =
       let supported = match U.as_call call with
       | Some {args; _} -> List.for_all (fun arg ->
@@ -2485,7 +2500,7 @@ module Queue = struct
         (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
         Timeline.guarded_wait timeline (fun () ->
             Hcq.Signal.wait timeline.Timeline.timeline value) in
-    Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+    Device.{timestamp_divider = 1000.; profile_offset; completion; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
       encode = Encoded_queue.encode state.State.hw ~name:state.State.name
         ~compute_entries:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring / 8)
         ~copy_entries:(Hcq.Mmio.size state.State.dma_queue.Queue_desc.ring / 8)

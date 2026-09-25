@@ -490,12 +490,16 @@ let () =
             let old = Sys.getenv_opt "PROFILE" in
             Fun.protect ~finally:(fun () -> Unix.putenv "PROFILE" (Option.value old ~default:"0")) (fun () ->
             Unix.putenv "PROFILE" "1";
+            let earliest = Unix.gettimeofday () *. 1e6 in
             for _ = 1 to 10 do run [|a; b|] done;
             let events = Device.profile device in
+            let latest = Unix.gettimeofday () *. 1e6 in
             equal int 2 (List.length events);
             List.iter (fun e ->
                 equal string "metal_queue_profile" e.Profile.name;
-                is_true (e.Profile.duration_us > 0.)) events;
+                is_true (e.Profile.duration_us > 0.);
+                is_true ~msg:"GPU timestamps align with the host submission interval"
+                  (e.start_us >= earliest -. 5000. && e.start_us +. e.duration_us <= latest +. 5000.)) events;
             equal int 0 (List.length (Device.profile device));
             let before = !(Helpers.Global_counters.time_sum_s) in
             run ~wait:true [|a; b|];

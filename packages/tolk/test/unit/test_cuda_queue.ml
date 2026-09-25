@@ -30,7 +30,7 @@ let compile ?(profile = false) ?peer_group calls =
   let register queue_name =
     let renderer_set = Device.Renderer_set.make ~device:queue_name
         ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-    let queue = Device.{timestamp_divider = 1000.; completion = (fun () () -> ()); prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some "COPY:0");
+    let queue = Device.{timestamp_divider = 1000.; profile_offset = (fun () -> 0.); completion = (fun () () -> ()); prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some "COPY:0");
       encode = Queue.encode queue_name; lower = Queue.lower queue_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
     let peer_group = if queue_name = device_name then None else peer_group in

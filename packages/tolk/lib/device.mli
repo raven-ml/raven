@@ -96,6 +96,8 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 type queue = {
   timestamp_divider : float; (** Clock ticks per microsecond. *)
+  profile_offset : unit -> float;
+      (** Calibrates device microseconds to host wall-clock microseconds. *)
   completion : unit -> (unit -> unit);
       (** [completion ()] captures submitted work without waiting and returns a
           function that waits for that work. Later submissions do not extend
@@ -213,7 +215,9 @@ val profile : t -> Profile.event list
     removing them from [d]. [PROFILE=1] enables collection for queue calls.
     Replaying a batch before synchronization retains only the latest timestamps
     for each reused slot, as in the reference. Separate batches retain separate
-    records. Events use [d]'s clock and have no guaranteed list order. *)
+    records. Starts are calibrated to the host wall clock; durations retain
+    device-clock differences. Calibration failure leaves the events available
+    for retry. Events have no guaranteed list order. *)
 
 val record_timing :
   t -> name:string -> queue:string -> buffer:Buffer.t -> first:int -> last:int -> unit

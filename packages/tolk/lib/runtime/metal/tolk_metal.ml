@@ -103,6 +103,7 @@ module Ffi = struct
   external hcq_resource : nativeint -> nativeint -> bool -> unit = "caml_tolk_metal_hcq_resource"
   external hcq_wait : nativeint -> int64 -> unit = "caml_tolk_metal_hcq_wait"
   external hcq_symbol : string -> nativeint = "caml_tolk_metal_hcq_symbol"
+  external profile_clock : unit -> float = "caml_tolk_metal_profile_clock"
   external buffer_address : nativeint -> nativeint = "caml_tolk_metal_buffer_address"
 
 end
@@ -519,7 +520,8 @@ module Queue = struct
         | None -> 0L
         | Some timeline -> Bytes.get_int64_le (B.as_bytes timeline) 8 in
       fun () -> Ffi.hcq_wait state.State.context value in
-    Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> ()); host = Device.name host; copy = (fun _ -> None); encode = encode device_name; lower = lower device_name;
+    Device.{timestamp_divider = 1000.; profile_offset = (fun () -> Profile.calibrate (fun () -> Ffi.profile_clock));
+      completion; prepare = (fun () -> ()); host = Device.name host; copy = (fun _ -> None); encode = encode device_name; lower = lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
 end
 

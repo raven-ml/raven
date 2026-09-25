@@ -553,7 +553,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
   let call = U.call ~body:program ~args:[parameter 0]
       ~info:{grad_fxn = None; name = None; precompile = false; precompile_backward = false;
         dtype = D.void; aux = None} in
-  let queue = Device.{timestamp_divider = 1000.; completion = (fun () ->
+  let queue = Device.{timestamp_divider = 1000.; profile_offset = (fun () -> 0.); completion = (fun () ->
       match !timeline with
       | None -> fun () -> ()
       | Some tl -> let value = Timeline.submitted tl in

@@ -12,6 +12,18 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mach/mach_time.h>
+
+/* GPUStartTime and GPUEndTime use the host mach-time clock (Apple's
+   MTLCommandBuffer timing contract), not the GPU's raw counter. */
+CAMLprim value caml_tolk_metal_profile_clock(value unit) {
+  CAMLparam1(unit);
+  mach_timebase_info_data_t scale;
+  if (mach_timebase_info(&scale) != KERN_SUCCESS)
+    caml_failwith("Metal profiling clock is unavailable");
+  double us = (double)mach_absolute_time() * scale.numer / scale.denom / 1000.0;
+  CAMLreturn(caml_copy_double(us));
+}
 
 // 13 is the undocumented request type Metal uses to compile source into MTLB.
 // This mirrors tinygrad's Metal compiler path.

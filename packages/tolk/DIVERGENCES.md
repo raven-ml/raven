@@ -152,9 +152,10 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   inspect `Device.profile` events or use `Profile.output` without adding a
   serialization dependency. Pending repeated slots coalesce until synchronization
   as in the target. Coverage: collector lifetime/failure tests, escaped trace
-  output, host queue replay and real Metal asynchronous replay. Cross-device
-  clock calibration remains open in TODO; exports currently normalize each
-  device independently. Reconsider the format if Raven gains a shared profiling
+  output, host queue replay and real Metal asynchronous replay. Calibrated
+  device timestamps share the host wall clock and a single trace origin;
+  AMD/NV/CUDA hardware alignment remains an acceptance requirement in TODO.
+  Reconsider the format if Raven gains a shared profiling
   artifact protocol needed by these consumers.
 
 - **CPU kernels expose an entry taking buffer and scalar arrays.** The Clang

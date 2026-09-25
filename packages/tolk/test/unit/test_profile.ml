@@ -6,12 +6,12 @@
 open Windtrap
 open Tolk
 
-let fixture synchronize =
+let fixture ?(profile_offset = fun () -> 0.) synchronize =
   let host = Tolk_cpu.create "CPU:profile-host" in
   let allocator = Device.Allocator.Pack (Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let renderer_set = Device.Renderer_set.make ~device:"CPU:profile"
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-  let queue = Device.{timestamp_divider = 10.; completion = (fun () () -> ()); prepare = (fun () -> ()); host = Device.name host;
+  let queue = Device.{timestamp_divider = 10.; profile_offset; completion = (fun () () -> ()); prepare = (fun () -> ()); host = Device.name host;
     copy = (fun _ -> None); encode = (fun _ -> None); lower = (fun _ -> None);
     compile = (fun _ -> fail "no compilation expected")} in
   let device = Device.make ~name:"CPU:profile" ~allocator ~renderer_set
@@ -36,6 +36,27 @@ let render events =
       In_channel.with_open_bin path In_channel.input_all)
 
 let () = run "Profile" [
+  test "clock calibration rejects outliers and invalid samples" (fun () ->
+      let samples = [|1e6; 1e15; 1e6; -1e15; 1e6|] and count = ref 0 in
+      let before = Unix.gettimeofday () *. 1e6 -. 1e6 in
+      let offset = Profile.calibrate (fun () () -> let value = samples.(!count) in incr count; value) in
+      let after = Unix.gettimeofday () *. 1e6 -. 1e6 in
+      equal int 5 !count;
+      is_true (before <= offset && offset <= after);
+      raises_match (function Invalid_argument _ -> true | _ -> false)
+        (fun () -> Profile.calibrate (fun () () -> nan)));
+  test "calibration shifts starts, preserves durations and retains failed collections" (fun () ->
+      let failed = ref true in
+      let profile_offset () = if !failed then failwith "clock unavailable" else 234. in
+      let device, buffer = fixture ~profile_offset (fun () -> ()) in
+      stamps buffer 100L 250L; register device buffer "pending";
+      raises_match (Exn.failure ~substring:"clock unavailable") (fun () -> Device.profile device);
+      failed := false;
+      let events = Device.profile device in
+      equal int 1 (List.length events);
+      equal float_exact 244. (List.hd events).Profile.start_us;
+      equal float_exact 15. (List.hd events).Profile.duration_us;
+      equal int 0 (List.length (Device.profile device)));
   test "asynchronous records wait for synchronization and drain once" (fun () ->
       let syncs = ref 0 in
       let device, buffer = fixture (fun () -> incr syncs) in
@@ -94,4 +115,11 @@ let () = run "Profile" [
           raises_match (function Invalid_argument _ -> true | _ -> false) (fun () ->
               render [Profile.{device = "NV"; queue = "COMPUTE:0"; name = "k";
                 start_us = 0.; duration_us}])) [nan; infinity; -1.]);
+  test "trace keeps one origin across devices" (fun () ->
+      let event = Profile.{device = "AMD"; queue = "COMPUTE:0"; name = "kernel";
+        start_us = 42.; duration_us = 3.} in
+      let fields = render [event; {event with device = "NV"; start_us = 52.}]
+        |> String.split_on_char ',' in
+      is_true (List.mem "\"ts\":0" fields);
+      is_true (List.mem "\"ts\":10" fields));
 ]

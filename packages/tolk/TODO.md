@@ -31,7 +31,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   submissions. Validate NV channel retirement across independently linked
   batches and direct dispatches on hardware, including kernel-argument arena
   reuse during long asynchronous batches.
-- Calibrate GPU and CPU profiling clocks for cross-device trace alignment.
+- Validate AMD/NV/CUDA profiling clock alignment on hardware.
   Validate staged peer transfers and shared host signals on small-BAR devices.
   Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
