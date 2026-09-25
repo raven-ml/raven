@@ -116,11 +116,6 @@ acceptance requirement; skipped tests are not execution evidence.
   `Uop.load`, `reduce`, `wmma` and `noop`, updating callers and contracts. Port
   remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
-- Consolidate symbolic launch evaluation on the exact shared evaluator.
-  `Uop.infer_int` and `Program_spec.launch_dims` duplicate `Uop.sym_infer`
-  using wrapping host arithmetic, and disagree on signed shifts. Cover launch
-  expressions whose intermediate products exceed host integers while their
-  final launch dimensions fit, plus casts and negative shift operands.
 - Replace `Uop.contiguous_view`'s separate movement interpreter with the
   target's flattened-index proof using shared movement and symbolic rewrites.
   Cover cancelling transposes, leading dimensions, symbolic bounds and byte

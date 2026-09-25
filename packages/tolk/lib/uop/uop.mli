@@ -1656,9 +1656,13 @@ val symbolic_vars : t -> (t * string * Bound.t * Bound.t) list
 
 val sym_infer : t -> (string * int) list -> int
 (** [sym_infer u var_vals] is the integer [u] evaluates to once its variables
-    take their values in [var_vals].
+    take their values in [var_vals]. Integer intermediates are exact. Casts
+    convert scalar kinds without narrowing to storage widths; bitcasts retain
+    the source representation. Floating-point intermediates use host double
+    precision, as in tinygrad's Python evaluator.
 
-    Raises [Invalid_argument] if [u] does not reduce to a constant. *)
+    Raises [Invalid_argument] if a required variable is missing, a scalar
+    operation is unsupported, or the result is not a host-sized integer. *)
 
 val exec_alu : Ops.t -> Dtype.t -> Const.t list -> Const.t option
 (** [exec_alu op target args] folds ALU op [op] applied to

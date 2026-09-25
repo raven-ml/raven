@@ -57,6 +57,15 @@ let expect_int_estimate label expected = function
   | E.Int n -> equal int expected n ~msg:label
   | E.Symbolic _ -> failwith (label ^ ": expected exact int estimate")
 
+let check_launch_dimension dimension bindings expected =
+  let gid = special (Gpu_dim.Group_id 0) dimension in
+  let spec = spec_of (U.toposort gid) in
+  let global = fst (Program_spec.launch_dims spec bindings) in
+  equal (array int) [|expected; 1; 1|] global;
+  let global = fst (U.program_launch_dims (Program_spec.program_info spec)
+      ~var_vals:bindings) in
+  is_true (global = [U.Launch_value_int expected; U.Launch_value_int 1; U.Launch_value_int 1])
+
 let () =
   run "Program_spec"
     [
@@ -129,9 +138,34 @@ let () =
             raises_match
               (function
                 | Invalid_argument msg ->
-                    msg = "program \"kern\": missing launch variable \"n\""
+                    msg = "program \"kern\": sym_infer: missing variable \"n\""
                 | _ -> false)
               (fun () -> Program_spec.launch_dims (spec_of [ n; gid ]) []));
+          test "launch dimensions retain exact intermediate products" (fun () ->
+            let variable name = U.variable ~name ~min_val:1 ~max_val:max_int () in
+            let n = variable "launch_n" and m = variable "launch_m" in
+            let dimension = U.O.((n * m) // U.const_int max_int) in
+            let value = 1 lsl 32 in
+            check_launch_dimension dimension ["launch_n", value; "launch_m", value] 4);
+          test "launch dimensions preserve Python signed shifts" (fun () ->
+            let n = U.variable ~name:"shift_n" ~min_val:(-1000) ~max_val:1000 () in
+            let shifted = U.alu_binary ~op:Ops.Shr ~lhs:n ~rhs:(U.const_int 1) in
+            check_launch_dimension U.O.(shifted + U.const_int 10) ["shift_n", -7] 6);
+          test "launch casts convert values without storage narrowing" (fun () ->
+            let n = U.variable ~name:"cast_n" ~min_val:(-1000) ~max_val:(1 lsl 30) () in
+            check_launch_dimension (U.cast ~src:n ~dtype:Dtype.int8) ["cast_n", 300] 300;
+            let floating = U.cast ~src:n ~dtype:Dtype.float32 in
+            check_launch_dimension (U.cast ~src:floating ~dtype:Dtype.weakint)
+              ["cast_n", 16_777_217] 16_777_217;
+            let boolean = U.cast ~src:n ~dtype:Dtype.bool in
+            let integer = U.cast ~src:boolean ~dtype:Dtype.weakint in
+            check_launch_dimension U.O.(integer + U.const_int 1) ["cast_n", -7] 2);
+          test "launch bitcasts retain the source representation" (fun () ->
+            let bits = U.variable ~name:"bits" ~min_val:0 ~max_val:0x7fff_ffff
+                ~dtype:Dtype.int32 () in
+            let floating = U.bitcast ~src:bits ~dtype:Dtype.float32 in
+            check_launch_dimension (U.cast ~src:floating ~dtype:Dtype.weakint)
+              ["bits", 0x3f80_0000] 1);
           test "launch floor div and mod use Python semantics" (fun () ->
             let n = define_var "n" (-10) 10 in
             let three = i32 3 in

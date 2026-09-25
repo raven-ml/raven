@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- Symbolic launch dimensions use exact arithmetic, preserving large intermediate
+  products, signed shifts and scalar casts. Both launch APIs now agree with
+  `Uop.sym_infer` instead of overflowing host integers independently.
+
 - `Op.arange` preserves values and lengths at OCaml integer boundaries.
   Exact endpoint and offset arithmetic prevents sign changes and empty ranges
   caused by overflowing intermediate calculations.

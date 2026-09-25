@@ -3137,18 +3137,6 @@ let symbolic_vars u =
           vmin_vmax = Some (lo, hi); _ } -> Some (n, name, lo, hi)
       | _ -> None)
 
-let sym_infer u var_vals =
-  let mappings =
-    symbolic_vars u
-    |> List.filter_map (fun (n, name, _, _) ->
-        match List.assoc_opt name var_vals with
-        | Some value -> Some (n, const_int value)
-        | None -> None)
-  in
-  match const_int_value (simplify (substitute mappings u)) with
-  | Some n -> n
-  | None -> invalid_arg "sym_infer: expression did not reduce to a constant"
-
 (* Symbolic integer ("sint") helpers. A dimension or size is a plain node: a
    concrete integer is a [Const] and a symbolic value is any other
    integer-valued expression. *)
@@ -3333,12 +3321,6 @@ let program_info_from_sink ?(target = Target.of_string "") sink =
   { target; global_size = !global_size; local_size = !local_size;
     vars = sort_program_vars !vars; globals; outs; ins }
 
-let int_floor_div a b =
-  let q = a / b and r = a mod b in
-  if r <> 0 && ((a < 0) <> (b < 0)) then q - 1 else q
-
-let int_floor_mod a b = a - (int_floor_div a b * b)
-
 (* Scalar ALU execution uses mathematical integers until an explicit dtype
    truncation. Storage conversion and host-sized indexing happen elsewhere. *)
 let const_as_float c =
@@ -3483,55 +3465,65 @@ let exec_alu op (target : Dtype.t) args =
         exec_ternary op target a b c
     | _ -> None
 
-let rec infer_int var_vals u =
-  match const_int_value (simplify u) with
-  | Some n -> n
-  | None ->
-      let srcs = src u in
-      let binary f =
-        if Array.length srcs < 2 then raise Not_found;
-        f (infer_int var_vals srcs.(0))
-          (infer_int var_vals srcs.(1))
-      in
-      match op u with
-      | Ops.Param | Ops.Buffer -> (
-          match program_var_name u with
-          | Some name ->
-              (match List.assoc_opt name var_vals with
+(* Host symbolic evaluation follows Python scalar arithmetic, not storage
+   conversion: integer intermediates remain exact and float casts use double
+   precision. Reuse scalar ALU semantics without a second operator table. *)
+let sym_infer u var_vals =
+  let values = Tbl.create 16 in
+  let unsupported u =
+    invalid_arg ("sym_infer: unsupported scalar " ^ Ops.name (op u)) in
+  let rec eval u =
+    match Tbl.find_opt values u with
+    | Some value -> value
+    | None ->
+        let value = match op u, arg u, src u with
+          | Ops.Const, Arg.Value value, _ -> value
+          | (Ops.Param | Ops.Buffer), Arg.Param_arg param, _
+              when param.addrspace = Dtype.Alu ->
+              (match param.name with
+               | Some name ->
+                   (match List.assoc_opt name var_vals with
+                    | Some value -> Const.int Dtype.weakint value
+                    | None -> invalid_arg
+                        (Printf.sprintf "sym_infer: missing variable %S" name))
+               | None -> invalid_arg "sym_infer: unnamed variable")
+          | Ops.After, _, sources when Array.length sources > 0 -> eval sources.(0)
+          | Ops.Cast, _, [| source |] ->
+              Const.of_view (Dtype.weak_dtype (dtype u)) (Const.view (eval source))
+          | Ops.Bitcast, _, [| source |] ->
+              let value = eval source in
+              (match Const.view value, Dtype.min (dtype source), Dtype.max (dtype source) with
+               | Const.Int n, `Int lo, `Int hi when Z.lt n lo || Z.gt n hi ->
+                   invalid_arg "sym_infer: bitcast input does not fit its storage dtype"
+               | _ -> ());
+              let source = Const.of_view (dtype source) (Const.view value) in
+              (match Const.bitcast ~dtype:(dtype u) source with
                | Some value -> value
-               | None -> invalid_arg
-                   (Printf.sprintf "program: missing launch variable %S" name))
-          | None -> invalid_arg
-              "program: unnamed launch variable")
-      | Ops.After when is_bound_var u -> infer_int var_vals (Option.get (as_bind u)).value
-      | Ops.Cast when Array.length srcs >= 1 -> infer_int var_vals srcs.(0)
-      | Ops.Add -> binary ( + )
-      | Ops.Sub -> binary ( - )
-      | Ops.Mul -> binary ( * )
-      | Ops.Cdiv -> binary ( / )
-      | Ops.Cmod -> binary ( mod )
-      | Ops.Floordiv -> binary int_floor_div
-      | Ops.Floormod -> binary int_floor_mod
-      | Ops.Max -> binary max
-      | Ops.Cmplt -> binary (fun a b -> if a < b then 1 else 0)
-      | Ops.Cmpne -> binary (fun a b -> if a <> b then 1 else 0)
-      | Ops.Cmpeq -> binary (fun a b -> if a = b then 1 else 0)
-      | Ops.And -> binary ( land )
-      | Ops.Or -> binary ( lor )
-      | Ops.Xor -> binary ( lxor )
-      | Ops.Shl -> binary ( lsl )
-      | Ops.Shr -> binary ( asr )
-      | Ops.Neg when Array.length srcs >= 1 -> -infer_int var_vals srcs.(0)
-      | Ops.Where when Array.length srcs >= 3 ->
-          if infer_int var_vals srcs.(0) <> 0 then
-            infer_int var_vals srcs.(1)
-          else infer_int var_vals srcs.(2)
-      | _ -> raise Not_found
+               | None -> unsupported u)
+          | Ops.Where, _, [| condition; yes; no |] ->
+              (match Const.view (Const.of_view Dtype.bool (Const.view (eval condition))) with
+               | Const.Bool condition -> eval (if condition then yes else no)
+               | _ -> unsupported u)
+          | operation, _, sources when Ops.Group.is_alu operation ->
+              (match exec_alu ~truncate_output:false operation (Dtype.weak_dtype (dtype u))
+                  (Array.to_list (Array.map eval sources)) with
+               | Some value -> value
+               | None -> unsupported u)
+          | _ -> unsupported u in
+        Tbl.add values u value;
+        value in
+  match Const.view (eval (simplify u)) with
+  | Const.Int value ->
+      (match integer_as_native value with
+       | Some value -> value
+       | None -> invalid_arg "sym_infer: result does not fit a host integer")
+  | Const.Bool value -> Bool.to_int value
+  | _ -> invalid_arg "sym_infer: expression did not evaluate to an integer"
 
 let program_launch_dim var_vals = function
   | Launch_int n -> Launch_value_int n
   | Launch_float f -> Launch_value_float f
-  | Launch_sym u -> Launch_value_int (infer_int var_vals u)
+  | Launch_sym u -> Launch_value_int (sym_infer u var_vals)
 
 let program_launch_dims (info : program_info) ~var_vals =
   ( List.map (program_launch_dim var_vals) info.global_size,

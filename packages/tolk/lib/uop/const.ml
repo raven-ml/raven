@@ -74,6 +74,63 @@ let of_view dtype = function
       else integer dtype n
   | Float f -> of_scalar dtype (`Float f)
 
+let is_signed_int_scalar = function
+  | Dtype.Int8 | Dtype.Int16 | Dtype.Int32 | Dtype.Int64 -> true
+  | _ -> false
+
+let raw_mask bytes =
+  if bytes >= 8 then -1L
+  else Int64.sub (Int64.shift_left 1L (bytes * 8)) 1L
+
+let low_bits bytes n = Int64.logand n (raw_mask bytes)
+
+let sign_extend bytes raw =
+  if bytes >= 8 then raw
+  else
+    let bits = bytes * 8 in
+    let sign = Int64.shift_left 1L (bits - 1) in
+    if Int64.logand raw sign = 0L then raw
+    else Int64.logor raw (Int64.lognot (raw_mask bytes))
+
+let raw_bits_of_const src c =
+  let bytes = Dtype.itemsize src in
+  match view c with
+  | Bool b -> Some (if b then 1L else 0L)
+  | Int n when Dtype.is_int src || Dtype.is_bool src ->
+      Some (Z.to_int64 (Z.signed_extract n 0 (min 64 (bytes * 8))))
+  | Float f ->
+      (match src with
+       | Dtype.Float32 ->
+           Some (low_bits bytes (Int64.of_int32 (Int32.bits_of_float f)))
+       | Dtype.Float64 -> Some (Int64.bits_of_float f)
+       | _ -> None)
+  | Int _ | Invalid -> None
+
+let storage_of_raw_bits dst raw =
+  let bytes = Dtype.itemsize dst in
+  let raw = low_bits bytes raw in
+  if Dtype.is_bool dst then Some (`Bool (raw <> 0L))
+  else if Dtype.is_int dst then
+    let n =
+      if is_signed_int_scalar (dst)
+      then sign_extend bytes raw
+      else raw
+    in
+    Some (`Int n)
+  else
+    match dst with
+    | Dtype.Float32 -> Some (`Float (Int32.float_of_bits (Int64.to_int32 raw)))
+    | Dtype.Float64 -> Some (`Float (Int64.float_of_bits raw))
+    | _ -> None
+
+let bitcast ~dtype:target c =
+  let source = dtype c in
+  match Dtype.storage_fmt_for_dtype source, Dtype.storage_fmt_for_dtype target with
+  | Some _, Some _ when Dtype.itemsize source = Dtype.itemsize target ->
+      Option.bind (raw_bits_of_const source c) (fun bits ->
+          Option.map (of_scalar target) (storage_of_raw_bits target bits))
+  | _ -> None
+
 let equal_view a b =
   match a, b with
   | Bool x, Bool y -> Bool.equal x y

@@ -435,50 +435,11 @@ let estimates t = t.estimates
 let global_size t = t.launch.global
 let local_size t = t.launch.local
 
-let floor_div a b =
-  let q = a / b and r = a mod b in
-  if r <> 0 && ((a < 0) <> (b < 0)) then q - 1 else q
-
-let floor_mod a b = a - (floor_div a b * b)
-
 let launch_dims t var_vals =
-  let rec eval d =
-    match U.arg d with
-    | U.Arg.Value c ->
-        (match Const.view c with
-         | Const.Int n -> Z.to_int n
-         | Const.Bool b -> if b then 1 else 0
-         | _ -> invalid_arg "launch dimension is not an integer expression")
-    | _ ->
-        (match U.op d, U.arg d with
-         | ( (Ops.Param | Ops.Buffer),
-             U.Arg.Param_arg { name = Some name; vmin_vmax = Some _; addrspace = Dtype.Alu; _ } )
-           ->
-             (match List.assoc_opt name var_vals with
-              | Some v -> v
-              | None ->
-                  invalid_arg
-                    (Printf.sprintf "program %S: missing launch variable %S" t.name name))
-         | _ ->
-             match U.op d, U.src d with
-             | (Ops.Cast | Ops.Bitcast), [| x |] -> eval x
-             | Ops.Add, [| a; b |] -> eval a + eval b
-             | Ops.Sub, [| a; b |] -> eval a - eval b
-             | Ops.Mul, [| a; b |] -> eval a * eval b
-             | Ops.Cdiv, [| a; b |] -> eval a / eval b
-             | Ops.Cmod, [| a; b |] ->
-                 let a = eval a and b = eval b in
-                 a - (a / b) * b
-             | Ops.Floordiv, [| a; b |] -> floor_div (eval a) (eval b)
-             | Ops.Floormod, [| a; b |] -> floor_mod (eval a) (eval b)
-             | Ops.Max, [| a; b |] -> max (eval a) (eval b)
-             | Ops.Shl, [| a; b |] -> eval a lsl eval b
-             | Ops.Shr, [| a; b |] -> eval a lsr eval b
-             | _ ->
-                 invalid_arg
-                   (Printf.sprintf "unsupported launch dimension op %s"
-                      (Ops.name (U.op d))))
-  in
+  let eval d =
+    try U.sym_infer d var_vals with
+    | Invalid_argument message ->
+        invalid_arg (Printf.sprintf "program %S: %s" t.name message) in
   let eval_dims dims = Array.map eval dims in
   let global = eval_dims t.launch.global in
   let local = Option.map eval_dims t.launch.local in

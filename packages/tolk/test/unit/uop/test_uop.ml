@@ -1643,6 +1643,20 @@ let program_launch_dims_floor_divmod () =
   equal (list launch_value_testable) ~msg:"ProgramInfo floor launch local dims"
     [ Launch_value_int 1; Launch_value_int 1; Launch_value_int 1 ] local_size
 
+let sym_infer_host_scalars () =
+  let n = Uop.variable ~name:"host_n" ~min_val:(-1000) ~max_val:max_int () in
+  let half = Uop.alu_binary ~op:Ops.Fdiv
+      ~lhs:(Uop.cast ~src:n ~dtype:Dtype.float32) ~rhs:(Uop.const_float 2.) in
+  let truncated = Uop.cast ~src:half ~dtype:Dtype.weakint in
+  equal int 7 (Uop.sym_infer Uop.O.(truncated + Uop.const_int 10) ["host_n", -7]);
+  equal int 0 (Uop.sym_infer Uop.O.(n * Uop.const_int 0) []);
+  let bound = Uop.bind ~var:n ~value:(Uop.const_int 7) in
+  equal int 9 (Uop.sym_infer Uop.O.(bound + Uop.const_int 1) ["host_n", 8]);
+  raises (Invalid_argument "sym_infer: result does not fit a host integer")
+    (fun () -> Uop.sym_infer Uop.O.(n * n) ["host_n", 1 lsl 32]);
+  raises (Invalid_argument "sym_infer: missing variable \"host_n\"")
+    (fun () -> Uop.sym_infer n [])
+
 let debug_prints_toposort_like_tinygrad () =
   let a = Uop.const_int 1 in
   let b = Uop.const_int 2 in
@@ -2620,6 +2634,8 @@ let () =
           test "ProgramInfo.from_sink parity" program_info_from_sink_parity;
           test "ProgramInfo launch floor div/mod"
             program_launch_dims_floor_divmod;
+          test "symbolic inference uses exact host scalar semantics"
+            sym_infer_host_scalars;
           test "tinygrad-shaped debug toposort"
             debug_prints_toposort_like_tinygrad;
           test "tinygrad-shaped debug ranges and supplied lists"

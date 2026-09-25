@@ -93,6 +93,13 @@ val of_view : Dtype.t -> view -> t
     otherwise it converts [v] to [dtype] while retaining exact integer payloads.
     Float-to-integer conversion follows {!of_scalar}. *)
 
+val bitcast : dtype:Dtype.t -> t -> t option
+(** [bitcast ~dtype c] reinterprets [c]'s storage bits as [dtype]. The
+    source representation is given by {!dtype}; integers use its low bits.
+    Returns [None] for invalid values, unequal storage sizes, or unsupported
+    representations. Supported representations are booleans, concrete
+    integers, [float32], and [float64]. *)
+
 (** {1:predicates Predicates and comparisons} *)
 
 val equal : t -> t -> bool
