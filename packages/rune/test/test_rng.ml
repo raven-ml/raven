@@ -395,10 +395,11 @@ let test_grad_dropout_mask_is_constant () =
 
 let test_vmap_per_lane_keys () =
   let ks = Nx.Rng.split ~n:4 (Nx.Rng.key 42) in
-  let stacked = Nx.stack ~axis:0 (Array.to_list ks) in
-  let out =
-    Rune.vmap' (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |]) stacked
-  in
+  let draw = Rune.vmap' (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |]) in
+  let out = draw (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 42)) in
+  check_bits ~msg:"split_batch maps as the stacked split does"
+    (draw (Nx.stack ~axis:0 (Array.to_list ks)))
+    out;
   equal ~msg:"one row per lane" int 4 (Nx.shape out).(0);
   (* Each lane draws what its key draws unbatched, and lanes differ. *)
   for i = 0 to 3 do
@@ -446,9 +447,12 @@ let test_vmap_fold_in_axis_decorrelates () =
 
 let test_vmap_scope_rooted_at_mapped_key () =
   let ks = Nx.Rng.split ~n:4 (Nx.Rng.key 42) in
-  let stacked = Nx.stack ~axis:0 (Array.to_list ks) in
   let draw () = Nx.rand Nx.float32 [| 8 |] in
-  let out = Rune.vmap' (fun key -> Nx.Rng.with_key key draw) stacked in
+  let out =
+    Rune.vmap'
+      (fun key -> Nx.Rng.with_key key draw)
+      (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 42))
+  in
   equal ~msg:"one row per lane" int 4 (Nx.shape out).(0);
   for i = 0 to 3 do
     check_bits

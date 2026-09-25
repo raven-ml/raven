@@ -53,8 +53,7 @@ val apply :
 
     {b Under vmap.} A key the mapped function closes over is a constant of the
     map, so every lane draws the identical mask. For independent lanes, fold the
-    lane index into the key with {!Nx.Rng.fold_in_axis}; a manual
-    {!Nx.Rng.split} into per-lane keys stacked along a mapped axis does the same
-    thing by hand.
+    lane index into the key with {!Nx.Rng.fold_in_axis}, or map over a batch of
+    keys from {!Nx.Rng.split_batch}.
 
     Raises [Invalid_argument] if [rate] is outside \[[0];[1]). *)

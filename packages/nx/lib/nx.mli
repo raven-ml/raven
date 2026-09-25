@@ -646,6 +646,21 @@ module Rng : sig
       [2]). Deterministic, and the subkeys are independent of each other; derive
       one subkey per consumer instead of reusing [k]. *)
 
+  val split_batch : n:int -> key -> key
+  (** [split_batch ~n k] is [split ~n k] as one batch of keys, of shape
+      [[|n; 2|]]: row [i] holds the words of [(split ~n k).(i)]. It is the
+      argument that gives each lane of a {!Rune.val-vmap} its own key:
+
+      {v
+      Rune.vmap'
+        (fun k -> Nx.Rng.normal k Nx.float32 [| 3 |])
+        (Nx.Rng.split_batch ~n:8 key)
+      v}
+
+      A sampler takes one key, so it raises on a batch outside the map.
+
+      Raises [Invalid_argument] if [n < 1]. *)
+
   val fold_in : key -> int -> key
   (** [fold_in k data] is the subkey of [k] indexed by [data]: distinct [data]
       values give independent keys. Use it to derive per-step keys from a root
@@ -665,7 +680,8 @@ module Rng : sig
   (** [fold_in_axis k] folds the current mapped-axis index into [k], giving one
       independent key per lane under {!Rune.val-vmap} or per device under
       {!Rune.pmap}. Outside a transform there is a single lane and it is
-      [fold_in k 0]. Decorrelates lanes without a manual split-and-stack. *)
+      [fold_in k 0]. Decorrelates lanes from a key the map captures, where
+      {!split_batch} decorrelates them from a key the map is given. *)
 
   (** {1:samplers Explicit samplers}
 

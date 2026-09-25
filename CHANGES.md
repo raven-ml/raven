@@ -1849,6 +1849,9 @@ thread.
 
 ### Nx
 
+- Add `Nx.Rng.split_batch ~n key`: the keys of `split ~n key` as one batch,
+  whose lanes each see one key under `Rune.vmap`. It replaces stacking split
+  keys into an `[n; 2]` tensor by hand.
 - **Breaking:** an index outside the axis, negative included, drops the update
   in `Nx.scatter` and reads zero in `Nx.take` and `Nx.take_along_axis`, eagerly
   as under `Rune.jit`. Eager calls used to raise `Invalid_argument`, so a

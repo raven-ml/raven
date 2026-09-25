@@ -165,7 +165,7 @@ let () =
   (* [3; 4] — one column per lane *)
 ```
 
-**Note.** Implicit random number generation (`Nx.rand` and friends) inside the mapped function draws *identical* values for every lane — the RNG key is a constant of the map. Thread distinct randomness in as mapped inputs instead. Reading a batched tensor's value inside the mapped function raises.
+**Note.** Implicit random number generation (`Nx.rand` and friends) inside the mapped function draws *identical* values for every lane — the RNG key is a constant of the map. Thread distinct randomness in as a mapped input instead: map over a batch of keys from `Nx.Rng.split_batch`, and each lane sees its own key. Reading a batched tensor's value inside the mapped function raises.
 
 ### Per-Sample Gradients
 

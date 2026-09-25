@@ -2451,6 +2451,12 @@ module Make (B : Backend_intf.S) = struct
       let bits = blocks "split" k n in
       Array.init n (fun i -> contiguous (slice [ I i ] bits))
 
+    (* Row [i] of the batch is [split ~n k]'s key [i]: both are row [i] of one
+       Threefry application. *)
+    let split_batch ~n k =
+      if n < 1 then invalid_arg "Nx.Rng.split_batch: n must be at least 1";
+      blocks "split_batch" k n
+
     let fold_in k data =
       check_key "fold_in" k;
       let ctx = B.context k in

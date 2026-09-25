@@ -38,6 +38,19 @@ let test_key_splitting () =
   equal ~msg:"split is deterministic" bool true
     (key_words keys.(0) = key_words keys2.(0))
 
+(* Row [i] of the batch is the array's key [i], bit for bit. *)
+let test_split_batch_rows_are_split () =
+  let key = Rng.key 42 in
+  let batch = Rng.split_batch ~n:5 key in
+  equal ~msg:"a batch of 5 keys" (array int) [| 5; 2 |] (Nx.shape batch);
+  Array.iteri
+    (fun i k ->
+      equal
+        ~msg:(Printf.sprintf "row %d is key %d" i i)
+        (array int32) (key_words k)
+        (Nx.to_array (Nx.slice [ I i ] batch)))
+    (Rng.split ~n:5 key)
+
 let test_fold_in () =
   let key = Rng.key 42 in
   let key1 = Rng.fold_in key 1 in
@@ -960,6 +973,7 @@ let () =
           test "creation" test_key_creation;
           test "splitting" test_key_splitting;
           test "fold_in" test_fold_in;
+          test "split_batch rows are split" test_split_batch_rows_are_split;
         ];
       group "sampling"
         [

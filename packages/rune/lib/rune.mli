@@ -187,10 +187,9 @@ val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {b Note.} Randomness a lane captures (an {!Nx.Rng.key}, or [Nx.rand] under a
     scope the map captures) draws {e identical} values for every lane: it is a
     constant of the map. Decorrelate them either by folding the lane index into
-    one key with {!Nx.Rng.fold_in_axis}, or by mapping over a key axis:
-    {!Nx.Rng.split} one key into per-lane keys, stack them into an [[n; 2]]
-    tensor, and map over it. Reading a batched tensor's value inside the mapped
-    function raises.
+    one key with {!Nx.Rng.fold_in_axis}, or by mapping over a batch of keys from
+    {!Nx.Rng.split_batch}: each lane sees one key. Reading a batched tensor's
+    value inside the mapped function raises.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
     ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
