@@ -1653,9 +1653,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             let t = go t_in in
+            let axis = Array.to_list axes in
+            (* A float sum accumulates at float32 or wider and rounds once, as
+               the eager one does; an integer sum wraps at its own width. *)
             ret k (dt t_in)
-              (F.Reduce.sum ~axis:(Array.to_list axes) ~keepdim:false
-                 ~dtype:(F.Tensor.val_dtype t) t))
+              (if ND.is_float (dt t_in) then F.Reduce.sum ~axis ~keepdim:false t
+               else
+                 F.Reduce.sum ~axis ~keepdim:false ~dtype:(F.Tensor.val_dtype t)
+                   t))
     | E_reduce_prod { t_in; axes } ->
         Some
           (fun k ->

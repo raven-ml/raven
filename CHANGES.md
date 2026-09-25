@@ -109,6 +109,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.sum` or `Nx.mean` of `bfloat16` or `float16` values
+  accumulates at `float32`, as the eager one does. It accumulated at the input's
+  precision: 4096 bfloat16 ones summed to 1024 on the CPU and 16384 to 4096 on
+  Metal.
 - A compiled function on Metal takes, returns and captures values with no
   elements. It raised "Metal OOM while allocating buffer": an empty value was
   given device storage, and Metal has none of size zero.

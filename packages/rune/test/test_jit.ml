@@ -1138,6 +1138,46 @@ let test_correlate_matches_eager () =
   let x = Nx.create f32 [| 6; 7 |] (Array.init 42 (fun i -> float_of_int i)) in
   check_arr ~msg:"correlate same" (to_arr (f x)) (g x)
 
+(* Reductions *)
+
+(* The devices a compiled reduction is checked on: the CPU, and Metal where the
+   machine has it. *)
+let devices =
+  "CPU"
+  ::
+  (match Tolk.Device.get "METAL" with
+  | _ -> [ "METAL" ]
+  | exception Invalid_argument _ -> [])
+
+(* A half-precision sum accumulates at float32, as the eager one does. A
+   half-precision accumulator stops growing: 16384 bfloat16 ones summed to 1024
+   on the CPU and 4096 on Metal, and values near 1.05 drifted on both. *)
+let test_half_sums_accumulate_wide () =
+  let check (type b) name (dtype : (float, b) Nx.dtype) =
+    let ones = Nx.ones dtype [| 16384 |] in
+    let near =
+      Nx.create dtype [| 4096 |]
+        (Array.init 4096 (fun i -> 1.0 +. (float_of_int (i mod 7) /. 64.0)))
+    in
+    List.iter
+      (fun device ->
+        List.iter
+          (fun (input, x) ->
+            List.iter
+              (fun (what, f) ->
+                let value t = Nx.item [] (Nx.cast f32 t) in
+                equal
+                  ~msg:(Printf.sprintf "%s %s of %s, %s" name what input device)
+                  float_exact
+                  (value (f x))
+                  (value (Rune.jit' ~device f x)))
+              [ ("sum", fun x -> Nx.sum x); ("mean", fun x -> Nx.mean x) ])
+          [ ("ones", ones); ("values near 1.05", near) ])
+      devices
+  in
+  check "bfloat16" Nx.bfloat16;
+  check "float16" Nx.float16
+
 (* Cumulative reductions *)
 
 (* A sum over int8 or int16 accumulates in int32; the compiled scan hands back
@@ -3415,6 +3455,11 @@ let tests =
         test "fold of unfold matches eager" test_fold_matches_eager;
         test "sliding window matches eager" test_sliding_window_matches_eager;
         test "correlate matches eager" test_correlate_matches_eager;
+      ];
+    group "reductions"
+      [
+        test "half-precision sums accumulate wide"
+          test_half_sums_accumulate_wide;
       ];
     group "cumulative reductions"
       [
