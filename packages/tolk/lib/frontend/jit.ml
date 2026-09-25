@@ -22,13 +22,16 @@ exception Jit_error = Tolk.Jit.Jit_error
 
 type 'a t = {
   fxn : T.t array -> vars:U.t array -> 'a;
+  outputs : 'a -> T.t list;
+  mutable symbolic_outputs : (T.t * U.t * (U.t * int64) list) list option;
   mutable inner : 'a Tolk.Jit.tiny_jit option;
   mutable current : (T.t array * U.t array) option;
       (* Arguments of the in-flight call, read by the engine-facing function
          during warmup and capture. *)
 }
 
-let create fxn = { fxn; inner = None; current = None }
+let create ~outputs fxn =
+  { fxn; outputs; symbolic_outputs = None; inner = None; current = None }
 
 (* The engine JIT is created on first call so that constructing a JIT does
    not open the execution device. *)
@@ -58,7 +61,8 @@ let captured t =
 
 let reset t =
   (match t.inner with Some jit -> Tolk.Jit.reset jit | None -> ());
-  t.current <- None
+  t.current <- None;
+  t.symbolic_outputs <- None
 
 let is_realized tensor =
   match U.runtime_realization_state (T.uop tensor) with
@@ -131,6 +135,33 @@ let held_buffers () =
     (T.live_tensors ());
   Hashtbl.fold (fun _ node acc -> node :: acc) held []
 
+(* Keep the captured graph as the source for every rebind. Rewriting the
+   previous result would freeze variables simplified away by an earlier call. *)
+let refresh_outputs t ret var_vals =
+  let symbolic = match t.symbolic_outputs with
+    | Some outputs -> outputs
+    | None ->
+        let outputs = List.filter_map (fun tensor ->
+            let node = T.uop tensor in
+            let bindings = List.filter_map (fun bound ->
+                if U.is_bound_var bound then Some (bound, U.unbind bound)
+                else None) (U.toposort node) in
+            if bindings = [] then None
+            else Some (tensor,
+                U.substitute ~walk:true
+                  (List.map (fun (bound, (var, _)) -> bound, var) bindings) node,
+                List.map snd bindings)) (t.outputs ret) in
+        t.symbolic_outputs <- Some outputs;
+        outputs in
+  List.iter (fun (tensor, node, bindings) ->
+      let replacements = List.map (fun (var, captured_value) ->
+          let value = match U.Arg.as_param_arg (U.arg var) with
+            | Some {name = Some name; _} ->
+                Option.value (List.assoc_opt name var_vals) ~default:captured_value
+            | _ -> captured_value in
+          var, U.bind ~var ~value:(U.const (Const.int64 Dtype.weakint value))) bindings in
+      T.set_uop tensor (U.substitute ~walk:true replacements node)) symbolic
+
 let call ?(vars = [||]) t tensors =
   let input_uops, var_vals = prepare_inputs tensors vars in
   let jit = inner t in
@@ -138,5 +169,6 @@ let call ?(vars = [||]) t tensors =
   Fun.protect
     ~finally:(fun () -> t.current <- None)
     (fun () ->
-      Tolk.Jit.call jit input_uops var_vals
-        ~held_buffers)
+      let ret = Tolk.Jit.call jit input_uops var_vals ~held_buffers in
+      if captured t then refresh_outputs t ret var_vals;
+      ret)

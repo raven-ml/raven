@@ -66,7 +66,7 @@ let time_replay call =
 (* A replayable compute workload: build the graph from realized inputs, warm
    and capture through the JIT, then time execution-only replays. *)
 let time_compute ~build inputs =
-  let jit = Jit.create (fun ins ~vars:_ -> Run.realize (build ins)) in
+  let jit = Jit.create ~outputs:(fun tensor -> [tensor]) (fun ins ~vars:_ -> Run.realize (build ins)) in
   Array.iter (fun t -> keep (Run.realize t)) inputs;
   let dev = Run.device () in
   let call () =

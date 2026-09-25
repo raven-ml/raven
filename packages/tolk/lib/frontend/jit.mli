@@ -44,8 +44,17 @@ exception Jit_error of string
     input signature mismatch on replay, or a capture that recorded no
     kernels. *)
 
-val create : (Tensor.t array -> vars:Tolk_uop.Uop.t array -> 'a) -> 'a t
-(** [create fxn] wraps [fxn] for capture and replay. [fxn] receives the
+val create :
+  outputs:('a -> Tensor.t list) ->
+  (Tensor.t array -> vars:Tolk_uop.Uop.t array -> 'a) -> 'a t
+(** [create ~outputs fxn] wraps [fxn] for capture and replay.
+    [outputs] enumerates the tensors in the returned value, including tensors
+    nested in records or containers. For a single tensor result, pass
+    [(fun tensor -> [tensor])]. Their symbolic views are rebound to the current
+    [vars] after replay; variables bound only inside [fxn] keep their captured
+    values.
+
+    [fxn] receives the
     input tensors and the [vars] array of the current call unchanged; it
     should build views from the [vars] bind nodes (for example with
     {!Movement.symbolic_shrink}) so that one captured program serves every

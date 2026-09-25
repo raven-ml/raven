@@ -679,6 +679,10 @@ thread.
 
 ### Tolk (new)
 
+- `Jit.call` refreshes symbolic output views with each replay binding instead
+  of retaining capture-time extents. `Jit.create ~outputs` explicitly identifies
+  tensors inside structured return values; inner fixed bindings remain fixed.
+
 - Image stores convert non-stacked half vectors to float lane by lane,
   preserving valid image-write types through late lowering.
 

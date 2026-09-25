@@ -324,7 +324,7 @@ let generate model tokenizer prompt count temperature =
   let toks = ref (Array.to_list (Brot.encode_ids tokenizer prompt)) in
   let start_pos = ref 0 in
   let jit =
-    Jit.create (fun _inputs ~vars ->
+    Jit.create ~outputs:(fun tensor -> [tensor]) (fun _inputs ~vars ->
         forward model (Tok vars.(0)) vars.(1) temperature)
   in
   let times = ref [] in

@@ -224,7 +224,7 @@ let jit_tests =
       (El.mul (El.add inputs.(0) inputs.(1)) (Rand.randn [ 10; 10 ]))
   in
   let five_draws a b =
-    let jf = Jit.create f in
+    let jf = Jit.create ~outputs:(fun tensor -> [tensor]) f in
     List.init 5 (fun _ -> (Run.to_float_array (Jit.call jf [| a; b |])).(0))
   in
   group "jit"
@@ -386,7 +386,7 @@ let placement_tests =
           Tolk.Helpers.Context_var.with_context [ B (Tolk.Helpers.training, 1) ] (fun () ->
               let src = Cr.shard ~axis:1 ~devices (source [ 8; 8 ]) in
               let draws () =
-                let jf = Jit.create (fun _ ~vars:_ ->
+                let jf = Jit.create ~outputs:(fun tensor -> [tensor]) (fun _ ~vars:_ ->
                     let out = Rand.dropout src in
                     check_sharding (Some 1) out;
                     Run.realize (gather out)) in

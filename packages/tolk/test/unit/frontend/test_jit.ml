@@ -53,7 +53,7 @@ let elementwise_tests =
               ~addrspace:D.Alu ~vmin_vmax:(D.min D.int64, D.max D.int64) () in
           let scalar = U.replace scalar ~op:Tolk_uop.Ops.Buffer () in
           let traces = ref 0 in
-          let jit = Jit.create (fun inputs ~vars ->
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars ->
               incr traces;
               Run.realize (El.add inputs.(0) (T.of_uop vars.(0)))) in
           List.iter (fun value ->
@@ -67,7 +67,7 @@ let elementwise_tests =
       test "storage slices remain views through capture and replay" (fun () ->
           List.iter (fun offset ->
               let traces = ref 0 in
-              let jit = Jit.create (fun inputs ~vars:_ ->
+              let jit = Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars:_ ->
                   incr traces;
                   let view = storage_view ~src:(U.base (T.uop inputs.(0)))
                       ~offset:(U.const_int offset) ~size:4 ~dtype:Tolk_uop.Dtype.float32 in
@@ -81,7 +81,7 @@ let elementwise_tests =
       test "chain replays without re-running the function" (fun () ->
           let traces = ref 0 in
           let jit =
-            Jit.create (fun inputs ~vars:_ ->
+            Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars:_ ->
                 incr traces;
                 let x = inputs.(0) in
                 Run.realize (El.mul (El.add x x) (T.f 3.)))
@@ -106,7 +106,7 @@ let elementwise_tests =
           equal int ~msg:"function ran only for warmup and capture" 2 !traces);
       test "empty host inputs participate in capture and replay" (fun () ->
           let traces = ref 0 in
-          let jit = Jit.create (fun inputs ~vars:_ ->
+          let jit = Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars:_ ->
               incr traces;
               Run.realize (El.add (Rd.sum inputs.(0)) (Rd.sum inputs.(1)))) in
           for call = 0 to 3 do
@@ -119,7 +119,7 @@ let elementwise_tests =
           equal int 2 !traces);
       test "unrealized inputs are realized by call" (fun () ->
           let jit =
-            Jit.create (fun inputs ~vars:_ ->
+            Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars:_ ->
                 Run.realize (El.add inputs.(0) (T.f 1.)))
           in
           let lazy_input () = El.add (vec [| 1.; 2. |]) (vec [| 10.; 20. |]) in
@@ -141,6 +141,41 @@ let symbolic_tests =
   in
   group "symbolic decode loop"
     [
+      test "returned symbolic views follow replay bindings" (fun () ->
+          let traces = ref 0 in
+          let fixed = U.bind
+              ~var:(U.variable ~name:"inner_size" ~min_val:1 ~max_val:8 ())
+              ~value:(U.const_int 3) in
+          let jit = Jit.create ~outputs:snd (fun inputs ~vars ->
+              incr traces;
+              let computed = Run.realize (El.add inputs.(0) (T.f 1.)) in
+              let prefix bound =
+                Mv.symbolic_shrink computed [Some (U.const_int 0, bound)] in
+              ("views", [prefix vars.(0); prefix fixed])) in
+          let concrete tensor =
+            let node = T.uop tensor in
+            let bindings = List.filter_map (fun u ->
+                match U.as_bind u with
+                | Some {value; _} -> Some (u, value)
+                | None -> None) (U.toposort node) in
+            T.of_uop (U.substitute ~walk:true bindings node) in
+          let step n =
+            let bound = U.bind
+                ~var:(U.variable ~name:"view_size" ~min_val:1 ~max_val:8 ())
+                ~value:(U.const_int n) in
+            let label, views = Jit.call jit ~vars:[|bound|]
+                [|vec (Array.init 8 (fun i -> Float.of_int (10 * n + i)))|] in
+            equal string "views" label;
+            List.iter2 (fun size view ->
+                let view = concrete view in
+                equal (list int) [size] (T.shape view);
+                check_floats (Array.init size (fun i -> Float.of_int (10 * n + i + 1))) view)
+              [n; 3] views in
+          List.iter step [1; 2; 4; 3; 8];
+          equal int 2 !traces;
+          Jit.reset jit;
+          List.iter step [4; 1; 6];
+          equal int 4 !traces);
       test "kv-cache assign at start_pos, prefix reduce, one capture"
         (fun () ->
           let max_context = 8 and width = 2 in
@@ -151,7 +186,7 @@ let symbolic_tests =
           ignore (Run.realize cache);
           let traces = ref 0 in
           let jit =
-            Jit.create (fun inputs ~vars ->
+            Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars ->
                 incr traces;
                 let row = inputs.(0) in
                 let pos = vars.(0) in
@@ -194,7 +229,7 @@ let error_tests =
     [
       test "input size mismatch on replay raises Jit_error" (fun () ->
           let jit =
-            Jit.create (fun inputs ~vars:_ ->
+            Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars:_ ->
                 Run.realize (El.add inputs.(0) (T.f 1.)))
           in
           ignore (Jit.call jit [| vec [| 1.; 2. |] |]);
@@ -203,14 +238,14 @@ let error_tests =
               ignore (Jit.call jit [| vec [| 1.; 2.; 3. |] |])));
       test "duplicate inputs raise Jit_error" (fun () ->
           let jit =
-            Jit.create (fun inputs ~vars:_ ->
+            Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars:_ ->
                 Run.realize (El.add inputs.(0) inputs.(1)))
           in
           let x = vec [| 1.; 2. |] in
           raises_match is_jit_error (fun () -> ignore (Jit.call jit [| x; x |])));
       test "malformed vars raise Jit_error" (fun () ->
           let jit =
-            Jit.create (fun inputs ~vars:_ ->
+            Jit.create ~outputs:(fun tensor -> [tensor]) (fun inputs ~vars:_ ->
                 Run.realize (El.add inputs.(0) (T.f 1.)))
           in
           raises_match is_jit_error (fun () ->

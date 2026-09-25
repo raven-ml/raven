@@ -72,8 +72,8 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
-- Refresh symbolic returned views after JIT replay, including fixed bindings
-  captured inside the function and nested result containers.
+- Validate normalized JIT input views and extract their symbolic bindings;
+  same-sized layout changes must not silently reuse a different captured view.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Validate large WMMA accumulator ordering at optimizer/expander boundaries,
