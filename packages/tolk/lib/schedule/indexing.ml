@@ -266,7 +266,7 @@ let realize_call_args ctx c =
   let src = U.src c in
   let passes a =
     always_contiguous (U.op (strip_reshapes a))
-    || Option.is_some (U.contiguous_view a)
+    || Option.is_some (U.storage_window a)
   in
   let views = List.filter (fun slot -> not (passes src.(slot + 1)))
       (List.init (Array.length src - 1) Fun.id) in

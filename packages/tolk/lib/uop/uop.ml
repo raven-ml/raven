@@ -2642,7 +2642,7 @@ let bounds u =
           let hi = dim_mul shard (const_int (i + 1)) in
           lo, hi)
 
-let contiguous_view u =
+let view_walk ~stage u =
   let exact_int t =
     match const_int_value t with
     | Some _ as value -> value
@@ -2738,7 +2738,8 @@ let contiguous_view u =
     | Ops.Bitcast ->
         Option.map (fun (base, offset, _) -> base, offset, shape node)
           (walk (src node).(0))
-    | Ops.Stage when arg node = Arg.Empty -> walk (src node).(0)
+    | Ops.Stage when arg node = Arg.Empty ->
+        if stage then Some (node, 0, shape node) else walk (src node).(0)
     | Ops.Detach | Ops.Contiguous_backward | Ops.After ->
         let srcs = src node in
         if Array.length srcs = 0 then None else walk srcs.(0)
@@ -2808,6 +2809,9 @@ let contiguous_view u =
     | _ -> None
   in
   Option.map (fun (base, offset, _) -> base, offset) (walk u)
+
+let contiguous_view u = view_walk ~stage:false u
+let storage_window u = view_walk ~stage:true u
 
 let reduce_axis ~src ~op ~axes =
   let shp = shape src in
