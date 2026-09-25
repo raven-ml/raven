@@ -322,6 +322,34 @@ let () =
         ];
       group "Pci_device"
         [
+          test "AMD constructor releases earlier BAR mappings on acquisition failure" (fun () ->
+              if not (Sys.file_exists "/proc/self/maps") then
+                skip ~reason:"PCI BAR mappings require Linux" ();
+              List.iter (fun missing -> with_fake_root (fun root ->
+                  let pcibus = "0000:03:00.0" in
+                  add_full_dev root pcibus;
+                  let dir = dev_dir root pcibus in
+                  write_file (dir // "config") (String.make 64 '\000');
+                  write_file (dir // "resource")
+                    (String.concat "\n"
+                       (List.init 6 (fun _ -> "0x1000 0x1fff 0x0")));
+                  let bars = if missing = 2 then [0] else [0; 2] in
+                  List.iter (fun bar ->
+                      write_file (dir // Printf.sprintf "resource%d" bar)
+                        (String.make 4096 '\000')) bars;
+                  let devpref = "tolktest" ^ uid () in
+                  let device = Pci_device.create ~sysfs:root ~devpref pcibus in
+                  raises_match
+                    (Exn.failure ~substring:(Printf.sprintf "resource%d" missing))
+                    (fun () -> Tolk_amd.Amdev.create device);
+                  let mappings = String.split_on_char '\n' (read_file "/proc/self/maps") in
+                  List.iter (fun bar ->
+                      let path = dir // Printf.sprintf "resource%d" bar in
+                      is_false (List.exists (String.ends_with ~suffix:path) mappings)) bars;
+                  (* The failed backend still owns the claim: CPU BAR cleanup
+                     does not certify that the hardware is quiescent. *)
+                  raises_match (Exn.failure ~substring:"Failed to acquire lock")
+                    (fun () -> Pci_device.create ~sysfs:root ~devpref pcibus))) [2; 5]);
           test "failed claims release their lock for retry" (fun () ->
               List.iter (fun missing -> with_fake_root (fun root ->
                   let pcibus = "0000:03:00.0" in

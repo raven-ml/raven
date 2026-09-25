@@ -535,22 +535,32 @@ let make ?pci_dev ?read_config ?write_config_flush ?reset
     ~bar1_base ()
 
 let create pci_dev =
-  let devfmt = System.Pci_device.pcibus pci_dev in
-  let mmio = System.Pci_device.map_bar pci_dev 0 in
-  setup ~pci_dev:(Some pci_dev) ~devfmt ~mmio
-    ~map_vram:(fun () -> System.Pci_device.map_bar pci_dev 1)
-    ~rreg:(fun addr -> Int32.to_int (Mmio.read32 mmio addr) land 0xffffffff)
-    ~wreg:(fun addr v -> Mmio.write32 mmio addr (Int32.of_int v))
-    ~read_config:(fun ~offset ~size ->
-      System.Pci_device.read_config pci_dev ~offset ~size)
-    ~write_config_flush:(fun ~offset ~value ~size ->
-      System.Pci_device.write_config_flush pci_dev ~offset ~value ~size)
-    ~reset:(fun () -> System.Pci_device.reset pci_dev)
-    ~now_ms:monotonic_ms
-    ~alloc_sysmem:(fun ~contiguous size ->
-      System.Pci_device.alloc_sysmem ~contiguous size)
-    ~bar1_base:(fst (System.Pci_device.bar_info pci_dev 1))
-    ()
+  (* Setup can reset the device, so its claim remains held on failure. Only
+     these independent CPU BAR mappings can be released here; firmware host
+     allocations and their publication happen after this constructor returns. *)
+  System.with_rollback (fun rollback ->
+    let devfmt = System.Pci_device.pcibus pci_dev in
+    let map_bar bar =
+      let view = System.Pci_device.map_bar pci_dev bar in
+      rollback (fun () ->
+          Tolk_hcq.Hcq.File_io.munmap (Mmio.addr view) ~size:(Mmio.size view));
+      view
+    in
+    let mmio = map_bar 0 in
+    setup ~pci_dev:(Some pci_dev) ~devfmt ~mmio
+      ~map_vram:(fun () -> map_bar 1)
+      ~rreg:(fun addr -> Int32.to_int (Mmio.read32 mmio addr) land 0xffffffff)
+      ~wreg:(fun addr v -> Mmio.write32 mmio addr (Int32.of_int v))
+      ~read_config:(fun ~offset ~size ->
+        System.Pci_device.read_config pci_dev ~offset ~size)
+      ~write_config_flush:(fun ~offset ~value ~size ->
+        System.Pci_device.write_config_flush pci_dev ~offset ~value ~size)
+      ~reset:(fun () -> System.Pci_device.reset pci_dev)
+      ~now_ms:monotonic_ms
+      ~alloc_sysmem:(fun ~contiguous size ->
+        System.Pci_device.alloc_sysmem ~contiguous size)
+      ~bar1_base:(fst (System.Pci_device.bar_info pci_dev 1))
+      ())
 
 let pci_dev t = t.pci_dev
 let devfmt t = t.devfmt

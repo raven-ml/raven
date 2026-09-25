@@ -959,77 +959,86 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(sleep_ms = system_sleep_ms)
   }
 
 let create pci_dev =
-  System.Pci_device.disable_aspm pci_dev;
-  let vram = System.Pci_device.map_bar pci_dev 0 in
-  let doorbell64 = System.Pci_device.map_bar pci_dev 2 in
-  let mmio = System.Pci_device.map_bar pci_dev 5 in
-  let vram_size = raw_rreg mmio mm_rcc_config_memsize lsl 20 in
-  let large_bar = Mmio.size vram >= vram_size in
-  let tmr_offset = vram_size - (64 lsl 10) in
-  let tmr_size = 10 lsl 10 in
-  let disc_tbl =
-    if large_bar then Mmio.read_bytes vram ~off:tmr_offset ~len:tmr_size
-    else read_vram mmio ~addr:tmr_offset ~size:tmr_size
-  in
-  let discovery = parse_discovery disc_tbl in
-  let gc_ver =
-    match List.assoc_opt Am.gc_hwip discovery.ip_ver with
-    | Some v -> v
-    | None -> failwith "ip discovery lists no graphics core"
-  in
-  let reserved_vram_size =
-    match gc_ver with 9, (4 | 5), _ -> 384 lsl 20 | _ -> 64 lsl 20
-  in
-  let rreg, wreg, reg = reg_access ~ips:(build_ips discovery) (`Bar mmio) in
-  let is_hive, paddr_base, mc_base = gmc_state (reg 0) in
-  let is_booting = ref true in
-  let on_range_mapped = ref (fun () -> ()) in
-  let devfmt = System.Pci_device.pcibus pci_dev in
-  let lv_span = 9 * (3 - Am.amdgpu_vm_pdb2) in
-  let mm =
-    Memory.create
-      ~pt_ops:
-        (Am_page_table.ops ~vram ~gc_ver
-           ~paddr_base:(fun () -> paddr_base)
-           ())
-      ~vram_size:(vram_size - reserved_vram_size)
-      ~boot_size:(3 lsl 20) ~va_bits:48
-      ~va_shifts:[ 12; 21; 30; 39 ]
-      ~va_base
-      ~palloc_ranges:
-        (List.init (lv_span + 1) (fun k ->
-             let i = lv_span - k in
-             (1 lsl (i + 12), if i >= 9 then 2 lsl 20 else 0x1000)))
-      ~va_allocator:(Lazy.force va_allocator)
-      ~is_booting:(fun () -> !is_booting)
-      ~zero_vram:(fun ~paddr ~size ->
-        Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
-      ~first_lv:Am.amdgpu_vm_pdb2 ~reserve_ptable:(not large_bar)
-      ~dbg_name:devfmt
-      ~on_range_mapped:(fun () -> !on_range_mapped ())
-      ()
-  in
-  {
-    pci_dev = Some pci_dev;
-    read_config = System.Pci_device.read_config pci_dev;
-    devfmt;
-    vram;
-    doorbell64;
-    mmio;
-    vram_size;
-    large_bar;
-    reserved_vram_size;
-    discovery;
-    rreg;
-    wreg;
-    reg;
-    is_hive;
-    paddr_base;
-    mc_base;
-    now_ms = monotonic_ms;
-    sleep_ms = system_sleep_ms;
-    is_booting;
-    is_err_state = ref false;
-    on_range_mapped;
-    mm;
-  }
+  (* These are independent CPU BAR mappings, not GPU backing allocations.
+     Firmware initialization begins only after this constructor returns. *)
+  System.with_rollback (fun rollback ->
+    System.Pci_device.disable_aspm pci_dev;
+    let map_bar bar =
+      let view = System.Pci_device.map_bar pci_dev bar in
+      rollback (fun () ->
+          Tolk_hcq.Hcq.File_io.munmap (Mmio.addr view) ~size:(Mmio.size view));
+      view
+    in
+    let vram = map_bar 0 in
+    let doorbell64 = map_bar 2 in
+    let mmio = map_bar 5 in
+    let vram_size = raw_rreg mmio mm_rcc_config_memsize lsl 20 in
+    let large_bar = Mmio.size vram >= vram_size in
+    let tmr_offset = vram_size - (64 lsl 10) in
+    let tmr_size = 10 lsl 10 in
+    let disc_tbl =
+      if large_bar then Mmio.read_bytes vram ~off:tmr_offset ~len:tmr_size
+      else read_vram mmio ~addr:tmr_offset ~size:tmr_size
+    in
+    let discovery = parse_discovery disc_tbl in
+    let gc_ver =
+      match List.assoc_opt Am.gc_hwip discovery.ip_ver with
+      | Some v -> v
+      | None -> failwith "ip discovery lists no graphics core"
+    in
+    let reserved_vram_size =
+      match gc_ver with 9, (4 | 5), _ -> 384 lsl 20 | _ -> 64 lsl 20
+    in
+    let rreg, wreg, reg = reg_access ~ips:(build_ips discovery) (`Bar mmio) in
+    let is_hive, paddr_base, mc_base = gmc_state (reg 0) in
+    let is_booting = ref true in
+    let on_range_mapped = ref (fun () -> ()) in
+    let devfmt = System.Pci_device.pcibus pci_dev in
+    let lv_span = 9 * (3 - Am.amdgpu_vm_pdb2) in
+    let mm =
+      Memory.create
+        ~pt_ops:
+          (Am_page_table.ops ~vram ~gc_ver
+             ~paddr_base:(fun () -> paddr_base)
+             ())
+        ~vram_size:(vram_size - reserved_vram_size)
+        ~boot_size:(3 lsl 20) ~va_bits:48
+        ~va_shifts:[ 12; 21; 30; 39 ]
+        ~va_base
+        ~palloc_ranges:
+          (List.init (lv_span + 1) (fun k ->
+               let i = lv_span - k in
+               (1 lsl (i + 12), if i >= 9 then 2 lsl 20 else 0x1000)))
+        ~va_allocator:(Lazy.force va_allocator)
+        ~is_booting:(fun () -> !is_booting)
+        ~zero_vram:(fun ~paddr ~size ->
+          Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
+        ~first_lv:Am.amdgpu_vm_pdb2 ~reserve_ptable:(not large_bar)
+        ~dbg_name:devfmt
+        ~on_range_mapped:(fun () -> !on_range_mapped ())
+        ()
+    in
+    {
+      pci_dev = Some pci_dev;
+      read_config = System.Pci_device.read_config pci_dev;
+      devfmt;
+      vram;
+      doorbell64;
+      mmio;
+      vram_size;
+      large_bar;
+      reserved_vram_size;
+      discovery;
+      rreg;
+      wreg;
+      reg;
+      is_hive;
+      paddr_base;
+      mc_base;
+      now_ms = monotonic_ms;
+      sleep_ms = system_sleep_ms;
+      is_booting;
+      is_err_state = ref false;
+      on_range_mapped;
+      mm;
+    })

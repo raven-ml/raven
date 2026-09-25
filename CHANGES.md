@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed AMD/NV PCI discovery releases constructor-owned BAR mappings.
+  Address-space reservation now precedes PCI claiming, so a reservation failure
+  cannot strand a device claim; uncertain hardware state keeps its claim held.
+
 - AMD PCI boot uses updated firmware and register tables, including SMU
   13.0.15 protocols. Missing or outdated firmware is downloaded from the
   pinned source with `curl`, SHA-verified and cached without replacing local files.

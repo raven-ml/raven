@@ -641,8 +641,10 @@ module Pci_iface_base = struct
                dev_id (List.length matching)
                (if List.length matching = 1 then "" else "s"))
     in
-    let pci_dev = Pci_device.create ~devpref pcibus in
+    (* The shared process VA reservation must succeed before taking a device
+       claim; unlike the claim, its lifetime spans all devices. *)
     reserve_va ~va_start ~va_size;
+    let pci_dev = Pci_device.create ~devpref pcibus in
     (try Pci_device.resize_bar pci_dev vram_bar with Failure _ -> ());
     let impl = dev_impl pci_dev in
     {
