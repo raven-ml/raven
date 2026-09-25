@@ -14,14 +14,6 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
-- Port the target's distinction between one-shot linker ring allocations and
-  retained command storage. Public links and `allow_cache:false` links can
-  remain unpublished or replay repeatedly; neither setting permits ring reuse.
-  Measure large eager linking first. Any transient optimization must be scoped
-  to eager link-and-execute, reserve a whole link before writing, drain through
-  `Device.synchronize` before wrap (including profiles), and retain backing after
-  failed completion. Cover unpublished, oversized and independently retained
-  links before adopting it.
 - Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
   `LRU=0`, forcing GC during allocation, mapped-buffer teardown,
   compiled submission, signal reservation and kernarg reuse. Verify that waits

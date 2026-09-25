@@ -6,6 +6,18 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Linked command storage stays independently owned.** The target uses a
+  device ring for cache-enabled links with link-time input bindings. Tolk's
+  public links may remain unpublished or replay after newer links; input tags
+  and cache policy do not establish a transient lifetime. Owned storage keeps
+  those consumers on one allocation protocol. Coverage: `test_link` independent
+  bindings and `bench/link` verified Metal chains with retained replay. Paired
+  64/128-call measurements show mixed eager-link costs and do not isolate a ring
+  benefit; they do not establish AMD/NV performance parity. Reconsider if a
+  consumer demonstrates substantial allocation cost and can scope one-shot
+  publication, reserve whole links before writing, and drain completion and
+  profiles before reuse, retaining backing after failed completion.
+
 - **AMD firmware lookup accepts verified plain local files and `AMD_FW_PATH`.**
   The target checks the system directory's compressed files before downloading.
   Tolk also accepts plain files and a configured directory for offline PCI boot;
