@@ -302,15 +302,19 @@ let get_runtime ?(queue = false) ~device program =
       Hashtbl.replace runtime_cache ckey prg;
       prg
 
-(* Capture registry
+type _ Effect.t +=
+  | Capture : (Tolk_uop.Uop.t -> (string * int64) list -> unit) option Effect.t
 
-   While non-empty, [Schedule.create_linear_with_vars] hands each linearized
-   schedule and its variable bindings to the head capturer instead of planning
-   it for execution. Owned here so the schedule can consult it without
-   depending on the JIT. *)
+let current_capture () =
+  try Effect.perform Capture with Effect.Unhandled Capture -> None
 
-let capturing : (Tolk_uop.Uop.t -> (string * int64) list -> unit) list ref =
-  ref []
+let with_capture callback f =
+  Effect.Deep.try_with f ()
+    { effc = (fun (type a) (request : a Effect.t) ->
+        match request with
+        | Capture -> Some (fun (k : (a, _) Effect.Deep.continuation) ->
+            Effect.Deep.continue k (Some callback))
+        | _ -> None) }
 
 (* Buffer binding
 

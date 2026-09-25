@@ -238,11 +238,9 @@ let memory_plans_internal_buffers_when_not_capturing () =
 
 let capture_hands_unplanned_schedule_to_capturer () =
   let received = ref None in
-  Realize.capturing :=
-    [ (fun linear var_vals -> received := Some (linear, var_vals)) ];
   let linear, var_vals =
-    Fun.protect
-      ~finally:(fun () -> Realize.capturing := [])
+    Realize.with_capture
+      (fun linear var_vals -> received := Some (linear, var_vals))
       (fun () ->
         Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id
           (internal_buffer_sink ()))

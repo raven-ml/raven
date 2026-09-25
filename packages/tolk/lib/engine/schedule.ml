@@ -814,8 +814,8 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
   (* Step 5: a capturer records this schedule instead of executing it, so hand
      it over unplanned — the capturer memory-plans the combined schedule once,
      after capture completes. *)
-  match !Realize.capturing with
-  | add_linear :: _ when capturing_enabled ->
+  match Realize.current_capture () with
+  | Some add_linear when capturing_enabled ->
       add_linear linear var_vals;
       (U.linear [], var_vals)
   | _ ->

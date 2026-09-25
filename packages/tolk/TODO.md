@@ -77,7 +77,7 @@ acceptance requirement; skipped tests are not execution evidence.
 - Reconcile remaining intermediate IR/GROUP and source differences in FP8
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
   `topk_rounds` and `multi_output`.
-- Minimize strict-OOB rejections observed in 19 frontend cases and three
+- Minimize strict-OOB rejections observed in 23 frontend cases and three
   Metal tensor-core cases (padded contraction and BF16 accumulation). Distinguish
   incomplete relational proofs from incorrect fixture extents; preserve strict
   rejection of unproved accesses and use shared symbolic rules for valid proofs.
@@ -116,8 +116,8 @@ acceptance requirement; skipped tests are not execution evidence.
   Establish native-handle retirement for replaced device owners: global program,
   runtime and linked-template caches currently retain entries indefinitely.
   Preserve live submission ownership while retiring unreachable cached handles.
-  Isolate schedule capture hooks and Rune's shared upload scratch across
-  concurrent callers as part of that audit. Cover finalizers registered on
+  Isolate Rune's shared upload scratch across concurrent callers as part
+  of that audit. Cover finalizers registered on
   another domain and systhreads sharing a domain: operation scopes currently
   prevent only same-domain GC re-entry and do not serialize device callers.
   Run the concurrent runtime and cache coverage under TSan.

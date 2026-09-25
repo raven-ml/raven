@@ -11,7 +11,7 @@
    records the computation as a LINEAR, exec (cnt>=2) replays that LINEAR
    with fresh input buffers.
 
-   Capture installs itself in {!Realize.capturing}, so every schedule the
+   Capture runs within {!Realize.with_capture}, so every schedule the
    function creates is recorded instead of executed. The recorded schedules
    are combined and lowered for replay: each input buffer node is substituted
    with a slotted PARAM, intermediate buffer memory is planned once over the
@@ -147,14 +147,12 @@ let call ?wait ?held_buffers t (input_uops : U.t array)
     else if t.cnt = 1 then begin
       (* Capture: record the linears the function schedules. *)
       let fxn = Option.get t.fxn in
-      if !Realize.capturing <> [] then
+      if Option.is_some (Realize.current_capture ()) then
         raise (Jit_error "nested TinyJit is not supported");
       let linears = ref [] in
-      Realize.capturing :=
-        [ (fun linear _var_vals -> linears := linear :: !linears) ];
       let ret =
-        Fun.protect
-          ~finally:(fun () -> Realize.capturing := [])
+        Realize.with_capture
+          (fun linear var_vals -> ignore var_vals; linears := linear :: !linears)
           (fun () -> fxn input_uops var_vals)
       in
       let linears = List.rev !linears in

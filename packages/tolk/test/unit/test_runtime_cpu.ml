@@ -167,16 +167,17 @@ let timing_cache_eviction () =
     Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
       Codegen.to_program device (Device.renderer device) sink) in
   let kernels = !(Helpers.Global_counters.kernel_count) in
-  let capture = !Realize.capturing in
-  Fun.protect ~finally:(fun () -> Realize.capturing := capture) (fun () ->
-    Realize.capturing := [fun _ _ -> fail "cache eviction entered JIT capture"];
-    Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
-      Realize.time_call ~device ~to_program:compile ~clear_l2:true
-        (program_call spec [dst; src]) (fun sample ->
-          for _ = 1 to 2 do
-            is_true (sample () > 0.);
-            equal int 3 (Helpers.Context_var.get Helpers.beam)
-          done)));
+  Realize.with_capture
+    (fun linear vars ->
+      ignore (linear, vars); fail "cache eviction entered JIT capture")
+    (fun () ->
+      Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
+        Realize.time_call ~device ~to_program:compile ~clear_l2:true
+          (program_call spec [dst; src]) (fun sample ->
+            for _ = 1 to 2 do
+              is_true (sample () > 0.);
+              equal int 3 (Helpers.Context_var.get Helpers.beam)
+            done)));
   equal int 1 !compilations;
   equal int 2 !fills;
   is_false (Device.Buffer.is_allocated (Option.get !eviction_buffer));

@@ -328,9 +328,105 @@ let scoped_timings ~dispatch_failure ~drain_failure () =
   equal int !calls !clears;
   equal int kernels !(Helpers.Global_counters.kernel_count)
 
+exception Capture_test_failure
+
+type _ Effect.t += Pause_capture : unit Effect.t
+
+let capture_callback () =
+  let calls = ref 0 in
+  fun linear vars -> ignore (linear, vars); incr calls
+
+let is_capture callback =
+  match Realize.current_capture () with
+  | Some current -> current == callback
+  | None -> false
+
+let capture_worker ready yield () =
+  let absent_before = Option.is_none (Realize.current_capture ()) in
+  let callback = capture_callback () in
+  let isolated = Realize.with_capture callback (fun () ->
+      ignore (Atomic.fetch_and_add ready 1);
+      while Atomic.get ready <> 2 do yield () done;
+      is_capture callback) in
+  absent_before && isolated && Option.is_none (Realize.current_capture ())
+
+let capture_tests =
+  group "Scoped capture"
+    [
+      test "nested captures restore the outer callback after exceptions" (fun () ->
+          let outer = capture_callback () and inner = capture_callback () in
+          is_true (Option.is_none (Realize.current_capture ()));
+          Realize.with_capture outer (fun () ->
+              is_true (is_capture outer);
+              Realize.with_capture inner (fun () -> is_true (is_capture inner));
+              is_true (is_capture outer);
+              (try
+                 Realize.with_capture inner (fun () ->
+                     is_true (is_capture inner); raise Capture_test_failure)
+               with Capture_test_failure -> ());
+              is_true (is_capture outer));
+          is_true (Option.is_none (Realize.current_capture ()));
+          (try Realize.with_capture outer (fun () -> raise Capture_test_failure)
+           with Capture_test_failure -> ());
+          is_true (Option.is_none (Realize.current_capture ())));
+      test "overlapping domains do not share or inherit capture" (fun () ->
+          let ready = Atomic.make 0 in
+          Realize.with_capture (capture_callback ()) (fun () ->
+              let first = Domain.spawn (capture_worker ready Domain.cpu_relax) in
+              let second = Domain.spawn (capture_worker ready Domain.cpu_relax) in
+              let first_result = Domain.join first in
+              let second_result = Domain.join second in
+              is_true first_result;
+              is_true second_result));
+      test "overlapping system threads do not share or inherit capture" (fun () ->
+          let ready = Atomic.make 0 in
+          let first_result = Atomic.make false and second_result = Atomic.make false in
+          Realize.with_capture (capture_callback ()) (fun () ->
+              let start result = Thread.create (fun () ->
+                  Atomic.set result (capture_worker ready Thread.yield ())) () in
+              let first = start first_result and second = start second_result in
+              Thread.join first;
+              Thread.join second;
+              is_true (Atomic.get first_result);
+              is_true (Atomic.get second_result)));
+      test "context snapshots do not carry a capture callback" (fun () ->
+          Realize.with_capture (capture_callback ()) (fun () ->
+              let snapshot = Helpers.Context_var.snapshot () in
+              let worker = Domain.spawn (fun () ->
+                  Helpers.Context_var.with_snapshot snapshot (fun () ->
+                      Option.is_none (Realize.current_capture ()))) in
+              is_true (Domain.join worker)));
+      test "suspended continuations retain their own capture scope" (fun () ->
+          let suspend callback =
+            let continuation : (unit, unit) Effect.Deep.continuation option ref = ref None in
+            Effect.Deep.try_with
+              (fun () -> Realize.with_capture callback (fun () ->
+                  is_true (is_capture callback);
+                  Effect.perform Pause_capture;
+                  is_true (is_capture callback))) ()
+              { effc = (fun (type a) (request : a Effect.t) ->
+                  match request with
+                  | Pause_capture -> Some (fun (k : (a, unit) Effect.Deep.continuation) ->
+                      continuation := Some k)
+                  | _ -> None) };
+            Option.get !continuation
+          in
+          let first = suspend (capture_callback ()) in
+          let second = suspend (capture_callback ()) in
+          is_true (Option.is_none (Realize.current_capture ()));
+          let outer = capture_callback () in
+          Realize.with_capture outer (fun () ->
+              Effect.Deep.continue first ();
+              is_true (is_capture outer);
+              Effect.Deep.continue second ();
+              is_true (is_capture outer));
+          is_true (Option.is_none (Realize.current_capture ())));
+    ]
+
 let () =
   run "Engine_realize"
     [
+      capture_tests;
       renderer_selection_tests;
       test "compilation resolves beam context once and respects explicit zero"
         compile_beam_policy;

@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Replace the global `Realize.capturing` registry with `with_capture` and
+  `current_capture`. Concurrent callers keep separate capture scopes, and
+  nested Rune compilation restores outer capture on return or exception.
+
 - `TC_MIN_GLOBALS` preserves global work when tensor-core heuristics choose
   upcasts. Scoped changes to this policy select distinct compiled programs.
 

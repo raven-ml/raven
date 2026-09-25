@@ -144,8 +144,8 @@ let () =
               equal string "ok" (Jit.call t [||] []);
               raises_jit_error (fun () ->
                   ignore (Jit.call t [||] []));
-              is_true ~msg:"capture registry cleared"
-                (match !Realize.capturing with [] -> true | _ -> false));
+              is_true ~msg:"capture scope exited"
+                (Option.is_none (Realize.current_capture ())));
         ];
       group "Capture and replay"
         [

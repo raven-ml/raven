@@ -13,7 +13,7 @@
 
     {ul
     {- {e Warmup} (cnt=0): execute eagerly.}
-    {- {e Capture} (cnt=1): install a capturer in {!Realize.capturing} so
+    {- {e Capture} (cnt=1): run within {!Realize.with_capture} so
        every schedule the function creates is recorded instead of executed,
        then lower the combined record for replay: substitute each input
        buffer node with a slotted {!Tolk_uop.Ops.Param}, plan intermediate

@@ -141,15 +141,21 @@ val compile_linear :
     {!program_config}, so kernels that differ only by diagnostic tags share one
     compilation; the stamped beam width is part of the key. *)
 
-(** {1:capture Capture registry} *)
+(** {1:capture Schedule capture} *)
 
-val capturing : (Tolk_uop.Uop.t -> (string * int64) list -> unit) list ref
-(** [capturing] is the schedule-capture registry. While non-empty,
-    {!Schedule.create_linear_with_vars} hands each linearized schedule and its
-    variable bindings to the head entry and returns an empty
-    {!Tolk_uop.Ops.Linear} instead of planning the schedule for execution.
-    {!Jit.call} installs its capturer here for the duration of the capture
-    run. *)
+val current_capture :
+  unit -> (Tolk_uop.Uop.t -> (string * int64) list -> unit) option
+(** [current_capture ()] is the callback of the innermost {!with_capture}
+    scope, or [None] outside capture. *)
+
+val with_capture :
+  (Tolk_uop.Uop.t -> (string * int64) list -> unit) -> (unit -> 'a) -> 'a
+(** [with_capture callback f] is [f ()] with [callback] receiving schedules
+    created by {!Schedule.create_linear_with_vars}. Nested scopes shadow the
+    outer callback, which is restored on return or exception.
+
+    Capture follows the dynamic continuation scope. Fresh domains and system
+    threads do not inherit it. *)
 
 (** {1:binding Buffer binding} *)
 

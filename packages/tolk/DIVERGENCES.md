@@ -6,6 +6,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Schedule capture follows the dynamic continuation scope.** Upstream uses
+  a process-global callback list. Tolk and Rune may compile on independent
+  domains or system threads, so `Realize.with_capture` scopes a private effect
+  query instead of mutating a registry. Coverage: `test_realize` nested failure,
+  concurrent callers, snapshot exclusion and suspended continuation tests;
+  Rune JIT consumers retain normal capture/replay behavior. TinyJit still
+  rejects nested capture. Reconsider if upstream supplies a scoped capture
+  protocol; this does not make mutable JIT instances safe for concurrent use.
+
 - **Numbered scalar declarations use their parameter slots.** Upstream renders
   symbolic binding names as C identifiers; Tolk uses `data<slot>_` for numbered
   scalars, preserving separate declarations when explicit slots share a binding

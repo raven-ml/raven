@@ -89,8 +89,8 @@ val create_linear_with_vars :
     and flattening the resulting linear schedule. Only binds for variables
     referenced by scheduled kernel bodies are returned.
 
-    When {!Realize.capturing} is non-empty (and the [CAPTURING] environment
-    variable is not [0]), the schedule is handed to the head capturer
+    Within {!Realize.with_capture} (when the [CAPTURING] environment
+    variable is not [0]), the schedule is handed to the scoped callback
     unplanned and an empty {!Tolk_uop.Ops.Linear} is returned: there is
     nothing to execute, and the capturer runs {!memory_plan_rewrite} once
     over the combined captured schedule. Otherwise the schedule is

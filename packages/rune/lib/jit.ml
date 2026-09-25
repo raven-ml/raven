@@ -1381,11 +1381,7 @@ let schedule_body_linear body_sink =
       (Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node) in
   let body_call = Tolk.Callify.transform_to_call body_sink in
   let captured = ref None in
-  Tolk.Realize.capturing :=
-    (fun l v -> captured := Some (l, v)) :: !Tolk.Realize.capturing;
-  Fun.protect
-    ~finally:(fun () ->
-      Tolk.Realize.capturing := List.tl !Tolk.Realize.capturing)
+  Tolk.Realize.with_capture (fun l v -> captured := Some (l, v))
     (fun () ->
       ignore
         (Tolk.Schedule.create_linear_with_vars
@@ -4870,10 +4866,8 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
            unplanned. *)
         let linear, var_vals =
           let captured = ref None in
-          Tolk.Realize.capturing :=
-            [ (fun linear var_vals -> captured := Some (linear, var_vals)) ];
-          Fun.protect
-            ~finally:(fun () -> Tolk.Realize.capturing := [])
+          Tolk.Realize.with_capture
+            (fun linear var_vals -> captured := Some (linear, var_vals))
             (fun () ->
               ignore
                 (Tolk.Schedule.create_linear_with_vars
