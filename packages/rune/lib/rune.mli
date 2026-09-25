@@ -521,30 +521,17 @@ val jit :
     read in place and outputs are computed directly into the returned tensors'
     storage; non-contiguous tensors are copied.
 
-    On other devices, results are bit-identical but data moves lazily. Inputs on
-    the host are copied to the device on every call; outputs are values placed
-    on the device: metadata such as shape and dtype never transfers, a read
-    copies the elements it reads and leaves the output where it is, and an nx
-    operation on it outside a compiled function returns a value on the device. A
-    placed value on the device, an output of an earlier call included, seeds the
-    program's input directly with no transfer, which makes iterated calls
-    (training steps, decode loops with a cache) run without per-call traffic. A
-    view of part of a storage is read in place too: the program reads the
-    storage the view reaches and applies a strided view's layout itself. The
-    range is bound from a 16-byte boundary: views that differ only by an offset
-    that is a multiple of 16 bytes share a program, and a C-order window at such
-    an offset shares the program of a value that covers its storage. Only views
-    whose windows overlap ({!Nx.sliding_window}) are copied. Device memory
-    backing an output is held until the output is garbage-collected or consumed.
-    Past a budget of device allocations since the last major collection (the
-    [RUNE_JIT_RESIDENT_BUDGET] environment variable, in bytes, 4 GiB by
-    default), a collection runs before allocating more, and an allocation that
-    still fails raises {!Nx.Device.Out_of_memory} before the call consumes
-    anything. A transfer failure surfaces as an exception at the first read of
-    the affected output. The intermediate values of a call live in scratch
-    memory that every compiled function on the device shares, sized to the
-    largest any of them needs, so functions called in turn (the blocks of a deep
-    model) do not each hold their own. A {!pmap} keeps its own.
+    On other devices, results are bit-identical. Host inputs are copied to the
+    device on every call; a placed input, an output of an earlier call included,
+    seeds the program with no transfer. Outputs are values on the device, and a
+    read copies the elements it reads. A view of part of a storage is read in
+    place; only views whose windows overlap ({!Nx.sliding_window}) are copied.
+    Device memory backing an output is held until the output is
+    garbage-collected or consumed; an allocation that fails, after a major
+    collection, raises {!Nx.Device.Out_of_memory} before the call consumes
+    anything, and a transfer failure raises at the first read of the affected
+    output. doc/05-compilation.md describes the memory budget and the scratch
+    memory compiled functions share.
 
     {b Captures.} The compilation cache lives in the partial application
     [jit s f]: apply [jit] once and reuse the returned function. Tensors [f]
@@ -565,30 +552,19 @@ val jit :
     other devices never do): pass values that change between calls as arguments
     rather than capturing them.
 
-    {b Tuning.} [beam] enables beam-search autotuning of this function's kernels
-    with the given width: instead of scheduling each kernel by fixed heuristics,
-    the compiler explores candidate schedules round by round, compiling and
-    timing them on the device and keeping the [beam] best at each step.
-    Compilation gets much slower and the compiled code usually faster; the tuned
-    result lands in the persistent cache like any other compilation, so the cost
-    is paid once per trace rather than once per process. When omitted (or
-    [< 1]), the [BEAM] environment variable applies. [beam_parallel] compiles a
-    search round's candidates across that many domains, cutting beam-search
-    compile time without changing its result; candidates are still timed one at
-    a time. It only matters when beam search runs and does not affect the
-    compiled code, so it is not part of any key. When omitted, the
-    [BEAM_PARALLEL] environment variable applies (default sequential).
+    {b Tuning.} [beam] searches kernel schedules with a beam of that width,
+    compiling and timing candidates on the device; compilation is much slower
+    and the kernels usually faster. When [beam] is omitted or below [1], the
+    [BEAM] environment variable gives the width, and no search runs when it is
+    unset. [beam_parallel] compiles a round's candidates on that many domains
+    without changing the result, and is not part of any key; it defaults to
+    [BEAM_PARALLEL] (sequential).
 
-    Compiled programs also persist across processes: the first compilation of a
-    trace writes the scheduled and compiled kernels to a disk cache under the
-    platform cache directory ([$XDG_CACHE_HOME/tolk/rune_jit], with
-    [XDG_CACHE_HOME] defaulting to [~/.cache] on Linux and [~/Library/Caches] on
-    macOS), and a later process compiling the same trace loads them instead of
-    scheduling and compiling again, leaving tracing as the bulk of warm start-up
-    time. Entries are invalidated automatically when the executable, the device
-    or its compiler, or the codegen options change. Set the [JITCACHE]
-    environment variable to [0] to disable the persistent cache; {!pmap}
-    compilations are never persisted. Results are identical either way.
+    {b Persistence.} Compiled programs are also written to a disk cache and
+    loaded by later processes that compile the same trace; [JITCACHE=0] disables
+    it, and results are identical either way. {!pmap} compilations are never
+    persisted. doc/05-compilation.md gives the cache's location and when entries
+    are invalidated.
 
     {b Transformations.} Under an enclosing transformation ({!grad},
     {!val-vmap}, {!with_debug}, an outer [jit]), the wrapped function runs
@@ -674,16 +650,17 @@ val pmap :
 
     Keys, results, consumption, compilation and captures are {!val-jit}'s,
     except that a consumed argument's per-device buffers are released after the
-    call and lend nothing: a consumed carry keeps two generations. Outputs stay
-    resident, one buffer per device, placed split or replicated over the devices
-    ({!Nx.placement}). A read gathers the shards in global order (a replicated
-    output reads one replica) and leaves them, and an nx operation on such an
-    output reads it and returns a host value. An output fed back as an input
-    leaf whose placement matches (same devices, same axis or replication) seeds
-    the compiled program's buffers directly with no transfer, so iterated calls
-    (a data-parallel training step) move only the freshly sharded batch; a value
-    whose placement mismatches is read through the host. [pmap] stays until
-    {!val-jit} over device lists replaces it.
+    call and lend nothing: a consumed carry keeps two generations. A pmap keeps
+    scratch memory of its own, apart from the one {!val-jit}'s functions share.
+    Outputs stay resident, one buffer per device, placed split or replicated
+    over the devices ({!Nx.placement}). A read gathers the shards in global
+    order (a replicated output reads one replica) and leaves them, and an nx
+    operation on such an output reads it and returns a host value. An output fed
+    back as an input leaf whose placement matches (same devices, same axis or
+    replication) seeds the compiled program's buffers directly with no transfer,
+    so iterated calls (a data-parallel training step) move only the freshly
+    sharded batch; a value whose placement mismatches is read through the host.
+    [pmap] stays until {!val-jit} over device lists replaces it.
 
     Under an enclosing transformation, [f] runs directly on the host like
     {!val-jit}: differentiate {e inside} the pmapped function.
