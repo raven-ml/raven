@@ -71,6 +71,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   lifetime test and hardware-gated host-view dispatch tests. Reconsider when all
   direct dispatch participates in the same byte-interval dependency protocol.
 
+- **Failed buffer setup unwinds acquired resources.** The frozen target does
+  not consistently roll back allocation and mapping failures. Tolk returns
+  PCI virtual/physical reservations and new page tables, releases KFD/NVK
+  handles acquired by failed setup, and closes NVK temporary mapping file
+  descriptors. Borrowed host mappings remain owned by the caller. Consumers:
+  allocation retries and long-lived accelerator sessions. Coverage:
+  `test_memory` allocation, zeroing, entry-write and flush failures, including
+  adjacent mappings and precreated tables. Driver fault injection and hardware
+  recovery remain open in TODO. Reconsider when upstream provides equivalent
+  failure ownership rules.
+
 - **PCI cleanup releases owned system-memory virtual ranges and the CPU
   view's address.** The frozen reference frees only device-memory ranges and
   assumes the GPU address is the CPU mapping address. BAR mappings can differ;

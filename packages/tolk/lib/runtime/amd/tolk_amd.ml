@@ -1455,40 +1455,47 @@ module Kfd_iface = struct
           ~flags:(F.map_private lor F.map_anonymous lor F.map_noreserve)
           ~fd:(-1) ~offset:0L
     in
-    let mmap_offset = if userptr then Int64.of_nativeint addr else 0L in
-    match Kfd.alloc_memory_of_gpu kfd ~va:addr ~size ~gpu_id ~flags ~mmap_offset with
-    | Error e ->
-        if cpu_addr = None then F.munmap addr ~size;
-        failwith
-          (match e with
-          | Kfd.Einval
-            when flags land Kfd.alloc_mem_flags_vram <> 0 && cpu_access ->
-              "Cannot allocate host-visible VRAM. Ensure the resizable BAR \
-               option is enabled on your system."
-          | Kfd.Einval -> "AMDKFD_IOC_ALLOC_MEMORY_OF_GPU: Invalid argument"
-          | Kfd.Enomem ->
-              Printf.sprintf "Cannot allocate %d bytes: no memory is available."
-                size)
-    | Ok (handle, mmap_offset) ->
-        if not userptr then begin
-          let mapped =
-            F.mmap ~addr ~size
-              ~prot:(F.prot_read lor F.prot_write)
-              ~flags:(F.map_shared lor F.map_fixed)
-              ~fd:drm_fd ~offset:mmap_offset
-          in
-          assert (mapped = addr)
-        end;
-        let view =
-          if cpu_access || host then Some (Hcq.Mmio.make ~addr ~size) else None
-        in
-        let b =
-          Hcq.Buffer.make ~va:addr ~size ?view ~meta:{ handle; owner = gpu_id;
-            ownership = (if cpu_addr = None then Owned else Registered) }
-            ()
-        in
-        map_to_gpu ~kfd ~gpu_id b;
-        b
+    let complete = ref false in
+    Fun.protect
+      ~finally:(fun () -> if not !complete && cpu_addr = None then F.munmap addr ~size)
+      (fun () ->
+        let mmap_offset = if userptr then Int64.of_nativeint addr else 0L in
+        match Kfd.alloc_memory_of_gpu kfd ~va:addr ~size ~gpu_id ~flags ~mmap_offset with
+        | Error e ->
+            failwith
+              (match e with
+              | Kfd.Einval
+                when flags land Kfd.alloc_mem_flags_vram <> 0 && cpu_access ->
+                  "Cannot allocate host-visible VRAM. Ensure the resizable BAR \
+                   option is enabled on your system."
+              | Kfd.Einval -> "AMDKFD_IOC_ALLOC_MEMORY_OF_GPU: Invalid argument"
+              | Kfd.Enomem ->
+                  Printf.sprintf "Cannot allocate %d bytes: no memory is available."
+                    size)
+        | Ok (handle, mmap_offset) ->
+            Fun.protect
+              ~finally:(fun () -> if not !complete then Kfd.free_memory_of_gpu kfd ~handle)
+              (fun () ->
+                if not userptr then begin
+                  let mapped =
+                    F.mmap ~addr ~size
+                      ~prot:(F.prot_read lor F.prot_write)
+                      ~flags:(F.map_shared lor F.map_fixed)
+                      ~fd:drm_fd ~offset:mmap_offset
+                  in
+                  assert (mapped = addr)
+                end;
+                let view =
+                  if cpu_access || host then Some (Hcq.Mmio.make ~addr ~size) else None
+                in
+                let b =
+                  Hcq.Buffer.make ~va:addr ~size ?view ~meta:{ handle; owner = gpu_id;
+                    ownership = (if cpu_addr = None then Owned else Registered) }
+                    ()
+                in
+                map_to_gpu ~kfd ~gpu_id b;
+                complete := true;
+                b))
 
   let create ~device_id =
     let kfd, gpus = scan () in

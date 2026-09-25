@@ -872,11 +872,15 @@ module Nvk_iface = struct
       File_io.openfile (Printf.sprintf "/dev/nvidia%d" minor)
         ~flags:File_io.o_rdwr
     in
-    let module P = Defs.Nv_ioctl_register_fd in
-    let b = Nv_tables.create_blob P.sizeof in
-    Nv_tables.set_field b P.ctl_fd st.fd_ctl;
-    escape fd ~nr:Defs.nv_esc_register_fd b;
-    fd
+    let registered = ref false in
+    Fun.protect ~finally:(fun () -> if not !registered then File_io.close fd)
+      (fun () ->
+        let module P = Defs.Nv_ioctl_register_fd in
+        let b = Nv_tables.create_blob P.sizeof in
+        Nv_tables.set_field b P.ctl_fd st.fd_ctl;
+        escape fd ~nr:Defs.nv_esc_register_fd b;
+        registered := true;
+        fd)
 
   let create st ~device_id =
     if device_id >= Array.length st.gpus_info then
@@ -911,69 +915,95 @@ module Nvk_iface = struct
       if system then File_io.openfile "/dev/nvidiactl" ~flags:File_io.o_rdwr
       else new_gpu_fd st ~minor:t.gpu_minor
     in
-    let module W = Defs.Nv_ioctl_nvos33_parameters_with_fd in
-    let module P = Defs.Nvos33_parameters in
-    let b = Nv_tables.create_blob W.sizeof in
-    Nv_tables.set_field b P.hclient st.root;
-    Nv_tables.set_field b P.hdevice t.nvdevice;
-    Nv_tables.set_field b P.hmemory memory_handle;
-    Nv_tables.set_field b P.length size;
-    Nv_tables.set_field b P.flags flags;
-    Nv_tables.set_field b W.fd fd;
-    escape st.fd_ctl ~nr:Defs.nv_esc_rm_map_memory b;
+    Fun.protect ~finally:(fun () -> File_io.close fd) (fun () ->
+      let module W = Defs.Nv_ioctl_nvos33_parameters_with_fd in
+      let module P = Defs.Nvos33_parameters in
+      let b = Nv_tables.create_blob W.sizeof in
+      Nv_tables.set_field b P.hclient st.root;
+      Nv_tables.set_field b P.hdevice t.nvdevice;
+      Nv_tables.set_field b P.hmemory memory_handle;
+      Nv_tables.set_field b P.length size;
+      Nv_tables.set_field b P.flags flags;
+      Nv_tables.set_field b W.fd fd;
+      escape st.fd_ctl ~nr:Defs.nv_esc_rm_map_memory b;
+      let status = Nv_tables.get_field b P.status in
+      if status <> 0 then
+        failwith ("_gpu_map_to_cpu returned " ^ error_str st.defs status);
+      File_io.mmap
+        ~addr:(Option.value target ~default:0n)
+        ~size
+        ~prot:(File_io.prot_read lor File_io.prot_write)
+        ~flags:
+          (File_io.map_shared
+          lor (if target = None then 0 else File_io.map_fixed))
+        ~fd ~offset:0L)
+
+  let free_memory st t handle =
+    let module P = Defs.Nvos00_parameters in
+    let b = Nv_tables.create_blob P.sizeof in
+    Nv_tables.set_field b P.hroot st.root;
+    Nv_tables.set_field b P.hobjectparent t.nvdevice;
+    Nv_tables.set_field b P.hobjectold handle;
+    escape st.fd_ctl ~nr:Defs.nv_esc_rm_free b;
     let status = Nv_tables.get_field b P.status in
-    if status <> 0 then
-      failwith ("_gpu_map_to_cpu returned " ^ error_str st.defs status);
-    File_io.mmap
-      ~addr:(Option.value target ~default:0n)
-      ~size
-      ~prot:(File_io.prot_read lor File_io.prot_write)
-      ~flags:
-        (File_io.map_shared
-        lor (if target = None then 0 else File_io.map_fixed))
-      ~fd ~offset:0L
+    if status <> 0 then failwith ("_gpu_free returned " ^ error_str st.defs status)
+
+  let free_range st ~va ~size =
+    let open Nv_defs_versions in
+    let fp = st.defs.uvm_free_params in
+    let b = Nv_tables.create_blob fp.sizeof in
+    Nv_tables.set_field b fp.base (Nativeint.to_int va);
+    Option.iter (fun f -> Nv_tables.set_field b f size) fp.length;
+    uvm st ~cmd:Defs.uvm_free ~rmstatus:fp.rmstatus b
 
   let gpu_uvm_map st t ~va ~size ~mem_handle ?(create_range = true)
       ?(has_cpu_mapping = false) ?(ownership = Owned) () =
-    if create_range then begin
-      let module C = Defs.Uvm_create_external_range_params in
-      let cb = Nv_tables.create_blob C.sizeof in
-      Nv_tables.set_field cb C.base (Nativeint.to_int va);
-      Nv_tables.set_field cb C.length size;
-      uvm st ~cmd:Defs.uvm_create_external_range ~rmstatus:C.rmstatus cb;
-      let open Nv_defs_versions in
-      let p46 = st.defs.nvos46_parameters in
-      let b = Nv_tables.create_blob p46.sizeof in
-      Nv_tables.set_field b p46.hclient st.root;
-      Nv_tables.set_field b p46.hdevice t.nvdevice;
-      Nv_tables.set_field b p46.hdma t.virtmem;
-      Nv_tables.set_field b p46.hmemory mem_handle;
-      Nv_tables.set_field b p46.length size;
-      Nv_tables.set_field b p46.flags
-        ((Defs.nvos46_flags_page_size_4kb lsl 8)
-        lor (Defs.nvos46_flags_cache_snoop_enable lsl 4)
-        lor (Defs.nvos46_flags_dma_offset_fixed_true lsl 15));
-      Nv_tables.set_field b p46.dmaoffset (Nativeint.to_int va);
-      escape st.fd_ctl ~nr:Defs.nv_esc_rm_map_memory_dma b;
-      let status = Nv_tables.get_field b p46.status in
-      if status <> 0 then
-        failwith ("nv_sys_alloc 1 returned " ^ error_str st.defs status);
-      assert (Nv_tables.get_field b p46.dmaoffset = Nativeint.to_int va)
-    end;
-    let module M = Defs.Uvm_map_external_allocation_params in
-    let mb =
-      map_external_params ~rm_ctrl_fd:st.fd_ctl ~root:st.root ~va ~size
-        ~mem_handle ~gpu_uuid:t.gpu_uuid
-    in
-    uvm st ~cmd:Defs.uvm_map_external_allocation ~rmstatus:M.rmstatus mb;
-    Hcq.Buffer.make ~va ~size
-      ?view:
-        (if has_cpu_mapping then Some (Hcq.Mmio.make ~addr:va ~size) else None)
-      ~meta:
-        {
-          h_memory = mem_handle; ownership;
-        }
-      ()
+    let created = ref false and complete = ref false in
+    Fun.protect
+      ~finally:(fun () -> if !created && not !complete then free_range st ~va ~size)
+      (fun () ->
+        if create_range then begin
+          let module C = Defs.Uvm_create_external_range_params in
+          let cb = Nv_tables.create_blob C.sizeof in
+          Nv_tables.set_field cb C.base (Nativeint.to_int va);
+          Nv_tables.set_field cb C.length size;
+          uvm st ~cmd:Defs.uvm_create_external_range ~rmstatus:C.rmstatus cb;
+          created := true;
+          let open Nv_defs_versions in
+          let p46 = st.defs.nvos46_parameters in
+          let b = Nv_tables.create_blob p46.sizeof in
+          Nv_tables.set_field b p46.hclient st.root;
+          Nv_tables.set_field b p46.hdevice t.nvdevice;
+          Nv_tables.set_field b p46.hdma t.virtmem;
+          Nv_tables.set_field b p46.hmemory mem_handle;
+          Nv_tables.set_field b p46.length size;
+          Nv_tables.set_field b p46.flags
+            ((Defs.nvos46_flags_page_size_4kb lsl 8)
+            lor (Defs.nvos46_flags_cache_snoop_enable lsl 4)
+            lor (Defs.nvos46_flags_dma_offset_fixed_true lsl 15));
+          Nv_tables.set_field b p46.dmaoffset (Nativeint.to_int va);
+          escape st.fd_ctl ~nr:Defs.nv_esc_rm_map_memory_dma b;
+          let status = Nv_tables.get_field b p46.status in
+          if status <> 0 then
+            failwith ("nv_sys_alloc 1 returned " ^ error_str st.defs status);
+          assert (Nv_tables.get_field b p46.dmaoffset = Nativeint.to_int va)
+        end;
+        let module M = Defs.Uvm_map_external_allocation_params in
+        let mb =
+          map_external_params ~rm_ctrl_fd:st.fd_ctl ~root:st.root ~va ~size
+            ~mem_handle ~gpu_uuid:t.gpu_uuid
+        in
+        uvm st ~cmd:Defs.uvm_map_external_allocation ~rmstatus:M.rmstatus mb;
+        let buffer = Hcq.Buffer.make ~va ~size
+          ?view:
+            (if has_cpu_mapping then Some (Hcq.Mmio.make ~addr:va ~size) else None)
+          ~meta:
+            {
+              h_memory = mem_handle; ownership;
+            }
+          () in
+        complete := true;
+        buffer)
 
   let alloc st t ?(host = false) ?(uncached = false) ?(cpu_access = false)
       ?(contiguous = false) ?(map_flags = 0) ?cpu_addr ?(read_only = false)
@@ -992,56 +1022,70 @@ module Nvk_iface = struct
       | Some a -> a
       | None -> alloc_gpu_vaddr ~alignment:page_size ~force_low:cpu_access size
     in
-    if host then begin
-      let va =
-        if alloced then
-          File_io.mmap ~addr:va ~size
-            ~prot:(File_io.prot_read lor File_io.prot_write)
-            ~flags:
-              (File_io.map_fixed lor File_io.map_shared
-             lor File_io.map_anonymous)
-            ~fd:(-1) ~offset:0L
-        else va
-      in
-      let flags =
-        (Defs.nvos02_flags_physicality_noncontiguous lsl 4)
-        lor (Defs.nvos02_flags_coherency_cached lsl 12)
-        lor (Defs.nvos02_flags_mapping_no_map lsl 30)
-      in
-      incr host_object_enumerator;
-      let module W = Defs.Nv_ioctl_nvos02_parameters_with_fd in
-      let module P = Defs.Nvos02_parameters in
-      let b = Nv_tables.create_blob W.sizeof in
-      Nv_tables.set_field b P.hroot st.root;
-      Nv_tables.set_field b P.hobjectparent t.nvdevice;
-      Nv_tables.set_field b P.flags flags;
-      Nv_tables.set_field b P.hobjectnew !host_object_enumerator;
-      Nv_tables.set_field b P.hclass Defs.nv01_memory_system_os_descriptor;
-      Nv_tables.set_field b P.pmemory (Nativeint.to_int va);
-      Nv_tables.set_field b P.limit (size - 1);
-      Nv_tables.set_field b W.fd (-1);
-      escape t.fd_dev ~nr:Defs.nv_esc_rm_alloc_memory b;
-      let status = Nv_tables.get_field b P.status in
-      if status <> 0 then
-        failwith ("host alloc returned " ^ error_str st.defs status);
-      let mem_handle = Nv_tables.get_field b P.hobjectnew in
-      gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:true
-        ~ownership:(if alloced then Owned else Registered) ()
-    end
-    else begin
-      let cls, params =
-        memory_allocation_params ~root:st.root ~size ~page_size ~uncached
-          ~contiguous ~read_only
-      in
-      let mem_handle = rm_alloc st ~parent:t.nvdevice ~cls ~params () in
-      let va =
-        if cpu_access then
-          gpu_map_to_cpu st t ~memory_handle:mem_handle ~size ~target:va
-            ~flags:map_flags ~system:uncached ()
-        else va
-      in
-      gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:cpu_access ()
-    end
+    let memory = ref None and mapping = ref None and complete = ref false in
+    Fun.protect
+      ~finally:(fun () -> if not !complete then
+        Fun.protect
+          ~finally:(fun () -> Option.iter (fun addr -> File_io.munmap addr ~size) !mapping)
+          (fun () -> Option.iter (free_memory st t) !memory))
+      (fun () ->
+        let buffer =
+          if host then begin
+            let va =
+              if alloced then
+                File_io.mmap ~addr:va ~size
+                  ~prot:(File_io.prot_read lor File_io.prot_write)
+                  ~flags:
+                    (File_io.map_fixed lor File_io.map_shared
+                   lor File_io.map_anonymous)
+                  ~fd:(-1) ~offset:0L
+              else va
+            in
+            if alloced then mapping := Some va;
+            let flags =
+              (Defs.nvos02_flags_physicality_noncontiguous lsl 4)
+              lor (Defs.nvos02_flags_coherency_cached lsl 12)
+              lor (Defs.nvos02_flags_mapping_no_map lsl 30)
+            in
+            incr host_object_enumerator;
+            let module W = Defs.Nv_ioctl_nvos02_parameters_with_fd in
+            let module P = Defs.Nvos02_parameters in
+            let b = Nv_tables.create_blob W.sizeof in
+            Nv_tables.set_field b P.hroot st.root;
+            Nv_tables.set_field b P.hobjectparent t.nvdevice;
+            Nv_tables.set_field b P.flags flags;
+            Nv_tables.set_field b P.hobjectnew !host_object_enumerator;
+            Nv_tables.set_field b P.hclass Defs.nv01_memory_system_os_descriptor;
+            Nv_tables.set_field b P.pmemory (Nativeint.to_int va);
+            Nv_tables.set_field b P.limit (size - 1);
+            Nv_tables.set_field b W.fd (-1);
+            escape t.fd_dev ~nr:Defs.nv_esc_rm_alloc_memory b;
+            let status = Nv_tables.get_field b P.status in
+            if status <> 0 then
+              failwith ("host alloc returned " ^ error_str st.defs status);
+            let mem_handle = Nv_tables.get_field b P.hobjectnew in
+            memory := Some mem_handle;
+            gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:true
+              ~ownership:(if alloced then Owned else Registered) ()
+          end
+          else begin
+            let cls, params =
+              memory_allocation_params ~root:st.root ~size ~page_size ~uncached
+                ~contiguous ~read_only
+            in
+            let mem_handle = rm_alloc st ~parent:t.nvdevice ~cls ~params () in
+            memory := Some mem_handle;
+            let va =
+              if cpu_access then
+                gpu_map_to_cpu st t ~memory_handle:mem_handle ~size ~target:va
+                  ~flags:map_flags ~system:uncached ()
+              else va
+            in
+            if cpu_access then mapping := Some va;
+            gpu_uvm_map st t ~va ~size ~mem_handle ~has_cpu_mapping:cpu_access ()
+          end in
+        complete := true;
+        buffer)
 
   let free st t buf =
     let buf = Hcq.Buffer.base buf in
@@ -1050,26 +1094,8 @@ module Nvk_iface = struct
       (* a handle above the enumerator came from the driver: release its
          physical memory; host objects only unregister through the
          address-range free below *)
-      if meta.h_memory > !host_object_enumerator then begin
-        let module P = Defs.Nvos00_parameters in
-        let b = Nv_tables.create_blob P.sizeof in
-        Nv_tables.set_field b P.hroot st.root;
-        Nv_tables.set_field b P.hobjectparent t.nvdevice;
-        Nv_tables.set_field b P.hobjectold meta.h_memory;
-        escape st.fd_ctl ~nr:Defs.nv_esc_rm_free b;
-        let status = Nv_tables.get_field b P.status in
-        if status <> 0 then
-          failwith ("_gpu_free returned " ^ error_str st.defs status)
-      end;
-      let open Nv_defs_versions in
-      let fp = st.defs.uvm_free_params in
-      let b = Nv_tables.create_blob fp.sizeof in
-      Nv_tables.set_field b fp.base
-        (Nativeint.to_int (Hcq.Buffer.va buf));
-      Option.iter
-        (fun f -> Nv_tables.set_field b f (Hcq.Buffer.size buf))
-        fp.length;
-      uvm st ~cmd:Defs.uvm_free ~rmstatus:fp.rmstatus b;
+      if meta.h_memory > !host_object_enumerator then free_memory st t meta.h_memory;
+      free_range st ~va:(Hcq.Buffer.va buf) ~size:(Hcq.Buffer.size buf);
       match Hcq.Buffer.view buf with
       | Some view when meta.ownership = Owned ->
           File_io.munmap (Hcq.Mmio.addr view) ~size:(Hcq.Mmio.size view)

@@ -188,7 +188,10 @@ val map_range :
     creating intermediate page tables as needed and using the largest
     page size each level allows. [uncached], [snooped] and the TLB
     fragment hint are recorded in the entries. [boot] allocates
-    intermediate page tables from the boot region.
+    intermediate page tables from the boot region. If allocation, entry
+    writing or the mapping callback raises, new entries and intermediate
+    tables are released; pre-existing mappings remain unchanged. Rollback
+    requires that clearing entries succeeds.
 
     Raises [Invalid_argument] if the sizes don't add up or any page
     of the range is already mapped. *)
@@ -227,8 +230,9 @@ val valloc :
     ranges, largest first, to reduce TLB pressure. [align] constrains
     the virtual range as in {!alloc_vaddr}.
 
-    Raises {!Tlsf.Out_of_memory} if physical memory is exhausted; any
-    partially allocated ranges are released. *)
+    Raises {!Tlsf.Out_of_memory} if physical or virtual memory is exhausted.
+    Allocation, zeroing and mapping failures release the request's physical
+    and virtual reservations, subject to {!map_range}'s rollback requirement. *)
 
 val vfree : 'pt t -> virt_mapping -> unit
 (** [vfree t vm] unmaps [vm] and releases its virtual range, which must

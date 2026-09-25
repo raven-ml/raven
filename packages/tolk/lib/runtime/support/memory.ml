@@ -127,8 +127,12 @@ let palloc t size ?(align = 0x1000) ?(zero = true) ?(boot = false)
     else t.pa_allocator
   in
   let paddr = Tlsf.alloc allocator (round_up size 0x1000) ~align () in
-  if zero then t.zero_vram ~paddr ~size;
-  paddr
+  match (if zero then t.zero_vram ~paddr ~size) with
+  | () -> paddr
+  | exception exn ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      Tlsf.free allocator paddr;
+      Printexc.raise_with_backtrace exn backtrace
 
 let pfree t paddr ?(ptable = false) () =
   Tlsf.free
@@ -235,11 +239,12 @@ let ctx_next ctx ~size ?paddr ?(off = 0) f =
         | None ->
             invalid_arg "paddr must be provided when allocating new page tables"
       in
-      let rec descend (pt, _, pte_covers) =
+      let rec descend (pt, pte_idx, pte_covers) =
         if
           pte_covers > !size
           || (not (ops.supports_huge_page pt ~paddr:(paddr + !off)))
           || ctx.vaddr land (pte_covers - 1) <> 0
+          || (ops.valid pt pte_idx && not (ops.is_page pt pte_idx))
         then descend (level_down ctx)
       in
       descend (top ctx)
@@ -258,6 +263,17 @@ let ctx_next ctx ~size ?paddr ?(off = 0) f =
       max
         (min (!size / pte_covers) (pte_cnt_at mm (ops.lv pt) - pte_idx))
         (if ctx.inspect then 1 else 0)
+    in
+    (* A batch of leaves must stop before a child table, even when the
+       surrounding addresses would otherwise admit huge pages. *)
+    let entries =
+      let rec leaves i =
+        if i >= entries then i
+        else if ops.valid pt (pte_idx + i)
+                && not (ops.is_page pt (pte_idx + i)) then i
+        else leaves (i + 1)
+      in
+      leaves 0
     in
     if entries <= 0 then
       invalid_arg
@@ -320,24 +336,52 @@ let map_range t ~vaddr ~size paddrs aspace ?(uncached = false)
             (Printf.sprintf "PTE already mapped: 0x%Lx"
                (t.pt_ops.entry pt (pte_idx + pte_off)))
       done);
+  (* The preflight above proved the leaves vacant. Journal new table links
+     and leaves before writing them so a failed write can also be undone. *)
+  let changes = ref [] in
+  let ops = t.pt_ops in
+  let tracked =
+    { t with pt_ops =
+        { ops with set_entry =
+            (fun pt ~idx ~paddr ?(table = false) ?uncached ?aspace ?snooped
+                 ?frag ~valid () ->
+              changes := (pt, idx, if table then Some paddr else None) :: !changes;
+              ops.set_entry pt ~idx ~paddr ~table ?uncached ?aspace ?snooped
+                ?frag ~valid ()) } }
+  in
+  let rollback () =
+    let allocator =
+      if boot then t.boot_allocator
+      else if t.reserve_ptable then t.ptable_allocator
+      else t.pa_allocator
+    in
+    List.iter
+      (fun (pt, idx, allocation) ->
+        ops.set_entry pt ~idx ~paddr:0 ~valid:false ();
+        Option.iter (Tlsf.free allocator) allocation)
+      !changes
+  in
   let ctx =
-    ctx_make t t.root_page_table vaddr ~create_pts:true ~free_pts:false
+    ctx_make tracked t.root_page_table vaddr ~create_pts:true ~free_pts:false
       ~inspect:false ~boot
   in
-  List.iter
-    (fun (paddr, psize) ->
-      ctx_next ctx ~size:psize ~paddr
-        (fun ~off ~pt ~pte_idx ~n_ptes ~pte_covers ->
-          for pte_off = 0 to n_ptes - 1 do
-            t.pt_ops.set_entry pt ~idx:(pte_idx + pte_off)
-              ~paddr:(paddr + off + (pte_off * pte_covers))
-              ~uncached ~aspace ~snooped
-              ~frag:(frag_size (ctx.vaddr + off) (n_ptes * pte_covers))
-              ~valid:true ()
-          done))
-    paddrs;
-  t.on_range_mapped ();
-  { va_addr = vaddr; size; paddrs; aspace; uncached; snooped }
+  let complete = ref false in
+  Fun.protect ~finally:(fun () -> if not !complete then rollback ()) (fun () ->
+      List.iter
+        (fun (paddr, psize) ->
+          ctx_next ctx ~size:psize ~paddr
+            (fun ~off ~pt ~pte_idx ~n_ptes ~pte_covers ->
+              for pte_off = 0 to n_ptes - 1 do
+                tracked.pt_ops.set_entry pt ~idx:(pte_idx + pte_off)
+                  ~paddr:(paddr + off + (pte_off * pte_covers))
+                  ~uncached ~aspace ~snooped
+                  ~frag:(frag_size (ctx.vaddr + off) (n_ptes * pte_covers))
+                  ~valid:true ()
+              done))
+        paddrs;
+      t.on_range_mapped ();
+      complete := true;
+      { va_addr = vaddr; size; paddrs; aspace; uncached; snooped })
 
 let unmap_range t ~vaddr ~size =
   if Helpers.getenv "MM_DEBUG" 0 <> 0 then
@@ -366,11 +410,16 @@ let identity_va t ~uncached =
   | Some va -> va
   | None ->
       let va = alloc_vaddr t t.vram_size ~align:t.vram_size () in
-      let (_ : virt_mapping) =
+      (match
         map_range t ~vaddr:va ~size:t.vram_size
           [ (0, t.vram_size) ]
           Phys ~uncached ()
-      in
+       with
+       | _ -> ()
+       | exception exn ->
+           let backtrace = Printexc.get_raw_backtrace () in
+           Tlsf.free t.va_allocator va;
+           Printexc.raise_with_backtrace exn backtrace);
       t.identity_vas <- (uncached, va) :: t.identity_vas;
       va
 
@@ -379,8 +428,14 @@ let valloc t size ?(align = 0x1000) ?(uncached = false) ?(contiguous = false) ()
   let size = round_up size 0x1000 in
   if Helpers.getenv "GMMU" 1 = 0 then begin
     let paddr = palloc t size ~align ~zero:false () in
+    let base = match identity_va t ~uncached with
+      | base -> base
+      | exception exn ->
+          let backtrace = Printexc.get_raw_backtrace () in
+          pfree t paddr ();
+          Printexc.raise_with_backtrace exn backtrace in
     {
-      va_addr = identity_va t ~uncached + paddr;
+      va_addr = base + paddr;
       size;
       paddrs = [ (paddr, size) ];
       aspace = Phys;
@@ -391,7 +446,7 @@ let valloc t size ?(align = 0x1000) ?(uncached = false) ?(contiguous = false) ()
   else begin
     (* Allocate physical memory and map it to the virtual address. *)
     let va = alloc_vaddr t size ~align () in
-    let paddrs =
+    let allocate_physical () =
       if contiguous then [ (palloc t size ~zero:true (), size) ]
       else begin
         (* Allocate the longest possible segments to reduce TLB pressure,
@@ -422,7 +477,19 @@ let valloc t size ?(align = 0x1000) ?(uncached = false) ?(contiguous = false) ()
         List.rev !paddrs
       end
     in
-    map_range t ~vaddr:va ~size paddrs Phys ~uncached ()
+    let paddrs = match allocate_physical () with
+      | paddrs -> paddrs
+      | exception exn ->
+          let backtrace = Printexc.get_raw_backtrace () in
+          Tlsf.free t.va_allocator va;
+          Printexc.raise_with_backtrace exn backtrace in
+    match map_range t ~vaddr:va ~size paddrs Phys ~uncached () with
+    | mapping -> mapping
+    | exception exn ->
+        let backtrace = Printexc.get_raw_backtrace () in
+        List.iter (fun (paddr, _) -> pfree t paddr ()) paddrs;
+        Tlsf.free t.va_allocator va;
+        Printexc.raise_with_backtrace exn backtrace
   end
 
 let vfree t vm =

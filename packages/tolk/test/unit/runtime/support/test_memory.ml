@@ -40,6 +40,8 @@ let encode ~paddr ~table ~uncached ~aspace ~snooped ~frag ~valid =
 
 let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
     ?(reserve_ptable = false)
+    ?(fail_zero = fun () -> false)
+    ?(fail_write = fun () -> false) ?(fail_flush = fun () -> false)
     ?(palloc_ranges = [ (0x8000, 0x8000); (0x1000, 0x1000) ])
     ?(va_size = 0x200000) ?(smi_dev = false) () =
   let vram = Array.make (vram_size / 8) 0L in
@@ -56,7 +58,8 @@ let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
         (fun pt ~idx ~paddr ?(table = false) ?(uncached = false)
              ?(aspace = Memory.Phys) ?(snooped = false) ?(frag = 0) ~valid () ->
           vram.((pt.paddr / 8) + idx) <-
-            encode ~paddr ~table ~uncached ~aspace ~snooped ~frag ~valid);
+            encode ~paddr ~table ~uncached ~aspace ~snooped ~frag ~valid;
+          if valid && fail_write () then failwith "page write failed");
       entry = word;
       valid = (fun pt idx -> Int64.logand (word pt idx) 1L <> 0L);
       address =
@@ -75,10 +78,13 @@ let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
       ~va_allocator:(Tlsf.create ~size:va_size ~base:va_base ())
       ~is_booting:(fun () -> !booting)
       ~zero_vram:(fun ~paddr ~size ->
+        if fail_zero () then failwith "zeroing failed";
         zeroed := (paddr, size) :: !zeroed;
         Array.fill vram (paddr / 8) (size / 8) 0L)
       ~reserve_ptable ~smi_dev
-      ~on_range_mapped:(fun () -> incr flushes)
+      ~on_range_mapped:(fun () ->
+        incr flushes;
+        if fail_flush () then failwith "flush failed")
       ()
   in
   booting := false;
@@ -193,6 +199,23 @@ let () =
                 (sparse 8 [ (2, 0x300C1L) ])
                 (slice fx 0x10000 8);
               equal int 0x8000 vm.Memory.size);
+          test "preserves precreated tables inside a huge-page range" (fun () ->
+              let fx = make_fixture () in
+              let pts = Memory.page_tables fx.mm ~vaddr:0x8000 ~size:0x1000 in
+              equal (list int) [ 0; 0x10000; 0x11000 ]
+                (List.map (fun pt -> pt.paddr) pts);
+              let (_ : Memory.virt_mapping) =
+                Memory.map_range fx.mm ~vaddr:0 ~size:0x10000
+                  [ (0x40000, 0x10000) ] Memory.Phys ()
+              in
+              equal (array int64)
+                (sparse 8 [ (0, 0x400C1L); (1, 0x11003L) ])
+                (slice fx 0x10000 8);
+              equal (array int64)
+                (Array.init 8 (fun i -> Int64.of_int (0x480C1 + i * 0x1000)))
+                (slice fx 0x11000 8);
+              Memory.unmap_range fx.mm ~vaddr:0 ~size:0x10000;
+              equal (array int64) (Array.make 8 0L) (slice fx 0 8));
           test "splits a misaligned range into small pages" (fun () ->
               let fx = make_fixture () in
               let (_ : Memory.virt_mapping) =
@@ -416,11 +439,63 @@ let () =
           test "releases partial allocations when memory runs out" (fun () ->
               let fx =
                 make_fixture ~vram_size:0xA000 ~boot_size:0x8000
+                  ~va_size:0x8000
                   ~palloc_ranges:[ (0x1000, 0x1000) ]
                   ()
               in
               raises_match oom (fun () -> Memory.valloc fx.mm 0x3000 ());
+              equal int 0 (Memory.alloc_vaddr fx.mm 0x3000 ());
               equal int 0x8000 (Memory.palloc fx.mm 0x1000 ()));
+          test "zeroing failure releases physical and virtual reservations" (fun () ->
+              let fail_zero = ref false in
+              let fx = make_fixture ~va_size:0x4000 ~fail_zero:(fun () -> !fail_zero) () in
+              fail_zero := true;
+              raises (Failure "zeroing failed") (fun () ->
+                  ignore (Memory.valloc fx.mm 0x2000 ~contiguous:true ()));
+              fail_zero := false;
+              let vm = Memory.valloc fx.mm 0x2000 ~contiguous:true () in
+              equal int 0 vm.Memory.va_addr;
+              equal (list (pair int int)) [(0x10000, 0x2000)] (vm_paddrs vm));
+          test "partial page writes roll back before retry" (fun () ->
+              for stop = 1 to 5 do
+                let writes = ref 0 and armed = ref true in
+                let fx = make_fixture ~va_size:0x8000 ~fail_write:(fun () ->
+                    incr writes; !armed && !writes = stop) () in
+                raises (Failure "page write failed") (fun () ->
+                    ignore (Memory.valloc fx.mm 0x3000 ()));
+                equal (array int64) (Array.make 16 0L) (slice fx 0 16);
+                armed := false;
+                let vm = Memory.valloc fx.mm 0x3000 () in
+                equal int 0 vm.Memory.va_addr;
+                equal (list (pair int int))
+                  [(0x10000, 0x1000); (0x11000, 0x1000); (0x12000, 0x1000)] (vm_paddrs vm);
+                Memory.vfree fx.mm vm
+              done);
+          test "flush failure preserves adjacent mappings and permits retry" (fun () ->
+              let armed = ref false in
+              let fx = make_fixture ~fail_flush:(fun () -> !armed) () in
+              let first = Memory.valloc fx.mm 0x1000 () in
+              let root = slice fx 0 16 in
+              armed := true;
+              raises (Failure "flush failed") (fun () ->
+                  ignore (Memory.valloc fx.mm 0x2000 ()));
+              equal (array int64) root (slice fx 0 16);
+              armed := false;
+              let second = Memory.valloc fx.mm 0x2000 () in
+              equal int 0x2000 second.Memory.va_addr;
+              Memory.vfree fx.mm first;
+              Memory.vfree fx.mm second;
+              equal int 0x10000 (Memory.palloc fx.mm 0x1000 ()));
+          test "page-table zeroing failure releases all data reservations" (fun () ->
+              let armed = ref false in
+              let fx = make_fixture ~va_size:0x4000 ~fail_zero:(fun () -> !armed) () in
+              armed := true;
+              raises (Failure "zeroing failed") (fun () ->
+                  ignore (Memory.valloc fx.mm 0x2000 ()));
+              armed := false;
+              let vm = Memory.valloc fx.mm 0x2000 () in
+              equal int 0 vm.Memory.va_addr;
+              equal (list (pair int int)) [(0x10000, 0x1000); (0x11000, 0x1000)] (vm_paddrs vm));
         ];
       group "Vfree"
         [

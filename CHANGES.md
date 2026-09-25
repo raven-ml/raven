@@ -389,6 +389,11 @@ thread.
 
 ### Tolk (new)
 
+- AMD KFD and NVIDIA NVK unwind failed memory setup without releasing borrowed
+  host storage; NVK closes temporary mapping descriptors. PCI allocation retries
+  reclaim reservations and partially written page tables after allocation,
+  zeroing or mapping failures.
+
 - Large fallback copies use 64 MiB host chunks on allocators with offset views,
   bounding temporary host and native upload memory while preserving overlapping
   view copies.
