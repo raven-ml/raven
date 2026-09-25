@@ -230,7 +230,7 @@ let forward_call_outputs sink =
                && U.has_buffer_identity target
                && U.max_numel base = U.max_numel (U.storage_base target)
             then Some (U.storage_base target)
-            else if U.op src = Ops.Stage && U.arg src = U.Arg.Empty then
+            else if U.op src = Ops.Stage && Array.length (U.src src) = 1 then
               Some (U.after ~src:target ~deps:[U.store ~dst:target ~value:(U.src src).(0) ()])
             else if U.op src = Ops.Buffer && U.has_buffer_identity target then Some target
             else None in
@@ -552,12 +552,12 @@ let materialize n =
           Some (U.store ~dst ~value:(U.contiguous ~src:value ()) ())
       | _ -> None)
   | Ops.Copy -> convert_copy_to_store n
-  | Ops.Stage when U.arg n = U.Arg.Empty -> stage_to_store n
+  | Ops.Stage when Array.length (U.src n) = 1 -> stage_to_store n
   | _ -> None
 
 let disk_copy n =
   match U.op n, U.src n with
-  | Ops.Copy, [|stage|] when U.op stage = Ops.Stage && U.arg stage = U.Arg.Empty ->
+  | Ops.Copy, [|stage|] when U.op stage = Ops.Stage && Array.length (U.src stage) = 1 ->
       let input = src0 stage in
       if is_movement input && U.on_disk input then
         Some (U.replace n ~src:[|input|] ()) else None

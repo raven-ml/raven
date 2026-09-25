@@ -98,6 +98,22 @@ let cross_device_assignment () =
           equal int (Tolk.Device.Buffer.id allocation)
             (Tolk.Device.Buffer.id (buffer destination))) [false; true]) [false; true]
 
+let noncontiguous_cross_device_assignment () =
+  let tensor device dims values =
+    Creation.clone ~device:(U.Single device) (Run.of_float_array ~shape:dims values) in
+  let destination = tensor "CPU:1" [2; 2] [|1.; 2.; 3.; 4.|] in
+  let source = tensor "CPU:2" [2; 1] [|7.; 8.|] in
+  ignore (Run.realize destination);
+  ignore (Run.realize source);
+  let target = Movement.shrink destination [0, 2; 0, 1] in
+  ignore (Op.assign target source);
+  raises_match
+    (function Invalid_argument message ->
+       String.starts_with ~prefix:"all buffers must be on the same device:" message
+     | _ -> false)
+    (fun () -> ignore (Run.realize destination));
+  check_values [|7.; 8.|] source
+
 let symbolic_clone () =
   List.iter (fun length ->
       let values = Array.init 16 (fun i -> float_of_int (i + 1)) in
@@ -140,5 +156,6 @@ let () =
         [test "sharded clones allocate per shard and preserve their axis" graph_clone;
          test "sharded clone views write independently of their source and sibling" clone_and_assign;
          test "cross-device assignment preserves destination aliases and source storage" cross_device_assignment;
+         test "cross-device assignment rejects noncontiguous destinations" noncontiguous_cross_device_assignment;
          test "sharded clones preserve symbolic nonsharded dimensions" symbolic_clone;
          test "DISK destinations reject before allocation and host gathers remain available" disk_clone])

@@ -231,14 +231,20 @@ let storage_windows_keep_allocation_boundaries () =
   let arithmetic = U.alu_binary ~op:Ops.Add ~lhs:base ~rhs:base in
   is_true ~msg:"a contiguous value still needs storage"
     (Option.is_none (Tolk.Indexing.storage_window arithmetic));
-  let staged = U.contiguous ~src:arithmetic ~force:true () in
-  let flat = U.reshape ~src:staged ~shape:(U.const_int 6) in
-  let view = U.shrink ~src:flat ~offset:(U.const_int 2) ~size:(U.const_int 3) in
-  match Tolk.Indexing.storage_window view with
-  | Some (anchor, offset) ->
-      is_true ~msg:"a stage owns the window, not its arithmetic input" (U.equal anchor staged);
-      equal int 8 offset
-  | None -> fail "staged storage window was not proved"
+  let stages =
+    [ U.contiguous ~src:arithmetic ~force:true ();
+      U.stage ~src:arithmetic ~ranges:[]
+        ~opts:{device = Some (U.Single "CPU"); addrspace = Dtype.Global; removable = false} ] in
+  List.iter (fun staged ->
+      is_true ~msg:"contiguous reuses a zero-coordinate stage regardless of options"
+        (U.equal staged (U.contiguous ~src:staged ()));
+      let flat = U.reshape ~src:staged ~shape:(U.const_int 6) in
+      let view = U.shrink ~src:flat ~offset:(U.const_int 2) ~size:(U.const_int 3) in
+      match Tolk.Indexing.storage_window view with
+      | Some (anchor, offset) ->
+          is_true ~msg:"a stage owns the window, not its arithmetic input" (U.equal anchor staged);
+          equal int 8 offset
+      | None -> fail "staged storage window was not proved") stages
 
 let storage_windows_keep_effects_and_typed_anchors () =
   let base = U.buffer ~slot:93833 ~dtype:Dtype.int32 ~shape:(U.const_int 8) () in

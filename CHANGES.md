@@ -679,6 +679,13 @@ thread.
 
 ### Tolk (new)
 
+- Cross-device `Op.assign` preserves contiguous destination slices and their
+  aliases through bulk transfer lowering; noncontiguous destinations are rejected.
+
+- Explicit `STAGE` graphs use their canonical storage capacity, preserving
+  vector extents and avoiding duplicate materialization. Zero-coordinate stages
+  reuse existing storage even when they carry stage options.
+
 - `Jit.call` rejects changed input layouts and reads symbolic bindings carried
   by input views. Equivalent composed reshapes and slices share a capture;
   conflicting input and explicit bindings fail before execution.

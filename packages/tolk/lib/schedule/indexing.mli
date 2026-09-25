@@ -165,6 +165,6 @@ val contiguous_view : Tolk_uop.Uop.t -> (Tolk_uop.Uop.t * int) option
 
 val storage_window : Tolk_uop.Uop.t -> (Tolk_uop.Uop.t * int) option
 (** [storage_window u] is [contiguous_view u] when its anchor names storage:
-    a BUFFER, ALLOC, PARAM, MSELECT, MSTACK or empty-argument STAGE, possibly
+    a BUFFER, ALLOC, PARAM, MSELECT, MSTACK or zero-coordinate STAGE, possibly
     through bitcasts and pending effects. A STAGE names its own future
     allocation. Arithmetic alone does not name storage. *)

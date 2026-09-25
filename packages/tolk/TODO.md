@@ -80,7 +80,7 @@ acceptance requirement; skipped tests are not execution evidence.
   extents. Canonicalize image coordinates across all producers and consumers,
   and render final constants.
 - Remove remaining parallel property reconstruction and silent guesses in
-  view offsets, stage buffer sizes and range metadata. Port remaining symbolic rules and measure
+  view offsets and range metadata. Port remaining symbolic rules and measure
   rewrite performance and long-lived memory use with weak node caches.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.

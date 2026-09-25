@@ -102,13 +102,17 @@ let transform_to_call sink =
   let sink = U.graph_rewrite (fun u ->
       match U.op u, U.src u with
       | (Ops.Copy | Ops.Stage), [|src|]
-        when (U.op u = Ops.Copy || U.arg u = U.Arg.Empty)
-             && (Ops.Group.is_movement (U.op src) || U.op src = Ops.Bitcast) ->
+        when Ops.Group.is_movement (U.op src) || U.op src = Ops.Bitcast ->
           (match materialized_view src with
            | Some view when U.op u = Ops.Stage -> Some view
            | Some view when not (U.equal view src) -> Some (U.replace u ~src:[|view|] ())
            | _ -> None)
-      | Ops.Store, src when Array.length src >= 2 && U.op src.(0) = Ops.Bitcast ->
+      | Ops.Store, src when Array.length src >= 2
+          && (U.op src.(0) = Ops.Bitcast
+              || Ops.Group.is_movement (U.op src.(0))
+                 && (match U.device_of src.(0), U.device_of src.(1) with
+                     | Some dst, Some value -> dst <> value
+                     | _ -> false)) ->
           (match materialized_view src.(0) with
            | Some view when not (U.equal view src.(0)) ->
                let src = Array.copy src in

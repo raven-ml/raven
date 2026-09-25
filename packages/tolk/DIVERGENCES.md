@@ -434,6 +434,24 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   still open in TODO). Reconsider the helper boundary if a native driver
   binding can provide the same calling convention and failure lifetime.
 
+- **Cross-device assignment accepts proved contiguous destination slices.**
+  The target rejects partial destinations whose flattened offset differs from
+  the source. Tolk exposes the destination through its existing byte-view
+  proof at the transfer boundary, preserving its allocation and aliases.
+  Consumer: frontend `Op.assign` across devices. Coverage: realized and pending
+  source transfers, untouched destination tails, source integrity and rejection
+  of noncontiguous destinations in `test_clone`. Reconsider when upstream
+  transfer lowering accepts these views directly.
+
+- **Symbolic STAGE active extents require range or constant coordinates.**
+  For mixed symbolic ranges and arithmetic coordinates, the target reads an
+  arbitrary expression child as the active dimension; the old Tolk fallback
+  guessed one. Tolk rejects this ambiguous graph. Fixed expression coordinates
+  and ordinary symbolic range coordinates use canonical shape properties.
+  Consumer: public kernel IR. Coverage: `test_schedule_rangeify` capacity and
+  active-extent cases. Reconsider when the IR defines active extents for mixed
+  coordinates without reconstructing them from expression operands.
+
 - **Contiguous-view proofs retain symbolic leading and subword aliases.** The
   frozen target fails to prove a leading slice of bound symbolic length and a
   single int32 viewed as four bytes. Tolk uses the same flattened-index design,

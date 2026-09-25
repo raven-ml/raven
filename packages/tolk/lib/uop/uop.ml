@@ -1234,10 +1234,10 @@ let flip ~src ~dims =
 let detach ~src =
   mk ~op:Ops.Detach ~dtype:(dtype src) ~src:[| src |] ~arg:Arg.Empty
 
-let contiguous ~src ?(force = false) () =
-  if not force && (is_virtual src || has_buffer_identity src ||
-      (op src = Ops.Stage && arg src = Arg.Empty)) then src
-  else mk ~op:Ops.Stage ~dtype:(dtype src) ~src:[|src|] ~arg:Arg.Empty
+let contiguous ~src:value ?(force = false) () =
+  if not force && (is_virtual value || has_buffer_identity value ||
+      (op value = Ops.Stage && Array.length (src value) = 1)) then value
+  else mk ~op:Ops.Stage ~dtype:(dtype value) ~src:[|value|] ~arg:Arg.Empty
 
 let contiguous_backward ~src =
   mk ~op:Ops.Contiguous_backward ~dtype:(dtype src) ~src:[| src |]

@@ -546,7 +546,7 @@ let rec storage_window u =
 and storage_anchor u =
   match U.op u with
   | Ops.Buffer | Ops.Alloc | Ops.Param | Ops.Mselect | Ops.Mstack -> true
-  | Ops.Stage -> U.arg u = U.Arg.Empty
+  | Ops.Stage -> Array.length (U.src u) = 1
   | Ops.Bitcast | Ops.Detach | Ops.Contiguous_backward | Ops.After ->
       Option.is_some (storage_window (src0 u))
   | _ -> false
@@ -591,7 +591,7 @@ let generate_realize_map ctx root =
      | Ops.Call -> realize_call_args ctx n
      | _ -> ());
     (match U.op n with
-     | Ops.Stage | Ops.Store -> realize_set ctx n Marked
+     | Ops.Store -> realize_set ctx n Marked
      | _ -> ());
     (match U.op n with
      | Ops.Mselect | Ops.Mstack ->

@@ -24,7 +24,6 @@ let getv = Helpers.Context_var.get
 
 (* Helpers *)
 
-let prod l = List.fold_left ( * ) 1 l
 let int_ n = U.const_int n
 
 let src0 u = (U.src u).(0)
@@ -451,7 +450,7 @@ let flat_index_of_ranges ?dims ranges =
       let acc = ref ranges.(n_axes - 1) in
       let stride = ref 1 in
       for i = n_axes - 2 downto 0 do
-        stride := !stride * dims.(i + 1);
+        stride := Bound.to_int (Bound.mul (Bound.int !stride) (Bound.int dims.(i + 1)));
         let open U.O in
         let term =
           if !stride = 0 then int_ 0
@@ -468,16 +467,11 @@ let flatten_stage n =
     (* Every stage flattens to exactly one index: multiple ranges collapse
        into a flat expression, and a rank-0 stage indexes its single element
        at zero. *)
-    when List.length ranges <> 1
-         && List.for_all
-              (fun r -> match U.op r with Ops.Range | Ops.Const -> true | _ -> false)
-              ranges ->
-      (* A stage's shape is its range dims followed by the source's own shape.
-         Only the range dims flatten into the index; folding the source's
-         shape in as well overflows the size to a negative when the source
-         carries an unresolved dimension. *)
-      let range_dims = List.map (fun r -> Bound.to_int (Bound.succ (U.vmax r))) ranges in
-      let shape = try U.max_shape n with Invalid_argument _ -> range_dims in
+    when List.length ranges <> 1 ->
+      (* Only the coordinate dimensions flatten into the index. The source's
+         trailing dimensions remain part of the stage's storage capacity. *)
+      let shape = U.max_shape n in
+      let range_dims = List.take (List.length ranges) shape in
       let flat_idx = flat_index_of_ranges ~dims:range_dims ranges in
       let flat = U.stage ~src ~ranges:[ flat_idx ] ~opts in
       let ret = U.reshape ~src:flat ~shape:(shape_node shape) in
@@ -494,7 +488,9 @@ let flatten_stage n =
         let active_shape = List.map (fun r ->
             match U.as_range r with
             | Some range -> range.size
-            | None -> int_ 1) ranges in
+            | None when U.op r = Ops.Const -> int_ 1
+            | None -> invalid_arg
+                "Rangeify.flatten_stage: symbolic stage coordinates must be ranges or constants") ranges in
         let size = match active_shape with [dim] -> dim | dims -> U.stack dims in
         let zeros = shape_node (List.map (fun _ -> 0) ranges) in
         Some (U.shrink ~src:ret ~offset:zeros ~size)
@@ -502,43 +498,18 @@ let flatten_stage n =
 
 let range_axis_cmp a b = compare (U.axis_id a) (U.axis_id b)
 
-let stage_to_store ?(allow_locals = true) counter n =
+let stage_to_store counter n =
   match U.as_stage n with
-  | Some { src; ranges; opts } ->
+  | Some { src; ranges = [idx_expr]; opts } ->
       (* A buffer is never weak: store at a committed width and cast the
          result back, so readers see the dtype the stage had. *)
       let buf_dtype = U.commit_dtype n in
       let read_back u = U.cast ~src:u ~dtype:(U.dtype n) in
-      let shape =
-        match shape_of n with
-        | Some _ as shape -> shape
-        | None -> (try Some (U.max_shape n) with Invalid_argument _ -> None)
-      in
-      let range_dims = List.map range_int_size ranges in
-      let stage_dims =
-        match shape with
-        | Some shape when shape <> [] && List.length shape = List.length ranges ->
-            shape
-        | _ -> range_dims
-      in
-      let idx_expr =
-        match ranges with
-        | [ idx ] -> idx
-        | _ -> flat_index_of_ranges ~dims:stage_dims ranges
-      in
       let idx_ranges = List.sort range_axis_cmp (U.ranges idx_expr) in
-      let size =
-        match stage_dims with
-        | _ :: _ -> prod stage_dims
-        | _ ->
-            let size_ranges =
-              match idx_ranges with [] -> U.ranges src | ranges -> ranges
-            in
-            prod (List.map range_int_size size_ranges)
-      in
-      if size <= 0 then None
-      else
-        (match U.op src with
+      let size = U.max_numel n in
+      if size <= 0 then
+        invalid_arg "Rangeify.stage_to_store: nonpositive stage capacity";
+      (match U.op src with
         | Ops.After ->
             let stores =
               List.filter (fun d -> match U.as_store d with
@@ -592,24 +563,8 @@ let stage_to_store ?(allow_locals = true) counter n =
                 ~ranges:idx_ranges
             in
             Some (read_back (U.after ~src:buf ~deps:[ ended ]))
-        | _ when opts.addrspace = Dtype.Local && allow_locals ->
-            let id = !counter in
-            incr counter;
-            let buf =
-              U.buffer ~slot:id ~shape:(shape_node [ size ]) ~dtype:buf_dtype
-                ~addrspace:Dtype.Local ()
-            in
-            let idx = U.index ~ptr:buf ~idxs:[ idx_expr ] () in
-            let st =
-              U.end_
-                ~value:(U.store ~dst:idx ~value:(U.cast ~src ~dtype:buf_dtype) ())
-                ~ranges:idx_ranges
-            in
-            Some
-              (read_back
-                 (U.after ~src:buf ~deps:[ U.barrier ~srcs:[ st ] () ]))
         | _ -> None)
-  | None -> None
+  | _ -> None
 
 (* Split kernels *)
 
@@ -1140,11 +1095,11 @@ let post_rangeify_rules =
        | _ -> None);
   ]
 
-let add_buffers_rules ?(allow_locals = true) counter =
+let add_buffers_rules counter =
   U.first_match [
     Prepare.movement_ops;
     flatten_stage;
-    stage_to_store ~allow_locals counter;
+    stage_to_store counter;
     (* Index the buffer under the read-back cast the rule above adds, and cast
        the loaded value instead. Without this the expander widens the whole
        cast buffer into one vector. *)
@@ -1266,7 +1221,7 @@ let get_kernel_graph root =
   let counter = ref buffer_slot_start in
   let root =
     U.graph_rewrite ~name:"add_buffers" ~bottom_up:true
-      (add_buffers_rules ~allow_locals:false counter) root
+      (add_buffers_rules counter) root
   in
   let root =
     U.graph_rewrite ~enter_calls:false ~bottom_up:true

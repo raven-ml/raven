@@ -595,27 +595,32 @@ let apply_movement_op_tests =
 
 (* run_rangeify tests *)
 
+let materialize src =
+  let dst = U.alloc ~slot:9000 ~dtype:(U.dtype src)
+      ~shape:(U.stack (U.shape src)) () in
+  U.store ~dst ~value:src ()
+
 let run_rangeify_tests =
   group "run_rangeify"
     [
       test "realized node creates Realized" (fun () ->
           let param = mk_param ~idx:0 [ 4 ] in
-          let contig = U.contiguous ~src:param ~force:true () in
-          let _sink = U.sink [ contig ] in
+          let store = materialize param in
+          let sink = U.sink [ store ] in
           let shapes = shape_of in
-          let ctx = Indexing.run_rangeify _sink ~shapes in
-          (match Hashtbl.find_opt ctx.realize_map (U.tag contig) with
+          let ctx = Indexing.run_rangeify sink ~shapes in
+          (match Hashtbl.find_opt ctx.realize_map (U.tag store) with
           | Some (Indexing.Realized axes) ->
               equal (list int) [ 0 ] axes
           | Some Indexing.Marked -> fail "expected Realized, got Marked"
           | None -> fail "expected Realized, got None"));
       test "realized node has range_map entry" (fun () ->
           let param = mk_param ~idx:0 [ 4 ] in
-          let contig = U.contiguous ~src:param ~force:true () in
-          let sink = U.sink [ contig ] in
+          let store = materialize param in
+          let sink = U.sink [ store ] in
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify sink ~shapes in
-          is_true (Hashtbl.mem ctx.range_map (U.tag contig)));
+          is_true (Hashtbl.mem ctx.range_map (U.tag store)));
       (* The maps are keyed on the graph rangeify walked. A node the apply
          pass builds must not acquire an entry: hash-consing collapses nodes
          that differed only in movement ops, so an inherited entry can carry
@@ -633,7 +638,7 @@ let run_rangeify_tests =
           in
           let sink =
             U.sink
-              [ U.contiguous ~src:scalar_use (); U.contiguous ~src:wide_use () ]
+              [ materialize scalar_use; materialize wide_use ]
           in
           let ctx = Indexing.run_rangeify sink ~shapes:shape_of in
           let keys tbl = Hashtbl.fold (fun k _ acc -> k :: acc) tbl [] in
@@ -647,16 +652,16 @@ let run_rangeify_tests =
       test "elementwise inherits consumer ranges" (fun () ->
           let param = mk_param ~idx:0 [ 4 ] in
           let neg = U.alu_unary ~op:Ops.Neg ~src:param in
-          let contig = U.contiguous ~src:neg () in
-          let sink = U.sink [ contig ] in
+          let store = materialize neg in
+          let sink = U.sink [ store ] in
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify sink ~shapes in
           is_true (Hashtbl.mem ctx.range_map (U.tag neg)));
       test "reduce creates reduce-kind ranges" (fun () ->
           let param = mk_param ~idx:0 [ 4; 4 ] in
           let red = U.reduce_axis ~src:param ~op:Ops.Add ~axes:[ 1 ] in
-          let contig = U.contiguous ~src:red () in
-          let sink = U.sink [ contig ] in
+          let store = materialize red in
+          let sink = U.sink [ store ] in
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify sink ~shapes in
           (match Hashtbl.find_opt ctx.range_map (U.tag red) with
@@ -672,8 +677,8 @@ let run_rangeify_tests =
       test "movement op has different in and out ranges" (fun () ->
           let param = mk_param ~idx:0 [ 4; 8 ] in
           let perm = U.permute ~src:param ~order:[ 1; 0 ] in
-          let contig = U.contiguous ~src:perm () in
-          let sink = U.sink [ contig ] in
+          let store = materialize perm in
+          let sink = U.sink [ store ] in
           let shapes = shape_of in
           let ctx = Indexing.run_rangeify sink ~shapes in
           (match Hashtbl.find_opt ctx.range_map (U.tag perm) with
@@ -685,11 +690,11 @@ let run_rangeify_tests =
           | None -> fail "expected range_map entry for permute"));
       test "2D realized node has all axes" (fun () ->
           let param = mk_param ~idx:0 [ 4; 8 ] in
-          let contig = U.contiguous ~src:param ~force:true () in
-          let _sink = U.sink [ contig ] in
+          let store = materialize param in
+          let sink = U.sink [ store ] in
           let shapes = shape_of in
-          let ctx = Indexing.run_rangeify _sink ~shapes in
-          (match Hashtbl.find_opt ctx.realize_map (U.tag contig) with
+          let ctx = Indexing.run_rangeify sink ~shapes in
+          (match Hashtbl.find_opt ctx.realize_map (U.tag store) with
           | Some (Indexing.Realized axes) ->
               equal (list int) [ 0; 1 ] axes
           | _ -> fail "expected Realized with [0;1]"));
@@ -699,21 +704,21 @@ let run_rangeify_tests =
             U.param ~slot:0 ~dtype:D.float32 ~shape:(U.stack [ n ])
               ~device:(U.Single "CPU") ()
           in
-          let contig = U.contiguous ~src:param ~force:true () in
-          let sink = U.sink [ contig ] in
+          let store = materialize param in
+          let sink = U.sink [ store ] in
           let shape_exprs u =
-            if u == param || u == contig then Some [ n ] else None
+            if u == param || u == store then Some [ n ] else None
           in
           let ctx =
             Indexing.run_rangeify sink ~shapes:shape_of ~shape_exprs
           in
-          match Hashtbl.find_opt ctx.range_map (U.tag contig) with
+          match Hashtbl.find_opt ctx.range_map (U.tag store) with
           | Some ([ rng ], _) ->
               (match U.as_range rng with
               | Some { size; _ } -> is_true (size == n)
               | None -> fail "expected symbolic Range")
           | Some _ -> fail "expected one symbolic range"
-          | None -> fail "expected range_map entry for symbolic contig");
+          | None -> fail "expected range_map entry for symbolic store");
     ]
 
 (* apply_rangeify_pass tests *)
@@ -724,7 +729,7 @@ let apply_rangeify_pass_tests =
       test "reduce indexes direct source before lowering" (fun () ->
           let param = mk_param ~idx:0 [ 4; 4 ] in
           let red = U.reduce_axis ~src:param ~op:Ops.Add ~axes:[ 1 ] in
-          let root = wrap_sink red in
+          let root = U.sink [materialize red] in
           let ctx = Indexing.run_rangeify root ~shapes:shape_of in
           let lowered = Indexing.apply_rangeify_pass ctx root in
           let red =
@@ -746,7 +751,7 @@ let apply_rangeify_pass_tests =
           let pad =
             U.pad ~src:param ~offset:(mk_shape [ 1 ]) ~size:(mk_shape [ 6 ])
           in
-          let root = wrap_sink pad in
+          let root = U.sink [materialize pad] in
           let ctx = Indexing.run_rangeify root ~shapes:shape_of in
           let lowered = Indexing.apply_rangeify_pass ctx root in
           let where =
@@ -771,8 +776,8 @@ let apply_rangeify_pass_tests =
           let root =
             U.sink
               [
-                U.contiguous ~src:sum ();
-                U.contiguous ~src:(U.permute ~src:sum ~order:[ 1; 0 ]) ();
+                materialize sum;
+                materialize (U.permute ~src:sum ~order:[ 1; 0 ]);
               ]
           in
           let ctx = Indexing.run_rangeify root ~shapes:shape_of in
@@ -1124,11 +1129,114 @@ let stack_selection_tests =
                (Hashtbl.find depths (U.tag selected) <= 16)))
        [ 1; 8; 9; 17; 1024 ])
 
+let stage_capacity_tests =
+  let stage src ranges =
+    U.stage ~src ~ranges
+      ~opts:{device = Some (U.Single "CPU"); addrspace = D.Global; removable = false} in
+  let capacity name expected build = test name (fun () ->
+      let staged = build () in
+      equal int expected (U.max_numel staged);
+      let graph = Rangeify.get_kernel_graph (U.sink [staged]) in
+      let allocated = U.toposort ~enter_calls:true graph
+          |> List.filter (op_is Ops.Alloc) |> List.map U.max_numel in
+      equal ~msg:"one allocation reserves the complete canonical STAGE shape"
+        (list int) [expected] allocated) in
+  let axes () =
+    U.range ~size:(weak_int 4) ~axis:0 ~kind:Ak.Weak (),
+    U.range ~size:(weak_int 3) ~axis:1 ~kind:Ak.Weak () in
+  let scalar r s = U.cast ~src:U.O.(r * weak_int 10 + s) ~dtype:D.int32 in
+  let vector r = U.stack [U.cast ~src:r ~dtype:D.int32;
+                         U.cast ~src:U.O.(r + weak_int 1) ~dtype:D.int32] in
+  group "stage capacity"
+    [
+      test "zero-coordinate stages reuse materialized inputs" (fun () ->
+          let src = mk_param ~idx:9010 [4] in
+          let prepared staged =
+            Prepare.prepare_rangeify (U.sink [staged]) |> first_src in
+          is_true ~msg:"attributed stages preserve the existing storage identity"
+            (prepared (stage src []) == src);
+          is_true ~msg:"bare stages have the same materialization contract"
+            (prepared (U.contiguous ~src ~force:true ()) == src));
+      test "preparation leaves indexed stages to rangeify" (fun () ->
+          let r = fst (axes ()) in
+          let staged = stage (U.cast ~src:r ~dtype:D.int32) [r] in
+          let prepared = Prepare.prepare_rangeify (U.sink [staged]) |> first_src in
+          is_true ~msg:"a coordinate-bearing stage is not a bare materialization"
+            (prepared == staged));
+      test "zero-coordinate stages reuse explicit output storage" (fun () ->
+          let src = mk_param ~idx:9011 [4] and dst = mk_param ~idx:9012 [4] in
+          let value = stage U.O.(src + weak_int 1) [] in
+          let graph = Prepare.prepare_rangeify (U.sink [U.store ~dst ~value ()]) in
+          equal int 0 (List.length (List.filter (op_is Ops.Alloc) (U.toposort graph)));
+          is_true (List.exists (fun n -> match U.as_store n with
+              | Some {dst = target; _} -> target == dst | None -> false) (U.toposort graph)));
+      test "coordinate stages are not forwarded as scalar output values" (fun () ->
+          let r = fst (axes ()) and dst = mk_param ~idx:9013 [4] in
+          let value = stage (U.cast ~src:r ~dtype:D.float32) [r] in
+          let graph = Prepare.prepare_rangeify (U.sink [U.store ~dst ~value ()]) in
+          is_true (List.exists (op_is Ops.Stage) (U.toposort graph)));
+      test "zero-coordinate stages preserve DISK view-copy normalization" (fun () ->
+          let src = U.param ~slot:9014 ~dtype:D.int32 ~shape:(weak_int 8)
+              ~device:(U.Single "DISK:stage-arity") () in
+          let view = U.shrink ~src ~offset:(weak_int 2) ~size:(weak_int 3) in
+          let copy = U.copy ~src:(stage view []) ~device:(U.Single "CPU") () in
+          let graph = Prepare.prepare_rangeify (U.sink [copy]) in
+          equal (list int) [8] (U.toposort graph |> List.filter (op_is Ops.Alloc)
+              |> List.map U.max_numel));
+      test "zero-coordinate stages expose the same contiguous call view" (fun () ->
+          let src = U.buffer ~slot:9015 ~dtype:D.int32 ~shape:(weak_int 8)
+              ~device:(U.Single "CPU") () in
+          let dst = U.buffer ~slot:9016 ~dtype:D.int32 ~shape:(weak_int 3)
+              ~device:(U.Single "CPU") () in
+          let view = U.shrink ~src ~offset:(weak_int 2) ~size:(weak_int 3) in
+          List.iter (fun value ->
+              let sink = U.sink [U.after ~src:dst ~deps:[U.store ~dst ~value ()]] in
+              match U.as_call (Callify.transform_to_call sink) with
+              | Some {args; _} -> equal (list int) [3;3] (List.map U.max_numel args)
+              | None -> fail "callification must produce a call")
+            [stage view []; U.contiguous ~src:view ~force:true ()]);
+      capacity "zero coordinates reserve one scalar" 1 (fun () ->
+          let src = U.variable ~name:"stage_scalar" ~min_val:0 ~max_val:100
+              ~dtype:D.int32 ~param:true () in
+          stage U.O.(src + weak_int 1) []);
+      capacity "one coordinate" 4 (fun () ->
+          let r = fst (axes ()) in stage (U.cast ~src:r ~dtype:D.int32) [r]);
+      capacity "multiple coordinates" 12 (fun () ->
+          let r, s = axes () in stage (scalar r s) [r;s]);
+      capacity "expression coordinates" 15 (fun () ->
+          let r, s = axes () in stage (scalar r s) [U.O.(r + weak_int 1);s]);
+      capacity "vector source with one coordinate" 8 (fun () ->
+          let r = fst (axes ()) in stage (vector r) [r]);
+      capacity "vector source with multiple coordinates" 24 (fun () ->
+          let r, s = axes () in stage (vector r) [r;s]);
+      test "mixed symbolic and expression coordinates require an explicit active shape" (fun () ->
+          let n = U.variable ~name:"mixed_stage_size" ~min_val:1 ~max_val:4 ~param:true () in
+          let r = U.range ~size:n ~axis:0 ~kind:Ak.Weak () in
+          let s = U.range ~size:(weak_int 3) ~axis:1 ~kind:Ak.Weak () in
+          let staged = stage (scalar r s) [r; U.O.(s + weak_int 1)] in
+          match Rangeify.get_kernel_graph (U.sink [staged]) with
+          | _ -> fail "an expression coordinate must not invent an active extent of one"
+          | exception Invalid_argument message ->
+              equal string "Rangeify.flatten_stage: symbolic stage coordinates must be ranges or constants" message);
+      test "zero storage capacity needs no allocation" (fun () ->
+          let r = U.range ~size:(weak_int 0) ~axis:0 ~kind:Ak.Weak () in
+          let src = U.variable ~name:"empty_stage_value" ~min_val:0 ~max_val:100
+              ~dtype:D.int32 ~param:true () in
+          let staged = stage src [r] in
+          equal int 0 (U.max_numel staged);
+          let graph = Rangeify.get_kernel_graph (U.sink [staged]) in
+          let storage = U.toposort ~enter_calls:true graph
+              |> List.filter (fun n -> List.mem (U.op n) [Ops.Stage; Ops.Alloc; Ops.Call]) in
+          equal ~msg:"preparation removes empty storage before allocation lowering"
+            int 0 (List.length storage));
+    ]
+
 (* Main *)
 
 let () =
   run "Schedule.Rangeify"
     [
+      stage_capacity_tests;
       stack_selection_tests;
       test "Shape queries release graphs" shape_queries_release_graphs;
       is_always_contiguous_tests;
