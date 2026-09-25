@@ -520,6 +520,10 @@ thread.
 
 ### Tolk (new)
 
+- A copy to another device from a contiguous slice of a realized value reads
+  the slice in place. It was first copied into a buffer of its own on the
+  source device.
+
 - A precompiled call reading a view argument read the wrong elements: a
   non-contiguous view as the flat bytes from its offset, and a window of a
   value computed in the same realization from the start of that value, with

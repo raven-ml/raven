@@ -368,6 +368,88 @@ let gathered ~ndev ~rows ~cols data =
   Run.realize_many [ w ];
   traffic (fun () -> device_bytes (gather devices w))
 
+(* Copies read and write contiguous windows of storage in place. *)
+let copy_tests =
+  group "copies"
+    [
+      (* Sizes are multiples of 256 bytes, the memory planner's granularity. *)
+      test "copies of rows of a staged value read them in place" (fun () ->
+          let x =
+            C.clone ~device:(U.Single "CPU:1")
+              (host ~shape:[ 64; 64 ] (Array.init 4096 float_of_int))
+          in
+          Run.realize_many [ x ];
+          let y =
+            T.of_uop (U.contiguous ~src:(T.uop (El.add x (T.f 1.0))) ())
+          in
+          let low =
+            C.clone ~device:(U.Single "CPU:2")
+              (Mv.shrink y [ (0, 32); (0, 64) ])
+          and high =
+            C.clone ~device:(U.Single "CPU:3")
+              (Mv.shrink y [ (32, 64); (0, 64) ])
+          in
+          let (_, flows), peaks =
+            peak_over [ "CPU:1" ] (fun () ->
+                traffic (fun () -> Run.realize_many [ low; high ]))
+          in
+          equal ~msg:"CPU:1 holds only y"
+            (list (pair string int))
+            [ ("CPU:1", 4096 * 4) ]
+            peaks;
+          equal ~msg:"each copy moves its rows" (list int) [ 8192; 8192 ]
+            [ received "CPU:2" flows; received "CPU:3" flows ];
+          equal (list bytes)
+            [ f32_bytes (Array.init 2048 (fun i -> float_of_int (i + 1))) ]
+            (device_bytes low);
+          equal (list bytes)
+            [ f32_bytes (Array.init 2048 (fun i -> float_of_int (i + 2049))) ]
+            (device_bytes high));
+      test "copies of symbolic slices keep their values" (fun () ->
+          let x =
+            C.clone ~device:(U.Single "CPU:1")
+              (host ~shape:[ 8; 7 ] (Array.init 56 float_of_int))
+          in
+          Run.realize_many [ x ];
+          let cols = U.variable ~name:"copy_cols" ~min_val:1 ~max_val:7 () in
+          List.iter
+            (fun (label, staged) ->
+              List.iter
+                (fun n ->
+                  let y = El.add x (T.f 1.0) in
+                  let y =
+                    if staged then T.of_uop (U.contiguous ~src:(T.uop y) ())
+                    else y
+                  in
+                  let sliced =
+                    U.shrink ~src:(T.uop y)
+                      ~offset:(T.shape_uop [ 0; 0 ])
+                      ~size:
+                        (U.stack
+                           [
+                             U.const_int 8;
+                             U.bind ~var:cols ~value:(U.const_int n);
+                           ])
+                  in
+                  let moved =
+                    T.of_uop (U.copy ~src:sliced ~device:(U.Single "CPU:2") ())
+                  in
+                  let expected = ref 0.0 in
+                  for r = 0 to 7 do
+                    for c = 0 to n - 1 do
+                      expected := !expected +. float_of_int ((r * 7) + c + 1)
+                    done
+                  done;
+                  equal
+                    ~msg:(Printf.sprintf "%s, %d columns" label n)
+                    (array float_exact) [| !expected |]
+                    (Run.to_float_array
+                       (C.clone ~device:(U.Single "CPU")
+                          (Rd.sum ~axis:[ 0; 1 ] moved))))
+                [ 3; 7 ])
+            [ ("lazy", false); ("staged", true) ]);
+    ]
+
 (* The peak of a 256 KiB value split on [axis] over 4 devices, gathered to them
    and summed. *)
 let check_gather_peak ~axis =
@@ -780,9 +862,8 @@ let in_layers layer =
 
 (* Fully sharded training fits when every device stays within two gathered
    layers plus its saved activations above its share of parameters, gradients
-   and optimizer state. Today's lowering misses that bound for two reasons: the
-   gradient is allreduced whole before each device keeps its rows, and every
-   copy source is staged in its own buffer. *)
+   and optimizer state. Today's lowering misses that bound because the gradient
+   is allreduced whole before each device keeps its rows. *)
 let fully_sharded (name, ndev, dims) =
   let batch = 64 and layers = Array.length dims - 1 in
   let layer_bytes = Array.init layers (fun l -> dims.(l) * dims.(l + 1) * 4) in
@@ -813,9 +894,7 @@ let fully_sharded (name, ndev, dims) =
          reduce-scatters. *)
       test "gathers move (n-1) layers and gradients 2(n-1)" (fun () ->
           equal int (4 * (ndev - 1) * weight_bytes) (run ()).peer_bytes);
-      xfail
-        ~reason:
-          "gradients allreduce before the reshard, copies stage their sources"
+      xfail ~reason:"gradients are allreduced whole before the reshard"
         (test "each device holds at most two layers and activations over state"
            (fun () ->
              let device, over =
@@ -893,6 +972,7 @@ let () =
               Device.Buffer.deallocate kept);
         ];
       allreduce_tests;
+      copy_tests;
       gather_tests;
       reshard_tests;
       group "tensor-parallel MLP moves only its allreduce"

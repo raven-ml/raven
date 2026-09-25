@@ -583,21 +583,21 @@ let stage_to_store stage =
           ~size:(dims_node dims) in
     Some (U.after ~src:view ~deps:[U.store ~dst:view ~value:input ()])
 
-(* A store target a copy can write directly: a buffer, or a contiguous
-   window of one with a concrete shape, which the copy reaches as a byte
-   view. The tinygrad counterpart takes whole buffers only, so a copy into a
-   window lands in a staging buffer that a kernel then copies again.
+(* Storage a copy can write or read in place: a buffer, or a contiguous
+   window of one (a STAGE counts as the buffer it becomes), which the copy
+   reaches as a byte view. The tinygrad counterpart takes whole buffers only:
+   it stages a window it reads, and a window it writes gets a staging buffer
+   that a kernel copies again.
 
-   A symbolic window keeps the staging buffer: a cross-device store of a
-   symbolic value is staged by [stage_to_store] into a SHRINK of a fresh
-   buffer, which has no buffer identity, so the third rule below would stage
-   it again, without end. *)
-let storage_window dst =
-  U.has_buffer_identity ~after_ok:true dst
-  || List.for_all (fun d -> Option.is_some (U.const_int_value d)) (U.shape dst)
-     && match U.contiguous_view dst with
-        | Some (base, _) -> U.has_buffer_identity ~after_ok:true base
-        | None -> false
+   Rule 3 below stages a cross-device value that is not such storage, and
+   the stage it adds counts as storage, so it does not fire twice on one
+   value. [stage_to_store] later turns a symbolic stage into a SHRINK of a
+   fresh buffer, which is not a window when an inner axis is symbolic, and a
+   store of it could match rule 3 again. None arises: a cross-device store
+   comes from [convert_copy_to_store], which pads its value to the maximum
+   shape, or from rule 1, whose destination is a window of the value's own
+   shape and so has no symbolic inner axis either. *)
+let storage_view value = Option.is_some (U.storage_window value)
 
 let materialize n =
   match U.op n with
@@ -605,7 +605,7 @@ let materialize n =
       match U.as_store n with
       | Some { dst; value; gate = None }
         when U.op value = Ops.Copy && U.device_of dst = U.device_of value
-          && storage_window dst ->
+          && storage_view dst ->
           Some (U.store ~dst ~value:(src0 value) ())
       | Some { dst; value; gate = None }
         when U.op dst = Ops.Reshape && U.op value = Ops.Reshape
@@ -614,7 +614,7 @@ let materialize n =
       | Some { dst; value; gate = None }
         when Option.is_some (U.device_of value)
           && U.device_of dst <> U.device_of value
-          && not (U.has_buffer_identity ~after_ok:true value) ->
+          && not (storage_view value) ->
           Some (U.store ~dst ~value:(U.contiguous ~src:value ()) ())
       | _ -> None)
   | Ops.Copy -> convert_copy_to_store n

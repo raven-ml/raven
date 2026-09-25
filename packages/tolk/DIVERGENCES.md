@@ -443,33 +443,44 @@ delete it rather than registering it.
   reference's either way. Consumer: rune's CPU device, which binds host memory
   it did not allocate (slices, mapped files) and passes `~aligned:false`.
 
+- **Copies read and write contiguous windows of storage in place**
+  (`schedule/prepare.ml` `storage_view`, `engine/schedule.ml`
+  `copy_kernel_params`). The reference's copies take whole buffers: a copy
+  from a window stages the window first (`materialize_cross_device_src`), and
+  a copy into a window lands in a staging buffer that a kernel copies again.
+  Tolk keeps a copy's source or destination when it is storage (a buffer, or
+  a STAGE, which becomes one) or a contiguous window of storage, and a copy
+  kernel storing `dst[i + a] <- src[i + b]` becomes a transfer between byte
+  views. The reference forbids offset copies because SDMA cannot do them;
+  tolk's copy paths take them: Realize resolves the SHRINK to a
+  `Device.Buffer.view`, `Deps_tracker.uop` keys byte intervals by view
+  offset, and the AMD SDMA `COPY_LINEAR` path (`tolk_amd.ml`) takes byte
+  addresses with no alignment requirement. Unverified on SDMA, CUDA and NV
+  queues until the node runs. Non-contiguous windows are still staged.
+  A stage counts as storage, so a value is staged once; a stage of a
+  symbolic value with a symbolic inner axis is not a window, and no
+  cross-device store of one arises (see `storage_view`). Coverage:
+  `test/unit/engine/test_collectives.ml` "copies".
+
 - **A gather is an all-gather of pure copies** (`schedule/multi.ml`
-  `allgather`, `schedule/prepare.ml` `storage_window`, `engine/schedule.ml`
-  `copy_kernel_params`). The reference lowers a copy of a split value to
-  several devices as an allreduce of zero-padded shards, and to one device as
-  a sum of padded shards. Tolk lowers both to one precompiled call named
+  `allgather`). The reference lowers a copy of a split value to several
+  devices as an allreduce of zero-padded shards, and to one device as a sum
+  of padded shards. Tolk lowers both to one precompiled call named
   `allgather` over (dst, src): each target gets one buffer, and each shard is
   written once into its window of it, by a transfer from another device or a
-  store on its own. Each device receives (n-1)/n of the value, where the
-  reference's ring and naive allreduces move 2(n-1)/n and n-1 full buffers,
-  and no padded shard or sum is materialized. The windows need two
-  extensions: prepare drops a copy into a contiguous window of a parameter or
-  buffer with a concrete shape (the reference only into a whole buffer, so a
-  window gets a staging buffer), and a copy kernel storing
-  `dst[i + a] <- src[i + b]` becomes a transfer between byte views. The
-  reference forbids offset copies because SDMA cannot do them; tolk's copy
-  paths take them: Realize resolves the SHRINK to a `Device.Buffer.view`,
-  `Deps_tracker.uop` keys byte intervals by view offset, and the AMD SDMA
-  `COPY_LINEAR` path (`tolk_amd.ml`) takes byte addresses with no alignment
-  requirement. Unverified on SDMA, CUDA and NV queues until the node runs.
-  Symbolic windows keep the staging buffer. Inner-axis windows are not
-  contiguous and stage every foreign shard. Outputs are forwarded again after
-  `multi_pm` (`schedule/prepare.ml` `prepare_rangeify`; the reference
-  forwards only before it), so a realized gather writes the result's storage
-  instead of a fresh allocation it then copies. Consumer: every copy of a
-  split value (`Creation.clone`, `U.copy` to a device list, resharding in
-  `multi_pm`).
-  Coverage: `test/unit/engine/test_collectives.ml` "all-gather" and
+  store on its own (see the window copies above). Each device receives
+  (n-1)/n of the value, where the reference's ring and naive allreduces move
+  2(n-1)/n and n-1 full buffers, and no padded shard or sum is materialized.
+  Inner-axis windows are not contiguous and stage every foreign shard. A
+  consumer does not fuse into a gather: a gather to one device followed by a
+  reduction holds the gathered value, where the reference's sum of padded
+  shards held the n-1 received pieces; write it as a reduce-scatter.
+  Outputs are forwarded again after `multi_pm` (`schedule/prepare.ml`
+  `prepare_rangeify`; the reference forwards only before it), so a realized
+  gather writes the result's storage instead of a fresh allocation it then
+  copies. Consumer: every copy of a split value (`Creation.clone`, `U.copy`
+  to a device list, resharding in `multi_pm`). Coverage:
+  `test/unit/engine/test_collectives.ml` "all-gather" and
   `test/unit/engine/test_multi.ml`.
 
 - **A collective call takes its whole output allocation**
