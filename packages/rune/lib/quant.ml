@@ -95,10 +95,11 @@ let lane_index lanes =
 
 let decoded dt codes scales = Nx.contiguous (decode dt codes scales)
 
-(* With fewer positions than experts, the selected experts' packed rows are
-   gathered, then decoded. A position that selects no expert gathers zero bytes,
-   reading nothing, and its product is set to zero after it: a zero row times an
-   [x] that is not finite is NaN. *)
+(* In a program over several devices, with fewer positions than experts, the
+   selected experts' packed rows are gathered, then decoded, and multiplied by
+   tolk's matmul. A position that selects no expert gathers zero bytes, reading
+   nothing, and its product is set to zero after it: a zero row times an [x]
+   that is not finite is NaN. *)
 let gathered ~transpose ~p ~e ids codes scales x =
   let ws = Nx.shape codes and is = Nx.shape ids in
   let valid =
@@ -410,20 +411,41 @@ let result_shape ~vector ob rows cols =
   if vector then Array.append ob [| cols |]
   else Array.concat [ ob; [| rows; cols |] ]
 
-(* Each route is its own block of [m] rows. *)
-let instances block_matmul ~transpose ~p ~e ids codes scales x =
+(* Each route is its own block of [m] rows, padded with zero rows up to a
+   multiple of the smallest of the block kernel's row tiles where it has any:
+   rows that no tile divides run the kernel without its pinned options, on Metal
+   2.3 times slower at 100 rows of gpt-oss's gate_up. [form] names the form in
+   the report. *)
+let instances kernels ~form ~transpose ~p ~e ids codes scales x =
   let vector = Nx.ndim x = 1 in
   let xb, rows = batch_rows x in
   let lanes = weight_lanes ~p codes scales in
   let ob, expert, row = routes ~e ~lanes ids xb in
   let w = flat_experts ~lanes codes scales x in
-  let y =
-    block_matmul ~transpose:(not transpose)
-      (Nx.take ~axis:0 ~indices:row rows)
-      w ~ids:expert
+  let m = Nx.dim 1 rows and k = Nx.dim 2 rows in
+  let n = if transpose then Nx.dim 2 w else Nx.dim 1 w in
+  let tile =
+    match
+      List.rev (Tolk_frontend.Op.block_row_tiles (renderer kernels) ~n ~k)
+    with
+    | smallest :: _ -> smallest
+    | [] -> 1
   in
-  let ys = Nx.shape y in
-  Nx.reshape (result_shape ~vector ob ys.(1) ys.(2)) y
+  let padded = (m + tile - 1) / tile * tile in
+  report
+    (Printf.sprintf "%s, blocks of %d rows on the block kernel" form padded);
+  let blocks = Nx.take ~axis:0 ~indices:row rows in
+  let blocks =
+    if padded = m then blocks
+    else Nx.pad [| (0, 0); (0, padded - m); (0, 0) |] 0.0 blocks
+  in
+  let y =
+    kernels.block_matmul ~transpose:(not transpose) blocks w ~ids:expert
+  in
+  let y =
+    if padded = m then y else Nx.shrink [| (0, Nx.dim 0 y); (0, m); (0, n) |] y
+  in
+  Nx.reshape (result_shape ~vector ob m n) y
 
 (* The rows of a block that decode-then-matmul multiplies: the largest of the
    block kernel's row tiles at most the rows an expert meets on average, or the
@@ -587,29 +609,70 @@ let groups kernels ~ids (Nx_quant.Mxfp4 { codes; scales }) x =
   m = 1 && routes > e
   && r *. (r -. 1.0) /. (2.0 *. float_of_int e) > tau kernels.device
 
+(* On one device every decoded form multiplies with the block kernel. Without
+   ids, the weight's stack is its experts and each position of the product's
+   batch addresses its own matrix. With fewer positions than experts, the
+   selected experts' packed rows are gathered, then decoded, and each position
+   addresses its gathered matrix; a position that selects no expert gathers
+   zeros and addresses none. *)
+let plain_blocks kernels ~transpose codes scales x =
+  let cs = Nx.shape codes in
+  let r = Array.length cs in
+  let wb = Array.sub cs 0 (r - 2) in
+  let flat t =
+    let s = Nx.shape t in
+    Nx.reshape (Array.append [| count wb |] (Array.sub s (r - 2) 2)) t
+  in
+  instances kernels ~form:"decoded" ~transpose ~p:0 ~e:(count wb)
+    (lane_index wb) (flat codes) (flat scales) x
+
+let gathered_blocks kernels ~transpose ~p ~e ids codes scales x =
+  let lanes = weight_lanes ~p codes scales in
+  let selected, expert, _ = routes ~e ~lanes ids [||] in
+  let g = count selected in
+  let codes, scales = flat_parts ~lanes codes scales in
+  if g = 0 then
+    let xb, rows = batch_rows x in
+    let ob = batch_shape ~lanes xb (Nx.shape ids) in
+    Nx.zeros (Nx.dtype x)
+      (result_shape ~vector:(Nx.ndim x = 1) ob (Nx.dim 1 rows) (Nx.dim 1 codes))
+  else
+    let take part = Nx.take ~axis:0 ~indices:expert part in
+    let own =
+      Nx.where
+        (Nx.greater_equal_s expert 0l)
+        (Nx.arange Nx.int32 0 g 1)
+        (Nx.full Nx.int32 [||] (-1l))
+    in
+    instances kernels ~form:"gathered" ~transpose ~p:0 ~e:g
+      (Nx.reshape selected own) (take codes) (take scales) x
+
 let product kernels ~transpose ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
   match ids with
-  | None ->
-      report "decoded";
-      let w = decoded (Nx.dtype x) codes scales in
-      Nx.matmul x (if transpose then w else Nx.matrix_transpose w)
+  | None -> (
+      match kernels with
+      | Some kernels -> plain_blocks kernels ~transpose codes scales x
+      | None ->
+          report "decoded";
+          let w = decoded (Nx.dtype x) codes scales in
+          Nx.matmul x (if transpose then w else Nx.matrix_transpose w))
   | Some ids -> (
       let ws = Nx.shape codes and is = Nx.shape ids in
       let p = Array.length ws - 3 in
       let e = ws.(p) in
       let positions = count (Array.sub is p (Array.length is - p)) in
-      if positions < e then begin
-        report "gathered";
-        gathered ~transpose ~p ~e ids codes scales x
-      end
-      else
-        match kernels with
-        | Some kernels ->
-            report "one block per position";
-            instances kernels.block_matmul ~transpose ~p ~e ids codes scales x
-        | None ->
-            report "dense";
-            every ~transpose ~p ~e ids codes scales x)
+      match kernels with
+      | Some kernels when positions < e ->
+          gathered_blocks kernels ~transpose ~p ~e ids codes scales x
+      | Some kernels ->
+          instances kernels ~form:"one block per position" ~transpose ~p ~e ids
+            codes scales x
+      | None when positions < e ->
+          report "gathered";
+          gathered ~transpose ~p ~e ids codes scales x
+      | None ->
+          report "dense";
+          every ~transpose ~p ~e ids codes scales x)
 
 (* Rule 2 first, then rule 1. The kernel takes float32, bfloat16 and float16 as
    they are, and the transposed product, the reverse rule's, never takes it.

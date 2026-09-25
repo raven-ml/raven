@@ -395,7 +395,8 @@ let test_kernel () =
   battery (case ~ids:(ints [| 2 |] [| -1; 6 |]) w (floats [| 2; 1; 128 |]))
 
 (* Past the row bound, decoding then multiplying: without ids, with fewer
-   positions than experts, with as many or more, and with lanes. *)
+   positions than experts, with as many or more, and with lanes. On Metal the 65
+   rows are padded to 72, a multiple of the block kernel's tile. *)
 let test_past_the_bound () =
   let rows = 65 in
   battery (case (weight [| 8; 64 |]) (floats [| rows; 64 |]));
@@ -932,6 +933,12 @@ let form_cases () =
       fun () -> apply ~transpose:true w ids (floats [| 8; 2; 1; 8 |]) );
     ( "one route per expert",
       fun () -> apply wide distinct (floats [| 40; 1; 64 |]) );
+    ( "a hundred rows",
+      fun () ->
+        Rune.jit'
+          ~devices:[ Rune.device device ]
+          (Nx_quant.apply (weight ~scale:moderate [| 8; 64 |]))
+          (floats [| 100; 64 |]) );
     ( "sixteen routes over two devices",
       fun () ->
         Rune.jit
@@ -1007,7 +1014,15 @@ let test_forms () =
   is_false ~msg:"one route per expert does not group"
     (grouped "one route per expert");
   equal ~msg:"over two devices, the dense form" (list string) [ "dense" ]
-    (Hashtbl.find_all forms "sixteen routes over two devices")
+    (Hashtbl.find_all forms "sixteen routes over two devices");
+  (* Past the row bound; on Metal the rows are padded to the block kernel's
+     smallest tile, so that its pinned options apply. *)
+  equal ~msg:"a hundred rows decode, padded on Metal" (list string)
+    [
+      Printf.sprintf "decoded, blocks of %d rows on the block kernel"
+        (if metal then 104 else 100);
+    ]
+    (Hashtbl.find_all forms "a hundred rows")
 
 (* debug *)
 
@@ -1056,7 +1071,7 @@ let () =
           slow "the kernel" test_kernel;
           slow "past the row bound" test_past_the_bound;
           test "the row bound chooses the kernel" test_rule;
-          test "grouping chooses its routes" test_forms;
+          test "each product takes its form" test_forms;
         ];
       group "placement"
         [ test "place splits at the format's blocks" test_place ];

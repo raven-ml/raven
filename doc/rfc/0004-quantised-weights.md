@@ -402,11 +402,15 @@ its id addresses, reading it in place. A copy of the gathered matrices, which
 tolk makes for a gather that feeds its ordinary matmul, as tinygrad does,
 would write `nb · n · k` values per product: 2.1 GB for gpt-oss's `gate_up` at
 a 512-token prefill. It decodes at `x`'s dtype when that dtype has float32's
-exponent range (bfloat16, float32), otherwise at float32. Without `ids`, and
-for the gathered rows when `i < d`, it multiplies with tolk's ordinary matmul,
-which keeps tensor cores where they exist; there a position that selects no
-expert is set to zero by a select after the product, since its gathered row
-is zero and `0 · x` is NaN where `x` is not finite.
+exponent range (bfloat16, float32), otherwise at float32. On one device the
+block kernel multiplies every decoded form: without `ids` each position of the
+product's batch addresses its own matrix of `w`'s stack, and for the gathered
+rows when `i < d` its own gathered matrix, a position that selects no expert
+addressing none and so getting exactly zero. Rules 1 and 3 then weigh the same
+two kernels, and one row bound serves both. Only a program over several
+devices multiplies decoded matrices with tolk's ordinary matmul; there a
+position that selects no expert is set to zero by a select after the product,
+since its gathered row is zero and `0 · x` is NaN where `x` is not finite.
 
 **The block kernel** is built through `Tensor.custom_kernel`, as the kernel
 is, with tensor-core options pinned per device and shape class. Its loop over

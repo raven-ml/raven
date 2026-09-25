@@ -163,6 +163,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled mxfp4 products that decode on one device multiply with tolk's
+  block kernel, without ids and with fewer positions than experts as with
+  more, each position's rows padded to the kernel's tile: exact products at
+  every dtype, and on the CPU 1.6 to 3.1 times faster at float32 and 7 to 11
+  times at bfloat16 (one gpt-oss expert, 8 to 128 rows); on Metal as fast at
+  multiples of 8 rows and up to 4.8 times faster otherwise (509 rows at
+  float32: 56-57 against 264-268 ms).
 - **Breaking:** `Rune.pmap` and its `in_axes` are removed: place the values and
   call `Rune.jit`. `Some a` is `Nx.place (Nx.Placement.sharded ~axis:a ds)`;
   `None` leaves a value on the host, where it enters as a copy on each device.
