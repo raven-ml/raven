@@ -280,11 +280,6 @@ let mask index =
 
 (* Pools *)
 
-let pool ~slots dtype shape =
-  if slots < 0 then
-    invalid "Cache_index.pool: slots must not be negative, got %d" slots;
-  Nx.zeros dtype (Array.append [| slots |] shape)
-
 let tail pool =
   let shape = Nx.shape pool in
   if Array.length shape = 0 then

@@ -2825,9 +2825,6 @@ thread.
   `Fn.keep_top_k` and `Fn.keep_top_p`. They return the logits with everything
   outside the kept set at negative infinity, where `Nx.top_k` returns the `k`
   greatest entries: one name, one meaning.
-- Add `Cache_index.pool ~slots dtype shape`, an empty pool of `slots` slots of
-  shape `shape`: the one place that knows the scratch row. A layer with its
-  own cache record builds its leaves with it, as `Attention.Cache.make` does.
 - **Breaking**: a sliding window is part of the cache index.
   `Cache_index.window w index` is `index` seeing the last `w` positions, and
   `Cache_index.extend` and `Cache_index.mask` lose `?window` and read the

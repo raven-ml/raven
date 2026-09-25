@@ -12,7 +12,8 @@
 - Revision: 4 (2026-09-25). Amends revision 3 in place: a pool of `slots`
   slots has `slots` rows, and what addresses nothing is `-1` throughout, since
   `Nx.scatter` drops a store and `Nx.take` reads zero at an index outside a
-  tensor, eagerly and compiled; the scratch row and its law go. Revision 3
+  tensor, eagerly and compiled; the scratch row, its law and
+  `Cache_index.pool`, which existed to build the row, go. Revision 3
   extended revision 2 in place with chosen columns and blocks of positions;
   Rationale records what revision 2 chose and why it changed. Revision 2
   replaced the first revision; Rationale says what that one chose and why it
@@ -191,8 +192,7 @@ engine's own tests can port them without model code.
 ### The cache
 
 A cache is an ordinary value of a type the model defines, whose leaves are
-pools: tensors of shape `[slots; ...]` of any width and dtype, built with
-`Cache_index.pool ~slots dtype shape`. There is no
+pools: tensors of shape `[slots; ...]` of any width and dtype. There is no
 batch axis; who owns a slot is the table's business. Kaun ships the record
 most models use, `Attention.Cache.t = { keys; values }` with payloads `[slots;
 kv_heads; head_dim]`, and `Cache.List`, the `Uniform` traversal of a list
@@ -220,7 +220,6 @@ module Cache_index : sig
   val window : int -> t -> t                (* the last w positions; static *)
   val every : int -> t -> t                 (* blocks of m positions; static *)
   val select : Nx.int32_t -> t -> t         (* [batch; seq; k] chosen columns *)
-  val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
   val advance : t -> t
 
   val batch : t -> int                      (* seq, context likewise: static sizes *)
@@ -492,8 +491,8 @@ engine or any caller of `Cache_index.make`.
    lane, whatever its slot holds (K).** Under a selection this holds per
    chosen column, and a column the token did not choose is not read. Prevents
    one request's overflow becoming another's `nan`.
-6. **Every cache leaf is one pool, built with `Cache_index.pool`: a tensor of
-   `slots` rows whose axis 0 is the slot axis, leaves in a fixed order
+6. **Every cache leaf is one pool: a tensor of `slots` rows whose axis 0 is
+   the slot axis, leaves in a fixed order
    (M).** No two leaves hold one tensor: a
    donated tensor seeds one leaf. Prevents an engine needing model code to
    move state, lost storage reuse, and a compiled program keyed by another
@@ -607,7 +606,8 @@ eagerly and did otherwise compiled, and the two modes had to agree. Once
 modes, `-1` did the row's work. Revision 4 removes it: pools hold their slots
 and nothing else, the write and the read lose their masks against the row, the
 law that it is never observed goes, and `~unique_indices:true` is no longer
-broken at the row by design. Where a value read from a table is used as a slot,
+broken at the row by design. A pool is then any tensor of zeros, so
+`Cache_index.pool` goes too. Where a value read from a table is used as a slot,
 the column is still masked first, since the zero it reads names slot `0`.
 
 **A `decode` transformation in rune that derives the step from `hidden`.**

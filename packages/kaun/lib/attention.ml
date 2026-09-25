@@ -303,7 +303,7 @@ module Cache = struct
         "Attention.Cache.make: slots must not be negative and kv_heads and \
          head_dim must be positive, got slots=%d kv_heads=%d head_dim=%d"
         slots kv_heads head_dim;
-    let pool () = Cache_index.pool ~slots dtype [| kv_heads; head_dim |] in
+    let pool () = Nx.zeros dtype [| slots; kv_heads; head_dim |] in
     { keys = pool (); values = pool () }
 
   (* Pools hold tokens first, [batch; seq; kv_heads; head_dim]; heads come first

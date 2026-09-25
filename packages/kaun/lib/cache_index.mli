@@ -7,16 +7,16 @@
 
     A cache is any record of {e pools}. A pool of [slots] slots is one tensor of
     [slots] rows whose axis 0 is the slot axis, with no batch axis: slot [s] is
-    row [s] of every pool, and {!pool} builds one. A cache index says, for one
-    call, which position each token holds and which slots hold the positions of
-    its sequence. One contiguous run of slots per sequence ({!rows}), paged
-    allocation, a prefix shared by two sequences and a forked beam are all
-    values of an index, and a layer is the same for each. A model passes the
-    index it was given to every layer and never looks inside; a layer calls
-    {!extend} on each of its pools and attends under {!mask}. A layer that keeps
-    one entry per block of positions reads its pools through {!val-every}, and
-    one that attends to a few columns per token through {!select}. {!ptree} is
-    an index's structure, which a compiled step's signature names.
+    row [s] of every pool. A cache index says, for one call, which position each
+    token holds and which slots hold the positions of its sequence. One
+    contiguous run of slots per sequence ({!rows}), paged allocation, a prefix
+    shared by two sequences and a forked beam are all values of an index, and a
+    layer is the same for each. A model passes the index it was given to every
+    layer and never looks inside; a layer calls {!extend} on each of its pools
+    and attends under {!mask}. A layer that keeps one entry per block of
+    positions reads its pools through {!val-every}, and one that attends to a
+    few columns per token through {!select}. {!ptree} is an index's structure,
+    which a compiled step's signature names.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -220,13 +220,6 @@ val positions : t -> Nx.int32_t
     padding is [0]. It does not depend on {!val-every}. *)
 
 (** {1:pools Pools} *)
-
-val pool : slots:int -> ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t
-(** [pool ~slots dtype shape] is an empty pool of [slots] slots, each of shape
-    [shape]: zeros of shape [slots] followed by [shape]. [slots] may be [0]: the
-    pool a {!whole} call is given.
-
-    Raises [Invalid_argument] if [slots] is negative. *)
 
 val extend :
   t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t

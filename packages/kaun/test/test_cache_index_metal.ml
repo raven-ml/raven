@@ -83,8 +83,8 @@ let test_stream_on_metal () =
       {
         x = Nx.zeros Nx.float32 [| 1; 1; 1 |];
         y = Nx.zeros Nx.float32 [| 1; 1 |];
-        sources = Cache_index.pool ~slots:12 Nx.float32 [| 1 |];
-        entries = Cache_index.pool ~slots:3 Nx.float32 [| 1 |];
+        sources = Nx.zeros Nx.float32 [| 12; 1 |];
+        entries = Nx.zeros Nx.float32 [| 3; 1 |];
       }
       [| 0; 1; 2; 3; 4; 5 |]
   in

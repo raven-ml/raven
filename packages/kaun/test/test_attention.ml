@@ -642,16 +642,12 @@ let test_cached_window () =
   in
   close ~msg:"in two chunks" expected (Nx.concatenate ~axis:1 [ y1; y2 ])
 
-(* A prompt fed whole, in chunks, or token by token gives the same outputs. *)
-let test_index_pool () =
-  let pool = Cache_index.pool ~slots:3 Nx.int32 [| 2; 5 |] in
-  shape_is ~msg:"slots, then the slot's shape" [| 3; 2; 5 |] pool;
-  is_true ~msg:"zeros" (Array.for_all (fun v -> v = 0l) (flat pool));
-  shape_is ~msg:"no slot" [| 0 |] (Cache_index.pool ~slots:0 Nx.float32 [||]);
-  shape_is ~msg:"an attention cache is two pools" [| 3; 2; 2 |] (cache 3).keys;
-  raises
-    (Invalid_argument "Cache_index.pool: slots must not be negative, got -1")
-    (fun () -> Cache_index.pool ~slots:(-1) Nx.float32 [| 2 |])
+let test_cache_pools () =
+  let c = cache 3 in
+  shape_is ~msg:"slots, then kv_heads and head_dim" [| 3; 2; 2 |] c.keys;
+  shape_is ~msg:"the values alike" [| 3; 2; 2 |] c.values;
+  is_true ~msg:"zeros" (Array.for_all (fun v -> v = 0.) (flat c.keys));
+  shape_is ~msg:"no slot" [| 0; 2; 2 |] (cache 0).keys
 
 let test_index_window () =
   let index = index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |] in
@@ -705,7 +701,7 @@ let selection_fixture () =
     Cache_index.extend
       (index_at ~pos:[| [| 0; 1; 2; 3; 4 |] |] ~slots)
       (numbered ~batch:1 ~from:0 5)
-      (Cache_index.pool ~slots:5 Nx.float32 [| 1 |])
+      (Nx.zeros Nx.float32 [| 5; 1 |])
   in
   let nan = Nx.full Nx.float32 [| 1; 1 |] nan in
   let pool = Nx.set [ Nx.R (1, 2) ] nan pool in
@@ -788,7 +784,7 @@ let test_index_select_whole () =
     int32s [| 2; 3; 3 |] (Array.concat (List.init 6 (fun _ -> [| 2; 0; 1 |])))
   in
   let selected = Cache_index.select columns index in
-  let pool = Cache_index.pool ~slots:0 Nx.float32 [| 1 |] in
+  let pool = Nx.zeros Nx.float32 [| 0; 1 |] in
   let seen, pool' = Cache_index.extend selected values pool in
   values_are ~msg:"the chosen tokens a token sees, zero elsewhere" ~tol:0.
     [|
@@ -940,7 +936,7 @@ let blocks_at ?(blocks = [| 2; 0; 1 |]) pos =
     ~table:(int32s [| 1; 12 |] (Array.init 12 Fun.id))
     ()
 
-let block_pool () = Cache_index.pool ~slots:3 Nx.float32 [| 1 |]
+let block_pool () = Nx.zeros Nx.float32 [| 3; 1 |]
 
 (* Token [t] sees block [j] when [(j + 1) * 4 <= t + 1]. *)
 let closed ~blocks positions =
@@ -1076,7 +1072,7 @@ let test_index_every_whole () =
       (Cache_index.whole ~lens:[| 6; 10 |] ~batch:2 ~seq:10 ())
   in
   equal ~msg:"ceil (seq / m) blocks" int 3 (Cache_index.context index);
-  let pool = Cache_index.pool ~slots:0 Nx.float32 [| 1 |] in
+  let pool = Nx.zeros Nx.float32 [| 0; 1 |] in
   let seen, pool' =
     Cache_index.extend index (numbered ~batch:2 ~from:0 10) pool
   in
@@ -1117,7 +1113,7 @@ let test_index_every_rows () =
   let _, pool =
     Cache_index.extend index
       (numbered ~batch:2 ~from:0 4)
-      (Cache_index.pool ~slots:6 Nx.float32 [| 1 |])
+      (Nx.zeros Nx.float32 [| 6; 1 |])
   in
   values_are ~msg:"sequence b's block j is slot 3 b + j" ~tol:0.
     [| 4.; 0.; 0.; 4.; 0.; 0. |]
@@ -1278,8 +1274,8 @@ let feed_stream ?(step = stream) calls =
           index = Cache_index.rows ~context:1 [| 1 |];
           x = Nx.zeros Nx.float32 [| 1; 1; 1 |];
           y = Nx.zeros Nx.float32 [| 1; 1 |];
-          sources = Cache_index.pool ~slots:12 Nx.float32 [| 1 |];
-          entries = Cache_index.pool ~slots:3 Nx.float32 [| 1 |];
+          sources = Nx.zeros Nx.float32 [| 12; 1 |];
+          entries = Nx.zeros Nx.float32 [| 3; 1 |];
         } )
       calls
   in
@@ -1306,8 +1302,8 @@ let test_index_every_stream () =
         index = whole;
         x = numbered ~batch:1 ~from:0 12;
         y = Nx.zeros Nx.float32 [| 1; 12 |];
-        sources = Cache_index.pool ~slots:0 Nx.float32 [| 1 |];
-        entries = Cache_index.pool ~slots:0 Nx.float32 [| 1 |];
+        sources = Nx.zeros Nx.float32 [| 0; 1 |];
+        entries = Nx.zeros Nx.float32 [| 0; 1 |];
       }
   in
   equal ~msg:"a whole index computes the same outputs" (list float_exact)
@@ -2033,7 +2029,7 @@ let () =
           test "a whole index is causal apply and keeps nothing"
             test_cached_whole;
           test "a window bounds what a token sees" test_cached_window;
-          test "a pool is its slots" test_index_pool;
+          test "an attention cache is two pools of its slots" test_cache_pools;
           test "a window is part of the index" test_index_window;
           test "a selection reads the columns each token chose"
             test_index_select;
