@@ -523,6 +523,31 @@ let scan_tests =
                     |> List.filter (fun u -> U.op u = Ops.Call) in
                 equal ~msg:(Printf.sprintf "%d rows" rows) int 1 (List.length calls))
                 [16384; 32768; 65536]));
+      test "gather reads rows by index, with no reduce loop over the table" (fun () ->
+          List.iter (fun dtype ->
+            let param slot dtype dims = U.param ~slot ~dtype
+                ~shape:(T.shape_uop dims) ~device:(U.Single "CPU") () in
+            let table = T.of_uop (param 0 dtype [1000; 2]) in
+            let indices = T.of_uop (param 1 D.int32 [3])
+                |> fun ids -> Mv.expand (Mv.reshape ids [3; 1]) [3; 2] in
+            let gathered = Op.gather table ~dim:0 indices in
+            let graph = Tolk.Rangeify.get_kernel_graph
+                (U.sink [U.store ~dst:(param 2 dtype [3; 2])
+                  ~value:(T.uop gathered) ()]) in
+            let kernel = List.find_map (fun u ->
+                match U.as_call u with
+                | Some { body; _ } when U.as_kernel_info body <> None -> Some body
+                | _ -> None) (U.toposort graph) |> Option.get in
+            let ren = Tolk.Device.renderer (Tolk.Device.get "CPU") in
+            let program = Tolk.Linearizer.linearize
+                (Tolk.Codegen.full_rewrite_to_sink ren kernel) in
+            let reduce_loops = List.filter_map (fun u ->
+                match U.as_range u with
+                | Some { kind = Tolk_uop.Axis_type.Reduce; size; _ } ->
+                    Some (Option.value ~default:0 (U.const_int_value size))
+                | _ -> None) program in
+            equal ~msg:(D.to_string dtype) (list int) [] reduce_loops)
+            [D.float32; D.bfloat16]);
       test "gather ndim mismatch raises" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)

@@ -409,6 +409,30 @@ let sub_add_neg a b =
 let bitnot x = U.alu_binary ~op:Ops.Xor ~lhs:x ~rhs:(U.const_like x (-1))
 let minimum a b = bitnot (maximum (bitnot a) (bitnot b))
 
+(* The reference's [*] in a rule body promotes through [_broadcasted]:
+   [Invalid] passes, a weak literal is rebuilt at the product's weak dtype,
+   and any other operand is cast to the product's dtype. [U.O.( * )] states
+   no promotion, so a weak count times a committed literal would stay a
+   mixed product that symbolic cannot fold. *)
+let mul_promoted a b =
+  let out = U.promo_dtype [ a; b ] in
+  let promote t =
+    let base = U.base t in
+    if U.is_invalid_const base then t
+    else if U.op base = Ops.Const && Dtype.is_weak (U.dtype t) then
+      let dtype = Dtype.weak_dtype out in
+      let rec remint u =
+        if u == base then U.ccast ~src:u ~dtype
+        else
+          let src = Array.copy (U.src u) in
+          src.(0) <- remint src.(0);
+          U.replace u ~src ()
+      in
+      if Dtype.equal (U.dtype t) dtype then t else remint t
+    else U.cast ~src:t ~dtype:out
+  in
+  U.alu_binary ~op:Ops.Mul ~lhs:(promote a) ~rhs:(promote b)
+
 (* sum over r in [0,N) of [lower <= r < upper] * val collapses to
    [clamp(min(upper,N) - max(lower,0), 0, N) * val]. *)
 let clamp_count ?lower ?upper r =
@@ -461,7 +485,7 @@ let rule_reduce_fold_lower =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some U.O.(clamp_count ~lower:cut r * v)
+      Some (mul_promoted (clamp_count ~lower:cut r) v)
 
 (* [((r < lower).not & (r < upper)).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_between =
@@ -479,7 +503,7 @@ let rule_reduce_fold_between =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some U.O.(clamp_count ~lower ~upper r * v)
+      Some (mul_promoted (clamp_count ~lower ~upper r) v)
 
 (* [(r < cut).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_upper =
@@ -494,7 +518,7 @@ let rule_reduce_fold_upper =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some U.O.(clamp_count ~upper:cut r * v)
+      Some (mul_promoted (clamp_count ~upper:cut r) v)
 
 (* [WHERE(cond, x, Invalid)].reduce(r, Add) lifts the gate out of the
    reduce when [cond] does not depend on the reduced ranges: every lane
