@@ -80,6 +80,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- Add `lion_step`, `radam_step`, `lamb_step`, `lars_step`, `adafactor_step`,
+  `adan_step`, `rmsprop_step` and `adagrad_step`, each with its `*_init` and a
+  state whose structure lets it ride a `Rune.jit`-compiled step as arguments.
 - **Breaking:** structural functions take `'p Nx.Ptree.t` in place of a module;
   `sgd_ptree`, `adam_ptree`, `lbfgs_ptree` and `Loss_scale.ptree` replace the
   state functors. A step raises naming the first path where its values differ.

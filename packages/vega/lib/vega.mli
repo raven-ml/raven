@@ -64,10 +64,10 @@
 
     - {b One skeleton.} The parameters, the gradients and each part of a state
       that has the parameters' shape visit the same leaves and reports under [p]
-      (the same {!Nx.Ptree.visits}) and have equal dtypes leaf by leaf.
-      {!sgd_step}, {!adam_step} and {!adamw_step} raise [Invalid_argument]
-      naming themselves, the first path at which a value differs from the
-      parameters, and what the value and the parameters hold there, for example
+      (the same {!Nx.Ptree.visits}) and have equal dtypes leaf by leaf. Every
+      step but {!lbfgs_step} raises [Invalid_argument] naming itself, the first
+      path at which a value differs from the parameters, and what the value and
+      the parameters hold there, for example
       ["Vega.adam_step: the root: length 1 in the gradients, length 2 in the
        parameters"] or
       ["Vega.adam_step: w: float32 in the gradients, float64 in the parameters"].
@@ -80,11 +80,12 @@
       step passes every leaf whose dtype is not a float through unchanged, in
       the parameters and in the state. So one structure serves the objective,
       the gradient and the update.
-    - {b States are structures.} {!sgd_ptree}, {!adam_ptree} and {!lbfgs_ptree}
-      are a state's structure over [p]. A state's leaf paths are its field name
-      followed by the parameter's path ([mu.blocks.0.w]), and [step] for the
-      counter, so a state is named in a compiled step's signature and saved with
-      its paths as checkpoint names. *)
+    - {b States are structures.} {!sgd_ptree}, {!adam_ptree}, {!rmsprop_ptree},
+      {!adagrad_ptree}, {!adan_ptree}, {!lion_ptree}, {!adafactor_ptree} and
+      {!lbfgs_ptree} are a state's structure over [p]. A state's leaf paths are
+      its field name followed by the parameter's path ([mu.blocks.0.w]), and
+      [step] for the counter, so a state is named in a compiled step's signature
+      and saved with its paths as checkpoint names. *)
 
 (** {1:schedules Learning-Rate Schedules}
 
@@ -290,6 +291,42 @@ val sgd_step :
     [st.velocity] when [momentum] is not [0.], does not have [params]' skeleton.
 *)
 
+(** {1:lars LARS} *)
+
+val lars_init : 'p Nx.Ptree.t -> 'p -> 'p sgd_state
+(** [lars_init] is {!sgd_init}: LARS keeps SGD's momentum velocity. *)
+
+val lars_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?momentum:float ->
+  ?weight_decay:float ->
+  ?nesterov:bool ->
+  'p sgd_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p sgd_state
+(** [lars_step p ~lr st ~params ~grads] is [(params', st')] after one LARS step
+    (You, Gitman and Ginsburg, 2017), for large-batch SGD: each leaf is a layer
+    whose step is scaled by the ratio of its weights' norm to its update's norm.
+    Per leaf, with [|x|] the L2 norm over the leaf's elements:
+
+    {v
+    u  = g + weight_decay * p
+    r  = |p| / (|u| + 1e-6), or 1 if |p| = 0 or |u| = 0
+    v' = momentum * v + r * u
+    p' = p - lr * v'
+    v}
+
+    With [nesterov], the last line is [p' = p - lr * (r * u + momentum * v')].
+    [momentum] defaults to [0.9], [weight_decay] to [0.01], [nesterov] to
+    [false]. The learning rate scales the velocity rather than entering it, as
+    in {!sgd_step}, and the paper's trust coefficient is folded into [lr].
+
+    Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\) or
+    [weight_decay] is negative, or as {!section-structures} states if [grads] or
+    [st.velocity] does not have [params]' skeleton. *)
+
 (** {1:adam Adam and AdamW} *)
 
 type 'p adam_state = {
@@ -376,6 +413,351 @@ val adamw_step :
     step is exactly {!adam_step}.
 
     Raises [Invalid_argument] as {!adam_step} does. *)
+
+(** {1:radam RAdam} *)
+
+val radam_init : 'p Nx.Ptree.t -> 'p -> 'p adam_state
+(** [radam_init] is {!adam_init}: RAdam shares Adam's state. *)
+
+val radam_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?b1:float ->
+  ?b2:float ->
+  ?eps:float ->
+  'p adam_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p adam_state
+(** [radam_step p ~lr st ~params ~grads] is [(params', st')] after one rectified
+    Adam step (Liu et al., 2020). Early on, too few squared gradients have been
+    averaged for Adam's adaptive scaling to be reliable; RAdam takes plain
+    momentum steps until the variance of that scaling is bounded, then Adam's
+    steps scaled by a rectification factor that rises towards [1]. Per element,
+    with [t = st.step + 1] and Adam's [mu'], [nu'] and bias-corrected [mu_hat],
+    [nu_hat] ({!adam_step}):
+
+    {v
+    rho_inf = 2 / (1 - b2) - 1
+    rho     = rho_inf - 2 t b2^t / (1 - b2^t)
+    r       = sqrt ((rho - 4) (rho - 2) rho_inf
+                    / ((rho_inf - 4) (rho_inf - 2) rho))
+    d       = r * mu_hat / (sqrt nu_hat + eps)   if rho > 5
+              mu_hat                             otherwise
+    p'      = p - lr * d
+    v}
+
+    Defaults and the counter's role are {!adam_step}'s; the choice between the
+    two forms is a tensor [where] on the counter, so the step traces under
+    {!Rune.val-jit}.
+
+    Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\) or [eps] is
+    not positive, or as {!adam_step} does. *)
+
+(** {1:lamb LAMB} *)
+
+val lamb_init : 'p Nx.Ptree.t -> 'p -> 'p adam_state
+(** [lamb_init] is {!adam_init}: LAMB shares Adam's state. *)
+
+val lamb_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?b1:float ->
+  ?b2:float ->
+  ?eps:float ->
+  ?weight_decay:float ->
+  'p adam_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p adam_state
+(** [lamb_step p ~lr st ~params ~grads] is [(params', st')] after one LAMB step
+    (You et al., 2020), for large-batch training: {!adamw_step}'s update, scaled
+    per leaf by LARS's trust ratio ({!lars_step}). With [d] Adam's
+    bias-corrected direction:
+
+    {v
+    u  = d + weight_decay * p
+    r  = |p| / (|u| + 1e-6), or 1 if |p| = 0 or |u| = 0
+    p' = p - lr * r * u
+    v}
+
+    Defaults are {!adam_step}'s, and [weight_decay] defaults to [0.01].
+
+    Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\), [eps] is
+    not positive or [weight_decay] is negative, or as {!adam_step} does. *)
+
+(** {1:rmsprop RMSprop} *)
+
+type 'p rmsprop_state = { nu : 'p; velocity : 'p; step : Nx.int32_t }
+(** The state for {!rmsprop_step}: the moving average of squared gradients and
+    the momentum velocity, both with the shape of the parameters, and the number
+    of completed steps as a scalar tensor. *)
+
+module Rmsprop_state : Nx.Ptree.S with type 'p t = 'p rmsprop_state
+(** The structure of RMSprop states. Its [walk] visits [nu] then [velocity] at
+    those fields as positions of the parameter, then [step] at ["step"] as a
+    fixed [int32] tensor. Transformations take {!rmsprop_ptree}. *)
+
+val rmsprop_ptree : 'p Nx.Ptree.t -> 'p rmsprop_state Nx.Ptree.t
+(** [rmsprop_ptree p] is [Nx.Ptree.nest (module Rmsprop_state) p]. *)
+
+val rmsprop_init : 'p Nx.Ptree.t -> 'p -> 'p rmsprop_state
+(** [rmsprop_init p params] is the initial state for optimizing [params]:
+    all-zero averages and velocity, and [step = 0]. *)
+
+val rmsprop_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?decay:float ->
+  ?eps:float ->
+  ?momentum:float ->
+  'p rmsprop_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p rmsprop_state
+(** [rmsprop_step p ~lr st ~params ~grads] is [(params', st')] after one RMSprop
+    step (Tieleman and Hinton, 2012). Per element:
+
+    {v
+    nu' = decay * nu + (1 - decay) * g^2
+    v'  = momentum * v + g / (sqrt nu' + eps)
+    p'  = p - lr * v'
+    v}
+
+    [decay] defaults to [0.9], [eps] to [1e-8], [momentum] to [0.], where the
+    velocity is the last scaled gradient.
+
+    Raises [Invalid_argument] if [decay] or [momentum] is outside \[[0];[1]\) or
+    [eps] is not positive, or as {!section-structures} states if [grads],
+    [st.nu] or [st.velocity] does not have [params]' skeleton. *)
+
+(** {1:adagrad Adagrad} *)
+
+type 'p adagrad_state = { sum_of_squares : 'p; step : Nx.int32_t }
+(** The state for {!adagrad_step}: the sum of all squared gradients so far, with
+    the shape of the parameters, and the number of completed steps as a scalar
+    tensor. *)
+
+module Adagrad_state : Nx.Ptree.S with type 'p t = 'p adagrad_state
+(** The structure of Adagrad states. Its [walk] visits [sum_of_squares] at that
+    field as a position of the parameter, then [step] at ["step"] as a fixed
+    [int32] tensor. Transformations take {!adagrad_ptree}. *)
+
+val adagrad_ptree : 'p Nx.Ptree.t -> 'p adagrad_state Nx.Ptree.t
+(** [adagrad_ptree p] is [Nx.Ptree.nest (module Adagrad_state) p]. *)
+
+val adagrad_init : 'p Nx.Ptree.t -> 'p -> 'p adagrad_state
+(** [adagrad_init p params] is the initial state for optimizing [params]: an
+    all-zero sum and [step = 0]. *)
+
+val adagrad_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?eps:float ->
+  'p adagrad_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p adagrad_state
+(** [adagrad_step p ~lr st ~params ~grads] is [(params', st')] after one Adagrad
+    step (Duchi, Hazan and Singer, 2011). Per element:
+
+    {v
+    s' = s + g^2
+    p' = p - lr * g / (sqrt s' + eps)
+    v}
+
+    [eps] defaults to [1e-8].
+
+    Raises [Invalid_argument] if [eps] is not positive, or as
+    {!section-structures} states if [grads] or [st.sum_of_squares] does not have
+    [params]' skeleton. *)
+
+(** {1:adan Adan} *)
+
+type 'p adan_state = {
+  mu : 'p;  (** Moving average of the gradients. *)
+  delta : 'p;  (** Moving average of the differences of successive gradients. *)
+  nu : 'p;
+      (** Moving average of the squared look-ahead gradients
+          [g + b2 * (g - prev_grads)]. *)
+  prev_grads : 'p;  (** The gradients of the last step, zero initially. *)
+  step : Nx.int32_t;  (** Completed steps, a scalar tensor. *)
+}
+(** The state for {!adan_step}. Every part but [step] has the shape of the
+    parameters. *)
+
+module Adan_state : Nx.Ptree.S with type 'p t = 'p adan_state
+(** The structure of Adan states. Its [walk] visits [mu], [delta], [nu] then
+    [prev_grads] at those fields as positions of the parameter, then [step] at
+    ["step"] as a fixed [int32] tensor. Transformations take {!adan_ptree}. *)
+
+val adan_ptree : 'p Nx.Ptree.t -> 'p adan_state Nx.Ptree.t
+(** [adan_ptree p] is [Nx.Ptree.nest (module Adan_state) p]. *)
+
+val adan_init : 'p Nx.Ptree.t -> 'p -> 'p adan_state
+(** [adan_init p params] is the initial state for optimizing [params]: every
+    part zero and [step = 0]. *)
+
+val adan_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?b1:float ->
+  ?b2:float ->
+  ?b3:float ->
+  ?eps:float ->
+  ?weight_decay:float ->
+  'p adan_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p adan_state
+(** [adan_step p ~lr st ~params ~grads] is [(params', st')] after one Adan step
+    (Xie et al., 2022), an adaptive Nesterov momentum. Per element, with
+    [dg = g - prev_grads]:
+
+    {v
+    mu'    = b1 * mu + (1 - b1) * g
+    delta' = b2 * delta + (1 - b2) * dg
+    nu'    = b3 * nu + (1 - b3) * (g + b2 * dg)^2
+    d      = (mu' + b2 * delta') / (sqrt nu' + eps) + weight_decay * p
+    p'     = p - lr * d
+    v}
+
+    and [prev_grads' = g]. There is no bias correction. [b1] defaults to [0.98],
+    [b2] to [0.92], [b3] to [0.99], [eps] to [1e-8], [weight_decay] to [0.02];
+    the weight decay is decoupled, as {!adamw_step}'s.
+
+    Raises [Invalid_argument] if [b1], [b2] or [b3] is outside \[[0];[1]\),
+    [eps] is not positive or [weight_decay] is negative, or as
+    {!section-structures} states if [grads] or a part of [st] other than [step]
+    does not have [params]' skeleton. *)
+
+(** {1:lion Lion} *)
+
+type 'p lion_state = { mu : 'p; step : Nx.int32_t }
+(** The state for {!lion_step}: the moving average of the gradients, with the
+    shape of the parameters, and the number of completed steps as a scalar
+    tensor. *)
+
+module Lion_state : Nx.Ptree.S with type 'p t = 'p lion_state
+(** The structure of Lion states. Its [walk] visits [mu] at that field as a
+    position of the parameter, then [step] at ["step"] as a fixed [int32]
+    tensor. Transformations take {!lion_ptree}. *)
+
+val lion_ptree : 'p Nx.Ptree.t -> 'p lion_state Nx.Ptree.t
+(** [lion_ptree p] is [Nx.Ptree.nest (module Lion_state) p]. *)
+
+val lion_init : 'p Nx.Ptree.t -> 'p -> 'p lion_state
+(** [lion_init p params] is the initial state for optimizing [params]: an
+    all-zero average and [step = 0]. *)
+
+val lion_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?b1:float ->
+  ?b2:float ->
+  'p lion_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p lion_state
+(** [lion_step p ~lr st ~params ~grads] is [(params', st')] after one Lion step
+    (Chen et al., 2023). Every element moves by exactly [lr], in the direction
+    of the sign of an interpolation between the average and the gradient:
+
+    {v
+    p'  = p - lr * sign (b1 * mu + (1 - b1) * g)
+    mu' = b2 * mu + (1 - b2) * g
+    v}
+
+    [b1] defaults to [0.9], [b2] to [0.99]. Since every step has the same size,
+    Lion wants a smaller rate than Adam, typically 3 to 10 times.
+
+    Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\), or as
+    {!section-structures} states if [grads] or [st.mu] does not have [params]'
+    skeleton. *)
+
+(** {1:adafactor Adafactor} *)
+
+type 'p adafactor_state = {
+  nu_row : 'p;
+      (** For a factored leaf of shape [[...; m; n]], the moving average of the
+          squared gradients' means over the last axis, of shape [[...; m; 1]]. A
+          scalar zero for other leaves. *)
+  nu_col : 'p;
+      (** For a factored leaf, the moving average of the squared gradients'
+          means over the second-to-last axis, of shape [[...; 1; n]]. A scalar
+          zero for other leaves. *)
+  nu : 'p;
+      (** For a leaf that is not factored, the moving average of the squared
+          gradients, of the leaf's shape. A scalar zero for factored leaves. *)
+  step : Nx.int32_t;  (** Completed steps, a scalar tensor. *)
+}
+(** The state for {!adafactor_step}. A leaf of two or more axes is factored: its
+    second moment is estimated from a row and a column statistic, in [m + n]
+    numbers rather than [m * n]. {!adafactor_init} decides which leaves are
+    factored, and the state records it. *)
+
+module Adafactor_state : Nx.Ptree.S with type 'p t = 'p adafactor_state
+(** The structure of Adafactor states. Its [walk] visits [nu_row], [nu_col] then
+    [nu] at those fields as positions of the parameter, then [step] at ["step"]
+    as a fixed [int32] tensor. Transformations take {!adafactor_ptree}. *)
+
+val adafactor_ptree : 'p Nx.Ptree.t -> 'p adafactor_state Nx.Ptree.t
+(** [adafactor_ptree p] is [Nx.Ptree.nest (module Adafactor_state) p]. *)
+
+val adafactor_init : 'p Nx.Ptree.t -> ?factored:bool -> 'p -> 'p adafactor_state
+(** [adafactor_init p params] is the initial state for optimizing [params]: zero
+    statistics and [step = 0]. With [factored] (the default, [true]), leaves of
+    two or more axes are factored; without, no leaf is. *)
+
+val adafactor_step :
+  'p Nx.Ptree.t ->
+  lr:(float, 'b) Nx.t ->
+  ?decay_rate:float ->
+  ?eps:float ->
+  ?clipping_threshold:float ->
+  'p adafactor_state ->
+  params:'p ->
+  grads:'p ->
+  'p * 'p adafactor_state
+(** [adafactor_step p ~lr st ~params ~grads] is [(params', st')] after one
+    Adafactor step (Shazeer and Stern, 2018): an adaptive step that keeps no
+    first moment and, for a factored leaf of [m] rows and [n] columns, estimates
+    the second moment from [m + n] numbers rather than [m * n]. With
+    [t = st.step + 1], the averages decay by [b = 1 - t^(-decay_rate)], which
+    rises towards [1]. Per element of a leaf that is not factored:
+
+    {v
+    nu' = b * nu + (1 - b) * g^2
+    u   = g / (sqrt nu' + eps)
+    v}
+
+    and of a factored leaf, with [mean_r] and [mean_c] the means over the last
+    and the second-to-last axis:
+
+    {v
+    nu_row' = b * nu_row + (1 - b) * mean_r (g^2)
+    nu_col' = b * nu_col + (1 - b) * mean_c (g^2)
+    u       = g / (sqrt (nu_row' * nu_col' / (mean_c nu_row' + eps)) + eps)
+    v}
+
+    The update is then clipped so that its root mean square over the leaf is at
+    most [clipping_threshold]:
+
+    {v p' = p - lr * u * min (1, clipping_threshold / rms u) v}
+
+    [decay_rate] defaults to [0.8], [eps] to [1e-30], [clipping_threshold] to
+    [1.0]; [infinity] disables the clipping. Adafactor is usually run with a
+    rate that decays with the counter, which the step's [lr] derives in tensor
+    arithmetic, here [1e-3 / sqrt t]:
+
+    {[
+    let t = Nx.cast Nx.float32 (Nx.add_s st.step 1l) in
+    Vega.adafactor_step p ~lr:(Nx.mul_s (Nx.rsqrt t) 1e-3) st ~params ~grads
+    ]}
+
+    Raises [Invalid_argument] if [decay_rate], [eps] or [clipping_threshold] is
+    not positive, or as {!section-structures} states if [grads] or a part of
+    [st] other than [step] does not have [params]' skeleton. *)
 
 (** {1:lbfgs L-BFGS}
 

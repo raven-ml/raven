@@ -925,7 +925,33 @@ end
 
 let lr v = Nx.scalar Nx.float32 v
 
-(* SGD *)
+(* Shared arithmetic of the steps *)
+
+(* [zeros p x] is [x] with every tensor zeroed. *)
+let zeros p x = Nx.Ptree.map p (fun _ t -> Nx.zeros_like t) x
+
+(* [descend ~lr x d] is [x - lr * d], the rate cast to [x]'s dtype. *)
+let descend ~lr x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr))
+
+(* [ema b m x] is [b * m + (1 - b) * x]: the moving average [m] after [x]. *)
+let ema b m x =
+  let dt = Nx.dtype x in
+  Nx.add (Nx.mul m (scalar dt b)) (Nx.mul x (scalar dt (1.0 -. b)))
+
+(* The layer-wise trust ratio of LARS and LAMB: [|x| / (|u| + 1e-6)] for the
+   leaf [x] and its update [u], or [1] when either norm is zero, as a scalar at
+   [x]'s dtype. *)
+let trust_ratio x u =
+  let dt = Nx.dtype x in
+  let norm t = Nx.sqrt (Nx.sum (Nx.mul t t)) in
+  let xn = norm x and un = norm u in
+  let zero = scalar dt 0.0 in
+  Nx.where
+    (Nx.logical_and (Nx.greater xn zero) (Nx.greater un zero))
+    (Nx.div xn (Nx.add un (scalar dt 1e-6)))
+    (scalar dt 1.0)
+
+(* SGD and LARS *)
 
 type 'p sgd_state = { velocity : 'p; step : Nx.int32_t }
 
@@ -942,13 +968,7 @@ end
 let sgd_ptree p = Nx.Ptree.nest (module Sgd_state) p
 
 let sgd_init p params =
-  {
-    velocity = Nx.Ptree.map p (fun _ leaf -> Nx.zeros_like leaf) params;
-    step = Nx.scalar Nx.int32 0l;
-  }
-
-(* [descend ~lr x d] is [x - lr * d], the rate cast to [x]'s dtype. *)
-let descend ~lr x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr))
+  { velocity = zeros p params; step = Nx.scalar Nx.int32 0l }
 
 let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
   let fn = "Vega.sgd_step" in
@@ -970,7 +990,27 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
     in
     (params, { velocity = parts.(0); step })
 
-(* Adam and AdamW *)
+let lars_init = sgd_init
+
+let lars_step p ~lr ?(momentum = 0.9) ?(weight_decay = 0.01) ?(nesterov = false)
+    st ~params ~grads =
+  let fn = "Vega.lars_step" in
+  validate_unit_interval fn "momentum" momentum;
+  validate_non_negative fn "weight_decay" weight_decay;
+  let f x g s =
+    let dt = Nx.dtype x in
+    let u = Nx.add g (Nx.mul x (scalar dt weight_decay)) in
+    let u = Nx.mul u (trust_ratio x u) in
+    let v = Nx.add (Nx.mul s.(0) (scalar dt momentum)) u in
+    let d = if nesterov then Nx.add u (Nx.mul v (scalar dt momentum)) else v in
+    (descend ~lr x d, [| v |])
+  in
+  let params, parts =
+    leafwise fn p ~params ~grads [ ("the velocity", st.velocity) ] ~f
+  in
+  (params, { velocity = parts.(0); step = Nx.add_s st.step 1l })
+
+(* The Adam family: Adam, AdamW, RAdam and LAMB *)
 
 type 'p adam_state = { mu : 'p; nu : 'p; step : Nx.int32_t }
 
@@ -988,57 +1028,371 @@ end
 let adam_ptree p = Nx.Ptree.nest (module Adam_state) p
 
 let adam_init p params =
-  let zeros () = Nx.Ptree.map p (fun _ leaf -> Nx.zeros_like leaf) params in
-  { mu = zeros (); nu = zeros (); step = Nx.scalar Nx.int32 0l }
+  { mu = zeros p params; nu = zeros p params; step = Nx.scalar Nx.int32 0l }
 
-(* One Adam step over every leaf, shared by [adam_step] and [adamw_step]: [apply
-   p d] is the new parameter from the old one and the bias-corrected direction.
-   The bias corrections [1 - b^t] are derived from the counter per leaf, at the
-   leaf's dtype like every other scalar in the step — tensor arithmetic with a
-   constant base, which compiles to [exp2] on every device — so the whole step
-   traces under jit and the state carries nothing the counter does not already
-   determine. *)
-let adam_update fn p ~b1 ~b2 ~eps
-    ~(apply : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) st ~params
-    ~grads =
+(* One step of Adam's moments over every leaf, shared by the family: [apply t x
+   mu_hat nu_hat] is the new parameter from the old one and the bias-corrected
+   moments at step [t]. [t] and the bias corrections [1 - b^t] are derived from
+   the counter per leaf, at the leaf's dtype like every other scalar in the step
+   — tensor arithmetic with a constant base, which compiles to [exp2] on every
+   device — so the whole step traces under jit and the state carries nothing the
+   counter does not already determine. *)
+let adam_update fn p ~b1 ~b2
+    ~(apply :
+       'a 'b.
+       ('a, 'b) Nx.t ->
+       ('a, 'b) Nx.t ->
+       ('a, 'b) Nx.t ->
+       ('a, 'b) Nx.t ->
+       ('a, 'b) Nx.t) st ~params ~grads =
   let step = Nx.add_s st.step 1l in
   let f x g s =
     let dt = Nx.dtype x in
-    let m =
-      Nx.add (Nx.mul s.(0) (scalar dt b1)) (Nx.mul g (scalar dt (1.0 -. b1)))
-    in
-    let n =
-      Nx.add
-        (Nx.mul s.(1) (scalar dt b2))
-        (Nx.mul (Nx.mul g g) (scalar dt (1.0 -. b2)))
-    in
+    let m = ema b1 s.(0) g and n = ema b2 s.(1) (Nx.mul g g) in
     let t = Nx.cast dt step in
     let c1 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b1) t) in
     let c2 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b2) t) in
-    let mu_hat = Nx.div m c1 in
-    let nu_hat = Nx.div n c2 in
-    ( apply x (Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps))),
-      [| m; n |] )
+    (apply t x (Nx.div m c1) (Nx.div n c2), [| m; n |])
   in
   let params, parts =
     leafwise fn p ~params ~grads [ ("mu", st.mu); ("nu", st.nu) ] ~f
   in
   (params, { mu = parts.(0); nu = parts.(1); step })
 
+(* Adam's direction from the bias-corrected moments. *)
+let adam_direction ~eps mu_hat nu_hat =
+  Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar (Nx.dtype mu_hat) eps))
+
 let adam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
-  let apply x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr)) in
-  adam_update "Vega.adam_step" p ~b1 ~b2 ~eps ~apply st ~params ~grads
+  let apply _ x mu_hat nu_hat =
+    descend ~lr x (adam_direction ~eps mu_hat nu_hat)
+  in
+  adam_update "Vega.adam_step" p ~b1 ~b2 ~apply st ~params ~grads
 
 let adamw_init = adam_init
 
 let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
     ?(weight_decay = 0.01) st ~params ~grads =
-  let apply x d =
-    let dt = Nx.dtype x in
-    let decayed = Nx.add d (Nx.mul x (scalar dt weight_decay)) in
-    Nx.sub x (Nx.mul decayed (Nx.cast dt lr))
+  let apply _ x mu_hat nu_hat =
+    let d = adam_direction ~eps mu_hat nu_hat in
+    descend ~lr x (Nx.add d (Nx.mul x (scalar (Nx.dtype x) weight_decay)))
   in
-  adam_update "Vega.adamw_step" p ~b1 ~b2 ~eps ~apply st ~params ~grads
+  adam_update "Vega.adamw_step" p ~b1 ~b2 ~apply st ~params ~grads
+
+let validate_adam fn ~b1 ~b2 ~eps =
+  validate_unit_interval fn "b1" b1;
+  validate_unit_interval fn "b2" b2;
+  validate_positive fn "eps" eps
+
+let radam_init = adam_init
+
+(* Like the bias corrections, every scalar of the rectification derives from
+   [b2] at the leaf's dtype, [rho_inf] included, so that [rho], the small
+   difference of two terms near [rho_inf], is taken between terms of one
+   [b2]. *)
+let radam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
+  let fn = "Vega.radam_step" in
+  validate_adam fn ~b1 ~b2 ~eps;
+  let apply t x mu_hat nu_hat =
+    let dt = Nx.dtype x in
+    let c v = scalar dt v in
+    let b2 = c b2 in
+    let rho_inf = Nx.sub (Nx.div (c 2.0) (Nx.sub (c 1.0) b2)) (c 1.0) in
+    let b2t = Nx.pow b2 t in
+    let rho =
+      Nx.sub rho_inf
+        (Nx.div (Nx.mul (Nx.mul (c 2.0) t) b2t) (Nx.sub (c 1.0) b2t))
+    in
+    let r =
+      Nx.sqrt
+        (Nx.div
+           (Nx.mul (Nx.mul (Nx.sub rho (c 4.0)) (Nx.sub rho (c 2.0))) rho_inf)
+           (Nx.mul
+              (Nx.mul (Nx.sub rho_inf (c 4.0)) (Nx.sub rho_inf (c 2.0)))
+              rho))
+    in
+    let d =
+      Nx.where
+        (Nx.greater rho (c 5.0))
+        (Nx.mul r (adam_direction ~eps mu_hat nu_hat))
+        mu_hat
+    in
+    descend ~lr x d
+  in
+  adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
+
+let lamb_init = adam_init
+
+let lamb_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
+    ?(weight_decay = 0.01) st ~params ~grads =
+  let fn = "Vega.lamb_step" in
+  validate_adam fn ~b1 ~b2 ~eps;
+  validate_non_negative fn "weight_decay" weight_decay;
+  let apply _ x mu_hat nu_hat =
+    let d = adam_direction ~eps mu_hat nu_hat in
+    let u = Nx.add d (Nx.mul x (scalar (Nx.dtype x) weight_decay)) in
+    descend ~lr x (Nx.mul u (trust_ratio x u))
+  in
+  adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
+
+(* RMSprop *)
+
+type 'p rmsprop_state = { nu : 'p; velocity : 'p; step : Nx.int32_t }
+
+module Rmsprop_state = struct
+  type 'p t = 'p rmsprop_state
+
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let nu = field c "nu" leaf st.nu in
+    let velocity = field c "velocity" leaf st.velocity in
+    let step = field c "step" tensor st.step in
+    { nu; velocity; step }
+end
+
+let rmsprop_ptree p = Nx.Ptree.nest (module Rmsprop_state) p
+
+let rmsprop_init p params =
+  {
+    nu = zeros p params;
+    velocity = zeros p params;
+    step = Nx.scalar Nx.int32 0l;
+  }
+
+let rmsprop_step p ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.0) st ~params
+    ~grads =
+  let fn = "Vega.rmsprop_step" in
+  validate_unit_interval fn "decay" decay;
+  validate_positive fn "eps" eps;
+  validate_unit_interval fn "momentum" momentum;
+  let f x g s =
+    let dt = Nx.dtype x in
+    let nu = ema decay s.(0) (Nx.mul g g) in
+    let u = Nx.div g (Nx.add (Nx.sqrt nu) (scalar dt eps)) in
+    let v =
+      if momentum = 0.0 then u else Nx.add (Nx.mul s.(1) (scalar dt momentum)) u
+    in
+    (descend ~lr x v, [| nu; v |])
+  in
+  let parts = [ ("nu", st.nu); ("the velocity", st.velocity) ] in
+  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  (params, { nu = parts.(0); velocity = parts.(1); step = Nx.add_s st.step 1l })
+
+(* Adagrad *)
+
+type 'p adagrad_state = { sum_of_squares : 'p; step : Nx.int32_t }
+
+module Adagrad_state = struct
+  type 'p t = 'p adagrad_state
+
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let sum_of_squares = field c "sum_of_squares" leaf st.sum_of_squares in
+    let step = field c "step" tensor st.step in
+    { sum_of_squares; step }
+end
+
+let adagrad_ptree p = Nx.Ptree.nest (module Adagrad_state) p
+
+let adagrad_init p params =
+  { sum_of_squares = zeros p params; step = Nx.scalar Nx.int32 0l }
+
+let adagrad_step p ~lr ?(eps = 1e-8) st ~params ~grads =
+  let fn = "Vega.adagrad_step" in
+  validate_positive fn "eps" eps;
+  let f x g s =
+    let s = Nx.add s.(0) (Nx.mul g g) in
+    let d = Nx.div g (Nx.add (Nx.sqrt s) (scalar (Nx.dtype x) eps)) in
+    (descend ~lr x d, [| s |])
+  in
+  let parts = [ ("sum_of_squares", st.sum_of_squares) ] in
+  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  (params, { sum_of_squares = parts.(0); step = Nx.add_s st.step 1l })
+
+(* Adan *)
+
+type 'p adan_state = {
+  mu : 'p;
+  delta : 'p;
+  nu : 'p;
+  prev_grads : 'p;
+  step : Nx.int32_t;
+}
+
+module Adan_state = struct
+  type 'p t = 'p adan_state
+
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let mu = field c "mu" leaf st.mu in
+    let delta = field c "delta" leaf st.delta in
+    let nu = field c "nu" leaf st.nu in
+    let prev_grads = field c "prev_grads" leaf st.prev_grads in
+    let step = field c "step" tensor st.step in
+    { mu; delta; nu; prev_grads; step }
+end
+
+let adan_ptree p = Nx.Ptree.nest (module Adan_state) p
+
+let adan_init p params =
+  {
+    mu = zeros p params;
+    delta = zeros p params;
+    nu = zeros p params;
+    prev_grads = zeros p params;
+    step = Nx.scalar Nx.int32 0l;
+  }
+
+let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
+    ?(weight_decay = 0.02) st ~params ~grads =
+  let fn = "Vega.adan_step" in
+  validate_unit_interval fn "b1" b1;
+  validate_unit_interval fn "b2" b2;
+  validate_unit_interval fn "b3" b3;
+  validate_positive fn "eps" eps;
+  validate_non_negative fn "weight_decay" weight_decay;
+  let f x g s =
+    let dt = Nx.dtype x in
+    let dg = Nx.sub g s.(3) in
+    let mu = ema b1 s.(0) g and delta = ema b2 s.(1) dg in
+    let ahead = Nx.add g (Nx.mul dg (scalar dt b2)) in
+    let nu = ema b3 s.(2) (Nx.mul ahead ahead) in
+    let d =
+      Nx.div
+        (Nx.add mu (Nx.mul delta (scalar dt b2)))
+        (Nx.add (Nx.sqrt nu) (scalar dt eps))
+    in
+    let d = Nx.add d (Nx.mul x (scalar dt weight_decay)) in
+    (descend ~lr x d, [| mu; delta; nu; g |])
+  in
+  let parts =
+    [
+      ("mu", st.mu);
+      ("delta", st.delta);
+      ("nu", st.nu);
+      ("prev_grads", st.prev_grads);
+    ]
+  in
+  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  let step = Nx.add_s st.step 1l in
+  ( params,
+    {
+      mu = parts.(0);
+      delta = parts.(1);
+      nu = parts.(2);
+      prev_grads = parts.(3);
+      step;
+    } )
+
+(* Lion *)
+
+type 'p lion_state = { mu : 'p; step : Nx.int32_t }
+
+module Lion_state = struct
+  type 'p t = 'p lion_state
+
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let mu = field c "mu" leaf st.mu in
+    let step = field c "step" tensor st.step in
+    { mu; step }
+end
+
+let lion_ptree p = Nx.Ptree.nest (module Lion_state) p
+let lion_init p params = { mu = zeros p params; step = Nx.scalar Nx.int32 0l }
+
+let lion_step p ~lr ?(b1 = 0.9) ?(b2 = 0.99) st ~params ~grads =
+  let fn = "Vega.lion_step" in
+  validate_unit_interval fn "b1" b1;
+  validate_unit_interval fn "b2" b2;
+  let f x g s =
+    (descend ~lr x (Nx.sign (ema b1 s.(0) g)), [| ema b2 s.(0) g |])
+  in
+  let params, parts = leafwise fn p ~params ~grads [ ("mu", st.mu) ] ~f in
+  (params, { mu = parts.(0); step = Nx.add_s st.step 1l })
+
+(* Adafactor *)
+
+type 'p adafactor_state = {
+  nu_row : 'p;
+  nu_col : 'p;
+  nu : 'p;
+  step : Nx.int32_t;
+}
+
+module Adafactor_state = struct
+  type 'p t = 'p adafactor_state
+
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let nu_row = field c "nu_row" leaf st.nu_row in
+    let nu_col = field c "nu_col" leaf st.nu_col in
+    let nu = field c "nu" leaf st.nu in
+    let step = field c "step" tensor st.step in
+    { nu_row; nu_col; nu; step }
+end
+
+let adafactor_ptree p = Nx.Ptree.nest (module Adafactor_state) p
+
+(* A factored leaf keeps its statistics in [nu_row] and [nu_col], any other in
+   [nu], and the parts a leaf does not use hold a scalar zero. So the state
+   records which leaves are factored: those whose [nu] has fewer axes than the
+   leaf itself. *)
+let adafactor_init p ?(factored = true) params =
+  let factors x = factored && Nx.ndim x >= 2 in
+  let unused x = Nx.zeros (Nx.dtype x) [||] in
+  let factor axis x =
+    if factors x then (
+      let shape = Array.copy (Nx.shape x) in
+      shape.(Array.length shape - axis) <- 1;
+      Nx.zeros (Nx.dtype x) shape)
+    else unused x
+  in
+  {
+    nu_row = Nx.Ptree.map p (fun _ x -> factor 1 x) params;
+    nu_col = Nx.Ptree.map p (fun _ x -> factor 2 x) params;
+    nu =
+      Nx.Ptree.map p
+        (fun _ x -> if factors x then unused x else Nx.zeros_like x)
+        params;
+    step = Nx.scalar Nx.int32 0l;
+  }
+
+let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
+    ?(clipping_threshold = 1.0) st ~params ~grads =
+  let fn = "Vega.adafactor_step" in
+  validate_positive fn "decay_rate" decay_rate;
+  validate_positive fn "eps" eps;
+  validate_positive fn "clipping_threshold" clipping_threshold;
+  let step = Nx.add_s st.step 1l in
+  let f x g s =
+    let dt = Nx.dtype x in
+    let one = scalar dt 1.0 and eps = scalar dt eps in
+    (* [t^-decay_rate] as [exp (-decay_rate * log t)]: compiled code lowers
+       [pow] only for a constant base or an integer or half-integer exponent. *)
+    let decay = Nx.mul (Nx.log (Nx.cast dt step)) (scalar dt (-.decay_rate)) in
+    let b = Nx.sub one (Nx.exp decay) in
+    let average m v = Nx.add (Nx.mul m b) (Nx.mul v (Nx.sub one b)) in
+    let g2 = Nx.mul g g in
+    let n = Nx.ndim x in
+    let u, s =
+      if Nx.ndim s.(2) < n then
+        let row = average s.(0) (Nx.mean ~axes:[ n - 1 ] ~keepdims:true g2) in
+        let col = average s.(1) (Nx.mean ~axes:[ n - 2 ] ~keepdims:true g2) in
+        let row_mean = Nx.mean ~axes:[ n - 2 ] ~keepdims:true row in
+        let nu = Nx.div (Nx.mul row col) (Nx.add row_mean eps) in
+        (Nx.div g (Nx.add (Nx.sqrt nu) eps), [| row; col; s.(2) |])
+      else
+        let nu = average s.(2) g2 in
+        (Nx.div g (Nx.add (Nx.sqrt nu) eps), [| s.(0); s.(1); nu |])
+    in
+    let rms = Nx.sqrt (Nx.mean (Nx.mul u u)) in
+    let clip = Nx.minimum one (Nx.div (scalar dt clipping_threshold) rms) in
+    (descend ~lr x (Nx.mul u clip), s)
+  in
+  let parts = [ ("nu_row", st.nu_row); ("nu_col", st.nu_col); ("nu", st.nu) ] in
+  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  (params, { nu_row = parts.(0); nu_col = parts.(1); nu = parts.(2); step })
 
 (* L-BFGS *)
 

@@ -15,6 +15,7 @@ depends: [
   "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
   "nx" {= version}
+  "rune" {= version & with-test}
   "windtrap" {with-test}
   "thumper" {with-test}
   "odoc" {with-doc}

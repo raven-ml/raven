@@ -205,6 +205,10 @@
   dune
   (nx
    (= :version))
+  (rune
+   (and
+    (= :version)
+    :with-test))
   (windtrap :with-test)
   (thumper :with-test))
  (tags

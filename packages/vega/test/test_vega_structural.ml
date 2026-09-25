@@ -450,7 +450,293 @@ let test_optimizers_carry_a_non_parameter_leaf () =
       (Vega.adamw_init Stepper.ptree params)
       ~params ~grads
   in
-  check "adamw" adamw
+  check "adamw" adamw;
+  let p = Stepper.ptree and lr = Vega.lr 0.1 in
+  let step name (updated, _) = check name updated in
+  step "lars" (Vega.lars_step p ~lr (Vega.lars_init p params) ~params ~grads);
+  step "radam" (Vega.radam_step p ~lr (Vega.radam_init p params) ~params ~grads);
+  step "lamb" (Vega.lamb_step p ~lr (Vega.lamb_init p params) ~params ~grads);
+  step "rmsprop"
+    (Vega.rmsprop_step p ~lr ~momentum:0.9
+       (Vega.rmsprop_init p params)
+       ~params ~grads);
+  step "adagrad"
+    (Vega.adagrad_step p ~lr (Vega.adagrad_init p params) ~params ~grads);
+  step "adan" (Vega.adan_step p ~lr (Vega.adan_init p params) ~params ~grads);
+  step "lion" (Vega.lion_step p ~lr (Vega.lion_init p params) ~params ~grads);
+  step "adafactor"
+    (Vega.adafactor_step p ~lr (Vega.adafactor_init p params) ~params ~grads)
+
+(* Lion, RAdam, LAMB, LARS, Adafactor, Adan, RMSprop and Adagrad *)
+
+(* A float64 matrix and vector: Adafactor factors the one and not the other, and
+   LARS's and LAMB's trust ratios differ between them. *)
+module Wb = struct
+  type t = { w : Nx.float64_t; b : Nx.float64_t }
+
+  module Walked = struct
+    type nonrec _ t = t
+
+    let walk c { w; b } =
+      let open Nx.Ptree.Walk in
+      let w = field c "w" tensor w in
+      let b = field c "b" tensor b in
+      { w; b }
+  end
+
+  let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
+end
+
+let wb w b =
+  {
+    Wb.w = Nx.create Nx.float64 [| 2; 3 |] w;
+    b = Nx.create Nx.float64 [| 3 |] b;
+  }
+
+let wb_target =
+  lazy (wb [| 0.1; 0.2; -0.3; 0.4; -0.5; 0.6 |] [| -0.7; 0.8; 0.9 |])
+
+let wb_grads (x : Wb.t) =
+  let t = Lazy.force wb_target in
+  { Wb.w = Nx.mul_s (Nx.sub x.w t.w) 2.0; b = Nx.mul_s (Nx.sub x.b t.b) 2.0 }
+
+(* [follows ~init ~step (w, b)] checks that eight steps from a fixed start on
+   the gradient of [||p - wb_target||^2] end at [w] and [b]. Expected values:
+   the per-tensor implementation at bfea66e15, run leaf by leaf. It took its
+   rates and weight decays as float32 schedules, so rates here are [Vega.lr] and
+   weight decays are [rounded] to float32. *)
+let rounded x = Int32.float_of_bits (Int32.bits_of_float x)
+
+let follows ~init ~step (w, b) () =
+  let rec go k params st =
+    if k = 0 then params
+    else
+      let params, st = step st ~params ~grads:(wb_grads params) in
+      go (k - 1) params st
+  in
+  let params = wb [| 0.5; -1.2; 2.0; -0.3; 0.8; 1.5 |] [| 1.0; -2.0; 0.25 |] in
+  let params = go 8 params (init Wb.ptree params) in
+  check_vec ~eps:1e-12 ~msg:"w" w params.w;
+  check_vec ~eps:1e-12 ~msg:"b" b params.b
+
+let test_rmsprop_trajectory =
+  follows ~init:Vega.rmsprop_init
+    ~step:(fun st -> Vega.rmsprop_step Wb.ptree ~lr:(Vega.lr 0.01) st)
+    ( [|
+        0.36243613887935616;
+        -1.0546103319516811;
+        1.8535037661485867;
+        -0.1575807154685458;
+        0.65483149409076835;
+        1.3562348676790772;
+      |],
+      [| 0.85410748659626345; -1.8532018103325221; 0.39194368077038816 |] )
+
+let test_rmsprop_momentum_trajectory =
+  follows ~init:Vega.rmsprop_init
+    ~step:(fun st ->
+      Vega.rmsprop_step Wb.ptree ~lr:(Vega.lr 0.01) ~momentum:0.9 st)
+    ( [|
+        0.019482040910134224;
+        -0.63248913074282231;
+        1.4221199669573561;
+        0.23713084350163544;
+        0.23462291139457309;
+        0.9486450535003067;
+      |],
+      [| 0.42771408903600838; -1.4193780845760426; 0.78192829333036751 |] )
+
+let test_adagrad_trajectory =
+  follows ~init:Vega.adagrad_init
+    ~step:(fun st -> Vega.adagrad_step Wb.ptree ~lr:(Vega.lr 0.1) st)
+    ( [|
+        0.18167555199967195;
+        -0.79131715880629638;
+        1.5795826597090736;
+        0.075287325474801839;
+        0.39371468960115386;
+        1.1092891092927324;
+      |],
+      [| 0.58592940989034603; -1.576460256104508; 0.61975162231019465 |] )
+
+let test_lion_trajectory =
+  follows ~init:Vega.lion_init
+    ~step:(fun st -> Vega.lion_step Wb.ptree ~lr:(Vega.lr 0.01) st)
+    ( [|
+        0.42000000178813934;
+        -1.1200000017881393;
+        1.9200000017881393;
+        -0.22000000178813933;
+        0.72000000178813939;
+        1.4200000017881393;
+      |],
+      [| 0.92000000178813934; -1.9200000017881393; 0.32999999821186066 |] )
+
+(* Eight steps cross from momentum steps to rectified ones: with [b2 = 0.999],
+   [rho] is below 5 up to the fifth step and above from the sixth. *)
+let test_radam_trajectory =
+  follows ~init:Vega.radam_init
+    ~step:(fun st -> Vega.radam_step Wb.ptree ~lr:(Vega.lr 0.01) st)
+    ( [|
+        0.4598985836034043;
+        -1.0620572493260865;
+        1.7740000784706591;
+        -0.2305461712107803;
+        0.67184137996033355;
+        1.4109779052542408;
+      |],
+      [| 0.83270485829882479; -1.7250794297474281; 0.31456176161030008 |] )
+
+let test_lamb_trajectory =
+  follows ~init:Vega.lamb_init
+    ~step:(fun st ->
+      Vega.lamb_step Wb.ptree ~lr:(Vega.lr 0.01) ~weight_decay:(rounded 0.01) st)
+    ( [|
+        0.4076288911828635;
+        -1.1064478293192996;
+        1.9056372630040368;
+        -0.20747395071242003;
+        0.70683175651562802;
+        1.4062769980333993;
+      |],
+      [| 0.89842985775586015; -1.8973554242093986; 0.35000475942674164 |] )
+
+(* LARS's momentum accumulates the trust-scaled update, as in the paper. The
+   per-tensor implementation's LARS took the trust ratio of the accumulated
+   gradient instead, so with momentum the expected values are its decay, trust
+   ratio, momentum and rate transforms chained in the paper's order, and without
+   momentum its LARS itself. *)
+let test_lars_trajectory =
+  follows ~init:Vega.lars_init
+    ~step:(fun st ->
+      Vega.lars_step Wb.ptree ~lr:(Vega.lr 0.1) ~weight_decay:(rounded 0.01) st)
+    ( [|
+        -0.10311105473850804;
+        0.90676805714082909;
+        -1.4613330099492292;
+        0.75113640978280594;
+        -1.1539299762342272;
+        0.14019060335384598;
+      |],
+      [| -1.1027388508197593; 1.4655109505693997; 1.0500890496290238 |] )
+
+let test_lars_nesterov_trajectory =
+  follows ~init:Vega.lars_init
+    ~step:(fun st ->
+      Vega.lars_step Wb.ptree ~lr:(Vega.lr 0.1) ~weight_decay:(rounded 0.01)
+        ~nesterov:true st)
+    ( [|
+        0.0022904246280579807;
+        0.5385830136729276;
+        -0.85642017182001073;
+        0.56743668858435314;
+        -0.81245536976550736;
+        0.37783493259799195;
+      |],
+      [| -1.1133674069043227; 1.4830278083976729; 1.0541331996352461 |] )
+
+let test_lars_no_momentum_trajectory =
+  follows ~init:Vega.lars_init
+    ~step:(fun st ->
+      Vega.lars_step Wb.ptree ~lr:(Vega.lr 0.1) ~weight_decay:(rounded 0.01)
+        ~momentum:0.0 st)
+    ( [|
+        0.28644449346382289;
+        -0.45401480198034716;
+        0.77437709287124723;
+        0.072196739996935169;
+        0.10813321604287521;
+        1.0185052865274873;
+      |],
+      [| 0.32932873062805601; -0.89467081119719283; 0.50518943463478394 |] )
+
+let test_adan_trajectory =
+  follows ~init:Vega.adan_init
+    ~step:(fun st ->
+      Vega.adan_step Wb.ptree ~lr:(Vega.lr 0.01) ~weight_decay:(rounded 0.02) st)
+    ( [|
+        0.45683347270888586;
+        -1.1552658787847068;
+        1.9539196198792232;
+        -0.25687545160538033;
+        0.75591644939640612;
+        1.454890507770245;
+      |],
+      [| 0.95555272431779104; -1.9538996006246216; 0.29222581010000648 |] )
+
+(* The per-tensor implementation's Adafactor built in a rate of [1e-3 / sqrt
+   t]. *)
+let adafactor_step (st : Wb.t Vega.adafactor_state) ~params ~grads =
+  let t = Nx.add_s (Nx.cast Nx.float64 st.step) 1.0 in
+  let lr = Nx.mul_s (Nx.rsqrt t) 1e-3 in
+  Vega.adafactor_step Wb.ptree ~lr st ~params ~grads
+
+let test_adafactor_trajectory =
+  follows
+    ~init:(fun p x -> Vega.adafactor_init p x)
+    ~step:adafactor_step
+    ( [|
+        0.49762229479050468;
+        -1.196488209408342;
+        1.9955374424672774;
+        -0.2934547708737284;
+        0.79486616423488821;
+        1.4972504760921053;
+      |],
+      [| 0.99563024375684173; -1.9956295831398083; 0.25436703443267278 |] )
+
+let test_adafactor_unfactored_trajectory =
+  follows
+    ~init:(fun p x -> Vega.adafactor_init p ~factored:false x)
+    ~step:adafactor_step
+    ( [|
+        0.49563572869059364;
+        -1.1956306043108442;
+        1.9956298050287165;
+        -0.2956326503530885;
+        0.79563076152346657;
+        1.4956317403913488;
+      |],
+      [| 0.99563024375684173; -1.9956295831398083; 0.25436703443267278 |] )
+
+let test_adafactor_factors_matrices () =
+  let params = wb (Array.make 6 1.0) (Array.make 3 1.0) in
+  let shapes (st : Wb.t Vega.adafactor_state) =
+    List.map
+      (fun (x : Wb.t) -> (Nx.shape x.w, Nx.shape x.b))
+      [ st.nu_row; st.nu_col; st.nu ]
+  in
+  let shape = array int in
+  let parts = list (Windtrap.pair shape shape) in
+  equal ~msg:"factored" parts
+    [ ([| 2; 1 |], [||]); ([| 1; 3 |], [||]); ([||], [| 3 |]) ]
+    (shapes (Vega.adafactor_init Wb.ptree params));
+  equal ~msg:"unfactored" parts
+    [ ([||], [||]); ([||], [||]); ([| 2; 3 |], [| 3 |]) ]
+    (shapes (Vega.adafactor_init Wb.ptree ~factored:false params))
+
+let test_ported_steps_validate () =
+  let params = vec [| 1.0 |] in
+  let lr = Vega.lr 0.1 in
+  let rejects name f =
+    raises_match ~msg:name Exn.invalid_arg (fun () ->
+        ignore (f ~params ~grads:params : Vec.t * _))
+  in
+  let p = Vec.ptree in
+  rejects "lion b1" (Vega.lion_step p ~lr ~b1:1.0 (Vega.lion_init p params));
+  rejects "radam b2"
+    (Vega.radam_step p ~lr ~b2:(-0.1) (Vega.radam_init p params));
+  rejects "lamb weight_decay"
+    (Vega.lamb_step p ~lr ~weight_decay:(-1.0) (Vega.lamb_init p params));
+  rejects "lars momentum"
+    (Vega.lars_step p ~lr ~momentum:1.0 (Vega.lars_init p params));
+  rejects "adafactor eps"
+    (Vega.adafactor_step p ~lr ~eps:0.0 (Vega.adafactor_init p params));
+  rejects "adan b3" (Vega.adan_step p ~lr ~b3:1.0 (Vega.adan_init p params));
+  rejects "rmsprop decay"
+    (Vega.rmsprop_step p ~lr ~decay:1.5 (Vega.rmsprop_init p params));
+  rejects "adagrad eps"
+    (Vega.adagrad_step p ~lr ~eps:(-1.0) (Vega.adagrad_init p params))
 
 (* L-BFGS *)
 
@@ -722,6 +1008,25 @@ let test_state_visits () =
   equal ~msg:"sgd" (list string)
     [ "velocity.a: a leaf"; "velocity.b: a leaf"; "step: a leaf" ]
     (visit_lines (Vega.sgd_ptree Pair.ptree) (Vega.sgd_init Pair.ptree params));
+  let visits parts =
+    List.concat_map (fun f -> [ f ^ ".a: a leaf"; f ^ ".b: a leaf" ]) parts
+    @ [ "step: a leaf" ]
+  in
+  let p = Pair.ptree in
+  equal ~msg:"rmsprop" (list string)
+    (visits [ "nu"; "velocity" ])
+    (visit_lines (Vega.rmsprop_ptree p) (Vega.rmsprop_init p params));
+  equal ~msg:"adagrad" (list string)
+    (visits [ "sum_of_squares" ])
+    (visit_lines (Vega.adagrad_ptree p) (Vega.adagrad_init p params));
+  equal ~msg:"adan" (list string)
+    (visits [ "mu"; "delta"; "nu"; "prev_grads" ])
+    (visit_lines (Vega.adan_ptree p) (Vega.adan_init p params));
+  equal ~msg:"lion" (list string) (visits [ "mu" ])
+    (visit_lines (Vega.lion_ptree p) (Vega.lion_init p params));
+  equal ~msg:"adafactor" (list string)
+    (visits [ "nu_row"; "nu_col"; "nu" ])
+    (visit_lines (Vega.adafactor_ptree p) (Vega.adafactor_init p params));
   let nested = Nx.Ptree.list Vec.ptree in
   equal ~msg:"a state reports what its parameters report" (list string)
     [
@@ -822,6 +1127,15 @@ let test_steps_check_the_skeleton () =
            (Vega.sgd_init vecs params)
            ~params
            ~grads:[ vec [| 1.0 |] ]));
+  raises
+    (Invalid_argument
+       "Vega.adan_step: the root: length 1 in prev_grads, length 2 in the \
+        parameters") (fun () ->
+      let st = Vega.adan_init vecs params in
+      ignore
+        (Vega.adan_step vecs ~lr:(Vega.lr 0.1)
+           { st with prev_grads = [ vec [| 0.0 |] ] }
+           ~params ~grads:params));
   let split : bool Split.t Nx.Ptree.t = Nx.Ptree.instantiate (module Split) in
   let params = (true, vec [| 1.0 |]) in
   raises
@@ -893,6 +1207,28 @@ let tests =
         test "zero gradients decay weights geometrically"
           test_adamw_decays_weights;
         test "converges on a quadratic bowl" test_adamw_converges;
+      ];
+    group "trajectories"
+      [
+        test "rmsprop follows its trajectory" test_rmsprop_trajectory;
+        test "rmsprop with momentum follows its trajectory"
+          test_rmsprop_momentum_trajectory;
+        test "adagrad follows its trajectory" test_adagrad_trajectory;
+        test "lion follows its trajectory" test_lion_trajectory;
+        test "radam follows its trajectory" test_radam_trajectory;
+        test "lamb follows its trajectory" test_lamb_trajectory;
+        test "lars follows its trajectory" test_lars_trajectory;
+        test "lars with nesterov follows its trajectory"
+          test_lars_nesterov_trajectory;
+        test "lars without momentum follows its trajectory"
+          test_lars_no_momentum_trajectory;
+        test "adan follows its trajectory" test_adan_trajectory;
+        test "adafactor follows its trajectory" test_adafactor_trajectory;
+        test "unfactored adafactor follows its trajectory"
+          test_adafactor_unfactored_trajectory;
+        test "adafactor factors the leaves of two axes"
+          test_adafactor_factors_matrices;
+        test "steps reject bad hyperparameters" test_ported_steps_validate;
       ];
     group "optimizer state as a structure"
       [
