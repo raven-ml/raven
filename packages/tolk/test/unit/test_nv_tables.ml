@@ -120,6 +120,23 @@ let () =
                 (Tables.defs_for_driver ~major:610)
                   .nv_channelgpfifo_allocation_parameters
                   .huserdmemory);
+          test "channel unregister uses the installed driver's UUID layout" (fun () ->
+              List.iter (fun major ->
+                  let p = (Tables.defs_for_driver ~major).uvm_unregister_channel_params in
+                  equal int 0x1c p.sizeof;
+                  equal (option (pair int int)) (Some (0, 16)) p.gpuuuid;
+                  equal (pair int int) (16, 4) p.hclient;
+                  equal (pair int int) (20, 4) p.hchannel;
+                  equal (pair int int) (24, 4) p.rmstatus) [570; 580];
+              let p = (Tables.defs_for_driver ~major:610).uvm_unregister_channel_params in
+              equal int 12 p.sizeof;
+              equal (option (pair int int)) None p.gpuuuid;
+              equal (pair int int) (0, 4) p.hclient;
+              equal (pair int int) (4, 4) p.hchannel;
+              equal (pair int int) (8, 4) p.rmstatus;
+              equal int 28 Defs.uvm_unregister_channel;
+              equal int 26 Defs.uvm_unregister_gpu_vaspace;
+              equal int 38 Defs.uvm_unregister_gpu);
           test "status codes are per generation" (fun () ->
               equal string "NV_ERR_NO_MEMORY"
                 (List.assoc Defs.nv_err_no_memory

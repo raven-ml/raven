@@ -136,6 +136,9 @@ let uvm_mm_initialize = 0x4b
 let uvm_register_gpu = 0x25
 let uvm_register_gpu_vaspace = 0x19
 let uvm_register_channel = 0x1b
+let uvm_unregister_gpu = 0x26
+let uvm_unregister_gpu_vaspace = 0x1a
+let uvm_unregister_channel = 0x1c
 let uvm_create_external_range = 0x49
 let uvm_map_external_allocation = 0x21
 let uvm_free = 0x22
@@ -425,6 +428,18 @@ module Uvm_register_channel_params = struct
   let base = (0x20, 8)
   let length = (0x28, 8)
   let rmstatus = (0x30, 4)
+end
+
+module Uvm_unregister_gpu_params = struct
+  let sizeof = 0x14
+  let gpu_uuid = (0, 0x10)
+  let rmstatus = (0x10, 4)
+end
+
+module Uvm_unregister_gpu_vaspace_params = struct
+  let sizeof = 0x14
+  let gpuuuid = (0, 0x10)
+  let rmstatus = (0x10, 4)
 end
 
 module Uvm_create_external_range_params = struct

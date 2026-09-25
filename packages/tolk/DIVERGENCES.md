@@ -135,14 +135,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   descriptors. Bootstrap failures release descriptors and per-device KFD
   events. KFD's process-wide event page remains cached; an ambiguous registration
   failure is latched because the kernel may already retain that page. Failed
-  KFD device construction destroys queues before releasing their buffers;
-  a failed queue stop retains storage and suppresses late finalizers.
+  KFD/NVK device construction retires queues before releasing their buffers;
+  a failed queue stop retains storage and suppresses late finalizers. NVK
+  unregisters channels with the installed driver's layout, then unwinds UVM
+  registrations, control mappings and the per-device RM object tree.
   Borrowed host mappings remain owned by the caller. Consumers:
   allocation retries and long-lived accelerator sessions. Coverage:
   `test_memory` allocation, zeroing, entry-write and flush failures, including
   adjacent mappings and precreated tables; `test_amd_system` covers reverse
   rollback order, acquisition failures, cleanup failures, descriptor release
-  and buffer finalizers after successful or failed queue retirement.
+  and buffer finalizers after successful or failed queue retirement;
+  `test_nv_tables` covers 570/580/610 unregister layouts.
   Driver fault injection and hardware
   recovery remain open in TODO. Reconsider when upstream provides equivalent
   failure ownership rules.

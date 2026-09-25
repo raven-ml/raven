@@ -144,6 +144,7 @@ CHANNEL_INTS = [
     "NVC6B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT_PITCH",
     "NVC6B5_LAUNCH_DMA_DST_MEMORY_LAYOUT_PITCH",
     "NVC6B5_LAUNCH_DMA_FLUSH_ENABLE_TRUE",
+    "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_ONE_WORD_SEMAPHORE",
     "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_FOUR_WORD_SEMAPHORE",
     "NVC6B5_SET_SEMAPHORE_A",
 ]
@@ -204,6 +205,9 @@ UVM_COMMANDS = [
     "UVM_REGISTER_GPU",
     "UVM_REGISTER_GPU_VASPACE",
     "UVM_REGISTER_CHANNEL",
+    "UVM_UNREGISTER_GPU",
+    "UVM_UNREGISTER_GPU_VASPACE",
+    "UVM_UNREGISTER_CHANNEL",
     "UVM_CREATE_EXTERNAL_RANGE",
     "UVM_MAP_EXTERNAL_ALLOCATION",
     "UVM_FREE",
@@ -310,6 +314,10 @@ STRUCTS = [
     ("Uvm_register_channel_params", "UVM_REGISTER_CHANNEL_PARAMS",
      ["gpuUuid/region", "rmCtrlFd", "hClient", "hChannel", "base", "length",
       "rmStatus"]),
+    ("Uvm_unregister_gpu_params", "UVM_UNREGISTER_GPU_PARAMS",
+     ["gpu_uuid/region", "rmStatus"]),
+    ("Uvm_unregister_gpu_vaspace_params", "UVM_UNREGISTER_GPU_VASPACE_PARAMS",
+     ["gpuUuid/region", "rmStatus"]),
     ("Uvm_create_external_range_params", "UVM_CREATE_EXTERNAL_RANGE_PARAMS",
      ["base", "length", "rmStatus"]),
     ("Uvm_map_external_allocation_params", "UVM_MAP_EXTERNAL_ALLOCATION_PARAMS",
@@ -336,6 +344,8 @@ PINNED_570_STRUCTS = [
 # reference name, used fields). "f?" marks a field absent from some
 # generations, emitted as an option.
 VERSIONED_STRUCTS = [
+    ("uvm_unregister_channel_params", "uvm_unregister_channel_params",
+     "UVM_UNREGISTER_CHANNEL_PARAMS", ["gpuUuid/region?", "hClient", "hChannel", "rmStatus"]),
     ("nva06c_ctrl_gpfifo_schedule_params", "schedule_params",
      "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS", ["bEnable"]),
     ("nva06f_ctrl_gpfifo_schedule_params", "schedule_params",
@@ -497,7 +507,8 @@ def used_layout(mod, name, fields):
             else:
                 out[field] = array_spec(cls, base)
         elif field.endswith("/region"):
-            out[field] = region_pair(cls, field.removesuffix("/region"))
+            base = field.removesuffix("/region")
+            out[field] = region_pair(cls, base) if getattr(cls, base, None) is not None else None
         elif "." in field:
             outer, inner = field.split(".")
             outer_off, _ = region_pair(cls, outer)
@@ -645,6 +656,8 @@ def versioned_value(mod):
         for spec in used:
             optional = spec.endswith("?")
             field = spec.rstrip("?")
+            region = field.endswith("/region")
+            field = field.removesuffix("/region")
             entry = next((f for f in cls._real_fields_ if f[0] == field), None)
             if entry is None:
                 if not optional:
@@ -653,6 +666,8 @@ def versioned_value(mod):
                 continue
             if field in VERSIONED_ELEM0_ARRAYS:
                 off, size, _count = array_spec(cls, field)
+            elif region:
+                off, size = region_pair(cls, field)
             else:
                 off, size = scalar_pair(cls, field)
             pair = f"({ml_int(off)}, {ml_int(size)})"
@@ -711,6 +726,14 @@ type vaspace_allocation_parameters = {
   flags : field;
 }
 
+type uvm_unregister_channel_params = {
+  sizeof : int;
+  gpuuuid : field option;  (* absent from the 610 layout *)
+  hclient : field;
+  hchannel : field;
+  rmstatus : field;
+}
+
 type uvm_free_params = {
   sizeof : int;
   base : field;
@@ -719,6 +742,7 @@ type uvm_free_params = {
 }
 
 type t = {
+  uvm_unregister_channel_params : uvm_unregister_channel_params;
   nva06c_ctrl_gpfifo_schedule_params : schedule_params;
   nva06f_ctrl_gpfifo_schedule_params : schedule_params;
   nvos46_parameters : nvos46_parameters;

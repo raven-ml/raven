@@ -42,6 +42,14 @@ type vaspace_allocation_parameters = {
   flags : field;
 }
 
+type uvm_unregister_channel_params = {
+  sizeof : int;
+  gpuuuid : field option;  (* absent from the 610 layout *)
+  hclient : field;
+  hchannel : field;
+  rmstatus : field;
+}
+
 type uvm_free_params = {
   sizeof : int;
   base : field;
@@ -50,6 +58,7 @@ type uvm_free_params = {
 }
 
 type t = {
+  uvm_unregister_channel_params : uvm_unregister_channel_params;
   nva06c_ctrl_gpfifo_schedule_params : schedule_params;
   nva06f_ctrl_gpfifo_schedule_params : schedule_params;
   nvos46_parameters : nvos46_parameters;
@@ -61,6 +70,12 @@ type t = {
 }
 
 let v570 : t = {
+  uvm_unregister_channel_params =
+    { sizeof = 0x1c;
+      gpuuuid = Some (0, 0x10);
+      hclient = (0x10, 4);
+      hchannel = (0x14, 4);
+      rmstatus = (0x18, 4) };
   nva06c_ctrl_gpfifo_schedule_params =
     { sizeof = 2;
       benable = (0, 1) };
@@ -244,6 +259,12 @@ let v570 : t = {
 }
 
 let v580 : t = {
+  uvm_unregister_channel_params =
+    { sizeof = 0x1c;
+      gpuuuid = Some (0, 0x10);
+      hclient = (0x10, 4);
+      hchannel = (0x14, 4);
+      rmstatus = (0x18, 4) };
   nva06c_ctrl_gpfifo_schedule_params =
     { sizeof = 3;
       benable = (0, 1) };
@@ -435,6 +456,12 @@ let v580 : t = {
 }
 
 let v610 : t = {
+  uvm_unregister_channel_params =
+    { sizeof = 0xc;
+      gpuuuid = None;
+      hclient = (0, 4);
+      hchannel = (4, 4);
+      rmstatus = (8, 4) };
   nva06c_ctrl_gpfifo_schedule_params =
     { sizeof = 3;
       benable = (0, 1) };

@@ -647,6 +647,12 @@ module Nvk_iface = struct
     mutable subdevice : int;
     mutable virtmem : int;
     mutable gpu_uuid : bytes;
+    mutable channel_group : int option;
+    mutable debugger : int option;
+    mutable channels : int list;
+    mutable gpu_registered : bool;
+    mutable vaspace_registered : bool;
+    mutable usermode_mapping : Hcq.Mmio.t option;
   }
 
   (* Driver-wide state shared by every device in the process: the control
@@ -957,6 +963,12 @@ module Nvk_iface = struct
           subdevice = 0;
           virtmem = 0;
           gpu_uuid = Bytes.make 16 '\000';
+          channel_group = None;
+          debugger = None;
+          channels = [];
+          gpu_registered = false;
+          vaspace_registered = false;
+          usermode_mapping = None;
         })
 
   (* Memory *)
@@ -990,11 +1002,11 @@ module Nvk_iface = struct
           lor (if target = None then 0 else File_io.map_fixed))
         ~fd ~offset:0L)
 
-  let free_memory st t handle =
+  let free_object st ~parent handle =
     let module P = Defs.Nvos00_parameters in
     let b = Nv_tables.create_blob P.sizeof in
     Nv_tables.set_field b P.hroot st.root;
-    Nv_tables.set_field b P.hobjectparent t.nvdevice;
+    Nv_tables.set_field b P.hobjectparent parent;
     Nv_tables.set_field b P.hobjectold handle;
     escape st.fd_ctl ~nr:Defs.nv_esc_rm_free b;
     let status = Nv_tables.get_field b P.status in
@@ -1079,7 +1091,7 @@ module Nvk_iface = struct
       ~finally:(fun () -> if not !complete then
         Fun.protect
           ~finally:(fun () -> Option.iter (fun addr -> File_io.munmap addr ~size) !mapping)
-          (fun () -> Option.iter (free_memory st t) !memory))
+          (fun () -> Option.iter (free_object st ~parent:t.nvdevice) !memory))
       (fun () ->
         let buffer =
           if host then begin
@@ -1146,7 +1158,7 @@ module Nvk_iface = struct
       (* a handle above the enumerator came from the driver: release its
          physical memory; host objects only unregister through the
          address-range free below *)
-      if meta.h_memory > !host_object_enumerator then free_memory st t meta.h_memory;
+      if meta.h_memory > !host_object_enumerator then free_object st ~parent:t.nvdevice meta.h_memory;
       free_range st ~va:(Hcq.Buffer.va buf) ~size:(Hcq.Buffer.size buf);
       match Hcq.Buffer.view buf with
       | Some view when meta.ownership = Owned ->
@@ -1226,9 +1238,11 @@ module Nvk_iface = struct
     let handle = rm_alloc st ~parent:t.subdevice ~cls:usermode_class () in
     let mmio_size = 0x10000 in
     let addr = gpu_map_to_cpu st t ~memory_handle:handle ~size:mmio_size () in
+    let mmio = Hcq.Mmio.make ~addr ~size:mmio_size in
+    t.usermode_mapping <- Some mmio;
     {
       Nv_iface.handle;
-      mmio = Hcq.Mmio.make ~addr ~size:mmio_size;
+      mmio;
       compute_class;
       dma_class;
       gpfifo_class;
@@ -1248,13 +1262,15 @@ module Nvk_iface = struct
     blit_bytes rb ~off:(fst R.gpu_uuid) t.gpu_uuid;
     Nv_tables.set_field rb R.rmctrlfd (-1);
     uvm st ~cmd:Defs.uvm_register_gpu ~rmstatus:R.rmstatus rb;
+    t.gpu_registered <- true;
     let module V = Defs.Uvm_register_gpu_vaspace_params in
     let vb = Nv_tables.create_blob V.sizeof in
     blit_bytes vb ~off:(fst V.gpuuuid) t.gpu_uuid;
     Nv_tables.set_field vb V.rmctrlfd st.fd_ctl;
     Nv_tables.set_field vb V.hclient st.root;
     Nv_tables.set_field vb V.hvaspace vaspace;
-    uvm st ~cmd:Defs.uvm_register_gpu_vaspace ~rmstatus:V.rmstatus vb
+    uvm st ~cmd:Defs.uvm_register_gpu_vaspace ~rmstatus:V.rmstatus vb;
+    t.vaspace_registered <- true
 
   let setup_gpfifo_vm st t ~gpfifo =
     let module P = Defs.Uvm_register_channel_params in
@@ -1266,11 +1282,10 @@ module Nvk_iface = struct
     Nv_tables.set_field b P.base
       (Nativeint.to_int (alloc_gpu_vaddr ~force_low:true 0x4000000));
     Nv_tables.set_field b P.length 0x4000000;
-    uvm st ~cmd:Defs.uvm_register_channel ~rmstatus:P.rmstatus b
+    uvm st ~cmd:Defs.uvm_register_channel ~rmstatus:P.rmstatus b;
+    t.channels <- gpfifo :: t.channels
 
-  let iface ~device_id : mem Nv_iface.t =
-    let st = init_root () in
-    let t = create st ~device_id in
+  let make_iface st t : mem Nv_iface.t =
     {
       Nv_iface.root = st.root;
       gpu_instance = t.gpu_instance;
@@ -1282,7 +1297,12 @@ module Nvk_iface = struct
           t.subdevice <- subdevice;
           t.virtmem <- virtmem);
       rm_alloc =
-        (fun ~parent ~cls ?params () -> rm_alloc st ~parent ~cls ?params ());
+        (fun ~parent ~cls ?params () ->
+          let handle = rm_alloc st ~parent ~cls ?params () in
+          if cls = Defs.nv01_device_0 then t.nvdevice <- handle;
+          if cls = Defs.kepler_channel_group_a then t.channel_group <- Some handle;
+          if cls = Defs.gt200_debugger then t.debugger <- Some handle;
+          handle);
       rm_control =
         (fun ~obj ~cmd ?params () -> rm_control st ~obj ~cmd ?params ());
       alloc =
@@ -1302,6 +1322,64 @@ module Nvk_iface = struct
       device_fini = (fun () -> ());
       nvdev = None;
     }
+
+  let iface ~device_id =
+    let st = init_root () in
+    make_iface st (create st ~device_id)
+
+  let with_initialization st t f =
+    let alive = ref true in
+    let stop () =
+      alive := false;
+      while t.channels <> [] do
+        let channel = List.hd t.channels in
+        let open Nv_defs_versions in
+        let p = st.defs.uvm_unregister_channel_params in
+        let b = Nv_tables.create_blob p.sizeof in
+        Option.iter (fun (off, _) -> blit_bytes b ~off t.gpu_uuid) p.gpuuuid;
+        Nv_tables.set_field b p.hclient st.root;
+        Nv_tables.set_field b p.hchannel channel;
+        uvm st ~cmd:Defs.uvm_unregister_channel ~rmstatus:p.rmstatus b;
+        t.channels <- List.tl t.channels
+      done;
+      Option.iter (fun debugger ->
+          free_object st ~parent:t.nvdevice debugger;
+          t.debugger <- None) t.debugger;
+      Option.iter (fun group ->
+          free_object st ~parent:t.nvdevice group;
+          t.channel_group <- None) t.channel_group in
+    let close () =
+      if t.vaspace_registered then begin
+        let module P = Defs.Uvm_unregister_gpu_vaspace_params in
+        let b = Nv_tables.create_blob P.sizeof in
+        blit_bytes b ~off:(fst P.gpuuuid) t.gpu_uuid;
+        uvm st ~cmd:Defs.uvm_unregister_gpu_vaspace ~rmstatus:P.rmstatus b;
+        t.vaspace_registered <- false
+      end;
+      if t.gpu_registered then begin
+        let module P = Defs.Uvm_unregister_gpu_params in
+        let b = Nv_tables.create_blob P.sizeof in
+        blit_bytes b ~off:(fst P.gpu_uuid) t.gpu_uuid;
+        uvm st ~cmd:Defs.uvm_unregister_gpu ~rmstatus:P.rmstatus b;
+        t.gpu_registered <- false
+      end;
+      Option.iter (fun mapping ->
+          File_io.munmap (Hcq.Mmio.addr mapping) ~size:(Hcq.Mmio.size mapping))
+        t.usermode_mapping;
+      t.usermode_mapping <- None;
+      if t.nvdevice <> 0 then begin
+        free_object st ~parent:st.root t.nvdevice;
+        t.nvdevice <- 0
+      end;
+      File_io.close t.fd_dev in
+    let interface = make_iface st t in
+    Tolk_hcq.System.with_buffer_setup ~free:interface.Nv_iface.free ~stop ~close
+      (fun ~track ~free ->
+        let alloc ?host ?uncached ?cpu_access ?contiguous ?map_flags ?cpu_addr size =
+          track (interface.Nv_iface.alloc ?host ?uncached ?cpu_access ?contiguous
+            ?map_flags ?cpu_addr size) in
+        f ~is_valid:(fun () -> !alive) {interface with Nv_iface.alloc; free})
+
 end
 
 (* Driver-less PCI interface: ops_nv.py:556-581 PCIIface *)
@@ -2213,6 +2291,7 @@ let on_device_hang (iface : 'mem Nv_iface.t) ~debugger ~debug_channel () =
 module State = struct
   type 'mem t = {
     name : string;
+    is_valid : unit -> bool;
     iface : 'mem Nv_iface.t;
     hw : 'mem device;
     subdevice : int;
@@ -2236,20 +2315,23 @@ module State = struct
     Timeline.guarded_wait t.tl (fun () -> Hcq.Submission.check t.submission)
 
   let prepare t =
+    if not (t.is_valid ()) then invalid_arg "NV device setup failed";
     check_submission t;
     Timeline.prepare t.tl;
     Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
       t.submission
 
   let synchronize t =
-    check_submission t;
-    Timeline.synchronize t.tl;
-    Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
-      t.submission;
-    Timeline.guarded_wait t.tl (fun () ->
-        List.iter (fun q -> Hcq.Submission.wait_progress t.submission q.Queue_desc.progress
-            ~target:(Hcq.Mmio.read64 q.Queue_desc.progress 0))
-          [t.compute_queue; t.dma_queue])
+    if t.is_valid () then begin
+      check_submission t;
+      Timeline.synchronize t.tl;
+      Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
+        t.submission;
+      Timeline.guarded_wait t.tl (fun () ->
+          List.iter (fun q -> Hcq.Submission.wait_progress t.submission q.Queue_desc.progress
+              ~target:(Hcq.Mmio.read64 q.Queue_desc.progress 0))
+            [t.compute_queue; t.dma_queue])
+    end
 
   let invalidate_caches t =
     if Nv_iface.is_nvd t.iface then
@@ -2517,7 +2599,7 @@ end
 (* The shared device open path over the selected interface: everything from
    object allocation through channel set-up and renderer wiring is
    interface-independent. *)
-let open_device ~name (iface : 'mem Nv_iface.t) =
+let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
   let module D = Defs.Nv0080_alloc_parameters in
   let db = Nv_tables.create_blob D.sizeof in
   Nv_tables.set_field db D.deviceid iface.Nv_iface.gpu_instance;
@@ -2635,6 +2717,7 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
   let state =
     {
       State.name = name;
+      is_valid;
       submission = hw.submission;
       iface;
       hw;
@@ -2715,8 +2798,14 @@ let create name =
         | None -> invalid_arg (Printf.sprintf "invalid NV device %S" name))
     | None -> 0
   in
-  let nvk () = Nv_iface.Pack (Nvk_iface.iface ~device_id) in
-  let pci () = Nv_iface.Pack (Pci_iface.iface (Pci_iface.create ~device_id)) in
-  let Nv_iface.Pack iface = Tolk.Helpers.select_interface ~device:name
+  let nvk () =
+    let st = Nvk_iface.init_root () in
+    let interface = Nvk_iface.create st ~device_id in
+    fun () -> Nvk_iface.with_initialization st interface
+      (fun ~is_valid iface -> open_device ~is_valid ~name iface) in
+  let pci () =
+    let iface = Pci_iface.iface (Pci_iface.create ~device_id) in
+    fun () -> open_device ~name iface in
+  let open_runtime = Tolk.Helpers.select_interface ~device:name
       [ "NVK", nvk; "PCI", pci ] in
-  open_device ~name iface
+  open_runtime ()

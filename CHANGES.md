@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed NVIDIA NVK device construction unregisters channels before releasing
+  queue storage, then unwinds UVM registrations, control mappings and device
+  objects. Cleanup uses the installed driver's channel-unregister layout.
+
 - Failed AMD KFD device construction retires queues before releasing their
   buffers, events and descriptors. Late scratch-buffer finalizers cannot
   touch abandoned timelines, and failed queue retirement retains its storage.
