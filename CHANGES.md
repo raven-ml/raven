@@ -661,6 +661,9 @@ thread.
 
 ### Tolk (new)
 
+- Keep internal buffers distinct during concurrent scheduling and JIT cache
+  imports; racing slot reservations could merge unrelated buffer identities.
+
 - Prevent overlapping linked queue replays from overwriting address tables
   or reserving the same timeline value. Failed queue preparation leaves the
   retained address table unchanged.

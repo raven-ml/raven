@@ -311,6 +311,46 @@ let fresh_internal_buffer_slots_stay_distinct () =
   is_true ~msg:"same slot aliases" (buffer a == buffer a);
   is_true ~msg:"fresh slot stays distinct" (not (buffer a == buffer b))
 
+let concurrent_internal_buffer_slots_keep_imports_distinct () =
+  let start = Atomic.make false in
+  let workers = Array.init 4 (fun _ -> Domain.spawn (fun () ->
+      while not (Atomic.get start) do Domain.cpu_relax () done;
+      Array.init 16384 (fun _ -> Schedule.fresh_internal_buffer_slot ()))) in
+  Atomic.set start true;
+  let slots = Array.concat (Array.to_list (Array.map Domain.join workers)) in
+  is_true ~msg:"all imported-buffer slots stay in the internal namespace"
+    (Array.for_all (fun slot -> slot < 0) slots);
+  (* Apply the same fresh-slot reconstruction that imported graphs use.
+     Repeated slots would hash-cons independent buffers onto one node. *)
+  let rebuilt = U.Tbl.create (Array.length slots) in
+  Array.iter (fun slot -> U.Tbl.replace rebuilt (buffer slot) ()) slots;
+  equal ~msg:"independent imported buffers do not collapse onto one node"
+    int (Array.length slots) (U.Tbl.length rebuilt)
+
+let concurrent_memory_plans_keep_arenas_distinct () =
+  let source = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
+      ~shape:(shape [16]) ~device:(U.Single "CPU") () in
+  let linear = U.linear [kernel "internal" [source]] in
+  let start = Atomic.make false in
+  let workers = Array.init 4 (fun _ -> Domain.spawn (fun () ->
+      while not (Atomic.get start) do Domain.cpu_relax () done;
+      Array.init 32 (fun _ ->
+          let planned = Schedule.memory_plan_rewrite linear [] in
+          match List.filter (fun node -> U.op node = Ops.Buffer)
+              (U.toposort ~enter_calls:true planned) with
+          | [arena] -> arena
+          | _ -> fail "expected one planned arena"))) in
+  Atomic.set start true;
+  let arenas = Array.concat (Array.to_list (Array.map Domain.join workers)) in
+  let slots = Hashtbl.create (Array.length arenas) in
+  Array.iter (fun arena ->
+      let descriptor = Option.get (U.as_buffer arena) in
+      is_true ~msg:"planner arenas use internal slots" (descriptor.buffer.slot < 0);
+      Hashtbl.replace slots descriptor.buffer.slot ()) arenas;
+  equal ~msg:"independent plans keep different arena identities"
+    int (Array.length arenas) (Hashtbl.length slots)
+
+
 let disk_views_move_after_bulk_transfers () =
   let disk = U.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(shape [4; 4])
       ~device:(U.Single "DISK:weights") () in
@@ -366,4 +406,8 @@ let () =
         create_linear_with_vars_extracts_bind_through_call;
       test "fresh internal buffer slots keep buffers distinct"
         fresh_internal_buffer_slots_stay_distinct;
+      test "concurrent internal slots keep imported buffers distinct"
+        concurrent_internal_buffer_slots_keep_imports_distinct;
+      test "concurrent memory plans keep arenas distinct"
+        concurrent_memory_plans_keep_arenas_distinct;
     ]

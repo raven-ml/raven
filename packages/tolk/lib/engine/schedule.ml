@@ -12,12 +12,9 @@ let debug = Helpers.getenv "DEBUG" 0
 let scache_enabled = Helpers.getenv "SCACHE" 1
 let capturing_enabled = Helpers.getenv "CAPTURING" 1 <> 0
 let no_memory_planner = Helpers.getenv "NO_MEMORY_PLANNER" 0 <> 0
-let next_post_sched_buffer_slot = ref (-1)
+let next_post_sched_buffer_slot = Atomic.make (-1)
 
-let fresh_internal_buffer_slot () =
-  let slot = !next_post_sched_buffer_slot in
-  decr next_post_sched_buffer_slot;
-  slot
+let fresh_internal_buffer_slot () = Atomic.fetch_and_add next_post_sched_buffer_slot (-1)
 
 let round_up n align = (n + align - 1) / align * align
 
