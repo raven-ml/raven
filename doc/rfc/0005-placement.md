@@ -284,8 +284,10 @@ val placement : ('a, 'b) t -> Placement.t
   batched value with the split axis shifted into the unbatched view. It
   raises when the mapped axis is the split axis: a lane of a map over devices
   has no single placement. Inside a compiled program on one device list,
-  a traced value's placement is the program's; over several devices it
-  raises: placement there is the compiler's.
+  a traced value's placement is the program's; over several devices it is
+  where nx's rules put the value as the function traces, which the program
+  keeps (a result that tolk's rewrite places elsewhere raises at compile
+  time).
 - **`place` performs `E_place { placement; t_in }`,** which replaces
   `E_to_device` (whose `context` field no handler reads). Under `grad` and
   `jvp` it is linear, and a cotangent is placed back at its primal's
@@ -385,10 +387,9 @@ and node = ..                     (* rune adds its trace's id and the tolk tenso
   (`schedule/multi.ml:242-318`, over its `Unshard` node), except for cuts
   within one shard. There, tolk copies a cut of exactly one whole shard to
   every device of the list (`schedule/multi.ml:201-205`) and raises on a cut
-  strictly inside one shard (`:206`), `Nx.item`'s included. A compiled
-  program keeps tolk's rule, since placement inside a program is the
-  compiler's, so the cut inside one shard is where eager and compiled
-  placements differ. From stage 2, rune checks split movements at trace
+  strictly inside one shard (`:206`), `Nx.item`'s included. A program over
+  several devices cannot hold a value on one of them, so the cut inside one
+  shard is where eager and compiled placements differ. From stage 2, rune checks split movements at trace
   time: a cut that nx refuses, or one strictly inside one shard, raises nx's
   message there, naming the operation, the split axis and the shape (for the
   second, the remedy is to place the value on one device first), and a
@@ -429,7 +430,9 @@ takes that split; operands split differently raise `Invalid_argument` ("place
 them alike first"), as compiled code does from M3. A reduction over
 the split axis gives a result replicated over the list, and a reduction over
 other axes keeps the split. Movement follows Split values. Operands whose
-placements have different device sets raise, as above.
+placements have different device sets raise, as above. A take reads its
+table along its axis: a table split there raises, and the result takes its
+positions' split.
 
 Until devices compute (stage 3), the engine runs an operation on the host: it
 reads its placed operands' windows, runs the host engine, and places the
@@ -559,7 +562,10 @@ once on their devices when they decide. With none placed it runs on
 the program's devices: it is uploaded for the call and replicated over the
 list, and a host capture is uploaded once per compiled function (RFC 0003). A
 `?devices`, or a leaf or capture placed on other devices, raises, naming the
-leaf.
+leaf. Only a split value decides the order of the program's devices, which
+decides where each slice lands: the first split leaf's order, else a split
+capture's. Values that are copies match the devices as a set. A `?devices`
+list fixes the order, and a split value in another order raises.
 
 An output leaf of `'s` has the placement of the input leaf at its position.
 When the compiler's placement differs, the program reshards at its end and
@@ -597,8 +603,9 @@ copies of its cache and rewrites every row of every pool each step. Inside
 program has one lane, so its value does not depend on how many devices hold
 it. The per-device-index tests under `pmap` move to `vmap` over a split
 axis, where `fold_in_axis` folds the lane index. `E_place` under `jit`
-is the identity when its target is the program's placement; lowering it to
-copy and shard nodes comes with device lists.
+is the identity at the value's own placement, lowers to tolk's copy and shard
+nodes for another placement over the program's devices, and raises
+`Jit_error` for any other target.
 
 A call waits for its work before it returns until the second half of stage 1,
 as today. From then it returns once its work is submitted: a read waits for the
