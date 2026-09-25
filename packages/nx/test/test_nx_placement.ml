@@ -13,13 +13,11 @@ open Windtrap
 
 (* The test engine *)
 
-(* One buffer per device of the placement the storage was made for, in placement
-   order: a split value's shards, a replicated value's copies. *)
+(* One buffer per device of the cell's placement, in its order: a split value's
+   shards, a replicated value's copies. *)
 type Nx_effect.storage +=
   | Mem :
-      ('a, 'b) Nx_core.Dtype.t
-      * Nx_effect.device list
-      * ('a, 'b) Nx_buffer.t list
+      ('a, 'b) Nx_core.Dtype.t * ('a, 'b) Nx_buffer.t list
       -> Nx_effect.storage
 
 let elements_read = ref 0
@@ -44,7 +42,7 @@ let rec engine =
     Nx_effect.read =
       (fun (type a b) (r : (a, b) Nx_effect.resident) : (a, b) Nx_buffer.t ->
         match r.r_cell.state with
-        | Live (Mem (dt, devices, shards)) -> (
+        | Live (Mem (dt, shards)) -> (
             match Nx_core.Dtype.equal_witness dt r.r_dtype with
             | Some Type.Equal ->
                 let shape =
@@ -53,6 +51,7 @@ let rec engine =
                 Nx_effect.assemble r
                   (Array.map (fun n -> (0, n)) shape)
                   (fun d v ->
+                    let devices = Nx.Placement.devices r.r_cell.placement in
                     let k = Option.get (List.find_index (( == ) d) devices) in
                     gather (List.nth shards k) v)
             | None -> assert false)
@@ -73,9 +72,9 @@ and place : type a b.
   let shape = Array.map (fun (lo, hi) -> hi - lo) (List.hd windows) in
   Nx_effect.placed p (Nx.dtype x)
     (Nx_core.View.create shape)
-    (Nx_effect.cell engine
+    (Nx_effect.cell ~placement:p
        ~length:(Array.fold_left ( * ) 1 shape)
-       (Mem (Nx.dtype x, devices, shards)))
+       (Mem (Nx.dtype x, shards)))
 
 let dev1 = Nx_effect.Device.make "TEST:1" engine
 let dev2 = Nx_effect.Device.make "TEST:2" engine
@@ -464,6 +463,49 @@ let test_eager_results_over_split_operands () =
       | _ -> false)
     (fun () -> Nx.mul s t)
 
+(* Whole shards of one storage, each a view on its device, combine as copies on
+   their devices, as a compiled program copies a whole shard to every device. *)
+let test_whole_shards_combine () =
+  let x = m23 () |> Nx.reshape [| 6; 1 |] in
+  let s = Nx.place (Nx.Placement.sharded ~axis:0 [ dev1; dev2 ]) x in
+  let rolled = Nx.roll ~axis:0 3 s in
+  equal ~msg:"a roll by one shard" placement
+    (Nx.Placement.replicated [ dev1; dev2 ])
+    (Nx.placement rolled);
+  equal ~msg:"its elements" (array float_exact)
+    (Nx.to_array (Nx.roll ~axis:0 3 x))
+    (Nx.to_array rolled);
+  let top = Nx.slice [ Nx.R (0, 3) ] s
+  and bottom = Nx.slice [ Nx.R (3, 6) ] s in
+  equal ~msg:"a sum of two shards" (array float_exact) [| 5.; 7.; 9. |]
+    (Nx.to_array (Nx.add top bottom));
+  raises_invalid (fun () -> Nx.roll ~axis:0 1 s);
+  raises_invalid (fun () -> Nx.add (Nx.slice [ Nx.R (0, 2) ] s) bottom);
+  raises_invalid (fun () ->
+      Nx.add (Nx.broadcast_to [| 3; 1 |] (Nx.slice [ Nx.R (0, 1) ] s)) bottom);
+  raises_invalid (fun () ->
+      Nx.add top (Nx.place on2 (Nx.slice [ Nx.R (3, 6) ] x)));
+  (* Over four devices, the copies are on all four, where a value on all of them
+     joins them. *)
+  let four = [ dev1; dev2; dev3; dev4 ] in
+  let y = Nx.reshape [| 8; 1 |] (Nx.arange Nx.float32 0 8 1) in
+  let s4 = Nx.place (Nx.Placement.sharded ~axis:0 four) y in
+  let pair =
+    Nx.add (Nx.slice [ Nx.R (0, 2) ] s4) (Nx.slice [ Nx.R (2, 4) ] s4)
+  in
+  equal ~msg:"two shards of four" placement
+    (Nx.Placement.replicated four)
+    (Nx.placement pair);
+  equal ~msg:"their sum" (array float_exact) [| 2.; 4. |] (Nx.to_array pair);
+  equal ~msg:"meets a value on all four" placement
+    (Nx.Placement.replicated four)
+    (Nx.placement
+       (Nx.add pair
+          (Nx.place
+             (Nx.Placement.replicated four)
+             (Nx.ones_like (Nx.slice [ Nx.R (0, 2) ] y)))));
+  raises_invalid (fun () -> Nx.roll ~axis:0 2 s4)
+
 let test_repeat_a_split_value () =
   let x = m23 () in
   let s = Nx.place (Nx.Placement.sharded ~axis:0 [ dev1; dev2 ]) x in
@@ -669,6 +711,7 @@ let tests =
         test "several devices" test_several_devices;
         test "eager results over split operands"
           test_eager_results_over_split_operands;
+        test "whole shards combine as copies" test_whole_shards_combine;
         test "repeat a split value" test_repeat_a_split_value;
         test "pp of a value split on axis 1" test_pp_split_on_axis_one;
         test "split values move as views" test_split_values_move_as_views;

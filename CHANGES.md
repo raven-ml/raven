@@ -1913,8 +1913,9 @@ thread.
   `slice` by indices and unit-step ranges, `flip`, `broadcast_to`,
   `sliding_window`) keeps it split and copies nothing, where it read the value
   to the host; a movement that would cross devices raises `Invalid_argument`.
-- **Breaking:** so do `Nx.roll` along the split axis, `Nx.array_split` and
-  `split` across shards, and `Nx.flatten`, `ravel`, `diagonal` or
+- **Breaking:** so do `Nx.roll` along the split axis (but by one shard of a
+  value split in two: copies on both devices, as compiled), `Nx.array_split`
+  and `split` across shards, and `Nx.flatten`, `ravel`, `diagonal` or
   `reshape [| -1 |]` of a value split on a later axis; the error names the
   refused movement (a reshape, cut, flip or window of the split axis). Read the
   value with `Nx.to_array`, or place it on one device first.

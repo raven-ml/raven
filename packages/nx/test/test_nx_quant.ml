@@ -118,7 +118,10 @@ let deferred shape =
   let engine = counting reads in
   let device = Nx_effect.Device.make "COUNTING" engine in
   let cell =
-    Nx_effect.cell engine ~length:n (Bytes (Nx_buffer.create Nx_buffer.uint8 n))
+    Nx_effect.cell
+      ~placement:(Nx.Placement.device device)
+      ~length:n
+      (Bytes (Nx_buffer.create Nx_buffer.uint8 n))
   in
   ( Nx_effect.placed
       (Nx.Placement.device device)

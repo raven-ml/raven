@@ -273,7 +273,7 @@ and ('a, 'b) resident = {
 }
 
 and cell = {
-  engine : engine;
+  placement : placement; (* where the storage lives, whichever views it *)
   length : int; (* elements of the storage, per shard *)
   mutable state : state;
   mutable bound : int; (* reachable programs that bind the storage *)
@@ -350,7 +350,7 @@ let read_elements (type a b) (r : (a, b) resident) : (a, b) Nx_buffer.t =
           Nx_buffer.fill buf v;
           buf
       | None -> assert false)
-  | Live _ -> r.r_cell.engine.read r
+  | Live _ -> (List.hd (Grid.devices r.r_cell.placement)).d_engine.read r
 
 (* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
 let global p shape =
@@ -503,10 +503,11 @@ end
 
 (* Placed constructors, for engines *)
 
-(* A cell over [storage] of [length] elements, which [engine] owns. The engine
-   attaches the finaliser that releases the storage. *)
-let cell engine ~length storage =
-  { engine; length; state = Live storage; bound = 0 }
+(* A cell over [storage] of [length] elements per device of [placement], whose
+   engine owns it. The engine attaches the finaliser that releases the
+   storage. *)
+let cell ~placement ~length storage =
+  { placement; length; state = Live storage; bound = 0 }
 
 let placed placement dtype view cell =
   if Placement.is_host placement then
@@ -643,10 +644,11 @@ let assemble (type a b) (r : (a, b) resident) window
    value of the dtype first, which allocates nothing and raises if [p] cannot
    hold the dtype. *)
 let held p dtype value shape =
-  let engine = Placement.engine p in
-  ignore (engine.place p (Host (Nx_backend.buffer host_context dtype [| 0 |])));
+  ignore
+    ((Placement.engine p).place p
+       (Host (Nx_backend.buffer host_context dtype [| 0 |])));
   placed p dtype (View.create shape)
-    (cell engine ~length:1 (Held (dtype, value)))
+    (cell ~placement:p ~length:1 (Held (dtype, value)))
 
 (* A hash for identity tables. A placed or traced value hashes by its id, which
    never changes; a host tensor by its structure, which no table sees change,
@@ -1163,18 +1165,55 @@ let same_devices p q =
   let dp = Placement.devices p and dq = Placement.devices q in
   List.compare_lengths dp dq = 0 && List.for_all (fun d -> List.memq d dq) dp
 
+(* Views of whole shards of one split storage, each on its own device. A
+   compiled program copies such a view to every device of the storage's list
+   (schedule/multi.ml, shrink_multi), so eager code joins them as copies on that
+   list: [Nx.roll] of a value split in two by one shard succeeds and lands where
+   it does compiled. [whole_shards xs] is that list. *)
+let whole_shards xs =
+  let views =
+    List.filter_map
+      (fun (P x) ->
+        match x with
+        | Placed r -> Some (r.r_cell, r.r_view, r.r_placement)
+        | _ -> None)
+      xs
+  in
+  (* A view of a whole shard reaches as many elements as the shard holds, and
+     none twice through a broadcast axis. *)
+  let whole c v =
+    View.numel v = c.length
+    && not
+         (Array.exists2
+            (fun n s -> n > 1 && s = 0)
+            (View.shape v) (View.strides v))
+  in
+  match views with
+  | (cell, _, _) :: _
+    when List.for_all
+           (fun (c, v, p) ->
+             c == cell && whole c v
+             && List.compare_length_with (Placement.devices p) 1 = 0)
+           views ->
+      Some (Placement.devices cell.placement)
+  | _ -> None
+
 (* [route op rule xs] is where [op] runs over [xs]. Placed operands on different
-   device lists raise. *)
+   device sets raise, but for [whole_shards]. *)
 let route op rule xs =
   match List.filter_map (fun (P x) -> placement_of x) xs with
   | [] -> On_host
   | p :: rest -> (
       match List.find_opt (fun q -> not (same_devices p q)) rest with
       | None -> At (result op rule xs)
-      | Some q ->
-          invalid_arg
-            (Format.asprintf "Nx.%s: operands on %a and %a; place one of them"
-               op Placement.pp p Placement.pp q))
+      | Some q -> (
+          match whole_shards xs with
+          | Some ds -> At (Placement.replicated ds)
+          | None ->
+              invalid_arg
+                (Format.asprintf
+                   "Nx.%s: operands on %a and %a; place one of them" op
+                   Placement.pp p Placement.pp q)))
 
 let route1 op rule a = route op rule [ P a ]
 let route2 op rule a b = route op rule [ P a; P b ]

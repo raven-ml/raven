@@ -3623,11 +3623,7 @@ let rec make_placed : type a b.
     }
   in
   account s 1;
-  let cell =
-    Nx_effect.cell
-      (Nx_effect.Placement.engine placement)
-      ~length:(NV.numel view) (Buffers s)
-  in
+  let cell = Nx_effect.cell ~placement ~length:(NV.numel view) (Buffers s) in
   if bufs <> [] then
     Gc.finalise
       (fun (c : Nx_effect.cell) ->

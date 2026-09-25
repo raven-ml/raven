@@ -256,6 +256,43 @@ let test_batch_split_operations () =
     (fun i -> Nx.correlate i w)
     (Nx.reshape [| 2; 1; 4; 4 |] (Nx.arange Nx.float32 0 32 1))
 
+(* A roll along the split axis by one shard of two cuts each shard whole, which
+   a compiled program copies to both devices: eager and compiled agree on the
+   elements and the placement. *)
+let test_roll_by_a_shard () =
+  let x = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1) in
+  let roll = Nx.roll ~axis:0 4 in
+  let compiled =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      roll x
+  in
+  let eager = roll (Nx.place (Nx.Placement.sharded ~axis:0 devs2) x) in
+  let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal in
+  equal ~msg:"placement" placement (Nx.placement compiled) (Nx.placement eager);
+  equal ~msg:"elements" (array float_exact) (Nx.to_array compiled)
+    (Nx.to_array eager);
+  equal ~msg:"the roll" (array float_exact)
+    (Nx.to_array (roll x))
+    (Nx.to_array eager);
+  (* Over four devices, two whole shards combine as copies on all four. *)
+  let pair s =
+    Nx.add (Nx.slice [ Nx.R (0, 2) ] s) (Nx.slice [ Nx.R (2, 4) ] s)
+  in
+  let compiled =
+    Rune.pmap ~devices:devs4 ~in_axes:[ Some 0 ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      pair x
+  in
+  let eager = pair (Nx.place (Nx.Placement.sharded ~axis:0 devs4) x) in
+  equal ~msg:"four devices: placement" placement (Nx.placement compiled)
+    (Nx.placement eager);
+  equal ~msg:"four devices: on all four" placement
+    (Nx.Placement.replicated devs4)
+    (Nx.placement eager);
+  equal ~msg:"four devices: elements" (array float_exact) (Nx.to_array compiled)
+    (Nx.to_array eager)
+
 let test_mismatched_placement_forces () =
   (* An output sharded on axis 0 fed into an axis-1 placement is forced to the
      host and re-split, not seeded. *)
@@ -896,6 +933,7 @@ let tests =
       [
         test "a split output in eager code" test_split_output_in_eager_code;
         test "operations over a batch split" test_batch_split_operations;
+        test "a roll by one shard" test_roll_by_a_shard;
         test "feedback call moves no bytes" test_feedback_moves_no_bytes;
         test "replicated outputs feed back without transfer"
           test_replicated_feedback;

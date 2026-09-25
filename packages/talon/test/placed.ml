@@ -45,7 +45,7 @@ and place : type a b.
   Nx_buffer.blit ~src ~dst:mem;
   Nx_effect.placed p (Nx.dtype x)
     (Nx_core.View.create (Nx.shape x))
-    (Nx_effect.cell engine ~length:(Nx_buffer.length mem)
+    (Nx_effect.cell ~placement:p ~length:(Nx_buffer.length mem)
        (Mem (Nx.dtype x, mem)))
 
 let device = Nx_effect.Device.make "TEST" engine
