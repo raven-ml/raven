@@ -477,9 +477,6 @@ and tensor_hook = { hook : 'a 'b. ('a, 'b) Nx_effect.t -> unit }
 let shape_of x = NV.shape (Nx_effect.view x)
 let numel shape = Array.fold_left ( * ) 1 shape
 
-(* Whether the program runs on several devices. *)
-let multi st = List.compare_length_with st.st_devices 1 > 0
-
 (* A capture that decides the program's devices where nothing else did: placed
    elsewhere than the default device, or split over the program's devices in
    another order than copies listed them. The program runs at its placement
@@ -1956,19 +1953,17 @@ let kernel_result st dt tt =
    raises [Invalid_argument] as nx does when its operands cannot meet. *)
 let result_placement : type c. state -> c Effect.t -> Nx.Placement.t =
  fun st eff ->
-  if not (multi st) then here st
-  else
-    match Nx_effect.routing eff with
-    | Some (op, rule, xs) ->
-        Nx_effect.result op rule
-          (List.map
-             (fun (Nx.P x) ->
-               (Some (placement_in st x), Array.length (shape_of x)))
-             xs)
-    | None -> (
-        match Nx_effect.movement_of eff with
-        | Some (Nx.P x, m) -> moved (placement_in st x) (shape_of x) m
-        | None -> here st)
+  match Nx_effect.routing eff with
+  | Some (op, rule, xs) ->
+      Nx_effect.result op rule
+        (List.map
+           (fun (Nx.P x) ->
+             (Some (placement_in st x), Array.length (shape_of x)))
+           xs)
+  | None -> (
+      match Nx_effect.movement_of eff with
+      | Some (Nx.P x, m) -> moved (placement_in st x) (shape_of x) m
+      | None -> here st)
 
 (* Whether a scan over the stacks [xs] cannot be staged in [st]'s program: a row
    of a stack split along its leading axis lies on one device, and a split row
@@ -2624,7 +2619,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             | exception (Invalid_argument _ as e) -> discontinue k e
             | () ->
                 if Nx.Placement.equal p q then continue k t_in
-                else if not (multi st && over st.st_devices q) then
+                else if not (over st.st_devices q) then
                   discontinue k
                     (Jit_error
                        (Format.asprintf
@@ -4461,12 +4456,15 @@ type leaf_info = {
   names : string array;
 }
 
-(* Bind [node] to [bufs], one per device of the program. *)
-let seed_node binding ~multi node = function
-  | [ buf ] when not multi -> Tolk.Realize.Buffers.seed binding node buf
-  | bufs ->
+(* Bind [node] to [bufs], one per device of the program, as the node's device
+   says: one buffer, or one per device of a list. *)
+let seed_node binding node bufs =
+  match (U.device_of node, bufs) with
+  | Some (U.Multi _), bufs ->
       Tolk.Realize.Buffers.seed_multi binding node
         (Tolk.Device.Multi_buffer.of_bufs bufs)
+  | _, [ buf ] -> Tolk.Realize.Buffers.seed binding node buf
+  | _ -> invalid_arg "Rune.jit: several buffers for a node on one device"
 
 (* [trace_compile ~devices f params leaves] traces and compiles [f] for a call
    over [devices], each leaf seeding the program at its placement in
@@ -4673,32 +4671,30 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
     end;
     pairing
   in
-  (* Over several devices a paired result of its leaf's shape keeps the leaf's
-     placement: where nx's rules put it elsewhere, the program reshards it at
-     its end, so a consumed carry keeps its placement from call to call, and one
-     that starts on the host stays a copy on each device. *)
+  (* A paired result of its leaf's shape keeps the leaf's placement: where nx's
+     rules put it elsewhere, the program reshards it at its end, so a consumed
+     carry keeps its placement from call to call, and one that starts on the
+     host stays a copy on each device. *)
   let out_anch =
-    if not multi then out_anch
-    else
-      List.map
-        (fun ((key, (Packed (_, ph) as pk), tt, place) as out) ->
-          match Hashtbl.find_opt pairing key with
-          | Some i ->
-              let (Nx.P leaf) = leaves.(i) in
-              let q = placements.(i) in
-              if shape_of leaf <> shape_of ph || Nx.Placement.equal place q then
-                out
-              else begin
-                if Lazy.force jit_debug >= 1 then
-                  Printf.eprintf "rune.jit: %s\n%!"
-                    (Format.asprintf
-                       "the result paired with the argument at %s is resharded \
-                        from %a to %a"
-                       info.names.(i) Nx.Placement.pp place Nx.Placement.pp q);
-                (key, pk, reshard st place q tt, q)
-              end
-          | None -> out)
-        out_anch
+    List.map
+      (fun ((key, (Packed (_, ph) as pk), tt, place) as out) ->
+        match Hashtbl.find_opt pairing key with
+        | Some i ->
+            let (Nx.P leaf) = leaves.(i) in
+            let q = placements.(i) in
+            if shape_of leaf <> shape_of ph || Nx.Placement.equal place q then
+              out
+            else begin
+              if Lazy.force jit_debug >= 1 then
+                Printf.eprintf "rune.jit: %s\n%!"
+                  (Format.asprintf
+                     "the result paired with the argument at %s is resharded \
+                      from %a to %a"
+                     info.names.(i) Nx.Placement.pp place Nx.Placement.pp q);
+              (key, pk, reshard st place q tt, q)
+            end
+        | None -> out)
+      out_anch
   in
   let out_uops =
     let outs_u = List.map (fun (_, _, tt, _) -> F.Tensor.uop tt) out_anch in
@@ -4729,9 +4725,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
        a syntactic [Unshard] and buffer allocation sizes its output per slice
        (copies allocate full-size on every device). Scheduling reapplies the
        same rules; the rewrite is idempotent. *)
-    if multi then
-      U.children (U.graph_rewrite Tolk.Multi.multi_pm (U.sink outs_u))
-    else outs_u
+    U.children (U.graph_rewrite Tolk.Multi.multi_pm (U.sink outs_u))
   in
   (* Resolve each output to the buffer node realization assigned it. An output
      whose node is a graph buffer under identity wrappers (an input or constant
@@ -4765,7 +4759,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
         let c =
           match written_buffer u with
           | Some v -> v
-          | None when (not multi) && strip_identity u = None && moves u ->
+          | None when strip_identity u = None && moves u ->
               Option.get
                 (written_buffer
                    (F.Tensor.uop (F.Creation.clone (F.Tensor.of_uop u))))
@@ -4917,7 +4911,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
     List.rev !acc
   in
   let binding = Tolk.Realize.Buffers.create () in
-  let seed = seed_node binding ~multi in
+  let seed = seed_node binding in
   let reserved = Hashtbl.create 16 in
   List.iter
     (fun inp ->
@@ -5298,9 +5292,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       | _ -> invalid_arg "Rune.jit: an arena off the program's devices")
     c.cp_arenas;
   let keep = ref [] in
-  let seed =
-    seed_node c.cp_binding ~multi:(List.compare_length_with c.cp_devices 1 > 0)
-  in
+  let seed = seed_node c.cp_binding in
   Array.iteri
     (fun i (Nx.P leaf) ->
       let inp = c.cp_inputs.(i) in

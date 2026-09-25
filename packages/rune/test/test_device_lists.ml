@@ -337,6 +337,27 @@ let test_a_moved_output_feeds_a_call () =
     (Nx.placement z);
   check_arr ~eps:0.0 ~msg:"value" (to_arr (Nx.add (Nx.add x x) (Nx.add x x))) z
 
+(* An input moved and returned is computed into an output of its own, split or
+   copied as the movement puts it. *)
+let test_moved_inputs_returned () =
+  let x = m86 () in
+  List.iter
+    (fun (msg, p) ->
+      List.iter
+        (fun (what, move) ->
+          let msg = msg ^ ", " ^ what in
+          let y = Rune.jit' move (Nx.place p x) in
+          check_arr ~eps:0.0 ~msg (to_arr (move x)) y)
+        [
+          ("a column window", fun x -> Nx.slice [ Nx.A; Nx.R (1, 3) ] x);
+          ("a transpose", Nx.transpose ?axes:None);
+          ("a flip", Nx.flip ~axes:[ 1 ]);
+        ])
+    [
+      ("split", Nx.Placement.sharded ~axis:0 devs4);
+      ("copied", Nx.Placement.replicated devs4);
+    ]
+
 let test_pass_through_output () =
   let g =
     Rune.jit' (fun x ->
@@ -1050,6 +1071,7 @@ let tests =
         test "copies feed back without transfer" test_replicated_feedback;
         test "a moved output feeds a call" test_a_moved_output_feeds_a_call;
         test "pass-through outputs gather on read" test_pass_through_output;
+        test "moved inputs are returned" test_moved_inputs_returned;
         test "a placed capture is bound on the devices"
           test_placed_capture_is_bound;
         test "a moved split output" test_moved_split_output;
