@@ -441,25 +441,39 @@ delete it rather than registering it.
   multiplying, so every device and path computes exact products; on Metal the
   tensor-core option then takes the float32 tensor cores, which on an M1 Max
   multiply 16 filled blocks of 64 rows at bfloat16 as fast as the bfloat16 ones
-  (4.34 against 4.33 ms at 5760 outputs, 2.22 ms at 2880). On CUDA and AMD this
-  form takes no narrow tensor cores, and on CUDA no float32 ones without
-  `ALLOW_TF32`: the matcher compares the multiply's operand dtypes with a tensor
-  core's input dtype, and would have to accept a widening cast of a narrow load
-  as a narrow-in, float32-out tensor core's input, which computes the same exact
-  product. No block options are pinned there yet. The options are pinned per
-  renderer and shape: on Metal the tensor cores, rows upcast by up to 8 tiles,
-  columns by 3, and a local split of 4 on the columns, measured at 6.6 to 7.6
-  TFLOPS at bfloat16 on an M1 Max for 46 filled blocks of 64 rows at gpt-oss's
-  shapes on the bfloat16 tensor cores (the float32 ones time equal), where the
-  heuristic's `matmul` reaches 8.2 on a dense product; on the CPU at every
-  dtype, rows upcast by up to 8, columns by up to 16 within 64 accumulators, and
-  the loop over tiles unrolled by 4, timed on an M1 Max at gpt-oss's shapes 9 to
-  37 times faster than no options at float32 and 8 to 18 times at bfloat16;
-  elsewhere none yet. Coverage: `test/unit/frontend/test_block_matmul.ml`
-  (values on the default device, and each renderer's loop bounds) and the
-  opt-correctness workloads `block_matmul` and `block_matmul_t`, under every
-  action that leaves the block axis whole. Consumer: rune's lowering of
-  `Nx_quant` products over expert ids, grouped or one block per position.
+  (4.34 against 4.33 ms at 5760 outputs, 2.22 ms at 2880). On CUDA and AMD the
+  matcher would give this form the narrow-in, float32-out tensor cores (see
+  widened tensor-core operands below), but no block options are pinned there
+  yet. The options are pinned per renderer and shape: on Metal the tensor cores,
+  rows upcast by up to 8 tiles, columns by 3, and a local split of 4 on the
+  columns, measured at 6.6 to 7.6 TFLOPS at bfloat16 on an M1 Max for 46 filled
+  blocks of 64 rows at gpt-oss's shapes on the bfloat16 tensor cores (the
+  float32 ones time equal), where the heuristic's `matmul` reaches 8.2 on a
+  dense product; on the CPU at every dtype, rows upcast by up to 8, columns by
+  up to 16 within 64 accumulators, and the loop over tiles unrolled by 4, timed
+  on an M1 Max at gpt-oss's shapes 9 to 37 times faster than no options at
+  float32 and 8 to 18 times at bfloat16; elsewhere none yet. Coverage:
+  `test/unit/frontend/test_block_matmul.ml` (values on the default device, and
+  each renderer's loop bounds) and the opt-correctness workloads `block_matmul`
+  and `block_matmul_t`, under every action that leaves the block axis whole.
+  Consumer: rune's lowering of `Nx_quant` products over expert ids, grouped or
+  one block per position.
+
+- **A narrow-in, float32-out tensor core takes widened operands**
+  (`codegen/opt/postrange.ml` `tc_operand`). The reference's matcher takes a
+  tensor core only when the multiply's operands have the core's input dtype,
+  so a product of narrow floats widened to float32 first,
+  `MUL(CAST f32 a, CAST f32 b)`, takes no narrow tensor core, and on CUDA none
+  at all without `ALLOW_TF32`. That product is exact unless it leaves
+  float32's normal range, which only a bfloat16 product can, and a narrow-in,
+  float32-out tensor core computes exactly it, so tolk accepts a float32
+  operand that is a cast of the core's narrower float input dtype and gives the
+  core the narrow value. A core with a narrow output takes no widened operand:
+  its products round. Cores are tried in the renderer's order, as in the
+  reference, so on Metal, whose float32 core comes first, such a product keeps
+  the float32 core. Consumer: `Op.block_matmul`'s product, once options take
+  tensor cores on CUDA or AMD. Coverage: `test/unit/codegen/test_tc.ml`
+  (widened operands).
 
 - **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
   `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference

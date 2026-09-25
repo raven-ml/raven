@@ -532,6 +532,10 @@ thread.
 
 ### Tolk (new)
 
+- A product of narrow floats widened to `float32` before the multiply takes a
+  narrow-in, `float32`-out tensor core, which computes the same product. It
+  took no narrow tensor core, and on CUDA none at all without `ALLOW_TF32`.
+
 - `Uop.call_info.name` is a `Uop.call_name`: `Label` for a callable's name,
   or `Collective` for the collective a precompiled call implements
   (`Allreduce op`, `Allgather axes`, `Reducescatter (op, axis)`), which no

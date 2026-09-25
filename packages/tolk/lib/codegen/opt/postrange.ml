@@ -420,6 +420,23 @@ let apply_tc_shifts t axes (tc : Tc.t) =
       axes.(dim) <- replaced;
       coordinate, lane) (Tc.axis_coords tc)
 
+(* The value a tensor core takes for a factor of the product: the factor at the
+   core's input dtype, or the narrower float a float32 factor is widened from
+   when the core outputs float32. The core multiplies it exactly, and the
+   float32 product of the widened values is exact unless it leaves float32's
+   normal range, which only a bfloat16 product can. *)
+let tc_operand (tc : Tc.t) u =
+  if scalar_eq (U.dtype u) tc.dtype_in then Some u
+  else
+    match U.op u, U.src u with
+    | Ops.Cast, [| src |]
+      when scalar_eq (U.dtype src) tc.dtype_in
+           && Dtype.is_float tc.dtype_in && Dtype.itemsize tc.dtype_in < 4
+           && scalar_is_float32 (U.dtype u)
+           && scalar_is_float32 tc.dtype_out ->
+        Some src
+    | _ -> None
+
 let build_wmma_node t (tc : Tc.t) axes coordinates =
   let reduce =
     match List.filter (fun u -> match U.as_reduce u with
@@ -435,6 +452,9 @@ let build_wmma_node t (tc : Tc.t) axes coordinates =
   let inputs = match U.op mul, U.src mul with
     | Ops.Mul, [| a; b |] -> [ a; b ]
     | _ -> raise (Opt_error "tensor-core reduction must multiply two operands") in
+  let inputs = List.map (fun input -> match tc_operand tc input with
+      | Some operand -> operand
+      | None -> raise (Opt_error "tensor-core operand dtype differs from the core's")) inputs in
   let inputs = List.map (fun input -> match gate with
       | None -> input
       | Some gate -> U.alu_ternary ~op:Ops.Where ~a:gate ~b:input
@@ -633,8 +653,6 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
             | Some tc -> [ tc ]
             | None -> raise (Opt_error err_invalid_tc_choice)
         in
-        let in0_sc = U.dtype in0 in
-        let in1_sc = U.dtype in1 in
         let red_sc = U.dtype red in
         let in0_ranges = U.ranges in0 in
         let in1_ranges = U.ranges in1 in
@@ -652,8 +670,8 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
                 && Helpers.Context_var.get Helpers.allow_tf32 = 0
               then None
               else if
-                (not (scalar_eq in0_sc tc.dtype_in))
-                || (not (scalar_eq in1_sc tc.dtype_in))
+                Option.is_none (tc_operand tc in0)
+                || Option.is_none (tc_operand tc in1)
                 || not (scalar_eq red_sc tc.dtype_out)
               then None
               else

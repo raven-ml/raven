@@ -157,6 +157,31 @@ let matmul_f16_global_ast ~m ~n ~k =
   let e = U.end_ ~value:st ~ranges:[ r_m; r_n ] in
   wrap_sink [ e ]
 
+(* Matmul over [dtype] loads widened to f32 before the multiply, the exact
+   product of narrow operands, summed at [acc]. *)
+let matmul_widened_global_ast ?(acc = D.float32) ~dtype ~m ~n ~k () =
+  let p_out = U.param ~slot:0 ~dtype:acc () in
+  let p_a = U.param ~slot:1 ~dtype () in
+  let p_b = U.param ~slot:2 ~dtype () in
+  let r_m = global_range ~axis:0 m in
+  let r_n = global_range ~axis:1 n in
+  let r_k = reduce_range ~axis:2 k in
+  let open U.O in
+  let widened p i =
+    U.cast ~src:(U.load ~src:(U.index ~ptr:p ~idxs:[ i ] ()) ()) ~dtype:D.float32
+  in
+  let mul =
+    U.alu_binary ~op:Ops.Mul
+      ~lhs:(widened p_a ((r_m * idx k) + r_k))
+      ~rhs:(widened p_b ((r_k * idx n) + r_n))
+  in
+  let src = if D.equal acc D.float32 then mul else U.cast ~src:mul ~dtype:acc in
+  let red = U.reduce ~op:Ops.Add ~src ~ranges:[ r_k ] ~dtype:acc in
+  let st =
+    U.store ~dst:(U.index ~ptr:p_out ~idxs:[ (r_m * idx n) + r_n ] ()) ~value:red ()
+  in
+  wrap_sink [ U.end_ ~value:st ~ranges:[ r_m; r_n ] ]
+
 (* Simple elementwise kernel (no reduce — for testing TC rejection) *)
 let elementwise_global_ast ~s0 ~s1 =
   let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
@@ -531,6 +556,36 @@ let () =
                 (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 2 })
             in
             is_true (result <> None));
+        ];
+
+      group "apply_tc_opt widened operands"
+        [
+          test "a narrow-in, f32-out core multiplies the narrow loads" (fun () ->
+            List.iter (fun dtype ->
+                let ast = matmul_widened_global_ast ~dtype ~m:16 ~n:16 ~k:16 () in
+                let t = P.create ast (tc_renderer Tc.cuda_sm80) in
+                ignore (P.apply_opt t
+                  (U.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }));
+                match List.find_map U.as_wmma (U.toposort (P.ast t)) with
+                | None -> is_true ~msg:"a WMMA node" false
+                | Some w ->
+                    let msg = D.to_string dtype in
+                    is_true ~msg (D.equal w.info.dtype_in dtype);
+                    is_true ~msg (D.equal (U.dtype w.a) dtype);
+                    is_true ~msg (D.equal (U.dtype w.b) dtype))
+              [ D.float16; D.bfloat16 ]);
+
+          (* Summed at f16, the widened product matches the half/half core's
+             output dtype, whose products round. *)
+          test "a core with a narrow output takes no widened loads" (fun () ->
+            let ast =
+              matmul_widened_global_ast ~acc:D.float16 ~dtype:D.float16 ~m:8
+                ~n:8 ~k:8 ()
+            in
+            let t = P.create ast (tc_renderer Tc.metal) in
+            raises_opt_error (fun () ->
+              ignore (P.apply_opt t
+                (U.Opt.Tc { axis = 0; tc_select = 2; tc_opt = 0; use_tc = 1 }))));
         ];
 
       (* Apply_tc_opt padding *)
