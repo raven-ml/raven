@@ -58,3 +58,4 @@ a document outside the repository.
 - [0004](0004-quantised-weights.md) Quantised weights (published)
 - [0005](0005-placement.md) Placement (discussion)
 - [0006](0006-structures.md) Structures and compiled signatures (discussion)
+- [0007](0007-devices.md) Devices, runtimes and backends (discussion)
