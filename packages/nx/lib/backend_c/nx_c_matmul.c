@@ -463,6 +463,40 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
       for (int i = 0; i < w; i++) s[i] = (compute)MM_ADD_##cat(s[i], s[i + w]); \
     *(compute *)vout = s[0];                                                   \
   }                                                                            \
+  /* A row times n columns, out[j] = sum_p a[p] * B(p, j), with mm_dot's     \
+     lanes and tree for every output, so each has the bits of mm_dot of the  \
+     row and its column whatever B's layout. Contiguous columns (bcs == 1)   \
+     run k outer over sixteen lane rows of n compute-typed accumulators      \
+     (`lanes`, 16 * n), vectorized along j; otherwise each column is one     \
+     mm_dot. */                                                                \
+  static void mm_row_##sfx(const void *va, int64_t as, const void *vb,         \
+                           int64_t brs, int64_t bcs, int64_t k, int64_t n,     \
+                           void *vlanes, void *vout) {                         \
+    const char *a = (const char *)va;                                        \
+    const char *b = (const char *)vb;                                        \
+    int64_t esz = (int64_t)sizeof(storage);                                   \
+    compute *out = (compute *)vout;                                           \
+    if (bcs != 1) {                                                           \
+      for (int64_t j = 0; j < n; j++)                                         \
+        mm_dot_##sfx(va, as, b + j * bcs * esz, brs, k, &out[j]);             \
+      return;                                                                  \
+    }                                                                          \
+    compute *lanes = (compute *)vlanes;                                       \
+    for (int64_t t = 0; t < 16 * n; t++) lanes[t] = (compute)0;              \
+    for (int64_t p = 0; p < k; p++) {                                          \
+      compute x = nx_c_ld_##sfx(a + p * as * esz);                            \
+      const storage *restrict row = (const storage *)(b + p * brs * esz);    \
+      compute *restrict l = lanes + (p & 15) * n;                             \
+      for (int64_t j = 0; j < n; j++)                                         \
+        MM_MAC_##cat(l[j], x, nx_c_ld_##sfx(&row[j]));                         \
+    }                                                                          \
+    for (int w = 8; w >= 1; w /= 2)                                           \
+      for (int i = 0; i < w; i++)                                             \
+        for (int64_t j = 0; j < n; j++)                                       \
+          lanes[i * n + j] =                                                  \
+              (compute)MM_ADD_##cat(lanes[i * n + j], lanes[(i + w) * n + j]); \
+    for (int64_t j = 0; j < n; j++) out[j] = lanes[j];                        \
+  }                                                                            \
   /* KC-panel accumulate: dst[i] += src[i] over `count` compute elements, the \
      one place a partial MR x NR tile folds into the compute-typed C tile. In  \
      compute precision (int64 wraps modularly BY CONSTRUCTION — MM_ADD's SINT  \
@@ -493,6 +527,8 @@ typedef void (*nx_c_mm_direct)(const void *, int64_t, int64_t, const void *,
                               int64_t, int64_t, int64_t);
 typedef void (*nx_c_mm_dot)(const void *, int64_t, const void *, int64_t,
                            int64_t, void *);
+typedef void (*nx_c_mm_row)(const void *, int64_t, const void *, int64_t,
+                           int64_t, int64_t, int64_t, void *, void *);
 typedef void (*nx_c_mm_micro)(void *, const void *, const void *, int64_t);
 typedef void (*nx_c_mm_acc)(void *, const void *, int);
 
@@ -501,6 +537,7 @@ typedef struct {
   nx_c_mm_store store;
   nx_c_mm_direct direct;
   nx_c_mm_dot dot;
+  nx_c_mm_row row;
   nx_c_mm_micro micro; /* NULL: dtype unsupported for matmul */
   nx_c_mm_acc acc;     /* KC-panel tile accumulate (compute-typed) */
   int MR, NR;
@@ -513,6 +550,7 @@ typedef struct {
                        mm_store_##sfx,                                         \
                        mm_direct_##sfx,                                        \
                        mm_dot_##sfx,                                           \
+                       mm_row_##sfx,                                           \
                        MM_MICRO_##compute,                                     \
                        mm_acc_##sfx,                                           \
                        MM_MR,                                                  \
@@ -827,6 +865,78 @@ static nx_c_status mm_dot_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
   return NX_C_OK;
 }
 
+/* ── Row: a 1 x n output ───────────────────────────────────────────────────
+
+   A row times a matrix (what a vector times a matrix becomes, the eager step
+   of a decoder) keeps the dot's arithmetic for every output: chunks of
+   MM_DOT_CHUNK along k added in chunk order, each summed by mm_row with the
+   dot's lanes and tree. So every output has the bits of the dot of the row and
+   its column, on any thread count and layout. One job is one tile of outputs of
+   one batch matrix over the whole k, so the chunks of an output never meet
+   across jobs. A tile is as wide as MM_ROW_LANE_BYTES of lanes allows (1024
+   float32 outputs), which keeps the k-outer loop's sixteen lane rows in L1:
+   on an M1 Max a bfloat16 row times 2880 x 5760 took 1.1 ms at that width and
+   1.5 at 256. Per worker: the tile's lanes, one chunk's sums and the running
+   sums. */
+#define MM_ROW_LANE_BYTES (64 * 1024)
+
+typedef struct {
+  const mm_ctx *x;
+  int64_t tile;     /* outputs per job */
+  int64_t ntiles;   /* tiles per batch matrix */
+  char *scratch;    /* per worker: lanes, chunk sums, running sums */
+  int64_t slot;     /* bytes per worker */
+} mm_row_ctx;
+
+static void mm_row_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  const mm_row_ctx *rc = (const mm_row_ctx *)vctx;
+  const mm_ctx *x = rc->x;
+  const nx_c_mm_desc *d = x->d;
+  char *lanes = rc->scratch + (int64_t)worker * rc->slot;
+  char *chunk_sums = lanes + 16 * rc->tile * d->csize;
+  char *sums = chunk_sums + rc->tile * d->csize;
+  for (int64_t job = lo; job < hi; job++) {
+    int64_t bt = job / rc->ntiles;
+    int64_t j0 = (job % rc->ntiles) * rc->tile;
+    int64_t nt = x->n - j0;
+    if (nt > rc->tile) nt = rc->tile;
+    const char *ab, *bb;
+    char *cb;
+    mm_batch_base(x, bt, &ab, &bb, &cb);
+    bb += j0 * x->b_cs * x->esz;
+    for (int64_t p0 = 0; p0 == 0 || p0 < x->k; p0 += MM_DOT_CHUNK) {
+      int64_t len = x->k - p0;
+      if (len > MM_DOT_CHUNK) len = MM_DOT_CHUNK;
+      d->row(ab + p0 * x->a_cs * x->esz, x->a_cs,
+             bb + p0 * x->b_rs * x->esz, x->b_rs, x->b_cs, len, nt, lanes,
+             p0 == 0 ? sums : chunk_sums);
+      if (p0 > 0) d->acc(sums, chunk_sums, (int)nt);
+    }
+    d->store(sums, cb, x->c_rs, x->c_cs, 0, j0, 1, (int)nt, (int)nt);
+  }
+}
+
+static nx_c_status mm_row_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
+                              int nthreads) {
+  int64_t tile = MM_ROW_LANE_BYTES / (16 * x->d->csize);
+  if (tile > x->n) tile = x->n;
+  int64_t ntiles = mm_ceil_div(x->n, tile);
+  int64_t jobs = nbatch * ntiles;
+  /* Compute-bound class, as for the dot. */
+  int nth = nthreads > 0 ? nthreads
+                         : nx_c_threads_for(NX_C_COST_COMPUTE, jobs,
+                                            x->k * tile, bytes);
+  if (nth > jobs) nth = (int)jobs;
+  if (nth < 1) nth = 1;
+  int64_t slot = (16 + 2) * tile * x->d->csize;
+  slot = (slot + 63) & ~(int64_t)63;
+  char *scratch = mm_alloc((size_t)nth * (size_t)slot);
+  if (!scratch) return NX_C_ERR_ALLOC;
+  mm_row_ctx rc = {x, tile, ntiles, scratch, slot};
+  nx_c_parallel_for(nth, jobs, bytes, mm_row_body, &rc, scratch);
+  return NX_C_OK;
+}
+
 /* ── Accelerate hook (macOS only) ──────────────────────────────────────────
 
    For f32/f64/c32/c64, the top-level driver routes large cblas-mappable products
@@ -1080,9 +1190,28 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   x.n_jc = 0;
   x.n_ic = 0;
 
-  /* A 1x1 output takes the dot path on every platform, ahead of Accelerate. */
-  if (m == 1 && n == 1 && !force_direct)
-    return mm_dot_run(&x, nbatch, bytes, nthreads);
+  /* A single row or column takes the dot's arithmetic on every platform,
+     ahead of Accelerate: one output by splitting its contraction, several by
+     tiles of outputs. A column C = A b is the row C^T = b^T A^T: the row is b
+     along its rows, the matrix is A with its strides swapped, and the
+     outputs run down C. */
+  if ((m == 1 || n == 1) && !force_direct) {
+    if (m == 1 && n == 1) return mm_dot_run(&x, nbatch, bytes, nthreads);
+    if (m == 1) return mm_row_run(&x, nbatch, bytes, nthreads);
+    mm_ctx t = x;
+    t.A = B;
+    t.B = A;
+    t.as_ = bs_;
+    t.bs_ = as_;
+    t.m = 1;
+    t.n = m;
+    t.a_cs = b_rs;
+    t.b_rs = a_cs;
+    t.b_cs = a_rs;
+    t.c_rs = c_cs;
+    t.c_cs = c_rs;
+    return mm_row_run(&t, nbatch, bytes, nthreads);
+  }
 
   /* Accelerate hook: for eligible f32/f64/c32/c64 the driver hands each batch
      matrix to cblas, one call at a time, on the calling thread with the runtime

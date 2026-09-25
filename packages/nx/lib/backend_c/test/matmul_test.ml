@@ -1059,6 +1059,89 @@ let test_dot_path () =
   in
   ok "f32 dot, one thread and four give the same bits" (run 1 = run 4)
 
+(* A single row (m = 1, n > 1) takes the row path, and a single column (n = 1)
+   the same path transposed: every output keeps the dot path's arithmetic.
+   Against the reference over both layouts of B, around a lane, a tile (1024 f32
+   outputs) and a chunk boundary; and bit for bit, each output equals the 1x1
+   dot of the row and its column, whether B is stored by rows or by columns, on
+   one thread and on four, and a matrix times a column equals the transposed row
+   product. *)
+let test_row_path () =
+  List.iter
+    (fun (k, n) ->
+      List.iter
+        (fun b_trans ->
+          test_real ~kind:Nx_dtype.float32 ~name:"f32-row" ~tol_rel:1e-4
+            ~tol_abs:1e-4 ~m:1 ~k ~n ~b_trans ~modes:[ `Prod; `St; `Direct ] ();
+          test_real ~kind:Nx_dtype.bfloat16 ~name:"bf16-row" ~tol_rel:1e-2
+            ~tol_abs:1e-2 ~m:1 ~k ~n ~b_trans ~modes:[ `Prod; `St ] ();
+          test_real ~kind:Nx_dtype.float64 ~name:"f64-row" ~tol_rel:1e-9
+            ~tol_abs:1e-9 ~m:1 ~k ~n ~b_trans ~a_off:3 ~b_off:5 ~c_off:2
+            ~modes:[ `Prod; `St ] ())
+        [ false; true ])
+    [ (0, 5); (1, 2); (17, 1023); (33, 1025); (300, 2100); (65537, 3) ];
+  List.iter
+    (fun (m, k) ->
+      List.iter
+        (fun a_trans ->
+          test_real ~kind:Nx_dtype.float32 ~name:"f32-column" ~tol_rel:1e-4
+            ~tol_abs:1e-4 ~m ~k ~n:1 ~a_trans ~modes:[ `Prod; `St; `Direct ] ();
+          test_real ~kind:Nx_dtype.bfloat16 ~name:"bf16-column" ~tol_rel:1e-2
+            ~tol_abs:1e-2 ~m ~k ~n:1 ~a_trans ~modes:[ `Prod; `St ] ())
+        [ false; true ])
+    [ (2, 17); (1025, 33); (2100, 300); (3, 65537) ];
+  test_int_small ~kind:Nx_dtype.int8 ~name:"i8-row-wrap" ~wrap:(wrap_signed 8)
+    ~m:1 ~k:40 ~n:600 ~vlo:10 ~vhi:12 ~modes:[ `Prod; `Direct ] ();
+  test_complex ~kind:Nx_dtype.complex64 ~name:"c32-row" ~tol:1e-2 ~m:1 ~k:200
+    ~n:300 ~modes:[ `Prod; `Direct ] ();
+  let k = 65536 + 37 and n = 1100 in
+  let a = Buf.create Nx_dtype.float32 k
+  and rows = Buf.create Nx_dtype.float32 (k * n)
+  and cols = Buf.create Nx_dtype.float32 (k * n) in
+  for p = 0 to k - 1 do
+    Buf.set a p (sin (float_of_int p));
+    for j = 0 to n - 1 do
+      let v = cos (float_of_int ((p * 7) + (j * 13))) in
+      Buf.set rows ((p * n) + j) v;
+      Buf.set cols ((j * k) + p) v
+    done
+  done;
+  let a_ffi = ffi a [| 1; k |] [| k; 1 |] in
+  let product b strides mode =
+    let c = Buf.create Nx_dtype.float32 n in
+    mm_ex (ffi c [| 1; n |] [| n; 1 |]) a_ffi (ffi b [| k; n |] strides) mode;
+    Array.init n (fun j -> Int32.bits_of_float (Buf.get c j))
+  in
+  let by_rows = product rows [| n; 1 |] 1 in
+  ok "f32 row, B by columns gives B by rows' bits"
+    (product cols [| 1; k |] 1 = by_rows);
+  ok "f32 row, four threads give one thread's bits"
+    (product rows [| n; 1 |] 4 = by_rows);
+  let dot j =
+    let c = Buf.create Nx_dtype.float32 1 in
+    mm_ex
+      (ffi c [| 1; 1 |] [| 1; 1 |])
+      a_ffi
+      (ffi ~offset:(j * k) cols [| k; 1 |] [| 1; 1 |])
+      1;
+    Int32.bits_of_float (Buf.get c 0)
+  in
+  ok "f32 row, each output is the dot of the row and its column"
+    (List.for_all (fun j -> dot j = by_rows.(j)) [ 0; 1; 1023; 1024; n - 1 ]);
+  let column m strides mode =
+    let c = Buf.create Nx_dtype.float32 n in
+    mm_ex
+      (ffi c [| n; 1 |] [| 1; 1 |])
+      (ffi m [| n; k |] strides)
+      (ffi a [| k; 1 |] [| 1; 1 |])
+      mode;
+    Array.init n (fun j -> Int32.bits_of_float (Buf.get c j))
+  in
+  ok "f32 column, A b has the bits of b^T A^T, A by rows"
+    (column cols [| k; 1 |] 1 = by_rows);
+  ok "f32 column, A b has the bits of b^T A^T, A by columns"
+    (column rows [| 1; n |] 4 = by_rows)
+
 let () =
   Windtrap.run "nx C backend matmul"
     [
@@ -1066,5 +1149,6 @@ let () =
         [
           test "owned, workspace, and Accelerate paths" test_maintenance_paths;
           test "a 1x1 output sums in chunks" test_dot_path;
+          test "a row keeps the dot's arithmetic" test_row_path;
         ];
     ]

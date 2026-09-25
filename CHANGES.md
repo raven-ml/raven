@@ -2009,6 +2009,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx.matmul` and `Nx.dot` of a vector and a matrix, in either order,
+  are over 20 times faster at `bfloat16` and `float16` (a row times 2880 x 5760:
+  0.95 ms, not 21.8), and each output has the bits of its row-column dot.
 - Eager `Nx.dot` of two vectors, `Nx.vecdot` and `Nx.inner` are faster and
   more accurate, and give the same bits on any thread count or layout: a dot of
   2^20 `bfloat16` elements takes 0.06 ms, against 0.39 ms before.
