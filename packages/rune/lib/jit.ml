@@ -422,8 +422,7 @@ type state = {
          own cleanups *)
   st_takes_storage : int -> bool;
       (* the input positions whose storage replay may hand an output: consumed
-         leaves of a single-device program whose outputs are not in host
-         memory *)
+         leaves of a program whose outputs are not in host memory *)
   st_ctx : Nx_effect.context;
   table : F.Tensor.t Tensor_map.Tbl.t;
       (* tensors with bytes (captures, constants made while tracing) -> tolk
@@ -4058,8 +4057,8 @@ module Ops = Tolk_uop.Ops
    lends only what it does not read. The analyses are one pass over the schedule
    and one over the outputs' graph, with the consumed inputs as bitsets. Replay
    adds what only it knows: the input must have seeded from storage no program
-   binds. Programs on one device only; over several, a carry keeps two
-   generations. *)
+   binds. Over several devices a storage is one buffer per device, all of which
+   an output takes, so the partners' placements must be equal too. *)
 
 (* The buffers the memory planner must leave alone: those under the nodes replay
    binds (inputs, constants, outputs), and every buffer a staged loop mentions,
@@ -4341,7 +4340,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       st_devices = ds;
       st_decided = decided;
       refusal = None;
-      st_takes_storage = (fun i -> consumed i && (not zero_copy) && not multi);
+      st_takes_storage = (fun i -> consumed i && not zero_copy);
       st_ctx = Nx_effect.create_context ();
       table = Tensor_map.Tbl.create 64;
       captures = Tensor_map.Tbl.create 16;
@@ -4555,41 +4554,38 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           | None -> out)
         out_anch
   in
-  (* Canonicalize sharding before allocation: rewrite the multi-device rules
-     over the whole output graph now, so every split value reaching a sink is a
-     syntactic [Unshard] and buffer allocation sizes its output per slice
-     (copies allocate full-size on every device). Scheduling reapplies the same
-     rules; the rewrite is idempotent. *)
   let out_uops =
     let outs_u = List.map (fun (_, _, tt, _) -> F.Tensor.uop tt) out_anch in
-    match multi with
-    | false ->
-        (* Only an output can be given its starting value by replay. An indexed
-           write into any other buffer starts from its input by a copy in the
-           program, as a computed destination does. *)
-        let is_output b =
-          List.exists
-            (fun u ->
-              match written_buffer u with
-              | Some v -> U.buf_uop v == b
-              | None -> false)
-            outs_u
-        in
-        let kept, copied =
-          List.partition (fun (b, _) -> is_output b) st.prefills
-        in
-        st.prefills <- kept;
-        if copied = [] then outs_u
-        else
-          let filled (b, input) =
-            (b, U.after ~src:b ~deps:[ U.store ~dst:b ~value:input () ])
-          in
-          U.children
-            (U.substitute ~walk:true (List.map filled copied) (U.sink outs_u))
-    | true ->
-        let pre = U.sink outs_u in
-        let pre = U.graph_rewrite Tolk.Multi.multi_pm pre in
-        U.children pre
+    (* Only an output can be given its starting value by replay. An indexed
+       write into any other buffer starts from its input by a copy in the
+       program, as a computed destination does. *)
+    let is_output b =
+      List.exists
+        (fun u ->
+          match written_buffer u with
+          | Some v -> U.buf_uop v == b
+          | None -> false)
+        outs_u
+    in
+    let kept, copied = List.partition (fun (b, _) -> is_output b) st.prefills in
+    st.prefills <- kept;
+    let filled (b, input) =
+      (b, U.after ~src:b ~deps:[ U.store ~dst:b ~value:input () ])
+    in
+    let outs_u =
+      if copied = [] then outs_u
+      else
+        U.children
+          (U.substitute ~walk:true (List.map filled copied) (U.sink outs_u))
+    in
+    (* Canonicalize sharding before allocation: rewrite the multi-device rules
+       over the whole output graph now, so every split value reaching a sink is
+       a syntactic [Unshard] and buffer allocation sizes its output per slice
+       (copies allocate full-size on every device). Scheduling reapplies the
+       same rules; the rewrite is idempotent. *)
+    if multi then
+      U.children (U.graph_rewrite Tolk.Multi.multi_pm (U.sink outs_u))
+    else outs_u
   in
   (* An output's placement, read from its sharding: every value of the program
      is on its devices, split along the axis an [Unshard] cuts by the device
@@ -4855,7 +4851,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       |> Array.of_list
     in
     (* On the host, outputs are host buffers the kernels write in place. *)
-    if multi || zero_copy || consumed_inputs = [||] then []
+    if zero_copy || consumed_inputs = [||] then []
     else begin
       let m = mentions_of linear in
       let position = Hashtbl.create 16 in
@@ -4867,18 +4863,18 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       for j = Array.length results - 1 downto 0 do
         first_result.(results.(j)) <- result_names.(j)
       done;
-      (* The single-device outputs, each node once, in walk order. *)
+      (* The outputs, each node once, in walk order. *)
       let candidates =
         let seen = Hashtbl.create 8 in
         List.filter_map
-          (fun (k, _, u, _, _) ->
+          (fun (k, _, _, _, _) ->
             match cp_outputs.(k) with
-            | { o_node = Some node; o_value; _ } ->
+            | { o_node = Some node; _ } ->
                 let otag = U.tag node in
                 if Hashtbl.mem seen otag then None
                 else begin
                   Hashtbl.replace seen otag ();
-                  Some (k, otag, o_value, u)
+                  Some (k, otag)
                 end
             | _ -> None)
           out_conts
@@ -4887,7 +4883,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
          after the kernels, so only that output may take it. *)
       let returned = Hashtbl.create 8 in
       List.iter
-        (fun (_, otag, _, _) ->
+        (fun (_, otag) ->
           if Hashtbl.mem position otag then Hashtbl.replace returned otag ())
         candidates;
       let starts_from = Hashtbl.create 4 in
@@ -4895,11 +4891,13 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
         (fun (b, input) -> Hashtbl.replace starts_from (U.tag b) (U.tag input))
         st.prefills;
       let taken = Array.make (Array.length cp_inputs) false in
-      let lendable i (Packed (odt, ph)) =
+      let lendable i k =
+        let { o_value = Packed (odt, ph); o_place; _ } = cp_outputs.(k) in
         consumed i
         && (not taken.(i))
         && cp_inputs.(i).i_dtype = ND.to_string odt
-        && cp_inputs.(i).i_numel = numel (shape_of ph)
+        && cp_inputs.(i).i_numel = numel (local_shape o_place (shape_of ph))
+        && Nx.Placement.equal cp_inputs.(i).i_place o_place
       in
       let lends = ref [] and paired = Hashtbl.create 8 in
       let pair k otag i =
@@ -4913,13 +4911,13 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
          partner at no other index, and an output that returns its partner
          unchanged always. *)
       List.iter
-        (fun (k, otag, v, _) ->
+        (fun (k, otag) ->
           match Hashtbl.find_opt pairing k with
           | Some i ->
               let itag = U.tag cp_inputs.(i).i_node in
               let returns_it = Hashtbl.find_opt position otag = Some i in
               if
-                lendable i v
+                lendable i k
                 && (returns_it
                    || (not (Hashtbl.mem returned itag))
                       && (not (Hashtbl.mem reserved otag))
@@ -4940,13 +4938,13 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       in
       let rest =
         List.filter
-          (fun (_, otag, _, _) ->
+          (fun (_, otag) ->
             not
               (Hashtbl.mem paired otag
               || Hashtbl.mem starts_from otag
               || Hashtbl.mem reserved otag))
           candidates
-        |> List.stable_sort (fun (_, a, _, _) (_, b, _, _) ->
+        |> List.stable_sort (fun (_, a) (_, b) ->
             Int.compare (written a) (written b))
       in
       let free =
@@ -4955,12 +4953,12 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           (Array.to_list consumed_inputs)
       in
       List.iter
-        (fun (k, otag, v, _) ->
+        (fun (k, otag) ->
           match
             List.find_opt
               (fun i ->
                 let itag = U.tag cp_inputs.(i).i_node in
-                lendable i v
+                lendable i k
                 && (not (Hashtbl.mem returned itag))
                 && allows m ~strict:true ~itag ~otag)
               free
@@ -5148,7 +5146,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       match seeds.(i) with
       | Whole { cell; bufs } ->
           keep := Obj.repr leaf :: !keep;
-          seed_entry.(i) <- Some cell;
+          seed_entry.(i) <- Some (cell, bufs);
           seed inp.i_node bufs
       | Range { lo; span; bufs; _ } ->
           keep := Obj.repr leaf :: !keep;
@@ -5167,21 +5165,21 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
               upload_windows c.cp_scratch inp.i_place leaf c.cp_devices
                 inp.i_bufs))
     leaves;
-  (* Lending claims: an output takes the storage of its partner when the partner
-     seeded from storage that no program binds. *)
-  let claims : (int, Nx_effect.cell * store) Hashtbl.t = Hashtbl.create 4 in
+  (* Lending claims: an output takes the storage of its partner, its buffer on
+     each device in the program's order, when the partner seeded from storage
+     that no program binds. *)
+  let claims :
+      (int, Nx_effect.cell * store * Tolk.Device.Buffer.t list) Hashtbl.t =
+    Hashtbl.create 4
+  in
   List.iter
     (fun { l_otag; l_input; _ } ->
       match seed_entry.(l_input) with
-      | Some e when e.bound = 0 -> (
+      | Some ((e : Nx_effect.cell), bufs) when e.bound = 0 -> (
           match store_of e with
           | Some s ->
-              reused_bytes :=
-                !reused_bytes
-                + List.fold_left
-                    (fun a b -> a + Tolk.Device.Buffer.nbytes b)
-                    0 s.s_bufs;
-              Hashtbl.replace claims l_otag (e, s)
+              reused_bytes := !reused_bytes + s.s_nbytes;
+              Hashtbl.replace claims l_otag (e, s, bufs)
           | None -> ())
       | _ -> ())
     c.cp_lends;
@@ -5228,10 +5226,9 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
             end
           else if not (Hashtbl.mem out_bufs tag) then
             match Hashtbl.find_opt claims tag with
-            | Some (_, s) ->
-                if not reserved then
-                  Tolk.Realize.Buffers.seed c.cp_binding node (List.hd s.s_bufs);
-                Hashtbl.add out_bufs tag s.s_bufs
+            | Some (_, _, bufs) ->
+                if not reserved then seed node bufs;
+                Hashtbl.add out_bufs tag bufs
             | None ->
                 let bufs = fresh odt ph place in
                 if reserved then copies := (node, bufs) :: !copies
@@ -5255,21 +5252,23 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   (* An output an indexed write lands in starts from its input. One that claimed
      that input's storage already holds the value; any other is given it by a
      copy. *)
+  let node_bufs node =
+    match Tolk.Realize.Buffers.buffer_of_node c.cp_binding node with
+    | Tolk.Realize.Single b -> [ b ]
+    | Tolk.Realize.Multi m -> Tolk.Device.Multi_buffer.bufs m
+  in
+  let copy_into dsts srcs =
+    List.iter2 (fun dst src -> Tolk.Device.Buffer.copy_from ~dst ~src) dsts srcs
+  in
   List.iter
     (fun (node, i) ->
       let claimed =
         match (Hashtbl.find_opt claims (U.tag node), seed_entry.(i)) with
-        | Some (e, _), Some e' -> e == e'
+        | Some (e, _, _), Some (e', _) -> e == e'
         | _ -> false
       in
-      if not claimed then begin
-        let dst = Tolk.Realize.Buffers.of_buffer_node c.cp_binding node in
-        let src =
-          Tolk.Realize.Buffers.of_buffer_node c.cp_binding
-            c.cp_inputs.(i).i_node
-        in
-        Tolk.Device.Buffer.copy_from ~dst ~src
-      end)
+      if not claimed then
+        copy_into (node_bufs node) (node_bufs c.cp_inputs.(i).i_node))
     c.cp_prefills;
   (* Before the first kernel, every storage a consumed leaf reaches is marked
      consumed; nothing unmarks it. Its buffers stay until the kernels have read
@@ -5297,14 +5296,6 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   | exception e ->
       release ();
       raise e);
-  let copy_into dsts srcs =
-    List.iter2 (fun dst src -> Tolk.Device.Buffer.copy_from ~dst ~src) dsts srcs
-  in
-  let node_bufs node =
-    match Tolk.Realize.Buffers.buffer_of_node c.cp_binding node with
-    | Tolk.Realize.Single b -> [ b ]
-    | Tolk.Realize.Multi m -> Tolk.Device.Multi_buffer.bufs m
-  in
   (* An output that is an input or a capture returned unchanged keeps its
      reserved binding: its value is copied into the storage allocated for it, so
      it never aliases an input and survives later calls. A consumed input
@@ -5387,7 +5378,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                             mapped file. *)
                          let nolru =
                            match Hashtbl.find_opt claims tag with
-                           | Some (_, s) -> s.s_nolru
+                           | Some (_, s, _) -> s.s_nolru
                            | None -> false
                          in
                          Nx.P
@@ -5401,7 +5392,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
      it in queue order, after the kernels of this call. A storage a program
      binds stays for it (see [trace_compile]). *)
   let claimed cell =
-    Hashtbl.fold (fun _ (e, _) a -> a || e == cell) claims false
+    Hashtbl.fold (fun _ (e, _, _) a -> a || e == cell) claims false
   in
   List.iter
     (fun (_, cell, s) ->

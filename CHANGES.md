@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A consumed argument of `Rune.jit` over several devices lends its storage,
+  its buffer on every device, to the result that continues it, as on one
+  device: a carry or a pool written by index keeps one generation on each
+  device instead of two, and the pool is no longer copied before the write.
 - Inside `Rune.jit` over several devices, `Nx.scatter` into a split value, and
   a traced `Nx.set` window into a value split along its first axis, write each
   device's slice with the indexed kernel one device uses, which stores each

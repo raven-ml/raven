@@ -493,6 +493,54 @@ let test_consume_replicated_releases_every_copy () =
   raises_consumed (fun () -> to_arr w1);
   check_arr ~eps:0.0 ~msg:"value" (Array.make n 4.0) w2
 
+(* A consumed argument over several devices lends its storage, its buffer on
+   every device, to the result that continues it: a carry split or copied, and a
+   pool an indexed write lands in, which the program never copies. *)
+let test_consumed_storage_is_lent () =
+  let lent f x =
+    let before = (Rune.jit_stats ()).reused_bytes in
+    let y = f x in
+    (y, (Rune.jit_stats ()).reused_bytes - before)
+  in
+  let step =
+    Rune.jit
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x -> Nx.add_s (Nx.mul_s x 2.0) 1.0)
+  in
+  List.iter
+    (fun (msg, p, bytes) ->
+      let y, reused = lent step (Nx.place p (m86 ())) in
+      equal ~msg:(msg ^ ": placement") placement p (Nx.placement y);
+      equal ~msg:(msg ^ ": every buffer is lent") int bytes reused;
+      check_arr ~eps:0.0 ~msg (to_arr (Nx.add_s (Nx.mul_s (m86 ()) 2.0) 1.0)) y)
+    [
+      ("split", Nx.Placement.sharded ~axis:0 devs4, 48 * 4);
+      ("copied", Nx.Placement.replicated devs4, 4 * 48 * 4);
+    ];
+  List.iter
+    (fun axis ->
+      let write, pool, slots, values = pool_rows ~axis in
+      let msg = Printf.sprintf "a pool split along axis %d" axis in
+      let expected = to_arr (write slots values pool) in
+      let f =
+        Rune.jit
+          Nx.Ptree.(consumes tensor @@ returns tensor)
+          (write slots values)
+      in
+      let y, reused = lent f (Nx.copy pool) in
+      equal ~msg:(msg ^ ": the pool is lent") int (64 * 4) reused;
+      check_arr ~eps:0.0 ~msg expected y;
+      (* Written and only read, the pool is filled in the program. *)
+      let g =
+        Rune.jit
+          Nx.Ptree.(consumes tensor @@ returns tensor)
+          (fun pool -> Nx.sum ~axes:[ 1; 2 ] (write slots values pool))
+      in
+      check_arr ~msg:(msg ^ ", only read")
+        (to_arr (Nx.sum ~axes:[ 1; 2 ] (write slots values pool)))
+        (g (Nx.copy pool)))
+    [ 0; 1 ]
+
 (* A capture over the storage a consumed argument reaches raises before the
    call, and nothing is consumed. *)
 let test_a_capture_of_consumed_storage_raises () =
@@ -802,6 +850,8 @@ let tests =
       [
         test "a split state loop is bounded at two generations"
           test_consume_split_state;
+        test "consumed storage is lent on every device"
+          test_consumed_storage_is_lent;
         test "consuming copies releases every copy"
           test_consume_replicated_releases_every_copy;
         test "a capture of consumed storage raises"
