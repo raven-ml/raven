@@ -668,6 +668,35 @@ let test_adafactor_factors_matrices () =
     [ ([||], [||]); ([||], [||]); ([| 2; 3 |], [| 3 |]) ]
     (shapes (Vega.adafactor_init Wb.ptree ~factored:false params))
 
+(* A leaf that is not a float holds zeros of its own shape in every part of the
+   state, as in the other states, and the step leaves it and them unchanged. A
+   vector leaf used to hold a scalar zero in [nu_row] and [nu_col], which does
+   not have the shape of the leaf its slot is typed as. *)
+let test_adafactor_carries_an_int_leaf () =
+  let p = Nx.Ptree.(pair tensor tensor) in
+  let count = Nx.create Nx.int32 [| 2 |] [| 3l; 7l |] in
+  let params = (Nx.create Nx.float64 [| 2; 3 |] (Array.make 6 1.0), count) in
+  let grads = (Nx.full Nx.float64 [| 2; 3 |] 0.5, Nx.zeros Nx.int32 [| 2 |]) in
+  let check_state msg (st : _ Vega.adafactor_state) =
+    List.iter
+      (fun (name, (_, c)) ->
+        equal
+          ~msg:
+            (Printf.sprintf "%s: %s holds zeros of the leaf's shape" msg name)
+          (array int32) [| 0l; 0l |] (Nx.to_array c))
+      [ ("nu_row", st.nu_row); ("nu_col", st.nu_col); ("nu", st.nu) ]
+  in
+  let st = Vega.adafactor_init p params in
+  check_state "init" st;
+  let (w', count'), st' =
+    Vega.adafactor_step p ~lr:(Vega.lr 0.01) st ~params ~grads
+  in
+  equal ~msg:"the int leaf is unchanged" (array int32) [| 3l; 7l |]
+    (Nx.to_array count');
+  is_true ~msg:"the float leaf moves"
+    (Nx.to_array w' <> Nx.to_array (fst params));
+  check_state "step" st'
+
 (* Precision *)
 
 (* Every step, one step on a float16 or bfloat16 leaf. At the leaf's dtype,
@@ -1287,6 +1316,7 @@ let tests =
           test_adafactor_unfactored_trajectory;
         test "adafactor factors the leaves of two axes"
           test_adafactor_factors_matrices;
+        test "adafactor carries an int leaf" test_adafactor_carries_an_int_leaf;
         test "steps reject bad hyperparameters" test_ported_steps_validate;
       ];
     group "precision"

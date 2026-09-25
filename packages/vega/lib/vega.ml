@@ -700,10 +700,13 @@ let adafactor_ptree p = Nx.Ptree.nest (module Adafactor_state) p
 (* A factored leaf keeps its statistics in [nu_row] and [nu_col], any other in
    [nu], and the parts a leaf does not use hold a scalar zero. So the state
    records which leaves are factored: those whose [nu] has fewer axes than the
-   leaf itself. *)
+   leaf itself. A leaf the step does not update is never factored and holds
+   zeros of its own shape in every part, as it does in every other state. *)
 let adafactor_init p ?(factored = true) params =
-  let factors x = factored && Nx.ndim x >= 2 in
-  let unused x = Nx.zeros (Nx.dtype x) [||] in
+  let factors x = factored && updates x && Nx.ndim x >= 2 in
+  let unused x =
+    if updates x then Nx.zeros (Nx.dtype x) [||] else Nx.zeros_like x
+  in
   let factor axis x =
     if factors x then (
       let shape = Array.copy (Nx.shape x) in

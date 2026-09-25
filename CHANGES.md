@@ -80,6 +80,10 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- `adafactor_init` gives a leaf that is not a float, such as an RNG key or a
+  counter, zeros of its own shape in every part of the state, as the other
+  states do. A vector leaf held a scalar zero, a value its slot's type does not
+  admit.
 - Steps compute at float32, or float64 for a float64 leaf, and store each leaf
   at its own dtype: `adam_step` no longer returns NaN on float16 or bfloat16
   leaves, and RAdam switches at the exact step with its rectification accurate
