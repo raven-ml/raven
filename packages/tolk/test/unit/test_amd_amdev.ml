@@ -367,7 +367,11 @@ type fake_dev = {
 let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
     ?(mp1 = (13, 0, 10)) ?(mmhub = (3, 0, 0)) ?(sdma = (6, 0, 2))
     ?(bif = (4, 3, 0)) ?(osssys = (6, 0, 0)) ?(extra_ips = [])
-    ?(harvested = []) ?(pre = fun _ -> ()) f =
+    ?(harvested = []) ?(pre = fun _ -> ())
+    ?(read_config = fun ~offset ~size ->
+        equal int 0 offset;
+        equal int 2 size;
+        0x1002) f =
   with_fake_vram 0x2000000 (fun vram ->
       let store = Hashtbl.create 16 in
       let reads = Hashtbl.create 16 in
@@ -411,7 +415,7 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
           ()
       in
       let dev =
-        Amdev.make ~rreg ~wreg ~vram
+        Amdev.make ~read_config ~rreg ~wreg ~vram
           ~doorbell64:(Mmio.view vram ~off:0 ~size:0x1000 ())
           ~mmio:(Mmio.view vram ~off:0 ~size:0x1000 ())
           ~vram_size:(Mmio.size vram) ~large_bar:true ~reserved_vram_size:0
@@ -1448,6 +1452,69 @@ let () =
                     (list (pair int int))
                     [ (resp, 0); (arg, 0); (msg, 0x2f) ]
                     (List.rev !(fd.log))));
+          test "mode1_reset waits for PCI vendor readiness" (fun () ->
+              let reads = ref 0 in
+              let reset_sent = ref false in
+              let read_config ~offset ~size =
+                equal int 0 offset;
+                equal int 2 size;
+                is_true ~msg:"reset precedes config polling" !reset_sent;
+                incr reads;
+                match !reads with 1 -> 0xffff | 2 -> 0x10de | _ -> 0x1002
+              in
+              with_fake_dev ~mp0:(13, 0, 6) ~mp1:(13, 0, 6) ~read_config
+                (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  let resp, _, msg = smu_addrs fd in
+                  Hashtbl.replace fd.wr_hooks msg (fun _ ->
+                      reset_sent := true;
+                      Hashtbl.replace fd.store resp 1);
+                  let start = Amdev.now_ms fd.dev in
+                  Smu.mode1_reset smu;
+                  equal int 3 !reads;
+                  is_true ~msg:"reset settles before returning"
+                    (Amdev.now_ms fd.dev - start >= 500)));
+          test "mode1_reset stops on PCI readiness timeout" (fun () ->
+              let reads = ref 0 in
+              let read_config ~offset ~size =
+                equal int 0 offset;
+                equal int 2 size;
+                incr reads;
+                0xffff
+              in
+              with_fake_dev ~mp0:(13, 0, 6) ~mp1:(13, 0, 6) ~read_config
+                (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  let start = Amdev.now_ms fd.dev in
+                  raises_match
+                    (function
+                      | Am_ip.Timeout_error msg ->
+                          has_substring msg "gpu did not return from mode1 reset"
+                          && has_substring msg "reboot required"
+                      | _ -> false)
+                    (fun () -> Smu.mode1_reset smu);
+                  is_true ~msg:"config was polled" (!reads > 1);
+                  let elapsed = Amdev.now_ms fd.dev - start in
+                  is_true ~msg:"500ms settling plus bounded 2s readiness"
+                    (elapsed >= 2500 && elapsed < 2520)));
+          test "mode1_reset leaves hive readiness to the group" (fun () ->
+              let read_config ~offset ~size =
+                fail (Printf.sprintf "unexpected hive config read at %d/%d" offset size)
+              in
+              with_fake_dev ~gc:(9, 4, 3) ~mmhub:(1, 8, 0)
+                ~mp0:(13, 0, 6) ~mp1:(13, 0, 6) ~read_config
+                ~pre:(fun store ->
+                  Hashtbl.replace store (0x8000 + 0x957) 0x32;
+                  Hashtbl.replace store (0x8000 + 0x958) 0x40)
+                (fun fd ->
+                  is_true ~msg:"scripted hive" (Amdev.is_hive fd.dev);
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  let start = Amdev.now_ms fd.dev in
+                  Smu.mode1_reset smu;
+                  is_true ~msg:"no settling delay for individual hive members"
+                    (Amdev.now_ms fd.dev - start < 500)));
           test "is_smu_alive polls the response register" (fun () ->
               with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
                   let smu = Smu.create fd.dev in

@@ -695,6 +695,7 @@ external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
 
 type t = {
   pci_dev : System.Pci_device.t option;
+  read_config : offset:int -> size:int -> int;
   devfmt : string;
   vram : Mmio.t;
   doorbell64 : Mmio.t;
@@ -717,6 +718,7 @@ type t = {
 }
 
 let pci_dev t = t.pci_dev
+let read_config t ~offset ~size = t.read_config ~offset ~size
 let devfmt t = t.devfmt
 let vram t = t.vram
 let doorbell64 t = t.doorbell64
@@ -919,7 +921,7 @@ let gmc_state reg =
   (is_hive, paddr_base, fb_base + paddr_base)
 
 let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
-    ?(on_range_mapped = ref (fun () -> ())) ~rreg ~wreg ~vram ~doorbell64
+    ?(on_range_mapped = ref (fun () -> ())) ~read_config ~rreg ~wreg ~vram ~doorbell64
     ~mmio ~vram_size ~large_bar ~reserved_vram_size ~discovery ~mm ~devfmt ()
     =
   let rreg, wreg, reg =
@@ -928,6 +930,7 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
   let is_hive, paddr_base, mc_base = gmc_state (reg 0) in
   {
     pci_dev;
+    read_config;
     devfmt;
     vram;
     doorbell64;
@@ -1002,6 +1005,7 @@ let create pci_dev =
   in
   {
     pci_dev = Some pci_dev;
+    read_config = System.Pci_device.read_config pci_dev;
     devfmt;
     vram;
     doorbell64;

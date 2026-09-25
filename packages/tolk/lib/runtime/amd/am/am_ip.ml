@@ -532,7 +532,16 @@ module Smu = struct
          1
      else
        send_msg t (require "PPSMC_MSG_Mode1Reset" M.ppsmc_msg_mode1reset) 0);
-    if not (Amdev.is_hive t.adev) then sleep_ms t.adev 500 (* 500ms *)
+    if not (Amdev.is_hive t.adev) then begin
+      sleep_ms t.adev 500;
+      (* Config reads fail fast on a wedged GPU. MMIO can instead block
+         until the root port's PCIe completion timeout. *)
+      wait_cond t.adev ~timeout_ms:2000 ~value:0x1002
+        ~msg:(Printf.sprintf
+          "am %s: gpu did not return from mode1 reset, reboot required"
+          (Amdev.devfmt t.adev))
+        (fun () -> Amdev.read_config t.adev ~offset:0 ~size:2)
+    end
 
   (* ip.py:197 read_table *)
   let read_table t ~size arg =

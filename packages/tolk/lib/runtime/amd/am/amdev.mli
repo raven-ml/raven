@@ -236,7 +236,7 @@ val create : Tolk_hcq.System.Pci_device.t -> t
     doorbell and register BARs, sizes VRAM, reads and parses the IP
     discovery table, resolves register families for the discovered IP
     versions, reads the die's address topology (see {!paddr2mc}), and
-    creates the device memory manager (a 32MB boot region, a dedicated
+    creates the device memory manager (a 3 MiB boot region, a dedicated
     page-table region when VRAM exceeds the VRAM BAR, and the main
     region behind them; four page-table levels over a 48-bit virtual
     space shared by all devices). The device starts in the booting
@@ -249,6 +249,7 @@ val make :
   ?now_ms:(unit -> int) ->
   ?is_booting:bool ref ->
   ?on_range_mapped:(unit -> unit) ref ->
+  read_config:(offset:int -> size:int -> int) ->
   rreg:(int -> int) ->
   wreg:(int -> int -> unit) ->
   vram:Tolk_hcq.Hcq.Mmio.t ->
@@ -262,12 +263,14 @@ val make :
   devfmt:string ->
   unit ->
   t
-(** [make ~rreg ~wreg ... ()] is a device over caller-provided parts:
+(** [make ~read_config ~rreg ~wreg ... ()] is a device over caller-provided parts:
     every register access goes through [rreg] and [wreg] (32-bit values
     at absolute dword addresses, replacing the register-BAR path of
     {!create} entirely), the BAR mappings, discovery table and memory
     manager are taken as given, and [now_ms] is the monotonic
     millisecond clock behind {!now_ms} (defaults to the system's).
+    [read_config] supplies PCI configuration reads at byte offsets,
+    including vendor readiness after a reset.
     Construction reads the address-topology registers through [rreg],
     so they must already answer (see {!paddr2mc}).
 
@@ -285,6 +288,11 @@ val make :
 val pci_dev : t -> Tolk_hcq.System.Pci_device.t option
 (** [pci_dev t] is the underlying PCI device; [None] for devices built
     by {!make} without one. *)
+
+val read_config : t -> offset:int -> size:int -> int
+(** [read_config t ~offset ~size] reads the little-endian value of [size]
+    bytes at byte [offset] in PCI configuration space. Read failures
+    propagate from the underlying device or supplied reader. *)
 
 val devfmt : t -> string
 (** [devfmt t] is the device's PCI bus address, for messages. *)

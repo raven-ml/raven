@@ -68,8 +68,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   on hardware, including compute changes from video-labelled commits.
 - Regenerate consumed AMD register tables and firmware hashes from the frozen
   target instead of old-pin inputs plus selected handwritten additions. Port
-  the consumed SMU/PSP 13.0.15 branches coherently, and poll PCI configuration
-  readiness after non-hive mode1 reset before resuming MMIO. Restore target
+  the consumed SMU/PSP 13.0.15 branches coherently. Restore target
   firmware retrieval/cache behavior when installed blobs are missing or have
   different hashes, using existing fetch facilities without new dependencies.
   Replace test-driven busy-spin delays with actual production sleeps and a

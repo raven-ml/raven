@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD mode1 reset now waits for PCI configuration readiness before resuming
+  MMIO, avoiding access to a device that has not returned from reset.
+  Non-hive devices report a bounded readiness timeout.
+
 - Execution and JIT replay now use owned `BUFFER` nodes and explicit `PARAM`
   arguments. Remove `Realize.Buffers` and the `Jit.call` buffer resolver; Rune
   inputs, arenas and nested loops use per-invocation parameter scopes.

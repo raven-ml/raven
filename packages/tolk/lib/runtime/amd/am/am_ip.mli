@@ -191,8 +191,11 @@ module Smu : sig
   val mode1_reset : t -> unit
   (** [mode1_reset t] asks the firmware to reset the whole device,
       through the message the device's generation expects, and gives
-      the hardware 500ms to settle (skipped on multi-die fabrics, which
-      reset as a group elsewhere). *)
+      the hardware 500ms to settle. It then waits up to 2 seconds for
+      the AMD vendor ID in PCI configuration space before callers can
+      resume register access. Raises {!Timeout_error} if the device
+      does not return. Multi-die fabrics skip both waits so every member
+      can receive its reset before the group waits. *)
 
   val read_table : t -> size:int -> int -> bytes
   (** [read_table t ~size arg] asks the firmware to export the table
