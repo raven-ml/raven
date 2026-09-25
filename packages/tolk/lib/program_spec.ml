@@ -54,16 +54,24 @@ module Estimates = struct
 
   let zero = { ops = Int 0; lds = Int 0; mem = Int 0 }
 
+  let of_integer n =
+    if Z.fits_int n then Int (Z.to_int n)
+    else Symbolic (U.const (Const.integer Dtype.weakint n))
+
+  let of_node node =
+    match U.const_int_value node with
+    | Some n -> Int n
+    | None -> Symbolic node
+
+  let as_node = function
+    | Int n -> U.const_int n
+    | Symbolic node -> U.cast ~src:node ~dtype:Dtype.weakint
+
   let add_estimate a b =
     match (a, b) with
-    | Int a, Int b -> Int (a + b)
-    | Symbolic s, Int 0 | Int 0, Symbolic s -> Symbolic s
-    | Symbolic a, Int b ->
-        Symbolic (U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:(U.const_int b))
-    | Int a, Symbolic b ->
-        Symbolic (U.alu_binary ~op:Ops.Add ~lhs:(U.const_int a) ~rhs:b)
-    | Symbolic a, Symbolic b ->
-        Symbolic (U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b)
+    | Int 0, x | x, Int 0 -> x
+    | Int a, Int b -> of_integer (Z.add (Z.of_int a) (Z.of_int b))
+    | _ -> Symbolic (U.alu_binary ~op:Ops.Add ~lhs:(as_node a) ~rhs:(as_node b))
 
   let ( + ) a b =
     {
@@ -95,19 +103,13 @@ module Estimates = struct
     match (a, b) with
     | Int 0, _ | _, Int 0 -> Int 0
     | Int 1, x | x, Int 1 -> x
-    | Int a, Int b -> Int (a * b)
-    | Symbolic a, Symbolic b ->
-        Symbolic (U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b)
-    | Symbolic a, Int b ->
-        Symbolic (U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:(U.const_int b))
-    | Int a, Symbolic b ->
-        Symbolic (U.alu_binary ~op:Ops.Mul ~lhs:(U.const_int a) ~rhs:b)
+    | Int a, Int b -> of_integer (Z.mul (Z.of_int a) (Z.of_int b))
+    | _ -> Symbolic (U.alu_binary ~op:Ops.Mul ~lhs:(as_node a) ~rhs:(as_node b))
 
-  (* Concrete lower of two estimates. Symbolic operands are left uncapped:
-     the [Int | Symbolic] model has no symbolic minimum, so the accumulated
-     (over-)estimate stands rather than fabricating a bound. *)
   let min_estimate a b =
-    match (a, b) with Int a, Int b -> Int (min a b) | _ -> a
+    match (a, b) with
+    | Int a, Int b -> Int (min a b)
+    | _ -> of_node (U.smin [ as_node a; as_node b ])
 
   (* A trip count read from memory (a loop bounded by a loaded id) is known
      only when the kernel runs, so it counts at its upper bound. No tinygrad
@@ -116,8 +118,8 @@ module Estimates = struct
     match U.const_int_value u with
     | Some n -> Int n
     | None
-      when List.exists (fun n -> U.op n = Ops.Load) (U.backward_slice u) ->
-        Int (Bound.to_int (U.vmax u))
+      when U.op u = Ops.Load || List.exists (fun n -> U.op n = Ops.Load) (U.backward_slice u) ->
+        of_integer (Bound.integer (U.vmax u))
     | None -> Symbolic u
 
   let rec add_reachable set u =
@@ -158,7 +160,7 @@ module Estimates = struct
 
   (* Bytes touched by a single access to [u]: one lane per shape element,
      each the width of the scalar element type. *)
-  let access_bytes u = U.max_numel u * Dtype.itemsize (U.dtype u)
+  let access_bytes u = mul_estimate (Int (U.max_numel u)) (Int (Dtype.itemsize (U.dtype u)))
 
   let of_program (program : program) =
     let ignored = U.Tbl.create 64 in
@@ -169,8 +171,8 @@ module Estimates = struct
     let caps = Hashtbl.create 16 in
     let mults = ref (Int 1) in
     let mult_stack = Stack.create () in
-    let add_ops n = ops := add_estimate !ops (mul_estimate !mults (Int n)) in
-    let add_lds n = lds := add_estimate !lds (mul_estimate !mults (Int n)) in
+    let add_ops n = ops := add_estimate !ops (mul_estimate !mults n) in
+    let add_lds n = lds := add_estimate !lds (mul_estimate !mults n) in
     let add_mem buf op bytes =
       match slot_of_define buf with
       | None -> ()
@@ -180,12 +182,11 @@ module Estimates = struct
             match Hashtbl.find_opt mem key with Some v -> v | None -> Int 0
           in
           Hashtbl.replace mem key
-            (add_estimate prev (mul_estimate !mults (Int bytes)));
+            (add_estimate prev (mul_estimate !mults bytes));
           (* Re-reads of a buffer count each byte at most once, so accumulated
              traffic is capped at the buffer's own footprint. *)
           if not (Hashtbl.mem caps slot) then
-            Hashtbl.replace caps slot
-              (Int (U.max_numel buf * Dtype.itemsize (U.dtype buf)))
+            Hashtbl.replace caps slot (access_bytes buf)
     in
     List.iter (fun u ->
       begin match U.op u with
@@ -201,7 +202,8 @@ module Estimates = struct
           (match U.as_store u with
            | Some sv ->
                if not (is_reg_access sv.dst) then
-                 add_lds (U.max_numel u * Dtype.itemsize (U.dtype sv.value));
+                 add_lds (mul_estimate (Int (U.max_numel u))
+                   (Int (Dtype.itemsize (U.dtype sv.value))));
                Option.iter
                  (fun buf -> add_mem buf Ops.Store (access_bytes sv.dst))
                  (trace_to_buffer_uop sv.dst)
@@ -234,15 +236,16 @@ module Estimates = struct
            | Some sv -> mults := mul_estimate !mults (estimate_of_size sv.size)
            | None -> ())
       | Ops.Mulacc when not (U.Tbl.mem ignored u) ->
-          add_ops (2 * U.max_numel u)
+          add_ops (mul_estimate (Int 2) (Int (U.max_numel u)))
       | op when Ops.Group.is_alu op && not (U.Tbl.mem ignored u) ->
-          add_ops (U.max_numel u)
+          add_ops (Int (U.max_numel u))
       | Ops.Wmma when not (U.Tbl.mem ignored u) ->
           (match U.as_wmma u with
            | Some { info; _ } ->
                let m, n, k = info.dims in
-               add_ops (2 * m * n * k / info.threads)
-           | None -> add_ops 2)
+               add_ops (of_integer Z.(div (of_int 2 * of_int m * of_int n * of_int k)
+                 (of_int info.threads)))
+           | None -> add_ops (Int 2))
       | _ -> ())
       program;
     let mem =
@@ -259,11 +262,7 @@ module Estimates = struct
     let ops =
       match !ops with
       | Int _ as ops -> ops
-      | Symbolic ops ->
-          let ops = Symbolic.simplify ops in
-          match U.const_int_value ops with
-          | Some n -> Int n
-          | None -> Symbolic ops
+      | Symbolic _ as ops -> of_node (Symbolic.simplify (as_node ops))
     in
     { ops; lds = !lds; mem }
 end

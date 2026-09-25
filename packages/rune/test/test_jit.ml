@@ -918,7 +918,7 @@ let test_scan_carry_written_in_place () =
       ignore (g c0);
       let before = !Tolk.Helpers.Global_counters.global_mem in
       let c, ys = g c0 in
-      let bytes = !Tolk.Helpers.Global_counters.global_mem - before in
+      let bytes = Z.to_int (Z.sub !Tolk.Helpers.Global_counters.global_mem before) in
       let msg what = Printf.sprintf "%s (read_old %b)" what read_old in
       check_arr ~msg:(msg "cache") (to_arr expected_c.cache) c.cache;
       check_arr ~msg:(msg "state") (to_arr expected_c.h) c.h;
@@ -1964,7 +1964,7 @@ let test_argsort_is_not_quadratic () =
   ignore (g x);
   let before = !Tolk.Helpers.Global_counters.global_ops in
   ignore (g x);
-  let ops = !Tolk.Helpers.Global_counters.global_ops - before in
+  let ops = Z.to_int (Z.sub !Tolk.Helpers.Global_counters.global_ops before) in
   satisfies
     ~msg:(Printf.sprintf "%d operations for %d entries" ops n)
     ~claim:"fewer than n^2" int

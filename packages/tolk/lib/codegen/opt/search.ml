@@ -428,7 +428,7 @@ let program_ops program var_vals =
   match kernel.estimates with
   | None -> 0.
   | Some {ops = U.Int n; _} -> Float.of_int n
-  | Some {ops = U.Sym node; _} -> Float.of_int (U.sym_infer node var_vals)
+  | Some {ops = U.Sym node; _} -> Z.to_float (U.sym_infer_z node var_vals)
 
 let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
     (s : P.t) (rawbufs : Device.Buffer.t list) ~var_vals (amt : int)

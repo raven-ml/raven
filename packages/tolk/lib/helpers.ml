@@ -292,16 +292,16 @@ let size_to_str s =
 (* [mem_used] and [mem_used_per_device] follow live allocations and are not
    reset. *)
 module Global_counters = struct
-  let global_ops = ref 0
-  let global_mem = ref 0
+  let global_ops = ref Z.zero
+  let global_mem = ref Z.zero
   let time_sum_s = ref 0.0
   let kernel_count = ref 0
   let mem_used = Tolk_uop.Storage.mem_used
   let mem_used_per_device = Tolk_uop.Storage.mem_used_per_device
 
   let reset () =
-    global_ops := 0;
-    global_mem := 0;
+    global_ops := Z.zero;
+    global_mem := Z.zero;
     time_sum_s := 0.0;
     kernel_count := 0
 end

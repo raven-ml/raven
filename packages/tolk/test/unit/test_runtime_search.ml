@@ -557,6 +557,7 @@ let candidate_program_metadata () =
   let backing = cpu "beam-program-buffers" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
   let compiled = ref 0 and timed = ref 0 and expected = ref [] in
+  let estimates = ref None in
   let runtime (obj : Tiny_elf.t) =
     equal string "callback-arch" obj.target.arch;
     is_true ~msg:"timing retains the callback PROGRAM, changing only launch size"
@@ -587,7 +588,7 @@ let candidate_program_metadata () =
     let children = Array.copy (U.src program) in
     let kernel = Option.get (U.as_kernel_info children.(0)) in
     children.(0) <- U.replace children.(0)
-        ~arg:(U.Arg.Kernel_info {kernel with estimates = None}) ();
+        ~arg:(U.Arg.Kernel_info {kernel with estimates = !estimates}) ();
     let program = U.replace program ~src:children ~arg:(U.Arg.Program_info info) () in
     let scaled = U.replace program ~arg:(U.Arg.Program_info {info with
         global_size = [U.Launch_int 65536; U.Launch_int 1; U.Launch_int 1]}) () in
@@ -614,7 +615,14 @@ let candidate_program_metadata () =
       Unix.putenv "BEAM_UOPS_MAX" "0";
       search ();
       is_true ~msg:"accepted candidates use the supplied constructor" (!compiled > 0);
-      is_true ~msg:"PROGRAMs without estimates can still be timed" (!timed > 0))
+      is_true ~msg:"PROGRAMs without estimates can still be timed" (!timed > 0);
+      estimates := Some { U.ops = U.Sym (U.const
+          (C.integer D.weakint (Z.shift_left Z.one 100)));
+        lds = U.Int 0; mem = U.Int 0 };
+      timed := 0;
+      search ();
+      is_true ~msg:"exact costs beyond host integers can still be ranked and timed"
+        (!timed > 0))
 
 (* Entry *)
 

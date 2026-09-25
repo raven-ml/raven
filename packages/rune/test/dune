@@ -45,6 +45,7 @@
   nx.buffer
   nx.effect
   tolk
+  zarith
   unix
   windtrap
   rune_test_support))
@@ -58,7 +59,7 @@
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries unix rune nx nx.quant tolk windtrap))
+ (libraries unix rune nx nx.quant tolk zarith windtrap))
 
 (tests
  (names test_jit_alignment)

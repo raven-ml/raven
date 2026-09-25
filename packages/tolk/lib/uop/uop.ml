@@ -3294,7 +3294,7 @@ let exec_alu op (target : Dtype.t) args =
 (* Host symbolic evaluation follows Python scalar arithmetic, not storage
    conversion: integer intermediates remain exact and float casts use double
    precision. Reuse scalar ALU semantics without a second operator table. *)
-let sym_infer u var_vals =
+let sym_infer_z u var_vals =
   let values = Tbl.create 16 in
   let unsupported u =
     invalid_arg ("sym_infer: unsupported scalar " ^ Ops.name (op u)) in
@@ -3339,12 +3339,14 @@ let sym_infer u var_vals =
         Tbl.add values u value;
         value in
   match Const.view (eval (simplify u)) with
-  | Const.Int value ->
-      (match integer_as_native value with
-       | Some value -> value
-       | None -> invalid_arg "sym_infer: result does not fit a host integer")
-  | Const.Bool value -> Bool.to_int value
+  | Const.Int value -> value
+  | Const.Bool value -> Z.of_int (Bool.to_int value)
   | _ -> invalid_arg "sym_infer: expression did not evaluate to an integer"
+
+let sym_infer u var_vals =
+  match integer_as_native (sym_infer_z u var_vals) with
+  | Some value -> value
+  | None -> invalid_arg "sym_infer: result does not fit a host integer"
 
 let program_launch_dim var_vals = function
   | Launch_int n -> Launch_value_int n

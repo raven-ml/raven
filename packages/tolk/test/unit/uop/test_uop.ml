@@ -1604,6 +1604,11 @@ let sym_infer_host_scalars () =
   equal int 0 (Uop.sym_infer Uop.O.(n * Uop.const_int 0) []);
   let bound = Uop.bind ~var:n ~value:(Uop.const_int 7) in
   equal int 9 (Uop.sym_infer Uop.O.(bound + Uop.const_int 1) ["host_n", 8L]);
+  equal string (Z.to_string (Z.shift_left Z.one 64))
+    (Z.to_string (Uop.sym_infer_z Uop.O.(n * n) ["host_n", 0x1_0000_0000L]));
+  equal string (Z.to_string (Z.shift_left Z.one 100))
+    (Z.to_string (Uop.sym_infer_z
+      (Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one 100))) []));
   raises (Invalid_argument "sym_infer: result does not fit a host integer")
     (fun () -> Uop.sym_infer Uop.O.(n * n) ["host_n", 0x1_0000_0000L]);
   raises (Invalid_argument "sym_infer: missing variable \"host_n\"")

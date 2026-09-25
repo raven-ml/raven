@@ -565,6 +565,27 @@ let () =
         ];
       group "Linear execution"
         [
+          test "execution counters retain exact large costs" (fun () ->
+            let state = runtime_state () in
+            let device = test_device state in
+            let cost = Z.shift_left Z.one 100 in
+            let estimates : U.estimates = {
+              ops = U.Sym (U.const (Const.integer Dtype.weakint cost));
+              mem = U.Int max_int; lds = U.Int 0 } in
+            let ki = { (kernel_info "large_cost") with estimates = Some estimates } in
+            let body = program_of (U.sink ~kernel_info:ki []) in
+            let call = U.call ~body ~args:[] ~info:(call_info None) in
+            let module G = Helpers.Global_counters in
+            let ops = !G.global_ops and mem = !G.global_mem in
+            for _ = 1 to 2 do
+              Realize.run_linear ~device ~to_program:(fun _ body -> program_of body)
+                (U.linear [call])
+            done;
+            equal int 0 state.nbufs;
+            equal string (Z.to_string (Z.mul (Z.of_int 2) cost))
+              (Z.to_string (Z.sub !G.global_ops ops));
+            equal string (Z.to_string (Z.mul (Z.of_int 2) (Z.of_int max_int)))
+              (Z.to_string (Z.sub !G.global_mem mem)));
           test "runs a kernel call with resolved buffers" (fun () ->
             let state = runtime_state () in
             let device = test_device state in

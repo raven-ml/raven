@@ -1644,16 +1644,20 @@ val symbolic_vars : t -> (t * string * Bound.t * Bound.t) list
 (** [symbolic_vars u] is the named, bounded variables [u] reaches, each as
     [(node, name, vmin, vmax)]. *)
 
-val sym_infer : t -> (string * int64) list -> int
-(** [sym_infer u var_vals] is the integer [u] evaluates to once its variables
-    take their signed 64-bit values in [var_vals]. Integer intermediates are
-    exact; only the result must fit a host integer. Casts
-    convert scalar kinds without narrowing to storage widths; bitcasts retain
-    the source representation. Floating-point intermediates use host double
+val sym_infer_z : t -> (string * int64) list -> Z.t
+(** [sym_infer_z u var_vals] is the exact integer [u] evaluates to once its
+    variables take their signed 64-bit values in [var_vals]. Casts convert
+    scalar kinds without narrowing to storage widths; bitcasts retain the
+    source representation. Floating-point intermediates use host double
     precision, as in tinygrad's Python evaluator.
 
     Raises [Invalid_argument] if a required variable is missing, a scalar
-    operation is unsupported, or the result is not a host-sized integer. *)
+    operation is unsupported, or the result is not an integer. *)
+
+val sym_infer : t -> (string * int64) list -> int
+(** [sym_infer u var_vals] is {!sym_infer_z} converted to a host integer.
+    Raises [Invalid_argument] if evaluation fails or the result does not fit
+    a host integer. Integer intermediates remain exact. *)
 
 val exec_alu : Ops.t -> Dtype.t -> Const.t list -> Const.t option
 (** [exec_alu op target args] folds ALU op [op] applied to

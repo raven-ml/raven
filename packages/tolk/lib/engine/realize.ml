@@ -538,10 +538,8 @@ let launch_geometry (info : Tolk_uop.Uop.program_info) ~var_vals =
 let get_call_name call bufs var_vals =
   let module U = Tolk_uop.Uop in
   let size_str u =
-    let numel =
-      List.fold_left (fun n d -> n * U.sym_infer d var_vals) 1 (U.shape u)
-    in
-    Helpers.size_to_str (numel * Tolk_uop.Dtype.itemsize (U.dtype u))
+    let bytes = U.O.(U.sprod (U.shape u) * U.const_int (Tolk_uop.Dtype.itemsize (U.dtype u))) in
+    Helpers.size_to_str (U.sym_infer bytes var_vals)
   in
   let dev_str buf =
     let name = Device.Buffer.device buf in
@@ -578,9 +576,12 @@ let estimate_uop call =
           match args with
           | dest :: _ ->
               let nbytes =
-                U.max_numel dest * Tolk_uop.Dtype.itemsize (U.dtype dest)
+                Z.mul (Z.of_int (U.max_numel dest))
+                  (Z.of_int (Tolk_uop.Dtype.itemsize (U.dtype dest)))
               in
-              { E.zero with lds = E.Int nbytes; mem = E.Int nbytes }
+              let bytes = if Z.fits_int nbytes then E.Int (Z.to_int nbytes)
+                else E.Symbolic (U.const (Tolk_uop.Const.integer Tolk_uop.Dtype.weakint nbytes)) in
+              { E.zero with lds = bytes; mem = bytes }
           | [] -> E.zero)
       | _ -> E.zero)
 
@@ -603,16 +604,16 @@ let track_stats ctx call ~device bufs var_vals run =
       | et -> et
     in
     let infer = function
-      | Program_spec.Estimates.Int n -> n
-      | Symbolic u -> U.sym_infer u var_vals
+      | Program_spec.Estimates.Int n -> Z.of_int n
+      | Symbolic u -> U.sym_infer_z u var_vals
     in
     let estimates = estimate_uop call in
     let op_est = infer estimates.ops and mem_est = infer estimates.mem in
     let kernels = match U.arg call with
       | U.Arg.Call_info {aux = Some info; _} -> List.length info.accesses | _ -> 1 in
     G.kernel_count := !G.kernel_count + kernels;
-    G.global_ops := !G.global_ops + op_est;
-    G.global_mem := !G.global_mem + mem_est;
+    G.global_ops := Z.add !G.global_ops op_est;
+    G.global_mem := Z.add !G.global_mem mem_est;
     Option.iter (fun t -> G.time_sum_s := !G.time_sum_s +. t) et;
     if debug () >= 2 then begin
       let key =
@@ -642,7 +643,7 @@ let track_stats ctx call ~device bufs var_vals run =
                 (Helpers.time_to_str ~w:9 t)
                 (if t > 0.01 then Some "yellow" else None)
             in
-            let per x = float_of_int x /. if t = 0.0 then 1e-20 else t in
+            let per x = Z.to_float x /. if t = 0.0 then 1e-20 else t in
             let flops = per op_est and membw = per mem_est in
             let ldsbw = per lds_est in
             let flops_str =

@@ -73,9 +73,6 @@ acceptance requirement; skipped tests are not execution evidence.
 
 - Audit HCQ2/NV compute changes in the upstream video migration against current
   consumers. Account for test relocations when regenerating the complete corpus.
-- Keep estimate sums/products exact beyond host-integer range, including byte
-  counts and WMMA products. Cap symbolic memory traffic by the buffer footprint
-  and preserve exact evaluation through beam ranking and runtime statistics.
 - Migrate the remaining Python drivers to the target API and generate the
   complete corpus separately. Attribute every changed expectation; require
   exact source parity for supported renderers.

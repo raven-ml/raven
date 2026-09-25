@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Kernel costs remain exact beyond host-integer limits, and symbolic memory
+  traffic is capped by its buffer footprint. `Global_counters.global_ops` and
+  `global_mem` now use `Z.t`; beam ranking converts costs only at comparison.
+
 - Remove the obsolete AMD/NV `Compute_queue`, `Copy_queue` and raw program
   APIs. Queue execution uses `Encoded_queue`; static setup and cache packets
   remain private to the runtimes.
