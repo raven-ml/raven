@@ -540,7 +540,7 @@ let test_reduction_gradients_at_zeros_and_ties () =
   check_arr ~msg:"products retain derivatives at exactly one zero" expected
     (Rune.grad' prod input);
   check_arr ~msg:"compiled product derivatives retain zero multiplicity" expected
-    (Rune.jit' ~device:"CPU" (Rune.grad' prod) input);
+    (Rune.jit' ~devices:[Nx.Device.host] (Rune.grad' prod) input);
   let _, tangent = Rune.jvp' prod input (Nx.ones_like input) in
   check_arr ~msg:"forward products use the same zero-safe derivative" [|34.|] tangent;
   let input = Nx.create f32 [|2; 3|] [|2.; 2.; 0.; -1.; -1.; 3.|] in
@@ -550,7 +550,7 @@ let test_reduction_gradients_at_zeros_and_ties () =
       check_arr ~msg:(name ^ " shares the derivative among ties") expected
         (Rune.grad' loss input);
       check_arr ~msg:(name ^ " compiled tie derivative") expected
-        (Rune.jit' ~device:"CPU" (Rune.grad' loss) input);
+        (Rune.jit' ~devices:[Nx.Device.host] (Rune.grad' loss) input);
       let _, derivative = Rune.jvp' loss input tangent in
       check_arr ~msg:(name ^ " averages tied tangents") [|8.|] derivative)
     ["max", (fun x -> Nx.max ~axes:[1] x), [|0.5; 0.5; 0.; 0.; 0.; 1.|];
@@ -564,7 +564,7 @@ let test_half_reduction_ties () =
   check_arr ~eps:1e-7 ~msg:"tie counts exceed half precision without overflowing"
     expected (Rune.grad' loss x);
   check_arr ~eps:1e-7 ~msg:"compiled half reduction retains its tie count"
-    expected (Rune.jit' ~device:"CPU" (Rune.grad' loss) x);
+    expected (Rune.jit' ~devices:[Nx.Device.host] (Rune.grad' loss) x);
   let _, tangent = Rune.jvp' loss x (Nx.ones_like x) in
   check_arr ~msg:"all tied directions shift the maximum by one" [|1.|] tangent
 

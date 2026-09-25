@@ -296,9 +296,117 @@ let failed_release_preserves_all_owners () =
   is_true ~msg:"the failed raw owner remains retained after collection"
     (Weak.check (List.assoc failed !allocations) 0)
 
+let overlap_error =
+  "Rune.jit: overlapping calls to one compiled function are not supported"
+
+let check_overlap = function
+  | Error (Invalid_argument message, _) -> equal string overlap_error message
+  | Error (exn, backtrace) -> Printexc.raise_with_backtrace exn backtrace
+  | Ok _ -> fail "an overlapping compiled call must be rejected"
+
+let cold_calls_have_one_owner compile () =
+  let entered = Atomic.make 0 and finish = Atomic.make false in
+  let compiled =
+    compile (fun x ->
+        if Atomic.fetch_and_add entered 1 = 0 then
+          while not (Atomic.get finish) do Domain.cpu_relax () done;
+        Nx.add_s x 1.)
+  in
+  let input value = Nx.full Nx.float32 [|4|] value in
+  let worker = Domain.spawn (fun () -> Nx.to_array (compiled (input 3.))) in
+  while Atomic.get entered = 0 do Domain.cpu_relax () done;
+  let overlap =
+    try Ok (compiled (input 9.))
+    with exn -> Error (exn, Printexc.get_raw_backtrace ())
+  in
+  Atomic.set finish true;
+  let first = Domain.join worker in
+  check_overlap overlap;
+  equal (array float_exact) (Array.make 4 4.) first;
+  let next =
+    Domain.join
+      (Domain.spawn (fun () -> Nx.to_array (compiled (input 9.))))
+  in
+  equal ~msg:"nonoverlapping callers may reuse the closure on another domain"
+    (array float_exact) (Array.make 4 10.) next
+
+let trace_failure_releases_the_owner compile () =
+  let first = Atomic.make true in
+  let compiled =
+    compile (fun x ->
+        if Atomic.exchange first false then raise Exit;
+        Nx.add_s x 1.)
+  in
+  let input = Nx.full Nx.float32 [|4|] 3. in
+  raises Exit (fun () -> ignore (compiled input));
+  equal ~msg:"a failed trace does not retain the closure's ownership"
+    (array float_exact) (Array.make 4 4.)
+    (Domain.join (Domain.spawn (fun () -> Nx.to_array (compiled input))))
+
+let reentrant_replays_have_one_owner name () =
+  let names = if name = "jit" then ["CPU:755"] else ["CPU:756"; "CPU:757"] in
+  let pending = ref None in
+  List.iter
+    (fun name ->
+      let base = Tolk.Device.get name in
+      let renderer = Tolk.Device.renderer base in
+      let runtime object_ =
+        let program = Tolk.Device.runtime base object_ in
+        let call buffers ~global ~local ~vals ~wait ~timeout =
+          (match !pending with
+          | None -> ()
+          | Some callback -> pending := None; callback ());
+          program.call buffers ~global ~local ~vals ~wait ~timeout
+        in
+        { program with call }
+      in
+      let allocator =
+        Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ())
+      in
+      ignore
+        (Tolk.Device.make ~name ~allocator:(Tolk.Device.Allocator.Pack allocator)
+           ~renderer_set:
+             (Tolk.Device.Renderer_set.make ~device:name
+                [("CLANG", fun _ -> renderer)])
+           ~runtime ~synchronize:(fun _ -> ()) ()))
+    names;
+  let f x = Nx.add_s x 1. in
+  let compiled = Rune.jit' ~devices:(List.map Rune.device names) f in
+  let input value = Nx.full Nx.float32 [|4|] value in
+  ignore (Nx.to_array (compiled (input 1.)));
+  pending := Some (fun () ->
+      let overlap =
+        try Ok (compiled (input 9.))
+        with exn -> Error (exn, Printexc.get_raw_backtrace ())
+      in
+      check_overlap overlap);
+  equal ~msg:"rejecting reentry leaves the outer replay's inputs intact"
+    (array float_exact) (Array.make 4 4.)
+    (Nx.to_array (compiled (input 3.)));
+  is_true ~msg:"the replay reached its native callback" (Option.is_none !pending);
+  equal ~msg:"the closure can run again after rejecting reentry"
+    (array float_exact) (Array.make 4 10.)
+    (Nx.to_array (compiled (input 9.)))
+
+let call_ownership_tests =
+  List.concat_map
+    (fun (name, compile) ->
+      [
+        test (name ^ " rejects overlapping cold calls")
+          (cold_calls_have_one_owner compile);
+        test (name ^ " releases its owner after trace failure")
+          (trace_failure_releases_the_owner compile);
+        test (name ^ " rejects reentrant replay")
+          (reentrant_replays_have_one_owner name);
+      ])
+    [
+      ("jit", fun f -> Rune.jit' ~devices:[Rune.device "CPU:1"] f);
+      ("jit over devices", fun f -> Rune.jit' ~devices:[Rune.device "CPU:1"; Rune.device "CPU:2"] f);
+    ]
+
 let () =
   run "rune transfer scratch"
-    [
+    (call_ownership_tests @ [
       test "reads keep their resident owner alive"
         reads_keep_their_resident_owner_alive;
       test "failed release preserves all owners"
@@ -310,4 +418,4 @@ let () =
         concurrent_device_lookups_keep_one_identity;
       test "independent replays keep their intermediates"
         independent_replays_keep_their_intermediates;
-    ]
+    ])

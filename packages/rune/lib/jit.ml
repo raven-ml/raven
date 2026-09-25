@@ -5618,6 +5618,7 @@ let check_live leaves =
    each retrace with the first difference from the previous call's key. *)
 let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
     (args : a Nx.Ptree.t) (result : r Nx.Ptree.t) (f : a -> r) : a -> r =
+  let in_use = Atomic.make false in
   let captured_on = ref None in
   let programs : (key * r compiled) list ref = ref [] in
   let previous = ref None in
@@ -5636,75 +5637,79 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
   in
   fun v ->
     if Gate.transforming () then f v
-    else
-      let leaves, skeleton = Nx.Ptree.flatten args v in
-      let leaves = Array.of_list leaves in
-      check_live leaves;
-      let ds, decided =
-        match
-          ( (try leaves_devices ~requested leaves
-             with Misplaced (is, message) ->
-               let { names; _ } = leaf_info ~roles args v in
-               invalid_arg (message (List.map (fun i -> names.(i)) is))),
-            !captured_on )
-        with
-        | Some (ds, Unordered), Some (c, Ordered)
-          when over ds (Nx.Placement.replicated c) ->
-            (c, Ordered)
-        | Some d, _ | None, Some d -> d
-        | None, None -> ([ default_device () ], Guessed)
-      in
-      let shapes = Array.map (fun (Nx.P x) -> shape_of x) leaves in
-      let hash = hash_call skeleton leaves shapes in
-      let program ds ~decided =
-        let devs = List.map tolk_device_of ds in
-        let seeds = Array.map (fun (Nx.P x) -> seed_of devs x) leaves in
-        match
-          List.find_opt
-            (fun (k, _) -> matches k ds ~hash skeleton leaves shapes seeds)
-            !programs
-        with
-        | Some (key, c) ->
-            previous := Some key;
-            replay result c leaves seeds
-        | None ->
-            let key = key_of ds ~hash skeleton leaves shapes seeds in
-            let info = leaf_info ~roles args v in
-            (if Lazy.Mutexed.force jit_debug >= 1 then
-               match !previous with
-               | Some prev ->
-                   Printf.eprintf "rune.jit: retrace: %s\n%!"
-                     (key_difference ~names:info.names key prev)
-               | None -> ());
-            (* The host's programs run over host memory. *)
-            let c =
-              trace_compile ~devices:(ds, devs)
-                ~zero_copy:(List.equal ( == ) ds [ Nx.Device.host ])
-                ~info ~const_cache:(const_cache ds) ~decided
-                ~placements:
-                  (Array.map (fun (Nx.P x) -> leaf_placement ds x) leaves)
-                ~layouts:(Array.map layout_of seeds)
-                ?beam ?beam_parallel args result f v leaves
-            in
-            (* Captures it binds make the devices the closure's. *)
-            if c.cp_bound <> [||] && !captured_on = None then
-              captured_on :=
-                Some (ds, if decided = Guessed then Unordered else decided);
-            programs := (key, c) :: !programs;
-            previous := Some key;
-            replay result c leaves seeds
-      in
-      (* Each retry decides more (guessed, then a set, then an order), so it
-         ends. *)
-      let rec run ds decided =
-        match program ds ~decided with
-        | y -> y
-        | exception Runs_on p ->
-            let ds, decided = decided_by p in
-            captured_on := Some (ds, decided);
-            run ds decided
-      in
-      run ds decided
+    else (
+      if not (Atomic.compare_and_set in_use false true) then
+        invalid_arg
+          "Rune.jit: overlapping calls to one compiled function are not supported";
+      Fun.protect ~finally:(fun () -> Atomic.set in_use false) (fun () ->
+        let leaves, skeleton = Nx.Ptree.flatten args v in
+        let leaves = Array.of_list leaves in
+        check_live leaves;
+        let ds, decided =
+          match
+            ( (try leaves_devices ~requested leaves
+               with Misplaced (is, message) ->
+                 let { names; _ } = leaf_info ~roles args v in
+                 invalid_arg (message (List.map (fun i -> names.(i)) is))),
+              !captured_on )
+          with
+          | Some (ds, Unordered), Some (c, Ordered)
+            when over ds (Nx.Placement.replicated c) ->
+              (c, Ordered)
+          | Some d, _ | None, Some d -> d
+          | None, None -> ([ default_device () ], Guessed)
+        in
+        let shapes = Array.map (fun (Nx.P x) -> shape_of x) leaves in
+        let hash = hash_call skeleton leaves shapes in
+        let program ds ~decided =
+          let devs = List.map tolk_device_of ds in
+          let seeds = Array.map (fun (Nx.P x) -> seed_of devs x) leaves in
+          match
+            List.find_opt
+              (fun (k, _) -> matches k ds ~hash skeleton leaves shapes seeds)
+              !programs
+          with
+          | Some (key, c) ->
+              previous := Some key;
+              replay result c leaves seeds
+          | None ->
+              let key = key_of ds ~hash skeleton leaves shapes seeds in
+              let info = leaf_info ~roles args v in
+              (if Lazy.Mutexed.force jit_debug >= 1 then
+                 match !previous with
+                 | Some prev ->
+                     Printf.eprintf "rune.jit: retrace: %s\n%!"
+                       (key_difference ~names:info.names key prev)
+                 | None -> ());
+              (* The host's programs run over host memory. *)
+              let c =
+                trace_compile ~devices:(ds, devs)
+                  ~zero_copy:(List.equal ( == ) ds [ Nx.Device.host ])
+                  ~info ~const_cache:(const_cache ds) ~decided
+                  ~placements:
+                    (Array.map (fun (Nx.P x) -> leaf_placement ds x) leaves)
+                  ~layouts:(Array.map layout_of seeds)
+                  ?beam ?beam_parallel args result f v leaves
+              in
+              (* Captures it binds make the devices the closure's. *)
+              if c.cp_bound <> [||] && !captured_on = None then
+                captured_on :=
+                  Some (ds, if decided = Guessed then Unordered else decided);
+              programs := (key, c) :: !programs;
+              previous := Some key;
+              replay result c leaves seeds
+        in
+        (* Each retry decides more (guessed, then a set, then an order), so it
+           ends. *)
+        let rec run ds decided =
+          match program ds ~decided with
+          | y -> y
+          | exception Runs_on p ->
+              let ds, decided = decided_by p in
+              captured_on := Some (ds, decided);
+              run ds decided
+        in
+        run ds decided))
 
 (* [devices], checked as a placement's devices are: at least one, distinct, of
    one backend. *)

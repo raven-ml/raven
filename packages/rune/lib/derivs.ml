@@ -78,7 +78,7 @@ let extrema' (type a b) ~axes (x : (a, b) T.t) out : (a, b) T.t =
     let mask = T.cast dtype mask in
     T.cast (T.dtype x) (T.div mask (T.sum ~axes ~keepdims:true mask)) in
   match T.dtype x with
-  | Nx_core.Dtype.Float64 -> normalize T.float64
+  | Nx_dtype.Float64 -> normalize T.float64
   | _ -> normalize T.float32
 
 (* The derivative at a single zero is the product of the other inputs;

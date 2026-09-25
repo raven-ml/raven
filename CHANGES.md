@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Overlapping or reentrant calls to the same `jit` or `pmap` closure now raise
+  `Invalid_argument` before accessing shared compilation or replay state.
+  Sequential calls can move between domains and threads.
+
 - `grad` and `jvp` now handle products containing zeros and share extrema
   derivatives among tied values. Half-precision extrema count ties in float32
   so large reductions do not overflow their gradient normalization.

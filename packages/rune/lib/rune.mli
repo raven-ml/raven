@@ -647,7 +647,10 @@ val jit :
     returns its updated parameters, optimizer state or cache, and the caller
     feeds them to the next call. Structured values read during tracing must not
     depend on traced tensors: a data-dependent {!cond} or {!while_loop}
-    predicate raises {!Jit_error}. Compiled functions are not thread-safe.
+    predicate raises {!Jit_error}. Overlapping or reentrant calls to one
+    compiled function raise [Invalid_argument] before accessing its compiled
+    state. Sequential calls may run on different domains. Calls under an
+    enclosing transformation execute [f] directly and do not claim that state.
 
     Randomness inside a compiled function comes from a {!Nx.Rng} key passed as
     an argument: samplers are pure functions of their key, so the compiled
