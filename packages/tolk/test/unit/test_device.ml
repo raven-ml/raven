@@ -248,6 +248,40 @@ let buffer_byte_ranges () =
   equal int 0 (Device.Buffer.nbytes empty);
   is_false (Device.Buffer.is_allocated base)
 
+let device_initialization_registration () =
+  let allocator = Device.Buffer.allocator
+      (Device.create_buffer ~size:0 ~dtype:i32 device) in
+  let create ?initialize name =
+    Device.make ~name ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:name [])
+      ~synchronize:(fun timeout -> ignore timeout) ?initialize () in
+  let attempts = ref 0 in
+  Device.register "BOOTSTRAP_TEST" (fun name ->
+      incr attempts;
+      create name ~initialize:(fun current ->
+          is_true ~msg:"bootstrap can resolve its own device"
+            (Device.get "bootstrap_test:0" == current);
+          if !attempts = 1 then failwith "bootstrap failed"));
+  raises (Failure "bootstrap failed") (fun () ->
+      ignore (Device.get "BOOTSTRAP_TEST"));
+  let ready = Device.get "BOOTSTRAP_TEST" in
+  equal ~msg:"failed bootstrap must reopen the device" int 2 !attempts;
+  is_true (Device.get "BOOTSTRAP_TEST" == ready);
+  raises (Failure "replacement failed") (fun () ->
+      ignore (create "bootstrap_test:0" ~initialize:(fun current ->
+          is_true (Device.get "BOOTSTRAP_TEST" == current);
+          failwith "replacement failed")));
+  is_true ~msg:"a failed replacement preserves the previous device"
+    (Device.get "BOOTSTRAP_TEST" == ready);
+  let replacement = ref None in
+  raises (Failure "superseded bootstrap failed") (fun () ->
+      ignore (create "BOOTSTRAP_TEST" ~initialize:(fun current ->
+          ignore current;
+          replacement := Some (create "BOOTSTRAP_TEST");
+          failwith "superseded bootstrap failed")));
+  is_true ~msg:"rollback must not remove a subsequently registered device"
+    (Device.get "BOOTSTRAP_TEST" == Option.get !replacement)
+
 let interleaved_kernel_formals () =
   let module U = Uop in
   let allocator = Device.Buffer.allocator
@@ -714,6 +748,7 @@ let failed_finalizer_is_not_retried () =
     (Stdlib.Weak.check backing 0)
 
 let () = run __FILE__ [ copy_from_tests;
+  test "device bootstrap registration rolls back failed initialization" device_initialization_registration;
   test "failed buffer finalizers are reported without retrying teardown" failed_finalizer_is_not_retried;
   test "buffer finalizers wait for device operations" finalizers_wait_for_device_operations;
   test "foreign access completion is captured, coalesced and retried" foreign_completion_dependencies;

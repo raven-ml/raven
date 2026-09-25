@@ -167,7 +167,8 @@ let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
 let opened : (string, t) Hashtbl.t = Hashtbl.create 8
 
 let make ~name ~allocator ~renderer_set ?runtime ~synchronize
-    ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None) () =
+    ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None)
+    ?(initialize = fun _ -> ()) () =
   let queue = Option.map (fun (q : queue) -> {q with
       prepare = (fun () -> Storage.with_operation q.prepare);
       profile_offset = (fun () -> Storage.with_operation q.profile_offset);
@@ -181,8 +182,20 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
     synchronize_lock = Mutex.create (); pending_lock = Mutex.create ();
     pending_accesses = Hashtbl.create 0; pending_timings = Hashtbl.create 0;
     profile_events = [] } in
-  Hashtbl.replace opened (canonicalize name) device;
-  device
+  let key = canonicalize name in
+  let previous = Hashtbl.find_opt opened key in
+  Hashtbl.replace opened key device;
+  match initialize device with
+  | () -> device
+  | exception exn ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      (match Hashtbl.find_opt opened key with
+       | Some current when current == device ->
+           (match previous with
+            | Some previous -> Hashtbl.replace opened key previous
+            | None -> Hashtbl.remove opened key)
+       | _ -> ());
+      Printexc.raise_with_backtrace exn backtrace
 
 let name d = d.name
 let peer_group d = d.peer_group

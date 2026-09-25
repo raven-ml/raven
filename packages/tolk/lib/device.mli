@@ -160,10 +160,11 @@ val make :
   ?peer_group:string ->
   ?queue:queue ->
   ?bufferize:(Tolk_uop.Uop.t -> Buffer.t option) ->
+  ?initialize:(t -> unit) ->
   unit ->
   t
 (** [make ~name ~allocator ~renderer_set ?runtime ~synchronize
-    ?invalidate_caches ?peer_group ?queue ?bufferize ()] is a device runtime, registered under its
+    ?invalidate_caches ?peer_group ?queue ?bufferize ?initialize ()] is a device runtime, registered under its
     canonical [name] for graph-owned buffers to resolve their allocator.
 
     [runtime obj] loads a compiled binary and returns a dispatch handle.
@@ -177,7 +178,13 @@ val make :
     queue signals. It defaults to the backend prefix of [name].
 
     [queue] supplies host compilation hooks. [bufferize] resolves backend
-    allocation descriptors during linking, returning [None] for generic storage. *)
+    allocation descriptors during linking, returning [None] for generic storage.
+
+    [initialize d] runs after registration so bootstrap submissions can resolve
+    [d] recursively through {!get}. If it raises, the previous registration is
+    restored unless another device has replaced [d]; native resource cleanup
+    remains the caller's responsibility. Registration and initialization do not
+    serialize concurrent callers. *)
 
 val name : t -> string
 (** [name d] is [d]'s device name. *)

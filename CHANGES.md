@@ -648,6 +648,10 @@ thread.
 
 ### Tolk (new)
 
+- `Device.make` accepts an initialization callback for bootstrap submissions
+  that need to resolve their own device. Failed initialization restores the
+  previous registration so later opens can retry.
+
 - AMD and NV kernels use compiled queue submissions exclusively, removing an
   unused 16 MiB argument allocation per device and the obsolete
   `Hcq.Kernargs` and backend direct-program APIs.
