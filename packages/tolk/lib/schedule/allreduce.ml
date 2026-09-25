@@ -255,7 +255,7 @@ let handle_allreduce buf ~op ~device =
    [src] itself made contiguous when it is not a view of storage. *)
 let storage_and_view src =
   let b = U.base src in
-  if Option.is_some (U.storage_window b) then
+  if Option.is_some (Indexing.storage_window b) then
     b, (fun storage -> U.substitute [ (b, storage) ] src)
   else U.contiguous ~src (), Fun.id
 

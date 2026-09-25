@@ -1441,21 +1441,6 @@ val bounds : t -> (t * t) list
     Raises [Invalid_argument] if [u] has no sharding axis or no multi-device
     placement. *)
 
-val contiguous_view : t -> (t * int) option
-(** [contiguous_view u] is the underlying storage node and byte offset when
-    [u] is a contiguous view. The offset must be statically known; leading
-    dimensions may have bounded symbolic lengths. Returns [None] if the
-    layout or offset cannot be established from the graph. *)
-
-val storage_window : t -> (t * int) option
-(** [storage_window u] is the storage [u] reads or writes and [u]'s byte
-    offset in it, when [u] is that storage or a contiguous window of it.
-    Storage is a {!Ops.Buffer}, {!Ops.Alloc}, {!Ops.Param}, {!Ops.Mselect}
-    or {!Ops.Mstack}, reached through movement ops, bitcasts and
-    {!Ops.After}, or an empty-arg {!Ops.Stage}, which becomes a buffer of its
-    own. It is {!contiguous_view} except that a stage counts as storage
-    rather than being looked through. *)
-
 (** {1:rewrite Rewriting} *)
 
 val graph_rewrite :

@@ -273,7 +273,7 @@ let slice_inputs_are_normalized_before_their_bases () =
         | Some { body; args; _ } -> body, args
         | None -> fail "expected call" in
       is_true ~msg:"view is a call argument" (List.exists (fun arg ->
-          match U.contiguous_view arg, U.contiguous_view view with
+          match Tolk.Prepare.contiguous_view arg, Tolk.Prepare.contiguous_view view with
           | Some (a, x), Some (b, y) -> a == b && x = y
           | _ -> false) args);
       is_false ~msg:"callee addresses its formal without an embedded storage slice"

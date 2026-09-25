@@ -492,15 +492,13 @@ let fold_add_divmod_recombine root =
                 | None -> (
                     match Uop.op q, Uop.src q with
                     | op, [| q_num; q_den |] when Ops.equal op mod_op -> (
-                        match const_int_v q_den with
-                        | Some d when d > 0 -> (
-                            match quotient_base ~div_op q_num base div with
-                            | Some b ->
-                                emit
-                                  (Uop.alu_binary ~op:mod_op ~lhs:b
-                                     ~rhs:(Uop.const_like b (div * d)))
-                            | None -> ())
-                        | _ -> ())
+                        if Bound.lt Bound.zero (Uop.vmin q_den) then
+                          match quotient_base ~div_op q_num base div with
+                          | Some b ->
+                              emit
+                                (Uop.alu_binary ~op:mod_op ~lhs:b
+                                   ~rhs:Uop.O.(Uop.const_like b div * q_den))
+                          | None -> ())
                     | _ -> ()));
            incr j
          done);

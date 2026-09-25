@@ -188,7 +188,7 @@ let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
 let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
 let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
 
-let profiling () = debug >= 2 || Helpers.getenv "PROFILE" 0 <> 0
+let profiling () = debug () >= 2 || Helpers.getenv "PROFILE" 0 <> 0
 
 (* No tinygrad counterpart: the reference keeps compiled queues per process,
    where rune's disk cache stores them across processes. *)
@@ -366,9 +366,15 @@ let rec resolve_buffer ctx node =
   | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Detach | Tolk_uop.Ops.After
   | Tolk_uop.Ops.Unshard | Tolk_uop.Ops.Contiguous_backward ->
       resolve_buffer ctx (U.src node).(0)
-  | op when Tolk_uop.Ops.Group.is_movement op || op = Tolk_uop.Ops.Bitcast ->
-      (match U.contiguous_view node with
+  | Tolk_uop.Ops.Bitcast ->
+      let size = U.max_numel node and dtype = U.dtype node in
+      (match resolve_buffer ctx (U.src node).(0) with
+       | Single buffer -> Single (Device.Buffer.view buffer ~size ~dtype ~offset:0)
+       | Multi buffer -> Multi (Device.Multi_buffer.view buffer ~size ~dtype ~offset:0))
+  | op when Tolk_uop.Ops.Group.is_movement op ->
+      (match Prepare.contiguous_view node with
        | None -> invalid_arg "resolve: non-contiguous storage view"
+       | Some (base, _) when U.equal base node -> invalid_arg "resolve: unresolved storage view"
        | Some (base, offset) ->
            let size = U.max_numel node and dtype = U.dtype node in
            match resolve_buffer ctx base with

@@ -106,10 +106,6 @@ acceptance requirement; skipped tests are not execution evidence.
   favor of canonical flat indexes. Use checked central numel in placeholders, frontend
   tensors and rangeify. Port remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
-- Replace `Uop.contiguous_view`'s separate movement interpreter with the
-  target's flattened-index proof using shared movement and symbolic rewrites.
-  Cover cancelling transposes, leading dimensions, symbolic bounds and byte
-  offsets across bitcasts. Preserve pending effects when extracting views.
 - Compare symbolic `STAGE` extent end to end: Tolk uses the active symbolic
   size, while the target reserves its maximum extent. Establish allocation and
   indexing requirements with a paired execution case before changing it.

@@ -3,8 +3,6 @@
 open Windtrap
 open Tolk_uop
 
-let byte_offset u = Option.map snd (Uop.contiguous_view u)
-
 let storage_view ~src ~offset ~size ~dtype =
   let module U = Tolk_uop.Uop in
   let module D = Tolk_uop.Dtype in
@@ -849,100 +847,6 @@ let property_helpers_parity () =
     (Uop.buf_uop sliced == buffer);
   is_true ~msg:"Stage buf_uop stops at stage"
     (Uop.buf_uop staged == staged);
-  is_true ~msg:"Contiguous view offset for base buffer is zero"
-    (byte_offset buffer = Some 0);
-  let offset_slice =
-    storage_view ~src:buffer ~offset:(Uop.const_int 3) ~size:2
-      ~dtype:Dtype.int32
-  in
-  is_true ~msg:"Contiguous view offset accumulates slice offset"
-    (byte_offset offset_slice = Some 12);
-  let matrix_shape = Uop.stack [ Uop.const_int 4; Uop.const_int 5 ] in
-  let matrix = Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:matrix_shape () in
-  let row_slice =
-    Uop.shrink ~src:matrix
-      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
-      ~size:(Uop.stack [ Uop.const_int 2; Uop.const_int 5 ])
-  in
-  is_true ~msg:"Contiguous view offset handles full-row shrink"
-    (byte_offset row_slice = Some 20);
-  let col_slice =
-    Uop.shrink ~src:matrix
-      ~offset:(Uop.stack [ Uop.const_int 0; Uop.const_int 1 ])
-      ~size:(Uop.stack [ Uop.const_int 4; Uop.const_int 2 ])
-  in
-  is_true ~msg:"Contiguous view offset rejects strided shrink"
-    (byte_offset col_slice = None);
-  let single_row_cols =
-    Uop.shrink ~src:matrix
-      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 2 ])
-      ~size:(Uop.stack [ Uop.const_int 1; Uop.const_int 2 ])
-  in
-  is_true ~msg:"Contiguous view offset handles one-row column shrink"
-    (byte_offset single_row_cols = Some 28);
-  let reshaped_matrix =
-    Uop.reshape ~src:matrix
-      ~shape:(Uop.stack [ Uop.const_int 2; Uop.const_int 10 ])
-  in
-  let reshaped_rows =
-    Uop.shrink ~src:reshaped_matrix
-      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
-      ~size:(Uop.stack [ Uop.const_int 1; Uop.const_int 10 ])
-  in
-  is_true ~msg:"Contiguous view offset composes through reshape"
-    (byte_offset reshaped_rows = Some 40);
-  let zero_pad =
-    Uop.pad ~src:matrix
-      ~offset:(Uop.stack [ Uop.const_int 0; Uop.const_int 0 ])
-      ~size:(Uop.stack [ Uop.const_int 4; Uop.const_int 5 ])
-  in
-  is_true ~msg:"Contiguous view offset accepts zero pad"
-    (byte_offset zero_pad = Some 0);
-  let positive_pad =
-    Uop.pad ~src:matrix
-      ~offset:(Uop.stack [ Uop.const_int 1; Uop.const_int 0 ])
-      ~size:(Uop.stack [ Uop.const_int 5; Uop.const_int 5 ])
-  in
-  is_true ~msg:"Contiguous view offset rejects positive pad"
-    (byte_offset positive_pad = None);
-  let singleton_shape =
-    Uop.stack [ Uop.const_int 1; Uop.const_int 3; Uop.const_int 4 ]
-  in
-  let singleton_matrix =
-    Uop.buffer ~slot:4 ~dtype:Dtype.int32 ~shape:singleton_shape ()
-  in
-  let singleton_permute =
-    Uop.permute ~src:singleton_matrix ~order:[ 1; 2; 0 ]
-  in
-  is_true ~msg:"Contiguous view offset accepts singleton-only permute"
-    (byte_offset singleton_permute = Some 0);
-  let flipped_singleton =
-    Uop.flip ~src:singleton_matrix ~dims:[ true; false; false ]
-  in
-  is_true ~msg:"Contiguous view offset accepts singleton flip"
-    (byte_offset flipped_singleton = Some 0);
-  let flipped_nonsingleton =
-    Uop.flip ~src:singleton_matrix ~dims:[ false; true; false ]
-  in
-  is_true ~msg:"Contiguous view offset rejects non-singleton flip"
-    (byte_offset flipped_nonsingleton = None);
-  let sym_one =
-    Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~vmin_vmax:(Bound.int (1), Bound.int (1))
-      ~name:"one" ~addrspace:Dtype.Alu ()
-  in
-  let symbolic_singleton =
-    Uop.buffer ~slot:5 ~dtype:Dtype.int32
-      ~shape:(Uop.stack [ sym_one; Uop.const_int 5 ])
-      ()
-  in
-  let symbolic_permute = Uop.permute ~src:symbolic_singleton ~order:[ 1; 0 ] in
-  let symbolic_flip =
-    Uop.flip ~src:symbolic_singleton ~dims:[ true; false ]
-  in
-  is_true ~msg:"Contiguous view offset accepts bounded symbolic singleton permute"
-    (byte_offset symbolic_permute = Some 0);
-  is_true ~msg:"Contiguous view offset accepts bounded symbolic singleton flip"
-    (byte_offset symbolic_flip = Some 0);
   let info =
     {
       Uop.grad_fxn = None;
@@ -1086,20 +990,6 @@ let prepend_expand () =
   is_true ~msg:"empty EXPAND dims is identity"
     (Uop.expand ~src:base ~dims:(Uop.stack []) == base)
 
-let contiguous_prepend_expand () =
-  let base = Uop.buffer ~slot:0 ~dtype:Dtype.int32
-      ~shape:(Uop.const_int 2) () in
-  let repeated = Uop.expand ~src:base ~dims:(Uop.const_int 2) in
-  is_true ~msg:"a matching leading dimension still broadcasts the storage"
-    (byte_offset repeated = None);
-  let singleton = Uop.expand ~src:base ~dims:(Uop.const_int 1) in
-  is_true ~msg:"a leading singleton preserves contiguous storage"
-    (byte_offset singleton = Some 0);
-  let tail = Uop.shrink ~src:singleton
-      ~offset:(Uop.stack [Uop.const_int 0; Uop.const_int 1])
-      ~size:(Uop.stack [Uop.const_int 1; Uop.const_int 1]) in
-  is_true ~msg:"a shrink after a leading singleton retains its byte offset"
-    (byte_offset tail = Some 4)
 
 let bitcast_size_change () =
   let bytes3 =
@@ -2674,7 +2564,6 @@ let () =
           test "void and value op shapes" void_and_value_op_shapes;
           test "STACK prepends a leading dim" stack_prepends_leading_dim;
           test "EXPAND prepends leading dims" prepend_expand;
-          test "EXPAND contiguous views respect leading dimensions" contiguous_prepend_expand;
           test "BITCAST size change" bitcast_size_change;
           test "child_ops reports the child op set"
             child_ops_reports_child_op_set;

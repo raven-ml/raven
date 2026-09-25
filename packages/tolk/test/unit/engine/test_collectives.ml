@@ -5,9 +5,9 @@
 
 (* Collectives on CPU:1..CPU:k: what each device holds and what crosses between
    devices. The host device CPU holds inputs and gathered results. The CPU
-   opener is replaced by one whose allocator counts live bytes per device and
-   records every buffer transfer, so the tests read memory and traffic off the
-   run.
+   opener is replaced by one whose allocator counts live bytes per device.
+   The realization adapter records the completed schedule's STORE calls, so
+   traffic follows executed copies without a second allocator transfer path.
 
    Transfer counts follow from the collective alone, so the traffic tests pin
    exact bytes. Peaks also move with scheduling and memory planning, so the
@@ -23,7 +23,6 @@ module El = Tolk_frontend.Elementwise
 module Mv = Tolk_frontend.Movement
 module Op = Tolk_frontend.Op
 module Rd = Tolk_frontend.Reduce
-module Run = Tolk_frontend.Run
 
 (* Counting devices *)
 
@@ -49,15 +48,6 @@ let count device n =
    counts as live. The cache is flushed and the allocation retried when an
    allocation fails, so live bytes are what a device needs. *)
 let counting device (Device.Allocator.Pack a) =
-  let transfer ~dest ~src ~dest_device ~src_device n =
-    let key = (src_device, dest_device) in
-    let sum = Option.value (Hashtbl.find_opt transfers key) ~default:0 in
-    Hashtbl.replace transfers key (sum + n);
-    let bytes = Bytes.create n in
-    a.copyout bytes src;
-    a.copyin dest bytes;
-    true
-  in
   Device.Allocator.Pack
     {
       a with
@@ -70,8 +60,6 @@ let counting device (Device.Allocator.Pack a) =
         (fun buf n spec ->
           count device (-n);
           a.free buf n spec);
-      transfer = Some transfer;
-      supports_transfer = true;
     }
 
 let create name =
@@ -93,6 +81,64 @@ let create name =
     ~bufferize:(Device.bufferize cpu) ()
 
 let () = Device.register "CPU" create
+
+(* Keep the frontend's normal planning and execution boundary. Capture hooks
+   receive an unplanned schedule without its external held-buffer set, so using
+   capture here would change the peak-memory behavior these tests measure. *)
+module Run = struct
+  include Tolk_frontend.Run
+
+  let record_copies linear var_vals =
+    let ctx = Realize.exec_context ~var_vals () in
+    let buffers node =
+      match Realize.resolve_buffer ctx node with
+      | Realize.Single buf -> [buf]
+      | Realize.Multi bufs -> Device.Multi_buffer.bufs bufs
+    in
+    let record dst src =
+      let key = (Device.Buffer.device src, Device.Buffer.device dst) in
+      let sum = Option.value (Hashtbl.find_opt transfers key) ~default:0 in
+      Hashtbl.replace transfers key (sum + Device.Buffer.nbytes src)
+    in
+    List.iter (fun call ->
+        match U.as_call call with
+        | Some {body; args = [dst; src]} when U.op body = Ops.Store ->
+            let destinations = buffers dst and sources = buffers src in
+            (match destinations, sources with
+             | destinations, [src] -> List.iter (fun dst -> record dst src) destinations
+             | [dst], sources -> List.iter (record dst) sources
+             | destinations, sources -> List.iter2 record destinations sources)
+        | _ -> ()) (U.children linear)
+
+  let realize_many ts =
+    let ts = List.filter (fun t -> not (List.exists
+        (fun dim -> U.const_int_value dim = Some 0) (T.symbolic_shape t))) ts in
+    if ts <> [] then begin
+      let dev = device () in
+      let to_program dev = Codegen.to_program dev (Device.renderer dev) in
+      let outs = List.map (fun t -> U.contiguous ~src:(T.uop t) ()) ts in
+      let tensor_sink = U.sink outs in
+      let sink, buffer_map = Bufferize.run tensor_sink in
+      let call = Callify.transform_to_call sink in
+      let mappings = List.filter_map (fun node ->
+          match Hashtbl.find_opt buffer_map (U.tag node) with
+          | Some replacement when replacement != node -> Some (node, replacement)
+          | _ -> None) (U.toposort tensor_sink @ U.toposort sink) in
+      T.apply_map mappings;
+      let linear, var_vals = Schedule.create_linear_with_vars
+          ~get_kernel_graph:Rangeify.get_kernel_graph call in
+      Realize.run_linear ~device:dev ~to_program ~var_vals linear;
+      record_copies linear var_vals;
+      List.iter2 (fun t out ->
+          match Hashtbl.find_opt buffer_map (U.tag out) with
+          | Some node -> T.set_uop t node
+          | None -> ()) ts outs
+    end
+
+  let to_float_array t =
+    realize_many [t];
+    Tolk_frontend.Run.to_float_array t
+end
 
 (* Measurements *)
 

@@ -192,7 +192,7 @@ val resolve_buffer : exec_context -> Tolk_uop.Uop.t -> buffer
 (** [resolve_buffer ctx node] is the concrete buffer named by call
     argument [node]: a {!Tolk_uop.Ops.Param} resolves through
     [ctx.input_uops]; contiguous movement and bitcast views alias their
-    resolved storage at the byte offset from {!Tolk_uop.Uop.contiguous_view} (per underlying device when the source is multi-device);
+    resolved storage at the byte offset from {!Prepare.contiguous_view} (per underlying device when the source is multi-device);
     a {!Tolk_uop.Ops.Buffer} supplies its owned storage; a
     {!Tolk_uop.Ops.Mselect} indexes one shard of its multi-device source; a
     {!Tolk_uop.Ops.Mstack} joins its per-device sources into a multi-device

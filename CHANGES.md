@@ -654,6 +654,10 @@ thread.
 
 ### Tolk (new)
 
+- `Prepare.contiguous_view` replaces `Uop.contiguous_view` and proves aliases
+  using shared indexing rewrites, including cancelling transposes and symbolic
+  leading slices while preserving byte offsets and pending effects.
+
 - Remove ignored `dtype` arguments from `Uop.load`, `reduce`, `wmma` and
   `noop`. Their types come from the source, accumulator or void-marker contract;
   callers should use an explicit cast when a conversion is required.

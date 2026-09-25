@@ -53,10 +53,14 @@ let uop u =
   let module U = Tolk_uop.Uop in
   let add a b = Tolk_uop.Bound.(to_int (add (int a) (int b))) in
   let rec unwrap u lane offset =
-    match U.contiguous_view u with
+    match Prepare.contiguous_view u with
     | Some (base, delta) when not (U.equal base u) -> unwrap base lane (add offset delta)
     | _ ->
         match U.op u, U.arg u with
+        | (Tolk_uop.Ops.After | Tolk_uop.Ops.Bitcast | Tolk_uop.Ops.Detach
+          | Tolk_uop.Ops.Contiguous_backward), _ ->
+            unwrap (U.src u).(0) lane offset
+        | Tolk_uop.Ops.Stage, U.Arg.Empty -> unwrap (U.src u).(0) lane offset
         | Tolk_uop.Ops.Mselect, U.Arg.Int i ->
             let src = (U.src u).(0) in
             if U.op src = Tolk_uop.Ops.Mstack then unwrap (U.src src).(i) None offset

@@ -23,7 +23,7 @@ let owned_buffer node =
   | _ -> None
 
 (* Resolve a node that is a contiguous view of a realized buffer to that buffer
-   viewed at its element offset — an alias, with no copy. Returns [None] when
+   viewed at its byte offset — an alias, with no copy. Returns [None] when
    the view is non-contiguous, its offset is not statically known, or its base
    buffer has not been realized. A whole-buffer view resolves to the base buffer
    itself, so an already-materialised node keeps its exact identity. *)
@@ -38,27 +38,29 @@ let view_buffer node =
           let src = U.src node in
           Array.length src > 0 && pending_effect src.(0)
   in
-  match U.contiguous_view node with
-  | None -> None
-  | Some _ when pending_effect node -> None
-  | Some (base, offset) ->
-      Option.map
-        (fun src ->
-          let numel = U.max_numel node in
-          let dtype = U.dtype node in
-          if
-            offset = 0
-            && numel = Tolk.Device.Buffer.size src
-            && D.equal dtype (Tolk.Device.Buffer.dtype src)
-          then src
-          else
-            let v =
-              Tolk.Device.Buffer.view src ~size:numel ~dtype
-                ~offset
-            in
-            Tolk.Device.Buffer.ensure_allocated v;
-            v)
-        (owned_buffer base)
+  let rec resolve node =
+    let view offset buffer =
+      let numel = U.max_numel node and dtype = U.dtype node in
+      if offset = 0 && numel = Tolk.Device.Buffer.size buffer
+         && D.equal dtype (Tolk.Device.Buffer.dtype buffer) then buffer
+      else
+        let result = Tolk.Device.Buffer.view buffer ~size:numel ~dtype ~offset in
+        Tolk.Device.Buffer.ensure_allocated result;
+        result in
+    match owned_buffer node with
+    | Some _ as buffer -> buffer
+    | None ->
+        match U.op node, U.arg node with
+        | Ops.Bitcast, _ -> Option.map (view 0) (resolve (U.src node).(0))
+        | (Ops.Reshape | Ops.Detach | Ops.Contiguous_backward), _
+        | Ops.Stage, U.Arg.Empty -> resolve (U.src node).(0)
+        | _ ->
+            match Tolk.Prepare.contiguous_view node with
+            | Some (base, offset) when not (U.equal base node) ->
+                Option.map (view offset) (resolve base)
+            | _ -> None
+  in
+  if pending_effect node then None else resolve node
 
 let buffer_of_node = view_buffer
 

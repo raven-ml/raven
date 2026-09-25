@@ -345,6 +345,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   still open in TODO). Reconsider the helper boundary if a native driver
   binding can provide the same calling convention and failure lifetime.
 
+- **Contiguous-view proofs retain symbolic leading and subword aliases.** The
+  frozen target fails to prove a leading slice of bound symbolic length and a
+  single int32 viewed as four bytes. Tolk uses the same flattened-index design,
+  with shared positive symbolic-radix simplification and an invariant byte
+  extent across bitcasts. Consumers: frontend buffer aliases, byte dependency
+  tracking and Rune storage preparation. Coverage: `test_contiguous_view`,
+  `test_symbolic`, frontend alias tests and `test_hcq2`. Reconsider the proof
+  differences when upstream handles these cases without materializing copies.
+
 - **Symbolic index expressions use `Movement.symbolic_shrink`**, composed with
   `Movement.squeeze` for a scalar selection. `Movement.index` keeps integer
   bounds; `Op.getitem` supports symbolic axis lengths and index-tensor shapes.

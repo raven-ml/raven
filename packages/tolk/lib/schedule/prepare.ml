@@ -44,81 +44,8 @@ let argsort order =
 
 let base = U.base
 
-let pm_mop_through_index n =
-  match U.as_index n with
-  | Some { ptr; _ } when is_movement ptr ->
-      let src = Option.get (movement_src ptr) in
-      let idxs = src_tail n in
-      let mop_shape u =
-        match shape_of u with
-        | Some _ as shape -> shape
-        | None -> (
-            try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape u))
-            with Invalid_argument _ -> None)
-      in
-      (match mop_shape src, mop_shape ptr with
-       | Some _, Some ps when List.length idxs = List.length ps ->
-           let new_idxs =
-             Indexing.apply_movement_op ~shapes:shape_of ptr idxs
-           in
-           Some (U.replace n ~src:(Array.of_list (src :: new_idxs)) ())
-       | Some src_shape, Some ptr_shape when U.op ptr = Ops.Reshape ->
-           let nidxs = List.length idxs in
-           let ptr_suffix =
-             List.filteri (fun i _ -> i >= nidxs) ptr_shape
-           in
-           let src_prefix = List.length src_shape - List.length ptr_suffix in
-           if src_prefix < 0 then None
-           else
-             let src_suffix =
-               List.filteri (fun i _ -> i >= src_prefix) src_shape
-             in
-             if src_suffix <> ptr_suffix then None
-             else if src_prefix = 0 then
-               if Dtype.equal (U.dtype src) (U.dtype n) then Some src
-               else None
-             else
-               let src_prefix_shape =
-                 List.filteri (fun i _ -> i < src_prefix) src_shape
-               in
-               let ptr_prefix_shape =
-                 List.filteri (fun i _ -> i < nidxs) ptr_shape
-               in
-               let shapes u =
-                 if u == src then Some src_prefix_shape
-                 else if u == ptr then Some ptr_prefix_shape
-                 else shape_of u
-               in
-               let new_idxs = Indexing.apply_movement_op ~shapes ptr idxs in
-               let ret = U.replace n ~src:(Array.of_list (src :: new_idxs)) () in
-               if shape_of ret = shape_of n then Some ret else None
-       | _ -> None)
-  | _ -> None
-
-let pm_mop_past_after n =
-  match U.op n with
-  | Ops.After ->
-      let r = src0 n in
-      let op = U.op r in
-      if not (Ops.Group.is_movement op || op = Ops.Index) then None
-      else
-        let src = Array.copy (U.src r) in
-        src.(0) <- U.after ~src:(src0 r) ~deps:(src_tail n);
-        Some (U.replace r ~src ())
-  | _ -> None
-
-let pm_mop_past_end n =
-  match U.as_end n with
-  | Some { value; ranges } when is_movement value ->
-      Some (U.end_ ~value:(Option.get (movement_src value)) ~ranges)
-  | _ -> None
-
-let movement_ops n =
-  match
-    U.first_match [ pm_mop_through_index; pm_mop_past_after; pm_mop_past_end ] n
-  with
-  | Some n' when not (U.equal n n') -> Some n'
-  | Some _ | None -> None
+let movement_ops = Indexing.movement_ops
+let contiguous_view = Indexing.contiguous_view
 
 (* Fold moved AFTERs (openpilot hack) *)
 
@@ -604,7 +531,7 @@ let stage_to_store stage =
    comes from [convert_copy_to_store], which pads its value to the maximum
    shape, or from rule 1, whose destination is a window of the value's own
    shape and so has no symbolic inner axis either. *)
-let storage_view value = Option.is_some (U.storage_window value)
+let storage_view value = Option.is_some (Indexing.storage_window value)
 
 let materialize n =
   match U.op n with
@@ -646,8 +573,7 @@ let earliest_rewrites =
     U.expand ~src:(U.const value) ~dims
   in
   U.first_match
-    [ pm_mop_through_index;
-      pm_mop_past_after; pm_mop_past_end;
+    [ movement_ops;
       Upat.Pattern_matcher.rewrite Movement.mop_cleanup;
       split_reduceop_rule;
       (fun n -> match U.op n with

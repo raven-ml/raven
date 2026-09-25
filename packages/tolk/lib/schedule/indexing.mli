@@ -151,3 +151,20 @@ val get_valid : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
     possibly-gated range.  [where(valid, _, invalid)] yields [valid];
     [stack [r0; ...]] yields [stack [get_valid r0; ...]]; [invalid]
     yields [false]; anything else yields [true]. *)
+
+val movement_ops : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+(** [movement_ops u] pushes movement through INDEX, AFTER and END. *)
+
+val contiguous_view : Tolk_uop.Uop.t -> (Tolk_uop.Uop.t * int) option
+(** [contiguous_view u] is the graph anchor and byte offset of a proven
+    contiguous view. The anchor retains pending effects and may be a bitcast.
+    It need not own allocated storage. Returns [None] when a constant offset
+    cannot be proved, or the device does not support views.
+
+    Raises [Invalid_argument] if the byte offset does not fit a host integer. *)
+
+val storage_window : Tolk_uop.Uop.t -> (Tolk_uop.Uop.t * int) option
+(** [storage_window u] is [contiguous_view u] when its anchor names storage:
+    a BUFFER, ALLOC, PARAM, MSELECT, MSTACK or empty-argument STAGE, possibly
+    through bitcasts and pending effects. A STAGE names its own future
+    allocation. Arithmetic alone does not name storage. *)

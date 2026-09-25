@@ -364,6 +364,15 @@ let storage_tests = group "custom storage" [
     let destination = Run.of_float_array ~shape:[2; 2] [|9.; 9.; 9.; 9.|] in
     ignore (Op.assign destination (Mv.reshape result [2; 2]));
     equal (array (float 1e-6)) [|1.; 2.; 3.; 4.|] (Run.to_float_array destination));
+  test "a slice of allocated custom output executes its pending call" (fun () ->
+    let input = Run.of_float_array ~shape:[6] [|1.; 2.; 3.; 4.; 5.; 6.|] in
+    let output = Run.of_float_array ~shape:[6] (Array.make 6 0.) in
+    let result = first (T.custom_kernel ~fxn:custom_add_one_kernel [output; input]) in
+    let view = Mv.reshape (Mv.shrink result [1, 4]) [3] in
+    is_true ~msg:"a pending call cannot be bypassed by resolving its storage view"
+      (Option.is_none (Run.buffer_of_node (T.uop view)));
+    equal (array (float 1e-6)) [|3.; 4.; 5.|] (Run.to_float_array view);
+    equal (array (float 1e-6)) [|2.; 3.; 4.; 5.; 6.; 7.|] (Run.to_float_array output));
   test "invalid partial stores preserve uncovered reads" (fun () ->
     let input = Run.of_float_array ~shape:[4] [|10.; 20.; 30.; 40.|] in
     let src = T.uop input in

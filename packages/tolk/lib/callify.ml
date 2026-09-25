@@ -20,6 +20,17 @@ let rec contiguous_view u =
     | Ops.After -> true
     | op when Ops.Group.is_movement op || op = Ops.Bitcast -> has_effect (U.src u).(0)
     | _ -> false in
+  let rec storage_anchor u =
+    if U.op u = Ops.Buffer then Some (u, 0)
+    else if U.op u = Ops.Bitcast then storage_anchor (U.src u).(0)
+    else view_anchor u
+  and view_anchor u =
+    match Prepare.contiguous_view u with
+    | Some (base, offset) when not (U.equal base u) || U.op base = Ops.Buffer ->
+        Option.map (fun (storage, base_offset) ->
+            storage, Bound.(to_int (add (int base_offset) (int offset))))
+          (storage_anchor base)
+    | _ -> None in
   (* A view of a split buffer is a view of each shard when multi_pm lowers
      it to one: that view, split the same way. The tinygrad counterpart
      declines when the view feeds a copy to one device, and drops a copy to
@@ -39,11 +50,13 @@ let rec contiguous_view u =
           U.unshard ~src:view ~axes:(List.map fst (U.sharding lowered))
             ~ranges:(List.map snd (U.sharding lowered)) ())
         (contiguous_view (U.src lowered).(0))
-  | None -> match U.contiguous_view u with
-    | Some (base, offset) when U.op base = Ops.Buffer ->
+  | None -> match view_anchor u with
+    | Some (base, offset) ->
         let bytes = U.bitcast ~src:base ~dtype:Dtype.int8 in
+        let size = Bound.(to_int (mul (int (U.max_numel u))
+            (int (Dtype.itemsize (U.dtype u))))) in
         let bytes = U.shrink ~src:bytes ~offset:(U.const_int offset)
-            ~size:(U.const_int (U.max_numel u * Dtype.itemsize (U.dtype u))) in
+            ~size:(U.const_int size) in
         let flat = U.bitcast ~src:bytes ~dtype:(U.dtype u) in
         let dims_node = function [d] -> d | dims -> U.stack dims in
         let dims = U.shape u in

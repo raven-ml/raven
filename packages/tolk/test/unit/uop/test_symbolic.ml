@@ -670,6 +670,18 @@ let divmod_reconstitute_tests =
           let mod_ = U.alu_binary ~op:Ops.Floormod ~lhs:x ~rhs:y in
           let expr = U.alu_binary ~op:Ops.Add ~lhs:mul ~rhs:mod_ in
           is_true (U.equal (simplify expr) x));
+      test "nested floor div/mod recombine with a positive symbolic radix" (fun () ->
+          let x = var "symbolic_radix_x" (-20) 100 in
+          let d = var "symbolic_radix" 1 7 in
+          let two = idx 2 in
+          let expr = U.O.(((x // two) mod d) * two + (x mod two)) in
+          let expected = simplify U.O.(x mod (two * d)) in
+          equal uop expected (simplify expr));
+      test "symbolic range coordinates recover the flattened index" (fun () ->
+          let d = var "range_radix" 1 7 in
+          let two = idx 2 in
+          let r = U.range ~size:U.O.(d * two) ~axis:0 ~kind:Axis_type.Weak () in
+          equal uop r (simplify U.O.(((r // two) mod d) * two + (r mod two))));
       test "scaled nested floor div/mod recombine" (fun () ->
           let x = var "x" 0 100 in
           let div = idx 2 in

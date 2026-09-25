@@ -256,66 +256,6 @@ let rec written_slots body =
           | None -> None)
         (U.toposort ~enter_calls:false body)
 
-(* Realize the arguments of a call. A call's argument is storage: a buffer,
-   or a contiguous window of one, which reaches the call as a byte view. Any
-   other argument the call only reads is realized into a copy; one it stores
-   into raises, since the call would write the copy. The tinygrad counterpart
-   realizes every argument that is not a buffer, written or not, and only of
-   bodies still to be lowered. *)
-let realize_call_args ctx c =
-  let src = U.src c in
-  let passes a =
-    always_contiguous (U.op (strip_reshapes a))
-    || Option.is_some (U.storage_window a)
-  in
-  let views = List.filter (fun slot -> not (passes src.(slot + 1)))
-      (List.init (Array.length src - 1) Fun.id) in
-  if views <> [] then begin
-    let written = written_slots src.(0) in
-    List.iter (fun slot ->
-        if List.mem slot written then
-          invalid_arg
-            (Printf.sprintf
-               "%s: the call stores into argument %d, which is a view; pass \
-                its storage and view it in the body"
-               (match U.as_call c with
-                | Some { info = { name = Some (Collective collective); _ }; _ } ->
-                    U.collective_name collective
-                | Some { info = { name = Some (Label name); _ }; _ } -> name
-                | _ -> "call")
-               slot);
-        let s = strip_reshapes src.(slot + 1) in
-        realize_set ctx s Marked;
-        Hashtbl.replace ctx.non_removable (U.tag s) ())
-      views
-  end
-
-let generate_realize_map ctx root =
-  List.iter (fun n ->
-    (match U.op n with
-     | Ops.Call -> realize_call_args ctx n
-     | _ -> ());
-    (match U.op n with
-     | Ops.Stage | Ops.Store -> realize_set ctx n Marked
-     | _ -> ());
-    (match U.op n with
-     | Ops.Mselect | Ops.Mstack ->
-         Array.iter (mark_non_contiguous ctx) (U.src n)
-     | _ -> ());
-    (* Conditionally unrealize or force-realize the value in STORE(dst, value). *)
-    (match U.op n with
-     | Ops.Store ->
-         let s = U.src n in
-         if Array.length s = 2 then begin
-           let dest = s.(0) and src = s.(1) in
-           let dest_base = U.base dest in
-           if List.exists (fun x -> x == dest_base)
-                (src :: U.backward_slice src) then
-             realize_set ctx src Marked
-         end
-     | _ -> ()))
-    (U.toposort root)
-
 (* Phase 2: range propagation *)
 
 (* Reshape.
@@ -418,6 +358,258 @@ let apply_movement_op ?shape_exprs ~shapes n rngs =
        | Some in_shape, Some out_shape -> apply_reshape in_shape out_shape rngs
        | _ -> rngs)
   | _ -> assert false
+
+let src0 u = (U.src u).(0)
+let src_tail u =
+  let s = U.src u in
+  Array.to_list (Array.sub s 1 (Array.length s - 1))
+
+let movement_src u =
+  if Ops.Group.is_movement (U.op u) then Some (src0 u) else None
+
+let is_movement u = Option.is_some (movement_src u)
+
+let shape_of n =
+  let rec concrete = function
+    | [] -> Some []
+    | dim :: rest ->
+        Option.bind (U.const_int_value dim) (fun value ->
+            Option.map (fun dims -> value :: dims) (concrete rest))
+  in
+  Option.bind (U.shape_opt n) concrete
+
+let pm_mop_through_index n =
+  match U.as_index n with
+  | Some { ptr; _ } when is_movement ptr ->
+      let src = Option.get (movement_src ptr) in
+      let idxs = src_tail n in
+      let mop_shape u =
+        match shape_of u with
+        | Some _ as shape -> shape
+        | None -> (
+            try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape u))
+            with Invalid_argument _ -> None)
+      in
+      (match mop_shape src, mop_shape ptr with
+       | Some _, Some ps when List.length idxs = List.length ps ->
+           let new_idxs =
+             apply_movement_op ~shapes:shape_of ptr idxs
+           in
+           Some (U.replace n ~src:(Array.of_list (src :: new_idxs)) ())
+       | Some src_shape, Some ptr_shape when U.op ptr = Ops.Reshape ->
+           let nidxs = List.length idxs in
+           let ptr_suffix =
+             List.filteri (fun i _ -> i >= nidxs) ptr_shape
+           in
+           let src_prefix = List.length src_shape - List.length ptr_suffix in
+           if src_prefix < 0 then None
+           else
+             let src_suffix =
+               List.filteri (fun i _ -> i >= src_prefix) src_shape
+             in
+             if src_suffix <> ptr_suffix then None
+             else if src_prefix = 0 then
+               if Dtype.equal (U.dtype src) (U.dtype n) then Some src
+               else None
+             else
+               let src_prefix_shape =
+                 List.filteri (fun i _ -> i < src_prefix) src_shape
+               in
+               let ptr_prefix_shape =
+                 List.filteri (fun i _ -> i < nidxs) ptr_shape
+               in
+               let shapes u =
+                 if u == src then Some src_prefix_shape
+                 else if u == ptr then Some ptr_prefix_shape
+                 else shape_of u
+               in
+               let new_idxs = apply_movement_op ~shapes ptr idxs in
+               let ret = U.replace n ~src:(Array.of_list (src :: new_idxs)) () in
+               if shape_of ret = shape_of n then Some ret else None
+       | _ -> None)
+  | _ -> None
+
+let pm_mop_past_after n =
+  match U.op n with
+  | Ops.After ->
+      let r = src0 n in
+      let op = U.op r in
+      if not (Ops.Group.is_movement op || op = Ops.Index) then None
+      else
+        let src = Array.copy (U.src r) in
+        src.(0) <- U.after ~src:(src0 r) ~deps:(src_tail n);
+        Some (U.replace r ~src ())
+  | _ -> None
+
+let pm_mop_past_end n =
+  match U.as_end n with
+  | Some { value; ranges } when is_movement value ->
+      Some (U.end_ ~value:(Option.get (movement_src value)) ~ranges)
+  | _ -> None
+
+let movement_ops n =
+  match
+    U.first_match [ pm_mop_through_index; pm_mop_past_after; pm_mop_past_end ] n
+  with
+  | Some n' when not (U.equal n n') -> Some n'
+  | Some _ | None -> None
+
+let contiguous_view u =
+  let unsupported device =
+    String.starts_with ~prefix:"WEBGPU" device || String.starts_with ~prefix:"CL" device in
+  if (match U.device_of u with
+      | Some (U.Single device) -> unsupported device
+      | Some (U.Multi devices) -> List.exists unsupported devices
+      | None | Some (U.Index _) -> false) then None
+  else
+    let integer n = match U.op n, U.arg n with
+      | Ops.Const, U.Arg.Value c -> (match Const.view c with Const.Int z -> Some z | _ -> None)
+      | _ -> None in
+    let total = U.sprod (U.shape u) in
+    (* Bitcasts change index units, but not the queried byte extent. *)
+    let byte_extent = U.simplify U.O.(total * U.const_int (Dtype.itemsize (U.dtype u))) in
+    let element_count base = U.simplify U.O.(byte_extent // U.const_int (Dtype.itemsize (U.dtype base))) in
+    let range size = U.range ~size ~axis:0 ~kind:Axis_type.Weak () in
+    let flatten value = U.reshape ~src:value ~shape:(U.sprod (U.shape value)) in
+    let proven = U.Ref_tbl.create 4 in
+    let prove base offset =
+      let indexed = U.index ~ptr:base ~idxs:[offset] () in
+      U.Ref_tbl.replace proven indexed ();
+      Some indexed in
+    let linear_offset base indices =
+      let dims = U.shape base in
+      if List.length indices <> List.length dims then None
+      else
+        let rec strides = function [] -> [] | _ :: rest -> U.sprod rest :: strides rest in
+        let linear = U.usum (U.const_int 0 :: List.map2 (fun index stride -> U.O.(index * stride)) indices (strides dims)) in
+        let count = element_count base in
+        Some (U.simplify U.O.(linear + (range count * U.const_int (-1)))) in
+    let bitcast_index base indices =
+      Option.bind (linear_offset base indices) (fun offset ->
+        let source = src0 base in
+        let osz = Dtype.itemsize (U.dtype base) and isz = Dtype.itemsize (U.dtype source) in
+        match integer offset, integer (U.simplify U.O.(byte_extent mod U.const_int isz)) with
+        | Some offset, Some remainder
+          when Z.equal remainder Z.zero
+            && Z.equal (Z.rem (Z.mul offset (Z.of_int osz)) (Z.of_int isz)) Z.zero ->
+            let offset = U.const (Const.integer Dtype.weakint
+                (Z.div (Z.mul offset (Z.of_int osz)) (Z.of_int isz))) in
+            let size = U.simplify U.O.(byte_extent // U.const_int isz) in
+            Some (U.index ~ptr:(flatten source) ~idxs:[U.O.(range size + offset)] ())
+        | _ -> None) in
+    let offset_rule n =
+      match U.op n, U.children n with
+      | Ops.Index, base :: indices ->
+          let crossed = if U.op base = Ops.Bitcast then bitcast_index base indices else None in
+          (match crossed with
+           | Some _ -> crossed
+           | None -> match indices with
+             | [] -> prove base (U.const_int 0)
+             | [index] when U.op index = Ops.Range -> prove base (U.const_int 0)
+             | [index] when U.op index = Ops.Add ->
+                 (match U.children index with
+                  | [range; offset] when U.op range = Ops.Range && Option.is_some (integer offset) -> prove base offset
+                  | _ -> None)
+             | [offset] when Option.is_some (integer offset)
+                 && U.resolve ~default:false (U.alu_binary ~op:Ops.Cmpeq ~lhs:byte_extent ~rhs:(U.const_int (Dtype.itemsize (U.dtype base)))) ->
+                 prove base offset
+             | _ :: _ :: _ ->
+                 Option.bind (linear_offset base indices) (fun offset ->
+                     if Option.is_some (integer offset) then prove base offset else None)
+             | _ -> None)
+      | _ -> None in
+    (* Prove the generated indices without rewriting the value graph. In
+       particular, simplifying a STAGE input would name a different allocation. *)
+    let inputs = U.Ref_tbl.create 16 in
+    List.iter (fun node -> U.Ref_tbl.replace inputs node ()) (U.toposort u);
+    let indexed = U.index ~ptr:(flatten u) ~idxs:[range total] () in
+    let rewrite n =
+      if U.Ref_tbl.mem inputs n then None
+      else U.first_match
+          [movement_ops; Upat.Pattern_matcher.rewrite Symbolic.symbolic; offset_rule] n in
+    let result = U.graph_rewrite ~name:"contiguous_view_offset" rewrite indexed in
+    match U.op result, U.children result with
+    | Ops.Index, [base; offset] when U.Ref_tbl.mem proven result ->
+        Option.map (fun offset ->
+            let bytes = Z.mul offset (Z.of_int (Dtype.itemsize (U.dtype base))) in
+            if not (Z.fits_int bytes) then invalid_arg "Indexing.contiguous_view: byte offset does not fit a host integer";
+            base, Z.to_int bytes) (integer offset)
+    | _ -> None
+
+(* Layout proof and storage ownership are distinct: arithmetic can have a
+   contiguous layout without owning storage. A stage is a future allocation;
+   retain it, and any pending AFTER, as the anchor rather than crossing it. *)
+let rec storage_window u =
+  match contiguous_view u with
+  | Some (anchor, _) as view when storage_anchor anchor -> view
+  | _ -> None
+and storage_anchor u =
+  match U.op u with
+  | Ops.Buffer | Ops.Alloc | Ops.Param | Ops.Mselect | Ops.Mstack -> true
+  | Ops.Stage -> U.arg u = U.Arg.Empty
+  | Ops.Bitcast | Ops.Detach | Ops.Contiguous_backward | Ops.After ->
+      Option.is_some (storage_window (src0 u))
+  | _ -> false
+
+(* Realize the arguments of a call. A call's argument is storage: a buffer,
+   or a contiguous window of one, which reaches the call as a byte view. Any
+   other argument the call only reads is realized into a copy; one it stores
+   into raises, since the call would write the copy. The tinygrad counterpart
+   realizes every argument that is not a buffer, written or not, and only of
+   bodies still to be lowered. *)
+let realize_call_args ctx c =
+  let src = U.src c in
+  let passes a =
+    always_contiguous (U.op (strip_reshapes a))
+    || Option.is_some (storage_window a)
+  in
+  let views = List.filter (fun slot -> not (passes src.(slot + 1)))
+      (List.init (Array.length src - 1) Fun.id) in
+  if views <> [] then begin
+    let written = written_slots src.(0) in
+    List.iter (fun slot ->
+        if List.mem slot written then
+          invalid_arg
+            (Printf.sprintf
+               "%s: the call stores into argument %d, which is a view; pass \
+                its storage and view it in the body"
+               (match U.as_call c with
+                | Some { info = { name = Some (Collective collective); _ }; _ } ->
+                    U.collective_name collective
+                | Some { info = { name = Some (Label name); _ }; _ } -> name
+                | _ -> "call")
+               slot);
+        let s = strip_reshapes src.(slot + 1) in
+        realize_set ctx s Marked;
+        Hashtbl.replace ctx.non_removable (U.tag s) ())
+      views
+  end
+
+let generate_realize_map ctx root =
+  List.iter (fun n ->
+    (match U.op n with
+     | Ops.Call -> realize_call_args ctx n
+     | _ -> ());
+    (match U.op n with
+     | Ops.Stage | Ops.Store -> realize_set ctx n Marked
+     | _ -> ());
+    (match U.op n with
+     | Ops.Mselect | Ops.Mstack ->
+         Array.iter (mark_non_contiguous ctx) (U.src n)
+     | _ -> ());
+    (* Conditionally unrealize or force-realize the value in STORE(dst, value). *)
+    (match U.op n with
+     | Ops.Store ->
+         let s = U.src n in
+         if Array.length s = 2 then begin
+           let dest = s.(0) and src = s.(1) in
+           let dest_base = U.base dest in
+           if List.exists (fun x -> x == dest_base)
+                (src :: U.backward_slice src) then
+             realize_set ctx src Marked
+         end
+     | _ -> ()))
+    (U.toposort root)
 
 (* Build the direct-consumer map for [root] from its toposort, over data
    sources only: a node reached through a shape or index argument is not a

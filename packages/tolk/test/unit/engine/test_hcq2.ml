@@ -60,7 +60,23 @@ let region_identity () =
   let a = Deps_tracker.uop (slice (U.mselect ~src:multi ~index:0) 4 8)
   and b = Deps_tracker.uop (slice (U.mselect ~src:multi ~index:1) 4 8) in
   equal bool true (a.base = b.base);
-  equal bool false (a.lane = b.lane)
+  equal bool false (a.lane = b.lane);
+  let other = Device.create_buffer ~size:32 ~dtype:Dtype.int32 device in
+  let stacked = U.mstack [U.from_buffer root; U.from_buffer other] in
+  let first = U.mselect ~src:stacked ~index:0
+  and second = U.mselect ~src:stacked ~index:1 in
+  let a = Deps_tracker.uop (slice first 4 8)
+  and b = Deps_tracker.uop (slice second 4 8) in
+  equal bool false (a.base = b.base);
+  equal (option int) None a.lane;
+  equal (option int) None b.lane;
+  equal int 16 a.start;
+  equal int 48 b.stop;
+  let bytes = U.bitcast ~src:second ~dtype:Dtype.uint8 in
+  let subword = Deps_tracker.uop (slice bytes 5 4) in
+  equal bool true (subword.base = b.base);
+  equal int 5 subword.start;
+  equal int 9 subword.stop
 
 let overlap_waits () =
   let a = parameter 0 and b = parameter 1 and c = parameter 2 in

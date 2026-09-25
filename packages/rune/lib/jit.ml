@@ -4180,13 +4180,11 @@ let arena_nodes bound linear =
     List.iter (fun node -> U.Tbl.replace seen node ()) bound;
     U.toposort ~enter_calls:true linear
     |> List.filter_map (fun u ->
-        match U.contiguous_view u with
-        | Some (src, _)
-          when U.op src = Ops.Buffer && TD.equal (U.dtype src) TD.int8
-               && not (U.Tbl.mem seen src) ->
-            U.Tbl.add seen src ();
-            Some src
-        | _ -> None)
+        if U.op u = Ops.Buffer && TD.equal (U.dtype u) TD.int8
+           && not (U.Tbl.mem seen u) then begin
+          U.Tbl.add seen u ();
+          Some u
+        end else None)
 
 let parameterize nodes =
   let seen = U.Tbl.create (List.length nodes) in
