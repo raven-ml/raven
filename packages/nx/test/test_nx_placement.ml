@@ -444,6 +444,10 @@ let test_eager_results_over_split_operands () =
     (Nx.slice [ Nx.L [ 1; 0 ] ] x)
     (Nx.slice [ Nx.L [ 1; 0 ] ] t);
   along (fun () -> Nx.slice [ Nx.L [ 1; 0 ] ] s);
+  let ids = Nx.create Nx.int32 [| 8 |] [| 5l; 0l; 3l; 3l; 1l; 2l; 4l; 0l |] in
+  check "rows taken by split positions" rows
+    (Nx.take ~axis:0 ~indices:ids w)
+    (Nx.take ~axis:0 ~indices:(Nx.place rows ids) (Nx.place copies w));
   let batch = Nx.reshape [| 2; 4; 4 |] (Nx.arange Nx.float32 0 32 1) in
   let spd =
     Nx.add

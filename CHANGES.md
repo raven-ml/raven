@@ -1958,6 +1958,10 @@ thread.
 
 ### Nx
 
+- `Nx.take` from a table on several devices at positions split across them
+  runs where they live: each device takes its own positions' rows, and the
+  result is split as the positions are. It raised as a gather along the split
+  axis.
 - `Nx.dot`, `Nx.vdot`, `Nx.inner`, `Nx.vecdot` and `einsum "i,i->"` of vectors
   compute as `Nx.matmul` does, so every product of the same vectors gives one
   answer. At `float16`, `bfloat16` and float8 they rounded each product first.

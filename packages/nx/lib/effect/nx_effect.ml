@@ -1070,7 +1070,10 @@ type rule =
   | Elementwise (* the operands' shape *)
   | Along of int list
     (* acts along these axes, the others as elementwise: sort, scan, pad,
-       concatenation, gather, fft, linear algebra *)
+       concatenation, fft, linear algebra *)
+  | Gather of int
+    (* reads its first operand along this axis at the positions its second
+       holds, the other axes as elementwise *)
   | Reduce of { axes : int array; keepdims : bool }
   | Contract
     (* a product over the last axis of the first and the next-to-last of the
@@ -1133,6 +1136,11 @@ let result op rule operands =
       List.iter
         (fun p -> List.iter (fun a -> if cut p a then along op a) axes)
         ps;
+      combine op ps
+  | Gather axis ->
+      (match operands with
+      | (Some p, _) :: _ when cut p axis -> along op axis
+      | _ -> ());
       combine op ps
   | Reduce { axes; keepdims } ->
       let reduce p =
@@ -1299,7 +1307,7 @@ let routing : type r. r Effect.t -> (string * rule * packed list) option =
   | E_cat { t_list; axis } ->
       Some ("concatenate", Along [ axis ], List.map (fun x -> P x) t_list)
   | E_gather { data; indices; axis } ->
-      Some ("take", Along [ axis ], [ P data; P indices ])
+      Some ("take", Gather axis, [ P data; P indices ])
   | E_update { t_in; starts; v } -> Some ("set", Into, [ P t_in; P starts; P v ])
   | E_scatter { data_template; indices; updates; _ } ->
       Some ("scatter", Into, [ P data_template; P indices; P updates ])
