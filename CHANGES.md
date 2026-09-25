@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- C-style rendering uses IR shapes for vector types and memory accesses,
+  fixing size-changing bitcasts and vector casts. Rendered graphs can now be
+  collected instead of remaining in a permanent expression-width cache.
+
 - Metal queue completion now collects command buffers in submission order.
   Later pending profiling work cannot hide an earlier completion, and host
   waits observe command failures and timestamps before publishing progress.

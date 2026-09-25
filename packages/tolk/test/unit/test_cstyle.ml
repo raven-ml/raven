@@ -945,6 +945,37 @@ let () =
         ];
       group "Vectorize and Index"
         [
+          test "vector cast uses the resulting shape" (fun () ->
+            let src =
+              U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 2)
+                ~addrspace:Dtype.Global ()
+            in
+            let dst =
+              U.param ~slot:1 ~dtype:dt ~shape:(U.const_int 2)
+                ~addrspace:Dtype.Global ()
+            in
+            let value = U.cast ~src:(load src) ~dtype:dt in
+            let prog = U.toposort (store dst value) in
+            for_each_renderer all_renderers (fun name r ->
+                assert_contains (name ^ " vector cast type") (render r prog)
+                  "((float2)(val0))"));
+          test "size-changing bitcast uses the resulting shape" (fun () ->
+            let src =
+              U.param ~slot:0 ~dtype:Dtype.uint32 ~shape:(U.const_int 2)
+                ~addrspace:Dtype.Global ()
+            in
+            let dst =
+              U.param ~slot:1 ~dtype:Dtype.uint8 ~shape:(U.const_int 8)
+                ~addrspace:Dtype.Global ()
+            in
+            let value = U.bitcast ~src:(load src) ~dtype:Dtype.uint8 in
+            let out = render clang_renderer (U.toposort (store dst value)) in
+            assert_contains "bitcast source vector" out "unsigned_int2";
+            assert_contains "bitcast result vector" out
+              "__builtin_bit_cast(unsigned_char8, (unsigned_int2)";
+            assert_contains "result vector typedef" out "ext_vector_type(8)";
+            assert_not_contains "no inherited input lane count" out
+              "typedef unsigned char unsigned_char2");
           test "vectorize" (fun () ->
             let prog = make_vectorize_index () in
             for_each_renderer all_renderers (fun name r ->
@@ -1572,6 +1603,22 @@ let () =
         ];
       group "Properties"
         [
+          test "rendering does not retain the expression graph" (fun () ->
+            let weak = Stdlib.Weak.create 1 in
+            let[@inline never] render_once () =
+              let src =
+                U.param ~slot:7139 ~dtype:dt ~shape:(U.const_int 4)
+                  ~addrspace:Dtype.Global ()
+              in
+              let value = load src in
+              Stdlib.Weak.set weak 0 (Some value);
+              ignore (render clang_renderer (U.toposort value))
+            in
+            render_once ();
+            Gc.full_major ();
+            Gc.full_major ();
+            is_false ~msg:"rendered expressions must be collectable"
+              (Stdlib.Weak.check weak 0));
           prop "non-empty output"
             Gen.(pair safe_dtype_gen renderer_gen)
             (fun (dt, (_name, renderer)) ->

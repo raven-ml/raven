@@ -143,7 +143,6 @@ type 'ctx rule =
 type ctx = {
   lang : language;
   r : string U.Tbl.t;
-  lane_demand : int U.Tbl.t;
 }
 
 and language = {
@@ -217,20 +216,6 @@ let is_image_shape = function
 
 let addrspace_of u = Option.value (U.addrspace u) ~default:Dtype.Alu
 
-(* Lane count contributed structurally by a node's own op: a Stack packs one
-   lane per source, every other node is scalar until its shape says otherwise. *)
-let stack_count u =
-  match U.op u with
-  | Ops.Stack ->
-      let n = Array.length (U.src u) in
-      if n <= 1 then 1 else n
-  | _ -> 1
-
-let max_numel u =
-  match U.shape_opt u with
-  | Some _ -> prod (U.max_shape u)
-  | None -> stack_count u
-
 (* Render scalar [dtype] at vector width [sz], decorated for [addrspace]
    (a pointer for Global/Local, or when [override_ptr]) and image [shape]. *)
 let render_dtype_c (lang : language) ?(sz = 1) ?(addrspace = Dtype.Alu)
@@ -262,59 +247,6 @@ let render_dtype_c (lang : language) ?(sz = 1) ?(addrspace = Dtype.Alu)
 let render_dtype (ctx : ctx) (dtype : Dtype.t) : string =
   render_dtype_c ctx.lang dtype
 
-(* Memoized: an unmemoized walk revisits shared subgraphs and goes
-   exponential on wide unrolled ALU chains. *)
-let expr_numel_cache : int U.Ref_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> U.Ref_tbl.create 256)
-
-let rec expr_numel u =
-  let expr_numel_cache = Domain.DLS.get expr_numel_cache in
-  match U.Ref_tbl.find_opt expr_numel_cache u with
-  | Some n -> n
-  | None ->
-      let n = compute_expr_numel u in
-      U.Ref_tbl.add expr_numel_cache u n;
-      n
-
-and compute_expr_numel u =
-  let base_count = stack_count u in
-  match U.op u with
-  | Ops.Stack ->
-      let srcs = U.src u in
-      if Array.length srcs = 0 then base_count else Array.length srcs
-  (* These carry their width in their own shape. A WMMA's is the accumulator
-     tail — the lanes one thread holds of the output tile — which is
-     independent of the operand widths, so it must not come from the sources:
-     an f16 tile can take an 8-lane operand and return 4. *)
-  | Ops.Index | Ops.Shrink | Ops.Wmma -> max base_count (max_numel u)
-  | Ops.Load ->
-      let srcs = U.src u in
-      if Array.length srcs = 0 then base_count
-      else
-        let access_count = expr_numel srcs.(0) in
-        if access_count > 1 then access_count else base_count
-  | Ops.Cast | Ops.Bitcast | Ops.Noop | Ops.After ->
-      let srcs = U.src u in
-      if Array.length srcs = 0 then base_count
-      else max base_count (expr_numel srcs.(0))
-  | op when Ops.Group.is_alu op ->
-      U.src u |> Array.to_list |> List.map expr_numel
-      |> List.fold_left max base_count
-  | _ -> base_count
-
-let base_render_numel u =
-  match U.op u, U.src u with
-  | (Ops.Buffer | Ops.Param), _ -> max_numel u
-  | Ops.Load, srcs when Array.length srcs > 0 ->
-      let access_count = expr_numel srcs.(0) in
-      if access_count > 1 then access_count else max_numel u
-  | _ -> expr_numel u
-
-let lane_demand ctx u =
-  try U.Tbl.find ctx.lane_demand u with Not_found -> 1
-
-let render_numel ctx u = max (base_render_numel u) (lane_demand ctx u)
-
 let scalar_view_source_is_value u =
   match U.addrspace u with
   | None | Some Dtype.Alu -> true
@@ -323,8 +255,10 @@ let scalar_view_source_is_value u =
 (* Value type of [u] as declared: its scalar dtype at the rendered lane count,
    decorated for its address space and shape. *)
 let render_type ctx u =
-  render_dtype_c ctx.lang ~sz:(render_numel ctx u)
-    ~addrspace:(addrspace_of u) ~shape:(U.shape_opt u) (U.dtype u)
+  render_dtype_c ctx.lang ~sz:(U.max_numel u)
+    ~addrspace:(addrspace_of u) ~shape:(U.shape_opt u)
+    ~override_ptr:(U.op u = Ops.Index && U.addrspace u = Some Dtype.Reg)
+    (U.dtype u)
 
 let render_cast (r : ctx) (dt : Dtype.t) (v : string) =
   strf "(%s)(%s)" (render_dtype r dt) v
@@ -351,7 +285,7 @@ let render_buffer (ctx : ctx) (u : U.t) =
   Some
     (strf "%s%s %s[%d];" prefix
        (render_dtype ctx (U.dtype u))
-       (lookup ctx u) (max_numel u))
+       (lookup ctx u) (U.max_numel u))
 
 let render_index (ctx : ctx) ~ptr ~idxs =
   let flat_index_string () =
@@ -451,7 +385,7 @@ let render_index (ctx : ctx) ~ptr ~idxs =
             | Const.Int i ->
                 let i = Z.to_int i in
                 let base = lookup ctx ptr in
-                if max_numel ptr > ctx.lang.gep_arr_threshold then
+                if U.max_numel ptr > ctx.lang.gep_arr_threshold then
                   strf "%s[%d]" base i
                 else strf "%s.%s" base (vec_elem_letter i)
             (* Non-constant lane access is C array subscript on the value. *)
@@ -474,33 +408,17 @@ let volatile_prefix u =
   | Some param when param.volatile -> "volatile "
   | Some _ | None -> ""
 
-(* [render_ptr ~access_scalar ~access_width u] renders the address
-   expression [u] (an INDEX/SHRINK node). [access_scalar]/[access_width] describe
-   the value moved through the access; when it is wider than one lane or its
-   scalar differs from the pointer's, the address is cast to a matching pointer
-   before the dereference. *)
-let render_ptr (ctx : ctx) ~access_scalar ~access_width (u : U.t) =
-  let expr_count = expr_numel u in
-  let access_count =
-    if expr_count > 1 then expr_count else max access_width (max_numel u)
-  in
-  let ptr_scalar =
-    if Array.length (U.src u) > 0 then U.dtype (U.src u).(0) else U.dtype u
-  in
-  let cast =
-    access_count > 1
-    || not (Dtype.equal access_scalar ptr_scalar)
-    || not (Dtype.equal (U.dtype u) ptr_scalar)
-  in
-  if cast then
+(* The access pointer carries the scalar type and shape of the value moved. *)
+let render_ptr (ctx : ctx) (u : U.t) =
+  let count = U.max_numel u in
+  if count > 1 || not (Dtype.equal (U.dtype u) (U.dtype (U.src u).(0))) then
     strf "((%s%s)(%s))" (volatile_prefix u)
-      (render_dtype_c ctx.lang ~sz:access_count ~addrspace:(addrspace_of u)
-         ~override_ptr:true ~shape:(U.shape_opt u) access_scalar)
+      (render_dtype_c ctx.lang ~sz:count ~addrspace:(addrspace_of u)
+         ~override_ptr:true ~shape:(U.shape_opt u) (U.dtype u))
       (lookup ctx u)
   else lookup ctx u
 
-let render_access ctx ~access_scalar ~access_width u =
-  "*" ^ render_ptr ctx ~access_scalar ~access_width u
+let render_access ctx u = "*" ^ render_ptr ctx u
 
 (* Images are the tinygrad convention of a rank-3 shape whose last axis is 4
    (RGBA); the buffer carries no pointer dtype, so image-ness is read from the
@@ -731,17 +649,19 @@ let base_rewrite : ctx rule list =
     ( op ~name:"x" Ops.Cast,
       fun ctx bs _ ->
         let x = bs $ "x" in
-        if max_numel x > 1 && U.addrspace x = Some Dtype.Reg then
+        if U.max_numel x > 1 && U.addrspace x = Some Dtype.Reg then
           Some
             (strf "__builtin_convertvector(%s, %s)"
                (lookup ctx (U.src x).(0))
                (render_type ctx x))
         else None );
-    (* CAST scalar: (dtype)(x) *)
+    (* CAST: (type)(x) *)
     ( op ~name:"x" Ops.Cast,
       fun ctx bs _ ->
         let x = bs $ "x" in
-        Some (strf "(%s)" (render_cast ctx (U.dtype x) (lookup ctx (U.src x).(0))))
+        Some
+          (strf "((%s)(%s))" (render_type ctx x)
+             (lookup ctx (U.src x).(0)))
     );
     (* BITCAST: __builtin_bit_cast(dtype, (src_dtype)(src)) *)
     ( op ~name:"x" Ops.Bitcast,
@@ -752,8 +672,8 @@ let base_rewrite : ctx rule list =
         let src = (U.src x).(0) in
         Some
           (strf "__builtin_bit_cast(%s, (%s)(%s))"
-             (render_dtype ctx (U.dtype x))
-             (render_dtype ctx (U.dtype src))
+             (render_type ctx x)
+             (render_type ctx src)
              (lookup ctx src)) );
     (* BARRIER *)
     (op Ops.Barrier, fun ctx _ _ -> Some ctx.lang.barrier);
@@ -777,11 +697,11 @@ let base_rewrite : ctx rule list =
         let src = (U.src x).(0) in
         let rec uniform_const_base n =
           match U.op n with
-          | Ops.Const when max_numel n = 1 -> Some n
+          | Ops.Const when U.max_numel n = 1 -> Some n
           | Ops.Reshape | Ops.Expand | Ops.Permute -> uniform_const_base (U.src n).(0)
           | _ -> None
         in
-        if render_numel ctx x = 1 && scalar_view_source_is_value src
+        if U.max_numel x = 1 && scalar_view_source_is_value src
         then Some (lookup ctx src)
         else
           match uniform_const_base src with
@@ -794,7 +714,7 @@ let base_rewrite : ctx rule list =
 	        let x = bs $ "x" in
 	        let rec uniform_const_base n =
 	          match U.op n with
-	          | Ops.Const when max_numel n = 1 -> Some n
+	          | Ops.Const when U.max_numel n = 1 -> Some n
 	          | Ops.Reshape | Ops.Expand | Ops.Permute ->
 	              uniform_const_base (U.src n).(0)
 	          | _ -> None
@@ -806,10 +726,9 @@ let base_rewrite : ctx rule list =
 	            | None -> None
 	            | Some i ->
 	                let base = lookup ctx ptr in
-	                let width = render_numel ctx ptr in
-	                if max_numel ptr = 1 && width <= 1 then
+	                if U.max_numel ptr = 1 then
 	                  Some base
-	                else if max_numel ptr > ctx.lang.gep_arr_threshold then
+	                else if U.max_numel ptr > ctx.lang.gep_arr_threshold then
 	                  Some (strf "%s[%d]" base i)
 	                else Some (strf "%s.%s" base (vec_elem_letter i)))
 	        | Ops.Index, Some v, _ -> (
@@ -835,19 +754,16 @@ let base_rewrite : ctx rule list =
         | Some { src; alt = Some alt_u; gate = Some gate } ->
             Some
               (strf "(%s?%s:%s)" (lookup ctx gate)
-                 (render_access ctx ~access_scalar:(U.dtype x)
-                   ~access_width:(render_numel ctx x) src)
+                 (render_access ctx src)
                  (lookup ctx alt_u))
         | Some { src; alt = Some _; gate = None } ->
             Some
               (strf "(%s)"
-                 (render_access ctx ~access_scalar:(U.dtype x)
-                   ~access_width:(render_numel ctx x) src))
+                 (render_access ctx src))
         | Some { src; alt = None; gate = _ } ->
             Some
               (strf "(%s)"
-                 (render_access ctx ~access_scalar:(U.dtype x)
-                   ~access_width:(render_numel ctx x) src))
+                 (render_access ctx src))
         | None -> None );
     (* Image STORE: write_imagef(buf, (int2)(x,y), value); *)
     ( op ~name:"x" Ops.Store,
@@ -864,8 +780,7 @@ let base_rewrite : ctx rule list =
         | Some v ->
             let store =
               strf "%s = %s;"
-                (render_access ctx ~access_scalar:(U.dtype v.value)
-                   ~access_width:(render_numel ctx v.value) v.dst)
+                (render_access ctx v.dst)
                 (lookup ctx v.value)
             in
             Some
@@ -953,7 +868,7 @@ let base_code_for_op : code_for_op =
 (* no_vectorized_alu: split a vector ALU node into scalar indexes + STACK.
    Ported lazily; we only need the surface behavior here for bools and WHERE. *)
 let no_vectorized_alu (u : U.t) : U.t option =
-  let n = max_numel u in
+  let n = U.max_numel u in
   if n <= 1 then None
   else
     let lanes =
@@ -961,7 +876,7 @@ let no_vectorized_alu (u : U.t) : U.t option =
         let scalar_srcs =
           Array.to_list (U.src u)
           |> List.map (fun s ->
-                 if max_numel s = n then
+                 if U.max_numel s = n then
                    U.index ~ptr:s ~idxs:[ U.const_int i ] ()
                  else s)
         in
@@ -969,22 +884,15 @@ let no_vectorized_alu (u : U.t) : U.t option =
     in
     Some (U.stack ~dtype:(U.dtype u) lanes)
 
-let extra_pm : U.t -> U.t option =
- fun node ->
-  let dt = U.dtype node in
-  let is_vec = max_numel node > 1 in
-  let is_bool_result = Dtype.is_bool dt && is_vec in
+let extra_pm (node : U.t) : U.t option =
   match U.op node with
-  | o when is_bool_result &&
-           (Ops.Group.is_alu o || o = Ops.Cast || o = Ops.Bitcast
-            || o = Ops.Index) ->
-      no_vectorized_alu node
-  | Ops.Cast when is_vec ->
-      let srcs = U.src node in
-      if Array.length srcs > 0 && Dtype.is_bool (U.dtype srcs.(0)) then
-        no_vectorized_alu node
+  | op when (Ops.Group.is_alu op || op = Ops.Cast || op = Ops.Bitcast
+             || op = Ops.Index) && U.max_numel node > 1 ->
+      if Dtype.is_bool (U.dtype node) || op = Ops.Where
+         || (op = Ops.Cast && Array.length (U.src node) > 0
+             && Dtype.is_bool (U.dtype (U.src node).(0)))
+      then no_vectorized_alu node
       else None
-  | Ops.Where when is_vec -> no_vectorized_alu node
   | _ -> None
 
 (* create_non_native_float_pats: promote ALU ops on non-native floats through
@@ -1198,7 +1106,7 @@ let should_inline ~expand_ssa ~child_count (u : U.t) : bool =
   let cc =
     try U.Tbl.find child_count u with Not_found -> 0
   in
-  if U.op u = Ops.Cast && max_numel u <> 1 then false
+  if U.op u = Ops.Cast && U.max_numel u <> 1 then false
   else
     match U.op u with
     | Ops.Index | Ops.Shrink | Ops.Customi -> true
@@ -1226,11 +1134,11 @@ let scalar_view_source_can_be_forwarded parents u src =
     | Some (_ :: _ as ps) -> List.for_all (fun p -> address_view_parent (U.op p)) ps
     | Some [] | None -> false
 
-let transparent_scalar_view parents (ctx : ctx) (u : U.t) : U.t option =
+let transparent_scalar_view parents (u : U.t) : U.t option =
   match U.op u, U.src u with
   | (Ops.Reshape | Ops.Expand | Ops.Permute), srcs
     when Array.length srcs > 0
-         && render_numel ctx u = 1
+         && U.max_numel u = 1
          && scalar_view_source_can_be_forwarded parents u srcs.(0) ->
       Some srcs.(0)
   | _ -> None
@@ -1306,7 +1214,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
                end
            | None -> ())
       | _ ->
-          (match transparent_scalar_view parents ctx u with
+          (match transparent_scalar_view parents u with
            | Some src -> U.Tbl.replace r u (U.Tbl.find r src)
            | None ->
                (* Name assignment. Special and Range have semantic names;
@@ -1456,24 +1364,6 @@ let buf_param ctx (u, nm, (dt, mut)) =
        ~shape:(U.shape_opt u) dt)
     suffix nm
 
-let collect_lane_demand uops =
-  let tbl = U.Tbl.create 32 in
-  let bump u width =
-    if width > 1 then
-      let old = try U.Tbl.find tbl u with Not_found -> 1 in
-      if width > old then U.Tbl.replace tbl u width
-  in
-  List.iter
-    (fun u ->
-      match U.as_index u with
-      | Some { ptr; idxs = [ idx ] } when U.addrspace ptr = Some Dtype.Alu -> (
-          match U.const_int_value idx with
-          | Some lane -> bump ptr (lane + 1)
-          | None -> ())
-      | _ -> ())
-    uops;
-  tbl
-
 let local_size_of u =
   match U.as_special u with
   | Some { name; size; _ } ->
@@ -1514,8 +1404,7 @@ let default_render_kernel (ctx : ctx) ~function_name ~kernel ~bufs
 (* render: tie it all together. *)
 let render (lang : language) ?name:name_override (uops : U.t list) : string =
   let ctx =
-    { lang; r = U.Tbl.create (List.length uops);
-      lane_demand = collect_lane_demand uops }
+    { lang; r = U.Tbl.create (List.length uops) }
   in
   let { name; kernel; bufs } = render_uops ctx uops in
   let name = Option.value ~default:name name_override in
@@ -1593,7 +1482,7 @@ let clang_extra_matcher (node : U.t) : U.t option =
            ~src:
              (U.cast ~src ~dtype:(Dtype.float32))
            ~dtype:(U.dtype node))
-  | (Ops.Sqrt | Ops.Trunc), _ when max_numel node > 1 ->
+  | (Ops.Sqrt | Ops.Trunc), _ when U.max_numel node > 1 ->
       no_vectorized_alu node
   | _ ->
       (match create_non_native_float_pats [ Dtype.Bfloat16 ] node with
@@ -1624,15 +1513,6 @@ let metadata_src_indices u =
   | _ -> []
 
 let used_alu_dtypes uops =
-  (* Vector width must match the width used when the value is declared
-     ({!render_type} -> {!render_numel}), not {!max_numel}: gated loads with
-     out-of-bounds addressing have no valid shape, so [max_numel] falls back to
-     a scalar while the value is still declared and indexed as a vector. *)
-  let lane_demand = collect_lane_demand uops in
-  let render_width u =
-    max (base_render_numel u)
-      (try U.Tbl.find lane_demand u with Not_found -> 1)
-  in
   let metadata_only = U.Tbl.create 64 and value = U.Tbl.create 64 in
   List.iter
     (fun u ->
@@ -1656,13 +1536,13 @@ let used_alu_dtypes uops =
     | Some _ | None -> acc
   in
   let dtype_for u =
-    if U.Tbl.mem metadata_only u then None
+    if U.Tbl.mem metadata_only u || U.shape_opt u = None then None
     else
       match U.addrspace u with
       | Some Dtype.Alu | None ->
           let scalar = U.dtype u in
           if Dtype.equal scalar Dtype.void then None
-          else Some (scalar, render_width u)
+          else Some (scalar, U.max_numel u)
       | Some (Dtype.Reg | Dtype.Global | Dtype.Local) -> None
   in
   List.rev (List.fold_left (fun acc u -> add (dtype_for u) acc) [] uops)
@@ -1673,7 +1553,7 @@ let used_vector_dtypes uops =
 (* [aligned] has no tinygrad counterpart: the reference reads [ALIGNED] from the
    environment only. *)
 let clang_vector_prefix ?aligned lang (scalar, count) =
-  let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
+  let ctx = { lang; r = U.Tbl.create 0 } in
   let aligned =
     match aligned with Some a -> a | None -> getenv "ALIGNED" 1 <> 0
   in
@@ -1935,7 +1815,7 @@ let dedup_by_key key values =
   loop [] [] values
 
 let metal_wmma_helpers lang uops =
-  let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
+  let ctx = { lang; r = U.Tbl.create 0 } in
   wmma_nodes uops
   |> dedup_by_key (fun ((info : U.wmma_info), dtype_out, _widths) ->
          (info.dims, info.dtype_in, dtype_out))
@@ -2075,7 +1955,7 @@ let cuda_extra_matcher (node : U.t) : U.t option =
 let vector_elem_names n = List.init n vec_elem_letter
 
 let cuda_vector_prefix lang (scalar, count) =
-  let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
+  let ctx = { lang; r = U.Tbl.create 0 } in
   let vec = render_dtype_c lang ~sz:count scalar in
   let scal = render_dtype ctx scalar in
   let names = vector_elem_names count in
@@ -2272,7 +2152,7 @@ let amd_code_for_workitem name : string =
         a a a
 
 let amd_vector_prefix lang (scalar, count) =
-  let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
+  let ctx = { lang; r = U.Tbl.create 0 } in
   let vec = render_dtype_c lang ~sz:count scalar in
   let scal = render_dtype ctx scalar in
   let names = vector_elem_names count in
@@ -2398,8 +2278,7 @@ let amd_nontemporal_load : ctx rule =
       match U.arg x, U.as_load x with
       | U.Arg.String "nontemporal", Some { src; alt = None; gate = None } ->
           Some (strf "__builtin_nontemporal_load(%s)"
-              (render_ptr ctx ~access_scalar:(U.dtype x)
-                 ~access_width:(render_numel ctx x) src))
+              (render_ptr ctx src))
       | _ -> None )
 
 let amd_string_rewrite arch =
@@ -2432,7 +2311,7 @@ let amd_fp8_wmma_bitcast node =
   match U.as_wmma node with
   | Some v
     when Dtype.equal (U.dtype node) Dtype.float32
-         && max_numel v.a = 8
+         && U.max_numel v.a = 8
          && Dtype.is_fp8 (U.dtype v.a) ->
       Some
         (U.wmma
