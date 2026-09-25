@@ -223,6 +223,16 @@ let scan_tests =
       test "long cumprod" (fun () ->
           let xs = Array.init 600 (fun i -> if i mod 97 = 0 then -1 else 1) in
           check_ints (prefix ( * ) xs) (Op.cumprod (Run.of_int_array ~shape:[ 600 ] xs)));
+      test "long cumprod of 8-bit floats" (fun () ->
+          (* The chunked scan of an emulated 8-bit float failed in the C and
+             Metal compilers. *)
+          let xs = Array.init 600 (fun i -> if i mod 97 = 0 then -1 else 1) in
+          List.iter
+            (fun dtype ->
+              check_floats (floats (prefix ( * ) xs))
+                (Dt.cast (Op.cumprod (Dt.cast (vec (floats xs)) dtype))
+                   Tolk_uop.Dtype.float32))
+            [ Tolk_uop.Dtype.fp8e4m3; Tolk_uop.Dtype.fp8e5m2 ]);
       test "long cummax" (fun () ->
           let xs = Array.init 1000 (fun i -> ((i * 37) mod 1009) - (i mod 3)) in
           let values, indices = Op.cummax (Run.of_int_array ~shape:[ 1000 ] xs) in
