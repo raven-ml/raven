@@ -1,7 +1,8 @@
 # TODO
 
 Migrate the reference from `baa6148066f1a29f56bb870f6f139c15bb3f495f` to the
-frozen target `471a3aeb6924257d5e9bf321f5ff0a519163f18e`. Intentional differences
+target `a83c6f8011863c17ef4e9c24c59e521be3c754d3` (upstream HEAD verified
+on 2026-09-25). Intentional differences
 belong in [DIVERGENCES.md](DIVERGENCES.md). Remove work when its acceptance
 criteria pass. The remaining milestones below define migration completion;
 separately scoped work does not block it.
@@ -70,6 +71,11 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
+- Integrate the upstream delta after `471a3aeb`: balanced large STACK selection,
+  simplified symbolic FLOP estimates, and symbolic-shift bounds validation.
+  Audit HCQ2/NV compute changes in the video migration and GPT-OSS/AMD kernel
+  changes against current consumers. Account for test relocations and removed
+  buffer options when regenerating the complete corpus.
 - Migrate the remaining Python drivers to the target API and generate the
   complete corpus separately, including AMD queue drivers and the 40 non-release
   NV fixtures for launch/setup/copy behavior. Update the C-style fixture

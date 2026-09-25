@@ -124,6 +124,7 @@ and to_program ?(optimize = true) ?beam_device dev ren sink =
   let full_sink = full_rewrite_to_sink ~optimize ~beam_device ren sink in
   let ki = kernel_info_exn "to_program" full_sink in
   let program = Linearizer.linearize full_sink in
+  let full_sink = List.hd (List.rev program) in
   let src = Renderer.render ren ~name:ki.name program in
   let comp =
     match Renderer.compiler ren with

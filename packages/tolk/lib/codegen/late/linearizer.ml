@@ -35,7 +35,7 @@ let priority_of u =
         | None -> invalid_arg "Linearizer: PARAM without a parameter argument"
       in
       -20, Idx idx
-  | Ops.Buffer ->
+  | Ops.Buffer | Ops.Alloc ->
       let pri =
         match U.addrspace u with
         | Some Dtype.Local -> -17
@@ -110,6 +110,11 @@ let linearize_cleanups (program : U.t list) : U.t list =
                 U.Ref_tbl.replace replacements u store;
                 loop (endif :: store :: if_ :: acc) rest
             | _ -> loop (u :: acc) rest)
+        | Ops.Alloc ->
+            let buffer = U.replace u ~op:Ops.Buffer () in
+            U.Ref_tbl.replace replacements original buffer;
+            U.Ref_tbl.replace replacements u buffer;
+            loop (buffer :: acc) rest
         | Ops.After -> loop (u :: acc) rest
         | _ -> loop (u :: acc) rest)
   in

@@ -476,6 +476,29 @@ let max_numel_checks_host_range () =
     (fun () -> Uop.param ~slot:0 ~dtype:Dtype.float32
         ~shape:(Uop.stack [ dim; dim ]) ())
 
+let allocations_preserve_shape_and_address_space () =
+  let scalar = Uop.alloc ~dtype:Dtype.weakint ~shape:(Uop.stack []) () in
+  equal (list int) [] (Uop.max_shape scalar);
+  is_true (Dtype.equal (Uop.dtype scalar) Dtype.int32);
+  let p = Option.get (Uop.Arg.as_param_arg (Uop.arg (Uop.storage_base scalar))) in
+  equal (option int) (Some 1) p.size;
+  let n = Uop.variable ~name:"allocation_extent" ~min_val:2 ~max_val:8 () in
+  List.iter (fun addrspace ->
+      let make () = Uop.alloc ~dtype:Dtype.float32 ~shape:(Uop.stack [n; Uop.const_int 3])
+          ~addrspace () in
+      let a = make () and b = make () in
+      is_false ~msg:"anonymous allocations have distinct storage" (Uop.storage_base a == Uop.storage_base b);
+      is_true (Uop.op (Uop.storage_base a) = Ops.Alloc);
+      is_true (Uop.addrspace a = Some addrspace);
+      is_true (List.equal Uop.equal [n; Uop.const_int 3] (Uop.shape a));
+      equal int 24 (Uop.max_numel a);
+      equal (list int) [8; 3] (Uop.max_shape (Uop.alloc_like a ~addrspace ())))
+    [Dtype.Global; Dtype.Local; Dtype.Reg];
+  List.iter (fun addrspace ->
+      raises_match (function Invalid_argument _ -> true | _ -> false)
+        (fun () -> Uop.alloc ~dtype:Dtype.float32 ~shape:(Uop.const_int 4)
+            ~addrspace ~device:(Uop.Single "CPU") ())) [Dtype.Local; Dtype.Reg]
+
 let placeholder_checks_shape_product () =
   List.iter (fun addrspace ->
       raises_match (function Invalid_argument _ -> true | _ -> false)
@@ -2571,6 +2594,7 @@ let () =
           test "tinygrad CAST bounds parity" cast_bounds_parity;
           test "flat storage parameters retain symbolic views" flat_storage_parameters;
           test "backward slices track shared dependencies" backward_slice_tracks_shared_dependencies;
+          test "allocations preserve shape and address space" allocations_preserve_shape_and_address_space;
           test "placeholder checks shape product" placeholder_checks_shape_product;
           test "max_numel checks host range" max_numel_checks_host_range;
           test "max_numel handles zero after large dimensions"

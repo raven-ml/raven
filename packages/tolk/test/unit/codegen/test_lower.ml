@@ -58,6 +58,24 @@ let global_ptr ?(slot = 0) () =
 let () =
   run "Codegen_lower"
     [
+      test "anonymous local storage survives lowering until linearization" (fun () ->
+          let local = U.alloc ~slot:17 ~dtype:Dtype.float32 ~shape:(U.const_int 4)
+              ~addrspace:Dtype.Local () in
+          let index ptr = U.index ~ptr ~idxs:[U.const_int 0] () in
+          let stored = U.store ~dst:(index local) ~value:(U.const (Const.float Dtype.float32 3.)) () in
+          let value = U.load ~src:(index (U.after ~src:local ~deps:[stored])) () in
+          let output = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:(U.const_int 1) () in
+          let lowered = Codegen_lower.lower (Cstyle.metal (Gpu_target.Apple 7))
+              (U.sink [U.store ~dst:(index output) ~value ()]) in
+          is_true ~msg:"compiler graph retains allocation intent"
+            (List.exists (fun n -> U.op n = Ops.Alloc) (U.toposort lowered));
+          let program = Linearizer.linearize lowered in
+          is_false ~msg:"rendered program and its sink share buffer declarations"
+            (List.exists (fun n -> List.exists (fun u -> U.op u = Ops.Alloc)
+                 (U.toposort n)) program);
+          is_true ~msg:"explicit local slot survives the common handoff"
+            (List.exists (fun n -> U.op n = Ops.Buffer &&
+              match U.Arg.as_param_arg (U.arg n) with Some p -> p.slot = 17 | None -> false) program));
       test "WMMA contracts complete split-axis identities" (fun () ->
           let range sub = U.range ~size:(U.const_int 2) ~axis:7 ~sub ~kind:Axis_type.Upcast () in
           let row = range [ 0 ] and col = range [ 1 ] in

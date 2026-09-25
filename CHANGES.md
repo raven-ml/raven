@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Anonymous allocations preserve scalar and symbolic shapes across calls and
+  kernel lowering. Local and register storage stays internal to the kernel
+  instead of being counted as external runtime arguments.
+
 - Dynamic scalar bindings in execution, JIT replay and beam search now carry
   the complete signed 64-bit range. Launch dimensions remain checked host
   integers, and scalar metadata preserves exact bounds.

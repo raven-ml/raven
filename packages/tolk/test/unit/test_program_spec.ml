@@ -222,6 +222,15 @@ let () =
                 equal (array int) [| 1; 1; 11 |] global;
                 is_none local
             | _ -> failwith "expected flat thread launch metadata");
+          test "local and register storage are not runtime globals" (fun () ->
+            let output = param 0 Dtype.float32 in
+            let local = U.buffer ~slot:9 ~dtype:Dtype.float32
+                ~shape:(U.const_int 8) ~addrspace:Dtype.Local () in
+            let register = U.buffer ~slot:11 ~dtype:Dtype.float32
+                ~shape:(U.const_int 1) ~addrspace:Dtype.Reg () in
+            let spec = spec_of [output; local; register] in
+            equal (list int) [0] (Program_spec.globals spec);
+            equal (list int) [0] (Program_spec.program_info spec).globals);
           test "core_id is an ordinary scalar" (fun () ->
             let arg = define_var "arg" 0 9 in
             let cid = define_var "core_id" 2 7 in

@@ -727,13 +727,23 @@ val buffer :
     [shape] is the full logical shape and each device owns a single shard. Tensor. *)
 
 val alloc :
-  slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:device ->
-  ?bind_on_realize:bool -> unit -> t
-(** [alloc ~slot ~dtype ?shape ?device ?bind_on_realize ()] declares unbound
-    global storage. Scheduling gives each invocation a fresh owner unless
+  ?slot:int -> dtype:Dtype.t -> shape:t -> ?addrspace:Dtype.addr_space ->
+  ?axis:int -> ?device:device -> ?bind_on_realize:bool -> unit -> t
+(** [alloc ?slot ~dtype ~shape ?addrspace ?axis ?device ?bind_on_realize ()]
+    declares unbound storage of [shape], preserving scalar and symbolic views.
+    Weak dtypes commit to their default width. [slot] defaults to a fresh
+    identity; [addrspace] defaults to {!Dtype.Global}. With [axis], [shape]
+    describes each shard and the result has the corresponding logical view.
+    Scheduling gives global storage a fresh owner for each invocation unless
     [bind_on_realize] (default [false]) requests persistent tensor storage.
 
-    @raise Invalid_argument if [dtype] is weak. *)
+    @raise Invalid_argument if [addrspace] is {!Dtype.Alu}, local or register
+      storage specifies [device] or [bind_on_realize], or the maximum element
+      count exceeds the host integer range. *)
+
+val alloc_like : t -> ?slot:int -> ?addrspace:Dtype.addr_space -> unit -> t
+(** [alloc_like u ?slot ?addrspace ()] declares storage with [u]'s dtype and
+    maximum per-shard shape. *)
 
 val from_buffer : Storage.t -> t
 (** [from_buffer b] is a flat BUFFER retaining [b], including its external

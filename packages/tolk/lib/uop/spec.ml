@@ -156,13 +156,6 @@ let allreduce_ok u x =
       && valid_device_payload device
   | None -> false
 
-let local_reg_buffer u =
-  match Uop.as_buffer u with
-  | Some { buffer; _ } ->
-      valid_buffer u
-      &&
-      (match buffer.addrspace with Dtype.Local | Dtype.Reg -> true | _ -> false)
-  | None -> false
 
 let mselect_ok u =
   match Uop.Arg.as_int (Uop.arg u), Uop.src u with
@@ -302,7 +295,7 @@ let shared_spec : t =
     op ~allow_any_len:true
       ~src:[
         ops (Ops.Group.movement @
-             [ Ops.Param; Ops.Buffer; Ops.Stage; Ops.Index; Ops.After;
+             [ Ops.Param; Ops.Buffer; Ops.Alloc; Ops.Stage; Ops.Index; Ops.After;
                Ops.Unshard; Ops.Bitcast; Ops.Ins ])
       ]
       Ops.After
@@ -357,10 +350,11 @@ let tensor_spec : t =
 
     op Ops.Alloc =?> (fun u _ ->
       match Uop.Arg.as_param_arg (Uop.arg u) with
-      | Some { addrspace = Dtype.Global; buffer = None; size; device; _ } ->
+      | Some { addrspace; buffer = None; size; device; _ } ->
           Array.length (Uop.src u) = 0 && not (is_weak u)
+          && List.mem addrspace [Dtype.Global; Dtype.Local; Dtype.Reg]
           && option_for_all (fun n -> n >= 0) size
-          && option_for_all valid_device_payload device
+          && option_for_all (fun device -> addrspace = Dtype.Global && valid_device_payload device) device
       | _ -> false);
 
     op Ops.Buffer =??> (fun u _ ->
@@ -444,12 +438,12 @@ let program_spec : t =
     =?> (fun _ bs ->
       let buffer = bs $ "buffer" in
       let buffer = if Uop.op buffer = Ops.Bitcast then (Uop.src buffer).(0) else buffer in
-      List.mem (Uop.op buffer) [Ops.Param; Ops.Buffer; Ops.After]
+      List.mem (Uop.op buffer) [Ops.Param; Ops.Buffer; Ops.Alloc; Ops.After]
       && Option.is_some (Uop.const_int_value (bs $ "size")));
 
     ops Ops.Group.movement =?> (fun _ _ -> false);
 
-    op Ops.Buffer =?> (fun u _ -> local_reg_buffer u);
+    ops [Ops.Buffer; Ops.Alloc] =?> (fun u _ -> valid_buffer u);
 
     op Ops.Const =??> (fun u _ ->
       if is_const_invalid u then Some false else None);

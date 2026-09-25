@@ -2386,12 +2386,19 @@ let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatil
       devices in
   sharded_view (mk ~op:Ops.Buffer ~dtype ~src:[||] ~arg:(Arg.Param_arg { p with buffer })) dims axis
 
-let alloc ~slot ~dtype ?shape:shape_arg ?device ?(bind_on_realize = false) () =
-  if Dtype.is_weak dtype then invalid_arg "Uop.alloc: dtype must be concrete";
-  let dims = match shape_arg with None -> [] | Some s -> as_shape s in
-  let p = default_param_arg ~dtype ?size:(storage_size dims) ?device slot in
-  view_as (mk ~op:Ops.Alloc ~dtype ~src:[||]
-    ~arg:(Arg.Param_arg { p with bind_on_realize })) dims
+let alloc ?slot ~dtype ~shape:shape_arg ?(addrspace = Dtype.Global) ?axis
+    ?device ?(bind_on_realize = false) () =
+  if addrspace = Dtype.Alu then invalid_arg "Uop.alloc: alu address space";
+  if addrspace <> Dtype.Global && (Option.is_some device || bind_on_realize) then
+    invalid_arg "Uop.alloc: local and reg storage cannot have a device or persistent owner";
+  let dtype = Dtype.strong_dtype dtype in
+  let dims = as_shape shape_arg in
+  let slot = match slot with Some slot -> slot | None -> fresh_buffer_slot () in
+  let p = default_param_arg ~dtype ~size:(max_shape_numel dims) ~addrspace ?device slot in
+  let node = mk ~op:Ops.Alloc ~dtype ~src:[||]
+      ~arg:(Arg.Param_arg { p with bind_on_realize }) in
+  if dims = [] then reshape ~src:node ~shape:shape_arg
+  else sharded_view node dims axis
 
 let from_buffer buf =
   let dtype = Storage.dtype buf in
@@ -2522,6 +2529,10 @@ let shard_shape u =
 let max_shard_shape u = List.map (fun d -> Bound.to_int (vmax d)) (shard_shape u)
 let max_shard_numel u = max_shape_numel (shard_shape u)
 
+let alloc_like u ?slot ?(addrspace = Dtype.Global) () =
+  alloc ?slot ~dtype:(dtype u)
+    ~shape:(shape_arg (List.map const_int (max_shard_shape u))) ~addrspace ()
+
 (* Calls pass storage explicitly; outputs are allocations in the caller. *)
 
 let param_like u ~slot =
@@ -2575,13 +2586,8 @@ let call_with_outputs ?output_pos ~values ~args ~info () =
   let outputs = List.map (fun value ->
       let device = match device_of value with Some _ as d -> d | None -> default_device in
       let dims = List.map resolve_dim (shard_shape value) in
-      let size = if dims = [] then 1 else Option.get (storage_size dims) in
-      let storage = alloc ~slot:(fresh_buffer_slot ()) ~dtype:(dtype value)
-          ~shape:(const_int size) ?device () in
-      let view = if dims = [] then reshape ~src:storage ~shape:(shape_arg []) else view_as storage dims in
-      match device, axis value with
-      | Some (Multi _), Some axis -> unshard ~src:view ~axes:[axis] ()
-      | _ -> view) values in
+      alloc ~dtype:(dtype value) ~shape:(shape_arg dims) ?device
+        ?axis:(axis value) ()) values in
   List.iter2 (fun slot output -> actuals.(slot) <- Some output) positions outputs;
   let body = sink (List.map2 (fun value slot ->
       store ~dst:(param_like value ~slot) ~value ()) values positions) in

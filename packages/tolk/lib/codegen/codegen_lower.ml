@@ -385,14 +385,14 @@ let devectorizer2 =
           op ~name:"u" Ops.Wmma => (fun bs -> do_stack_wmma (bs $ "u"));
           (* stacked INDEX is many INDEX *)
           ( op ~name:"idx"
-              ~src:[ ops ~name:"b" [ Ops.Param; Ops.Buffer ]; op ~name:"s" Ops.Stack ]
+              ~src:[ ops ~name:"b" [ Ops.Param; Ops.Buffer; Ops.Alloc ]; op ~name:"s" Ops.Stack ]
               Ops.Index
           => fun bs ->
             let b = bs $ "b" and s = bs $ "s" in
             Some (U.stack (Array.to_list (U.src s) |> List.map (fun u -> U.index ~ptr:b ~idxs:[ u ] ()))) );
           (* INDEX into RESHAPE moves the RESHAPE *)
           ( op ~name:"idx"
-              ~src:[ ops ~name:"b" [ Ops.Param; Ops.Buffer ]; op ~name:"s" Ops.Reshape ]
+              ~src:[ ops ~name:"b" [ Ops.Param; Ops.Buffer; Ops.Alloc ]; op ~name:"s" Ops.Reshape ]
               Ops.Index
           => fun bs ->
             let b = bs $ "b" and s = bs $ "s" in
@@ -488,7 +488,6 @@ let fix_group_for_reduce =
 (* Accumulator numbering. The reference bumps a single counter once per
    reduce it lowers, so a reduce created part-way through the rewrite --
    fix_group_for_reduce makes one -- is numbered as naturally as the rest. *)
-type reduce_ctx = { mutable acc_num : int }
 
 (* Ranges live in the reduce body but not in the reduce loops or already ended:
    these must be sequenced before the accumulator init. *)
@@ -538,9 +537,9 @@ let reduce_ranges_to_acc ctx node =
   match U.as_reduce node with
   | Some { src; ranges = _ :: _ as reduce_range; op; num_axes } ->
       let dtype = U.dtype node in
-      let slot = ctx.acc_num in
-      ctx.acc_num <- ctx.acc_num + 1;
-      let acc = U.placeholder_like node ~slot ~addrspace:Dtype.Reg () in
+      let slot = !ctx in
+      incr ctx;
+      let acc = U.alloc_like node ~slot ~addrspace:Dtype.Reg () in
       let input_ranges = reduce_input_ranges src reduce_range in
       let acc_init =
         U.store ~dst:(U.after ~src:acc ~deps:input_ranges)
@@ -732,8 +731,7 @@ let pm_reduce_local ctx =
       pm_clean_up_group_sink;
     ]
 
-let pm_reduce root =
-  let ctx = { acc_num = 0 } in
+let pm_reduce ctx root =
   U.graph_rewrite ~name:"remove reduces"
     (U.first_match [ PM.rewrite mop_cleanup; PM.rewrite (pm_reduce_local ctx) ])
     root
@@ -775,7 +773,7 @@ let add_local_buffer_rule counter node =
       let slot = !counter in
       incr counter;
       let buf =
-        U.placeholder ~shape:(U.max_shape node) ~dtype:(U.dtype node) ~slot
+        U.alloc ~shape:(U.stack (List.map U.const_int (U.max_shape node))) ~dtype:(U.dtype node) ~slot
           ~addrspace:opts.addrspace ()
       in
       let store = U.store ~dst:(U.index ~ptr:buf ~idxs:ranges ()) ~value:src () in
@@ -949,11 +947,16 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
       sink
   in
 
-  (* remove reduces: [mop_cleanup + pm_reduce_local]. *)
-  let sink = pm_reduce sink in
+  let slots = U.toposort sink |> List.fold_left (fun next node ->
+      match U.op node, U.Arg.as_param_arg (U.arg node) with
+      | (Ops.Buffer | Ops.Alloc), Some param -> max next (param.slot + 1)
+      | _ -> next) 0 |> ref in
+  (* Reduce accumulators and local storage share one slot sequence, after
+     the explicit allocations already present in the kernel. *)
+  let sink = pm_reduce slots sink in
 
   (* add local buffers: [pm_add_local_buffers = add_local_buffer + pm_mops]. *)
-  let sink = pm_add_local_buffers (ref 0) sink in
+  let sink = pm_add_local_buffers slots sink in
 
   (* add gpu dims: [pm_add_gpudims]. *)
   let sink = Gpudims.pm_add_gpudims ren sink in

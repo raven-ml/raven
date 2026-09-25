@@ -25,7 +25,7 @@ let slot_of_param (p : U.param_arg) =
 let slot_of_define (u : U.t) =
   match U.op u, U.arg u with
   | (Ops.Param | Ops.Buffer), U.Arg.Param_arg param ->
-      if param.addrspace = Dtype.Alu then None else slot_of_param param
+      if param.addrspace = Dtype.Global then slot_of_param param else None
   | _ -> None
 
 (* Trace a pointer expression back to its originating buffer node. *)

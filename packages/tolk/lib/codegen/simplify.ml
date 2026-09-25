@@ -644,7 +644,7 @@ let pm_reduce_load_collapse =
 
 let is_leaf n =
   is_const n || match U.op n with
-  | Ops.Const | Ops.Param | Ops.Buffer -> true
+  | Ops.Const | Ops.Param | Ops.Buffer | Ops.Alloc -> true
   | _ -> false
 
 let has_store_or_reduce nodes =
