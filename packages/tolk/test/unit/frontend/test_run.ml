@@ -819,7 +819,7 @@ let stack_tests =
     ]
 
 (* [cat] takes one of two lowerings: equal extents on the joined axis stack
-   and merge the new axis, anything else pads and sums. Both are covered on
+   and merge the new axis, anything else pads and selects. Both are covered on
    every axis, since only the equal-extent case reaches the stack. *)
 let cat_tests =
   group "cat"
@@ -846,6 +846,41 @@ let cat_tests =
           let a = fa ~shape:[ 2; 1 ] [| 1.; 4. |] in
           let b = fa ~shape:[ 2; 2 ] [| 2.; 3.; 5.; 6. |] in
           check_floats [| 1.; 2.; 3.; 4.; 5.; 6. |] (Op.cat ~dim:1 a [ b ]));
+      test "unequal extents keep every bit" (fun () ->
+          (* Both zeros, NaNs of either sign with payloads, signalling ones,
+             and subnormals, which a sum of zero-padded pieces changes. *)
+          let module D = Tolk_uop.Dtype in
+          let words =
+            [|
+              0x80000000l; 0x7F800001l; 0xFFC00123l; 0x00000001l; 0x807FFFFFl;
+              0x7FA00000l; 0x80000000l; 0x3F800000l; 0x80000001l; 0x00000000l;
+            |]
+          in
+          let bytes = Bytes.create 40 in
+          Array.iteri (fun i w -> Bytes.set_int32_le bytes (4 * i) w) words;
+          let words_of t =
+            let b = Run.data t in
+            Array.init (Bytes.length b / 4) (fun i -> Bytes.get_int32_le b (4 * i))
+          in
+          let devices =
+            U.Single "CPU" :: Option.to_list (T.device (vec [| 0. |]))
+            |> List.sort_uniq compare
+          in
+          List.iter
+            (fun device ->
+              let x =
+                Creation.clone ~device
+                  (Run.of_bytes ~dtype:D.float32 ~shape:[ 10 ] bytes)
+              in
+              let piece lo hi = Mv.shrink x [ (lo, hi) ] in
+              equal (array int32) words
+                (words_of (Op.cat (piece 0 3) [ piece 3 8; piece 8 10 ]));
+              let rows = Mv.reshape x [ 2; 5 ] in
+              let columns lo hi = Mv.shrink rows [ (0, 2); (lo, hi) ] in
+              equal (array int32) words
+                (words_of
+                   (Op.cat ~dim:1 (columns 0 1) [ columns 1 3; columns 3 5 ])))
+            devices);
       test "a single operand is the identity" (fun () ->
           check_floats [| 1.; 2.; 3. |] (Op.cat (vec [| 1.; 2.; 3. |]) []));
       test "negative axis counts from the end" (fun () ->

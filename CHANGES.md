@@ -160,6 +160,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.concatenate` of pieces of unequal extent returns their
+  elements bit for bit. It summed zero-padded pieces, which could turn -0 into
+  +0, quiet a signalling NaN and, on Metal, flush a subnormal to zero.
 - A compiled gather inside a padded or concatenated value reads its indices
   under their guard. It read them unconditionally, out of bounds wherever the
   guard was false, which could crash the process.

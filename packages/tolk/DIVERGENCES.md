@@ -612,3 +612,22 @@ delete it rather than registering it.
   bit through the load's dtype; otherwise the select stays. Every golden and
   parity output is unchanged. Coverage: `test_lower` "gater folds a select
   into a load only when its value survives".
+
+- **Concatenation selects its pieces** (`frontend/op.ml` `cat`). The
+  reference joins pieces of unequal extent by summing them zero-padded
+  (`bitwise_or` for booleans). A sum returns its operand only where
+  `x + 0 = x`, which IEEE arithmetic breaks: -0 + 0 is +0, an add quiets a
+  signalling NaN, and Metal flushes a subnormal operand of a float add to
+  zero. Rune's sort tests join 12 pieces of unequal extent, 804 float32
+  elements, and the compiled join returned none of their 24 -0 as -0. tolk
+  pads each piece into place and takes it with a `where` on its padded
+  footprint, a padded `true`, so every bit pattern survives and booleans need
+  no special case. Equal extents already stack. Kernels are unchanged in
+  number. A loaded piece's select becomes the alternative of its gated load,
+  so loaded pieces cost fewer operations than the sum; a join of two
+  computed pieces costs 6 selects per 4 elements where the reference folds
+  its sum into 3. Every golden and parity output is unchanged, since their
+  cats have equal extents. Consumers: every unequal-extent `cat`, among them
+  rune's `E_cat` (`Nx.concatenate`).
+  Coverage: `test_run` "unequal extents keep every bit", rune's `test_jit`
+  and `test_jit_metal` "concatenation keeps every bit", on CPU and Metal.

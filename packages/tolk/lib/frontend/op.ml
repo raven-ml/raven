@@ -116,7 +116,6 @@ let layernorm ?(axis = [ -1 ]) ?(eps = 1e-5) t =
 (* Concatenation *)
 
 let cat ?(dim = 0) t args =
-  let tensors = t :: args in
   let dim = T.resolve_dim t dim in
   let n = T.ndim t in
   let off_dim s = List.filteri (fun ax _ -> ax <> dim) s in
@@ -136,31 +135,34 @@ let cat ?(dim = 0) t args =
   else begin
     (* Padding needs a concrete extent on the concatenated axis; the other
        axes may stay symbolic since they receive no padding. *)
-    let sizes =
-      List.map
-        (fun x ->
-          match Uop.const_int_value (extent x) with
-          | Some s -> s
-          | None -> invalid_arg "Op.cat: symbolic dimension on the cat axis")
-        tensors
+    let size x =
+      match Uop.const_int_value (extent x) with
+      | Some s -> s
+      | None -> invalid_arg "Op.cat: symbolic dimension on the cat axis"
     in
-    let total = List.fold_left ( + ) 0 sizes in
-    let combine =
-      if D.is_bool (T.dtype t) then Elementwise.bitwise_or else Elementwise.add
+    let sizes = List.map size args in
+    let total = List.fold_left ( + ) (size t) sizes in
+    let place before sz x =
+      Movement.pad x
+        (List.init n (fun ax ->
+             if ax = dim then (before, total - before - sz) else (0, 0)))
     in
-    let _, rev_padded =
-      List.fold_left2
-        (fun (before, acc) x sz ->
-          let padding =
-            List.init n (fun ax ->
-                if ax = dim then (before, total - before - sz) else (0, 0))
-          in
-          (before + sz, Movement.pad x padding :: acc))
-        (0, []) tensors sizes
+    (* Concatenation is selection: a position takes its piece's element where
+       the piece's padded footprint is true. The tinygrad counterpart sums
+       zero-padded pieces, which turns -0 into +0, quiets a signalling NaN and,
+       on devices whose float adds flush subnormals, zeroes them. *)
+    let footprint before sz =
+      place before sz
+        (Creation.ones ~dtype:D.bool ~buffer:false
+           (List.init n (fun ax -> if ax = dim then sz else 1)))
     in
-    match List.rev rev_padded with
-    | [] -> t
-    | h :: tl -> List.fold_left combine h tl
+    snd
+      (List.fold_left2
+         (fun (before, acc) x sz ->
+           let placed = place before sz x in
+           (before + sz, Elementwise.where (footprint before sz) placed acc))
+         (size t, place 0 (size t) t)
+         args sizes)
   end
 
 (* Matrix multiplication *)

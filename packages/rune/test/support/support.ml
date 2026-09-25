@@ -511,6 +511,55 @@ let check_gathers_keep_negative_zero ?devices () =
   check "float16" Nx.float16 Nx.int16;
   check "bfloat16" Nx.bfloat16 Nx.int16
 
+(* A compiled concatenation of pieces of unequal extent returns their elements:
+   three slices of a matrix joined back along their axis give its bits, both
+   zeros, NaNs of either sign with payloads, signalling ones and subnormals
+   included. *)
+let check_concatenate_keeps_bits ?devices () =
+  let check (type a b c d) name pattern (int : (a, b) Nx.dtype)
+      (float : (c, d) Nx.dtype) =
+    let cuts = [ 0; 5; 12; 24 ] in
+    let join axis x =
+      let rec pieces = function
+        | lo :: (hi :: _ as rest) ->
+            Nx.slice (List.init axis (fun _ -> Nx.A) @ [ Nx.R (lo, hi) ]) x
+            :: pieces rest
+        | _ -> []
+      in
+      Nx.concatenate ~axis (pieces cuts)
+    in
+    let x =
+      Nx.bitcast float
+        (Nx.init int [| 24; 24 |] (fun i ->
+             pattern.(((24 * i.(0)) + i.(1)) mod Array.length pattern)))
+    in
+    List.iter
+      (fun axis ->
+        equal
+          ~msg:(Printf.sprintf "%s along axis %d" name axis)
+          bool true
+          (Nx.to_array (Nx.bitcast int (Rune.jit' ?devices (join axis) x))
+          = Nx.to_array (Nx.bitcast int x)))
+      [ 0; 1 ]
+  in
+  check "float32"
+    [|
+      0x80000000l;
+      0x7F800001l;
+      0xFFC00123l;
+      1l;
+      0x807FFFFFl;
+      0x7FA00000l;
+      0x3F800000l;
+    |]
+    Nx.int32 Nx.float32;
+  check "float16"
+    [| 0x8000; 0x7C01; 0xFE23; 1; 0x83FF; 0x7D00; 0x3C00 |]
+    Nx.uint16 Nx.float16;
+  check "bfloat16"
+    [| 0x8000; 0x7F81; 0xFFC3; 1; 0x807F; 0x7FA0; 0x3F80 |]
+    Nx.uint16 Nx.bfloat16
+
 (* A row long enough for 2-bit rounds, and k * (n + 1) past int32, so the
    running count is int64: all but about a thousand entries tie at the
    threshold, more than 2^20 of them, so their count times k passes 2^31 along

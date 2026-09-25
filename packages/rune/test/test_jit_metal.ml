@@ -862,6 +862,8 @@ let tests =
           (check_bitcast_matches_eager ~devices:[ Rune.device "METAL" ]);
         test "gathers keep -0 on the GPU"
           (check_gathers_keep_negative_zero ~devices:[ Rune.device "METAL" ]);
+        test "concatenation keeps every bit on the GPU"
+          (check_concatenate_keeps_bits ~devices:[ Rune.device "METAL" ]);
         test "an index outside the axis beside unit axes on the GPU"
           (check_out_of_range_beside_unit_axes ~devices:[ Rune.device "METAL" ]);
         slow "sorted values are the input's elements on the GPU"
