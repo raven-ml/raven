@@ -806,6 +806,73 @@ let late_bounded_cmplt_collapses_to_eq () =
          && const_int64_value src.(1) = Some 4L)
   | None -> is_true ~msg:"late CMPLT rule fired" false
 
+let late_comparisons_use_exact_integer_proofs () =
+  let open Uop in
+  let x = param ~slot:0 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu () in
+  let y = param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu () in
+  let constant n = const (Const.integer Dtype.weakint n) in
+  let min = Z.neg (Z.shift_left Z.one 63) in
+  let max = Z.pred (Z.neg min) in
+  let rewrite u = Decomp_op.get_late_rewrite_patterns (supported_ops ()) u in
+  let integer u = match as_const u with
+    | Some c -> (match Const.view c with
+        | Const.Int n -> Z.to_string n
+        | _ -> fail "expected integer constant")
+    | None -> fail "expected constant" in
+  let reversed = (alu_binary ~op:Ops.And ~lhs:O.(constant max < x)
+      ~rhs:O.(x < constant (Z.succ min))) in
+  is_true ~msg:"empty interval must not wrap to equality at INT64_MIN"
+    (Option.is_none (rewrite reversed));
+  List.iter (fun midpoint ->
+      let interval = alu_binary ~op:Ops.And ~lhs:O.(constant (Z.pred midpoint) < x)
+          ~rhs:O.(x < constant (Z.succ midpoint)) in
+      let result = Option.get (rewrite interval) in
+      is_true (op result = Ops.Cmpeq);
+      Windtrap.equal string (Z.to_string midpoint) (integer (src result).(1)))
+    [Z.succ min; Z.pred max; Z.shift_left Z.one 80];
+  let not_min = Option.get (rewrite O.(not_ (x < constant min))) in
+  Windtrap.equal string (Z.to_string (Z.pred min)) (integer (src not_min).(0));
+  let not_max = Option.get (rewrite O.(not_ (constant max < x))) in
+  Windtrap.equal string (Z.to_string (Z.succ max)) (integer (src not_max).(1));
+  let neg_x = alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(constant Z.minus_one) in
+  let neg_min = Option.get (rewrite O.(neg_x < constant min)) in
+  Windtrap.equal string (Z.to_string (Z.neg min)) (integer (src neg_min).(0));
+  let product = alu_binary ~op:Ops.Mul ~lhs:y ~rhs:(constant min) in
+  let neg_product = Option.get (rewrite O.(neg_x < product)) in
+  Windtrap.equal string (Z.to_string (Z.neg min))
+    (integer (src (src neg_product).(0)).(1))
+
+let comparison_extrema_simplify_before_late_codegen () =
+  let open Uop in
+  let x = param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu () in
+  let min = Z.neg (Z.shift_left Z.one 63) in
+  let max = Z.pred (Z.neg min) in
+  let constant n = const (Const.integer Dtype.weakint n) in
+  let neg_x = alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(constant Z.minus_one) in
+  let cases = [
+    "empty interval", (alu_binary ~op:Ops.And ~lhs:O.(constant max < x)
+      ~rhs:O.(x < constant (Z.succ min))), false;
+    "below minimum", O.(not_ (x < constant min)), true;
+    "above maximum", O.(not_ (constant max < x)), true;
+    "negated minimum", O.(neg_x < constant min), false;
+  ] in
+  let dst = param ~slot:0 ~dtype:Dtype.bool ~shape:(const_int 1)
+      ~addrspace:Dtype.Global () in
+  let dst = index ~ptr:dst ~idxs:[const_int 0] () in
+  List.iter (fun (name, predicate, expected) ->
+      let kernel_info = {name; applied_opts = []; opts_to_apply = None;
+        estimates = None; beam = 0} in
+      let lowered = Codegen_lower.lower (Cstyle.clang (Gpu_target.host_cpu ()))
+          (sink ~kernel_info [store ~dst ~value:predicate ()]) in
+      let stores = List.filter (fun u -> op u = Ops.Store) (toposort lowered) in
+      match stores with
+      | [store] ->
+          let value = (src store).(1) in
+          (match Option.map Const.view (as_const value) with
+           | Some (Const.Bool actual) -> Windtrap.equal ~msg:name bool expected actual
+           | _ -> fail (name ^ ": comparison must simplify to a Boolean constant"))
+      | _ -> fail (name ^ ": expected one output store")) cases
+
 let compact_float_accesses_narrow_storage_first () =
   List.iter (fun dtype ->
       let buf = Uop.param ~slot:0 ~dtype ~shape:(Uop.const_int 5)
@@ -1050,6 +1117,10 @@ let () =
             late_negated_const_cmplt_canonicalizes;
           test "bounded CMPLT collapses to equality"
             late_bounded_cmplt_collapses_to_eq;
+          test "late comparisons use exact integer proofs"
+            late_comparisons_use_exact_integer_proofs;
+          test "comparison extrema simplify before late codegen"
+            comparison_extrema_simplify_before_late_codegen;
         ];
       group "float decomposition"
         [

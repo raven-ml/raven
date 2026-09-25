@@ -238,12 +238,12 @@ let signed_int_dtype n =
   let dt = Uop.dtype n in
   if Dtype.is_int dt && not (Dtype.is_unsigned dt) then Some dt else None
 
-let const_int64_for dt n = Uop.const (Const.int64 dt n)
+let const_integer_for dt n = Uop.const (Const.integer dt n)
 
-let const_int64_value_signed n =
+let const_integer_value_signed n =
   let dt = Uop.dtype n in
   if Dtype.is_int dt && not (Dtype.is_unsigned dt) then
-    (match const_int64_value n with
+    (match const_integer n with
      | Some v -> Some (dt, v)
      | None -> None)
   else None
@@ -266,10 +266,10 @@ let as_mul_neg_one n =
 let as_mul_const_signed n =
   match Uop.op n, Uop.src n with
   | Ops.Mul, [| a; b |] ->
-      (match const_int64_value_signed b with
+      (match const_integer_value_signed b with
        | Some (dt, v) -> Some (a, dt, v)
        | None ->
-           (match const_int64_value_signed a with
+           (match const_integer_value_signed a with
             | Some (dt, v) -> Some (b, dt, v)
             | None -> None))
   | _ -> None
@@ -546,7 +546,8 @@ let rule_add_neg_to_sub (ops : supported_ops) node =
     | _ -> None
 
 (* Late signed-CMPLT canonicalizations. Simplex expects equalities in a
-   particular shape, so these mirror tinygrad's late-only comparison rules. *)
+   particular shape, so these mirror tinygrad's late-only comparison rules.
+   Proof constants stay exact until their consumer commits a storage width. *)
 let rule_not_cmplt_const (ops : supported_ops) node =
   if not ops.has_cmplt then None
   else
@@ -555,22 +556,22 @@ let rule_not_cmplt_const (ops : supported_ops) node =
         (match Uop.src cmp with
          | [| x; c |]
            when is_signed_int_node x
-                && Option.is_some (const_int64_value_signed c) ->
-             (match const_int64_value_signed c with
+                && Option.is_some (const_integer_value_signed c) ->
+             (match const_integer_value_signed c with
               | Some (dt, cv) ->
                   Some
                     (Uop.alu_binary ~op:Ops.Cmplt
-                       ~lhs:(const_int64_for dt (Int64.sub cv 1L))
+                       ~lhs:(const_integer_for dt (Z.pred cv))
                        ~rhs:x)
               | None -> None)
          | [| c; x |]
            when is_signed_int_node x
-                && Option.is_some (const_int64_value_signed c) ->
-             (match const_int64_value_signed c with
+                && Option.is_some (const_integer_value_signed c) ->
+             (match const_integer_value_signed c with
               | Some (dt, cv) ->
                   Some
                     (Uop.alu_binary ~op:Ops.Cmplt ~lhs:x
-                       ~rhs:(const_int64_for dt (Int64.add cv 1L)))
+                       ~rhs:(const_integer_for dt (Z.succ cv)))
               | None -> None)
          | _ -> None)
     | _ -> None
@@ -586,14 +587,14 @@ let rule_negated_signed_cmplt (ops : supported_ops) node =
                   Some
                     (Uop.alu_binary ~op:Ops.Cmplt
                        ~lhs:(Uop.alu_binary ~op:Ops.Mul ~lhs:y
-                               ~rhs:(const_int64_for dt (Int64.neg cv)))
+                               ~rhs:(const_integer_for dt (Z.neg cv)))
                        ~rhs:x)
               | _ ->
-                  (match const_int64_value_signed rhs with
+                  (match const_integer_value_signed rhs with
                    | Some (dt, cv) ->
                        Some
                          (Uop.alu_binary ~op:Ops.Cmplt
-                            ~lhs:(const_int64_for dt (Int64.neg cv))
+                            ~lhs:(const_integer_for dt (Z.neg cv))
                             ~rhs:x)
                    | None -> None))
          | _ -> None)
@@ -607,13 +608,13 @@ let rule_bounded_cmplt_to_eq (ops : supported_ops) node =
           match Uop.op left, Uop.src left, Uop.op right, Uop.src right with
           | Ops.Cmplt, [| c1; x1 |], Ops.Cmplt, [| x2; c2 |]
             when Uop.equal x1 x2 && is_signed_int_node x1 ->
-              (match const_int64_value c1, const_int64_value c2,
+              (match const_integer c1, const_integer c2,
                      signed_int_dtype x1 with
                | Some lo, Some hi, Some dt
-                 when Int64.equal (Int64.add lo 1L) (Int64.sub hi 1L) ->
+                 when Z.equal (Z.succ lo) (Z.pred hi) ->
                    Some
                      (Uop.alu_binary ~op:Ops.Cmpeq ~lhs:x1
-                        ~rhs:(const_int64_for dt (Int64.add lo 1L)))
+                        ~rhs:(const_integer_for dt (Z.succ lo)))
                | _ -> None)
           | _ -> None
         in

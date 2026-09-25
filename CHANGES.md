@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- Late signed comparison rewrites keep proof arithmetic exact at integer
+  boundaries, preventing an empty interval from wrapping into equality.
+
 - Range analysis reuses ended-range results for shared `AFTER` and `BARRIER`
   dependencies, avoiding exponential traversal and allocation during compilation.
 

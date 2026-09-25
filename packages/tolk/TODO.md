@@ -125,11 +125,8 @@ acceptance requirement; skipped tests are not execution evidence.
   Test optimizer resource bounds with symbolic dimensions rather than silently
   treating unknown extents as one; distinguish a proven mismatch from a
   conservative optimization difference.
-- Remove wrapping host `Int64` arithmetic from late comparison rewrites.
-  The interval proof in `decomp_op` can turn an empty signed-64 interval into
-  equality at `INT64_MIN`. Cover the local proof and its normal-pipeline
-  reachability, plus adjacent negated-comparison rules, against target exact
-  arithmetic. Audit PADTO and shared-memory products at the same boundaries.
+- Audit PADTO and shared-memory products at integer boundaries against
+  the target's exact arithmetic.
 - Use the target's sanitized `signed_char` name for RDNA3 int8 tensor-core
   fragments; distinguish source naming parity from fragment layout correctness.
 - Add deterministic beam coverage for reconsidering candidates rejected by
