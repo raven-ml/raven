@@ -2346,8 +2346,9 @@ val sort :
     [(sorted, indices)] where [indices] maps sorted positions back to originals.
     [descending] defaults to [false]. [axis] defaults to [-1] (last).
 
-    The sort is stable (equal elements preserve their relative order). NaN sorts
-    to the end in either direction.
+    [sorted] is [take_along_axis ~axis ~indices t], bit for bit. The sort is
+    stable: equal elements keep their input order, [-0.] and [0.] and NaNs
+    included. NaN sorts to the end in either direction.
 
     Raises [Invalid_argument] if [axis] is out of bounds.
 

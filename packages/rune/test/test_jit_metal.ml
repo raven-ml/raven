@@ -540,9 +540,7 @@ let test_place_from_a_mapped_file () =
         (g x))
 
 (* Metal flushes float32 subnormals to zero when it compares floats. A compiled
-   sort keeps them, in order, as eager does, and -0 ties with 0. Adding 0 on the
-   host clears the sign of zero: eager's value sort leaves the order of -0 and
-   +0 unspecified. *)
+   sort keeps them, in order, as eager does, and -0 ties with 0. *)
 let test_sort_keeps_subnormals () =
   let x =
     vec32
@@ -552,10 +550,9 @@ let test_sort_keeps_subnormals () =
     let values, indices = Nx.sort ~axis:0 x in
     Nx.stack [ values; Nx.cast f32 indices ]
   in
-  let unsigned_zero t = Array.map (fun v -> v +. 0.) (to_arr t) in
   equal ~msg:"sorted values over their positions" (array float_exact)
-    (unsigned_zero (sort x))
-    (unsigned_zero (Rune.jit' ~devices:[ Rune.device "METAL" ] sort x))
+    (to_arr (sort x))
+    (to_arr (Rune.jit' ~devices:[ Rune.device "METAL" ] sort x))
 
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4), and
    a loop whose state starts on the host compiles once. *)

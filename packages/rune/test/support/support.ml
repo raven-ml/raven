@@ -645,9 +645,9 @@ let check_sort_values_are_elements ?devices ?(float64 = true) () =
   if float64 then check "float64" Nx.float64 Nx.int64
 
 (* Compiled [sort_pieces] of a [sort_input] against eager, segment by segment. A
-   zero compares without its sign: eager's value sort leaves the order of -0 and
-   +0 unspecified ([check_sort_values_are_elements] checks the compiled
-   bits). *)
+   zero compares without its sign: the compiled concatenation of the segments
+   turns some -0 into 0, which the sort itself does not
+   ([check_sort_values_are_elements] checks its bits). *)
 let check_sort_pieces (type a b) ?infinities out pieces
     (dtype : (a, b) Nx.dtype) =
   let size shape = Array.fold_left ( * ) 1 shape in

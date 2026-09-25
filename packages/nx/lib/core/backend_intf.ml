@@ -384,13 +384,14 @@ module type S = sig
       {b Frontend guarantees:} [axis] is valid and non-negative. *)
 
   val sort : axis:int -> descending:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** [sort ~axis ~descending x] sorts elements of [x] along [axis]. NaN values
-      are placed at the end regardless of sort direction. *)
+  (** [sort ~axis ~descending x] is the elements of [x] along [axis] in the
+      order of [argsort ~axis ~descending x], bit for bit. *)
 
   val argsort :
     axis:int -> descending:bool -> ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t
   (** [argsort ~axis ~descending x] returns int32 indices that would sort
-      elements of [x] along [axis]. *)
+      elements of [x] along [axis]. The sort is stable, and NaN values are
+      placed at the end regardless of sort direction. *)
 
   (** {1 Movement Operations}
 
