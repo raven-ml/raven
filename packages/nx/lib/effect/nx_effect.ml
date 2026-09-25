@@ -67,6 +67,10 @@ module Grid : sig
   (* [select p ~axis j] is the placement of the devices of [p] that hold tile
      [j] of the cut tensor [axis]: the grid axes of that cut go. *)
 
+  val uncut : 'd t -> axis:int -> 'd t
+  (* [uncut p ~axis] is [p] with tensor [axis] whole on every device: the grid
+     axes that cut it hold copies. *)
+
   val equal : ('d -> 'd -> bool) -> 'd t -> 'd t -> bool
   val pp : (Format.formatter -> 'd -> unit) -> Format.formatter -> 'd t -> unit
 end = struct
@@ -203,6 +207,12 @@ end = struct
             gone
         in
         normal (List.map snd keep) extents cuts
+
+  let uncut p ~axis =
+    match p with
+    | One _ -> p
+    | Grid { devices; extents; cuts } ->
+        normal devices extents (List.filter (fun c -> c.axis <> axis) cuts)
 
   (* Two placements are equal when every device holds the same window under
      both, whatever the shape: the same tile of the same number along every cut
@@ -1026,47 +1036,154 @@ let place p x =
 (* Routing
 
    Every fallback runs where its operands live. Operands all on the host run on
-   the link-time engine. Placed operands must share one device, which host
-   operands join: until devices compute, the operation reads the placed
-   operands' windows, runs on the host engine and places its result there. A
-   result of one element is held by nx instead, so reading it back moves
-   nothing. The route is decided before anything is read, so operands on two
-   device lists raise before any work.
+   the link-time engine. Placed operands must share their devices, and host
+   operands join them: until devices compute, the operation reads the placed
+   operands' windows, runs on the host engine and places its result. A result of
+   one element is held by nx instead, so reading it back moves nothing. The
+   route is decided before anything is read, so operands on two device lists
+   raise before any work.
 
-   A value on several devices is read to the host by an operation, whose result
-   is a host value, until operations over device lists exist. Its devices still
-   count: it does not mix with a value on other devices. *)
+   The result takes the placement tolk's multi-device rewrite gives the same
+   operation in a compiled program (schedule/multi.ml), so eager and compiled
+   placements agree and stay as they are once devices compute: an elementwise
+   operation keeps its operands' split, resharding to the last split axis among
+   them; a reduction over a split axis holds a copy on every device; an
+   operation along a split axis, or of a kind tolk has no rule for, raises. *)
 
-type route =
-  | On_host
-  | At of placement (* one device: the result is placed there *)
-  | Read_from of placement (* several devices: the result is a host value *)
+type route = On_host | At of placement
 
-let join : type a b. string -> route -> (a, b) t -> route =
- fun op r x ->
-  match x with
-  | Host _ -> r
+(* How the axes of an operation's result derive from its operands', which
+   decides where the result lives. *)
+type rule =
+  | Elementwise (* the operands' shape *)
+  | Along of int list
+    (* acts along these axes, the others as elementwise: sort, scan, pad,
+       concatenation, gather, fft, linear algebra *)
+  | Reduce of { axes : int array; keepdims : bool }
+  | Contract
+    (* a product over the last axis of the first and the next-to-last of the
+       second *)
+  | Into (* the first operand, with the others written into it *)
+
+let placement_of : type a b. (a, b) t -> placement option = function
+  | Host _ -> None
+  | Placed r -> Some r.r_placement
   | Traced _ -> outside_trace ()
-  | Placed { r_placement = p; _ } -> (
-      match r with
-      | On_host -> (
-          match Placement.devices p with [ _ ] -> At p | _ -> Read_from p)
-      | At q | Read_from q ->
-          if List.equal ( == ) (Placement.devices q) (Placement.devices p) then
-            r
-          else
-            invalid_arg
-              (Format.asprintf "Nx.%s: operands on %a and %a; place one of them"
-                 op Placement.pp q Placement.pp p))
 
-let route1 op a = join op On_host a
-let route2 op a b = join op (join op On_host a) b
-let route3 op a b c = join op (join op (join op On_host a) b) c
+let rank (P x) = Array.length (View.shape (view x))
+
+(* The last two axes of [x], along which linear algebra acts. *)
+let matrix_axes x =
+  let r = rank (P x) in
+  [ r - 2; r - 1 ]
+
+(* Every axis of [x] but the first, along which windows are taken. *)
+let spatial x = List.init (rank (P x) - 1) succ
+
+(* The axes [padding] pads. *)
+let padded padding =
+  List.filter
+    (fun a -> padding.(a) <> (0, 0))
+    (List.init (Array.length padding) Fun.id)
+
+let along op axis =
+  invalid_arg
+    (Printf.sprintf
+       "Nx.%s: the operation runs along the split axis %d, whose shards are on \
+        different devices; place the value replicated or on one device first"
+       op axis)
+
+(* [combine op ps] is the placement of an elementwise operation's result over
+   operands at [ps]: that of the split ones, which must be alike; copies take
+   it. *)
+let combine op ps =
+  match List.filter (fun p -> Grid.cuts p <> []) ps with
+  | [] -> List.hd ps
+  | p :: rest -> (
+      match List.find_opt (fun q -> not (Placement.equal p q)) rest with
+      | None -> p
+      | Some q ->
+          invalid_arg
+            (Format.asprintf
+               "Nx.%s: operands at %a and %a are split differently; place them \
+                alike first"
+               op Placement.pp p Placement.pp q))
+
+(* [result op rule xs] is where [op]'s result over [xs] lives, the placed ones
+   among them sharing their devices. *)
+let result op rule xs =
+  let ps = List.filter_map (fun (P x) -> placement_of x) xs in
+  let cut p a = List.mem_assoc a (Grid.cuts p) in
+  match rule with
+  | Elementwise -> combine op ps
+  | Along axes ->
+      List.iter
+        (fun p -> List.iter (fun a -> if cut p a then along op a) axes)
+        ps;
+      combine op ps
+  | Reduce { axes; keepdims } ->
+      let reduce p =
+        let p =
+          Array.fold_left
+            (fun p a -> if cut p a then Grid.uncut p ~axis:a else p)
+            p axes
+        in
+        if keepdims then p
+        else
+          Grid.map_axes
+            (fun a ->
+              a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes)
+            p
+      in
+      combine op (List.map reduce ps)
+  | Contract ->
+      (* As [a @ b] is [a [..., m, 1, k] * b [..., 1, n, k]] summed over [k]. *)
+      let r = List.fold_left (fun r x -> Int.max r (rank x)) 0 xs in
+      let lift j (P x) =
+        let n = rank (P x) in
+        let axis i =
+          if (j = 0 && i = n - 1) || (j = 1 && i = n - 2) then r else i + r - n
+        in
+        Option.map (Grid.map_axes axis) (placement_of x)
+      in
+      let p =
+        combine op
+          (List.concat (List.mapi (fun j x -> Option.to_list (lift j x)) xs))
+      in
+      if cut p r then Grid.uncut p ~axis:r else p
+  | Into -> (
+      match xs with
+      | P x :: _ when Option.is_some (placement_of x) ->
+          Option.get (placement_of x)
+      | _ ->
+          let p = combine op ps in
+          List.fold_left (fun p (a, _) -> Grid.uncut p ~axis:a) p (Grid.cuts p))
+
+let same_devices p q =
+  let dp = Placement.devices p and dq = Placement.devices q in
+  List.compare_lengths dp dq = 0 && List.for_all (fun d -> List.memq d dq) dp
+
+(* [route op rule xs] is where [op] runs over [xs]. Placed operands on different
+   device lists raise. *)
+let route op rule xs =
+  match List.filter_map (fun (P x) -> placement_of x) xs with
+  | [] -> On_host
+  | p :: rest -> (
+      match List.find_opt (fun q -> not (same_devices p q)) rest with
+      | None -> At (result op rule xs)
+      | Some q ->
+          invalid_arg
+            (Format.asprintf "Nx.%s: operands on %a and %a; place one of them"
+               op Placement.pp p Placement.pp q))
+
+let route1 op rule a = route op rule [ P a ]
+let route2 op rule a b = route op rule [ P a; P b ]
+let route3 op rule a b c = route op rule [ P a; P b; P c ]
 
 let settle : type a b. route -> (a, b) Nx_backend.t -> (a, b) t =
  fun r h ->
   match r with
-  | On_host | Read_from _ -> Host h
+  | On_host -> Host h
   | At p ->
       let shape = View.shape (Nx_backend.view h) in
       if Array.fold_left ( * ) 1 shape = 1 then
@@ -1076,15 +1193,17 @@ let settle : type a b. route -> (a, b) Nx_backend.t -> (a, b) t =
         held p (Nx_backend.dtype h) v shape
       else (Placement.engine p).place p (Host h)
 
-(* [routed1 op x f] runs [f] where [x] lives, [x] being no host tensor. *)
-let routed1 op x f =
-  let r = route1 op x in
+(* [routed1 op rule x f] runs [f] where [x] lives, [x] being no host tensor. *)
+let routed1 op rule x f =
+  let r = route1 op rule x in
   settle r (f (host_of x))
 
 let unary_op op eff host_op t_in =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
-    match t_in with Host t -> Host (host_op t) | _ -> routed1 op t_in host_op)
+    match t_in with
+    | Host t -> Host (host_op t)
+    | _ -> routed1 op Elementwise t_in host_op)
 
 let binary_op op eff host_op a b =
   try Effect.perform (eff ())
@@ -1092,7 +1211,7 @@ let binary_op op eff host_op a b =
     match (a, b) with
     | Host a, Host b -> Host (host_op a b)
     | _ ->
-        let r = route2 op a b in
+        let r = route2 op Elementwise a b in
         settle r (host_op (host_of a) (host_of b)))
 
 (* Movements
@@ -1270,8 +1389,8 @@ let idiv a b = binary_op "div" (fun () -> E_idiv { a; b }) Nx_backend.idiv a b
 
 (* [routed2 op a b f] runs [f] where [a] and [b] live, one being no host
    tensor. *)
-let routed2 op a b f =
-  let r = route2 op a b in
+let routed2 op rule a b f =
+  let r = route2 op rule a b in
   settle r (f (host_of a) (host_of b))
 
 let cmpeq a b =
@@ -1279,28 +1398,28 @@ let cmpeq a b =
   with Effect.Unhandled _ -> (
     match (a, b) with
     | Host a, Host b -> Host (Nx_backend.cmpeq a b)
-    | _ -> routed2 "equal" a b Nx_backend.cmpeq)
+    | _ -> routed2 "equal" Elementwise a b Nx_backend.cmpeq)
 
 let cmpne a b =
   try Effect.perform (E_cmpne { a; b })
   with Effect.Unhandled _ -> (
     match (a, b) with
     | Host a, Host b -> Host (Nx_backend.cmpne a b)
-    | _ -> routed2 "not_equal" a b Nx_backend.cmpne)
+    | _ -> routed2 "not_equal" Elementwise a b Nx_backend.cmpne)
 
 let cmplt a b =
   try Effect.perform (E_cmplt { a; b })
   with Effect.Unhandled _ -> (
     match (a, b) with
     | Host a, Host b -> Host (Nx_backend.cmplt a b)
-    | _ -> routed2 "less" a b Nx_backend.cmplt)
+    | _ -> routed2 "less" Elementwise a b Nx_backend.cmplt)
 
 let cmple a b =
   try Effect.perform (E_cmple { a; b })
   with Effect.Unhandled _ -> (
     match (a, b) with
     | Host a, Host b -> Host (Nx_backend.cmple a b)
-    | _ -> routed2 "less_equal" a b Nx_backend.cmple)
+    | _ -> routed2 "less_equal" Elementwise a b Nx_backend.cmple)
 
 (* Unary operations *)
 
@@ -1356,21 +1475,33 @@ let reduce ~op ~axes t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.reduce ~op ~axes t)
-    | _ -> routed1 "reduce" t_in (Nx_backend.reduce ~op ~axes))
+    | _ ->
+        routed1 "reduce"
+          (Reduce { axes; keepdims = false })
+          t_in
+          (Nx_backend.reduce ~op ~axes))
 
 let argmax ~axis ~keepdims t_in =
   try Effect.perform (E_argmax { t_in; axis; keepdims })
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.argmax ~axis ~keepdims t)
-    | _ -> routed1 "argmax" t_in (Nx_backend.argmax ~axis ~keepdims))
+    | _ ->
+        routed1 "argmax"
+          (Reduce { axes = [| axis |]; keepdims })
+          t_in
+          (Nx_backend.argmax ~axis ~keepdims))
 
 let argmin ~axis ~keepdims t_in =
   try Effect.perform (E_argmin { t_in; axis; keepdims })
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.argmin ~axis ~keepdims t)
-    | _ -> routed1 "argmin" t_in (Nx_backend.argmin ~axis ~keepdims))
+    | _ ->
+        routed1 "argmin"
+          (Reduce { axes = [| axis |]; keepdims })
+          t_in
+          (Nx_backend.argmin ~axis ~keepdims))
 
 let associative_scan ~axis ~op t_in =
   try Effect.perform (E_associative_scan { t_in; axis; op })
@@ -1378,21 +1509,25 @@ let associative_scan ~axis ~op t_in =
     match t_in with
     | Host t -> Host (Nx_backend.associative_scan ~axis ~op t)
     | _ ->
-        routed1 "associative_scan" t_in (Nx_backend.associative_scan ~axis ~op))
+        routed1 "associative_scan" (Along [ axis ]) t_in
+          (Nx_backend.associative_scan ~axis ~op))
 
 let sort ~axis ~descending t_in =
   try Effect.perform (E_sort { t_in; axis; descending })
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.sort ~axis ~descending t)
-    | _ -> routed1 "sort" t_in (Nx_backend.sort ~axis ~descending))
+    | _ ->
+        routed1 "sort" (Along [ axis ]) t_in (Nx_backend.sort ~axis ~descending))
 
 let argsort ~axis ~descending t_in =
   try Effect.perform (E_argsort { t_in; axis; descending })
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.argsort ~axis ~descending t)
-    | _ -> routed1 "argsort" t_in (Nx_backend.argsort ~axis ~descending))
+    | _ ->
+        routed1 "argsort" (Along [ axis ]) t_in
+          (Nx_backend.argsort ~axis ~descending))
 
 (* Movement operations *)
 
@@ -1444,15 +1579,17 @@ let pad t_in padding_config fill_value =
     match t_in with
     | Host t -> Host (Nx_backend.pad t padding_config fill_value)
     | _ ->
-        routed1 "pad" t_in (fun t -> Nx_backend.pad t padding_config fill_value))
+        routed1 "pad"
+          (Along (padded padding_config))
+          t_in
+          (fun t -> Nx_backend.pad t padding_config fill_value))
 
-(* Creation operations. A value created in the context of one device lives
-   there, and a scalar there is held by nx and allocates nothing. A filled value
-   of more than one element has storage of its own, so that its view covers its
-   storage and a compiled call can consume it. A value created in the context of
-   several devices is a host value, as an operation over them gives. *)
+(* Creation operations. A value created in the context of devices lives there, a
+   full copy on each, and a scalar there is held by nx and allocates nothing. A
+   filled value of more than one element has storage of its own, so that its
+   view covers its storage and a compiled call can consume it. *)
 
-let at_devices = function [ d ] -> At (Placement.device d) | _ -> On_host
+let at_devices ds = At (Placement.replicated ds)
 
 let buffer (ctx : context) dtype shape_arr =
   let size_in_elements = Array.fold_left ( * ) 1 shape_arr in
@@ -1472,8 +1609,7 @@ let const_scalar (ctx : context) value dtype =
   with Effect.Unhandled _ -> (
     match ctx with
     | Host c -> Host (Nx_backend.full c dtype [||] value)
-    | On [ d ] -> held (Placement.device d) dtype value [||]
-    | On _ -> Host (Nx_backend.full host_context dtype [||] value))
+    | On ds -> held (Placement.replicated ds) dtype value [||])
 
 let broadcast scalar shape_arr =
   if Array.length shape_arr = 0 then scalar
@@ -1510,23 +1646,27 @@ let contiguous t_in =
     match t_in with
     | Host t -> Host (Nx_backend.contiguous t)
     | Placed r when covers r -> t_in
-    | _ -> routed1 "contiguous" t_in Fun.id)
+    | _ -> routed1 "contiguous" Elementwise t_in Fun.id)
 
 let copy t_in =
   try Effect.perform (E_copy { t_in })
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.copy t)
-    | _ -> routed1 "copy" t_in Nx_backend.copy)
+    | _ -> routed1 "copy" Elementwise t_in Nx_backend.copy)
 
 (* Ternary operations *)
 
 let where condition if_true if_false =
   try Effect.perform (E_where { condition; if_true; if_false })
-  with Effect.Unhandled _ ->
-    let r = route3 "where" condition if_true if_false in
-    settle r
-      (Nx_backend.where (host_of condition) (host_of if_true) (host_of if_false))
+  with Effect.Unhandled _ -> (
+    match (condition, if_true, if_false) with
+    | Host c, Host a, Host b -> Host (Nx_backend.where c a b)
+    | _ ->
+        let r = route3 "where" Elementwise condition if_true if_false in
+        settle r
+          (Nx_backend.where (host_of condition) (host_of if_true)
+             (host_of if_false)))
 
 (* Cat *)
 
@@ -1536,7 +1676,9 @@ let cat t_list ~axis =
     if List.for_all (function Host _ -> true | _ -> false) t_list then
       Host (Nx_backend.cat (List.map host_of t_list) ~axis)
     else
-      let r = List.fold_left (join "concatenate") On_host t_list in
+      let r =
+        route "concatenate" (Along [ axis ]) (List.map (fun x -> P x) t_list)
+      in
       settle r (Nx_backend.cat (List.map host_of t_list) ~axis)
 
 (* Cast *)
@@ -1547,7 +1689,7 @@ let cast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) : (c, d) t =
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.cast ~dtype:target_dtype t)
-    | _ -> routed1 "cast" t_in (Nx_backend.cast ~dtype:target_dtype))
+    | _ -> routed1 "cast" Elementwise t_in (Nx_backend.cast ~dtype:target_dtype))
 
 let bitcast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) :
     (c, d) t =
@@ -1556,40 +1698,57 @@ let bitcast (type a b c d) ~(dtype : (c, d) Dtype.t) (t_in : (a, b) t) :
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.bitcast ~dtype:target_dtype t)
-    | _ -> routed1 "bitcast" t_in (Nx_backend.bitcast ~dtype:target_dtype))
+    | _ ->
+        routed1 "bitcast" Elementwise t_in
+          (Nx_backend.bitcast ~dtype:target_dtype))
 
 (* Indexed access *)
 
 let gather data indices ~axis =
   try Effect.perform (E_gather { data; indices; axis })
-  with Effect.Unhandled _ ->
-    let r = route2 "take" data indices in
-    settle r (Nx_backend.gather (host_of data) (host_of indices) ~axis)
+  with Effect.Unhandled _ -> (
+    match (data, indices) with
+    | Host d, Host i -> Host (Nx_backend.gather d i ~axis)
+    | _ ->
+        let r = route2 "take" (Along [ axis ]) data indices in
+        settle r (Nx_backend.gather (host_of data) (host_of indices) ~axis))
 
 let update t_in ~starts v =
   try Effect.perform (E_update { t_in; starts; v })
-  with Effect.Unhandled _ ->
-    let r = route3 "set" t_in starts v in
-    settle r
-      (Nx_backend.update (host_of t_in) ~starts:(host_of starts) (host_of v))
+  with Effect.Unhandled _ -> (
+    match (t_in, starts, v) with
+    | Host t, Host s, Host v -> Host (Nx_backend.update t ~starts:s v)
+    | _ ->
+        let r = route3 "set" Into t_in starts v in
+        settle r
+          (Nx_backend.update (host_of t_in) ~starts:(host_of starts) (host_of v)))
 
 let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
   try
     Effect.perform
       (E_scatter { data_template; indices; updates; axis; mode; unique_indices })
-  with Effect.Unhandled _ ->
-    let r = route3 "scatter" data_template indices updates in
-    settle r
-      (Nx_backend.scatter ~mode ~unique_indices (host_of data_template)
-         ~indices:(host_of indices) ~updates:(host_of updates) ~axis)
+  with Effect.Unhandled _ -> (
+    match (data_template, indices, updates) with
+    | Host d, Host i, Host u ->
+        Host
+          (Nx_backend.scatter ~mode ~unique_indices d ~indices:i ~updates:u
+             ~axis)
+    | _ ->
+        let r = route3 "scatter" Into data_template indices updates in
+        settle r
+          (Nx_backend.scatter ~mode ~unique_indices (host_of data_template)
+             ~indices:(host_of indices) ~updates:(host_of updates) ~axis))
 
 (* Random *)
 
 let threefry key ctr =
   try Effect.perform (E_threefry { key; ctr })
-  with Effect.Unhandled _ ->
-    let r = route2 "threefry" key ctr in
-    settle r (Nx_backend.threefry (host_of key) (host_of ctr))
+  with Effect.Unhandled _ -> (
+    match (key, ctr) with
+    | Host k, Host c -> Host (Nx_backend.threefry k c)
+    | _ ->
+        let r = route2 "threefry" Elementwise key ctr in
+        settle r (Nx_backend.threefry (host_of key) (host_of ctr)))
 
 (* The index of the current lane along the innermost mapped axis. The vmap/pmap
    handler answers with a per-lane (batched) or per-device index; with no
@@ -1608,8 +1767,10 @@ let unfold t_in ~kernel_size ~stride ~dilation ~padding =
     | Host t ->
         Host (Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding)
     | _ ->
-        routed1 "unfold" t_in (fun t ->
-            Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding))
+        routed1 "unfold"
+          (Along (spatial t_in))
+          t_in
+          (fun t -> Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding))
 
 let fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
   try
@@ -1622,7 +1783,10 @@ let fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
           (Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation
              ~padding)
     | _ ->
-        routed1 "fold" t_in (fun t ->
+        routed1 "fold"
+          (Along (spatial t_in))
+          t_in
+          (fun t ->
             Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation
               ~padding))
 
@@ -1633,7 +1797,7 @@ let matmul a b =
   with Effect.Unhandled _ -> (
     match (a, b) with
     | Host a, Host b -> Host (Nx_backend.matmul a b)
-    | _ -> routed2 "matmul" a b Nx_backend.matmul)
+    | _ -> routed2 "matmul" Contract a b Nx_backend.matmul)
 
 (* FFT operations *)
 
@@ -1642,14 +1806,14 @@ let fft t ~axes =
   with Effect.Unhandled _ -> (
     match t with
     | Host h -> Host (Nx_backend.fft h ~axes)
-    | _ -> routed1 "fft" t (Nx_backend.fft ~axes))
+    | _ -> routed1 "fft" (Along (Array.to_list axes)) t (Nx_backend.fft ~axes))
 
 let ifft t ~axes =
   try Effect.perform (E_ifft { t; axes })
   with Effect.Unhandled _ -> (
     match t with
     | Host h -> Host (Nx_backend.ifft h ~axes)
-    | _ -> routed1 "ifft" t (Nx_backend.ifft ~axes))
+    | _ -> routed1 "ifft" (Along (Array.to_list axes)) t (Nx_backend.ifft ~axes))
 
 let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes :
     (Complex.t, c) t =
@@ -1657,7 +1821,11 @@ let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes :
   with Effect.Unhandled _ -> (
     match t with
     | Host h -> Host (Nx_backend.rfft h ~dtype ~axes)
-    | _ -> routed1 "rfft" t (Nx_backend.rfft ~dtype ~axes))
+    | _ ->
+        routed1 "rfft"
+          (Along (Array.to_list axes))
+          t
+          (Nx_backend.rfft ~dtype ~axes))
 
 let irfft (type a c) ?s (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
     ~axes : (float, c) t =
@@ -1665,7 +1833,11 @@ let irfft (type a c) ?s (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
   with Effect.Unhandled _ -> (
     match t with
     | Host h -> Host (Nx_backend.irfft ?s h ~dtype ~axes)
-    | _ -> routed1 "irfft" t (Nx_backend.irfft ?s ~dtype ~axes))
+    | _ ->
+        routed1 "irfft"
+          (Along (Array.to_list axes))
+          t
+          (Nx_backend.irfft ?s ~dtype ~axes))
 
 (* Linear algebra *)
 
@@ -1674,19 +1846,23 @@ let cholesky ~upper t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.cholesky ~upper t)
-    | _ -> routed1 "cholesky" t_in (Nx_backend.cholesky ~upper))
+    | _ ->
+        routed1 "cholesky"
+          (Along (matrix_axes t_in))
+          t_in
+          (Nx_backend.cholesky ~upper))
 
 let qr ~reduced t_in =
   try Effect.perform (E_qr { t_in; reduced })
   with Effect.Unhandled _ ->
-    let r = route1 "qr" t_in in
+    let r = route1 "qr" (Along (matrix_axes t_in)) t_in in
     let q, rr = Nx_backend.qr ~reduced (host_of t_in) in
     (settle r q, settle r rr)
 
 let svd ~full_matrices t_in =
   try Effect.perform (E_svd { t_in; full_matrices })
   with Effect.Unhandled _ ->
-    let r = route1 "svd" t_in in
+    let r = route1 "svd" (Along (matrix_axes t_in)) t_in in
     let u, s, vt = Nx_backend.svd ~full_matrices (host_of t_in) in
     (settle r u, settle r s, settle r vt)
 
@@ -1695,12 +1871,12 @@ let eigvals t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.eigvals t)
-    | _ -> routed1 "eigvals" t_in Nx_backend.eigvals)
+    | _ -> routed1 "eigvals" (Along (matrix_axes t_in)) t_in Nx_backend.eigvals)
 
 let eig t_in =
   try Effect.perform (E_eig { t_in })
   with Effect.Unhandled _ ->
-    let r = route1 "eig" t_in in
+    let r = route1 "eig" (Along (matrix_axes t_in)) t_in in
     let vals, vecs = Nx_backend.eig (host_of t_in) in
     (settle r vals, settle r vecs)
 
@@ -1709,12 +1885,13 @@ let eigvalsh t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.eigvalsh t)
-    | _ -> routed1 "eigvalsh" t_in Nx_backend.eigvalsh)
+    | _ ->
+        routed1 "eigvalsh" (Along (matrix_axes t_in)) t_in Nx_backend.eigvalsh)
 
 let eigh t_in =
   try Effect.perform (E_eigh { t_in })
   with Effect.Unhandled _ ->
-    let r = route1 "eigh" t_in in
+    let r = route1 "eigh" (Along (matrix_axes t_in)) t_in in
     let vals, vecs = Nx_backend.eigh (host_of t_in) in
     (settle r vals, settle r vecs)
 
@@ -1725,7 +1902,7 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
     | Host a, Host b ->
         Host (Nx_backend.solve_triangular ~upper ~transpose ~unit_diag a b)
     | _ ->
-        let r = route2 "solve_triangular" a b in
+        let r = route2 "solve_triangular" (Along (matrix_axes a)) a b in
         settle r
           (Nx_backend.solve_triangular ~upper ~transpose ~unit_diag (host_of a)
              (host_of b)))

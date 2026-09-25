@@ -253,7 +253,12 @@ val to_array : ('a, 'b) t -> 'a array
     or a list of devices each holding an equal slice along one axis.
 
     The result of an operation lives where its placed operands live: operands on
-    the host join them, and operands on two different placements raise. A read
+    the host join them, and operands on two different device sets raise. Over
+    split operands, an elementwise result keeps their split, which must be the
+    same for all of them (copies take it); a reduction over the split axis is a
+    full copy on each device; and an operation along the split axis ({!sort},
+    {!cumsum}, {!pad} or {!concatenate} along it, linear algebra on its last
+    two axes, {!fft} over it) raises. A read
     ({!item}, {!to_array}, {!to_buffer}, {!pp}, a save) copies the elements it
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.

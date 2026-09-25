@@ -213,7 +213,7 @@ let test_replicated_feedback () =
   check_arr ~eps:0.0 ~msg:"replicated read" [| 4.0; 8.0; 12.0 |] w2
 
 (* An output split on axis 1 reads, prints and takes part in operations that
-   create constants beside it, which run on the host. *)
+   create constants beside it. *)
 let test_split_output_in_eager_code () =
   let g =
     Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ]
@@ -227,6 +227,34 @@ let test_split_output_in_eager_code () =
   check_arr ~eps:0.0 ~msg:"gathered rows"
     (to_arr (Nx.slice [ Nx.L [ 1; 0 ] ] h))
     (Nx.slice [ Nx.L [ 1; 0 ] ] y)
+
+(* Linear algebra and windows act along their own axes: over a value split on
+   its batch axis, eager and compiled code agree on the elements and the
+   placement. *)
+let test_batch_split_operations () =
+  let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal in
+  let agree msg f x =
+    let compiled =
+      Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ]
+        Nx.Ptree.(tensor @-> returns tensor)
+        f x
+    in
+    let eager = f (Nx.place (Nx.Placement.sharded ~axis:0 devs2) x) in
+    equal ~msg:(msg ^ ": placement") placement (Nx.placement compiled)
+      (Nx.placement eager);
+    check_arr ~eps:1e-5 ~msg (to_arr compiled) eager
+  in
+  let batch = Nx.reshape [| 2; 3; 3 |] (Nx.arange Nx.float32 0 18 1) in
+  let spd =
+    Nx.add
+      (Nx.matmul batch (Nx.transpose ~axes:[ 0; 2; 1 ] batch))
+      (Nx.mul_s (Nx.eye Nx.float32 3) 10.)
+  in
+  agree "cholesky" Nx.cholesky spd;
+  let w = Nx.ones Nx.float32 [| 2; 2 |] in
+  agree "correlate"
+    (fun i -> Nx.correlate i w)
+    (Nx.reshape [| 2; 1; 4; 4 |] (Nx.arange Nx.float32 0 32 1))
 
 let test_mismatched_placement_forces () =
   (* An output sharded on axis 0 fed into an axis-1 placement is forced to the
@@ -867,6 +895,7 @@ let tests =
     group "residency"
       [
         test "a split output in eager code" test_split_output_in_eager_code;
+        test "operations over a batch split" test_batch_split_operations;
         test "feedback call moves no bytes" test_feedback_moves_no_bytes;
         test "replicated outputs feed back without transfer"
           test_replicated_feedback;

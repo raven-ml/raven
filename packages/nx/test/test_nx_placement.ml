@@ -356,8 +356,8 @@ let test_several_devices () =
   equal ~msg:"a split value is read whole" (array float_exact) (Nx.to_array x)
     (Nx.to_array s);
   let d = Nx.add r r in
-  equal ~msg:"an operation on several devices reads to the host" placement
-    Nx.Placement.host (Nx.placement d);
+  equal ~msg:"an operation on copies gives copies" placement (Nx.placement r)
+    (Nx.placement d);
   equal ~msg:"its result" (array float_exact)
     [| 2.; 4.; 6.; 8.; 10.; 12. |]
     (Nx.to_array d);
@@ -367,13 +367,102 @@ let test_several_devices () =
       | Invalid_argument msg -> String.ends_with ~suffix:"place one of them" msg
       | _ -> false)
     (fun () -> Nx.add r p);
-  equal ~msg:"constants over several devices are host values"
-    (array float_exact)
+  let t = Nx.tril r in
+  equal ~msg:"constants over several devices are copies" placement
+    (Nx.placement r) (Nx.placement t);
+  equal ~msg:"and the result is right" (array float_exact)
     [| 1.; 0.; 0.; 4.; 5.; 0. |]
-    (Nx.to_array (Nx.tril r));
-  equal ~msg:"and so are gathered rows" (array float_exact)
+    (Nx.to_array t);
+  equal ~msg:"gathered rows of copies" (array float_exact)
     [| 4.; 5.; 6.; 1.; 2.; 3. |]
-    (Nx.to_array (Nx.slice [ Nx.L [ 1; 0 ] ] s))
+    (Nx.to_array (Nx.slice [ Nx.L [ 1; 0 ] ] r))
+
+(* An eager result over split operands takes the placement tolk's rewrite gives
+   the same operation in a compiled program. *)
+let test_eager_results_over_split_operands () =
+  let ds = [ dev1; dev2 ] in
+  let rows = Nx.Placement.sharded ~axis:0 ds
+  and cols = Nx.Placement.sharded ~axis:1 ds
+  and copies = Nx.Placement.replicated ds in
+  let x = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1) in
+  let w = Nx.reshape [| 6; 4 |] (Nx.arange Nx.float32 0 24 1) in
+  let s = Nx.place rows x and t = Nx.place cols x and r = Nx.place copies x in
+  let check msg p expected y =
+    equal ~msg:(msg ^ ": placement") placement p (Nx.placement y);
+    equal ~msg (array float_exact) (Nx.to_array expected) (Nx.to_array y)
+  in
+  check "split + split" rows (Nx.add x x) (Nx.add s s);
+  check "split + copies" rows (Nx.add x x) (Nx.add s r);
+  check "copies + split" rows (Nx.add x x) (Nx.add r s);
+  check "split + host" rows (Nx.add x x) (Nx.add s x);
+  check "split + scalar" rows (Nx.add_s x 1.) (Nx.add_s s 1.);
+  check "a unary operation" rows (Nx.exp x) (Nx.exp s);
+  check "a comparison" rows
+    (Nx.cast Nx.float32 (Nx.less x (Nx.flip x)))
+    (Nx.cast Nx.float32
+       (Nx.less s (Nx.flip ~axes:[ 1 ] (Nx.flip ~axes:[ 0 ] x))));
+  check "a reduction over the split axis" copies (Nx.sum ~axes:[ 0 ] x)
+    (Nx.sum ~axes:[ 0 ] s);
+  check "a reduction over the other axis" rows (Nx.sum ~axes:[ 1 ] x)
+    (Nx.sum ~axes:[ 1 ] s);
+  check "a reduction before the split axis"
+    (Nx.Placement.sharded ~axis:0 ds)
+    (Nx.max ~axes:[ 0 ] x) (Nx.max ~axes:[ 0 ] t);
+  check "keeping its axes" cols
+    (Nx.sum ~axes:[ 0 ] ~keepdims:true x)
+    (Nx.sum ~axes:[ 0 ] ~keepdims:true t);
+  check "a sum of everything" copies (Nx.sum x) (Nx.sum s);
+  check "an operation along the other axis" rows (Nx.cumsum ~axis:1 x)
+    (Nx.cumsum ~axis:1 s);
+  check "a sort along the other axis" rows
+    (Nx.sort ~axis:1 x |> fst)
+    (Nx.sort ~axis:1 s |> fst);
+  check "rows times copies" rows (Nx.matmul x w)
+    (Nx.matmul s (Nx.place copies w));
+  check "copies times columns" cols (Nx.matmul x w)
+    (Nx.matmul r (Nx.place cols w));
+  check "columns times rows" copies (Nx.matmul x w)
+    (Nx.matmul t (Nx.place rows w));
+  check "a pad of the other axis" rows
+    (Nx.pad [| (0, 0); (1, 1) |] 0. x)
+    (Nx.pad [| (0, 0); (1, 1) |] 0. s);
+  check "a concatenation along the other axis" rows
+    (Nx.concatenate ~axis:1 [ x; x ])
+    (Nx.concatenate ~axis:1 [ s; s ]);
+  check "a copy" rows (Nx.copy x) (Nx.copy s);
+  let along f =
+    raises_match
+      (function
+        | Invalid_argument msg ->
+            String.ends_with
+              ~suffix:"place the value replicated or on one device first" msg
+        | _ -> false)
+      f
+  in
+  along (fun () -> Nx.cumsum ~axis:0 s);
+  along (fun () -> Nx.sort ~axis:0 s);
+  along (fun () -> Nx.pad [| (1, 1); (0, 0) |] 0. s);
+  along (fun () -> Nx.concatenate ~axis:0 [ s; s ]);
+  check "rows gathered from columns" cols
+    (Nx.slice [ Nx.L [ 1; 0 ] ] x)
+    (Nx.slice [ Nx.L [ 1; 0 ] ] t);
+  along (fun () -> Nx.slice [ Nx.L [ 1; 0 ] ] s);
+  let batch = Nx.reshape [| 2; 4; 4 |] (Nx.arange Nx.float32 0 32 1) in
+  let spd =
+    Nx.add
+      (Nx.matmul batch (Nx.transpose ~axes:[ 0; 2; 1 ] batch))
+      (Nx.mul_s (Nx.eye Nx.float32 4) 10.)
+  in
+  check "linear algebra over a split batch" rows (Nx.cholesky spd)
+    (Nx.cholesky (Nx.place rows spd));
+  along (fun () -> Nx.cholesky (Nx.place cols spd));
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.ends_with
+            ~suffix:"are split differently; place them alike first" msg
+      | _ -> false)
+    (fun () -> Nx.mul s t)
 
 let test_repeat_a_split_value () =
   let x = m23 () in
@@ -578,6 +667,8 @@ let tests =
         test "a read copies what it reads" test_a_read_copies_what_it_reads;
         test "views share their cell" test_views_share_the_cell;
         test "several devices" test_several_devices;
+        test "eager results over split operands"
+          test_eager_results_over_split_operands;
         test "repeat a split value" test_repeat_a_split_value;
         test "pp of a value split on axis 1" test_pp_split_on_axis_one;
         test "split values move as views" test_split_values_move_as_views;

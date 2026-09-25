@@ -1885,6 +1885,10 @@ thread.
 
 ### Nx
 
+- Operations over values on several devices keep their results on those
+  devices: an elementwise result keeps its operands' split, which must be
+  alike, a reduction over the split axis is a copy on each device, and an
+  operation along the split axis (a sort, a pad, linear algebra) raises.
 - **Breaking:** `Nx.Placement.t` is abstract. Build a placement with `host`,
   `device`, `replicated` and `sharded`, and take it apart with `devices` and
   `window` (the part a device holds); `equal` now holds for copies in any order.

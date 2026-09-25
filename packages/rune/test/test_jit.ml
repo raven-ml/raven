@@ -3595,6 +3595,23 @@ let test_moves_do_not_gather_on_the_host () =
   equal ~msg:"columns to rows: each element read once" int n down;
   equal ~msg:"columns to rows" (array int32) (Nx.to_array x) (Nx.to_array y)
 
+(* Eager operations over split values keep their results on the devices, as
+   tolk's rewrite places them. *)
+let test_eager_results_on_device_lists () =
+  let x = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1) in
+  let rows = Nx.Placement.sharded ~axis:0 cpus in
+  let s = Nx.place rows x in
+  let check msg p expected y =
+    equal ~msg:(msg ^ ": placement") placement p (Nx.placement y);
+    equal ~msg (array float_exact) (Nx.to_array expected) (Nx.to_array y)
+  in
+  check "elementwise" rows (Nx.mul x (Nx.exp x)) (Nx.mul s (Nx.exp s));
+  check "a reduction over the split axis"
+    (Nx.Placement.replicated cpus)
+    (Nx.sum ~axes:[ 0 ] x) (Nx.sum ~axes:[ 0 ] s);
+  check "a reduction over the other axis" rows (Nx.sum ~axes:[ 1 ] x)
+    (Nx.sum ~axes:[ 1 ] s)
+
 (* A split upload from a mapped file uploads each device's window once, read
    from the file. *)
 let test_split_upload_from_a_file () =
@@ -4193,6 +4210,8 @@ let tests =
         test "moves do not gather on the host"
           test_moves_do_not_gather_on_the_host;
         test "a split upload from a mapped file" test_split_upload_from_a_file;
+        test "eager results stay on the devices"
+          test_eager_results_on_device_lists;
       ];
     group "bound captures"
       [
