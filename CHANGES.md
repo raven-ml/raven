@@ -511,6 +511,10 @@ thread.
 
 ### Tolk (new)
 
+- A realized allreduce whose result is a symbolic slice of an inner axis
+  returned zeros; it now returns the sum. The reduction wrote a copy of the
+  result's view instead of its storage.
+
 - `Op.block_matmul` on the CPU keeps a register tile of rows and columns and
   unrolls the contraction: 9 to 37 times faster at float32 and 1.4 to 2.1
   times at bfloat16 at gpt-oss's shapes, where it ran with no options.

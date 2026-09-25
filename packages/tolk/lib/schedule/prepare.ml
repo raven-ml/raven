@@ -628,7 +628,7 @@ let earliest_rewrites =
       Upat.Pattern_matcher.rewrite Movement.mop_cleanup;
       (fun n -> match U.as_allreduce n with
          | Some { src; device; op } ->
-             Allreduce.create_allreduce_function src ~device ~op ()
+             Allreduce.create_allreduce_function src ~device ~op
          | None -> None);
       split_reduceop_rule;
       (fun n -> match U.op n with

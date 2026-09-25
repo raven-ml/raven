@@ -434,7 +434,7 @@ let () =
                   let src = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:v ~device:(U.Multi devs4) () in
                   let result = Option.get (Allreduce.handle_allreduce src ~op:Ops.Add ~device:(U.Multi devs4)) in
                   is_true (List.for_all2 U.equal [v] (U.shape result));
-                  let call = Option.get (Allreduce.create_allreduce_function src ~op:Ops.Add ~device:(U.Multi devs4) ()) in
+                  let call = Option.get (Allreduce.create_allreduce_function src ~op:Ops.Add ~device:(U.Multi devs4)) in
                   is_true (List.for_all2 U.equal [v] (U.shape call));
                   equal (list int) [7] (U.max_shape call);
                   List.iter (fun n ->

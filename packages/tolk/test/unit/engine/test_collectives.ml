@@ -276,22 +276,66 @@ let check_replicas_equal ~msg = function
         rest
 
 let allreduce_tests =
-  cases "allreduce replicas agree bit for bit" ~name:fst strategies
-    (fun strategy ->
-      with_strategy strategy @@ fun () ->
-      List.iter
-        (fun ndev ->
-          let cols = 4096 in
-          let data = spread (ndev * cols) in
-          let x =
-            C.shard ~axis:0 ~devices:(devices ndev)
-              (host ~shape:[ ndev; cols ] data)
+  group "allreduce"
+    [
+      cases "replicas agree bit for bit" ~name:fst strategies (fun strategy ->
+          with_strategy strategy @@ fun () ->
+          List.iter
+            (fun ndev ->
+              let cols = 4096 in
+              let data = spread (ndev * cols) in
+              let x =
+                C.shard ~axis:0 ~devices:(devices ndev)
+                  (host ~shape:[ ndev; cols ] data)
+              in
+              let msg = Printf.sprintf "%d devices" ndev in
+              let replicas = device_bytes (Rd.sum ~axis:[ 0 ] x) in
+              check_replicas_equal ~msg replicas;
+              check_sums ~msg
+                (column_sums ~rows:ndev ~cols data)
+                (List.hd replicas))
+            [ 2; 3; 4; 6; 8 ]);
+      test "a realized allreduce of a symbolic slice keeps its values"
+        (fun () ->
+          let data = Array.init 112 float_of_int in
+          let w =
+            C.shard ~axis:0 ~devices:(devices 4) (host ~shape:[ 4; 4; 7 ] data)
           in
-          let msg = Printf.sprintf "%d devices" ndev in
-          let replicas = device_bytes (Rd.sum ~axis:[ 0 ] x) in
-          check_replicas_equal ~msg replicas;
-          check_sums ~msg (column_sums ~rows:ndev ~cols data) (List.hd replicas))
-        [ 2; 3; 4; 6; 8 ])
+          Run.realize_many [ w ];
+          let cols =
+            U.variable ~name:"allreduce_cols" ~min_val:1 ~max_val:7 ()
+          in
+          List.iter
+            (fun n ->
+              let sliced =
+                U.shrink ~src:(T.uop w)
+                  ~offset:(T.shape_uop [ 0; 0; 0 ])
+                  ~size:
+                    (U.stack
+                       [
+                         U.const_int 4;
+                         U.const_int 4;
+                         U.bind ~var:cols ~value:(U.const_int n);
+                       ])
+              in
+              let reduced = Rd.sum ~axis:[ 0 ] (T.of_uop sliced) in
+              Run.realize_many [ reduced ];
+              let expected = ref 0.0 in
+              for a = 0 to 3 do
+                for b = 0 to 3 do
+                  for c = 0 to n - 1 do
+                    expected := !expected +. data.((a * 28) + (b * 7) + c)
+                  done
+                done
+              done;
+              equal
+                ~msg:(Printf.sprintf "%d columns" n)
+                (array float_exact) [| !expected |]
+                (Run.to_float_array
+                   (C.clone ~device:(U.Single "CPU")
+                      (Rd.sum ~axis:[ 0; 1 ] reduced))))
+            [ 3; 7 ]);
+    ]
 
 (* The per-device replicas of a [rows; cols] value split on axis 0 and gathered
    to its devices, and the transfers of the gather. *)

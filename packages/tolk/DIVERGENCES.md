@@ -431,6 +431,18 @@ delete it rather than registering it.
   reference's either way. Consumer: rune's CPU device, which binds host memory
   it did not allocate (slices, mapped files) and passes `~aligned:false`.
 
+- **A collective call takes its whole output allocation**
+  (`schedule/allreduce.ml` `collective`). The reference's
+  `create_allreduce_function` passes the output's view (a SHRINK of a RESHAPE
+  of the allocation) as the call's first argument. `realize_custom_kernel_srcs`
+  realizes any argument that is not buffer-like into a copy of its values, so
+  when that view is not a plain reshape (a symbolic slice of an inner axis),
+  the call writes the copy and the result reads an allocation nothing wrote:
+  such a realized allreduce returned zeros. Tolk passes the allocation and
+  views it inside the call's body, which is also the raw storage a library
+  collective needs. Coverage: `test/unit/engine/test_collectives.ml` "a
+  realized allreduce of a symbolic slice keeps its values".
+
 - **`Creation.shard` splits a replicated value where it lives**
   (`frontend/creation.ml` `shard`). The reference raises on any multi-device
   source. A value replicated on exactly the target devices is split without a

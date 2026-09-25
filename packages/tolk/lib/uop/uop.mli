@@ -246,7 +246,10 @@ type queue_info = {
 
 type call_info = {
   grad_fxn : grad_fxn option;  (** Custom gradient callback, if any. *)
-  name : string option;  (** Optional callable name for debugging. *)
+  name : string option;
+      (** Optional callable name. A precompiled call that implements a
+          collective carries the collective's name, ["allreduce"] or
+          ["allgather"], over its (dst, src) arguments. *)
   precompile : bool;
       (** [true] to precompile the forward callee. *)
   precompile_backward : bool;
