@@ -2839,8 +2839,8 @@ let test_read_after_call_waits () =
   check_arr ~eps:1e-6 ~msg:"after fifty unread calls" (Array.make 4096 expected)
     !h
 
-(* Arenas. A program's planned intermediates are slices of its device's shared
-   arena, so programs run in turn hold one arena between them. *)
+(* Arenas. Each compiled program owns its planned intermediate storage;
+   independent retained programs cannot overwrite one another's working set. *)
 
 let device_bytes name =
   Option.value ~default:0
@@ -2880,15 +2880,15 @@ let arena_program ~n act =
   in
   (f, Rune.jit' ~devices:[ cpu1 ] f, x)
 
-let test_programs_share_an_arena () =
+let test_programs_own_their_arenas () =
   let n = 512 in
   let f, f', x = arena_program ~n Nx.tanh in
   let g, g', _ = arena_program ~n Nx.sin in
   check_arr ~eps:1e-2 ~msg:"first program" (to_arr (f (x 1))) (f' (x 1));
   let before = device_bytes "CPU:1" in
   check_arr ~eps:1e-2 ~msg:"second program" (to_arr (g (x 2))) (g' (x 2));
-  is_true ~msg:"the second program allocates no arena of its own"
-    (device_bytes "CPU:1" - before < n * n * 4);
+  is_true ~msg:"the second program owns independent intermediate storage"
+    (device_bytes "CPU:1" - before >= n * n * 4);
   for k = 3 to 5 do
     check_arr ~eps:1e-2 ~msg:"the first after the second"
       (to_arr (f (x k)))
@@ -2898,22 +2898,27 @@ let test_programs_share_an_arena () =
       (g' (x (k + 3)))
   done
 
-(* A larger arena grows the shared one; the programs bound to the old buffer
-   move to the new one at their next call, and the old buffer is freed: the
-   device grows by less than the new arena. *)
-let test_a_grown_arena_frees_the_old () =
+(* Return while the large program is still reachable, then let its complete
+   compiled graph go. The small program must retain only its own arena. *)
+let[@inline never] run_independent_large_arena n =
+  let g, g', y = arena_program ~n Nx.sin in
+  check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
+  let used = device_bytes "CPU:1" in
+  ignore (Sys.opaque_identity (Some g'));
+  used
+
+let test_dropping_a_program_releases_its_arena () =
   let f, f', x = arena_program ~n:256 Nx.tanh in
   check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
+  full_major ();
   let n = 1024 in
-  let g, g', y = arena_program ~n Nx.sin in
-  let before = device_bytes "CPU:1" in
-  check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
-  is_true ~msg:"the outgrown buffer is freed"
-    (device_bytes "CPU:1" - before < (n * n * 4) - (128 * 1024));
-  check_arr ~eps:1e-2 ~msg:"small, on the grown arena"
+  let retained = run_independent_large_arena n in
+  full_major ();
+  is_true ~msg:"the dropped program releases its intermediate storage"
+    (device_bytes "CPU:1" <= retained - (n * n * 4));
+  check_arr ~eps:1e-2 ~msg:"the retained program keeps its own arena"
     (to_arr (f (x 2)))
-    (f' (x 2));
-  check_arr ~eps:1e-2 ~msg:"large again" (to_arr (g (y 2))) (g' (y 2))
+    (f' (x 2))
 
 (* Not inlined: once it returns, only the queued kernels use the placed
    input. *)
@@ -4712,8 +4717,9 @@ let tests =
           test_capture_uploaded_once_across_signatures;
         test "dropped handles are reclaimed" test_dropped_handles_are_reclaimed;
         test "a read after a call waits for it" test_read_after_call_waits;
-        test "programs run in turn share an arena" test_programs_share_an_arena;
-        test "a grown arena frees the old one" test_a_grown_arena_frees_the_old;
+        test "programs own their arenas" test_programs_own_their_arenas;
+        test "dropping a program releases its arena"
+          test_dropping_a_program_releases_its_arena;
         test "a buffer freed under a running kernel is not reused"
           test_buffer_freed_under_a_running_kernel;
       ];

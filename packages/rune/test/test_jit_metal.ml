@@ -438,10 +438,9 @@ let test_two_programs_alternate () =
   check_arr ~eps:1e-3 ~msg:"u" (to_arr !e.Pair.u) !h.Pair.u;
   check_arr ~eps:1e-3 ~msg:"v" (to_arr !e.Pair.v) !h.Pair.v
 
-(* Programs run in turn share the device's arena. A program recorded as a device
-   queue over a smaller arena is re-patched onto the grown one, and a second
-   program of the same size allocates no arena of its own. *)
-let test_programs_share_an_arena () =
+(* Each retained compiled graph owns its intermediate storage. Programs of
+   different sizes replay in turn without rebinding one another's arenas. *)
+let test_programs_own_their_arenas () =
   let program ~n act =
     let f x =
       let a = act (Nx.matmul x (Nx.transpose x)) in
@@ -462,18 +461,18 @@ let test_programs_share_an_arena () =
   check_arr ~eps:1e-2 ~msg:"small, replayed" (to_arr (f (x 2))) (f' (x 2));
   (* Bound the cost of the fused cubic reduction. The 1024 case can trigger
      an interactivity abort with the frozen tinygrad kernel too;
-     512 still grows the arena fourfold and exercises its later rebinding. *)
+     512 still exercises independent arenas with different sizes. *)
   let n = 512 in
   let g, g', y = program ~n Nx.sin in
   check_arr ~eps:1e-2 ~msg:"large" (to_arr (g (y 1))) (g' (y 1));
-  check_arr ~eps:1e-2 ~msg:"small, on the grown arena"
+  check_arr ~eps:1e-2 ~msg:"small, after the large program"
     (to_arr (f (x 3)))
     (f' (x 3));
   let h, h', _ = program ~n (fun a -> Nx.mul_s (Nx.sin a) 0.5) in
   let before = device_bytes () in
   check_arr ~eps:1e-2 ~msg:"another large" (to_arr (h (y 2))) (h' (y 2));
-  is_true ~msg:"it allocates no arena of its own"
-    (device_bytes () - before < n * n * 4);
+  is_true ~msg:"it owns independent intermediate storage"
+    (device_bytes () - before >= n * n * 4);
   for k = 4 to 6 do
     check_arr ~eps:1e-2 ~msg:"small, in turn" (to_arr (f (x k))) (f' (x k));
     check_arr ~eps:1e-2 ~msg:"large, in turn" (to_arr (g (y k))) (g' (y k));
@@ -892,7 +891,7 @@ let tests =
         test "command storage is released with its function"
           test_command_storage_released_with_its_function;
         test "a read after a call waits for it" test_read_after_call_waits;
-        test "programs run in turn share an arena" test_programs_share_an_arena;
+        test "programs own their arenas" test_programs_own_their_arenas;
         test "two programs alternate on one consumed state"
           test_two_programs_alternate;
         test "sort keeps subnormals" test_sort_keeps_subnormals;

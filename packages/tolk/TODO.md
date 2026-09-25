@@ -114,8 +114,8 @@ acceptance requirement; skipped tests are not execution evidence.
   from multi-device templates and retained-link caches while preserving live
   submission ownership. Make first-run bookkeeping and execution statistics
   safe for concurrent callers.
-  Establish ownership of Rune's shared JIT arenas, pending release/view lists
-  and mutable storage lists across callers; synchronize trace identities,
+  Establish ownership of Rune's pending release/view lists and mutable storage
+  lists across callers; synchronize trace identities,
   transfer/allocation statistics and GC-budget counters. Cover finalizers registered on
   another domain and systhreads sharing a domain: operation scopes currently
   prevent only same-domain GC re-entry and do not serialize device callers.

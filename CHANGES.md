@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Give each compiled function its own planned intermediate buffers, preventing
+  interleaved JIT calls from corrupting one another. Dropping a compiled graph
+  releases its arena without retaining the largest allocation process-wide.
+
 - Prevent independent uploads of 64 MiB or more from overwriting each other's
   staging bytes. Concurrent `Rune.device` lookups now return one canonical
   device identity.
@@ -180,9 +184,6 @@ All notable changes to this project will be documented in this file.
 - `jit ~beam:0` disables default autotuning under a nonzero `BEAM` context,
   and the persistent cache key uses that explicit choice.
 
-- Release outgrown JIT arenas after queued work completes, without waiting
-  for temporary buffer views to be garbage-collected.
-
 - A compiled float sum of -0s, the negation of a zero sum, and `c ? t : 0 +
   c ? 0 : f` keep eager's sign of zero: a sum of -0s was -0 and `-(x + 3)` at
   x = -3 was +0.
@@ -191,10 +192,9 @@ All notable changes to this project will be documented in this file.
   `max (-0) (+0)` was -0.
 - A compiled `>=` or `<=` with a NaN operand is false, as eager's is: it was
   true, so a mask like `where (x >= 0) x 0` kept NaNs that eager drops.
-- A program of `Rune.jit` over several devices binds its intermediates to each
-  device's shared arenas, as one-device programs do: each device's grow with
-  its own programs and stay across calls. They were allocated and released on
-  every call.
+- `Rune.jit` over several devices retains its planned intermediate buffers
+  across calls. Each compiled graph owns its storage independently on every
+  device, avoiding repeated allocation without sharing writable arenas.
 - `Rune.remat` inside `Rune.jit` over several devices checkpoints as on one
   device: the block's arguments are kept on each device and the block is
   recomputed in the backward pass. It kept every intermediate.

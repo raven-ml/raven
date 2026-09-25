@@ -282,18 +282,6 @@ let release_store s =
       if s.s_nolru then List.iter Tolk.Device.synchronize s.s_devices;
       List.iter Tolk.Device.Buffer.deallocate bufs
 
-(* Arenas
-
-   A compiled program's planned intermediates are slices of arena buffers (see
-   [held_buffers]). They live and die inside one call, and a device runs the
-   calls of all programs in queue order, so the programs a device runs share its
-   arenas: a program's [k]th arena is bound, at every call, to the device's
-   [k]th shared buffer, on each of its devices. An outgrown buffer is freed
-   after the device has finished its work, independently of view collection. *)
-
-let arenas : (Tolk.Device.t * (int, Tolk.Device.Buffer.t) Hashtbl.t) list ref =
-  ref []
-
 (* Buffer views over a range of a value's storage that a finished call or a
    dropped program bound (see [seed_of]). They go at the next safe point, before
    their owning stores. *)
@@ -338,38 +326,6 @@ let collect () =
   drain_releases ();
   majors := (Gc.quick_stat ()).major_collections;
   allocated := 0
-
-(* The device's [k]th shared arena, of at least [nbytes] bytes. It bypasses the
-   allocator's cache: an outgrown arena returns to the system. *)
-let shared_arena dev k nbytes =
-  let slots =
-    match List.assq_opt dev !arenas with
-    | Some slots -> slots
-    | None ->
-        let slots = Hashtbl.create 4 in
-        arenas := (dev, slots) :: !arenas;
-        slots
-  in
-  match Hashtbl.find_opt slots k with
-  | Some buf when Tolk.Device.Buffer.nbytes buf >= nbytes -> buf
-  | outgrown ->
-      let buf =
-        Tolk.Device.create_buffer ~size:nbytes ~dtype:TD.int8
-          ~spec:{ Tolk.Device.Buffer_spec.default with nolru = true }
-          dev
-      in
-      (try Tolk.Device.Buffer.ensure_allocated buf
-       with _ ->
-         Gc.major ();
-         drain_releases ();
-         Tolk.Device.Buffer.ensure_allocated buf);
-      Option.iter
-        (fun old ->
-          Tolk.Device.synchronize dev;
-          Tolk.Device.Buffer.deallocate old)
-        outgrown;
-      Hashtbl.replace slots k buf;
-      buf
 
 (* How a program reads an input or constant from its node: from element [skip]
    on, the value's elements in C order, or a view of [strides] over the elements
@@ -4086,7 +4042,7 @@ type 'q compiled = {
   cp_vars : (string * int64) list;
   cp_input_uops : U.t array;
       (* default storage for the schedule's PARAM slots; replay copies this
-         array and supplies its input, output and shared-arena owners *)
+         array and supplies its input and output owners *)
   cp_inputs : input array; (* one per leaf visit, in traversal order *)
   cp_consumed : bool array;
       (* per input position, whether a call consumes it: its storage is marked
@@ -4127,9 +4083,6 @@ type 'q compiled = {
   cp_reserved : (int, unit) Hashtbl.t;
       (* tags of input arguments and owned constants: pass-through outputs
          copy their value or take a consumed input's storage *)
-  cp_arenas : U.t list;
-      (* the memory planner's arena PARAMs, supplied at every call with their
-         devices' shared arenas (see [shared_arena]) *)
   cp_skeleton : 'q; (* the traced result, the template results are rebuilt in *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
@@ -4146,19 +4099,6 @@ let argument_slot node =
   match U.as_param node with
   | Some {param; _} -> param.slot
   | None -> invalid_arg "Rune.jit: replay storage must be a PARAM"
-
-(* Planned arenas are byte buffers reached through views, excluding storage
-   held by the caller. Their owners can grow between calls to different JITs. *)
-let arena_nodes bound linear =
-    let seen = U.Tbl.create 4 in
-    List.iter (fun node -> U.Tbl.replace seen node ()) bound;
-    U.toposort ~enter_calls:true linear
-    |> List.filter_map (fun u ->
-        if U.op u = Ops.Buffer && TD.equal (U.dtype u) TD.int8
-           && not (U.Tbl.mem seen u) then begin
-          U.Tbl.add seen u ();
-          Some u
-        end else None)
 
 let parameterize nodes =
   let seen = U.Tbl.create (List.length nodes) in
@@ -4823,11 +4763,10 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   let constant_nodes = List.map (fun (node, _, _) -> node) st.consts
       @ List.map (fun (node, _, _) -> node) st.bound_consts in
   let held = input_nodes @ constant_nodes @ output_nodes in
-  let replay_nodes arenas =
+  let replay_nodes =
     input_nodes
     @ List.filter (fun node -> not (List.exists (U.equal node) constant_nodes))
-        output_nodes
-    @ arenas in
+        output_nodes in
   (* Persistent compile cache: a hit replaces scheduling and kernel compilation
      with an import of the stored compiled linear, rebound to this trace's fresh
      buffer nodes. Programs over several devices are not cached. *)
@@ -4867,8 +4806,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           Tolk.Schedule.memory_plan_rewrite linear (held_buffers held linear)
         in
         let linear =
-          let parameters = parameterize
-              (replay_nodes (arena_nodes held linear)) in
+          let parameters = parameterize replay_nodes in
           let linear = U.substitute ~walk:true parameters linear in
           let compile () =
             Tolk.Realize.compile_linear ~device:dev ?beam ~to_program linear
@@ -4892,8 +4830,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           cache_key;
         (linear, var_vals)
   in
-  let cp_arenas = arena_nodes held linear in
-  let parameters = parameterize (replay_nodes cp_arenas) in
+  let parameters = parameterize replay_nodes in
   let cp_input_uops = Array.of_list (List.map fst parameters) in
   let constants = ref [] in
   let own node bufs = constants := (node, owned_uop node bufs) :: !constants in
@@ -5115,7 +5052,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   let mappings = parameters @ !constants in
   let mapped node = Option.value (List.assq_opt node mappings) ~default:node in
   let linear = U.substitute ~walk:true mappings linear in
-  let linear = Tolk.Realize.link_linear
+  let linear = Tolk.Realize.link_linear ~allow_cache:false
       ~ctx:(Tolk.Realize.exec_context ~input_uops:cp_input_uops ()) linear in
   let cp_inputs = Array.map
       (fun inp -> {inp with i_node = mapped inp.i_node}) cp_inputs in
@@ -5126,7 +5063,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       let node = List.find (fun node -> U.tag node = lend.l_otag) output_nodes in
       {lend with l_otag = U.tag (mapped node)}) cp_lends in
   let cp_prefills = List.map (fun (node, input) -> mapped node, input) cp_prefills in
-  let cp_arenas = List.map mapped cp_arenas in
   let reserved = Hashtbl.create (List.length input_nodes + List.length constant_nodes) in
   List.iter (fun node -> Hashtbl.replace reserved (U.tag (mapped node)) ())
     (input_nodes @ constant_nodes);
@@ -5161,7 +5097,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       cp_lends;
       cp_prefills;
       cp_reserved = reserved;
-      cp_arenas;
       cp_skeleton = y;
       cp_scratch = Hashtbl.create 8;
     }
@@ -5264,40 +5199,6 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   let ranges = ref [] in
   Fun.protect ~finally:(fun () -> pending_views := !ranges @ !pending_views)
   @@ fun () ->
-  (* Rebind arenas before queue replay patches their addresses: another compiled
-     function may have grown the shared storage since the last call. An arena
-     over the program's devices is a view of each device's shared buffer of
-     exactly its size, the shards of one buffer being equal, while each device's
-     buffer grows with its own programs only. An arena on one device of several,
-     which a collective's copies use, is that device's, found by the name the
-     program gave it. *)
-  let devs = List.map snd c.cp_devices in
-  let names = List.map Tolk.Device.name devs in
-  List.iteri
-    (fun k node ->
-      let nbytes = U.max_numel node in
-      let seed dev =
-        supply node [shared_arena dev k nbytes]
-      in
-      match (U.device_of node, devs) with
-      | Some (U.Single _), [ dev ] -> seed dev
-      | Some (U.Single name), _ -> (
-          match List.find_index (String.equal name) names with
-          | Some i -> seed (List.nth devs i)
-          | None -> invalid_arg "Rune.jit: an arena off the program's devices")
-      | Some (U.Multi ns), _ when List.equal String.equal ns names ->
-          let exactly dev =
-            let buf = shared_arena dev k nbytes in
-            if Tolk.Device.Buffer.nbytes buf = nbytes then buf
-            else begin
-              let view = buffer_range buf ~lo:0 ~span:nbytes in
-              ranges := view :: !ranges;
-              view
-            end
-          in
-          supply node (List.map exactly devs)
-      | _ -> invalid_arg "Rune.jit: an arena off the program's devices")
-    c.cp_arenas;
   let keep = ref [] in
   Array.iteri
     (fun i (Nx.P leaf) ->

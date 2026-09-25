@@ -67,9 +67,8 @@
  (package rune)
  (libraries rune nx nx.buffer tolk tolk.uop windtrap rune_test_support))
 
-; Alone in its executable: the compiled programs of a process share the
-; memory planner's arenas, which only grow. It runs on the CPU device and, on
-; macOS, on Metal.
+; Alone in its executable so memory accounting excludes other compiled
+; programs. It runs on the CPU device and, on macOS, on Metal.
 
 (tests
  (names test_remat_memory)
