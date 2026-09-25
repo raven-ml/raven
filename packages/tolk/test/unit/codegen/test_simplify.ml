@@ -785,6 +785,33 @@ let reduce_simplify_tests =
 let load_collapse_tests =
   group "pm_load_collapse"
     [
+      test "collapses an arange row gather with independent output ranges" (fun () ->
+          let row = loop_range ~axis:0 13 in
+          let lane = loop_range ~axis:1 4 in
+          let selected = reduce_range ~axis:2 32 in
+          let arange r =
+            let scan = reduce_range ~axis:3 32 in
+            let value = U.O.where U.O.(scan < r + idx 1)
+                (U.const (C.int D.int32 1)) (idx 0) in
+            let count = U.reduce ~op:Ops.Add ~src:value ~ranges:[ scan ] in
+            U.O.(Simplify.reduce_simplify_all count + idx (-1))
+          in
+          let table = U.param ~slot:0 ~dtype:D.float32 ~shape:(idx 128)
+              ~addrspace:D.Global () in
+          let value = U.index ~ptr:table ~idxs:[ U.O.((selected * idx 4) + lane) ] () in
+          let gate = U.O.ne (arange row) (arange selected) in
+          let src = U.alu_ternary ~op:Ops.Where ~a:gate ~b:(f32 0.0) ~c:value in
+          let red = U.reduce ~op:Ops.Add ~src ~ranges:[ selected ] in
+          let result = Simplify.load_collapse_all red in
+          equal int 0 (List.length (List.filter (fun u -> U.op u = Ops.Reduce)
+              (U.toposort result)));
+          is_false (List.exists (U.equal selected) (U.toposort result));
+          let load = List.find (fun u -> U.op u = Ops.Index) (U.toposort result) in
+          let index = (U.src load).(1) in
+          List.iter (fun (i, j) ->
+              let concrete = U.substitute [ row, idx i; lane, idx j ] index in
+              equal int ((i * 4) + j) (U.sym_infer concrete []))
+            [ 0, 0; 0, 3; 12, 0; 12, 3 ]);
       test "collapses reduce over gated load" (fun () ->
           (* (idx != r).where(0, expr).reduce(r, ADD)
              -> valid_check ? expr[r:=idx] : 0 *)
