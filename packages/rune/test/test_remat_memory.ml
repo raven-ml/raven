@@ -29,8 +29,7 @@ let device = Option.value (Sys.getenv_opt "DEV") ~default:"CPU"
 
 let device_bytes () =
   ignore (Rune.jit_stats ());
-  Option.value ~default:0
-    (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device device)
+  Tolk.Helpers.Global_counters.mem_used ~device ()
 
 (* Without remat the gradient keeps every layer's pre-activation until the
    backward pass reaches it, [layers * batch * hidden] floats: the arena is

@@ -394,12 +394,12 @@ let compiled_host_submission () =
   let src = buffer 12l and dst = buffer 0l in
   replay linked [|src; src; dst|];
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0);
-  let submissions = !(Realize.queue_submissions) in
-  let kernels = !(Helpers.Global_counters.kernel_count) in
+  let submissions = Realize.queue_submissions () in
+  let kernels = (Helpers.Global_counters.snapshot ()).kernel_count in
   Device.Buffer.copy_from ~dst ~src;
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0);
-  equal int (submissions + 1) !(Realize.queue_submissions);
-  equal int kernels !(Helpers.Global_counters.kernel_count);
+  equal int (submissions + 1) (Realize.queue_submissions ());
+  equal int kernels (Helpers.Global_counters.snapshot ()).kernel_count;
   (* Overlap must be detected from each invocation's storage before publishing
      a parallel copy, including separately wrapped external addresses. *)
   let overlap ~external_ ~backwards =
@@ -415,12 +415,12 @@ let compiled_host_submission () =
       else Device.Buffer.view root ~size:3 ~dtype:Dtype.int32 ~offset in
     let src = view (if backwards then 0 else 4)
     and dst = view (if backwards then 4 else 0) in
-    let before = !(Realize.queue_submissions) in
+    let before = Realize.queue_submissions () in
     Device.Buffer.copy_from ~dst ~src;
     let bytes = Device.Buffer.as_bytes root in
     equal (list int32) (if backwards then [1l; 1l; 2l; 3l] else [2l; 3l; 4l; 4l])
       (List.init 4 (fun i -> Bytes.get_int32_le bytes (4 * i)));
-    equal int before !(Realize.queue_submissions) in
+    equal int before (Realize.queue_submissions ()) in
   List.iter (fun external_ -> List.iter (fun backwards -> overlap ~external_ ~backwards)
       [false; true]) [false; true];
   (* The host queue executes both kinds as copies; PROGRAM selects COMPUTE
@@ -451,13 +451,13 @@ let compiled_host_submission () =
   and overlap_dst = Device.Buffer.view overlap_root ~size:3 ~dtype:Dtype.int32 ~offset:4 in
   let kernel_output = buffer (-7l) in
   let overlap_timeline = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
-  let submissions = !(Realize.queue_submissions) in
+  let submissions = Realize.queue_submissions () in
   replay overlapping [|overlap_src; overlap_dst; buffer 23l; kernel_output|];
   equal (list int32) [1l; 1l; 2l; 3l]
     (List.init 4 (fun i -> Bytes.get_int32_le (Device.Buffer.as_bytes overlap_root) (4 * i)));
   equal int32 23l (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
   equal int64 (Int64.succ overlap_timeline) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
-  equal int (submissions + 1) !(Realize.queue_submissions);
+  equal int (submissions + 1) (Realize.queue_submissions ());
   let compiled_overlap = !compilations in
   replay overlapping [|overlap_src; overlap_dst; buffer 37l; kernel_output|];
   equal int compiled_overlap !compilations;
@@ -512,17 +512,17 @@ let compiled_host_submission () =
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes src) 0);
   let timed = compile ~profile:true [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
       compute (ptr 2) (ptr 1)] in
-  let before = !(Helpers.Global_counters.time_sum_s) in
+  let before = (Helpers.Global_counters.snapshot ()).time_sum_s in
   replay timed [|src; dst1; dst2|];
-  equal (float 1e-15) 2e-8 (!(Helpers.Global_counters.time_sum_s) -. before);
+  equal (float 1e-15) 2e-8 ((Helpers.Global_counters.snapshot ()).time_sum_s -. before);
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst2) 0);
   timestamp_step := 1_000_000_000;
-  let kernels = !(Helpers.Global_counters.kernel_count) in
+  let kernels = (Helpers.Global_counters.snapshot ()).kernel_count in
   Realize.time_call ~device ~to_program
     (compute (U.from_buffer dst1) (U.from_buffer src)) (fun sample ->
       equal ~msg:"timing uses the device timestamp interval" (float 1e-12) 1. (sample ());
       equal ~msg:"retained timing storage supports another sample" (float 1e-12) 1. (sample ()));
-  equal int kernels !(Helpers.Global_counters.kernel_count);
+  equal int kernels (Helpers.Global_counters.snapshot ()).kernel_count;
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst1) 0);
   timestamp_step := 10;
   let old_profile = Sys.getenv_opt "PROFILE" in
@@ -567,13 +567,13 @@ let compiled_host_submission () =
       compute (ptr 3) foreign_input] in
   let copy_output = buffer (-11l) and kernel_output = buffer (-13l) in
   let failed_timeline = Device.Buffer.as_bytes timeline in
-  let submissions = !(Realize.queue_submissions) in
+  let submissions = Realize.queue_submissions () in
   raises (Storage.Mapping_unavailable "test import is unsupported")
     (fun () -> replay unsupported_kernel [|buffer 29l; copy_output; foreign; kernel_output|]);
   equal int32 (-11l) (Bytes.get_int32_le (Device.Buffer.as_bytes copy_output) 0);
   equal int32 (-13l) (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
   equal Windtrap.bytes failed_timeline (Device.Buffer.as_bytes timeline);
-  equal int submissions !(Realize.queue_submissions);
+  equal int submissions (Realize.queue_submissions ());
   let unsupported_after_overlap = compile
       [compute (ptr 4) (ptr 5);
        U.store_call ~dst:(copy_ptr 1) ~src:(copy_ptr 0);
@@ -587,7 +587,7 @@ let compiled_host_submission () =
   equal int32 (-13l) (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
   equal int32 (-17l) (Bytes.get_int32_le (Device.Buffer.as_bytes prefix_output) 0);
   equal Windtrap.bytes failed_timeline (Device.Buffer.as_bytes timeline);
-  equal int submissions !(Realize.queue_submissions);
+  equal int submissions (Realize.queue_submissions ());
   replay transfer [|foreign; middle; output|];
   equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
   equal int64 (Int64.succ before) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
@@ -730,9 +730,9 @@ let compiled_host_submission () =
   let empty_copy = compile [U.store_call ~dst:(empty 1) ~src:(empty 0)] in
   let src = Device.create_buffer ~size:0 ~dtype:Dtype.uint8 device
   and dst = Device.create_buffer ~size:0 ~dtype:Dtype.uint8 device in
-  let before = !Realize.queue_submissions in
+  let before = Realize.queue_submissions () in
   replay empty_copy [|src; dst|];
-  equal int before !Realize.queue_submissions
+  equal int before (Realize.queue_submissions ())
 
 let () = run "Engine_hcq2" [
   test "AMD all-to-all honors default and explicit SDMA queue counts" all_to_all_copy_queues;

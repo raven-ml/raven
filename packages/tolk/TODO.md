@@ -106,8 +106,6 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Make first-run bookkeeping and execution statistics
-  safe for concurrent callers.
   Establish ownership of Rune's pending release/view lists and mutable storage
   lists across callers; synchronize trace identities,
   transfer/allocation statistics and GC-budget counters. Cover finalizers registered on

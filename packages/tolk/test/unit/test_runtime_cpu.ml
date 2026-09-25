@@ -184,7 +184,7 @@ let timing_cache_eviction () =
        read a surrounding context again after compile_linear selected zero. *)
     Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
       Codegen.to_program device (Device.renderer device) sink) in
-  let kernels = !(Helpers.Global_counters.kernel_count) in
+  let kernels = (Helpers.Global_counters.snapshot ()).kernel_count in
   Realize.with_capture
     (fun linear vars ->
       ignore (linear, vars); fail "cache eviction entered JIT capture")
@@ -199,7 +199,7 @@ let timing_cache_eviction () =
   equal int 1 !compilations;
   equal int 2 !fills;
   is_false (Device.Buffer.is_allocated (Option.get !eviction_buffer));
-  equal int kernels !(Helpers.Global_counters.kernel_count);
+  equal int kernels (Helpers.Global_counters.snapshot ()).kernel_count;
   equal (list int) [42] (read_i32_buffer dst);
   let failing_device = Device.make ~name:"CPU:cache-eviction-failure" ~allocator ~renderer_set
       ~runtime:(Device.runtime host)

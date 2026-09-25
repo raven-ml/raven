@@ -312,7 +312,7 @@ let scoped_timings ~dispatch_failure ~drain_failure () =
   let n = variable "n" 0 16 in
   let program = program_of (U.sink ~kernel_info:(kernel_info "timing") [n]) in
   let call = U.call ~body:program ~args:[] ~info:(call_info None) in
-  let kernels = !(Helpers.Global_counters.kernel_count) in
+  let kernels = (Helpers.Global_counters.snapshot ()).kernel_count in
   let run () = Realize.time_call ~device
       ~to_program:(fun device body -> ignore device; program_of body)
       ~var_vals:["n",13L] ~timeout:7 ~clear_l2:true call (fun sample ->
@@ -326,7 +326,7 @@ let scoped_timings ~dispatch_failure ~drain_failure () =
   equal int !calls !loaded;
   equal int (if drain_failure then 0 else !loaded) !freed;
   equal int !calls !clears;
-  equal int kernels !(Helpers.Global_counters.kernel_count)
+  equal int kernels (Helpers.Global_counters.snapshot ()).kernel_count
 
 let cache_device name runtime =
   Device.make ~name ~allocator:(test_allocator (allocator_stats ()))
@@ -731,6 +731,44 @@ let replaced_submission_owner () =
   equal int 1 !replacement_calls;
   ignore (Sys.opaque_identity new_table)
 
+let concurrent_execution_statistics () =
+  let allocator = Device.Allocator.Pack
+      (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let runtime object_ =
+    ignore object_;
+    Device.{call = (fun bufs ~global ~local ~vals ~wait ~timeout ->
+        ignore (bufs, global, local, vals, wait, timeout); Some 0.125);
+      free = (fun () -> ()); handle = 0n} in
+  let device = Device.make ~name:"TEST:concurrent-statistics" ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:"TEST" ["TEST", Fun.const test_renderer])
+      ~runtime ~synchronize:(fun timeout -> ignore timeout) () in
+  let estimates = U.{ops = Int 3; mem = Int 5; lds = Int 0} in
+  let body = program_of (U.sink
+      ~kernel_info:{(kernel_info "concurrent_statistics") with estimates = Some estimates} []) in
+  let linear = U.linear [U.call ~body ~args:[] ~info:(call_info None)] in
+  let execute () = Realize.run_linear ~device ~jit:true ~wait:true
+      ~to_program:(fun owner sink -> ignore (owner, sink); fail "already compiled") linear in
+  execute ();
+  let module G = Helpers.Global_counters in
+  G.reset ();
+  let ready = Atomic.make 0 in
+  let workers = Array.init 4 (fun _ -> Domain.spawn (fun () ->
+      ignore (Atomic.fetch_and_add ready 1);
+      while Atomic.get ready <> 4 do Domain.cpu_relax () done;
+      for _ = 1 to 2000 do
+        execute ();
+        let snapshot = G.snapshot () in
+        let count = Z.of_int snapshot.kernel_count in
+        equal string (Z.to_string (Z.mul count (Z.of_int 3))) (Z.to_string snapshot.global_ops);
+        equal string (Z.to_string (Z.mul count (Z.of_int 5))) (Z.to_string snapshot.global_mem);
+        equal (float 1e-15) (float_of_int snapshot.kernel_count *. 0.125) snapshot.time_sum_s
+      done)) in
+  Array.iter Domain.join workers;
+  equal int 8000 (G.snapshot ()).kernel_count;
+  equal string "24000" (Z.to_string (G.snapshot ()).global_ops);
+  equal string "40000" (Z.to_string (G.snapshot ()).global_mem);
+  equal (float 1e-15) 1000. (G.snapshot ()).time_sum_s
+
 let () =
   run "Engine_realize"
     [
@@ -742,6 +780,7 @@ let () =
       test "submission scope permits reentry and rejects unprepared owners before writes" submission_scope_reentry;
       test "failed preparation leaves the address table unchanged and releases ownership" failed_submission_prepare;
       test "retained queue replay rejects replaced device owners before writes" replaced_submission_owner;
+      test "concurrent execution records every cost and timing" concurrent_execution_statistics;
       capture_tests;
       owner_cache_tests;
       renderer_selection_tests;
@@ -989,16 +1028,16 @@ let () =
             let body = program_of (U.sink ~kernel_info:ki []) in
             let call = U.call ~body ~args:[] ~info:(call_info None) in
             let module G = Helpers.Global_counters in
-            let ops = !G.global_ops and mem = !G.global_mem in
+            let ops = (G.snapshot ()).global_ops and mem = (G.snapshot ()).global_mem in
             for _ = 1 to 2 do
               Realize.run_linear ~device ~to_program:(fun _ body -> program_of body)
                 (U.linear [call])
             done;
             equal int 0 state.nbufs;
             equal string (Z.to_string (Z.mul (Z.of_int 2) cost))
-              (Z.to_string (Z.sub !G.global_ops ops));
+              (Z.to_string (Z.sub (G.snapshot ()).global_ops ops));
             equal string (Z.to_string (Z.mul (Z.of_int 2) (Z.of_int max_int)))
-              (Z.to_string (Z.sub !G.global_mem mem)));
+              (Z.to_string (Z.sub (G.snapshot ()).global_mem mem)));
           test "runs a kernel call with resolved buffers" (fun () ->
             let state = runtime_state () in
             let device = test_device state in

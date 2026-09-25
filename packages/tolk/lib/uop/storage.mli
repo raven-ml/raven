@@ -318,11 +318,10 @@ val addr : ?device:string -> t -> nativeint
 
 (** {1:accounting Allocation accounting} *)
 
-val mem_used : int ref
-(** [mem_used] counts live internally allocated bytes, excluding disk storage. *)
-
-val mem_used_per_device : (string, int) Hashtbl.t
-(** [mem_used_per_device] contains the same accounting grouped by device. *)
+val mem_used : ?device:string -> unit -> int
+(** [mem_used ()] counts live internally allocated bytes, excluding disk storage.
+    With [device], it counts only that device's bytes, or zero if it has no live
+    allocations. Reads and allocation updates are synchronized across domains. *)
 
 (** {1 Serialization} *)
 

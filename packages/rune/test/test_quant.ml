@@ -580,9 +580,9 @@ let test_one_token_gathers () =
         (fun (ids, x) -> Nx_quant.apply ~ids w x)
     in
     ignore (Nx.to_array (f (ids, x)));
-    let before = !Tolk.Helpers.Global_counters.global_ops in
+    let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
     ignore (Nx.to_array (f (ids, x)));
-    Z.to_int (Z.sub !Tolk.Helpers.Global_counters.global_ops before)
+    Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
   in
   let gathered = ops 32 and every = ops 4 in
   is_true
@@ -598,9 +598,9 @@ let test_rule () =
     let f = Rune.jit' ~devices:[ Rune.device device ] (Nx_quant.apply w) in
     let x = Nx.cast Nx.bfloat16 (floats [| rows; k |]) in
     ignore (Nx.to_array (f x));
-    let before = !Tolk.Helpers.Global_counters.global_mem in
+    let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
     ignore (Nx.to_array (f x));
-    Z.to_int (Z.sub !Tolk.Helpers.Global_counters.global_mem before)
+    Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before)
   in
   List.iter
     (fun device ->

@@ -19,14 +19,13 @@ module Runner = struct
     display_name : string;
     device : Device.t;
     estimates : Program_spec.Estimates.t;
-    mutable first_run : bool;
     call :
       Device.Buffer.t list -> (string * int64) list ->
       wait:bool -> timeout:int option -> float option;
   }
 
   let make ~display_name ~device ?(estimates = Program_spec.Estimates.zero) call =
-    { display_name; device; estimates; first_run = true; call }
+    { display_name; device; estimates; call }
 
   let dev t = t.device
   let display_name t = t.display_name
@@ -686,7 +685,15 @@ let estimate_uop call =
           | [] -> E.zero)
       | _ -> E.zero)
 
-let first_run_cache : (int, unit) Hashtbl.t = Hashtbl.create 64
+let first_run_cache = Tolk_uop.Uop.Weak_tbl.create 64
+let first_run_lock = Mutex.create ()
+
+let first_run call =
+  let module U = Tolk_uop.Uop in
+  let key = match U.as_call call with Some { body; _ } -> body | None -> call in
+  with_cache_lock first_run_lock (fun () ->
+      if U.Weak_tbl.mem first_run_cache key then false
+      else (U.Weak_tbl.replace first_run_cache key (); true))
 
 (* Runs [run], which launches [call] over [bufs] on [device] and returns its
    time if it measured one, then counts the call and, under DEBUG >= 2, prints
@@ -712,19 +719,14 @@ let track_stats ctx call ~device bufs var_vals run =
     let op_est = infer estimates.ops and mem_est = infer estimates.mem in
     let kernels = match U.arg call with
       | U.Arg.Call_info {aux = Some info; _} -> List.length info.accesses | _ -> 1 in
-    G.kernel_count := !G.kernel_count + kernels;
-    G.global_ops := Z.add !G.global_ops op_est;
-    G.global_mem := Z.add !G.global_mem mem_est;
-    Option.iter (fun t -> G.time_sum_s := !G.time_sum_s +. t) et;
+    let counters = G.add ~kernels ~ops:op_est ~mem:mem_est ~time:et in
     if debug () >= 2 then begin
-      let key =
-        match U.as_call call with Some { body; _ } -> U.tag body | None -> -1
-      in
+      let first = first_run call in
       let display_name = get_call_name call bufs var_vals in
       let lds_est = infer estimates.lds in
       let header_color =
         if ctx.jit then Some "magenta"
-        else if Hashtbl.mem first_run_cache key then None
+        else if not first then None
         else Some "green"
       in
       let name = Device.name device in
@@ -732,7 +734,7 @@ let track_stats ctx call ~device bufs var_vals run =
         Helpers.colored
           (strf "*** %-7s %4d"
              (String.sub name 0 (min 7 (String.length name)))
-             !G.kernel_count)
+             counters.kernel_count)
           header_color
       in
       let timing =
@@ -762,15 +764,14 @@ let track_stats ctx call ~device bufs var_vals run =
                   (strf "%4.0f|%-6.0f TB/s" (membw *. 1e-12) (ldsbw *. 1e-12))
                   (Some "green")
             in
-            strf " tm %s/%9.2fms (%s %s)" ptm (!G.time_sum_s *. 1e3) flops_str
+            strf " tm %s/%9.2fms (%s %s)" ptm (counters.time_sum_s *. 1e3) flops_str
               mem_str
       in
       Printf.eprintf "%s %s%s arg %2d mem %6.2f GB%s\n%!" header display_name
         (String.make (max 0 (46 - Helpers.ansilen display_name)) ' ')
         (List.length bufs)
-        (float_of_int !G.mem_used /. 1e9)
-        timing;
-      Hashtbl.replace first_run_cache key ()
+        (float_of_int (G.mem_used ()) /. 1e9)
+        timing
     end
   end;
   et
@@ -877,7 +878,8 @@ let exec_copy ctx ~device call =
       | _ -> invalid_arg "exec_copy: malformed STORE call")
   | None -> invalid_arg "exec_copy: expected CALL"
 
-let queue_submissions = ref 0
+let submission_count = Atomic.make 0
+let queue_submissions () = Atomic.get submission_count
 
 let staged_queue ~to_program ctx call submission buffers =
   let module U = Tolk_uop.Uop in
@@ -1033,7 +1035,7 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
           let host_time = prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals
               ~wait:ctx.wait ~timeout:ctx.timeout in
           timings := [host_time];
-          incr queue_submissions;
+          ignore (Atomic.fetch_and_add submission_count 1);
           List.iter (fun (owner, source) ->
               Device.depend_on (Device.get owner) (Device.get source)) submission.host_deps;
           if Helpers.getenv "PROFILE" 0 <> 0 then

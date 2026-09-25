@@ -422,10 +422,10 @@ let () =
                   let source = wrap (Nativeint.add source_addr (Nativeint.of_int offset))
                   and output = wrap output_addr in
                   Device.Buffer.copyin source (int32_to_bytes [347]);
-                  let before = !(Realize.queue_submissions) in
+                  let before = Realize.queue_submissions () in
                   replay ~wait:true [|source; i32_buf device [0]; output|];
                   equal (list int) [347] (read_i32 output);
-                  equal int (before + if offset = 0 then 1 else 0) !(Realize.queue_submissions)) [0; 1];
+                  equal int (before + if offset = 0 then 1 else 0) (Realize.queue_submissions ())) [0; 1];
               ignore (Sys.opaque_identity (source_owner, output_owner)));
           test "queued peer copies preserve views with mapping fallback" (fun () ->
               let first = cuda_device () in

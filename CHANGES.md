@@ -661,6 +661,10 @@ thread.
 
 ### Tolk (new)
 
+- Preserve execution and allocation counts across concurrent callers.
+  `Global_counters.snapshot ()`, `Storage.mem_used ?device ()` and
+  `Realize.queue_submissions ()` replace externally mutable counters.
+
 - Reject replay of a linked queue after one of its devices has been replaced,
   before its old native addresses reach the replacement runtime. `Uop.export`
   now rejects linked queues; serialize their unlinked templates instead.

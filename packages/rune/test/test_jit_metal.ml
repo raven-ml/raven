@@ -59,7 +59,7 @@ let test_queue_batched_replay () =
   in
   let f x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
   let g = Rune.jit' ~devices:[ Rune.device "METAL" ] f in
-  let launches0 = !Tolk.Realize.queue_submissions in
+  let launches0 = Tolk.Realize.queue_submissions () in
   List.iteri
     (fun i data ->
       let x = Nx.create f32 [| 2; 4 |] data in
@@ -73,7 +73,7 @@ let test_queue_batched_replay () =
       Array.make 8 (-0.25);
     ];
   queues_used ~msg:"every call dispatched a compiled queue"
-    (!Tolk.Realize.queue_submissions - launches0 >= 3);
+    ((Tolk.Realize.queue_submissions ()) - launches0 >= 3);
   let x = Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i)) in
   check_arr ~msg:"a resident output feeds the next call"
     (to_arr (f (f x)))
@@ -105,10 +105,10 @@ let test_scan_body_replays_as_a_queue () =
     Nx.create f32 [| 6; 4 |] (Array.init 24 (fun i -> float_of_int i /. 24.0))
   in
   check_arr ~msg:"first call" (to_arr (f xs)) (g xs);
-  let launches0 = !Tolk.Realize.queue_submissions in
+  let launches0 = Tolk.Realize.queue_submissions () in
   check_arr ~msg:"replay" (to_arr (f xs)) (g xs);
   queues_used ~msg:"one queue submission per iteration"
-    (!Tolk.Realize.queue_submissions - launches0 >= 6)
+    ((Tolk.Realize.queue_submissions ()) - launches0 >= 6)
 
 (* A linked queue keeps its intermediates' buffers alive, so it must not outlive
    the compiled function it belongs to. *)
@@ -125,16 +125,16 @@ let test_command_storage_released_with_its_function () =
   in
   run 0.;
   full_major ();
-  let base = !Tolk.Device.Buffer.mem_used in
-  let launches0 = !Tolk.Realize.queue_submissions in
+  let base = Tolk.Device.Buffer.mem_used () in
+  let launches0 = Tolk.Realize.queue_submissions () in
   for i = 1 to 4 do
     run (float_of_int i)
   done;
   queues_used ~msg:"the calls recorded compiled queues"
-    (!Tolk.Realize.queue_submissions - launches0 >= 8);
+    ((Tolk.Realize.queue_submissions ()) - launches0 >= 8);
   full_major ();
   equal ~msg:"no command storage outlives its function" int base
-    !Tolk.Device.Buffer.mem_used
+    (Tolk.Device.Buffer.mem_used ())
 
 (* Placed weights. The compiled trace binds their buffers as its constants, and
    the batched replay reads them on every call with nothing uploaded. *)
@@ -159,7 +159,7 @@ let test_placed_weights_bind () =
   let p1 = on_metal w1 in
   let p2 = on_metal w2 in
   let g = Rune.jit' ~devices:[ Rune.device "METAL" ] (f p1 p2) in
-  let launches0 = !Tolk.Realize.queue_submissions in
+  let launches0 = Tolk.Realize.queue_submissions () in
   List.iter
     (fun v ->
       let x = Nx.create f32 [| 2; 4 |] (Array.make 8 v) in
@@ -168,7 +168,7 @@ let test_placed_weights_bind () =
       check_arr ~msg:"matches eager" (to_arr (f w1 w2 x)) y)
     [ 0.5; -1.0; 2.0 ];
   queues_used ~msg:"the calls replayed as compiled queues"
-    (!Tolk.Realize.queue_submissions - launches0 >= 3);
+    ((Tolk.Realize.queue_submissions ()) - launches0 >= 3);
   check_arr ~msg:"a bound weight reads back" (to_arr w1) p1;
   is_true ~msg:"and keeps its buffer" (bound_by 1 p1);
   let x = Nx.create f32 [| 2; 4 |] (Array.make 8 0.25) in
@@ -453,8 +453,7 @@ let test_programs_own_their_arenas () =
     (f, Rune.jit' ~devices:[ Rune.device "METAL" ] f, x)
   in
   let device_bytes () =
-    Option.value ~default:0
-      (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device "METAL")
+    Tolk.Helpers.Global_counters.mem_used ~device:"METAL" ()
   in
   let f, f', x = program ~n:256 Nx.tanh in
   check_arr ~eps:1e-2 ~msg:"small" (to_arr (f (x 1))) (f' (x 1));
@@ -841,7 +840,7 @@ let test_custom_backward_on_metal () =
     Nx.sum (Nx.mul y y)
   in
   let compiled = Rune.jit' ~devices:[ Rune.device "METAL" ] (Rune.grad' loss) in
-  let before = !Tolk.Realize.queue_submissions in
+  let before = Tolk.Realize.queue_submissions () in
   check_arr ~msg:"custom backward scatter accumulates duplicates"
     [| 14.; 0.; 84.; 0. |]
     (compiled (vec32 [| 1.; 2.; 3.; 4. |]));
@@ -850,7 +849,7 @@ let test_custom_backward_on_metal () =
     [| 28.; 0.; 112.; 0. |]
     (compiled (vec32 [| 2.; 3.; 4.; 5. |]));
   queues_used ~msg:"custom backward uses compiled queues"
-    (!Tolk.Realize.queue_submissions > before)
+    ((Tolk.Realize.queue_submissions ()) > before)
 
 let tests =
   [

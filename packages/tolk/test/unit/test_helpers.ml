@@ -46,26 +46,45 @@ let formatting =
 let counters =
   group "Global_counters"
     [
+      test "concurrent allocations preserve live byte counts" (fun () ->
+          let name = "CPU:concurrent-accounting" in
+          let allocator = Device.Allocator.Pack
+              (Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+          let ready = Atomic.make 0 in
+          let workers = Array.init 4 (fun _ -> Domain.spawn (fun () ->
+              ignore (Atomic.fetch_and_add ready 1);
+              while Atomic.get ready <> 4 do Domain.cpu_relax () done;
+              Array.init 1000 (fun _ ->
+                  let buffer = Device.Buffer.create ~device:name ~size:128
+                      ~dtype:Tolk_uop.Dtype.uint8 allocator in
+                  Device.Buffer.ensure_allocated buffer;
+                  buffer))) in
+          let buffers = Array.map Domain.join workers in
+          equal int (4 * 1000 * 128) (G.mem_used ~device:name ());
+          let releases = Array.map (fun owned ->
+              Domain.spawn (fun () -> Array.iter Device.Buffer.deallocate owned)) buffers in
+          Array.iter Domain.join releases;
+          equal int 0 (G.mem_used ~device:name ()));
       test "mem_used follows allocation and release" (fun () ->
-          let before = !G.mem_used in
+          let before = G.mem_used () in
           let buf =
             Device.create_buffer ~size:1000 ~dtype:Tolk_uop.Dtype.float32 device
           in
-          equal int before !G.mem_used;
+          equal int before (G.mem_used ());
           Device.Buffer.ensure_allocated buf;
-          equal int (before + 4000) !G.mem_used;
+          equal int (before + 4000) (G.mem_used ());
           Device.Buffer.deallocate buf;
-          equal int before !G.mem_used);
+          equal int before (G.mem_used ()));
       test "reset leaves mem_used alone" (fun () ->
           let buf =
             Device.create_buffer ~size:10 ~dtype:Tolk_uop.Dtype.float32 device
           in
           Device.Buffer.ensure_allocated buf;
-          let used = !G.mem_used in
-          G.kernel_count := 3;
+          let used = G.mem_used () in
+          ignore (G.add ~kernels:3 ~ops:Z.zero ~mem:Z.zero ~time:None);
           G.reset ();
-          equal int 0 !G.kernel_count;
-          equal int used !G.mem_used;
+          equal int 0 (G.snapshot ()).kernel_count;
+          equal int used (G.mem_used ());
           Device.Buffer.deallocate buf);
     ]
 

@@ -290,21 +290,46 @@ let size_to_str s =
     Printf.sprintf "%.2f KB" (f /. float_of_int (1 lsl 10))
   else Printf.sprintf "%d B" s
 
-(* [mem_used] and [mem_used_per_device] follow live allocations and are not
-   reset. *)
-module Global_counters = struct
-  let global_ops = ref Z.zero
-  let global_mem = ref Z.zero
-  let time_sum_s = ref 0.0
-  let kernel_count = ref 0
-  let mem_used = Tolk_uop.Storage.mem_used
-  let mem_used_per_device = Tolk_uop.Storage.mem_used_per_device
+(* Execution totals are one coherent snapshot. [mem_used] follows live
+   allocations and is not reset. *)
+module Global_counters : sig
+  type t = {
+    global_ops : Z.t;
+    global_mem : Z.t;
+    time_sum_s : float;
+    kernel_count : int;
+  }
 
-  let reset () =
-    global_ops := Z.zero;
-    global_mem := Z.zero;
-    time_sum_s := 0.0;
-    kernel_count := 0
+  val snapshot : unit -> t
+  val add : kernels:int -> ops:Z.t -> mem:Z.t -> time:float option -> t
+  val reset : unit -> unit
+  val mem_used : ?device:string -> unit -> int
+end = struct
+  type t = {
+    global_ops : Z.t;
+    global_mem : Z.t;
+    time_sum_s : float;
+    kernel_count : int;
+  }
+
+  let empty = { global_ops = Z.zero; global_mem = Z.zero;
+                time_sum_s = 0.; kernel_count = 0 }
+  let state = Atomic.make empty
+  let snapshot () = Atomic.get state
+
+  let rec add ~kernels ~ops ~mem ~time =
+    let previous = snapshot () in
+    let next = {
+      global_ops = Z.add previous.global_ops ops;
+      global_mem = Z.add previous.global_mem mem;
+      time_sum_s = previous.time_sum_s +. Option.value time ~default:0.;
+      kernel_count = previous.kernel_count + kernels;
+    } in
+    if Atomic.compare_and_set state previous next then next
+    else add ~kernels ~ops ~mem ~time
+
+  let reset () = Atomic.set state empty
+  let mem_used = Tolk_uop.Storage.mem_used
 end
 
 (* Hashing *)

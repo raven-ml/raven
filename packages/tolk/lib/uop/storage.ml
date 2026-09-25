@@ -133,13 +133,25 @@ let with_operation f =
         result)
   end
 
-let mem_used = ref 0
-let mem_used_per_device : (string, int) Hashtbl.t = Hashtbl.create 4
+let live_bytes = ref 0
+let live_bytes_per_device : (string, int) Hashtbl.t = Hashtbl.create 4
+let accounting_lock = Mutex.create ()
+
+let with_accounting f =
+  with_operation (fun () -> Mutex.protect accounting_lock f)
+
+let mem_used ?device () =
+  with_accounting (fun () -> match device with
+      | None -> !live_bytes
+      | Some name -> Option.value (Hashtbl.find_opt live_bytes_per_device name) ~default:0)
 
 let add_mem_used device nbytes =
-  mem_used := !mem_used + nbytes;
-  let previous = Option.value (Hashtbl.find_opt mem_used_per_device device) ~default:0 in
-  Hashtbl.replace mem_used_per_device device (previous + nbytes)
+  with_accounting (fun () ->
+      live_bytes := !live_bytes + nbytes;
+      let previous = Option.value (Hashtbl.find_opt live_bytes_per_device device) ~default:0 in
+      let bytes = previous + nbytes in
+      if bytes = 0 then Hashtbl.remove live_bytes_per_device device
+      else Hashtbl.replace live_bytes_per_device device bytes)
 
 let next_id = Atomic.make 0
 let fresh_id () = Atomic.fetch_and_add next_id 1

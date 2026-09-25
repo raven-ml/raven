@@ -100,7 +100,7 @@ let test_queue_replay () =
      queue submission. *)
   let f x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
   let g = Rune.jit' ~devices:[ Rune.device "CUDA" ] f in
-  let launches0 = !Tolk.Realize.queue_submissions in
+  let launches0 = Tolk.Realize.queue_submissions () in
   List.iteri
     (fun i data ->
       let x = Nx.create f32 [| 2; 4 |] data in
@@ -114,7 +114,7 @@ let test_queue_replay () =
       Array.make 8 (-0.25);
     ];
   is_true ~msg:"every call dispatched a compiled queue submission"
-    (!Tolk.Realize.queue_submissions - launches0 >= 3)
+    ((Tolk.Realize.queue_submissions ()) - launches0 >= 3)
 
 let test_capture_uploaded_once_across_signatures () =
   require_cuda ();

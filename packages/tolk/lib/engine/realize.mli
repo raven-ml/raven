@@ -297,8 +297,8 @@ val run_linear :
 
     [wait] is forced to [true] when [DEBUG >= 2]. *)
 
-val queue_submissions : int ref
-(** [queue_submissions] counts compiled host submissions dispatched through
+val queue_submissions : unit -> int
+(** [queue_submissions ()] counts compiled host submissions dispatched through
     {!run_linear}. A cumulative observability counter for tests and debugging. *)
 
 

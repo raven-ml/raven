@@ -916,9 +916,9 @@ let test_scan_carry_written_in_place () =
           (fold ~read_old)
       in
       ignore (g c0);
-      let before = !Tolk.Helpers.Global_counters.global_mem in
+      let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
       let c, ys = g c0 in
-      let bytes = Z.to_int (Z.sub !Tolk.Helpers.Global_counters.global_mem before) in
+      let bytes = Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before) in
       let msg what = Printf.sprintf "%s (read_old %b)" what read_old in
       check_arr ~msg:(msg "cache") (to_arr expected_c.cache) c.cache;
       check_arr ~msg:(msg "state") (to_arr expected_c.h) c.h;
@@ -952,9 +952,9 @@ let test_scan_reads_rows_in_place () =
   let kernels_per_replay f =
     let g = Rune.jit' f in
     ignore (g x0);
-    let before = !Tolk.Helpers.Global_counters.kernel_count in
+    let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
     let y = g x0 in
-    (y, !Tolk.Helpers.Global_counters.kernel_count - before)
+    (y, (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before)
   in
   let y, from_rows = kernels_per_replay over_rows in
   let _, from_capture = kernels_per_replay over_capture in
@@ -1962,9 +1962,9 @@ let test_argsort_is_not_quadratic () =
   let g = Rune.jit' (Nx.argsort ~axis:0) in
   let x = sort_input f32 n in
   ignore (g x);
-  let before = !Tolk.Helpers.Global_counters.global_ops in
+  let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
   ignore (g x);
-  let ops = Z.to_int (Z.sub !Tolk.Helpers.Global_counters.global_ops before) in
+  let ops = Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before) in
   satisfies
     ~msg:(Printf.sprintf "%d operations for %d entries" ops n)
     ~claim:"fewer than n^2" int
@@ -2843,8 +2843,7 @@ let test_read_after_call_waits () =
    independent retained programs cannot overwrite one another's working set. *)
 
 let device_bytes name =
-  Option.value ~default:0
-    (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device name)
+  Tolk.Helpers.Global_counters.mem_used ~device:name ()
 
 (* Not inlined: once it returns, the caller no longer holds the window or its
    storage, while [g] itself remains alive. *)

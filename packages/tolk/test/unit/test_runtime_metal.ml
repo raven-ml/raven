@@ -440,11 +440,11 @@ let beam_timings_use_compiled_queues () =
     opts_to_apply = None; estimates = None; beam = 0} in
   let sink = U.sink ~kernel_info [U.end_ ~value:store ~ranges:[range]] in
   let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
-  let before = !(Realize.queue_submissions) in
+  let before = Realize.queue_submissions () in
   let selected = Search.beam_search ~to_program ~disable_cache:true
       (Postrange.create sink renderer) [dst; src] ~var_vals:[] 1 device in
   is_true ~msg:"search submits candidates through compiled queues"
-    (!(Realize.queue_submissions) > before);
+    ((Realize.queue_submissions ()) > before);
   let program = to_program device (Postrange.get_optimized_ast selected) in
   let call = U.call ~body:program ~args:[U.from_buffer dst; U.from_buffer src]
       ~info:{grad_fxn = None; name = None; precompile = false;
@@ -483,10 +483,10 @@ let multi_device_calls_use_queues () =
   List.iter (fun value ->
       let a = i32_buf device [0] and b = i32_buf device [0] in
       let input = i32_buf device [value] in
-      let before = !(Realize.queue_submissions) in
+      let before = Realize.queue_submissions () in
       let input_uops = [|U.mstack [U.from_buffer a; U.from_buffer b]; U.from_buffer input|] in
       Realize.run_linear ~device ~to_program ~input_uops ~jit:true ~wait:true compiled;
-      is_true (!(Realize.queue_submissions) > before);
+      is_true ((Realize.queue_submissions ()) > before);
       equal (list int) [value] (read_i32 a);
       equal (list int) [value + 1] (read_i32 b)) [10; 73]
 
@@ -706,10 +706,10 @@ let () =
                 is_true ~msg:"GPU timestamps align with the host submission interval"
                   (e.start_us >= earliest -. 5000. && e.start_us +. e.duration_us <= latest +. 5000.)) events;
             equal int 0 (List.length (Device.profile device));
-            let before = !(Helpers.Global_counters.time_sum_s) in
+            let before = (Helpers.Global_counters.snapshot ()).time_sum_s in
             run ~wait:true [|a; b|];
             is_true ~msg:"completed command buffers supply positive GPU time"
-              (!(Helpers.Global_counters.time_sum_s) > before);
+              ((Helpers.Global_counters.snapshot ()).time_sum_s > before);
             equal (list int) [22] (read_i32 a);
             equal (list int) [21] (read_i32 b);
             equal int 2 (List.length (Device.profile device))));
@@ -811,9 +811,9 @@ let () =
             let spec = compile_incr device "metal_host_copy" in
             let run = compile_queue device [queue_call device spec [0; 0]] in
             run [|src|];
-            let before = !(Realize.queue_submissions) in
+            let before = Realize.queue_submissions () in
             Device.Buffer.copy_from ~dst ~src;
-            equal int before !(Realize.queue_submissions);
+            equal int before (Realize.queue_submissions ());
             equal (list int) [2] (read_i32 dst));
         ];
     ]

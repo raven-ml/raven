@@ -6,6 +6,13 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Statistics publish coherent snapshots across domains.** The target exposes
+  mutable Python counters. Tolk publishes execution totals atomically and locks
+  live allocation accounting so independent OCaml callers do not lose updates.
+  First-run display bookkeeping uses synchronized weak program keys rather than
+  retaining every historical program ID. Coverage: concurrent execution and
+  allocation regressions in `test_realize` and `test_helpers`.
+
 - **Queue submissions serialize on their participating device owners.** Tolk
   callers may share retained links across domains or system threads. One
   ordered owner scope covers table updates, timeline reservation and prepared
@@ -14,8 +21,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   tables, independent links sharing a timeline, nested transport and failed
   preparation; `test_hcq2` staged/ordered fallback. Reconsider if links become
   immutable per call or backends supply an equivalent submission protocol.
-  This does not serialize execution statistics or arbitrary recursive replay
-  of an identical graph from a custom runtime callback.
+  This does not serialize arbitrary recursive replay of an identical graph
+  from a custom runtime callback.
 
 - **Scheduled device metadata uses canonical device names.** Tolk collapses
   `CPU:0` to `CPU` at its device boundary, so late-allreduce PARAM tuples use
