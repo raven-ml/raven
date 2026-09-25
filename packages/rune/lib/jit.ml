@@ -490,9 +490,7 @@ let buffer_tensor node shape =
    over the value's reshaped view, an index form the lowering cannot handle (the
    view survives into a rank-mismatched INDEX). *)
 let store_flat dst n tt =
-  U.store ~dst
-    ~value:(U.contiguous ~src:(F.Tensor.uop (F.Movement.reshape tt [ n ])) ())
-    ()
+  U.store ~dst ~value:(F.Tensor.uop (F.Movement.reshape tt [ n ])) ()
 
 let make_node st dtolk n =
   let device =

@@ -160,6 +160,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Rune.scan` no longer copies each stored carry, output and
+  cotangent before writing it to its loop buffer (16 MLP blocks, batch 2048,
+  CPU: 16 kernels instead of 21 and 70 MiB instead of 78 for the gradient).
 - Compiled mxfp4 products on the CPU group routes by expert from 257 routes
   over 32 experts: gpt-oss-20b's MoE block at 512 routes runs 2.0x faster at
   float32 and 1.3x at bfloat16. The CPU used to never group.
