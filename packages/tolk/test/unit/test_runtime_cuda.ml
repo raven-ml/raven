@@ -128,6 +128,46 @@ let compile_queue device calls =
     Realize.run_linear ~device ~to_program ~jit:true ~wait ~var_vals:vars
       ~input_uops:(Array.map U.from_buffer inputs) linked
 
+let cached_functions_survive_link_collection () =
+  let device = cuda_device () in
+  let spec = compile_incr device "cuda_cached_function" in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let compiled = Realize.compile_linear ~device ~profile:false ~to_program
+      (U.linear [queue_call device spec [1; 0]; queue_call device spec [0; 1]]) in
+  let function_param = List.find (fun u -> match U.as_param u with
+      | Some {param = {allocation = Some ("cuda_function", _); _}; _} -> true
+      | _ -> false) (U.toposort ~enter_calls:true compiled) in
+  let function_word () = Option.get (Device.bufferize device function_param) in
+  let cached = function_word () in
+  let a = i32_buf device [0] and b = i32_buf device [0] in
+  let run linked = Realize.run_linear ~device ~to_program ~jit:true ~wait:true
+      ~input_uops:[|U.from_buffer a; U.from_buffer b|] linked in
+  let retains_function linked =
+    List.exists (fun u -> match U.as_buffer u with
+        | Some {buffer = {buffer = Some [buf]; _}; _} -> buf == cached
+        | _ -> false) (U.toposort linked)
+  in
+  let first = Stdlib.Weak.create 1 in
+  let launch_first () =
+    let linked = Realize.link_linear ~allow_cache:false compiled in
+    is_true (retains_function linked);
+    Stdlib.Weak.set first 0 (Some linked);
+    run linked
+  in
+  launch_first ();
+  let second = Realize.link_linear ~allow_cache:false compiled in
+  is_true (retains_function second);
+  Gc.full_major ();
+  is_true (Option.is_none (Stdlib.Weak.get first 0));
+  is_true ~msg:"device cache owns the function word after link collection"
+    (Device.Buffer.is_allocated cached);
+  is_true ~msg:"repeated binding reuses the same cached function word"
+    (function_word () == cached);
+  run second;
+  run second;
+  equal (list int) [6] (read_i32 a);
+  equal (list int) [5] (read_i32 b)
+
 let schedule_queue_linear device ~to_program sink =
   let call, buffer_map = bufferized_call sink in
   let linear, var_vals =
@@ -373,6 +413,8 @@ let () =
               let replay = compile_queue first [U.store_call ~dst:(p 1 second) ~src:(p 0 first)] in
               replay ~wait:true [|source; output|];
               equal (list int) [0; 0; 2; 3] (read_i32 base));
+          test "cached functions survive independent link collection"
+            cached_functions_survive_link_collection;
           test "replays a multi-kernel chain" (fun () ->
               let device = cuda_device () in
               let spec = compile_incr device "cuda_queue_chain" in

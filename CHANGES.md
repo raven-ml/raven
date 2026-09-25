@@ -648,6 +648,10 @@ thread.
 
 ### Tolk (new)
 
+- Reuse Metal pipelines and CUDA functions across independently linked
+  submissions, avoiding repeated native program creation. Retiring one replay
+  keeps programs used by other replays alive until device shutdown.
+
 - `Device.make` accepts an initialization callback for bootstrap submissions
   that need to resolve their own device. Failed initialization restores the
   previous registration so later opens can retry.
@@ -656,9 +660,9 @@ thread.
   unused 16 MiB argument allocation per device and the obsolete
   `Hcq.Kernargs` and backend direct-program APIs.
 
-- Metal and CUDA kernels execute exclusively through compiled queues;
-  linked command storage owns their loaded programs. Multi-device calls share
-  this path, and unsupported mappings fail before fallback copies execute.
+- Metal and CUDA kernels execute exclusively through compiled queues.
+  Multi-device calls share this path, and unsupported mappings fail before
+  fallback copies execute.
 - Buffer views refresh after their base storage is reallocated. Remove the
   unused allocator disk-copy hook and redundant capability flags.
 

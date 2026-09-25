@@ -49,7 +49,7 @@ module Ffi = struct
   external memcpy_async : nativeint -> nativeint -> nativeint -> int -> unit
     = "caml_tolk_cuda_memcpy_async"
 
-  external module_load : bytes -> nativeint = "caml_tolk_cuda_module_load"
+  external module_load : string -> nativeint = "caml_tolk_cuda_module_load"
 
   external module_function : nativeint -> string -> nativeint
     = "caml_tolk_cuda_module_function"
@@ -72,6 +72,8 @@ module State = struct
     context : nativeint;
     queue : nativeint;
     mutable closed : bool;
+    functions : (string * string, Device.Buffer.t) Hashtbl.t;
+    function_lock : Mutex.t;
     mutable timeline : Device.Buffer.t option;
     mutable handles : Device.Buffer.t option;
     arch : string;
@@ -95,6 +97,7 @@ module State = struct
       (try
          let state = {
            queue; closed = false; timeline = None; handles = None;
+           functions = Hashtbl.create 16; function_lock = Mutex.create ();
            name = Device.canonicalize name; device = cu_device; context; arch;
            peers = Hashtbl.create 4; pending_copyin = []; allocator = None } in
          devices := !devices @ [ state ];
@@ -121,10 +124,13 @@ module State = struct
     end
 
   let shutdown t =
-    if not t.closed then begin
-      t.closed <- true;
+    let retire = Mutex.protect t.function_lock (fun () ->
+        if t.closed then false else begin t.closed <- true; true end) in
+    if retire then begin
       devices := List.filter (fun d -> d != t) !devices;
-      Fun.protect ~finally:(fun () -> Ffi.ctx_destroy t.context)
+      Fun.protect ~finally:(fun () ->
+          Ffi.ctx_destroy t.context;
+          Mutex.protect t.function_lock (fun () -> Hashtbl.clear t.functions))
         (fun () -> Ffi.hcq_destroy t.queue)
     end
 
@@ -253,10 +259,8 @@ module Queue = struct
   module U = Uop
   module B = Device.Buffer
 
-  let word ?(release = fun () -> ()) value =
-    let base = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
-    let allocator = {base with free = (fun address size spec ->
-        release (); base.free address size spec)} in
+  let word value =
+    let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
     let b = B.create ~device:"CPU" ~size:1 ~dtype:Dtype.uint64
         (Device.Allocator.Pack allocator) in
     let bytes = Bytes.create 8 in
@@ -277,23 +281,22 @@ module Queue = struct
         Some b
     | Some {param = {allocation = Some ("cuda_function", data); _}; _} ->
         let object_ = (Marshal.from_string data 0 : Tiny_elf.t) in
-        Ffi.ctx_set_current state.State.context;
-        let module_ = Ffi.module_load object_.lib in
-        let unloaded = ref false in
-        let release () =
-          if not !unloaded then begin
-            unloaded := true;
-            if not state.State.closed then begin
-              Ffi.ctx_set_current state.State.context;
-              Ffi.module_unload module_
-            end
-          end in
-        (try Some (word (Ffi.module_function module_ object_.name)
-            ~release:(fun () -> State.synchronize state; release ()))
-         with exn ->
-           let backtrace = Printexc.get_raw_backtrace () in
-           release ();
-           Printexc.raise_with_backtrace exn backtrace)
+        let key = Bytes.to_string object_.lib, object_.name in
+        Some (Mutex.protect state.State.function_lock (fun () ->
+            if state.State.closed then invalid_arg "CUDA device is closed";
+            match Hashtbl.find_opt state.State.functions key with
+            | Some buffer -> buffer
+            | None ->
+                Ffi.ctx_set_current state.State.context;
+                let module_ = Ffi.module_load (fst key) in
+                try
+                  let buffer = word (Ffi.module_function module_ object_.name) in
+                  Hashtbl.add state.State.functions key buffer;
+                  buffer
+                with exn ->
+                  let backtrace = Printexc.get_raw_backtrace () in
+                  Ffi.module_unload module_;
+                  Printexc.raise_with_backtrace exn backtrace))
     | Some _ when U.node_tag u = Some "timeline" ->
         let b = match state.State.timeline with
           | Some b -> b

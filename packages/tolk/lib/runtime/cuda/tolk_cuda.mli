@@ -19,7 +19,8 @@
 
     Kernels are compiled to PTX with NVRTC for the device's compute-capability
     architecture and JIT-compiled by the driver at module load. Compilation results
-    are stored in the on-disk compile cache.
+    are stored in the on-disk compile cache. Each device shares loaded functions
+    across compiled schedules; their modules remain owned by its CUDA context.
 
     {1:env Environment variables}
 

@@ -30,13 +30,10 @@ CAMLprim value caml_tolk_metal_profile_clock(value unit) {
 #define REQUEST_TYPE_COMPILE 13
 
 typedef struct {
-  id<MTLLibrary> library;
-  id<MTLFunction> function;
   id<MTLComputePipelineState> pipeline;
   // Cached to avoid repeated ObjC message sends (tinygrad: "cache these msg
   // calls"). Used to validate local threadgroup size before dispatch.
   uint64_t max_total_threads;
-  size_t args_size;
 } tolk_metal_program;
 
 static void fail_with_nserror(NSError* error, const char* fallback) {
@@ -165,10 +162,8 @@ CAMLprim value caml_tolk_metal_buffer_copyout(value v_bytes, value v_buf,
 }
 
 CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,
-                                           value v_lib, value v_args_size) {
-  CAMLparam4(v_device, v_name, v_lib, v_args_size);
-  intnat args_size = Long_val(v_args_size);
-  if (args_size < 8) caml_invalid_argument("Metal: invalid argument storage size");
+                                           value v_lib) {
+  CAMLparam3(v_device, v_name, v_lib);
   @autoreleasepool {
     id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
     const char* name = String_val(v_name);
@@ -236,16 +231,13 @@ CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,
       [library release];
       fail_with_nserror(error, "Metal pipeline creation failed");
     }
+    [function release];
+    [library release];
     tolk_metal_program* prog = calloc(1, sizeof(tolk_metal_program));
     if (prog == NULL) {
       [pipeline release];
-      [function release];
-      [library release];
       caml_failwith("Metal program allocation failed");
     }
-    prog->args_size = (size_t)args_size;
-    prog->library = library;
-    prog->function = function;
     prog->pipeline = pipeline;
     prog->max_total_threads =
         (uint64_t)[pipeline maxTotalThreadsPerThreadgroup];
@@ -259,20 +251,20 @@ CAMLprim value caml_tolk_metal_program_free(value v_prog) {
     tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
     if (prog != NULL) {
       [prog->pipeline release];
-      [prog->function release];
-      [prog->library release];
       free(prog);
     }
     CAMLreturn(Val_unit);
   }
 }
 
-static uint8_t* metal_argument_destination(tolk_metal_program* prog,
-                                          value buffer, value offset) {
+static uint8_t* metal_argument_destination(value buffer, value offset,
+                                          value size) {
   id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(buffer);
   intnat off = Long_val(offset);
+  intnat args_size = Long_val(size);
+  if (args_size < 8) caml_invalid_argument("Metal: invalid argument storage size");
   if (buf == nil || off < 0 || (uint64_t)off > [buf length] ||
-      prog->args_size > [buf length] - (uint64_t)off)
+      (uint64_t)args_size > [buf length] - (uint64_t)off)
     caml_invalid_argument("Metal: argument storage is too small");
   return (uint8_t*)[buf contents] + off;
 }
@@ -301,9 +293,9 @@ CAMLprim value caml_tolk_metal_icb_create(value v_device, value v_count) {
 
 CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_prog,
                                      value v_arg_buf, value v_arg_offset,
-                                     value v_global, value v_local) {
+                                     value v_global, value v_local, value v_args_size) {
   CAMLparam5(v_icb, v_index, v_prog, v_arg_buf, v_arg_offset);
-  CAMLxparam2(v_global, v_local);
+  CAMLxparam3(v_global, v_local, v_args_size);
   @autoreleasepool {
     id<MTLIndirectCommandBuffer> icb =
         (id<MTLIndirectCommandBuffer>)Nativeint_val(v_icb);
@@ -312,7 +304,7 @@ CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_pr
     intnat arg_offset = Long_val(v_arg_offset);
     if (arg_offset < 0 || (uint64_t)arg_offset > UINT32_MAX)
       caml_invalid_argument("Metal ICB: argument arena offset exceeds 32 bits");
-    (void)metal_argument_destination(prog, v_arg_buf, v_arg_offset);
+    (void)metal_argument_destination(v_arg_buf, v_arg_offset, v_args_size);
     if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3) {
       caml_failwith("Metal ICB expects 3D sizes");
     }
@@ -348,7 +340,7 @@ CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_pr
 CAMLprim value caml_tolk_metal_icb_encode_bc(value* argv, int argc) {
   (void)argc;
   return caml_tolk_metal_icb_encode(argv[0], argv[1], argv[2], argv[3], argv[4],
-                              argv[5], argv[6]);
+                              argv[5], argv[6], argv[7]);
 }
 
 CAMLprim value caml_tolk_metal_icb_release(value v_icb) {

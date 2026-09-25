@@ -30,7 +30,7 @@ module Ffi = struct
   external buffer_copyout : bytes -> nativeint -> int -> unit
     = "caml_tolk_metal_buffer_copyout"
 
-  external program_create : nativeint -> string -> bytes -> int -> nativeint
+  external program_create : nativeint -> string -> string -> nativeint
     = "caml_tolk_metal_program_create"
 
   external program_free : nativeint -> unit = "caml_tolk_metal_program_free"
@@ -44,7 +44,7 @@ module Ffi = struct
     = "caml_tolk_metal_icb_create"
 
   external icb_encode :
-    nativeint -> int -> nativeint -> nativeint -> int -> int array -> int array -> unit
+    nativeint -> int -> nativeint -> nativeint -> int -> int array -> int array -> int -> unit
     = "caml_tolk_metal_icb_encode_bc" "caml_tolk_metal_icb_encode"
 
   external icb_release : nativeint -> unit = "caml_tolk_metal_icb_release"
@@ -79,6 +79,8 @@ module State = struct
     mutable context_buffer : Device.Buffer.t option;
     mutable in_flight : nativeint list;
     mutable closed : bool;
+    programs : (string * string, nativeint) Hashtbl.t;
+    program_lock : Mutex.t;
     needs_icb_fix : bool;
     arch : string;
   }
@@ -98,6 +100,8 @@ module State = struct
           context_buffer = None;
           in_flight = [];
           closed = false;
+          programs = Hashtbl.create 16;
+          program_lock = Mutex.create ();
           needs_icb_fix;
           arch;
         }
@@ -126,10 +130,15 @@ module State = struct
   let shutdown t =
     if not t.closed then (
       synchronize t;
-      Ffi.hcq_release t.context;
-      Ffi.release_command_queue t.queue;
-      Ffi.release_device t.device;
-      t.closed <- true)
+      Mutex.protect t.program_lock (fun () ->
+          if not t.closed then begin
+            Ffi.hcq_release t.context;
+            t.closed <- true;
+            Hashtbl.iter (fun _ program -> Ffi.program_free program) t.programs;
+            Hashtbl.clear t.programs;
+            Ffi.release_command_queue t.queue;
+            Ffi.release_device t.device
+          end))
 end
 
 module Allocator = struct
@@ -214,13 +223,24 @@ module Compiler = struct
 end
 
 module Program = struct
-  let load state (obj : Tolk_uop.Tiny_elf.t) =
-    let args_size = List.fold_left (fun size (field : Tolk_uop.Tiny_elf.field) ->
-        max size ((field.offset + field.size + 7) / 8 * 8)) 8
-        (Tolk_uop.Tiny_elf.layout obj.signature) in
-    Ffi.program_create state.State.device obj.name obj.lib args_size
+  let key (obj : Tolk_uop.Tiny_elf.t) = Bytes.to_string obj.lib, obj.name
 
-  let free = Ffi.program_free
+  let load state obj =
+    let key = key obj in
+    Mutex.protect state.State.program_lock (fun () ->
+        if state.State.closed then invalid_arg "Metal device is closed";
+        match Hashtbl.find_opt state.State.programs key with
+        | Some program -> program
+        | None ->
+            let program = Ffi.program_create state.State.device obj.name (fst key) in
+            (try Hashtbl.add state.State.programs key program
+             with exn -> Ffi.program_free program; raise exn);
+            program)
+
+  let args_size (obj : Tolk_uop.Tiny_elf.t) =
+    List.fold_left (fun size (field : Tolk_uop.Tiny_elf.field) ->
+        max size ((field.offset + field.size + 7) / 8 * 8)) 8
+        (Tolk_uop.Tiny_elf.layout obj.signature)
 end
 
 module Icb = struct
@@ -230,8 +250,8 @@ module Icb = struct
     let handle = Ffi.icb_create state.State.device count in
     { handle; count }
 
-  let encode t ~index ~program ~arg_buf ~arg_offset ~global ~local =
-    Ffi.icb_encode t.handle index program arg_buf arg_offset global local
+  let encode t ~index ~program ~arg_buf ~arg_offset ~global ~local ~args_size =
+    Ffi.icb_encode t.handle index program arg_buf arg_offset global local args_size
 
   let release t = Ffi.icb_release t.handle
 end
@@ -278,18 +298,17 @@ module Queue = struct
         let live = ref None in
         let alloc size spec =
           let raw = allocator.alloc size spec in
-          let programs = ref [] and icb = ref None in
+          let icb = ref None in
           (try
              Ffi.buffer_copyin raw.Metal_buffer.handle 0 (Bytes.make size '\000');
              let commands = Array.of_list desc.commands in
              let indirect = Icb.create state ~count:(Array.length commands) in
              icb := Some indirect;
+             let programs = Array.map (fun c -> Program.load state c.object_) commands in
              Array.iteri (fun i c ->
-                 let program = Program.load state c.object_ in
-                 programs := program :: !programs;
-                 Icb.encode indirect ~index:i ~program
-                   ~arg_buf:raw.handle ~arg_offset:c.offset ~global:c.global ~local:c.local) commands;
-             let programs = List.rev !programs in
+                 Icb.encode indirect ~index:i ~program:programs.(i)
+                   ~arg_buf:raw.handle ~arg_offset:c.offset ~global:c.global ~local:c.local
+                   ~args_size:(Program.args_size c.object_)) commands;
              Array.iter (fun c ->
                  let dimensions = Array.append c.global c.local in
                  let bytes = Bytes.create 48 in
@@ -297,8 +316,9 @@ module Queue = struct
                  Ffi.buffer_copyin raw.handle c.sizes bytes) commands;
              let records = List.map2 (fun program c ->
                  [program; Nativeint.of_int (List.length c.object_.signature);
-                  Nativeint.of_int c.offset; Nativeint.of_int c.sizes]) programs desc.commands
-                 |> List.concat in
+                  Nativeint.of_int c.offset; Nativeint.of_int c.sizes])
+                 (Array.to_list programs) desc.commands |> List.concat in
+             let programs = Helpers.dedup_by Nativeint.equal (Array.to_list programs) in
              (* Header: ICB, count, workaround, pipelines, argument buffer;
                 pipeline handles; program/count/argument offset/size offset per command. *)
              let values = [indirect.handle; Nativeint.of_int indirect.count;
@@ -307,17 +327,15 @@ module Queue = struct
              let bytes = Bytes.create (8 * List.length values) in
              List.iteri (fun i v -> Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint v)) values;
              Ffi.buffer_copyin raw.handle desc.header bytes;
-             live := Some (indirect, programs);
+             live := Some indirect;
              raw
            with exn ->
              Option.iter Icb.release !icb;
-             List.iter Program.free !programs;
              allocator.free raw size spec;
              raise exn) in
         let free raw size spec =
           State.synchronize state;
-          Option.iter (fun (icb, programs) -> Icb.release icb;
-              List.iter Program.free programs) !live;
+          Option.iter Icb.release !live;
           live := None;
           allocator.free raw size spec in
         let spec = {Device.Buffer_spec.default with nolru = true; cpu_access = true} in
@@ -394,7 +412,9 @@ module Queue = struct
         let profile = !stamps <> [] in
         if profile && List.length !stamps <> 2 * List.length !commands then
           invalid_arg "Metal queue: timestamps must bracket each command";
-        let stamp_offset = header + 8 * (5 + 5 * List.length !commands) in
+        let pipeline_count = List.length (Helpers.dedup_by Stdlib.(=)
+            (List.map (fun c -> Program.key c.object_) !commands)) in
+        let stamp_offset = header + 8 * (5 + pipeline_count + 4 * List.length !commands) in
         List.iteri (fun i stamp -> rows := (stamp_offset + 8 * i, stamp) :: !rows)
           (List.rev !stamps);
         let size = stamp_offset + 8 * List.length !stamps in

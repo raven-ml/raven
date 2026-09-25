@@ -23,9 +23,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   independently linked submissions; these are separate safety requirements.
 - Port the target's distinction between one-shot linker ring allocations and
   retained command storage. Share NV code images within a compiled schedule
-  and use one QMD/argument arena per run. Deduplicate Metal pipelines and CUDA
-  functions as the target does, auditing cross-schedule ownership before
-  adding device-level caches. Measure allocation counts and
+  and use one QMD/argument arena per run. Measure allocation counts and
   test independent retained links, descriptor alignment and replay patching.
 - Resolve ordered fallback for mixed kernel/copy batches whose runtime bindings
   overlap. Such batches currently reject before any submission; copy-only

@@ -136,7 +136,10 @@ static CUresult fake_stream_destroy(CUstream stream) {
   destroy_steps++; return 0;
 }
 static CUresult fake_context_destroy(CUcontext context) {
-  assert(context == (CUcontext)0x4); destroy_steps++; return 0;
+  assert(context == (CUcontext)0x4);
+  live_modules = 0;
+  destroy_steps++;
+  return 0;
 }
 static CUresult fake_error(CUresult status, const char **message) {
   (void)status; *message = "injected synchronization failure"; return 0;

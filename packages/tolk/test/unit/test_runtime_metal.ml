@@ -144,6 +144,58 @@ let compile_queue ?(profile = false) device calls =
     Realize.run_linear ~device ~to_program ~jit:true ~wait ~var_vals:vars
       ~input_uops:(Array.map U.from_buffer inputs) linked
 
+let shared_pipelines_survive_link_retirement () =
+  let device = metal_device () in
+  let spec = compile_incr device "metal_shared_pipeline" in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let calls = [queue_call device spec [1; 0]; queue_call device spec [0; 1]] in
+  let compiled = Realize.compile_linear ~device ~profile:false ~to_program (U.linear calls) in
+  let first = Realize.link_linear ~allow_cache:false compiled
+  and second = Realize.link_linear ~allow_cache:false compiled in
+  (* Each command has two pointers and six launch-size words, at byte offsets
+     0 and 256. The header has five metadata words, one unique pipeline and
+     four words per command. *)
+  let header = 256 + 16 + 48 in
+  let command_buffer linked =
+    let candidates = U.toposort linked |> List.filter_map (fun u ->
+        match U.as_buffer u with
+        | Some {buffer = {buffer = Some [buf]; _}; _}
+          when Device.Buffer.device buf = Device.name device
+               && Device.Buffer.nbytes buf = header + (14 * 8) -> Some buf
+        | _ -> None) in
+    match candidates with
+    | [buf] -> buf
+    | _ -> fail "expected one command allocation with a deduplicated pipeline header"
+  in
+  let first_commands = command_buffer first
+  and second_commands = command_buffer second in
+  Device.Buffer.ensure_allocated first_commands;
+  Device.Buffer.ensure_allocated second_commands;
+  let first_header = Device.Buffer.as_bytes first_commands
+  and second_header = Device.Buffer.as_bytes second_commands in
+  is_false ~msg:"independent links own distinct indirect command buffers"
+    (Int64.equal (Bytes.get_int64_le first_header header)
+       (Bytes.get_int64_le second_header header));
+  equal int64 2L (Bytes.get_int64_le first_header (header + 8));
+  equal int64 1L (Bytes.get_int64_le first_header (header + 24));
+  equal int64 1L (Bytes.get_int64_le second_header (header + 24));
+  is_false (Int64.equal 0L (Bytes.get_int64_le first_header (header + 40)));
+  equal ~msg:"independent links borrow the same native pipeline" int64
+    (Bytes.get_int64_le first_header (header + 40))
+    (Bytes.get_int64_le second_header (header + 40));
+  let a = i32_buf device [0] and b = i32_buf device [0] in
+  let run linked =
+    Realize.run_linear ~device ~to_program ~jit:true ~wait:true
+      ~input_uops:[|U.from_buffer a; U.from_buffer b|] linked
+  in
+  run first;
+  Device.Buffer.deallocate first_commands;
+  is_false (Device.Buffer.is_allocated first_commands);
+  run second;
+  run second;
+  equal (list int) [6] (read_i32 a);
+  equal (list int) [5] (read_i32 b)
+
 let test_mixed_scalar_widths () =
   let device = metal_device () in
   let output = U.param ~slot:0 ~dtype:Dtype.int64 ~shape:(U.const_int 4) () in
@@ -592,6 +644,8 @@ let () =
             equal (list int) [22] (read_i32 a);
             equal (list int) [21] (read_i32 b);
             equal int 2 (List.length (Device.profile device))));
+          test "shares pipelines across commands and independently retired links"
+            shared_pipelines_survive_link_retirement;
           test "relaunches without an intervening synchronize" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_queue_relaunch" in

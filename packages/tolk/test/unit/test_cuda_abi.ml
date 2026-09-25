@@ -57,13 +57,19 @@ let failed_initialization () =
 
 let shutdown_after_failure () =
   List.iter (fun failure ->
+      ignore (setup ());
+      let module_ = load (Bytes.of_string "ptx") in
+      ignore (function_ module_ "typed");
+      equal int 1 (live_modules ());
       let queue = shutdown_setup failure in
       let destroy () = Fun.protect ~finally:(fun () -> context_destroy 0x4n)
           (fun () -> queue_destroy queue) in
       if failure then
         raises (Failure "CUDA Error 719, injected synchronization failure") destroy
       else destroy ();
-      equal int 5 (shutdown_steps ())) [ false; true ]
+      equal int 5 (shutdown_steps ());
+      equal ~msg:"context retirement releases its cached modules" int 0
+        (live_modules ())) [ false; true ]
 
 let compiled_arguments () =
   let queue = setup () in
