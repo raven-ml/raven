@@ -2009,6 +2009,11 @@ thread.
 
 ### Nx
 
+- Eager float `Nx.sum` spreads every element of a run over sixteen partial
+  sums by its position, strided or not: a vector's sum no longer depends on its
+  stride, and a sum whose length is not a multiple of 16 can change in the last
+  bit. Reductions over several axes, or along a non-contiguous axis, still
+  depend on the layout.
 - Eager `Nx.matmul` and `Nx.dot` of a vector and a matrix, in either order,
   are over 20 times faster at `bfloat16` and `float16` (a row times 2880 x 5760:
   0.95 ms, not 21.8), and each output has the bits of its row-column dot.

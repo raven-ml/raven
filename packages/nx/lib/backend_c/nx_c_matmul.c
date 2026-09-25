@@ -357,6 +357,10 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
 #define MM_ADD_NX_C_CAT_COMPLEX(a, b) ((a) + (b))
 #define MM_ADD_NX_C_CAT_BOOL(a, b) ((a) + (b))
 
+/* Lane i of mm_dot's sums and of mm_row's lane rows for output j. */
+#define MM_LANE_DOT(i) s[i]
+#define MM_LANE_ROW(i) lanes[(i) * n + j]
+
 #define MM_GEN(sfx, kind, storage, compute, ld, st, cat)                       \
   static void mm_pack_a_##sfx(void *vdst, const void *vsrc, int64_t rs,        \
                               int64_t cs, int64_t row0, int64_t mc, int64_t k, \
@@ -435,40 +439,35 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
         nx_c_st_##sfx(c + (i * crs + j * ccs) * esz, acc);                    \
       }                                                                        \
   }                                                                            \
-  /* Dot of k elements at element strides as, bs into one compute value.     \
-     Element p accumulates into lane p mod 16 whatever the strides, and the   \
-     lanes combine by a fixed tree, so the rounding depends on neither the    \
-     layout nor the machine; the contiguous run vectorizes with sixteen       \
+  /* Dot of k elements at element strides as, bs into one compute value, in \
+     nx_c.h's summation order: the contiguous run vectorizes over the lanes'  \
      independent accumulators, where one would wait on every multiply-add. */ \
   static void mm_dot_##sfx(const void *va, int64_t as, const void *vb,         \
                            int64_t bs, int64_t k, void *vout) {                \
     const char *a = (const char *)va;                                        \
     const char *b = (const char *)vb;                                        \
     int64_t esz = (int64_t)sizeof(storage);                                   \
-    compute s[16];                                                             \
-    for (int i = 0; i < 16; i++) s[i] = (compute)0;                           \
+    compute s[NX_C_LANES];                                                     \
+    for (int i = 0; i < NX_C_LANES; i++) s[i] = (compute)0;                   \
     int64_t p = 0;                                                             \
     if (as == 1 && bs == 1) {                                                 \
       const storage *pa = (const storage *)va;                                \
       const storage *pb = (const storage *)vb;                                \
-      for (; p + 16 <= k; p += 16)                                            \
-        for (int i = 0; i < 16; i++)                                          \
+      for (; p + NX_C_LANES <= k; p += NX_C_LANES)                            \
+        for (int i = 0; i < NX_C_LANES; i++)                                  \
           MM_MAC_##cat(s[i], nx_c_ld_##sfx(&pa[p + i]),                        \
                        nx_c_ld_##sfx(&pb[p + i]));                             \
     }                                                                          \
     for (; p < k; p++)                                                         \
-      MM_MAC_##cat(s[p & 15], nx_c_ld_##sfx(a + p * as * esz),                 \
+      MM_MAC_##cat(s[p % NX_C_LANES], nx_c_ld_##sfx(a + p * as * esz),         \
                    nx_c_ld_##sfx(b + p * bs * esz));                           \
-    for (int w = 8; w >= 1; w /= 2)                                           \
-      for (int i = 0; i < w; i++) s[i] = (compute)MM_ADD_##cat(s[i], s[i + w]); \
-    *(compute *)vout = s[0];                                                   \
+    *(compute *)vout = (compute)NX_C_LANE_TREE(MM_LANE_DOT, MM_ADD_##cat);     \
   }                                                                            \
-  /* A row times n columns, out[j] = sum_p a[p] * B(p, j), with mm_dot's     \
-     lanes and tree for every output, so each has the bits of mm_dot of the  \
-     row and its column whatever B's layout. Contiguous columns (bcs == 1)   \
-     run k outer over sixteen lane rows of n compute-typed accumulators      \
-     (`lanes`, 16 * n), vectorized along j; otherwise each column is one     \
-     mm_dot. */                                                                \
+  /* A row times n columns, out[j] = sum_p a[p] * B(p, j), in the summation  \
+     order for every output, so each has the bits of mm_dot of the row and   \
+     its column whatever B's layout. Contiguous columns (bcs == 1) run k     \
+     outer over the lane rows of n compute-typed sums (`lanes`, NX_C_LANES   \
+     * n), vectorized along j; otherwise each column is one mm_dot. */        \
   static void mm_row_##sfx(const void *va, int64_t as, const void *vb,         \
                            int64_t brs, int64_t bcs, int64_t k, int64_t n,     \
                            void *vlanes, void *vout) {                         \
@@ -482,20 +481,16 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
       return;                                                                  \
     }                                                                          \
     compute *lanes = (compute *)vlanes;                                       \
-    for (int64_t t = 0; t < 16 * n; t++) lanes[t] = (compute)0;              \
+    for (int64_t t = 0; t < NX_C_LANES * n; t++) lanes[t] = (compute)0;      \
     for (int64_t p = 0; p < k; p++) {                                          \
       compute x = nx_c_ld_##sfx(a + p * as * esz);                            \
       const storage *restrict row = (const storage *)(b + p * brs * esz);    \
-      compute *restrict l = lanes + (p & 15) * n;                             \
+      compute *restrict l = lanes + (p % NX_C_LANES) * n;                     \
       for (int64_t j = 0; j < n; j++)                                         \
         MM_MAC_##cat(l[j], x, nx_c_ld_##sfx(&row[j]));                         \
     }                                                                          \
-    for (int w = 8; w >= 1; w /= 2)                                           \
-      for (int i = 0; i < w; i++)                                             \
-        for (int64_t j = 0; j < n; j++)                                       \
-          lanes[i * n + j] =                                                  \
-              (compute)MM_ADD_##cat(lanes[i * n + j], lanes[(i + w) * n + j]); \
-    for (int64_t j = 0; j < n; j++) out[j] = lanes[j];                        \
+    for (int64_t j = 0; j < n; j++)                                           \
+      out[j] = (compute)NX_C_LANE_TREE(MM_LANE_ROW, MM_ADD_##cat);            \
   }                                                                            \
   /* KC-panel accumulate: dst[i] += src[i] over `count` compute elements, the \
      one place a partial MR x NR tile folds into the compute-typed C tile. In  \
@@ -893,7 +888,7 @@ static void mm_row_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   const mm_ctx *x = rc->x;
   const nx_c_mm_desc *d = x->d;
   char *lanes = rc->scratch + (int64_t)worker * rc->slot;
-  char *chunk_sums = lanes + 16 * rc->tile * d->csize;
+  char *chunk_sums = lanes + NX_C_LANES * rc->tile * d->csize;
   char *sums = chunk_sums + rc->tile * d->csize;
   for (int64_t job = lo; job < hi; job++) {
     int64_t bt = job / rc->ntiles;
@@ -918,7 +913,7 @@ static void mm_row_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 
 static nx_c_status mm_row_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
                               int nthreads) {
-  int64_t tile = MM_ROW_LANE_BYTES / (16 * x->d->csize);
+  int64_t tile = MM_ROW_LANE_BYTES / (NX_C_LANES * x->d->csize);
   if (tile > x->n) tile = x->n;
   int64_t ntiles = mm_ceil_div(x->n, tile);
   int64_t jobs = nbatch * ntiles;
@@ -928,7 +923,7 @@ static nx_c_status mm_row_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
                                             x->k * tile, bytes);
   if (nth > jobs) nth = (int)jobs;
   if (nth < 1) nth = 1;
-  int64_t slot = (16 + 2) * tile * x->d->csize;
+  int64_t slot = (NX_C_LANES + 2) * tile * x->d->csize;
   slot = (slot + 63) & ~(int64_t)63;
   char *scratch = mm_alloc((size_t)nth * (size_t)slot);
   if (!scratch) return NX_C_ERR_ALLOC;

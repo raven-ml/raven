@@ -128,34 +128,29 @@
     acc->NX_C_ACCF_##compute = m;                                               \
   }
 
-/* Float sum: sixteen partial accumulators. The contiguous run vectorizes into
-   four independent NEON accumulators (clang packs four partials per vector) —
-   the instruction-level parallelism a reduction needs to stream at single-core
-   read bandwidth, where two accumulators (an 8-wide unroll) stall latency-bound
-   at ~half the rate. The partials also keep each lane below the compute type's
-   integer ceiling, so a run of ones sums exactly instead of stalling a single
-   accumulator. The combine is a fixed balanced tree, so the grouping — hence the
-   rounding — does not depend on n. */
+/* Float sum: NX_C_LANES partial sums in nx_c.h's summation order. The
+   contiguous run vectorizes into four independent NEON accumulators (clang packs
+   four partials per vector) — the instruction-level parallelism a reduction
+   needs to stream at single-core read bandwidth, where two accumulators (an
+   8-wide unroll) stall latency-bound at ~half the rate. The lanes also keep each
+   partial below the compute type's integer ceiling, so a run of ones sums
+   exactly instead of stalling a single accumulator, strided or not. */
+#define NX_C_SUM_LANE(i) s[i]
+#define NX_C_SUM_ADD(a, b) ((a) + (b))
 #define NX_C_SUM_STEP_FLOAT_DEF(sfx, storage, compute)                          \
   static void nx_c_sum_step_##sfx(nx_c_acc *acc, const char *in, int64_t in_step,\
                                  int64_t n, void *ctx) {                        \
     (void)ctx;                                                                 \
-    compute s[16];                                                             \
-    for (int i = 0; i < 16; i++) s[i] = 0;                                     \
+    compute s[NX_C_LANES];                                                     \
+    for (int i = 0; i < NX_C_LANES; i++) s[i] = 0;                             \
     int64_t k = 0;                                                             \
     if (in_step == (int64_t)sizeof(storage)) {                                 \
       const storage *p = (const storage *)in;                                  \
-      for (; k + 16 <= n; k += 16)                                             \
-        for (int i = 0; i < 16; i++) s[i] += nx_c_ld_##sfx(&p[k + i]);          \
-      for (; k < n; k++) s[0] += nx_c_ld_##sfx(&p[k]);                          \
-    } else {                                                                   \
-      for (; k < n; k++) s[0] += nx_c_ld_##sfx(in + k * in_step);              \
+      for (; k + NX_C_LANES <= n; k += NX_C_LANES)                             \
+        for (int i = 0; i < NX_C_LANES; i++) s[i] += nx_c_ld_##sfx(&p[k + i]);  \
     }                                                                          \
-    compute lo = ((s[0] + s[1]) + (s[2] + s[3])) +                            \
-                 ((s[4] + s[5]) + (s[6] + s[7]));                             \
-    compute hi = ((s[8] + s[9]) + (s[10] + s[11])) +                          \
-                 ((s[12] + s[13]) + (s[14] + s[15]));                         \
-    acc->NX_C_ACCF_##compute += lo + hi;                                        \
+    for (; k < n; k++) s[k % NX_C_LANES] += nx_c_ld_##sfx(in + k * in_step);   \
+    acc->NX_C_ACCF_##compute += NX_C_LANE_TREE(NX_C_SUM_LANE, NX_C_SUM_ADD);    \
   }
 
 /* Inclusive scan: sequential within a slice; the running value is stored back

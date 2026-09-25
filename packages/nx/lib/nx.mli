@@ -2183,6 +2183,12 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     are kept with size 1. [keepdims] defaults to [false]. Negative axes count
     from the end.
 
+    An eager float sum spreads the elements of a run over sixteen partial sums
+    by position, so a vector's sum does not depend on its stride. A sum over
+    several axes, or along an axis that is not contiguous in memory, groups its
+    elements by the layout, and the same values in another layout can differ in
+    the last bits.
+
     {@ocaml[
       # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
         |> sum |> item []

@@ -399,6 +399,22 @@ static inline nx_c_dtype nx_c_dtype_of_kind(int kind) {
    - Complex has no mod and no ordered comparison; rounding/abs/sign on complex
      are the kernel's concern (rejected loudly, never identity), not the ABI's. */
 
+/* ── Float summation order ────────────────────────────────────────────────
+
+   A sum over a run (a reduction's run, a dot's chunk) keeps NX_C_LANES partial
+   sums: element p of the run goes to lane p mod NX_C_LANES whatever the stride,
+   and NX_C_LANE_TREE combines the lanes by one fixed balanced tree. A
+   contiguous run vectorizes over independent accumulators, and the rounding
+   depends on neither the layout nor the machine. LANE(i) names lane i and ADD
+   is the compute type's addition. */
+#define NX_C_LANES 16
+#define NX_C_LANE_TREE(LANE, ADD)                                             \
+  ADD(ADD(ADD(ADD(LANE(0), LANE(1)), ADD(LANE(2), LANE(3))),                  \
+          ADD(ADD(LANE(4), LANE(5)), ADD(LANE(6), LANE(7)))),                 \
+      ADD(ADD(ADD(LANE(8), LANE(9)), ADD(LANE(10), LANE(11))),                \
+          ADD(ADD(LANE(12), LANE(13)), ADD(LANE(14), LANE(15)))))
+_Static_assert(NX_C_LANES == 16, "NX_C_LANE_TREE combines sixteen lanes");
+
 /* ── Status protocol ──────────────────────────────────────────────────────
 
    A status is NULL on success, otherwise a static, never-freed string. No

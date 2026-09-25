@@ -190,6 +190,19 @@ let reduction_edge_cases =
           (Float.is_nan (Nx.item [] min_result));
         equal ~msg:"max with nan" bool true
           (Float.is_nan (Nx.item [] max_result)));
+    (* Element p of a float sum's run goes to lane p mod 16 strided or not, so a
+       column and its contiguous copy sum to the same bits. A strided run summed
+       into one lane: -146.946198 against -146.949036. *)
+    test "a float sum's bits do not depend on the stride" (fun () ->
+        let wide =
+          Nx.create Nx.float32 [| 1003; 2 |]
+            (Array.init 2006 (fun i -> sin (float_of_int i) *. 1e3))
+        in
+        let strided = Nx.slice [ Nx.A; Nx.I 0 ] wide in
+        let bits t = Int32.bits_of_float (Nx.item [] (Nx.sum t)) in
+        equal ~msg:"strided and contiguous" int32
+          (bits (Nx.copy strided))
+          (bits strided));
   ]
 
 (* ───── Rounding Edge Cases ───── *)
