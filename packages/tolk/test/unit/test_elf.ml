@@ -252,9 +252,9 @@ let () =
           test "symbols resolve through fixed addresses" (fun () ->
               let elf = Elf.load (et_dyn_fixture ()) in
               equal int 0x104 (Elf.find_symbol_offset elf "kern"));
-          test "executables are still rejected" (fun () ->
+          test "core dumps are rejected" (fun () ->
               let obj = et_dyn_fixture () in
-              set16 obj 16 2 (* e_type: ET_EXEC *);
+              set16 obj 16 4 (* e_type: ET_CORE *);
               raises (Invalid_argument "unsupported ELF type") (fun () ->
                   Elf.load obj));
         ];

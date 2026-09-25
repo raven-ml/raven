@@ -645,6 +645,9 @@ thread.
 
 ### Tolk (new)
 
+- Load NVRTC-produced cubins on the NV backend. The ELF loader previously
+  rejected their executable format before reading the kernel.
+
 - `Hcq.Timeline.submit` replaces `next_timeline`: AMD/NV direct submissions
   advance their completion counter only after publication succeeds. Failed
   submissions retain storage and timing slots instead of leaving phantom waits.

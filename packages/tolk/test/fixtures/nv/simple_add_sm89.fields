@@ -1,0 +1,7 @@
+name simple_add
+regs_usage 12
+shmem_usage 1024
+lcmem_usage 576
+cbuf0_size 352
+constbuf0_size 380
+kernargs_size 512

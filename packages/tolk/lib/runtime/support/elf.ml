@@ -85,6 +85,7 @@ let array_find_opt f a =
   aux 0
 
 let et_rel = 1
+let et_exec = 2
 let et_dyn = 3
 let sht_null = 0
 let sht_progbits = 1
@@ -137,7 +138,8 @@ let read_headers obj =
   let data = u8 obj 5 in
   if class_ <> 2 || data <> 1 then invalid_arg "unsupported ELF format";
   let e_type = u16 obj 16 in
-  if e_type <> et_rel && e_type <> et_dyn then invalid_arg "unsupported ELF type";
+  if e_type <> et_rel && e_type <> et_exec && e_type <> et_dyn then
+    invalid_arg "unsupported ELF type";
   let e_shoff = Int64.to_int (u64 obj 40) in
   let e_shentsize = u16 obj 58 in
   let e_shnum = u16 obj 60 in

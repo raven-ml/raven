@@ -7,9 +7,9 @@
 
 (** ELF object loading.
 
-    Parses 64-bit little-endian ELF relocatable objects ([ET_REL]) and shared
-    objects ([ET_DYN]) and lays out their program-data sections into a
-    contiguous flat image. Sections carrying a fixed address keep it as their
+    Parses 64-bit little-endian ELF relocatable objects ([ET_REL]), executables
+    ([ET_EXEC], including CUDA cubins) and shared objects ([ET_DYN]). Their
+    program-data sections are laid out into a contiguous flat image. Sections carrying a fixed address keep it as their
     image offset; the remaining sections are appended after them. Section and
     relocation metadata is preserved for backend-specific loaders, but no
     machine-specific relocations are applied. *)
@@ -50,7 +50,7 @@ type reloc = private {
 (** The type for relocations anchored at absolute image offsets. *)
 
 type t
-(** The type for a laid-out relocatable ELF object. Holds the flat image,
+(** The type for a laid-out ELF object. Holds the flat image,
     resolved section addresses, symbols, and pending relocations. *)
 
 (** {1:loading Loading} *)
@@ -66,7 +66,7 @@ val load : ?force_section_align:int -> Bytes.t -> t
     [force_section_align] (defaults to [1]).
 
     Raises [Invalid_argument] if [obj] is not a valid 64-bit little-endian ELF
-    relocatable ([ET_REL]) or shared ([ET_DYN]) object. *)
+    relocatable ([ET_REL]), executable ([ET_EXEC]) or shared ([ET_DYN]) object. *)
 
 (** {1:accessors Accessors} *)
 

@@ -1938,14 +1938,6 @@ let () =
               let dir = "../fixtures/nv" in
               let cubin = Filename.concat dir "simple_add_sm89.cubin" in
               let fields_file = Filename.concat dir "simple_add_sm89.fields" in
-              if not (Sys.file_exists cubin && Sys.file_exists fields_file)
-              then
-                skip
-                  ~reason:
-                    "no cubin fixture (generate it with \
-                     test/fixtures/nv/generate_fixture.py on a box with the \
-                     CUDA toolkit)"
-                  ();
               let fields =
                 List.filter_map
                   (fun line ->
@@ -1982,8 +1974,11 @@ let () =
                   equal int (fint "lcmem_usage") prg.Program.lcmem_usage;
                   equal int (fint "constbuf0_size")
                     prg.Program.params.Tolk_nv.cbuf0_size;
-                  equal int
-                    (fint "kernargs_alloc_size")
+                  equal int (fint "cbuf0_size")
+                    (Array.length prg.Program.cbuf_0 * 4);
+                  (* Direct dispatch reserves eight QMD slots after the same
+                     argument blob used by the target's compiled path. *)
+                  equal int (fint "kernargs_size" + 0x800)
                     prg.Program.kernargs_alloc_size));
         ];
       group "device info"

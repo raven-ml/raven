@@ -1,90 +1,79 @@
-"""Generates the real-cubin fixture for test_runtime_nv.ml's skip-gated
-"cubin fixture" test.
+"""Compile the checked-in cubin and record expectations using the frozen target.
 
-Compiles a trivial kernel to a cubin for sm_89 through the pinned clone's
-nvrtc binding (no GPU needed, only the CUDA toolkit's libnvrtc), then
-records the fields tolk's Program.load must parse from it. The test
-compares its parse of simple_add_sm89.cubin against simple_add_sm89.fields
-and skips when either file is absent, so this script only needs to run on
-a Linux box with the CUDA toolkit; commit both outputs.
-
-Run (from anywhere):
-  uv run python packages/tolk/test/fixtures/nv/generate_fixture.py
+Requires libnvrtc, Python 3.11+, and a tinygrad checkout/archive supplied through
+--tinygrad-root. No GPU is opened. See README.md for the reproducible container
+command and the compiler image digest.
 """
 
-import os
-import re
-import struct
+import argparse
+import ctypes
+import hashlib
+import json
+from pathlib import Path
 import sys
+from types import SimpleNamespace
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "..", "..", "..", "..", "_tinygrad"))
-
-from tinygrad.helpers import round_up  # noqa: E402
-from tinygrad.runtime.support.compiler_cuda import NVRTCCompiler  # noqa: E402
-from tinygrad.runtime.support.elf import elf_loader  # noqa: E402
-
-NAME, ARCH = "simple_add", "sm_89"
-SRC = """
-extern "C" __global__ void simple_add(int* out, const int* a, const int* b, int n) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) out[i] = a[i] + b[i];
-}
-"""
-
-
-def parse_elf_info(sh, start_off=0):
-    # REPLICATED BLOCK -- NVProgram._parse_elf_info
-    # (_tinygrad/tinygrad/runtime/ops_nv.py); re-sync on pin moves.
-    while start_off < sh.header.sh_size:
-        typ, param, sz = struct.unpack_from("BBH", sh.content, start_off)
-        yield typ, param, sh.content[start_off + 4 : start_off + sz + 4] if typ == 0x4 else sz
-        start_off += (sz if typ == 0x4 else 0) + 4
-    # END REPLICATED BLOCK
-
-
-def parse_fields(lib):
-    # REPLICATED BLOCK -- the non-NAK section walk of NVProgram.__init__
-    # (_tinygrad/tinygrad/runtime/ops_nv.py, the sections loop), with the
-    # address bookkeeping dropped: only the sizes tolk's test asserts on.
-    # Re-sync on pin moves.
-    _image, sections, _relocs = elf_loader(lib, force_section_align=128)
-    regs_usage, shmem_usage, lcmem_usage, cbuf0_size = 0, 0x400, 0x240, 0
-    constbufs = {0: 0x160}
-    for sh in sections:
-        if sh.name == f".nv.shared.{NAME}":
-            shmem_usage = round_up(0x400 + sh.header.sh_size, 128)
-        if m := re.match(r"\.nv\.constant(\d+)", sh.name):
-            constbufs[int(m.group(1))] = sh.header.sh_size
-        elif sh.name.startswith(".nv.info"):
-            for typ, param, data in parse_elf_info(sh):
-                if sh.name == f".nv.info.{NAME}" and param == 0xA:
-                    cbuf0_size = struct.unpack_from("IH", data)[1]
-                elif sh.name == ".nv.info" and param == 0x12:
-                    lcmem_usage = struct.unpack_from("II", data)[1] + 0x240
-                elif sh.name == ".nv.info" and param == 0x2F:
-                    regs_usage = struct.unpack_from("II", data)[1]
-    # END REPLICATED BLOCK
-    return {
-        "name": NAME,
-        "regs_usage": regs_usage,
-        "shmem_usage": shmem_usage,
-        "lcmem_usage": lcmem_usage,
-        "cbuf0_size": cbuf0_size,
-        "constbuf0_size": constbufs[0],
-        "kernargs_alloc_size": round_up(constbufs[0], 1 << 8) + (8 << 8),
-    }
+REFERENCE = "471a3aeb6924257d5e9bf321f5ff0a519163f18e"
+HERE = Path(__file__).resolve().parent
 
 
 def main():
-    lib = NVRTCCompiler(ARCH, ptx=False, cache_key="nv").compile(SRC)
-    with open(os.path.join(_HERE, f"{NAME}_{ARCH}.cubin"), "wb") as f:
-        f.write(lib)
-    fields = parse_fields(lib)
-    with open(os.path.join(_HERE, f"{NAME}_{ARCH}.fields"), "w") as f:
-        for k, v in fields.items():
-            f.write(f"{k} {v}\n")
-    print("\n".join(f"{k} {v}" for k, v in fields.items()))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tinygrad-root", type=Path, required=True)
+    parser.add_argument("--compiler-image", required=True)
+    args = parser.parse_args()
+    sys.path.insert(0, str(args.tinygrad_root))
+
+    from tinygrad.dtype import dtypes
+    from tinygrad.runtime.autogen import nvrtc
+    from tinygrad.runtime.ops_nv import NVProgramData, nv_gpu
+    from tinygrad.runtime.support.compiler_cuda import NVRTCCompiler, nvrtc_check
+
+    source = (HERE / "simple_add.cu").read_bytes()
+    compiler = NVRTCCompiler("sm_89", ptx=False)
+    lib = compiler.compile(source.decode())
+    major, minor = ctypes.c_int(), ctypes.c_int()
+    nvrtc_check(nvrtc.nvrtcVersion(major, minor))
+    dev = SimpleNamespace(
+        iface=SimpleNamespace(compute_class=nv_gpu.AMPERE_COMPUTE_B),
+        renderer=None, shared_mem_window=0x729400000000,
+        local_mem_window=0x729300000000, sass_version=0x89,
+    )
+    dev._ensure_has_local_memory = lambda size: setattr(dev, "slm_per_thread", size)
+    obj = SimpleNamespace(name="simple_add", lib=lib, signature=[
+        (None, None, dtypes.uint8, None), (None, None, dtypes.uint8, None),
+        (None, None, dtypes.uint8, None), ("n", None, dtypes.int32, None),
+    ])
+    data = NVProgramData(dev, obj)
+    fields = {
+        "name": obj.name,
+        "regs_usage": data.qmd.read("register_count_v"),
+        "shmem_usage": data.qmd.read("shared_memory_size"),
+        "lcmem_usage": dev.slm_per_thread,
+        "cbuf0_size": len(data.cbuf_0) * 4,
+        "constbuf0_size": data.constbufs[0][1],
+        "kernargs_size": data.kernargs_size,
+    }
+    stem = HERE / "simple_add_sm89"
+    stem.with_suffix(".cubin").write_bytes(lib)
+    stem.with_suffix(".fields").write_text("".join(f"{k} {v}\n" for k, v in fields.items()))
+    digest = lambda data: hashlib.sha256(data).hexdigest()
+    provenance = {
+        "reference": REFERENCE,
+        "compiler_image": args.compiler_image,
+        "compiler": f"NVRTC {major.value}.{minor.value}",
+        "options": compiler.compile_options,
+        "source_sha256": digest(source),
+        "binary_sha256": digest(lib),
+        "oracle_sha256": {
+            name: digest((args.tinygrad_root / name).read_bytes()) for name in (
+                "tinygrad/runtime/support/compiler_cuda.py", "tinygrad/runtime/ops_nv.py",
+                "tinygrad/runtime/support/elf.py",
+            )
+        },
+    }
+    stem.with_suffix(".json").write_text(json.dumps(provenance, indent=2) + "\n")
+    print(fields)
 
 
 if __name__ == "__main__":

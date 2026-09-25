@@ -1,0 +1,19 @@
+{
+  "reference": "471a3aeb6924257d5e9bf321f5ff0a519163f18e",
+  "compiler_image": "ghcr.io/tinygrad/cuda-arm64@sha256:350801c5bc2fd3cf7a0c59e88e10483419a97a039e39bcb304cb9598d995349a",
+  "compiler": "NVRTC 12.8",
+  "options": [
+    "--gpu-architecture=sm_89",
+    "-I/usr/local/cuda/include",
+    "-I/usr/include",
+    "-I/opt/cuda/include",
+    "--minimal"
+  ],
+  "source_sha256": "aeb42772fb0dd43a92162bd8827d0ade73466b8207dcfd6eb79ff077bdea2ea7",
+  "binary_sha256": "4f80310e18666d28a1e7ce79c7c16c8cc23b5bda349c103b0ad3c5e44a092a90",
+  "oracle_sha256": {
+    "tinygrad/runtime/support/compiler_cuda.py": "44e2eb882f867db26cb0a0c27716cc5c1000e4a7ea2401d3346d226573078bda",
+    "tinygrad/runtime/ops_nv.py": "dfc025816f1bfaf23e72f3fc6977a2d186563c934135d7aa60949ef58c4b3fc0",
+    "tinygrad/runtime/support/elf.py": "4297414131c64097ab47365c8c5d7178dc7fa5d6488e4edf0a538a3890f1a6d9"
+  }
+}
