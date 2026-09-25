@@ -26,11 +26,12 @@ val assign : Tensor.t -> Tensor.t -> Tensor.t
     A weak [t] first acquires fresh storage at the dtype selected by
     {!Tolk_uop.Uop.commit_dtype}. A weak [x]
     promotes with [t]'s dtype; the result must match [t]'s dtype. Once [t] has
-    a concrete dtype, assigning it to itself is a no-op.
+    a concrete dtype, assigning it to itself is a no-op. For a storage write,
+    a value on another device is copied to the destination during preparation.
 
     @raise Invalid_argument
-      if the dtypes differ after weak promotion, or the tensors live on
-      different devices. *)
+      if the dtypes differ after weak promotion, or the tensors have
+      incompatible sharding axes. *)
 
 (** {1 Statistics} *)
 

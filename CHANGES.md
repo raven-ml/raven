@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- `Creation.clone` preserves sharding and allocates each shard separately.
+  `Op.assign` accepts cross-device values through copy preparation and rejects
+  incompatible shard axes; clones reject DISK destinations before allocation.
+
 - Symbolic launch dimensions use exact arithmetic, preserving large intermediate
   products, signed shifts and scalar casts. Both launch APIs now agree with
   `Uop.sym_infer` instead of overflowing host integers independently.

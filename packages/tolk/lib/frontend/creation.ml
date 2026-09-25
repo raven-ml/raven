@@ -36,13 +36,24 @@ let empty ?(dtype = D.default_float) ?device shape =
    shape, written by a store effect. Realization allocates the storage and
    runs the fill, and in-place assignment then writes into it. *)
 let clone ?device t =
-  let shape = T.symbolic_shape t in
-  let max_shape = U.max_shape (T.uop t) in
-  let n = U.max_numel (T.uop t) in
   let device = match device, T.device t with
     | Some device, _ | None, Some device -> device
     | None, None -> U.Single (Backend.device_name ())
   in
+  let canonicalize = Tolk.Helpers.canonicalize_device_name in
+  let device = match device with
+    | U.Single device | U.Multi [device] -> U.Single (canonicalize device)
+    | U.Multi devices -> U.Multi (List.map canonicalize devices)
+    | U.Index _ -> device in
+  let disk = String.starts_with ~prefix:"DISK" in
+  if (match device with U.Single d -> disk d
+      | U.Multi devices -> List.exists disk devices | U.Index _ -> false) then
+    invalid_arg "Creation.clone: cannot clone DISK storage; use an explicit store";
+  let axis = match device with U.Multi _ -> U.axis (T.uop t) | _ -> None in
+  let shape, max_shape, n =
+    match axis with
+    | Some _ -> U.shard_shape (T.uop t), U.max_shard_shape (T.uop t), U.max_shard_numel (T.uop t)
+    | None -> T.symbolic_shape t, U.max_shape (T.uop t), U.max_numel (T.uop t) in
   let dtype = U.commit_dtype (T.uop t) in
   let buf =
     U.alloc ~bind_on_realize:true ~slot:(U.fresh_buffer_slot ()) ~dtype
@@ -55,6 +66,9 @@ let clone ?device t =
         ~offset:(T.shape_uop (List.map (fun _ -> 0) shape))
         ~size:(T.symbolic_shape_uop shape)
   in
+  let dst = match axis with
+    | Some axis -> U.unshard ~src:dst ~axes:[axis] ()
+    | None -> dst in
   let value =
     match (T.device t, device) with
     | Some from, device when from <> device ->

@@ -1141,11 +1141,38 @@ let scalar_operand_tests =
           is_true (is_dtype (El.add i8 (T.i 1)) D.int8));
     ]
 
+let assignment_tests =
+  let sharded axis =
+    Cr.clone (Cr.shard ?axis ~devices:[ "CPU:1"; "CPU:2" ]
+      (Cr.empty ~dtype:D.float32 ~device:(U.Single "CPU") [ 4; 4 ])) in
+  group "assignment sharding"
+    [
+      test "incompatible axes reject before changing the destination" (fun () ->
+          List.iter (fun (dst_axis, src_axis) ->
+              let dst = sharded dst_axis and src = sharded src_axis in
+              let before = T.uop dst in
+              raises_match
+                (function Invalid_argument msg -> msg = "Op.assign: sharding axis mismatch" | _ -> false)
+                (fun () -> Op.assign dst src);
+              is_true (T.uop dst == before))
+            [ Some 0, Some 1; Some 0, None; None, Some 0 ]);
+      test "matching axes accept assignment" (fun () ->
+          List.iter (fun axis ->
+              let dst = sharded axis in
+              ignore (Op.assign dst (sharded axis));
+              equal (option int) axis (U.axis (T.uop dst))) [ None; Some 0; Some 1 ]);
+      test "device-less scalar broadcasts to sharded destination" (fun () ->
+          let dst = sharded (Some 0) in
+          ignore (Op.assign dst (T.f 3.));
+          equal (option int) (Some 0) (U.axis (T.uop dst)));
+    ]
+
 let () =
   run "Tolk_frontend"
     [
       creation_tests;
       creation2_tests;
+      assignment_tests;
       shape_memo_tests;
       scatter_tests;
       select_tests;

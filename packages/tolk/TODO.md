@@ -154,10 +154,6 @@ acceptance requirement; skipped tests are not execution evidence.
 - Preserve source placement and sharding in `Rand.rand_like` and dropout;
   generating fresh mask storage on the default device does not preserve the
   source's device. Cover nondefault devices and per-shard generation.
-  Make `Creation.clone` allocate per-shard extents and preserve shard axes,
-  including symbolic views and independently mutable output storage. Match the
-  target's early DISK-clone rejection and assignment-axis compatibility checks.
-  Cover mismatched sharding axes before constructing STORE effects.
 - Measure search cost, selected-kernel latency, JIT replay, allocations and
   handle counts on consumer workloads.
 - At the reference pin move, `find_bufs`' read/write cycle check keys on the

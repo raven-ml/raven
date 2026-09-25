@@ -34,12 +34,12 @@ let assign t x =
         Dtype_ops.cast x (D.least_upper_dtype [ T.dtype t; T.dtype x ])
       else x
     in
-    (match (T.device t, T.device x) with
-    | Some dt, Some dx when dt <> dx ->
-        invalid_arg "Op.assign: device mismatch"
-    | _ -> ());
     if not (D.equal (T.dtype t) (T.dtype x)) then
       invalid_arg "Op.assign: dtype mismatch";
+    (match T.device t, T.device x with
+    | Some (Uop.Multi _), Some _ when Uop.axis (T.uop t) <> Uop.axis (T.uop x) ->
+        invalid_arg "Op.assign: sharding axis mismatch"
+    | _ -> ());
     let dst = T.uop t in
     let assigned_to = Uop.storage_base dst in
     if not (Uop.has_buffer_identity assigned_to)

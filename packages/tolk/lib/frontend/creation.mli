@@ -29,13 +29,15 @@ val empty :
 val clone : ?device:Tolk_uop.Uop.device -> Tensor.t -> Tensor.t
 (** [clone t] is [t]'s value in fresh storage. Symbolic dimensions allocate
     at their upper bounds and retain their logical shape through a view.
-    Writes into the clone leave [t]'s storage alone. The buffer is placed on
-    [device], which defaults to [t]'s
-    device, and [t] is copied across when it lives on another one. A constant
-    [t] has no device, and without [device] its clone is placed by whatever
-    consumes it. Weak inputs commit to a concrete dtype according to
-    {!Tolk_uop.Uop.commit_dtype}; exact integers outside all storage types
-    raise [Invalid_argument]. *)
+    Writes into the clone leave [t]'s storage alone. [device] defaults to
+    [t]'s device, or the selected default device for device-less values.
+    A multi-device destination preserves [t]'s sharding axis and allocates
+    each shard separately; a single-device destination gathers the whole tensor.
+
+    Weak inputs commit to a concrete dtype according to
+    {!Tolk_uop.Uop.commit_dtype}. Raises [Invalid_argument] for exact integers
+    outside all storage types or a DISK destination, which requires an explicit
+    store. *)
 
 val shard : ?axis:int -> devices:string list -> Tensor.t -> Tensor.t
 (** [shard ~devices t] replicates [t] across [devices]. With [axis], it

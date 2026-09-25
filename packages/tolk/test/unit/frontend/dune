@@ -1,6 +1,7 @@
 (tests
  (names
   test_frontend
+  test_clone
   test_run
   test_custom_kernel
   test_block_matmul
@@ -11,6 +12,7 @@
   test_quant_matmul)
  (modules
   test_frontend
+  test_clone
   test_run
   test_custom_kernel
   test_block_matmul
