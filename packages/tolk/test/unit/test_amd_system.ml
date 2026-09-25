@@ -83,6 +83,46 @@ let is_failure = function Failure _ -> true | _ -> false
 let () =
   run "System"
     [
+      group "setup rollback"
+        [
+          test "success transfers ownership" (fun () ->
+              let released = ref false in
+              equal int 7 (System.with_rollback (fun rollback ->
+                  rollback (fun () -> released := true); 7));
+              is_false !released);
+          test "each acquisition failure releases only acquired resources" (fun () ->
+              for fail_at = 0 to 4 do
+                let released = ref [] in
+                raises_match (Exn.failure ~substring:"acquisition failed") (fun () ->
+                    System.with_rollback (fun rollback ->
+                        for resource = 0 to 4 do
+                          if resource = fail_at then failwith "acquisition failed";
+                          rollback (fun () -> released := !released @ [resource])
+                        done));
+                equal (list int) (List.init fail_at (fun i -> fail_at - i - 1)) !released
+              done);
+          test "cleanup errors retain the cause and do not skip independent releases" (fun () ->
+              let released = ref [] in
+              raises_match (Exn.failure ~substring:"Rollback failed:") (fun () ->
+                  System.with_rollback (fun rollback ->
+                      rollback (fun () -> released := !released @ [1]);
+                      rollback (fun () -> failwith "cleanup failed");
+                      rollback (fun () -> released := !released @ [3]);
+                      failwith "setup failed"));
+              equal (list int) [3; 1] !released);
+          test "failed setup closes real descriptors" (fun () ->
+              let path = Filename.temp_file "tolk-rollback" ".tmp" in
+              Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+                  let descriptor = ref None in
+                  raises_match (Exn.failure ~substring:"after open") (fun () ->
+                      System.with_rollback (fun rollback ->
+                          let fd = File_io.openfile path ~flags:File_io.o_rdwr in
+                          descriptor := Some fd;
+                          rollback (fun () -> File_io.close fd);
+                          failwith "after open"));
+                  raises_match (function Failure _ -> true | _ -> false)
+                    (fun () -> File_io.close (Option.get !descriptor))));
+        ];
       group "device visibility"
         [
           test "preserves enumeration without indices" (fun () ->

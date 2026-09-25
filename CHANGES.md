@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed AMD KFD and NVIDIA NVK bootstrap releases acquired descriptors and
+  per-device KFD events, so retries do not accumulate abandoned resources.
+  KFD retains its shared event page if registration may have reached the kernel.
+
 - `Device.profile` calibrates GPU timestamps to the host clock; `Profile.output`
   preserves timing between devices instead of starting each device at zero.
   Operation durations retain their original device-clock measurements.

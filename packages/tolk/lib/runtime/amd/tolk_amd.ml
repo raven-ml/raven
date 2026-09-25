@@ -100,6 +100,9 @@ module Kfd = struct
     int * int
     = "caml_tolk_kfd_create_event"
 
+  external destroy_event : int -> event_id:int -> unit
+    = "caml_tolk_kfd_destroy_event"
+
   external wait_events :
     int ->
     queue_event_id:int ->
@@ -1364,7 +1367,9 @@ module Kfd_iface = struct
   (* Driver-wide state, shared by every device: the driver file descriptor,
      the usable GPU nodes, and the one interrupt-mailbox page. *)
   let state : (int * string array) option ref = ref None
-  let event_page : mem Hcq.Buffer.t option ref = ref None
+  (* Page registration can succeed before event creation fails in KFD.
+     Keep that page alive and latch an ambiguous registration failure. *)
+  let event_page : (mem Hcq.Buffer.t * exn option) option ref = ref None
 
   let read_file path = In_channel.with_open_bin path In_channel.input_all
   let int_of_file path = int_of_string (String.trim (read_file path))
@@ -1377,8 +1382,9 @@ module Kfd_iface = struct
   let scan () =
     match !state with
     | Some s -> s
-    | None ->
+    | None -> System.with_rollback (fun rollback ->
         let fd = Hcq.File_io.openfile "/dev/kfd" ~flags:Hcq.File_io.o_rdwr in
+        rollback (fun () -> Hcq.File_io.close fd);
         let gpus =
           Array.of_list (List.filter usable_gpu (Array.to_list (Sys.readdir topology)))
         in
@@ -1388,7 +1394,7 @@ module Kfd_iface = struct
         let gpus = Array.of_list
             (Tolk_hcq.System.filter_visible_devices "AMD" (Array.to_list gpus)) in
         state := Some (fd, gpus);
-        (fd, gpus)
+        (fd, gpus))
 
   let count () = Array.length (snd (scan ()))
 
@@ -1506,7 +1512,7 @@ module Kfd_iface = struct
 
   let create ~device_id =
     let kfd, gpus = scan () in
-    if device_id >= Array.length gpus then
+    if device_id < 0 || device_id >= Array.length gpus then
       failwith
         (Printf.sprintf
            "No device found for %d. Requesting more devices than the system \
@@ -1519,57 +1525,60 @@ module Kfd_iface = struct
     let ip_versions =
       discover_ips (Printf.sprintf "/sys/class/drm/renderD%d/device" drm_minor)
     in
-    let drm_fd =
-      Hcq.File_io.openfile
-        (Printf.sprintf "/dev/dri/renderD%d" drm_minor)
-        ~flags:Hcq.File_io.o_rdwr
-    in
-    let kfd_ver = Kfd.get_version kfd in
-    Kfd.acquire_vm kfd ~drm_fd ~gpu_id;
-    if kfd_ver >= (1, 14) then Kfd.runtime_enable kfd ~mode_mask:0;
-    let page =
-      match !event_page with
-      | Some page ->
-          map_to_gpu ~kfd ~gpu_id page;
-          page
-      | None ->
-          let page = alloc_raw ~kfd ~drm_fd ~gpu_id ~uncached:true 0x8000 in
-          (* register the page so signal-event slots live in it *)
-          ignore
-            (Kfd.create_event kfd
-               ~event_page_offset:(Hcq.Buffer.meta page).handle
-               ~event_type:Kfd.event_type_signal ~auto_reset:0
-              : int * int);
-          event_page := Some page;
-          page
-    in
-    let queue_event_id, queue_event_slot =
-      Kfd.create_event kfd ~event_page_offset:0L
-        ~event_type:Kfd.event_type_signal ~auto_reset:1
-    in
-    let mem_fault_event_id, _ =
-      Kfd.create_event kfd ~event_page_offset:0L
-        ~event_type:Kfd.event_type_memory ~auto_reset:0
-    in
-    let hw_fault_event_id, _ =
-      Kfd.create_event kfd ~event_page_offset:0L
-        ~event_type:Kfd.event_type_hw_exception ~auto_reset:0
-    in
-    {
-      gpu_id;
-      props;
-      ip_versions;
-      drm_fd;
-      queue_event = { event_id = queue_event_id };
-      queue_event_mailbox_ptr =
-        Nativeint.add (Hcq.Buffer.va page)
-          (Nativeint.of_int (queue_event_slot * 8));
-      mem_fault_event_id;
-      hw_fault_event_id;
-      doorbells = None;
-      mem_fault = None;
-      hw_fault = None;
-    }
+    System.with_rollback (fun rollback ->
+        let drm_fd =
+          Hcq.File_io.openfile
+            (Printf.sprintf "/dev/dri/renderD%d" drm_minor)
+            ~flags:Hcq.File_io.o_rdwr
+        in
+        rollback (fun () -> Hcq.File_io.close drm_fd);
+        let kfd_ver = Kfd.get_version kfd in
+        Kfd.acquire_vm kfd ~drm_fd ~gpu_id;
+        if kfd_ver >= (1, 14) then Kfd.runtime_enable kfd ~mode_mask:0;
+        let page, (queue_event_id, queue_event_slot) =
+          match !event_page with
+          | Some (_, Some error) -> raise error
+          | Some (page, None) ->
+              map_to_gpu ~kfd ~gpu_id page;
+              page, Kfd.create_event kfd ~event_page_offset:0L
+                ~event_type:Kfd.event_type_signal ~auto_reset:1
+          | None ->
+              let page = alloc_raw ~kfd ~drm_fd ~gpu_id ~uncached:true 0x8000 in
+              let event = match Kfd.create_event kfd
+                  ~event_page_offset:(Hcq.Buffer.meta page).handle
+                  ~event_type:Kfd.event_type_signal ~auto_reset:1 with
+                | event -> event_page := Some (page, None); event
+                | exception error ->
+                    event_page := Some (page, Some error);
+                    raise error in
+              page, event
+        in
+        rollback (fun () -> Kfd.destroy_event kfd ~event_id:queue_event_id);
+        let mem_fault_event_id, _ =
+          Kfd.create_event kfd ~event_page_offset:0L
+            ~event_type:Kfd.event_type_memory ~auto_reset:0
+        in
+        rollback (fun () -> Kfd.destroy_event kfd ~event_id:mem_fault_event_id);
+        let hw_fault_event_id, _ =
+          Kfd.create_event kfd ~event_page_offset:0L
+            ~event_type:Kfd.event_type_hw_exception ~auto_reset:0
+        in
+        rollback (fun () -> Kfd.destroy_event kfd ~event_id:hw_fault_event_id);
+        {
+          gpu_id;
+          props;
+          ip_versions;
+          drm_fd;
+          queue_event = { event_id = queue_event_id };
+          queue_event_mailbox_ptr =
+            Nativeint.add (Hcq.Buffer.va page)
+              (Nativeint.of_int (queue_event_slot * 8));
+          mem_fault_event_id;
+          hw_fault_event_id;
+          doorbells = None;
+          mem_fault = None;
+          hw_fault = None;
+        })
 
   let props t = t.props
   let ip_versions t = t.ip_versions

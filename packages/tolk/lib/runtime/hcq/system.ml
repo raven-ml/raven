@@ -7,6 +7,22 @@
 
 module File_io = Hcq.File_io
 
+let with_rollback f =
+  let actions = ref [] in
+  match f (fun release -> actions := release :: !actions) with
+  | result -> result
+  | exception error ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      let failures = List.filter_map (fun release ->
+          match release () with
+          | () -> None
+          | exception error -> Some (Printexc.to_string error)) !actions in
+      let error = match failures with
+        | [] -> error
+        | failures -> Failure (Printexc.to_string error ^ "\nRollback failed: " ^
+            String.concat "; " failures) in
+      Printexc.raise_with_backtrace error backtrace
+
 let filter_visible_devices device devices =
   let old = Tolk.Helpers.getenv_str "HCQ_VISIBLE_DEVICES" "" in
   if old <> "" then

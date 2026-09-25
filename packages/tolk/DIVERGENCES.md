@@ -132,10 +132,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   not consistently roll back allocation and mapping failures. Tolk returns
   PCI virtual/physical reservations and new page tables, releases KFD/NVK
   handles acquired by failed setup, and closes NVK temporary mapping file
-  descriptors. Borrowed host mappings remain owned by the caller. Consumers:
+  descriptors. Bootstrap failures release descriptors and per-device KFD
+  events. KFD's process-wide event page remains cached; an ambiguous registration
+  failure is latched because the kernel may already retain that page.
+  Borrowed host mappings remain owned by the caller. Consumers:
   allocation retries and long-lived accelerator sessions. Coverage:
   `test_memory` allocation, zeroing, entry-write and flush failures, including
-  adjacent mappings and precreated tables. Driver fault injection and hardware
+  adjacent mappings and precreated tables; `test_amd_system` covers reverse
+  rollback order, acquisition failures, cleanup failures and descriptor release.
+  Driver fault injection and hardware
   recovery remain open in TODO. Reconsider when upstream provides equivalent
   failure ownership rules.
 

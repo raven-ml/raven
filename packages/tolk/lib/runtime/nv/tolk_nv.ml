@@ -841,12 +841,16 @@ module Nvk_iface = struct
   let init_root () =
     match !state with
     | Some st -> st
-    | None ->
+    | None -> Tolk_hcq.System.with_rollback (fun rollback ->
         let fd_ctl = File_io.openfile "/dev/nvidiactl" ~flags:File_io.o_rdwr in
+        rollback (fun () -> File_io.close fd_ctl);
         let fd_uvm = File_io.openfile "/dev/nvidia-uvm" ~flags:File_io.o_rdwr in
+        rollback (fun () -> File_io.close fd_uvm);
         let fd_uvm_2 =
           File_io.openfile "/dev/nvidia-uvm" ~flags:File_io.o_rdwr
         in
+        rollback (fun () -> File_io.close fd_uvm_2);
+        (* Closing the control fd releases its root client on failed setup. *)
         (* the root client exists before the driver generation is known;
            the bootstrap decodes with the oldest layouts *)
         let boot = Nv_defs_versions.v570 in
@@ -898,7 +902,7 @@ module Nvk_iface = struct
           }
         in
         state := Some st;
-        st
+        st)
 
   let rm_alloc st ~parent ~cls ?params () =
     rm_alloc' ~fd_ctl:st.fd_ctl ~defs:st.defs ~root:st.root ~parent ~cls
@@ -920,40 +924,40 @@ module Nvk_iface = struct
       File_io.openfile (Printf.sprintf "/dev/nvidia%d" minor)
         ~flags:File_io.o_rdwr
     in
-    let registered = ref false in
-    Fun.protect ~finally:(fun () -> if not !registered then File_io.close fd)
-      (fun () ->
+    Tolk_hcq.System.with_rollback (fun rollback ->
+        rollback (fun () -> File_io.close fd);
         let module P = Defs.Nv_ioctl_register_fd in
         let b = Nv_tables.create_blob P.sizeof in
         Nv_tables.set_field b P.ctl_fd st.fd_ctl;
         escape fd ~nr:Defs.nv_esc_register_fd b;
-        registered := true;
         fd)
 
   let create st ~device_id =
-    if device_id >= Array.length st.gpus_info then
+    if device_id < 0 || device_id >= Array.length st.gpus_info then
       failwith
         (Printf.sprintf
            "No device found for %d. Requesting more devices than the system \
             has?"
            device_id);
     let gpu = st.gpus_info.(device_id) in
-    let fd_dev = new_gpu_fd st ~minor:gpu.minor_number in
-    let module P = Defs.Nv0000_ctrl_gpu_get_id_info_v2_params in
-    let b = Nv_tables.create_blob P.sizeof in
-    Nv_tables.set_field b P.gpuid gpu.gpu_id;
-    rm_control st ~obj:st.root ~cmd:Defs.nv0000_ctrl_cmd_gpu_get_id_info_v2
-      ~params:b ();
-    {
-      device_id;
-      fd_dev;
-      gpu_minor = gpu.minor_number;
-      gpu_instance = Nv_tables.get_field b P.deviceinstance;
-      nvdevice = 0;
-      subdevice = 0;
-      virtmem = 0;
-      gpu_uuid = Bytes.make 16 '\000';
-    }
+    Tolk_hcq.System.with_rollback (fun rollback ->
+        let fd_dev = new_gpu_fd st ~minor:gpu.minor_number in
+        rollback (fun () -> File_io.close fd_dev);
+        let module P = Defs.Nv0000_ctrl_gpu_get_id_info_v2_params in
+        let b = Nv_tables.create_blob P.sizeof in
+        Nv_tables.set_field b P.gpuid gpu.gpu_id;
+        rm_control st ~obj:st.root ~cmd:Defs.nv0000_ctrl_cmd_gpu_get_id_info_v2
+          ~params:b ();
+        {
+          device_id;
+          fd_dev;
+          gpu_minor = gpu.minor_number;
+          gpu_instance = Nv_tables.get_field b P.deviceinstance;
+          nvdevice = 0;
+          subdevice = 0;
+          virtmem = 0;
+          gpu_uuid = Bytes.make 16 '\000';
+        })
 
   (* Memory *)
 

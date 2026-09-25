@@ -43,6 +43,7 @@ _Static_assert(sizeof(struct kfd_ioctl_map_memory_to_gpu_args) == 24,
 _Static_assert(sizeof(struct kfd_ioctl_unmap_memory_from_gpu_args) == 24,
                "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_create_event_args) == 32, "kfd ABI");
+_Static_assert(sizeof(struct kfd_ioctl_destroy_event_args) == 8, "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_wait_events_args) == 24, "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_create_queue_args) == 96, "kfd ABI");
 _Static_assert(sizeof(struct kfd_memory_exception_failure) == 16, "kfd ABI");
@@ -195,6 +196,15 @@ CAMLprim value caml_tolk_kfd_create_event(value v_fd, value v_page_offset,
   Store_field(res, 0, Val_long(a.event_id));
   Store_field(res, 1, Val_long(a.event_slot_index));
   CAMLreturn(res);
+}
+
+CAMLprim value caml_tolk_kfd_destroy_event(value v_fd, value v_event_id) {
+  CAMLparam2(v_fd, v_event_id);
+  struct kfd_ioctl_destroy_event_args a = {0};
+  a.event_id = (uint32_t)Long_val(v_event_id);
+  if (kfd_ioctl(Int_val(v_fd), AMDKFD_IOC_DESTROY_EVENT, &a) < 0)
+    raise_errno("AMDKFD_IOC_DESTROY_EVENT");
+  CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_tolk_kfd_wait_events(value v_fd, value v_queue_id,
@@ -354,6 +364,11 @@ CAMLprim value caml_tolk_kfd_create_event(value v_fd, value v_page_offset,
   (void)v_event_type;
   (void)v_auto_reset;
   return kfd_unavailable();
+}
+
+CAMLprim value caml_tolk_kfd_destroy_event(value v_fd, value v_event_id) {
+  CAMLparam2(v_fd, v_event_id);
+  CAMLreturn(kfd_unavailable());
 }
 
 CAMLprim value caml_tolk_kfd_wait_events(value v_fd, value v_queue_id,

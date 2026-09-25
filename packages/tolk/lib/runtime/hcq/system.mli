@@ -18,6 +18,16 @@
     them. On other systems the module loads and its pure entry points
     work, but device probing fails cleanly. *)
 
+val with_rollback : (((unit -> unit) -> unit) -> 'a) -> 'a
+(** [with_rollback f] calls [f register]. Register a release action after each
+    successful acquisition. If [f] raises, actions run in reverse order;
+    otherwise ownership transfers to its result and no action runs.
+    The original exception and backtrace are preserved when cleanup succeeds.
+    Cleanup failures do not prevent later actions: they are appended to the
+    original error in a [Failure]. Register dependent releases in one action
+    when a failed release must prevent the next one. [register] must not escape
+    the call to [f]. *)
+
 val filter_visible_devices : string -> 'a list -> 'a list
 (** [filter_visible_devices device devices] selects and orders [devices] using
     the indices of [device]'s [DEV] target. Comma-separated indices preserve

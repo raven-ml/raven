@@ -620,7 +620,10 @@ module Kfd_iface : sig
   (** [create ~device_id] opens the [device_id]th usable GPU node (in
       stable node order), acquires its virtual-memory space, and
       registers the completion and fault events. Raises [Failure] if
-      [device_id] names no node. *)
+      [device_id] names no node. Failed setup releases the descriptor and
+      per-device events. The process-wide event page and its mappings remain
+      cached. An ambiguous page-registration failure is latched: KFD may
+      already retain the page even when event creation fails. *)
 
   val props : t -> (string * int) list
   (** [props t] are the node's topology properties, e.g.
