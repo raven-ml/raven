@@ -842,6 +842,8 @@ let tests =
           test_scatter_duplicates_on_metal;
         test "bitcast reads on the GPU the bits eager reads"
           (check_bitcast_matches_eager ~devices:[ Rune.device "METAL" ]);
+        test "gathers keep -0 on the GPU"
+          (check_gathers_keep_negative_zero ~devices:[ Rune.device "METAL" ]);
         slow "top_k over a row of 2^20 entries on the GPU"
           (check_top_k_long_row ~devices:[ Rune.device "METAL" ]);
         slow "top_k selects on the GPU what it selects eagerly"

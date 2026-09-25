@@ -475,6 +475,42 @@ let check_bitcast_matches_eager ?devices () =
        |])
     Nx.bfloat16
 
+(* A compiled gather returns the elements it selects, so a -0 stays -0 through
+   strided and listed slices, [take] and [take_along_axis], as eagerly. Each
+   result is compared as the bits of its float width, widened to int32. *)
+let check_gathers_keep_negative_zero ?devices () =
+  let check (type b c d) name (dtype : (float, b) Nx.dtype)
+      (bits : (c, d) Nx.dtype) =
+    let row = [| -0.; 0.; -1.; 0.; -0.; -2. |] in
+    let x = Nx.cast dtype (Nx.create f32 [| 1; 6 |] row) in
+    let table =
+      Nx.cast dtype
+        (Nx.init f32 [| 100; 2 |] (fun i ->
+             if (i.(0) + i.(1)) mod 3 = 0 then -0. else float_of_int i.(1)))
+    in
+    let rows = Nx.create Nx.int32 [| 4 |] [| 0l; 3l; 6l; 99l |] in
+    let columns = Nx.create Nx.int32 [| 1; 3 |] [| 0l; 4l; 2l |] in
+    let bits_of t = Nx.to_array (Nx.cast Nx.int32 (Nx.bitcast bits t)) in
+    List.iter
+      (fun (msg, f, x) ->
+        equal
+          ~msg:(Printf.sprintf "%s %s" name msg)
+          (array int32)
+          (bits_of (f x))
+          (bits_of (Rune.jit' ?devices f x)))
+      [
+        ("strided slice", Nx.slice [ Nx.A; Nx.Rs (0, 6, 2) ], x);
+        ("reversed strided slice", Nx.slice [ Nx.A; Nx.Rs (5, -7, -2) ], x);
+        ("listed slice", Nx.slice [ Nx.A; Nx.L [ 4; 0; 1 ] ], x);
+        ("strided rows", Nx.slice [ Nx.Rs (0, 100, 3) ], table);
+        ("take", Nx.take ~axis:0 ~indices:rows, table);
+        ("take_along_axis", Nx.take_along_axis ~axis:1 ~indices:columns, x);
+      ]
+  in
+  check "float32" Nx.float32 Nx.int32;
+  check "float16" Nx.float16 Nx.int16;
+  check "bfloat16" Nx.bfloat16 Nx.int16
+
 (* A row long enough for 2-bit rounds, and k * (n + 1) past int32, so the
    running count is int64: all but about a thousand entries tie at the
    threshold, more than 2^20 of them, so their count times k passes 2^31 along
