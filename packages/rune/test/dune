@@ -94,7 +94,7 @@
  (names test_tensor_parallel)
  (modules test_tensor_parallel)
  (package rune)
- (libraries rune nx tolk tolk.uop tolk.cpu windtrap rune_test_support))
+ (libraries rune nx nx.quant tolk tolk.uop tolk.cpu windtrap rune_test_support))
 
 ; A plain executable: whether a temporary is dead at the copy it checks
 ; depends on how its caller is compiled.

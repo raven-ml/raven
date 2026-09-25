@@ -95,50 +95,12 @@ let lane_index lanes =
 
 let decoded dt codes scales = Nx.contiguous (decode dt codes scales)
 
-(* In a program over several devices, with fewer positions than experts, the
-   selected experts' packed rows are gathered, then decoded, and multiplied by
-   tolk's matmul. A position that selects no expert gathers zero bytes, reading
-   nothing, and its product is set to zero after it: a zero row times an [x]
-   that is not finite is NaN. *)
-let gathered ~transpose ~p ~e ids codes scales x =
-  let ws = Nx.shape codes and is = Nx.shape ids in
-  let valid =
-    Nx.logical_and (Nx.greater_equal_s ids 0l) (Nx.less_s ids (Int32.of_int e))
-  in
-  (* An index into the weight's experts, lanes flattened: [-1] for none. *)
-  let index =
-    if p = 0 then ids
-    else
-      let q = Array.length is - p in
-      let lane = lane_index (Array.sub ws 0 p) in
-      let lane = Nx.reshape (Array.append (Nx.shape lane) (ones q)) lane in
-      Nx.where valid
-        (Nx.add (Nx.mul_s lane (Int32.of_int e)) ids)
-        (Nx.full Nx.int32 [||] (-1l))
-  in
-  let take part =
-    let s = Nx.shape part in
-    let r = Array.length s in
-    let inner = Array.sub s (r - 2) 2 in
-    let flat =
-      if p = 0 then part else Nx.reshape (Array.append [| -1 |] inner) part
-    in
-    let rows = Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] index) flat in
-    Nx.reshape (Array.append (Nx.shape index) inner) rows
-  in
-  let w = decoded (Nx.dtype x) (take codes) (take scales) in
-  let y = Nx.matmul x (if transpose then w else Nx.matrix_transpose w) in
-  let valid = Nx.broadcast_to (Nx.shape index) valid in
-  let tail = if Nx.ndim x = 1 then ones 1 else ones 2 in
-  let valid = Nx.reshape (Array.append (Nx.shape valid) tail) valid in
-  Nx.where valid y (Nx.zeros_like y)
-
-(* What a single-device trace gives the lowering: its device, whose measured
-   options fix the kernel's row bound and the grouping cost, [quant_matmul ?ids
-   x ~codes ~scales], tolk's [Op.quant_matmul] over traced values: [x] [[| ix;
-   m; k |]], matrices [[| e; n; k / 2 |]] and ids [[| i |]], each of the [i]
-   instances taking block [t / (i / ix)] of [x]; and [block_matmul ~transpose x
-   w ~ids], tolk's [Op.block_matmul]. *)
+(* What a trace gives the lowering: its first device, whose measured options fix
+   the kernel's row bound and the grouping cost, [quant_matmul ?ids x ~codes
+   ~scales], tolk's [Op.quant_matmul] over traced values: [x] [[| ix; m; k |]],
+   matrices [[| e; n; k / 2 |]] and ids [[| i |]], each of the [i] instances
+   taking block [t / (i / ix)] of [x]; and [block_matmul ~transpose x w ~ids],
+   tolk's [Op.block_matmul]. *)
 type kernels = {
   device : Tolk.Device.t;
   quant_matmul :
@@ -266,65 +228,6 @@ let by_kernel kernels ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
    row block of [x] and an id. Lanes are flattened into the experts, an id [i]
    of lane [l] addressing expert [l * e + i], so one ranking serves every
    lane. *)
-
-(* Without the block kernel, in a program over several devices, the dense form
-   (rule 3's stop outcome): every matrix is decoded once, and every row of [x]
-   is multiplied by every expert of its lane, each position then keeping its own
-   expert's product; an index outside the experts gathers zeros. It holds [e]
-   products per position where a copy of one decoded matrix per position would
-   hold [n * k] values each (68 GB for gpt-oss's [gate_up] at a 512-token
-   prefill). Routes are not grouped there: their ranking would run along a
-   sharded axis. The products are materialised: fused into the gather, the
-   product loses its matmul kernel. *)
-let every ~transpose ~p ~e ids codes scales x =
-  let vector = Nx.ndim x = 1 in
-  let x =
-    if vector then Nx.reshape (Array.append [| 1 |] (Nx.shape x)) x else x
-  in
-  let xs = Nx.shape x and is = Nx.shape ids in
-  let xr = Array.length xs in
-  let xb = Array.sub xs 0 (xr - 2) and mk = Array.sub xs (xr - 2) 2 in
-  let q = Array.length is - p in
-  let rank = max (Array.length xb) (p + q) in
-  let pre = rank - p - q in
-  (* x's batch as [pre; lanes; experts; positions]. *)
-  let xb = Array.append (ones (rank - Array.length xb)) xb in
-  let x =
-    Nx.reshape
-      (Array.concat
-         [ Array.sub xb 0 (pre + p); [| 1 |]; Array.sub xb (pre + p) q; mk ])
-      x
-  in
-  let w = decoded (Nx.dtype x) codes scales in
-  let ds = Nx.shape w in
-  let w =
-    Nx.reshape
-      (Array.concat
-         [ ones pre; Array.sub ds 0 (p + 1); ones q; Array.sub ds (p + 1) 2 ])
-      w
-  in
-  let z =
-    Nx.contiguous (Nx.matmul x (if transpose then w else Nx.matrix_transpose w))
-  in
-  let zs = Nx.shape z in
-  let lanes = broadcast (Array.sub zs pre p) (Array.sub is 0 p)
-  and positions = broadcast (Array.sub zs (pre + p + 1) q) (Array.sub is p q) in
-  let rows = Array.sub zs (pre + p + 1 + q) 2 in
-  let batch = Array.concat [ Array.sub zs 0 pre; lanes ] in
-  let z =
-    Nx.broadcast_to (Array.concat [ batch; [| e |]; positions; rows ]) z
-  in
-  let index =
-    Nx.broadcast_to
-      (Array.concat [ batch; [| 1 |]; positions; rows ])
-      (Nx.reshape
-         (Array.concat
-            [ ones pre; Array.sub is 0 p; [| 1 |]; Array.sub is p q; ones 2 ])
-         ids)
-  in
-  let y = Nx.take_along_axis ~axis:(pre + p) ~indices:index z in
-  let rows = if vector then [| rows.(1) |] else rows in
-  Nx.reshape (Array.concat [ batch; positions; rows ]) y
 
 (* The product's batch: [x]'s batch [xb], [ids]'s shape [is] and the weight's
    lanes, broadcast. *)
@@ -599,12 +502,12 @@ let groups kernels ~ids (Nx_quant.Mxfp4 { codes; scales }) x =
   m = 1 && routes > e
   && r *. (r -. 1.0) /. (2.0 *. float_of_int e) > tau kernels.device
 
-(* On one device every decoded form multiplies with the block kernel. Without
-   ids, the weight's stack is its experts and each position of the product's
-   batch addresses its own matrix. With fewer positions than experts, the
-   selected experts' packed rows are gathered, then decoded, and each position
-   addresses its gathered matrix; a position that selects no expert gathers
-   zeros and addresses none. *)
+(* Every decoded form multiplies with the block kernel. Without ids, the
+   weight's stack is its experts and each position of the product's batch
+   addresses its own matrix. With fewer positions than experts, the selected
+   experts' packed rows are gathered, then decoded, and each position addresses
+   its gathered matrix; a position that selects no expert gathers zeros and
+   addresses none. *)
 let plain_blocks kernels ~transpose codes scales x =
   let cs = Nx.shape codes in
   let r = Array.length cs in
@@ -639,30 +542,17 @@ let gathered_blocks kernels ~transpose ~p ~e ids codes scales x =
 
 let product kernels ~transpose ?ids (Nx_quant.Mxfp4 { codes; scales }) x =
   match ids with
-  | None -> (
-      match kernels with
-      | Some kernels -> plain_blocks kernels ~transpose codes scales x
-      | None ->
-          report "decoded";
-          let w = decoded (Nx.dtype x) codes scales in
-          Nx.matmul x (if transpose then w else Nx.matrix_transpose w))
-  | Some ids -> (
+  | None -> plain_blocks kernels ~transpose codes scales x
+  | Some ids ->
       let ws = Nx.shape codes and is = Nx.shape ids in
       let p = Array.length ws - 3 in
       let e = ws.(p) in
       let positions = count (Array.sub is p (Array.length is - p)) in
-      match kernels with
-      | Some kernels when positions < e ->
-          gathered_blocks kernels ~transpose ~p ~e ids codes scales x
-      | Some kernels ->
-          instances kernels ~form:"one block per position" ~transpose ~p ~e ids
-            codes scales x
-      | None when positions < e ->
-          report "gathered";
-          gathered ~transpose ~p ~e ids codes scales x
-      | None ->
-          report "dense";
-          every ~transpose ~p ~e ids codes scales x)
+      if positions < e then
+        gathered_blocks kernels ~transpose ~p ~e ids codes scales x
+      else
+        instances kernels ~form:"one block per position" ~transpose ~p ~e ids
+          codes scales x
 
 (* Rule 2 first, then rule 1. The kernel takes float32, bfloat16 and float16 as
    they are, and the transposed product, the reverse rule's, never takes it.
@@ -679,12 +569,12 @@ let apply (type b) kernels ~transpose ?ids w (x : (float, b) Nx.t) :
   in
   let form : type c. (float, c) Nx.t -> (float, c) Nx.t =
    fun x ->
-    match (kernels, ids) with
-    | Some kernels, Some ids when groups kernels ~ids w x ->
+    match ids with
+    | Some ids when groups kernels ~ids w x ->
         let (Nx_quant.Mxfp4 { codes; scales }) = w in
         let p = Nx.ndim codes - 3 in
         grouped kernels ~transpose ~p ~e:(Nx.dim p codes) ids codes scales x
-    | Some kernels, _ when not transpose -> (
+    | _ when not transpose -> (
         match by_kernel kernels ?ids w x with
         | Some y ->
             report "kernel";
@@ -696,10 +586,9 @@ let apply (type b) kernels ~transpose ?ids w (x : (float, b) Nx.t) :
   | Nx.Float32 | Nx.BFloat16 | Nx.Float16 -> form x
   | dt -> Nx.cast dt (form (Nx.cast Nx.float32 x))
 
-(* [lower kernels w op] is [op]'s compiled form; [kernels] is [None] in a
-   program over several devices. *)
+(* [lower kernels w op] is [op]'s compiled form. *)
 let lower : type a b.
-    kernels option -> Nx_quant.t -> (a, b) Nx_quant.Effect.op -> (a, b) Nx.t =
+    kernels -> Nx_quant.t -> (a, b) Nx_quant.Effect.op -> (a, b) Nx.t =
  fun kernels (Nx_quant.Mxfp4 { codes; scales } as w) -> function
   | Apply { ids; x; transpose } -> apply kernels ~transpose ?ids w x
   | Dequant dt -> decode dt codes scales

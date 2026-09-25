@@ -167,6 +167,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx_quant.apply` inside `Rune.jit` over several devices takes the kernels
+  one device takes, on each device's slices. Over experts split across the
+  devices, each device multiplies the routes to its own experts and the
+  partial products sum, whatever device a route's token is on. It decoded
+  every expert of every lane (the dense form).
 - A consumed argument of `Rune.jit` over several devices lends its storage,
   its buffer on every device, to the result that continues it, as on one
   device: a carry or a pool written by index keeps one generation on each

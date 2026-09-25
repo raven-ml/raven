@@ -884,8 +884,8 @@ let split_rows (ids, x) =
   in
   (Nx.place rows ids, Nx.place rows x)
 
-(* A program over several devices multiplies the blocks by their gathered
-   matrices and groups no routes. *)
+(* A program over several devices multiplies each device's routes and rows with
+   the kernels one device uses. *)
 let test_over_devices () =
   let w = weight ~scale:moderate [| 4; 8; 64 |] in
   let routed (ids, x) = Nx_quant.apply ~ids w x in
@@ -905,13 +905,34 @@ let test_over_devices () =
       ( "many routes",
         ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1)),
         floats [| 8; 2; 1; 64 |] );
-    ]
+    ];
+  (* Experts split across the devices under whole routes: each device multiplies
+     the routes to its own experts, and the products sum. *)
+  let two = [ Rune.device "CPU:1"; Rune.device "CPU:2" ] in
+  let ids = ints [| 8; 2 |] (Array.init 16 (fun i -> (i * 5 mod 6) - 1))
+  and x = floats [| 8; 1; 1; 64 |] in
+  close ~msg:"split experts"
+    (routed (ids, x))
+    (Rune.jit
+       Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
+       (fun w -> Nx_quant.apply ~ids w x)
+       (Nx_quant.place (Nx.Placement.sharded ~axis:0 two) w));
+  (* Routes and rows split as well: a route may name an expert on the other
+     device, which multiplies it. *)
+  let ids = ints [| 4; 1 |] [| 3; 0; 1; 2 |] and x = floats [| 4; 1; 1; 64 |] in
+  close ~msg:"split experts under split routes"
+    (routed (ids, x))
+    (Rune.jit
+       Nx.Ptree.(Nx_quant.ptree @-> inputs () @-> returns tensor)
+       (fun w (ids, x) -> Nx_quant.apply ~ids w x)
+       (Nx_quant.place (Nx.Placement.sharded ~axis:0 two) w)
+       (split_rows (ids, x)))
 
 (* The form each product takes, as [RUNE_JIT_DEBUG=1] logs it, in a child
    process that reads the variable fresh. On Metal, 16 routes over 4 experts
    group, forward and transposed; 40 routes over 40 experts do not, as each
    block would be one row. The CPU groups none of them (τ = 1024), and a program
-   over several devices takes the dense form. *)
+   over several devices takes the form one device takes, per device. *)
 let form_role = "RUNE_QUANT_FORM_ROLE"
 
 let form_cases () =
@@ -1013,7 +1034,7 @@ let test_forms () =
     (grouped "sixteen routes, transposed");
   is_false ~msg:"one route per expert does not group"
     (grouped "one route per expert");
-  equal ~msg:"over two devices, the dense form" (list string) [ "dense" ]
+  equal ~msg:"over two devices, the kernel on each" (list string) [ "kernel" ]
     (Hashtbl.find_all forms "sixteen routes over two devices");
   (* Past the row bound; on Metal the rows are padded to the block kernel's
      smallest tile, so that its pinned options apply. *)

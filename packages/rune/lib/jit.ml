@@ -1876,6 +1876,21 @@ let aligned st q x =
   then tolk_of st x
   else resharded st q x
 
+(* The placement over [ds] of [u] as tolk lays it out: split along the axis its
+   [Unshard] cuts by the device range, or a copy on each device. A value after
+   the effects that wrote it is laid out as its storage. *)
+let laid_out ds u =
+  let u = if U.op u = Tolk_uop.Ops.After then (U.src u).(0) else u in
+  match U.sharding u with
+  | [] -> Nx.Placement.replicated ds
+  | [ (axis, _) ] -> Nx.Placement.sharded ~axis ds
+  | _ -> unsupported "a value cut along several axes"
+
+(* A kernel's result [tt] in [st]'s program, where tolk's kernel builder put
+   it. *)
+let kernel_result st dt tt =
+  traced st (laid_out st.st_devices (F.Tensor.uop tt)) dt tt
+
 (* Where the result of the operation performing [eff] lives in [st]'s program:
    raises [Invalid_argument] as nx does when its operands cannot meet. *)
 let result_placement : type c. state -> c Effect.t -> Nx.Placement.t =
@@ -2475,35 +2490,47 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                       (F.Dtype_ops.cast tb TD.float32))
                    (F.Tensor.dtype ta)
                else F.Op.matmul ta tb))
-    (* Quantised products lower to Nx compositions, traced under this handler
-       like the function's own operations, and on a single device to tolk's
-       kernels over the traced values. *)
+    (* Quantised products lower to Nx compositions and tolk's kernels over the
+       traced values, traced under this handler like the function's own
+       operations. A block or instance names its matrix by id, which over
+       matrices split along their first axis may be another device's: its rows
+       and ids are brought whole, and each device multiplies the ones whose
+       matrix it holds (tolk's partial product). Otherwise rows are split with
+       their ids. *)
     | Nx_quant.Effect.E_quant { w; op } ->
-        let kernels =
-          if multi st then None
+        let operands ids x matrices =
+          if
+            Option.is_some ids
+            && List.mem_assoc 0 (Nx_effect.Grid.cuts (placement_in st matrices))
+          then
+            (resharded st (here st) x, Option.map (resharded st (here st)) ids)
           else
-            let quant_matmul ?ids x ~codes ~scales =
-              let part name t =
-                let tt = go t in
-                if Lazy.force jit_debug >= 1 && not (is_storage tt) then
-                  Printf.eprintf
-                    "rune.jit: quantised product: %s is a view, copied on \
-                     every call\n\
-                     %!"
-                    name;
-                tt
-              in
-              let codes = part "codes" codes
-              and scales = part "scales" scales in
-              traced st (here st) (dt x)
-                (F.Op.quant_matmul ?ids:(Option.map go ids) (go x) ~codes
-                   ~scales)
-            in
-            let block_matmul ~transpose x w ~ids =
-              traced st (here st) (dt x)
-                (F.Op.block_matmul ~transpose (go x) (go w) ~ids:(go ids))
-            in
-            Some { Quant.device = st.st_device; quant_matmul; block_matmul }
+            match Option.map (placement_in st) ids with
+            | Some p when Nx_effect.Grid.cuts p <> [] ->
+                (aligned st p x, Option.map go ids)
+            | _ -> (go x, Option.map go ids)
+        in
+        let quant_matmul ?ids x ~codes ~scales =
+          let part name t =
+            let tt = go t in
+            if Lazy.force jit_debug >= 1 && not (is_storage tt) then
+              Printf.eprintf
+                "rune.jit: quantised product: %s is a view, copied on every call\n\
+                 %!"
+                name;
+            tt
+          in
+          let rows, ids = operands ids x codes in
+          let codes = part "codes" codes and scales = part "scales" scales in
+          kernel_result st (dt x) (F.Op.quant_matmul ?ids rows ~codes ~scales)
+        in
+        let block_matmul ~transpose x w ~ids =
+          let rows, ids = operands (Some ids) x w in
+          kernel_result st (dt x)
+            (F.Op.block_matmul ~transpose rows (go w) ~ids:(Option.get ids))
+        in
+        let kernels =
+          { Quant.device = st.st_device; quant_matmul; block_matmul }
         in
         Some
           (fun k ->
@@ -4587,15 +4614,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       U.children (U.graph_rewrite Tolk.Multi.multi_pm (U.sink outs_u))
     else outs_u
   in
-  (* An output's placement, read from its sharding: every value of the program
-     is on its devices, split along the axis an [Unshard] cuts by the device
-     range, or a copy on each. *)
-  let place_of u =
-    match U.sharding u with
-    | [] -> Nx.Placement.replicated ds
-    | [ (axis, _) ] -> Nx.Placement.sharded ~axis ds
-    | _ -> unsupported "a result cut along several axes"
-  in
   (* Resolve each output to the buffer node realization assigned it. An output
      whose node is a graph buffer under identity wrappers (an input or constant
      returned unchanged: [U.contiguous] elides itself on buffer-identity
@@ -4634,7 +4652,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
                    (F.Tensor.uop (F.Creation.clone (F.Tensor.of_uop u))))
           | None -> U.contiguous ~src:u ()
         in
-        let place = place_of u in
+        let place = laid_out ds u in
         if not (Nx.Placement.equal tracked place) then
           err "Rune.jit: a result lands at %s where nx's rules put it at %s"
             (Format.asprintf "%a" Nx.Placement.pp place)
