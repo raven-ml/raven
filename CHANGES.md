@@ -654,6 +654,9 @@ thread.
 
 ### Tolk (new)
 
+- Fix Metal compilation of four-lane `int8`, `uint8`, `uint16` and `uint64`
+  accesses by using native vector type names.
+
 - Preserve closed reduction dependencies when finalizing optimizer ranges;
   nested range extents no longer reintroduce an already closed axis.
 

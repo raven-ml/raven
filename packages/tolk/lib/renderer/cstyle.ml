@@ -1729,6 +1729,10 @@ let opencl_language : language =
 (* MetalRenderer *)
 
 let metal_type_map : Dtype.t -> string option = function
+  | Dtype.Int8 -> Some "char"
+  | Dtype.Uint8 -> Some "uchar"
+  | Dtype.Uint16 -> Some "ushort"
+  | Dtype.Uint64 -> Some "ulong"
   | Dtype.Uint32 -> Some "uint"
   | Dtype.Bfloat16 -> Some "bfloat"
   | _ -> None

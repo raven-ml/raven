@@ -580,6 +580,13 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit` and `test_jit_metal` "integer comparisons read wrapped values".
   Remove this ruling when upstream narrows its results.
 
+- **Metal uses native integer vector names.** The frozen target emits undefined
+  `signed_char4` and `unsigned_char4` (and equivalent wider unsigned names).
+  Tolk maps these scalars to Metal's `char`, `uchar`, `ushort` and `ulong`,
+  producing valid vector types for compact storage copies. Coverage:
+  `test_runtime_metal` compiles and executes four-lane copies at each width.
+  Remove this ruling when upstream emits equivalent valid Metal types.
+
 - **Pointer casts preserve volatile qualifiers.** The frozen reference qualifies
   parameters but its `CStyleLanguage.render_ptr` drops the qualifier when casting
   a vector access. Tolk keeps it so explicit vector accesses to polling or shared

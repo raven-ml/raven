@@ -281,6 +281,30 @@ let test_many_buffer_arguments count () =
   equal (list int) [sum + 99] (read_i32 buffers.(0));
   equal (list int) [sum + 99] (read_i32 second)) [false; true]
 
+let test_integer_vector_copies () =
+  let device = metal_device () in
+  List.iter (fun dtype ->
+      let param slot = U.param ~slot ~dtype ~shape:(U.const_int 4)
+          ~addrspace:Dtype.Global () in
+      let output = param 0 and input = param 1 in
+      let zero = U.cconst (Const.int Dtype.int32 0) Dtype.int32 in
+      let window ptr = U.shrink ~src:ptr ~offset:zero ~size:(U.const_int 4) in
+      let src = window input and dst = window output in
+      let value = U.load ~src () in
+      let store = U.store ~dst ~value () in
+      let spec = Device.compile_program device ~name:"integer_vector_copy"
+          [output; input; zero; src; dst; value; store] in
+      let buffer () =
+        let b = Device.create_buffer ~size:4 ~dtype device in
+        Device.Buffer.ensure_allocated b;
+        b in
+      let input = buffer () and output = buffer () in
+      let expected = Bytes.init (4 * Dtype.itemsize dtype) (fun i -> Char.chr ((i * 53 + 129) land 255)) in
+      Device.Buffer.copyin input expected;
+      run_spec device spec [output; input];
+      equal ~msg:(Dtype.to_string dtype) bytes expected (Device.Buffer.as_bytes output))
+    [Dtype.int8; Dtype.uint8; Dtype.uint16; Dtype.uint64]
+
 let test_thread_reduction kind width expected () =
   let device = metal_device () in
   let param slot size = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int size) () in
@@ -466,6 +490,7 @@ let () =
     [
       group "Execution"
         [
+          test "integer vector copies use native Metal types" test_integer_vector_copies;
           test "beam timing replays compiled Metal queues" beam_timings_use_compiled_queues;
           test "multi-device calls share inputs and bind each lane in compiled queues"
             multi_device_calls_use_queues;
