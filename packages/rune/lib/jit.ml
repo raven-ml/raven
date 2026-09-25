@@ -902,44 +902,31 @@ let bit_length n =
   let rec go n acc = if n = 0 then acc else go (n lsr 1) (acc + 1) in
   go n 0
 
-(* Whether [keys] and their positions along [dim] fit together in a non-negative
-   int64 (see [argsort_graph]). *)
-let packs_positions ~packs ~dim keys =
-  let shape = F.Tensor.shape keys in
-  let dim = if dim < 0 then dim + List.length shape else dim in
-  packs
-  && TD.bitsize (F.Tensor.dtype keys) + bit_length (List.nth shape dim - 1)
-     <= 63
-
 (* The stable positions that sort [x] along [dim]. Tolk's network sorts values
-   and recovers each position by an n×n match of sorted values to inputs. When a
-   key and its position fit together in a non-negative int64, the network sorts
-   that integer instead: the key in the high bits, offset to be non-negative
+   and recovers each position by an n×n match of sorted values to inputs. Where
+   int64 is native ([packs]), the network sorts integers that carry the position
+   instead: a key of at most 32 bits in the high bits, offset to be non-negative
    since C and Metal leave a shift of a negative integer undefined, and the
    position in the low bits, complemented for a descending sort so that equal
    keys keep index order. Packed integers are distinct, so the network alone
-   gives the stable order and the positions are its low bits. 32-bit keys fit at
-   every length an int32 position reaches; 64-bit keys never fit and, like a
-   device without native int64 ([packs] is false), keep the match. The packed
-   integers get a kernel of their own: fused into the padding of an axis that is
-   not a power of two, the positions' arange no longer folds to an index and
-   costs n^2 work. *)
+   gives the stable order and the positions are its low bits; an int32 position
+   leaves room for 32 key bits. A 64-bit key sorts as two such passes, least
+   significant half first: the second pass sorts the high halves in the first
+   pass's order, and being stable it keeps that order among equal high halves.
+   The packed integers get a kernel of their own: fused into the padding of an
+   axis that is not a power of two, the positions' arange no longer folds to an
+   index and costs n^2 work. *)
 let argsort_graph ~packs ~dim ~descending x =
   let keys, _ = sort_keys ~descending x in
   let key_dtype = F.Tensor.dtype keys in
   let shape = F.Tensor.shape x in
   let dim = if dim < 0 then dim + List.length shape else dim in
   let n = List.nth shape dim in
-  let low_bits = bit_length (n - 1) in
-  if not (packs_positions ~packs ~dim keys) then
-    snd (F.Op.sort ~dim ~descending keys)
-  else
-    let open F.Elementwise in
-    let int t v = F.Creation.const_like t (F.Tensor.Sint v) in
-    let offset =
-      if TD.is_unsigned key_dtype || TD.is_bool key_dtype then 0
-      else 1 lsl (TD.bitsize key_dtype - 1)
-    in
+  let open F.Elementwise in
+  let int t v = F.Creation.const_like t (F.Tensor.Sint v) in
+  (* The stable positions of [high], non-negative int64 below 2^32. *)
+  let positions high =
+    let low_bits = bit_length (n - 1) in
     let low = (1 lsl low_bits) - 1 in
     let complement r = if descending then sub (int r low) r else r in
     let ranks =
@@ -947,25 +934,42 @@ let argsort_graph ~packs ~dim ~descending x =
         (F.Op.arange ~dtype:TD.int64 n)
         (List.mapi (fun i _ -> if i = dim then n else 1) shape)
     in
-    let wide = F.Dtype_ops.cast keys TD.int64 in
-    let high = add wide (int wide offset) in
     let packed =
       bitwise_or (lshift high (int high low_bits)) (complement ranks)
     in
     let sorted = fst (F.Op.sort ~dim ~descending (contiguous packed)) in
     complement (bitwise_and sorted (int sorted low))
+  in
+  let signed = not (TD.is_unsigned key_dtype || TD.is_bool key_dtype) in
+  if not packs then snd (F.Op.sort ~dim ~descending keys)
+  else if TD.bitsize key_dtype <= 32 then
+    let offset = if signed then 1 lsl (TD.bitsize key_dtype - 1) else 0 in
+    let wide = F.Dtype_ops.cast keys TD.int64 in
+    positions (add wide (int wide offset))
+  else
+    let half = 1 lsl 32 in
+    let lo =
+      F.Dtype_ops.cast (bitwise_and keys (int keys (half - 1))) TD.int64
+    in
+    (* The high half by floor division, which never shifts a negative key. *)
+    let hi = F.Dtype_ops.cast (floordiv keys (int keys half)) TD.int64 in
+    let hi = if signed then add hi (int hi (half / 2)) else hi in
+    let along p t = F.Op.gather t ~dim (F.Dtype_ops.cast p TD.int32) in
+    let first = positions lo in
+    along (positions (along first hi)) first
 
 (* [x] sorted along [dim]. A float sort returns [x]'s elements at the stable
    positions that sort it, so a -0 or a NaN keeps its bits; mapped back from the
    keys, every zero would come back as +0 and every NaN as one NaN (see
-   [order_keys]). Where the positions do not pack, recovering them costs n^2
+   [order_keys]). Without native int64, recovering the positions costs n^2
    operations, so the keys map back instead. An integer is its own key. *)
 let sort_graph ~packs ~dim ~descending x =
-  let keys, values = sort_keys ~descending x in
-  if TD.is_float (F.Tensor.dtype x) && packs_positions ~packs ~dim keys then
+  if TD.is_float (F.Tensor.dtype x) && packs then
     F.Op.gather x ~dim
       (F.Dtype_ops.cast (argsort_graph ~packs ~dim ~descending x) TD.int32)
-  else values (fst (F.Op.sort ~dim ~descending keys))
+  else
+    let keys, values = sort_keys ~descending x in
+    values (fst (F.Op.sort ~dim ~descending keys))
 
 (* Whether [u]'s graph reaches an input buffer node. Constants lifted during the
    trace (captures, host arrays) are buffers too, but only input nodes are in

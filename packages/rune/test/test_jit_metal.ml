@@ -868,7 +868,9 @@ let tests =
         test "an index outside the axis beside unit axes on the GPU"
           (check_out_of_range_beside_unit_axes ~devices:[ Rune.device "METAL" ]);
         slow "sorted values are the input's elements on the GPU"
-          (check_sort_values_are_elements ~devices:[ Rune.device "METAL" ]);
+          (check_sort_values_are_elements
+             ~devices:[ Rune.device "METAL" ]
+             ~float64:false);
         slow "top_k over a row of 2^20 entries on the GPU"
           (check_top_k_long_row ~devices:[ Rune.device "METAL" ]);
         slow "top_k selects on the GPU what it selects eagerly"

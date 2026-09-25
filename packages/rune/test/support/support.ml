@@ -589,8 +589,9 @@ let sort_pieces out pieces x =
 (* A compiled sort returns the input's elements at the positions eager's argsort
    gives, bit for bit: both zeros, and NaNs of either sign with payloads, along
    a short axis and one of 600. The values are compared as bits, widened to
-   int32, outside the compiled function, where a float8 bitcast is allowed. *)
-let check_sort_values_are_elements ?devices () =
+   int64, outside the compiled function, where a float8 bitcast is allowed.
+   [float64] is false for a device without it. *)
+let check_sort_values_are_elements ?devices ?(float64 = true) () =
   let nan_of bits = Int64.float_of_bits bits in
   let short =
     [|
@@ -617,7 +618,7 @@ let check_sort_values_are_elements ?devices () =
   in
   let check (type b c d) name (dtype : (float, b) Nx.dtype)
       (bits : (c, d) Nx.dtype) =
-    let bits_of t = Nx.to_array (Nx.cast Nx.int32 (Nx.bitcast bits t)) in
+    let bits_of t = Nx.to_array (Nx.cast Nx.int64 (Nx.bitcast bits t)) in
     List.iter
       (fun (shape, row) ->
         let x = Nx.cast dtype (Nx.create f64 shape row) in
@@ -630,7 +631,7 @@ let check_sort_values_are_elements ?devices () =
             in
             let indices = snd (Nx.sort ~descending ~axis x) in
             let values x = fst (Nx.sort ~descending ~axis x) in
-            equal ~msg (array int32)
+            equal ~msg (array int64)
               (bits_of (Nx.take_along_axis ~axis ~indices x))
               (bits_of (Rune.jit' ?devices values x)))
           [ false; true ])
@@ -640,7 +641,8 @@ let check_sort_values_are_elements ?devices () =
   check "float16" Nx.float16 Nx.int16;
   check "bfloat16" Nx.bfloat16 Nx.int16;
   check "float8_e4m3" Nx.float8_e4m3 Nx.uint8;
-  check "float8_e5m2" Nx.float8_e5m2 Nx.uint8
+  check "float8_e5m2" Nx.float8_e5m2 Nx.uint8;
+  if float64 then check "float64" Nx.float64 Nx.int64
 
 (* Compiled [sort_pieces] of a [sort_input] against eager, segment by segment. A
    zero compares without its sign: eager's value sort leaves the order of -0 and

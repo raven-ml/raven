@@ -1817,9 +1817,9 @@ let test_float8_bitcast_is_refused () =
 (* Every sortable dtype in both directions, over axes of 1, 2 and 33, the last
    batched around it; float32 and bfloat16 also over axes of 513 and 32768.
    Dtypes of up to 32 bits sort key and position packed in one int64; 64-bit
-   dtypes keep Tolk's match of values. A compiled fp8 store saturates an
-   infinity, so fp8 inputs have none here; [test_sort_matches_eager] checks the
-   positions of float8_e5m2 infinities. *)
+   dtypes sort their two 32-bit halves that way. A compiled fp8 store saturates
+   an infinity, so fp8 inputs have none here; [test_sort_matches_eager] checks
+   the positions of float8_e5m2 infinities. *)
 let test_sort_dtypes_match_eager () =
   let pieces = [ ([| 1 |], 0); ([| 2 |], 0); ([| 2; 33; 3 |], 1) ] in
   let long = pieces @ [ ([| 2; 513; 3 |], 1); ([| 32_768 |], 0) ] in
