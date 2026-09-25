@@ -103,7 +103,7 @@ let () =
               done);
           test "cleanup errors retain the cause and do not skip independent releases" (fun () ->
               let released = ref [] in
-              raises_match (Exn.failure ~substring:"Rollback failed:") (fun () ->
+              raises_match (function System.Rollback_failed (Failure cause, [Failure cleanup]) -> cause = "setup failed" && cleanup = "cleanup failed" | _ -> false) (fun () ->
                   System.with_rollback (fun rollback ->
                       rollback (fun () -> released := !released @ [1]);
                       rollback (fun () -> failwith "cleanup failed");
@@ -122,6 +122,53 @@ let () =
                           failwith "after open"));
                   raises_match (function Failure _ -> true | _ -> false)
                     (fun () -> File_io.close (Option.get !descriptor))));
+        ];
+      group "device buffer setup"
+        [
+          test "failed construction stops queues before freeing pending buffers" (fun () ->
+              let events = ref [] and delayed_free = ref (fun () -> ()) in
+              let record event = events := !events @ [event] in
+              let buffer id = Tolk_hcq.Hcq.Buffer.make ~va:(Nativeint.of_int id)
+                  ~size:16 ~meta:id () in
+              raises_match (Exn.failure ~substring:"construction") (fun () ->
+                  System.with_buffer_setup
+                    ~free:(fun b -> record (string_of_int (Tolk_hcq.Hcq.Buffer.meta b)))
+                    ~stop:(fun () -> record "stop") ~close:(fun () -> record "close")
+                    (fun ~track ~free ->
+                      let first = track (buffer 1) in
+                      free first;
+                      let second = track (buffer 2) in
+                      ignore (track (buffer 3));
+                      delayed_free := (fun () -> free second);
+                      failwith "construction"));
+              equal (list string) ["1"; "stop"; "3"; "2"; "close"] !events;
+              !delayed_free ();
+              equal (list string) ["1"; "stop"; "3"; "2"; "close"] !events);
+          test "failed queue retirement retains buffers despite late finalizers" (fun () ->
+              let releases = ref 0 and closes = ref 0 and delayed_free = ref (fun () -> ()) in
+              raises_match (function System.Rollback_failed (Failure cause, [Failure cleanup]) -> cause = "construction" && cleanup = "queue still live" | _ -> false)
+                (fun () -> System.with_buffer_setup
+                    ~free:(fun _ -> incr releases)
+                    ~stop:(fun () -> failwith "queue still live")
+                    ~close:(fun () -> incr closes)
+                    (fun ~track ~free ->
+                      let buffer = track (Tolk_hcq.Hcq.Buffer.make ~va:1n ~size:16 ~meta:() ()) in
+                      delayed_free := (fun () -> free buffer);
+                      failwith "construction"));
+              !delayed_free ();
+              equal int 0 !releases;
+              equal int 0 !closes);
+          test "successful construction transfers future allocator calls" (fun () ->
+              let released = ref [] in
+              let track, free = System.with_buffer_setup
+                  ~free:(fun b -> released := Tolk_hcq.Hcq.Buffer.meta b :: !released)
+                  ~stop:(fun () -> fail "no queue stop on success")
+                  ~close:(fun () -> fail "no close on success")
+                  (fun ~track ~free -> track, free) in
+              let buffer = track (Tolk_hcq.Hcq.Buffer.make ~va:1n ~size:16 ~meta:7 ()) in
+              equal (list int) [] !released;
+              free buffer;
+              equal (list int) [7] !released);
         ];
       group "device visibility"
         [

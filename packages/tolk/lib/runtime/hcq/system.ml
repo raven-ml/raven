@@ -7,6 +7,14 @@
 
 module File_io = Hcq.File_io
 
+exception Rollback_failed of exn * exn list
+
+let () = Printexc.register_printer (function
+    | Rollback_failed (error, failures) ->
+        Some (Printexc.to_string error ^ "\nRollback failed: " ^
+          String.concat "; " (List.map Printexc.to_string failures))
+    | _ -> None)
+
 let with_rollback f =
   let actions = ref [] in
   match f (fun release -> actions := release :: !actions) with
@@ -16,12 +24,40 @@ let with_rollback f =
       let failures = List.filter_map (fun release ->
           match release () with
           | () -> None
-          | exception error -> Some (Printexc.to_string error)) !actions in
+          | exception error -> Some error) !actions in
       let error = match failures with
         | [] -> error
-        | failures -> Failure (Printexc.to_string error ^ "\nRollback failed: " ^
-            String.concat "; " failures) in
+        | failures -> Rollback_failed (error, failures) in
       Printexc.raise_with_backtrace error backtrace
+
+let with_buffer_setup ~free ~stop ~close f =
+  let pending = ref [] and phase = ref `Building in
+  let track buffer =
+    (match !phase with
+    | `Building -> pending := buffer :: !pending
+    | `Ready -> ()
+    | `Failed -> invalid_arg "allocation after failed device setup");
+    buffer in
+  let release buffer = match !phase with
+    | `Failed -> ()
+    | `Ready -> free buffer
+    | `Building ->
+        free buffer;
+        let base = Hcq.Buffer.base buffer in
+        pending := List.filter (fun held -> Hcq.Buffer.base held != base) !pending in
+  with_rollback (fun rollback ->
+      rollback (fun () ->
+          (* Storage finalizers may still hold [release]. Disable them before
+             attempting queue retirement, including when retirement fails. *)
+          phase := `Failed;
+          stop ();
+          List.iter free !pending;
+          pending := [];
+          close ());
+      let result = f ~track ~free:release in
+      phase := `Ready;
+      pending := [];
+      result)
 
 let filter_visible_devices device devices =
   let old = Tolk.Helpers.getenv_str "HCQ_VISIBLE_DEVICES" "" in

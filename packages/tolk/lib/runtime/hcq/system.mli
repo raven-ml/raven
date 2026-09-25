@@ -18,15 +18,34 @@
     them. On other systems the module loads and its pure entry points
     work, but device probing fails cleanly. *)
 
+exception Rollback_failed of exn * exn list
+(** A setup error and the failures encountered during its rollback.
+    Distinct from [Failure] so optional-backend fallbacks cannot swallow a
+    failed cleanup and proceed with resources still in use. *)
+
 val with_rollback : (((unit -> unit) -> unit) -> 'a) -> 'a
 (** [with_rollback f] calls [f register]. Register a release action after each
     successful acquisition. If [f] raises, actions run in reverse order;
     otherwise ownership transfers to its result and no action runs.
     The original exception and backtrace are preserved when cleanup succeeds.
     Cleanup failures do not prevent later actions: they are appended to the
-    original error in a [Failure]. Register dependent releases in one action
+    original error in [Rollback_failed]. Register dependent releases in one action
     when a failed release must prevent the next one. [register] must not escape
     the call to [f]. *)
+
+val with_buffer_setup :
+  free:('m Hcq.Buffer.t -> unit) -> stop:(unit -> unit) -> close:(unit -> unit) ->
+  (track:('m Hcq.Buffer.t -> 'm Hcq.Buffer.t) ->
+   free:('m Hcq.Buffer.t -> unit) -> 'a) -> 'a
+(** [with_buffer_setup ~free ~stop ~close f] tracks raw allocations while [f]
+    constructs a device. [f] must wrap its allocator with [track] and use the
+    supplied [free] for releases, including later storage finalizers.
+    Success transfers ownership; the wrappers then stop tracking allocations.
+    Failure calls [stop] before releasing pending buffers and calling [close].
+    If any cleanup step fails, later steps are skipped and the cleanup error
+    is appended as in {!with_rollback}. Finalizers cannot release buffers again
+    after failed setup, even if [stop] failed and queues still use them.
+    Imported buffers remain outside this allocation scope. *)
 
 val filter_visible_devices : string -> 'a list -> 'a list
 (** [filter_visible_devices device devices] selects and orders [devices] using

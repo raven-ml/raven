@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed AMD KFD device construction retires queues before releasing their
+  buffers, events and descriptors. Late scratch-buffer finalizers cannot
+  touch abandoned timelines, and failed queue retirement retains its storage.
+
 - Failed AMD KFD and NVIDIA NVK bootstrap releases acquired descriptors and
   per-device KFD events, so retries do not accumulate abandoned resources.
   KFD retains its shared event page if registration may have reached the kernel.

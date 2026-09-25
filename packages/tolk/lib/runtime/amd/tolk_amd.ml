@@ -127,8 +127,11 @@ module Kfd = struct
     ctl_stack_size:int ->
     write_pointer_address:nativeint ->
     read_pointer_address:nativeint ->
-    int64 * nativeint * nativeint
+    int * int64 * nativeint * nativeint
     = "caml_tolk_kfd_create_queue_bc" "caml_tolk_kfd_create_queue"
+
+  external destroy_queue : int -> queue_id:int -> unit
+    = "caml_tolk_kfd_destroy_queue"
 
   let alloc_mem_flags_vram = 1 lsl 0
   let alloc_mem_flags_gtt = 1 lsl 1
@@ -1357,6 +1360,7 @@ module Kfd_iface = struct
     queue_event_mailbox_ptr : nativeint;
     mem_fault_event_id : int;
     hw_fault_event_id : int;
+    mutable queues : int list;
     mutable doorbells : (int64 * nativeint) option;
     mutable mem_fault : Kfd.mem_fault option;
     mutable hw_fault : Kfd.hw_fault option;
@@ -1575,6 +1579,7 @@ module Kfd_iface = struct
               (Nativeint.of_int (queue_event_slot * 8));
           mem_fault_event_id;
           hw_fault_event_id;
+          queues = [];
           doorbells = None;
           mem_fault = None;
           hw_fault = None;
@@ -1629,7 +1634,7 @@ module Kfd_iface = struct
     let kfd, _ = scan () in
     let buf_va = function Some b -> Hcq.Buffer.va b | None -> 0n in
     let buf_size = function Some b -> Hcq.Buffer.size b | None -> 0 in
-    let doorbell_offset, rptr_addr, wptr_addr =
+    let queue_id, doorbell_offset, rptr_addr, wptr_addr =
       Kfd.create_queue kfd
         ~ring_base:(Hcq.Buffer.va ring)
         ~ring_size:(Hcq.Buffer.size ring)
@@ -1651,36 +1656,41 @@ module Kfd_iface = struct
           (Nativeint.add (Hcq.Buffer.va gart)
              (Nativeint.of_int (rptr + (8 * xcc_id))))
     in
-    let doorbells_base, doorbells_addr =
-      match t.doorbells with
-      | Some d -> d
-      | None ->
-          (* the doorbell region is two pages *)
-          let base = Int64.logand doorbell_offset (Int64.lognot 0x1fffL) in
-          let addr =
-            Hcq.File_io.mmap ~addr:0n ~size:0x2000
-              ~prot:(Hcq.File_io.prot_read lor Hcq.File_io.prot_write)
-              ~flags:Hcq.File_io.map_shared ~fd:kfd ~offset:base
-          in
-          t.doorbells <- Some (base, addr);
-          (base, addr)
-    in
-    {
-      Queue_desc.aql = None;
-      ring =
-        Hcq.Mmio.make ~addr:(Hcq.Buffer.va ring) ~size:(Hcq.Buffer.size ring);
-      read_ptr = Hcq.Mmio.make ~addr:rptr_addr ~size:8;
-      write_ptr = Hcq.Mmio.make ~addr:wptr_addr ~size:8;
-      doorbell =
-        Hcq.Mmio.make
-          ~addr:
-            (Nativeint.add doorbells_addr
-               (Nativeint.of_int
-                  (Int64.to_int (Int64.sub doorbell_offset doorbells_base))))
-          ~size:8;
-      hdp_flush = None;
-      resetup = None;
-    }
+    t.queues <- queue_id :: t.queues;
+    System.with_rollback (fun rollback ->
+        rollback (fun () ->
+            Kfd.destroy_queue kfd ~queue_id;
+            t.queues <- List.filter (( <> ) queue_id) t.queues);
+        let doorbells_base, doorbells_addr =
+          match t.doorbells with
+          | Some d -> d
+          | None ->
+              (* the doorbell region is two pages *)
+              let base = Int64.logand doorbell_offset (Int64.lognot 0x1fffL) in
+              let addr =
+                Hcq.File_io.mmap ~addr:0n ~size:0x2000
+                  ~prot:(Hcq.File_io.prot_read lor Hcq.File_io.prot_write)
+                  ~flags:Hcq.File_io.map_shared ~fd:kfd ~offset:base
+              in
+              t.doorbells <- Some (base, addr);
+              (base, addr)
+        in
+        {
+          Queue_desc.aql = None;
+          ring =
+            Hcq.Mmio.make ~addr:(Hcq.Buffer.va ring) ~size:(Hcq.Buffer.size ring);
+          read_ptr = Hcq.Mmio.make ~addr:rptr_addr ~size:8;
+          write_ptr = Hcq.Mmio.make ~addr:wptr_addr ~size:8;
+          doorbell =
+            Hcq.Mmio.make
+              ~addr:
+                (Nativeint.add doorbells_addr
+                   (Nativeint.of_int
+                      (Int64.to_int (Int64.sub doorbell_offset doorbells_base))))
+              ~size:8;
+          hdp_flush = None;
+          resetup = None;
+        })
 
   let poll_events t ~timeout_ms =
     let kfd, _ = scan () in
@@ -1761,6 +1771,31 @@ module Kfd_iface = struct
       after_sync = None;
       device_fini = None;
     }
+
+  let with_initialization t f =
+    let kfd, _ = scan () in
+    let alive = ref true in
+    let stop () =
+      alive := false;
+      while t.queues <> [] do
+        let queue_id = List.hd t.queues in
+        Kfd.destroy_queue kfd ~queue_id;
+        t.queues <- List.tl t.queues
+      done in
+    let close () =
+      Option.iter (fun (_, address) -> Hcq.File_io.munmap address ~size:0x2000)
+        t.doorbells;
+      t.doorbells <- None;
+      List.iter (fun event_id -> Kfd.destroy_event kfd ~event_id)
+        [t.hw_fault_event_id; t.mem_fault_event_id; t.queue_event.event_id];
+      Hcq.File_io.close t.drm_fd in
+    let interface = iface t in
+    System.with_buffer_setup ~free:interface.Iface.free ~stop ~close
+      (fun ~track ~free ->
+        let alloc ?host ?uncached ?cpu_access size =
+          track (interface.Iface.alloc ?host ?uncached ?cpu_access size) in
+        f ~is_valid:(fun () -> !alive) {interface with Iface.alloc; free})
+
 end
 
 (* Driver-less PCI interface: ops_amd.py:843-908 PCIIface *)
@@ -2024,6 +2059,7 @@ module State = struct
   type 'mem t = {
     name : string;
     buffer_kind : 'mem Hcq.Buffer.t Type.Id.t;
+    is_valid : unit -> bool;
     iface : 'mem Iface.t;
     hw : 'mem device;
     compute_queue : Queue_desc.t;
@@ -2042,6 +2078,7 @@ module State = struct
     Timeline.guarded_wait t.tl (fun () -> Hcq.Submission.check t.submission)
 
   let prepare t =
+    if not (t.is_valid ()) then invalid_arg "AMD device setup failed";
     check_submission t;
     Timeline.prepare t.tl;
     Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
@@ -2058,11 +2095,14 @@ module State = struct
     Timeline.synchronize t.tl
 
   let synchronize t =
-    check_submission t;
-    Timeline.synchronize t.tl;
-    match t.iface.Iface.after_sync with
-    | Some after_sync -> after_sync ()
-    | None -> ()
+    (* A scratch buffer's finalizer can outlive failed setup. Its backing
+       and timeline were either released by rollback or retained after a
+       failed queue stop; neither may be touched by that finalizer. *)
+    if t.is_valid () then begin
+      check_submission t;
+      Timeline.synchronize t.tl;
+      Option.iter (fun after_sync -> after_sync ()) t.iface.Iface.after_sync
+    end
 end
 
 module Allocator = struct
@@ -2354,7 +2394,7 @@ end
 
 (* The shared device open path over the selected interface: everything
    from topology sizing to renderer wiring is interface-independent. *)
-let open_device ~name iface =
+let open_device ?(is_valid = fun () -> true) ~name iface =
   let props = iface.Iface.props in
   let ip = iface.Iface.ip_versions in
   let trgt = prop props "gfx_target_version" in
@@ -2408,35 +2448,53 @@ let open_device ~name iface =
   let debug_memory_size = round_up (wave_cnt * 32) 64 in
   let create_queue queue_type ~ring_size ?(eop_buffer_size = 0)
       ?(ctx_save_restore_size = 0) ?(ctl_stack_size = 0) ?(idx = 0) () =
-    let ring =
-      iface.Iface.alloc ~host:true ~uncached:true ~cpu_access:true ring_size
-    in
-    let gart = iface.Iface.alloc ~host:true ~uncached:true ~cpu_access:true 0x100 in
-    let eop_buffer =
-      if eop_buffer_size = 0 then None
-      else Some (iface.Iface.alloc eop_buffer_size)
-    in
-    let cwsr_buffer =
-      if ctx_save_restore_size = 0 then None
-      else
-        Some
-          (iface.Iface.alloc
-             (round_up
-                ((ctx_save_restore_size + debug_memory_size) * xccs)
-                System.page_size))
-    in
-    (* The queue's pointers live at the dispatch-id slots of an HSA queue
-       descriptor laid out in the gart buffer. *)
-    let aql = if queue_type = Compute_aql then
-        let commands = iface.Iface.alloc ~cpu_access:true (16 lsl 20) in
-        Some (Queue_desc.initialize_aql ~descriptor:(Hcq.Buffer.cpu_view gart) ~commands
-          ~cu_count:(cu_cnt * xccs) ~waves_per_cu)
-      else None in
-    let queue = iface.Iface.create_queue queue_type ~ring ~gart
-      ~rptr:Amd_hsa_defs.Amd_queue.read_dispatch_id
-      ~wptr:Amd_hsa_defs.Amd_queue.write_dispatch_id ?eop_buffer ?cwsr_buffer
-      ~ctx_save_restore_size ~ctl_stack_size ~idx () in
-    {queue with Queue_desc.aql}
+    let allocated = ref [] in
+    let alloc ?host ?uncached ?cpu_access size =
+      let buffer = iface.Iface.alloc ?host ?uncached ?cpu_access size in
+      allocated := buffer :: !allocated;
+      buffer in
+    let construct () =
+      let ring =
+        alloc ~host:true ~uncached:true ~cpu_access:true ring_size
+      in
+      let gart = alloc ~host:true ~uncached:true ~cpu_access:true 0x100 in
+      let eop_buffer =
+        if eop_buffer_size = 0 then None
+        else Some (alloc eop_buffer_size)
+      in
+      let cwsr_buffer =
+        if ctx_save_restore_size = 0 then None
+        else
+          Some
+            (alloc
+               (round_up
+                  ((ctx_save_restore_size + debug_memory_size) * xccs)
+                  System.page_size))
+      in
+      (* The queue's pointers live at the dispatch-id slots of an HSA queue
+         descriptor laid out in the gart buffer. *)
+      let aql = if queue_type = Compute_aql then
+          let commands = alloc ~cpu_access:true (16 lsl 20) in
+          Some (Queue_desc.initialize_aql ~descriptor:(Hcq.Buffer.cpu_view gart) ~commands
+            ~cu_count:(cu_cnt * xccs) ~waves_per_cu)
+        else None in
+      let queue = iface.Iface.create_queue queue_type ~ring ~gart
+        ~rptr:Amd_hsa_defs.Amd_queue.read_dispatch_id
+        ~wptr:Amd_hsa_defs.Amd_queue.write_dispatch_id ?eop_buffer ?cwsr_buffer
+        ~ctx_save_restore_size ~ctl_stack_size ~idx () in
+      {queue with Queue_desc.aql} in
+    match construct () with
+    | queue -> queue
+    | exception (System.Rollback_failed _ as error) -> raise error
+    | exception error ->
+        let backtrace = Printexc.get_raw_backtrace () in
+        if iface.Iface.is_am then Printexc.raise_with_backtrace error backtrace;
+        (* KFD guarantees a rejected queue is destroyed before propagating a
+           normal error. Failed retirement must retain these allocations. *)
+        System.with_rollback (fun rollback ->
+            List.iter (fun buffer -> rollback (fun () -> iface.Iface.free buffer))
+              (List.rev !allocated);
+            Printexc.raise_with_backtrace error backtrace)
   in
   let compute_queue =
     (* driver-less devices carry no compute-wave save/restore state *)
@@ -2480,6 +2538,7 @@ let open_device ~name iface =
     {
       State.name = name;
       buffer_kind = iface.Iface.kind;
+      is_valid;
       iface;
       hw;
       compute_queue;
@@ -2547,8 +2606,9 @@ let create name =
     | None -> 0
   in
   let kfd () =
-    let iface = Kfd_iface.iface (Kfd_iface.create ~device_id) in
-    fun () -> open_device ~name iface
+    let interface = Kfd_iface.create ~device_id in
+    fun () -> Kfd_iface.with_initialization interface
+      (fun ~is_valid iface -> open_device ~is_valid ~name iface)
   in
   let pci () =
     let iface = Pci_iface.iface (Pci_iface.create ~device_id) in

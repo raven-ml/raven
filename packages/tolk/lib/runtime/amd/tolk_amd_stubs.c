@@ -46,6 +46,7 @@ _Static_assert(sizeof(struct kfd_ioctl_create_event_args) == 32, "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_destroy_event_args) == 8, "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_wait_events_args) == 24, "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_create_queue_args) == 96, "kfd ABI");
+_Static_assert(sizeof(struct kfd_ioctl_destroy_queue_args) == 8, "kfd ABI");
 _Static_assert(sizeof(struct kfd_memory_exception_failure) == 16, "kfd ABI");
 _Static_assert(sizeof(struct kfd_hsa_memory_exception_data) == 32, "kfd ABI");
 _Static_assert(sizeof(struct kfd_hsa_hw_exception_data) == 16, "kfd ABI");
@@ -271,7 +272,11 @@ CAMLprim value caml_tolk_kfd_create_queue(
   CAMLxparam5(v_queue_percentage, v_queue_priority, v_eop_addr, v_eop_size,
               v_cwsr_addr);
   CAMLxparam4(v_cwsr_size, v_ctl_stack_size, v_wptr, v_rptr);
-  CAMLlocal1(res);
+  CAMLlocal4(res, doorbell, rptr, wptr);
+  res = caml_alloc_tuple(4);
+  doorbell = caml_copy_int64(0);
+  rptr = caml_copy_nativeint(0);
+  wptr = caml_copy_nativeint(0);
   struct kfd_ioctl_create_queue_args a = {0};
   a.ring_base_address = (uint64_t)Nativeint_val(v_ring_base);
   a.ring_size = (uint32_t)Long_val(v_ring_size);
@@ -288,11 +293,30 @@ CAMLprim value caml_tolk_kfd_create_queue(
   a.read_pointer_address = (uint64_t)Nativeint_val(v_rptr);
   if (kfd_ioctl(Int_val(v_fd), AMDKFD_IOC_CREATE_QUEUE, &a) < 0)
     raise_errno("AMDKFD_IOC_CREATE_QUEUE");
-  res = caml_alloc_tuple(3);
-  Store_field(res, 0, caml_copy_int64((int64_t)a.doorbell_offset));
-  Store_field(res, 1, caml_copy_nativeint((intnat)a.read_pointer_address));
-  Store_field(res, 2, caml_copy_nativeint((intnat)a.write_pointer_address));
+  Int64_val(doorbell) = (int64_t)a.doorbell_offset;
+  Nativeint_val(rptr) = (intnat)a.read_pointer_address;
+  Nativeint_val(wptr) = (intnat)a.write_pointer_address;
+  Store_field(res, 0, Val_long(a.queue_id));
+  Store_field(res, 1, doorbell);
+  Store_field(res, 2, rptr);
+  Store_field(res, 3, wptr);
   CAMLreturn(res);
+}
+
+CAMLprim value caml_tolk_kfd_destroy_queue(value v_fd, value v_queue_id) {
+  CAMLparam2(v_fd, v_queue_id);
+  struct kfd_ioctl_destroy_queue_args a = {0};
+  a.queue_id = (uint32_t)Long_val(v_queue_id);
+  int fd = Int_val(v_fd);
+  caml_release_runtime_system();
+  int result = kfd_ioctl(fd, AMDKFD_IOC_DESTROY_QUEUE, &a);
+  int saved_errno = errno;
+  caml_acquire_runtime_system();
+  if (result < 0) {
+    errno = saved_errno;
+    raise_errno("AMDKFD_IOC_DESTROY_QUEUE");
+  }
+  CAMLreturn(Val_unit);
 }
 
 #else /* !__linux__ */
@@ -380,6 +404,11 @@ CAMLprim value caml_tolk_kfd_wait_events(value v_fd, value v_queue_id,
   (void)v_hw_id;
   (void)v_timeout_ms;
   return kfd_unavailable();
+}
+
+CAMLprim value caml_tolk_kfd_destroy_queue(value v_fd, value v_queue_id) {
+  CAMLparam2(v_fd, v_queue_id);
+  CAMLreturn(kfd_unavailable());
 }
 
 CAMLprim value caml_tolk_kfd_create_queue(
