@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed LRU cache cleanup retains uncertain backing and restores untouched
+  entries, preventing a single retirement failure from losing ownership of
+  every remaining cached buffer.
+
 - `Rand.rand_like`, `randn_like` and dropout preserve source placement and
   sharding. RNG keys and counters now belong to their requested device;
   sharded draws advance independent streams while replicated draws share one.

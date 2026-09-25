@@ -36,7 +36,7 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   concurrency remains open in TODO.
   Reconsider if native ownership makes automatic teardown non-reentrant.
 
-- **Failed automatic teardown retains its owner until process exit.** An
+- **Failed automatic or cached teardown retains its owner until process exit.** An
   allocator may release only part of a mapping or native object before raising;
   retrying can double-free it, while dropping its owner can release backing still
   reachable by the device. A later successful synchronization proves completion,
@@ -45,7 +45,9 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   retained and the original exception is propagated. This trades storage after
   a teardown failure for explicit lifetime safety, without another cleanup
   protocol. Coverage: `test_device` reports the failure once, keeps the owner
-  alive through collection, and never retries. Reconsider when a concrete
+  alive through collection, and never retries; `test_lru_allocator` retains
+  failed raw backing after its allocator is collected and preserves untouched
+  cache entries alongside concurrent additions. Reconsider when a concrete
   backend recovery consumer can prove complete destruction of those resources.
 
 - **Metal publishes completion after checking command status and timestamps.**

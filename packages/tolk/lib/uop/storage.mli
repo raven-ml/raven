@@ -167,6 +167,11 @@ val offset : t -> int
 
 (** {1:operations Device operations} *)
 
+val release : (unit -> unit) -> unit
+(** [release action] calls [action ()] once. If it raises, [action] and the
+    resources it owns are retained until process exit without automatic retry,
+    and the original exception and backtrace are propagated. *)
+
 val with_operation : (unit -> 'a) -> 'a
 (** [with_operation f] is [f ()], deferring buffer finalizers on the current
     domain until the outermost operation returns. Deferred releases retain

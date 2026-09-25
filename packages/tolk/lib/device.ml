@@ -19,11 +19,6 @@ module Lru_allocator = struct
      retried rather than overwriting it. *)
   let wrap (inner : 'buf Allocator.t) : 'buf Allocator.t =
     let cache : (int * Buffer_spec.t * 'buf) list Atomic.t = Atomic.make [] in
-    let free_cache () =
-      List.iter
-        (fun (size, spec, buf) -> inner.free buf size spec)
-        (Atomic.exchange cache [])
-    in
     let rec take size spec =
       let entries = Atomic.get cache in
       let rec find acc = function
@@ -42,6 +37,26 @@ module Lru_allocator = struct
       let entries = Atomic.get cache in
       if not (Atomic.compare_and_set cache entries (entry :: entries)) then
         cache_buf entry
+    in
+    let free_cache () =
+      let rec restore entries =
+        let current = Atomic.get cache in
+        if not (Atomic.compare_and_set cache current (current @ entries)) then
+          restore entries
+      in
+      let rec free = function
+        | [] -> ()
+        | (size, spec, buf) :: rest ->
+            (match Storage.release (fun () -> inner.free buf size spec) with
+             | () -> free rest
+             | exception exn ->
+                 let backtrace = Printexc.get_raw_backtrace () in
+                 (* Only untouched entries may be reused. Concurrent additions
+                    stay in the cache, and the uncertain owner stays retained. *)
+                 restore rest;
+                 Printexc.raise_with_backtrace exn backtrace)
+      in
+      free (Atomic.exchange cache [])
     in
     {
       inner with

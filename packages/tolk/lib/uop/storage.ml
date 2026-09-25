@@ -97,15 +97,22 @@ let rec push pending release =
   if not (Atomic.compare_and_set pending previous (release :: previous)) then
     push pending release
 
+let release action =
+  match action () with
+  | () -> ()
+  | exception exn ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      push failed_releases action;
+      Printexc.raise_with_backtrace exn backtrace
+
 let rec drain state =
   let rec release_all = function
     | [] -> ()
-    | release :: rest ->
-        (match release () with
+    | action :: rest ->
+        (match release action with
          | () -> release_all rest
          | exception exn ->
              let backtrace = Printexc.get_raw_backtrace () in
-             push failed_releases release;
              List.iter (push state.pending) rest;
              Printexc.raise_with_backtrace exn backtrace)
   in
