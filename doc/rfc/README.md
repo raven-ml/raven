@@ -56,4 +56,5 @@ a document outside the repository.
 - [0002](0002-decode-contract.md) The decode contract (committed)
 - [0003](0003-loading-weights.md) Loading weights (committed)
 - [0004](0004-quantised-weights.md) Quantised weights (published)
+- [0005](0005-placement.md) Placement (discussion)
 - [0006](0006-structures.md) Structures and compiled signatures (discussion)
