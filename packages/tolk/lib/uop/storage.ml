@@ -34,7 +34,6 @@ type t = {
   spec : Buffer_spec.t;
   allocator : allocator_pack Lazy.t;
   mutable storage : allocation;
-  mutable generation : int;
   mutable mappings : (allocator_pack * backing) list;
   base : t option;
   offset : int;
@@ -166,9 +165,8 @@ let add_ref buf cnt =
   root.uop_refcount <- root.uop_refcount + cnt;
   buf
 
-let is_initialized buf =
+let is_allocated buf =
   match buf.storage with Unallocated -> false | Empty | Allocated _ -> true
-let is_allocated buf = is_initialized buf || is_initialized (base buf)
 let allocated_views buf = (base buf).allocated_views
 
 let counts_as_used buf =
@@ -177,8 +175,7 @@ let counts_as_used buf =
 
 let rec allocate buf =
   with_operation (fun () ->
-    if is_initialized buf then invalid_arg "buffer already allocated";
-    buf.generation <- fresh_id ();
+    if is_allocated buf then invalid_arg "buffer already allocated";
     if nbytes buf = 0 then buf.storage <- Empty
     else match buf.base with
     | None ->
@@ -199,7 +196,7 @@ let rec allocate buf =
             root.allocated_views <- root.allocated_views + 1
         | Unallocated | Empty -> assert false)
 
-and ensure_allocated buf = if not (is_initialized buf) then allocate buf
+and ensure_allocated buf = if not (is_allocated buf) then allocate buf
 
 let deallocate buf =
   with_operation (fun () ->
@@ -237,7 +234,7 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
   ignore (checked_nbytes size dtype : int);
   let buf = {
     id = fresh_id (); device; size; dtype; spec; allocator;
-    storage = Unallocated; generation = -1; mappings = []; base = None; offset = 0;
+    storage = Unallocated; mappings = []; base = None; offset = 0;
     uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise finalize buf;
@@ -352,15 +349,11 @@ let view buf ~size ~dtype ~offset =
     invalid_arg "buffer view exceeds base buffer";
   let v = {
     id = fresh_id (); device = root.device; size; dtype; spec = root.spec;
-    allocator = root.allocator; storage = Unallocated; generation = -1; mappings = []; base = Some root;
+    allocator = root.allocator; storage = Unallocated; mappings = []; base = Some root;
     offset = buf.offset + offset; uop_refcount = 0; allocated_views = 0;
   } in
   Gc.finalise finalize v;
   v
-
-let generation buf =
-  ensure_allocated buf;
-  buf.generation
 
 let target_allocator device buf =
   match device with None -> allocator buf | Some device -> !allocator_resolver device
@@ -518,9 +511,9 @@ let snapshot buffers =
     | Some saved -> saved
     | None ->
         let data = match buf.base with
-          | Some root -> View (save root, buf.offset, is_initialized buf)
+          | Some root -> View (save root, buf.offset, is_allocated buf)
           | None ->
-              if is_initialized buf || Option.is_some buf.spec.external_ptr then begin
+              if is_allocated buf || Option.is_some buf.spec.external_ptr then begin
                 ensure_allocated buf;
                 Data (Some (as_bytes buf))
               end else Data None

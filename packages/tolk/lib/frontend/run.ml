@@ -163,21 +163,18 @@ let realize t =
 let materialize t = Creation.clone ~device:(U.Single (device_name ())) t
 
 let buffer_of t =
-  match buffer_of_node (T.uop t) with
-  | Some buf -> buf
-  | None -> (
-      (* A contiguous view of a realized buffer aliases it directly, so resolve
-         it without a round-trip through the scheduler. *)
-      match view_buffer (T.uop t) with
-      | Some buf -> buf
-      | None -> (
-          let t = if T.device t = None then materialize t else t in
-          match List.hd (realize_buffers [ t ]) with
-          | Some buf -> buf
-          | None ->
-              failwith
-                "Run.buffer_of: tensor folded to a constant expression with no \
-                 storage"))
+  let buf =
+    match view_buffer (T.uop t) with
+    | Some buf -> buf
+    | None ->
+        let t = if T.device t = None then materialize t else t in
+        match List.hd (realize_buffers [ t ]) with
+        | Some buf -> buf
+        | None -> failwith
+            "Run.buffer_of: tensor folded to a constant expression with no storage"
+  in
+  Tolk.Device.Buffer.ensure_allocated buf;
+  buf
 
 let data t =
   if has_empty_shape t then Bytes.empty

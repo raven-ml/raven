@@ -1725,6 +1725,13 @@ let numerical_edge_tests =
 let lifetime_tests =
   group "lifetime"
     [
+      test "reading an uninitialized buffer view preserves its values" (fun () ->
+          let module B = Tolk.Device.Buffer in
+          let input = vec [| 10.; 20.; 30.; 40. |] in
+          let base = Option.get (Run.buffer_of_node (T.uop input)) in
+          let view = B.view base ~size:2 ~dtype:Tolk_uop.Dtype.float32 ~offset:4 in
+          let tensor = T.of_uop (U.from_buffer view) in
+          check_floats [| 20.; 30. |] tensor);
       test "empty host inputs need no native allocation" (fun () ->
           let floats = Run.of_float_array ~shape:[ 0; 3 ] [||] in
           let ints = Run.of_int_array ~shape:[ 2; 0 ] [||] in

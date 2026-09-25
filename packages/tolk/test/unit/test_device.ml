@@ -113,7 +113,7 @@ let failed_view_allocation_preserves_ownership () =
   let view = Device.Buffer.view base ~size:2 ~dtype:i32 ~offset:4 in
   raises (Failure "offset failed") (fun () -> Device.Buffer.allocate view);
   equal int 0 (Device.Buffer.allocated_views base);
-  is_false (Device.Buffer.is_initialized view);
+  is_false (Device.Buffer.is_allocated view);
   Device.Buffer.ensure_allocated view;
   equal int 1 (Device.Buffer.allocated_views base);
   Device.Buffer.deallocate view;
@@ -139,11 +139,10 @@ let empty_storage () =
     } in
   let create () = Device.Buffer.create ~device:"EMPTY" ~size:0 ~dtype:i32 allocator in
   let src = create () and dst = create () in
-  is_false (Device.Buffer.is_initialized src);
+  is_false (Device.Buffer.is_allocated src);
   Device.Buffer.ensure_allocated src;
   Device.Buffer.ensure_allocated src;
   is_true (Device.Buffer.is_allocated src);
-  is_true (Device.Buffer.is_initialized src);
   equal nativeint 0n (Device.Buffer.addr src);
   Device.Buffer.copyin src Bytes.empty;
   equal string "" (Bytes.to_string (Device.Buffer.as_bytes src));
@@ -157,7 +156,7 @@ let empty_storage () =
   let tail = Device.Buffer.view base ~size:0 ~dtype:i32 ~offset:(4 * D.itemsize i32) in
   Device.Buffer.ensure_allocated tail;
   is_false ~msg:"an empty view does not allocate its nonempty base"
-    (Device.Buffer.is_initialized base);
+    (Device.Buffer.is_allocated base);
   equal nativeint 0n (Device.Buffer.addr tail);
   List.iter Device.Buffer.deallocate [ tail; base; view; src; dst ]
 
@@ -178,7 +177,7 @@ let buffer_byte_ranges () =
   equal int 8 (Device.Buffer.nbytes nested);
   let empty = Device.Buffer.view nested ~size:0 ~dtype:D.uint8 ~offset:8 in
   equal int 0 (Device.Buffer.nbytes empty);
-  is_false (Device.Buffer.is_initialized base)
+  is_false (Device.Buffer.is_allocated base)
 
 let interleaved_kernel_formals () =
   let module U = Uop in
@@ -316,11 +315,7 @@ let typed_storage_identity () =
   equal (list int) [42] (read_i32 dst);
   raises_match (function Invalid_argument _ -> true | _ -> false)
     (fun () -> ignore (Device.Buffer.addr src));
-  let generation = Device.Buffer.generation src in
-  equal int generation (Device.Buffer.generation src);
-  Device.Buffer.deallocate src;
-  is_false ~msg:"reallocation invalidates previously captured arguments"
-    (generation = Device.Buffer.generation src)
+  Device.Buffer.deallocate src
 
 let mappings_follow_storage_ownership () =
   let source_kind : bytes Type.Id.t = Type.Id.make () in

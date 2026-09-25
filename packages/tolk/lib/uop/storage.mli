@@ -209,13 +209,9 @@ val ensure_allocated : t -> unit
     No-op otherwise. *)
 
 val is_allocated : t -> bool
-(** [is_allocated b] is [true] iff [b] has initialized empty storage or its
-    base buffer's storage exists. *)
-
-val is_initialized : t -> bool
-(** [is_initialized b] is [true] iff this specific buffer or view has its own
-    storage initialized, including empty storage without a pointer. A view
-    can be uninitialised even when the base buffer is allocated. *)
+(** [is_allocated b] is [true] iff [b] has its own storage initialized,
+    including empty storage without a pointer. An unallocated view remains
+    unallocated when only its base has storage. *)
 
 val allocated_views : t -> int
 (** [allocated_views b] is the number of nonempty allocated views of [b]'s
@@ -337,11 +333,6 @@ val synchronize : ?device:string -> t -> unit
     differs from [b]'s owner, for the owner as well. [device] defaults to [b]'s
     device, whose own dispatch order must be preserved by the caller. Use this
     before direct dispatch; compiled queue dependencies replace these waits. *)
-
-val generation : t -> int
-(** [generation b] initializes [b] and returns the identity of its current
-    allocation. Reallocating [b] changes this identity; replay uses it to
-    detect stale bindings without interpreting backend handles. *)
 
 val host_addr : t -> nativeint option
 (** [host_addr b] initializes and synchronizes [b], then returns its host
