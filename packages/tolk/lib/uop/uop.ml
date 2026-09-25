@@ -1429,6 +1429,9 @@ end)
 let ranges_cache : Ref_set.t Weak_tbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
 
+let ended_ranges_cache : t list Weak_tbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
+
 let rec ranges_set u =
   let ranges_cache = Domain.DLS.get ranges_cache in
   match Weak_tbl.find_opt ranges_cache u with
@@ -1452,6 +1455,15 @@ and compute_ranges u =
   !acc
 
 and ended_ranges u =
+  let cache = Domain.DLS.get ended_ranges_cache in
+  match Weak_tbl.find_opt cache u with
+  | Some ranges -> ranges
+  | None ->
+      let ranges = compute_ended_ranges u in
+      Weak_tbl.add cache u ranges;
+      ranges
+
+and compute_ended_ranges u =
   let children = src u in
   match op u with
   | Ops.Call

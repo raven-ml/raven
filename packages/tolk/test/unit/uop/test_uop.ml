@@ -1153,7 +1153,7 @@ let backward_slice_tracks_shared_dependencies () =
     (Uop.in_backward_slice leaf root)
 
 let property_caches_release_nodes () =
-  let weak = Stdlib.Weak.create 2 in
+  let weak = Stdlib.Weak.create 4 in
   let[@inline never] populate () =
     let r = Uop.range ~axis:9127 ~kind:Axis_type.Weak ~size:(Uop.const_int 9) () in
     let cond = Uop.O.(r < Uop.const_int 4) in
@@ -1167,15 +1167,22 @@ let property_caches_release_nodes () =
     ignore (Uop.shape r);
     ignore (Uop.backward_slice cond);
     ignore (Uop.in_backward_slice r cond);
+    let ended = Uop.end_ ~value:cond ~ranges:[r] in
+    let barrier = Uop.barrier ~srcs:[ended; ended] () in
+    ignore (Uop.ranges barrier);
     Stdlib.Weak.set weak 0 (Some r);
-    Stdlib.Weak.set weak 1 (Some cond)
+    Stdlib.Weak.set weak 1 (Some cond);
+    Stdlib.Weak.set weak 2 (Some ended);
+    Stdlib.Weak.set weak 3 (Some barrier)
   in
   populate ();
   Gc.full_major ();
   Gc.full_major ();
   is_false ~msg:"cached range is collectible, even when its ranges include itself"
     (Stdlib.Weak.check weak 0);
-  is_false ~msg:"cached condition is collectible" (Stdlib.Weak.check weak 1)
+  is_false ~msg:"cached condition is collectible" (Stdlib.Weak.check weak 1);
+  is_false ~msg:"cached ending dependency is collectible" (Stdlib.Weak.check weak 2);
+  is_false ~msg:"cached barrier is collectible" (Stdlib.Weak.check weak 3)
 
 let exec_alu_folds_and_absorbs () =
   let c n = Const.int Dtype.int32 n in
@@ -2349,6 +2356,33 @@ let after_closes_ranges_from_dependencies () =
   is_true ~msg:"dependency-ended range is not live"
     (not (List.exists (Uop.equal r) (Uop.ranges sequenced)))
 
+let shared_ending_dependencies_have_bounded_allocations () =
+  let leaf = Uop.barrier ~srcs:[Uop.const_int 91283] () in
+  let rec nest depth node =
+    if depth = 0 then node
+    else nest (depth - 1) (Uop.barrier ~srcs:[node; node] ()) in
+  let root = nest 16 leaf in
+  let minor_before, promoted_before, major_before = Gc.counters () in
+  let ranges = Uop.ranges root in
+  let minor_after, promoted_after, major_after = Gc.counters () in
+  let words = minor_after -. minor_before +. major_after -. major_before
+      -. (promoted_after -. promoted_before) in
+  equal int 0 (List.length ranges);
+  if words > 50_000. then
+    failf "17 shared barriers allocated %.0f words while resolving empty ranges" words
+
+let nested_ending_dependencies_preserve_live_range_order () =
+  let range axis = Uop.range ~size:(Uop.const_int 4) ~axis ~kind:Axis_type.Weak () in
+  let first = range 91284 and closed = range 91285 and last = range 91286 in
+  let end_closed = Uop.end_ ~value:closed ~ranges:[closed] in
+  let barrier = Uop.barrier ~srcs:[end_closed; end_closed] () in
+  let value = Uop.O.(first + closed + last) in
+  let root = Uop.after ~src:value ~deps:[barrier; barrier] in
+  equal (list int) [Uop.tag first; Uop.tag last]
+    (List.map Uop.tag (Uop.ranges root));
+  is_true (Uop.ranges_subset root value);
+  is_false (Uop.ranges_subset value root)
+
 let linear_closes_ranges () =
   let r =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Weak ()
@@ -2715,6 +2749,10 @@ let () =
         ];
       group "Ranges"
         [
+          test "shared ending dependencies have bounded allocations"
+            shared_ending_dependencies_have_bounded_allocations;
+          test "nested ending dependencies preserve live range order"
+            nested_ending_dependencies_preserve_live_range_order;
           test "After closes dependency ranges"
             after_closes_ranges_from_dependencies;
           test "Linear closes ranges" linear_closes_ranges;

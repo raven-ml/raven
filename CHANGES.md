@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- Range analysis reuses ended-range results for shared `AFTER` and `BARRIER`
+  dependencies, avoiding exponential traversal and allocation during compilation.
+
 - `Creation.full_like`, `zeros_like` and `ones_like` preserve device placement
   and allocate local shard sizes, including symbolic nonsharded dimensions.
   Fill and random constructors now use the same placement rules.
