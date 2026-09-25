@@ -2383,6 +2383,33 @@ let nested_ending_dependencies_preserve_live_range_order () =
   is_true (Uop.ranges_subset root value);
   is_false (Uop.ranges_subset value root)
 
+let range_order_and_membership_share_scope () =
+  List.iter (fun membership_first ->
+      let axis = if membership_first then 91300 else 91310 in
+      let range i = Uop.range ~size:(Uop.const_int 4) ~axis:(axis + i)
+          ~kind:Axis_type.Weak () in
+      let first = range 0 and second = range 1 and third = range 2 in
+      let left = Uop.O.(third + first) and right = Uop.O.(second + third) in
+      let value = Uop.O.(left + right) in
+      let nested = Uop.range ~size:(Uop.const_int 3) ~axis:(axis + 3)
+          ~kind:Axis_type.Weak ~parents:[third; first; second; first] () in
+      let closed = Uop.end_ ~value:nested ~ranges:[first; first; second] in
+      let expected = [nested; third] in
+      let membership () =
+        List.iter (fun range ->
+            equal bool (List.memq range expected) (Uop.ranges_subset range closed))
+          [first; second; third];
+        is_true (Uop.ranges_subset closed nested);
+        is_false (Uop.ranges_subset nested closed) in
+      if membership_first then membership ();
+      equal (list int) (List.map Uop.tag [third; first; second])
+        (List.map Uop.tag (Uop.ranges value));
+      equal (list int) (List.map Uop.tag [nested; third; first; second])
+        (List.map Uop.tag (Uop.ranges nested));
+      equal (list int) (List.map Uop.tag expected)
+        (List.map Uop.tag (Uop.ranges closed));
+      membership ()) [false; true]
+
 let linear_closes_ranges () =
   let r =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Weak ()
@@ -2753,6 +2780,8 @@ let () =
             shared_ending_dependencies_have_bounded_allocations;
           test "nested ending dependencies preserve live range order"
             nested_ending_dependencies_preserve_live_range_order;
+          test "range order and membership share scope in either query order"
+            range_order_and_membership_share_scope;
           test "After closes dependency ranges"
             after_closes_ranges_from_dependencies;
           test "Linear closes ranges" linear_closes_ranges;

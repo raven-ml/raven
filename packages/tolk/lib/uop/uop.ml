@@ -1426,33 +1426,40 @@ module Ref_set = Set.Make (struct
   let compare a b = Int.compare a.Hashcons.tag b.Hashcons.tag
 end)
 
-let ranges_cache : Ref_set.t Weak_tbl.t Domain.DLS.key =
+(* Keep source order and membership together, so both queries share scope
+   propagation. RANGE nodes precede their outer dependencies. *)
+let ranges_cache : (t list * Ref_set.t) Weak_tbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
 
 let ended_ranges_cache : t list Weak_tbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
 
-let rec ranges_set u =
-  let ranges_cache = Domain.DLS.get ranges_cache in
-  match Weak_tbl.find_opt ranges_cache u with
-  | Some set -> set
+let rec ranges_property u =
+  let cache = Domain.DLS.get ranges_cache in
+  match Weak_tbl.find_opt cache u with
+  | Some ranges -> ranges
   | None ->
-      let set = compute_ranges u in
-      Weak_tbl.add ranges_cache u set;
-      set
+      let ranges = compute_ranges u in
+      Weak_tbl.add cache u ranges;
+      ranges
 
 and compute_ranges u =
-  let acc = ref Ref_set.empty in
-  let children = src u in
-  Array.iter (fun c -> acc := Ref_set.union !acc (ranges_set c)) children;
+  let members = ref Ref_set.empty and reversed = ref [] in
+  Array.iter (fun child ->
+      List.iter (fun r ->
+          if not (Ref_set.mem r !members) then begin
+            members := Ref_set.add r !members;
+            reversed := r :: !reversed
+          end) (fst (ranges_property child))) (src u);
   List.iter (fun ended ->
-    if op ended = Ops.Range then acc := Ref_set.remove ended !acc
-    else
-      Ref_set.iter (fun r -> acc := Ref_set.remove r !acc)
-        (ranges_set ended))
+      if op ended = Ops.Range then members := Ref_set.remove ended !members
+      else members := Ref_set.diff !members (snd (ranges_property ended)))
     (ended_ranges u);
-  (if op u = Ops.Range then acc := Ref_set.add u !acc);
-  !acc
+  let ordered = List.fold_left (fun ordered r ->
+      if Ref_set.mem r !members then r :: ordered else ordered) [] !reversed in
+  if op u = Ops.Range then
+    u :: List.filter (fun r -> r != u) ordered, Ref_set.add u !members
+  else ordered, !members
 
 and ended_ranges u =
   let cache = Domain.DLS.get ended_ranges_cache in
@@ -1488,8 +1495,6 @@ and compute_ended_ranges u =
        | Option.Some k ->
            Array.to_list (Array.sub children k (Array.length children - k)))
 
-(* Ordered variant of [ranges_set]; memoized like it, since an unmemoized
-   walk revisits shared subgraphs and goes exponential on unrolled kernels. *)
 (* Bool-typed nodes reachable from a node, itself included: a backward slice
    pruned to the only dtype a condition can have. Memoized, since the
    where-closure fold queries it on every WHERE and an unmemoized walk
@@ -1510,43 +1515,10 @@ let rec bool_slice u =
 
 let bool_slice_mem root u = Ref_set.mem u (bool_slice root)
 
-let ranges_list_cache : t list Weak_tbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Weak_tbl.create 64)
-
-let ranges u =
-  let ranges_list_cache = Domain.DLS.get ranges_list_cache in
-  let mem_ref x xs = List.exists (fun y -> y == x) xs in
-  let add_unique_rev acc r = if mem_ref r acc then acc else r :: acc in
-  let remove_many acc rs =
-    List.filter (fun r -> not (mem_ref r rs)) acc
-  in
-  let rec ranges_list u =
-    match Weak_tbl.find_opt ranges_list_cache u with
-    | Some l -> l
-    | None ->
-        let l = compute_ranges_list u in
-        Weak_tbl.add ranges_list_cache u l;
-        l
-  and compute_ranges_list u =
-    let children = src u in
-    let acc = ref [] in
-    Array.iter
-      (fun c ->
-         List.iter (fun r -> acc := add_unique_rev !acc r) (ranges_list c))
-      children;
-    List.iter
-      (fun ended ->
-         if op ended = Ops.Range then acc := remove_many !acc [ ended ]
-         else acc := remove_many !acc (ranges_list ended))
-      (ended_ranges u);
-    let ordered = List.rev !acc in
-    if op u = Ops.Range then u :: remove_many ordered [ u ] else ordered
-  in
-  ranges_list u
+let ranges u = fst (ranges_property u)
 
 let ranges_subset sub sup =
-  let sup_set = ranges_set sup in
-  List.for_all (fun r -> Ref_set.mem r sup_set) (ranges sub)
+  Ref_set.subset (snd (ranges_property sub)) (snd (ranges_property sup))
 
 let opaque_call_body = function
   | Ops.Sink | Ops.Program | Ops.Linear | Ops.Store

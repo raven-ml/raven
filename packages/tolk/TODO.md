@@ -110,8 +110,7 @@ acceptance requirement; skipped tests are not execution evidence.
 - Remove remaining parallel property reconstruction and silent guesses in
   renderer widths, view offsets, stage buffer sizes and range metadata. Remove
   the C renderer's independent multidimensional stride reconstruction in
-  favor of canonical flat indexes. Unify ordered range and range
-  membership traversal; use checked central numel in placeholders, frontend
+  favor of canonical flat indexes. Use checked central numel in placeholders, frontend
   tensors and rangeify. Remove ignored `dtype` arguments from source-derived
   `Uop.load`, `reduce`, `wmma` and `noop`, updating callers and contracts. Port
   remaining symbolic rules and measure rewrite performance and long-lived
