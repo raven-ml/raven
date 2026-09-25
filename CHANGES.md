@@ -386,6 +386,9 @@ thread.
 
 ### Tolk (new)
 
+- `Creation.shard` partitions a tensor along an axis or replicates it across
+  devices. Sharded results can be gathered with `Creation.clone` on one device.
+
 - Allreduce preserves symbolic output extents and supports hierarchical
   reduction through `ALLREDUCE_NODE_NDEVS`. Cross-device symbolic copies
   transfer padded storage instead of repeating values to fill the allocation.

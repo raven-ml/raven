@@ -64,6 +64,37 @@ let clone ?device t =
   let value = U.cast ~src:value ~dtype in
   T.of_uop (U.after ~src:dst ~deps:[ U.store ~dst ~value () ])
 
+let shard ?axis ~devices t =
+  let devices = List.map Tolk.Helpers.canonicalize_device_name devices in
+  if devices = [] then invalid_arg "Creation.shard: empty device group";
+  match T.device t with
+  | None -> t
+  | Some (U.Multi _ | U.Index _) -> invalid_arg "Creation.shard: source must be on one device"
+  | Some (U.Single source) ->
+      match devices with
+      | [device] ->
+          if source = device then t
+          else T.of_uop (U.copy ~src:(T.uop t) ~device:(U.Single device) ())
+      | _ ->
+          let copied = U.copy ~src:(T.uop t) ~device:(U.Multi devices) () in
+          match axis with
+          | None -> T.of_uop copied
+          | Some axis ->
+              let axis = T.resolve_dim t axis in
+              let shape = T.symbolic_shape t in
+              let count = U.const_int (List.length devices) in
+              let size = List.nth shape axis in
+              let remainder = U.simplify (U.alu_binary ~op:Ops.Floormod ~lhs:size ~rhs:count) in
+              if U.const_int_value remainder <> Some 0 then
+                invalid_arg "Creation.shard: axis size must be divisible by the device count";
+              let size = U.simplify (U.alu_binary ~op:Ops.Floordiv ~lhs:size ~rhs:count) in
+              let range = U.range ~size:count ~axis:(-1) ~kind:Axis_type.Device () in
+              let offset = U.simplify (U.alu_binary ~op:Ops.Mul ~lhs:range ~rhs:size) in
+              let local = U.shrink ~src:copied
+                  ~offset:(T.symbolic_shape_uop (List.mapi (fun i _ -> if i = axis then offset else U.const_int 0) shape))
+                  ~size:(T.symbolic_shape_uop (List.mapi (fun i dim -> if i = axis then size else dim) shape)) in
+              T.of_uop (U.unshard ~src:local ~axes:[axis] ~ranges:[range] ())
+
 let full ?dtype ?(buffer = true) shape fill =
   let dt = match dtype with Some d -> d | None -> dtype_of_fill fill in
   let v = broadcast_scalar dt fill shape in

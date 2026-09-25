@@ -1606,6 +1606,40 @@ let constant_integer_division () =
                        2147483647; 2147483648; 4294967294; 4294967295 |];
           D.int32, [| -2147483648; -65537; -20; -19; -7; -1; 0; 1; 7; 2147483647 |] ])
 
+let sharding_tests =
+  group "sharding"
+    [
+      test "partition, compute and gather" (fun () ->
+          let device = Run.device_name () in
+          let devices = [device; device] in
+          let input = fa ~shape:[2; 4] [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.|] in
+          let sharded = Creation.shard ~axis:(-1) ~devices input in
+          equal (list int) [2; 4] (T.shape sharded);
+          equal (list int) [2; 2] (U.max_shard_shape (T.uop sharded));
+          let result = Rd.sum ~axis:[1] (El.mul sharded sharded) in
+          check_floats [|30.; 174.|] (Creation.clone ~device:(U.Single device) result));
+      test "replication preserves shape and values" (fun () ->
+          let device = Run.device_name () in
+          let input = vec [|1.; 2.; 3.|] in
+          let replicated = Creation.shard ~devices:[device; device] input in
+          is_true (U.axis (T.uop replicated) = None);
+          check_floats [|2.; 4.; 6.|]
+            (Creation.clone ~device:(U.Single device) (El.add replicated replicated)));
+      test "single and device-less tensors need no partition" (fun () ->
+          let input = vec [|1.; 2.|] in
+          is_true (Creation.shard ~devices:[Run.device_name ()] input == input);
+          let constant = T.i 7 in
+          is_true (Creation.shard ~devices:["CPU:1"; "CPU:2"] constant == constant));
+      test "invalid partitions fail before realization" (fun () ->
+          let input = vec [|1.; 2.; 3.|] in
+          let devices = [Run.device_name (); Run.device_name ()] in
+          let invalid f = raises_match (function Invalid_argument _ -> true | _ -> false) f in
+          invalid (fun () -> ignore (Creation.shard ~devices:[] input));
+          invalid (fun () -> ignore (Creation.shard ~axis:1 ~devices input));
+          invalid (fun () -> ignore (Creation.shard ~axis:0 ~devices input));
+          invalid (fun () -> ignore (Creation.shard ~devices (Creation.shard ~devices input))));
+    ]
+
 let () =
   run "Tolk_frontend_run"
     [
@@ -1621,6 +1655,7 @@ let () =
           equal string original (Run.device_name ()));
       test "constant integer division and modulo preserve boundary values"
         constant_integer_division;
+      sharding_tests;
       aliasing_tests;
       lifetime_tests;
       numerical_edge_tests;

@@ -1390,8 +1390,9 @@ val max_numel : t -> int
     not fit in a host integer. *)
 
 val shard_shape : t -> t list
-(** [shard_shape u] is [shape u], except that a multi-device tensor with a
-    known sharding axis has that axis divided by the number of devices. *)
+(** [shard_shape u] is the local source shape of an UNSHARD. For another
+    multi-device tensor with a known single sharding axis, it divides that
+    logical axis by the device count. Otherwise it is [shape u]. *)
 
 val max_shard_shape : t -> int list
 (** [max_shard_shape u] is {!shard_shape} with every symbolic dimension
@@ -1407,7 +1408,8 @@ val axis : t -> int option
     a single-axis {!Ops.Unshard} reads its axis tuple, {!Ops.Copy} clears the axis,
     ALU ops use the last
     non-[None] source axis, and movement/reduction ops remap or clear the
-    axis using tinygrad's shape rules. *)
+    axis using tinygrad's shape rules. Raises [Invalid_argument] for an
+    UNSHARD with multiple axes; use {!sharding} to inspect those axes. *)
 
 val bounds : t -> (t * t) list
 (** [bounds u] is the per-device shard interval on [u]'s sharding axis.

@@ -37,6 +37,19 @@ val clone : ?device:Tolk_uop.Uop.device -> Tensor.t -> Tensor.t
     {!Tolk_uop.Uop.commit_dtype}; exact integers outside all storage types
     raise [Invalid_argument]. *)
 
+val shard : ?axis:int -> devices:string list -> Tensor.t -> Tensor.t
+(** [shard ~devices t] replicates [t] across [devices]. With [axis], it
+    partitions that axis into equal contiguous shards while retaining [t]'s
+    logical shape. Negative axes count from the end. Symbolic dimensions must
+    be provably divisible by the device count.
+
+    A single device moves the whole tensor there. Device-less values are
+    unchanged. Use {!clone} with a single destination device to gather a
+    sharded result.
+
+    @raise Invalid_argument if [devices] is empty, [t] already has multiple
+    devices, or the axis is invalid or cannot be divided evenly. *)
+
 val full :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> int list -> Tensor.scalar ->
   Tensor.t
