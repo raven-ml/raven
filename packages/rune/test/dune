@@ -87,6 +87,15 @@
    METAL
    (run %{dep:test_remat_memory.exe}))))
 
+; Alone in its executable: it replaces the CPU opener with one that counts the
+; bytes each transfer moves between devices.
+
+(tests
+ (names test_tensor_parallel)
+ (modules test_tensor_parallel)
+ (package rune)
+ (libraries rune nx tolk tolk.uop tolk.cpu windtrap rune_test_support))
+
 ; A plain executable: whether a temporary is dead at the copy it checks
 ; depends on how its caller is compiled.
 
