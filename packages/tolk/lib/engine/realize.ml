@@ -164,6 +164,7 @@ let program_config () =
       var Helpers.use_tc;
       var Helpers.tc_select;
       var Helpers.tc_opt;
+      var Helpers.tc_min_globals;
       var Helpers.image;
       var Helpers.disable_fast_idiv;
       var Helpers.transcendental;

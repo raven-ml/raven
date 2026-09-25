@@ -194,10 +194,10 @@ let double_reduce_global_ast ~s0 ~s1 ~sr1 ~sr2 =
   wrap_sink [ e ]
 
 (* Matmul: out[m,n] = sum_k(a[m,k] * b[k,n]) *)
-let matmul_global_ast ~m ~n ~k =
+let matmul_global_ast ~input_dtype ~m ~n ~k =
   let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:input_dtype () in
+  let p_b = U.param ~slot:2 ~dtype:input_dtype () in
   let r_m = global_range ~axis:0 m in
   let r_n = global_range ~axis:1 n in
   let r_k = reduce_range ~axis:2 k in
@@ -207,6 +207,7 @@ let matmul_global_ast ~m ~n ~k =
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
+  let mul = U.cast ~src:mul ~dtype:D.float32 in
   let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] in
   let out_idx =
     U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
@@ -307,8 +308,8 @@ let image_reduce_invalid_dims_ast ~s0 ~sr =
    (broadcast on j). Triggers heuristic upcast stride analysis. *)
 let broadcast_ewise_global_ast ~s0 ~s1 =
   let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:global_fptr () in
+  let p_b = U.param ~slot:2 ~dtype:global_fptr () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
@@ -375,8 +376,8 @@ let masked_ewise_3d_global_ast ~s0 ~s1 ~s2 =
    Axis 0 is NOT expand (all bufs use r0). Tests local expand priority. *)
 let partial_broadcast_global_ast ~s0 ~s1 =
   let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:global_fptr () in
+  let p_b = U.param ~slot:2 ~dtype:global_fptr () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
@@ -760,13 +761,31 @@ let integration_tests =
           is_true (has is_local opts));
       (* Matmul on GPU: heuristic upcast + reduce unroll + locals. *)
       test "matmul on GPU" (fun () ->
-          let ast = matmul_global_ast ~m:128 ~n:128 ~k:128 in
+          let ast = matmul_global_ast ~input_dtype:D.float32 ~m:128 ~n:128 ~k:128 in
           let ren = gpu_renderer () in
           let opts = run_heuristic ast ren in
           is_true (has is_upcast opts);
           is_true (has is_unroll opts);
           is_true (has is_local opts);
           is_true (not (has is_grouptop opts)));
+      test "tensor-core upcasts preserve requested global occupancy" (fun () ->
+          let ast = matmul_global_ast ~input_dtype:D.float16 ~m:128 ~n:128 ~k:128 in
+          let ren = Cstyle.cuda Gpu_target.SM80 in
+          let tc = U.Opt.Tc {axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1} in
+          let split axis kind = U.Opt.Split {axis; amount = 4; kind; top = false} in
+          List.iter (fun (floor, expected, globals) ->
+              with_var Helpers.tc_min_globals floor (fun () ->
+                  let scheduler = run_heuristic_scheduler ast ren in
+                  is_true ~msg:"reference optimizer sequence"
+                    (P.applied_opts scheduler = expected);
+                  let shape = P.full_shape scheduler in
+                  let count = List.fold_left (fun n axis ->
+                      n * U.sym_infer (List.nth shape axis) []) 1
+                      (P.axes_of scheduler [Ak.Global]) in
+                  equal int globals count))
+            [0, [tc; split 0 Ak.Upcast; split 1 Ak.Upcast; split 1 Ak.Local], 2;
+             1, [tc; split 0 Ak.Upcast; split 1 Ak.Local; split 1 Ak.Upcast], 2;
+             4, [tc; split 0 Ak.Upcast; split 1 Ak.Local], 8]);
       (* Elementwise on CPU: default upcast only. *)
       test "elementwise on CPU" (fun () ->
           let ast = elementwise_loop_ast ~s0:128 ~s1:128 in

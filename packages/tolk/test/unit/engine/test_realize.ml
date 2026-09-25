@@ -437,7 +437,7 @@ let () =
                         ignore (Realize.compile_linear ~device ~to_program linear)))
                   [0; 1; 0];
                 equal ~msg:key (list int) [0; 1] (List.rev !compiled_policies))
-              [Helpers.tc_select; Helpers.tc_opt]);
+              [Helpers.tc_select; Helpers.tc_opt; Helpers.tc_min_globals]);
           test "keys cached programs by selected target" (fun () ->
             let create target =
               let render ?name program =

@@ -121,13 +121,29 @@ let try_tensor_cores k =
         | None -> try_axis (axis + 1)
         | Some (n_rng, m_rng) ->
             let rngs = [| n_rng; m_rng |] in
-            List.iter (fun d ->
-              let upcast axis amount = U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount } in
-              match try_opt_on_rng tk rngs.(d) [ 5; 4; 3; 2 ] upcast with
+            let split d sizes kind =
+              let opt axis amount = U.Opt.Split { kind; top = false; axis; amount } in
+              match try_opt_on_rng tk rngs.(d) sizes opt with
               | Some (replaced, _) -> rngs.(d) <- replaced
-              | None -> ()) [ 1; 0 ];
-            let local axis amount = U.Opt.Split { kind = Axis_type.Local; top = false; axis; amount } in
-            ignore (try_opt_on_rng tk rngs.(0) [ 4; 2 ] local);
+              | None -> () in
+            split 1 [ 5; 4; 3; 2 ] Axis_type.Upcast;
+            let min_globals = Helpers.Context_var.get Helpers.tc_min_globals in
+            if min_globals = 0 then begin
+              split 0 [ 5; 4; 3; 2 ] Axis_type.Upcast;
+              split 0 [ 4; 2 ] Axis_type.Local
+            end else begin
+              split 0 [ 4; 2 ] Axis_type.Local;
+              match List.find_opt (divides_by rngs.(0)) [ 5; 4; 3; 2 ] with
+              | None -> ()
+              | Some size ->
+                  let shape = P.full_shape tk in
+                  let globals = List.fold_left (fun acc axis ->
+                      U.O.(acc * List.nth shape axis)) (U.const_int 1)
+                      (P.axes_of tk [Axis_type.Global]) in
+                  let enough = U.O.(not_ (globals < (U.const_int size * U.const_int min_globals))) in
+                  if U.resolve ~default:false enough then
+                    split 0 [size] Axis_type.Upcast
+            end;
             Some tk
     in
     try_axis 0

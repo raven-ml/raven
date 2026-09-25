@@ -657,6 +657,9 @@ thread.
 
 ### Tolk (new)
 
+- `TC_MIN_GLOBALS` preserves global work when tensor-core heuristics choose
+  upcasts. Scoped changes to this policy select distinct compiled programs.
+
 - Ordinary tensor slices retain their base storage in compiled call signatures;
   only explicitly materialized contiguous views become narrowed call inputs.
 

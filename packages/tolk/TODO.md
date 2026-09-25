@@ -107,9 +107,8 @@ acceptance requirement; skipped tests are not execution evidence.
   packing and replay on hardware.
 - Add deterministic beam coverage for reconsidering candidates rejected by
   the per-step compute filter. Measure search cost and selected kernels at
-  the upstream stopping threshold. Port remaining heuristics, including
-  `TC_MIN_GLOBALS` global-occupancy preservation and its compilation cache key,
-  plus device-aware compilation and dynamic cache policy. Share bounded workers
+  the upstream stopping threshold. Port remaining heuristics, device-aware
+  compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
   Synchronize device opening and runtime caches; concurrent callers

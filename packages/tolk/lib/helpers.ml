@@ -199,6 +199,7 @@ let training = Context_var.int ~key:"TRAINING" ~default:0
 let use_tc = Context_var.int ~key:"TC" ~default:1
 let tc_select = Context_var.int ~key:"TC_SELECT" ~default:(-1)
 let tc_opt = Context_var.int ~key:"TC_OPT" ~default:0
+let tc_min_globals = Context_var.int ~key:"TC_MIN_GLOBALS" ~default:0
 let transcendental = Context_var.int ~key:"TRANSCENDENTAL" ~default:1
 let split_reduceop = Context_var.int ~key:"SPLIT_REDUCEOP" ~default:1
 
