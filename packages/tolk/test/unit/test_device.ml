@@ -22,7 +22,7 @@ module D = Dtype
    linker would drop [Realize] and copy_from would stay unbacked. The installed
    runner resolves the destination device by name, so the CPU opener must be
    registered too. *)
-let () = ignore (Sys.opaque_identity Realize.graph_launches)
+let () = ignore (Sys.opaque_identity Realize.queue_submissions)
 let () = Device.register "CPU" Tolk_cpu.create
 
 let device = Device.get "CPU:device-test"

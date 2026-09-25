@@ -249,9 +249,8 @@ let release_store s =
    calls of all programs in queue order, so the single-device programs a device
    runs share its arenas: a program's [k]th arena is bound, at every call, to
    the device's [k]th shared buffer, which grows to the largest arena bound to
-   it. The buffer a slot outgrows is retired: device graphs recorded over it
-   keep views of it for as long as their program lives, and it is freed once no
-   view remains, after the device has finished the work that may use it. *)
+   it. The buffer a slot outgrows is retired until its views are released and
+   the device has finished the work that may use it. *)
 
 let arenas : (string * int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 4
 let retired_arenas : (Tolk.Device.t * Tolk.Device.Buffer.t) list ref = ref []
@@ -1212,11 +1211,8 @@ let schedule_body_linear st body_sink =
         | None -> assert false
       in
       reserve_slots_of body_linear;
-      (* Batched like a compiled call's linear: each iteration replays the
-         body's graphs with the rebound slot buffers patched in. *)
-      Tolk.Jit.batch_graphs ~device:st.st_device
-        (Tolk.Realize.compile_linear ~device:st.st_device
-           ~to_program:(to_program st.st_device) body_linear), resolve_node
+      Tolk.Realize.compile_linear ~device:st.st_device
+        ~to_program:(to_program st.st_device) body_linear, resolve_node
 
 (* Schedule analyses, shared by buffer reuse at the jit boundary and inside a
    staged loop's body. *)
@@ -1260,12 +1256,12 @@ let same_index_paths ~(inode : U.t) (u : U.t) =
   let reaches, bad = go u in
   (reaches, not bad)
 
-(* The schedule's calls in execution order, descending into batched graph calls.
+(* The schedule's calls in execution order, expanding queue access metadata.
    [Opaque] marks a call whose inner order is unknown (a staged loop): it may
    read and write its arguments in any order. *)
 type scheduled = Kernel of U.t list | Opaque of U.t
 
-let rec schedule_calls linear =
+let schedule_calls linear =
   List.concat_map
     (fun call ->
       let call = U.without_after call in
@@ -1274,10 +1270,7 @@ let rec schedule_calls linear =
           (match U.arg call with
            | U.Arg.Call_info {aux = Some info; _} ->
                List.map (fun slots -> Kernel (List.map (List.nth args) slots)) info.accesses
-           | _ when U.op body = Tolk_uop.Ops.Custom_function ->
-               (match U.Arg.as_string (U.arg body), U.children body with
-                | Some "graph", [inner] -> schedule_calls inner
-                | _ -> [Opaque call])
+           | _ when U.op body = Tolk_uop.Ops.Custom_function -> [Opaque call]
            | _ -> [Kernel args])
       | None -> [])
     (U.children linear)
@@ -3906,13 +3899,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~consumed_from ~const_cache
           cache_key;
         (linear, var_vals)
   in
-  (* Batch consecutive graph-compatible kernels into device execution graphs
-     (CUDA graphs, Metal indirect command buffers), so replay dispatches each
-     batch as one launch instead of one launch per kernel. Buffers rebound
-     between replays (inputs, fresh per-call outputs) are diff-patched into the
-     recorded graph by [Realize.run_linear]'s graph runner. Honors JIT (>= 2
-     disables) and JIT_BATCH_SIZE. *)
-  let linear = Tolk.Jit.batch_graphs ~device:dev linear in
   (* The planner's arenas are the int8 buffers its slices view; every other
      buffer a slice views is an input, a constant or an output. *)
   let cp_arenas =

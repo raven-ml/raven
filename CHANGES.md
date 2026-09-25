@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- Remove `Device.Graph` and `Jit.batch_graphs`; queue submission is compiled
+  by `Realize.compile_linear` for both eager execution and JIT replay.
+  `Realize.queue_submissions` replaces the old graph launch counter.
+
 - Replace CUDA graph replay with host-compiled compute and copy queues.
   Linked kernels and argument storage survive replay; event handoffs order
   ordinary dispatches and uploads with queued work.

@@ -29,7 +29,7 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 - Adopt HCQ2 byte-interval dependencies and queue encoding on the
   compile/link/run path, including CPU host submission and retained JIT
-  execution. Replace the old graph APIs. Validate replay inputs whose alias
+  execution. Validate replay inputs whose alias
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection and eager submission-template caching.

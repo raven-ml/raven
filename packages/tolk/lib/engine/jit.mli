@@ -18,10 +18,7 @@
        then lower the combined record for replay: substitute each input
        buffer node with a slotted {!Tolk_uop.Ops.Param}, plan intermediate
        buffer memory once over the combined linear, compile every kernel,
-       and, when the device has a {!Device.Graph} capability, batch
-       consecutive compatible calls into graph calls that replay as a single
-       dispatch each ([JIT_BATCH_SIZE] caps the first batch and the cap
-       doubles per batch; [JIT >= 2] disables batching).}
+       including host submission programs on devices with queue support.}
     {- {e Exec} (cnt>=2): validate the inputs against the capture and replay
        the compiled linear through {!Realize.run_linear}, passing the current
        input buffer nodes as [input_uops] and the per-call variable values as
@@ -36,23 +33,6 @@
 exception Jit_error of string
 (** Raised for JIT-specific errors: nested capture, empty capture, or an
     input mismatch on replay. *)
-
-(** {1:batching Graph batching} *)
-
-val batch_graphs : device:Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [batch_graphs ~device linear] groups consecutive graph-compatible calls
-    of a compiled {!Tolk_uop.Ops.Linear} into {!Tolk_uop.Ops.Custom_function}
-    ["graph"] calls, each replayed as a single batched dispatch through the
-    device's {!Device.Graph} capability by {!Realize.run_linear}. A call is
-    compatible when its body is a compiled {!Tolk_uop.Ops.Program} (or a
-    {!Tolk_uop.Ops.Store}, if the capability supports copies) and every buffer
-    argument lives on [device]; incompatible calls break the batch. [JIT_BATCH_SIZE] caps the first batch and the
-    cap doubles per emitted batch. The identity when [JIT >= 2] or the device
-    has no graph capability.
-
-    {!call} applies this to its captured linear at lowering; it is exposed
-    for callers that compile with {!Realize.compile_linear} and replay through
-    {!Realize.run_linear} directly. *)
 
 (** {1:captured Captured schedule} *)
 

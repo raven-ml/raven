@@ -82,11 +82,9 @@ let test_cuda_handle_into_cpu_jit () =
      copies. *)
   check_arr ~msg:"cuda handle read on the cpu device" [| 3.0; 5.0 |] (gp h)
 
-(* Multi-kernel compiled traces replay as batched device execution graphs: the
-   kernels are recorded into a CUDA graph on the first call and later calls
-   patch the rebound buffers (fresh outputs, resident inputs) into the recorded
-   graph instead of launching each kernel individually. *)
-let test_graph_batched_replay () =
+(* Multi-kernel traces execute compiled host submissions. Every replay patches
+   fresh buffer addresses into the shared submission table. *)
+let test_queue_replay () =
   require_cuda ();
   let w1 =
     Nx.create f32 [| 4; 4 |]
@@ -97,10 +95,10 @@ let test_graph_batched_replay () =
       (Array.init 16 (fun i -> float_of_int (i mod 3) -. 1.0))
   in
   (* Two chained matmuls: at least two kernels, so the batch rewrite emits a
-     graph call. *)
+     queue submission. *)
   let f x = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
   let g = Rune.jit' ~device:"CUDA" f in
-  let launches0 = !Tolk.Realize.graph_launches in
+  let launches0 = !Tolk.Realize.queue_submissions in
   List.iteri
     (fun i data ->
       let x = Nx.create f32 [| 2; 4 |] data in
@@ -113,8 +111,8 @@ let test_graph_batched_replay () =
       Array.init 8 (fun i -> float_of_int (7 - i));
       Array.make 8 (-0.25);
     ];
-  is_true ~msg:"every call dispatched a device execution graph"
-    (!Tolk.Realize.graph_launches - launches0 >= 3)
+  is_true ~msg:"every call dispatched a compiled queue submission"
+    (!Tolk.Realize.queue_submissions - launches0 >= 3)
 
 let test_capture_uploaded_once_across_signatures () =
   require_cuda ();
@@ -461,8 +459,8 @@ let tests =
       [
         test "element-wise chain matches eager" test_elementwise_on_cuda;
         test "grad inside jit matches eager" test_matmul_grad_on_cuda;
-        test "multi-kernel traces replay as batched graphs"
-          test_graph_batched_replay;
+        test "multi-kernel traces replay through compiled queues"
+          test_queue_replay;
       ];
     group "cuda residency"
       [

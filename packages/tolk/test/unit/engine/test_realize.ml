@@ -92,7 +92,7 @@ let test_allocator ?(transfer = false) stats =
       }
 
 let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
-    ?(transfer = false) ?graph
+    ?(transfer = false)
     ?(renderer_set = Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const test_renderer ])
     state =
   let runtime _ =
@@ -109,7 +109,7 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
   in
   Device.make ~name
     ~allocator:(test_allocator ~transfer stats)
-    ~renderer_set ~runtime ~synchronize ?graph ()
+    ~renderer_set ~runtime ~synchronize ()
 
 let variable name lo hi =
   U.variable ~param:true ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 ()
@@ -280,102 +280,11 @@ let compiled_launch_uses_fixed_workgroups () =
   Realize.run_linear ~device ~to_program:program_of ~var_vals:[ "n", 37 ] binding (U.linear [ call ]);
   equal int 1 !calls
 
-let graph_updates_symbolic_local_dimensions () =
-  let recorded = ref [||] and updates = ref [] in
-  let graph : Device.Graph.t =
-    { supports_copy = false; max_buffer_offset = None;
-      build = (fun nodes ->
-          recorded := nodes;
-          { Device.Graph.set_buf = (fun _ _ _ -> ());
-            set_val = (fun _ _ _ -> ());
-            set_launch_dims = (fun _ ~global ~local ->
-                equal (array int) [| 7; 1; 1 |] global;
-                updates := local.(0) :: !updates);
-            set_params = (fun _ -> ());
-            launch = (fun ~wait:_ -> None) }) } in
-  let device = test_device ~name:"TEST:symbolic-workgroups" ~graph (runtime_state ()) in
-  let n = variable "n" 1 8 in
-  let group = U.special ~name:"gidx0" ~size:(U.const_int 7) () in
-  let local = U.special ~name:"lidx0" ~size:n () in
-  let program = program_of (U.sink ~kernel_info:(kernel_info "symbolic_workgroups") [ group; local ]) in
-  let kernel = U.call ~body:program ~args:[] ~info:(call_info None) in
-  let body = U.custom_function ~name:"graph" ~srcs:[ U.linear [ kernel ] ] in
-  let call = U.call ~body ~args:[] ~info:(call_info None) in
-  let binding = Realize.Buffers.create () in
-  let launch n = Realize.run_linear ~device ~to_program:program_of
-      ~var_vals:[ "n", n ] binding (U.linear [ call ]) in
-  launch 2;
-  launch 4;
-  (match !recorded with
-   | [| Device.Graph.Kernel k |] -> equal (array int) [| 2; 1; 1 |] k.local
-   | _ -> fail "expected one recorded kernel");
-  equal (list int) [ 2; 4 ] (List.rev !updates)
-
-let graph_binds_sparse_arguments () =
-  let recorded = ref [||] in
-  let updates = ref [] in
-  let launches = ref 0 in
-  let graph : Device.Graph.t =
-    { supports_copy = false; max_buffer_offset = None;
-      build = (fun nodes ->
-          recorded := nodes;
-          { set_buf = (fun node pos buf ->
-                updates := (node, pos, Device.Buffer.id buf) :: !updates);
-            set_val = (fun _ _ _ -> ());
-            set_launch_dims = (fun _ ~global:_ ~local:_ -> ());
-            set_params = (fun _ -> ());
-            launch = (fun ~wait:_ -> incr launches; None) }) } in
-  let device = test_device ~graph (runtime_state ()) in
-  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(shape_const 4) () in
-  let index ptr = U.index ~ptr ~idxs:[ U.const_int 0 ] () in
-  let body = U.sink ~kernel_info:(kernel_info "sparse_graph")
-      [ U.store ~dst:(index (ptr 3)) ~value:(U.load ~src:(index (ptr 11)) ()) () ] in
-  let program = program_of body in
-  let a = buffer_node ~slot:(U.fresh_buffer_slot ()) () in
-  let b = buffer_node ~slot:(U.fresh_buffer_slot ()) () in
-  let unused = ptr 999 in
-  let kernel output input =
-    U.call ~body:program
-      ~args:(List.init 12 (function 3 -> output | 11 -> input | _ -> unused))
-      ~info:(call_info None) in
-  let body = U.custom_function ~name:"graph"
-      ~srcs:[ U.linear [ kernel a b; kernel b a ] ] in
-  let call = U.call ~body ~args:[] ~info:(call_info None) in
-  let binding = Realize.Buffers.create () in
-  let owner = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
-  Realize.Buffers.seed binding a owner;
-  let launch () = Realize.run_linear ~device ~to_program:program_of binding (U.linear [call]) in
-  launch ();
-  equal int 1 !launches;
-  (match !recorded with
-  | [| Device.Graph.Kernel first; Device.Graph.Kernel second |] ->
-      equal int 2 (Array.length first.bufs);
-      equal int 2 (Array.length second.bufs);
-      equal (array int) [||] first.deps;
-      equal (array int) [| 0 |] second.deps
-  | _ -> fail "expected two recorded kernels");
-  launch ();
-  equal int 0 (List.length !updates);
-  Device.Buffer.deallocate owner;
-  launch ();
-  equal int 2 (List.length !updates);
-  let replacement = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
-  Realize.Buffers.seed binding a replacement;
-  launch ();
-  equal int 4 (List.length !updates);
-  List.iter (fun (_, _, id) -> equal int (Device.Buffer.id replacement) id)
-    (List.filteri (fun i _ -> i < 2) !updates);
-  launch ();
-  equal int 4 (List.length !updates)
-
 let () =
   run "Engine_realize"
     [
       renderer_selection_tests;
       test "compiled launch uses fixed workgroups" compiled_launch_uses_fixed_workgroups;
-      test "graph updates symbolic local dimensions" graph_updates_symbolic_local_dimensions;
-      test "graph binding compacts sparse slots and preserves dependencies"
-        graph_binds_sparse_arguments;
       group "Compiled_runner"
         [
           test "passes every scalar from program metadata" (fun () ->

@@ -101,12 +101,15 @@ let queue_call device spec slots =
       ~linear:(U.linear (Program_spec.program spec))
       ~source:(U.source (Program_spec.src spec))
       ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib spec)))) ~info () in
-  let args = List.mapi (fun i slot ->
+  let selected = List.map2 (fun global slot ->
       let formal = List.find (fun u -> match U.as_param u with
-          | Some {param; _} -> param.slot = List.nth info.globals i
-          | None -> false) (Program_spec.program spec) in
-      U.param ~slot ~dtype:(U.dtype formal) ~shape:(U.const_int (U.max_numel formal))
-        ~device:(U.Single (Device.name device)) ()) slots in
+          | Some {param; _} -> param.slot = global | None -> false) (Program_spec.program spec) in
+      global, U.param ~slot ~dtype:(U.dtype formal) ~shape:(U.const_int (U.max_numel formal))
+        ~device:(U.Single (Device.name device)) ()) info.globals slots in
+  let unused = U.param ~slot:999 ~dtype:Dtype.uint8 ~shape:(U.const_int 0)
+      ~device:(U.Single (Device.name device)) () in
+  let args = List.init (1 + List.fold_left max (-1) info.globals) (fun i ->
+      Option.value (List.assoc_opt i selected) ~default:unused) in
   U.call ~body:program ~args
     ~info:{grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None; dtype = Dtype.void}

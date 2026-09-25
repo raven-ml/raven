@@ -27,15 +27,7 @@ module B = Device.Buffer
 
 let debug = Helpers.getenv "DEBUG" 0
 
-let default_jit_level =
-  if Host_config.system = "macosx"
-     && List.mem Host_config.architecture [ "amd64"; "i386" ]
-  then 2
-  else 1
-
-let jit_level = Helpers.getenv "JIT" default_jit_level
-let jit_batch_size = Helpers.getenv "JIT_BATCH_SIZE" 32
-let graph_one_kernel = Helpers.getenv "GRAPH_ONE_KERNEL" 0 <> 0
+let jit_level = Helpers.getenv "JIT" 1
 let is_op op n = Ops.equal (U.op n) op
 
 exception Jit_error of string
@@ -45,9 +37,6 @@ let call_arg_uops args = List.filter (fun s -> not (U.is_bound_var s)) args
 
 let call_args call =
   match U.as_call (U.without_after call) with Some { args; _ } -> args | None -> []
-
-let call_body call =
-  match U.as_call (U.without_after call) with Some { body; _ } -> Some body | None -> None
 
 (* Validation token: inputs must keep their size, dtype, and device across
    replays. *)
@@ -64,151 +53,10 @@ let input_info_of_uop u =
     ii_device = U.device_of u;
   }
 
-(* Graph batching
-
-   Groups consecutive graph-compatible calls of a compiled LINEAR into
-   CUSTOM_FUNCTION "graph" calls so replay dispatches each group as one
-   batched launch through the device's {!Device.Graph} capability. A call is
-   compatible when its body is a PROGRAM (or a COPY, if the capability
-   supports copies), every buffer argument lives on the batch's device, and
-   no buffer view starts past the capability's offset bound; any other call
-   breaks the batch. The batch
-   size limit doubles after each emitted graph. *)
-
-let dedup xs =
-  List.rev
-    (List.fold_left (fun acc x -> if List.memq x acc then acc else x :: acc)
-       [] xs)
-
-(* All external inputs of the batch become the graph call's arguments. *)
-let create_graph_call batch =
-  let input_list =
-    dedup
-      (List.concat_map
-         (fun si ->
-           List.concat_map
-             (fun arg ->
-               List.filter
-                 (fun u ->
-                   match U.as_param u with
-                   | Some { param = { slot; addrspace; _ }; _ } ->
-                       slot >= 0 && addrspace <> Dtype.Alu
-                   | None -> false)
-                 (U.toposort arg))
-             (call_args si))
-         batch)
-  in
-  let cf = U.custom_function ~name:"graph" ~srcs:[ U.linear batch ] in
-  let info : U.call_info =
-    {
-      grad_fxn = None;
-      name = None;
-      precompile = false;
-      precompile_backward = false;
-      dtype = Dtype.void;
-      aux = None;
-    }
-  in
-  (* Compiled PROGRAM bodies keep their internal ranges (launch axes have no
-     END), so the batched call is assembled with [U.replace], like
-     {!Realize.compile_linear}, instead of re-running [U.call]'s range check. *)
-  let call =
-    U.call ~body:(U.custom_function ~name:"graph" ~srcs:[]) ~args:input_list
-      ~info
-  in
-  U.replace call ~src:(Array.of_list (cf :: input_list)) ()
-
-let device_prefix name =
-  match String.index_opt name ':' with
-  | Some i -> String.sub name 0 i
-  | None -> name
-
-(* [Some prefixes] of the devices a call's buffer arguments live on, or
-   [None] when an argument is multi-device (never graphed). *)
-let call_device_prefixes si =
-  let rec loop acc = function
-    | [] -> Some (dedup (List.rev acc))
-    | b :: rest ->
-        if U.is_bound_var b then loop acc rest
-        else (
-          match U.device_of b with
-          | Some (U.Single d) -> loop (device_prefix d :: acc) rest
-          | Some (U.Multi _ | U.Index _) -> None
-          | None -> loop acc rest)
-  in
-  loop [] (call_args si)
-
-(* Graph backends may limit byte offsets into argument storage. *)
-let view_offsets_within max_offset si =
-  List.for_all (fun b ->
-      match U.contiguous_view b with
-      | Some (_, offset) -> offset <= max_offset
-      | None -> false) (List.filter (fun b -> not (U.is_variable b || U.is_bound_var b)) (call_args si))
-
-let graph_split_rewrite ~device linear ~max_batch_size =
-  let graph = Device.graph device in
-  let graph_prefix = device_prefix (Device.name device) in
-  let new_src = ref [] and batch = ref [] and batch_len = ref 0 in
-  let max_batch_size = ref max_batch_size in
-  let flush_batch () =
-    (match List.rev !batch with
-    | ([] | [ _ ]) as b when not graph_one_kernel ->
-        new_src := List.rev_append b !new_src
-    | b ->
-        new_src := create_graph_call b :: !new_src;
-        max_batch_size := !max_batch_size * 2;
-        if debug >= 2 then
-          Printf.eprintf "JIT GRAPHing batch with %d kernels\n%!"
-            (List.length b));
-    batch := [];
-    batch_len := 0
-  in
-  List.iter
-    (fun si ->
-      match call_body si with
-      | Some body ->
-          let can_graph =
-            (match graph, U.arg (U.without_after si) with
-            | _, U.Arg.Call_info {aux = Some _; _} -> false
-            | Some g, _ ->
-                (is_op Ops.Program body
-                || (is_op Ops.Store body && g.Device.Graph.supports_copy))
-                && (match g.Device.Graph.max_buffer_offset with
-                   | Some max_offset -> view_offsets_within max_offset si
-                   | None -> true)
-            | None, _ -> false)
-            &&
-            match call_device_prefixes si with
-            | Some prefixes ->
-                List.for_all (String.equal graph_prefix) prefixes
-            | None -> false
-          in
-          let can_extend =
-            can_graph && (!max_batch_size = 0 || !batch_len < !max_batch_size)
-          in
-          if (not can_extend) && !batch <> [] then flush_batch ();
-          if can_graph then begin
-            batch := si :: !batch;
-            incr batch_len
-          end
-          else new_src := si :: !new_src
-      | None -> new_src := si :: !new_src)
-    (U.children linear);
-  if !batch <> [] then flush_batch ();
-  U.linear (List.rev !new_src)
-
-(* Graph batching for a compiled LINEAR, honoring the JIT level: the identity
-   when batching is disabled (JIT >= 2). Also the entry point for callers that
-   drive Realize directly (rune's jit) instead of going through [call]. *)
-let batch_graphs ~device linear =
-  if jit_level < 2 then
-    graph_split_rewrite ~device linear ~max_batch_size:jit_batch_size
-  else linear
-
 (* Lower a captured LINEAR for replay: substitute each input buffer node with
    a PARAM carrying its slot index, plan intermediate buffer memory once over
    the combined schedule with [held_bufs] kept intact, compile every kernel,
-   and batch graph-compatible calls. *)
+   including queue submission on supported devices. *)
 let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
   let mappings =
     List.mapi
@@ -226,8 +74,7 @@ let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
   in
   let linear = U.substitute ~walk:true mappings linear in
   let linear = Schedule.memory_plan_rewrite linear held_bufs in
-  let linear = Realize.compile_linear ~device ~to_program linear in
-  batch_graphs ~device linear
+  Realize.compile_linear ~device ~to_program linear
 
 (* Captured schedule *)
 
@@ -239,21 +86,6 @@ type 'a captured_jit = {
   binding : Realize.Buffers.t;
   expected_input_info : input_info array;
 }
-
-(* The direct calls of a lowered LINEAR, looking through graph batches: a
-   CUSTOM_FUNCTION "graph" call stands for the calls of its LINEAR body. *)
-let flatten_graph_calls linear =
-  List.concat_map
-    (fun call ->
-      match call_body call with
-      | Some body
-        when is_op Ops.Custom_function body
-             && U.Arg.as_string (U.arg body) = Some "graph" -> (
-          match U.children body with
-          | [ inner ] -> U.children inner
-          | _ -> [ call ])
-      | _ -> [ call ])
-    (U.children linear)
 
 (* Bind every non-input buffer argument the resolver knows to its concrete
    buffer, once at capture: weights, outputs, and held buffers keep their
@@ -269,7 +101,7 @@ let seed_known_buffers binding ~buffers linear =
             | Some buf -> Realize.Buffers.seed binding node buf
             | None -> ())
         (call_arg_uops (call_args call)))
-    (flatten_graph_calls linear)
+    (U.children linear)
 
 let validate_inputs t (input_uops : U.t array) =
   let n = Array.length t.expected_input_info in

@@ -114,8 +114,15 @@ let queue_call device spec slots =
       ~linear:(U.linear (Program_spec.program spec))
       ~source:(U.source (Program_spec.src spec))
       ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib spec)))) ~info () in
-  let args = List.map (fun slot -> U.param ~slot ~dtype:Dtype.int32
-      ~shape:(U.const_int 1) ~device:(U.Single (Device.name device)) ()) slots in
+  let selected = List.map2 (fun global slot ->
+      let formal = List.find (fun u -> match U.as_param u with
+          | Some {param; _} -> param.slot = global | None -> false) (Program_spec.program spec) in
+      global, U.param ~slot ~dtype:(U.dtype formal) ~shape:(U.const_int (U.max_numel formal))
+        ~device:(U.Single (Device.name device)) ()) info.globals slots in
+  let unused = U.param ~slot:999 ~dtype:Dtype.uint8 ~shape:(U.const_int 0)
+      ~device:(U.Single (Device.name device)) () in
+  let args = List.init (1 + List.fold_left max (-1) info.globals) (fun i ->
+      Option.value (List.assoc_opt i selected) ~default:unused) in
   U.call ~body:program ~args
     ~info:{grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None; dtype = Dtype.void}
@@ -430,6 +437,34 @@ let () =
         ];
       group "Compiled queues"
         [
+          test "replays sparse kernel slots with rebound arguments" (fun () ->
+            let device = metal_device () in
+            let mappings = [i32_param ~slot:0, i32_param ~slot:3;
+                            i32_param ~slot:1, i32_param ~slot:11] in
+            let program = List.map (U.substitute ~walk:true mappings) (increment_program ()) in
+            let spec = Device.compile_program device ~name:"metal_sparse_slots" program in
+            let replay = compile_queue device [queue_call device spec [0; 1]] in
+            let first = i32_buf device [0] and second = i32_buf device [0] in
+            replay ~wait:true [|first; i32_buf device [41]|];
+            replay ~wait:true [|second; i32_buf device [9]|];
+            equal (list int) [42] (read_i32 first);
+            equal (list int) [10] (read_i32 second));
+          test "replays symbolic local workgroup dimensions" (fun () ->
+            let device = metal_device () in
+            let output = i32_param ~slot:0 in
+            let n = U.variable ~param:true ~name:"width" ~min_val:1 ~max_val:8 ~dtype:Dtype.int32 () in
+            let thread = U.special ~name:"lidx0" ~size:n () in
+            let value = U.cast ~src:thread ~dtype:Dtype.int32 in
+            let dst = U.index ~ptr:output ~idxs:[thread] () in
+            let store = U.store ~dst ~value () in
+            let spec = Device.compile_program device ~name:"metal_symbolic_local"
+                [output; n; thread; value; dst; store] in
+            let replay = compile_queue device [queue_call device spec [0]] in
+            List.iter (fun width ->
+                let buffer = i32_buf device (List.init 8 (fun _ -> -1)) in
+                replay ~wait:true ~vars:["width", width] [|buffer|];
+                equal (list int) (List.init 8 (fun i -> if i < width then i else -1))
+                  (read_i32 buffer)) [2; 4; 3]);
           test "replays a multi-kernel chain in order" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_queue_chain" in

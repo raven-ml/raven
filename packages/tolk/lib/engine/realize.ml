@@ -506,29 +506,7 @@ let get_call_name call bufs var_vals =
             (strf "copy %10s, %7s <- %-7s" (size_str out) (dev_str dest)
                (dev_str src))
             (Some "yellow")
-      | Tolk_uop.Ops.Custom_function, _, _
-        when U.Arg.as_string (U.arg ast) = Some "graph" -> (
-          match U.children ast with
-          | [ linear ] ->
-              Helpers.colored
-                (strf "batched %d" (List.length (U.children linear)))
-                (Some "cyan")
-          | _ -> invalid_arg "get_call_name: malformed graph call")
       | _ -> invalid_arg "get_call_name is not implemented")
-
-(* What is recorded about a graph call is keyed by its body and held weakly:
-   it goes when the last linear that mentions the graph does. *)
-module Graph_cache = Ephemeron.K1.Make (struct
-  type t = Tolk_uop.Uop.t
-
-  let equal = ( == )
-  let hash = Tolk_uop.Uop.tag
-end)
-
-(* Estimates of a batched graph: the sum over its calls, recorded when the
-   graph runner is created. *)
-let graph_estimates : Program_spec.Estimates.t Graph_cache.t =
-  Graph_cache.create 8
 
 let estimate_uop call =
   let module U = Tolk_uop.Uop in
@@ -552,11 +530,6 @@ let estimate_uop call =
               in
               { E.zero with lds = E.Int nbytes; mem = E.Int nbytes }
           | [] -> E.zero)
-      | Tolk_uop.Ops.Custom_function
-        when U.Arg.as_string (U.arg ast) = Some "graph" ->
-          Option.value
-            (Graph_cache.find_opt graph_estimates ast)
-            ~default:E.zero
       | _ -> E.zero)
 
 let first_run_cache : (int, unit) Hashtbl.t = Hashtbl.create 64
@@ -754,339 +727,7 @@ let exec_copy binding ctx ~device call =
       | _ -> invalid_arg "exec_copy: malformed STORE call")
   | None -> invalid_arg "exec_copy: expected CALL"
 
-(* Graph runner
-
-   Batched replay of a compiled call sequence through the device's
-   {!Device.Graph} capability. The runner resolves every buffer argument once
-   when the graph is recorded; each replay patches only the state that can
-   change between calls — buffer arguments whose resolution goes through an
-   input PARAM slot or an explicitly seeded binding (callers reseed input and
-   output nodes with different buffers per call), symbolic variable values,
-   and launch dimensions of kernels with symbolic global sizes — into the
-   affected nodes before launching. Dynamic buffer arguments are re-resolved
-   on every replay and patched only when their address changed, so stable
-   bindings cost one lookup and no graph update. *)
-
-module Graph_runner = struct
-  module U = Tolk_uop.Uop
-
-  type kernel = {
-    info : U.program_info;
-    var_replace : (int * string) list;
-        (* Scalar argument index -> variable name patched on replay. *)
-    symbolic : bool;  (* Global launch dims depend on variables. *)
-  }
-
-  type kind = Kernel of kernel | Copy
-
-  type gcall = {
-    kind : kind;
-    bufs : Device.Buffer.t list;
-        (* Resolved once at record time; kept so the addresses captured in
-           the graph stay backed by live allocations. *)
-    dyn : (int * U.t) array;
-        (* Buffer argument position -> argument node, for arguments whose
-           resolution can change between replays: those reaching an input
-           PARAM slot or a seeded binding. Re-resolved and diff-patched on
-           every replay. *)
-    dyn_bufs : Device.Buffer.t array;
-        (* Last resolution of each dynamic argument, parallel to [dyn]; keeps
-           the addresses committed in the graph backed by live buffers. *)
-    dyn_generations : int array;
-        (* Committed allocation of each dynamic argument, parallel to [dyn]. *)
-  }
-
-  type t = {
-    calls : gcall array;
-    updatable : int list;
-    exec : Device.Graph.exec;
-  }
-
-  let pad3 a = Array.init 3 (fun i -> if i < Array.length a then a.(i) else 1)
-
-  let launch_values_to_ints values =
-    pad3
-      (Array.of_list
-         (List.map
-            (function
-              | U.Launch_value_int n -> n
-              | U.Launch_value_float f -> int_of_float f)
-            values))
-
-  let is_symbolic (info : U.program_info) =
-    List.exists
-      (function U.Launch_sym _ -> true | _ -> false)
-      (info.global_size @ info.local_size)
-
-  (* Variables of a kernel, as (scalar argument index, name). *)
-  let kernel_vars (info : U.program_info) =
-    List.mapi
-      (fun i var ->
-        match U.as_param var with
-        | Some { param = { name = Some name; _ }; _ } ->
-            Some (i, name)
-        | _ -> None)
-      info.vars
-    |> List.filter_map Fun.id
-
-  let updated_launch k ~var_vals =
-    let global, local = U.program_launch_dims k.info ~var_vals in
-    launch_values_to_ints global, launch_values_to_ints local
-
-  let create ~device binding ctx ast =
-    let build =
-      match Device.graph device with
-      | Some g -> g.Device.Graph.build
-      | None -> invalid_arg "graph: device has no graph capability"
-    in
-    let linear =
-      match U.children ast with
-      | [ linear ] -> linear
-      | _ -> invalid_arg "graph: expected a single LINEAR body"
-    in
-    let deps = Deps_tracker.create () in
-    let calls = ref [] and nodes = ref [] and n = ref 0 in
-    List.iter
-      (fun call ->
-        match U.as_call call with
-        | Some { body; args; _ } -> (
-            let args = call_arg_uops args in
-            let args = match U.as_program_info body with
-              | Some info -> program_args info args
-              | None -> args in
-            let dyn =
-              List.mapi
-                (fun pos arg ->
-                  let dynamic =
-                    List.exists
-                      (fun u ->
-                        (match U.as_param u with
-                        | Some { param = { slot; addrspace; _ }; _ } ->
-                            slot >= 0 && addrspace <> Tolk_uop.Dtype.Alu
-                        | None -> false)
-                        || Buffers.seeded binding u)
-                      (U.toposort arg)
-                  in
-                  if dynamic then Some (pos, arg) else None)
-                args
-              |> List.filter_map Fun.id |> Array.of_list
-            in
-            let bufs = List.map (resolve binding ctx) args in
-            List.iter Device.Buffer.ensure_allocated bufs;
-            let bufs_arr = Array.of_list bufs in
-            let dyn_bufs = Array.map (fun (pos, _) -> bufs_arr.(pos)) dyn in
-            let dyn_generations = Array.map Device.Buffer.generation dyn_bufs in
-            match U.op body with
-            | Tolk_uop.Ops.Program ->
-                let info =
-                  match U.as_program_info body with
-                  | Some info -> info
-                  | None -> invalid_arg "graph: PROGRAM without info"
-                in
-                let prg = get_runtime ~device body in
-                let global, local =
-                  launch_geometry info ~var_vals:ctx.var_vals
-                in
-                let global = pad3 global in
-                let local = pad3 local in
-                let vals =
-                  Array.of_list
-                    (U.program_vals info ~var_vals:ctx.var_vals)
-                in
-                let node_deps =
-                  Deps_tracker.access deps
-                    (List.map Deps_tracker.buffer bufs)
-                    ~writes:(List.mapi (fun i slot -> i, slot) info.globals
-                     |> List.filter_map (fun (i, slot) ->
-                         if List.mem slot info.outs then Some i else None)) !n
-                in
-                nodes :=
-                  Device.Graph.Kernel
-                    {
-                      handle = prg.Device.handle;
-                      global;
-                      local;
-                      bufs = Array.of_list bufs;
-                      vals;
-                      deps = Array.of_list (List.sort_uniq Int.compare node_deps);
-                    }
-                  :: !nodes;
-                calls :=
-                  {
-                    kind =
-                      Kernel
-                        {
-                          info;
-                          var_replace = kernel_vars info;
-                          symbolic = is_symbolic info;
-                        };
-                    bufs;
-                    dyn;
-                    dyn_bufs;
-                    dyn_generations;
-                  }
-                  :: !calls;
-                incr n
-            | Tolk_uop.Ops.Store -> (
-                match bufs with
-                | [ dest; src ] ->
-                    let node_deps =
-                      Deps_tracker.access deps
-                        (List.map Deps_tracker.buffer bufs)
-                        ~writes:[ 0 ] !n
-                    in
-                    nodes :=
-                      Device.Graph.Copy
-                        {
-                          dest;
-                          src;
-                          nbytes = Device.Buffer.nbytes dest;
-                          deps = Array.of_list (List.sort_uniq Int.compare node_deps);
-                        }
-                      :: !nodes;
-                    calls :=
-                      { kind = Copy; bufs; dyn; dyn_bufs; dyn_generations } :: !calls;
-                    incr n
-                | _ -> invalid_arg "graph: malformed STORE call")
-            | _ ->
-                invalid_arg
-                  (Format.asprintf "graph: unsupported call body %a" U.pp body)
-            )
-        | None -> invalid_arg "graph: expected CALL")
-      (U.children linear);
-    let calls = Array.of_list (List.rev !calls) in
-    let exec = build (Array.of_list (List.rev !nodes)) in
-    let updatable =
-      List.init (Array.length calls) Fun.id
-      |> List.filter (fun j ->
-             let c = calls.(j) in
-             c.dyn <> [||]
-             ||
-             match c.kind with
-             | Kernel k -> k.var_replace <> [] || k.symbolic
-             | Copy -> false)
-    in
-    { calls; updatable; exec }
-
-  let call t binding ctx =
-    let var_vals = ctx.var_vals in
-    List.iter
-      (fun j ->
-        let c = t.calls.(j) in
-        let dirty = ref false in
-        Array.iteri
-          (fun i (pos, arg) ->
-            let buf = resolve binding ctx arg in
-            let generation = Device.Buffer.generation buf in
-            c.dyn_bufs.(i) <- buf;
-            if generation <> c.dyn_generations.(i) then begin
-              c.dyn_generations.(i) <- generation;
-              t.exec.Device.Graph.set_buf j pos buf;
-              dirty := true
-            end)
-          c.dyn;
-        (match c.kind with
-        | Kernel k ->
-            List.iter
-              (fun (i, name) ->
-                match List.assoc_opt name var_vals with
-                | Some v ->
-                    t.exec.Device.Graph.set_val j i v;
-                    dirty := true
-                | None ->
-                    invalid_arg
-                      (strf "graph call %d: missing variable %S on replay" j name))
-              k.var_replace;
-            if k.symbolic then begin
-              let global, local = updated_launch k ~var_vals in
-              t.exec.Device.Graph.set_launch_dims j ~global ~local;
-              dirty := true
-            end
-        | Copy -> ());
-        if !dirty then t.exec.Device.Graph.set_params j)
-      t.updatable;
-    t.exec.Device.Graph.launch ~wait:ctx.wait
-end
-
-(* Graph runners are recorded on first execution of their graph call node and
-   replayed on every subsequent execution of the captured linear. A runner
-   keeps the buffers it recorded alive, which is why the table is weak. *)
-let graph_cache : Graph_runner.t Graph_cache.t = Graph_cache.create 8
-
-(* Cumulative count of batched graph launches, including recording launches.
-   Observability hook for tests and debugging. *)
-let graph_launches = ref 0
-
-let graph_runners () = (Graph_cache.stats_alive graph_cache).num_bindings
-
-let record_graph ~device binding ctx ast =
-  let module U = Tolk_uop.Uop in
-  let rt = Graph_runner.create ~device binding ctx ast in
-  if not (Graph_cache.mem graph_estimates ast) then begin
-    let calls = List.concat_map U.children (U.children ast) in
-    Graph_cache.replace graph_estimates ast
-      (List.fold_left
-         (fun acc c -> Program_spec.Estimates.(acc + estimate_uop c))
-         Program_spec.Estimates.zero calls)
-  end;
-  rt
-
-let launch_graph binding ctx ~device call rt =
-  incr graph_launches;
-  ignore
-    (track_stats ctx call ~device [] ctx.var_vals (fun () ->
-         Graph_runner.call rt binding ctx)
-      : float option)
-
-let exec_graph binding ctx ~device call =
-  let module U = Tolk_uop.Uop in
-  match U.as_call call with
-  | Some { body = ast; _ } ->
-      let rt =
-        match Graph_cache.find_opt graph_cache ast with
-        | Some rt -> rt
-        | None ->
-            let rt = record_graph ~device binding ctx ast in
-            Graph_cache.replace graph_cache ast rt;
-            rt
-      in
-      launch_graph binding ctx ~device call rt
-  | None -> invalid_arg "exec_graph: expected CALL"
-
-(* A staged loop replays each graph of its body once per iteration, and
-   patching a graph waits for the graph's previous replay to finish. The loop
-   therefore cycles through [loop_graph_instances] recordings of each graph:
-   while the host patches one, the device runs another with a third queued
-   behind it, so it never idles on the host between iterations. No tinygrad
-   counterpart: see [exec_loop]. *)
-let loop_graph_instances = 3
-
-let loop_graphs : Graph_runner.t option array Graph_cache.t =
-  Graph_cache.create 8
-
-let exec_loop_graph binding ctx ~device ~iteration call =
-  let module U = Tolk_uop.Uop in
-  match U.as_call call with
-  | Some { body = ast; _ } ->
-      let ring =
-        match Graph_cache.find_opt loop_graphs ast with
-        | Some ring -> ring
-        | None ->
-            let ring = Array.make loop_graph_instances None in
-            Graph_cache.replace loop_graphs ast ring;
-            ring
-      in
-      let k = iteration mod loop_graph_instances in
-      let rt =
-        match ring.(k) with
-        | Some rt -> rt
-        | None ->
-            let rt = record_graph ~device binding ctx ast in
-            ring.(k) <- Some rt;
-            rt
-      in
-      launch_graph binding ctx ~device call rt
-  | None -> invalid_arg "exec_loop_graph: expected CALL"
+let queue_submissions = ref 0
 
 let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) =
   let module U = Tolk_uop.Uop in
@@ -1115,7 +756,7 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) =
       let run () =
         let started = if ctx.wait then Unix.gettimeofday () else 0. in
         ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
-        incr graph_launches;
+        incr queue_submissions;
         if ctx.wait then begin
           List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
           Some (Unix.gettimeofday () -. started)
@@ -1138,9 +779,6 @@ let rec dispatch_call binding ctx ~device call =
           (match U.arg call with
            | U.Arg.Call_info {aux = Some submission; _} -> exec_hcq binding ctx call submission
            | _ -> exec_kernel binding ctx ~device call)
-      | Tolk_uop.Ops.Custom_function
-        when U.Arg.as_string (U.arg body) = Some "graph" ->
-          exec_graph binding ctx ~device call
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function
         when U.Arg.as_string (U.arg body) = Some "loop" ->
@@ -1157,7 +795,7 @@ let rec dispatch_call binding ctx ~device call =
    No tinygrad counterpart: tinygrad has no cross-kernel loop construct — its
    answer to a recurrence is an unrolled schedule replayed by TinyJit. The
    named-CUSTOM_FUNCTION payload mechanism is upstream's own extension seam
-   (the reference dispatches "graph", "encdec" and "hcq" calls the same way);
+   (the reference uses it for named custom calls);
    "loop" is a tolk-local name in it, so parity-relevant code paths never see
    one.
 
@@ -1168,9 +806,8 @@ let rec dispatch_call binding ctx ~device call =
    body wrote. The payload (the children of the CUSTOM_FUNCTION body) encodes:
 
    - child 0: the body's LINEAR (pre-compiled: its CALL(SINK) bodies are
-     already CALL(PROGRAM), and consecutive kernels may be batched into a
-     graph call, which each iteration replays with its rebound slot buffers
-     patched in);
+     already CALL(PROGRAM), including queue submissions. Each iteration
+     rebinds the body’s slot buffers);
    - child 1: the trip count;
    - child 2: 1 for a reversed (backward) loop, 0 otherwise;
    - child 3: the number of input slots, then per slot five entries:
@@ -1257,14 +894,7 @@ and exec_loop binding ctx ~device call =
       for j = 0 to trip - 1 do
         List.iter (bind ~next:0 j) in_slots;
         List.iter (bind ~next:1 j) out_slots;
-        List.iter
-          (fun c ->
-            match U.as_call c with
-            | Some { body; _ }
-              when U.op body = Tolk_uop.Ops.Custom_function
-                   && U.Arg.as_string (U.arg body) = Some "graph" ->
-                exec_loop_graph binding ctx ~device ~iteration:j c
-            | _ -> dispatch_call binding ctx ~device c)
+        List.iter (dispatch_call binding ctx ~device)
           (U.children body_linear)
       done;
       (* The body's launches are asynchronous. Block until they complete so
@@ -1292,10 +922,6 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
             when U.op body = Tolk_uop.Ops.Custom_function
                  && U.Arg.as_string (U.arg body) = Some "loop" ->
               "loop"
-          | Some { body; _ }
-            when U.op body = Tolk_uop.Ops.Custom_function
-                 && U.Arg.as_string (U.arg body) = Some "graph" ->
-              "graph"
           | Some { body; _ } when U.op body = Tolk_uop.Ops.Store -> "copy"
           | _ -> "?")
         (U.children linear)

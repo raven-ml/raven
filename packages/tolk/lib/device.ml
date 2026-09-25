@@ -86,40 +86,6 @@ type queue = {
   compile : Uop.t -> Uop.t;
 }
 
-(* Batched dispatch graphs *)
-
-module Graph = struct
-  type node =
-    | Kernel of {
-        handle : nativeint;
-        global : int array;
-        local : int array;
-        bufs : Buffer.t array;
-        vals : int array;
-        deps : int array;
-      }
-    | Copy of {
-        dest : Buffer.t;
-        src : Buffer.t;
-        nbytes : int;
-        deps : int array;
-      }
-
-  type exec = {
-    set_buf : int -> int -> Buffer.t -> unit;
-    set_val : int -> int -> int -> unit;
-    set_launch_dims : int -> global:int array -> local:int array -> unit;
-    set_params : int -> unit;
-    launch : wait:bool -> float option;
-  }
-
-  type t = {
-    supports_copy : bool;
-    max_buffer_offset : int option;
-    build : node array -> exec;
-  }
-end
-
 module Renderer_set = struct
   type t = {
     device : string;
@@ -164,7 +130,6 @@ type t = {
   runtime : runtime;
   synchronize : unit -> unit;
   invalidate_caches_fn : (unit -> unit) option;
-  graph : Graph.t option;
   queue : queue option;
   bufferize : Uop.t -> Buffer.t option;
 }
@@ -188,9 +153,9 @@ let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
 let opened : (string, t) Hashtbl.t = Hashtbl.create 8
 
 let make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches ?graph ?queue ?(bufferize = fun _ -> None) () =
+    ?invalidate_caches ?queue ?(bufferize = fun _ -> None) () =
   let device = { name; allocator; renderer_set; runtime; synchronize;
-    invalidate_caches_fn = invalidate_caches; graph; queue; bufferize } in
+    invalidate_caches_fn = invalidate_caches; queue; bufferize } in
   Hashtbl.replace opened (canonicalize name) device;
   device
 
@@ -217,7 +182,6 @@ let runtime d (obj : Tolk_uop.Tiny_elf.t) =
   in
   { prg with call }
 let synchronize d = d.synchronize ()
-let graph d = d.graph
 let queue d = d.queue
 let bufferize d = d.bufferize
 

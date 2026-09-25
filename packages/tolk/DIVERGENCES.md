@@ -96,8 +96,7 @@ delete it rather than registering it.
   bound as a view at byte offset `i * stride` for iteration `i`, never
   copied; rows are padded to 16 bytes so every view is aligned. Loop bodies
   use the same compile/link/run protocol as other schedules; each iteration
-  rebinds materialized slot buffers. Metal and CUDA submit compiled host programs;
-  backends awaiting queue migration still use graph runners. The named
+  rebinds materialized slot buffers. The named
   `CUSTOM_FUNCTION` payload is the extension seam. Keep the two rangeify
   branches when updating the reference. Rune's `test_jit.ml` scan groups and
   `test_jit_metal.ml` exercise this extension. Reconsider it if upstream gains

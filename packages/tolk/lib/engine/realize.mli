@@ -310,12 +310,7 @@ val run_linear :
     built from its compiled binary. A program carrying queue metadata refreshes
     its address table and submits through its host device; [wait] also waits for
     the submitted devices. A {!Tolk_uop.Ops.Store} transfers between its
-    resolved buffers; a {!Tolk_uop.Ops.Custom_function} named ["graph"] records
-    its LINEAR body into the device's {!Device.Graph} on first execution and
-    replays that graph afterwards, patching per run every buffer argument
-    whose resolution changed (arguments reaching a {!Tolk_uop.Ops.Param} slot
-    or a binding reseeded through {!Buffers.seed}), variable values, and
-    symbolic launch dimensions. Buffer arguments are resolved with
+    resolved buffers. Buffer arguments are resolved with
     {!resolve_buffer}, so {!Tolk_uop.Ops.Param} slots index into
     [input_uops].
 
@@ -326,7 +321,7 @@ val run_linear :
     backend, through a host bounce otherwise).
 
     Unless [update_stats] is [false], every dispatched kernel, view, copy and
-    batched graph is counted in {!Helpers.Global_counters} with its estimated
+    queue submission is counted in {!Helpers.Global_counters} with its estimated
     operations and memory traffic. When [DEBUG >= 2] each also prints one line
     on standard error: device, running call count, name, argument count, device
     memory in use, and its time over the running total with the rates the
@@ -336,13 +331,6 @@ val run_linear :
 
     [wait] is forced to [true] when [DEBUG >= 2]. *)
 
-val graph_launches : int ref
-(** [graph_launches] counts batched graph launches dispatched through
-    {!Device.Graph} execs, including each graph's recording launch. A
-    cumulative observability counter for tests and debugging. *)
-
-val graph_runners : unit -> int
-(** [graph_runners ()] is the number of recorded graphs whose graph call is
-    still reachable. A recorded graph keeps the buffers it addresses alive, and
-    is dropped with the last linear that mentions it. An observability hook for
-    tests and debugging. *)
+val queue_submissions : int ref
+(** [queue_submissions] counts compiled host submissions dispatched through
+    {!run_linear}. A cumulative observability counter for tests and debugging. *)

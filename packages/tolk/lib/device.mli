@@ -85,7 +85,7 @@ type prog = {
     vals:int64 array -> wait:bool -> timeout:int option -> float option;
   free : unit -> unit;
   handle : nativeint;
-      (** Backend kernel handle used to build {!Graph} nodes. [0n] when the
+      (** Backend kernel handle retained by linked command storage. [0n] when the
           backend has no addressable kernel object. *)
 }
 (** A device-specific dispatch handle. *)
@@ -105,66 +105,6 @@ type queue = {
       (** Compiles the final host sink to a PROGRAM. *)
 }
 (** Device hooks for compiling queue submission through the shared UOp protocol. *)
-
-(** {1:graph Batched dispatch graphs} *)
-
-(** Backend interface for batched replay of a fixed call sequence.
-
-    A graph records a sequence of kernel launches and buffer copies once and
-    replays them with a single dispatch, eliminating per-call launch
-    overhead. The engine builds the node list, tracks node dependencies, and
-    patches per-replay state (rebound buffer arguments, variable values,
-    launch dimensions) through {!exec} before each launch. *)
-module Graph : sig
-  type node =
-    | Kernel of {
-        handle : nativeint;  (** Kernel handle from {!prog.handle}. *)
-        global : int array;  (** Global launch dimensions (3 entries). *)
-        local : int array;  (** Local launch dimensions (3 entries). *)
-        bufs : Buffer.t array;  (** Buffer arguments and their ownership. *)
-        vals : int array;  (** Scalar arguments. *)
-        deps : int array;  (** Indices of nodes this node must wait on. *)
-      }
-    | Copy of {
-        dest : Buffer.t;  (** Destination buffer. *)
-        src : Buffer.t;  (** Source buffer. *)
-        nbytes : int;  (** Copied byte count. *)
-        deps : int array;  (** Indices of nodes this node must wait on. *)
-      }  (** One recorded call. Node indices follow build order. *)
-
-  type exec = {
-    set_buf : int -> int -> Buffer.t -> unit;
-        (** [set_buf node pos buf] stages buffer argument [pos] of [node] to
-            [buf]. For {!constructor-Copy} nodes position [0] is the
-            destination and position [1] the source. *)
-    set_val : int -> int -> int -> unit;
-        (** [set_val node idx v] stages scalar argument [idx] of [node]. *)
-    set_launch_dims : int -> global:int array -> local:int array -> unit;
-        (** [set_launch_dims node ~global ~local] stages new launch
-            dimensions for kernel [node]. *)
-    set_params : int -> unit;
-        (** [set_params node] commits the staged state of [node] into the
-            instantiated graph. *)
-    launch : wait:bool -> float option;
-        (** [launch ~wait] replays the graph. Returns the elapsed device time
-            in seconds when [wait] is [true] and the backend supports
-            timing. *)
-  }
-  (** An instantiated graph. *)
-
-  type t = {
-    supports_copy : bool;
-        (** [true] iff {!constructor-Copy} nodes are supported, allowing the
-            engine to batch buffer copies alongside kernels. *)
-    max_buffer_offset : int option;
-        (** Largest byte offset a buffer view argument may carry, if the
-            backend bounds it. The engine keeps calls with a larger view
-            offset out of graphs. *)
-    build : node array -> exec;
-        (** [build nodes] records and instantiates a graph over [nodes]. *)
-  }
-  (** The type for backend graph capabilities. *)
-end
 
 (** {1:renderer_set Renderer selection} *)
 
@@ -197,21 +137,17 @@ val make :
   runtime:runtime ->
   synchronize:(unit -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
-  ?graph:Graph.t ->
   ?queue:queue ->
   ?bufferize:(Tolk_uop.Uop.t -> Buffer.t option) ->
   unit ->
   t
 (** [make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches ?graph ?queue ?bufferize ()] is a device runtime, registered under its
+    ?invalidate_caches ?queue ?bufferize ()] is a device runtime, registered under its
     canonical [name] for graph-owned buffers to resolve their allocator.
 
     [runtime obj] loads a compiled binary and returns a dispatch handle.
 
     [synchronize ()] blocks until all pending work on the device completes.
-
-    [graph] is the batched-dispatch capability, or absent when the backend
-    cannot replay call sequences as a single dispatch.
 
     [queue] supplies host compilation hooks. [bufferize] resolves backend
     allocation descriptors during linking, returning [None] for generic storage. *)
@@ -231,9 +167,6 @@ val runtime : t -> runtime
 
 val synchronize : t -> unit
 (** [synchronize d] blocks until all pending work on [d] completes. *)
-
-val graph : t -> Graph.t option
-(** [graph d] is [d]'s batched-dispatch capability, if any. *)
 
 val queue : t -> queue option
 (** [queue d] is [d]'s compiled submission capability, if any. *)
