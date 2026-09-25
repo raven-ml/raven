@@ -254,7 +254,9 @@ let test_randint_covers_range_uniformly () =
 let test_bernoulli_extremes () =
   let n = 100_000 in
   let count p =
-    let t = Nx.cast uint8 (Rng.bernoulli (Rng.key 17) (param float32 [| n |] p)) in
+    let t =
+      Nx.cast uint8 (Rng.bernoulli (Rng.key 17) (param float32 [| n |] p))
+    in
     Array.fold_left
       (fun acc v -> acc + if v > 0 then 1 else 0)
       0 (Nx.to_array t)
@@ -265,7 +267,9 @@ let test_bernoulli_extremes () =
 let test_bernoulli () =
   let shape = [| 1000 |] in
   let p = 0.3 in
-  let t = Rng.with_key (Rng.key 42) (fun () -> bernoulli (param float32 shape p)) in
+  let t =
+    Rng.with_key (Rng.key 42) (fun () -> bernoulli (param float32 shape p))
+  in
 
   equal ~msg:"bernoulli produces correct shape" (array int) shape (Nx.shape t);
   let t_int = cast uint8 t in
@@ -313,9 +317,8 @@ let test_shuffle_preserves_shape () =
   let sorted_shuffled = Array.copy shuffled_flat in
   Array.sort compare sorted_orig;
   Array.sort compare sorted_shuffled;
-  equal ~msg:"shuffle preserves multiset"
-    (array float_exact)
-    sorted_orig sorted_shuffled;
+  equal ~msg:"shuffle preserves multiset" (array float_exact) sorted_orig
+    sorted_shuffled;
 
   let shuffled_again = Rng.with_key (Rng.key 7) (fun () -> shuffle x) in
   let equality = Nx.equal shuffled shuffled_again |> Nx.all |> Nx.to_array in
@@ -482,26 +485,23 @@ let test_permutation_is_a_permutation () =
    often. A skewed key construction shows up here as a heavy diagonal.
 
    (This does not test the tie bias the 64-bit keys were introduced for. That
-   one is not observable at any feasible sample size: it shifts P(i before j)
-   by 2^-24, which needs ~1e16 trials to see. The argument for it is the
-   collision count, in the comment on [permutation].) *)
+   one is not observable at any feasible sample size: it shifts P(i before j) by
+   2^-24, which needs ~1e16 trials to see. The argument for it is the collision
+   count, in the comment on [permutation].) *)
 let test_permutation_positions_are_uniform () =
   let n = 8 and trials = 20_000 in
   let counts = Array.make_matrix n n 0 in
   for t = 0 to trials - 1 do
     let p = Nx.to_array (Rng.permutation (Rng.key t) n) in
-    Array.iteri (fun pos v ->
+    Array.iteri
+      (fun pos v ->
         let v = Int32.to_int v in
         counts.(pos).(v) <- counts.(pos).(v) + 1)
       p
   done;
   let expected = float_of_int trials /. float_of_int n in
   (* Binomial standard deviation, times five. *)
-  let tol =
-    5.0
-    *. Stdlib.sqrt
-         (expected *. (1.0 -. (1.0 /. float_of_int n)))
-  in
+  let tol = 5.0 *. Stdlib.sqrt (expected *. (1.0 -. (1.0 /. float_of_int n))) in
   Array.iteri
     (fun pos row ->
       Array.iteri
@@ -513,8 +513,8 @@ let test_permutation_positions_are_uniform () =
     counts
 
 (* Both are inverse-CDF draws whose closed-form moments pin them exactly.
-   Gumbel(0,1): mean = Euler-Mascheroni, variance = pi^2/6. Exponential(1):
-   mean = variance = 1. A sign slip or a missing negation moves both. *)
+   Gumbel(0,1): mean = Euler-Mascheroni, variance = pi^2/6. Exponential(1): mean
+   = variance = 1. A sign slip or a missing negation moves both. *)
 let test_gumbel_and_exponential_moments () =
   let n = 200_000 in
   let moments a =
@@ -564,15 +564,18 @@ let test_gamma_moments () =
     let var = central 2.0 in
     let skew = central 3.0 /. (var ** 1.5) in
     let label = Printf.sprintf "gamma(%g)" concentration in
-    equal ~msg:(label ^ " mean") (float (0.03 *. concentration)) concentration
-      mean;
-    equal ~msg:(label ^ " variance") (float (0.06 *. concentration))
+    equal ~msg:(label ^ " mean")
+      (float (0.03 *. concentration))
+      concentration mean;
+    equal ~msg:(label ^ " variance")
+      (float (0.06 *. concentration))
       concentration var;
-    equal ~msg:(label ^ " skewness")
-      (float 0.12)
+    equal ~msg:(label ^ " skewness") (float 0.12)
       (2.0 /. Stdlib.sqrt concentration)
       skew;
-    equal ~msg:(label ^ " draws are positive") bool true
+    equal
+      ~msg:(label ^ " draws are positive")
+      bool true
       (Array.for_all (fun x -> x > 0.0) v)
   in
   check 0.4;
@@ -599,7 +602,8 @@ let test_gamma_is_elementwise () =
    broadcast raise, and a Dirichlet needs a component axis. *)
 let test_parameter_shapes_are_checked () =
   invalid_arg_raised ~msg:"beta parameters that do not broadcast" (fun () ->
-      ignore (Rng.beta (Rng.key 0) (ones float32 [| 3 |]) (ones float32 [| 4 |])));
+      ignore
+        (Rng.beta (Rng.key 0) (ones float32 [| 3 |]) (ones float32 [| 4 |])));
   invalid_arg_raised ~msg:"one component" (fun () ->
       ignore (Rng.dirichlet (Rng.key 0) (ones float32 [| 4; 1 |])));
   invalid_arg_raised ~msg:"a scalar concentration" (fun () ->
@@ -619,9 +623,7 @@ let test_poisson_matches_the_pmf () =
     let len = float_of_int n in
     let mean = Array.fold_left (fun a x -> a +. float_of_int x) 0.0 v /. len in
     let var =
-      Array.fold_left
-        (fun a x -> a +. ((float_of_int x -. mean) ** 2.0))
-        0.0 v
+      Array.fold_left (fun a x -> a +. ((float_of_int x -. mean) ** 2.0)) 0.0 v
       /. len
     in
     let label =
@@ -629,7 +631,9 @@ let test_poisson_matches_the_pmf () =
     in
     equal ~msg:(label ^ " mean") (float (0.03 *. Stdlib.sqrt rate)) rate mean;
     equal ~msg:(label ^ " variance") (float (0.1 *. rate)) rate var;
-    equal ~msg:(label ^ " counts are non-negative") bool true
+    equal
+      ~msg:(label ^ " counts are non-negative")
+      bool true
       (Array.for_all (fun x -> x >= 0) v);
     (* Frequencies against the pmf, over the counts carrying real mass. *)
     let top = int_of_float (Float.ceil (rate +. (4.0 *. Stdlib.sqrt rate))) in
@@ -647,11 +651,11 @@ let test_poisson_matches_the_pmf () =
       pmf := !pmf *. rate /. float_of_int (c + 1)
     done
   in
-  (* Below 10 the draw is by inversion, from 10 up by transformed rejection;
-     12 sits just inside the second regime, where its acceptance is lowest.
-     The large rates exercise the log-pmf test where its direct form would
-     have cancelled to noise, at float32 in particular; the pmf underflows on
-     the host there, so only the moments are checked. *)
+  (* Below 10 the draw is by inversion, from 10 up by transformed rejection; 12
+     sits just inside the second regime, where its acceptance is lowest. The
+     large rates exercise the log-pmf test where its direct form would have
+     cancelled to noise, at float32 in particular; the pmf underflows on the
+     host there, so only the moments are checked. *)
   List.iter
     (fun rate ->
       check float64 rate;
@@ -659,9 +663,9 @@ let test_poisson_matches_the_pmf () =
     [ 0.7; 4.0; 12.0; 30.0; 200.0; 1e5 ];
   check float64 1e7
 
-(* A tensor of rates spanning both regimes, drawn at once: each column keeps
-   its own mean. Out-of-domain rates give a count of zero rather than
-   raising, since a rate is data. *)
+(* A tensor of rates spanning both regimes, drawn at once: each column keeps its
+   own mean. Out-of-domain rates give a count of zero rather than raising, since
+   a rate is data. *)
 let test_poisson_is_elementwise () =
   let n = 50_000 in
   let rates = [| 0.5; 5.0; 50.0; 500.0 |] in
@@ -676,7 +680,8 @@ let test_poisson_is_elementwise () =
         (Nx.item [] (mean (slice [ R (0, n); I i ] t))))
     rates;
   let bad = create float64 [| 3 |] [| 0.0; -1.0; Float.nan |] in
-  equal ~msg:"zero, negative and NaN rates count zero" (array int32) [| 0l; 0l; 0l |]
+  equal ~msg:"zero, negative and NaN rates count zero" (array int32)
+    [| 0l; 0l; 0l |]
     (Nx.to_array (Rng.poisson (Rng.key 0) bad))
 
 (* Beta(a, b) has mean a/(a+b) and variance ab/((a+b)^2 (a+b+1)); the variance
@@ -699,12 +704,12 @@ let test_beta_moments () =
     let total = alpha +. beta in
     let label = Printf.sprintf "beta(%g, %g)" alpha beta in
     equal ~msg:(label ^ " mean") (float 0.01) (alpha /. total) mean;
-    equal
-      ~msg:(label ^ " variance")
-      (float 0.005)
+    equal ~msg:(label ^ " variance") (float 0.005)
       (alpha *. beta /. (total *. total *. (total +. 1.0)))
       var;
-    equal ~msg:(label ^ " draws lie in [0, 1]") bool true
+    equal
+      ~msg:(label ^ " draws lie in [0, 1]")
+      bool true
       (Array.for_all (fun x -> x >= 0.0 && x <= 1.0) v)
   in
   check 2.0 5.0;
@@ -990,8 +995,7 @@ let () =
           test "poisson matches the pmf" test_poisson_matches_the_pmf;
           test "poisson is elementwise" test_poisson_is_elementwise;
           test "beta moments" test_beta_moments;
-          test "dirichlet is on the simplex"
-            test_dirichlet_is_on_the_simplex;
+          test "dirichlet is on the simplex" test_dirichlet_is_on_the_simplex;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
           test "categorical_axis_handling" test_categorical_axis_handling;
