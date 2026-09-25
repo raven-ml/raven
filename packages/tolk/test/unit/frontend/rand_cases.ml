@@ -316,5 +316,94 @@ let dropout_tests =
 (* Groups whose values must be identical on every device. *)
 let exact_groups = [ sha256_tests; golden_tests; counter_tests ]
 
+let placement_tests =
+  let module U = Tolk_uop.Uop in
+  let devices = [ "CPU:1"; "CPU:2" ] in
+  let on_cpu f =
+    Tolk.Helpers.Context_var.with_context
+      [ B (Tolk.Helpers.dev, [ Tolk_uop.Target.of_string "CPU" ]) ] f in
+  let source shape =
+    Cr.clone ~device:(U.Single "CPU:1") (Cr.ones ~buffer:false shape) in
+  let gather t = T.of_uop (U.copy ~src:(T.uop t) ~device:(U.Single "CPU") ()) in
+  let check_counter device count =
+    match Rand.device_rng_counter device with
+    | None -> failf "no rng counter on %s" device
+    | Some counter ->
+        is_true (T.device counter = Some (U.Single device));
+        check_ints [| count; 0 |] counter in
+  let check_sharding axis t =
+    is_true (T.device t = Some (U.Multi devices));
+    equal (option int) axis (U.axis (T.uop t)) in
+  group "placement"
+    [
+      test "rand_like owns its source-device stream and fresh storage" (fun () -> on_cpu (fun () ->
+          Rand.manual_seed 42;
+          let src = source [ 4 ] in
+          let draw = Rand.rand_like src in
+          is_true (T.device draw = Some (U.Single "CPU:1"));
+          check_floats_exact [|0.5334206819534302; 0.6701551675796509;
+              0.7630789279937744; 0.4320552349090576|] draw;
+          check_counter "CPU:1" 4;
+          is_true (Rand.device_rng_counter "CPU" = None);
+          ignore (Tolk_frontend.Op.assign draw (Cr.const_like draw (T.Sfloat 7.)));
+          check_floats_exact [| 7.; 7.; 7.; 7. |] draw;
+          check_floats_exact [| 1.; 1.; 1.; 1. |] src));
+      test "sharded rand_like advances one local stream per device" (fun () -> on_cpu (fun () ->
+          List.iter (fun axis ->
+              Rand.manual_seed 42;
+              let src = Cr.shard ~axis ~devices (source [ 4; 4 ]) in
+              let draw = Rand.rand_like src in
+              check_sharding (Some axis) draw;
+              equal (list int) [ 4; 4 ] (T.shape draw);
+              let values = Run.to_float_array (gather draw) in
+              equal int 16 (Array.length values);
+              Array.iter (fun x -> is_true (x >= 0. && x < 1.)) values;
+              List.iter (fun device -> check_counter device 8) devices;
+              is_true (Rand.device_rng_counter "CPU" = None);
+              ignore (Tolk_frontend.Op.assign draw (Cr.const_like draw (T.Sfloat 7.)));
+              check_floats_exact (Array.make 16 7.) (gather draw);
+              check_floats_exact (Array.make 16 1.) (gather src)) [ 0; 1 ]));
+      test "replicated rand_like shares one default-device draw" (fun () -> on_cpu (fun () ->
+          Rand.manual_seed 42;
+          let src = Cr.shard ~devices (source [ 4 ]) in
+          let draw = Rand.rand_like src in
+          check_sharding None draw;
+          let shard index = T.of_uop (U.mselect ~src:(T.uop draw) ~index) in
+          let first = Run.to_float_array (shard 0) in
+          check_floats_exact first (shard 1);
+          check_counter "CPU" 4;
+          List.iter (fun device -> is_true (Rand.device_rng_counter device = None)) devices));
+      test "randn_like preserves the source shard axis after stacking" (fun () -> on_cpu (fun () ->
+          Rand.manual_seed 42;
+          let src = Cr.shard ~axis:1 ~devices (source [ 4; 4 ]) in
+          let draw = Rand.randn_like src in
+          check_sharding (Some 1) draw;
+          equal (list int) [ 4; 4 ] (T.shape draw);
+          Array.iter (fun x -> is_true (Float.is_finite x))
+            (Run.to_float_array (gather draw));
+          List.iter (fun device -> check_counter device 16) devices));
+      test "sharded dropout advances both streams on captured replay" (fun () -> on_cpu (fun () ->
+          Tolk.Helpers.Context_var.with_context [ B (Tolk.Helpers.training, 1) ] (fun () ->
+              let src = Cr.shard ~axis:1 ~devices (source [ 8; 8 ]) in
+              let draws () =
+                let jf = Jit.create (fun _ ~vars:_ ->
+                    let out = Rand.dropout src in
+                    check_sharding (Some 1) out;
+                    Run.realize (gather out)) in
+                let results = List.init 5 (fun _ ->
+                    Run.to_float_array (Jit.call jf [||])) in
+                is_true (Jit.captured jf);
+                List.iter (fun xs ->
+                    Array.iter (fun x -> is_true (x = 0. || x = 2.)) xs) results;
+                equal int 5 (List.length (List.sort_uniq compare results));
+                List.iter (fun device -> check_counter device 160) devices;
+                is_true (Rand.device_rng_counter "CPU" = None);
+                results in
+              Rand.manual_seed 1234;
+              let first = draws () in
+              Rand.manual_seed 1234;
+              equal (list (array float_exact)) first (draws ()))));
+    ]
+
 let all_groups =
-  exact_groups @ [ jit_tests; stat_tests; dropout_tests ]
+  exact_groups @ [ jit_tests; stat_tests; dropout_tests; placement_tests ]

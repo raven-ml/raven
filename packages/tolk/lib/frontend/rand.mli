@@ -40,8 +40,10 @@ val rand :
 
 val rand_like :
   ?dtype:Tolk_uop.Dtype.t -> ?contiguous:bool -> Tensor.t -> Tensor.t
-(** [rand_like t] is {!val-rand} with the shape of [t] and, unless
-    overridden, the dtype of [t]. *)
+(** [rand_like t] is {!val-rand} with the shape, device and sharding of [t]
+    and, unless overridden, its dtype. A device-less [t] uses the default
+    device. Shards draw from their respective device streams; replicated
+    tensors share one draw from the default device stream. *)
 
 val uniform :
   ?low:float -> ?high:float -> ?dtype:Tolk_uop.Dtype.t -> int list ->
@@ -83,8 +85,8 @@ val randn : ?dtype:Tolk_uop.Dtype.t -> int list -> Tensor.t
     (default: the default float). *)
 
 val randn_like : ?dtype:Tolk_uop.Dtype.t -> Tensor.t -> Tensor.t
-(** [randn_like t] is {!randn} with the shape of [t] and, unless overridden,
-    the dtype of [t]. *)
+(** [randn_like t] is {!randn} with the shape, device and sharding of [t]
+    and, unless overridden, its dtype. Device streams follow {!rand_like}. *)
 
 val normal :
   ?mean:float -> ?std:float -> ?dtype:Tolk_uop.Dtype.t -> int list ->

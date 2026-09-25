@@ -151,9 +151,10 @@ acceptance requirement; skipped tests are not execution evidence.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
   correctness fixes; measure accelerator candidates on supported hardware.
-- Preserve source placement and sharding in `Rand.rand_like` and dropout;
-  generating fresh mask storage on the default device does not preserve the
-  source's device. Cover nondefault devices and per-shard generation.
+- Preserve device placement and sharding in `Creation.full_like`, `zeros_like`
+  and `ones_like`, which currently retain only shape and dtype. Cover materialized
+  fills, pure broadcast values and per-shard extents against the target's
+  shared `*_like` placement rules.
 - Measure search cost, selected-kernel latency, JIT replay, allocations and
   handle counts on consumer workloads.
 - At the reference pin move, `find_bufs`' read/write cycle check keys on the

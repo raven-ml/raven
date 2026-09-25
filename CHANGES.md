@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- `Rand.rand_like`, `randn_like` and dropout preserve source placement and
+  sharding. RNG keys and counters now belong to their requested device;
+  sharded draws advance independent streams while replicated draws share one.
+
 - `Creation.clone` preserves sharding and allocates each shard separately.
   `Op.assign` accepts cross-device values through copy preparation and rejects
   incompatible shard axes; clones reject DISK destinations before allocation.

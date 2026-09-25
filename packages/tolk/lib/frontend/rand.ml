@@ -36,12 +36,18 @@ let device_rng_counter device = Hashtbl.find_opt device_rng_counters device
 
 let slice t a b = Op.getitem t Movement.[ R (Some a, Some b, None) ]
 
-let uint32_input values =
+let uint32_input device values =
   let bytes = Bytes.create (4 * Array.length values) in
   Array.iteri
     (fun i v -> Bytes.set_int32_le bytes (i * 4) (Int32.of_int v))
     values;
-  Run.of_bytes ~dtype:D.uint32 ~shape:[ Array.length values ] bytes
+  let buffer =
+    Tolk.Device.create_buffer ~dtype:D.uint32 ~size:(Array.length values)
+      (Tolk.Device.get device)
+  in
+  Tolk.Device.Buffer.ensure_allocated buffer;
+  Tolk.Device.Buffer.copyin buffer bytes;
+  T.of_uop (Uop.from_buffer buffer)
 
 let next_counter device num =
   if not (Hashtbl.mem device_seeds device) then begin
@@ -49,8 +55,8 @@ let next_counter device num =
     Bytes.set_int32_be index 0 (Int32.of_int (Hashtbl.length device_seeds));
     let digest = Tolk.Helpers.sha256 index in
     let key_word = Int32.to_int (Bytes.get_int32_be digest 28) land 0xFFFFFFFF in
-    Hashtbl.replace device_seeds device (uint32_input [| key_word; !seed |]);
-    Hashtbl.replace device_rng_counters device (uint32_input [| 0; 0 |])
+    Hashtbl.replace device_seeds device (uint32_input device [| key_word; !seed |]);
+    Hashtbl.replace device_rng_counters device (uint32_input device [| 0; 0 |])
   end;
   let counter = Hashtbl.find device_rng_counters device in
   let num_low = num land 0xFFFFFFFF and num_high = num lsr 32 in
@@ -157,27 +163,54 @@ let check_shape name shape =
   if List.exists (fun s -> s < 0) shape then
     invalid_arg (Printf.sprintf "Rand.%s: dimensions must be non-negative" name)
 
-let rand ?dtype ?(contiguous = true) shape =
+let rand_on device ?dtype ?(contiguous = true) shape =
   let dt = match dtype with Some d -> d | None -> D.default_float in
   if (not (D.is_float dt)) || D.is_weak dt then
     invalid_arg "Rand.rand: only concrete float dtypes are supported";
   check_shape "rand" shape;
-  let device = Run.device_name () in
+  let device = Tolk.Helpers.canonicalize_device_name device in
   let key, counter =
     next_counter device (ceildiv (prod shape * D.itemsize dt) 4)
   in
   rand_from key counter shape dt ~contiguous
 
+let rand ?dtype ?contiguous shape =
+  rand_on (Run.device_name ()) ?dtype ?contiguous shape
+
 let rand_like ?dtype ?contiguous t =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
-  rand ~dtype:dt ?contiguous (T.shape t)
+  match T.device t with
+  | Some (Uop.Multi devices) -> (
+      match Uop.axis (T.uop t) with
+      | None ->
+          Creation.shard ~devices (rand ~dtype:dt ?contiguous (T.shape t))
+      | Some axis ->
+          let shape =
+            List.map
+              (fun d ->
+                match Uop.const_int_value d with
+                | Some size -> size
+                | None -> invalid_arg "Rand.rand_like: symbolic dimension")
+              (Uop.shard_shape (T.uop t))
+          in
+          let shards =
+            List.map
+              (fun device ->
+                T.uop (rand_on device ~dtype:dt ?contiguous shape))
+              devices
+          in
+          T.of_uop (Uop.unshard ~src:(Uop.mstack shards) ~axes:[ axis ] ()))
+  | Some (Uop.Single device) ->
+      rand_on device ~dtype:dt ?contiguous (T.shape t)
+  | None -> rand ~dtype:dt ?contiguous (T.shape t)
+  | Some (Uop.Index _) -> invalid_arg "Rand.rand_like: unresolved device index"
 
 (* Box-Muller: two uniform draws give one standard normal sample. *)
 let randn_like ?dtype t =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
   if dtype = None && D.is_weak dt then
     invalid_arg "Rand.randn_like: a weak-dtyped input needs an explicit dtype";
-  let src = rand ~dtype:D.float32 (2 :: T.shape t) in
+  let src = rand_like ~dtype:D.float32 (Movement.stack t [ t ]) in
   let sel i = Op.getitem src Movement.[ I i ] in
   Dtype_ops.cast
     (Elementwise.mul
