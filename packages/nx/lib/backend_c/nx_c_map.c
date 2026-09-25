@@ -247,12 +247,20 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TOINT_NX_C_CAT_FLOAT(dsfx, v) nx_c_f2i_##dsfx((double)(v))
 #define NX_C_TOINT_NX_C_CAT_COMPLEX(dsfx, v) nx_c_f2i_##dsfx((double)creal(v))
 
-/* A float dst narrower than its float compute type double-rounds: e.g. f64->f16
-   is (float)(double) then float_to_half, since float_to_half is the only f16
-   converter. The extra rounding is sub-ulp and within the conformance tolerance;
-   noted for honesty, not correctness. */
+/* A bf16 or float8 dst computes in float. A wider src reaches its encoder
+   through double_to_float_odd, so the value rounds once; an integer above 2^53
+   also rounds on its way to double. An f16 dst from a wider src rounds to
+   float and then to f16, as OCaml's float16 bigarrays do. */
+#define NX_C_NARROW_ODD(v)                                                      \
+  _Generic((v), float: (v), default: double_to_float_odd((double)(v)))
+#define NX_C_FNARROW_f16(dcompute, v) ((dcompute)(v))
+#define NX_C_FNARROW_f32(dcompute, v) ((dcompute)(v))
+#define NX_C_FNARROW_f64(dcompute, v) ((dcompute)(v))
+#define NX_C_FNARROW_bf16(dcompute, v) NX_C_NARROW_ODD(v)
+#define NX_C_FNARROW_f8e4m3(dcompute, v) NX_C_NARROW_ODD(v)
+#define NX_C_FNARROW_f8e5m2(dcompute, v) NX_C_NARROW_ODD(v)
 #define NX_C_CASTVAL_NX_C_CAT_FLOAT(dcompute, dsfx, scat, v)                     \
-  ((dcompute)(NX_C_SREAL_##scat(v)))
+  NX_C_FNARROW_##dsfx(dcompute, NX_C_SREAL_##scat(v))
 #define NX_C_CASTVAL_NX_C_CAT_COMPLEX(dcompute, dsfx, scat, v) ((dcompute)(v))
 #define NX_C_CASTVAL_NX_C_CAT_BOOL(dcompute, dsfx, scat, v)                      \
   ((dcompute)((v) != 0))

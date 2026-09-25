@@ -206,6 +206,43 @@ let test_float8_e5m2_semantics () =
   equal ~msg:"e5m2 underflow" float_exact 0.0 (rt 0x1p-17);
   equal ~msg:"e5m2 nan" bool true (Float.is_nan (rt Float.nan))
 
+(* A float64 rounds once. Each value lies within 2^-40 of a tie at the stored
+   precision, close enough that rounding to float32 first would land on the tie
+   and then round it to even, the wrong way. *)
+let test_float64_rounds_once () =
+  let above = Float.succ and below = Float.pred in
+  let check name k cases =
+    List.iter
+      (fun (x, want) ->
+        equal
+          ~msg:(Printf.sprintf "%s %h" name x)
+          float_exact want (store_get k x))
+      cases
+  in
+  check "bf16" bfloat16
+    [
+      (above 1.00390625, 1.0078125);
+      (below 1.01171875, 1.0078125);
+      (1e39, Float.infinity);
+      (-1e-50, -0.0);
+    ];
+  check "e4m3" float8_e4m3
+    [
+      (above 336.0, 352.0);
+      (below 368.0, 352.0);
+      (below 0x1.8p-9, 0x1p-9);
+      (-1e-50, -0.0);
+    ];
+  check "e5m2" float8_e5m2
+    [
+      (above 288.0, 320.0);
+      (below 352.0, 320.0);
+      (below 0x1.8p-16, 0x1p-16);
+      (1e39, Float.infinity);
+    ];
+  equal ~msg:"e4m3 1e39 is nan" bool true
+    (Float.is_nan (store_get float8_e4m3 1e39))
+
 let test_int4_clamping () =
   equal ~msg:"int4 clamps high" int 7 (store_get int4 9);
   equal ~msg:"int4 clamps low" int (-8) (store_get int4 (-9));
@@ -569,6 +606,7 @@ let () =
           test "bfloat16" test_bfloat16_semantics;
           test "float8 e4m3" test_float8_e4m3_semantics;
           test "float8 e5m2" test_float8_e5m2_semantics;
+          test "float64 rounds once" test_float64_rounds_once;
           test "int4 clamping" test_int4_clamping;
           test "uint64 roundtrip" test_uint64_roundtrip;
         ];

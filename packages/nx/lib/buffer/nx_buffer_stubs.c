@@ -265,8 +265,7 @@ CAMLprim value caml_nx_buffer_set(value vb, value vind, value newval) {
 
   switch (kind) {
     case NX_BA_BFLOAT16:
-      ((uint16_t *)b->data)[offset] =
-          float_to_bfloat16((float)Double_val(newval));
+      ((uint16_t *)b->data)[offset] = double_to_bfloat16(Double_val(newval));
       break;
     case NX_BA_BOOL:
       ((uint8_t *)b->data)[offset] = Bool_val(newval);
@@ -296,12 +295,10 @@ CAMLprim value caml_nx_buffer_set(value vb, value vind, value newval) {
       break;
     }
     case NX_BA_FP8_E4M3:
-      ((uint8_t *)b->data)[offset] =
-          float_to_fp8_e4m3((float)Double_val(newval));
+      ((uint8_t *)b->data)[offset] = double_to_fp8_e4m3(Double_val(newval));
       break;
     case NX_BA_FP8_E5M2:
-      ((uint8_t *)b->data)[offset] =
-          float_to_fp8_e5m2((float)Double_val(newval));
+      ((uint8_t *)b->data)[offset] = double_to_fp8_e5m2(Double_val(newval));
       break;
     case NX_BA_UINT32:
       ((uint32_t *)b->data)[offset] = Int32_val(newval);
@@ -379,8 +376,7 @@ static void nx_buffer_unsafe_set_ext(struct caml_ba_array *b, intnat offset,
   int kind = nx_buffer_get_kind(b);
   switch (kind) {
     case NX_BA_BFLOAT16:
-      ((uint16_t *)b->data)[offset] =
-          float_to_bfloat16((float)Double_val(newval));
+      ((uint16_t *)b->data)[offset] = double_to_bfloat16(Double_val(newval));
       break;
     case NX_BA_BOOL:
       ((uint8_t *)b->data)[offset] = Bool_val(newval);
@@ -410,12 +406,10 @@ static void nx_buffer_unsafe_set_ext(struct caml_ba_array *b, intnat offset,
       break;
     }
     case NX_BA_FP8_E4M3:
-      ((uint8_t *)b->data)[offset] =
-          float_to_fp8_e4m3((float)Double_val(newval));
+      ((uint8_t *)b->data)[offset] = double_to_fp8_e4m3(Double_val(newval));
       break;
     case NX_BA_FP8_E5M2:
-      ((uint8_t *)b->data)[offset] =
-          float_to_fp8_e5m2((float)Double_val(newval));
+      ((uint8_t *)b->data)[offset] = double_to_fp8_e5m2(Double_val(newval));
       break;
     case NX_BA_UINT32:
       ((uint32_t *)b->data)[offset] = Int32_val(newval);
@@ -570,7 +564,7 @@ CAMLprim value caml_nx_buffer_fill(value vb, value vinit) {
 
   switch (kind) {
     case NX_BA_BFLOAT16: {
-      uint16_t init = float_to_bfloat16((float)Double_val(vinit));
+      uint16_t init = double_to_bfloat16(Double_val(vinit));
       uint16_t *p = (uint16_t *)b->data;
       for (uintnat i = 0; i < num_elts; i++)
         p[i] = init;
@@ -598,12 +592,12 @@ CAMLprim value caml_nx_buffer_fill(value vb, value vinit) {
       break;
     }
     case NX_BA_FP8_E4M3: {
-      uint8_t init = float_to_fp8_e4m3((float)Double_val(vinit));
+      uint8_t init = double_to_fp8_e4m3(Double_val(vinit));
       memset(b->data, init, num_elts);
       break;
     }
     case NX_BA_FP8_E5M2: {
-      uint8_t init = float_to_fp8_e5m2((float)Double_val(vinit));
+      uint8_t init = double_to_fp8_e5m2(Double_val(vinit));
       memset(b->data, init, num_elts);
       break;
     }

@@ -1914,6 +1914,10 @@ thread.
 
 ### Nx
 
+- Writing a `float` into a `bfloat16` or `float8` tensor, and `Nx.cast` to
+  those dtypes from wider floats or integers, round once to nearest even. They
+  rounded to `float32` first, so `Nx.scalar Nx.float8_e4m3 336.00000000000006`
+  was 320 instead of 352.
 - Operations over values on several devices keep their results on those
   devices: an elementwise result keeps its operands' split, which must be
   alike, a reduction over the split axis is a copy on each device, and an

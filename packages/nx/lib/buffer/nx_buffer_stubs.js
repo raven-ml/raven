@@ -21,6 +21,19 @@
    compute the same values under js_of_ocaml as natively, except for NaN
    payload bits, which JavaScript canonicalizes. */
 
+//Provides: caml_nx_float32_odd_bits
+function caml_nx_float32_odd_bits(num) {
+  /* The float32 bits of num rounded to odd, as double_to_float_odd in
+     nx_buffer_stubs.h: the encoders below then round the number once. */
+  var view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, num, false);
+  var bits = view.getUint32(0, false);
+  var f = view.getFloat32(0, false);
+  var away = Math.abs(f) > Math.abs(num) ? 1 : 0;
+  var inexact = num === num && f !== num ? 1 : 0;
+  return ((bits - away) | inexact) >>> 0;
+}
+
 //Provides: caml_unpackBfloat16
 function caml_unpackBfloat16(bits) {
   /* bfloat16 is the upper 16 bits of a float32 */
@@ -31,11 +44,9 @@ function caml_unpackBfloat16(bits) {
 }
 
 //Provides: caml_packBfloat16
+//Requires: caml_nx_float32_odd_bits
 function caml_packBfloat16(num) {
-  var buffer = new ArrayBuffer(4);
-  var view = new DataView(buffer);
-  view.setFloat32(0, num, false);
-  var bits = view.getUint32(0, false);
+  var bits = caml_nx_float32_odd_bits(num);
   /* NaN first: the rounding bias below could carry a small NaN significand
      into the exponent and turn it into inf. */
   if ((bits & 0x7fffffff) > 0x7f800000) {
@@ -47,6 +58,7 @@ function caml_packBfloat16(num) {
 }
 
 //Provides: caml_packFp8_e4m3
+//Requires: caml_nx_float32_odd_bits
 function caml_packFp8_e4m3(num) {
   /* OCP "fn" variant: no infinities, S.1111.111 is NaN, exponent 15 is
      otherwise normal up to the max finite 448, subnormals scale by 2^-6.
@@ -56,10 +68,7 @@ function caml_packFp8_e4m3(num) {
   if (num === Infinity) return 0x7f;
   if (num === -Infinity) return 0xff;
 
-  var buffer = new ArrayBuffer(4);
-  var view = new DataView(buffer);
-  view.setFloat32(0, num, false);
-  var bits = view.getUint32(0, false);
+  var bits = caml_nx_float32_odd_bits(num);
   var sign = ((bits >>> 31) << 7) & 0xff;
   var exp = ((bits >>> 23) & 0xff) - 127;
 
@@ -105,6 +114,7 @@ function caml_unpackFp8_e4m3(byte) {
 }
 
 //Provides: caml_packFp8_e5m2
+//Requires: caml_nx_float32_odd_bits
 function caml_packFp8_e5m2(num) {
   /* IEEE-like: has infinities and subnormals. Finite overflow rounds to
      infinity. */
@@ -112,10 +122,7 @@ function caml_packFp8_e5m2(num) {
   if (num === Infinity) return 0x7c;
   if (num === -Infinity) return 0xfc;
 
-  var buffer = new ArrayBuffer(4);
-  var view = new DataView(buffer);
-  view.setFloat32(0, num, false);
-  var bits = view.getUint32(0, false);
+  var bits = caml_nx_float32_odd_bits(num);
   var sign = ((bits >>> 31) << 7) & 0xff;
   var exp = ((bits >>> 23) & 0xff) - 127;
 

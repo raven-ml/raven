@@ -301,4 +301,36 @@ static inline float fp8_e5m2_to_float(uint8_t fp8) {
   return negative ? -value : value;
 }
 
+/* Encoders from binary64. A double narrows to binary32 by rounding to odd
+   (truncating, then setting the last bit if a discarded bit was set), and the
+   binary32 encoder rounds that to nearest even. Binary32's grid is at least
+   four times finer than bfloat16's or float8's at every magnitude, so the odd
+   last bit stands for the discarded bits without creating or breaking a tie:
+   the result is the double rounded once. Casting to float first would round
+   twice and move a value next to a tie onto it. */
+static inline float double_to_float_odd(double x) {
+  union {
+    float f;
+    uint32_t i;
+  } u = {.f = (float)x};
+  /* Stepping back from a result that rounded away from zero truncates, which
+     also brings an overflow to inf back to FLT_MAX. NaN is neither. */
+  uint32_t away = fabs((double)u.f) > fabs(x);
+  uint32_t inexact = ((double)u.f != x) & (x == x);
+  u.i = (u.i - away) | inexact;
+  return u.f;
+}
+
+static inline uint16_t double_to_bfloat16(double x) {
+  return float_to_bfloat16(double_to_float_odd(x));
+}
+
+static inline uint8_t double_to_fp8_e4m3(double x) {
+  return float_to_fp8_e4m3(double_to_float_odd(x));
+}
+
+static inline uint8_t double_to_fp8_e5m2(double x) {
+  return float_to_fp8_e5m2(double_to_float_odd(x));
+}
+
 #endif /* NX_BUFFER_STUBS_H */

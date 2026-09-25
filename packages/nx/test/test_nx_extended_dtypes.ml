@@ -280,6 +280,35 @@ let test_half_special_values (type b) name (dt : (float, b) Nx.dtype) () =
   equal ~msg:(name ^ " -inf") float_exact Float.neg_infinity back.(1);
   is_true ~msg:(name ^ " nan") (Float.is_nan back.(2))
 
+(* A cast from a source wider than float32 rounds once. Each value lies just
+   beside a tie at the target precision, where rounding to float32 first would
+   land on the tie and then round it to even, the wrong way. Contiguous and
+   strided casts take different kernels. *)
+let check_casts_once (type a b c) name (src : (a, b) Nx.dtype)
+    (dt : (float, c) Nx.dtype) cases =
+  List.iter
+    (fun (x, want) ->
+      let m = Nx.full src [| 2; 2 |] x in
+      let cast t = Nx.to_array (Nx.cast Nx.float64 (Nx.cast dt t)) in
+      let want = Array.make 4 want in
+      equal ~msg:(name ^ " contiguous") (array float_exact) want (cast m);
+      equal ~msg:(name ^ " strided") (array float_exact) want
+        (cast (Nx.transpose m)))
+    cases
+
+let test_wide_casts_round_once () =
+  let above = Float.succ and below = Float.pred in
+  check_casts_once "float64 to bfloat16" Nx.float64 Nx.bfloat16
+    [ (above 1.00390625, 1.0078125); (below 1.01171875, 1.0078125) ];
+  check_casts_once "float64 to float8_e4m3" Nx.float64 Nx.float8_e4m3
+    [ (above 336.0, 352.0); (below 368.0, 352.0); (below 0x1.8p-9, 0x1p-9) ];
+  check_casts_once "float64 to float8_e5m2" Nx.float64 Nx.float8_e5m2
+    [ (above 288.0, 320.0); (below 352.0, 320.0) ];
+  (* 2^24 + 2^16 + 1 is just above the bfloat16 tie 2^24 + 2^16; float32 holds
+     neither it nor its neighbour and rounds it onto the tie. *)
+  check_casts_once "int32 to bfloat16" Nx.int32 Nx.bfloat16
+    [ (16842753l, 16908288.0) ]
+
 (* Binary ops compute wide and round the result back to the half dtype. *)
 let test_half_binary_rounding () =
   (* bfloat16: 256 + 1 ties between 256 and 258 -> 256. *)
@@ -537,6 +566,7 @@ let suite =
           (test_half_special_values "float16" Nx_core.Dtype.float16);
         test "bfloat16 special values"
           (test_half_special_values "bfloat16" Nx_core.Dtype.bfloat16);
+        test "wide casts round once" test_wide_casts_round_once;
         test "binary op rounding" test_half_binary_rounding;
         test "float16 binary exact"
           (test_half_binary_exact "float16" Nx_core.Dtype.float16);
