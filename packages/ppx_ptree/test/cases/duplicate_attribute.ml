@@ -1,1 +1,1 @@
-type t = { value : Nx.float32_t [@ptree.leaf] [@ptree.leaf] } [@@deriving ptree]
+type t = { name : string [@ptree.skip] [@ptree.skip] } [@@deriving ptree]

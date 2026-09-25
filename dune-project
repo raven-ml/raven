@@ -120,9 +120,9 @@
 (package
  (name ppx_ptree)
  (dir packages/ppx_ptree)
- (synopsis "Derive typed parameter-tree traversals for Raven")
+ (synopsis "Derive the walk of a Raven structure")
  (description
-  "Ppx_ptree derives the map, map2, and iter operations required by Nx.Ptree.S. It supports mixed-dtype tensor records, products, fixed-shape containers, recursion, explicit leaves, ignored metadata, and delegation to existing parameter-tree modules.")
+  "Ppx_ptree derives the walk function of Nx.Ptree.S from a type definition: records, variants, tuples, options, lists, tensors of a fixed type and nested structures, with errors located at the source.")
  (depends
   (ocaml
    (>= 5.5.0))

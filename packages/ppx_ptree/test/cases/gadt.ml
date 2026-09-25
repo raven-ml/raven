@@ -1,1 +1,1 @@
-type t = Value : Nx.float32_t -> t [@@deriving ptree]
+type 'a t = Value : Nx.float32_t -> 'a t [@@deriving ptree]

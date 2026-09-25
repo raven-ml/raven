@@ -1,9 +1,9 @@
-type helper = { state : Nx.int64_t }
+type 'a helper = { state : Nx.int64_t; w : 'a }
 
-and t = {
-  weight : Nx.float32_t;
-  optional : Nx.float32_t option;
-  helper : helper;
-  name : string; [@ptree.ignore]
+and 'a t = {
+  helper : 'a helper;
+  optional : 'a option;
+  name : string; [@ptree.skip]
 }
-[@@deriving ptree]
+
+and state = { steps : Nx.int32_t } [@@deriving ptree]

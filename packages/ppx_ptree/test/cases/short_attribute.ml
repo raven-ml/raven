@@ -1,1 +1,1 @@
-type t = { weight : Nx.float32_t; name : string [@ignore] } [@@deriving ptree]
+type t = { name : string [@skip] } [@@deriving ptree]

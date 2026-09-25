@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Fit [y = x @ w + b] with a derived parameter tree. The generated [map],
-   [map2], and [iter] functions make [Params] directly usable by Rune. *)
+(* Fit [y = x @ w + b] with a derived structure. [Params.t] has no parameter, so
+   the deriver generates its [walk] and its structure, [Params.ptree]. *)
 
 module Params = struct
   type t = { w : Nx.float32_t; b : Nx.float32_t } [@@deriving ptree]
@@ -23,19 +23,19 @@ let () =
     Nx.mean (Nx.square (Nx.sub prediction y))
   in
 
-  (* [Params] is both the input and output tree. The first call traces and
-     compiles the gradient and update; later calls replay the compiled step. *)
+  (* The step consumes the parameters and returns the updated ones. The first
+     call traces and compiles the gradient and the update; later calls replay
+     the compiled program. *)
   let learning_rate = 0.1 in
   let step =
-    Rune.jit2
-      (module Params)
-      (module Params)
+    Rune.jit
+      Nx.Ptree.(consumes Params.ptree @@ returns Params.ptree)
       (fun params ->
-        let gradients = Rune.grad (module Params) loss params in
+        let grads = Rune.grad Params.ptree loss params in
         Params.
           {
-            w = Nx.sub params.w (Nx.mul_s gradients.w learning_rate);
-            b = Nx.sub params.b (Nx.mul_s gradients.b learning_rate);
+            w = Nx.sub params.w (Nx.mul_s grads.w learning_rate);
+            b = Nx.sub params.b (Nx.mul_s grads.b learning_rate);
           })
   in
 

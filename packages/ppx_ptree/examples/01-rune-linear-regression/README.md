@@ -1,8 +1,9 @@
 # Rune linear regression
 
-This example derives an `Nx.Ptree.S` implementation for a parameter record and
-uses it directly with `Rune.grad` and `Rune.jit2`. The complete gradient and
-parameter update are compiled together.
+This example derives the structure of a parameter record with
+`[@@deriving ptree]` and trains it with `Rune.grad` under `Rune.jit`. The
+record has no type parameter, so the deriver also generates its structure,
+`Params.ptree`, which the gradient, the compiled step and the update take.
 
 Run it from the repository root:
 

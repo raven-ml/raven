@@ -35,6 +35,8 @@ All notable changes to this project will be documented in this file.
     `Checkpoint.of_params (module P)` and `of_packed` are `of_value p`,
     `to_params` and `to_packed` are `to_value p`, and `Vega.Loss_scale`'s
     traversals are `Vega.Loss_scale.ptree`.
+  - `[@@deriving ptree]`'s `map`, `map2`, `iter`, `fold`, `fold2`, `names`
+    and `Uniform` are one derived `walk`.
 - `fehu`, `sowilo`, `norn`, and `nx-oxcaml` move to `contrib/`. Each is its own
   dune project with its own version, builds against `main`, and sits outside
   the 1.0 API commitment. Changes to `fehu`, `sowilo`, and `norn` are now
@@ -415,23 +417,13 @@ All notable changes to this project will be documented in this file.
 
 ### Ppx_ptree (new)
 
-- `[@@deriving ptree]` recognises a field typed `Nx.Rng.key` as a tensor leaf.
-  A key belongs in a parameter structure whenever a compiled step draws from it,
-  but the deriver only knew qualified types whose name ends in `t`, so the field
-  had to be spelled `(int32, int32_elt) Nx.t`.
-
-- Add `~mirror` to the deriver: `[@@deriving ptree ~mirror]` on a concrete
-  record also generates its payload-generic `module Uniform`, `to_uniform`, and
-  — when every leaf dtype is statically known — a dtype-checked `of_uniform`.
-- Extend `[@@deriving ptree]` to payload-generic types: a type with one
-  parameter occurring outside tensor leaves derives `map`, `map2`, `iter`,
-  `fold` and `fold2` over dot-joined leaf paths, plus `names : 'a t -> string t`.
-- Add the `ppx_ptree` deriver, which generates the `map`, `map2`, and `iter`
-  operations required by `Nx.Ptree.S` for records, products, containers, and
-  recursive parameter types, with generated code and diagnostics located at the
-  originating source forms.
-- Add a runnable linear-regression example using a derived parameter module
-  directly with `Rune.grad` and `Rune.jit2`.
+- Add the `ppx_ptree` deriver: `[@@deriving ptree]` writes a type's `walk`,
+  the one function of `Nx.Ptree.S`, and a type without a parameter's
+  structure, `ptree`. `[@ptree.int]` marks an integer a compiled program
+  depends on, `[@ptree.skip]` data no program reads, and `[@ptree.walk f]` a
+  part walked with `f`.
+- Add a runnable linear-regression example that trains a derived structure
+  with `Rune.grad` under `Rune.jit`.
 
 ### Munin (new)
 

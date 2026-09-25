@@ -1,1 +1,1 @@
-type t = { nested : F(X).state } [@@deriving ptree]
+type 'a t = { nested : 'a F(X).t } [@@deriving ptree]
