@@ -445,4 +445,39 @@ let () =
             expect_int_estimate "lds" 40 est.lds;
             expect_int_estimate "mem" 4 est.mem);
         ];
+      group "Symbolic estimates"
+        [
+          test "every operation contributes its symbolic loop count" (fun () ->
+            let n = U.variable ~name:"estimate_n" ~min_val:1 ~max_val:8 () in
+            let r = range n in
+            let a = f32 1.0 in
+            let first = add a a in
+            let second = neg first in
+            let end_ = U.end_ ~value:second ~ranges:[ r ] in
+            let est = E.of_program [ n; r; a; first; second; end_ ] in
+            match est.ops with
+            | E.Int _ -> failwith "expected a symbolic loop estimate"
+            | E.Symbolic ops ->
+                equal int 6 (U.sym_infer ops [ ("estimate_n", 3L) ]);
+                equal int 16 (U.sym_infer ops [ ("estimate_n", 8L) ]));
+          test "adding estimates preserves equal symbolic contributions" (fun () ->
+            let n = U.variable ~name:"estimate_sum" ~min_val:1 ~max_val:8 () in
+            let est = E.{ ops = Symbolic n; lds = Symbolic n; mem = Symbolic n } in
+            let sum = E.(est + est) in
+            List.iter
+              (function
+                | E.Int _ -> failwith "expected a symbolic estimate sum"
+                | E.Symbolic value ->
+                    equal int 6 (U.sym_infer value [ ("estimate_sum", 3L) ]))
+              [ sum.ops; sum.lds; sum.mem ]);
+          test "final FLOPs simplify a cancelling symbolic loop bound" (fun () ->
+            let n = U.variable ~name:"estimate_cancel" ~min_val:1 ~max_val:8 () in
+            let size = add (add n (U.const_int 3)) (mul n (U.const_int (-1))) in
+            let r = range size in
+            let a = f32 1.0 in
+            let body = add a a in
+            let end_ = U.end_ ~value:body ~ranges:[ r ] in
+            let est = E.of_program [ r; a; body; end_ ] in
+            expect_int_estimate "ops" 3 est.ops);
+        ];
     ]

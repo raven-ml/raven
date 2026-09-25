@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Symbolic kernel estimates count repeated loop contributions correctly and
+  simplify final FLOP expressions. Equal symbolic terms previously lost an
+  addend, understating beam-search costs.
+
 - Compiled signatures reject conflicting scalar declarations before dispatch,
   preventing rendered arguments and native packing from disagreeing. Distinct
   explicit scalar slots can still share a symbolic binding name.

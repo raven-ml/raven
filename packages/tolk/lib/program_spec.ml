@@ -58,7 +58,6 @@ module Estimates = struct
     match (a, b) with
     | Int a, Int b -> Int (a + b)
     | Symbolic s, Int 0 | Int 0, Symbolic s -> Symbolic s
-    | Symbolic a, Symbolic b when U.equal a b -> Symbolic a
     | Symbolic a, Int b ->
         Symbolic (U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:(U.const_int b))
     | Int a, Symbolic b ->
@@ -257,7 +256,16 @@ module Estimates = struct
           add_estimate acc capped)
         mem (Int 0)
     in
-    { ops = !ops; lds = !lds; mem }
+    let ops =
+      match !ops with
+      | Int _ as ops -> ops
+      | Symbolic ops ->
+          let ops = Symbolic.simplify ops in
+          match U.const_int_value ops with
+          | Some n -> Int n
+          | None -> Symbolic ops
+    in
+    { ops; lds = !lds; mem }
 end
 
 type launch = {
