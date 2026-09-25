@@ -56,6 +56,11 @@ acceptance requirement; skipped tests are not execution evidence.
 
 ## 3. Close parity and adopt the reference
 
+- Audit the remaining rule ports for promotion: `symbolic.ml`, `divandmod.ml`,
+  `postrange.ml` and the other codegen rule bodies build with `U.O`, which
+  promotes nothing, where the reference's source uses its promoting operators.
+  A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
+
 - Make a `Bitcast` to or from an emulated float8 act on the stored byte. Today
   the float decomposition decodes the element through float16 and back, which
   flushes subnormals and clamps infinities, so rune refuses a compiled float8

@@ -98,6 +98,13 @@ let flatten_range_all root =
 let floormod lhs rhs = U.alu_binary ~op:Ops.Floormod ~lhs ~rhs
 let cmod lhs rhs = U.alu_binary ~op:Ops.Cmod ~lhs ~rhs
 
+let symbolic_range ~axis =
+  let size = U.variable ~name:"n" ~min_val:1 ~max_val:16 ~param:true () in
+  U.range ~size ~axis ~kind:Ak.Weak ~dtype:D.weakint ()
+
+let i32_var name =
+  U.variable ~name ~min_val:0 ~max_val:20 ~dtype:D.int32 ~param:true ()
+
 (* Pm_flatten_range *)
 
 let flatten_range_tests =
@@ -677,14 +684,11 @@ let reduce_simplify_tests =
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
-      (* lift x+y out of reduce on lt, through the cast arm: the bound is
-         wider than the addend, and the subtraction promotes, so casting
-         the bound down to the addend's width would strand it unfolded. *)
       test "lift x+y out of reduce on lt" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open U.O in
-          (* (r + 2) < i32 7 lifts to r < 7 - 2 = 5. *)
-          let cond = r + idx 2 < U.const (C.int D.int32 7) in
+          (* (r + 2) < 7 lifts to r < 7 - 2 = 5. *)
+          let cond = r + idx 2 < idx 7 in
           let src =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 2.0) ~c:(f32 0.0)
           in
@@ -974,6 +978,103 @@ let load_collapse_extra_tests =
           equal int (count_ranges result) 0);
     ]
 
+(* Promoting rule bodies *)
+
+(* A weak operand that is not a literal, such as a range or a symbolic
+   size, must not meet a committed operand unpromoted. *)
+let mixed_operands root =
+  let weak_value u = D.is_weak (U.dtype u) && U.op (U.base u) <> Ops.Const in
+  let committed u = not (D.is_weak (U.dtype u)) in
+  List.filter
+    (fun n ->
+      match U.src n with
+      | [| a; b |] when Ops.Group.is_binary (U.op n) ->
+          (weak_value a && committed b) || (weak_value b && committed a)
+      | _ -> false)
+    (U.toposort root)
+
+let promoting_tests =
+  group "promoting rule bodies"
+    [
+      (* The folded count mixes the symbolic size with the i32 bounds; the
+         reference casts the size to i32 at each meeting. *)
+      test "reduce-fold counts commit a symbolic size to the bound's dtype"
+        (fun () ->
+          let r = symbolic_range ~axis:0 in
+          let lower = i32_var "l" and upper = i32_var "u" in
+          let open U.O in
+          let zero = U.const_float 0.0 in
+          let between = U.alu_binary ~op:Ops.And ~lhs:(not_ (r < lower))
+              ~rhs:(r < upper) in
+          List.iter
+            (fun (msg, src) ->
+              let red =
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+              in
+              let result = Simplify.reduce_simplify_all red in
+              equal ~msg int 0 (count_ranges result);
+              equal ~msg int 0 (List.length (mixed_operands result)))
+            [
+              ("upper", where (r < upper) (f32 2.0) zero);
+              ("lower", where (r < lower) zero (f32 2.0));
+              ("between", where between (f32 2.0) zero);
+            ]);
+      (* Lifting casts the range to the bound's dtype, and the count fold
+         matches only a bare range, so the reduce stays as it does in the
+         reference. *)
+      test "lifted comparisons promote the range to the bound's dtype"
+        (fun () ->
+          let r = loop_range ~axis:0 10 in
+          let open U.O in
+          let y = i32_var "y" and c = i32_var "c" in
+          List.iter
+            (fun (msg, cond) ->
+              let src = where cond (f32 2.0) (U.const_float 0.0) in
+              let red =
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+              in
+              equal ~msg int 1
+                (count_ranges (Simplify.reduce_simplify_all red)))
+            [
+              ("add", r + idx 2 < U.const (C.int D.int32 7));
+              ("mul", r * y < c);
+            ]);
+      test "undo rule compares the loaded index at the bound's dtype"
+        (fun () ->
+          let p = U.param ~slot:0 ~dtype:D.int32 ~addrspace:D.Global () in
+          let loaded =
+            U.cast
+              ~src:(U.load ~src:(U.index ~ptr:p ~idxs:[ idx 0 ] ()) ())
+              ~dtype:D.weakint
+          in
+          let open U.O in
+          let result =
+            Simplify.load_collapse_all (loaded + i32_var "y" < i32_var "c")
+          in
+          equal int 0 (List.length (mixed_operands result));
+          match U.op result with
+          | Ops.Cmplt ->
+              let lhs = (U.src result).(0) in
+              is_true (U.op lhs = Ops.Cast && (U.src lhs).(0) == loaded)
+          | _ -> fail "expected a comparison");
+      test "unparented symbolic ranges scale by the size cast to the reduce"
+        (fun () ->
+          let r0 = loop_range ~axis:0 4 and r1 = symbolic_range ~axis:1 in
+          let src = U.cast ~src:r0 ~dtype:D.float32 in
+          List.iter
+            (fun (op, compensation) ->
+              let red =
+                U.reduce ~op ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+              in
+              let result = Simplify.reduce_unparented_all red in
+              equal int 0 (List.length (mixed_operands result));
+              is_true (U.op result = compensation);
+              let size = (U.src result).(1) in
+              is_true (U.op size = Ops.Cast
+                       && D.equal (U.dtype size) D.float32))
+            [ (Ops.Add, Ops.Mul); (Ops.Mul, Ops.Pow) ]);
+    ]
+
 (* Entry point *)
 
 let () =
@@ -988,4 +1089,5 @@ let () =
       load_collapse_tests;
       vmin_vmax_tests;
       load_collapse_extra_tests;
+      promoting_tests;
     ]

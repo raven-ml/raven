@@ -3806,6 +3806,70 @@ module O = struct
   let bool_ b = const_bool b
 end
 
+module Promoting = struct
+  let broadcasted a b =
+    let out = promo_dtype [ a; b ] in
+    let promote t =
+      let b = base t in
+      if is_invalid_const b then t
+      else if op b = Ops.Const && Dtype.is_weak (dtype t) then
+        let weak = Dtype.weak_dtype out in
+        let rec remint u =
+          if op u = Ops.Const then ccast ~src:u ~dtype:weak
+          else
+            let src = Array.copy (src u) in
+            src.(0) <- remint src.(0);
+            replace u ~src ()
+        in
+        if Dtype.equal (dtype t) weak then t else remint t
+      else cast ~src:t ~dtype:out
+    in
+    (promote a, promote b)
+
+  let binop op a b =
+    let lhs, rhs = broadcasted a b in
+    alu_binary ~op ~lhs ~rhs
+
+  let ( + ) = binop Ops.Add
+  let ( * ) = binop Ops.Mul
+  let ( < ) = binop Ops.Cmplt
+  let ne = binop Ops.Cmpne
+  let xor = binop Ops.Xor
+  let pow = binop Ops.Pow
+  let maximum = binop Ops.Max
+
+  let neg a =
+    if Dtype.is_bool (dtype a) then ne a (const_bool true)
+    else a * const_int (-1)
+
+  let ( - ) a b =
+    let a, b = broadcasted a b in
+    alu_binary ~op:Ops.Add ~lhs:a ~rhs:(neg b)
+
+  let ( // ) a b =
+    let lhs, rhs = broadcasted a b in
+    if not (Dtype.is_int (dtype lhs) && Dtype.is_int (dtype rhs)) then
+      invalid_arg "Uop.Promoting.( // ): expected integer operands";
+    alu_binary ~op:Ops.Floordiv ~lhs ~rhs
+
+  (* Integers take [max] under the involution [x lxor k], with
+     [k = min + max] of the dtype: [-1] when signed, all ones when
+     unsigned. *)
+  let minimum a b =
+    let t, x = broadcasted a b in
+    let dt = promo_dtype [ a; b ] in
+    let max_ lhs rhs = alu_binary ~op:Ops.Max ~lhs ~rhs in
+    if Dtype.is_float dt then neg (max_ (neg t) (neg x))
+    else
+      let k =
+        match (Dtype.min dt, Dtype.max dt) with
+        | `Int lo, `Int hi -> const (Const.integer Dtype.weakint (Z.add lo hi))
+        | `Bool _, `Bool _ -> const_bool true
+        | _ -> invalid_arg "Uop.Promoting.minimum: expected a numeric dtype"
+      in
+      xor (max_ (xor t k) (xor x k)) k
+end
+
 (* Formatting *)
 
 let rec pp_uop fmt u =

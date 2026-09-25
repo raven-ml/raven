@@ -356,14 +356,12 @@ let reduce_unparented node =
           then U.reduce ~op ~src ~ranges:parented ~dtype
           else src
         in
-        (* The range size is weak-typed, so it commits to the reduce's
-           dtype where it lands; no cast is needed to widen it. *)
-        let compensate binop acc r =
-          U.alu_binary ~op:binop ~lhs:acc ~rhs:(range_size r)
-        in
+        let compensate binop acc r = binop acc (range_size r) in
         let ret = match op with
-          | Ops.Add -> List.fold_left (compensate Ops.Mul) ret unparented
-          | Ops.Mul -> List.fold_left (compensate Ops.Pow) ret unparented
+          | Ops.Add ->
+              List.fold_left (compensate U.Promoting.( * )) ret unparented
+          | Ops.Mul ->
+              List.fold_left (compensate U.Promoting.pow) ret unparented
           | _ -> ret
         in
         Some ret
@@ -391,60 +389,25 @@ let toposort_gated gate root =
   visit root;
   List.rev !order
 
-let maximum a b = U.alu_binary ~op:Ops.Max ~lhs:a ~rhs:b
-
 let as_lowered_add_reduce u =
   match U.as_reduce u with
   | Some ({ op = Ops.Add; num_axes = 0; _ } as v) -> Some v
   | _ -> None
 
-(* The reference builds [a - b] as [a + b * (-1)]; a raw SUB node would
-   block symbolic term collection (cancellation, comparison lifting). *)
-let sub_add_neg a b =
-  U.alu_binary ~op:Ops.Add ~lhs:a
-    ~rhs:(U.alu_binary ~op:Ops.Mul ~lhs:b ~rhs:(U.const_like b (-1)))
-
-(* [minimum] mirrors the reference: [~max(~a, ~b)] on ints, where [~x] is
-   [x lxor -1]. The XOR pair cancels under symbolic once the MAX folds. *)
-let bitnot x = U.alu_binary ~op:Ops.Xor ~lhs:x ~rhs:(U.const_like x (-1))
-let minimum a b = bitnot (maximum (bitnot a) (bitnot b))
-
-(* The reference's [*] in a rule body promotes through [_broadcasted]:
-   [Invalid] passes, a weak literal is rebuilt at the product's weak dtype,
-   and any other operand is cast to the product's dtype. [U.O.( * )] states
-   no promotion, so a weak count times a committed literal would stay a
-   mixed product that symbolic cannot fold. *)
-let mul_promoted a b =
-  let out = U.promo_dtype [ a; b ] in
-  let promote t =
-    let base = U.base t in
-    if U.is_invalid_const base then t
-    else if U.op base = Ops.Const && Dtype.is_weak (U.dtype t) then
-      let dtype = Dtype.weak_dtype out in
-      let rec remint u =
-        if u == base then U.ccast ~src:u ~dtype
-        else
-          let src = Array.copy (U.src u) in
-          src.(0) <- remint src.(0);
-          U.replace u ~src ()
-      in
-      if Dtype.equal (U.dtype t) dtype then t else remint t
-    else U.cast ~src:t ~dtype:out
-  in
-  U.alu_binary ~op:Ops.Mul ~lhs:(promote a) ~rhs:(promote b)
-
 (* sum over r in [0,N) of [lower <= r < upper] * val collapses to
    [clamp(min(upper,N) - max(lower,0), 0, N) * val]. *)
 let clamp_count ?lower ?upper r =
+  let open U.Promoting in
   let n = range_size r in
-  let hi = match upper with Some u -> minimum u n | None -> n in
   let zero = U.const_int 0 in
-  let lo = match lower with Some l -> maximum l zero | None -> zero in
-  minimum (maximum (sub_add_neg hi lo) zero) n
+  let hi = match upper with Some u -> minimum u n | None -> n in
+  let lo =
+    match lower with Some l -> maximum l zero | None -> U.const_like r 0
+  in
+  minimum (maximum (hi - lo) zero) n
 
 (* [(x + y).or_casted < c -> x < (c - y)] when [y] and [c] carry no
-   ranges. The subtraction promotes, so [c] needs no cast to reach [y]'s
-   width. *)
+   ranges. *)
 let rule_lift_add_lt =
   let open Upat in
   let x = var "x" and y = var "y" and c = var "c" in
@@ -453,7 +416,7 @@ let rule_lift_add_lt =
     let y = bs $ "y" and c = bs $ "c" in
     if no_range y && no_range c then
       let x = bs $ "x" in
-      Some U.O.(x < sub_add_neg c y)
+      Some U.Promoting.(x < c - y)
     else None
   in
   [ O.(add < c) => body; O.(cast add < c) => body ]
@@ -467,9 +430,7 @@ let rule_lift_mul_lt =
     let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
     if no_range y && no_range c && Dtype.is_int (U.dtype y) && Bound.lt (Bound.int 0) (U.vmin y)
     then
-      let open U.O in
-      let numerator = c + y - U.const_like y 1 in
-      Some (x < (U.alu_binary ~op:Ops.Floordiv ~lhs:numerator ~rhs:y))
+      Some U.Promoting.(x < (c + y - U.const_int 1) // y)
     else None
 
 (* [(r < cut).where(0, val)].reduce(r, Add) *)
@@ -485,7 +446,7 @@ let rule_reduce_fold_lower =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some (mul_promoted (clamp_count ~lower:cut r) v)
+      Some U.Promoting.(clamp_count ~lower:cut r * v)
 
 (* [((r < lower).not & (r < upper)).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_between =
@@ -503,7 +464,7 @@ let rule_reduce_fold_between =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some (mul_promoted (clamp_count ~lower ~upper r) v)
+      Some U.Promoting.(clamp_count ~lower ~upper r * v)
 
 (* [(r < cut).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_upper =
@@ -518,7 +479,7 @@ let rule_reduce_fold_upper =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      Some (mul_promoted (clamp_count ~upper:cut r) v)
+      Some U.Promoting.(clamp_count ~upper:cut r * v)
 
 (* [WHERE(cond, x, Invalid)].reduce(r, Add) lifts the gate out of the
    reduce when [cond] does not depend on the reduced ranges: every lane
@@ -621,9 +582,7 @@ let rule_lift_add_ne =
     let y = bs $ "y" and c = bs $ "c" in
     if no_range y && no_range c then
       let x = bs $ "x" in
-      Some
-        (U.alu_binary ~op:Ops.Cmpne ~lhs:x
-           ~rhs:(sub_add_neg (U.cast ~src:c ~dtype:(U.dtype y)) y))
+      Some U.Promoting.(ne x (U.cast ~src:c ~dtype:(U.dtype y) - y))
     else None
   in
   [ O.(ne add c) => body; O.(ne (cast add) c) => body ]
@@ -802,7 +761,7 @@ let rule_undo_add_lt_on_load =
   O.(x + y < c) => fun bs ->
     let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
     if no_load y && no_load c && not (no_load x) then
-      Some U.O.(x < sub_add_neg c y)
+      Some U.Promoting.(x < c - y)
     else None
 
 let pm_load_collapse =

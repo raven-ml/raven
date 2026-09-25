@@ -1790,6 +1790,64 @@ module O : sig
   (** [bool_ b] is {!Uop.const_bool}. *)
 end
 
+(** Promoting operators.
+
+    The operators of tinygrad's UOp promote their operands before building
+    the node, as its tensors do; {!O} builds the node as given. A rule body
+    ported from tinygrad uses these where tinygrad's source uses an operator
+    or [maximum]/[minimum], so a weak non-literal meeting a committed operand
+    is cast rather than left as a mixed node that symbolic rules do not fold.
+    Integer literals written in the reference's source are weak: pass
+    {!const_int}. *)
+module Promoting : sig
+  val broadcasted : t -> t -> t * t
+  (** [broadcasted a b] brings [a] and [b] to their {!promo_dtype} [out].
+      An {!Const.invalid} operand is returned as is, a weak constant (under
+      movement ops) is rebuilt at [Dtype.weak_dtype out], and any other
+      operand is {!cast} to [out]. *)
+
+  val ( + ) : t -> t -> t
+  (** [a + b] is {!Ops.Add} of the {!broadcasted} operands. *)
+
+  val ( - ) : t -> t -> t
+  (** [a - b] is {!Ops.Add} of the {!broadcasted} [a] and [neg b]. *)
+
+  val ( * ) : t -> t -> t
+  (** [a * b] is {!Ops.Mul} of the {!broadcasted} operands. *)
+
+  val ( // ) : t -> t -> t
+  (** [a // b] is {!Ops.Floordiv} of the {!broadcasted} operands. tinygrad's
+      float path (a floored product with the reciprocal) is not ported.
+
+      Raises [Invalid_argument] unless both promote to an integer dtype. *)
+
+  val ( < ) : t -> t -> t
+  (** [a < b] is {!Ops.Cmplt} of the {!broadcasted} operands. *)
+
+  val ne : t -> t -> t
+  (** [ne a b] is {!Ops.Cmpne} of the {!broadcasted} operands. *)
+
+  val xor : t -> t -> t
+  (** [xor a b] is {!Ops.Xor} of the {!broadcasted} operands. *)
+
+  val pow : t -> t -> t
+  (** [pow a b] is {!Ops.Pow} of the {!broadcasted} operands. *)
+
+  val maximum : t -> t -> t
+  (** [maximum a b] is {!Ops.Max} of the {!broadcasted} operands. *)
+
+  val minimum : t -> t -> t
+  (** [minimum a b] is the smaller of the {!broadcasted} operands, built
+      from {!Ops.Max}: [neg (max (neg a) (neg b))] on floats, and
+      [(max (a ^ k) (b ^ k)) ^ k] on integers and booleans, where [k] is the
+      sum of the dtype's bounds ([-1] for signed integers and
+      {!Dtype.weakint}, all ones for unsigned ones, [true] for booleans). *)
+
+  val neg : t -> t
+  (** [neg a] is [ne a true] on booleans and [a * const_int (-1)]
+      otherwise. *)
+end
+
 (** {1:fmt Formatting} *)
 
 val pp : Format.formatter -> t -> unit
