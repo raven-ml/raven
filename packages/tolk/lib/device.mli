@@ -179,10 +179,11 @@ val make :
     allocation descriptors during linking, returning [None] for generic storage.
 
     [initialize d] runs after registration so bootstrap submissions can resolve
-    [d] recursively through {!get}. If it raises, the previous registration is
-    restored unless another device has replaced [d]; native resource cleanup
-    remains the caller's responsibility. Registration and initialization do not
-    serialize concurrent callers. *)
+    [d] recursively through {!get} on the initializing thread. Other threads
+    wait until initialization finishes. If it raises, the previous registration
+    is restored unless a nested registration has replaced [d]; native resource
+    cleanup remains the caller's responsibility. Initializations for different
+    canonical names may run concurrently. *)
 
 val id : t -> int
 (** [id d] uniquely identifies [d] within the process. Separately constructed
@@ -310,10 +311,14 @@ val register : string -> (string -> t) -> unit
 
 val get : string -> t
 (** [get name] is the device runtime for the canonicalized [name], opened via
-    its registered opener on first lookup and cached afterwards.
+    its registered opener on first lookup and cached afterwards. Concurrent
+    callers share one opening attempt at a time. An initializing thread can
+    resolve its own device after {!make} registers it; other callers wait for
+    the opener and initialization to finish.
 
-    Raises [Failure] if no opener is registered for [name]'s prefix or the
-    opener fails. *)
+    Raises [Failure] if no opener is registered for [name]'s prefix or an opener
+    recursively looks up its name before registering a device. Exceptions from
+    the opener are propagated; waiting callers can retry after a failure. *)
 
 (** {1:multi_buffer Multi-device buffers} *)
 

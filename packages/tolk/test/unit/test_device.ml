@@ -276,7 +276,141 @@ let device_initialization_registration () =
           replacement := Some (create "BOOTSTRAP_TEST");
           failwith "superseded bootstrap failed")));
   is_true ~msg:"rollback must not remove a subsequently registered device"
-    (Device.get "BOOTSTRAP_TEST" == Option.get !replacement)
+    (Device.get "BOOTSTRAP_TEST" == Option.get !replacement);
+  Device.register "SUPERSEDED_OPENER" (fun name ->
+      let earlier = create name in
+      replacement := Some (create name);
+      earlier);
+  let latest = Device.get "SUPERSEDED_OPENER" in
+  is_true ~msg:"an opener cannot republish a superseded device"
+    (latest == Option.get !replacement)
+
+let registry_gate () =
+  let mutex = Mutex.create () and changed = Condition.create () in
+  let released = ref false in
+  let wait () = Mutex.protect mutex (fun () ->
+      while not !released do Condition.wait changed mutex done) in
+  let release () = Mutex.protect mutex (fun () ->
+      released := true; Condition.broadcast changed) in
+  wait, release
+
+let registry_worker ~systhread run =
+  let capture () = try Ok (run ()) with exn -> Error (exn, Printexc.get_raw_backtrace ()) in
+  let joined =
+    if systhread then begin
+      let result = ref None in
+      let worker = Thread.create (fun () -> result := Some (capture ())) () in
+      fun () -> Thread.join worker; Option.get !result
+    end else begin
+      let worker = Domain.spawn capture in
+      fun () -> Domain.join worker
+    end in
+  fun () -> match joined () with
+    | Ok value -> value
+    | Error (exn, bt) -> Printexc.raise_with_backtrace exn bt
+
+let registry_factory () =
+  let allocator = Device.Buffer.allocator
+      (Device.create_buffer ~size:0 ~dtype:i32 device) in
+  fun ?initialize name -> Device.make ~name ~allocator
+    ~renderer_set:(Device.Renderer_set.make ~device:name [])
+    ~synchronize:(fun timeout -> ignore timeout) ?initialize ()
+
+let concurrent_device_opening () =
+  let make = registry_factory () in
+  let wait, release = registry_gate () in
+  let started, announce = registry_gate () in
+  let attempts = Atomic.make 0 in
+  Device.register "OPEN_CONCURRENT" (fun name ->
+      ignore (Atomic.fetch_and_add attempts 1);
+      announce (); wait (); make name);
+  let first = registry_worker ~systhread:false (fun () -> Device.get "OPEN_CONCURRENT") in
+  started ();
+  let followers = List.init 4 (fun i -> registry_worker ~systhread:(i mod 2 = 0)
+      (fun () -> Device.get "open_concurrent:0")) in
+  (* Keep the opener blocked while both systhreads and domains enter get. *)
+  Thread.delay 0.02;
+  release ();
+  let devices = first () :: List.map (fun join -> join ()) followers in
+  equal ~msg:"one opener owns the canonical name" int 1 (Atomic.get attempts);
+  List.iter (fun current -> is_true (current == List.hd devices)) devices
+
+let incomplete_device_is_private () =
+  let make = registry_factory () in
+  let wait, release = registry_gate () in
+  let started, announce = registry_gate () in
+  let initialized = Atomic.make false in
+  let first = registry_worker ~systhread:false (fun () ->
+      make "INIT_CONCURRENT" ~initialize:(fun current ->
+          is_true (Device.get "init_concurrent:0" == current);
+          announce (); wait (); Atomic.set initialized true)) in
+  started ();
+  let followers = List.init 4 (fun i -> registry_worker ~systhread:(i mod 2 = 0)
+      (fun () -> let current = Device.get "INIT_CONCURRENT" in
+        current, Atomic.get initialized)) in
+  Thread.delay 0.02;
+  (* An unrelated name can still initialize while this callback is blocked. *)
+  let independent = make "INIT_INDEPENDENT" in
+  is_true (Device.get "INIT_INDEPENDENT" == independent);
+  release ();
+  let ready = first () in
+  List.iter (fun join ->
+      let current, completed = join () in
+      is_true ~msg:"get waits for initialization" completed;
+      is_true (current == ready)) followers
+
+let failed_initialization_wakes_waiters () =
+  let make = registry_factory () in
+  let wait, release = registry_gate () in
+  let started, announce = registry_gate () in
+  let attempts = Atomic.make 0 in
+  Device.register "RETRY_CONCURRENT" (fun name ->
+      let attempt = Atomic.fetch_and_add attempts 1 in
+      make name ~initialize:(fun current ->
+          is_true (Device.get name == current);
+          if attempt = 0 then begin
+            announce (); wait (); failwith "concurrent bootstrap failed"
+          end));
+  let first = registry_worker ~systhread:false (fun () ->
+      try ignore (Device.get "RETRY_CONCURRENT"); false with
+      | Failure message when message = "concurrent bootstrap failed" -> true) in
+  started ();
+  let follower = registry_worker ~systhread:true (fun () -> Device.get "RETRY_CONCURRENT") in
+  Thread.delay 0.02;
+  release ();
+  let failed = first () in
+  let ready = follower () in
+  is_true ~msg:"the initiating caller receives its original failure" failed;
+  equal ~msg:"a waiting caller retries after rollback" int 2 (Atomic.get attempts);
+  is_true (Device.get "RETRY_CONCURRENT" == ready)
+
+let failed_opener_does_not_publish () =
+  let make = registry_factory () in
+  List.iter (fun early_failure ->
+      let name = if early_failure then "POST_MAKE_RETRY" else "POST_MAKE_FAILURE" in
+      let attempts = ref 0 in
+      Device.register name (fun name ->
+          incr attempts;
+          if early_failure && !attempts = 1 then
+            (try ignore (make name ~initialize:(fun current ->
+                 ignore current; failwith "early initialization failed")) with
+             | Failure message when message = "early initialization failed" -> ());
+          let current = make name in
+          if !attempts = 1 then failwith "opener failed after make";
+          current);
+      raises (Failure "opener failed after make") (fun () -> ignore (Device.get name));
+      let ready = Device.get name in
+      equal ~msg:"failed opener must retry instead of publishing its partial device" int 2 !attempts;
+      is_true (Device.get name == ready)) [false; true];
+  let replacement = ref None in
+  Device.register "POST_MAKE_SUPERSEDED" (fun name ->
+      ignore (make name);
+      replacement := Some (make name);
+      failwith "superseded opener failed");
+  raises (Failure "superseded opener failed") (fun () ->
+      ignore (Device.get "POST_MAKE_SUPERSEDED"));
+  is_true ~msg:"a failed opener preserves the newer nested registration"
+    (Device.get "POST_MAKE_SUPERSEDED" == Option.get !replacement)
 
 let interleaved_kernel_formals () =
   let module U = Uop in
@@ -744,6 +878,10 @@ let program_storage_is_device_owned () =
 let () = run __FILE__ [ copy_from_tests;
   test "program storage belongs to the device across links" program_storage_is_device_owned;
   test "device bootstrap registration rolls back failed initialization" device_initialization_registration;
+  test "concurrent device lookup runs one opener" concurrent_device_opening;
+  test "incomplete devices are private to the initializing thread" incomplete_device_is_private;
+  test "failed device initialization wakes waiting callers" failed_initialization_wakes_waiters;
+  test "failed openers cannot publish provisional devices" failed_opener_does_not_publish;
   test "failed buffer finalizers are reported without retrying teardown" failed_finalizer_is_not_retried;
   test "buffer finalizers wait for device operations" finalizers_wait_for_device_operations;
   test "foreign access completion is captured, coalesced and retried" foreign_completion_dependencies;

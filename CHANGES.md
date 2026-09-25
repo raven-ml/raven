@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Concurrent `Device.get` calls open each device once and wait for its
+  initialization. Failed openers retry without publishing partial devices;
+  recursive bootstrap can still resolve its own provisional device.
+
 - Replace the global `Realize.capturing` registry with `with_capture` and
   `current_capture`. Concurrent callers keep separate capture scopes, and
   nested Rune compilation restores outer capture on return or exception.

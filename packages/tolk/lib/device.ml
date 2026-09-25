@@ -183,7 +183,42 @@ let canonicalize device =
 
 let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
 let opened : (string, t) Hashtbl.t = Hashtbl.create 8
+let registry_lock = Mutex.create ()
+let registry_changed = Condition.create ()
+type initialization = {
+  owner : int;
+  mutable depth : int;
+  mutable first_registration : t option;
+}
+let initializing : (string, initialization) Hashtbl.t = Hashtbl.create 4
 let next_id = Atomic.make 0
+
+(* Called with registry_lock held. A bootstrap may resolve its own provisional
+   device, but other threads wait for the entire opener/initializer to finish. *)
+let rec wait_for_initialization name owner =
+  match Hashtbl.find_opt initializing name with
+  | Some current when current.owner <> owner ->
+      Condition.wait registry_changed registry_lock;
+      wait_for_initialization name owner
+  | _ -> ()
+
+let with_initialization name f =
+  let owner = Thread.id (Thread.self ()) in
+  let current = Mutex.protect registry_lock (fun () ->
+      wait_for_initialization name owner;
+      match Hashtbl.find_opt initializing name with
+      | Some current -> current.depth <- current.depth + 1; current
+      | None ->
+          let current = {owner; depth = 1; first_registration = None} in
+          Hashtbl.add initializing name current;
+          current) in
+  Fun.protect (fun () -> f current) ~finally:(fun () ->
+      Mutex.protect registry_lock (fun () ->
+          current.depth <- current.depth - 1;
+          if current.depth = 0 then begin
+            Hashtbl.remove initializing name;
+            Condition.broadcast registry_changed
+          end))
 
 let make ~name ~allocator ~renderer_set ?runtime ~synchronize
     ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None)
@@ -204,19 +239,28 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
     pending_accesses = Hashtbl.create 0; pending_timings = Hashtbl.create 0;
     profile_events = [] } in
   let key = canonicalize name in
-  let previous = Hashtbl.find_opt opened key in
-  Hashtbl.replace opened key device;
-  match initialize device with
-  | () -> device
-  | exception exn ->
-      let backtrace = Printexc.get_raw_backtrace () in
-      (match Hashtbl.find_opt opened key with
-       | Some current when current == device ->
-           (match previous with
-            | Some previous -> Hashtbl.replace opened key previous
-            | None -> Hashtbl.remove opened key)
-       | _ -> ());
-      Printexc.raise_with_backtrace exn backtrace
+  with_initialization key (fun opening ->
+      let previous = Mutex.protect registry_lock (fun () ->
+          let previous = Hashtbl.find_opt opened key in
+          Hashtbl.replace opened key device;
+          if opening.first_registration = None then
+            opening.first_registration <- Some device;
+          previous) in
+      match initialize device with
+      | () -> device
+      | exception exn ->
+          let backtrace = Printexc.get_raw_backtrace () in
+          Mutex.protect registry_lock (fun () ->
+              match Hashtbl.find_opt opened key with
+              | Some current when current == device ->
+                  (match previous with
+                   | Some previous -> Hashtbl.replace opened key previous
+                   | None -> Hashtbl.remove opened key);
+                  (match opening.first_registration with
+                   | Some first when first == device -> opening.first_registration <- None
+                   | _ -> ())
+              | _ -> ());
+          Printexc.raise_with_backtrace exn backtrace)
 
 let id d = d.id
 let name d = d.name
@@ -389,7 +433,8 @@ let invalidate_caches d = Storage.with_operation (fun () ->
    device instances the caller never opened itself. *)
 
 let register prefix opener =
-  Hashtbl.replace openers (String.uppercase_ascii prefix) opener
+  Mutex.protect registry_lock (fun () ->
+      Hashtbl.replace openers (String.uppercase_ascii prefix) opener)
 
 let device_prefix device =
   match String.index_opt device ':' with
@@ -399,16 +444,41 @@ let device_prefix device =
 let get device =
   Storage.with_operation (fun () ->
     let device = canonicalize device in
-    match Hashtbl.find_opt opened device with
-    | Some d -> d
-    | None ->
-        let d =
-          match Hashtbl.find_opt openers (device_prefix device) with
-          | Some create -> create device
-          | None -> failwith (Printf.sprintf "unknown device %S" device)
-        in
-        Hashtbl.replace opened device d;
-        d)
+    let owner = Thread.id (Thread.self ()) in
+    let ready = Mutex.protect registry_lock (fun () ->
+        wait_for_initialization device owner;
+        match Hashtbl.find_opt opened device with
+        | Some current -> Some current
+        | None when Hashtbl.mem initializing device ->
+            failwith (Printf.sprintf "device %S recursively opened before registration" device)
+        | None -> None) in
+    match ready with
+    | Some current -> current
+    | None -> with_initialization device (fun opening ->
+        let action = Mutex.protect registry_lock (fun () ->
+            match Hashtbl.find_opt opened device with
+            | Some current -> `Ready current
+            | None ->
+                match Hashtbl.find_opt openers (device_prefix device) with
+                | Some create -> `Open create
+                | None -> failwith (Printf.sprintf "unknown device %S" device)) in
+        match action with
+        | `Ready current -> current
+        | `Open create ->
+            match create device with
+            | current ->
+                Mutex.protect registry_lock (fun () ->
+                    match Hashtbl.find_opt opened device with
+                    | Some latest -> latest
+                    | None -> Hashtbl.add opened device current; current)
+            | exception exn ->
+                let backtrace = Printexc.get_raw_backtrace () in
+                Mutex.protect registry_lock (fun () ->
+                    match opening.first_registration, Hashtbl.find_opt opened device with
+                    | Some provisional, Some current when current == provisional ->
+                        Hashtbl.remove opened device
+                    | _ -> ());
+                Printexc.raise_with_backtrace exn backtrace))
 
 let () = Storage.install_allocator_resolver (fun name -> (get name).allocator)
 

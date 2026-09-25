@@ -111,8 +111,8 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Synchronize device opening and runtime caches; concurrent callers
-  currently mutate the shared registry and execution Hashtbls without locking.
+  Synchronize runtime caches; concurrent callers currently mutate the shared
+  execution Hashtbls without locking.
   Establish native-handle retirement for replaced device owners: global program,
   runtime and linked-template caches currently retain entries indefinitely.
   Preserve live submission ownership while retiring unreachable cached handles.
