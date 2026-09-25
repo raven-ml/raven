@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI treats a fabric segment as a multi-die hive only when the hardware
+  advertises peer regions, preserving single-device boot waits and avoiding
+  fabric firmware setup on standalone devices.
+
 - Metal compiled queues report GPU command failures when waiting or preparing
   another submission. Host reads wait for checked command completion, avoiding
   partial results from a failed command whose timeline event was signaled.

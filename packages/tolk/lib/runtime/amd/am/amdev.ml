@@ -706,7 +706,7 @@ type t = {
   rreg : int -> int;
   wreg : int -> int -> unit;
   reg : int -> string -> Am_register.t;
-  xgmi_seg_sz : int;
+  is_hive : bool;
   paddr_base : int;
   mc_base : int;
   now_ms : unit -> int;
@@ -740,7 +740,7 @@ let ip_ver t hwip =
   | None -> invalid_arg (Printf.sprintf "no discovered ip 0x%x" hwip)
 
 (* amdev.py:241 is_hive, amdev.py:243-245 paddr conversions *)
-let is_hive t = t.xgmi_seg_sz > 0
+let is_hive t = t.is_hive
 let paddr2mc t paddr = t.mc_base + paddr
 let paddr2xgmi t paddr = t.paddr_base + paddr
 let xgmi2paddr t xgmi_paddr = xgmi_paddr - t.paddr_base
@@ -909,12 +909,14 @@ let gmc_state reg =
   in
   let xgmi_phys_id = bitfield "regGCMC_VM_XGMI_LFB_CNTL" "pf_lfb_region" in
   let xgmi_seg_sz = bitfield "regGCMC_VM_XGMI_LFB_SIZE" "pf_lfb_size" lsl 24 in
+  let xgmi_max_region = bitfield "regGCMC_VM_XGMI_LFB_CNTL" "pf_max_region" in
+  let is_hive = xgmi_seg_sz > 0 && xgmi_max_region > 0 in
   let paddr_base = xgmi_phys_id * xgmi_seg_sz in
   let fb_base =
     (Am_register.read (reg "regMMMC_VM_FB_LOCATION_BASE") land 0xFFFFFF)
     lsl 24
   in
-  (xgmi_seg_sz, paddr_base, fb_base + paddr_base)
+  (is_hive, paddr_base, fb_base + paddr_base)
 
 let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
     ?(on_range_mapped = ref (fun () -> ())) ~rreg ~wreg ~vram ~doorbell64
@@ -923,7 +925,7 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
   let rreg, wreg, reg =
     reg_access ~ips:(build_ips discovery) (`Fns (rreg, wreg))
   in
-  let xgmi_seg_sz, paddr_base, mc_base = gmc_state (reg 0) in
+  let is_hive, paddr_base, mc_base = gmc_state (reg 0) in
   {
     pci_dev;
     devfmt;
@@ -937,7 +939,7 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
     rreg;
     wreg;
     reg;
-    xgmi_seg_sz;
+    is_hive;
     paddr_base;
     mc_base;
     now_ms;
@@ -970,7 +972,7 @@ let create pci_dev =
     match gc_ver with 9, (4 | 5), _ -> 384 lsl 20 | _ -> 64 lsl 20
   in
   let rreg, wreg, reg = reg_access ~ips:(build_ips discovery) (`Bar mmio) in
-  let xgmi_seg_sz, paddr_base, mc_base = gmc_state (reg 0) in
+  let is_hive, paddr_base, mc_base = gmc_state (reg 0) in
   let is_booting = ref true in
   let on_range_mapped = ref (fun () -> ()) in
   let devfmt = System.Pci_device.pcibus pci_dev in
@@ -1011,7 +1013,7 @@ let create pci_dev =
     rreg;
     wreg;
     reg;
-    xgmi_seg_sz;
+    is_hive;
     paddr_base;
     mc_base;
     now_ms = monotonic_ms;

@@ -1115,6 +1115,14 @@ let () =
         ];
       group "address topology"
         [
+          test "a fabric segment without peer regions is not a hive" (fun () ->
+              List.iter (fun (control, size) ->
+                  with_fake_dev ~gc:(9, 4, 3) ~mmhub:(1, 8, 0)
+                    ~pre:(fun store ->
+                      Hashtbl.replace store (0x8000 + 0x957) control;
+                      Hashtbl.replace store (0x8000 + 0x958) size)
+                    (fun fd -> equal bool false (Amdev.is_hive fd.dev)))
+                [0, 0x40; 0x30, 0]);
           test "reads the framebuffer and fabric position at creation"
             (fun () ->
               with_fake_dev (fun fd ->
@@ -1125,7 +1133,7 @@ let () =
                 ~pre:(fun store ->
                   (* The compute hub owns fabric topology. Give the memory
                      hub different values so selecting it cannot pass. *)
-                  Hashtbl.replace store (0x8000 + 0x957) 2;
+                  Hashtbl.replace store (0x8000 + 0x957) 0x32;
                   Hashtbl.replace store (0x8000 + 0x958) 0x40;
                   Hashtbl.replace store (mmhub_base + 0xc97) 3;
                   Hashtbl.replace store (mmhub_base + 0xc98) 0x20)
