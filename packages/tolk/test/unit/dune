@@ -89,6 +89,8 @@
  (names test_runtime_amd)
  (modules test_runtime_amd)
  (package tolk)
+ (deps
+  (glob_files ../fixtures/amd/*))
  (libraries tolk tolk.uop tolk.hcq tolk.amd tolk.cpu windtrap))
 
 (tests

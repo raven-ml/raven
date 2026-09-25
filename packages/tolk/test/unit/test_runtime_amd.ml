@@ -235,8 +235,8 @@ let hsaco_fixture ?(rodata_name = ".rodata") ?(reloc_type = 5)
 (* Runs [f] with a [Program.load]-ready allocator over a fresh mapping:
    [alloc] records the sizes it served and hands out CPU-mapped buffers
    with device address 0xA00000. *)
-let with_lib_alloc f =
-  with_map 0x2000 (fun m ->
+let with_lib_alloc ?(capacity = 0x2000) f =
+  with_map capacity (fun m ->
       let sizes = ref [] in
       let alloc size =
         sizes := size :: !sizes;
@@ -1466,6 +1466,54 @@ let () =
         ];
       group "Program"
         [
+          test "the linked clang kernel matches target code and launch fields"
+            (fun () ->
+              let read suffix =
+                In_channel.with_open_bin
+                  ("../fixtures/amd/simple_add_gfx1100." ^ suffix)
+                  In_channel.input_all in
+              let fields =
+                String.split_on_char '\n' (read "fields")
+                |> List.filter_map (fun line ->
+                    match String.split_on_char ' ' line with
+                    | [name; value] -> Some (name, int_of_string value)
+                    | _ -> None) in
+              let field name = List.assoc name fields in
+              let lib = Bytes.of_string (read "hsaco") in
+              with_lib_alloc ~capacity:0x4000 (fun alloc sizes mapping ->
+                  let prg = Program.load (gfx1100 ()) ~alloc ~props:lds64
+                      ~name:"simple_add" lib in
+                  let params = prg.Program.params in
+                  List.iter (fun (name, actual) -> equal int (field name) actual)
+                    ["rsrc1", params.rsrc1; "rsrc2", params.rsrc2;
+                     "rsrc3", params.rsrc3;
+                     "group_segment_size", prg.group_segment_size;
+                     "private_segment_size", prg.private_segment_size;
+                     "kernargs_segment_size", prg.kernargs_segment_size];
+                  equal bool (field "wave32" <> 0) params.wave32;
+                  equal bool (field "enable_dispatch_ptr" <> 0)
+                    params.enable_dispatch_ptr;
+                  equal bool (field "enable_private_segment_sgpr" <> 0)
+                    params.enable_private_segment_sgpr;
+                  equal int 1 (List.length !sizes);
+                  is_true (List.hd !sizes >= field "image_size");
+                  equal nativeint
+                    (Nativeint.add 0xA00000n
+                       (Nativeint.of_int (field "entry_point_offset")))
+                    params.prog_addr;
+                  equal nativeint
+                    (Nativeint.add 0xA00000n
+                       (Nativeint.of_int (field "desc_offset")))
+                    params.kernel_object;
+                  (* NOBITS image layout is a separate open parity audit.
+                     Compare code and descriptor at the target's addresses. *)
+                  let image = read "image" in
+                  List.iter (fun (offset, size) ->
+                      equal string (String.sub image offset size)
+                        (Bytes.to_string
+                           (Mmio.read_bytes mapping ~off:offset ~len:size)))
+                    [field "code_offset", field "code_size";
+                     field "desc_offset", 64]));
           test "load derives launch parameters from the descriptor" (fun () ->
               with_lib_alloc (fun alloc sizes _m ->
                   let dev = gfx1100 () in

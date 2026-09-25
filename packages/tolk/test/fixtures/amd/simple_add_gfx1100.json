@@ -1,0 +1,38 @@
+{
+  "reference": "471a3aeb6924257d5e9bf321f5ff0a519163f18e",
+  "compiler": "Homebrew clang version 22.1.7\nTarget: arm64-apple-darwin25.3.0\nThread model: posix\nInstalledDir: /opt/homebrew/Cellar/llvm/22.1.7_1/bin\nConfiguration file: /opt/homebrew/Cellar/llvm/22.1.7_1/etc/clang/arm64-apple-darwin25.cfg",
+  "linker": "Ubuntu LLD 18.1.3 (compatible with GNU linkers)",
+  "compile_options": [
+    "-x",
+    "hip",
+    "--cuda-device-only",
+    "--offload-arch=gfx1100",
+    "-nogpuinc",
+    "-nogpulib",
+    "-O3",
+    "-mcumode",
+    "-mcode-object-version=5",
+    "-cuid=tolk_fixture",
+    "-fgpu-rdc",
+    "-c"
+  ],
+  "codegen_options": [
+    "-target",
+    "amdgcn-amd-amdhsa",
+    "-mcpu=gfx1100",
+    "-nogpulib",
+    "-O3",
+    "-mcode-object-version=5",
+    "-c"
+  ],
+  "link_options": [
+    "-shared"
+  ],
+  "source_sha256": "09145b8f0798ed1c4ce26527097da4fb699c909fec17c725eff1306a9d46b68d",
+  "binary_sha256": "4351fb5640b1348c725268f809e5d023c16ef813607e71450056c04eb34640a5",
+  "image_sha256": "1ee4dd2fc8411ee58fc8a56ca405ec574b9947da6e0b0d8c8322d53e2bba4657",
+  "oracle_sha256": {
+    "tinygrad/runtime/ops_amd.py": "da738f447c3dfba55d66983cc001c08a9a93205a183511f3a30f2bf7edeb7ff9",
+    "tinygrad/runtime/support/elf.py": "4297414131c64097ab47365c8c5d7178dc7fa5d6488e4edf0a538a3890f1a6d9"
+  }
+}

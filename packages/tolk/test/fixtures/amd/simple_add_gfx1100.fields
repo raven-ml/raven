@@ -1,0 +1,14 @@
+desc_offset 1472
+entry_point_offset 5632
+rsrc1 3233742848
+rsrc2 158
+rsrc3 32
+wave32 1
+private_segment_size 0
+group_segment_size 0
+kernargs_segment_size 28
+enable_dispatch_ptr 0
+enable_private_segment_sgpr 0
+image_size 6332
+code_offset 5632
+code_size 640

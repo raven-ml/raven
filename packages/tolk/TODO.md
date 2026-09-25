@@ -54,9 +54,8 @@ with their rationale and validation; commit count is not an acceptance metric.
 Acceptance: every existing backend builds against the shared protocol and no
 consumer depends on the old graph or storage interfaces. CPU and Metal execute
 kernels, copies and replay with correct dependencies and lifetimes; Rune and
-Kaun consumer suites pass. Generate real hsaco/cubin fixtures with compiler
-provenance. Validate AMD/NV/CUDA dispatch, replay, peer transfers and recovery
-on their respective hardware. Record unavailable hardware as an explicit open
+Kaun consumer suites pass. Validate AMD/NV/CUDA dispatch, replay, peer transfers
+and recovery on their respective hardware. Record unavailable hardware as an explicit open
 acceptance requirement; skipped tests are not execution evidence.
 
 ## 3. Close parity and adopt the reference
@@ -65,6 +64,12 @@ acceptance requirement; skipped tests are not execution evidence.
   `postrange.ml` and the other codegen rule bodies build with `U.O`, which
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
+- Audit the shared ELF loader's allocatable `NOBITS` sections against the
+  target's `PROGBITS`-only image. Linked HIP objects include a zero-filled
+  `__hip_cuid` symbol; Tolk reserves its address and the linker padding, while
+  the target omits them. Establish the actual CPU/custom-kernel consumer
+  requirement, then justify the difference or remove it. Compare whole images
+  in addition to the code/descriptor checks in the real AMD fixture.
 
 - Make a `Bitcast` to or from an emulated float8 act on the stored byte. Today
   the float decomposition decodes the element through float16 and back, which
