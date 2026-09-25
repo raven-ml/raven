@@ -71,8 +71,6 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
-- Audit HCQ2/NV compute changes in the upstream video migration against current
-  consumers. Account for test relocations when regenerating the complete corpus.
 - Attribute every changed expectation in the separately generated reference
   corpus; require exact source parity for supported renderers, apart from
   explicitly justified divergences.
