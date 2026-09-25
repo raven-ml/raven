@@ -1693,6 +1693,21 @@ let () =
                   is_true (Option.get dev.Tolk_nv.shader_local_mem == old);
                   equal int 1 (Timeline.submitted tl);
                   equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
+          test "failed setup submission does not advertise unsubmitted work"
+            (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m and tl = timeline m in
+                  let queue = queue_desc ~entries:3 m in
+                  let error = Invalid_argument "NV FIFO capacity must be a power of two" in
+                  raises error (fun () ->
+                      Tolk_nv.ensure_has_local_memory dev
+                        ~alloc:(fun size -> Buffer.make ~va:0x60000000n ~size ~meta:() ())
+                        ~free:(fun _ -> fail "failed submission must retain storage")
+                        ~num_gpcs:2 ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2
+                        ~max_warps_per_sm:48 ~tl ~queue 0x100);
+                  equal int 0 (Timeline.submitted tl);
+                  equal int32 0l (Mmio.read32 queue.gpput 0);
+                  raises error (fun () -> Timeline.synchronize tl)));
           test "out of memory without a fallback propagates" (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev m in

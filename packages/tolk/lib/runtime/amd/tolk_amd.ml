@@ -2112,10 +2112,9 @@ module State = struct
     prepare t;
     let cq = Compute_queue.create t.hw in
     Compute_queue.memory_barrier cq;
-    Compute_queue.signal cq
-      ~value:(Timeline.next_timeline t.tl)
-      t.tl.Timeline.timeline;
-    Compute_queue.submit cq t.compute_queue;
+    Timeline.submit t.tl (fun value ->
+      Compute_queue.signal cq ~value t.tl.Timeline.timeline;
+      Compute_queue.submit cq t.compute_queue);
     Timeline.synchronize t.tl
 
   let synchronize t =
@@ -2140,8 +2139,9 @@ module Allocator = struct
       ~value:(Timeline.submitted tl)
       tl.Timeline.timeline;
     build cp;
-    Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
-    Copy_queue.submit cp qd
+    Timeline.submit tl (fun value ->
+      Copy_queue.signal cp ~value tl.Timeline.timeline;
+      Copy_queue.submit cp qd)
 
   let submit_chunk state qd ~dest ~src len =
     submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src len)
@@ -2273,30 +2273,27 @@ module Runtime = struct
           | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
       let local = Option.value local ~default:default_local in
       let tl = state.State.tl in
-      let timeline_value = Timeline.next_timeline tl in
       let launch ?timing () =
-        Program.call prg ~layout ~kernargs:state.State.kernargs
-          ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
-          ~timeline_value ?wait:timing ~bufs ~vals
-          ~global_size:(global.(0), global.(1), global.(2))
-          ~local_size:(local.(0), local.(1), local.(2))
-          ()
+        Timeline.submit tl (fun timeline_value ->
+          Program.call prg ~layout ~kernargs:state.State.kernargs
+            ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
+            ~timeline_value ?wait:timing ~bufs ~vals
+            ~global_size:(global.(0), global.(1), global.(2))
+            ~local_size:(local.(0), local.(1), local.(2))
+            ())
       in
-      if not wait then
-        (try launch () with Hcq.Signal.Timeout _ as exn ->
-          Timeline.guarded_wait tl (fun () -> raise exn))
+      if not wait then launch ()
       else begin
         (match tl.Timeline.error_state with Some e -> raise e | None -> ());
         let st_slot = Hcq.Signal.Pool.get state.State.pool in
         let en_slot = Hcq.Signal.Pool.get state.State.pool in
-        Fun.protect
-          ~finally:(fun () ->
-            Hcq.Signal.Pool.put state.State.pool en_slot;
-            Hcq.Signal.Pool.put state.State.pool st_slot)
-          (fun () ->
-            let st = Hcq.Signal.make ~timestamp_divider:100. st_slot in
-            let en = Hcq.Signal.make ~timestamp_divider:100. en_slot in
-            Timeline.guarded_wait tl (fun () -> launch ~timing:(st, en) ()))
+        let st = Hcq.Signal.make ~timestamp_divider:100. st_slot in
+        let en = Hcq.Signal.make ~timestamp_divider:100. en_slot in
+        (* A failed launch may still write timestamps; retain its pool slots. *)
+        let result = launch ~timing:(st, en) () in
+        Hcq.Signal.Pool.put state.State.pool en_slot;
+        Hcq.Signal.Pool.put state.State.pool st_slot;
+        result
       end
     in
     let free () =
@@ -2384,9 +2381,9 @@ module Queue = struct
           State.prepare state;
           let queue = Compute_queue.create state.State.hw in
           Compute_queue.timestamp queue stamp;
-          Compute_queue.signal queue ~value:(Timeline.next_timeline state.State.tl)
-            state.State.tl.Timeline.timeline;
-          Compute_queue.submit queue state.State.compute_queue;
+          Timeline.submit state.State.tl (fun value ->
+            Compute_queue.signal queue ~value state.State.tl.Timeline.timeline;
+            Compute_queue.submit queue state.State.compute_queue);
           fun () ->
             Timeline.synchronize state.State.tl;
             Hcq.Signal.timestamp stamp) in

@@ -2127,10 +2127,9 @@ let ensure_has_local_memory (dev : 'meta device) ~alloc ~free ~num_gpcs
     Compute_queue.setup cq
       ~local_mem:(Hcq.Buffer.va shader_local_mem)
       ~local_mem_tpc_bytes:bytes_per_tpc ();
-    Compute_queue.signal cq
-      ~value:(Hcq.Timeline.next_timeline tl)
-      tl.Hcq.Timeline.timeline;
-    Compute_queue.submit cq queue;
+    Hcq.Timeline.submit tl (fun value ->
+      Compute_queue.signal cq ~value tl.Hcq.Timeline.timeline;
+      Compute_queue.submit cq queue);
     Option.iter free old
   end
 
@@ -2385,8 +2384,9 @@ module Allocator = struct
       ~value:(Timeline.submitted tl)
       tl.Timeline.timeline;
     build cp;
-    Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
-    Copy_queue.submit cp state.State.dma_queue
+    Timeline.submit tl (fun value ->
+      Copy_queue.signal cp ~value tl.Timeline.timeline;
+      Copy_queue.submit cp state.State.dma_queue)
 
   let submit_chunk state ~dest ~src len =
     submit_copy state (fun cp -> Copy_queue.copy cp ~dest ~src len)
@@ -2486,30 +2486,27 @@ module Runtime = struct
       let local = Option.value local ~default:default_local in
       let tl = state.State.tl in
       State.check_submission state;
-      let timeline_value = Timeline.next_timeline tl in
       let launch ?timing () =
-        Program.call prg ~layout ~kernargs:state.State.kernargs
-          ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
-          ~timeline_value ?wait:timing ~bufs ~vals
-          ~global_size:(global.(0), global.(1), global.(2))
-          ~local_size:(local.(0), local.(1), local.(2))
-          ()
+        Timeline.submit tl (fun timeline_value ->
+          Program.call prg ~layout ~kernargs:state.State.kernargs
+            ~queue:state.State.compute_queue ~timeline:tl.Timeline.timeline
+            ~timeline_value ?wait:timing ~bufs ~vals
+            ~global_size:(global.(0), global.(1), global.(2))
+            ~local_size:(local.(0), local.(1), local.(2))
+            ())
       in
-      if not wait then
-        (try launch () with Hcq.Signal.Timeout _ as exn ->
-          Timeline.guarded_wait tl (fun () -> raise exn))
+      if not wait then launch ()
       else begin
         (match tl.Timeline.error_state with Some e -> raise e | None -> ());
         let st_slot = Hcq.Signal.Pool.get state.State.pool in
         let en_slot = Hcq.Signal.Pool.get state.State.pool in
-        Fun.protect
-          ~finally:(fun () ->
-            Hcq.Signal.Pool.put state.State.pool en_slot;
-            Hcq.Signal.Pool.put state.State.pool st_slot)
-          (fun () ->
-            let st = Hcq.Signal.make st_slot in
-            let en = Hcq.Signal.make en_slot in
-            Timeline.guarded_wait tl (fun () -> launch ~timing:(st, en) ()))
+        let st = Hcq.Signal.make st_slot in
+        let en = Hcq.Signal.make en_slot in
+        (* A failed launch may still write timestamps; retain its pool slots. *)
+        let result = launch ~timing:(st, en) () in
+        Hcq.Signal.Pool.put state.State.pool en_slot;
+        Hcq.Signal.Pool.put state.State.pool st_slot;
+        result
       end
     in
     let free () = Program.free ~free:state.State.iface.Nv_iface.free prg in
@@ -2586,9 +2583,9 @@ module Queue = struct
           State.prepare state;
           let queue = Compute_queue.create state.State.hw in
           Compute_queue.timestamp queue stamp;
-          Compute_queue.signal queue ~value:(Timeline.next_timeline state.State.tl)
-            state.State.tl.Timeline.timeline;
-          Compute_queue.submit queue state.State.compute_queue;
+          Timeline.submit state.State.tl (fun value ->
+            Compute_queue.signal queue ~value state.State.tl.Timeline.timeline;
+            Compute_queue.submit queue state.State.compute_queue);
           fun () ->
             Timeline.synchronize state.State.tl;
             Hcq.Signal.timestamp stamp) in
@@ -2785,15 +2782,16 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
   Compute_queue.setup cq ~compute_class:usermode.Nv_iface.compute_class
     ~local_mem_window:hw.local_mem_window
     ~shared_mem_window:hw.shared_mem_window ();
-  Compute_queue.signal cq ~value:(Timeline.next_timeline tl)
-    tl.Timeline.timeline;
-  Compute_queue.submit cq compute_queue;
+  Timeline.submit tl (fun value ->
+    Compute_queue.signal cq ~value tl.Timeline.timeline;
+    Compute_queue.submit cq compute_queue);
   let cp = Copy_queue.create hw in
   Copy_queue.wait cp ~value:(Timeline.submitted tl)
     tl.Timeline.timeline;
   Copy_queue.setup cp ~copy_class:usermode.Nv_iface.dma_class ();
-  Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
-  Copy_queue.submit cp dma_queue;
+  Timeline.submit tl (fun value ->
+    Copy_queue.signal cp ~value tl.Timeline.timeline;
+    Copy_queue.submit cp dma_queue);
   Timeline.synchronize tl;
   at_exit (fun () ->
       if is_valid () then begin

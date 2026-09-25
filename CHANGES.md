@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- `Hcq.Timeline.submit` replaces `next_timeline`: AMD/NV direct submissions
+  advance their completion counter only after publication succeeds. Failed
+  submissions retain storage and timing slots instead of leaving phantom waits.
+
 - AMD compiled PM4 dispatches give each compute die a disjoint scratch region,
   preventing simultaneous dies from overwriting each other's private storage.
 

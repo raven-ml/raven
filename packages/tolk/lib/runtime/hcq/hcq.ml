@@ -447,11 +447,22 @@ module Timeline = struct
       Mmio.write64 (Buffer.cpu_view (Signal.buf t.timeline)) 8 (Int64.of_int epoch)
     end
 
-  let next_timeline t =
-    prepare t;
-    let value = submitted t + 1 in
-    Mmio.write64 (Buffer.cpu_view (Signal.buf t.timeline)) 8 (Int64.of_int value);
-    value
+  let submit t f =
+    Tolk_uop.Storage.with_operation (fun () ->
+        prepare t;
+        let value = submitted t + 1 in
+        let result = guarded_wait t (fun () ->
+            match f value with
+            | result -> result
+            | exception ((Signal.Timeout _ | Failure _) as error) -> raise error
+            | exception error ->
+                (* Submission may have touched hardware before raising. Keep
+                   storage until the failed device has been retired. *)
+                let backtrace = Printexc.get_raw_backtrace () in
+                t.error_state <- Some error;
+                Printexc.raise_with_backtrace error backtrace) in
+        Mmio.write64 (Buffer.cpu_view (Signal.buf t.timeline)) 8 (Int64.of_int value);
+        result)
 
   let copyin t ~submit_chunk buf bytes =
     let total = Bytes.length bytes in

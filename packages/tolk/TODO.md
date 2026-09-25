@@ -25,7 +25,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   Metal lifetime stress.
 
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
-  submissions. Validate NV channel retirement across independently linked
+  submissions, including failures during direct publication and timed dispatch.
+  Validate NV channel retirement across independently linked
   batches and direct dispatches on hardware, including kernel-argument arena
   reuse during long asynchronous batches.
 - Validate AMD/NV/CUDA profiling clock alignment on hardware.

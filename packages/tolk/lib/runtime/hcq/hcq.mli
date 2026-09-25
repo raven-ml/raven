@@ -379,7 +379,7 @@ end
 
     A timeline orders a device's submitted work behind one
     monotonically increasing counter: each submission takes the next
-    value with {!Timeline.next_timeline} and instructs the device to
+    value with {!Timeline.submit} and instructs the device to
     write it to the timeline signal once the work completes, so waiting
     for a value waits for everything submitted up to it. The timeline
     latches device errors so failures stay loud, rolls the counter over
@@ -390,7 +390,7 @@ module Timeline : sig
     timeline : ('meta, 'dev) Signal.t;
         (** The signal completed work advances. *)
     mutable error_state : exn option;
-        (** The latched device error: once a wait stalls or faults,
+        (** The latched device error: once a submission fails or a wait stalls,
             later waits re-raise it unless successful recovery clears it. *)
     bounce : 'meta Buffer.t array;
         (** Rotating CPU-mapped, pinned staging buffers for host
@@ -411,10 +411,16 @@ module Timeline : sig
   (** [submitted t] reads the last submitted value from the second word
       of the mapped timeline. Direct and compiled submissions share it. *)
 
-  val next_timeline : ('meta, 'dev) t -> int
-  (** [next_timeline t] is the counter value for the next submission,
-      calling {!prepare} before advancing the counter. The submission must signal the
-      timeline with the value once its work completes. *)
+  val submit : ('meta, 'dev) t -> (int -> 'a) -> 'a
+  (** [submit t f] calls {!prepare}, then [f value] with the next completion
+      value. [f] must submit work that signals [value] when it completes.
+      The submitted counter advances only when [f] returns successfully.
+      Automatic buffer finalization is deferred until publication finishes.
+
+      Failures are latched so later waits cannot release storage still in use
+      by partially submitted work. {!Signal.Timeout} and [Failure] use the
+      fault reporting and recovery rules of {!guarded_wait}; other exceptions
+      are retained unchanged. Submissions to one device must be serialized. *)
 
   val prepare : ('meta, 'dev) t -> unit
   (** [prepare t] checks latched errors and, when the low dword reaches
@@ -448,9 +454,8 @@ module Timeline : sig
       the slot, and calls [submit_chunk ~dest ~src len] with [dest] the
       chunk's sub-buffer of [buf] and [src] the slot. [submit_chunk]
       must submit a device copy of [len] bytes ordered after all
-      previously submitted work and signal the timeline with a fresh
-      {!next_timeline} value; the slot records that value and is reused
-      only once it passes. *)
+      previously submitted work through {!submit}. The slot records the
+      published value and is reused only once it passes. *)
 
   val copyout :
     ('meta, 'dev) t ->
@@ -462,9 +467,8 @@ module Timeline : sig
       [buf] into [bytes] through the first staging buffer, chunk by
       chunk: [submit_chunk ~dest ~src len] must submit a device copy of
       the [len]-byte chunk ([src], a sub-buffer of [buf]) into the slot
-      ([dest]), ordered after all previously submitted work, and signal
-      the timeline with a fresh {!next_timeline} value; the copy waits
-      for that value and blits the slot into [bytes]. Callers
+      ([dest]), ordered after all previously submitted work through {!submit}.
+      The copy waits for the published value and blits the slot into [bytes]. Callers
       {!synchronize} first so earlier writes to [buf] have retired. *)
 end
 

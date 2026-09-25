@@ -186,6 +186,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   transfers; hardware acceptance remains explicit in TODO. Reconsider when
   upstream distinguishes system and device memory in its small-BAR check.
 
+- **Direct submissions publish timeline values after queue publication.** The
+  direct AMD/NV interface shares its counter with compiled queues. Advancing
+  it before queue setup succeeds leaves later waits targeting work that does
+  not exist. `Timeline.submit` owns counter publication and finalizer deferral;
+  failed submissions latch an error and retain storage, including timestamp
+  slots a late GPU write could still target. Coverage: the NV local-memory
+  regression rejects queue setup without advancing the counter, and the shared
+  timeline tests cover compiled/direct handoffs and rollover. Reconsider when
+  all direct operations use the compiled submission protocol; hardware failure
+  injection remains in TODO.
+
 - **Failed buffer setup unwinds acquired resources.** The frozen target does
   not consistently roll back allocation and mapping failures. Tolk returns
   PCI virtual/physical reservations, CPU mappings and new page tables, releases KFD/NVK

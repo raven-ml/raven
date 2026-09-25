@@ -2526,7 +2526,7 @@ let () =
                       equal bool true (tl.Timeline.error_state = None);
                       Submission.prepare submission;
                       Timeline.synchronize tl;
-                      equal int 7 (Timeline.next_timeline tl);
+                      equal int 7 (Timeline.submit tl Fun.id);
                       (* the recovered device sleeps cleanly again *)
                       Pci_iface.sleep t ~timeout_ms:0)));
           test

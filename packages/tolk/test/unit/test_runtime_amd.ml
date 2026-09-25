@@ -1020,10 +1020,13 @@ let () =
                     bounce_next = 0; on_hang = (fun () -> fail "unexpected hang");
                   } in
                   equal int 0 (Timeline.submitted tl);
-                  equal int 1 (Timeline.next_timeline tl);
+                  equal int 1 (Timeline.submit tl (fun value ->
+                      equal int 0 (Timeline.submitted tl);
+                      equal int 1 value;
+                      value));
                   equal int64 1L (Mmio.read64 m 8);
                   Mmio.write64 m 8 37L;
-                  equal int 38 (Timeline.next_timeline tl);
+                  equal int 38 (Timeline.submit tl Fun.id);
                   Signal.set_value tl.Timeline.timeline 38;
                   Timeline.synchronize tl;
                   equal int64 38L (Mmio.read64 m 8)));
@@ -1040,7 +1043,7 @@ let () =
                       Timeline.prepare tl;
                       is_true (tl.Timeline.timeline == signal);
                       let next = ((epoch + 1) lsl 32) + 1 in
-                      equal int next (Timeline.next_timeline tl);
+                      equal int next (Timeline.submit tl Fun.id);
                       (* AMD/SDMA write only the low dword; the CPU retains the epoch. *)
                       Mmio.write32 m 0 1l;
                       equal int next (Signal.value signal);
