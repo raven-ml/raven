@@ -661,6 +661,9 @@ thread.
 
 ### Tolk (new)
 
+- Reject beam-search candidates whose upcast or local lane products exceed
+  their limits even when the product is larger than a host integer.
+
 - Keep internal buffers distinct during concurrent scheduling and JIT cache
   imports; racing slot reservations could merge unrelated buffer identities.
 

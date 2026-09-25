@@ -93,26 +93,22 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
     let axis = U.Opt.axis a in
     not (is_tc a) && (axis >= P.shape_len s || is_noop a axis (P.full_shape s))
   in
-  let factor x =
-    match U.const_int_value x with
-    | Some sz -> sz
-    | None -> U.sym_infer x var_vals
-  in
   let upcast_and_local s2 =
-    let up = ref 1 and lcl = ref 1 in
+    let up = ref Z.one and lcl = ref Z.one in
     List.iter2 (fun x t ->
-      let sz = factor x in
+      let sz = U.sym_infer_z x var_vals in
       if t = Axis_type.Upcast || t = Axis_type.Unroll then
-        up := !up * sz
+        up := Z.mul !up sz
       else if t = Axis_type.Warp || t = Axis_type.Local then
-        lcl := !lcl * sz)
+        lcl := Z.mul !lcl sz)
       (P.full_shape s2) (P.axis_types s2);
     let tc_up = match P.tensor_core s2 with
       | Some (tc : Tc.t) ->
-          let m, n, k = tc.dims in m * n * k / tc.threads
-      | None -> 1
+          let m, n, k = tc.dims in
+          Z.div (Z.mul (Z.of_int m) (Z.mul (Z.of_int n) (Z.of_int k))) (Z.of_int tc.threads)
+      | None -> Z.one
     in
-    (!up / tc_up, !lcl)
+    (Z.div !up tc_up, !lcl)
   in
   let acted = ref (if include_0 then [(0, s)] else []) in
   List.iteri (fun i a ->
@@ -122,12 +118,12 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
       | exception P.Opt_error _ -> ()
       | _ ->
           let up, lcl = upcast_and_local s2 in
-          if up > max_up || lcl > max_lcl then begin
+          if Z.gt up (Z.of_int max_up) || Z.gt lcl (Z.of_int max_lcl) then begin
             if beam_log_surpass_max () then
               Printf.eprintf
-                "too many upcast/local. up/tc_up=%d, max_up=%d, lcl=%d, \
+                "too many upcast/local. up/tc_up=%s, max_up=%d, lcl=%s, \
                  max_lcl=%d\n%!"
-                up max_up lcl max_lcl
+                (Z.to_string up) max_up (Z.to_string lcl) max_lcl
           end else
             acted := (i + 1, s2) :: !acted)
     actions;

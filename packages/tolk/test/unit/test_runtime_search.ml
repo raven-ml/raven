@@ -626,8 +626,35 @@ let candidate_program_metadata () =
 
 (* Entry *)
 
+let overflowing_resource_products_reject_candidates () =
+  let device = cpu "beam-resource-products" in
+  let check kind =
+    let ranges = List.init 2 (fun axis ->
+        U.range ~size:(idx (1 lsl 32)) ~axis ~kind ()) in
+    let global = U.range ~size:(idx 4) ~axis:2 ~kind:Ak.Global () in
+    let ast = U.sink ~kernel_info:{U.name = "resource_products";
+        applied_opts = []; opts_to_apply = None; estimates = None; beam = 0}
+        (global :: ranges) in
+    let compiled = ref 0 in
+    let to_program owner candidate =
+      ignore (owner, candidate);
+      incr compiled;
+      failwith "resource limits must reject this candidate before compilation" in
+    ignore (Search.beam_search ~to_program ~disable_cache:true
+        (P.create ast ren) [] ~var_vals:[] 1 device);
+    equal ~msg:"overflow cannot make an excessive lane product admissible"
+      int 0 !compiled
+  in
+  let cachelevel = Sys.getenv_opt "CACHELEVEL" in
+  Unix.putenv "CACHELEVEL" "0";
+  Fun.protect
+    ~finally:(fun () -> Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:""))
+    (fun () -> List.iter check [Ak.Upcast; Ak.Local])
+
 let () = run __FILE__
     [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
+      test "beam rejects overflowing resource products"
+        overflowing_resource_products_reject_candidates;
       test "beam retains candidate PROGRAM metadata and scales only its launch"
         candidate_program_metadata;
       test "parallel compilation joins workers before propagating failure"
