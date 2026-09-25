@@ -21,15 +21,12 @@ let numbering () =
           incr count;
           !count);
       free = (fun buf _ _ -> freed := buf :: !freed);
-      copyin = (fun _ _ -> ());
-      copyout = (fun _ _ -> ());
       addr = Some Nativeint.of_int;
       host = (fun _ -> None);
       kind = Type.Id.make ();
       mapping = None;
       synchronize = (fun () -> ());
       offset = None;
-      transfer = None;
     }
   in
   (Device.Lru_allocator.wrap raw, fail, freed)

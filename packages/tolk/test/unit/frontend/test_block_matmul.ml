@@ -233,23 +233,8 @@ let value_tests =
 
 (* A device that renders for [ren] and runs nothing. *)
 let render_only prefix ren =
-  let allocator =
-    Device.Allocator.Pack
-      Device.Allocator.
-        {
-          alloc = (fun nbytes _ -> Bytes.make nbytes '\000');
-          free = (fun _ _ _ -> ());
-          copyin = (fun _ _ -> ());
-          copyout = (fun _ _ -> ());
-          addr = None;
-          host = (fun _ -> None);
-          kind = Type.Id.make ();
-          mapping = None;
-          synchronize = (fun () -> ());
-          offset = None;
-          transfer = None;
-        }
-  in
+  let allocator = Device.Allocator.Pack
+      (Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   Device.register prefix (fun name ->
       Device.make ~name ~allocator
         ~renderer_set:

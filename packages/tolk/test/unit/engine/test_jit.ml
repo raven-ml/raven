@@ -28,29 +28,8 @@ let renderer =
     ()
 
 let allocator =
-  let module Raw = struct
-    type t = { data : bytes; offset : int; nbytes : int }
-  end in
   Device.Allocator.Pack
-    {
-      Device.Allocator.kind = Type.Id.make ();
-      host = Fun.const None;
-      mapping = None;
-      synchronize = (fun () -> ());
-      alloc =
-        (fun nbytes _spec ->
-          Raw.{ data = Bytes.make nbytes '\000'; offset = 0; nbytes });
-      free = (fun _ _ _ -> ());
-      copyin = (fun raw src -> Bytes.blit src 0 raw.Raw.data raw.offset raw.nbytes);
-      copyout =
-        (fun dst raw -> Bytes.blit raw.Raw.data raw.offset dst 0 raw.nbytes);
-      addr = Some (fun _ -> Nativeint.zero);
-      offset =
-        Some
-          (fun raw nbytes byte_offset ->
-            Raw.{ data = raw.data; offset = raw.offset + byte_offset; nbytes });
-      transfer = None;
-    }
+    (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
 
 let make_device ?(name = "TEST:0") ?(state = runtime_state ()) () =
   Device.make ~name ~allocator

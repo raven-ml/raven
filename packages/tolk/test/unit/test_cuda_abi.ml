@@ -14,9 +14,10 @@ external function_ : nativeint -> string -> nativeint = "caml_tolk_cuda_module_f
 external unload : nativeint -> unit = "caml_tolk_cuda_module_unload"
 external live_modules : unit -> int = "caml_test_cuda_live_modules"
 external copy : nativeint -> nativeint -> nativeint -> int -> unit
-  = "caml_tolk_cuda_memcpy_htod_async"
+  = "caml_test_cuda_abi_copy"
 external submit : nativeint -> bytes -> unit = "caml_test_cuda_abi_submit"
-external handoffs : unit -> int = "caml_test_cuda_abi_handoffs"
+external copies : unit -> int = "caml_test_cuda_abi_copies"
+external failed_copy : unit -> int = "caml_test_cuda_abi_failed_copy"
 external registration_status : int -> unit = "caml_test_cuda_registration_status"
 external register_host : nativeint -> int -> int = "caml_tolk_cuda_mem_host_register"
 external timestamp : unit -> int64 = "caml_test_cuda_timestamp"
@@ -67,7 +68,7 @@ let shutdown_after_failure () =
       if failure then
         raises (Failure "CUDA Error 719, injected synchronization failure") destroy
       else destroy ();
-      equal int 5 (shutdown_steps ());
+      equal int 4 (shutdown_steps ());
       equal ~msg:"context retirement releases its cached modules" int 0
         (live_modules ())) [ false; true ]
 
@@ -84,18 +85,18 @@ let compiled_arguments () =
        \x00\x00\x00\x00\x00\x00\x00\x80\
        \x2c\x01\x00\x00\x89\x67\x45\x23" in
   copy queue 0x100002000n 0x300004000n 40;
-  equal int 0 (handoffs ());
+  equal int 1 (copies ());
   submit fn expected;
   equal bytes expected (captured ());
-  equal int 1 (handoffs ());
+  equal int 1 (copies ());
   Bytes.set_int64_le expected 0 0x900008000L;
   Bytes.set_int64_le expected 24 0x200000003L;
   Bytes.set_uint8 expected 16 11;
   copy queue 0x100002000n 0x300004000n 40;
-  equal int 2 (handoffs ());
+  equal int 2 (copies ());
   submit fn expected;
   equal bytes expected (captured ());
-  equal int 3 (handoffs ());
+  equal int 2 (copies ());
   equal int 1 (live_modules ());
   unload module_;
   equal int 0 (live_modules ())
@@ -106,7 +107,10 @@ let () =
         is_true (timestamp () > 0L));
       test "concurrent initialization publishes a complete driver table" concurrent_initialization;
       test "missing driver symbols stay failed across callers" failed_initialization;
-      test "compiled submission preserves packed arguments and allocator copy handoffs" compiled_arguments;
+      test "shared submission preserves packed arguments and copy stream selection" compiled_arguments;
+      test "failed shared copy blocks subsequent queue work" (fun () ->
+        ignore (setup ());
+        equal int 1 (failed_copy ()));
       test "host registration separates unsupported mappings from driver faults" (fun () ->
         List.iter (fun (status, expected) -> registration_status status;
             equal int expected (register_host 0x10000n 16)) [0, 1; 712, 0; 1, -1; 801, -1];

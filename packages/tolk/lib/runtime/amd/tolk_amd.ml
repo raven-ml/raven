@@ -260,9 +260,6 @@ type 'meta program = {
 module Queue_desc = struct
   type aql = {
     descriptor : Hcq.Mmio.t;
-    commands : Hcq.Mmio.t;
-    address : nativeint;
-    allocator : Tolk.Bump.t;
   }
   type t = {
     ring : Hcq.Mmio.t;
@@ -274,7 +271,7 @@ module Queue_desc = struct
     resetup : (unit -> unit) option;
   }
 
-  let initialize_aql ~descriptor ~commands ~cu_count ~waves_per_cu =
+  let initialize_aql ~descriptor ~cu_count ~waves_per_cu =
     let module A = Amd_hsa_defs.Amd_queue in
     Hcq.Mmio.blit_bytes descriptor ~off:0 (Bytes.make A.size '\000');
     let put off value = Hcq.Mmio.write32 descriptor off (Int32.of_int value) in
@@ -283,8 +280,7 @@ module Queue_desc = struct
     put A.read_dispatch_id_field_base_byte_offset A.read_dispatch_id;
     put A.max_cu_id (cu_count - 1);
     put A.max_wave_id (waves_per_cu - 1);
-    {descriptor; commands = Hcq.Buffer.cpu_view commands; address = Hcq.Buffer.va commands;
-      allocator = Tolk.Bump.create ~size:(Hcq.Buffer.size commands) ~wrap:true ()}
+    {descriptor}
 
   let update_scratch (dev : 'meta device) t =
     let module A = Amd_hsa_defs.Amd_queue in
@@ -302,18 +298,6 @@ module Queue_desc = struct
       [|lo32 base; hi32 base lor swizzle; Hcq.Buffer.size dev.scratch / dev.xccs; format|];
     put A.compute_tmpring_size dev.tmpring_size;
     Hcq.Mmio.fence ()
-
-  let signal_doorbell t value =
-    Hcq.Mmio.fence ();
-    Hcq.Mmio.write64 t.write_ptr 0 (Int64.of_int value);
-    (* the doorbell read triggers a device fetch: every ring and pointer
-       store must be globally visible before it lands *)
-    Hcq.Mmio.fence ();
-    (* ops_amd.py:680-683: driver-less queues also flush the host data
-       path, so host writes to device memory reach the engines *)
-    Option.iter (fun view -> Hcq.Mmio.write32 view 0 0l) t.hdp_flush;
-    Hcq.Mmio.fence ();
-    Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int (value - if Option.is_some t.aql then 1 else 0))
 end
 
 (* The interface seam: the device runtime drives the GPU through one of
@@ -363,17 +347,12 @@ end
 (* Compute queue *)
 
 module Compute_queue = struct
-  type packet = Indirect of int * int | Dispatch of int array
-  type 'meta t = { dev : 'meta device; q : Q.t;
-    mutable packets : packet list; mutable run_start : int }
+  type 'meta t = { dev : 'meta device; q : Q.t }
 
   let wait_reg_mem_function_eq = wait_reg_mem_function_eq
   let wait_reg_mem_function_geq = wait_reg_mem_function_geq
-  let create dev = { dev; q = Q.create (); packets = []; run_start = 0 }
-  let close_run t =
-    let stop = Q.length t.q in
-    if stop > t.run_start then t.packets <- Indirect (t.run_start, stop - t.run_start) :: t.packets;
-    t.run_start <- stop
+
+  let create dev = { dev; q = Q.create () }
   let q t = t.q
 
   let pkt3 t op payload =
@@ -536,16 +515,6 @@ module Compute_queue = struct
 
   let exec t (prg : 'meta program) ~kernargs ~global_size:(gx, gy, gz)
       ~local_size:(lx, ly, lz) =
-    if t.dev.is_aql then begin
-      close_run t;
-      List.iter (fun (global, local) ->
-          if global < 1 || local < 1 || local > 0xffff || global > 0xffffffff / local then
-            invalid_arg "Compute_queue.exec: launch dimensions exceed AQL fields") [gx,lx; gy,ly; gz,lz];
-      let object_ = va64 prg.kernel_object and args = va64 (Hcq.Buffer.va kernargs) in
-      t.packets <- Dispatch [|dispatch_header; lx lor (ly lsl 16); lz;
-        gx * lx; gy * ly; gz * lz; prg.private_segment_size; prg.group_segment_size;
-        lo32 object_; hi32 object_; lo32 args; hi32 args; 0; 0; 0; 0|] :: t.packets
-    end else begin
     if prg.enable_dispatch_ptr && Hcq.Buffer.size kernargs < Amd_hsa_defs.Kernel_dispatch_packet.size then
       invalid_arg "Compute_queue.exec: dispatch packet missing from kernargs";
     if prg.dev.sqtt_enabled then
@@ -628,8 +597,6 @@ module Compute_queue = struct
         lor P.event_index event_index_partial_flush;
       |]
 
-    end
-
   let wait t ?(value = 0) sg =
     let value = if Hcq.Signal.is_timeline sg then value land 0xffffffff else value in
     wait_reg_mem t ~mem:(Hcq.Signal.value_addr sg) ~mask:0xffffffff value
@@ -660,7 +627,6 @@ module Compute_queue = struct
       value
 
   let signal t ?(value = 0) sg =
-    if t.dev.is_aql then close_run t;
     let module P = (val t.dev.pm4) in
     pred_exec t ~xcc_mask:0b1 (fun () ->
         (* the end-of-pipe event goes through the queue's EOP buffer; queues
@@ -679,73 +645,6 @@ module Compute_queue = struct
                 P.int_sel__mec_release_mem__send_interrupt_after_write_confirm
               ~ctxid:dev.queue_event.event_id ()
         | _ -> ())
-
-  let submit t (qd : Queue_desc.t) =
-    if Q.length t.q = 0 && t.packets = [] then ()
-    else if t.dev.is_aql then begin
-      close_run t;
-      let staging = match qd.aql with Some aql -> aql
-        | None -> invalid_arg "Compute_queue.submit: missing AQL staging" in
-      let bytes = Q.length t.q * 4 in
-      let offset = Tolk.Bump.alloc staging.allocator bytes ~align:256 () in
-      for i = 0 to Q.length t.q - 1 do
-        Hcq.Mmio.write32 staging.commands (offset + i * 4) (Int32.of_int (Q.get t.q i))
-      done;
-      let module P = (val t.dev.pm4) in
-      let packet = function
-        | Dispatch words -> words
-        | Indirect (start, count) ->
-            let address = Int64.add (va64 staging.address) (Int64.of_int (offset + start * 4)) in
-            [|indirect_header; P.packet3 P.packet3_indirect_buffer 2; lo32 address; hi32 address;
-              count lor P.indirect_buffer_valid; 10; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0|] in
-      let put = Int64.to_int (Hcq.Mmio.read64 qd.write_ptr 0) in
-      let entries = Hcq.Mmio.size qd.ring / 64 in
-      let packets = List.rev t.packets in
-      if List.length packets >= entries then invalid_arg "AQL submission exceeds ring capacity";
-      List.iteri (fun i p -> Array.iteri (fun j value ->
-          Hcq.Mmio.write32 qd.ring (((put + i) mod entries) * 64 + j * 4) (Int32.of_int value))
-          (packet p)) packets;
-      Queue_desc.signal_doorbell qd (put + List.length packets)
-    end else begin
-    let put = Int64.to_int (Hcq.Mmio.read64 qd.write_ptr 0) in
-    let cmds = Q.dwords t.q in
-    let ring_len = Hcq.Mmio.size qd.ring / 4 in
-    let cmds =
-      if t.dev.xccs = 1 then cmds
-      else begin
-        (* predication only takes effect inside indirect buffers, not in the
-           ring itself: wrap the stream in an in-ring indirect buffer, padded
-           so its body never straddles the wrap point *)
-        let module P = (val t.dev.pm4) in
-        let n = Array.length cmds in
-        let ib_start = (put + 5) mod ring_len in
-        let ib_pad = if ib_start + n > ring_len then ring_len - ib_start else 0 in
-        let ib_ptr =
-          Int64.add
-            (va64 (Hcq.Mmio.addr qd.ring))
-            (Int64.of_int ((put + 5 + ib_pad) mod ring_len * 4))
-        in
-        Array.concat
-          [
-            [|
-              P.packet3 P.packet3_indirect_buffer 2;
-              lo32 ib_ptr;
-              hi32 ib_ptr;
-              n lor P.indirect_buffer_valid;
-              P.packet3 P.packet3_nop (ib_pad + n - 1);
-            |];
-            Array.make ib_pad 0;
-            cmds;
-          ]
-      end
-    in
-    for i = 0 to Array.length cmds - 1 do
-      Hcq.Mmio.write32 qd.ring
-        ((put + i) mod ring_len * 4)
-        (Int32.of_int (Array.unsafe_get cmds i))
-    done;
-    Queue_desc.signal_doorbell qd (put + Array.length cmds)
-    end
 end
 
 (* Copy queue *)
@@ -755,25 +654,20 @@ module Copy_queue = struct
     dev : 'meta device;
     q : Q.t;
     max_copy_size : int;
-    mutable cmd_sizes_rev : int list;
   }
 
   let create ?max_copy_size (dev : 'meta device) =
     let max_copy_size =
       match max_copy_size with Some s -> s | None -> dev.max_copy_size
     in
-    { dev; q = Q.create (); max_copy_size; cmd_sizes_rev = [] }
+    { dev; q = Q.create (); max_copy_size }
 
   let q t = t.q
-  let cmd_sizes t = List.rev t.cmd_sizes_rev
 
-  (* every packet records its dword count: submission needs the command
-     boundaries to split a stream across the ring's wrap point *)
   let cmd t payload =
     for i = 0 to Array.length payload - 1 do
       Q.push t.q (Array.unsafe_get payload i)
-    done;
-    t.cmd_sizes_rev <- Array.length payload :: t.cmd_sizes_rev
+    done
 
   let copy t ~dest ~src size =
     let module S = (val t.dev.sdma) in
@@ -854,57 +748,6 @@ module Copy_queue = struct
     if b64 then
       cmd t [| S.sdma_op_write; lo32 va; hi32 va; 1; lo32 value; hi32 value |]
     else cmd t [| S.sdma_op_write; lo32 va; hi32 va; 0; lo32 value |]
-
-  let submit t (qd : Queue_desc.t) =
-    let put = ref (Int64.to_int (Hcq.Mmio.read64 qd.write_ptr 0)) in
-    let cmds = Q.dwords t.q in
-    let n = Array.length cmds in
-    let nbytes = Hcq.Mmio.size qd.ring in
-    (* the engine fetches packets as units, so a packet must never straddle
-       the ring end: blit whole packets up to the end, and restart at the
-       ring start with the rest, zero-filling the gap *)
-    let tail_blit_dword =
-      let rec fit acc = function
-        | sz :: rest when (acc + sz) * 4 < nbytes - (!put mod nbytes) ->
-            fit (acc + sz) rest
-        | _ -> acc
-      in
-      fit 0 (cmd_sizes t)
-    in
-    let rem_packet_cnt = n - tail_blit_dword in
-    let total_bytes =
-      (if rem_packet_cnt = 0 then tail_blit_dword * 4
-       else (nbytes - (!put mod nbytes)) mod nbytes)
-      + (rem_packet_cnt * 4)
-    in
-    if total_bytes >= nbytes then
-      invalid_arg "Copy_queue.submit: stream does not fit in the ring";
-    while
-      !put + total_bytes - Int64.to_int (Hcq.Mmio.read64 qd.read_ptr 0)
-      > nbytes
-    do
-      ()
-    done;
-    let start = !put mod nbytes / 4 in
-    for i = 0 to tail_blit_dword - 1 do
-      Hcq.Mmio.write32 qd.ring
-        ((start + i) * 4)
-        (Int32.of_int (Array.unsafe_get cmds i))
-    done;
-    put := !put + (tail_blit_dword * 4);
-    if rem_packet_cnt > 0 then begin
-      let zero_fill = nbytes - (!put mod nbytes) in
-      for i = 0 to (zero_fill / 4) - 1 do
-        Hcq.Mmio.write32 qd.ring ((!put mod nbytes) + (i * 4)) 0l
-      done;
-      put := !put + zero_fill;
-      for i = 0 to rem_packet_cnt - 1 do
-        Hcq.Mmio.write32 qd.ring (i * 4)
-          (Int32.of_int (Array.unsafe_get cmds (tail_blit_dword + i)))
-      done;
-      put := !put + (rem_packet_cnt * 4)
-    end;
-    Queue_desc.signal_doorbell qd !put
 end
 
 (* Programs *)
@@ -2067,54 +1910,6 @@ module State = struct
 end
 
 module Allocator = struct
-  (* One DMA stream ordered against the device timeline: wait for the last
-     submitted work, append the packets of [build], advance the timeline. *)
-  let submit_copy state qd build =
-    let tl = state.State.tl in
-    State.prepare state;
-    let cp = Copy_queue.create state.State.hw in
-    Copy_queue.wait cp
-      ~value:(Timeline.submitted tl)
-      tl.Timeline.timeline;
-    build cp;
-    Timeline.submit tl (fun value ->
-      Copy_queue.signal cp ~value tl.Timeline.timeline;
-      Copy_queue.submit cp qd)
-
-  let submit_chunk state qd ~dest ~src len =
-    submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src len)
-
-  let copyin state buf bytes =
-    match state.State.sdma_queue 0 with
-    | None ->
-        (* Without a DMA engine every buffer is host-visible: write the
-           mapping directly once the device is idle. *)
-        Timeline.synchronize state.State.tl;
-        Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view buf) ~off:0 bytes
-    | Some qd ->
-        Timeline.copyin state.State.tl ~submit_chunk:(submit_chunk state qd)
-          buf bytes
-
-  let copyout state bytes buf =
-    Timeline.synchronize state.State.tl;
-    match state.State.sdma_queue 0 with
-    | None ->
-        let len = Bytes.length bytes in
-        Bytes.blit
-          (Hcq.Mmio.read_bytes (Hcq.Buffer.cpu_view buf) ~off:0 ~len)
-          0 bytes 0 len
-    | Some qd ->
-        Timeline.copyout state.State.tl ~submit_chunk:(submit_chunk state qd)
-          bytes buf
-
-  let transfer state ~dest ~src ~dest_device ~src_device nbytes =
-    if Tolk.Device.canonicalize dest_device <> Tolk.Device.canonicalize src_device then false
-    else begin
-      let qd = Option.get (state.State.sdma_queue 0) in
-      submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src nbytes);
-      true
-    end
-
   let raw state =
     let alloc size (spec : Tolk.Device.Buffer_spec.t) =
       match spec.external_ptr with
@@ -2137,7 +1932,6 @@ module Allocator = struct
     let offset buf size byte_offset =
       Hcq.Buffer.offset buf ~off:byte_offset ~size ()
     in
-    let has_sdma = Option.is_some (state.State.sdma_queue 0) in
     {
       Tolk.Device.Allocator.kind = state.State.buffer_kind;
       host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
@@ -2148,11 +1942,8 @@ module Allocator = struct
       synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
-      copyin = copyin state;
-      copyout = copyout state;
       addr = Some Hcq.Buffer.va;
       offset = Some offset;
-      transfer = (if has_sdma then Some (transfer state) else None);
     }
 
   let create state =
@@ -2349,8 +2140,7 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
       (* The queue's pointers live at the dispatch-id slots of an HSA queue
          descriptor laid out in the gart buffer. *)
       let aql = if queue_type = Compute_aql then
-          let commands = alloc ~cpu_access:true (16 lsl 20) in
-          Some (Queue_desc.initialize_aql ~descriptor:(Hcq.Buffer.cpu_view gart) ~commands
+          Some (Queue_desc.initialize_aql ~descriptor:(Hcq.Buffer.cpu_view gart)
             ~cu_count:(cu_cnt * xccs) ~waves_per_cu)
         else None in
       let queue = iface.Iface.create_queue queue_type ~ring ~gart
@@ -2408,7 +2198,6 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
       ~sleep:iface.Iface.sleep ~owner:hw
       (Hcq.Signal.Pool.get pool)
   in
-  let bounce_count = 32 and bounce_size = 2 lsl 20 in
   let state =
     {
       State.name = name;
@@ -2423,11 +2212,6 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
           Timeline.timeline = timeline_signal ();
 
           error_state = None;
-          bounce =
-            Array.init bounce_count (fun _ ->
-                iface.Iface.alloc ~host:true bounce_size);
-          bounce_timeline = Array.make bounce_count 0;
-          bounce_next = 0;
           on_hang = iface.Iface.on_device_hang;
         };
       allocator = None;

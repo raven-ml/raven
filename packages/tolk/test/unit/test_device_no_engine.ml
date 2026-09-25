@@ -31,6 +31,13 @@ let allocated_i32 n =
 let fail_loud_tests =
   group "Buffer.copy_from without the engine"
     [
+      test "host byte access needs no copy runner" (fun () ->
+          let buf = allocated_i32 1 in
+          Fun.protect ~finally:(fun () -> Device.Buffer.deallocate buf) (fun () ->
+            let input = Bytes.create 4 in
+            Bytes.set_int32_le input 0 42l;
+            Device.Buffer.copyin buf input;
+            equal bytes input (Device.Buffer.as_bytes buf)));
       test "raises before the copy runner is installed" (fun () ->
           (* Same size and dtype, so copy_from clears its own precondition
              checks and reaches the uninstalled runner rather than raising a

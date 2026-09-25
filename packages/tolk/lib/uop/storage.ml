@@ -50,11 +50,8 @@ and 'buf allocator = {
   kind : 'buf Type.Id.t;
   alloc : int -> Buffer_spec.t -> 'buf;
   free : 'buf -> int -> Buffer_spec.t -> unit;
-  copyin : 'buf -> bytes -> unit;
-  copyout : bytes -> 'buf -> unit;
   addr : ('buf -> nativeint) option;
   offset : ('buf -> int -> int -> 'buf) option;
-  transfer : (dest:'buf -> src:'buf -> dest_device:string -> src_device:string -> int -> bool) option;
 }
 and allocator_pack = Pack : 'buf allocator -> allocator_pack
 and backing = Backing : 'buf allocator * 'buf -> backing
@@ -65,7 +62,6 @@ module Allocator = struct
     (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
   type buffer = t
   type nonrec 'buf mapping = 'buf mapping = { map : buffer -> 'buf; unmap : 'buf -> unit }
-  type 'buf transfer = dest:'buf -> src:'buf -> dest_device:string -> src_device:string -> int -> bool
   type 'buf t = 'buf allocator = {
     host : 'buf -> nativeint option;
     mapping : 'buf mapping option;
@@ -73,11 +69,8 @@ module Allocator = struct
     kind : 'buf Type.Id.t;
     alloc : int -> Buffer_spec.t -> 'buf;
     free : 'buf -> int -> Buffer_spec.t -> unit;
-    copyin : 'buf -> bytes -> unit;
-    copyout : bytes -> 'buf -> unit;
     addr : ('buf -> nativeint) option;
     offset : ('buf -> int -> int -> 'buf) option;
-    transfer : 'buf transfer option;
   }
   type packed = allocator_pack = Pack : 'buf t -> packed
 end
@@ -264,20 +257,6 @@ let supports_offset buf =
   let Allocator.Pack alloc = allocator buf in
   Option.is_some alloc.offset
 
-let device_prefix device =
-  match String.index_opt device ':' with
-  | Some i -> String.sub device 0 i
-  | None -> device
-
-let same_backend a b = String.equal (device_prefix a) (device_prefix b)
-
-let supports_transfer dst src =
-  let Allocator.Pack alloc = allocator dst in
-  let Allocator.Pack source = allocator src in
-  Option.is_some (Type.Id.provably_equal alloc.kind source.kind)
-  && Option.is_some alloc.transfer
-  && same_backend dst.device src.device
-
 let ensure_size buf bytes =
   let expected = nbytes buf in
   if Bytes.length bytes <> expected then
@@ -291,28 +270,6 @@ let synchronize_mappings ?except buf =
       if not (Option.fold ~none:false ~some:(fun except -> target == except) except) then
         alloc.synchronize ()) root.mappings
 
-let copyin buf bytes =
-  with_operation (fun () ->
-    ensure_size buf bytes;
-    if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
-    ensure_allocated buf;
-    synchronize_mappings buf;
-    match buf.storage with
-    | Unallocated -> invalid_arg "buffer is not allocated"
-    | Empty -> ()
-    | Allocated (Backing (alloc, raw)) -> alloc.copyin raw bytes)
-
-let copyout buf bytes =
-  with_operation (fun () ->
-    ensure_size buf bytes;
-    if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
-    ensure_allocated buf;
-    synchronize_mappings buf;
-    match buf.storage with
-    | Unallocated -> invalid_arg "buffer is not allocated"
-    | Empty -> ()
-    | Allocated (Backing (alloc, raw)) -> alloc.copyout bytes raw)
-
 external host_view : nativeint -> int -> Allocator.host_view = "caml_tolk_host_view"
 
 let as_buffer buf =
@@ -323,35 +280,6 @@ let as_buffer buf =
   | Empty -> None
   | Allocated (Backing (alloc, raw)) ->
       Option.map (fun addr -> host_view addr (nbytes buf)) (alloc.host raw)
-
-let transfer ~dst ~src =
-  with_operation (fun () ->
-    if size dst <> size src then invalid_arg "buffer transfer size mismatch";
-    if not (Dtype.equal (dtype dst) (dtype src)) then
-      invalid_arg "buffer transfer dtype mismatch";
-    if nbytes dst = 0 then begin
-      ensure_allocated dst;
-      ensure_allocated src;
-      true
-    end else if supports_transfer dst src then begin
-      synchronize_mappings dst;
-      synchronize_mappings src;
-      ensure_allocated dst;
-      ensure_allocated src;
-      match dst.storage, src.storage with
-      | Allocated (Backing (alloc, dest)), Allocated (Backing (source, raw_src)) ->
-          (match Type.Id.provably_equal alloc.kind source.kind with
-           | Some Type.Equal ->
-               (Option.get alloc.transfer) ~dest ~src:raw_src
-                 ~dest_device:dst.device ~src_device:src.device (nbytes dst)
-           | None -> false)
-      | _ -> assert false
-    end else false)
-
-let as_bytes buf =
-  let bytes = Bytes.create (nbytes buf) in
-  copyout buf bytes;
-  bytes
 
 let view buf ~size ~dtype ~offset =
   if offset < 0 then invalid_arg "buffer view offset must be non-negative";
@@ -463,8 +391,6 @@ module Host_allocator = struct
   let kind : nativeint Type.Id.t = Type.Id.make ()
   external alloc : int -> nativeint = "caml_tolk_host_alloc"
   external free : nativeint -> int -> unit = "caml_tolk_host_free"
-  external copyin : nativeint -> bytes -> unit = "caml_tolk_host_copyin"
-  external copyout : bytes -> nativeint -> unit = "caml_tolk_host_copyout"
 
   let make ~synchronize =
     let alloc size spec = match spec.Buffer_spec.external_ptr with
@@ -479,10 +405,8 @@ module Host_allocator = struct
       | Some addr -> addr
       | None -> invalid_arg "buffer has no host mapping" in
     Allocator.{ kind; synchronize; alloc; free;
-      copyin = (fun buf bytes -> synchronize (); copyin buf bytes);
-      copyout = (fun bytes buf -> synchronize (); copyout bytes buf);
       host = Option.some; addr = Some Fun.id; offset = Some offset;
-      mapping = Some {map; unmap = ignore}; transfer = None }
+      mapping = Some {map; unmap = ignore} }
 end
 
 (* Buffer-to-buffer copy is a scheduled device operation, not a device-layer
@@ -504,6 +428,73 @@ let copy_from ~dst ~src =
     if not (Dtype.equal (dtype dst) (dtype src)) then
       invalid_arg "buffer copy dtype mismatch";
     !copy_runner ~dst ~src)
+
+external host_copyin : nativeint -> bytes -> int -> int -> unit
+  = "caml_tolk_host_copyin"
+
+external host_copyout : nativeint -> bytes -> int -> int -> unit
+  = "caml_tolk_host_copyout"
+
+let copy_bytes ~upload buf bytes =
+  with_operation (fun () ->
+    ensure_size buf bytes;
+    if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
+    ensure_allocated buf;
+    synchronize_mappings buf;
+    match buf.storage with
+    | Unallocated -> assert false
+    | Empty -> ()
+    | Allocated (Backing (alloc, raw)) ->
+        let copy = if upload then host_copyin else host_copyout in
+        match alloc.host raw with
+        | Some address ->
+            alloc.synchronize ();
+            copy address bytes 0 (Bytes.length bytes)
+        | None ->
+            (* Command storage is host mapped and takes the branch above.
+               Only user storage needs a queued STORE, through staging owned
+               by the same device so no foreign host import is required. *)
+            let width = Dtype.itemsize buf.dtype in
+            let count =
+              if supports_offset buf then min buf.size (max 1 ((64 lsl 20) / width))
+              else buf.size in
+            let spec = {Buffer_spec.default with
+              host = true; cpu_access = true; nolru = true} in
+            let staging = create ~device:buf.device ~size:count ~dtype:buf.dtype
+                ~spec (allocator buf) in
+            ensure_allocated staging;
+            let address = match host_addr staging with
+              | Some address -> address
+              | None ->
+                  deallocate staging;
+                  invalid_arg "host staging allocation has no host mapping" in
+            let offset = ref 0 in
+            while !offset < buf.size do
+              let size = min count (buf.size - !offset) in
+              let target = if size = buf.size then buf else
+                  view buf ~size ~dtype:buf.dtype ~offset:(!offset * width) in
+              let chunk = if size = count then staging else
+                  view staging ~size ~dtype:buf.dtype ~offset:0 in
+              ensure_allocated target;
+              ensure_allocated chunk;
+              if upload then copy address bytes (!offset * width) (size * width);
+              if upload then copy_from ~dst:target ~src:chunk
+              else copy_from ~dst:chunk ~src:target;
+              alloc.synchronize ();
+              if not upload then copy address bytes (!offset * width) (size * width);
+              if chunk != staging then deallocate chunk;
+              if target != buf then deallocate target;
+              offset := !offset + size
+            done;
+            deallocate staging)
+
+let copyin buf bytes = copy_bytes ~upload:true buf bytes
+let copyout buf bytes = copy_bytes ~upload:false buf bytes
+
+let as_bytes buf =
+  let bytes = Bytes.create (nbytes buf) in
+  copyout buf bytes;
+  bytes
 
 (* Snapshots contain bytes and ownership edges, never allocator closures or
    process-local pointers. IDs preserve sharing within a serialized graph. *)

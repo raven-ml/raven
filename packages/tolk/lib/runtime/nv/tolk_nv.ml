@@ -160,16 +160,12 @@ type 'meta device = {
   mutable shader_local_mem : Tolk.Device.Buffer.t option;
   shared_mem_window : nativeint;
   local_mem_window : nativeint;
-  cmdq_page : 'meta Hcq.Buffer.t;
-  mutable cmdq_position : int;
-  cmdq_pending : (int * Hcq.Mmio.t * int64) Stdlib.Queue.t;
   submission : Hcq.Submission.t;
-  cmdq : Hcq.Mmio.t;
   gpu_mmio : Hcq.Mmio.t;
 }
 
 let device ~compute_class ~dma_class ~gpfifo_class ~sass_version
-    ?(slm_per_thread = 0) ~shared_mem_window ~local_mem_window ~cmdq_page
+    ?(slm_per_thread = 0) ~shared_mem_window ~local_mem_window
     ~gpu_mmio () =
   {
     compute_class;
@@ -180,11 +176,7 @@ let device ~compute_class ~dma_class ~gpfifo_class ~sass_version
     shader_local_mem = None;
     shared_mem_window;
     local_mem_window;
-    cmdq_page;
-    cmdq_position = 0;
-    cmdq_pending = Stdlib.Queue.create ();
     submission = Hcq.Submission.create ();
-    cmdq = Hcq.Buffer.cpu_view cmdq_page;
     gpu_mmio;
   }
 
@@ -230,73 +222,6 @@ let push_sem_wait q ~addr ~value =
       lor bits Defs.nvc56f_sem_execute_payload_size
             Defs.nvc56f_sem_execute_payload_size_64bit;
     |]
-
-(* Submission: stage the stream in the device's command buffer, point the
-   next ring entry at it, publish the new put position, and only then ring
-   the work-submission doorbell, so the device never fetches a stale
-   entry. *)
-let completed progress =
-  let submitted = Hcq.Mmio.read64 progress 0 in
-  let low = Int64.logand (Int64.of_int32 (Hcq.Mmio.read32 progress 8)) 0xffffffffL in
-  Hcq.Mmio.fence ();
-  Int64.sub submitted (Int64.logand (Int64.sub submitted low) 0xffffffffL)
-
-let submit_to_gpfifo ~compute (dev : 'meta device) q (qd : Queue_desc.t) =
-  Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
-    dev.submission;
-  let entries = Hcq.Mmio.size qd.ring / 8 in
-  if entries < 2 || entries land (entries - 1) <> 0 then
-    invalid_arg "NV FIFO capacity must be a power of two";
-  let next = Int64.succ (Hcq.Mmio.read64 qd.progress 0) in
-  let required = Int64.sub next (Int64.of_int (entries - 1)) in
-  if required > 0L then Hcq.Submission.wait_progress dev.submission qd.progress ~target:required;
-  let tail = Q.create () in
-  let address = va64 (Nativeint.add qd.progress_addr 8n) in
-  let value = Int64.to_int (Int64.logand next 0xffffffffL) in
-  if compute then
-    nvm tail 0 Defs.nvc56f_sem_addr_lo
-      [| lo32 address; hi32 address; value; 0;
-         bits Defs.nvc56f_sem_execute_operation Defs.nvc56f_sem_execute_operation_release
-         lor bits Defs.nvc56f_sem_execute_release_wfi Defs.nvc56f_sem_execute_release_wfi_en |]
-  else begin
-    nvm tail 4 Defs.nvc6b5_set_semaphore_a [|hi32 address; lo32 address; value|];
-    nvm tail 4 Defs.nvc6b5_launch_dma
-      [|bits Defs.nvc6b5_launch_dma_flush_enable 1
-        lor bits Defs.nvc6b5_launch_dma_semaphore_type 1|]
-  end;
-  let n = Q.length q + Q.length tail in
-  let size = Hcq.Mmio.size dev.cmdq in
-  if n * 4 > size || n > 0x1fffff then invalid_arg "NV command stream exceeds staging capacity";
-  let start = round_up dev.cmdq_position 16 in
-  let start = if start mod size + n * 4 > size then round_up start size else start in
-  let finish = start + n * 4 in
-  let rec retire () =
-    if not (Stdlib.Queue.is_empty dev.cmdq_pending) then begin
-      let first, progress, target = Stdlib.Queue.peek dev.cmdq_pending in
-      if finish - first > size || completed progress >= target then begin
-        Hcq.Submission.wait_progress dev.submission progress ~target;
-        ignore (Stdlib.Queue.take dev.cmdq_pending);
-        retire ()
-      end
-    end
-  in
-  retire ();
-  let base = start mod size in
-  for i = 0 to n - 1 do
-    let word = if i < Q.length q then Q.get q i else Q.get tail (i - Q.length q) in
-    Hcq.Mmio.write32 dev.cmdq (base + i * 4) (Int32.of_int word)
-  done;
-  let cmdq_addr = Nativeint.to_int (Hcq.Buffer.va dev.cmdq_page) + base in
-  let put = Int32.to_int (Hcq.Mmio.read32 qd.gpput 0) in
-  Hcq.Mmio.write64 qd.ring (put mod entries * 8)
-    (Int64.of_int (((cmdq_addr / 4) lsl 2) lor (n lsl 42) lor (1 lsl 41)));
-  Hcq.Mmio.write64 qd.progress 0 next;
-  dev.cmdq_position <- finish;
-  Stdlib.Queue.add (start, qd.progress, next) dev.cmdq_pending;
-  Hcq.Mmio.fence ();
-  Hcq.Mmio.write32 qd.gpput 0 (Int32.of_int ((put + 1) mod entries));
-  Hcq.Mmio.fence ();
-  Hcq.Mmio.write32 dev.gpu_mmio 0x90 (Int32.of_int qd.token)
 
 (* Compute queue *)
 
@@ -511,8 +436,6 @@ module Compute_queue = struct
               Defs.nvc56f_sem_execute_payload_size_32bit;
       |];
     t.active_qmd <- None
-
-  let submit t qd = submit_to_gpfifo ~compute:true t.dev t.q qd
 end
 
 (* Copy queue *)
@@ -565,8 +488,6 @@ module Copy_queue = struct
 
   let wait t ?(value = 0) sg =
     push_sem_wait t.q ~addr:(Hcq.Signal.value_addr sg) ~value
-
-  let submit t qd = submit_to_gpfifo ~compute:false t.dev t.q qd
 end
 
 (* Driver interface seam *)
@@ -1759,7 +1680,6 @@ module Program = struct
       data.constbufs;
     qmd, cbuf_0
 
-
 end
 
 (* Local-memory sizing *)
@@ -2309,38 +2229,6 @@ module State = struct
 end
 
 module Allocator = struct
-  (* One DMA stream ordered against the device timeline: wait for the last
-     submitted work, append the packets of [build], advance the timeline. *)
-  let submit_copy state build =
-    let tl = state.State.tl in
-    State.prepare state;
-    let cp = Copy_queue.create state.State.hw in
-    Copy_queue.wait cp
-      ~value:(Timeline.submitted tl)
-      tl.Timeline.timeline;
-    build cp;
-    Timeline.submit tl (fun value ->
-      Copy_queue.signal cp ~value tl.Timeline.timeline;
-      Copy_queue.submit cp state.State.dma_queue)
-
-  let submit_chunk state ~dest ~src len =
-    submit_copy state (fun cp -> Copy_queue.copy cp ~dest ~src len)
-
-  let copyin state buf bytes =
-    Timeline.copyin state.State.tl ~submit_chunk:(submit_chunk state) buf bytes
-
-  let copyout state bytes buf =
-    State.synchronize state;
-    Timeline.copyout state.State.tl ~submit_chunk:(submit_chunk state) bytes
-      buf
-
-  let transfer state ~dest ~src ~dest_device ~src_device nbytes =
-    if Tolk.Device.canonicalize dest_device <> Tolk.Device.canonicalize src_device then false
-    else begin
-      submit_copy state (fun cp -> Copy_queue.copy cp ~dest ~src nbytes);
-      true
-    end
-
   let raw state =
     let alloc size (spec : Tolk.Device.Buffer_spec.t) =
       match spec.external_ptr with
@@ -2368,11 +2256,8 @@ module Allocator = struct
       synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
-      copyin = copyin state;
-      copyout = copyout state;
       addr = Some Hcq.Buffer.va;
       offset = Some offset;
-      transfer = Some (transfer state);
     }
 
   let create state =
@@ -2569,7 +2454,6 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
   Nv_tables.set_field sb sp.benable 1;
   iface.Nv_iface.rm_control ~obj:channel_group
     ~cmd:Defs.nva06c_ctrl_cmd_gpfifo_schedule ~params:sb ();
-  let cmdq_page = iface.Nv_iface.alloc ~cpu_access:true 0x200000 in
   let num_gpcs, num_tpc_per_gpc, num_sm_per_tpc, max_warps_per_sm, sm_version =
     match
       query_gpu_info iface ~subdevice
@@ -2591,7 +2475,7 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
       ~gpfifo_class:usermode.Nv_iface.gpfifo_class
       ~sass_version:(sass_of_sm_version sm_version)
       ~shared_mem_window:0x729400000000n ~local_mem_window:0x729300000000n
-      ~cmdq_page ~gpu_mmio:usermode.Nv_iface.mmio ()
+      ~gpu_mmio:usermode.Nv_iface.mmio ()
   in
   let pool =
     Hcq.Signal.Pool.create ~alloc_page:(fun () ->
@@ -2601,7 +2485,6 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
     Hcq.Signal.make ~is_timeline:true ~sleep:iface.Nv_iface.sleep ~owner:hw
       (Hcq.Signal.Pool.get pool)
   in
-  let bounce_count = 32 and bounce_size = 2 lsl 20 in
   let state =
     {
       State.name = name;
@@ -2617,11 +2500,6 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
           Timeline.timeline = timeline_signal ();
 
           error_state = None;
-          bounce =
-            Array.init bounce_count (fun _ ->
-                iface.Nv_iface.alloc ~host:true bounce_size);
-          bounce_timeline = Array.make bounce_count 0;
-          bounce_next = 0;
           on_hang = on_device_hang iface ~debugger ~debug_channel;
         };
       num_gpcs;

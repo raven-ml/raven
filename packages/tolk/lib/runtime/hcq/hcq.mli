@@ -385,13 +385,12 @@ end
 (** Device completion timelines.
 
     A timeline orders a device's submitted work behind one
-    monotonically increasing counter: each submission takes the next
-    value with {!Timeline.submit} and instructs the device to
+    monotonically increasing counter: each compiled submission takes the next
+    value and instructs the device to
     write it to the timeline signal once the work completes, so waiting
     for a value waits for everything submitted up to it. The timeline
     latches device errors so failures stay loud, rolls the counter over
-    before it outgrows the signal's dword, and stages host transfers
-    through a rotating set of pinned bounce buffers. *)
+    before it outgrows the signal's dword. *)
 module Timeline : sig
   type ('meta, 'dev) t = {
     timeline : ('meta, 'dev) Signal.t;
@@ -399,13 +398,6 @@ module Timeline : sig
     mutable error_state : exn option;
         (** The latched device error: once a submission fails or a wait stalls,
             later waits re-raise it unless successful recovery clears it. *)
-    bounce : 'meta Buffer.t array;
-        (** Rotating CPU-mapped, pinned staging buffers for host
-            transfers, all of one size. *)
-    bounce_timeline : int array;
-        (** Per-slot timeline value of the slot's last use, so reuse
-            waits only for that submission. *)
-    mutable bounce_next : int;  (** The most recently used slot. *)
     on_hang : unit -> unit;
         (** Called after a wait stalled or faulted; expected to raise
             [Failure] with the device's fault report, which is folded
@@ -416,18 +408,7 @@ module Timeline : sig
 
   val submitted : ('meta, 'dev) t -> int
   (** [submitted t] reads the last submitted value from the second word
-      of the mapped timeline. Direct and compiled submissions share it. *)
-
-  val submit : ('meta, 'dev) t -> (int -> 'a) -> 'a
-  (** [submit t f] calls {!prepare}, then [f value] with the next completion
-      value. [f] must submit work that signals [value] when it completes.
-      The submitted counter advances only when [f] returns successfully.
-      Automatic buffer finalization is deferred until publication finishes.
-
-      Failures are latched so later waits cannot release storage still in use
-      by partially submitted work. {!Signal.Timeout} and [Failure] use the
-      fault reporting and recovery rules of {!guarded_wait}; other exceptions
-      are retained unchanged. Submissions to one device must be serialized. *)
+      of the mapped timeline. *)
 
   val prepare : ('meta, 'dev) t -> unit
   (** [prepare t] checks latched errors and, when the low dword reaches
@@ -448,33 +429,4 @@ module Timeline : sig
   (** [synchronize ?timeout_ms t] waits until every value handed out so far has
       completed. Raises the latched error if the device already failed,
       and latches new stalls or faults (see {!guarded_wait}). *)
-
-  val copyin :
-    ('meta, 'dev) t ->
-    submit_chunk:(dest:'meta Buffer.t -> src:'meta Buffer.t -> int -> unit) ->
-    'meta Buffer.t ->
-    bytes ->
-    unit
-  (** [copyin t ~submit_chunk buf bytes] copies [bytes] into the device
-      region [buf] through the staging buffers: each chunk waits for
-      its staging slot's previous use to complete, blits the chunk into
-      the slot, and calls [submit_chunk ~dest ~src len] with [dest] the
-      chunk's sub-buffer of [buf] and [src] the slot. [submit_chunk]
-      must submit a device copy of [len] bytes ordered after all
-      previously submitted work through {!submit}. The slot records the
-      published value and is reused only once it passes. *)
-
-  val copyout :
-    ('meta, 'dev) t ->
-    submit_chunk:(dest:'meta Buffer.t -> src:'meta Buffer.t -> int -> unit) ->
-    bytes ->
-    'meta Buffer.t ->
-    unit
-  (** [copyout t ~submit_chunk bytes buf] copies the device region
-      [buf] into [bytes] through the first staging buffer, chunk by
-      chunk: [submit_chunk ~dest ~src len] must submit a device copy of
-      the [len]-byte chunk ([src], a sub-buffer of [buf]) into the slot
-      ([dest]), ordered after all previously submitted work through {!submit}.
-      The copy waits for the published value and blits the slot into [bytes]. Callers
-      {!synchronize} first so earlier writes to [buf] have retired. *)
 end

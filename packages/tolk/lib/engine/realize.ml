@@ -67,7 +67,7 @@ let buffers_overlap a b =
     | Some a, Some b -> intervals_overlap a b
     | _ -> false
 
-let copy_via_host ~device dest src =
+let copy_via_host dest src =
   let module B = Device.Buffer in
   B.ensure_allocated dest;
   B.ensure_allocated src;
@@ -100,9 +100,6 @@ let copy_via_host ~device dest src =
       B.ensure_allocated src;
       B.copyout src bytes;
       B.copyin dst bytes;
-      (* Native uploads can retain their own pinned bounce. Drain it before
-         allocating the next one, even for an asynchronous caller. *)
-      Device.synchronize device;
       B.deallocate src;
       B.deallocate dst;
       remaining := !remaining - length
@@ -126,9 +123,7 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
                      (Device.Buffer.dtype dest) (Device.Buffer.dtype src))
         then invalid_arg "buffer copy: size or dtype mismatch";
         let st = Unix.gettimeofday () in
-        let transferred = not (buffers_overlap dest src)
-          && Device.Buffer.transfer ~dst:dest ~src in
-        if not transferred then copy_via_host ~device dest src;
+        copy_via_host dest src;
         if wait then begin
           Device.synchronize device;
           Some (Unix.gettimeofday () -. st)
@@ -141,7 +136,7 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
 
 (* Disk/TINYFS fast paths in tinygrad require a disk-backed allocator boundary.
    Tolk currently has no disk buffer runtime, so host bounce remains the
-   fallback when allocator transfer is unavailable. *)
+   fallback for copies that cannot use a shared device queue. *)
 
 (* XXX: EncDec — hardware encode/decode (HEVC).  Out of scope. *)
 

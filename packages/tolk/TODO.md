@@ -14,35 +14,23 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
-- Move AMD/NV allocator transfers onto shared execution. Delete duplicate
-  command builders and
-  handoff bookkeeping once their callers migrate, preserving transfer ownership
-  and ordering.
-  Move host-mapped initialization/readback to direct host access before routing
-  unmapped byte transfers through owned host buffers and shared STORE calls;
-  queue image/command initialization currently calls allocator copyin, so a
-  blanket shared-submission replacement would recursively link queues. Remove
-  AMD's eager 32-by-2-MiB staging pool with its obsolete transfer path. Keep
-  OCaml byte storage alive through completion without borrowing moving pointers.
-  Preserve bounded waits and retirement for independently linked submissions;
-  these are separate safety requirements.
 - Port the target's distinction between one-shot linker ring allocations and
   retained command storage. Share NV code images within a compiled schedule
   and use one QMD/argument arena per run. Measure allocation counts and
   test independent retained links, descriptor alignment and replay patching.
 - Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
-  `LRU=0`, forcing GC during allocation, mapped-buffer teardown, direct dispatch,
+  `LRU=0`, forcing GC during allocation, mapped-buffer teardown,
   compiled submission, signal reservation and kernarg reuse. Verify that waits
   target submitted work and PCI allocator/page-table operations cannot re-enter.
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
-  submissions, including failures during direct publication and timed dispatch.
+  submissions, including failures during publication and timed dispatch.
   Validate NV channel retirement across independently linked
-  batches and direct dispatches on hardware, including kernel-argument arena
+  batches on hardware, including kernel-argument arena
   reuse during long asynchronous batches.
 - Validate AMD/NV/CUDA profiling clock alignment on hardware.
   Validate staged peer transfers and shared host signals on small-BAR devices.
   Validate AMD AQL/multi-XCC
-  dispatch and direct ring/staging reuse under long asynchronous batches.
+  dispatch and ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register
   tables. Audit VF mailbox leases, gated register access and PF-only boot
   operations against the existing AMD device scope; justify any retained gap.
@@ -63,6 +51,11 @@ with their rationale and validation; commit count is not an acceptance metric.
   region index/count alone cannot prove a shared hive, and driver sysfs state
   cannot be assumed after takeover. Check mixed-vendor/cross-hive mappings and
   reject imports outside the receiver's virtual-address aperture.
+  Cover failed import rollback that leaves receiver page-table entries live;
+  retain and prevent explicit deallocation of the source until retirement is
+  established. Sequence KFD/NVK allocation rollback so failed driver-object
+  retirement cannot release host mappings or physical backing; inject both
+  setup and cleanup failures.
   Complete rollback of firmware
   bootstrap failures before a booted interface exists. Validate post-boot
   AMD/NV queue/runtime rollback with injected hardware failures, including
@@ -97,7 +90,10 @@ acceptance requirement; skipped tests are not execution evidence.
   `Nx.bitcast`.
 
 - Migrate every Python driver to the target API and generate the complete
-  corpus separately, including AMD/NV queue drivers. Update the C-style fixture
+  corpus separately, including AMD/NV queue drivers. Eight NV signal/timestamp
+  expectations still encode old-pin releases; the current one-/two-word signals
+  and separate timestamp release match the target. Update their generator and
+  README when regenerating, rather than copying actual output. Update the C-style fixture
   builder to emit committed constants (`cconst`); its bare boolean CONST
   currently renders an empty condition. Attribute every changed
   expectation; require exact source parity for supported renderers.

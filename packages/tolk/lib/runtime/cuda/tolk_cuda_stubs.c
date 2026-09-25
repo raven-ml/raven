@@ -32,7 +32,6 @@ typedef struct CUctx_st *CUcontext;
 typedef struct CUmod_st *CUmodule;
 typedef struct CUfunc_st *CUfunction;
 typedef struct CUstream_st *CUstream;
-typedef struct CUevent_st *CUevent;
 #define CU_LAUNCH_PARAM_END ((void *)0x00)
 #define CU_LAUNCH_PARAM_BUFFER_POINTER ((void *)0x01)
 #define CU_LAUNCH_PARAM_BUFFER_SIZE ((void *)0x02)
@@ -52,11 +51,6 @@ static CUresult (*p_cuMemHostRegister)(void *, size_t, unsigned int);
 static CUresult (*p_cuMemHostUnregister)(void *);
 static CUresult (*p_cuDeviceCanAccessPeer)(int *, CUdevice, CUdevice);
 static CUresult (*p_cuCtxEnablePeerAccess)(CUcontext, unsigned int);
-static CUresult (*p_cuMemcpyPeerAsync)(CUdeviceptr, CUcontext, CUdeviceptr,
-                                    CUcontext, size_t, CUstream);
-static CUresult (*p_cuMemcpyHtoDAsync)(CUdeviceptr, const void *, size_t,
-                                       CUstream);
-static CUresult (*p_cuMemcpyDtoH)(void *, CUdeviceptr, size_t);
 static CUresult (*p_cuMemcpyAsync)(CUdeviceptr, CUdeviceptr, size_t, CUstream);
 static CUresult (*p_cuModuleLoadData)(CUmodule *, const void *);
 static CUresult (*p_cuModuleGetFunction)(CUfunction *, CUmodule, const char *);
@@ -67,13 +61,9 @@ static CUresult (*p_cuLaunchKernel)(CUfunction, unsigned int, unsigned int,
                                     unsigned int, unsigned int, CUstream,
                                     void **, void **);
 static CUresult (*p_cuGetErrorString)(CUresult, const char **);
-static CUresult (*p_cuEventCreate)(CUevent *, unsigned int);
-static CUresult (*p_cuEventRecord)(CUevent, CUstream);
-static CUresult (*p_cuEventDestroy)(CUevent);
 static CUresult (*p_cuStreamCreate)(CUstream *, unsigned int);
 static CUresult (*p_cuStreamDestroy)(CUstream);
 static CUresult (*p_cuStreamQuery)(CUstream);
-static CUresult (*p_cuStreamWaitEvent)(CUstream, CUevent, unsigned int);
 static CUresult (*p_cuStreamWaitValue64)(CUstream, CUdeviceptr, uint64_t, unsigned int);
 static CUresult (*p_cuStreamWriteValue64)(CUstream, CUdeviceptr, uint64_t, unsigned int);
 
@@ -118,9 +108,6 @@ static void load_cuda(void) {
   LOAD_CUDA(p_cuMemHostUnregister, "cuMemHostUnregister");
   LOAD_CUDA(p_cuDeviceCanAccessPeer, "cuDeviceCanAccessPeer");
   LOAD_CUDA(p_cuCtxEnablePeerAccess, "cuCtxEnablePeerAccess");
-  LOAD_CUDA(p_cuMemcpyPeerAsync, "cuMemcpyPeerAsync");
-  LOAD_CUDA(p_cuMemcpyHtoDAsync, "cuMemcpyHtoDAsync_v2");
-  LOAD_CUDA(p_cuMemcpyDtoH, "cuMemcpyDtoH_v2");
   LOAD_CUDA(p_cuMemcpyAsync, "cuMemcpyAsync");
   LOAD_CUDA(p_cuModuleLoadData, "cuModuleLoadData");
   LOAD_CUDA(p_cuModuleGetFunction, "cuModuleGetFunction");
@@ -128,13 +115,9 @@ static void load_cuda(void) {
   LOAD_CUDA(p_cuLaunchKernel, "cuLaunchKernel");
   LOAD_CUDA(p_cuLaunchHostFunc, "cuLaunchHostFunc");
   LOAD_CUDA(p_cuGetErrorString, "cuGetErrorString");
-  LOAD_CUDA(p_cuEventCreate, "cuEventCreate");
-  LOAD_CUDA(p_cuEventRecord, "cuEventRecord");
-  LOAD_CUDA(p_cuEventDestroy, "cuEventDestroy_v2");
   LOAD_CUDA(p_cuStreamCreate, "cuStreamCreate");
   LOAD_CUDA(p_cuStreamDestroy, "cuStreamDestroy_v2");
   LOAD_CUDA(p_cuStreamQuery, "cuStreamQuery");
-  LOAD_CUDA(p_cuStreamWaitEvent, "cuStreamWaitEvent");
   LOAD_CUDA(p_cuStreamWaitValue64, "cuStreamWaitValue64_v2");
   LOAD_CUDA(p_cuStreamWriteValue64, "cuStreamWriteValue64_v2");
 #undef LOAD_CUDA
@@ -168,9 +151,7 @@ typedef struct {
   CUcontext context;
   pthread_mutex_t lock;
   CUstream streams[2];
-  CUevent handoff;
   CUresult status;
-  int direct_pending, queue_pending;
 } tolk_cuda_queue;
 
 static CUresult queue_status(tolk_cuda_queue *q, CUresult status) {
@@ -178,31 +159,9 @@ static CUresult queue_status(tolk_cuda_queue *q, CUresult status) {
   return q->status;
 }
 
-static CUresult before_direct(tolk_cuda_queue *q) {
-  if (q->status != 0) return q->status;
-  queue_status(q, p_cuCtxSetCurrent(q->context));
-  if (q->status == 0 && q->queue_pending) {
-    queue_status(q, p_cuEventRecord(q->handoff, q->streams[1]));
-    if (q->status == 0)
-      queue_status(q, p_cuStreamWaitEvent(q->streams[0], q->handoff, 0));
-    q->queue_pending = 0;
-  }
-  q->direct_pending = 1;
-  return q->status;
-}
-
 static void tolk_cuda_hcq_begin(tolk_cuda_queue *q) {
   pthread_mutex_lock(&q->lock);
-  if (q->status == 0) {
-    queue_status(q, p_cuCtxSetCurrent(q->context));
-    if (q->status == 0 && q->direct_pending) {
-      queue_status(q, p_cuEventRecord(q->handoff, q->streams[0]));
-      if (q->status == 0)
-        queue_status(q, p_cuStreamWaitEvent(q->streams[1], q->handoff, 0));
-      q->direct_pending = 0;
-    }
-    q->queue_pending = 1;
-  }
+  if (q->status == 0) queue_status(q, p_cuCtxSetCurrent(q->context));
   pthread_mutex_unlock(&q->lock);
 }
 
@@ -297,9 +256,7 @@ CAMLprim value caml_tolk_cuda_hcq_create(value v_context) {
   q->context = (CUcontext)Nativeint_val(v_context);
   CUresult status = p_cuStreamCreate(&q->streams[0], 1); /* nonblocking */
   if (status == 0) status = p_cuStreamCreate(&q->streams[1], 1);
-  if (status == 0) status = p_cuEventCreate(&q->handoff, 2); /* no timing */
   if (status != 0) {
-    if (q->handoff != NULL) p_cuEventDestroy(q->handoff);
     if (q->streams[0] != NULL) p_cuStreamDestroy(q->streams[0]);
     if (q->streams[1] != NULL) p_cuStreamDestroy(q->streams[1]);
     pthread_mutex_destroy(&q->lock);
@@ -320,8 +277,6 @@ CAMLprim value caml_tolk_cuda_hcq_destroy(value v_queue) {
   if (status == 0) status = result;
   /* Attempt every release even if synchronization or an earlier release
      fails. Context destruction follows on the OCaml side. */
-  result = p_cuEventDestroy(q->handoff);
-  if (status == 0) status = result;
   for (int i = 0; i < 2; i++) {
     result = p_cuStreamDestroy(q->streams[i]);
     if (status == 0) status = result;
@@ -535,71 +490,10 @@ CAMLprim value caml_tolk_cuda_enable_peer(value v_device, value v_peer,
   CAMLreturn(Val_true);
 }
 
-CAMLprim value caml_tolk_cuda_memcpy_peer(value v_dst, value v_dst_ctx,
-                                        value v_src, value v_src_ctx, value v_size) {
-  CAMLparam5(v_dst, v_dst_ctx, v_src, v_src_ctx, v_size);
-  cuda_check(p_cuMemcpyPeerAsync((CUdeviceptr)Nativeint_val(v_dst),
-      (CUcontext)Nativeint_val(v_dst_ctx), (CUdeviceptr)Nativeint_val(v_src),
-      (CUcontext)Nativeint_val(v_src_ctx), (size_t)Long_val(v_size), NULL));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_host_write(value v_host, value v_bytes) {
-  CAMLparam2(v_host, v_bytes);
-  memcpy((void *)Nativeint_val(v_host), Bytes_val(v_bytes),
-         caml_string_length(v_bytes));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_memcpy_htod_async(value v_queue, value v_dst,
-                                                value v_src, value v_size) {
-  CAMLparam4(v_queue, v_dst, v_src, v_size);
-  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
-  pthread_mutex_lock(&q->lock);
-  CUresult status = before_direct(q);
-  if (status == 0) status = p_cuMemcpyHtoDAsync(
-      (CUdeviceptr)Nativeint_val(v_dst), (const void *)Nativeint_val(v_src),
-      (size_t)Long_val(v_size), q->streams[0]);
-  pthread_mutex_unlock(&q->lock);
-  cuda_check(status);
-  CAMLreturn(Val_unit);
-}
-
-/* Device-to-host copy into raw (pinned) host memory. The destination is not
-   OCaml-managed, so the runtime lock is released for the duration of the
-   blocking copy. */
-CAMLprim value caml_tolk_cuda_memcpy_dtoh_ptr(value v_dst, value v_src,
-                                              value v_size) {
-  CAMLparam3(v_dst, v_src, v_size);
-  void *dst = (void *)Nativeint_val(v_dst);
-  CUdeviceptr src = (CUdeviceptr)Nativeint_val(v_src);
-  size_t size = (size_t)Long_val(v_size);
-  CUresult status;
-  caml_release_runtime_system();
-  status = p_cuMemcpyDtoH(dst, src, size);
-  caml_acquire_runtime_system();
-  cuda_check(status);
-  CAMLreturn(Val_unit);
-}
-
 CAMLprim value caml_tolk_cuda_host_read(value v_bytes, value v_host) {
   CAMLparam2(v_bytes, v_host);
   memcpy(Bytes_val(v_bytes), (const void *)Nativeint_val(v_host),
          caml_string_length(v_bytes));
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_memcpy_async(value v_queue, value v_dst,
-                                                value v_src, value v_size) {
-  CAMLparam4(v_queue, v_dst, v_src, v_size);
-  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
-  pthread_mutex_lock(&q->lock);
-  CUresult status = before_direct(q);
-  if (status == 0) status = p_cuMemcpyAsync(
-      (CUdeviceptr)Nativeint_val(v_dst), (CUdeviceptr)Nativeint_val(v_src),
-      (size_t)Long_val(v_size), q->streams[0]);
-  pthread_mutex_unlock(&q->lock);
-  cuda_check(status);
   CAMLreturn(Val_unit);
 }
 

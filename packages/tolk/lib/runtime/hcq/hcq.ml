@@ -378,18 +378,11 @@ module Signal = struct
   end
 end
 
-(* Timeline lifecycle and host-transfer staging shared by hardware-queue
-   device runtimes (hcq.py:384-517 HCQCompiled, :576-645 HCQAllocator). *)
+(* Timeline lifecycle shared by hardware-queue device runtimes. *)
 module Timeline = struct
   type ('meta, 'dev) t = {
     timeline : ('meta, 'dev) Signal.t;
     mutable error_state : exn option;
-    (* Rotating pinned staging buffers for host transfers; each slot records
-       the timeline value of its last use so reuse waits only for that
-       submission. *)
-    bounce : 'meta Buffer.t array;
-    bounce_timeline : int array;
-    mutable bounce_next : int;
     on_hang : unit -> unit;
   }
 
@@ -446,57 +439,6 @@ module Timeline = struct
       Signal.set_value t.timeline epoch;
       Mmio.write64 (Buffer.cpu_view (Signal.buf t.timeline)) 8 (Int64.of_int epoch)
     end
-
-  let submit t f =
-    Tolk_uop.Storage.with_operation (fun () ->
-        prepare t;
-        let value = submitted t + 1 in
-        let result = guarded_wait t (fun () ->
-            match f value with
-            | result -> result
-            | exception ((Signal.Timeout _ | Failure _) as error) -> raise error
-            | exception error ->
-                (* Submission may have touched hardware before raising. Keep
-                   storage until the failed device has been retired. *)
-                let backtrace = Printexc.get_raw_backtrace () in
-                t.error_state <- Some error;
-                Printexc.raise_with_backtrace error backtrace) in
-        Mmio.write64 (Buffer.cpu_view (Signal.buf t.timeline)) 8 (Int64.of_int value);
-        result)
-
-  let copyin t ~submit_chunk buf bytes =
-    let total = Bytes.length bytes in
-    let step = Buffer.size t.bounce.(0) in
-    let off = ref 0 in
-    while !off < total do
-      t.bounce_next <- (t.bounce_next + 1) mod Array.length t.bounce;
-      let slot = t.bounce_next in
-      guarded_wait t (fun () -> Signal.wait t.timeline t.bounce_timeline.(slot));
-      let len = min step (total - !off) in
-      Mmio.blit_bytes
-        (Buffer.cpu_view t.bounce.(slot))
-        ~off:0
-        (Bytes.sub bytes !off len);
-      submit_chunk ~dest:(Buffer.offset buf ~off:!off ()) ~src:t.bounce.(slot)
-        len;
-      t.bounce_timeline.(slot) <- submitted t;
-      off := !off + len
-    done
-
-  let copyout t ~submit_chunk bytes buf =
-    let total = Bytes.length bytes in
-    let staging = t.bounce.(0) in
-    let step = Buffer.size staging in
-    let off = ref 0 in
-    while !off < total do
-      let len = min step (total - !off) in
-      submit_chunk ~dest:staging ~src:(Buffer.offset buf ~off:!off ()) len;
-      guarded_wait t (fun () -> Signal.wait t.timeline (submitted t));
-      Bytes.blit
-        (Mmio.read_bytes (Buffer.cpu_view staging) ~off:0 ~len)
-        0 bytes !off len;
-      off := !off + len
-    done
 end
 
 let profile_offset name =

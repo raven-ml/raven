@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- Buffer byte transfers now use synchronized host access or bounded owned
+  staging through shared submissions. Remove allocator copy callbacks and
+  unused eager AMD/NV staging pools, saving at least 64 MiB per device.
+
 - Beam search waits for every started compilation worker before reporting a
   worker or spawn failure, preventing work from escaping its compilation context.
 

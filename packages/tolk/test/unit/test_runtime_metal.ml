@@ -583,13 +583,13 @@ let () =
             let src = i32_view src_base ~offset:4 ~size:1 in
             run_spec device spec [ dst; src ];
             equal (list int) [ 0; 42; 0; 0 ] (read_i32 dst_base));
-          test "blit transfer respects buffer view offsets" (fun () ->
+          test "shared copies respect buffer view offsets" (fun () ->
             let device = metal_device () in
             let dst_base = i32_buf device [ 0; 0; 0; 0 ] in
             let src_base = i32_buf device [ 1; 2; 3; 4 ] in
             let dst = i32_view dst_base ~offset:4 ~size:2 in
             let src = i32_view src_base ~offset:8 ~size:2 in
-            is_true (Device.Buffer.transfer ~dst ~src);
+            Device.Buffer.copy_from ~dst ~src;
             equal (list int) [ 0; 3; 4; 0 ] (read_i32 dst_base));
         ];
       group "Compiled queues"
@@ -754,9 +754,15 @@ let () =
                   Device.synchronize device
                 done);
             equal (list int) [ 24 ] (read_i32 a));
-          test "copies use the device transfer path" (fun () ->
+          test "unified-memory copies wait for preceding kernels" (fun () ->
             let device = metal_device () in
-            let src = U.from_buffer (i32_buf device [1]) and dst = U.from_buffer (i32_buf device [0]) in
-            is_true (Option.is_none ((Option.get (Device.queue device)).Device.copy (U.store_call ~dst ~src))));
+            let src = i32_buf device [1] and dst = i32_buf device [0] in
+            let spec = compile_incr device "metal_host_copy" in
+            let run = compile_queue device [queue_call device spec [0; 0]] in
+            run [|src|];
+            let before = !(Realize.queue_submissions) in
+            Device.Buffer.copy_from ~dst ~src;
+            equal int before !(Realize.queue_submissions);
+            equal (list int) [2] (read_i32 dst));
         ];
     ]

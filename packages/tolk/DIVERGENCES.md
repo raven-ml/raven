@@ -167,39 +167,43 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 - **NV channels track completion without a hardware consumer pointer.**
   Ampere exposes GPPut but no GPGet. Tolk appends an engine release carrying
-  a channel sequence; direct and compiled submissions share that sequence
-  and leave a FIFO slot empty. Direct staging waits before overlapping live
-  storage, retained replay waits before patching its old command tail, and
-  synchronization drains both channels. The frozen target does not bound
-  independent submissions this way. Native waits latch timeout and suppress
-  publication. Coverage: `test_runtime_nv` FIFO saturation and resumption,
-  independent retained batches, staging wrap across channels, delayed command
+  a channel sequence and leaves a FIFO slot empty. Retained replay waits before
+  patching its old command tail, and synchronization drains both channels.
+  The frozen target does not bound independent submissions this way. Native
+  waits latch timeout and suppress publication. Coverage: `test_runtime_nv`
+  FIFO saturation and resumption, independent retained batches, delayed command
   tails and 32-bit completion rollover. Hardware validation remains open.
   Reconsider when upstream provides equivalent occupancy and retirement rules.
 
-- **AMD/NV submissions read the mapped producer position and retain timeline
-  addresses across rollover.** Direct `Device.prog` launches coexist with
-  compiled submissions, so a second host counter can overwrite unread ring
-  entries. Before the low timeline dword reaches its comparison limit, Tolk
-  drains work and advances the high-word epoch at the same address. Retained
+- **AMD/NV submissions retain timeline addresses across rollover.** Before
+  the low timeline dword reaches its comparison limit, Tolk drains work and
+  advances the high-word epoch at the same address. Independently retained
   host fences remain monotonic while GPU dword waits restart safely. AQL scratch
   updates touch only scratch fields, preserving live dispatch counters. Coverage:
   mapped producer tests, two epoch transitions and compiled AMD host replay
-  across rollover. Hardware acceptance remains in TODO. Reconsider when direct
-  dispatch is removed or upstream provides an equivalent rollover protocol.
+  across rollover. Hardware acceptance remains in TODO. Reconsider when
+  upstream provides an equivalent rollover protocol for retained submissions.
 
-- **Host access, direct calls and native transfers wait for existing importers.**
-  Host reads/writes and native buffer transfers wait for importing devices.
-  During migration, `Device.runtime` also enforces this boundary for direct
-  calls; removing that separate dispatch path is required in TODO. Address binding itself does not wait. Compiled host
-  submissions use `Device.queue_runtime` and their encoded fences, so replay
-  does not accidentally drain every device. They wait for recorded foreign
-  accesses outside their own timelines, including separate groups sharing host
-  memory. Coverage: storage mapping/transfer
-  lifetime tests, CPU direct-binding waits, host queue replay with zero implicit
-  owner waits, uncovered host-writer retirement before submission, and real
-  Metal host-view dispatch. Reconsider when all direct
-  dispatch participates in the same byte-interval dependency protocol.
+- **Host access waits for existing importers.** Host reads/writes wait for
+  importing devices. CPU runtime calls enforce this boundary too; address
+  binding itself does not wait. Compiled host submissions use
+  `Device.queue_runtime` and their encoded fences, so replay does not
+  accidentally drain every device. They wait for recorded foreign accesses
+  outside their own timelines, including separate groups sharing host memory.
+  Coverage: storage mapping lifetime tests, CPU binding waits, host queue replay
+  with zero implicit owner waits, uncovered host-writer retirement before
+  submission, and real Metal host-view dispatch. Reconsider when all CPU
+  execution participates in the same byte-interval dependency protocol.
+
+- **OCaml byte transfers use synchronous owned staging.** Unlike Python's
+  stable memoryviews, OCaml bytes cannot be borrowed by asynchronous device
+  work. `Storage.copyin` and `copyout` use direct synchronized host access when
+  available, otherwise one owned host allocation and ordinary STORE calls.
+  Offset-capable storage bounds staging to 64 MiB and waits before reuse or
+  host reads; command initialization remains directly host mapped. Coverage:
+  `test_storage_copy` chunk boundaries and failed-wait ownership, CPU byte
+  access without the engine, and Metal copies after asynchronous kernels.
+  Reconsider if a nonmoving public host-buffer API replaces these conveniences.
 
 - **Staging slots belong to a prepared schedule.** The frozen target caches
   one host staging allocation per host device. Independently retained Tolk

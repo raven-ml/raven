@@ -50,28 +50,9 @@ let test_renderer =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
     ~has_shared:false ~shared_max:0 ~render:(fun ?name:_ _ -> "") ()
 
-let buffer_kind = Type.Id.make ()
 let test_allocator =
-  let alloc nbytes _spec = Bytes.make nbytes '\000' in
-  let free _buf _nbytes _spec = () in
-  let copyin buf src = Bytes.blit src 0 buf 0 (Bytes.length src) in
-  let copyout dst buf = Bytes.blit buf 0 dst 0 (Bytes.length dst) in
-  let addr _buf = Nativeint.zero in
   Device.Allocator.Pack
-    Device.Allocator.
-      {
-        kind = buffer_kind;
-        host = Fun.const None;
-        mapping = None;
-        synchronize = (fun () -> ());
-        alloc;
-        free;
-        copyin;
-        copyout;
-        addr = Some addr;
-        offset = None;
-        transfer = None;
-      }
+    (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
 
 let test_device =
   Device.make ~name:"TEST:0" ~allocator:test_allocator

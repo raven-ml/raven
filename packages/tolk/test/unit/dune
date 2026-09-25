@@ -174,3 +174,9 @@
  (package tolk)
  (enabled_if (= %{system} macosx))
  (libraries test_metal_completion_driver windtrap threads))
+
+(test
+ (name test_storage_copy)
+ (modules test_storage_copy)
+ (package tolk)
+ (libraries unix tolk tolk.uop tolk.cpu windtrap))

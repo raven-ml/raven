@@ -31,24 +31,7 @@ module Ffi = struct
   external mem_host_register : nativeint -> int -> int = "caml_tolk_cuda_mem_host_register"
   external mem_host_unregister : nativeint -> unit = "caml_tolk_cuda_mem_host_unregister"
   external enable_peer : int -> int -> nativeint -> bool = "caml_tolk_cuda_enable_peer"
-  external memcpy_peer : nativeint -> nativeint -> nativeint -> nativeint -> int -> unit
-    = "caml_tolk_cuda_memcpy_peer"
-
-  external host_write : nativeint -> bytes -> unit
-    = "caml_tolk_cuda_host_write"
-
-  external memcpy_htod_async : nativeint -> nativeint -> nativeint -> int -> unit
-    = "caml_tolk_cuda_memcpy_htod_async"
-
-  external memcpy_dtoh_ptr : nativeint -> nativeint -> int -> unit
-    = "caml_tolk_cuda_memcpy_dtoh_ptr"
-
-  external host_read : bytes -> nativeint -> unit
-    = "caml_tolk_cuda_host_read"
-
-  external memcpy_async : nativeint -> nativeint -> nativeint -> int -> unit
-    = "caml_tolk_cuda_memcpy_async"
-
+  external host_read : bytes -> nativeint -> unit = "caml_tolk_cuda_host_read"
   external module_load : string -> nativeint = "caml_tolk_cuda_module_load"
 
   external module_function : nativeint -> string -> nativeint
@@ -78,10 +61,6 @@ module State = struct
     mutable handles : Device.Buffer.t option;
     arch : string;
     peers : (nativeint, bool) Hashtbl.t;
-    mutable pending_copyin : (storage * int * Device.Buffer_spec.t) list;
-    (* The device's LRU-wrapped allocator; set right after creation and used
-       by copyin staging and pending-buffer release. *)
-    mutable allocator : storage Device.Allocator.t option;
   }
 
   let devices : t list ref = ref []
@@ -99,7 +78,7 @@ module State = struct
            queue; closed = false; timeline = None; handles = None;
            functions = Hashtbl.create 16; function_lock = Mutex.create ();
            name = Device.canonicalize name; device = cu_device; context; arch;
-           peers = Hashtbl.create 4; pending_copyin = []; allocator = None } in
+           peers = Hashtbl.create 4 } in
          devices := !devices @ [ state ];
          state
        with exn ->
@@ -114,13 +93,7 @@ module State = struct
   let synchronize t =
     if not t.closed then begin
       Ffi.ctx_set_current t.context;
-      Ffi.hcq_synchronize t.queue;
-      let pending = t.pending_copyin in
-      t.pending_copyin <- [];
-      List.iter
-        (fun (buf, size, spec) ->
-          (Option.get t.allocator).Device.Allocator.free buf size spec)
-        pending
+      Ffi.hcq_synchronize t.queue
     end
 
   let shutdown t =
@@ -133,8 +106,6 @@ module State = struct
           Mutex.protect t.function_lock (fun () -> Hashtbl.clear t.functions))
         (fun () -> Ffi.hcq_destroy t.queue)
     end
-
-  let synchronize_system () = List.iter synchronize !devices
 
   let find name = List.find_opt (fun state -> state.name = Device.canonicalize name) !devices
 
@@ -150,8 +121,6 @@ module State = struct
 end
 
 module Allocator = struct
-  let host_spec = { Device.Buffer_spec.default with host = true }
-
   let raw state =
     let alloc size spec =
       Ffi.ctx_set_current state.State.context;
@@ -169,46 +138,6 @@ module Allocator = struct
         | Some _ -> ()
         | None -> if buf.host then Ffi.mem_free_host buf.address else Ffi.mem_free buf.address
       end
-    in
-    let copyin buf bytes =
-      if buf.host then begin
-        State.synchronize state;
-        Ffi.host_write buf.address bytes
-      end else begin
-        Ffi.ctx_set_current state.State.context;
-        let size = Bytes.length bytes in
-        let host = (Option.get state.State.allocator).Device.Allocator.alloc size host_spec in
-        state.State.pending_copyin <- (host, size, host_spec) :: state.State.pending_copyin;
-        Ffi.host_write host.address bytes;
-        Ffi.memcpy_htod_async state.queue buf.address host.address size
-      end
-    in
-    let copyout bytes buf =
-      State.synchronize_system ();
-      if buf.host then Ffi.host_read bytes buf.address else begin
-        Ffi.ctx_set_current state.State.context;
-        let size = Bytes.length bytes in
-        let allocator = Option.get state.State.allocator in
-        let host = allocator.Device.Allocator.alloc size host_spec in
-        Fun.protect ~finally:(fun () -> allocator.free host size host_spec)
-          (fun () -> Ffi.memcpy_dtoh_ptr host.address buf.address size;
-                     Ffi.host_read bytes host.address)
-      end
-    in
-    let transfer ~dest ~src ~dest_device ~src_device nbytes =
-      match State.find dest_device, State.find src_device with
-      | Some dst, Some source when State.enable_peer dst source ->
-          if dst.context = source.context then begin
-            Ffi.ctx_set_current dst.context;
-            Ffi.memcpy_async dst.queue dest.address src.address nbytes
-          end else begin
-            State.synchronize source;
-            State.synchronize dst;
-            Ffi.memcpy_peer dest.address dst.context src.address source.context nbytes;
-            State.synchronize dst
-          end;
-          true
-      | _ -> false
     in
     let offset buf size byte_offset =
       ignore size;
@@ -243,15 +172,12 @@ module Allocator = struct
     Device.Allocator.{kind = buffer_kind;
       host = (fun (buf : storage) -> if buf.host then Some buf.address else None);
       mapping = Some {map; unmap};
-      synchronize = (fun () -> State.synchronize_system ());
-      alloc; free; copyin; copyout;
-      addr = Some (fun buf -> buf.address); offset = Some offset;
-      transfer = Some transfer }
+      synchronize = (fun () -> State.synchronize state);
+      alloc; free;
+      addr = Some (fun buf -> buf.address); offset = Some offset }
 
   let create state =
-    let allocator = Device.Lru_allocator.wrap (raw state) in
-    state.State.allocator <- Some allocator;
-    Device.Allocator.Pack allocator
+    Device.Allocator.Pack (Device.Lru_allocator.wrap (raw state))
 end
 
 module Queue = struct

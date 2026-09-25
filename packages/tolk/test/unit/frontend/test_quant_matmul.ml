@@ -348,24 +348,8 @@ let no_inputs () =
 (* Code per renderer *)
 
 let renderer_device name ren =
-  let alloc nbytes _ = Bytes.make nbytes '\000' in
-  let allocator =
-    Tolk.Device.Allocator.Pack
-      Tolk.Device.Allocator.
-        {
-          alloc;
-          free = (fun _ _ _ -> ());
-          copyin = (fun _ _ -> ());
-          copyout = (fun _ _ -> ());
-          addr = None;
-          host = (fun _ -> None);
-          kind = Type.Id.make ();
-          mapping = None;
-          synchronize = (fun () -> ());
-          offset = None;
-          transfer = None;
-        }
-  in
+  let allocator = Tolk.Device.Allocator.Pack
+      (Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   Tolk.Device.register name (fun canonical ->
       Tolk.Device.make ~name:canonical ~allocator
         ~renderer_set:

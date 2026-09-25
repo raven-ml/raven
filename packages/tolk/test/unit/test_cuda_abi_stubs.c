@@ -65,43 +65,39 @@ static CUresult fake_get(CUfunction *f, CUmodule module, const char *name) {
   *f = (CUfunction)0xcafe;
   return 0;
 }
-static CUresult fake_copy(CUdeviceptr dst, const void *src, size_t size, CUstream stream) {
+static unsigned copies;
+static CUresult copy_status;
+static CUresult fake_copy(CUdeviceptr dst, CUdeviceptr src, size_t size, CUstream stream) {
   assert(dst == 0x100002000ULL);
-  assert(src == (void *)0x300004000ULL);
+  assert(src == 0x300004000ULL);
   assert(size == 40);
-  (void)stream;
-  return 0;
+  assert(stream == (CUstream)0x2);
+  copies++;
+  return copy_status;
 }
 static CUresult fake_launch(CUfunction f, unsigned gx, unsigned gy, unsigned gz,
     unsigned lx, unsigned ly, unsigned lz, unsigned shared, CUstream stream,
     void **params, void **extra) {
   (void)gx; (void)gy; (void)gz; (void)lx; (void)ly; (void)lz;
-  (void)shared; (void)stream; assert(params == NULL); assert(f == (CUfunction)0xcafe);
+  (void)shared; assert(stream == (CUstream)0x1); assert(params == NULL); assert(f == (CUfunction)0xcafe);
   assert(live_modules == 1);
   capture(extra); return 0;
 }
 static tolk_cuda_queue queue = {.lock = PTHREAD_MUTEX_INITIALIZER};
-static unsigned handoffs;
 static CUresult fake_context(CUcontext ctx) { (void)ctx; return 0; }
-static CUresult fake_record(CUevent event, CUstream stream) {
-  (void)event; (void)stream; handoffs++; return 0;
-}
-static CUresult fake_wait(CUstream stream, CUevent event, unsigned flags) {
-  (void)stream; (void)event; (void)flags; return 0;
-}
 CAMLprim value caml_test_cuda_abi_setup(value unit) {
   CAMLparam1(unit);
   p_cuModuleLoadData = fake_load;
   p_cuModuleUnload = fake_unload;
   p_cuModuleGetFunction = fake_get;
-  p_cuMemcpyHtoDAsync = fake_copy;
+  p_cuMemcpyAsync = fake_copy;
   p_cuLaunchKernel = fake_launch;
   p_cuCtxSetCurrent = fake_context;
-  p_cuEventRecord = fake_record;
-  p_cuStreamWaitEvent = fake_wait;
   queue.status = 0;
-  queue.direct_pending = queue.queue_pending = 0;
-  handoffs = 0;
+  queue.streams[0] = (CUstream)0x1;
+  queue.streams[1] = (CUstream)0x2;
+  copies = 0;
+  copy_status = 0;
   live_modules = 0;
   CAMLreturn(caml_copy_nativeint((intnat)&queue));
 }
@@ -117,9 +113,29 @@ CAMLprim value caml_test_cuda_abi_submit(value function, value arguments) {
   cuda_check(queue.status);
   CAMLreturn(Val_unit);
 }
-CAMLprim value caml_test_cuda_abi_handoffs(value unit) {
+CAMLprim value caml_test_cuda_abi_copy(value q, value dst, value src, value size) {
+  CAMLparam4(q, dst, src, size);
+  tolk_cuda_queue *state = (tolk_cuda_queue *)Nativeint_val(q);
+  tolk_cuda_hcq_begin(state);
+  tolk_cuda_hcq_copy(state, Nativeint_val(dst), Nativeint_val(src), Long_val(size));
+  cuda_check(state->status);
+  CAMLreturn(Val_unit);
+}
+CAMLprim value caml_test_cuda_abi_copies(value unit) {
   (void)unit;
-  return Val_int(handoffs);
+  return Val_int(copies);
+}
+CAMLprim value caml_test_cuda_abi_failed_copy(value unit) {
+  CAMLparam1(unit);
+  copy_status = 719;
+  tolk_cuda_hcq_copy(&queue, 0x100002000ULL, 0x300004000ULL, 40);
+  assert(queue.status == 719);
+  copy_status = 0;
+  tolk_cuda_hcq_begin(&queue);
+  tolk_cuda_hcq_copy(&queue, 0x100002000ULL, 0x300004000ULL, 40);
+  assert(queue.status == 719);
+  queue.status = 0;
+  CAMLreturn(Val_int(copies));
 }
 CAMLprim value caml_test_cuda_abi_captured(value unit) {
   CAMLparam1(unit);
@@ -128,9 +144,6 @@ CAMLprim value caml_test_cuda_abi_captured(value unit) {
 
 static int destroy_steps, fail_sync;
 static CUresult fake_synchronize(void) { destroy_steps++; return fail_sync ? 719 : 0; }
-static CUresult fake_event_destroy(CUevent event) {
-  assert(event == (CUevent)0x3); destroy_steps++; return 0;
-}
 static CUresult fake_stream_destroy(CUstream stream) {
   assert(stream == (CUstream)0x1 || stream == (CUstream)0x2);
   destroy_steps++; return 0;
@@ -154,13 +167,11 @@ CAMLprim value caml_test_cuda_shutdown_setup(value failure) {
   q->context = (CUcontext)0x4;
   q->streams[0] = (CUstream)0x1;
   q->streams[1] = (CUstream)0x2;
-  q->handoff = (CUevent)0x3;
   destroy_steps = 0;
   fail_sync = Bool_val(failure);
   p_cuCtxSetCurrent = fake_context;
   p_cuCtxSynchronize = fake_synchronize;
   p_cuCtxDestroy = fake_context_destroy;
-  p_cuEventDestroy = fake_event_destroy;
   p_cuStreamDestroy = fake_stream_destroy;
   p_cuGetErrorString = fake_error;
   Nativeint_val(result) = (intnat)q;

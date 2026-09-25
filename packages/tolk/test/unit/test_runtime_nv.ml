@@ -35,36 +35,21 @@ let with_map size f =
     (fun () -> f (Mmio.make ~addr ~size))
 
 (* One 0x8000-byte anonymous mapping backs everything a test touches:
-   the command staging page at 0, the usermode register region at
+   the usermode register region at
    0x1000, ring and put pointer at 0x2000, a signal slot at 0x3000, two
    kernel-argument areas at 0x4000 and 0x5000, and template descriptor
    storage at 0x6000. Device addresses are made up and distinct from
    the CPU mapping. *)
 let with_fixture f = with_map 0x8000 f
 
-let nv_dev ?(compute_class = Defs.ada_compute_a) ?(cmdq_size = 0x1000)
+let nv_dev ?(compute_class = Defs.ada_compute_a)
     ?(sass_version = 0x59) ?slm_per_thread m =
   Tolk_nv.device ~compute_class ~dma_class:Defs.ampere_dma_copy_b
     ~gpfifo_class:Defs.ampere_channel_gpfifo_a ~sass_version ?slm_per_thread
     ~shared_mem_window:0x729400000000n ~local_mem_window:0x729300000000n
-    ~cmdq_page:
-      (Buffer.make ~va:0x400000n ~size:cmdq_size
-         ~view:(Mmio.view m ~off:0 ~size:cmdq_size ())
-         ~meta:() ())
     ~gpu_mmio:(Mmio.view m ~off:0x1000 ~size:0x1000 ())
     ()
 
-let queue_desc ?(entries = 8) ?(offset = 0) m =
-  {
-    Tolk_nv.Queue_desc.ring = Mmio.view m ~off:(offset + 0x2000) ~size:(entries * 8) ();
-    gpput = Mmio.view m ~off:(offset + 0x2000 + (entries * 8)) ~size:4 ();
-    progress = Mmio.view m ~off:(offset + 0x2800) ~size:16 ();
-    progress_addr = Nativeint.add 0x800000n (Nativeint.of_int offset);
-    token = 0x1abcd;
-  }
-
-(* A signal whose value address has non-zero top bits, so encodings that
-   split it are visible. *)
 let signal m =
   Signal.make
     (Buffer.make ~va:0x200000010n ~size:16
@@ -340,9 +325,6 @@ let timeline m =
     Timeline.timeline = sig_at 0x3000 0x200000010n;
 
     error_state = None;
-    bounce = [||];
-    bounce_timeline = [||];
-    bounce_next = 0;
     on_hang = (fun () -> ());
   }
 
@@ -581,7 +563,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(profile = false)
       let view = Mmio.make ~addr:address ~size:16 in
       let raw = Tolk_hcq.Hcq.Buffer.make ~va:address ~size:16 ~view ~meta:() () in
       timeline := Some {Timeline.timeline = Signal.make ~is_timeline:true raw;
-        error_state = None; bounce = [||]; bounce_timeline = [||]; bounce_next = 0;
+        error_state = None;
         on_hang = (fun () -> fail "unexpected fixture hang")}
     end;
     (match U.as_param u with
@@ -746,10 +728,7 @@ let shared_calibration m =
   let free raw size spec =
     if Some raw = !stamp then incr frees;
     base.free raw size spec in
-  let copyout bytes raw =
-    if Some raw = !stamp then fail "calibration must read its host mapping directly";
-    base.copyout bytes raw in
-  let allocator = Device.Allocator.Pack {base with alloc; free; copyout} in
+  let allocator = Device.Allocator.Pack {base with alloc; free} in
   let buffers = ref None and waits = ref 0 and fail_wait = ref false in
   let collecting = ref false in
   let synchronize () =
@@ -1347,115 +1326,6 @@ let () =
                     ~global_size:(1, 1, 1) ~local_size:(1, 1, 1);
                   equal int 16 (Q.length (Compute_queue.q cq));
                   equal int 0 (Qmd.read q1 "dependent_qmd0_enable")));
-        ];
-      group "submit"
-        [
-          test "direct submission follows a producer position written by compiled code" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let qd = queue_desc m in
-                  Mmio.write32 qd.Tolk_nv.Queue_desc.gpput 0 3l;
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.wait cq ~value:5 (signal m);
-                  Compute_queue.submit cq qd;
-                  equal int64 0L (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
-                  equal int64 0x320000400000L (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 24);
-                  equal int32 4l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0)));
-          test "stages the stream and rings the doorbell" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let qd = queue_desc m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.wait cq ~value:5 (signal m);
-                  Compute_queue.submit cq qd;
-                  (* the stream lands at the staging page's start *)
-                  equal int32 0x20050017l (Mmio.read32 m 0);
-                  equal int32 5l (Mmio.read32 m 12);
-                  equal int32 0x800008l (Mmio.read32 m 28);
-                  equal int32 1l (Mmio.read32 m 36);
-                  (* Twelve dwords: six wait words and six retirement words. *)
-                  equal int64 0x320000400000L
-                    (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
-                  equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
-                  equal int32 0x1abcdl (Mmio.read32 m 0x1090);
-                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
-          test "resubmission stages a fresh copy and advances the ring"
-            (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m in
-                  let qd = queue_desc m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.wait cq ~value:5 (signal m);
-                  Compute_queue.submit cq qd;
-                  Compute_queue.submit cq qd;
-                  (* The stream and retirement marker occupy 48 bytes. *)
-                  equal int32 0x20050017l (Mmio.read32 m 0x30);
-                  equal int64 0x320000400030L
-                    (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 8);
-                  equal int32 2l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
-                  equal int 2 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
-          test "direct FIFO exhaustion preserves unread entries" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev m and qd = queue_desc ~entries:2 m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.wait cq ~value:5 (signal m);
-                  Compute_queue.submit cq qd;
-                  let before = Mmio.read_bytes m ~off:0 ~len:0x2900 in
-                  let old = Sys.getenv_opt "HCQ_TIMEOUT_MS" in
-                  Fun.protect ~finally:(fun () -> Unix.putenv "HCQ_TIMEOUT_MS"
-                      (Option.value old ~default:"30000")) (fun () ->
-                    Unix.putenv "HCQ_TIMEOUT_MS" "1";
-                    raises_match (Exn.failure ~substring:"HCQ submission timed out")
-                      (fun () -> Compute_queue.submit cq qd));
-                  equal bytes before (Mmio.read_bytes m ~off:0 ~len:0x2900)));
-          test "staging wrap cannot overwrite an unfinished stream" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev ~cmdq_size:0x40 m and qd = queue_desc m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.wait cq ~value:5 (signal m);
-                  Compute_queue.submit cq qd;
-                  let before = Mmio.read_bytes m ~off:0 ~len:0x2900 in
-                  let old = Sys.getenv_opt "HCQ_TIMEOUT_MS" in
-                  Fun.protect ~finally:(fun () -> Unix.putenv "HCQ_TIMEOUT_MS"
-                      (Option.value old ~default:"30000")) (fun () ->
-                    Unix.putenv "HCQ_TIMEOUT_MS" "1";
-                    raises_match (Exn.failure ~substring:"HCQ submission timed out")
-                      (fun () -> Compute_queue.submit cq qd));
-                  equal bytes before (Mmio.read_bytes m ~off:0 ~len:0x2900)));
-          test "staging retirement is independent across channels" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev ~cmdq_size:0x60 m in
-                  let a = queue_desc m and b = queue_desc ~offset:0x100 m in
-                  let cq = Compute_queue.create dev in
-                  Compute_queue.wait cq ~value:5 (signal m);
-                  Compute_queue.submit cq a;
-                  Compute_queue.submit cq b;
-                  let pending = Mmio.read_bytes m ~off:0x30 ~len:0x30 in
-                  Mmio.write32 a.Tolk_nv.Queue_desc.progress 8 1l;
-                  Compute_queue.submit cq a;
-                  equal bytes pending (Mmio.read_bytes m ~off:0x30 ~len:0x30);
-                  equal int32 0l (Mmio.read32 b.Tolk_nv.Queue_desc.progress 8);
-                  equal int64 2L (Mmio.read64 a.Tolk_nv.Queue_desc.progress 0)));
-          test "the staging page and the ring wrap" (fun () ->
-              with_fixture (fun m ->
-                  let dev = nv_dev ~cmdq_size:0x40 m in
-                  let qd = queue_desc ~entries:2 m in
-                  let cq1 = Compute_queue.create dev in
-                  Compute_queue.wait cq1 ~value:5 (signal m);
-                  let cq2 = Compute_queue.create dev in
-                  Compute_queue.wait cq2 ~value:7 (signal m);
-                  Compute_queue.submit cq1 qd;
-                  Mmio.write32 qd.Tolk_nv.Queue_desc.progress 8 1l;
-                  Compute_queue.submit cq1 qd;
-                  Mmio.write32 qd.Tolk_nv.Queue_desc.progress 8 2l;
-                  equal int32 0l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
-                  (* Each retired 48-byte stream wraps the 64-byte staging page. *)
-                  Compute_queue.submit cq2 qd;
-                  equal int32 7l (Mmio.read32 m 12);
-                  equal int64 0x320000400000L
-                    (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
-                  equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
-                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
         ];
       group "iface wire formats"
         [

@@ -44,19 +44,29 @@ CAMLprim value caml_tolk_host_free(value v_ptr, value v_size) {
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_host_copyin(value v_ptr, value v_bytes) {
-  CAMLparam2(v_ptr, v_bytes);
+CAMLprim value caml_tolk_host_copyin(value v_ptr, value v_bytes,
+                                    value v_offset, value v_length) {
+  CAMLparam4(v_ptr, v_bytes, v_offset, v_length);
   void *ptr = (void *)Nativeint_val(v_ptr);
-  size_t len = (size_t)caml_string_length(v_bytes);
-  memcpy(ptr, Bytes_val(v_bytes), len);
+  intnat offset = Long_val(v_offset), length = Long_val(v_length);
+  size_t size = caml_string_length(v_bytes);
+  if (offset < 0 || length < 0 || (uintnat)offset > size ||
+      (uintnat)length > size - (uintnat)offset)
+    caml_invalid_argument("host copy source range is outside bytes");
+  if (length != 0) memcpy(ptr, Bytes_val(v_bytes) + offset, (size_t)length);
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_host_copyout(value v_bytes, value v_ptr) {
-  CAMLparam2(v_bytes, v_ptr);
+CAMLprim value caml_tolk_host_copyout(value v_ptr, value v_bytes,
+                                     value v_offset, value v_length) {
+  CAMLparam4(v_ptr, v_bytes, v_offset, v_length);
   void *ptr = (void *)Nativeint_val(v_ptr);
-  size_t len = (size_t)caml_string_length(v_bytes);
-  memcpy(Bytes_val(v_bytes), ptr, len);
+  intnat offset = Long_val(v_offset), length = Long_val(v_length);
+  size_t size = caml_string_length(v_bytes);
+  if (offset < 0 || length < 0 || (uintnat)offset > size ||
+      (uintnat)length > size - (uintnat)offset)
+    caml_invalid_argument("host copy destination range is outside bytes");
+  if (length != 0) memcpy(Bytes_val(v_bytes) + offset, ptr, (size_t)length);
   CAMLreturn(Val_unit);
 }
 

@@ -38,7 +38,7 @@ val create : string -> Tolk.Device.t
 (** [create name] is a Metal device identified by [name].
 
     The device uses the system default Metal GPU, an LRU-cached shared-memory
-    allocator with blit-based buffer transfers, and a {!Tolk.Cstyle.metal}
+    allocator with shared compiled buffer transfers, and a {!Tolk.Cstyle.metal}
     renderer built from the device's Metal GPU family. An {!Stdlib.at_exit}
     handler synchronizes in-flight work and releases the underlying Metal
     device and command queue.

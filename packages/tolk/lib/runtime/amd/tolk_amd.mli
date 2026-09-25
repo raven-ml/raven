@@ -152,18 +152,15 @@ type 'meta program = {
 module Queue_desc : sig
   type aql = {
     descriptor : Hcq.Mmio.t;
-    commands : Hcq.Mmio.t;
-    address : nativeint;
-    allocator : Tolk.Bump.t;
   }
-  (** Mapped queue descriptor and indirect command staging for direct AQL submission. *)
+  (** Mapped HSA queue descriptor. *)
   type t = {
     ring : Hcq.Mmio.t;  (** The command ring. *)
-    aql : aql option; (** AQL staging; absent on PM4 and DMA queues. *)
+    aql : aql option; (** HSA queue descriptor; absent on PM4 and DMA queues. *)
     read_ptr : Hcq.Mmio.t;
         (** 64-bit consumer position, advanced by the device. *)
     write_ptr : Hcq.Mmio.t;
-        (** 64-bit producer position shared by direct and compiled submission:
+        (** 64-bit producer position used by compiled submission:
             a dword count for PM4, a packet count for AQL and a byte count for DMA. *)
     doorbell : Hcq.Mmio.t;  (** 64-bit doorbell slot of the queue. *)
     hdp_flush : Hcq.Mmio.t option;
@@ -177,11 +174,6 @@ module Queue_desc : sig
   }
   (** The type for mapped queues. *)
 
-  val signal_doorbell : t -> int -> unit
-  (** [signal_doorbell t value] publishes [value] to the device: it writes
-      the write pointer, fences so all prior ring stores are visible,
-      writes the [hdp_flush] register when present, then writes the doorbell.
-      AQL doorbells identify the last packet, one less than the producer count. *)
 end
 
 (** {1:iface Device interfaces}
@@ -264,7 +256,7 @@ end
 
 (** {1:queues Queue builders} *)
 
-(** Compute-engine command streams.
+(** PM4 compute-engine command streams.
 
     Each function appends one logical command to the queue's dword
     stream; {!Compute_queue.q} exposes the accumulated stream for
@@ -298,8 +290,7 @@ module Compute_queue : sig
 
       Raises [Invalid_argument] if the dispatch packet is missing, if [prg]
       wants thread-trace capture (unsupported), or if it wants a
-      private-segment descriptor on a multi-die PM4 queue. AQL dispatches
-      use the kernel descriptor and the queue’s scratch configuration. *)
+      private-segment descriptor on a multi-die PM4 queue. *)
 
   val signal : 'meta t -> ?value:int -> ('a, 'meta device) Hcq.Signal.t -> unit
   (** [signal t sg] flushes caches and writes [value] (defaults to [0])
@@ -328,21 +319,6 @@ module Compute_queue : sig
   (** [memory_barrier t] flushes the host-data-path caches and
       invalidates every GPU cache, making host writes visible to
       subsequent commands. *)
-
-  val submit : 'meta t -> Queue_desc.t -> unit
-  (** [submit t qd] copies the accumulated stream into [qd]'s ring at
-      its mapped write position, wrapping dword by dword at the ring end,
-      then advances the write pointer and rings the doorbell. The stream is kept:
-      submitting again replays it.
-
-      AQL queues stage PM4 runs in their indirect-command allocation and
-      interleave vendor packets with kernel dispatch packets. Their producer
-      counts 64-byte packets.
-
-      On multi-die PM4 devices the stream is placed behind an in-ring
-      indirect-buffer packet, padded so its body never straddles the
-      wrap point, because predication only takes effect inside indirect
-      buffers. *)
 
   (** {2:packets Packet-level interface}
 
@@ -424,9 +400,7 @@ end
 (** DMA-engine command streams.
 
     Each function appends one packet to the queue's dword stream;
-    {!Copy_queue.q} exposes the accumulated stream and
-    {!Copy_queue.cmd_sizes} its packet boundaries, which submission
-    needs to split the stream across a ring's wrap point. *)
+    {!Copy_queue.q} exposes the accumulated stream. *)
 module Copy_queue : sig
   type 'meta t
   (** The type for DMA command streams under construction. *)
@@ -437,10 +411,6 @@ module Copy_queue : sig
 
   val q : 'meta t -> Hcq.Q.t
   (** [q t] is the underlying dword stream. *)
-
-  val cmd_sizes : 'meta t -> int list
-  (** [cmd_sizes t] is the dword count of each packet, in stream
-      order. *)
 
   val copy :
     'meta t -> dest:'a Hcq.Buffer.t -> src:'b Hcq.Buffer.t -> int -> unit
@@ -467,17 +437,6 @@ module Copy_queue : sig
       when [b64] is [true], the low 32 otherwise (defaults to
       [false]). *)
 
-  val submit : 'meta t -> Queue_desc.t -> unit
-  (** [submit t qd] copies the accumulated packets into [qd]'s ring at
-      its mapped write position, advances the write pointer in bytes and
-      rings the doorbell. The engine fetches packets as units, so a packet never
-      straddles the ring end: when the next packet would, the remaining
-      tail is zero-filled and the stream continues at the ring start.
-      Blocks until the device has consumed enough of the ring for the
-      stream to fit. The stream is kept: submitting again replays it.
-
-      Raises [Invalid_argument] if the stream cannot fit in the ring at
-      all. *)
 end
 
 (** {1:programs Programs} *)

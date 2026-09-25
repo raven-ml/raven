@@ -27,16 +27,10 @@ module Ffi = struct
   external buffer_copyin : nativeint -> int -> bytes -> unit
     = "caml_tolk_metal_buffer_copyin"
 
-  external buffer_copyout : bytes -> nativeint -> int -> unit
-    = "caml_tolk_metal_buffer_copyout"
-
   external program_create : nativeint -> string -> string -> nativeint
     = "caml_tolk_metal_program_create"
 
   external program_free : nativeint -> unit = "caml_tolk_metal_program_free"
-
-  external command_buffer_wait : nativeint -> unit
-    = "caml_tolk_metal_command_buffer_wait"
 
   external compile : string -> bytes option = "caml_tolk_metal_compile"
 
@@ -49,10 +43,6 @@ module Ffi = struct
 
   external icb_release : nativeint -> unit = "caml_tolk_metal_icb_release"
   external needs_icb_fix : nativeint -> bool = "caml_tolk_metal_needs_icb_fix"
-
-  external blit_copy :
-    nativeint -> nativeint -> int -> nativeint -> int -> int -> nativeint
-    = "caml_tolk_metal_blit_copy_bc" "caml_tolk_metal_blit_copy"
 
   external device_arch : nativeint -> string = "caml_tolk_metal_device_arch"
   external hcq_create : nativeint -> nativeint = "caml_tolk_metal_hcq_create"
@@ -77,7 +67,6 @@ module State = struct
     context : nativeint;
     mutable timeline : Device.Buffer.t option;
     mutable context_buffer : Device.Buffer.t option;
-    mutable in_flight : nativeint list;
     mutable closed : bool;
     programs : (string * string, nativeint) Hashtbl.t;
     program_lock : Mutex.t;
@@ -98,7 +87,6 @@ module State = struct
           context = Ffi.hcq_create queue;
           timeline = None;
           context_buffer = None;
-          in_flight = [];
           closed = false;
           programs = Hashtbl.create 16;
           program_lock = Mutex.create ();
@@ -113,15 +101,7 @@ module State = struct
       raise exn
 
   let synchronize t =
-    let rec drain = function
-      | [] -> ()
-      | cmd :: rest ->
-          t.in_flight <- rest;
-          Ffi.command_buffer_wait cmd;
-          drain rest
-    in
     if not t.closed then begin
-      drain t.in_flight;
       Option.iter (fun timeline ->
           let value = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 8 in
           Ffi.hcq_wait t.context value) t.timeline
@@ -163,27 +143,6 @@ module Allocator = struct
       | Some _ -> ()
       | None -> Ffi.buffer_free buf.Metal_buffer.handle
     in
-    let copyin buf bytes =
-      State.synchronize state;
-      Ffi.buffer_copyin buf.Metal_buffer.handle buf.offset bytes
-    in
-    let copyout bytes buf =
-      State.synchronize state;
-      Ffi.buffer_copyout bytes buf.Metal_buffer.handle buf.offset
-    in
-    let transfer ~dest ~src ~dest_device ~src_device nbytes =
-      if Device.canonicalize dest_device <> Device.canonicalize src_device then false
-      else begin
-        State.synchronize state;
-        let cmd =
-          Ffi.blit_copy state.State.queue src.Metal_buffer.handle src.offset
-            dest.Metal_buffer.handle dest.offset nbytes
-        in
-        state.State.in_flight <- cmd :: state.State.in_flight;
-        State.synchronize state;
-        true
-      end
-    in
     let offset buf size byte_offset =
       if byte_offset < 0 then
         invalid_arg "Metal buffer offset must be non-negative";
@@ -199,12 +158,9 @@ module Allocator = struct
       synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
-      copyin;
-      copyout;
       addr = Some (fun buf -> Nativeint.add (Ffi.buffer_address buf.Metal_buffer.handle)
           (Nativeint.of_int buf.offset));
       offset = Some offset;
-      transfer = Some transfer;
     }
 
   let create state =

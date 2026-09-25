@@ -637,9 +637,6 @@ let scripted_registration ?(sdma_queues = fun () -> []) fd t =
       Timeline.timeline = Signal.make (slot 0x1f20000);
 
       error_state = Some (Failure "wedged");
-      bounce = [||];
-      bounce_timeline = [||];
-      bounce_next = 0;
       on_hang = (fun () -> Pci_iface.on_device_hang t);
     }
   in
@@ -2630,7 +2627,8 @@ let () =
                       equal bool true (tl.Timeline.error_state = None);
                       Submission.prepare submission;
                       Timeline.synchronize tl;
-                      equal int 7 (Timeline.submit tl Fun.id);
+                      Timeline.prepare tl;
+                      equal int 6 (Timeline.submitted tl);
                       (* the recovered device sleeps cleanly again *)
                       Pci_iface.sleep t ~timeout_ms:0)));
           test

@@ -66,7 +66,6 @@ let backed_buf va size =
 let make_dev ~compute_class ~dma_class ~gpfifo_class ~sass_version =
   device ~compute_class ~dma_class ~gpfifo_class ~sass_version ~slm_per_thread
     ~shared_mem_window ~local_mem_window
-    ~cmdq_page:(backed_buf 0x900000n 0x10000)
     ~gpu_mmio:(anon_mmio 0x1000) ()
 
 let dump_dwords name chip dwords =

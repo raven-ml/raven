@@ -31,65 +31,16 @@ let test_renderer =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
     ~has_shared:false ~shared_max:0 ~render:(fun ?name:_ _ -> "") ()
 
-type allocator_stats = {
-  mutable copyin_calls : int;
-  mutable copyout_calls : int;
-  mutable transfer_calls : int;
-  mutable synchronize_calls : int;
-}
+type allocator_stats = { mutable synchronize_calls : int }
 
-let allocator_stats () =
-  { copyin_calls = 0; copyout_calls = 0; transfer_calls = 0;
-    synchronize_calls = 0 }
+let allocator_stats () = { synchronize_calls = 0 }
 
-let buffer_kind = Type.Id.make ()
-let test_allocator ?(transfer = false) stats =
-  let alloc nbytes spec =
-    ignore spec;
-    Bytes.make nbytes '\000'
-  in
-  let free buf nbytes spec =
-    ignore buf;
-    ignore nbytes;
-    ignore spec
-  in
-  let copyin buf src =
-    stats.copyin_calls <- stats.copyin_calls + 1;
-    Bytes.blit src 0 buf 0 (Bytes.length src)
-  in
-  let copyout dst buf =
-    stats.copyout_calls <- stats.copyout_calls + 1;
-    Bytes.blit buf 0 dst 0 (Bytes.length dst)
-  in
-  let offset buf nbytes byte_offset = Bytes.sub buf byte_offset nbytes in
-  let transfer_fn =
-    if transfer then
-      Some
-        (fun ~dest ~src ~dest_device ~src_device nbytes ->
-           equal string "TEST:0" dest_device;
-           equal string "TEST:1" src_device;
-           stats.transfer_calls <- stats.transfer_calls + 1;
-           Bytes.blit src 0 dest 0 nbytes; true)
-    else None
-  in
+let test_allocator stats =
   Device.Allocator.Pack
-    Device.Allocator.
-      {
-        kind = buffer_kind;
-        host = Fun.const None;
-        mapping = None;
-        synchronize = (fun () -> ());
-        alloc;
-        free;
-        copyin;
-        copyout;
-        addr = None;
-        offset = Some offset;
-        transfer = transfer_fn;
-      }
+    (Storage.Host_allocator.make ~synchronize:(fun () ->
+         stats.synchronize_calls <- stats.synchronize_calls + 1))
 
 let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
-    ?(transfer = false)
     ?(renderer_set = Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const test_renderer ])
     state =
   let runtime _ =
@@ -106,7 +57,7 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
     stats.synchronize_calls <- stats.synchronize_calls + 1
   in
   Device.make ~name
-    ~allocator:(test_allocator ~transfer stats)
+    ~allocator:(test_allocator stats)
     ~renderer_set ~runtime ~synchronize ()
 
 let variable name lo hi =
@@ -153,90 +104,73 @@ let call_program state program var_vals =
 let payload n =
   Bytes.init n (fun i -> Char.chr ((i * 17 + 3) land 0xff))
 
-let create_buffer ?(name = "TEST:0") ?(transfer = false) stats =
+let create_buffer ?(name = "TEST:0") stats =
   let state = runtime_state () in
-  let device = test_device ~name ~stats ~transfer state in
+  let device = test_device ~name ~stats state in
   let buffer = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
   device, buffer
 
-let run_copy ?(dest_name = "TEST:0") ?(src_name = "TEST:1")
-    ?(dest_transfer = false) ?(src_transfer = false) () =
+let run_copy ?(src_name = "TEST:1") () =
   let dest_stats = allocator_stats () in
   let src_stats = allocator_stats () in
-  let device, dest =
-    create_buffer ~name:dest_name ~transfer:dest_transfer dest_stats
-  in
-  let src_device, src =
-    create_buffer ~name:src_name ~transfer:src_transfer src_stats
-  in
+  let device, dest = create_buffer dest_stats in
+  let src_device, src = create_buffer ~name:src_name src_stats in
   ignore src_device;
-  let data = payload (Device.Buffer.nbytes src) in
-  Device.Buffer.ensure_allocated src;
-  Device.Buffer.copyin src data;
-  let runner =
-    Realize.buffer_copy ~device
-      ~total_sz:(Device.Buffer.nbytes dest)
-      ~dest_device:(Device.Buffer.device dest)
-      ~src_device:(Device.Buffer.device src)
-  in
-  ignore (Realize.Runner.call runner [ dest; src ] []
-            ~wait:true ~timeout:None);
-  dest, data, dest_stats, src_stats
+  Fun.protect
+    ~finally:(fun () -> List.iter Device.Buffer.deallocate [dest; src])
+    (fun () ->
+      let data = payload (Device.Buffer.nbytes src) in
+      Device.Buffer.ensure_allocated src;
+      Device.Buffer.copyin src data;
+      let dest_waits = dest_stats.synchronize_calls
+      and src_waits = src_stats.synchronize_calls in
+      let runner = Realize.buffer_copy ~device
+          ~total_sz:(Device.Buffer.nbytes dest)
+          ~dest_device:(Device.Buffer.device dest)
+          ~src_device:(Device.Buffer.device src) in
+      ignore (Realize.Runner.call runner [dest; src] [] ~wait:true ~timeout:None);
+      is_true ~msg:"copy waits for the destination"
+        (dest_stats.synchronize_calls > dest_waits);
+      is_true ~msg:"copy waits for the source"
+        (src_stats.synchronize_calls > src_waits);
+      equal bytes data (Device.Buffer.as_bytes dest))
 
-(* Sparse backing keeps the large-copy test's memory use equal to the bounce
-   itself. Uploads account for retained native staging until synchronization. *)
+(* Exercise both traversal directions across the bounded host-copy chunks,
+   including independently wrapped pointers to the same native allocation. *)
 let bounded_copy ~source_offset ~dest_offset ~external_alias =
   let chunk = 64 lsl 20 in
   let length = 2 * chunk + 17 in
-  let marks = Hashtbl.create 8 in
-  let points = [0; 16; chunk - 1; chunk; chunk + 16; length - 1] in
-  List.iter (fun p -> Hashtbl.add marks (source_offset + p) ()) points;
-  let pending = ref 0 and peak = ref 0 and sizes = ref [] in
-  let synchronize () = pending := 0 in
-  let kind = Type.Id.make () in
-  let allocator = Device.Allocator.Pack Device.Allocator.{
-    kind; alloc = (fun _ _ -> 0); free = (fun _ _ _ -> ());
-    host = Fun.const None; mapping = None; synchronize;
-    addr = Some Nativeint.of_int;
-    offset = Some (fun base _ offset -> base + offset);
-    copyout = (fun bytes offset ->
-      Bytes.fill bytes 0 (Bytes.length bytes) '\000';
-      Hashtbl.iter (fun p () ->
-        if p >= offset && p - offset < Bytes.length bytes then
-          Bytes.set bytes (p - offset) '\001') marks);
-    copyin = (fun offset bytes ->
-      let n = Bytes.length bytes in
-      pending := !pending + n;
-      peak := max !peak !pending;
-      sizes := n :: !sizes;
-      Hashtbl.filter_map_inplace (fun p () ->
-        if p >= offset && p - offset < n then None else Some ()) marks;
-      let rec insert i = match Bytes.index_from_opt bytes i '\001' with
-        | None -> ()
-        | Some p -> Hashtbl.replace marks (offset + p) (); insert (p + 1) in
-      insert 0);
-    transfer = None;
-  } in
-  let device = Device.make ~name:"TEST:bounded" ~allocator
-      ~renderer_set:(Device.Renderer_set.make ~device:"TEST" ["TEST", Fun.const test_renderer])
-      ~runtime:(fun _ -> failwith "copy must not create a runtime")
-      ~synchronize:(fun timeout -> ignore timeout; synchronize ()) () in
-  let root () = Device.create_buffer ~size:(length + max source_offset dest_offset)
-      ~dtype:Dtype.uint8 device in
-  let src = root () in
-  let dst = if external_alias then root () else src in
-  let src = Device.Buffer.view src ~size:length ~dtype:Dtype.uint8 ~offset:source_offset
-  and dst = Device.Buffer.view dst ~size:length ~dtype:Dtype.uint8 ~offset:dest_offset in
-  let runner = Realize.buffer_copy ~device ~total_sz:length
-      ~dest_device:"TEST:bounded" ~src_device:"TEST:bounded" in
-  ignore (Realize.Runner.call runner [dst; src] [] ~wait:false ~timeout:None);
-  equal int chunk !peak;
-  equal int 0 !pending;
-  equal int length (List.fold_left ( + ) 0 !sizes);
-  let actual = Hashtbl.to_seq_keys marks |> List.of_seq
-      |> List.filter (fun p -> p >= dest_offset && p - dest_offset < length)
-      |> List.map (fun p -> p - dest_offset) |> List.sort compare in
-  equal (list int) points actual
+  let stats = allocator_stats () in
+  let device = test_device ~name:"TEST:bounded" ~stats (runtime_state ()) in
+  let root = Device.create_buffer
+      ~size:(length + max source_offset dest_offset) ~dtype:Dtype.uint8 device in
+  Device.Buffer.ensure_allocated root;
+  let dst_base = if not external_alias then root else
+      Device.create_buffer ~size:(Device.Buffer.size root) ~dtype:Dtype.uint8
+        ~spec:{Device.Buffer_spec.default with
+          external_ptr = Some (Device.Buffer.addr root)} device in
+  let src = Device.Buffer.view root ~size:length ~dtype:Dtype.uint8 ~offset:source_offset
+  and dst = Device.Buffer.view dst_base ~size:length ~dtype:Dtype.uint8 ~offset:dest_offset in
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter Device.Buffer.deallocate [src; dst];
+      if external_alias then Device.Buffer.deallocate dst_base;
+      Device.Buffer.deallocate root)
+    (fun () ->
+      Device.Buffer.ensure_allocated src;
+      Device.Buffer.ensure_allocated dst;
+      let points = [0; 16; chunk - 1; chunk; chunk + 16; length - 1] in
+      let source = Option.get (Device.Buffer.as_buffer src) in
+      List.iter (fun p -> Bigarray.Array1.set source p 1) points;
+      let runner = Realize.buffer_copy ~device ~total_sz:length
+          ~dest_device:"TEST:bounded" ~src_device:"TEST:bounded" in
+      ignore (Realize.Runner.call runner [dst; src] [] ~wait:false ~timeout:None);
+      let result = Option.get (Device.Buffer.as_buffer dst) in
+      let actual = ref [] in
+      for i = 0 to length - 1 do
+        if Bigarray.Array1.unsafe_get result i <> 0 then actual := i :: !actual
+      done;
+      equal (list int) points (List.rev !actual))
 
 let with_target s f =
   Helpers.Context_var.with_context [ B (Helpers.dev, [ Target.of_string s ]) ] f
@@ -536,38 +470,15 @@ let () =
         ];
       group "Buffer copy"
         [
-          test "bounds staging and preserves overlapping views in both directions" (fun () ->
+          test "preserves overlapping views across staging chunks in both directions" (fun () ->
             bounded_copy ~source_offset:17 ~dest_offset:81 ~external_alias:false;
             bounded_copy ~source_offset:81 ~dest_offset:17 ~external_alias:false);
           test "preserves overlapping external allocations while streaming" (fun () ->
             bounded_copy ~source_offset:17 ~dest_offset:81 ~external_alias:true;
             bounded_copy ~source_offset:81 ~dest_offset:17 ~external_alias:true);
-          test "uses allocator transfer for same backend devices" (fun () ->
-            let dest, data, dest_stats, src_stats =
-              run_copy ~dest_transfer:true ()
-            in
-            equal string (Bytes.to_string data)
-              (Bytes.to_string (Device.Buffer.as_bytes dest));
-            equal int 1 dest_stats.transfer_calls;
-            equal int 0 dest_stats.copyin_calls;
-            equal int 0 src_stats.copyout_calls;
-            equal int 1 dest_stats.synchronize_calls);
-          test "falls back to host bounce without allocator transfer" (fun () ->
-            let dest, data, dest_stats, src_stats = run_copy () in
-            equal string (Bytes.to_string data)
-              (Bytes.to_string (Device.Buffer.as_bytes dest));
-            equal int 0 dest_stats.transfer_calls;
-            equal int 1 dest_stats.copyin_calls;
-            equal int 1 src_stats.copyout_calls);
-          test "does not transfer across backend prefixes" (fun () ->
-            let dest, data, dest_stats, src_stats =
-              run_copy ~dest_transfer:true ~src_name:"OTHER:0" ()
-            in
-            equal string (Bytes.to_string data)
-              (Bytes.to_string (Device.Buffer.as_bytes dest));
-            equal int 0 dest_stats.transfer_calls;
-            equal int 1 dest_stats.copyin_calls;
-            equal int 1 src_stats.copyout_calls);
+          test "copies bytes between host-backed devices" (fun () -> run_copy ());
+          test "copies bytes across backend prefixes" (fun () ->
+            run_copy ~src_name:"OTHER:0" ());
           test "rejects size or dtype mismatches before copy" (fun () ->
             let state = runtime_state () in
             let stats = allocator_stats () in

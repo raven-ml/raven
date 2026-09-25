@@ -366,13 +366,13 @@ let () =
               equal (list int) [0; 0; 2; 3] (read_i32 base);
               Device.Buffer.copy_from ~dst:src ~src:dst;
               equal (list int) [2; 3] (read_i32 src));
-          test "transfer respects buffer view offsets" (fun () ->
+          test "shared copies respect buffer view offsets" (fun () ->
               let device = cuda_device () in
               let dst_base = i32_buf device [ 0; 0; 0; 0 ] in
               let src_base = i32_buf device [ 1; 2; 3; 4 ] in
               let dst = i32_view dst_base ~offset:4 ~size:2 in
               let src = i32_view src_base ~offset:8 ~size:2 in
-              is_true (Device.Buffer.transfer ~dst ~src);
+              Device.Buffer.copy_from ~dst ~src;
               equal (list int) [ 0; 3; 4; 0 ] (read_i32 dst_base));
         ];
       group "Queues"

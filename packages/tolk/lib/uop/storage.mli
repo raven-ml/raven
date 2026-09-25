@@ -35,9 +35,9 @@ end
 
 (** Backend allocator interface.
 
-    An allocator manages device buffer lifecycle: allocation, data transfer,
-    addressing, and optional features such as offset views and device-to-device
-    copies. The buffer type ['buf] is backend-specific and hidden behind
+    An allocator manages allocation, addressing, mapping and offset views.
+    Device execution owns transfers. The buffer type ['buf] is backend-specific
+    and hidden behind
     {!packed} at the device level.
 
     Allocator wrappers can add caching without changing buffer ownership. *)
@@ -56,13 +56,6 @@ module Allocator : sig
         (** [unmap mapped] releases mapping metadata, without freeing source storage. *)
   }
   (** Cross-device mapping operations. *)
-
-  type 'buf transfer =
-    dest:'buf -> src:'buf -> dest_device:string -> src_device:string -> int -> bool
-  (** [transfer ~dest ~src ~dest_device ~src_device nbytes] copies [nbytes]
-      between compatible backend buffers, ordering the operation against both
-      devices. Returns [false] without issuing work when the backend cannot
-      perform the transfer; the engine then uses a host bounce. *)
 
   type host_view =
     (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -84,18 +77,12 @@ module Allocator : sig
     free : 'buf -> int -> Buffer_spec.t -> unit;
         (** [free buf nbytes spec] releases [buf]. [nbytes] and [spec] must
             match the values passed to {!field-alloc}. *)
-    copyin : 'buf -> bytes -> unit;
-        (** [copyin buf src] copies [src] into [buf]. *)
-    copyout : bytes -> 'buf -> unit;
-        (** [copyout dst buf] copies [buf] into [dst]. *)
     addr : ('buf -> nativeint) option;
         (** Device address access, absent for opaque buffer handles. *)
     offset : ('buf -> int -> int -> 'buf) option;
         (** [offset buf nbytes byte_offset] is a view into [buf] starting at
             [byte_offset] and spanning [nbytes], or [None] if the backend does
             not support offset views. *)
-    transfer : 'buf transfer option;
-        (** Device-to-device transfer, or [None] if unsupported. *)
   }
   (** The type for backend allocators parameterised by the buffer representation
       ['buf]. *)
@@ -226,11 +213,6 @@ val supports_offset : t -> bool
 (** [supports_offset b] is [true] iff [b]'s allocator provides offset views.
 *)
 
-val supports_transfer : t -> t -> bool
-(** [supports_transfer dst src] is [true] iff [dst]'s allocator provides
-    native transfer, their allocator representation identities agree, and
-    their device names have the same backend prefix. *)
-
 val allocator : t -> Allocator.packed
 (** [allocator b] is the allocator of [b]'s base buffer. *)
 
@@ -246,14 +228,14 @@ val add_ref : t -> int -> t
 (** {1:data_transfer Data transfer}
 
     {!copy_from} is the canonical way to move data between buffers. The
-    primitives below expose a buffer's allocator directly and exist for the
-    execution engine to service copies; prefer {!copy_from} in application
-    code. *)
+    byte operations below synchronize host access or use owned host staging
+    and scheduled device copies. *)
 
 val copyin : t -> bytes -> unit
-(** [copyin b src] writes the raw bytes [src] into [b]'s backing store through
-    its allocator. Low-level host-to-device primitive; application code should
-    move data with {!copy_from}.
+(** [copyin b src] writes [src] into [b] and waits for completion. Host-mapped
+    storage is written directly after synchronization; other storage uses
+    owned host staging and {!copy_from}. Staging is bounded to 64 MiB when
+    the allocator supports offset views, otherwise it spans the whole buffer.
 
     A previously initialized view refreshes if its base storage has changed.
 
@@ -261,9 +243,8 @@ val copyin : t -> bytes -> unit
     no initialized storage. *)
 
 val copyout : t -> bytes -> unit
-(** [copyout b dst] reads the raw bytes of [b] from its backing store into
-    [dst] through its allocator. Low-level device-to-host primitive;
-    application code should move data with {!copy_from}.
+(** [copyout b dst] reads [b] into [dst] after synchronization, using direct
+    host access or the same bounded staging as {!copyin}.
 
     A previously initialized view refreshes if its base storage has changed.
 
@@ -285,18 +266,6 @@ val as_bytes : t -> bytes
 (** [as_bytes b] is a fresh [bytes] value containing the contents of [b].
     Equivalent to allocating [Bytes.create (nbytes b)] and calling {!copyout}.
 *)
-
-val transfer : dst:t -> src:t -> bool
-(** [transfer ~dst ~src] copies [src] into [dst] through [dst]'s allocator
-    device-to-device transfer hook when {!supports_transfer} is [true],
-    returning [true] when the native transfer ran and [false] when no hook is
-    available or the hook declines this device pair. Importing devices are
-    synchronized before the native hook; both buffers are allocated if it runs.
-    Low-level
-    same-backend primitive that {!copy_from} uses as a fast path; application
-    code should use {!copy_from}.
-
-    Raises [Invalid_argument] if [dst] and [src] differ in size or dtype. *)
 
 val copy_from : dst:t -> src:t -> unit
 (** [copy_from ~dst ~src] copies the contents of [src] into [dst], allocating

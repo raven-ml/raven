@@ -102,16 +102,8 @@ type 'meta device = {
       (** Virtual-address window shared-memory accesses go through. *)
   local_mem_window : nativeint;
       (** Virtual-address window local-memory accesses go through. *)
-  cmdq_page : 'meta Hcq.Buffer.t;
-      (** CPU-mapped device memory where submissions stage their
-          command streams. *)
-  mutable cmdq_position : int;
-      (** Absolute byte position for the next direct command stream. *)
-  cmdq_pending : (int * Hcq.Mmio.t * int64) Stdlib.Queue.t;
-      (** Staging regions and channel sequences still awaiting retirement. *)
   submission : Hcq.Submission.t;
-      (** Failure state shared by direct and compiled submissions. *)
-  cmdq : Hcq.Mmio.t;  (** CPU view of [cmdq_page]. *)
+      (** Failure state for compiled submissions. *)
   gpu_mmio : Hcq.Mmio.t;
       (** Usermode register region carrying the work-submission
           doorbell. *)
@@ -127,18 +119,13 @@ val device :
   ?slm_per_thread:int ->
   shared_mem_window:nativeint ->
   local_mem_window:nativeint ->
-  cmdq_page:'meta Hcq.Buffer.t ->
   gpu_mmio:Hcq.Mmio.t ->
   unit ->
   'meta device
 (** [device ~compute_class ~dma_class ~gpfifo_class ~sass_version
-    ~shared_mem_window ~local_mem_window ~cmdq_page ~gpu_mmio ()] is a
-    device description over the given engine classes and mappings. The
-    command-stream allocator wraps over [cmdq_page], whose CPU view
-    must exist. [slm_per_thread] defaults to [0] and [shader_local_mem]
-    starts absent.
-
-    Raises [Invalid_argument] if [cmdq_page] has no CPU view. *)
+    ~shared_mem_window ~local_mem_window ~gpu_mmio ()] is a
+    device description over the given engine classes and mappings.
+    [slm_per_thread] defaults to [0] and [shader_local_mem] starts absent. *)
 
 (** {1:programs Programs} *)
 
@@ -275,15 +262,6 @@ module Compute_queue : sig
       data, and constant caches, making prior memory writes visible to
       subsequent launches. *)
 
-  val submit : 'meta t -> Queue_desc.t -> unit
-  (** [submit t qd] stages the accumulated stream in the device's
-      command buffer, writes the next ring entry of [qd] to point at
-      it, publishes the new put position, fences, and rings the
-      work-submission doorbell with [qd]'s token. A trailing engine release
-      retires the channel sequence. FIFO capacity and staging reuse wait for
-      retirement with [HCQ_TIMEOUT_MS] (default 30 seconds); timeout latches
-      failure without overwriting live commands. The stream is kept:
-      submitting again stages it again. Submissions must be serialized. *)
 end
 
 (** Copy-engine command streams.
@@ -324,9 +302,6 @@ module Copy_queue : sig
   (** [timestamp t sg] releases [sg] with value [0], stamping its
       timestamp slot. *)
 
-  val submit : 'meta t -> Queue_desc.t -> unit
-  (** [submit t qd] stages the accumulated stream and rings the
-      doorbell, exactly as {!Compute_queue.submit}. *)
 end
 
 (** {1:iface Driver interfaces} *)
@@ -700,7 +675,7 @@ val create : string -> Tolk.Device.t
 (** [create name] opens the NVIDIA device [name] names — ["NV"] for the
     first visible device, ["NV:1"] for the second, and so on — through
     the selected interface and is its runtime: a compute and a copy channel,
-    an allocator staging host transfers through the copy engine,
+    an allocator exposing host mappings for shared transfers,
     kernels compiled to the exact chip's binary format and dispatched
     through shared compiled queues, execution timing from device clocks, and
     fault reports raised through the completion timeline when the

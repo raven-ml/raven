@@ -99,22 +99,6 @@ let reg ~addr =
     addr;
   }
 
-(* A queue descriptor carved out of one mapping: the ring at offset 0,
-   then the read pointer, write pointer, and a fake doorbell word. *)
-let queue_desc ~ring_dwords m =
-  let ring_bytes = ring_dwords * 4 in
-  {
-    Tolk_amd.Queue_desc.aql = None;
-    ring = Mmio.view m ~off:0 ~size:ring_bytes ();
-    read_ptr = Mmio.view m ~off:ring_bytes ~size:8 ();
-    write_ptr = Mmio.view m ~off:(ring_bytes + 8) ~size:8 ();
-    doorbell = Mmio.view m ~off:(ring_bytes + 16) ~size:8 ();
-    hdp_flush = None;
-    resetup = None;
-  }
-
-let ring_dword m i = Int32.to_int (Mmio.read32 m (i * 4)) land 0xFFFFFFFF
-let ring_dwords m n = Array.init n (ring_dword m)
 let set16 b off v = Bytes.set_uint16_le b off v
 let set32 b off v = Bytes.set_int32_le b off (Int32.of_int v)
 let set64 b off v = Bytes.set_int64_le b off (Int64.of_int v)
@@ -392,7 +376,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
       let view = Mmio.make ~addr:address ~size:16 in
       let raw = Tolk_hcq.Hcq.Buffer.make ~va:address ~size:16 ~view ~meta:() () in
       timeline := Some {Timeline.timeline = Signal.make ~is_timeline:true raw;
-        error_state = None; bounce = [||]; bounce_timeline = [||]; bounce_next = 0;
+        error_state = None;
         on_hang = (fun () -> fail "unexpected fixture hang")}
     end;
     (match U.as_param u with
@@ -647,33 +631,6 @@ let execute_aql_queue ~multi =
   equal int 5 (Bytes.get_int8 args 8);
   equal int64 (Int64.of_nativeint (Device.Buffer.addr rebound)) (Bytes.get_int64_le args 0)
 
-let direct_aql_queue () =
-  with_map 0x3000 (fun m ->
-      let dev = { (gfx1100 ()) with Tolk_amd.is_aql = true } in
-      let base = queue_desc ~ring_dwords:128 m in
-      let aql = Tolk_amd.Queue_desc.{descriptor = Mmio.view m ~off:0x300 ~size:0x100 ();
-        commands = Mmio.view m ~off:0x1000 ~size:0x1000 (); address = 0xabcdef000n;
-        allocator = Tolk.Bump.create ~size:0x1000 ~wrap:true ()} in
-      let queue = {base with Tolk_amd.Queue_desc.aql = Some aql} in
-      Mmio.write64 queue.write_ptr 0 7L;
-      let cq = Tolk_amd.Compute_queue.create dev in
-      let sg = Signal.make (Buffer.make ~va:0x987000n ~size:16
-        ~view:(Mmio.view m ~off:0x500 ~size:16 ()) ~meta:() ()) in
-      Tolk_amd.Compute_queue.wait cq ~value:7 sg;
-      let args = Buffer.make ~va:0x777000n ~size:32 ~meta:() () in
-      Tolk_amd.Compute_queue.exec cq (amd_prog dev) ~kernargs:args ~global_size:(3,2,1) ~local_size:(2,1,1);
-      Tolk_amd.Compute_queue.signal cq ~value:8 sg;
-      Tolk_amd.Compute_queue.submit cq queue;
-      equal int64 10L (Mmio.read64 queue.write_ptr 0);
-      equal int64 9L (Mmio.read64 queue.doorbell 0);
-      equal int32 0x11500l (Mmio.read32 queue.ring (7 * 64));
-      equal int64 0xabcdef000L (Mmio.read64 queue.ring (7 * 64 + 8));
-      equal int32 0x31502l (Mmio.read32 queue.ring 0);
-      equal int32 6l (Mmio.read32 queue.ring 12);
-      equal int64 0x100040L (Mmio.read64 queue.ring 32);
-      equal int64 0x777000L (Mmio.read64 queue.ring 40);
-      equal int32 0x11500l (Mmio.read32 queue.ring 64))
-
 let queue_timeout () =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
@@ -718,8 +675,7 @@ let () =
   run "Amd_runtime"
     [ group "AQL"
         [test "compiled single-XCC packets wrap in dispatch units" (fun () -> execute_aql_queue ~multi:false);
-         test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true);
-         test "direct packets use GPU indirect addresses and the shared producer" direct_aql_queue];
+         test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true)];
       group "Compiled queues" [
         test "profiling timestamps bracket the compiled dispatch" compiled_profile_packets;
         test "PM4 compute dies use disjoint scratch slices" compiled_pm4_scratch_slices;
@@ -1026,56 +982,10 @@ let () =
         ];
       group "Timeline"
         [
-          test "staging waits report and latch device faults" (fun () ->
-              List.iter (fun upload -> with_map 4096 (fun m ->
-                  let root = Buffer.make ~va:(Mmio.addr m) ~size:4096 ~view:m ~meta:() () in
-                  let reports = ref 0 and submitted = ref 0 in
-                  let tl = {
-                    Timeline.timeline = Signal.make ~sleep:(fun _ -> failwith "staging wait failed")
-                      (Buffer.offset root ~off:0 ~size:16 ());
-                    error_state = None;
-                    bounce = [|Buffer.offset root ~off:64 ~size:16 ()|];
-                    bounce_timeline = [|1|]; bounce_next = 0;
-                    on_hang = (fun () -> incr reports; failwith "MMU fault");
-                  } in
-                  Mmio.write64 m 8 1L;
-                  let buffer = Buffer.offset root ~off:128 ~size:16 () in
-                  let submit_chunk ~dest ~src size =
-                    equal int 16 (Buffer.size dest);
-                    equal int 16 (Buffer.size src);
-                    equal int 16 size; incr submitted in
-                  let failed = function Failure msg ->
-                    contains msg "staging wait failed" && contains msg "MMU fault" | _ -> false in
-                  raises_match failed (fun () ->
-                      if upload then Timeline.copyin tl ~submit_chunk buffer (Bytes.make 16 '\000')
-                      else Timeline.copyout tl ~submit_chunk (Bytes.make 16 '\000') buffer);
-                  equal int (if upload then 0 else 1) !submitted;
-                  raises_match failed (fun () -> Timeline.synchronize tl);
-                  equal int 1 !reports)) [true; false]);
-          test "direct submissions observe the counter written by compiled submission" (fun () ->
-              with_map 4096 (fun m ->
-                  let tl = {
-                    Timeline.timeline = Signal.make ~is_timeline:true (slot_buf m);
-
-                    error_state = None; bounce = [||]; bounce_timeline = [||];
-                    bounce_next = 0; on_hang = (fun () -> fail "unexpected hang");
-                  } in
-                  equal int 0 (Timeline.submitted tl);
-                  equal int 1 (Timeline.submit tl (fun value ->
-                      equal int 0 (Timeline.submitted tl);
-                      equal int 1 value;
-                      value));
-                  equal int64 1L (Mmio.read64 m 8);
-                  Mmio.write64 m 8 37L;
-                  equal int 38 (Timeline.submit tl Fun.id);
-                  Signal.set_value tl.Timeline.timeline 38;
-                  Timeline.synchronize tl;
-                  equal int64 38L (Mmio.read64 m 8)));
           test "rollover retains the signal address and host fence epochs" (fun () ->
               with_map 4096 (fun m ->
                   let signal = Signal.make ~is_timeline:true (slot_buf m) in
                   let tl = {Timeline.timeline = signal; error_state = None;
-                    bounce = [||]; bounce_timeline = [|17|]; bounce_next = 0;
                     on_hang = (fun () -> fail "unexpected hang")} in
                   List.iter (fun epoch ->
                       let end_ = (epoch lsl 32) + (1 lsl 31) in
@@ -1084,22 +994,18 @@ let () =
                       Timeline.prepare tl;
                       is_true (tl.Timeline.timeline == signal);
                       let next = ((epoch + 1) lsl 32) + 1 in
-                      equal int next (Timeline.submit tl Fun.id);
+                      equal int (next - 1) (Timeline.submitted tl);
+                      Mmio.write64 m 8 (Int64.of_int next);
                       (* AMD/SDMA write only the low dword; the CPU retains the epoch. *)
                       Mmio.write32 m 0 1l;
                       equal int next (Signal.value signal);
-                      Timeline.synchronize tl;
-                      equal int 17 tl.Timeline.bounce_timeline.(0)) [0; 1]));
+                      Timeline.synchronize tl) [0; 1]));
           test "a stalled wait folds the hang report into the timeout" (fun () ->
               with_map 4096 (fun m ->
                   let tl =
                     {
                       Timeline.timeline = Signal.make ~value:1 (slot_buf m);
-
                       error_state = None;
-                      bounce = [||];
-                      bounce_timeline = [||];
-                      bounce_next = 0;
                       on_hang = (fun () -> failwith "MMU fault: 0xdead");
                     }
                   in
@@ -1120,11 +1026,7 @@ let () =
                   let tl =
                     {
                       Timeline.timeline = Signal.make (slot_buf m);
-
                       error_state = None;
-                      bounce = [||];
-                      bounce_timeline = [||];
-                      bounce_next = 0;
                       on_hang = (fun () -> failwith "");
                     }
                   in
@@ -1142,11 +1044,7 @@ let () =
                   let tl =
                     {
                       Timeline.timeline = Signal.make (slot_buf m);
-
                       error_state = None;
-                      bounce = [||];
-                      bounce_timeline = [||];
-                      bounce_next = 0;
                       on_hang = (fun () -> failwith "HW fault: reset_type=1");
                     }
                   in
@@ -1215,90 +1113,6 @@ let () =
                   let q = Cq.create (gfx1100 ()) in
                   raises_match is_invalid_arg (fun () ->
                       Cq.wait q ~value:0x100000000 s)));
-          test "submit copies the stream and rings the doorbell" (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              with_map 4096 (fun m ->
-                  let qd = queue_desc ~ring_dwords:16 m in
-                  let cq = Cq.create (gfx1100 ()) in
-                  List.iter (Q.push (Cq.q cq)) [ 0x11; 0x22; 0x33 ];
-                  Cq.submit cq qd;
-                  equal (array int) [| 0x11; 0x22; 0x33 |] (ring_dwords m 3);
-                  equal int 3 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
-                  equal int64 3L (Mmio.read64 m ((16 * 4) + 8));
-                  equal int64 3L (Mmio.read64 m ((16 * 4) + 16));
-                  (* the stream is kept: submitting again replays it *)
-                  Cq.submit cq qd;
-                  equal (array int)
-                    [| 0x11; 0x22; 0x33; 0x11; 0x22; 0x33 |]
-                    (ring_dwords m 6);
-                  equal int64 6L (Mmio.read64 m ((16 * 4) + 16))));
-          test "submit wraps dword by dword at the ring end" (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              with_map 4096 (fun m ->
-                  let qd = queue_desc ~ring_dwords:8 m in
-                  let cq = Cq.create (gfx1100 ()) in
-                  List.iter (Q.push (Cq.q cq)) [ 0x11; 0x22; 0x33 ];
-                  Cq.submit cq qd;
-                  Cq.submit cq qd;
-                  Cq.submit cq qd;
-                  (* the third stream lands at indices 6, 7, 0 *)
-                  equal (array int)
-                    [| 0x33; 0x22; 0x33; 0x11; 0x22; 0x33; 0x11; 0x22 |]
-                    (ring_dwords m 8);
-                  equal int 9 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
-                  equal int64 9L (Mmio.read64 m ((8 * 4) + 16))));
-          test "multi-die submit wraps the stream in an indirect buffer"
-            (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              with_map 4096 (fun m ->
-                  let dev = gfx942 () in
-                  let module P = (val dev.Tolk_amd.pm4) in
-                  let qd = queue_desc ~ring_dwords:32 m in
-                  let cq = Cq.create dev in
-                  List.iter (Q.push (Cq.q cq)) [ 0x11; 0x22; 0x33 ];
-                  Cq.submit cq qd;
-                  let ib_ptr =
-                    Int64.add (Int64.of_nativeint (Mmio.addr m)) 20L
-                  in
-                  equal (array int)
-                    [|
-                      P.packet3 P.packet3_indirect_buffer 2;
-                      Int64.to_int (Int64.logand ib_ptr 0xFFFFFFFFL);
-                      Int64.to_int (Int64.shift_right_logical ib_ptr 32);
-                      3 lor P.indirect_buffer_valid;
-                      P.packet3 P.packet3_nop 2;
-                      0x11;
-                      0x22;
-                      0x33;
-                    |]
-                    (ring_dwords m 8);
-                  equal int 8 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0))));
-          test "multi-die submit pads the indirect body past the wrap"
-            (fun () ->
-              let module Cq = Tolk_amd.Compute_queue in
-              with_map 4096 (fun m ->
-                  let dev = gfx942 () in
-                  let module P = (val dev.Tolk_amd.pm4) in
-                  let qd = queue_desc ~ring_dwords:32 m in
-                  Mmio.write64 qd.Tolk_amd.Queue_desc.write_ptr 0 26L;
-                  let cq = Cq.create dev in
-                  List.iter (Q.push (Cq.q cq)) [ 0x11; 0x22; 0x33 ];
-                  Cq.submit cq qd;
-                  (* header at 26; the one-dword pad fills index 31 so the
-                     body starts back at index 0 *)
-                  let ib_ptr = Int64.of_nativeint (Mmio.addr m) in
-                  equal (array int)
-                    [|
-                      P.packet3 P.packet3_indirect_buffer 2;
-                      Int64.to_int (Int64.logand ib_ptr 0xFFFFFFFFL);
-                      Int64.to_int (Int64.shift_right_logical ib_ptr 32);
-                      3 lor P.indirect_buffer_valid;
-                      P.packet3 P.packet3_nop 3;
-                      0;
-                    |]
-                    (Array.init 6 (fun i -> ring_dword m (26 + i)));
-                  equal (array int) [| 0x11; 0x22; 0x33 |] (ring_dwords m 3);
-                  equal int 35 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0))));
         ];
       group "Copy_queue"
         [
@@ -1309,11 +1123,11 @@ let () =
               let dst = Buffer.make ~va:0x20000000n ~size:0 ~meta:() () in
               let exact = Cp.create ~max_copy_size:0x1000 dev in
               Cp.copy exact ~dest:dst ~src 0x1000;
-              equal (list int) [ 7 ] (Cp.cmd_sizes exact);
+              equal int 7 (Q.length (Cp.q exact));
               equal int 0xfff (Q.get (Cp.q exact) 1);
               let split = Cp.create ~max_copy_size:0x1000 dev in
               Cp.copy split ~dest:dst ~src 0x1001;
-              equal (list int) [ 7; 7 ] (Cp.cmd_sizes split);
+              equal int 14 (Q.length (Cp.q split));
               let q = Cp.q split in
               equal int 0xfff (Q.get q 1);
               (* the second chunk copies the single remaining byte at
@@ -1321,77 +1135,6 @@ let () =
               equal int 0 (Q.get q 8);
               equal int 0x10001000 (Q.get q 10);
               equal int 0x20001000 (Q.get q 12));
-          test "cmd_sizes records packet boundaries" (fun () ->
-              let module Cp = Tolk_amd.Copy_queue in
-              with_map 4096 (fun m ->
-                  let dev = gfx942 () in
-                  let s =
-                    Signal.make ~is_timeline:true ~owner:dev
-                      (slot_buf ~va:0x400000n m)
-                  in
-                  let q = Cp.create dev in
-                  Cp.signal q ~value:1 s;
-                  equal (list int) [ 4; 4; 2 ] (Cp.cmd_sizes q);
-                  equal int 10 (Q.length (Cp.q q))));
-          test "submit copies packets and advances in bytes" (fun () ->
-              let module Cp = Tolk_amd.Copy_queue in
-              with_map 4096 (fun m ->
-                  let qd = queue_desc ~ring_dwords:16 m in
-                  let cp = Cp.create (gfx1100 ()) in
-                  let buf = Buffer.make ~va:0x10000000n ~size:8 ~meta:() () in
-                  Cp.write cp buf 0xABCDL;
-                  Cp.submit cp qd;
-                  equal (array int)
-                    (Q.dwords (Cp.q cp))
-                    (ring_dwords m 5);
-                  equal int 20 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
-                  equal int64 20L (Mmio.read64 m ((16 * 4) + 8));
-                  equal int64 20L (Mmio.read64 m ((16 * 4) + 16))));
-          test "a packet that would straddle moves past a zero-filled tail"
-            (fun () ->
-              let module Cp = Tolk_amd.Copy_queue in
-              with_map 4096 (fun m ->
-                  let qd = queue_desc ~ring_dwords:16 m in
-                  let dev = gfx1100 () in
-                  let src = Buffer.make ~va:0x10000000n ~size:0 ~meta:() () in
-                  let dst = Buffer.make ~va:0x20000000n ~size:0 ~meta:() () in
-                  let first = Cp.create dev in
-                  Cp.copy first ~dest:dst ~src 0x100;
-                  Cp.copy first ~dest:dst ~src 0x100;
-                  Cp.submit first qd;
-                  equal int 56 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
-                  (* sentinels in the two dwords before the ring end prove
-                     the zero-fill really writes them *)
-                  Mmio.write32 m (14 * 4) 0xDEADBEEFl;
-                  Mmio.write32 m (15 * 4) 0xDEADBEEFl;
-                  (* the device consumed the first packet; without this the
-                     overrun spin would never let the wrap through *)
-                  Mmio.write64 m (16 * 4) 28L;
-                  let second = Cp.create dev in
-                  Cp.copy second ~dest:dst ~src 0x100;
-                  Cp.submit second qd;
-                  equal int 0 (ring_dword m 14);
-                  equal int 0 (ring_dword m 15);
-                  equal (array int)
-                    (Q.dwords (Cp.q second))
-                    (ring_dwords m 7);
-                  equal int 92 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
-                  equal int64 92L (Mmio.read64 m ((16 * 4) + 16))));
-          test "a stream that cannot fit the ring is rejected" (fun () ->
-              let module Cp = Tolk_amd.Copy_queue in
-              with_map 4096 (fun m ->
-                  let qd = queue_desc ~ring_dwords:8 m in
-                  let dev = gfx1100 () in
-                  let src = Buffer.make ~va:0x10000000n ~size:0 ~meta:() () in
-                  let dst = Buffer.make ~va:0x20000000n ~size:0 ~meta:() () in
-                  let cp = Cp.create dev in
-                  Cp.copy cp ~dest:dst ~src 0x100;
-                  Cp.submit cp qd;
-                  equal int 28 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
-                  (* even with the whole ring consumed, the wrapped stream
-                     would need the full ring: rejected before blocking *)
-                  Mmio.write64 m (8 * 4) 28L;
-                  raises_match is_invalid_arg (fun () -> Cp.submit cp qd)));
         ];
       group "Program"
         [

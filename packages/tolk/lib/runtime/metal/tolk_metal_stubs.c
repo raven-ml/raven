@@ -150,17 +150,6 @@ CAMLprim value caml_tolk_metal_buffer_copyin(value v_buf, value v_offset,
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_metal_buffer_copyout(value v_bytes, value v_buf,
-                                              value v_offset) {
-  CAMLparam3(v_bytes, v_buf, v_offset);
-  id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(v_buf);
-  NSUInteger offset = (NSUInteger)Long_val(v_offset);
-  void* src = (uint8_t*)[buf contents] + offset;
-  size_t len = (size_t)caml_string_length(v_bytes);
-  memcpy(Bytes_val(v_bytes), src, len);
-  CAMLreturn(Val_unit);
-}
-
 CAMLprim value caml_tolk_metal_program_create(value v_device, value v_name,
                                            value v_lib) {
   CAMLparam3(v_device, v_name, v_lib);
@@ -369,41 +358,6 @@ CAMLprim value caml_tolk_metal_needs_icb_fix(value v_device) {
   }
 }
 
-CAMLprim value caml_tolk_metal_blit_copy(value v_queue, value v_src_buf,
-                                    value v_src_offset, value v_dst_buf,
-                                    value v_dst_offset, value v_size) {
-  CAMLparam5(v_queue, v_src_buf, v_src_offset, v_dst_buf, v_dst_offset);
-  CAMLxparam1(v_size);
-  @autoreleasepool {
-    id<MTLCommandQueue> queue = (id<MTLCommandQueue>)Nativeint_val(v_queue);
-    id<MTLBuffer> src = (id<MTLBuffer>)Nativeint_val(v_src_buf);
-    NSUInteger src_offset = (NSUInteger)Long_val(v_src_offset);
-    id<MTLBuffer> dst = (id<MTLBuffer>)Nativeint_val(v_dst_buf);
-    NSUInteger dst_offset = (NSUInteger)Long_val(v_dst_offset);
-    NSUInteger size = (NSUInteger)Long_val(v_size);
-
-    id<MTLCommandBuffer> cmd = [queue commandBuffer];
-    if (cmd == nil) caml_failwith("Metal command buffer creation failed");
-    id<MTLBlitCommandEncoder> encoder = [cmd blitCommandEncoder];
-    if (encoder == nil) caml_failwith("Metal blit encoder creation failed");
-    [encoder copyFromBuffer:src
-               sourceOffset:src_offset
-                   toBuffer:dst
-          destinationOffset:dst_offset
-                       size:size];
-    [encoder endEncoding];
-    [cmd commit];
-    [cmd retain];
-    CAMLreturn(caml_copy_nativeint((intnat)cmd));
-  }
-}
-
-CAMLprim value caml_tolk_metal_blit_copy_bc(value* argv, int argc) {
-  (void)argc;
-  return caml_tolk_metal_blit_copy(argv[0], argv[1], argv[2], argv[3], argv[4],
-                              argv[5]);
-}
-
 CAMLprim value caml_tolk_metal_device_arch(value v_device) {
   CAMLparam1(v_device);
   @autoreleasepool {
@@ -423,30 +377,6 @@ CAMLprim value caml_tolk_metal_device_arch(value v_device) {
     }
     caml_failwith("Metal device has no supported GPU family");
   }
-}
-
-CAMLprim value caml_tolk_metal_command_buffer_wait(value v_cmd) {
-  CAMLparam1(v_cmd);
-  id<MTLCommandBuffer> cmd = (id<MTLCommandBuffer>)Nativeint_val(v_cmd);
-
-  caml_release_runtime_system();
-  [cmd waitUntilCompleted];
-  caml_acquire_runtime_system();
-
-  @autoreleasepool {
-    NSError* error = [cmd error];
-    if (error != nil) {
-      NSString* desc = [error localizedDescription];
-      const char* msg =
-          desc != nil ? [desc UTF8String] : "Metal command buffer failed";
-      char buf[512];
-      snprintf(buf, sizeof(buf), "%s", msg);
-      [cmd release];
-      caml_failwith(buf);
-    }
-    [cmd release];
-  }
-  CAMLreturn(Val_unit);
 }
 
 typedef void* (*MTLCodeGenServiceCreate_t)(const char* label);
