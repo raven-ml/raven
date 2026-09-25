@@ -158,6 +158,10 @@ module Submission : sig
   (** [check t] raises [Failure] if polling timed out. A failed submission cannot
       publish another doorbell; its error remains latched. *)
 
+  val lower : string -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+  (** [lower name u] bounds host timeline polling and guards dependent stores
+      after a failed wait, preserving storage still in use by the device. *)
+
   val symbol : string -> nativeint
   (** [symbol name] is an ordinary C helper callable with the OCaml runtime
       released. Raises [Invalid_argument] for an unknown helper name. *)

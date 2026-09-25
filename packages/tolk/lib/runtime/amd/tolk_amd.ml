@@ -993,7 +993,7 @@ module Encoded_queue = struct
     Tolk.Hcq2.patch ~blob:(String.make size '\000') ~after buf
       (List.mapi (fun i word -> i * 4, word) words)
   let context name = U.placeholder ~shape:[2] ~dtype:D.uint64 ~slot:0
-      ~device:(U.Single name) ~allocation:("hcq_submission", "") ()
+      ~device:(U.Single name) ~volatile:true ~allocation:("hcq_submission", "") ()
   let publish ~name ~after ~wptr ~doorbell ~next ~is_am ~lag =
     let flush = if is_am then addr "CPU"
         (placeholder name "hdp_flush" D.uint32 1 ~volatile:true) else u64 0 in
@@ -1008,19 +1008,7 @@ module Encoded_queue = struct
     op Ops.Cmpeq ready (u32 1)
   let guarded_count ready count = U.alu_ternary ~op:Ops.Where ~a:ready ~b:count ~c:zero
 
-  let lower name u = match U.as_load u with
-    | Some {src; _} ->
-        (match U.as_index src with
-         | Some {ptr; idxs = [i]} when U.const_int_value i = Some 0
-             && U.node_tag (U.buf_uop ptr) = Some "timeline" && U.op ptr = Ops.After ->
-             let deps = List.tl (U.children ptr) in
-             (match deps with
-              | target :: _ -> Some (Tolk.Hcq2.ccall ~host:name ~after:deps
-                  ~name:"tolk_hcq_poll" ~dtype:D.uint64
-                  [index (context name) zero; index (U.without_after ptr) zero; target])
-              | [] -> None)
-         | _ -> None)
-    | _ -> None
+  let lower = Hcq.Submission.lower
 
   let push ~name ~kind ~ring_size ~is_am ~dependency source ~unit ~lag =
     let ring = placeholder name ("ring_" ^ kind) D.uint32 (ring_size / 4) ~volatile:true in

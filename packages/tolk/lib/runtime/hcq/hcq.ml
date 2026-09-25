@@ -156,6 +156,39 @@ module Submission = struct
     if timeout_ms < 0 then invalid_arg "Submission.prepare: negative timeout";
     Mmio.write64 t.view 0 Int64.(add (of_int (Ffi.monotonic_ms ())) (of_int timeout_ms))
 
+  let lower name u =
+    let open Tolk_uop in
+    let module U = Uop in
+    let context () = U.placeholder ~shape:[2] ~dtype:Dtype.uint64 ~slot:0
+        ~device:(U.Single name) ~volatile:true ~allocation:("hcq_submission", "") () in
+    let index ptr i = U.index ~ptr ~idxs:[U.const_int i] () in
+    match U.as_load u, U.as_store u with
+    | Some {src; _}, _ ->
+        (match U.as_index src with
+         | Some {ptr; idxs = [i]} when U.const_int_value i = Some 0
+             && U.node_tag (U.buf_uop ptr) = Some "timeline" && U.op ptr = Ops.After ->
+             let deps = List.tl (U.children ptr) in
+             (match deps with
+              | target :: _ -> Some (Tolk.Hcq2.ccall ~host:name ~after:deps
+                  ~name:"tolk_hcq_poll" ~dtype:Dtype.uint64
+                  [index (context ()) 0; index (U.without_after ptr) 0; target])
+              | [] -> None)
+         | _ -> None)
+    | _, Some {dst; value; gate = None} ->
+        (match U.as_index dst with
+         | Some {ptr; idxs} when List.for_all (fun i -> U.equal (U.get_idx i) i) idxs ->
+             let waits = U.toposort ~enter_calls:true dst |> List.exists (fun n ->
+                 U.op n = Ops.Custom_function && U.Arg.as_string (U.arg n) = Some "tolk_hcq_poll") in
+             if not waits then None else
+               let state = U.after ~src:(context ()) ~deps:[dst] in
+               let error = U.load ~src:(index state 1) () in
+               let cond = U.alu_binary ~op:Ops.Cmpeq ~lhs:error
+                   ~rhs:(U.const (Const.int Dtype.uint64 0)) in
+               let dst = U.index ~ptr ~idxs:(List.map (fun src -> U.valid ~src ~cond) idxs) () in
+               Some (U.store ~dst ~value ())
+         | _ -> None)
+    | _ -> None
+
   let symbol = Ffi.submission_symbol
 end
 

@@ -478,10 +478,14 @@ let queue_timeout () =
   run ();
   let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "doorbell_compute") in
   let published = doorbell () in
+  let protected = List.map (fun tag -> tag, Device.Buffer.as_bytes (Hashtbl.find buffers tag))
+      ["timeline"; "slots"; "kernargs"; "cmdbuf_compute"] in
   run ();
   raises_match (Exn.failure ~substring:"HCQ submission timed out")
     (fun () -> Submission.check submission);
   equal bytes published (doorbell ());
+  List.iter (fun (tag, before) -> equal ~msg:tag bytes before
+      (Device.Buffer.as_bytes (Hashtbl.find buffers tag))) protected;
   raises_match (Exn.failure ~substring:"HCQ submission timed out") run
 
 let queue_full () =

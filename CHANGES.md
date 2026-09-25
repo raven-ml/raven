@@ -386,6 +386,9 @@ thread.
 
 ### Tolk (new)
 
+- Timed-out AMD queue replays preserve the timeline, command buffers and
+  arguments still owned by in-flight work, and reject further submissions.
+
 - Compiled queue linking applies casts and bitcasts around constant expressions,
   so split device addresses and packed descriptor fields are initialized before
   submission instead of remaining unapplied patches.
