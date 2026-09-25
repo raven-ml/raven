@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI multi-die setup programs each memory hub and compute die separately,
+  including TLB acknowledgements, AQL descriptors, engine reset and clock
+  gating. These paths previously repeated writes to instance zero.
+
 - AMD PCI register bindings honor discovered IP instances. SDMA 4.4 initializes
   and tears down each selected engine and copy ring instead of repeatedly
   programming instance zero.

@@ -1639,6 +1639,28 @@ let () =
                     (list (pair int int))
                     [ (flush_target, 0) ]
                     (List.rev !(fd.log))));
+          test "memory hubs initialize and acknowledge invalidation independently" (fun () ->
+              with_fake_dev ~extra_ips:[0x22, 1, (3, 0, 0), [0x60000]] (fun fd ->
+                  let gmc = Gmc.create fd.dev and soc = Soc.create fd.dev in
+                  let reg inst name = Amdev.reg fd.dev ~inst name in
+                  let addr inst name = (Amdev.Am_register.reg (reg inst name)).Reg.addr in
+                  Gmc.init_hw gmc ~soc;
+                  equal int 2 (Gmc.vmhubs gmc);
+                  for inst = 0 to 1 do
+                    equal int 1 (List.assoc "enable_context"
+                      (Amdev.Am_register.read_bitfields (reg inst "regMMVM_CONTEXT0_CNTL")));
+                    Hashtbl.replace fd.reads (addr inst "regMMVM_INVALIDATE_ENG17_SEM") (fun () -> 1)
+                  done;
+                  Hashtbl.replace fd.reads (addr 0 "regMMVM_INVALIDATE_ENG17_ACK") (fun () -> 1);
+                  raises_match (function Am_ip.Timeout_error _ -> true | _ -> false)
+                    (fun () -> Gmc.flush_tlb gmc ~xccs:1 Gmc.Mm ~vmid:0);
+                  Hashtbl.replace fd.reads (addr 1 "regMMVM_INVALIDATE_ENG17_ACK") (fun () -> 1);
+                  Gmc.flush_tlb gmc ~xccs:1 Gmc.Mm ~vmid:0;
+                  for inst = 0 to 1 do
+                    equal int 1 (List.assoc "per_vmid_invalidate_req"
+                      (Amdev.Am_register.read_bitfields (reg inst "regMMVM_INVALIDATE_ENG17_REQ")));
+                    equal int 0 (Hashtbl.find fd.store (addr inst "regMMVM_INVALIDATE_ENG17_SEM"))
+                  done));
           test "an installed mapping hook runs after map_range" (fun () ->
               with_fake_dev (fun fd ->
                   let calls = ref 0 in
@@ -1655,6 +1677,52 @@ let () =
         ];
       group "gfx engines"
         [
+          test "AQL descriptors and recovery address each compute die" (fun () ->
+              with_fake_dev ~gc:(9, 4, 3)
+                ~extra_ips:[0xb, 1, (9, 4, 3), [0x68000; 0x69000]] (fun fd ->
+                  let gfx = Gfx.create fd.dev in
+                  let reg inst name = Amdev.reg fd.dev ~inst name in
+                  let addr inst name = (Amdev.Am_register.reg (reg inst name)).Reg.addr in
+                  let read inst name = Amdev.Am_register.read (reg inst name) in
+                  equal int 2 (Gfx.xccs gfx);
+                  let soc = Soc.create fd.dev and gmc = Gmc.create fd.dev in
+                  let psp = Psp.create fd.dev ~fw:no_fw in
+                  let psp_commands = psp_script fd ~pref:"regMP0_SMN_C2PMSG" psp in
+                  Gfx.init_hw gfx ~soc ~gmc ~psp ~fw:no_fw ~partial_boot:false;
+                  equal int 1 (List.length !(psp_commands.frames));
+                  for inst = 0 to 1 do
+                    equal int 1 (List.assoc "enable_context"
+                      (Amdev.Am_register.read_bitfields (reg inst "regGCVM_CONTEXT0_CNTL")));
+                    equal int (0x100 * inst) (read inst "regCP_MEC_DOORBELL_RANGE_LOWER");
+                    equal int 0x2a114042 (read inst "regGB_ADDR_CONFIG")
+                  done;
+                  ignore (Gfx.setup_ring gfx ~ring_addr:0x100000 ~ring_size:0x800
+                    ~rptr_addr:0x11000 ~wptr_addr:0x12000 ~eop_addr:0x13000
+                    ~eop_size:0x800 ~idx:0 ~aql:true : int);
+                  let descriptor inst = read inst "regCP_MQD_BASE_ADDR" - 0x10000000 in
+                  equal int 0x1000 (descriptor 1 - descriptor 0);
+                  for inst = 0 to 1 do
+                    equal int 1 (read inst "regCP_HQD_ACTIVE");
+                    equal int32 (Int32.of_int inst) (Mmio.read32 fd.fvram (descriptor inst + 0x9c));
+                    equal int32 0x1000l (Mmio.read32 fd.fvram (descriptor inst + 0x388));
+                    Hashtbl.replace fd.wr_hooks (addr inst "regSPI_COMPUTE_QUEUE_RESET")
+                      (fun _ -> Hashtbl.replace fd.store (addr inst "regCP_HQD_ACTIVE") 0)
+                  done;
+                  Gfx.reset_mec gfx ~fw:no_fw;
+                  for inst = 0 to 1 do
+                    equal int 2 (read inst "regCP_HQD_DEQUEUE_REQUEST");
+                    equal int 0 (read inst "regGRBM_GFX_CNTL");
+                    equal int 0 (read inst "regCP_MEC_CNTL");
+                    equal int 0 (read inst "regGRBM_SOFT_RESET")
+                  done;
+                  for inst = 0 to 1 do
+                    Hashtbl.replace fd.reads (addr inst "regRLC_SAFE_MODE") (fun () -> 0)
+                  done;
+                  Gfx.set_clockgating_state gfx;
+                  for inst = 0 to 1 do
+                    equal int 1 (List.assoc "cgcg_en"
+                      (Amdev.Am_register.read_bitfields (reg inst "regRLC_CGCG_CGLS_CTRL")))
+                  done));
           test "init_hw boots the compute engines" (fun () ->
               with_fake_dev (fun fd ->
                   let soc = Soc.create fd.dev in

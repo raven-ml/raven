@@ -290,13 +290,13 @@ module Gmc = struct
     (* Can't issue TLB invalidation if the hub isn't initialized. *)
     if hub_initted t hub then begin
       let pref = hub_pref hub in
-      for _ = 1 to (match hub with Mm -> t.vmhubs | Gc -> xccs) do
+      for inst = 0 to (match hub with Mm -> t.vmhubs | Gc -> xccs) - 1 do
         (if hub = Mm then
            wait_cond adev ~value:1 ~msg:"mm flush_tlb timeout" (fun () ->
-               Am_register.read (Amdev.reg adev "regMMVM_INVALIDATE_ENG17_SEM")
+               Am_register.read (Amdev.reg adev ~inst "regMMVM_INVALIDATE_ENG17_SEM")
                land 0x1));
         Am_register.write
-          (Amdev.reg adev
+          (Amdev.reg adev ~inst
              (Printf.sprintf "reg%sVM_INVALIDATE_ENG17_REQ" pref))
           [
             ("flush_type", flush_type);
@@ -309,38 +309,38 @@ module Gmc = struct
         wait_cond adev ~value:(1 lsl vmid) ~msg:"flush_tlb timeout"
           (fun () ->
             Am_register.read
-              (Amdev.reg adev
+              (Amdev.reg adev ~inst
                  (Printf.sprintf "reg%sVM_INVALIDATE_ENG17_ACK" pref))
             land (1 lsl vmid));
         if hub = Mm then
           Am_register.write
-            (Amdev.reg adev "regMMVM_INVALIDATE_ENG17_SEM")
+            (Amdev.reg adev ~inst "regMMVM_INVALIDATE_ENG17_SEM")
             ~value:0x0 [];
         if Amdev.ip_ver adev Am.gc_hwip >= (11, 0, 0) && hub = Mm then begin
           Am_register.update
-            (Amdev.reg adev "regMMVM_L2_BANK_SELECT_RESERVED_CID2")
+            (Amdev.reg adev ~inst "regMMVM_L2_BANK_SELECT_RESERVED_CID2")
             [ ("reserved_cache_private_invalidation", 1) ];
           (* Read back the register to ensure the invalidation is
              complete *)
           ignore
             (Am_register.read
-               (Amdev.reg adev "regMMVM_L2_BANK_SELECT_RESERVED_CID2"))
+               (Amdev.reg adev ~inst "regMMVM_L2_BANK_SELECT_RESERVED_CID2"))
         end
       done
     end
 
   (* ip.py:107 enable_vm_addressing *)
-  let enable_vm_addressing t page_table hub ~vmid =
+  let enable_vm_addressing t page_table hub ~vmid ~inst =
     let adev = t.adev in
     let pref = hub_pref hub in
     let name fmt = Printf.sprintf fmt pref vmid in
-    Amdev.wreg_pair adev
+    Amdev.wreg_pair adev ~inst
       (name "reg%sVM_CONTEXT%d_PAGE_TABLE_START_ADDR")
       ~lo:"_LO32" ~hi:"_HI32" (t.vm_base lsr 12);
-    Amdev.wreg_pair adev
+    Amdev.wreg_pair adev ~inst
       (name "reg%sVM_CONTEXT%d_PAGE_TABLE_END_ADDR")
       ~lo:"_LO32" ~hi:"_HI32" (t.vm_end lsr 12);
-    Amdev.wreg_pair adev
+    Amdev.wreg_pair adev ~inst
       (name "reg%sVM_CONTEXT%d_PAGE_TABLE_BASE_ADDR")
       ~lo:"_LO32" ~hi:"_HI32"
       (Amdev.paddr2xgmi adev (Amdev.Am_page_table.paddr page_table) lor 1);
@@ -349,7 +349,7 @@ module Gmc = struct
     in
     let fault_flags suffix = List.map (fun x -> (x ^ suffix, 1)) fault_kinds in
     Am_register.write
-      (Amdev.reg adev (name "reg%sVM_CONTEXT%d_CNTL"))
+      (Amdev.reg adev ~inst (name "reg%sVM_CONTEXT%d_CNTL"))
       ~value:0x1800000
       (fault_flags "_protection_fault_enable_interrupt"
       @ fault_flags "_protection_fault_enable_default"
@@ -361,15 +361,13 @@ module Gmc = struct
           ("page_table_block_size", if t.trans_futher then 9 else 0);
         ])
 
-  (* ip.py:117 init_hub. The register layer resolves die instance 0
-     only, so the per-instance loop programs every instance through
-     the same registers; exact on single-die parts. *)
+  (* ip.py:117 init_hub *)
   let init_hub t ~soc hub ~inst_cnt =
     let adev = t.adev in
     let pref = hub_pref hub in
-    let r name = Amdev.reg adev (Printf.sprintf "reg%s%s" pref name) in
     let pair name = Printf.sprintf "reg%s%s" pref name in
-    for _ = 1 to inst_cnt do
+    for inst = 0 to inst_cnt - 1 do
+      let r name = Amdev.reg adev ~inst (Printf.sprintf "reg%s%s" pref name) in
       (* Init system apertures *)
       Am_register.write (r "MC_VM_AGP_BASE") ~value:0 [];
       (* disable AGP *)
@@ -381,11 +379,11 @@ module Gmc = struct
       Am_register.write
         (r "MC_VM_SYSTEM_APERTURE_HIGH_ADDR")
         ~value:(t.fb_end lsr 18) [];
-      Amdev.wreg_pair adev
+      Amdev.wreg_pair adev ~inst
         (pair "MC_VM_SYSTEM_APERTURE_DEFAULT_ADDR")
         ~lo:"_LSB" ~hi:"_MSB"
         (t.memscratch_xgmi_paddr lsr 12);
-      Amdev.wreg_pair adev
+      Amdev.wreg_pair adev ~inst
         (pair "VM_L2_PROTECTION_FAULT_DEFAULT_ADDR")
         ~lo:"_LO32" ~hi:"_HI32"
         (t.dummy_page_xgmi_paddr lsr 12);
@@ -426,19 +424,19 @@ module Gmc = struct
           [ ("walker_priority_client_id", 0x1ff) ];
       enable_vm_addressing t
         (Memory.root_page_table (Amdev.mm adev))
-        hub ~vmid:0;
+        hub ~vmid:0 ~inst;
       (* Disable identity aperture *)
-      Amdev.wreg_pair adev
+      Amdev.wreg_pair adev ~inst
         (pair "VM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR")
         ~lo:"_LO32" ~hi:"_HI32" 0xfffffffff;
-      Amdev.wreg_pair adev
+      Amdev.wreg_pair adev ~inst
         (pair "VM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR")
         ~lo:"_LO32" ~hi:"_HI32" 0x0;
-      Amdev.wreg_pair adev
+      Amdev.wreg_pair adev ~inst
         (pair "VM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET")
         ~lo:"_LO32" ~hi:"_HI32" 0x0;
       for eng_i = 0 to 17 do
-        Amdev.wreg_pair adev
+        Amdev.wreg_pair adev ~inst
           (Printf.sprintf "reg%sVM_INVALIDATE_ENG%d_ADDR_RANGE" pref eng_i)
           ~lo:"_LO32" ~hi:"_HI32" 0x1fffffffff
       done
@@ -1018,19 +1016,19 @@ module Gfx = struct
   let xccs t = t.xccs
 
   (* ip.py:372 _grbm_select *)
-  let grbm_select ?(me = 0) ?(pipe = 0) ?(queue = 0) ?(vmid = 0) t =
+  let grbm_select ?(me = 0) ?(pipe = 0) ?(queue = 0) ?(vmid = 0) ~inst t =
     Am_register.write
-      (Amdev.reg t.adev "regGRBM_GFX_CNTL")
+      (Amdev.reg t.adev ~inst "regGRBM_GFX_CNTL")
       [ ("meid", me); ("pipeid", pipe); ("vmid", vmid); ("queueid", queue) ]
 
   (* ip.py:375 _enable_mec *)
   let enable_mec t =
-    for _ = 1 to t.xccs do
+    for inst = 0 to t.xccs - 1 do
       if Amdev.ip_ver t.adev Am.gc_hwip >= (10, 0, 0) then
         Am_register.update
-          (Amdev.reg t.adev "regCP_MEC_RS64_CNTL")
+          (Amdev.reg t.adev ~inst "regCP_MEC_RS64_CNTL")
           [ ("mec_pipe0_reset", 0); ("mec_pipe0_active", 1); ("mec_halt", 0) ]
-      else Am_register.write (Amdev.reg t.adev "regCP_MEC_CNTL") ~value:0x0 []
+      else Am_register.write (Amdev.reg t.adev ~inst "regCP_MEC_CNTL") ~value:0x0 []
     done;
     (* Wait for MEC to be ready *)
     sleep_ms t.adev 50
@@ -1038,16 +1036,16 @@ module Gfx = struct
   (* ip.py:381 _config_mec *)
   let config_mec t ~fw =
     let adev = t.adev in
-    let config_helper ~eng_name ~cntl_reg ~eng_reg ~pipe_cnt ?(me = 0) () =
+    let config_helper ~inst ~eng_name ~cntl_reg ~eng_reg ~pipe_cnt ?(me = 0) () =
       for pipe = 0 to pipe_cnt - 1 do
-        grbm_select ~me ~pipe t;
-        Amdev.wreg_pair adev
+        grbm_select ~me ~pipe ~inst t;
+        Amdev.wreg_pair adev ~inst
           (Printf.sprintf "regCP_%s_PRGRM_CNTR_START" eng_reg)
           ~lo:"" ~hi:"_HI"
           (List.assoc eng_name fw.Firmware.ucode_start lsr 2)
       done;
-      grbm_select t;
-      let cntl = Amdev.reg adev (Printf.sprintf "regCP_%s_CNTL" cntl_reg) in
+      grbm_select ~inst t;
+      let cntl = Amdev.reg adev ~inst (Printf.sprintf "regCP_%s_CNTL" cntl_reg) in
       let resets v =
         List.init pipe_cnt (fun pipe ->
             ( Printf.sprintf "%s_pipe%d_reset"
@@ -1058,23 +1056,23 @@ module Gfx = struct
       Am_register.update cntl (resets 1);
       Am_register.update cntl (resets 0)
     in
-    for _ = 1 to t.xccs do
+    for inst = 0 to t.xccs - 1 do
       if Amdev.ip_ver adev Am.gc_hwip < (10, 0, 0) then
         Am_register.update
-          (Amdev.reg adev "regCP_MEC_CNTL")
+          (Amdev.reg adev ~inst "regCP_MEC_CNTL")
           [
             ("mec_invalidate_icache", 1); ("mec_me1_pipe0_reset", 1);
             ("mec_me2_pipe0_reset", 1); ("mec_me1_halt", 1);
             ("mec_me2_halt", 1);
           ];
       if Amdev.ip_ver adev Am.gc_hwip >= (12, 0, 0) then begin
-        config_helper ~eng_name:"PFP" ~cntl_reg:"ME" ~eng_reg:"PFP"
+        config_helper ~inst ~eng_name:"PFP" ~cntl_reg:"ME" ~eng_reg:"PFP"
           ~pipe_cnt:1 ();
-        config_helper ~eng_name:"ME" ~cntl_reg:"ME" ~eng_reg:"ME" ~pipe_cnt:1
+        config_helper ~inst ~eng_name:"ME" ~cntl_reg:"ME" ~eng_reg:"ME" ~pipe_cnt:1
           ()
       end;
       if Amdev.ip_ver adev Am.gc_hwip >= (10, 0, 0) then
-        config_helper ~eng_name:"MEC" ~cntl_reg:"MEC_RS64" ~eng_reg:"MEC_RS64"
+        config_helper ~inst ~eng_name:"MEC" ~cntl_reg:"MEC_RS64" ~eng_reg:"MEC_RS64"
           ~pipe_cnt:1 ~me:1 ()
     done
 
@@ -1082,24 +1080,24 @@ module Gfx = struct
   let dequeue_hqds t =
     let adev = t.adev in
     for q = 0 to 1 do
-      for _ = 1 to t.xccs do
-        grbm_select ~me:1 ~pipe:0 ~queue:q t;
-        if Am_register.read (Amdev.reg adev "regCP_HQD_ACTIVE") land 1 <> 0
+      for inst = 0 to t.xccs - 1 do
+        grbm_select ~me:1 ~pipe:0 ~queue:q ~inst t;
+        if Am_register.read (Amdev.reg adev ~inst "regCP_HQD_ACTIVE") land 1 <> 0
         then begin
           (* 1 - DRAIN_PIPE; 2 - RESET_WAVES *)
           Am_register.write
-            (Amdev.reg adev "regCP_HQD_DEQUEUE_REQUEST")
+            (Amdev.reg adev ~inst "regCP_HQD_DEQUEUE_REQUEST")
             ~value:0x2 [];
           Am_register.write
-            (Amdev.reg adev "regSPI_COMPUTE_QUEUE_RESET")
+            (Amdev.reg adev ~inst "regSPI_COMPUTE_QUEUE_RESET")
             ~value:0x1 [];
           if not (Amdev.is_err_state adev) then
             wait_cond adev ~value:0 ~msg:"HQD dequeue timeout" (fun () ->
-                Am_register.read (Amdev.reg adev "regCP_HQD_ACTIVE") land 1)
+                Am_register.read (Amdev.reg adev ~inst "regCP_HQD_ACTIVE") land 1)
         end
       done
     done;
-    grbm_select t
+    for inst = 0 to t.xccs - 1 do grbm_select ~inst t done
 
   let fini_hw t = dequeue_hqds t
 
@@ -1108,14 +1106,14 @@ module Gfx = struct
     dequeue_hqds t;
     (* gfx12+ resets through the per-pipe engine controls instead *)
     if Amdev.ip_ver t.adev Am.gc_hwip < (12, 0, 0) then begin
-      for _ = 1 to t.xccs do
+      for inst = 0 to t.xccs - 1 do
         Am_register.write
-          (Amdev.reg t.adev "regGRBM_SOFT_RESET")
+          (Amdev.reg t.adev ~inst "regGRBM_SOFT_RESET")
           [ ("soft_reset_cp", 1); ("soft_reset_cpc", 1) ]
       done;
       sleep_ms t.adev 50;
-      for _ = 1 to t.xccs do
-        Am_register.write (Amdev.reg t.adev "regGRBM_SOFT_RESET") ~value:0x0 []
+      for inst = 0 to t.xccs - 1 do
+        Am_register.write (Amdev.reg t.adev ~inst "regGRBM_SOFT_RESET") ~value:0x0 []
       done
     end;
     config_mec t ~fw;
@@ -1140,43 +1138,43 @@ module Gfx = struct
       config_mec t ~fw;
       (* NOTE: Golden reg for gfx11. No values for this reg provided.
          The kernel just ors 0x20000000 to this reg. *)
-      for _ = 1 to t.xccs do
-        let tcp = Amdev.reg adev "regTCP_CNTL" in
+      for inst = 0 to t.xccs - 1 do
+        let tcp = Amdev.reg adev ~inst "regTCP_CNTL" in
         Am_register.write tcp ~value:(Am_register.read tcp lor 0x20000000) []
       done;
-      for _ = 1 to t.xccs do
-        Am_register.write (Amdev.reg adev "regRLC_CNTL") ~value:0x1 []
+      for inst = 0 to t.xccs - 1 do
+        Am_register.write (Amdev.reg adev ~inst "regRLC_CNTL") ~value:0x1 []
       done;
-      for _ = 1 to t.xccs do
+      for inst = 0 to t.xccs - 1 do
         Am_register.update
-          (Amdev.reg adev "regRLC_SRM_CNTL")
+          (Amdev.reg adev ~inst "regRLC_SRM_CNTL")
           [ ("srm_enable", 1); ("auto_incr_addr", 1) ]
       done;
-      for _ = 1 to t.xccs do
-        Am_register.write (Amdev.reg adev "regRLC_SPM_MC_CNTL") ~value:0xf []
+      for inst = 0 to t.xccs - 1 do
+        Am_register.write (Amdev.reg adev ~inst "regRLC_SPM_MC_CNTL") ~value:0xf []
       done;
       (let nbio_ma, nbio_mi, _ = Amdev.ip_ver adev Am.nbio_hwip in
        if (nbio_ma, nbio_mi) <> (7, 9) then begin
          Soc.doorbell_enable soc ~port:0 ~awid:0x3 ~awaddr_31_28_value:0x3 ();
          Soc.doorbell_enable soc ~port:3 ~awid:0x6 ~awaddr_31_28_value:0x3 ()
        end);
-      for xcc = 0 to t.xccs - 1 do
+      for inst = 0 to t.xccs - 1 do
         if List.mem gc_ver [ (9, 4, 3); (9, 5, 0) ] then begin
           (* Golden value for mi300/mi350 *)
           Am_register.write
-            (Amdev.reg adev "regGB_ADDR_CONFIG")
+            (Amdev.reg adev ~inst "regGB_ADDR_CONFIG")
             ~value:0x2a114042 [];
           Am_register.update
-            (Amdev.reg adev "regTCP_UTCL1_CNTL2")
+            (Amdev.reg adev ~inst "regTCP_UTCL1_CNTL2")
             [ ("spare", 1) ]
         end;
         Am_register.update
-          (Amdev.reg adev "regGRBM_CNTL")
+          (Amdev.reg adev ~inst "regGRBM_CNTL")
           [ ("read_timeout", 0xff) ];
         for i = 0 to 15 do
-          grbm_select ~vmid:i t;
+          grbm_select ~vmid:i ~inst t;
           Am_register.write
-            (Amdev.reg adev "regSH_MEM_CONFIG")
+            (Amdev.reg adev ~inst "regSH_MEM_CONFIG")
             ((if gc_major >= 10 then [ ("initial_inst_prefetch", 3) ]
               else [ ("retry_disable", 1) ])
             @ (if (gc_major, gc_minor) = (9, 4) then [ ("f8_mode", 1) ]
@@ -1189,17 +1187,17 @@ module Gfx = struct
              LDS:     0x10000000'00000000 - 0x10000001'00000000 (4GB)
              Scratch: 0x20000000'00000000 - 0x20000001'00000000 (4GB) *)
           Am_register.write
-            (Amdev.reg adev "regSH_MEM_BASES")
+            (Amdev.reg adev ~inst "regSH_MEM_BASES")
             [ ("shared_base", 0x1); ("private_base", 0x2) ]
         done;
-        grbm_select t;
+        grbm_select ~inst t;
         (* Configure MEC doorbell range *)
         Am_register.write
-          (Amdev.reg adev "regCP_MEC_DOORBELL_RANGE_LOWER")
-          ~value:(0x100 * xcc) [];
+          (Amdev.reg adev ~inst "regCP_MEC_DOORBELL_RANGE_LOWER")
+          ~value:(0x100 * inst) [];
         Am_register.write
-          (Amdev.reg adev "regCP_MEC_DOORBELL_RANGE_UPPER")
-          ~value:((0x100 * xcc) + 0xf8) []
+          (Amdev.reg adev ~inst "regCP_MEC_DOORBELL_RANGE_UPPER")
+          ~value:((0x100 * inst) + 0xf8) []
       done;
       enable_mec t;
       (* Set 1 partition *)
@@ -1218,7 +1216,7 @@ module Gfx = struct
     in
     let module M = (val mqd_mod adev) in
     for xcc = 0 to (if aql then t.xccs else 1) - 1 do
-      grbm_select ~me:1 ~pipe ~queue t;
+      grbm_select ~me:1 ~pipe ~queue ~inst:xcc t;
       let mqd = Bytes.make M.sizeof '\x00' in
       M.set_header mqd 0xC0310800;
       M.set_cp_mqd_base_addr_lo mqd (lo32 (t.mqd_mc.(queue) + (0x1000 * xcc)));
@@ -1295,11 +1293,11 @@ module Gfx = struct
       (* The queue-bringup registers mirror the descriptor's register
          block, dword for dword from its 0x80th dword. *)
       let base =
-        (Am_register.reg (Amdev.reg adev "regCP_MQD_BASE_ADDR"))
+        (Am_register.reg (Amdev.reg adev ~inst:xcc "regCP_MQD_BASE_ADDR"))
           .Amd_tables.Reg.addr
       in
       let last =
-        (Am_register.reg (Amdev.reg adev "regCP_HQD_PQ_WPTR_HI"))
+        (Am_register.reg (Amdev.reg adev ~inst:xcc "regCP_HQD_PQ_WPTR_HI"))
           .Amd_tables.Reg.addr
       in
       for i = 0 to last - base do
@@ -1307,9 +1305,9 @@ module Gfx = struct
           (Int32.to_int (Bytes.get_int32_le mqd ((0x80 + i) * 4))
           land 0xffffffff)
       done;
-      Am_register.write (Amdev.reg adev "regCP_HQD_ACTIVE") ~value:0x1 [];
+      Am_register.write (Amdev.reg adev ~inst:xcc "regCP_HQD_ACTIVE") ~value:0x1 [];
       Gmc.flush_hdp adev;
-      grbm_select t
+      grbm_select ~inst:xcc t
     done;
     doorbell
 
@@ -1320,33 +1318,33 @@ module Gfx = struct
     (match Amdev.reg adev "regMM_ATC_L2_MISC_CG" with
     | reg -> Am_register.write reg [ ("enable", 1); ("mem_ls_enable", 1) ]
     | exception Invalid_argument _ -> ());
-    for _ = 1 to t.xccs do
+    for inst = 0 to t.xccs - 1 do
       Am_register.write
-        (Amdev.reg adev "regRLC_SAFE_MODE")
+        (Amdev.reg adev ~inst "regRLC_SAFE_MODE")
         [ ("message", 1); ("cmd", 1) ];
       wait_cond adev ~value:0 ~msg:"RLC safe mode timeout" (fun () ->
-          Am_register.read (Amdev.reg adev "regRLC_SAFE_MODE") land 0x1);
+          Am_register.read (Amdev.reg adev ~inst "regRLC_SAFE_MODE") land 0x1);
       Am_register.update
-        (Amdev.reg adev "regRLC_CGCG_CGLS_CTRL")
+        (Amdev.reg adev ~inst "regRLC_CGCG_CGLS_CTRL")
         [
           ("cgcg_gfx_idle_threshold", 0x36); ("cgcg_en", 1);
           ("cgls_rep_compansat_delay", 0xf); ("cgls_en", 1);
         ];
       Am_register.update
-        (Amdev.reg adev "regCP_RB_WPTR_POLL_CNTL")
+        (Amdev.reg adev ~inst "regCP_RB_WPTR_POLL_CNTL")
         [ ("poll_frequency", 0x100); ("idle_poll_count", 0x90) ];
       Am_register.update
-        (Amdev.reg adev "regCP_INT_CNTL")
+        (Amdev.reg adev ~inst "regCP_INT_CNTL")
         [
           ("cntx_busy_int_enable", 1); ("cntx_empty_int_enable", 1);
           ("cmp_busy_int_enable", 1);
         ];
       if gc_major >= 10 then begin
         Am_register.update
-          (Amdev.reg adev "regSDMA0_RLC_CGCG_CTRL")
+          (Amdev.reg adev ~inst "regSDMA0_RLC_CGCG_CTRL")
           [ ("cgcg_int_enable", 1) ];
         Am_register.update
-          (Amdev.reg adev "regSDMA1_RLC_CGCG_CTRL")
+          (Amdev.reg adev ~inst "regSDMA1_RLC_CGCG_CTRL")
           [ ("cgcg_int_enable", 1) ]
       end;
       let feats_gfx9 =
@@ -1360,7 +1358,7 @@ module Gfx = struct
         else []
       in
       Am_register.update
-        (Amdev.reg adev "regRLC_CGTT_MGCG_OVERRIDE")
+        (Amdev.reg adev ~inst "regRLC_CGTT_MGCG_OVERRIDE")
         (feats_gfx9 @ feats_gfx11
         @ [
             ("gfxip_fgcg_override", 0); ("grbm_cgtt_sclk_override", 0);
@@ -1368,7 +1366,7 @@ module Gfx = struct
             ("gfxip_cgls_override", 0); ("gfxip_cgcg_override", 0);
           ]);
       Am_register.write
-        (Amdev.reg adev "regRLC_SAFE_MODE")
+        (Amdev.reg adev ~inst "regRLC_SAFE_MODE")
         [ ("message", 0); ("cmd", 1) ]
     done
 end
