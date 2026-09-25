@@ -412,7 +412,10 @@ delete it rather than registering it.
   tiles, columns by 3, and a local split of 4 on the columns, measured at 6.6 to
   7.6 TFLOPS at bfloat16 on an M1 Max for 46 filled blocks of 64 rows at
   gpt-oss's shapes, where the heuristic's `matmul` reaches 8.2 on a dense
-  product; elsewhere none yet. Coverage:
+  product; on the CPU at every dtype, rows upcast by up to 8, columns by up to
+  16 within 64 accumulators, and the loop over tiles unrolled by 4, timed on
+  an M1 Max at gpt-oss's shapes 9 to 37 times faster than no options at
+  float32 and 1.4 to 2.1 times at bfloat16; elsewhere none yet. Coverage:
   `test/unit/frontend/test_block_matmul.ml` (values on the default device, and
   each renderer's loop bounds) and the opt-correctness workloads `block_matmul`
   and `block_matmul_t`, under every action that leaves the block axis whole.

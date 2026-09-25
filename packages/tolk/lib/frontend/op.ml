@@ -1129,11 +1129,25 @@ let block_row_tiles ren dtype ~n ~k =
 
 (* The contraction's tile depth and the options, per renderer and shape,
    pinned from measurements. The block axis is axis 0 when there are several
-   blocks; the rows, then the columns, follow it. *)
+   blocks; the rows, then the columns, then the contraction's tiles follow
+   it.
+
+   On the CPU the options keep a register tile of at most 64 accumulators,
+   float32 at every dtype: rows upcast by up to 8, columns by up to 16 within
+   that bound, and the loop over the contraction's tiles unrolled by 4. 64 is
+   half of a 128-float vector register file (32 NEON registers, or 16 AVX2
+   ones), leaving the other half to the loads of x and w; it under-uses
+   AVX-512's 32 registers of 16 floats. The constants were measured on one M1
+   Max core at gpt-oss's shapes (5760 outputs, 2880 inputs) against no
+   options: 9 to 37 times faster at float32 from blocks of one row to 64, and
+   1.4 to 2.1 times at bfloat16, where rounding each product to bfloat16 costs
+   more than the loads the tile saves. A tile of 16 by 8 (128 accumulators)
+   and one of 4 by 8 (32) were both slower than 8 by 8. *)
 let block_options ren ~dtype ~nb ~m ~n ~k =
   let depth = if k mod 8 = 0 && k > 8 then 8 else 1 in
   let first = if nb > 1 then 1 else 0 in
   let largest l size = List.find (fun u -> size mod u = 0) l in
+  let opt amount o = if amount > 1 then [ o ] else [] in
   let opts =
     if block_tensor_cores ren ~dtype ~n ~k && m mod 8 = 0 then
       let rows = m / 8 and cols = n / 8 in
@@ -1141,11 +1155,21 @@ let block_options ren ~dtype ~nb ~m ~n ~k =
       let uc = largest [ 3; 2; 1 ] cols in
       let lc = largest [ 4; 2; 1 ] (cols / uc) in
       let col = first + if rows / ur > 1 then 1 else 0 in
-      let opt amount o = if amount > 1 then [ o ] else [] in
       (Uop.Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 1 }
       :: opt ur (split_opt first ur Upcast))
       @ opt uc (split_opt col uc Upcast)
       @ opt lc (split_opt col lc Local)
+    else if Tolk.Renderer.device ren = "CPU" then
+      let ur = largest row_upcasts m in
+      let uc = largest (List.filter (fun u -> ur * u <= 64) [ 16; 8; 4; 2; 1 ]) n in
+      let ut = largest [ 4; 2; 1 ] (k / depth) in
+      let left size u = if size / u > 1 then 1 else 0 in
+      let split u = if u > 1 then 1 else 0 in
+      let col = first + left m ur in
+      let tile = col + left n uc + split ur + split uc in
+      opt ur (split_opt first ur Upcast)
+      @ opt uc (split_opt col uc Upcast)
+      @ opt ut (split_opt tile ut Unroll)
     else []
   in
   (depth, opts)

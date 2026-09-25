@@ -120,6 +120,12 @@ migration to main.
 
 ## Separately scoped work
 
+- Unrolling the block kernel's constant inner loop of 8 on the CPU
+  (`Op.block_matmul`, a `Split` of kind `Unroll` on the last axis) fails to
+  lower with "invalid axis" in `full_rewrite_to_sink`, although Postrange
+  applies it; the pinned CPU options unroll the outer loop over tiles instead.
+  Acceptance: `Split` of the inner axis by 8 lowers and runs in
+  `test_block_matmul`'s CPU values.
 - Make stored NV queues process-independent. The encoder embeds the channels'
   work-submission tokens (`tolk_nv.ml` `tolk_hcq_gpfifo` call) and the
   device's per-thread local memory in each QMD template (`template_dev`); both

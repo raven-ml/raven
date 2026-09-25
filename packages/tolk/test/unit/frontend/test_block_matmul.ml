@@ -247,7 +247,10 @@ let lowered ~device ren ~dtype ~nb ~m ~n ~k ~e =
   in
   let sink = Codegen.full_rewrite_to_sink ren kernel in
   let program = Linearizer.linearize sink in
-  (program, Renderer.render ren ~name:"block" program)
+  let opts =
+    match U.as_kernel_info sink with Some ki -> ki.applied_opts | None -> []
+  in
+  (program, Renderer.render ren ~name:"block" program, opts)
 
 (* The sizes of the program's loops that are not constant, and whether each
    reads memory. *)
@@ -287,7 +290,7 @@ let code_tests =
              test
                (Printf.sprintf "%s, %s" (Renderer.device ren) shape)
                (fun () ->
-                 let program, _ =
+                 let program, _, _ =
                    lowered ~device:prefix ren ~dtype:D.float32 ~nb ~m ~n ~k
                      ~e:4
                  in
@@ -304,7 +307,7 @@ let code_tests =
             let ren = List.assoc "RMETAL" renderers in
             List.iter
               (fun dtype ->
-                let _, src =
+                let _, src, _ =
                   lowered ~device:"RMETAL" ren ~dtype ~nb:65 ~m:64 ~n:2880
                     ~k:2880 ~e:32
                 in
@@ -312,6 +315,30 @@ let code_tests =
                   ~msg:(D.to_string dtype)
                   (contains src "simdgroup_multiply_accumulate"))
               [ D.float32; D.float16; D.bfloat16 ]);
+        test "the CPU tiles rows, columns and the contraction" (fun () ->
+            let ren = List.assoc "RCLANG" renderers in
+            List.iter
+              (fun (dtype, m, expect) ->
+                let _, _, opts =
+                  lowered ~device:"RCLANG" ren ~dtype ~nb:4 ~m ~n:5760 ~k:2880
+                    ~e:32
+                in
+                equal (list string)
+                  ~msg:(Printf.sprintf "%s, %d rows" (D.to_string dtype) m)
+                  expect
+                  (List.map U.Opt.to_string opts))
+              [
+                ( D.float32,
+                  8,
+                  [
+                    "SPLIT:1:8:upcast:false";
+                    "SPLIT:1:8:upcast:false";
+                    "SPLIT:4:4:unroll:false";
+                  ] );
+                ( D.bfloat16,
+                  1,
+                  [ "SPLIT:1:16:upcast:false"; "SPLIT:3:4:unroll:false" ] );
+              ]);
       ])
 
 let () = run "block_matmul" [ value_tests; code_tests ]

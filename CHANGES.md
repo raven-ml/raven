@@ -495,6 +495,10 @@ thread.
 
 ### Tolk (new)
 
+- `Op.block_matmul` on the CPU keeps a register tile of rows and columns and
+  unrolls the contraction: 9 to 37 times faster at float32 and 1.4 to 2.1
+  times at bfloat16 at gpt-oss's shapes, where it ran with no options.
+
 - A compiled program is no longer reused, in the process or from rune's disk
   cache, under other values of `TC_SELECT`, `TC_OPT`, `FLOAT16`, `MV*`,
   `OCCUPANCY_FLOOR`, `DMC`, `ALLOW_HALF8`, `EXPAND_SSA`, `ALIGNED` or the CPU
