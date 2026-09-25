@@ -1880,6 +1880,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.Placement.t` is abstract. Build a placement with `host`,
+  `device`, `replicated` and `sharded`, and take it apart with `devices` and
+  `window` (the part a device holds); `equal` now holds for copies in any order.
 - **Breaking:** the key type `Nx.Rng.key` is now `Nx.Rng.t`, a private type
   that only `Nx.Rng` builds (`Rng.key seed` still makes one), so arithmetic or
   slicing on a key, or an arbitrary int32 tensor, no longer type-checks as

@@ -300,15 +300,10 @@ end
 
 (** Placements. *)
 module Placement : sig
-  (** The type for placements. Only the functions below build one, so a
-      placement is in normal form: a list of one device is that device, and a
-      list never repeats a device. *)
-  type t = Nx_effect.placement = private
-    | Device of Device.t
-    | Replicated of Device.t list  (** Two or more devices, a copy on each. *)
-    | Sharded of { axis : int; devices : Device.t list }
-        (** Two or more devices, each holding an equal slice of [axis], in
-            order. *)
+  type t = Nx_effect.placement
+  (** The type for placements: where each device's window of a value lies. Only
+      the functions below build one, and a placement is in normal form: a list
+      of one device is that device, and a list never repeats a device. *)
 
   val host : t
   (** [host] is [device Device.host]. *)
@@ -328,8 +323,22 @@ module Placement : sig
 
       Raises [Invalid_argument] if [axis] is negative, or as {!replicated}. *)
 
+  val devices : t -> Device.t list
+  (** [devices p] is the devices of [p], in the order that decides which window
+      each holds. *)
+
+  val window : t -> int array -> Device.t -> (int * int) array
+  (** [window p shape d] is the window of a value of shape [shape] that [d]
+      holds at [p], as [(start, stop)] per axis, [stop] exclusive, as {!shrink}
+      takes it: [shrink (window p (shape x) d) x] is [d]'s part of [x].
+
+      Raises [Invalid_argument] if [d] is not one of [devices p], or if [p]
+      splits an axis [shape] does not have or does not divide evenly. *)
+
   val equal : t -> t -> bool
-  (** [equal p p'] is [true] iff [p] and [p'] place values alike. *)
+  (** [equal p p'] is [true] iff every device holds the same window of any value
+      at [p] and at [p']. A list of full copies is equal to the same devices in
+      another order. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a placement. *)

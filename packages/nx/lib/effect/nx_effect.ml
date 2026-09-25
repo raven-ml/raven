@@ -29,6 +29,226 @@ open Nx_core
 
 type 'device context_of = Host of Nx_backend.context | On of 'device list
 
+(* Placements over a grid
+
+   A placement is one device, or a grid: distinct devices in row-major order
+   over the grid's extents, and for each cut tensor axis the grid axes that cut
+   it, major first. A grid axis that no cut names holds copies. The
+   representation is kept in normal form: extents are at least 2, adjacent grid
+   axes merge when no cut names either or one cut names both in order, and a
+   grid of one device is that device. It is abstract, over any device type, so
+   that nothing outside this module matches on it: it is taken apart by the
+   window each device holds. *)
+
+module Grid : sig
+  type 'd t
+
+  val device : 'd -> 'd t
+  val v : 'd list -> int list -> (int * int list) list -> 'd t
+  (* [v devices extents cuts] is the grid over [devices], in row-major order
+     over [extents], each [(axis, over)] of [cuts] cutting tensor [axis] over
+     the grid axes [over], major first, in normal form. Raises
+     [Invalid_argument] unless the extents multiply to the number of devices,
+     and the cut axes and the grid axes they name are distinct and in range. *)
+
+  val devices : 'd t -> 'd list
+  val cuts : 'd t -> (int * int) list
+  (* [cuts p] is each cut tensor axis of [p] with the number of tiles it is cut
+     into, by increasing axis. *)
+
+  val tile_index : 'd t -> int -> (int * int) list
+  (* [tile_index p k] is, for each cut tensor axis of [p], the index of the tile
+     that the device at position [k] holds. *)
+
+  val map_axes : (int -> int) -> 'd t -> 'd t
+  (* [map_axes f p] cuts tensor axis [f a] where [p] cuts [a]. *)
+
+  val select : 'd t -> axis:int -> int -> 'd t
+  (* [select p ~axis j] is the placement of the devices of [p] that hold tile
+     [j] of the cut tensor [axis]: the grid axes of that cut go. *)
+
+  val equal : ('d -> 'd -> bool) -> 'd t -> 'd t -> bool
+  val pp : (Format.formatter -> 'd -> unit) -> Format.formatter -> 'd t -> unit
+end = struct
+  type cut = { axis : int; over : int list }
+
+  type 'd t =
+    | One of 'd
+    | Grid of { devices : 'd list; extents : int list; cuts : cut list }
+
+  let device d = One d
+
+  (* Grid axis [g] removed from the cuts, the axes after it renumbered. *)
+  let without g cuts =
+    List.map
+      (fun c ->
+        {
+          c with
+          over =
+            List.filter_map
+              (fun h ->
+                if h = g then None else Some (if h > g then h - 1 else h))
+              c.over;
+        })
+      cuts
+
+  let rec follows g = function
+    | a :: (b :: _ as rest) -> (a = g && b = g + 1) || follows g rest
+    | _ -> false
+
+  let rec normal devices extents cuts =
+    let mentions g = List.exists (fun c -> List.mem g c.over) cuts in
+    let mergeable g =
+      (not (mentions g || mentions (g + 1)))
+      || List.exists (fun c -> follows g c.over) cuts
+    in
+    let n = List.length extents in
+    match List.find_index (( = ) 1) extents with
+    | Some g ->
+        normal devices
+          (List.filteri (fun i _ -> i <> g) extents)
+          (without g cuts)
+    | None -> (
+        match
+          List.find_opt mergeable (List.init (Int.max 0 (n - 1)) Fun.id)
+        with
+        | Some g ->
+            let extents =
+              List.concat
+                (List.mapi
+                   (fun i e ->
+                     if i = g then [ e * List.nth extents (g + 1) ]
+                     else if i = g + 1 then []
+                     else [ e ])
+                   extents)
+            in
+            normal devices extents (without (g + 1) cuts)
+        | None -> (
+            match devices with
+            | [ d ] -> One d
+            | _ ->
+                let cuts = List.filter (fun c -> c.over <> []) cuts in
+                let cuts =
+                  List.sort (fun a b -> Int.compare a.axis b.axis) cuts
+                in
+                Grid { devices; extents; cuts }))
+
+  let v devices extents cuts =
+    let fail fmt = Printf.ksprintf invalid_arg ("Nx_effect.Grid.v: " ^^ fmt) in
+    let rank = List.length extents in
+    if List.fold_left ( * ) 1 extents <> List.length devices then
+      fail "the extents do not multiply to the number of devices";
+    let axes = List.map fst cuts and over = List.concat_map snd cuts in
+    let distinct l =
+      List.length (List.sort_uniq Int.compare l) = List.length l
+    in
+    if not (distinct axes && distinct over) then fail "an axis is cut twice";
+    if List.exists (fun a -> a < 0) axes then fail "a negative axis";
+    if List.exists (fun g -> g < 0 || g >= rank) over then
+      fail "a grid axis out of range";
+    normal devices extents (List.map (fun (axis, over) -> { axis; over }) cuts)
+
+  let devices = function One d -> [ d ] | Grid g -> g.devices
+
+  let count extents c =
+    List.fold_left (fun n g -> n * List.nth extents g) 1 c.over
+
+  let cuts = function
+    | One _ -> []
+    | Grid { extents; cuts; _ } ->
+        List.map (fun c -> (c.axis, count extents c)) cuts
+
+  let tile_index p k =
+    match p with
+    | One _ -> []
+    | Grid { extents; cuts; _ } ->
+        let e = Array.of_list extents in
+        let coord = Array.make (Array.length e) 0 and r = ref k in
+        for g = Array.length e - 1 downto 0 do
+          coord.(g) <- !r mod e.(g);
+          r := !r / e.(g)
+        done;
+        List.map
+          (fun c ->
+            ( c.axis,
+              List.fold_left (fun j g -> (j * e.(g)) + coord.(g)) 0 c.over ))
+          cuts
+
+  let map_axes f = function
+    | One _ as p -> p
+    | Grid g ->
+        let cuts = List.map (fun c -> { c with axis = f c.axis }) g.cuts in
+        Grid
+          {
+            g with
+            cuts = List.sort (fun a b -> Int.compare a.axis b.axis) cuts;
+          }
+
+  let select p ~axis j =
+    match p with
+    | One _ -> p
+    | Grid { devices; extents; cuts } ->
+        let cut = List.find (fun c -> c.axis = axis) cuts in
+        let keep =
+          List.filteri
+            (fun k _ -> List.assoc axis (tile_index p k) = j)
+            (List.mapi (fun k d -> (k, d)) devices)
+        in
+        let gone = List.sort (fun a b -> Int.compare b a) cut.over in
+        let extents = List.filteri (fun g _ -> not (List.mem g gone)) extents in
+        let cuts =
+          List.fold_left
+            (fun cuts g -> without g cuts)
+            (List.filter (fun c -> c.axis <> axis) cuts)
+            gone
+        in
+        normal (List.map snd keep) extents cuts
+
+  (* Two placements are equal when every device holds the same window under
+     both, whatever the shape: the same tile of the same number along every cut
+     axis. *)
+  let equal eq p q =
+    let dq = devices q in
+    let tiles p k =
+      List.map2 (fun (a, n) (_, j) -> (a, n, j)) (cuts p) (tile_index p k)
+    in
+    List.compare_lengths (devices p) dq = 0
+    && List.for_all
+         (fun (k, d) ->
+           match List.find_index (eq d) dq with
+           | Some k' -> tiles p k = tiles q k'
+           | None -> false)
+         (List.mapi (fun k d -> (k, d)) (devices p))
+
+  let pp pp_device ppf p =
+    let list ppf ds =
+      Format.pp_print_list
+        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+        pp_device ppf ds
+    in
+    match p with
+    | One d -> pp_device ppf d
+    | Grid { devices; extents = [ _ ]; cuts = [] } ->
+        Format.fprintf ppf "replicated [%a]" list devices
+    | Grid { devices; extents = [ _ ]; cuts = [ { axis; _ } ] } ->
+        Format.fprintf ppf "sharded ~axis:%d [%a]" axis list devices
+    | Grid { devices; extents; cuts } ->
+        let ints =
+          Format.pp_print_list
+            ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "x")
+            Format.pp_print_int
+        in
+        Format.fprintf ppf "grid %a [%a]" ints extents list devices;
+        List.iter
+          (fun c ->
+            Format.fprintf ppf " ~axis:%d/%a" c.axis
+              (Format.pp_print_list
+                 ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ",")
+                 Format.pp_print_int)
+              c.over)
+          cuts
+end
+
 type ('a, 'b) t =
   | Host : ('a, 'b) Nx_backend.t -> ('a, 'b) t
   | Placed : ('a, 'b) resident -> ('a, 'b) t
@@ -73,12 +293,7 @@ and engine = {
 }
 
 and device = { d_id : int; d_name : string; d_engine : engine }
-
-and placement =
-  | Device of device
-  | Replicated of device list
-  | Sharded of { axis : int; devices : device list }
-
+and placement = device Grid.t
 and storage = ..
 and node = ..
 
@@ -127,15 +342,23 @@ let read_elements (type a b) (r : (a, b) resident) : (a, b) Nx_buffer.t =
       | None -> assert false)
   | Live _ -> r.r_cell.engine.read r
 
+(* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
+let global p shape =
+  match Grid.cuts p with
+  | [] -> shape
+  | cuts ->
+      let shape = Array.copy shape in
+      List.iter (fun (a, n) -> shape.(a) <- shape.(a) * n) cuts;
+      shape
+
 (* A split value's view is each shard's, and its shape the whole's. *)
 let whole_view r =
-  match r.r_placement with
-  | Sharded { axis; devices } ->
+  match Grid.cuts r.r_placement with
+  | [] -> r.r_view
+  | _ ->
       let v = r.r_view in
-      let shape = Array.copy (View.shape v) in
-      shape.(axis) <- shape.(axis) * List.length devices;
-      View.create ~offset:(View.offset v) ~strides:(View.strides v) shape
-  | Device _ | Replicated _ -> r.r_view
+      View.create ~offset:(View.offset v) ~strides:(View.strides v)
+        (global r.r_placement (View.shape v))
 
 let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_backend.t =
   Nx_backend.reshape
@@ -171,8 +394,8 @@ module Device = struct
       read = (fun _ -> invalid_arg "the host holds no placed value");
       place =
         (fun p x ->
-          match p with
-          | Device d when d.d_engine == host_engine -> Host (host_of x)
+          match Grid.devices p with
+          | [ d ] when d.d_engine == host_engine -> Host (host_of x)
           | _ -> invalid_arg "the host engine places values on the host only");
     }
 
@@ -189,20 +412,13 @@ end
 (* Placements *)
 
 module Placement = struct
-  type t = placement =
-    | Device of device
-    | Replicated of device list
-    | Sharded of { axis : int; devices : device list }
+  type t = placement
 
-  let host = Device Device.host
-  let device d = Device d
-
-  let devices = function
-    | Device d -> [ d ]
-    | Replicated ds | Sharded { devices = ds; _ } -> ds
-
+  let host = Grid.device Device.host
+  let device d = Grid.device d
+  let devices = Grid.devices
   let engine p = (List.hd (devices p)).d_engine
-  let is_host = function Device d -> d == Device.host | _ -> false
+  let is_host p = match devices p with [ d ] -> d == Device.host | _ -> false
 
   let check what ds =
     let fail fmt =
@@ -226,33 +442,53 @@ module Placement = struct
 
   let replicated ds =
     check "replicated" ds;
-    match ds with [ d ] -> Device d | ds -> Replicated ds
+    Grid.v ds [ List.length ds ] []
 
   let sharded ~axis ds =
     if axis < 0 then
       invalid_arg (Printf.sprintf "Nx.Placement.sharded: axis %d < 0" axis);
     check "sharded" ds;
-    match ds with [ d ] -> Device d | ds -> Sharded { axis; devices = ds }
+    Grid.v ds [ List.length ds ] [ (axis, [ 0 ]) ]
 
-  let equal a b =
-    match (a, b) with
-    | Device a, Device b -> a == b
-    | Replicated a, Replicated b -> List.equal ( == ) a b
-    | Sharded a, Sharded b ->
-        a.axis = b.axis && List.equal ( == ) a.devices b.devices
-    | _ -> false
+  (* Raises unless every cut of [p] divides its axis of [shape] evenly. *)
+  let check_shape what p shape =
+    List.iter
+      (fun (a, n) ->
+        if a >= Array.length shape then
+          invalid_arg
+            (Printf.sprintf "%s: shape %s has no axis %d to split" what
+               (Shape.to_string shape) a);
+        if shape.(a) mod n <> 0 then
+          invalid_arg
+            (Printf.sprintf
+               "%s: axis %d of shape %s does not split evenly over %d devices"
+               what a (Shape.to_string shape) n))
+      (Grid.cuts p)
 
-  let pp ppf p =
-    let list ppf ds =
-      Format.pp_print_list
-        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-        Device.pp ppf ds
-    in
-    match p with
-    | Device d -> Device.pp ppf d
-    | Replicated ds -> Format.fprintf ppf "replicated [%a]" list ds
-    | Sharded { axis; devices } ->
-        Format.fprintf ppf "sharded ~axis:%d [%a]" axis list devices
+  let window p shape d =
+    match List.find_index (( == ) d) (devices p) with
+    | None ->
+        invalid_arg
+          (Printf.sprintf "Nx.Placement.window: %s holds no window" d.d_name)
+    | Some k ->
+        check_shape "Nx.Placement.window" p shape;
+        let w = Array.map (fun n -> (0, n)) shape in
+        List.iter2
+          (fun (a, n) (_, j) ->
+            let size = shape.(a) / n in
+            w.(a) <- (j * size, (j + 1) * size))
+          (Grid.cuts p) (Grid.tile_index p k);
+        w
+
+  (* The placement of a value with a new leading axis, and of one without its
+     leading axis, which no cut may name. *)
+  let with_leading_axis p = Grid.map_axes succ p
+
+  let without_leading_axis p =
+    if List.mem_assoc 0 (Grid.cuts p) then None else Some (Grid.map_axes pred p)
+
+  let equal = Grid.equal ( == )
+  let pp ppf p = Grid.pp Device.pp ppf p
 end
 
 (* Placed constructors, for engines *)
@@ -279,6 +515,119 @@ let covers r =
   View.is_c_contiguous r.r_view
   && View.offset r.r_view = 0
   && View.numel r.r_view = r.r_cell.length
+
+(* [iter_rows box ~into ~at f] calls [f src_off dst_off] for each row of a box
+   of extents [box], at [src_off] in the box's elements in C order and at
+   [dst_off] in those of shape [into] in C order, the box's corner at [at]. *)
+let iter_rows box ~into ~at f =
+  let rank = Array.length box in
+  let strides = Shape.c_contiguous_strides into in
+  let run = box.(rank - 1) and idx = Array.make rank 0 in
+  let n = Array.fold_left ( * ) 1 box in
+  for row = 0 to (if run = 0 then 0 else n / run) - 1 do
+    let base = ref at.(rank - 1) in
+    for a = 0 to rank - 2 do
+      base := !base + ((at.(a) + idx.(a)) * strides.(a))
+    done;
+    f (row * run) !base;
+    let a = ref (rank - 2) in
+    while !a >= 0 do
+      idx.(!a) <- idx.(!a) + 1;
+      if idx.(!a) < box.(!a) then a := -1
+      else begin
+        idx.(!a) <- 0;
+        decr a
+      end
+    done
+  done
+
+(* [blit_box src box dst ~into ~at] copies [src], the elements of a box of
+   extents [box] in C order, into [dst], the elements of shape [into] in C
+   order, with the box's corner at [at]. Rows are copied whole, as integer words
+   of the element's width: a float copied through an OCaml float would quiet a
+   signalling NaN. 4-bit elements are copied as values. *)
+let blit_box (type a b) (src : (a, b) Nx_buffer.t) box
+    (dst : (a, b) Nx_buffer.t) ~into ~at =
+  let box, into, at =
+    if Array.length box = 0 then ([| 1 |], [| 1 |], [| 0 |]) else (box, into, at)
+  in
+  let words (type c d) (word : (c, d) Nx_buffer.kind) w =
+    let scale a =
+      let a = Array.copy a in
+      let r = Array.length a - 1 in
+      a.(r) <- a.(r) * w;
+      a
+    in
+    let s = Nx_buffer.to_bigarray1 (Nx_buffer.reinterpret word src)
+    and d = Nx_buffer.to_bigarray1 (Nx_buffer.reinterpret word dst) in
+    let box = scale box in
+    let run = box.(Array.length box - 1) in
+    iter_rows box ~into:(scale into) ~at:(scale at) (fun src_off dst_off ->
+        Bigarray.Array1.blit
+          (Bigarray.Array1.sub s src_off run)
+          (Bigarray.Array1.sub d dst_off run))
+  in
+  match Nx_buffer.kind src with
+  | Nx_buffer.Int4 | Nx_buffer.UInt4 ->
+      let run = box.(Array.length box - 1) in
+      iter_rows box ~into ~at (fun src_off dst_off ->
+          for i = 0 to run - 1 do
+            Nx_buffer.unsafe_set dst (dst_off + i)
+              (Nx_buffer.unsafe_get src (src_off + i))
+          done)
+  | kind -> (
+      match Nx_buffer.kind_size_in_bytes kind with
+      | 1 -> words Nx_buffer.Int8 1
+      | 2 -> words Nx_buffer.Int16 1
+      | 4 -> words Nx_buffer.Int32 1
+      | 8 -> words Nx_buffer.Int64 1
+      | n -> words Nx_buffer.Int64 (n / 8))
+
+(* The box two windows share, [None] when they share no element. *)
+let intersect a b =
+  let w =
+    Array.map2 (fun (lo, hi) (lo', hi') -> (Int.max lo lo', Int.min hi hi')) a b
+  in
+  if Array.exists (fun (lo, hi) -> lo >= hi) w then None else Some w
+
+(* [within outer w] is window [w] measured from [outer]'s corner. *)
+let within outer w =
+  Array.map2 (fun (o, _) (lo, hi) -> (lo - o, hi - o)) outer w
+
+let extents w = Array.map (fun (lo, hi) -> hi - lo) w
+
+(* [assemble r window read] is the elements of [window] of the value [r], in C
+   order, from [read d v], the elements of the per-shard view [v] on device [d]
+   in C order. Each tile meeting the window is read once, from the first device
+   that holds it, and only where it meets the window. Engines read placed
+   values, and gather the pieces of a move, this way. *)
+let assemble (type a b) (r : (a, b) resident) window
+    (read : device -> View.t -> (a, b) Nx_buffer.t) : (a, b) Nx_buffer.t =
+  let p = r.r_placement in
+  let shape = global p (View.shape r.r_view) in
+  let pieces =
+    List.fold_left
+      (fun pieces d ->
+        let t = Placement.window p shape d in
+        if List.exists (fun (_, t', _) -> t' = t) pieces then pieces
+        else
+          match intersect window t with
+          | Some i -> (d, t, i) :: pieces
+          | None -> pieces)
+      [] (Placement.devices p)
+  in
+  let piece (d, t, i) = read d (View.shrink r.r_view (within t i)) in
+  match pieces with
+  | [ ((_, _, i) as only) ] when i = window -> piece only
+  | _ ->
+      let into = extents window in
+      let dst = Nx_buffer.create r.r_dtype (Array.fold_left ( * ) 1 into) in
+      List.iter
+        (fun ((_, _, i) as p) ->
+          blit_box (piece p) (extents i) dst ~into
+            ~at:(Array.map fst (within window i)))
+        pieces;
+      dst
 
 (* A held value of shape [shape] on [p]. The engine is asked to place an empty
    value of the dtype first, which allocates nothing and raises if [p] cannot
@@ -666,19 +1015,9 @@ let move (type a b) p (x : (a, b) t) : (a, b) t =
   | Placed { r_placement; _ } when Placement.equal r_placement p -> x
   | Host _ when Placement.is_host p -> x
   | Placed r when Placement.is_host p -> Host (read_host r)
-  | Host _ | Placed _ -> (
-      match p with
-      | Sharded { axis; devices } ->
-          let shape = View.shape (view x) in
-          let n = List.length devices in
-          if axis >= Array.length shape || shape.(axis) mod n <> 0 then
-            invalid_arg
-              (Printf.sprintf
-                 "Nx.place: axis %d of shape %s does not split evenly over %d \
-                  devices"
-                 axis (Shape.to_string shape) n);
-          (Placement.engine p).place p x
-      | Device _ | Replicated _ -> (Placement.engine p).place p x)
+  | Host _ | Placed _ ->
+      Placement.check_shape "Nx.place" p (View.shape (view x));
+      (Placement.engine p).place p x
 
 let place p x =
   try Effect.perform (E_place { placement = p; t_in = x })
@@ -710,7 +1049,8 @@ let join : type a b. string -> route -> (a, b) t -> route =
   | Traced _ -> outside_trace ()
   | Placed { r_placement = p; _ } -> (
       match r with
-      | On_host -> ( match p with Device _ -> At p | _ -> Read_from p)
+      | On_host -> (
+          match Placement.devices p with [ _ ] -> At p | _ -> Read_from p)
       | At q | Read_from q ->
           if List.equal ( == ) (Placement.devices q) (Placement.devices p) then
             r
@@ -785,14 +1125,15 @@ let move_view v = function
   | Sliding_window { axis; window; step } ->
       View.sliding_window v ~axis ~window ~step
 
-(* What a movement does to one split axis: the axis stays split, at an index, or
-   the movement keeps a single shard. *)
+(* What a movement does to one cut axis: the axis stays cut, at an index, or the
+   movement keeps a single tile along it. *)
 type split_axis = Split of int | Shard of int
 
-(* [split_axis ~axis ~n shape m] is what [m] does to a value of shape [shape]
-   split in [n] shards along [axis], with [m] as it applies to one shard. A
-   value split along several axes would apply it once per axis. Raises
-   [Invalid_argument] if [m] would move elements between shards. *)
+(* [split_axis ~axis ~n shape m] is what [m] does to the tensor [axis] of a
+   value of shape [shape] cut in [n] tiles along it. Every cut is decided
+   against the whole shapes, as tolk's rewrite does, so a value cut along
+   several axes cannot land two cuts on one axis. Raises [Invalid_argument] if
+   [m] would move elements between tiles. *)
 let split_axis ~axis ~n shape m =
   let k = shape.(axis) / n in
   let across what =
@@ -806,13 +1147,10 @@ let split_axis ~axis ~n shape m =
   | Permute order ->
       let a = ref 0 in
       Array.iteri (fun i o -> if o = axis then a := i) order;
-      (Split !a, m)
-  | Expand target ->
+      Split !a
+  | Expand _ ->
       (* The split axis spans at least two shards, so it is never broadcast. *)
-      let local = Array.copy target in
-      if axis < Array.length local && local.(axis) = shape.(axis) then
-        local.(axis) <- k;
-      (Split axis, Expand local)
+      Split axis
   | Reshape target ->
       (* The split axis becomes the last axis whose leading extents multiply to
          those of the split axis; its extent must divide over the shards. *)
@@ -831,37 +1169,71 @@ let split_axis ~axis ~n shape m =
           (Printf.sprintf "Nx.reshape: cannot reshape %s to %s"
              (Shape.to_string shape) (Shape.to_string target));
       if !a < 0 || target.(!a) mod n <> 0 then across "reshape";
-      let local = Array.copy target in
-      local.(!a) <- target.(!a) / n;
-      (Split !a, Reshape local)
+      Split !a
   | Shrink limits ->
-      let lo, hi = limits.(axis) and local = Array.copy limits in
-      if lo = 0 && hi = shape.(axis) then begin
-        local.(axis) <- (0, k);
-        (Split axis, Shrink local)
-      end
-      else if lo / k = (hi - 1) / k then begin
-        let j = lo / k in
-        local.(axis) <- (lo - (j * k), hi - (j * k));
-        (Shard j, Shrink local)
-      end
+      let lo, hi = limits.(axis) in
+      if lo = 0 && hi = shape.(axis) then Split axis
+      else if lo / k = (hi - 1) / k then Shard (lo / k)
       else across "cut"
-  | Flip dims -> if dims.(axis) then across "flip" else (Split axis, m)
+  | Flip dims -> if dims.(axis) then across "flip" else Split axis
   | Sliding_window { axis = a; _ } ->
-      if a = axis then across "window" else (Split axis, m)
+      if a = axis then across "window" else Split axis
+
+(* [localize shape m fates] is [m] as one tile of a value of shape [shape] sees
+   it, [fates] giving each cut axis, its number of tiles and what [m] does to
+   it. *)
+let localize shape m fates =
+  let each f =
+    List.iter (fun (axis, n, fate) -> f axis (shape.(axis) / n) n fate) fates
+  in
+  match m with
+  | Reshape target ->
+      let local = Array.copy target in
+      each (fun _ _ n fate ->
+          match fate with
+          | Split a -> local.(a) <- target.(a) / n
+          | Shard _ -> ());
+      Reshape local
+  | Expand target ->
+      let local = Array.copy target in
+      each (fun axis k _ _ ->
+          if axis < Array.length local && target.(axis) = shape.(axis) then
+            local.(axis) <- k);
+      Expand local
+  | Shrink limits ->
+      let local = Array.copy limits in
+      each (fun axis k _ fate ->
+          let lo, hi = limits.(axis) in
+          local.(axis) <-
+            (match fate with
+            | Split _ -> (0, k)
+            | Shard j -> (lo - (j * k), hi - (j * k))));
+      Shrink local
+  | Permute _ | Flip _ | Sliding_window _ -> m
 
 (* [split_view p v m] is the placement and per-shard view of a value at [p]
-   whose per-shard view is [v], moved by [m]. *)
+   whose per-shard view is [v], moved by [m]. A cut inside one tile keeps the
+   devices that hold that tile. *)
 let split_view p v m =
-  match p with
-  | Device _ | Replicated _ -> (p, move_view v m)
-  | Sharded { axis; devices } -> (
-      let n = List.length devices in
-      let shape = Array.copy (View.shape v) in
-      shape.(axis) <- shape.(axis) * n;
-      match split_axis ~axis ~n shape m with
-      | Split a, m -> (Sharded { axis = a; devices }, move_view v m)
-      | Shard j, m -> (Device (List.nth devices j), move_view v m))
+  match Grid.cuts p with
+  | [] -> (p, move_view v m)
+  | cuts ->
+      let shape = global p (View.shape v) in
+      let fates =
+        List.map (fun (axis, n) -> (axis, n, split_axis ~axis ~n shape m)) cuts
+      in
+      let p =
+        List.fold_left
+          (fun p (axis, _, fate) ->
+            match fate with Shard j -> Grid.select p ~axis j | Split _ -> p)
+          p fates
+      in
+      let moved a =
+        match List.find (fun (axis, _, _) -> axis = a) fates with
+        | _, _, Split a' -> a'
+        | _, _, Shard _ -> a
+      in
+      (Grid.map_axes moved p, move_view v (localize shape m fates))
 
 let movement_op eff host_op movement t_in arg =
   try Effect.perform (eff ())
@@ -1080,7 +1452,7 @@ let pad t_in padding_config fill_value =
    storage and a compiled call can consume it. A value created in the context of
    several devices is a host value, as an operation over them gives. *)
 
-let at_devices = function [ d ] -> At (Device d) | _ -> On_host
+let at_devices = function [ d ] -> At (Placement.device d) | _ -> On_host
 
 let buffer (ctx : context) dtype shape_arr =
   let size_in_elements = Array.fold_left ( * ) 1 shape_arr in
@@ -1100,7 +1472,7 @@ let const_scalar (ctx : context) value dtype =
   with Effect.Unhandled _ -> (
     match ctx with
     | Host c -> Host (Nx_backend.full c dtype [||] value)
-    | On [ d ] -> held (Device d) dtype value [||]
+    | On [ d ] -> held (Placement.device d) dtype value [||]
     | On _ -> Host (Nx_backend.full host_context dtype [||] value))
 
 let broadcast scalar shape_arr =

@@ -185,10 +185,6 @@ let reset_stats () =
 
 type leaf_place = P_single | P_replicated | P_sharded of int
 
-let place_axis = function
-  | P_sharded a -> Some a
-  | P_replicated | P_single -> None
-
 (* A pmap device tuple: canonical names and their registry instances. *)
 type multi_spec = { md_names : string list; md_devs : Tolk.Device.t list }
 
@@ -459,16 +455,17 @@ let check_capture : type a b. state -> (a, b) Nx_effect.t -> unit =
               "Rune.jit: a captured value was consumed at %s in a compiled \
                call's arguments; capture the value the call returned"
               path))
-  | Some (Device d), Placed { r_placement = Device d'; _ } when d' == d -> ()
-  | Some _, Placed { r_placement = Device d'; _ } when st.st_may_move ->
-      refuse st (Runs_on d')
-  | Some p, Placed { r_placement = p'; _ } ->
-      refuse st
-        (Invalid_argument
-           (Format.asprintf
-              "Rune.jit: a captured value is on %a and the program runs on %a; \
-               place it on %a, or on the host"
-              Nx.Placement.pp p' Nx.Placement.pp p Nx.Placement.pp p))
+  | Some p, Placed { r_placement = p'; _ } -> (
+      match Nx.Placement.devices p' with
+      | _ when Nx.Placement.equal p p' -> ()
+      | [ d' ] when st.st_may_move -> refuse st (Runs_on d')
+      | _ ->
+          refuse st
+            (Invalid_argument
+               (Format.asprintf
+                  "Rune.jit: a captured value is on %a and the program runs on \
+                   %a; place it on %a, or on the host"
+                  Nx.Placement.pp p' Nx.Placement.pp p Nx.Placement.pp p)))
   | _ -> ()
 
 (* A traced tensor's payload: the trace that made it and its node. *)
@@ -3380,37 +3377,6 @@ let read_window : type a b.
       dst
     end
 
-(* A split value's shards, each a C-contiguous [shard] of the whole [shape],
-   gathered in global order. *)
-let read_shards : type a b.
-    (a, b) ND.t ->
-    int array ->
-    axis:int ->
-    NV.t ->
-    Tolk.Device.Buffer.t list ->
-    (a, b) Nx_buffer.t =
- fun dt shape ~axis shard bufs ->
-  let n = numel shape and shard_n = NV.numel shard in
-  let host = Nx_buffer.create dt n in
-  let outer = ref 1 in
-  for d = 0 to axis - 1 do
-    outer := !outer * shape.(d)
-  done;
-  let shard_row = shard_n / !outer in
-  let full_row = List.length bufs * shard_row in
-  List.iteri
-    (fun k buf ->
-      let part = read_window dt buf shard in
-      for o = 0 to !outer - 1 do
-        for i = 0 to shard_row - 1 do
-          Nx_buffer.unsafe_set host
-            ((o * full_row) + (k * shard_row) + i)
-            (Nx_buffer.unsafe_get part ((o * shard_row) + i))
-        done
-      done)
-    bufs;
-  host
-
 (* The name of the tolk device that compiles and runs the host's programs. *)
 let host_name = "CPU"
 
@@ -3421,37 +3387,33 @@ let tolk_device_of d =
     | Some (d', dev) when d' == d -> dev
     | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
 
+(* The tolk device of [d] and the buffer of [s] it holds. nx places a view only
+   on devices that hold its storage. *)
+let buffer_on s d =
+  let dev = tolk_device_of d in
+  match List.find_index (( == ) dev) s.s_devices with
+  | Some k -> (dev, List.nth s.s_bufs k)
+  | None ->
+      failwith
+        (Printf.sprintf
+           "Rune: a value on %s views a storage that it does not hold"
+           (Nx.Device.name d))
+
 let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
  fun r ->
   drain_releases ();
-  match (store_of r.r_cell, r.r_placement) with
-  | None, _ -> assert false (* nx reads held and consumed values itself *)
-  | Some s, Sharded { axis; devices } ->
-      List.iter Tolk.Device.synchronize s.s_devices;
-      let shape = Array.copy (NV.shape r.r_view) in
-      shape.(axis) <- shape.(axis) * List.length devices;
-      read_shards r.r_dtype shape ~axis r.r_view s.s_bufs
-  | Some s, ((Device _ | Replicated _) as p) -> (
-      match s.s_bufs with
-      | [] -> Nx_buffer.create r.r_dtype 0 (* an empty value has no buffer *)
-      | bufs ->
-          (* A value on one device of a split storage views that device's
-             shard. *)
-          let d = List.hd (Nx_effect.Placement.devices p) in
-          let dev = tolk_device_of d in
-          let k =
-            match List.find_index (( == ) dev) s.s_devices with
-            | Some k -> k
-            | None ->
-                (* nx places a view only on devices that hold its storage. *)
-                failwith
-                  (Printf.sprintf
-                     "Rune: a value on %s views a storage that %s does not \
-                      hold; nx placed a view off its storage's devices"
-                     (Nx.Device.name d) (Nx.Device.name d))
-          in
+  match store_of r.r_cell with
+  | None -> assert false (* nx reads held and consumed values itself *)
+  | Some { s_bufs = []; _ } ->
+      Nx_buffer.create r.r_dtype 0 (* an empty value has no buffer *)
+  | Some s ->
+      let shape = Nx_effect.global r.r_placement (NV.shape r.r_view) in
+      Nx_effect.assemble r
+        (Array.map (fun n -> (0, n)) shape)
+        (fun d v ->
+          let dev, buf = buffer_on s d in
           Tolk.Device.synchronize dev;
-          read_window r.r_dtype (List.nth bufs k) r.r_view)
+          read_window r.r_dtype buf v)
 
 (* [x] with a host value in place of a placed one: its view's elements. *)
 let on_host : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t = function
@@ -3526,14 +3488,15 @@ and make_placed : type a b.
 and place_on : type a b.
     Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
  fun p x ->
-  match p with
-  | Replicated _ | Sharded _ ->
+  match Nx.Placement.devices p with
+  | _ :: _ :: _ ->
       invalid_arg
         (Format.asprintf
            "Nx.place: placing a value on several devices (%a) is not supported \
             yet"
            Nx.Placement.pp p)
-  | Device d ->
+  | [] -> assert false
+  | [ d ] ->
       let dev = tolk_device_of d in
       check_holds d dev (Nx_effect.dtype x);
       let x = on_host x in
@@ -4737,20 +4700,20 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       multi_spec -> leaf_place -> (a, b) Nx_effect.t -> Nx_effect.cell option =
    fun spec place -> function
      | Placed r when Nx_effect.covers r -> (
-         let axis =
-           match r.r_placement with
-           | Sharded { axis; _ } -> Some axis
-           | _ -> None
+         let devices = List.map nx_device spec.md_devs in
+         let expected =
+           match place with
+           | P_sharded axis -> Nx.Placement.sharded ~axis devices
+           | P_replicated | P_single -> Nx.Placement.replicated devices
          in
          match store_of r.r_cell with
          | Some s
            when s.s_bufs <> []
                 && List.equal ( == ) s.s_devices spec.md_devs
-                && List.compare_lengths
-                     (Nx_effect.Placement.devices r.r_placement)
-                     s.s_devices
-                   = 0
-                && axis = place_axis place ->
+                && List.equal ( == )
+                     (Nx.Placement.devices r.r_placement)
+                     devices
+                && Nx.Placement.equal r.r_placement expected ->
              Some r.r_cell
          | _ -> None)
      | _ -> None
@@ -5197,41 +5160,44 @@ let leaves_device ~requested leaves =
   Array.iteri
     (fun i (Nx.P leaf) ->
       match leaf with
-      | Nx_effect.Placed { r_placement = Device d; _ } -> (
-          (match requested with
-          | Some r when r != d ->
+      | Nx_effect.Placed { r_placement; _ } -> (
+          match Nx.Placement.devices r_placement with
+          | [ d ] -> (
+              (match requested with
+              | Some r when r != d ->
+                  raise
+                    (Misplaced
+                       ( [ i ],
+                         fun names ->
+                           Printf.sprintf
+                             "Rune.jit: the argument at %s is on %s and \
+                              ~devices names %s; place it on %s, or on the \
+                              host"
+                             (List.hd names) (dname d) (dname r) (dname r) ))
+              | _ -> ());
+              match !found with
+              | Some (d0, i0) when d0 != d ->
+                  raise
+                    (Misplaced
+                       ( [ i0; i ],
+                         fun names ->
+                           Printf.sprintf
+                             "Rune.jit: the arguments at %s and %s are on %s \
+                              and %s; place them on one device"
+                             (List.nth names 0) (List.nth names 1) (dname d0)
+                             (dname d) ))
+              | Some _ -> ()
+              | None -> found := Some (d, i))
+          | _ ->
               raise
                 (Misplaced
                    ( [ i ],
                      fun names ->
-                       Printf.sprintf
-                         "Rune.jit: the argument at %s is on %s and ~devices \
-                          names %s; place it on %s, or on the host"
-                         (List.hd names) (dname d) (dname r) (dname r) ))
-          | _ -> ());
-          match !found with
-          | Some (d0, i0) when d0 != d ->
-              raise
-                (Misplaced
-                   ( [ i0; i ],
-                     fun names ->
-                       Printf.sprintf
-                         "Rune.jit: the arguments at %s and %s are on %s and \
-                          %s; place them on one device"
-                         (List.nth names 0) (List.nth names 1) (dname d0)
-                         (dname d) ))
-          | Some _ -> ()
-          | None -> found := Some (d, i))
-      | Nx_effect.Placed { r_placement; _ } ->
-          raise
-            (Misplaced
-               ( [ i ],
-                 fun names ->
-                   Format.asprintf
-                     "Rune.jit: the argument at %s is on %a; a compiled \
-                      function runs on one device, so place it on one device, \
-                      or on the host"
-                     (List.hd names) Nx.Placement.pp r_placement ))
+                       Format.asprintf
+                         "Rune.jit: the argument at %s is on %a; a compiled \
+                          function runs on one device, so place it on one \
+                          device, or on the host"
+                         (List.hd names) Nx.Placement.pp r_placement )))
       | _ -> ())
     leaves;
   Option.map fst !found

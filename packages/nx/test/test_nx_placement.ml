@@ -39,29 +39,6 @@ let gather (type a b) (mem : (a, b) Nx_buffer.t) v : (a, b) Nx_buffer.t =
   elements_read := !elements_read + n;
   dst
 
-(* Each shard's view [v], interleaved in global order along [axis]. *)
-let gather_shards (type a b) (shards : (a, b) Nx_buffer.t list) ~axis v :
-    (a, b) Nx_buffer.t =
-  let shape = Nx_core.View.shape v in
-  let outer = Array.fold_left ( * ) 1 (Array.sub shape 0 axis) in
-  let row = Nx_core.View.numel v / Int.max 1 outer in
-  let n = List.length shards in
-  let dst =
-    Nx_buffer.create (Nx_buffer.kind (List.hd shards)) (n * outer * row)
-  in
-  List.iteri
-    (fun k mem ->
-      let part = gather mem v in
-      for o = 0 to outer - 1 do
-        for i = 0 to row - 1 do
-          Nx_buffer.set dst
-            ((((o * n) + k) * row) + i)
-            (Nx_buffer.get part ((o * row) + i))
-        done
-      done)
-    shards;
-  dst
-
 let rec engine =
   {
     Nx_effect.read =
@@ -69,13 +46,15 @@ let rec engine =
         match r.r_cell.state with
         | Live (Mem (dt, devices, shards)) -> (
             match Nx_core.Dtype.equal_witness dt r.r_dtype with
-            | Some Type.Equal -> (
-                match r.r_placement with
-                | Sharded { axis; _ } -> gather_shards shards ~axis r.r_view
-                | Device d ->
+            | Some Type.Equal ->
+                let shape =
+                  Nx_effect.global r.r_placement (Nx_core.View.shape r.r_view)
+                in
+                Nx_effect.assemble r
+                  (Array.map (fun n -> (0, n)) shape)
+                  (fun d v ->
                     let k = Option.get (List.find_index (( == ) d) devices) in
-                    gather (List.nth shards k) r.r_view
-                | Replicated _ -> gather (List.hd shards) r.r_view)
+                    gather (List.nth shards k) v)
             | None -> assert false)
         | _ -> assert false);
     place = (fun p x -> place p x);
@@ -86,28 +65,17 @@ and place : type a b.
  fun p x ->
   if Nx.numel x > 0 then incr uploads;
   let h = Nx.place Nx.Placement.host x in
-  let own h = Nx.to_buffer (Nx.copy h) in
-  let shape = Array.copy (Nx.shape h) in
+  let devices = Nx.Placement.devices p in
+  let windows = List.map (Nx.Placement.window p (Nx.shape h)) devices in
   let shards =
-    match p with
-    | Sharded { axis; devices } ->
-        let n = List.length devices in
-        let k = shape.(axis) / n in
-        shape.(axis) <- k;
-        List.init n (fun i ->
-            own
-              (Nx.slice
-                 (List.init (axis + 1) (fun d ->
-                      if d = axis then Nx.R (i * k, (i + 1) * k) else Nx.A))
-                 h))
-    | Replicated ds -> List.map (fun _ -> own h) ds
-    | Device _ -> [ own h ]
+    List.map (fun w -> Nx.to_buffer (Nx.copy (Nx.shrink w h))) windows
   in
+  let shape = Array.map (fun (lo, hi) -> hi - lo) (List.hd windows) in
   Nx_effect.placed p (Nx.dtype x)
     (Nx_core.View.create shape)
     (Nx_effect.cell engine
        ~length:(Array.fold_left ( * ) 1 shape)
-       (Mem (Nx.dtype x, Nx_effect.Placement.devices p, shards)))
+       (Mem (Nx.dtype x, devices, shards)))
 
 let dev1 = Nx_effect.Device.make "TEST:1" engine
 let dev2 = Nx_effect.Device.make "TEST:2" engine
@@ -137,14 +105,147 @@ let test_normal_forms () =
     (Nx.Placement.sharded ~axis:3 [ dev1 ]);
   is_true ~msg:"the host"
     (Nx.Placement.equal Nx.Placement.host (Nx.Placement.device Nx.Device.host));
-  is_false ~msg:"order matters"
+  is_true ~msg:"copies are equal in any order"
     (Nx.Placement.equal
        (Nx.Placement.replicated [ dev1; dev2 ])
        (Nx.Placement.replicated [ dev2; dev1 ]));
+  is_false ~msg:"slices are not"
+    (Nx.Placement.equal
+       (Nx.Placement.sharded ~axis:0 [ dev1; dev2 ])
+       (Nx.Placement.sharded ~axis:0 [ dev2; dev1 ]));
   raises_invalid (fun () -> Nx.Placement.replicated []);
   raises_invalid (fun () -> Nx.Placement.replicated [ dev1; dev1 ]);
   raises_invalid (fun () -> Nx.Placement.sharded ~axis:0 [ dev1; other ]);
   raises_invalid (fun () -> Nx.Placement.sharded ~axis:(-1) [ dev1; dev2 ])
+
+let windows = Testable.(array (pair int int))
+
+let test_tiles () =
+  let s = Nx.Placement.sharded ~axis:1 [ dev1; dev2; dev3 ] in
+  equal ~msg:"the second slice" windows
+    [| (0, 2); (2, 4) |]
+    (Nx.Placement.window s [| 2; 6 |] dev2);
+  equal ~msg:"a copy is the whole" windows
+    [| (0, 2); (0, 6) |]
+    (Nx.Placement.window
+       (Nx.Placement.replicated [ dev1; dev2 ])
+       [| 2; 6 |] dev2);
+  raises_invalid (fun () -> Nx.Placement.window s [| 2; 6 |] dev4);
+  raises_invalid (fun () -> Nx.Placement.window s [| 2; 5 |] dev1);
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          msg = "Nx.Placement.window: shape [6] has no axis 1 to split"
+      | _ -> false)
+    (fun () -> Nx.Placement.window s [| 6 |] dev1)
+
+(* [equal] agrees with comparing every device's window, over random placements
+   of one dimension and their reorderings. The windows come from the
+   constructors' arguments, and [window] is checked against them too. *)
+let test_equal_is_the_window_map () =
+  let rng = Random.State.make [| 5 |] in
+  let pool = [| dev1; dev2; dev3; dev4 |] in
+  let shape = [| 12; 12; 12 |] in
+  let shuffle l =
+    List.map snd
+      (List.sort compare (List.map (fun d -> (Random.State.bits rng, d)) l))
+  in
+  (* A placement's arguments: its devices and its split axis, if any. *)
+  let make (ds, axis) =
+    match axis with
+    | None -> Nx.Placement.replicated ds
+    | Some axis -> Nx.Placement.sharded ~axis ds
+  in
+  let expected (ds, axis) d =
+    let whole = Array.map (fun n -> (0, n)) shape in
+    match (List.find_index (( == ) d) ds, axis) with
+    | None, _ -> None
+    | Some _, None -> Some whole
+    | Some i, Some a ->
+        let k = shape.(a) / List.length ds in
+        whole.(a) <- (i * k, (i + 1) * k);
+        Some whole
+  in
+  let random () =
+    let n = 1 + Random.State.int rng 4 in
+    let ds = List.filteri (fun i _ -> i < n) (shuffle (Array.to_list pool)) in
+    (ds, if Random.State.bool rng then None else Some (Random.State.int rng 3))
+  in
+  let agreed = ref 0 in
+  for _ = 1 to 2000 do
+    let a = random () in
+    let b =
+      if Random.State.bool rng then random ()
+      else
+        let ds, axis = a in
+        ( shuffle ds,
+          if Random.State.bool rng then axis else Some (Random.State.int rng 3)
+        )
+    in
+    let p = make a and q = make b in
+    List.iter
+      (fun d ->
+        equal ~msg:"a window" (option windows) (expected a d)
+          (Some (Nx.Placement.window p shape d)))
+      (Nx.Placement.devices p);
+    let same = Array.for_all (fun d -> expected a d = expected b d) pool in
+    if same then incr agreed;
+    equal
+      ~msg:(Format.asprintf "%a and %a" Nx.Placement.pp p Nx.Placement.pp q)
+      bool same (Nx.Placement.equal p q)
+  done;
+  is_true ~msg:"some pairs are equal" (!agreed > 100)
+
+(* A grid, built inside nx.effect only, is kept in normal form and compared by
+   its windows. *)
+let test_grids () =
+  let ds = [ dev1; dev2; dev3; dev4 ] in
+  let grid = Nx_effect.Grid.v ds in
+  equal ~msg:"cut over both axes in order is the flat split" placement
+    (Nx.Placement.sharded ~axis:0 ds)
+    (grid [ 2; 2 ] [ (0, [ 0; 1 ]) ]);
+  equal ~msg:"no cut is the copies" placement
+    (Nx.Placement.replicated ds)
+    (grid [ 2; 2 ] []);
+  equal ~msg:"extents of one go" placement
+    (Nx.Placement.sharded ~axis:1 ds)
+    (grid [ 1; 4; 1 ] [ (1, [ 1 ]) ]);
+  equal ~msg:"cut minor first is the split in column order" placement
+    (Nx.Placement.sharded ~axis:0 [ dev1; dev3; dev2; dev4 ])
+    (grid [ 2; 2 ] [ (0, [ 1; 0 ]) ]);
+  let two = grid [ 2; 2 ] [ (0, [ 0 ]); (1, [ 1 ]) ] in
+  equal ~msg:"a device's window under two cuts" windows
+    [| (2, 4); (0, 3) |]
+    (Nx.Placement.window two [| 4; 6 |] dev3);
+  equal ~msg:"half a grid holds copies" windows
+    [| (0, 2); (0, 6) |]
+    (Nx.Placement.window (grid [ 2; 2 ] [ (0, [ 0 ]) ]) [| 4; 6 |] dev2);
+  raises_invalid (fun () -> grid [ 2; 3 ] []);
+  raises_invalid (fun () -> grid [ 2; 2 ] [ (0, [ 0 ]); (1, [ 0 ]) ])
+
+(* A value cut along two axes moves by the whole shapes, as tolk's rewrite
+   decides it: no two cuts land on one axis. *)
+let test_two_cuts_move () =
+  let p =
+    Nx_effect.Grid.v [ dev1; dev2; dev3; dev4 ] [ 2; 2 ]
+      [ (0, [ 0 ]); (1, [ 1 ]) ]
+  in
+  let x = Nx.arange Nx.int32 0 8 1 |> Nx.reshape [| 2; 4 |] in
+  let s = Nx.place p x in
+  let r = Nx.reshape [| 2; 2; 2 |] s in
+  equal ~msg:"both cuts survive" placement
+    (Nx_effect.Grid.v [ dev1; dev2; dev3; dev4 ] [ 2; 2 ]
+       [ (0, [ 0 ]); (1, [ 1 ]) ])
+    (Nx.placement r);
+  equal ~msg:"its elements" (array int32)
+    (Nx.to_array (Nx.reshape [| 2; 2; 2 |] x))
+    (Nx.to_array r);
+  raises_invalid (fun () -> Nx.reshape [| 8 |] s);
+  let row = Nx.slice [ Nx.I 1 ] s in
+  equal ~msg:"a row keeps the devices holding it" placement
+    (Nx.Placement.sharded ~axis:0 [ dev3; dev4 ])
+    (Nx.placement row);
+  equal ~msg:"the row" (array int32) [| 4l; 5l; 6l; 7l |] (Nx.to_array row)
 
 (* Moving *)
 
@@ -464,6 +565,10 @@ let tests =
     group "placement"
       [
         test "placements are in normal form" test_normal_forms;
+        test "a placement's tiles" test_tiles;
+        test "equality is the window map" test_equal_is_the_window_map;
+        test "grids" test_grids;
+        test "a value cut twice moves by the whole shapes" test_two_cuts_move;
         test "a move keeps its source" test_place_keeps_its_source;
         test "a split must divide evenly" test_place_splits_evenly;
         test "results live with their operands"

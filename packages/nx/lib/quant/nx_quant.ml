@@ -38,17 +38,21 @@ let mxfp4 ~scales codes =
   Mxfp4 { codes; scales }
 
 let place p (Mxfp4 { codes; scales }) =
-  (match p with
-  | Nx.Placement.Sharded { axis; devices } ->
-      let r = Nx.ndim scales in
-      let groups = (Nx.shape scales).(r - 1) and parts = List.length devices in
-      if axis = r - 1 && groups mod parts <> 0 then
+  (* A group is 16 bytes of codes: every window must start and stop at one. *)
+  let c = Nx.shape codes in
+  let r = Array.length c in
+  List.iter
+    (fun d ->
+      let lo, hi = (Nx.Placement.window p c d).(r - 1) in
+      if lo mod 16 <> 0 || hi mod 16 <> 0 then
         invalid_arg
           (strf
              "Nx_quant.place: splitting codes and scales along axis %d in %d \
               cuts a 32-value group (%d groups)"
-             axis parts groups)
-  | Nx.Placement.Device _ | Nx.Placement.Replicated _ -> ());
+             (r - 1)
+             (c.(r - 1) / (hi - lo))
+             (Nx.shape scales).(r - 1)))
+    (Nx.Placement.devices p);
   Mxfp4 { codes = Nx.place p codes; scales = Nx.place p scales }
 
 let shape (Mxfp4 { codes; _ }) =
