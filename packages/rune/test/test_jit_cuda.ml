@@ -168,12 +168,27 @@ let check_half_on_cuda name ~eps f x =
   check_arr ~eps ~msg:(name ^ " first call") (to_arr (f x)) (g x);
   check_arr ~eps ~msg:(name ^ " replay") (to_arr (f x)) (g x)
 
-let test_half_matmul_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps () =
+(* A narrow matrix product widens its operands to float32, multiplies and sums
+   there, and rounds once, as the eager one does, with and without tensor cores.
+   Operands are multiples of 2^-8 below 1, so every partial sum is exact in
+   float32 whatever the order, as in test_jit's narrow matrix products. *)
+let test_narrow_matmul_on_cuda (type b) (dt : (float, b) Nx.dtype) () =
   require_cuda ();
-  let b = half_mat dt 8 3 cos_data in
-  check_half_on_cuda name ~eps
-    (fun a -> Nx.matmul a b)
-    (half_mat dt 4 8 sin_data)
+  let operand seed rows cols =
+    Nx.create dt [| rows; cols |]
+      (Array.init (rows * cols) (fun i ->
+           float_of_int ((((i * 37) + seed) mod 511) - 255) /. 256.0))
+  in
+  let values t = Nx.to_array (Nx.cast f32 t) in
+  List.iter
+    (fun (m, k, n) ->
+      let a = operand 11 m k and b = operand 5 k n in
+      equal
+        ~msg:(Printf.sprintf "%dx%dx%d" m k n)
+        (array float_exact)
+        (values (Nx.matmul a b))
+        (values (Rune.jit' ~devices:[ Rune.device "CUDA" ] (Nx.matmul a) b)))
+    [ (3, 12, 5); (1, 64, 40); (16, 32, 24); (64, 256, 48) ]
 
 let test_half_softmax_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps () =
   require_cuda ();
@@ -474,10 +489,10 @@ let tests =
       ];
     group "cuda half"
       [
-        test "float16 matmul matches eager"
-          (test_half_matmul_on_cuda "float16" Nx.float16 ~eps:0.01);
-        test "bfloat16 matmul matches eager"
-          (test_half_matmul_on_cuda "bfloat16" Nx.bfloat16 ~eps:0.07);
+        test "float16 matmul equals eager"
+          (test_narrow_matmul_on_cuda Nx.float16);
+        test "bfloat16 matmul equals eager"
+          (test_narrow_matmul_on_cuda Nx.bfloat16);
         test "float16 softmax matches eager"
           (test_half_softmax_on_cuda "float16" Nx.float16 ~eps:0.002);
         test "bfloat16 softmax matches eager"

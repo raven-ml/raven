@@ -2457,6 +2457,10 @@ val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     - N-D × 1-D → [b] is treated as a column vector.
     - N-D × M-D → matrix multiply on last two axes; leading axes are broadcast.
 
+    At [float16], [bfloat16] and the float8 dtypes, the operands are widened to
+    [float32], multiplied and summed at [float32], and each element of the
+    result is rounded once to the operands' dtype.
+
     Raises [Invalid_argument] if inputs are 0-D or inner dimensions mismatch.
 
     {@ocaml[

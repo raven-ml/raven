@@ -69,11 +69,6 @@ let check_eager_vs_jit ~eps ~msg f x =
   check_arr ~eps ~msg:(msg ^ " first call") (to_arr (f x)) (g x);
   check_arr ~eps ~msg:(msg ^ " replay") (to_arr (f x)) (g x)
 
-let test_jit_matmul (type b) name (dt : (float, b) Nx.dtype) ~eps () =
-  let b = half_mat dt 8 3 cos_data in
-  let f a = Nx.matmul a b in
-  check_eager_vs_jit ~eps ~msg:(name ^ " matmul") f (half_mat dt 4 8 sin_data)
-
 let softmax_graph x =
   let e = Nx.exp x in
   Nx.div e (Nx.sum e ~axes:[ 1 ] ~keepdims:true)
@@ -151,8 +146,6 @@ let tests =
       ];
     group "eager vs jit"
       [
-        test "float16 matmul" (test_jit_matmul "float16" f16 ~eps:0.01);
-        test "bfloat16 matmul" (test_jit_matmul "bfloat16" bf16 ~eps:0.07);
         test "float16 softmax" (test_jit_softmax "float16" f16 ~eps:0.002);
         test "bfloat16 softmax" (test_jit_softmax "bfloat16" bf16 ~eps:0.016);
         test "float16 layernorm" (test_jit_layernorm "float16" f16 ~eps:0.008);

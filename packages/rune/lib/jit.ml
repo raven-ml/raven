@@ -729,6 +729,12 @@ let nan_from_first ~axis t scanned =
     (F.Creation.const_like scanned (F.Tensor.Sfloat Float.nan))
     scanned
 
+(* A float narrower than float32. Its products and its sums compute at float32
+   and round once, as eager's do. *)
+let narrow_float t =
+  let d = F.Tensor.dtype t in
+  TD.is_float d && TD.itemsize d < 4
+
 (* A float as the integer of its width, and the float it was read from: an 8-bit
    float is read as its float16 widening. Where 8-bit floats are emulated,
    bitcasting one re-encodes it from a wider value, which saturates infinities.
@@ -1855,13 +1861,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           (fun k ->
             let t = go t_in in
             let axis = Array.to_list axes in
-            (* A half-precision product multiplies at float32 and rounds once,
-               as the eager one does. *)
-            let narrow =
-              ND.is_float (dt t_in) && TD.itemsize (F.Tensor.dtype t) < 4
-            in
             ret k (dt t_in)
-              (if narrow then
+              (if narrow_float t then
                  F.Dtype_ops.cast
                    (F.Reduce.prod ~axis ~keepdim:false ~dtype:TD.float32 t)
                    (F.Tensor.dtype t)
@@ -2226,7 +2227,17 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             end)
     (* Matrix multiplication *)
     | E_matmul { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Op.matmul (go a) (go b)))
+        Some
+          (fun k ->
+            let ta = go a and tb = go b in
+            ret k (dt a)
+              (if narrow_float ta then
+                 F.Dtype_ops.cast
+                   (F.Op.matmul
+                      (F.Dtype_ops.cast ta TD.float32)
+                      (F.Dtype_ops.cast tb TD.float32))
+                   (F.Tensor.dtype ta)
+               else F.Op.matmul ta tb))
     (* Quantised products lower to Nx compositions, traced under this handler
        like the function's own operations, and on a single device to tolk's
        kernels over the traced values. *)

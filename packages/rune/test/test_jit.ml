@@ -1265,6 +1265,44 @@ let test_half_products_multiply_wide () =
   check "bfloat16" Nx.bfloat16;
   check "float16" Nx.float16
 
+(* Operands of a narrow product whose every partial sum is exact in float32
+   whatever the order: [step] times integers of magnitude below [1 / step]. A
+   product computed at float32 and rounded once is then the exact sum rounded
+   once. *)
+let exact_operand (type b) (dtype : (float, b) Nx.dtype) ~step seed shape =
+  let span = int_of_float (1.0 /. step) in
+  Nx.create dtype shape
+    (Array.init (Array.fold_left ( * ) 1 shape) (fun i ->
+         let v = ((i * 37) + seed) mod ((2 * span) - 1) in
+         float_of_int (v - span + 1) *. step))
+
+(* A narrow matrix product widens its operands to float32, multiplies and sums
+   there, and rounds once, as the eager one does, with and without tensor cores.
+   Rounding each product to the operands' dtype changed 1781 of 3072 elements at
+   64 x 256 x 48 bfloat16 on the CPU. *)
+let test_narrow_matmuls_multiply_exactly () =
+  let check (type b) name (dtype : (float, b) Nx.dtype) ~step =
+    let values t = Nx.to_array (Nx.cast f32 t) in
+    List.iter
+      (fun device ->
+        List.iter
+          (fun (m, k, n) ->
+            let a = exact_operand dtype ~step 11 [| m; k |]
+            and b = exact_operand dtype ~step 5 [| k; n |] in
+            equal
+              ~msg:(Printf.sprintf "%s %dx%dx%d, %s" name m k n device)
+              (array float_exact)
+              (values (Nx.matmul a b))
+              (values
+                 (Rune.jit' ~devices:[ Rune.device device ] (Nx.matmul a) b)))
+          [ (3, 12, 5); (1, 64, 40); (16, 32, 24); (64, 256, 48) ])
+      devices
+  in
+  check "bfloat16" Nx.bfloat16 ~step:(1.0 /. 256.0);
+  check "float16" Nx.float16 ~step:(1.0 /. 256.0);
+  check "float8_e4m3" Nx.float8_e4m3 ~step:(1.0 /. 8.0);
+  check "float8_e5m2" Nx.float8_e5m2 ~step:(1.0 /. 8.0)
+
 (* Compiled max and min are NaN when any element is NaN, as eager's, and of -0
    and +0 give the greater for a maximum and the lesser for a minimum, as IEEE
    orders them, where eager keeps the first; [ieee] is that reference. Compiled
@@ -4089,6 +4127,8 @@ let tests =
           test_half_sums_accumulate_wide;
         test "half-precision products multiply wide"
           test_half_products_multiply_wide;
+        test "narrow matrix products multiply exactly"
+          test_narrow_matmuls_multiply_exactly;
         slow "extremes" test_extremes;
       ];
     group "cumulative reductions"

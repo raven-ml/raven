@@ -160,6 +160,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.matmul` of `bfloat16`, `float16` or float8 values multiplies
+  and sums at `float32` and rounds once, as eager does. Rounding each product
+  moved greedy gpt-oss-20b off its `float32` ids at the fifth token.
 - A sum over a value split across three or more devices keeps a -0 result
   under the ring, all-to-all and hierarchical allreduces (ring is the default
   above 256000 elements): their replicas were laid back together by adding

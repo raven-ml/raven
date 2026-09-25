@@ -471,9 +471,13 @@ delete it rather than registering it.
   core the narrow value. A core with a narrow output takes no widened operand:
   its products round. Cores are tried in the renderer's order, as in the
   reference, so on Metal, whose float32 core comes first, such a product keeps
-  the float32 core. Consumer: `Op.block_matmul`'s product, once options take
-  tensor cores on CUDA or AMD. Coverage: `test/unit/codegen/test_tc.ml`
-  (widened operands).
+  the float32 core, which on an M1 Max multiplies gpt-oss's 512-row bfloat16
+  products as fast as the bfloat16 core (2.54 ms at best for 512 x 2880 x
+  4096 either way). Consumers: rune's `Nx.matmul` at bfloat16, float16 and
+  float8, which widens its operands to compute eager's exact products, and
+  `Op.block_matmul`'s product once options take tensor cores on CUDA or AMD.
+  Coverage: `test/unit/codegen/test_tc.ml` (widened operands) and rune's
+  `test_jit` narrow matrix products, exact against eager on CPU and Metal.
 
 - **`?aligned` on the Clang renderer** (`renderer/cstyle.ml`
   `clang_vector_prefix`, passed down from `Tolk_cpu.create`). The reference
