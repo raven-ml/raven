@@ -13,7 +13,7 @@ module System = Tolk_hcq.System
 let debug = Helpers.getenv "DEBUG" 0
 
 (* amdev.py:146 AMDev.Version *)
-let version = 0xA0000008
+let version = 0xA000000D
 
 type t = {
   adev : Amdev.t;
@@ -120,6 +120,9 @@ let init t =
     end
     else partial_boot
   in
+  let partial_boot = partial_boot ||
+    (Amdev.ip_ver adev Amd_tables.Am_defs.gc_hwip = (9, 5, 0)
+     && Am_register.read (reg "regSCRATCH_REG7") = version) in
   t.partial_boot <- partial_boot;
 
   (* Init hw for the blocks where it is needed. *)
@@ -149,7 +152,8 @@ let init t =
         ("Psp", fun () -> Am_ip.Psp.init_hw t.psp);
         ("Smu", fun () -> Am_ip.Smu.init_hw t.smu);
       ]
-  end;
+  end
+  else Am_ip.Psp.restore_tmr t.psp;
 
   (* Booting done. *)
   Amdev.set_is_booting adev false;
@@ -172,6 +176,7 @@ let init t =
   else Am_ip.Smu.set_clocks t.smu ~level:(Some (-1));
   Am_ip.Soc.set_clockgating_state t.soc;
   Am_ip.Gfx.set_clockgating_state t.gfx;
+  Am_register.write (reg "regSCRATCH_REG5") ~value:(Am_ip.Psp.tmr_size t.psp) [];
   Am_register.write (reg "regSCRATCH_REG7") ~value:version [];
   (* Set initialized state. *)
   Am_register.write (reg "regSCRATCH_REG6") ~value:1 [];

@@ -240,9 +240,7 @@ module Psp : sig
   (** [create adev ~fw] prepares the block for loading the firmware set
       [fw]: picks the mailbox register family of the device's
       security-processor generation and allocates the staging buffer,
-      command buffer, fence buffer, submission ring and, on generations
-      whose trusted memory region is not reserved by the boot firmware,
-      that region too, all from boot memory. Requires [adev] to be
+      command buffer, fence buffer and submission ring from boot memory. Requires [adev] to be
       booting. *)
 
   val is_sos_alive : t -> bool
@@ -259,14 +257,26 @@ module Psp : sig
       trigger). Raises {!Timeout_error} when a mailbox or ring response
       never arrives, [Failure] when the firmware rejects a command. *)
 
+  val restore_tmr : t -> unit
+  (** [restore_tmr t] reserves the resident trusted memory region from the
+      size in [regSCRATCH_REG5], without clearing its contents. Call before
+      any other runtime physical allocation on a partial boot. Raises
+      [Failure] if a runtime reservation has zero size, [Out_of_memory] if it
+      does not fit. *)
+
+  val tmr_size : t -> int
+  (** [tmr_size t] is the firmware-reported trusted memory size, or zero before
+      {!init_hw} or {!restore_tmr}. *)
+
   val spatial_partition_cmd : t -> int -> unit
   (** [spatial_partition_cmd t mode] asks the secure OS to partition
       the device's compute dies into [mode] partitions. *)
 
   (** {2:layout Boot-memory layout}
 
-      Device-local physical addresses of the block's structures, fixed
-      at {!create} time. *)
+      Device-local physical addresses of the block's structures. Boot
+      buffers are fixed at {!create}; the trusted memory region is reserved
+      during {!init_hw} or {!restore_tmr}. *)
 
   val msg1_paddr : t -> int
   (** [msg1_paddr t] is the 1MB firmware staging buffer. *)
@@ -282,8 +292,8 @@ module Psp : sig
   (** [ring_paddr t] is the submission ring. *)
 
   val tmr_paddr : t -> int
-  (** [tmr_paddr t] is the trusted memory region, or [0] when the boot
-      firmware reserves it instead. *)
+  (** [tmr_paddr t] is the trusted memory region, or [0] before initialization
+      or when the boot firmware reserves it instead. *)
 end
 
 (** {1:gfx Compute engines}

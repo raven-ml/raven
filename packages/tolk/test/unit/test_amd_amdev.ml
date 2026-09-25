@@ -398,7 +398,7 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
       let mm =
         Memory.create
           ~pt_ops:(Amdev.Am_page_table.ops ~vram ~gc_ver:gc ())
-          ~vram_size:(Mmio.size vram) ~boot_size:0x1800000 ~va_bits:48
+          ~vram_size:(Mmio.size vram) ~boot_size:0x300000 ~va_bits:48
           ~va_shifts:[ 12; 21; 30; 39 ]
           ~va_base:0
           ~palloc_ranges:[ (0x200000, 0x200000); (0x1000, 0x1000) ]
@@ -592,7 +592,7 @@ let last_write log =
 (* The boot-session stamps must close the log, byte-exact: they are the
    contract another driver of the protocol reads back. *)
 let check_boot_stamps fd log =
-  equal int 0xA0000008 Am_boot.version;
+  equal int 0xA000000D Am_boot.version;
   let rec last2 = function
     | [ a; b ] -> (a, b)
     | _ :: rest -> last2 rest
@@ -600,7 +600,7 @@ let check_boot_stamps fd log =
   in
   let (r7, v7), (r6, v6) = last2 log in
   equal int (raddr fd.dev "regSCRATCH_REG7") r7;
-  equal int 0xA0000008 v7;
+  equal int 0xA000000D v7;
   equal int (raddr fd.dev "regSCRATCH_REG6") r6;
   equal int 1 v6
 
@@ -1301,7 +1301,7 @@ let () =
                     [
                       psp_cmd Am.gfx_cmd_id_setup_tmr
                         [
-                          (0x1c, lo32 (mc tmr)); (0x20, hi32 (mc tmr));
+                          (0x1c, 0); (0x20, 0);
                           (0x28, 2); (0x2c, lo32 tmr); (0x30, hi32 tmr);
                         ];
                       psp_cmd Am.gfx_cmd_id_autoload_rlc [];
@@ -2270,12 +2270,15 @@ let () =
               with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
                   Hashtbl.replace fd.store
                     (raddr fd.dev "regSCRATCH_REG7")
-                    0xA0000008;
+                    0xA000000D;
+                  Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG5") 0x120000;
                   let t = Am_boot.create ~fw:boot_fw fd.dev in
                   let (_ : psp_script) = script_boot fd t in
                   fd.log := [];
                   Am_boot.init t;
                   equal bool true t.Am_boot.partial_boot;
+                  equal int 0x300000 (Psp.tmr_paddr t.Am_boot.psp);
+                  equal int 0x120000 (Psp.tmr_size t.Am_boot.psp);
                   equal bool false (Amdev.is_booting fd.dev);
                   let log = writes fd in
                   (* the boot-memory blocks kept the previous session's
@@ -2290,12 +2293,49 @@ let () =
                   equal bool false (wrote fd "regRLC_SPM_MC_CNTL" log);
                   equal bool true (wrote fd "regSDMA0_WATCHDOG_CNTL" log);
                   check_boot_stamps fd log));
+          test "full and partial boots reserve the same resident TMR" (fun () ->
+              let fw = {boot_fw with Firmware.sos_fw =
+                  (Am.psp_fw_type_psp_toc, Bytes.of_string "TOCIMAGE") :: boot_fw.sos_fw} in
+              let boot partial =
+                with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                    if partial then begin
+                      Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG7") Am_boot.version;
+                      Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG5") 0x120000
+                    end;
+                    let t = Am_boot.create ~fw fd.dev in
+                    ignore (script_boot fd t);
+                    Mmio.write32 fd.fvram 0x300000 0x12345678l;
+                    Am_boot.init t;
+                    equal int 0x120000 (rstore fd "regSCRATCH_REG5");
+                    equal int32 0x12345678l (Mmio.read32 fd.fvram 0x300000);
+                    let next = Memory.palloc (Amdev.mm fd.dev) 0x1000 () in
+                    Psp.tmr_paddr t.psp, next) in
+              equal (pair int int) (0x300000, 0x420000) (boot false);
+              equal (pair int int) (0x300000, 0x420000) (boot true));
+          test "GC 9.5 retains resident state after an unclean session" (fun () ->
+              let extra_ips = List.init 15 (fun i ->
+                  0x2a, i + 1, (4, 4, 2), [0xb000 + (i + 1) * 0x1000]) in
+              with_fake_dev ~gc:(9, 5, 0) ~mp1:(13, 0, 0) ~sdma:(4, 4, 2)
+                ~bif:(7, 9, 0) ~extra_ips (fun fd ->
+                  Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG7") Am_boot.version;
+                  Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG6") 1;
+                  Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG5") 0x120000;
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  Hashtbl.replace fd.store
+                    (raddr fd.dev (Gmc.pf_status_reg t.gmc Gmc.Gc)) 1;
+                  ignore (script_boot fd t);
+                  fd.log := [];
+                  Am_boot.init t;
+                  equal bool true t.partial_boot;
+                  equal bool false (wrote fd "regMP0_SMN_C2PMSG_35" (writes fd));
+                  equal bool false (wrote fd "mmMP1_SMN_C2PMSG_75" (writes fd));
+                  equal int 0x300000 (Psp.tmr_paddr t.psp)));
           test "a suspect previous session forces the full path" (fun () ->
               (* an unclean shutdown: the session flag never cleared *)
               with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
                   Hashtbl.replace fd.store
                     (raddr fd.dev "regSCRATCH_REG7")
-                    0xA0000008;
+                    0xA000000D;
                   Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG6") 1;
                   let t = Am_boot.create ~fw:boot_fw fd.dev in
                   let (_ : psp_script) = script_boot fd t in
@@ -2307,7 +2347,7 @@ let () =
               with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
                   Hashtbl.replace fd.store
                     (raddr fd.dev "regSCRATCH_REG7")
-                    0xA0000008;
+                    0xA000000D;
                   let t = Am_boot.create ~fw:boot_fw fd.dev in
                   Hashtbl.replace fd.store
                     (raddr fd.dev (Gmc.pf_status_reg t.Am_boot.gmc Gmc.Gc))

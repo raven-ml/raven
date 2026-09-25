@@ -981,7 +981,7 @@ let create pci_dev =
            ~paddr_base:(fun () -> paddr_base)
            ())
       ~vram_size:(vram_size - reserved_vram_size)
-      ~boot_size:(32 lsl 20) ~va_bits:48
+      ~boot_size:(3 lsl 20) ~va_bits:48
       ~va_shifts:[ 12; 21; 30; 39 ]
       ~va_base
       ~palloc_ranges:

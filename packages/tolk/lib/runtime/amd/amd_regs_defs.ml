@@ -1023,6 +1023,7 @@ let gc_9_4_3 = [
   ("regGRBM_CAM_DATA", (0x5e17, 1, [ ("cam_addr", (0, 15)); ("cam_remapaddr", (16, 31)) ]));
   ("regGRBM_HYP_CAM_DATA", (0x5e17, 1, [ ("cam_addr", (0, 15)); ("cam_remapaddr", (16, 31)) ]));
   ("regRLC_FWL_FIRST_VIOL_ADDR", (0x5f37, 1, [ ("viol_status", (0, 0)); ("viol_op", (1, 1)); ("viol_addr", (2, 19)); ("viol_aperture_id", (20, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_11_0_0 = [
@@ -2607,6 +2608,7 @@ let gc_11_0_0 = [
   ("regRLC_FWL_FIRST_VIOL_ADDR", (0x5f26, 1, [ ("viol_addr", (0, 17)); ("viol_aperture_id", (18, 29)); ("viol_op", (30, 30)); ("reserved", (31, 31)) ]));
   ("regRLC_GFX_IMU_DATA_0", (0x4052, 1, [ ("data", (0, 31)) ]));
   ("regRLC_GFX_IMU_CMD", (0x4053, 1, [ ("cmd", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_11_0_3 = [
@@ -4204,6 +4206,7 @@ let gc_11_0_3 = [
   ("regRLC_FWL_FIRST_VIOL_ADDR", (0x5f26, 1, [ ("viol_addr", (0, 17)); ("viol_aperture_id", (18, 29)); ("viol_op", (30, 30)); ("reserved", (31, 31)) ]));
   ("regRLC_GFX_IMU_DATA_0", (0x4052, 1, [ ("data", (0, 31)) ]));
   ("regRLC_GFX_IMU_CMD", (0x4053, 1, [ ("cmd", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_11_5_0 = [
@@ -5423,6 +5426,7 @@ let gc_11_5_0 = [
   ("regGRBM_HYP_CAM_DATA_UPPER", (0x5e12, 1, [ ("cam_addr", (0, 1)); ("cam_remapaddr", (16, 17)) ]));
   ("regRLC_GFX_IMU_DATA_0", (0x4052, 1, [ ("data", (0, 31)) ]));
   ("regRLC_GFX_IMU_CMD", (0x4053, 1, [ ("cmd", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_12_0_0 = [
@@ -6808,6 +6812,7 @@ let gc_12_0_0 = [
   ("regGRBMH_RB_SA0_REMAP_CNTL", (0x5922, 1, [ ("rb0_remap_en", (0, 0)); ("rb0_remap", (1, 3)); ("rb1_remap_en", (4, 4)); ("rb1_remap", (5, 7)); ("rb2_remap_en", (8, 8)); ("rb2_remap", (9, 11)); ("rb3_remap_en", (12, 12)); ("rb3_remap", (13, 15)) ]));
   ("regGRBMH_RB_SA1_REMAP_CNTL", (0x5923, 1, [ ("rb0_remap_en", (0, 0)); ("rb0_remap", (1, 3)); ("rb1_remap_en", (4, 4)); ("rb1_remap", (5, 7)); ("rb2_remap_en", (8, 8)); ("rb2_remap", (9, 11)); ("rb3_remap_en", (12, 12)); ("rb3_remap", (13, 15)) ]));
   ("regGRBMH_GRBM_SA_REMAP_CNTL", (0x5a09, 1, [ ("se0_sa_remap", (0, 1)); ("se1_sa_remap", (2, 3)); ("se2_sa_remap", (4, 5)); ("se3_sa_remap", (6, 7)); ("se4_sa_remap", (8, 9)); ("se5_sa_remap", (10, 11)); ("se6_sa_remap", (12, 13)); ("se7_sa_remap", (14, 15)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let mmhub_1_8_0 = [

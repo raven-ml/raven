@@ -11,10 +11,12 @@
     and drives them through boot ({!val-init}), shutdown ({!fini}) and
     fault recovery ({!recover}).
 
-    Two scratch registers carry the boot protocol between sessions, so
+    Three scratch registers carry the boot protocol between sessions, so
     a later session — from this process or any other driver of the same
     protocol — can tell what state the hardware is in:
 
+    - [regSCRATCH_REG5] holds the firmware-reported trusted memory size,
+      reserved at the same physical address on a partial boot.
     - [regSCRATCH_REG7] holds {!version} while the device was set up by
       this protocol and its boot-memory structures are intact.
     - [regSCRATCH_REG6] holds [1] while a session is active, and on
@@ -27,7 +29,9 @@
     that never finalized ([regSCRATCH_REG6] non-zero), a latched
     translation fault, or [AM_RESET=1] in the environment forces the
     full bring-up instead, resetting the device first when a previous
-    driver left its firmware running. *)
+    driver left its firmware running. GC 9.5 devices with a matching stamp
+    always retain their partial boot: resetting live fabric state requires
+    external coordination. *)
 
 type t = {
   adev : Amdev.t;  (** The device the blocks drive. *)
@@ -48,7 +52,7 @@ type t = {
 
 val version : int
 (** [version] is the boot-protocol stamp held in [regSCRATCH_REG7]
-    while a device is set up: [0xA0000008]. The value is a cross-driver
+    while a device is set up: [0xA000000D]. The value is a cross-driver
     contract; changing it strands devices booted by other drivers of
     the protocol and vice versa. *)
 

@@ -361,6 +361,16 @@ let () =
               raises_match (Exn.invalid_arg ~substring:"During booting")
                 (fun () -> Memory.palloc fx.mm 0x1000 ~boot:true ());
               equal int 0x10000 (Memory.palloc fx.mm 0x1000 ()));
+          test "reserves resident firmware without clearing it during boot" (fun () ->
+              let fx = make_fixture () in
+              fx.booting := true;
+              let resident = Memory.reserve_runtime fx.mm 0x2000 ~align:0x1000 in
+              equal int 0x10000 resident;
+              equal (list (pair int int)) [(0, 0x1000)] !(fx.zeroed);
+              fx.booting := false;
+              equal int 0x12000 (Memory.palloc fx.mm 0x1000 ());
+              Memory.pfree fx.mm resident ();
+              equal int resident (Memory.palloc fx.mm 0x1000 ()));
           test "zeroes allocations unless told otherwise" (fun () ->
               let fx = make_fixture () in
               equal (list (pair int int)) [ (0, 0x1000) ] !(fx.zeroed);

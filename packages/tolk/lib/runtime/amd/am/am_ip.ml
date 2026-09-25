@@ -679,11 +679,10 @@ module Psp = struct
     fence_paddr : int;
     ring_size : int;
     ring_paddr : int;
-    max_tmr_size : int;
     mutable tmr_size : int;
     boot_time_tmr : bool;
     autoload_tmr : bool;
-    tmr_paddr : int;
+    mutable tmr_paddr : int;
   }
 
   (* ip.py:560 AM_PSP.init_sw *)
@@ -709,17 +708,10 @@ module Psp = struct
     in
     let ring_size = 0x10000 in
     let ring_paddr = Memory.palloc mm ring_size ~zero:false ~boot:true () in
-    let max_tmr_size = 0x1300000 in
     let boot_time_tmr =
       List.mem mp0 [ (13, 0, 6); (13, 0, 14); (14, 0, 2); (14, 0, 3) ]
     in
     let autoload_tmr = not (List.mem mp0 [ (13, 0, 6); (13, 0, 14) ]) in
-    let tmr_paddr =
-      if not boot_time_tmr then
-        Memory.palloc mm max_tmr_size ~align:Am.psp_tmr_alignment ~zero:false
-          ~boot:true ()
-      else 0
-    in
     {
       adev;
       fw;
@@ -731,11 +723,10 @@ module Psp = struct
       fence_paddr;
       ring_size;
       ring_paddr;
-      max_tmr_size;
       tmr_size = 0;
       boot_time_tmr;
       autoload_tmr;
-      tmr_paddr;
+      tmr_paddr = 0;
     }
 
   let msg1_paddr t = t.msg1_paddr
@@ -871,16 +862,26 @@ module Psp = struct
     Am.Psp_gfx_cmd_resp.Cmd_load_toc.set_toc_size cmd toc_size;
     ring_submit t cmd
 
-  (* ip.py:628 _tmr_init: load TOC and calculate TMR size *)
+  let reserve_tmr t size =
+    if size < 0 || (size = 0 && not t.boot_time_tmr) then
+      failwith "PSP trusted memory size must be positive";
+    let paddr = if t.boot_time_tmr then 0 else
+        Memory.reserve_runtime (Amdev.mm t.adev) size ~align:Am.psp_tmr_alignment in
+    t.tmr_size <- size;
+    t.tmr_paddr <- paddr
+
+  let restore_tmr t =
+    reserve_tmr t (Am_register.read (Amdev.reg t.adev "regSCRATCH_REG5"))
+
+  let tmr_size t = t.tmr_size
+
+  (* The first runtime reservation is identical on full and partial boots.
+     Never zero it: a partial boot still has live firmware in these pages. *)
   let tmr_init t =
     let fwm = List.assoc Am.psp_fw_type_psp_toc t.fw.Firmware.sos_fw in
     prep_msg1 t fwm;
     let resp = load_toc_cmd t (Bytes.length fwm) in
-    t.tmr_size <- Am.Psp_gfx_cmd_resp.resp_tmr_size resp 0;
-    if t.tmr_size > t.max_tmr_size then
-      failwith
-        (Printf.sprintf "tmr size 0x%x exceeds the maximum 0x%x" t.tmr_size
-           t.max_tmr_size)
+    reserve_tmr t (Am.Psp_gfx_cmd_resp.resp_tmr_size resp 0)
 
   (* ip.py:682 _tmr_load_cmd *)
   let tmr_load_cmd t =

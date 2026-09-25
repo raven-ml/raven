@@ -527,7 +527,11 @@ def gen_regs():
     for value in regs.__all__:
         prefix, ver = family_version(value)
         fam_values.append((prefix, ver, value))
-        fam = getattr(regs, value)
+        fam = dict(getattr(regs, value))
+        # The target boot protocol stores the resident TMR size in REG5.
+        # This register is absent from the old reference's curated maps.
+        if prefix == "gc":
+            fam.setdefault("regSCRATCH_REG5", (0x2045, 1, {"scratch_reg5": (0, 31)}))
         lines.append(f"let {value} = [")
         lines += [reg_entry(fam, nm) for nm in fam]
         lines.append("]")
@@ -745,8 +749,10 @@ def gen_am():
     lines.append("(* IP discovery: signatures, table ids, hardware ids. *)")
     lines.append(int_let("binary_signature", am.BINARY_SIGNATURE))
     lines.append(int_let("discovery_table_signature", am.DISCOVERY_TABLE_SIGNATURE))
+    lines.append(int_let("harvest_table_signature", am.HARVEST_TABLE_SIGNATURE))
     lines.append(int_let("table_ip_discovery", am.IP_DISCOVERY))
     lines.append(int_let("table_gc", am.GC))
+    lines.append(int_let("table_harvest", am.HARVEST_INFO))
     lines += [int_let(nm, getattr(am, nm)) for nm in AM_HWIP_IDS]
     lines.append("")
     lines.append("(* Hardware IP id -> discovery hardware id. *)")

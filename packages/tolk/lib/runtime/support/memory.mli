@@ -251,6 +251,13 @@ val vfree : 'pt t -> virt_mapping -> unit
 
 (** {1:physical Physical memory} *)
 
+val reserve_runtime : 'pt t -> int -> align:int -> int
+(** [reserve_runtime t size ~align] reserves runtime physical memory without
+    reading or clearing it, including during boot. This keeps firmware-owned
+    memory unavailable to later allocations. [size] is rounded up to 4 KiB.
+    The address is a multiple of [align]. Release it with {!pfree} only after
+    firmware relinquishes ownership. Raises [Out_of_memory] if it does not fit. *)
+
 val palloc :
   'pt t ->
   int ->

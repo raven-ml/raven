@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI boots reserve the firmware-reported trusted memory region at a stable
+  address across sessions. The boot layout now uses the target protocol stamp;
+  GC 9.5 keeps resident fabric state after an unclean matching session.
+
 - AMD PCI initialization lowers clocks and halts compute and DMA engines
   before resetting a live device, avoiding resets while engines run at full speed.
 

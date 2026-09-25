@@ -117,6 +117,9 @@ let create ~pt_ops ~vram_size ~boot_size ~va_bits ~va_shifts ~va_base
     identity_vas = [];
   }
 
+let reserve_runtime t size ~align =
+  Tlsf.alloc t.pa_allocator (round_up size 0x1000) ~align ()
+
 let palloc t size ?(align = 0x1000) ?(zero = true) ?(boot = false)
     ?(ptable = false) () =
   if t.is_booting () <> boot then
