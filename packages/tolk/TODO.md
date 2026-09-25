@@ -14,6 +14,39 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
+- Remove the remaining parallel execution and binding protocols before treating
+  this milestone as complete. Migrate Rune's `cp_binding`, input/arena rebinding
+  and custom-loop reseeding to `PARAM` arguments and owned `BUFFER` nodes, then
+  delete `Realize.Buffers` and its resolver/cache state. Validate nested loops,
+  donation, arena reuse, placed views and GC between replays on CPU and Metal.
+- Route autotuning through the target's compiled, linked `time_call` path.
+  Move GPU standalone calls, raw channel setup, local-memory growth, cache
+  invalidation, profiling calibration and allocator transfers onto shared
+  submissions. Delete the obsolete GPU `Device.prog`/`Compiled_runner` paths,
+  duplicate command builders, direct argument arenas and handoff bookkeeping
+  once their callers migrate. Preserve bounded waits and retirement for
+  independently linked submissions; these are separate safety requirements.
+- Port the target's distinction between one-shot linker ring allocations and
+  retained command storage. Share NV code images within a compiled schedule
+  and use one QMD/argument arena per run. Audit cross-schedule code-image cache
+  ownership before adding any persistent cache. Measure allocation counts and
+  test independent retained links, descriptor alignment and replay patching.
+- Reconcile base/view allocation policy with the target: Tolk forbids base
+  teardown while allocated views exist; the target refreshes stale views after
+  reallocation. Review this together with Rune arena retirement and queued
+  foreign users. Remove unused allocator capability fields (`copy_from_disk`,
+  its flag, and the redundant transfer flag) rather than preserve dead APIs.
+- Make Metal completion publication monotonic and retire callback ownership
+  safely. Verify cross-command callback ordering or collect completions in
+  submission order; an earlier completed command must remain complete while a
+  later profiled command is pending. Cover reordered callbacks, timestamp
+  visibility, sticky failures and context retirement. Account for any retained
+  difference from the target's command-buffer collection model.
+- Give uncertain failed teardown an explicit ownership policy: finalizer
+  failures currently retain closures process-wide with no reclamation after
+  confirmed device retirement. Justify that limit or attach retained owners
+  to the existing device retirement mechanism; do not retry uncertain unmaps.
+
 - Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
   `LRU=0`, forcing GC during allocation, mapped-buffer teardown, direct dispatch,
   compiled submission, signal reservation and kernarg reuse. Verify that waits
@@ -38,11 +71,22 @@ with their rationale and validation; commit count is not an acceptance metric.
   operations against the existing AMD device scope; justify any retained gap.
   Validate compiled PM4 scratch separation on multi-die hardware and reconcile
   scratch growth across retained and multi-device links.
-  Port NV channel/descriptor, semaphore, GSP and compute submission
-  fixes, including compute hunks in video-labelled commits.
+  Validate NV channel/descriptor, semaphore and GSP compute submission behavior
+  on hardware, including compute changes from video-labelled commits.
+- Regenerate consumed AMD register tables and firmware hashes from the frozen
+  target instead of old-pin inputs plus selected handwritten additions. Port
+  the consumed SMU/PSP 13.0.15 branches coherently, and poll PCI configuration
+  readiness after non-hive mode1 reset before resuming MMIO. Restore target
+  firmware retrieval/cache behavior when installed blobs are missing or have
+  different hashes, using existing fetch facilities without new dependencies.
+  Replace test-driven busy-spin delays with actual production sleeps and a
+  narrow test clock boundary.
 - Complete PCI multi-die mappings: export AMD hive memory through XGMI peer
   addresses instead of its PCI BAR, and select BAR or fabric addresses according
-  to the receiving device. Check mixed-vendor and cross-hive reachability.
+  to the receiving device. Establish raw-PCI fabric identity and reachability;
+  region index/count alone cannot prove a shared hive, and driver sysfs state
+  cannot be assumed after takeover. Check mixed-vendor/cross-hive mappings and
+  reject imports outside the receiver's virtual-address aperture.
   Complete rollback of firmware
   bootstrap failures before a booted interface exists. Validate post-boot
   AMD/NV queue/runtime rollback with injected hardware failures, including
@@ -98,7 +142,12 @@ acceptance requirement; skipped tests are not execution evidence.
   extents. Canonicalize image coordinates across all producers and consumers,
   and render final constants.
 - Remove remaining parallel property reconstruction and silent guesses in
-  renderer widths, view offsets, stage buffer sizes and range metadata. Port
+  renderer widths, view offsets, stage buffer sizes and range metadata. Remove
+  the C renderer's domain-lifetime strong width cache and source-width/lane
+  reconstruction in favor of central properties. Unify ordered range and range
+  membership traversal; use checked central numel in placeholders, frontend
+  tensors and rangeify. Remove ignored `dtype` arguments from source-derived
+  `Uop.load`, `reduce` and `wmma`, updating callers and contracts. Port
   remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
 - Add deterministic beam coverage for reconsidering candidates rejected by

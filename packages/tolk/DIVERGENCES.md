@@ -6,6 +6,23 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Automatic buffer teardown defers GC re-entry during device operations.**
+  OCaml may run a buffer finalizer during another allocator or queue operation;
+  releasing that buffer can re-enter the same lock or alter state mid-update.
+  `Storage.with_operation` defers such automatic releases to the outer operation
+  boundary. Explicit release still reports errors. Coverage: `test_device`
+  finalization during device calls and failed teardown, allocator tests, and
+  Metal lifetime checks. This scope is not cross-domain or systhread locking;
+  concurrency and uncertain failed-owner reclamation remain open in TODO.
+  Reconsider if native ownership makes automatic teardown non-reentrant.
+
+- **AMD queue retirement propagates HQD dequeue timeouts.** The target can
+  suppress that timeout, but Tolk uses successful retirement to decide whether
+  GPU-reachable backing may be freed during rollback. Reporting success without
+  quiescence would invalidate that ownership decision. Coverage: scripted
+  `test_amd_amdev` teardown failures; hardware retirement remains in TODO.
+  Reconsider when equivalent quiescence can be established after the timeout.
+
 - **Rune owns custom differentiation before Tolk lowering.** The target's
   custom-kernel gradients run in its tensor autodiff layer. Tolk retains call
   metadata but has no separate autodiff consumer: Rune's effect handlers run
@@ -136,20 +153,10 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   across rollover. Hardware acceptance remains in TODO. Reconsider when direct
   dispatch is removed or upstream provides an equivalent rollover protocol.
 
-- **Direct AMD/NV launches fence kernel-argument arena wrap.** Tolk retains
-  direct `Device.prog` launches for autotuning and standalone runtime callers;
-  the frozen target's queue compiler owns argument storage per linked batch.
-  The direct arena waits for the preceding timeline value before wrapping,
-  without waiting for ordinary allocations. Coverage: `test_runtime_amd` and
-  `test_runtime_nv` preserve arguments, QMDs and producer positions after a
-  failed wrap wait, then retry after completion. Reconsider when direct
-  dispatch uses the compiled queue's per-batch storage ownership.
-
 - **Host access, direct calls and native transfers wait for existing importers.**
-  Tolk still exposes asynchronous `Device.prog` dispatch outside compiled queue
-  dependencies. `Device.runtime` waits for foreign owners and importers before
-  direct dispatch; host reads/writes and native buffer transfers also wait for
-  importing devices. Address binding itself does not wait. Compiled host
+  Host reads/writes and native buffer transfers wait for importing devices.
+  During migration, `Device.runtime` also enforces this boundary for direct
+  calls; removing that separate dispatch path is required in TODO. Address binding itself does not wait. Compiled host
   submissions use `Device.queue_runtime` and their encoded fences, so replay
   does not accidentally drain every device. They wait for recorded foreign
   accesses outside their own timelines, including separate groups sharing host
@@ -185,17 +192,6 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   Device-memory imports still request staging. Consumer: staged PCI peer
   transfers; hardware acceptance remains explicit in TODO. Reconsider when
   upstream distinguishes system and device memory in its small-BAR check.
-
-- **Direct submissions publish timeline values after queue publication.** The
-  direct AMD/NV interface shares its counter with compiled queues. Advancing
-  it before queue setup succeeds leaves later waits targeting work that does
-  not exist. `Timeline.submit` owns counter publication and finalizer deferral;
-  failed submissions latch an error and retain storage, including timestamp
-  slots a late GPU write could still target. Coverage: the NV local-memory
-  regression rejects queue setup without advancing the counter, and the shared
-  timeline tests cover compiled/direct handoffs and rollover. Reconsider when
-  all direct operations use the compiled submission protocol; hardware failure
-  injection remains in TODO.
 
 - **Failed buffer setup unwinds acquired resources.** The frozen target does
   not consistently roll back allocation and mapping failures. Tolk returns
@@ -257,12 +253,11 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 - **CUDA submission calls ordinary C helpers instead of Python-callable driver
   objects.** Generated host code runs with the OCaml runtime released, so
   helpers retain the first submission failure for synchronization to report.
-  Event handoffs also order the autotuner’s direct `Device.prog` launches and
-  allocator uploads with nonblocking queues. Consumers: compiled submission,
-  JIT replay and search timing. Coverage: driver-independent submission
+  Consumers: compiled submission and JIT replay. The remaining direct-launch
+  and allocator-upload handoffs are transitional work to remove in TODO. Coverage: driver-independent submission
   compilation and CUDA runtime replay/transfer cases (hardware acceptance is
-  still open in TODO). Reconsider the handoffs if direct dispatch and uploads
-  move entirely into queue compilation.
+  still open in TODO). Reconsider the helper boundary if a native driver
+  binding can provide the same calling convention and failure lifetime.
 
 - **Symbolic index expressions use `Movement.symbolic_shrink`**, composed with
   `Movement.squeeze` for a scalar selection. `Movement.index` keeps integer
