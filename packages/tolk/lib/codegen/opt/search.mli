@@ -35,8 +35,9 @@ val beam_search :
 (** [beam_search ~to_program s rawbufs ~var_vals amt device] optimises scheduler [s] using
     beam search with beam width [amt]. [var_vals] supplies the named scalar
     values used for candidate filtering, estimates, launch dimensions and timing.
-    [to_program] compiles kernels needed by the shared queue path without
-    recursively invoking beam search. Every symbolic variable in [s] must have a value within its declared bounds.
+    [to_program] returns a complete compiled [PROGRAM] for each candidate and
+    kernels needed by the shared queue path, without recursively invoking beam
+    search. Candidate launch metadata and estimates come from that [PROGRAM]. Every symbolic variable in [s] must have a value within its declared bounds.
     Missing or out-of-bounds values raise [Invalid_argument].
 
     - [allow_test_size] (default [true]) scales down global dimensions

@@ -654,6 +654,9 @@ thread.
 
 ### Tolk (new)
 
+- Beam search now uses shared `PROGRAM` compilation, preserving the compiler
+  callback's target, signature and profiling identity when timing candidates.
+
 - Remove `Tiny_elf.pack`; command submission uses `Tiny_elf.layout` and shared
   typed queue patches, leaving one argument encoding path.
 

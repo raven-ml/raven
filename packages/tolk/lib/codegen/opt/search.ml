@@ -133,10 +133,10 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
     actions;
   List.rev !acted
 
-(* Resolve symbolic global dims and shrink until they fit max_global_size by
-   halving dims > 16 from the end. Returns (scaled_size, factor). *)
-let get_test_global_size global_size var_vals max_global_size =
-  let test = Array.map (fun sz -> U.sym_infer sz var_vals) global_size in
+(* Shrink global dims until they fit max_global_size by halving dims > 16
+   from the end. Returns (scaled_size, factor). *)
+let get_test_global_size global_size max_global_size =
+  let test = Array.copy global_size in
   let input_size = Array.fold_left ( * ) 1 test in
   let cont = ref true in
   while !cont && Array.fold_left ( * ) 1 test > max_global_size do
@@ -153,7 +153,7 @@ let get_test_global_size global_size var_vals max_global_size =
 
 (* Compilation *)
 
-type compiled = { program : Program_spec.t; compile_time : float }
+type compiled = { program : U.t; compile_time : float }
 
 exception Compile_timeout
 
@@ -176,17 +176,17 @@ let with_compile_timeout ~use_timeout f =
   | v -> cleanup (); v
   | exception e -> cleanup (); raise e
 
-(* Compile a single candidate: optimize -> lower -> check uop count -> compile.
+(* Compile a single candidate through the shared PROGRAM constructor and reject
+   oversized linear programs, as the reference search does.
    Returns (index, result) so callers can dispatch candidates in parallel and
    match results back. *)
-let try_compile ~use_timeout ((idx, s) : int * P.t) (device : Device.t)
+let try_compile ~to_program ~use_timeout ((idx, s) : int * P.t) (device : Device.t)
     : int * compiled option =
-  let ren = P.ren s in
   let compile () =
     let st = Unix.gettimeofday () in
     let ast = P.get_optimized_ast ~name_override:"test" (P.copy s) in
-    let ir = Linearizer.linearize (Codegen_lower.lower ren ast) in
-    let uop_count = List.length ir in
+    let program = to_program device ast in
+    let uop_count = Array.length (U.src (U.src program).(1)) in
     let beam_uops_max = beam_uops_max () in
     if beam_uops_max > 0 && uop_count >= beam_uops_max then begin
       if beam_log_surpass_max () then
@@ -194,9 +194,7 @@ let try_compile ~use_timeout ((idx, s) : int * P.t) (device : Device.t)
           uop_count beam_uops_max;
       None
     end else
-      let estimates = Program_spec.Estimates.of_program ir in
-      let prog = Device.compile_program device ~name:"test" ~estimates ir in
-      Some { program = prog; compile_time = Unix.gettimeofday () -. st }
+      Some { program; compile_time = Unix.gettimeofday () -. st }
   in
   let result =
     try with_compile_timeout ~use_timeout compile with
@@ -218,11 +216,11 @@ let try_compile ~use_timeout ((idx, s) : int * P.t) (device : Device.t)
    runs afterwards in the main domain, one candidate at a time, so timings
    never contend for the device. In parallel mode the per-candidate alarm
    timeout is skipped: SIGALRM is process-global. *)
-let compile_candidates ~device ~nworkers candidates =
+let compile_candidates ~to_program ~device ~nworkers candidates =
   let n = List.length candidates in
   let compiled : compiled option array = Array.make n None in
   let compile_one ~use_timeout i cand =
-    compiled.(i) <- snd (try_compile ~use_timeout (i, cand) device)
+    compiled.(i) <- snd (try_compile ~to_program ~use_timeout (i, cand) device)
   in
   if nworkers <= 0 || n < 2 then begin
     List.iteri (compile_one ~use_timeout:true) candidates;
@@ -244,7 +242,7 @@ let compile_candidates ~device ~nworkers candidates =
           let worker = Domain.spawn (fun () ->
               for i = lo to hi - 1 do
                 compiled.(i) <-
-                  snd (try_compile ~use_timeout:false (i, cands.(i)) device)
+                  snd (try_compile ~to_program ~use_timeout:false (i, cands.(i)) device)
               done) in
           workers := worker :: !workers
       done
@@ -360,16 +358,19 @@ let time_program ~device ~to_program p rawbufs_by_slot var_vals ~early_stop ~cnt
     else None
   in
   let factor = ref 1.0 in
+  let info = Option.get (U.as_program_info p) in
   let p =
     if not allow_test_size then p
     else
-      let scaled_global, f =
-        get_test_global_size (Program_spec.global_size p) var_vals 65536
-      in
+      let global, _ = U.program_launch_dims info ~var_vals in
+      let global = Array.of_list (List.map (function
+          | U.Launch_value_int n -> n
+          | U.Launch_value_float f -> int_of_float f) global) in
+      let scaled_global, f = get_test_global_size global 65536 in
       factor := f;
-      Program_spec.with_global_dims scaled_global p
+      U.replace p ~arg:(U.Arg.Program_info {info with
+        global_size = List.map (fun n -> U.Launch_int n) (Array.to_list scaled_global)}) ()
   in
-  let info = Program_spec.program_info p in
   let args = List.init (List.fold_left max (-1) info.globals + 1) (fun slot ->
       match List.assoc_opt slot rawbufs_by_slot with
       | Some buf -> U.from_buffer buf
@@ -377,13 +378,7 @@ let time_program ~device ~to_program p rawbufs_by_slot var_vals ~early_stop ~cnt
       | None -> invalid_arg (Printf.sprintf
           "beam_search: raw buffer slot %d missing (%d slots supplied)"
           slot (List.length rawbufs_by_slot))) in
-  let kernel_info = U.{name = Program_spec.name p;
-    applied_opts = Program_spec.applied_opts p; opts_to_apply = None;
-    estimates = Some (Program_spec.Estimates.to_uop (Program_spec.estimates p)); beam = 0} in
-  let program = U.program ~sink:(U.sink ~kernel_info (Program_spec.program p))
-      ~linear:(U.linear (Program_spec.program p)) ~source:(U.source (Program_spec.src p))
-      ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib p)))) ~info () in
-  let call = U.call ~body:program ~args
+  let call = U.call ~body:p ~args
       ~info:U.{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = None} in
   Realize.time_call ~device ~to_program ~var_vals ?timeout ~clear_l2 call
@@ -427,9 +422,11 @@ let apply_cached_opts s cached_opts =
   ret
 
 let program_ops program var_vals =
-  match (Program_spec.estimates program).ops with
-  | Program_spec.Estimates.Int n -> Float.of_int n
-  | Symbolic node -> Float.of_int (U.sym_infer node var_vals)
+  let kernel = Option.get (U.as_kernel_info (U.src program).(0)) in
+  match kernel.estimates with
+  | None -> 0.
+  | Some {ops = U.Int n; _} -> Float.of_int n
+  | Some {ops = U.Sym node; _} -> Float.of_int (U.sym_infer node var_vals)
 
 let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
     (s : P.t) (rawbufs : Device.Buffer.t list) ~var_vals (amt : int)
@@ -459,7 +456,7 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
   | Some cached_opts -> apply_cached_opts s cached_opts
   | None ->
       let beam = ref [(s, infinity)] in
-      let seen_libs : (bytes, unit) Hashtbl.t = Hashtbl.create 256 in
+      let seen_libs : (string, unit) Hashtbl.t = Hashtbl.create 256 in
       (* Compilation is reusable; eligibility is reconsidered each round.
          Only a binary accepted for timing enters [seen_libs]. *)
       let compiled_asts : compiled option U.Ref_tbl.t = U.Ref_tbl.create 256 in
@@ -515,10 +512,7 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
         match compiled with
         | None -> ()
         | Some { program; compile_time } ->
-            let lib = match Program_spec.lib program with
-              | Some l -> l
-              | None -> assert false
-            in
+            let lib = Option.get (U.Arg.as_string (U.arg (U.src program).(3))) in
             if not (Hashtbl.mem seen_libs lib) then
               let this_ops = program_ops program var_vals in
               least_compute_ops := Float.min this_ops !least_compute_ops;
@@ -553,7 +547,7 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
         let timed = ref [] in
         let least_compute_ops = ref infinity in
         let n_candidates = List.length candidates in
-        let compiled = compile_candidates ~device ~nworkers uncompiled in
+        let compiled = compile_candidates ~to_program ~device ~nworkers uncompiled in
         List.iteri (fun i cand -> U.Ref_tbl.add compiled_asts (P.ast cand) compiled.(i)) uncompiled;
         List.iteri
           (fun i cand ->
