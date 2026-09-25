@@ -88,6 +88,57 @@ module Allocator = struct
   type packed = allocator_pack = Pack : 'buf t -> packed
 end
 
+(* Finalizers can interrupt any OCaml allocation, including one between a
+   reserved timeline value and its submission or inside a PCI allocator. Keep
+   their entire teardown, including imported mappings, outside such operations.
+   This prevents re-entry on a domain; it does not serialize device callers. *)
+type operation = {
+  mutable active : bool;
+  pending : (unit -> unit) list Atomic.t;
+}
+
+let operation = Domain.DLS.new_key (fun () ->
+    { active = false; pending = Atomic.make [] })
+
+(* A failed teardown can have released only part of its mappings. Retain its
+   owner rather than retrying an uncertain unmap or losing live GPU backing. *)
+let failed_releases = Atomic.make []
+
+let rec push pending release =
+  let previous = Atomic.get pending in
+  if not (Atomic.compare_and_set pending previous (release :: previous)) then
+    push pending release
+
+let rec drain state =
+  let rec release_all = function
+    | [] -> ()
+    | release :: rest ->
+        (match release () with
+         | () -> release_all rest
+         | exception exn ->
+             let backtrace = Printexc.get_raw_backtrace () in
+             push failed_releases release;
+             List.iter (push state.pending) rest;
+             Printexc.raise_with_backtrace exn backtrace)
+  in
+  match Atomic.exchange state.pending [] with
+  | [] -> ()
+  | pending ->
+      (* Preserve finalization order: views detach before their base frees. *)
+      release_all (List.rev pending);
+      drain state
+
+let with_operation f =
+  let state = Domain.DLS.get operation in
+  if state.active then f ()
+  else begin
+    state.active <- true;
+    Fun.protect ~finally:(fun () -> state.active <- false) (fun () ->
+        let result = f () in
+        drain state;
+        result)
+  end
+
 let mem_used = ref 0
 let mem_used_per_device : (string, int) Hashtbl.t = Hashtbl.create 4
 
@@ -125,48 +176,55 @@ let counts_as_used buf =
   && Option.is_none buf.spec.external_ptr
 
 let rec allocate buf =
-  if is_initialized buf then invalid_arg "buffer already allocated";
-  buf.generation <- fresh_id ();
-  if nbytes buf = 0 then buf.storage <- Empty
-  else match buf.base with
-  | None ->
-      let Allocator.Pack alloc = allocator buf in
-      let raw = alloc.alloc (nbytes buf) buf.spec in
-      buf.storage <- Allocated (Backing (alloc, raw));
-      if counts_as_used buf then add_mem_used buf.device (nbytes buf)
-  | Some root ->
-      ensure_allocated root;
-      match root.storage with
-      | Allocated (Backing (alloc, raw)) ->
-          let offset = match alloc.offset with
-            | Some f -> f
-            | None -> invalid_arg "allocator offset is required for buffer views"
-          in
-          let view = offset raw (nbytes buf) buf.offset in
-          buf.storage <- Allocated (Backing (alloc, view));
-          root.allocated_views <- root.allocated_views + 1
-      | Unallocated | Empty -> assert false
+  with_operation (fun () ->
+    if is_initialized buf then invalid_arg "buffer already allocated";
+    buf.generation <- fresh_id ();
+    if nbytes buf = 0 then buf.storage <- Empty
+    else match buf.base with
+    | None ->
+        let Allocator.Pack alloc = allocator buf in
+        let raw = alloc.alloc (nbytes buf) buf.spec in
+        buf.storage <- Allocated (Backing (alloc, raw));
+        if counts_as_used buf then add_mem_used buf.device (nbytes buf)
+    | Some root ->
+        ensure_allocated root;
+        match root.storage with
+        | Allocated (Backing (alloc, raw)) ->
+            let offset = match alloc.offset with
+              | Some f -> f
+              | None -> invalid_arg "allocator offset is required for buffer views"
+            in
+            let view = offset raw (nbytes buf) buf.offset in
+            buf.storage <- Allocated (Backing (alloc, view));
+            root.allocated_views <- root.allocated_views + 1
+        | Unallocated | Empty -> assert false)
 
 and ensure_allocated buf = if not (is_initialized buf) then allocate buf
 
 let deallocate buf =
-  match buf.base, buf.storage with
-  | _, Unallocated -> ()
-  | _, Empty -> buf.storage <- Unallocated
-  | None, Allocated (Backing (alloc, raw)) ->
-      if buf.allocated_views <> 0 then
-        invalid_arg "base buffer still has allocated views";
-      List.iter (fun (_, Backing (mapped_alloc, mapped)) ->
-          mapped_alloc.synchronize ();
-          (Option.get mapped_alloc.mapping).unmap mapped) buf.mappings;
-      buf.mappings <- [];
-      alloc.free raw (nbytes buf) buf.spec;
-      if counts_as_used buf then add_mem_used buf.device (-nbytes buf);
-      buf.storage <- Unallocated
-  | Some root, Allocated _ ->
-      buf.mappings <- [];
-      buf.storage <- Unallocated;
-      root.allocated_views <- root.allocated_views - 1
+  with_operation (fun () ->
+    match buf.base, buf.storage with
+    | _, Unallocated -> ()
+    | _, Empty -> buf.storage <- Unallocated
+    | None, Allocated (Backing (alloc, raw)) ->
+        if buf.allocated_views <> 0 then
+          invalid_arg "base buffer still has allocated views";
+        List.iter (fun (_, Backing (mapped_alloc, mapped)) ->
+            mapped_alloc.synchronize ();
+            (Option.get mapped_alloc.mapping).unmap mapped) buf.mappings;
+        buf.mappings <- [];
+        alloc.free raw (nbytes buf) buf.spec;
+        if counts_as_used buf then add_mem_used buf.device (-nbytes buf);
+        buf.storage <- Unallocated
+    | Some root, Allocated _ ->
+        buf.mappings <- [];
+        buf.storage <- Unallocated;
+        root.allocated_views <- root.allocated_views - 1)
+
+let finalize buf =
+  let state = Domain.DLS.get operation in
+  push state.pending (fun () -> deallocate buf);
+  with_operation (fun () -> ())
 
 let checked_nbytes size dtype =
   let itemsize = Dtype.itemsize dtype in
@@ -182,7 +240,7 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
     storage = Unallocated; generation = -1; mappings = []; base = None; offset = 0;
     uop_refcount = 0; allocated_views = 0;
   } in
-  Gc.finalise deallocate buf;
+  Gc.finalise finalize buf;
   buf
 
 let create ~device ~size ~dtype ?spec allocator =
@@ -228,20 +286,22 @@ let synchronize_mappings ?except buf =
         alloc.synchronize ()) root.mappings
 
 let copyin buf bytes =
-  ensure_size buf bytes;
-  synchronize_mappings buf;
-  match buf.storage with
-  | Unallocated -> invalid_arg "buffer is not allocated"
-  | Empty -> ()
-  | Allocated (Backing (alloc, raw)) -> alloc.copyin raw bytes
+  with_operation (fun () ->
+    ensure_size buf bytes;
+    synchronize_mappings buf;
+    match buf.storage with
+    | Unallocated -> invalid_arg "buffer is not allocated"
+    | Empty -> ()
+    | Allocated (Backing (alloc, raw)) -> alloc.copyin raw bytes)
 
 let copyout buf bytes =
-  ensure_size buf bytes;
-  synchronize_mappings buf;
-  match buf.storage with
-  | Unallocated -> invalid_arg "buffer is not allocated"
-  | Empty -> ()
-  | Allocated (Backing (alloc, raw)) -> alloc.copyout bytes raw
+  with_operation (fun () ->
+    ensure_size buf bytes;
+    synchronize_mappings buf;
+    match buf.storage with
+    | Unallocated -> invalid_arg "buffer is not allocated"
+    | Empty -> ()
+    | Allocated (Backing (alloc, raw)) -> alloc.copyout bytes raw)
 
 external host_view : nativeint -> int -> Allocator.host_view = "caml_tolk_host_view"
 
@@ -253,27 +313,28 @@ let as_buffer buf =
       Option.map (fun addr -> host_view addr (nbytes buf)) (alloc.host raw)
 
 let transfer ~dst ~src =
-  if size dst <> size src then invalid_arg "buffer transfer size mismatch";
-  if not (Dtype.equal (dtype dst) (dtype src)) then
-    invalid_arg "buffer transfer dtype mismatch";
-  if nbytes dst = 0 then begin
-    ensure_allocated dst;
-    ensure_allocated src;
-    true
-  end else if supports_transfer dst src then begin
-    synchronize_mappings dst;
-    synchronize_mappings src;
-    ensure_allocated dst;
-    ensure_allocated src;
-    match dst.storage, src.storage with
-    | Allocated (Backing (alloc, dest)), Allocated (Backing (source, raw_src)) ->
-        (match Type.Id.provably_equal alloc.kind source.kind with
-         | Some Type.Equal ->
-             (Option.get alloc.transfer) ~dest ~src:raw_src
-               ~dest_device:dst.device ~src_device:src.device (nbytes dst)
-         | None -> false)
-    | _ -> assert false
-  end else false
+  with_operation (fun () ->
+    if size dst <> size src then invalid_arg "buffer transfer size mismatch";
+    if not (Dtype.equal (dtype dst) (dtype src)) then
+      invalid_arg "buffer transfer dtype mismatch";
+    if nbytes dst = 0 then begin
+      ensure_allocated dst;
+      ensure_allocated src;
+      true
+    end else if supports_transfer dst src then begin
+      synchronize_mappings dst;
+      synchronize_mappings src;
+      ensure_allocated dst;
+      ensure_allocated src;
+      match dst.storage, src.storage with
+      | Allocated (Backing (alloc, dest)), Allocated (Backing (source, raw_src)) ->
+          (match Type.Id.provably_equal alloc.kind source.kind with
+           | Some Type.Equal ->
+               (Option.get alloc.transfer) ~dest ~src:raw_src
+                 ~dest_device:dst.device ~src_device:src.device (nbytes dst)
+           | None -> false)
+      | _ -> assert false
+    end else false)
 
 let as_bytes buf =
   let bytes = Bytes.create (nbytes buf) in
@@ -294,7 +355,7 @@ let view buf ~size ~dtype ~offset =
     allocator = root.allocator; storage = Unallocated; generation = -1; mappings = []; base = Some root;
     offset = buf.offset + offset; uop_refcount = 0; allocated_views = 0;
   } in
-  Gc.finalise deallocate v;
+  Gc.finalise finalize v;
   v
 
 let generation buf =
@@ -305,12 +366,13 @@ let target_allocator device buf =
   match device with None -> allocator buf | Some device -> !allocator_resolver device
 
 let synchronize ?device buf =
-  let target = target_allocator device buf in
-  synchronize_mappings ~except:target buf;
-  if target != allocator buf then begin
-    let Allocator.Pack source = allocator buf in
-    source.synchronize ()
-  end
+  with_operation (fun () ->
+    let target = target_allocator device buf in
+    synchronize_mappings ~except:target buf;
+    if target != allocator buf then begin
+      let Allocator.Pack source = allocator buf in
+      source.synchronize ()
+    end)
 
 let rec mapped_backing target buf =
   ensure_allocated buf;
@@ -341,50 +403,53 @@ let rec mapped_backing target buf =
            buf.mappings <- (target, raw) :: buf.mappings;
            Some raw)
 
-
 let find_mapping : type a. a Type.Id.t -> t -> a option = fun kind buf ->
-  let root = match buf.base with Some root -> root | None -> buf in
-  let rec find : (allocator_pack * backing) list -> a option = function
-    | [] -> None
-    | (_, Backing (alloc, raw)) :: rest ->
-        match Type.Id.provably_equal kind alloc.kind with
-        | None -> find rest
-        | Some Type.Equal ->
-            if root == buf then Some raw
-            else match alloc.offset with
-              | Some offset -> Some (offset raw (nbytes buf) buf.offset)
-              | None -> invalid_arg "mapped allocator does not support views"
-  in
-  find root.mappings
+  with_operation (fun () ->
+    let root = match buf.base with Some root -> root | None -> buf in
+    let rec find : (allocator_pack * backing) list -> a option = function
+      | [] -> None
+      | (_, Backing (alloc, raw)) :: rest ->
+          match Type.Id.provably_equal kind alloc.kind with
+          | None -> find rest
+          | Some Type.Equal ->
+              if root == buf then Some raw
+              else match alloc.offset with
+                | Some offset -> Some (offset raw (nbytes buf) buf.offset)
+                | None -> invalid_arg "mapped allocator does not support views"
+    in
+    find root.mappings)
 
 let get : type a. ?device:string -> a Type.Id.t -> t -> a option =
   fun ?device kind buf ->
-  let target = target_allocator device buf in
-  let Allocator.Pack alloc = target in
-  if Option.is_none (Type.Id.provably_equal kind alloc.kind) then
-    invalid_arg "buffer storage belongs to a different backend";
-  match mapped_backing target buf with
-  | Some (Backing (alloc, raw)) ->
-      (match Type.Id.provably_equal kind alloc.kind with
-       | Some Type.Equal -> Some raw
-       | None -> assert false)
-  | None -> None
+  with_operation (fun () ->
+    let target = target_allocator device buf in
+    let Allocator.Pack alloc = target in
+    if Option.is_none (Type.Id.provably_equal kind alloc.kind) then
+      invalid_arg "buffer storage belongs to a different backend";
+    match mapped_backing target buf with
+    | Some (Backing (alloc, raw)) ->
+        (match Type.Id.provably_equal kind alloc.kind with
+         | Some Type.Equal -> Some (raw : a)
+         | None -> assert false)
+    | None -> None)
 
 let host_addr buf =
-  ensure_allocated buf;
-  synchronize_mappings buf;
-  match buf.storage with
-  | Allocated (Backing (alloc, raw)) -> alloc.synchronize (); alloc.host raw
-  | Empty -> Some Nativeint.zero
-  | Unallocated -> assert false
+  with_operation (fun () ->
+    ensure_allocated buf;
+    synchronize_mappings buf;
+    match buf.storage with
+    | Allocated (Backing (alloc, raw)) -> alloc.synchronize (); alloc.host raw
+    | Empty -> Some Nativeint.zero
+    | Unallocated -> assert false)
 
 let addr ?device buf =
-  match mapped_backing (target_allocator device buf) buf with
-  | Some (Backing (alloc, raw)) ->
-      (match alloc.addr with
-       | Some addr -> addr raw
-       | None -> invalid_arg "buffer storage has no native address")
-  | None -> Nativeint.zero
+  with_operation (fun () ->
+    match mapped_backing (target_allocator device buf) buf with
+    | Some (Backing (alloc, raw)) ->
+        (match alloc.addr with
+         | Some addr -> addr raw
+         | None -> invalid_arg "buffer storage has no native address")
+    | None -> Nativeint.zero)
 
 module Host_allocator = struct
   let kind : nativeint Type.Id.t = Type.Id.make ()
@@ -428,10 +493,11 @@ let copy_runner : (dst:t -> src:t -> unit) ref =
 let install_copy_runner f = copy_runner := f
 
 let copy_from ~dst ~src =
-  if size dst <> size src then invalid_arg "buffer copy size mismatch";
-  if not (Dtype.equal (dtype dst) (dtype src)) then
-    invalid_arg "buffer copy dtype mismatch";
-  !copy_runner ~dst ~src
+  with_operation (fun () ->
+    if size dst <> size src then invalid_arg "buffer copy size mismatch";
+    if not (Dtype.equal (dtype dst) (dtype src)) then
+      invalid_arg "buffer copy dtype mismatch";
+    !copy_runner ~dst ~src)
 
 (* Snapshots contain bytes and ownership edges, never allocator closures or
    process-local pointers. IDs preserve sharing within a serialized graph. *)

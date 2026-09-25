@@ -180,6 +180,19 @@ val offset : t -> int
 (** [offset b] is the byte offset into the base buffer. [0] for base buffers.
 *)
 
+(** {1:operations Device operations} *)
+
+val with_operation : (unit -> 'a) -> 'a
+(** [with_operation f] is [f ()], deferring buffer finalizers on the current
+    domain until the outermost operation returns. Deferred releases retain
+    their buffers and use their allocators' normal synchronization. Storage
+    operations already establish this scope; device runtimes also use it
+    around setup, dispatch and submission.
+
+    If [f] raises, pending releases wait for a later successful operation.
+    A deferred release failure is propagated and its storage retained without
+    retrying teardown. Calls on different domains are not serialized. *)
+
 (** {1:allocation Allocation} *)
 
 val allocate : t -> unit

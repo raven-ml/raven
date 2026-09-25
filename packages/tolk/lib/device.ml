@@ -168,6 +168,13 @@ let opened : (string, t) Hashtbl.t = Hashtbl.create 8
 
 let make ~name ~allocator ~renderer_set ~runtime ~synchronize
     ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None) () =
+  let queue = Option.map (fun (q : queue) -> {q with
+      prepare = (fun () -> Storage.with_operation q.prepare);
+      profile_offset = (fun () -> Storage.with_operation q.profile_offset);
+      completion = (fun () ->
+        let wait = Storage.with_operation q.completion in
+        fun () -> Storage.with_operation wait);
+    }) queue in
   let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
   let device = { name; peer_group; allocator; renderer_set; runtime; synchronize;
     invalidate_caches_fn = invalidate_caches; queue; bufferize;
@@ -181,33 +188,36 @@ let name d = d.name
 let peer_group d = d.peer_group
 let renderer d = Renderer_set.select d.renderer_set
 let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
-  let nbufs = List.fold_left (fun n (a : Tolk_uop.Tiny_elf.argument) ->
-      if a.addrspace = Tolk_uop.Dtype.Alu then n else n + 1) 0 obj.signature in
-  let nvals = List.length obj.signature - nbufs in
-  let seen = Array.make (nbufs + nvals) false in
-  List.iter (fun (a : Tolk_uop.Tiny_elf.argument) ->
-      if a.slot < 0 || a.slot >= Array.length seen || seen.(a.slot)
-         || ((a.addrspace = Tolk_uop.Dtype.Alu) <> (a.slot >= nbufs)) then
-        invalid_arg (Printf.sprintf "program %S: invalid argument slot %d" obj.name a.slot);
-      seen.(a.slot) <- true) obj.signature;
-  let prg = d.runtime obj in
-  let name = obj.name in
-  let call bufs ~global ~local ~vals ~wait ~timeout =
-    if Array.length bufs <> nbufs || Array.length vals <> nvals then
-      invalid_arg (Printf.sprintf
-          "program %S: expected %d buffers and %d scalars, received %d and %d"
-          name nbufs nvals (Array.length bufs) (Array.length vals));
-    if not ordered then Array.iter (Buffer.synchronize ~device:d.name) bufs;
-    prg.call bufs ~global ~local ~vals ~wait ~timeout
-  in
-  { prg with call }
+  Storage.with_operation (fun () ->
+    let nbufs = List.fold_left (fun n (a : Tolk_uop.Tiny_elf.argument) ->
+        if a.addrspace = Tolk_uop.Dtype.Alu then n else n + 1) 0 obj.signature in
+    let nvals = List.length obj.signature - nbufs in
+    let seen = Array.make (nbufs + nvals) false in
+    List.iter (fun (a : Tolk_uop.Tiny_elf.argument) ->
+        if a.slot < 0 || a.slot >= Array.length seen || seen.(a.slot)
+           || ((a.addrspace = Tolk_uop.Dtype.Alu) <> (a.slot >= nbufs)) then
+          invalid_arg (Printf.sprintf "program %S: invalid argument slot %d" obj.name a.slot);
+        seen.(a.slot) <- true) obj.signature;
+    let prg = d.runtime obj in
+    let name = obj.name in
+    let call bufs ~global ~local ~vals ~wait ~timeout =
+      Storage.with_operation (fun () ->
+        if Array.length bufs <> nbufs || Array.length vals <> nvals then
+          invalid_arg (Printf.sprintf
+              "program %S: expected %d buffers and %d scalars, received %d and %d"
+              name nbufs nvals (Array.length bufs) (Array.length vals));
+        if not ordered then Array.iter (Buffer.synchronize ~device:d.name) bufs;
+        prg.call bufs ~global ~local ~vals ~wait ~timeout)
+    in
+    { prg with call; free = (fun () -> Storage.with_operation prg.free) })
 
 let runtime d = load_runtime ~ordered:false d
 let queue_runtime d = load_runtime ~ordered:true d
 
 let with_pending_lock d f =
-  Mutex.lock d.pending_lock;
-  Fun.protect ~finally:(fun () -> Mutex.unlock d.pending_lock) f
+  Storage.with_operation (fun () ->
+    Mutex.lock d.pending_lock;
+    Fun.protect ~finally:(fun () -> Mutex.unlock d.pending_lock) f)
 
 let depend_on d source =
   if d != source then begin
@@ -226,7 +236,10 @@ let record_timing d ~name ~queue ~buffer ~first ~last =
       Hashtbl.replace d.pending_timings (Buffer.id buffer, first)
         {buffer; first; last; label = name; queue_name = queue})
 
-let wait_dependencies d ~ordered = Mutex.protect d.synchronize_lock (fun () ->
+let with_synchronize_lock d f =
+  Storage.with_operation (fun () -> Mutex.protect d.synchronize_lock f)
+
+let wait_dependencies d ~ordered = with_synchronize_lock d (fun () ->
   let accesses = with_pending_lock d (fun () ->
       let accesses = Hashtbl.to_seq d.pending_accesses |> List.of_seq
         |> List.filter (fun (source, _) -> not (List.mem source ordered)) in
@@ -241,7 +254,7 @@ let wait_dependencies d ~ordered = Mutex.protect d.synchronize_lock (fun () ->
               Hashtbl.add d.pending_accesses source wait) accesses);
     Printexc.raise_with_backtrace exn backtrace)
 
-let synchronize d = Mutex.protect d.synchronize_lock (fun () ->
+let synchronize d = with_synchronize_lock d (fun () ->
   let pending, accesses = with_pending_lock d (fun () ->
       let pending = Hashtbl.to_seq_values d.pending_timings |> List.of_seq in
       Hashtbl.clear d.pending_timings;
@@ -293,7 +306,7 @@ let profile d =
         events)
 
 let queue d = d.queue
-let bufferize d = d.bufferize
+let bufferize d u = Storage.with_operation (fun () -> d.bufferize u)
 
 let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
   let module U = Tolk_uop.Uop in
@@ -317,7 +330,8 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
 let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
 
-let invalidate_caches d = Option.iter (fun f -> f ()) d.invalidate_caches_fn
+let invalidate_caches d = Storage.with_operation (fun () ->
+    Option.iter (fun f -> f ()) d.invalidate_caches_fn)
 
 (* Device registry
 
@@ -335,17 +349,18 @@ let device_prefix device =
   | None -> device
 
 let get device =
-  let device = canonicalize device in
-  match Hashtbl.find_opt opened device with
-  | Some d -> d
-  | None ->
-      let d =
-        match Hashtbl.find_opt openers (device_prefix device) with
-        | Some create -> create device
-        | None -> failwith (Printf.sprintf "unknown device %S" device)
-      in
-      Hashtbl.replace opened device d;
-      d
+  Storage.with_operation (fun () ->
+    let device = canonicalize device in
+    match Hashtbl.find_opt opened device with
+    | Some d -> d
+    | None ->
+        let d =
+          match Hashtbl.find_opt openers (device_prefix device) with
+          | Some create -> create device
+          | None -> failwith (Printf.sprintf "unknown device %S" device)
+        in
+        Hashtbl.replace opened device d;
+        d)
 
 let () = Storage.install_allocator_resolver (fun name -> (get name).allocator)
 

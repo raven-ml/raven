@@ -484,7 +484,141 @@ let foreign_completion_dependencies () =
   Device.synchronize owner;
   equal (list int) [19; 17; 13; 11; 9; 9; 5] !waited
 
+(* A backend callback reserves work before an allocation can run the GC.
+   Releasing unrelated storage there must not synchronize an unsubmitted fence
+   or re-enter its allocator. Exercise the same boundary for direct and host
+   submission programs. *)
+let finalizers_wait_for_device_operations () =
+  let busy = ref false and releases = ref [] and probe = ref (fun () -> ()) in
+  let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let allocator = Device.Allocator.Pack { host with
+      alloc = (fun size spec -> !probe (); host.alloc size spec);
+      free = (fun raw size spec ->
+        releases := ("free", !busy) :: !releases;
+        host.free raw size spec);
+      copyin = (fun raw bytes -> !probe (); host.copyin raw bytes);
+      copyout = (fun bytes raw -> !probe (); host.copyout bytes raw);
+    } in
+  let renderer_set = Device.Renderer_set.make ~device:"CPU"
+      ["CLANG", (fun _ -> Device.renderer device)] in
+  let mapping = Option.get host.mapping in
+  let teardown_wait = ref (fun () -> ()) in
+  let mapped = Device.Allocator.Pack {host with
+      synchronize = (fun () ->
+        releases := ("mapping wait", !busy) :: !releases;
+        !teardown_wait ());
+      mapping = Some {mapping with
+        unmap = (fun raw -> releases := ("unmap", !busy) :: !releases;
+          mapping.unmap raw)};
+    } in
+  ignore (Device.make ~name:"FINALIZER_MAP" ~allocator:mapped ~renderer_set
+      ~runtime:(fun _ -> fail "mapping has no programs")
+      ~synchronize:(fun () -> ()) ());
+  let abandon () =
+    let buf = Device.Buffer.create ~device:"FINALIZER" ~size:1 ~dtype:D.uint8
+        ~spec:{Device.Buffer_spec.default with nolru = true} allocator in
+    Device.Buffer.ensure_allocated buf;
+    let view = Device.Buffer.view buf ~size:1 ~dtype:D.uint8 ~offset:0 in
+    Device.Buffer.ensure_allocated view;
+    ignore (Device.Buffer.addr ~device:"FINALIZER_MAP" view) in
+  let collect () =
+    probe := (fun () -> ());
+    abandon ();
+    busy := true;
+    Gc.full_major (); Gc.full_major ();
+    busy := false in
+  let queue = Device.{timestamp_divider = 1.;
+      profile_offset = (fun () -> !probe (); 0.);
+      completion = (fun () -> !probe (); fun () -> !probe ());
+      prepare = (fun () -> !probe ()); host = "CPU";
+      copy = (fun _ -> None); encode = (fun _ -> None);
+      lower = (fun _ -> None); compile = Fun.id} in
+  let dev = Device.make ~name:"FINALIZER" ~allocator ~queue
+      ~renderer_set
+      ~runtime:(fun _ ->
+        !probe ();
+        {Device.call = (fun _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ ->
+            !probe (); None);
+         free = (fun () -> !probe ()); handle = 0n})
+      ~bufferize:(fun _ -> !probe (); None)
+      ~invalidate_caches:(fun () -> !probe ())
+      ~synchronize:(fun () -> !probe ()) () in
+  teardown_wait := (fun () -> Device.synchronize dev);
+  let obj = Tiny_elf.{lib = Bytes.empty; name = "finalizer_probe";
+      target = Renderer.target (Device.renderer device); signature = [];
+      profile_key = None} in
+  let direct = Device.runtime dev obj and submission = Device.queue_runtime dev obj in
+  let run_program prg () =
+    ignore (prg.Device.call [||] ~global:[|1;1;1|] ~local:None ~vals:[||]
+      ~wait:false ~timeout:None) in
+  let queue = Option.get (Device.queue dev) in
+  let wait = queue.completion () in
+  let wait_dependency () =
+    (* The source callback runs while the owner's dependency lock is held. *)
+    let source = Device.make ~name:"FINALIZER_SOURCE" ~allocator ~renderer_set
+        ~runtime:(fun _ -> fail "source has no programs")
+        ~synchronize:(fun () -> ())
+        ~queue:{queue with completion = (fun () -> fun () -> !probe ())} () in
+    Device.depend_on dev source;
+    Device.wait_dependencies dev ~ordered:[] in
+  let buffer = Device.Buffer.create ~device:"FINALIZER" ~size:1 ~dtype:D.uint8 allocator in
+  List.iter (fun (name, run) ->
+      releases := [];
+      probe := collect;
+      run ();
+      equal ~msg:name (list (pair string bool))
+        ["mapping wait", false; "unmap", false; "free", false]
+        (List.rev !releases))
+    ["allocation", (fun () -> Device.Buffer.ensure_allocated buffer);
+     "upload", (fun () -> Device.Buffer.copyin buffer (Bytes.make 1 '\000'));
+     "download", (fun () -> ignore (Device.Buffer.as_bytes buffer));
+     "synchronize", (fun () -> Device.synchronize dev);
+     "runtime creation", (fun () -> (Device.runtime dev obj).free ());
+     "kernel", run_program direct;
+     "host submission", run_program submission;
+     "program release", direct.free;
+     "queue preparation", queue.prepare;
+     "queue clock", (fun () -> ignore (queue.profile_offset ()));
+     "completion capture", (fun () -> (queue.completion ()) ());
+     "completion wait", wait;
+     "foreign completion wait", wait_dependency;
+     "command storage", (fun () -> ignore (Device.bufferize dev (Uop.const_int 0)));
+     "cache invalidation", (fun () -> Device.invalidate_caches dev)];
+  submission.free ();
+  Device.Buffer.deallocate buffer;
+  releases := [];
+  probe := (fun () -> collect (); failwith "submission failed");
+  raises (Failure "submission failed") (fun () -> Device.synchronize dev);
+  equal ~msg:"failed operations retain pending storage" (list (pair string bool)) [] !releases;
+  Device.synchronize dev;
+  equal ~msg:"a successful wait releases pending storage" (list (pair string bool))
+    ["mapping wait", false; "unmap", false; "free", false]
+    (List.rev !releases)
+
+(* A failed free may already have changed native state. It must surface once
+   and retain the owner without retrying an uncertain teardown. *)
+let failed_finalizer_is_not_retried () =
+  let frees = ref 0 in
+  let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let allocator = Device.Allocator.Pack {host with
+      alloc = (fun _ _ -> 0n);
+      free = (fun _ _ _ -> incr frees; failwith "teardown failed")} in
+  let abandon () =
+    let buf = Device.Buffer.create ~device:"FAILED_FINALIZER" ~size:1
+        ~dtype:D.uint8 allocator in
+    Device.Buffer.ensure_allocated buf in
+  raises (Failure "teardown failed") (fun () ->
+      Storage.with_operation (fun () ->
+          abandon ();
+          Gc.full_major (); Gc.full_major ();
+          equal ~msg:"release waits for the operation" int 0 !frees));
+  equal int 1 !frees;
+  Storage.with_operation (fun () -> Gc.full_major (); Gc.full_major ());
+  equal ~msg:"uncertain teardown is not retried" int 1 !frees
+
 let () = run __FILE__ [ copy_from_tests;
+  test "failed buffer finalizers are reported without retrying teardown" failed_finalizer_is_not_retried;
+  test "buffer finalizers wait for device operations" finalizers_wait_for_device_operations;
   test "foreign access completion is captured, coalesced and retried" foreign_completion_dependencies;
   test "host storage owns zeroed pages suitable for GPU registration" (fun () ->
       List.iter (fun size ->

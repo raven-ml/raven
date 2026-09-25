@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Buffer finalizers defer teardown until device operations finish, preventing
+  GC from waiting on unsubmitted work or re-entering native allocators. Failed
+  teardown retains its storage instead of retrying a partially completed free.
+
 - `Uop.axis` of an operation whose operand of lower rank is split counts the
   operand's axis from where it broadcasts, as the multi rewrite does. It kept
   the operand's own index, so a matrix product over a column-split weight

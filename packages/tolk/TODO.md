@@ -14,18 +14,16 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
-- Make AMD/NV frees safe inside GC finalisers. A `Device.Buffer` finaliser runs
-  at any allocation and reaches the raw `free` for buffers that bypass the LRU
-  cache (`nolru`, LRU=0), so it can land inside any HCQ device operation.
-  Between `Timeline.next_timeline` and `submit` its synchronize waits for a
-  value not yet submitted, times out and latches `error_state`. On driver-less
-  AMD and NV it also re-enters `Memory.vfree`/`valloc`, corrupting the TLSF
-  allocators and page tables. Apply the CPU runtime's `after_queue` rule over
-  a window that covers every HCQ device operation (alloc, free, call, copy,
-  signal and kernarg paths): a free made inside it runs at the next
-  synchronize, after its wait. Waiting only for the last submitted value is
-  unsound: the owning buffer can be finalised while the packet being built
-  still targets its memory. Needs hardware validation.
+- Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
+  `LRU=0`, forcing GC during allocation, mapped-buffer teardown, direct dispatch,
+  compiled submission, signal reservation and kernarg reuse. Verify that waits
+  target submitted work and PCI allocator/page-table operations cannot re-enter.
+- Diagnose intermittent Metal shared-arena corruption: Rune's
+  `programs run in turn share an arena` test produced incorrect outputs around
+  element 210, followed once by an `Impacting Interactivity` GPU error. Repeated
+  isolated and full-suite runs also pass; establish the cause before accepting
+  Metal lifetime stress. Report compiled-queue command errors during waits,
+  rather than trusting a signaled timeline alone.
 
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
   submissions. Validate NV channel retirement across independently linked
