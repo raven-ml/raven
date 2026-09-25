@@ -115,7 +115,11 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   OCaml may run a buffer finalizer during another allocator or queue operation;
   releasing that buffer can re-enter the same lock or alter state mid-update.
   `Storage.with_operation` defers such automatic releases to the outer operation
-  boundary. Explicit release still reports errors. Coverage: `test_device`
+  boundary. Rune's placed-cell finalizer retains its store until the deferred
+  release queue takes ownership; reads retain the cell through copying. Views
+  follow their buffer/graph owners without a second Rune retirement queue.
+  Explicit release still reports errors. Coverage: `test_jit_scratch` premature
+  read finalization, failed release and concurrent transfer accounting; `test_device`
   finalization during device calls and failed teardown, allocator tests, and
   Metal lifetime checks. This scope is not cross-domain or systhread locking;
   concurrency remains open in TODO.

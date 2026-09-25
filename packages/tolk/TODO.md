@@ -100,9 +100,8 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Establish ownership of Rune's pending release/view lists and mutable storage
-  lists across callers; synchronize trace identities,
-  transfer/allocation statistics and GC-budget counters. Cover finalizers registered on
+  Establish ownership of shared Rune storage, capture counts and mutable
+  compiled-instance caches across callers. Cover finalizers registered on
   another domain and systhreads sharing a domain: operation scopes currently
   prevent only same-domain GC re-entry and do not serialize device callers.
   Run the concurrent runtime and cache coverage under TSan.

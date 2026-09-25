@@ -167,6 +167,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Keep placed storage alive until `Nx.to_buffer` finishes reading it.
+  Collected values now hand ownership to one deferred-release path; failed
+  allocator cleanup retains its backing without losing other queued releases.
+- Preserve `Rune.jit_stats` transfer counts and live-byte totals across
+  concurrent callers, and give concurrent traces distinct identities.
+
 - Give each compiled function its own planned intermediate buffers, preventing
   interleaved JIT calls from corrupting one another. Dropping a compiled graph
   releases its arena without retaining the largest allocation process-wide.

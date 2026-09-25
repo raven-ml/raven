@@ -147,15 +147,18 @@ type stats = {
   reused_bytes : int;
 }
 
-let bytes_to_device = ref 0
-let bytes_from_device = ref 0
-let resident_bytes = ref 0
-let reused_bytes = ref 0
+let transfer_stats =
+  Atomic.make
+    { bytes_to_device = 0; bytes_from_device = 0; resident_bytes = 0; reused_bytes = 0 }
+
+let rec update_stats f =
+  let previous = Atomic.get transfer_stats in
+  let next = f previous in
+  if not (Atomic.compare_and_set transfer_stats previous next) then update_stats f
 
 let reset_stats () =
-  bytes_to_device := 0;
-  bytes_from_device := 0;
-  reused_bytes := 0
+  update_stats (fun s ->
+      { s with bytes_to_device = 0; bytes_from_device = 0; reused_bytes = 0 })
 
 (* Placements
 
@@ -261,12 +264,19 @@ let buffer_on s d =
            "Rune: a value on %s views a storage that it does not hold"
            (Nx.Device.name d))
 
-let account s sign = resident_bytes := !resident_bytes + (sign * s.s_nbytes)
+let account store sign =
+  update_stats (fun s ->
+      { s with resident_bytes = s.resident_bytes + (sign * store.s_nbytes) })
 
 (* Finalizers only record the store; buffers are released at the next safe point
    (a read, a placement or a replay), not mid-GC inside arbitrary device
    code. *)
-let pending_release : store list ref = ref []
+let pending_release : store list Atomic.t = Atomic.make []
+
+let rec enqueue_release store =
+  let pending = Atomic.get pending_release in
+  if not (Atomic.compare_and_set pending_release pending (store :: pending)) then
+    enqueue_release store
 
 let release_store s =
   match s.s_bufs with
@@ -278,38 +288,31 @@ let release_store s =
          work queued after the kernels that use it can take it. A buffer that
          bypasses the pool returns to the system, so the work that may still
          read it is awaited first. Transient kernel-argument views can outlive
-         the call; freeing their base makes them stale. *)
-      if s.s_nolru then List.iter Tolk.Device.synchronize s.s_devices;
-      List.iter Tolk.Device.Buffer.deallocate bufs
-
-(* Buffer views over a range of a value's storage that a finished call or a
-   dropped program bound (see [seed_of]). They go at the next safe point, before
-   their owning stores. *)
-let pending_views : Tolk.Device.Buffer.t list ref = ref []
+         the call; freeing their base makes them stale. A failed teardown keeps
+         its detached owners alive without retrying uncertain native frees. *)
+      Tolk.Device.Buffer.release (fun () ->
+          if s.s_nolru then List.iter Tolk.Device.synchronize s.s_devices;
+          List.iter Tolk.Device.Buffer.deallocate bufs)
 
 let drain_releases () =
-  (match !pending_views with
-  | [] -> ()
-  | views ->
-      pending_views := [];
-      List.iter Tolk.Device.Buffer.deallocate views);
-  match !pending_release with
-  | [] -> ()
-  | stores ->
-      pending_release := [];
-      List.iter release_store stores
+  let rec release = function
+    | [] -> ()
+    | store :: rest -> (
+        match release_store store with
+        | () -> release rest
+        | exception exn ->
+            let backtrace = Printexc.get_raw_backtrace () in
+            List.iter enqueue_release (List.rev rest);
+            Printexc.raise_with_backtrace exn backtrace)
+  in
+  release (Atomic.exchange pending_release [])
 
 (* A query is a safe point too: retiring the collected values first keeps
    [resident_bytes] to the storage still reachable, instead of a figure that
    depends on when the GC last ran. *)
 let stats () =
   drain_releases ();
-  {
-    bytes_to_device = !bytes_to_device;
-    bytes_from_device = !bytes_from_device;
-    resident_bytes = !resident_bytes;
-    reused_bytes = !reused_bytes;
-  }
+  Atomic.get transfer_stats
 
 (* The collection budget: device allocations since the last major collection,
    eager results and uploads included. The collector does not see device memory,
@@ -318,14 +321,29 @@ let stats () =
 let resident_budget () =
   env_int "RUNE_JIT_RESIDENT_BUDGET" (4 * 1024 * 1024 * 1024)
 
-let allocated = ref 0
-let majors = ref 0
+let allocation_pressure = Atomic.make (0, 0)
+
+let reserve_allocation n =
+  let observed = (Gc.quick_stat ()).major_collections in
+  let budget = resident_budget () in
+  let rec reserve () =
+    let previous = Atomic.get allocation_pressure in
+    let major, bytes = previous in
+    let bytes = if observed > major then 0 else bytes in
+    let next_bytes = if n > max_int - bytes then max_int else bytes + n in
+    let next = Int.max observed major, next_bytes in
+    if Atomic.compare_and_set allocation_pressure previous next then
+      next_bytes > budget
+    else reserve ()
+  in
+  reserve ()
 
 let collect () =
   Gc.major ();
   drain_releases ();
-  majors := (Gc.quick_stat ()).major_collections;
-  allocated := 0
+  (* Observe the new epoch without discarding reservations another caller
+     already recorded after this collection. *)
+  ignore (reserve_allocation 0)
 
 (* How a program reads an input or constant from its node: from element [skip]
    on, the value's elements in C order, or a view of [strides] over the elements
@@ -477,7 +495,7 @@ let check_capture : type a b. state -> (a, b) Nx_effect.t -> unit =
 type Nx_effect.node +=
   | Node of { trace : int; tensor : F.Tensor.t; place : Nx.Placement.t }
 
-let trace_counter = ref 0
+let trace_counter = Atomic.make 0
 
 (* Where the program runs: its device, or a copy on each of its devices. *)
 let here st = Nx.Placement.replicated st.st_devices
@@ -3450,7 +3468,8 @@ let rec copyin_at : type a b.
         ~off:(off + (!pos * item))
         ~len:(len * item)
         (fun w -> Tolk.Device.Buffer.copyin w bytes);
-      bytes_to_device := !bytes_to_device + (len * item);
+      update_stats (fun s ->
+          { s with bytes_to_device = s.bytes_to_device + (len * item) });
       pos := !pos + len
     done
   end
@@ -3505,7 +3524,8 @@ let copyout_into : type a b.
     with_window buf ~off:(!pos * item) ~len:(len * item) (fun w ->
         Tolk.Device.Buffer.copyout w bytes);
     Nx_buffer.blit_from_bytes ~dst_off:(dst_off + !pos) ~len bytes host;
-    bytes_from_device := !bytes_from_device + (len * item);
+    update_stats (fun s ->
+        { s with bytes_from_device = s.bytes_from_device + (len * item) });
     pos := !pos + len
   done
 
@@ -3676,7 +3696,8 @@ let read_window : type a b.
     let lo, hi = extent v in
     with_storage_range dt buf ~lo ~hi @@ fun src how ->
     if how = `Borrowed then
-      bytes_from_device := !bytes_from_device + (n * ND.itemsize dt);
+      update_stats (fun s ->
+          { s with bytes_from_device = s.bytes_from_device + (n * ND.itemsize dt) });
     if NV.is_c_contiguous v && how = `Copied then src
     else begin
       let dst = Nx_buffer.create dt n in
@@ -3687,6 +3708,7 @@ let read_window : type a b.
 
 let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
  fun r ->
+  Fun.protect ~finally:(fun () -> ignore (Sys.opaque_identity r)) @@ fun () ->
   drain_releases ();
   match store_of r.r_cell with
   | None -> assert false (* nx reads held and consumed values itself *)
@@ -3708,13 +3730,10 @@ let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
 let allocate d buf =
   drain_releases ();
   let n = Tolk.Device.Buffer.nbytes buf in
-  let m = (Gc.quick_stat ()).major_collections in
-  if m <> !majors then begin
-    majors := m;
-    allocated := 0
+  if reserve_allocation n then begin
+    collect ();
+    ignore (reserve_allocation n)
   end;
-  if !allocated + n > resident_budget () then collect ();
-  allocated := !allocated + n;
   (* Allocators report an exhausted device with [Failure]. *)
   try Tolk.Device.Buffer.ensure_allocated buf
   with Failure _ -> (
@@ -3775,6 +3794,7 @@ let transfer : type a b.
     Tolk.Device.Buffer.t list ->
     unit =
  fun sc r s devs windows bufs ->
+  Fun.protect ~finally:(fun () -> ignore (Sys.opaque_identity r)) @@ fun () ->
   let q = r.r_placement and dt = r.r_dtype in
   let shape = Nx_effect.global q (NV.shape r.r_view) in
   let item = ND.itemsize dt in
@@ -3876,11 +3896,12 @@ let rec make_placed : type a b.
   account s 1;
   let cell = Nx_effect.cell ~placement ~length:(NV.numel view) (Buffers s) in
   if bufs <> [] then
+    (* Keep the store alive until the cell hands it to the release queue.
+       Consumed storage is retired by replay or its last compiled capture. *)
     Gc.finalise
       (fun (c : Nx_effect.cell) ->
         match c.state with
-        | Live (Buffers s) when s.s_bufs <> [] ->
-            pending_release := s :: !pending_release
+        | Live _ when s.s_bufs <> [] -> enqueue_release s
         | _ -> ())
       cell;
   Nx_effect.placed placement dt view cell
@@ -4414,10 +4435,9 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   let consumed i = info.consumed.(i) in
   let dev = List.hd devs in
   let multi = List.compare_length_with ds 1 > 0 in
-  incr trace_counter;
   let st =
     {
-      st_id = !trace_counter;
+      st_id = Atomic.fetch_and_add trace_counter 1 + 1;
       st_device = dev;
       st_devices = ds;
       st_decided = decided;
@@ -4878,7 +4898,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
     st.consts;
   (* A bound capture owns the resident buffers through its constant:
      reads leave storage in place, and the value is reachable from the trace. *)
-  let views = ref [] in
   let bound =
     List.map
       (fun (node, pk, seed_) ->
@@ -4886,7 +4905,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
         match seed_ with
         | Range { cell; bufs; lo; span; _ } ->
             let bufs = List.map (fun buf -> buffer_range buf ~lo ~span) bufs in
-            views := bufs @ !views;
             own node bufs;
             (cell, pk)
         | Whole { cell; bufs } ->
@@ -5104,16 +5122,14 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   (* A bound storage that a call consumed stays for the programs that bind it;
      the last of them to go releases it. *)
   let cells = List.map (fun (cell, _) -> (cell, store_of cell)) bound in
-  let views = !views in
   Gc.finalise_last
     (fun () ->
-      pending_views := views @ !pending_views;
       List.iter
         (fun ((cell : Nx_effect.cell), store) ->
           cell.bound <- cell.bound - 1;
           match (cell.state, store) with
           | Consumed _, Some s when cell.bound = 0 ->
-              pending_release := s :: !pending_release
+              enqueue_release s
           | _ -> ())
         cells)
     compiled;
@@ -5127,7 +5143,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   let supply node bufs =
     input_uops.(argument_slot node) <- owned_uop node bufs
   in
-  let in0 = !bytes_to_device and out0 = !bytes_from_device in
+  let before = Atomic.get transfer_stats in
   (* Seed the inputs. A leaf placed on this device seeds its input node with
      its buffer directly — no transfer, and the value stays resident (inputs
      are read-only). Otherwise wrap the current leaf's memory when the device
@@ -5193,12 +5209,6 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
              c.cp_names.(i)))
     consumed;
   let seed_entry = Array.make (Array.length c.cp_inputs) None in
-  (* The buffer views of this call's ranges are released once it has run, or has
-     raised: not at a safe point inside it, where the launch would allocate them
-     again. *)
-  let ranges = ref [] in
-  Fun.protect ~finally:(fun () -> pending_views := !ranges @ !pending_views)
-  @@ fun () ->
   let keep = ref [] in
   Array.iteri
     (fun i (Nx.P leaf) ->
@@ -5211,7 +5221,6 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       | Range { lo; span; bufs; _ } ->
           keep := Obj.repr leaf :: !keep;
           let range = List.map (fun buf -> buffer_range buf ~lo ~span) bufs in
-          ranges := range @ !ranges;
           supply inp.i_node range
       | Copy -> (
           match
@@ -5238,7 +5247,10 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       | Some ((e : Nx_effect.cell), bufs) when e.bound = 0 -> (
           match store_of e with
           | Some s ->
-              reused_bytes := !reused_bytes + s.s_nbytes;
+              let reused = List.fold_left
+                  (fun a b -> a + Tolk.Device.Buffer.nbytes b) 0 bufs in
+              update_stats (fun stats ->
+                  { stats with reused_bytes = stats.reused_bytes + reused });
               Hashtbl.replace claims l_otag (e, s, bufs)
           | None -> ())
       | _ -> ())
@@ -5464,15 +5476,16 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       | _ -> ())
     marked;
   if Lazy.force jit_debug >= 1 then begin
+    let after = Atomic.get transfer_stats in
     Printf.eprintf
       "rune.jit: replay on %s: %d bytes to device, %d bytes from device, %d \
        bytes resident\n\
        %!"
       (String.concat ", "
          (List.map (fun (d, _) -> Nx.Device.name d) c.cp_devices))
-      (!bytes_to_device - in0)
-      (!bytes_from_device - out0)
-      !resident_bytes;
+      (after.bytes_to_device - before.bytes_to_device)
+      (after.bytes_from_device - before.bytes_from_device)
+      after.resident_bytes;
     List.iter
       (fun (i, cell, s) ->
         match
