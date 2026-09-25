@@ -11,7 +11,6 @@ open Tolk_uop
 module U = Uop
 
 let strf = Printf.sprintf
-let prod = List.fold_left ( * ) 1
 
 exception Opt_error of string
 
@@ -326,10 +325,9 @@ let const_dims t kinds =
 
 let upcast_size t =
   let fs = full_shape t in
-  prod
-    (List.map
-       (fun a -> const_int_or 1 (List.nth fs a))
-       (axes_of t [ Axis_type.Upcast; Axis_type.Unroll ]))
+  List.fold_left (fun acc axis -> U.O.(acc * List.nth fs axis))
+    (U.const_int 1) (axes_of t [ Axis_type.Upcast; Axis_type.Unroll ])
+  |> U.simplify
 
 let upcastable_dims t =
   const_dims t [ Axis_type.Global; Axis_type.Local; Axis_type.Weak ]

@@ -661,6 +661,10 @@ thread.
 
 ### Tolk (new)
 
+- Keep optimizer upcast products exact and symbolic instead of overflowing
+  host integers or treating unknown extents as one. `Postrange.upcast_size`
+  now returns a `Uop.t`; heuristics require proven resource bounds.
+
 - Prove gated gather, scatter, selection and scan accesses under `CHECK_OOB`
   using their component bounds. Reject unsafe narrowing casts and keep proof
   variables distinct from user parameters.

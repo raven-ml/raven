@@ -104,8 +104,8 @@ val reduce_axes : t -> int list
 val unrollable_dims : t -> int list
 (** [unrollable_dims t] are reduced Local/Reduce axes with constant size > 1. *)
 
-val upcast_size : t -> int
-(** Product of Upcast and Unroll shape sizes. *)
+val upcast_size : t -> Tolk_uop.Uop.t
+(** [upcast_size t] is the exact symbolic product of Upcast and Unroll extents. *)
 
 val upcasted : t -> int
 (** Number of Upcast and Unroll axes. *)

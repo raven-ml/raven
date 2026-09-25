@@ -504,7 +504,7 @@ let heuristic_upcast_tests =
           let ast = broadcast_ewise_global_ast ~s0:64 ~s1:64 in
           let ren = cpu_renderer () in
           let result = run_heuristic_scheduler ast ren in
-          is_true (P.upcast_size result <= 32));
+          is_true (U.resolve ~default:false U.O.(not_ (idx 32 < P.upcast_size result))));
     ]
 
 (* Group 5: Matvec detection *)

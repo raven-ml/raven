@@ -454,14 +454,14 @@ let shift_opt_tests =
         ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 4 }));
         let ats = P.axis_types t in
         is_true (List.exists (fun at -> at = Ak.Upcast) ats);
-        equal int 4 (P.upcast_size t));
+        equal int 4 (U.sym_infer (P.upcast_size t) []));
       (* Port of test_full_upcast: UPCAST with amount=0 uses full range size *)
       test "UPCAST with amount=0 uses full range size" (fun () ->
         let ast = elementwise_global_ast ~s0:4 ~s1:4 in
         let ren = gpu_renderer () in
         let t = P.create ast ren in
         ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 }));
-        equal int 4 (P.upcast_size t);
+        equal int 4 (U.sym_infer (P.upcast_size t) []);
         equal int 1 (P.upcasted t));
       test "UPCAST with amount=0 uses vmax extent" (fun () ->
         let ast = symbolic_extent_global_ast () in
@@ -701,6 +701,19 @@ let swap_tests =
 let state_query_tests =
   group "state queries"
     [
+      test "upcast products remain exact beyond host integers" (fun () ->
+        let ranges = List.init 2 (fun axis ->
+            U.range ~size:(idx (1 lsl 32)) ~axis ~kind:Ak.Upcast ()) in
+        let t = P.create (wrap_sink ranges) (gpu_renderer ()) in
+        equal string "18446744073709551616"
+          (Z.to_string (U.sym_infer_z (P.upcast_size t) [])));
+      test "upcast products retain symbolic extents" (fun () ->
+        let n = U.variable ~name:"upcast_n" ~min_val:2 ~max_val:16 () in
+        let r = U.range ~size:n ~axis:0 ~kind:Ak.Upcast () in
+        let t = P.create (wrap_sink [ r ]) (gpu_renderer ()) in
+        equal int 8 (U.sym_infer (P.upcast_size t) [ "upcast_n", 8L ]);
+        equal int 2 (Bound.to_int (U.vmin (P.upcast_size t)));
+        equal int 16 (Bound.to_int (U.vmax (P.upcast_size t))));
       (* rngs sorts by axis_to_pos: Weak(-1) < Global(0) < Reduce(4) *)
       test "rngs sorted by axis_to_pos then axis" (fun () ->
         let ast = reduce_ast ~s0:4 ~s1:4 ~sr:8 in
