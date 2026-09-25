@@ -345,6 +345,8 @@ module Iface = struct
     register :
       (compute_queue:Queue_desc.t ->
       tl:('mem, 'mem device) Timeline.t ->
+      submission:Hcq.Submission.t ->
+      sdma_queues:(unit -> Queue_desc.t list) ->
       unit)
       option;
     after_sync : (unit -> unit) option;
@@ -1902,21 +1904,24 @@ module Pci_iface = struct
         r_am : Am_boot.t;
         r_compute : Queue_desc.t;
         r_tl : ('mem, 'mem device) Timeline.t;
+        r_submission : Hcq.Submission.t;
+        r_sdma_queues : unit -> Queue_desc.t list;
       }
         -> registered
 
   let registry : registered list ref = ref []
 
-  let register ~am ~compute_queue ~tl =
+  let register ~am ~compute_queue ~tl ~submission ~sdma_queues =
     registry :=
-      Registered { r_am = am; r_compute = compute_queue; r_tl = tl }
+      Registered { r_am = am; r_compute = compute_queue; r_tl = tl;
+        r_submission = submission; r_sdma_queues = sdma_queues }
       :: !registry
 
   let unregister am =
     registry := List.filter (fun (Registered r) -> r.r_am != am) !registry
 
   (* ops_amd.py:891 _collect_interrupts *)
-  let collect_interrupts ?(reset = false) ?(drain_only = false) () =
+  let collect_interrupts ?reset ?(drain_only = false) () =
     List.iter
       (fun entry ->
         match entry with
@@ -1926,14 +1931,18 @@ module Pci_iface = struct
             else
               Am_ip.Ih.interrupt_handler boot.Am_boot.ih ~soc:boot.Am_boot.soc
                 ~gmc:boot.Am_boot.gmc ~smu:boot.Am_boot.smu;
-            if
-              reset
-              && Am_boot.recover boot
-                   ~force:(r.r_tl.Timeline.error_state <> None)
-            then begin
-              (* the processors lost their queues: rebuild the compute
-                 queue and rewind the timeline to the last completed
-                 value *)
+            if Option.fold ~none:false ~some:(fun target -> target == boot) reset then begin
+              (* MEC reset cannot cancel copies waiting on abandoned compute
+                 signals. Keep the fault latched until SDMA is known idle. *)
+              if List.exists (fun queue ->
+                  Hcq.Mmio.read64 queue.Queue_desc.read_ptr 0 <>
+                  Hcq.Mmio.read64 queue.Queue_desc.write_ptr 0) (r.r_sdma_queues ()) then
+                failwith "AMD recovery requires idle SDMA queues";
+              if not (Am_boot.recover boot ~force:true) then
+                failwith "AMD compute recovery failed";
+              (* Rebuild the lost compute queue and retire its abandoned
+                 epoch so retained command storage can be submitted again.
+                 The failing caller still receives the fault report. *)
               Hcq.Mmio.write64 r.r_compute.Queue_desc.read_ptr 0 0L;
               Hcq.Mmio.write64 r.r_compute.Queue_desc.write_ptr 0 0L;
               (match r.r_compute.Queue_desc.resetup with
@@ -1941,6 +1950,7 @@ module Pci_iface = struct
               | None -> ());
               Hcq.Signal.set_value r.r_tl.Timeline.timeline
                 (Timeline.submitted r.r_tl);
+              Hcq.Submission.clear_error r.r_submission;
               r.r_tl.Timeline.error_state <- None
             end)
       !registry
@@ -1961,8 +1971,8 @@ module Pci_iface = struct
           failwith "Device is in error state")
 
   (* ops_amd.py:903 on_device_hang *)
-  let on_device_hang () =
-    as_fault (fun () -> collect_interrupts ~reset:true ());
+  let on_device_hang boot =
+    as_fault (fun () -> collect_interrupts ~reset:boot ());
     failwith "Device hang detected"
 
   let iface t =
@@ -1990,9 +2000,10 @@ module Pci_iface = struct
       sleep =
         (fun spent_ms ->
           if spent_ms > 200 then sleep (am t) ~timeout_ms:200);
-      on_device_hang = (fun () -> on_device_hang ());
+      on_device_hang = (fun () -> on_device_hang (am t));
       register =
-        Some (fun ~compute_queue ~tl -> register ~am:(am t) ~compute_queue ~tl);
+        Some (fun ~compute_queue ~tl ~submission ~sdma_queues ->
+          register ~am:(am t) ~compute_queue ~tl ~submission ~sdma_queues);
       after_sync = Some (fun () -> collect_interrupts ~drain_only:true ());
       device_fini = Some (fun () -> Am_boot.fini (am t));
     }
@@ -2470,7 +2481,8 @@ let open_device ~name iface =
     }
   in
   (match iface.Iface.register with
-  | Some register -> register ~compute_queue ~tl:state.State.tl
+  | Some register -> register ~compute_queue ~tl:state.State.tl ~submission:state.State.submission
+      ~sdma_queues:(fun () -> Hashtbl.to_seq_values sdma_queues |> List.of_seq |> List.filter_map Fun.id)
   | None -> ());
   (match iface.Iface.device_fini with
   | Some fini ->

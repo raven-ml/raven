@@ -158,6 +158,11 @@ module Submission : sig
   (** [check t] raises [Failure] if polling timed out. A failed submission cannot
       publish another doorbell; its error remains latched. *)
 
+  val clear_error : t -> unit
+  (** [clear_error t] clears the native submission failure after the device
+      has recovered and its queue storage is safe to reuse. It neither waits
+      nor resets hardware. The next submission must call {!prepare} again. *)
+
   val wait_progress : t -> Mmio.t -> target:int64 -> unit
   (** [wait_progress t progress ~target] waits for an NV channel sequence.
       [progress] contains the host's 64-bit submitted sequence followed by
@@ -386,7 +391,7 @@ module Timeline : sig
         (** The signal completed work advances. *)
     mutable error_state : exn option;
         (** The latched device error: once a wait stalls or faults,
-            every later {!synchronize} re-raises it. *)
+            later waits re-raise it unless successful recovery clears it. *)
     bounce : 'meta Buffer.t array;
         (** Rotating CPU-mapped, pinned staging buffers for host
             transfers, all of one size. *)
@@ -419,12 +424,12 @@ module Timeline : sig
       submissions to one device must be serialized. *)
 
   val guarded_wait : ('meta, 'dev) t -> (unit -> 'a) -> 'a
-  (** [guarded_wait t f] is [f ()]. When [f] raises
-      {!Signal.Timeout} or [Failure], [on_hang] runs and a single
-      [Failure] folding the wait failure and the fault report — each
-      may be all the information there is — is latched into
-      [error_state] and raised, so every later {!synchronize} fails
-      loudly with the full story. *)
+  (** [guarded_wait t f] first raises any latched error, otherwise runs [f ()].
+      When [f] raises {!Signal.Timeout} or [Failure], the failure is latched
+      before [on_hang] runs. A single [Failure] combines the wait failure and
+      fault report and is always raised to the caller whose work failed.
+      If [on_hang] clears [error_state] after successful recovery, later waits
+      may proceed; otherwise they re-raise the combined failure. *)
 
   val synchronize : ('meta, 'dev) t -> unit
   (** [synchronize t] waits until every value handed out so far has

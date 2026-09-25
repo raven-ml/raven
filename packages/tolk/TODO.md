@@ -36,7 +36,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register
-  tables. Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
+  tables, including SDMA 4.4 queue-instance addressing in setup and teardown.
+  Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
 - Complete PCI multi-die mappings and NV ring placement. Finish rollback of
   failed KFD/NVK device initialization;

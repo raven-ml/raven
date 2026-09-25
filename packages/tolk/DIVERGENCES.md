@@ -55,6 +55,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   remains open. Reconsider when upstream provides equivalent bounds and
   backpressure.
 
+- **AMD compute recovery requires idle SDMA queues.** The reference resets
+  compute processors and advances their abandoned timeline without cancelling
+  queued DMA commands. Those commands can still wait on signals from discarded
+  compute work and later access reused storage. Tolk retains the fault when a
+  copy ring has outstanding work. Recovery of an idle-copy device clears both
+  its timeline error and its native submission latch, while reporting the lost
+  work to the caller. Coverage: `test_amd_amdev` full guarded recovery, healthy
+  peer isolation and refusal to release active copy storage. Reconsider when
+  DMA cancellation and retirement have hardware validation.
+
 - **NV channels track completion without a hardware consumer pointer.**
   Ampere exposes GPPut but no GPGet. Tolk appends an engine release carrying
   a channel sequence; direct and compiled submissions share that sequence

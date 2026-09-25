@@ -246,9 +246,11 @@ module Iface : sig
     register :
       (compute_queue:Queue_desc.t ->
       tl:('mem, 'mem device) Hcq.Timeline.t ->
+      submission:Hcq.Submission.t ->
+      sdma_queues:(unit -> Queue_desc.t list) ->
       unit)
       option;
-        (** Hands the interface the device's compute queue and timeline
+        (** Hands the interface the device's compute queue, timeline and native submission state
             once they exist, for interrupt collection and fault
             recovery. *)
     after_sync : (unit -> unit) option;
@@ -771,11 +773,16 @@ module Pci_iface : sig
     am:Am_boot.t ->
     compute_queue:Queue_desc.t ->
     tl:('mem, 'mem device) Hcq.Timeline.t ->
+    submission:Hcq.Submission.t ->
+    sdma_queues:(unit -> Queue_desc.t list) ->
     unit
-  (** [register ~am ~compute_queue ~tl] makes a booted device visible
+  (** [register ~am ~compute_queue ~tl ~submission ~sdma_queues] makes a booted device visible
       to {!collect_interrupts}: its interrupt rings are serviced on
       every collection pass, and on recovery its compute queue is
-      rebuilt (via the queue's [resetup]) and its timeline rewound. The
+      rebuilt (via [resetup]), its abandoned timeline epoch retired, and
+      its native submission failure cleared. [sdma_queues ()] lists existing
+      copy queues; recovery requires them to be idle because compute reset
+      cannot cancel outstanding copies. The
       device runtime registers each device once its queues exist. *)
 
   val unregister : Am_boot.t -> unit
@@ -783,14 +790,13 @@ module Pci_iface : sig
       registered for the life of the process; a scripted device must
       leave the registry before its mappings do. *)
 
-  val collect_interrupts : ?reset:bool -> ?drain_only:bool -> unit -> unit
+  val collect_interrupts : ?reset:Am_boot.t -> ?drain_only:bool -> unit -> unit
   (** [collect_interrupts ()] services the interrupt rings of every
       registered device (see {!register}): decoding and reporting
       pending entries ([drain_only] discards them instead), and with
-      [reset], recovering devices that faulted — resetting their
-      compute processors, re-creating their compute queue, and
-      rewinding their timeline to the last completed value. Both
-      default to [false]. *)
+      [reset], recovering only that device: resetting its compute processors,
+      re-creating its compute queue, and retiring its abandoned timeline epoch.
+      No device is reset by default. [drain_only] defaults to [false]. *)
 
   val sleep : Am_boot.t -> timeout_ms:int -> unit
   (** [sleep am ~timeout_ms] parks a stalled wait: it blocks on the
@@ -801,10 +807,10 @@ module Pci_iface : sig
       afterwards, or with a protocol fault report when collection
       itself fails, so waits abort onto the recovery path. *)
 
-  val on_device_hang : unit -> 'a
-  (** [on_device_hang ()] handles a stalled or faulted wait: collects
-      pending interrupts, recovers every registered device that
-      faulted (see {!collect_interrupts}), and raises [Failure].
+  val on_device_hang : Am_boot.t -> 'a
+  (** [on_device_hang am] handles a stalled or faulted wait: collects
+      pending interrupts, recovers [am] (see {!collect_interrupts}),
+      and raises [Failure].
       Recovered devices keep working; the raise reports the hang to
       the caller whose work was lost. *)
 

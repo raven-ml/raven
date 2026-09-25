@@ -938,6 +938,32 @@ let () =
         ];
       group "Timeline"
         [
+          test "staging waits report and latch device faults" (fun () ->
+              List.iter (fun upload -> with_map 4096 (fun m ->
+                  let root = Buffer.make ~va:(Mmio.addr m) ~size:4096 ~view:m ~meta:() () in
+                  let reports = ref 0 and submitted = ref 0 in
+                  let tl = {
+                    Timeline.timeline = Signal.make ~sleep:(fun _ -> failwith "staging wait failed")
+                      (Buffer.offset root ~off:0 ~size:16 ());
+                    error_state = None;
+                    bounce = [|Buffer.offset root ~off:64 ~size:16 ()|];
+                    bounce_timeline = [|1|]; bounce_next = 0;
+                    on_hang = (fun () -> incr reports; failwith "MMU fault");
+                  } in
+                  Mmio.write64 m 8 1L;
+                  let buffer = Buffer.offset root ~off:128 ~size:16 () in
+                  let submit_chunk ~dest ~src size =
+                    equal int 16 (Buffer.size dest);
+                    equal int 16 (Buffer.size src);
+                    equal int 16 size; incr submitted in
+                  let failed = function Failure msg ->
+                    contains msg "staging wait failed" && contains msg "MMU fault" | _ -> false in
+                  raises_match failed (fun () ->
+                      if upload then Timeline.copyin tl ~submit_chunk buffer (Bytes.make 16 '\000')
+                      else Timeline.copyout tl ~submit_chunk (Bytes.make 16 '\000') buffer);
+                  equal int (if upload then 0 else 1) !submitted;
+                  raises_match failed (fun () -> Timeline.synchronize tl);
+                  equal int 1 !reports)) [true; false]);
           test "direct submissions observe the counter written by compiled submission" (fun () ->
               with_map 4096 (fun m ->
                   let tl = {

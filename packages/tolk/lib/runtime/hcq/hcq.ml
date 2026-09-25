@@ -154,6 +154,8 @@ module Submission = struct
     | 2L -> failwith "HCQ command stream exceeds ring capacity"
     | _ -> failwith "HCQ submission timed out"
 
+  let clear_error t = Mmio.write64 t.view 8 0L
+
   let prepare ?(timeout_ms = 30000) t =
     check t;
     if timeout_ms < 0 then invalid_arg "Submission.prepare: negative timeout";
@@ -395,6 +397,7 @@ module Timeline = struct
 
   (* Failures latch until device recovery explicitly clears them. *)
   let guarded_wait t f =
+    (match t.error_state with Some e -> raise e | None -> ());
     match f () with
     | r -> r
     | exception ((Signal.Timeout _ | Failure _) as e) ->
@@ -407,6 +410,9 @@ module Timeline = struct
           | Failure msg -> msg
           | e -> Printexc.to_string e
         in
+        (* Recovery runs inside the fault reporter. Latch before entering it
+           so a successful reset can explicitly clear the failed epoch. *)
+        t.error_state <- Some (Failure base);
         let report =
           match t.on_hang () with
           | () -> None
@@ -420,7 +426,7 @@ module Timeline = struct
             | Some r when String.equal r base -> base
             | Some r -> base ^ "\n" ^ r)
         in
-        t.error_state <- Some combined;
+        if Option.is_some t.error_state then t.error_state <- Some combined;
         raise combined
 
   let synchronize t =
@@ -454,7 +460,7 @@ module Timeline = struct
     while !off < total do
       t.bounce_next <- (t.bounce_next + 1) mod Array.length t.bounce;
       let slot = t.bounce_next in
-      Signal.wait t.timeline t.bounce_timeline.(slot);
+      guarded_wait t (fun () -> Signal.wait t.timeline t.bounce_timeline.(slot));
       let len = min step (total - !off) in
       Mmio.blit_bytes
         (Buffer.cpu_view t.bounce.(slot))
@@ -474,7 +480,7 @@ module Timeline = struct
     while !off < total do
       let len = min step (total - !off) in
       submit_chunk ~dest:staging ~src:(Buffer.offset buf ~off:!off ()) len;
-      Signal.wait t.timeline (submitted t);
+      guarded_wait t (fun () -> Signal.wait t.timeline (submitted t));
       Bytes.blit
         (Mmio.read_bytes (Buffer.cpu_view staging) ~off:0 ~len)
         0 bytes !off len;

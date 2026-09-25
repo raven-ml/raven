@@ -26,6 +26,7 @@ module Am = Tolk_amd.Amd_tables.Am_defs
 module Fw_defs = Tolk_amd.Amd_tables.Fw_defs
 module Reg = Tolk_amd.Amd_tables.Reg
 module Mmio = Tolk_hcq.Hcq.Mmio
+module Submission = Tolk_hcq.Hcq.Submission
 module File_io = Tolk_hcq.Hcq.File_io
 module Memory = Tolk.Memory
 module Tlsf = Tolk.Tlsf
@@ -601,7 +602,7 @@ let check_boot_stamps fd log =
    memory: a compute queue mid-stream whose [resetup] records its
    replay, and a timeline mid-flight with a latched error. Offsets sit
    in the main memory region, beyond every boot allocation. *)
-let scripted_registration fd t =
+let scripted_registration ?(sdma_queues = fun () -> []) fd t =
   let view off size = Mmio.view fd.fvram ~off ~size () in
   let slot off =
     Hbuf.make ~va:(Nativeint.of_int off) ~size:16 ~view:(view off 16) ~meta:()
@@ -629,12 +630,16 @@ let scripted_registration fd t =
       bounce = [||];
       bounce_timeline = [||];
       bounce_next = 0;
-      on_hang = (fun () -> ());
+      on_hang = (fun () -> Pci_iface.on_device_hang t);
     }
   in
   Mmio.write64 (view 0x1f20000 16) 8 6L;
-  Pci_iface.register ~am:t ~compute_queue:qd ~tl;
-  (qd, tl, resetup_ran)
+  let submission = Submission.create () in
+  let bytes = Bytes.make 16 '\000' in
+  Bytes.set_int64_le bytes 8 1L;
+  Tolk.Device.Buffer.copyin (Submission.buffer submission) bytes;
+  Pci_iface.register ~am:t ~compute_queue:qd ~tl ~submission ~sdma_queues;
+  (qd, tl, resetup_ran, submission)
 
 let () =
   run "Amdev"
@@ -2223,6 +2228,41 @@ let () =
         ];
       group "driver-less recovery"
         [
+          test "a timeout recovers only its device, even without an interrupt fault" (fun () ->
+              with_fake_dev (fun first -> with_fake_dev (fun second ->
+                  let a = Am_boot.create ~fw:boot_fw first.dev
+                  and b = Am_boot.create ~fw:boot_fw second.dev in
+                  let _, ta, reset_a, sa = scripted_registration first a
+                  and qb, tb, reset_b, sb = scripted_registration second b in
+                  Fun.protect ~finally:(fun () -> Pci_iface.unregister a; Pci_iface.unregister b) (fun () ->
+                      ta.Timeline.error_state <- None;
+                      raises_match (Exn.failure ~substring:"Device hang detected") (fun () ->
+                          Timeline.guarded_wait ta (fun () -> Submission.check sa));
+                      equal int 1 !reset_a;
+                      equal int 0 !reset_b;
+                      equal int64 42L (Mmio.read64 qb.Queue_desc.write_ptr 0);
+                      is_true (Option.is_some tb.Timeline.error_state);
+                      Submission.prepare sa;
+                      raises_match (Exn.failure ~substring:"submission timed out")
+                        (fun () -> Submission.check sb)))));
+          test "compute recovery does not release outstanding SDMA work" (fun () ->
+              with_fake_dev (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  let copies = ref [] in
+                  let qd, tl, resetup, submission = scripted_registration
+                      ~sdma_queues:(fun () -> !copies) fd t in
+                  copies := [qd];
+                  Fun.protect ~finally:(fun () -> Pci_iface.unregister t) (fun () ->
+                      tl.Timeline.error_state <- None;
+                      raises_match (Exn.failure ~substring:"idle SDMA") (fun () ->
+                          Timeline.guarded_wait tl (fun () -> Submission.check submission));
+                      equal int 0 !resetup;
+                      equal int64 42L (Mmio.read64 qd.Queue_desc.write_ptr 0);
+                      equal int 0 (Signal.value tl.Timeline.timeline);
+                      raises_match (Exn.failure ~substring:"idle SDMA")
+                        (fun () -> Timeline.synchronize tl);
+                      raises_match (Exn.failure ~substring:"submission timed out")
+                        (fun () -> Submission.check submission))));
           test "a ring fault latches the error state; the hang path recovers"
             (fun () ->
               with_fake_dev (fun fd ->
@@ -2235,7 +2275,7 @@ let () =
                   Mmio.write32 fd.fvram ring_paddr (Int32.of_int 0x0014);
                   Hashtbl.replace fd.reads (raddr fd.dev "regIH_RB_WPTR")
                     (fun () -> 8 lsl 2);
-                  let qd, tl, resetup_ran = scripted_registration fd t in
+                  let qd, tl, resetup_ran, submission = scripted_registration fd t in
                   Fun.protect
                     ~finally:(fun () -> Pci_iface.unregister t)
                     (fun () ->
@@ -2245,9 +2285,10 @@ let () =
                       equal bool true (Amdev.is_err_state fd.dev);
                       (* the hang path recovers the device, restores its
                          queue and timeline, and re-raises *)
+                      tl.Timeline.error_state <- None;
                       raises_match
                         (Exn.failure ~substring:"Device hang detected")
-                        (fun () -> Pci_iface.on_device_hang ());
+                        (fun () -> Timeline.guarded_wait tl (fun () -> Submission.check submission));
                       equal bool false (Amdev.is_err_state fd.dev);
                       equal int 0 (Int64.to_int (Mmio.read64 qd.Queue_desc.write_ptr 0));
                       equal int64 0L (Mmio.read64 qd.Queue_desc.read_ptr 0);
@@ -2255,6 +2296,9 @@ let () =
                       equal int 1 !resetup_ran;
                       equal int 6 (Signal.value tl.Timeline.timeline);
                       equal bool true (tl.Timeline.error_state = None);
+                      Submission.prepare submission;
+                      Timeline.synchronize tl;
+                      equal int 7 (Timeline.next_timeline tl);
                       (* the recovered device sleeps cleanly again *)
                       Pci_iface.sleep t ~timeout_ms:0)));
           test
@@ -2269,7 +2313,7 @@ let () =
                     (raddr fd.dev "regBIF_BX0_BIF_DOORBELL_INT_CNTL")
                     (rencode fd "regBIF_BX0_BIF_DOORBELL_INT_CNTL"
                        [ ("ras_cntlr_interrupt_status", 1) ]);
-                  let (_ : Queue_desc.t * _ * _) =
+                  let (_ : Queue_desc.t * _ * _ * _) =
                     scripted_registration fd t
                   in
                   Fun.protect

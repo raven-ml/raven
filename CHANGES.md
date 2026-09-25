@@ -389,6 +389,13 @@ thread.
 
 ### Tolk (new)
 
+- Successful AMD PCI compute recovery releases retained submission errors while
+  still reporting the failed work to its caller. Recovery targets only the
+  failed device and remains blocked while SDMA work is outstanding.
+
+- AMD/NV staging waits now retain device fault reports, so subsequent waits
+  consistently report the original failure instead of timing out again.
+
 - Interleaved compatible device groups share compiled batches when byte
   dependencies permit reordering. Runtime alias checks also cover writable
   accesses moved across another group.
