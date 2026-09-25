@@ -39,3 +39,4 @@ let () =
 - [Linear Algebra](03-linear-algebra.md) — decompositions, solvers, FFT
 - [Input/Output](04-io.md) — images, npy, npz files
 - [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference
+- [Structures](06-structures.md) — records of tensors that transformations, optimizers and checkpoints walk
