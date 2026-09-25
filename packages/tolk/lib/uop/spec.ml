@@ -46,11 +46,6 @@ let valid_device_payload = function
   | Uop.Multi devs -> devs <> []
   | Uop.Index _ -> false
 
-let valid_multi_device_payload = function
-  | Uop.Multi devs -> devs <> []
-  | Uop.Single _ | Uop.Index _ -> false
-
-
 let valid_shape_child u =
   is_int u
   || (Uop.op u = Ops.Stack && is_void u && Array.length (Uop.src u) = 0)
@@ -153,7 +148,7 @@ let allreduce_ok u x =
       Uop.equal src x
       && same_dtype u x
       && valid_reduce_op op
-      && valid_multi_device_payload device
+      && valid_device_payload device
   | None -> false
 
 let local_reg_buffer u =

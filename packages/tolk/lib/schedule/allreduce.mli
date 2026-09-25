@@ -7,36 +7,24 @@
 
 (** Multi-device collective reduction.
 
-    Builds allreduce computation graphs using naive, ring, or all-to-all
+    Builds allreduce computation graphs using naive, hierarchical, ring, or all-to-all
     strategies depending on device count, element count, and the [RING],
     [ALL2ALL], and [RING_ALLREDUCE_THRESHOLD] context variables. *)
-
-(** {1:encoding Shape encoding} *)
-
-val emit_shape : int list -> Tolk_uop.Uop.t
-(** [emit_shape dims] encodes [dims] as a shape node. A single dimension
-    becomes a scalar constant; multiple dimensions become a
-    {!Tolk_uop.Uop.stack} of scalar constants. *)
-
-val emit_pairs :
-  (int * int) list -> Tolk_uop.Uop.t * Tolk_uop.Uop.t
-(** [emit_pairs pairs] splits [(lo, hi)] int pairs into two shape nodes
-    [(emit_shape los, emit_shape his)]. *)
-
-(** {1:allreduce Allreduce} *)
 
 val handle_allreduce :
   Tolk_uop.Uop.t ->
   op:Tolk_uop.Ops.t ->
   device:Tolk_uop.Uop.device ->
-  shape:int list ->
   Tolk_uop.Uop.t option
-(** [handle_allreduce buf ~op ~device ~shape] builds a reduction graph that
+(** [handle_allreduce buf ~op ~device] builds a reduction graph that
     combines every shard of [buf] with [op] and places the result
     on [device].
 
-    Returns [None] if [buf] is not on a multi-device. Raises
-    [Failure] if [buf] has no concrete shape.
+    Returns [None] if [buf] is not on multiple devices. Symbolic shapes use
+    padded maximum-size transfers and retain their logical extents. Ring and
+    all-to-all strategies require concrete shapes. When [ALLREDUCE_NODE_NDEVS]
+    divides the device count, hierarchical reduction first combines chunks
+    within each node, then across corresponding ranks, and gathers locally.
 
     The strategy is selected automatically:
     {ul
@@ -51,16 +39,14 @@ val create_allreduce_function :
   Tolk_uop.Uop.t ->
   op:Tolk_uop.Ops.t ->
   device:Tolk_uop.Uop.device ->
-  dtype:Tolk_uop.Dtype.t ->
-  shape:int list ->
   ?output:Tolk_uop.Uop.t ->
   unit ->
   Tolk_uop.Uop.t option
-(** [create_allreduce_function buf ~op ~device ~dtype ~shape ()]
+(** [create_allreduce_function buf ~op ~device ()]
     wraps {!handle_allreduce} into a precompiled [CALL] kernel with
     parameter and buffer setup.
 
-    [output] defaults to a fresh contiguous buffer of the given
-    [dtype], [shape], and [device].
+    [output] defaults to a fresh contiguous buffer with the
+    source dtype and logical shape on [device].
 
     Returns [None] if [buf] is not on a multi-device. *)

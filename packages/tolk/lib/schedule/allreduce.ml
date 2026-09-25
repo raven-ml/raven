@@ -7,7 +7,7 @@
 
 (* Multi-device collective reduction.
 
-   Implements naive, ring, and all-to-all allreduce strategies for reducing
+   Implements naive, hierarchical, ring, and all-to-all allreduce strategies for reducing
    buffers across multiple devices. *)
 
 open Tolk_uop
@@ -24,9 +24,6 @@ let emit_shape = function
   | [ d ] -> dim d
   | dims -> U.stack (List.map dim dims)
 
-let emit_pairs pairs =
-  (emit_shape (List.map fst pairs), emit_shape (List.map snd pairs))
-
 (* Int-list wrappers over Uop shape/bounds APIs. *)
 
 let reshape src dims = U.reshape ~src ~shape:(emit_shape dims)
@@ -39,7 +36,14 @@ let shrink src bounds =
 let pad_to_shape src ~offset ~shape =
   U.pad ~src ~offset:(emit_shape offset) ~size:(emit_shape shape)
 
-let copy_to_device src dev = U.copy ~src ~device:(Single dev) ()
+let copy_to_device src dev =
+  if U.device_of src = Some (U.Single dev) then src
+  else U.copy ~src ~device:(Single dev) ()
+
+let emit = function [d] -> d | dims -> U.stack dims
+let shrink_to src shape =
+  if List.equal U.equal (U.shape src) shape then src
+  else U.shrink ~src ~offset:(emit (List.map (fun _ -> dim 0) shape)) ~size:(emit shape)
 
 (* Canonical device placement: canonical per-device names, and a
    single-element group collapses to that device. *)
@@ -58,11 +62,36 @@ let fold_reduce op = function
   | [] -> failwith "fold_reduce: empty list"
   | x :: xs -> List.fold_left (reduce op) x xs
 
+let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
+  let numel = List.fold_left ( * ) 1 shape in
+  let flat = reshape buf [numel] in
+  let chunks = Array.init hdev (fun k -> numel * k / hdev, numel * (k + 1) / hdev) in
+  let fold = fold_reduce op in
+  let owned = Array.init ndev (fun i ->
+      let k = i mod hdev and box = i / hdev * hdev in
+      fold (List.init hdev (fun j ->
+          let shard = U.mselect ~src:flat ~index:(box + j) in
+          copy_to_device (shrink shard [chunks.(k)]) devs.(i)))) in
+  let summed = Array.init ndev (fun i ->
+      let peers = List.init (ndev / hdev) (fun box -> box * hdev + i mod hdev)
+        |> List.filter (fun j -> j <> i) in
+      fold (owned.(i) :: List.map (fun j -> copy_to_device owned.(j) devs.(i)) peers)) in
+  let gathered = Array.init hdev (fun k ->
+      match device with
+      | U.Single target -> copy_to_device summed.(k) target
+      | _ -> U.mstack (List.init ndev (fun j -> copy_to_device summed.(j / hdev * hdev + k) devs.(j)))) in
+  let result = U.usum (List.init hdev (fun k ->
+      pad_to_shape gathered.(k) ~offset:[fst chunks.(k)] ~shape:[numel])) in
+  reshape result shape
+
 (* handle_allreduce *)
 
-let handle_allreduce buf ~op ~device ~shape =
+let handle_allreduce buf ~op ~device =
   match U.device_of buf with
   | Some (Multi devs) ->
+      let logical_shape = U.shape buf in
+      let concrete = List.for_all (fun d -> Option.is_some (U.const_int_value d)) logical_shape in
+      let shape = U.max_shape buf in
       let devs = Array.of_list devs in
       let ndev = Array.length devs in
       let numel = List.fold_left ( * ) 1 shape in
@@ -74,20 +103,25 @@ let handle_allreduce buf ~op ~device ~shape =
       (* Ring allreduce doesn't benefit with <=2 nodes or <256k elements —
          fall back to naive to save on dispatch and chunking. *)
       let use_all2all =
-        all2all >= 2 || (ndev > 2 && numel > threshold && all2all >= 1)
+        concrete && (all2all >= 2 || (ndev > 2 && numel > threshold && all2all >= 1))
       in
       let use_ring =
-        (not use_all2all)
+        concrete && (not use_all2all)
         && (ring >= 2 || (ndev > 2 && numel > threshold && ring >= 1))
       in
-      let buf = U.contiguous ~src:buf () in
-      if (not use_ring) && not use_all2all then
+      let padded = if concrete then buf else
+          U.pad ~src:buf ~offset:(emit_shape (List.map (fun _ -> 0) shape)) ~size:(emit_shape shape) in
+      let buf = U.contiguous ~src:padded () in
+      let hdev = Helpers.Context_var.get Helpers.allreduce_node_ndevs in
+      if concrete && hdev > 0 && ndev mod hdev = 0 then
+        Some (hierarchical buf ~op ~device ~shape ~ndev ~hdev devs)
+      else if (not use_ring) && not use_all2all then
         (* Naive: copy every shard to the target device and reduce. *)
         let shards =
           List.init ndev (fun i ->
               U.copy ~src:(U.mselect ~src:buf ~index:i) ~device ())
         in
-        Some (fold_reduce op shards)
+        Some (shrink_to (fold_reduce op shards) logical_shape)
       else
         (* Divide into ndev chunks, aligned to the largest power-of-2 factor
            (up to 32) that divides numel. Larger chunks go to earlier
@@ -183,8 +217,7 @@ let handle_allreduce buf ~op ~device ~shape =
         (* Reassemble: pad each chunk back to full size and sum. *)
         let padded =
           List.init ndev (fun i ->
-              let s, e = bounds.(i) in
-              ignore e;
+              let s = fst bounds.(i) in
               pad_to_shape copied_chunks.(i) ~offset:[ s ] ~shape:[ numel ])
         in
         Some (reshape (U.usum padded) shape)
@@ -192,50 +225,23 @@ let handle_allreduce buf ~op ~device ~shape =
 
 (* create_allreduce_function *)
 
-let create_allreduce_function buf ~op ~device ~dtype ~shape ?output () =
-  let output =
-    match output with
-    | Some o -> o
+let create_allreduce_function buf ~op ~device ?output () =
+  let red = U.allreduce ~src:buf ~op ~device in
+  let shape = U.shape red in
+  let output = match output with
+    | Some output -> output
     | None ->
-        let allocation =
-          U.alloc ~slot:(U.fresh_buffer_slot ())
-            ~device:(canonicalize_device device)
-            ~shape:(emit_shape (if shape = [] then [1] else shape)) ~dtype ()
-        in
-        U.reshape ~src:allocation ~shape:(emit_shape shape)
-  in
-  (* Build params mirroring the output and source signatures. *)
-  let to_ =
-    U.param ~slot:0 ~dtype ~shape:(emit_shape shape) ~device
-      ~addrspace:Dtype.Global ()
-  in
-  let src_device =
-    match U.device_of buf with Some d -> d | None -> device
-  in
-  let src =
-    U.param ~slot:1 ~dtype ~shape:(emit_shape shape) ~device:src_device
-      ~addrspace:Dtype.Global ()
-  in
-  match handle_allreduce src ~op ~device ~shape with
+        let allocation = U.alloc ~slot:(U.fresh_buffer_slot ())
+            ~device:(canonicalize_device device) ~dtype:(U.dtype red)
+            ~shape:(dim (U.max_numel red)) () in
+        shrink_to (U.reshape ~src:allocation ~shape:(emit_shape (U.max_shape red))) shape in
+  let dst = U.param_like red ~slot:0 and src = U.param_like buf ~slot:1 in
+  match handle_allreduce src ~op ~device with
   | Some result ->
-      let assigned =
-        U.after ~src:to_ ~deps:[ U.store ~dst:to_ ~value:result () ]
-      in
-      let sink = U.sink [ assigned ] in
-      let info : U.call_info =
-        {
-          grad_fxn = None;
-          name = Some "allreduce";
-          precompile = true;
-          precompile_backward = false;
-          dtype = Dtype.void;
-          aux = None;
-        }
-      in
-      let kernel =
-        U.call ~body:sink
-          ~args:[ output; U.contiguous ~src:buf () ]
-          ~info
-      in
-      Some (U.after ~src:output ~deps:[ kernel ])
+      let body = U.sink [U.after ~src:dst ~deps:[U.store ~dst ~value:result ()]] in
+      let info : U.call_info = {
+        grad_fxn = None; name = Some "allreduce"; precompile = true;
+        precompile_backward = false; dtype = Dtype.void; aux = None } in
+      let call = U.call ~body ~args:[output; U.contiguous ~src:buf ()] ~info in
+      Some (U.after ~src:output ~deps:[call])
   | None -> None

@@ -395,6 +395,51 @@ let () =
               (* Row sums of [[1..4]; [5..8]]. *)
               equal (array (float 1e-6)) [| 10.; 26. |] got);
         ];
+      group "Collectives"
+        [
+          test "forced strategies reduce uneven chunks on four devices" (fun () ->
+              List.iter (fun bindings ->
+                  Helpers.Context_var.with_context bindings (fun () ->
+                      let data = iota 28 in
+                      let got = run_sharded ~devices:devs4 ~shape:[4; 7] ~axis:0 data
+                          (fun x -> U.reduce_axis ~src:x ~op:Ops.Add ~axes:[0]) in
+                      let expected = Array.init 7 (fun i ->
+                          data.(i) +. data.(7+i) +. data.(14+i) +. data.(21+i)) in
+                      equal (array (float 1e-6)) expected got))
+                [ [Helpers.Context_var.B (Helpers.ring, 2)];
+                  [Helpers.Context_var.B (Helpers.all2all, 2)];
+                  [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, 2)];
+                  [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, 4)] ]);
+          test "hierarchical scalar handles empty chunks" (fun () ->
+              Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, 4)] (fun () ->
+                  let got = run_sharded ~devices:devs4 ~shape:[4] ~axis:0 (iota 4)
+                      (fun x -> U.reduce_axis ~src:x ~op:Ops.Add ~axes:[0]) in
+                  equal (array (float 1e-6)) [|10.|] got));
+          test "hierarchical maximum handles negative values" (fun () ->
+              Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.allreduce_node_ndevs, 2)] (fun () ->
+                  let data = Array.map (~-.) (iota 28) in
+                  let got = run_sharded ~devices:devs4 ~shape:[4; 7] ~axis:0 data
+                      (fun x -> U.reduce_axis ~src:x ~op:Ops.Max ~axes:[0]) in
+                  equal (array (float 1e-6)) (Array.sub data 0 7) got));
+          test "symbolic allreduce retains logical sizes under forced ring" (fun () ->
+              Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.ring, 2)] (fun () ->
+                  let v = U.variable ~name:"collective_size" ~min_val:1 ~max_val:7 () in
+                  let src = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:v ~device:(U.Multi devs4) () in
+                  let result = Option.get (Allreduce.handle_allreduce src ~op:Ops.Add ~device:(U.Multi devs4)) in
+                  is_true (List.for_all2 U.equal [v] (U.shape result));
+                  let call = Option.get (Allreduce.create_allreduce_function src ~op:Ops.Add ~device:(U.Multi devs4) ()) in
+                  is_true (List.for_all2 U.equal [v] (U.shape call));
+                  equal (list int) [7] (U.max_shape call);
+                  List.iter (fun n ->
+                      let data = iota 28 in
+                      let size = U.bind ~var:v ~value:(int_ n) in
+                      let got = run_sharded ~devices:devs4 ~shape:[4; 7] ~axis:0 data (fun x ->
+                          let sliced = U.shrink ~src:x ~offset:(shape_node [0; 0]) ~size:(emit [int_ 4; size]) in
+                          U.reduce_axis ~src:sliced ~op:Ops.Add ~axes:[0]) in
+                      let expected = Array.init n (fun i ->
+                          data.(i) +. data.(7+i) +. data.(14+i) +. data.(21+i)) in
+                      equal (array (float 1e-6)) expected (Array.sub got 0 n)) [2; 6]));
+        ];
       group "Cuda"
         [
           test "duplicated device tuple runs on one CUDA device" (fun () ->

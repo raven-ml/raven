@@ -555,38 +555,20 @@ let reshape_to u dims =
   if List.equal U.equal (U.shape u) dims then u
   else U.reshape ~src:u ~shape:(dims_node dims)
 
-let flatten u =
-  match U.shape u with
-  | [] -> reshape_to u [ int_ 1 ]
-  | [ _ ] -> u
-  | ds -> reshape_to u [ U.simplify (U.uprod ds) ]
-
-(* A COPY is a plain kernel: the source's flat view, made contiguous unless
-   it already names a buffer, stored into a flat buffer on the target device
-   and reshaped back. [existing] is the buffer an assignment stores the copy
-   into; it is written directly only when it is a whole buffer. The
-   scheduler turns the kernel back into a transfer. *)
-let convert_copy_to_store ?existing copy =
+let convert_copy_to_store copy =
   let input = src0 copy in
-  let input =
-    if U.has_buffer_identity ~after_ok:true input then input
-    else U.contiguous ~src:input ()
-  in
-  let input = flatten input in
-  match existing with
-  | Some buf ->
-      if not (U.has_buffer_identity ~after_ok:true buf) then None
-      else Some (U.store ~dst:(flatten buf) ~value:input ())
-  | None ->
-      let device = U.Arg.as_device (U.arg copy) in
-      let buf =
-        U.alloc ~slot:(U.fresh_buffer_slot ()) ~dtype:(U.dtype copy)
-          ~shape:(shape_node (U.max_shape input)) ?device ()
-      in
-      let stored =
-        U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:input () ]
-      in
-      Some (reshape_to stored (U.shape copy))
+  let dims = U.shape input and max_dims = List.map int_ (U.max_shape input) in
+  let input = if List.equal U.equal dims max_dims then input else
+      U.pad ~src:input ~offset:(dims_node (List.map (fun _ -> int_ 0) dims))
+        ~size:(dims_node max_dims) in
+  let device = U.Arg.as_device (U.arg copy) in
+  let buffer = U.alloc ~slot:(U.fresh_buffer_slot ()) ~dtype:(U.dtype copy)
+      ~shape:(int_ (U.max_numel input)) ?device () in
+  let buffer = reshape_to buffer max_dims in
+  let stored = U.after ~src:buffer ~deps:[U.store ~dst:buffer ~value:input ()] in
+  Some (if List.equal U.equal dims max_dims then stored else
+      U.shrink ~src:stored ~offset:(dims_node (List.map (fun _ -> int_ 0) dims))
+        ~size:(dims_node dims))
 
 let stage_to_store stage =
   let input = src0 stage in
@@ -605,8 +587,19 @@ let materialize n =
   match U.op n with
   | Ops.Store -> (
       match U.as_store n with
-      | Some { dst; value; gate = None } when U.op value = Ops.Copy ->
-          convert_copy_to_store ~existing:dst value
+      | Some { dst; value; gate = None }
+        when U.op value = Ops.Copy && U.device_of dst = U.device_of value
+          && U.has_buffer_identity ~after_ok:true dst ->
+          Some (U.store ~dst ~value:(src0 value) ())
+      | Some { dst; value; gate = None }
+        when U.op dst = Ops.Reshape && U.op value = Ops.Reshape
+          && List.equal U.equal (U.shape (src0 dst)) (U.shape (src0 value)) ->
+          Some (U.store ~dst:(src0 dst) ~value:(src0 value) ())
+      | Some { dst; value; gate = None }
+        when Option.is_some (U.device_of value)
+          && U.device_of dst <> U.device_of value
+          && not (U.has_buffer_identity ~after_ok:true value) ->
+          Some (U.store ~dst ~value:(U.contiguous ~src:value ()) ())
       | _ -> None)
   | Ops.Copy -> convert_copy_to_store n
   | Ops.Stage when U.arg n = U.Arg.Empty -> stage_to_store n
@@ -635,49 +628,11 @@ let earliest_rewrites =
       Upat.Pattern_matcher.rewrite Movement.mop_cleanup;
       (fun n -> match U.as_allreduce n with
          | Some { src; device; op } ->
-             (* [shape_of] is concrete and stays undefined on a symbolic
-                dimension; the node's own shape at its bounds is the
-                backstop. *)
-             let shape = match shape_of n with
-               | Some _ as s -> s
-               | None ->
-                   (try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape n))
-                    with Invalid_argument _ -> None)
-             in
-             (match shape with
-              | Some shape ->
-                  Allreduce.create_allreduce_function src ~device ~op
-                    ~dtype:(U.dtype n) ~shape ()
-              | None -> None)
+             Allreduce.create_allreduce_function src ~device ~op ()
          | None -> None);
       split_reduceop_rule;
       (fun n -> match U.op n with
          | Ops.Detach | Ops.Contiguous_backward -> Some (src0 n)
-         | _ -> None);
-      (* COPY transfers a contiguous range, so materialise a source that is
-         resized (shrink/pad/expand) or reordered (permute/flip). *)
-      (fun n -> match U.op n with
-         | Ops.Copy when is_movement (src0 n) ->
-             let s = src0 n in
-             let resized =
-               match shape_of (base s), shape_of s with
-               | Some a, Some b -> prod a <> prod b
-               | _ -> false
-             in
-             if resized || U.contiguous_view s = None then
-               let sr = Array.copy (U.src n) in
-               sr.(0) <- U.contiguous ~src:s ();
-               Some (U.replace n ~src:sr ())
-             else None
-         | _ -> None);
-      (* Copying an MSELECT to its own device is just the MSELECT (no NOOP
-         kernel). *)
-      (fun n -> match U.op n with
-         | Ops.Copy when U.op (src0 n) = Ops.Mselect ->
-             let ms = src0 n in
-             (match U.device_of ms, U.device_of n with
-              | Some d1, Some d2 when d1 = d2 -> Some ms
-              | _ -> None)
          | _ -> None);
       (fun n -> match U.op n with
          | Ops.Copy ->
@@ -686,18 +641,6 @@ let earliest_rewrites =
               | Some d1, Some d2 when d1 = d2 ->
                   Some s
               | _ -> None)
-         | _ -> None);
-      (* Copy on reshape is reshape on copy. *)
-      (fun n -> match U.op n with
-         | Ops.Copy when U.op (src0 n) = Ops.Reshape ->
-             let shp = src0 n in
-             (match U.Arg.as_device (U.arg n) with
-              | Some device ->
-                  Some
-                    (U.reshape
-                       ~src:(U.copy ~src:(src0 shp) ~device ())
-                       ~shape:(U.src shp).(1))
-              | None -> None)
          | _ -> None);
       materialize;
       (fun n -> match U.op n with

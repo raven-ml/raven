@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- Allreduce preserves symbolic output extents and supports hierarchical
+  reduction through `ALLREDUCE_NODE_NDEVS`. Cross-device symbolic copies
+  transfer padded storage instead of repeating values to fill the allocation.
+
 - Sharded parameters now allocate only their local storage. `Uop.unshard`
   carries sorted axes and explicit ranges, preserving symbolic sizes and
   supporting per-thread fragment indexing and multi-axis device gathering.

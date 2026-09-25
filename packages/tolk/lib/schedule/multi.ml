@@ -284,7 +284,7 @@ let rec multi_pm node =
   | Ops.Allreduce ->
       let {U.op; device; src} = Option.get (U.as_allreduce node) in
       if first_multi then Some (rewrap (U.allreduce ~src:(inner src) ~device ~op) src)
-      else if late_allreduce = 0 then Allreduce.handle_allreduce src ~op ~device ~shape:(U.max_shape src)
+      else if late_allreduce = 0 then Allreduce.handle_allreduce src ~op ~device
       else None
   | Ops.Call ->
       let {U.body; args; info} = Option.get (U.as_call node) in

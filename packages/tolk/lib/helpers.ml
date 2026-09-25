@@ -150,6 +150,7 @@ let reduceop_split_size = Context_var.int ~key:"REDUCEOP_SPLIT_SIZE" ~default:22
 let lru = Context_var.int ~key:"LRU" ~default:1
 let ring = Context_var.int ~key:"RING" ~default:1
 let all2all = Context_var.int ~key:"ALL2ALL" ~default:0
+let allreduce_node_ndevs = Context_var.int ~key:"ALLREDUCE_NODE_NDEVS" ~default:0
 
 let ring_allreduce_threshold =
   Context_var.int ~key:"RING_ALLREDUCE_THRESHOLD" ~default:256_000

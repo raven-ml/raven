@@ -136,6 +136,7 @@ let key ~device ~beam call =
               var H.pcontig;
               var H.ring;
               var H.all2all;
+              var H.allreduce_node_ndevs;
               var H.ring_allreduce_threshold;
               var H.allreduce_cast;
             ]

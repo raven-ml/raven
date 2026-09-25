@@ -469,9 +469,9 @@ let allreduce_rejects_bad_device_or_dtype () =
   in
   is_true ~msg:"Allreduce result dtype must match source"
     (Dtype.equal (Uop.dtype red) Dtype.int32);
-  let bad_single = Uop.allreduce ~src ~device:(Uop.Single "CPU") ~op:Ops.Add in
-  is_true ~msg:"Allreduce requires a multi-device group"
-    (rejected Spec.tensor_spec bad_single);
+  let single = Uop.allreduce ~src ~device:(Uop.Single "CPU") ~op:Ops.Add in
+  is_true ~msg:"Allreduce accepts a single destination device"
+    (accepts Spec.tensor_spec single);
   let bad_index = Uop.allreduce ~src ~device:(Uop.Index 0) ~op:Ops.Add in
   is_true ~msg:"Allreduce rejects positional device selector"
     (rejected Spec.tensor_spec bad_index);
