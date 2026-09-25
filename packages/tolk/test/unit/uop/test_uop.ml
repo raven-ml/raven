@@ -1464,6 +1464,15 @@ let cache_info_semantic_key_parity () =
     (not (Uop.equal call_without_aux call_with_aux));
   is_true ~msg:"CallInfo.aux is excluded from semantic_key"
     (Uop.semantic_key call_without_aux = Uop.semantic_key call_with_aux);
+  let info = Option.get (Uop.as_call_info call_with_aux) in
+  let aux = { (Option.get info.aux) with fallback = [call_without_aux] } in
+  let call_with_fallback = Uop.call ~body:sink ~args:[] ~info:{info with aux = Some aux} in
+  let roundtrip = Uop.import (Uop.export call_with_fallback) in
+  let restored = Option.get (Option.get (Uop.as_call_info roundtrip)).aux in
+  is_true ~msg:"fallback graph edges remain serializable"
+    (List.equal Uop.equal [call_without_aux] restored.fallback);
+  is_true ~msg:"nonempty auxiliary fallback stays outside semantic_key"
+    (Uop.semantic_key call_without_aux = Uop.semantic_key call_with_fallback);
   let metadata : Uop.metadata =
     { name = "trace"; backward = false }
   in

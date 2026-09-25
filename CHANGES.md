@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.semantic_key` ignores auxiliary fallback graphs consistently, so calls
+  that differ only in fallback metadata share a semantic cache key.
+
 - Keep compiled programs and runtime handles with their `Device.t` owner.
   Replacing a device with the same name no longer reuses incompatible renderer
   assumptions, loaders or linked queue templates.

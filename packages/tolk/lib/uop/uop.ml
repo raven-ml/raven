@@ -3606,7 +3606,6 @@ let semantic_key root =
            global_size = List.map scalar pi.global_size;
            local_size = List.map scalar pi.local_size },
          List.map symbolic (pi.global_size @ pi.local_size), List.length pi.vars)
-    | Arg.Call_info info -> (Arg.Call_info { info with aux = None }, [], 0)
     | Arg.Param_arg p -> (Arg.Param_arg { p with buffer = None }, [], 0)
     | arg -> (arg, [], 0)
   in
@@ -3621,6 +3620,9 @@ let semantic_key root =
         Ref_tbl.add memo u k;
         k
   and compute_key u =
+    let argument = match arg u with
+      | Arg.Call_info info -> Arg.Call_info { info with aux = None }
+      | argument -> argument in
     (* The header must separate any two nodes whose own payload differs. The
        polymorphic hash is unreliable here: [Hashtbl.hash] stops after 10
        meaningful words (too few to reach a payload buried behind the dtype),
@@ -3629,7 +3631,7 @@ let semantic_key root =
        and render constant payloads exactly. *)
     let header =
       let payload =
-        (op u, dtype u, semantic_arg (arg u))
+        (op u, dtype u, semantic_arg argument)
       in
       let value =
         match arg u with Arg.Value c -> Const.to_string c | _ -> ""
@@ -3640,7 +3642,7 @@ let semantic_key root =
         value
     in
     let children =
-      (Array.to_list (src u) @ arg_uops (arg u))
+      (Array.to_list (src u) @ arg_uops argument)
       |> List.map key |> String.concat ""
     in
     Digest.to_hex (Digest.string (header ^ children))
