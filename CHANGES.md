@@ -661,6 +661,10 @@ thread.
 
 ### Tolk (new)
 
+- Reject replay of a linked queue after one of its devices has been replaced,
+  before its old native addresses reach the replacement runtime. `Uop.export`
+  now rejects linked queues; serialize their unlinked templates instead.
+
 - Retire cached queue templates and linked storage when any participating
   device is replaced. Concurrent first links now share one published result
   and one lazily initialized Metal/CUDA timeline.

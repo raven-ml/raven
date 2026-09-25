@@ -86,6 +86,7 @@ and grad_fxn = grad_output:t -> call:t -> t option list
 and queue_info = {
   fallback : t list;
   devices : string list;
+  linked_owners : (string * int) list;
   host : string;
   table : int;
   inputs : (int * string) list;
@@ -3535,7 +3536,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 34
+let export_version = 35
 
 type serialized_node = {
   serialized_op : Ops.t;
@@ -3568,6 +3569,8 @@ let export root =
         let arg, owned = match arg u with
           | Arg.Call_info { grad_fxn = Some _; _ } ->
               invalid_arg "Uop.export: graph carries a gradient function"
+          | Arg.Call_info { aux = Some info; _ } when info.linked_owners <> [] ->
+              invalid_arg "Uop.export: graph carries linked native addresses"
           | Arg.Param_arg p ->
               Arg.Param_arg { p with buffer = None },
               Option.map (List.map buffer_id) p.buffer

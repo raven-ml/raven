@@ -106,9 +106,6 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Reject stale retained HCQ execution after device
-  replacement, or carry its actual owner identities through dispatch: embedded
-  addresses belong to the old owner while queue lookup currently uses names.
   Make first-run bookkeeping and execution statistics
   safe for concurrent callers.
   Establish ownership of Rune's pending release/view lists and mutable storage

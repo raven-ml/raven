@@ -68,6 +68,9 @@ let rec run ~resolve ?(allow_cache = true) linear =
              | Some (U.Index _) | None -> ());
             (match U.arg node with
              | U.Arg.Call_info {aux = Some info; _} ->
+                 List.iter (fun (name, id) ->
+                     if Device.id (Device.get name) <> id then
+                       invalid_arg "link: device owner changed since linking") info.linked_owners;
                  List.iter own_name (info.host :: info.devices @
                    List.concat_map (fun (owner, source) -> [owner; source]) info.host_deps)
              | _ -> ());
@@ -147,8 +150,18 @@ let rec run ~resolve ?(allow_cache = true) linear =
                   ~dtype:(U.dtype u) ~spec owner in
             Some (U.from_buffer buf)
         | Ops.Call ->
-            (match U.as_call u with
-             | Some {body; _} when U.op body = Ops.Custom_function
+            (match U.arg u, U.as_call u with
+             | U.Arg.Call_info ({aux = Some info; _} as call), _
+                 when info.linked_owners = [] ->
+                 let names = info.host :: info.devices @ List.map snd info.inputs @
+                   List.concat_map (fun (owner, source) -> [owner; source]) info.host_deps
+                   |> List.sort_uniq String.compare in
+                 let linked_owners = List.map (fun name ->
+                     let owner = Device.get name in
+                     Device.name owner, Device.id owner) names in
+                 Some (U.replace u ~arg:(U.Arg.Call_info
+                     {call with aux = Some {info with linked_owners}}) ())
+             | _, Some {body; _} when U.op body = Ops.Custom_function
                  && U.Arg.as_string (U.arg body) = Some "loop" ->
                  let src = Array.copy (U.src body) in
                  let linked = run ~resolve ~allow_cache src.(0) in

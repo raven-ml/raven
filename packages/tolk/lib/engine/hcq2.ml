@@ -342,7 +342,7 @@ let lower_batch queue devices calls original_calls independent_accesses timestam
           let slot = position 0 arg args in
           if slot < 0 then arg else U.param_like arg ~slot) original.args in
       U.replace call ~src:(Array.of_list (original.body :: actuals)) ()) original_calls in
-  let aux = U.{fallback; devices; host = queue.host; table = position 0 table bufs;
+  let aux = U.{fallback; devices; linked_owners = []; host = queue.host; table = position 0 table bufs;
     timings = (if timestamps = [] then [] else List.map2 (fun (device, start, finish) (c : call) ->
       device, c.queue, position 0 (U.buf_uop start) args,
       (Deps_tracker.uop start).start / 8 + 1, (Deps_tracker.uop finish).start / 8 + 1) timestamps calls);

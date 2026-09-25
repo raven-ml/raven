@@ -13,4 +13,6 @@ val run :
     bodies. The result retains every allocation whose address it embeds.
     Untagged parameters stay bound at execution time. [lt_input] placeholders
     bind through [resolve] and disable caching. Other links are cached weakly
-    by [linear] unless [allow_cache] is [false]. *)
+    by [linear] unless [allow_cache] is [false]. Queue submissions record the
+    device instance IDs used to bind native addresses; relinking a submission
+    after any recorded owner was replaced raises [Invalid_argument]. *)

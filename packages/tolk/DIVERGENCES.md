@@ -35,7 +35,9 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   owners; link-cache hits also require current owner identities. Coverage:
   `test_link` secondary replacement, collection and concurrent publication,
   and `test_realize` multi-owner template collection. Externally retained old
-  graphs keep their storage alive; execution after replacement remains open.
+  graphs keep their storage alive. Linked queue metadata records owner instance
+  IDs, so relinking or replay after replacement fails before native writes.
+  Unlike unlinked templates, linked queues cannot be exported across processes.
 
 - **Schedule capture follows the dynamic continuation scope.** Upstream uses
   a process-global callback list. Tolk and Rune may compile on independent

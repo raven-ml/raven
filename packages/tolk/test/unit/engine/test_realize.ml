@@ -617,7 +617,8 @@ let submission_fixture device_name prepare invoke =
     let body = program_of (U.sink ~kernel_info:(kernel_info device_name) [formal]) in
     let input = U.param ~slot:0 ~dtype:Dtype.uint64 ~shape:(shape_const 1)
         ~device:(U.Single device_name) () in
-    let aux = U.{fallback = []; devices = [device_name]; host = device_name; table = 0;
+    let aux = U.{fallback = []; devices = [device_name];
+      linked_owners = [device_name, Device.id device]; host = device_name; table = 0;
       inputs = [1, device_name]; outputs = []; timings = []; independent_accesses = [];
       host_deps = []; accesses = []} in
     let linear = U.linear [U.call ~body ~args:[U.from_buffer table; input]
@@ -711,6 +712,25 @@ let failed_submission_prepare () =
   replay input;
   equal int 1 !calls
 
+let replaced_submission_owner () =
+  let name = "TEST:replaced-submission-owner" in
+  let buffer, link = submission_fixture name (fun () -> ()) (fun table -> ignore table) in
+  let table, replay = link () in
+  let input = buffer () in
+  let replacement_calls = ref 0 in
+  let new_buffer, new_link = submission_fixture name (fun () -> ())
+      (fun table -> ignore table; incr replacement_calls) in
+  raises (Invalid_argument "queue replay: device owner changed since linking")
+    (fun () -> replay input);
+  equal ~msg:"stale native addresses never reach the replacement runtime"
+    int 0 !replacement_calls;
+  equal ~msg:"rejection precedes address-table writes"
+    int64 0L (Bytes.get_int64_le (Device.Buffer.as_bytes table) 0);
+  let new_table, new_replay = new_link () in
+  new_replay (new_buffer ());
+  equal int 1 !replacement_calls;
+  ignore (Sys.opaque_identity new_table)
+
 let () =
   run "Engine_realize"
     [
@@ -721,6 +741,7 @@ let () =
         (serialized_submission_tables ~independent:true);
       test "submission scope permits reentry and rejects unprepared owners before writes" submission_scope_reentry;
       test "failed preparation leaves the address table unchanged and releases ownership" failed_submission_prepare;
+      test "retained queue replay rejects replaced device owners before writes" replaced_submission_owner;
       capture_tests;
       owner_cache_tests;
       renderer_selection_tests;

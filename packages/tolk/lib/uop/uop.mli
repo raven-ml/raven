@@ -233,6 +233,9 @@ type grad_fxn = grad_output:t -> call:t -> t option list
 type queue_info = {
   fallback : t list; (** Original calls, parameterized by the submission arguments. *)
   devices : string list; (** Devices submitted by the host program. *)
+  linked_owners : (string * int) list;
+      (** Canonical device names and instance IDs whose native addresses were
+          bound by linking. Empty before linking; not portable across processes. *)
   host : string; (** Device executing the host program. *)
   table : int; (** Call argument containing runtime addresses, or [-1]. *)
   inputs : (int * string) list; (** Source argument and target address space per table row. *)
@@ -1518,7 +1521,10 @@ val export : t -> string
 
     Raises [Invalid_argument] if any node carries a gradient function
     ([grad_fxn] in its {!call_info}): gradient functions are closures and
-    cannot be serialized. Compiled programs never carry them. *)
+    cannot be serialized. Compiled programs never carry them. Also raises
+    [Invalid_argument] for a linked queue submission: embedded native addresses
+    and device instance IDs belong to this process. Export its unlinked template
+    and link the imported graph instead. *)
 
 val import : string -> t
 (** [import s] rebuilds a graph previously produced by {!export} in this

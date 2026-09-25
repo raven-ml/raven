@@ -275,6 +275,11 @@ val run_linear :
     {!resolve_buffer}, so {!Tolk_uop.Ops.Param} slots index into
     [input_uops].
 
+    Linked queue submissions retain the device instance IDs whose addresses
+    they embed. Replacing any of those devices makes replay raise
+    [Invalid_argument] before address-table updates or dispatch. Compile and
+    link a fresh schedule for the replacement device.
+
     A call whose arguments resolve to multi-device buffers executes once per
     device position: a kernel launches its one compiled program on each
     device with the device index bound to the [_device_num] variable, and a

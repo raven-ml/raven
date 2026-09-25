@@ -986,6 +986,9 @@ let fallback_owners ctx calls =
 
 let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
   let module U = Tolk_uop.Uop in
+  List.iter (fun (name, id) ->
+      if Device.id (Device.get name) <> id then
+        invalid_arg "queue replay: device owner changed since linking") submission.linked_owners;
   match U.as_call call with
   | Some {body; args} ->
       let args = Array.of_list (call_arg_uops args) in

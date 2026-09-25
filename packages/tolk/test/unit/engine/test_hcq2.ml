@@ -210,6 +210,13 @@ let peer_group_batches () =
   equal string (U.semantic_key linear) (U.semantic_key imported);
   let device = List.hd devices in
   let linked = Realize.link_linear imported in
+  List.iter (fun call ->
+      let owners = (info call).linked_owners in
+      is_true ~msg:"linking records the owners of embedded native addresses" (owners <> []);
+      List.iter (fun (name, id) -> equal int id (Device.id (Device.get name))) owners)
+    (U.children linked);
+  raises (Invalid_argument "Uop.export: graph carries linked native addresses")
+    (fun () -> ignore (U.export linked));
   let buffers = Array.init 6 (fun _ ->
       let buffer = Device.create_buffer ~size:32 ~dtype:Dtype.int32 host in
       Device.Buffer.ensure_allocated buffer; buffer) in
