@@ -38,6 +38,7 @@
    single-thread call goes through the panel path (nthreads == 1 still releases
    the lock, since the traffic clears the cutoff). */
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -434,6 +435,34 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
         nx_c_st_##sfx(c + (i * crs + j * ccs) * esz, acc);                    \
       }                                                                        \
   }                                                                            \
+  /* Dot of k elements at element strides as, bs into one compute value.     \
+     Element p accumulates into lane p mod 16 whatever the strides, and the   \
+     lanes combine by a fixed tree, so the rounding depends on neither the    \
+     layout nor the machine; the contiguous run vectorizes with sixteen       \
+     independent accumulators, where one would wait on every multiply-add. */ \
+  static void mm_dot_##sfx(const void *va, int64_t as, const void *vb,         \
+                           int64_t bs, int64_t k, void *vout) {                \
+    const char *a = (const char *)va;                                        \
+    const char *b = (const char *)vb;                                        \
+    int64_t esz = (int64_t)sizeof(storage);                                   \
+    compute s[16];                                                             \
+    for (int i = 0; i < 16; i++) s[i] = (compute)0;                           \
+    int64_t p = 0;                                                             \
+    if (as == 1 && bs == 1) {                                                 \
+      const storage *pa = (const storage *)va;                                \
+      const storage *pb = (const storage *)vb;                                \
+      for (; p + 16 <= k; p += 16)                                            \
+        for (int i = 0; i < 16; i++)                                          \
+          MM_MAC_##cat(s[i], nx_c_ld_##sfx(&pa[p + i]),                        \
+                       nx_c_ld_##sfx(&pb[p + i]));                             \
+    }                                                                          \
+    for (; p < k; p++)                                                         \
+      MM_MAC_##cat(s[p & 15], nx_c_ld_##sfx(a + p * as * esz),                 \
+                   nx_c_ld_##sfx(b + p * bs * esz));                           \
+    for (int w = 8; w >= 1; w /= 2)                                           \
+      for (int i = 0; i < w; i++) s[i] = (compute)MM_ADD_##cat(s[i], s[i + w]); \
+    *(compute *)vout = s[0];                                                   \
+  }                                                                            \
   /* KC-panel accumulate: dst[i] += src[i] over `count` compute elements, the \
      one place a partial MR x NR tile folds into the compute-typed C tile. In  \
      compute precision (int64 wraps modularly BY CONSTRUCTION — MM_ADD's SINT  \
@@ -462,6 +491,8 @@ typedef void (*nx_c_mm_store)(const void *, void *, int64_t, int64_t, int64_t,
 typedef void (*nx_c_mm_direct)(const void *, int64_t, int64_t, const void *,
                               int64_t, int64_t, void *, int64_t, int64_t,
                               int64_t, int64_t, int64_t);
+typedef void (*nx_c_mm_dot)(const void *, int64_t, const void *, int64_t,
+                           int64_t, void *);
 typedef void (*nx_c_mm_micro)(void *, const void *, const void *, int64_t);
 typedef void (*nx_c_mm_acc)(void *, const void *, int);
 
@@ -469,6 +500,7 @@ typedef struct {
   nx_c_mm_pack pack_a, pack_b;
   nx_c_mm_store store;
   nx_c_mm_direct direct;
+  nx_c_mm_dot dot;
   nx_c_mm_micro micro; /* NULL: dtype unsupported for matmul */
   nx_c_mm_acc acc;     /* KC-panel tile accumulate (compute-typed) */
   int MR, NR;
@@ -480,6 +512,7 @@ typedef struct {
                        mm_pack_b_##sfx,                                        \
                        mm_store_##sfx,                                         \
                        mm_direct_##sfx,                                        \
+                       mm_dot_##sfx,                                           \
                        MM_MICRO_##compute,                                     \
                        mm_acc_##sfx,                                           \
                        MM_MR,                                                  \
@@ -714,6 +747,84 @@ static void mm_direct_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     x->d->direct(ab, x->a_rs, x->a_cs, bb, x->b_rs, x->b_cs, cb, x->c_rs,
                  x->c_cs, x->m, x->n, x->k);
   }
+}
+
+/* ── Dot: a 1x1 output ────────────────────────────────────────────────────
+
+   A product whose output is one element per batch matrix (a row times a column,
+   what Nx.dot of two vectors becomes) has no tile to fill: the direct loop's one
+   accumulator waits on every multiply-add, and the blocked path pads a 1x1 tile.
+   Its own path splits each contraction into fixed MM_DOT_CHUNK-element chunks,
+   one job per (batch, chunk). A job sums its chunk with the kernel's sixteen
+   lanes into a compute-typed partial; the job that finishes a batch's last
+   chunk adds that batch's partials in chunk order and stores once. The chunk
+   size, the lanes and the combine order are fixed, so the result is the same on
+   any thread count, and it is summed in the compute type and rounded once like
+   every other path. */
+#define MM_DOT_CHUNK (64 * 1024)
+
+typedef struct {
+  const mm_ctx *x;
+  int64_t nchunks;           /* chunks per contraction */
+  char *partials;            /* nbatch * nchunks compute elements */
+  _Atomic int64_t *pending;  /* per batch: chunks not yet summed */
+} mm_dot_ctx;
+
+static void mm_dot_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  (void)worker;
+  const mm_dot_ctx *dc = (const mm_dot_ctx *)vctx;
+  const mm_ctx *x = dc->x;
+  const nx_c_mm_desc *d = x->d;
+  for (int64_t job = lo; job < hi; job++) {
+    int64_t bt = job / dc->nchunks, chunk = job % dc->nchunks;
+    const char *ab, *bb;
+    char *cb;
+    mm_batch_base(x, bt, &ab, &bb, &cb);
+    int64_t p0 = chunk * MM_DOT_CHUNK;
+    int64_t len = x->k - p0;
+    if (len > MM_DOT_CHUNK) len = MM_DOT_CHUNK;
+    char *sum = dc->partials + bt * dc->nchunks * d->csize;
+    d->dot(ab + p0 * x->a_cs * x->esz, x->a_cs, bb + p0 * x->b_rs * x->esz,
+           x->b_rs, len, sum + chunk * d->csize);
+    if (dc->nchunks > 1 &&
+        atomic_fetch_sub_explicit(&dc->pending[bt], 1, memory_order_acq_rel) !=
+            1)
+      continue;
+    for (int64_t c = 1; c < dc->nchunks; c++)
+      d->acc(sum, sum + c * d->csize, 1);
+    d->store(sum, cb, x->c_rs, x->c_cs, 0, 0, 1, 1, 1);
+  }
+}
+
+static nx_c_status mm_dot_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
+                              int nthreads) {
+  int64_t nchunks = x->k > MM_DOT_CHUNK ? mm_ceil_div(x->k, MM_DOT_CHUNK) : 1;
+  int64_t jobs = nbatch * nchunks;
+  size_t partials_sz = (size_t)jobs * (size_t)x->d->csize;
+  partials_sz = (partials_sz + 63) & ~(size_t)63;
+  size_t pending_sz = nchunks > 1 ? (size_t)nbatch * sizeof(_Atomic int64_t) : 0;
+  char *scratch = mm_alloc(partials_sz + pending_sz);
+  if (!scratch) return NX_C_ERR_ALLOC;
+  mm_dot_ctx dc;
+  dc.x = x;
+  dc.nchunks = nchunks;
+  dc.partials = scratch;
+  dc.pending = nchunks > 1 ? (_Atomic int64_t *)(scratch + partials_sz) : NULL;
+  for (int64_t bt = 0; nchunks > 1 && bt < nbatch; bt++)
+    atomic_init(&dc.pending[bt], nchunks);
+  /* Compute-bound class, not bandwidth: every element costs a load conversion
+     and a multiply-add, and every output a lane combine and a store. On an M1
+     Max it splits a 2^20-element f32 dot to 0.06 ms against 0.11 ms serial, and
+     100000 dots of 16 to 0.24 ms against 0.89 ms; at 2^24 elements it ties. */
+  int nth = nthreads > 0
+                ? nthreads
+                : nx_c_threads_for(NX_C_COST_COMPUTE, jobs,
+                                   x->k < MM_DOT_CHUNK ? x->k : MM_DOT_CHUNK,
+                                   bytes);
+  if (nth > jobs) nth = (int)jobs;
+  if (nth < 1) nth = 1;
+  nx_c_parallel_for(nth, jobs, bytes, mm_dot_body, &dc, scratch);
+  return NX_C_OK;
 }
 
 /* ── Accelerate hook (macOS only) ──────────────────────────────────────────
@@ -968,6 +1079,10 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   x.bp_panel = 0;
   x.n_jc = 0;
   x.n_ic = 0;
+
+  /* A 1x1 output takes the dot path on every platform, ahead of Accelerate. */
+  if (m == 1 && n == 1 && !force_direct)
+    return mm_dot_run(&x, nbatch, bytes, nthreads);
 
   /* Accelerate hook: for eligible f32/f64/c32/c64 the driver hands each batch
      matrix to cblas, one call at a time, on the calling thread with the runtime
@@ -1278,10 +1393,11 @@ CAMLprim value caml_nx_c_matmul(value vout, value va, value vb) {
      0 = owned blocked, engine thread policy   (owned multi-thread path)
      1 = owned blocked, forced single thread
      2 = owned direct naive triple loop
-     3 = automatic Accelerate route if eligible, else owned policy. */
+     3 = automatic Accelerate route if eligible, else owned policy
+     4 = owned, forced four threads (a split the policy would not choose). */
 void nx_c_matmul_maintenance(value vout, value va, value vb, int mode) {
   int force_direct = (mode == 2);
-  int nthreads = (mode == 0 || mode == 3) ? 0 : 1;
+  int nthreads = (mode == 0 || mode == 3) ? 0 : mode == 4 ? 4 : 1;
   int allow_accel = (mode == 3);
   mm_stub("matmul", vout, va, vb, force_direct, nthreads, allow_accel);
 }

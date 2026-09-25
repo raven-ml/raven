@@ -35,7 +35,8 @@ type ('a, 'b) ffi = {
 external mm : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
   = "caml_nx_c_matmul"
 
-(* mode: 0 owned+policy, 1 owned+single-thread, 2 owned direct naive, 3 accel *)
+(* mode: 0 owned+policy, 1 owned+single-thread, 2 owned direct naive, 3 accel,
+   4 owned+four threads *)
 external mm_ex : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> int -> unit
   = "caml_nx_c_matmul_ex"
 
@@ -1020,9 +1021,50 @@ let test_maintenance_paths () =
   test_packed_unsupported ~kind:Nx_dtype.int4 ~name:"i4" ();
   test_packed_unsupported ~kind:Nx_dtype.uint4 ~name:"u4" ()
 
+(* A 1x1 output (a dot) takes its own path: chunks of 65536 elements, sixteen
+   lanes per chunk, partials added in chunk order. Against the reference, at
+   contractions around a lane and a chunk boundary, strided and offset; and bit
+   for bit the same on one thread and on four, over a batch whose contractions
+   span several chunks, so the split cannot change the rounding. *)
+let test_dot_path () =
+  List.iter
+    (fun k ->
+      test_real ~kind:Nx_dtype.float32 ~name:"f32-dot" ~tol_rel:1e-4
+        ~tol_abs:1e-4 ~m:1 ~k ~n:1 ~modes:[ `Prod; `St; `Direct ] ();
+      test_real ~kind:Nx_dtype.float64 ~name:"f64-dot" ~tol_rel:1e-9
+        ~tol_abs:1e-9 ~m:1 ~k ~n:1 ~a_trans:true ~b_trans:true ~a_off:3
+        ~b_off:5 ~c_off:2 ~modes:[ `Prod; `St ] ();
+      test_real ~kind:Nx_dtype.bfloat16 ~name:"bf16-dot" ~tol_rel:1e-2
+        ~tol_abs:1e-2 ~m:1 ~k ~n:1 ~modes:[ `Prod; `St ] ())
+    [ 0; 1; 15; 16; 17; 65535; 65536; 65537; (3 * 65536) + 5 ];
+  test_int_small ~kind:Nx_dtype.int8 ~name:"i8-dot-wrap" ~wrap:(wrap_signed 8)
+    ~m:1 ~k:70000 ~n:1 ~vlo:10 ~vhi:12 ~modes:[ `Prod; `Direct ] ();
+  test_complex ~kind:Nx_dtype.complex64 ~name:"c32-dot" ~tol:1e-2 ~m:1
+    ~k:70000 ~n:1 ~modes:[ `Prod; `Direct ] ();
+  let g = 5 and k = (2 * 65536) + 7 in
+  let a = Buf.create Nx_dtype.float32 (g * k)
+  and b = Buf.create Nx_dtype.float32 (g * k) in
+  for t = 0 to (g * k) - 1 do
+    Buf.set a t (sin (float_of_int t));
+    Buf.set b t (cos (float_of_int (3 * t)))
+  done;
+  let run mode =
+    let c = Buf.create Nx_dtype.float32 g in
+    mm_ex
+      (ffi c [| g; 1; 1 |] [| 1; 1; 1 |])
+      (ffi a [| g; 1; k |] [| k; k; 1 |])
+      (ffi b [| g; k; 1 |] [| k; 1; 1 |])
+      mode;
+    Array.init g (fun i -> Int32.bits_of_float (Buf.get c i))
+  in
+  ok "f32 dot, one thread and four give the same bits" (run 1 = run 4)
+
 let () =
   Windtrap.run "nx C backend matmul"
     [
       group "internal-path-equivalence"
-        [ test "owned, workspace, and Accelerate paths" test_maintenance_paths ];
+        [
+          test "owned, workspace, and Accelerate paths" test_maintenance_paths;
+          test "a 1x1 output sums in chunks" test_dot_path;
+        ];
     ]
