@@ -111,6 +111,12 @@
    (run %{test})))
  (libraries rune nx nx.buffer nx.dtype unix))
 
+(test
+ (name test_jit_scratch)
+ (modules test_jit_scratch)
+ (package rune)
+ (libraries rune nx nx.buffer tolk tolk.uop windtrap))
+
 (tests
  (names test_jit_cache)
  (modules test_jit_cache)

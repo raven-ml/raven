@@ -169,6 +169,7 @@ let reset_stats () =
    value, whose engine is [engine] below, and one tolk device. *)
 
 let by_name : (string, Nx.Device.t * Tolk.Device.t) Hashtbl.t = Hashtbl.create 4
+let by_name_mutex = Mutex.create ()
 
 (* The name of the tolk device that compiles and runs the host's programs. *)
 let host_name = "CPU"
@@ -176,7 +177,10 @@ let host_name = "CPU"
 let tolk_device_of d =
   if d == Nx.Device.host then Tolk.Device.get host_name
   else
-    match Hashtbl.find_opt by_name (Nx.Device.name d) with
+    match
+      Mutex.protect by_name_mutex (fun () ->
+          Hashtbl.find_opt by_name (Nx.Device.name d))
+    with
     | Some (d', dev) when d' == d -> dev
     | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
 
@@ -3301,38 +3305,20 @@ type host_out = Host : ('a, 'b) ND.t * ('a, 'b) Nx_buffer.t -> host_out
 
 let chunk_bytes = 64 * 1024 * 1024
 
-(* A device may park host staging per pending copy until it next synchronizes
-   (CUDA pins one buffer per copy), so a long run of copies synchronizes every
-   [sync_bytes]. *)
-let sync_bytes = 256 * 1024 * 1024
-let unsynced_bytes = ref 0
-
-let note_copied dev n =
-  unsynced_bytes := !unsynced_bytes + n;
-  if !unsynced_bytes >= sync_bytes then begin
-    Tolk.Device.synchronize dev;
-    unsynced_bytes := 0
-  end
-
-(* Byte staging, keyed by size and reused across calls, so that a compiled
-   program does not repopulate the page tables with a fresh [Bytes] per leaf on
-   every replay. A transfer primitive wants bytes of exactly its length; every
-   full chunk shares one [Bytes], and the table holds the shorter lengths.
-   Compiled functions are not thread-safe, and each use completes before the
-   next lookup. *)
+(* Byte staging belongs to the caller's table, including full chunks, and is
+   reused across calls so a compiled program does not allocate fresh [Bytes]
+   for every leaf on every replay. Transfer primitives consume the bytes
+   synchronously before the next lookup. One compiled function is not safe
+   for concurrent replay, but independent callers do not share staging. *)
 type scratch = (int, Bytes.t) Hashtbl.t
 
-let full_chunk = lazy (Bytes.create chunk_bytes)
-
 let scratch_bytes tbl size =
-  if size = chunk_bytes then Lazy.force full_chunk
-  else
-    match Hashtbl.find_opt tbl size with
-    | Some b -> b
-    | None ->
-        let b = Bytes.create size in
-        Hashtbl.add tbl size b;
-        b
+  match Hashtbl.find_opt tbl size with
+  | Some b -> b
+  | None ->
+      let b = Bytes.create size in
+      Hashtbl.add tbl size b;
+      b
 
 (* The window of [buf] that starts at byte [off] and spans [len] bytes, as a
    buffer of bytes, so that two windows of the same length copy into each other.
@@ -3473,12 +3459,11 @@ let read_base : type a b.
    at most a chunk, each made contiguous on its own. *)
 let rec copyin_at : type a b.
     scratch ->
-    Tolk.Device.t ->
     Tolk.Device.Buffer.t ->
     off:int ->
     (a, b) Nx_effect.t ->
     unit =
- fun sc dev buf ~off x ->
+ fun sc buf ~off x ->
   let v = Nx_effect.view x in
   let shape = NV.shape v in
   let item = ND.itemsize (Nx_effect.dtype x) in
@@ -3510,15 +3495,14 @@ let rec copyin_at : type a b.
         ~len:(len * item)
         (fun w -> Tolk.Device.Buffer.copyin w bytes);
       bytes_to_device := !bytes_to_device + (len * item);
-      note_copied dev (len * item);
       pos := !pos + len
     done
   end
   else
     match read_base sc x with
-    | Some base -> copyin_at sc dev buf ~off base
+    | Some base -> copyin_at sc buf ~off base
     | None when nbytes <= chunk_bytes ->
-        copyin_at sc dev buf ~off (Nx_effect.contiguous x)
+        copyin_at sc buf ~off (Nx_effect.contiguous x)
     | None ->
         (* Axes of size one before [axis] do not change the row-major order. *)
         let axis = ref 0 in
@@ -3536,16 +3520,16 @@ let rec copyin_at : type a b.
               (fun d n -> if d = axis then (!r, stop) else (0, n))
               shape
           in
-          copyin_at sc dev buf
+          copyin_at sc buf
             ~off:(off + (!r * row))
             (Nx_effect.shrink x ranges);
           r := stop
         done
 
 (* Copy a tensor's logical contents into a device buffer. *)
-let copyin_tensor sc dev buf x =
+let copyin_tensor sc buf x =
   ensure_storage buf;
-  copyin_at sc dev buf ~off:0
+  copyin_at sc buf ~off:0
     (match x with
     | Nx_effect.Placed _ -> Nx_effect.Host (Nx_effect.host_of x)
     | x -> x)
@@ -3587,9 +3571,9 @@ let upload_windows : type a b.
   let x = on_host x in
   let shape = shape_of x in
   List.iter2
-    (fun (d, dev) buf ->
-      copyin_tensor sc dev buf
-        (Nx_effect.shrink x (Nx.Placement.window p shape d)))
+    (fun device buf ->
+      copyin_tensor sc buf
+        (Nx_effect.shrink x (Nx.Placement.window p shape (fst device))))
     on bufs
 
 (* Build a fresh tensor of [dt]/[shape] from a device buffer's contents. *)
@@ -3898,7 +3882,7 @@ let transfer : type a b.
             Nx_effect.assemble r block (fun d v ->
                 read_window dt (snd (buffer_on s d)) v)
           in
-          copyin_at sc dev buf
+          copyin_at sc buf
             ~off:(!r0 * row * item)
             (Nx_effect.from_host Nx_effect.host_tensor_context host);
           r0 := r1
@@ -3977,9 +3961,8 @@ and place_on : type a b.
       match source with
       | `Host h ->
           List.iter2
-            (fun (dev, buf) w ->
-              copyin_tensor sc dev buf (Nx_effect.shrink h w))
-            (List.combine devs bufs) windows
+            (fun buf w -> copyin_tensor sc buf (Nx_effect.shrink h w))
+            bufs windows
       | `Stored (r, s) -> transfer sc r s devs windows bufs
     with e ->
       release_unowned bufs;
@@ -4022,7 +4005,7 @@ let device name =
   let name = canonical name in
   if String.equal name host_name then Nx.Device.host
   else
-    match Hashtbl.find_opt by_name name with
+    match Mutex.protect by_name_mutex (fun () -> Hashtbl.find_opt by_name name) with
     | Some (d, _) -> d
     | None ->
         if not (List.mem (backend name) backends) then
@@ -4033,9 +4016,13 @@ let device name =
             invalid_arg
               (Printf.sprintf "Rune.device: device %s unavailable: %s" name msg)
         in
-        let d = Nx_effect.Device.make name (engine_for (backend name)) in
-        Hashtbl.add by_name name (d, dev);
-        d
+        Mutex.protect by_name_mutex (fun () ->
+            match Hashtbl.find_opt by_name name with
+            | Some (d, _) -> d
+            | None ->
+                let d = Nx_effect.Device.make name (engine_for (backend name)) in
+                Hashtbl.add by_name name (d, dev);
+                d)
 
 (* Metal exposes one device, whatever the index; the other backends number
    theirs from 0, and the first index that does not open ends the list. *)

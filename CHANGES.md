@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Prevent independent uploads of 64 MiB or more from overwriting each other's
+  staging bytes. Concurrent `Rune.device` lookups now return one canonical
+  device identity.
+
 - Support compiled `Nx.bitcast` to and from float8, preserving all byte
   encodings through direct outputs, transposes and slices on CPU and Metal.
 
