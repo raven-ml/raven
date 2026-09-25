@@ -661,6 +661,10 @@ thread.
 
 ### Tolk (new)
 
+- Keep beam-search trial launches within the size budget when symbolic
+  dimensions multiply beyond host integer limits; timing scales now preserve
+  the full launch size.
+
 - Preserve execution and allocation counts across concurrent callers.
   `Global_counters.snapshot ()`, `Storage.mem_used ?device ()` and
   `Realize.queue_submissions ()` replace externally mutable counters.

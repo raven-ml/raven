@@ -94,10 +94,6 @@ acceptance requirement; skipped tests are not execution evidence.
 - Compare symbolic `STAGE` extent end to end: Tolk uses the active symbolic
   size, while the target reserves its maximum extent. Establish allocation and
   indexing requirements with a paired execution case before changing it.
-  Test remaining beam-search launch-size resource bounds at
-  integer and symbolic dimension boundaries rather than silently treating
-  unknown extents as one; distinguish a proven mismatch from a conservative
-  optimization difference.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.
 - Add deterministic beam coverage for reconsidering candidates rejected by

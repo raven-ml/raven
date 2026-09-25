@@ -133,9 +133,11 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
    from the end. Returns (scaled_size, factor). *)
 let get_test_global_size global_size max_global_size =
   let test = Array.copy global_size in
-  let input_size = Array.fold_left ( * ) 1 test in
+  let product dims = Array.fold_left (fun acc n -> Z.mul acc (Z.of_int n)) Z.one dims in
+  let input_size = product test in
+  let limit = Z.of_int max_global_size in
   let cont = ref true in
-  while !cont && Array.fold_left ( * ) 1 test > max_global_size do
+  while !cont && Z.gt (product test) limit do
     cont := false;
     for j = Array.length test - 1 downto 0 do
       if not !cont && test.(j) > 16 then begin
@@ -144,8 +146,8 @@ let get_test_global_size global_size max_global_size =
       end
     done
   done;
-  let scaled = Array.fold_left ( * ) 1 test in
-  (test, Float.of_int input_size /. Float.of_int (max scaled 1))
+  let scaled = product test in
+  (test, Z.to_float input_size /. Z.to_float (Z.max scaled Z.one))
 
 (* Compilation *)
 

@@ -553,7 +553,10 @@ let sequential_compile_interrupt () =
                 (P.create ast ren) rawbufs ~var_vals:[] 1 device)));
       equal ~msg:"interruption stops candidate compilation immediately" int 1 !compiled)
 
-let candidate_program_metadata () =
+let candidate_program_metadata ~large () =
+  let extent = if large then 1 lsl 32 else 131072 in
+  let second = if large then 1 lsl 32 else 1 in
+  let scaled = if large then [|4096; 16; 1|] else [|65536; 1; 1|] in
   let backing = cpu "beam-program-buffers" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
   let compiled = ref 0 and timed = ref 0 and expected = ref [] in
@@ -564,7 +567,7 @@ let candidate_program_metadata () =
       (List.mem obj.profile_key !expected);
     let call _ ~global ~local ~vals ~wait:_ ~timeout:_ =
       incr timed;
-      equal (array int) [|65536; 1; 1|] global;
+      equal (array int) scaled global;
       equal (option (array int)) (Some [|2; 1; 1|]) local;
       equal (array int64) [||] vals;
       Some 1e-6 in
@@ -581,9 +584,9 @@ let candidate_program_metadata () =
     incr compiled;
     let program = to_program device ast in
     let info = Option.get (U.as_program_info program) in
-    let extent = U.variable ~name:"timing_extent" ~min_val:65536 ~max_val:131072 () in
+    let symbolic_extent = U.variable ~name:"timing_extent" ~min_val:65536 ~max_val:extent () in
     let info = {info with target = {info.target with arch = "callback-arch"};
-      global_size = [U.Launch_sym extent; U.Launch_int 1; U.Launch_int 1];
+      global_size = [U.Launch_sym symbolic_extent; U.Launch_int second; U.Launch_int 1];
       local_size = [U.Launch_int 2; U.Launch_int 1; U.Launch_int 1]} in
     let children = Array.copy (U.src program) in
     let kernel = Option.get (U.as_kernel_info children.(0)) in
@@ -591,7 +594,7 @@ let candidate_program_metadata () =
         ~arg:(U.Arg.Kernel_info {kernel with estimates = !estimates}) ();
     let program = U.replace program ~src:children ~arg:(U.Arg.Program_info info) () in
     let scaled = U.replace program ~arg:(U.Arg.Program_info {info with
-        global_size = [U.Launch_int 65536; U.Launch_int 1; U.Launch_int 1]}) () in
+        global_size = List.map (fun n -> U.Launch_int n) (Array.to_list scaled)}) () in
     expected := Some (U.semantic_key scaled) :: !expected;
     program in
   let ast = elementwise_1d_ast ~n:4 in
@@ -606,7 +609,7 @@ let candidate_program_metadata () =
     (fun () ->
       let search () = ignore (Search.beam_search ~to_program:compile_candidate
           ~disable_cache:true (P.create ast renderer) rawbufs
-          ~var_vals:["timing_extent", 131072L] 1 device) in
+          ~var_vals:["timing_extent", Int64.of_int extent] 1 device) in
       Unix.putenv "BEAM_UOPS_MAX" "1";
       search ();
       is_true ~msg:"candidate compilation uses the supplied constructor" (!compiled > 0);
@@ -656,7 +659,9 @@ let () = run __FILE__
       test "beam rejects overflowing resource products"
         overflowing_resource_products_reject_candidates;
       test "beam retains candidate PROGRAM metadata and scales only its launch"
-        candidate_program_metadata;
+        (candidate_program_metadata ~large:false);
+      test "beam scales symbolic launch products beyond host integer bounds"
+        (candidate_program_metadata ~large:true);
       test "parallel compilation joins workers before propagating failure"
         (parallel_failure_joins_workers Stack_overflow);
       test "parallel compilation joins workers before propagating interruption"
