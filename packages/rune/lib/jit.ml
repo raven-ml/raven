@@ -3323,6 +3323,16 @@ let read_shards : type a b.
     bufs;
   host
 
+(* The name of the tolk device that compiles and runs the host's programs. *)
+let host_name = "CPU"
+
+let tolk_device_of d =
+  if d == Nx.Device.host then Tolk.Device.get host_name
+  else
+    match Hashtbl.find_opt by_name (Nx.Device.name d) with
+    | Some (d', dev) when d' == d -> dev
+    | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
+
 let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
  fun r ->
   drain_releases ();
@@ -3333,12 +3343,27 @@ let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
       let shape = Array.copy (NV.shape r.r_view) in
       shape.(axis) <- shape.(axis) * List.length devices;
       read_shards r.r_dtype shape ~axis r.r_view s.s_bufs
-  | Some s, (Device _ | Replicated _) -> (
-      match (s.s_devices, s.s_bufs) with
-      | dev :: _, buf :: _ ->
+  | Some s, ((Device _ | Replicated _) as p) -> (
+      match s.s_bufs with
+      | [] -> Nx_buffer.create r.r_dtype 0 (* an empty value has no buffer *)
+      | bufs ->
+          (* A value on one device of a split storage views that device's
+             shard. *)
+          let d = List.hd (Nx_effect.Placement.devices p) in
+          let dev = tolk_device_of d in
+          let k =
+            match List.find_index (( == ) dev) s.s_devices with
+            | Some k -> k
+            | None ->
+                (* nx places a view only on devices that hold its storage. *)
+                failwith
+                  (Printf.sprintf
+                     "Rune: a value on %s views a storage that %s does not \
+                      hold; nx placed a view off its storage's devices"
+                     (Nx.Device.name d) (Nx.Device.name d))
+          in
           Tolk.Device.synchronize dev;
-          read_window r.r_dtype buf r.r_view
-      | _ -> Nx_buffer.create r.r_dtype 0 (* an empty value has no buffer *))
+          read_window r.r_dtype (List.nth bufs k) r.r_view)
 
 (* [x] with a host value in place of a placed one: its view's elements. *)
 let on_host : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t = function
@@ -3365,16 +3390,6 @@ let allocate d buf =
     collect ();
     try Tolk.Device.Buffer.ensure_allocated buf
     with Failure _ -> raise (Nx.Device.Out_of_memory (d, n)))
-
-(* The name of the tolk device that compiles and runs the host's programs. *)
-let host_name = "CPU"
-
-let tolk_device_of d =
-  if d == Nx.Device.host then Tolk.Device.get host_name
-  else
-    match Hashtbl.find_opt by_name (Nx.Device.name d) with
-    | Some (d', dev) when d' == d -> dev
-    | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
 
 (* Raise unless [dev] can hold [dt]. *)
 let check_holds (type a b) d dev (dt : (a, b) ND.t) =
@@ -4626,8 +4641,9 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   (* A placed value on a single device seeds the compiled input as [seeds]
      say. On a device tuple, it seeds only when its view covers its storage and
      its placement matches the input's: the same tuple with the same shard
-     axis. Any other value is read by the copy path, which leaves it where it
-     is, and re-split. *)
+     axis, on every device of its storage (not a view of one shard). Any other
+     value is read by the copy path, which leaves it where it is, and
+     re-split. *)
   let resident_multi : type a b.
       multi_spec -> leaf_place -> (a, b) Nx_effect.t -> Nx_effect.cell option =
    fun spec place -> function
@@ -4641,21 +4657,39 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
          | Some s
            when s.s_bufs <> []
                 && List.equal ( == ) s.s_devices spec.md_devs
+                && List.compare_lengths
+                     (Nx_effect.Placement.devices r.r_placement)
+                     s.s_devices
+                   = 0
                 && axis = place_axis place ->
              Some r.r_cell
          | _ -> None)
      | _ -> None
   in
   (* Consumption, checked before anything moves (RFC 0006, rule 4). A consumed
-     leaf's view must cover its storage, and no other leaf of the call, nor a
-     capture of the program, may reach that storage. A host leaf has no storage
-     to consume: it is uploaded and stays usable. *)
+     leaf's view must cover its storage on every device that holds it, and no
+     other leaf of the call, nor a capture of the program, may reach that
+     storage. A host leaf has no storage to consume: it is uploaded and stays
+     usable. *)
   let consumed = ref [] in
   Array.iteri
     (fun i (Nx.P leaf) ->
       if c.cp_consumed.(i) then
         match leaf with
         | Placed r ->
+            (match store_of r.r_cell with
+            | Some s
+              when List.compare_lengths
+                     (Nx_effect.Placement.devices r.r_placement)
+                     s.s_devices
+                   < 0 ->
+                invalid_arg
+                  (Printf.sprintf
+                     "Rune.jit: the argument at %s is a view of one shard of a \
+                      split storage, so it cannot be consumed; pass Nx.copy of \
+                      it"
+                     c.cp_names.(i))
+            | _ -> ());
             if not (Nx_effect.covers r) then
               invalid_arg
                 (Printf.sprintf

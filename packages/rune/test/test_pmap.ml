@@ -344,6 +344,51 @@ let test_split_output_into_jit_raises () =
       | _ -> false)
     (fun () -> Rune.jit' (fun x -> Nx.add_s x 1.0) y)
 
+(* A value on one device of a split storage, which nx makes from a cut inside
+   one shard, views that device's shard: it reads that shard, enters a
+   replicated input by value rather than as the whole storage, and cannot be
+   consumed, which would release every shard. *)
+let test_one_shard_of_a_split_storage () =
+  let g =
+    Rune.pmap ~devices:devs4
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun x -> Nx.add x x)
+  in
+  let x = m86 () in
+  let y = g x in
+  let v =
+    match y with
+    | Nx_effect.Placed r ->
+        Nx_effect.placed
+          (Nx.Placement.device (List.nth devs4 1))
+          f32 r.r_view r.r_cell
+    | _ -> fail "expected a placed value"
+  in
+  let rows = Nx.slice [ Nx.R (2, 4) ] (Nx.add x x) in
+  check_arr ~eps:0.0 ~msg:"reads its device's shard" (to_arr rows) v;
+  let h =
+    Rune.pmap ~devices:devs4 ~in_axes:[ None ]
+      Nx.Ptree.(tensor @-> returns tensor)
+      (fun v -> Nx.mul_s v 3.0)
+  in
+  check_arr ~eps:0.0 ~msg:"enters a replicated input by value"
+    (to_arr (Nx.mul_s rows 3.0))
+    (h v);
+  let f =
+    Rune.jit
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun v -> Nx.add_s v 1.0)
+  in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          msg
+          = "Rune.jit: the argument at 0 is a view of one shard of a split \
+             storage, so it cannot be consumed; pass Nx.copy of it"
+      | _ -> false)
+    (fun () -> f v);
+  check_arr ~eps:0.0 ~msg:"the split value stays" (to_arr (Nx.add x x)) y
+
 let test_pass_through_output () =
   let g =
     Rune.pmap ~devices:devs2
@@ -796,6 +841,7 @@ let tests =
         test "a placed capture is read back and replicated"
           test_placed_capture_is_replicated;
         test "a split output into jit raises" test_split_output_into_jit_raises;
+        test "one shard of a split storage" test_one_shard_of_a_split_storage;
       ];
     group "consumption"
       [
