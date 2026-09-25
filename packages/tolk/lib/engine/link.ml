@@ -102,7 +102,9 @@ let rec run ~resolve ?(allow_cache = true) linear =
                       invalid_arg ("link: unsupported allocation " ^ kind ^ " on " ^ device)
                   | Some {param; _} -> param.volatile | None -> assert false in
                 let spec = {B.Buffer_spec.default with host = volatile;
-                  cpu_access = true; uncached = volatile} in
+                  cpu_access = true; uncached = volatile ||
+                    Option.fold ~none:false ~some:(String.starts_with ~prefix:"cmdbuf")
+                      (U.node_tag u)} in
                 Device.create_buffer ~size:(max 1 (U.max_numel u))
                   ~dtype:(U.dtype u) ~spec owner in
             Some (U.from_buffer buf)

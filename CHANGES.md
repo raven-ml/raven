@@ -645,6 +645,9 @@ thread.
 
 ### Tolk (new)
 
+- Allocate AMD/NV compiled command streams uncached, so device command fetches
+  observe patched commands during replay.
+
 - Load NVRTC-produced cubins on the NV backend. The ELF loader previously
   rejected their executable format before reading the kernel.
 

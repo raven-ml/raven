@@ -2320,8 +2320,8 @@ module Queue = struct
         alloc = (fun _ _ -> raw); free = (fun _ _ _ -> State.synchronize state) } in
       B.create ~device:name ~size ~dtype
         ~spec:{Device.Buffer_spec.default with nolru = true} (Device.Allocator.Pack allocator) in
-    let allocate ?(host = false) ?(cpu_access = true) () =
-      let spec = {Device.Buffer_spec.default with host; cpu_access; nolru = true} in
+    let allocate () =
+      let spec = {Device.Buffer_spec.default with cpu_access = true; nolru = true} in
       B.create ~device:name ~size ~dtype ~spec (Device.Allocator.Pack (Allocator.raw state)) in
     match U.as_param u with
     | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
@@ -2345,8 +2345,6 @@ module Queue = struct
     | Some _ ->
         (match U.node_tag u with
          | Some "timeline" -> Some (borrowed (Hcq.Signal.buf state.State.tl.Timeline.timeline))
-         | Some "slots" -> Some (allocate ~host:true ())
-         | Some ("kernargs" | "cmdbuf_compute") -> Some (allocate ())
          | Some "hdp_flush" -> Some (borrow_view (Option.get state.State.compute_queue.Queue_desc.hdp_flush))
          | Some tag ->
              let descriptor, suffix = if Filename.check_suffix tag "_compute" then

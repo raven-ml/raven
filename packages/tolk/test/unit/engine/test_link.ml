@@ -24,6 +24,24 @@ let placeholder device tag dtype size =
 let initialized p bytes = U.set ~target:p ~value:(U.binary bytes) ()
 let link ?allow_cache b l = Realize.link_linear b ?allow_cache l
 
+let allocation_specs () =
+  let device = Tolk_cpu.create "CPU:link-allocation-specs" in
+  let b = binding () in
+  List.iter (fun (tag, volatile, host, uncached) ->
+      let p = U.placeholder ~shape:[16] ~dtype:Dtype.uint8 ~slot:0
+          ~device:(U.Single (Device.name device)) ~volatile () |> U.with_tag tag in
+      let linked = link b (U.linear [call [p]]) in
+      let spec = B.spec (resolve b (List.hd (args linked))) in
+      equal ~msg:(tag ^ " host") bool host spec.host;
+      equal ~msg:(tag ^ " uncached") bool uncached spec.uncached;
+      equal ~msg:(tag ^ " CPU access") bool true spec.cpu_access)
+    ["cmdbuf_compute", false, false, true;
+     "cmdbuf_copy_0", false, false, true;
+     "slots", true, true, true;
+     "retired_compute", true, true, true;
+     "qmd", false, false, false;
+     "kernargs", false, false, false]
+
 let initialization () =
   let device = Tolk_cpu.create "CPU:link-patches" in
   let p = placeholder device "commands" Dtype.uint8 24 in
@@ -139,6 +157,7 @@ let host_call_replay () =
   execute (-9)
 
 let () = run "Engine_link" [
+  test "allocates command streams uncached and volatile slots on the host" allocation_specs;
   test "initializes blobs, sparse words and ranged patches once" initialization;
   test "folds nested casts and bitcasts in link patches" cast_patches;
   test "retains mapped addresses and byte view offsets" addresses;

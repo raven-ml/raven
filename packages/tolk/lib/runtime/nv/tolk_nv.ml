@@ -2412,7 +2412,7 @@ module Allocator = struct
       | Some _ -> invalid_arg "NV buffers cannot adopt an external pointer"
       | None ->
           state.State.iface.Nv_iface.alloc ~host:spec.host
-            ~cpu_access:spec.cpu_access size
+            ~uncached:spec.uncached ~cpu_access:spec.cpu_access size
     in
     (* A queued kernel may still use the memory. *)
     let free buf _size (_ : Tolk.Device.Buffer_spec.t) =
@@ -2533,8 +2533,8 @@ module Queue = struct
         alloc = (fun _ _ -> raw); free = (fun _ _ _ -> State.synchronize state) } in
       B.create ~device:name ~size ~dtype
         ~spec:{Device.Buffer_spec.default with nolru = true} (Device.Allocator.Pack allocator) in
-    let allocate ?(host = false) ?(cpu_access = true) () =
-      let spec = {Device.Buffer_spec.default with host; cpu_access; nolru = true} in
+    let allocate () =
+      let spec = {Device.Buffer_spec.default with cpu_access = true; nolru = true} in
       B.create ~device:name ~size ~dtype ~spec (Device.Allocator.Pack (Allocator.raw state)) in
     match U.as_param u with
     | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
@@ -2553,8 +2553,6 @@ module Queue = struct
     | Some _ ->
         (match U.node_tag u with
          | Some "timeline" -> Some (borrowed (Hcq.Signal.buf state.State.tl.Timeline.timeline))
-         | Some ("slots" | "retired_compute" | "retired_copy") -> Some (allocate ~host:true ())
-         | Some ("qmd" | "cmdbuf_compute" | "cmdbuf_copy") -> Some (allocate ())
          | Some "doorbell" -> Some (borrow_view (Hcq.Mmio.view state.State.hw.gpu_mmio ~off:0x90 ~size:4 ()))
          | Some tag ->
              let descriptor, suffix = if Filename.check_suffix tag "_compute" then
