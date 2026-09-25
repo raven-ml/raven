@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_8_4n10(device float* data0_32, device float* data1_32, device float* data2_32, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_32; device float* data1_32; device float* data2_32; };
+kernel void E_8_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_32 = args.data0_32; device float* data1_32 = args.data1_32; device float* data2_32 = args.data2_32;
   int lidx0 = lid.x; /* 8 */
   int alu0 = (lidx0<<2);
   float4 val0 = (*((device float4*)((data1_32+alu0))));
@@ -10,7 +12,9 @@ kernel void E_8_4n10(device float* data0_32, device float* data1_32, device floa
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_8_4n11(device float* data0_32, device float* data1_32, device float* data2_32, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_32; device float* data1_32; device float* data2_32; };
+kernel void E_8_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_32 = args.data0_32; device float* data1_32 = args.data1_32; device float* data2_32 = args.data2_32;
   int lidx0 = lid.x; /* 8 */
   int alu0 = (lidx0<<2);
   float4 val0 = (*((device float4*)((data1_32+alu0))));

@@ -2,8 +2,7 @@ typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
 template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
-#include <cuda_fp16.h>
-extern "C" __global__ void __launch_bounds__(16) r_16_8_16_2n1(float* data0_128, unsigned char* data1_512, unsigned char* data2_256) {
+extern "C" __global__ void __launch_bounds__(16) r_16_8_16_2(float* data0_128, unsigned char* data1_512, unsigned char* data2_256) {
   float buf0[1];
   float buf1[1];
   __shared__ __align__(16) float buf2[16];
@@ -14,15 +13,15 @@ extern "C" __global__ void __launch_bounds__(16) r_16_8_16_2n1(float* data0_128,
   for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {
     unsigned char val0 = (*(data1_512+((lidx0<<1)+Ridx0+(gidx1<<5))));
     unsigned char val1 = (*(data2_256+(gidx0+(lidx0<<4)+(Ridx0<<3))));
-    unsigned short cast0 = ((unsigned short)((val0&((unsigned char)(127u)))));
-    unsigned short cast1 = ((unsigned short)((val1&((unsigned char)(127u)))));
-    unsigned short alu1 = (cast0<<((unsigned short)(7u)));
-    unsigned short alu2 = ((cast0==((unsigned short)(127u)))?(alu1|((unsigned short)(31744u))):(alu1+((unsigned short)(8192u))));
-    unsigned short alu3 = (((cast0>>((unsigned short)(3u)))==((unsigned short)(0u)))?((unsigned short)(0u)):alu2);
-    unsigned short alu4 = (cast1<<((unsigned short)(7u)));
-    unsigned short alu5 = ((cast1==((unsigned short)(127u)))?(alu4|((unsigned short)(31744u))):(alu4+((unsigned short)(8192u))));
-    unsigned short alu6 = (((cast1>>((unsigned short)(3u)))==((unsigned short)(0u)))?((unsigned short)(0u)):alu5);
-    *(buf0+0) = ((*(buf0+0))+((float)((tg_bitcast<half>((unsigned short)(((((unsigned short)((val0&((unsigned char)(128u)))))<<((unsigned short)(8u)))|alu3)))*tg_bitcast<half>((unsigned short)(((((unsigned short)((val1&((unsigned char)(128u)))))<<((unsigned short)(8u)))|alu6)))))));
+    uint cast0 = ((uint)((val0&((unsigned char)(127u)))));
+    uint cast1 = ((uint)((val1&((unsigned char)(127u)))));
+    uint alu1 = (cast0<<20u);
+    uint alu2 = ((cast0==127u)?(alu1|2139095040u):(alu1+1006632960u));
+    uint alu3 = (((cast0>>3u)==0u)?0u:alu2);
+    uint alu4 = (cast1<<20u);
+    uint alu5 = ((cast1==127u)?(alu4|2139095040u):(alu4+1006632960u));
+    uint alu6 = (((cast1>>3u)==0u)?0u:alu5);
+    *(buf0+0) = ((*(buf0+0))+(tg_bitcast<float>((uint)(((((uint)((val0&((unsigned char)(128u)))))<<24u)|alu3)))*tg_bitcast<float>((uint)(((((uint)((val1&((unsigned char)(128u)))))<<24u)|alu6)))));
   }
   *(buf2+lidx0) = (*(buf0+0));
   __syncthreads();

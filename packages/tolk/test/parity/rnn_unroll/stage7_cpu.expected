@@ -11,11 +11,11 @@ void r_4_4_4_4(float* restrict data0_16, float* restrict data1_16, float* restri
         float val2 = (*(data2_16+((Ridx0<<2)+Lidx3)));
         *(buf0+0) = ((*(buf0+0))+(val1*val2));
       }
-      float val3 = (*(data4_16+(Lidx3+4)));
-      float val4 = (*(data4_16+(Lidx3+8)));
-      float val5 = (*(data4_16+(Lidx3+12)));
+      float val3 = (*(data4_16+(Lidx3+12)));
+      float val4 = (*(data4_16+(Lidx3+4)));
+      float val5 = (*(data4_16+(Lidx3+8)));
       float val6 = (*(data4_16+Lidx3));
-      *(data0_16+(alu0+Lidx3)) = ((*(buf0+0))+(val0[0]*val6)+(val0[1]*val3)+(val0[2]*val4)+(val0[3]*val5));
+      *(data0_16+(alu0+Lidx3)) = ((*(buf0+0))+(val0[0]*val6)+(val0[1]*val4)+(val0[2]*val5)+(val0[3]*val3));
     }
   }
 }

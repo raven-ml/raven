@@ -1,5 +1,5 @@
 typedef int int2 __attribute__((aligned(8),ext_vector_type(2)));
-void E_16_3n1(unsigned char* restrict data0_48, int* restrict data1_3, unsigned char* restrict data2_1048576) {
+void E_16_3(unsigned char* restrict data0_48, int* restrict data1_3, unsigned char* restrict data2_1048576) {
   int val0 = (*(data1_3+2));
   int2 val1 = (*((int2*)((data1_3+0))));
   for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {

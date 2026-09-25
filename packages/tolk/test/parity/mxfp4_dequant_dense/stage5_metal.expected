@@ -1,63 +1,68 @@
 === kernel 0 ===
-   0 Ops.CONST           :            dtypes.int                               []                               6
-   1 Ops.PARAM           :            dtypes.float                             ['6']                            ParamArg(0, dtypes.float, device='CPU')
-   2 Ops.CONST           :            dtypes.int                               []                               3
-   3 Ops.SPECIAL         :            dtypes.int                               ['3']                            lidx0
-   4 Ops.CONST           :            dtypes.int                               []                               2
-   5 Ops.SPECIAL         :            dtypes.int                               ['2']                            gidx0
-   6 Ops.MUL             :            dtypes.int                               [5, '3']                         None
-   7 Ops.ADD             :            dtypes.int                               [3, 6]                           None
-   8 Ops.INDEX           :            dtypes.float                             [1, 7]                           None
-   9 Ops.CONST           :            dtypes.int                               []                               256
-  10 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(2, dtypes.float, device='CPU')
-  11 Ops.PARAM           :            dtypes.uchar                             ['6']                            ParamArg(1, dtypes.uchar, device='CPU')
-  12 Ops.INDEX           :            dtypes.uchar                             [11, 7]                          None
+   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 6, device='CPU')
+   1 Ops.CONST           :            dtypes.weakint                           []                               3
+   2 Ops.CAST            :            dtypes.int                               ['3']                            dtypes.int
+   3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+   4 Ops.CONST           :            dtypes.weakint                           []                               2
+   5 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+   6 Ops.SPECIAL         :            dtypes.int                               [5]                              gidx0
+   7 Ops.MUL             :            dtypes.int                               [6, 2]                           None
+   8 Ops.ADD             :            dtypes.int                               [3, 7]                           None
+   9 Ops.INDEX           :            dtypes.float                             [0, 8]                           None
+  10 Ops.PARAM           :            dtypes.float                             []                               ParamArg(2, dtypes.float, 256, device='CPU')
+  11 Ops.PARAM           :            dtypes.uchar                             []                               ParamArg(1, dtypes.uchar, 6, device='CPU')
+  12 Ops.INDEX           :            dtypes.uchar                             [11, 8]                          None
   13 Ops.LOAD            :            dtypes.uchar                             [12]                             None
   14 Ops.INDEX           :            dtypes.float                             [10, 13]                         None
   15 Ops.LOAD            :            dtypes.float                             [14]                             None
-  16 Ops.STORE           :            dtypes.void                              [8, 15]                          None
-  17 Ops.SINK            :            dtypes.void                              [16]                             KernelInfo(name='E_2_3', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.LOCAL, axis=0, arg=3),), opts_to_apply=None, estimates=None, beam=0)
+  16 Ops.STORE           :            dtypes.void                              [9, 15]                          None
+  17 Ops.SINK            :            dtypes.void                              [16]                             KernelInfo(name='E_2_3', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), opts_to_apply=None, estimates=None, beam=0)
 === kernel 1 ===
-   0 Ops.CONST           :            dtypes.int                               []                               192
-   1 Ops.PARAM           :            dtypes.float                             ['192']                          ParamArg(0, dtypes.float, device='CPU')
-   2 Ops.CONST           :            dtypes.int                               []                               3
-   3 Ops.SPECIAL         :            dtypes.int                               ['3']                            gidx0
-   4 Ops.CONST           :            dtypes.int                               []                               6
-   5 Ops.SHL             :            dtypes.int                               [3, '6']                         None
-   6 Ops.CONST           :            dtypes.int                               []                               32
-   7 Ops.SPECIAL         :            dtypes.int                               ['32']                           lidx0
-   8 Ops.CONST           :            dtypes.int                               []                               1
-   9 Ops.SHL             :            dtypes.int                               [7, '1']                         None
-  10 Ops.ADD             :            dtypes.int                               [5, 9]                           None
-  11 Ops.CONST           :            dtypes.int                               []                               2
-  12 Ops.SHRINK          :            dtypes.float                             [1, 10, '2']                     None
-  13 Ops.CONST           :            dtypes.int                               []                               16
-  14 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(2, dtypes.float, device='CPU')
-  15 Ops.CONST           :            dtypes.int                               []                               96
-  16 Ops.PARAM           :            dtypes.uchar                             ['96']                           ParamArg(1, dtypes.uchar, device='CPU')
-  17 Ops.CONST           :            dtypes.int                               []                               5
-  18 Ops.SHL             :            dtypes.int                               [3, '5']                         None
-  19 Ops.ADD             :            dtypes.int                               [7, 18]                          None
-  20 Ops.INDEX           :            dtypes.uchar                             [16, 19]                         None
-  21 Ops.LOAD            :            dtypes.uchar                             [20]                             None
-  22 Ops.CONST           :            dtypes.uchar                             []                               15
-  23 Ops.AND             :            dtypes.uchar                             [21, '15']                       None
-  24 Ops.INDEX           :            dtypes.float                             [14, 23]                         None
-  25 Ops.LOAD            :            dtypes.float                             [24]                             None
-  26 Ops.PARAM           :            dtypes.float                             ['6']                            ParamArg(3, dtypes.float, device='CPU')
-  27 Ops.SHL             :            dtypes.int                               [3, '1']                         None
-  28 Ops.CONST           :            dtypes.int                               []                               4
-  29 Ops.SHR             :            dtypes.int                               [7, '4']                         None
-  30 Ops.ADD             :            dtypes.int                               [27, 29]                         None
-  31 Ops.INDEX           :            dtypes.float                             [26, 30]                         None
-  32 Ops.LOAD            :            dtypes.float                             [31]                             None
-  33 Ops.MUL             :            dtypes.float                             [25, 32]                         None
-  34 Ops.CONST           :            dtypes.uchar                             []                               4
-  35 Ops.SHR             :            dtypes.uchar                             [21, '4']                        None
-  36 Ops.INDEX           :            dtypes.float                             [14, 35]                         None
+   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 192, device='CPU')
+   1 Ops.CONST           :            dtypes.weakint                           []                               3
+   2 Ops.CAST            :            dtypes.int                               ['3']                            dtypes.int
+   3 Ops.SPECIAL         :            dtypes.int                               [2]                              gidx0
+   4 Ops.CONST           :            dtypes.weakint                           []                               6
+   5 Ops.CAST            :            dtypes.int                               ['6']                            dtypes.int
+   6 Ops.SHL             :            dtypes.int                               [3, 5]                           None
+   7 Ops.CONST           :            dtypes.weakint                           []                               32
+   8 Ops.CAST            :            dtypes.int                               ['32']                           dtypes.int
+   9 Ops.SPECIAL         :            dtypes.int                               [8]                              lidx0
+  10 Ops.CONST           :            dtypes.weakint                           []                               1
+  11 Ops.CAST            :            dtypes.int                               ['1']                            dtypes.int
+  12 Ops.SHL             :            dtypes.int                               [9, 11]                          None
+  13 Ops.ADD             :            dtypes.int                               [6, 12]                          None
+  14 Ops.CONST           :            dtypes.weakint                           []                               2
+  15 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+  16 Ops.SHRINK          :            dtypes.float                             [0, 13, 15]                      None
+  17 Ops.PARAM           :            dtypes.float                             []                               ParamArg(2, dtypes.float, 16, device='CPU')
+  18 Ops.PARAM           :            dtypes.uchar                             []                               ParamArg(1, dtypes.uchar, 96, device='CPU')
+  19 Ops.CONST           :            dtypes.weakint                           []                               5
+  20 Ops.CAST            :            dtypes.int                               ['5']                            dtypes.int
+  21 Ops.SHL             :            dtypes.int                               [3, 20]                          None
+  22 Ops.ADD             :            dtypes.int                               [9, 21]                          None
+  23 Ops.INDEX           :            dtypes.uchar                             [18, 22]                         None
+  24 Ops.LOAD            :            dtypes.uchar                             [23]                             None
+  25 Ops.CONST           :            dtypes.weakint                           []                               15
+  26 Ops.CAST            :            dtypes.uchar                             ['15']                           dtypes.uchar
+  27 Ops.AND             :            dtypes.uchar                             [24, 26]                         None
+  28 Ops.INDEX           :            dtypes.float                             [17, 27]                         None
+  29 Ops.LOAD            :            dtypes.float                             [28]                             None
+  30 Ops.PARAM           :            dtypes.float                             []                               ParamArg(3, dtypes.float, 6, device='CPU')
+  31 Ops.SHL             :            dtypes.int                               [3, 11]                          None
+  32 Ops.CONST           :            dtypes.weakint                           []                               4
+  33 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+  34 Ops.SHR             :            dtypes.int                               [9, 33]                          None
+  35 Ops.ADD             :            dtypes.int                               [31, 34]                         None
+  36 Ops.INDEX           :            dtypes.float                             [30, 35]                         None
   37 Ops.LOAD            :            dtypes.float                             [36]                             None
-  38 Ops.MUL             :            dtypes.float                             [37, 32]                         None
-  39 Ops.STACK           :            dtypes.float                             [33, 38]                         None
-  40 Ops.STORE           :            dtypes.void                              [12, 39]                         None
-  41 Ops.GROUP           :            dtypes.void                              [40, 40]                         None
-  42 Ops.SINK            :            dtypes.void                              [41]                             KernelInfo(name='E_3_32_2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=1, arg=0), Opt(op=OptOps.LOCAL, axis=0, arg=32)), opts_to_apply=None, estimates=None, beam=0)
+  38 Ops.MUL             :            dtypes.float                             [29, 37]                         None
+  39 Ops.CAST            :            dtypes.uchar                             ['4']                            dtypes.uchar
+  40 Ops.SHR             :            dtypes.uchar                             [24, 39]                         None
+  41 Ops.INDEX           :            dtypes.float                             [17, 40]                         None
+  42 Ops.LOAD            :            dtypes.float                             [41]                             None
+  43 Ops.MUL             :            dtypes.float                             [42, 37]                         None
+  44 Ops.STACK           :            dtypes.float                             [38, 43]                         None
+  45 Ops.STORE           :            dtypes.void                              [16, 44]                         None
+  46 Ops.GROUP           :            dtypes.void                              [45, 45]                         None
+  47 Ops.SINK            :            dtypes.void                              [46]                             KernelInfo(name='E_3_32_2', applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)

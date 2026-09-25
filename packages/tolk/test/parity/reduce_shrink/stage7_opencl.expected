@@ -1,4 +1,4 @@
-__kernel void r_16_16_2n5(__global float* data0_16, __global float* data1_1024, __global float* data2_16) {
+__kernel void r_16_16_2(__global float* data0_16, __global float* data1_1024, __global float* data2_16) {
   float buf0[1];
   float buf1[1];
   __attribute__ ((aligned (16))) __local float buf2[16];

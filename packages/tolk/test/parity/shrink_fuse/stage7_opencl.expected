@@ -1,4 +1,4 @@
-__kernel void E_4_4n7(__global float* data0_16, __global float* data1_131072, __global float* data2_131072, __global float* data3_16) {
+__kernel void E_4_4(__global float* data0_16, __global float* data1_131072, __global float* data2_131072, __global float* data3_16) {
   int lidx0 = get_local_id(0); /* 4 */
   int alu0 = (lidx0<<2);
   float4 val0 = (*((__global float4*)((data1_131072+alu0))));

@@ -1,5 +1,5 @@
 typedef int int2 __attribute__((aligned(8),ext_vector_type(2)));
-void E_96_2_2n1(int* restrict data0_384, int* restrict data1_2, unsigned char* restrict data2_384) {
+void E_96_2_2(int* restrict data0_384, int* restrict data1_2, unsigned char* restrict data2_384) {
   int2 val0 = (*((int2*)((data1_2+0))));
   for (int Lidx2 = 0; Lidx2 < 96; Lidx2++) {
     unsigned char val1 = (((-1<val0[0])&(val0[0]<4))?*(data2_384+((val0[0]*96)+Lidx2)):((unsigned char)(0u)));
@@ -11,7 +11,7 @@ void E_96_2_2n1(int* restrict data0_384, int* restrict data1_2, unsigned char* r
 }
 ---
 typedef int int2 __attribute__((aligned(8),ext_vector_type(2)));
-void E_6_2n1(int* restrict data0_12, int* restrict data1_2, unsigned char* restrict data2_24) {
+void E_6_2(int* restrict data0_12, int* restrict data1_2, unsigned char* restrict data2_24) {
   int2 val0 = (*((int2*)((data1_2+0))));
   for (int Lidx2 = 0; Lidx2 < 6; Lidx2++) {
     unsigned char val1 = (((-1<val0[0])&(val0[0]<4))?*(data2_24+((val0[0]*6)+Lidx2)):((unsigned char)(0u)));
@@ -23,7 +23,7 @@ void E_6_2n1(int* restrict data0_12, int* restrict data1_2, unsigned char* restr
 ---
 typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_3_4n1(float* restrict data0_12, int* restrict data1_12, float* restrict data2_256) {
+void E_3_4(float* restrict data0_12, int* restrict data1_12, float* restrict data2_256) {
   for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {
     int alu0 = (Lidx1<<2);
     int4 val0 = (*((int4*)((data1_12+alu0))));
@@ -37,7 +37,7 @@ void E_3_4n1(float* restrict data0_12, int* restrict data1_12, float* restrict d
 ---
 typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_96_4n1(float* restrict data0_384, int* restrict data1_384, float* restrict data2_16, float* restrict data3_12) {
+void E_96_4(float* restrict data0_384, int* restrict data1_384, float* restrict data2_16, float* restrict data3_12) {
   for (int Lidx1 = 0; Lidx1 < 96; Lidx1++) {
     int alu0 = (Lidx1<<2);
     int4 val0 = (*((int4*)((data1_384+alu0))));

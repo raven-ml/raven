@@ -1,127 +1,127 @@
-   0 Ops.CONST           :            dtypes.int                               []                               2304
-   1 Ops.PARAM           :            dtypes.float                             ['2304']                         ParamArg(0, dtypes.float, device='CPU')
-   2 Ops.STACK           :            dtypes.void                              []                               None
-   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(4, dtypes.int, vmin_vmax=(0, 7), multiple_of=1, name='core_id', addrspace=AddrSpace.ALU)
-   4 Ops.CONST           :            dtypes.int                               []                               288
-   5 Ops.MUL             :            dtypes.int                               [3, '288']                       None
-   6 Ops.CONST           :            dtypes.int                               []                               96
-   7 Ops.RANGE           : 1          dtypes.int                               ['96']                           (1, AxisType.WEAK)
-   8 Ops.CONST           :            dtypes.int                               []                               3
-   9 Ops.MUL             : 1          dtypes.int                               [7, '3']                         None
-  10 Ops.ADD             : 1          dtypes.int                               [5, 9]                           None
-  11 Ops.INDEX           : 1          dtypes.float                             [1, 10]                          None
-  12 Ops.BUFFER          :            dtypes.float                             ['3']                            ParamArg(0, dtypes.float, addrspace=AddrSpace.REG)
-  13 Ops.AFTER           : 1          dtypes.float                             [12, 7]                          None
-  14 Ops.CONST           :            dtypes.int                               []                               0
-  15 Ops.INDEX           : 1          dtypes.float                             [13, '0']                        None
-  16 Ops.CONST           :            dtypes.float                             []                               0.0
-  17 Ops.STORE           : 1          dtypes.void                              [15, '0.0']                      None
-  18 Ops.CONST           :            dtypes.int                               []                               1
-  19 Ops.INDEX           : 1          dtypes.float                             [13, '1']                        None
-  20 Ops.STORE           : 1          dtypes.void                              [19, '0.0']                      None
-  21 Ops.CONST           :            dtypes.int                               []                               2
-  22 Ops.INDEX           : 1          dtypes.float                             [13, '2']                        None
-  23 Ops.STORE           : 1          dtypes.void                              [22, '0.0']                      None
-  24 Ops.CONST           :            dtypes.int                               []                               192
-  25 Ops.RANGE           : 0,1        dtypes.int                               ['192', 7]                       (0, AxisType.REDUCE)
-  26 Ops.AFTER           : 0,1        dtypes.float                             [12, 17, 20, 23, 25]             None
-  27 Ops.INDEX           : 0,1        dtypes.float                             [26, '0']                        None
-  28 Ops.LOAD            : 0,1        dtypes.float                             [27]                             None
-  29 Ops.CONST           :            dtypes.int                               []                               1769472
-  30 Ops.PARAM           :            dtypes.float                             ['1769472']                      ParamArg(1, dtypes.float, device='CPU')
-  31 Ops.CONST           :            dtypes.int                               []                               221184
-  32 Ops.MUL             :            dtypes.int                               [3, '221184']                    None
-  33 Ops.MUL             : 1          dtypes.int                               [7, '2304']                      None
-  34 Ops.ADD             : 1          dtypes.int                               [32, 33]                         None
-  35 Ops.SHL             : 0,1        dtypes.int                               [25, '2']                        None
-  36 Ops.ADD             : 0,1        dtypes.int                               [34, 35]                         None
-  37 Ops.CONST           :            dtypes.int                               []                               4
-  38 Ops.SHRINK          : 0,1        dtypes.float                             [30, 36, '4']                    None
+   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 2304, device='CPU')
+   1 Ops.CONST           :            dtypes.weakint                           []                               768
+   2 Ops.CAST            :            dtypes.int                               ['768']                          dtypes.int
+   3 Ops.RANGE           : 1          dtypes.int                               [2]                              (1, AxisType.WEAK)
+   4 Ops.CONST           :            dtypes.weakint                           []                               3
+   5 Ops.CAST            :            dtypes.int                               ['3']                            dtypes.int
+   6 Ops.MUL             : 1          dtypes.int                               [3, 5]                           None
+   7 Ops.INDEX           : 1          dtypes.float                             [0, 6]                           None
+   8 Ops.ALLOC           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 3, addrspace=AddrSpace.REG)
+   9 Ops.AFTER           : 1          dtypes.float                             [8, 3]                           None
+  10 Ops.CONST           :            dtypes.weakint                           []                               0
+  11 Ops.CAST            :            dtypes.int                               ['0']                            dtypes.int
+  12 Ops.INDEX           : 1          dtypes.float                             [9, 11]                          None
+  13 Ops.CONST           :            dtypes.weakfloat                         []                               0.0
+  14 Ops.CAST            :            dtypes.float                             ['0.0']                          dtypes.float
+  15 Ops.STORE           : 1          dtypes.void                              [12, 14]                         None
+  16 Ops.CONST           :            dtypes.weakint                           []                               1
+  17 Ops.CAST            :            dtypes.int                               ['1']                            dtypes.int
+  18 Ops.INDEX           : 1          dtypes.float                             [9, 17]                          None
+  19 Ops.STORE           : 1          dtypes.void                              [18, 14]                         None
+  20 Ops.CONST           :            dtypes.weakint                           []                               2
+  21 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+  22 Ops.INDEX           : 1          dtypes.float                             [9, 21]                          None
+  23 Ops.STORE           : 1          dtypes.void                              [22, 14]                         None
+  24 Ops.CONST           :            dtypes.weakint                           []                               192
+  25 Ops.CAST            :            dtypes.int                               ['192']                          dtypes.int
+  26 Ops.RANGE           : 0,1        dtypes.int                               [25, 3]                          (0, AxisType.REDUCE)
+  27 Ops.AFTER           : 0,1        dtypes.float                             [8, 15, 19, 23, 26]              None
+  28 Ops.INDEX           : 0,1        dtypes.float                             [27, 11]                         None
+  29 Ops.LOAD            : 0,1        dtypes.float                             [28]                             None
+  30 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 1769472, device='CPU')
+  31 Ops.SHL             : 0,1        dtypes.int                               [26, 21]                         None
+  32 Ops.CONST           :            dtypes.weakint                           []                               2304
+  33 Ops.CAST            :            dtypes.int                               ['2304']                         dtypes.int
+  34 Ops.MUL             : 1          dtypes.int                               [3, 33]                          None
+  35 Ops.ADD             : 0,1        dtypes.int                               [31, 34]                         None
+  36 Ops.CONST           :            dtypes.weakint                           []                               4
+  37 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+  38 Ops.SHRINK          : 0,1        dtypes.float                             [30, 35, 37]                     None
   39 Ops.LOAD            : 0,1        dtypes.float                             [38]                             None
-  40 Ops.INDEX           : 0,1        dtypes.float                             [39, '0']                        None
-  41 Ops.CONST           :            dtypes.int                               []                               768
-  42 Ops.PARAM           :            dtypes.float                             ['768']                          ParamArg(2, dtypes.float, device='CPU')
-  43 Ops.SHRINK          : 0,1        dtypes.float                             [42, 35, '4']                    None
-  44 Ops.LOAD            : 0,1        dtypes.float                             [43]                             None
-  45 Ops.INDEX           : 0,1        dtypes.float                             [44, '0']                        None
-  46 Ops.MUL             : 0,1        dtypes.float                             [40, 45]                         None
-  47 Ops.INDEX           : 0,1        dtypes.float                             [39, '1']                        None
-  48 Ops.INDEX           : 0,1        dtypes.float                             [44, '1']                        None
-  49 Ops.MUL             : 0,1        dtypes.float                             [47, 48]                         None
-  50 Ops.ADD             : 0,1        dtypes.float                             [46, 49]                         None
-  51 Ops.INDEX           : 0,1        dtypes.float                             [39, '2']                        None
-  52 Ops.INDEX           : 0,1        dtypes.float                             [44, '2']                        None
-  53 Ops.MUL             : 0,1        dtypes.float                             [51, 52]                         None
-  54 Ops.ADD             : 0,1        dtypes.float                             [50, 53]                         None
-  55 Ops.INDEX           : 0,1        dtypes.float                             [39, '3']                        None
-  56 Ops.INDEX           : 0,1        dtypes.float                             [44, '3']                        None
-  57 Ops.MUL             : 0,1        dtypes.float                             [55, 56]                         None
-  58 Ops.ADD             : 0,1        dtypes.float                             [54, 57]                         None
-  59 Ops.ADD             : 0,1        dtypes.float                             [28, 58]                         None
-  60 Ops.STORE           : 0,1        dtypes.void                              [27, 59]                         None
-  61 Ops.INDEX           : 0,1        dtypes.float                             [26, '1']                        None
-  62 Ops.LOAD            : 0,1        dtypes.float                             [61]                             None
-  63 Ops.ADD             : 0,1        dtypes.int                               [36, '768']                      None
-  64 Ops.SHRINK          : 0,1        dtypes.float                             [30, 63, '4']                    None
-  65 Ops.LOAD            : 0,1        dtypes.float                             [64]                             None
-  66 Ops.INDEX           : 0,1        dtypes.float                             [65, '0']                        None
-  67 Ops.MUL             : 0,1        dtypes.float                             [66, 45]                         None
-  68 Ops.INDEX           : 0,1        dtypes.float                             [65, '1']                        None
-  69 Ops.MUL             : 0,1        dtypes.float                             [68, 48]                         None
-  70 Ops.ADD             : 0,1        dtypes.float                             [67, 69]                         None
-  71 Ops.INDEX           : 0,1        dtypes.float                             [65, '2']                        None
-  72 Ops.MUL             : 0,1        dtypes.float                             [71, 52]                         None
-  73 Ops.ADD             : 0,1        dtypes.float                             [70, 72]                         None
-  74 Ops.INDEX           : 0,1        dtypes.float                             [65, '3']                        None
-  75 Ops.MUL             : 0,1        dtypes.float                             [74, 56]                         None
-  76 Ops.ADD             : 0,1        dtypes.float                             [73, 75]                         None
-  77 Ops.ADD             : 0,1        dtypes.float                             [62, 76]                         None
-  78 Ops.STORE           : 0,1        dtypes.void                              [61, 77]                         None
-  79 Ops.INDEX           : 0,1        dtypes.float                             [26, '2']                        None
-  80 Ops.LOAD            : 0,1        dtypes.float                             [79]                             None
-  81 Ops.CONST           :            dtypes.int                               []                               1536
-  82 Ops.ADD             : 0,1        dtypes.int                               [36, '1536']                     None
-  83 Ops.SHRINK          : 0,1        dtypes.float                             [30, 82, '4']                    None
+  40 Ops.INDEX           : 0,1        dtypes.float                             [39, 11]                         None
+  41 Ops.PARAM           :            dtypes.float                             []                               ParamArg(2, dtypes.float, 768, device='CPU')
+  42 Ops.SHRINK          : 0,1        dtypes.float                             [41, 31, 37]                     None
+  43 Ops.LOAD            : 0,1        dtypes.float                             [42]                             None
+  44 Ops.INDEX           : 0,1        dtypes.float                             [43, 11]                         None
+  45 Ops.MUL             : 0,1        dtypes.float                             [40, 44]                         None
+  46 Ops.INDEX           : 0,1        dtypes.float                             [39, 17]                         None
+  47 Ops.INDEX           : 0,1        dtypes.float                             [43, 17]                         None
+  48 Ops.MUL             : 0,1        dtypes.float                             [46, 47]                         None
+  49 Ops.ADD             : 0,1        dtypes.float                             [45, 48]                         None
+  50 Ops.INDEX           : 0,1        dtypes.float                             [39, 21]                         None
+  51 Ops.INDEX           : 0,1        dtypes.float                             [43, 21]                         None
+  52 Ops.MUL             : 0,1        dtypes.float                             [50, 51]                         None
+  53 Ops.ADD             : 0,1        dtypes.float                             [49, 52]                         None
+  54 Ops.INDEX           : 0,1        dtypes.float                             [39, 5]                          None
+  55 Ops.INDEX           : 0,1        dtypes.float                             [43, 5]                          None
+  56 Ops.MUL             : 0,1        dtypes.float                             [54, 55]                         None
+  57 Ops.ADD             : 0,1        dtypes.float                             [53, 56]                         None
+  58 Ops.ADD             : 0,1        dtypes.float                             [29, 57]                         None
+  59 Ops.STORE           : 0,1        dtypes.void                              [28, 58]                         None
+  60 Ops.INDEX           : 0,1        dtypes.float                             [27, 17]                         None
+  61 Ops.LOAD            : 0,1        dtypes.float                             [60]                             None
+  62 Ops.ADD             : 0,1        dtypes.int                               [35, 2]                          None
+  63 Ops.SHRINK          : 0,1        dtypes.float                             [30, 62, 37]                     None
+  64 Ops.LOAD            : 0,1        dtypes.float                             [63]                             None
+  65 Ops.INDEX           : 0,1        dtypes.float                             [64, 11]                         None
+  66 Ops.MUL             : 0,1        dtypes.float                             [65, 44]                         None
+  67 Ops.INDEX           : 0,1        dtypes.float                             [64, 17]                         None
+  68 Ops.MUL             : 0,1        dtypes.float                             [67, 47]                         None
+  69 Ops.ADD             : 0,1        dtypes.float                             [66, 68]                         None
+  70 Ops.INDEX           : 0,1        dtypes.float                             [64, 21]                         None
+  71 Ops.MUL             : 0,1        dtypes.float                             [70, 51]                         None
+  72 Ops.ADD             : 0,1        dtypes.float                             [69, 71]                         None
+  73 Ops.INDEX           : 0,1        dtypes.float                             [64, 5]                          None
+  74 Ops.MUL             : 0,1        dtypes.float                             [73, 55]                         None
+  75 Ops.ADD             : 0,1        dtypes.float                             [72, 74]                         None
+  76 Ops.ADD             : 0,1        dtypes.float                             [61, 75]                         None
+  77 Ops.STORE           : 0,1        dtypes.void                              [60, 76]                         None
+  78 Ops.INDEX           : 0,1        dtypes.float                             [27, 21]                         None
+  79 Ops.LOAD            : 0,1        dtypes.float                             [78]                             None
+  80 Ops.CONST           :            dtypes.weakint                           []                               1536
+  81 Ops.CAST            :            dtypes.int                               ['1536']                         dtypes.int
+  82 Ops.ADD             : 0,1        dtypes.int                               [35, 81]                         None
+  83 Ops.SHRINK          : 0,1        dtypes.float                             [30, 82, 37]                     None
   84 Ops.LOAD            : 0,1        dtypes.float                             [83]                             None
-  85 Ops.INDEX           : 0,1        dtypes.float                             [84, '0']                        None
-  86 Ops.MUL             : 0,1        dtypes.float                             [85, 45]                         None
-  87 Ops.INDEX           : 0,1        dtypes.float                             [84, '1']                        None
-  88 Ops.MUL             : 0,1        dtypes.float                             [87, 48]                         None
+  85 Ops.INDEX           : 0,1        dtypes.float                             [84, 11]                         None
+  86 Ops.MUL             : 0,1        dtypes.float                             [85, 44]                         None
+  87 Ops.INDEX           : 0,1        dtypes.float                             [84, 17]                         None
+  88 Ops.MUL             : 0,1        dtypes.float                             [87, 47]                         None
   89 Ops.ADD             : 0,1        dtypes.float                             [86, 88]                         None
-  90 Ops.INDEX           : 0,1        dtypes.float                             [84, '2']                        None
-  91 Ops.MUL             : 0,1        dtypes.float                             [90, 52]                         None
+  90 Ops.INDEX           : 0,1        dtypes.float                             [84, 21]                         None
+  91 Ops.MUL             : 0,1        dtypes.float                             [90, 51]                         None
   92 Ops.ADD             : 0,1        dtypes.float                             [89, 91]                         None
-  93 Ops.INDEX           : 0,1        dtypes.float                             [84, '3']                        None
-  94 Ops.MUL             : 0,1        dtypes.float                             [93, 56]                         None
+  93 Ops.INDEX           : 0,1        dtypes.float                             [84, 5]                          None
+  94 Ops.MUL             : 0,1        dtypes.float                             [93, 55]                         None
   95 Ops.ADD             : 0,1        dtypes.float                             [92, 94]                         None
-  96 Ops.ADD             : 0,1        dtypes.float                             [80, 95]                         None
-  97 Ops.STORE           : 0,1        dtypes.void                              [79, 96]                         None
-  98 Ops.GROUP           : 0,1        dtypes.void                              [60, 78, 97]                     None
-  99 Ops.END             : 1          dtypes.void                              [98, 25]                         None
- 100 Ops.AFTER           : 1          dtypes.float                             [12, 99]                         None
- 101 Ops.INDEX           : 1          dtypes.float                             [100, '0']                       None
+  96 Ops.ADD             : 0,1        dtypes.float                             [79, 95]                         None
+  97 Ops.STORE           : 0,1        dtypes.void                              [78, 96]                         None
+  98 Ops.GROUP           : 0,1        dtypes.void                              [59, 77, 97]                     None
+  99 Ops.END             : 1          dtypes.void                              [98, 26]                         None
+ 100 Ops.AFTER           : 1          dtypes.float                             [8, 99]                          None
+ 101 Ops.INDEX           : 1          dtypes.float                             [100, 11]                        None
  102 Ops.LOAD            : 1          dtypes.float                             [101]                            None
- 103 Ops.PARAM           :            dtypes.float                             ['2304']                         ParamArg(3, dtypes.float, device='CPU')
- 104 Ops.INDEX           : 1          dtypes.float                             [103, 10]                        None
+ 103 Ops.PARAM           :            dtypes.float                             []                               ParamArg(3, dtypes.float, 2304, device='CPU')
+ 104 Ops.INDEX           : 1          dtypes.float                             [103, 6]                         None
  105 Ops.LOAD            : 1          dtypes.float                             [104]                            None
  106 Ops.ADD             : 1          dtypes.float                             [102, 105]                       None
- 107 Ops.STORE           : 1          dtypes.void                              [11, 106]                        None
- 108 Ops.ADD             : 1          dtypes.int                               [10, '1']                        None
- 109 Ops.INDEX           : 1          dtypes.float                             [1, 108]                         None
- 110 Ops.INDEX           : 1          dtypes.float                             [100, '1']                       None
+ 107 Ops.STORE           : 1          dtypes.void                              [7, 106]                         None
+ 108 Ops.ADD             : 1          dtypes.int                               [6, 17]                          None
+ 109 Ops.INDEX           : 1          dtypes.float                             [0, 108]                         None
+ 110 Ops.INDEX           : 1          dtypes.float                             [100, 17]                        None
  111 Ops.LOAD            : 1          dtypes.float                             [110]                            None
  112 Ops.INDEX           : 1          dtypes.float                             [103, 108]                       None
  113 Ops.LOAD            : 1          dtypes.float                             [112]                            None
  114 Ops.ADD             : 1          dtypes.float                             [111, 113]                       None
  115 Ops.STORE           : 1          dtypes.void                              [109, 114]                       None
- 116 Ops.ADD             : 1          dtypes.int                               [10, '2']                        None
- 117 Ops.INDEX           : 1          dtypes.float                             [1, 116]                         None
- 118 Ops.INDEX           : 1          dtypes.float                             [100, '2']                       None
+ 116 Ops.ADD             : 1          dtypes.int                               [6, 21]                          None
+ 117 Ops.INDEX           : 1          dtypes.float                             [0, 116]                         None
+ 118 Ops.INDEX           : 1          dtypes.float                             [100, 21]                        None
  119 Ops.LOAD            : 1          dtypes.float                             [118]                            None
  120 Ops.INDEX           : 1          dtypes.float                             [103, 116]                       None
  121 Ops.LOAD            : 1          dtypes.float                             [120]                            None
  122 Ops.ADD             : 1          dtypes.float                             [119, 121]                       None
  123 Ops.STORE           : 1          dtypes.void                              [117, 122]                       None
  124 Ops.GROUP           : 1          dtypes.void                              [107, 115, 123]                  None
- 125 Ops.END             :            dtypes.void                              [124, 7]                         None
- 126 Ops.SINK            :            dtypes.void                              [125]                            KernelInfo(name='r_96_8_3_192_4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=3), Opt(op=OptOps.UNROLL, axis=0, arg=4), Opt(op=OptOps.THREAD, axis=0, arg=8)), opts_to_apply=None, estimates=None, beam=0)
+ 125 Ops.END             :            dtypes.void                              [124, 3]                         None
+ 126 Ops.SINK            :            dtypes.void                              [125]                            KernelInfo(name='r_768_3_192_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL))), opts_to_apply=None, estimates=None, beam=0)

@@ -3,7 +3,7 @@ extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned in
 extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
 extern "C" __attribute__((device, const)) float __ocml_sqrt_f32(float);
-extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_16n9(float* data0_1, float* data1_16) {
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_16(float* data0_1, float* data1_16) {
   float buf0[1];
   __attribute__((shared, aligned(16)))float buf1[16];
   int lidx0 = __ockl_get_local_id(0); /* 16 */

@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_16_16_2n3(device float* data0_16, device float* data1_1024, device float* data2_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_16; device float* data1_1024; device float* data2_16; };
+kernel void r_16_16_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_16 = args.data0_16; device float* data1_1024 = args.data1_1024; device float* data2_16 = args.data2_16;
   float buf0[1];
   float buf1[1];
   threadgroup __attribute__((aligned(16))) float buf2[16];

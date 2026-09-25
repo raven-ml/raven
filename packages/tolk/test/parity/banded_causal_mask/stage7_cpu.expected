@@ -1,19 +1,19 @@
 typedef int int2 __attribute__((aligned(8),ext_vector_type(2)));
-void E_8_3n1(float* restrict data0_24, int* restrict data1_3, int* restrict data2_8, float* restrict data3_24) {
+void E_8_3(float* restrict data0_24, int* restrict data1_3, int* restrict data2_8, float* restrict data3_24) {
   int val0 = (*(data1_3+2));
   int2 val1 = (*((int2*)((data1_3+0))));
   for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {
     int val2 = (*(data2_8+Lidx1));
-    int alu0 = (Lidx1+8);
+    int alu0 = (Lidx1+16);
     float val3 = (*(data3_24+alu0));
-    int alu1 = (Lidx1+16);
+    int alu1 = (Lidx1+8);
     float val4 = (*(data3_24+alu1));
     float val5 = (*(data3_24+Lidx1));
     float alu2 = ((((val1[0]<val2)!=1)&((val1[0]+-4)<val2))?val5:((float)(-__builtin_inff())));
-    float alu3 = ((((val1[1]<val2)!=1)&((val1[1]+-4)<val2))?val3:((float)(-__builtin_inff())));
-    float alu4 = ((((val0<val2)!=1)&((val0+-4)<val2))?val4:((float)(-__builtin_inff())));
-    *(data0_24+alu0) = alu3;
-    *(data0_24+alu1) = alu4;
+    float alu3 = ((((val1[1]<val2)!=1)&((val1[1]+-4)<val2))?val4:((float)(-__builtin_inff())));
+    float alu4 = ((((val0<val2)!=1)&((val0+-4)<val2))?val3:((float)(-__builtin_inff())));
+    *(data0_24+alu0) = alu4;
+    *(data0_24+alu1) = alu3;
     *(data0_24+Lidx1) = alu2;
   }
 }

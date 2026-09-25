@@ -1,5 +1,5 @@
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void r_4_8n1(float* restrict data0_4, float* restrict data1_32, float* restrict data2_64, const int data3_) {
+void r_4_8(float* restrict data0_4, float* restrict data1_32, float* restrict data2_64, const int data3_) {
   for (int Lidx2 = 0; Lidx2 < 4; Lidx2++) {
     int alu0 = (Lidx2<<3);
     float4 val0 = (*((float4*)((data1_32+(alu0+4)))));
@@ -27,7 +27,7 @@ void r_4_8n1(float* restrict data0_4, float* restrict data1_32, float* restrict 
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_4_2_4n1(float* restrict data0_32, float* restrict data1_32, float* restrict data2_64, float* restrict data3_4, const int data4_) {
+void E_4_2_4(float* restrict data0_32, float* restrict data1_32, float* restrict data2_64, float* restrict data3_4, const int data4_) {
   for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {
     float val0 = (*(data3_4+Lidx1));
     int alu0 = (Lidx1<<3);

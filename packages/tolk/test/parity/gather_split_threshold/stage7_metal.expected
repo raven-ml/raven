@@ -1,12 +1,14 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_16_3n3(device unsigned char* data0_48, device int* data1_3, device unsigned char* data2_1048576, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device uchar* data0_48; device int* data1_3; device uchar* data2_1048576; };
+kernel void E_16_3(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device uchar* data0_48 = args.data0_48; device int* data1_3 = args.data1_3; device uchar* data2_1048576 = args.data2_1048576;
   int2 val0 = (*((device int2*)((data1_3+0))));
   int lidx0 = lid.x; /* 16 */
-  unsigned char val1 = (((-1<val0.x)&(val0.x<65536))?*(data2_1048576+(lidx0+(val0.x<<4))):((unsigned char)(0u)));
-  unsigned char val2 = (((-1<val0.y)&(val0.y<65536))?*(data2_1048576+(lidx0+(val0.y<<4))):((unsigned char)(0u)));
+  uchar val1 = (((-1<val0.x)&(val0.x<65536))?*(data2_1048576+(lidx0+(val0.x<<4))):((uchar)(0u)));
+  uchar val2 = (((-1<val0.y)&(val0.y<65536))?*(data2_1048576+(lidx0+(val0.y<<4))):((uchar)(0u)));
   int val3 = (*(data1_3+2));
-  unsigned char val4 = (((-1<val3)&(val3<65536))?*(data2_1048576+(lidx0+(val3<<4))):((unsigned char)(0u)));
+  uchar val4 = (((-1<val3)&(val3<65536))?*(data2_1048576+(lidx0+(val3<<4))):((uchar)(0u)));
   *(data0_48+lidx0) = val1;
   *(data0_48+(lidx0+16)) = val2;
   *(data0_48+(lidx0+32)) = val4;

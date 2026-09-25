@@ -1,5 +1,5 @@
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n9(float* restrict data0_64, float* restrict data1_128) {
+void E_16_4(float* restrict data0_64, float* restrict data1_128) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_128+alu0))));
@@ -8,7 +8,7 @@ void E_16_4n9(float* restrict data0_64, float* restrict data1_128) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n10(float* restrict data0_64, float* restrict data1_64) {
+void E_16_4(float* restrict data0_64, float* restrict data1_64) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_64+alu0))));
@@ -17,7 +17,7 @@ void E_16_4n10(float* restrict data0_64, float* restrict data1_64) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n11(float* restrict data0_64, float* restrict data1_128) {
+void E_16_4(float* restrict data0_64, float* restrict data1_128) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_128+(alu0+64)))));
@@ -26,7 +26,7 @@ void E_16_4n11(float* restrict data0_64, float* restrict data1_128) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n12(float* restrict data0_64, float* restrict data1_64) {
+void E_16_4(float* restrict data0_64, float* restrict data1_64) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_64+alu0))));
@@ -35,7 +35,7 @@ void E_16_4n12(float* restrict data0_64, float* restrict data1_64) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n13(float* restrict data0_64, float* restrict data1_128) {
+void E_16_4(float* restrict data0_64, float* restrict data1_128) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_128+alu0))));
@@ -44,7 +44,7 @@ void E_16_4n13(float* restrict data0_64, float* restrict data1_128) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n14(float* restrict data0_64, float* restrict data1_64) {
+void E_16_4(float* restrict data0_64, float* restrict data1_64) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_64+alu0))));
@@ -53,7 +53,7 @@ void E_16_4n14(float* restrict data0_64, float* restrict data1_64) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n15(float* restrict data0_64, float* restrict data1_128) {
+void E_16_4(float* restrict data0_64, float* restrict data1_128) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_128+(alu0+64)))));
@@ -62,7 +62,7 @@ void E_16_4n15(float* restrict data0_64, float* restrict data1_128) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n16(float* restrict data0_64, float* restrict data1_64) {
+void E_16_4(float* restrict data0_64, float* restrict data1_64) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_64+alu0))));
@@ -71,7 +71,7 @@ void E_16_4n16(float* restrict data0_64, float* restrict data1_64) {
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_16_4n17(float* restrict data0_64, float* restrict data1_64, float* restrict data2_64) {
+void E_16_4(float* restrict data0_64, float* restrict data1_64, float* restrict data2_64) {
   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
     int alu0 = (Lidx0<<2);
     float4 val0 = (*((float4*)((data1_64+alu0))));

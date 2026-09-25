@@ -1,4 +1,4 @@
-__kernel void r_5_5_2_2_10n5(__global float* data0_100, __global float* data1_1000, __global float* data2_100) {
+__kernel void r_5_5_2_2_10(__global float* data0_100, __global float* data1_1000, __global float* data2_100) {
   int gidx0 = get_group_id(0); /* 5 */
   int gidx1 = get_group_id(1); /* 5 */
   int lidx0 = get_local_id(0); /* 2 */

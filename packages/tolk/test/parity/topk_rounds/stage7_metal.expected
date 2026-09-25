@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n24(device bool* data0_3, device float* data1_12, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device bool* data0_3; device float* data1_12; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device bool* data0_3 = args.data0_3; device float* data1_12 = args.data1_12;
   int lidx0 = lid.x; /* 3 */
   float4 val0 = (*((device float4*)((data1_12+(lidx0<<2)))));
   *(data0_3+lidx0) = (((val0.x!=val0.x)^1)|((val0.y!=val0.y)^1)|((val0.z!=val0.z)^1)|((val0.w!=val0.w)^1));
@@ -8,7 +10,9 @@ kernel void r_3_4n24(device bool* data0_3, device float* data1_12, uint3 gid [[t
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n25(device float* data0_3, device float* data1_12, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_3; device float* data1_12; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_3 = args.data0_3; device float* data1_12 = args.data1_12;
   float4 val0 = (*((device float4*)((data1_12+0))));
   float4 val1 = (*((device float4*)((data1_12+4))));
   float4 val2 = (*((device float4*)((data1_12+8))));
@@ -39,7 +43,9 @@ kernel void r_3_4n25(device float* data0_3, device float* data1_12, uint3 gid [[
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n26(device int* data0_3, device bool* data1_3, device float* data2_12, device float* data3_3, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device int* data0_3; device bool* data1_3; device float* data2_12; device float* data3_3; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device int* data0_3 = args.data0_3; device bool* data1_3 = args.data1_3; device float* data2_12 = args.data2_12; device float* data3_3 = args.data3_3;
   bool val0 = (*(data1_3+0));
   bool val1 = (*(data1_3+1));
   bool val2 = (*(data1_3+2));
@@ -48,37 +54,48 @@ kernel void r_3_4n26(device int* data0_3, device bool* data1_3, device float* da
   float4 val5 = (*((device float4*)((data2_12+4))));
   float4 val6 = (*((device float4*)((data2_12+8))));
   float2 val7 = (*((device float2*)((data3_3+0))));
-  int cast0 = ((int)((((val4.x!=val4.x)^1)&(val4.x==val7.x))));
-  int cast1 = ((int)((((val4.y!=val4.y)^1)&(val4.y==val7.x))));
-  int cast2 = ((int)((((val4.z!=val4.z)^1)&(val4.z==val7.x))));
-  int cast3 = ((int)((((val4.w!=val4.w)^1)&(val4.w==val7.x))));
-  int cast4 = ((int)((((val5.x!=val5.x)^1)&(val5.x==val7.y))));
-  int cast5 = ((int)((((val5.y!=val5.y)^1)&(val5.y==val7.y))));
-  int cast6 = ((int)((((val5.z!=val5.z)^1)&(val5.z==val7.y))));
-  int cast7 = ((int)((((val5.w!=val5.w)^1)&(val5.w==val7.y))));
-  int alu0 = ((cast0<cast1)?cast1:cast0);
-  int alu1 = ((cast4<cast5)?cast5:cast4);
-  int alu2 = ((alu0<cast2)?cast2:alu0);
-  int alu3 = ((alu1<cast6)?cast6:alu1);
-  int alu4 = ((alu2<cast3)?cast3:alu2);
-  int alu5 = (val0?alu4:1);
-  int alu6 = ((alu3<cast7)?cast7:alu3);
-  int alu7 = (val1?alu6:1);
-  int cast8 = ((int)((((val6.x!=val6.x)^1)&(val6.x==val3))));
-  int cast9 = ((int)((((val6.y!=val6.y)^1)&(val6.y==val3))));
-  int cast10 = ((int)((((val6.z!=val6.z)^1)&(val6.z==val3))));
-  int cast11 = ((int)((((val6.w!=val6.w)^1)&(val6.w==val3))));
-  int alu8 = ((cast8<cast9)?cast9:cast8);
-  int alu9 = ((alu8<cast10)?cast10:alu8);
-  int alu10 = ((alu9<cast11)?cast11:alu9);
-  int alu11 = (val2?alu10:1);
-  *(data0_3+2) = alu11;
-  *((device int2*)((data0_3+0))) = int2(alu5,alu7);
+  bool alu0 = (val0?(((val4.x!=val4.x)^1)&(val4.x==val7.x)):1);
+  int cast0 = ((int)(alu0));
+  bool alu1 = (val0?(((val4.y!=val4.y)^1)&(val4.y==val7.x)):1);
+  int cast1 = ((int)(alu1));
+  bool alu2 = (val0?(((val4.z!=val4.z)^1)&(val4.z==val7.x)):1);
+  int cast2 = ((int)(alu2));
+  bool alu3 = (val0?(((val4.w!=val4.w)^1)&(val4.w==val7.x)):1);
+  int cast3 = ((int)(alu3));
+  bool alu4 = (val1?(((val5.x!=val5.x)^1)&(val5.x==val7.y)):1);
+  int cast4 = ((int)(alu4));
+  bool alu5 = (val1?(((val5.y!=val5.y)^1)&(val5.y==val7.y)):1);
+  int cast5 = ((int)(alu5));
+  bool alu6 = (val1?(((val5.z!=val5.z)^1)&(val5.z==val7.y)):1);
+  int cast6 = ((int)(alu6));
+  bool alu7 = (val1?(((val5.w!=val5.w)^1)&(val5.w==val7.y)):1);
+  int cast7 = ((int)(alu7));
+  int alu8 = ((cast0<cast1)?cast1:cast0);
+  int alu9 = ((cast4<cast5)?cast5:cast4);
+  int alu10 = ((alu8<cast2)?cast2:alu8);
+  int alu11 = ((alu9<cast6)?cast6:alu9);
+  int alu12 = ((alu10<cast3)?cast3:alu10);
+  int alu13 = ((alu11<cast7)?cast7:alu11);
+  bool alu14 = (val2?(((val6.x!=val6.x)^1)&(val6.x==val3)):1);
+  int cast8 = ((int)(alu14));
+  bool alu15 = (val2?(((val6.y!=val6.y)^1)&(val6.y==val3)):1);
+  int cast9 = ((int)(alu15));
+  bool alu16 = (val2?(((val6.z!=val6.z)^1)&(val6.z==val3)):1);
+  int cast10 = ((int)(alu16));
+  bool alu17 = (val2?(((val6.w!=val6.w)^1)&(val6.w==val3)):1);
+  int cast11 = ((int)(alu17));
+  int alu18 = ((cast8<cast9)?cast9:cast8);
+  int alu19 = ((alu18<cast10)?cast10:alu18);
+  int alu20 = ((alu19<cast11)?cast11:alu19);
+  *(data0_3+2) = alu20;
+  *((device int2*)((data0_3+0))) = int2(alu12,alu13);
 }
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n27(device int* data0_3, device bool* data1_3, device float* data2_12, device float* data3_3, device int* data4_3, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device int* data0_3; device bool* data1_3; device float* data2_12; device float* data3_3; device int* data4_3; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device int* data0_3 = args.data0_3; device bool* data1_3 = args.data1_3; device float* data2_12 = args.data2_12; device float* data3_3 = args.data3_3; device int* data4_3 = args.data4_3;
   bool val0 = (*(data1_3+0));
   bool val1 = (*(data1_3+1));
   bool val2 = (*(data1_3+2));
@@ -89,36 +106,36 @@ kernel void r_3_4n27(device int* data0_3, device bool* data1_3, device float* da
   float4 val7 = (*((device float4*)((data2_12+4))));
   float4 val8 = (*((device float4*)((data2_12+8))));
   float2 val9 = (*((device float2*)((data3_3+0))));
-  int alu0 = (val0?((int)((((val6.x!=val6.x)^1)&(val6.x==val9.x)))):1);
-  int alu1 = (val0?((int)((((val6.y!=val6.y)^1)&(val6.y==val9.x)))):1);
-  int alu2 = (val0?((int)((((val6.z!=val6.z)^1)&(val6.z==val9.x)))):1);
-  int alu3 = (val0?((int)((((val6.w!=val6.w)^1)&(val6.w==val9.x)))):1);
-  int cast0 = ((int)((alu3==val4.x)));
-  int alu4 = (val1?((int)((((val7.x!=val7.x)^1)&(val7.x==val9.y)))):1);
-  int alu5 = (val1?((int)((((val7.y!=val7.y)^1)&(val7.y==val9.y)))):1);
-  int alu6 = (val1?((int)((((val7.z!=val7.z)^1)&(val7.z==val9.y)))):1);
-  int alu7 = (val1?((int)((((val7.w!=val7.w)^1)&(val7.w==val9.y)))):1);
-  int cast1 = ((int)((alu7==val4.y)));
-  int alu8 = (((int)((alu1==val4.x)))*3);
-  int alu9 = (((int)((alu5==val4.y)))*3);
-  int alu10 = (((int)((alu0==val4.x)))<<2);
-  int alu11 = (((int)((alu2==val4.x)))<<1);
-  int alu12 = (((int)((alu4==val4.y)))<<2);
-  int alu13 = (((int)((alu6==val4.y)))<<1);
+  bool alu0 = (val0?(((val6.x!=val6.x)^1)&(val6.x==val9.x)):1);
+  bool alu1 = (val0?(((val6.y!=val6.y)^1)&(val6.y==val9.x)):1);
+  bool alu2 = (val0?(((val6.z!=val6.z)^1)&(val6.z==val9.x)):1);
+  bool alu3 = (val0?(((val6.w!=val6.w)^1)&(val6.w==val9.x)):1);
+  int cast0 = ((int)((((int)(alu3))==val4.x)));
+  bool alu4 = (val1?(((val7.x!=val7.x)^1)&(val7.x==val9.y)):1);
+  bool alu5 = (val1?(((val7.y!=val7.y)^1)&(val7.y==val9.y)):1);
+  bool alu6 = (val1?(((val7.z!=val7.z)^1)&(val7.z==val9.y)):1);
+  bool alu7 = (val1?(((val7.w!=val7.w)^1)&(val7.w==val9.y)):1);
+  int cast1 = ((int)((((int)(alu7))==val4.y)));
+  int alu8 = (((int)((((int)(alu1))==val4.x)))*3);
+  int alu9 = (((int)((((int)(alu5))==val4.y)))*3);
+  int alu10 = (((int)((((int)(alu0))==val4.x)))<<2);
+  int alu11 = (((int)((((int)(alu2))==val4.x)))<<1);
+  int alu12 = (((int)((((int)(alu4))==val4.y)))<<2);
+  int alu13 = (((int)((((int)(alu6))==val4.y)))<<1);
   int alu14 = ((alu10<alu8)?alu8:alu10);
   int alu15 = ((alu12<alu9)?alu9:alu12);
   int alu16 = ((alu14<alu11)?alu11:alu14);
   int alu17 = ((alu15<alu13)?alu13:alu15);
   int alu18 = ((alu16<cast0)?cast0:alu16);
   int alu19 = ((alu17<cast1)?cast1:alu17);
-  int alu20 = (val2?((int)((((val8.x!=val8.x)^1)&(val8.x==val5)))):1);
-  int alu21 = (val2?((int)((((val8.y!=val8.y)^1)&(val8.y==val5)))):1);
-  int alu22 = (val2?((int)((((val8.z!=val8.z)^1)&(val8.z==val5)))):1);
-  int alu23 = (val2?((int)((((val8.w!=val8.w)^1)&(val8.w==val5)))):1);
-  int cast2 = ((int)((alu23==val3)));
-  int alu24 = (((int)((alu21==val3)))*3);
-  int alu25 = (((int)((alu20==val3)))<<2);
-  int alu26 = (((int)((alu22==val3)))<<1);
+  bool alu20 = (val2?(((val8.x!=val8.x)^1)&(val8.x==val5)):1);
+  bool alu21 = (val2?(((val8.y!=val8.y)^1)&(val8.y==val5)):1);
+  bool alu22 = (val2?(((val8.z!=val8.z)^1)&(val8.z==val5)):1);
+  bool alu23 = (val2?(((val8.w!=val8.w)^1)&(val8.w==val5)):1);
+  int cast2 = ((int)((((int)(alu23))==val3)));
+  int alu24 = (((int)((((int)(alu21))==val3)))*3);
+  int alu25 = (((int)((((int)(alu20))==val3)))<<2);
+  int alu26 = (((int)((((int)(alu22))==val3)))<<1);
   int alu27 = ((alu25<alu24)?alu24:alu25);
   int alu28 = ((alu27<alu26)?alu26:alu27);
   int alu29 = ((alu28<cast2)?cast2:alu28);
@@ -128,7 +145,9 @@ kernel void r_3_4n27(device int* data0_3, device bool* data1_3, device float* da
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n28(device bool* data0_3, device int* data1_4, device int* data2_3, device float* data3_12, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device bool* data0_3; device int* data1_4; device int* data2_3; device float* data3_12; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device bool* data0_3 = args.data0_3; device int* data1_4 = args.data1_4; device int* data2_3 = args.data2_3; device float* data3_12 = args.data3_12;
   int lidx0 = lid.x; /* 3 */
   int val0 = (*(data2_3+lidx0));
   int4 val1 = (*((device int4*)((data1_4+0))));
@@ -138,7 +157,9 @@ kernel void r_3_4n28(device bool* data0_3, device int* data1_4, device int* data
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n29(device float* data0_3, device int* data1_4, device int* data2_3, device float* data3_12, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_3; device int* data1_4; device int* data2_3; device float* data3_12; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_3 = args.data0_3; device int* data1_4 = args.data1_4; device int* data2_3 = args.data2_3; device float* data3_12 = args.data3_12;
   int val0 = (*(data2_3+2));
   int4 val1 = (*((device int4*)((data1_4+0))));
   int2 val2 = (*((device int2*)((data2_3+0))));
@@ -172,7 +193,9 @@ kernel void r_3_4n29(device float* data0_3, device int* data1_4, device int* dat
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_4_3n3(device int* data0_12, device bool* data1_3, device float* data2_12, device float* data3_3, device int* data4_4, device int* data5_3, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device int* data0_12; device bool* data1_3; device float* data2_12; device float* data3_3; device int* data4_4; device int* data5_3; };
+kernel void E_4_3(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device int* data0_12 = args.data0_12; device bool* data1_3 = args.data1_3; device float* data2_12 = args.data2_12; device float* data3_3 = args.data3_3; device int* data4_4 = args.data4_4; device int* data5_3 = args.data5_3;
   bool val0 = (*(data1_3+0));
   bool val1 = (*(data1_3+1));
   bool val2 = (*(data1_3+2));
@@ -188,19 +211,21 @@ kernel void E_4_3n3(device int* data0_12, device bool* data1_3, device float* da
   float val9 = (*(data3_3+2));
   float2 val10 = (*((device float2*)((data3_3+0))));
   bool alu2 = (val3!=val5.x);
-  bool alu3 = (val3!=val5.y);
-  bool alu4 = (val3!=val4);
-  int alu5 = (val0?((int)((alu2&((val6!=val6)^1)&(val6==val10.x)))):((int)(alu2)));
-  int alu6 = (val1?((int)((alu3&((val7!=val7)^1)&(val7==val10.y)))):((int)(alu3)));
-  int alu7 = (val2?((int)((alu4&((val8!=val8)^1)&(val8==val9)))):((int)(alu4)));
-  *(data0_12+lidx0) = alu5;
-  *(data0_12+alu0) = alu6;
-  *(data0_12+alu1) = alu7;
+  bool alu3 = (val0?(alu2&((val6!=val6)^1)&(val6==val10.x)):alu2);
+  bool alu4 = (val3!=val5.y);
+  bool alu5 = (val1?(alu4&((val7!=val7)^1)&(val7==val10.y)):alu4);
+  bool alu6 = (val3!=val4);
+  bool alu7 = (val2?(alu6&((val8!=val8)^1)&(val8==val9)):alu6);
+  *(data0_12+lidx0) = ((int)(alu3));
+  *(data0_12+alu0) = ((int)(alu5));
+  *(data0_12+alu1) = ((int)(alu7));
 }
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n30(device int* data0_3, device int* data1_12, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device int* data0_3; device int* data1_12; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device int* data0_3 = args.data0_3; device int* data1_12 = args.data1_12;
   int lidx0 = lid.x; /* 3 */
   int4 val0 = (*((device int4*)((data1_12+(lidx0<<2)))));
   int alu0 = ((val0.x<val0.y)?val0.y:val0.x);
@@ -211,7 +236,9 @@ kernel void r_3_4n30(device int* data0_3, device int* data1_12, uint3 gid [[thre
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_4n31(device int* data0_3, device int* data1_12, device int* data2_3, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device int* data0_3; device int* data1_12; device int* data2_3; };
+kernel void r_3_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device int* data0_3 = args.data0_3; device int* data1_12 = args.data1_12; device int* data2_3 = args.data2_3;
   int lidx0 = lid.x; /* 3 */
   int val0 = (*(data2_3+lidx0));
   int4 val1 = (*((device int4*)((data1_12+(lidx0<<2)))));
@@ -227,7 +254,9 @@ kernel void r_3_4n31(device int* data0_3, device int* data1_12, device int* data
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_3_2n6(device int* data0_6, device int* data1_3, device int* data2_3, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device int* data0_6; device int* data1_3; device int* data2_3; };
+kernel void E_3_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device int* data0_6 = args.data0_6; device int* data1_3 = args.data1_3; device int* data2_3 = args.data2_3;
   int lidx0 = lid.x; /* 3 */
   int val0 = (*(data1_3+lidx0));
   int val1 = (*(data2_3+lidx0));
@@ -236,7 +265,9 @@ kernel void E_3_2n6(device int* data0_6, device int* data1_3, device int* data2_
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_2_3n3(device float* data0_6, device int* data1_3, device int* data2_3, device float* data3_12, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_6; device int* data1_3; device int* data2_3; device float* data3_12; };
+kernel void E_2_3(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_6 = args.data0_6; device int* data1_3 = args.data1_3; device int* data2_3 = args.data2_3; device float* data3_12 = args.data3_12;
   int val0 = (*(data1_3+2));
   int val1 = (*(data2_3+2));
   int2 val2 = (*((device int2*)((data1_3+0))));
@@ -253,7 +284,9 @@ kernel void E_2_3n3(device float* data0_6, device int* data1_3, device int* data
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_2n6(device float* data0_3, device float* data1_6, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_3; device float* data1_6; };
+kernel void r_3_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_3 = args.data0_3; device float* data1_6 = args.data1_6;
   int lidx0 = lid.x; /* 3 */
   float2 val0 = (*((device float2*)((data1_6+(lidx0<<1)))));
   float alu0 = ((val0.x<val0.y)?val0.y:val0.x);
@@ -262,7 +295,9 @@ kernel void r_3_2n6(device float* data0_3, device float* data1_6, uint3 gid [[th
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void r_3_2n7(device float* data0_3, device float* data1_6, device float* data2_3, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_3; device float* data1_6; device float* data2_3; };
+kernel void r_3_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_3 = args.data0_3; device float* data1_6 = args.data1_6; device float* data2_3 = args.data2_3;
   int lidx0 = lid.x; /* 3 */
   float val0 = (*(data2_3+lidx0));
   float2 val1 = (*((device float2*)((data1_6+(lidx0<<1)))));
@@ -271,7 +306,9 @@ kernel void r_3_2n7(device float* data0_3, device float* data1_6, device float* 
 ---
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_3_2n7(device float* data0_6, device float* data1_6, device float* data2_3, device float* data3_3, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_6; device float* data1_6; device float* data2_3; device float* data3_3; };
+kernel void E_3_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_6 = args.data0_6; device float* data1_6 = args.data1_6; device float* data2_3 = args.data2_3; device float* data3_3 = args.data3_3;
   int lidx0 = lid.x; /* 3 */
   int lidx1 = lid.y; /* 2 */
   int alu0 = (lidx1+(lidx0<<1));

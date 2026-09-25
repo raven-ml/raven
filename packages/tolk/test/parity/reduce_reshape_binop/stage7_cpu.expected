@@ -1,4 +1,4 @@
-void r_10_10n1(float* restrict data0_10, float* restrict data1_100, float* restrict data2_10) {
+void r_10_10(float* restrict data0_10, float* restrict data1_100, float* restrict data2_10) {
   for (int Lidx1 = 0; Lidx1 < 10; Lidx1++) {
     float val0 = (*(data1_100+(Lidx1+10)));
     float val1 = (*(data1_100+(Lidx1+20)));

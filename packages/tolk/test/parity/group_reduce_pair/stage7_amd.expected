@@ -2,7 +2,7 @@ typedef long unsigned int size_t;
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
-extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_16_16_16_16n3(float* data0_256, float* data1_256, float* data2_256, float* data3_256, float* data4_256) {
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) r_16_16_16_16(float* data0_256, float* data1_256, float* data2_256, float* data3_256, float* data4_256) {
   float buf0[1];
   float buf1[1];
   __attribute__((shared, aligned(16)))float buf2[16];

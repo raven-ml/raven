@@ -1,4 +1,4 @@
-void E_6n1(float* restrict data0_6, unsigned char* restrict data1_6, float* restrict data2_256) {
+void E_6(float* restrict data0_6, unsigned char* restrict data1_6, float* restrict data2_256) {
   for (int Lidx1 = 0; Lidx1 < 6; Lidx1++) {
     unsigned char val0 = (*(data1_6+Lidx1));
     float val1 = (*(data2_256+val0));
@@ -7,7 +7,7 @@ void E_6n1(float* restrict data0_6, unsigned char* restrict data1_6, float* rest
 }
 ---
 typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));
-void E_96_2n1(float* restrict data0_192, unsigned char* restrict data1_96, float* restrict data2_16, float* restrict data3_6) {
+void E_96_2(float* restrict data0_192, unsigned char* restrict data1_96, float* restrict data2_16, float* restrict data3_6) {
   for (int Lidx1 = 0; Lidx1 < 96; Lidx1++) {
     unsigned char val0 = (*(data1_96+Lidx1));
     float val1 = (*(data2_16+(val0>>((unsigned char)(4u)))));

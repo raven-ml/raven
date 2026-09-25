@@ -74,9 +74,6 @@ acceptance requirement; skipped tests are not execution evidence.
 - Attribute every changed expectation in the separately generated reference
   corpus; require exact source parity for supported renderers, apart from
   explicitly justified divergences.
-- Reconcile remaining intermediate IR/GROUP and source differences in FP8
-  `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
-  `topk_rounds` and `multi_output`.
 - Minimize strict-OOB rejections observed in 23 frontend cases and three
   Metal tensor-core cases (padded contraction and BF16 accumulation). Distinguish
   incomplete relational proofs from incorrect fixture extents; preserve strict

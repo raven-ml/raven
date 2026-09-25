@@ -1,64 +1,63 @@
-void r_3_64_4_4_64_4n1(float* restrict data0_3072, float* restrict data1_3000, const int data2_) {
+void r_3_256_4_64_4(float* restrict data0_3072, float* restrict data1_3000) {
   float buf0[4];
   for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {
-    for (int Lidx3 = 0; Lidx3 < 64; Lidx3++) {
-      int alu0 = ((data2_<<6)+Lidx3);
+    for (int Lidx3 = 0; Lidx3 < 256; Lidx3++) {
       *(buf0+0) = 0.0f;
       *(buf0+1) = 0.0f;
       *(buf0+2) = 0.0f;
       *(buf0+3) = 0.0f;
       for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {
-        int alu5 = ((data2_*192)+(Lidx3*3)+(Ridx0*12)+Lidx1);
-        int alu6 = (alu0+(Ridx0<<2));
-        _Bool alu7 = (254<alu6);
-        float val0 = ((alu7&(278<alu6))?*(data1_3000+(alu5+-837)):0.0f);
-        _Bool alu8 = (253<alu6);
-        float val1 = ((alu8&(277<alu6))?*(data1_3000+(alu5+-834)):0.0f);
-        _Bool alu9 = (252<alu6);
-        float val2 = ((alu9&(276<alu6))?*(data1_3000+(alu5+-831)):0.0f);
-        _Bool alu10 = (251<alu6);
-        float val3 = ((alu10&(275<alu6))?*(data1_3000+(alu5+-828)):0.0f);
-        float val4 = (alu7?*(data1_3000+(alu5+-69)):0.0f);
-        float val5 = (alu8?*(data1_3000+(alu5+-66)):0.0f);
-        float val6 = (alu9?*(data1_3000+(alu5+-63)):0.0f);
-        float val7 = (alu10?*(data1_3000+(alu5+-60)):0.0f);
-        float val8 = (alu7?*(data1_3000+(alu5+699)):0.0f);
-        float val9 = (alu8?*(data1_3000+(alu5+702)):0.0f);
-        float val10 = (alu9?*(data1_3000+(alu5+705)):0.0f);
-        float val11 = (alu10?*(data1_3000+(alu5+708)):0.0f);
-        float val12 = (alu7?*(data1_3000+(alu5+1467)):0.0f);
-        float val13 = (alu8?*(data1_3000+(alu5+1470)):0.0f);
-        float val14 = (alu9?*(data1_3000+(alu5+1473)):0.0f);
-        float val15 = (alu10?*(data1_3000+(alu5+1476)):0.0f);
-        *(buf0+0) = ((*(buf0+0))+val0+val1+val2+val3);
-        *(buf0+1) = ((*(buf0+1))+val4+val5+val6+val7);
-        *(buf0+2) = ((*(buf0+2))+val8+val9+val10+val11);
-        *(buf0+3) = ((*(buf0+3))+val12+val13+val14+val15);
+        int alu4 = ((Ridx0*12)+(Lidx3*3)+Lidx1);
+        int alu5 = ((Ridx0<<2)+Lidx3);
+        _Bool alu6 = (251<alu5);
+        float val0 = (alu6?*(data1_3000+(alu4+-60)):0.0f);
+        _Bool alu7 = (252<alu5);
+        float val1 = (alu7?*(data1_3000+(alu4+-63)):0.0f);
+        _Bool alu8 = (253<alu5);
+        float val2 = (alu8?*(data1_3000+(alu4+-66)):0.0f);
+        _Bool alu9 = (254<alu5);
+        float val3 = (alu9?*(data1_3000+(alu4+-69)):0.0f);
+        float val4 = ((alu6&(275<alu5))?*(data1_3000+(alu4+-828)):0.0f);
+        float val5 = ((alu7&(276<alu5))?*(data1_3000+(alu4+-831)):0.0f);
+        float val6 = ((alu8&(277<alu5))?*(data1_3000+(alu4+-834)):0.0f);
+        float val7 = ((alu9&(278<alu5))?*(data1_3000+(alu4+-837)):0.0f);
+        float val8 = (alu9?*(data1_3000+(alu4+1467)):0.0f);
+        float val9 = (alu8?*(data1_3000+(alu4+1470)):0.0f);
+        float val10 = (alu7?*(data1_3000+(alu4+1473)):0.0f);
+        float val11 = (alu6?*(data1_3000+(alu4+1476)):0.0f);
+        float val12 = (alu9?*(data1_3000+(alu4+699)):0.0f);
+        float val13 = (alu8?*(data1_3000+(alu4+702)):0.0f);
+        float val14 = (alu7?*(data1_3000+(alu4+705)):0.0f);
+        float val15 = (alu6?*(data1_3000+(alu4+708)):0.0f);
+        *(buf0+0) = ((*(buf0+0))+val7+val6+val5+val4);
+        *(buf0+1) = ((*(buf0+1))+val3+val2+val1+val0);
+        *(buf0+2) = ((*(buf0+2))+val12+val13+val14+val15);
+        *(buf0+3) = ((*(buf0+3))+val8+val9+val10+val11);
       }
-      int alu16 = (alu0+(Lidx1<<10));
-      *(data0_3072+(alu16+256)) = (*(buf0+1));
-      *(data0_3072+(alu16+512)) = (*(buf0+2));
-      *(data0_3072+(alu16+768)) = (*(buf0+3));
-      *(data0_3072+alu16) = (*(buf0+0));
+      int alu15 = ((Lidx1<<10)+Lidx3);
+      *(data0_3072+(alu15+256)) = (*(buf0+1));
+      *(data0_3072+(alu15+512)) = (*(buf0+2));
+      *(data0_3072+(alu15+768)) = (*(buf0+3));
+      *(data0_3072+alu15) = (*(buf0+0));
     }
   }
 }
 ---
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void r_3_4_4n1(float* restrict data0_12, float* restrict data1_3072) {
+void r_3_4_4(float* restrict data0_12, float* restrict data1_3072) {
   for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {
     int alu0 = (Lidx1<<10);
-    float val0 = (*(data1_3072+(alu0+255)));
-    float val1 = (*(data1_3072+(alu0+511)));
-    float val2 = (*(data1_3072+(alu0+767)));
-    float val3 = (*(data1_3072+(alu0+1023)));
-    float alu1 = (val0+val1);
-    float alu2 = (alu1+val2);
-    *((float4*)((data0_12+(Lidx1<<2)))) = (float4){val0,alu1,alu2,(alu2+val3)};
+    float val0 = (*(data1_3072+(alu0+1023)));
+    float val1 = (*(data1_3072+(alu0+255)));
+    float val2 = (*(data1_3072+(alu0+511)));
+    float val3 = (*(data1_3072+(alu0+767)));
+    float alu1 = (val1+val2);
+    float alu2 = (alu1+val3);
+    *((float4*)((data0_12+(Lidx1<<2)))) = (float4){val1,alu1,alu2,(alu2+val0)};
   }
 }
 ---
-void E_1000_3n1(float* restrict data0_3000, float* restrict data1_3072, float* restrict data2_12) {
+void E_1000_3(float* restrict data0_3000, float* restrict data1_3072, float* restrict data2_12) {
   for (int Lidx0 = 0; Lidx0 < 1000; Lidx0++) {
     for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {
       float val0 = (*(data1_3072+((Lidx1<<10)+Lidx0+24)));

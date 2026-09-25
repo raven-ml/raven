@@ -1,4 +1,4 @@
-void r_10_10_10n1(float* restrict data0_100, float* restrict data1_1000, float* restrict data2_100) {
+void r_10_10_10(float* restrict data0_100, float* restrict data1_1000, float* restrict data2_100) {
   for (int Lidx1 = 0; Lidx1 < 10; Lidx1++) {
     for (int Lidx2 = 0; Lidx2 < 10; Lidx2++) {
       int alu0 = ((Lidx2*10)+Lidx1);
