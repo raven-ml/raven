@@ -80,6 +80,10 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- A compiled `Schedule.polynomial_decay` with a fractional `power` was NaN
+  from `decay_steps` on, so training kept a NaN learning rate after the
+  decay: `1 - s / steps` compiled to a value just below zero. It now takes
+  the remaining fraction `(steps - s) / steps`, exactly zero there.
 - `Vega.global_dot` takes each leaf's inner product with `Nx.vdot`, so a
   `bfloat16` or `float16` leaf's products are summed at `float32` and rounded
   once, as every other product of vectors is. It rounded each product first.

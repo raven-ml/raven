@@ -24,14 +24,6 @@ let clamp_ratio ~steps s =
     (Nx.minimum s (Nx.scalar f32 (float_of_int steps)))
     (float_of_int steps)
 
-(* [base ** p] for [base >= 0] and a constant exponent. Integer and
-   half-integer exponents stay [pow], which the compiler decomposes into
-   multiplications and square roots; other exponents go through exp/log, whose
-   limit at a zero base is the right value for positive [p]. *)
-let pow_const base p =
-  if Float.is_integer (2.0 *. p) then Nx.pow_s base p
-  else Nx.exp (Nx.mul_s (Nx.log base) p)
-
 let constant value _step = Nx.scalar f32 value
 
 let linear ~init_value ~end_value ~steps =
@@ -60,9 +52,13 @@ let exponential_decay ~init_value ~decay_rate ~decay_steps =
 let polynomial_decay ~init_value ~end_value ~decay_steps ?(power = 1.0) () =
   if decay_steps <= 0 then
     invalid_arg "Schedule.polynomial_decay: decay_steps must be positive";
+  let steps = float_of_int decay_steps in
   fun step ->
-    let ratio = clamp_ratio ~steps:decay_steps (to_f32 step) in
-    let poly = pow_const (Nx.rsub_s 1.0 ratio) power in
+    (* The fraction left, [(steps - s) / steps], is exactly zero from the end
+       of the decay on; [1 - s / steps] can round below it. *)
+    let s = Nx.minimum (to_f32 step) (Nx.scalar f32 steps) in
+    let remaining = Nx.div_s (Nx.rsub_s steps s) steps in
+    let poly = Nx.pow_s remaining power in
     Nx.add_s (Nx.mul_s poly (init_value -. end_value)) end_value
 
 let warmup_cosine ~init_value ~peak_value ~warmup_steps =

@@ -153,6 +153,26 @@ let test_radam_compiled_rectification () =
         (rel <= 3e-4))
     exact
 
+(* A compiled polynomial decay takes eager's values through the decay and after
+   it, where it stays at [end_value]: its base is exactly zero there. *)
+let test_polynomial_decay_compiles () =
+  List.iter
+    (fun power ->
+      let s =
+        Vega.Schedule.polynomial_decay ~init_value:1.0 ~end_value:0.1
+          ~decay_steps:10 ~power ()
+      in
+      let g = Rune.jit' ~devices:[ dev ] s in
+      for k = 0 to 20 do
+        let step = Nx.scalar Nx.int32 (Int32.of_int k) in
+        equal
+          ~msg:(Printf.sprintf "power %g, step %d" power k)
+          (float 1e-6)
+          (Nx.item [] (s step))
+          (Nx.item [] (g step))
+      done)
+    [ 0.5; 0.7; 1.0; 2.0 ]
+
 let () =
   run "vega jit"
     [
@@ -161,5 +181,7 @@ let () =
         [
           test "compiled radam rectifies as in float64"
             test_radam_compiled_rectification;
+          test "a polynomial decay compiles to eager's values"
+            test_polynomial_decay_compiles;
         ];
     ]
