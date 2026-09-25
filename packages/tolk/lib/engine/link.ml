@@ -14,6 +14,11 @@ let cache = U.Weak_tbl.create 16
 let rec constant u =
   match U.as_const u with
   | Some c -> Some c
+  | None when List.mem (U.op u) [Ops.Cast; Ops.Bitcast] ->
+      (match U.children u with
+       | [src] -> Option.bind (constant src) (fun value ->
+           U.replace u ~src:[|U.const value|] () |> Symbolic.simplify |> U.as_const)
+       | _ -> None)
   | None when Ops.Group.is_alu (U.op u) ->
       let values = List.map constant (U.children u) in
       if List.for_all Option.is_some values then
@@ -152,7 +157,7 @@ let rec run ~resolve ?(allow_cache = true) linear =
               if List.length deps = Array.length (U.src u) - 1 then None
               else Some (U.after ~src:value ~deps)
             else invalid_arg "link: unresolved initialization dependency"
-        | op when Ops.Group.is_alu op -> Option.map U.const (constant u)
+        | op when Ops.Group.is_alu op || op = Ops.Cast || op = Ops.Bitcast -> Option.map U.const (constant u)
         | _ -> None in
       let linked = U.graph_rewrite ~name:"link" rewrite linear in
       let linked = match U.children linked, !refs with

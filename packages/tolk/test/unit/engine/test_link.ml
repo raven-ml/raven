@@ -52,6 +52,24 @@ let initialization () =
   equal bool false (B.id output = B.id fresh);
   equal int32 17l (Bytes.get_int32_le (B.as_bytes fresh) 4)
 
+let cast_patches () =
+  let device = Tolk_cpu.create "CPU:link-casts" in
+  let p = placeholder device "words" Dtype.uint8 12 in
+  let uint64 n = U.const (Const.int64 Dtype.uint64 n) in
+  let address = U.alu_binary ~op:Ops.Add ~lhs:(uint64 0x1234567800000000L)
+      ~rhs:(uint64 0xabcdef01L) in
+  let lower = U.cast ~src:address ~dtype:Dtype.uint32 in
+  let upper = U.cast ~dtype:Dtype.uint32
+      ~src:(U.alu_binary ~op:Ops.Shr ~lhs:address ~rhs:(uint64 32L)) in
+  let byte = U.bitcast ~dtype:Dtype.uint8
+      ~src:(U.cast ~src:(U.alu_unary ~op:Ops.Neg ~src:(U.const_int 17)) ~dtype:Dtype.int8) in
+  let ready = Hcq2.patch ~blob:(String.make 12 '\000') p [0, lower; 4, upper; 8, byte] in
+  let b = binding () in
+  let linked = link b (U.linear [call [ready]]) in
+  let contents = B.as_bytes (resolve b (List.hd (args linked))) in
+  equal int64 0x12345678abcdef01L (Bytes.get_int64_le contents 0);
+  equal int 239 (Bytes.get_uint8 contents 8)
+
 let addresses () =
   let device = Tolk_cpu.create "CPU:link-addresses" in
   let source = B.on_device ~device:(Device.name device) ~size:4 ~dtype:Dtype.uint64 () in
@@ -122,6 +140,7 @@ let host_call_replay () =
 
 let () = run "Engine_link" [
   test "initializes blobs, sparse words and ranged patches once" initialization;
+  test "folds nested casts and bitcasts in link patches" cast_patches;
   test "retains mapped addresses and byte view offsets" addresses;
   test "does not cache link-time inputs" input_links;
   test "preserves runtime parameters and call bodies" preserve_runtime;

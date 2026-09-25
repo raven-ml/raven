@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- Compiled queue linking applies casts and bitcasts around constant expressions,
+  so split device addresses and packed descriptor fields are initialized before
+  submission instead of remaining unapplied patches.
+
 - NV initializes the instruction-prefetch guard after each loaded kernel and
   rejects invalid relocations before allocating device memory.
 
