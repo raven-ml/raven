@@ -835,6 +835,36 @@ let test_grad_through_a_staged_scan () =
   equal ~msg:"dw" (array (float 1e-6)) (fst expected) dw;
   equal ~msg:"dxs" (array (float 1e-6)) (snd expected) dxs
 
+(* Gradient checkpointing over a split batch keeps the residuals on each device
+   and recomputes the block in the backward pass, equal to one device: the
+   program runs more operations than the one without the checkpoint, which keeps
+   the block's intermediates. *)
+let test_remat_over_a_split_batch () =
+  let w =
+    Nx.create f32 [| 6; 6 |]
+      (Array.init 36 (fun i -> cos (float_of_int i) /. 4.))
+  in
+  let block x = Nx.tanh (Nx.matmul (Nx.tanh (Nx.matmul x w)) w) in
+  let grad remat =
+    let block =
+      if remat then Rune.remat Nx.Ptree.(tensor @-> returns tensor) block
+      else block
+    in
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns tensor)
+      (Rune.grad Nx.Ptree.tensor (fun x -> Nx.sum (block (Nx.mul_s x 2.0))))
+  in
+  let x = m86 () in
+  let ops g =
+    ignore (g (rows devs4 x));
+    let before = !Tolk.Helpers.Global_counters.global_ops in
+    let y = g (rows devs4 x) in
+    (y, !Tolk.Helpers.Global_counters.global_ops - before)
+  in
+  let y, recomputed = ops (grad true) and _, kept = ops (grad false) in
+  check_arr ~msg:"split grads" (to_arr (grad true x)) y;
+  is_true ~msg:"the block is recomputed" (recomputed > kept)
+
 (* The DP microbench: a 2-layer MLP train step (value_and_grad + SGD inside the
    compiled function), the parameters entering from the host as a copy on each
    device and the batch split over 2 devices. The 10-step loss trajectory
@@ -1001,6 +1031,7 @@ let tests =
         test "a staged scan over split rows" test_a_staged_scan_over_split_rows;
         test "grad through a staged scan" test_grad_through_a_staged_scan;
         test "a carry placed by its body" test_a_carry_placed_by_its_body;
+        test "remat over a split batch" test_remat_over_a_split_batch;
         test "grad through a scan over split rows"
           test_grad_through_scan_over_devices;
       ];

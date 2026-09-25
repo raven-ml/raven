@@ -1746,23 +1746,29 @@ let in_scan_body st f =
 
 (* Gradient checkpointing (see [Remat]) *)
 
-(* The storage [u] reads through views, when it reads one. *)
+(* The storage [u] reads through views, each device's slice of it when [u] is
+   split, when it reads one. *)
 let viewed_storage u =
   let base = U.base u in
+  let base =
+    if U.op base = Tolk_uop.Ops.Unshard then U.base (U.src base).(0) else base
+  in
   if U.has_buffer_identity ~after_ok:true base then Some base else None
 
-(* The storage behind [tt]'s views. A value that reads none is stored into a
-   buffer first and [tt] repointed at it: the tensors that read [tt] later read
-   the buffer, and the nodes built before keep the computation they read. *)
-let storage st tt =
+(* The storage behind [tt]'s views, a value at [p]. A value that reads none is
+   stored into a buffer of each device's slice first and [tt] repointed at it:
+   the tensors that read [tt] later read the buffer, and the nodes built before
+   keep the computation they read. *)
+let storage st p tt =
   match viewed_storage (F.Tensor.uop tt) with
   | Some s -> s
   | None ->
       let shape = Array.of_list (F.Tensor.shape tt) in
-      let n = numel shape in
-      let buf = make_node st (F.Tensor.val_dtype tt) n in
-      let s = U.after ~src:buf ~deps:[ store_flat buf n tt ] in
-      F.Tensor.set_uop tt (F.Tensor.uop (buffer_tensor s shape));
+      let buf =
+        make_node st (F.Tensor.val_dtype tt) (numel (local_shape p shape))
+      in
+      let s = U.after ~src:buf ~deps:[ store_placed p buf shape tt ] in
+      F.Tensor.set_uop tt (F.Tensor.uop (placed_tensor p s shape));
       s
 
 (* [u] with [base], the node its views read, replaced by [f base]. *)
@@ -2343,25 +2349,26 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        by such storage is read as it is, so a remat whose arguments are all
        inputs or constants shares the forward pass's nodes, as does one whose
        cotangents are storage from the start: the AFTER has nothing to wait for.
-       A staged scan body, whose backward loop recomputes each step already, and
-       a multi-device trace keep the plain function. *)
+       A staged scan body, whose backward loop recomputes each step already,
+       keeps the plain function. *)
     | Remat.E_remat (Remat.Call { params_s; params; f; residuals; _ }) ->
         Some
           (fun k ->
-            if residuals && st.scan_bodies = 0 && not (multi st) then
+            if residuals && st.scan_bodies = 0 then
               Nx.Ptree.fold params_s
-                (fun _ leaf () -> ignore (storage st (go leaf) : U.t))
+                (fun _ leaf () ->
+                  ignore (storage st (placement_in st leaf) (go leaf) : U.t))
                 params ();
             continue k (Effect.Deep.match_with f params (handler st)))
     | Remat.E_barrier { values; after } ->
         Some
           (fun k ->
-            if st.scan_bodies > 0 || multi st then continue k values
+            if st.scan_bodies > 0 then continue k values
             else
               let deps =
                 List.filter_map
                   (fun (Nx.P a) ->
-                    let s = storage st (go a) in
+                    let s = storage st (placement_in st a) (go a) in
                     if U.op s = Tolk_uop.Ops.After then Some s else None)
                   after
               in
@@ -2369,7 +2376,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 (List.map
                    (fun (Nx.P v) ->
                      let tt = go v in
-                     let s = storage st tt in
+                     let s = storage st (placement_in st v) tt in
                      if U.op s <> Tolk_uop.Ops.After then Nx.P v
                      else
                        Nx.P

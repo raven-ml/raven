@@ -167,6 +167,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.remat` inside `Rune.jit` over several devices checkpoints as on one
+  device: the block's arguments are kept on each device and the block is
+  recomputed in the backward pass. It kept every intermediate.
 - `Rune.scan` inside `Rune.jit` over several devices stages as a loop, as on
   one device: its body is traced once, each device running it over its slices
   of the carry and the rows. It unrolled into the program, one copy of the
