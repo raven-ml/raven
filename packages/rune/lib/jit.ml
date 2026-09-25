@@ -771,8 +771,8 @@ let float_bits x =
    so that the larger float is the larger integer. -0 is read as +0 so that
    equal zeros tie ([`Tied]), or orders below +0 ([`Ordered]). Every NaN,
    recognised on its bits (magnitude above infinity's), takes the greatest
-   integer ([`Greatest]) or the least ([`Least]); no number takes either. The
-   -0 test compares bits: a float comparison may flush subnormals to zero. A
+   integer ([`Greatest]) or the least ([`Least]); no number takes either. The -0
+   test compares bits: a float comparison may flush subnormals to zero. A
    non-float [x] is its own key. *)
 let order_keys ~nan ~zeros x =
   let dtype = F.Tensor.dtype x in
@@ -1236,8 +1236,10 @@ let reserve_slots_of linear =
    nodes, which the loop executor rebinds per iteration. *)
 let schedule_body_linear st body_sink =
   let body_sink, buffer_map = Tolk.Bufferize.run body_sink in
-  let resolve_node node = U.buf_uop
-      (Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node) in
+  let resolve_node node =
+    U.buf_uop
+      (Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node)
+  in
   let body_call = Tolk.Callify.transform_to_call body_sink in
   let captured = ref None in
   Tolk.Realize.capturing :=
@@ -1273,8 +1275,8 @@ let schedule_body_linear st body_sink =
         | None -> assert false
       in
       reserve_slots_of body_linear;
-      Tolk.Realize.compile_linear ~device:st.st_device
-        ~to_program body_linear, resolve_node
+      ( Tolk.Realize.compile_linear ~device:st.st_device ~to_program body_linear,
+        resolve_node )
 
 (* Schedule analyses, shared by buffer reuse at the jit boundary and inside a
    staged loop's body. *)
@@ -1501,7 +1503,13 @@ let loop_call l ~body_linear ~resolve_node ~reversed ~n =
     cint (List.length ss)
     :: List.concat_map
          (fun s ->
-           [ resolve_node s.node; cint s.pos0; cint s.pos1; cint s.size; cint s.stride ])
+           [
+             resolve_node s.node;
+             cint s.pos0;
+             cint s.pos1;
+             cint s.size;
+             cint s.stride;
+           ])
          (List.rev ss)
   in
   let payload =
@@ -2491,7 +2499,8 @@ and stage_scan : type r.
     let rec settle ~copied ~same_index =
       let modes, (linear, resolve_node) = body ~copied ~same_index in
       let allows ?indexed (s : body_slot) o =
-        schedule_allows ?indexed ~linear ~itag:(U.tag s.s_node) ~otag:(U.tag (resolve_node o))
+        schedule_allows ?indexed ~linear ~itag:(U.tag s.s_node)
+          ~otag:(U.tag (resolve_node o))
           ()
       in
       let failed_writes =
@@ -2512,7 +2521,8 @@ and stage_scan : type r.
             | `Written _ | `Pair _ -> [])
           (List.combine c_slots modes)
       in
-      if failed_writes = [] && failed_updates = [] then (modes, linear, resolve_node)
+      if failed_writes = [] && failed_updates = [] then
+        (modes, linear, resolve_node)
       else
         settle ~copied:(failed_writes @ copied)
           ~same_index:
@@ -3961,7 +3971,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
               U.reshape ~src:node ~shape:(F.Tensor.shape_uop shard_shape)
             in
             ( node,
-              F.Tensor.of_uop (U.unshard ~src:inner ~axes:[a] ()),
+              F.Tensor.of_uop (U.unshard ~src:inner ~axes:[ a ] ()),
               List.map
                 (fun d -> Tolk.Device.create_buffer ~size:per ~dtype:dtolk d)
                 spec.md_devs )
@@ -4070,9 +4080,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
             (U.substitute ~walk:true (List.map filled copied) (U.sink outs_u))
     | Some _ ->
         let pre = U.sink outs_u in
-        let pre =
-          U.graph_rewrite Tolk.Multi.multi_pm pre
-        in
+        let pre = U.graph_rewrite Tolk.Multi.multi_pm pre in
         U.children pre
   in
   let place_of u =
@@ -4126,9 +4134,14 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
   in
   let sink = U.sink (List.map (fun (_, _, _, _, c) -> c) out_conts) in
   let sink, buffer_map = Tolk.Bufferize.run sink in
-  st.prefills <- List.map (fun (node, input) ->
-      let node = Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node in
-      U.buf_uop node, input) st.prefills;
+  st.prefills <-
+    List.map
+      (fun (node, input) ->
+        let node =
+          Option.value (Hashtbl.find_opt buffer_map (U.tag node)) ~default:node
+        in
+        (U.buf_uop node, input))
+      st.prefills;
   let call = Tolk.Callify.transform_to_call sink in
   let resolve what u c =
     let unwrap node = U.buf_uop node in
@@ -4211,8 +4224,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
         in
         let linear =
           let compile () =
-            Tolk.Realize.compile_linear ~device:dev ?beam
-              ~to_program linear
+            Tolk.Realize.compile_linear ~device:dev ?beam ~to_program linear
           in
           match beam_parallel with
           | None -> compile ()
@@ -4596,8 +4608,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
 let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
     (leaves : Nx.packed array) (seeds : seed array) : q =
   drain_releases ();
-  (* Rebind arenas before queue replay patches their addresses: another
-     compiled function may have grown the shared storage since the last call. *)
+  (* Rebind arenas before queue replay patches their addresses: another compiled
+     function may have grown the shared storage since the last call. *)
   List.iteri
     (fun k node ->
       let nbytes = List.fold_left ( * ) 1 (U.max_shape node) in
