@@ -707,6 +707,66 @@ let test_consumed_value_does_not_move () =
   raises_invalid (fun () -> Nx.to_array p);
   equal ~msg:"its shape stays readable" (array int) [| 2; 3 |] (Nx.shape p)
 
+type Nx_effect.node += Identity_probe
+
+let test_concurrent_identities () =
+  let start = Atomic.make false in
+  let workers =
+    Array.init 4 (fun _ ->
+        Domain.spawn (fun () ->
+            while not (Atomic.get start) do
+              Domain.cpu_relax ()
+            done;
+            let ids = Array.make (4096 * 4) 0 in
+            for i = 0 to 4095 do
+              let d = Nx_effect.Device.make "IDENTITY" engine in
+              let placed =
+                Nx_effect.placed (Nx_effect.Device d) Nx.float32
+                  (Nx_core.View.create [| 1 |])
+                  (Nx_effect.cell engine ~length:1
+                     (Nx_effect.Held (Nx.float32, 1.)))
+              in
+              let traced =
+                Nx_effect.traced (Nx_effect.On [ d ]) Nx.float32 [| 1 |]
+                  Identity_probe
+              in
+              let view = Nx_effect.reshape placed [| 1; 1 |] in
+              ids.(4 * i) <- d.d_id;
+              ids.((4 * i) + 1) <- Nx_effect.identity_hash placed;
+              ids.((4 * i) + 2) <- Nx_effect.identity_hash traced;
+              ids.((4 * i) + 3) <- Nx_effect.identity_hash view
+            done;
+            ids))
+  in
+  Atomic.set start true;
+  let ids = Array.concat (Array.to_list (Array.map Domain.join workers)) in
+  Array.sort Int.compare ids;
+  let distinct = ref 1 in
+  for i = 1 to Array.length ids - 1 do
+    if ids.(i) <> ids.(i - 1) then incr distinct
+  done;
+  equal
+    ~msg:"every device, placed value, trace and view has a distinct identity"
+    int (Array.length ids) !distinct
+
+let test_trace_identity_frontier () =
+  let traced () =
+    Nx_effect.traced (Nx_effect.On [ dev1 ]) Nx.float32 [| 1 |] Identity_probe
+  in
+  let before = Nx_effect.identity_hash (traced ()) in
+  let horizon = Nx_effect.next_traced_id () in
+  equal ~msg:"observing the frontier allocates no identity" int horizon
+    (Nx_effect.next_traced_id ());
+  let after = Nx_effect.identity_hash (traced ()) in
+  is_true ~msg:"existing traces precede the frontier" (before < horizon);
+  equal ~msg:"the next trace starts at the frontier" int horizon after;
+  let device = Nx_effect.Device.make "FRONTIER" engine in
+  let later = Nx_effect.identity_hash (traced ()) in
+  is_true ~msg:"other constructors share the increasing sequence"
+    (after < device.d_id && device.d_id < later);
+  is_false ~msg:"new traces are not mistaken for captured traces"
+    (later < horizon)
+
 let tests =
   [
     group "placement"
@@ -739,6 +799,13 @@ let tests =
         test "moved views of a consumed split value"
           test_moved_views_of_a_consumed_split;
         test "a consumed value is not placed" test_consumed_value_does_not_move;
+      ];
+    group "identity"
+      [
+        test "concurrent constructors keep distinct identities"
+          test_concurrent_identities;
+        test "the trace frontier separates existing and new traces"
+          test_trace_identity_frontier;
       ];
   ]
 

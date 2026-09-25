@@ -314,15 +314,12 @@ type context = device context_of
    engine passes it to a program as it passes a host value. *)
 type storage += Held : ('a, 'b) Nx_dtype.t * 'a -> storage
 
-let id_counter = ref 0
-
-let fresh_id () =
-  incr id_counter;
-  !id_counter
+let id_counter = Atomic.make 0
+let fresh_id () = Atomic.fetch_and_add id_counter 1 + 1
 
 (* Ids are handed out in increasing order, so a tracer can tell the traced
    tensors made before a point of its trace from those made after it. *)
-let next_traced_id () = !id_counter + 1
+let next_traced_id () = Atomic.get id_counter + 1
 let host_context = Nx_backend.create_context ()
 
 let outside_trace () =

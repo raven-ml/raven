@@ -2408,6 +2408,10 @@ thread.
 
 ### Nx
 
+- Preserve distinct tensor, view and device identities when they are created
+  concurrently; lost counter increments could make unrelated values alias in
+  identity tables used by tracing.
+
 - Eager `Nx.matmul` chooses its small-product loop by rows: fewer than 8 rows
   up to about 5 million multiply-adds take it (4 x 4096 x 16 `bfloat16`: 28 us,
   not 85), and everything else the blocked kernel (100 x 100 x 10: 10 us, not 27).
