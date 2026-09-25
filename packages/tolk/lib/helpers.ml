@@ -54,21 +54,51 @@ let canonicalize_device_name device =
 
 (* Context variables *)
 
-module Context_var = struct
-  type 'a t = { key : string; value : 'a ref }
+module Context_var : sig
+  type 'a t
+  type binding = B : 'a t * 'a -> binding
+  type snapshot
+
+  val make : key:string -> default:'a -> parse:(string -> 'a) -> 'a t
+  val int : key:string -> default:int -> int t
+  val string : key:string -> default:string -> string t
+  val key : 'a t -> string
+  val get : 'a t -> 'a
+  val with_context : binding list -> (unit -> 'a) -> 'a
+  val snapshot : unit -> snapshot
+  val with_snapshot : snapshot -> (unit -> 'a) -> 'a
+end = struct
+  type value = ..
+  type 'a t = {
+    key : string;
+    default : 'a;
+    pack : 'a -> value;
+    unpack : value -> 'a option;
+  }
+
+  module Values = Map.Make (String)
+  module Threads = Map.Make (Int)
+  type snapshot = value Values.t
+  type binding = B : 'a t * 'a -> binding
 
   let declared : (string, unit) Hashtbl.t = Hashtbl.create 64
+  let declaration_lock = Mutex.create ()
 
   let declare key =
-    if Hashtbl.mem declared key then
-      invalid_arg (Printf.sprintf "Context_var: %s is already declared" key);
-    Hashtbl.replace declared key ()
+    Mutex.lock declaration_lock;
+    Fun.protect ~finally:(fun () -> Mutex.unlock declaration_lock) (fun () ->
+        if Hashtbl.mem declared key then
+          invalid_arg (Printf.sprintf "Context_var: %s is already declared" key);
+        Hashtbl.add declared key ())
 
-  let make ~key ~default ~parse =
+  let make (type a) ~key ~(default : a) ~parse =
+    let default = match Sys.getenv_opt key with
+      | None -> default
+      | Some s -> parse s in
     declare key;
-    { key; value = ref (match Sys.getenv_opt key with
-        | None -> default
-        | Some s -> parse s) }
+    let module Box = struct type value += Value of a end in
+    { key; default; pack = (fun value -> Box.Value value);
+      unpack = (function Box.Value value -> Some value | _ -> None) }
 
   let int ~key ~default =
     make ~key ~default
@@ -79,17 +109,44 @@ module Context_var = struct
         let s = String.trim s in
         if s = "" then default else s)
 
-  let key v = v.key
-  let get v = !(v.value)
+  (* Systhreads share DLS, so each active scope is keyed by thread within its
+     domain. Persistent maps make reads and worker snapshots immutable; CAS
+     preserves other threads' entries when a scope enters or unwinds. *)
+  let scopes : snapshot Threads.t Atomic.t Domain.DLS.key =
+    Domain.DLS.new_key (fun () -> Atomic.make Threads.empty)
 
-  type binding = B : 'a t * 'a -> binding
+  let snapshot () =
+    let active = Atomic.get (Domain.DLS.get scopes) in
+    if Threads.is_empty active then Values.empty
+    else Option.value (Threads.find_opt (Thread.id (Thread.self ())) active)
+        ~default:Values.empty
+
+  let key v = v.key
+  let get v =
+    match Values.find_opt v.key (snapshot ()) with
+    | None -> v.default
+    | Some value ->
+        (match v.unpack value with
+         | Some value -> value
+         | None -> invalid_arg ("Context_var: invalid binding for " ^ v.key))
+
+  let with_snapshot context f =
+    let scopes = Domain.DLS.get scopes and thread = Thread.id (Thread.self ()) in
+    let saved = Option.value (Threads.find_opt thread (Atomic.get scopes))
+        ~default:Values.empty in
+    let rec install context =
+      let before = Atomic.get scopes in
+      let after = if Values.is_empty context then Threads.remove thread before
+        else Threads.add thread context before in
+      if not (Atomic.compare_and_set scopes before after) then install context
+    in
+    install context;
+    Fun.protect ~finally:(fun () -> install saved) f
 
   let with_context overrides f =
-    let saved = List.map (fun (B (v, _)) -> B (v, !(v.value))) overrides in
-    List.iter (fun (B (v, x)) -> v.value := x) overrides;
-    Fun.protect
-      ~finally:(fun () -> List.iter (fun (B (v, old)) -> v.value := old) saved)
-      f
+    let context = List.fold_left (fun context (B (v, value)) ->
+        Values.add v.key (v.pack value) context) (snapshot ()) overrides in
+    with_snapshot context f
 end
 
 let dev =
@@ -127,8 +184,8 @@ let select_interface ~device candidates =
   select_first_inited ~message:(Printf.sprintf "No interface for %s is available" device)
     (List.map snd candidates)
 
-(* Each variable is declared once, here, so every reader shares one value and
-   a [with_context] override reaches all of them. *)
+(* Variables have one immutable default; scoped overrides are local to the
+   calling thread and are explicitly transported to compilation workers. *)
 
 let debug = Context_var.int ~key:"DEBUG" ~default:0
 let beam = Context_var.int ~key:"BEAM" ~default:0

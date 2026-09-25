@@ -228,6 +228,7 @@ let compile_candidates ~to_program ~device ~nworkers candidates =
   end else begin
     let nworkers = min nworkers (min 16 n) in
     let cands = Array.of_list candidates in
+    let context = Helpers.Context_var.snapshot () in
     let chunk = (n + nworkers - 1) / nworkers in
     let workers = ref [] and failure = ref None in
     let record_failure exn =
@@ -240,15 +241,16 @@ let compile_candidates ~to_program ~device ~nworkers candidates =
           let lo = w * chunk in
           let hi = min ((w + 1) * chunk) n in
           let worker = Domain.spawn (fun () ->
-              for i = lo to hi - 1 do
-                compiled.(i) <-
-                  snd (try_compile ~to_program ~use_timeout:false (i, cands.(i)) device)
-              done) in
+              Helpers.Context_var.with_snapshot context (fun () ->
+                  for i = lo to hi - 1 do
+                    compiled.(i) <-
+                      snd (try_compile ~to_program ~use_timeout:false (i, cands.(i)) device)
+                  done)) in
           workers := worker :: !workers
       done
     with exn -> record_failure exn);
     (* A failed spawn or join must not let another worker outlive the search
-       scope and observe its caller's restored compilation context. *)
+       scope while it still owns candidate compilation and its snapshot. *)
     List.iter (fun worker ->
         try Domain.join worker with exn -> record_failure exn)
       (List.rev !workers);

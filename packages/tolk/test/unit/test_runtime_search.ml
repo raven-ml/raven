@@ -457,7 +457,7 @@ let parallel_failure_joins_workers failure () =
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
   let started = Atomic.make 0 and finished = Atomic.make 0 in
   let returned = Atomic.make false and release = Atomic.make false in
-  let timed_out = Atomic.make false in
+  let timed_out = Atomic.make false and inherited_context = Atomic.make true in
   let await predicate =
     let deadline = Unix.gettimeofday () +. 5. in
     while not (predicate ()) && Unix.gettimeofday () < deadline do
@@ -467,6 +467,9 @@ let parallel_failure_joins_workers failure () =
   in
   let compile src =
     ignore src;
+    if Helpers.Context_var.get Search.beam_parallel <> 2
+       || Helpers.Context_var.get Helpers.tc_opt <> 1 then
+      Atomic.set inherited_context false;
     let worker = Atomic.fetch_and_add started 1 in
     Fun.protect
       ~finally:(fun () -> ignore (Atomic.fetch_and_add finished 1))
@@ -507,7 +510,8 @@ let parallel_failure_joins_workers failure () =
     (fun () ->
       let outcome =
         try
-          Helpers.Context_var.with_context [B (Search.beam_parallel, 2)] (fun () ->
+          Helpers.Context_var.with_context
+            [B (Search.beam_parallel, 2); B (Helpers.tc_opt, 1)] (fun () ->
               ignore (Search.beam_search ~to_program ~disable_cache:true
                 (P.create ast ren) rawbufs ~var_vals:[] 1 device));
           None
@@ -515,6 +519,8 @@ let parallel_failure_joins_workers failure () =
       let completed_at_return = Atomic.get finished in
       Atomic.set returned true;
       equal int 2 (Atomic.get started);
+      is_true ~msg:"compiler workers receive the caller's immutable policy snapshot"
+        (Atomic.get inherited_context);
       equal ~msg:"all started workers finish before search propagates failure"
         int 2 completed_at_return;
       is_false ~msg:"worker coordination completed within its deadline"

@@ -84,9 +84,107 @@ let with_env key value f =
 let select candidates =
   Tolk.Helpers.select_first_inited ~message:"No interface is available" candidates
 
+module Context = H.Context_var
+
+let context_value = Context.int ~key:"TOLK_TEST_CONTEXT_VALUE" ~default:10
+let context_label = Context.string ~key:"TOLK_TEST_CONTEXT_LABEL" ~default:"default"
+let context_payload : int ref option Context.t = Context.make ~key:"TOLK_TEST_CONTEXT_PAYLOAD"
+    ~default:None ~parse:(fun _ -> None)
+
+let rendezvous count =
+  let mutex = Mutex.create () and condition = Condition.create () in
+  let arrived = ref 0 in
+  fun () ->
+    Mutex.lock mutex;
+    incr arrived;
+    if !arrived = count then Condition.broadcast condition
+    else while !arrived < count do Condition.wait condition mutex done;
+    Mutex.unlock mutex
+
+let overlapping_contexts spawn join =
+  let entered = rendezvous 2 and observed = rendezvous 2 in
+  let worker value () =
+    let scoped = Context.with_context [B (context_value, value)] (fun () ->
+        entered ();
+        let first = Context.get context_value in
+        observed ();
+        first) in
+    scoped, Context.get context_value
+  in
+  let first = spawn (worker 20) and second = spawn (worker 30) in
+  let first = join first and second = join second in
+  equal (pair int int) (20, 10) first;
+  equal (pair int int) (30, 10) second;
+  equal int 10 (Context.get context_value)
+
+let thread_spawn f =
+  let result = Atomic.make None in
+  let thread = Thread.create (fun () ->
+      let value = try Ok (f ()) with exn -> Error (exn, Printexc.get_raw_backtrace ()) in
+      Atomic.set result (Some value)) () in
+  thread, result
+
+let thread_join (thread, result) =
+  Thread.join thread;
+  match Atomic.get result with
+  | Some (Ok value) -> value
+  | Some (Error (exn, backtrace)) -> Printexc.raise_with_backtrace exn backtrace
+  | None -> fail "context worker did not publish its result"
+
+let snapshot_transport () =
+  let captured = Context.with_context [B (context_value, 20)] Context.snapshot in
+  Context.with_context [B (context_value, 30)] (fun () ->
+      let worker () =
+        Context.with_context [B (context_label, "worker")] (fun () ->
+            let value = Context.with_snapshot captured (fun () ->
+                let before = Context.get context_value, Context.get context_label in
+                Context.with_context [B (context_value, 40); B (context_label, "nested")]
+                  (fun () ->
+                    equal int 40 (Context.get context_value);
+                    equal string "nested" (Context.get context_label));
+                equal int 20 (Context.get context_value);
+                before) in
+            equal string "worker" (Context.get context_label);
+            equal int 10 (Context.get context_value);
+            value) in
+      let domain = Domain.spawn worker and thread = thread_spawn worker in
+      equal (pair int string) (20, "default") (Domain.join domain);
+      equal (pair int string) (20, "default") (thread_join thread);
+      equal int 30 (Context.get context_value));
+  equal int 10 (Context.get context_value)
+
+let scopes_release_values () =
+  let weak = Stdlib.Weak.create 1 in
+  let install () =
+    let payload = ref 42 in
+    Stdlib.Weak.set weak 0 (Some payload);
+    Context.with_context [B (context_payload, Some payload)] (fun () ->
+        is_true (Context.get context_payload = Some payload)) in
+  install ();
+  Gc.full_major ();
+  is_true ~msg:"exited scopes do not retain their bound values"
+    (Option.is_none (Stdlib.Weak.get weak 0))
+
+let contexts =
+  group "contexts"
+    [test "nested duplicate overrides restore after an exception" (fun () ->
+         Context.with_context [B (context_value, 20); B (context_value, 30)] (fun () ->
+             equal int 30 (Context.get context_value);
+             raises Exit (fun () -> Context.with_context [B (context_value, 40)] (fun () ->
+                 equal int 40 (Context.get context_value);
+                 raise Exit));
+             equal int 30 (Context.get context_value));
+         equal int 10 (Context.get context_value));
+     test "overlapping domains retain their own contexts" (fun () ->
+         overlapping_contexts Domain.spawn Domain.join);
+     test "overlapping systhreads retain their own contexts" (fun () ->
+         overlapping_contexts thread_spawn thread_join);
+     test "snapshots are immutable and replace a worker's current context" snapshot_transport;
+     test "exited scopes release their values" scopes_release_values]
+
 let () =
   run __FILE__
-    [ formatting; counters;
+    [ formatting; counters; contexts;
       test "target strings preserve architecture and interface spelling" (fun () ->
           let t = Target.of_string "remote:host:2+nv:cuda:sm_89" in
           equal string "NV" t.device;

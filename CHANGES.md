@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Compilation policy overrides are isolated across domains and systhreads;
+  beam workers inherit an immutable snapshot, so concurrent or nested searches
+  cannot change one another’s settings.
+
 - AMD PCI boot marks the session unfinished before programming hardware and
   restores that marker after a reset, so a failed initialization cannot leave
   the previous session’s clean-shutdown stamp in place.

@@ -127,9 +127,8 @@ acceptance requirement; skipped tests are not execution evidence.
   the upstream stopping threshold. Port remaining heuristics, including
   `TC_MIN_GLOBALS` global-occupancy preservation and its compilation cache key,
   plus device-aware compilation and dynamic cache policy. Share bounded workers
-  with lowering, with context snapshots, cancellation/timeouts, errors,
-  affinity/container limits, nested-context audits and concurrent-cache
-  coverage.
+  with lowering, with cancellation/timeouts, errors,
+  affinity/container limits and concurrent-cache coverage.
   Synchronize device opening and runtime caches; concurrent callers
   currently mutate the shared registry and execution Hashtbls without locking.
   Establish native-handle retirement for replaced device owners: global program,

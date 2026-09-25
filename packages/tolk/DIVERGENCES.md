@@ -399,9 +399,13 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 - **Compilation workers use OCaml domains rather than Python processes.**
   This is an execution mechanism, not a reason for different search policy.
-  Shared context, bounded worker ownership and cancellation must be validated
-  before parallel compilation becomes the default; those tasks are in TODO.
-  Reconsider if domain isolation cannot preserve compilation semantics.
+  Workers inherit immutable context snapshots; domain/systhread isolation and
+  exceptional worker joins have regression coverage. Shared worker limits,
+  cancellation policy and runtime caches still require the TODO acceptance.
+  OCaml 5.5.1 TSan reports ephemeron races also reproduced by a standalone,
+  mutex-protected Stdlib.Weak program; this does not establish harmlessness or
+  satisfy TSan acceptance. Reconsider if domain isolation cannot preserve
+  compilation semantics.
 
 - **Cache eviction uses the device of the timed candidate.** The target's
   fallback materializes 1024×1024 float32 ones on the frontend's default
