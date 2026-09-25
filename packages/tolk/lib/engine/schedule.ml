@@ -755,7 +755,7 @@ let variables_of_kernel_body body =
 
 (* Full schedule pipeline: tensor graph -> Linear + var_vals. *)
 let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
-    U.t * (string * int) list =
+    U.t * (string * int64) list =
   (* Step 1: lower SINKs to LINEARs *)
   let graph =
     U.graph_rewrite ~enter_calls:true
@@ -793,12 +793,12 @@ let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
             U.Arg.Value value ->
               if List.mem name used_vars then
                 (match Const.view value with
-                 | Int n ->
-                     let n = Z.to_int n in
+                 | Int _ ->
+                     let _, n = U.unbind src in
                      (match List.assoc_opt name !var_vals with
                       | Some prev when prev <> n ->
                           invalid_arg (Printf.sprintf
-                            "bind mismatch on %s, %d <> %d" name prev n)
+                            "bind mismatch on %s, %Ld <> %Ld" name prev n)
                       | Some _ -> ()
                       | None -> var_vals := (name, n) :: !var_vals)
                  | _ -> ())

@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Dynamic scalar bindings in execution, JIT replay and beam search now carry
+  the complete signed 64-bit range. Launch dimensions remain checked host
+  integers, and scalar metadata preserves exact bounds.
+
 - Compilation policy overrides are isolated across domains and systhreads;
   beam workers inherit an immutable snapshot, so concurrent or nested searches
   cannot change one another’s settings.

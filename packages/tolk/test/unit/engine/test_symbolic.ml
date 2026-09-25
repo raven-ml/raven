@@ -64,8 +64,8 @@ let realize_output device ~to_program ~buf_node ~value =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
   in
-  equal ~msg:"extracted bind value" (list (pair string int))
-    [ ("start_pos", value) ]
+  equal ~msg:"extracted bind value" (list (pair string int64))
+    [ ("start_pos", Int64.of_int value) ]
     var_vals;
   Realize.run_linear ~device ~to_program ~var_vals linear;
   Device.synchronize device;

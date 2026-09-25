@@ -50,7 +50,7 @@ val captured : 'a tiny_jit -> 'a captured_jit option
 val create :
   device:Device.t ->
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  ?fxn:(Tolk_uop.Uop.t array -> (string * int) list -> 'a) ->
+  ?fxn:(Tolk_uop.Uop.t array -> (string * int64) list -> 'a) ->
   ?captured:'a captured_jit ->
   ?prune:bool ->
   unit ->
@@ -80,7 +80,7 @@ val call :
   ?held_buffers:(unit -> Tolk_uop.Uop.t list) ->
   'a tiny_jit ->
   Tolk_uop.Uop.t array ->
-  (string * int) list ->
+  (string * int64) list ->
   'a
 (** [call ?wait ?held_buffers t input_uops var_vals] runs [t] with
     the input buffer nodes [input_uops] and variable values [var_vals].

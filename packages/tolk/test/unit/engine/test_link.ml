@@ -145,7 +145,7 @@ let host_call_replay () =
   let execute value =
     let result = Device.create_buffer ~size:1 ~dtype:Dtype.int32 device in
     Realize.run_linear ~device ~to_program ~jit:true ~wait:true
-      ~input_uops:[|U.from_buffer result|] ~var_vals:["n", value] linked;
+      ~input_uops:[|U.from_buffer result|] ~var_vals:["n", Int64.of_int value] linked;
     equal int32 (Int32.of_int (abs value)) (Bytes.get_int32_le (B.as_bytes result) 0) in
   execute (-31);
   Gc.full_major ();

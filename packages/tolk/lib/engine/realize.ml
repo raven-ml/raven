@@ -21,7 +21,7 @@ module Runner = struct
     estimates : Program_spec.Estimates.t;
     mutable first_run : bool;
     call :
-      Device.Buffer.t list -> (string * int) list ->
+      Device.Buffer.t list -> (string * int64) list ->
       wait:bool -> timeout:int option -> float option;
   }
 
@@ -308,7 +308,7 @@ let get_runtime ?(queue = false) ~device program =
    it for execution. Owned here so the schedule can consult it without
    depending on the JIT. *)
 
-let capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref =
+let capturing : (Tolk_uop.Uop.t -> (string * int64) list -> unit) list ref =
   ref []
 
 (* Buffer binding
@@ -324,7 +324,7 @@ type buffer =
 (* Execution context threaded through a LINEAR run: symbolic variable values,
    the input buffers PARAM slots index into, and the JIT/wait flags. *)
 type exec_context = {
-  var_vals : (string * int) list;
+  var_vals : (string * int64) list;
   input_uops : Tolk_uop.Uop.t array;
   update_stats : bool;
   jit : bool;
@@ -694,12 +694,7 @@ let exec_kernel ctx ~device call =
         let global, local =
           launch_geometry info ~var_vals
         in
-        let vals =
-          Array.of_list
-            (List.map
-               Int64.of_int
-               (U.program_vals info ~var_vals))
-        in
+        let vals = Array.of_list (U.program_vals info ~var_vals) in
         let buf_args = Array.of_list bufs in
         let run () =
           try prg.call buf_args ~global ~local:(Some local) ~vals ~wait:ctx.wait
@@ -732,7 +727,7 @@ let exec_kernel ctx ~device call =
                 | [] -> device
               in
               launch ~device
-                ~var_vals:(("_device_num", j) :: ctx.var_vals)
+                ~var_vals:(("_device_num", Int64.of_int j) :: ctx.var_vals)
                 bufs)
             groups)
   | None -> invalid_arg "exec_kernel: expected CALL"
@@ -893,7 +888,7 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
           | Some info -> info | None -> invalid_arg "exec_hcq: expected PROGRAM" in
         with_runtime ~queue:true ctx ~device:host body (fun prg ->
         let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
-        let vals = U.program_vals info ~var_vals:ctx.var_vals |> List.map Int64.of_int |> Array.of_list in
+        let vals = U.program_vals info ~var_vals:ctx.var_vals |> Array.of_list in
         let timings = ref [] in
         let run () =
           submission.devices @ List.map fst submission.host_deps |> List.sort_uniq String.compare

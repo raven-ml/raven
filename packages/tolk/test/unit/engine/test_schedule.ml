@@ -118,7 +118,7 @@ let create_linear_call_substitutes_params_and_new_buffers () =
   let big_sink = U.call ~body ~args:[actual] ~info:(call_info "linear") in
   let instantiate () =
     let linear, var_vals = Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big_sink in
-    equal (list (pair string int)) [] var_vals;
+    equal (list (pair string int64)) [] var_vals;
     match U.children linear with
     | [si] ->
         (match U.as_call si with
@@ -177,7 +177,7 @@ let create_linear_call_param_slots_count_binds () =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:(fun u -> u) big_sink
   in
-  equal (list (pair string int)) [ "n", 5 ] var_vals;
+  equal (list (pair string int64)) [ "n", 5L ] var_vals;
   match U.children linear with
   | [ si ] ->
       (match U.as_call si with
@@ -203,7 +203,7 @@ let create_linear_with_vars_returns_only_used_binds () =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:(fun u -> u) big_sink
   in
-  equal (list (pair string int)) [ "n", 7 ] var_vals
+  equal (list (pair string int64)) [ "n", 7L ] var_vals
 
 (* A CALL(LINEAR) whose kernel writes through an internal device buffer: the
    memory planner folds that buffer into an arena on the execution path, and
@@ -247,11 +247,11 @@ let capture_hands_unplanned_schedule_to_capturer () =
         Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id
           (internal_buffer_sink ()))
   in
-  equal (list (pair string int)) [] var_vals;
+  equal (list (pair string int64)) [] var_vals;
   equal int 0 (List.length (U.children linear));
   match !received with
   | Some (captured, captured_vars) ->
-      equal (list (pair string int)) [] captured_vars;
+      equal (list (pair string int64)) [] captured_vars;
       equal int 1 (List.length (U.children captured));
       is_true ~msg:"captured schedule is not memory-planned"
         (Ops.equal (U.op (internal_buffer_arg captured)) Ops.Buffer)
@@ -274,7 +274,7 @@ let nested_scalar_bindings_are_lexical () =
       | Some {body; _} -> List.map (fun (_, name, _, _) -> name) (U.symbolic_vars body)
       | None -> fail "expected kernel call") (U.children linear) in
   equal (list (list string)) [["outer"]; ["inner"]; ["outer"]] names;
-  equal (list (pair string int)) [("inner", 7); ("outer", 3)]
+  equal (list (pair string int64)) [("inner", 7L); ("outer", 3L)]
     (List.sort compare vars)
 
 (* Call arguments: a precompiled call over [4; 4] storage on CPU:1, whose

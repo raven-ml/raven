@@ -56,7 +56,10 @@ let rec make_beam_search device beam_width =
       let spec = { Device.Buffer_spec.default with nolru = true } in
       let var_vals = U.symbolic_vars (Postrange.ast k)
           |> List.map (fun (_, name, lo, hi) ->
-              name, Bound.to_int (Bound.floordiv (Bound.add lo hi) (Bound.int 2))) in
+              let midpoint = Bound.integer (Bound.floordiv (Bound.add lo hi) (Bound.int 2)) in
+              if not (Z.fits_int64 midpoint) then
+                invalid_arg "Codegen: timing midpoint does not fit int64";
+              name, Z.to_int64 midpoint) in
       let rawbufs =
         List.map
           (fun (_, dtype, size) -> Device.create_buffer ~size ~dtype ~spec dev)

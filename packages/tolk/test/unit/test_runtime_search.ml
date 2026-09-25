@@ -282,7 +282,7 @@ let beam_search_tests =
           let ast = U.sink ~kernel_info:ki [ e ] in
           let s = P.create ast ren in
           let rawbufs = create_bufs_for_kernel device ast in
-          let result = Search.beam_search ~to_program s rawbufs ~var_vals:[ "v", 8 ] 1 device in
+          let result = Search.beam_search ~to_program s rawbufs ~var_vals:[ "v", 8L ] 1 device in
           ignore (result : P.t));
       test "uses the supplied symbolic value during timing" (fun () ->
           let device = cpu "beam-explicit-variable" in
@@ -299,10 +299,10 @@ let beam_search_tests =
                   raises_match (function Invalid_argument _ -> true | _ -> false)
                     (fun () -> Search.beam_search ~to_program ~disable_cache:true
                       (P.create ast ren) [ output; input ] ~var_vals 1 device))
-                [ []; [ "scale", -5 ]; [ "scale", 0 ] ];
+                [ []; [ "scale", -5L ]; [ "scale", 0L ] ];
               List.iter (fun scale ->
                   ignore (Search.beam_search ~to_program ~disable_cache:true
-                    (P.create ast ren) [ output; input ] ~var_vals:[ "scale", scale ]
+                    (P.create ast ren) [ output; input ] ~var_vals:[ "scale", Int64.of_int scale ]
                     1 device : P.t);
                   equal (list (float 1e-6))
                     (List.map (fun x -> Float.of_int (scale * x)) [ 1; 2; 3; 4 ])
@@ -605,7 +605,7 @@ let candidate_program_metadata () =
     (fun () ->
       let search () = ignore (Search.beam_search ~to_program:compile_candidate
           ~disable_cache:true (P.create ast renderer) rawbufs
-          ~var_vals:["timing_extent", 131072] 1 device) in
+          ~var_vals:["timing_extent", 131072L] 1 device) in
       Unix.putenv "BEAM_UOPS_MAX" "1";
       search ();
       is_true ~msg:"candidate compilation uses the supplied constructor" (!compiled > 0);

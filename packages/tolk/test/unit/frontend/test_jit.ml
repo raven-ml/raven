@@ -47,6 +47,23 @@ let is_jit_error = function Jit.Jit_error _ -> true | _ -> false
 let elementwise_tests =
   group "elementwise"
     [
+      test "signed int64 endpoints survive binding, capture and replay" (fun () ->
+          let module D = Tolk_uop.Dtype in
+          let scalar = U.param ~slot:(-1) ~name:"wide" ~dtype:D.int64
+              ~addrspace:D.Alu ~vmin_vmax:(D.min D.int64, D.max D.int64) () in
+          let scalar = U.replace scalar ~op:Tolk_uop.Ops.Buffer () in
+          let traces = ref 0 in
+          let jit = Jit.create (fun inputs ~vars ->
+              incr traces;
+              Run.realize (El.add inputs.(0) (T.of_uop vars.(0)))) in
+          List.iter (fun value ->
+              let bound = U.bind ~var:scalar
+                  ~value:(U.const (Tolk_uop.Const.int64 D.int64 value)) in
+              let input = Run.of_bytes ~dtype:D.int64 ~shape:[1] (Bytes.make 8 '\000') in
+              let output = Jit.call jit ~vars:[|bound|] [|input|] in
+              equal int64 value (Bytes.get_int64_le (Run.data output) 0))
+            [Int64.min_int; Int64.max_int; Int64.min_int; Int64.max_int];
+          equal int 2 !traces);
       test "storage slices remain views through capture and replay" (fun () ->
           List.iter (fun offset ->
               let traces = ref 0 in

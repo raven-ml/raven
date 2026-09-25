@@ -79,7 +79,7 @@ val memory_plan_rewrite :
 val create_linear_with_vars :
   get_kernel_graph:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t * (string * int) list
+  Tolk_uop.Uop.t * (string * int64) list
 (** [create_linear_with_vars ~get_kernel_graph big_sink] runs the
     schedule creation pipeline on [big_sink] and returns the
     linearized schedule plus the values bound to runtime variables.

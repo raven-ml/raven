@@ -111,7 +111,7 @@ let exec_captured ?(wait = false) t (input_uops : U.t array) var_vals =
 (* TinyJit *)
 
 type 'a tiny_jit = {
-  fxn : (U.t array -> (string * int) list -> 'a) option;
+  fxn : (U.t array -> (string * int64) list -> 'a) option;
   device : Device.t;
   to_program : Device.t -> U.t -> U.t;
   mutable captured : 'a captured_jit option;
@@ -139,7 +139,7 @@ let combine_linears linears =
        linears)
 
 let call ?wait ?held_buffers t (input_uops : U.t array)
-    (var_vals : (string * int) list) =
+    (var_vals : (string * int64) list) =
   let ret =
     if jit_level = 0 || t.cnt = 0 then
       (* Warmup: execute eagerly. *)

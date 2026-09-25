@@ -623,7 +623,7 @@ let execute_queue ~compute_class ~copies m =
       let inputs = Array.init (if copies then 3 else 1) (fun _ ->
           Device.create_buffer ~size:16 ~dtype:D.int32 device) in
       Realize.run_linear ~device ~to_program ~jit:true
-        ~var_vals:["small", small; "count", count] ~input_uops:(Array.map U.from_buffer inputs) linked;
+        ~var_vals:["small", Int64.of_int small; "count", Int64.of_int count] ~input_uops:(Array.map U.from_buffer inputs) linked;
       Submission.check submission;
       equal int replay (word "gpput_compute");
       let qmd_buffer = get "qmd" in
@@ -694,7 +694,7 @@ let raw_submissions m =
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   Realize.run_linear ~device
     ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-    ~jit:true ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked;
+    ~jit:true ~var_vals:["small", 7L; "count", 3L] ~input_uops:[|U.from_buffer input|] linked;
   check 3L 2L 1L;
   Tolk_nv.submit_commands ~device ~queue:"COMPUTE:0" setup;
   check 4L 3L 1L
@@ -812,8 +812,8 @@ let queue_chain ?(extra_args = 0) ~compute_class m =
     Device.Buffer.copyin progress bytes in
   let run linked arena small count inputs =
     Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-      ~jit:true ~var_vals:(["small", small; "count", count] @
-        List.init extra_args (fun i -> "extra_" ^ string_of_int i, i + small))
+      ~jit:true ~var_vals:(["small", Int64.of_int small; "count", Int64.of_int count] @
+        List.init extra_args (fun i -> "extra_" ^ string_of_int i, Int64.of_int (i + small)))
       ~input_uops:(Array.map U.from_buffer inputs) linked;
     Submission.check submission;
     let address = Device.Buffer.addr arena in
@@ -855,7 +855,7 @@ let queue_timeout m =
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run () = Realize.run_linear ~device
       ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) ~jit:true
-      ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked in
+      ~var_vals:["small", 7L; "count", 3L] ~input_uops:[|U.from_buffer input|] linked in
   run ();
   let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "gpput_compute") in
   let published = doorbell () in
@@ -879,7 +879,7 @@ let queue_capacity ~copies ~resume m =
     let linked = Realize.link_linear ~allow_cache:false compiled in
     Realize.run_linear ~device
       ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-      ~jit:true ~var_vals:["small", 7; "count", 3]
+      ~jit:true ~var_vals:["small", 7L; "count", 3L]
       ~input_uops:inputs linked
   in
   for i = 1 to 7 do
@@ -928,7 +928,7 @@ let queue_counter_rollover m =
   List.iter (fun expected ->
       Realize.run_linear ~device
         ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-        ~jit:true ~var_vals:["small", 7; "count", 3]
+        ~jit:true ~var_vals:["small", 7L; "count", 3L]
         ~input_uops:[|U.from_buffer input|] linked;
       Submission.check submission;
       let data = Device.Buffer.as_bytes progress in
@@ -951,7 +951,7 @@ let queue_retirement_timeout m =
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run small = Realize.run_linear ~device
       ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-      ~jit:true ~var_vals:["small", small; "count", 3]
+      ~jit:true ~var_vals:["small", Int64.of_int small; "count", 3L]
       ~input_uops:[|U.from_buffer input|] linked in
   run 7;
   (* The kernel timeline may finish before the channel consumes its tail. *)
@@ -1732,7 +1732,7 @@ let () =
                   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
                   Realize.run_linear ~device
                     ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-                    ~jit:true ~var_vals:["small", -17; "count", 3]
+                    ~jit:true ~var_vals:["small", -17L; "count", 3L]
                     ~input_uops:[|U.from_buffer input|] linked;
                   Submission.check submission;
                   let buffer = Hashtbl.find buffers "qmd" in

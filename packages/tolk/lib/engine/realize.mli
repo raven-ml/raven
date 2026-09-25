@@ -29,7 +29,7 @@ module Runner : sig
     display_name:string ->
     device:Device.t ->
     ?estimates:Program_spec.Estimates.t ->
-    (Device.Buffer.t list -> (string * int) list ->
+    (Device.Buffer.t list -> (string * int64) list ->
      wait:bool -> timeout:int option -> float option) ->
     t
   (** [make ~display_name ~device ?estimates call] is a runner that
@@ -48,7 +48,7 @@ module Runner : sig
   (** [estimates t] is [t]'s cost estimates. *)
 
   val call :
-    t -> Device.Buffer.t list -> (string * int) list ->
+    t -> Device.Buffer.t list -> (string * int64) list ->
     wait:bool -> timeout:int option -> float option
   (** [call t bufs var_vals ~wait ~timeout] dispatches the operation
       on [bufs] with variable bindings [var_vals].
@@ -57,7 +57,7 @@ module Runner : sig
       supports timing, [None] otherwise. *)
 
   val exec :
-    t -> Device.Buffer.t list -> ?var_vals:(string * int) list ->
+    t -> Device.Buffer.t list -> ?var_vals:(string * int64) list ->
     unit -> float option
   (** [exec t bufs ?var_vals ()] is {!call} with [~wait:false] and
       [~timeout:None]. Always returns [None].
@@ -143,7 +143,7 @@ val compile_linear :
 
 (** {1:capture Capture registry} *)
 
-val capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref
+val capturing : (Tolk_uop.Uop.t -> (string * int64) list -> unit) list ref
 (** [capturing] is the schedule-capture registry. While non-empty,
     {!Schedule.create_linear_with_vars} hands each linearized schedule and its
     variable bindings to the head entry and returns an empty
@@ -160,7 +160,7 @@ type buffer =
 (** The type for concrete buffers named by call arguments. *)
 
 type exec_context = {
-  var_vals : (string * int) list;
+  var_vals : (string * int64) list;
   input_uops : Tolk_uop.Uop.t array;
   update_stats : bool;
   jit : bool;
@@ -173,7 +173,7 @@ type exec_context = {
     calls are counted and reported, and the JIT and wait flags. *)
 
 val exec_context :
-  ?var_vals:(string * int) list ->
+  ?var_vals:(string * int64) list ->
   ?input_uops:Tolk_uop.Uop.t array ->
   ?update_stats:bool ->
   ?jit:bool ->
@@ -221,7 +221,7 @@ val link_linear :
 val run_linear :
   device:Device.t ->
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  ?var_vals:(string * int) list ->
+  ?var_vals:(string * int64) list ->
   ?input_uops:Tolk_uop.Uop.t array ->
   ?update_stats:bool ->
   ?jit:bool ->
@@ -288,7 +288,7 @@ val queue_submissions : int ref
 val time_call :
   device:Device.t ->
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
-  ?var_vals:(string * int) list ->
+  ?var_vals:(string * int64) list ->
   ?timeout:int ->
   ?clear_l2:bool ->
   Tolk_uop.Uop.t ->

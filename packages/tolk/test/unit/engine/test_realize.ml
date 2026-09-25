@@ -261,7 +261,7 @@ let compiled_launch_uses_fixed_workgroups () =
   let flat = U.special ~name:"idx0" ~size:(U.const_int 7) () in
   let body = U.sink ~kernel_info:(kernel_info "fixed_workgroups") [ flat; n ] in
   let call = U.call ~body:(program_of body) ~args:[] ~info:(call_info None) in
-  Realize.run_linear ~device ~to_program:(fun device body -> ignore device; program_of body) ~var_vals:[ "n", 37 ] (U.linear [ call ]);
+  Realize.run_linear ~device ~to_program:(fun device body -> ignore device; program_of body) ~var_vals:[ "n", 37L ] (U.linear [ call ]);
   equal int 1 !calls
 
 let compile_beam_policy () =
@@ -315,7 +315,7 @@ let scoped_timings ~dispatch_failure ~drain_failure () =
   let kernels = !(Helpers.Global_counters.kernel_count) in
   let run () = Realize.time_call ~device
       ~to_program:(fun device body -> ignore device; program_of body)
-      ~var_vals:["n",13] ~timeout:7 ~clear_l2:true call (fun sample ->
+      ~var_vals:["n",13L] ~timeout:7 ~clear_l2:true call (fun sample ->
         equal float_exact 0.25 (sample ());
         equal float_exact 0.25 (sample ())) in
   if drain_failure then
@@ -347,7 +347,7 @@ let () =
             let state = runtime_state () in
             let n = variable "n" 0 16 in
             let core_id = variable "core_id" 0 3 in
-            ignore (call_program state [ n; core_id ] [ "core_id", 2; "n", 7 ]);
+            ignore (call_program state [ n; core_id ] [ "core_id", 2L; "n", 7L ]);
             equal (array int64) [| 2L; 7L |] state.vals;
             equal (array int) [| 1; 1; 1 |] state.global;
             equal int 0 state.nbufs);

@@ -20,8 +20,8 @@ type program = Tolk_uop.Uop.t list
 
 type var = {
   name : string;  (** Variable name matching the IR definition. *)
-  lo : int;  (** Inclusive lower bound. *)
-  hi : int;  (** Inclusive upper bound. *)
+  lo : Tolk_uop.Bound.t;  (** Inclusive lower bound. *)
+  hi : Tolk_uop.Bound.t;  (** Inclusive upper bound. *)
   dtype : Tolk_uop.Dtype.t;  (** Scalar data type. *)
 }
 (** Bounded scalar {!Tolk_uop.Uop.Param_arg} kernel parameter. *)
@@ -119,7 +119,7 @@ val program_info : t -> Tolk_uop.Uop.program_info
     [spec]. Symbolic global and local dimensions are preserved as launch
     expressions. Flat-thread launches use unit local dimensions. *)
 
-val launch_dims : t -> (string * int) list -> int array * int array option
+val launch_dims : t -> (string * int64) list -> int array * int array option
 (** [launch_dims spec var_vals] evaluates launch dimensions by replacing
     symbolic variables with the values in [var_vals].
 

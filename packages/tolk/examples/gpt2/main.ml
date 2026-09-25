@@ -33,7 +33,12 @@ let half_mode = Tolk.Helpers.getenv "HALF" 0 <> 0
 let pos_value pos =
   match U.const_int_value pos with
   | Some v -> v
-  | None -> snd (U.unbind pos)
+  | None ->
+      let value = snd (U.unbind pos) in
+      if Int64.compare value (Int64.of_int min_int) < 0
+         || Int64.compare value (Int64.of_int max_int) > 0 then
+        invalid_arg "position does not fit a host integer";
+      Int64.to_int value
 
 let plus u n = U.O.(u + U.const_int n)
 

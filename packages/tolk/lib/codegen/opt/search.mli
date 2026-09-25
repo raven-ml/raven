@@ -28,7 +28,7 @@ val beam_search :
   ?disable_cache:bool ->
   Postrange.t ->
   Device.Buffer.t list ->
-  var_vals:(string * int) list ->
+  var_vals:(string * int64) list ->
   int ->
   Device.t ->
   Postrange.t

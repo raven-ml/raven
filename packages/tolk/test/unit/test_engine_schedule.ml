@@ -212,7 +212,7 @@ let create_linear_with_vars_extracts_bind_through_call () =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
   in
-  equal (list (pair string int)) [ ("start_pos", 5) ] var_vals
+  equal (list (pair string int64)) [ ("start_pos", 5L) ] var_vals
 
 let create_linear_with_vars_keeps_only_used_binds () =
   let out = buffer 0 in
@@ -235,7 +235,7 @@ let create_linear_with_vars_keeps_only_used_binds () =
       (U.call ~body:(U.sink [graph]) ~args:(List.tl (U.children big_sink))
          ~info:{call_info with precompile = true})
   in
-  equal (list (pair string int)) [ "used", 7 ] var_vals
+  equal (list (pair string int64)) [ "used", 7L ] var_vals
 
 let volatile_inputs_survive_scheduling () =
   let build ?(sliced = true) volatile =

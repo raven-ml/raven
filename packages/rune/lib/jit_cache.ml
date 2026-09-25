@@ -194,11 +194,9 @@ let vars_of_args names args =
       List.filter_map
         (fun u ->
           match U.as_bind u with
-          | Some { var; value } -> (
-              match
-                (U.Arg.as_param_arg (U.arg var), U.const_int_value value)
-              with
-              | Some { name = Some name; _ }, Some n -> Some (name, n)
+          | Some { var; _ } -> (
+              match U.Arg.as_param_arg (U.arg var) with
+              | Some { name = Some name; _ } -> Some (name, snd (U.unbind u))
               | _ -> None)
           | None -> None)
         args

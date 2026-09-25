@@ -437,7 +437,7 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
       match List.assoc_opt name var_vals with
       | None -> invalid_arg (Printf.sprintf "beam_search: missing variable %S" name)
       | Some value ->
-          let value = Bound.int value in
+          let value = `Int (Z.of_int64 value) in
           if Bound.lt value lo || Bound.lt hi value then
             invalid_arg (Printf.sprintf "beam_search: variable %S is outside its bounds" name))
     (U.symbolic_vars (P.ast s));

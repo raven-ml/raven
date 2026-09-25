@@ -4100,7 +4100,7 @@ type 'q compiled = {
   cp_zero_copy : bool;
   cp_ctx : Nx_effect.context;
   cp_linear : U.t;
-  cp_vars : (string * int) list;
+  cp_vars : (string * int64) list;
   cp_input_uops : U.t array;
       (* default storage for the schedule's PARAM slots; replay copies this
          array and supplies its input, output and shared-arena owners *)

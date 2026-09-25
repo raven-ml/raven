@@ -163,6 +163,19 @@ let () =
             ignore (run ());
             raises_jit_error (fun () ->
                 ignore (run ~dtype:Dtype.float32 ())));
+          test "capture and replay retain both signed int64 endpoints" (fun () ->
+            let n = U.param ~slot:(-1) ~name:"wide" ~dtype:Dtype.int64
+                ~addrspace:Dtype.Alu
+                ~vmin_vmax:(Dtype.min Dtype.int64, Dtype.max Dtype.int64) () in
+            let body = U.sink ~kernel_info:(kernel_info "jit_full_width") [n] in
+            let variable = U.replace n ~op:Ops.Buffer () in
+            let binds values = [U.bind ~var:variable
+                ~value:(U.const (Const.int64 Dtype.int64 (List.assoc "wide" values)))] in
+            let state, run = make_kernel_jit ~body ~binds () in
+            List.iter (fun value ->
+                ignore (run ~var_vals:["wide", value] ());
+                equal (array int64) [|value|] state.vals)
+              [Int64.min_int; Int64.max_int; Int64.min_int]);
           test "replay passes per-call var_vals to the runtime" (fun () ->
             let n = U.variable ~name:"n" ~min_val:1 ~max_val:16 () in
             let body =
@@ -172,17 +185,17 @@ let () =
             in
             let binds var_vals =
               [ U.bind ~var:n
-                  ~value:(U.const_int (List.assoc "n" var_vals)) ]
+                  ~value:(U.const (Const.int64 Dtype.weakint (List.assoc "n" var_vals))) ]
             in
             let state, run = make_kernel_jit ~body ~binds () in
-            ignore (run ~var_vals:[ ("n", 3) ] ());
-            ignore (run ~var_vals:[ ("n", 3) ] ());
+            ignore (run ~var_vals:[ ("n", 3L) ] ());
+            ignore (run ~var_vals:[ ("n", 3L) ] ());
             equal (array int64) [| 3L |] state.vals;
             equal (array int) [| 3; 1; 1 |] state.global;
-            ignore (run ~var_vals:[ ("n", 5) ] ());
+            ignore (run ~var_vals:[ ("n", 5L) ] ());
             equal (array int64) [| 5L |] state.vals;
             equal (array int) [| 5; 1; 1 |] state.global;
-            ignore (run ~var_vals:[ ("n", 9) ] ());
+            ignore (run ~var_vals:[ ("n", 9L) ] ());
             equal (array int64) [| 9L |] state.vals;
             equal (array int) [| 9; 1; 1 |] state.global);
         ];

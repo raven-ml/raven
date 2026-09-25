@@ -217,12 +217,14 @@ let overlapping_copy_between_kernels () =
 let test_mixed_scalar_widths () =
   let device = metal_device () in
   let output = U.param ~slot:0 ~dtype:Dtype.int64 ~shape:(U.const_int 4) () in
-  let cases = [ Dtype.int8, "small", -128, 127, -7;
-                Dtype.int16, "halfword", -512, 512, 300;
-                Dtype.int32, "word", 0, 65536, 12345;
-                Dtype.int64, "wide", 0, 0x3_0000_0000, 0x1_0000_0002 ] in
-  let vars = List.map (fun (dtype, name, min_val, max_val, _) ->
-      U.variable ~param:true ~name ~min_val ~max_val ~dtype ()) cases in
+  let cases = [
+    Dtype.int8, "small", (Bound.int (-128), Bound.int 127), -7L;
+    Dtype.int16, "halfword", (Bound.int (-512), Bound.int 512), 300L;
+    Dtype.int32, "word", (Bound.zero, Bound.int 65536), 12345L;
+    Dtype.int64, "wide", (Dtype.min Dtype.int64, Dtype.max Dtype.int64), Int64.min_int;
+  ] in
+  let vars = List.map (fun (dtype, name, vmin_vmax, _) ->
+      U.param ~slot:(-1) ~dtype ~name ~addrspace:Dtype.Alu ~vmin_vmax ()) cases in
   let stores = List.mapi (fun i var ->
       let offset = U.const (Const.int Dtype.int32 i) in
       let ptr = U.index ~ptr:output ~idxs:[ offset ] () in
@@ -233,18 +235,21 @@ let test_mixed_scalar_widths () =
   let buffer = Device.create_buffer ~size:4 ~dtype:Dtype.int64 device in
   Device.Buffer.ensure_allocated buffer;
   Device.Buffer.copyin buffer (Bytes.make 32 '\000');
-  let bindings = List.map (fun (_, name, _, _, value) -> name, value) cases in
+  let bindings = List.map (fun (_, name, _, value) -> name, value) cases in
   let read () =
     let bytes = Device.Buffer.as_bytes buffer in
     List.init 4 (fun i -> Bytes.get_int64_le bytes (8 * i)) in
   ignore (call_spec device spec [ buffer ] bindings);
-  equal (list int64) [ -7L; 300L; 12345L; 0x1_0000_0002L ] (read ());
+  equal (list int64) [ -7L; 300L; 12345L; Int64.min_int ] (read ());
   let run = compile_queue device [queue_call device spec [0]] in
   run ~vars:bindings [| buffer |];
   let bindings = List.map (fun (name, value) -> name,
-      if name = "small" then 11 else if name = "wide" then 0x2_0000_0003 else value) bindings in
+      if name = "small" then 11L else if name = "wide" then Int64.max_int else value) bindings in
   run ~wait:true ~vars:bindings [| buffer |];
-  equal (list int64) [ 11L; 300L; 12345L; 0x2_0000_0003L ] (read ())
+  equal (list int64) [ 11L; 300L; 12345L; Int64.max_int ] (read ());
+  run ~wait:true ~vars:["small", -7L; "halfword", 300L; "word", 12345L;
+      "wide", Int64.min_int] [|buffer|];
+  equal (list int64) [-7L; 300L; 12345L; Int64.min_int] (read ())
 
 let test_many_buffer_arguments count () =
   let device = metal_device () in
@@ -532,7 +537,7 @@ let () =
             let device = metal_device () in
             let spec = compile_var device "metal_store_var" in
             let dst = i32_buf device [ 0 ] in
-            ignore (call_spec device spec [ dst ] [ "n", 37 ]);
+            ignore (call_spec device spec [ dst ] [ "n", 37L ]);
             equal (list int) [ 37 ] (read_i32 dst));
           test "wait returns gpu time" (fun () ->
             let device = metal_device () in
@@ -644,7 +649,7 @@ let () =
             let replay = compile_queue device [queue_call device spec [0]] in
             List.iter (fun width ->
                 let buffer = i32_buf device (List.init 8 (fun _ -> -1)) in
-                replay ~wait:true ~vars:["width", width] [|buffer|];
+                replay ~wait:true ~vars:["width", Int64.of_int width] [|buffer|];
                 equal (list int) (List.init 8 (fun i -> if i < width then i else -1))
                   (read_i32 buffer)) [2; 4; 3]);
           test "replays a multi-kernel chain in order" (fun () ->
@@ -706,16 +711,16 @@ let () =
             let spec = compile_var device "metal_queue_var" in
             let dst = i32_buf device [0] in
             let run = compile_queue device [queue_call device spec [0]] in
-            run ~wait:true ~vars:["n", 5] [|dst|];
+            run ~wait:true ~vars:["n", 5L] [|dst|];
             equal (list int) [5] (read_i32 dst);
-            run ~wait:true ~vars:["n", 9] [|dst|];
+            run ~wait:true ~vars:["n", 9L] [|dst|];
             equal (list int) [9] (read_i32 dst));
           test "fences command patches while earlier launches are in flight" (fun () ->
             let device = metal_device () in
             let spec = compile_var device "metal_queue_inflight" in
             let outputs = Array.init 128 (fun _ -> i32_buf device [0]) in
             let run = compile_queue device [queue_call device spec [0]] in
-            Array.iteri (fun i dst -> run ~vars:["n", i + 1] [|dst|]) outputs;
+            Array.iteri (fun i dst -> run ~vars:["n", Int64.of_int (i + 1)] [|dst|]) outputs;
             Device.synchronize device;
             Array.iteri (fun i dst -> equal (list int) [i + 1] (read_i32 dst)) outputs);
           test "rebinds buffer views between launches" (fun () ->

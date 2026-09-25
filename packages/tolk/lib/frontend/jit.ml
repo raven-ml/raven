@@ -108,7 +108,7 @@ let prepare_inputs tensors vars =
         | Some prev when prev <> value ->
             raise
               (Jit_error
-                 (Printf.sprintf "conflicting values for JIT var %s: %d and %d"
+                 (Printf.sprintf "conflicting values for JIT var %s: %Ld and %Ld"
                     name prev value))
         | _ -> ());
         (name, value) :: acc)

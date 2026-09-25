@@ -113,11 +113,8 @@ acceptance requirement; skipped tests are not execution evidence.
   the target's exact arithmetic.
 - Use the target's sanitized `signed_char` name for RDNA3 int8 tensor-core
   fragments; distinguish source naming parity from fragment layout correctness.
-- Carry full-width dynamic scalar bindings through retained execution. The
-  native ABI accepts `int64`, but `exec_context`/`run_linear` bind values through
-  OCaml `int`, excluding part of the signed 64-bit range. Separate typed scalar
-  arguments from host-sized launch geometry; cover both int64 endpoints through
-  real CPU/Metal execution and CUDA shared-queue argument packing.
+- Validate both signed int64 endpoints through CUDA shared-queue argument
+  packing and replay on hardware.
 - Validate conflicting formal identities in hand-built programs. Rendered-name
   deduplication and ABI node-identity deduplication can disagree for same-name
   scalar parameters with different dtypes or bounds; establish one invariant

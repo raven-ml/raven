@@ -2989,8 +2989,12 @@ let sprod dims = simplify (dim_prod dims)
 let unbind u =
   match as_bind u with
   | Some { var; value } -> (
-      match const_int_value value with
-      | Some n -> (var, n)
+      match as_const value with
+      | Some value ->
+          (match Const.view value with
+           | Const.Int n when Z.fits_int64 n -> var, Z.to_int64 n
+           | Const.Int _ -> invalid_arg "Uop.unbind: bound value does not fit int64"
+           | _ -> invalid_arg "Uop.unbind: bound value is not an integer")
       | None -> invalid_arg "Uop.unbind: bound value is not an integer")
   | _ -> invalid_arg "Uop.unbind: expected a bound variable"
 
@@ -3301,7 +3305,7 @@ let sym_infer u var_vals =
               (match param.name with
                | Some name ->
                    (match List.assoc_opt name var_vals with
-                    | Some value -> Const.int Dtype.weakint value
+                    | Some value -> Const.int64 Dtype.weakint value
                     | None -> invalid_arg
                         (Printf.sprintf "sym_infer: missing variable %S" name))
                | None -> invalid_arg "sym_infer: unnamed variable")

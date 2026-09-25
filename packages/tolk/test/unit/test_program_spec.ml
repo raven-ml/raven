@@ -86,7 +86,7 @@ let () =
           test "bounded scalar metadata retains the complete ABI" (fun () ->
             let output = param 0 Dtype.int64 in
             let value = U.param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu
-                ~name:"value" ~vmin_vmax:(Bound.zero, Bound.int 7) () in
+                ~name:"value" ~vmin_vmax:(Dtype.min Dtype.int64, Dtype.max Dtype.int64) () in
             let at = index output (U.const_int 0) in
             let spec = spec_of [output; value; at; store at value]
                 |> Program_spec.with_lib Bytes.empty in
@@ -94,7 +94,10 @@ let () =
             equal (list int) [0; 1]
               (List.map (fun (arg : Tiny_elf.argument) -> arg.slot) obj.signature);
             equal (list string) ["value"]
-              (List.map (fun (v : Program_spec.var) -> v.name) (Program_spec.vars spec)));
+              (List.map (fun (v : Program_spec.var) -> v.name) (Program_spec.vars spec));
+            let variable = List.hd (Program_spec.vars spec) in
+            is_true (Bound.equal variable.lo (Dtype.min Dtype.int64));
+            is_true (Bound.equal variable.hi (Dtype.max Dtype.int64)));
           test "reads and writes are deduplicated" (fun () ->
             let p0 = param 0 Dtype.float32 in
             let p1 = param 1 Dtype.float32 in
@@ -140,7 +143,7 @@ let () =
             let spec = spec_of [ m; c4; groups; gid; lid ] in
             match Program_spec.launch_kind spec with
             | Program_spec.Thread_groups ->
-                let global, local = Program_spec.launch_dims spec [ "m", 3 ] in
+                let global, local = Program_spec.launch_dims spec [ "m", 3L ] in
                 equal (array int) [| 12; 1; 1 |] global;
                 begin match local with
                 | None -> failwith "expected local dims"
@@ -153,7 +156,7 @@ let () =
             let gid = special (Gpu_dim.Group_id 0) n in
             let global, _local =
               Program_spec.launch_dims (spec_of [ m; n; gid ])
-                [ "m", 3; "n", 9 ]
+                [ "m", 3L; "n", 9L ]
             in
             equal (array int) [| 9; 1; 1 |] global);
           test "missing launch variables identify the program" (fun () ->
@@ -170,26 +173,26 @@ let () =
             let n = variable "launch_n" and m = variable "launch_m" in
             let dimension = U.O.((n * m) // U.const_int max_int) in
             let value = 1 lsl 32 in
-            check_launch_dimension dimension ["launch_n", value; "launch_m", value] 4);
+            check_launch_dimension dimension ["launch_n", Int64.of_int value; "launch_m", Int64.of_int value] 4);
           test "launch dimensions preserve Python signed shifts" (fun () ->
             let n = U.variable ~name:"shift_n" ~min_val:(-1000) ~max_val:1000 () in
             let shifted = U.alu_binary ~op:Ops.Shr ~lhs:n ~rhs:(U.const_int 1) in
-            check_launch_dimension U.O.(shifted + U.const_int 10) ["shift_n", -7] 6);
+            check_launch_dimension U.O.(shifted + U.const_int 10) ["shift_n", -7L] 6);
           test "launch casts convert values without storage narrowing" (fun () ->
             let n = U.variable ~name:"cast_n" ~min_val:(-1000) ~max_val:(1 lsl 30) () in
-            check_launch_dimension (U.cast ~src:n ~dtype:Dtype.int8) ["cast_n", 300] 300;
+            check_launch_dimension (U.cast ~src:n ~dtype:Dtype.int8) ["cast_n", 300L] 300;
             let floating = U.cast ~src:n ~dtype:Dtype.float32 in
             check_launch_dimension (U.cast ~src:floating ~dtype:Dtype.weakint)
-              ["cast_n", 16_777_217] 16_777_217;
+              ["cast_n", 16_777_217L] 16_777_217;
             let boolean = U.cast ~src:n ~dtype:Dtype.bool in
             let integer = U.cast ~src:boolean ~dtype:Dtype.weakint in
-            check_launch_dimension U.O.(integer + U.const_int 1) ["cast_n", -7] 2);
+            check_launch_dimension U.O.(integer + U.const_int 1) ["cast_n", -7L] 2);
           test "launch bitcasts retain the source representation" (fun () ->
             let bits = U.variable ~name:"bits" ~min_val:0 ~max_val:0x7fff_ffff
                 ~dtype:Dtype.int32 () in
             let floating = U.bitcast ~src:bits ~dtype:Dtype.float32 in
             check_launch_dimension (U.cast ~src:floating ~dtype:Dtype.weakint)
-              ["bits", 0x3f80_0000] 1);
+              ["bits", 0x3f80_0000L] 1);
           test "launch floor div and mod use Python semantics" (fun () ->
             let n = define_var "n" (-10) 10 in
             let three = i32 3 in
@@ -200,7 +203,7 @@ let () =
             let global, local =
               Program_spec.launch_dims
                 (spec_of [ n; three; groups; locals; gid; lid ])
-                [ "n", -7 ]
+                [ "n", -7L ]
             in
             equal (array int) [| -3; 1; 1 |] global;
             begin match local with
@@ -214,7 +217,7 @@ let () =
             match Program_spec.launch_kind spec with
             | Program_spec.Threads ->
                 let global, local =
-                  Program_spec.launch_dims spec [ "threads", 11 ]
+                  Program_spec.launch_dims spec [ "threads", 11L ]
                 in
                 equal (array int) [| 1; 1; 11 |] global;
                 is_none local
@@ -258,7 +261,7 @@ let () =
             let n = define_var "n" 1 32 in
             let lid = special (Gpu_dim.Local_id 0) n in
             let info = Program_spec.program_info (spec_of [ n; lid ]) in
-            let _, local = U.program_launch_dims info ~var_vals:[ "n", 8 ] in
+            let _, local = U.program_launch_dims info ~var_vals:[ "n", 8L ] in
             is_true (local = [ U.Launch_value_int 8; U.Launch_value_int 1; U.Launch_value_int 1 ]));
           test "duplicate launch axis is rejected" (fun () ->
             let c4 = i32 4 in

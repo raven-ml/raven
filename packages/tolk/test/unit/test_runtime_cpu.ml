@@ -880,7 +880,7 @@ let test_sparse_program_arguments () =
       precompile_backward = false; aux = None; dtype = Dtype.void } in
   let call = U.call ~body:program ~args ~info in
   Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-    ~var_vals:[ "increment", 1 ] (U.linear [ call ]);
+    ~var_vals:[ "increment", 1L ] (U.linear [ call ]);
   equal (list int) [ 42 ] (read_i32_buffer output_buffer);
   equal (list int) [ 41 ] (read_i32_buffer input_buffer);
   let obj = U.to_elf program in
@@ -941,17 +941,41 @@ let test_linear_formal_order ?(permute_slots = false) ~reverse_buffers ~reverse_
           ~global:[| 1; 1; 1 |] ~local:None ~vals ~wait:true ~timeout:None))
   end else begin
     Realize.run_linear ~device ~to_program ~wait:true
-      ~var_vals:["z_small", 3; "a_wide", wide_value]
+      ~var_vals:["z_small", 3L; "a_wide", Int64.of_int wide_value]
       (U.linear [program_call spec buffers])
   end;
   equal int64 (Int64.of_int (wide_value + 8)) (Bytes.get_int64_le (Device.Buffer.as_bytes out) 0);
   equal int64 5L (Bytes.get_int64_le (Device.Buffer.as_bytes inp) 0)
+
+let test_full_width_scalar_bindings () =
+  let device = cpu "full-width-scalars" in
+  let output = U.param ~slot:0 ~dtype:Dtype.int64 ~shape:(U.const_int 1) () in
+  let value = U.param ~slot:1 ~name:"value" ~dtype:Dtype.int64
+      ~addrspace:Dtype.Alu ~vmin_vmax:(Dtype.min Dtype.int64, Dtype.max Dtype.int64) () in
+  let store = U.store ~dst:(U.index ~ptr:output ~idxs:[U.const_int 0] ()) ~value () in
+  let info : U.kernel_info = {name = "full_width_scalars"; applied_opts = [];
+      opts_to_apply = None; estimates = None; beam = 0} in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let program = to_program device (U.sink ~kernel_info:info [store]) in
+  let buffer = Device.create_buffer ~size:1 ~dtype:Dtype.int64 device in
+  let call_info : U.call_info = {grad_fxn = None; name = None; precompile = false;
+      precompile_backward = false; aux = None; dtype = Dtype.void} in
+  let call = U.call ~body:program ~args:[U.from_buffer buffer] ~info:call_info in
+  let linear = U.linear [call] in
+  Fun.protect ~finally:(fun () -> Device.Buffer.deallocate buffer) (fun () ->
+      List.iter (fun value ->
+          Realize.run_linear ~device ~to_program ~var_vals:["value", value]
+            ~wait:true ~jit:true linear;
+          equal int64 value (Bytes.get_int64_le (Device.Buffer.as_bytes buffer) 0))
+        [Int64.min_int; Int64.max_int; Int64.min_int])
 
 let main () =
   run "Cpu_runtime"
     [
       group "Execution"
         [
+          test "retained execution preserves both signed int64 endpoints"
+            test_full_width_scalar_bindings;
           test "direct binding waits for foreign storage" direct_binding_waits_for_foreign_storage;
           test "padded exponential sum uses zero for extra lanes"
             (test_padded_reduction Ops.Add
@@ -1013,7 +1037,7 @@ let main () =
             let spec = Device.compile_program device ~name:"write_core_id"
                 (core_id_program ()) in
             let dst = create_i32_buffer device [ 0; 0; 0; 0; 0; 0; 0; 0 ] in
-            Realize.run_linear ~device ~to_program ~var_vals:["core_id", 5]
+            Realize.run_linear ~device ~to_program ~var_vals:["core_id", 5L]
               (U.linear [program_call spec [dst]]);
             equal (list int) [ 0; 0; 0; 0; 0; 5; 0; 0 ] (read_i32_buffer dst));
           test "untimed calls finish before returning" (fun () ->

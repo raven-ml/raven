@@ -11,7 +11,7 @@ open Tolk_uop
 
 module U = Uop
 
-type var = { name : string; lo : int; hi : int; dtype : Dtype.t }
+type var = { name : string; lo : Bound.t; hi : Bound.t; dtype : Dtype.t }
 type var_def = { node : U.t; var : var }
 type launch_kind = Serial | Thread_groups | Threads
 
@@ -299,8 +299,7 @@ let collect_vars (program : program) =
             | _ -> invalid_arg (Printf.sprintf
                 "Program_spec: scalar parameter slot %d requires a name and bounds" slot) in
           U.Ref_tbl.add seen u ();
-          Some { node = u; var = { name; lo = Bound.to_int lo;
-            hi = Bound.to_int hi; dtype = U.dtype u } }
+          Some { node = u; var = { name; lo; hi; dtype = U.dtype u } }
       | _ -> None) program
 
 let collect_globals (program : program) =

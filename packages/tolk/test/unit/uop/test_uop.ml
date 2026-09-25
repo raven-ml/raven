@@ -344,7 +344,7 @@ let bind_requires_concrete_value () =
   raises (Invalid_argument "Uop.bind: value violates variable divisor")
     (fun () -> ignore (Uop.bind ~var ~value:(Uop.const_int 6)));
   let bound = Uop.bind ~var ~value:(Uop.const_int 12) in
-  equal int 12 (snd (Uop.unbind bound));
+  equal int64 12L (snd (Uop.unbind bound));
   equal int 4 (Uop.const_factor var);
   is_true ~msg:"variable has no runtime allocation"
     (match Uop.as_buffer var with
@@ -1515,20 +1515,20 @@ let program_info_from_sink_parity () =
   equal int ~msg:"ProgramInfo vars count" 2 (List.length info.vars);
   is_true ~msg:"ProgramInfo vars sorted by slot"
     (List.hd info.vars == core_id && List.nth info.vars 1 == n);
-  equal (list int) ~msg:"ProgramInfo values include every scalar"
-    [ 2; 6 ] (Uop.program_vals info ~var_vals:[ "core_id", 2; "n", 6 ]);
+  equal (list int64) ~msg:"ProgramInfo values include every scalar"
+    [ 2L; 6L ] (Uop.program_vals info ~var_vals:[ "core_id", 2L; "n", 6L ]);
   raises_match
     (function
       | Invalid_argument msg -> contains msg "\"n\""
       | _ -> false)
-    (fun () -> Uop.program_vals info ~var_vals:[ "core_id", 2 ]);
+    (fun () -> Uop.program_vals info ~var_vals:[ "core_id", 2L ]);
   raises_match
     (function
       | Invalid_argument msg -> contains msg "\"n\""
       | _ -> false)
     (fun () -> Uop.program_launch_dims info ~var_vals:[]);
   let global_size, local_size =
-    Uop.program_launch_dims info ~var_vals:[ "n", 6 ]
+    Uop.program_launch_dims info ~var_vals:[ "n", 6L ]
   in
   equal (list launch_value_testable) ~msg:"ProgramInfo launch dims"
     [ Launch_value_int 1; Launch_value_int 1; Launch_value_int 7 ]
@@ -1549,7 +1549,7 @@ let program_launch_dims_floor_divmod () =
   let sink = Uop.sink [ group_dim; group_dim_y ] in
   let info = Uop.program_info_from_sink sink in
   let global_size, local_size =
-    Uop.program_launch_dims info ~var_vals:[ "n", -7 ]
+    Uop.program_launch_dims info ~var_vals:[ "n", -7L ]
   in
   equal (list launch_value_testable)
     ~msg:"ProgramInfo floor launch global dims"
@@ -1563,12 +1563,12 @@ let sym_infer_host_scalars () =
   let half = Uop.alu_binary ~op:Ops.Fdiv
       ~lhs:(Uop.cast ~src:n ~dtype:Dtype.float32) ~rhs:(Uop.const_float 2.) in
   let truncated = Uop.cast ~src:half ~dtype:Dtype.weakint in
-  equal int 7 (Uop.sym_infer Uop.O.(truncated + Uop.const_int 10) ["host_n", -7]);
+  equal int 7 (Uop.sym_infer Uop.O.(truncated + Uop.const_int 10) ["host_n", -7L]);
   equal int 0 (Uop.sym_infer Uop.O.(n * Uop.const_int 0) []);
   let bound = Uop.bind ~var:n ~value:(Uop.const_int 7) in
-  equal int 9 (Uop.sym_infer Uop.O.(bound + Uop.const_int 1) ["host_n", 8]);
+  equal int 9 (Uop.sym_infer Uop.O.(bound + Uop.const_int 1) ["host_n", 8L]);
   raises (Invalid_argument "sym_infer: result does not fit a host integer")
-    (fun () -> Uop.sym_infer Uop.O.(n * n) ["host_n", 1 lsl 32]);
+    (fun () -> Uop.sym_infer Uop.O.(n * n) ["host_n", 0x1_0000_0000L]);
   raises (Invalid_argument "sym_infer: missing variable \"host_n\"")
     (fun () -> Uop.sym_infer n [])
 
@@ -2423,7 +2423,7 @@ let unbind_splits_bound_variables () =
   let bound = Uop.bind ~var:v ~value:(Uop.const_int 7) in
   let var, value = Uop.unbind bound in
   is_true ~msg:"unbind returns the variable" (Uop.equal var v);
-  equal int ~msg:"unbind returns the value" 7 value;
+  equal int64 ~msg:"unbind returns the value" 7L value;
   let raises =
     try
       ignore (Uop.unbind v);
@@ -2505,6 +2505,22 @@ let commutative_axes_use_lexical_argument_order () =
   is_true ~msg:"axis 10 sorts before axis 2" ((Uop.src sum).(0) == b && (Uop.src sum).(1) == a);
   is_true ~msg:"canonical order is idempotent" (Uop.simplify sum == sum)
 
+let full_width_scalar_bindings () =
+  let scalar = Uop.param ~slot:(-1) ~name:"full_width" ~dtype:Dtype.int64
+      ~addrspace:Dtype.Alu
+      ~vmin_vmax:(Dtype.min Dtype.int64, Dtype.max Dtype.int64) () in
+  let variable = Uop.replace scalar ~op:Ops.Buffer () in
+  let divisor = Uop.const (Const.int64 Dtype.weakint 0x4000_0000_0000_0000L) in
+  let info = Uop.program_info_from_sink (Uop.sink [scalar]) in
+  List.iter (fun (value, quotient) ->
+      let binding = Uop.bind ~var:variable ~value:(Uop.const (Const.int64 Dtype.int64 value)) in
+      equal int64 value (snd (Uop.unbind binding));
+      equal (list int64) [value] (Uop.program_vals info ~var_vals:["full_width", value]);
+      equal int quotient (Uop.sym_infer Uop.O.(scalar // divisor) ["full_width", value]);
+      raises (Invalid_argument "sym_infer: result does not fit a host integer")
+        (fun () -> Uop.sym_infer scalar ["full_width", value]))
+    [Int64.min_int, -2; Int64.max_int, 1]
+
 let constants_preserve_operand_shape () =
   let scalar = Uop.variable ~name:"constant_scalar" ~min_val:0 ~max_val:9
       ~dtype:Dtype.int32 () in
@@ -2529,6 +2545,8 @@ let () =
     [
       group "Construction"
         [
+          test "full-width scalar bindings retain exact values and checked launch arithmetic"
+            full_width_scalar_bindings;
           test "constant-like values preserve scalar, vector and symbolic tensor shapes"
             constants_preserve_operand_shape;
           test "compiled signatures preserve sparse slots and argument types"

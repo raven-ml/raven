@@ -332,7 +332,7 @@ val program_info_from_sink : ?target:Target.t -> t -> program_info
     launch dimensions. *)
 
 val program_launch_dims :
-  program_info -> var_vals:(string * int) list ->
+  program_info -> var_vals:(string * int64) list ->
   launch_value list * launch_value list
 (** [program_launch_dims info ~var_vals] resolves [info.global_size] and
     [info.local_size] using [var_vals]. Symbolic dimensions are
@@ -342,7 +342,7 @@ val program_launch_dims :
     dimension references a missing variable. Raises [Not_found] for an
     expression outside the UOp-local evaluator. *)
 
-val program_vals : program_info -> var_vals:(string * int) list -> int list
+val program_vals : program_info -> var_vals:(string * int64) list -> int64 list
 (** [program_vals info ~var_vals] is the runtime argument tuple for
     [info.vars], in their declared order, resolved from [var_vals].
 
@@ -1634,9 +1634,10 @@ val symbolic_vars : t -> (t * string * Bound.t * Bound.t) list
 (** [symbolic_vars u] is the named, bounded variables [u] reaches, each as
     [(node, name, vmin, vmax)]. *)
 
-val sym_infer : t -> (string * int) list -> int
+val sym_infer : t -> (string * int64) list -> int
 (** [sym_infer u var_vals] is the integer [u] evaluates to once its variables
-    take their values in [var_vals]. Integer intermediates are exact. Casts
+    take their signed 64-bit values in [var_vals]. Integer intermediates are
+    exact; only the result must fit a host integer. Casts
     convert scalar kinds without narrowing to storage widths; bitcasts retain
     the source representation. Floating-point intermediates use host double
     precision, as in tinygrad's Python evaluator.
@@ -1695,12 +1696,12 @@ val broadcast_shape : t list list -> t list
 
     @raise Invalid_argument if the shapes are incompatible. *)
 
-val unbind : t -> t * int
+val unbind : t -> t * int64
 (** [unbind u] splits a {!bind} node into its symbolic variable and
     bound integer value.
 
     @raise Invalid_argument if [u] is not a {!bind} of a variable to an
-    integer constant. *)
+    integer constant, or if its value does not fit a signed 64-bit integer. *)
 
 (** {1:compare Comparison} *)
 
