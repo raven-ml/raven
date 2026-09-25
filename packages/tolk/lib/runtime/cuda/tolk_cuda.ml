@@ -20,6 +20,7 @@ module Ffi = struct
     = "caml_tolk_cuda_compute_capability"
 
   external ctx_create : int -> nativeint = "caml_tolk_cuda_ctx_create"
+  external ctx_destroy : nativeint -> unit = "caml_tolk_cuda_ctx_destroy"
 
   external ctx_set_current : nativeint -> unit
     = "caml_tolk_cuda_ctx_set_current"
@@ -70,6 +71,7 @@ module Ffi = struct
     float option = "caml_tolk_cuda_launch_kernel_bc" "caml_tolk_cuda_launch_kernel"
 
   external hcq_create : nativeint -> nativeint = "caml_tolk_cuda_hcq_create"
+  external hcq_destroy : nativeint -> unit = "caml_tolk_cuda_hcq_destroy"
   external hcq_synchronize : nativeint -> unit = "caml_tolk_cuda_hcq_synchronize"
   external hcq_symbol : string -> nativeint = "caml_tolk_cuda_hcq_symbol"
   external program_function : nativeint -> nativeint = "caml_tolk_cuda_program_function"
@@ -82,6 +84,7 @@ module State = struct
     device : int;
     context : nativeint;
     queue : nativeint;
+    mutable closed : bool;
     mutable timeline : Device.Buffer.t option;
     mutable handles : Device.Buffer.t option;
     arch : string;
@@ -98,23 +101,45 @@ module State = struct
     Ffi.init ();
     let cu_device = Ffi.device_get device_id in
     let context = Ffi.ctx_create cu_device in
-    let major, minor = Ffi.compute_capability cu_device in
-    let arch = Printf.sprintf "sm_%d%d" major minor in
-    let queue = Ffi.hcq_create context in
-    let state = { queue; timeline = None; handles = None; name = Device.canonicalize name; device = cu_device; context; arch;
-      peers = Hashtbl.create 4; pending_copyin = []; allocator = None } in
-    devices := !devices @ [ state ];
-    state
+    try
+      let major, minor = Ffi.compute_capability cu_device in
+      let arch = Printf.sprintf "sm_%d%d" major minor in
+      let queue = Ffi.hcq_create context in
+      (try
+         let state = {
+           queue; closed = false; timeline = None; handles = None;
+           name = Device.canonicalize name; device = cu_device; context; arch;
+           peers = Hashtbl.create 4; pending_copyin = []; allocator = None } in
+         devices := !devices @ [ state ];
+         state
+       with exn ->
+         let bt = Printexc.get_raw_backtrace () in
+         Ffi.hcq_destroy queue;
+         Printexc.raise_with_backtrace exn bt)
+    with exn ->
+      let bt = Printexc.get_raw_backtrace () in
+      Ffi.ctx_destroy context;
+      Printexc.raise_with_backtrace exn bt
 
   let synchronize t =
-    Ffi.ctx_set_current t.context;
-    Ffi.hcq_synchronize t.queue;
-    let pending = t.pending_copyin in
-    t.pending_copyin <- [];
-    List.iter
-      (fun (buf, size, spec) ->
-        (Option.get t.allocator).Device.Allocator.free buf size spec)
-      pending
+    if not t.closed then begin
+      Ffi.ctx_set_current t.context;
+      Ffi.hcq_synchronize t.queue;
+      let pending = t.pending_copyin in
+      t.pending_copyin <- [];
+      List.iter
+        (fun (buf, size, spec) ->
+          (Option.get t.allocator).Device.Allocator.free buf size spec)
+        pending
+    end
+
+  let shutdown t =
+    if not t.closed then begin
+      t.closed <- true;
+      devices := List.filter (fun d -> d != t) !devices;
+      Fun.protect ~finally:(fun () -> Ffi.ctx_destroy t.context)
+        (fun () -> Ffi.hcq_destroy t.queue)
+    end
 
   let synchronize_system () = List.iter synchronize !devices
 
@@ -145,10 +170,12 @@ module Allocator = struct
     in
     let free buf size spec =
       ignore size;
-      State.synchronize state;
-      match spec.Device.Buffer_spec.external_ptr with
-      | Some _ -> ()
-      | None -> if buf.host then Ffi.mem_free_host buf.address else Ffi.mem_free buf.address
+      if not state.State.closed then begin
+        State.synchronize state;
+        match spec.Device.Buffer_spec.external_ptr with
+        | Some _ -> ()
+        | None -> if buf.host then Ffi.mem_free_host buf.address else Ffi.mem_free buf.address
+      end
     in
     let copyin buf bytes =
       if buf.host then begin
@@ -213,8 +240,10 @@ module Allocator = struct
                {address; host = true; registered})
     in
     let unmap raw =
-      State.synchronize state;
-      if raw.registered then Ffi.mem_host_unregister raw.address
+      if not state.State.closed then begin
+        State.synchronize state;
+        if raw.registered then Ffi.mem_host_unregister raw.address
+      end
     in
     Device.Allocator.{kind = buffer_kind;
       host = (fun (buf : storage) -> if buf.host then Some buf.address else None);
@@ -255,10 +284,12 @@ module Program = struct
     in
     let free () =
       if not !unloaded then begin
-        Ffi.ctx_set_current state.State.context;
         unloaded := true;
         Fun.protect ~finally:(fun () -> Ffi.program_free func)
-          (fun () -> Ffi.module_unload module_)
+          (fun () -> if not state.State.closed then begin
+            Ffi.ctx_set_current state.State.context;
+            Ffi.module_unload module_
+          end)
       end in
     Device.{ call; free; handle = func }
 end
@@ -330,15 +361,22 @@ let create name =
     | None -> 0
   in
   let state = State.create name device_id in
-  let allocator = Allocator.create state in
-  let renderer_set = Device.Renderer_set.make ~device:name ~arch:state.State.arch
-      [ "CUDA", (fun target ->
-          let arch = match Gpu_target.parse_cuda_arch target.Tolk_uop.Target.arch with
-            | Some arch -> arch
-            | None -> invalid_arg ("unsupported CUDA architecture: " ^ target.arch) in
-          let compiler = Tolk_nvrtc.Compiler_nvrtc.create ~cache_key:"cuda" target.arch in
-          Renderer.with_compiler compiler (Cstyle.cuda arch)) ] in
-  let runtime = Program.runtime state in
-  let synchronize () = State.synchronize state in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ~queue:(Queue.create state name) ~bufferize:(Queue.bufferize state name) ()
+  try
+    let allocator = Allocator.create state in
+    let renderer_set = Device.Renderer_set.make ~device:name ~arch:state.State.arch
+        [ "CUDA", (fun target ->
+            let arch = match Gpu_target.parse_cuda_arch target.Tolk_uop.Target.arch with
+              | Some arch -> arch
+              | None -> invalid_arg ("unsupported CUDA architecture: " ^ target.arch) in
+            let compiler = Tolk_nvrtc.Compiler_nvrtc.create ~cache_key:"cuda" target.arch in
+            Renderer.with_compiler compiler (Cstyle.cuda arch)) ] in
+    let runtime = Program.runtime state in
+    let synchronize () = State.synchronize state in
+    let device = Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize
+      ~queue:(Queue.create state name) ~bufferize:(Queue.bufferize state name) () in
+    at_exit (fun () -> State.shutdown state);
+    device
+  with exn ->
+    let bt = Printexc.get_raw_backtrace () in
+    State.shutdown state;
+    Printexc.raise_with_backtrace exn bt

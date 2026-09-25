@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- CUDA initializes its driver once across domains and reports missing symbols
+  consistently. Device creation unwinds failures, and shutdown releases streams,
+  events and contexts even after a synchronization error.
 - Compiled host submissions preserve address-load ordering in verified IR,
   allowing Metal queue replay with `SPEC=1` without relaxing validation.
 - Gated reductions and indexed loads collapse again with typed constants,

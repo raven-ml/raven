@@ -41,6 +41,7 @@ static CUresult (*p_cuDeviceGet)(CUdevice *, int);
 static CUresult (*p_cuDeviceComputeCapability)(int *, int *, CUdevice);
 static CUresult (*p_cuCtxCreate)(CUcontext *, unsigned int, CUdevice);
 static CUresult (*p_cuCtxSetCurrent)(CUcontext);
+static CUresult (*p_cuCtxDestroy)(CUcontext);
 static CUresult (*p_cuCtxSynchronize)(void);
 static CUresult (*p_cuMemAlloc)(CUdeviceptr *, size_t);
 static CUresult (*p_cuMemFree)(CUdeviceptr);
@@ -77,9 +78,13 @@ static CUresult (*p_cuStreamWaitValue64)(CUstream, CUdeviceptr, uint64_t, unsign
 static CUresult (*p_cuStreamWriteValue64)(CUstream, CUdeviceptr, uint64_t, unsigned int);
 
 static void *cuda_handle = NULL;
+static pthread_once_t cuda_once = PTHREAD_ONCE_INIT;
+static const char *cuda_load_error = NULL;
+static CUresult cuda_init_status;
 
-static void ensure_cuda(void) {
-  if (cuda_handle != NULL) return;
+/* Publish the function table only after initialization. This callback cannot
+   raise into OCaml: pthread_once must finish even when a symbol is missing. */
+static void load_cuda(void) {
   static const char *names[] = {
 #if defined(_WIN32)
       "nvcuda.dll",
@@ -89,17 +94,21 @@ static void ensure_cuda(void) {
       NULL};
   for (int i = 0; cuda_handle == NULL && names[i] != NULL; ++i)
     cuda_handle = tolk_dlopen(names[i]);
-  if (cuda_handle == NULL) caml_failwith("CUDA driver library not found");
+  if (cuda_handle == NULL) {
+    cuda_load_error = "CUDA driver library not found";
+    return;
+  }
 #define LOAD_CUDA(var, name)                                          \
   do {                                                                \
     var = tolk_dlsym(cuda_handle, name);                                   \
-    if (var == NULL) caml_failwith("CUDA driver is missing " name);   \
+    if (var == NULL) { cuda_load_error = "CUDA driver is missing " name; return; } \
   } while (0)
   LOAD_CUDA(p_cuInit, "cuInit");
   LOAD_CUDA(p_cuDeviceGet, "cuDeviceGet");
   LOAD_CUDA(p_cuDeviceComputeCapability, "cuDeviceComputeCapability");
   LOAD_CUDA(p_cuCtxCreate, "cuCtxCreate_v2");
   LOAD_CUDA(p_cuCtxSetCurrent, "cuCtxSetCurrent");
+  LOAD_CUDA(p_cuCtxDestroy, "cuCtxDestroy_v2");
   LOAD_CUDA(p_cuCtxSynchronize, "cuCtxSynchronize");
   LOAD_CUDA(p_cuMemAlloc, "cuMemAlloc_v2");
   LOAD_CUDA(p_cuMemFree, "cuMemFree_v2");
@@ -130,6 +139,15 @@ static void ensure_cuda(void) {
   LOAD_CUDA(p_cuStreamWaitValue64, "cuStreamWaitValue64_v2");
   LOAD_CUDA(p_cuStreamWriteValue64, "cuStreamWriteValue64_v2");
 #undef LOAD_CUDA
+  cuda_init_status = p_cuInit(0);
+}
+
+static void ensure_cuda(void) {
+  caml_release_runtime_system();
+  int status = pthread_once(&cuda_once, load_cuda);
+  caml_acquire_runtime_system();
+  if (status != 0) caml_failwith("CUDA driver initialization lock failed");
+  if (cuda_load_error != NULL) caml_failwith(cuda_load_error);
 }
 
 static void cuda_check(CUresult status) {
@@ -253,6 +271,7 @@ CAMLprim value caml_tolk_cuda_hcq_create(value v_context) {
   if (status == 0) status = p_cuStreamCreate(&q->streams[1], 1);
   if (status == 0) status = p_cuEventCreate(&q->handoff, 2); /* no timing */
   if (status != 0) {
+    if (q->handoff != NULL) p_cuEventDestroy(q->handoff);
     if (q->streams[0] != NULL) p_cuStreamDestroy(q->streams[0]);
     if (q->streams[1] != NULL) p_cuStreamDestroy(q->streams[1]);
     pthread_mutex_destroy(&q->lock);
@@ -261,6 +280,39 @@ CAMLprim value caml_tolk_cuda_hcq_create(value v_context) {
   }
   Nativeint_val(result) = (intnat)q;
   CAMLreturn(result);
+}
+
+CAMLprim value caml_tolk_cuda_hcq_destroy(value v_queue) {
+  CAMLparam1(v_queue);
+  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
+  caml_release_runtime_system();
+  CUresult status = q->status;
+  CUresult result = p_cuCtxSetCurrent(q->context);
+  if (result == 0) result = p_cuCtxSynchronize();
+  if (status == 0) status = result;
+  /* Attempt every release even if synchronization or an earlier release
+     fails. Context destruction follows on the OCaml side. */
+  result = p_cuEventDestroy(q->handoff);
+  if (status == 0) status = result;
+  for (int i = 0; i < 2; i++) {
+    result = p_cuStreamDestroy(q->streams[i]);
+    if (status == 0) status = result;
+  }
+  pthread_mutex_destroy(&q->lock);
+  free(q);
+  caml_acquire_runtime_system();
+  cuda_check(status);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_tolk_cuda_ctx_destroy(value v_context) {
+  CAMLparam1(v_context);
+  CUcontext context = (CUcontext)Nativeint_val(v_context);
+  caml_release_runtime_system();
+  CUresult status = p_cuCtxDestroy(context);
+  caml_acquire_runtime_system();
+  cuda_check(status);
+  CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_tolk_cuda_hcq_synchronize(value v_queue) {
@@ -300,7 +352,7 @@ CAMLprim value caml_tolk_cuda_hcq_symbol(value v_name) {
 CAMLprim value caml_tolk_cuda_init(value unit) {
   CAMLparam1(unit);
   ensure_cuda();
-  cuda_check(p_cuInit(0));
+  cuda_check(cuda_init_status);
   CAMLreturn(Val_unit);
 }
 
@@ -325,9 +377,12 @@ CAMLprim value caml_tolk_cuda_compute_capability(value v_device) {
 
 CAMLprim value caml_tolk_cuda_ctx_create(value v_device) {
   CAMLparam1(v_device);
+  CAMLlocal1(result);
+  result = caml_copy_nativeint(0);
   CUcontext ctx = NULL;
   cuda_check(p_cuCtxCreate(&ctx, 0, (CUdevice)Int_val(v_device)));
-  CAMLreturn(caml_copy_nativeint((intnat)ctx));
+  Nativeint_val(result) = (intnat)ctx;
+  CAMLreturn(result);
 }
 
 CAMLprim value caml_tolk_cuda_ctx_set_current(value v_ctx) {

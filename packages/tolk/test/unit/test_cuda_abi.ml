@@ -20,6 +20,50 @@ external launch :
 external function_ : nativeint -> nativeint = "caml_tolk_cuda_program_function"
 external submit : nativeint -> bytes -> unit = "caml_test_cuda_abi_submit"
 external handoffs : unit -> int = "caml_test_cuda_abi_handoffs"
+external init : unit -> unit = "caml_tolk_cuda_init"
+external init_counts : unit -> int * int = "caml_test_cuda_init_counts"
+external shutdown_setup : bool -> nativeint = "caml_test_cuda_shutdown_setup"
+external shutdown_steps : unit -> int = "caml_test_cuda_shutdown_steps"
+external queue_destroy : nativeint -> unit = "caml_tolk_cuda_hcq_destroy"
+external context_destroy : nativeint -> unit = "caml_tolk_cuda_ctx_destroy"
+
+let concurrent_initialization () =
+  let missing = Sys.getenv_opt "TOLK_TEST_CUDA_MISSING" <> None in
+  let start = Atomic.make false in
+  let domains = List.init 4 (fun _ -> Domain.spawn (fun () ->
+      while not (Atomic.get start) do Domain.cpu_relax () done;
+      for _ = 1 to 10 do
+        if missing then
+          raises (Failure "CUDA driver is missing cuMemAlloc_v2") init
+        else init ()
+      done)) in
+  Atomic.set start true;
+  List.iter Domain.join domains;
+  let initialized, symbols = init_counts () in
+  equal int (if missing then 0 else 1) initialized;
+  is_true (symbols > 0);
+  if not missing then init ();
+  equal (pair int int) (initialized, symbols) (init_counts ())
+
+let failed_initialization () =
+  let binary = Sys.executable_name in
+  let env = Array.append (Unix.environment ()) [| "TOLK_TEST_CUDA_MISSING=1" |] in
+  let pid = Unix.create_process_env binary
+      [| binary; "--filter"; "concurrent initialization" |] env
+      Unix.stdin Unix.stdout Unix.stderr in
+  match snd (Unix.waitpid [] pid) with
+  | Unix.WEXITED 0 -> ()
+  | _ -> failf "missing-symbol initialization did not fail consistently"
+
+let shutdown_after_failure () =
+  List.iter (fun failure ->
+      let queue = shutdown_setup failure in
+      let destroy () = Fun.protect ~finally:(fun () -> context_destroy 0x4n)
+          (fun () -> queue_destroy queue) in
+      if failure then
+        raises (Failure "CUDA Error 719, injected synchronization failure") destroy
+      else destroy ();
+      equal int 5 (shutdown_steps ())) [ false; true ]
 
 let rejects f =
   raises_match (function Invalid_argument _ -> true | _ -> false)
@@ -62,5 +106,7 @@ let typed_arguments () =
 
 let () =
   run "CUDA native ABI"
-    [ test "direct and compiled submission preserve typed arguments and handoffs"
-        typed_arguments ]
+    [ test "concurrent initialization publishes a complete driver table" concurrent_initialization;
+      test "missing driver symbols stay failed across callers" failed_initialization;
+      test "direct and compiled submission preserve typed arguments and handoffs" typed_arguments;
+      test "shutdown releases all resources after synchronization failure" shutdown_after_failure ]

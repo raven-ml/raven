@@ -6,8 +6,35 @@
 /* Exercise the production stubs with the CUDA driver boundary replaced.
    This test executable does not link tolk.cuda, so these entry points have
    one definition and the injected function table cannot affect a device. */
-#include "tolk_cuda_stubs.c"
 #include <assert.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Replace dynamic loading before including the production stubs. */
+#define TOLK_DL_H
+static void *tolk_dlopen(const char *name);
+static void *tolk_dlsym(void *handle, const char *name);
+#include "tolk_cuda_stubs.c"
+
+static int init_calls, symbol_calls;
+static CUresult fake_init(unsigned flags) { assert(flags == 0); init_calls++; return 0; }
+static CUresult fake_unused(void) { return 0; }
+static void *tolk_dlopen(const char *name) { (void)name; return (void *)1; }
+static void *tolk_dlsym(void *handle, const char *name) {
+  assert(handle == (void *)1);
+  symbol_calls++;
+  if (getenv("TOLK_TEST_CUDA_MISSING") && strcmp(name, "cuMemAlloc_v2") == 0) return NULL;
+  return strcmp(name, "cuInit") == 0 ? (void *)fake_init : (void *)fake_unused;
+}
+CAMLprim value caml_test_cuda_init_counts(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(counts);
+  counts = caml_alloc_tuple(2);
+  Store_field(counts, 0, Val_int(init_calls));
+  Store_field(counts, 1, Val_int(symbol_calls));
+  CAMLreturn(counts);
+}
 
 static char captured[256];
 static size_t captured_size;
@@ -64,4 +91,46 @@ CAMLprim value caml_test_cuda_abi_handoffs(value unit) {
 CAMLprim value caml_test_cuda_abi_captured(value unit) {
   CAMLparam1(unit);
   CAMLreturn(caml_alloc_initialized_string(captured_size, captured));
+}
+
+static int destroy_steps, fail_sync;
+static CUresult fake_synchronize(void) { destroy_steps++; return fail_sync ? 719 : 0; }
+static CUresult fake_event_destroy(CUevent event) {
+  assert(event == (CUevent)0x3); destroy_steps++; return 0;
+}
+static CUresult fake_stream_destroy(CUstream stream) {
+  assert(stream == (CUstream)0x1 || stream == (CUstream)0x2);
+  destroy_steps++; return 0;
+}
+static CUresult fake_context_destroy(CUcontext context) {
+  assert(context == (CUcontext)0x4); destroy_steps++; return 0;
+}
+static CUresult fake_error(CUresult status, const char **message) {
+  (void)status; *message = "injected synchronization failure"; return 0;
+}
+CAMLprim value caml_test_cuda_shutdown_setup(value failure) {
+  CAMLparam1(failure);
+  CAMLlocal1(result);
+  result = caml_copy_nativeint(0);
+  tolk_cuda_queue *q = calloc(1, sizeof(*q));
+  if (q == NULL) caml_raise_out_of_memory();
+  assert(pthread_mutex_init(&q->lock, NULL) == 0);
+  q->context = (CUcontext)0x4;
+  q->streams[0] = (CUstream)0x1;
+  q->streams[1] = (CUstream)0x2;
+  q->handoff = (CUevent)0x3;
+  destroy_steps = 0;
+  fail_sync = Bool_val(failure);
+  p_cuCtxSetCurrent = fake_context;
+  p_cuCtxSynchronize = fake_synchronize;
+  p_cuCtxDestroy = fake_context_destroy;
+  p_cuEventDestroy = fake_event_destroy;
+  p_cuStreamDestroy = fake_stream_destroy;
+  p_cuGetErrorString = fake_error;
+  Nativeint_val(result) = (intnat)q;
+  CAMLreturn(result);
+}
+CAMLprim value caml_test_cuda_shutdown_steps(value unit) {
+  (void)unit;
+  return Val_int(destroy_steps);
 }

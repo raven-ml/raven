@@ -35,8 +35,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection and eager submission-template caching.
   Bring CUDA host and peer copies onto the queue path with runtime mapping
-  eligibility and unsupported-mapping fallback. Audit CUDA context/stream
-  destruction and concurrent driver initialization. Validate AMD AQL/multi-XCC
+  eligibility and unsupported-mapping fallback. Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register
   tables. Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
@@ -96,7 +95,8 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded compilation workers
   with lowering, with context snapshots, cancellation/timeouts, errors,
   affinity/container limits, nested-context audits and concurrent-cache
-  coverage.
+  coverage. Synchronize device opening and runtime caches; concurrent callers
+  currently mutate the shared registry and execution Hashtbls without locking.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
   correctness fixes; measure accelerator candidates on supported hardware.

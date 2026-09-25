@@ -149,4 +149,4 @@
  (name test_cuda_abi)
  (modules test_cuda_abi)
  (package tolk)
- (libraries test_cuda_abi_driver windtrap))
+ (libraries test_cuda_abi_driver windtrap unix))
