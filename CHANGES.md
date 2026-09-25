@@ -657,6 +657,9 @@ thread.
 
 ### Tolk (new)
 
+- Beam compilation propagates interruption immediately and joins started workers
+  before returning; cancellation was previously treated as a rejected candidate.
+
 - Preserve raw compact-float bits through bitcasts, copies and value selection,
   including FP8 subnormals and NaN payloads; numeric arithmetic keeps its normal
   conversion and masked fallback semantics.

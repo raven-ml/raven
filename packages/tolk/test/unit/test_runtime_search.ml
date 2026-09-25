@@ -452,7 +452,7 @@ let codegen_midpoint_rounds_down () =
   is_true ~msg:"codegen benchmarks candidates" (!observed <> []);
   List.iter (equal (list int64) [ -3L ]) !observed
 
-let parallel_failure_joins_workers () =
+let parallel_failure_joins_workers failure () =
   let backing = cpu "beam-worker-ownership" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
   let started = Atomic.make 0 and finished = Atomic.make 0 in
@@ -473,7 +473,7 @@ let parallel_failure_joins_workers () =
       (fun () ->
         if worker = 0 then await (fun () -> Atomic.get started >= 2)
         else await (fun () -> Atomic.get release);
-        raise Stack_overflow)
+        raise failure)
   in
   let ren = Renderer.with_compiler
       (Compiler.make ~name:"BEAM_WORKER_OWNERSHIP" ~compile ()) ren in
@@ -494,8 +494,11 @@ let parallel_failure_joins_workers () =
         Unix.sleepf 0.001
       done;
       Atomic.set release true) in
+  let strict = Sys.getenv_opt "BEAM_STRICT_MODE" in
+  Unix.putenv "BEAM_STRICT_MODE" "0";
   Fun.protect
     ~finally:(fun () ->
+      Unix.putenv "BEAM_STRICT_MODE" (Option.value strict ~default:"");
       Atomic.set returned true;
       Atomic.set release true;
       Domain.join coordinator;
@@ -517,9 +520,32 @@ let parallel_failure_joins_workers () =
       is_false ~msg:"worker coordination completed within its deadline"
         (Atomic.get timed_out);
       match outcome with
-      | Some Stack_overflow -> ()
+      | Some exn when exn = failure -> ()
       | Some exn -> raise exn
       | None -> failwith "search swallowed the worker exception")
+
+let sequential_compile_interrupt () =
+  let device = cpu "beam-compile-interrupt" in
+  let ast = elementwise_1d_ast ~n:64 in
+  let rawbufs = create_bufs_for_kernel device ast in
+  let compiled = ref 0 in
+  let to_program device ast =
+    ignore device;
+    ignore ast;
+    incr compiled;
+    raise Sys.Break in
+  let strict = Sys.getenv_opt "BEAM_STRICT_MODE" in
+  Unix.putenv "BEAM_STRICT_MODE" "0";
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.putenv "BEAM_STRICT_MODE" (Option.value strict ~default:"");
+      List.iter Device.Buffer.deallocate rawbufs)
+    (fun () ->
+      raises Sys.Break (fun () ->
+          Helpers.Context_var.with_context [B (Search.beam_parallel, 0)] (fun () ->
+              ignore (Search.beam_search ~to_program ~disable_cache:true
+                (P.create ast ren) rawbufs ~var_vals:[] 1 device)));
+      equal ~msg:"interruption stops candidate compilation immediately" int 1 !compiled)
 
 let candidate_program_metadata () =
   let backing = cpu "beam-program-buffers" in
@@ -591,5 +617,9 @@ let () = run __FILE__
       test "beam retains candidate PROGRAM metadata and scales only its launch"
         candidate_program_metadata;
       test "parallel compilation joins workers before propagating failure"
-        parallel_failure_joins_workers;
+        (parallel_failure_joins_workers Stack_overflow);
+      test "parallel compilation joins workers before propagating interruption"
+        (parallel_failure_joins_workers Sys.Break);
+      test "sequential compilation propagates interruption"
+        sequential_compile_interrupt;
       test "codegen rounds negative timing midpoints down" codegen_midpoint_rounds_down ]

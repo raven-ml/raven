@@ -201,7 +201,7 @@ let try_compile ~to_program ~use_timeout ((idx, s) : int * P.t) (device : Device
     | Compile_timeout ->
         if debug >= 2 then Printf.eprintf "*** BEAM COMPILE TIMEOUT\n%!";
         None
-    | (Out_of_memory | Stack_overflow) as exn -> raise exn
+    | (Sys.Break | Out_of_memory | Stack_overflow) as exn -> raise exn
     | Failure _ | Invalid_argument _ ->
         if debug >= 4 then
           Printf.eprintf "%s\n%!" (Printexc.get_backtrace ());
