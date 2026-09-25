@@ -60,6 +60,13 @@ let () =
           test "13.0.7 uses the 13.0.0 interface" (fun () ->
             let module S = (val Tables.smu ~version:(13, 0, 7)) in
             equal int 14 S.ppsmc_msg_setdriverdramaddrhigh);
+          test "13.0.10 uses the consumer message and clock IDs" (fun () ->
+            let module S = (val Tables.smu ~version:(13, 0, 10)) in
+            equal int 14 S.ppsmc_msg_setdriverdramaddrhigh;
+            equal int 6 S.ppsmc_msg_enableallsmufeatures;
+            equal (option int) (Some 0x12) S.ppsmc_msg_transfertablesmu2dram;
+            equal int 2 S.ppclk_uclk;
+            equal (option int) (Some 0) S.ppclk_gfxclk);
           test "13.0.8 resolves to 13.0.6 and lacks a gfx clock" (fun () ->
             let module S = (val Tables.smu ~version:(13, 0, 8)) in
             equal int 13 S.ppsmc_msg_setdriverdramaddrhigh;

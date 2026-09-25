@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Use the correct SMU 13.0.10 command family and exclude auxiliary PSP v2.1
+  images during AMD PCI firmware loading, preventing wrong power-management
+  commands and firmware selection.
+
 - Allocate AMD/NV compiled command streams uncached, so device command fetches
   observe patched commands during replay.
 

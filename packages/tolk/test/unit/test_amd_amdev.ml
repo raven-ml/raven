@@ -940,6 +940,34 @@ let () =
                   ([ Am.gfx_fw_type_rlc_g ], "RLCGCODE");
                 ]
                 (desc_strings fw.Firmware.descs));
+          test "PSP v2.1 excludes auxiliary firmware descriptors" (fun () ->
+              let sos = Bytes.make 0x140 '\x00' in
+              common_header sos ~ver:(2, 1) ~ucode_off:0x100 ~ucode_size:16;
+              s32 sos 0x20 3;
+              s32 sos 0x24 2;
+              List.iteri (fun i (kind, data) ->
+                  let descriptor = 0x28 + i * 0x10 in
+                  s32 sos descriptor kind;
+                  s32 sos (descriptor + 8) (i * 4);
+                  s32 sos (descriptor + 12) 4;
+                  put sos (0x100 + i * 4) data)
+                [2, "SOS!"; 3, "KDB!"; 2, "AUX!"];
+              let load, _ = fw_loader [
+                "psp_13_0_10_sos.bin", sos;
+                "smu_13_0_10.bin", smu_blob_gfx11 ();
+                "sdma_6_0_2.bin", sdma_blob_v2 ();
+                "gc_11_0_2_mec.bin", gfx_blob_v2 ~code:"MECCODE1"
+                  ~stack:"MECSTAK1" ~start_lo:0x1000 ~start_hi:2;
+                "gc_11_0_2_imu.bin", imu_blob ();
+                "gc_11_0_2_rlc.bin", rlc_blob_v2_3 ();
+              ] in
+              let fw = Firmware.create ~load [
+                Am.gc_hwip, (11, 0, 2); Am.sdma0_hwip, (6, 0, 2);
+                Am.mp0_hwip, (13, 0, 10); Am.mp1_hwip, (13, 0, 10);
+              ] in
+              equal (list (pair int string)) [2, "SOS!"; 3, "KDB!"]
+                (List.map (fun (kind, data) -> kind, Bytes.to_string data)
+                   fw.Firmware.sos_fw));
           test "gfx9: pptable scan, jump table, save-restore lists"
             (fun () ->
               let files =
@@ -1367,8 +1395,17 @@ let () =
                   (resp, 0); (arg, 0); (msg, 6);
                 ]
                 log;
-              (* 13.0.10 resolves the 13.0.6 interface: other ids *)
+              (* 13.0.10 uses the same consumer interface as 13.0.0. *)
               let (resp, arg, msg), dt, log = run_init (13, 0, 10) in
+              equal
+                (list (pair int int))
+                [
+                  (resp, 0); (arg, hi32 dt); (msg, 0xe);
+                  (resp, 0); (arg, lo32 dt); (msg, 0xf);
+                  (resp, 0); (arg, 0); (msg, 6);
+                ]
+                log;
+              let (resp, arg, msg), dt, log = run_init (13, 0, 6) in
               equal
                 (list (pair int int))
                 [
@@ -2532,11 +2569,12 @@ let () =
           test
             "a protocol timeout during collection surfaces as the fault \
              report" (fun () ->
-              with_fake_dev (fun fd ->
+              with_fake_dev ~mp1:(13, 0, 6) (fun fd ->
                   let t = Am_boot.create ~fw:boot_fw fd.dev in
                   Ih.init_hw t.Am_boot.ih;
                   (* the bus fault line is raised, but the power
-                     management firmware never answers the bank dump *)
+                     management firmware never answers the bank dump;
+                     this SMU interface provides the MCA commands. *)
                   Hashtbl.replace fd.store
                     (raddr fd.dev "regBIF_BX0_BIF_DOORBELL_INT_CNTL")
                     (rencode fd "regBIF_BX0_BIF_DOORBELL_INT_CNTL"

@@ -212,7 +212,10 @@ end
 
 let smu ~version : (module Smu) =
   (* 13.0.7 firmware speaks the 13.0.0 message interface, not 13.0.6's. *)
-  let version = if version = (13, 0, 7) then (13, 0, 0) else version in
+  let version =
+    if version = (13, 0, 7) || version = (13, 0, 10) then (13, 0, 0)
+    else version
+  in
   let resolved =
     List.fold_left
       (fun best (v, m) ->

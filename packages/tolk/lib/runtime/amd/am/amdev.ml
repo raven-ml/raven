@@ -148,7 +148,7 @@ module Firmware = struct
           ( Am.Psp_firmware_header_v2_0.psp_fw_bin_count sos_blob 0,
             Am.Psp_firmware_header_v2_0.psp_fw_bin_offset )
       | 2, 1 ->
-          ( Am.Psp_firmware_header_v2_1.psp_fw_bin_count sos_blob 0,
+          ( Am.Psp_firmware_header_v2_1.psp_aux_fw_bin_index sos_blob 0,
             Am.Psp_firmware_header_v2_1.psp_fw_bin_offset )
       | ma, mi ->
           failwith
