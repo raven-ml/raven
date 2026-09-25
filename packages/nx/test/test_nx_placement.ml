@@ -661,6 +661,20 @@ let test_a_cut_inside_one_shard () =
   equal ~msg:"lives on the second device" placement (Nx.Placement.device dev2)
     (Nx.placement (Nx.slice [ Nx.I 4 ] t))
 
+let test_a_view_off_its_storage_raises () =
+  let s = over_four ~axis:0 (x86 ()) in
+  let r =
+    match s with Nx_effect.Placed r -> r | _ -> fail "expected placed"
+  in
+  raises_invalid (fun () ->
+      Nx_effect.placed (Nx.Placement.device other) r.r_dtype r.r_view r.r_cell);
+  is_true ~msg:"a device of its storage"
+    (match
+       Nx_effect.placed (Nx.Placement.device dev2) r.r_dtype r.r_view r.r_cell
+     with
+    | Nx_effect.Placed _ -> true
+    | _ -> false)
+
 let test_moved_views_of_a_consumed_split () =
   let s = over_four ~axis:0 (x86 ()) in
   let views =
@@ -716,6 +730,8 @@ let tests =
         test "a value split on axis 1 moves as a view" test_split_axis_one;
         test "a move across devices raises" test_moves_across_devices_raise;
         test "a cut inside one shard" test_a_cut_inside_one_shard;
+        test "a view off its storage's devices raises"
+          test_a_view_off_its_storage_raises;
         test "moved views of a consumed split value"
           test_moved_views_of_a_consumed_split;
         test "a consumed value is not placed" test_consumed_value_does_not_move;

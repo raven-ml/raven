@@ -512,6 +512,13 @@ let cell ~placement ~length storage =
 let placed placement dtype view cell =
   if Placement.is_host placement then
     invalid_arg "Nx_effect.placed: a placed value is never on the host";
+  let held = Placement.devices cell.placement in
+  if
+    not (List.for_all (fun d -> List.memq d held) (Placement.devices placement))
+  then
+    invalid_arg
+      (Format.asprintf "Nx_effect.placed: a value on %a views a storage on %a"
+         Placement.pp placement Placement.pp cell.placement);
   Placed
     {
       r_id = fresh_id ();
