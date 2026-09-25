@@ -143,7 +143,7 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
 (* Program and runtime caches
 
    [program_cache] memoizes the CALL(SINK) -> CALL(PROGRAM) compilation, keyed
-   on the kernel's semantic key, the device, and [program_config] (so tag-only
+   on the kernel's semantic key, the device instance, and [program_config] (so tag-only
    differences share a compiled program, and a kernel compiled under one
    configuration is never served under another). [runtime_cache] memoizes the
    device dispatch handle built from a PROGRAM's compiled binary. *)
@@ -182,7 +182,7 @@ let cache_key ~device ~ast_key =
   let compiler_name = match Renderer.compiler ren with
     | Some c -> Compiler.name c | None -> "" in
   Marshal.to_string
-    (Device.name device, Renderer.target ren, compiler_name, program_config (), ast_key) []
+    (Device.id device, Renderer.target ren, compiler_name, program_config (), ast_key) []
 
 let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
 let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
@@ -251,15 +251,25 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
                 Option.map (fun q -> d, Device.get q.Device.host) (Device.queue d)
             | _ -> None)
         |> List.sort_uniq (fun (a, _) (b, _) -> String.compare (Device.name a) (Device.name b)) in
-    let hosts = List.sort_uniq (fun a b -> String.compare (Device.name a) (Device.name b))
-        (List.map snd queued) in
+    let participants = U.toposort ~enter_calls:false linear
+        |> List.concat_map (fun n -> match U.device_of n with
+            | Some (U.Single name) -> [name]
+            | Some (U.Multi names) -> names
+            | Some (U.Index _) | None -> [])
+        |> List.sort_uniq String.compare
+        |> List.concat_map (fun name ->
+            let device = Device.get name in
+            device :: (match Device.queue device with
+              | Some queue -> [Device.get queue.Device.host]
+              | None -> []))
+        |> List.sort_uniq (fun a b -> Int.compare (Device.id a) (Device.id b)) in
     (* Link-time tags are semantic here: a runtime table and a captured input
        must never share a linked template. Keep the hash-consed key alive. *)
     let key = Marshal.to_string
         (List.map (fun (d, _) -> Device.name d, queue_config ~profile d) queued,
          queue_config ~profile device,
          cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
-         List.map (fun host -> cache_key ~device:host ~ast_key:"") hosts) [] in
+         List.map (fun device -> cache_key ~device ~ast_key:"") participants) [] in
     let templates = Domain.DLS.get queue_template_cache in
     match Hashtbl.find_opt templates key with
     | Some (_, compiled) -> compiled

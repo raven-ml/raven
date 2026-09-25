@@ -398,6 +398,26 @@ let () =
               (Realize.compile_linear ~device:dev1 ~to_program
                  (U.linear [ call_of ast ]));
             equal int 2 !calls);
+          test "same-named devices use their own runtime loader" (fun () ->
+            let first = runtime_state () and second = runtime_state () in
+            let dev0 = test_device ~name:"TEST:runtime-owner" first in
+            let body = program_of
+                (U.sink ~kernel_info:(kernel_info "same_program_runtime_owner") []) in
+            let linear = U.linear [U.call ~body ~args:[] ~info:(call_info None)] in
+            let run device =
+              Realize.run_linear ~device ~jit:true ~update_stats:false
+                ~to_program:(fun _ _ -> fail "PROGRAM must not be recompiled") linear in
+            run dev0;
+            equal int 0 first.nbufs;
+            first.nbufs <- -1;
+            let dev1 = test_device ~name:"TEST:runtime-owner" second in
+            run dev1;
+            equal int 0 second.nbufs;
+            equal int (-1) first.nbufs;
+            second.nbufs <- -1;
+            run dev0;
+            equal int 0 first.nbufs;
+            equal int (-1) second.nbufs);
           test "keys cached programs by scoped tensor-core policy" (fun () ->
             List.iter (fun policy ->
                 let key = Helpers.Context_var.key policy in

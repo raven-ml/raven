@@ -286,6 +286,56 @@ let test_compilation_preserves_alignment () =
   compile true "aligned-cache";
   compile false "unaligned-cache"
 
+let test_same_name_compilation_preserves_alignment () =
+  let name = "CPU:replaced-alignment" in
+  let param slot =
+    U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int 4)
+      ~addrspace:Dtype.Global () in
+  let src = param 0 and dst = param 1 in
+  let zero = U.const (Const.int Dtype.int32 0) in
+  let window p = U.shrink ~src:p ~offset:zero ~size:(U.const_int 4) in
+  let input = window src and output = window dst in
+  let value = U.load ~src:input () in
+  let store = U.store ~dst:output ~value () in
+  let instructions = [src; dst; zero; input; output; value; store] in
+  let kernel_info = U.{name = "same_name_alignment"; applied_opts = [];
+    opts_to_apply = None; estimates = None; beam = 0} in
+  let sink = U.sink ~kernel_info [store] in
+  let compile device =
+    let to_program owner body =
+      let spec = Device.compile_program owner ~name:kernel_info.name instructions in
+      U.program ~sink:body ~linear:(U.linear instructions)
+        ~source:(U.source (Program_spec.src spec))
+        ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib spec))))
+        ~info:(Program_spec.program_info spec) () in
+    let args = List.init 2 (fun _ ->
+        U.from_buffer (Device.create_buffer ~size:4 ~dtype:Dtype.float32 device)) in
+    let call = U.call ~body:sink ~args
+        ~info:U.{grad_fxn = None; name = None; precompile = false;
+          precompile_backward = false; dtype = Dtype.void; aux = None} in
+    let linear = Realize.compile_linear ~device ~to_program (U.linear [call]) in
+    match U.children linear with
+    | [call] -> (Option.get (U.as_call call)).body
+    | _ -> fail "expected one compiled CPU call" in
+  let source program =
+    match U.children program with
+    | [_; _; source; _] -> Option.get (U.Arg.as_string (U.arg source))
+    | _ -> fail "expected PROGRAM source" in
+  let aligned = Tolk_cpu.create ~aligned:true name in
+  let first = compile aligned in
+  let unaligned = Tolk_cpu.create ~aligned:false name in
+  let second = compile unaligned in
+  List.iter (fun (device, program) ->
+      equal string
+        (Renderer.render (Device.renderer device) ~name:kernel_info.name instructions)
+        (source program);
+      equal string (Target.to_string (Renderer.target (Device.renderer device)))
+        (Target.to_string (Option.get (U.as_program_info program)).target))
+    [aligned, first; unaligned, second];
+  is_true ~msg:"alignment changes generated source" (source first <> source second);
+  is_true ~msg:"retained old owner keeps its own cached program" (compile aligned == first);
+  is_true ~msg:"replacement owner reuses its own cached program" (compile unaligned == second)
+
 let test_split_axis_identity () =
   let device = cpu "split-axis-identity" in
   let range sub size =
@@ -867,6 +917,8 @@ let main () =
           test "emulated long casts preserve float64 precision" test_emulated_long_to_float64;
           test "split ranges with one root axis retain distinct lanes" test_split_axis_identity;
           test "compilation preserves the selected buffer alignment" test_compilation_preserves_alignment;
+          test "same-named device replacement preserves compiled alignment"
+            test_same_name_compilation_preserves_alignment;
           test "host calls preserve effects and loop arguments" test_host_calls;
           test "execute a conditional loop" test_conditional_loop;
           test "compile and run one kernel" (fun () ->

@@ -143,6 +143,9 @@ acceptance requirement; skipped tests are not execution evidence.
   coverage.
   Synchronize device opening and runtime caches; concurrent callers
   currently mutate the shared registry and execution Hashtbls without locking.
+  Establish native-handle retirement for replaced device owners: global program,
+  runtime and linked-template caches currently retain entries indefinitely.
+  Preserve live submission ownership while retiring unreachable cached handles.
   Isolate schedule capture hooks and Rune's shared upload scratch across
   concurrent callers as part of that audit. Cover finalizers registered on
   another domain and systhreads sharing a domain: operation scopes currently

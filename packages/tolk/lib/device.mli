@@ -184,6 +184,10 @@ val make :
     remains the caller's responsibility. Registration and initialization do not
     serialize concurrent callers. *)
 
+val id : t -> int
+(** [id d] uniquely identifies [d] within the process. Separately constructed
+    devices have distinct identifiers, including those with the same name. *)
+
 val name : t -> string
 (** [name d] is [d]'s device name. *)
 

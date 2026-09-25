@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- Keep compiled programs and runtime handles with their `Device.t` owner.
+  Replacing a device with the same name no longer reuses incompatible renderer
+  assumptions, loaders or linked queue templates.
+
 - Remove unused `Buffer.uop_refcount`, `Buffer.add_ref` and
   `Multi_buffer.add_ref`; live views and owning UOps retain storage directly.
 

@@ -147,6 +147,7 @@ end
 type pending_timing = { buffer : Buffer.t; first : int; last : int; label : string; queue_name : string }
 
 type t = {
+  id : int;
   name : string;
   peer_group : string;
   allocator : Allocator.packed;
@@ -182,6 +183,7 @@ let canonicalize device =
 
 let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
 let opened : (string, t) Hashtbl.t = Hashtbl.create 8
+let next_id = Atomic.make 0
 
 let make ~name ~allocator ~renderer_set ?runtime ~synchronize
     ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None)
@@ -194,7 +196,8 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
         fun timeout -> Storage.with_operation (fun () -> wait timeout));
     }) queue in
   let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
-  let device = { name; peer_group; allocator; renderer_set; runtime; synchronize;
+  let device = { id = Atomic.fetch_and_add next_id 1;
+    name; peer_group; allocator; renderer_set; runtime; synchronize;
     invalidate_caches_fn = invalidate_caches; queue; bufferize;
     program_buffers = Uop.Tbl.create 16; program_lock = Mutex.create ();
     synchronize_lock = Mutex.create (); pending_lock = Mutex.create ();
@@ -215,6 +218,7 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
        | _ -> ());
       Printexc.raise_with_backtrace exn backtrace
 
+let id d = d.id
 let name d = d.name
 let peer_group d = d.peer_group
 let renderer d = Renderer_set.select d.renderer_set

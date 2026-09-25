@@ -137,7 +137,7 @@ val compile_linear :
     explicit [0] leaves default-zero kernels on heuristic optimization.
     Kernels that already carry a positive beam width retain it.
 
-    Compiled programs are cached by the kernel's semantic key, the device, and
+    Compiled programs are cached by the kernel's semantic key, the device instance, and
     {!program_config}, so kernels that differ only by diagnostic tags share one
     compilation; the stamped beam width is part of the key. *)
 
