@@ -71,6 +71,30 @@ let () =
     [
       group "Extraction"
         [
+          test "incomplete scalar metadata is rejected before ABI construction" (fun () ->
+            let output = param 0 Dtype.int64 in
+            let at = index output (U.const_int 0) in
+            let cases = [
+              U.param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu ~name:"value" ();
+              U.param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu
+                ~vmin_vmax:(Bound.zero, Bound.int 7) ();
+              U.param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu ()] in
+            List.iter (fun value ->
+                raises (Invalid_argument
+                    "Program_spec: scalar parameter slot 1 requires a name and bounds")
+                  (fun () -> spec_of [output; value; at; store at value])) cases);
+          test "bounded scalar metadata retains the complete ABI" (fun () ->
+            let output = param 0 Dtype.int64 in
+            let value = U.param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu
+                ~name:"value" ~vmin_vmax:(Bound.zero, Bound.int 7) () in
+            let at = index output (U.const_int 0) in
+            let spec = spec_of [output; value; at; store at value]
+                |> Program_spec.with_lib Bytes.empty in
+            let obj = Program_spec.to_elf spec in
+            equal (list int) [0; 1]
+              (List.map (fun (arg : Tiny_elf.argument) -> arg.slot) obj.signature);
+            equal (list string) ["value"]
+              (List.map (fun (v : Program_spec.var) -> v.name) (Program_spec.vars spec)));
           test "reads and writes are deduplicated" (fun () ->
             let p0 = param 0 Dtype.float32 in
             let p1 = param 1 Dtype.float32 in

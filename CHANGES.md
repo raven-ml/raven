@@ -654,6 +654,10 @@ thread.
 
 ### Tolk (new)
 
+- Reject hand-built scalar parameters missing a name or bounds before building
+  the runtime ABI; they previously disappeared from the signature while native
+  code could still read their missing argument.
+
 - Tensor-core selection now tries smaller valid tiles after a symbolic split
   rejects an earlier candidate, restoring the optimizer before retrying.
 

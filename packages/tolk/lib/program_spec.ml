@@ -292,8 +292,12 @@ let collect_vars (program : program) =
   List.filter_map (fun u ->
       match U.op u, U.arg u with
       | (Ops.Param | Ops.Buffer), U.Arg.Param_arg
-          { name = Some name; vmin_vmax = Some (lo, hi); addrspace = Dtype.Alu; _ }
+          { name; vmin_vmax; addrspace = Dtype.Alu; slot; _ }
         when not (U.Ref_tbl.mem seen u) ->
+          let name, lo, hi = match name, vmin_vmax with
+            | Some name, Some (lo, hi) -> name, lo, hi
+            | _ -> invalid_arg (Printf.sprintf
+                "Program_spec: scalar parameter slot %d requires a name and bounds" slot) in
           U.Ref_tbl.add seen u ();
           Some { node = u; var = { name; lo = Bound.to_int lo;
             hi = Bound.to_int hi; dtype = U.dtype u } }
