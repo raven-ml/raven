@@ -503,10 +503,12 @@ delete it rather than registering it.
   reduction holds the gathered value, where the reference's sum of padded
   shards held the n-1 received pieces; write it as a reduce-scatter.
   Outputs are forwarded again after `multi_pm` (`schedule/prepare.ml`
-  `prepare_rangeify`; the reference forwards only before it), so a realized
-  gather writes the result's storage instead of a fresh allocation it then
-  copies. Consumer: every copy of a split value (`Creation.clone`, `U.copy`
-  to a device list, resharding in `multi_pm`). Coverage:
+  `prepare_rangeify`; the reference forwards only before it), and allreduces
+  become calls just before that, where the reference makes them among the
+  earliest rewrites, so a realized gather or allreduce writes the result's
+  storage instead of a fresh allocation it then copies. Consumer: every
+  copy of a split value (`Creation.clone`, `U.copy` to a device list,
+  resharding in `multi_pm`). Coverage:
   `test/unit/engine/test_collectives.ml` "all-gather" and
   `test/unit/engine/test_multi.ml`.
 

@@ -642,10 +642,6 @@ let earliest_rewrites =
     [ pm_mop_through_index;
       pm_mop_past_after; pm_mop_past_end;
       Upat.Pattern_matcher.rewrite Movement.mop_cleanup;
-      (fun n -> match U.as_allreduce n with
-         | Some { src; device; op } ->
-             Allreduce.create_allreduce_function src ~device ~op
-         | None -> None);
       split_reduceop_rule;
       (fun n -> match U.op n with
          | Ops.Detach | Ops.Contiguous_backward -> Some (src0 n)
@@ -737,11 +733,19 @@ let earliest_rewrites =
 
 let prepare_rangeify root =
   let root = forward_call_outputs root in
-  (* The tinygrad counterpart forwards outputs only before multi_pm. The
-     collectives multi_pm lowers allocate their results, so outputs are
-     forwarded again: a realized collective writes the result's storage
-     instead of an allocation it then copies. *)
-  let root = forward_call_outputs (U.graph_rewrite ~name:"multi_pm" Multi.multi_pm root) in
+  let root = U.graph_rewrite ~name:"multi_pm" Multi.multi_pm root in
+  (* Every collective is a call from here on: multi_pm lowers the gathers,
+     and the allreduces it leaves become calls now.
+     The tinygrad counterpart turns an allreduce into its call among the
+     earliest rewrites, and forwards outputs only before multi_pm. The calls
+     allocate their results, so outputs are forwarded again: a realized
+     collective writes the result's storage instead of an allocation it then
+     copies. *)
+  let root = U.graph_rewrite ~name:"allreduce calls" (fun n ->
+      match U.as_allreduce n with
+      | Some { src; device; op } -> Allreduce.create_allreduce_function src ~device ~op
+      | None -> None) root in
+  let root = forward_call_outputs root in
   let root = U.graph_rewrite ~name:"inline calls"
       (U.first_match [movement_ops; inline_call; returned_after; disk_copy]) root in
   let root =

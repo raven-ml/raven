@@ -532,6 +532,10 @@ thread.
 
 ### Tolk (new)
 
+- An allreduced tensor that a realization returns is written straight into its
+  storage. It was reduced into an intermediate buffer and then copied, which
+  held one more copy of the tensor on each device.
+
 - A `float8` constant past the format's largest finite value folds to its
   infinity, or NaN where it has none, and a `bfloat16` constant rounds once
   from the double, so compiled constants equal nx's eager values. `500.`

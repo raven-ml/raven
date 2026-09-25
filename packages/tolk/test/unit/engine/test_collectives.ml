@@ -326,30 +326,27 @@ let allreduce_tests =
                     int 0 !positive)
                 (device_bytes (Rd.sum ~axis:[ 0 ] x)))
             [ 2; 3; 4; 6 ]);
-      xfail ~reason:"an allreduce call is built after outputs are forwarded"
-        (test "a realized allreduce holds no more than a consumed one"
-           (fun () ->
-             let devices = devices 4 and cols = 65536 in
-             let w =
-               C.shard ~axis:0 ~devices
-                 (host ~shape:[ 4; cols ]
-                    (uniform ~seed:[| 4; cols |] (4 * cols)))
-             in
-             Run.realize_many [ w ];
-             let peaks f =
-               snd (peak_over devices (fun () -> device_bytes (f ())))
-             in
-             let consumed =
-               peaks (fun () -> Rd.sum ~axis:[ 0 ] (Rd.sum ~axis:[ 0 ] w))
-             and realized = peaks (fun () -> Rd.sum ~axis:[ 0 ] w) in
-             List.iter2
-               (fun (device, consumed) (_, realized) ->
-                 satisfies ~msg:device
-                   ~claim:(Printf.sprintf "at most %d bytes" (consumed + 4))
-                   int
-                   (fun realized -> realized <= consumed + 4)
-                   realized)
-               consumed realized));
+      test "a realized allreduce holds no more than a consumed one" (fun () ->
+          let devices = devices 4 and cols = 65536 in
+          let w =
+            C.shard ~axis:0 ~devices
+              (host ~shape:[ 4; cols ] (uniform ~seed:[| 4; cols |] (4 * cols)))
+          in
+          Run.realize_many [ w ];
+          let peaks f =
+            snd (peak_over devices (fun () -> device_bytes (f ())))
+          in
+          let consumed =
+            peaks (fun () -> Rd.sum ~axis:[ 0 ] (Rd.sum ~axis:[ 0 ] w))
+          and realized = peaks (fun () -> Rd.sum ~axis:[ 0 ] w) in
+          List.iter2
+            (fun (device, consumed) (_, realized) ->
+              satisfies ~msg:device
+                ~claim:(Printf.sprintf "at most %d bytes" (consumed + 4))
+                int
+                (fun realized -> realized <= consumed + 4)
+                realized)
+            consumed realized);
       test "a realized allreduce of a symbolic slice keeps its values"
         (fun () ->
           let data = Array.init 112 float_of_int in
