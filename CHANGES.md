@@ -520,6 +520,10 @@ thread.
 
 ### Tolk (new)
 
+- A `float16` constant between `2^-25` and `2^-24` in a compiled graph folds
+  to the smallest subnormal, `2^-24`. It folded to zero, so `3e-8` became
+  `0`.
+
 - Realizing a slice of a split tensor whose part on each device is a
   contiguous window of that device's shard gives a view of the shards:
   nothing is allocated or copied. Each part was copied into a new buffer.

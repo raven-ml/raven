@@ -373,7 +373,7 @@ let float_to_fp16 x =
     let unbiased = exp - 1023 in
     if unbiased > 15 then
       if sign = 1L then Float.neg Float.infinity else Float.infinity
-    else if unbiased < -24 then if sign = 1L then -0.0 else 0.0
+    else if unbiased < -25 then if sign = 1L then -0.0 else 0.0
     else
       let fp16_sign = Int64.shift_left sign 15 in
       let fp16_bits =

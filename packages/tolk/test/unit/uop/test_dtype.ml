@@ -257,6 +257,12 @@ let fp16_conversion () =
   eq infinity (Dtype.float_to_fp16 65520.0);
   eq neg_infinity (Dtype.float_to_fp16 (-65520.0));
   eq 0.0 (Dtype.float_to_fp16 1e-8);
+  (* Half the smallest subnormal 2^-24 is a tie and rounds to even, zero;
+     anything above it rounds up to 2^-24. *)
+  eq 0.0 (Dtype.float_to_fp16 0x1p-25);
+  eq 0x1p-24 (Dtype.float_to_fp16 (Float.succ 0x1p-25));
+  eq 0x1p-24 (Dtype.float_to_fp16 3e-8);
+  eq (-0x1p-24) (Dtype.float_to_fp16 (-0x1.8p-25));
   eq infinity (Dtype.float_to_fp16 infinity);
   eq neg_infinity (Dtype.float_to_fp16 neg_infinity);
   is_true (Float.is_nan (Dtype.float_to_fp16 Float.nan))
