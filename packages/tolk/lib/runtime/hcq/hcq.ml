@@ -483,12 +483,18 @@ module Timeline = struct
 end
 
 module Kernargs = struct
-  type 'meta t = { buf : 'meta Buffer.t; bump : Tolk.Bump.t }
+  type 'meta t = { buf : 'meta Buffer.t; mutable position : int }
 
-  let create buf = { buf; bump = Tolk.Bump.create ~size:(Buffer.size buf) () }
+  let create buf = { buf; position = 0 }
 
-  let alloc t size =
-    Buffer.offset t.buf ~off:(Tolk.Bump.alloc t.bump size ~align:8 ()) ~size ()
+  let alloc t size ~wait =
+    if size < 0 || size > Buffer.size t.buf then
+      invalid_arg "Kernargs.alloc: size exceeds the region";
+    let off = (t.position + 7) / 8 * 8 in
+    let off = if size > Buffer.size t.buf - off then (wait (); 0) else off in
+    let slot = Buffer.offset t.buf ~off ~size () in
+    t.position <- off + size;
+    slot
 
   let write_args ?(prefix = [||]) layout slot ~bufs ~vals =
     let view = Buffer.cpu_view slot in

@@ -1729,7 +1729,8 @@ module Program = struct
       failwith
         (Printf.sprintf "Invalid global/local dims (%d, %d, %d), (%d, %d, %d)"
            gx gy gz lx ly lz);
-    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size in
+    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size
+        ~wait:(fun () -> Hcq.Signal.wait timeline ?timeout_ms (timeline_value - 1)) in
     Hcq.Kernargs.write_args ~prefix:t.cbuf_0 layout slot ~bufs ~vals;
     let cq = Compute_queue.create t.params.dev in
     Compute_queue.wait cq ~value:(timeline_value - 1) timeline;
@@ -2384,7 +2385,9 @@ module Runtime = struct
           ~local_size:(local.(0), local.(1), local.(2))
           ()
       in
-      if not wait then launch ()
+      if not wait then
+        (try launch () with Hcq.Signal.Timeout _ as exn ->
+          Timeline.guarded_wait tl (fun () -> raise exn))
       else begin
         (match tl.Timeline.error_state with Some e -> raise e | None -> ());
         let st_slot = Hcq.Signal.Pool.get state.State.pool in

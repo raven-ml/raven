@@ -69,6 +69,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   across rollover. Hardware acceptance remains in TODO. Reconsider when direct
   dispatch is removed or upstream provides an equivalent rollover protocol.
 
+- **Direct AMD/NV launches fence kernel-argument arena wrap.** Tolk retains
+  direct `Device.prog` launches for autotuning and standalone runtime callers;
+  the frozen target's queue compiler owns argument storage per linked batch.
+  The direct arena waits for the preceding timeline value before wrapping,
+  without waiting for ordinary allocations. Coverage: `test_runtime_amd` and
+  `test_runtime_nv` preserve arguments, QMDs and producer positions after a
+  failed wrap wait, then retry after completion. Reconsider when direct
+  dispatch uses the compiled queue's per-batch storage ownership.
+
 - **Host access and direct cross-device binding wait for existing importers.**
   Tolk still exposes asynchronous `Device.prog` dispatch outside compiled queue
   dependencies. Waiting for the importing devices prevents CPU reads or writes

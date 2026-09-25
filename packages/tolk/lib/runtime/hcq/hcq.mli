@@ -467,8 +467,7 @@ end
 
     A kernargs region hands out small slots of a CPU-mapped buffer for
     the arguments of individual kernel launches. The region recycles
-    space by wrapping: slots are valid until the region wraps back
-    around, which in-flight work must outlive by construction. *)
+    space by wrapping, waiting for earlier users before reusing storage. *)
 module Kernargs : sig
   type 'meta t
   (** The type for kernel-argument regions. Mutable. *)
@@ -477,10 +476,12 @@ module Kernargs : sig
   (** [create buf] is a region handing out slots of the CPU-mapped
       buffer [buf]. *)
 
-  val alloc : 'meta t -> int -> 'meta Buffer.t
-  (** [alloc t size] is a fresh 8-byte-aligned slot of [size] bytes,
-      wrapping to the start of the region when the end is reached.
-      Raises [Invalid_argument] if [size] exceeds the region. *)
+  val alloc : 'meta t -> int -> wait:(unit -> unit) -> 'meta Buffer.t
+  (** [alloc t size ~wait] is a fresh 8-byte-aligned slot of [size] bytes.
+      Before wrapping to the start, [wait ()] must retire every earlier
+      user of the region. If [wait] raises, the allocation position and
+      existing bytes remain unchanged.
+      Raises [Invalid_argument] if [size] is negative or exceeds the region. *)
 
   val write_args :
     ?prefix:int array ->

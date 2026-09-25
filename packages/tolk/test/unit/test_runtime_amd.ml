@@ -1014,21 +1014,21 @@ let () =
                     Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
                   in
                   let k = Kernargs.create root in
-                  let a = Kernargs.alloc k 24 in
+                  let a = Kernargs.alloc ~wait:(fun () -> ()) k 24 in
                   equal nativeint 0x300000n (Buffer.va a);
                   equal int 24 (Buffer.size a);
-                  let b = Kernargs.alloc k 8 in
+                  let b = Kernargs.alloc ~wait:(fun () -> ()) k 8 in
                   equal nativeint 0x300018n (Buffer.va b);
-                  let c = Kernargs.alloc k 4 in
+                  let c = Kernargs.alloc ~wait:(fun () -> ()) k 4 in
                   equal nativeint 0x300020n (Buffer.va c);
-                  let d = Kernargs.alloc k 8 in
+                  let d = Kernargs.alloc ~wait:(fun () -> ()) k 8 in
                   equal nativeint 0x300028n (Buffer.va d)));
           test "write_args lays out addresses then values" (fun () ->
               with_map 4096 (fun m ->
                   let root =
                     Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
                   in
-                  let slot = Kernargs.alloc (Kernargs.create root) 24 in
+                  let slot = Kernargs.alloc ~wait:(fun () -> ()) (Kernargs.create root) 24 in
                   Kernargs.write_args (argument_layout 2 [ Tolk_uop.Dtype.int32; Tolk_uop.Dtype.int32 ]) slot ~bufs:[| 0x1000n; 0x2000n |]
                     ~vals:[| 7L; -1L |];
                   equal bytes
@@ -1043,7 +1043,7 @@ let () =
                   let root =
                     Buffer.make ~va:0x300000n ~size:4096 ~view:m ~meta:() ()
                   in
-                  let slot = Kernargs.alloc (Kernargs.create root) 32 in
+                  let slot = Kernargs.alloc ~wait:(fun () -> ()) (Kernargs.create root) 32 in
                   Kernargs.write_args (argument_layout 1 [ Tolk_uop.Dtype.int32 ]) slot
                     ~prefix:[| 0xdeadbeef; 1 |]
                     ~bufs:[| 0x1000n |] ~vals:[| 7L |];
@@ -1085,6 +1085,24 @@ let () =
                   equal bytes
                     (Bytes.of_string "\xef\xbe\xad\xde\x01\x00\x00\x00\x00\x20\x00\x00\x01\x00\x00\x00\xf9\x00\x2c\x01\x39\x30\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80")
                     (Mmio.read_bytes m ~off:0 ~len:32)));
+          test "wrap waits once and leaves the cursor unchanged on failure" (fun () ->
+              with_map 4096 (fun m ->
+                  let root = Buffer.make ~va:0x300000n ~size:64
+                      ~view:(Mmio.view m ~off:0 ~size:64 ()) ~meta:() () in
+                  let k = Kernargs.create root in
+                  let waits = ref 0 in
+                  let wait () = incr waits in
+                  ignore (Kernargs.alloc k 48 ~wait);
+                  equal int 0 !waits;
+                  raises_match (Exn.failure ~substring:"busy") (fun () ->
+                      Kernargs.alloc k 32 ~wait:(fun () -> failwith "busy"));
+                  equal nativeint 0x300030n (Buffer.va (Kernargs.alloc k 16 ~wait));
+                  equal int 0 !waits;
+                  equal nativeint 0x300000n (Buffer.va (Kernargs.alloc k 24 ~wait));
+                  equal int 1 !waits;
+                  raises_match is_invalid_arg (fun () -> Kernargs.alloc k 80 ~wait);
+                  equal nativeint 0x300018n (Buffer.va (Kernargs.alloc k 8 ~wait));
+                  equal int 1 !waits));
           test "the region wraps when exhausted" (fun () ->
               with_map 4096 (fun m ->
                   let root =
@@ -1093,11 +1111,11 @@ let () =
                       ~meta:() ()
                   in
                   let k = Kernargs.create root in
-                  ignore (Kernargs.alloc k 48);
-                  let wrapped = Kernargs.alloc k 32 in
+                  ignore (Kernargs.alloc ~wait:(fun () -> ()) k 48);
+                  let wrapped = Kernargs.alloc ~wait:(fun () -> ()) k 32 in
                   equal nativeint 0x300000n (Buffer.va wrapped);
                   raises_match is_invalid_arg (fun () ->
-                      Kernargs.alloc k 80)));
+                      Kernargs.alloc ~wait:(fun () -> ()) k 80)));
         ];
       group "Compute_queue"
         [
@@ -1572,6 +1590,37 @@ let () =
         ];
       group "Dispatch"
         [
+          test "arena wrap waits before replacing live kernel arguments" (fun () ->
+              with_map 8192 (fun m ->
+                  let dev = gfx1100 () in
+                  let qd = queue_desc ~ring_dwords:512 m in
+                  let aux = 512 * 4 + 24 in
+                  let tl = Signal.make ~is_timeline:true ~owner:dev
+                      (Buffer.make ~va:0x400000n ~size:16
+                         ~view:(Mmio.view m ~off:aux ~size:16 ()) ~meta:() ()) in
+                  let arena = Mmio.view m ~off:(aux + 16) ~size:24 () in
+                  let kernargs = Kernargs.create
+                      (Buffer.make ~va:0x300000n ~size:24 ~view:arena ~meta:() ()) in
+                  let prg = {
+                    Program.params = amd_prog dev; name = "k";
+                    lib_gpu = Buffer.make ~va:0x100000n ~size:0x1000 ~meta:() ();
+                    group_segment_size = 0; private_segment_size = 0;
+                    kernargs_segment_size = 24; kernargs_alloc_size = 24 } in
+                  let launch timeline_value value = Program.call prg
+                      ~layout:(argument_layout 2 [Tolk_uop.Dtype.int64]) ~kernargs
+                      ~queue:qd ~timeline:tl ~timeline_value ~timeout_ms:0
+                      ~bufs:[|0x1000n; 0x2000n|] ~vals:[|value|]
+                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1) () in
+                  ignore (launch 1 7L);
+                  let before = Mmio.read_bytes arena ~off:0 ~len:24 in
+                  let put = Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0 in
+                  raises_match (function Signal.Timeout _ -> true | _ -> false)
+                    (fun () -> launch 2 19L);
+                  equal bytes before (Mmio.read_bytes arena ~off:0 ~len:24);
+                  equal int64 put (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0);
+                  Signal.set_value tl 1;
+                  ignore (launch 2 19L);
+                  equal int64 19L (Mmio.read64 arena 16)));
           test "a timed call brackets the launch and reports elapsed time"
             (fun () ->
               let module Cq = Tolk_amd.Compute_queue in
@@ -1755,7 +1804,7 @@ let () =
                       pointer_pair := true
                   done;
                   is_true ~msg:"dispatch pointer precedes the kernarg pointer" !pointer_pair;
-                  equal nativeint 0x300058n (Buffer.va (Kernargs.alloc kernargs 8));
+                  equal nativeint 0x300058n (Buffer.va (Kernargs.alloc ~wait:(fun () -> ()) kernargs 8));
                   (* the timeline wait needs a value to wait on *)
                   raises_match is_invalid_arg (fun () ->
                       Program.call ~layout:[]

@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Direct AMD/NV launches wait before wrapping their kernel-argument arenas,
+  preserving in-flight arguments and descriptors. `Hcq.Kernargs.alloc` now
+  requires a retirement callback and preserves its cursor if that wait fails.
+
 - NV asynchronous submissions wait for FIFO capacity and command-storage
   retirement, preventing long batches or independent replays from overwriting
   commands still in use. Stalled waits preserve live storage and report failure.

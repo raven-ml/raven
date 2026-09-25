@@ -687,7 +687,9 @@ module Program : sig
       the two signals, blocks until [timeline] reaches [timeline_value]
       ([timeout_ms] bounds the wait, see {!Hcq.Signal.wait}), and
       returns the seconds elapsed between the two captures. Otherwise
-      the call returns [None] without blocking.
+      the call returns [None]. Reusing the start of [kernargs] waits for
+      [timeline_value - 1] before replacing arguments, even without [wait];
+      [timeout_ms] also bounds that wait.
 
       Raises [Failure] if [local_size] exceeds 1024 threads, the
       kernel's register use ([max_threads]), or the device's

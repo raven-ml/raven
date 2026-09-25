@@ -1034,7 +1034,8 @@ module Program = struct
         Bytes.set_int32_le packet P.group_segment_size (Int32.of_int t.group_segment_size);
         Some packet
       end else None in
-    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size in
+    let slot = Hcq.Kernargs.alloc kernargs t.kernargs_alloc_size
+        ~wait:(fun () -> Hcq.Signal.wait timeline ?timeout_ms (timeline_value - 1)) in
     Hcq.Kernargs.write_args layout slot ~bufs ~vals;
     Option.iter (Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view slot) ~off:t.kernargs_segment_size) packet;
     let cq = Compute_queue.create t.params.dev in
@@ -2192,7 +2193,9 @@ module Runtime = struct
           ~local_size:(local.(0), local.(1), local.(2))
           ()
       in
-      if not wait then launch ()
+      if not wait then
+        (try launch () with Hcq.Signal.Timeout _ as exn ->
+          Timeline.guarded_wait tl (fun () -> raise exn))
       else begin
         (match tl.Timeline.error_state with Some e -> raise e | None -> ());
         let st_slot = Hcq.Signal.Pool.get state.State.pool in

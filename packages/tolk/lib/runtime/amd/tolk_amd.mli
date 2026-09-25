@@ -565,7 +565,9 @@ module Program : sig
       the two signals, blocks until [timeline] reaches [timeline_value]
       ([timeout_ms] bounds the wait, see {!Hcq.Signal.wait}), and
       returns the seconds elapsed between the two captures. Otherwise
-      the call returns [None] without blocking.
+      the call returns [None]. Reusing the start of [kernargs] waits for
+      [timeline_value - 1] before replacing arguments, even without [wait];
+      [timeout_ms] also bounds that wait.
 
       Dispatch-pointer programs append an HSA packet after their arguments.
       Raises [Invalid_argument] if launch dimensions exceed its fields, or

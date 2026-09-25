@@ -1710,6 +1710,30 @@ let () =
         ];
       group "program call"
         [
+          test "arena wrap waits before replacing live arguments and QMDs" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev ~sass_version:0x89 ~slm_per_thread:0x380 m in
+                  let prg = load_fixture dev and qd = queue_desc m in
+                  let tl = signal m in
+                  let size = prg.Program.kernargs_alloc_size in
+                  let arena = Mmio.view m ~off:0x4000 ~size () in
+                  let kernargs = Kernargs.create
+                      (Buffer.make ~va:0x30000000n ~size ~view:arena ~meta:() ()) in
+                  let launch timeline_value value = Program.call prg
+                      ~layout:(argument_layout 2 [Tolk_uop.Dtype.int64]) ~kernargs
+                      ~queue:qd ~timeline:tl ~timeline_value ~timeout_ms:0
+                      ~bufs:[|0x1000n; 0x2000n|] ~vals:[|value|]
+                      ~global_size:(1, 1, 1) ~local_size:(1, 1, 1) () in
+                  ignore (launch 1 7L);
+                  let before = Mmio.read_bytes arena ~off:0 ~len:size in
+                  raises_match (function Signal.Timeout _ -> true | _ -> false)
+                    (fun () -> launch 2 19L);
+                  equal bytes before (Mmio.read_bytes arena ~off:0 ~len:size);
+                  equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
+                  Signal.set_value tl 1;
+                  ignore (launch 2 19L);
+                  equal int64 19L (Mmio.read64 arena 0x170);
+                  equal int32 2l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0)));
           test "call stages the arguments, descriptor and stream" (fun () ->
               with_fixture (fun m ->
                   let dev =
@@ -1872,7 +1896,7 @@ let () =
                         ~local_size:(1, 1, 1) ());
                   (* nothing was staged or submitted *)
                   equal nativeint 0x30000000n
-                    (Buffer.va (Kernargs.alloc kernargs 8));
+                    (Buffer.va (Kernargs.alloc ~wait:(fun () -> ()) kernargs 8));
                   equal int 0 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
           test "blackwell programs use the wide driver-parameter layout"
             (fun () ->
