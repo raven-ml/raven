@@ -14,6 +14,14 @@
     accumulation ({!Q}), synchronization slots ({!Signal}), device
     completion timelines ({!Timeline}). *)
 
+val profile_offset : string -> unit -> float
+(** [profile_offset device] is a reusable clock-calibration callback for the
+    device's queue. It submits five timestamps through the shared HCQ path and
+    returns the median host-minus-device offset in microseconds. Resources are
+    allocated on the first call, after the device has been registered, and kept
+    alive by the callback. Calibration suppresses debug synchronization and
+    emits no profiling events. Device submission and wait failures propagate. *)
+
 (** Files and memory mappings. *)
 module File_io : sig
   (** {1:files Files} *)

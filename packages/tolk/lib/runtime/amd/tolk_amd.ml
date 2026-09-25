@@ -2011,7 +2011,6 @@ module State = struct
     hw : 'mem device;
     compute_queue : Queue_desc.t;
     sdma_queue : int -> Queue_desc.t option;
-    pool : 'mem Hcq.Signal.Pool.t;
     tl : ('mem, 'mem device) Timeline.t;
     submission : Hcq.Submission.t;
     mutable scratch : Tolk.Device.Buffer.t option;
@@ -2230,21 +2229,7 @@ module Queue = struct
 
   let create state =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
-    (* Keep a dedicated slot: a failed wait may leave its timestamp write
-       pending, so it must not return to the shared pool. *)
-    let profile_stamp = lazy (Hcq.Signal.make ~timestamp_divider:100. (Hcq.Signal.Pool.get state.State.pool)) in
-    let profile_offset () =
-      let stamp = Lazy.force profile_stamp in
-      Profile.calibrate (fun () ->
-          State.prepare state;
-          let queue = Compute_queue.create state.State.hw in
-          Compute_queue.timestamp queue stamp;
-          Timeline.submit state.State.tl (fun value ->
-            Compute_queue.signal queue ~value state.State.tl.Timeline.timeline;
-            Compute_queue.submit queue state.State.compute_queue);
-          fun () ->
-            Timeline.synchronize state.State.tl;
-            Hcq.Signal.timestamp stamp) in
+    let profile_offset = Hcq.profile_offset state.State.name in
     let copy call =
       let supported = match U.as_call call with
       | Some {args; _} -> List.for_all (fun arg ->
@@ -2433,7 +2418,6 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
       hw;
       compute_queue;
       sdma_queue;
-      pool;
       tl =
         {
           Timeline.timeline = timeline_signal ();

@@ -498,3 +498,44 @@ module Timeline = struct
       off := !off + len
     done
 end
+
+let profile_offset name =
+  let open Tolk in
+  let open Tolk_uop in
+  let module U = Uop in
+  let calibration = lazy (
+    let device = Device.get name in
+    let stamp = Device.create_buffer ~size:2 ~dtype:Dtype.uint64
+        ~spec:{Device.Buffer_spec.default with host = true; uncached = true; nolru = true} device in
+    let timeline = Hcq2.timeline name in
+    let at ptr i = U.index ~ptr ~idxs:[U.const_int i] () in
+    let value = U.load ~src:(at timeline 1) () in
+    let next = U.alu_binary ~op:Ops.Add ~lhs:value ~rhs:(U.const (Const.int Dtype.uint64 1)) in
+    let instructions = U.linear [
+        U.ins ~mnemonic:"wait" ~operands:[timeline; value] ();
+        U.ins ~mnemonic:"timestamp" ~operands:[U.from_buffer stamp] ();
+        U.ins ~mnemonic:"store" ~operands:[timeline; next] ()]
+      |> fun linear -> U.replace linear ~arg:(U.Arg.Device (U.Single name)) () in
+    let backend = String.lowercase_ascii (List.hd (String.split_on_char ':' name)) in
+    let submit = U.custom_function ~name:("submit_" ^ backend ^ "_compute_0")
+        ~srcs:[instructions; U.group []] in
+    let bump = U.store ~dst:(at (U.after ~src:timeline ~deps:[submit]) 1) ~value:next () in
+    let kernel_info = U.{name = "clock_calibration"; applied_opts = []; opts_to_apply = None;
+      estimates = None; beam = 0} in
+    let call = Hcq2.lower_call ~devices:[name] (U.sink ~kernel_info [bump]) in
+    device, stamp, Realize.link_linear (U.linear [call])) in
+  fun () -> Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.debug, 0)] (fun () ->
+    let device, stamp, linked = Lazy.force calibration in
+    let queue = Option.get (Device.queue device) in
+    let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+    Profile.calibrate (fun () ->
+        Realize.run_linear ~device ~to_program ~jit:true ~wait:false ~update_stats:false linked;
+        fun () ->
+          Device.synchronize device;
+          let view = Option.get (Device.Buffer.as_buffer stamp) in
+          let ticks = ref 0L in
+          for i = 0 to 7 do
+            ticks := Int64.logor !ticks
+              (Int64.shift_left (Int64.of_int (Bigarray.Array1.unsafe_get view (8 + i))) (8 * i))
+          done;
+          Int64.to_float !ticks /. queue.timestamp_divider))

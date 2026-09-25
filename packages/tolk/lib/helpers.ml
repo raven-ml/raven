@@ -130,6 +130,7 @@ let select_interface ~device candidates =
 (* Each variable is declared once, here, so every reader shares one value and
    a [with_context] override reaches all of them. *)
 
+let debug = Context_var.int ~key:"DEBUG" ~default:0
 let beam = Context_var.int ~key:"BEAM" ~default:0
 let noopt = Context_var.int ~key:"NOOPT" ~default:0
 let image = Context_var.int ~key:"IMAGE" ~default:0

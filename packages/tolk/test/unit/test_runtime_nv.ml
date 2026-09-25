@@ -731,6 +731,71 @@ let raw_submission_timeout m =
   List.iter (fun (buffer, before) -> equal Windtrap.bytes before (Device.Buffer.as_bytes buffer)) protected;
   ignore (Sys.opaque_identity linked)
 
+let shared_calibration m =
+  let open Tolk in
+  let stamp = ref None and allocations = ref 0 and frees = ref 0 in
+  let base = Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let alloc size (spec : Device.Buffer_spec.t) =
+    let raw = base.alloc size spec in
+    if spec.host && spec.uncached && spec.nolru then begin
+      equal int 16 size;
+      incr allocations;
+      stamp := Some raw
+    end;
+    raw in
+  let free raw size spec =
+    if Some raw = !stamp then incr frees;
+    base.free raw size spec in
+  let copyout bytes raw =
+    if Some raw = !stamp then fail "calibration must read its host mapping directly";
+    base.copyout bytes raw in
+  let allocator = Device.Allocator.Pack {base with alloc; free; copyout} in
+  let buffers = ref None and waits = ref 0 and fail_wait = ref false in
+  let collecting = ref false in
+  let synchronize () =
+    if not !collecting then begin
+    equal int 0 (Helpers.Context_var.get Helpers.debug);
+    incr waits;
+    let get tag = Device.Buffer.as_bytes (Hashtbl.find (Option.get !buffers) tag) in
+    let timeline = get "timeline" in
+    equal int64 (Int64.of_int !waits) (Bytes.get_int64_le timeline 8);
+    let commands = get "cmdbuf_compute" in
+    equal int64 (Int64.of_nativeint (Option.get !stamp)) (Bytes.get_int64_le commands 28);
+    if !fail_wait then failwith "calibration wait failed";
+    let stamp_view = Mmio.make ~addr:(Option.get !stamp) ~size:16 in
+    Mmio.write64 stamp_view 8 1234000L;
+    Bytes.set_int64_le timeline 0 (Int64.of_int !waits);
+    Device.Buffer.copyin (Hashtbl.find (Option.get !buffers) "timeline") timeline;
+    let progress = get "progress_compute" in
+    Bytes.set_int32_le progress 8 (Int32.of_int !waits);
+    Device.Buffer.copyin (Hashtbl.find (Option.get !buffers) "progress_compute") progress
+    end in
+  let calibration = Tolk_hcq.Hcq.profile_offset "NV:queue-compilation" in
+  equal int 0 !allocations;
+  let _, device, _, slots, _ = queue_fixture ~allocator ~synchronize
+      ~compute_class:Defs.ada_compute_a ~copies:false m in
+  buffers := Some slots;
+  Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.debug, 2)] (fun () ->
+      for round = 1 to 2 do
+        let before = Unix.gettimeofday () *. 1e6 -. 1234. in
+        let offset = calibration () in
+        let after = Unix.gettimeofday () *. 1e6 -. 1234. in
+        is_true (before <= offset && offset <= after);
+        equal int (round * 5) !waits;
+        equal int 1 !allocations;
+        equal int 2 (Helpers.Context_var.get Helpers.debug)
+      done;
+      collecting := true;
+      equal int 0 (List.length (Device.profile device));
+      collecting := false;
+      fail_wait := true;
+      raises_match (Exn.failure ~substring:"calibration wait failed") calibration;
+      equal int 11 !waits;
+      equal int 2 (Helpers.Context_var.get Helpers.debug));
+  Gc.full_major ();
+  equal int 0 !frees;
+  ignore (Sys.opaque_identity (device, calibration))
+
 let queue_chain ~compute_class m =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~chain:true ~compute_class ~copies:false m in
@@ -878,7 +943,8 @@ let () =
   run "Nv_runtime"
     [
       group "compiled queues"
-        [test "raw setup and kernels share timeline and FIFO progress" (fun () -> with_fixture raw_submissions);
+        [test "shared clock calibration owns its stamp and scopes debug waits" (fun () -> with_fixture shared_calibration);
+         test "raw setup and kernels share timeline and FIFO progress" (fun () -> with_fixture raw_submissions);
          test "failed raw submission leaves live storage and counters unchanged" (fun () -> with_fixture raw_submission_timeout);
          test "Ada descriptors chain launches and release only the tail" (fun () ->
              with_fixture (queue_chain ~compute_class:Defs.ada_compute_a));

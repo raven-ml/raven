@@ -10,7 +10,7 @@ let keep_alive x = ignore (Sys.opaque_identity x)
 
 (* Environment *)
 
-let debug = Helpers.getenv "DEBUG" 0
+let debug () = Helpers.Context_var.get Helpers.debug
 
 (* Runners *)
 
@@ -581,12 +581,12 @@ let first_run_cache : (int, unit) Hashtbl.t = Hashtbl.create 64
 let track_stats ctx call ~device bufs var_vals run =
   let module U = Tolk_uop.Uop in
   let module G = Helpers.Global_counters in
-  let st = if debug >= 2 then Unix.gettimeofday () else 0.0 in
+  let st = if debug () >= 2 then Unix.gettimeofday () else 0.0 in
   let et = run () in
   if ctx.update_stats then begin
     let et =
       match et with
-      | None when debug >= 2 ->
+      | None when debug () >= 2 ->
           Device.synchronize device;
           Some (Unix.gettimeofday () -. st)
       | et -> et
@@ -603,7 +603,7 @@ let track_stats ctx call ~device bufs var_vals run =
     G.global_ops := !G.global_ops + op_est;
     G.global_mem := !G.global_mem + mem_est;
     Option.iter (fun t -> G.time_sum_s := !G.time_sum_s +. t) et;
-    if debug >= 2 then begin
+    if debug () >= 2 then begin
       let key =
         match U.as_call call with Some { body; _ } -> U.tag body | None -> -1
       in
@@ -1092,7 +1092,7 @@ and exec_loop ctx ~device ~to_program call =
             | Single b -> row b
             | Multi m -> U.mstack (List.map row (Device.Multi_buffer.bufs m))
       in
-      if debug >= 2 then
+      if debug () >= 2 then
         Printf.eprintf "exec_loop: %d iterations, reversed=%b\n%!" trip
           reversed;
       for j = 0 to trip - 1 do
@@ -1122,9 +1122,9 @@ let rec run_linear ~device ~to_program ?(var_vals = [])
       (compile_linear_cached ~cache:true ~device ~to_program linear), input_uops in
   let ctx =
     exec_context ~var_vals ~input_uops ~update_stats ~jit
-      ~wait:(wait || debug >= 2) ()
+      ~wait:(wait || debug () >= 2) ()
   in
-  if debug >= 2 then begin
+  if debug () >= 2 then begin
     let names =
       List.map
         (fun call ->
@@ -1143,7 +1143,7 @@ let rec run_linear ~device ~to_program ?(var_vals = [])
   end;
   List.iter
     (fun call ->
-      if debug >= 3 then begin
+      if debug () >= 3 then begin
         let name =
           match U.as_call call with
           | Some { body; _ } -> Tolk_uop.Ops.name (U.op body)

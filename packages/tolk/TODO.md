@@ -14,8 +14,8 @@ with their rationale and validation; commit count is not an acceptance metric.
 
 ## 2. Migrate storage, execution and existing consumers
 
-- Move AMD/NV profiling calibration and allocator transfers onto shared
-  execution. Delete duplicate command builders and
+- Move AMD/NV allocator transfers onto shared execution. Delete duplicate
+  command builders and
   handoff bookkeeping once their callers migrate, preserving transfer ownership
   and ordering.
   Move host-mapped initialization/readback to direct host access before routing
