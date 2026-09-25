@@ -69,6 +69,27 @@ let with_env name value f =
      | None -> Unix.putenv name "");
     raise exn
 
+let concurrent_buffer_slots () =
+  let domains = 4 and per_domain = 4096 in
+  let ready = Atomic.make 0 in
+  let workers = Array.init domains (fun worker ->
+      ignore worker;
+      Domain.spawn (fun () ->
+      ignore (Atomic.fetch_and_add ready 1);
+      while Atomic.get ready <> domains do Domain.cpu_relax () done;
+      Array.init per_domain (fun index -> ignore index; Uop.fresh_buffer_slot ()))) in
+  let slots = Array.concat (Array.to_list (Array.map Domain.join workers)) in
+  Array.sort Int.compare slots;
+  for i = 1 to Array.length slots - 1 do
+    is_true ~msg:"independent allocations have distinct slot identities"
+      (slots.(i - 1) < slots.(i))
+  done;
+  let reserved = slots.(Array.length slots - 1) + 17 in
+  Uop.reserve_buffer_slots reserved;
+  is_true (Uop.fresh_buffer_slot () >= reserved);
+  Uop.reserve_buffer_slots 0;
+  is_true (Uop.fresh_buffer_slot () > reserved)
+
 (* Construction + accessors *)
 
 let ops_access () =
@@ -2659,6 +2680,7 @@ let () =
           test "Ops tinygrad order" ops_tinygrad_order;
           test "Ops.Group algebra" group_algebra;
           test "hash-consing yields same node" hashcons_identity;
+          test "independent allocations reserve unique buffer slots" concurrent_buffer_slots;
           test "Add has two srcs" add_has_two_srcs;
           test "infix O module builds Mul" infix_builds_mul;
           test "usum and uprod fold booleans with Or and And"

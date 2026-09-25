@@ -667,6 +667,10 @@ thread.
 
 ### Tolk (new)
 
+- Independent callers now receive distinct buffer identities and retain every
+  live tensor handle during concurrent construction. Lost identities or registry
+  entries could alias allocations or prevent graph rebinding.
+
 - Render dynamic vector lane indexes as element access instead of vector
   addition. C renderers now require canonical flat memory indexes, rejecting
   malformed multidimensional indexes instead of guessing strides.

@@ -21,6 +21,7 @@ type t = { mutable uop : U.t }
    realization rebinding computed nodes onto their buffers) can repoint every
    live handle whose graph contains a rewritten node. Weak slots let the GC
    collect tensors as usual; dead slots are compacted when the array fills. *)
+let live_mutex = Mutex.create ()
 let live = ref (Stdlib.Weak.create 1024)
 let live_n = ref 0
 
@@ -49,17 +50,18 @@ let rec register t =
   end
 
 let live_tensors () =
-  let acc = ref [] in
-  for i = !live_n - 1 downto 0 do
-    match Stdlib.Weak.get !live i with
-    | Some t -> acc := t :: !acc
-    | None -> ()
-  done;
-  !acc
+  Mutex.protect live_mutex (fun () ->
+      let acc = ref [] in
+      for i = !live_n - 1 downto 0 do
+        match Stdlib.Weak.get !live i with
+        | Some t -> acc := t :: !acc
+        | None -> ()
+      done;
+      !acc)
 
 let of_uop uop =
   let t = { uop } in
-  register t;
+  Mutex.protect live_mutex (fun () -> register t);
   t
 
 let uop t = t.uop

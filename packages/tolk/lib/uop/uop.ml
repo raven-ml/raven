@@ -781,15 +781,14 @@ let linear srcs =
 (* Buffer slots come from one process-wide counter: buffers hash-cons on
    (slot, dtype, shape, device), so reusing a slot would collapse two distinct
    allocations onto one node identity. *)
-let next_buffer_slot = ref 0
+let next_buffer_slot = Atomic.make 0
 
-let fresh_buffer_slot () =
-  let s = !next_buffer_slot in
-  incr next_buffer_slot;
-  s
+let fresh_buffer_slot () = Atomic.fetch_and_add next_buffer_slot 1
 
-let reserve_buffer_slots n =
-  if n > !next_buffer_slot then next_buffer_slot := n
+let rec reserve_buffer_slots n =
+  let current = Atomic.get next_buffer_slot in
+  if n > current && not (Atomic.compare_and_set next_buffer_slot current n) then
+    reserve_buffer_slots n
 
 let stage ~src ~ranges ~opts =
   mk ~op:Ops.Stage ~dtype:(dtype src)

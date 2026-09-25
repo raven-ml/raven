@@ -32,9 +32,24 @@ let ones_i sh = Cr.ones ~dtype:D.int32 sh
 
 (* Creation *)
 
+let concurrent_tensor_registration () =
+  let domains = 4 and per_domain = 1024 in
+  let ready = Atomic.make 0 in
+  let workers = Array.init domains (fun worker -> Domain.spawn (fun () ->
+      ignore (Atomic.fetch_and_add ready 1);
+      while Atomic.get ready <> domains do Domain.cpu_relax () done;
+      Array.init per_domain (fun i -> T.i ((worker * per_domain) + i)))) in
+  let tensors = Array.concat (Array.to_list (Array.map Domain.join workers)) in
+  let live = T.live_tensors () in
+  Array.iter (fun tensor ->
+      is_true ~msg:"every live handle remains available for graph rebinding"
+        (List.exists (fun candidate -> candidate == tensor) live)) tensors;
+  ignore (Sys.opaque_identity tensors)
+
 let creation_tests =
   group "creation"
     [
+      test "independent callers register all live tensors" concurrent_tensor_registration;
       test "a weak clone has a concrete dtype and fresh storage" (fun () ->
           let input = T.i (1 lsl 40) in
           let a = Cr.clone input and b = Cr.clone input in
