@@ -13,8 +13,14 @@ open Windtrap
 
 (* The test engine *)
 
+(* One buffer per device of the placement the storage was made for, in placement
+   order: a split value's shards, a replicated value's copies. *)
 type Nx_effect.storage +=
-  | Mem : ('a, 'b) Nx_core.Dtype.t * ('a, 'b) Nx_buffer.t -> Nx_effect.storage
+  | Mem :
+      ('a, 'b) Nx_core.Dtype.t
+      * Nx_effect.device list
+      * ('a, 'b) Nx_buffer.t list
+      -> Nx_effect.storage
 
 let elements_read = ref 0
 let uploads = ref 0
@@ -30,6 +36,30 @@ let gather (type a b) (mem : (a, b) Nx_buffer.t) v : (a, b) Nx_buffer.t =
     Array.iteri (fun d k -> off := !off + (k * strides.(d))) idx;
     Nx_buffer.set dst i (Nx_buffer.get mem !off)
   done;
+  elements_read := !elements_read + n;
+  dst
+
+(* Each shard's view [v], interleaved in global order along [axis]. *)
+let gather_shards (type a b) (shards : (a, b) Nx_buffer.t list) ~axis v :
+    (a, b) Nx_buffer.t =
+  let shape = Nx_core.View.shape v in
+  let outer = Array.fold_left ( * ) 1 (Array.sub shape 0 axis) in
+  let row = Nx_core.View.numel v / Int.max 1 outer in
+  let n = List.length shards in
+  let dst =
+    Nx_buffer.create (Nx_buffer.kind (List.hd shards)) (n * outer * row)
+  in
+  List.iteri
+    (fun k mem ->
+      let part = gather mem v in
+      for o = 0 to outer - 1 do
+        for i = 0 to row - 1 do
+          Nx_buffer.set dst
+            ((((o * n) + k) * row) + i)
+            (Nx_buffer.get part ((o * row) + i))
+        done
+      done)
+    shards;
   dst
 
 let rec engine =
@@ -37,19 +67,15 @@ let rec engine =
     Nx_effect.read =
       (fun (type a b) (r : (a, b) Nx_effect.resident) : (a, b) Nx_buffer.t ->
         match r.r_cell.state with
-        | Live (Mem (dt, mem)) -> (
-            (* A split value's storage here is the whole value in C order, and
-               its view covers it. *)
-            let v =
-              match r.r_placement with
-              | Sharded _ ->
-                  Nx_core.View.create
-                    (Nx_core.View.shape (Nx_effect.whole_view r))
-              | Device _ | Replicated _ -> r.r_view
-            in
-            elements_read := !elements_read + Nx_core.View.numel v;
+        | Live (Mem (dt, devices, shards)) -> (
             match Nx_core.Dtype.equal_witness dt r.r_dtype with
-            | Some Type.Equal -> gather mem v
+            | Some Type.Equal -> (
+                match r.r_placement with
+                | Sharded { axis; _ } -> gather_shards shards ~axis r.r_view
+                | Device d ->
+                    let k = Option.get (List.find_index (( == ) d) devices) in
+                    gather (List.nth shards k) r.r_view
+                | Replicated _ -> gather (List.hd shards) r.r_view)
             | None -> assert false)
         | _ -> assert false);
     place = (fun p x -> place p x);
@@ -59,13 +85,29 @@ and place : type a b.
     Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
  fun p x ->
   if Nx.numel x > 0 then incr uploads;
-  let src = Nx.to_buffer (Nx.place Nx.Placement.host x) in
-  let mem = Nx_buffer.create (Nx_buffer.kind src) (Nx_buffer.length src) in
-  Nx_buffer.blit ~src ~dst:mem;
+  let h = Nx.place Nx.Placement.host x in
+  let own h = Nx.to_buffer (Nx.copy h) in
+  let shape = Array.copy (Nx.shape h) in
+  let shards =
+    match p with
+    | Sharded { axis; devices } ->
+        let n = List.length devices in
+        let k = shape.(axis) / n in
+        shape.(axis) <- k;
+        List.init n (fun i ->
+            own
+              (Nx.slice
+                 (List.init (axis + 1) (fun d ->
+                      if d = axis then Nx.R (i * k, (i + 1) * k) else Nx.A))
+                 h))
+    | Replicated ds -> List.map (fun _ -> own h) ds
+    | Device _ -> [ own h ]
+  in
   Nx_effect.placed p (Nx.dtype x)
-    (Nx_core.View.create (Nx.shape x))
-    (Nx_effect.cell engine ~length:(Nx_buffer.length mem)
-       (Mem (Nx.dtype x, mem)))
+    (Nx_core.View.create shape)
+    (Nx_effect.cell engine
+       ~length:(Array.fold_left ( * ) 1 shape)
+       (Mem (Nx.dtype x, Nx_effect.Placement.devices p, shards)))
 
 let dev1 = Nx_effect.Device.make "TEST:1" engine
 let dev2 = Nx_effect.Device.make "TEST:2" engine
@@ -200,30 +242,10 @@ let test_views_share_the_cell () =
   equal ~msg:"the copy survives" (array float_exact) [| 1.; 2.; 3. |]
     (Nx.to_array c)
 
-(* A value split or replicated over [dev1; dev2], whose storage holds [x]. *)
-let over_two placement x shard =
-  Nx_effect.placed placement (Nx.dtype x)
-    (Nx_core.View.create shard)
-    (Nx_effect.cell engine
-       ~length:(Array.fold_left ( * ) 1 shard)
-       (Mem (Nx.dtype x, Nx.to_buffer x)))
-
 let test_several_devices () =
   let x = m23 () in
-  let r =
-    Nx_effect.placed
-      (Nx.Placement.replicated [ dev1; dev2 ])
-      Nx.float32
-      (Nx_core.View.create [| 2; 3 |])
-      (Nx_effect.cell engine ~length:6 (Mem (Nx.float32, Nx.to_buffer x)))
-  in
-  let s =
-    Nx_effect.placed
-      (Nx.Placement.sharded ~axis:0 [ dev1; dev2 ])
-      Nx.float32
-      (Nx_core.View.create [| 1; 3 |])
-      (Nx_effect.cell engine ~length:3 (Mem (Nx.float32, Nx.to_buffer x)))
-  in
+  let r = Nx.place (Nx.Placement.replicated [ dev1; dev2 ]) x in
+  let s = Nx.place (Nx.Placement.sharded ~axis:0 [ dev1; dev2 ]) x in
   equal ~msg:"a split value's shape is the whole's" (array int) [| 2; 3 |]
     (Nx.shape s);
   equal ~msg:"a replicated view" (array int) [| 3; 2 |]
@@ -254,7 +276,7 @@ let test_several_devices () =
 
 let test_pp_split_on_axis_one () =
   let x = Nx.create Nx.float32 [| 2; 4 |] (Array.init 8 float_of_int) in
-  let s = over_two (Nx.Placement.sharded ~axis:1 [ dev1; dev2 ]) x [| 2; 2 |] in
+  let s = Nx.place (Nx.Placement.sharded ~axis:1 [ dev1; dev2 ]) x in
   equal ~msg:"pp reads the elements in C order" string (Nx.to_string x)
     (Nx.to_string s)
 
