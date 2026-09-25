@@ -26,7 +26,7 @@
   test_decoder
   test_structures)
  (modules
-  (:standard \ test_cache_index_metal))
+  (:standard \ test_cache_index_metal test_decode_devices))
  (package kaun)
  (libraries kaun rune vega nx nx.dtype windtrap unix))
 
@@ -37,3 +37,11 @@
  (enabled_if
   (= %{system} macosx))
  (libraries kaun rune nx windtrap))
+
+; Over CPU:1..CPU:4; it reads tolk's estimate of the bytes a replay moves.
+
+(test
+ (name test_decode_devices)
+ (modules test_decode_devices)
+ (package kaun)
+ (libraries kaun rune nx tolk windtrap))
