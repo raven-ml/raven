@@ -520,6 +520,10 @@ thread.
 
 ### Tolk (new)
 
+- Gathering a slice of a split tensor whose part on each device is contiguous
+  reads each part in place. Each device first copied its part into a buffer
+  of its own.
+
 - A copy to another device from a contiguous slice of a realized value reads
   the slice in place. It was first copied into a buffer of its own on the
   source device.

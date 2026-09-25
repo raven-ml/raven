@@ -540,6 +540,29 @@ let gather_tests =
                 (List.init ndev (fun _ -> (ndev - 1) * value / ndev))
                 (List.map (fun d -> received d flows) (devices ndev)))
             [ 2; 3; 4; 8 ]);
+      (* Each shard's slice, rows 1..3 of its [1; 4; 64], is contiguous. *)
+      test "a gather of a slice of a split buffer stages nothing" (fun () ->
+          let devices = devices 2 and data = spread (2 * 4 * 64) in
+          let w = C.shard ~axis:0 ~devices (host ~shape:[ 2; 4; 64 ] data) in
+          Run.realize_many [ w ];
+          let sliced = Mv.shrink w [ (0, 2); (1, 3); (0, 64) ] in
+          let replicas, peaks =
+            peak_over devices (fun () -> device_bytes (gather devices sliced))
+          in
+          let expected =
+            Array.init
+              (2 * 2 * 64)
+              (fun i ->
+                let block = i / 128 and rest = i mod 128 in
+                data.((block * 256) + 64 + rest))
+          in
+          List.iter
+            (fun replica -> is_true (Bytes.equal (f32_bytes expected) replica))
+            replicas;
+          equal ~msg:"each device holds only the gathered value"
+            (list (pair string int))
+            (List.map (fun d -> (d, 2 * 2 * 64 * 4)) devices)
+            peaks);
       test "a gather lowers to one call named allgather" (fun () ->
           let devices = devices 2 in
           let w = C.shard ~axis:0 ~devices (host ~shape:[ 4; 4 ] (spread 16)) in

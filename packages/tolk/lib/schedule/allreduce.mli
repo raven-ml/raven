@@ -44,11 +44,12 @@ val collective :
   Tolk_uop.Uop.t
 (** [collective ~name ~device ~like src body] is the value, of [like]'s shape
     and dtype on [device], that a precompiled [CALL] named [name] computes
-    from [src]. The call's two arguments are a fresh allocation for the result
-    and [src] made contiguous; [body ~dst ~src] gives the stores into [dst], a
-    view of the allocation at [like]'s shape, from [src], the call's input
-    parameter. Every collective has this (dst, src) contract, so a backend can
-    replace a body with a library call. *)
+    from [src]. The call's two arguments are storage: a fresh allocation for
+    the result, and the storage [src] views, or [src] made contiguous when it
+    is not a view of storage. [body ~dst ~src] gives the stores into [dst], a
+    view of the allocation at [like]'s shape, from [src], the same view of the
+    call's input parameter. Every collective has this (dst, src) contract, so
+    a backend can replace a body with a library call. *)
 
 val create_allreduce_function :
   Tolk_uop.Uop.t ->

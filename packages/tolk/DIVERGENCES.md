@@ -483,17 +483,21 @@ delete it rather than registering it.
   `test/unit/engine/test_collectives.ml` "all-gather" and
   `test/unit/engine/test_multi.ml`.
 
-- **A collective call takes its whole output allocation**
+- **A collective call takes whole storage for both arguments**
   (`schedule/allreduce.ml` `collective`). The reference's
   `create_allreduce_function` passes the output's view (a SHRINK of a RESHAPE
-  of the allocation) as the call's first argument. `realize_custom_kernel_srcs`
-  realizes any argument that is not buffer-like into a copy of its values, so
-  when that view is not a plain reshape (a symbolic slice of an inner axis),
-  the call writes the copy and the result reads an allocation nothing wrote:
-  such a realized allreduce returned zeros. Tolk passes the allocation and
-  views it inside the call's body, which is also the raw storage a library
-  collective needs. Coverage: `test/unit/engine/test_collectives.ml` "a
-  realized allreduce of a symbolic slice keeps its values".
+  of the allocation) as the call's first argument and its source made
+  contiguous as the second. The realize map turns an argument that is not a
+  buffer into a copy of its values, so when the output view is not a plain
+  reshape (a symbolic slice of an inner axis) the call wrote the copy and the
+  result read an allocation nothing wrote: such a realized allreduce returned
+  zeros. Tolk passes the allocation, and for a source that is a view of
+  storage (a buffer, or a STAGE) the storage, and views both inside the
+  call's body: the output is written in place, the source is read without a
+  staged copy of the view, and each is the raw storage a library collective
+  needs. Coverage: `test/unit/engine/test_collectives.ml` "a realized
+  allreduce of a symbolic slice keeps its values" and "a gather of a slice of
+  a split buffer stages nothing".
 
 - **Every call's arguments are realized under one rule**
   (`schedule/indexing.ml` `realize_call_args`, `engine/schedule.ml`

@@ -232,26 +232,36 @@ let handle_allreduce buf ~op ~device =
 
 (* Collectives *)
 
+(* The storage a view reads, and the view as a function of that storage:
+   [src] itself made contiguous when it is not a view of storage. *)
+let storage_and_view src =
+  let b = U.base src in
+  if Option.is_some (U.storage_window b) then
+    b, (fun storage -> U.substitute [ (b, storage) ] src)
+  else U.contiguous ~src (), Fun.id
+
 let collective ~name ~device ~like src body =
   let shape = U.shape like and max_shape = U.max_shape like in
   let alloc = U.alloc ~slot:(U.fresh_buffer_slot ()) ~device:(canonicalize_device device)
       ~dtype:(U.dtype like) ~shape:(dim (List.fold_left ( * ) 1 max_shape)) () in
-  (* The call takes the whole allocation and views it inside its body. A view
-     argument was scheduled as a copy of the viewed values, so the call's
-     writes missed the storage its consumers read. *)
+  (* The call takes whole storage for both arguments and views it inside its
+     body. A view argument would be copied in: refused for the output, which
+     the call writes, and a staged copy of the view for the input. *)
   let view storage = shrink_to (reshape storage max_shape) shape in
+  let input, src_view = storage_and_view src in
   let dst = U.param_like alloc ~slot:0 in
-  let stores = body ~dst:(view dst) ~src:(U.param_like src ~slot:1) in
+  let stores = body ~dst:(view dst) ~src:(src_view (U.param_like input ~slot:1)) in
   let info : U.call_info = {
     grad_fxn = None; name = Some name; precompile = true;
     precompile_backward = false; dtype = Dtype.void; aux = None } in
   let call = U.call ~body:(U.sink [U.after ~src:dst ~deps:stores])
-      ~args:[alloc; U.contiguous ~src ()] ~info in
+      ~args:[alloc; input] ~info in
   U.after ~src:(view alloc) ~deps:[call]
 
 let create_allreduce_function buf ~op ~device =
-  let like = U.allreduce ~src:buf ~op ~device in
-  Option.map (fun result ->
-      collective ~name:"allreduce" ~device ~like buf (fun ~dst ~src:_ ->
-          [U.store ~dst ~value:result ()]))
-    (handle_allreduce (U.param_like buf ~slot:1) ~op ~device)
+  match U.device_of buf with
+  | Some (Multi devs) ->
+      let like = U.allreduce ~src:buf ~op ~device in
+      Some (collective ~name:"allreduce" ~device ~like buf (fun ~dst ~src ->
+          [U.store ~dst ~value:(reduce_shards src ~op ~device devs) ()]))
+  | _ -> None
