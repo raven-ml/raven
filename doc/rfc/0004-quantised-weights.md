@@ -342,35 +342,34 @@ grouped prefill's stop outcome (§Target) and, until split parts land, a program
 over several devices (below).
 
 **The kernel** is tolk's `Op.quant_matmul`, beside `Op.scatter_indexed`, built
-through the ported `Tensor.custom_kernel` with its optimisation options
-pinned, so neither the heuristic nor a search picks them. For each output row,
-32-value group and tile of `M` rows of `x`, it loads the group's code bytes
-and its scale byte once, decodes in registers, takes `M` float32 dot products,
-and multiplies each partial sum by the group's scale 2^(s − 127): the float
-whose bits are `s << 23` for 1 ≤ s ≤ 254, 2^−127 (bits `0x00400000`) for s =
-0, and NaN for s = 255. Row addresses with `ids` are computed at tolk's index
-dtype. A position outside the gate is written as zero. On a GPU its loop over
-`k` is an outer loop, whose bound is zero for a work group whose positions all
-fall outside the gate, around the constant loop its options split, as in the
-block kernel (below), so no load of `w` or `x` runs for it; on the CPU the
-bound is constant and the loads are gated. In a bounded loop of at most one
-iteration every use of the index folds to 0, and the reduce over the loop,
-left unparented, is rewritten to its body times the loop's size (tinygrad's
-`reduce_unparented`, ported), which evaluates the loads of a position outside
-the gate. So the outer loop keeps two iterations or more, and a row of a
-single group (`k = 32`) is gated at its loads on a GPU too. Its
-pinned options keep the position axis off local and upcast dimensions, and its
-builder raises if they do not. It takes each part as whole storage, contiguous
-along its last axis; loaded and placed parts are, and a part that is not is
-copied on every call, which `RUNE_JIT_DEBUG` reports. The options are
-measured: on Metal, the group amount is the largest divisor of `k / 32` at
-most 15 (15 for gpt-oss's 90 groups: 45 to 49 µs per expert against 58 µs at
-6, tinygrad's matrix-vector amount), with 4 columns per work group and up to 4
-per thread, and `x`'s rows are upcast by `M` up to 8, columns per thread times
-rows at most 4, beyond which registers spill. The kernel is an additive
-`DIVERGENCES.md` entry, since
-tinygrad's only fused quantised products are AMD kernels in `extra/`, and
-tolk's tests hold it to the reference on every device.
+through the ported `Tensor.custom_kernel` with its optimisation options pinned,
+so neither the heuristic nor a search picks them. For each output row, 32-value
+group and tile of `M` rows of `x`, it loads the group's code bytes and its scale
+byte once, decodes in registers, takes `M` float32 dot products, and multiplies
+each partial sum by the group's scale 2^(s − 127): the float whose bits are
+`s << 23` for 1 ≤ s ≤ 254, 2^−127 (bits `0x00400000`) for s = 0, and NaN for
+s = 255. Row addresses with `ids` are computed at tolk's index dtype. A position
+outside the gate is written as zero. On a GPU its loop over `k` is an outer
+loop, whose bound is zero for a work group whose positions all fall outside the
+gate, around the constant loop its options split, as in the block kernel
+(below), so no load of `w` or `x` runs for it; on the CPU the bound is constant,
+and such a position reads matrix 0 and is zeroed by a select on its store. In a
+bounded loop of at most one iteration every use of the index folds to 0, and the
+reduce over the loop, left unparented, is rewritten to its body times the loop's
+size (tinygrad's `reduce_unparented`, ported), which evaluates the loads of a
+position outside the gate. So the outer loop keeps two iterations or more, and a
+row of a single group (`k = 32`) reads matrix 0 on a GPU too. Its pinned options
+keep the position axis off local and upcast dimensions, and its builder raises
+if they do not. It takes each part as whole storage, contiguous along its last
+axis; loaded and placed parts are, and a part that is not is copied on every
+call, which `RUNE_JIT_DEBUG` reports. The options are measured: on Metal, the
+group amount is the largest divisor of `k / 32` at most 15 (15 for gpt-oss's 90
+groups: 45 to 49 µs per expert against 58 µs at 6, tinygrad's matrix-vector
+amount), with 4 columns per work group and up to 4 per thread, and `x`'s rows
+are upcast by `M` up to 8, columns per thread times rows at most 4, beyond which
+registers spill. The kernel is an additive `DIVERGENCES.md` entry, since
+tinygrad's only fused quantised products are AMD kernels in `extra/`, and tolk's
+tests hold it to the reference on every device.
 
 **The grouped form** is a composition in rune's lowering, with no kernel of
 its own. Each route is a row of `x` and an id. A one-hot of the ids against
@@ -685,16 +684,17 @@ tinygrad folds only a range of constant size (`uop/symbolic.py:250`).
    (Marlin, ggml's interleaved blocks).
 6. **On a GPU, the kernel and the block kernel run no multiply-adds for a work
    group whose positions or block select no expert,** except the kernel's rows
-   of a single group (`k = 32`) and the block kernel's contractions of one
-   input, whose loads are gated instead. The cause is a bounded loop of at most
-   one iteration: every use of its index folds to 0, so it drops out of its
-   reduce, and the reduce, left unparented, is rewritten to its body times the
-   loop's size (`reduce_unparented`, as in tinygrad), which runs the body
-   whatever the bound. It is the issue of a reduce over a possibly empty range,
-   where the exceptions' removal belongs. Held by tolk's codegen test for each
-   renderer, by the kernels' builders refusing options on the position and block
-   axes, and by §Target's one-lane row. Prevents expert parallelism dividing a
-   device's expert reads while leaving it the whole step's arithmetic.
+   of a single group (`k = 32`), which read matrix 0 and are zeroed, and the
+   block kernel's contractions of one input, whose loads are gated instead. The
+   cause is a bounded loop of at most one iteration: every use of its index
+   folds to 0, so it drops out of its reduce, and the reduce, left unparented,
+   is rewritten to its body times the loop's size (`reduce_unparented`, as in
+   tinygrad), which runs the body whatever the bound. It is the issue of a
+   reduce over a possibly empty range, where the exceptions' removal belongs.
+   Held by tolk's codegen test for each renderer, by the kernels' builders
+   refusing options on the position and block axes, and by §Target's one-lane
+   row. Prevents expert parallelism dividing a device's expert reads while
+   leaving it the whole step's arithmetic.
 
 ## Drawbacks
 

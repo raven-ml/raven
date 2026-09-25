@@ -428,7 +428,7 @@ let reads_memory u =
 
 (* On a GPU, one loop's bound reads the position's id, and every float multiply
    lies inside it: at gpt-oss's rows of 2880 inputs, one row or a tile of 8.
-   With a single group per row (32 inputs) the kernel gates its loads instead,
+   With a single group per row (32 inputs) the kernel clamps the id instead,
    and no loop's bound reads memory, as on the CPU: this row fails when the
    kernel's two-iteration cap is removed, which is right once a reduce over a
    possibly empty loop stops being rewritten to its body times the loop's
@@ -467,29 +467,42 @@ let codegen ~m ~k (name, ren, gpu) =
         equal ~msg:"float multiplies outside the loop" int 0 !outside
       end)
 
-(* Where the kernel gates its loads, a load at an address read from memory, the
-   instance's id, carries the gate, a lone instance included: its id is read
-   at a fixed address, outside every loop. *)
+(* Where no loop's bound reads the id, an id outside the matrices reads matrix
+   0: every load at an address read from memory, the instance's id, is ungated
+   and its address selects on the id, a lone instance included, whose id is
+   read at a fixed address outside every loop. The values tests hold such an
+   instance's result at +0, and CHECK_OOB=1 its loads in bounds. *)
 let rec address u =
   match U.op u with
   | Ops.Index -> List.tl (Array.to_list (U.src u))
   | Ops.Cast | Ops.Bitcast -> address (U.src u).(0)
   | _ -> [ u ]
 
-let gated ~k (name, ren, gpu) =
-  test (Printf.sprintf "%s, one instance of %d inputs gates its loads" name k)
+let clamped ~k (name, ren, gpu) =
+  test (Printf.sprintf "%s, one instance of %d inputs clamps its id" name k)
     (fun () ->
-      if not (gpu && k >= 64) then
-        let ungated =
-          List.filter
+      if not (gpu && k >= 64) then begin
+        let at_id =
+          List.filter_map
             (fun u ->
               match U.as_load u with
-              | Some { src; gate = None; _ } ->
-                  List.exists reads_memory (address src)
-              | _ -> false)
+              | Some { src; gate; _ }
+                when List.exists reads_memory (address src) ->
+                  Some (gate, address src)
+              | _ -> None)
             (program ~instances:1 name ren ~m:1 ~k)
         in
-        equal ~msg:"loads at an id without a gate" int 0 (List.length ungated))
+        let selects a =
+          List.exists (fun n -> U.op n = Ops.Where) (U.backward_slice a)
+        in
+        is_true ~msg:"loads at the id" (at_id <> []);
+        List.iter
+          (fun (gate, address) ->
+            is_true ~msg:"no gate" (Option.is_none gate);
+            is_true ~msg:"the address selects on the id"
+              (List.exists selects address))
+          at_id
+      end)
 
 let refusals =
   let empty dtype shape =
@@ -538,8 +551,8 @@ let () =
                codegen ~m:1 ~k:2880 r;
                codegen ~m:8 ~k:2880 r;
                codegen ~m:1 ~k:32 r;
-               gated ~k:32 r;
-               gated ~k:64 r;
+               clamped ~k:32 r;
+               clamped ~k:64 r;
              ])
            renderers);
     ]

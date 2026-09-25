@@ -562,6 +562,12 @@ thread.
 
 ### Tolk (new)
 
+- `Op.quant_matmul` with ids on the CPU reads matrix 0 for an id outside the
+  matrices, and zeroes its result, instead of gating every load on the id,
+  which made clang spill the kernel: 1.7 to 3.2 times faster at bfloat16 and
+  1.2 to 1.3 times at float32 from two rows per position (gpt-oss's expert,
+  5760 by 2880). One row per position at float32 is 10% slower.
+
 - With `ALLREDUCE_NODE_NDEVS` set to a box size h, an all-gather or
   reduce-scatter of concrete shape over its own n devices crosses boxes only
   between devices at the same position in their boxes: each device moves

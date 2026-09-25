@@ -725,7 +725,10 @@ let scatter_indexed t ~dim index src ~mode ~unique =
    option splits. Such a position reads its id, runs no multiply-adds and
    stores the reduction's identity. The CPU runs work groups as a loop and
    miscompiles a loop bound that reads that loop's index, so there the bound is
-   constant, the loads are gated and a select zeroes the store. *)
+   constant: an id outside the matrices reads matrix 0, every load stays in
+   bounds, and a select zeroes the store. Gating each load on the id instead
+   made clang spill the narrow-input unpacking, nearly three times the
+   instructions at bfloat16. *)
 
 type quant_options = {
   group : int; (* threads splitting a row's groups, dividing k / 32 *)
@@ -864,8 +867,8 @@ let quant_matmul ?ids x ~codes ~scales =
        body's loads then run for an invalid id too, and Metal returns garbage
        there. Under an upcast or a group such a kernel also fails to compile,
        likely from the same rewrite (not traced). Before 8b26ea10a the range
-       rule also folded the loop itself. A single group
-       is gated at its loads instead, so it runs its multiply-adds. *)
+       rule also folded the loop itself. A single group reads matrix 0 for
+       such an id instead, as on the CPU, so it runs its multiply-adds. *)
     let group =
       if not gpu then 1
       else if gated then
@@ -958,8 +961,9 @@ let quant_matmul ?ids x ~codes ~scales =
         | Some ids ->
             let id = at (flat ids i) pos in
             let bound v = Uop.const (Const.int (Uop.dtype id) v) in
-            ( Some (bits Ops.And (not_ (id < bound 0)) (id < bound e)),
-              Uop.cast ~src:id ~dtype:D.weakint )
+            let selects = bits Ops.And (not_ (id < bound 0)) (id < bound e) in
+            let id = if bounded then id else where selects id (bound 0) in
+            (Some selects, Uop.cast ~src:id ~dtype:D.weakint)
       in
       let t =
         match selects with
@@ -970,12 +974,7 @@ let quant_matmul ?ids x ~codes ~scales =
       in
       let a = reduce group 4 and q = reduce 4 5 in
       let g = (t * int group) + a in
-      let gate idx =
-        match selects with
-        | Some selects when not bounded -> Uop.valid ~src:idx ~cond:selects
-        | _ -> idx
-      in
-      let load ptr idx = Uop.load ~src:(at ptr (gate idx)) () in
+      let load ptr idx = Uop.load ~src:(at ptr idx) () in
       let line = if merged then col else (matrix * int n) + col in
       let word =
         Uop.bitcast

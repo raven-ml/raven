@@ -406,7 +406,9 @@ delete it rather than registering it.
   rows and decoded in registers. Codes and 16-bit inputs are read through a
   float32 placeholder over their storage, since the reference folds only float
   loads into vectors. With ids, a position whose id selects no matrix bounds
-  the outer reduce loop at zero on a GPU and gates its loads on the CPU.
+  the outer reduce loop at zero on a GPU; on the CPU, and for a single group
+  anywhere, it reads matrix 0 and a select zeroes its store, since gating each
+  load on the id made clang spill the narrow-input unpacking.
   Consumer: rune's lowering of `Nx_quant.apply` (RFC 0004), which takes it
   within `quant_row_bound`'s rows. Coverage:
   `test/unit/frontend/test_quant_matmul.ml` (a host reference on the default

@@ -257,8 +257,8 @@ val quant_matmul :
 
     Every operand is read as whole storage: a view is copied first. On a GPU,
     when [k] is at least 64, an instance whose id selects no matrix reads its
-    id and nothing else, and runs no multiply-adds; with a single group per
-    row, its loads are gated instead.
+    id and nothing else, and runs no multiply-adds; elsewhere it reads matrix
+    0 and its result is zeroed.
 
     @raise Invalid_argument
       if the shapes disagree as above, if [k] is not a multiple of 32, if
