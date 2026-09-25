@@ -253,7 +253,7 @@ let storage_and_view src =
     b, (fun storage -> U.substitute [ (b, storage) ] src)
   else U.contiguous ~src (), Fun.id
 
-let collective kind ~device ~like src body =
+let collective kind ~device ~like src phases =
   let shape = U.shape like and max_shape = U.max_shape like in
   let alloc = U.alloc ~slot:(U.fresh_buffer_slot ()) ~device:(canonicalize_device device)
       ~dtype:(U.dtype like) ~shape:(dim (List.fold_left ( * ) 1 max_shape)) () in
@@ -262,19 +262,19 @@ let collective kind ~device ~like src body =
      the call writes, and a staged copy of the view for the input. *)
   let view storage = shrink_to (reshape storage max_shape) shape in
   let input, src_view = storage_and_view src in
-  let dst = U.param_like alloc ~slot:0 in
-  let stores = body ~dst:(view dst) ~src:(src_view (U.param_like input ~slot:1)) in
+  let written = List.fold_left (fun state phase ->
+      match phase state with [] -> state | stores -> U.after ~src:state ~deps:stores)
+      (view (U.param_like alloc ~slot:0)) (phases ~src:(src_view (U.param_like input ~slot:1))) in
   let info : U.call_info = {
     grad_fxn = None; name = Some (Collective kind); precompile = true;
     precompile_backward = false; dtype = Dtype.void; aux = None } in
-  let call = U.call ~body:(U.sink [U.after ~src:dst ~deps:stores])
-      ~args:[alloc; input] ~info in
+  let call = U.call ~body:(U.sink [ written ]) ~args:[alloc; input] ~info in
   U.after ~src:(view alloc) ~deps:[call]
 
 let create_allreduce_function buf ~op ~device =
   match U.device_of buf with
   | Some (Multi devs) ->
       let like = U.allreduce ~src:buf ~op ~device in
-      Some (collective (Allreduce op) ~device ~like buf (fun ~dst ~src ->
-          [U.store ~dst ~value:(reduce_shards src ~op ~device devs) ()]))
+      Some (collective (Allreduce op) ~device ~like buf (fun ~src ->
+          [ (fun dst -> [ U.store ~dst ~value:(reduce_shards src ~op ~device devs) () ]) ]))
   | _ -> None

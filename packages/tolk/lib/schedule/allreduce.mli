@@ -44,17 +44,19 @@ val collective :
   device:Tolk_uop.Uop.device ->
   like:Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t ->
-  (dst:Tolk_uop.Uop.t -> src:Tolk_uop.Uop.t -> Tolk_uop.Uop.t list) ->
+  (src:Tolk_uop.Uop.t -> (Tolk_uop.Uop.t -> Tolk_uop.Uop.t list) list) ->
   Tolk_uop.Uop.t
-(** [collective kind ~device ~like src body] is the value, of [like]'s shape
-    and dtype on [device], that a precompiled [CALL] implementing [kind]
-    computes
-    from [src]. The call's two arguments are storage: a fresh allocation for
-    the result, and the storage [src] views, or [src] made contiguous when it
-    is not a view of storage. [body ~dst ~src] gives the stores into [dst], a
-    view of the allocation at [like]'s shape, from [src], the same view of the
-    call's input parameter. Every collective has this (dst, src) contract, so
-    a backend can replace a body with a library call. *)
+(** [collective kind ~device ~like src phases] is the value, of [like]'s
+    shape and dtype on [device], that a precompiled [CALL] implementing
+    [kind] computes from [src]. The call's two arguments are storage: a fresh
+    allocation for the result, and the storage [src] views, or [src] made
+    contiguous when it is not a view of storage. [phases ~src] fill the
+    result from [src], the same view of the call's input parameter, in
+    order: each maps the result as the earlier phases left it (first [dst],
+    a view of the allocation at [like]'s shape) to its stores into it, and
+    may read what they wrote through it. Every collective has this
+    (dst, src) contract, so a backend can replace a body with a library
+    call. *)
 
 val create_allreduce_function :
   Tolk_uop.Uop.t ->

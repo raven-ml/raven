@@ -89,7 +89,7 @@ let allgather multi device =
     emit (List.mapi (fun axis size -> match List.assoc_opt axis coords with
         | Some c -> mul (int_ c) size | None -> zero) local) in
   Allreduce.collective (U.Allgather (List.map fst (U.sharding multi))) ~device ~like:multi
-    (inner multi) (fun ~dst ~src ->
+    (inner multi) (fun ~src -> [ fun dst ->
       List.concat (List.mapi (fun k target ->
           let replica = match device with U.Multi _ -> U.mselect ~src:dst ~index:k | _ -> dst in
           List.mapi (fun j source ->
@@ -97,7 +97,7 @@ let allgather multi device =
               let value = if source = target then shard
                 else U.copy ~src:shard ~device:(U.Single target) () in
               U.store ~dst:(U.shrink ~src:replica ~offset:(window j) ~size:(emit local)) ~value ())
-            sources) targets))
+            sources) targets) ])
 
 (* Reduce-scatter: [shrink], keeping each device's own block of an
    allreduce along one axis and the allreduce's only consumer, becomes the
@@ -148,7 +148,7 @@ let reducescatter ~only_consumer shrink =
                ~size:(U.src shrink).(2) in
            let blocks =
              Allreduce.collective (U.Reducescatter (op, axis)) ~device ~like src
-               (fun ~dst ~src ->
+               (fun ~src -> [ fun dst ->
                  List.mapi (fun k target ->
                      let parts = List.mapi (fun j source ->
                          let part = block_of k (U.mselect ~src ~index:j) in
@@ -157,7 +157,7 @@ let reducescatter ~only_consumer shrink =
                          sources in
                      U.store ~dst:(U.mselect ~src:dst ~index:k)
                        ~value:(Allreduce.fold_reduce op parts) ())
-                   targets)
+                   targets ])
            in
            Some (match cast with
                | Some dtype -> U.cast ~src:blocks ~dtype | None -> blocks)
