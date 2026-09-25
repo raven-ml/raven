@@ -42,7 +42,6 @@ with their rationale and validation; commit count is not an acceptance metric.
   failure unwinding across KFD/NVK/PCI. Validate host/device placement,
   host/peer mappings and CPU mapping cleanup on large-BAR and small-BAR hardware.
   Preserve tinygrad's default PCI selection.
-- Reconcile the extra slice-copy kernels in `multi_allreduce_ring`.
 
 Acceptance: every existing backend builds against the shared protocol and no
 consumer depends on the old graph or storage interfaces. CPU and Metal execute
@@ -66,6 +65,8 @@ acceptance requirement; skipped tests are not execution evidence.
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
   `topk_rounds` and `multi_output`. Reconcile CPU/Metal `lorenz_fold` ordering
   and Metal `vectorize_index` after the constant representation is migrated.
+  Reconcile CUDA kernel ordering in `multi_allreduce_ring` and render
+  SPECIAL launch-size comments from final constants.
   Remove the Llama driver's manual staging shortcuts: its attention-score
   kernel is named `E_2`, whereas the target tensor graph produces
   `r_2_2_2_2_2`.

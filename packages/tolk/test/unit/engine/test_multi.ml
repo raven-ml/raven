@@ -397,6 +397,16 @@ let () =
         ];
       group "Collectives"
         [
+          test "forced ring handles aligned empty chunks on four devices" (fun () ->
+              Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.ring, 2)] (fun () ->
+                  let data = iota (32 * 64) in
+                  let got = run_sharded ~devices:devs4 ~shape:[32; 64] ~axis:0 data
+                      (fun x -> U.reduce_axis ~src:x ~op:Ops.Add ~axes:[0]) in
+                  let expected = Array.init 64 (fun i ->
+                      let sum = ref 0. in
+                      for row = 0 to 31 do sum := !sum +. data.(row * 64 + i) done;
+                      !sum) in
+                  equal (array (float 1e-6)) expected got));
           test "forced strategies reduce uneven chunks on four devices" (fun () ->
               List.iter (fun bindings ->
                   Helpers.Context_var.with_context bindings (fun () ->
