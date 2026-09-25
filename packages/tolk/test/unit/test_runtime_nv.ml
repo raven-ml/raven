@@ -558,7 +558,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
       | None -> fun () -> ()
       | Some tl -> let value = Timeline.submitted tl in
           fun () -> Timeline.guarded_wait tl (fun () -> Signal.wait tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
-    host = "CPU"; copy = (fun _ -> Some "COPY:0");
+    host = "CPU"; max_kernel_bindings = None; copy = (fun _ -> Some "COPY:0");
     encode = Tolk_nv.Encoded_queue.encode (nv_dev ~compute_class m) ~name:device_name
         ~compute_entries:8 ~copy_entries:8 ~compute_token:0x123 ~copy_token:0x456;
     lower = Tolk_nv.Encoded_queue.lower device_name;

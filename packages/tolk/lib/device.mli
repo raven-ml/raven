@@ -105,6 +105,9 @@ type queue = {
   prepare : unit -> unit;
       (** Prepares shared runtime state before each compiled submission. *)
   host : string; (** Host device executing submission programs. *)
+  max_kernel_bindings : int option;
+      (** Most buffers plus scalar arguments a queued kernel may take, if
+          bounded. A kernel with more runs as an ordinary dispatch. *)
   copy : Tolk_uop.Uop.t -> string option;
       (** [copy call] selects the queue for a bulk store, or [None] for ordinary
           dispatch. A [COMPUTE:] queue lowers the store to a byte-copy kernel. *)

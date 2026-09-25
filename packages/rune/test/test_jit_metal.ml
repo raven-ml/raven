@@ -714,6 +714,36 @@ let test_scans_keep_subnormals () =
         (to_arr (Rune.jit' ~device:"METAL" f x)))
     [ ("cummax", Nx.cummax ~axis:0); ("cummin", Nx.cummin ~axis:0) ]
 
+(* Sixteen queued sorts feed one concatenation of 17 arguments, which feeds a
+   queued running sum. From an indirect command buffer an M1 Max computed most
+   of the concatenation wrong, so it runs as a direct dispatch between the
+   batches. *)
+let test_many_argument_kernel () =
+  let len k = 64 + k in
+  let f x =
+    Nx.cumsum ~axis:0
+      (Nx.concatenate ~axis:0
+         (List.init 16 (fun k ->
+              fst
+                (Nx.sort
+                   (Nx.reshape
+                      [| len k |]
+                      (Nx.shrink [| (k, k + 1); (0, len k) |] x))))))
+  in
+  let g = Rune.jit' ~device:"METAL" f in
+  for call = 1 to 3 do
+    let x =
+      Nx.create Nx.int32 [| 16; 79 |]
+        (Array.init (16 * 79) (fun i ->
+             Int32.of_int ((((i * 7919) + (call * 104729)) mod 2003) - 1000)))
+    in
+    equal
+      ~msg:(Printf.sprintf "call %d" call)
+      (array int32)
+      (Nx.to_array (f x))
+      (Nx.to_array (g x))
+  done
+
 (* A value with no elements has no storage: an empty input, output or capture
    compiles and replays on Metal, next to values that do have elements. *)
 let test_empty_values () =
@@ -791,6 +821,8 @@ let tests =
         test "sort keeps subnormals" test_sort_keeps_subnormals;
         test "empty values have no storage" test_empty_values;
         test "scans keep subnormals" test_scans_keep_subnormals;
+        test "a 17-argument kernel between queued work matches eager"
+          test_many_argument_kernel;
       ];
     group "placed weights"
       [

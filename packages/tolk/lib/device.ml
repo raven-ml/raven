@@ -84,6 +84,7 @@ type queue = {
   completion : unit -> (unit -> unit);
   prepare : unit -> unit;
   host : string;
+  max_kernel_bindings : int option;
   copy : Tolk_uop.Uop.t -> string option;
   encode : Uop.t -> Uop.t option;
   lower : Uop.t -> Uop.t option;
