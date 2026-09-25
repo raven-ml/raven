@@ -217,7 +217,8 @@ let () =
 
   let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
   let params = Model.init () in
-  let state = ref (params, Vega.adamw_init (module Model) params) in
+  let model = Nx.Ptree.instantiate (module Model) in
+  let state = ref (params, Vega.adamw_init model params) in
   let step = ref 0 in
 
   for epoch = 1 to 3 do
@@ -225,12 +226,12 @@ let () =
     |> Seq.iter (fun (x, y) ->
         let params, ostate = !state in
         let loss, grads =
-          Rune.value_and_grad (module Model)
+          Rune.value_and_grad model
             (fun p -> Kaun.Loss.softmax_cross_entropy_sparse (Model.apply p x) y)
             params
         in
         let params, ostate =
-          Vega.adamw_step (module Model) ~lr:0.001 ostate ~params ~grads
+          Vega.adamw_step model ~lr:(Vega.lr 0.001) ostate ~params ~grads
         in
         state := (params, ostate);
         incr step;
