@@ -27,18 +27,16 @@ with their rationale and validation; commit count is not an acceptance metric.
   unsound: the owning buffer can be finalised while the packet being built
   still targets its memory. Needs hardware validation.
 
-- Adopt HCQ2 byte-interval dependencies and queue encoding on the
-  compile/link/run path, including CPU host submission and retained JIT
-  execution. Share mapped submitted/completed timeline state with direct
-  dispatch and transfers; complete fault reporting and recovery for retained
-  submissions, including bounded host waits. Validate replay inputs whose alias
+- Complete NV queue encoding on the shared compile/link/run path, including
+  bounded host waits and retained JIT execution. Complete AMD/NV fault-reporting
+  and recovery handoffs for retained submissions. Validate replay inputs whose alias
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection and eager submission-template caching.
   Bring CUDA host and peer copies onto the queue path with runtime mapping
   eligibility and unsupported-mapping fallback. Audit CUDA context/stream
-  destruction and concurrent driver initialization. Port AMD queue
-  descriptors, AQL/multi-XCC, race/recovery fixes and consumed firmware/register
+  destruction and concurrent driver initialization. Complete AMD AQL/multi-XCC,
+  direct dispatch-pointer support, race/recovery fixes and consumed firmware/register
   tables. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
 - Complete PCI multi-die mappings and NV ring placement. Audit allocation-

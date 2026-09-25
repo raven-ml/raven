@@ -614,7 +614,7 @@ let scripted_registration fd t =
       read_ptr = view 0x1f10100 8;
       write_ptr = view 0x1f10108 8;
       doorbell = view 0x1f10110 8;
-      flush_hdp = None;
+      hdp_flush = None;
       resetup = Some (fun () -> incr resetup_ran);
     }
   in

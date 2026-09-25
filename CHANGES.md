@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD uses compiled host submission for PM4 kernels, SDMA copies and retained
+  replay. Polling and ring backpressure are bounded; a stalled submission
+  preserves unread commands and reports its failure at synchronization.
+
 - AMD and NV submissions share mapped queue positions and timeline counters.
   Timeline rollover retains linked signal addresses and replay fence values;
   NV completion signals no longer overwrite the submitted counter with timestamps.

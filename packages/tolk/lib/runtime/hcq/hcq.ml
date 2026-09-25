@@ -39,7 +39,7 @@ module Ffi = struct
 
   external fence : unit -> unit = "caml_tolk_hcq_fence" [@@noalloc]
 
-  external host_fence_address : unit -> nativeint = "caml_tolk_hcq_host_fence_address"
+  external submission_symbol : string -> nativeint = "caml_tolk_hcq_submission_symbol"
 
   external read64_int : nativeint -> int = "caml_tolk_hcq_read64_int"
   [@@noalloc]
@@ -55,8 +55,6 @@ module Ffi = struct
     = "caml_tolk_hcq_memcpy_from_ptr"
   [@@noalloc]
 end
-
-let host_fence_address = Ffi.host_fence_address
 
 module File_io = struct
   let {
@@ -132,6 +130,33 @@ module Mmio = struct
     dst
 
   let fence = Ffi.fence
+end
+
+module Submission = struct
+  type t = { buffer : Tolk_uop.Storage.t; view : Mmio.t }
+
+  let create () =
+    let open Tolk_uop in
+    let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+    let buffer = Storage.create ~device:"CPU" ~size:2 ~dtype:Dtype.uint64
+        (Storage.Allocator.Pack allocator) in
+    Storage.ensure_allocated buffer;
+    let view = Mmio.make ~addr:(Option.get (Storage.host_addr buffer)) ~size:16 in
+    {buffer; view}
+
+  let buffer t = t.buffer
+  let check t =
+    match Mmio.read64 t.view 8 with
+    | 0L -> ()
+    | 2L -> failwith "HCQ command stream exceeds ring capacity"
+    | _ -> failwith "HCQ submission timed out"
+
+  let prepare ?(timeout_ms = 30000) t =
+    check t;
+    if timeout_ms < 0 then invalid_arg "Submission.prepare: negative timeout";
+    Mmio.write64 t.view 0 Int64.(add (of_int (Ffi.monotonic_ms ())) (of_int timeout_ms))
+
+  let symbol = Ffi.submission_symbol
 end
 
 module Buffer = struct

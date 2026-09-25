@@ -9,6 +9,7 @@ module Mmio = Tolk_hcq.Hcq.Mmio
 module Buffer = Tolk_hcq.Hcq.Buffer
 module Q = Tolk_hcq.Hcq.Q
 module Signal = Tolk_hcq.Hcq.Signal
+module Submission = Tolk_hcq.Hcq.Submission
 module Timeline = Tolk_hcq.Hcq.Timeline
 module Kernargs = Tolk_hcq.Hcq.Kernargs
 module Compiler_amd = Tolk_amd.Compiler_amd
@@ -113,7 +114,7 @@ let queue_desc ~ring_dwords m =
     read_ptr = Mmio.view m ~off:ring_bytes ~size:8 ();
     write_ptr = Mmio.view m ~off:(ring_bytes + 8) ~size:8 ();
     doorbell = Mmio.view m ~off:(ring_bytes + 16) ~size:8 ();
-    flush_hdp = None;
+    hdp_flush = None;
     resetup = None;
   }
 
@@ -334,11 +335,12 @@ let read_i32 buf =
   List.init (Bytes.length bytes / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
 
-let queue_fixture ?(dispatch_ptr = false) ?(scratch = 256) ~copies () =
+let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ~copies () =
   let open Tolk in
   let open Tolk_uop in
   let device_name = "AMD:queue-compilation" in
   let timeline = ref None in
+  let submission = Submission.create () in
   let host = Tolk_cpu.create "CPU" in
   let parameter slot = U.param ~slot ~dtype:D.int32 ~shape:(U.const_int 16)
       ~device:(U.Single device_name) () in
@@ -359,17 +361,20 @@ let queue_fixture ?(dispatch_ptr = false) ?(scratch = 256) ~copies () =
         dtype = D.void; aux = None} in
   let props = ["lds_size_in_kb", 64; "simd_count", 192; "simd_per_cu", 2;
     "array_count", 12; "simd_arrays_per_engine", 2; "max_slots_scratch_cu", 32] in
-  let queue = Device.{prepare = (fun () -> Option.iter Timeline.prepare !timeline);
+  let queue = Device.{prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
     host = "CPU"; copy = (fun _ -> true);
     encode = Tolk_amd.Encoded_queue.encode (gfx1100 ()) ~props ~name:device_name
         ~compute_ring_size:4096 ~copy_ring_size:(Some 4096);
-    lower = (fun _ -> None);
+    lower = Tolk_amd.Encoded_queue.lower device_name;
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let renderer_set = Device.Renderer_set.make ~device:device_name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
   let buffers = Hashtbl.create 16 in
-  let bufferize u =
+  let bufferize u = match U.as_param u with
+    | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
+        Some (Submission.buffer submission)
+    | _ ->
     let buffer = Device.Buffer.create ~device:device_name ~size:(U.max_numel u)
         ~dtype:(U.dtype u) allocator in
     Device.Buffer.ensure_allocated buffer;
@@ -386,9 +391,8 @@ let queue_fixture ?(dispatch_ptr = false) ?(scratch = 256) ~copies () =
      | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
          let libs, symbol = (Marshal.from_string data 0 : string list * string) in
          equal (list string) [] libs;
-         equal string "tolk_hcq_host_fence" symbol;
          let bytes = Bytes.create 8 in
-         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Tolk_hcq.Hcq.host_fence_address ()));
+         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Submission.symbol symbol));
          Device.Buffer.copyin buffer bytes
      | Some {param = {allocation = Some ("amd_image", image); _}; _} ->
          Device.Buffer.copyin buffer (Bytes.of_string image)
@@ -398,14 +402,14 @@ let queue_fixture ?(dispatch_ptr = false) ?(scratch = 256) ~copies () =
       ~synchronize:(fun () -> ()) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)] else [call] in
-  Hcq2.compile (U.linear calls), device, host, buffers
+  Hcq2.compile (U.linear calls), device, host, buffers, submission
 
 let compile_queue ~copies =
-  let compiled, _, _, _ = queue_fixture ~copies () in compiled
+  let compiled, _, _, _, _ = queue_fixture ~copies () in compiled
 
 let execute_queue ~copies ~dispatch_ptr ~scratch =
   let open Tolk in
-  let compiled, device, host, buffers = queue_fixture ~copies ~dispatch_ptr ~scratch () in
+  let compiled, device, host, buffers, submission = queue_fixture ~copies ~dispatch_ptr ~scratch () in
   let binding = Realize.Buffers.create () in
   let linked = Realize.link_linear binding compiled in
   let get tag = Hashtbl.find buffers tag in
@@ -414,8 +418,12 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
     Bytes.set_int64_le bytes 0 (Int64.of_int value);
     Device.Buffer.copyin (get tag) bytes in
   let word tag = Int64.to_int (Bytes.get_int64_le (Device.Buffer.as_bytes (get tag)) 0) in
-  set_word "write_ptr_compute" 1022;
-  if copies then set_word "write_ptr_copy" 4088;
+  let put = (1 lsl 32) + 1022 in
+  set_word "write_ptr_compute" put;
+  set_word "read_ptr_compute" 1022;
+  if copies then begin
+    set_word "write_ptr_copy" 4088; set_word "read_ptr_copy" 4088
+  end;
   let to_program = Codegen.to_program host (Device.renderer host) in
   List.iteri (fun replay (small, count) ->
       if replay = 1 then begin
@@ -428,7 +436,8 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
           i32_buf device (List.init 16 Fun.id)) in
       Realize.run_linear ~device ~to_program binding ~jit:true
         ~var_vals:["small", small; "count", count] ~input_uops:(Array.map U.from_buffer inputs) linked;
-      equal int (1026 + replay * 4) (word "write_ptr_compute");
+      Submission.check submission;
+      equal int (put + (replay + 1) * 4) (word "write_ptr_compute");
       equal int (word "write_ptr_compute") (word "doorbell_compute");
       let arena = Device.Buffer.as_bytes (get "kernargs") in
       equal int small (Bytes.get_int8 arena 8);
@@ -452,13 +461,55 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
       equal int64 (if replay = 0 then 1L else 0x100000001L)
         (Bytes.get_int64_le timeline 8);
       Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
-      Device.Buffer.copyin (get "timeline") timeline) [(-17, 3); (29, 11)];
+      Device.Buffer.copyin (get "timeline") timeline;
+      set_word "read_ptr_compute" (word "write_ptr_compute");
+      if copies then set_word "read_ptr_copy" (word "write_ptr_copy")) [(-17, 3); (29, 11)];
   equal bool (scratch <> 0) (Hashtbl.mem buffers "scratch")
+
+let queue_timeout () =
+  let open Tolk in
+  let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let input = i32_buf device (List.init 16 Fun.id) in
+  let run () = Realize.run_linear ~device
+      ~to_program:(Codegen.to_program host (Device.renderer host)) binding ~jit:true
+      ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked in
+  run ();
+  let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "doorbell_compute") in
+  let published = doorbell () in
+  run ();
+  raises_match (Exn.failure ~substring:"HCQ submission timed out")
+    (fun () -> Submission.check submission);
+  equal bytes published (doorbell ());
+  raises_match (Exn.failure ~substring:"HCQ submission timed out") run
+
+let queue_full () =
+  let open Tolk in
+  let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let ring = Hashtbl.find buffers "ring_compute" in
+  let before = Device.Buffer.as_bytes ring in
+  let pointer = Hashtbl.find buffers "write_ptr_compute" in
+  let initial = Bytes.create 8 in
+  Bytes.set_int64_le initial 0 1021L;
+  Device.Buffer.copyin pointer initial;
+  let input = i32_buf device (List.init 16 Fun.id) in
+  Realize.run_linear ~device
+    ~to_program:(Codegen.to_program host (Device.renderer host)) binding ~jit:true
+    ~var_vals:["small", 7; "count", 3] ~input_uops:[|U.from_buffer input|] linked;
+  raises_match (Exn.failure ~substring:"HCQ submission timed out")
+    (fun () -> Submission.check submission);
+  equal bytes before (Device.Buffer.as_bytes ring);
+  equal int64 1021L (Bytes.get_int64_le (Device.Buffer.as_bytes pointer) 0)
 
 let () =
   run "Amd_runtime"
     [
       group "Compiled queues" [
+        test "a replay timeout suppresses publication and latches failure" queue_timeout;
+        test "a full ring times out without overwriting unread commands" queue_full;
         test "executes wrapped compute submissions and patches replay arguments" (fun () ->
             execute_queue ~copies:false ~dispatch_ptr:false ~scratch:256);
         test "executes SDMA wrapping with dispatch packets and no scratch" (fun () ->

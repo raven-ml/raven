@@ -259,18 +259,19 @@ module Queue_desc = struct
     read_ptr : Hcq.Mmio.t;
     write_ptr : Hcq.Mmio.t;
     doorbell : Hcq.Mmio.t;
-    flush_hdp : (unit -> unit) option;
+    hdp_flush : Hcq.Mmio.t option;
     resetup : (unit -> unit) option;
   }
 
   let signal_doorbell t value =
+    Hcq.Mmio.fence ();
     Hcq.Mmio.write64 t.write_ptr 0 (Int64.of_int value);
     (* the doorbell read triggers a device fetch: every ring and pointer
        store must be globally visible before it lands *)
     Hcq.Mmio.fence ();
     (* ops_amd.py:680-683: driver-less queues also flush the host data
        path, so host writes to device memory reach the engines *)
-    (match t.flush_hdp with Some flush -> flush () | None -> ());
+    Option.iter (fun view -> Hcq.Mmio.write32 view 0 0l) t.hdp_flush;
     Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int value)
 end
 
@@ -984,8 +985,35 @@ module Encoded_queue = struct
         ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name) () |> U.with_tag tag in
     Tolk.Hcq2.patch ~blob:(String.make size '\000') ~after buf
       (List.mapi (fun i word -> i * 4, word) words)
-  let fence name after = Tolk.Hcq2.ccall ~host:name ~after ~name:"tolk_hcq_host_fence"
-      ~dtype:D.void []
+  let context name = U.placeholder ~shape:[2] ~dtype:D.uint64 ~slot:0
+      ~device:(U.Single name) ~allocation:("hcq_submission", "") ()
+  let publish ~name ~after ~wptr ~doorbell ~next ~is_am ~lag =
+    let flush = if is_am then addr "CPU"
+        (placeholder name "hdp_flush" D.uint32 1 ~volatile:true) else u64 0 in
+    Tolk.Hcq2.ccall ~host:name ~after ~name:"tolk_hcq_publish" ~dtype:D.void
+      [index (context name) zero; index wptr zero; index doorbell zero;
+       next; flush; u64 lag]
+
+  let reserve ~name ~kind ~after ~put ~needed ~capacity =
+    let rptr = placeholder name ("read_ptr_" ^ kind) D.uint64 1 ~volatile:true in
+    let ready = Tolk.Hcq2.ccall ~host:name ~after ~name:"tolk_hcq_reserve" ~dtype:D.uint32
+        [index (context name) zero; index rptr zero; put; needed; u64 capacity] in
+    op Ops.Cmpeq ready (u32 1)
+  let guarded_count ready count = U.alu_ternary ~op:Ops.Where ~a:ready ~b:count ~c:zero
+
+  let lower name u = match U.as_load u with
+    | Some {src; _} ->
+        (match U.as_index src with
+         | Some {ptr; idxs = [i]} when U.const_int_value i = Some 0
+             && U.node_tag (U.buf_uop ptr) = Some "timeline" && U.op ptr = Ops.After ->
+             let deps = List.tl (U.children ptr) in
+             (match deps with
+              | target :: _ -> Some (Tolk.Hcq2.ccall ~host:name ~after:deps
+                  ~name:"tolk_hcq_poll" ~dtype:D.uint64
+                  [index (context name) zero; index (U.without_after ptr) zero; target])
+              | [] -> None)
+         | _ -> None)
+    | _ -> None
 
   let push ~name ~kind ~ring_size ~is_am ~dependency source ~unit ~lag =
     let ring = placeholder name ("ring_" ^ kind) D.uint32 (ring_size / 4) ~volatile:true in
@@ -996,20 +1024,18 @@ module Encoded_queue = struct
     let tail = cast D.int32 (op Ops.Cmod (mul p (u64 (unit / 4))) (u64 (ring_size / 4))) in
     let remaining = sub rs tail in
     let first = U.alu_ternary ~op:Ops.Where ~a:(op Ops.Cmplt remaining n) ~b:remaining ~c:n in
+    let ready = reserve ~name ~kind ~after:[dependency] ~put:p
+        ~needed:(u64 (U.max_numel source / unit)) ~capacity:(ring_size / unit) in
     let source = U.bitcast ~src:source ~dtype:D.uint32 in
     let copy after dst src count axis =
-      let i = U.range ~size:count ~axis ~kind:Axis_type.Loop ~dtype:D.int32 ~parents:[after] () in
+      let i = U.range ~size:(guarded_count ready count) ~axis ~kind:Axis_type.Loop ~dtype:D.int32 ~parents:[after] () in
       U.end_ ~value:(store (U.after ~src:ring ~deps:[after]) (add dst i)
         (load source (add src i))) ~ranges:[i] in
     let copied = copy dependency tail zero first 10 in
     let copied = copy copied zero first (sub n first) 11 in
     let next = add p (u64 (U.max_numel source * 4 / unit)) in
-    let written = store (U.after ~src:wptr ~deps:[fence name [copied]]) zero next in
-    let written = if is_am then
-        store (U.after ~src:(placeholder name "hdp_flush" D.uint32 1 ~volatile:true)
-          ~deps:[fence name [written]]) zero (u32 0)
-      else written in
-    store (U.after ~src:doorbell ~deps:[fence name [written]]) zero (sub next (u64 lag))
+    publish ~name ~after:[copied] ~wptr ~doorbell ~next ~is_am ~lag
+
 
   let encode (dev : 'meta device) ~props ~name ~compute_ring_size ~copy_ring_size u =
     match U.op u, U.arg u, U.children u with
@@ -1170,7 +1196,7 @@ module Encoded_queue = struct
           let ring_size = match copy_ring_size with Some size -> size
             | None -> invalid_arg "AMD device has no SDMA queue" in
           let size = U.max_numel stream / 4 and rs = ring_size / 4 in
-          if size > rs then invalid_arg "AMD SDMA command stream exceeds its ring";
+          if size >= rs then invalid_arg "AMD SDMA command stream exceeds its ring";
           let ring = placeholder name "ring_copy" D.uint32 rs ~volatile:true in
           let wptr = placeholder name "write_ptr_copy" D.uint64 1 ~volatile:true in
           let bell = placeholder name "doorbell_copy" D.uint64 1 ~volatile:true in
@@ -1179,17 +1205,23 @@ module Encoded_queue = struct
           let fits = cast D.int32 (op Ops.Cmplt (i32 (size - 1)) (sub (i32 rs) tail)) in
           let start = mul fits tail in
           let padding = mul (sub (i32 1) fits) (sub (i32 rs) tail) in
-          let z = U.range ~size:padding ~axis:10 ~kind:Axis_type.Loop ~dtype:D.int32 ~parents:[stream] () in
+          let room = reserve ~name ~kind:"copy" ~after:[stream] ~put:p
+              ~needed:(cast D.uint64 (mul padding (i32 4))) ~capacity:ring_size in
+          let z = U.range ~size:(guarded_count room padding) ~axis:10 ~kind:Axis_type.Loop
+              ~dtype:D.int32 ~parents:[stream] () in
           let cleared = U.end_ ~value:(store ring (add tail z) (u32 0)) ~ranges:[z] in
-          let i = U.range ~size:(i32 size) ~axis:11 ~kind:Axis_type.Loop ~dtype:D.int32 ~parents:[cleared] () in
-          let copied = U.end_ ~value:(store (U.after ~src:ring ~deps:[cleared]) (add start i)
+          let padded = add p (cast D.uint64 (mul padding (i32 4))) in
+          let published = publish ~name ~after:[cleared] ~wptr ~doorbell:bell ~next:padded
+              ~is_am:dev.is_am ~lag:0 in
+          let room = reserve ~name ~kind:"copy" ~after:[published] ~put:padded
+              ~needed:(u64 (size * 4)) ~capacity:ring_size in
+          let i = U.range ~size:(guarded_count room (i32 size)) ~axis:11 ~kind:Axis_type.Loop
+              ~dtype:D.int32 ~parents:[published] () in
+          let copied = U.end_ ~value:(store (U.after ~src:ring ~deps:[published]) (add start i)
               (load (U.bitcast ~src:stream ~dtype:D.uint32) i)) ~ranges:[i] in
           let next = add p (cast D.uint64 (mul (add padding (i32 size)) (i32 4))) in
-          let written = store (U.after ~src:wptr ~deps:[fence name [copied]]) zero next in
-          let written = if dev.is_am then store (U.after
-              ~src:(placeholder name "hdp_flush" D.uint32 1 ~volatile:true)
-              ~deps:[fence name [written]]) zero (u32 0) else written in
-          Some (store (U.after ~src:bell ~deps:[fence name [written]]) zero next)
+          Some (publish ~name ~after:[copied] ~wptr ~doorbell:bell ~next
+            ~is_am:dev.is_am ~lag:0)
         end
     | _ -> None
 end
@@ -1517,7 +1549,7 @@ module Kfd_iface = struct
                (Nativeint.of_int
                   (Int64.to_int (Int64.sub doorbell_offset doorbells_base))))
           ~size:8;
-      flush_hdp = None;
+      hdp_flush = None;
       resetup = None;
     }
 
@@ -1734,7 +1766,9 @@ module Pci_iface = struct
         Hcq.Mmio.view
           (Amdev.doorbell64 boot.Am_boot.adev)
           ~off:(doorbell_index * 8) ~size:8 ();
-      flush_hdp = Some (fun () -> Am_ip.Gmc.flush_hdp boot.Am_boot.adev);
+      hdp_flush = Some (Hcq.Mmio.view (Amdev.mmio boot.Am_boot.adev)
+        ~off:(Amdev.Am_register.read (Amdev.reg boot.Am_boot.adev
+          "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL")) ~size:4 ());
       resetup = Some (fun () -> ignore (setup () : int));
     }
 
@@ -1857,12 +1891,23 @@ module State = struct
     kernargs : 'mem Hcq.Kernargs.t;
     pool : 'mem Hcq.Signal.Pool.t;
     tl : ('mem, 'mem device) Timeline.t;
+    submission : Hcq.Submission.t;
     (* The device's LRU-wrapped allocator; set right after creation and used
        for scratch sizing. *)
     mutable allocator : 'mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
   }
 
+  let check_submission t =
+    Timeline.guarded_wait t.tl (fun () -> Hcq.Submission.check t.submission)
+
+  let prepare t =
+    check_submission t;
+    Timeline.prepare t.tl;
+    Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
+      t.submission
+
   let invalidate_caches t =
+    prepare t;
     let cq = Compute_queue.create t.hw in
     Compute_queue.memory_barrier cq;
     Compute_queue.signal cq
@@ -1872,6 +1917,7 @@ module State = struct
     Timeline.synchronize t.tl
 
   let synchronize t =
+    check_submission t;
     Timeline.synchronize t.tl;
     match t.iface.Iface.after_sync with
     | Some after_sync -> after_sync ()
@@ -1883,7 +1929,7 @@ module Allocator = struct
      submitted work, append the packets of [build], advance the timeline. *)
   let submit_copy state qd build =
     let tl = state.State.tl in
-    Timeline.prepare tl;
+    State.prepare state;
     let cp = Copy_queue.create state.State.hw in
     Copy_queue.wait cp
       ~value:(Timeline.submitted tl)
@@ -2003,6 +2049,7 @@ module Runtime = struct
     in
     ensure_scratch state prg.Program.private_segment_size;
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
+      State.prepare state;
       let bufs = Array.map (fun buf ->
           match Tolk.Device.Buffer.get ~device:state.State.name state.State.buffer_kind buf with
           | Some raw -> Hcq.Buffer.va raw | None -> 0n) bufs in
@@ -2036,6 +2083,79 @@ module Runtime = struct
       Program.free ~free:state.State.iface.Iface.free prg
     in
     { Tolk.Device.call; free; handle = 0n }
+end
+
+module Queue = struct
+  open Tolk
+  open Tolk_uop
+  module U = Uop
+  module B = Device.Buffer
+
+  let bufferize state u =
+    let name = state.State.name in
+    let size = U.max_numel u and dtype = U.dtype u in
+    let borrow_view view =
+      let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> State.synchronize state) in
+      let spec = {Device.Buffer_spec.default with external_ptr = Some (Hcq.Mmio.addr view); nolru = true} in
+      B.create ~device:"CPU" ~size ~dtype ~spec (Device.Allocator.Pack allocator) in
+    let borrowed raw =
+      let allocator = { (Allocator.raw state) with
+        alloc = (fun _ _ -> raw); free = (fun _ _ _ -> State.synchronize state) } in
+      B.create ~device:name ~size ~dtype
+        ~spec:{Device.Buffer_spec.default with nolru = true} (Device.Allocator.Pack allocator) in
+    let allocate ?(host = false) ?(cpu_access = true) () =
+      let spec = {Device.Buffer_spec.default with host; cpu_access; nolru = true} in
+      B.create ~device:name ~size ~dtype ~spec (Device.Allocator.Pack (Allocator.raw state)) in
+    match U.as_param u with
+    | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
+        Some (Hcq.Submission.buffer state.State.submission)
+    | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
+        let libs, symbol = (Marshal.from_string data 0 : string list * string) in
+        if libs <> [] then invalid_arg "AMD host helpers do not load libraries";
+        let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+        let b = B.create ~device:"CPU" ~size:1 ~dtype:Dtype.uint64 (Device.Allocator.Pack allocator) in
+        let bytes = Bytes.create 8 in
+        Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Hcq.Submission.symbol symbol));
+        B.ensure_allocated b; B.copyin b bytes; Some b
+    | Some {param = {allocation = Some ("amd_image", image); _}; _} ->
+        let b = allocate () in
+        B.ensure_allocated b; B.copyin b (Bytes.of_string image); Some b
+    | Some {param = {allocation = Some ("amd_scratch", _); _}; _} ->
+        Some (allocate ~cpu_access:false ())
+    | Some _ ->
+        (match U.node_tag u with
+         | Some "timeline" -> Some (borrowed (Hcq.Signal.buf state.State.tl.Timeline.timeline))
+         | Some "slots" -> Some (allocate ~host:true ())
+         | Some ("kernargs" | "cmdbuf_compute") -> Some (allocate ())
+         | Some "hdp_flush" -> Some (borrow_view (Option.get state.State.compute_queue.Queue_desc.hdp_flush))
+         | Some tag ->
+             let descriptor, suffix = if Filename.check_suffix tag "_compute" then
+                 Some state.State.compute_queue, "_compute"
+               else if Filename.check_suffix tag "_copy" then state.State.sdma_queue, "_copy"
+               else None, "" in
+             Option.bind descriptor (fun q ->
+                 let field = String.sub tag 0 (String.length tag - String.length suffix) in
+                 Option.map borrow_view (match field with
+                   | "ring" -> Some q.Queue_desc.ring
+                   | "read_ptr" -> Some q.Queue_desc.read_ptr
+                   | "write_ptr" -> Some q.Queue_desc.write_ptr
+                   | "doorbell" -> Some q.Queue_desc.doorbell
+                   | _ -> None))
+         | None -> None)
+    | None -> None
+
+  let create state =
+    let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
+    let copy call = Option.is_some state.State.sdma_queue && match U.as_call call with
+      | Some {args; _} -> List.for_all (fun arg ->
+          U.device_of arg = Some (U.Single state.State.name)) args
+      | None -> false in
+    Device.{prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+      encode = Encoded_queue.encode state.State.hw ~props:state.State.iface.Iface.props
+        ~name:state.State.name ~compute_ring_size:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
+        ~copy_ring_size:(Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) state.State.sdma_queue);
+      lower = Encoded_queue.lower state.State.name;
+      compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
 end
 
 (* The shared device open path over the selected interface: everything
@@ -2177,6 +2297,7 @@ let open_device ~name iface =
           on_hang = iface.Iface.on_device_hang;
         };
       allocator = None;
+      submission = Hcq.Submission.create ();
     }
   in
   (match iface.Iface.register with
@@ -2207,7 +2328,7 @@ let open_device ~name iface =
     ~runtime:(Runtime.runtime state)
     ~synchronize:(fun () -> State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
-    ()
+    ~queue:(Queue.create state) ~bufferize:(Queue.bufferize state) ()
 
 let create name =
   let device_id =

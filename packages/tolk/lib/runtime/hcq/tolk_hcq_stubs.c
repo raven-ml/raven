@@ -192,24 +192,75 @@ CAMLprim value caml_tolk_hcq_fence(value unit) {
   return Val_unit;
 }
 
-static void tolk_hcq_host_fence(void) {
-  atomic_thread_fence(memory_order_seq_cst);
-}
-
-CAMLprim value caml_tolk_hcq_host_fence_address(value unit) {
-  CAMLparam1(unit);
-  CAMLreturn(caml_copy_nativeint((intnat)tolk_hcq_host_fence));
+static uint64_t monotonic_ms(void) {
+#if defined(_WIN32)
+  return GetTickCount64();
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+#endif
 }
 
 CAMLprim value caml_tolk_hcq_monotonic_ms(value unit) {
   (void)unit;
-#if defined(_WIN32)
-  return Val_long((intnat)GetTickCount64());
-#else
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return Val_long((intnat)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
-#endif
+  return Val_long((intnat)monotonic_ms());
+}
+
+/* State is [deadline_ms, failed]. One device serializes its submissions.
+   These ordinary C functions run inside generated host code with the OCaml
+   runtime released. Failures suppress publication and are reported by OCaml
+   synchronization; never unwind through the generated frame. */
+static uint64_t tolk_hcq_poll(volatile uint64_t *state,
+                              volatile uint64_t *timeline, uint64_t target) {
+  if (state[1]) return UINT64_MAX;
+  uint64_t value = timeline[0];
+  atomic_thread_fence(memory_order_acquire);
+  if (value < target && monotonic_ms() >= state[0]) {
+    state[1] = 1;
+    return UINT64_MAX;
+  }
+  return value;
+}
+
+static uint32_t tolk_hcq_reserve(volatile uint64_t *state,
+                                volatile uint64_t *read_ptr, uint64_t put,
+                                uint64_t needed, uint64_t capacity) {
+  if (capacity < 2 || (capacity & (capacity - 1)) || needed >= capacity) {
+    state[1] = 2;
+    return 0;
+  }
+  if (state[1]) return 0;
+  /* Hardware may report only a ring-relative read position. Keep one slot
+     unused so full and empty cannot share the same pointer difference. */
+  while (((*read_ptr - put - 1) & (capacity - 1)) < needed) {
+    if (monotonic_ms() >= state[0]) { state[1] = 1; return 0; }
+  }
+  atomic_thread_fence(memory_order_acquire);
+  return 1;
+}
+
+static void tolk_hcq_publish(volatile uint64_t *state,
+                             volatile uint64_t *write_ptr,
+                             volatile uint64_t *doorbell, uint64_t next,
+                             uint64_t flush_addr, uint64_t lag) {
+  if (state[1] || *write_ptr == next) return;
+  atomic_thread_fence(memory_order_seq_cst);
+  *write_ptr = next;
+  atomic_thread_fence(memory_order_seq_cst);
+  if (flush_addr) *(volatile uint32_t *)(uintptr_t)flush_addr = 0;
+  atomic_thread_fence(memory_order_seq_cst);
+  *doorbell = next - lag;
+}
+
+CAMLprim value caml_tolk_hcq_submission_symbol(value name) {
+  CAMLparam1(name);
+  void *symbol;
+  if (!strcmp(String_val(name), "tolk_hcq_poll")) symbol = (void *)tolk_hcq_poll;
+  else if (!strcmp(String_val(name), "tolk_hcq_reserve")) symbol = (void *)tolk_hcq_reserve;
+  else if (!strcmp(String_val(name), "tolk_hcq_publish")) symbol = (void *)tolk_hcq_publish;
+  else caml_invalid_argument("unknown HCQ submission helper");
+  CAMLreturn(caml_copy_nativeint((intnat)symbol));
 }
 
 CAMLprim value caml_tolk_hcq_memcpy_to_ptr(value v_dst, value v_src,

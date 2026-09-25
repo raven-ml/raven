@@ -158,7 +158,7 @@ module Queue_desc : sig
         (** 64-bit producer position shared by direct and compiled submission:
             a dword count for PM4 rings, a byte count for DMA rings. *)
     doorbell : Hcq.Mmio.t;  (** 64-bit doorbell slot of the queue. *)
-    flush_hdp : (unit -> unit) option;
+    hdp_flush : Hcq.Mmio.t option;
         (** Flushes the host-data-path write buffer, run before every
             doorbell write; queues on devices driven without the kernel
             driver need it so host stores to device memory reach the
@@ -172,7 +172,7 @@ module Queue_desc : sig
   val signal_doorbell : t -> int -> unit
   (** [signal_doorbell t value] publishes [value] to the device: it writes
       the write pointer, fences so all prior ring stores are visible,
-      runs [flush_hdp] when present, then writes the doorbell. *)
+      writes the [hdp_flush] register when present, then writes the doorbell. *)
 end
 
 (** {1:iface Device interfaces}
@@ -559,6 +559,10 @@ end
 
 (** Compiled host submission over AMD packet templates. *)
 module Encoded_queue : sig
+  val lower : string -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+  (** [lower name u] replaces timeline polling with bounded native polling
+      for the device [name]. *)
+
   val encode :
     'meta device -> props:(string * int) list -> name:string ->
     compute_ring_size:int -> copy_ring_size:int option ->

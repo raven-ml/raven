@@ -6,6 +6,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Compiled AMD submission bounds polling and reserves ring space before
+  writing commands.** The frozen target can spin forever or overwrite unread
+  packets when producers outrun a queue. Native helpers latch failures while
+  OCaml is released, suppress ring writes/publication after failure, and leave
+  one slot unused to distinguish full from empty with ring-relative pointers.
+  SDMA publishes wrap padding before reserving space for the next stream.
+  Consumers: retained replay and large asynchronous copy batches. Coverage:
+  host-executed AMD wrap, full-ring and stalled-replay tests; hardware validation
+  remains open. Reconsider when upstream provides equivalent bounds and
+  backpressure.
+
 - **AMD/NV submissions read the mapped producer position and retain timeline
   addresses across rollover.** Direct `Device.prog` launches coexist with
   compiled submissions, so a second host counter can overwrite unread ring

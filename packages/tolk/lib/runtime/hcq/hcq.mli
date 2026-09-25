@@ -15,11 +15,6 @@
     completion timelines ({!Timeline}) and kernel argument staging
     ({!Kernargs}). *)
 
-val host_fence_address : unit -> nativeint
-(** [host_fence_address ()] is an ordinary C [void(void)] function that
-    orders host memory accesses before device doorbells. Compiled submission
-    can call it while the OCaml runtime is released. *)
-
 (** Files and memory mappings. *)
 module File_io : sig
   (** {1:files Files} *)
@@ -142,6 +137,30 @@ module Mmio : sig
   val fence : unit -> unit
   (** [fence ()] is a full memory barrier: memory accesses sequenced
       before it complete before any access sequenced after it. *)
+end
+
+(** Bounded native polling for compiled queue submission. *)
+module Submission : sig
+  type t
+  (** The state of one device's serialized native submissions. *)
+
+  val create : unit -> t
+  (** [create ()] allocates host state with no latched error. *)
+
+  val buffer : t -> Tolk_uop.Storage.t
+  (** [buffer t] owns the state passed to native submission helpers. *)
+
+  val prepare : ?timeout_ms:int -> t -> unit
+  (** [prepare ?timeout_ms t] checks latched errors and starts a polling deadline.
+      [timeout_ms] defaults to [30000]. Raises [Invalid_argument] if negative. *)
+
+  val check : t -> unit
+  (** [check t] raises [Failure] if polling timed out. A failed submission cannot
+      publish another doorbell; its error remains latched. *)
+
+  val symbol : string -> nativeint
+  (** [symbol name] is an ordinary C helper callable with the OCaml runtime
+      released. Raises [Invalid_argument] for an unknown helper name. *)
 end
 
 (** Regions of device memory.
