@@ -30,9 +30,6 @@ with their rationale and validation; commit count is not an acceptance metric.
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
   submissions. Validate NV FIFO occupancy across independently linked batches
   and direct dispatches; Ampere control pages do not expose a consumer pointer.
-  Validate replay inputs whose alias
-  relationships change, including overlapping external views and duplicate
-  input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection.
   Bring CUDA host and peer copies onto the queue path with runtime mapping
   eligibility and unsupported-mapping fallback. Validate AMD AQL/multi-XCC

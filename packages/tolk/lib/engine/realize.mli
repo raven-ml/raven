@@ -318,7 +318,12 @@ val run_linear :
     arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
     built from its compiled binary. A program carrying queue metadata refreshes
     its address table and submits through its host device; [wait] also waits for
-    the submitted devices. A {!Tolk_uop.Ops.Store} transfers between its
+    the submitted devices. Before updating that table, replay rejects writable
+    overlaps between unordered calls, including independently wrapped external
+    pointers. FIFO order and transitive queue waits permit buffer donation;
+    new read-only aliases and disjoint views are also allowed.
+    Represent writable aliases through a shared root in the graph before
+    compiling their queue dependencies. A {!Tolk_uop.Ops.Store} transfers between its
     resolved buffers. Buffer arguments are resolved with
     {!resolve_buffer}, so {!Tolk_uop.Ops.Param} slots index into
     [input_uops].

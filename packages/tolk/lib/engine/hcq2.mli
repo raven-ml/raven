@@ -13,6 +13,8 @@ type plan = {
       (** Device, queue and ordered instructions, in first-use submission order. *)
   timelines : Tolk_uop.Uop.t list;
       (** Per-batch timeline slots to fence before reusing command storage. *)
+  independent_accesses : (Tolk_uop.Uop.t * Tolk_uop.Uop.t) list;
+      (** Access pairs from unordered calls, with at least one write. *)
   signals : Tolk_uop.Uop.t list;
       (** Queue signals to re-arm before submission. *)
 }

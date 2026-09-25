@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Reject queue replay bindings that introduce writable overlaps between
+  unordered calls, including overlapping external pointers. Ordered buffer
+  donation, read-only aliases and disjoint views remain valid.
+
 - Compile scheduled kernels for their argument devices, fixing CPU-sharded
   custom kernels when Metal is the default. `Realize` and `Jit` compiler
   callbacks now receive the execution device.

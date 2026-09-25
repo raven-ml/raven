@@ -91,6 +91,19 @@ let nv_chain () =
       copy "NV" "COMPUTE:0" (slice c 8 8) (slice a 0 8)] in
   equal (list int) [1; 2; 2] (constant_waits (queue plan "NV" "COMPUTE:0"))
 
+let alias_ordering () =
+  let a = parameter 0 and b = parameter 1 and c = parameter 2
+  and d = parameter 3 in
+  let independent = Hcq2.plan [copy "NV" "COPY:0" a b;
+      copy "NV" "COPY:1" c d] in
+  equal int 3 (List.length independent.independent_accesses);
+  let same_queue = Hcq2.plan [copy "NV" "COPY:0" a b;
+      copy "NV" "COPY:0" c d] in
+  equal int 0 (List.length same_queue.independent_accesses);
+  let transitive = Hcq2.plan [copy "NV" "COPY:0" a b;
+      copy "NV" "COPY:1" c a; copy "NV" "COMPUTE:0" d c] in
+  equal int 0 (List.length transitive.independent_accesses)
+
 let peers_and_timestamps () =
   let src = parameter 0 and dst = parameter ~device:"NV:1" 1 in
   let plan = Hcq2.plan ~profile:true [copy "NV" "COPY:0" dst src] in
@@ -110,7 +123,7 @@ let compiled_host_submission () =
   Device.Buffer.copyin timeline (Bytes.make 16 '\000');
   let observed = Device.Buffer.create ~device:name ~size:1 ~dtype:Dtype.uint64 allocator in
   let encode u = match U.op u, U.arg u, U.children u with
-    | Ops.Custom_function, U.Arg.String "submit_cpu_copy", [linear; dependency] ->
+    | Ops.Custom_function, U.Arg.String ("submit_cpu_copy" | "submit_cpu_compute"), [linear; dependency] ->
         let trace = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
             ~device:(U.Single name) () |> U.with_tag "trace" in
         let arena = U.placeholder ~shape:[8] ~dtype:Dtype.uint8 ~slot:7
@@ -177,6 +190,58 @@ let compiled_host_submission () =
       equal int32 value (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0)) [42l; 71l];
   equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
   equal int64 2L (Bytes.get_int64_le (Device.Buffer.as_bytes observed) 0);
+  let replay linear inputs = Realize.run_linear ~device ~to_program binding
+      ~jit:true ~wait:true ~input_uops:(Array.map U.from_buffer inputs) linear in
+  let src = buffer 12l and dst = buffer 0l in
+  replay linked [|src; src; dst|];
+  equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0);
+  (* The host queue executes both kinds as copies; PROGRAM selects COMPUTE
+     so the real planner must distinguish FIFO, waits and independent calls. *)
+  let compute dst src =
+    let sink = U.sink [] in
+    let info = { (U.program_info_from_sink sink) with globals = [0; 1]; outs = [0]; ins = [1] } in
+    let body = U.program ~sink ~linear:(U.linear []) ~source:(U.source "")
+        ~binary:(U.binary "") ~info () in
+    U.call ~body ~args:[dst; src]
+      ~info:{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; dtype = Dtype.void; aux = None} in
+  let compile calls = U.linear calls |> Realize.compile_linear ~device ~to_program
+      |> Realize.link_linear binding in
+  let independent = compile [U.store_call ~dst:(ptr 2) ~src:(ptr 0);
+      compute (ptr 3) (ptr 1)] in
+  let rejected inputs =
+    let before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
+    raises (Invalid_argument "queue replay: bindings introduce an untracked writable alias")
+      (fun () -> replay independent inputs);
+    equal int64 before (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0) in
+  rejected [|src; src; dst; dst|];
+  let root = Device.create_buffer ~size:4 ~dtype:Dtype.int32 device in
+  Device.Buffer.ensure_allocated root;
+  let bytes = Bytes.make 16 '\000' in
+  Bytes.set_int32_le bytes 0 73l;
+  Bytes.set_int32_le bytes 4 89l;
+  Device.Buffer.copyin root bytes;
+  let view offset = Device.Buffer.view root ~size:1 ~dtype:Dtype.int32 ~offset in
+  replay independent [|view 0; view 4; view 8; view 12|];
+  equal int32 73l (Bytes.get_int32_le (Device.Buffer.as_bytes root) 8);
+  equal int32 89l (Bytes.get_int32_le (Device.Buffer.as_bytes root) 12);
+  rejected [|view 0; view 4; view 8; view 8|];
+  let external_view offset =
+    let spec = {Device.Buffer_spec.default with
+      external_ptr = Some (Nativeint.add (Device.Buffer.addr root) (Nativeint.of_int offset))} in
+    Device.create_buffer ~size:1 ~dtype:Dtype.int32 ~spec device in
+  rejected [|src; src; external_view 8; external_view 10|];
+  replay independent [|external_view 0; external_view 4; external_view 8; external_view 12|];
+  equal int32 89l (Bytes.get_int32_le (Device.Buffer.as_bytes root) 12);
+  let dst1 = buffer 0l and dst2 = buffer 0l in
+  replay independent [|src; src; dst1; dst2|];
+  equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst1) 0);
+  equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst2) 0);
+  let ordered = compile [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
+      compute (ptr 2) (ptr 1)] in
+  replay ordered [|src; dst1; src|];
+  equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes src) 0);
+  ignore (Sys.opaque_identity root);
   let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
   let compiled = Realize.compile_linear ~device ~to_program
       (U.linear [U.store_call ~dst ~src]) in
@@ -231,6 +296,7 @@ let () = run "Engine_hcq2" [
   test "only overlapping accesses wait across queues" overlap_waits;
   test "parameter views retain their shared runtime slot" parameter_views;
   test "NV cross-queue waits close the previous compute chain" nv_chain;
+  test "alias constraints follow FIFO and transitive cross-queue waits" alias_ordering;
   test "peer epilogues and profiling slots participate in timelines" peers_and_timestamps;
   test "compiled host submission patches addresses and replays through timelines" compiled_host_submission;
 ]

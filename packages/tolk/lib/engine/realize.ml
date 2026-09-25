@@ -804,12 +804,39 @@ let exec_copy binding ctx ~device call =
 
 let queue_submissions = ref 0
 
+(* Independently wrapped external pointers need not share a Storage.base_id.
+   Check the physical intervals only where the compiled queues permit calls
+   to overlap; ordered buffer donation and read-only aliases stay legal. *)
+let validate_queue_aliases buffers (submission : Tolk_uop.Uop.queue_info) =
+  if submission.independent_accesses <> [] then begin
+  let module B = Device.Buffer in
+  let addresses = Hashtbl.create 16 in
+  let interval slot = match Hashtbl.find_opt addresses slot with
+    | Some value -> value
+    | None ->
+        let b = buffers.(slot) in
+        let start = B.addr b in
+        let owner = Device.canonicalize (B.device b) in
+        let owner = if String.starts_with ~prefix:"CPU" owner then "CPU" else owner in
+        let value = owner, start, Nativeint.add start (Nativeint.of_int (B.nbytes b)) in
+        Hashtbl.add addresses slot value;
+        value in
+  List.iter (fun (a, b) ->
+      if B.nbytes buffers.(a) <> 0 && B.nbytes buffers.(b) <> 0 then begin
+        let da, sa, ea = interval a and db, sb, eb = interval b in
+        if da = db && Nativeint.unsigned_compare sa eb < 0
+           && Nativeint.unsigned_compare sb ea < 0 then
+          invalid_arg "queue replay: bindings introduce an untracked writable alias"
+      end) submission.independent_accesses
+  end
+
 let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
   | Some {body; args} ->
       let args = Array.of_list (call_arg_uops args) in
       let buffers = Array.map (resolve binding ctx) args in
+      validate_queue_aliases buffers submission;
       if submission.inputs <> [] then begin
         if submission.table < 0 || submission.table >= Array.length buffers then
           invalid_arg "exec_hcq: missing runtime address table";

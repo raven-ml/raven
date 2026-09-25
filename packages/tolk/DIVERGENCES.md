@@ -6,6 +6,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Queue replay validates writable aliases before submission.** The target
+  derives dependencies from graph identities without checking whether later
+  runtime bindings add overlaps. Tolk rejects new writable overlaps between
+  unordered calls before patching the address table. FIFO order and transitive
+  queue waits still permit donation; disjoint views and read-only aliases also
+  remain valid. Shared graph roots establish dependencies for writable aliases. Consumers: retained Rune
+  and Tolk submissions, particularly external pointer imports. Coverage:
+  `test_hcq2` duplicate writable inputs, overlapping external wrappers, unchanged
+  timelines on rejection and accepted read-only/disjoint bindings. Reconsider
+  when dependencies can be recompiled automatically for a changed alias layout.
+
 - **Multi-axis reshapes use each axis's own shard count.** The frozen target
   reuses the last range's count while constructing all local dimensions, so a
   `[2; 4]` tile sharded 2-by-3 cannot reshape its `[4; 12]` logical shape to
