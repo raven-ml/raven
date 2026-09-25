@@ -112,5 +112,54 @@ let tests =
            Vega.adafactor_step Wb.ptree ~lr:(Nx.mul_s (Nx.rsqrt t) 1e-2) st));
   ]
 
+(* RAdam at [b2 = 0.9999], compiled in float32: the rectified steps 6 to 12 move
+   as far as eager float64 ones to within 1.5e-4 (2e-5 eagerly; the float32 [1 -
+   pow b2 t] was off by 3.5%). The remaining error is float32's [rho = rho_inf -
+   tail], a difference of two terms near 19999 whose absolute error is about
+   2e-3; compiled code rounds the rest of the rectification differently ([1 -
+   b^t] itself agrees with float64 to 1.5e-7 compiled). *)
+let test_radam_compiled_rectification () =
+  let target64 = Nx.create Nx.float64 [| 3 |] [| 1.0; -2.0; 0.5 |] in
+  let target32 = Nx.cast Nx.float32 target64 in
+  let p = Nx.Ptree.tensor in
+  let step target (params, st) =
+    let grads = Nx.mul_s (Nx.sub params target) 2.0 in
+    Vega.radam_step p ~lr:(Vega.lr 0.1) ~b2:0.9999 st ~params ~grads
+  in
+  let path f params =
+    let rec go k x acc =
+      if k = 12 then List.rev acc
+      else
+        let x = f x in
+        go (k + 1) x (Nx.to_array (Nx.cast Nx.float64 (fst x)) :: acc)
+    in
+    let path = go 0 (params, Vega.radam_init p params) [] in
+    Array.map2 ( -. ) (List.nth path 11) (List.nth path 5)
+  in
+  let both = Nx.Ptree.pair p (Vega.adam_ptree p) in
+  let compiled =
+    path
+      (Rune.jit ~devices:[ dev ]
+         Nx.Ptree.(consumes both @@ returns both)
+         (step target32))
+      (Nx.zeros Nx.float32 [| 3 |])
+  in
+  let exact = path (step target64) (Nx.zeros Nx.float64 [| 3 |]) in
+  Array.iteri
+    (fun i d ->
+      let rel = Float.abs (compiled.(i) -. d) /. Float.abs d in
+      is_true
+        ~msg:(Printf.sprintf "element %d: relative error %g" i rel)
+        (rel <= 3e-4))
+    exact
+
 let () =
-  run "vega jit" [ group "a step compiles with its state consumed" tests ]
+  run "vega jit"
+    [
+      group "a step compiles with its state consumed" tests;
+      group "precision"
+        [
+          test "compiled radam rectifies as in float64"
+            test_radam_compiled_rectification;
+        ];
+    ]

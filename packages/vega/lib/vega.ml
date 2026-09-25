@@ -82,35 +82,84 @@ let take (type a b) fn name path (x : (a, b) Nx.t) rest : (a, b) Nx.t =
             name
             (Dtype.to_string (Nx.dtype x)))
 
+(* A step computes at float32, or at float64 for a float64 leaf, and returns
+   each leaf at its own dtype. Float16 and bfloat16 leaves round once, when the
+   result is stored: at their dtype, Adam's [eps = 1e-8] rounds to zero in
+   float16 and [b2 = 0.999] to one in bfloat16. *)
+type 'w compute = (float, 'w) Nx.t
+
+(* The compute dtypes, as a witness a step's arithmetic is written against. *)
+type _ wide = F32 : Nx.float32_elt wide | F64 : Nx.float64_elt wide
+
+let dtype : type w. w wide -> (float, w) Nx.dtype = function
+  | F32 -> Nx.float32
+  | F64 -> Nx.float64
+
 (* [leafwise fn p ~params ~grads parts ~f] steps [params] leaf by leaf. [parts]
    are the state's values of the parameters' skeleton, each with its name for
-   errors. At a float leaf, [f x g s] takes the parameter, its gradient and its
-   leaf of each part, in order, and returns the new parameter and the parts' new
-   leaves; other leaves pass through unchanged. The result is the new parameters
-   and the new parts. *)
+   errors. At a float leaf, [f w x g s] takes the parameter, its gradient and
+   its leaf of each part, in order, cast to the compute dtype [w], and returns
+   the new parameter and the parts' new leaves, which are cast back; other
+   leaves pass through unchanged. The result is the new parameters and the new
+   parts. *)
 let leafwise fn p ~params ~grads parts
     ~(f :
-       'a 'b.
-       ('a, 'b) Nx.t ->
-       ('a, 'b) Nx.t ->
-       ('a, 'b) Nx.t array ->
-       ('a, 'b) Nx.t * ('a, 'b) Nx.t array) =
+       'w.
+       'w wide ->
+       'w compute ->
+       'w compute ->
+       'w compute array ->
+       'w compute * 'w compute array) =
   let skeleton = snd (Nx.Ptree.flatten p params) in
   let aligned name x = ref (aligned fn p skeleton name x) in
   let grads = aligned "the gradients" grads in
   let parts = Array.of_list parts in
   let leaves = Array.map (fun (name, x) -> (name, aligned name x)) parts in
   let parts' = Array.map (fun _ -> ref []) parts in
+  let step (type a b) (x : (a, b) Nx.t) g s =
+    let dt = Nx.dtype x in
+    let run (type w) (w : w wide) =
+      let wide = dtype w in
+      let x, s =
+        f w (Nx.cast wide x) (Nx.cast wide g) (Array.map (Nx.cast wide) s)
+      in
+      (Nx.cast dt x, Array.map (Nx.cast dt) s)
+    in
+    match dt with Dtype.Float64 -> run F64 | _ -> run F32
+  in
   let update path x =
     let g = take fn "the gradients" path x grads in
     let s = Array.map (fun (name, rest) -> take fn name path x rest) leaves in
-    let x, s = if updates x then f x g s else (x, s) in
+    let x, s = if updates x then step x g s else (x, s) in
     Array.iteri (fun i y -> parts'.(i) := Nx.P y :: !(parts'.(i))) s;
     x
   in
   let params = Nx.Ptree.map p update params in
   let rebuild i (_, like) = Nx.Ptree.rebuild p ~like (List.rev !(parts'.(i))) in
   (params, Array.mapi rebuild parts)
+
+(* A scalar of the step counter, computed once per step at each compute dtype
+   that asks for it. *)
+type counted = { f32 : Nx.float32_t Lazy.t; f64 : Nx.float64_t Lazy.t }
+
+let counted (f : 'w. (float, 'w) Nx.dtype -> 'w compute) =
+  { f32 = lazy (f Nx.float32); f64 = lazy (f Nx.float64) }
+
+let at : type w. counted -> w wide -> w compute =
+ fun c -> function F32 -> Lazy.force c.f32 | F64 -> Lazy.force c.f64
+
+(* [one_minus_exp x] is [1 - exp x] for [x <= 0] without the cancellation of
+   subtracting from one: [-expm1 x], with [expm1] written with [exp] and [log]
+   as [(u - 1) x / log u] for [u = exp x], whose rounding errors cancel. It is
+   [x] where [u] rounds to one, and [u - 1] below [-1], which loses nothing and
+   stays defined where [u] underflows to zero. *)
+let one_minus_exp x =
+  let dt = Nx.dtype x in
+  let one = scalar dt 1.0 in
+  let u = Nx.exp x in
+  let near = Nx.div (Nx.mul (Nx.sub u one) x) (Nx.log u) in
+  let expm1 = Nx.where (Nx.equal u one) x near in
+  Nx.neg (Nx.where (Nx.less x (scalar dt (-1.0))) (Nx.sub u one) expm1)
 
 (* Gradient transformations *)
 
@@ -278,11 +327,11 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
     (* Plain gradient descent: the velocity is exactly the gradient. Skipping
        the [momentum * v + g] arithmetic avoids touching (and, under [jit],
        capturing) the velocity tensors at all. *)
-    let f x g _ = (descend ~lr x g, [||]) in
+    let f _ x g _ = (descend ~lr x g, [||]) in
     let params, _ = leafwise fn p ~params ~grads [] ~f in
     (params, { velocity = grads; step })
   else
-    let f x g s =
+    let f _ x g s =
       let v = Nx.add (Nx.mul s.(0) (scalar (Nx.dtype x) momentum)) g in
       (descend ~lr x v, [| v |])
     in
@@ -298,7 +347,7 @@ let lars_step p ~lr ?(momentum = 0.9) ?(weight_decay = 0.01) ?(nesterov = false)
   let fn = "Vega.lars_step" in
   validate_unit_interval fn "momentum" momentum;
   validate_non_negative fn "weight_decay" weight_decay;
-  let f x g s =
+  let f _ x g s =
     let dt = Nx.dtype x in
     let u = Nx.add g (Nx.mul x (scalar dt weight_decay)) in
     let u = Nx.mul u (trust_ratio x u) in
@@ -331,29 +380,27 @@ let adam_ptree p = Nx.Ptree.nest (module Adam_state) p
 let adam_init p params =
   { mu = zeros p params; nu = zeros p params; step = Nx.scalar Nx.int32 0l }
 
-(* One step of Adam's moments over every leaf, shared by the family: [apply t x
+(* [bias_correction step b] is [1 - b^t] at the counter [t = step], as [-expm1
+   (t ln b)]: [1 - pow b t] would lose the digits that matter to cancellation,
+   since [b^t] is within [1e-3] of one for Adam's [b2] and small [t]. *)
+let bias_correction step b =
+  counted (fun dt ->
+      one_minus_exp (Nx.mul (Nx.cast dt step) (scalar dt (Float.log b))))
+
+(* One step of Adam's moments over every leaf, shared by the family: [apply x
    mu_hat nu_hat] is the new parameter from the old one and the bias-corrected
-   moments at step [t]. [t] and the bias corrections [1 - b^t] are derived from
-   the counter per leaf, at the leaf's dtype like every other scalar in the step
-   — tensor arithmetic with a constant base, which compiles to [exp2] on every
-   device — so the whole step traces under jit and the state carries nothing the
-   counter does not already determine. *)
+   moments. The corrections derive from the state's counter inside the step, so
+   the whole step traces under jit and the state carries nothing the counter
+   does not already determine. *)
 let adam_update fn p ~b1 ~b2
     ~(apply :
-       'a 'b.
-       ('a, 'b) Nx.t ->
-       ('a, 'b) Nx.t ->
-       ('a, 'b) Nx.t ->
-       ('a, 'b) Nx.t ->
-       ('a, 'b) Nx.t) st ~params ~grads =
+       'w. 'w wide -> 'w compute -> 'w compute -> 'w compute -> 'w compute) st
+    ~params ~grads =
   let step = Nx.add_s st.step 1l in
-  let f x g s =
-    let dt = Nx.dtype x in
+  let c1 = bias_correction step b1 and c2 = bias_correction step b2 in
+  let f w x g s =
     let m = ema b1 s.(0) g and n = ema b2 s.(1) (Nx.mul g g) in
-    let t = Nx.cast dt step in
-    let c1 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b1) t) in
-    let c2 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b2) t) in
-    (apply t x (Nx.div m c1) (Nx.div n c2), [| m; n |])
+    (apply w x (Nx.div m (at c1 w)) (Nx.div n (at c2 w)), [| m; n |])
   in
   let params, parts =
     leafwise fn p ~params ~grads [ ("mu", st.mu); ("nu", st.nu) ] ~f
@@ -392,38 +439,48 @@ let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
 
 let radam_init = adam_init
 
-(* Like the bias corrections, every scalar of the rectification derives from
-   [b2] at the leaf's dtype, [rho_inf] included, so that [rho], the small
-   difference of two terms near [rho_inf], is taken between terms of one
-   [b2]. *)
+(* The first step at which [rho] reaches 5, where RAdam starts rectifying. It
+   depends on [b2] alone, so it is found on the host in float64 and the step
+   compares it with the integer counter, exactly whatever the leaves' dtype.
+   [rho] rises with [t] towards [rho_inf], so the search ends; it never reaches
+   5 when [rho_inf] does not exceed it. *)
+let radam_switch b2 =
+  let rho_inf = (2.0 /. (1.0 -. b2)) -. 1.0 in
+  let rho t =
+    let x = t *. Float.log b2 in
+    rho_inf -. (2.0 *. t *. Float.exp x /. -.Float.expm1 x)
+  in
+  let rec first t =
+    if t >= Int32.to_int Int32.max_int then Int32.max_int
+    else if rho (float t) >= 5.0 then Int32.of_int t
+    else first (t + 1)
+  in
+  if rho_inf <= 5.0 then Int32.max_int else first 1
+
 let radam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
   let fn = "Vega.radam_step" in
   validate_adam fn ~b1 ~b2 ~eps;
-  let apply t x mu_hat nu_hat =
-    let dt = Nx.dtype x in
-    let c v = scalar dt v in
-    let b2 = c b2 in
-    let rho_inf = Nx.sub (Nx.div (c 2.0) (Nx.sub (c 1.0) b2)) (c 1.0) in
-    let b2t = Nx.pow b2 t in
-    let rho =
-      Nx.sub rho_inf
-        (Nx.div (Nx.mul (Nx.mul (c 2.0) t) b2t) (Nx.sub (c 1.0) b2t))
-    in
-    let r =
-      Nx.sqrt
-        (Nx.div
-           (Nx.mul (Nx.mul (Nx.sub rho (c 4.0)) (Nx.sub rho (c 2.0))) rho_inf)
-           (Nx.mul
-              (Nx.mul (Nx.sub rho_inf (c 4.0)) (Nx.sub rho_inf (c 2.0)))
-              rho))
-    in
-    let d =
-      Nx.where
-        (Nx.greater rho (c 5.0))
-        (Nx.mul r (adam_direction ~eps mu_hat nu_hat))
-        mu_hat
-    in
-    descend ~lr x d
+  let rho_inf = (2.0 /. (1.0 -. b2)) -. 1.0 in
+  let step = Nx.add_s st.step 1l in
+  let rectified = Nx.greater_equal_s step (radam_switch b2) in
+  let r =
+    counted (fun dt ->
+        let c v = scalar dt v in
+        let t = Nx.cast dt step in
+        let x = Nx.mul t (c (Float.log b2)) in
+        let tail =
+          Nx.div (Nx.mul (Nx.mul (c 2.0) t) (Nx.exp x)) (one_minus_exp x)
+        in
+        let rho = Nx.sub (c rho_inf) tail in
+        let k = rho_inf /. ((rho_inf -. 4.0) *. (rho_inf -. 2.0)) in
+        Nx.sqrt
+          (Nx.div
+             (Nx.mul (Nx.mul (Nx.sub rho (c 4.0)) (Nx.sub rho (c 2.0))) (c k))
+             rho))
+  in
+  let apply w x mu_hat nu_hat =
+    let rectification = Nx.mul (at r w) (adam_direction ~eps mu_hat nu_hat) in
+    descend ~lr x (Nx.where rectified rectification mu_hat)
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
@@ -471,7 +528,7 @@ let rmsprop_step p ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.0) st ~params
   validate_unit_interval fn "decay" decay;
   validate_positive fn "eps" eps;
   validate_unit_interval fn "momentum" momentum;
-  let f x g s =
+  let f _ x g s =
     let dt = Nx.dtype x in
     let nu = ema decay s.(0) (Nx.mul g g) in
     let u = Nx.div g (Nx.add (Nx.sqrt nu) (scalar dt eps)) in
@@ -506,7 +563,7 @@ let adagrad_init p params =
 let adagrad_step p ~lr ?(eps = 1e-8) st ~params ~grads =
   let fn = "Vega.adagrad_step" in
   validate_positive fn "eps" eps;
-  let f x g s =
+  let f _ x g s =
     let s = Nx.add s.(0) (Nx.mul g g) in
     let d = Nx.div g (Nx.add (Nx.sqrt s) (scalar (Nx.dtype x) eps)) in
     (descend ~lr x d, [| s |])
@@ -557,7 +614,7 @@ let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
   validate_unit_interval fn "b3" b3;
   validate_positive fn "eps" eps;
   validate_non_negative fn "weight_decay" weight_decay;
-  let f x g s =
+  let f _ x g s =
     let dt = Nx.dtype x in
     let dg = Nx.sub g s.(3) in
     let mu = ema b1 s.(0) g and delta = ema b2 s.(1) dg in
@@ -611,7 +668,7 @@ let lion_step p ~lr ?(b1 = 0.9) ?(b2 = 0.99) st ~params ~grads =
   let fn = "Vega.lion_step" in
   validate_unit_interval fn "b1" b1;
   validate_unit_interval fn "b2" b2;
-  let f x g s =
+  let f _ x g s =
     (descend ~lr x (Nx.sign (ema b1 s.(0) g)), [| ema b2 s.(0) g |])
   in
   let params, parts = leafwise fn p ~params ~grads [ ("mu", st.mu) ] ~f in
@@ -671,14 +728,17 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
   validate_positive fn "eps" eps;
   validate_positive fn "clipping_threshold" clipping_threshold;
   let step = Nx.add_s st.step 1l in
-  let f x g s =
+  (* An average keeps [1 - t^-decay_rate] of its old value and takes
+     [t^-decay_rate] of the new one, [exp e] for [e = -decay_rate log t]. *)
+  let exponent dt =
+    Nx.mul (Nx.log (Nx.cast dt step)) (scalar dt (-.decay_rate))
+  in
+  let keep = counted (fun dt -> one_minus_exp (exponent dt)) in
+  let fresh = counted (fun dt -> Nx.exp (exponent dt)) in
+  let f w x g s =
     let dt = Nx.dtype x in
-    let one = scalar dt 1.0 and eps = scalar dt eps in
-    (* [t^-decay_rate] as [exp (-decay_rate * log t)]: compiled code lowers
-       [pow] only for a constant base or an integer or half-integer exponent. *)
-    let decay = Nx.mul (Nx.log (Nx.cast dt step)) (scalar dt (-.decay_rate)) in
-    let b = Nx.sub one (Nx.exp decay) in
-    let average m v = Nx.add (Nx.mul m b) (Nx.mul v (Nx.sub one b)) in
+    let eps = scalar dt eps in
+    let average m v = Nx.add (Nx.mul m (at keep w)) (Nx.mul v (at fresh w)) in
     let g2 = Nx.mul g g in
     let n = Nx.ndim x in
     let u, s =
@@ -693,7 +753,9 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
         (Nx.div g (Nx.add (Nx.sqrt nu) eps), [| s.(0); s.(1); nu |])
     in
     let rms = Nx.sqrt (Nx.mean (Nx.mul u u)) in
-    let clip = Nx.minimum one (Nx.div (scalar dt clipping_threshold) rms) in
+    let clip =
+      Nx.minimum (scalar dt 1.0) (Nx.div (scalar dt clipping_threshold) rms)
+    in
     (descend ~lr x (Nx.mul u clip), s)
   in
   let parts = [ ("nu_row", st.nu_row); ("nu_col", st.nu_col); ("nu", st.nu) ] in

@@ -80,6 +80,10 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- Steps compute at float32, or float64 for a float64 leaf, and store each leaf
+  at its own dtype: `adam_step` no longer returns NaN on float16 or bfloat16
+  leaves, and RAdam switches at the exact step with its rectification accurate
+  in float32.
 - **Breaking** (relative to earlier unreleased revisions): the per-tensor tier
   is removed. Its state was opaque, carried its own chain and covered one
   tensor, so it could neither be a compiled step's argument nor be saved by
@@ -126,10 +130,10 @@ All notable changes to this project will be documented in this file.
   `int32` tensor, the number of completed steps. A host `int` counter burned
   the Adam bias corrections into the trace at compile time and replayed them
   stale on every later call; the tensor counter tracks correctly under `jit`,
-  and the corrections `1 - b^t` are derived from it inside each step, per
-  leaf at the leaf's dtype (`float64` parameters keep their exact analytic
-  corrections). The state carries nothing the counter does not determine, so
-  checkpoints hold the moments plus one scalar.
+  and the corrections `1 - b^t` are derived from it inside each step
+  (`float64` parameters keep their exact analytic corrections). The state
+  carries nothing the counter does not determine, so checkpoints hold the
+  moments plus one scalar.
 - **Breaking:** the structural step functions take the learning rate as a
   scalar tensor: `~lr:(float, 'b) Nx.t`, cast to each leaf's dtype. `Vega.lr
   v` is the constant-rate helper (`Nx.scalar Nx.float32 v`; any float dtype

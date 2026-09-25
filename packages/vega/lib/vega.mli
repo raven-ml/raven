@@ -63,7 +63,7 @@
 
 (** {1:structures Parameters and states}
 
-    A function over parameters walks its values with their structure [p]. Three
+    A function over parameters walks its values with their structure [p]. Four
     rules hold:
 
     - {b One skeleton.} The parameters, the gradients and each part of a state
@@ -89,7 +89,16 @@
       {!lbfgs_ptree} are a state's structure over [p]. A state's leaf paths are
       its field name followed by the parameter's path ([mu.blocks.0.w]), and
       [step] for the counter, so a state is named in a compiled step's signature
-      and saved with its paths as checkpoint names. *)
+      and saved with its paths as checkpoint names.
+    - {b Precision.} A step computes each leaf at float32, or at float64 for a
+      float64 leaf, and returns the parameters and the state at their own
+      dtypes, so a float16 or bfloat16 leaf is rounded once, when stored.
+      Constants that depend only on hyperparameters are computed on the host in
+      float64; scalars of the step counter, once per step at the leaf's compute
+      dtype, [1 - b^t] without cancellation. A low-precision state still rounds
+      what it stores: a bfloat16 moving average whose decay is below half its
+      spacing does not decay. {!lbfgs_step} keeps its scalars at the objective's
+      dtype instead. *)
 
 (** {1:schedules Learning-Rate Schedules}
 
@@ -383,8 +392,8 @@ val adam_step :
     [lr] is a scalar tensor ({!lr}). [b1] defaults to [0.9], [b2] to [0.999],
     [eps] to [1e-8]; they are compile-time constants, safe captures under
     {!Rune.val-jit}. The bias corrections are derived from the state's counter
-    per leaf, at the leaf's dtype, in tensor arithmetic, so the whole step
-    traces and the returned state feeds the next call.
+    in tensor arithmetic (see {!section-structures} for their precision), so the
+    whole step traces and the returned state feeds the next call.
 
     Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\) or [eps] is
     not positive, or as {!section-structures} states if [grads], [st.mu] or
@@ -446,14 +455,16 @@ val radam_step :
     rho     = rho_inf - 2 t b2^t / (1 - b2^t)
     r       = sqrt ((rho - 4) (rho - 2) rho_inf
                     / ((rho_inf - 4) (rho_inf - 2) rho))
-    d       = r * mu_hat / (sqrt nu_hat + eps)   if rho > 5
+    d       = r * mu_hat / (sqrt nu_hat + eps)   if t >= t*
               mu_hat                             otherwise
     p'      = p - lr * d
     v}
 
-    Defaults and the counter's role are {!adam_step}'s; the choice between the
-    two forms is a tensor [where] on the counter, so the step traces under
-    {!Rune.val-jit}.
+    where [t*] is the first step at which [rho] reaches [5]. [t*] depends on
+    [b2] alone: it is found on the host in float64 and compared with the integer
+    counter, so the switch is exact at any leaf dtype, and the choice between
+    the two forms is a tensor [where] that traces under {!Rune.val-jit}.
+    Defaults and the counter's role are {!adam_step}'s.
 
     Raises [Invalid_argument] as {!adam_step} does. *)
 

@@ -668,6 +668,118 @@ let test_adafactor_factors_matrices () =
     [ ([||], [||]); ([||], [||]); ([| 2; 3 |], [| 3 |]) ]
     (shapes (Vega.adafactor_init Wb.ptree ~factored:false params))
 
+(* Precision *)
+
+(* Every step, one step on a float16 or bfloat16 leaf. At the leaf's dtype,
+   Adam's [eps] rounds to zero in float16 and [b2] to one in bfloat16, either of
+   which makes a zero-gradient element NaN; steps compute at float32 and round
+   once. The rate is 0.1 so that a move exceeds bfloat16's spacing at 3. *)
+let low_precision (type b) (dt : (float, b) Nx.dtype) () =
+  let p = Nx.Ptree.tensor and lr = Vega.lr 0.1 in
+  let params = Nx.create dt [| 3 |] [| 1.0; 2.0; 3.0 |] in
+  let grads = Nx.create dt [| 3 |] [| 0.5; 0.0; -0.5 |] in
+  let check name (updated, _) =
+    let before = Nx.to_array (Nx.cast Nx.float64 params)
+    and after = Nx.to_array (Nx.cast Nx.float64 updated) in
+    Array.iteri
+      (fun i x ->
+        is_true
+          ~msg:(Printf.sprintf "%s: element %d is finite" name i)
+          (Float.is_finite x))
+      after;
+    is_true
+      ~msg:(name ^ ": a nonzero gradient moves its element")
+      (after.(0) < before.(0) && after.(2) > before.(2))
+  in
+  check "sgd"
+    (Vega.sgd_step p ~lr ~momentum:0.9 (Vega.sgd_init p params) ~params ~grads);
+  check "lars" (Vega.lars_step p ~lr (Vega.lars_init p params) ~params ~grads);
+  check "adam" (Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads);
+  check "adamw"
+    (Vega.adamw_step p ~lr (Vega.adamw_init p params) ~params ~grads);
+  check "radam"
+    (Vega.radam_step p ~lr (Vega.radam_init p params) ~params ~grads);
+  check "lamb" (Vega.lamb_step p ~lr (Vega.lamb_init p params) ~params ~grads);
+  check "rmsprop"
+    (Vega.rmsprop_step p ~lr (Vega.rmsprop_init p params) ~params ~grads);
+  check "adagrad"
+    (Vega.adagrad_step p ~lr (Vega.adagrad_init p params) ~params ~grads);
+  check "adan" (Vega.adan_step p ~lr (Vega.adan_init p params) ~params ~grads);
+  check "lion" (Vega.lion_step p ~lr (Vega.lion_init p params) ~params ~grads);
+  check "adafactor"
+    (Vega.adafactor_step p ~lr (Vega.adafactor_init p params) ~params ~grads);
+  let adam, _ = Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads in
+  equal ~msg:"adam leaves a zero-gradient element" (float 1e-9) 2.0
+    (Nx.item [ 1 ] (Nx.cast Nx.float64 adam))
+
+(* [radam_switch b2] is the first step at which RAdam's [rho] reaches 5, in
+   float64 from the closed form. *)
+let radam_switch b2 =
+  let rho_inf = (2.0 /. (1.0 -. b2)) -. 1.0 in
+  let rec first t =
+    let bt = b2 ** Float.of_int t in
+    if rho_inf -. (2.0 *. Float.of_int t *. bt /. (1.0 -. bt)) >= 5.0 then t
+    else first (t + 1)
+  in
+  first 1
+
+(* With a constant unit gradient, Adam's bias-corrected average is one, so a
+   momentum step moves the parameter by exactly the rate and a rectified one by
+   [r], below one. The first step that does not move by the rate is the switch,
+   which must be the exact one in float32 for every [b2], including the ones at
+   which a float32 [rho] crossed 5 a step early. *)
+let test_radam_switch_is_exact () =
+  let p = Nx.Ptree.tensor and lr = Vega.lr 1.0 in
+  List.iter
+    (fun b2 ->
+      let grads = Nx.create Nx.float32 [| 1 |] [| 1.0 |] in
+      let rec switch t params st =
+        let params', st = Vega.radam_step p ~lr ~b2 st ~params ~grads in
+        let moved = Nx.item [ 0 ] params -. Nx.item [ 0 ] params' in
+        if Float.abs (moved -. 1.0) > 1e-3 || t = 12 then t
+        else switch (t + 1) params' st
+      in
+      let params = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
+      equal
+        ~msg:(Printf.sprintf "b2 = %g" b2)
+        int (radam_switch b2)
+        (switch 1 params (Vega.radam_init p params)))
+    [
+      0.8; 0.9; 0.99; 0.998; 0.99857854705; 0.9986040462; 0.999; 0.9999; 0.99999;
+    ]
+
+(* RAdam at [b2 = 0.9999] in float32 against float64, over the rectified steps 6
+   to 12: [rho] is the small difference of two terms near 19999 there. Computing
+   [1 - b2^t] as [1 - pow b2 t] at float32 puts this displacement off by 3.5%,
+   the step's [-expm1] form by 2e-5. *)
+let radam_rectified (type b) (dt : (float, b) Nx.dtype) step =
+  let target = Nx.create dt [| 3 |] [| 1.0; -2.0; 0.5 |] in
+  let rec go k params st acc =
+    if k = 12 then List.rev acc
+    else
+      let grads = Nx.mul_s (Nx.sub params target) 2.0 in
+      let params, st = step st ~params ~grads in
+      go (k + 1) params st (Nx.to_array (Nx.cast Nx.float64 params) :: acc)
+  in
+  let params = Nx.zeros dt [| 3 |] in
+  let path = go 0 params (Vega.radam_init Nx.Ptree.tensor params) [] in
+  Array.map2 ( -. ) (List.nth path 11) (List.nth path 5)
+
+let test_radam_rectification_in_float32 () =
+  let step st ~params ~grads =
+    Vega.radam_step Nx.Ptree.tensor ~lr:(Vega.lr 0.1) ~b2:0.9999 st ~params
+      ~grads
+  in
+  let f32 = radam_rectified Nx.float32 step
+  and f64 = radam_rectified Nx.float64 step in
+  Array.iteri
+    (fun i d ->
+      let rel = Float.abs (f32.(i) -. d) /. Float.abs d in
+      is_true
+        ~msg:(Printf.sprintf "element %d: relative error %g" i rel)
+        (rel <= 1e-4))
+    f64
+
 let test_ported_steps_validate () =
   let params = vec [| 1.0 |] in
   let lr = Vega.lr 0.1 in
@@ -1176,6 +1288,14 @@ let tests =
         test "adafactor factors the leaves of two axes"
           test_adafactor_factors_matrices;
         test "steps reject bad hyperparameters" test_ported_steps_validate;
+      ];
+    group "precision"
+      [
+        test "float16 steps stay finite" (low_precision Nx.float16);
+        test "bfloat16 steps stay finite" (low_precision Nx.bfloat16);
+        test "radam switches at the exact step" test_radam_switch_is_exact;
+        test "radam rectifies in float32 as in float64"
+          test_radam_rectification_in_float32;
       ];
     group "optimizer state as a structure"
       [
