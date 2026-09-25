@@ -358,6 +358,56 @@ CAMLprim value caml_tolk_cuda_hcq_synchronize(value v_queue) {
   CAMLreturn(Val_unit);
 }
 
+/* Await only a captured timeline value. Synchronizing the context here
+   would also drain later submissions that never accessed the host owner. */
+static double hcq_clock_ms(void) {
+#if defined(_WIN32)
+  LARGE_INTEGER tick, frequency;
+  QueryPerformanceCounter(&tick);
+  QueryPerformanceFrequency(&frequency);
+  return 1000.0 * (double)tick.QuadPart / (double)frequency.QuadPart;
+#else
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1e6;
+#endif
+}
+
+CAMLprim value caml_tolk_cuda_hcq_await(value v_queue, value v_signal,
+                                      value v_goal, value v_timeout) {
+  CAMLparam4(v_queue, v_signal, v_goal, v_timeout);
+  tolk_cuda_queue *q = (tolk_cuda_queue *)Nativeint_val(v_queue);
+  volatile uint64_t *signal = (volatile uint64_t *)Nativeint_val(v_signal);
+  uint64_t goal = Int64_val(v_goal);
+  int timeout_ms = Int_val(v_timeout);
+  caml_release_runtime_system();
+  double started = hcq_clock_ms();
+  uint64_t previous = 0;
+  for (;;) {
+    uint64_t done = tolk_cuda_hcq_poll(q, signal);
+    if (done >= goal) break;
+    if (done != previous) { previous = done; started = hcq_clock_ms(); }
+    else if (hcq_clock_ms() - started > timeout_ms) {
+      pthread_mutex_lock(&q->lock);
+      queue_status(q, 702); /* CUDA_ERROR_LAUNCH_TIMEOUT */
+      pthread_mutex_unlock(&q->lock);
+      break;
+    }
+#if defined(_WIN32)
+    Sleep(0);
+#else
+    struct timespec pause = {0, 10000};
+    nanosleep(&pause, NULL);
+#endif
+  }
+  pthread_mutex_lock(&q->lock);
+  CUresult status = q->status;
+  pthread_mutex_unlock(&q->lock);
+  caml_acquire_runtime_system();
+  cuda_check(status);
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value caml_tolk_cuda_hcq_symbol(value v_name) {
   CAMLparam1(v_name);
   const char *name = String_val(v_name);

@@ -367,7 +367,11 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
     "array_count", 12; "simd_arrays_per_engine", 2; "max_slots_scratch_cu", 32] in
   let hw = if multi then gfx942 () else gfx1100 () in
   let hw = {hw with Tolk_amd.is_aql = aql} in
-  let queue = Device.{timestamp_divider = 100.; prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
+  let queue = Device.{timestamp_divider = 100.; completion = (fun () ->
+      match !timeline with
+      | None -> fun () -> ()
+      | Some tl -> let value = Timeline.submitted tl in
+          fun () -> Timeline.guarded_wait tl (fun () -> Signal.wait tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
     host = "CPU"; copy = (fun _ -> true);
     encode = Tolk_amd.Encoded_queue.encode hw ~props ~name:device_name
         ~compute_ring_size:4096 ~copy_ring_size:(Some 4096);

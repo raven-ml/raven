@@ -2469,9 +2469,21 @@ module Queue = struct
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
     let copy call = match U.as_call call with
       | Some {args; _} -> List.for_all (fun arg ->
-          U.device_of arg = Some (U.Single state.State.name)) args
+          match U.device_of arg with
+          | Some (U.Single name) ->
+              List.hd (String.split_on_char ':' name) = "CPU"
+              || Device.peer_group (Device.get name) = Device.peer_group (Device.get state.State.name)
+          | _ -> false) args
       | None -> false in
-    Device.{timestamp_divider = 1000.; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+    let completion () =
+      let timeline = state.State.tl in
+      let value = Timeline.submitted timeline in
+      fun () ->
+        State.check_submission state;
+        (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
+        Timeline.guarded_wait timeline (fun () ->
+            Hcq.Signal.wait timeline.Timeline.timeline value) in
+    Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
       encode = Encoded_queue.encode state.State.hw ~name:state.State.name
         ~compute_entries:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring / 8)
         ~copy_entries:(Hcq.Mmio.size state.State.dma_queue.Queue_desc.ring / 8)
@@ -2666,6 +2678,7 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
             (Tolk_nvrtc.Compiler_nvrtc.create ~ptx:false ~cache_key:"nv" target.arch)
             (Tolk.Cstyle.cuda ~device:"NV" arch)) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
+    ~peer_group:(if Option.is_some iface.Nv_iface.nvdev then "PCIDevice" else "NV")
     ~runtime:(Runtime.runtime state)
     ~synchronize:(fun () -> State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)

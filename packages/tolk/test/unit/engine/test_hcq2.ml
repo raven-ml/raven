@@ -168,13 +168,17 @@ let compiled_host_submission () =
             if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
         Some (U.group nodes)
     | _ -> None in
+  let completions = ref [] in
+  let completion () =
+    let value = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 8 in
+    fun () -> completions := value :: !completions in
   let compilations = ref 0 in
   let compile sink =
     incr compilations;
     let program = Codegen.to_program ~optimize:false host (Device.renderer host) sink in
     Spec.type_verify Spec.program_spec (U.src program).(0);
     program in
-  let queue = Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
+  let queue = Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
     compile} in
   let renderer_set = Device.Renderer_set.make ~device:name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
@@ -301,6 +305,10 @@ let compiled_host_submission () =
                  compute (ptr 2) (ptr 1)]) in
   let imported = U.import (U.export template) in
   equal string (U.semantic_key template) (U.semantic_key imported);
+  (match U.arg (U.without_after (List.hd (U.children imported))) with
+   | U.Arg.Call_info {aux = Some info; _} ->
+       equal (list (pair string string)) [("CPU:unmappable", name)] info.host_deps
+   | _ -> fail "import lost host dependencies");
   let transfer = Realize.link_linear binding imported in
   let middle = buffer 0l and output = buffer 0l in
   let before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
@@ -315,6 +323,9 @@ let compiled_host_submission () =
   replay transfer [|foreign; middle; output|];
   equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
   equal int64 (Int64.succ before) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+  equal (list int64) [] !completions;
+  Device.synchronize owner;
+  equal (list int64) [Int64.succ before] !completions;
   let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
   let compiled = Realize.compile_linear ~device ~to_program
       (U.linear [U.store_call ~dst ~src]) in

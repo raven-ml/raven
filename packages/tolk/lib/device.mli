@@ -96,6 +96,10 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 type queue = {
   timestamp_divider : float; (** Clock ticks per microsecond. *)
+  completion : unit -> (unit -> unit);
+      (** [completion ()] captures submitted work without waiting and returns a
+          function that waits for that work. Later submissions do not extend
+          the wait. The function retains its backend state. *)
   prepare : unit -> unit;
       (** Prepares shared runtime state before each compiled submission. *)
   host : string; (** Host device executing submission programs. *)
@@ -140,23 +144,30 @@ val make :
   runtime:runtime ->
   synchronize:(unit -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
+  ?peer_group:string ->
   ?queue:queue ->
   ?bufferize:(Tolk_uop.Uop.t -> Buffer.t option) ->
   unit ->
   t
 (** [make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches ?queue ?bufferize ()] is a device runtime, registered under its
+    ?invalidate_caches ?peer_group ?queue ?bufferize ()] is a device runtime, registered under its
     canonical [name] for graph-owned buffers to resolve their allocator.
 
     [runtime obj] loads a compiled binary and returns a dispatch handle.
 
     [synchronize ()] blocks until all pending work on the device completes.
 
+    [peer_group] identifies devices sharing compatible memory mappings and
+    queue signals. It defaults to the backend prefix of [name].
+
     [queue] supplies host compilation hooks. [bufferize] resolves backend
     allocation descriptors during linking, returning [None] for generic storage. *)
 
 val name : t -> string
 (** [name d] is [d]'s device name. *)
+
+val peer_group : t -> string
+(** [peer_group d] identifies devices compatible with [d] for queue batching. *)
 
 val renderer : t -> Renderer.t
 (** [renderer d] is the active renderer. *)
@@ -177,8 +188,15 @@ val queue_runtime : t -> runtime
 
 val synchronize : t -> unit
 (** [synchronize d] blocks until all pending work on [d] completes, then
-    collects registered queue timestamps. Failed synchronization retains
+    waits for recorded foreign memory accesses and collects registered queue
+    timestamps. Failed synchronization retains
     pending records for a later retry. *)
+
+val depend_on : t -> t -> unit
+(** [depend_on owner source] records completion of work already submitted to
+    [source] that accesses [owner] memory. It does not wait. Repeated calls
+    retain only the latest completion for each source.
+    Raises [Invalid_argument] if a distinct [source] has no queue. *)
 
 val profile : t -> Profile.event list
 (** [profile d] synchronizes [d] and returns the collected profiling events,

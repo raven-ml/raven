@@ -345,6 +345,12 @@ let lower_call queue devices calls independent_accesses timestamps sink =
       device, position 0 (U.buf_uop start) args,
       (Deps_tracker.uop start).start / 8 + 1, (Deps_tracker.uop finish).start / 8 + 1) timestamps;
     independent_accesses = List.map (fun (a, b) -> position 0 a args, position 0 b args) independent_accesses;
+    host_deps = List.concat_map (fun (c : call) ->
+        fst (arguments c.call) |> List.filter_map (fun arg ->
+          match U.device_of arg with
+          | Some (U.Single owner) when not (List.mem (Device.canonicalize owner) devices) ->
+              Some (Device.canonicalize owner, c.device)
+          | _ -> None)) calls |> List.sort_uniq Stdlib.compare;
     inputs; outputs = List.map (fun u -> position 0 u args) written;
     accesses = List.map (fun c -> List.map (fun u -> position 0 u args)
         (fst (arguments c.call))) calls} in
@@ -426,8 +432,8 @@ let compile ?(profile = false) linear =
   List.iter (fun call -> match enqueue call with
       | None -> flush (); result := call :: !result
       | Some c ->
-          (* Peer groups will extend this boundary when backend peer mapping is ported. *)
-          if !group <> Some c.device then flush ();
-          group := Some c.device; batch := c :: !batch) (U.children linear);
+          let peer_group = Device.peer_group (Device.get c.device) in
+          if !group <> Some peer_group then flush ();
+          group := Some peer_group; batch := c :: !batch) (U.children linear);
   flush ();
   U.linear (List.rev !result)

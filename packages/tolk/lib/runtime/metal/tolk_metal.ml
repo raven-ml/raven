@@ -514,7 +514,12 @@ module Queue = struct
 
   let create state device_name =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
-    Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = Device.name host; copy = (fun _ -> false); encode = encode device_name; lower = lower device_name;
+    let completion () =
+      let value = match state.State.timeline with
+        | None -> 0L
+        | Some timeline -> Bytes.get_int64_le (B.as_bytes timeline) 8 in
+      fun () -> Ffi.hcq_wait state.State.context value in
+    Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> ()); host = Device.name host; copy = (fun _ -> false); encode = encode device_name; lower = lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
 end
 

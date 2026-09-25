@@ -72,6 +72,7 @@ module Ffi = struct
 
   external hcq_create : nativeint -> nativeint = "caml_tolk_cuda_hcq_create"
   external hcq_destroy : nativeint -> unit = "caml_tolk_cuda_hcq_destroy"
+  external hcq_await : nativeint -> nativeint -> int64 -> int -> unit = "caml_tolk_cuda_hcq_await"
   external hcq_synchronize : nativeint -> unit = "caml_tolk_cuda_hcq_synchronize"
   external hcq_symbol : string -> nativeint = "caml_tolk_cuda_hcq_symbol"
   external program_function : nativeint -> nativeint = "caml_tolk_cuda_program_function"
@@ -350,7 +351,18 @@ module Queue = struct
               List.mem (List.hd (String.split_on_char ':' name)) ["CUDA"; "CPU"]
           | _ -> false) args
       | None -> false in
-    Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = Device.name host; copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
+    let completion () =
+      match state.State.timeline with
+      | None -> fun () -> ()
+      | Some timeline ->
+          let address = B.addr timeline in
+          let bytes = Bytes.create 8 in
+          Ffi.host_read bytes (Nativeint.add address 8n);
+          let value = Bytes.get_int64_le bytes 0 in
+          fun () ->
+            Ffi.hcq_await state.State.queue address value (Helpers.getenv "HCQDEV_WAIT_TIMEOUT_MS" 30000);
+            ignore (Sys.opaque_identity timeline) in
+    Device.{timestamp_divider = 1000.; completion; prepare = (fun () -> ()); host = Device.name host; copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
 end
 

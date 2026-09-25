@@ -239,6 +239,7 @@ type queue_info = {
   outputs : int list; (** Written arguments of the original calls. *)
   timings : (string * int * int * int) list; (** Device, argument slot and start/end uint64 word offsets. *)
   independent_accesses : (int * int) list; (** Argument pairs that must not overlap at replay. *)
+  host_deps : (string * string) list; (** Memory owner and submitting device outside the batch timelines. *)
   accesses : int list list; (** Argument slots touched by each original dispatch, in order. *)
 }
 (** Metadata for compiled hardware-queue submission. *)

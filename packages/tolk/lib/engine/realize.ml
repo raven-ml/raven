@@ -924,6 +924,8 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
           let started = if ctx.wait then Unix.gettimeofday () else 0. in
           ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
           incr queue_submissions;
+          List.iter (fun (owner, source) ->
+              Device.depend_on (Device.get owner) (Device.get source)) submission.host_deps;
           if Helpers.getenv "PROFILE" 0 <> 0 then
             List.iteri (fun i (device, slot, first, last) ->
                 let name, queue = match List.nth_opt submission.fallback i with

@@ -44,4 +44,5 @@ val patch :
 
 val compile : ?profile:bool -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [compile ?profile linear] encodes calls supported by their device's queue hooks into
-    host programs. Other calls remain individual dispatches. *)
+    host programs, combining adjacent calls from the same peer group. Other
+    calls remain individual dispatches. *)

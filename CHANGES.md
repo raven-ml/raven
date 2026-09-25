@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Compatible accelerator peers share compiled queue batches. Host-device
+  synchronization waits for captured foreign memory accesses, and AMD/NV
+  host and peer copies can use the shared queue protocol.
+
 - Compiled queue replay binds cached storage mappings without synchronizing
   their owners. Direct runtime calls and native transfers still wait for foreign
   storage users, preserving safety while queue fences control asynchronous work.

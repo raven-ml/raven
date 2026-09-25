@@ -80,6 +80,7 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 
 type queue = {
   timestamp_divider : float;
+  completion : unit -> (unit -> unit);
   prepare : unit -> unit;
   host : string;
   copy : Tolk_uop.Uop.t -> bool;
@@ -129,6 +130,7 @@ type pending_timing = { buffer : Buffer.t; first : int; last : int; label : stri
 
 type t = {
   name : string;
+  peer_group : string;
   allocator : Allocator.packed;
   renderer_set : Renderer_set.t;
   runtime : runtime;
@@ -136,7 +138,9 @@ type t = {
   invalidate_caches_fn : (unit -> unit) option;
   queue : queue option;
   bufferize : Uop.t -> Buffer.t option;
-  profile_lock : Mutex.t;
+  synchronize_lock : Mutex.t;
+  pending_lock : Mutex.t;
+  pending_accesses : (string, unit -> unit) Hashtbl.t;
   pending_timings : (int * int, pending_timing) Hashtbl.t;
   mutable profile_events : Profile.event list;
 }
@@ -160,15 +164,18 @@ let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
 let opened : (string, t) Hashtbl.t = Hashtbl.create 8
 
 let make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches ?queue ?(bufferize = fun _ -> None) () =
-  let device = { name; allocator; renderer_set; runtime; synchronize;
+    ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None) () =
+  let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
+  let device = { name; peer_group; allocator; renderer_set; runtime; synchronize;
     invalidate_caches_fn = invalidate_caches; queue; bufferize;
-    profile_lock = Mutex.create (); pending_timings = Hashtbl.create 0;
+    synchronize_lock = Mutex.create (); pending_lock = Mutex.create ();
+    pending_accesses = Hashtbl.create 0; pending_timings = Hashtbl.create 0;
     profile_events = [] } in
   Hashtbl.replace opened (canonicalize name) device;
   device
 
 let name d = d.name
+let peer_group d = d.peer_group
 let renderer d = Renderer_set.select d.renderer_set
 let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
   let nbufs = List.fold_left (fun n (a : Tolk_uop.Tiny_elf.argument) ->
@@ -195,25 +202,37 @@ let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
 let runtime d = load_runtime ~ordered:false d
 let queue_runtime d = load_runtime ~ordered:true d
 
-let with_profile_lock d f =
-  Mutex.lock d.profile_lock;
-  Fun.protect ~finally:(fun () -> Mutex.unlock d.profile_lock) f
+let with_pending_lock d f =
+  Mutex.lock d.pending_lock;
+  Fun.protect ~finally:(fun () -> Mutex.unlock d.pending_lock) f
+
+let depend_on d source =
+  if d != source then begin
+    let queue = match source.queue with
+      | Some queue -> queue
+      | None -> invalid_arg "Device.depend_on: source has no queue" in
+    with_pending_lock d (fun () ->
+        Hashtbl.replace d.pending_accesses source.name (queue.completion ()))
+  end
 
 let record_timing d ~name ~queue ~buffer ~first ~last =
   if first < 0 || last < 0 || max first last >= Buffer.nbytes buffer / 8 then
     invalid_arg "Device.record_timing: timestamp outside storage";
   if Option.is_none d.queue then invalid_arg "Device.record_timing: device has no queue";
-  with_profile_lock d (fun () ->
+  with_pending_lock d (fun () ->
       Hashtbl.replace d.pending_timings (Buffer.id buffer, first)
         {buffer; first; last; label = name; queue_name = queue})
 
-let synchronize d =
-  let pending = with_profile_lock d (fun () ->
+let synchronize d = Mutex.protect d.synchronize_lock (fun () ->
+  let pending, accesses = with_pending_lock d (fun () ->
       let pending = Hashtbl.to_seq_values d.pending_timings |> List.of_seq in
       Hashtbl.clear d.pending_timings;
-      pending) in
+      let accesses = Hashtbl.to_seq d.pending_accesses |> List.of_seq in
+      Hashtbl.clear d.pending_accesses;
+      pending, accesses) in
   let events = try
     d.synchronize ();
+    List.iter (fun (_, wait) -> wait ()) accesses;
     match pending with
     | [] -> []
     | _ ->
@@ -232,17 +251,21 @@ let synchronize d =
               duration_us = Int64.to_float (Int64.sub finish start) /. divider}) pending
   with exn ->
     let backtrace = Printexc.get_raw_backtrace () in
-    with_profile_lock d (fun () -> List.iter (fun entry ->
+    with_pending_lock d (fun () ->
+      List.iter (fun (source, wait) ->
+          if not (Hashtbl.mem d.pending_accesses source) then
+            Hashtbl.add d.pending_accesses source wait) accesses;
+      List.iter (fun entry ->
         let key = Buffer.id entry.buffer, entry.first in
         if not (Hashtbl.mem d.pending_timings key) then
           Hashtbl.add d.pending_timings key entry) pending);
     Printexc.raise_with_backtrace exn backtrace in
   if events <> [] then
-    with_profile_lock d (fun () -> d.profile_events <- List.rev_append events d.profile_events)
+    with_pending_lock d (fun () -> d.profile_events <- List.rev_append events d.profile_events))
 
 let profile d =
   synchronize d;
-  with_profile_lock d (fun () ->
+  with_pending_lock d (fun () ->
       let events = List.rev d.profile_events in
       d.profile_events <- [];
       events)

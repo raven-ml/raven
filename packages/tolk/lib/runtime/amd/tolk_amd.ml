@@ -2282,9 +2282,21 @@ module Queue = struct
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
     let copy call = Option.is_some state.State.sdma_queue && match U.as_call call with
       | Some {args; _} -> List.for_all (fun arg ->
-          U.device_of arg = Some (U.Single state.State.name)) args
+          match U.device_of arg with
+          | Some (U.Single name) ->
+              List.hd (String.split_on_char ':' name) = "CPU"
+              || Device.peer_group (Device.get name) = Device.peer_group (Device.get state.State.name)
+          | _ -> false) args
       | None -> false in
-    Device.{timestamp_divider = 100.; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+    let completion () =
+      let timeline = state.State.tl in
+      let value = Timeline.submitted timeline in
+      fun () ->
+        State.check_submission state;
+        (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
+        Timeline.guarded_wait timeline (fun () ->
+            Hcq.Signal.wait timeline.Timeline.timeline value) in
+    Device.{timestamp_divider = 100.; completion; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
       encode = Encoded_queue.encode state.State.hw ~props:state.State.iface.Iface.props
         ~name:state.State.name ~compute_ring_size:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
         ~copy_ring_size:(Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) state.State.sdma_queue);
@@ -2462,6 +2474,7 @@ let open_device ~name iface =
           Tolk.Renderer.with_compiler (Compiler_amd.create ~arch:target.arch)
             (Tolk.Cstyle.amd arch)) ] in
   Tolk.Device.make ~name ~allocator ~renderer_set
+    ~peer_group:(if iface.Iface.is_am then "PCIDevice" else "AMD")
     ~runtime:(Runtime.runtime state)
     ~synchronize:(fun () -> State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)

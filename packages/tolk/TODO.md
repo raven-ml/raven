@@ -33,7 +33,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   reuse during long asynchronous batches.
 - Calibrate GPU and CPU profiling clocks for cross-device trace alignment.
   Port asynchronous two-slot queue staging for unsupported imports, including
-  peer-group batching and host-memory completion dependencies.
+  regrouping interleaved peer groups without weakening cross-group dependencies.
   Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register

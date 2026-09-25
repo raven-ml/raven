@@ -24,16 +24,17 @@ let program_call () =
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; dtype = Dtype.void; aux = None}
 
-let compile ?(profile = false) calls =
+let compile ?(profile = false) ?peer_group calls =
   let host = Tolk_cpu.create "CPU" in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let register queue_name =
     let renderer_set = Device.Renderer_set.make ~device:queue_name
         ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-    let queue = Device.{timestamp_divider = 1000.; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
+    let queue = Device.{timestamp_divider = 1000.; completion = (fun () () -> ()); prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
       encode = Queue.encode queue_name; lower = Queue.lower queue_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
-    ignore (Device.make ~name:queue_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
+    let peer_group = if queue_name = device_name then None else peer_group in
+    ignore (Device.make ?peer_group ~name:queue_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
       ~synchronize:(fun () -> ()) ~queue ()) in
   List.iter register [device_name; "CUDA:queue-peer"];
   Hcq2.compile ~profile (U.linear calls)
@@ -50,7 +51,30 @@ let symbols root = U.toposort ~enter_calls:true root |> List.filter_map (fun u -
         Some symbol
     | _ -> None) |> List.sort_uniq String.compare
 
+let peer slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 16)
+    ~device:(U.Single "CUDA:queue-peer") ()
+
 let () = run "CUDA queue compilation" [
+  test "compatible peers share a submission with cross-device dependencies" (fun () ->
+      let compiled = compile [U.store_call ~dst:(parameter 1) ~src:(parameter 0);
+          U.store_call ~dst:(peer 2) ~src:(parameter 1);
+          U.store_call ~dst:(peer 3) ~src:(peer 2)] in
+      equal int 1 (List.length (U.children compiled));
+      match U.arg (U.without_after (List.hd (U.children compiled))) with
+      | U.Arg.Call_info {aux = Some info; _} ->
+          equal (list string) [device_name; "CUDA:queue-peer"] info.devices;
+          equal int 3 (List.length info.accesses);
+          equal int 0 (List.length info.host_deps)
+      | _ -> fail "peers were not batched");
+  test "incompatible groups and ordinary calls retain batch boundaries" (fun () ->
+      let first = U.store_call ~dst:(parameter 1) ~src:(parameter 0)
+      and second = U.store_call ~dst:(peer 3) ~src:(peer 2) in
+      let compiled = compile ~peer_group:"separate" [first; second; first] in
+      equal int 3 (List.length (U.children compiled));
+      let ordinary = U.store_call
+          ~dst:(U.param ~slot:4 ~dtype:Dtype.int32 ~shape:(U.const_int 16) ~device:(U.Single "CPU") ())
+          ~src:(U.param ~slot:5 ~dtype:Dtype.int32 ~shape:(U.const_int 16) ~device:(U.Single "CPU") ()) in
+      equal int 3 (List.length (U.children (compile [first; ordinary; second]))));
   test "compiles mixed-width arguments and symbolic launch dimensions" (fun () ->
       let compiled = compile [program_call ()] in
       equal (list string) ["tolk_cuda_hcq_begin"; "tolk_cuda_hcq_launch";
@@ -76,6 +100,7 @@ let () = run "CUDA queue compilation" [
       match U.arg (U.without_after (List.hd (U.children compiled))) with
       | U.Arg.Call_info {aux = Some info; _} ->
           equal int 1 (List.length info.fallback);
+          equal (list (pair string string)) [("CPU", device_name)] info.host_deps;
           is_true (List.for_all (fun (_, d) -> d = device_name) info.inputs)
       | _ -> fail "host copy was not enqueued");
   test "profiles compute and copy calls with native host callbacks" (fun () ->

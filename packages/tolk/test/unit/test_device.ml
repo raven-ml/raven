@@ -418,7 +418,54 @@ let mappings_follow_storage_ownership () =
   ignore (get first source);
   equal int 1 (count "MAP_TARGET:1 map")
 
+let foreign_completion_dependencies () =
+  let owner = Tolk_cpu.create "CPU:pending-owner" in
+  let submitted = ref 0 and captured = ref 0 and waited = ref [] in
+  let fail_wait = ref false and during_wait = ref (fun () -> ()) in
+  let name = "PENDING:source" in
+  let renderer_set = Device.Renderer_set.make ~device:name
+      ["CLANG", (fun target -> Renderer.with_target target (Device.renderer owner))] in
+  let completion () =
+    incr captured;
+    let value = !submitted in
+    fun () ->
+      waited := value :: !waited;
+      !during_wait ();
+      if !fail_wait then failwith "pending access failed" in
+  let queue = Device.{timestamp_divider = 1.; completion; prepare = (fun () -> ());
+    host = Device.name owner; copy = (fun _ -> false); encode = (fun _ -> None);
+    lower = (fun _ -> None); compile = (fun _ -> fail "not compiled")} in
+  let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let source = Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime owner)
+      ~synchronize:(fun () -> fail "must not drain later source work") ~queue () in
+  equal string "PENDING" (Device.peer_group source);
+  submitted := 3;
+  Device.depend_on owner source;
+  submitted := 5;
+  Device.depend_on owner source;
+  submitted := 9;
+  equal int 2 !captured;
+  equal (list int) [] !waited;
+  Device.synchronize owner;
+  equal (list int) [5] !waited;
+  Device.synchronize owner;
+  equal (list int) [5] !waited;
+  Device.depend_on owner owner;
+  Device.depend_on owner source;
+  fail_wait := true;
+  raises (Failure "pending access failed") (fun () -> Device.synchronize owner);
+  (* A newer access recorded during a failed wait must survive restoration. *)
+  during_wait := (fun () -> submitted := 11; Device.depend_on owner source);
+  raises (Failure "pending access failed") (fun () -> Device.synchronize owner);
+  during_wait := (fun () -> ());
+  fail_wait := false;
+  Device.synchronize owner;
+  equal (list int) [11; 9; 9; 5] !waited;
+  Device.synchronize owner;
+  equal (list int) [11; 9; 9; 5] !waited
+
 let () = run __FILE__ [ copy_from_tests;
+  test "foreign access completion is captured, coalesced and retried" foreign_completion_dependencies;
   test "host storage owns zeroed pages suitable for GPU registration" (fun () ->
       List.iter (fun size ->
           let b = Device.create_buffer device ~size ~dtype:D.uint8
