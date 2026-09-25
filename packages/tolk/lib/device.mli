@@ -95,6 +95,8 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
     the order declared by its signature. *)
 
 type queue = {
+  prepare : unit -> unit;
+      (** Prepares shared runtime state before each compiled submission. *)
   host : string; (** Host device executing submission programs. *)
   copy : Tolk_uop.Uop.t -> bool; (** [copy call] whether this bulk-store call can use the device queue. *)
   encode : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option;

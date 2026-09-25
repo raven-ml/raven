@@ -503,7 +503,7 @@ module Queue = struct
 
   let create state device_name =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
-    Device.{host = Device.name host; copy = (fun _ -> false); encode = encode device_name; lower = lower device_name;
+    Device.{prepare = (fun () -> ()); host = Device.name host; copy = (fun _ -> false); encode = encode device_name; lower = lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
 end
 

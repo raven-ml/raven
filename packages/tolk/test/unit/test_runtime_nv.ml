@@ -67,7 +67,6 @@ let queue_desc ?(entries = 8) m =
     Tolk_nv.Queue_desc.ring = Mmio.view m ~off:0x2000 ~size:(entries * 8) ();
     gpput = Mmio.view m ~off:(0x2000 + (entries * 8)) ~size:4 ();
     token = 0x1abcd;
-    put_value = 0;
   }
 
 (* A signal whose value address has non-zero top bits, so encodings that
@@ -372,8 +371,7 @@ let timeline m =
   in
   {
     Timeline.timeline = sig_at 0x3000 0x200000010n;
-    shadow_timeline = sig_at 0x3010 0x200000020n;
-    timeline_value = 1;
+
     error_state = None;
     bounce = [||];
     bounce_timeline = [||];
@@ -635,16 +633,16 @@ let () =
                   Compute_queue.signal cq ~value:7 (signal m);
                   equal (array int)
                     [|
-                      0x20050017; 0x10; 2; 7; 0; 0x03100001; 0x20010008; 0;
+                      0x20050017; 0x10; 2; 7; 0; 0x01100001; 0x20010008; 0;
                     |]
                     (dwords cq)));
-          test "timestamp is a zero-valued signal" (fun () ->
+          test "timestamp captures the clock without a completion interrupt" (fun () ->
               with_fixture (fun m ->
                   let cq = Compute_queue.create (nv_dev m) in
                   Compute_queue.timestamp cq (signal m);
                   equal (array int)
                     [|
-                      0x20050017; 0x10; 2; 0; 0; 0x03100001; 0x20010008; 0;
+                      0x20050017; 0x10; 2; 0; 0; 0x03100001;
                     |]
                     (dwords cq)));
           test "memory_barrier" (fun () ->
@@ -738,7 +736,14 @@ let () =
                   let cq = Copy_queue.create (nv_dev m) in
                   Copy_queue.signal cq ~value:3 (signal m);
                   equal (array int)
-                    [| 0x20038090; 2; 0x10; 3; 0x200180c0; 0x14 |]
+                    [| 0x20038090; 2; 0x10; 3; 0x200180c0; 0x0c |]
+                    (copy_dwords cq)));
+          test "timestamp uses four words while completion preserves adjacent state" (fun () ->
+              with_fixture (fun m ->
+                  let cq = Copy_queue.create (nv_dev m) in
+                  Copy_queue.timestamp cq (signal m);
+                  equal (array int)
+                    [|0x20038090; 2; 0x10; 0; 0x200180c0; 0x14|]
                     (copy_dwords cq)));
           test "wait matches the compute encoding" (fun () ->
               with_fixture (fun m ->
@@ -883,7 +888,9 @@ let () =
                      (byte 96); its top nibble lands in the next word
                      without clobbering the enable bit set just before *)
                   equal int32 0x10l (Mmio.read32 qview 96);
-                  equal int32 0x800002l (Mmio.read32 qview 100);
+                  equal int32 0xa0800002l (Mmio.read32 qview 100);
+                  equal int 2 (Qmd.read q1 "release0_structure_size");
+                  equal int 1 (Qmd.read q1 "release0_payload64b");
                   equal int32 9l (Mmio.read32 qview 104);
                   equal int32 0l (Mmio.read32 qview 108);
                   (* a second signal takes the second slot, a third falls
@@ -900,6 +907,17 @@ let () =
         ];
       group "submit"
         [
+          test "direct submission follows a producer position written by compiled code" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m in
+                  let qd = queue_desc m in
+                  Mmio.write32 qd.Tolk_nv.Queue_desc.gpput 0 3l;
+                  let cq = Compute_queue.create dev in
+                  Compute_queue.wait cq ~value:5 (signal m);
+                  Compute_queue.submit cq qd;
+                  equal int64 0L (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
+                  equal int64 0x1a0000400000L (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 24);
+                  equal int32 4l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0)));
           test "stages the stream and rings the doorbell" (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev m in
@@ -916,7 +934,7 @@ let () =
                     (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
                   equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
                   equal int32 0x1abcdl (Mmio.read32 m 0x1090);
-                  equal int 1 qd.Tolk_nv.Queue_desc.put_value));
+                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
           test "resubmission stages a fresh copy and advances the ring"
             (fun () ->
               with_fixture (fun m ->
@@ -931,7 +949,7 @@ let () =
                   equal int64 0x1a0000400020L
                     (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 8);
                   equal int32 2l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
-                  equal int 2 qd.Tolk_nv.Queue_desc.put_value));
+                  equal int 2 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
           test "the staging page and the ring wrap" (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev ~cmdq_size:0x40 m in
@@ -951,7 +969,7 @@ let () =
                   equal int64 0x1a0000400000L
                     (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
                   equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
-                  equal int 3 qd.Tolk_nv.Queue_desc.put_value));
+                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
         ];
       group "iface wire formats"
         [
@@ -1237,8 +1255,8 @@ let () =
                   (match dev.Tolk_nv.shader_local_mem with
                   | Some b -> equal int 0x480000 (Buffer.size b)
                   | None -> fail "expected a backing store");
-                  equal int 2 tl.Timeline.timeline_value;
-                  equal int 1 qd.Tolk_nv.Queue_desc.put_value;
+                  equal int 1 (Timeline.submitted tl);
+                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0));
                   let expected =
                     let cq = Compute_queue.create dev in
                     Compute_queue.wait cq ~value:0 tl.Timeline.timeline;
@@ -1254,7 +1272,7 @@ let () =
                     ~num_tpc_per_gpc:3 ~num_sm_per_tpc:2 ~max_warps_per_sm:48
                     ~tl ~queue:qd 0x80;
                   equal int 1 (List.length !allocs);
-                  equal int 2 tl.Timeline.timeline_value));
+                  equal int 1 (Timeline.submitted tl)));
           test "out of memory reallocates the old size and restores the state"
             (fun () ->
               with_fixture (fun m ->
@@ -1292,8 +1310,8 @@ let () =
                   | None -> fail "expected a backing store");
                   (* the engine is still repointed, with the attempted
                      per-TPC size *)
-                  equal int 3 tl.Timeline.timeline_value;
-                  equal int 2 qd.Tolk_nv.Queue_desc.put_value;
+                  equal int 2 (Timeline.submitted tl);
+                  equal int 2 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0));
                   let expected =
                     let cq = Compute_queue.create dev in
                     Compute_queue.wait cq ~value:1 tl.Timeline.timeline;
@@ -1323,8 +1341,8 @@ let () =
                         ~max_warps_per_sm:48 ~tl ~queue:qd 0x10);
                   equal int 0x20 dev.Tolk_nv.slm_per_thread;
                   is_true (Option.is_none dev.Tolk_nv.shader_local_mem);
-                  equal int 1 tl.Timeline.timeline_value;
-                  equal int 0 qd.Tolk_nv.Queue_desc.put_value));
+                  equal int 0 (Timeline.submitted tl);
+                  equal int 0 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
         ];
       group "program call"
         [
@@ -1387,7 +1405,7 @@ let () =
                     (Qmd.read q "constant_buffer_addr_lower_0");
                   equal int 1 (Qmd.read q "release0_enable");
                   equal int 1 (Qmd.read q "release0_payload_lower");
-                  equal int 1 qd.Tolk_nv.Queue_desc.put_value;
+                  equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0));
                   equal int32 0x1abcdl (Mmio.read32 m 0x1090)));
           test "call with wait brackets the launch and reports the time"
             (fun () ->
@@ -1432,10 +1450,10 @@ let () =
                     [|
                       0x20050017; 0x10; 2; 0; 0; 0x01000003;
                       0x200125a6; 0x1011;
-                      0x20050017; 0x20; 2; 0; 0; 0x03100001; 0x20010008; 0;
+                      0x20050017; 0x20; 2; 0; 0; 0x03100001;
                       0x200120ad; 0x300002; 0x200120b0; 9;
                     |]
-                    (staged_dwords m ~off:0 20);
+                    (staged_dwords m ~off:0 18);
                   let q =
                     exec_qmd ~compute_class:dev.Tolk_nv.compute_class m
                       ~kernarg_off:0x4000
@@ -1491,7 +1509,7 @@ let () =
                   (* nothing was staged or submitted *)
                   equal nativeint 0x30000000n
                     (Buffer.va (Kernargs.alloc kernargs 8));
-                  equal int 0 qd.Tolk_nv.Queue_desc.put_value));
+                  equal int 0 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
           test "blackwell programs use the wide driver-parameter layout"
             (fun () ->
               with_fixture (fun m ->

@@ -30,8 +30,8 @@ with their rationale and validation; commit count is not an acceptance metric.
 - Adopt HCQ2 byte-interval dependencies and queue encoding on the
   compile/link/run path, including CPU host submission and retained JIT
   execution. Share mapped submitted/completed timeline state with direct
-  dispatch and transfers; retire the independent OCaml counters and define
-  rollover/recovery for retained submissions. Validate replay inputs whose alias
+  dispatch and transfers; complete fault reporting and recovery for retained
+  submissions, including bounded host waits. Validate replay inputs whose alias
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
 - Complete queue timestamp collection and eager submission-template caching.

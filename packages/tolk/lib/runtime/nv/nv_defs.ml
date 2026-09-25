@@ -92,6 +92,7 @@ let nvc6b5_launch_dma_data_transfer_type_non_pipelined = 2
 let nvc6b5_launch_dma_src_memory_layout_pitch = 1
 let nvc6b5_launch_dma_dst_memory_layout_pitch = 1
 let nvc6b5_launch_dma_flush_enable_true = 1
+let nvc6b5_launch_dma_semaphore_type_release_one_word_semaphore = 1
 let nvc6b5_launch_dma_semaphore_type_release_four_word_semaphore = 2
 let nvc6b5_set_semaphore_a = 0x240
 

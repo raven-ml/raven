@@ -15,6 +15,11 @@
     completion timelines ({!Timeline}) and kernel argument staging
     ({!Kernargs}). *)
 
+val host_fence_address : unit -> nativeint
+(** [host_fence_address ()] is an ordinary C [void(void)] function that
+    orders host memory accesses before device doorbells. Compiled submission
+    can call it while the OCaml runtime is released. *)
+
 (** Files and memory mappings. *)
 module File_io : sig
   (** {1:files Files} *)
@@ -347,13 +352,8 @@ end
     through a rotating set of pinned bounce buffers. *)
 module Timeline : sig
   type ('meta, 'dev) t = {
-    mutable timeline : ('meta, 'dev) Signal.t;
+    timeline : ('meta, 'dev) Signal.t;
         (** The signal completed work advances. *)
-    mutable shadow_timeline : ('meta, 'dev) Signal.t;
-        (** The spare signal {!wrap_timeline_signal} swaps in. *)
-    mutable timeline_value : int;
-        (** The counter value the next submission takes; starts at
-            [1]. *)
     mutable error_state : exn option;
         (** The latched device error: once a wait stalls or faults,
             every later {!synchronize} re-raises it. *)
@@ -372,22 +372,24 @@ module Timeline : sig
   (** The type for completion timelines over buffers with metadata
       ['meta] and signals owned by devices of type ['dev]. *)
 
+  val submitted : ('meta, 'dev) t -> int
+  (** [submitted t] reads the last submitted value from the second word
+      of the mapped timeline. Direct and compiled submissions share it. *)
+
   val next_timeline : ('meta, 'dev) t -> int
   (** [next_timeline t] is the counter value for the next submission,
-      advancing the counter past it. The submission must signal the
+      calling {!prepare} before advancing the counter. The submission must signal the
       timeline with the value once its work completes. *)
 
-  val wrap_timeline_signal : ('meta, 'dev) t -> unit
-  (** [wrap_timeline_signal t] restarts the counter at [1] on the
-      shadow signal, whose stale value cannot be mistaken for a future
-      one: the signals swap roles, the new timeline signal's value is
-      reset to [0], and the staging slots forget their recorded values.
-      All submitted work must have completed. *)
+  val prepare : ('meta, 'dev) t -> unit
+  (** [prepare t] checks latched errors and, when the low dword reaches
+      [2^31], drains work before advancing to the next [2^32] epoch. The
+      signal address stays fixed and retained host fences keep their full
+      counter values. Call this before reading values for a submission;
+      submissions to one device must be serialized. *)
 
   val guarded_wait : ('meta, 'dev) t -> (unit -> 'a) -> 'a
-  (** [guarded_wait t f] is [f ()], wrapping the timeline (see
-      {!wrap_timeline_signal}) after a successful return once the
-      counter outgrows the signal dword. When [f] raises
+  (** [guarded_wait t f] is [f ()]. When [f] raises
       {!Signal.Timeout} or [Failure], [on_hang] runs and a single
       [Failure] folding the wait failure and the fault report — each
       may be all the information there is — is latched into

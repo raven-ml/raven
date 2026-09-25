@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD and NV submissions share mapped queue positions and timeline counters.
+  Timeline rollover retains linked signal addresses and replay fence values;
+  NV completion signals no longer overwrite the submitted counter with timestamps.
+
 - Compiled queue submissions preserve argument-buffer patches when linking
   their addresses and rewrite native callee dependencies consistently, avoiding
   stale replay arguments and spurious control-flow cycles.

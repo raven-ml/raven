@@ -113,7 +113,6 @@ let queue_desc ~ring_dwords m =
     read_ptr = Mmio.view m ~off:ring_bytes ~size:8 ();
     write_ptr = Mmio.view m ~off:(ring_bytes + 8) ~size:8 ();
     doorbell = Mmio.view m ~off:(ring_bytes + 16) ~size:8 ();
-    put_value = 0;
     flush_hdp = None;
     resetup = None;
   }
@@ -335,9 +334,150 @@ let read_i32 buf =
   List.init (Bytes.length bytes / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
 
+let queue_fixture ?(dispatch_ptr = false) ?(scratch = 256) ~copies () =
+  let open Tolk in
+  let open Tolk_uop in
+  let device_name = "AMD:queue-compilation" in
+  let timeline = ref None in
+  let host = Tolk_cpu.create "CPU" in
+  let parameter slot = U.param ~slot ~dtype:D.int32 ~shape:(U.const_int 16)
+      ~device:(U.Single device_name) () in
+  let output = U.param ~slot:0 ~dtype:D.int32 ~shape:(U.const_int 16) () in
+  let small = U.variable ~param:true ~name:"small" ~min_val:(-128) ~max_val:127 ~dtype:D.int8 () in
+  let count = U.variable ~param:true ~name:"count" ~min_val:1 ~max_val:16 ~dtype:D.int64 () in
+  let value = U.cast ~src:small ~dtype:D.int32 in
+  let store = U.store ~dst:(U.index ~ptr:output ~idxs:[U.const_int 0] ()) ~value () in
+  let lib = hsaco_fixture ~private_seg:scratch ~code_props:(if dispatch_ptr then 0x402 else 0x400) () in
+  let spec = Program_spec.of_program ~name:"queue_fixture" ~src:"" ~device:device_name ~lib
+      [output; small; count; value; store] in
+  let info = {(Program_spec.program_info spec) with global_size = [U.Launch_sym count];
+    local_size = [U.Launch_int 1]} in
+  let program = U.program ~sink:(U.sink [store]) ~linear:(U.linear (Program_spec.program spec))
+      ~source:(U.source "") ~binary:(U.binary (Bytes.to_string lib)) ~info () in
+  let call = U.call ~body:program ~args:[parameter 0]
+      ~info:{grad_fxn = None; name = None; precompile = false; precompile_backward = false;
+        dtype = D.void; aux = None} in
+  let props = ["lds_size_in_kb", 64; "simd_count", 192; "simd_per_cu", 2;
+    "array_count", 12; "simd_arrays_per_engine", 2; "max_slots_scratch_cu", 32] in
+  let queue = Device.{prepare = (fun () -> Option.iter Timeline.prepare !timeline);
+    host = "CPU"; copy = (fun _ -> true);
+    encode = Tolk_amd.Encoded_queue.encode (gfx1100 ()) ~props ~name:device_name
+        ~compute_ring_size:4096 ~copy_ring_size:(Some 4096);
+    lower = (fun _ -> None);
+    compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+  let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let renderer_set = Device.Renderer_set.make ~device:device_name
+      ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
+  let buffers = Hashtbl.create 16 in
+  let bufferize u =
+    let buffer = Device.Buffer.create ~device:device_name ~size:(U.max_numel u)
+        ~dtype:(U.dtype u) allocator in
+    Device.Buffer.ensure_allocated buffer;
+    Option.iter (fun tag -> Hashtbl.replace buffers tag buffer) (U.node_tag u);
+    if U.node_tag u = Some "timeline" then begin
+      let address = Device.Buffer.addr buffer in
+      let view = Mmio.make ~addr:address ~size:16 in
+      let raw = Tolk_hcq.Hcq.Buffer.make ~va:address ~size:16 ~view ~meta:() () in
+      timeline := Some {Timeline.timeline = Signal.make ~is_timeline:true raw;
+        error_state = None; bounce = [||]; bounce_timeline = [||]; bounce_next = 0;
+        on_hang = (fun () -> fail "unexpected fixture hang")}
+    end;
+    (match U.as_param u with
+     | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
+         let libs, symbol = (Marshal.from_string data 0 : string list * string) in
+         equal (list string) [] libs;
+         equal string "tolk_hcq_host_fence" symbol;
+         let bytes = Bytes.create 8 in
+         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Tolk_hcq.Hcq.host_fence_address ()));
+         Device.Buffer.copyin buffer bytes
+     | Some {param = {allocation = Some ("amd_image", image); _}; _} ->
+         Device.Buffer.copyin buffer (Bytes.of_string image)
+     | _ -> ());
+    Some buffer in
+  let device = Device.make ~name:device_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
+      ~synchronize:(fun () -> ()) ~queue ~bufferize () in
+  let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
+      call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)] else [call] in
+  Hcq2.compile (U.linear calls), device, host, buffers
+
+let compile_queue ~copies =
+  let compiled, _, _, _ = queue_fixture ~copies () in compiled
+
+let execute_queue ~copies ~dispatch_ptr ~scratch =
+  let open Tolk in
+  let compiled, device, host, buffers = queue_fixture ~copies ~dispatch_ptr ~scratch () in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let get tag = Hashtbl.find buffers tag in
+  let set_word tag value =
+    let bytes = Bytes.create 8 in
+    Bytes.set_int64_le bytes 0 (Int64.of_int value);
+    Device.Buffer.copyin (get tag) bytes in
+  let word tag = Int64.to_int (Bytes.get_int64_le (Device.Buffer.as_bytes (get tag)) 0) in
+  set_word "write_ptr_compute" 1022;
+  if copies then set_word "write_ptr_copy" 4088;
+  let to_program = Codegen.to_program host (Device.renderer host) in
+  List.iteri (fun replay (small, count) ->
+      if replay = 1 then begin
+        let bytes = Bytes.make 16 '\000' in
+        Bytes.set_int64_le bytes 0 0x80000000L;
+        Bytes.set_int64_le bytes 8 0x80000000L;
+        Device.Buffer.copyin (get "timeline") bytes
+      end;
+      let inputs = Array.init (if copies then 3 else 1) (fun _ ->
+          i32_buf device (List.init 16 Fun.id)) in
+      Realize.run_linear ~device ~to_program binding ~jit:true
+        ~var_vals:["small", small; "count", count] ~input_uops:(Array.map U.from_buffer inputs) linked;
+      equal int (1026 + replay * 4) (word "write_ptr_compute");
+      equal int (word "write_ptr_compute") (word "doorbell_compute");
+      let arena = Device.Buffer.as_bytes (get "kernargs") in
+      equal int small (Bytes.get_int8 arena 8);
+      equal int64 (Int64.of_int count) (Bytes.get_int64_le arena 16);
+      equal int64 (Int64.of_nativeint (Device.Buffer.addr ~device:(Device.name device)
+          inputs.(0))) (Bytes.get_int64_le arena 0);
+      if dispatch_ptr then begin
+        equal int 0x31502 (Int32.to_int (Bytes.get_int32_le arena 24));
+        equal int count (Int32.to_int (Bytes.get_int32_le arena 36));
+        equal int scratch (Int32.to_int (Bytes.get_int32_le arena 48))
+      end;
+      if copies then begin
+        is_true (word "write_ptr_copy" > 4096);
+        equal int (word "write_ptr_copy") (word "doorbell_copy");
+        let ring = Device.Buffer.as_bytes (get "ring_copy") in
+        equal int32 0l (Bytes.get_int32_le ring 4088);
+        equal int32 0l (Bytes.get_int32_le ring 4092)
+      end;
+      (* Simulate completion; these tests execute submission code, not GPU packets. *)
+      let timeline = Device.Buffer.as_bytes (get "timeline") in
+      equal int64 (if replay = 0 then 1L else 0x100000001L)
+        (Bytes.get_int64_le timeline 8);
+      Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
+      Device.Buffer.copyin (get "timeline") timeline) [(-17, 3); (29, 11)];
+  equal bool (scratch <> 0) (Hashtbl.mem buffers "scratch")
+
 let () =
   run "Amd_runtime"
     [
+      group "Compiled queues" [
+        test "executes wrapped compute submissions and patches replay arguments" (fun () ->
+            execute_queue ~copies:false ~dispatch_ptr:false ~scratch:256);
+        test "executes SDMA wrapping with dispatch packets and no scratch" (fun () ->
+            execute_queue ~copies:true ~dispatch_ptr:true ~scratch:0);
+        test "compiles symbolic launch dimensions and mixed-width arguments" (fun () ->
+            let compiled = compile_queue ~copies:false in
+            let call = Option.get (U.as_call (U.without_after (List.hd (U.children compiled)))) in
+            let object_ = U.to_elf call.body in
+            is_true (Bytes.length object_.lib > 0);
+            let scalars = List.filter_map (fun (a : Tolk_uop.Tiny_elf.argument) ->
+                if a.addrspace = D.Alu then Some (D.to_string a.dtype) else None) object_.signature in
+            equal (list string) ["i64"; "i8"] (List.sort String.compare scalars));
+        test "compiles dependencies between SDMA and compute" (fun () ->
+            let compiled = compile_queue ~copies:true in
+            equal int 1 (List.length (U.children compiled));
+            match U.arg (U.without_after (List.hd (U.children compiled))) with
+            | U.Arg.Call_info {aux = Some info; _} -> equal int 3 (List.length info.accesses)
+            | _ -> fail "queue lost argument access metadata");
+      ];
       group "File_io"
         [
           test "opens and closes a file" (fun () ->
@@ -619,14 +759,47 @@ let () =
         ];
       group "Timeline"
         [
+          test "direct submissions observe the counter written by compiled submission" (fun () ->
+              with_map 4096 (fun m ->
+                  let tl = {
+                    Timeline.timeline = Signal.make ~is_timeline:true (slot_buf m);
+
+                    error_state = None; bounce = [||]; bounce_timeline = [||];
+                    bounce_next = 0; on_hang = (fun () -> fail "unexpected hang");
+                  } in
+                  equal int 0 (Timeline.submitted tl);
+                  equal int 1 (Timeline.next_timeline tl);
+                  equal int64 1L (Mmio.read64 m 8);
+                  Mmio.write64 m 8 37L;
+                  equal int 38 (Timeline.next_timeline tl);
+                  Signal.set_value tl.Timeline.timeline 38;
+                  Timeline.synchronize tl;
+                  equal int64 38L (Mmio.read64 m 8)));
+          test "rollover retains the signal address and host fence epochs" (fun () ->
+              with_map 4096 (fun m ->
+                  let signal = Signal.make ~is_timeline:true (slot_buf m) in
+                  let tl = {Timeline.timeline = signal; error_state = None;
+                    bounce = [||]; bounce_timeline = [|17|]; bounce_next = 0;
+                    on_hang = (fun () -> fail "unexpected hang")} in
+                  List.iter (fun epoch ->
+                      let end_ = (epoch lsl 32) + (1 lsl 31) in
+                      Mmio.write64 m 8 (Int64.of_int end_);
+                      Signal.set_value signal end_;
+                      Timeline.prepare tl;
+                      is_true (tl.Timeline.timeline == signal);
+                      let next = ((epoch + 1) lsl 32) + 1 in
+                      equal int next (Timeline.next_timeline tl);
+                      (* AMD/SDMA write only the low dword; the CPU retains the epoch. *)
+                      Mmio.write32 m 0 1l;
+                      equal int next (Signal.value signal);
+                      Timeline.synchronize tl;
+                      equal int 17 tl.Timeline.bounce_timeline.(0)) [0; 1]));
           test "a stalled wait folds the hang report into the timeout" (fun () ->
               with_map 4096 (fun m ->
                   let tl =
                     {
                       Timeline.timeline = Signal.make ~value:1 (slot_buf m);
-                      shadow_timeline =
-                        Signal.make (slot_buf ~va:0x10n (Mmio.view m ~off:16 ()));
-                      timeline_value = 3;
+
                       error_state = None;
                       bounce = [||];
                       bounce_timeline = [||];
@@ -634,6 +807,7 @@ let () =
                       on_hang = (fun () -> failwith "MMU fault: 0xdead");
                     }
                   in
+                  Mmio.write64 m 8 2L;
                   let expect = function
                     | Failure msg ->
                         contains msg "Wait timeout: 5 ms!"
@@ -651,9 +825,7 @@ let () =
                   let tl =
                     {
                       Timeline.timeline = Signal.make (slot_buf m);
-                      shadow_timeline =
-                        Signal.make (slot_buf ~va:0x10n (Mmio.view m ~off:16 ()));
-                      timeline_value = 2;
+
                       error_state = None;
                       bounce = [||];
                       bounce_timeline = [||];
@@ -675,9 +847,7 @@ let () =
                   let tl =
                     {
                       Timeline.timeline = Signal.make (slot_buf m);
-                      shadow_timeline =
-                        Signal.make (slot_buf ~va:0x10n (Mmio.view m ~off:16 ()));
-                      timeline_value = 2;
+
                       error_state = None;
                       bounce = [||];
                       bounce_timeline = [||];
@@ -839,7 +1009,7 @@ let () =
                   List.iter (Q.push (Cq.q cq)) [ 0x11; 0x22; 0x33 ];
                   Cq.submit cq qd;
                   equal (array int) [| 0x11; 0x22; 0x33 |] (ring_dwords m 3);
-                  equal int 3 qd.Tolk_amd.Queue_desc.put_value;
+                  equal int 3 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   equal int64 3L (Mmio.read64 m ((16 * 4) + 8));
                   equal int64 3L (Mmio.read64 m ((16 * 4) + 16));
                   (* the stream is kept: submitting again replays it *)
@@ -861,7 +1031,7 @@ let () =
                   equal (array int)
                     [| 0x33; 0x22; 0x33; 0x11; 0x22; 0x33; 0x11; 0x22 |]
                     (ring_dwords m 8);
-                  equal int 9 qd.Tolk_amd.Queue_desc.put_value;
+                  equal int 9 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   equal int64 9L (Mmio.read64 m ((8 * 4) + 16))));
           test "multi-die submit wraps the stream in an indirect buffer"
             (fun () ->
@@ -888,7 +1058,7 @@ let () =
                       0x33;
                     |]
                     (ring_dwords m 8);
-                  equal int 8 qd.Tolk_amd.Queue_desc.put_value));
+                  equal int 8 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0))));
           test "multi-die submit pads the indirect body past the wrap"
             (fun () ->
               let module Cq = Tolk_amd.Compute_queue in
@@ -896,7 +1066,7 @@ let () =
                   let dev = gfx942 () in
                   let module P = (val dev.Tolk_amd.pm4) in
                   let qd = queue_desc ~ring_dwords:32 m in
-                  qd.Tolk_amd.Queue_desc.put_value <- 26;
+                  Mmio.write64 qd.Tolk_amd.Queue_desc.write_ptr 0 26L;
                   let cq = Cq.create dev in
                   List.iter (Q.push (Cq.q cq)) [ 0x11; 0x22; 0x33 ];
                   Cq.submit cq qd;
@@ -914,7 +1084,7 @@ let () =
                     |]
                     (Array.init 6 (fun i -> ring_dword m (26 + i)));
                   equal (array int) [| 0x11; 0x22; 0x33 |] (ring_dwords m 3);
-                  equal int 35 qd.Tolk_amd.Queue_desc.put_value));
+                  equal int 35 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0))));
         ];
       group "Copy_queue"
         [
@@ -960,7 +1130,7 @@ let () =
                   equal (array int)
                     (Q.dwords (Cp.q cp))
                     (ring_dwords m 5);
-                  equal int 20 qd.Tolk_amd.Queue_desc.put_value;
+                  equal int 20 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   equal int64 20L (Mmio.read64 m ((16 * 4) + 8));
                   equal int64 20L (Mmio.read64 m ((16 * 4) + 16))));
           test "a packet that would straddle moves past a zero-filled tail"
@@ -975,7 +1145,7 @@ let () =
                   Cp.copy first ~dest:dst ~src 0x100;
                   Cp.copy first ~dest:dst ~src 0x100;
                   Cp.submit first qd;
-                  equal int 56 qd.Tolk_amd.Queue_desc.put_value;
+                  equal int 56 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   (* sentinels in the two dwords before the ring end prove
                      the zero-fill really writes them *)
                   Mmio.write32 m (14 * 4) 0xDEADBEEFl;
@@ -991,7 +1161,7 @@ let () =
                   equal (array int)
                     (Q.dwords (Cp.q second))
                     (ring_dwords m 7);
-                  equal int 92 qd.Tolk_amd.Queue_desc.put_value;
+                  equal int 92 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   equal int64 92L (Mmio.read64 m ((16 * 4) + 16))));
           test "a stream that cannot fit the ring is rejected" (fun () ->
               let module Cp = Tolk_amd.Copy_queue in
@@ -1003,7 +1173,7 @@ let () =
                   let cp = Cp.create dev in
                   Cp.copy cp ~dest:dst ~src 0x100;
                   Cp.submit cp qd;
-                  equal int 28 qd.Tolk_amd.Queue_desc.put_value;
+                  equal int 28 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   (* even with the whole ring consumed, the wrapped stream
                      would need the full ring: rejected before blocking *)
                   Mmio.write64 m (8 * 4) 28L;
@@ -1326,7 +1496,7 @@ let () =
                   equal (array int) expected
                     (ring_dwords m (Array.length expected));
                   equal int (Array.length expected)
-                    qd.Tolk_amd.Queue_desc.put_value;
+                    (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   equal int64
                     (Int64.of_int (Array.length expected))
                     (Mmio.read64 m ((512 * 4) + 16))));
@@ -1417,7 +1587,7 @@ let () =
                   (* nothing was staged or submitted *)
                   equal nativeint 0x300000n
                     (Buffer.va (Kernargs.alloc kernargs 8));
-                  equal int 0 qd.Tolk_amd.Queue_desc.put_value;
+                  equal int 0 (Int64.to_int (Mmio.read64 qd.Tolk_amd.Queue_desc.write_ptr 0));
                   (* the timeline wait needs a value to wait on *)
                   raises_match is_invalid_arg (fun () ->
                       Program.call ~layout:[]

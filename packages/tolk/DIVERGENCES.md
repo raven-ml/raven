@@ -6,6 +6,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **AMD/NV submissions read the mapped producer position and retain timeline
+  addresses across rollover.** Direct `Device.prog` launches coexist with
+  compiled submissions, so a second host counter can overwrite unread ring
+  entries. Before the low timeline dword reaches its comparison limit, Tolk
+  drains work and advances the high-word epoch at the same address. Retained
+  host fences remain monotonic while GPU dword waits restart safely. Coverage:
+  mapped producer tests, two epoch transitions and compiled AMD host replay
+  across rollover. Hardware acceptance remains in TODO. Reconsider when direct
+  dispatch is removed or upstream provides an equivalent rollover protocol.
+
 - **Host access and direct cross-device binding wait for existing importers.**
   Tolk still exposes asynchronous `Device.prog` dispatch outside compiled queue
   dependencies. Waiting for the importing devices prevents CPU reads or writes

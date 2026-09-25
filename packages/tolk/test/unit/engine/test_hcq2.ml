@@ -139,7 +139,7 @@ let compiled_host_submission () =
             if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
         Some (U.group nodes)
     | _ -> None in
-  let queue = Device.{host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
+  let queue = Device.{prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true); encode; lower = (fun _ -> None);
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
   let renderer_set = Device.Renderer_set.make ~device:name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in

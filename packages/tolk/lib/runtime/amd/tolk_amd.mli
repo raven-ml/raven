@@ -155,11 +155,9 @@ module Queue_desc : sig
     read_ptr : Hcq.Mmio.t;
         (** 64-bit consumer position, advanced by the device. *)
     write_ptr : Hcq.Mmio.t;
-        (** 64-bit producer position, published from [put_value]. *)
+        (** 64-bit producer position shared by direct and compiled submission:
+            a dword count for PM4 rings, a byte count for DMA rings. *)
     doorbell : Hcq.Mmio.t;  (** 64-bit doorbell slot of the queue. *)
-    mutable put_value : int;
-        (** End of the submitted stream: a dword count for compute
-            rings, a byte count for DMA rings. *)
     flush_hdp : (unit -> unit) option;
         (** Flushes the host-data-path write buffer, run before every
             doorbell write; queues on devices driven without the kernel
@@ -171,8 +169,8 @@ module Queue_desc : sig
   }
   (** The type for mapped queues. *)
 
-  val signal_doorbell : t -> unit
-  (** [signal_doorbell t] publishes [put_value] to the device: it writes
+  val signal_doorbell : t -> int -> unit
+  (** [signal_doorbell t value] publishes [value] to the device: it writes
       the write pointer, fences so all prior ring stores are visible,
       runs [flush_hdp] when present, then writes the doorbell. *)
 end
@@ -559,6 +557,17 @@ module Program : sig
       value does not fit its slot. *)
 end
 
+(** Compiled host submission over AMD packet templates. *)
+module Encoded_queue : sig
+  val encode :
+    'meta device -> props:(string * int) list -> name:string ->
+    compute_ring_size:int -> copy_ring_size:int option ->
+    Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+  (** [encode dev ~props ~name ~compute_ring_size ~copy_ring_size u] lowers
+      queue submission [u] to host code over packet templates. Ring sizes are
+      bytes. Returns [None] for other operations. *)
+end
+
 (** {1:kfd Kernel-driver interface} *)
 
 (** GPU access through the Linux kernel driver.
@@ -569,6 +578,7 @@ end
     every operation raise [Failure] with the system error when the
     driver rejects a request; on systems without the driver,
     {!Kfd_iface.create} and {!Kfd_iface.count} raise [Failure]. *)
+
 module Kfd_iface : sig
   type mem
   (** The type for driver metadata of an allocation: the kernel memory

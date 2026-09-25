@@ -29,7 +29,7 @@ let compile calls =
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let renderer_set = Device.Renderer_set.make ~device:device_name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-  let queue = Device.{host = "CPU"; copy = (fun _ -> true);
+  let queue = Device.{prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
     encode = Queue.encode device_name; lower = Queue.lower device_name;
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
   ignore (Device.make ~name:device_name ~allocator ~renderer_set ~runtime:(Device.runtime host)

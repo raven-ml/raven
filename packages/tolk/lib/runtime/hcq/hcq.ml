@@ -39,6 +39,8 @@ module Ffi = struct
 
   external fence : unit -> unit = "caml_tolk_hcq_fence" [@@noalloc]
 
+  external host_fence_address : unit -> nativeint = "caml_tolk_hcq_host_fence_address"
+
   external read64_int : nativeint -> int = "caml_tolk_hcq_read64_int"
   [@@noalloc]
 
@@ -53,6 +55,8 @@ module Ffi = struct
     = "caml_tolk_hcq_memcpy_from_ptr"
   [@@noalloc]
 end
+
+let host_fence_address = Ffi.host_fence_address
 
 module File_io = struct
   let {
@@ -237,6 +241,7 @@ module Signal = struct
       }
     in
     set_value t value;
+    if is_timeline then Mmio.write64 view 8 0L;
     t
 
   let buf t = t.buf
@@ -309,9 +314,7 @@ end
    device runtimes (hcq.py:384-517 HCQCompiled, :576-645 HCQAllocator). *)
 module Timeline = struct
   type ('meta, 'dev) t = {
-    mutable timeline : ('meta, 'dev) Signal.t;
-    mutable shadow_timeline : ('meta, 'dev) Signal.t;
-    mutable timeline_value : int;
+    timeline : ('meta, 'dev) Signal.t;
     mutable error_state : exn option;
     (* Rotating pinned staging buffers for host transfers; each slot records
        the timeline value of its last use so reuse waits only for that
@@ -322,31 +325,12 @@ module Timeline = struct
     on_hang : unit -> unit;
   }
 
-  let next_timeline t =
-    t.timeline_value <- t.timeline_value + 1;
-    t.timeline_value - 1
+  let submitted t = Int64.to_int (Mmio.read64 (Buffer.cpu_view (Signal.buf t.timeline)) 8)
 
-  (* The timeline counter must stay a signal dword: past 2^31 the counter
-     restarts at 1 on the shadow signal, whose stale value cannot be mistaken
-     for a future one, and the staging slots forget their old values. *)
-  let wrap_timeline_signal t =
-    let tl = t.timeline in
-    t.timeline <- t.shadow_timeline;
-    t.shadow_timeline <- tl;
-    t.timeline_value <- 1;
-    Signal.set_value t.timeline 0;
-    Array.fill t.bounce_timeline 0 (Array.length t.bounce_timeline) 0
-
-  (* A stalled or faulted wait latches the device error so every later
-     synchronize fails loudly with the fault report; a passed wait rolls the
-     timeline over before its counter outgrows the signal dword. The wait
-     failure and the hang report are folded into one exception: each may be
-     all the information there is. *)
+  (* Failures latch until device recovery explicitly clears them. *)
   let guarded_wait t f =
     match f () with
-    | r ->
-        if t.timeline_value > 1 lsl 31 then wrap_timeline_signal t;
-        r
+    | r -> r
     | exception ((Signal.Timeout _ | Failure _) as e) ->
         let base =
           match e with
@@ -375,7 +359,27 @@ module Timeline = struct
 
   let synchronize t =
     (match t.error_state with Some e -> raise e | None -> ());
-    guarded_wait t (fun () -> Signal.wait t.timeline (t.timeline_value - 1))
+    guarded_wait t (fun () -> Signal.wait t.timeline (submitted t))
+
+  let prepare t =
+    (match t.error_state with Some e -> raise e | None -> ());
+    let value = submitted t in
+    if value land 0xffffffff >= 1 lsl 31 then begin
+      (* GPU waits compare the low dword. Drain before restarting that dword,
+         but retain a monotonically increasing epoch for host replay fences.
+         Neither the signal address nor any retained fence needs rebinding. *)
+      synchronize t;
+      if value > max_int - (1 lsl 32) then failwith "HCQ timeline exhausted";
+      let epoch = ((value lsr 32) + 1) lsl 32 in
+      Signal.set_value t.timeline epoch;
+      Mmio.write64 (Buffer.cpu_view (Signal.buf t.timeline)) 8 (Int64.of_int epoch)
+    end
+
+  let next_timeline t =
+    prepare t;
+    let value = submitted t + 1 in
+    Mmio.write64 (Buffer.cpu_view (Signal.buf t.timeline)) 8 (Int64.of_int value);
+    value
 
   let copyin t ~submit_chunk buf bytes =
     let total = Bytes.length bytes in
@@ -392,7 +396,7 @@ module Timeline = struct
         (Bytes.sub bytes !off len);
       submit_chunk ~dest:(Buffer.offset buf ~off:!off ()) ~src:t.bounce.(slot)
         len;
-      t.bounce_timeline.(slot) <- t.timeline_value - 1;
+      t.bounce_timeline.(slot) <- submitted t;
       off := !off + len
     done
 
@@ -404,7 +408,7 @@ module Timeline = struct
     while !off < total do
       let len = min step (total - !off) in
       submit_chunk ~dest:staging ~src:(Buffer.offset buf ~off:!off ()) len;
-      Signal.wait t.timeline (t.timeline_value - 1);
+      Signal.wait t.timeline (submitted t);
       Bytes.blit
         (Mmio.read_bytes (Buffer.cpu_view staging) ~off:0 ~len)
         0 bytes !off len;

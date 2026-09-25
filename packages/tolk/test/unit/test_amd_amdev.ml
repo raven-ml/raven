@@ -614,7 +614,6 @@ let scripted_registration fd t =
       read_ptr = view 0x1f10100 8;
       write_ptr = view 0x1f10108 8;
       doorbell = view 0x1f10110 8;
-      put_value = 42;
       flush_hdp = None;
       resetup = Some (fun () -> incr resetup_ran);
     }
@@ -624,8 +623,7 @@ let scripted_registration fd t =
   let tl =
     {
       Timeline.timeline = Signal.make (slot 0x1f20000);
-      shadow_timeline = Signal.make (slot 0x1f20010);
-      timeline_value = 7;
+
       error_state = Some (Failure "wedged");
       bounce = [||];
       bounce_timeline = [||];
@@ -633,6 +631,7 @@ let scripted_registration fd t =
       on_hang = (fun () -> ());
     }
   in
+  Mmio.write64 (view 0x1f20000 16) 8 6L;
   Pci_iface.register ~am:t ~compute_queue:qd ~tl;
   (qd, tl, resetup_ran)
 
@@ -2249,7 +2248,7 @@ let () =
                         (Exn.failure ~substring:"Device hang detected")
                         (fun () -> Pci_iface.on_device_hang ());
                       equal bool false (Amdev.is_err_state fd.dev);
-                      equal int 0 qd.Queue_desc.put_value;
+                      equal int 0 (Int64.to_int (Mmio.read64 qd.Queue_desc.write_ptr 0));
                       equal int64 0L (Mmio.read64 qd.Queue_desc.read_ptr 0);
                       equal int64 0L (Mmio.read64 qd.Queue_desc.write_ptr 0);
                       equal int 1 !resetup_ran;

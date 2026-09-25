@@ -314,7 +314,7 @@ module Queue = struct
       | Some {args; _} -> List.for_all (fun arg ->
           U.device_of arg = Some (U.Single state.State.name)) args
       | None -> false in
-    Device.{host = Device.name host; copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
+    Device.{prepare = (fun () -> ()); host = Device.name host; copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
 end
 

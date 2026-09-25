@@ -259,20 +259,19 @@ module Queue_desc = struct
     read_ptr : Hcq.Mmio.t;
     write_ptr : Hcq.Mmio.t;
     doorbell : Hcq.Mmio.t;
-    mutable put_value : int;
     flush_hdp : (unit -> unit) option;
     resetup : (unit -> unit) option;
   }
 
-  let signal_doorbell t =
-    Hcq.Mmio.write64 t.write_ptr 0 (Int64.of_int t.put_value);
+  let signal_doorbell t value =
+    Hcq.Mmio.write64 t.write_ptr 0 (Int64.of_int value);
     (* the doorbell read triggers a device fetch: every ring and pointer
        store must be globally visible before it lands *)
     Hcq.Mmio.fence ();
     (* ops_amd.py:680-683: driver-less queues also flush the host data
        path, so host writes to device memory reach the engines *)
     (match t.flush_hdp with Some flush -> flush () | None -> ());
-    Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int t.put_value)
+    Hcq.Mmio.write64 t.doorbell 0 (Int64.of_int value)
 end
 
 (* The interface seam: the device runtime drives the GPU through one of
@@ -616,6 +615,7 @@ module Compute_queue = struct
         | _ -> ())
 
   let submit t (qd : Queue_desc.t) =
+    let put = Int64.to_int (Hcq.Mmio.read64 qd.write_ptr 0) in
     let cmds = Q.dwords t.q in
     let ring_len = Hcq.Mmio.size qd.ring / 4 in
     let cmds =
@@ -626,12 +626,12 @@ module Compute_queue = struct
            so its body never straddles the wrap point *)
         let module P = (val t.dev.pm4) in
         let n = Array.length cmds in
-        let ib_start = (qd.put_value + 5) mod ring_len in
+        let ib_start = (put + 5) mod ring_len in
         let ib_pad = if ib_start + n > ring_len then ring_len - ib_start else 0 in
         let ib_ptr =
           Int64.add
             (va64 (Hcq.Mmio.addr qd.ring))
-            (Int64.of_int ((qd.put_value + 5 + ib_pad) mod ring_len * 4))
+            (Int64.of_int ((put + 5 + ib_pad) mod ring_len * 4))
         in
         Array.concat
           [
@@ -649,11 +649,10 @@ module Compute_queue = struct
     in
     for i = 0 to Array.length cmds - 1 do
       Hcq.Mmio.write32 qd.ring
-        ((qd.put_value + i) mod ring_len * 4)
+        ((put + i) mod ring_len * 4)
         (Int32.of_int (Array.unsafe_get cmds i))
     done;
-    qd.put_value <- qd.put_value + Array.length cmds;
-    Queue_desc.signal_doorbell qd
+    Queue_desc.signal_doorbell qd (put + Array.length cmds)
 end
 
 (* Copy queue *)
@@ -762,6 +761,7 @@ module Copy_queue = struct
     else cmd t [| S.sdma_op_write; lo32 va; hi32 va; 0; lo32 value |]
 
   let submit t (qd : Queue_desc.t) =
+    let put = ref (Int64.to_int (Hcq.Mmio.read64 qd.write_ptr 0)) in
     let cmds = Q.dwords t.q in
     let n = Array.length cmds in
     let nbytes = Hcq.Mmio.size qd.ring in
@@ -770,7 +770,7 @@ module Copy_queue = struct
        ring start with the rest, zero-filling the gap *)
     let tail_blit_dword =
       let rec fit acc = function
-        | sz :: rest when (acc + sz) * 4 < nbytes - (qd.put_value mod nbytes) ->
+        | sz :: rest when (acc + sz) * 4 < nbytes - (!put mod nbytes) ->
             fit (acc + sz) rest
         | _ -> acc
       in
@@ -779,37 +779,37 @@ module Copy_queue = struct
     let rem_packet_cnt = n - tail_blit_dword in
     let total_bytes =
       (if rem_packet_cnt = 0 then tail_blit_dword * 4
-       else (nbytes - (qd.put_value mod nbytes)) mod nbytes)
+       else (nbytes - (!put mod nbytes)) mod nbytes)
       + (rem_packet_cnt * 4)
     in
     if total_bytes >= nbytes then
       invalid_arg "Copy_queue.submit: stream does not fit in the ring";
     while
-      qd.put_value + total_bytes - Int64.to_int (Hcq.Mmio.read64 qd.read_ptr 0)
+      !put + total_bytes - Int64.to_int (Hcq.Mmio.read64 qd.read_ptr 0)
       > nbytes
     do
       ()
     done;
-    let start = qd.put_value mod nbytes / 4 in
+    let start = !put mod nbytes / 4 in
     for i = 0 to tail_blit_dword - 1 do
       Hcq.Mmio.write32 qd.ring
         ((start + i) * 4)
         (Int32.of_int (Array.unsafe_get cmds i))
     done;
-    qd.put_value <- qd.put_value + (tail_blit_dword * 4);
+    put := !put + (tail_blit_dword * 4);
     if rem_packet_cnt > 0 then begin
-      let zero_fill = nbytes - (qd.put_value mod nbytes) in
+      let zero_fill = nbytes - (!put mod nbytes) in
       for i = 0 to (zero_fill / 4) - 1 do
-        Hcq.Mmio.write32 qd.ring ((qd.put_value mod nbytes) + (i * 4)) 0l
+        Hcq.Mmio.write32 qd.ring ((!put mod nbytes) + (i * 4)) 0l
       done;
-      qd.put_value <- qd.put_value + zero_fill;
+      put := !put + zero_fill;
       for i = 0 to rem_packet_cnt - 1 do
         Hcq.Mmio.write32 qd.ring (i * 4)
           (Int32.of_int (Array.unsafe_get cmds (tail_blit_dword + i)))
       done;
-      qd.put_value <- qd.put_value + (rem_packet_cnt * 4)
+      put := !put + (rem_packet_cnt * 4)
     end;
-    Queue_desc.signal_doorbell qd
+    Queue_desc.signal_doorbell qd !put
 end
 
 (* Programs *)
@@ -825,9 +825,21 @@ module Program = struct
     kernargs_alloc_size : int;
   }
 
+  type data = {
+    desc_offset : int;
+    entry_offset : int;
+    rsrc1 : int; rsrc2 : int; rsrc3 : int;
+    wave32 : bool;
+    enable_private_segment_sgpr : bool;
+    enable_dispatch_ptr : bool;
+    group_segment_size : int;
+    private_segment_size : int;
+    kernargs_segment_size : int;
+  }
+
   let r_amdgpu_rel64 = 5
 
-  let load (dev : 'meta device) ~alloc ~props ~name lib =
+  let image ~target ~props lib =
     let elf = Tolk.Elf.load lib in
     let image = Tolk.Elf.image elf in
     let sections = Tolk.Elf.sections elf in
@@ -850,8 +862,6 @@ module Program = struct
              (sections.(r.symbol.shndx).addr + r.symbol.value - r.offset
             + r.addend)))
       (Tolk.Elf.relocs elf);
-    let lib_gpu = alloc (round_up (Bytes.length image) 0x1000) in
-    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
     (* the kernel descriptor sits at the start of [.rodata] *)
     let u32 off =
       Int32.to_int (Bytes.get_int32_le image (rodata + off)) land 0xFFFFFFFF
@@ -875,39 +885,41 @@ module Program = struct
       land Amd_hsa_defs.amd_kernel_code_properties_enable_sgpr_dispatch_ptr
       <> 0
     in
-    {
-      params =
-        {
-          dev;
-          prog_addr =
-            Nativeint.add (Hcq.Buffer.va lib_gpu)
-              (Nativeint.of_int (rodata + entry_off));
-          (* generation 11 must run waves privileged: unprivileged waves
-             are corrupted by compute-wave save/restore *)
-          rsrc1 =
-            (u32 Amd_kd_defs.compute_pgm_rsrc1
-            lor if major dev.target = 11 then 1 lsl 20 else 0);
-          rsrc2 = u32 Amd_kd_defs.compute_pgm_rsrc2 lor (lds_size lsl 15);
-          rsrc3 = u32 Amd_kd_defs.compute_pgm_rsrc3;
-          wave32 = code_props land 0x400 <> 0;
-          enable_private_segment_sgpr =
-            code_props
-            land
-            Amd_hsa_defs
-            .amd_kernel_code_properties_enable_sgpr_private_segment_buffer
-            <> 0;
-          enable_dispatch_ptr;
-        };
-      name;
-      lib_gpu;
+    ({
+      desc_offset = rodata;
+      entry_offset = rodata + entry_off;
+      rsrc1 = u32 Amd_kd_defs.compute_pgm_rsrc1
+        lor (if major target = 11 then 1 lsl 20 else 0);
+      rsrc2 = u32 Amd_kd_defs.compute_pgm_rsrc2 lor (lds_size lsl 15);
+      rsrc3 = u32 Amd_kd_defs.compute_pgm_rsrc3;
+      wave32 = code_props land 0x400 <> 0;
+      enable_private_segment_sgpr = code_props land
+        Amd_hsa_defs.amd_kernel_code_properties_enable_sgpr_private_segment_buffer <> 0;
+      enable_dispatch_ptr;
       group_segment_size;
       private_segment_size;
       kernargs_segment_size;
-      kernargs_alloc_size =
-        (kernargs_segment_size
-        +
-        if enable_dispatch_ptr then Amd_hsa_defs.Kernel_dispatch_packet.size
-        else 0);
+    }, image)
+
+  let load (dev : 'meta device) ~alloc ~props ~name lib =
+    let data, image = image ~target:dev.target ~props lib in
+    let lib_gpu = alloc (round_up (Bytes.length image) 0x1000) in
+    Hcq.Mmio.blit_bytes (Hcq.Buffer.cpu_view lib_gpu) ~off:0 image;
+    {
+      params = {
+        dev;
+        prog_addr = Nativeint.add (Hcq.Buffer.va lib_gpu) (Nativeint.of_int data.entry_offset);
+        rsrc1 = data.rsrc1; rsrc2 = data.rsrc2; rsrc3 = data.rsrc3;
+        wave32 = data.wave32;
+        enable_private_segment_sgpr = data.enable_private_segment_sgpr;
+        enable_dispatch_ptr = data.enable_dispatch_ptr;
+      };
+      name; lib_gpu;
+      group_segment_size = data.group_segment_size;
+      private_segment_size = data.private_segment_size;
+      kernargs_segment_size = data.kernargs_segment_size;
+      kernargs_alloc_size = data.kernargs_segment_size +
+        (if data.enable_dispatch_ptr then Amd_hsa_defs.Kernel_dispatch_packet.size else 0);
     }
 
   let free ~free:release t = release t.lib_gpu
@@ -936,6 +948,252 @@ module Program = struct
         Hcq.Signal.wait timeline ?timeout_ms timeline_value;
         Some ((Hcq.Signal.timestamp en -. Hcq.Signal.timestamp st) /. 1e6)
 end
+
+(* Static packet templates, patched and submitted by compiled host code. *)
+module Encoded_queue = struct
+  open Tolk_uop
+  module U = Uop
+  module D = Dtype
+
+  let u32 n = U.const (Const.int D.uint32 n)
+  let u64 n = U.const (Const.int D.uint64 n)
+  let cast dtype src = U.cast ~src ~dtype
+  let op op lhs rhs = U.alu_binary ~op ~lhs ~rhs
+  let add = op Ops.Add
+  let mul = op Ops.Mul
+  let shr = op Ops.Shr
+  let bor = op Ops.Or
+  let sub a b = add a (U.alu_unary ~op:Ops.Neg ~src:b)
+  let index ptr i = U.index ~ptr ~idxs:[i] ()
+  let load ptr i = U.load ~src:(index ptr i) ()
+  let store ptr i value = U.store ~dst:(index ptr i) ~value ()
+  let addr name src = U.getaddr ~device:name ~src ()
+  let i32 n = U.const (Const.int D.int32 n)
+  let zero = i32 0
+  let placeholder ?allocation ?(volatile = false) name tag dtype size =
+    U.placeholder ~shape:[size] ~dtype ~slot:0 ~device:(U.Single name)
+      ?allocation ~volatile () |> U.with_tag tag
+  let words value =
+    if D.itemsize (U.dtype value) = 8 then
+      [cast D.uint32 value; cast D.uint32 (shr value (u64 32))]
+    else [cast D.uint32 value]
+  let buffer ~name ~tag ~after values =
+    let words = List.concat_map words values in
+    let size = List.length words * 4 in
+    let buf = U.placeholder ~shape:[size] ~dtype:D.uint8
+        ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name) () |> U.with_tag tag in
+    Tolk.Hcq2.patch ~blob:(String.make size '\000') ~after buf
+      (List.mapi (fun i word -> i * 4, word) words)
+  let fence name after = Tolk.Hcq2.ccall ~host:name ~after ~name:"tolk_hcq_host_fence"
+      ~dtype:D.void []
+
+  let push ~name ~kind ~ring_size ~is_am ~dependency source ~unit ~lag =
+    let ring = placeholder name ("ring_" ^ kind) D.uint32 (ring_size / 4) ~volatile:true in
+    let wptr = placeholder name ("write_ptr_" ^ kind) D.uint64 1 ~volatile:true in
+    let doorbell = placeholder name ("doorbell_" ^ kind) D.uint64 1 ~volatile:true in
+    let p = load (U.after ~src:wptr ~deps:[dependency]) zero in
+    let rs = i32 (ring_size / 4) and n = i32 (U.max_numel source / 4) in
+    let tail = cast D.int32 (op Ops.Cmod (mul p (u64 (unit / 4))) (u64 (ring_size / 4))) in
+    let remaining = sub rs tail in
+    let first = U.alu_ternary ~op:Ops.Where ~a:(op Ops.Cmplt remaining n) ~b:remaining ~c:n in
+    let source = U.bitcast ~src:source ~dtype:D.uint32 in
+    let copy after dst src count axis =
+      let i = U.range ~size:count ~axis ~kind:Axis_type.Loop ~dtype:D.int32 ~parents:[after] () in
+      U.end_ ~value:(store (U.after ~src:ring ~deps:[after]) (add dst i)
+        (load source (add src i))) ~ranges:[i] in
+    let copied = copy dependency tail zero first 10 in
+    let copied = copy copied zero first (sub n first) 11 in
+    let next = add p (u64 (U.max_numel source * 4 / unit)) in
+    let written = store (U.after ~src:wptr ~deps:[fence name [copied]]) zero next in
+    let written = if is_am then
+        store (U.after ~src:(placeholder name "hdp_flush" D.uint32 1 ~volatile:true)
+          ~deps:[fence name [written]]) zero (u32 0)
+      else written in
+    store (U.after ~src:doorbell ~deps:[fence name [written]]) zero (sub next (u64 lag))
+
+  let encode (dev : 'meta device) ~props ~name ~compute_ring_size ~copy_ring_size u =
+    match U.op u, U.arg u, U.children u with
+    | Ops.Custom_function, U.Arg.String ("submit_amd_compute" | "submit_amd_copy" as kind),
+        [linear; dependency] ->
+        let compute = kind = "submit_amd_compute" in
+        let module P = (val dev.pm4) in
+        let module S = (val dev.sdma) in
+        let commands = ref [] in
+        let q xs = commands := List.rev_append (List.concat_map words xs) !commands in
+        let pkt cmd xs =
+          let xs = List.concat_map words xs in
+          q (u32 (P.packet3 cmd (List.length xs - 1)) :: xs) in
+        let wreg reg xs =
+          let reg : Reg.t = Ip.reg dev.gc reg in
+          let cmd, base =
+            if reg.addr >= P.packet3_set_sh_reg_start && reg.addr < P.packet3_set_sh_reg_end then
+              P.packet3_set_sh_reg, P.packet3_set_sh_reg_start
+            else P.packet3_set_uconfig_reg, P.packet3_set_uconfig_reg_start in
+          pkt cmd (u32 (reg.addr - base) :: xs) in
+        let append_static f =
+          let cq = Compute_queue.create dev in
+          f cq; q (Array.to_list (Q.dwords (Compute_queue.q cq)) |> List.map u32) in
+        let release ~timestamp signal value =
+          let cq = Compute_queue.create dev in
+          Compute_queue.release_mem cq ~data_sel:(if timestamp then
+              P.data_sel__mec_release_mem__send_gpu_clock_counter
+            else P.data_sel__mec_release_mem__send_32_bit_low)
+            ~int_sel:(if timestamp then P.int_sel__mec_release_mem__none else
+              P.int_sel__mec_release_mem__send_interrupt_after_write_confirm)
+            ~cache_flush:(not timestamp) ();
+          let packet = Q.dwords (Compute_queue.q cq) in
+          let address = add (addr name signal) (u64 (if timestamp then 8 else 0)) in
+          let args = [u32 packet.(1); u32 packet.(2); address; cast D.uint64 value; u32 packet.(7)] in
+          pkt P.packet3_release_mem args in
+        let dims xs = List.init 3 (fun i -> if i >= List.length xs then u32 1 else
+            match List.nth xs i with
+            | U.Launch_int n -> u32 n | U.Launch_float f -> u32 (int_of_float f)
+            | U.Launch_sym v -> cast D.uint32 v) in
+        let dispatch_packet (data : Program.data) info =
+          let open Amd_hsa_defs in
+          let header = (1 lsl hsa_packet_header_barrier)
+            lor (hsa_fence_scope_system lsl hsa_packet_header_scacquire_fence_scope)
+            lor (hsa_fence_scope_system lsl hsa_packet_header_screlease_fence_scope)
+            lor (hsa_packet_type_kernel_dispatch lsl hsa_packet_header_type)
+            lor (3 lsl (16 + hsa_kernel_dispatch_packet_setup_dimensions)) in
+          let local = dims info.U.local_size and global = dims info.U.global_size in
+          [u32 header; bor (List.nth local 0) (op Ops.Shl (List.nth local 1) (u32 16));
+           List.nth local 2] @ List.map2 mul global local @
+          [u32 data.private_segment_size; u32 data.group_segment_size;
+           u64 0; u64 0; u64 0; u64 0] in
+        let kernargs body args =
+          let info = Option.get (U.as_program_info body) in
+          let object_ = U.to_elf body in
+          let data, image = Program.image ~target:dev.target ~props object_.lib in
+          let program = placeholder ~allocation:("amd_image", Bytes.to_string image)
+              name "program" D.uint8 (Bytes.length image) in
+          let buffers = List.filter (fun a -> not (U.is_bound_var a)) args in
+          let bound = List.filter_map (fun a -> match U.as_bind a with
+              | Some {var; value} -> Option.map (fun n -> n, value) (U.program_var_name var)
+              | None -> None) args in
+          let vars = List.map (fun v -> match U.program_var_name v with
+              | Some n -> Option.value (List.assoc_opt n bound) ~default:v | None -> v) info.vars in
+          let actuals = List.map (fun i -> addr name (List.nth buffers i)) info.globals @ vars in
+          let rows = Tiny_elf.layout object_.signature |> List.map (fun (f : Tiny_elf.field) ->
+              let dtype = if f.argument.addrspace = D.Alu then f.argument.dtype else D.uint64 in
+              f.offset, cast dtype (List.nth actuals f.argument.slot)) in
+          let size = data.Program.kernargs_segment_size +
+            (if data.enable_dispatch_ptr then Amd_hsa_defs.Kernel_dispatch_packet.size else 0) in
+          let arena = U.placeholder ~shape:[max 8 (round_up size 8)] ~dtype:D.uint8
+              ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name) () |> U.with_tag "kernargs" in
+          let rows = if data.enable_dispatch_ptr then rows @
+              (List.concat_map words (dispatch_packet data info) |> List.mapi
+                (fun i value -> data.kernargs_segment_size + i * 4, value)) else rows in
+          let arena = Tolk.Hcq2.patch ~after:[dependency] arena rows in
+          data, program, arena, info in
+        List.iter (fun node -> match U.as_call node, U.arg node with
+          | Some {body; args}, _ when U.op body = Ops.Program && compute ->
+              let data, program, arena, info = kernargs body args in
+              let local = dims info.local_size and global = dims info.global_size in
+              let scratch, tmpring_size = if data.private_segment_size = 0 then u64 0, 0
+                else begin
+                  let alignment = if major dev.target = 9 then 1024 else 256 in
+                  let per_thread = round_up data.private_segment_size (alignment / 64) in
+                  let cu = prop props "simd_count" / prop props "simd_per_cu" / dev.xccs in
+                  let slots = prop props "max_slots_scratch_cu" in
+                  let per_xcc = per_thread * 64 * slots * cu in
+                  let se = prop props "array_count" / prop props "simd_arrays_per_engine" / dev.xccs in
+                  let wavesize = ceildiv (64 * per_thread) alignment in
+                  let waves = min (cu * slots * dev.xccs)
+                      (per_xcc / (wavesize * alignment) / (if major dev.target = 9 then 1 else se)) in
+                  let scratch = placeholder ~allocation:("amd_scratch", string_of_int (per_xcc * dev.xccs))
+                      name "scratch" D.uint8 (per_xcc * dev.xccs) |> addr name in
+                  scratch, Amd_tables.tmpring_size ~target_major:(major dev.target) ~waves ~wavesize
+                end in
+              append_static (fun cq -> Compute_queue.acquire_mem cq ~gli:0 ~gl2:0 ());
+              wreg "regCOMPUTE_PGM_LO" [shr (add (addr name program) (u64 data.entry_offset)) (u64 8)];
+              wreg "regCOMPUTE_PGM_RSRC1" [u32 data.rsrc1; u32 data.rsrc2];
+              wreg "regCOMPUTE_PGM_RSRC3" [u32 data.rsrc3];
+              wreg "regCOMPUTE_TMPRING_SIZE" [u32 tmpring_size];
+              wreg "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" [shr scratch (u64 8)];
+              wreg "regCOMPUTE_RESTART_X" [u32 0; u32 0; u32 0];
+              let user = if data.enable_private_segment_sgpr then
+                  [bor scratch (U.const (Const.int64 D.uint64 Int64.min_int)); u32 0xffffffff; u32 0x20c14000]
+                else [] in
+              let user = if data.enable_dispatch_ptr then
+                  user @ [add (addr name arena) (u64 data.kernargs_segment_size)] else user in
+              wreg "regCOMPUTE_USER_DATA_0" (user @ [addr name arena]);
+              wreg "regCOMPUTE_RESOURCE_LIMITS" [u32 (Reg.encode (Ip.reg dev.gc "regCOMPUTE_RESOURCE_LIMITS")
+                  ["waves_per_sh", Tolk.Helpers.getenv "WAVES_PER_SH" 0])];
+              wreg "regCOMPUTE_START_X" ([u32 0; u32 0; u32 0] @ local @ [u32 0; u32 0]);
+              let initiator = Reg.encode (Ip.reg dev.gc "regCOMPUTE_DISPATCH_INITIATOR")
+                  (["force_start_at_000", 1; "compute_shader_en", 1] @
+                   if major dev.target = 9 then [] else ["cs_w32_en", Bool.to_int data.wave32]) in
+              pkt P.packet3_dispatch_direct (global @ [u32 initiator]);
+              let module Soc = (val dev.soc) in
+              pkt P.packet3_event_write [u32 (P.event_type Soc.cs_partial_flush lor P.event_index event_index_partial_flush)]
+          | Some {body; args = [dst; src]}, _ when U.op body = Ops.Store && not compute ->
+              let bytes = U.max_numel dst * D.itemsize (U.dtype dst) in
+              let offset = ref 0 in
+              while !offset < bytes do
+                let size = min dev.max_copy_size (bytes - !offset) in
+                q [u32 (S.sdma_op_copy lor S.sdma_pkt_copy_linear_header_sub_op S.sdma_subop_copy_linear);
+                   u32 (size - 1); u32 0; add (addr name src) (u64 !offset); add (addr name dst) (u64 !offset)];
+                offset := !offset + size
+              done
+          | _, U.Arg.Typed ("barrier", _) -> if compute then append_static Compute_queue.memory_barrier
+          | _, U.Arg.Typed ("wait", _) ->
+              let args = U.src node in
+              if compute then pkt P.packet3_wait_reg_mem [u32 (P.wait_reg_mem_mem_space 1 lor
+                  P.wait_reg_mem_operation 0 lor P.wait_reg_mem_function wait_reg_mem_function_geq lor P.wait_reg_mem_engine 0);
+                addr name args.(0); cast D.uint32 args.(1); u32 0xffffffff; u32 4]
+              else q [u32 (S.sdma_op_poll_regmem lor S.sdma_pkt_poll_regmem_header_func wait_reg_mem_function_geq
+                  lor S.sdma_pkt_poll_regmem_header_mem_poll 1); addr name args.(0); cast D.uint32 args.(1);
+                u32 0xffffffff; u32 (S.sdma_pkt_poll_regmem_dw5_interval 4 lor S.sdma_pkt_poll_regmem_dw5_retry_count 0xfff)]
+          | _, U.Arg.Typed ("store", _) ->
+              let args = U.src node in
+              if compute then release ~timestamp:false args.(0) args.(1)
+              else q [u32 (S.sdma_op_fence lor (if major dev.target = 9 then 0 else
+                    Amd_sdma_defs.V6_0_0.sdma_pkt_fence_header_mtype 3));
+                  addr name args.(0); cast D.uint32 args.(1); u32 S.sdma_op_trap; u32 0]
+          | _, U.Arg.Typed ("timestamp", _) ->
+              let signal = (U.src node).(0) in
+              if compute then release ~timestamp:true signal (u64 0)
+              else q [u32 (S.sdma_op_timestamp lor S.sdma_pkt_timestamp_get_header_sub_op
+                  S.sdma_subop_timestamp_get_global); add (addr name signal) (u64 8)]
+          | _ -> invalid_arg "AMD queue: unsupported instruction") (U.children linear);
+        let stream = buffer ~name:(if compute then name else "CPU")
+            ~tag:(if compute then "cmdbuf_compute" else "cmdbuf_copy")
+            ~after:[dependency] (List.rev !commands) in
+        if compute then begin
+          let ib = buffer ~name:"CPU" ~tag:"ib_compute" ~after:[stream]
+              [u32 (P.packet3 P.packet3_indirect_buffer 2); addr name stream;
+               u32 (U.max_numel stream / 4 lor P.indirect_buffer_valid)] in
+          Some (push ~name ~kind:"compute" ~ring_size:compute_ring_size ~is_am:dev.is_am
+            ~dependency:stream ib ~unit:4 ~lag:0)
+        end else begin
+          let ring_size = match copy_ring_size with Some size -> size
+            | None -> invalid_arg "AMD device has no SDMA queue" in
+          let size = U.max_numel stream / 4 and rs = ring_size / 4 in
+          if size > rs then invalid_arg "AMD SDMA command stream exceeds its ring";
+          let ring = placeholder name "ring_copy" D.uint32 rs ~volatile:true in
+          let wptr = placeholder name "write_ptr_copy" D.uint64 1 ~volatile:true in
+          let bell = placeholder name "doorbell_copy" D.uint64 1 ~volatile:true in
+          let p = load (U.after ~src:wptr ~deps:[dependency]) zero in
+          let tail = cast D.int32 (op Ops.Cdiv (op Ops.Cmod p (u64 ring_size)) (u64 4)) in
+          let fits = cast D.int32 (op Ops.Cmplt (i32 (size - 1)) (sub (i32 rs) tail)) in
+          let start = mul fits tail in
+          let padding = mul (sub (i32 1) fits) (sub (i32 rs) tail) in
+          let z = U.range ~size:padding ~axis:10 ~kind:Axis_type.Loop ~dtype:D.int32 ~parents:[stream] () in
+          let cleared = U.end_ ~value:(store ring (add tail z) (u32 0)) ~ranges:[z] in
+          let i = U.range ~size:(i32 size) ~axis:11 ~kind:Axis_type.Loop ~dtype:D.int32 ~parents:[cleared] () in
+          let copied = U.end_ ~value:(store (U.after ~src:ring ~deps:[cleared]) (add start i)
+              (load (U.bitcast ~src:stream ~dtype:D.uint32) i)) ~ranges:[i] in
+          let next = add p (cast D.uint64 (mul (add padding (i32 size)) (i32 4))) in
+          let written = store (U.after ~src:wptr ~deps:[fence name [copied]]) zero next in
+          let written = if dev.is_am then store (U.after
+              ~src:(placeholder name "hdp_flush" D.uint32 1 ~volatile:true)
+              ~deps:[fence name [written]]) zero (u32 0) else written in
+          Some (store (U.after ~src:bell ~deps:[fence name [written]]) zero next)
+        end
+    | _ -> None
+end
+
 
 (* Kernel-driver interface *)
 
@@ -1259,7 +1517,6 @@ module Kfd_iface = struct
                (Nativeint.of_int
                   (Int64.to_int (Int64.sub doorbell_offset doorbells_base))))
           ~size:8;
-      put_value = 0;
       flush_hdp = None;
       resetup = None;
     }
@@ -1477,7 +1734,6 @@ module Pci_iface = struct
         Hcq.Mmio.view
           (Amdev.doorbell64 boot.Am_boot.adev)
           ~off:(doorbell_index * 8) ~size:8 ();
-      put_value = 0;
       flush_hdp = Some (fun () -> Am_ip.Gmc.flush_hdp boot.Am_boot.adev);
       resetup = Some (fun () -> ignore (setup () : int));
     }
@@ -1524,14 +1780,13 @@ module Pci_iface = struct
               (* the processors lost their queues: rebuild the compute
                  queue and rewind the timeline to the last completed
                  value *)
-              r.r_compute.Queue_desc.put_value <- 0;
               Hcq.Mmio.write64 r.r_compute.Queue_desc.read_ptr 0 0L;
               Hcq.Mmio.write64 r.r_compute.Queue_desc.write_ptr 0 0L;
               (match r.r_compute.Queue_desc.resetup with
               | Some resetup -> resetup ()
               | None -> ());
               Hcq.Signal.set_value r.r_tl.Timeline.timeline
-                (r.r_tl.Timeline.timeline_value - 1);
+                (Timeline.submitted r.r_tl);
               r.r_tl.Timeline.error_state <- None
             end)
       !registry
@@ -1628,9 +1883,10 @@ module Allocator = struct
      submitted work, append the packets of [build], advance the timeline. *)
   let submit_copy state qd build =
     let tl = state.State.tl in
+    Timeline.prepare tl;
     let cp = Copy_queue.create state.State.hw in
     Copy_queue.wait cp
-      ~value:(tl.Timeline.timeline_value - 1)
+      ~value:(Timeline.submitted tl)
       tl.Timeline.timeline;
     build cp;
     Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
@@ -1911,8 +2167,7 @@ let open_device ~name iface =
       tl =
         {
           Timeline.timeline = timeline_signal ();
-          shadow_timeline = timeline_signal ();
-          timeline_value = 1;
+
           error_state = None;
           bounce =
             Array.init bounce_count (fun _ ->

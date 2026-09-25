@@ -184,7 +184,6 @@ module Queue_desc = struct
     ring : Hcq.Mmio.t;
     gpput : Hcq.Mmio.t;
     token : int;
-    mutable put_value : int;
   }
 end
 
@@ -227,13 +226,13 @@ let submit_to_gpfifo (dev : 'meta device) q (qd : Queue_desc.t) =
     Hcq.Mmio.write32 dev.cmdq (base + (i * 4)) (Int32.of_int (Q.get q i))
   done;
   let entries = Hcq.Mmio.size qd.ring / 8 in
+  let put = Int32.to_int (Hcq.Mmio.read32 qd.gpput 0) in
   Hcq.Mmio.write64 qd.ring
-    (qd.put_value mod entries * 8)
+    (put mod entries * 8)
     (Int64.of_int (((cmdq_addr / 4) lsl 2) lor (n lsl 42) lor (1 lsl 41)));
-  Hcq.Mmio.write32 qd.gpput 0 (Int32.of_int ((qd.put_value + 1) mod entries));
+  Hcq.Mmio.write32 qd.gpput 0 (Int32.of_int ((put + 1) mod entries));
   Hcq.Mmio.fence ();
-  Hcq.Mmio.write32 dev.gpu_mmio 0x90 (Int32.of_int qd.token);
-  qd.put_value <- qd.put_value + 1
+  Hcq.Mmio.write32 dev.gpu_mmio 0x90 (Int32.of_int qd.token)
 
 (* Compute queue *)
 
@@ -341,7 +340,7 @@ module Compute_queue = struct
           ]);
     t.active_qmd <- Some qmd
 
-  let signal t ?(value = 0) sg =
+  let release t ~value ~timestamp sg =
     let patched =
       match t.active_qmd with
       | None -> false
@@ -353,7 +352,12 @@ module Compute_queue = struct
             else if Qmd.read qmd (Printf.sprintf "release%d_enable" i) <> 0
             then claim (i + 1)
             else begin
-              Qmd.write qmd [ (Printf.sprintf "release%d_enable" i, 1) ];
+              Qmd.write qmd
+                ([Printf.sprintf "release%d_enable" i, 1;
+                  (if v3 then Printf.sprintf "release%d_structure_size" i
+                   else Printf.sprintf "release_structure_size_%d" i),
+                  (if timestamp then 0 else 2)]
+                @ if v3 then [Printf.sprintf "release%d_payload64b" i, 1] else []);
               let addr_off =
                 Qmd.field_offset qmd
                   (if v3 then Printf.sprintf "release%d_address_lower" i
@@ -398,13 +402,14 @@ module Compute_queue = struct
           lor bits Defs.nvc56f_sem_execute_payload_size
                 Defs.nvc56f_sem_execute_payload_size_64bit
           lor bits Defs.nvc56f_sem_execute_release_timestamp
-                Defs.nvc56f_sem_execute_release_timestamp_en;
+                (if timestamp then Defs.nvc56f_sem_execute_release_timestamp_en else 0);
         |];
-      nvm t.q 0 Defs.nvc56f_non_stall_interrupt [| 0 |];
+      if not timestamp then nvm t.q 0 Defs.nvc56f_non_stall_interrupt [| 0 |];
       t.active_qmd <- None
     end
 
-  let timestamp t sg = signal t ~value:0 sg
+  let signal t ?(value = 0) sg = release t ~value ~timestamp:false sg
+  let timestamp t sg = release t ~value:0 ~timestamp:true sg
 
   let write t ?(b64 = false) buf value =
     let a = va64 (Hcq.Buffer.va buf) in
@@ -478,7 +483,7 @@ module Copy_queue = struct
       off := !off + step
     done
 
-  let signal t ?(value = 0) sg =
+  let release t ~value ~timestamp sg =
     let a = va64 (Hcq.Signal.value_addr sg) in
     nvm t.q 4 Defs.nvc6b5_set_semaphore_a [| hi32 a; lo32 a; value |];
     nvm t.q 4 Defs.nvc6b5_launch_dma
@@ -486,10 +491,12 @@ module Copy_queue = struct
         bits Defs.nvc6b5_launch_dma_flush_enable
           Defs.nvc6b5_launch_dma_flush_enable_true
         lor bits Defs.nvc6b5_launch_dma_semaphore_type
-              Defs.nvc6b5_launch_dma_semaphore_type_release_four_word_semaphore;
+              (if timestamp then Defs.nvc6b5_launch_dma_semaphore_type_release_four_word_semaphore
+               else Defs.nvc6b5_launch_dma_semaphore_type_release_one_word_semaphore);
       |]
 
-  let timestamp t sg = signal t ~value:0 sg
+  let signal t ?(value = 0) sg = release t ~value ~timestamp:false sg
+  let timestamp t sg = release t ~value:0 ~timestamp:true sg
 
   let wait t ?(value = 0) sg =
     push_sem_wait t.q ~addr:(Hcq.Signal.value_addr sg) ~value
@@ -1672,7 +1679,7 @@ let ensure_has_local_memory (dev : 'meta device) ~alloc ~free ~num_gpcs
     dev.shader_local_mem <- Some shader_local_mem;
     let cq = Compute_queue.create dev in
     Compute_queue.wait cq
-      ~value:(tl.Hcq.Timeline.timeline_value - 1)
+      ~value:(Hcq.Timeline.submitted tl)
       tl.Hcq.Timeline.timeline;
     Compute_queue.setup cq
       ~local_mem:(Hcq.Buffer.va shader_local_mem)
@@ -1803,7 +1810,6 @@ let new_gpfifo (iface : 'mem Nv_iface.t) ~(usermode : Nv_iface.usermode) ~nvdevi
           ~off:(offset + (entries * 8) + Defs.ampere_a_control_gpfifo_gpput)
           ~size:4 ();
       token = Nv_tables.get_field wb W.worksubmittoken;
-      put_value = 0;
     },
     debug )
 
@@ -1899,9 +1905,10 @@ module Allocator = struct
      submitted work, append the packets of [build], advance the timeline. *)
   let submit_copy state build =
     let tl = state.State.tl in
+    Timeline.prepare tl;
     let cp = Copy_queue.create state.State.hw in
     Copy_queue.wait cp
-      ~value:(tl.Timeline.timeline_value - 1)
+      ~value:(Timeline.submitted tl)
       tl.Timeline.timeline;
     build cp;
     Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;
@@ -2164,8 +2171,7 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
       tl =
         {
           Timeline.timeline = timeline_signal ();
-          shadow_timeline = timeline_signal ();
-          timeline_value = 1;
+
           error_state = None;
           bounce =
             Array.init bounce_count (fun _ ->
@@ -2192,7 +2198,7 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
     tl.Timeline.timeline;
   Compute_queue.submit cq compute_queue;
   let cp = Copy_queue.create hw in
-  Copy_queue.wait cp ~value:(tl.Timeline.timeline_value - 1)
+  Copy_queue.wait cp ~value:(Timeline.submitted tl)
     tl.Timeline.timeline;
   Copy_queue.setup cp ~copy_class:usermode.Nv_iface.dma_class ();
   Copy_queue.signal cp ~value:(Timeline.next_timeline tl) tl.Timeline.timeline;

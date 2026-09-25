@@ -171,7 +171,6 @@ module Queue_desc : sig
     token : int;
         (** Work-submission token naming the channel to the
             doorbell. *)
-    mutable put_value : int;  (** Number of entries submitted. *)
   }
   (** The type for mapped channels. *)
 end

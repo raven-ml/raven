@@ -754,6 +754,8 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) =
       let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
       let vals = U.program_vals info ~var_vals:ctx.var_vals |> List.map Int64.of_int |> Array.of_list in
       let run () =
+        List.iter (fun d -> Option.iter (fun q -> q.Device.prepare ())
+            (Device.queue (Device.get d))) submission.devices;
         let started = if ctx.wait then Unix.gettimeofday () else 0. in
         ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
         incr queue_submissions;

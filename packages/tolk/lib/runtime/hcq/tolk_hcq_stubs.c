@@ -192,6 +192,15 @@ CAMLprim value caml_tolk_hcq_fence(value unit) {
   return Val_unit;
 }
 
+static void tolk_hcq_host_fence(void) {
+  atomic_thread_fence(memory_order_seq_cst);
+}
+
+CAMLprim value caml_tolk_hcq_host_fence_address(value unit) {
+  CAMLparam1(unit);
+  CAMLreturn(caml_copy_nativeint((intnat)tolk_hcq_host_fence));
+}
+
 CAMLprim value caml_tolk_hcq_monotonic_ms(value unit) {
   (void)unit;
 #if defined(_WIN32)
