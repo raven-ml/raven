@@ -287,13 +287,15 @@ val jvp' :
 
 val remat : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
 (** [remat s f] is [f], recomputed during the backward pass instead of having
-    its intermediate results retained by the tape: reverse-mode differentiation
-    of [remat s f] trades compute for memory. [s] is [f]'s signature, as for
-    {!val-vmap}. Differentiating [remat s f] gives the gradients of [f].
+    its intermediate results retained: reverse-mode differentiation of
+    [remat s f] keeps [f]'s arguments and runs [f] again when the backward pass
+    reaches it, trading compute for memory. [s] is [f]'s signature, as for
+    {!val-vmap}. Every transformation sees [remat s f] as it sees [f]: its
+    derivatives in either mode, including those with respect to tensors [f]
+    captures, and its batched form under {!val-vmap} are [f]'s.
 
-    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument,
-    and when differentiated in forward mode (it is a {!custom_vjp} rule
-    underneath). *)
+    Raises [Invalid_argument] when applied to [s] if [s] consumes an argument.
+*)
 
 (** {1:jacobians Jacobians} *)
 

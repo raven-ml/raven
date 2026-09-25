@@ -639,6 +639,62 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   "Rune: a custom_vjp function is not forward-differentiable; \
                    define a custom_jvp rule instead"
               else continue k (fst (fwd params)))
+      (* Gradient checkpointing. The call passes on as the remat of [f]'s jvp: a
+         function of the call's arguments that gives each argument it receives
+         the tangent of the call's argument at its position, runs [f] under this
+         handler and returns [f]'s results and the tangents of its active ones,
+         so that an enclosing transformation sees the tangents as results of the
+         remat. The tangents of the arguments, like those of the tensors [f]
+         captures, are tensors the function closes over. *)
+      | Remat.E_remat (Remat.Call { params_s; result_s; params; f }) ->
+          Some
+            (fun k ->
+              let dparams =
+                List.map
+                  (fun (P p) -> Option.map (fun d -> P d) (tangent p))
+                  (fst (Nx.Ptree.flatten params_s params))
+              in
+              let active_out = ref [] in
+              let f' params =
+                List.iter2
+                  (fun (P p) d ->
+                    Option.iter
+                      (fun d ->
+                        Tensor_map.set tangents p (T.unpack (T.dtype p) d))
+                      d)
+                  (fst (Nx.Ptree.flatten params_s params))
+                  dparams;
+                let y = Effect.Deep.match_with f params (handler tangents) in
+                let ys = fst (Nx.Ptree.flatten result_s y) in
+                active_out := List.map (fun (P l) -> active l) ys;
+                ( y,
+                  List.filter_map
+                    (fun (P l) -> Option.map (fun d -> P d) (tangent l))
+                    ys )
+              in
+              let y, dy =
+                Remat.run
+                  (Remat.Call
+                     {
+                       params_s;
+                       result_s = Nx.Ptree.pair result_s Structure.packed_list;
+                       params;
+                       f = f';
+                     })
+              in
+              ignore
+                (List.fold_left2
+                   (fun dy (P l) is_active ->
+                     match (is_active, dy) with
+                     | true, d :: dy ->
+                         set_tangent l (T.unpack (T.dtype l) d);
+                         dy
+                     | true, [] -> assert false
+                     | false, dy -> dy)
+                   dy
+                   (fst (Nx.Ptree.flatten result_s y))
+                   !active_out);
+              continue k y)
       (* Quantised products. A weight is never differentiated; the tangent of a
          product is the product of the tangent of [x]. *)
       | Nx_quant.Effect.E_quant

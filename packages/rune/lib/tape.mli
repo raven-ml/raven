@@ -25,8 +25,12 @@
 type t
 (** A tape. Create one per differentiation, discard after {!backward}. *)
 
-val create : unit -> t
-(** [create ()] is an empty tape. *)
+val create : ?parent:t -> unit -> t
+(** [create ?parent ()] is an empty tape. A tape with a [parent] differentiates
+    a computation that runs inside the parent's: a tensor the parent tracks
+    becomes a leaf of the tape when the tape first checks it ({!tracked}), and
+    {!captures} lists those leaves so that their cotangents can go back to the
+    parent. *)
 
 (** {1:tracking Forward pass} *)
 
@@ -34,7 +38,11 @@ val track : t -> ('a, 'b) Nx.t -> unit
 (** [track tape x] marks [x] as reachable from the differentiated inputs. *)
 
 val tracked : t -> ('a, 'b) Nx.t -> bool
-(** [tracked tape x] is [true] iff [x] was marked with {!track}. *)
+(** [tracked tape x] is [true] iff [x] was marked with {!track}, or if the
+    parent tracks [x], which then becomes a leaf of [tape]. *)
+
+val captures : t -> Nx.packed list
+(** [captures tape] is the tensors [tape] took from its parent as leaves. *)
 
 val record : t -> (unit -> unit) -> unit
 (** [record tape pull] appends [pull] to the tape in forward order. [pull] runs

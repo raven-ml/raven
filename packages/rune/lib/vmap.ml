@@ -606,6 +606,42 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           Some
             (fun k ->
               continue k (match_with (fun () -> f params) () (handler st)))
+    (* Gradient checkpointing: the remat passes on with its function batched, so
+       that the enclosing context recomputes the batched computation, the
+       tensors [f] captures included. The batched function receives the physical
+       tensors of the arguments, those of the call or their aliases in a
+       backward pass, marks those at the batched arguments' positions, and
+       records which results come out batched; the results the call returns,
+       which may be aliases, are marked at those positions. *)
+    | Remat.E_remat (Remat.Call { params_s; result_s; params; f }) ->
+        let flags =
+          List.map
+            (fun (Nx.P p) -> batched st p)
+            (fst (Nx.Ptree.flatten params_s params))
+        in
+        let out = ref [] in
+        let f' params =
+          List.iter2
+            (fun (Nx.P p) b -> if b then mark st p)
+            (fst (Nx.Ptree.flatten params_s params))
+            flags;
+          let y = match_with f params (handler st) in
+          out :=
+            List.map
+              (fun (Nx.P l) -> batched st l)
+              (fst (Nx.Ptree.flatten result_s y));
+          y
+        in
+        Some
+          (fun k ->
+            let y =
+              Remat.run (Remat.Call { params_s; result_s; params; f = f' })
+            in
+            List.iter2
+              (fun (Nx.P l) b -> if b then mark st l)
+              (fst (Nx.Ptree.flatten result_s y))
+              !out;
+            continue k y)
     (* Operations on constants, and effects from other libraries, fall through.
        A new Nx tensor operation must be added to this match: an unmatched
        batched operand would silently produce wrong shapes. *)

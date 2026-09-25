@@ -89,6 +89,15 @@ let of_walker (type s) (w : s walker) : s Ptree.t =
   end in
   Ptree.instantiate (module M)
 
+(* A list of tensors of any dtypes, each at its index. *)
+let packed_list : Nx.packed list Ptree.t =
+  of_walker
+    {
+      walk =
+        (fun c l ->
+          Ptree.Walk.list (fun c (Nx.P x) -> Nx.P (Ptree.Walk.tensor c x)) c l);
+    }
+
 type 'f spine =
   | Spine : {
       walk : 'a walker;

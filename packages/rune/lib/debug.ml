@@ -15,7 +15,8 @@ module T = Nx
 let shape_string s =
   "[" ^ String.concat "," (Array.to_list (Array.map string_of_int s)) ^ "]"
 
-let handler ppf =
+let rec handler : type r. Format.formatter -> (r, r) Effect.Deep.handler =
+ fun ppf ->
   let open Effect.Deep in
   (* Logs [name] with the output shape, then continues with the output. *)
   let obs (type a b) k name (out : (a, b) t) =
@@ -128,6 +129,12 @@ let handler ppf =
           | Dequant _ -> "quant_dequant"
         in
         Some (fun k -> obs k name (Nx_quant.Effect.perform w op))
+    (* A remat passes on with its function logged. *)
+    | Remat.E_remat (Remat.Call c) ->
+        Some
+          (fun k ->
+            let f params = match_with c.f params (handler ppf) in
+            continue k (Remat.run (Remat.Call { c with f })))
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }

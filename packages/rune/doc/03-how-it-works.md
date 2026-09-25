@@ -92,7 +92,7 @@ Two consequences documented in [Transformations](02-transformations.md) follow d
 
 `custom_vjp` and `custom_jvp` communicate with the ambient handlers through their own effects. Dispatch is by handler stacking: the innermost transformation that understands the effect applies the rule; enclosing transformations see the forward computation itself. A differentiation of the wrong mode raises — a custom VJP is not forward-differentiable, and vice versa. When no transformation is in scope, the plain forward function runs at the call site.
 
-`remat` is a small application of this machinery: it wraps a function in a `custom_vjp` whose backward rule re-runs the function under a fresh tape and pulls the cotangent back through it. Nothing from the wrapped function's first execution is retained; the recomputation happens exactly when the backward pass needs it.
+`remat` has an effect of its own, and every handler passes it on to the enclosing context with the function wrapped in itself, so that no transformation misses the tensors the function captures. Reverse mode learns, from the wrapped run, whether the result depends on a tracked tensor; if it does, it keeps the function's arguments and records a pull thunk that runs the function again under a fresh tape linked to its own and pulls the cotangent back through it. A tracked tensor the function captures becomes a leaf of the linked tape, and its cotangent goes back to the enclosing tape. Forward mode passes on the remat of the function's jvp, whose results include the tangents; `vmap` passes on the function batched. Nothing from the wrapped function's first execution is retained; the recomputation happens exactly when the backward pass needs it.
 
 ## detach and no_grad
 

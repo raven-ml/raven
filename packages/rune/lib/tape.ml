@@ -7,17 +7,32 @@ type t = {
   tracked : Tensor_map.Ids.t;
   mutable cotangents : Tensor_map.t;
   pulls : (unit -> unit) Dynarray.t;
+  parent : t option;
+  mutable captures : Nx.packed list;
 }
 
-let create () =
+let create ?parent () =
   {
     tracked = Tensor_map.Ids.create ();
     cotangents = Tensor_map.create ();
     pulls = Dynarray.create ();
+    parent;
+    captures = [];
   }
 
 let track tape x = Tensor_map.Ids.add tape.tracked x
-let tracked tape x = Tensor_map.Ids.mem tape.tracked x
+
+let rec tracked tape x =
+  Tensor_map.Ids.mem tape.tracked x
+  ||
+  match tape.parent with
+  | Some parent when tracked parent x ->
+      track tape x;
+      tape.captures <- Nx.P x :: tape.captures;
+      true
+  | _ -> false
+
+let captures tape = tape.captures
 let record tape pull = Dynarray.add_last tape.pulls pull
 
 let backward tape =

@@ -263,7 +263,7 @@ let () =
   Printf.printf "%s\n" (Nx.to_string g_remat) (* identical *)
 ```
 
-Wrap the memory-heavy sub-computation (a transformer block, say), not the whole objective. `remat` is a `custom_vjp` rule underneath, so differentiating it in forward mode raises.
+Wrap the memory-heavy sub-computation (a transformer block, say), not the whole objective. The block may close over its weights: every transformation sees `remat s f` as it sees `f`, so gradients and tangents reach the tensors it captures. Forward mode keeps no intermediates: under `jvp`, `remat s f` computes what `f` does.
 
 ## Custom Differentiation Rules
 

@@ -1112,6 +1112,47 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   "Rune: a custom_jvp function is not reverse-differentiable; \
                    define a custom_vjp rule instead"
               else continue k (f params))
+      (* Gradient checkpointing. The call passes on with [f] run under this
+         handler over a scratch tape linked to this one, which tells whether the
+         result depends on a tracked tensor: an argument, or one [f] captures.
+         The scratch tape is then dropped. When the result does depend on one,
+         the tape keeps the arguments and, once the result's cotangents exist,
+         differentiates a second run of [f] (see [recompute]). *)
+      | Remat.E_remat (Remat.Call { params_s; result_s; params; f; _ }) ->
+          Some
+            (fun k ->
+              let depends = ref false in
+              let f' params =
+                let scratch = Tape.create ~parent:tape () in
+                let y = Effect.Deep.match_with f params (handler scratch) in
+                depends :=
+                  Nx.Ptree.fold result_s
+                    (fun _ leaf d -> d || Tape.tracked scratch leaf)
+                    y false;
+                y
+              in
+              let y =
+                Remat.run (Remat.Call { params_s; result_s; params; f = f' })
+              in
+              if not !depends then continue k y
+              else begin
+                (* A result that is one of the parameters is aliased, so its
+                   cotangent is the result's alone. *)
+                let y = Structure.aliases result_s y in
+                Nx.Ptree.fold result_s (fun _ leaf () -> track leaf) y ();
+                Tape.record tape (fun () ->
+                    if
+                      Nx.Ptree.fold result_s
+                        (fun _ leaf seeded ->
+                          seeded || Option.is_some (Tape.find tape leaf))
+                        y false
+                    then
+                      recompute tape params_s result_s f params
+                        (Nx.Ptree.map result_s
+                           (fun _ leaf -> Tape.cotangent tape leaf)
+                           y));
+                continue k y
+              end)
       (* Quantised products. A weight is never differentiated; the cotangent of
          [x] is the transposed product with the same ids, summed over the axes
          along which [x] was broadcast. The tape holds the weight and the ids,
@@ -1155,3 +1196,43 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }
+
+(* Accumulate into [tape] the pullback of [cts] through a second run of [f] at
+   [params]. The run reads aliases of [params] under a tape linked to [tape], so
+   a tensor [f] captures that [tape] tracks becomes a leaf of the run and its
+   cotangent goes back to [tape] too. *)
+and recompute : type p q.
+    Tape.t -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p -> q -> unit =
+ fun tape params_s result_s f params cts ->
+  let params' = Structure.aliases params_s params in
+  let run = Tape.create ~parent:tape () in
+  ignore
+    (Structure.map2 "Rune.remat" params_s ~this:"the arguments"
+       ~that:"their aliases"
+       (fun _ p p' ->
+         if Tape.tracked tape p then Tape.track run p';
+         p)
+       params params');
+  let y =
+    Gate.with_transform (fun () ->
+        Effect.Deep.match_with f params' (handler run))
+  in
+  ignore
+    (Structure.map2 "Rune.remat" result_s ~this:"the result"
+       ~that:"the cotangents"
+       (fun _ yl ct ->
+         Tape.accumulate run yl ct;
+         yl)
+       y cts);
+  Tape.backward run;
+  ignore
+    (Structure.map2 "Rune.remat" params_s ~this:"the arguments"
+       ~that:"their aliases"
+       (fun _ p p' ->
+         if Tape.tracked run p' then
+           Tape.accumulate tape p (Tape.cotangent run p');
+         p)
+       params params');
+  List.iter
+    (fun (Nx.P c) -> Tape.accumulate tape c (Tape.cotangent run c))
+    (Tape.captures run)

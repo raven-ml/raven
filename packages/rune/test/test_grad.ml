@@ -228,6 +228,114 @@ let test_remat_rejects_consumes () =
       in
       ())
 
+(* A block whose backward pass reads its intermediates, and a point and a
+   direction to differentiate it at. *)
+let remat_block x = Nx.sum (Nx.mul (Nx.tanh (Nx.mul x x)) (Nx.exp x))
+let rematted = Rune.remat Nx.Ptree.(tensor @-> returns tensor) remat_block
+let at () = vec64 [| 0.7; -1.3; 2.1 |]
+let along () = vec64 [| 0.5; 1.0; -2.0 |]
+
+let test_remat_under_jvp () =
+  let y, dy = Rune.jvp' remat_block (at ()) (along ()) in
+  let y', dy' = Rune.jvp' rematted (at ()) (along ()) in
+  check_arr ~msg:"value" (to_arr y) y';
+  check_arr ~msg:"tangent" (to_arr dy) dy'
+
+(* Rows of [xs] are the lanes. *)
+let test_remat_under_vmap () =
+  let xs () = Nx.create f64 [| 2; 3 |] [| 0.7; -1.3; 2.1; 0.2; 0.9; -0.4 |] in
+  let lanes f x = Nx.sum (Rune.vmap' f x) in
+  check_arr ~msg:"values"
+    (to_arr (Rune.vmap' remat_block (xs ())))
+    (Rune.vmap' rematted (xs ()));
+  check_arr ~msg:"grad of vmap"
+    (to_arr (Rune.grad' (lanes remat_block) (xs ())))
+    (Rune.grad' (lanes rematted) (xs ()));
+  check_arr ~msg:"vmap of grad"
+    (to_arr (Rune.vmap' (Rune.grad' remat_block) (xs ())))
+    (Rune.vmap' (Rune.grad' rematted) (xs ()));
+  check_arr ~msg:"compiled grad of vmap"
+    (to_arr (Rune.grad' (lanes remat_block) (xs ())))
+    (Rune.jit' (Rune.grad' (lanes rematted)) (xs ()));
+  check_arr ~msg:"compiled vmap of grad"
+    (to_arr (Rune.vmap' (Rune.grad' remat_block) (xs ())))
+    (Rune.jit' (Rune.vmap' (Rune.grad' rematted)) (xs ()))
+
+let test_remat_under_jit () =
+  let f p = Nx.sum (Nx.mul (Nx.exp p.fst) (Nx.sin (Nx.mul p.snd p.fst))) in
+  let params =
+    { fst = vec64 [| 0.7; -1.3; 2.1 |]; snd = vec64 [| 1.9; 0.8; -0.6 |] }
+  in
+  let g = Rune.grad pair_ptree f params in
+  let g' =
+    Rune.jit
+      Nx.Ptree.(pair_ptree @-> returns pair_ptree)
+      (Rune.grad pair_ptree
+         (Rune.remat Nx.Ptree.(pair_ptree @-> returns tensor) f))
+      params
+  in
+  check_arr ~msg:"d fst" (to_arr g.fst) g'.fst;
+  check_arr ~msg:"d snd" (to_arr g.snd) g'.snd
+
+(* Second derivatives differentiate the recomputation, and under jit its
+   barrier. *)
+let test_remat_second_order_under_jit () =
+  let hvp f x =
+    Rune.grad' (fun x -> Nx.sum (Nx.mul (Rune.grad' f x) (along ()))) x
+  in
+  check_arr ~msg:"reverse over reverse"
+    (to_arr (hvp remat_block (at ())))
+    (Rune.jit' (hvp rematted) (at ()));
+  let fwd f x = snd (Rune.jvp' (Rune.grad' f) x (along ())) in
+  check_arr ~msg:"forward over reverse"
+    (to_arr (fwd remat_block (at ())))
+    (Rune.jit' (fwd rematted) (at ()))
+
+(* A layer that closes over its weight [w]: every transformation reaches the
+   capture through the remat, eagerly and compiled. *)
+let layer w x = Nx.mul (Nx.exp x) w
+let rematted_layer = Rune.remat Nx.Ptree.(tensor @-> returns tensor)
+
+let check_eager_and_jit ~msg f g x =
+  check_arr ~msg:(msg ^ ", eager") (to_arr (f x)) (g x);
+  check_arr ~msg:(msg ^ ", compiled") (to_arr (f x)) (Rune.jit' g x)
+
+let test_remat_grad_of_capture () =
+  let loss r w = Nx.sum (Nx.sin (r (layer w) (at ()))) in
+  check_eager_and_jit ~msg:"d w"
+    (Rune.grad' (loss (fun f -> f)))
+    (Rune.grad' (loss rematted_layer))
+    (along ())
+
+let test_remat_jvp_of_capture () =
+  let fn r w = r (layer w) (at ()) in
+  let tangent r w = snd (Rune.jvp' (fn r) w (along ())) in
+  check_eager_and_jit ~msg:"tangent"
+    (tangent (fun f -> f))
+    (tangent rematted_layer) (at ())
+
+(* [w] is captured and feeds the argument: both shares reach it. *)
+let test_remat_grad_of_capture_and_argument () =
+  let loss r w = Nx.sum (r (layer w) (Nx.mul w w)) in
+  check_eager_and_jit ~msg:"d w"
+    (Rune.grad' (loss (fun f -> f)))
+    (Rune.grad' (loss rematted_layer))
+    (along ())
+
+(* The lane's row is captured and the argument is a constant of the map. *)
+let test_remat_batched_capture () =
+  let xs () = Nx.create f64 [| 2; 3 |] [| 0.7; -1.3; 2.1; 0.2; 0.9; -0.4 |] in
+  let lane r x = r (fun c -> Nx.mul (Nx.sin c) x) (along ()) in
+  check_eager_and_jit ~msg:"values"
+    (Rune.vmap' (lane (fun f -> f)))
+    (Rune.vmap' (lane rematted_layer))
+    (xs ());
+  let lanes r xs = Nx.sum (Rune.vmap' (lane r) xs) in
+  check_eager_and_jit ~msg:"grad of vmap"
+    (Rune.grad' (lanes (fun f -> f)))
+    (Rune.grad' (lanes rematted_layer))
+    (xs ())
+
 (* A single tensor has nowhere to carry a non-differentiable value, so an
    integer argument there is simply the wrong dtype. *)
 let test_grad_rejects_integer_leaves () =
@@ -367,6 +475,17 @@ let tests =
         test "a returned argument is not counted twice"
           test_remat_returns_an_argument;
         test "rejects a consumed argument" test_remat_rejects_consumes;
+        test "is its function under jvp" test_remat_under_jvp;
+        test "composes with vmap" test_remat_under_vmap;
+        test "gradients are unchanged under jit" test_remat_under_jit;
+        test "second derivatives are unchanged under jit"
+          test_remat_second_order_under_jit;
+        test "differentiates a captured tensor" test_remat_grad_of_capture;
+        test "pushes forward a captured tensor's tangent"
+          test_remat_jvp_of_capture;
+        test "differentiates a tensor both captured and passed"
+          test_remat_grad_of_capture_and_argument;
+        test "maps a batched capture" test_remat_batched_capture;
       ];
     group "set"
       [ test "differentiates both operands" test_set_grad_both_operands ];

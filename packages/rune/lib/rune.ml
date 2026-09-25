@@ -262,12 +262,10 @@ let jvp' f x tangent =
 let remat fn =
   let (Structure.Uncurried u) = Structure.uncurry "Rune.remat" fn in
   fun f ->
-    u.curry (fun args ->
-        let f = u.apply f in
-        Custom.custom_vjp u.args u.result
-          ~fwd:(fun args -> (f args, args))
-          ~bwd:(fun args cts -> snd (vjp u.args u.result f args cts))
-          args)
+    u.curry (fun params ->
+        Remat.run
+          (Remat.Call
+             { params_s = u.args; result_s = u.result; params; f = u.apply f }))
 
 (* Jacobians *)
 
