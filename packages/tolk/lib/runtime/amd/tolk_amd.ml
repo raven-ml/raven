@@ -339,8 +339,7 @@ module Iface = struct
       ?cwsr_buffer:'mem Hcq.Buffer.t ->
       ?ctl_stack_size:int ->
       ?ctx_save_restore_size:int ->
-      unit ->
-      Queue_desc.t;
+      ?idx:int -> unit -> Queue_desc.t;
     sleep : int -> unit;
     on_device_hang : unit -> unit;
     register :
@@ -1134,9 +1133,14 @@ module Encoded_queue = struct
 
   let encode (dev : 'meta device) ~props ~name ~compute_ring_size ~copy_ring_size u =
     match U.op u, U.arg u, U.children u with
-    | Ops.Custom_function, U.Arg.String ("submit_amd_compute" | "submit_amd_copy" as kind),
-        [linear; dependency] ->
-        let compute = kind = "submit_amd_compute" in
+    | Ops.Custom_function, U.Arg.String kind, [linear; dependency]
+        when kind = "submit_amd_compute_0" || String.starts_with ~prefix:"submit_amd_copy_" kind ->
+        let compute = kind = "submit_amd_compute_0" in
+        let queue_index = if compute then 0 else
+          match int_of_string_opt (String.sub kind 16 (String.length kind - 16)) with
+          | Some i when i >= 0 -> i
+          | _ -> invalid_arg "AMD queue: invalid SDMA index" in
+        let queue_kind = "copy_" ^ string_of_int queue_index in
         let module P = (val dev.pm4) in
         let module S = (val dev.sdma) in
         let commands = ref [] and aql_packets = ref [] and run_start = ref 0 in
@@ -1283,7 +1287,7 @@ module Encoded_queue = struct
           | _ -> invalid_arg "AMD queue: unsupported instruction") (U.children linear);
         if compute && dev.is_aql then close_run ();
         let stream = buffer ~name:(if compute then name else "CPU")
-            ~tag:(if compute then "cmdbuf_compute" else "cmdbuf_copy")
+            ~tag:(if compute then "cmdbuf_compute" else "cmdbuf_" ^ queue_kind)
             ~after:[dependency] (List.rev !commands) in
         if compute && dev.is_aql then begin
           let packets = List.rev !aql_packets |> List.map (U.substitute ~walk:true
@@ -1298,19 +1302,19 @@ module Encoded_queue = struct
           Some (push ~name ~kind:"compute" ~ring_size:compute_ring_size ~is_am:dev.is_am
             ~dependency:stream ib ~unit:4 ~lag:0)
         end else begin
-          let ring_size = match copy_ring_size with Some size -> size
-            | None -> invalid_arg "AMD device has no SDMA queue" in
+          let ring_size = match copy_ring_size queue_index with Some size -> size
+            | None -> invalid_arg (Printf.sprintf "AMD device has no SDMA queue %d" queue_index) in
           let size = U.max_numel stream / 4 and rs = ring_size / 4 in
           if size >= rs then invalid_arg "AMD SDMA command stream exceeds its ring";
-          let ring = placeholder name "ring_copy" D.uint32 rs ~volatile:true in
-          let wptr = placeholder name "write_ptr_copy" D.uint64 1 ~volatile:true in
-          let bell = placeholder name "doorbell_copy" D.uint64 1 ~volatile:true in
+          let ring = placeholder name ("ring_" ^ queue_kind) D.uint32 rs ~volatile:true in
+          let wptr = placeholder name ("write_ptr_" ^ queue_kind) D.uint64 1 ~volatile:true in
+          let bell = placeholder name ("doorbell_" ^ queue_kind) D.uint64 1 ~volatile:true in
           let p = load (U.after ~src:wptr ~deps:[dependency]) zero in
           let tail = cast D.int32 (op Ops.Cdiv (op Ops.Cmod p (u64 ring_size)) (u64 4)) in
           let fits = cast D.int32 (op Ops.Cmplt (i32 (size - 1)) (sub (i32 rs) tail)) in
           let start = mul fits tail in
           let padding = mul (sub (i32 1) fits) (sub (i32 rs) tail) in
-          let room = reserve ~name ~kind:"copy" ~after:[stream] ~put:p
+          let room = reserve ~name ~kind:queue_kind ~after:[stream] ~put:p
               ~needed:(cast D.uint64 (mul padding (i32 4))) ~capacity:ring_size in
           let z = U.range ~size:(guarded_count room padding) ~axis:10 ~kind:Axis_type.Loop
               ~dtype:D.int32 ~parents:[stream] () in
@@ -1318,7 +1322,7 @@ module Encoded_queue = struct
           let padded = add p (cast D.uint64 (mul padding (i32 4))) in
           let published = publish ~name ~after:[cleared] ~wptr ~doorbell:bell ~next:padded
               ~is_am:dev.is_am ~lag:0 in
-          let room = reserve ~name ~kind:"copy" ~after:[published] ~put:padded
+          let room = reserve ~name ~kind:queue_kind ~after:[published] ~put:padded
               ~needed:(u64 (size * 4)) ~capacity:ring_size in
           let i = U.range ~size:(guarded_count room (i32 size)) ~axis:11 ~kind:Axis_type.Loop
               ~dtype:D.int32 ~parents:[published] () in
@@ -1733,7 +1737,8 @@ module Kfd_iface = struct
           ~meta:{ handle = 0L; owner = 0; ownership = Imported } ();
       create_queue =
         (fun queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer ?cwsr_buffer
-             ?ctl_stack_size ?ctx_save_restore_size () ->
+             ?ctl_stack_size ?ctx_save_restore_size ?(idx = 0) () ->
+          if idx < 0 then invalid_arg "KFD queue: negative index";
           create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
             ?cwsr_buffer ?ctl_stack_size ?ctx_save_restore_size ());
       (* long waits back off to driver-event sleeps, which also surface
@@ -1842,7 +1847,7 @@ module Pci_iface = struct
 
   (* ops_amd.py:877 PCIIface.create_queue *)
   let create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
-      ?cwsr_buffer ?(ctl_stack_size = 0) ?(ctx_save_restore_size = 0) () =
+      ?cwsr_buffer ?(ctl_stack_size = 0) ?(ctx_save_restore_size = 0) ?(idx = 0) () =
     (* the driver-less path has no compute-wave save/restore *)
     if cwsr_buffer <> None || ctl_stack_size <> 0 || ctx_save_restore_size <> 0
     then invalid_arg "Pci_iface.create_queue: no cwsr state for am";
@@ -1856,7 +1861,7 @@ module Pci_iface = struct
       | Sdma ->
           fun () ->
             Am_ip.Sdma.setup_ring boot.Am_boot.sdma ~ring_addr ~ring_size
-              ~rptr_addr ~wptr_addr ~idx:0
+              ~rptr_addr ~wptr_addr ~idx
       | Compute | Compute_aql ->
           let eop =
             match eop_buffer with
@@ -1979,9 +1984,9 @@ module Pci_iface = struct
       empty_scratch = Base.empty;
       create_queue =
         (fun queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer ?cwsr_buffer
-             ?ctl_stack_size ?ctx_save_restore_size () ->
+             ?ctl_stack_size ?ctx_save_restore_size ?idx () ->
           create_queue t queue_type ~ring ~gart ~rptr ~wptr ?eop_buffer
-            ?cwsr_buffer ?ctl_stack_size ?ctx_save_restore_size ());
+            ?cwsr_buffer ?ctl_stack_size ?ctx_save_restore_size ?idx ());
       sleep =
         (fun spent_ms ->
           if spent_ms > 200 then sleep (am t) ~timeout_ms:200);
@@ -2002,7 +2007,7 @@ module State = struct
     iface : 'mem Iface.t;
     hw : 'mem device;
     compute_queue : Queue_desc.t;
-    sdma_queue : Queue_desc.t option;
+    sdma_queue : int -> Queue_desc.t option;
     kernargs : 'mem Hcq.Kernargs.t;
     pool : 'mem Hcq.Signal.Pool.t;
     tl : ('mem, 'mem device) Timeline.t;
@@ -2058,7 +2063,7 @@ module Allocator = struct
     submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src len)
 
   let copyin state buf bytes =
-    match state.State.sdma_queue with
+    match state.State.sdma_queue 0 with
     | None ->
         (* Without a DMA engine every buffer is host-visible: write the
            mapping directly once the device is idle. *)
@@ -2070,7 +2075,7 @@ module Allocator = struct
 
   let copyout state bytes buf =
     Timeline.synchronize state.State.tl;
-    match state.State.sdma_queue with
+    match state.State.sdma_queue 0 with
     | None ->
         let len = Bytes.length bytes in
         Bytes.blit
@@ -2083,7 +2088,7 @@ module Allocator = struct
   let transfer state ~dest ~src ~dest_device ~src_device nbytes =
     if Tolk.Device.canonicalize dest_device <> Tolk.Device.canonicalize src_device then false
     else begin
-      let qd = Option.get state.State.sdma_queue in
+      let qd = Option.get (state.State.sdma_queue 0) in
       submit_copy state qd (fun cp -> Copy_queue.copy cp ~dest ~src nbytes);
       true
     end
@@ -2099,7 +2104,7 @@ module Allocator = struct
           state.State.iface.Iface.alloc ~host:spec.host
             ~uncached:spec.uncached
             ~cpu_access:
-              (spec.cpu_access || Option.is_none state.State.sdma_queue)
+              (spec.cpu_access || Option.is_none (state.State.sdma_queue 0))
             size
     in
     (* A queued kernel may still use the memory. *)
@@ -2110,7 +2115,7 @@ module Allocator = struct
     let offset buf size byte_offset =
       Hcq.Buffer.offset buf ~off:byte_offset ~size ()
     in
-    let has_sdma = Option.is_some state.State.sdma_queue in
+    let has_sdma = Option.is_some (state.State.sdma_queue 0) in
     {
       Tolk.Device.Allocator.kind = state.State.buffer_kind;
       host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
@@ -2265,8 +2270,14 @@ module Queue = struct
          | Some tag ->
              let descriptor, suffix = if Filename.check_suffix tag "_compute" then
                  Some state.State.compute_queue, "_compute"
-               else if Filename.check_suffix tag "_copy" then state.State.sdma_queue, "_copy"
-               else None, "" in
+               else match String.rindex_opt tag '_' with
+                 | Some at ->
+                     let prefix = String.sub tag 0 at in
+                     (match int_of_string_opt (String.sub tag (at + 1) (String.length tag - at - 1)) with
+                      | Some idx when idx >= 0 && Filename.check_suffix prefix "_copy" ->
+                          state.State.sdma_queue idx, "_copy_" ^ string_of_int idx
+                      | _ -> None, "")
+                 | None -> None, "" in
              Option.bind descriptor (fun q ->
                  let field = String.sub tag 0 (String.length tag - String.length suffix) in
                  Option.map borrow_view (match field with
@@ -2289,7 +2300,7 @@ module Queue = struct
               || Device.peer_group (Device.get name) = Device.peer_group (Device.get state.State.name)
           | _ -> false) args
       | None -> false in
-      if supported then Some (if Option.is_some state.State.sdma_queue then "COPY:0" else "COMPUTE:0") else None in
+      if supported then Some (if Option.is_some (state.State.sdma_queue 0) then "COPY:0" else "COMPUTE:0") else None in
     let completion () =
       let timeline = state.State.tl in
       let value = Timeline.submitted timeline in
@@ -2301,7 +2312,7 @@ module Queue = struct
     Device.{timestamp_divider = 100.; completion; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
       encode = Encoded_queue.encode state.State.hw ~props:state.State.iface.Iface.props
         ~name:state.State.name ~compute_ring_size:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
-        ~copy_ring_size:(Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) state.State.sdma_queue);
+        ~copy_ring_size:(fun idx -> Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) (state.State.sdma_queue idx));
       lower = Encoded_queue.lower state.State.name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
 end
@@ -2361,7 +2372,7 @@ let open_device ~name iface =
   in
   let debug_memory_size = round_up (wave_cnt * 32) 64 in
   let create_queue queue_type ~ring_size ?(eop_buffer_size = 0)
-      ?(ctx_save_restore_size = 0) ?(ctl_stack_size = 0) () =
+      ?(ctx_save_restore_size = 0) ?(ctl_stack_size = 0) ?(idx = 0) () =
     let ring =
       iface.Iface.alloc ~host:true ~uncached:true ~cpu_access:true ring_size
     in
@@ -2389,7 +2400,7 @@ let open_device ~name iface =
     let queue = iface.Iface.create_queue queue_type ~ring ~gart
       ~rptr:Amd_hsa_defs.Amd_queue.read_dispatch_id
       ~wptr:Amd_hsa_defs.Amd_queue.write_dispatch_id ?eop_buffer ?cwsr_buffer
-      ~ctx_save_restore_size ~ctl_stack_size () in
+      ~ctx_save_restore_size ~ctl_stack_size ~idx () in
     {queue with Queue_desc.aql}
   in
   let compute_queue =
@@ -2399,13 +2410,20 @@ let open_device ~name iface =
         (if iface.Iface.is_am then 0 else wg_data_size + ctl_stack_size)
       ~ctl_stack_size:(if iface.Iface.is_am then 0 else ctl_stack_size) ()
   in
-  let sdma_queue =
-    if Tolk.Helpers.getenv "AMD_DISABLE_SDMA" 0 <> 0 then None
-    else
-      match create_queue Sdma ~ring_size:(16 lsl 20) () with
-      | qd -> Some qd
-      | exception Failure _ -> None
-  in
+  let sdma_queues = Hashtbl.create 2 in
+  let sdma_queue idx =
+    if idx < 0 then invalid_arg "AMD queue: negative index";
+    match Hashtbl.find_opt sdma_queues idx with
+    | Some queue -> queue
+    | None ->
+        let queue = if Tolk.Helpers.getenv "AMD_DISABLE_SDMA" 0 <> 0
+            || (iface.Iface.is_am && ip.sdma >= (5, 0, 0) && idx > 0) then None
+          else match create_queue Sdma ~ring_size:(16 lsl 20) ~idx () with
+            | qd -> Some qd
+            | exception Failure _ -> None in
+        Hashtbl.add sdma_queues idx queue;
+        queue in
+  ignore (sdma_queue 0 : Queue_desc.t option);
   let hw =
     device ~target ~xccs ~is_aql ~gc_version:ip.gc ~nbio_version:ip.nbif
       ~sdma_version:ip.sdma ~tmpring_size:0

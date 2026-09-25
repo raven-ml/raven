@@ -437,7 +437,7 @@ module Queue = struct
     | _ -> None
 
   let encode name u = match U.op u, U.arg u, U.children u with
-    | Ops.Custom_function, U.Arg.String "submit_metal_compute", [linear; dependency] ->
+    | Ops.Custom_function, U.Arg.String "submit_metal_compute_0", [linear; dependency] ->
         let commands = ref [] and rows = ref [] and sizes = ref [] and used = ref 0 in
         let signal = ref None and stamps = ref [] in
         let align n a = (n + a - 1) / a * a in

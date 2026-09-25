@@ -339,7 +339,7 @@ let read_i32 buf =
   List.init (Bytes.length bytes / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
 
-let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ?(aql = false) ?(multi = false) ~copies () =
+let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ?(aql = false) ?(multi = false) ?(split_copies = false) ~copies () =
   let open Tolk in
   let open Tolk_uop in
   let device_name = "AMD:queue-compilation" in
@@ -347,7 +347,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
   let submission = Submission.create () in
   let host = Tolk_cpu.create "CPU" in
   let parameter slot = U.param ~slot ~dtype:D.int32 ~shape:(U.const_int 16)
-      ~device:(U.Single device_name) () in
+      ~device:(U.Single (if split_copies && slot <> 0 then "CPU" else device_name)) () in
   let output = U.param ~slot:0 ~dtype:D.int32 ~shape:(U.const_int 16) () in
   let small = U.variable ~param:true ~name:"small" ~min_val:(-128) ~max_val:127 ~dtype:D.int8 () in
   let count = U.variable ~param:true ~name:"count" ~min_val:1 ~max_val:16 ~dtype:D.int64 () in
@@ -372,9 +372,13 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
       | None -> fun () -> ()
       | Some tl -> let value = Timeline.submitted tl in
           fun () -> Timeline.guarded_wait tl (fun () -> Signal.wait tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
-    host = "CPU"; copy = (fun _ -> Some "COPY:0");
+    host = "CPU"; copy = (fun call ->
+      let index = match U.as_call call with
+        | Some {args = dst :: _; _} when split_copies && U.device_of dst = Some (U.Single "CPU") -> 1
+        | _ -> 0 in
+      Some ("COPY:" ^ string_of_int index));
     encode = Tolk_amd.Encoded_queue.encode hw ~props ~name:device_name
-        ~compute_ring_size:4096 ~copy_ring_size:(Some 4096);
+        ~compute_ring_size:4096 ~copy_ring_size:(fun _ -> Some 4096);
     lower = Tolk_amd.Encoded_queue.lower device_name;
     compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
@@ -434,7 +438,7 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
   set_word "write_ptr_compute" put;
   set_word "read_ptr_compute" 1022;
   if copies then begin
-    set_word "write_ptr_copy" 4088; set_word "read_ptr_copy" 4088
+    set_word "write_ptr_copy_0" 4088; set_word "read_ptr_copy_0" 4088
   end;
   let to_program device = Codegen.to_program device (Device.renderer device) in
   List.iteri (fun replay (small, count) ->
@@ -462,9 +466,9 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
         equal int scratch (Int32.to_int (Bytes.get_int32_le arena 48))
       end;
       if copies then begin
-        is_true (word "write_ptr_copy" > 4096);
-        equal int (word "write_ptr_copy") (word "doorbell_copy");
-        let ring = Device.Buffer.as_bytes (get "ring_copy") in
+        is_true (word "write_ptr_copy_0" > 4096);
+        equal int (word "write_ptr_copy_0") (word "doorbell_copy_0");
+        let ring = Device.Buffer.as_bytes (get "ring_copy_0") in
         equal int32 0l (Bytes.get_int32_le ring 4088);
         equal int32 0l (Bytes.get_int32_le ring 4092)
       end;
@@ -475,8 +479,36 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
       Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
       Device.Buffer.copyin (get "timeline") timeline;
       set_word "read_ptr_compute" (word "write_ptr_compute");
-      if copies then set_word "read_ptr_copy" (word "write_ptr_copy")) [(-17, 3); (29, 11)];
+      if copies then set_word "read_ptr_copy_0" (word "write_ptr_copy_0")) [(-17, 3); (29, 11)];
   is_true (Hashtbl.mem buffers "scratch")
+
+let execute_split_copy_queues () =
+  let open Tolk in
+  let compiled, device, host, buffers, submission = queue_fixture ~split_copies:true ~copies:true () in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let get tag = Hashtbl.find buffers tag in
+  let word tag = Bytes.get_int64_le (Device.Buffer.as_bytes (get tag)) 0 in
+  let set_word tag value =
+    let bytes = Bytes.create 8 in
+    Bytes.set_int64_le bytes 0 value; Device.Buffer.copyin (get tag) bytes in
+  set_word "write_ptr_copy_0" 4088L; set_word "read_ptr_copy_0" 4088L;
+  let inputs = [|i32_buf device (List.init 16 Fun.id);
+    i32_buf host (List.init 16 Fun.id); i32_buf host (List.init 16 Fun.id)|] in
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    binding ~jit:true ~var_vals:["small", 7; "count", 3]
+    ~input_uops:(Array.map U.from_buffer inputs) linked;
+  Submission.check submission;
+  is_true (word "write_ptr_copy_0" > 4096L);
+  is_true (word "write_ptr_copy_1" > 0L && word "write_ptr_copy_1" < 4096L);
+  List.iter (fun index ->
+      let suffix = "_copy_" ^ string_of_int index in
+      equal int64 (word ("write_ptr" ^ suffix)) (word ("doorbell" ^ suffix))) [0; 1];
+  is_false (Device.Buffer.addr (get "ring_copy_0") = Device.Buffer.addr (get "ring_copy_1"));
+  let timeline = Device.Buffer.as_bytes (get "timeline") in
+  Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
+  Device.Buffer.copyin (get "timeline") timeline;
+  Device.synchronize host
 
 let execute_aql_queue ~multi =
   let open Tolk in
@@ -603,6 +635,7 @@ let () =
          test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true);
          test "direct packets use GPU indirect addresses and the shared producer" direct_aql_queue];
       group "Compiled queues" [
+        test "upload and download publish to independent SDMA rings" execute_split_copy_queues;
         test "a replay timeout suppresses publication and latches failure" queue_timeout;
         test "a full ring times out without overwriting unread commands" queue_full;
         test "executes wrapped compute submissions and patches replay arguments" (fun () ->

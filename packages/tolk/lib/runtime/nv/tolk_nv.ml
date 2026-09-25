@@ -1805,9 +1805,9 @@ module Encoded_queue = struct
   let encode (dev : 'meta device) ~name ~compute_entries ~copy_entries
       ~compute_token ~copy_token u =
     match U.op u, U.arg u, U.children u with
-    | Ops.Custom_function, U.Arg.String ("submit_nv_compute" | "submit_nv_copy" as kind),
+    | Ops.Custom_function, U.Arg.String ("submit_nv_compute_0" | "submit_nv_copy_0" as kind),
         [linear; dependency] ->
-        let compute = kind = "submit_nv_compute" in
+        let compute = kind = "submit_nv_compute_0" in
         let suffix = if compute then "compute" else "copy" in
         let progress = placeholder ~volatile:true name ("progress_" ^ suffix) D.uint64 2 in
         let retired = U.placeholder ~shape:[1] ~dtype:D.uint64 ~slot:(U.fresh_buffer_slot ())

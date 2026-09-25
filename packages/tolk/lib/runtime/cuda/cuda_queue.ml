@@ -28,9 +28,9 @@ let lower name u = match U.as_load u with
   | _ -> None
 
 let encode name u = match U.op u, U.arg u, U.children u with
-  | Ops.Custom_function, U.Arg.String ("submit_cuda_compute" | "submit_cuda_copy" as kind),
+  | Ops.Custom_function, U.Arg.String ("submit_cuda_compute_0" | "submit_cuda_copy_0" as kind),
       [linear; dependency] ->
-      let stream = uint (if kind = "submit_cuda_copy" then 1 else 0) in
+      let stream = uint (if kind = "submit_cuda_copy_0" then 1 else 0) in
       let ctx = load (context name) 0 in
       let previous = ref (call name ~after:[dependency] "tolk_cuda_hcq_begin" Dtype.void [ctx]) in
       let emit fn args = previous := call name ~after:[!previous] fn Dtype.void (ctx :: args) in

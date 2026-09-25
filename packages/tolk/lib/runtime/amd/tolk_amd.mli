@@ -232,9 +232,10 @@ module Iface : sig
       ?cwsr_buffer:'mem Hcq.Buffer.t ->
       ?ctl_stack_size:int ->
       ?ctx_save_restore_size:int ->
-      unit ->
-      Queue_desc.t;
-        (** Creates a hardware queue (see {!Kfd_iface.create_queue}). *)
+      ?idx:int -> unit -> Queue_desc.t;
+        (** Creates a hardware queue (see {!Kfd_iface.create_queue}). [idx]
+            selects the PCI SDMA ring and defaults to [0]. KFD assigns its
+            hardware ring independently of this logical index. *)
     sleep : int -> unit;
         (** Called from stalled signal waits with the milliseconds since
             the last observed progress; may block briefly, and may raise
@@ -582,11 +583,12 @@ module Encoded_queue : sig
 
   val encode :
     'meta device -> props:(string * int) list -> name:string ->
-    compute_ring_size:int -> copy_ring_size:int option ->
+    compute_ring_size:int -> copy_ring_size:(int -> int option) ->
     Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
   (** [encode dev ~props ~name ~compute_ring_size ~copy_ring_size u] lowers
       queue submission [u] to host code over packet templates. Ring sizes are
-      bytes. Returns [None] for other operations. *)
+      bytes; [copy_ring_size index] supplies the indexed SDMA ring, or [None]
+      when unavailable. Returns [None] for other operations. *)
 end
 
 (** {1:kfd Kernel-driver interface} *)

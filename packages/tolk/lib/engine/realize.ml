@@ -296,7 +296,8 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2 || Helpers
     (* Link-time tags are semantic here: a runtime table and a captured input
        must never share a linked template. Keep the hash-consed key alive. *)
     let key = Marshal.to_string
-        (profile, cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
+        (profile, Helpers.Context_var.get Helpers.all2all, Helpers.getenv "HCQ_NUM_SDMA" (-1),
+         cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
          List.map (fun host -> cache_key ~device:host ~ast_key:"") hosts) [] in
     let templates = Domain.DLS.get queue_template_cache in
     match Hashtbl.find_opt templates key with

@@ -114,6 +114,42 @@ let peers_and_timestamps () =
   let offsets = List.map (fun n -> (Deps_tracker.uop (U.src n).(0)).start) stamps in
   equal (list int) [32; 48] offsets
 
+let all_to_all_copy_queues () =
+  let host = Tolk_cpu.create "CPU" and selected = ref [] in
+  let devices = List.init 3 (fun i -> "AMD:all-to-all-" ^ string_of_int i) in
+  List.iter (fun name ->
+      let encode u = match U.op u, U.arg u, U.children u with
+        | Ops.Custom_function, U.Arg.String kind, [_; dependency]
+            when String.starts_with ~prefix:"submit_amd_" kind ->
+            if String.starts_with ~prefix:"submit_amd_copy_" kind then
+              selected := kind :: !selected;
+            Some (U.group [dependency])
+        | _ -> None in
+      let queue = Device.{timestamp_divider = 1.; completion = (fun () () -> ());
+        prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some "COPY:0");
+        encode; lower = (fun _ -> None);
+        compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+      let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+      ignore (Device.make ~name ~allocator
+        ~renderer_set:(Device.Renderer_set.make ~device:name
+          ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
+        ~runtime:(Device.runtime host) ~synchronize:(fun () -> ()) ~queue ())) devices;
+  let src = parameter ~device:(List.hd devices) 0 in
+  let linear = U.linear (List.mapi (fun i device ->
+      U.store_call ~dst:(parameter ~device (i + 1)) ~src) devices) in
+  let old_count = Sys.getenv_opt "HCQ_NUM_SDMA" in
+  Fun.protect ~finally:(fun () -> Unix.putenv "HCQ_NUM_SDMA" (Option.value old_count ~default:"")) (fun () ->
+      let check all2all count expected =
+        selected := [];
+        Unix.putenv "HCQ_NUM_SDMA" count;
+        Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.all2all, all2all)] (fun () ->
+            ignore (Hcq2.compile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) linear));
+        equal (list string) expected (List.sort_uniq String.compare !selected) in
+      check 0 "" ["submit_amd_copy_0"];
+      check 1 "" ["submit_amd_copy_0"; "submit_amd_copy_1"; "submit_amd_copy_2"];
+      check 1 "2" ["submit_amd_copy_0"; "submit_amd_copy_1"];
+      check 1 "0" ["submit_amd_copy_0"])
+
 let staged_peer_dependencies () =
   let staging_mode = ref `Accept in
   let host = Tolk_cpu.create "CPU" in
@@ -188,7 +224,7 @@ let compiled_host_submission () =
   Device.Buffer.copyin timeline (Bytes.make 16 '\000');
   let observed = Device.Buffer.create ~device:name ~size:1 ~dtype:Dtype.uint64 allocator in
   let encode u = match U.op u, U.arg u, U.children u with
-    | Ops.Custom_function, U.Arg.String ("submit_cpu_copy" | "submit_cpu_compute"), [linear; dependency] ->
+    | Ops.Custom_function, U.Arg.String ("submit_cpu_copy_0" | "submit_cpu_compute_0"), [linear; dependency] ->
         let trace = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
             ~device:(U.Single name) () |> U.with_tag "trace" in
         let arena = U.placeholder ~shape:[8] ~dtype:Dtype.uint8 ~slot:7
@@ -498,6 +534,7 @@ let compiled_host_submission () =
   equal int before !Realize.queue_submissions
 
 let () = run "Engine_hcq2" [
+  test "AMD all-to-all honors default and explicit SDMA queue counts" all_to_all_copy_queues;
   test "staging alternates bounded slots with read-before-reuse dependencies" staged_peer_dependencies;
   test "byte intervals match a per-byte dependency model" byte_dependencies;
   test "owned aliases and device lanes preserve allocation identity" region_identity;

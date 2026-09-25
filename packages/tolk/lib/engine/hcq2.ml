@@ -370,7 +370,7 @@ let compile_batch ~profile ~original_calls calls =
   let previous = ref [fence] in
   let submits = List.map (fun (device, kind, commands) ->
       let prefix = String.lowercase_ascii (List.hd (String.split_on_char ':' device)) in
-      let kind = String.lowercase_ascii (List.hd (String.split_on_char ':' kind)) in
+      let kind = String.lowercase_ascii kind |> String.map (fun c -> if c = ':' then '_' else c) in
       let submit = U.custom_function ~name:("submit_" ^ prefix ^ "_" ^ kind)
           ~srcs:[U.replace (U.linear commands) ~arg:(U.Arg.Device (U.Single device)) (); U.group !previous] in
       previous := [submit]; submit) plan.queues in
@@ -497,6 +497,28 @@ let compile_copy ~to_program c = match U.as_call c.call with
   | _ -> c
 
 let compile ~to_program ?(profile = false) linear =
+  let peers = U.children linear |> List.concat_map (fun call -> match U.as_call call with
+      | Some {body; args} when U.op body = Ops.Store ->
+          List.filter_map (fun arg -> match U.device_of arg with
+              | Some (U.Single name) ->
+                  let name = Device.canonicalize name in
+                  if List.hd (String.split_on_char ':' name) = "AMD" then Some name else None
+              | _ -> None) args
+      | _ -> []) |> List.sort_uniq String.compare in
+  let count = max 1 (Helpers.getenv "HCQ_NUM_SDMA"
+      (if Helpers.Context_var.get Helpers.all2all >= 1 then min (List.length peers) 8 else 1)) in
+  let assign_copy c = match U.as_call c.call with
+    | Some {body; args = [dst; src]} when U.op body = Ops.Store && c.queue = "COPY:0" ->
+        let position arg = match U.device_of arg with
+          | Some (U.Single name) -> List.find_index (String.equal (Device.canonicalize name)) peers
+          | _ -> None in
+        (match position dst, position src with
+         | Some dst, Some src ->
+             let n = List.length peers in
+             let index = ((dst - src - 1 + n) mod n) mod count in
+             {c with queue = "COPY:" ^ string_of_int index}
+         | _ -> c)
+    | _ -> c in
   let result = ref [] and batch = ref [] and group = ref None in
   let flush () =
     if !batch <> [] then begin
@@ -507,7 +529,7 @@ let compile ~to_program ?(profile = false) linear =
   List.iter (fun call -> match enqueue call with
       | None -> flush (); result := call :: !result
       | Some c ->
-          let c = compile_copy ~to_program c in
+          let c = compile_copy ~to_program (assign_copy c) in
           let peer_group = Device.peer_group (Device.get c.device) in
           if !group <> Some peer_group then flush ();
           group := Some peer_group; batch := (c, call) :: !batch) (U.children linear);
