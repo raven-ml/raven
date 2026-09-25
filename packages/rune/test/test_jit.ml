@@ -1281,6 +1281,26 @@ let test_scans_propagate_nan () =
 
 (* Indexed access *)
 
+(* An int32 narrowed from an int64 minus one, compared with a constant, then
+   gathered. Reduce collapse lifted the subtraction out of the comparison and
+   back in until it detected a rewrite cycle. *)
+let test_gather_of_narrowed_comparison () =
+  let at = Nx.create Nx.int32 [| 1 |] [| 1l |] in
+  let narrowed x = Nx.cast Nx.int32 (Nx.sub x (Nx.scalar Nx.int64 1L)) in
+  let largest k = Nx.equal k (Nx.scalar Nx.int32 Int32.max_int) in
+  let f x =
+    let k = narrowed x in
+    Nx.take_along_axis ~axis:0 ~indices:at
+      (Nx.where (largest k) (Nx.scalar f32 Float.nan) (Nx.cast f32 k))
+  in
+  let x = Nx.create Nx.int64 [| 2 |] [| 6L; 3L |] in
+  List.iter
+    (fun device ->
+      equal ~msg:device (array float_exact)
+        (to_arr (f x))
+        (to_arr (Rune.jit' ~device f x)))
+    devices
+
 (* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
    keeps the last update, [`Add] accumulates both on top of [x]'s value. *)
 let test_scatter_matches_eager () =
@@ -3521,6 +3541,8 @@ let tests =
     group "indexed access"
       [
         test "scatter matches eager" test_scatter_matches_eager;
+        test "gather of a narrowed comparison"
+          test_gather_of_narrowed_comparison;
         test "scatter orders duplicate updates" test_scatter_duplicates;
         test "scatter orders thousands of duplicate updates"
           test_scatter_many_duplicates_in_order;
