@@ -1420,23 +1420,37 @@ module Gsp = struct
     set_field a G.Rpc_gsp_rm_control.paramssize (Bytes.length params);
     Bytes.cat a params
 
+  let device_runlists table =
+    let module P = D.Nv2080_ctrl_fifo_get_device_info_table_params in
+    let module E = D.Nv2080_ctrl_fifo_device_entry in
+    let count = Nv_tables.get_field table P.numentries in
+    if count > P.entries_count then invalid_arg "GSP device-info entry count exceeds its table";
+    let entries = ref [] in
+    for i = 0 to count - 1 do
+      let base = P.entries_offset + i * P.entries_elem_size + E.enginedata_offset in
+      let at index = Nv_tables.get_field table (base + index * E.enginedata_elem_size, 4) in
+      entries := (at 2, at 3) :: !entries
+    done;
+    !entries
+
+  let channel_runlist runlists ~engine =
+    let engine = engine + (if engine >= D.nv2080_engine_type_nvdec0 then 10 else 0) in
+    Option.value (List.assoc_opt engine runlists) ~default:0
+
   (* ip.py:576 the driver's in-place update of a control's parameter
      structure: the response carries the envelope echo then the updated
-     parameters, copied back into the caller's blob. GB20x parts need the
-     work-submit enable bit patched into the returned token. *)
-  let rm_control_apply ~chip_name ~cmd ~response ~(params : Nv_tables.blob) =
+     parameters, copied back into the caller's blob. Tokens also need the
+     channel runlist and, on GB20x, the work-submit enable bit. *)
+  let rm_control_apply ~chip_name ~runlist ~cmd ~response ~(params : Nv_tables.blob) =
     let start = G.Rpc_gsp_rm_control.sizeof in
     for i = 0 to Bigarray.Array1.dim params - 1 do
       Bigarray.Array1.set params i (Bytes.get response (start + i))
     done;
-    if
-      String.length chip_name >= 3
-      && String.sub chip_name 0 3 = "GB2"
-      && cmd = D.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token
-    then begin
+    if cmd = D.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token then begin
       let module W = D.Nvc36f_ctrl_cmd_gpfifo_get_work_submit_token_params in
       let tok = Nv_tables.get_field params W.worksubmittoken in
-      Nv_tables.set_field params W.worksubmittoken (tok lor (1 lsl 30))
+      let enable = if String.starts_with ~prefix:"GB2" chip_name then 1 lsl 30 else 0 in
+      Nv_tables.set_field params W.worksubmittoken (tok lor (runlist lsl 16) lor enable)
     end
 
   (* GSP boot state and execution *)
@@ -1513,6 +1527,8 @@ module Gsp = struct
     mutable device : int;
     mutable subdevice : int;
     mutable grctx_bufs : (int * grbuf) list;
+    mutable runlists : (int * int) list;
+    channel_runlists : (int, int) Hashtbl.t;
   }
 
   let create nvdev ~boot =
@@ -1534,6 +1550,8 @@ module Gsp = struct
       device = 0;
       subdevice = 0;
       grctx_bufs = [];
+      runlists = [];
+      channel_runlists = Hashtbl.create 4;
     }
 
   let falcon_boot f = Falcon f
@@ -1780,7 +1798,9 @@ module Gsp = struct
     in
     match params with
     | Some p ->
-        rm_control_apply ~chip_name:(Nvdev.chip_name t.nvdev) ~cmd ~response:res
+        let runlist = if cmd = D.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token then
+            Hashtbl.find t.channel_runlists hobject else 0 in
+        rm_control_apply ~chip_name:(Nvdev.chip_name t.nvdev) ~runlist ~cmd ~response:res
           ~params:p
     | None -> ()
 
@@ -1856,6 +1876,11 @@ module Gsp = struct
     Rpc_queue.send_rpc (cmd_q t) G.nv_vgpu_msg_function_gsp_rm_alloc
       (rm_alloc_request ~client ~hparent ~hobject:obj ~hclass ~params:params_bytes);
     ignore (Rpc_queue.wait_resp (stat_q t) G.nv_vgpu_msg_function_gsp_rm_alloc);
+    if hclass = t.gpfifo_class then begin
+      let engine = Nv_tables.get_field (Option.get params)
+          G.Nv_channelgpfifo_allocation_parameters.enginetype in
+      Hashtbl.replace t.channel_runlists obj (channel_runlist t.runlists ~engine)
+    end;
     if hclass = D.fermi_vaspace_a && client <> t.priv_root then
       rpc_set_page_directory t ~device:hparent ~hvaspace:obj
         ~pdir_paddr:
@@ -1945,6 +1970,11 @@ module Gsp = struct
       rpc_rm_alloc t ~hparent:dev ~hclass:D.fermi_vaspace_a
         ~params:(Nv_tables.create_blob vp.sizeof) ~client:t.priv_root ()
     in
+    let module I = D.Nv2080_ctrl_fifo_get_device_info_table_params in
+    let info = Nv_tables.create_blob I.sizeof in
+    rpc_rm_control t ~hobject:subdev ~cmd:D.nv2080_ctrl_cmd_fifo_get_device_info_table
+      ~params:info ~client:t.priv_root ();
+    t.runlists <- device_runlists info;
     (* reserve 512 MiB for the server-reserved page directory entries *)
     let res_sz = 512 lsl 20 in
     let res_va = Tolk.Memory.alloc_vaddr mm res_sz () in

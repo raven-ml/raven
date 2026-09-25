@@ -97,6 +97,8 @@ let nvc6b5_launch_dma_semaphore_type_release_four_word_semaphore = 2
 let nvc6b5_set_semaphore_a = 0x240
 
 (* Control commands and their flag values. *)
+let nv2080_ctrl_cmd_fifo_get_device_info_table = 0x20801112
+let nv2080_engine_type_nvdec0 = 0x13
 let nv0000_ctrl_cmd_system_get_build_version_v2 = 0x13e
 let nv0000_ctrl_cmd_gpu_get_id_info_v2 = 0x205
 let nv0080_ctrl_cmd_gpu_get_classlist = 0x800201
@@ -471,6 +473,21 @@ end
 
 (* Read only on the driver-less tier, whose RPC layer is pinned to the
    570-generation layouts; emitted from that generation. *)
+module Nv2080_ctrl_fifo_get_device_info_table_params = struct
+  let sizeof = 0xc8c
+  let numentries = (4, 4)
+  let entries_offset = 0xc
+  let entries_elem_size = 0x64
+  let entries_count = 0x20
+end
+
+module Nv2080_ctrl_fifo_device_entry = struct
+  let sizeof = 0x64
+  let enginedata_offset = 0
+  let enginedata_elem_size = 4
+  let enginedata_count = 0x10
+end
+
 module Nv2080_ctrl_internal_static_gr_get_info_params = struct
   let sizeof = 0xe80
   let engineinfo_offset = 0

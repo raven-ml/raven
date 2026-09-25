@@ -535,17 +535,28 @@ module Gsp : sig
       GSP_RM_CONTROL payload: the control envelope followed by the
       command's parameter bytes. *)
 
+  val device_runlists : Nv_tables.blob -> (int * int) list
+  (** [device_runlists table] reads engine IDs and runlist IDs from a
+      FIFO_GET_DEVICE_INFO_TABLE response. Later duplicate engine entries take
+      precedence. Raises [Invalid_argument] if the entry count exceeds the
+      fixed table capacity. *)
+
+  val channel_runlist : (int * int) list -> engine:int -> int
+  (** [channel_runlist runlists ~engine] resolves a channel engine through
+      the GSP device-info numbering, defaulting to zero when absent. *)
+
   val rm_control_apply :
     chip_name:string ->
+    runlist:int ->
     cmd:int ->
     response:bytes ->
     params:Nv_tables.blob ->
     unit
-  (** [rm_control_apply ~chip_name ~cmd ~response ~params] copies the
+  (** [rm_control_apply ~chip_name ~runlist ~cmd ~response ~params] copies the
       driver's in-place parameter update out of a GSP_RM_CONTROL
-      [response] (past its envelope echo) back into [params]. On a GB20x
-      part, the work-submit-token control additionally has the enable bit
-      patched into the returned token. *)
+      [response] (past its envelope echo) back into [params]. The work-submit
+      token includes [runlist] in bits 16 and above, plus the enable bit on
+      GB20x parts. Other control responses are copied unchanged. *)
 
   val set_channel_gpfifo_descs :
     params:Nv_tables.blob ->

@@ -165,6 +165,8 @@ CHANNEL_BIT_RANGES = [
 ]
 
 CONTROL_INTS = [
+    "NV2080_CTRL_CMD_FIFO_GET_DEVICE_INFO_TABLE",
+    "NV2080_ENGINE_TYPE_NVDEC0",
     "NV0000_CTRL_CMD_SYSTEM_GET_BUILD_VERSION_V2",
     "NV0000_CTRL_CMD_GPU_GET_ID_INFO_V2",
     "NV0080_CTRL_CMD_GPU_GET_CLASSLIST",
@@ -332,6 +334,9 @@ RENAMES = {"type": "typ", "function": "func"}
 # pinned to the 570-generation layouts, so it is emitted from that generation
 # only and exempt from the cross-version stability check.
 PINNED_570_STRUCTS = [
+    ("Nv2080_ctrl_fifo_get_device_info_table_params",
+     "NV2080_CTRL_FIFO_GET_DEVICE_INFO_TABLE_PARAMS", ["numEntries", "entries/array"]),
+    ("Nv2080_ctrl_fifo_device_entry", "NV2080_CTRL_FIFO_DEVICE_ENTRY", ["engineData/array"]),
     ("Nv2080_ctrl_internal_static_gr_get_info_params",
      "NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS", ["engineInfo/array"]),
     ("Nv2080_ctrl_internal_static_gr_info",

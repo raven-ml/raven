@@ -18,6 +18,7 @@ open Windtrap
 module Ip = Tolk_nv.Ip
 module Rpc_queue = Tolk_nv.Ip.Rpc_queue
 module Tables = Tolk_nv.Nv_tables
+module Defs = Tables.Defs
 module Gsp_defs = Tolk_nv.Nv_tables.Gsp_defs
 module Mmio = Tolk_hcq.Hcq.Mmio
 module File_io = Tolk_hcq.Hcq.File_io
@@ -1201,7 +1202,24 @@ let () =
                 (hex
                    (Ip.Gsp.rm_control_request ~client:0xc1000000 ~hobject:0x5d
                       ~cmd:0x20801201 ~params)));
-          test "the control response is copied back with the gb20x token patch"
+          test "channel runlists follow the GSP engine table" (fun () ->
+              let module P = Defs.Nv2080_ctrl_fifo_get_device_info_table_params in
+              let module E = Defs.Nv2080_ctrl_fifo_device_entry in
+              let table = Tables.create_blob P.sizeof in
+              Tables.set_field table P.numentries 3;
+              List.iteri (fun i (engine, runlist) ->
+                  let base = P.entries_offset + i * P.entries_elem_size + E.enginedata_offset in
+                  Tables.set_field table (base + 2 * E.enginedata_elem_size, 4) engine;
+                  Tables.set_field table (base + 3 * E.enginedata_elem_size, 4) runlist)
+                [0, 1; 0, 3; Defs.nv2080_engine_type_nvdec0 + 10, 7];
+              let runlists = Ip.Gsp.device_runlists table in
+              equal int 3 (Ip.Gsp.channel_runlist runlists ~engine:0);
+              equal int 7 (Ip.Gsp.channel_runlist runlists ~engine:Defs.nv2080_engine_type_nvdec0);
+              equal int 0 (Ip.Gsp.channel_runlist [] ~engine:0);
+              Tables.set_field table P.numentries (P.entries_count + 1);
+              raises_match (function Invalid_argument _ -> true | _ -> false)
+                (fun () -> Ip.Gsp.device_runlists table));
+          test "the control response adds channel runlists and the gb20x enable bit"
             (fun () ->
               (* the response is the envelope echo, the parameters, then the
                  declared-length trailing ring bytes *)
@@ -1210,17 +1228,17 @@ let () =
               let cmd = 0xc36f0108 in
               let apply chip =
                 let p = Tables.create_blob 4 in
-                Ip.Gsp.rm_control_apply ~chip_name:chip ~cmd ~response:resp
+                Ip.Gsp.rm_control_apply ~chip_name:chip ~runlist:3 ~cmd ~response:resp
                   ~params:p;
                 Tables.get_field p (0, 4)
               in
               (* gb20x sets the work-submit enable bit (1<<30) *)
-              equal int 0x40000005 (apply "GB202");
-              (* other parts keep the returned token unchanged *)
-              equal int 0x5 (apply "GA102");
+              equal int 0x40030005 (apply "GB202");
+              (* other parts still need the runlist bits *)
+              equal int 0x30005 (apply "GA102");
               (* and so does a different control command on gb20x *)
               let p = Tables.create_blob 4 in
-              Ip.Gsp.rm_control_apply ~chip_name:"GB202" ~cmd:0x1234
+              Ip.Gsp.rm_control_apply ~chip_name:"GB202" ~runlist:3 ~cmd:0x1234
                 ~response:resp ~params:p;
               equal int 0x5 (Tables.get_field p (0, 4)));
         ];

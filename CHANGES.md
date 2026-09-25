@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- NVIDIA PCI compute submissions include the channel runlist in work-submit
+  tokens, so GSP-created channels reach the correct hardware queue.
+
 - Failed PCI host-page discovery and BAR mapping release CPU mappings and
   GPU memory reservations. If page-table rollback itself fails, backing
   storage stays reserved so the device cannot access reused memory.
