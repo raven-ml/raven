@@ -376,38 +376,48 @@ let test_host_is_not_a_device () =
         Nx.Ptree.(tensor @-> returns tensor)
         Fun.id)
 
-let test_placed_capture_is_replicated () =
+(* A capture on the program's devices is bound where it lives; one on other
+   devices raises instead of being read back. *)
+let test_placed_capture_is_bound () =
   let w = Nx.create f32 [| 6 |] (arange 6) in
-  let p = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) w in
-  let bound =
-    Rune.jit' ~devices:[ Rune.device "CPU:1" ] (fun x -> Nx.mul x p)
-  in
   let x = m46 () in
-  check_arr ~msg:"bound" (to_arr (Nx.mul x w)) (bound x);
+  let on1 = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) w in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with ~prefix:"Rune.jit: a captured value is on CPU:1"
+            msg
+      | _ -> false)
+    (fun () ->
+      Rune.pmap ~devices:devs2
+        Nx.Ptree.(tensor @-> returns tensor)
+        (fun x -> Nx.mul x on1)
+        x);
+  let copies = Nx.place (Nx.Placement.replicated devs2) w in
   let g =
     Rune.pmap ~devices:devs2
       Nx.Ptree.(tensor @-> returns tensor)
-      (fun x -> Nx.mul x p)
+      (fun x -> Nx.mul x copies)
   in
   check_arr ~msg:"pmap" (to_arr (Nx.mul x w)) (g x);
-  check_arr ~msg:"bound, after the pmap read it" (to_arr (Nx.mul x w)) (bound x)
+  let x = Nx.place (Nx.Placement.sharded ~axis:0 devs2) x in
+  Rune.reset_jit_stats ();
+  check_arr ~msg:"again" (to_arr (Nx.mul (m46 ()) w)) (g x);
+  equal ~msg:"the capture moves nothing" int 0
+    (Rune.jit_stats ()).bytes_to_device
 
-(* A compiled function runs on one device: an output of a pmap, on several,
-   raises as its input instead of being read through the host. *)
-let test_split_output_into_jit_raises () =
+(* An output of a pmap, on several devices, runs a compiled function there. *)
+let test_split_output_into_jit () =
   let g =
     Rune.pmap ~devices:devs2
       Nx.Ptree.(tensor @-> returns tensor)
       (fun x -> Nx.mul_s x 2.0)
   in
   let y = g (m46 ()) in
-  raises_match
-    (function
-      | Invalid_argument msg ->
-          String.starts_with ~prefix:"Rune.jit: the argument at 0 is on sharded"
-            msg
-      | _ -> false)
-    (fun () -> Rune.jit' (fun x -> Nx.add_s x 1.0) y)
+  let z = Rune.jit' (fun x -> Nx.add_s x 1.0) y in
+  check_arr ~msg:"value" (to_arr (Nx.add_s (Nx.mul_s (m46 ()) 2.0) 1.0)) z;
+  is_true ~msg:"split as its input"
+    (Nx.Placement.equal (Nx.placement z) (Nx.placement y))
 
 (* A movement of a split output is a view of every shard: its elements are the
    host movement's, read through per-shard views with offsets, negative strides
@@ -572,19 +582,19 @@ let test_mismatched_placement_is_consumed () =
   in
   let x = m46 () in
   let y = g0 x in
-  (* The axis-1 call reads y through the host to re-split it, and consumes
-     it. *)
+  (* The axis-1 call places a copy of y split on axis 1, and consumes the
+     copy. *)
   check_arr ~eps:0.0 ~msg:"re-split result matches"
     (to_arr (Nx.add (Nx.add x x) (Nx.add x x)))
     (g1 y);
-  raises_consumed (fun () -> to_arr y)
+  check_arr ~eps:0.0 ~msg:"y stays" (to_arr (Nx.add x x)) y
 
-(* A pmap copies every capture: one over the storage its consumed argument
-   reaches raises before the call, and nothing is consumed. *)
+(* A capture over the storage a consumed argument reaches raises before the
+   call, and nothing is consumed. *)
 let test_a_capture_of_consumed_storage_raises () =
-  let w = Nx.place (Nx.Placement.device (Rune.device "CPU:1")) (m46 ()) in
+  let w = Nx.place (Nx.Placement.replicated devs2) (m46 ()) in
   let g =
-    Rune.pmap ~devices:devs2
+    Rune.pmap ~devices:devs2 ~in_axes:[ None ]
       Nx.Ptree.(consumes tensor @@ returns tensor)
       (fun x -> Nx.add x w)
   in
@@ -940,9 +950,9 @@ let tests =
         test "mismatched placement forces and re-splits"
           test_mismatched_placement_forces;
         test "pass-through outputs gather on read" test_pass_through_output;
-        test "a placed capture is read back and replicated"
-          test_placed_capture_is_replicated;
-        test "a split output into jit raises" test_split_output_into_jit_raises;
+        test "a placed capture is bound on the devices"
+          test_placed_capture_is_bound;
+        test "a split output into jit" test_split_output_into_jit;
         test "a moved split output" test_moved_split_output;
         test "one shard of a split storage" test_one_shard_of_a_split_storage;
       ];
@@ -952,7 +962,7 @@ let tests =
           test_consume_sharded_state;
         test "replicated consumption releases every replica"
           test_consume_replicated_releases_all_shards;
-        test "a mismatched placement is read and consumed"
+        test "a mismatched placement is placed first"
           test_mismatched_placement_is_consumed;
         test "a capture of consumed storage raises"
           test_a_capture_of_consumed_storage_raises;

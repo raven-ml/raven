@@ -470,14 +470,14 @@ val jit :
     one tensor is [0]. Keys, errors and [RUNE_JIT_DEBUG] reports use these
     paths.
 
-    {b Keys.} A key is the device, every tensor's path, dtype, shape and layout,
-    and every report of the arguments' walks (an integer, a case, an option's
-    presence, a list's length), compared by path segments. An argument with
-    another window, or a list that gained an element with no tensor, traces and
-    compiles its own program. An integer that changes on every call compiles a
-    program per value; a value that varies belongs in a tensor.
-    [RUNE_JIT_DEBUG=1] reports each retrace with the first difference from the
-    previous call's key, such as
+    {b Keys.} A key is the devices, every tensor's path, dtype, shape, placement
+    and layout, a host tensor counting as a copy on each device, and every
+    report of the arguments' walks (an integer, a case, an option's presence, a
+    list's length), compared by path segments. An argument with another window,
+    or a list that gained an element with no tensor, traces and compiles its own
+    program. An integer that changes on every call compiles a program per value;
+    a value that varies belongs in a tensor. [RUNE_JIT_DEBUG=1] reports each
+    retrace with the first difference from the previous call's key, such as
     ["rune.jit: retrace: 1.window: int 3 here, int 2 in the previous key"].
 
     {b Results.} Every result leaf is a value with storage of its own. A result
@@ -519,19 +519,20 @@ val jit :
     ["rune.jit: 2.0.keys -> result 1.0.keys reused"], or what became of its
     storage. On the host, results are host tensors and nothing is lent.
 
-    {b Devices.} A call runs where its placed input leaves and captures live
-    ({!Nx.placement}), and on {!default_device} when none is placed. Captures
-    are found by tracing: when the inputs are on the host, the first trace that
-    meets a placed capture runs again on its device, and later calls run there.
-    [devices] names the device instead, as a list of one device ({!val-device}).
-    Host values join the device a call runs on. A placed input leaf on another
-    device raises [Invalid_argument] naming its path, before anything runs, and
-    so does a placed capture, at the trace that meets it: move it with
-    {!Nx.place} first. So does a dtype the device cannot hold, such as [float64]
-    on Metal, in an input leaf; in a value the function computes or captures it
-    raises {!Jit_error}. On the host, contiguous inputs and captured tensors are
-    read in place and outputs are computed directly into the returned tensors'
-    storage; non-contiguous tensors are copied.
+    {b Devices.} A call runs on the devices where its placed input leaves and
+    captures live ({!Nx.placement}), and on {!default_device} when none is
+    placed. Captures are found by tracing: when the inputs are on the host, the
+    first trace that meets a placed capture runs again on its devices, and later
+    calls run there. [devices] names the devices instead ({!val-device},
+    {!val-devices}): at least one, distinct, of one backend. Host values join
+    the devices a call runs on, a full copy on each. A placed input leaf on
+    other devices raises [Invalid_argument] naming its path and both placements,
+    before anything runs, and so does a placed capture, at the trace that meets
+    it: move it with {!Nx.place} first. So does a dtype the device cannot hold,
+    such as [float64] on Metal, in an input leaf; in a value the function
+    computes or captures it raises {!Jit_error}. On the host, contiguous inputs
+    and captured tensors are read in place and outputs are computed directly
+    into the returned tensors' storage; non-contiguous tensors are copied.
 
     On other devices, results are bit-identical. Host inputs are copied to the
     device on every call; a placed input, an output of an earlier call included,
@@ -545,24 +546,38 @@ val jit :
     output. doc/05-compilation.md describes the memory budget and the scratch
     memory compiled functions share.
 
+    {b Several devices.} Over several devices the function sees global shapes,
+    and each leaf stays where it lives: a split leaf is one slice on each device
+    ({!Nx.Placement.sharded}), a copy or a host leaf the whole value on each.
+    Results come back placed over the same devices, split or copied as the
+    compiler lowers them: an elementwise operation keeps its operands' split,
+    and a reduction over a split axis is an allreduce whose result is a copy on
+    each device, so the gradient of a loss over a batch split across devices is
+    summed across them. Only a split value orders the devices, which decides the
+    slice each holds: the first split leaf, else a split capture, while copies
+    list them as a set, and [devices] fixes the order; a split leaf or capture
+    in another order raises. A call returns once its work is queued on every
+    device, and a read waits for it. {!Nx.placement} of a value the function
+    computes raises: placement inside such a program is the compiler's. Storage
+    reuse, staged scans and in-place indexed writes apply on one device only,
+    for now: a consumed carry keeps two generations.
+
     {b Captures.} The compilation cache lives in the partial application
     [jit s f]: apply [jit] once and reuse the returned function. Tensors [f]
     closes over are compile-time constants, bound once when the trace first
     compiles: on the host contiguous captures are read in place, and every other
     capture is copied to the device once per closure, and signatures share the
-    copy. A capture placed on the device, a view of it included, is bound
-    instead, except by a {!pmap}: the program uses its buffer as the constant
+    copy. A capture placed on the program's devices, a split one or a view of it
+    included, is bound instead: the program uses its buffers as the constant
     from its first compilation on, no bytes move, and every compiled function
-    that captures the value shares the one buffer. A compiled function keeps the
-    values it binds reachable, and their buffers stay while it is reachable: a
-    call that consumes a bound storage ends it for its values, and the programs
-    that bind it keep replaying with it. A closure whose capture was consumed
-    raises [Invalid_argument] at its next trace. A {!pmap} reads a placed
-    capture to the host and uploads it, as it does a host capture. Mutating a
-    captured tensor between calls is not supported and has unspecified
-    visibility (the host may observe the mutation through its in-place binding;
-    other devices never do): pass values that change between calls as arguments
-    rather than capturing them.
+    that captures the value shares them. A compiled function keeps the values it
+    binds reachable, and their buffers stay while it is reachable: a call that
+    consumes a bound storage ends it for its values, and the programs that bind
+    it keep replaying with it. A closure whose capture was consumed raises
+    [Invalid_argument] at its next trace. Mutating a captured tensor between
+    calls is not supported and has unspecified visibility (the host may observe
+    the mutation through its in-place binding; other devices never do): pass
+    values that change between calls as arguments rather than capturing them.
 
     {b Tuning.} [beam] searches kernel schedules with a beam of that width,
     compiling and timing candidates on the device; compilation is much slower
@@ -574,9 +589,9 @@ val jit :
 
     {b Persistence.} Compiled programs are also written to a disk cache and
     loaded by later processes that compile the same trace; [JITCACHE=0] disables
-    it, and results are identical either way. {!pmap} compilations are never
-    persisted. doc/05-compilation.md gives the cache's location and when entries
-    are invalidated.
+    it, and results are identical either way. Programs over several devices are
+    never persisted. doc/05-compilation.md gives the cache's location and when
+    entries are invalidated.
 
     {b Transformations.} Under an enclosing transformation ({!grad},
     {!val-vmap}, {!with_debug}, an outer [jit]), the wrapped function runs
@@ -619,9 +634,9 @@ val jit :
     constant replayed on every call.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
-    [Invalid_argument] if [s] has no argument, if [devices] is empty or names
-    more than one device, for a leaf or capture placed on another device, and as
-    consumption above says. *)
+    [Invalid_argument] if [s] has no argument, if [devices] is empty, repeats a
+    device or mixes backends, for a leaf or capture placed on other devices, and
+    as consumption above says. *)
 
 val jit' :
   ?devices:Nx.Device.t list ->
@@ -642,44 +657,20 @@ val pmap :
   ('a -> 'b) ->
   'a ->
   'b
-(** [pmap ~devices s f] is [f] compiled to run in parallel across [devices]:
-    {!val-jit} whose arguments are placed on a device tuple instead of one
-    device. [devices] share one backend, and the host ({!Nx.Device.host}) is not
-    one of them; name several devices of one backend with {!val-devices} or with
-    an index (["CUDA:1"], ["CPU:1"], ["CPU:2"], ...).
-
-    [in_axes] gives one entry per argument of [s]: [Some a] splits every tensor
-    of the argument along axis [a] into [List.length devices] equal shards, one
-    per device; [None] replicates it, a full copy on every device. It defaults
-    to [Some 0] for every argument; another axis per tensor is {!Nx.moveaxis}.
-    [f] observes full (global) shapes and needs no collective operations: an
-    operation combining sharded and replicated values runs on every device over
-    its shard, and a reduction over a sharded axis (say the mean loss over a
-    sharded batch) becomes a cross-device allreduce automatically.
-    Differentiating such a loss inside [pmap] yields allreduced gradients, which
-    makes data-parallel training a matter of sharding the batch and replicating
-    the parameters.
-
-    Keys, results, consumption, compilation and captures are {!val-jit}'s,
-    except that a consumed argument's per-device buffers are released after the
-    call and lend nothing: a consumed carry keeps two generations. A pmap keeps
-    scratch memory of its own, apart from the one {!val-jit}'s functions share.
-    Outputs stay resident, one buffer per device, placed split or replicated
-    over the devices ({!Nx.placement}). A read gathers the shards in global
-    order (a replicated output reads one replica) and leaves them, and an nx
-    operation on such an output reads it and returns a host value. An output fed
-    back as an input leaf whose placement matches (same devices, same axis or
-    replication) seeds the compiled program's buffers directly with no transfer,
-    so iterated calls (a data-parallel training step) move only the freshly
-    sharded batch; a value whose placement mismatches is read through the host.
-    [pmap] stays until {!val-jit} over device lists replaces it.
-
-    Under an enclosing transformation, [f] runs directly on the host like
-    {!val-jit}: differentiate {e inside} the pmapped function.
+(** [pmap ~devices s f] is {!val-jit} over [devices] with its arguments placed
+    on them first. [in_axes] gives one entry per argument of [s]: [Some a]
+    places every tensor of the argument split along axis [a]
+    ({!Nx.Placement.sharded}), and [None] leaves it where it is, a host tensor
+    entering as a copy on each device and a tensor placed elsewhere placed as a
+    copy first. It defaults to [Some 0] for every argument; another axis per
+    tensor is {!Nx.moveaxis}. A tensor already at its placement moves nothing,
+    so an output fed back seeds the program in place. [devices] share one
+    backend, and the host ({!Nx.Device.host}) is not one of them. Everything
+    else is {!val-jit}'s over several devices.
 
     Raises [Invalid_argument] if [devices] is empty, mixes backends or holds the
     host; if [in_axes] has more or fewer entries than [s] has arguments; or if a
-    sharded tensor's rank is too small or its dimension does not divide evenly
+    split tensor's rank is too small or its dimension does not divide evenly
     across the devices, naming its path. Raises {!Jit_error} when tracing fails,
     as {!val-jit}. *)
 

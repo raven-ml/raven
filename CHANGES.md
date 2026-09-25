@@ -160,6 +160,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` runs over several devices: where its split or replicated leaves
+  and captures live, or on `?devices`, which now takes any list of one
+  backend. Host leaves enter as a copy on each device, placed leaves and
+  captures (split ones included) are read in place, results come back placed,
+  and a call returns without waiting for its devices.
 - Reading a value on Metal or `CPU:k` that nothing else holds (the operand
   of an eager operation, say) no longer reads freed memory: the collector
   could release its buffer during the copy, which crashed when the buffer came

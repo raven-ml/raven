@@ -3395,13 +3395,14 @@ let test_a_consumed_argument_between_read_ones () =
       | _ -> false)
     (fun () -> to_arr p.Pair.u);
   equal ~msg:"its shape stays readable" (array int) [| 2 |] (Nx.shape p.Pair.u);
-  invalid_starting "Rune.jit: ~devices names several devices" (fun () ->
+  invalid_starting "Rune.jit: ~devices: " (fun () ->
+      ignore (Rune.jit' ~devices:[ cpu1; cpu1 ] (fun x -> x) (vec32 [| 1.0 |])));
+  invalid_starting "Rune.jit: ~devices: " (fun () ->
       ignore
-        (Rune.jit'
-           ~devices:[ cpu1; Rune.device "CPU:2" ]
+        (Rune.jit' ~devices:[ cpu1; Nx.Device.host ]
            (fun x -> x)
            (vec32 [| 1.0 |])));
-  invalid_starting "Rune.jit: ~devices names no device" (fun () ->
+  invalid_starting "Rune.jit: ~devices: " (fun () ->
       ignore (Rune.jit' ~devices:[] (fun x -> x) (vec32 [| 1.0 |])))
 
 (* The values written are read from the consumed pool by a kernel that runs
@@ -3699,6 +3700,173 @@ let test_eager_results_on_device_lists () =
     (Nx.sum ~axes:[ 0 ] x) (Nx.sum ~axes:[ 0 ] s);
   check "a reduction over the other axis" rows (Nx.sum ~axes:[ 1 ] x)
     (Nx.sum ~axes:[ 1 ] s)
+
+(* Compiled over device lists. A function runs where its placed leaves and
+   captures live: a split leaf is one slice per device, a host leaf a copy on
+   each, and results come back placed over the same devices. *)
+
+let rows86 () = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1)
+
+(* A program over split values equals the same program on one device, bit for
+   bit. *)
+let test_jit_over_a_split_input () =
+  let x = rows86 () in
+  let rows = Nx.Placement.sharded ~axis:0 cpus in
+  let f x = (Nx.tanh (Nx.add_s (Nx.mul_s x 0.1) 1.0), Nx.sum ~axes:[ 1 ] x) in
+  let sg = Nx.Ptree.(tensor @-> returns (pair tensor tensor)) in
+  let e, r = Rune.jit ~devices:[ List.hd cpus ] sg f x in
+  let g = Rune.jit sg f in
+  let y, t = g (Nx.place rows x) in
+  equal ~msg:"elementwise: placement" placement rows (Nx.placement y);
+  equal ~msg:"elementwise" (array float_exact) (Nx.to_array e) (Nx.to_array y);
+  equal ~msg:"a reduction along the other axis: placement" placement rows
+    (Nx.placement t);
+  equal ~msg:"a reduction along the other axis" (array float_exact)
+    (Nx.to_array r) (Nx.to_array t);
+  let (y', _), up, _ = delta (fun () -> g y) in
+  equal ~msg:"an output fed back uploads nothing" int 0 up;
+  equal ~msg:"and stays split" placement rows (Nx.placement y');
+  let total = Rune.jit' (Nx.sum ~axes:[ 0 ]) (Nx.place rows x) in
+  equal ~msg:"a reduction over the split axis: placement" placement
+    (Nx.Placement.replicated cpus)
+    (Nx.placement total);
+  check_arr ~msg:"a reduction over the split axis"
+    (Nx.to_array (Nx.sum ~axes:[ 0 ] x))
+    total
+
+let test_host_leaves_enter_replicated () =
+  let traces = ref 0 in
+  let g =
+    Rune.jit' ~devices:cpus (fun x ->
+        incr traces;
+        Nx.mul_s x 2.0)
+  in
+  let x = rows86 () in
+  let y = g x in
+  equal ~msg:"a copy on each device" placement
+    (Nx.Placement.replicated cpus)
+    (Nx.placement y);
+  equal ~msg:"value" (array float_exact)
+    (Nx.to_array (Nx.mul_s x 2.0))
+    (Nx.to_array y);
+  let z, up, _ = delta (fun () -> g y) in
+  equal ~msg:"the placed result seeds the same program" int 1 !traces;
+  equal ~msg:"and uploads nothing" int 0 up;
+  equal ~msg:"value" (array float_exact)
+    (Nx.to_array (Nx.mul_s x 4.0))
+    (Nx.to_array z)
+
+let test_leaves_on_other_devices_raise () =
+  let x = Nx.place (Nx.Placement.sharded ~axis:0 cpus) (rows86 ()) in
+  let w = Nx.place (Nx.Placement.device (List.hd cpus)) (rows86 ()) in
+  let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.add in
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with
+            ~prefix:
+              "Rune.jit: the arguments at 0 and 1 are on sharded ~axis:0 \
+               [CPU:1; CPU:2; CPU:3; CPU:4] and CPU:1"
+            msg
+      | _ -> false)
+    (fun () -> g x w);
+  let reversed =
+    Nx.place (Nx.Placement.sharded ~axis:0 (List.rev cpus)) (rows86 ())
+  in
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () -> g x reversed);
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with
+            ~prefix:"Rune.jit: the argument at 0 is on sharded ~axis:0" msg
+      | _ -> false)
+    (fun () -> Rune.jit' ~devices:(List.tl cpus) (fun x -> Nx.mul_s x 2.0) x)
+
+(* Only a split value orders the devices. Copies list them as a set: a split
+   capture over the same devices in another order decides the order, and copies
+   listed in two orders share a program. A [?devices] list fixes the order. *)
+let test_a_split_capture_orders_copies () =
+  let a = List.nth cpus 0 and b = List.nth cpus 1 in
+  let x = rows86 () in
+  let split = Nx.place (Nx.Placement.sharded ~axis:0 [ a; b ]) x in
+  let copies_ba = Nx.place (Nx.Placement.replicated [ b; a ]) x in
+  let y = Rune.jit' (fun c -> Nx.add c split) copies_ba in
+  equal ~msg:"a copied leaf meets a split capture" placement
+    (Nx.Placement.sharded ~axis:0 [ a; b ])
+    (Nx.placement y);
+  equal ~msg:"value" (array float_exact)
+    (Nx.to_array (Nx.mul_s x 2.0))
+    (Nx.to_array y);
+  let copied_capture = Nx.place (Nx.Placement.replicated [ b; a ]) x in
+  let z = Rune.jit' (fun h -> Nx.add (Nx.add h copied_capture) split) x in
+  equal ~msg:"a host leaf, a copied and a split capture" (array float_exact)
+    (Nx.to_array (Nx.mul_s x 3.0))
+    (Nx.to_array z);
+  let split_ba = Nx.place (Nx.Placement.sharded ~axis:0 [ b; a ]) x in
+  let copied_ab = Nx.place (Nx.Placement.replicated [ a; b ]) x in
+  let w = Rune.jit' (fun h -> Nx.add (Nx.add h copied_ab) split_ba) x in
+  equal ~msg:"copies, then a split capture in the other order" placement
+    (Nx.Placement.sharded ~axis:0 [ b; a ])
+    (Nx.placement w);
+  equal ~msg:"value" (array float_exact)
+    (Nx.to_array (Nx.mul_s x 3.0))
+    (Nx.to_array w);
+  raises_match
+    (function
+      | Invalid_argument msg ->
+          String.starts_with ~prefix:"Rune.jit: a captured value is on" msg
+      | _ -> false)
+    (fun () -> Rune.jit' ~devices:[ b; a ] (fun c -> Nx.add c split) x);
+  let traces = ref 0 in
+  let g =
+    Rune.jit' (fun c ->
+        incr traces;
+        Nx.mul_s c 2.0)
+  in
+  ignore (g (Nx.place (Nx.Placement.replicated [ a; b ]) x));
+  ignore (g copies_ba);
+  equal ~msg:"copies in two orders share a program" int 1 !traces
+
+let test_split_capture_is_bound () =
+  let rows = Nx.Placement.sharded ~axis:0 cpus in
+  let w = Nx.place rows (Nx.mul_s (rows86 ()) 0.5) in
+  let g = Rune.jit' (fun x -> Nx.add x w) in
+  let x = Nx.place rows (rows86 ()) in
+  let y, up, _ = delta (fun () -> g x) in
+  equal ~msg:"binding a split capture uploads nothing" int 0 up;
+  equal ~msg:"the program counts the binding" int 1 (cell_of w).bound;
+  equal ~msg:"value" (array float_exact)
+    (Nx.to_array (Nx.mul_s (rows86 ()) 1.5))
+    (Nx.to_array y);
+  equal ~msg:"split" placement rows (Nx.placement y);
+  let h = Rune.jit' (fun x -> Nx.mul_s x 3.0) in
+  let z, up, _ =
+    delta (fun () ->
+        h (Rune.jit' ~devices:cpus (fun x -> Nx.add x w) (rows86 ())))
+  in
+  equal ~msg:"a host input is uploaded to each device" int (4 * 48 * 4) up;
+  equal ~msg:"value" (array float_exact)
+    (Nx.to_array (Nx.mul_s (rows86 ()) 4.5))
+    (Nx.to_array z)
+
+let test_views_of_split_values_are_read_in_place () =
+  let s = Nx.place (Nx.Placement.sharded ~axis:0 cpus) (rows86 ()) in
+  let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+  List.iter
+    (fun (msg, view) ->
+      let y, up, _ = delta (fun () -> g (view s)) in
+      equal ~msg:(msg ^ ": uploads nothing") int 0 up;
+      equal ~msg (array float_exact)
+        (Nx.to_array (Nx.mul_s (view (rows86 ())) 2.0))
+        (Nx.to_array y))
+    [
+      ("columns", Nx.slice [ Nx.A; Nx.R (1, 4) ]);
+      ( "flipped columns",
+        fun x -> Nx.flip ~axes:[ 1 ] (Nx.slice [ Nx.A; Nx.R (1, 4) ] x) );
+      ("the rows of one shard", Nx.slice [ Nx.R (4, 6) ]);
+    ]
 
 (* A split upload from a mapped file uploads each device's window once, read
    from the file. *)
@@ -4306,6 +4474,16 @@ let tests =
         test "a split upload from a mapped file" test_split_upload_from_a_file;
         test "eager results stay on the devices"
           test_eager_results_on_device_lists;
+      ];
+    group "compiled over device lists"
+      [
+        test "a split input" test_jit_over_a_split_input;
+        test "host leaves enter as copies" test_host_leaves_enter_replicated;
+        test "leaves on other devices raise" test_leaves_on_other_devices_raise;
+        test "a split capture orders copies" test_a_split_capture_orders_copies;
+        test "a split capture is bound" test_split_capture_is_bound;
+        test "views of split values are read in place"
+          test_views_of_split_values_are_read_in_place;
       ];
     group "bound captures"
       [

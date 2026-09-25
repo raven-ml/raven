@@ -161,21 +161,59 @@ let reset_stats () =
 
 (* Placements
 
-   A compiled trace binds each input and output leaf to a placement: the trace's
-   single device, or — under [pmap] — every device of a tuple, either replicated
-   (a full copy per device) or sharded (split along one axis into equal
-   per-device slices). The traced function always observes global shapes;
-   placement is a property of the compiled signature. *)
-
-type leaf_place = P_single | P_replicated | P_sharded of int
-
-(* A pmap device tuple: canonical names and their registry instances. *)
-type multi_spec = { md_names : string list; md_devs : Tolk.Device.t list }
+   A compiled trace runs on a list of devices of one backend, and binds each
+   input and output leaf at a placement over that list ([Nx.Placement]): on one
+   device, that device; on several, a full copy on each or equal slices along a
+   cut axis, in the list's order. The traced function always observes global
+   shapes; placement is a property of the compiled signature. *)
 
 (* The devices other than the host, by canonical name: each has one nx device
    value, whose engine is [engine] below, and one tolk device. *)
 
 let by_name : (string, Nx.Device.t * Tolk.Device.t) Hashtbl.t = Hashtbl.create 4
+
+(* The name of the tolk device that compiles and runs the host's programs. *)
+let host_name = "CPU"
+
+let tolk_device_of d =
+  if d == Nx.Device.host then Tolk.Device.get host_name
+  else
+    match Hashtbl.find_opt by_name (Nx.Device.name d) with
+    | Some (d', dev) when d' == d -> dev
+    | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
+
+(* Whether [p] is over the devices [ds] a program runs on: the same devices, and
+   a split value's slices in the program's order. *)
+let over ds p =
+  let dp = Nx.Placement.devices p in
+  if Nx_effect.Grid.cuts p = [] then
+    List.compare_lengths dp ds = 0 && List.for_all (fun d -> List.memq d ds) dp
+  else List.equal ( == ) dp ds
+
+(* How far a call's devices are decided: not at all (the default device, which a
+   placed capture replaces), as a set (by copies, whose order a split capture
+   may still fix), or in order (by a split value or [?devices]). Only a split
+   value's order decides which slice lands where. *)
+type decided = Guessed | Unordered | Ordered
+
+(* The devices [p] decides for a program: a split value's in its order, a copy's
+   as a set, listed in the order devices were opened. *)
+let decided_by p =
+  let ds = Nx.Placement.devices p in
+  if Nx_effect.Grid.cuts p = [] then (List.sort Nx.Device.compare ds, Unordered)
+  else (ds, Ordered)
+
+(* A leaf's placement in a program over [ds]: its own, or a copy on each device
+   for a host value. *)
+let leaf_placement : type a b.
+    Nx.Device.t list -> (a, b) Nx_effect.t -> Nx.Placement.t =
+ fun ds x ->
+  match x with Placed r -> r.r_placement | _ -> Nx.Placement.replicated ds
+
+(* The extents of the slice each device holds of a value of [shape] at [p]. *)
+let local_shape p shape =
+  Nx_effect.extents
+    (Nx.Placement.window p shape (List.hd (Nx.Placement.devices p)))
 
 (* Resident storage
 
@@ -199,6 +237,18 @@ type Nx_effect.storage += Buffers of store
 
 let store_of (c : Nx_effect.cell) =
   match c.state with Live (Buffers s) -> Some s | _ -> None
+
+(* The tolk device of [d] and the buffer of [s] it holds. nx places a view only
+   on devices that hold its storage. *)
+let buffer_on s d =
+  let dev = tolk_device_of d in
+  match List.find_index (( == ) dev) s.s_devices with
+  | Some k -> (dev, List.nth s.s_bufs k)
+  | None ->
+      failwith
+        (Printf.sprintf
+           "Rune: a value on %s views a storage that it does not hold"
+           (Nx.Device.name d))
 
 let account s sign = resident_bytes := !resident_bytes + (sign * s.s_nbytes)
 
@@ -328,30 +378,37 @@ type layout = { skip : int; strides : int array option }
 
 let dense = { skip = 0; strides = None }
 
-(* How a value seeds a program's input or constant: see [seed_of]. *)
+(* How a value seeds a program's input or constant (see [seed_of]): by the
+   buffers of its storage, one per device of the program in its order, or by the
+   range of them its view reaches, or by a copy. *)
 type seed =
-  | Whole of Nx_effect.cell
-  | Range of { cell : Nx_effect.cell; lo : int; span : int; layout : layout }
+  | Whole of { cell : Nx_effect.cell; bufs : Tolk.Device.Buffer.t list }
+  | Range of {
+      cell : Nx_effect.cell;
+      bufs : Tolk.Device.Buffer.t list;
+      lo : int;
+      span : int;
+      layout : layout;
+    }
   | Copy
 
 (* Trace state *)
 
 type input = {
   i_node : U.t;
-  i_place : leaf_place;
-  i_bufs : Tolk.Device.Buffer.t list; (* one per device of the placement *)
+  i_place : Nx.Placement.t;
+  i_bufs : Tolk.Device.Buffer.t list; (* one per device of the program *)
   i_dtype : string;
   i_numel : int;
 }
 
 type state = {
   st_id : int; (* the trace's own id, in its traced tensors *)
-  st_device : Tolk.Device.t;
-  st_multi : string list option; (* pmap device tuple, [None] = single *)
-  st_placement : Nx.Placement.t option; (* a single device's placement *)
-  st_may_move : bool;
-      (* nothing decided the device: a capture placed elsewhere moves the
-         program to it (see [Runs_on]) *)
+  st_device : Tolk.Device.t; (* the first of [st_devices], which compiles *)
+  st_devices : Nx.Device.t list; (* where the program runs, in order *)
+  st_decided : decided;
+      (* how far the devices are decided: a capture placed elsewhere may move
+         the program to its devices, or order them (see [Runs_on]) *)
   mutable refusal : exn option;
       (* the first reason the program cannot run on its device, raised once the
          function returns: raising inside a handler would drop the function's
@@ -370,10 +427,12 @@ type state = {
   mutable prefills : (U.t * U.t) list;
       (* a fresh buffer an indexed write lands in, and the input buffer node
          whose value it starts from (see [write_destination]) *)
-  mutable consts : (U.t * packed) list; (* reverse order *)
+  mutable consts : (U.t * Nx.Placement.t * packed) list;
+      (* reverse order, each at its placement in the program *)
   bound : F.Tensor.t Tensor_map.Tbl.t; (* resident captures bound in place *)
-  mutable bound_consts : (U.t * Nx_effect.cell * packed * seed) list;
-  mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
+  mutable bound_consts : (U.t * packed * seed) list;
+  mutable axis_index : U.t option;
+      (* over several devices: the per-device index buffer, once *)
   scan_stacks : (U.t * int) list Tbl.t;
       (* staged scans: the step record's identity -> the per-leaf carry-stack
          buffer nodes the forward loop wrote, for the backward loop to read. The
@@ -404,18 +463,22 @@ and tensor_hook = { hook : 'a 'b. ('a, 'b) Nx_effect.t -> unit }
 let shape_of x = NV.shape (Nx_effect.view x)
 let numel shape = Array.fold_left ( * ) 1 shape
 
-(* A capture placed on another device than the program's, when nothing else
-   decided where the program runs: the program runs there instead. *)
-exception Runs_on of Nx.Device.t
+(* Whether the program runs on several devices. *)
+let multi st = List.compare_length_with st.st_devices 1 > 0
 
-(* The first refusal wins, except that while nothing decided the device, a
-   capture's device replaces what the guessed device refused: the program runs
-   there instead. *)
+(* A capture that decides the program's devices where nothing else did: placed
+   elsewhere than the default device, or split over the program's devices in
+   another order than copies listed them. The program runs at its placement
+   instead. *)
+exception Runs_on of Nx.Placement.t
+
+(* The first refusal wins, except that a capture's placement replaces what the
+   undecided devices refused: the program runs there instead. *)
 let refuse st e =
   match (st.refusal, e) with
   | None, _ -> st.refusal <- Some e
   | Some (Runs_on _), _ -> ()
-  | Some _, Runs_on _ when st.st_may_move -> st.refusal <- Some e
+  | Some _, Runs_on _ when st.st_decided <> Ordered -> st.refusal <- Some e
   | Some _, _ -> ()
 
 let check_dtype : type a b. state -> (a, b) ND.t -> string -> unit =
@@ -427,29 +490,34 @@ let check_dtype : type a b. state -> (a, b) ND.t -> string -> unit =
             (ND.to_string dt)
             (Tolk.Device.name st.st_device)))
 
-(* A captured value lives on the program's device or on the host, and was not
-   consumed. A pmap reads any other through the host. *)
+(* A captured value lives on the program's devices or on the host, and was not
+   consumed. *)
 let check_capture : type a b. state -> (a, b) Nx_effect.t -> unit =
  fun st x ->
-  match (st.st_placement, x) with
-  | _, Placed { r_cell = { state = Consumed { path }; _ }; _ } ->
+  match x with
+  | Placed { r_cell = { state = Consumed { path }; _ }; _ } ->
       refuse st
         (Invalid_argument
            (Printf.sprintf
               "Rune.jit: a captured value was consumed at %s in a compiled \
                call's arguments; capture the value the call returned"
               path))
-  | Some p, Placed { r_placement = p'; _ } -> (
-      match Nx.Placement.devices p' with
-      | _ when Nx.Placement.equal p p' -> ()
-      | [ d' ] when st.st_may_move -> refuse st (Runs_on d')
-      | _ ->
-          refuse st
-            (Invalid_argument
-               (Format.asprintf
-                  "Rune.jit: a captured value is on %a and the program runs on \
-                   %a; place it on %a, or on the host"
-                  Nx.Placement.pp p' Nx.Placement.pp p Nx.Placement.pp p)))
+  | Placed { r_placement = p; _ } -> (
+      if not (over st.st_devices p) then
+        match st.st_decided with
+        | Guessed -> refuse st (Runs_on p)
+        | Unordered
+          when over st.st_devices
+                 (Nx.Placement.replicated (Nx.Placement.devices p)) ->
+            refuse st (Runs_on p)
+        | Unordered | Ordered ->
+            let q = Nx.Placement.replicated st.st_devices in
+            refuse st
+              (Invalid_argument
+                 (Format.asprintf
+                    "Rune.jit: a captured value is on %a and the program runs \
+                     on %a; place it there, or on the host"
+                    Nx.Placement.pp p Nx.Placement.pp q)))
   | _ -> ()
 
 (* A traced tensor's payload: the trace that made it and its node. *)
@@ -477,26 +545,46 @@ let buffer_tensor node shape =
 let store_flat dst n tt =
   U.store ~dst ~value:(F.Tensor.uop (F.Movement.reshape tt [ n ])) ()
 
+(* A buffer of [n] elements on every device of the program. *)
 let make_node st dtolk n =
   let device =
-    match st.st_multi with
-    | Some names -> U.Multi names (* pmap: constants replicate on the tuple *)
-    | None -> U.Single (Tolk.Device.name st.st_device)
+    match st.st_devices with
+    | [ _ ] -> U.Single (Tolk.Device.name st.st_device)
+    | ds -> U.Multi (List.map Nx.Device.name ds)
   in
   U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:dtolk
     ~shape:(F.Tensor.shape_uop [ n ]) ~device ()
 
+(* [local], each device's slice of a value at [p], as the whole value: under
+   tolk's [Unshard] when [p] cuts an axis. *)
+let whole_tensor p local =
+  match Nx_effect.Grid.cuts p with
+  | [] -> local
+  | [ (axis, _) ] ->
+      F.Tensor.of_uop (U.unshard ~src:(F.Tensor.uop local) ~axes:[ axis ] ())
+  | _ -> unsupported "a value cut along several axes"
+
+(* Where a constant of the program lives in it: a placed value on the program's
+   devices keeps its placement, and any other is copied to each device. *)
+let const_placement : type a b. state -> (a, b) Nx_effect.t -> Nx.Placement.t =
+ fun st x ->
+  match x with
+  | Placed { r_placement = p; _ } when over st.st_devices p -> p
+  | _ -> Nx.Placement.replicated st.st_devices
+
 (* Bind a tensor whose bytes exist outside the traced computation (a closure
    capture, or a host constant created while tracing) as a compile-time
    constant: a buffer input aliasing the tensor's memory when the device can
-   share it, uploaded once when the trace compiles otherwise. *)
+   share it, uploaded once when the trace compiles otherwise, each device its
+   slice. *)
 let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   let dt = Nx_effect.dtype x in
   check_dtype st dt "a constant of the function";
-  let shape = shape_of x in
-  let node = make_node st (tolk_dtype dt) (numel shape) in
-  st.consts <- (node, Packed (dt, x)) :: st.consts;
-  let tt = buffer_tensor node shape in
+  let p = const_placement st x in
+  let local = local_shape p (shape_of x) in
+  let node = make_node st (tolk_dtype dt) (numel local) in
+  st.consts <- (node, p, Packed (dt, x)) :: st.consts;
+  let tt = whole_tensor p (buffer_tensor node local) in
   Tensor_map.Tbl.replace st.table (Key x) tt;
   tt
 
@@ -513,11 +601,12 @@ let extent v =
 
 (* Placed views
 
-   A value placed on a program's device seeds the program without a copy: its
-   buffer when its view covers its storage, otherwise the range of storage its
-   view reaches, bound as a buffer view from a 16-byte boundary (see
-   [alignment]). A C-order window is that range as it is; any other view is
-   movement over the range, which the program applies, when its axes nest. A
+   A value placed on a program's devices seeds the program without a copy: its
+   buffers when its view covers its storage, otherwise the range of storage its
+   view reaches on each device, bound as a buffer view from a 16-byte boundary
+   (see [alignment]). A split value's view is each slice's, so the range is the
+   same on every device. A C-order window is that range as it is; any other view
+   is movement over the range, which the program applies, when its axes nest. A
    value that seeds neither way is copied. *)
 
 (* The axes a view steps along, by decreasing stride. *)
@@ -595,35 +684,56 @@ let view_movement flat ~span shape strides =
    offsets differ by a multiple of 16 bytes share a program. *)
 let alignment = 16
 
-let seed_of : type a b. Tolk.Device.t -> (a, b) Nx_effect.t -> seed =
- fun dev x ->
+(* [seed_of devs x] seeds [x] in a program over [devs]. A value whose view
+   covers its storage on every device that holds it seeds whole; a view of one
+   slice of a split storage, which covers that slice alone, seeds as a range. *)
+let seed_of : type a b. Tolk.Device.t list -> (a, b) Nx_effect.t -> seed =
+ fun devs x ->
   match x with
   | Placed r -> (
       match store_of r.r_cell with
-      | Some { s_devices = [ d ]; s_bufs = [ buf ]; _ } when d == dev ->
-          let v = r.r_view in
-          let range lo n strides =
-            let per =
-              Int.max 1 (alignment / TD.itemsize (Tolk.Device.Buffer.dtype buf))
-            in
-            let skip = lo mod per in
-            Range
-              {
-                cell = r.r_cell;
-                lo = lo - skip;
-                span = n + skip;
-                layout = { skip; strides };
-              }
+      | Some s when s.s_bufs <> [] -> (
+          let holder dev =
+            Option.map (List.nth s.s_bufs)
+              (List.find_index (( == ) dev) s.s_devices)
           in
-          if Nx_effect.covers r then Whole r.r_cell
-          else if NV.numel v = 0 || not (Tolk.Device.Buffer.supports_offset buf)
-          then Copy
-          else if NV.is_c_contiguous v then
-            range (NV.offset v) (NV.numel v) None
-          else if nests (NV.shape v) (NV.strides v) then
-            let lo, hi = extent v in
-            range lo (hi - lo) (Some (NV.strides v))
-          else Copy
+          match List.map holder devs with
+          | bufs when List.mem None bufs -> Copy
+          | bufs ->
+              let bufs = List.map Option.get bufs in
+              let v = r.r_view in
+              let range lo n strides =
+                let item =
+                  TD.itemsize (Tolk.Device.Buffer.dtype (List.hd bufs))
+                in
+                let per = Int.max 1 (alignment / item) in
+                let skip = lo mod per in
+                Range
+                  {
+                    cell = r.r_cell;
+                    bufs;
+                    lo = lo - skip;
+                    span = n + skip;
+                    layout = { skip; strides };
+                  }
+              in
+              if
+                Nx_effect.covers r
+                && List.compare_lengths
+                     (Nx.Placement.devices r.r_placement)
+                     s.s_devices
+                   = 0
+              then Whole { cell = r.r_cell; bufs }
+              else if
+                NV.numel v = 0
+                || not (List.for_all Tolk.Device.Buffer.supports_offset bufs)
+              then Copy
+              else if NV.is_c_contiguous v then
+                range (NV.offset v) (NV.numel v) None
+              else if nests (NV.shape v) (NV.strides v) then
+                let lo, hi = extent v in
+                range lo (hi - lo) (Some (NV.strides v))
+              else Copy)
       | _ -> Copy)
   | _ -> Copy
 
@@ -663,18 +773,20 @@ let layout_tensor node layout shape =
     | Some strides ->
         view_movement range ~span:(size - layout.skip) shape strides
 
-(* A capture placed on a single-device program's device keeps its storage: the
-   program reads it as the constant and no bytes move. The compiled record keeps
-   the value reachable and counts the binding on its cell, so its buffer stays
-   while the program lives, even once a call consumes the storage. *)
-let bind_const (type a b) st seed cell (x : (a, b) Nx_effect.t) : F.Tensor.t =
+(* A capture placed on the program's devices keeps its storage, a split one
+   included: the program reads it as the constant and no bytes move. The
+   compiled record keeps the value reachable and counts the binding on its cell,
+   so its buffers stay while the program lives, even once a call consumes the
+   storage. *)
+let bind_const (type a b) st seed (x : (a, b) Nx_effect.t) : F.Tensor.t =
   let dt = Nx_effect.dtype x in
   check_dtype st dt "a constant of the function";
-  let shape = shape_of x in
+  let p = const_placement st x in
+  let local = local_shape p (shape_of x) in
   let layout = layout_of seed in
-  let node = make_node st (tolk_dtype dt) (layout_size layout shape) in
-  st.bound_consts <- (node, cell, Packed (dt, x), seed) :: st.bound_consts;
-  let tt = layout_tensor node layout shape in
+  let node = make_node st (tolk_dtype dt) (layout_size layout local) in
+  st.bound_consts <- (node, Packed (dt, x), seed) :: st.bound_consts;
+  let tt = whole_tensor p (layout_tensor node layout local) in
   Tensor_map.Tbl.replace st.bound (Key x) tt;
   tt
 
@@ -694,11 +806,11 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
          computed inside a jitted function exists outside it only as an output"
   | _ -> (
       check_capture st x;
-      match if st.st_multi = None then seed_of st.st_device x else Copy with
-      | (Whole cell | Range { cell; _ }) as seed -> (
+      match seed_of (List.map tolk_device_of st.st_devices) x with
+      | (Whole _ | Range _) as seed -> (
           match Tensor_map.Tbl.find_opt st.bound (Key x) with
           | Some t -> t
-          | None -> bind_const st seed cell x)
+          | None -> bind_const st seed x)
       | Copy -> (
           match Tensor_map.Tbl.find_opt st.table (Key x) with
           | Some t -> t
@@ -2008,12 +2120,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        answers the probe with [false] — so reverse-mode below tapes the eager
        fold per step and never records an [E_scan_bwd] — and unrolls a directly
        performed scan into the trace, as every jit did before staging. *)
-    | Scan.E_scan_probe ->
-        Some (fun k -> continue k (Option.is_none st.st_multi))
+    | Scan.E_scan_probe -> Some (fun k -> continue k (not (multi st)))
     | Scan.E_scan req ->
         Some
           (fun k ->
-            if st.st_multi <> None then
+            if multi st then
               let res : Scan.scan_res =
                 Effect.Deep.match_with
                   (fun () -> Scan.eager req)
@@ -2040,7 +2151,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | Remat.E_remat (Remat.Call { params_s; params; f; residuals; _ }) ->
         Some
           (fun k ->
-            if residuals && st.scan_bodies = 0 && st.st_multi = None then
+            if residuals && st.scan_bodies = 0 && not (multi st) then
               Nx.Ptree.fold params_s
                 (fun _ leaf () -> ignore (storage st (go leaf) : U.t))
                 params ();
@@ -2048,7 +2159,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | Remat.E_barrier { values; after } ->
         Some
           (fun k ->
-            if st.scan_bodies > 0 || st.st_multi <> None then continue k values
+            if st.scan_bodies > 0 || multi st then continue k values
             else
               let deps =
                 List.filter_map
@@ -2083,13 +2194,13 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let t = go data_template and index = go indices in
             let src = go updates in
             let r =
-              match (st.st_multi, mode) with
-              | None, _ ->
+              match (multi st, mode) with
+              | false, _ ->
                   F.Op.scatter_indexed
                     (write_destination st t ~operands:[ index; src ])
                     ~dim:axis index src ~mode ~unique:unique_indices
-              | Some _, `Set -> F.Op.scatter t ~dim:axis index src
-              | Some _, `Add ->
+              | true, `Set -> F.Op.scatter t ~dim:axis index src
+              | true, `Add ->
                   F.Op.scatter_reduce t ~dim:axis index src ~reduce:`Sum
                     ~include_self:true ()
             in
@@ -2129,7 +2240,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 (F.Elementwise.where mask (F.Op.pad ~value:zero tv pads) tt)
             end
             else if
-              st.st_multi = None
+              (not (multi st))
               && Array.fold_left ( * ) 1 tshape <= Int32.to_int Int32.max_int
             then begin
               let st_t = go starts in
@@ -2243,31 +2354,30 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        kernels over the traced values. *)
     | Nx_quant.Effect.E_quant { w; op } ->
         let kernels =
-          match st.st_multi with
-          | Some _ -> None
-          | None ->
-              let quant_matmul ?ids x ~codes ~scales =
-                let part name t =
-                  let tt = go t in
-                  if Lazy.force jit_debug >= 1 && not (is_storage tt) then
-                    Printf.eprintf
-                      "rune.jit: quantised product: %s is a view, copied on \
-                       every call\n\
-                       %!"
-                      name;
-                  tt
-                in
-                let codes = part "codes" codes
-                and scales = part "scales" scales in
-                traced st (dt x)
-                  (F.Op.quant_matmul ?ids:(Option.map go ids) (go x) ~codes
-                     ~scales)
+          if multi st then None
+          else
+            let quant_matmul ?ids x ~codes ~scales =
+              let part name t =
+                let tt = go t in
+                if Lazy.force jit_debug >= 1 && not (is_storage tt) then
+                  Printf.eprintf
+                    "rune.jit: quantised product: %s is a view, copied on \
+                     every call\n\
+                     %!"
+                    name;
+                tt
               in
-              let block_matmul ~transpose x w ~ids =
-                traced st (dt x)
-                  (F.Op.block_matmul ~transpose (go x) (go w) ~ids:(go ids))
-              in
-              Some { Quant.device = st.st_device; quant_matmul; block_matmul }
+              let codes = part "codes" codes
+              and scales = part "scales" scales in
+              traced st (dt x)
+                (F.Op.quant_matmul ?ids:(Option.map go ids) (go x) ~codes
+                   ~scales)
+            in
+            let block_matmul ~transpose x w ~ids =
+              traced st (dt x)
+                (F.Op.block_matmul ~transpose (go x) (go w) ~ids:(go ids))
+            in
+            Some { Quant.device = st.st_device; quant_matmul; block_matmul }
         in
         Some
           (fun k ->
@@ -2275,13 +2385,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               (Effect.Deep.match_with
                  (fun () -> Quant.lower kernels w op)
                  () (handler st)))
-    (* Device movement is the identity on the single jit device. *)
-    (* A placement inside a program is the compiler's: placing a value where
-       the program runs is the identity, and a program moves nothing between
-       devices yet. *)
+    (* A placement inside a program is the compiler's: placing a value where the
+       program runs is the identity, and a program moves nothing between devices
+       yet. *)
     | E_place { placement; t_in } -> (
-        match st.st_placement with
-        | Some p when Nx.Placement.equal p placement ->
+        match st.st_devices with
+        | [ d ] when Nx.Placement.equal (Nx.Placement.device d) placement ->
             Some (fun k -> continue k t_in)
         | _ ->
             Some
@@ -2296,9 +2405,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        of a placement asks of its primal. Several devices are the compiler's to
        split. *)
     | E_placement x when is_traced x -> (
-        match st.st_placement with
-        | Some p -> Some (fun k -> continue k p)
-        | None ->
+        match st.st_devices with
+        | [ d ] -> Some (fun k -> continue k (Nx.Placement.device d))
+        | _ ->
             Some
               (fun k ->
                 discontinue k
@@ -2379,18 +2488,18 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           (fun k ->
             discontinue k
               (Jit_error "Rune.jit: psum is only meaningful under vmap"))
-    (* The mapped-axis index. Under pmap it is the device's own index, bound as
-       a per-device scalar input buffer (each device's buffer holds its index)
-       exactly as sharded input slices are bound. A key folded with it
+    (* The mapped-axis index. Over several devices it is the device's own index,
+       bound as a per-device scalar input buffer (each device's buffer holds its
+       index) exactly as split input slices are bound. A key folded with it
        ([Nx.Rng.fold_in_axis]) therefore decorrelates the devices while keeping
        the key's global (scalar-broadcast) shape, so downstream samplers are
        unchanged. A buffer value (not a symbolic offset) survives the sharding,
-       allreduce, and grad rewrites intact. Single device jit has one lane: fall
-       through to the eager index 0. *)
+       allreduce, and grad rewrites intact. A program on one device has one
+       lane: fall through to the eager index 0. *)
     | E_axis_index -> (
-        match st.st_multi with
-        | None -> None
-        | Some _ ->
+        match st.st_devices with
+        | [ _ ] -> None
+        | _ ->
             Some
               (fun k ->
                 let node =
@@ -3232,32 +3341,28 @@ let copyout_into : type a b.
     pos := !pos + len
   done
 
-(* Upload a host tensor to a device tuple: the whole value to every device
-   (replication), or to each device its slice of the shard axis. *)
-let upload_multi : type a b.
+(* [x] with a host value in place of a placed one: its view's elements. *)
+let on_host : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t = function
+  | Placed _ as x -> Nx_effect.Host (Nx_effect.host_of x)
+  | x -> x
+
+(* Copy [x] into [bufs], one per device of [on], each its window of [x] at [p]:
+   the whole value for a copy, its slice for a split. *)
+let upload_windows : type a b.
     scratch ->
-    leaf_place ->
-    Tolk.Device.t list ->
-    Tolk.Device.Buffer.t list ->
+    Nx.Placement.t ->
     (a, b) Nx_effect.t ->
+    (Nx.Device.t * Tolk.Device.t) list ->
+    Tolk.Device.Buffer.t list ->
     unit =
- fun sc place devs bufs x ->
-  match place with
-  | P_replicated | P_single ->
-      List.iter2 (fun dev buf -> copyin_tensor sc dev buf x) devs bufs
-  | P_sharded axis ->
-      let shape = shape_of x in
-      let part = shape.(axis) / List.length bufs in
-      List.iteri
-        (fun k (dev, buf) ->
-          let ranges =
-            Array.mapi
-              (fun d n ->
-                if d = axis then (k * part, (k + 1) * part) else (0, n))
-              shape
-          in
-          copyin_tensor sc dev buf (Nx_effect.shrink x ranges))
-        (List.combine devs bufs)
+ fun sc p x on bufs ->
+  let x = on_host x in
+  let shape = shape_of x in
+  List.iter2
+    (fun (d, dev) buf ->
+      copyin_tensor sc dev buf
+        (Nx_effect.shrink x (Nx.Placement.window p shape d)))
+    on bufs
 
 (* Build a fresh tensor of [dt]/[shape] from a device buffer's contents. *)
 let read_out : type a b.
@@ -3412,28 +3517,6 @@ let read_window : type a b.
       dst
     end
 
-(* The name of the tolk device that compiles and runs the host's programs. *)
-let host_name = "CPU"
-
-let tolk_device_of d =
-  if d == Nx.Device.host then Tolk.Device.get host_name
-  else
-    match Hashtbl.find_opt by_name (Nx.Device.name d) with
-    | Some (d', dev) when d' == d -> dev
-    | _ -> invalid_arg ("Rune: " ^ Nx.Device.name d ^ " is not a rune device")
-
-(* The tolk device of [d] and the buffer of [s] it holds. nx places a view only
-   on devices that hold its storage. *)
-let buffer_on s d =
-  let dev = tolk_device_of d in
-  match List.find_index (( == ) dev) s.s_devices with
-  | Some k -> (dev, List.nth s.s_bufs k)
-  | None ->
-      failwith
-        (Printf.sprintf
-           "Rune: a value on %s views a storage that it does not hold"
-           (Nx.Device.name d))
-
 let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
  fun r ->
   drain_releases ();
@@ -3449,11 +3532,6 @@ let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
           let dev, buf = buffer_on s d in
           Tolk.Device.synchronize dev;
           read_window r.r_dtype buf v)
-
-(* [x] with a host value in place of a placed one: its view's elements. *)
-let on_host : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t = function
-  | Placed _ as x -> Nx_effect.Host (Nx_effect.host_of x)
-  | x -> x
 
 (* Allocate [buf] on [dev], whose device value is [d], collecting first past the
    budget. An allocation that fails collects and retries once (the LRU allocator
@@ -3764,12 +3842,9 @@ let default_device =
   in
   fun () -> Lazy.force chosen
 
-(* The device value of a tolk device. *)
-let nx_device dev = device (Tolk.Device.name dev)
-
-let create_fresh_buffer dev dtolk n =
+let create_fresh_buffer d dev dtolk n =
   let buf = Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev in
-  allocate (nx_device dev) buf;
+  allocate d buf;
   buf
 
 (* Compiled traces *)
@@ -3777,15 +3852,19 @@ let create_fresh_buffer dev dtolk n =
 (* A value the traced function returns: its placeholder (dtype and shape), the
    buffer node realization assigned it ([None] when it has no elements: every
    call returns a fresh empty tensor), and its placement. *)
-type output = { o_value : packed; o_node : U.t option; o_place : leaf_place }
+type output = {
+  o_value : packed;
+  o_node : U.t option;
+  o_place : Nx.Placement.t;
+}
 
 (* An output that may take an input's storage: its buffer node's tag, the
    input's position, and the result's path as [RUNE_JIT_DEBUG] names it. *)
 type lend = { l_otag : int; l_input : int; l_result : string }
 
 type 'q compiled = {
-  cp_device : Tolk.Device.t;
-  cp_multi : multi_spec option; (* pmap device tuple, [None] = single *)
+  cp_device : Tolk.Device.t; (* the first of [cp_devices], which compiles *)
+  cp_devices : (Nx.Device.t * Tolk.Device.t) list; (* where it runs *)
   cp_zero_copy : bool;
   cp_ctx : Nx_effect.context;
   cp_linear : U.t;
@@ -3833,7 +3912,8 @@ type 'q compiled = {
          them *)
   cp_arenas : U.t list;
       (* the memory planner's arena buffer nodes, bound at every call to the
-         device's shared arenas (see [shared_arena]); none under a pmap *)
+         device's shared arenas (see [shared_arena]); none over several
+         devices *)
   cp_skeleton : 'q; (* the traced result, the template results are rebuilt in *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
@@ -3876,7 +3956,8 @@ module Ops = Tolk_uop.Ops
    lends only what it does not read. The analyses are one pass over the schedule
    and one over the outputs' graph, with the consumed inputs as bitsets. Replay
    adds what only it knows: the input must have seeded from storage no program
-   binds. Single-device programs only; a pmap carry keeps two generations. *)
+   binds. Programs on one device only; over several, a carry keeps two
+   generations. *)
 
 (* The buffers the memory planner must leave alone: those under the nodes replay
    binds (inputs, constants, outputs), and every buffer a staged loop mentions,
@@ -3891,8 +3972,6 @@ let held_buffers bound linear =
       (schedule_calls linear)
   in
   List.concat_map buffers bound @ opaque
-
-let bufs_of c = match store_of c with Some s -> s.s_bufs | None -> []
 
 (* The kernels that first and last mention each buffer, by tag, the buffers an
    opaque call mentions, and the kernels that store more than one buffer. *)
@@ -3993,23 +4072,29 @@ let derivations roots inodes =
 
 (* Program keys
 
-   Two calls share a program exactly when they run on one device, their
-   arguments visit the same leaves at the same paths and make the same reports
-   ([Nx.Ptree.Skeleton]), and their leaves have equal dtypes, shapes and
-   layouts. The hash only finds candidates. *)
+   Two calls share a program exactly when they run on the same devices in the
+   same order, their arguments visit the same leaves at the same paths and make
+   the same reports ([Nx.Ptree.Skeleton]), and their leaves have equal dtypes,
+   shapes, placements and layouts, a host leaf counting as a copy on each
+   device. The hash only finds candidates. *)
 
-type leaf_sig = { l_dtype : string; l_shape : int array; l_layout : layout }
+type leaf_sig = {
+  l_dtype : string;
+  l_shape : int array;
+  l_place : Nx.Placement.t;
+  l_layout : layout;
+}
 
 type key = {
-  k_device : Nx.Device.t;
+  k_devices : Nx.Device.t list;
   k_skeleton : Nx.Ptree.Skeleton.t;
   k_leaves : leaf_sig array;
   k_hash : int;
 }
 
-let key_of d ~hash skeleton leaves shapes seeds =
+let key_of ds ~hash skeleton leaves shapes seeds =
   {
-    k_device = d;
+    k_devices = ds;
     k_skeleton = skeleton;
     k_leaves =
       Array.mapi
@@ -4017,6 +4102,7 @@ let key_of d ~hash skeleton leaves shapes seeds =
           {
             l_dtype = ND.to_string (Nx_effect.dtype x);
             l_shape = shapes.(i);
+            l_place = leaf_placement ds x;
             l_layout = layout_of seeds.(i);
           })
         leaves;
@@ -4036,9 +4122,9 @@ let hash_call skeleton leaves shapes =
   done;
   !h land max_int
 
-(* Whether [key] is the key of a call on [d] whose argument flattened to
+(* Whether [key] is the key of a call on [ds] whose argument flattened to
    [skeleton] and [leaves], of [shapes], seeded as [seeds]. *)
-let matches key d ~hash skeleton leaves shapes seeds =
+let matches key ds ~hash skeleton leaves shapes seeds =
   let n = Array.length leaves in
   let rec same_leaves i =
     i = n
@@ -4047,17 +4133,37 @@ let matches key d ~hash skeleton leaves shapes seeds =
     let (Nx.P x) = leaves.(i) in
     String.equal l.l_dtype (ND.to_string (Nx_effect.dtype x))
     && l.l_shape = shapes.(i)
+    && Nx.Placement.equal l.l_place (leaf_placement ds x)
     && l.l_layout = layout_of seeds.(i)
     && same_leaves (i + 1)
   in
-  key.k_hash = hash && key.k_device == d
+  key.k_hash = hash
+  && List.equal ( == ) key.k_devices ds
   && Array.length key.k_leaves = n
   && same_leaves 0
   && Nx.Ptree.Skeleton.equal key.k_skeleton skeleton
 
+let same_sig a b =
+  String.equal a.l_dtype b.l_dtype
+  && a.l_shape = b.l_shape
+  && Nx.Placement.equal a.l_place b.l_place
+  && a.l_layout = b.l_layout
+
+let pp_devices ppf = function
+  | [ d ] -> Nx.Device.pp ppf d
+  | ds ->
+      Format.fprintf ppf "[%a]"
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+           Nx.Device.pp)
+        ds
+
 let describe_leaf l =
-  Printf.sprintf "%s [%s]%s" l.l_dtype
+  Format.asprintf "%s [%s]%s%s" l.l_dtype
     (String.concat "; " (Array.to_list (Array.map string_of_int l.l_shape)))
+    (match Nx.Placement.devices l.l_place with
+    | [ _ ] -> ""
+    | _ -> Format.asprintf " %a" Nx.Placement.pp l.l_place)
     (if l.l_layout = dense then ""
      else
        Printf.sprintf " viewed from element %d%s" l.l_layout.skip
@@ -4071,10 +4177,9 @@ let describe_leaf l =
    previous call's: the device, the first differing visit, or the first leaf
    whose signature differs, named by [names]. *)
 let key_difference ~names key previous =
-  if key.k_device != previous.k_device then
-    Printf.sprintf "the device: %s here, %s in the previous key"
-      (Nx.Device.name key.k_device)
-      (Nx.Device.name previous.k_device)
+  if not (List.equal ( == ) key.k_devices previous.k_devices) then
+    Format.asprintf "the devices: %a here, %a in the previous key" pp_devices
+      key.k_devices pp_devices previous.k_devices
   else
     match
       Nx.Ptree.Skeleton.diff ~this:"here" key.k_skeleton
@@ -4085,7 +4190,8 @@ let key_difference ~names key previous =
         let n = Array.length key.k_leaves in
         let rec first i =
           if i >= n then None
-          else if key.k_leaves.(i) <> previous.k_leaves.(i) then Some i
+          else if not (same_sig key.k_leaves.(i) previous.k_leaves.(i)) then
+            Some i
           else first (i + 1)
         in
         match first 0 with
@@ -4117,25 +4223,32 @@ type leaf_info = {
   names : string array;
 }
 
-let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
-    ?(may_move = false) ?layouts ?multi ?beam ?beam_parallel (p : p Nx.Ptree.t)
+(* Bind [node] to [bufs], one per device of the program. *)
+let seed_node binding ~multi node = function
+  | [ buf ] when not multi -> Tolk.Realize.Buffers.seed binding node buf
+  | bufs ->
+      Tolk.Realize.Buffers.seed_multi binding node
+        (Tolk.Device.Multi_buffer.of_bufs bufs)
+
+(* [trace_compile ~devices f params leaves] traces and compiles [f] for a call
+   over [devices], each leaf seeding the program at its placement in
+   [placements] and read under its layout in [layouts]. *)
+let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
+    ~decided ~placements ~layouts ?beam ?beam_parallel (p : p Nx.Ptree.t)
     (q : q Nx.Ptree.t) (f : p -> q) (params : p) (leaves : Nx.packed array) :
     q compiled =
   let consumed i = info.consumed.(i) in
+  let dev = List.hd devs in
+  let multi = List.compare_length_with ds 1 > 0 in
   incr trace_counter;
   let st =
     {
       st_id = !trace_counter;
       st_device = dev;
-      st_multi = Option.map (fun (spec, _) -> spec.md_names) multi;
-      st_placement =
-        (match multi with
-        | None -> Some (Nx.Placement.device (nx_device dev))
-        | Some _ -> None);
-      st_may_move = may_move;
+      st_devices = ds;
+      st_decided = decided;
       refusal = None;
-      st_takes_storage =
-        (fun i -> consumed i && (not zero_copy) && multi = None);
+      st_takes_storage = (fun i -> consumed i && (not zero_copy) && not multi);
       st_ctx = Nx_effect.create_context ();
       table = Tensor_map.Tbl.create 64;
       captures = Tensor_map.Tbl.create 16;
@@ -4171,54 +4284,23 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
                (ND.to_string (Nx_effect.dtype leaf))
                (Tolk.Device.name dev))
         in
-        if may_move then refuse st e else raise e
+        if decided = Guessed then refuse st e else raise e
       end;
-      let shape = shape_of leaf in
-      let n = numel shape in
-      let place =
-        match multi with None -> P_single | Some (_, places) -> places.(!pos)
-      in
-      (* The trace-level tensor carries the global shape. A sharded leaf becomes
-         a per-shard buffer on the device tuple wrapped in MULTI (whose shape
-         multiplies the axis back up); a replicated leaf is a full-size buffer
-         on the tuple with no wrapper. *)
-      (* A view of part of a storage binds the range of storage it reaches. *)
-      let layout = match layouts with Some a -> a.(!pos) | None -> dense in
-      let size = layout_size layout shape in
-      let node, tt, bufs =
-        match (place, multi) with
-        | P_single, _ ->
-            let node = make_node st dtolk size in
-            ( node,
-              layout_tensor node layout shape,
-              [ Tolk.Device.create_buffer ~size ~dtype:dtolk dev ] )
-        | P_replicated, Some (spec, _) ->
-            let node = make_node st dtolk n in
-            ( node,
-              buffer_tensor node shape,
-              List.map
-                (fun d -> Tolk.Device.create_buffer ~size:n ~dtype:dtolk d)
-                spec.md_devs )
-        | P_sharded a, Some (spec, _) ->
-            let ndev = List.length spec.md_names in
-            let per = n / ndev in
-            let node = make_node st dtolk per in
-            let shard_shape =
-              Array.to_list shape
-              |> List.mapi (fun i d -> if i = a then d / ndev else d)
-            in
-            let inner =
-              U.reshape ~src:node ~shape:(F.Tensor.shape_uop shard_shape)
-            in
-            ( node,
-              F.Tensor.of_uop (U.unshard ~src:inner ~axes:[ a ] ()),
-              List.map
-                (fun d -> Tolk.Device.create_buffer ~size:per ~dtype:dtolk d)
-                spec.md_devs )
-        | (P_replicated | P_sharded _), None -> assert false
+      (* The trace-level tensor carries the global shape: a split leaf is a
+         buffer of one slice on each device under tolk's [Unshard], which
+         multiplies the cut axis back up, and a copy is the whole value on each
+         device. A view of part of a storage binds the range of storage it
+         reaches. *)
+      let place = placements.(!pos) and layout = layouts.(!pos) in
+      let local = local_shape place (shape_of leaf) in
+      let size = layout_size layout local in
+      let node = make_node st dtolk size in
+      let tt = whole_tensor place (layout_tensor node layout local) in
+      let bufs =
+        List.map (fun d -> Tolk.Device.create_buffer ~size ~dtype:dtolk d) devs
       in
       let ph =
-        Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
+        Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
           (Node { trace = st.st_id; tensor = tt })
       in
       placeholders := Nx.P ph :: !placeholders;
@@ -4288,14 +4370,14 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
       outs
   in
   (* Canonicalize sharding before allocation: rewrite the multi-device rules
-     over the whole output graph now, so every sharded value reaching a sink is
-     a syntactic MULTI and buffer allocation sizes its output per shard
-     (replicated values allocate full-size on every device). Scheduling
-     reapplies the same rules; the rewrite is idempotent. *)
+     over the whole output graph now, so every split value reaching a sink is a
+     syntactic [Unshard] and buffer allocation sizes its output per slice
+     (copies allocate full-size on every device). Scheduling reapplies the same
+     rules; the rewrite is idempotent. *)
   let out_uops =
     let outs_u = List.map (fun (_, _, tt) -> F.Tensor.uop tt) out_anch in
     match multi with
-    | None ->
+    | false ->
         (* Only an output can be given its starting value by replay. An indexed
            write into any other buffer starts from its input by a copy in the
            program, as a computed destination does. *)
@@ -4318,25 +4400,26 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
           in
           U.children
             (U.substitute ~walk:true (List.map filled copied) (U.sink outs_u))
-    | Some _ ->
+    | true ->
         let pre = U.sink outs_u in
         let pre = U.graph_rewrite Tolk.Multi.multi_pm pre in
         U.children pre
   in
+  (* An output's placement, read from its sharding: every value of the program
+     is on its devices, split along the axis an [Unshard] cuts by the device
+     range, or a copy on each. *)
   let place_of u =
-    match U.device_of u with
-    | Some (U.Multi _) -> (
-        match (U.op u, U.axis u) with
-        | Tolk_uop.Ops.Unshard, Some a -> P_sharded a
-        | _ -> P_replicated)
-    | Some (U.Single _) | Some (U.Index _) | None -> P_single
+    match U.sharding u with
+    | [] -> Nx.Placement.replicated ds
+    | [ (axis, _) ] -> Nx.Placement.sharded ~axis ds
+    | _ -> unsupported "a result cut along several axes"
   in
   (* Resolve each output to the buffer node realization assigned it. An output
      whose node is a graph buffer under identity wrappers (an input or constant
      returned unchanged: [U.contiguous] elides itself on buffer-identity
      sources, so such outputs are never scheduled) reads that buffer directly.
-     In multi mode the mapped node may wrap the buffer in MULTI; follow it
-     down. *)
+     Over several devices the mapped node may wrap the buffer in [Unshard];
+     follow it down. *)
   let rec strip_identity u =
     match U.op u with
     | Tolk_uop.Ops.Buffer -> Some u
@@ -4363,7 +4446,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
         let c =
           match written_buffer u with
           | Some v -> v
-          | None when multi = None && strip_identity u = None && moves u ->
+          | None when (not multi) && strip_identity u = None && moves u ->
               Option.get
                 (written_buffer
                    (F.Tensor.uop (F.Creation.clone (F.Tensor.of_uop u))))
@@ -4406,7 +4489,13 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
       out_conts;
     List.iter
       (fun (k, pk, _) ->
-        a.(k) <- Some { o_value = pk; o_node = None; o_place = P_single })
+        a.(k) <-
+          Some
+            {
+              o_value = pk;
+              o_node = None;
+              o_place = Nx.Placement.replicated ds;
+            })
       empty;
     Array.map Option.get a
   in
@@ -4415,7 +4504,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
   in
   (* Persistent compile cache: a hit replaces scheduling and kernel compilation
      with an import of the stored compiled linear, rebound to this trace's fresh
-     buffer nodes. Multi-device placements are not cached. *)
+     buffer nodes. Programs over several devices are not cached. *)
   (* The effective beam width: the per-call override when it enables search,
      otherwise the BEAM environment variable. Part of the persistent cache key
      because it changes the compiled kernels. *)
@@ -4425,9 +4514,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
     | Some _ | None -> env_int "BEAM" 0
   in
   let cache_key =
-    match multi with
-    | Some _ -> None
-    | None -> Jit_cache.key ~device:dev ~beam:effective_beam call
+    if multi then None else Jit_cache.key ~device:dev ~beam:effective_beam call
   in
   let cached = Option.bind cache_key (fun key -> Jit_cache.load ~key call) in
   let linear, var_vals =
@@ -4455,8 +4542,8 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
         let linear =
           let bound =
             List.map (fun inp -> inp.i_node) !inputs
-            @ List.map fst st.consts
-            @ List.map (fun (node, _, _, _) -> node) st.bound_consts
+            @ List.map (fun (node, _, _) -> node) st.consts
+            @ List.map (fun (node, _, _) -> node) st.bound_consts
             @ Option.to_list st.axis_index
             @ output_nodes
           in
@@ -4484,14 +4571,14 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
   (* The planner's arenas are the int8 buffers its slices view; every other
      buffer a slice views is an input, a constant or an output. *)
   let cp_arenas =
-    if multi <> None then []
+    if multi then []
     else begin
       let bound = Hashtbl.create 16 in
       List.iter
         (fun n -> Hashtbl.replace bound (U.tag n) ())
         (List.map (fun inp -> inp.i_node) !inputs
-        @ List.map fst st.consts
-        @ List.map (fun (node, _, _, _) -> node) st.bound_consts
+        @ List.map (fun (node, _, _) -> node) st.consts
+        @ List.map (fun (node, _, _) -> node) st.bound_consts
         @ output_nodes);
       let seen = Hashtbl.create 4 and acc = ref [] in
       List.iter
@@ -4510,92 +4597,71 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
     end
   in
   let binding = Tolk.Realize.Buffers.create () in
+  let seed = seed_node binding ~multi in
   let reserved = Hashtbl.create 16 in
   List.iter
     (fun inp ->
       Hashtbl.replace reserved (U.tag inp.i_node) ();
-      match inp.i_bufs with
-      | [ buf ] when inp.i_place = P_single ->
-          Tolk.Realize.Buffers.seed binding inp.i_node buf
-      | bufs ->
-          Tolk.Realize.Buffers.seed_multi binding inp.i_node
-            (Tolk.Device.Multi_buffer.of_bufs bufs))
+      seed inp.i_node inp.i_bufs)
     !inputs;
   (* Bind each constant once, at compile time: alias its memory when the device
-     shares host memory and the tensor is contiguous, copy its bytes to the
-     device otherwise (to every device of a pmap tuple). The staging of these
-     one-time uploads is dropped with this table. *)
+     shares host memory and the tensor is contiguous, copy each device its slice
+     otherwise. The staging of these one-time uploads is dropped with this
+     table. *)
   let scratch = Hashtbl.create 8 in
   let wrapped = ref [] in
   List.iter
-    (fun (node, (Packed (cdt, src) as pk)) ->
+    (fun (node, cp, (Packed (cdt, src) as pk)) ->
       Hashtbl.replace reserved (U.tag node) ();
       match if zero_copy then wrap_tensor dev src else None with
       | Some (buf, keep) ->
           Tolk.Realize.Buffers.seed binding node buf;
           wrapped := (pk, keep) :: !wrapped
-      | None -> (
+      | None ->
           (* One device copy of a capture serves every signature of the closure:
              the bytes are uploaded when the capture is first compiled and later
-             compilations reuse the buffer. *)
-          let buf =
+             compilations reuse the buffers. *)
+          let bufs =
             match Tensor_map.Tbl.find_opt const_cache (Key src) with
-            | Some buf -> buf
+            | Some bufs -> bufs
             | None ->
-                let n = numel (shape_of src) in
-                let dtolk = tolk_dtype cdt in
-                let buf =
-                  match multi with
-                  | None ->
-                      let buf =
-                        Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev
-                      in
-                      copyin_tensor scratch dev buf src;
-                      Tolk.Realize.Single buf
-                  | Some (spec, _) ->
-                      let bufs =
-                        List.map
-                          (fun d ->
-                            let buf =
-                              Tolk.Device.create_buffer ~size:n ~dtype:dtolk d
-                            in
-                            copyin_tensor scratch d buf src;
-                            buf)
-                          spec.md_devs
-                      in
-                      Tolk.Realize.Multi (Tolk.Device.Multi_buffer.of_bufs bufs)
+                let n = numel (local_shape cp (shape_of src)) in
+                let bufs =
+                  List.map
+                    (fun d ->
+                      Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype cdt)
+                        d)
+                    devs
                 in
-                Tensor_map.Tbl.replace const_cache (Key src) buf;
-                buf
+                upload_windows scratch cp src (List.combine ds devs) bufs;
+                Tensor_map.Tbl.replace const_cache (Key src) bufs;
+                bufs
           in
-          match buf with
-          | Tolk.Realize.Single buf ->
-              Tolk.Realize.Buffers.seed binding node buf
-          | Tolk.Realize.Multi mbuf ->
-              Tolk.Realize.Buffers.seed_multi binding node mbuf))
+          seed node bufs)
     st.consts;
-  (* A bound capture seeds its constant with the resident buffer itself: reads
-     leave storage in place, and the value is reachable from the trace. *)
+  (* A bound capture seeds its constant with the resident buffers themselves:
+     reads leave storage in place, and the value is reachable from the trace. *)
   let views = ref [] in
   let bound =
     List.map
-      (fun (node, cell, pk, seed) ->
+      (fun (node, pk, seed_) ->
         Hashtbl.replace reserved (U.tag node) ();
-        (match (store_of cell, seed) with
-        | Some { s_bufs = [ buf ]; _ }, Range { lo; span; _ } ->
-            let view = buffer_range buf ~lo ~span in
-            views := view :: !views;
-            Tolk.Realize.Buffers.seed binding node view
-        | Some { s_bufs = [ buf ]; _ }, (Whole _ | Copy) ->
-            Tolk.Realize.Buffers.seed binding node buf
-        | _ -> err "Rune.jit: a bound capture was consumed while tracing");
-        (cell, pk))
+        match seed_ with
+        | Range { cell; bufs; lo; span; _ } ->
+            let bufs = List.map (fun buf -> buffer_range buf ~lo ~span) bufs in
+            views := bufs @ !views;
+            seed node bufs;
+            (cell, pk)
+        | Whole { cell; bufs } ->
+            seed node bufs;
+            (cell, pk)
+        | Copy -> assert false (* only a seeded capture is bound *))
       st.bound_consts
   in
-  (* The per-device axis index ([Nx.Rng.fold_in_axis] under pmap): one scalar
-     buffer per device holding that device's own index. *)
-  (match (st.axis_index, multi) with
-  | Some node, Some (spec, _) ->
+  (* The per-device axis index ([Nx.Rng.fold_in_axis] over several devices): one
+     scalar buffer per device holding that device's own index. *)
+  Option.iter
+    (fun node ->
       Hashtbl.replace reserved (U.tag node) ();
       let bufs =
         List.mapi
@@ -4605,21 +4671,18 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
             Nx_buffer.unsafe_set idx 0 (Int32.of_int i);
             copyin_tensor scratch d buf (Nx_effect.from_host st.st_ctx idx);
             buf)
-          spec.md_devs
+          devs
       in
-      Tolk.Realize.Buffers.seed_multi binding node
-        (Tolk.Device.Multi_buffer.of_bufs bufs)
-  | _ -> ());
+      seed node bufs)
+    st.axis_index;
   let cp_inputs = Array.of_list (List.rev !inputs) in
   let cp_lends =
     let consumed_inputs =
-      List.filter
-        (fun i -> consumed i && cp_inputs.(i).i_place = P_single)
-        (List.init (Array.length cp_inputs) Fun.id)
+      List.filter consumed (List.init (Array.length cp_inputs) Fun.id)
       |> Array.of_list
     in
     (* On the host, outputs are host buffers the kernels write in place. *)
-    if multi <> None || zero_copy || consumed_inputs = [||] then []
+    if multi || zero_copy || consumed_inputs = [||] then []
     else begin
       let m = mentions_of linear in
       let position = Hashtbl.create 16 in
@@ -4637,7 +4700,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
         List.filter_map
           (fun (k, _, u, _, _) ->
             match cp_outputs.(k) with
-            | { o_node = Some node; o_place = P_single; o_value } ->
+            | { o_node = Some node; o_value; _ } ->
                 let otag = U.tag node in
                 if Hashtbl.mem seen otag then None
                 else begin
@@ -4661,7 +4724,6 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
       let taken = Array.make (Array.length cp_inputs) false in
       let lendable i (Packed (odt, ph)) =
         consumed i
-        && cp_inputs.(i).i_place = P_single
         && (not taken.(i))
         && cp_inputs.(i).i_dtype = ND.to_string odt
         && cp_inputs.(i).i_numel = numel (shape_of ph)
@@ -4796,14 +4858,14 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
     Array.of_list
       (List.map fst bound
       @ List.filter_map
-          (fun (_, Packed (_, x)) ->
+          (fun (_, _, Packed (_, x)) ->
             match x with Nx_effect.Placed r -> Some r.r_cell | _ -> None)
           st.consts)
   in
   let compiled =
     {
       cp_device = dev;
-      cp_multi = Option.map fst multi;
+      cp_devices = List.combine ds devs;
       cp_zero_copy = zero_copy;
       cp_ctx = st.st_ctx;
       cp_linear = linear;
@@ -4863,34 +4925,6 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
      shares host memory and the leaf is contiguous, and copy its bytes if not.
      Seeded leaves and wrapped hosts are kept reachable until the run
      completes, so no finalizer can release a buffer the kernels still read. *)
-  (* A placed value on a single device seeds the compiled input as [seeds]
-     say. On a device tuple, it seeds only when its view covers its storage and
-     its placement matches the input's: the same tuple with the same shard
-     axis, on every device of its storage (not a view of one shard). Any other
-     value is read by the copy path, which leaves it where it is, and
-     re-split. *)
-  let resident_multi : type a b.
-      multi_spec -> leaf_place -> (a, b) Nx_effect.t -> Nx_effect.cell option =
-   fun spec place -> function
-     | Placed r when Nx_effect.covers r -> (
-         let devices = List.map nx_device spec.md_devs in
-         let expected =
-           match place with
-           | P_sharded axis -> Nx.Placement.sharded ~axis devices
-           | P_replicated | P_single -> Nx.Placement.replicated devices
-         in
-         match store_of r.r_cell with
-         | Some s
-           when s.s_bufs <> []
-                && List.equal ( == ) s.s_devices spec.md_devs
-                && List.equal ( == )
-                     (Nx.Placement.devices r.r_placement)
-                     devices
-                && Nx.Placement.equal r.r_placement expected ->
-             Some r.r_cell
-         | _ -> None)
-     | _ -> None
-  in
   (* Consumption, checked before anything moves (RFC 0006, rule 4). A consumed
      leaf's view must cover its storage on every device that holds it, and no
      other leaf of the call, nor a capture of the program, may reach that
@@ -4957,46 +4991,33 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   Fun.protect ~finally:(fun () -> pending_views := !ranges @ !pending_views)
   @@ fun () ->
   let keep = ref [] in
+  let seed =
+    seed_node c.cp_binding ~multi:(List.compare_length_with c.cp_devices 1 > 0)
+  in
   Array.iteri
     (fun i (Nx.P leaf) ->
       let inp = c.cp_inputs.(i) in
-      match c.cp_multi with
-      | Some spec -> (
-          match resident_multi spec inp.i_place leaf with
-          | Some e ->
-              keep := Obj.repr leaf :: !keep;
-              Tolk.Realize.Buffers.seed_multi c.cp_binding inp.i_node
-                (Tolk.Device.Multi_buffer.of_bufs (bufs_of e))
+      match seeds.(i) with
+      | Whole { cell; bufs } ->
+          keep := Obj.repr leaf :: !keep;
+          seed_entry.(i) <- Some cell;
+          seed inp.i_node bufs
+      | Range { lo; span; bufs; _ } ->
+          keep := Obj.repr leaf :: !keep;
+          let range = List.map (fun buf -> buffer_range buf ~lo ~span) bufs in
+          ranges := range @ !ranges;
+          seed inp.i_node range
+      | Copy -> (
+          match
+            if c.cp_zero_copy then wrap_tensor c.cp_device leaf else None
+          with
+          | Some (buf, ka) ->
+              keep := ka :: !keep;
+              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf
           | None ->
-              Tolk.Realize.Buffers.seed_multi c.cp_binding inp.i_node
-                (Tolk.Device.Multi_buffer.of_bufs inp.i_bufs);
-              upload_multi c.cp_scratch inp.i_place spec.md_devs inp.i_bufs
-                (on_host leaf))
-      | None -> (
-          match seeds.(i) with
-          | Whole e ->
-              keep := Obj.repr leaf :: !keep;
-              seed_entry.(i) <- Some e;
-              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node
-                (List.hd (bufs_of e))
-          | Range { cell = e; lo; span; _ } ->
-              keep := Obj.repr leaf :: !keep;
-              let range = buffer_range (List.hd (bufs_of e)) ~lo ~span in
-              ranges := range :: !ranges;
-              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node range
-          | Copy -> (
-              match
-                if c.cp_zero_copy then wrap_tensor c.cp_device leaf else None
-              with
-              | Some (buf, ka) ->
-                  keep := ka :: !keep;
-                  Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf
-              | None -> (
-                  match inp.i_bufs with
-                  | [ buf ] ->
-                      Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf;
-                      copyin_tensor c.cp_scratch c.cp_device buf leaf
-                  | _ -> assert false))))
+              seed inp.i_node inp.i_bufs;
+              upload_windows c.cp_scratch inp.i_place leaf c.cp_devices
+                inp.i_bufs))
     leaves;
   (* Lending claims: an output takes the storage of its partner when the partner
      seeded from storage that no program binds. *)
@@ -5030,18 +5051,14 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
     Hashtbl.create 8
   in
   let copies = ref [] in
-  let fresh odt n place =
-    match (place, c.cp_multi) with
-    | P_single, _ -> [ create_fresh_buffer c.cp_device (tolk_dtype odt) n ]
-    | (P_replicated | P_sharded _), Some spec ->
-        List.map
-          (fun d -> create_fresh_buffer d (tolk_dtype odt) n)
-          spec.md_devs
-    | (P_replicated | P_sharded _), None -> assert false
+  (* Buffers for an output of [ph] at [place]: each device's slice of a split
+     one, the whole value on each device for a copy. *)
+  let fresh odt ph place =
+    let n = numel (local_shape place (shape_of ph)) in
+    List.map
+      (fun (d, dev) -> create_fresh_buffer d dev (tolk_dtype odt) n)
+      c.cp_devices
   in
-  (* The elements a node holds per device: the shard of a sharded output, the
-     full value of a replicated one. *)
-  let node_numel node = List.fold_left ( * ) 1 (U.max_shape node) in
   Array.iter
     (fun { o_value = Packed (odt, ph); o_node; o_place = place } ->
       match o_node with
@@ -5068,21 +5085,9 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                   Tolk.Realize.Buffers.seed c.cp_binding node (List.hd s.s_bufs);
                 Hashtbl.add out_bufs tag s.s_bufs
             | None ->
-                let bufs =
-                  fresh odt
-                    (if place = P_single then numel (shape_of ph)
-                     else node_numel node)
-                    place
-                in
+                let bufs = fresh odt ph place in
                 if reserved then copies := (node, bufs) :: !copies
-                else
-                  begin match bufs with
-                  | [ buf ] when place = P_single ->
-                      Tolk.Realize.Buffers.seed c.cp_binding node buf
-                  | bufs ->
-                      Tolk.Realize.Buffers.seed_multi c.cp_binding node
-                        (Tolk.Device.Multi_buffer.of_bufs bufs)
-                  end;
+                else seed node bufs;
                 Hashtbl.add out_bufs tag bufs))
     c.cp_outputs;
   (* Storage of its own for each result leaf that repeats an earlier leaf's
@@ -5094,14 +5099,8 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
           c.cp_outputs.(k)
         in
         match o_node with
-        | Some node when not c.cp_first.(j) ->
-            if c.cp_zero_copy then None
-            else
-              Some
-                (fresh odt
-                   (if place = P_single then numel (shape_of ph)
-                    else node_numel node)
-                   place)
+        | Some _ when not c.cp_first.(j) ->
+            if c.cp_zero_copy then None else Some (fresh odt ph place)
         | _ -> None)
       c.cp_results
   in
@@ -5170,46 +5169,23 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
           copy_into dsts (Hashtbl.find out_bufs (U.tag node))
       | None -> ())
     repeats;
-  (* The call returns while its kernels may still run. An output is a placed
-     value whose reads wait for the device, and a buffer released below goes
-     back to the device's pool, where only work queued after these kernels can
-     take it. Two programs still wait here. On the zero-copy device the outputs
-     are host tensors the kernels write in place, and wrapped buffers alias
-     caller memory (seeded inputs and wrapped captures) that the caller may
-     touch as soon as the call returns. A pmap waits too. *)
-  (match c.cp_multi with
-  | Some spec -> List.iter Tolk.Device.synchronize spec.md_devs
-  | None -> if c.cp_zero_copy then Tolk.Device.synchronize c.cp_device);
+  (* The call returns while its kernels may still run, on every device. An
+     output is a placed value whose reads wait for its devices, and a buffer
+     released below goes back to its device's pool, where only work queued after
+     these kernels can take it. The host's programs still wait here: their
+     outputs are host tensors the kernels write in place, and wrapped buffers
+     alias caller memory (seeded inputs and wrapped captures) that the caller
+     may touch as soon as the call returns. *)
+  if c.cp_zero_copy then Tolk.Device.synchronize c.cp_device;
   ignore (Sys.opaque_identity !keep);
   ignore (Sys.opaque_identity c.cp_wrapped);
   ignore (Sys.opaque_identity c.cp_bound);
-  let placed_on : type a b.
-      leaf_place ->
-      (a, b) ND.t ->
-      int array ->
-      nolru:bool ->
-      Tolk.Device.Buffer.t list ->
-      (a, b) Nx_effect.t =
-   fun place dt shape ~nolru bufs ->
-    let devices, placement, view =
-      match (place, c.cp_multi) with
-      | P_single, _ ->
-          ( [ c.cp_device ],
-            Nx.Placement.device (nx_device c.cp_device),
-            NV.create shape )
-      | P_replicated, Some spec ->
-          ( spec.md_devs,
-            Nx.Placement.replicated (List.map nx_device spec.md_devs),
-            NV.create shape )
-      | P_sharded axis, Some spec ->
-          let shard = Array.copy shape in
-          shard.(axis) <- shard.(axis) / List.length spec.md_devs;
-          ( spec.md_devs,
-            Nx.Placement.sharded ~axis (List.map nx_device spec.md_devs),
-            NV.create shard )
-      | (P_replicated | P_sharded _), None -> assert false
-    in
-    make_placed placement devices ~nolru dt view bufs
+  let placed_on place dt shape ~nolru bufs =
+    make_placed place
+      (List.map snd c.cp_devices)
+      ~nolru dt
+      (NV.create (local_shape place shape))
+      bufs
   in
   (* The result's leaves, in walk order. *)
   let values =
@@ -5293,7 +5269,8 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       "rune.jit: replay on %s: %d bytes to device, %d bytes from device, %d \
        bytes resident\n\
        %!"
-      (Tolk.Device.name c.cp_device)
+      (String.concat ", "
+         (List.map (fun (d, _) -> Nx.Device.name d) c.cp_devices))
       (!bytes_to_device - in0)
       (!bytes_from_device - out0)
       !resident_bytes;
@@ -5320,60 +5297,66 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
 
 (* Public entry points *)
 
-(* A call's placed leaves that cannot share one device: the leaves, by position,
+(* A call's placed leaves that are not on its devices: the leaves, by position,
    and the message given their names. *)
 exception Misplaced of int list * (string list -> string)
 
-(* The device a call's placed leaves share. Each must be on [requested] when a
-   device is requested, on the same device as the others, and on one device;
-   otherwise raises [Misplaced]. *)
-let leaves_device ~requested leaves =
-  let dname = Nx.Device.name in
-  let found = ref None in
-  Array.iteri
-    (fun i (Nx.P leaf) ->
-      match leaf with
-      | Nx_effect.Placed { r_placement; _ } -> (
-          match Nx.Placement.devices r_placement with
-          | [ d ] -> (
-              (match requested with
-              | Some r when r != d ->
-                  raise
-                    (Misplaced
-                       ( [ i ],
-                         fun names ->
-                           Printf.sprintf
-                             "Rune.jit: the argument at %s is on %s and \
-                              ~devices names %s; place it on %s, or on the \
-                              host"
-                             (List.hd names) (dname d) (dname r) (dname r) ))
-              | _ -> ());
-              match !found with
-              | Some (d0, i0) when d0 != d ->
-                  raise
-                    (Misplaced
-                       ( [ i0; i ],
-                         fun names ->
-                           Printf.sprintf
-                             "Rune.jit: the arguments at %s and %s are on %s \
-                              and %s; place them on one device"
-                             (List.nth names 0) (List.nth names 1) (dname d0)
-                             (dname d) ))
-              | Some _ -> ()
-              | None -> found := Some (d, i))
-          | _ ->
-              raise
-                (Misplaced
-                   ( [ i ],
-                     fun names ->
-                       Format.asprintf
-                         "Rune.jit: the argument at %s is on %a; a compiled \
-                          function runs on one device, so place it on one \
-                          device, or on the host"
-                         (List.hd names) Nx.Placement.pp r_placement )))
-      | _ -> ())
-    leaves;
-  Option.map fst !found
+(* The devices a call runs on, as its placed leaves decide them, and how far:
+   [requested] when given, else those of its first split leaf, whose order
+   decides which slice lands where, else those of its first placed leaf as a set
+   ([decided_by]). Every placed leaf must be over them ([over]); otherwise
+   raises [Misplaced]. *)
+let leaves_devices ~requested leaves =
+  let placed =
+    List.concat
+      (List.mapi
+         (fun i (Nx.P leaf) ->
+           match leaf with
+           | Nx_effect.Placed r -> [ (i, r.r_placement) ]
+           | _ -> [])
+         (Array.to_list leaves))
+  in
+  let decided =
+    match requested with
+    | Some ds -> Some (None, (ds, Ordered))
+    | None -> (
+        let split =
+          List.filter (fun (_, p) -> Nx_effect.Grid.cuts p <> []) placed
+        in
+        match split @ placed with
+        | (i, p) :: _ -> Some (Some (i, p), decided_by p)
+        | [] -> None)
+  in
+  Option.map
+    (fun (by, ((ds, _) as d)) ->
+      List.iter
+        (fun (i, p) ->
+          if not (over ds p) then
+            raise
+              (match by with
+              | None ->
+                  Misplaced
+                    ( [ i ],
+                      fun names ->
+                        Format.asprintf
+                          "Rune.jit: the argument at %s is on %a and ~devices \
+                           names %a; place it there, or on the host"
+                          (List.hd names) Nx.Placement.pp p pp_devices ds )
+              | Some (j, q) ->
+                  let (a, pa), (b, pb) =
+                    if j < i then ((j, q), (i, p)) else ((i, p), (j, q))
+                  in
+                  Misplaced
+                    ( [ a; b ],
+                      fun names ->
+                        Format.asprintf
+                          "Rune.jit: the arguments at %s and %s are on %a and \
+                           %a; place them on the same devices, in one order"
+                          (List.nth names 0) (List.nth names 1) Nx.Placement.pp
+                          pa Nx.Placement.pp pb )))
+        placed;
+      d)
+    decided
 
 (* What a program knows of the leaves of [args], a value of a signature's
    arguments with [roles]: each leaf's path is its name, and its first segment
@@ -5409,10 +5392,12 @@ let check_live leaves =
 
 (* The compiled function over [args], a signature's arguments with [roles].
 
-   A call runs on the requested device, else where its placed leaves live, else
+   A call runs on the requested devices, else where its placed leaves live, else
    where a capture lives, else on the default device. Captures are found by
    tracing: a trace on the default device that meets a capture placed elsewhere
-   runs again on the capture's device, which every later call then takes.
+   runs again on the capture's devices, and one over devices that copies listed
+   as a set, which meets a capture split over them in another order, runs again
+   in that order; every later call then takes them.
 
    A call flattens its arguments once: the leaves seed the program, and the
    skeleton and the leaves' signatures are its key. [RUNE_JIT_DEBUG=1] reports
@@ -5422,17 +5407,17 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
   let captured_on = ref None in
   let programs : (key * r compiled) list ref = ref [] in
   let previous = ref None in
-  (* Device copies of captured tensors, per device, shared by every signature of
-     this closure and keyed by capture identity. *)
-  let const_caches : (string, Tolk.Realize.buffer Tensor_map.Tbl.t) Hashtbl.t =
-    Hashtbl.create 1
-  in
-  let const_cache d =
-    match Hashtbl.find_opt const_caches (Nx.Device.name d) with
-    | Some t -> t
+  (* Device copies of captured tensors, per device list, shared by every
+     signature of this closure and keyed by capture identity. *)
+  let const_caches = ref [] in
+  let const_cache ds =
+    match
+      List.find_opt (fun (ds', _) -> List.equal ( == ) ds ds') !const_caches
+    with
+    | Some (_, t) -> t
     | None ->
         let t = Tensor_map.Tbl.create 4 in
-        Hashtbl.add const_caches (Nx.Device.name d) t;
+        const_caches := (ds, t) :: !const_caches;
         t
   in
   fun v ->
@@ -5441,33 +5426,35 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
       let leaves, skeleton = Nx.Ptree.flatten args v in
       let leaves = Array.of_list leaves in
       check_live leaves;
-      let d, may_move =
+      let ds, decided =
         match
-          ( requested,
-            (try leaves_device ~requested leaves
+          ( (try leaves_devices ~requested leaves
              with Misplaced (is, message) ->
                let { names; _ } = leaf_info ~roles args v in
                invalid_arg (message (List.map (fun i -> names.(i)) is))),
             !captured_on )
         with
-        | Some d, _, _ | None, Some d, _ | None, None, Some d -> (d, false)
-        | None, None, None -> (default_device (), true)
+        | Some (ds, Unordered), Some (c, Ordered)
+          when over ds (Nx.Placement.replicated c) ->
+            (c, Ordered)
+        | Some d, _ | None, Some d -> d
+        | None, None -> ([ default_device () ], Guessed)
       in
       let shapes = Array.map (fun (Nx.P x) -> shape_of x) leaves in
       let hash = hash_call skeleton leaves shapes in
-      let program d ~may_move =
-        let dev = tolk_device_of d in
-        let seeds = Array.map (fun (Nx.P x) -> seed_of dev x) leaves in
+      let program ds ~decided =
+        let devs = List.map tolk_device_of ds in
+        let seeds = Array.map (fun (Nx.P x) -> seed_of devs x) leaves in
         match
           List.find_opt
-            (fun (k, _) -> matches k d ~hash skeleton leaves shapes seeds)
+            (fun (k, _) -> matches k ds ~hash skeleton leaves shapes seeds)
             !programs
         with
         | Some (key, c) ->
             previous := Some key;
             replay result c leaves seeds
         | None ->
-            let key = key_of d ~hash skeleton leaves shapes seeds in
+            let key = key_of ds ~hash skeleton leaves shapes seeds in
             let info = leaf_info ~roles args v in
             (if Lazy.force jit_debug >= 1 then
                match !previous with
@@ -5477,36 +5464,45 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
                | None -> ());
             (* The host's programs run over host memory. *)
             let c =
-              trace_compile ~device:dev ~zero_copy:(d == Nx.Device.host) ~info
-                ~const_cache:(const_cache d) ~may_move
+              trace_compile ~devices:(ds, devs)
+                ~zero_copy:(List.equal ( == ) ds [ Nx.Device.host ])
+                ~info ~const_cache:(const_cache ds) ~decided
+                ~placements:
+                  (Array.map (fun (Nx.P x) -> leaf_placement ds x) leaves)
                 ~layouts:(Array.map layout_of seeds)
                 ?beam ?beam_parallel args result f v leaves
             in
-            (* Captures it binds make the device the closure's. *)
+            (* Captures it binds make the devices the closure's. *)
             if c.cp_bound <> [||] && !captured_on = None then
-              captured_on := Some d;
+              captured_on :=
+                Some (ds, if decided = Guessed then Unordered else decided);
             programs := (key, c) :: !programs;
             previous := Some key;
             replay result c leaves seeds
       in
-      match program d ~may_move with
-      | y -> y
-      | exception Runs_on d' ->
-          captured_on := Some d';
-          program d' ~may_move:false
+      (* Each retry decides more (guessed, then a set, then an order), so it
+         ends. *)
+      let rec run ds decided =
+        match program ds ~decided with
+        | y -> y
+        | exception Runs_on p ->
+            let ds, decided = decided_by p in
+            captured_on := Some (ds, decided);
+            run ds decided
+      in
+      run ds decided
+
+(* [devices], checked as a placement's devices are: at least one, distinct, of
+   one backend. *)
+let checked_devices what devices =
+  match Nx.Placement.replicated devices with
+  | _ -> devices
+  | exception Invalid_argument m ->
+      invalid_arg (Printf.sprintf "%s: ~devices: %s" what m)
 
 let jit ?devices ?beam ?beam_parallel sg f =
   let (Structure.Uncurried u) = Structure.signature "Rune.jit" sg in
-  let requested =
-    match devices with
-    | None -> None
-    | Some [ d ] -> Some d
-    | Some [] -> invalid_arg "Rune.jit: ~devices names no device"
-    | Some _ ->
-        invalid_arg
-          "Rune.jit: ~devices names several devices; a compiled function runs \
-           on one device"
-  in
+  let requested = Option.map (checked_devices "Rune.jit") devices in
   u.curry
     (compile_fn ?requested ?beam ?beam_parallel ~roles:u.roles u.args u.result
        (u.apply f))
@@ -5514,9 +5510,8 @@ let jit ?devices ?beam ?beam_parallel sg f =
 let jit' ?devices ?beam ?beam_parallel f =
   jit ?devices ?beam ?beam_parallel Nx.Ptree.(tensor @-> returns tensor) f
 
-(* pmap: multi-device parallel jit. The compiled core is [trace_compile] /
-   [replay] with a multi-device placement; pmap only derives the placement from
-   [devices] and [in_axes] and validates it against the leaves. *)
+(* pmap: [jit] over the argument leaves placed as [in_axes] says, on
+   [devices]. *)
 
 let pmap_devices devices =
   if devices = [] then
@@ -5534,16 +5529,12 @@ let pmap_devices devices =
           (Printf.sprintf
              "Rune.pmap: devices must share one backend, got %s and %s"
              (List.hd names) (Nx.Device.name d)))
-    devices;
-  names
+    devices
 
 let pmap ~devices ?in_axes ?beam ?beam_parallel sg f =
   let (Structure.Uncurried u) = Structure.signature "Rune.pmap" sg in
-  let names = pmap_devices devices in
-  let devs = List.map tolk_device_of devices in
-  let spec = { md_names = names; md_devs = devs } in
-  let dev = List.hd devs in
-  let ndev = List.length names in
+  pmap_devices devices;
+  let ndev = List.length devices in
   let axes =
     match in_axes with
     | None -> Array.make u.arity (Some 0)
@@ -5556,25 +5547,26 @@ let pmap ~devices ?in_axes ?beam ?beam_parallel sg f =
                (List.length l) u.arity);
         Array.of_list l
   in
-  let programs = ref [] in
-  let const_cache : Tolk.Realize.buffer Tensor_map.Tbl.t =
-    Tensor_map.Tbl.create 4
+  let run =
+    compile_fn ~requested:devices ?beam ?beam_parallel ~roles:u.roles u.args
+      u.result (u.apply f)
   in
   let call v =
     if Gate.transforming () then u.apply f v
     else begin
-      let leaves, skeleton = Nx.Ptree.flatten u.args v in
-      let leaves = Array.of_list leaves in
-      check_live leaves;
-      let shapes = Array.map (fun (Nx.P x) -> shape_of x) leaves in
+      let leaves, _ = Nx.Ptree.flatten u.args v in
       let info = leaf_info ~roles:u.roles u.args v in
-      let places =
-        Array.mapi
-          (fun i k ->
-            match axes.(k) with
-            | None -> P_replicated
+      let placed =
+        List.mapi
+          (fun i (Nx.P x) ->
+            match axes.(info.arguments.(i)) with
+            | None -> (
+                match x with
+                | Nx_effect.Placed r when not (over devices r.r_placement) ->
+                    Nx.P (Nx.place (Nx.Placement.replicated devices) x)
+                | _ -> Nx.P x)
             | Some a ->
-                let shape = shapes.(i) in
+                let shape = shape_of x in
                 if a < 0 || a >= Array.length shape then
                   invalid_arg
                     (Printf.sprintf
@@ -5587,29 +5579,10 @@ let pmap ~devices ?in_axes ?beam ?beam_parallel sg f =
                        "Rune.pmap: the argument at %s has dimension %d along \
                         axis %d, which does not divide into %d equal shards"
                        info.names.(i) shape.(a) a ndev);
-                P_sharded a)
-          info.arguments
+                Nx.P (Nx.place (Nx.Placement.sharded ~axis:a devices) x))
+          leaves
       in
-      let seeds = Array.make (Array.length leaves) Copy in
-      let d = nx_device dev and hash = hash_call skeleton leaves shapes in
-      let c =
-        match
-          List.find_opt
-            (fun (k, _) -> matches k d ~hash skeleton leaves shapes seeds)
-            !programs
-        with
-        | Some (_, c) -> c
-        | None ->
-            let key = key_of d ~hash skeleton leaves shapes seeds in
-            let c =
-              trace_compile ~device:dev ~zero_copy:false ~info ~const_cache
-                ?beam ?beam_parallel ~multi:(spec, places) u.args u.result
-                (u.apply f) v leaves
-            in
-            programs := (key, c) :: !programs;
-            c
-      in
-      replay u.result c leaves seeds
+      run (Nx.Ptree.rebuild u.args ~like:v placed)
     end
   in
   u.curry call
