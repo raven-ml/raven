@@ -654,6 +654,9 @@ thread.
 
 ### Tolk (new)
 
+- Remove `Tiny_elf.pack`; command submission uses `Tiny_elf.layout` and shared
+  typed queue patches, leaving one argument encoding path.
+
 - Reject hand-built scalar parameters missing a name or bounds before building
   the runtime ABI; they previously disappeared from the signature while native
   code could still read their missing argument.
