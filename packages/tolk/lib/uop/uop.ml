@@ -825,13 +825,15 @@ let as_const u =
   | Ops.Const, Arg.Value value, _ -> Some value
   | Ops.Cast, _, [| value |] when op value = Ops.Const ->
       (match arg value with
-       | Arg.Value c -> Some (Const.of_view (dtype u) (Const.view c))
+       | Arg.Value c when Const.converts (dtype u) (Const.view c) ->
+           Some (Const.of_view (dtype u) (Const.view c))
        | _ -> None)
   | _ -> None
 
 let ccast ~src ~dtype =
   match op src, arg src with
-  | Ops.Const, Arg.Value value -> const (Const.of_view dtype (Const.view value))
+  | Ops.Const, Arg.Value value when Const.converts dtype (Const.view value) ->
+      const (Const.of_view dtype (Const.view value))
   | _ -> cast ~src ~dtype
 
 let cconst value dtype =

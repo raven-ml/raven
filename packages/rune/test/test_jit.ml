@@ -75,6 +75,20 @@ let test_narrow_constants_wrap () =
   check "uint32 x - 1 < 5" u32 (fun x ->
       Nx.less (Nx.sub_s x 1l) (Nx.full_like x 5l))
 
+(* A subnormal base to a negative power above -1 has a finite power, though its
+   reciprocal overflows: 1e-40 ** -0.5 is 1e20. On the CPU: Metal flushes
+   subnormals. *)
+let test_pow_of_subnormal () =
+  let x = vec32 [| 1e-40; 3e-39; 1e-45 |] in
+  List.iter
+    (fun e ->
+      let f x = Nx.pow_s x e in
+      check_arr ~eps:2e-5
+        ~msg:(Printf.sprintf "compiled / eager x ** %g" e)
+        [| 1.; 1.; 1. |]
+        (Nx.div (Rune.jit' ~devices:[ Rune.device "CPU" ] f x) (f x)))
+    [ -0.8; -0.5; -0.3 ]
+
 let test_elementwise_matches_eager () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
   let g = Rune.jit' f in
@@ -4401,6 +4415,8 @@ let tests =
         test "narrow constants wrap" test_narrow_constants_wrap;
         test "integer comparisons read wrapped values"
           (check_wrapping_comparisons ?devices:None);
+        test "pow of a tensor base matches eager" (check_pow ?devices:None);
+        test "pow of a subnormal base" test_pow_of_subnormal;
         test "float sums and products keep their grouping"
           (check_float_association ?devices:None);
         test "element-wise chain matches eager" test_elementwise_matches_eager;

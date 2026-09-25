@@ -236,8 +236,9 @@ let cast_const target c =
       let value = if Dtype.is_int target || Dtype.is_bool target then
         Dtype.truncate_integer target n else n in
       Some (Const.of_view target (Const.Int value))
-  | Const.Float f -> Some (Const.of_scalar target (`Float f))
-  | Const.Invalid -> None
+  | Const.Float f when Const.converts target (Const.Float f) ->
+      Some (Const.of_scalar target (`Float f))
+  | Const.Float _ | Const.Invalid -> None
 
 let const_node_from_lanes dtype lanes =
   match lanes with
@@ -380,26 +381,44 @@ let weak_exponent c v =
   | Some _ when Float.is_integer v -> Uop.const_int (int_of_float v)
   | _ -> Uop.const_float v
 
+(* Constant exponents expand into products, square roots and reciprocals.
+   A negative exponent takes the reciprocal first only where [|e| >= 1]: a
+   power of that size overflows whenever [1 / x] does, while [x^-0.8] of a
+   subnormal [x] is finite; [x^-0.5] is [1 / sqrt x], and the remaining
+   negative exponents are left to [xpow]. A half-integer power reads -0 and
+   -inf as pow does, as powers of +0 and +inf, where [sqrt] alone would
+   give -0 and nan. *)
 let simplify_pow x c =
+  let whole v = Float.of_int (Float.to_int v) = v in
+  let half_integer v = whole (v -. 0.5) in
+  let pow x v = Uop.alu_binary ~op:Ops.Pow ~lhs:x ~rhs:v in
   match const_numeric_v c with
   | None -> None
   | Some e ->
-      if e < 0.0 then
-        let neg_c = weak_exponent c (-. e) in
-        let r = Uop.alu_unary ~op:Ops.Reciprocal ~src:x in
-        Some (Uop.alu_binary ~op:Ops.Pow ~lhs:r ~rhs:neg_c)
+      if e <= -1.0 && (whole e || half_integer e) then
+        Some (pow (Uop.alu_unary ~op:Ops.Reciprocal ~src:x)
+                (weak_exponent c (-. e)))
+      else if e = -0.5 then
+        Some (Uop.alu_unary ~op:Ops.Reciprocal
+                ~src:(pow x (Uop.const_float 0.5)))
+      else if e < 0.0 then None
       else if e = 0.0 then Some (const_numeric_like x 1.0)
-      else if Float.of_int (Float.to_int (e -. 0.5)) +. 0.5 = e then
+      else if half_integer e then
         (* half-integer: x^e = x^(e-0.5) * sqrt(x) *)
-        let c' = Uop.const_float (e -. 0.5) in
-        let half = Uop.alu_binary ~op:Ops.Pow ~lhs:x ~rhs:c' in
+        let half = pow x (Uop.const_float (e -. 0.5)) in
         let s = Uop.alu_unary ~op:Ops.Sqrt ~src:x in
-        Some (Uop.alu_binary ~op:Ops.Mul ~lhs:half ~rhs:s)
-      else if Float.of_int (Float.to_int e) = e then
+        let r = Uop.alu_binary ~op:Ops.Mul ~lhs:half ~rhs:s in
+        if not (Dtype.is_float (Uop.dtype x)) then Some r
+        else
+          let is v = Uop.alu_binary ~op:Ops.Cmpeq ~lhs:x
+              ~rhs:(const_numeric_like x v) in
+          Some Uop.O.(where (is 0.0) (const_numeric_like x 0.0)
+                        (where (is Float.neg_infinity)
+                           (const_numeric_like x Float.infinity) r))
+      else if whole e then
         (* integer >= 0: repeated squaring *)
         let n = Float.to_int e in
-        let c' = weak_exponent c (Float.of_int (n / 2)) in
-        let y = Uop.alu_binary ~op:Ops.Pow ~lhs:x ~rhs:c' in
+        let y = pow x (weak_exponent c (Float.of_int (n / 2))) in
         let y2 = Uop.alu_binary ~op:Ops.Mul ~lhs:y ~rhs:y in
         if n mod 2 = 1
         then Some (Uop.alu_binary ~op:Ops.Mul ~lhs:y2 ~rhs:x)
@@ -863,9 +882,11 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        else None));
 
     (cast ~name:"root" (var "value") => fun bs ->
+       let dt = Uop.dtype (bs $ "root") in
        match const_of_uop (bs $ "value") with
-       | Some c -> Some (Uop.const (Const.of_view (Uop.dtype (bs $ "root")) (Const.view c)))
-       | None -> None);
+       | Some c when Const.converts dt (Const.view c) ->
+           Some (Uop.const (Const.of_view dt (Const.view c)))
+       | _ -> None);
 
     (* Evaluate unary ALU on Consts or STACKs of Consts. *)
     (ops ~name:"root" Ops.Group.unary => fun bs ->

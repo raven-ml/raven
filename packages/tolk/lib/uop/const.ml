@@ -63,6 +63,11 @@ let of_scalar dtype value =
     | `Int n -> int64 dtype n
     | `Float f -> integer dtype (Z.of_float f)
 
+(* C leaves a non-finite float's conversion to an integer undefined. *)
+let converts dtype = function
+  | Float f -> Float.is_finite f || not (Dtype.is_int dtype)
+  | Bool _ | Int _ | Invalid -> true
+
 let of_view dtype = function
   | Invalid -> invalid
   | Bool b -> of_scalar dtype (`Bool b)

@@ -559,41 +559,53 @@ let xlog2 d =
   let r = where (ne d d) nan_c r in
   where (ne (Uop.alu_unary ~op:Ops.Reciprocal ~src:d) neg_inf) r neg_inf
 
-(* [xpow base exponent] is [base ** exponent], expressed as
-   [exp2(exponent * log2(|base|))] with sign and [0 ** 0] fixups. *)
+(* [xpow base exponent] is [base ** exponent] with the special values of C's
+   [pow], expressed as [exp2(exponent * log2(|base|))]. Parity is read in
+   float, where [trunc] and halving are exact for every value (a float past
+   its mantissa is an even integer), and the sign from the sign bit, so -0
+   counts as negative and a non-finite exponent never meets an integer
+   cast. *)
 let xpow base exponent =
-  let dt = Uop.dtype base in
-  let exp_dt = Uop.dtype exponent in
-  let v = dt in
-  let exp_v = exp_dt in
-  let zero = const_float_v v 0.0 in
-  let exp_zero = const_float_v exp_v 0.0 in
-  let one = const_float_v v 1.0 in
-  let nan_c = const_float_v v Float.nan in
-  let two_i = Uop.const (Const.int Dtype.int32 2) in
+  let v = Uop.dtype base in
+  let c x = const_float_v v x in
+  let bits =
+    match v with
+    | Dtype.Float64 -> Dtype.int64
+    | Dtype.Float16 -> Dtype.int16
+    | _ -> Dtype.int32
+  in
   let open Uop.O in
-  let is_neg = base < zero in
+  let eq a b = Uop.alu_binary ~op:Ops.Cmpeq ~lhs:a ~rhs:b in
+  let both a b = Uop.alu_binary ~op:Ops.And ~lhs:a ~rhs:b in
+  let either a b = Uop.alu_binary ~op:Ops.Or ~lhs:a ~rhs:b in
+  let trunc x = Uop.alu_unary ~op:Ops.Trunc ~src:x in
+  let is_neg = base < c 0.0 in
   let abs_base = where is_neg (neg base) base in
   let log_abs = Uop.alu_unary ~op:Ops.Log2 ~src:abs_base in
   let ret = Uop.alu_unary ~op:Ops.Exp2 ~src:(exponent * log_abs) in
-  let int_exp = cast exp_dt (cast Dtype.int32 exponent) in
-  let non_int = ne exponent int_exp in
-  let abs_exp = where (exponent < exp_zero) (neg exponent) exponent in
+  let non_int = ne (trunc exponent) exponent in
   let is_odd =
-    cast Dtype.bool (cast Dtype.int32 abs_exp mod two_i)
+    both (not_ non_int) (ne (trunc (exponent * c 0.5) * c 2.0) exponent)
   in
-  (* A negative base raised to a non-integer power is nan, except for
-     -inf, which is never nan and keeps [|base| ** exponent]. *)
-  let neg_inf = const_float_v v Float.neg_infinity in
-  let not_neg_inf = Uop.alu_binary ~op:Ops.Cmpne ~lhs:base ~rhs:neg_inf in
-  let neg_base =
-    where non_int (where not_neg_inf nan_c ret) (where is_odd (neg ret) ret)
+  let sign_bit =
+    Uop.bitcast ~src:base ~dtype:bits < Uop.const (Const.int bits 0)
   in
-  (* x ** 0 is 1 for every x, including 0 and inf. *)
-  let exp_is_zero =
-    Uop.alu_binary ~op:Ops.Cmpeq ~lhs:exponent ~rhs:exp_zero
+  (* A negative base to a non-integer power is nan, except -inf, whose power
+     is |base| ** exponent; an odd power keeps the base's sign. *)
+  let signed =
+    where
+      (both (both is_neg non_int) (ne base (c Float.neg_infinity)))
+      (c Float.nan)
+      (where (both sign_bit is_odd) (neg ret) ret)
   in
-  where exp_is_zero one (where is_neg neg_base ret)
+  (* x ** 0, 1 ** y and (-1) ** ±inf are 1, nan operands included. *)
+  let abs_exp = where (exponent < c 0.0) (neg exponent) exponent in
+  let is_one =
+    either
+      (either (eq exponent (c 0.0)) (eq base (c 1.0)))
+      (both (eq base (c (-1.0))) (eq abs_exp (c Float.infinity)))
+  in
+  where is_one (c 1.0) signed
 (* [via_f32 f d dtype] applies [f] directly when [dtype] is one of the
    three full-precision float kinds, and otherwise lifts [d] through
    float32 around [f] for narrower float types. *)
@@ -605,8 +617,8 @@ let via_f32 f d dtype =
   else None
 
 (* Transcendental rewrite: lowers [Exp2]/[Log2]/[Sin] to their polynomial
-   decompositions, [Sqrt] to [xpow(d, 0.5)], and upcasts narrow float
-   dtypes through float32. *)
+   decompositions, [Sqrt] to [xpow(d, 0.5)], [Pow] to [xpow], and upcasts
+   narrow float dtypes through float32. *)
 let get_transcendental_patterns (ops : Decomp_op.supported_ops) (node : Uop.t) =
   let src0 () =
     let s = Uop.src node in
@@ -624,4 +636,15 @@ let get_transcendental_patterns (ops : Decomp_op.supported_ops) (node : Uop.t) =
     when not ops.has_sqrt || ops.force_transcendental ->
       let v = Uop.dtype d in
       Some (xpow d (const_float_v v 0.5))
+  (* No renderer spells [Pow]. It decomposes at float32 or wider: the
+     rounding error of [e * log2 x], which grows with the result's binary
+     exponent, becomes the result's relative error, more than a 16-bit
+     float's precision absorbs. *)
+  | Ops.Pow, Some base when Dtype.is_float dt ->
+      let exponent = (Uop.src node).(1) in
+      if Dtype.equal dt Dtype.float32 || Dtype.equal dt Dtype.float64 then
+        Some (xpow base exponent)
+      else
+        let f32 u = Uop.cast ~src:u ~dtype:Dtype.float32 in
+        Some (Uop.cast ~src:(xpow (f32 base) (f32 exponent)) ~dtype:dt)
   | _ -> None

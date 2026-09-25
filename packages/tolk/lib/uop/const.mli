@@ -84,6 +84,11 @@ val of_scalar : Dtype.t -> Dtype.storage_scalar -> t
     integer payloads. Float-to-integer conversion truncates toward zero without a width limit.
     Raises [Z.Overflow] when converting a non-finite float to an integer. *)
 
+val converts : Dtype.t -> view -> bool
+(** [converts dtype v] is [false] exactly when [v] is a non-finite float and
+    [dtype] an integer dtype: C leaves that conversion undefined, so it has no
+    constant value, and a cast of such a constant stays a cast. *)
+
 val of_view : Dtype.t -> view -> t
 (** [of_view dtype v] is {!invalid} for {!Invalid}, ignoring [dtype];
     otherwise it converts [v] to [dtype] while retaining exact integer payloads.

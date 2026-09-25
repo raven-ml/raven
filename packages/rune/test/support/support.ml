@@ -490,6 +490,102 @@ let check_wrapping_comparisons ?devices () =
     (Nx.create Nx.int8 [| 5 |] [| -128; -1; 0; 12; 127 |])
     (cases 1 2 5 127)
 
+(* A compiled power matches eager's within the rounding of [exp2 (e * log2 x)]:
+   a relative [2e-5] at float32 and two units in the last place at float16,
+   where it is computed at float32. Zeros, infinities and NaN match exactly,
+   signs included: a negative base to a fractional power is NaN, -inf is not, an
+   odd power of -0 is negative, a huge float exponent is even, and 1 ** nan and
+   (-1) ** inf are 1. *)
+let check_pow ?devices () =
+  let check (type b) name (dtype : (float, b) Nx.dtype) rtol bases f =
+    let n = Array.length bases in
+    let x = Nx.cast dtype (vec32 bases) in
+    let expected = to_arr (Nx.cast f32 (f x)) in
+    let actual = to_arr (Nx.cast f32 (Rune.jit' ?devices f x)) in
+    Array.iteri
+      (fun k e ->
+        let a = actual.(k) in
+        let msg =
+          Printf.sprintf "%s, row %d at %g: %h, eager %h" name (k / n)
+            bases.(k mod n)
+            a e
+        in
+        if Float.is_nan e then is_true ~msg (Float.is_nan a)
+        else if e = 0. || not (Float.is_finite e) then
+          equal ~msg int32 (Int32.bits_of_float e) (Int32.bits_of_float a)
+        else is_true ~msg (Float.abs (a -. e) <= rtol *. Float.abs e))
+      expected
+  in
+  let bases =
+    [|
+      0.;
+      -0.;
+      1.;
+      -1.;
+      2.;
+      -2.;
+      0.5;
+      3.7;
+      -3.7;
+      1e-3;
+      1e3;
+      infinity;
+      neg_infinity;
+      nan;
+    |]
+  in
+  let powers x =
+    Nx.stack
+      (List.map (Nx.pow_s x)
+         [
+           0.3;
+           -0.8;
+           7.3;
+           -1.7;
+           2.5;
+           -2.5;
+           0.5;
+           -0.5;
+           infinity;
+           neg_infinity;
+           nan;
+         ])
+  in
+  check "float32 x ** e" Nx.float32 2e-5 bases powers;
+  check "float16 x ** e" Nx.float16 2e-3 bases powers;
+  check "float16 x ** 1e5" Nx.float16 2e-3 bases (fun x -> Nx.pow_s x 1e5);
+  let pairs =
+    [
+      (0., 0.3);
+      (-0., -0.8);
+      (1., 7.3);
+      (-1., -1.7);
+      (2., 2.5);
+      (-2., -2.5);
+      (0.5, 0.5);
+      (3.7, -0.5);
+      (-3.7, 3.);
+      (1e-3, -2.);
+      (1e3, 0.);
+      (-0., -1.);
+      (-0., 3.);
+      (-0., -3.);
+      (-2., 1e10);
+      (-0.5, 1e10);
+      (-2., 3e9);
+      (-2., 2147483648.);
+      (-1., infinity);
+      (-1., neg_infinity);
+      (1., nan);
+      (nan, 0.);
+      (-8., 1. /. 3.);
+    ]
+  in
+  let ys = vec32 (Array.of_list (List.map snd pairs)) in
+  check "float32 x ** y" Nx.float32 2e-5
+    (Array.of_list (List.map fst pairs))
+    (fun x -> Nx.pow x ys)
+
 (* Bitcast compiles to the bits eager reads, both ways, from a transposed view:
    both zeros, infinities, quiet and signalling NaN with payloads, subnormals.
    The bits leave and enter the compiled function as stored, and an eager

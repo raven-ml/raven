@@ -163,6 +163,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.pow` of a tensor base compiles for any float exponent, a
+  tensor or a constant that is not a whole or half number, where it raised
+  `unhandled op POW`, and takes pow's special values: the sign of an odd
+  power of -0 or a negative base, NaN for a negative base to a fractional
+  power, `1 ** y = 1`, and exact zeros and infinities at -0 and -inf, and on
+  the CPU at subnormal bases (`(-inf) ** 2.5` was NaN, `1e-40 ** -0.8` inf).
+  A 16-bit float power is computed at `float32`.
 - A compiled comparison of an integer sum or product that may wrap no longer
   folds as if it could not: `uint32` `x - 1 < 5` compiled to `x < 6`, true at
   x = 0, and `uint8` `x - 1 < 255` to true. Signed 32- and 64-bit overflow

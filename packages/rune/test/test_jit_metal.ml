@@ -895,6 +895,8 @@ let tests =
           (check_float_association ~devices:[ Rune.device "METAL" ]);
         test "integer comparisons read wrapped values"
           (check_wrapping_comparisons ~devices:[ Rune.device "METAL" ]);
+        test "pow of a tensor base matches eager"
+          (check_pow ~devices:[ Rune.device "METAL" ]);
         test "a 17-argument kernel between queued work matches eager"
           test_many_argument_kernel;
       ];

@@ -103,6 +103,16 @@ let offset_comparison_respects_wrap () =
     (rewrite Uop.O.(y < c 6))
     (rewrite Uop.O.(y + c (-1) < c 5))
 
+(* A non-finite float has no integer value: its cast to an integer stays a
+   cast instead of folding (C leaves the conversion undefined). *)
+let non_finite_cast_to_int_stays () =
+  List.iter
+    (fun f ->
+      let e = Uop.cast ~src:(Uop.const (Const.float Dtype.float32 f)) ~dtype:Dtype.int32 in
+      is_true ~msg:(Printf.sprintf "cast int32 %g stays a cast" f)
+        (Uop.op (rewrite e) = Ops.Cast))
+    [ Float.infinity; Float.neg_infinity; Float.nan ]
+
 let int_neutral_chain_folds () =
   let x = var ~name:"x" ~lo:0 ~hi:9 () in
   let x = Uop.cast ~src:x ~dtype:Dtype.int32 in
@@ -337,6 +347,8 @@ let simplify_driver_groups =
         test "associative combine" two_stage_associative;
         test "an offset crosses a comparison only without wrapping"
           offset_comparison_respects_wrap;
+        test "a non-finite cast to an integer stays a cast"
+          non_finite_cast_to_int_stays;
       ];
     group "constant folding and invalid propagation"
       [

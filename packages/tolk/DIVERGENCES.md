@@ -291,6 +291,39 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit_metal` "integer comparisons read wrapped values". Remove this
   ruling when upstream reasons modularly.
 
+- **A power decomposes with the transcendentals, at float32 or wider.** The
+  reference rewrites every `POW` into `xpow` (`exp2 (e * log2 |x|)` with sign
+  and zero fixups) inside `sym`, importing the decomposition into its
+  symbolic module. Tolk rewrites it in the late decompositions beside
+  `SQRT -> xpow`, where no renderer spells `POW`, so the rule lives with the
+  decomposition it uses. A float16, bfloat16 or float8 power is computed at
+  float32 and rounded once: at float16, `e * log2 x` loses enough bits that
+  compiled powers were off by up to 100% (6282 float16 powers on the CPU,
+  exponents in [-8, 8]: mean relative error 7.4e-2 computed in float16,
+  4.1e-7 at float32). The reference's xpow reads parity from an `int32`
+  cast of the exponent, undefined past 2^31 and for non-finite values (ARM
+  saturates, Metal gives NaN, and folding a constant inf raised), and its
+  sign from `base < 0`, which misses -0: `(-0) ** -1` was +inf and
+  `(-2) ** 1e10` was -inf. Tolk reads parity in float (`trunc e != e`,
+  `trunc (e * 0.5) * 2 != e`, exact for every float) and the sign from the
+  sign bit, and adds C's `1 ** y = 1` and `(-1) ** ±inf = 1`. A cast of a
+  non-finite float constant to an integer stays a cast (`Const.converts`)
+  instead of raising in the fold. Coverage: rune `test_jit` and
+  `test_jit_metal` "pow of a tensor base matches eager"; tolk `test_symbolic`
+  "a non-finite cast to an integer stays a cast".
+
+- **Constant exponents keep pow's special values.** The reference takes the
+  reciprocal of the base for every negative constant exponent and expands
+  half-integers as `x^k * sqrt x`. The reciprocal overflows for a subnormal
+  base whose power does not (`1e-40 ** -0.8` gave inf, not 1e32), and
+  `sqrt` turns -0 into -0 and -inf into NaN where pow gives +0 and +inf
+  (`(-inf) ** 2.5`). Tolk takes the reciprocal first only for exponents of
+  magnitude at least 1, where the power overflows whenever the reciprocal
+  does, writes `x ** -0.5` as `1 / sqrt x`, leaves other negative exponents to
+  `xpow`, and selects +0 and +inf for a half-integer power of a zero or -inf.
+  Coverage: rune `test_jit` "pow of a subnormal base" and both suites' "pow
+  of a tensor base matches eager".
+
 ## Validation dependencies
 
 - **Scalar out-of-bounds validation has no SMT solver fallback.** Keep Tolk's
