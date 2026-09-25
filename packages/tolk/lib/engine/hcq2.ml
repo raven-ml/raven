@@ -408,27 +408,76 @@ let compile_batch ~profile calls =
   let lowered = lower_call queue devices calls independent_accesses timestamps sink in
   U.substitute ~walk:true (List.map (fun (a, b) -> b, a) mappings) lowered
 
+let enqueue call = match U.as_call call with
+  | Some {body; args} when (U.op body = Ops.Program || U.op body = Ops.Store)
+      && (match U.arg call with U.Arg.Call_info {aux = None; _} -> true | _ -> false)
+      && not (List.exists (fun u -> match U.device_of u with Some (U.Multi _) -> true | _ -> false) args) ->
+      let args = List.filter (fun u -> not (U.is_bound_var u)) args in
+      let args = if U.op body = Ops.Store then List.rev args else args in
+      List.find_map (fun arg -> match U.device_of arg with
+          | Some (U.Single device) ->
+              let dev = Device.get device in
+              (match Device.queue dev with
+               | Some q when U.op body = Ops.Program || q.copy call ->
+                   Some {call; device = Device.name dev;
+                     queue = if U.op body = Ops.Program then "COMPUTE:0" else "COPY:0"}
+               | _ -> None)
+          | _ -> None) args
+  | _ -> None
+
+(* A failed peer import becomes two ordinary queue legs through host memory.
+   Allocate per prepared schedule: independent linked batches must not race
+   over shared staging slots before either batch's retirement fence. *)
+let stage_copies ~resolve linear =
+  let module B = Device.Buffer in
+  let buffers = Hashtbl.create 2 and changed = ref false in
+  let staging host = match Hashtbl.find_opt buffers host with
+    | Some buf -> buf
+    | None ->
+        let spec = {Device.Buffer_spec.default with host = true; cpu_access = true; nolru = true} in
+        let buf = Device.create_buffer ~size:(128 lsl 20) ~dtype:Dtype.uint8 ~spec (Device.get host) in
+        Hashtbl.add buffers host buf;
+        buf in
+  let expand call = match U.as_call call, enqueue call with
+    | Some {body; args = [dst; src]}, Some selected when U.op body = Ops.Store ->
+        let target = resolve dst and source = resolve src in
+        let mapped = try
+          ignore (B.addr ~device:selected.device target : nativeint);
+          ignore (B.addr ~device:selected.device source : nativeint);
+          true
+        with Storage.Mapping_unavailable _ -> false in
+        if mapped || B.base_id target = B.base_id source then [call] else begin
+          let host = (Option.get (Device.queue (Device.get selected.device))).host in
+          let buffer = staging host in
+          let base = U.from_buffer buffer in
+          let dst = U.bitcast ~src:dst ~dtype:Dtype.uint8
+          and src = U.bitcast ~src ~dtype:Dtype.uint8 in
+          let size = B.nbytes source and chunk = B.nbytes buffer / 2 in
+          if B.nbytes target <> size || U.max_numel src <> size || U.max_numel dst <> size then
+            invalid_arg "stage copy: storage size differs from its compiled extent";
+          let calls = List.init (if size = 0 then 0 else 1 + (size - 1) / chunk) (fun i ->
+              let offset = i * chunk and length = min chunk (size - i * chunk) in
+              let slot = view base ((i mod 2) * chunk) length in
+              [U.store_call ~dst:slot ~src:(view src offset length);
+               U.store_call ~dst:(view dst offset length) ~src:slot]) |> List.concat in
+          (* All queued legs must be able to import the staging allocation.
+             Otherwise retain the ordinary bounded host-copy fallback. *)
+          List.iter (fun call -> Option.iter (fun selected ->
+              ignore (B.addr ~device:selected.device buffer : nativeint)) (enqueue call)) calls;
+          changed := true;
+          calls
+        end
+    | _ -> [call] in
+  try
+    let calls = List.concat_map expand (U.children linear) in
+    if !changed then Some (U.linear calls) else None
+  with Storage.Mapping_unavailable _ -> None
+
 let compile ?(profile = false) linear =
   let result = ref [] and batch = ref [] and group = ref None in
   let flush () =
     if !batch <> [] then result := compile_batch ~profile (List.rev !batch) :: !result;
     batch := []; group := None in
-  let enqueue call = match U.as_call call with
-    | Some {body; args} when (U.op body = Ops.Program || U.op body = Ops.Store)
-        && (match U.arg call with U.Arg.Call_info {aux = None; _} -> true | _ -> false)
-        && not (List.exists (fun u -> match U.device_of u with Some (U.Multi _) -> true | _ -> false) args) ->
-        let args = List.filter (fun u -> not (U.is_bound_var u)) args in
-        let args = if U.op body = Ops.Store then List.rev args else args in
-        List.find_map (fun arg -> match U.device_of arg with
-            | Some (U.Single device) ->
-                let dev = Device.get device in
-                (match Device.queue dev with
-                 | Some q when U.op body = Ops.Program || q.copy call ->
-                     Some {call; device = Device.name dev;
-                       queue = if U.op body = Ops.Program then "COMPUTE:0" else "COPY:0"}
-                 | _ -> None)
-            | _ -> None) args
-    | _ -> None in
   List.iter (fun call -> match enqueue call with
       | None -> flush (); result := call :: !result
       | Some c ->

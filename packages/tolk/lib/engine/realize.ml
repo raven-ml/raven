@@ -858,6 +858,23 @@ let exec_copy binding ctx ~device call =
   | None -> invalid_arg "exec_copy: expected CALL"
 
 let queue_submissions = ref 0
+let staged_queue_cache = Domain.DLS.new_key (fun () -> Tolk_uop.Uop.Weak_tbl.create 16)
+
+let staged_queue binding ctx call submission buffers =
+  let module U = Tolk_uop.Uop in
+  let shape = Array.map (fun b ->
+      Device.Buffer.device b, Device.Buffer.nbytes b, Device.Buffer.dtype b) buffers in
+  let cache = Domain.DLS.get staged_queue_cache in
+  match U.Weak_tbl.find_opt cache call with
+  | Some (cached_shape, staged) when cached_shape = shape -> Some staged
+  | _ ->
+      match Hcq2.stage_copies ~resolve:(resolve binding ctx) (U.linear submission.U.fallback) with
+      | None -> None
+      | Some staged ->
+          let compiled = Hcq2.compile ~profile:(submission.U.timings <> []) staged in
+          let linked = link_linear binding ~input_uops:ctx.input_uops compiled in
+          U.Weak_tbl.replace cache call (shape, linked);
+          Some linked
 
 (* Independently wrapped external pointers need not share a Storage.base_id.
    Check the physical intervals only where the compiled queues permit calls
@@ -900,9 +917,7 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
         Some bytes
       with Tolk_uop.Storage.Mapping_unavailable _ when submission.fallback <> [] -> None in
       (match addresses with
-      | None ->
-          List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
-          fallback buffers
+      | None -> fallback buffers
       | Some bytes ->
         if submission.inputs <> [] then begin
           if submission.table < 0 || submission.table >= Array.length buffers then
@@ -971,8 +986,10 @@ let rec dispatch_call binding ctx ~device call =
           (match U.arg call with
            | U.Arg.Call_info {aux = Some submission; _} ->
                exec_hcq binding ctx call submission ~fallback:(fun buffers ->
-                   let ctx = {ctx with input_uops = Array.map U.from_buffer buffers; wait = true} in
-                   List.iter (dispatch_call binding ctx ~device) submission.fallback)
+                   let ctx = {ctx with input_uops = Array.map U.from_buffer buffers} in
+                   match staged_queue binding ctx call submission buffers with
+                   | Some staged -> List.iter (dispatch_call binding ctx ~device) (U.children staged)
+                   | None -> List.iter (dispatch_call binding {ctx with wait = true} ~device) submission.fallback)
            | _ -> exec_kernel binding ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function

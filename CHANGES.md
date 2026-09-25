@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Unsupported queue copy imports use two 64 MiB staging slots with dependencies
+  before reuse, retaining asynchronous replay and rebinding. PCI host signals
+  remain importable on small-BAR devices; device and allocation faults propagate.
+
 - Compatible accelerator peers share compiled queue batches. Host-device
   synchronization waits for captured foreign memory accesses, and AMD/NV
   host and peer copies can use the shared queue protocol.

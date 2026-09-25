@@ -89,6 +89,23 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   owner waits, and real Metal host-view dispatch. Reconsider when all direct
   dispatch participates in the same byte-interval dependency protocol.
 
+- **Staging slots belong to a prepared schedule.** The frozen target caches
+  one host staging allocation per host device. Independently retained Tolk
+  batches fence their own command storage, so sharing those slots would let
+  one batch overwrite transfers belonging to another. Each staged schedule
+  owns two 64 MiB slots, reused with byte-interval queue dependencies. Coverage:
+  `test_hcq2` checks chunk tails, read-before-reuse waits, independent storage,
+  replay rebinding and input lifetime. Reconsider when a shared staging pool
+  has reservations spanning independent submissions.
+
+- **PCI peers can import system memory owned by small-BAR devices.** Host
+  timelines and queue signals use system physical pages, not the owner's BAR.
+  The frozen target rejects them together with inaccessible device memory,
+  preventing the very cross-queue signals needed for staged peer copies.
+  Device-memory imports still request staging. Consumer: staged PCI peer
+  transfers; hardware acceptance remains explicit in TODO. Reconsider when
+  upstream distinguishes system and device memory in its small-BAR check.
+
 - **Failed buffer setup unwinds acquired resources.** The frozen target does
   not consistently roll back allocation and mapping failures. Tolk returns
   PCI virtual/physical reservations and new page tables, releases KFD/NVK

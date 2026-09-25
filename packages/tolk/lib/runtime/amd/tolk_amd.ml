@@ -1602,9 +1602,9 @@ module Kfd_iface = struct
     | None ->
         let address = match B.host_addr source with
           | Some address -> address
-          | None -> invalid_arg "KFD map requires KFD or host-accessible storage" in
+          | None -> raise (Tolk_uop.Storage.Mapping_unavailable "KFD map requires KFD or host-accessible storage") in
         if Nativeint.logand address 0xfffn <> 0n then
-          invalid_arg "KFD host mapping requires page alignment";
+          raise (Tolk_uop.Storage.Mapping_unavailable "KFD host mapping requires page alignment");
         alloc t ~host:true ~cpu_access:true ~cpu_addr:address
           (round_up (B.nbytes source) 0x1000)
 

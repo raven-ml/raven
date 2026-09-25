@@ -331,9 +331,13 @@ val run_linear :
     pointers. FIFO order and transitive queue waits permit buffer donation;
     new read-only aliases and disjoint views are also allowed.
     Represent writable aliases through a shared root in the graph before
-    compiling their queue dependencies. Unsupported mappings fall back to the
-    original calls in order, before the address table is updated or any queue
-    work is published. Allocation and device faults propagate. A
+    compiling their queue dependencies. Unsupported copy imports prepare a
+    cached schedule with two alternating 64 MiB host slots and queue fences
+    before slot reuse. Staging memory belongs to that prepared schedule;
+    runtime input buffers are not retained. If staging cannot be imported,
+    the original calls execute in order. Preparation happens before the
+    address table is updated or queue work is published. Allocation and device
+    faults propagate. A
     {!Tolk_uop.Ops.Store} transfers between its
     resolved buffers. Buffer arguments are resolved with
     {!resolve_buffer}, so {!Tolk_uop.Ops.Param} slots index into

@@ -42,6 +42,14 @@ val patch :
     stores at the byte offsets in [rows]. Static stores move to link time.
     Runtime stores wait for [after] before modifying command storage. *)
 
+val stage_copies :
+  resolve:(Tolk_uop.Uop.t -> Device.Buffer.t) -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
+(** [stage_copies ~resolve linear] replaces bulk copies with unsupported queue
+    imports by two queue legs through alternating 64 MiB host slots. Storage is
+    private to the returned schedule. [resolve] supplies current call bindings.
+    Returns [None] if no copy needs staging or staging cannot be imported.
+    Other allocation and device failures propagate. *)
+
 val compile : ?profile:bool -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [compile ?profile linear] encodes calls supported by their device's queue hooks into
     host programs, combining adjacent calls from the same peer group. Other

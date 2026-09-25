@@ -114,6 +114,59 @@ let peers_and_timestamps () =
   let offsets = List.map (fun n -> (Deps_tracker.uop (U.src n).(0)).start) stamps in
   equal (list int) [32; 48] offsets
 
+let staged_peer_dependencies () =
+  let staging_mode = ref `Accept in
+  let host = Tolk_cpu.create "CPU" in
+  let make name =
+    let raw = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+    let mapping = Option.get raw.mapping in
+    let allocator = Device.Allocator.Pack {raw with mapping = Some {mapping with
+        map = (fun source ->
+          if String.starts_with ~prefix:"NV:staging" (Device.Buffer.device source) then
+            raise (Storage.Mapping_unavailable "peer mapping unavailable");
+          (match !staging_mode with
+           | `Accept -> ()
+           | `Reject -> raise (Storage.Mapping_unavailable "host mapping unavailable")
+           | `Fault -> failwith "host mapping fault");
+          mapping.map source)}} in
+    let queue = Device.{timestamp_divider = 1.; completion = (fun () () -> ());
+      prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> true);
+      encode = (fun _ -> None); lower = (fun _ -> None);
+      compile = (fun _ -> fail "staging plan should not compile")} in
+    Device.make ~name ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:name
+        ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
+      ~runtime:(Device.runtime host) ~synchronize:(fun () -> ()) ~queue () in
+  let source = make "NV:staging-source" and target = make "NV:staging-target" in
+  let chunk = 64 lsl 20 and size = (128 lsl 20) + 32 in
+  let src_buffer = Device.create_buffer ~size ~dtype:Dtype.uint8 source
+  and dst_buffer = Device.create_buffer ~size ~dtype:Dtype.uint8 target in
+  let src = U.from_buffer src_buffer and dst = U.from_buffer dst_buffer in
+  let linear = U.linear [U.store_call ~dst ~src] in
+  let resolve node =
+    if U.equal node src then src_buffer
+    else if U.equal node dst then dst_buffer
+    else fail "unexpected staging input" in
+  let staged = Option.get (Hcq2.stage_copies ~resolve linear) in
+  let calls = U.children staged in
+  equal int 6 (List.length calls);
+  let slots = List.filteri (fun i _ -> i mod 2 = 0) calls
+      |> List.map (fun c -> List.hd (Option.get (U.as_call c)).args) in
+  equal (list int) [0; chunk; 0] (List.map (fun s -> (Deps_tracker.uop s).start) slots);
+  equal (list int) [chunk; chunk; 32] (List.map U.max_numel slots);
+  let plan = Hcq2.plan (List.mapi (fun i call -> Hcq2.{call;
+      device = Device.name (if i mod 2 = 0 then source else target); queue = "COPY:0"}) calls) in
+  equal (list int) [2] (constant_waits (queue plan (Device.name source) "COPY:0"));
+  equal (list int) [1; 3; 5] (constant_waits (queue plan (Device.name target) "COPY:0"));
+  let other = Option.get (Hcq2.stage_copies ~resolve linear) in
+  let other_slot = List.hd (Option.get (U.as_call (List.hd (U.children other)))).args in
+  is_false ~msg:"independently prepared batches must not share staging storage"
+    ((Deps_tracker.uop (List.hd slots)).base = (Deps_tracker.uop other_slot).base);
+  staging_mode := `Reject;
+  is_true (Option.is_none (Hcq2.stage_copies ~resolve linear));
+  staging_mode := `Fault;
+  raises (Failure "host mapping fault") (fun () -> Hcq2.stage_copies ~resolve linear)
+
 let compiled_host_submission () =
   let host = Tolk_cpu.create "CPU" in
   let name = "CPU:queue-test" in
@@ -315,17 +368,40 @@ let compiled_host_submission () =
   import_mode := `Reject;
   replay transfer [|foreign; middle; output|];
   equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
-  equal int64 before (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+  equal int64 (Int64.succ before) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+  let compiled_before = !compilations in
+  Bytes.set_int32_le bytes 0 643l;
+  Device.Buffer.copyin foreign bytes;
+  replay transfer [|foreign; middle; output|];
+  equal int32 643l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
+  equal int compiled_before !compilations;
+  let rebound_weak =
+    let rebound = Device.create_buffer ~size:1 ~dtype:Dtype.int32 owner in
+    Device.Buffer.ensure_allocated rebound;
+    Bytes.set_int32_le bytes 0 811l;
+    Device.Buffer.copyin rebound bytes;
+    let weak = Stdlib.Weak.create 1 in
+    Stdlib.Weak.set weak 0 (Some rebound);
+    Realize.run_linear ~device ~to_program binding ~jit:true
+      ~input_uops:(Array.map U.from_buffer [|rebound; middle; output|]) transfer;
+    weak in
+  equal int32 811l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
+  equal int compiled_before !compilations;
+  Gc.full_major (); Gc.full_major ();
+  is_false ~msg:"staged replay cache must not retain runtime inputs" (Stdlib.Weak.check rebound_weak 0);
+  let before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
   import_mode := `Fault;
   raises (Failure "test import hardware fault") (fun () -> replay transfer [|foreign; middle; output|]);
   equal int64 before (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
   import_mode := `Accept;
+  Bytes.set_int32_le bytes 0 347l;
+  Device.Buffer.copyin foreign bytes;
   replay transfer [|foreign; middle; output|];
   equal int32 347l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
   equal int64 (Int64.succ before) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
-  equal (list int64) [] !completions;
+  let completed_before = !completions in
   Device.synchronize owner;
-  equal (list int64) [Int64.succ before] !completions;
+  equal (list int64) (Int64.succ before :: completed_before) !completions;
   let src = U.from_buffer (buffer 19l) and dst = U.from_buffer (buffer 0l) in
   let compiled = Realize.compile_linear ~device ~to_program
       (U.linear [U.store_call ~dst ~src]) in
@@ -375,6 +451,7 @@ let compiled_host_submission () =
   equal int (linked_before + 4) !links
 
 let () = run "Engine_hcq2" [
+  test "staging alternates bounded slots with read-before-reuse dependencies" staged_peer_dependencies;
   test "byte intervals match a per-byte dependency model" byte_dependencies;
   test "owned aliases and device lanes preserve allocation identity" region_identity;
   test "only overlapping accesses wait across queues" overlap_waits;

@@ -325,8 +325,11 @@ module Pci_iface_base : sig
   (** [map t b] maps the source allocation into [t]. PCI device memory is
       reached through its owner's BAR; host storage is pinned and mapped by
       its physical pages. Host addresses must be page aligned and fit the
-      GPU address range. Raises [Invalid_argument] for unsupported storage
-      or a peer with a small BAR. The caller must retain [b] until unmapping. *)
+      GPU address range. System-memory allocations remain importable when
+      their owner has a small BAR. Raises {!Tolk_uop.Storage.Mapping_unavailable}
+      for unsupported storage, an incompatible host address, or device memory
+      behind a small BAR. Driver failures propagate. The caller must retain
+      [b] until unmapping. *)
 
   val unmap : ('impl, 'pt) t -> mem Hcq.Buffer.t -> unit
   (** [unmap t b] releases an import's page tables without releasing the

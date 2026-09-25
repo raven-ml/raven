@@ -1169,9 +1169,9 @@ module Nvk_iface = struct
     | None ->
         let address = match B.host_addr source with
           | Some address -> address
-          | None -> invalid_arg "NVK map requires NVK or host-accessible storage" in
+          | None -> raise (Tolk_uop.Storage.Mapping_unavailable "NVK map requires NVK or host-accessible storage") in
         if Nativeint.logand address 0xfffn <> 0n then
-          invalid_arg "NVK host mapping requires page alignment";
+          raise (Tolk_uop.Storage.Mapping_unavailable "NVK host mapping requires page alignment");
         alloc st t ~host:true ~cpu_addr:address (B.nbytes source)
 
   (* Channel set-up *)

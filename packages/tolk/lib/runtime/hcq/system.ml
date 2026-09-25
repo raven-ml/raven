@@ -659,8 +659,9 @@ module Pci_iface_base = struct
           (match Hcq.Buffer.meta b with
           | Mapping _ -> invalid_arg "PCI map requires source allocation metadata"
           | Allocation a ->
-              if is_bar_small a.owner then
-                invalid_arg "P2P mapping not supported for small bar devices";
+              if a.mapping.Memory.aspace <> Memory.Sys && is_bar_small a.owner then
+                raise (Tolk_uop.Storage.Mapping_unavailable
+                  "P2P mapping not supported for small bar device memory");
               let paddrs, aspace = match a.mapping.Memory.aspace with
                 | Memory.Sys -> a.mapping.paddrs, Memory.Sys
                 | Memory.Phys | Memory.Peer -> p2p_paddrs a.owner a.mapping.paddrs in
@@ -669,13 +670,13 @@ module Pci_iface_base = struct
       | None ->
           let address = match B.host_addr source with
             | Some address -> address
-            | None -> invalid_arg "PCI map requires PCI or host-accessible storage" in
+            | None -> raise (Tolk_uop.Storage.Mapping_unavailable "PCI map requires PCI or host-accessible storage") in
           let lo = Nativeint.to_int address in
-          if lo land 0xfff <> 0 then invalid_arg "PCI host mapping requires page alignment";
+          if lo land 0xfff <> 0 then raise (Tolk_uop.Storage.Mapping_unavailable "PCI host mapping requires page alignment");
           let size = round_up (B.nbytes source) 0x1000 in
           let base = Memory.va_base t.mm and bits = Memory.va_bits t.mm in
           if lo < base || size > (1 lsl bits) || lo - base > (1 lsl bits) - size then
-            invalid_arg "PCI host address is outside the GPU virtual address range";
+            raise (Tolk_uop.Storage.Mapping_unavailable "PCI host address is outside the GPU virtual address range");
           lock_memory ~addr:address ~size;
           let paddrs = List.map (fun paddr -> paddr, 0x1000)
               (system_paddrs ~vaddr:address size) in
