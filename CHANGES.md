@@ -645,6 +645,10 @@ thread.
 
 ### Tolk (new)
 
+- Beam search now times the same compiled queue submissions used for GPU
+  execution, including device timestamps and supported timeout budgets.
+  Temporary timing programs are released only after successful completion.
+
 - Fix reading an unallocated buffer view whose base is already allocated.
   `Buffer.is_allocated` now describes the view itself, and tensor reads ensure
   its storage exists before accessing it.

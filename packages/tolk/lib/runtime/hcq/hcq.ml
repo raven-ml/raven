@@ -429,9 +429,9 @@ module Timeline = struct
         if Option.is_some t.error_state then t.error_state <- Some combined;
         raise combined
 
-  let synchronize t =
+  let synchronize ?timeout_ms t =
     (match t.error_state with Some e -> raise e | None -> ());
-    guarded_wait t (fun () -> Signal.wait t.timeline (submitted t))
+    guarded_wait t (fun () -> Signal.wait ?timeout_ms t.timeline (submitted t))
 
   let prepare t =
     (match t.error_state with Some e -> raise e | None -> ());

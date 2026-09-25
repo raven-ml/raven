@@ -2117,13 +2117,17 @@ module State = struct
       Compute_queue.submit cq t.compute_queue);
     Timeline.synchronize t.tl
 
-  let synchronize t =
+  let wait_timeout t timeout =
+    if not t.iface.Iface.is_am || timeout = Some 0 then None else timeout
+
+  let synchronize ?timeout t =
     (* A scratch buffer's finalizer can outlive failed setup. Its backing
        and timeline were either released by rollback or retained after a
        failed queue stop; neither may be touched by that finalizer. *)
     if t.is_valid () then begin
       check_submission t;
-      Timeline.synchronize t.tl;
+      let timeout_ms = wait_timeout t timeout in
+      Timeline.synchronize ?timeout_ms t.tl;
       Option.iter (fun after_sync -> after_sync ()) t.iface.Iface.after_sync
     end
 end
@@ -2398,11 +2402,12 @@ module Queue = struct
     let completion () =
       let timeline = state.State.tl in
       let value = Timeline.submitted timeline in
-      fun () ->
+      fun timeout ->
+        let timeout_ms = State.wait_timeout state timeout in
         State.check_submission state;
         (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
         Timeline.guarded_wait timeline (fun () ->
-            Hcq.Signal.wait timeline.Timeline.timeline value) in
+            Hcq.Signal.wait ?timeout_ms timeline.Timeline.timeline value) in
     (* The encoder's ring kind, interface and sizes, and the resource limit it
        reads per call. *)
     let config () =
@@ -2622,7 +2627,7 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~peer_group:(if iface.Iface.is_am then "PCIDevice" else "AMD")
     ~runtime:(Runtime.runtime state)
-    ~synchronize:(fun () -> State.synchronize state)
+    ~synchronize:(fun timeout -> State.synchronize ?timeout state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ~queue:(Queue.create state) ~bufferize:(Queue.bufferize state) ()
 

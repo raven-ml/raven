@@ -437,8 +437,8 @@ module Timeline : sig
       If [on_hang] clears [error_state] after successful recovery, later waits
       may proceed; otherwise they re-raise the combined failure. *)
 
-  val synchronize : ('meta, 'dev) t -> unit
-  (** [synchronize t] waits until every value handed out so far has
+  val synchronize : ?timeout_ms:int -> ('meta, 'dev) t -> unit
+  (** [synchronize ?timeout_ms t] waits until every value handed out so far has
       completed. Raises the latched error if the device already failed,
       and latches new stalls or faults (see {!guarded_wait}). *)
 

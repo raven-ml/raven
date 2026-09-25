@@ -188,7 +188,7 @@ let interleaved_kernel_formals () =
       [ "CUDA", (fun _ -> Renderer.with_compiler compiler (Cstyle.cuda Gpu_target.SM80)) ] in
   let dev = Device.make ~name:"SIGNATURE_TEST" ~allocator ~renderer_set
       ~runtime:(fun _ -> fail "source-only test loaded a binary")
-      ~synchronize:(fun () -> ()) () in
+      ~synchronize:(fun timeout -> ignore timeout; ()) () in
   let param slot = U.param ~slot ~dtype:i32 ~shape:(U.const_int 1) () in
   let output = param 7 and input = param 2 in
   let increment = U.variable ~param:true ~name:"increment" ~min_val:0 ~max_val:100 ~dtype:i32 () in
@@ -365,7 +365,7 @@ let mappings_follow_storage_ownership () =
       ~renderer_set:(Device.Renderer_set.make ~device:name
           ["CLANG", (fun _ -> Device.renderer device)])
       ~runtime:(fun _ -> fail "mapping test does not execute code")
-      ~synchronize:allocator.synchronize () in
+      ~synchronize:(fun timeout -> ignore timeout; allocator.synchronize ()) () in
   let first = target "MAP_TARGET:1" and second = target "MAP_TARGET:2" in
   is_true (Option.is_none (Device.Buffer.find_mapping target_kind source));
   let get device buf = Option.get (Device.Buffer.get ~device:(Device.name device) target_kind buf) in
@@ -416,6 +416,7 @@ let mappings_follow_storage_ownership () =
 let foreign_completion_dependencies () =
   let owner = Tolk_cpu.create "CPU:pending-owner" in
   let submitted = ref 0 and captured = ref 0 and waited = ref [] in
+  let timeouts = ref [] in
   let fail_wait = ref false and during_wait = ref (fun () -> ()) in
   let name = "PENDING:source" in
   let renderer_set = Device.Renderer_set.make ~device:name
@@ -423,7 +424,8 @@ let foreign_completion_dependencies () =
   let completion () =
     incr captured;
     let value = !submitted in
-    fun () ->
+    fun timeout ->
+      timeouts := timeout :: !timeouts;
       waited := value :: !waited;
       !during_wait ();
       if !fail_wait then failwith "pending access failed" in
@@ -432,7 +434,7 @@ let foreign_completion_dependencies () =
     lower = (fun _ -> None); compile = (fun _ -> fail "not compiled")} in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let source = Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime owner)
-      ~synchronize:(fun () -> fail "must not drain later source work") ~queue () in
+      ~synchronize:(fun timeout -> ignore timeout; fail "must not drain later source work") ~queue () in
   equal string "PENDING" (Device.peer_group source);
   submitted := 3;
   Device.depend_on owner source;
@@ -441,7 +443,8 @@ let foreign_completion_dependencies () =
   submitted := 9;
   equal int 2 !captured;
   equal (list int) [] !waited;
-  Device.synchronize owner;
+  Device.synchronize ~timeout:7 owner;
+  equal (list (option int)) [Some 7] !timeouts;
   equal (list int) [5] !waited;
   Device.synchronize owner;
   equal (list int) [5] !waited;
@@ -508,7 +511,7 @@ let finalizers_wait_for_device_operations () =
     } in
   ignore (Device.make ~name:"FINALIZER_MAP" ~allocator:mapped ~renderer_set
       ~runtime:(fun _ -> fail "mapping has no programs")
-      ~synchronize:(fun () -> ()) ());
+      ~synchronize:(fun timeout -> ignore timeout; ()) ());
   let abandon () =
     let buf = Device.Buffer.create ~device:"FINALIZER" ~size:1 ~dtype:D.uint8
         ~spec:{Device.Buffer_spec.default with nolru = true} allocator in
@@ -524,7 +527,7 @@ let finalizers_wait_for_device_operations () =
     busy := false in
   let queue = Device.{timestamp_divider = 1.;
       profile_offset = (fun () -> !probe (); 0.);
-      completion = (fun () -> !probe (); fun () -> !probe ());
+      completion = (fun () -> !probe (); fun timeout -> ignore timeout; !probe ());
       prepare = (fun () -> !probe ()); host = "CPU";
       copy = (fun _ -> None); encode = (fun _ -> None);
       lower = (fun _ -> None); compile = Fun.id} in
@@ -537,7 +540,7 @@ let finalizers_wait_for_device_operations () =
          free = (fun () -> !probe ()); handle = 0n})
       ~bufferize:(fun _ -> !probe (); None)
       ~invalidate_caches:(fun () -> !probe ())
-      ~synchronize:(fun () -> !probe ()) () in
+      ~synchronize:(fun timeout -> ignore timeout; !probe ()) () in
   teardown_wait := (fun () -> Device.synchronize dev);
   let obj = Tiny_elf.{lib = Bytes.empty; name = "finalizer_probe";
       target = Renderer.target (Device.renderer device); signature = [];
@@ -552,8 +555,8 @@ let finalizers_wait_for_device_operations () =
     (* The source callback runs while the owner's dependency lock is held. *)
     let source = Device.make ~name:"FINALIZER_SOURCE" ~allocator ~renderer_set
         ~runtime:(fun _ -> fail "source has no programs")
-        ~synchronize:(fun () -> ())
-        ~queue:{queue with completion = (fun () -> fun () -> !probe ())} () in
+        ~synchronize:(fun timeout -> ignore timeout; ())
+        ~queue:{queue with completion = (fun () -> fun timeout -> ignore timeout; !probe ())} () in
     Device.depend_on dev source;
     Device.wait_dependencies dev ~ordered:[] in
   let buffer = Device.Buffer.create ~device:"FINALIZER" ~size:1 ~dtype:D.uint8 allocator in
@@ -574,8 +577,8 @@ let finalizers_wait_for_device_operations () =
      "program release", direct.free;
      "queue preparation", queue.prepare;
      "queue clock", (fun () -> ignore (queue.profile_offset ()));
-     "completion capture", (fun () -> (queue.completion ()) ());
-     "completion wait", wait;
+     "completion capture", (fun () -> (queue.completion ()) None);
+     "completion wait", (fun () -> wait None);
      "foreign completion wait", wait_dependency;
      "command storage", (fun () -> ignore (Device.bufferize dev (Uop.const_int 0)));
      "cache invalidation", (fun () -> Device.invalidate_caches dev)];

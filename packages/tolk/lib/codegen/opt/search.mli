@@ -23,6 +23,7 @@ val beam_parallel : int Helpers.Context_var.t
     scope with {!Helpers.Context_var.with_context}. *)
 
 val beam_search :
+  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   ?allow_test_size:bool ->
   ?disable_cache:bool ->
   Postrange.t ->
@@ -31,10 +32,11 @@ val beam_search :
   int ->
   Device.t ->
   Postrange.t
-(** [beam_search s rawbufs ~var_vals amt device] optimises scheduler [s] using
+(** [beam_search ~to_program s rawbufs ~var_vals amt device] optimises scheduler [s] using
     beam search with beam width [amt]. [var_vals] supplies the named scalar
     values used for candidate filtering, estimates, launch dimensions and timing.
-    Every symbolic variable in [s] must have a value within its declared bounds.
+    [to_program] compiles kernels needed by the shared queue path without
+    recursively invoking beam search. Every symbolic variable in [s] must have a value within its declared bounds.
     Missing or out-of-bounds values raise [Invalid_argument].
 
     - [allow_test_size] (default [true]) scales down global dimensions

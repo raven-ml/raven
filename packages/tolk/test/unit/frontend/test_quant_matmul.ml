@@ -380,7 +380,7 @@ let renderer_device name ren =
             handle = 0n;
             free = (fun () -> ());
           })
-        ~synchronize:(fun () -> ())
+        ~synchronize:(fun timeout -> ignore timeout; ())
         ())
 
 let renderers =

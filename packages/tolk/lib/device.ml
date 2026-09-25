@@ -81,7 +81,7 @@ type runtime = Tolk_uop.Tiny_elf.t -> prog
 type queue = {
   timestamp_divider : float;
   profile_offset : unit -> float;
-  completion : unit -> (unit -> unit);
+  completion : unit -> (int option -> unit);
   prepare : unit -> unit;
   host : string;
   max_kernel_bindings : int option;
@@ -137,13 +137,13 @@ type t = {
   allocator : Allocator.packed;
   renderer_set : Renderer_set.t;
   runtime : runtime;
-  synchronize : unit -> unit;
+  synchronize : int option -> unit;
   invalidate_caches_fn : (unit -> unit) option;
   queue : queue option;
   bufferize : Uop.t -> Buffer.t option;
   synchronize_lock : Mutex.t;
   pending_lock : Mutex.t;
-  pending_accesses : (string, unit -> unit) Hashtbl.t;
+  pending_accesses : (string, int option -> unit) Hashtbl.t;
   pending_timings : (int * int, pending_timing) Hashtbl.t;
   mutable profile_events : Profile.event list;
 }
@@ -173,7 +173,7 @@ let make ~name ~allocator ~renderer_set ~runtime ~synchronize
       profile_offset = (fun () -> Storage.with_operation q.profile_offset);
       completion = (fun () ->
         let wait = Storage.with_operation q.completion in
-        fun () -> Storage.with_operation wait);
+        fun timeout -> Storage.with_operation (fun () -> wait timeout));
     }) queue in
   let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
   let device = { name; peer_group; allocator; renderer_set; runtime; synchronize;
@@ -245,7 +245,7 @@ let wait_dependencies d ~ordered = with_synchronize_lock d (fun () ->
         |> List.filter (fun (source, _) -> not (List.mem source ordered)) in
       List.iter (fun (source, _) -> Hashtbl.remove d.pending_accesses source) accesses;
       accesses) in
-  try List.iter (fun (_, wait) -> wait ()) accesses
+  try List.iter (fun (_, wait) -> wait None) accesses
   with exn ->
     let backtrace = Printexc.get_raw_backtrace () in
     with_pending_lock d (fun () ->
@@ -254,7 +254,7 @@ let wait_dependencies d ~ordered = with_synchronize_lock d (fun () ->
               Hashtbl.add d.pending_accesses source wait) accesses);
     Printexc.raise_with_backtrace exn backtrace)
 
-let synchronize d = with_synchronize_lock d (fun () ->
+let synchronize ?timeout d = with_synchronize_lock d (fun () ->
   let pending, accesses = with_pending_lock d (fun () ->
       let pending = Hashtbl.to_seq_values d.pending_timings |> List.of_seq in
       Hashtbl.clear d.pending_timings;
@@ -262,8 +262,8 @@ let synchronize d = with_synchronize_lock d (fun () ->
       Hashtbl.clear d.pending_accesses;
       pending, accesses) in
   let events = try
-    d.synchronize ();
-    List.iter (fun (_, wait) -> wait ()) accesses;
+    d.synchronize timeout;
+    List.iter (fun (_, wait) -> wait timeout) accesses;
     match pending with
     | [] -> []
     | _ ->

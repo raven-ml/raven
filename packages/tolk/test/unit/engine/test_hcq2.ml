@@ -125,7 +125,7 @@ let all_to_all_copy_queues () =
               selected := kind :: !selected;
             Some (U.group [dependency])
         | _ -> None in
-      let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () () -> ());
+      let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () -> Fun.const ());
         prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; config = (fun () -> ""); copy = (fun _ -> Some "COPY:0");
         encode; lower = (fun _ -> None);
         compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
@@ -133,7 +133,7 @@ let all_to_all_copy_queues () =
       ignore (Device.make ~name ~allocator
         ~renderer_set:(Device.Renderer_set.make ~device:name
           ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
-        ~runtime:(Device.runtime host) ~synchronize:(fun () -> ()) ~queue ())) devices;
+        ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout; ()) ~queue ())) devices;
   let src = parameter ~device:(List.hd devices) 0 in
   let linear = U.linear (List.mapi (fun i device ->
       U.store_call ~dst:(parameter ~device (i + 1)) ~src) devices) in
@@ -161,14 +161,14 @@ let peer_group_batches () =
     let copy call = match U.as_call call with
       | Some {args = dst :: _; _} when U.device_of dst = Some (U.Single name) -> Some "COPY:0"
       | _ -> None in
-    let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () () -> ());
+    let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () -> Fun.const ());
       prepare = (fun () -> incr prepared); host = "CPU"; max_kernel_bindings = None; config = (fun () -> ""); copy; encode; lower = (fun _ -> None);
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
     let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
     Device.make ~name ~peer_group:name ~allocator
       ~renderer_set:(Device.Renderer_set.make ~device:name
         ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
-      ~runtime:(Device.runtime host) ~synchronize:(fun () -> ()) ~queue () in
+      ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout; ()) ~queue () in
   let devices = List.map make names in
   let a slot = parameter ~device:(List.nth names 0) slot
   and b slot = parameter ~device:(List.nth names 1) slot in
@@ -220,14 +220,14 @@ let staged_peer_dependencies () =
            | `Reject -> raise (Storage.Mapping_unavailable "host mapping unavailable")
            | `Fault -> failwith "host mapping fault");
           mapping.map source)}} in
-    let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () () -> ());
+    let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () -> Fun.const ());
       prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; config = (fun () -> ""); copy = (fun _ -> Some "COPY:0");
       encode = (fun _ -> None); lower = (fun _ -> None);
       compile = (fun _ -> fail "staging plan should not compile")} in
     Device.make ~name ~allocator
       ~renderer_set:(Device.Renderer_set.make ~device:name
         ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
-      ~runtime:(Device.runtime host) ~synchronize:(fun () -> ()) ~queue () in
+      ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout; ()) ~queue () in
   let source = make "NV:staging-source" and target = make "NV:staging-target" in
   let chunk = 64 lsl 20 and size = (128 lsl 20) + 32 in
   let src_buffer = Device.create_buffer ~size ~dtype:Dtype.uint8 source
@@ -278,6 +278,7 @@ let compiled_host_submission () =
   Device.Buffer.ensure_allocated timeline;
   Device.Buffer.copyin timeline (Bytes.make 16 '\000');
   let observed = Device.Buffer.create ~device:name ~size:1 ~dtype:Dtype.uint64 allocator in
+  let timestamp_step = ref 10 in
   let encode u = match U.op u, U.arg u, U.children u with
     | Ops.Custom_function, U.Arg.String ("submit_cpu_copy_0" | "submit_cpu_compute_0"), [linear; dependency] ->
         let trace = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
@@ -304,7 +305,7 @@ let compiled_host_submission () =
                   U.store ~dst:(U.index ~ptr:(U.after ~src:(U.src op).(0) ~deps:!previous) ~idxs:[U.const_int 0] ())
                     ~value:(U.src op).(1) ()
               | _, U.Arg.Typed ("timestamp", _) ->
-                  stamp := !stamp + 10;
+                  stamp := !stamp + !timestamp_step;
                   U.store ~dst:(U.index ~ptr:(U.after ~src:(U.src op).(0) ~deps:!previous)
                     ~idxs:[U.const_int 1] ()) ~value:(U.const (Const.int Dtype.uint64 !stamp)) ()
               | _, U.Arg.Typed (("wait" | "barrier"), _) -> U.noop ~dtype:Dtype.void ()
@@ -316,7 +317,7 @@ let compiled_host_submission () =
   let completions = ref [] in
   let completion () =
     let value = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 8 in
-    fun () -> completions := value :: !completions in
+    fun timeout -> ignore timeout; completions := value :: !completions in
   let compilations = ref 0 in
   let compile sink =
     incr compilations;
@@ -330,7 +331,7 @@ let compiled_host_submission () =
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
   let links = ref 0 in
   let device = Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime host)
-      ~synchronize:(fun () -> ()) ~queue
+      ~synchronize:(fun timeout -> ignore timeout; ()) ~queue
       ~bufferize:(fun p -> match U.node_tag p with
         | Some "timeline" -> Some timeline
         | Some "trace" -> Some observed
@@ -426,6 +427,15 @@ let compiled_host_submission () =
   replay timed [|src; dst1; dst2|];
   equal (float 1e-15) 2e-8 (!(Helpers.Global_counters.time_sum_s) -. before);
   equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst2) 0);
+  timestamp_step := 1_000_000_000;
+  let kernels = !(Helpers.Global_counters.kernel_count) in
+  Realize.time_call ~device ~to_program
+    (compute (U.from_buffer dst1) (U.from_buffer src)) (fun sample ->
+      equal ~msg:"timing uses the device timestamp interval" (float 1e-12) 1. (sample ());
+      equal ~msg:"retained timing storage supports another sample" (float 1e-12) 1. (sample ()));
+  equal int kernels !(Helpers.Global_counters.kernel_count);
+  equal int32 12l (Bytes.get_int32_le (Device.Buffer.as_bytes dst1) 0);
+  timestamp_step := 10;
   let old_profile = Sys.getenv_opt "PROFILE" in
   Fun.protect ~finally:(fun () -> Unix.putenv "PROFILE" (Option.value old_profile ~default:"0")) (fun () ->
       Unix.putenv "PROFILE" "1";
@@ -500,12 +510,13 @@ let compiled_host_submission () =
   equal (list int64) (Int64.succ before :: completed_before) !completions;
   let waited = ref false in
   let timeline_before = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
-  let completion () () =
+  let completion () timeout =
+    ignore timeout;
     equal ~msg:"foreign host writer must retire before the new submission" int64
       timeline_before (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
     waited := true in
   let outsider = Device.make ~name:"OUTSIDE:writer" ~allocator ~renderer_set
-      ~runtime:(Device.runtime host) ~synchronize:(fun () -> fail "must wait only captured work")
+      ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout; fail "must wait only captured work")
       ~queue:{queue with completion} () in
   Device.depend_on owner outsider;
   Realize.run_linear ~device ~to_program binding ~jit:true

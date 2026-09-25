@@ -338,7 +338,7 @@ let indexed_rawbufs ~device ast rawbufs =
     pairs
 
 (* Time a compiled program on device. Returns a list of timing samples. *)
-let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
+let time_program ~device ~to_program p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
     ~allow_test_size ~dev_timeout =
   let timeout =
     if dev_timeout && Float.is_finite early_stop then
@@ -355,42 +355,29 @@ let time_program ~device p rawbufs_by_slot var_vals ~early_stop ~cnt ~clear_l2
       factor := f;
       Program_spec.with_global_dims scaled_global p
   in
-  let prg = Device.runtime device (Program_spec.to_elf p) in
-  (* Candidates are timed once per search. Retain a handle for its samples,
-     then drain queued work and release it even if timing raises. Ordinary
-     execution owns its separate runtime cache. *)
-  Fun.protect
-    ~finally:(fun () ->
-      Fun.protect ~finally:prg.free (fun () -> Device.synchronize device))
-    (fun () ->
-      let car = Realize.Compiled_runner.create ~device ~prg p in
-      let input_bufs =
-        List.map
-          (fun slot ->
-            match List.assoc_opt slot rawbufs_by_slot with
-            | Some buf -> buf
-            | None ->
-                invalid_arg
-                  (Printf.sprintf
-                     "beam_search: raw buffer slot %d missing (%d slots supplied)"
-                     slot (List.length rawbufs_by_slot)))
-          (Program_spec.globals p)
-      in
-      let tms = ref [] in
-      let stopped = ref false in
+  let info = Program_spec.program_info p in
+  let args = List.init (List.fold_left max (-1) info.globals + 1) (fun slot ->
+      match List.assoc_opt slot rawbufs_by_slot with
+      | Some buf -> U.from_buffer buf
+      | None when not (List.mem slot info.globals) -> U.noop ~dtype:Dtype.void ()
+      | None -> invalid_arg (Printf.sprintf
+          "beam_search: raw buffer slot %d missing (%d slots supplied)"
+          slot (List.length rawbufs_by_slot))) in
+  let kernel_info = U.{name = Program_spec.name p;
+    applied_opts = Program_spec.applied_opts p; opts_to_apply = None;
+    estimates = Some (Program_spec.Estimates.to_uop (Program_spec.estimates p)); beam = 0} in
+  let program = U.program ~sink:(U.sink ~kernel_info (Program_spec.program p))
+      ~linear:(U.linear (Program_spec.program p)) ~source:(U.source (Program_spec.src p))
+      ~binary:(U.binary (Bytes.to_string (Option.get (Program_spec.lib p)))) ~info () in
+  let call = U.call ~body:program ~args
+      ~info:U.{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; dtype = Dtype.void; aux = None} in
+  Realize.time_call ~device ~to_program ~var_vals ?timeout ~clear_l2 call
+    (fun sample ->
+      let tms = ref [] and stopped = ref false in
       for _ = 1 to cnt do
         if not !stopped then begin
-          if clear_l2 then Device.invalidate_caches device;
-          let tm =
-            try
-              match
-                Realize.Compiled_runner.call car input_bufs var_vals ~wait:true
-                  ~timeout
-              with
-              | Some t -> t *. !factor
-              | None -> infinity
-            with Assert_failure _ -> infinity
-          in
+          let tm = try sample () *. !factor with Assert_failure _ -> infinity in
           tms := tm :: !tms;
           if early_stop < List.fold_left min infinity !tms then stopped := true
         end
@@ -430,7 +417,7 @@ let program_ops program var_vals =
   | Program_spec.Estimates.Int n -> Float.of_int n
   | Symbolic node -> Float.of_int (U.sym_infer node var_vals)
 
-let beam_search ?(allow_test_size = true) ?disable_cache
+let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
     (s : P.t) (rawbufs : Device.Buffer.t list) ~var_vals (amt : int)
     (device : Device.t) : P.t =
   List.iter (fun (_, name, lo, hi) ->
@@ -482,7 +469,7 @@ let beam_search ?(allow_test_size = true) ?disable_cache
           | [] -> 1.0
         in
         match
-          time_program ~device program rawbufs_by_slot var_vals ~early_stop
+          time_program ~device ~to_program program rawbufs_by_slot var_vals ~early_stop
             ~cnt:3
             ~clear_l2:true ~allow_test_size
             ~dev_timeout:(beam_dev_timeout ())

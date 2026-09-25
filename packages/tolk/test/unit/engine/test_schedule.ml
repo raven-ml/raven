@@ -83,7 +83,7 @@ let test_device =
       { Device.call = (fun _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ -> None);
         handle = 0n;
         free = (fun () -> ()) })
-    ~synchronize:(fun () -> ()) ()
+    ~synchronize:(fun timeout -> ignore timeout; ()) ()
 
 let after_partition_orders_nested_after_dependencies () =
   let buf = U.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in

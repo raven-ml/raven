@@ -69,7 +69,7 @@ let make_device ?(name = "TEST:0") ?(state = runtime_state ()) () =
         free = (fun () -> ());
         handle = 0n;
       })
-    ~synchronize:(fun () -> ())
+    ~synchronize:(fun timeout -> ignore timeout; ())
     ()
 
 let device = make_device ()

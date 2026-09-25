@@ -2600,7 +2600,8 @@ module Queue = struct
     let completion () =
       let timeline = state.State.tl in
       let value = Timeline.submitted timeline in
-      fun () ->
+      fun timeout ->
+        ignore timeout; (* This backend cannot recover timed-out work. *)
         State.check_submission state;
         (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
         Timeline.guarded_wait timeline (fun () ->
@@ -2813,7 +2814,7 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
   Tolk.Device.make ~name ~allocator ~renderer_set
     ~peer_group:(if Option.is_some iface.Nv_iface.nvdev then "PCIDevice" else "NV")
     ~runtime:(Runtime.runtime state)
-    ~synchronize:(fun () -> State.synchronize state)
+    ~synchronize:(fun timeout -> ignore timeout; State.synchronize state)
     ~invalidate_caches:(fun () -> State.invalidate_caches state)
     ~queue:(Queue.create state) ~bufferize:(Queue.bufferize state) ()
 

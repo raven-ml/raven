@@ -317,11 +317,47 @@ let cpu_maps_metal_storage () =
   run_spec cpu spec [output; input];
   equal (list int) [0; 8; 9; 0] (read_i32 base)
 
+let beam_timings_use_compiled_queues () =
+  let device = metal_device () in
+  let renderer = Device.renderer device in
+  let n = 16 in
+  let dst = i32_buf device (List.init n (fun _ -> -1))
+  and src = i32_buf device (List.init n Fun.id) in
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int n)
+      ~device:(U.Single (Device.name device)) () in
+  let range = U.range ~size:(U.const_int n) ~axis:0 ~kind:Axis_type.Weak () in
+  let at p = U.index ~ptr:p ~idxs:[range] () in
+  let value = U.alu_binary ~op:Ops.Mul ~lhs:(U.load ~src:(at (ptr 1)) ())
+      ~rhs:(U.const (Const.int Dtype.int32 2)) in
+  let store = U.store ~dst:(at (ptr 0)) ~value () in
+  let kernel_info = U.{name = "beam_queue_timing"; applied_opts = [];
+    opts_to_apply = None; estimates = None; beam = 0} in
+  let sink = U.sink ~kernel_info [U.end_ ~value:store ~ranges:[range]] in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let before = !(Realize.queue_submissions) in
+  let selected = Search.beam_search ~to_program ~disable_cache:true
+      (Postrange.create sink renderer) [dst; src] ~var_vals:[] 1 device in
+  is_true ~msg:"search submits candidates through compiled queues"
+    (!(Realize.queue_submissions) > before);
+  let program = to_program device (Postrange.get_optimized_ast selected) in
+  let call = U.call ~body:program ~args:[U.from_buffer dst; U.from_buffer src]
+      ~info:{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; aux = None; dtype = Dtype.void} in
+  Realize.time_call ~device ~to_program call (fun sample ->
+      List.iter (fun offset ->
+          Device.Buffer.copyin src (int32_to_bytes (List.init n (fun i -> i + offset)));
+          let elapsed = sample () in
+          is_true ~msg:"Metal timing is finite and positive"
+            (Float.is_finite elapsed && elapsed > 0.);
+          equal (list int) (List.init n (fun i -> 2 * (i + offset))) (read_i32 dst))
+        [0; 37])
+
 let () =
   run "Metal_runtime"
     [
       group "Execution"
         [
+          test "beam timing replays compiled Metal queues" beam_timings_use_compiled_queues;
           test "CPU kernels map Metal storage and byte views without copying"
             cpu_maps_metal_storage;
           test "tensor cores retain warp lanes across four local dimensions"

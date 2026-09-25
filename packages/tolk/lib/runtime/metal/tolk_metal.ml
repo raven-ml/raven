@@ -499,7 +499,7 @@ module Queue = struct
       let value = match state.State.timeline with
         | None -> 0L
         | Some timeline -> Bytes.get_int64_le (B.as_bytes timeline) 8 in
-      fun () -> Ffi.hcq_wait state.State.context value in
+      fun timeout -> ignore timeout; Ffi.hcq_wait state.State.context value in
     (* An M1 Max computes wrong values for a kernel of 16 to 29 arguments that
        runs from an indirect command buffer, and correct ones when the same
        kernel is dispatched directly. *)
@@ -524,4 +524,4 @@ let create name =
   let synchronize () = State.synchronize state in
   let queue, bufferize = Queue.create state name in
   let queue = if State.is_virtual state then None else Some queue in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ?queue ~bufferize ()
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize:(fun timeout -> ignore timeout; synchronize ()) ?queue ~bufferize ()

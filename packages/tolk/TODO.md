@@ -19,8 +19,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   and custom-loop reseeding to `PARAM` arguments and owned `BUFFER` nodes, then
   delete `Realize.Buffers` and its resolver/cache state. Validate nested loops,
   donation, arena reuse, placed views and GC between replays on CPU and Metal.
-- Route autotuning through the target's compiled, linked `time_call` path.
-  Move GPU standalone calls, raw channel setup, local-memory growth, cache
+- Move GPU standalone calls, raw channel setup, local-memory growth, cache
   invalidation, profiling calibration and allocator transfers onto shared
   submissions. Delete the obsolete GPU `Device.prog`/`Compiled_runner` paths,
   duplicate command builders, direct argument arenas and handoff bookkeeping

@@ -34,7 +34,23 @@ let buffer_params ast =
        | _ -> None)
   |> List.sort (fun (a, _, _) (b, _, _) -> Int.compare a b)
 
-let make_beam_search device beam_width =
+let beam_width sink =
+  match U.as_kernel_info sink with
+  | Some { beam = kernel_beam; _ } when kernel_beam >= 1 -> kernel_beam
+  | _ -> beam ()
+
+let has_tag u = match U.node_tag u with Some _ -> true | None -> false
+
+let sym = Symbolic.sym
+
+let kernel_info_exn stage sink =
+  match U.as_kernel_info sink with
+  | Some ki -> ki
+  | None ->
+      invalid_arg
+        (Printf.sprintf "Codegen.%s: Sink is missing KernelInfo" stage)
+
+let rec make_beam_search device beam_width =
   Option.map
     (fun dev k ->
       (* Timing buffers for this kernel's candidates. [nolru] so their
@@ -56,24 +72,16 @@ let make_beam_search device beam_width =
         ~finally:(fun () -> List.iter Device.Buffer.deallocate rawbufs)
         (fun () ->
           Search.beam_search
+            ~to_program:(fun dev -> to_program ~optimize:false dev (Device.renderer dev))
             ~allow_test_size:(beam_estimate () <> 0)
             k rawbufs ~var_vals beam_width dev))
     device
-
-let beam_width sink =
-  match U.as_kernel_info sink with
-  | Some { beam = kernel_beam; _ } when kernel_beam >= 1 -> kernel_beam
-  | _ -> beam ()
-
-let has_tag u = match U.node_tag u with Some _ -> true | None -> false
-
-let sym = Symbolic.sym
 
 (* Optimize and lower a kernel AST to a form ready for linearization.
    When [optimize] is true, runs load collapse, range splitting, symbolic
    simplification, range tightening, and dispatches to beam search or
    hand-coded optimizations via Postrange. *)
-let full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
+and full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
   if debug () >= 5 then Format.eprintf "=== ast ===@.%a@." U.pp sink;
   let sink = U.graph_rewrite ~bottom_up:true ~name:"early movement ops"
       Prepare.movement_ops sink in
@@ -106,19 +114,12 @@ let full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
   let sink = Codegen_lower.lower ren sink in
   sink
 
-let kernel_info_exn stage sink =
-  match U.as_kernel_info sink with
-  | Some ki -> ki
-  | None ->
-      invalid_arg
-        (Printf.sprintf "Codegen.%s: Sink is missing KernelInfo" stage)
-
 (* Build an on-graph PROGRAM node for kernel [sink]: optimize + lower, derive
    program metadata, linearize, render, and compile. The result is
    [PROGRAM(SINK, LINEAR, SOURCE, BINARY)] carrying the launch/argument
    metadata as its arg, mirroring the compiled-kernel representation the
    engine dispatches on. *)
-let to_program ?(optimize = true) ?beam_device dev ren sink =
+and to_program ?(optimize = true) ?beam_device dev ren sink =
   ignore (kernel_info_exn "to_program" sink : U.kernel_info);
   let optimize = optimize && not (has_tag sink) in
   let beam_device = Option.value beam_device ~default:dev in

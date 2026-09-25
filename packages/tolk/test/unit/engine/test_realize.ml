@@ -104,7 +104,8 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
     in
     Device.{ call; free = (fun () -> ()); handle = 0n }
   in
-  let synchronize () =
+  let synchronize timeout =
+    ignore timeout;
     stats.synchronize_calls <- stats.synchronize_calls + 1
   in
   Device.make ~name
@@ -224,7 +225,8 @@ let bounded_copy ~source_offset ~dest_offset ~external_alias =
   } in
   let device = Device.make ~name:"TEST:bounded" ~allocator
       ~renderer_set:(Device.Renderer_set.make ~device:"TEST" ["TEST", Fun.const test_renderer])
-      ~runtime:(fun _ -> failwith "copy must not create a runtime") ~synchronize () in
+      ~runtime:(fun _ -> failwith "copy must not create a runtime")
+      ~synchronize:(fun timeout -> ignore timeout; synchronize ()) () in
   let root () = Device.create_buffer ~size:(length + max source_offset dest_offset)
       ~dtype:Dtype.uint8 device in
   let src = root () in
@@ -326,7 +328,7 @@ let compiled_launch_uses_fixed_workgroups () =
       [ "TEST", Fun.const renderer ] in
   let device = Device.make ~name:"TEST:fixed-workgroups"
       ~allocator:(test_allocator (allocator_stats ())) ~renderer_set
-      ~runtime ~synchronize:(fun () -> ()) () in
+      ~runtime ~synchronize:(fun timeout -> ignore timeout) () in
   let n = variable "n" 0 100 in
   let flat = U.special ~name:"idx0" ~size:(U.const_int 7) () in
   let body = U.sink ~kernel_info:(kernel_info "fixed_workgroups") [ flat; n ] in
@@ -335,10 +337,54 @@ let compiled_launch_uses_fixed_workgroups () =
   Realize.run_linear ~device ~to_program:(fun device body -> ignore device; program_of body) ~var_vals:[ "n", 37 ] binding (U.linear [ call ]);
   equal int 1 !calls
 
+let scoped_timings ~dispatch_failure ~drain_failure () =
+  let loaded = ref 0 and freed = ref 0 and calls = ref 0 and clears = ref 0 in
+  let runtime _ =
+    incr loaded;
+    let call _ ~global:_ ~local:_ ~vals ~wait ~timeout =
+      incr calls;
+      equal bool true wait;
+      equal (option int) (Some 7) timeout;
+      equal (array int64) [|13L|] vals;
+      if dispatch_failure then raise Exit;
+      Some 0.25 in
+    Device.{call; free = (fun () -> incr freed); handle = 0n} in
+  let renderer_set = Device.Renderer_set.make ~device:"TEST"
+      ["TEST", Fun.const test_renderer] in
+  let device = Device.make ~name:"TEST:scoped-timings"
+      ~allocator:(test_allocator (allocator_stats ())) ~renderer_set ~runtime
+      ~synchronize:(fun timeout -> ignore timeout;
+        if drain_failure then failwith "drain failed")
+      ~invalidate_caches:(fun () -> incr clears) () in
+  let n = variable "n" 0 16 in
+  let program = program_of (U.sink ~kernel_info:(kernel_info "timing") [n]) in
+  let call = U.call ~body:program ~args:[] ~info:(call_info None) in
+  let kernels = !(Helpers.Global_counters.kernel_count) in
+  let run () = Realize.time_call ~device
+      ~to_program:(fun device body -> ignore device; program_of body)
+      ~var_vals:["n",13] ~timeout:7 ~clear_l2:true call (fun sample ->
+        equal float_exact 0.25 (sample ());
+        equal float_exact 0.25 (sample ())) in
+  if drain_failure then
+    raises_match (function Fun.Finally_raised _ -> true | _ -> false) run
+  else if dispatch_failure then raises Exit run
+  else run ();
+  equal int (if dispatch_failure || drain_failure then 1 else 2) !calls;
+  equal int !calls !loaded;
+  equal int (if drain_failure then 0 else !loaded) !freed;
+  equal int !calls !clears;
+  equal int kernels !(Helpers.Global_counters.kernel_count)
+
 let () =
   run "Engine_realize"
     [
       renderer_selection_tests;
+      test "timing samples forward timeout and release transient runtimes"
+        (scoped_timings ~dispatch_failure:false ~drain_failure:false);
+      test "failed timing dispatch drains before runtime release"
+        (scoped_timings ~dispatch_failure:true ~drain_failure:false);
+      test "failed timing drain preserves its runtime"
+        (scoped_timings ~dispatch_failure:true ~drain_failure:true);
       test "compiled launch uses fixed workgroups" compiled_launch_uses_fixed_workgroups;
       group "Compiled_runner"
         [

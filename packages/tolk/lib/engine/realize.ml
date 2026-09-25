@@ -446,11 +446,25 @@ type exec_context = {
   update_stats : bool;
   jit : bool;
   wait : bool;
+  timeout : int option;
+  cache : bool;
 }
 
 let exec_context ?(var_vals = []) ?(input_uops = [||]) ?(update_stats = true)
-    ?(jit = false) ?(wait = false) () =
-  { var_vals; input_uops; update_stats; jit; wait }
+    ?(jit = false) ?(wait = false) ?timeout ?(cache = true) () =
+  { var_vals; input_uops; update_stats; jit; wait; timeout; cache }
+
+(* Uncached timing handles are scoped to one synchronous sample. If draining
+   failed work raises, retain the handle rather than free executable storage
+   that the device could still reach. *)
+let with_runtime ?(queue = false) ctx ~device program f =
+  if ctx.cache then f (get_runtime ~queue ~device program)
+  else
+    let runtime = if queue then Device.queue_runtime else Device.runtime in
+    let prg = runtime device (Tolk_uop.Uop.to_elf program) in
+    Fun.protect
+      ~finally:(fun () -> Device.synchronize device; prg.free ())
+      (fun () -> f prg)
 
 (* Resolve a call argument UOp to the concrete buffer it names. A seeded node
    resolves to its bound buffer directly; otherwise resolution is structural.
@@ -794,7 +808,7 @@ let exec_kernel binding ctx ~device call =
          with the device index bound as the [_device_num] variable. *)
       let launch ~device ~var_vals bufs =
         List.iter Device.Buffer.ensure_allocated bufs;
-        let prg = get_runtime ~device program in
+        with_runtime ctx ~device program (fun prg ->
         let global, local =
           launch_geometry info ~var_vals
         in
@@ -807,14 +821,14 @@ let exec_kernel binding ctx ~device call =
         let buf_args = Array.of_list bufs in
         let run () =
           try prg.call buf_args ~global ~local:(Some local) ~vals ~wait:ctx.wait
-                ~timeout:None
+                ~timeout:ctx.timeout
           with exn ->
             List.iter keep_alive bufs;
             raise exn
         in
         let ret = track_stats ctx call ~device bufs var_vals run in
         List.iter keep_alive bufs;
-        ignore (ret : float option)
+        ret)
       in
       (match unwrap_multi resolved with
       | [ bufs ]
@@ -826,9 +840,9 @@ let exec_kernel binding ctx ~device call =
             | buf :: _ -> device_for ~device buf
             | [] -> device
           in
-          launch ~device ~var_vals:ctx.var_vals bufs
+          [launch ~device ~var_vals:ctx.var_vals bufs]
       | groups ->
-          List.iteri
+          List.mapi
             (fun j bufs ->
               let device =
                 match bufs with
@@ -879,7 +893,8 @@ let exec_copy binding ctx ~device call =
                   | [ dest; src ] ->
                       copy ~device:(device_for ~device dest) dest src
                   | _ -> assert false)
-                (unwrap_multi [ dest_b; src_b ]))
+                (unwrap_multi [ dest_b; src_b ]));
+          []
       | _ -> invalid_arg "exec_copy: malformed STORE call")
   | None -> invalid_arg "exec_copy: expected CALL"
 
@@ -956,9 +971,10 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
         let host = Device.get submission.host in
         let info = match U.as_program_info body with
           | Some info -> info | None -> invalid_arg "exec_hcq: expected PROGRAM" in
-        let prg = get_runtime ~queue:true ~device:host body in
+        with_runtime ~queue:true ctx ~device:host body (fun prg ->
         let bufs = List.map (Array.get buffers) info.globals |> Array.of_list in
         let vals = U.program_vals info ~var_vals:ctx.var_vals |> List.map Int64.of_int |> Array.of_list in
+        let timings = ref [] in
         let run () =
           submission.devices @ List.map fst submission.host_deps |> List.sort_uniq String.compare
           |> List.iter (fun owner ->
@@ -966,7 +982,9 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
           List.iter (fun d -> Option.iter (fun q -> q.Device.prepare ())
               (Device.queue (Device.get d))) submission.devices;
           let started = if ctx.wait then Unix.gettimeofday () else 0. in
-          ignore (prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals ~wait:false ~timeout:None);
+          let host_time = prg.call bufs ~global:[|1; 1; 1|] ~local:None ~vals
+              ~wait:ctx.wait ~timeout:ctx.timeout in
+          timings := [host_time];
           incr queue_submissions;
           List.iter (fun (owner, source) ->
               Device.depend_on (Device.get owner) (Device.get source)) submission.host_deps;
@@ -981,7 +999,7 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
                 Device.record_timing (Device.get device) ~name ~queue ~buffer:buffers.(slot) ~first ~last)
               submission.timings;
           if ctx.wait then begin
-            List.iter (fun d -> Device.synchronize (Device.get d)) submission.devices;
+            List.iter (fun d -> Device.synchronize ?timeout:ctx.timeout (Device.get d)) submission.devices;
             if submission.timings = [] then Some (Unix.gettimeofday () -. started)
             else begin
               let snapshots = Hashtbl.create (List.length submission.devices) in
@@ -994,12 +1012,15 @@ let exec_hcq binding ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
                 and finish = Bytes.get_int64_le bytes (8 * last) in
                 let ticks = Int64.sub finish start in
                 let divider = (Option.get (Device.queue (Device.get device))).timestamp_divider in
-                total +. Int64.to_float ticks /. divider /. 1e6) 0. submission.timings)
+                let elapsed = Int64.to_float ticks /. divider /. 1e6 in
+                timings := Some elapsed :: !timings;
+                total +. elapsed) 0. submission.timings)
             end
           end else None in
         ignore (track_stats ctx call ~device:(Device.get (List.hd submission.devices))
           (Array.to_list buffers) ctx.var_vals run);
-        keep_alive buffers)
+        keep_alive buffers;
+        List.rev !timings))
   | None -> invalid_arg "exec_hcq: expected CALL"
 
 (* Dispatch one call of a LINEAR. Shared by [run_linear] and the loop
@@ -1017,8 +1038,8 @@ let rec dispatch_call binding ctx ~device ~to_program call =
                exec_hcq binding ctx call submission ~fallback:(fun buffers ->
                    let ctx = {ctx with input_uops = Array.map U.from_buffer buffers} in
                    match staged_queue ~to_program binding ctx call submission buffers with
-                   | Some staged -> List.iter (dispatch_call binding ctx ~device ~to_program) (U.children staged)
-                   | None -> List.iter (dispatch_call binding {ctx with wait = true} ~device ~to_program) submission.fallback)
+                   | Some staged -> List.concat_map (dispatch_call binding ctx ~device ~to_program) (U.children staged)
+                   | None -> List.concat_map (dispatch_call binding {ctx with wait = true} ~device ~to_program) submission.fallback)
            | _ -> exec_kernel binding ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function
@@ -1150,14 +1171,16 @@ and exec_loop binding ctx ~device ~to_program call =
       for j = 0 to trip - 1 do
         List.iter (bind ~next:0 j) in_slots;
         List.iter (bind ~next:1 j) out_slots;
-        List.iter (dispatch_call binding ctx ~device ~to_program)
+        List.iter (fun call ->
+            ignore (dispatch_call binding ctx ~device ~to_program call : float option list))
           (U.children body_linear)
       done;
       (* The body's launches are asynchronous. Block until they complete so
          the per-iteration views are never released under queued work. *)
       List.iter
         (fun b -> Device.synchronize (device_for ~device b))
-        (shards (buf 0))
+        (shards (buf 0));
+      []
   | None -> invalid_arg "exec_loop: expected CALL"
 
 let rec run_linear ~device ~to_program binding ?(var_vals = [])
@@ -1199,11 +1222,25 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
         in
         Printf.eprintf "run_linear: dispatch %s\n%!" name
       end;
-      match U.as_call call with
-      | Some { body; _ }
-        when U.op body = Tolk_uop.Ops.Custom_function
-             && U.Arg.as_string (U.arg body) = Some "loop" ->
-          exec_loop binding ctx ~device ~to_program call
-      | _ -> dispatch_call binding ctx ~device ~to_program call)
+      ignore (dispatch_call binding ctx ~device ~to_program call : float option list))
     (U.children linear);
   keep_alive linear
+
+
+let time_call ~device ~to_program ?(var_vals = []) ?timeout
+    ?(clear_l2 = false) call f =
+  let module U = Tolk_uop.Uop in
+  let binding = Buffers.create () in
+  let compiled = compile_linear ~device ~to_program ~beam:0 ~profile:true
+      (U.linear [call]) in
+  let linked = link_linear binding ~allow_cache:false compiled in
+  let ctx = exec_context ~var_vals ~update_stats:false ~wait:true ?timeout
+      ~cache:false () in
+  let sample () =
+    if clear_l2 then Device.invalidate_caches device;
+    let times = List.concat_map (dispatch_call binding ctx ~device ~to_program)
+        (U.children linked) in
+    List.fold_left (fun longest -> function
+        | Some elapsed -> max longest elapsed | None -> longest) 0. times in
+  Fun.protect ~finally:(fun () -> Device.synchronize device; keep_alive linked)
+    (fun () -> f sample)

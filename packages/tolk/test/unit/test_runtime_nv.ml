@@ -555,9 +555,9 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
         dtype = D.void; aux = None} in
   let queue = Device.{timestamp_divider = 1000.; profile_offset = (fun () -> 0.); completion = (fun () ->
       match !timeline with
-      | None -> fun () -> ()
+      | None -> Fun.const ()
       | Some tl -> let value = Timeline.submitted tl in
-          fun () -> Timeline.guarded_wait tl (fun () -> Signal.wait tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
+          fun timeout_ms -> Timeline.guarded_wait tl (fun () -> Signal.wait ?timeout_ms tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
     host = "CPU"; max_kernel_bindings = None; config = (fun () -> ""); copy = (fun _ -> Some "COPY:0");
     encode = Tolk_nv.Encoded_queue.encode (nv_dev ~compute_class m) ~name:device_name
         ~compute_entries:8 ~copy_entries:8 ~compute_token:0x123 ~copy_token:0x456;
@@ -598,7 +598,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
      | _ -> ());
     Some buffer in
   let device = Device.make ~name:device_name ~allocator ~renderer_set ~runtime:(Device.runtime host)
-      ~synchronize:(fun () -> ()) ~queue ~bufferize () in
+      ~synchronize:(fun timeout -> ignore timeout; ()) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)]
     else if chain then [call; U.replace call ~src:[|program; parameter 1|] ()] else [call] in

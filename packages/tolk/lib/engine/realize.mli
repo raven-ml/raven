@@ -264,6 +264,8 @@ type exec_context = {
   update_stats : bool;
   jit : bool;
   wait : bool;
+  timeout : int option;
+  cache : bool;
 }
 (** Execution context threaded through a LINEAR run: symbolic variable values,
     the input buffer nodes that {!Tolk_uop.Ops.Param} slots index into, whether
@@ -275,11 +277,15 @@ val exec_context :
   ?update_stats:bool ->
   ?jit:bool ->
   ?wait:bool ->
+  ?timeout:int ->
+  ?cache:bool ->
   unit ->
   exec_context
-(** [exec_context ?var_vals ?input_uops ?update_stats ?jit ?wait ()] builds a
-    context. [update_stats] defaults to [true]; the other fields default to
-    empty or [false]. *)
+(** [exec_context ?var_vals ?input_uops ?update_stats ?jit ?wait ?timeout ?cache ()] builds a
+    context. [update_stats] and [cache] default to [true]; the other fields
+    default to empty or [false]. [timeout] is the device wait budget in
+    milliseconds. [cache=false] releases each dispatch handle after its
+    synchronous sample; failed drains retain the handle. *)
 
 val resolve_buffer : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> buffer
 (** [resolve_buffer binding ctx node] is the concrete buffer named by call
@@ -377,3 +383,25 @@ val run_linear :
 val queue_submissions : int ref
 (** [queue_submissions] counts compiled host submissions dispatched through
     {!run_linear}. A cumulative observability counter for tests and debugging. *)
+
+
+val time_call :
+  device:Device.t ->
+  to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
+  ?var_vals:(string * int) list ->
+  ?timeout:int ->
+  ?clear_l2:bool ->
+  Tolk_uop.Uop.t ->
+  ((unit -> float) -> 'a) ->
+  'a
+(** [time_call ~device ~to_program ?var_vals ?timeout ?clear_l2 call f] compiles
+    and links [call] with device timestamps, then calls [f sample]. Each
+    [sample ()] executes the linked call synchronously and returns its longest
+    host or device duration in seconds. [clear_l2] invalidates the device
+    caches before each sample and defaults to [false]. [timeout] is forwarded
+    to runtimes and recoverable device waits in milliseconds.
+
+    Linked storage is shared between samples. Transient dispatch handles are
+    released after successful draining, including when execution raises.
+    [sample] must only be used within [f]; the device is drained when [f]
+    returns or raises. Timing does not update execution statistics. *)

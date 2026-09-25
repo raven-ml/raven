@@ -98,10 +98,11 @@ type queue = {
   timestamp_divider : float; (** Clock ticks per microsecond. *)
   profile_offset : unit -> float;
       (** Calibrates device microseconds to host wall-clock microseconds. *)
-  completion : unit -> (unit -> unit);
+  completion : unit -> (int option -> unit);
       (** [completion ()] captures submitted work without waiting and returns a
-          function that waits for that work. Later submissions do not extend
-          the wait. The function retains its backend state. *)
+          function that waits for that work with an optional timeout in milliseconds.
+          Only recoverable backends use custom timeouts; later submissions do not
+          extend the captured work. The function retains its backend state. *)
   prepare : unit -> unit;
       (** Prepares shared runtime state before each compiled submission. *)
   host : string; (** Host device executing submission programs. *)
@@ -154,7 +155,7 @@ val make :
   allocator:Allocator.packed ->
   renderer_set:Renderer_set.t ->
   runtime:runtime ->
-  synchronize:(unit -> unit) ->
+  synchronize:(int option -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
   ?peer_group:string ->
   ?queue:queue ->
@@ -167,7 +168,9 @@ val make :
 
     [runtime obj] loads a compiled binary and returns a dispatch handle.
 
-    [synchronize ()] blocks until all pending work on the device completes.
+    [synchronize timeout] blocks until all pending work on the device completes.
+    Recoverable backends honor [Some milliseconds]; other backends use their
+    normal wait policy.
 
     [peer_group] identifies devices sharing compatible memory mappings and
     queue signals. It defaults to the backend prefix of [name].
@@ -198,10 +201,11 @@ val queue_runtime : t -> runtime
     {!runtime} does, but binding existing mappings does not synchronize other
     devices. Only queue programs with complete dependency fences may use it. *)
 
-val synchronize : t -> unit
-(** [synchronize d] blocks until all pending work on [d] completes, then
+val synchronize : ?timeout:int -> t -> unit
+(** [synchronize ?timeout d] blocks until all pending work on [d] completes, then
     waits for recorded foreign memory accesses and collects registered queue
-    timestamps. Failed synchronization retains
+    timestamps. [timeout] is a per-wait limit in milliseconds for recoverable
+    backends; other backends use their normal timeout. Failed synchronization retains
     pending records for a later retry. *)
 
 val depend_on : t -> t -> unit
