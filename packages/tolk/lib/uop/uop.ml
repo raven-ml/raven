@@ -871,8 +871,6 @@ let invalid () = const Const.invalid
 let const_int n = const (Const.int Dtype.weakint n)
 let const_float x = const (Const.float Dtype.weakfloat x)
 let const_bool b = const (Const.bool b)
-let zero_like u = const (Const.of_scalar (dtype u) (`Int 0L))
-let const_like u n = const (Const.of_scalar (dtype u) (`Int (Int64.of_int n)))
 
 let index ~ptr ~idxs () =
   let const_int_value u =
@@ -2747,6 +2745,12 @@ let rec const_of_dtype ?shape:target_shape dtype value =
       (* A scalar constant broadcasts to [target] by prepending it. *)
       if target = [] || dims_equal (shape ret) target then ret
       else expand ~src:ret ~dims:target_arg
+
+let const_like u n =
+  const_of_dtype ?shape:(Option.map shape_arg (shape_opt u)) (dtype u)
+    (Const_scalar (`Int (Int64.of_int n)))
+
+let zero_like u = const_like u 0
 
 let rec const_factor u =
   match const_int_value u with

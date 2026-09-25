@@ -164,9 +164,15 @@ let const_float_v u =
   | Some c -> (match Const.view c with Const.Float f -> Some f | _ -> None)
   | None -> None
 
+let shaped_const u value =
+  let constant = Uop.const value in
+  match Uop.shape_opt u with
+  | None -> constant
+  | Some shape -> Uop.expand ~src:constant ~dims:(Uop.stack shape)
+
 let const_nan_like u =
   let v = Uop.dtype u in
-  if Dtype.is_float v then Some (Uop.const (Const.of_scalar v (`Float Float.nan)))
+  if Dtype.is_float v then Some (shaped_const u (Const.of_scalar v (`Float Float.nan)))
   else None
 
 let rec gcd_int a b =
@@ -297,9 +303,9 @@ let fold_const_alu root =
 (* Build a numeric const matching [c]'s dtype with value [v]. *)
 let const_numeric_like c v =
   let dtv = Uop.dtype c in
-  if Dtype.is_float dtv then Uop.const (Const.of_scalar dtv (`Float v))
+  if Dtype.is_float dtv then shaped_const c (Const.of_scalar dtv (`Float v))
   else if Dtype.is_int dtv then
-    Uop.const (Const.of_scalar dtv (`Int (Int64.of_int (int_of_float v))))
+    shaped_const c (Const.of_scalar dtv (`Int (Int64.of_int (int_of_float v))))
   else Uop.const_like c (int_of_float v)
 
 (* Read [c]'s numeric value as a float. Returns [None] for non-numeric
@@ -312,7 +318,7 @@ let const_numeric_v c =
        | Some n -> Some (float_of_int n)
        | None -> None)
 
-let const_bound_like u n = Uop.const (Bound.const (Uop.dtype u) n)
+let const_bound_like u n = shaped_const u (Bound.const (Uop.dtype u) n)
 
 (* The rewritten exponent is left weak: it is a mathematical value, and the
    width it eventually takes is the surrounding expression's to decide.
@@ -786,11 +792,9 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (rewrite1 (fun x -> alu [ x; x ] Ops.Floormod)
        (fun x -> Some (Uop.const_like x 0)));
 
-    (* x < x -> false (or a vector of falses matching x's lane count). *)
+    (* x < x -> false, preserving the comparison's shape. *)
     (rewrite1 (fun x -> O.(x < x)) (fun x ->
-       let n = match Uop.op x with
-         | Ops.Stack -> Array.length (Uop.src x) | _ -> 1 in
-       Some (Uop.broadcast (Uop.const_bool false) n)));
+       Some (shaped_const x (Const.bool false))));
 
     (* x ^ x -> 0 (on ints/bool) *)
     (rewrite1 (fun x -> alu [ x; x ] Ops.Xor) (fun x ->
@@ -835,13 +839,10 @@ let symbolic_simple : Upat.Pattern_matcher.t =
            Some (Uop.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:c)
        | _ -> None);
 
-    (* x != x -> False (ints/bool only, vectorised to match lanes). *)
+    (* x != x -> false (ints/bool only), preserving the comparison's shape. *)
     (rewrite1 (fun x -> alu [ x; x ] Ops.Cmpne) (fun x ->
        if Dtype.is_int (Uop.dtype x) || Dtype.is_bool (Uop.dtype x)
-       then
-         let n = match Uop.op x with
-           | Ops.Stack -> Array.length (Uop.src x) | _ -> 1 in
-         Some (Uop.broadcast (Uop.const_bool false) n)
+       then Some (shaped_const x (Const.bool false))
        else None));
 
     (cast ~name:"root" (var "value") => fun bs ->
@@ -976,7 +977,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
          match scalar_const_as_int (bs $ "c") with
          | Some 0 -> Some (bs $ "x")
          | Some 1 -> Some (Uop.O.not_ (bs $ "x"))
-         | Some _ -> Some (Uop.const_bool true)
+         | Some _ -> Some (shaped_const (bs $ "x") (Const.bool true))
          | None -> None);
 
     (* where(a, b, b) -> b (noop conditional) *)
@@ -1321,8 +1322,8 @@ let fold_where_closure cond t f =
   if not (Uop.bool_slice_mem t cond || Uop.bool_slice_mem f cond) then None
   else if has_index cond || has_index t || has_index f then None
   else
-    let t' = Uop.substitute [ (cond, Uop.const_bool true) ] t in
-    let f' = Uop.substitute [ (cond, Uop.const_bool false) ] f in
+    let t' = Uop.substitute [ (cond, shaped_const cond (Const.bool true)) ] t in
+    let f' = Uop.substitute [ (cond, shaped_const cond (Const.bool false)) ] f in
     if Uop.equal t' t && Uop.equal f' f then None
     else Some (Uop.O.where cond t' f')
 
@@ -1332,7 +1333,7 @@ let symbolic : Upat.Pattern_matcher.t =
     (* x | !x -> True *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
      alu [ x; alu [ x; true_ ] Ops.Cmpne ] Ops.Or
-     => fun _ -> Some (Uop.const_bool true));
+     => fun bs -> Some (shaped_const (bs $ "x") (Const.bool true)));
 
     (* Canonical operand order for index-mode commutative ops. *)
     (ops ~dtype:Dtype.weakint ~name:"x" Ops.Group.commutative => fun bs ->

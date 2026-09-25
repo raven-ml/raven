@@ -2495,11 +2495,32 @@ let commutative_axes_use_lexical_argument_order () =
   is_true ~msg:"axis 10 sorts before axis 2" ((Uop.src sum).(0) == b && (Uop.src sum).(1) == a);
   is_true ~msg:"canonical order is idempotent" (Uop.simplify sum == sum)
 
+let constants_preserve_operand_shape () =
+  let scalar = Uop.variable ~name:"constant_scalar" ~min_val:0 ~max_val:9
+      ~dtype:Dtype.int32 () in
+  let vector = Uop.stack [scalar; scalar; scalar] in
+  let rows = Uop.variable ~name:"constant_rows" ~min_val:1 ~max_val:4 () in
+  let tensor = Uop.param ~slot:95301 ~dtype:Dtype.float32
+      ~shape:(Uop.stack [rows; Uop.const_int 3]) () in
+  List.iter (fun source ->
+      List.iter (fun (value, constant) ->
+          is_true ~msg:"constant keeps the exact symbolic shape"
+            (List.equal Uop.equal (Uop.shape source) (Uop.shape constant));
+          is_true ~msg:"constant keeps the requested scalar dtype"
+            (Dtype.equal (Uop.dtype source) (Uop.dtype constant));
+          is_true ~msg:"constant keeps its value"
+            (Bound.equal (Uop.vmin constant) (Bound.int value)
+             && Bound.equal (Uop.vmax constant) (Bound.int value)))
+        [0, Uop.zero_like source; 7, Uop.const_like source 7])
+    [scalar; vector; tensor]
+
 let () =
   run "tolk.uop"
     [
       group "Construction"
         [
+          test "constant-like values preserve scalar, vector and symbolic tensor shapes"
+            constants_preserve_operand_shape;
           test "compiled signatures preserve sparse slots and argument types"
             compiled_signature_preserves_slots_and_types;
           test "argument structures align pointers and mixed scalar widths" binary_argument_layout;

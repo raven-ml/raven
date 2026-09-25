@@ -252,9 +252,29 @@ let storage_windows_keep_effects_and_typed_anchors () =
       equal int 1 offset
   | None -> fail "typed effect-bearing storage window was not proved"
 
+let shaped_constant_proof () =
+  let base = U.buffer ~slot:93833 ~dtype:Dtype.uint32 ~shape:(shape [2; 3]) () in
+  let always_false = U.alu_binary ~op:Ops.Cmplt ~lhs:base
+      ~rhs:(U.const (Const.int Dtype.uint32 0)) in
+  let self_compare = U.alu_binary ~op:Ops.Cmpne ~lhs:base ~rhs:base in
+  let zero = U.alu_binary ~op:Ops.Xor ~lhs:base ~rhs:base in
+  let flags = U.buffer ~slot:93834 ~dtype:Dtype.bool ~shape:(shape [2; 3]) () in
+  let true_ = U.alu_binary ~op:Ops.Or ~lhs:flags ~rhs:(U.O.not_ flags) in
+  let nested_flags = U.permute
+      ~src:(U.permute ~src:flags ~order:[1; 0]) ~order:[1; 0] in
+  let closure = U.O.where flags nested_flags (U.const_bool false) in
+  equal (list int) [2; 3] (U.max_shape (Symbolic.simplify closure));
+  List.iter (fun value ->
+      let permuted = U.permute ~src:(U.cast ~src:value ~dtype:Dtype.int32)
+          ~order:[1; 0] in
+      equal (list int) [3; 2] (U.max_shape (Symbolic.simplify permuted));
+      equal (option int) None (byte_offset permuted))
+    [always_false; self_compare; zero; true_]
+
 let () = run "Contiguous view"
     [test "storage windows retain allocation boundaries" storage_windows_keep_allocation_boundaries;
      test "storage windows retain typed effects" storage_windows_keep_effects_and_typed_anchors;
+test "constant folding preserves tensor shape during view proofs" shaped_constant_proof;
      test "unsupported backends reject typed views" unsupported_devices;
      test "one-element bitcast views preserve byte extent" bitcast_singleton_extent;
      test "symbolic leading views compose their flattened index" symbolic_leading_extent;

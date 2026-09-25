@@ -951,7 +951,7 @@ let convert_pad_to_where ctx x =
       let valid = prod_valid (List.map get_valid in_rngs) in
       let bx = with_indexed_children ctx x in
       let src = (U.src bx).(0) in
-      Some (U.alu_ternary ~op:Ops.Where ~a:valid ~b:src ~c:(U.zero_like x))
+      Some (U.alu_ternary ~op:Ops.Where ~a:valid ~b:src ~c:(U.const (Const.zero (U.dtype x))))
   | _ -> None
 
 (* STACK -> nested WHERE selecting a source on the leading range.

@@ -802,16 +802,12 @@ val const_bool : bool -> t
 (** [const_bool b] is a {!Dtype.bool} boolean constant. Shared. *)
 
 val zero_like : t -> t
-(** [zero_like u] is a [Const] zero with [u]'s value dtype.
-
-    @raise Invalid_argument if [u] has a pointer dtype. *)
+(** [zero_like u] is a zero constant of [u]'s dtype, expanded to [u]'s shape
+    when [u] has a shape. *)
 
 val const_like : t -> int -> t
-(** [const_like u n] is an integer [Const] with value [n] and [u]'s
-    value dtype.
-
-    @raise Invalid_argument if [u] has a pointer dtype, or if [u]'s
-    dtype is not a scalar integer. *)
+(** [const_like u n] converts [n] to a constant of [u]'s dtype and expands it
+    to [u]'s shape when [u] has a shape. *)
 
 (** {2:ctors_mem Indexing and memory}
 

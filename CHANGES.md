@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Constant folding preserves tensor shapes, including symbolic dimensions and
+  conditions reused through views, so JIT `top_k` and comparison/permute graphs
+  remain valid during shared view analysis.
+
 - Beam compilation propagates interruption immediately and joins started workers
   before returning; cancellation was previously treated as a rejected candidate.
 
