@@ -300,7 +300,7 @@ let make_lorenz_fold () =
   let f v = U.const (Const.float Dtype.float32 v) in
   let mul a b = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b in
   let add a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
-  let neg_one = f (-1.0) in
+  let neg_one = U.const (Const.float Dtype.weakfloat (-1.0)) in
   let sub a b = add a (mul b neg_one) in
   let sigma = f 10.0 and rho = f 28.0 and beta = f 2.5 and dt = f 0.0625 in
   let step (x, y, z) =
@@ -342,27 +342,27 @@ let make_llama_rmsnorm backend =
   let e = U.end_ ~value:st ~ranges:[ ri ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("r_2_8n1", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 } ])
+    | "clang" -> ("r_2_8", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 } ])
     | "cuda" ->
-        ( "r_2_8n2",
+        ( "r_2_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "metal" ->
-        ( "r_2_8n3",
+        ( "r_2_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "opencl" ->
-        ( "r_2_8n4",
+        ( "r_2_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "amd" ->
-        ( "r_2_8n5",
+        ( "r_2_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 1; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
@@ -414,27 +414,27 @@ let make_llama_embedding backend =
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("E_8_2n1", [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 } ])
+    | "clang" -> ("E_8_2", [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 } ])
     | "cuda" ->
-        ( "E_8_2n2",
+        ( "E_8_2",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "metal" ->
-        ( "E_8_2n3",
+        ( "E_8_2",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "opencl" ->
-        ( "E_8_2n4",
+        ( "E_8_2",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "amd" ->
-        ( "E_8_2n5",
+        ( "E_8_2",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 0; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
@@ -481,30 +481,30 @@ let make_llama_ffn_gate backend =
   let e = U.end_ ~value:st ~ranges:[ r1; r2; r3; r4 ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("r_2_8_8n1", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 } ])
+    | "clang" -> ("r_2_8_8", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 } ])
     | "cuda" ->
-        ( "r_2_8_8n2",
+        ( "r_2_8_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "metal" ->
-        ( "r_2_8_8n3",
+        ( "r_2_8_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "opencl" ->
-        ( "r_2_8_8n4",
+        ( "r_2_8_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 8 };
           ] )
     | "amd" ->
-        ( "r_2_8_8n5",
+        ( "r_2_8_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
@@ -540,30 +540,30 @@ let make_llama_vector_scale backend =
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("E_2_2_4n1", [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 } ])
+    | "clang" -> ("E_2_2_4", [ U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 } ])
     | "cuda" ->
-        ( "E_2_2_4n2",
+        ( "E_2_2_4",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "metal" ->
-        ( "E_2_2_4n3",
+        ( "E_2_2_4",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "opencl" ->
-        ( "E_2_2_4n4",
+        ( "E_2_2_4",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
           ] )
     | "amd" ->
-        ( "E_2_2_4n5",
+        ( "E_2_2_4",
           [
             U.Opt.Split { kind = Axis_type.Upcast; top = false; axis = 1; amount = 4 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
@@ -593,7 +593,7 @@ let make_llama_output_projection backend =
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in
   let name, opts_to_apply =
     match backend with
-    | "clang" -> ("r_2_32_8n1", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 } ])
+    | "clang" -> ("r_2_32_8", [ U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 } ])
     | "cuda" ->
         ( "r_2_2_16_8",
           [
@@ -602,21 +602,21 @@ let make_llama_output_projection backend =
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 16 };
           ] )
     | "metal" ->
-        ( "r_2_2_16_8n1",
+        ( "r_2_2_16_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 16 };
           ] )
     | "opencl" ->
-        ( "r_2_2_16_8n2",
+        ( "r_2_2_16_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 16 };
           ] )
     | "amd" ->
-        ( "r_2_2_16_8n3",
+        ( "r_2_2_16_8",
           [
             U.Opt.Split { kind = Axis_type.Unroll; top = false; axis = 2; amount = 0 };
             U.Opt.Split { kind = Axis_type.Local; top = false; axis = 0; amount = 2 };

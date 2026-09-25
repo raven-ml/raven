@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Generated kernels avoid redundant 64-bit index arithmetic when bounds prove
+  32-bit operations safe, and preserve shared floating-point expressions when
+  distributing negation.
+
 - Late scalar variables, including sharded kernels' device index, receive
   parameter slots after existing buffers so generated declarations and runtime
   argument packing agree.

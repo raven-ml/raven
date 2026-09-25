@@ -130,7 +130,7 @@ let param_arg_debug_string (p : param_arg) =
     | None -> ()
     | Some value -> fields := !fields @ [ name ^ "=" ^ render value ]
   in
-  add "size" string_of_int p.size;
+  Option.iter (fun size -> fields := !fields @ [ string_of_int size ]) p.size;
   add "image" (fun (h, w) -> tuple_string [string_of_int h; string_of_int w]) p.image;
   add "vmin_vmax" bound_pair_string p.vmin_vmax;
   add "multiple_of" string_of_int p.multiple_of;

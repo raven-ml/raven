@@ -1696,6 +1696,7 @@ let debug_prints_rich_args_dataclass_style () =
     Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~name:"buf"
       ~addrspace:Dtype.Local ()
   in
+  let sized = Uop.param ~slot:3 ~dtype:Dtype.float32 ~shape:(Uop.const_int 256) () in
   let staged =
     Uop.stage ~src:(Uop.const_int 1) ~ranges:[]
       ~opts:
@@ -1735,7 +1736,7 @@ let debug_prints_rich_args_dataclass_style () =
   in
   let call = Uop.call ~body:sink ~args:[] ~info in
   let out =
-    Render.uops_list_to_string [ param; buffer; staged; sink; program; call ]
+    Render.uops_list_to_string [ param; buffer; sized; staged; sink; program; call ]
   in
   is_true ~msg:"ParamArg repr"
     (contains out
@@ -1743,6 +1744,8 @@ let debug_prints_rich_args_dataclass_style () =
   is_true ~msg:"Buffer ParamArg repr"
     (contains out
        "ParamArg(2, dtypes.int, name='buf', addrspace=AddrSpace.LOCAL)");
+  is_true ~msg:"sized ParamArg uses positional size"
+    (contains out "ParamArg(3, dtypes.float, 256)");
   is_true ~msg:"Stage repr"
     (contains out
        "BufferizeOpts(device=0, addrspace=AddrSpace.LOCAL, removable=False)");

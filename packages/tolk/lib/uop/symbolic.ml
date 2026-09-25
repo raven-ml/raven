@@ -1593,39 +1593,37 @@ let symbolic : Upat.Pattern_matcher.t =
        then Some (Uop.O.where (bs $ "c") (bs $ "t") (bs $ "f"))
        else None);
 
-    (* Binary op on two int64 sources narrows to int32 math when no operand
-       or result overflows int32, then casts the result back to int64. A
-       constant operand is rebuilt weak rather than cast, so it stays free to
-       take whichever width the rebuilt node settles on. *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Int64) and y = var_dtype "y" (exact_dtype Dtype.Int64) in
+    (* Long/weak integer math narrows when every operand and the result fit
+       int32. Bare constants remain weak; the result keeps its original dtype. *)
+    (let long_or_weak = any_dtype [ exact_dtype Dtype.Int64; exact_dtype Dtype.Weakint ] in
+     let x = var_dtype "x" long_or_weak and y = var_dtype "y" long_or_weak in
      ops ~src:[ x; y ] ~name:"u" Ops.Group.binary => fun bs ->
        let u = bs $ "u" and x = bs $ "x" and y = bs $ "y" in
        let i32 = Dtype.int32 in
-       if overflows u i32 || overflows x i32 || overflows y i32 then None
+       if not (Dtype.equal (Uop.dtype x) Dtype.int64
+               || Dtype.equal (Uop.dtype y) Dtype.int64)
+          || overflows u i32 || overflows x i32 || overflows y i32
+       then None
        else
          let narrow v =
-           match const_int_v v with
-           | Some n -> Uop.const_int n
-           | None -> Uop.cast ~src:v ~dtype:Dtype.int32
+           match Uop.op v, const_int_v v with
+           | Ops.Const, Some n -> Uop.const_int n
+           | _ -> Uop.cast ~src:v ~dtype:Dtype.int32
          in
          let narrowed =
            Uop.alu_binary ~op:(Uop.op u) ~lhs:(narrow x) ~rhs:(narrow y)
          in
          Some (Uop.cast ~src:narrowed ~dtype:(Uop.dtype u)));
 
-    (* Narrowing cast chain: [x.cast(a).cast(b)] where [x], [a], [b] are
-       ints, [a]'s range covers [x.vmin..x.vmax]. Collapse to
-       [x.cast(b)]. *)
-    (let x = var_dtype "x" (exact_dtype Dtype.Weakint) in
+    (* An intermediate integer cast is redundant when the source's actual
+       bounds fit, even if its declared dtype is wider. *)
+    (let x = var "x" in
      cast ~name:"b" (cast ~name:"a" x) => fun bs ->
        let x = bs $ "x" and a = bs $ "a" and b = bs $ "b" in
-       if not (Dtype.is_int (Uop.dtype x) && Dtype.is_int (Uop.dtype a))
-       then None
-       else (
-         match int_bounds (Uop.dtype a) with
-         | Some (lo, hi) when Bound.le lo (Uop.vmin x) && Bound.le (Uop.vmax x) hi ->
-             Some (Uop.cast ~src:x ~dtype:(Uop.dtype b))
-         | _ -> None));
+       if Dtype.is_int (Uop.dtype x) && Dtype.is_int (Uop.dtype a)
+          && not (overflows x (Uop.dtype a))
+       then Some (Uop.ccast ~src:x ~dtype:(Uop.dtype b))
+       else None);
 
     (* -1 * (x + c) -> x*-1 + c*-1. Distributing as a multiply (not a NEG)
        lets a scaled operand's constant factor fold through the two-stage
@@ -1637,7 +1635,7 @@ let symbolic : Upat.Pattern_matcher.t =
        if not (exact_algebra x) then None
        else
          let neg u =
-           Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1))
+           Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const (Const.of_scalar (Dtype.weak_dtype (Uop.dtype u)) (`Int (-1L))))
          in
          let nx = neg x and nc = neg c in
          Some Uop.O.(nx + nc));
@@ -2258,7 +2256,7 @@ let sym : Upat.Pattern_matcher.t =
          if not (exact_algebra x) then None
          else
            let neg u =
-             Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1))
+             Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const (Const.of_scalar (Dtype.weak_dtype (Uop.dtype u)) (`Int (-1L))))
            in
            let nx = neg x and ny = neg y in
            Some Uop.O.(nx + ny)));

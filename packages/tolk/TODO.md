@@ -82,8 +82,8 @@ acceptance requirement; skipped tests are not execution evidence.
   paired graph intent and add compilation checks for the corrected fixtures.
 - Reconcile remaining intermediate IR/GROUP and source differences in FP8
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
-  `topk_rounds` and `multi_output`. Reconcile CPU/Metal `lorenz_fold` ordering
-  and Metal `vectorize_index` after the constant representation is migrated.
+  `topk_rounds` and `multi_output`. Reconcile Metal `vectorize_index` after
+  the constant representation is migrated.
   Reconcile CUDA kernel ordering in `multi_allreduce_ring`.
   Remove the Llama driver's manual staging shortcuts: its attention-score
   kernel is named `E_2`, whereas the target tensor graph produces

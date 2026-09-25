@@ -1494,6 +1494,49 @@ let end_preserves_effects () =
   equal ~msg:"a constant BACKEDGE condition remains a condition" uop edge
     (rewrite edge)
 
+let distributed_negation_keeps_scaled_terms_shared () =
+  let x = Uop.param ~slot:0 ~dtype:Dtype.float32 () in
+  let y = Uop.param ~slot:1 ~dtype:Dtype.float32 () in
+  let f value = Uop.const (Const.float Dtype.weakfloat value) in
+  let mul lhs rhs = Uop.alu_binary ~op:Ops.Mul ~lhs ~rhs in
+  let add lhs rhs = Uop.alu_binary ~op:Ops.Add ~lhs ~rhs in
+  let scaled = mul y (f 0.625) in
+  let expression = mul (add x scaled) (f (-1.0)) in
+  let expected_step = add (mul x (f (-1.0))) (mul scaled (f (-1.0))) in
+  (match sym expression with
+   | Some actual -> equal ~msg:"distribution leaves literals bare for folding"
+       uop expected_step actual
+   | None -> fail "expected negation distribution");
+  let expected = add (mul x (f (-1.0))) (mul y (f (-0.625))) in
+  equal uop expected (simplify expression)
+
+let integer_width_folding_tests =
+  group "integer width folding"
+    [
+      test "bounded long and weak operands narrow together" (fun () ->
+          let x = Uop.variable ~name:"bounded_long" ~min_val:(-16) ~max_val:16 ~dtype:Dtype.int64 () in
+          let eight = Uop.const_int 8 in
+          let product = Uop.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:eight in
+          let expected = Uop.cast ~dtype:Dtype.int64
+              ~src:(Uop.alu_binary ~op:Ops.Mul
+                ~lhs:(Uop.cast ~src:x ~dtype:Dtype.int32) ~rhs:eight) in
+          equal uop expected (rewrite product));
+      test "long arithmetic retains width when result can overflow int32" (fun () ->
+          let x = Uop.variable ~name:"wide_long" ~min_val:0 ~max_val:2147483647 ~dtype:Dtype.int64 () in
+          let product = Uop.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(Uop.const_int 8) in
+          equal uop product (rewrite product));
+      test "bounded concrete integer cast chains collapse" (fun () ->
+          let x = Uop.variable ~name:"bounded_cast" ~min_val:(-16) ~max_val:16 ~dtype:Dtype.int64 () in
+          let chain = Uop.cast ~dtype:Dtype.int16
+              ~src:(Uop.cast ~src:x ~dtype:Dtype.int32) in
+          equal uop (Uop.cast ~src:x ~dtype:Dtype.int16) (rewrite chain));
+      test "narrowing intermediate cast remains observable" (fun () ->
+          let x = Uop.variable ~name:"overflowing_cast" ~min_val:0 ~max_val:4294967295 ~dtype:Dtype.int64 () in
+          let chain = Uop.cast ~dtype:Dtype.int64
+              ~src:(Uop.cast ~src:x ~dtype:Dtype.int32) in
+          equal uop chain (rewrite chain));
+    ]
+
 (* Entry point *)
 
 let () =
@@ -1501,6 +1544,9 @@ let () =
     (simplify_driver_groups
      @ [
          test "END preserves effects" end_preserves_effects;
+         integer_width_folding_tests;
+         test "distributed negation keeps scaled terms shared"
+           distributed_negation_keeps_scaled_terms_shared;
          const_fold_tests;
          identity_fold_tests;
          self_fold_tests;
