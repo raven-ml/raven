@@ -568,17 +568,20 @@ let grouped kernels ~transpose ~p ~e ids codes scales x =
    experts lost for that reason (111 against 101 ms per step) and 64 won (135
    against 150 ms; 213 against 249 ms at 128): [tau] is 16 there, its crossover
    measured no closer, as nothing between 33 and 63 routes was run. On the CPU,
-   in gpt-oss-20b's MoE block with the block kernel's CPU options, grouping lost
-   at 128 routes at float32 (0.98 against 0.76 s) and at bfloat16 up to 256
-   (3.24 against 3.15 s; 2.88 against 2.39 s at 192), and won at both from 384
-   (4.08 against 4.81 s at bfloat16; at 512, 1.53 against 3.04 s at float32 and
-   4.91 against 6.36 s at bfloat16): [tau] is 1024 there, which over 32 experts
-   groups from 257 routes, forgoing float32's wins at 192 and 256; nothing
-   between 257 and 383 routes was run. *)
+   in gpt-oss-20b's MoE block, grouped / ungrouped time was, from 48 to 160
+   routes, 1.33, 1.13, 0.83, 0.78, 0.77, 0.75, 0.70, 0.72, 0.67 and 0.64 at
+   float32 (at 48, 64, 96, 100, 104, 112, 120, 124, 128 and 160 routes) and
+   1.85, 1.52, 1.14, 1.12, 1.13, 1.07, 1.07, 1.07, 1.01 and 0.68 at bfloat16.
+   [tau] is chosen as the row bound is: the threshold whose largest loss over
+   both dtypes, a loss from grouping and a win forgone alike, is smallest.
+   Grouping from 96 routes costs at most bfloat16's 1.14 there; from 100 it
+   would forgo float32's 1.20 at 96, from 128 its 1.43 at 120, and from 64 it
+   would cost bfloat16 1.52. [tau] is 140, which over 32 experts groups from 96
+   routes. *)
 let tau device =
   match Tolk.Renderer.device (Tolk.Device.renderer device) with
   | "METAL" -> 16.0
-  | "CPU" -> 1024.0
+  | "CPU" -> 140.0
   | _ -> Float.infinity
 
 let groups kernels ~ids (Nx_quant.Mxfp4 { codes; scales }) x =

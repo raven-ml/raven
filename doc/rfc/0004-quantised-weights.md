@@ -309,19 +309,22 @@ the CPU's sits on it at 16-bit dtypes.
    routes over 32 experts, where every block is one row (111 against 101 ms per
    step), and won from 64 (135 against 150 ms; 213 against 249 ms at 128), so
    `τ` lies between 0 and 63 there; nothing between 33 and 63 routes was
-   measured. On the CPU `τ = 1024`, which over 32 experts groups from 257
-   routes. With the block kernel unoptimised, grouping lost at every size
-   measured (16 to 512 routes of gpt-oss's MoE block; at 512, 10.2 against 7.1
-   s). With its CPU options, grouping lost at 128 routes at float32 (0.98
-   against 0.76 s) and at bfloat16 up to 256 (3.24 against 3.15 s; 2.88 against
-   2.39 s at 192), and won at both from 384 (4.08 against 4.81 s at bfloat16;
-   at 512, 1.53 against 3.04 s at float32 and 4.91 against 6.36 s at bfloat16).
-   One value per device forgoes float32's wins at 192 and 256 routes (1.05
-   against 1.13 s, 1.09 against 1.55 s); nothing between 257 and 383 routes was
-   measured. Both values were measured on one M1 Max; every Metal device and
-   every CPU takes them until measured elsewhere, and `τ` is infinite on every
-   other device.
-   Ungrouped, and with `m > 1`, each instance takes rule 1 with `r = m`.
+   measured. On the CPU `τ = 140`, which over 32 experts groups from 96 routes.
+   With the block kernel unoptimised, grouping lost at every size measured (16
+   to 512 routes of gpt-oss's MoE block; at 512, 10.2 against 7.1 s). With its
+   CPU options, exact products, one row bound for both rules and the kernel
+   reading matrix 0 for an unselected id, grouped / ungrouped time at 48, 64,
+   96, 100, 104, 112, 120, 124, 128 and 160 routes was 1.33, 1.13, 0.83, 0.78,
+   0.77, 0.75, 0.70, 0.72, 0.67 and 0.64 at float32, and 1.85, 1.52, 1.14, 1.12,
+   1.13, 1.07, 1.07, 1.07, 1.01 and 0.68 at bfloat16 (at 512, 0.37 and 0.39).
+   `τ` is chosen by `ρ`'s rule, the threshold whose largest loss over both
+   dtypes, a loss from grouping and a win forgone alike, is smallest: grouping
+   from 96 routes costs at most bfloat16's 1.14 there, where starting at 100
+   would forgo float32's 1.20 at 96, at 128 its 1.43 at 120, and at 64 would
+   cost bfloat16 1.52. Both values were measured on one M1 Max; every Metal
+   device and every CPU takes them until measured elsewhere, and `τ` is infinite
+   on every other device. Ungrouped, and with `m > 1`, each instance takes rule
+   1 with `r = m`.
 3. **Grouped,** the blocks take the kernel while the rows an expert meets on
    average, `R / ē`, are at most `ρ`, each block as many rows as that average
    rounded up to a power of two, at most `M`: a row the kernel carries costs a
@@ -396,7 +399,7 @@ and each route's result is gathered back from its slot. A filled block reads
 its expert once and multiplies its `B` rows. An empty block reads no weights
 and, on a GPU, runs no multiply-adds, so it costs a launch, one read of its id
 and a store of zeros (the block kernel, below). The arithmetic is the routes'
-plus at most `d · B` rows of padding. The CPU groups from 257 routes over 32
+plus at most `d · B` rows of padding. The CPU groups from 96 routes over 32
 experts, once the block kernel has options measured on it (rule 2). A route
 with no expert has no slot, so under expert parallelism, where a lane's ids name its own experts and
 −1 the others, a device reads and multiplies only for its own routes. The

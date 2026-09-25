@@ -235,9 +235,11 @@ All notable changes to this project will be documented in this file.
 - A compiled `Rune.scan` no longer copies each stored carry, output and
   cotangent before writing it to its loop buffer (16 MLP blocks, batch 2048,
   CPU: 16 kernels instead of 21 and 70 MiB instead of 78 for the gradient).
-- Compiled mxfp4 products on the CPU group routes by expert from 257 routes
-  over 32 experts: gpt-oss-20b's MoE block at 512 routes runs 2.0x faster at
-  float32 and 1.3x at bfloat16. The CPU used to never group.
+- Compiled mxfp4 products on the CPU group routes by expert from 96 routes
+  over 32 experts, at every dtype: gpt-oss-20b's MoE block runs 1.2 to 1.6
+  times faster at float32 from 96 to 160 routes, 1.5 times at bfloat16 at 160,
+  and 2.6-2.7 times at both at 512, while bfloat16 is up to 14% slower from 96
+  to 127 routes. The CPU used to never group.
 - A compiled function traced under `PROFILE=1` or `DEBUG>=2` no longer serves
   its persistent cache entry to later unprofiled runs, which ran with
   per-kernel queue timestamps (512-token gpt-oss-20b prefill 7-10% slower).

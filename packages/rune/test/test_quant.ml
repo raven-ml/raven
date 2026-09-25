@@ -299,9 +299,9 @@ let test_instances () =
 (* Enough routes of one row each that grouping pays (rule 2, with 4 experts from
    5 routes on Metal): routes ranked by expert fill blocks that read their
    expert once. Within the kernel's row bound the blocks take the kernel, past
-   it the block kernel; which depends on the device and dtype (rule 3). On the
-   CPU (τ = 1024) only the 160 routes over 2 experts group, and the other cases
-   take rule 1. *)
+   it the block kernel (rule 3). On the CPU (τ = 140) the 48 routes over 4
+   experts, the 64 over 4 and the 40 over 2 group on the kernel, the 160 over 2
+   on the block kernel, and the other cases take rule 1. *)
 let test_grouped () =
   let w = weight [| 4; 8; 64 |] in
   let ids =
