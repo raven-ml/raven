@@ -304,7 +304,13 @@ val run_linear :
     When [jit] is [false] (default), [linear] is first compiled with
     {!compile_linear}, turning each kernel {!Tolk_uop.Ops.Sink} body into a
     {!Tolk_uop.Ops.Program}, then linked with {!link_linear}; when [jit] is
-    [true], [linear] is assumed already compiled and linked. Each call is then dispatched on its body: a
+    [true], [linear] is assumed already compiled and linked. Eager queue
+    templates preserve buffer aliases and byte offsets without retaining input
+    storage. Below [HCQ_CACHE_THRESH] calls (default [64]), linked command
+    storage is reused with runtime address patches; larger schedules resolve
+    their inputs at each link.
+
+    Each call is then dispatched on its body: a
     {!Tolk_uop.Ops.Program} is launched with launch dimensions and scalar
     arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
     built from its compiled binary. A program carrying queue metadata refreshes

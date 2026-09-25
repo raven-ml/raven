@@ -139,7 +139,9 @@ let compiled_host_submission () =
             if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
         Some (U.group nodes)
     | _ -> None in
+  let compilations = ref 0 in
   let compile sink =
+    incr compilations;
     let program = Codegen.to_program ~optimize:false host (Device.renderer host) sink in
     Spec.type_verify Spec.program_spec (U.src program).(0);
     program in
@@ -147,10 +149,14 @@ let compiled_host_submission () =
     compile} in
   let renderer_set = Device.Renderer_set.make ~device:name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
+  let links = ref 0 in
   let device = Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime host)
       ~synchronize:(fun () -> ()) ~queue
       ~bufferize:(fun p -> match U.node_tag p with
-        | Some "timeline" -> Some timeline | Some "trace" -> Some observed | _ -> None) () in
+        | Some "timeline" -> Some timeline
+        | Some "trace" -> Some observed
+        | Some "slots" -> incr links; None
+        | _ -> None) () in
   let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) ~device:(U.Single name) () in
   let linear = U.linear [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
                          U.store_call ~dst:(ptr 2) ~src:(ptr 1)] in
@@ -180,7 +186,44 @@ let compiled_host_submission () =
   Realize.Buffers.seed binding src replacement;
   Realize.Buffers.seed binding dst output;
   Realize.run_linear ~device ~to_program binding ~jit:true linked;
-  equal int32 91l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0)
+  equal int32 91l (Bytes.get_int32_le (Device.Buffer.as_bytes output) 0);
+  let run_eager src mid dst =
+    let src = U.from_buffer src and mid = U.from_buffer mid and dst_node = U.from_buffer dst in
+    let linear = U.linear [U.store_call ~dst:mid ~src;
+        U.store_call ~dst:dst_node ~src:mid] in
+    Realize.run_linear ~device ~to_program (Realize.Buffers.create ()) ~wait:true linear;
+    Device.Buffer.ensure_allocated dst;
+    Bytes.get_int32_le (Device.Buffer.as_bytes dst) 0 in
+  let run_separate value = run_eager (buffer value) (buffer 0l) (buffer 0l) in
+  let before = !compilations and linked_before = !links in
+  equal int32 123l (run_separate 123l);
+  equal int32 456l (run_separate 456l);
+  equal int (before + 1) !compilations;
+  equal int (linked_before + 1) !links;
+  let weak = Stdlib.Weak.create 1 in
+  let run_aliases value =
+    let root = Device.create_buffer ~size:3 ~dtype:Dtype.int32 device in
+    let bytes = Bytes.make 12 '\000' in
+    Bytes.set_int32_le bytes 0 value;
+    Device.Buffer.ensure_allocated root;
+    Device.Buffer.copyin root bytes;
+    Stdlib.Weak.set weak 0 (Some root);
+    let view offset = Device.Buffer.view root ~size:1 ~dtype:Dtype.int32 ~offset in
+    run_eager (view 0) (view 4) (view 8) in
+  equal int32 789l (run_aliases 789l);
+  equal int32 987l (run_aliases 987l);
+  equal int (before + 2) !compilations;
+  Gc.full_major ();
+  Gc.full_major ();
+  is_false ~msg:"cached submission does not retain input storage" (Stdlib.Weak.check weak 0);
+  equal int32 111l (run_separate 111l);
+  equal int (before + 2) !compilations;
+  equal int (linked_before + 2) !links;
+  Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.hcq_cache_thresh, 0)] (fun () ->
+      equal int32 654l (run_separate 654l);
+      equal int32 321l (run_separate 321l));
+  equal int (before + 3) !compilations;
+  equal int (linked_before + 4) !links
 
 let () = run "Engine_hcq2" [
   test "byte intervals match a per-byte dependency model" byte_dependencies;

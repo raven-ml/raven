@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- Eager execution reuses compiled queue templates across fresh inputs while
+  preserving shared-base views. Small schedules reuse linked command storage;
+  `HCQ_CACHE_THRESH` keeps larger schedules' inputs bound at link time.
 - CUDA initializes its driver once across domains and reports missing symbols
   consistently. Device creation unwinds failures, and shutdown releases streams,
   events and contexts even after a synchronization error.

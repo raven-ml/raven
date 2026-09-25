@@ -200,13 +200,14 @@ let cache_key ~device ~ast_key =
 
 let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
 let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
+let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
 
 (* Rewrite each kernel CALL(SINK) in [linear] to CALL(PROGRAM), compiling the
    body with [to_program] and caching the compiled PROGRAM by the SINK's
    semantic key. Bulk STORE calls pass through unchanged. [beam] stamps
    sinks that carry no beam width of their own; kernel_info is part of the
    semantic key, so a stamped sink gets its own cache entry. *)
-let compile_linear ~device ?beam ~to_program linear =
+let compile_linear_cached ~cache ~device ?beam ~to_program linear =
   let module U = Tolk_uop.Uop in
   let stamp body =
     match beam with
@@ -236,7 +237,33 @@ let compile_linear ~device ?beam ~to_program linear =
           ()
     | _ -> call
   in
-  Hcq2.compile (U.linear (List.map compile_call (U.children linear)))
+  let linear = U.linear (List.map compile_call (U.children linear)) in
+  if not cache || List.exists (fun n ->
+      U.op n = Tolk_uop.Ops.Buffer && U.addrspace n = Some Tolk_uop.Dtype.Global)
+      (U.toposort ~enter_calls:true linear) then Hcq2.compile linear
+  else
+    let hosts = U.toposort ~enter_calls:false linear
+        |> List.filter_map (fun n -> match U.device_of n with
+            | Some (U.Single name) ->
+                Option.map (fun q -> Device.get q.Device.host)
+                  (Device.queue (Device.get name))
+            | _ -> None)
+        |> List.sort_uniq (fun a b -> String.compare (Device.name a) (Device.name b)) in
+    (* Link-time tags are semantic here: a runtime table and a captured input
+       must never share a linked template. Keep the hash-consed key alive. *)
+    let key = Marshal.to_string
+        (cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
+         List.map (fun host -> cache_key ~device:host ~ast_key:"") hosts) [] in
+    let templates = Domain.DLS.get queue_template_cache in
+    match Hashtbl.find_opt templates key with
+    | Some (_, compiled) -> compiled
+    | None ->
+        let compiled = Hcq2.compile linear in
+        Hashtbl.add templates key (linear, compiled);
+        compiled
+
+let compile_linear ~device ?beam ~to_program linear =
+  compile_linear_cached ~cache:false ~device ?beam ~to_program linear
 
 let program_args (info : Tolk_uop.Uop.program_info) args =
   let args = Array.of_list args in
@@ -416,6 +443,46 @@ let resolve binding ctx node =
 let link_linear binding ?(input_uops = [||]) ?allow_cache linear =
   let ctx = exec_context ~input_uops () in
   Link.run ~resolve:(resolve binding ctx) ?allow_cache linear
+
+(* Eager templates name root allocations, preserving byte views and duplicate
+   arguments. Only the invocation owns actual buffers; cached command storage
+   contains runtime table slots (or link-time inputs for large schedules). *)
+let eager_template binding ~input_uops linear =
+  let module U = Tolk_uop.Uop in
+  let module D = Tolk_uop.Dtype in
+  if List.exists (fun call -> match U.arg (U.without_after call) with
+      | U.Arg.Call_info {aux = Some _; _} -> true | _ -> false) (U.children linear)
+  then linear, input_uops
+  else
+  let ctx = exec_context ~input_uops () in
+  let inputs = ref [] and slots = Hashtbl.create 16 in
+  let use_runtime = Array.length (U.src linear) <
+      Helpers.Context_var.get Helpers.hcq_cache_thresh in
+  let buffer_view buffer =
+    let base = Device.Buffer.base buffer in
+    let slot = match Hashtbl.find_opt slots (Device.Buffer.id base) with
+      | Some slot -> slot
+      | None ->
+          let slot = Hashtbl.length slots in
+          Hashtbl.add slots (Device.Buffer.id base) slot;
+          inputs := U.bitcast ~src:(U.from_buffer base) ~dtype:D.uint8 :: !inputs;
+          slot in
+    let param = U.param ~slot ~dtype:D.uint8
+        ~shape:(U.const_int (Device.Buffer.nbytes base))
+        ~device:(U.Single (Device.Buffer.device base)) () in
+    let param = if use_runtime then param else U.with_tag "lt_input" param in
+    let view = U.shrink ~src:param ~offset:(U.const_int (Device.Buffer.offset buffer))
+        ~size:(U.const_int (Device.Buffer.nbytes buffer)) in
+    U.bitcast ~src:view ~dtype:(Device.Buffer.dtype buffer) in
+  let linear = U.graph_rewrite ~walk:true (fun node ->
+      match U.op node, U.Arg.as_param_arg (U.arg node) with
+      | (Tolk_uop.Ops.Buffer | Tolk_uop.Ops.Param),
+        Some {addrspace = D.Global; allocation = None; _} ->
+          Some (match resolve_buffer binding ctx node with
+            | Single buffer -> buffer_view buffer
+            | Multi buffers -> U.mstack (List.map buffer_view (Device.Multi_buffer.bufs buffers)))
+      | _ -> None) linear in
+  linear, Array.of_list (List.rev !inputs)
 
 (* Execution device for a resolved buffer: the ambient device when the names
    agree, the registry's device for the buffer's placement otherwise. *)
@@ -908,8 +975,10 @@ let rec run_linear ~device ~to_program binding ?(var_vals = [])
     ?(input_uops = [||]) ?(update_stats = true) ?(jit = false) ?(wait = false)
     (linear : Tolk_uop.Uop.t) =
   let module U = Tolk_uop.Uop in
-  let linear = if jit then linear else
-    link_linear binding ~input_uops (compile_linear ~device ~to_program linear) in
+  let linear, input_uops = if jit then linear, input_uops else
+    let linear, input_uops = eager_template binding ~input_uops linear in
+    link_linear binding ~input_uops
+      (compile_linear_cached ~cache:true ~device ~to_program linear), input_uops in
   let ctx =
     exec_context ~var_vals ~input_uops ~update_stats ~jit
       ~wait:(wait || debug >= 2) ()

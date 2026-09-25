@@ -33,7 +33,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   Validate replay inputs whose alias
   relationships change, including overlapping external views and duplicate
   input buffers, so compiled dependencies cannot become stale.
-- Complete queue timestamp collection and eager submission-template caching.
+- Complete queue timestamp collection.
   Bring CUDA host and peer copies onto the queue path with runtime mapping
   eligibility and unsupported-mapping fallback. Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
@@ -50,6 +50,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   Preserve their correctness/lifetime regressions and revalidate the one-hot
   gather guard at the split threshold. Add custom-kernel sharding, source,
   reshape/flip/slice, invalid-store, assignment and gradient cases.
+  Fix the value-producing END rejected under `SPEC=1` in the custom GEMM's
+  serial accumulator loop.
 
 Acceptance: every existing backend builds against the shared protocol and no
 consumer depends on the old graph or storage interfaces. CPU and Metal execute

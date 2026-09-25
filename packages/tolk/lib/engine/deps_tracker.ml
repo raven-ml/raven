@@ -61,6 +61,8 @@ let uop u =
             let src = (U.src u).(0) in
             if U.op src = Tolk_uop.Ops.Mstack then unwrap (U.src src).(i) None offset
             else unwrap src (Some i) offset
+        | Tolk_uop.Ops.Mstack, _ when Option.is_some lane ->
+            unwrap (U.src u).(Option.get lane) None offset
         | Tolk_uop.Ops.Buffer, U.Arg.Param_arg {buffer = Some buffers; _} ->
             let buffer = match lane, buffers with
               | None, [b] -> Some b
