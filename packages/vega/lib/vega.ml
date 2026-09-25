@@ -782,6 +782,36 @@ let take (type a b) fn name path (x : (a, b) Nx.t) rest : (a, b) Nx.t =
             name
             (Dtype.to_string (Nx.dtype x)))
 
+(* [leafwise fn p ~params ~grads parts ~f] steps [params] leaf by leaf. [parts]
+   are the state's values of the parameters' skeleton, each with its name for
+   errors. At a float leaf, [f x g s] takes the parameter, its gradient and its
+   leaf of each part, in order, and returns the new parameter and the parts' new
+   leaves; other leaves pass through unchanged. The result is the new parameters
+   and the new parts. *)
+let leafwise fn p ~params ~grads parts
+    ~(f :
+       'a 'b.
+       ('a, 'b) Nx.t ->
+       ('a, 'b) Nx.t ->
+       ('a, 'b) Nx.t array ->
+       ('a, 'b) Nx.t * ('a, 'b) Nx.t array) =
+  let skeleton = snd (Nx.Ptree.flatten p params) in
+  let aligned name x = ref (aligned fn p skeleton name x) in
+  let grads = aligned "the gradients" grads in
+  let parts = Array.of_list parts in
+  let leaves = Array.map (fun (name, x) -> (name, aligned name x)) parts in
+  let parts' = Array.map (fun _ -> ref []) parts in
+  let update path x =
+    let g = take fn "the gradients" path x grads in
+    let s = Array.map (fun (name, rest) -> take fn name path x rest) leaves in
+    let x, s = if updates x then f x g s else (x, s) in
+    Array.iteri (fun i y -> parts'.(i) := Nx.P y :: !(parts'.(i))) s;
+    x
+  in
+  let params = Nx.Ptree.map p update params in
+  let rebuild i (_, like) = Nx.Ptree.rebuild p ~like (List.rev !(parts'.(i))) in
+  (params, Array.mapi rebuild parts)
+
 (* Gradient transformations *)
 
 let global_norm p grads =
@@ -917,37 +947,28 @@ let sgd_init p params =
     step = Nx.scalar Nx.int32 0l;
   }
 
-let descend (type a b) ~lr (p : (a, b) Nx.t) (v : (a, b) Nx.t) =
-  if updates p then Nx.sub p (Nx.mul v (Nx.cast (Nx.dtype p) lr)) else p
+(* [descend ~lr x d] is [x - lr * d], the rate cast to [x]'s dtype. *)
+let descend ~lr x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr))
 
 let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
   let fn = "Vega.sgd_step" in
-  let skeleton = snd (Nx.Ptree.flatten p params) in
-  let aligned name x = ref (aligned fn p skeleton name x) in
-  let grads' = aligned "the gradients" grads in
+  let step = Nx.add_s st.step 1l in
   if momentum = 0.0 then
     (* Plain gradient descent: the velocity is exactly the gradient. Skipping
        the [momentum * v + g] arithmetic avoids touching (and, under [jit],
        capturing) the velocity tensors at all. *)
-    let update path x = descend ~lr x (take fn "the gradients" path x grads') in
-    ( Nx.Ptree.map p update params,
-      { velocity = grads; step = Nx.add_s st.step 1l } )
+    let f x g _ = (descend ~lr x g, [||]) in
+    let params, _ = leafwise fn p ~params ~grads [] ~f in
+    (params, { velocity = grads; step })
   else
-    let velocity = aligned "the velocity" st.velocity in
-    let velocity' = ref [] in
-    let update path x =
-      let g = take fn "the gradients" path x grads' in
-      let v = take fn "the velocity" path x velocity in
-      let v =
-        if updates v then Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g
-        else v
-      in
-      velocity' := Nx.P v :: !velocity';
-      descend ~lr x v
+    let f x g s =
+      let v = Nx.add (Nx.mul s.(0) (scalar (Nx.dtype x) momentum)) g in
+      (descend ~lr x v, [| v |])
     in
-    let params = Nx.Ptree.map p update params in
-    let velocity = Nx.Ptree.rebuild p ~like:st.velocity (List.rev !velocity') in
-    (params, { velocity; step = Nx.add_s st.step 1l })
+    let params, parts =
+      leafwise fn p ~params ~grads [ ("the velocity", st.velocity) ] ~f
+    in
+    (params, { velocity = parts.(0); step })
 
 (* Adam and AdamW *)
 
@@ -980,42 +1001,29 @@ let adam_init p params =
 let adam_update fn p ~b1 ~b2 ~eps
     ~(apply : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) st ~params
     ~grads =
-  let skeleton = snd (Nx.Ptree.flatten p params) in
-  let aligned name x = ref (aligned fn p skeleton name x) in
-  let grads = aligned "the gradients" grads in
-  let mu = aligned "mu" st.mu and nu = aligned "nu" st.nu in
   let step = Nx.add_s st.step 1l in
-  let mu' = ref [] and nu' = ref [] in
-  let update path x =
-    let g = take fn "the gradients" path x grads in
-    let m = take fn "mu" path x mu and n = take fn "nu" path x nu in
-    let m, n, x =
-      if updates x then
-        let dt = Nx.dtype x in
-        let m =
-          Nx.add (Nx.mul m (scalar dt b1)) (Nx.mul g (scalar dt (1.0 -. b1)))
-        in
-        let n =
-          Nx.add
-            (Nx.mul n (scalar dt b2))
-            (Nx.mul (Nx.mul g g) (scalar dt (1.0 -. b2)))
-        in
-        let t = Nx.cast dt step in
-        let c1 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b1) t) in
-        let c2 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b2) t) in
-        let mu_hat = Nx.div m c1 in
-        let nu_hat = Nx.div n c2 in
-        (m, n, apply x (Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps))))
-      else (m, n, x)
+  let f x g s =
+    let dt = Nx.dtype x in
+    let m =
+      Nx.add (Nx.mul s.(0) (scalar dt b1)) (Nx.mul g (scalar dt (1.0 -. b1)))
     in
-    mu' := Nx.P m :: !mu';
-    nu' := Nx.P n :: !nu';
-    x
+    let n =
+      Nx.add
+        (Nx.mul s.(1) (scalar dt b2))
+        (Nx.mul (Nx.mul g g) (scalar dt (1.0 -. b2)))
+    in
+    let t = Nx.cast dt step in
+    let c1 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b1) t) in
+    let c2 = Nx.sub (scalar dt 1.0) (Nx.pow (scalar dt b2) t) in
+    let mu_hat = Nx.div m c1 in
+    let nu_hat = Nx.div n c2 in
+    ( apply x (Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps))),
+      [| m; n |] )
   in
-  let params = Nx.Ptree.map p update params in
-  let mu = Nx.Ptree.rebuild p ~like:st.mu (List.rev !mu') in
-  let nu = Nx.Ptree.rebuild p ~like:st.nu (List.rev !nu') in
-  (params, { mu; nu; step })
+  let params, parts =
+    leafwise fn p ~params ~grads [ ("mu", st.mu); ("nu", st.nu) ] ~f
+  in
+  (params, { mu = parts.(0); nu = parts.(1); step })
 
 let adam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
   let apply x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr)) in
