@@ -1,4 +1,6 @@
-void elementwise_sqrt(float* restrict data0_-1, float* restrict data1_-1, const int data2_) {
-  float val0 = (*(data0_-1+data2_));
-  *(data1_-1+data2_) = __builtin_sqrtf(val0);
+void elementwise_sqrt(float* restrict data0_-1, float* restrict data1_-1) {
+  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {
+    float val0 = (*(data0_-1+Lidx0));
+    *(data1_-1+Lidx0) = __builtin_sqrtf(val0);
+  }
 }

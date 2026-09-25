@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void E_8_2n3(device float* data0_16, device int* data1_2, device float* data2_256, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_16; device int* data1_2; device float* data2_256; };
+kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_16 = args.data0_16; device int* data1_2 = args.data1_2; device float* data2_256 = args.data2_256;
   int2 val0 = (*((device int2*)((data1_2+0))));
   int lidx0 = lid.x; /* 8 */
   float val1 = (((-1<val0.x)&(val0.x<32))?*(data2_256+(lidx0+(val0.x<<3))):0.0f);

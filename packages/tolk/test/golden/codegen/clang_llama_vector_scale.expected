@@ -1,5 +1,5 @@
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_2_2_4n1(float* restrict data0_16, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8) {
+void E_2_2_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8) {
   for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {
     float val0 = (*(data2_2+Lidx0));
     for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {

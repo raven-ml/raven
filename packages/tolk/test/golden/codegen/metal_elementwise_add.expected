@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void elementwise_add(device float* data0_-1, device float* data1_-1, device float* data2_-1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_-1; device float* data1_-1; device float* data2_-1; };
+kernel void elementwise_add(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_-1 = args.data0_-1; device float* data1_-1 = args.data1_-1; device float* data2_-1 = args.data2_-1;
   int gidx0 = gid.x; /* 256 */
   float val0 = (*(data0_-1+gidx0));
   float val1 = (*(data1_-1+gidx0));

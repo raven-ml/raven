@@ -13,14 +13,14 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   float alu3 = (val1+(0.0625f*alu2));
   float alu4 = ((val0*val1)+(val2*-2.5f));
   float alu5 = (val2+(0.0625f*alu4));
-  float alu6 = ((alu0*-0.625f)-val0);
-  float alu7 = (alu3+alu6);
-  float alu8 = (alu1+(alu7*0.625f));
-  float alu9 = ((alu4*-0.0625f)-val2);
-  float alu10 = ((alu2*-0.0625f)-val1);
-  float alu11 = ((alu1*(28.0f+alu9))+alu10);
-  float alu12 = (alu3+(0.0625f*alu11));
-  float alu13 = ((alu1*alu3)+(alu5*-2.5f));
-  float alu14 = (alu5+(0.0625f*alu13));
-  *(data3_-1+gidx0) = (alu8+((alu12+alu6+(alu7*-0.625f))*0.625f)+alu12+(0.0625f*((alu8*(28.0f+alu9+(alu13*-0.0625f)))+alu10+(alu11*-0.0625f)))+alu14+(0.0625f*((alu8*alu12)+(alu14*-2.5f))));
+  float alu6 = ((alu1*alu3)+(alu5*-2.5f));
+  float alu7 = ((alu4*-0.0625f)-val2);
+  float alu8 = ((alu0*-0.625f)-val0);
+  float alu9 = (alu3+alu8);
+  float alu10 = (alu1+(alu9*0.625f));
+  float alu11 = ((alu2*-0.0625f)-val1);
+  float alu12 = ((alu1*(28.0f+alu7))+alu11);
+  float alu13 = (alu3+(0.0625f*alu12));
+  float alu14 = (alu5+(0.0625f*alu6));
+  *(data3_-1+gidx0) = (alu10+((alu13+alu8+(alu9*-0.625f))*0.625f)+alu13+(0.0625f*((alu10*(28.0f+alu7+(alu6*-0.0625f)))+alu11+(alu12*-0.0625f)))+alu14+(0.0625f*((alu10*alu13)+(alu14*-2.5f))));
 }

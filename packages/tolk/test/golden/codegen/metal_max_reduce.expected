@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
-kernel void max_reduce(device float* data0_-1, device float* data1_-1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+struct args_t { device float* data0_-1; device float* data1_-1; };
+kernel void max_reduce(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_-1 = args.data0_-1; device float* data1_-1 = args.data1_-1;
   float buf0[1];
   *(buf0+0) = ((float)(-INFINITY));
   for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {

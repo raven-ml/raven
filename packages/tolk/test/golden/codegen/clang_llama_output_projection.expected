@@ -1,5 +1,5 @@
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void r_2_32_8n1(float* restrict data0_64, float* restrict data1_16, float* restrict data2_256) {
+void r_2_32_8(float* restrict data0_64, float* restrict data1_16, float* restrict data2_256) {
   for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
     int alu0 = (Lidx1<<3);
     float4 val0 = (*((float4*)((data1_16+(alu0+4)))));

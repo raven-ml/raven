@@ -5,7 +5,7 @@ extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned 
 extern "C" __attribute__((device, const)) float __ocml_sqrt_f32(float);
 typedef float float4 __attribute__((ext_vector_type(4)));
 static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
-extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 2))) r_2_8n5(float* data0_2, float* data1_16) {
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 2))) r_2_8(float* data0_2, float* data1_16) {
   int lidx0 = __ockl_get_local_id(0); /* 2 */
   int alu0 = (lidx0<<3);
   float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
