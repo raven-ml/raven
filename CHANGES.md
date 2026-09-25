@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A program of `Rune.jit` over several devices binds its intermediates to each
+  device's shared arenas, as one-device programs do: each device's grow with
+  its own programs and stay across calls. They were allocated and released on
+  every call.
 - `Rune.remat` inside `Rune.jit` over several devices checkpoints as on one
   device: the block's arguments are kept on each device and the block is
   recomputed in the backward pass. It kept every intermediate.

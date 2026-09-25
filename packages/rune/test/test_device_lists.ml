@@ -493,6 +493,60 @@ let test_consume_replicated_releases_every_copy () =
   raises_consumed (fun () -> to_arr w1);
   check_arr ~eps:0.0 ~msg:"value" (Array.make n 4.0) w2
 
+(* Programs over several devices share each device's arenas, which grow and
+   stay: a program run after a smaller one allocates nothing on any device but
+   its captured weights, where its intermediate, a quarter of an [n x n] matrix
+   per device, would take four times as much. Each device's arenas grow with its
+   own programs only. *)
+let test_programs_over_devices_share_arenas () =
+  let wave k r c =
+    Nx.create f32 [| r; c |]
+      (Array.init (r * c) (fun i -> sin (float_of_int ((k * i) + 1)) /. 8.0))
+  in
+  let run ?(devices = devs4) n act =
+    let w = wave 2 8 n and w2 = wave 3 n 8 in
+    let f =
+      Rune.jit' (fun x ->
+          Nx.sum ~axes:[ 1 ] (Nx.matmul (act (Nx.matmul x w)) w2))
+    in
+    let x = wave 1 n 8 in
+    ignore
+      (to_arr
+         (f
+            (match devices with
+            | [ d ] -> Nx.place (Nx.Placement.device d) x
+            | ds -> rows ds x)))
+  in
+  let bytes () =
+    List.map
+      (fun d ->
+        Option.value ~default:0
+          (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device
+             (Nx.Device.name d)))
+      devs4
+  in
+  let n = 1024 in
+  run n Nx.tanh;
+  run (n / 2) Nx.sin;
+  let before = bytes () in
+  run n Nx.cos;
+  List.iter2
+    (fun b a ->
+      is_true ~msg:"the program allocates only its captured weights"
+        (a - b <= 2 * 8 * n * 4))
+    before (bytes ());
+  (* A larger program on the first device grows that device's arenas alone: over
+     all four, a small program then binds each device's own. *)
+  run ~devices:[ List.hd devs4 ] (2 * n) Nx.tanh;
+  let before = bytes () in
+  run 64 Nx.sin;
+  List.iter2
+    (fun b a ->
+      is_true ~msg:"a small program allocates little on the other devices"
+        (a - b <= 64 * 1024))
+    (List.tl before)
+    (List.tl (bytes ()))
+
 (* A consumed argument over several devices lends its storage, its buffer on
    every device, to the result that continues it: a carry split or copied, and a
    pool an indexed write lands in, which the program never copies. *)
@@ -1005,6 +1059,8 @@ let tests =
       [
         test "a split state loop is bounded at two generations"
           test_consume_split_state;
+        test "programs over devices share arenas"
+          test_programs_over_devices_share_arenas;
         test "consumed storage is lent on every device"
           test_consumed_storage_is_lent;
         test "consuming copies releases every copy"

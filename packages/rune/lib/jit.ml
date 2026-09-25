@@ -287,13 +287,15 @@ let release_store s =
 
    A compiled program's planned intermediates are slices of arena buffers (see
    [held_buffers]). They live and die inside one call, and a device runs the
-   calls of all programs in queue order, so the single-device programs a device
-   runs share its arenas: a program's [k]th arena is bound, at every call, to
-   the device's [k]th shared buffer, which grows to the largest arena bound to
-   it. The buffer a slot outgrows is retired until its views are released and
-   the device has finished the work that may use it. *)
+   calls of all programs in queue order, so the programs a device runs share its
+   arenas: a program's [k]th arena is bound, at every call, to the device's
+   [k]th shared buffer, on each of its devices, which grows to the largest arena
+   bound to it. The buffer a slot outgrows is retired until its views are
+   released and the device has finished the work that may use it. *)
 
-let arenas : (string * int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 4
+let arenas : (Tolk.Device.t * (int, Tolk.Device.Buffer.t) Hashtbl.t) list ref =
+  ref []
+
 let retired_arenas : (Tolk.Device.t * Tolk.Device.Buffer.t) list ref = ref []
 
 let free_retired_arenas () =
@@ -358,8 +360,15 @@ let collect () =
 (* The device's [k]th shared arena, of at least [nbytes] bytes. It bypasses the
    allocator's cache: an outgrown arena returns to the system. *)
 let shared_arena dev k nbytes =
-  let key = (Tolk.Device.name dev, k) in
-  match Hashtbl.find_opt arenas key with
+  let slots =
+    match List.assq_opt dev !arenas with
+    | Some slots -> slots
+    | None ->
+        let slots = Hashtbl.create 4 in
+        arenas := (dev, slots) :: !arenas;
+        slots
+  in
+  match Hashtbl.find_opt slots k with
   | Some buf when Tolk.Device.Buffer.nbytes buf >= nbytes -> buf
   | outgrown ->
       Option.iter
@@ -375,7 +384,7 @@ let shared_arena dev k nbytes =
          Gc.major ();
          drain_releases ();
          Tolk.Device.Buffer.ensure_allocated buf);
-      Hashtbl.replace arenas key buf;
+      Hashtbl.replace slots k buf;
       buf
 
 (* How a program reads an input or constant from its node: from element [skip]
@@ -4150,9 +4159,8 @@ type 'q compiled = {
       (* tags of input and constant buffer nodes: outputs must not reseed
          them *)
   cp_arenas : U.t list;
-      (* the memory planner's arena buffer nodes, bound at every call to the
-         device's shared arenas (see [shared_arena]); none over several
-         devices *)
+      (* the memory planner's arena buffer nodes, bound at every call to their
+         devices' shared arenas (see [shared_arena]) *)
   cp_skeleton : 'q; (* the traced result, the template results are rebuilt in *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
@@ -4886,30 +4894,27 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   (* The planner's arenas are the int8 buffers its slices view; every other
      buffer a slice views is an input, a constant or an output. *)
   let cp_arenas =
-    if multi then []
-    else begin
-      let bound = Hashtbl.create 16 in
-      List.iter
-        (fun n -> Hashtbl.replace bound (U.tag n) ())
-        (List.map (fun inp -> inp.i_node) !inputs
-        @ List.map (fun (node, _, _) -> node) st.consts
-        @ List.map (fun (node, _, _) -> node) st.bound_consts
-        @ output_nodes);
-      let seen = Hashtbl.create 4 and acc = ref [] in
-      List.iter
-        (fun u ->
-          match U.contiguous_view u with
-          | Some (src, _)
-            when U.op src = Ops.Buffer
-                 && TD.equal (U.dtype src) TD.int8
-                 && (not (Hashtbl.mem bound (U.tag src)))
-                 && not (Hashtbl.mem seen (U.tag src)) ->
-              Hashtbl.replace seen (U.tag src) ();
-              acc := src :: !acc
-          | _ -> ())
-        (U.toposort ~enter_calls:true linear);
-      List.rev !acc
-    end
+    let bound = Hashtbl.create 16 in
+    List.iter
+      (fun n -> Hashtbl.replace bound (U.tag n) ())
+      (List.map (fun inp -> inp.i_node) !inputs
+      @ List.map (fun (node, _, _) -> node) st.consts
+      @ List.map (fun (node, _, _) -> node) st.bound_consts
+      @ output_nodes);
+    let seen = Hashtbl.create 4 and acc = ref [] in
+    List.iter
+      (fun u ->
+        match U.contiguous_view u with
+        | Some (src, _)
+          when U.op src = Ops.Buffer
+               && TD.equal (U.dtype src) TD.int8
+               && (not (Hashtbl.mem bound (U.tag src)))
+               && not (Hashtbl.mem seen (U.tag src)) ->
+            Hashtbl.replace seen (U.tag src) ();
+            acc := src :: !acc
+        | _ -> ())
+      (U.toposort ~enter_calls:true linear);
+    List.rev !acc
   in
   let binding = Tolk.Realize.Buffers.create () in
   let seed = seed_node binding ~multi in
@@ -5185,14 +5190,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
 let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
     (leaves : Nx.packed array) (seeds : seed array) : q =
   drain_releases ();
-  (* Rebind arenas before queue replay patches their addresses: another compiled
-     function may have grown the shared storage since the last call. *)
-  List.iteri
-    (fun k node ->
-      let nbytes = List.fold_left ( * ) 1 (U.max_shape node) in
-      Tolk.Realize.Buffers.seed c.cp_binding node
-        (shared_arena c.cp_device k nbytes))
-    c.cp_arenas;
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
   (* Seed the inputs. A leaf placed on this device seeds its input node with
      its buffer directly — no transfer, and the value stays resident (inputs
@@ -5265,6 +5262,41 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   let ranges = ref [] in
   Fun.protect ~finally:(fun () -> pending_views := !ranges @ !pending_views)
   @@ fun () ->
+  (* Rebind arenas before queue replay patches their addresses: another compiled
+     function may have grown the shared storage since the last call. An arena
+     over the program's devices is a view of each device's shared buffer of
+     exactly its size, the shards of one buffer being equal, while each device's
+     buffer grows with its own programs only. An arena on one device of several,
+     which a collective's copies use, is that device's, found by the name the
+     program gave it. *)
+  let devs = List.map snd c.cp_devices in
+  let names = List.map Tolk.Device.name devs in
+  List.iteri
+    (fun k node ->
+      let nbytes = List.fold_left ( * ) 1 (U.max_shape node) in
+      let seed dev =
+        Tolk.Realize.Buffers.seed c.cp_binding node (shared_arena dev k nbytes)
+      in
+      match (U.device_of node, devs) with
+      | Some (U.Single _), [ dev ] -> seed dev
+      | Some (U.Single name), _ -> (
+          match List.find_index (String.equal name) names with
+          | Some i -> seed (List.nth devs i)
+          | None -> invalid_arg "Rune.jit: an arena off the program's devices")
+      | Some (U.Multi ns), _ when List.equal String.equal ns names ->
+          let exactly dev =
+            let buf = shared_arena dev k nbytes in
+            if Tolk.Device.Buffer.nbytes buf = nbytes then buf
+            else begin
+              let view = buffer_range buf ~lo:0 ~span:nbytes in
+              ranges := view :: !ranges;
+              view
+            end
+          in
+          Tolk.Realize.Buffers.seed_multi c.cp_binding node
+            (Tolk.Device.Multi_buffer.of_bufs (List.map exactly devs))
+      | _ -> invalid_arg "Rune.jit: an arena off the program's devices")
+    c.cp_arenas;
   let keep = ref [] in
   let seed =
     seed_node c.cp_binding ~multi:(List.compare_length_with c.cp_devices 1 > 0)
