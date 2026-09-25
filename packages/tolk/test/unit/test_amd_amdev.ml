@@ -361,7 +361,7 @@ type fake_dev = {
 
 let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
     ?(mp1 = (13, 0, 10)) ?(mmhub = (3, 0, 0)) ?(sdma = (6, 0, 2))
-    ?(bif = (4, 3, 0)) ?(osssys = (6, 0, 0)) ?(pre = fun _ -> ()) f =
+    ?(bif = (4, 3, 0)) ?(osssys = (6, 0, 0)) ?(extra_ips = []) ?(pre = fun _ -> ()) f =
   with_fake_vram 0x2000000 (fun vram ->
       let store = Hashtbl.create 16 in
       let reads = Hashtbl.create 16 in
@@ -411,7 +411,7 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
           ~vram_size:(Mmio.size vram) ~large_bar:true ~reserved_vram_size:0
           ~discovery:
             (Amdev.parse_discovery
-               (discovery_blob (dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys)))
+               (discovery_blob (dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys @ extra_ips)))
           ~mm ~devfmt:"test"
           ~now_ms:(fun () ->
             incr clock;
@@ -2014,6 +2014,40 @@ let () =
                           ] );
                     ]
                     (List.rev !(fd.log))));
+          test "SDMA 4.4 binds every engine and ring to its discovered instance" (fun () ->
+              let extra_ips = List.init 15 (fun i ->
+                  0x2a, i + 1, (4, 4, 2), [0xb000 + (i + 1) * 0x1000]) in
+              with_fake_dev ~sdma:(4, 4, 2) ~extra_ips (fun fd ->
+                  let sdma = Sdma.create fd.dev and soc = Soc.create fd.dev in
+                  let reg inst name = Amdev.reg fd.dev ~inst name in
+                  Sdma.init_hw sdma ~soc;
+                  for inst = 0 to 15 do
+                    let cntl = reg inst "regSDMA_CNTL" in
+                    equal int (0xb000 + inst * 0x1000 + 0x6d) (Amdev.Am_register.reg cntl).Reg.addr;
+                    equal int 3 (Amdev.Am_register.read cntl)
+                  done;
+                  is_true (reg 4 "regSDMA_CNTL" == reg 4 "regSDMA_CNTL");
+                  raises_match (Exn.invalid_arg ~substring:"instance 16")
+                    (fun () -> reg 16 "regSDMA_CNTL");
+                  let queues = [1, 4; 4, 1; 5, 5] in
+                  List.iter (fun (idx, inst) ->
+                      let ring = 0x40000 + idx * 0x10000 in
+                      equal int (0x100 + inst * 0xa)
+                        (Sdma.setup_ring sdma ~ring_addr:ring ~ring_size:0x800
+                          ~rptr_addr:0x1234500011000 ~wptr_addr:0x2345600012000 ~idx);
+                      equal int (ring lsr 8) (Amdev.Am_register.read (reg inst "regSDMA_GFX_RB_BASE"));
+                      equal int 0x12345 (Amdev.Am_register.read (reg inst "regSDMA_GFX_RB_RPTR_ADDR_HI"))) queues;
+                  let untouched = reg 0 "regSDMA_GFX_RB_CNTL" in
+                  Amdev.Am_register.write untouched ~value:0x80000000 [];
+                  Sdma.fini_hw sdma;
+                  equal int 0x80000000 (Amdev.Am_register.read untouched);
+                  List.iter (fun (_, inst) ->
+                      List.iter (fun (name, field) ->
+                          equal int 0 (List.assoc field (Amdev.Am_register.read_bitfields (reg inst name))))
+                        ["regSDMA_GFX_RB_CNTL", "rb_enable";
+                         "regSDMA_GFX_IB_CNTL", "ib_enable";
+                         "regSDMA_GFX_DOORBELL", "enable";
+                         "regSDMA_GFX_DOORBELL_OFFSET", "offset"]) queues));
           test "setup_ring programs the queue and returns its doorbell"
             (fun () ->
               with_fake_dev (fun fd ->

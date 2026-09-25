@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI register bindings honor discovered IP instances. SDMA 4.4 initializes
+  and tears down each selected engine and copy ring instead of repeatedly
+  programming instance zero.
+
 - Successful AMD PCI compute recovery releases retained submission errors while
   still reporting the failed work to its caller. Recovery targets only the
   failed device and remains blocked while SDMA work is outstanding.

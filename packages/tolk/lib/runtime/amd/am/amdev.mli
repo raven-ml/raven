@@ -373,12 +373,13 @@ val xgmi2paddr : t -> int -> int
 
 (** {2:regaccess Register access} *)
 
-val reg : t -> string -> Am_register.t
-(** [reg t name] is the register [name] (e.g. ["regSCRATCH_REG7"])
+val reg : t -> ?inst:int -> string -> Am_register.t
+(** [reg t ?inst name] is the register [name] (e.g. ["regSCRATCH_REG7"])
     resolved against the register families of the device's discovered
     IP versions, bound to the device. Names are matched exactly; when
     several families define the same name, the family resolved last
-    wins. Raises [Invalid_argument] if no family defines [name]. *)
+    wins. [inst] selects its discovered IP instance and defaults to [0].
+    Raises [Invalid_argument] if the register or instance is absent. *)
 
 val rreg : t -> int -> int
 (** [rreg t reg] is the 32-bit value of the register at dword address
@@ -389,10 +390,10 @@ val wreg : t -> int -> int -> unit
 (** [wreg t reg v] writes the 32-bit value [v] to the register at dword
     address [reg], like {!rreg}. *)
 
-val wreg_pair : t -> string -> lo:string -> hi:string -> int -> unit
-(** [wreg_pair t base ~lo ~hi v] writes the 64-bit value [v] across the
+val wreg_pair : t -> ?inst:int -> string -> lo:string -> hi:string -> int -> unit
+(** [wreg_pair t ?inst base ~lo ~hi v] writes the 64-bit value [v] across the
     register pair named [base ^ lo] (low half) and [base ^ hi] (high
-    half). *)
+    half), using discovered IP instance [inst] (default [0]). *)
 
 val indirect_wreg_pcie : t -> ?aid:int -> int -> int -> unit
 (** [indirect_wreg_pcie t reg v] writes [v] to the register at dword

@@ -688,7 +688,7 @@ type t = {
   discovery : discovery;
   rreg : int -> int;
   wreg : int -> int -> unit;
-  reg : string -> Am_register.t;
+  reg : int -> string -> Am_register.t;
   xgmi_seg_sz : int;
   paddr_base : int;
   mc_base : int;
@@ -730,11 +730,11 @@ let xgmi2paddr t xgmi_paddr = xgmi_paddr - t.paddr_base
 
 let rreg t r = t.rreg r
 let wreg t r v = t.wreg r v
-let reg t name = t.reg name
+let reg t ?(inst = 0) name = t.reg inst name
 
-let wreg_pair t base ~lo ~hi v =
-  Am_register.write (reg t (base ^ lo)) ~value:(v land 0xffffffff) [];
-  Am_register.write (reg t (base ^ hi)) ~value:(v lsr 32) []
+let wreg_pair t ?(inst = 0) base ~lo ~hi v =
+  Am_register.write (reg t ~inst (base ^ lo)) ~value:(v land 0xffffffff) [];
+  Am_register.write (reg t ~inst (base ^ hi)) ~value:(v lsr 32) []
 
 let indirect_wreg_pcie t ?(aid = 0) r v =
   let reg_addr =
@@ -775,11 +775,6 @@ let build_ips discovery =
     | Some v -> v
     | None -> failwith (Printf.sprintf "ip 0x%x missing from discovery" hwip)
   in
-  let inst0_bases hwip =
-    match List.assoc_opt hwip discovery.regs_offset with
-    | Some insts -> List.assoc_opt 0 insts
-    | None -> None
-  in
   let gc_ver = ip_version Am.gc_hwip in
   let mods =
     [
@@ -796,9 +791,10 @@ let build_ips discovery =
     else []
   in
   let create_ip name hwip version =
-    match inst0_bases hwip with
-    | Some bases -> [ Amd_tables.Ip.create ~name ~version ~bases ]
-    | None -> []
+    match List.assoc_opt hwip discovery.regs_offset with
+    | Some ((_, bases) :: _ as instances) ->
+        [ Amd_tables.Ip.create ~name ~version ~bases, instances ]
+    | Some [] | None -> []
   in
   let ips =
     List.concat_map
@@ -829,12 +825,16 @@ let reg_access ~ips access =
      in an earlier one. [ips] holds the most recently resolved family
      first, so lookups prefer later families and a name defined twice
      resolves as if the tables had been merged in resolution order. *)
-  let find name =
+  let find inst name =
     let rec loop = function
       | [] -> invalid_arg (Printf.sprintf "device has no register %s" name)
-      | ip :: rest -> (
+      | (ip, instances) :: rest -> (
           match Amd_tables.Ip.reg ip name with
-          | r when String.equal r.Amd_tables.Reg.name name -> r
+          | r when String.equal r.Amd_tables.Reg.name name ->
+              let bases = match List.assoc_opt inst instances with
+                | Some bases -> bases
+                | None -> invalid_arg (Printf.sprintf "register %s has no instance %d" name inst) in
+              {r with addr = bases.(r.segment) + r.offset}
           | _ -> loop rest
           | exception Invalid_argument _ -> loop rest)
     in
@@ -852,17 +852,17 @@ let reg_access ~ips access =
         else raw_wreg mmio r v
     | `Fns (_, wreg) -> wreg r v
   and indirect_rreg r =
-    Am_register.write (reg "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
-    Am_register.read (reg "regBIF_BX_PF0_RSMU_DATA")
+    Am_register.write (reg 0 "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
+    Am_register.read (reg 0 "regBIF_BX_PF0_RSMU_DATA")
   and indirect_wreg r v =
-    Am_register.write (reg "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
-    Am_register.write (reg "regBIF_BX_PF0_RSMU_DATA") ~value:v []
-  and reg name =
-    match Hashtbl.find_opt regs name with
+    Am_register.write (reg 0 "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
+    Am_register.write (reg 0 "regBIF_BX_PF0_RSMU_DATA") ~value:v []
+  and reg inst name =
+    match Hashtbl.find_opt regs (name, inst) with
     | Some r -> r
     | None ->
-        let r = Am_register.make ~reg:(find name) ~rreg ~wreg in
-        Hashtbl.add regs name r;
+        let r = Am_register.make ~reg:(find inst name) ~rreg ~wreg in
+        Hashtbl.add regs (name, inst) r;
         r
   in
   (rreg, wreg, reg)
@@ -893,7 +893,7 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
   let rreg, wreg, reg =
     reg_access ~ips:(build_ips discovery) (`Fns (rreg, wreg))
   in
-  let xgmi_seg_sz, paddr_base, mc_base = gmc_state reg in
+  let xgmi_seg_sz, paddr_base, mc_base = gmc_state (reg 0) in
   {
     pci_dev;
     devfmt;
@@ -939,7 +939,7 @@ let create pci_dev =
     match gc_ver with 9, (4 | 5), _ -> 384 lsl 20 | _ -> 64 lsl 20
   in
   let rreg, wreg, reg = reg_access ~ips:(build_ips discovery) (`Bar mmio) in
-  let xgmi_seg_sz, paddr_base, mc_base = gmc_state reg in
+  let xgmi_seg_sz, paddr_base, mc_base = gmc_state (reg 0) in
   let is_booting = ref true in
   let on_range_mapped = ref (fun () -> ()) in
   let devfmt = System.Pci_device.pcibus pci_dev in

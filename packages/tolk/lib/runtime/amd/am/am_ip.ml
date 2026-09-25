@@ -1625,11 +1625,8 @@ module Sdma = struct
     (* "F32" or "MCU": the engine's control-thread name, which prefixes
        its halt and poll-enable fields. *)
     sdma_name : string;
-    (* Register-name prefixes of the queues brought up so far, in setup
-       order. Engine selection by register instance (the pre-5.0
-       generations) is not represented until the register layer
-       addresses instances. *)
-    mutable sdma_reginst : string list;
+    (* Register prefixes and discovered instances of configured queues. *)
+    mutable sdma_reginst : (string * int) list;
   }
 
   (* ip.py:499 AM_SDMA.init_sw *)
@@ -1650,7 +1647,8 @@ module Sdma = struct
     let pipe_cnt = if sdma_ver < (5, 0, 0) then 16 else 1 in
     for pipe_id = 0 to pipe_cnt - 1 do
       let pipe = if sdma_ver < (5, 0, 0) then "" else string_of_int pipe_id in
-      let r name = Amdev.reg adev (Printf.sprintf "regSDMA%s_%s" pipe name) in
+      let inst = if sdma_ver < (5, 0, 0) then pipe_id else 0 in
+      let r name = Amdev.reg adev ~inst (Printf.sprintf "regSDMA%s_%s" pipe name) in
       if sdma_ver >= (6, 0, 0) then begin
         (* 10s, 100ms per unit *)
         Am_register.update (r "WATCHDOG_CNTL") [ ("queue_hang_count", 100) ];
@@ -1697,6 +1695,7 @@ module Sdma = struct
 
   (* ip.py:537 setup_ring *)
   let setup_ring t ~ring_addr ~ring_size ~rptr_addr ~wptr_addr ~idx =
+    if idx < 0 then invalid_arg "Sdma.setup_ring: negative queue index";
     let adev = t.adev in
     let sdma_ver = Amdev.ip_ver adev Am.sdma0_hwip in
     let sdma_ma, sdma_mi, _ = sdma_ver in
@@ -1709,17 +1708,17 @@ module Sdma = struct
       if (sdma_ma, sdma_mi) = (4, 4) then "regSDMA_GFX"
       else Printf.sprintf "regSDMA%d_QUEUE%d" pipe queue
     in
+    let inst = if (sdma_ma, sdma_mi) = (4, 4) then pipe + (queue * 4) else 0 in
     let doorbell =
       Am.amdgpu_navi10_doorbell_sdma_engine0 + ((pipe + (queue * 4)) * 0xA)
     in
-    t.sdma_reginst <- t.sdma_reginst @ [ reg ];
-    let r name = Amdev.reg adev (reg ^ name) in
+    let r name = Amdev.reg adev ~inst (reg ^ name) in
     Am_register.write (r "_MINOR_PTR_UPDATE") ~value:0x1 [];
-    Amdev.wreg_pair adev (reg ^ "_RB_RPTR") ~lo:"" ~hi:"_HI" 0;
-    Amdev.wreg_pair adev (reg ^ "_RB_WPTR") ~lo:"" ~hi:"_HI" 0;
-    Amdev.wreg_pair adev (reg ^ "_RB_BASE") ~lo:"" ~hi:"_HI" (ring_addr lsr 8);
-    Amdev.wreg_pair adev (reg ^ "_RB_RPTR_ADDR") ~lo:"_LO" ~hi:"_HI" rptr_addr;
-    Amdev.wreg_pair adev
+    Amdev.wreg_pair adev ~inst (reg ^ "_RB_RPTR") ~lo:"" ~hi:"_HI" 0;
+    Amdev.wreg_pair adev ~inst (reg ^ "_RB_WPTR") ~lo:"" ~hi:"_HI" 0;
+    Amdev.wreg_pair adev ~inst (reg ^ "_RB_BASE") ~lo:"" ~hi:"_HI" (ring_addr lsr 8);
+    Amdev.wreg_pair adev ~inst (reg ^ "_RB_RPTR_ADDR") ~lo:"_LO" ~hi:"_HI" rptr_addr;
+    Amdev.wreg_pair adev ~inst
       (reg ^ "_RB_WPTR_POLL_ADDR")
       ~lo:"_LO" ~hi:"_HI" wptr_addr;
     Am_register.update (r "_DOORBELL_OFFSET") [ ("offset", doorbell * 2) ];
@@ -1735,22 +1734,24 @@ module Sdma = struct
           ("rb_size", bit_length (ring_size / 4) - 1);
         ]);
     Am_register.update (r "_IB_CNTL") [ ("ib_enable", 1) ];
+    if not (List.mem (reg, inst) t.sdma_reginst) then
+      t.sdma_reginst <- t.sdma_reginst @ [reg, inst];
     doorbell
 
   (* ip.py:525 AM_SDMA.fini_hw *)
   let fini_hw t =
     let adev = t.adev in
     List.iter
-      (fun reg ->
+      (fun (reg, inst) ->
         Am_register.update
-          (Amdev.reg adev (reg ^ "_RB_CNTL"))
+          (Amdev.reg adev ~inst (reg ^ "_RB_CNTL"))
           [ ("rb_enable", 0) ];
         Am_register.update
-          (Amdev.reg adev (reg ^ "_IB_CNTL"))
+          (Amdev.reg adev ~inst (reg ^ "_IB_CNTL"))
           [ ("ib_enable", 0) ];
-        Am_register.update (Amdev.reg adev (reg ^ "_DOORBELL")) [ ("enable", 0) ];
+        Am_register.update (Amdev.reg adev ~inst (reg ^ "_DOORBELL")) [ ("enable", 0) ];
         Am_register.update
-          (Amdev.reg adev (reg ^ "_DOORBELL_OFFSET"))
+          (Amdev.reg adev ~inst (reg ^ "_DOORBELL_OFFSET"))
           [ ("offset", 0) ])
       t.sdma_reginst;
     if Amdev.ip_ver adev Am.sdma0_hwip >= (6, 0, 0) then begin
