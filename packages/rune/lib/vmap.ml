@@ -613,7 +613,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        backward pass, marks those at the batched arguments' positions, and
        records which results come out batched; the results the call returns,
        which may be aliases, are marked at those positions. *)
-    | Remat.E_remat (Remat.Call { params_s; result_s; params; f }) ->
+    | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals }) ->
         let flags =
           List.map
             (fun (Nx.P p) -> batched st p)
@@ -635,13 +635,24 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             let y =
-              Remat.run (Remat.Call { params_s; result_s; params; f = f' })
+              Remat.run
+                (Remat.Call { params_s; result_s; params; f = f'; residuals })
             in
             List.iter2
               (fun (Nx.P l) b -> if b then mark st l)
               (fst (Nx.Ptree.flatten result_s y))
               !out;
             continue k y)
+    | Remat.E_barrier { values; after } ->
+        if not (List.exists (fun (Nx.P v) -> batched st v) values) then None
+        else
+          Some
+            (fun k ->
+              let out = Remat.barrier ~after values in
+              List.iter2
+                (fun (Nx.P v) (Nx.P o) -> if batched st v then mark st o)
+                values out;
+              continue k out)
     (* Operations on constants, and effects from other libraries, fall through.
        A new Nx tensor operation must be added to this match: an unmatched
        batched operand would silently produce wrong shapes. *)

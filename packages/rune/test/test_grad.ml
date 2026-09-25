@@ -322,6 +322,35 @@ let test_remat_grad_of_capture_and_argument () =
     (Rune.grad' (loss rematted_layer))
     (along ())
 
+(* Second derivatives with respect to weights that are inputs of the compiled
+   function, passed to the remat or captured by it. *)
+let test_remat_hvp_of_weights () =
+  let hvp loss w =
+    Rune.grad' (fun w -> Nx.sum (Nx.mul (Rune.grad' loss w) (along ()))) w
+  in
+  let passed r w =
+    Nx.sum (Nx.sin (r (fun w x -> Nx.tanh (Nx.mul x w)) w (Nx.cos (at ()))))
+  in
+  check_eager_and_jit ~msg:"passed"
+    (hvp (passed (fun f -> f)))
+    (hvp (passed (Rune.remat Nx.Ptree.(tensor @-> tensor @-> returns tensor))))
+    (along ());
+  let captured r w =
+    Nx.sum (Nx.sin (r (fun x -> Nx.mul (Nx.exp x) (Nx.mul w w)) (at ())))
+  in
+  check_eager_and_jit ~msg:"captured"
+    (hvp (captured (fun f -> f)))
+    (hvp (captured rematted_layer))
+    (along ())
+
+(* The argument is the tensor the function captures. *)
+let test_remat_argument_also_captured () =
+  let loss r w = Nx.sum (r (fun x -> Nx.mul (Nx.sin x) w) w) in
+  check_eager_and_jit ~msg:"d w"
+    (Rune.grad' (loss (fun f -> f)))
+    (Rune.grad' (loss rematted_layer))
+    (along ())
+
 (* The lane's row is captured and the argument is a constant of the map. *)
 let test_remat_batched_capture () =
   let xs () = Nx.create f64 [| 2; 3 |] [| 0.7; -1.3; 2.1; 0.2; 0.9; -0.4 |] in
@@ -486,6 +515,10 @@ let tests =
         test "differentiates a tensor both captured and passed"
           test_remat_grad_of_capture_and_argument;
         test "maps a batched capture" test_remat_batched_capture;
+        test "second derivatives with respect to weights under jit"
+          test_remat_hvp_of_weights;
+        test "differentiates an argument it also captures"
+          test_remat_argument_also_captured;
       ];
     group "set"
       [ test "differentiates both operands" test_set_grad_both_operands ];

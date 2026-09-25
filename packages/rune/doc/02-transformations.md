@@ -263,7 +263,7 @@ let () =
   Printf.printf "%s\n" (Nx.to_string g_remat) (* identical *)
 ```
 
-Wrap the memory-heavy sub-computation (a transformer block, say), not the whole objective. The block may close over its weights: every transformation sees `remat s f` as it sees `f`, so gradients and tangents reach the tensors it captures. Forward mode keeps no intermediates: under `jvp`, `remat s f` computes what `f` does.
+Wrap the memory-heavy sub-computation (a transformer block, say), not the whole objective. The block may close over its weights: every transformation sees `remat s f` as it sees `f`, so gradients and tangents reach the tensors it captures. Under `jit`, the recomputation runs in the backward pass, once the block's output cotangent exists, so the compiled program holds one block's intermediates at a time. A compiled `scan` already recomputes each step in its backward loop, so a `scan` body gains nothing from `remat`. Forward mode keeps no intermediates: under `jvp`, `remat s f` computes what `f` does.
 
 ## Custom Differentiation Rules
 

@@ -1132,7 +1132,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                 y
               in
               let y =
-                Remat.run (Remat.Call { params_s; result_s; params; f = f' })
+                Remat.run
+                  (Remat.Call
+                     { params_s; result_s; params; f = f'; residuals = true })
               in
               if not !depends then continue k y
               else begin
@@ -1153,6 +1155,25 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                            y));
                 continue k y
               end)
+      (* The barrier is the identity: an output's cotangent is its value's. *)
+      | Remat.E_barrier { values; after } ->
+          if not (List.exists (fun (Nx.P v) -> tracked v) values) then None
+          else
+            Some
+              (fun k ->
+                let out = Remat.barrier ~after values in
+                List.iter2
+                  (fun (Nx.P v) o ->
+                    let o = Nx.unpack (T.dtype v) o in
+                    if tracked v && o != v then begin
+                      track o;
+                      Tape.record tape (fun () ->
+                          match Tape.find tape o with
+                          | None -> ()
+                          | Some g -> Tape.accumulate tape v g)
+                    end)
+                  values out;
+                continue k out)
       (* Quantised products. A weight is never differentiated; the cotangent of
          [x] is the transposed product with the same ids, summed over the axes
          along which [x] was broadcast. The tape holds the weight and the ids,
@@ -1198,17 +1219,22 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
   { retc = Fun.id; exnc = raise; effc }
 
 (* Accumulate into [tape] the pullback of [cts] through a second run of [f] at
-   [params]. The run reads aliases of [params] under a tape linked to [tape], so
-   a tensor [f] captures that [tape] tracks becomes a leaf of the run and its
-   cotangent goes back to [tape] too. *)
+   [params]. The run reads [params] through a barrier after [cts], under a tape
+   linked to [tape], so a tensor [f] captures that [tape] tracks becomes a leaf
+   of the run and its cotangent goes back to [tape] too. *)
 and recompute : type p q.
     Tape.t -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p -> q -> unit =
  fun tape params_s result_s f params cts ->
-  let params' = Structure.aliases params_s params in
+  let after = fst (Nx.Ptree.flatten result_s cts) in
+  let params' =
+    Structure.aliases params_s
+      (Nx.Ptree.rebuild params_s ~like:params
+         (Remat.barrier ~after (fst (Nx.Ptree.flatten params_s params))))
+  in
   let run = Tape.create ~parent:tape () in
   ignore
     (Structure.map2 "Rune.remat" params_s ~this:"the arguments"
-       ~that:"their aliases"
+       ~that:"their barriers"
        (fun _ p p' ->
          if Tape.tracked tape p then Tape.track run p';
          p)
@@ -1227,7 +1253,7 @@ and recompute : type p q.
   Tape.backward run;
   ignore
     (Structure.map2 "Rune.remat" params_s ~this:"the arguments"
-       ~that:"their aliases"
+       ~that:"their barriers"
        (fun _ p p' ->
          if Tape.tracked run p' then
            Tape.accumulate tape p (Tape.cotangent run p');

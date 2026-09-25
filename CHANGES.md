@@ -160,6 +160,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.remat` saves memory under `jit`: its recomputation shared the forward
+  pass's nodes, which kept every block's intermediates live (16 MLP blocks,
+  batch 2048, CPU: 169 MiB with or without `remat`, now 62 MiB).
 - `Rune.remat` works under `jvp` and differentiates the tensors its function
   captures, such as the weights a layer closes over: their gradients and
   tangents were zero, or missed the captured share. It raised under `jvp`.

@@ -107,6 +107,14 @@ acceptance requirement; skipped tests are not execution evidence.
 - Update the TSan workspace's OCaml 5.4 pin for the current dependency set and
   run runtime/lifetime stress tests. Measure search cost, selected-kernel
   latency, JIT replay, allocations and handle counts on consumer workloads.
+- At the reference pin move, `find_bufs`' read/write cycle check keys on the
+  pointer node (upstream `read_from.setdefault(buf, state:=idx.src[0]) is not
+  state`), where the pin and tolk key on its op. Rune's remat barrier reads a
+  materialised argument as `AFTER(AFTER(buf, STORE), cotangents)`, and a
+  second-order backward can read it as `AFTER(buf, STORE)` in the same kernel:
+  one op today, two states under the new check. `test_grad`'s remat group and
+  `test_remat_memory` would then raise "cycle detected while indexing buffer";
+  the barrier needs another form before the pin moves.
 - Remove closed divergence rulings. Give retained differences a current
   consumer, test and reconsideration criterion. Update the reference pin and
   expectations only when drivers and implementation agree.

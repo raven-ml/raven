@@ -4,13 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 (* The device memory a compiled gradient needs when every layer is under
-   [Rune.remat].
+   [Rune.remat], on the device the [DEV] environment variable names.
 
-   On the CPU device a compiled call's inputs, constants and outputs alias host
-   memory, so the device memory it allocates is the memory planner's arena: the
-   most intermediates live at once. The arenas are shared by every program the
-   process compiles and only grow, so this suite compiles one program and runs
-   alone in its executable. *)
+   The figure is the device's allocated bytes across the first call, less the
+   weights and input uploaded to it and the gradients computed on it: on the CPU
+   device those alias host memory and count nothing. What remains is the memory
+   planner's arena, the most intermediates live at once, and on Metal the
+   compiled queue's command storage (33 KiB here). The arenas are shared by
+   every program the process compiles and only grow, so this suite compiles one
+   program and runs alone in its executable. *)
 
 open Windtrap
 
@@ -23,19 +25,20 @@ let f32 = Nx.float32
 (* A residual MLP block. Its backward pass reads the [batch; hidden]
    pre-activation, eight times the size of the block's input. *)
 let block (w1, w2) x = Nx.add x (Nx.matmul (Nx.relu (Nx.matmul x w1)) w2)
+let device = Option.value (Sys.getenv_opt "DEV") ~default:"CPU"
 
 let device_bytes () =
   ignore (Rune.jit_stats ());
   Option.value ~default:0
-    (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device "CPU")
+    (Hashtbl.find_opt Tolk.Helpers.Global_counters.mem_used_per_device device)
 
 (* Without remat the gradient keeps every layer's pre-activation until the
-   backward pass reaches it, [layers * batch * hidden] floats. With remat it
-   keeps each layer's input, an eighth of that, and recomputes one layer at a
-   time, so the peak stays under half of it. The layers are unrolled: a staged
-   [Rune.scan] already recomputes each step in its backward loop, remat or
-   not. *)
-let test_remat_bounds_the_peak () =
+   backward pass reaches it, [layers * batch * hidden] floats: the arena is
+   5,013,504 bytes on the CPU device. With remat it keeps each layer's input, an
+   eighth of that, and recomputes one layer at a time: 1,802,240 bytes. The
+   layers are unrolled: a staged [Rune.scan] already recomputes each step in its
+   backward loop, remat or not. *)
+let test_remat_keeps_under_half_the_activations () =
   let s = Nx.Ptree.(pair tensor tensor) in
   let remat_block =
     Rune.remat Nx.Ptree.(s @-> tensor @-> returns tensor) block
@@ -58,21 +61,22 @@ let test_remat_bounds_the_peak () =
   let before = device_bytes () in
   let g1, _ = grad (w1s, w2s) in
   ignore (Nx.item [] (Nx.sum g1) : float);
-  let peak = device_bytes () - before in
+  let transfers =
+    if device = "CPU" then 0
+    else (2 * (Nx.nbytes w1s + Nx.nbytes w2s)) + Nx.nbytes x
+  in
+  let arena = device_bytes () - before - transfers in
   let activations = layers * batch * hidden * 4 in
   is_true
     ~msg:
-      (Printf.sprintf "peak %d bytes, under half of the %d activation bytes"
-         peak activations)
-    (peak < activations / 2)
+      (Printf.sprintf
+         "an arena of %d bytes is under half of %d activation bytes" arena
+         activations)
+    (arena < activations / 2)
 
 let () =
   run "rune remat memory"
     [
-      xfail
-        ~reason:
-          "jit shares the recomputed forward with the original, so the \
-           activations stay live"
-        (test "jit (grad) under remat bounds the peak"
-           test_remat_bounds_the_peak);
+      test "jit (grad) under remat keeps under half the activations"
+        test_remat_keeps_under_half_the_activations;
     ]

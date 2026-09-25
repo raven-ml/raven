@@ -646,7 +646,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
          so that an enclosing transformation sees the tangents as results of the
          remat. The tangents of the arguments, like those of the tensors [f]
          captures, are tensors the function closes over. *)
-      | Remat.E_remat (Remat.Call { params_s; result_s; params; f }) ->
+      | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals })
+        ->
           Some
             (fun k ->
               let dparams =
@@ -680,6 +681,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                        result_s = Nx.Ptree.pair result_s Structure.packed_list;
                        params;
                        f = f';
+                       residuals;
                      })
               in
               ignore
@@ -695,6 +697,43 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                    (fst (Nx.Ptree.flatten result_s y))
                    !active_out);
               continue k y)
+      (* The barrier is the identity, and the tangents pass through it with
+         their values: an output's tangent is its value's tangent after the
+         barrier. A tangent read around the barrier would let the
+         recomputation's tangents share the forward pass's. *)
+      | Remat.E_barrier { values; after } ->
+          let tangents =
+            List.filter_map
+              (fun (P v) -> Option.map (fun d -> P d) (tangent v))
+              values
+          in
+          if tangents = [] then None
+          else
+            Some
+              (fun k ->
+                let out = Remat.barrier ~after (values @ tangents) in
+                let rec split vs out =
+                  match (vs, out) with
+                  | [], tangents -> ([], tangents)
+                  | _ :: vs, o :: out ->
+                      let os, tangents = split vs out in
+                      (o :: os, tangents)
+                  | _ :: _, [] -> assert false
+                in
+                let out, tangents = split values out in
+                ignore
+                  (List.fold_left2
+                     (fun tangents (P v) o ->
+                       match (tangent v, tangents) with
+                       | Some _, d :: tangents ->
+                           set_tangent
+                             (T.unpack (T.dtype v) o)
+                             (T.unpack (T.dtype v) d);
+                           tangents
+                       | Some _, [] -> assert false
+                       | None, tangents -> tangents)
+                     tangents values out);
+                continue k out)
       (* Quantised products. A weight is never differentiated; the tangent of a
          product is the product of the tangent of [x]. *)
       | Nx_quant.Effect.E_quant

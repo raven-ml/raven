@@ -410,8 +410,12 @@ type state = {
       (* active observers of the tensors a scan body reads, innermost first;
          consulted by [tolk_of] while a scan body is being traced *)
   mutable scan_writes : (U.t * U.t list ref) list;
-      (* staged scans being traced: each carry slot's buffer node -> the buffers
-         indexed writes into it land in (see [write_destination]) *)
+  (* staged scans being traced: each carry slot's buffer node -> the buffers
+     indexed writes into it land in (see [write_destination]) *)
+  mutable scan_bodies : int;
+      (* the staged scan bodies being traced, forward or backward: a body
+         recomputes its step in the backward loop, so remat has nothing to do
+         there *)
 }
 
 (* A polymorphic observer of the tensors flowing through [tolk_of]. *)
@@ -1582,6 +1586,40 @@ let realize_arg st (tt : F.Tensor.t) : U.t =
     U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:u () ]
   else U.contiguous ~force:true ~src:u ()
 
+let in_scan_body st f =
+  st.scan_bodies <- st.scan_bodies + 1;
+  Fun.protect ~finally:(fun () -> st.scan_bodies <- st.scan_bodies - 1) f
+
+(* Gradient checkpointing (see [Remat]) *)
+
+(* The storage [u] reads through views, when it reads one. *)
+let viewed_storage u =
+  let base = U.base u in
+  if U.has_buffer_identity ~after_ok:true base then Some base else None
+
+(* The storage behind [tt]'s views. A value that reads none is stored into a
+   buffer first and [tt] repointed at it: the tensors that read [tt] later read
+   the buffer, and the nodes built before keep the computation they read. *)
+let storage st tt =
+  match viewed_storage (F.Tensor.uop tt) with
+  | Some s -> s
+  | None ->
+      let shape = Array.of_list (F.Tensor.shape tt) in
+      let n = numel shape in
+      let buf = make_node st (F.Tensor.val_dtype tt) n in
+      let s = U.after ~src:buf ~deps:[ store_flat buf n tt ] in
+      F.Tensor.set_uop tt (F.Tensor.uop (buffer_tensor s shape));
+      s
+
+(* [u] with [base], the node its views read, replaced by [f base]. *)
+let rec reroot base f u =
+  if u == base then f u
+  else
+    U.replace u
+      ~src:
+        (Array.mapi (fun i s -> if i = 0 then reroot base f s else s) (U.src u))
+      ()
+
 (* A row slot [slot] of [numel] elements over the rows of the [n; ...] value
    [tt], padded to the loop's row stride when a row falls short of it. *)
 let add_rows_in_value st l ~slot ~numel ~n tt =
@@ -1998,6 +2036,55 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               continue k res
             else stage_scan st req k)
     | Scan.E_scan_bwd bwd -> Some (fun k -> stage_scan_bwd st bwd k)
+    (* Gradient checkpointing. A differentiated remat's arguments are the
+       residuals of its backward pass, so they are materialised. The backward
+       pass reads them through an AFTER on their storage whose dependencies are
+       the cotangents of the result, materialised too: that node is one the
+       forward pass never built, so the recomputation shares nothing with it,
+       and the kernels reading it wait for the cotangents, so the recomputation
+       runs in the backward pass. Storage the program does not write (an input
+       of the compiled function, a constant) takes no AFTER: a kernel reading it
+       in two states would be a read/write cycle to the scheduler, and no
+       intermediate of the forward pass depends on it alone. An argument backed
+       by such storage is read as it is, so a remat whose arguments are all
+       inputs or constants shares the forward pass's nodes, as does one whose
+       cotangents are storage from the start: the AFTER has nothing to wait for.
+       A staged scan body, whose backward loop recomputes each step already, and
+       a multi-device trace keep the plain function. *)
+    | Remat.E_remat (Remat.Call { params_s; params; f; residuals; _ }) ->
+        Some
+          (fun k ->
+            if residuals && st.scan_bodies = 0 && st.st_multi = None then
+              Nx.Ptree.fold params_s
+                (fun _ leaf () -> ignore (storage st (go leaf) : U.t))
+                params ();
+            continue k (Effect.Deep.match_with f params (handler st)))
+    | Remat.E_barrier { values; after } ->
+        Some
+          (fun k ->
+            if st.scan_bodies > 0 || st.st_multi <> None then continue k values
+            else
+              let deps =
+                List.filter_map
+                  (fun (Nx.P a) ->
+                    let s = storage st (go a) in
+                    if U.op s = Tolk_uop.Ops.After then Some s else None)
+                  after
+              in
+              continue k
+                (List.map
+                   (fun (Nx.P v) ->
+                     let tt = go v in
+                     let s = storage st tt in
+                     if U.op s <> Tolk_uop.Ops.After then Nx.P v
+                     else
+                       Nx.P
+                         (traced st (dt v)
+                            (F.Tensor.of_uop
+                               (reroot s
+                                  (fun s -> U.after ~src:s ~deps)
+                                  (F.Tensor.uop tt)))))
+                   values))
     (* Indexed access *)
     | E_gather { data; indices; axis } ->
         Some
@@ -2375,14 +2462,15 @@ and stage_scan : type r.
   st.scan_collectors <- collect :: st.scan_collectors;
   st.scan_writes <- writes @ outer_writes;
   let c_next, y =
-    Fun.protect
-      ~finally:(fun () ->
-        st.scan_collectors <- List.tl st.scan_collectors;
-        st.scan_writes <- outer_writes)
-      (fun () ->
-        Effect.Deep.match_with
-          (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
-          () (handler st))
+    in_scan_body st (fun () ->
+        Fun.protect
+          ~finally:(fun () ->
+            st.scan_collectors <- List.tl st.scan_collectors;
+            st.scan_writes <- outer_writes)
+          (fun () ->
+            Effect.Deep.match_with
+              (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
+              () (handler st)))
   in
   Tbl.replace st.scan_closed (Obj.repr step) !closed;
   (* A loop can only be compiled from a shape-stable carry (the single prototype
@@ -2660,12 +2748,13 @@ and stage_scan_bwd : type r.
   List.iter (fun s -> if differentiable s then track s.s_ph) x_slots;
   List.iter track closed;
   let c_next, y =
-    Effect.Deep.match_with
-      (fun () ->
+    in_scan_body st (fun () ->
         Effect.Deep.match_with
-          (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
-          () (Reverse.handler tape))
-      () (handler st)
+          (fun () ->
+            Effect.Deep.match_with
+              (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
+              () (Reverse.handler tape))
+          () (handler st))
   in
   if not (same_shapes c_next c_slots) then
     err
@@ -2673,23 +2762,24 @@ and stage_scan_bwd : type r.
        receives (shape-stable carry)";
   let cotangent (Nx.P t) = Nx.P (Tape.cotangent tape t) in
   let dc_i, dx_i, dgs =
-    Effect.Deep.match_with
-      (fun () ->
-        let seed (Nx.P v) s =
-          Tape.accumulate tape v (Nx.unpack (Nx_effect.dtype v) s.s_ph)
-        in
-        List.iter2 seed c_next dc_slots;
-        List.iter2 seed y dy_slots;
-        Tape.backward tape;
-        ( List.map (fun s -> cotangent s.s_ph) c_slots,
-          List.map
-            (fun s ->
-              if differentiable s then Some (cotangent s.s_ph) else None)
-            x_slots,
-          List.map
-            (fun (Nx.P g) -> Scan.Closed_ctan (g, Tape.cotangent tape g))
-            closed ))
-      () (handler st)
+    in_scan_body st (fun () ->
+        Effect.Deep.match_with
+          (fun () ->
+            let seed (Nx.P v) s =
+              Tape.accumulate tape v (Nx.unpack (Nx_effect.dtype v) s.s_ph)
+            in
+            List.iter2 seed c_next dc_slots;
+            List.iter2 seed y dy_slots;
+            Tape.backward tape;
+            ( List.map (fun s -> cotangent s.s_ph) c_slots,
+              List.map
+                (fun s ->
+                  if differentiable s then Some (cotangent s.s_ph) else None)
+                x_slots,
+              List.map
+                (fun (Nx.P g) -> Scan.Closed_ctan (g, Tape.cotangent tape g))
+                closed ))
+          () (handler st))
   in
   (* The backward body: per-leaf carry cotangents, row cotangents, and the
      external inputs' accumulators. The accumulation is elementwise, so it runs
@@ -3923,6 +4013,7 @@ let trace_compile (type p q) ~device:dev ~zero_copy ~info ~const_cache
       scan_closed = Tbl.create 4;
       scan_collectors = [];
       scan_writes = [];
+      scan_bodies = 0;
     }
   in
   (* One placeholder and one input record per leaf visit, in traversal order, so

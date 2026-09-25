@@ -265,7 +265,13 @@ let remat fn =
     u.curry (fun params ->
         Remat.run
           (Remat.Call
-             { params_s = u.args; result_s = u.result; params; f = u.apply f }))
+             {
+               params_s = u.args;
+               result_s = u.result;
+               params;
+               f = u.apply f;
+               residuals = false;
+             }))
 
 (* Jacobians *)
 

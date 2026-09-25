@@ -67,13 +67,25 @@
  (libraries rune nx nx.buffer tolk tolk.uop windtrap rune_test_support))
 
 ; Alone in its executable: the compiled programs of a process share the
-; memory planner's arenas, which only grow.
+; memory planner's arenas, which only grow. It runs on the CPU device and, on
+; macOS, on Metal.
 
 (tests
  (names test_remat_memory)
  (modules test_remat_memory)
  (package rune)
  (libraries rune nx tolk windtrap))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (setenv
+   DEV
+   METAL
+   (run %{dep:test_remat_memory.exe}))))
 
 (tests
  (names test_jit_cache)

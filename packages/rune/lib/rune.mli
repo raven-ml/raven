@@ -294,6 +294,17 @@ val remat : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     derivatives in either mode, including those with respect to tensors [f]
     captures, and its batched form under {!val-vmap} are [f]'s.
 
+    Under {!val-jit}, reverse mode materialises the arguments and reads them
+    again only once the cotangents of [f]'s result exist, so [f] runs again in
+    the backward pass and its intermediates are live for one run at a time. A
+    remat whose arguments are all inputs or constants of the compiled function
+    is not recomputed, nor is one whose cotangents are, as for a {!val-vjp}
+    given its cotangents as arguments: nothing is saved. A derivative that
+    combines both modes, such as a Hessian-vector product, saves less under jit
+    today: the compiled program keeps the forward-mode values of every layer.
+    Inside the body of a compiled {!scan}, remat changes nothing: the backward
+    loop recomputes each step already.
+
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument.
 *)
 
