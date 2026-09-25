@@ -124,6 +124,10 @@ let peer_bytes select (flows : flows) =
       else sum)
     0 flows
 
+(* Under ALLREDUCE_NODE_NDEVS = [per_box], CPU:i sits in box (i-1)/per_box at
+   rail (i-1) mod per_box. *)
+let box ~per_box d = (Scanf.sscanf d "CPU:%d" Fun.id - 1) / per_box
+let rail ~per_box d = (Scanf.sscanf d "CPU:%d" Fun.id - 1) mod per_box
 let peer = peer_bytes (fun ~src:_ ~dst:_ -> true)
 let received device = peer_bytes (fun ~src:_ ~dst -> dst = device)
 let sent device = peer_bytes (fun ~src ~dst:_ -> src = device)
@@ -395,6 +399,29 @@ let gathered ~ndev ~rows ~cols data =
   Run.realize_many [ w ];
   traffic (fun () -> device_bytes (gather devices w))
 
+(* Per device of [devices], the bytes of the flows [by] assigns to it that cross
+   boxes under [per_box] and that stay in its box, and whether every flow
+   between boxes runs along a rail. *)
+let box_flows ~per_box ~devices ~by flows =
+  let crossing ~src ~dst = box ~per_box src <> box ~per_box dst in
+  ( List.map
+      (fun d ->
+        ( peer_bytes
+            (fun ~src ~dst -> by ~src ~dst d && crossing ~src ~dst)
+            flows,
+          peer_bytes
+            (fun ~src ~dst -> by ~src ~dst d && not (crossing ~src ~dst))
+            flows ))
+      devices,
+    List.for_all
+      (fun ((src, dst), _) ->
+        src = "CPU" || dst = "CPU"
+        || (not (crossing ~src ~dst))
+        || rail ~per_box src = rail ~per_box dst)
+      flows )
+
+let per_box_cases = [ ("boxes of 2", 2); ("boxes of 4", 4) ]
+
 (* Copies read and write contiguous windows of storage in place. *)
 let copy_tests =
   group "copies"
@@ -567,6 +594,34 @@ let gather_tests =
                 (List.init ndev (fun _ -> (ndev - 1) * value / ndev))
                 (List.map (fun d -> received d flows) (devices ndev)))
             [ 2; 3; 4; 8 ]);
+      (* Of the (n-1)/n each device receives, (b-1)/n crosses boxes for b boxes,
+         along its rail, and the rest comes from its own box. *)
+      cases "a gather to its own devices crosses boxes along rails" ~name:fst
+        per_box_cases (fun (_, per_box) ->
+          Helpers.Context_var.with_context
+            Helpers.Context_var.[ B (Helpers.allreduce_node_ndevs, per_box) ]
+          @@ fun () ->
+          let ndev = 8 and rows = 48 and cols = 256 in
+          let data = uniform ~seed:[| per_box |] (rows * cols) in
+          let replicas, flows = gathered ~ndev ~rows ~cols data in
+          List.iteri
+            (fun i replica ->
+              is_true
+                ~msg:(Printf.sprintf "replica %d" (i + 1))
+                (Bytes.equal (f32_bytes data) replica))
+            replicas;
+          let shard = rows * cols * 4 / ndev and boxes = ndev / per_box in
+          let per_device, on_rails =
+            box_flows ~per_box ~devices:(devices ndev)
+              ~by:(fun ~src:_ ~dst d -> dst = d)
+              flows
+          in
+          equal ~msg:"received from other boxes, and from its own"
+            (list (pair int int))
+            (List.init ndev (fun _ ->
+                 ((boxes - 1) * shard, (per_box - 1) * boxes * shard)))
+            per_device;
+          is_true ~msg:"every flow between boxes runs along a rail" on_rails);
       (* Each shard's slice, rows 1..3 of its [1; 4; 64], is contiguous. *)
       test "a gather of a slice of a split buffer stages nothing" (fun () ->
           let devices = devices 2 and data = spread (2 * 4 * 64) in
@@ -637,7 +692,13 @@ let gather_tests =
                     (U.device_of dst = Some (U.Multi devices))
               | _ -> fail "the AFTER does not wait on an allgather call")
           | _ -> fail "the gather is not an AFTER of one call");
-      test "a gather of a symbolic slice keeps its values" (fun () ->
+      (* Boxes apply to concrete shapes only, as for the allreduce. *)
+      cases "a gather of a symbolic slice keeps its values" ~name:fst
+        [ ("flat", 0); ("boxes of 2", 2) ]
+        (fun (_, per_box) ->
+          Helpers.Context_var.with_context
+            Helpers.Context_var.[ B (Helpers.allreduce_node_ndevs, per_box) ]
+          @@ fun () ->
           let devices = devices 4 and data = Array.init 56 float_of_int in
           let w = C.shard ~axis:0 ~devices (host ~shape:[ 8; 7 ] data) in
           Run.realize_many [ w ];
@@ -705,11 +766,13 @@ let gather_tests =
     ]
 
 (* An allreduce resharded to rows is a reduce-scatter: each device receives its
-   rows of every other device's partial and folds them in device order. *)
+   rows of every other device's partial and folds them in device order, or in
+   box order over each box's device-order fold under ALLREDUCE_NODE_NDEVS. *)
 
 (* Each device's rows of the sum over axis 0 of [ndev; rows; cols] partials,
-   reduce-scattered under [under], and a naive allreduce's replica of the whole
-   sum. *)
+   reduce-scattered under [under], and the replica of the whole sum from the
+   allreduce that folds in the same order: [under]'s boxes, without its ring or
+   all-to-all. *)
 let scattered_and_replica ~under ~ndev ~rows ~cols data =
   let devices = devices ndev in
   let partials =
@@ -721,8 +784,10 @@ let scattered_and_replica ~under ~ndev ~rows ~cols data =
     device_bytes (C.shard ~axis:0 ~devices (Rd.sum ~axis:[ 0 ] partials))
   in
   let replica =
-    with_strategy (strategy "naive") @@ fun () ->
-    List.hd (device_bytes (Rd.sum ~axis:[ 0 ] partials))
+    with_strategy under @@ fun () ->
+    Helpers.Context_var.with_context
+      Helpers.Context_var.[ B (Helpers.ring, 0); B (Helpers.all2all, 0) ]
+    @@ fun () -> List.hd (device_bytes (Rd.sum ~axis:[ 0 ] partials))
   in
   (blocks, replica)
 
@@ -765,8 +830,8 @@ let reduce_scatter_tests =
                   | _ -> fail "the AFTER does not wait on a reducescatter call")
               | _ -> fail "the blocks are not an AFTER of one call")
           | _ -> fail "the reshard is not split on axis 0");
-      cases "blocks equal a naive allreduce's rows bit for bit" ~name:fst
-        strategies (fun strategy ->
+      cases "blocks equal the allreduce's rows in their fold order bit for bit"
+        ~name:fst strategies (fun strategy ->
           List.iter
             (fun ndev ->
               let rows = 24 and cols = 256 in
@@ -806,6 +871,36 @@ let reduce_scatter_tests =
                 (List.init ndev (fun _ -> (ndev - 1) * rows * cols * 4 / ndev))
                 (List.map (fun d -> sent d flows) devices))
             [ 4; 8 ]);
+      (* Of the (n-1)/n of its partial each device sends, (b-1)/n crosses boxes
+         for b boxes, along its rail, and the rest stays in its box. *)
+      cases "a reduce-scatter over its own devices crosses boxes along rails"
+        ~name:fst per_box_cases (fun (_, per_box) ->
+          Helpers.Context_var.with_context
+            Helpers.Context_var.[ B (Helpers.allreduce_node_ndevs, per_box) ]
+          @@ fun () ->
+          let ndev = 8 and rows = 64 and cols = 256 in
+          let devices = devices ndev in
+          let partials =
+            C.shard ~axis:0 ~devices
+              (host ~shape:[ ndev; rows; cols ]
+                 (uniform ~seed:[| per_box; rows |] (ndev * rows * cols)))
+          in
+          Run.realize_many [ partials ];
+          let _, flows =
+            traffic (fun () ->
+                device_bytes
+                  (C.shard ~axis:0 ~devices (Rd.sum ~axis:[ 0 ] partials)))
+          in
+          let block = rows * cols * 4 / ndev and boxes = ndev / per_box in
+          let per_device, on_rails =
+            box_flows ~per_box ~devices ~by:(fun ~src ~dst:_ d -> src = d) flows
+          in
+          equal ~msg:"sent to other boxes, and within its own"
+            (list (pair int int))
+            (List.init ndev (fun _ ->
+                 ((boxes - 1) * block, (per_box - 1) * boxes * block)))
+            per_device;
+          is_true ~msg:"every flow between boxes runs along a rail" on_rails);
       (* The reshard slices the replica the whole use needs anyway, so the naive
          allreduce's n-1 partials are all a device sends. *)
       test "an allreduce also used whole is reduced once" (fun () ->
@@ -862,10 +957,16 @@ let reduce_scatter_tests =
                "multi: ALLREDUCE in the body of call step; collectives in call \
                 bodies are not lowered") (fun () ->
               ignore (Multi.lower_allreduces (U.sink [ call ]))));
-      (* The blocks land in a split buffer, as a gradient lands in its
-         storage. *)
-      test "each device holds its partial and (n-1)/n of it more" (fun () ->
-          let ndev = 4 and rows = 64 and cols = 1024 in
+      (* The blocks land in a split buffer, as a gradient lands in its storage.
+         Under b boxes a device also holds the partials it folds for the b-1
+         other boxes until they are copied. *)
+      cases "each device holds its partial and (n-1)/n + (b-1)/n of it more"
+        ~name:fst (("flat", 0) :: per_box_cases) (fun (_, per_box) ->
+          Helpers.Context_var.with_context
+            Helpers.Context_var.[ B (Helpers.allreduce_node_ndevs, per_box) ]
+          @@ fun () ->
+          let ndev = 8 and rows = 64 and cols = 1024 in
+          let boxes = if per_box = 0 then 1 else ndev / per_box in
           let devices = devices ndev in
           let partials =
             C.shard ~axis:0 ~devices
@@ -882,16 +983,64 @@ let reduce_scatter_tests =
                (C.shard ~axis:0 ~devices
                   (Rd.sum ~axis:[ 0 ] (El.add partials (T.f 1.0)))));
           let _, peaks = peak_over devices (fun () -> Run.realize_many [ g ]) in
+          let bound =
+            partial
+            + ((ndev - 1) * partial / ndev)
+            + ((boxes - 1) * partial / ndev)
+          in
           List.iter
             (fun (device, peak) ->
               satisfies ~msg:device
-                ~claim:
-                  (Printf.sprintf "at most %d bytes"
-                     (partial + ((ndev - 1) * partial / ndev)))
+                ~claim:(Printf.sprintf "at most %d bytes" bound)
                 int
-                (fun peak -> peak <= partial + ((ndev - 1) * partial / ndev))
+                (fun peak -> peak <= bound)
                 peak)
             peaks);
+      (* Boxes apply to concrete shapes only: the allreduce of a symbolic value
+         is not hierarchical, so its blocks keep the flat order. *)
+      test "blocks of a symbolic slice equal the allreduce's rows under boxes"
+        (fun () ->
+          Helpers.Context_var.with_context
+            Helpers.Context_var.[ B (Helpers.allreduce_node_ndevs, 4) ]
+          @@ fun () ->
+          let ndev = 8 and rows = 8 and cols = 16 in
+          let devices = devices ndev in
+          let partials =
+            C.shard ~axis:0 ~devices
+              (host ~shape:[ ndev; rows; cols ] (spread (ndev * rows * cols)))
+          in
+          Run.realize_many [ partials ];
+          let v = U.variable ~name:"scatter_cols" ~min_val:1 ~max_val:cols () in
+          List.iter
+            (fun n ->
+              let sliced =
+                T.of_uop
+                  (U.shrink ~src:(T.uop partials)
+                     ~offset:(T.shape_uop [ 0; 0; 0 ])
+                     ~size:
+                       (U.stack
+                          [
+                            U.const_int ndev;
+                            U.const_int rows;
+                            U.bind ~var:v ~value:(U.const_int n);
+                          ]))
+              in
+              let values t =
+                let whole =
+                  U.pad
+                    ~src:(T.uop (C.clone ~device:(U.Single "CPU") t))
+                    ~offset:(T.shape_uop [ 0; 0 ])
+                    ~size:(T.shape_uop [ rows; cols ])
+                in
+                let a = Run.to_float_array (T.of_uop whole) in
+                Array.init (rows * n) (fun i -> a.((i / n * cols) + (i mod n)))
+              in
+              let sum = Rd.sum ~axis:[ 0 ] sliced in
+              equal
+                ~msg:(Printf.sprintf "%d columns" n)
+                (array float_exact) (values sum)
+                (values (C.shard ~axis:0 ~devices sum)))
+            [ 5; 16 ]);
       test "float16 partials reduce-scatter in float16 under ALLREDUCE_CAST"
         (fun () ->
           let ndev = 4 and rows = 8 and cols = 64 in

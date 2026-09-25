@@ -70,6 +70,14 @@ let shard_subview full multi =
    precompiled call implementing [Allgather] over (dst, src), so the scheduler
    and a backend see one unit.
 
+   When the targets are the sources and ALLREDUCE_NODE_NDEVS puts them in
+   several boxes ([Allreduce.box_size]), shards cross boxes only along rails.
+   Shard j reaches device k directly when they share a box or a rail. Any
+   other shard reaches k from the device of k's box on j's rail, read back
+   from the window that device stored it in. Each device receives (n-1)/n of
+   the value, as flat, of which (b-1)/n crosses a box for b boxes, against
+   (n-h)/n flat for boxes of h.
+
    The tinygrad counterpart concatenates padded shards with a sum kernel for
    one device, and for several it allreduces the padded shards, which moves
    2(n-1)/n of the value per device under ring and n-1 full buffers under
@@ -88,16 +96,26 @@ let allgather multi device =
         | None -> invalid_arg "multi: gather shard index is not concrete") (U.sharding multi) in
     emit (List.mapi (fun axis size -> match List.assoc_opt axis coords with
         | Some c -> mul (int_ c) size | None -> zero) local) in
+  let relay = match Allreduce.box_size ~like:multi (List.length sources) with
+    | Some hdev when targets = sources -> fun k j ->
+        if k / hdev = j / hdev || k mod hdev = j mod hdev then None
+        else Some (k / hdev * hdev + j mod hdev)
+    | _ -> fun _ _ -> None in
   Allreduce.collective (U.Allgather (List.map fst (U.sharding multi))) ~device ~like:multi
-    (inner multi) (fun ~src -> [ fun dst ->
-      List.concat (List.mapi (fun k target ->
-          let replica = match device with U.Multi _ -> U.mselect ~src:dst ~index:k | _ -> dst in
-          List.mapi (fun j source ->
-              let shard = U.mselect ~src ~index:j in
-              let value = if source = target then shard
-                else U.copy ~src:shard ~device:(U.Single target) () in
-              U.store ~dst:(U.shrink ~src:replica ~offset:(window j) ~size:(emit local)) ~value ())
-            sources) targets) ])
+    (inner multi) (fun ~src ->
+      let slot state k j =
+        let replica = match device with U.Multi _ -> U.mselect ~src:state ~index:k | _ -> state in
+        U.shrink ~src:replica ~offset:(window j) ~size:(emit local) in
+      let pairs = List.concat (List.mapi (fun k _ -> List.mapi (fun j _ -> k, j) sources) targets) in
+      let deliver state (k, j) value =
+        U.store ~dst:(slot state k j) ~value:(Allreduce.copy_to_device value (List.nth targets k)) () in
+      (* The relayed shards are a second phase: it reads them back from the
+         relays' windows the first phase wrote. *)
+      [ (fun dst -> List.filter_map (fun (k, j) ->
+            if Option.is_some (relay k j) then None
+            else Some (deliver dst (k, j) (U.mselect ~src ~index:j))) pairs);
+        (fun first -> List.filter_map (fun (k, j) ->
+            Option.map (fun r -> deliver first (k, j) (slot first r j)) (relay k j)) pairs) ])
 
 (* Reduce-scatter: [shrink], keeping each device's own block of an
    allreduce along one axis and the allreduce's only consumer, becomes the
@@ -108,6 +126,17 @@ let allgather multi device =
    bit. The allreduce may sit between the casts [reduce_multi] adds under
    ALLREDUCE_CAST. The collective is a precompiled call implementing
    [Reducescatter] over (dst, src).
+
+   When the targets are the sources and ALLREDUCE_NODE_NDEVS puts them in
+   several boxes ([Allreduce.box_size]), the reduction runs in two phases,
+   and only the second crosses boxes. First each box folds its members'
+   partials of block k, in device order, on its member at k's rail, which
+   for k's own box is k's destination. Then device k folds the boxes'
+   partials of block k in box order, in place. That is the hierarchical
+   allreduce's order, so the blocks equal its rows bit for bit. Each device
+   still sends (n-1)/n of its partial, of which (b-1)/n crosses a box for b
+   boxes, against (n-h)/n flat for boxes of h. The partials a device holds
+   for the other boxes add (b-1)/n of the partial to its peak.
 
    No tinygrad counterpart: the reference allreduces the whole value and
    each device keeps its rows, which sends 2(n-1)/n of the value per device
@@ -146,18 +175,39 @@ let reducescatter ~only_consumer shrink =
                ~size:(subst_device_num (U.src shrink).(2) k) in
            let like = U.shrink ~src:reduced ~offset:(U.src shrink).(1)
                ~size:(U.src shrink).(2) in
+           (* The sources of each box, the box holding target k, and the
+              device of box b at k's rail, which folds b's partials of block k. *)
+           let boxes, own, at = match Allreduce.box_size ~like (List.length targets) with
+             | Some hdev when sources = targets ->
+                 List.init (List.length targets / hdev) (fun b -> List.init hdev (fun j -> b * hdev + j)),
+                 (fun k -> k / hdev), (fun b k -> b * hdev + k mod hdev)
+             | _ -> [ List.init (List.length sources) Fun.id ], (fun _ -> 0), (fun _ k -> k) in
            let blocks =
              Allreduce.collective (U.Reducescatter (op, axis)) ~device ~like src
-               (fun ~src -> [ fun dst ->
-                 List.mapi (fun k target ->
-                     let parts = List.mapi (fun j source ->
-                         let part = block_of k (U.mselect ~src ~index:j) in
-                         if source = target then part
-                         else U.copy ~src:part ~device:(U.Single target) ())
-                         sources in
-                     U.store ~dst:(U.mselect ~src:dst ~index:k)
-                       ~value:(Allreduce.fold_reduce op parts) ())
-                   targets ])
+               (fun ~src ->
+                 let box_sum k members h =
+                   Allreduce.fold_reduce op (List.map (fun j ->
+                       Allreduce.copy_to_device (block_of k (U.mselect ~src ~index:j))
+                         (List.nth targets h)) members) in
+                 (* Each device folds its own box's partials of its block into
+                    its destination. Under boxes, a second phase folds that in
+                    place with the other boxes' partials, which their devices
+                    at its rail store and copy, in box order. A partial is
+                    stored before that fold, as the hierarchical allreduce
+                    stores its: fused into it, it would render as one flat sum
+                    with the copies. *)
+                 [ (fun dst -> List.mapi (fun k _ ->
+                       U.store ~dst:(U.mselect ~src:dst ~index:k)
+                         ~value:(box_sum k (List.nth boxes (own k)) k) ()) targets);
+                   (fun first -> match boxes with
+                     | [ _ ] -> []
+                     | _ -> List.mapi (fun k target ->
+                         let term b members =
+                           if b = own k then U.mselect ~src:first ~index:k
+                           else Allreduce.copy_to_device
+                               (U.contiguous ~src:(box_sum k members (at b k)) ()) target in
+                         U.store ~dst:(U.mselect ~src:first ~index:k)
+                           ~value:(Allreduce.fold_reduce op (List.mapi term boxes)) ()) targets) ])
            in
            Some (match cast with
                | Some dtype -> U.cast ~src:blocks ~dtype | None -> blocks)

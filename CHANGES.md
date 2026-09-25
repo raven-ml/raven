@@ -562,6 +562,14 @@ thread.
 
 ### Tolk (new)
 
+- With `ALLREDUCE_NODE_NDEVS` set to a box size h, an all-gather or
+  reduce-scatter of concrete shape over its own n devices crosses boxes only
+  between devices at the same position in their boxes: each device moves
+  (b-1)/n of the value between b boxes, where it moved (n-h)/n, at the cost
+  of (b-1)/n of the partial in a reduce-scatter's peak. The reduce-scatter
+  folds within each box first, so its blocks equal the hierarchical
+  allreduce's rows bit for bit.
+
 - A product of narrow floats widened to `float32` before the multiply takes a
   narrow-in, `float32`-out tensor core, which computes the same product. It
   took no narrow tensor core, and on CUDA none at all without `ALLOW_TF32`.

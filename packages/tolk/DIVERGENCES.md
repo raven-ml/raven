@@ -542,10 +542,10 @@ delete it rather than registering it.
   `Reducescatter (op, axis)` over (dst, src): device k receives block k of
   every other device's partial, read in place as a window, and folds the
   partials in device order. That is the naive allreduce's order, so the blocks
-  equal its rows bit for bit, under every strategy: the reduce-scatter is
-  direct whatever RING, ALL2ALL and ALLREDUCE_NODE_NDEVS say, sending (n-1)/n
-  of the partial per device and holding (n-1)/n of it in received blocks. A
-  ring variant (2/n held) is not built. An allreduce with any other consumer
+  equal its rows bit for bit: the reduce-scatter is direct whatever RING and
+  ALL2ALL say, sending (n-1)/n of the partial per device and holding (n-1)/n
+  of it in received blocks (ALLREDUCE_NODE_NDEVS makes it hierarchical, see
+  below). A ring variant (2/n held) is not built. An allreduce with any other consumer
   stays one allreduce, and its reshard slices the replica. With
   LATE_ALLREDUCE=0 `multi_pm` expands every allreduce before its consumers are
   seen, so no reduce-scatter is built and a reshard moves the allreduce's
@@ -553,6 +553,40 @@ delete it rather than registering it.
   assigned into a split buffer, as a gradient is, are written there directly.
   Coverage: `test/unit/engine/test_collectives.ml` "reduce-scatter" and "fully
   sharded step".
+
+- **Gathers and reduce-scatters are hierarchical under ALLREDUCE_NODE_NDEVS**
+  (`schedule/multi.ml` `allgather` and `reducescatter`,
+  `schedule/allreduce.ml` `box_size`). The reference reads
+  ALLREDUCE_NODE_NDEVS for its allreduce only. Tolk reads it as the box size
+  of every collective of concrete shape whose targets are its sources, when it
+  splits them into several boxes of several devices: device i sits in box i/h
+  at rail i mod h, and only copies between devices of one rail cross a box.
+  Concrete shapes only, as the hierarchical allreduce requires, so a
+  reduce-scatter keeps the fold order of the allreduce it replaces. A
+  reduce-scatter folds each block within each box, in device order, on the
+  box's device at the block's rail, which for the block's own box is its
+  destination; the block's device then folds the other boxes' stored partials
+  into it in place, in box order: the hierarchical allreduce's order, so its
+  blocks equal that allreduce's rows bit for bit. An all-gather copies each
+  shard along its rail to every box, then within each box from the device that
+  received it, reading it back from that device's destination. Both are two
+  phases of one call: a collective's body is a list of phases, each reading
+  and writing the state the previous one left. Each device still sends
+  (reduce-scatter) or receives (all-gather) (n-1)/n of the value, of which
+  (b-1)/n crosses a box for b boxes, against (n-h)/n flat. The partials a
+  device holds for the other boxes add (b-1)/n of the partial to a
+  reduce-scatter's peak until they are copied; an all-gather split on its
+  outer axis adds nothing (an inner-axis gather already stages its windows). A
+  fully sharded step under boxes therefore stays over its two-layer bound by
+  (b-1)/n of a layer less its slack (2.141, 2.320 and 2.031 layers against
+  2.125, 2.062 and 2.023 in boxes of 2); reusing the dead in-box blocks inside
+  a collective's body would recover it, which is memory planning inside call
+  bodies, not yet done. Until device identity names boxes,
+  ALLREDUCE_NODE_NDEVS does. Coverage: `test/unit/engine/test_collectives.ml`
+  "a gather to its own devices crosses boxes along rails", "a reduce-scatter
+  over its own devices crosses boxes along rails", "each device holds its
+  partial and (n-1)/n + (b-1)/n of it more", the symbolic-slice cases, and the
+  equality cases under the hierarchical strategies.
 
 - **An allreduce lays its reduced chunks back together by selection**
   (`schedule/allreduce.ml` `assemble`). The reference reassembles the ring,

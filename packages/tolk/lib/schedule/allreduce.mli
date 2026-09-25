@@ -35,6 +35,19 @@ val handle_allreduce :
     {- {e Ring} when [RING >= 2], or [RING >= 1] and the size
        exceeds the threshold with [> 2] devices.}} *)
 
+val box_size : like:Tolk_uop.Uop.t -> int -> int option
+(** [box_size ~like ndev] is [Some hdev] when [ALLREDUCE_NODE_NDEVS] is
+    [hdev] and splits [ndev] devices into several boxes of several devices
+    each, for a collective whose value has [like]'s shape: device [i] sits in
+    box [i / hdev] at rail [i mod hdev]. It is [None] when the setting is 0,
+    1, [ndev] or does not divide [ndev], or when [like] has a symbolic
+    dimension: the cases in which {!handle_allreduce} is not hierarchical or
+    folds in the flat order, so the flat collectives keep its order. *)
+
+val copy_to_device : Tolk_uop.Uop.t -> string -> Tolk_uop.Uop.t
+(** [copy_to_device u d] is [u] when it is on device [d], and a copy of it to
+    [d] otherwise. *)
+
 val fold_reduce : Tolk_uop.Ops.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
 (** [fold_reduce op xs] combines [xs] with [op] from the left, in list
     order. Raises [Failure] on an empty list. *)

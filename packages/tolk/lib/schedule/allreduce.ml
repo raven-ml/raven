@@ -80,6 +80,12 @@ let assemble numel chunks =
         (fun acc (b, x) -> U.O.where (footprint b) (place b x) acc)
         (place b0 x0) rest
 
+let concrete u = List.for_all (fun d -> Option.is_some (U.const_int_value d)) (U.shape u)
+
+let box_size ~like ndev =
+  let hdev = Helpers.Context_var.get Helpers.allreduce_node_ndevs in
+  if concrete like && hdev > 1 && hdev < ndev && ndev mod hdev = 0 then Some hdev else None
+
 let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
   let numel = List.fold_left ( * ) 1 shape in
   let flat = reshape buf [numel] in
@@ -110,7 +116,7 @@ let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
    [device]. *)
 let reduce_shards buf ~op ~device devs =
   let logical_shape = U.shape buf in
-  let concrete = List.for_all (fun d -> Option.is_some (U.const_int_value d)) logical_shape in
+  let concrete = concrete buf in
   let shape = U.max_shape buf in
   let devs = Array.of_list devs in
   let ndev = Array.length devs in
