@@ -30,21 +30,10 @@ def kernel():
     rk = UOp.range(K, 1, AxisType.REDUCE)
     ld_w = pW.index(rj * K + rk).load()
     ld_x = pX.index(rk).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld_w * ld_x, rk), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(ld_w * ld_x, rk), arg=(Ops.ADD, 0))
     st = pY.index(rj).store(red)
     end = st.end(rj)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="group_reduce_matvec",
-            axis_types=(AxisType.GLOBAL, AxisType.REDUCE),
-            opts_to_apply=(
-                Opt(op=OptOps.GROUP, axis=0, arg=8),
-                Opt(op=OptOps.LOCAL, axis=0, arg=4),
-                Opt(op=OptOps.UPCAST, axis=0, arg=4),
-            ),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='group_reduce_matvec', opts_to_apply=(Opt(OptOps.SPLIT, 1, (8, AxisType.LOCAL)), Opt(OptOps.SPLIT, 0, (4, AxisType.LOCAL)), Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)))))
 
 
 if __name__ == "__main__":

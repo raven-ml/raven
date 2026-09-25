@@ -9,13 +9,13 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from helpers import _HipNoComgr, dump_tensor, mk_param, wrap_sink  # noqa: E402
+from helpers import hip_renderer, dump_tensor, mk_param, wrap_sink  # noqa: E402
 from tinygrad.helpers import Target  # noqa: E402
 from tinygrad.uop.ops import UOp, Ops, shape_to_shape_arg  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 
 BACKENDS = {
-    "amd_gfx950": _HipNoComgr(Target("AMD", arch="gfx950")),
+    "amd_gfx950": hip_renderer(Target("AMD", arch="gfx950")),
 }
 
 
@@ -24,10 +24,10 @@ def build():
     a = mk_param(0, M, K, dtype=dtypes.fp8e4m3)
     b = mk_param(1, K, N, dtype=dtypes.fp8e4m3)
     # dot: a.reshape(M,1,K) * b.permute(1,0).reshape(1,N,K), summed over K.
-    ar = UOp(Ops.RESHAPE, a.dtype, (a, shape_to_shape_arg((M, 1, K))))
+    ar = UOp(Ops.RESHAPE, src=(a, shape_to_shape_arg((M, 1, K))))
     ae = ar.expand((M, N, K))
-    bt = UOp(Ops.PERMUTE, b.dtype, (b,), (1, 0))
-    br = UOp(Ops.RESHAPE, bt.dtype, (bt, shape_to_shape_arg((1, N, K))))
+    bt = UOp(Ops.PERMUTE, src=(b,), arg=(1, 0))
+    br = UOp(Ops.RESHAPE, src=(bt, shape_to_shape_arg((1, N, K))))
     be = br.expand((M, N, K))
     mul = (ae * be).cast(dtypes.float32)
     red = mul._rop(Ops.ADD, (2,))

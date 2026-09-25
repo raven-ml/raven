@@ -14,7 +14,7 @@ def build():
     a = mk_param(0, 10, 10)
     b = mk_param(1, 10)
     red = a._rop(Ops.ADD, (0,))
-    reshaped = UOp(Ops.RESHAPE, dtypes.float32, (red, shape_to_shape_arg((10,))))
+    reshaped = UOp(Ops.RESHAPE, src=(red, shape_to_shape_arg((10,))))
     return wrap_sink(reshaped + b)
 
 

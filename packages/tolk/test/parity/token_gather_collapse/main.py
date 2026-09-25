@@ -37,7 +37,7 @@ def kernel():
     gate = vocab.cast(dtypes.int) != toks.index(tok_i)
     body = gate.where(UOp.const(0.0, dtypes.float),
                       wte.index(vocab * UOp.const(768, dtypes.weakint) + col))
-    red = UOp(Ops.REDUCE, dtypes.float, (body, r), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(body, r), arg=(Ops.ADD, 0))
     out_idx = (col * UOp.const(29, dtypes.weakint) + chunk
                + tok_i * UOp.const(22272, dtypes.weakint))
     st = out.index(out_idx).store(red).end(tok_i, col, chunk)

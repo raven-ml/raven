@@ -13,8 +13,8 @@ from tinygrad.dtype import dtypes  # noqa: E402
 def build():
     a = mk_param(0, 16)
     red = a._rop(Ops.ADD, (0,))
-    sq = UOp(Ops.SQRT, dtypes.float32, (red,))
-    neg = UOp(Ops.NEG, dtypes.float32, (sq,))
+    sq = UOp(Ops.SQRT, src=(red,))
+    neg = UOp(Ops.NEG, src=(sq,))
     return wrap_sink(neg)
 
 

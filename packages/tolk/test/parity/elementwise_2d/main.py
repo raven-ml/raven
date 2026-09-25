@@ -24,14 +24,7 @@ def kernel():
     add = ld_a + ld_b
     st = p2.index(flat).store(add)
     end = st.end(ri, rj)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="elementwise_2d",
-            axis_types=(AxisType.GLOBAL, AxisType.GLOBAL),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='elementwise_2d', opts_to_apply=()))
 
 
 if __name__ == "__main__":

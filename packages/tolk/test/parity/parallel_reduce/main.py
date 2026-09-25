@@ -17,19 +17,12 @@ def kernel():
     p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(128, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
-    red1 = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
-    red2 = UOp(Ops.REDUCE, dtypes.float32, (ld * ld, r0), (Ops.ADD, 0))
+    red1 = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.ADD, 0))
+    red2 = UOp(Ops.REDUCE, src=(ld * ld, r0), arg=(Ops.ADD, 0))
     c0 = UOp.const(0, dtypes.weakint)
     st1 = p1.index(c0).store(red1)
     st2 = p2.index(c0).store(red2)
-    return UOp.sink(
-        st1, st2,
-        arg=KernelInfo(
-            name="parallel_reduce",
-            axis_types=(AxisType.REDUCE,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(st1, st2, arg=KernelInfo(name='parallel_reduce', opts_to_apply=()))
 
 
 if __name__ == "__main__":

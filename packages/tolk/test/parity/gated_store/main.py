@@ -24,14 +24,7 @@ def kernel():
         gate.where(add, UOp.invalid())
     )
     end = st.end(r0)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="gated_store",
-            axis_types=(AxisType.GLOBAL,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='gated_store', opts_to_apply=()))
 
 
 if __name__ == "__main__":

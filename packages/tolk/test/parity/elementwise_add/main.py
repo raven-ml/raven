@@ -21,14 +21,7 @@ def kernel():
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     add = p0.index(r0).load() + p1.index(r0).load()
     end = p2.index(r0).store(add).end(r0)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="elementwise_add",
-            axis_types=(AxisType.GLOBAL,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='elementwise_add', opts_to_apply=()))
 
 
 if __name__ == "__main__":

@@ -21,14 +21,7 @@ def kernel():
     val = cond.where(ld, zero)
     st = p1.index(r0).store(val)
     end = st.end(r0)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="elementwise_where",
-            axis_types=(AxisType.GLOBAL,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='elementwise_where', opts_to_apply=()))
 
 
 if __name__ == "__main__":

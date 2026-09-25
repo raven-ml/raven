@@ -16,17 +16,10 @@ def kernel():
     p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.ADD, 0))
     c0 = UOp.const(0, dtypes.weakint)
     st = p1.index(c0).store(red)
-    return UOp.sink(
-        st,
-        arg=KernelInfo(
-            name="sum_reduce",
-            axis_types=(AxisType.REDUCE,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(st, arg=KernelInfo(name='sum_reduce', opts_to_apply=()))
 
 
 if __name__ == "__main__":

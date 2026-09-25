@@ -18,17 +18,8 @@ def kernel():
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     st1 = p1.index(r0).store(ld_a + UOp.const(1.0, dtypes.float32))
-    e1 = st1.end(r0)
     st2 = p2.index(r0).store(ld_a * UOp.const(2.0, dtypes.float32))
-    e2 = st2.end(r0)
-    return UOp.sink(
-        e1, e2,
-        arg=KernelInfo(
-            name="multi_output",
-            axis_types=(AxisType.GLOBAL,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(UOp.group(st1, st2).end(r0), arg=KernelInfo(name='multi_output', opts_to_apply=()))
 
 
 if __name__ == "__main__":

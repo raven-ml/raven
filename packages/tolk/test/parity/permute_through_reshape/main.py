@@ -14,8 +14,8 @@ def build():
     a = mk_param(0, 16, 16)
     b = mk_param(1, 16, 16)
     add = a + b
-    reshaped = UOp(Ops.RESHAPE, dtypes.float32, (add, shape_to_shape_arg((4, 4, 4, 4))))
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (reshaped,), (2, 3, 0, 1))
+    reshaped = UOp(Ops.RESHAPE, src=(add, shape_to_shape_arg((4, 4, 4, 4))))
+    permed = UOp(Ops.PERMUTE, src=(reshaped,), arg=(2, 3, 0, 1))
     return wrap_sink(permed)
 
 

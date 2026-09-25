@@ -16,17 +16,10 @@ def kernel():
     p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld = p0.index(r0).load()
-    sq = UOp(Ops.SQRT, dtypes.float32, (ld,))
+    sq = UOp(Ops.SQRT, src=(ld,))
     st = p1.index(r0).store(sq)
     end = st.end(r0)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="elementwise_sqrt",
-            axis_types=(AxisType.GLOBAL,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='elementwise_sqrt', opts_to_apply=()))
 
 
 if __name__ == "__main__":

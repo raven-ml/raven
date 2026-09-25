@@ -12,48 +12,48 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
-    sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
+    sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
     b = UOp.param(1, dtypes.float32, shape=(-1,))
-    idx0 = UOp.const(0, dtypes.int)
-    idx1 = UOp.const(1, dtypes.int)
-    idx2 = UOp.const(2, dtypes.int)
-    idx3 = UOp.const(3, dtypes.int)
+    idx0 = UOp.cconst(0, dtypes.int)
+    idx1 = UOp.cconst(1, dtypes.int)
+    idx2 = UOp.cconst(2, dtypes.int)
+    idx3 = UOp.cconst(3, dtypes.int)
     ia0 = a.index(idx0)
     ia1 = a.index(idx1)
     ia2 = a.index(idx2)
     ia3 = a.index(idx3)
-    v0 = UOp(Ops.LOAD, dtypes.float32, (ia0,))
-    v1 = UOp(Ops.LOAD, dtypes.float32, (ia1,))
-    v2 = UOp(Ops.LOAD, dtypes.float32, (ia2,))
-    v3 = UOp(Ops.LOAD, dtypes.float32, (ia3,))
+    v0 = UOp(Ops.LOAD, src=(ia0,))
+    v1 = UOp(Ops.LOAD, src=(ia1,))
+    v2 = UOp(Ops.LOAD, src=(ia2,))
+    v3 = UOp(Ops.LOAD, src=(ia3,))
     vec = UOp.stack(v0, v1, v2, v3)
     lane = vec.index(idx2).simplify()
     idx_b = b.index(idx0)
-    store = UOp(Ops.STORE, dtypes.void, (idx_b, lane))
+    store = UOp(Ops.STORE, src=(idx_b, lane))
     return [sink, a, b, idx0, idx1, idx2, idx3,
             ia0, ia1, ia2, ia3, v0, v1, v2, v3,
             vec, lane, idx_b, store]
 
 
 def kernel_scalarized():
-    sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
+    sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
     b = UOp.param(1, dtypes.float32, shape=(-1,))
-    idx0 = UOp.const(0, dtypes.int)
-    idx1 = UOp.const(1, dtypes.int)
-    idx2 = UOp.const(2, dtypes.int)
-    idx3 = UOp.const(3, dtypes.int)
+    idx0 = UOp.cconst(0, dtypes.int)
+    idx1 = UOp.cconst(1, dtypes.int)
+    idx2 = UOp.cconst(2, dtypes.int)
+    idx3 = UOp.cconst(3, dtypes.int)
     ia0 = a.index(idx0)
     ia1 = a.index(idx1)
     ia2 = a.index(idx2)
     ia3 = a.index(idx3)
-    v0 = UOp(Ops.LOAD, dtypes.float32, (ia0,))
-    v1 = UOp(Ops.LOAD, dtypes.float32, (ia1,))
-    v2 = UOp(Ops.LOAD, dtypes.float32, (ia2,))
-    v3 = UOp(Ops.LOAD, dtypes.float32, (ia3,))
+    v0 = UOp(Ops.LOAD, src=(ia0,))
+    v1 = UOp(Ops.LOAD, src=(ia1,))
+    v2 = UOp(Ops.LOAD, src=(ia2,))
+    v3 = UOp(Ops.LOAD, src=(ia3,))
     idx_b = b.index(idx0)
-    store = UOp(Ops.STORE, dtypes.void, (idx_b, v2))
+    store = UOp(Ops.STORE, src=(idx_b, v2))
     return [sink, a, b, idx0, idx1, idx2, idx3,
             ia0, ia1, ia2, ia3, v0, v1, v2, v3, idx_b, store]
 

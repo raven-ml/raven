@@ -1,18 +1,17 @@
 """Shared plumbing for parity case main.py scripts.
 
 Centralises the pieces every case needs: the sys.path hook that makes the
-reference clone at `_tinygrad/` importable, a CUDA renderer subclass that
-skips NVRTC init (we only render, never execute), the table of backends we
+reference clone at `_tinygrad/` importable, render-only compiler construction mocks
+(the target renderer initializers run unchanged), the table of backends we
 diff against, and the canonical call sequence through the reference codegen
 pipeline.
 """
 
 import contextlib
 import io
-import math
 import os
-import re
 import sys
+from unittest.mock import patch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, "..", "..", "..", "..", "_tinygrad"))
@@ -23,74 +22,46 @@ sys.path.insert(0, os.path.join(_HERE, "..", "..", "..", "..", "_tinygrad"))
 os.environ["NO_COLOR"] = "1"
 
 from tinygrad.codegen import (  # noqa: E402
-    full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups,
+    full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups, pm_alloc_to_buf,
 )
 from tinygrad.codegen.late.linearizer import linearize  # noqa: E402
-from tinygrad.codegen.opt import tc  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 from tinygrad.helpers import Target  # noqa: E402
 from tinygrad.renderer.cstyle import (  # noqa: E402
     ClangRenderer, CUDARenderer, HIPRenderer, MetalRenderer, OpenCLRenderer,
-    _wmma_name, base_rewrite, fp8_index, pm_manual_bf16_cast,
 )
 from tinygrad.schedule.rangeify import get_kernel_graph  # noqa: E402
-from tinygrad.uop.ops import KernelInfo, Ops, PatternMatcher, UPat  # noqa: E402
+from tinygrad.schedule.prepare import prepare_rangeify  # noqa: E402
+from tinygrad.uop.ops import AxisType, KernelInfo, Ops  # noqa: E402
 from tinygrad.uop.render import print_uops  # noqa: E402
 
 
-class _CudaNoNvrtc(CUDARenderer):
-    """CUDARenderer without NVRTC init — render-only, no execution."""
-
-    def __init__(self, target):
-        self.target, self.compiler = target, None
-        ver = int(target.arch[3:])
-        self.tensor_cores = (
-            tc.cuda_sm89 if ver >= 89
-            else tc.cuda_sm80 if ver >= 80
-            else tc.cuda_sm75 if ver >= 75
-            else []
-        )
+def render_only(ctor, target, compiler):
+    """Run the real renderer initializer, replacing only compiler construction."""
+    with patch(compiler, return_value=None):
+        return ctor(target)
 
 
-class _HipNoComgr(HIPRenderer):
-    """HIPRenderer without comgr init — render-only, no execution.
+def cuda_renderer(target):
+    return render_only(CUDARenderer, target,
+                       "tinygrad.runtime.support.compiler_cuda.NVRTCCompiler")
 
-    Mirrors HIPRenderer.__init__ (cstyle.py) minus the compiler; the CDNA
-    string_rewrite block is copied verbatim and must be re-synced on pin
-    bumps.
-    """
 
-    def __init__(self, target):
-        self.target, self.compiler = target, None
-        self.tensor_cores = tc.get_amd(target.arch)
-        if not self.is_cdna4(target.arch):
-            self.extra_matcher = HIPRenderer.extra_matcher + pm_manual_bf16_cast
-        if self.is_cdna(target.arch):
-            self.string_rewrite = PatternMatcher([
-                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]},"
-                  f" {fp8_index(x.src[0].dtype)}, {fp8_index(x.src[0].dtype)}, 0, 0, 0, 0)" if x.arg[0][2] == 128 else None),
-                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]}, 0, 0, 0)"),
-                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.nan}, {fp8_index(x.dtype)})" if math.isnan(x.val) else None),
-                (UPat(Ops.CONST, dtypes.fp8s, arg=math.inf, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.infinity}, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CONST, dtypes.fp8s, arg=-math.inf, name="x"), lambda ctx,x: f"f32_to_fp8(-{ctx.infinity}, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({x.val}f, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
-                  lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CAST, dtypes.float, (UPat.var("y", dtypes.fp8s),), name="x",),
-                  lambda ctx,x,y: f"__builtin_amdgcn_cvt_f32_{('fp8', 'bf8')[fp8_index(y.dtype)]}((unsigned int){ctx[x.src[0]]}, 0)"),
-            ]) + base_rewrite
+def hip_renderer(target):
+    return render_only(HIPRenderer, target,
+                       "tinygrad.runtime.support.compiler_amd.HIPCompiler")
 
 
 ALL_BACKENDS = {}
 for _name, _ctor in [
     ("cpu", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
-    ("cuda", lambda: _CudaNoNvrtc(Target("CUDA", arch="sm_80"))),
+    ("cuda", lambda: cuda_renderer(Target("CUDA", arch="sm_80"))),
     ("metal", lambda: MetalRenderer(Target("METAL", arch="Apple7"))),
     ("opencl", lambda: OpenCLRenderer(Target("CL"))),
     # amd stays last: auto-generated kernel names carry a per-process counter,
     # so inserting a backend mid-list would renumber every later backend's
     # kernels and rewrite the pre-existing goldens.
-    ("amd", lambda: _HipNoComgr(Target("AMD", arch="gfx1100"))),
+    ("amd", lambda: hip_renderer(Target("AMD", arch="gfx1100"))),
 ]:
     try:
         ALL_BACKENDS[_name] = _ctor()
@@ -99,26 +70,28 @@ for _name, _ctor in [
 
 GPU_BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k != "cpu"}
 
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _strip_ansi(s):
-    return _ANSI.sub("", s)
+def kernel_for_renderer(ren, sink):
+    """Match the paired fixture: hardware ranges become CPU software loops."""
+    if ren.has_local:
+        return sink
+    return sink.substitute({u: u.replace(arg=(*u.arg[:-1], AxisType.WEAK))
+                            for u in sink.toposort()
+                            if u.op is Ops.RANGE and u.arg[-1] is AxisType.GLOBAL})
 
 
 def stage5(ren, sink, optimize=True):
     """Columnar print_uops of the kernel after full_rewrite_to_sink."""
-    rewritten = full_rewrite_to_sink(sink, ren, optimize=optimize)
+    rewritten = full_rewrite_to_sink(kernel_for_renderer(ren, sink), ren, optimize=optimize)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         print_uops(list(rewritten.toposort()))
-    return _strip_ansi(buf.getvalue().rstrip("\n"))
+    return buf.getvalue().rstrip("\n")
 
 
 def stage7(ren, sink, optimize=True):
     """Final rendered backend source (trimmed)."""
-    program = linearize(full_rewrite_to_sink(sink, ren, optimize=optimize))
-    program = line_rewrite(program, pm_linearize_cleanups)
+    program = linearize(full_rewrite_to_sink(kernel_for_renderer(ren, sink), ren, optimize=optimize))
+    program = line_rewrite(program, pm_linearize_cleanups + pm_alloc_to_buf)
     return ren.render(program).strip()
 
 
@@ -131,15 +104,15 @@ def mk_param(slot, *shape, dtype=None, device="CPU"):
 
 
 def wrap_sink(*srcs):
-    """Wrap each source in CONTIGUOUS and return a SINK."""
-    from tinygrad.uop.ops import UOp as _UOp, Ops as _Ops
-    contigs = [_UOp(_Ops.CONTIGUOUS, s.dtype, (s,)) for s in srcs]
+    """Materialize each source with the target contiguous operation."""
+    from tinygrad.uop.ops import UOp as _UOp
+    contigs = [s.contiguous() for s in srcs]
     return _UOp.sink(*contigs)
 
 
 def _extract_kernels(sink):
     """Run rangeify, return inline kernel AST roots (CALL srcs) in toposort."""
-    kg = get_kernel_graph(sink)
+    kg = get_kernel_graph(prepare_rangeify(sink))
     out = []
     for u in kg.toposort():
         if u.op is Ops.CALL and isinstance(u.src[0].arg, KernelInfo):
@@ -156,7 +129,7 @@ def stage5_tensor(ren, tensor_sink, optimize=True):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             print_uops(list(rewritten.toposort()))
-        body = _strip_ansi(buf.getvalue().rstrip("\n"))
+        body = buf.getvalue().rstrip("\n")
         if len(kernels) == 1:
             parts.append(body)
         else:
@@ -170,7 +143,7 @@ def stage7_tensor(ren, tensor_sink, optimize=True):
     sources = [
         ren.render(line_rewrite(
             linearize(full_rewrite_to_sink(k, ren, optimize=optimize)),
-            pm_linearize_cleanups,
+            pm_linearize_cleanups + pm_alloc_to_buf,
         )).strip()
         for k in kernels
     ]

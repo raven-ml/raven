@@ -73,9 +73,13 @@ acceptance requirement; skipped tests are not execution evidence.
 
 - Audit HCQ2/NV compute changes in the upstream video migration against current
   consumers. Account for test relocations when regenerating the complete corpus.
-- Migrate the remaining Python drivers to the target API and generate the
-  complete corpus separately. Attribute every changed expectation; require
-  exact source parity for supported renderers.
+- Attribute every changed expectation in the separately generated reference
+  corpus; require exact source parity for supported renderers, apart from
+  explicitly justified divergences.
+- Replace negative unknown pointer extents in paired hand-built kernel fixtures
+  with their actual shapes. Names such as `data0_-1` currently make those
+  render-only cases unsuitable for source-compilation acceptance; preserve
+  paired graph intent and add compilation checks for the corrected fixtures.
 - Reconcile remaining intermediate IR/GROUP and source differences in FP8
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
   `topk_rounds` and `multi_output`. Reconcile CPU/Metal `lorenz_fold` ordering

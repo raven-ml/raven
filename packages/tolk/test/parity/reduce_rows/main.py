@@ -19,17 +19,10 @@ def kernel():
     rj = UOp.range(COLS, 1, AxisType.REDUCE)
     flat = ri * COLS + rj
     ld = p0.index(flat).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, rj), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(ld, rj), arg=(Ops.ADD, 0))
     st = p1.index(ri).store(red)
     end = st.end(ri)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="reduce_rows",
-            axis_types=(AxisType.GLOBAL, AxisType.REDUCE),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='reduce_rows', opts_to_apply=()))
 
 
 if __name__ == "__main__":

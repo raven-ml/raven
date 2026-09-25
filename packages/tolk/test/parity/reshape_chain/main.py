@@ -13,8 +13,8 @@ from tinygrad.dtype import dtypes  # noqa: E402
 def build():
     a = mk_param(0, 4, 4)
     b = mk_param(1, 2, 8)
-    r1 = UOp(Ops.RESHAPE, dtypes.float32, (a, shape_to_shape_arg((16,))))
-    r2 = UOp(Ops.RESHAPE, dtypes.float32, (r1, shape_to_shape_arg((2, 8))))
+    r1 = UOp(Ops.RESHAPE, src=(a, shape_to_shape_arg((16,))))
+    r2 = UOp(Ops.RESHAPE, src=(r1, shape_to_shape_arg((2, 8))))
     return wrap_sink(r2 + b)
 
 

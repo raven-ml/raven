@@ -12,15 +12,18 @@ Usage:
 After running, commit the generated .expected files.
 """
 
+import argparse
 import os
+from pathlib import Path
 import sys
+from unittest.mock import patch
 
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "..", "..", "_tinygrad"
-    ),
-)
+HERE = Path(__file__).resolve().parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--tinygrad", type=Path, default=HERE.parents[4] / "_tinygrad")
+parser.add_argument("--output", type=Path, default=HERE)
+args = parser.parse_args()
+sys.path.insert(0, str(args.tinygrad.resolve()))
 
 # Disable ANSI color in the reference — auto-generated kernel names embed ANSI
 # escape codes per axis type that would otherwise leak into rendered source.
@@ -30,8 +33,8 @@ from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import Target
 from tinygrad.schedule.rangeify import get_kernel_graph
-from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups
-from tinygrad.codegen.opt.postrange import Scheduler
+from tinygrad.schedule.prepare import prepare_rangeify
+from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups, pm_alloc_to_buf
 from tinygrad.codegen.late.linearizer import linearize
 from tinygrad.renderer.cstyle import (
     ClangRenderer,
@@ -39,33 +42,22 @@ from tinygrad.renderer.cstyle import (
     MetalRenderer,
     OpenCLRenderer,
 )
-import tinygrad.renderer.cstyle as _cstyle_mod
 from tinygrad import Tensor, nn
 from extra.models.llama import Transformer
 
-OUT_DIR = os.path.dirname(__file__)
+OUT_DIR = args.output
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class _RenderOnlyCUDARenderer(CUDARenderer):
-    """CUDARenderer that skips compiler init (nvrtc not needed for rendering)."""
-
-    def __init__(self, target):
-        self.target, self.compiler = target, None
-        arch = target.arch
-        ver = int(arch[3:])
-        tc = _cstyle_mod.tc
-        self.tensor_cores = (
-            tc.cuda_sm89 if ver >= 89
-            else tc.cuda_sm80 if ver >= 80
-            else tc.cuda_sm75 if ver >= 75
-            else []
-        )
+def cuda_renderer():
+    with patch("tinygrad.runtime.support.compiler_cuda.NVRTCCompiler", return_value=None):
+        return CUDARenderer(Target("CUDA", arch="sm_80"))
 
 
 RENDERERS = {}
 for _name, _ctor in [
     ("clang", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
-    ("cuda", lambda: _RenderOnlyCUDARenderer(Target("CUDA", arch="sm_80"))),
+    ("cuda", cuda_renderer),
     ("metal", lambda: MetalRenderer(Target("METAL"))),
     ("opencl", lambda: OpenCLRenderer(Target("CL"))),
 ]:
@@ -86,13 +78,13 @@ def render_kernel(ast, renderer, optimize=True):
     """Run full codegen pipeline on a kernel AST and return rendered source."""
     rewritten = full_rewrite_to_sink(ast, renderer, optimize=optimize)
     lst = linearize(rewritten)
-    lst = line_rewrite(lst, pm_linearize_cleanups)
+    lst = line_rewrite(lst, pm_linearize_cleanups + pm_alloc_to_buf)
     return renderer.render(lst).strip()
 
 
 def get_source(sink, renderer, optimize=True):
     """Build tensor graph, rangeify, codegen, render all kernels."""
-    kg = get_kernel_graph(sink)
+    kg = get_kernel_graph(prepare_rangeify(sink))
     sources = []
     for u in kg.toposort():
         if u.op is Ops.CALL and isinstance(u.src[0].arg, KernelInfo):
@@ -106,8 +98,8 @@ def get_source(sink, renderer, optimize=True):
 def mk_shape(*dims):
     """Encode a shape as a VECTORIZE of index consts (or single const for 1-D)."""
     if len(dims) == 1:
-        return UOp.const(dims[0], dtypes.int)
-    return UOp.stack(*(UOp.const(d, dtypes.int) for d in dims))
+        return UOp.const(dims[0])
+    return UOp.stack(*(UOp.const(d) for d in dims))
 
 
 def mk_param(slot, *shape, dtype=dtypes.float32):
@@ -116,8 +108,8 @@ def mk_param(slot, *shape, dtype=dtypes.float32):
 
 
 def wrap_sink(*srcs):
-    """Wrap source(s) in CONTIGUOUS -> SINK."""
-    contigs = [UOp(Ops.CONTIGUOUS, s.dtype, (s,)) for s in srcs]
+    """Wrap source(s) in contiguous stages -> SINK."""
+    contigs = [s.contiguous() for s in srcs]
     return UOp.sink(*contigs)
 
 
@@ -156,7 +148,7 @@ def build_binop_reshape():
     b = mk_param(1, 10)
     c = mk_param(2, 5, 2)
     add = a + b
-    reshaped = UOp(Ops.RESHAPE, dtypes.float32, (add, mk_shape(5, 2)))
+    reshaped = UOp(Ops.RESHAPE, (add, mk_shape(5, 2)))
     return wrap_sink(reshaped + c)
 
 
@@ -166,7 +158,7 @@ def build_binop_permute():
     b = mk_param(1, 2, 5)
     c = mk_param(2, 5, 2)
     add = a + b
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (add,), (1, 0))
+    permed = UOp(Ops.PERMUTE, (add,), (1, 0))
     return wrap_sink(permed + c)
 
 
@@ -184,8 +176,8 @@ def build_reduce_unary():
     """c = neg(sqrt(sum(a))), shape [16] -> scalar."""
     a = mk_param(0, 16)
     red = a._rop(Ops.ADD, (0,))
-    sq = UOp(Ops.SQRT, dtypes.float32, (red,))
-    neg = UOp(Ops.NEG, dtypes.float32, (sq,))
+    sq = UOp(Ops.SQRT, (red,))
+    neg = UOp(Ops.NEG, (sq,))
     return wrap_sink(neg)
 
 
@@ -194,7 +186,7 @@ def build_reduce_reshape_binop():
     a = mk_param(0, 10, 10)
     b = mk_param(1, 10)
     red = a._rop(Ops.ADD, (0,))
-    reshaped = UOp(Ops.RESHAPE, dtypes.float32, (red, mk_shape(10)))
+    reshaped = UOp(Ops.RESHAPE, (red, mk_shape(10)))
     return wrap_sink(reshaped + b)
 
 
@@ -203,7 +195,7 @@ def build_reduce_permute_binop():
     a = mk_param(0, 10, 10, 10)
     b = mk_param(1, 10, 10)
     red = a._rop(Ops.ADD, (0,))
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (red,), (1, 0))
+    permed = UOp(Ops.PERMUTE, (red,), (1, 0))
     return wrap_sink(permed + b)
 
 
@@ -212,8 +204,8 @@ def build_permute_through_reshape():
     a = mk_param(0, 16, 16)
     b = mk_param(1, 16, 16)
     add = a + b
-    reshaped = UOp(Ops.RESHAPE, dtypes.float32, (add, mk_shape(4, 4, 4, 4)))
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (reshaped,), (2, 3, 0, 1))
+    reshaped = UOp(Ops.RESHAPE, (add, mk_shape(4, 4, 4, 4)))
+    permed = UOp(Ops.PERMUTE, (reshaped,), (2, 3, 0, 1))
     return wrap_sink(permed)
 
 
@@ -263,7 +255,7 @@ def build_reduce_shrink():
     a = mk_param(0, 32, 32)
     b = mk_param(1, 16)
     red = a._rop(Ops.ADD, (1,))
-    reshaped = UOp(Ops.RESHAPE, dtypes.float32, (red, mk_shape(32)))
+    reshaped = UOp(Ops.RESHAPE, (red, mk_shape(32)))
     shrunk = reshaped.shrink(((0, 16),))
     return wrap_sink(shrunk + b)
 
@@ -274,7 +266,7 @@ def build_contiguous_add():
     y = mk_param(1, 32)
     z = mk_param(2, 32)
     add = x + y
-    contig = UOp(Ops.CONTIGUOUS, dtypes.float32, (add,))
+    contig = add.contiguous()
     return wrap_sink(contig + z)
 
 
@@ -282,8 +274,8 @@ def build_reshape_chain():
     """c = a.reshape(16).reshape(2,8) + b, shape [4,4], b=[2,8]."""
     a = mk_param(0, 4, 4)
     b = mk_param(1, 2, 8)
-    r1 = UOp(Ops.RESHAPE, dtypes.float32, (a, mk_shape(16)))
-    r2 = UOp(Ops.RESHAPE, dtypes.float32, (r1, mk_shape(2, 8)))
+    r1 = UOp(Ops.RESHAPE, (a, mk_shape(16)))
+    r2 = UOp(Ops.RESHAPE, (r1, mk_shape(2, 8)))
     return wrap_sink(r2 + b)
 
 
@@ -332,10 +324,7 @@ def llama_model_sinks():
     }
     _LLAMA_MODEL_SINKS = {}
     for sink in sinks:
-        name_counts = Scheduler.kernel_cnt.copy()
         rewritten = full_rewrite_to_sink(sink, RENDERERS["clang"], optimize=True)
-        Scheduler.kernel_cnt.clear()
-        Scheduler.kernel_cnt.update(name_counts)
         case_name = targets.get(rewritten.arg.name)
         if case_name is not None:
             _LLAMA_MODEL_SINKS[case_name] = sink

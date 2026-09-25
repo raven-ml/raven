@@ -29,7 +29,7 @@ DEVICES = ("CPU:0", "CPU:1")
 
 
 def build():
-    a = UOp.param(0, dtypes.float32, shape=(4, 8), device=DEVICES, axis=0)
+    a = UOp.param(0, dtypes.float32, shape=(4, 8), device=DEVICES).unshard(0)
     b = UOp.param(1, dtypes.float32, shape=(8, 8), device=DEVICES)
     h = a.alu(Ops.ADD, b)
     red = h._rop(Ops.MAX, (1,))

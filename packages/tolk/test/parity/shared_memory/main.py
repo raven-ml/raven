@@ -12,19 +12,19 @@ from tinygrad.dtype import dtypes, AddrSpace  # noqa: E402
 
 
 def kernel():
-    sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
+    sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
     temp = UOp.placeholder((256,), dtypes.float32, 0, AddrSpace.LOCAL)
-    idx = UOp.const(0, dtypes.int)
-    zero = UOp.const(0.0, dtypes.float32)
+    idx = UOp.cconst(0, dtypes.int)
+    zero = UOp.cconst(0.0, dtypes.float32)
     idx_local = temp.index(idx)
-    store_local = UOp(Ops.STORE, dtypes.void, (idx_local, zero))
-    barrier = UOp(Ops.BARRIER, dtypes.void, (store_local,))
+    store_local = UOp(Ops.STORE, src=(idx_local, zero))
+    barrier = UOp(Ops.BARRIER, src=(store_local,))
     after = temp.after(barrier)
     idx_local2 = after.index(idx)
-    ld = UOp(Ops.LOAD, dtypes.float32, (idx_local2,))
+    ld = UOp(Ops.LOAD, src=(idx_local2,))
     idx_global = a.index(idx)
-    store_global = UOp(Ops.STORE, dtypes.void, (idx_global, ld))
+    store_global = UOp(Ops.STORE, src=(idx_global, ld))
     return [sink, a, temp, idx, zero, idx_local, store_local, barrier, after,
             idx_local2, ld, idx_global, store_global]
 

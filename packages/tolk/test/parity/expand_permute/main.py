@@ -15,7 +15,7 @@ def build():
     b = mk_param(1, 10, 10, 1)
     ab = a + b
     expanded = ab.expand((10, 10, 10))
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (ab,), (2, 1, 0))
+    permed = UOp(Ops.PERMUTE, src=(ab,), arg=(2, 1, 0))
     permed_expanded = permed.expand((10, 10, 10))
     return wrap_sink(expanded + permed_expanded)
 

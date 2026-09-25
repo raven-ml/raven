@@ -25,7 +25,7 @@ BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k in ("cpu", "cuda")}
 
 def build():
     a = mk_param(0, 768, 2304)
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (a,), (1, 0))
+    permed = UOp(Ops.PERMUTE, src=(a,), arg=(1, 0))
     return wrap_sink(permed)
 
 

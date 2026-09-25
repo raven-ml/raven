@@ -22,14 +22,7 @@ def kernel():
     add = cast_a + ld_b
     st = p2.index(r0).store(add)
     end = st.end(r0)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="elementwise_cast_f16",
-            axis_types=(AxisType.GLOBAL,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='elementwise_cast_f16', opts_to_apply=()))
 
 
 if __name__ == "__main__":

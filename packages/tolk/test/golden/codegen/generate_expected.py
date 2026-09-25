@@ -6,105 +6,67 @@ full_rewrite_to_sink + linearize + render pipeline.  This produces the reference
 source code that Tolk's Pipeline.full_rewrite_to_sink must match.
 
 Usage:
-    uv run packages/tolk/test/golden/codegen/generate_expected.py
+    python3 packages/tolk/test/golden/codegen/generate_expected.py \
+      --tinygrad _plans/tinygrad-a83c6f801 --output _plans/goldens-a83/codegen
 
-After running, commit the generated .expected files.
+Generate separately and review differences before updating expectations.
 """
 
-import math
+import argparse
 import os
+from pathlib import Path
 import sys
+from unittest.mock import patch
 
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "..", "..", "_tinygrad"
-    ),
-)
+HERE = Path(__file__).resolve().parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--tinygrad", type=Path, default=HERE.parents[4] / "_tinygrad")
+parser.add_argument("--output", type=Path, default=HERE)
+args = parser.parse_args()
+sys.path.insert(0, str(args.tinygrad.resolve()))
+for key in ("DEBUG", "VIZ", "PROFILE"):
+    os.environ.pop(key, None)
 
 # Disable ANSI color in the reference — auto-generated kernel names embed ANSI
 # escape codes per axis type, which would leak into rendered source and the
 # KernelInfo.name used to look up model kernels.
 os.environ["NO_COLOR"] = "1"
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, PatternMatcher, UPat
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import Target
-from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups
-from tinygrad.codegen.late.linearizer import linearize
+from tinygrad.codegen import full_rewrite_to_sink, do_linearize
 from tinygrad.renderer.cstyle import (
     ClangRenderer,
     CUDARenderer,
     HIPRenderer,
     MetalRenderer,
     OpenCLRenderer,
-    _wmma_name,
-    base_rewrite,
-    fp8_index,
-    pm_manual_bf16_cast,
 )
-import tinygrad.renderer.cstyle as _cstyle_mod
 from tinygrad import Tensor, nn
 from extra.models.llama import Transformer
 
-OUT_DIR = os.path.dirname(__file__)
+OUT_DIR = args.output
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class _RenderOnlyCUDARenderer(CUDARenderer):
-    """CUDARenderer that skips compiler init (nvrtc not needed for rendering)."""
-
-    def __init__(self, target):
-        self.target, self.compiler = target, None
-        arch = target.arch
-        ver = int(arch[3:])
-        tc = _cstyle_mod.tc
-        self.tensor_cores = (
-            tc.cuda_sm89 if ver >= 89
-            else tc.cuda_sm80 if ver >= 80
-            else tc.cuda_sm75 if ver >= 75
-            else []
-        )
-
-
-class _RenderOnlyHIPRenderer(HIPRenderer):
-    """HIPRenderer without comgr init — render-only, no execution.
-
-    Mirrors HIPRenderer.__init__ (cstyle.py) minus the compiler; the CDNA
-    string_rewrite block is copied verbatim and must be re-synced on pin
-    bumps.
-    """
-
-    def __init__(self, target):
-        self.target, self.compiler = target, None
-        self.tensor_cores = _cstyle_mod.tc.get_amd(target.arch)
-        if not self.is_cdna4(target.arch):
-            self.extra_matcher = HIPRenderer.extra_matcher + pm_manual_bf16_cast
-        if self.is_cdna(target.arch):
-            self.string_rewrite = PatternMatcher([
-                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]},"
-                  f" {fp8_index(x.src[0].dtype)}, {fp8_index(x.src[0].dtype)}, 0, 0, 0, 0)" if x.arg[0][2] == 128 else None),
-                (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]}, 0, 0, 0)"),
-                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.nan}, {fp8_index(x.dtype)})" if math.isnan(x.val) else None),
-                (UPat(Ops.CONST, dtypes.fp8s, arg=math.inf, name="x"), lambda ctx,x: f"f32_to_fp8({ctx.infinity}, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CONST, dtypes.fp8s, arg=-math.inf, name="x"), lambda ctx,x: f"f32_to_fp8(-{ctx.infinity}, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CONST, dtypes.fp8s, name="x"), lambda ctx,x: f"f32_to_fp8({x.val}f, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
-                  lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-                (UPat(Ops.CAST, dtypes.float, (UPat.var("y", dtypes.fp8s),), name="x",),
-                  lambda ctx,x,y: f"__builtin_amdgcn_cvt_f32_{('fp8', 'bf8')[fp8_index(y.dtype)]}((unsigned int){ctx[x.src[0]]}, 0)"),
-            ]) + base_rewrite
+def render_only(ctor, target, compiler):
+    # Keep the target's initializer and matchers; only compiler construction
+    # is disabled because these fixtures render without compiling or executing.
+    with patch(compiler, return_value=None):
+        return ctor(target)
 
 
 RENDERERS = {}
 for _name, _ctor in [
     ("clang", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
-    ("cuda", lambda: _RenderOnlyCUDARenderer(Target("CUDA", arch="sm_80"))),
+    ("cuda", lambda: render_only(CUDARenderer, Target("CUDA", arch="sm_80"),
+                                  "tinygrad.runtime.support.compiler_cuda.NVRTCCompiler")),
     ("metal", lambda: MetalRenderer(Target("METAL", arch="Apple7"))),
     ("opencl", lambda: OpenCLRenderer(Target("CL"))),
-    # amd stays last: auto-generated kernel names carry a per-process counter,
-    # so inserting a backend mid-list would renumber every later backend's
-    # kernels and rewrite the pre-existing goldens.
-    ("amd", lambda: _RenderOnlyHIPRenderer(Target("AMD", arch="gfx1100"))),
+    # Keep backend order aligned with the existing reference corpus.
+    ("amd", lambda: render_only(HIPRenderer, Target("AMD", arch="gfx1100"),
+                                 "tinygrad.runtime.support.compiler_amd.HIPCompiler")),
 ]:
     try:
         RENDERERS[_name] = _ctor()
@@ -121,20 +83,23 @@ def write_expected(name, content):
 
 def get_source(sink, renderer, optimize=True):
     """Run the full tinygrad codegen pipeline and return rendered source."""
+    # Match generate_actual.ml: hand-built GPU ranges are software loops on CPU.
+    if not renderer.has_local:
+        sink = sink.substitute({u: u.replace(arg=(*u.axis_id, AxisType.WEAK))
+                                for u in sink.toposort()
+                                if u.op is Ops.RANGE and u.axis_type is AxisType.GLOBAL})
     rewritten = full_rewrite_to_sink(sink, renderer, optimize=optimize)
-    lst = linearize(rewritten)
-    lst = line_rewrite(lst, pm_linearize_cleanups)
-    return renderer.render(lst).strip()
+    program = do_linearize(renderer, UOp(Ops.PROGRAM), rewritten)
+    return renderer.render(list(program.src[1].src)).strip()
 
 
 def ki(name="test", **kwargs):
     """Build a KernelInfo with deterministic defaults.
 
-    Using name != "test" forces apply_opts to preserve the name rather than
-    auto-generating one with a global counter, which avoids order-dependent
-    naming mismatches between the Python and OCaml generators.
+    Explicit names keep hand-built fixtures identifiable after optimization;
+    model fixtures retain the target's automatically derived kernel names.
     """
-    defaults = dict(name=name, axis_types=(), opts_to_apply=())
+    defaults = dict(name=name, opts_to_apply=())
     defaults.update(kwargs)
     return KernelInfo(**defaults)
 
@@ -155,7 +120,7 @@ def build_elementwise_add():
     add = ld_a + ld_b
     st = p2.index(r0).store(add)
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("elementwise_add", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("elementwise_add"))
 
 
 def build_sum_reduce():
@@ -164,10 +129,10 @@ def build_sum_reduce():
     p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.ADD, 0))
     c0 = UOp.const(0, dtypes.int)
     st = p1.index(c0).store(red)
-    return UOp.sink(st, arg=ki("sum_reduce", axis_types=(AxisType.REDUCE,)))
+    return UOp.sink(st, arg=ki("sum_reduce"))
 
 
 def build_max_reduce():
@@ -176,10 +141,10 @@ def build_max_reduce():
     p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(64, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.MAX, 0))
+    red = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.MAX, 0))
     c0 = UOp.const(0, dtypes.int)
     st = p1.index(c0).store(red)
-    return UOp.sink(st, arg=ki("max_reduce", axis_types=(AxisType.REDUCE,)))
+    return UOp.sink(st, arg=ki("max_reduce"))
 
 
 def build_dot_product():
@@ -191,10 +156,10 @@ def build_dot_product():
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
     mul = ld_a * ld_b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul, r0), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(mul, r0), arg=(Ops.ADD, 0))
     c0 = UOp.const(0, dtypes.int)
     st = p2.index(c0).store(red)
-    return UOp.sink(st, arg=ki("dot_product", axis_types=(AxisType.REDUCE,)))
+    return UOp.sink(st, arg=ki("dot_product"))
 
 
 def build_matmul_small():
@@ -212,14 +177,13 @@ def build_matmul_small():
     ld_a = pA.index(a_idx).load()
     ld_b = pB.index(b_idx).load()
     mul = ld_a * ld_b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul, rk), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(mul, rk), arg=(Ops.ADD, 0))
     st = pC.index(c_idx).store(red)
     end = st.end(ri, rj)
     return UOp.sink(
         end,
         arg=ki(
             "matmul_small",
-            axis_types=(AxisType.GLOBAL, AxisType.GLOBAL, AxisType.REDUCE),
         ),
     )
 
@@ -239,7 +203,7 @@ def build_elementwise_2d():
     st = p2.index(flat).store(add)
     end = st.end(ri, rj)
     return UOp.sink(
-        end, arg=ki("elementwise_2d", axis_types=(AxisType.GLOBAL, AxisType.GLOBAL))
+        end, arg=ki("elementwise_2d")
     )
 
 
@@ -252,11 +216,11 @@ def build_reduce_rows():
     rj = UOp.range(COLS, 1, AxisType.REDUCE)
     flat = ri * COLS + rj
     ld = p0.index(flat).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, rj), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(ld, rj), arg=(Ops.ADD, 0))
     st = p1.index(ri).store(red)
     end = st.end(ri)
     return UOp.sink(
-        end, arg=ki("reduce_rows", axis_types=(AxisType.GLOBAL, AxisType.REDUCE))
+        end, arg=ki("reduce_rows")
     )
 
 
@@ -268,10 +232,9 @@ def build_multi_output():
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld_a = p0.index(r0).load()
     st1 = p1.index(r0).store(ld_a + UOp.const(1.0, dtypes.float32))
-    e1 = st1.end(r0)
     st2 = p2.index(r0).store(ld_a * UOp.const(2.0, dtypes.float32))
-    e2 = st2.end(r0)
-    return UOp.sink(e1, e2, arg=ki("multi_output", axis_types=(AxisType.GLOBAL,)))
+    end = UOp.group(st1, st2).end(r0)
+    return UOp.sink(end, arg=ki("multi_output"))
 
 
 def build_gated_store():
@@ -288,7 +251,7 @@ def build_gated_store():
         gate.where(add, UOp.invalid())
     )
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("gated_store", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("gated_store"))
 
 
 # ── Test cases ──
@@ -308,7 +271,7 @@ def build_no_optimize():
     add = ld_a + ld_b
     st = p2.index(r0).store(add)
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("no_optimize", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("no_optimize"))
 
 
 def build_elementwise_where():
@@ -322,7 +285,7 @@ def build_elementwise_where():
     val = cond.where(ld, zero)
     st = p1.index(r0).store(val)
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("elementwise_where", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("elementwise_where"))
 
 
 def build_elementwise_cast_f16():
@@ -337,7 +300,7 @@ def build_elementwise_cast_f16():
     add = cast_a + ld_b
     st = p2.index(r0).store(add)
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("elementwise_cast_f16", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("elementwise_cast_f16"))
 
 
 def build_elementwise_sqrt():
@@ -346,10 +309,10 @@ def build_elementwise_sqrt():
     p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
     ld = p0.index(r0).load()
-    sq = UOp(Ops.SQRT, dtypes.float32, (ld,))
+    sq = UOp(Ops.SQRT, src=(ld,))
     st = p1.index(r0).store(sq)
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("elementwise_sqrt", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("elementwise_sqrt"))
 
 
 def build_parallel_reduce():
@@ -359,12 +322,12 @@ def build_parallel_reduce():
     p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(128, 0, AxisType.REDUCE)
     ld = p0.index(r0).load()
-    red1 = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
-    red2 = UOp(Ops.REDUCE, dtypes.float32, (ld * ld, r0), (Ops.ADD, 0))
+    red1 = UOp(Ops.REDUCE, src=(ld, r0), arg=(Ops.ADD, 0))
+    red2 = UOp(Ops.REDUCE, src=(ld * ld, r0), arg=(Ops.ADD, 0))
     c0 = UOp.const(0, dtypes.int)
     st1 = p1.index(c0).store(red1)
     st2 = p2.index(c0).store(red2)
-    return UOp.sink(st1, st2, arg=ki("parallel_reduce", axis_types=(AxisType.REDUCE,)))
+    return UOp.sink(st1, st2, arg=ki("parallel_reduce"))
 
 
 def build_elementwise_int32():
@@ -378,7 +341,7 @@ def build_elementwise_int32():
     add = ld_a + ld_b
     st = p2.index(r0).store(add)
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("elementwise_int32", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("elementwise_int32"))
 
 
 def build_lorenz_fold():
@@ -403,7 +366,7 @@ def build_lorenz_fold():
         x, y, z = x + dt * dx, y + dt * dy, z + dt * dz
     st = po.index(r0).store((x + y) + z)
     end = st.end(r0)
-    return UOp.sink(end, arg=ki("lorenz_fold", axis_types=(AxisType.GLOBAL,)))
+    return UOp.sink(end, arg=ki("lorenz_fold"))
 
 
 _LLAMA_MODEL_SINKS = None

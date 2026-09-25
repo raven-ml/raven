@@ -12,15 +12,15 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
-    sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
+    sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
-    idx = UOp.const(0, dtypes.int)
-    cond = UOp.const(True, dtypes.bool)
-    if_op = UOp(Ops.IF, dtypes.void, (cond,))
+    idx = UOp.cconst(0, dtypes.int)
+    cond = UOp.cconst(True, dtypes.bool)
+    if_op = UOp(Ops.IF, src=(cond,))
     idx_a = a.index(idx)
-    one = UOp.const(1.0, dtypes.float32)
-    store = UOp(Ops.STORE, dtypes.void, (idx_a, one))
-    endif = UOp(Ops.ENDIF, dtypes.void, (if_op,))
+    one = UOp.cconst(1.0, dtypes.float32)
+    store = UOp(Ops.STORE, src=(idx_a, one))
+    endif = UOp(Ops.ENDIF, src=(if_op,))
     return [sink, a, idx, cond, if_op, idx_a, one, store, endif]
 
 

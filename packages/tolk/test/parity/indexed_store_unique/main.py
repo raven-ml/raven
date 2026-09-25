@@ -29,14 +29,7 @@ def kernel():
     target = (row.cast(dtypes.weakint) * D + j).valid(in_bounds)
     st = dst.index(target).store(src.index(k * D + j).load())
     end = st.end(j, k)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="indexed_store_unique",
-            axis_types=(AxisType.WEAK, AxisType.WEAK),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='indexed_store_unique', opts_to_apply=()))
 
 
 if __name__ == "__main__":

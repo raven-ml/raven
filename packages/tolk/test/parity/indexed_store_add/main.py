@@ -31,14 +31,7 @@ def kernel():
     old = dst.index(target).load()
     st = dst.index(target).store(old + src.index(k * D + j).load())
     end = st.end(k).end(j)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="indexed_store_add",
-            axis_types=(AxisType.WEAK, AxisType.REDUCE),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='indexed_store_add', opts_to_apply=()))
 
 
 if __name__ == "__main__":

@@ -12,19 +12,19 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
-    sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
+    sink = UOp(Ops.SINK, src=(), arg=KernelInfo())
     a = UOp.param(0, dtypes.float32, shape=(-1,))
-    ten = UOp.const(10, dtypes.int)
-    five = UOp.const(5, dtypes.int)
-    ridx0 = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.WEAK))
-    ridx1 = UOp(Ops.RANGE, dtypes.int, (five,), (1, AxisType.WEAK))
+    ten = UOp.cconst(10, dtypes.int)
+    five = UOp.cconst(5, dtypes.int)
+    ridx0 = UOp(Ops.RANGE, src=(ten,), arg=(0, AxisType.WEAK))
+    ridx1 = UOp(Ops.RANGE, src=(five,), arg=(1, AxisType.WEAK))
     combined = ridx0 + ridx1
     idx_ld = a.index(combined)
-    ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
+    ld = UOp(Ops.LOAD, src=(idx_ld,))
     idx_st = a.index(combined)
-    store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
-    end1 = UOp(Ops.END, dtypes.void, (store, ridx1))
-    end0 = UOp(Ops.END, dtypes.void, (end1, ridx0))
+    store = UOp(Ops.STORE, src=(idx_st, ld))
+    end1 = UOp(Ops.END, src=(store, ridx1))
+    end0 = UOp(Ops.END, src=(end1, ridx0))
     return [sink, a, ten, five, ridx0, ridx1, combined, idx_ld, ld, idx_st,
             store, end1, end0]
 

@@ -24,11 +24,11 @@ HORIZON = 2
 
 
 def reshape(x, shape):
-    return UOp(Ops.RESHAPE, dtypes.float32, (x, shape_to_shape_arg(shape)))
+    return UOp(Ops.RESHAPE, src=(x, shape_to_shape_arg(shape)))
 
 
 def transpose(x):
-    return UOp(Ops.PERMUTE, dtypes.float32, (x,), (1, 0))
+    return UOp(Ops.PERMUTE, src=(x,), arg=(1, 0))
 
 
 # out[m, n] = sum_k lhs[m, k] * rhs[k, n]

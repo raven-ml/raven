@@ -25,17 +25,10 @@ def kernel():
     ld_a = pA.index(a_idx).load()
     ld_b = pB.index(b_idx).load()
     mul = ld_a * ld_b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul, rk), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(mul, rk), arg=(Ops.ADD, 0))
     st = pC.index(c_idx).store(red)
     end = st.end(ri, rj)
-    return UOp.sink(
-        end,
-        arg=KernelInfo(
-            name="matmul_small",
-            axis_types=(AxisType.GLOBAL, AxisType.GLOBAL, AxisType.REDUCE),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(end, arg=KernelInfo(name='matmul_small', opts_to_apply=()))
 
 
 if __name__ == "__main__":

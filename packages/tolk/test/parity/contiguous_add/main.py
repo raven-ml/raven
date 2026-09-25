@@ -15,7 +15,7 @@ def build():
     y = mk_param(1, 32)
     z = mk_param(2, 32)
     add = x + y
-    contig = UOp(Ops.CONTIGUOUS, dtypes.float32, (add,))
+    contig = add.contiguous()
     return wrap_sink(contig + z)
 
 

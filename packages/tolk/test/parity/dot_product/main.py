@@ -19,17 +19,10 @@ def kernel():
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
     mul = ld_a * ld_b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul, r0), (Ops.ADD, 0))
+    red = UOp(Ops.REDUCE, src=(mul, r0), arg=(Ops.ADD, 0))
     c0 = UOp.const(0, dtypes.weakint)
     st = p2.index(c0).store(red)
-    return UOp.sink(
-        st,
-        arg=KernelInfo(
-            name="dot_product",
-            axis_types=(AxisType.REDUCE,),
-            opts_to_apply=(),
-        ),
-    )
+    return UOp.sink(st, arg=KernelInfo(name='dot_product', opts_to_apply=()))
 
 
 if __name__ == "__main__":

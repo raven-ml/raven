@@ -26,7 +26,7 @@ DEVICES = ("CPU:0", "CPU:1")
 
 
 def build():
-    a = UOp.param(0, dtypes.float32, shape=(8, 8), device=DEVICES, axis=0)
+    a = UOp.param(0, dtypes.float32, shape=(8, 8), device=DEVICES).unshard(0)
     b = UOp.param(1, dtypes.float32, shape=(16, 8), device=DEVICES)
     return wrap_sink(a + b)
 

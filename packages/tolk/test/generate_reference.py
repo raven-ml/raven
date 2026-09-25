@@ -27,6 +27,14 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 
+# Generate and retain these target outputs, but do not imply exact comparison
+# with a deliberately different implementation (see Tolk's DIVERGENCES.md).
+REFERENCE_ONLY = {
+    "golden/amdqueue": {
+        "exec_gfx942.expected": "Resident multi-XCC scratch partitioning differs from upstream",
+    },
+}
+
 
 def git(reference, *args):
     return subprocess.check_output(["git", "-C", str(reference), *args])
@@ -61,6 +69,7 @@ def generate(reference, revision, output, suite):
                         ("NO_COLOR", "NUM_CPU_THREADS", "PYTHONHASHSEED",
                          "PYTHONNOUSERSITE")},
         "driver_sources": {},
+        "fixture_inputs": {},
         "drivers": [],
     }
     failures = []
@@ -76,17 +85,31 @@ def generate(reference, revision, output, suite):
             destination = workspace / source.relative_to(ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
+        # Queue references parse real compiled program metadata. Stage and hash
+        # those inputs, without copying any existing comparison expectations.
+        for source in sorted((HERE / "fixtures").rglob("*")):
+            if source.suffix not in {".cubin", ".hsaco"}:
+                continue
+            manifest["fixture_inputs"][source.relative_to(HERE).as_posix()] = (
+                hashlib.sha256(source.read_bytes()).hexdigest())
+            destination = workspace / source.relative_to(ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
         for driver in drivers:
             name = driver.parent.relative_to(HERE).as_posix()
             print(f"Generating {name}", flush=True)
             staged = workspace / driver.relative_to(ROOT)
             destination = output / name
             destination.mkdir(parents=True)
-            expected = {p.name for p in driver.parent.glob("*.expected")}
+            reference_only = REFERENCE_ONLY.get(name, {})
+            expected = {p.name for p in driver.parent.glob("*.expected")} | set(reference_only)
             if not expected:
                 failures.append(f"{name}: no expected-file inventory")
+            command = [sys.executable, str(staged)]
+            if name.startswith("golden/"):
+                command += ["--tinygrad", str(workspace / "_tinygrad"), "--output", str(staged.parent)]
             result = subprocess.run(
-                [sys.executable, str(staged)], cwd=workspace, env=env,
+                command, cwd=workspace, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             )
             (destination / "generation.log").write_text(result.stdout)
@@ -99,7 +122,7 @@ def generate(reference, revision, output, suite):
                 shutil.copyfile(source, destination / filename)
             manifest["drivers"].append({
                 "name": name, "exit_code": result.returncode,
-                "missing": missing, "unexpected": extra, "files": files,
+                "missing": missing, "unexpected": extra, "reference_only": reference_only, "files": files,
             })
             if result.returncode or missing or extra:
                 failures.append(

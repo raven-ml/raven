@@ -6,21 +6,26 @@ the debug hook minimal: DEBUG=6 prints a single stable graph dump that can be
 diffed verbatim, without porting tinygrad's full tracing infrastructure.
 
 Usage:
-    uv run packages/tolk/test/golden/debug/generate_expected.py
+    python3 packages/tolk/test/golden/debug/generate_expected.py \
+      --tinygrad _plans/tinygrad-a83c6f801 --output _plans/goldens-a83/debug
 """
 
+import argparse
+import contextlib
 import io
 import os
+from pathlib import Path
 import re
 import sys
-import contextlib
 
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "..", "..", "_tinygrad"
-    ),
-)
+HERE = Path(__file__).resolve().parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--tinygrad", type=Path, default=HERE.parents[4] / "_tinygrad")
+parser.add_argument("--output", type=Path, default=HERE)
+args = parser.parse_args()
+sys.path.insert(0, str(args.tinygrad.resolve()))
+for key in ("DEBUG", "VIZ", "PROFILE"):
+    os.environ.pop(key, None)
 
 # Disable ANSI color in the reference — auto-generated kernel names embed ANSI
 # escape codes per axis type that would otherwise leak into print_uops output.
@@ -33,7 +38,8 @@ from tinygrad.codegen import full_rewrite_to_sink
 from tinygrad.helpers import Target
 from tinygrad.renderer.cstyle import ClangRenderer
 
-OUT_DIR = os.path.dirname(__file__)
+OUT_DIR = args.output
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 RENDERER = ClangRenderer(Target("CPU", arch="x86_64,znver2"))
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -52,14 +58,14 @@ def build_elementwise_add(name, opts_to_apply, ptr_size=-1):
     p0 = UOp.param(0, dtypes.float32, shape=(ptr_size,))
     p1 = UOp.param(1, dtypes.float32, shape=(ptr_size,))
     p2 = UOp.param(2, dtypes.float32, shape=(ptr_size,))
-    r0 = UOp.range(256, 0, AxisType.GLOBAL)
+    r0 = UOp.range(256, 0, AxisType.WEAK)
     ld_a = p0.index(r0).load()
     ld_b = p1.index(r0).load()
     add = ld_a + ld_b
     st = p2.index(r0).store(add)
     end = st.end(r0)
     return UOp.sink(end, arg=KernelInfo(
-        name=name, axis_types=(AxisType.GLOBAL,), opts_to_apply=opts_to_apply))
+        name=name, opts_to_apply=opts_to_apply))
 
 
 def generate_test(name, sink):
