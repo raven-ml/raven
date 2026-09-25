@@ -35,8 +35,8 @@ type ('a, 'b) ffi = {
 external mm : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
   = "caml_nx_c_matmul"
 
-(* mode: 0 owned+policy, 1 owned+single-thread, 2 owned direct naive, 3 accel,
-   4 owned+four threads *)
+(* mode: 0 owned+policy, 1 owned+single-thread, 2 owned direct naive, 3 accel, 4
+   owned+four threads *)
 external mm_ex : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> int -> unit
   = "caml_nx_c_matmul_ex"
 
@@ -1032,15 +1032,15 @@ let test_dot_path () =
       test_real ~kind:Nx_dtype.float32 ~name:"f32-dot" ~tol_rel:1e-4
         ~tol_abs:1e-4 ~m:1 ~k ~n:1 ~modes:[ `Prod; `St; `Direct ] ();
       test_real ~kind:Nx_dtype.float64 ~name:"f64-dot" ~tol_rel:1e-9
-        ~tol_abs:1e-9 ~m:1 ~k ~n:1 ~a_trans:true ~b_trans:true ~a_off:3
-        ~b_off:5 ~c_off:2 ~modes:[ `Prod; `St ] ();
+        ~tol_abs:1e-9 ~m:1 ~k ~n:1 ~a_trans:true ~b_trans:true ~a_off:3 ~b_off:5
+        ~c_off:2 ~modes:[ `Prod; `St ] ();
       test_real ~kind:Nx_dtype.bfloat16 ~name:"bf16-dot" ~tol_rel:1e-2
         ~tol_abs:1e-2 ~m:1 ~k ~n:1 ~modes:[ `Prod; `St ] ())
     [ 0; 1; 15; 16; 17; 65535; 65536; 65537; (3 * 65536) + 5 ];
   test_int_small ~kind:Nx_dtype.int8 ~name:"i8-dot-wrap" ~wrap:(wrap_signed 8)
     ~m:1 ~k:70000 ~n:1 ~vlo:10 ~vhi:12 ~modes:[ `Prod; `Direct ] ();
-  test_complex ~kind:Nx_dtype.complex64 ~name:"c32-dot" ~tol:1e-2 ~m:1
-    ~k:70000 ~n:1 ~modes:[ `Prod; `Direct ] ();
+  test_complex ~kind:Nx_dtype.complex64 ~name:"c32-dot" ~tol:1e-2 ~m:1 ~k:70000
+    ~n:1 ~modes:[ `Prod; `Direct ] ();
   let g = 5 and k = (2 * 65536) + 7 in
   let a = Buf.create Nx_dtype.float32 (g * k)
   and b = Buf.create Nx_dtype.float32 (g * k) in
