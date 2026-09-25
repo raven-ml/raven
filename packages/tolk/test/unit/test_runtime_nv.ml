@@ -398,7 +398,7 @@ let fake_iface ?nvdev
     rm_alloc = (fun ~parent:_ ~cls:_ ?params:_ () -> fail "unscripted rm_alloc");
     rm_control;
     alloc =
-      (fun ?host:_ ?uncached:_ ?cpu_access:_ ?contiguous:_ ?map_flags:_
+      (fun ?host:_ ?uncached:_ ?cpu_access:_ ?contiguous:_ ?force_devmem:_ ?map_flags:_
            ?cpu_addr:_ _ -> fail "unscripted alloc");
     free = (fun _ -> fail "unscripted free");
     kind = Type.Id.make ();

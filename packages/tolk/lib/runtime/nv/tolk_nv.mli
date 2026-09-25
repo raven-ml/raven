@@ -393,6 +393,7 @@ module Nv_iface : sig
       ?uncached:bool ->
       ?cpu_access:bool ->
       ?contiguous:bool ->
+      ?force_devmem:bool ->
       ?map_flags:int ->
       ?cpu_addr:nativeint ->
       int ->
@@ -404,6 +405,8 @@ module Nv_iface : sig
             allocates GPU-uncacheable system pages; [cpu_access] also
             maps device memory for the CPU, so the buffer has a view;
             [contiguous] requires physically contiguous pages;
+            [force_devmem] prevents the PCI interface from placing CPU-visible
+            device allocations in host memory when the BAR is small;
             [map_flags] adds driver flags to the CPU mapping;
             [cpu_addr] reuses the existing CPU mapping at that address
             instead of reserving a fresh range. All default to [false],

@@ -39,7 +39,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   tables.
   Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
-- Complete PCI multi-die mappings and NV ring placement. Finish rollback of
+- Complete PCI multi-die mappings. Finish rollback of
   failed PCI queue/device construction after interface bootstrap;
   inject driver mapping failures to validate allocation unwinding. Validate host/device placement,
   host/peer mappings and CPU mapping cleanup on large-BAR and small-BAR hardware.

@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- NVIDIA PCI command rings stay in device memory on small-BAR cards, matching
+  the physical addresses used when GSP creates their channels.
+
 - NVIDIA PCI compute submissions include the channel runlist in work-submit
   tokens, so GSP-created channels reach the correct hardware queue.
 

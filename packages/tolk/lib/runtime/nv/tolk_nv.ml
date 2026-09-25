@@ -597,6 +597,7 @@ module Nv_iface = struct
       ?uncached:bool ->
       ?cpu_access:bool ->
       ?contiguous:bool ->
+      ?force_devmem:bool ->
       ?map_flags:int ->
       ?cpu_addr:nativeint ->
       int ->
@@ -1306,7 +1307,7 @@ module Nvk_iface = struct
       rm_control =
         (fun ~obj ~cmd ?params () -> rm_control st ~obj ~cmd ?params ());
       alloc =
-        (fun ?host ?uncached ?cpu_access ?contiguous ?map_flags ?cpu_addr size ->
+        (fun ?host ?uncached ?cpu_access ?contiguous ?force_devmem:_ ?map_flags ?cpu_addr size ->
           alloc st t ?host ?uncached ?cpu_access ?contiguous ?map_flags
             ?cpu_addr size);
       free = (fun buf -> free st t buf);
@@ -1375,9 +1376,9 @@ module Nvk_iface = struct
     let interface = make_iface st t in
     Tolk_hcq.System.with_buffer_setup ~free:interface.Nv_iface.free ~stop ~close
       (fun ~track ~free ->
-        let alloc ?host ?uncached ?cpu_access ?contiguous ?map_flags ?cpu_addr size =
+        let alloc ?host ?uncached ?cpu_access ?contiguous ?force_devmem ?map_flags ?cpu_addr size =
           track (interface.Nv_iface.alloc ?host ?uncached ?cpu_access ?contiguous
-            ?map_flags ?cpu_addr size) in
+            ?force_devmem ?map_flags ?cpu_addr size) in
         f ~is_valid:(fun () -> !alive) {interface with Nv_iface.alloc; free})
 
 end
@@ -1516,9 +1517,9 @@ module Pci_iface = struct
         (fun ~obj ~cmd ?params () ->
           Ip.Gsp.rpc_rm_control g ~hobject:obj ~cmd ?params ~client:t.root ());
       alloc =
-        (fun ?host ?uncached ?cpu_access ?contiguous ?map_flags:_ ?cpu_addr:_
+        (fun ?host ?uncached ?cpu_access ?contiguous ?force_devmem ?map_flags:_ ?cpu_addr:_
              size ->
-          Base.alloc t.base ?host ?uncached ?cpu_access ?contiguous size);
+          Base.alloc t.base ?host ?uncached ?cpu_access ?contiguous ?force_devmem size);
       free = Base.free t.base;
       kind = Base.kind;
       hmemory = Base.hmemory;
@@ -2654,7 +2655,7 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
       ~params:cb ()
   in
   let gpfifo_area =
-    iface.Nv_iface.alloc ~contiguous:true ~cpu_access:true
+    iface.Nv_iface.alloc ~contiguous:true ~cpu_access:true ~force_devmem:true
       ~map_flags:(Defs.nvos33_flags_caching_type_writecombined lsl 23)
       0x300000
   in
