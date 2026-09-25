@@ -260,8 +260,8 @@ let special_dtype_by_stage () =
     (rejected Spec.program_spec idx_special)
 
 let group_rejects_value_source () =
-  let noop0 = Uop.noop ~dtype:Dtype.void () in
-  let noop1 = Uop.noop ~dtype:Dtype.void () in
+  let noop0 = Uop.noop () in
+  let noop1 = Uop.noop () in
   let bad =
     Uop.replace (Uop.group [ noop0; noop1 ]) ~src:[| i32 1 |] ()
   in
@@ -270,7 +270,7 @@ let group_rejects_value_source () =
 
 let after_rejects_value_first_source () =
   let bad =
-    Uop.replace (i32 1) ~op:Ops.After ~src:[| i32 1; Uop.noop ~dtype:Dtype.void () |]
+    Uop.replace (i32 1) ~op:Ops.After ~src:[| i32 1; Uop.noop () |]
       ()
   in
   is_true ~msg:"After first source must be orderable"
@@ -303,7 +303,7 @@ let barrier_boundaries () =
 
 let group_after_bad_layouts () =
   let grouped =
-    Uop.group [ Uop.noop ~dtype:Dtype.void (); Uop.noop ~dtype:Dtype.void () ]
+    Uop.group [ Uop.noop (); Uop.noop () ]
   in
   is_true ~msg:"Group must be void"
     (Dtype.equal (Uop.dtype grouped) Dtype.void);
@@ -419,21 +419,21 @@ let reduce_arg_required () =
   let lowered =
     Uop.reduce ~src:(i32 1)
       ~ranges:[ Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Reduce () ]
-      ~op:Ops.Add ~dtype:Dtype.int32
+      ~op:Ops.Add
   in
   is_true ~msg:"lowered reduce accepted by tensor spec"
     (accepts Spec.tensor_spec lowered)
 
 let tensor_reduce_accepts_lowered_integer_tail () =
   let r =
-    Uop.reduce ~src:(i32 1) ~ranges:[] ~op:Ops.Add ~dtype:Dtype.int32
+    Uop.reduce ~src:(i32 1) ~ranges:[] ~op:Ops.Add
   in
   is_true ~msg:"tensor spec accepts axes-empty reduce"
     (accepts Spec.tensor_spec r);
   let lowered =
     Uop.reduce ~src:(i32 1)
       ~ranges:[ Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Reduce () ]
-      ~op:Ops.Add ~dtype:Dtype.int32
+      ~op:Ops.Add
   in
   is_true ~msg:"tensor spec accepts lowered integer tail"
     (accepts Spec.tensor_spec lowered);
@@ -708,7 +708,7 @@ let full_spec_accepts_intermediate_forms () =
     Uop.replace (i32 1) ~op:Ops.Load ~src:[| i32 1 |] ()
   in
   let loose_store =
-    Uop.replace (Uop.noop ~dtype:Dtype.void ()) ~op:Ops.Store
+    Uop.replace (Uop.noop ()) ~op:Ops.Store
       ~src:[| i32 1; Uop.const_float 2.0 |] ()
   in
   let value_index =
@@ -728,7 +728,7 @@ let full_spec_accepts_intermediate_forms () =
   let special = Uop.special ~name:"gidx0" ~size:(i32 4) ~dtype:Dtype.int32 () in
   is_true ~msg:"full_spec accepts ranges replaced by hardware indices"
     (accepts Spec.full_spec
-       (Uop.end_ ~value:(Uop.noop ~dtype:Dtype.void ()) ~ranges:[ special ]));
+       (Uop.end_ ~value:(Uop.noop ()) ~ranges:[ special ]));
   is_true ~msg:"full_spec accepts transitional Load intermediate"
     (accepts Spec.full_spec loose_load);
   is_true ~msg:"full_spec accepts transitional Store intermediate"
@@ -884,7 +884,7 @@ let program_oob_rejects_unproved_indices () =
   with_env "CHECK_OOB" "1" (fun () ->
       List.iter (fun idx ->
           is_false (Validate.validate_index_source (Uop.index ~ptr:p ~idxs:[ idx ] ()))) indices;
-      let shapeless = Uop.noop ~dtype:Dtype.int32 () in
+      let shapeless = Uop.custom_inline ~fmt:"0" ~args:[] ~dtype:Dtype.int32 in
       is_false (Validate.validate_index_source
           (Uop.index ~ptr:shapeless ~idxs:[ i32 0 ] ()));
       let narrowed = Uop.cast ~src:(i32 128) ~dtype:Dtype.int8 in
@@ -1076,7 +1076,7 @@ let program_rejects_bad_if_layouts () =
 let program_rejects_loose_after_layout () =
   let bad =
     Uop.replace (i32 1) ~op:Ops.After
-      ~src:[| i32 1; Uop.noop ~dtype:Dtype.void () |] ()
+      ~src:[| i32 1; Uop.noop () |] ()
   in
   is_true ~msg:"program_spec rejects loose value-first After"
     (rejected Spec.program_spec bad)
@@ -1085,7 +1085,7 @@ let program_rejects_if_dedup_source_matrix () =
   let p = global_i32_param () in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
   let bad_bitcast = Uop.bitcast ~src:idx ~dtype:Dtype.float32 in
-  let bad_after = Uop.after ~src:idx ~deps:[ Uop.noop ~dtype:Dtype.void () ] in
+  let bad_after = Uop.after ~src:idx ~deps:[ Uop.noop () ] in
   let bad_buffer =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ()
   in
@@ -1120,7 +1120,7 @@ let program_end_range_boundaries () =
   let weak_range =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Global ()
   in
-  let body = Uop.noop ~dtype:Dtype.void () in
+  let body = Uop.noop () in
   let closed = Uop.end_ ~value:body ~ranges:[ int_range ] in
   let weak_closed = Uop.end_ ~value:body ~ranges:[ weak_range ] in
   let bad_tail =
@@ -1144,7 +1144,7 @@ let verify_list_validates_flat_program () =
 (* Full spec *)
 
 let full_spec_has_no_catch_all () =
-  let unknown = Uop.replace (Uop.noop ~dtype:Dtype.void ())
+  let unknown = Uop.replace (Uop.noop ())
       ~op:Ops.Wait () in
   is_true ~msg:"full_spec rejects unrecognised node"
     (rejected Spec.full_spec unknown)
@@ -1178,7 +1178,7 @@ let typed_host_call_contract () =
 let end_requires_an_effect () =
   let range = Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Loop
       ~dtype:Dtype.int32 () in
-  let body = Uop.noop ~dtype:Dtype.void () in
+  let body = Uop.noop () in
   let closed = Uop.end_ ~value:body ~ranges:[ range ] in
   List.iter (fun spec ->
       is_true ~msg:"END accepts a void effect" (accepts spec closed);
@@ -1195,7 +1195,7 @@ let conditional_loop_contract () =
       ~dtype:Dtype.int32 () in
   let loop = Uop.loop ~axis:2 in
   let cond = Uop.alu_binary ~op:Ops.Cmplt ~lhs:outer ~rhs:(i32 3) in
-  let edge = Uop.backedge ~body:(Uop.noop ~src:loop ~dtype:Dtype.void ())
+  let edge = Uop.backedge ~body:(Uop.noop ~src:loop ())
       ~loop ~cond in
   List.iter (fun spec -> Spec.type_verify spec edge)
     [ Spec.tensor_spec; Spec.program_spec; Spec.full_spec ];

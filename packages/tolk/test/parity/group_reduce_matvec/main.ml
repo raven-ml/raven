@@ -30,7 +30,6 @@ let kernel () =
   let ld_x = U.load ~src:(U.index ~ptr:px ~idxs:[ rk ] ()) () in
   let red =
     U.reduce ~op:Ops.Add ~src:(ld_w * ld_x) ~ranges:[ rk ]
-      ~dtype:Dtype.float32
   in
   let st =
     U.store ~dst:(U.index ~ptr:py ~idxs:[ rj ] ()) ~value:red ()

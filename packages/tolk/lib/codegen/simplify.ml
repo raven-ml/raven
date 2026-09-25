@@ -350,10 +350,8 @@ let reduce_unparented node =
       in
       if unparented = [] then None
       else
-        let dtype = U.dtype node in
         let ret =
-          if parented <> [] || not (Dtype.equal (U.dtype node) (U.dtype src))
-          then U.reduce ~op ~src ~ranges:parented ~dtype
+          if parented <> [] then U.reduce ~op ~src ~ranges:parented
           else src
         in
         let compensate binop acc r = binop acc (range_size r) in
@@ -488,7 +486,7 @@ let rule_reduce_invalid_gate =
     | Some { ranges; _ } when is_invalid i && no_range cond ->
         Some
           (U.alu_ternary ~op:Ops.Where ~a:cond
-             ~b:(U.reduce ~op:Ops.Add ~src:x ~ranges ~dtype:(U.dtype red))
+             ~b:(U.reduce ~op:Ops.Add ~src:x ~ranges)
              ~c:i)
     | _ -> None
 
@@ -502,11 +500,10 @@ let rule_reduce_split_add =
     match as_lowered_add_reduce red with
     | None -> None
     | Some { ranges; _ } ->
-        let dtype = U.dtype red in
         Some
           (U.alu_binary ~op:Ops.Add
-             ~lhs:(U.reduce ~op:Ops.Add ~src:x ~ranges ~dtype)
-             ~rhs:(U.reduce ~op:Ops.Add ~src:y ~ranges ~dtype))
+             ~lhs:(U.reduce ~op:Ops.Add ~src:x ~ranges)
+             ~rhs:(U.reduce ~op:Ops.Add ~src:y ~ranges))
 
 (* [(x & y).where(c, 0)].reduce(Add) -> y.where(c, 0).reduce * x.
 
@@ -528,13 +525,12 @@ let rule_reduce_and_where =
     | Some { ranges; _ } ->
         if not (is_zero_const z) then None
         else
-          let dtype = U.dtype red in
           let body =
             U.alu_ternary ~op:Ops.Where ~a:y ~b:c ~c:(U.zero_like c)
           in
           Some
             (U.alu_binary ~op:Ops.Mul
-               ~lhs:(U.reduce ~op:Ops.Add ~src:body ~ranges ~dtype)
+               ~lhs:(U.reduce ~op:Ops.Add ~src:body ~ranges)
                ~rhs:x)
 
 (* [x * gate.cast] with [gate:bool] -> [gate.where(x, 0)]. *)
@@ -706,7 +702,6 @@ let reduce_collapse_inner ~pm red u =
             let collapse_fxn =
               U.reduce ~op:Ops.Add ~ranges:[ r ]
                 ~src:(U.substitute fwd !result)
-                ~dtype:(U.dtype !result)
             in
             let sink =
               rewrite_fixpoint ~name:"reduce_collapse" pm collapse_fxn

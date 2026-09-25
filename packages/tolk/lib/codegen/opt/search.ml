@@ -373,7 +373,7 @@ let time_program ~device ~to_program p rawbufs_by_slot var_vals ~early_stop ~cnt
   let args = List.init (List.fold_left max (-1) info.globals + 1) (fun slot ->
       match List.assoc_opt slot rawbufs_by_slot with
       | Some buf -> U.from_buffer buf
-      | None when not (List.mem slot info.globals) -> U.noop ~dtype:Dtype.void ()
+      | None when not (List.mem slot info.globals) -> U.noop ()
       | None -> invalid_arg (Printf.sprintf
           "beam_search: raw buffer slot %d missing (%d slots supplied)"
           slot (List.length rawbufs_by_slot))) in

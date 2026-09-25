@@ -1089,7 +1089,7 @@ let reduce_tests =
           let ld = U.load ~src:(U.index ~ptr:(ptr_buffer 20) ~idxs:[ rng ] ()) () in
           let body = U.alu_binary ~op:Ops.Mul ~lhs:ld ~rhs:x in
           let red = U.reduce ~src:body ~ranges:[ rng ] ~op:Ops.Max
-              ~dtype:(U.dtype body) in
+              in
           let result = simplify red in
           check_op result Ops.Mul;
           let a = src result 0 and b = src result 1 in

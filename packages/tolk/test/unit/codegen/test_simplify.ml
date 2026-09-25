@@ -257,7 +257,7 @@ let simplify_merge_tests =
           let r1 = reduce_range ~axis:1 4 in
           let open U.O in
           let value = (r0 * idx 4) + r1 in
-          let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ r0; r1 ] ~dtype:D.weakint in
+          let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ r0; r1 ] in
           let sink = wrap_sink [ U.end_ ~value:red ~ranges:[] ] in
           let result = Simplify.simplify_ranges sink in
           (* Different kinds: should not merge *)
@@ -380,7 +380,7 @@ let range_shrink_tests =
           let load = gated_load (r < idx 4) r in
           let src = U.cast ~src:r ~dtype:(D.float32) + load in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let sink = wrap_sink [ U.end_ ~value:red ~ranges:[] ] in
           let result = Simplify.simplify_ranges sink in
@@ -480,7 +480,7 @@ let reduce_unparented_tests =
           let r1 = loop_range ~axis:1 5 in
           let src = U.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ]
           in
           let result = Simplify.reduce_unparented_all red in
           (* r1 should be eliminated; result should have a Mul by 5 *)
@@ -493,7 +493,7 @@ let reduce_unparented_tests =
           let r1 = loop_range ~axis:1 3 in
           let src = U.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Mul ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            U.reduce ~op:Ops.Mul ~src ~ranges:[ r0; r1 ]
           in
           let result = Simplify.reduce_unparented_all red in
           let ranges = find_ranges result in
@@ -505,7 +505,7 @@ let reduce_unparented_tests =
           let r1 = loop_range ~axis:1 3 in
           let src = U.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Max ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            U.reduce ~op:Ops.Max ~src ~ranges:[ r0; r1 ]
           in
           let result = Simplify.reduce_unparented_all red in
           let ranges = find_ranges result in
@@ -520,7 +520,7 @@ let reduce_unparented_tests =
           let src = U.cast ~src:r0 ~dtype:(D.float32)
                     + U.cast ~src:r1 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ]
           in
           let result = Simplify.reduce_unparented_all red in
           (* Both ranges referenced, no change *)
@@ -541,7 +541,7 @@ let reduce_simplify_tests =
           let open U.O in
           let src = x + y in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           (* After distribution + unparented removal, the constant term
@@ -572,7 +572,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0;
@@ -588,7 +588,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:val_
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0;
@@ -599,7 +599,7 @@ let reduce_simplify_tests =
           let r = loop_range ~axis:0 5 in
           let src = f32 3.0 in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0;
@@ -612,7 +612,7 @@ let reduce_simplify_tests =
           let x = f32 5.0 in
           let src = x * gate_cast in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           (* x * gate.cast() -> gate.where(x, 0) inside the reduce,
@@ -629,7 +629,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 1.0) ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r1; r2 ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r1; r2 ]
           in
           let result = Simplify.reduce_simplify_all red in
           (* r2 is unparented -> removed with *4 multiplier.
@@ -660,7 +660,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           (* Range should be eliminated: count = min(max(min(7,10)-max(2,0),0),10) = 5 *)
@@ -680,7 +680,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
@@ -693,7 +693,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 2.0) ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0;
@@ -752,7 +752,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(idx 1) ~c:(idx 0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.weakint
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
@@ -772,7 +772,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.reduce_simplify_all red in
           (* DEFINE_VAR should be factored out as a Mul *)
@@ -797,7 +797,7 @@ let load_collapse_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.load_collapse_all red in
           (* The range should be eliminated *)
@@ -811,7 +811,7 @@ let load_collapse_tests =
           let expr = plain_load r in
           let src = expr * U.cast ~src:gate ~dtype:D.float32 in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.load_collapse_all red in
           equal int (count_ranges result) 0);
@@ -998,7 +998,7 @@ let load_collapse_extra_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.load_collapse_all red in
           (* The expression should be simplified — at minimum the
@@ -1016,7 +1016,7 @@ let load_collapse_extra_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
           in
           let result = Simplify.load_collapse_all red in
           equal int (count_ranges result) 0);

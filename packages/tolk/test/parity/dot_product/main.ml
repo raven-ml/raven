@@ -11,7 +11,7 @@ let kernel () =
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r0 ] in
   let st =
     U.store
       ~dst:(U.index ~ptr:p2 ~idxs:[(Helpers.idx 0)] ())

@@ -295,7 +295,7 @@ let run_kernel dev ast bufs =
   let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->
       match List.find_opt (fun (s, _, _) -> s = slot) bufs with
       | Some (_, buf, _) -> U.from_buffer buf
-      | None when not (List.mem slot info.globals) -> U.noop ~dtype:Dtype.void ()
+      | None when not (List.mem slot info.globals) -> U.noop ()
       | None -> invalid_arg (Printf.sprintf "run_kernel: no buffer for slot %d" slot)) in
   let call = U.call ~body:program ~args ~info:U.{grad_fxn = None; name = None;
     precompile = false; precompile_backward = false; dtype = Dtype.void; aux = None} in

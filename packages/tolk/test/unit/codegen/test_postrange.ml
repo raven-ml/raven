@@ -92,7 +92,7 @@ let reduce_ast ~s0 ~s1 ~sr =
       ()
   in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] in
   let out_idx =
     U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
@@ -111,7 +111,7 @@ let reduce_unsafe_pad_ast ~s0 ~sr =
   let ld = U.load ~src:in_idx () in
   let exp_ld = U.alu_unary ~op:Ops.Exp2 ~src:ld in
   let red =
-    U.reduce ~op:Ops.Add ~src:exp_ld ~ranges:[ rr ] ~dtype:D.float32
+    U.reduce ~op:Ops.Add ~src:exp_ld ~ranges:[ rr ]
   in
   let out_idx = U.index ~ptr:p0 ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
@@ -127,7 +127,7 @@ let max_reduce_ast ~s0 ~sr =
   let open U.O in
   let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx sr) + rr)] () in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Max ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Max ~src:ld ~ranges:[ rr ] in
   let out_idx = U.index ~ptr:p0 ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
@@ -196,7 +196,7 @@ let reduce_global_ast ~s0 ~s1 ~sr =
       ()
   in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] in
   let out_idx =
     U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
@@ -978,7 +978,7 @@ let matmul_ast ~si ~sj ~sk =
   let idx_b = U.index ~ptr:p_b ~idxs:[((rk * idx sj) + rj)] () in
   let ld_b = U.load ~src:idx_b () in
   let mul = ld_a * ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] in
   let out_idx =
     U.index ~ptr:p_out ~idxs:[((ri * idx sj) + rj)] ()
   in

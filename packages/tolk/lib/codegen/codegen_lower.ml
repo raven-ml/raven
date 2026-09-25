@@ -67,9 +67,9 @@ let build_range_map sink =
 
 (* Front-permuted reduce with [num_axes] leading horizontal axes plus the loop
    [ranges]: a reduce over the ranges whose reduce-arg carries [num_axes]. *)
-let reduce_with_num_axes ~src ~ranges ~op ~num_axes ~dtype =
+let reduce_with_num_axes ~src ~ranges ~op ~num_axes =
   U.replace
-    (U.reduce ~src ~ranges ~op ~dtype)
+    (U.reduce ~src ~ranges ~op)
     ~arg:(U.Arg.Reduce_arg { op; num_axes })
     ()
 
@@ -103,7 +103,7 @@ let expand_reduce node =
              ~src:
                (reduce_with_num_axes ~src:(U.permute ~src ~order:perm)
                   ~ranges:(List.rev !range_srcs) ~op
-                  ~num_axes:(List.length new_axes) ~dtype:(U.dtype node))
+                  ~num_axes:(List.length new_axes))
              ~shape:(shape_arg out_shape))
   | Some _ | None -> None
 
@@ -479,8 +479,7 @@ let fix_group_for_reduce_rule node =
         in
         let indexed = U.index ~ptr:local ~idxs:(upstream_locals @ reduce_loop) () in
         Some
-          (reduce_with_num_axes ~src:indexed ~ranges:reduce_loop ~op:v.op ~num_axes:0
-             ~dtype:(U.dtype node))
+          (reduce_with_num_axes ~src:indexed ~ranges:reduce_loop ~op:v.op ~num_axes:0)
 
 let fix_group_for_reduce =
   let open Upat in

@@ -46,7 +46,7 @@ let kernel () =
       ~b:(U.const (Const.float Dtype.float32 0.0))
       ~c:(U.index ~ptr:wte ~idxs:[ (vocab * U.const_int 768) + col ] ())
   in
-  let red = U.reduce ~src:body ~ranges:[ r ] ~op:Ops.Add ~dtype:Dtype.float32 in
+  let red = U.reduce ~src:body ~ranges:[ r ] ~op:Ops.Add in
   let out_idx = (col * U.const_int 29) + chunk + (tok_i * U.const_int 22272) in
   let st =
     U.store ~dst:(U.index ~ptr:out ~idxs:[ out_idx ] ()) ~value:red ()

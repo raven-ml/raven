@@ -63,7 +63,7 @@ let rec run ~resolve ?(allow_cache = true) linear =
             (match U.op value, U.arg value, U.as_index dst with
              | Ops.Binary, U.Arg.String blob, None ->
                  write (buffer dst) 0 (Bytes.of_string blob);
-                 Some (U.noop ~dtype:Dtype.void ())
+                 Some (U.noop ())
              | _, _, Some {ptr; idxs = [indices]} ->
                  let offsets = List.map constant (words indices)
                  and values = List.map constant (words value) in
@@ -77,7 +77,7 @@ let rec run ~resolve ?(allow_cache = true) linear =
                          | Const.Int n -> Z.to_int (Z.mul n (Z.of_int (Bytes.length bytes)))
                          | _ -> invalid_arg "link: patch index must be an integer" in
                        write buf offset bytes) offsets values;
-                   Some (U.noop ~dtype:Dtype.void ())
+                   Some (U.noop ())
                  end
              | _ -> None)
         | _ -> None in
@@ -146,7 +146,7 @@ let rec run ~resolve ?(allow_cache = true) linear =
                                let body = U.substitute [range, U.const_int i] value in
                                U.graph_rewrite rewrite body) in
                            if List.for_all (fun n -> U.op n = Ops.Noop) folded
-                           then Some (U.noop ~dtype:Dtype.void ()) else None
+                           then Some (U.noop ()) else None
                        | _ -> None)
                   | None -> None)
              | _ -> None)

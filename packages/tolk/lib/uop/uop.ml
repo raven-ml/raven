@@ -765,12 +765,12 @@ let after ~src:s ~deps =
 let rec without_after u =
   if op u = Ops.After then without_after (src u).(0) else u
 
-let noop ?src ~dtype () =
+let noop ?src () =
   let srcs = match src with Option.None -> [||] | Option.Some s -> [| s |] in
-  mk ~op:Ops.Noop ~dtype ~src:srcs ~arg:Arg.Empty
+  mk ~op:Ops.Noop ~dtype:void_dtype ~src:srcs ~arg:Arg.Empty
 
 let shape_to_shape_arg = function
-  | Option.None -> noop ~dtype:void_dtype ()
+  | Option.None -> noop ()
   | Option.Some shape -> shape
 
 let linear srcs =
@@ -918,9 +918,7 @@ let as_buffer u =
   | Ops.Buffer, Arg.Param_arg p, 0 -> Some { buffer = p; shape = storage_shape_arg p }
   | _ -> None
 
-let load ~src ?dtype:load_dtype ?alt ?gate () =
-  (* The indexed source already carries the element dtype. *)
-  let dtype = match load_dtype with Some dtype -> dtype | None -> dtype src in
+let load ~src ?alt ?gate () =
   let srcs = match alt, gate with
     | Option.None, Option.None -> [| src |]
     | Option.Some a, Option.Some g -> [| src; a; g |]
@@ -929,7 +927,7 @@ let load ~src ?dtype:load_dtype ?alt ?gate () =
     | Option.Some _, Option.None ->
         invalid_arg "Uop.load: alt requires gate"
   in
-  mk ~op:Ops.Load ~dtype ~src:srcs ~arg:Arg.Empty
+  mk ~op:Ops.Load ~dtype:(dtype src) ~src:srcs ~arg:Arg.Empty
 
 let store ~dst ~value ?gate () =
   let src =
@@ -1036,7 +1034,7 @@ let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.weakint)
     ~arg:(Arg.Range_info { axis; sub; kind })
 
 let loop ~axis =
-  range ~size:(noop ~dtype:Dtype.void ()) ~axis ~kind:Axis_type.Weak
+  range ~size:(noop ()) ~axis ~kind:Axis_type.Weak
     ~dtype:Dtype.void ()
 
 let backedge ~body ~loop ~cond =
@@ -1064,8 +1062,8 @@ let special ~name ~size ?(dtype = Dtype.weakint) () =
   mk ~op:Ops.Special ~dtype
     ~src:[| cast ~src:size ~dtype |] ~arg:(Arg.String name)
 
-let reduce ~src ~ranges ~op ~dtype =
-  mk ~op:Ops.Reduce ~dtype
+let reduce ~src ~ranges ~op =
+  mk ~op:Ops.Reduce ~dtype:(dtype src)
     ~src:(Array.of_list (src :: ranges))
     ~arg:(Arg.Reduce_arg { op; num_axes = 0 })
 
@@ -1266,8 +1264,8 @@ let set ~target ~value ?(extras = []) () =
   let st = store ~dst:target ~value () in
   after ~src:target ~deps:(st :: extras)
 
-let wmma ~a ~b ~c ~info ~dtype =
-  mk ~op:Ops.Wmma ~dtype ~src:[| a; b; c |] ~arg:(Arg.Wmma_info info)
+let wmma ~a ~b ~c ~info =
+  mk ~op:Ops.Wmma ~dtype:(dtype c) ~src:[| a; b; c |] ~arg:(Arg.Wmma_info info)
 
 let custom ~fmt ~args =
   mk ~op:Ops.Custom ~dtype:void_dtype

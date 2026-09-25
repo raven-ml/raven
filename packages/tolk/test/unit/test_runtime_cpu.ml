@@ -121,7 +121,7 @@ let program_call spec bufs =
   let selected = List.combine info.globals bufs in
   let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->
       match List.assoc_opt slot selected with
-      | Some buf -> U.from_buffer buf | None -> U.noop ~dtype:Dtype.void ()) in
+      | Some buf -> U.from_buffer buf | None -> U.noop ()) in
   U.call ~body ~args ~info:U.{grad_fxn = None; name = None; precompile = false;
     precompile_backward = false; dtype = Dtype.void; aux = None}
 
@@ -768,7 +768,7 @@ let test_padded_reduction op transform values expected () =
   let range = U.range ~size:(U.const_int count) ~axis:0 ~kind:Axis_type.Reduce () in
   let loaded = U.load ~src:(U.index ~ptr:input ~idxs:[ range ] ()) () in
   let value = transform loaded in
-  let reduced = U.reduce ~op ~src:value ~ranges:[ range ] ~dtype in
+  let reduced = U.reduce ~op ~src:value ~ranges:[ range ] in
   let dst = U.index ~ptr:output ~idxs:[ U.const_int 0 ] () in
   let kernel_info : U.kernel_info =
     { name = "padded_reduction";

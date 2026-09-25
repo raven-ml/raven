@@ -1184,7 +1184,7 @@ let quant_matmul ?ids x ~codes ~scales =
          group loop, which the range simplifier would otherwise merge. *)
       let sum r v =
         if is_range r then
-          Uop.reduce ~src:v ~ranges:[ r ] ~op:Ops.Add ~dtype:D.float32
+          Uop.reduce ~src:v ~ranges:[ r ] ~op:Ops.Add
         else v
       in
       let terms = List.init 8 (fun j -> input j * code j) in
@@ -1466,7 +1466,7 @@ let block_matmul ?(transpose = false) x w ~ids =
           let acc =
             Uop.reduce ~src:(f32 xv * f32 wv)
               ~ranges:(List.filter is_range [ tile; inner ])
-              ~op:Ops.Add ~dtype:D.float32
+              ~op:Ops.Add
           in
           let acc =
             if bounded then acc

@@ -294,7 +294,7 @@ let time_spec device spec bufs =
   let selected = List.combine info.globals bufs in
   let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->
       match List.assoc_opt slot selected with
-      | Some buf -> U.from_buffer buf | None -> U.noop ~dtype:D.void ()) in
+      | Some buf -> U.from_buffer buf | None -> U.noop ()) in
   let call = U.call ~body ~args ~info:U.{grad_fxn = None; name = None;
     precompile = false; precompile_backward = false; dtype = D.void; aux = None} in
   let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in

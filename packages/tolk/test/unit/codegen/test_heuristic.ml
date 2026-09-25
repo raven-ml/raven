@@ -152,7 +152,7 @@ let reduce_global_ast ~s0 ~s1 ~sr =
       ()
   in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] in
   let out_idx =
     U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
@@ -184,7 +184,7 @@ let double_reduce_global_ast ~s0 ~s1 ~sr1 ~sr2 =
   in
   let ld = U.load ~src:in_idx () in
   let red =
-    U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr1; rr2 ] ~dtype:D.float32
+    U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr1; rr2 ]
   in
   let out_idx =
     U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
@@ -207,7 +207,7 @@ let matmul_global_ast ~m ~n ~k =
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] in
   let out_idx =
     U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in
@@ -228,7 +228,7 @@ let matvec_global_ast ~rows ~cols =
   let idx_x = U.index ~ptr:p_x ~idxs:[r_j] () in
   let idx_a = U.index ~ptr:p_a ~idxs:[((r_i * idx cols) + r_j)] () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:idx_x ~rhs:idx_a in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] in
   let out_idx = U.index ~ptr:p_out ~idxs:[r_i] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_i ] in
@@ -249,7 +249,7 @@ let matvec_load_global_ast ~rows ~cols =
   let ld_x = U.load ~src:idx_x () in
   let ld_a = U.load ~src:idx_a () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_x ~rhs:ld_a in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] in
   let out_idx = U.index ~ptr:p_out ~idxs:[r_i] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_i ] in
@@ -281,7 +281,7 @@ let image_reduce_ast ~s0 ~sr =
   let rr = reduce_range ~axis:1 sr in
   let src = U.index ~ptr:p_img ~idxs:[rr] () in
   let ld = U.load ~src () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] in
   let out_idx = U.index ~ptr:p_out ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
@@ -296,7 +296,7 @@ let image_reduce_invalid_dims_ast ~s0 ~sr =
   let rr = reduce_range ~axis:1 sr in
   let src = U.index ~ptr:p_img ~idxs:[rr] () in
   let ld = U.load ~src () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] in
   let out_idx = U.index ~ptr:p_out ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in

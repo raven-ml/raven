@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- Remove ignored `dtype` arguments from `Uop.load`, `reduce`, `wmma` and
+  `noop`. Their types come from the source, accumulator or void-marker contract;
+  callers should use an explicit cast when a conversion is required.
+
 - PCI peer imports reject source addresses outside the receiving GPU’s virtual
   address range before editing page tables, allowing shared execution to stage
   unsupported transfers.

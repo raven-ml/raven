@@ -104,9 +104,7 @@ acceptance requirement; skipped tests are not execution evidence.
   renderer widths, view offsets, stage buffer sizes and range metadata. Remove
   the C renderer's independent multidimensional stride reconstruction in
   favor of canonical flat indexes. Use checked central numel in placeholders, frontend
-  tensors and rangeify. Remove ignored `dtype` arguments from source-derived
-  `Uop.load`, `reduce`, `wmma` and `noop`, updating callers and contracts. Port
-  remaining symbolic rules and measure rewrite performance and long-lived
+  tensors and rangeify. Port remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
 - Replace `Uop.contiguous_view`'s separate movement interpreter with the
   target's flattened-index proof using shared movement and symbolic rewrites.

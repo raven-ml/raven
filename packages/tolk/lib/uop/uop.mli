@@ -680,9 +680,9 @@ val after : src:t -> deps:t list -> t
 val without_after : t -> t
 (** [without_after u] removes outer {!Ops.After} dependency wrappers. *)
 
-val noop : ?src:t -> dtype:Dtype.t -> unit -> t
-(** [noop ?src ~dtype ()] is a pass-through scheduling marker with
-    [dtype]. Optional single [src]. Tensor. *)
+val noop : ?src:t -> unit -> t
+(** [noop ?src ()] is a scheduling marker with void dtype and an optional
+    single [src]. Tensor. *)
 
 val shape_to_shape_arg : t option -> t
 (** [shape_to_shape_arg shape] is [shape] when supplied and an empty void
@@ -829,10 +829,9 @@ val index : ptr:t -> idxs:t list -> unit -> t
     its element type). A constant index into a {!Ops.Stack} selects the lane
     node directly. Kernel. *)
 
-val load : src:t -> ?dtype:Dtype.t -> ?alt:t -> ?gate:t -> unit -> t
-(** [load ~src ?dtype ?alt ?gate ()] loads the element addressed by [src]. The
-    result dtype is [dtype] when specified, and otherwise [src]'s dtype, which
-    the indexed source already carries. [alt] is the value substituted when
+val load : src:t -> ?alt:t -> ?gate:t -> unit -> t
+(** [load ~src ?alt ?gate ()] loads the element addressed by [src], inheriting
+    its dtype. [alt] is the value substituted when
     [gate] is false. [alt] and [gate] must be supplied together. Kernel. *)
 
 val store : dst:t -> value:t -> ?gate:t -> unit -> t
@@ -998,10 +997,9 @@ val special : name:string -> size:t -> ?dtype:Dtype.t -> unit -> t
 
     {!Ops.Allreduce}: [src = \[| body |\]], [arg = Op_device (r, device)]. *)
 
-val reduce :
-  src:t -> ranges:t list -> op:Ops.t -> dtype:Dtype.t -> t
-(** [reduce ~src ~ranges ~op ~dtype] reduces [src] using [op] over the
-    loop [ranges], producing a value of [dtype]. The payload has
+val reduce : src:t -> ranges:t list -> op:Ops.t -> t
+(** [reduce ~src ~ranges ~op] reduces [src] using [op] over the
+    loop [ranges], inheriting [src]'s dtype. The payload has
     [num_axes = 0]. Kernel. *)
 
 val reduce_axis : src:t -> op:Ops.t -> axes:int list -> t
@@ -1193,10 +1191,10 @@ val custom_kernel : ?grad_fxn:grad_fxn -> fxn:(t list -> t) -> t list -> t list
 
 (** {2:ctors_tc Tensor-core} *)
 
-val wmma :
-  a:t -> b:t -> c:t -> info:wmma_info -> dtype:Dtype.t -> t
-(** [wmma ~a ~b ~c ~info ~dtype] is a concrete tensor-core
-    matrix-multiply-accumulate. See {!wmma_info} for the per-device
+val wmma : a:t -> b:t -> c:t -> info:wmma_info -> t
+(** [wmma ~a ~b ~c ~info] is a concrete tensor-core
+    matrix-multiply-accumulate with the accumulator [c]'s dtype.
+    See {!wmma_info} for the per-device
     configuration. Kernel. *)
 
 (** {2:ctors_custom Backend escape hatches} *)

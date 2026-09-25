@@ -44,7 +44,7 @@ let wmma ~dims ~threads =
   in
   let a = U.const (Const.float Dtype.float16 1.0) in
   let c = f32 0.0 in
-  U.wmma ~a ~b:a ~c ~info ~dtype:Dtype.float32
+  U.wmma ~a ~b:a ~c ~info
 let special dim size =
   U.special ~name:(Gpu_dim.to_special_name dim) ~size ~dtype:(U.dtype size) ()
 

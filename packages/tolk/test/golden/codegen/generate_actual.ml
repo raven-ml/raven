@@ -67,7 +67,7 @@ let make_sum_reduce () =
   let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
   let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] in
   let st =
     U.store ~dst:(U.index ~ptr:p1 ~idxs:[(idx 0)] ()) ~value:red ()
   in
@@ -79,7 +79,7 @@ let make_max_reduce () =
   let r0 = U.range ~size:(U.const_int 64) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
   let red =
-    U.reduce ~op:Ops.Max ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.float32
+    U.reduce ~op:Ops.Max ~src:ld ~ranges:[ r0 ]
   in
   let st =
     U.store ~dst:(U.index ~ptr:p1 ~idxs:[ idx 0 ] ()) ~value:red ()
@@ -94,7 +94,7 @@ let make_dot_product () =
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r0 ] in
   let st =
     U.store ~dst:(U.index ~ptr:p2 ~idxs:[(idx 0)] ()) ~value:red ()
   in
@@ -115,7 +115,7 @@ let make_matmul_small () =
   let ld_a = U.load ~src:(U.index ~ptr:pA ~idxs:[a_idx] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:pB ~idxs:[b_idx] ()) () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] in
   let st =
     U.store ~dst:(U.index ~ptr:pC ~idxs:[c_idx] ()) ~value:red ()
   in
@@ -157,7 +157,7 @@ let make_reduce_rows () =
   let open U.O in
   let flat = ri * int_ cols + rj in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[flat] ()) () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rj ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rj ] in
   let st =
     U.store ~dst:(U.index ~ptr:p1 ~idxs:[ri] ()) ~value:red ()
   in
@@ -262,9 +262,9 @@ let make_parallel_reduce () =
   let p2 = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
   let r0 = U.range ~size:(U.const_int 128) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
-  let red1 = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red1 = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] in
   let sq = U.alu_binary ~op:Ops.Mul ~lhs:ld ~rhs:ld in
-  let red2 = U.reduce ~op:Ops.Add ~src:sq ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red2 = U.reduce ~op:Ops.Add ~src:sq ~ranges:[ r0 ] in
   let c0 = idx 0 in
   let st1 =
     U.store ~dst:(U.index ~ptr:p1 ~idxs:[c0] ()) ~value:red1 ()
@@ -324,7 +324,7 @@ let make_llama_rmsnorm backend =
   let in_idx = (ri * int_ 8) + rr in
   let ld = U.load ~src:(U.index ~ptr:p1 ~idxs:[ in_idx ] ()) () in
   let sq = U.alu_binary ~op:Ops.Mul ~lhs:ld ~rhs:ld in
-  let sum = U.reduce ~op:Ops.Add ~src:sq ~ranges:[ rr ] ~dtype:Dtype.float32 in
+  let sum = U.reduce ~op:Ops.Add ~src:sq ~ranges:[ rr ] in
   let mean =
     U.alu_binary ~op:Ops.Mul ~lhs:sum
       ~rhs:(U.const (Const.float Dtype.float32 0.125))
@@ -406,7 +406,7 @@ let make_llama_embedding backend =
   let zero = U.const (Const.float Dtype.float32 0.0) in
   let selected = U.alu_ternary ~op:Ops.Where ~a:gate ~b:zero ~c:emb in
   let value =
-    U.reduce ~op:Ops.Add ~src:selected ~ranges:[ rv ] ~dtype:Dtype.float32
+    U.reduce ~op:Ops.Add ~src:selected ~ranges:[ rv ]
   in
   let st =
     U.store ~dst:(U.index ~ptr:p0 ~idxs:[ out_idx ] ()) ~value ()
@@ -474,7 +474,7 @@ let make_llama_ffn_gate backend =
            ~rhs:weight)
       ~rhs:matrix
   in
-  let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ rr ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ rr ] in
   let st =
     U.store ~dst:(U.index ~ptr:p0 ~idxs:[ out_idx ] ()) ~value:red ()
   in
@@ -584,7 +584,7 @@ let make_llama_output_projection backend =
   let input = U.load ~src:(U.index ~ptr:p1 ~idxs:[ (ri * int_ 8) + rr ] ()) () in
   let weight = U.load ~src:(U.index ~ptr:p2 ~idxs:[ (rj * int_ 8) + rr ] ()) () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:input ~rhs:weight in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rr ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rr ] in
   let st =
     U.store
       ~dst:(U.index ~ptr:p0 ~idxs:[ (ri * int_ 32) + rj ] ())

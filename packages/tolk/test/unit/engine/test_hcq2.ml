@@ -187,7 +187,7 @@ let peer_group_batches () =
     (sizes (compile [store (a 1) (a 0); store (b 3) (a 1); store (a 5) (b 3)]));
   equal (list int) [1; 1; 1]
     (sizes (compile [store (a 1) (a 0); store (b 3) (a 5); store (a 5) (a 4)]));
-  let separated = compile [store (a 1) (a 0); U.noop ~dtype:Dtype.void ();
+  let separated = compile [store (a 1) (a 0); U.noop ();
       store (b 3) (b 2); store (a 5) (a 4)] in
   equal int 4 (List.length (U.children separated));
   let imported = U.import (U.export linear) in
@@ -308,7 +308,7 @@ let compiled_host_submission () =
                   stamp := !stamp + !timestamp_step;
                   U.store ~dst:(U.index ~ptr:(U.after ~src:(U.src op).(0) ~deps:!previous)
                     ~idxs:[U.const_int 1] ()) ~value:(U.const (Const.int Dtype.uint64 !stamp)) ()
-              | _, U.Arg.Typed (("wait" | "barrier"), _) -> U.noop ~dtype:Dtype.void ()
+              | _, U.Arg.Typed (("wait" | "barrier"), _) -> U.noop ()
               | _ -> fail "unexpected host queue instruction" in
             if U.op node <> Ops.Noop then previous := [node]; node) (U.children linear) in
         Some (U.group nodes)

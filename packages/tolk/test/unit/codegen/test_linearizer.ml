@@ -306,7 +306,7 @@ let conditional_loop_nesting () =
   let outer = U.range ~size:(i32 3) ~axis:0 ~kind:Axis_type.Loop
       ~dtype:Dtype.int32 () in
   let inner = U.loop ~axis:1 in
-  let body = U.noop ~src:inner ~dtype:Dtype.void () in
+  let body = U.noop ~src:inner () in
   let cond = U.alu_binary ~op:Ops.Cmplt ~lhs:outer ~rhs:(i32 2) in
   let edge = U.backedge ~body ~loop:inner ~cond in
   let sink = U.sink [ U.end_ ~value:edge ~ranges:[ outer ] ] in
@@ -729,7 +729,7 @@ let () =
                 let idx = U.index ~ptr:p0 ~idxs:[r0] () in
                 let ld = U.load ~src:idx () in
                 let red =
-                  U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] ~dtype:dt
+                  U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ]
                 in
                 ignore (linearize (U.sink [ red ]))));
           test "graph IF nodes are rejected" (fun () ->

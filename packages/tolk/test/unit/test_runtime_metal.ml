@@ -293,7 +293,7 @@ let test_thread_reduction kind width expected () =
   let stride = 8 * width in
   let idx = U.O.(row * int_ stride + col * int_ 8 + seq) in
   let loaded = U.load ~src:(U.index ~ptr:input ~idxs:[ idx ] ()) () in
-  let value = U.reduce ~src:loaded ~ranges:[ seq; col ] ~op:Ops.Add ~dtype:Dtype.int32 in
+  let value = U.reduce ~src:loaded ~ranges:[ seq; col ] ~op:Ops.Add in
   let store = U.store ~dst:(U.index ~ptr:output ~idxs:[ row ] ()) ~value () in
   let kernel_info : U.kernel_info =
     { name = "metal_thread_reduce";
@@ -322,7 +322,7 @@ let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.floa
   let bv = load b U.O.(red * int_ n + col) in
   let product = U.alu_binary ~op:Ops.Mul ~lhs:av ~rhs:bv in
   let product = if dtype_in = dtype_out then product else U.cast ~src:product ~dtype:dtype_out in
-  let value = U.reduce ~src:product ~ranges:[ red ] ~op:Ops.Add ~dtype:dtype_out in
+  let value = U.reduce ~src:product ~ranges:[ red ] ~op:Ops.Add in
   let dst = U.index ~ptr:output ~idxs:[ U.O.(row * int_ n + col) ] () in
   let store = U.store ~dst ~value () in
   let kernel_info : U.kernel_info =

@@ -1018,7 +1018,6 @@ let reduce_layouts () =
   in
   let lowered =
     Uop.reduce ~src:shaped ~ranges:[ range ] ~op:Ops.Add
-      ~dtype:Dtype.float32
   in
   (match Uop.as_reduce lowered with
    | Some { src; ranges; op; num_axes } ->
@@ -1831,7 +1830,6 @@ let debug_prints_reduce_arg_tuple () =
   in
   let lowered =
     Uop.reduce ~src:body ~ranges:[ range ] ~op:Ops.Add
-      ~dtype:Dtype.float32
   in
   let out = Render.uops_list_to_string [ tensor_reduce; lowered ] in
   is_true ~msg:"tensor reduce arg repr"

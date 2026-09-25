@@ -2317,7 +2317,7 @@ let amd_fp8_wmma_bitcast node =
         (U.wmma
            ~a:(U.bitcast ~src:v.a ~dtype:Dtype.uint64)
            ~b:(U.bitcast ~src:v.b ~dtype:Dtype.uint64)
-           ~c:v.c ~info:v.info ~dtype:(U.dtype node))
+           ~c:v.c ~info:v.info)
   | Some _ | None -> None
 
 let amd_extra_matcher arch node =

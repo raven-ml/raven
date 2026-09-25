@@ -474,7 +474,7 @@ let build_llama_attention_context b =
       ~rhs:(U.index ~ptr:v ~idxs:[ (r2 * wi 4) + r3 ] ())
   in
   let value =
-    U.reduce ~src:value ~ranges:[ r2 ] ~op:Ops.Add ~dtype:D.float32
+    U.reduce ~src:value ~ranges:[ r2 ] ~op:Ops.Add
   in
   let dst = U.index ~ptr:out ~idxs:[ (r1 * wi 4) + r3 ] () in
   U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r1; r2; r3 ]
@@ -500,7 +500,6 @@ let build_llama_attention_output b =
   let value = load ctx ctx_idx * load weight weight_idx in
   let value =
     U.reduce ~src:value ~ranges:[ rred; rdim ] ~op:Ops.Add
-      ~dtype:D.float32
   in
   let idx = (rseq * wi 8) + rout in
   let value = load residual idx + value in

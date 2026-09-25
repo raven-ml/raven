@@ -9,10 +9,10 @@ let kernel () =
   let p2 = U.param ~slot:2 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let r0 = U.range ~size:(U.const_int 128) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
-  let red1 = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red1 = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r0 ] in
   let sq = U.alu_binary ~op:Ops.Mul ~lhs:ld ~rhs:ld in
   let red2 =
-    U.reduce ~op:Ops.Add ~src:sq ~ranges:[ r0 ] ~dtype:Dtype.float32
+    U.reduce ~op:Ops.Add ~src:sq ~ranges:[ r0 ]
   in
   let c0 = Helpers.idx 0 in
   let st1 =

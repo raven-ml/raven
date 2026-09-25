@@ -480,13 +480,13 @@ let build_wmma_node t (tc : Tc.t) axes coordinates =
   let wmma = U.wmma ~a ~b
       ~c:(U.const_of_dtype tc.dtype_out (U.Const_tuple
           (List.init (1 lsl c_count) (fun _ -> U.Const_scalar (`Float 0.0)))))
-      ~info ~dtype:tc.dtype_out in
+      ~info in
   let contracted = List.filter_map (fun (coordinate, range) ->
       if coordinate.[0] = 'k' then Some range else None) coordinates in
   let extra = U.find_nodes is_range (U.sink red.ranges)
       |> List.filter (fun r -> not (List.memq r contracted)) in
   let value = if extra = [] then wmma
-    else U.reduce ~op:Ops.Add ~src:wmma ~ranges:extra ~dtype:(U.dtype wmma) in
+    else U.reduce ~op:Ops.Add ~src:wmma ~ranges:extra in
   t.ast <- U.substitute [ reduce, value ] t.ast;
   refresh t
 

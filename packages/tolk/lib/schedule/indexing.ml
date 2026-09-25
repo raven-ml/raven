@@ -749,7 +749,7 @@ let convert_reduce ctx x =
       let ranges = List.filteri (fun i _ -> i < num_axes) in_rngs in
       let bx = with_indexed_children ctx x in
       let src = (U.src bx).(0) in
-      Some (U.reduce ~src ~op ~ranges ~dtype:(U.dtype x))
+      Some (U.reduce ~src ~op ~ranges)
   | _ -> None
 
 (* PAD -> WHERE(valid, src, 0). *)

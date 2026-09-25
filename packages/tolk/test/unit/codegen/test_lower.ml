@@ -68,7 +68,7 @@ let () =
           let zero = U.const (Const.float Dtype.float32 0.) in
           let value = U.wmma ~a:(U.cast ~src:row ~dtype:Dtype.float16)
               ~b:(U.cast ~src:col ~dtype:Dtype.float16) ~c:(U.stack [ zero; zero ])
-              ~info ~dtype:Dtype.float32 in
+              ~info in
           let dst = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:(U.const_int 2)
               ~addrspace:Dtype.Global () in
           let store = U.store ~dst:(U.index ~ptr:dst ~idxs:[ row ] ()) ~value () in
@@ -365,7 +365,7 @@ let () =
             let b = U.const (Const.float Dtype.float32 2.0) in
             let c = U.const (Const.float Dtype.float32 3.0) in
             let stack = U.stack ~dtype:Dtype.float32 [ b; c ] in
-            let noop = U.noop ~dtype:Dtype.void () in
+            let noop = U.noop () in
             let root = U.sink [ U.sink [ a ]; stack; noop ] in
             let lowered = Codegen_lower.lower (test_renderer ()) root in
             match U.op lowered, Array.to_list (U.src lowered) with

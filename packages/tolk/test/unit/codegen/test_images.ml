@@ -37,7 +37,7 @@ let lowered_float_buffer ?(slot = 0) size =
 let lowered_load buf offset =
   U.load
     ~src:(U.index ~ptr:buf ~idxs:[ U.const_int offset ] ())
-    ~dtype:Dtype.float32 ()
+    ()
 
 let lowered_store buf offset value =
   U.store
@@ -260,7 +260,7 @@ let () =
                      (U.sink [ store ]))));
           test "non-index memory ops are rejected" (fun () ->
             let buf = lowered_float_buffer 16 in
-            let load = U.load ~src:buf ~dtype:Dtype.float32 () in
+            let load = U.load ~src:buf () in
             raises_match
               (function
                 | Failure msg ->

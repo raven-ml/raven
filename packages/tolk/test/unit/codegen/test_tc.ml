@@ -80,7 +80,7 @@ let matmul_f32_ast ~m ~n ~k =
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] in
   let out_idx =
     U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in
@@ -102,7 +102,7 @@ let matmul_f32_global_ast ~m ~n ~k =
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] in
   let out_idx =
     U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in
@@ -130,7 +130,7 @@ let matmul_reduced_output_ast ~m ~n ~k =
       ~rhs:(U.load ~src:idx_b ())
   in
   let red =
-    U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_m; r_k ] ~dtype:D.float32
+    U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_m; r_k ]
   in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ r_n ] ()) ~value:red () in
   wrap_sink [ U.end_ ~value:st ~ranges:[ r_n ] ]
@@ -149,7 +149,7 @@ let matmul_f16_global_ast ~m ~n ~k =
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] in
   let out_idx =
     U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in

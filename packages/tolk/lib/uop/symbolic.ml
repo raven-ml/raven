@@ -526,7 +526,7 @@ let invalid_index_or_casted =
   let open Upat in
   [ invalid_index; cast invalid_index ]
 
-let noop_void () = Uop.noop ~dtype:Dtype.void ()
+let noop_void () = Uop.noop ()
 
 let zero_of_dtype dt =
   if Dtype.is_bool dt then Uop.const (Const.bool false)
@@ -2113,7 +2113,7 @@ let sym : Upat.Pattern_matcher.t =
     (* store(index, load(index)) -> Noop  (self-store elimination). *)
     (let i = op ~name:"index" Ops.Index in
      store i (load i) => fun _ ->
-       Some (Uop.noop ~dtype:Dtype.void ()));
+       Some (Uop.noop ()));
 
     (* store(index, gate.where(alt, load(index))) -> gated store of alt. *)
     (let index = op ~name:"index" Ops.Index in
@@ -2134,7 +2134,7 @@ let sym : Upat.Pattern_matcher.t =
     (* Store of Invalid -> Noop. *)
     (store ~name:"st" any invalid_pat => fun bs ->
        if is_invalid_const (bs $ "i")
-       then Some (Uop.noop ~dtype:Dtype.void ())
+       then Some (Uop.noop ())
        else None);
 
     (* store(buf.index(idx), cond.where(val, Invalid), ...ranges)

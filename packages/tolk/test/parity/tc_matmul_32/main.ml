@@ -34,7 +34,7 @@ let kernel renderer =
   let ld_b = U.load ~src:(U.index ~ptr:pb ~idxs:[ (rk * int_ n) + rj ] ()) () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
   let mulf = U.cast ~src:mul ~dtype:Dtype.float32 in
-  let red = U.reduce ~op:Ops.Add ~src:mulf ~ranges:[ rk ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mulf ~ranges:[ rk ] in
   let st =
     U.store ~dst:(U.index ~ptr:pc ~idxs:[ (ri * int_ n) + rj ] ()) ~value:red ()
   in

@@ -1220,7 +1220,7 @@ let add_buffers_rules ?(allow_locals = true) counter =
                  src0 value
              | _ -> value
            in
-           if is_invalid value then Some (U.noop ~dtype:Dtype.void ())
+           if is_invalid value then Some (U.noop ())
            else None
        | _ -> None);
     (fun n -> match U.op n with

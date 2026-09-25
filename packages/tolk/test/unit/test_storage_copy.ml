@@ -83,7 +83,7 @@ let fixture suffix =
                     ~ptr:(U.after ~src:(U.src op).(0) ~deps:!previous)
                     ~idxs:[U.const_int 0] ()) ~value:(U.src op).(1) ()
               | _, U.Arg.Typed (("wait" | "barrier" | "timestamp"), _) ->
-                  U.noop ~dtype:Dtype.void ()
+                  U.noop ()
               | _ -> failwith "unexpected copy queue instruction" in
             if U.op command <> Ops.Noop then previous := [command];
             command) (U.children linear) in

@@ -390,7 +390,7 @@ let make_wmma ?(threads = 64)
   let info : U.wmma_info =
     { dims; dtype_in; threads; tc_upcast_axes = Some upcast_axes }
   in
-  U.toposort (U.wmma ~a ~b ~c ~info ~dtype:dtype_out)
+  U.toposort (U.wmma ~a ~b ~c ~info)
 
 let make_vectorize_index () =
   let ptr = global_ptr dt in
@@ -1317,7 +1317,6 @@ let () =
             in
             let wmma =
               U.wmma ~a ~b ~c ~info
-                ~dtype:Dtype.float32
             in
             match apply_extra_matcher (Cstyle.amd Gpu_target.CDNA4) wmma with
             | Some r -> (
@@ -1537,7 +1536,7 @@ let () =
               let info : U.wmma_info = { dims = (16, 16, 32); dtype_in = dtype;
                 threads = 64; tc_upcast_axes = Some ([], [], []) } in
               let renderer = Cstyle.amd Gpu_target.CDNA3 in
-              let wmma = U.wmma ~a ~b ~c ~info ~dtype:Dtype.float32 in
+              let wmma = U.wmma ~a ~b ~c ~info in
               (match apply_extra_matcher renderer wmma with
                | Some node -> (match U.as_wmma node with
                    | Some v ->

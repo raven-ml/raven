@@ -124,7 +124,7 @@ let running_sum_kernel name ~size =
   let rj = U.range ~size:(idx size) ~axis:1 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ rj ] ()) () in
   let masked = U.O.where U.O.(ri < rj) (ci 0) ld in
-  let red = U.reduce ~op:Ops.Add ~src:masked ~ranges:[ rj ] ~dtype:Dtype.int32 in
+  let red = U.reduce ~op:Ops.Add ~src:masked ~ranges:[ rj ] in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ ri ] ()) ~value:red () in
   U.sink
     ~kernel_info:(kernel_info name)
@@ -136,7 +136,7 @@ let sum_to_scalar_kernel name ~size =
   let p_in = iparam ~slot:1 size in
   let r = U.range ~size:(idx size) ~axis:0 ~kind:Axis_type.Reduce () in
   let ld = U.load ~src:(U.index ~ptr:p_in ~idxs:[ r ] ()) () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r ] ~dtype:Dtype.int32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ r ] in
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ idx 0 ] ()) ~value:red () in
   U.sink ~kernel_info:(kernel_info name) [ st ]
 

@@ -275,7 +275,7 @@ let () =
               let info : U.wmma_info =
                 { dims = (8, 8, 8); dtype_in = Dtype.float32; threads = 32;
                   tc_upcast_axes = Some ([ ([ 3; 1; 2 ], 2) ], [], [ ([ 3; 1; 2 ], 2) ]) } in
-              let value = U.wmma ~a:x ~b:x ~c:x ~info ~dtype:Dtype.float32 in
+              let value = U.wmma ~a:x ~b:x ~c:x ~info in
               is_true ~msg:"nested axis metadata survives import" (U.import (U.export value) == value));
           test "compiled target survives serialization and separates program keys"
             program_target_identity;

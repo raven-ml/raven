@@ -12,7 +12,7 @@ let kernel () =
   let open U.O in
   let flat = (ri * int_ cols) + rj in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[flat] ()) () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rj ] ~dtype:Dtype.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rj ] in
   let st =
     U.store ~dst:(U.index ~ptr:p1 ~idxs:[ri] ()) ~value:red ()
   in
