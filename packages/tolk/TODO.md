@@ -79,8 +79,6 @@ acceptance requirement; skipped tests are not execution evidence.
   safety.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
-  Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
-  and compare it with the target coalescer.
 - Validate large WMMA accumulator ordering at optimizer/expander boundaries,
   including BF16/FNUZ across supported renderers. Port remaining gpudims, slot
   allocation, range merge, gating and WAR barriers while preserving symbolic

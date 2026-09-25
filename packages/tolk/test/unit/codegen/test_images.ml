@@ -220,24 +220,24 @@ let () =
                 equal int 1 (List.length (List.filter (fun u ->
                     U.Arg.equal (U.arg u) (U.Arg.String "nontemporal")) merged)))
               [ lowered_load; (fun buf i -> lowered_store buf i (Float.of_int i)) ]);
-          test "duplicate stores to one offset are rejected" (fun () ->
+          test "CPU and CUDA agree on repeated stores" (fun () ->
             let buf = lowered_float_buffer 16 in
-            let stores =
-              [
-                lowered_store buf 0 1.0;
-                lowered_store buf 0 2.0;
-              ]
-            in
-            raises_match
-              (function
-                | Failure msg ->
-                    String.equal msg
-                      "Coalesce: multiple stores to the same offset"
-                | _ -> false)
-              (fun () ->
-                ignore
-                  (Coalesce.memory_coalescing (test_renderer ())
-                     (U.sink stores))));
+            let first = lowered_store buf 0 1.0 in
+            let conflicting = lowered_store buf 0 2.0 in
+            List.iter (fun (backend, renderer) ->
+                let repeated = Coalesce.memory_coalescing renderer
+                    (U.sink [first; first]) in
+                equal ~msg:(backend ^ " deduplicates identical stores") int 1
+                  (count (fun node -> U.op node = Ops.Store) repeated);
+                raises_match
+                  (function
+                    | Failure msg -> String.equal msg
+                        "Coalesce: multiple stores to the same offset"
+                    | _ -> false)
+                  (fun () -> ignore (Coalesce.memory_coalescing renderer
+                      (U.sink [first; conflicting]))))
+              ["CPU", Cstyle.clang Gpu_target.X86_64;
+               "CUDA", Cstyle.cuda Gpu_target.SM80]);
           test "gated memory ops are rejected" (fun () ->
             let buf = lowered_float_buffer 16 in
             let idx =
