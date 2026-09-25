@@ -77,13 +77,18 @@ val const_like :
 val full_like :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> Tensor.t -> Tensor.scalar ->
   Tensor.t
-(** [full_like t v] is [full] with the shape of [t] and, unless overridden,
-    the dtype of [t]. *)
+(** [full_like t v] is filled with [v], with the shape and, unless overridden,
+    dtype of [t]. By default, buffers preserve [t]'s device placement and sharding.
+
+    With [buffer=false], fills remain broadcast constants without a fill buffer.
+    Single-device constants have no placement. Sharded constants retain their
+    partition, but further [*_like] calls on these device-less values preserve
+    only their global shape. *)
 
 val zeros_like :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> Tensor.t -> Tensor.t
-(** [zeros_like t] is a zero-filled tensor shaped like [t]. *)
+(** [zeros_like t] is {!full_like}[ t (Sint 0)]. *)
 
 val ones_like :
   ?dtype:Tolk_uop.Dtype.t -> ?buffer:bool -> Tensor.t -> Tensor.t
-(** [ones_like t] is a one-filled tensor shaped like [t]. *)
+(** [ones_like t] is {!full_like}[ t (Sint 1)]. *)

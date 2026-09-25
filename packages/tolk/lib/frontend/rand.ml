@@ -179,31 +179,14 @@ let rand ?dtype ?contiguous shape =
 
 let rand_like ?dtype ?contiguous t =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
-  match T.device t with
-  | Some (Uop.Multi devices) -> (
-      match Uop.axis (T.uop t) with
-      | None ->
-          Creation.shard ~devices (rand ~dtype:dt ?contiguous (T.shape t))
-      | Some axis ->
-          let shape =
-            List.map
-              (fun d ->
-                match Uop.const_int_value d with
-                | Some size -> size
-                | None -> invalid_arg "Rand.rand_like: symbolic dimension")
-              (Uop.shard_shape (T.uop t))
-          in
-          let shards =
-            List.map
-              (fun device ->
-                T.uop (rand_on device ~dtype:dt ?contiguous shape))
-              devices
-          in
-          T.of_uop (Uop.unshard ~src:(Uop.mstack shards) ~axes:[ axis ] ()))
-  | Some (Uop.Single device) ->
-      rand_on device ~dtype:dt ?contiguous (T.shape t)
-  | None -> rand ~dtype:dt ?contiguous (T.shape t)
-  | Some (Uop.Index _) -> invalid_arg "Rand.rand_like: unresolved device index"
+  Like.create t (fun shape device ->
+      let shape = List.map (fun d ->
+          match Uop.const_int_value d with
+          | Some size -> size
+          | None -> invalid_arg "Rand.rand_like: symbolic dimension") shape in
+      match device with
+      | Some device -> rand_on device ~dtype:dt ?contiguous shape
+      | None -> rand ~dtype:dt ?contiguous shape)
 
 (* Box-Muller: two uniform draws give one standard normal sample. *)
 let randn_like ?dtype t =

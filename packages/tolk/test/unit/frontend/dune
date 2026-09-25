@@ -2,6 +2,7 @@
  (names
   test_frontend
   test_clone
+  test_like
   test_run
   test_custom_kernel
   test_block_matmul
@@ -13,6 +14,7 @@
  (modules
   test_frontend
   test_clone
+  test_like
   test_run
   test_custom_kernel
   test_block_matmul

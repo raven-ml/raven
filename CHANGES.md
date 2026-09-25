@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- `Creation.full_like`, `zeros_like` and `ones_like` preserve device placement
+  and allocate local shard sizes, including symbolic nonsharded dimensions.
+  Fill and random constructors now use the same placement rules.
+
 - `Uop.semantic_key` ignores auxiliary fallback graphs consistently, so calls
   that differ only in fallback metadata share a semantic cache key.
 

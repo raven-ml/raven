@@ -138,9 +138,13 @@ let const_like ?dtype t fill =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
   broadcast_scalar dt fill (T.shape t)
 
-let full_like ?dtype ?buffer t fill =
+let full_like ?dtype ?(buffer = true) t fill =
   let dt = match dtype with Some d -> d | None -> T.val_dtype t in
-  full ~dtype:dt ?buffer (T.shape t) fill
+  Like.create t (fun shape device ->
+      let scalar = T.of_uop (U.const (T.scalar_const dt fill)) in
+      let value = Movement.symbolic_broadcast_to scalar shape in
+      if buffer then clone ?device:(Option.map (fun d -> U.Single d) device) value
+      else value)
 
 let zeros_like ?dtype ?buffer t = full_like ?dtype ?buffer t (T.Sint 0)
 let ones_like ?dtype ?buffer t = full_like ?dtype ?buffer t (T.Sint 1)
