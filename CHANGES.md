@@ -389,6 +389,11 @@ thread.
 
 ### Tolk (new)
 
+- Compiled programs on Metal no longer return wrong values from kernels of 16
+  to 29 arguments, such as a concatenation of 16 tensors. An M1 Max
+  miscomputes them from an indirect command buffer, so they now run as direct
+  dispatches between queued batches.
+
 - `Op.quant_matmul` and `Op.block_matmul` use the migrated optimizer and storage
   APIs. Quantized kernels count dynamic reduction axes when choosing splits,
   preserving gated products across CPU and GPU renderers.

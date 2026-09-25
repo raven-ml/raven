@@ -426,7 +426,11 @@ let enqueue call = match U.as_call call with
               let dev = Device.get device in
               (match Device.queue dev with
                | Some q ->
-                   let queue = if U.op body = Ops.Program then Some "COMPUTE:0" else q.copy call in
+                   let fits = match q.max_kernel_bindings, U.as_program_info body with
+                     | Some most, Some info -> List.length info.globals + List.length info.vars <= most
+                     | _ -> true in
+                   let queue = if U.op body <> Ops.Program then q.copy call
+                     else if fits then Some "COMPUTE:0" else None in
                    Option.map (fun queue -> {call; device = Device.name dev; queue}) queue
                | None -> None)
           | _ -> None) args

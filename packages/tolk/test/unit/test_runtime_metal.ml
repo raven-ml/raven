@@ -127,10 +127,10 @@ let queue_call device spec slots =
     ~info:{grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None; dtype = Dtype.void}
 
-let compile_queue ?(profile = false) device calls =
+let compile_queue ?(profile = false) ?(queued = true) device calls =
   let to_program device = Codegen.to_program device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~profile ~to_program (U.linear calls) in
-  is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
+  equal ~msg:"queue compilation produces a host submission" bool queued (List.exists (fun call ->
       match U.arg (U.without_after call) with
       | U.Arg.Call_info {aux = Some _; _} -> true | _ -> false) (U.children compiled));
   let timings = List.concat_map (fun call -> match U.arg (U.without_after call) with
@@ -174,9 +174,8 @@ let test_mixed_scalar_widths () =
   run ~wait:true ~vars:bindings [| buffer |];
   equal (list int64) [ 11L; 300L; 12345L; 0x2_0000_0003L ] (read ())
 
-let test_many_buffer_arguments () =
+let test_many_buffer_arguments count () =
   let device = metal_device () in
-  let count = 33 in
   let params = List.init count (fun slot ->
       U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) ()) in
   let output = List.hd params in
@@ -193,19 +192,21 @@ let test_many_buffer_arguments () =
       [ dst; U.store ~dst ~value:!sum () ] in
   let spec = Device.compile_program device ~name:"metal_many_arguments" linear in
   let buffers = Array.init count (fun i -> i32_buf device [ i ]) in
+  let sum = count * (count - 1) / 2 in
   run_spec device spec (Array.to_list buffers);
-  equal (list int) [ 528 ] (read_i32 buffers.(0));
+  equal (list int) [ sum ] (read_i32 buffers.(0));
   let second = i32_buf device [ 0 ] in
   let slots = List.init count Fun.id in
-  let run = compile_queue device
+  (* A kernel of more than 15 arguments stays out of Metal queues. *)
+  let run = compile_queue ~queued:(count <= 15) device
       [queue_call device spec slots; queue_call device spec (count :: List.tl slots)] in
   let inputs = Array.append buffers [|second|] in
   run inputs;
   let replacement = i32_buf device [100] in
   inputs.(1) <- replacement;
   run ~wait:true inputs;
-  equal (list int) [627] (read_i32 buffers.(0));
-  equal (list int) [627] (read_i32 second)
+  equal (list int) [sum + 99] (read_i32 buffers.(0));
+  equal (list int) [sum + 99] (read_i32 second)
 
 let test_thread_reduction kind width expected () =
   let device = metal_device () in
@@ -339,8 +340,12 @@ let () =
             (test_thread_reduction Axis_type.Warp 32 [ 32640; 98176 ]);
           test "typed argument structures preserve scalar widths in dispatch and replay"
             test_mixed_scalar_widths;
-          test "argument structures support more than 31 buffers and rebinding"
-            test_many_buffer_arguments;
+          test "an argument structure of 15 buffers is queued and rebinds"
+            (test_many_buffer_arguments 15);
+          test "an argument structure of 16 buffers dispatches directly and rebinds"
+            (test_many_buffer_arguments 16);
+          test "an argument structure of 33 buffers dispatches directly and rebinds"
+            (test_many_buffer_arguments 33);
           test "compile and run one kernel" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_add_one" in

@@ -36,6 +36,25 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   chains and write-after-read barriers. Reconsider when upstream orders shared
   memory accesses between incompatible peer groups.
 
+- **Metal queues leave kernels with more than 15 arguments to direct
+  dispatch.** The target encodes every kernel into an indirect command buffer.
+  On an M1 Max (Apple7) a kernel with 16 to 29 arguments (buffers plus scalar
+  variables) and a body with many distinct constants computes wrong values
+  from an indirect command buffer and correct ones from a direct dispatch of
+  the same pipeline and buffers. A standalone Objective-C program with no
+  tolk or tinygrad code reproduces it, with the arguments bound as buffers or
+  as fields of one argument buffer; GPU shader validation hides it, and the
+  target's pre-M3 empty dispatch does not help. The target returns wrong
+  values for a `cat` of 16 tensors. Tolk's queue capability
+  `max_kernel_bindings` is `Some 15` on Metal, and `Hcq2.enqueue` leaves a
+  kernel above it to an ordinary dispatch between batches. At the time of the
+  ruling, no kernel of the rune Metal tests (apart from this coverage) or of
+  the tiny gpt-oss validation exceeded 10 arguments. Coverage: Rune's
+  `test_jit_metal` concatenation of 16 sorts between queued kernels, and the
+  Metal runtime's argument structures of 15 buffers (queued), 16 and 33
+  (direct), which rebind between calls. Reconsider when Apple fixes the
+  driver, and measure Apple8 and later, which were not available.
+
 - **Multi-axis reshapes use each axis's own shard count.** The frozen target
   reuses the last range's count while constructing all local dimensions, so a
   `[2; 4]` tile sharded 2-by-3 cannot reshape its `[4; 12]` logical shape to

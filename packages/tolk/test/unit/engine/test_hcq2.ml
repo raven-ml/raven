@@ -126,7 +126,7 @@ let all_to_all_copy_queues () =
             Some (U.group [dependency])
         | _ -> None in
       let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () () -> ());
-        prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some "COPY:0");
+        prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; copy = (fun _ -> Some "COPY:0");
         encode; lower = (fun _ -> None);
         compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
       let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
@@ -162,7 +162,7 @@ let peer_group_batches () =
       | Some {args = dst :: _; _} when U.device_of dst = Some (U.Single name) -> Some "COPY:0"
       | _ -> None in
     let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () () -> ());
-      prepare = (fun () -> incr prepared); host = "CPU"; copy; encode; lower = (fun _ -> None);
+      prepare = (fun () -> incr prepared); host = "CPU"; max_kernel_bindings = None; copy; encode; lower = (fun _ -> None);
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
     let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
     Device.make ~name ~peer_group:name ~allocator
@@ -221,7 +221,7 @@ let staged_peer_dependencies () =
            | `Fault -> failwith "host mapping fault");
           mapping.map source)}} in
     let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () () -> ());
-      prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some "COPY:0");
+      prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; copy = (fun _ -> Some "COPY:0");
       encode = (fun _ -> None); lower = (fun _ -> None);
       compile = (fun _ -> fail "staging plan should not compile")} in
     Device.make ~name ~allocator
@@ -323,7 +323,7 @@ let compiled_host_submission () =
     let program = Codegen.to_program ~optimize:false host (Device.renderer host) sink in
     Spec.type_verify Spec.program_spec (U.src program).(0);
     program in
-  let queue = Device.{timestamp_divider = 1000.; profile_offset = (fun () -> 0.); completion; prepare = (fun () -> ()); host = "CPU"; copy = (fun _ -> Some !copy_queue); encode; lower = (fun _ -> None);
+  let queue = Device.{timestamp_divider = 1000.; profile_offset = (fun () -> 0.); completion; prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; copy = (fun _ -> Some !copy_queue); encode; lower = (fun _ -> None);
     compile} in
   let renderer_set = Device.Renderer_set.make ~device:name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in

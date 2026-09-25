@@ -2384,7 +2384,7 @@ module Queue = struct
         (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
         Timeline.guarded_wait timeline (fun () ->
             Hcq.Signal.wait timeline.Timeline.timeline value) in
-    Device.{timestamp_divider = 100.; profile_offset; completion; prepare = (fun () -> State.prepare state); host = Device.name host; copy;
+    Device.{timestamp_divider = 100.; profile_offset; completion; prepare = (fun () -> State.prepare state); host = Device.name host; max_kernel_bindings = None; copy;
       encode = Encoded_queue.encode state.State.hw ~props:state.State.iface.Iface.props
         ~name:state.State.name ~compute_ring_size:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
         ~copy_ring_size:(fun idx -> Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) (state.State.sdma_queue idx));
