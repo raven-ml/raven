@@ -287,10 +287,10 @@ val create_buffer :
 
     [spec] defaults to {!Buffer_spec.default}. *)
 
-val invalidate_caches : t -> bool
-(** [invalidate_caches d] runs [d]'s cache-invalidation hook and returns [true].
-    Returns [false] without side effects when no hook was provided to {!make},
-    allowing timing runs to use a cache-eviction workload instead. *)
+val invalidate_caches : t -> (unit -> unit) option
+(** [invalidate_caches d] is [d]'s cache invalidation operation, if available.
+    Looking up the operation has no effect. Calling it invalidates the device
+    caches within a storage operation scope. *)
 
 (** {1:registry Device registry}
 

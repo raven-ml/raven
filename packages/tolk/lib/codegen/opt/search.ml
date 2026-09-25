@@ -482,7 +482,7 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
         match
           time_program ~device ~to_program program rawbufs_by_slot var_vals ~early_stop
             ~cnt:3
-            ~clear_l2:true ~allow_test_size
+            ~clear_l2:(Option.is_some (Device.invalidate_caches device)) ~allow_test_size
             ~dev_timeout:(beam_dev_timeout ())
         with
         | tms ->

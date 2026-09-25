@@ -1331,12 +1331,16 @@ let time_call ~device ~to_program ?(var_vals = []) ?timeout
       let linear = compile_linear ~device ~to_program ~beam:0 ~profile:false (U.linear [call])
           |> link_linear ~allow_cache:false in
       linear, buffer)) in
+  let invalidate = Device.invalidate_caches device in
   let sample () =
-    if clear_l2 && not (Device.invalidate_caches device) then begin
-      let linear, _ = Lazy.force eviction in
-      let clear_ctx = {ctx with var_vals = []; wait = false} in
-      List.iter (fun call -> ignore (dispatch_call clear_ctx ~device ~to_program call))
-        (U.children linear)
+    if clear_l2 then begin
+      match invalidate with
+      | Some invalidate -> invalidate ()
+      | None ->
+          let linear, _ = Lazy.force eviction in
+          let clear_ctx = {ctx with var_vals = []; wait = false} in
+          List.iter (fun call -> ignore (dispatch_call clear_ctx ~device ~to_program call))
+            (U.children linear)
     end;
     let times = List.concat_map (dispatch_call ctx ~device ~to_program)
         (U.children linked) in

@@ -413,10 +413,10 @@ let transient_program_lifetimes =
       test "rejected timings release programs" (check (Some (Failure "timing failed")));
       test "interrupted search releases programs" (check (Some Exit)) ]
 
-let codegen_midpoint_rounds_down () =
+let codegen_midpoint_rounds_down ~has_cache_hook () =
   let backing = cpu "beam-midpoint" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
-  let observed = ref [] and evictions = ref 0 in
+  let observed = ref [] and evictions = ref 0 and invalidations = ref 0 in
   let runtime obj =
     let prg = Device.runtime backing obj in
     let eviction = List.for_all (fun (arg : Tiny_elf.argument) -> arg.addrspace <> D.Alu)
@@ -437,6 +437,7 @@ let codegen_midpoint_rounds_down () =
       [ "CLANG", (fun _ -> ren) ] in
   let device = Device.make ~name:"CPU:beam-midpoint-recording"
       ~allocator:(Device.Buffer.allocator sample) ~renderer_set ~runtime
+      ?invalidate_caches:(if has_cache_hook then Some (fun () -> incr invalidations) else None)
       ~synchronize:(fun timeout -> Device.synchronize ?timeout backing) () in
   let variable = U.variable ~name:"scale" ~min_val:(-4) ~max_val:(-1) () in
   let ast = U.substitute [ f32 2., U.cast ~src:variable ~dtype:D.float32 ]
@@ -448,8 +449,10 @@ let codegen_midpoint_rounds_down () =
   Fun.protect
     ~finally:(fun () -> Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:""))
     (fun () -> ignore (Codegen.to_program ~beam_device:device device ren ast));
-  is_true ~msg:"codegen clears the cache before timing" (!evictions > 0);
+  equal ~msg:"beam does not synthesize an eviction kernel" int 0 !evictions;
   is_true ~msg:"codegen benchmarks candidates" (!observed <> []);
+  equal ~msg:"only an advertised cache hook runs before each sample" int
+    (if has_cache_hook then List.length !observed else 0) !invalidations;
   List.iter (equal (list int64) [ -3L ]) !observed
 
 let parallel_failure_joins_workers failure () =
@@ -629,6 +632,82 @@ let candidate_program_metadata ~large () =
 
 (* Entry *)
 
+let compute_filtered_candidate_is_reconsidered () =
+  let backing = cpu "beam-reconsider-buffers" in
+  let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
+  let timed = ref [] and compiled = ref [] in
+  let a = U.Opt.Swap {axis = 0; with_axis = 1}
+  and b = U.Opt.Swap {axis = 1; with_axis = 2}
+  and c = U.Opt.Swap {axis = 0; with_axis = 2} in
+  let label opts = String.concat "," (List.map U.Opt.to_string opts) in
+  let cheap = label [a] and rejected = label [c] and bridge = label [a;b] in
+  let runtime (obj : Tiny_elf.t) =
+    let candidate = Bytes.to_string obj.lib in
+    let call buffers ~global ~local ~vals ~wait ~timeout =
+      ignore (buffers, global, local, vals, wait, timeout);
+      timed := candidate :: !timed;
+      Some (if candidate = cheap then 3e-6
+            else if candidate = bridge then 2e-6
+            else if candidate = rejected then 2e-6 -. 5e-9
+            else 10e-6) in
+    Device.{call; free = (fun () -> ()); handle = 0n} in
+  let renderer = Renderer.with_compiler
+      (Compiler.make ~name:"BEAM_RECONSIDER" ~compile:Bytes.of_string ()) ren in
+  let renderer_set = Device.Renderer_set.make ~device:"CPU" ~arch:"generic"
+      ["CLANG", Fun.const renderer] in
+  let device = Device.make ~name:"CPU:beam-reconsider"
+      ~allocator:(Device.Buffer.allocator sample) ~renderer_set ~runtime
+      ~synchronize:(fun timeout -> ignore timeout)
+      ~invalidate_caches:(fun () -> ()) () in
+  (* Three global-axis permutations provide two paths to the same AST:
+     SWAP(0,2) and SWAP(0,1), SWAP(1,2), SWAP(0,1). *)
+  let output = U.param ~slot:0 ~dtype:D.float32 ~shape:(idx 64) () in
+  let input = U.param ~slot:1 ~dtype:D.float32 ~shape:(idx 64) () in
+  let ranges = List.init 3 (fun axis ->
+      U.range ~size:(idx 4) ~axis ~kind:Ak.Global ()) in
+  let position = match ranges with
+    | [x;y;z] -> U.O.(x * int_ 16 + y * int_ 4 + z)
+    | _ -> assert false in
+  let value = U.load ~src:(index_ptr input position) () in
+  let ast = U.sink [U.end_
+      ~value:(U.store ~dst:(index_ptr output position) ~value ()) ~ranges] in
+  let template = to_program device (elementwise_1d_ast ~n:64) in
+  let compile_candidate owner candidate =
+    is_true ~msg:"the constructor uses the search device" (owner == device);
+    let opts = (Option.get (U.as_kernel_info candidate)).applied_opts in
+    if not (List.for_all (function U.Opt.Swap _ -> true | _ -> false) opts) then
+      failwith "the scripted compiler only accepts axis permutations";
+    let candidate = label opts in
+    compiled := candidate :: !compiled;
+    let children = Array.copy (U.src template) in
+    let kernel = Option.get (U.as_kernel_info children.(0)) in
+    let ops = if candidate = cheap then 1 else 2000 in
+    children.(0) <- U.replace children.(0) ~arg:(U.Arg.Kernel_info
+        {kernel with estimates = Some {U.ops = U.Int ops; lds = U.Int 0; mem = U.Int 0}}) ();
+    children.(3) <- U.binary candidate;
+    U.replace template ~src:children () in
+  let rawbufs = create_bufs_for_kernel device ast in
+  let cachelevel = Sys.getenv_opt "CACHELEVEL"
+  and min_progress = Sys.getenv_opt "BEAM_MIN_PROGRESS" in
+  Unix.putenv "CACHELEVEL" "0";
+  Unix.putenv "BEAM_MIN_PROGRESS" "0.01";
+  Fun.protect ~finally:(fun () ->
+      Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:"");
+      Unix.putenv "BEAM_MIN_PROGRESS" (Option.value min_progress ~default:"");
+      List.iter Device.Buffer.deallocate (sample :: rawbufs)) (fun () ->
+    let result = Helpers.Context_var.with_context [B (Search.beam_parallel, 0)] (fun () ->
+        Search.beam_search ~to_program:compile_candidate ~disable_cache:true
+          ~allow_test_size:false (P.create ast renderer) rawbufs ~var_vals:[] 1 device) in
+    equal ~msg:"the previously rejected AST reuses its compilation" int 1
+      (List.length (List.filter ((=) rejected) !compiled));
+    equal ~msg:"the previously rejected binary receives all three timing samples" int 3
+      (List.length (List.filter ((=) rejected) !timed));
+    equal ~msg:"the sub-threshold improvement still selects the better kernel"
+      (list string) (List.map U.Opt.to_string [a;b;a])
+      (List.map U.Opt.to_string (P.applied_opts result));
+    equal ~msg:"only the six distinct permutation ASTs are compiled" int 6
+      (List.length !compiled))
+
 let overflowing_resource_products_reject_candidates () =
   let device = cpu "beam-resource-products" in
   let check kind =
@@ -656,6 +735,8 @@ let overflowing_resource_products_reject_candidates () =
 
 let () = run __FILE__
     [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
+      test "beam reconsiders compute-filtered candidates in later rounds"
+        compute_filtered_candidate_is_reconsidered;
       test "beam rejects overflowing resource products"
         overflowing_resource_products_reject_candidates;
       test "beam retains candidate PROGRAM metadata and scales only its launch"
@@ -668,4 +749,7 @@ let () = run __FILE__
         (parallel_failure_joins_workers Sys.Break);
       test "sequential compilation propagates interruption"
         sequential_compile_interrupt;
-      test "codegen rounds negative timing midpoints down" codegen_midpoint_rounds_down ]
+      test "codegen rounds negative timing midpoints down without cache eviction"
+        (codegen_midpoint_rounds_down ~has_cache_hook:false);
+      test "beam invokes the available cache hook for each timing sample"
+        (codegen_midpoint_rounds_down ~has_cache_hook:true) ]

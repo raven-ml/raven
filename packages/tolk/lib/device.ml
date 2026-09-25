@@ -420,10 +420,9 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
 let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
 
-let invalidate_caches d = Storage.with_operation (fun () ->
-    match d.invalidate_caches_fn with
-    | Some invalidate -> invalidate (); true
-    | None -> false)
+let invalidate_caches d =
+  Option.map (fun invalidate () -> Storage.with_operation invalidate)
+    d.invalidate_caches_fn
 
 (* Device registry
 

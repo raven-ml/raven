@@ -803,7 +803,7 @@ let finalizers_wait_for_device_operations () =
      "completion wait", (fun () -> wait None);
      "foreign completion wait", wait_dependency;
      "command storage", (fun () -> ignore (Device.bufferize dev (Uop.const_int 0)));
-     "cache invalidation", (fun () -> ignore (Device.invalidate_caches dev))];
+     "cache invalidation", (fun () -> Option.get (Device.invalidate_caches dev) ())];
   submission.free ();
   Device.Buffer.deallocate buffer;
   releases := [];

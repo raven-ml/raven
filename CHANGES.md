@@ -679,6 +679,10 @@ thread.
 
 ### Tolk (new)
 
+- Beam search follows the device's cache-invalidation capability, avoiding
+  unnecessary eviction kernels during CPU timing. `Device.invalidate_caches`
+  now returns the optional operation without invoking it.
+
 - Concurrent scheduling now protects its shared cache, and independent buffer
   views retain accurate ownership counts through allocation and retirement.
 
