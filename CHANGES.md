@@ -135,6 +135,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled integer constant outside its dtype's range, such as
+  `Nx.add_s x 256` on uint8, takes the wrapped value as eager does. Folding
+  used it unwrapped: `x + 256 < 5` gave false and `x / 257` gave 0.
 - **Breaking:** `Rune.jit` takes the signature of the function it compiles and
   returns a function of the same type, with arguments read (`@->`) or consumed
   (`consumes ... @@`) and a result of any structure. `jit2`, `jit_step`,

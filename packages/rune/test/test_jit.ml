@@ -45,6 +45,36 @@ let test_64_bit_constants () =
         (Nx.to_array (Rune.jit' f u32)))
     [ Int32.min_int; -1l; 0x80000001l ]
 
+(* A constant outside a narrow dtype's range, a scalar or a pad value, is the
+   wrapped value eager stores: 256 is 0 in uint8, 257 is 1, 200 is -56 in int8.
+   A subtraction that does not underflow compares as it reads: x - 1 adds Tolk's
+   own -1, which is not a stored value. *)
+let test_narrow_constants_wrap () =
+  let check (type a b) name (x : (a, b) Nx.t) f =
+    equal ~msg:name (array bool)
+      (Nx.to_array (f x))
+      (Nx.to_array (Rune.jit' f x))
+  in
+  let x = Nx.create Nx.uint8 [| 3 |] [| 1; 2; 3 |] in
+  check "x + 256 < 5" x (fun x -> Nx.less (Nx.add_s x 256) (Nx.full_like x 5));
+  check "256 < 5" x (fun x -> Nx.less (Nx.full_like x 256) (Nx.full_like x 5));
+  check "x / 257 = x" x (fun x -> Nx.equal (Nx.div x (Nx.full_like x 257)) x);
+  check "int8 y + 200 < 0"
+    (Nx.create Nx.int8 [| 3 |] [| 1; 2; 3 |])
+    (fun y -> Nx.less (Nx.add_s y 200) (Nx.zeros_like y));
+  check "uint8 pad 256 < 5" x (fun x ->
+      Nx.less (Nx.pad [| (1, 1) |] 256 x) (Nx.full Nx.uint8 [| 5 |] 5));
+  check "int8 pad 200 < 0"
+    (Nx.create Nx.int8 [| 3 |] [| 1; 2; 3 |])
+    (fun y -> Nx.less (Nx.pad [| (1, 1) |] 200 y) (Nx.zeros Nx.int8 [| 5 |]));
+  let u8 = Nx.create Nx.uint8 [| 3 |] [| 1; 2; 200 |] in
+  check "uint8 x - 1 < 5" u8 (fun x ->
+      Nx.less (Nx.sub_s x 1) (Nx.full_like x 5));
+  let u32 = Nx.create Nx.uint32 [| 3 |] [| 1l; 2l; 200l |] in
+  check "uint32 x - 1 < x" u32 (fun x -> Nx.less (Nx.sub_s x 1l) x);
+  check "uint32 x - 1 < 5" u32 (fun x ->
+      Nx.less (Nx.sub_s x 1l) (Nx.full_like x 5l))
+
 let test_elementwise_matches_eager () =
   let f x = Nx.tanh (Nx.add (Nx.mul x x) x) in
   let g = Rune.jit' f in
@@ -3811,6 +3841,7 @@ let tests =
     group "jit basics"
       [
         test "64-bit constants keep every bit" test_64_bit_constants;
+        test "narrow constants wrap" test_narrow_constants_wrap;
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "a compiled float8 bitcast is refused"
