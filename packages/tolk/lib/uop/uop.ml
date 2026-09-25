@@ -1934,9 +1934,9 @@ and compute_min_max u =
           let a, b = B.round dt a, B.round dt b in
           let is_nan = function `Float f -> Float.is_nan f | _ -> false in
           if is_nan a || is_nan b then lo, hi
-          else if Dtype.is_unsigned dt && B.le zero a && B.le b hi then a, b
-          else if (Dtype.is_float dt || (Dtype.is_int dt && not (Dtype.is_unsigned dt)))
-                  && B.le a hi && B.le lo b then B.max lo a, B.min b hi
+          else if Dtype.is_int dt && B.le lo a && B.le b hi then a, b
+          else if Dtype.is_float dt && B.le a hi && B.le lo b then
+            B.max lo a, B.min b hi
           else lo, hi
       | _ -> dtype_bounds ()
 

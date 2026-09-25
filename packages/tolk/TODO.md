@@ -74,10 +74,12 @@ acceptance requirement; skipped tests are not execution evidence.
 - Attribute every changed expectation in the separately generated reference
   corpus; require exact source parity for supported renderers, apart from
   explicitly justified divergences.
-- Minimize strict-OOB rejections observed in 23 frontend cases and three
-  Metal tensor-core cases (padded contraction and BF16 accumulation). Distinguish
-  incomplete relational proofs from incorrect fixture extents; preserve strict
-  rejection of unproved accesses and use shared symbolic rules for valid proofs.
+- Prove the remaining strict-OOB rejections in leading-axis long cumsum and
+  three Metal tensor-core cases (padded contraction and BF16 accumulation).
+  Their distributed affine indexes no longer contain the gate's bounded sum
+  as a subexpression. Preserve rejection until shared symbolic rules establish
+  safety. Audit fixed-width ALU overflow in canonical bounds, including false
+  gate proofs after unsigned wraparound.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
   Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report

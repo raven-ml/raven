@@ -992,6 +992,79 @@ let program_oob_masked_symbolic_lower_bound_only_rejected () =
     (with_env "CHECK_OOB" "1" (fun () ->
          rejected_list Spec.program_spec [ p; n; gate; idx; ld ]))
 
+let masked_access_accepted ~size ~index ~gate =
+  let p = global_i32_param ~size () in
+  let idx = Uop.index ~ptr:p ~idxs:[ index ] () in
+  let ld = load_with_gate ~idx ~alt:(i32 0) ~gate in
+  with_env "CHECK_OOB" "1" (fun () -> not (rejected Spec.program_spec ld))
+
+let program_oob_loaded_component_bounds () =
+  let rows = global_i32_param ~slot:1 ~size:1 () in
+  let row = Uop.load ~src:(Uop.index ~ptr:rows ~idxs:[ i32 0 ] ()) () in
+  let col = Uop.variable ~param:true ~name:"col" ~min_val:0 ~max_val:2
+      ~dtype:Dtype.int32 () in
+  let index = Uop.O.(row * i32 3 + col) in
+  let lower = Uop.O.(i32 (-1) < row) and upper = Uop.O.(row < i32 4) in
+  let gate = Uop.alu_binary ~op:Ops.And ~lhs:lower ~rhs:upper in
+  is_true ~msg:"guard bounds the loaded row before stride multiplication"
+    (masked_access_accepted ~size:12 ~index ~gate);
+  is_false ~msg:"missing lower bound must not prove the loaded row safe"
+    (masked_access_accepted ~size:12 ~index ~gate:upper);
+  is_false ~msg:"last row still exceeds a shorter buffer"
+    (masked_access_accepted ~size:11 ~index ~gate)
+
+let program_oob_offset_component_bounds () =
+  let x = Uop.variable ~param:true ~name:"scan" ~min_val:0 ~max_val:1019
+      ~dtype:Dtype.int32 () in
+  let index = Uop.O.(x + i32 (-511)) in
+  is_true ~msg:"scan mask proves a nonnegative offset"
+    (masked_access_accepted ~size:512 ~index ~gate:Uop.O.(i32 510 < x));
+  is_false ~msg:"one smaller guard permits index minus one"
+    (masked_access_accepted ~size:512 ~index ~gate:Uop.O.(i32 509 < x))
+
+let program_oob_shift_component_bounds () =
+  let r = Uop.variable ~param:true ~name:"selection" ~min_val:0 ~max_val:7
+      ~dtype:Dtype.int32 () in
+  let half = Uop.alu_binary ~op:Ops.Shr ~lhs:Uop.O.(r + i32 1) ~rhs:(i32 1) in
+  let index = Uop.O.(half + i32 (-3)) in
+  is_true ~msg:"selection guard bounds the shifted component"
+    (masked_access_accepted ~size:4 ~index ~gate:Uop.O.(i32 4 < r));
+  is_false ~msg:"weaker selection guard permits a negative index"
+    (masked_access_accepted ~size:4 ~index ~gate:Uop.O.(i32 2 < r))
+
+let program_oob_committed_guard_constants () =
+  let x = Uop.variable ~param:true ~name:"guard_constant" ~min_val:0 ~max_val:31
+      ~dtype:Dtype.int32 () in
+  let upper = Uop.const (Const.integer Dtype.int32 (Z.of_string "-2147483649")) in
+  is_false ~msg:"an overflowing committed guard constant is not its weak payload"
+    (masked_access_accepted ~size:16 ~index:x ~gate:Uop.O.(x < upper));
+  let lower = Uop.const (Const.integer Dtype.int32 (Z.of_string "4294967295")) in
+  is_false ~msg:"component proof must preserve overflowing guard casts"
+    (masked_access_accepted ~size:1 ~index:Uop.O.(x + i32 (-31))
+       ~gate:Uop.O.(lower < x))
+
+let program_oob_proof_variables_are_fresh () =
+  let x = Uop.variable ~param:true ~name:"x" ~min_val:0 ~max_val:6
+      ~dtype:Dtype.int32 () in
+  let user = Uop.param ~slot:(-1) ~name:"fake0" ~dtype:Dtype.int32
+      ~shape:(Uop.stack []) ~vmin_vmax:(Bound.int 0, Bound.int 3)
+      ~multiple_of:1 ~addrspace:Dtype.Alu () in
+  is_false ~msg:"a proof variable must not alias an unrelated input parameter"
+    (masked_access_accepted ~size:1 ~index:Uop.O.(x + user * i32 (-1))
+       ~gate:Uop.O.(x < i32 4))
+
+let program_oob_component_bounds_preserve_casts () =
+  let x = Uop.variable ~param:true ~name:"narrow" ~min_val:0 ~max_val:255
+      ~dtype:Dtype.int32 () in
+  let index = Uop.cast ~src:x ~dtype:Dtype.int8 in
+  is_false ~msg:"a valid source interval does not remove narrowing wraparound"
+    (masked_access_accepted ~size:256 ~index ~gate:Uop.O.(i32 127 < x));
+  let y = Uop.variable ~param:true ~name:"wrap" ~min_val:0 ~max_val:3
+      ~dtype:Dtype.int32 () in
+  let index = Uop.cast ~src:Uop.O.(y + i32 127) ~dtype:Dtype.int8 in
+  is_false ~msg:"component bounds preserve narrowing after arithmetic"
+    (masked_access_accepted ~size:256 ~index ~gate:Uop.O.(i32 0 < y))
+
 let program_rejects_nested_casted_index_source () =
   let p = global_i32_param () in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] () in
@@ -1332,6 +1405,18 @@ let () =
             program_oob_symbolic_store_remains_rejected;
           test "CHECK_OOB accepts mask-proven symbolic bounds"
             program_oob_masked_symbolic_bounds_are_accepted;
+          test "CHECK_OOB uses loaded component bounds"
+            program_oob_loaded_component_bounds;
+          test "CHECK_OOB uses offset component bounds"
+            program_oob_offset_component_bounds;
+          test "CHECK_OOB uses shifted component bounds"
+            program_oob_shift_component_bounds;
+          test "CHECK_OOB preserves committed guard constants"
+            program_oob_committed_guard_constants;
+          test "CHECK_OOB proof variables cannot alias user parameters"
+            program_oob_proof_variables_are_fresh;
+          test "CHECK_OOB component bounds preserve casts and wrapping"
+            program_oob_component_bounds_preserve_casts;
           test "CHECK_OOB rejects incomplete masked symbolic bounds"
             program_oob_masked_symbolic_lower_bound_only_rejected;
           test "Nested casted index source rejected"

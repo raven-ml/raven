@@ -43,11 +43,15 @@ let tighten_lower = Bound.max
 let tighten_upper = Bound.min
 
 let integer_const u =
-  match Uop.as_const u with
+  let constant =
+    if Bound.equal (Uop.vmin u) (Uop.vmax u) then Uop.as_const u else None
+  in
+  match constant with
   | Some c ->
       (match Const.view c with
-       | Const.Int n -> Some (`Int n)
-       | Const.Bool b -> Some (`Bool b)
+       | Const.Int n when Bound.equal (Uop.vmin u) (`Int n) -> Some (`Int n)
+       | Const.Bool b when Bound.equal (Uop.vmin u) (`Bool b) -> Some (`Bool b)
+       | Const.Int _ | Const.Bool _ -> None
        | Const.Float _ | Const.Invalid -> None)
   | _ -> None
 
@@ -83,6 +87,23 @@ let validate_index_with_gate_bounds size idx gate =
   in
   interval_empty (lo, hi) || (Bound.le Bound.zero lo && Bound.lt hi size)
 
+let validate_index_with_symbolic_bounds size idx gate =
+  if not (Dtype.is_int (Uop.dtype idx)) then false
+  else
+    let zero = Uop.const_int 0 in
+    let limit = Uop.const (Const.integer Dtype.weakint (Bound.integer size)) in
+    let negative = Uop.alu_binary ~op:Ops.Cmplt ~lhs:idx ~rhs:zero in
+    let nonnegative = Uop.alu_binary ~op:Ops.Cmpne ~lhs:negative
+        ~rhs:(Uop.const_bool true) in
+    let below = Uop.alu_binary ~op:Ops.Cmplt ~lhs:idx ~rhs:limit in
+    let in_bounds = Uop.alu_binary ~op:Ops.And ~lhs:nonnegative ~rhs:below in
+    (* Simplify the proof, not the memory expression: a loaded component can
+       be constrained by the gate without changing its storage dependencies. *)
+    let proof = Symbolic.uop_given_valid ~try_simplex:false gate in_bounds in
+    match Uop.op proof, Uop.as_const proof with
+    | Ops.Const, Some c -> Const.view c = Const.Bool true
+    | _ -> false
+
 let validate_index ?gate uidx =
   let srcs = Uop.src uidx in
   if Array.length srcs < 2 then true
@@ -100,7 +121,9 @@ let validate_index ?gate uidx =
           (Bound.le Bound.zero (Uop.vmin idx) && Bound.lt (Uop.vmax idx) size)
           ||
           match gate with
-          | Some gate -> validate_index_with_gate_bounds size idx gate
+          | Some gate ->
+              validate_index_with_gate_bounds size idx gate
+              || validate_index_with_symbolic_bounds size idx gate
           | None -> false
         in
         match idxs with

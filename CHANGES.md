@@ -661,6 +661,10 @@ thread.
 
 ### Tolk (new)
 
+- Prove gated gather, scatter, selection and scan accesses under `CHECK_OOB`
+  using their component bounds. Reject unsafe narrowing casts and keep proof
+  variables distinct from user parameters.
+
 - Optimizer padding and shared-memory limits use exact arithmetic. Large
   extents no longer wrap negative, and symbolic local sizes must prove that
   their full storage requirement fits the device budget.

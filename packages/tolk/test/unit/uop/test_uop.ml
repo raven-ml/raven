@@ -581,7 +581,7 @@ let exact_symbolic_bounds () =
   raises_match (function Invalid_argument _ -> true | _ -> false)
     (fun () -> Bound.to_int (`Int huge))
 
-let cast_bounds_parity () =
+let cast_bounds () =
   let fits = Uop.variable ~name:"fits" ~min_val:5 ~max_val:10 () in
   equal_bounds ~msg:"CAST to unsigned keeps exact bounds when the source fits"
     (Uop.cast ~src:fits ~dtype:Dtype.uint8) (5, 10);
@@ -594,8 +594,16 @@ let cast_bounds_parity () =
   equal_bounds ~msg:"CAST to unsigned of a too-large source can wrap"
     (Uop.cast ~src:too_large ~dtype:Dtype.uint8) (0, 255);
   let wide = Uop.variable ~name:"wide" ~min_val:(-300) ~max_val:300 () in
-  equal_bounds ~msg:"CAST to a signed int clamps to the destination window"
+  equal_bounds ~msg:"CAST to a signed int can wrap across both limits"
     (Uop.cast ~src:wide ~dtype:Dtype.int8) (-128, 127);
+  let positive = Uop.variable ~name:"positive" ~min_val:0 ~max_val:255 () in
+  equal_bounds ~msg:"signed narrowing of a nonnegative interval can become negative"
+    (Uop.cast ~src:positive ~dtype:Dtype.int8) (-128, 127);
+  let negative = Uop.variable ~name:"negative" ~min_val:(-255) ~max_val:0 () in
+  equal_bounds ~msg:"signed narrowing of a nonpositive interval can become positive"
+    (Uop.cast ~src:negative ~dtype:Dtype.int8) (-128, 127);
+  equal_bounds ~msg:"signed narrowing preserves a wholly representable interval"
+    (Uop.cast ~src:fits ~dtype:Dtype.int8) (5, 10);
   equal_bounds ~msg:"CAST to bool says nothing"
     (Uop.cast ~src:fits ~dtype:Dtype.bool) (0, 1);
   let round_trip =
@@ -2613,7 +2621,7 @@ let () =
           test "binding requires a concrete value" bind_requires_concrete_value;
           test "tinygrad integer bounds parity" integer_bounds_parity;
           test "integer bounds wrap at a fixed width" wrapping_integer_bounds;
-          test "tinygrad CAST bounds parity" cast_bounds_parity;
+          test "CAST bounds preserve representable intervals" cast_bounds;
           test "flat storage parameters retain symbolic views" flat_storage_parameters;
           test "backward slices track shared dependencies" backward_slice_tracks_shared_dependencies;
           test "allocations preserve shape and address space" allocations_preserve_shape_and_address_space;

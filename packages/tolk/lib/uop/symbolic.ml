@@ -1813,19 +1813,19 @@ let parse_valid v =
            Some (lhs, false, Uop.vmin rhs2)
        | _ -> None)
   | Ops.Cmplt, [| lhs; rhs |] when Dtype.is_int (Uop.dtype lhs) ->
-      (match Uop.op lhs, Uop.arg lhs with
-       (* c < X is a lower bound on X. *)
-       | Ops.Const, Uop.Arg.Value c ->
+      let constant =
+        if Bound.equal (Uop.vmin lhs) (Uop.vmax lhs) then Uop.as_const lhs
+        else None
+      in
+      (match constant with
+       (* Only representable CAST constants retain their weak payload value. *)
+       | Some c ->
            (match Const.view c with
-            | Const.Int n -> Some (rhs, false, `Int (Z.succ n))
+            | Const.Int n when Bound.equal (Uop.vmin lhs) (`Int n) ->
+                Some (rhs, false, `Int (Z.succ n))
             | _ -> None)
-       | _ -> Some (lhs, true, Bound.pred (Uop.vmax rhs)))
+       | None -> Some (lhs, true, Bound.pred (Uop.vmax rhs)))
   | _ -> None
-
-let fake_var ~index ~lo ~hi ~(dtype : Dtype.t) () =
-  let name = Printf.sprintf "fake%d" index in
-  Uop.param ~slot:(-1) ~name ~dtype ~shape:(Uop.stack [])
-    ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ()
 
 (* [uop_given_valid ~try_simplex valid u] rewrites [u] under the
    assumption that every AND-clause of [valid] holds. For each bounded
@@ -1869,6 +1869,26 @@ let given_valid ~try_simplex valid u =
         else lo_r := Some bound)
     clauses;
   let order = List.rev !order in
+  let occupied_names = Hashtbl.create 16 in
+  List.iter
+    (fun root -> List.iter
+        (fun node -> match Uop.Arg.as_param_arg (Uop.arg node) with
+          | Some { name = Some name; _ } -> Hashtbl.replace occupied_names name ()
+          | _ -> ())
+        (Uop.toposort root))
+    [ valid; u ];
+  let next_name = ref 0 in
+  let rec fresh_name () =
+    let name = Printf.sprintf "fake%d" !next_name in
+    incr next_name;
+    if Hashtbl.mem occupied_names name then fresh_name ()
+    else (Hashtbl.add occupied_names name (); name)
+  in
+  (* A temporary must not hash-cons with an unrelated input parameter. *)
+  let fake_var ~lo ~hi ~dtype () =
+    Uop.param ~slot:(-1) ~name:(fresh_name ()) ~dtype ~shape:(Uop.stack [])
+      ~vmin_vmax:(lo, hi) ~multiple_of:1 ~addrspace:Dtype.Alu ()
+  in
   let all_candidates = ref [] in
   let uop_ref = ref u in
   let all_same_uop xs =
@@ -1923,7 +1943,7 @@ let given_valid ~try_simplex valid u =
                   ~src:[| s0; List.hd snd_srcs |] ())
         | _ -> ()
   in
-  List.iteri (fun i expr ->
+  List.iter (fun expr ->
     let lo_r, hi_r = Uop.Tbl.find bounds expr in
     let default_lo = Uop.vmin expr in
     let default_hi = Uop.vmax expr in
@@ -1932,7 +1952,7 @@ let given_valid ~try_simplex valid u =
     if not (Dtype.is_int (Uop.dtype expr)) then ()
     else
       let dt = Uop.dtype expr in
-      let fake = fake_var ~index:i ~lo ~hi ~dtype:dt () in
+      let fake = fake_var ~lo ~hi ~dtype:dt () in
       all_candidates := (expr, fake) :: !all_candidates;
       if try_simplex then begin
         try_candidate [ (expr, fake) ];
@@ -1946,7 +1966,7 @@ let given_valid ~try_simplex valid u =
           let simplex_cands = List.map (fun xi ->
             let xi_dt = Uop.dtype xi in
             let hi_xi = Uop.vmax xi in
-            (xi, fake_var ~index:i ~lo:Bound.one ~hi:hi_xi ~dtype:xi_dt ())
+            (xi, fake_var ~lo:Bound.one ~hi:hi_xi ~dtype:xi_dt ())
           ) (Uop.split_uop expr Ops.Add) in
           try_candidate simplex_cands
       end)

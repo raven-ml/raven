@@ -623,6 +623,22 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## Validation dependencies
 
+- **Narrowing integer CAST bounds include native wraparound.** The target
+  intersects signed bounds with the destination range, assuming overflow is
+  undefined. Tolk's Clang and Metal casts turn loaded int32 values 128 and 255
+  into int8 values -128 and -1. Keep source bounds only when wholly representable;
+  otherwise use the destination range so the checker cannot prove negative
+  indexes safe. Coverage: UOp CAST bounds, Spec narrowing controls and frontend
+  native readback on CPU and Metal. Reconsider with an explicit trapping or
+  saturating conversion contract.
+
+- **Symbolic proof variables cannot share user identities.** The target's
+  fixed `fake0` names can alias a user PARAM and incorrectly prove an unsafe
+  index valid. Tolk selects temporary names absent from the query graph.
+  Coverage: the Spec proof-name collision regression. Retain while public
+  PARAM names can overlap temporary names; reconsider if upstream uses fresh
+  identities independently of names.
+
 - **Scalar out-of-bounds validation has no SMT solver fallback.** Keep Tolk's
   dependency footprint small: interval and symbolic proofs must establish
   safety, and unproved accesses are rejected under `CHECK_OOB`. Some safe

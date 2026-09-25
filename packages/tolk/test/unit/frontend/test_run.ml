@@ -59,6 +59,12 @@ let elementwise_tests =
           check_floats [| 1.; 2.718282; 7.389056 |] (El.exp (vec [| 0.; 1.; 2. |])));
       test "pow" (fun () ->
           check_floats [| 4.; 9. |] (El.pow (vec [| 2.; 3. |]) (T.f 2.0)));
+      test "signed narrowing wraps loaded integers" (fun () ->
+          let source = Run.of_int_array ~shape:[ 2 ] [| 128; 255 |] in
+          let bytes = Run.data (Dt.cast source Tolk_uop.Dtype.int8) in
+          equal int 2 (Bytes.length bytes);
+          equal (array int) [| -128; -1 |]
+            (Array.init 2 (Bytes.get_int8 bytes)));
       test "broadcast add scalar" (fun () ->
           check_floats [| 6.; 7.; 8. |] (El.add (vec [| 1.; 2.; 3. |]) (T.f 5.0)));
       test "contiguous preserves values" (fun () ->
