@@ -94,8 +94,7 @@
 #define MM_KC_FULLK_MAX 2048
 
 /* Below this the pack setup does not pay: run a direct strided triple loop in
-   the compute type instead. Also taken when a dimension is smaller than the
-   register tile, where blocking would be mostly edge padding. Tuned by the test. */
+   the compute type instead. Tuned by the test. */
 #define MM_DIRECT_CUTOFF (48 * 48 * 48)
 
 /* Register tile height, shared by every microkernel; NR is per compute type. */
@@ -1147,8 +1146,8 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   if ((m > 1 && c_rs == 0) || (n > 1 && c_cs == 0))
     return NX_C_ERR_OUT_ALIASED; /* distinct C rows/cols would collide on one cell */
 
-  int use_direct = force_direct || (m < MR) || (n < NR) ||
-                   ((int64_t)m * n * k < MM_DIRECT_CUTOFF);
+  int use_direct =
+      force_direct || ((int64_t)m * n * k < MM_DIRECT_CUTOFF);
 
   /* Rough total traffic, for the pool's lock-release decision (HEAVY threads
      off run count, not this). A large GEMM clears the cutoff and releases. */

@@ -857,6 +857,20 @@ let test_maintenance_paths () =
       (200, 3, 5);
     ];
 
+  (* Fewer rows than the register tile, or fewer columns, above the direct
+     cutoff: the blocked kernel's partial edge tiles. *)
+  List.iter
+    (fun (m, k, n) ->
+      List.iter
+        (fun (a_trans, b_trans) ->
+          test_real ~kind:Nx_dtype.float32 ~name:"f32-narrow" ~tol_rel:1e-3
+            ~tol_abs:1e-3 ~m ~k ~n ~a_trans ~b_trans
+            ~modes:[ `Owned; `St; `Direct ] ();
+          test_real ~kind:Nx_dtype.bfloat16 ~name:"bf16-narrow" ~tol_rel:1e-2
+            ~tol_abs:1e-2 ~m ~k ~n ~a_trans ~b_trans ~modes:[ `Prod; `St ] ())
+        [ (false, false); (true, true) ])
+    [ (2, 300, 200); (7, 256, 100); (200, 300, 3); (5, 3000, 11) ];
+
   (* offsets on all three operands *)
   test_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol_rel:1e-3 ~tol_abs:1e-3 ~m:40
     ~k:40 ~n:40 ~a_off:5 ~b_off:7 ~c_off:3 ~modes:[ `Prod; `Direct ] ();

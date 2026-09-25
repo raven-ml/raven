@@ -2009,6 +2009,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx.matmul` of 2 to 7 rows, or of a few columns, is 15 to 50 times
+  faster: 2 `bfloat16` rows times 2880 x 5760 take 3 ms, not 45 (7 rows: 3.2 ms,
+  not 156).
 - Eager float `Nx.sum` spreads every element of a run over sixteen partial
   sums by its position, strided or not: a vector's sum no longer depends on its
   stride, and a sum whose length is not a multiple of 16 can change in the last
