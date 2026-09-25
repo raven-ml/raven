@@ -39,6 +39,9 @@ module Ffi = struct
 
   external fence : unit -> unit = "caml_tolk_hcq_fence" [@@noalloc]
 
+  external wait_progress : nativeint -> nativeint -> int64 -> unit
+    = "caml_tolk_hcq_wait_progress"
+
   external submission_symbol : string -> nativeint = "caml_tolk_hcq_submission_symbol"
 
   external read64_int : nativeint -> int = "caml_tolk_hcq_read64_int"
@@ -156,6 +159,10 @@ module Submission = struct
     if timeout_ms < 0 then invalid_arg "Submission.prepare: negative timeout";
     Mmio.write64 t.view 0 Int64.(add (of_int (Ffi.monotonic_ms ())) (of_int timeout_ms))
 
+  let wait_progress t progress ~target =
+    Ffi.wait_progress (Mmio.addr t.view) (Mmio.addr progress) target;
+    check t
+
   let lower name u =
     let open Tolk_uop in
     let module U = Uop in
@@ -178,7 +185,8 @@ module Submission = struct
         (match U.as_index dst with
          | Some {ptr; idxs} when List.for_all (fun i -> U.equal (U.get_idx i) i) idxs ->
              let waits = U.toposort ~enter_calls:true dst |> List.exists (fun n ->
-                 U.op n = Ops.Custom_function && U.Arg.as_string (U.arg n) = Some "tolk_hcq_poll") in
+                 U.op n = Ops.Custom_function && List.mem (U.Arg.as_string (U.arg n))
+                   [Some "tolk_hcq_poll"; Some "tolk_hcq_wait_progress"]) in
              if not waits then None else
                let state = U.after ~src:(context ()) ~deps:[dst] in
                let error = U.load ~src:(index state 1) () in

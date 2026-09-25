@@ -9,6 +9,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/threads.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdatomic.h>
@@ -253,15 +254,49 @@ static void tolk_hcq_publish(volatile uint64_t *state,
   *doorbell = next - lag;
 }
 
-/* Ampere control pages expose GPPut, not GPGet. Replays fence their own
-   command storage through the shared timeline before reusing it. */
+/* progress is [host submitted sequence, GPU completed low dword]. The
+   capacity bound keeps the low-dword distance unambiguous across rollover. */
+static uint64_t nv_completed(volatile uint64_t *progress) {
+  uint64_t submitted = progress[0];
+  uint32_t completed = *(volatile uint32_t *)(progress + 1);
+  atomic_thread_fence(memory_order_acquire);
+  return submitted - (uint32_t)((uint32_t)submitted - completed);
+}
+
+static void tolk_hcq_wait_progress(volatile uint64_t *state,
+                                   volatile uint64_t *progress, uint64_t target) {
+  if (state[1]) return;
+  while (nv_completed(progress) < target) {
+    if (monotonic_ms() >= state[0]) { state[1] = 1; return; }
+  }
+}
+
+CAMLprim value caml_tolk_hcq_wait_progress(value state, value progress, value target) {
+  CAMLparam3(state, progress, target);
+  volatile uint64_t *s = (volatile uint64_t *)(uintptr_t)Nativeint_val(state);
+  volatile uint64_t *p = (volatile uint64_t *)(uintptr_t)Nativeint_val(progress);
+  uint64_t t = (uint64_t)Int64_val(target);
+  caml_release_runtime_system();
+  tolk_hcq_wait_progress(s, p, t);
+  caml_acquire_runtime_system();
+  CAMLreturn(Val_unit);
+}
+
+/* Ampere exposes GPPut but no GPGet. Each stream therefore retires a
+   software sequence after its engine has finished using command storage. */
 static void tolk_hcq_gpfifo(volatile uint64_t *state, volatile uint64_t *ring,
                             volatile uint32_t *put, volatile uint32_t *doorbell,
-                            uint64_t entry, uint32_t token, uint32_t capacity) {
+                            uint64_t entry, uint32_t token, uint32_t capacity,
+                            volatile uint64_t *progress, volatile uint64_t *retired) {
   if (state[1]) return;
   if (capacity < 2 || (capacity & (capacity - 1))) { state[1] = 2; return; }
+  uint64_t next = progress[0] + 1;
+  if (next >= capacity) tolk_hcq_wait_progress(state, progress, next - capacity + 1);
+  if (state[1]) return;
   uint32_t p = *put;
   ring[p & (capacity - 1)] = entry;
+  progress[0] = next;
+  retired[0] = next;
   atomic_thread_fence(memory_order_seq_cst);
   *put = (p + 1) & (capacity - 1);
   atomic_thread_fence(memory_order_seq_cst);
@@ -274,6 +309,7 @@ CAMLprim value caml_tolk_hcq_submission_symbol(value name) {
   if (!strcmp(String_val(name), "tolk_hcq_poll")) symbol = (void *)tolk_hcq_poll;
   else if (!strcmp(String_val(name), "tolk_hcq_reserve")) symbol = (void *)tolk_hcq_reserve;
   else if (!strcmp(String_val(name), "tolk_hcq_publish")) symbol = (void *)tolk_hcq_publish;
+  else if (!strcmp(String_val(name), "tolk_hcq_wait_progress")) symbol = (void *)tolk_hcq_wait_progress;
   else if (!strcmp(String_val(name), "tolk_hcq_gpfifo")) symbol = (void *)tolk_hcq_gpfifo;
   else caml_invalid_argument("unknown HCQ submission helper");
   CAMLreturn(caml_copy_nativeint((intnat)symbol));

@@ -161,7 +161,9 @@ type 'meta device = {
   shared_mem_window : nativeint;
   local_mem_window : nativeint;
   cmdq_page : 'meta Hcq.Buffer.t;
-  cmdq_allocator : Tolk.Bump.t;
+  mutable cmdq_position : int;
+  cmdq_pending : (int * Hcq.Mmio.t * int64) Stdlib.Queue.t;
+  submission : Hcq.Submission.t;
   cmdq : Hcq.Mmio.t;
   gpu_mmio : Hcq.Mmio.t;
 }
@@ -179,11 +181,9 @@ let device ~compute_class ~dma_class ~gpfifo_class ~sass_version
     shared_mem_window;
     local_mem_window;
     cmdq_page;
-    cmdq_allocator =
-      Tolk.Bump.create
-        ~size:(Hcq.Buffer.size cmdq_page)
-        ~base:(Nativeint.to_int (Hcq.Buffer.va cmdq_page))
-        ~wrap:true ();
+    cmdq_position = 0;
+    cmdq_pending = Stdlib.Queue.create ();
+    submission = Hcq.Submission.create ();
     cmdq = Hcq.Buffer.cpu_view cmdq_page;
     gpu_mmio;
   }
@@ -198,6 +198,8 @@ module Queue_desc = struct
   type t = {
     ring : Hcq.Mmio.t;
     gpput : Hcq.Mmio.t;
+    progress : Hcq.Mmio.t;
+    progress_addr : nativeint;
     token : int;
   }
 end
@@ -233,18 +235,64 @@ let push_sem_wait q ~addr ~value =
    next ring entry at it, publish the new put position, and only then ring
    the work-submission doorbell, so the device never fetches a stale
    entry. *)
-let submit_to_gpfifo (dev : 'meta device) q (qd : Queue_desc.t) =
-  let n = Q.length q in
-  let cmdq_addr = Tolk.Bump.alloc dev.cmdq_allocator (n * 4) ~align:16 () in
-  let base = cmdq_addr - Nativeint.to_int (Hcq.Buffer.va dev.cmdq_page) in
-  for i = 0 to n - 1 do
-    Hcq.Mmio.write32 dev.cmdq (base + (i * 4)) (Int32.of_int (Q.get q i))
-  done;
+let completed progress =
+  let submitted = Hcq.Mmio.read64 progress 0 in
+  let low = Int64.logand (Int64.of_int32 (Hcq.Mmio.read32 progress 8)) 0xffffffffL in
+  Hcq.Mmio.fence ();
+  Int64.sub submitted (Int64.logand (Int64.sub submitted low) 0xffffffffL)
+
+let submit_to_gpfifo ~compute (dev : 'meta device) q (qd : Queue_desc.t) =
+  Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
+    dev.submission;
   let entries = Hcq.Mmio.size qd.ring / 8 in
+  if entries < 2 || entries land (entries - 1) <> 0 then
+    invalid_arg "NV FIFO capacity must be a power of two";
+  let next = Int64.succ (Hcq.Mmio.read64 qd.progress 0) in
+  let required = Int64.sub next (Int64.of_int (entries - 1)) in
+  if required > 0L then Hcq.Submission.wait_progress dev.submission qd.progress ~target:required;
+  let tail = Q.create () in
+  let address = va64 (Nativeint.add qd.progress_addr 8n) in
+  let value = Int64.to_int (Int64.logand next 0xffffffffL) in
+  if compute then
+    nvm tail 0 Defs.nvc56f_sem_addr_lo
+      [| lo32 address; hi32 address; value; 0;
+         bits Defs.nvc56f_sem_execute_operation Defs.nvc56f_sem_execute_operation_release
+         lor bits Defs.nvc56f_sem_execute_release_wfi Defs.nvc56f_sem_execute_release_wfi_en |]
+  else begin
+    nvm tail 4 Defs.nvc6b5_set_semaphore_a [|hi32 address; lo32 address; value|];
+    nvm tail 4 Defs.nvc6b5_launch_dma
+      [|bits Defs.nvc6b5_launch_dma_flush_enable 1
+        lor bits Defs.nvc6b5_launch_dma_semaphore_type 1|]
+  end;
+  let n = Q.length q + Q.length tail in
+  let size = Hcq.Mmio.size dev.cmdq in
+  if n * 4 > size || n > 0x1fffff then invalid_arg "NV command stream exceeds staging capacity";
+  let start = round_up dev.cmdq_position 16 in
+  let start = if start mod size + n * 4 > size then round_up start size else start in
+  let finish = start + n * 4 in
+  let rec retire () =
+    if not (Stdlib.Queue.is_empty dev.cmdq_pending) then begin
+      let first, progress, target = Stdlib.Queue.peek dev.cmdq_pending in
+      if finish - first > size || completed progress >= target then begin
+        Hcq.Submission.wait_progress dev.submission progress ~target;
+        ignore (Stdlib.Queue.take dev.cmdq_pending);
+        retire ()
+      end
+    end
+  in
+  retire ();
+  let base = start mod size in
+  for i = 0 to n - 1 do
+    let word = if i < Q.length q then Q.get q i else Q.get tail (i - Q.length q) in
+    Hcq.Mmio.write32 dev.cmdq (base + i * 4) (Int32.of_int word)
+  done;
+  let cmdq_addr = Nativeint.to_int (Hcq.Buffer.va dev.cmdq_page) + base in
   let put = Int32.to_int (Hcq.Mmio.read32 qd.gpput 0) in
-  Hcq.Mmio.write64 qd.ring
-    (put mod entries * 8)
+  Hcq.Mmio.write64 qd.ring (put mod entries * 8)
     (Int64.of_int (((cmdq_addr / 4) lsl 2) lor (n lsl 42) lor (1 lsl 41)));
+  Hcq.Mmio.write64 qd.progress 0 next;
+  dev.cmdq_position <- finish;
+  Stdlib.Queue.add (start, qd.progress, next) dev.cmdq_pending;
   Hcq.Mmio.fence ();
   Hcq.Mmio.write32 qd.gpput 0 (Int32.of_int ((put + 1) mod entries));
   Hcq.Mmio.fence ();
@@ -464,7 +512,7 @@ module Compute_queue = struct
       |];
     t.active_qmd <- None
 
-  let submit t qd = submit_to_gpfifo t.dev t.q qd
+  let submit t qd = submit_to_gpfifo ~compute:true t.dev t.q qd
 end
 
 (* Copy queue *)
@@ -518,7 +566,7 @@ module Copy_queue = struct
   let wait t ?(value = 0) sg =
     push_sem_wait t.q ~addr:(Hcq.Signal.value_addr sg) ~value
 
-  let submit t qd = submit_to_gpfifo t.dev t.q qd
+  let submit t qd = submit_to_gpfifo ~compute:false t.dev t.q qd
 end
 
 (* Driver interface seam *)
@@ -1759,6 +1807,16 @@ module Encoded_queue = struct
     | Ops.Custom_function, U.Arg.String ("submit_nv_compute" | "submit_nv_copy" as kind),
         [linear; dependency] ->
         let compute = kind = "submit_nv_compute" in
+        let suffix = if compute then "compute" else "copy" in
+        let progress = placeholder ~volatile:true name ("progress_" ^ suffix) D.uint64 2 in
+        let retired = U.placeholder ~shape:[1] ~dtype:D.uint64 ~slot:(U.fresh_buffer_slot ())
+            ~device:(U.Single name) ~volatile:true () |> U.with_tag ("retired_" ^ suffix) in
+        let retired = Tolk.Hcq2.patch ~blob:(String.make 8 '\000') retired [] in
+        let target = U.load ~src:(index (U.after ~src:retired ~deps:[dependency])) () in
+        let dependency = Tolk.Hcq2.ccall ~host:name ~after:[dependency]
+            ~name:"tolk_hcq_wait_progress" ~dtype:D.void
+            [index (context name); index progress; target] in
+        let next = add (U.load ~src:(index (U.after ~src:progress ~deps:[dependency])) ()) (u64 1) in
         let commands = ref [] and descriptors = ref [] and previous = ref None in
         let q xs = commands := List.rev_append xs !commands in
         let nvm subchannel method_ xs =
@@ -1907,6 +1965,18 @@ module Encoded_queue = struct
                     bits Defs.nvc6b5_launch_dma_semaphore_type (if timestamp then 2 else 1))]
               end
           | _ -> invalid_arg "NV queue: unsupported instruction") (U.children linear);
+        let completion = add (addr name progress) (u64 8) in
+        if compute then
+          nvm 0 Defs.nvc56f_sem_addr_lo
+            [cast D.uint32 completion; cast D.uint32 (shr completion (u64 32));
+             cast D.uint32 next; u32 0;
+             u32 (bits Defs.nvc56f_sem_execute_operation Defs.nvc56f_sem_execute_operation_release
+               lor bits Defs.nvc56f_sem_execute_release_wfi Defs.nvc56f_sem_execute_release_wfi_en)]
+        else begin
+          nvm 4 Defs.nvc6b5_set_semaphore_a (hilo completion @ [cast D.uint32 next]);
+          nvm 4 Defs.nvc6b5_launch_dma [u32 (bits Defs.nvc6b5_launch_dma_flush_enable 1
+            lor bits Defs.nvc6b5_launch_dma_semaphore_type 1)]
+        end;
         let patches = List.rev_map (fun (d, rows) ->
             let fields = Hashtbl.fold (fun word value rows -> (word * 4, value) :: rows) d.words []
                 |> List.sort (fun (a, _) (b, _) -> Int.compare a b) in
@@ -1914,7 +1984,6 @@ module Encoded_queue = struct
         let commands = List.rev !commands in
         let size = List.length commands * 4 in
         if size / 4 > 0x1fffff then invalid_arg "NV command stream exceeds its FIFO entry";
-        let suffix = if compute then "compute" else "copy" in
         let buffer = U.placeholder ~shape:[size] ~dtype:D.uint8 ~slot:(U.fresh_buffer_slot ())
             ~device:(U.Single name) () |> U.with_tag ("cmdbuf_" ^ suffix) in
         let buffer = Tolk.Hcq2.patch ~blob:(String.make size '\000') ~after:(dependency :: patches)
@@ -1926,7 +1995,8 @@ module Encoded_queue = struct
         let entry = bor (addr name buffer) (u64 (((size / 4) lsl 42) lor (1 lsl 41))) in
         Some (Tolk.Hcq2.ccall ~host:name ~after:[buffer] ~name:"tolk_hcq_gpfifo" ~dtype:D.void
           [index (context name); index ring; index put; index doorbell; entry;
-           u32 (if compute then compute_token else copy_token); u32 entries])
+           u32 (if compute then compute_token else copy_token); u32 entries;
+           index progress; index retired])
     | _ -> None
 end
 
@@ -2070,12 +2140,18 @@ let new_gpfifo (iface : 'mem Nv_iface.t) ~(usermode : Nv_iface.usermode) ~nvdevi
     ~cmd:Defs.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token ~params:wb ();
   iface.Nv_iface.setup_gpfifo_vm ~gpfifo;
   let area = Hcq.Buffer.cpu_view gpfifo_area in
+  let progress_offset = offset + 0x90000 in
+  let progress = Hcq.Mmio.view area ~off:progress_offset ~size:16 () in
+  Hcq.Mmio.write64 progress 0 0L;
+  Hcq.Mmio.write64 progress 8 0L;
   ( {
       Queue_desc.ring = Hcq.Mmio.view area ~off:offset ~size:(entries * 8) ();
       gpput =
         Hcq.Mmio.view area
           ~off:(offset + (entries * 8) + Defs.ampere_a_control_gpfifo_gpput)
           ~size:4 ();
+      progress;
+      progress_addr = Nativeint.add (Hcq.Buffer.va gpfifo_area) (Nativeint.of_int progress_offset);
       token = Nv_tables.get_field wb W.worksubmittoken;
     },
     debug )
@@ -2162,7 +2238,13 @@ module State = struct
 
   let synchronize t =
     check_submission t;
-    Timeline.synchronize t.tl
+    Timeline.synchronize t.tl;
+    Hcq.Submission.prepare ~timeout_ms:(Tolk.Helpers.getenv "HCQ_TIMEOUT_MS" 30000)
+      t.submission;
+    Timeline.guarded_wait t.tl (fun () ->
+        List.iter (fun q -> Hcq.Submission.wait_progress t.submission q.Queue_desc.progress
+            ~target:(Hcq.Mmio.read64 q.Queue_desc.progress 0))
+          [t.compute_queue; t.dma_queue])
 
   let invalidate_caches t =
     if Nv_iface.is_nvd t.iface then
@@ -2330,10 +2412,12 @@ module Queue = struct
   let bufferize state u =
     let name = state.State.name in
     let size = U.max_numel u and dtype = U.dtype u in
-    let borrow_view view =
+    let borrow_view ?(device = "CPU") ?address view =
       let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> State.synchronize state) in
+      let allocator = match address with None -> allocator
+        | Some address -> {allocator with addr = Some (fun _ -> address)} in
       let spec = {Device.Buffer_spec.default with external_ptr = Some (Hcq.Mmio.addr view); nolru = true} in
-      B.create ~device:"CPU" ~size ~dtype ~spec (Device.Allocator.Pack allocator) in
+      B.create ~device ~size ~dtype ~spec (Device.Allocator.Pack allocator) in
     let borrowed raw =
       let allocator = { (Allocator.raw state) with
         alloc = (fun _ _ -> raw); free = (fun _ _ _ -> State.synchronize state) } in
@@ -2359,7 +2443,7 @@ module Queue = struct
     | Some _ ->
         (match U.node_tag u with
          | Some "timeline" -> Some (borrowed (Hcq.Signal.buf state.State.tl.Timeline.timeline))
-         | Some "slots" -> Some (allocate ~host:true ())
+         | Some ("slots" | "retired_compute" | "retired_copy") -> Some (allocate ~host:true ())
          | Some ("qmd" | "cmdbuf_compute" | "cmdbuf_copy") -> Some (allocate ())
          | Some "doorbell" -> Some (borrow_view (Hcq.Mmio.view state.State.hw.gpu_mmio ~off:0x90 ~size:4 ()))
          | Some tag ->
@@ -2369,10 +2453,12 @@ module Queue = struct
                else None, "" in
              Option.bind descriptor (fun q ->
                  let field = String.sub tag 0 (String.length tag - String.length suffix) in
-                 Option.map borrow_view (match field with
-                   | "ring" -> Some q.Queue_desc.ring
-                   | "gpput" -> Some q.Queue_desc.gpput
-                   | _ -> None))
+                 match field with
+                 | "ring" -> Some (borrow_view q.Queue_desc.ring)
+                 | "gpput" -> Some (borrow_view q.Queue_desc.gpput)
+                 | "progress" -> Some (borrow_view ~device:name
+                     ~address:q.Queue_desc.progress_addr q.Queue_desc.progress)
+                 | _ -> None)
          | None -> None)
     | None -> None
 
@@ -2513,7 +2599,7 @@ let open_device ~name (iface : 'mem Nv_iface.t) =
   let state =
     {
       State.name = name;
-      submission = Hcq.Submission.create ();
+      submission = hw.submission;
       iface;
       hw;
       subdevice;

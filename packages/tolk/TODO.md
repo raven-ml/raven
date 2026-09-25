@@ -28,8 +28,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   still targets its memory. Needs hardware validation.
 
 - Complete AMD/NV fault-reporting and recovery handoffs for retained
-  submissions. Validate NV FIFO occupancy across independently linked batches
-  and direct dispatches; Ampere control pages do not expose a consumer pointer.
+  submissions. Validate NV channel retirement across independently linked
+  batches and direct dispatches on hardware. Protect direct AMD/NV kernel-
+  argument arena reuse during long asynchronous batches.
 - Collect asynchronous queue profiling records at synchronization and export
   them through the profiling trace path. Port asynchronous two-slot queue
   staging for unsupported imports.

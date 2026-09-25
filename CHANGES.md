@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- NV asynchronous submissions wait for FIFO capacity and command-storage
+  retirement, preventing long batches or independent replays from overwriting
+  commands still in use. Stalled waits preserve live storage and report failure.
+
 - AMD KFD and NVIDIA NVK unwind failed memory setup without releasing borrowed
   host storage; NVK closes temporary mapping descriptors. PCI allocation retries
   reclaim reservations and partially written page tables after allocation,

@@ -158,6 +158,13 @@ module Submission : sig
   (** [check t] raises [Failure] if polling timed out. A failed submission cannot
       publish another doorbell; its error remains latched. *)
 
+  val wait_progress : t -> Mmio.t -> target:int64 -> unit
+  (** [wait_progress t progress ~target] waits for an NV channel sequence.
+      [progress] contains the host's 64-bit submitted sequence followed by
+      the GPU's completed low 32 bits. Fewer than [2^31] submissions may be
+      outstanding. The storage must remain alive throughout the call.
+      Timeout latches a failure and raises as {!check} does. *)
+
   val lower : string -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
   (** [lower name u] bounds host timeline polling and guards dependent stores
       after a failed wait, preserving storage still in use by the device. *)

@@ -63,10 +63,12 @@ let nv_dev ?(compute_class = Defs.ada_compute_a) ?(cmdq_size = 0x1000)
     ~gpu_mmio:(Mmio.view m ~off:0x1000 ~size:0x1000 ())
     ()
 
-let queue_desc ?(entries = 8) m =
+let queue_desc ?(entries = 8) ?(offset = 0) m =
   {
-    Tolk_nv.Queue_desc.ring = Mmio.view m ~off:0x2000 ~size:(entries * 8) ();
-    gpput = Mmio.view m ~off:(0x2000 + (entries * 8)) ~size:4 ();
+    Tolk_nv.Queue_desc.ring = Mmio.view m ~off:(offset + 0x2000) ~size:(entries * 8) ();
+    gpput = Mmio.view m ~off:(offset + 0x2000 + (entries * 8)) ~size:4 ();
+    progress = Mmio.view m ~off:(offset + 0x2800) ~size:16 ();
+    progress_addr = Nativeint.add 0x800000n (Nativeint.of_int offset);
     token = 0x1abcd;
   }
 
@@ -565,6 +567,11 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ~compute_class ~copies 
     | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
         Some (Submission.buffer submission)
     | _ ->
+    let shared = match U.node_tag u with
+      | Some ("timeline" | "ring_compute" | "ring_copy" | "gpput_compute" | "gpput_copy"
+             | "progress_compute" | "progress_copy" | "doorbell" as tag) -> Hashtbl.find_opt buffers tag
+      | _ -> None in
+    match shared with Some buffer -> Some buffer | None ->
     let buffer = Device.Buffer.create ~device:device_name ~size:(U.max_numel u)
         ~dtype:(U.dtype u) allocator in
     Device.Buffer.ensure_allocated buffer;
@@ -655,7 +662,12 @@ let execute_queue ~compute_class ~copies m =
       (* Execute the generated host program, then model GPU completion. *)
       let timeline = Device.Buffer.as_bytes (get "timeline") in
       Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
-      Device.Buffer.copyin (get "timeline") timeline) [(-17, 3); (29, 11)]
+      Device.Buffer.copyin (get "timeline") timeline;
+      List.iter (fun tag ->
+          let progress = Device.Buffer.as_bytes (get tag) in
+          Bytes.set_int32_le progress 8 (Int64.to_int32 (Bytes.get_int64_le progress 0));
+          Device.Buffer.copyin (get tag) progress)
+        ("progress_compute" :: if copies then ["progress_copy"] else [])) [(-17, 3); (29, 11)]
 
 let queue_chain ~compute_class m =
   let open Tolk in
@@ -680,7 +692,7 @@ let queue_chain ~compute_class m =
   equal int 1 (Qmd.read (snd last) "release0_enable");
   let stream = Device.Buffer.as_bytes (Hashtbl.find buffers "cmdbuf_compute") in
   (* One cache barrier, one six-dword wait, and one four-dword launch. *)
-  equal int 48 (Bytes.length stream)
+  equal int 72 (Bytes.length stream)
 
 let queue_timeout m =
   let open Tolk in
@@ -704,6 +716,106 @@ let queue_timeout m =
       (Device.Buffer.as_bytes (Hashtbl.find buffers tag))) protected;
   raises_match (Exn.failure ~substring:"HCQ submission timed out") run
 
+let queue_capacity ~copies ~resume m =
+  let open Tolk in
+  let compiled, device, host, buffers, submission =
+    queue_fixture ~timeout_ms:100 ~compute_class:Defs.ada_compute_a ~copies m in
+  let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
+  let run () =
+    let binding = Realize.Buffers.create () in
+    let linked = Realize.link_linear binding ~allow_cache:false compiled in
+    Realize.run_linear ~device
+      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+      binding ~jit:true ~var_vals:["small", 7; "count", 3]
+      ~input_uops:(Array.make (if copies then 3 else 1) (U.from_buffer input)) linked
+  in
+  for i = 1 to 7 do
+    run ();
+    Submission.check submission;
+    equal int i (Int32.to_int (Bytes.get_int32_le
+      (Device.Buffer.as_bytes (Hashtbl.find buffers "gpput_compute")) 0))
+  done;
+  let channels = "compute" :: if copies then ["copy"] else [] in
+  let before = List.concat_map (fun suffix ->
+      List.map (fun prefix -> let tag = prefix ^ suffix in
+          tag, Device.Buffer.as_bytes (Hashtbl.find buffers tag))
+        ["ring_"; "gpput_"; "progress_"]) channels in
+  if resume then begin
+    let progress = List.map (fun suffix ->
+        let b = Hashtbl.find buffers ("progress_" ^ suffix) in
+        Mmio.make ~addr:(Device.Buffer.addr b) ~size:16) channels in
+    let gpu = Domain.spawn (fun () -> Unix.sleepf 0.01;
+        List.iter (fun p -> Mmio.write32 p 8 3l) progress) in
+    Fun.protect ~finally:(fun () -> Domain.join gpu) run;
+    Submission.check submission;
+    List.iter (fun suffix ->
+        equal int32 0l (Bytes.get_int32_le
+          (Device.Buffer.as_bytes (Hashtbl.find buffers ("gpput_" ^ suffix))) 0);
+        equal int64 8L (Bytes.get_int64_le
+          (Device.Buffer.as_bytes (Hashtbl.find buffers ("progress_" ^ suffix))) 0)) channels
+  end else begin
+    run ();
+    raises_match (Exn.failure ~substring:"HCQ submission timed out")
+      (fun () -> Submission.check submission);
+    List.iter (fun (tag, bytes_before) -> equal ~msg:tag bytes bytes_before
+        (Device.Buffer.as_bytes (Hashtbl.find buffers tag))) before
+  end
+
+let queue_counter_rollover m =
+  let open Tolk in
+  let compiled, device, host, buffers, submission =
+    queue_fixture ~timeout_ms:100 ~compute_class:Defs.ada_compute_a ~copies:false m in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let progress = Hashtbl.find buffers "progress_compute" in
+  let data = Bytes.make 16 '\000' in
+  Bytes.set_int64_le data 0 0xfffffffeL;
+  Bytes.set_int32_le data 8 (-2l);
+  Device.Buffer.copyin progress data;
+  let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
+  List.iter (fun expected ->
+      Realize.run_linear ~device
+        ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+        binding ~jit:true ~var_vals:["small", 7; "count", 3]
+        ~input_uops:[|U.from_buffer input|] linked;
+      Submission.check submission;
+      let data = Device.Buffer.as_bytes progress in
+      equal int64 expected (Bytes.get_int64_le data 0);
+      let commands = Device.Buffer.as_bytes (Hashtbl.find buffers "cmdbuf_compute") in
+      equal int32 (Int64.to_int32 expected)
+        (Bytes.get_int32_le commands (Bytes.length commands - 12));
+      Bytes.set_int32_le data 8 (Int64.to_int32 expected);
+      Device.Buffer.copyin progress data;
+      let timeline = Hashtbl.find buffers "timeline" in
+      let data = Device.Buffer.as_bytes timeline in
+      Bytes.set_int64_le data 0 (Bytes.get_int64_le data 8);
+      Device.Buffer.copyin timeline data) [0xffffffffL; 0x100000000L; 0x100000001L]
+
+let queue_retirement_timeout m =
+  let open Tolk in
+  let compiled, device, host, buffers, submission =
+    queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
+  let binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding compiled in
+  let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
+  let run small = Realize.run_linear ~device
+      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+      binding ~jit:true ~var_vals:["small", small; "count", 3]
+      ~input_uops:[|U.from_buffer input|] linked in
+  run 7;
+  (* The kernel timeline may finish before the channel consumes its tail. *)
+  let timeline = Hashtbl.find buffers "timeline" in
+  let data = Device.Buffer.as_bytes timeline in
+  Bytes.set_int64_le data 0 (Bytes.get_int64_le data 8);
+  Device.Buffer.copyin timeline data;
+  let before = List.map (fun tag -> tag, Device.Buffer.as_bytes (Hashtbl.find buffers tag))
+      ["qmd"; "cmdbuf_compute"; "ring_compute"; "gpput_compute"; "progress_compute"] in
+  run 19;
+  raises_match (Exn.failure ~substring:"HCQ submission timed out")
+    (fun () -> Submission.check submission);
+  List.iter (fun (tag, data) -> equal ~msg:tag bytes data
+      (Device.Buffer.as_bytes (Hashtbl.find buffers tag))) before
+
 let () =
   run "Nv_runtime"
     [
@@ -712,6 +824,14 @@ let () =
              with_fixture (queue_chain ~compute_class:Defs.ada_compute_a));
          test "Blackwell descriptors chain launches and release only the tail" (fun () ->
              with_fixture (queue_chain ~compute_class:Defs.blackwell_compute_b));
+         test "independent retained batches cannot overfill the FIFO" (fun () ->
+             with_fixture (queue_capacity ~copies:false ~resume:false));
+         test "compute and copy FIFOs resume when the GPU retires work" (fun () ->
+             with_fixture (queue_capacity ~copies:true ~resume:true));
+         test "channel completion survives low-dword rollover" (fun () ->
+             with_fixture queue_counter_rollover);
+         test "a completed kernel does not retire its command tail" (fun () ->
+             with_fixture queue_retirement_timeout);
          test "stalled replay times out and latches submission failure" (fun () -> with_fixture queue_timeout);
          test "Ada compute replay patches arguments and wraps the shared FIFO" (fun () ->
              with_fixture (execute_queue ~compute_class:Defs.ada_compute_a ~copies:false));
@@ -1113,7 +1233,7 @@ let () =
                   Compute_queue.wait cq ~value:5 (signal m);
                   Compute_queue.submit cq qd;
                   equal int64 0L (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
-                  equal int64 0x1a0000400000L (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 24);
+                  equal int64 0x320000400000L (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 24);
                   equal int32 4l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0)));
           test "stages the stream and rings the doorbell" (fun () ->
               with_fixture (fun m ->
@@ -1125,9 +1245,10 @@ let () =
                   (* the stream lands at the staging page's start *)
                   equal int32 0x20050017l (Mmio.read32 m 0);
                   equal int32 5l (Mmio.read32 m 12);
-                  (* ring entry: address 0x400000, length 6 dwords at bit
-                     42, fetch flag at bit 41 *)
-                  equal int64 0x1a0000400000L
+                  equal int32 0x800008l (Mmio.read32 m 28);
+                  equal int32 1l (Mmio.read32 m 36);
+                  (* Twelve dwords: six wait words and six retirement words. *)
+                  equal int64 0x320000400000L
                     (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
                   equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
                   equal int32 0x1abcdl (Mmio.read32 m 0x1090);
@@ -1141,12 +1262,54 @@ let () =
                   Compute_queue.wait cq ~value:5 (signal m);
                   Compute_queue.submit cq qd;
                   Compute_queue.submit cq qd;
-                  (* 24 bytes round up to the next 16-byte slot at 0x20 *)
-                  equal int32 0x20050017l (Mmio.read32 m 0x20);
-                  equal int64 0x1a0000400020L
+                  (* The stream and retirement marker occupy 48 bytes. *)
+                  equal int32 0x20050017l (Mmio.read32 m 0x30);
+                  equal int64 0x320000400030L
                     (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 8);
                   equal int32 2l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
                   equal int 2 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));
+          test "direct FIFO exhaustion preserves unread entries" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev m and qd = queue_desc ~entries:2 m in
+                  let cq = Compute_queue.create dev in
+                  Compute_queue.wait cq ~value:5 (signal m);
+                  Compute_queue.submit cq qd;
+                  let before = Mmio.read_bytes m ~off:0 ~len:0x2900 in
+                  let old = Sys.getenv_opt "HCQ_TIMEOUT_MS" in
+                  Fun.protect ~finally:(fun () -> Unix.putenv "HCQ_TIMEOUT_MS"
+                      (Option.value old ~default:"30000")) (fun () ->
+                    Unix.putenv "HCQ_TIMEOUT_MS" "1";
+                    raises_match (Exn.failure ~substring:"HCQ submission timed out")
+                      (fun () -> Compute_queue.submit cq qd));
+                  equal bytes before (Mmio.read_bytes m ~off:0 ~len:0x2900)));
+          test "staging wrap cannot overwrite an unfinished stream" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev ~cmdq_size:0x40 m and qd = queue_desc m in
+                  let cq = Compute_queue.create dev in
+                  Compute_queue.wait cq ~value:5 (signal m);
+                  Compute_queue.submit cq qd;
+                  let before = Mmio.read_bytes m ~off:0 ~len:0x2900 in
+                  let old = Sys.getenv_opt "HCQ_TIMEOUT_MS" in
+                  Fun.protect ~finally:(fun () -> Unix.putenv "HCQ_TIMEOUT_MS"
+                      (Option.value old ~default:"30000")) (fun () ->
+                    Unix.putenv "HCQ_TIMEOUT_MS" "1";
+                    raises_match (Exn.failure ~substring:"HCQ submission timed out")
+                      (fun () -> Compute_queue.submit cq qd));
+                  equal bytes before (Mmio.read_bytes m ~off:0 ~len:0x2900)));
+          test "staging retirement is independent across channels" (fun () ->
+              with_fixture (fun m ->
+                  let dev = nv_dev ~cmdq_size:0x60 m in
+                  let a = queue_desc m and b = queue_desc ~offset:0x100 m in
+                  let cq = Compute_queue.create dev in
+                  Compute_queue.wait cq ~value:5 (signal m);
+                  Compute_queue.submit cq a;
+                  Compute_queue.submit cq b;
+                  let pending = Mmio.read_bytes m ~off:0x30 ~len:0x30 in
+                  Mmio.write32 a.Tolk_nv.Queue_desc.progress 8 1l;
+                  Compute_queue.submit cq a;
+                  equal bytes pending (Mmio.read_bytes m ~off:0x30 ~len:0x30);
+                  equal int32 0l (Mmio.read32 b.Tolk_nv.Queue_desc.progress 8);
+                  equal int64 2L (Mmio.read64 a.Tolk_nv.Queue_desc.progress 0)));
           test "the staging page and the ring wrap" (fun () ->
               with_fixture (fun m ->
                   let dev = nv_dev ~cmdq_size:0x40 m in
@@ -1156,14 +1319,14 @@ let () =
                   let cq2 = Compute_queue.create dev in
                   Compute_queue.wait cq2 ~value:7 (signal m);
                   Compute_queue.submit cq1 qd;
+                  Mmio.write32 qd.Tolk_nv.Queue_desc.progress 8 1l;
                   Compute_queue.submit cq1 qd;
+                  Mmio.write32 qd.Tolk_nv.Queue_desc.progress 8 2l;
                   equal int32 0l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
-                  (* a third stream no longer fits behind 0x38: the
-                     allocator restarts at the page base and the entry
-                     reuses ring slot 0 *)
+                  (* Each retired 48-byte stream wraps the 64-byte staging page. *)
                   Compute_queue.submit cq2 qd;
                   equal int32 7l (Mmio.read32 m 12);
-                  equal int64 0x1a0000400000L
+                  equal int64 0x320000400000L
                     (Mmio.read64 qd.Tolk_nv.Queue_desc.ring 0);
                   equal int32 1l (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0);
                   equal int 1 (Int32.to_int (Mmio.read32 qd.Tolk_nv.Queue_desc.gpput 0))));

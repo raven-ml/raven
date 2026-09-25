@@ -105,9 +105,12 @@ type 'meta device = {
   cmdq_page : 'meta Hcq.Buffer.t;
       (** CPU-mapped device memory where submissions stage their
           command streams. *)
-  cmdq_allocator : Tolk.Bump.t;
-      (** Wrapping bump allocator handing out stream addresses inside
-          [cmdq_page]. *)
+  mutable cmdq_position : int;
+      (** Absolute byte position for the next direct command stream. *)
+  cmdq_pending : (int * Hcq.Mmio.t * int64) Stdlib.Queue.t;
+      (** Staging regions and channel sequences still awaiting retirement. *)
+  submission : Hcq.Submission.t;
+      (** Failure state shared by direct and compiled submissions. *)
   cmdq : Hcq.Mmio.t;  (** CPU view of [cmdq_page]. *)
   gpu_mmio : Hcq.Mmio.t;
       (** Usermode register region carrying the work-submission
@@ -168,6 +171,10 @@ module Queue_desc : sig
             a staged command stream. *)
     gpput : Hcq.Mmio.t;
         (** 32-bit producer position, published after each entry. *)
+    progress : Hcq.Mmio.t;
+        (** Host submitted sequence at byte 0, GPU completed low dword at byte 8. *)
+    progress_addr : nativeint;
+        (** GPU address of [progress], which may differ from its CPU mapping. *)
     token : int;
         (** Work-submission token naming the channel to the
             doorbell. *)
@@ -272,8 +279,11 @@ module Compute_queue : sig
   (** [submit t qd] stages the accumulated stream in the device's
       command buffer, writes the next ring entry of [qd] to point at
       it, publishes the new put position, fences, and rings the
-      work-submission doorbell with [qd]'s token. The stream is kept:
-      submitting again stages it again. *)
+      work-submission doorbell with [qd]'s token. A trailing engine release
+      retires the channel sequence. FIFO capacity and staging reuse wait for
+      retirement with [HCQ_TIMEOUT_MS] (default 30 seconds); timeout latches
+      failure without overwriting live commands. The stream is kept:
+      submitting again stages it again. Submissions must be serialized. *)
 end
 
 (** Copy-engine command streams.
