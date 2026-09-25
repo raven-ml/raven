@@ -292,11 +292,16 @@ val float_to_fp16 : float -> float
     (bit pattern not preserved). *)
 
 val float_to_bf16 : float -> float
-(** [float_to_bf16 x] rounds [x] to bfloat16 precision using
-    round-to-nearest-even. Non-finite values pass through unchanged. *)
+(** [float_to_bf16 x] rounds [x] once to bfloat16 precision using
+    round-to-nearest-even. Overflow produces an infinity; non-finite values
+    pass through unchanged. *)
 
 val float_to_fp8 : t -> float -> int
-(** [float_to_fp8 dt x] encodes [x] as an fp8 byte value in [0..255].
+(** [float_to_fp8 dt x] encodes [x] as an fp8 byte value in [0..255], rounding
+    once to nearest even. A finite [x] that rounds past the largest finite
+    value encodes as an infinity of its sign, which is NaN in formats without
+    one ({!fp8e4m3} and the fnuz formats), as infinities do. A NaN keeps its
+    sign, except in the fnuz formats, whose only NaN is [0x80].
 
     Raises [Invalid_argument] if [dt] is not an fp8 dtype.
 

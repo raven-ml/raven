@@ -442,7 +442,12 @@ let float_to_fp16 x =
 let float_to_bf16 x =
   if not (Float.is_finite x) then x
   else
+    (* Round to odd at binary32 first: its 16 extra bits keep the rounding
+       below the only one. *)
     let u = Int32.bits_of_float x in
+    let f = Int32.float_of_bits u in
+    let u = if Float.abs f > Float.abs x then Int32.pred u else u in
+    let u = if f <> x then Int32.logor u 1l else u in
     let u =
       Int32.logand
         (Int32.add u
@@ -454,36 +459,36 @@ let float_to_bf16 x =
 
 type fp8_params = {
   exp_bias : int; sig_bits : int; mantissa_mask : int;
-  mindenorm_o2 : int64; overflow_threshold : int64;
-  maxnorm : int; minnorm : int64;
+  mindenorm_o2 : int64; overflow_threshold : int64; minnorm : int64;
 }
 
 let fp8e4m3_params =
   { exp_bias = 7; sig_bits = 4; mantissa_mask = 0x7;
     mindenorm_o2 = 0x3F50000000000000L; overflow_threshold = 0x407D000000000000L;
-    maxnorm = 0x7E; minnorm = 0x3F90000000000000L }
+    minnorm = 0x3F90000000000000L }
 
 let fp8e5m2_params =
   { exp_bias = 15; sig_bits = 3; mantissa_mask = 0x3;
     mindenorm_o2 = 0x3EE0000000000000L;
     overflow_threshold = Int64.sub 0x40EE000000000000L 1L;
-    maxnorm = 0x7B; minnorm = 0x3F10000000000000L }
+    minnorm = 0x3F10000000000000L }
 
 let fp8e4m3fnuz_params =
   { exp_bias = 8; sig_bits = 4; mantissa_mask = 0x7;
     mindenorm_o2 = 0x3F40000000000000L;
     overflow_threshold = Int64.sub 0x406F000000000000L 1L;
-    maxnorm = 0x7F; minnorm = 0x3F80000000000000L }
+    minnorm = 0x3F80000000000000L }
 
 let fp8e5m2fnuz_params =
   { exp_bias = 16; sig_bits = 3; mantissa_mask = 0x3;
     mindenorm_o2 = 0x3ED0000000000000L;
     overflow_threshold = Int64.sub 0x40EE000000000000L 1L;
-    maxnorm = 0x7F; minnorm = 0x3F00000000000000L }
+    minnorm = 0x3F00000000000000L }
 
 (* Pack a binary64 into an fp8 byte. Signs, subnormals, overflow, and
-   round-to-nearest-even are handled case-by-case. *)
-let float_to_fp8 dt x =
+   round-to-nearest-even are handled case-by-case. A finite value that rounds
+   past the largest finite one encodes as the infinity of its sign. *)
+let rec float_to_fp8 dt x =
   match dt with
   | (Fp8e4m3fnuz | Fp8e5m2fnuz) when not (Float.is_finite x) -> 0x80
   | (Fp8e4m3fnuz | Fp8e5m2fnuz) when x = 0.0 -> 0x00
@@ -518,9 +523,8 @@ let float_to_fp8 dt x =
       let absx = Int64.logand xbits 0x7FFFFFFFFFFFFFFFL in
       let res =
         if Int64.compare absx p.mindenorm_o2 <= 0 then 0
-        else if Int64.compare absx 0x7FF0000000000000L > 0 then
-          if dt = Fp8e4m3 then 0x7F else 0x7E lor mantissa
-        else if Int64.compare absx p.overflow_threshold > 0 then p.maxnorm
+        else if Int64.compare absx p.overflow_threshold > 0 then
+          float_to_fp8 dt (Float.copy_sign Float.infinity x)
         else if Int64.compare absx p.minnorm >= 0 then begin
           let base = (exp lsl (p.sig_bits - 1)) lor mantissa in
           let round_mask = Int64.sub (Int64.shift_left half_ulp 1) 1L in

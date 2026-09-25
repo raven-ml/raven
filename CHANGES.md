@@ -520,6 +520,11 @@ thread.
 
 ### Tolk (new)
 
+- A `float8` constant past the format's largest finite value folds to its
+  infinity, or NaN where it has none, and a `bfloat16` constant rounds once
+  from the double, so compiled constants equal nx's eager values. `500.`
+  folded to 448 in `float8_e4m3`.
+
 - A `float16` constant between `2^-25` and `2^-24` in a compiled graph folds
   to the smallest subnormal, `2^-24`. It folded to zero, so `3e-8` became
   `0`.

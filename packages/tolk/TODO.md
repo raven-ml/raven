@@ -148,6 +148,34 @@ migration to main.
   `COPY_TOKEN` and `SLM` from NV's queue config. Acceptance: an NV host test
   encodes one program for two devices that differ only in tokens and local
   memory and gets equal linears.
+- Make emulated float8 conversions in compiled kernels agree with the
+  constant codec. `decomp_dtype.ml`'s `f2f` ports the reference's
+  decomposition, which flushes subnormals to zero both ways, `f2f_clamp`
+  saturates overflow and infinities, and the `CAST` rule clamps without
+  rounding. On an emulating device (CPU, Metal), against eager nx on
+  float32 inputs:
+
+  | Path | Input | Eager | Compiled |
+  |---|---|---|---|
+  | store `cast e4m3 x` | 2^-7, 2^-8, 2^-9, 1.5·2^-10 | same, 2^-9 for the last | 0 |
+  | store | 500, inf | NaN | 448 |
+  | fused `cast f32 (cast e4m3 x)` | 336, 1.0625, 1.5·2^-10 | 320, 1, 2^-9 | unchanged |
+  | load `cast f32 x`, x : e4m3 | 2^-7, 2^-8, 2^-9 | same | 0 |
+  | load, x : e5m2 | 2^-15, 2^-16 | same | 0 |
+
+  Every e4m3 code from 0x01 to 0x07 reads as zero, so a compiled float8
+  dequantisation on CPU or Metal loses them, while CUDA's native float8
+  keeps them. Make `f2f` denormalise instead of flushing in both
+  directions, round the `CAST` rule through `f2f` both ways, and decide
+  overflow after rounding with no pre-clamp, as the codec does; the native
+  CUDA and HIP constructors need a compare and select to stop saturating.
+  Settle at the same time that tolk emulates float8 through `float32` where
+  the reference uses `half` on renderers with native half. Record the result
+  in DIVERGENCES.md. Land it before any compiled float8 path is claimed to
+  match eager, and before RFC 0004's float8 weights run compiled on CPU or
+  Metal. rune's `test_jit.ml` float8 sort and bitcast cases know part of
+  this.
+
 - Review whether Tolk needs its `nn` layer. Design shared safetensors ownership
   with Nx and model/state ownership with Kaun, avoiding duplicate codecs and
   additional JSON dependencies.

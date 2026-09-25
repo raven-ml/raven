@@ -275,7 +275,11 @@ let bf16_conversion () =
   eq 1232.0 (Dtype.float_to_bf16 1234.0);
   eq infinity (Dtype.float_to_bf16 infinity);
   eq neg_infinity (Dtype.float_to_bf16 neg_infinity);
-  is_true (Float.is_nan (Dtype.float_to_bf16 Float.nan))
+  is_true (Float.is_nan (Dtype.float_to_bf16 Float.nan));
+  (* Just above the tie between 1 and 1 + 2^-7: rounding to float32 first
+     would land on the tie and round it down. *)
+  eq 1.0078125 (Dtype.float_to_bf16 (Float.succ 1.00390625));
+  eq infinity (Dtype.float_to_bf16 1e39)
 
 let fp8_conversion () =
   let eq = equal float_exact in
@@ -283,19 +287,18 @@ let fp8_conversion () =
   equal int 0 (Dtype.float_to_fp8 Dtype.fp8e5m2 0.0);
   eq 0.0 (Dtype.fp8_to_float Dtype.fp8e4m3 0);
   eq 0.0 (Dtype.fp8_to_float Dtype.fp8e5m2 0);
-  (* E4m3 max normal 448.0; saturating (infinity -> NaN, above-max -> maxnorm). *)
-  eq 448.0
-    (Dtype.fp8_to_float Dtype.fp8e4m3 (Dtype.float_to_fp8 Dtype.fp8e4m3 448.0));
-  is_true
-    (Float.is_nan
-       (Dtype.fp8_to_float Dtype.fp8e4m3
-          (Dtype.float_to_fp8 Dtype.fp8e4m3 infinity)));
-  eq 448.0
-    (Dtype.fp8_to_float Dtype.fp8e4m3 (Dtype.float_to_fp8 Dtype.fp8e4m3 500.0));
-  (* E5m2 max normal 57344.0; IEEE-like (infinity -> infinity, NaN -> NaN). *)
-  eq 57344.0
-    (Dtype.fp8_to_float Dtype.fp8e5m2
-       (Dtype.float_to_fp8 Dtype.fp8e5m2 57344.0));
+  (* Past the largest finite value a result is the format's infinity of its
+     sign, or NaN where the format has none, as for an infinity. *)
+  let rt dt x = Dtype.fp8_to_float dt (Dtype.float_to_fp8 dt x) in
+  eq 448.0 (rt Dtype.fp8e4m3 448.0);
+  eq 448.0 (rt Dtype.fp8e4m3 464.0);
+  is_true (Float.is_nan (rt Dtype.fp8e4m3 infinity));
+  is_true (Float.is_nan (rt Dtype.fp8e4m3 500.0));
+  equal int 0xff (Dtype.float_to_fp8 Dtype.fp8e4m3 (-1e6));
+  equal int 0x80 (Dtype.float_to_fp8 Dtype.fp8e4m3fnuz 1e6);
+  eq 57344.0 (rt Dtype.fp8e5m2 57344.0);
+  eq 57344.0 (rt Dtype.fp8e5m2 57343.0);
+  eq infinity (rt Dtype.fp8e5m2 61440.0);
   eq infinity
     (Dtype.fp8_to_float Dtype.fp8e5m2
        (Dtype.float_to_fp8 Dtype.fp8e5m2 infinity));
@@ -363,7 +366,7 @@ let truncation_surface () =
   equal storage_scalar (`Int 255L) (Dtype.truncate Dtype.uint8 (`Int (-1L)));
   equal storage_scalar (`Int (-128L)) (Dtype.truncate Dtype.int8 (`Int 128L));
   equal storage_scalar (`Float 448.0)
-    (Dtype.truncate Dtype.fp8e4m3 (`Float 500.0));
+    (Dtype.truncate Dtype.fp8e4m3 (`Float 464.0));
   equal storage_scalar (`Float 1232.0)
     (Dtype.truncate Dtype.bfloat16 (`Float 1234.0))
 
