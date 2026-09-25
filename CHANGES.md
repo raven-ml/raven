@@ -661,6 +661,10 @@ thread.
 
 ### Tolk (new)
 
+- Retire cached queue templates and linked storage when any participating
+  device is replaced. Concurrent first links now share one published result
+  and one lazily initialized Metal/CUDA timeline.
+
 - Reject beam-search candidates whose upcast or local lane products exceed
   their limits even when the product is larger than a host integer.
 

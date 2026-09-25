@@ -194,11 +194,14 @@ type device_cache = {
   submission_lock : Mutex.t;
 }
 
-module Owner_cache = Ephemeron.K1.Make (struct
+module Owner_key = struct
   type t = Device.t
   let equal a b = a == b
   let hash = Device.id
-end)
+end
+
+module Owner_cache = Ephemeron.K1.Make (Owner_key)
+module Queue_cache = Ephemeron.Kn.Make (Owner_key)
 
 let owner_caches = Owner_cache.create 16
 let owner_caches_lock = Mutex.create ()
@@ -248,7 +251,34 @@ let with_submission_owners names f =
 let submission_owners (submission : Tolk_uop.Uop.queue_info) =
   submission.devices @ List.concat_map (fun (owner, source) -> [owner; source]) submission.host_deps
 
-let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
+type queue_cache = {
+  templates : (string, Tolk_uop.Uop.t * Tolk_uop.Uop.t) Hashtbl.t;
+  staged : (string * Tolk_uop.Uop.t) Tolk_uop.Uop.Weak_tbl.t;
+  lock : Mutex.t;
+}
+
+let queue_caches = Queue_cache.create 16
+
+let queue_cache owners =
+  let owners = List.sort_uniq (fun a b -> Int.compare (Device.id a) (Device.id b)) owners
+      |> Array.of_list in
+  with_cache_lock owner_caches_lock (fun () ->
+      match Queue_cache.find_opt queue_caches owners with
+      | Some cache -> cache
+      | None ->
+          let cache = {templates = Hashtbl.create 64;
+            staged = Tolk_uop.Uop.Weak_tbl.create 16; lock = Mutex.create ()} in
+          Queue_cache.add queue_caches owners cache;
+          cache)
+
+let queue_participants names =
+  List.sort_uniq String.compare names
+  |> List.concat_map (fun name ->
+      let device = Device.get name in
+      device :: (match Device.queue device with
+        | Some queue -> [Device.get queue.Device.host]
+        | None -> []))
+  |> List.sort_uniq (fun a b -> Int.compare (Device.id a) (Device.id b))
 
 let profiling () = debug () >= 2 || Helpers.getenv "PROFILE" 0 <> 0
 
@@ -321,13 +351,7 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
             | Some (U.Single name) -> [name]
             | Some (U.Multi names) -> names
             | Some (U.Index _) | None -> [])
-        |> List.sort_uniq String.compare
-        |> List.concat_map (fun name ->
-            let device = Device.get name in
-            device :: (match Device.queue device with
-              | Some queue -> [Device.get queue.Device.host]
-              | None -> []))
-        |> List.sort_uniq (fun a b -> Int.compare (Device.id a) (Device.id b)) in
+        |> queue_participants in
     (* Link-time tags are semantic here: a runtime table and a captured input
        must never share a linked template. Keep the hash-consed key alive. *)
     let key = Marshal.to_string
@@ -335,13 +359,15 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
          queue_config ~profile device,
          cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
          List.map (fun device -> cache_key ~device ~ast_key:"") participants) [] in
-    let templates = Domain.DLS.get queue_template_cache in
-    match Hashtbl.find_opt templates key with
+    let cache = queue_cache (device :: participants) in
+    match with_cache_lock cache.lock (fun () -> Hashtbl.find_opt cache.templates key) with
     | Some (_, compiled) -> compiled
     | None ->
         let compiled = Hcq2.compile ~to_program ~profile linear in
-        Hashtbl.add templates key (linear, compiled);
-        compiled
+        with_cache_lock cache.lock (fun () ->
+            match Hashtbl.find_opt cache.templates key with
+            | Some (_, winner) -> winner
+            | None -> Hashtbl.add cache.templates key (linear, compiled); compiled)
 
 let compile_linear ~device ?beam ?profile ~to_program linear =
   compile_linear_cached ~cache:false ~device ?beam ?profile ~to_program linear
@@ -852,23 +878,29 @@ let exec_copy ctx ~device call =
   | None -> invalid_arg "exec_copy: expected CALL"
 
 let queue_submissions = ref 0
-let staged_queue_cache = Domain.DLS.new_key (fun () -> Tolk_uop.Uop.Weak_tbl.create 16)
 
 let staged_queue ~to_program ctx call submission buffers =
   let module U = Tolk_uop.Uop in
   let shape = Array.map (fun b ->
       Device.Buffer.device b, Device.Buffer.nbytes b, Device.Buffer.dtype b) buffers in
-  let cache = Domain.DLS.get staged_queue_cache in
-  match U.Weak_tbl.find_opt cache call with
-  | Some (cached_shape, staged) when cached_shape = shape -> Some staged
+  let participants = queue_participants
+      (submission.U.host :: submission_owners submission @
+       Array.to_list (Array.map Device.Buffer.device buffers)) in
+  let cache = queue_cache participants in
+  let key = Marshal.to_string
+      (shape, List.map (fun device -> cache_key ~device ~ast_key:"") participants) [] in
+  match with_cache_lock cache.lock (fun () -> U.Weak_tbl.find_opt cache.staged call) with
+  | Some (cached_key, staged) when cached_key = key -> Some staged
   | _ ->
       match Hcq2.stage_copies ~resolve:(resolve ctx) (U.linear submission.U.fallback) with
       | None -> None
       | Some staged ->
           let compiled = Hcq2.compile ~to_program ~profile:(submission.U.timings <> []) staged in
           let linked = link_linear ~ctx compiled in
-          U.Weak_tbl.replace cache call (shape, linked);
-          Some linked
+          Some (with_cache_lock cache.lock (fun () ->
+              match U.Weak_tbl.find_opt cache.staged call with
+              | Some (cached_key, winner) when cached_key = key -> winner
+              | _ -> U.Weak_tbl.replace cache.staged call (key, linked); linked))
 
 (* Independently wrapped external pointers need not share a Storage.base_id.
    Check the physical intervals only where the compiled queues permit calls

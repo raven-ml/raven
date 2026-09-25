@@ -31,7 +31,11 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_realize` owner collection, concurrent misses and reentrant compilation;
   `test_runtime_cpu` live execution after replacement and collection. Reconsider
   if device replacement is removed or upstream supplies owner-scoped caches.
-  Mutable linked replay storage and multi-device template ownership remain open.
+  Queue templates and staged schedules use all participating devices as weak
+  owners; link-cache hits also require current owner identities. Coverage:
+  `test_link` secondary replacement, collection and concurrent publication,
+  and `test_realize` multi-owner template collection. Externally retained old
+  graphs keep their storage alive; execution after replacement remains open.
 
 - **Schedule capture follows the dynamic continuation scope.** Upstream uses
   a process-global callback list. Tolk and Rune may compile on independent

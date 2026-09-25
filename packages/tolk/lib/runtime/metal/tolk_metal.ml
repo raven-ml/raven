@@ -100,11 +100,16 @@ module State = struct
       Ffi.release_device device;
       raise exn
 
+  let with_program_lock t f =
+    Tolk_uop.Storage.with_operation (fun () -> Mutex.protect t.program_lock f)
+
+  let timeline t = with_program_lock t (fun () -> t.timeline)
+
   let synchronize t =
     if not t.closed then begin
       Option.iter (fun timeline ->
           let value = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 8 in
-          Ffi.hcq_wait t.context value) t.timeline
+          Ffi.hcq_wait t.context value) (timeline t)
     end
 
   let shutdown t =
@@ -245,9 +250,14 @@ module Queue = struct
         if libs <> [] then invalid_arg "Metal host helpers do not load libraries";
         Some (word (Ffi.hcq_symbol symbol))
     | Some {param = {allocation = Some ("metal_context", _); _}; _} ->
-        let buffer = match state.State.context_buffer with
-          | Some b -> b | None -> let b = word state.context in state.context_buffer <- Some b; b in
-        Some buffer
+        Some (State.with_program_lock state (fun () ->
+            if state.State.closed then invalid_arg "Metal device is closed";
+            match state.State.context_buffer with
+            | Some buffer -> buffer
+            | None ->
+                let buffer = word state.context in
+                state.context_buffer <- Some buffer;
+                buffer))
     | Some {param = {allocation = Some ("metal_icb", data); _}; _} ->
         let desc = (Marshal.from_string data 0 : descriptor) in
         let allocator = Allocator.raw state in
@@ -298,9 +308,14 @@ module Queue = struct
         Some (B.create ~device:name ~size:(U.max_numel u) ~dtype:(U.dtype u) ~spec
           (Device.Allocator.Pack {allocator with alloc; free}))
     | Some _ when U.node_tag u = Some "timeline" ->
-        let buffer = match state.State.timeline with
-          | Some b -> b | None -> let b = host_buffer 2 in state.timeline <- Some b; b in
-        Some buffer
+        Some (State.with_program_lock state (fun () ->
+            if state.State.closed then invalid_arg "Metal device is closed";
+            match state.State.timeline with
+            | Some buffer -> buffer
+            | None ->
+                let buffer = host_buffer 2 in
+                state.timeline <- Some buffer;
+                buffer))
     | _ -> None
 
   let lower name u = match U.as_load u with
@@ -394,7 +409,7 @@ module Queue = struct
   let create state device_name =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
     let completion () =
-      let value = match state.State.timeline with
+      let value = match State.timeline state with
         | None -> 0L
         | Some timeline -> Bytes.get_int64_le (B.as_bytes timeline) 8 in
       fun timeout -> ignore timeout; Ffi.hcq_wait state.State.context value in

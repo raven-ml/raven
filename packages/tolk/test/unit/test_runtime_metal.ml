@@ -490,9 +490,30 @@ let multi_device_calls_use_queues () =
       equal (list int) [value] (read_i32 a);
       equal (list int) [value + 1] (read_i32 b)) [10; 73]
 
+let concurrent_timeline_initialization () =
+  let device = metal_device () in
+  let name = Device.name device in
+  let timeline = Hcq2.timeline name in
+  let context = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
+      ~device:(U.Single name) ~allocation:("metal_context", "") () in
+  let ready = Atomic.make 0 in
+  let workers = Array.init 4 (fun _ -> Domain.spawn (fun () ->
+      ignore (Atomic.fetch_and_add ready 1);
+      while Atomic.get ready <> 4 do Domain.cpu_relax () done;
+      Option.get (Device.bufferize device timeline),
+      Option.get (Device.bufferize device context))) in
+  let buffers = Array.map Domain.join workers in
+  let first_timeline, first_context = buffers.(0) in
+  Array.iter (fun (timeline, context) ->
+      equal int (Device.Buffer.id first_timeline) (Device.Buffer.id timeline);
+      equal int (Device.Buffer.id first_context) (Device.Buffer.id context)) buffers;
+  equal bytes (Bytes.make 16 '\000') (Device.Buffer.as_bytes first_timeline)
+
 let () =
   run "Metal_runtime"
     [
+      test "concurrent first links share one timeline and context descriptor"
+        concurrent_timeline_initialization;
       group "Execution"
         [
           test "integer vector copies use native Metal types" test_integer_vector_copies;

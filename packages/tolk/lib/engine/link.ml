@@ -9,7 +9,19 @@ open Tolk_uop
 module U = Uop
 module B = Device.Buffer
 
+type cached = {
+  names : string array;
+  graph : (Device.t, U.t) Ephemeron.Kn.t;
+}
+
 let cache = U.Weak_tbl.create 16
+let cache_lock = Mutex.create ()
+let with_cache_lock f = Storage.with_operation (fun () -> Mutex.protect cache_lock f)
+
+let find_cached linear =
+  match with_cache_lock (fun () -> U.Weak_tbl.find_opt cache linear) with
+  | None -> None
+  | Some entry -> Ephemeron.Kn.query entry.graph (Array.map Device.get entry.names)
 
 let rec constant u =
   match U.as_const u with
@@ -37,14 +49,39 @@ let word_bytes c =
   Bytes.init n (fun i -> Char.chr (Z.to_int (Z.extract value (8 * i) 8)))
 
 let rec run ~resolve ?(allow_cache = true) linear =
-  match if allow_cache then U.Weak_tbl.find_opt cache linear else None with
+  match if allow_cache then find_cached linear else None with
   | Some linked -> linked
   | None ->
       let refs = ref [] and can_cache = ref allow_cache in
+      let owners = ref [] in
+      let own device =
+        if not (List.exists (( == ) device) !owners) then owners := device :: !owners in
+      let own_name name =
+        let device = Device.get name in
+        own device;
+        Option.iter (fun queue -> own (Device.get queue.Device.host)) (Device.queue device) in
+      let rec collect_owners linear =
+        List.iter (fun node ->
+            (match U.device_of node with
+             | Some (U.Single name) -> own_name name
+             | Some (U.Multi names) -> List.iter own_name names
+             | Some (U.Index _) | None -> ());
+            (match U.arg node with
+             | U.Arg.Call_info {aux = Some info; _} ->
+                 List.iter own_name (info.host :: info.devices @
+                   List.concat_map (fun (owner, source) -> [owner; source]) info.host_deps)
+             | _ -> ());
+            match U.as_call node with
+            | Some {body; _} when U.op body = Ops.Custom_function
+                && U.Arg.as_string (U.arg body) = Some "loop" ->
+                collect_owners (U.src body).(0)
+            | _ -> ()) (U.toposort ~enter_calls:false linear) in
+      collect_owners linear;
       let retain buf =
         if not (List.exists (U.equal buf) !refs) then refs := buf :: !refs in
       let buffer u =
         let b = resolve u in
+        own_name (B.device b);
         retain (U.from_buffer b);
         b in
       let write buf offset bytes =
@@ -94,6 +131,7 @@ let rec run ~resolve ?(allow_cache = true) linear =
                   | Some (U.Single d) -> d
                   | _ -> invalid_arg "link: placeholder needs one device" in
                 let owner = Device.get device in
+                own owner;
                 match Device.bufferize owner u with
                 | Some buf -> buf
                 | None ->
@@ -166,5 +204,15 @@ let rec run ~resolve ?(allow_cache = true) linear =
         | first :: rest, (_ :: _ as deps) ->
             U.replace linked ~src:(Array.of_list (U.after ~src:first ~deps :: rest)) ()
         | _ -> linked in
-      if !can_cache then U.Weak_tbl.replace cache linear linked;
-      linked
+      if not !can_cache then linked else
+        let owners = List.sort (fun a b -> Int.compare (Device.id a) (Device.id b)) !owners
+            |> Array.of_list in
+        let names = Array.map Device.name owners in
+        let entry = {names; graph = Ephemeron.Kn.make owners linked} in
+        with_cache_lock (fun () ->
+            let previous = match U.Weak_tbl.find_opt cache linear with
+              | Some cached when cached.names = names -> Ephemeron.Kn.query cached.graph owners
+              | Some _ | None -> None in
+            match previous with
+            | Some winner -> winner
+            | None -> U.Weak_tbl.replace cache linear entry; linked)

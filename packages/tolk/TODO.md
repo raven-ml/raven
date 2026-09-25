@@ -25,6 +25,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   batches on hardware, including kernel-argument arena
   reuse during long asynchronous batches.
 - Validate AMD/NV/CUDA profiling clock alignment on hardware.
+  Validate concurrent first-link timeline/context initialization on CUDA.
   Validate staged peer transfers and shared host signals on small-BAR devices.
   Validate AMD AQL/multi-XCC
   dispatch and ring/staging reuse under long asynchronous batches.
@@ -108,10 +109,7 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Synchronize linked-template and staged replay cache lookup/publication.
-  Retire obsolete device owners
-  from multi-device templates and retained-link caches while preserving live
-  submission ownership. Reject stale retained HCQ execution after device
+  Reject stale retained HCQ execution after device
   replacement, or carry its actual owner identities through dispatch: embedded
   addresses belong to the old owner while queue lookup currently uses names.
   Make first-run bookkeeping and execution statistics

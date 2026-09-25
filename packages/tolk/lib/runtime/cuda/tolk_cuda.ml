@@ -90,6 +90,11 @@ module State = struct
       Ffi.ctx_destroy context;
       Printexc.raise_with_backtrace exn bt
 
+  let with_function_lock t f =
+    Tolk_uop.Storage.with_operation (fun () -> Mutex.protect t.function_lock f)
+
+  let timeline t = with_function_lock t (fun () -> t.timeline)
+
   let synchronize t =
     if not t.closed then begin
       Ffi.ctx_set_current t.context;
@@ -201,10 +206,14 @@ module Queue = struct
         if libs <> [] then invalid_arg "CUDA host helpers do not load libraries";
         Some (word (Ffi.hcq_symbol symbol))
     | Some {param = {allocation = Some ("cuda_context", _); _}; _} ->
-        let b = match state.State.handles with
-          | Some b -> b
-          | None -> let b = word state.queue in state.handles <- Some b; b in
-        Some b
+        Some (State.with_function_lock state (fun () ->
+            if state.State.closed then invalid_arg "CUDA device is closed";
+            match state.State.handles with
+            | Some buffer -> buffer
+            | None ->
+                let buffer = word state.queue in
+                state.handles <- Some buffer;
+                buffer))
     | Some {param = {allocation = Some ("cuda_function", data); _}; _} ->
         let object_ = (Marshal.from_string data 0 : Tiny_elf.t) in
         let key = Bytes.to_string object_.lib, object_.name in
@@ -224,15 +233,18 @@ module Queue = struct
                   Ffi.module_unload module_;
                   Printexc.raise_with_backtrace exn backtrace))
     | Some _ when U.node_tag u = Some "timeline" ->
-        let b = match state.State.timeline with
-          | Some b -> b
-          | None ->
-              let spec = {Device.Buffer_spec.default with host = true; nolru = true} in
-              let b = B.create ~device:name ~size:2 ~dtype:Dtype.uint64 ~spec
-                  (Device.Allocator.Pack (Allocator.raw state)) in
-              B.ensure_allocated b;
-              B.copyin b (Bytes.make 16 '\000'); state.timeline <- Some b; b in
-        Some b
+        Some (State.with_function_lock state (fun () ->
+            if state.State.closed then invalid_arg "CUDA device is closed";
+            match state.State.timeline with
+            | Some buffer -> buffer
+            | None ->
+                let spec = {Device.Buffer_spec.default with host = true; nolru = true} in
+                let buffer = B.create ~device:name ~size:2 ~dtype:Dtype.uint64 ~spec
+                    (Device.Allocator.Pack (Allocator.raw state)) in
+                B.ensure_allocated buffer;
+                B.copyin buffer (Bytes.make 16 '\000');
+                state.timeline <- Some buffer;
+                buffer))
     | _ -> None
 
   let create state device_name =
@@ -247,7 +259,7 @@ module Queue = struct
       | None -> false in
       if supported then Some "COPY:0" else None in
     let completion () =
-      match state.State.timeline with
+      match State.timeline state with
       | None -> Fun.const ()
       | Some timeline ->
           let address = B.addr timeline in

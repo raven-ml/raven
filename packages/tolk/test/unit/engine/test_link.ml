@@ -151,7 +151,73 @@ let host_call_replay () =
   Gc.full_major ();
   execute (-9)
 
+let replacement_ownership () =
+  let primary = Tolk_cpu.create "CPU:link-primary-owner" in
+  let name = "CPU:link-secondary-owner" in
+  let secondary = Tolk_cpu.create name in
+  let linear = U.linear [call [placeholder primary "primary" Dtype.uint8 4;
+      placeholder secondary "secondary" Dtype.uint8 4]] in
+  let original = link linear in
+  let previous = resolve (List.nth (args original) 1) in
+  B.ensure_allocated previous;
+  B.copyin previous (Bytes.of_string "kept");
+  let replacement = Tolk_cpu.create name in
+  let refreshed = link linear in
+  let current = resolve (List.nth (args refreshed) 1) in
+  is_false ~msg:"replacing a secondary owner invalidates cached links while old owners remain live"
+    (B.id previous = B.id current);
+  equal bytes (Bytes.of_string "kept") (B.as_bytes previous);
+  is_true (U.equal refreshed (link linear));
+  ignore (Sys.opaque_identity (primary, secondary, replacement, original))
+
+let obsolete_link_collection () =
+  let primary = Tolk_cpu.create "CPU:link-live-primary" in
+  let name = "CPU:link-retired-secondary" in
+  let weak_owner = Stdlib.Weak.create 1 and weak_buffer = Stdlib.Weak.create 1 in
+  let populate () =
+    let secondary = Tolk_cpu.create name in
+    Stdlib.Weak.set weak_owner 0 (Some secondary);
+    let linear = U.linear [call [placeholder primary "primary" Dtype.uint8 4;
+        placeholder secondary "secondary" Dtype.uint8 4]] in
+    let linked = link linear in
+    Stdlib.Weak.set weak_buffer 0 (Some (resolve (List.nth (args linked) 1)));
+    linear in
+  let linear = populate () in
+  let replacement = Tolk_cpu.create name in
+  for _ = 1 to 5 do Gc.full_major () done;
+  is_false ~msg:"cache keys do not retain an obsolete secondary device"
+    (Stdlib.Weak.check weak_owner 0);
+  is_false ~msg:"a live input graph and primary device do not retain obsolete linked storage"
+    (Stdlib.Weak.check weak_buffer 0);
+  ignore (Sys.opaque_identity (primary, replacement, linear))
+
+let concurrent_link_publication () =
+  let entered = Atomic.make 0 in
+  let allocator = Device.Allocator.Pack
+      (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let name = "CPU:parallel-link-publication" in
+  let host = Tolk_cpu.create "CPU:parallel-link-host" in
+  let device = Device.make ~name ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:"CPU"
+        ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
+      ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout)
+      ~bufferize:(fun node ->
+        ignore (Atomic.fetch_and_add entered 1);
+        while Atomic.get entered <> 2 do Domain.cpu_relax () done;
+        Some (B.create ~device:name ~size:(U.max_numel node) ~dtype:(U.dtype node) allocator)) () in
+  let linear = U.linear [call [placeholder device "shared" Dtype.uint8 4]] in
+  let first = Domain.spawn (fun () -> link linear)
+  and second = Domain.spawn (fun () -> link linear) in
+  let first_result = Domain.join first and second_result = Domain.join second in
+  is_true ~msg:"simultaneous misses publish one retained linked graph"
+    (U.equal first_result second_result);
+  is_true (U.equal first_result (link linear));
+  ignore (Sys.opaque_identity device)
+
 let () = run "Engine_link" [
+  test "secondary owner replacement invalidates cached links without invalidating retained links" replacement_ownership;
+  test "obsolete owner storage retires even while the original graph remains live" obsolete_link_collection;
+  test "concurrent first links publish one retained graph" concurrent_link_publication;
   test "allocates command streams uncached and volatile slots on the host" allocation_specs;
   test "initializes blobs, sparse words and ranged patches once" initialization;
   test "folds nested casts and bitcasts in link patches" cast_patches;

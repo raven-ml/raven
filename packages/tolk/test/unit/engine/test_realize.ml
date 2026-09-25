@@ -558,6 +558,36 @@ let capture_tests =
           is_true (Option.is_none (Realize.current_capture ())));
     ]
 
+let obsolete_multi_owner_template () =
+  let primary = test_device ~name:"TEST:template-primary" (runtime_state ()) in
+  let secondary_name = "TEST:template-secondary" in
+  let owner = Stdlib.Weak.create 1 and program = Stdlib.Weak.create 1 in
+  let populate () =
+    let secondary = test_device ~name:secondary_name (runtime_state ()) in
+    Stdlib.Weak.set owner 0 (Some secondary);
+    let formal = U.param ~slot:0 ~dtype:Dtype.uint64 ~shape:(shape_const 1) () in
+    let sink = U.sink ~kernel_info:(kernel_info "multi_owner_template") [formal] in
+    let arg = U.param ~slot:0 ~dtype:Dtype.uint64 ~shape:(shape_const 1)
+        ~device:(U.Single secondary_name) () in
+    let linear = U.linear [U.call ~body:sink ~args:[arg] ~info:(call_info None)] in
+    let input = Device.create_buffer ~size:1 ~dtype:Dtype.uint64 secondary in
+    let to_program device body =
+      ignore device;
+      let compiled = program_of body in
+      Stdlib.Weak.set program 0 (Some compiled);
+      compiled in
+    Realize.run_linear ~device:primary ~input_uops:[|U.from_buffer input|]
+      ~update_stats:false ~to_program linear;
+    linear in
+  let linear = populate () in
+  let replacement = test_device ~name:secondary_name (runtime_state ()) in
+  for _ = 1 to 5 do Gc.full_major () done;
+  is_false ~msg:"the secondary owner retires independently of the compiler owner"
+    (Stdlib.Weak.check owner 0);
+  is_false ~msg:"the queue template cannot retain a retired secondary owner's program"
+    (Stdlib.Weak.check program 0);
+  ignore (Sys.opaque_identity (primary, replacement, linear))
+
 let submission_fixture device_name prepare invoke =
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make
       ~synchronize:(fun () -> ())) in
@@ -684,6 +714,7 @@ let failed_submission_prepare () =
 let () =
   run "Engine_realize"
     [
+      test "multi-owner templates retire when a secondary owner is replaced" obsolete_multi_owner_template;
       test "concurrent submissions retain their own address tables"
         (serialized_submission_tables ~independent:false);
       test "independent links serialize reservations on their shared device timeline"
