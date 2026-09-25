@@ -18,7 +18,12 @@ with their rationale and validation; commit count is not an acceptance metric.
   invalidation, profiling calibration and allocator transfers onto shared
   submissions. Delete the obsolete GPU `Device.prog`/`Compiled_runner` paths,
   duplicate command builders, direct argument arenas and handoff bookkeeping
-  once their callers migrate. Preserve bounded waits and retirement for
+  once their callers migrate. Separate Metal/CUDA loaded-program ownership
+  from direct launch wrappers; remove unused Metal `Icb.execute` and dispatch
+  update APIs while retaining allocator blit ownership. Route
+  `Buffer.copy_from` through scheduled STORE at the existing compiler boundary,
+  and establish NV raw-INS compilation before deleting bootstrap submissions.
+  Preserve bounded waits and retirement for
   independently linked submissions; these are separate safety requirements.
 - Port the target's distinction between one-shot linker ring allocations and
   retained command storage. Share NV code images within a compiled schedule
@@ -109,7 +114,9 @@ acceptance requirement; skipped tests are not execution evidence.
   `Nx.bitcast`.
 
 - Migrate every Python driver to the target API and generate the complete
-  corpus separately, including AMD/NV queue drivers. Attribute every changed
+  corpus separately, including AMD/NV queue drivers. Update the C-style fixture
+  builder to emit committed constants (`cconst`); its bare boolean CONST
+  currently renders an empty condition. Attribute every changed
   expectation; require exact source parity for supported renderers.
 - Reconcile remaining intermediate IR/GROUP and source differences in FP8
   `sm_80`, `rangeify`, `moe_gather_block`, `softmax_sink`, `swiglu_clamped`,
@@ -131,13 +138,30 @@ acceptance requirement; skipped tests are not execution evidence.
   and render final constants.
 - Remove remaining parallel property reconstruction and silent guesses in
   renderer widths, view offsets, stage buffer sizes and range metadata. Remove
-  the C renderer's domain-lifetime strong width cache and source-width/lane
-  reconstruction in favor of central properties. Unify ordered range and range
+  the C renderer's independent multidimensional stride reconstruction in
+  favor of canonical flat indexes. Unify ordered range and range
   membership traversal; use checked central numel in placeholders, frontend
   tensors and rangeify. Remove ignored `dtype` arguments from source-derived
-  `Uop.load`, `reduce` and `wmma`, updating callers and contracts. Port
+  `Uop.load`, `reduce`, `wmma` and `noop`, updating callers and contracts. Port
   remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
+- Replace `Uop.contiguous_view`'s separate movement interpreter with the
+  target's flattened-index proof using shared movement and symbolic rewrites.
+  Cover cancelling transposes, leading dimensions, symbolic bounds and byte
+  offsets across bitcasts. Preserve pending effects when extracting views.
+- Compare symbolic `STAGE` extent end to end: Tolk uses the active symbolic
+  size, while the target reserves its maximum extent. Establish allocation and
+  indexing requirements with a paired execution case before changing it.
+  Test optimizer resource bounds with symbolic dimensions rather than silently
+  treating unknown extents as one; distinguish a proven mismatch from a
+  conservative optimization difference.
+- Remove wrapping host `Int64` arithmetic from late comparison rewrites.
+  The interval proof in `decomp_op` can turn an empty signed-64 interval into
+  equality at `INT64_MIN`. Cover the local proof and its normal-pipeline
+  reachability, plus adjacent negated-comparison rules, against target exact
+  arithmetic. Audit PADTO and shared-memory products at the same boundaries.
+- Use the target's sanitized `signed_char` name for RDNA3 int8 tensor-core
+  fragments; distinguish source naming parity from fragment layout correctness.
 - Add deterministic beam coverage for reconsidering candidates rejected by
   the per-step compute filter. Measure search cost and selected kernels at
   the upstream stopping threshold. Port remaining heuristics, device-aware
