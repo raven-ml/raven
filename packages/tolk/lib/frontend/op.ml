@@ -1383,11 +1383,24 @@ let rec getitem t indices =
   | [] -> x
   | _ ->
       let dims = List.map fst tops and tensors = List.map snd tops in
+      (* Indexed axes that are not consecutive put the broadcast axes first:
+         moved to the front, they are consecutive and take the same linear
+         gather. *)
+      let x, dims =
+        let d0 = List.hd dims in
+        if dims = List.init (List.length dims) (fun i -> d0 + i) then (x, dims)
+        else
+          let rest =
+            List.filter
+              (fun d -> not (List.mem d dims))
+              (List.init (T.ndim x) Fun.id)
+          in
+          (Movement.permute x (dims @ rest), List.init (List.length dims) Fun.id)
+      in
       let big_shape = Uop.broadcast_shape (List.map T.symbolic_shape tensors) in
       let bshape_len = List.length big_shape in
       let d0 = List.hd dims in
       let dlast = List.nth dims (List.length dims - 1) in
-      let consecutive = dims = List.init (List.length dims) (fun i -> d0 + i) in
       let xshape = T.symbolic_shape x in
       let axis_size d =
         match Uop.const_int_value (List.nth xshape d) with
@@ -1395,9 +1408,11 @@ let rec getitem t indices =
         | None ->
             invalid_arg "Op.getitem: advanced indexing needs a concrete axis size"
       in
-      if List.length dims > 1 && consecutive then (
-        (* Consecutive integer-tensor indices: one linear gather over the
-           flattened block instead of a mask per axis. *)
+      if List.length dims > 1 then (
+        (* Several integer-tensor indices: one linear gather over the
+           flattened block. The tinygrad counterpart sums a product of one
+           mask per axis, which does not reduce to a load: the sum turns -0
+           into +0, and split, it multiplies a masked NaN by zero. *)
         let ishp = List.map axis_size dims in
         let strides = List.mapi (fun i _ -> prod (drop (i + 1) ishp)) ishp in
         let linear_idx =
@@ -1443,44 +1458,21 @@ let rec getitem t indices =
       else
         let xndim = T.ndim x in
         let pre_reduce_shape = take d0 xshape @ big_shape @ drop d0 xshape in
-        let mask =
-          match
-            List.map2
-              (fun d tn ->
-                let i =
-                  Movement.symbolic_broadcast_to
-                    (Movement.symbolic_reshape tn
-                       (T.symbolic_shape tn
-                        @ List.init (xndim - d0) (fun _ -> Uop.const_int 1)))
-                    pre_reduce_shape
-                in
-                one_hot_along_dim ~dim:(d - xndim) i (axis_size d))
-              dims tensors
-          with
-          | h :: tl -> Elementwise.uprod h tl
-          | [] -> assert false
+        let tn = List.hd tensors in
+        let i =
+          Movement.symbolic_broadcast_to
+            (Movement.symbolic_reshape tn
+               (T.symbolic_shape tn
+               @ List.init (xndim - d0) (fun _ -> Uop.const_int 1)))
+            pre_reduce_shape
         in
+        let mask = one_hot_along_dim ~dim:(d0 - xndim) i (axis_size d0) in
         let reshape_arg =
           take d0 xshape @ List.init bshape_len (fun _ -> Uop.const_int 1)
           @ drop d0 xshape
         in
-        let sum_axis = List.map (fun d -> d + bshape_len) dims in
-        let x =
-          let reshaped = Movement.symbolic_reshape x reshape_arg in
-          Reduce.sum ~axis:sum_axis ~dtype:(T.val_dtype x)
-            (Elementwise.where mask reshaped (T.i 0))
-        in
-        let permuted =
-          d0 <> 0 && List.length dims <> 1
-          && dims <> List.init (dlast - d0 + 1) (fun i -> d0 + i)
-        in
-        if not permuted then x
-        else
-          let nd = T.ndim x in
-          Movement.permute x
-            (List.init bshape_len (fun i -> d0 + i)
-            @ List.init d0 Fun.id
-            @ List.init (nd - (d0 + bshape_len)) (fun i -> d0 + bshape_len + i))
+        Reduce.sum ~axis:[ d0 + bshape_len ] ~dtype:(T.val_dtype x)
+          (Elementwise.where mask (Movement.symbolic_reshape x reshape_arg) (T.i 0))
 
 (* Boolean selection
 

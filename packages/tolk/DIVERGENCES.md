@@ -631,3 +631,18 @@ delete it rather than registering it.
   rune's `E_cat` (`Nx.concatenate`).
   Coverage: `test_run` "unequal extents keep every bit", rune's `test_jit`
   and `test_jit_metal` "concatenation keeps every bit", on CPU and Metal.
+
+- **Several tensor indices read through one linear gather**
+  (`frontend/op.ml` `getitem`). The reference selects `x[i, :, j]` by
+  summing `x` under the product of one mask per indexed axis. That product
+  does not reduce to a load. `x[2, :, 0]` of a `[256; 2; 256]` float32 whose
+  selected elements are -0, holding a NaN at `[3; 0; 0]`, came back
+  `[NaN; +0]` on CPU and Metal: the sum turned -0 into +0, and, split into
+  chunks, it multiplied the unread NaN by zero. tolk flattens the indexed
+  axes, which the reference's order puts first when they are not
+  consecutive, and gathers once at the linear index. `x[7, :, 200]` of a
+  `[256; 4; 256]` float32 compiles to one kernel of gated loads, where the
+  mask product took two with a 1024-element partial sum between them. Every
+  golden and parity output is unchanged. Coverage: `test_run`
+  "non-consecutive tensor indices select their elements", the shape tests in
+  `test_frontend`.

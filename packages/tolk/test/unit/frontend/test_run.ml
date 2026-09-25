@@ -296,6 +296,22 @@ let getitem_tests =
       test "tensor index" (fun () ->
           check_floats [| 8.; 9.; 10.; 11.; 0.; 1.; 2.; 3. |]
             (Op.getitem (base ()) [ Mv.T (Run.of_int_array ~shape:[ 2 ] [| 2; 0 |]) ]));
+      test "non-consecutive tensor indices select their elements" (fun () ->
+          (* x[i, :, j] reads x[2, :, 0], both -0, beside a NaN in a row it
+             does not read; a sum of masked elements gives +0, or NaN when a
+             masked NaN is multiplied by zero. *)
+          let module D = Tolk_uop.Dtype in
+          let bytes = Bytes.create (4 * 256 * 2 * 256) in
+          for k = 0 to (256 * 2 * 256) - 1 do
+            Bytes.set_int32_le bytes (4 * k)
+              (if k mod 256 = 0 then 0x80000000l else 0x3F800000l)
+          done;
+          Bytes.set_int32_le bytes (4 * 3 * 2 * 256) 0x7FC00000l;
+          let x = Run.of_bytes ~dtype:D.float32 ~shape:[ 256; 2; 256 ] bytes in
+          let at v = Run.of_int_array ~shape:[ 1 ] [| v |] in
+          let got = Run.data (Op.getitem x [ Mv.T (at 2); Mv.All; Mv.T (at 0) ]) in
+          equal (array int32) [| 0x80000000l; 0x80000000l |]
+            (Array.init 2 (fun k -> Bytes.get_int32_le got (4 * k))));
     ]
 
 (* The lowered kernel of [t] loads int32 indices, each under a gate. *)
