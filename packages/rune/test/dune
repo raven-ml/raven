@@ -66,6 +66,15 @@
  (package rune)
  (libraries rune nx nx.buffer tolk tolk.uop windtrap rune_test_support))
 
+; Alone in its executable: the compiled programs of a process share the
+; memory planner's arenas, which only grow.
+
+(tests
+ (names test_remat_memory)
+ (modules test_remat_memory)
+ (package rune)
+ (libraries rune nx tolk windtrap))
+
 (tests
  (names test_jit_cache)
  (modules test_jit_cache)
