@@ -196,54 +196,31 @@ let device ~target ~xccs ~gc_version ~nbio_version ~sdma_version
     queue_event;
   }
 
-let ensure_has_local_memory (dev : 'meta device) ~props ~alloc ~free
-    private_segment_size =
+let scratch_layout (dev : 'meta device) ~props private_segment_size =
+  let alignment = if major dev.target = 9 then 1024 else 256 in
+  let per_thread = round_up (max private_segment_size 128) (alignment / 64) in
+  let cu = prop props "simd_count" / prop props "simd_per_cu" / dev.xccs in
+  let slots = prop props "max_slots_scratch_cu" in
+  let per_xcc = per_thread * 64 * slots * cu in
+  let se = prop props "array_count" / prop props "simd_arrays_per_engine" / dev.xccs in
+  let wavesize = ceildiv (64 * per_thread) alignment in
+  let waves = min (cu * slots * dev.xccs)
+      (per_xcc / (wavesize * alignment) / (if major dev.target = 9 then 1 else se)) in
+  per_xcc * dev.xccs,
+  Amd_tables.tmpring_size ~target_major:(major dev.target) ~waves ~wavesize
+
+let ensure_has_local_memory (dev : 'meta device) ~props ~alloc ~free private_segment_size =
+  let private_segment_size = max private_segment_size 128 in
   if dev.max_private_segment_size < private_segment_size then begin
-    let lanes_per_wave = 64 in
-    let mem_alignment_size = if major dev.target <> 9 then 256 else 1024 in
-    let size_per_thread =
-      round_up private_segment_size (mem_alignment_size / lanes_per_wave)
-    in
-    let max_slots_scratch_cu = prop props "max_slots_scratch_cu" in
-    let cu_cnt =
-      prop props "simd_count" / prop props "simd_per_cu" / dev.xccs
-    in
-    let size_per_xcc =
-      size_per_thread * lanes_per_wave * max_slots_scratch_cu * cu_cnt
-    in
-    let old_size = Hcq.Buffer.size dev.scratch in
-    if old_size > 0 then free dev.scratch;
-    let scratch, grown =
-      match alloc (size_per_xcc * dev.xccs) with
-      | buf -> (buf, true)
-      (* out of memory: fall back to the old size so the device stays
-         usable, and leave the sizing state untouched *)
-      | exception Failure _ when old_size > 0 -> (alloc old_size, false)
-    in
+    let size, tmpring_size = scratch_layout dev ~props private_segment_size in
+    (* Allocation failure must preserve the old backing and fail the larger
+       launch. Returning success with undersized scratch corrupts memory. *)
+    let scratch = alloc size in
+    let previous = dev.scratch in
     dev.scratch <- scratch;
-    if grown then begin
-      let se_cnt =
-        prop props "array_count"
-        / prop props "simd_arrays_per_engine"
-        / dev.xccs
-      in
-      (* the per-die slicing below is only validated on generation-9
-         multi-die parts; every other supported chip is single-die *)
-      let max_scratch_waves = cu_cnt * max_slots_scratch_cu * dev.xccs in
-      let wave_scratch =
-        ceildiv (lanes_per_wave * size_per_thread) mem_alignment_size
-      in
-      let num_waves =
-        size_per_xcc
-        / (wave_scratch * mem_alignment_size)
-        / (if major dev.target <> 9 then se_cnt else 1)
-      in
-      dev.tmpring_size <-
-        Amd_tables.tmpring_size ~target_major:(major dev.target)
-          ~waves:(min num_waves max_scratch_waves)
-          ~wavesize:wave_scratch;
-      dev.max_private_segment_size <- private_segment_size
-    end
+    dev.tmpring_size <- tmpring_size;
+    dev.max_private_segment_size <- private_segment_size;
+    if Hcq.Buffer.size previous > 0 then free previous
   end
 
 (* Programs *)
@@ -1140,21 +1117,9 @@ module Encoded_queue = struct
           | Some {body; args}, _ when U.op body = Ops.Program && compute ->
               let data, program, arena, info = kernargs body args in
               let local = dims info.local_size and global = dims info.global_size in
-              let scratch, tmpring_size = if data.private_segment_size = 0 then u64 0, 0
-                else begin
-                  let alignment = if major dev.target = 9 then 1024 else 256 in
-                  let per_thread = round_up data.private_segment_size (alignment / 64) in
-                  let cu = prop props "simd_count" / prop props "simd_per_cu" / dev.xccs in
-                  let slots = prop props "max_slots_scratch_cu" in
-                  let per_xcc = per_thread * 64 * slots * cu in
-                  let se = prop props "array_count" / prop props "simd_arrays_per_engine" / dev.xccs in
-                  let wavesize = ceildiv (64 * per_thread) alignment in
-                  let waves = min (cu * slots * dev.xccs)
-                      (per_xcc / (wavesize * alignment) / (if major dev.target = 9 then 1 else se)) in
-                  let scratch = placeholder ~allocation:("amd_scratch", string_of_int (per_xcc * dev.xccs))
-                      name "scratch" D.uint8 (per_xcc * dev.xccs) |> addr name in
-                  scratch, Amd_tables.tmpring_size ~target_major:(major dev.target) ~waves ~wavesize
-                end in
+              let size, tmpring_size = scratch_layout dev ~props data.private_segment_size in
+              let scratch = placeholder ~allocation:("amd_scratch", string_of_int data.private_segment_size)
+                  name "scratch" D.uint8 size |> addr name in
               append_static (fun cq -> Compute_queue.acquire_mem cq ~gli:0 ~gl2:0 ());
               wreg "regCOMPUTE_PGM_LO" [shr (add (addr name program) (u64 data.entry_offset)) (u64 8)];
               wreg "regCOMPUTE_PGM_RSRC1" [u32 data.rsrc1; u32 data.rsrc2];
@@ -1916,6 +1881,7 @@ module State = struct
     pool : 'mem Hcq.Signal.Pool.t;
     tl : ('mem, 'mem device) Timeline.t;
     submission : Hcq.Submission.t;
+    mutable scratch : Tolk.Device.Buffer.t option;
     (* The device's LRU-wrapped allocator; set right after creation and used
        for scratch sizing. *)
     mutable allocator : 'mem Hcq.Buffer.t Tolk.Device.Allocator.t option;
@@ -2046,19 +2012,23 @@ module Allocator = struct
 end
 
 module Runtime = struct
-  (* Scratch backing goes through the LRU allocator so resizes reuse freed
-     device memory. *)
+  (* Retained links own the backing they captured. Growing the device's
+     current scratch drops only its reference, so older programs keep valid
+     addresses until their links are released. *)
   let ensure_scratch state size =
-    let allocator = Option.get state.State.allocator in
-    ensure_has_local_memory state.State.hw
-      ~props:state.State.iface.Iface.props
+    let owner = ref None in
+    ensure_has_local_memory state.State.hw ~props:state.State.iface.Iface.props
       ~alloc:(fun size ->
-        allocator.Tolk.Device.Allocator.alloc size
-          Tolk.Device.Buffer_spec.default)
-      ~free:(fun buf ->
-        allocator.Tolk.Device.Allocator.free buf (Hcq.Buffer.size buf)
-          Tolk.Device.Buffer_spec.default)
-      size
+        let spec = {Tolk.Device.Buffer_spec.default with nolru = true} in
+        let buffer = Tolk.Device.Buffer.create ~device:state.State.name ~size
+            ~dtype:Tolk_uop.Dtype.uint8 ~spec
+            (Tolk.Device.Allocator.Pack (Option.get state.State.allocator)) in
+        Tolk.Device.Buffer.ensure_allocated buffer;
+        let raw = Option.get (Tolk.Device.Buffer.get state.State.buffer_kind buffer) in
+        owner := Some buffer;
+        raw)
+      ~free:ignore size;
+    Option.iter (fun buffer -> state.State.scratch <- Some buffer) !owner
 
   let default_local = [| 1; 1; 1 |]
 
@@ -2071,7 +2041,12 @@ module Runtime = struct
           state.State.iface.Iface.alloc ~cpu_access:true size)
         ~props:state.State.iface.Iface.props ~name lib
     in
-    ensure_scratch state prg.Program.private_segment_size;
+    (match ensure_scratch state prg.Program.private_segment_size with
+     | () -> ()
+     | exception exn ->
+         let backtrace = Printexc.get_raw_backtrace () in
+         Program.free ~free:state.State.iface.Iface.free prg;
+         Printexc.raise_with_backtrace exn backtrace);
     let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       State.prepare state;
       let bufs = Array.map (fun buf ->
@@ -2144,8 +2119,9 @@ module Queue = struct
     | Some {param = {allocation = Some ("amd_image", image); _}; _} ->
         let b = allocate () in
         B.ensure_allocated b; B.copyin b (Bytes.of_string image); Some b
-    | Some {param = {allocation = Some ("amd_scratch", _); _}; _} ->
-        Some (allocate ~cpu_access:false ())
+    | Some {param = {allocation = Some ("amd_scratch", requested); _}; _} ->
+        Runtime.ensure_scratch state (int_of_string requested);
+        state.State.scratch
     | Some _ ->
         (match U.node_tag u with
          | Some "timeline" -> Some (borrowed (Hcq.Signal.buf state.State.tl.Timeline.timeline))
@@ -2322,6 +2298,7 @@ let open_device ~name iface =
         };
       allocator = None;
       submission = Hcq.Submission.create ();
+      scratch = None;
     }
   in
   (match iface.Iface.register with

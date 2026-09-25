@@ -37,7 +37,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   eligibility and unsupported-mapping fallback. Audit CUDA context/stream
   destruction and concurrent driver initialization. Complete AMD AQL/multi-XCC,
   race/recovery fixes and consumed firmware/register
-  tables. Port NV channel/descriptor, semaphore, GSP and compute submission
+  tables. Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
 - Complete PCI multi-die mappings and NV ring placement. Audit allocation-
   failure unwinding across KFD/NVK/PCI. Validate host/device placement,

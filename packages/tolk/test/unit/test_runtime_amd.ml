@@ -464,7 +464,7 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
       Device.Buffer.copyin (get "timeline") timeline;
       set_word "read_ptr_compute" (word "write_ptr_compute");
       if copies then set_word "read_ptr_copy" (word "write_ptr_copy")) [(-17, 3); (29, 11)];
-  equal bool (scratch <> 0) (Hashtbl.mem buffers "scratch")
+  is_true (Hashtbl.mem buffers "scratch")
 
 let queue_timeout () =
   let open Tolk in
@@ -512,7 +512,7 @@ let () =
         test "a full ring times out without overwriting unread commands" queue_full;
         test "executes wrapped compute submissions and patches replay arguments" (fun () ->
             execute_queue ~copies:false ~dispatch_ptr:false ~scratch:256);
-        test "executes SDMA wrapping with dispatch packets and no scratch" (fun () ->
+        test "executes SDMA wrapping with dispatch packets and minimum scratch" (fun () ->
             execute_queue ~copies:true ~dispatch_ptr:true ~scratch:0);
         test "compiles symbolic launch dimensions and mixed-width arguments" (fun () ->
             let compiled = compile_queue ~copies:false in
@@ -1373,7 +1373,7 @@ let () =
               (* already covered: nothing happens *)
               Tolk_amd.ensure_has_local_memory dev ~props ~alloc ~free 128;
               equal (list int) [ 0x3000000 ] !allocs;
-              (* growing frees the old buffer first *)
+              (* growing retires the old buffer after replacement succeeds *)
               Tolk_amd.ensure_has_local_memory dev ~props ~alloc ~free 512;
               equal (list int) [ 0x6000000; 0x3000000 ] !allocs;
               equal (list int) [ 0x3000000 ] !frees;
@@ -1393,11 +1393,11 @@ let () =
               let alloc size = Buffer.make ~va:0x900000n ~size ~meta:() () in
               Tolk_amd.ensure_has_local_memory dev ~props ~alloc
                 ~free:(fun _ -> ())
-                99;
-              (* 99 rounds to 100 B/thread (4-byte granule); 25 alignment
-                 granules per wave *)
-              equal int 19660800 (Buffer.size dev.Tolk_amd.scratch);
-              equal int (512 lor (25 lsl 12)) dev.tmpring_size);
+                131;
+              (* 131 rounds to 132 B/thread (4-byte granule); 33 alignment
+                 granules per wave. *)
+              equal int 25952256 (Buffer.size dev.Tolk_amd.scratch);
+              equal int (512 lor (33 lsl 12)) dev.tmpring_size);
           test "generation 9 uses its alignment and die count" (fun () ->
               let dev = gfx942 ~scratch:(no_scratch ()) () in
               let props =
@@ -1412,10 +1412,10 @@ let () =
               let alloc size = Buffer.make ~va:0x900000n ~size ~meta:() () in
               let free _ = () in
               Tolk_amd.ensure_has_local_memory dev ~props ~alloc ~free 4;
-              (* 4 rounds to 16 B/thread (1024/64 granule); one granule per
-                 wave; 8 dies of 16 B * 64 * 32 * 38 *)
-              equal int 0x980000 (Buffer.size dev.Tolk_amd.scratch);
-              equal int (1216 lor (1 lsl 12)) dev.tmpring_size;
+              (* Small requests retain the upstream 128 B/thread minimum:
+                 8 dies of 128 B * 64 * 32 * 38. *)
+              equal int 0x4c00000 (Buffer.size dev.Tolk_amd.scratch);
+              equal int (1216 lor (8 lsl 12)) dev.tmpring_size;
               Tolk_amd.ensure_has_local_memory dev ~props ~alloc ~free 512;
               equal int 0x13000000 (Buffer.size dev.scratch);
               equal int (1216 lor (32 lsl 12)) dev.tmpring_size);
@@ -1438,7 +1438,7 @@ let () =
                  generation 11; generation 12 carries 18 bits *)
               equal int 0x100000000 (Buffer.size dev.Tolk_amd.scratch);
               equal int (256 lor (0x8000 lsl 12)) dev.tmpring_size);
-          test "a failed grow falls back to the old size" (fun () ->
+          test "a failed grow preserves the old allocation and rejects the launch" (fun () ->
               let dev = gfx1100 ~scratch:(no_scratch ()) () in
               let props =
                 [
@@ -1457,11 +1457,14 @@ let () =
               in
               let free b = frees := Buffer.size b :: !frees in
               Tolk_amd.ensure_has_local_memory dev ~props ~alloc ~free 256;
-              Tolk_amd.ensure_has_local_memory dev ~props ~alloc ~free 1024;
-              (* the old buffer is gone, so its size is re-allocated and the
-                 sizing state stays at the 256-byte segment *)
-              equal (list int) [ 0x3000000; 0x3000000 ] !allocs;
-              equal (list int) [ 0x3000000 ] !frees;
+              let previous = dev.Tolk_amd.scratch in
+              raises_match (Exn.failure ~substring:"no memory") (fun () ->
+                  Tolk_amd.ensure_has_local_memory dev ~props ~alloc ~free 1024);
+              is_true (dev.scratch == previous);
+              (* The previous backing is still owned; failed growth neither
+                 frees nor reallocates it. *)
+              equal (list int) [ 0x3000000 ] !allocs;
+              equal (list int) [] !frees;
               equal int 0x3000000 (Buffer.size dev.Tolk_amd.scratch);
               equal int (512 lor (64 lsl 12)) dev.tmpring_size;
               equal int 256 dev.max_private_segment_size);

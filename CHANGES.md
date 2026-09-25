@@ -386,6 +386,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD direct launches and retained queues share owned scratch storage with
+  tinygrad's minimum sizing. Resizing preserves backing captured by older
+  replays; allocation failure rejects larger launches without discarding it.
+
 - Direct AMD launches support kernels requiring an HSA dispatch-packet pointer.
   AMD waits and AMD/NV DMA completion packets preserve timeline epochs by
   encoding only the low word in hardware dword fields.

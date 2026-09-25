@@ -107,22 +107,17 @@ val ensure_has_local_memory :
   int ->
   unit
 (** [ensure_has_local_memory dev ~props ~alloc ~free size] grows [dev]'s
-    scratch buffer until it covers a private segment of [size] bytes per
-    work-item, and stores the matching scratch-ring register value in
-    [dev.tmpring_size]. Does nothing when the scratch already covers
-    [size] (per [dev.max_private_segment_size]).
+    scratch buffer to cover [max size 128] private bytes per work-item and
+    stores the matching register value in [dev.tmpring_size]. Does nothing
+    when [dev.max_private_segment_size] already covers that requirement.
 
-    Growing frees the old buffer through [free] (unless it is empty,
-    the state of a freshly created device) and allocates the new one
-    through [alloc], sized from the device's compute topology in
-    [props]: ["simd_count"], ["simd_per_cu"], ["array_count"],
-    ["simd_arrays_per_engine"], and ["max_slots_scratch_cu"]. When
-    [alloc] raises [Failure] for the grown size, the old size is
-    allocated again and the sizing state is left unchanged, so the
-    device stays usable.
+    Allocation uses the device topology in [props]: ["simd_count"],
+    ["simd_per_cu"], ["array_count"], ["simd_arrays_per_engine"], and
+    ["max_slots_scratch_cu"]. A successful replacement retires the previous
+    nonempty buffer through [free]. Allocation failure leaves the previous
+    backing and sizing state unchanged and propagates to the caller.
 
-    Raises [Failure] when a property is missing or when allocation
-    fails without a previous size to fall back to. *)
+    Raises [Failure] when a property is missing or allocation fails. *)
 
 type 'meta program = {
   dev : 'meta device;  (** Device the program was loaded on. *)
