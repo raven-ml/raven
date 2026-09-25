@@ -693,20 +693,15 @@ let check_sort_values_are_elements ?devices ?(float64 = true) () =
   check "float8_e5m2" Nx.float8_e5m2 Nx.uint8;
   if float64 then check "float64" Nx.float64 Nx.int64
 
-(* Compiled [sort_pieces] of a [sort_input] against eager, segment by segment. A
-   zero compares without its sign: the compiled concatenation of the segments
-   turns some -0 into 0, which the sort itself does not
-   ([check_sort_values_are_elements] checks its bits). *)
+(* Compiled [sort_pieces] of a [sort_input] against eager, segment by segment,
+   zeros with their signs. *)
 let check_sort_pieces (type a b) ?infinities out pieces
     (dtype : (a, b) Nx.dtype) =
   let size shape = Array.fold_left ( * ) 1 shape in
   let total = List.fold_left (fun acc (s, _) -> acc + size s) 0 pieces in
   let x = sort_input ?infinities dtype total in
-  let unsigned_zero v = if v = 0. then 0. else v in
-  let expected = Array.map unsigned_zero (to_arr (sort_pieces out pieces x)) in
-  let actual =
-    Array.map unsigned_zero (to_arr (Rune.jit' (sort_pieces out pieces) x))
-  in
+  let expected = to_arr (sort_pieces out pieces x) in
+  let actual = to_arr (Rune.jit' (sort_pieces out pieces) x) in
   let at = ref 0 in
   List.iter
     (fun (shape, axis) ->
