@@ -28,33 +28,38 @@ static CUresult fake_launch(CUfunction f, unsigned gx, unsigned gy, unsigned gz,
   (void)shared; (void)stream; assert(params == NULL); assert(f == (CUfunction)0xcafe);
   capture(extra); return 0;
 }
-static CUresult fake_graph_create(CUgraph *g, unsigned flags) {
-  (void)flags; *g = (CUgraph)1; return 0;
+static tolk_cuda_queue queue = {.lock = PTHREAD_MUTEX_INITIALIZER};
+static unsigned handoffs;
+static CUresult fake_context(CUcontext ctx) { (void)ctx; return 0; }
+static CUresult fake_record(CUevent event, CUstream stream) {
+  (void)event; (void)stream; handoffs++; return 0;
 }
-static CUresult fake_graph_add(CUgraphNode *n, CUgraph g, const CUgraphNode *deps,
-    size_t count, const CUDA_KERNEL_NODE_PARAMS_v1 *p) {
-  (void)g; (void)deps; (void)count; *n = (CUgraphNode)2;
-  capture(p->extra); return 0;
+static CUresult fake_wait(CUstream stream, CUevent event, unsigned flags) {
+  (void)stream; (void)event; (void)flags; return 0;
 }
-static CUresult fake_instantiate(CUgraphExec *e, CUgraph g, CUgraphNode *n, char *log, size_t size) {
-  (void)g; (void)n; (void)log; (void)size; *e = (CUgraphExec)3; return 0;
-}
-static CUresult fake_set(CUgraphExec e, CUgraphNode n, const CUDA_KERNEL_NODE_PARAMS_v1 *p) {
-  (void)e; (void)n; capture(p->extra); return 0;
-}
-static CUresult fake_graph_destroy(CUgraph g) { (void)g; return 0; }
-static CUresult fake_exec_destroy(CUgraphExec e) { (void)e; return 0; }
 CAMLprim value caml_test_cuda_abi_setup(value unit) {
-  (void)unit;
+  CAMLparam1(unit);
   p_cuModuleGetFunction = fake_get;
   p_cuLaunchKernel = fake_launch;
-  p_cuGraphCreate = fake_graph_create;
-  p_cuGraphAddKernelNode = fake_graph_add;
-  p_cuGraphInstantiate = fake_instantiate;
-  p_cuGraphExecKernelNodeSetParams = fake_set;
-  p_cuGraphDestroy = fake_graph_destroy;
-  p_cuGraphExecDestroy = fake_exec_destroy;
-  return Val_unit;
+  p_cuCtxSetCurrent = fake_context;
+  p_cuEventRecord = fake_record;
+  p_cuStreamWaitEvent = fake_wait;
+  queue.status = 0;
+  queue.direct_pending = queue.queue_pending = 0;
+  handoffs = 0;
+  CAMLreturn(caml_copy_nativeint((intnat)&queue));
+}
+CAMLprim value caml_test_cuda_abi_submit(value function, value arguments) {
+  CAMLparam2(function, arguments);
+  tolk_cuda_hcq_begin(&queue);
+  tolk_cuda_hcq_launch(&queue, (CUfunction)Nativeint_val(function),
+      1, 1, 1, 1, 1, 1, Bytes_val(arguments), caml_string_length(arguments));
+  cuda_check(queue.status);
+  CAMLreturn(Val_unit);
+}
+CAMLprim value caml_test_cuda_abi_handoffs(value unit) {
+  (void)unit;
+  return Val_int(handoffs);
 }
 CAMLprim value caml_test_cuda_abi_captured(value unit) {
   CAMLparam1(unit);
