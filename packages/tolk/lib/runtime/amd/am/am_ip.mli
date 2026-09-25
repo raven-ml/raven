@@ -357,6 +357,10 @@ module Gfx : sig
       the engines. Raises {!Timeout_error} when the firmware does not
       acknowledge safe mode. *)
 
+  val halt_engines : t -> unit
+  (** [halt_engines t] halts both compute micro-engines on every compute die,
+      preserving unrelated control bits. *)
+
   val fini_hw : t -> unit
   (** [fini_hw t] drains and deactivates the active hardware queues.
       Raises {!Timeout_error} when a queue does not drain on a healthy
@@ -436,6 +440,10 @@ module Sdma : sig
       addresses, and enables it. Returns the queue's doorbell index.
       Raises [Failure] for a queue index the generation does not
       have. *)
+
+  val halt_engines : t -> unit
+  (** [halt_engines t] halts the F32 or MCU controller on SDMA 6 and later.
+      Earlier generations are unchanged. *)
 
   val fini_hw : t -> unit
   (** [fini_hw t] disables every queue {!setup_ring} created and, on

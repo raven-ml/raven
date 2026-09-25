@@ -1037,6 +1037,16 @@ module Gfx = struct
     (* Wait for MEC to be ready *)
     sleep_ms t.adev 50
 
+  let halt_engines t =
+    for inst = 0 to t.xccs - 1 do
+      if Amdev.ip_ver t.adev Am.gc_hwip >= (10, 0, 0) then
+        Am_register.update (Amdev.reg t.adev ~inst "regCP_MEC_RS64_CNTL")
+          [ ("mec_halt", 1) ]
+      else
+        Am_register.update (Amdev.reg t.adev ~inst "regCP_MEC_CNTL")
+          [ ("mec_me1_halt", 1); ("mec_me2_halt", 1) ]
+    done
+
   (* ip.py:381 _config_mec *)
   let config_mec t ~fw =
     let adev = t.adev in
@@ -1739,6 +1749,12 @@ module Sdma = struct
     if not (List.mem (reg, inst) t.sdma_reginst) then
       t.sdma_reginst <- t.sdma_reginst @ [reg, inst];
     doorbell
+
+  let halt_engines t =
+    if Amdev.ip_ver t.adev Am.sdma0_hwip >= (6, 0, 0) then
+      Am_register.update
+        (Amdev.reg t.adev ("regSDMA0_" ^ t.sdma_name ^ "_CNTL"))
+        [ ("halt", 1) ]
 
   (* ip.py:525 AM_SDMA.fini_hw *)
   let fini_hw t =

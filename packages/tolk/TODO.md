@@ -36,7 +36,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   Validate AMD AQL/multi-XCC
   dispatch and direct ring/staging reuse under long asynchronous batches.
   Complete AMD race/recovery fixes and consumed firmware/register
-  tables.
+  tables: preserve GC 9.5 partial boots,
+  disable PCIe ASPM before MMIO reads, and reconcile TMR reservation/session
+  stamps. Audit VF mailbox leases, gated register access and PF-only boot
+  operations against the existing AMD device scope; justify any retained gap.
   Reconcile scratch growth across retained and multi-device links. Port NV channel/descriptor, semaphore, GSP and compute submission
   fixes, including compute hunks in video-labelled commits.
 - Complete PCI multi-die mappings. Finish rollback of

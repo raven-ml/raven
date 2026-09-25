@@ -2330,6 +2330,20 @@ let () =
                   fd.log := [];
                   Am_boot.init t;
                   let log = writes fd in
+                  (* A live device must lower its clocks and halt both engines
+                     before the reset; reinitialization follows the reset. *)
+                  let reset = first_write_to fd "mmMP1_SMN_C2PMSG_75" log in
+                  List.iter (fun name ->
+                      equal bool true (first_write_to fd name log < reset))
+                    ["mmMP1_SMN_C2PMSG_66"; "regCP_MEC_RS64_CNTL";
+                     "regSDMA0_F32_CNTL"];
+                  let before_reset = List.filteri (fun i _ -> i < reset) log in
+                  let assert_halted name field =
+                    let register = Amdev.Am_register.reg (Amdev.reg fd.dev name) in
+                    let value = List.assoc register.Reg.addr (List.rev before_reset) in
+                    equal int 1 (List.assoc field (Reg.decode register value)) in
+                  assert_halted "regCP_MEC_RS64_CNTL" "mec_halt";
+                  assert_halted "regSDMA0_F32_CNTL" "halt";
                   (* the debug-mailbox reset ran before any block came up *)
                   equal bool true
                     (first_write_to fd "mmMP1_SMN_C2PMSG_75" log

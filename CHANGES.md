@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI initialization lowers clocks and halts compute and DMA engines
+  before resetting a live device, avoiding resets while engines run at full speed.
+
 - NVIDIA PCI command rings stay in device memory on small-BAR cards, matching
   the physical addresses used when GSP creates their channels.
 
