@@ -1,52 +1,41 @@
 # Ppx_ptree
 
-`ppx_ptree` derives the rank-2 tensor traversals required by `Nx.Ptree.S`:
+`ppx_ptree` derives the `walk` of a structure from its type. A structure
+(`Nx.Ptree.S`) is a type `'a t` with one function, `walk`, that visits the
+parts of a value with an `Nx.Ptree.Walk` cursor; every transformation,
+optimizer and checkpoint works from it. The deriver writes the function a
+hand-written structure would:
 
 ```ocaml
-type t = {
-  weight : Nx.float32_t;
-  bias : Nx.float32_t option;
-  name : string [@ptree.ignore];
-}
-[@@deriving ptree]
+module Mlp = struct
+  type 'a t = {
+    l1 : 'a Kaun.Linear.t;
+    l2 : 'a Kaun.Linear.t;
+    window : int option; [@ptree.int]
+    name : string; [@ptree.skip]
+  }
+  [@@deriving ptree]
+end
+
+let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
-The declaration generates `map`, `map2`, and `iter`. A type with any other
-name generates suffixed functions, such as `map_state`, `map2_state`, and
-`iter_state`. This lets one declaration group contain helper structures while
-reserving the unsuffixed names for one primary `t` or `params` type.
+The derived `walk` visits `l1` and `l2` with `Kaun.Linear.walk` under their
+field names, reports the window's presence and value, and copies the name.
+It is equivalent to:
 
-The same attribute on a payload-generic type — one type parameter, occurring
-outside tensor leaves — derives the rank-1 uniform traversals instead; see
-[Uniform types](#uniform-payload-generic-types) below.
+```ocaml
+let walk c x =
+  let l1 = Nx.Ptree.Walk.field c "l1" Kaun.Linear.walk x.l1 in
+  let l2 = Nx.Ptree.Walk.field c "l2" Kaun.Linear.walk x.l2 in
+  let window = Nx.Ptree.Walk.field c "window" Nx.Ptree.Walk.(option int) x.window in
+  { l1; l2; window; name = x.name }
+```
 
-## Supported shapes
+A derived walk and a hand-written one are interchangeable; raven's own
+packages write theirs by hand.
 
-Tensor leaves may use `('a, 'b) Nx.t`, `Nx_effect.t`, or any of Nx's concrete
-tensor aliases. Records, tuples, `option`, `list`, and `array` compose
-recursively. Qualified `M.t` and `M.params` types delegate to `M.map`,
-`M.map2`, and `M.iter`.
-
-Use attributes when syntax alone cannot express the intended role:
-
-- `[@ptree.leaf]` treats the annotated type as a tensor leaf. OCaml still
-  checks that it is an `Nx.t`.
-- `[@ptree.ignore]` copies metadata in `map`, takes the left value in `map2`,
-  and skips it in `iter`.
-- `[@ptree.using M]` delegates a subtree to module `M`.
-
-Attributes on record labels apply to the whole field. Put an attribute on a
-core type to annotate a nested component, for example
-`(Nx.Rng.key [@ptree.leaf]) option`.
-
-Variants and dynamic tree representations are intentionally out of scope.
-Container constructors and lengths, as well as ignored values, must remain
-stable for the lifetime of a Rune JIT closure.
-
-## Build setup
-
-Add `ppx_ptree` as a PPX and depend directly on `nx`, since generated code uses
-the public `Nx.t` type:
+## Setup
 
 ```lisp
 (library
@@ -54,114 +43,88 @@ the public `Nx.t` type:
  (preprocess (pps ppx_ptree)))
 ```
 
-The PPX adds no runtime dependency.
+The generated code uses `Nx.Ptree`, so the library depends on `nx`. The
+deriver adds no runtime dependency.
 
-## Uniform (payload-generic) types
+## Generated values
 
-When a type has exactly one type parameter and that parameter occurs outside
-tensor leaves, `[@@deriving ptree]` derives rank-1, type-changing traversals
-instead — the `Nx.Ptree.Uniform` shape:
+- `walk` for a type named `t`, and `walk_name` for a type `name`.
+- For a type without a parameter, also `ptree : t Nx.Ptree.t` (or
+  `ptree_name`), its structure at its one type:
 
-```ocaml
-type 'a t = { w : 'a; b : 'a option; name : string }
-[@@deriving ptree]
+  ```ocaml
+  type state = { scale : Nx.float32_t; steps : Nx.int32_t } [@@deriving ptree]
+  (* walk_state, and ptree_state : state Nx.Ptree.t *)
+  ```
+
+  A type with a parameter has one structure per payload type, so it gets no
+  `ptree`; `Nx.Ptree.instantiate (module M)` builds one where the dtype is
+  known.
+- In an interface, `[@@deriving ptree]` declares the same values.
+
+## How a part is walked
+
+Records walk their fields in declaration order under the fields' names.
+Variants report the constructor's name as their case, then walk their
+arguments: one argument at the constructor's path, several at indices `0`,
+`1`, ..., an inline record's fields by name.
+
+| Part's type | Walk |
+|---|---|
+| the parameter `'a` | `Walk.leaf` |
+| `('x, 'y) Nx.t`, `Nx.float32_t` and the other aliases, `Nx.Rng.key` | `Walk.tensor` |
+| `ty option`, `ty list` | `Walk.option`, `Walk.list` |
+| `ty array` | length reported with `Walk.int`, then each element at its index |
+| a tuple | each component with `Walk.index` |
+| `'a M.t`, `'a M.name` | `M.walk`, `M.walk_name` |
+| `'a name` of the declaration group or defined before it | `walk_name` |
+| `M.t`, `M.name` | `Walk.structure M.ptree`, `Walk.structure M.ptree_name` |
+| `name` of the declaration group | `walk_name` |
+| `name` defined before it | `Walk.structure ptree_name` |
+| `Nx.float32_t M.t`, a fixed instance of a module's `t` | `Walk.structure (Nx.Ptree.nest (module M) Nx.Ptree.tensor)` |
+| `int`, `bool` under `[@ptree.int]` | `Walk.int` |
+
+A qualified type without arguments is taken to be a structure at one type
+named by the `ptree` convention, as `Kaun.Cache_index.ptree` and
+`Nx_quant.ptree` are. A type that follows neither convention fails to compile
+at the part's type, for example with `Unbound value M.walk`.
+
+## Attributes
+
+An attribute goes after a record field, or on a type to annotate a nested
+part: `(int [@ptree.int]) list`. A part takes at most one.
+
+- `[@ptree.int]` reports the part's integers and bools. A compiled program is
+  cached per reported value: mark an integer that changes what a program
+  computes, such as a window or a block size.
+- `[@ptree.skip]` leaves the part out of the walk; the rebuilt value keeps it.
+  It is for data no compiled program depends on, such as a name, and its type
+  must not mention the parameter.
+- `[@ptree.walk f]` walks the part with `f`. A part that has a structure at one
+  type and no module, such as an optimizer state, is
+  `[@ptree.walk Nx.Ptree.Walk.structure (Vega.adam_ptree mlp)]`.
+
+An `int` or `bool` without an attribute is an error. Reporting it would compile
+a program per value for data no program reads, and leaving it out would freeze
+data a program reads into its first trace; the attribute says which it is.
+
+## Errors
+
+The deriver reports each unsupported part at its source location: scalar
+data without an attribute, functions, objects, polymorphic variants,
+first-class modules, GADT constructors, abstract, extensible and private
+types, types with more than one parameter, and the parameter inside a tensor
+type or a skipped part. For a field `count : int`:
+
 ```
-
-This produces `map`, `map2`, `iter`, `fold`, `fold2`, and `names`:
-
-```ocaml
-val map   : ('a -> 'b) -> 'a t -> 'b t
-val map2  : ('a -> 'b -> 'c) -> 'a t -> 'b t -> 'c t
-val iter  : ('a -> unit) -> 'a t -> unit
-val fold  : (string -> 'acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-val fold2 : (string -> 'acc -> 'a -> 'b -> 'acc) -> 'acc -> 'a t -> 'b t -> 'acc
-val names : 'a t -> string t
+Error: ppx_ptree: field [count] is an int; report it with [@ptree.int] if a
+compiled program depends on it, or leave it out with [@ptree.skip]
 ```
-
-`fold` and `fold2` pass each payload leaf's path to the callback, and `names`
-is the tree of those paths, computed from a value so optional and variable-size
-containers resolve. A path is the dot-joined sequence of record field names and
-container indices from the root — `"w"`, `"layers.0"`, `"pair.1"` — matching
-the checkpoint naming convention; `Some` contributes no segment, and a payload
-at the root has the empty path.
-
-Payload positions are the positions where `'a` occurs directly — not inside an
-`Nx.t` leaf. Fields without `'a` are static metadata: preserved by `map`,
-left-biased by `map2`, skipped by `iter`/`fold`/`fold2`, copied by `names`.
-The `[@ptree.*]` attributes do not apply to payload positions of uniform
-types; a field whose bare `'a` carries an attribute keeps its rank-2 meaning
-for mode selection, so records like `{ tag : 'tag [@ptree.ignore]; ... }`
-continue to derive the classic traversals.
-
-### Nesting
-
-A field `'a sub` (a sibling type in the same declaration group) or `'a Sub.t`
-delegates to the sibling's or `Sub`'s uniform traversals. Delegated types must
-be applied to the payload parameter alone.
-
-Paths compose: a leaf the delegate reports as `"w"` under a field `head` becomes
-`"head.w"`. A delegate whose payload sits at its own root — `type 'a leaf = 'a`
-— reports the empty path, so a field `bias : 'a leaf` yields `"bias"`.
-
-### Bridge to Ptree.S
-
-`Nx.Ptree.instantiate` fills a uniform type's payload at a single tensor
-type, yielding the `Nx.Ptree.S` walker the transformations take (in kaun,
-`Kaun.ptree` is the same function):
-
-```ocaml
-module Params = struct
-  type 'a t = { w : 'a; b : 'a }
-  [@@deriving ptree]
-end
-
-let p = Nx.Ptree.instantiate (module Params)
-
-let g = Rune.grad p loss params
-```
-
-For mixed leaf dtypes, the `Nx.Ptree.Make` functor packs the leaves instead:
-`Nx.Ptree.Make (Params)` satisfies `Nx.Ptree.S` with `t` equal to
-`Nx.Ptree.tensor Params.t`; recover a typed tensor from one with
-`Nx.Ptree.unpack`.
-
-### Mirror mode (concrete records)
-
-`[@@deriving ptree ~mirror]` on a concrete type additionally generates a
-uniform mirror alongside the rank-2 traversals:
-
-- `module Uniform` — the payload-generic mirror `'m t` with all six uniform
-  traversals; static fields keep their original types.
-- `val to_uniform : t -> Nx.Ptree.tensor Uniform.t` — packs tensor leaves.
-- `val of_uniform : Nx.Ptree.tensor Uniform.t -> t` — unpacks with dtype
-  checks (generated only when every leaf dtype is statically known, e.g.
-  `Nx.float32_t`; errors carry the leaf's path).
-
-```ocaml
-type t = { w : Nx.float32_t; b : Nx.float16_t }
-[@@deriving ptree ~mirror]
-
-(* uniform traversals on the mirror view: *)
-let symmetrize (params : t) (syms : Symmetry.t Uniform.t) : t =
-  let u = to_uniform params in
-  let zipped =
-    Uniform.map2
-      (fun (Nx.Ptree.P x) sym -> Nx.Ptree.P (Symmetry.project sym x))
-      u syms
-  in
-  of_uniform zipped
-```
-
-A field `linear : Linear.t` maps to `'m Linear.Uniform.t` in the mirror;
-`Linear` must itself derive `[@@deriving ptree ~mirror]`. Mirror mode applies
-to a single declaration whose definition is visible, without locally declared
-or recursive sub-structures.
 
 ## Example
 
-The [Rune linear-regression example](examples/01-rune-linear-regression/)
-derives a parameter module and passes it directly to `Rune.grad` and
-`Rune.jit2`:
+The [linear-regression example](examples/01-rune-linear-regression/) derives
+a parameter record and trains it with `Rune.grad` under `Rune.jit`:
 
 ```sh
 dune exec packages/ppx_ptree/examples/01-rune-linear-regression/main.exe

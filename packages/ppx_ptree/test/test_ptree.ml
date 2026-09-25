@@ -3,593 +3,414 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Each derived walk visits what a hand-written walk of the same type visits:
+   the same leaves and reports, at the same paths, in the same order. *)
+
 open Windtrap
 
-let f32 values = Nx.create Nx.float32 [| Array.length values |] values
-let f64 values = Nx.create Nx.float64 [| Array.length values |] values
+let f32 = Nx.float32
+let vec xs = Nx.create f32 [| Array.length xs |] xs
+let ints xs = Nx.create Nx.int32 [| Array.length xs |] xs
 
-module Tensor_alias = struct
-  type t = Nx.float32_t [@@deriving ptree]
-end
+let visits s x =
+  List.map (Format.asprintf "%a" Nx.Ptree.pp_visit) (Nx.Ptree.visits s x)
 
-module Tensor_alias_as_ptree : Nx.Ptree.S with type t = Tensor_alias.t =
-  Tensor_alias
+let same ~msg ~hand derived x =
+  let expected = visits hand x in
+  is_true ~msg:(msg ^ " visits something") (expected <> []);
+  equal ~msg (list string) expected (visits derived x)
 
-module Effect_leaf = struct
-  type t = (float, Nx.float32_elt) Nx_effect.t [@@deriving ptree]
-end
+(* Parameter positions, options, lists and tuples. *)
 
-module Effect_leaf_as_ptree : Nx.Ptree.S with type t = Effect_leaf.t =
-  Effect_leaf
-
-module All_aliases = struct
-  type t = {
-    float16 : Nx.float16_t;
-    float32 : Nx.float32_t;
-    float64 : Nx.float64_t;
-    bfloat16 : Nx.bfloat16_t;
-    float8_e4m3 : Nx.float8_e4m3_t;
-    float8_e5m2 : Nx.float8_e5m2_t;
-    int4 : Nx.int4_t;
-    uint4 : Nx.uint4_t;
-    int8 : Nx.int8_t;
-    uint8 : Nx.uint8_t;
-    int16 : Nx.int16_t;
-    uint16 : Nx.uint16_t;
-    int32 : Nx.int32_t;
-    uint32 : Nx.uint32_t;
-    int64 : Nx.int64_t;
-    uint64 : Nx.uint64_t;
-    complex64 : Nx.complex64_t;
-    complex128 : Nx.complex128_t;
-    bool : Nx.bool_t;
-  }
+module Record = struct
+  type 'a t = { w : 'a; b : 'a option; layers : 'a list; pair : 'a * 'a }
   [@@deriving ptree]
 end
 
-module All_aliases_as_ptree : Nx.Ptree.S with type t = All_aliases.t =
-  All_aliases
+module Record_hand = struct
+  type 'a t = 'a Record.t
 
-module Open_alias = struct
+  let walk c (x : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf x.w in
+    let b = field c "b" (option leaf) x.b in
+    let layers = field c "layers" (list leaf) x.layers in
+    let pair =
+      field c "pair"
+        (fun c (p, q) ->
+          let p = index c 0 leaf p in
+          let q = index c 1 leaf q in
+          (p, q))
+        x.pair
+    in
+    { w; b; layers; pair }
+end
+
+let test_record () =
+  let x =
+    Record.
+      {
+        w = vec [| 1. |];
+        b = None;
+        layers = [ vec [| 2. |]; vec [| 3. |] ];
+        pair = (vec [| 4. |], vec [| 5. |]);
+      }
+  in
+  same ~msg:"record"
+    ~hand:(Nx.Ptree.instantiate (module Record_hand))
+    (Nx.Ptree.instantiate (module Record))
+    x;
+  same ~msg:"present option"
+    ~hand:(Nx.Ptree.instantiate (module Record_hand))
+    (Nx.Ptree.instantiate (module Record))
+    { x with b = Some (vec [| 6. |]) }
+
+(* Tensors of a fixed type, and the structure of a type without parameter. *)
+
+module Tensors = struct
   open Nx
 
-  type t = { value : float32_t } [@@deriving ptree]
-end
-
-module Open_alias_as_ptree : Nx.Ptree.S with type t = Open_alias.t = Open_alias
-
-module Simple = struct
-  type t = { weight : Nx.float32_t; bias : Nx.float64_t } [@@deriving ptree]
-end
-
-module Simple_as_ptree : Nx.Ptree.S with type t = Simple.t = Simple
-
-module Generic = struct
-  type 'dtype params = { weight : (float, 'dtype) Nx.t } [@@deriving ptree]
-  type t = Nx.float32_elt params
-end
-
-module Generic_as_ptree : Nx.Ptree.S with type t = Generic.t = Generic
-
-module Phantom = struct
-  type 'phantom params = { weight : Nx.float32_t } [@@deriving ptree]
-  type t = unit params
-end
-
-module Phantom_as_ptree : Nx.Ptree.S with type t = Phantom.t = Phantom
-
-module Variance = struct
-  type +'tag params = { weight : Nx.float32_t; tag : 'tag [@ptree.ignore] }
-  [@@deriving ptree]
-
-  type t = string params
-end
-
-module Variance_as_ptree : Nx.Ptree.S with type t = Variance.t = Variance
-
-module Aliased_core = struct
-  type t = Nx.float32_t as 'tensor [@@deriving ptree]
-end
-
-module Aliased_core_as_ptree : Nx.Ptree.S with type t = Aliased_core.t =
-  Aliased_core
-
-module type Private_signature = sig
-  type t = private { weight : Nx.float32_t } [@@deriving ptree]
-end
-
-module Existing = struct
-  type t = Nx.float32_t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) value = f value
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) value = f value
-end
-
-module Existing_params = struct
-  type 'dtype params = { value : (float, 'dtype) Nx.t }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) params =
-    { value = f params.value }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) left
-      right =
-    { value = f left.value right.value }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) params = f params.value
-end
-
-module Automatic_params = struct
-  type t = { nested : Nx.float32_elt Existing_params.params } [@@deriving ptree]
-end
-
-module Automatic_params_as_ptree : Nx.Ptree.S with type t = Automatic_params.t =
-  Automatic_params
-
-module Derived_helper = struct
-  type helper = { value : Nx.float32_t } [@@deriving ptree]
-end
-
-module Handwritten_outer = struct
-  type t = { inner : Derived_helper.helper }
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (value : t) =
-    { inner = Derived_helper.map_helper f value.inner }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t)
-      (left : t) (right : t) =
-    { inner = Derived_helper.map2_helper f left.inner right.inner }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (value : t) =
-    Derived_helper.iter_helper f value.inner
-end
-
-module Handwritten_outer_as_ptree :
-  Nx.Ptree.S with type t = Handwritten_outer.t =
-  Handwritten_outer
-
-module Composite = struct
-  type state = { step : Nx.int64_t }
-
-  and t = {
-    pair : Nx.float32_t * Nx.float64_t;
-    optional : Nx.float32_t option;
-    layers : Existing.t list;
-    buffers : Existing.t array;
-    state : state;
-    name : string; [@ptree.ignore]
-  }
-  [@@deriving ptree]
-end
-
-module Recursive = struct
-  type node = { value : Nx.float32_t; next : node option }
-  and t = { root : node } [@@deriving ptree]
-end
-
-module Annotations = struct
-  type weight = Nx.float32_t
-
   type t = {
-    weight : weight; [@ptree.leaf]
-    delegated : Simple.t; [@ptree.using Simple]
-    ignored : int; [@ptree.ignore]
+    scale : Nx.float32_t;
+    shift : (float, Nx.float64_elt) Nx.t;
+    key : Nx.Rng.key;
+    count : int32_t;
   }
   [@@deriving ptree]
 end
 
-module Nested_annotation = struct
-  type weight = Nx.float32_t
-  type t = { optional : (weight[@ptree.leaf]) option } [@@deriving ptree]
+module Tensors_hand = struct
+  type _ t = Tensors.t
+
+  let walk c (x : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let scale = field c "scale" tensor x.scale in
+    let shift = field c "shift" tensor x.shift in
+    let key = field c "key" tensor x.key in
+    let count = field c "count" tensor x.count in
+    { scale; shift; key; count }
 end
 
-module Ignored_unsupported = struct
+let tensors =
+  Tensors.
+    {
+      scale = vec [| 1. |];
+      shift = Nx.create Nx.float64 [| 1 |] [| 2. |];
+      key = Nx.Rng.key 0;
+      count = ints [| 3l |];
+    }
+
+let test_tensors () =
+  same ~msg:"tensors"
+    ~hand:(Nx.Ptree.instantiate (module Tensors_hand))
+    Tensors.ptree tensors;
+  let doubled = Nx.Ptree.map Tensors.ptree (fun _ t -> Nx.add t t) tensors in
+  equal ~msg:"ptree maps the tensors" (array float_exact) [| 4. |]
+    (Nx.to_array doubled.Tensors.shift)
+
+(* Structures: a module's walk at the parameter, a structure at one type for a
+   type without parameter, and a fixed instance of a module's [t]. *)
+
+module Model = struct
+  type 'a block = { attn : 'a Kaun.Linear.t; mlp : 'a Kaun.Linear.t list }
+
+  and 'a t = {
+    blocks : 'a block list;
+    head : 'a Kaun.Linear.t;
+    stats : Tensors.t;
+    index : Kaun.Cache_index.t;
+    frozen : Nx.float32_t Kaun.Linear.t;
+  }
+  [@@deriving ptree]
+end
+
+module Model_hand = struct
+  type 'a t = 'a Model.t
+
+  let block c (b : _ Model.block) : _ Model.block =
+    let open Nx.Ptree.Walk in
+    let attn = field c "attn" Kaun.Linear.walk b.attn in
+    let mlp = field c "mlp" (list Kaun.Linear.walk) b.mlp in
+    { attn; mlp }
+
+  let walk c (m : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let blocks = field c "blocks" (list block) m.blocks in
+    let head = field c "head" Kaun.Linear.walk m.head in
+    let stats = field c "stats" (structure Tensors.ptree) m.stats in
+    let index = field c "index" (structure Kaun.Cache_index.ptree) m.index in
+    let frozen =
+      field c "frozen"
+        (structure (Nx.Ptree.instantiate (module Kaun.Linear)))
+        m.frozen
+    in
+    { blocks; head; stats; index; frozen }
+end
+
+let model =
+  Model.
+    {
+      blocks =
+        [
+          {
+            attn = Kaun.Linear.init ~inputs:2 ~outputs:2;
+            mlp = [ Kaun.Linear.init ~inputs:2 ~outputs:2 ];
+          };
+        ];
+      head = Kaun.Linear.init ~inputs:2 ~outputs:1;
+      stats = tensors;
+      index =
+        Kaun.Cache_index.window 4 (Kaun.Cache_index.rows ~context:8 [| 0 |]);
+      frozen = Kaun.Linear.init ~inputs:1 ~outputs:1;
+    }
+
+let test_model () =
+  same ~msg:"model"
+    ~hand:(Nx.Ptree.instantiate (module Model_hand))
+    (Nx.Ptree.instantiate (module Model))
+    model;
+  let cast = Nx.Ptree.cast (module Model) Nx.float16 model in
+  is_true ~msg:"cast casts the parameter" (Nx.dtype cast.head.w = Nx.float16);
+  is_true ~msg:"cast keeps a fixed instance" (cast.frozen.w == model.frozen.w)
+
+(* [@ptree.walk e] walks a part with [e]. *)
+
+let model_ptree = Nx.Ptree.instantiate (module Model)
+let adam = Vega.adam_ptree model_ptree
+
+module State = struct
   type t = {
-    callback : int -> int; [@ptree.ignore]
-    reference : int ref; [@ptree.ignore]
-    lazy_value : int Lazy.t; [@ptree.ignore]
-    table : (string, int) Hashtbl.t; [@ptree.ignore]
+    params : Nx.float32_t Model.t;
+        [@ptree.walk Nx.Ptree.Walk.structure model_ptree]
+    opt : Nx.float32_t Model.t Vega.adam_state;
+        [@ptree.walk Nx.Ptree.Walk.structure adam]
   }
   [@@deriving ptree]
 end
 
-module Mutual = struct
-  type left = { value : Nx.float32_t; right : right option }
-  and right = { value : Nx.float32_t; left : left option }
-  and t = { root : left } [@@deriving ptree]
+module State_hand = struct
+  type _ t = State.t
+
+  let walk c (s : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let params = field c "params" (structure model_ptree) s.params in
+    let opt = field c "opt" (structure adam) s.opt in
+    { params; opt }
 end
 
-module Ignored_only = struct
-  type t = { name : string [@ptree.ignore] } [@@deriving ptree]
-end
+let test_walk_attribute () =
+  let state =
+    State.{ params = model; opt = Vega.adam_init model_ptree model }
+  in
+  same ~msg:"walk attribute"
+    ~hand:(Nx.Ptree.instantiate (module State_hand))
+    State.ptree state
 
-module Ignored_alias = struct
-  type t = (string[@ptree.ignore]) [@@deriving ptree]
-end
+(* [@ptree.int] reports integers and bools; [@ptree.skip] copies a part. *)
 
-module Ignored_exotic = struct
-  module type S = sig end
-
-  type t = {
-    object_value : < get : int >; [@ptree.ignore]
-    package_value : (module S); [@ptree.ignore]
+module Data = struct
+  type 'a t = {
+    w : 'a;
+    window : int option; [@ptree.int]
+    causal : bool; [@ptree.int]
+    sizes : (int[@ptree.int]) list;
+    name : string; [@ptree.skip]
   }
   [@@deriving ptree]
 end
 
-module Mutable = struct
-  type 'tag params = {
-    mutable weight : Nx.float32_t;
-    tag : 'tag; [@ptree.ignore]
-  }
-    constraint 'tag = string
-  [@@deriving ptree]
+module Data_hand = struct
+  type 'a t = 'a Data.t
+
+  let walk c (x : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf x.w in
+    let window = field c "window" (option int) x.window in
+    let causal =
+      field c "causal" (fun c b -> int c (Bool.to_int b) <> 0) x.causal
+    in
+    let sizes = field c "sizes" (list int) x.sizes in
+    { w; window; causal; sizes; name = x.name }
 end
 
-module Integration = struct
-  type t = {
-    weight : Nx.float32_t;
-    bias : Nx.float64_t;
-    label : string; [@ptree.ignore]
-  }
-  [@@deriving ptree ~mirror]
-end
-
-module Jit_structure = struct
-  type t = { left : Nx.float32_t list; right : Nx.float32_t list }
-  [@@deriving ptree]
-end
-
-module Manual_simple = struct
-  type t = Simple.t
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (value : t) =
-    Simple.{ weight = f value.weight; bias = f value.bias }
-
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t)
-      (left : t) (right : t) =
-    Simple.
-      { weight = f left.weight right.weight; bias = f left.bias right.bias }
-
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (value : t) =
-    f value.weight;
-    f value.bias
-end
-
-let test_single_aliases_and_delegation () =
-  let tensor = f32 [| 1.; 2. |] in
-  let count = ref 0 in
-  let mapped =
-    Tensor_alias.map
-      (fun leaf ->
-        incr count;
-        leaf)
-      tensor
-  in
-  equal int 1 !count;
-  equal (array float_exact) [| 1.; 2. |] (Nx.to_array mapped);
-  let automatic =
-    Automatic_params.{ nested = Existing_params.{ value = tensor } }
-  in
-  let automatic_count = ref 0 in
-  Automatic_params.iter
-    (fun leaf ->
-      Stdlib.ignore leaf;
-      incr automatic_count)
-    automatic;
-  equal int 1 !automatic_count;
-  let outer = Handwritten_outer.{ inner = Derived_helper.{ value = tensor } } in
-  let outer_count = ref 0 in
-  Handwritten_outer.iter
-    (fun leaf ->
-      Stdlib.ignore leaf;
-      incr outer_count)
-    outer;
-  equal int 1 !outer_count
-
-let test_simple_order () =
-  let value = Simple.{ weight = f32 [| 1.; 2. |]; bias = f64 [| 3. |] } in
-  let layouts = ref [] in
-  Simple.iter (fun tensor -> layouts := Nx.numel tensor :: !layouts) value;
-  equal (list int) [ 2; 1 ] (List.rev !layouts);
-  let mapped = Simple.map (fun tensor -> tensor) value in
-  equal (array float_exact) [| 1.; 2. |] (Nx.to_array mapped.weight);
-  let combined =
-    Simple.map2
-      (fun left right ->
-        Stdlib.ignore right;
-        left)
-      value mapped
-  in
-  equal (array float_exact) [| 3. |] (Nx.to_array combined.bias)
-
-let test_matches_handwritten_traversal () =
-  let value = Simple.{ weight = f32 [| 1.; 2. |]; bias = f64 [| 3. |] } in
-  let handwritten_order = ref [] in
-  Manual_simple.iter
-    (fun tensor -> handwritten_order := Nx.numel tensor :: !handwritten_order)
-    value;
-  let derived_order = ref [] in
-  Simple.iter
-    (fun tensor -> derived_order := Nx.numel tensor :: !derived_order)
-    value;
-  equal (list int) (List.rev !handwritten_order) (List.rev !derived_order);
-  let derived = Simple.map (fun tensor -> tensor) value in
-  let handwritten = Manual_simple.map (fun tensor -> tensor) value in
-  equal
-    (array float_exact)
-    (Nx.to_array handwritten.weight)
-    (Nx.to_array derived.weight);
-  equal
-    (array float_exact)
-    (Nx.to_array handwritten.bias)
-    (Nx.to_array derived.bias)
-
-let test_containers_and_helpers () =
-  let tensor length =
-    f32 (Array.init length (fun index -> float_of_int index))
-  in
-  let value =
-    Composite.
+let test_data () =
+  let x =
+    Data.
       {
-        pair = (tensor 1, f64 [| 2.; 3. |]);
-        optional = Some (tensor 3);
-        layers = [ tensor 4; tensor 5 ];
-        buffers = [| tensor 6 |];
-        state =
-          { step = Nx.create Nx.int64 [| 7 |] (Array.init 7 Int64.of_int) };
-        name = "left";
+        w = vec [| 1. |];
+        window = Some 8;
+        causal = true;
+        sizes = [ 2; 3 ];
+        name = "block";
       }
   in
-  let count = ref 0 in
-  let order = ref [] in
-  Composite.iter
-    (fun tensor ->
-      order := Nx.numel tensor :: !order;
-      incr count)
-    value;
-  equal int 7 !count;
-  equal ~msg:"containers preserve declaration and element order" (list int)
-    [ 1; 2; 3; 4; 5; 6; 7 ] (List.rev !order);
-  let map_count = ref 0 in
-  let identity =
-    Composite.map
-      (fun leaf ->
-        incr map_count;
-        leaf)
-      value
-  in
-  equal int 7 !map_count;
-  equal string "left" identity.name;
-  is_true ~msg:"array mapping returns a fresh array"
-    (identity.buffers != value.buffers);
-  let identity_order = ref [] in
-  Composite.iter
-    (fun leaf -> identity_order := Nx.numel leaf :: !identity_order)
-    identity;
-  equal ~msg:"map identity preserves every leaf" (list int)
-    [ 1; 2; 3; 4; 5; 6; 7 ] (List.rev !identity_order);
-  let right = { value with name = "right" } in
-  let map2_count = ref 0 in
-  let paired_sizes = ref [] in
-  let mapped =
-    Composite.map2
-      (fun left right ->
-        incr map2_count;
-        paired_sizes := (Nx.numel left, Nx.numel right) :: !paired_sizes;
-        left)
-      value right
-  in
-  equal int 7 !map2_count;
-  equal ~msg:"map2 pairs corresponding leaves"
-    (list (pair int int))
-    [ (1, 1); (2, 2); (3, 3); (4, 4); (5, 5); (6, 6); (7, 7) ]
-    (List.rev !paired_sizes);
-  equal string "left" mapped.name;
-  raises
-    (Invalid_argument
-       "Test_ptree.Composite.map2: list length mismatch at layers") (fun () ->
-      Stdlib.ignore
-        (Composite.map2
-           (fun left right ->
-             Stdlib.ignore right;
-             left)
-           value { right with layers = [] }));
-  raises
-    (Invalid_argument
-       "Test_ptree.Composite.map2: option constructor mismatch at optional")
-    (fun () ->
-      Stdlib.ignore
-        (Composite.map2
-           (fun left right ->
-             Stdlib.ignore right;
-             left)
-           value
-           { right with optional = None }));
-  raises
-    (Invalid_argument
-       "Test_ptree.Composite.map2: array length mismatch at buffers") (fun () ->
-      Stdlib.ignore
-        (Composite.map2
-           (fun left right ->
-             Stdlib.ignore right;
-             left)
-           value
-           { right with buffers = [||] }))
+  let derived = Nx.Ptree.instantiate (module Data) in
+  same ~msg:"data" ~hand:(Nx.Ptree.instantiate (module Data_hand)) derived x;
+  let y = Nx.Ptree.map derived (fun _ t -> t) x in
+  equal ~msg:"skip copies the part" string "block" y.name;
+  is_true ~msg:"a reported bool rebuilds" y.causal;
+  equal ~msg:"a reported int rebuilds" (option int) (Some 8) y.window
+
+(* Variants name their case before their parts. *)
+
+module Weight = struct
+  type 'a t =
+    | Float of 'a
+    | Mxfp4 of { blocks : Nx.uint8_t; scales : Nx.uint8_t }
+    | Scaled of 'a * Nx.float32_t
+    | Tied
+  [@@deriving ptree]
+end
+
+module Weight_hand = struct
+  type 'a t = 'a Weight.t
+
+  let walk c : _ t -> _ t =
+    let open Nx.Ptree.Walk in
+    function
+    | Float w ->
+        case c "Float";
+        Float (leaf c w)
+    | Mxfp4 { blocks; scales } ->
+        case c "Mxfp4";
+        let blocks = field c "blocks" tensor blocks in
+        let scales = field c "scales" tensor scales in
+        Mxfp4 { blocks; scales }
+    | Scaled (w, s) ->
+        case c "Scaled";
+        let w = index c 0 leaf w in
+        let s = index c 1 tensor s in
+        Scaled (w, s)
+    | Tied ->
+        case c "Tied";
+        Tied
+end
+
+let test_variant () =
+  let u8 = Nx.create Nx.uint8 [| 1 |] [| 7 |] in
+  List.iter
+    (fun (msg, x) ->
+      same ~msg
+        ~hand:(Nx.Ptree.instantiate (module Weight_hand))
+        (Nx.Ptree.instantiate (module Weight))
+        x)
+    [
+      ("constructor with one argument", Weight.Float (vec [| 1. |]));
+      ("inline record", Weight.Mxfp4 { blocks = u8; scales = u8 });
+      ( "constructor with two arguments",
+        Weight.Scaled (vec [| 1. |], vec [| 2. |]) );
+      ("constant constructor", Weight.Tied);
+    ]
+
+(* Recursive types, arrays and aliases. *)
+
+module Tree = struct
+  type 'a t = Leaf of 'a | Node of 'a t list [@@deriving ptree]
+end
+
+module Tree_hand = struct
+  type 'a t = 'a Tree.t
+
+  let rec walk c : _ t -> _ t =
+    let open Nx.Ptree.Walk in
+    function
+    | Leaf x ->
+        case c "Leaf";
+        Leaf (leaf c x)
+    | Node l ->
+        case c "Node";
+        Node (list walk c l)
+end
 
 let test_recursive () =
-  let value =
-    Recursive.
-      {
-        root =
-          {
-            value = f32 [| 1. |];
-            next = Some { value = f32 [| 2. |]; next = None };
-          };
-      }
-  in
-  let count = ref 0 in
-  Recursive.iter
-    (fun tensor ->
-      Stdlib.ignore tensor;
-      incr count)
-    value;
-  equal int 2 !count;
-  let mapped = Recursive.map (fun tensor -> tensor) value in
-  is_some mapped.root.next;
-  let mutual =
-    Mutual.
-      {
-        root =
-          {
-            value = f32 [| 1. |];
-            right =
-              Some
-                {
-                  value = f32 [| 2. |];
-                  left = Some { value = f32 [| 3. |]; right = None };
-                };
-          };
-      }
-  in
-  let mutual_count = ref 0 in
-  Mutual.iter
-    (fun tensor ->
-      Stdlib.ignore tensor;
-      incr mutual_count)
-    mutual;
-  equal int 3 !mutual_count
+  same ~msg:"recursive"
+    ~hand:(Nx.Ptree.instantiate (module Tree_hand))
+    (Nx.Ptree.instantiate (module Tree))
+    Tree.(Node [ Leaf (vec [| 1. |]); Node [ Leaf (vec [| 2. |]) ] ])
 
-let test_annotations_and_ignored () =
-  let simple = Simple.{ weight = f32 [| 2. |]; bias = f64 [| 3. |] } in
-  let value =
-    Annotations.{ weight = f32 [| 1. |]; delegated = simple; ignored = 7 }
-  in
-  let count = ref 0 in
-  Annotations.iter
-    (fun tensor ->
-      Stdlib.ignore tensor;
-      incr count)
-    value;
-  equal int 3 !count;
-  let right = { value with ignored = 99 } in
-  let mapped =
-    Annotations.map2
-      (fun left right ->
-        Stdlib.ignore right;
-        left)
-      value right
-  in
-  equal int 7 mapped.ignored;
-  let metadata = Ignored_only.{ name = "left" } in
-  equal string "left" (Ignored_only.map (fun tensor -> tensor) metadata).name;
-  equal string "left"
-    (Ignored_only.map2
-       (fun left right ->
-         Stdlib.ignore right;
-         left)
-       metadata
-       Ignored_only.{ name = "right" })
-      .name;
-  equal string "left" (Ignored_alias.map (fun tensor -> tensor) "left");
-  let nested = Nested_annotation.{ optional = Some (f32 [| 4. |]) } in
-  let nested_count = ref 0 in
-  Nested_annotation.iter
-    (fun tensor ->
-      Stdlib.ignore tensor;
-      incr nested_count)
-    nested;
-  equal int 1 !nested_count
+module Stack = struct
+  type 'a t = { layers : 'a array } [@@deriving ptree]
+end
 
-let test_generic_and_mutable () =
-  let generic = Generic.{ weight = f32 [| 1. |] } in
-  equal
-    (array float_exact)
-    [| 1. |]
-    (Nx.to_array (Generic.map (fun tensor -> tensor) generic).weight);
-  let generic64 = Generic.{ weight = f64 [| 2. |] } in
-  equal
-    (array float_exact)
-    [| 2. |]
-    (Nx.to_array (Generic.map (fun tensor -> tensor) generic64).weight);
-  let mutable_value = Mutable.{ weight = f32 [| 2. |]; tag = "tag" } in
-  let mapped = Mutable.map (fun tensor -> tensor) mutable_value in
-  equal string "tag" mapped.tag;
-  is_true (mapped != mutable_value)
+module Stack_hand = struct
+  type 'a t = 'a Stack.t
 
-let integration_loss (params : Integration.t) =
-  Nx.add
-    (Nx.cast Nx.float64 (Nx.sum (Nx.mul params.weight params.weight)))
-    (Nx.sum (Nx.mul params.bias params.bias))
+  let walk c (x : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let layers =
+      field c "layers"
+        (fun c a ->
+          ignore (int c (Array.length a));
+          Array.mapi (fun i x -> index c i leaf x) a)
+        x.layers
+    in
+    { layers }
+end
 
-let test_rune_and_vega_integration () =
-  let params =
-    Integration.
-      {
-        weight = f32 [| 1.; -2.; 3. |];
-        bias = f64 [| 0.5 |];
-        label = "first trace";
-      }
-  in
-  let gradients = Rune.grad (module Integration) integration_loss params in
-  equal (array float_exact) [| 2.; -4.; 6. |] (Nx.to_array gradients.weight);
-  equal (array float_exact) [| 1. |] (Nx.to_array gradients.bias);
-  is_true (Vega.global_norm (module Integration) gradients > 0.);
-  let checkpoint =
-    Kaun.Checkpoint.of_packed
-      (module Integration.Uniform)
-      (Integration.to_uniform params)
-  in
-  equal (list string) [ "bias"; "weight" ] (Kaun.Checkpoint.names checkpoint);
-  let jitted =
-    Rune.jit2
-      (module Integration)
-      (module Integration)
-      (fun value -> Rune.grad (module Integration) integration_loss value)
-  in
-  let first = jitted params in
-  equal (array float_exact) [| 2.; -4.; 6. |] (Nx.to_array first.weight);
-  let second_params =
-    Integration.
-      {
-        weight = f32 [| 2.; 3.; 4. |];
-        bias = f64 [| 1. |];
-        label = "changed after trace";
-      }
-  in
-  let second = jitted second_params in
-  equal (array float_exact) [| 4.; 6.; 8. |] (Nx.to_array second.weight);
-  equal ~msg:"ignored metadata is fixed by the first JIT trace" string
-    "first trace" second.label;
-  let replay_structure =
-    Rune.jit2 (module Jit_structure) (module Jit_structure) Fun.id
-  in
-  let first_structure =
-    Jit_structure.{ left = [ f32 [| 1. |] ]; right = [ f32 [| 2. |] ] }
-  in
-  let first_structure_result = replay_structure first_structure in
-  equal int 1 (List.length first_structure_result.left);
-  let changed_structure =
-    Jit_structure.{ left = [ f32 [| 3. |]; f32 [| 4. |] ]; right = [] }
-  in
-  let replayed = replay_structure changed_structure in
-  equal ~msg:"container structure is fixed by the first JIT trace" int 1
-    (List.length replayed.left);
-  equal ~msg:"container structure is fixed by the first JIT trace" int 1
-    (List.length replayed.right)
+let test_array () =
+  same ~msg:"array"
+    ~hand:(Nx.Ptree.instantiate (module Stack_hand))
+    (Nx.Ptree.instantiate (module Stack))
+    Stack.{ layers = [| vec [| 1. |]; vec [| 2. |] |] }
 
-let tests =
-  [
-    test "supports tensor aliases and both delegation directions"
-      test_single_aliases_and_delegation;
-    test "preserves mixed-dtype leaf order" test_simple_order;
-    test "matches a handwritten traversal" test_matches_handwritten_traversal;
-    test "traverses containers and helper types" test_containers_and_helpers;
-    test "supports recursive products" test_recursive;
-    test "honors leaf, using, and ignore annotations"
-      test_annotations_and_ignored;
-    test "supports generic dtype and mutable records" test_generic_and_mutable;
-    test "works directly with Rune and Vega" test_rune_and_vega_integration;
-  ]
+module Alias = struct
+  type 'a t = 'a Kaun.Linear.t * 'a [@@deriving ptree]
+end
 
-let () = run "ppx_ptree" tests
+module Alias_hand = struct
+  type 'a t = 'a Alias.t
+
+  let walk c ((l, x) : _ t) : _ t =
+    let open Nx.Ptree.Walk in
+    let l = index c 0 Kaun.Linear.walk l in
+    let x = index c 1 leaf x in
+    (l, x)
+end
+
+let test_alias () =
+  same ~msg:"alias"
+    ~hand:(Nx.Ptree.instantiate (module Alias_hand))
+    (Nx.Ptree.instantiate (module Alias))
+    (Kaun.Linear.init ~inputs:1 ~outputs:1, vec [| 1. |])
+
+(* A type whose parameter is anonymous is a module of [Nx.Ptree.S]. *)
+
+module Phantom = struct
+  type _ t = { scale : Nx.float32_t } [@@deriving ptree]
+end
+
+let test_phantom () =
+  equal ~msg:"phantom" (list string) [ "scale: a leaf" ]
+    (visits
+       (Nx.Ptree.instantiate (module Phantom))
+       { Phantom.scale = vec [| 1. |] })
+
+(* A derived structure serves transformations. *)
+
+let test_grad () =
+  let loss (m : Nx.float32_t Model.t) =
+    Nx.sum (Kaun.Linear.apply m.head (vec [| 1.; 2. |]))
+  in
+  let derived = Rune.grad model_ptree loss model in
+  let hand = Rune.grad (Nx.Ptree.instantiate (module Model_hand)) loss model in
+  equal ~msg:"gradients" (array float_exact) (Nx.to_array hand.head.w)
+    (Nx.to_array derived.head.w)
+
+let () =
+  run "ppx_ptree"
+    [
+      group "walks"
+        [
+          test "records, options, lists and tuples" test_record;
+          test "tensors and a type without parameter" test_tensors;
+          test "structures" test_model;
+          test "[@ptree.walk]" test_walk_attribute;
+          test "[@ptree.int] and [@ptree.skip]" test_data;
+          test "variants" test_variant;
+          test "recursive types" test_recursive;
+          test "arrays" test_array;
+          test "aliases" test_alias;
+          test "an anonymous parameter" test_phantom;
+        ];
+      group "transformations" [ test "grad" test_grad ];
+    ]

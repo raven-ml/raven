@@ -1,0 +1,20 @@
+type 'a t = {
+  w: 'a ;
+  b: 'a option ;
+  layers: 'a Linear.t list }[@@deriving ptree]
+include
+  struct
+    let _ = fun (_ : 'a t) -> ()
+    let walk : 'a 'b . ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t =
+      fun ptree__c ptree__x ->
+        let ptree__f_w =
+          Nx.Ptree.Walk.field ptree__c "w" Nx.Ptree.Walk.leaf ptree__x.w in
+        let ptree__f_b =
+          Nx.Ptree.Walk.field ptree__c "b"
+            (Nx.Ptree.Walk.option Nx.Ptree.Walk.leaf) ptree__x.b in
+        let ptree__f_layers =
+          Nx.Ptree.Walk.field ptree__c "layers"
+            (Nx.Ptree.Walk.list Linear.walk) ptree__x.layers in
+        { w = ptree__f_w; b = ptree__f_b; layers = ptree__f_layers }
+    let _ = walk
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]

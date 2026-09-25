@@ -1,0 +1,4 @@
+File "compiler_cases/missing_walk.ml", line 17, characters 20-32:
+17 | type 'a t = { sub : 'a Missing.t } [@@deriving ptree]
+                         ^^^^^^^^^^^^
+Error: Unbound value Missing.walk

@@ -236,6 +236,20 @@ window: int 4
 
 A structure's test checks these lines for each shape its values take: a present and an absent option, each case of a variant, an empty and a non-empty list. It also checks the round trip: `Nx.Ptree.rebuild s ~like:x (fst (Nx.Ptree.flatten s x))` is `x`.
 
+## Deriving a Walk
+
+The `ppx_ptree` package writes `walk` from the type. `[@@deriving ptree]` walks each field under its name and each part by its type: the parameter with `leaf`, a tensor type with `tensor`, a module's `'a M.t` with `M.walk`, options, lists and tuples as above, and a variant's case under the constructor's name. An `int` or a `bool` must say whether a compiled program depends on it: `[@ptree.int]` reports it, and `[@ptree.skip]` leaves data such as a name out of the walk.
+
+<!-- $MDX skip -->
+```ocaml
+module Block = struct
+  type 'a t = { proj : 'a Linear.t; steps : Nx.int32_t; window : int option [@ptree.int] }
+  [@@deriving ptree]
+end
+```
+
+This `Block` visits what the hand-written one visits, and its test is the same. A type without a parameter also gets its structure at its one type, `ptree`. The rules, the attributes and the errors are in `packages/ppx_ptree/README.md`.
+
 ## Next Steps
 
 - [Rune's transformations](../../rune/doc/02-transformations.md) take structures, and `Rune.jit` takes a signature built from them, such as `Nx.Ptree.(tensor @-> consumes caches @@ returns (pair tensor caches))`.

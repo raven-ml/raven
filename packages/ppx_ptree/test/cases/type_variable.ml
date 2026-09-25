@@ -1,1 +1,1 @@
-type ('a, 'b) t = { value : 'a } [@@deriving ptree]
+type 'a t = { w : 'a; v : 'b } [@@deriving ptree]

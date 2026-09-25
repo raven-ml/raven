@@ -1,0 +1,36 @@
+type 'a t =
+  | Float of 'a 
+  | Mxfp4 of {
+  blocks: Nx.uint8_t ;
+  scales: Nx.uint8_t } 
+  | Scaled of 'a * Nx.float32_t 
+  | Tied [@@deriving ptree]
+include
+  struct
+    let _ = fun (_ : 'a t) -> ()
+    let walk : 'a 'b . ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t =
+      fun ptree__c ->
+        function
+        | Float ptree__0 ->
+            (Nx.Ptree.Walk.case ptree__c "Float";
+             (let ptree__0 = Nx.Ptree.Walk.leaf ptree__c ptree__0 in
+              Float ptree__0))
+        | Mxfp4 ptree__x ->
+            (Nx.Ptree.Walk.case ptree__c "Mxfp4";
+             (let ptree__f_blocks =
+                Nx.Ptree.Walk.field ptree__c "blocks" Nx.Ptree.Walk.tensor
+                  ptree__x.blocks in
+              let ptree__f_scales =
+                Nx.Ptree.Walk.field ptree__c "scales" Nx.Ptree.Walk.tensor
+                  ptree__x.scales in
+              Mxfp4 { blocks = ptree__f_blocks; scales = ptree__f_scales }))
+        | Scaled (ptree__0, ptree__1) ->
+            (Nx.Ptree.Walk.case ptree__c "Scaled";
+             (let ptree__0 =
+                Nx.Ptree.Walk.index ptree__c 0 Nx.Ptree.Walk.leaf ptree__0 in
+              let ptree__1 =
+                Nx.Ptree.Walk.index ptree__c 1 Nx.Ptree.Walk.tensor ptree__1 in
+              Scaled (ptree__0, ptree__1)))
+        | Tied -> (Nx.Ptree.Walk.case ptree__c "Tied"; Tied)
+    let _ = walk
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
