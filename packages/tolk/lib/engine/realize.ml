@@ -142,11 +142,13 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
 
 (* Program and runtime caches
 
-   [program_cache] memoizes the CALL(SINK) -> CALL(PROGRAM) compilation, keyed
+   Each device's [programs] table memoizes the CALL(SINK) -> CALL(PROGRAM) compilation, keyed
    on the kernel's semantic key, the device instance, and [program_config] (so tag-only
    differences share a compiled program, and a kernel compiled under one
-   configuration is never served under another). [runtime_cache] memoizes the
-   device dispatch handle built from a PROGRAM's compiled binary. *)
+   configuration is never served under another). [runtimes] memoizes the
+   device dispatch handle built from a PROGRAM's compiled binary. Weak owner
+   keys let replaced devices and their cache entries retire together. Build
+   callbacks run outside cache locks; simultaneous misses publish one winner. *)
 
 let program_config () =
   let module D = Tolk_uop.Dtype in
@@ -185,8 +187,33 @@ let cache_key ~device ~ast_key =
   Marshal.to_string
     (Device.id device, Renderer.target ren, compiler_name, program_config (), ast_key) []
 
-let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
-let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
+type device_cache = {
+  programs : (string, Tolk_uop.Uop.t) Hashtbl.t;
+  runtimes : (string, Device.prog) Hashtbl.t;
+  lock : Mutex.t;
+}
+
+module Owner_cache = Ephemeron.K1.Make (struct
+  type t = Device.t
+  let equal a b = a == b
+  let hash = Device.id
+end)
+
+let owner_caches = Owner_cache.create 16
+let owner_caches_lock = Mutex.create ()
+
+let with_cache_lock lock f =
+  Tolk_uop.Storage.with_operation (fun () -> Mutex.protect lock f)
+
+let device_cache device =
+  with_cache_lock owner_caches_lock (fun () ->
+      match Owner_cache.find_opt owner_caches device with
+      | Some cache -> cache
+      | None ->
+          let cache = { programs = Hashtbl.create 64; runtimes = Hashtbl.create 64;
+            lock = Mutex.create () } in
+          Owner_cache.add owner_caches device cache;
+          cache)
 let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
 
 let profiling () = debug () >= 2 || Helpers.getenv "PROFILE" 0 <> 0
@@ -227,13 +254,16 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
         in
         let body = stamp body in
         let ckey = cache_key ~device ~ast_key:(U.semantic_key body) in
+        let cache = device_cache device in
         let program =
-          match Hashtbl.find_opt program_cache ckey with
+          match with_cache_lock cache.lock (fun () -> Hashtbl.find_opt cache.programs ckey) with
           | Some p -> p
           | None ->
               let p = to_program device body in
-              Hashtbl.replace program_cache ckey p;
-              p
+              with_cache_lock cache.lock (fun () ->
+                  match Hashtbl.find_opt cache.programs ckey with
+                  | Some winner -> winner
+                  | None -> Hashtbl.add cache.programs ckey p; p)
         in
         U.replace call
           ~src:(Array.of_list (program :: List.tl (U.children call)))
@@ -294,13 +324,19 @@ let get_runtime ?(queue = false) ~device program =
   let module U = Tolk_uop.Uop in
   let ckey = cache_key ~device ~ast_key:
       ((if queue then "queue:" else "kernel:") ^ string_of_int (U.tag program)) in
-  match Hashtbl.find_opt runtime_cache ckey with
+  let cache = device_cache device in
+  match with_cache_lock cache.lock (fun () -> Hashtbl.find_opt cache.runtimes ckey) with
   | Some prg -> prg
   | None ->
       let runtime = if queue then Device.queue_runtime else Device.runtime in
       let prg = runtime device (U.to_elf program) in
-      Hashtbl.replace runtime_cache ckey prg;
-      prg
+      let previous = with_cache_lock cache.lock (fun () ->
+          match Hashtbl.find_opt cache.runtimes ckey with
+          | Some winner -> Some winner
+          | None -> Hashtbl.add cache.runtimes ckey prg; None) in
+      match previous with
+      | None -> prg
+      | Some winner -> prg.free (); winner
 
 type _ Effect.t +=
   | Capture : (Tolk_uop.Uop.t -> (string * int64) list -> unit) option Effect.t

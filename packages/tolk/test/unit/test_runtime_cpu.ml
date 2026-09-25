@@ -127,6 +127,24 @@ let program_call spec bufs =
 
 let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device)
 
+let runtime_survives_owner_replacement () =
+  let name = "cached-executable-lifetime" in
+  let program, output, input =
+    let device = cpu name in
+    let spec = Device.compile_program device ~name:"retained_executable"
+        (increment_program ()) in
+    let output = create_i32_buffer device [0] and input = create_i32_buffer device [41] in
+    Device.runtime device (Program_spec.to_elf spec), output, input in
+  ignore (cpu name);
+  for _ = 1 to 3 do Gc.full_major () done;
+  let call () = ignore (program.Device.call [|output; input|]
+      ~global:[|1; 1; 1|] ~local:None ~vals:[||] ~wait:false ~timeout:None) in
+  Fun.protect ~finally:program.free (fun () ->
+      call ();
+      equal (list int) [42] (read_i32_buffer output));
+  program.free ();
+  raises (Invalid_argument "CPU program has been unloaded") call
+
 let timing_cache_eviction () =
   let host = cpu "eviction-host" in
   let renderer_set = Device.Renderer_set.make ~device:"CPU"
@@ -1069,6 +1087,8 @@ let main () =
                   ~vals:[||] ~wait:false ~timeout:None));
             equal (list int) [ 999_999 ] (read_i32_buffer observed);
             ignore (Sys.opaque_identity buf));
+          test "live executables survive device replacement and major collection"
+            runtime_survives_owner_replacement;
           test "cache eviction materializes ones without beam search, stats, or capture"
             timing_cache_eviction;
           test "wait returns positive elapsed time" (fun () ->

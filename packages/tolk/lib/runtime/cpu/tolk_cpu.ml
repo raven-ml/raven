@@ -26,36 +26,32 @@ type loaded_program = {
   base : nativeint;
   entry : nativeint;
   size : int;
-  mutable unloaded : bool;
+  unloaded : bool Atomic.t;
 }
 
 let link_symbol ?(libs = []) name =
   let libs = Array.of_list libs in
   link_symbol_raw libs name
 
+let unload_program loaded =
+  if Atomic.compare_and_set loaded.unloaded false true then
+    exec_free loaded.base loaded.size
+
 let load_program ~name ~lib =
-  let prepared =
-    Elf_cpu_loader.load ~link_symbol ~entry:name lib
-  in
+  let prepared = Elf_cpu_loader.load ~link_symbol ~entry:name lib in
   let size = Elf_cpu_loader.alloc_size prepared in
   let base = exec_alloc size in
   try
     let image = Elf_cpu_loader.link ~base prepared in
     exec_write base image;
-    let entry =
-      Nativeint.add base
-        (Nativeint.of_int (Elf_cpu_loader.entry_offset prepared))
-    in
-    { base; entry; size; unloaded = false }
+    let entry = Nativeint.add base
+        (Nativeint.of_int (Elf_cpu_loader.entry_offset prepared)) in
+    let loaded = { base; entry; size; unloaded = Atomic.make false } in
+    Gc.finalise unload_program loaded;
+    loaded
   with exn ->
     exec_free base size;
     raise exn
-
-let unload_program loaded =
-  if not loaded.unloaded then begin
-    loaded.unloaded <- true;
-    exec_free loaded.base loaded.size
-  end
 
 (* Allocator *)
 
@@ -80,9 +76,12 @@ let create ?aligned name =
     let call bufs ~global:_ ~local:_ ~vals ~wait ~timeout:_ =
       let bufs = Array.map (fun buf ->
           Option.value (Device.Buffer.get ~device:name buffer_kind buf) ~default:0n) bufs in
-      if loaded.unloaded then invalid_arg "CPU program has been unloaded";
+      if Atomic.get loaded.unloaded then invalid_arg "CPU program has been unloaded";
       let st = if wait then monotonic_ns () else 0 in
-      exec_call loaded.entry (reorder buffer_slots bufs) (reorder scalar_slots vals);
+      Fun.protect
+        ~finally:(fun () -> ignore (Sys.opaque_identity loaded))
+        (fun () -> exec_call loaded.entry
+            (reorder buffer_slots bufs) (reorder scalar_slots vals));
       if wait then Some (float_of_int (monotonic_ns () - st) *. 1e-9)
       else None
     in

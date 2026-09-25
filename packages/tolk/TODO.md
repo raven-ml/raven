@@ -111,11 +111,11 @@ acceptance requirement; skipped tests are not execution evidence.
   compilation and dynamic cache policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Synchronize runtime caches; concurrent callers currently mutate the shared
-  execution Hashtbls without locking.
-  Establish native-handle retirement for replaced device owners: global program,
-  runtime and linked-template caches currently retain entries indefinitely.
-  Preserve live submission ownership while retiring unreachable cached handles.
+  Synchronize linked-template and staged replay caches, including shared
+  argument storage during overlapping calls. Retire obsolete device owners
+  from multi-device templates and retained-link caches while preserving live
+  submission ownership. Make first-run bookkeeping and execution statistics
+  safe for concurrent callers.
   Isolate Rune's shared upload scratch across concurrent callers as part
   of that audit. Cover finalizers registered on
   another domain and systhreads sharing a domain: operation scopes currently

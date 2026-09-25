@@ -657,6 +657,10 @@ thread.
 
 ### Tolk (new)
 
+- Compiled program and runtime caches synchronize concurrent misses and retire
+  with replaced device owners. Live CPU executables remain usable across GC;
+  unreachable executable mappings now have automatic cleanup.
+
 - Concurrent `Device.get` calls open each device once and wait for its
   initialization. Failed openers retry without publishing partial devices;
   recursive bootstrap can still resolve its own provisional device.

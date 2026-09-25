@@ -328,6 +328,141 @@ let scoped_timings ~dispatch_failure ~drain_failure () =
   equal int !calls !clears;
   equal int kernels !(Helpers.Global_counters.kernel_count)
 
+let cache_device name runtime =
+  Device.make ~name ~allocator:(test_allocator (allocator_stats ()))
+    ~renderer_set:(Device.Renderer_set.make ~device:"TEST" ["TEST", Fun.const test_renderer])
+    ~runtime ~synchronize:(fun timeout -> ignore timeout) ()
+
+let cache_linear body = U.linear [U.call ~body ~args:[] ~info:(call_info None)]
+
+let run_cached device linear =
+  Realize.run_linear ~device ~jit:true ~update_stats:false
+    ~to_program:(fun device body -> ignore device; program_of body) linear
+
+let cache_owner_lifetime () =
+  let owner = Stdlib.Weak.create 1 and program = Stdlib.Weak.create 1
+  and runtime = Stdlib.Weak.create 1 in
+  let name = "TEST:collectible-cache-owner" in
+  let populate () =
+    let device = cache_device name (fun object_ ->
+        ignore object_;
+        let lifetime = ref 0 in
+        Stdlib.Weak.set runtime 0 (Some lifetime);
+        let call buffers ~global ~local ~vals ~wait ~timeout =
+          ignore (buffers, global, local, vals, wait, timeout);
+          incr lifetime; None in
+        Device.{call; free = (fun () -> ()); handle = 0n}) in
+    Stdlib.Weak.set owner 0 (Some device);
+    let body = U.sink ~kernel_info:(kernel_info "collectible_cache_program") [] in
+    let compiled = Realize.compile_linear ~device
+        ~to_program:(fun device body -> ignore device; program_of body) (cache_linear body) in
+    let call = Option.get (U.as_call (U.src compiled).(0)) in
+    Stdlib.Weak.set program 0 (Some call.body);
+    run_cached device compiled
+  in
+  populate ();
+  ignore (test_device ~name (runtime_state ()));
+  for _ = 1 to 5 do Gc.full_major () done;
+  is_false ~msg:"replaced device owner is collectible" (Stdlib.Weak.check owner 0);
+  is_false ~msg:"compiled graph retires with its owner" (Stdlib.Weak.check program 0);
+  is_false ~msg:"runtime handle retires with its owner" (Stdlib.Weak.check runtime 0)
+
+let reentrant_compilation () =
+  let device = test_device ~name:"TEST:reentrant-program-cache" (runtime_state ()) in
+  let inner = U.sink ~kernel_info:(kernel_info "inner_cache_program") [] in
+  let outer = U.sink ~kernel_info:(kernel_info "outer_cache_program") [] in
+  let calls = ref [] in
+  let rec compile owner body =
+    calls := body :: !calls;
+    if U.equal body outer then
+      ignore (Realize.compile_linear ~device:owner ~to_program:compile (cache_linear inner));
+    program_of body in
+  ignore (Realize.compile_linear ~device ~to_program:compile (cache_linear outer));
+  ignore (Realize.compile_linear ~device ~to_program:compile (cache_linear inner));
+  equal int 2 (List.length !calls)
+
+let parallel_cache_misses ~threads () =
+  let mode = if threads then "threads" else "domains" in
+  let compiled = Atomic.make 0 and loaded = Atomic.make 0
+  and freed = Atomic.make 0 and dispatched = Atomic.make 0 in
+  let meet counter =
+    ignore (Atomic.fetch_and_add counter 1);
+    while Atomic.get counter <> 2 do Thread.yield () done in
+  let runtime object_ =
+    ignore object_;
+    meet loaded;
+    let released = Atomic.make false in
+    let call buffers ~global ~local ~vals ~wait ~timeout =
+      ignore (buffers, global, local, vals, wait, timeout);
+      if Atomic.get released then failwith "dispatched a discarded runtime";
+      ignore (Atomic.fetch_and_add dispatched 1); None in
+    let free () =
+      if not (Atomic.compare_and_set released false true) then
+        failwith "runtime freed twice";
+      ignore (Atomic.fetch_and_add freed 1) in
+    Device.{call; free; handle = 0n} in
+  let device = cache_device ("TEST:parallel-cache-" ^ mode) runtime in
+  let body = U.sink ~kernel_info:(kernel_info ("parallel_cache_" ^ mode)) [] in
+  let program = program_of body and linear = cache_linear body in
+  let compile owner sink = ignore (owner, sink); meet compiled; program in
+  let results = Array.init 2 (fun _ -> Atomic.make None) in
+  let work i () =
+    let result = try
+      let ready = Realize.compile_linear ~device ~to_program:compile linear in
+      run_cached device ready;
+      Ok ready
+    with exn -> Error exn in
+    Atomic.set results.(i) (Some result) in
+  if threads then begin
+    let first = Thread.create (work 0) () and second = Thread.create (work 1) () in
+    Thread.join first; Thread.join second
+  end else begin
+    let first = Domain.spawn (work 0) and second = Domain.spawn (work 1) in
+    Domain.join first; Domain.join second
+  end;
+  Array.iter (fun result -> match Atomic.get result with
+      | Some (Ok _) -> () | Some (Error exn) -> raise exn
+      | None -> fail "worker did not return") results;
+  equal int 2 (Atomic.get compiled);
+  equal int 2 (Atomic.get loaded);
+  equal int 1 (Atomic.get freed);
+  equal int 2 (Atomic.get dispatched);
+  let ready = Realize.compile_linear ~device ~to_program:compile linear in
+  run_cached device ready;
+  equal int 2 (Atomic.get compiled);
+  equal int 2 (Atomic.get loaded);
+  equal int 3 (Atomic.get dispatched)
+
+let cache_failure_retry () =
+  let attempts = ref 0 in
+  let runtime object_ =
+    ignore object_; incr attempts;
+    if !attempts = 1 then raise Exit;
+    let call buffers ~global ~local ~vals ~wait ~timeout =
+      ignore (buffers, global, local, vals, wait, timeout); None in
+    Device.{call; free = (fun () -> ()); handle = 0n} in
+  let device = cache_device "TEST:failed-cache-construction" runtime in
+  let body = U.sink ~kernel_info:(kernel_info "failed_cache_construction") [] in
+  let compilations = ref 0 in
+  let compile owner sink =
+    ignore owner; incr compilations;
+    if !compilations = 1 then raise Exit;
+    program_of sink in
+  raises Exit (fun () -> ignore (Realize.compile_linear ~device ~to_program:compile (cache_linear body)));
+  let ready = Realize.compile_linear ~device ~to_program:compile (cache_linear body) in
+  raises Exit (fun () -> run_cached device ready);
+  run_cached device ready;
+  run_cached device ready;
+  equal int 2 !compilations;
+  equal int 2 !attempts
+
+let owner_cache_tests = group "Owner cache lifetime"
+    [ test "replaced owners release program and runtime graphs" cache_owner_lifetime;
+      test "compilation can recursively compile another key" reentrant_compilation;
+      test "concurrent domain misses publish one runtime" (parallel_cache_misses ~threads:false);
+      test "concurrent systhread misses publish one runtime" (parallel_cache_misses ~threads:true);
+      test "failed constructors do not poison subsequent cache misses" cache_failure_retry ]
+
 exception Capture_test_failure
 
 type _ Effect.t += Pause_capture : unit Effect.t
@@ -427,6 +562,7 @@ let () =
   run "Engine_realize"
     [
       capture_tests;
+      owner_cache_tests;
       renderer_selection_tests;
       test "compilation resolves beam context once and respects explicit zero"
         compile_beam_policy;

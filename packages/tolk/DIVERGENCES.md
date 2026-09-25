@@ -6,6 +6,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Program/runtime caches are weakly owned by device instances.** Upstream
+  retains process-global cache entries. Tolk permits replacing a device under
+  the same canonical name, so old compiler graphs and native executables retire
+  with that owner while live calls retain their own allocation. Coverage:
+  `test_realize` owner collection, concurrent misses and reentrant compilation;
+  `test_runtime_cpu` live execution after replacement and collection. Reconsider
+  if device replacement is removed or upstream supplies owner-scoped caches.
+  Mutable linked replay storage and multi-device template ownership remain open.
+
 - **Schedule capture follows the dynamic continuation scope.** Upstream uses
   a process-global callback list. Tolk and Rune may compile on independent
   domains or system threads, so `Realize.with_capture` scopes a private effect
