@@ -648,6 +648,10 @@ thread.
 
 ### Tolk (new)
 
+- Mixed kernel/copy replays preserve snapshot-copy semantics for overlapping
+  views. Kernel mappings are checked before execution, so an unsupported later
+  mapping cannot leave earlier outputs partially changed.
+
 - NV channel initialization and local-memory growth share kernel submission
   ordering and retirement. Failed local-memory setup preserves the previous
   capacity and retains storage whose completion is uncertain.

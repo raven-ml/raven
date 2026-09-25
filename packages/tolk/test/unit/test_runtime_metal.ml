@@ -196,6 +196,24 @@ let shared_pipelines_survive_link_retirement () =
   equal (list int) [6] (read_i32 a);
   equal (list int) [5] (read_i32 b)
 
+let overlapping_copy_between_kernels () =
+  let device = metal_device () in
+  let spec = compile_incr device "metal_ordered_overlap" in
+  let first = queue_call device spec [0; 0]
+  and last = queue_call device spec [2; 1] in
+  let src = List.hd (Option.get (U.as_call first)).args
+  and dst = List.nth (Option.get (U.as_call last)).args 1 in
+  let run = compile_queue device [first; U.store_call ~dst ~src; last] in
+  let root = i32_buf device (List.init 17 (fun i -> i + 1)) in
+  let source = i32_view root ~offset:0 ~size:16
+  and destination = i32_view root ~offset:4 ~size:16 in
+  let output = i32_buf device (List.init 16 (fun _ -> 0)) in
+  run ~wait:true [|source; destination; output|];
+  equal (list int) (2 :: 2 :: List.init 15 (fun i -> i + 2)) (read_i32 root);
+  equal (list int) (3 :: List.init 15 (fun _ -> 0)) (read_i32 output);
+  run ~wait:true [|source; destination; output|];
+  equal (list int) (4 :: List.init 15 (fun _ -> 0)) (read_i32 output)
+
 let test_mixed_scalar_widths () =
   let device = metal_device () in
   let output = U.param ~slot:0 ~dtype:Dtype.int64 ~shape:(U.const_int 4) () in
@@ -646,6 +664,8 @@ let () =
             equal int 2 (List.length (Device.profile device))));
           test "shares pipelines across commands and independently retired links"
             shared_pipelines_survive_link_retirement;
+          test "preserves overlapping copies between compiled kernels"
+            overlapping_copy_between_kernels;
           test "relaunches without an intervening synchronize" (fun () ->
             let device = metal_device () in
             let spec = compile_incr device "metal_queue_relaunch" in

@@ -812,6 +812,44 @@ let validate_queue_aliases buffers (submission : Tolk_uop.Uop.queue_info) =
     submission.independent_accesses
   end
 
+let queue_addresses buffers (submission : Tolk_uop.Uop.queue_info) =
+  let bytes = Bytes.create (8 * List.length submission.inputs) in
+  List.iteri (fun i (slot, device) ->
+      let address = Device.Buffer.addr ~device buffers.(slot) in
+      Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint address)) submission.inputs;
+  bytes
+
+let ordered_fallback ~device ~to_program ctx submission =
+  let module U = Tolk_uop.Uop in
+  let flush kernels calls = match kernels with
+    | [] -> calls
+    | _ ->
+        let compiled = compile_linear_cached ~cache:true ~device ~to_program
+            ~profile:(submission.U.timings <> []) (U.linear (List.rev kernels)) in
+        let linked = link_linear ~ctx compiled in
+        List.rev_append (U.children linked) calls
+  in
+  let rec split kernels calls = function
+    | [] -> List.rev (flush kernels calls)
+    | call :: rest ->
+        (match U.as_call call with
+         | Some {body; _} when U.op body = Tolk_uop.Ops.Program ->
+             split (call :: kernels) calls rest
+         | _ -> split [] (call :: flush kernels calls) rest)
+  in
+  let calls = split [] [] submission.fallback in
+  (* Validate every kernel segment before an earlier copy can change user
+     storage. Resolving imports does not patch tables or publish timelines. *)
+  List.iter (fun call ->
+      let call = U.without_after call in
+      match U.as_call call, U.arg call with
+      | Some {args; _}, U.Arg.Call_info {aux = Some info; _} ->
+          let buffers = Array.of_list (List.map (resolve ctx) (call_arg_uops args)) in
+          validate_queue_aliases buffers info;
+          ignore (queue_addresses buffers info)
+      | _ -> ()) calls;
+  calls
+
 let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
   let module U = Tolk_uop.Uop in
   match U.as_call call with
@@ -825,16 +863,8 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
               let fallback_ctx = Lazy.force fallback_ctx in
               buffers_overlap (resolve fallback_ctx dst) (resolve fallback_ctx src)
           | _ -> false) submission.fallback in
-      if overlapping_copy && List.exists (fun call -> match U.as_call call with
-          | Some {body; _} -> U.op body = Tolk_uop.Ops.Program | None -> false)
-          submission.fallback then
-        invalid_arg "queue replay: overlapping copies mixed with kernels require separate submissions";
       let addresses = if overlapping_copy then Error None else try
-        let bytes = Bytes.create (8 * List.length submission.inputs) in
-        List.iteri (fun i (slot, device) ->
-            let address = Device.Buffer.addr ~device buffers.(slot) in
-            Bytes.set_int64_le bytes (8 * i) (Int64.of_nativeint address)) submission.inputs;
-        Ok bytes
+        Ok (queue_addresses buffers submission)
       with Tolk_uop.Storage.Mapping_unavailable _ as error when submission.fallback <> [] ->
         let backtrace = Printexc.get_raw_backtrace () in
         Error (Some (error, backtrace)) in
@@ -926,7 +956,8 @@ let rec dispatch_call ctx ~device ~to_program call =
                             | Some {body; _} -> U.op body = Tolk_uop.Ops.Program | None -> false)
                             submission.fallback -> Printexc.raise_with_backtrace error backtrace
                         | _ -> ());
-                       List.concat_map (dispatch_call {ctx with wait = true} ~device ~to_program) submission.fallback)
+                       let calls = ordered_fallback ~device ~to_program ctx submission in
+                       List.concat_map (dispatch_call {ctx with wait = true} ~device ~to_program) calls)
            | _ -> exec_kernel ctx ~device call)
       (* A nested staged loop (a scan inside a scan's body). *)
       | Tolk_uop.Ops.Custom_function

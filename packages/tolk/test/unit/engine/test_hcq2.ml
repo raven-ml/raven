@@ -426,15 +426,33 @@ let compiled_host_submission () =
   Device.Buffer.copyin overlap_root overlap_bytes;
   let overlap_src = Device.Buffer.view overlap_root ~size:3 ~dtype:Dtype.int32 ~offset:0
   and overlap_dst = Device.Buffer.view overlap_root ~size:3 ~dtype:Dtype.int32 ~offset:4 in
-  let untouched = buffer (-7l) in
-  let overlap_timeline = Device.Buffer.as_bytes timeline in
+  let kernel_output = buffer (-7l) in
+  let overlap_timeline = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0 in
   let submissions = !(Realize.queue_submissions) in
-  raises (Invalid_argument "queue replay: overlapping copies mixed with kernels require separate submissions")
-    (fun () -> replay overlapping [|overlap_src; overlap_dst; buffer 23l; untouched|]);
-  equal bytes overlap_bytes (Device.Buffer.as_bytes overlap_root);
-  equal int32 (-7l) (Bytes.get_int32_le (Device.Buffer.as_bytes untouched) 0);
-  equal bytes overlap_timeline (Device.Buffer.as_bytes timeline);
-  equal int submissions !(Realize.queue_submissions);
+  replay overlapping [|overlap_src; overlap_dst; buffer 23l; kernel_output|];
+  equal (list int32) [1l; 1l; 2l; 3l]
+    (List.init 4 (fun i -> Bytes.get_int32_le (Device.Buffer.as_bytes overlap_root) (4 * i)));
+  equal int32 23l (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
+  equal int64 (Int64.succ overlap_timeline) (Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 0);
+  equal int (submissions + 1) !(Realize.queue_submissions);
+  let compiled_overlap = !compilations in
+  replay overlapping [|overlap_src; overlap_dst; buffer 37l; kernel_output|];
+  equal int compiled_overlap !compilations;
+  equal int32 37l (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
+  let ordered_overlap = compile [compute (copy_ptr 0) (copy_ptr 2);
+      U.store_call ~dst:(copy_ptr 1) ~src:(copy_ptr 0);
+      compute (copy_ptr 3) (copy_ptr 1)] in
+  let three values =
+    let buf = Device.create_buffer ~size:3 ~dtype:Dtype.int32 device in
+    Device.Buffer.ensure_allocated buf;
+    let bytes = Bytes.create 12 in
+    List.iteri (fun i value -> Bytes.set_int32_le bytes (4 * i) value) values;
+    Device.Buffer.copyin buf bytes;
+    buf in
+  let after_copy = three [0l; 0l; 0l] in
+  replay ordered_overlap [|overlap_src; overlap_dst; three [11l; 12l; 13l]; after_copy|];
+  equal (list int32) [11l; 12l; 13l]
+    (List.init 3 (fun i -> Bytes.get_int32_le (Device.Buffer.as_bytes after_copy) (4 * i)));
   let independent = compile [U.store_call ~dst:(ptr 2) ~src:(ptr 0);
       compute (ptr 3) (ptr 1)] in
   let rejected inputs =
@@ -531,6 +549,20 @@ let compiled_host_submission () =
     (fun () -> replay unsupported_kernel [|buffer 29l; copy_output; foreign; kernel_output|]);
   equal int32 (-11l) (Bytes.get_int32_le (Device.Buffer.as_bytes copy_output) 0);
   equal int32 (-13l) (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
+  equal Windtrap.bytes failed_timeline (Device.Buffer.as_bytes timeline);
+  equal int submissions !(Realize.queue_submissions);
+  let unsupported_after_overlap = compile
+      [compute (ptr 4) (ptr 5);
+       U.store_call ~dst:(copy_ptr 1) ~src:(copy_ptr 0);
+       compute (ptr 3) foreign_input] in
+  let before_overlap = Device.Buffer.as_bytes overlap_root in
+  let prefix_output = buffer (-17l) in
+  raises (Storage.Mapping_unavailable "test import is unsupported")
+    (fun () -> replay unsupported_after_overlap
+        [|overlap_src; overlap_dst; foreign; kernel_output; prefix_output; buffer 89l|]);
+  equal Windtrap.bytes before_overlap (Device.Buffer.as_bytes overlap_root);
+  equal int32 (-13l) (Bytes.get_int32_le (Device.Buffer.as_bytes kernel_output) 0);
+  equal int32 (-17l) (Bytes.get_int32_le (Device.Buffer.as_bytes prefix_output) 0);
   equal Windtrap.bytes failed_timeline (Device.Buffer.as_bytes timeline);
   equal int submissions !(Realize.queue_submissions);
   replay transfer [|foreign; middle; output|];

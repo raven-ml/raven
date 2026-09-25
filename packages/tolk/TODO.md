@@ -30,10 +30,6 @@ with their rationale and validation; commit count is not an acceptance metric.
   retained command storage. Share NV code images within a compiled schedule
   and use one QMD/argument arena per run. Measure allocation counts and
   test independent retained links, descriptor alignment and replay patching.
-- Resolve ordered fallback for mixed kernel/copy batches whose runtime bindings
-  overlap. Such batches currently reject before any submission; copy-only
-  batches retain the bounded overlap-safe fallback. Keep unsupported foreign
-  kernel mappings explicit instead of falling through to a removed launcher.
 - Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
   `LRU=0`, forcing GC during allocation, mapped-buffer teardown, direct dispatch,
   compiled submission, signal reservation and kernarg reuse. Verify that waits
