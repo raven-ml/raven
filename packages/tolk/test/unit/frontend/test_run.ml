@@ -495,6 +495,52 @@ let scatter_indexed_tests =
               (indexed `Set (zeros [ 4; 2 ]) ~dim:0 (index ()) (iota [ 4; 2 ]));
             check_floats [| 1.; 2.; 8.; 10.; 5.; 6.; 7.; 8. |]
               (indexed `Add (iota [ 4; 2 ]) ~dim:0 (index ()) (iota [ 4; 2 ])));
+        test "an index outside the axis writes nothing beside unit axes"
+          (fun () ->
+            (* When no range of the destination's address meets the updates,
+               one update, or a scatter axis of extent 1, the bound on the
+               loaded index is its store's only gate. *)
+            let devices =
+              U.Single "CPU"
+              :: Option.to_list (T.device (fi ~shape:[ 1 ] [| 0 |]))
+              |> List.sort_uniq compare
+            in
+            let column = [ 3; 1 ] and one = [ 1; 1 ] and row = [ 1; 3 ] in
+            let cases =
+              [
+                (column, [ 1; 1 ], [| -1 |], None, [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
+                (column, [ 1; 1 ], [| 3 |], None, [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
+                (column, [ 2; 1 ], [| -1; 1 |], None, [| 1.; 8.; 3. |], [| 1.; 10.; 3. |]);
+                (column, [ 2; 1 ], [| 1; 3 |], None, [| 1.; 9.; 3. |], [| 1.; 11.; 3. |]);
+                (one, [ 2; 1 ], [| -1; -1 |], None, [| 1. |], [| 1. |]);
+                (row, [ 2; 1 ], [| -1; -1 |], Some [ 2; 3 ], [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
+              ]
+            in
+            List.iter
+              (fun device ->
+                let on t = Creation.clone ~device t in
+                List.iter
+                  (fun (dest, ishape, ids, expanded, set, add) ->
+                    let index () =
+                      let i = on (fi ~shape:ishape ids) in
+                      match expanded with None -> i | Some sh -> Mv.expand i sh
+                    in
+                    let sshape = Option.value expanded ~default:ishape in
+                    let n = List.fold_left ( * ) 1 sshape in
+                    let src () =
+                      on (fa ~shape:sshape (Array.init n (fun j -> 9. -. float_of_int j)))
+                    in
+                    List.iter
+                      (fun unique ->
+                        check_floats set
+                          (indexed ~unique `Set (on (iota dest)) ~dim:0
+                             (index ()) (src ()));
+                        check_floats add
+                          (indexed ~unique `Add (on (iota dest)) ~dim:0
+                             (index ()) (src ())))
+                      [ false; true ])
+                  cases)
+              devices);
         test "an index broadcast off the axis is read once per row" (fun () ->
             let index = fi ~shape:[ 3; 1 ] [| 2; 0; 2 |] in
             let broadcast = Mv.expand index [ 3; 2 ] in

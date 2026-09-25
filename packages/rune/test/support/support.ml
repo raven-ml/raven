@@ -678,3 +678,70 @@ let check_sort_pieces (type a b) ?infinities out pieces
           "descending indices";
         ])
     pieces
+
+(* An index outside the axis drops a scatter's update, reads zero at a gather
+   and passes no gradient back through one, where no range of the compiled
+   destination's address meets the updates: one update beside a unit axis, or a
+   scatter axis of extent 1, whose index may be broadcast inside the function.
+   With and without the promise of unique indices. *)
+let check_out_of_range_beside_unit_axes ?devices () =
+  let check msg expected f t =
+    check_arr ~msg:(msg ^ ", eager") expected (f t);
+    check_arr ~msg:(msg ^ ", compiled") expected (Rune.jit' ?devices f t)
+  in
+  let column = Nx.create f32 [| 3; 1 |] [| 1.; 2.; 3. |] in
+  let one = Nx.create f32 [| 1; 1 |] [| 1. |] in
+  let row = Nx.create f32 [| 1; 3 |] [| 1.; 2.; 3. |] in
+  List.iter
+    (fun (t, ids, broadcast, set, add) ->
+      let n = Array.length ids in
+      let indices =
+        Nx.create Nx.int32 [| n; 1 |] (Array.map Int32.of_int ids)
+      in
+      let shape = Option.value broadcast ~default:[| n; 1 |] in
+      let values =
+        Nx.create f32 shape
+          (Array.init (Array.fold_left ( * ) 1 shape) (fun j ->
+               9. -. float_of_int j))
+      in
+      let at =
+        String.concat "; " (Array.to_list (Array.map string_of_int ids))
+      in
+      let dims =
+        String.concat "x" (Array.to_list (Array.map string_of_int (Nx.shape t)))
+      in
+      List.iter
+        (fun unique_indices ->
+          let scatter mode t =
+            let indices =
+              match broadcast with
+              | None -> indices
+              | Some shape -> Nx.broadcast_to shape indices
+            in
+            Nx.scatter ~mode ~unique_indices ~axis:0 ~indices ~values t
+          in
+          let msg =
+            Printf.sprintf "%s at [%s], unique %b" dims at unique_indices
+          in
+          check (msg ^ ", set") set (scatter `Set) t;
+          check (msg ^ ", add") add (scatter `Add) t)
+        [ false; true ])
+    [
+      (column, [| -1 |], None, [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
+      (column, [| 3 |], None, [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
+      (column, [| -1; 1 |], None, [| 1.; 8.; 3. |], [| 1.; 10.; 3. |]);
+      (column, [| 1; 3 |], None, [| 1.; 9.; 3. |], [| 1.; 11.; 3. |]);
+      (one, [| -1; -1 |], None, [| 1. |], [| 1. |]);
+      (row, [| -1; -1 |], Some [| 2; 3 |], [| 1.; 2.; 3. |], [| 1.; 2.; 3. |]);
+    ];
+  List.iter
+    (fun (ids, taken) ->
+      let indices =
+        Nx.create Nx.int32 [| Array.length ids |] (Array.map Int32.of_int ids)
+      in
+      check "take" taken (Nx.take ~axis:0 ~indices) column)
+    [ ([| -1 |], [| 0. |]); ([| 3 |], [| 0. |]); ([| -1; 1 |], [| 0.; 2. |]) ];
+  let far = Nx.create Nx.int32 [| 2 |] [| -1l; -1l |] in
+  check "the gradient of take over an axis of size 1" [| 0.; 0.; 0. |]
+    (Rune.grad' (fun t -> Nx.sum (Nx.take ~axis:0 ~indices:far t)))
+    row

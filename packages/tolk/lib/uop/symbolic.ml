@@ -2037,6 +2037,11 @@ let pm_simplify_valid =
 
   ]
 
+(* A reshape gives every axis the whole gate, and each axis keeps the clauses
+   over its own ranges; a clause over another axis's ranges is kept there. A
+   clause that reads memory bounds a loaded value, which no axis's ranges
+   imply, so every axis keeps it: dropping it ungates a store whose address
+   does not carry the value. *)
 let pm_drop_and_clauses =
   let open Upat in
   Pattern_matcher.make [
@@ -2051,7 +2056,11 @@ let pm_drop_and_clauses =
          let keep, drop =
            List.partition
              (fun c ->
-               List.exists (fun r -> List.memq r x_ranges) (Uop.ranges c))
+               List.exists
+                 (fun u ->
+                   match Uop.op u with Ops.Load | Ops.Index -> true | _ -> false)
+                 (c :: Uop.backward_slice c)
+               || List.exists (fun r -> List.memq r x_ranges) (Uop.ranges c))
              clauses
          in
          if drop = [] then None

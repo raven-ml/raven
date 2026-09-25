@@ -3985,6 +3985,8 @@ let tests =
         test "take over a large table matches eager"
           test_take_large_table_matches_eager;
         test "gathers keep -0" (check_gathers_keep_negative_zero ?devices:None);
+        test "an index outside the axis beside unit axes"
+          (check_out_of_range_beside_unit_axes ?devices:None);
         slow "sorted values are the input's elements"
           (check_sort_values_are_elements ?devices:None);
         slow "sort matches eager" test_sort_matches_eager;

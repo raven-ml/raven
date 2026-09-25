@@ -367,6 +367,18 @@ delete it rather than registering it.
   `Set` and an unspecified value under `Add`; every other position stays
   exact. Consumer: `Nx.top_k`, whose compaction is a permutation.
 
+- **A gate clause on a loaded value survives a reshape** (`uop/symbolic.ml`
+  `pm_drop_and_clauses`). The reference keeps, on each axis of a reshape, only
+  the clauses over that axis's ranges; its index gates bound addresses, and
+  meaning lives in values. tolk's indexed scatter gates its store on the
+  loaded index, and the quantised and block products gate loads on a loaded
+  id, so the gate carries meaning. No axis's ranges imply a clause on a loaded
+  value, and dropping it stored an out-of-range update at the index modulo the
+  axis (one update, or a destination axis of size 1). tolk keeps a clause that
+  reads memory on every axis; every golden and parity output is unchanged.
+  Covered by `test_run`, the block and quant gate tests and rune's
+  out-of-range scatter checks, on CPU and Metal.
+
 - **Quantised matrix product** (`frontend/op.ml` `quant_matmul`). The
   reference's only fused quantised products are hand-written AMD kernels in
   `extra/`; a product with MXFP4 weights written as tensor operations decodes

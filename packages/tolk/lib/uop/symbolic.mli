@@ -72,8 +72,8 @@ val pm_simplify_valid : Upat.Pattern_matcher.t
     indices. *)
 
 val pm_drop_and_clauses : Upat.Pattern_matcher.t
-(** [pm_drop_and_clauses] removes invalid-gate clauses that do not depend
-    on ranges used by the gated index. *)
+(** [pm_drop_and_clauses] removes invalid-gate clauses over ranges that the
+    gated index does not use. A clause that reads memory is kept. *)
 
 val pm_remove_invalid : Upat.Pattern_matcher.t
 (** [pm_remove_invalid] replaces every {!Const.Invalid} constant with a zero of

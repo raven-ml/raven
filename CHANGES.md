@@ -160,6 +160,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.scatter` drops an update whose index is outside the axis
+  when there is one update or the axis has size 1, and the gradient of a
+  compiled `Nx.take` over an axis of size 1 no longer adds the cotangent of an
+  out-of-range read. Both used to land at the index modulo the axis.
 - `Rune.remat` saves memory under `jit`: its recomputation shared the forward
   pass's nodes, which kept every block's intermediates live (16 MLP blocks,
   batch 2048, CPU: 169 MiB with or without `remat`, now 62 MiB).

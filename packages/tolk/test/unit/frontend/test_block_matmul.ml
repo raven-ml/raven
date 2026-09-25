@@ -271,6 +271,13 @@ let contains s sub =
   in
   at 0
 
+(* The index expressions of a load's address. *)
+let rec address u =
+  match U.op u with
+  | Ops.Index -> List.tl (Array.to_list (U.src u))
+  | Ops.Cast | Ops.Bitcast -> address (U.src u).(0)
+  | _ -> [ u ]
+
 let code_tests =
   let shapes =
     [
@@ -303,6 +310,37 @@ let code_tests =
            shapes)
        renderers
     @ [
+        test "a lone block's loads at its id are gated" (fun () ->
+            (* Where the kernel gates its loads rather than bounding its
+               contraction by the id, which it reads at a fixed address. *)
+            List.iter
+              (fun (prefix, ren) ->
+                List.iter
+                  (fun k ->
+                    if not (Renderer.has_local ren && k > 1) then
+                      let program, _, _ =
+                        lowered ~device:prefix ren ~dtype:D.float32 ~nb:1 ~m:4
+                          ~n:16 ~k ~e:4
+                      in
+                      let ungated =
+                        List.filter
+                          (fun u ->
+                            match U.as_load u with
+                            | Some { src; gate = None; _ } ->
+                                List.exists
+                                  (fun i ->
+                                    List.exists
+                                      (fun v -> U.op v = Ops.Load)
+                                      (U.backward_slice i))
+                                  (address src)
+                            | _ -> false)
+                          program
+                      in
+                      equal
+                        ~msg:(Printf.sprintf "%s, k = %d" prefix k)
+                        int 0 (List.length ungated))
+                  [ 1; 8 ])
+              renderers);
         test "Metal takes its tensor cores" (fun () ->
             let ren = List.assoc "RMETAL" renderers in
             List.iter

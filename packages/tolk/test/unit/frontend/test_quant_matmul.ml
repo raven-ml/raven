@@ -334,14 +334,15 @@ let () =
       renderer_device ("QMM" ^ String.uppercase_ascii name) ren)
     renderers
 
-(* The linearized kernel of a product with ids over 32 matrices of 64 columns,
-   [m] rows of [k] inputs per instance, on [ren]. *)
-let program name ren ~m ~k =
+(* The linearized kernel of a product with [instances] ids (default 4) over 32
+   matrices of 64 columns, [m] rows of [k] inputs per instance, on [ren]. *)
+let program ?(instances = 4) name ren ~m ~k =
   let device = U.Single ("QMM" ^ String.uppercase_ascii name) in
   let empty dtype shape = Creation.empty ~dtype ~device shape in
   let y =
-    Op.quant_matmul ~ids:(empty D.int32 [ 4 ])
-      (empty D.bfloat16 [ 4; m; k ])
+    Op.quant_matmul
+      ~ids:(empty D.int32 [ instances ])
+      (empty D.bfloat16 [ instances; m; k ])
       ~codes:(empty D.uint8 [ 32; 64; k / 2 ])
       ~scales:(empty D.uint8 [ 32; 64; k / 32 ])
   in
@@ -402,6 +403,30 @@ let codegen ~m ~k (name, ren, gpu) =
         equal ~msg:"float multiplies outside the loop" int 0 !outside
       end)
 
+(* Where the kernel gates its loads, a load at an address read from memory, the
+   instance's id, carries the gate, a lone instance included: its id is read
+   at a fixed address, outside every loop. *)
+let rec address u =
+  match U.op u with
+  | Ops.Index -> List.tl (Array.to_list (U.src u))
+  | Ops.Cast | Ops.Bitcast -> address (U.src u).(0)
+  | _ -> [ u ]
+
+let gated ~k (name, ren, gpu) =
+  test (Printf.sprintf "%s, one instance of %d inputs gates its loads" name k)
+    (fun () ->
+      if not (gpu && k >= 64) then
+        let ungated =
+          List.filter
+            (fun u ->
+              match U.as_load u with
+              | Some { src; gate = None; _ } ->
+                  List.exists reads_memory (address src)
+              | _ -> false)
+            (program ~instances:1 name ren ~m:1 ~k)
+        in
+        equal ~msg:"loads at an id without a gate" int 0 (List.length ungated))
+
 let refusals =
   let empty dtype shape =
     Creation.empty ~dtype ~device:(U.Single "CPU") shape
@@ -448,6 +473,8 @@ let () =
                codegen ~m:1 ~k:2880 r;
                codegen ~m:8 ~k:2880 r;
                codegen ~m:1 ~k:32 r;
+               gated ~k:32 r;
+               gated ~k:64 r;
              ])
            renderers);
     ]
