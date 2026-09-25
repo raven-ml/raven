@@ -1,5 +1,5 @@
 #pragma OPENCL EXTENSION cl_khr_fp16 : enable
-__kernel void test(__global half* data0_-1, __global half* data1_-1) {
-  half val0 = (*(data0_-1+0));
-  *(data1_-1+0) = sqrt(val0);
+__kernel void test(__global half* data0_1, __global half* data1_1) {
+  half val0 = (*(data0_1+0));
+  *(data1_1+0) = sqrt(val0);
 }

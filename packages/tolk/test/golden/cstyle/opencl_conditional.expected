@@ -1,5 +1,5 @@
-__kernel void test(__global float* data0_-1) {
+__kernel void test(__global float* data0_1) {
   if (1) {
-    *(data0_-1+0) = 1.0f;
+    *(data0_1+0) = 1.0f;
   }
 }

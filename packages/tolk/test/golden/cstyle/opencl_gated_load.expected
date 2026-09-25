@@ -1,4 +1,4 @@
-__kernel void test(__global float* data0_-1, __global float* data1_-1) {
-  float val0 = (1?*(data0_-1+0):0.0f);
-  *(data1_-1+0) = val0;
+__kernel void test(__global float* data0_1, __global float* data1_1) {
+  float val0 = (1?*(data0_1+0):0.0f);
+  *(data1_1+0) = val0;
 }

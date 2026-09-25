@@ -72,9 +72,6 @@ acceptance requirement; skipped tests are not execution evidence.
   promotes nothing, where the reference's source uses its promoting operators.
   A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
 
-- Attribute every changed expectation in the separately generated reference
-  corpus; require exact source parity for supported renderers, apart from
-  explicitly justified divergences.
 - Prove the remaining strict-OOB rejections in leading-axis long cumsum and
   three Metal tensor-core cases (padded contraction and BF16 accumulation).
   Their distributed affine indexes no longer contain the gate's bounded sum

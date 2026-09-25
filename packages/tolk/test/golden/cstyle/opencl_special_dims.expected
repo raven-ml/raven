@@ -1,7 +1,7 @@
-__kernel void test(__global float* data0_-1) {
+__kernel void test(__global float* data0_63) {
   int gidx0 = get_group_id(0); /* 32 */
   int lidx0 = get_local_id(0); /* 32 */
   int alu0 = (gidx0+lidx0);
-  float val0 = (*(data0_-1+alu0));
-  *(data0_-1+alu0) = val0;
+  float val0 = (*(data0_63+alu0));
+  *(data0_63+alu0) = val0;
 }

@@ -1,5 +1,5 @@
-void test(int* restrict data0_-1, int* restrict data1_-1, int* restrict data2_-1) {
-  int val0 = (*(data0_-1+0));
-  int val1 = (*(data1_-1+0));
-  *(data2_-1+0) = (val0*val1);
+void test(int* restrict data0_1, int* restrict data1_1, int* restrict data2_1) {
+  int val0 = (*(data0_1+0));
+  int val1 = (*(data1_1+0));
+  *(data2_1+0) = (val0*val1);
 }

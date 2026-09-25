@@ -51,6 +51,7 @@ def check_cpu_sources(output, compiler, env):
     command = [compiler, "-x", "c", "-fsyntax-only", "-"]
     sources = sorted(output.glob("parity/*/stage7_cpu.expected"))
     sources += sorted(output.glob("golden/codegen/clang_*.expected"))
+    sources += sorted(output.glob("golden/cstyle/clang_*.expected"))
     files = {}
     for source in sources:
         name = source.relative_to(output).as_posix()

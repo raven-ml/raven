@@ -1,11 +1,11 @@
 #include <metal_stdlib>
 using namespace metal;
-struct args_t { device float* data0_-1; };
+struct args_t { device float* data0_1; };
 kernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device float* data0_-1 = args.data0_-1;
+  device float* data0_1 = args.data0_1;
   threadgroup __attribute__((aligned(16))) float buf0[256];
   *(buf0+0) = 0.0f;
   threadgroup_barrier(mem_flags::mem_threadgroup);
   float val0 = (*(buf0+0));
-  *(data0_-1+0) = val0;
+  *(data0_1+0) = val0;
 }

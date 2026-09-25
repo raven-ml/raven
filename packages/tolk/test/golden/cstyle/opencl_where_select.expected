@@ -1,6 +1,6 @@
-__kernel void test(__global float* data0_-1, __global float* data1_-1, __global float* data2_-1) {
-  float val0 = (*(data0_-1+0));
-  float val1 = (*(data1_-1+0));
+__kernel void test(__global float* data0_1, __global float* data1_1, __global float* data2_1) {
+  float val0 = (*(data0_1+0));
+  float val1 = (*(data1_1+0));
   float alu0 = (1?val0:val1);
-  *(data2_-1+0) = alu0;
+  *(data2_1+0) = alu0;
 }

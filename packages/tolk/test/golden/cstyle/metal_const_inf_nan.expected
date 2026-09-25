@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
-struct args_t { device float* data0_-1; };
+struct args_t { device float* data0_2; };
 kernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device float* data0_-1 = args.data0_-1;
-  *(data0_-1+0) = ((float)(INFINITY));
-  *(data0_-1+1) = ((float)(NAN));
+  device float* data0_2 = args.data0_2;
+  *(data0_2+0) = ((float)(INFINITY));
+  *(data0_2+1) = ((float)(NAN));
 }

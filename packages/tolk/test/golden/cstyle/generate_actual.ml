@@ -19,9 +19,9 @@ let make_simple_add_f32 () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
-  let p2 = B.emit b (Param { slot = 2; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
+  let p2 = B.emit b (Param { slot = 2; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr }) in
   let idx1 = B.emit b (Index { ptr = p1; idxs = [ c0 ]; dtype = ptr }) in
@@ -36,9 +36,9 @@ let make_simple_mul_i32 () =
   let dt = Dtype.int32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
-  let p2 = B.emit b (Param { slot = 2; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
+  let p2 = B.emit b (Param { slot = 2; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr }) in
   let idx1 = B.emit b (Index { ptr = p1; idxs = [ c0 ]; dtype = ptr }) in
@@ -53,7 +53,7 @@ let make_loop () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 10 }) in
   let c10 = B.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 }) in
   let r = B.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_type.Weak }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ r ]; dtype = ptr }) in
@@ -67,8 +67,8 @@ let make_gated_load () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let gate = B.emit b (Const { value = Const.bool true; dtype = Dtype.bool }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr }) in
@@ -84,7 +84,7 @@ let make_shared_memory () =
   let dt = Dtype.float32 in
   let gptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = gptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = gptr; size = 1 }) in
   let dl =
     B.emit b
       (Buffer { slot = Some 0; size = 256; dtype = dt; addrspace = Dtype.Local })
@@ -103,9 +103,9 @@ let make_where_select () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
-  let p2 = B.emit b (Param { slot = 2; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
+  let p2 = B.emit b (Param { slot = 2; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr }) in
   let idx1 = B.emit b (Index { ptr = p1; idxs = [ c0 ]; dtype = ptr }) in
@@ -123,8 +123,8 @@ let make_cast_f16_to_f32 () =
   let from_ptr = from_dt in
   let to_ptr = to_dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = from_ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = to_ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = from_ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = to_ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = from_ptr }) in
   let idx1 = B.emit b (Index { ptr = p1; idxs = [ c0 ]; dtype = to_ptr }) in
@@ -137,7 +137,7 @@ let make_nested_loops () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 14 }) in
   let c10 = B.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 }) in
   let c5 = B.emit b (Const { value = Const.int Dtype.int32 5; dtype = Dtype.int32 }) in
   let r0 = B.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_type.Weak }) in
@@ -155,10 +155,10 @@ let make_multi_param () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
-  let _ = B.emit b (Param { slot = 2; dtype = ptr }) in
-  let p3 = B.emit b (Param { slot = 3; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
+  let _ = B.emit b (Param { slot = 2; dtype = ptr; size = 1 }) in
+  let p3 = B.emit b (Param { slot = 3; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr }) in
   let idx1 = B.emit b (Index { ptr = p1; idxs = [ c0 ]; dtype = ptr }) in
@@ -173,8 +173,8 @@ let make_unary_sqrt_f32 () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr }) in
   let ld = B.emit b (Load { src = idx0; alt = None; gate = None; dtype = dt }) in
@@ -187,8 +187,8 @@ let make_unary_sqrt_f16 () =
   let dt = Dtype.float16 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = ptr }) in
   let ld = B.emit b (Load { src = idx0; alt = None; gate = None; dtype = dt }) in
@@ -201,7 +201,7 @@ let make_special_dims () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 63 }) in
   let c32 = Uop.const_int 32 in
   let gid = B.emit b (Special { dim = Gpu_dim.Group_id 0; size = c32; dtype = Dtype.int32 }) in
   let lid = B.emit b (Special { dim = Gpu_dim.Local_id 0; size = c32; dtype = Dtype.int32 }) in
@@ -218,8 +218,8 @@ let make_bitcast_f32_to_i32 () =
   let from_ptr = from_dt in
   let to_ptr = to_dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = from_ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = to_ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = from_ptr; size = 1 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = to_ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let idx0 = B.emit b (Index { ptr = p0; idxs = [ c0 ]; dtype = from_ptr }) in
   let ld = B.emit b (Load { src = idx0; alt = None; gate = None; dtype = from_dt }) in
@@ -232,7 +232,7 @@ let make_conditional () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let cond = B.emit b (Const { value = Const.bool true; dtype = Dtype.bool }) in
   let if_ = B.emit b (If { cond; idx_for_dedup = c0 }) in
@@ -246,7 +246,7 @@ let make_const_inf_nan () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 2 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let c1 = B.emit b (Const { value = Const.int Dtype.int32 1; dtype = Dtype.int32 }) in
   let finf = B.emit b (Const { value = Const.float dt infinity; dtype = dt }) in
@@ -261,8 +261,8 @@ let make_vectorize_index () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 4 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let c1 = B.emit b (Const { value = Const.int Dtype.int32 1; dtype = Dtype.int32 }) in
   let c2 = B.emit b (Const { value = Const.int Dtype.int32 2; dtype = Dtype.int32 }) in
@@ -285,8 +285,8 @@ let make_vectorize_index_scalarized () =
   let dt = Dtype.float32 in
   let ptr = dt in
   let b = B.create () in
-  let p0 = B.emit b (Param { slot = 0; dtype = ptr }) in
-  let p1 = B.emit b (Param { slot = 1; dtype = ptr }) in
+  let p0 = B.emit b (Param { slot = 0; dtype = ptr; size = 4 }) in
+  let p1 = B.emit b (Param { slot = 1; dtype = ptr; size = 1 }) in
   let c0 = B.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
   let c1 = B.emit b (Const { value = Const.int Dtype.int32 1; dtype = Dtype.int32 }) in
   let c2 = B.emit b (Const { value = Const.int Dtype.int32 2; dtype = Dtype.int32 }) in
