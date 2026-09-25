@@ -108,7 +108,7 @@
  (names test_amd_amdev)
  (modules test_amd_amdev)
  (package tolk)
- (libraries tolk tolk.hcq tolk.amd windtrap))
+ (libraries tolk tolk.hcq tolk.amd windtrap unix))
 
 (tests
  (names test_nv_tables)

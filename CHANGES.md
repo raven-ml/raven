@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- AMD PCI boot uses updated firmware and register tables, including SMU
+  13.0.15 protocols. Missing or outdated firmware is downloaded from the
+  pinned source with `curl`, SHA-verified and cached without replacing local files.
+
 - NV submissions share immutable program images and allocate descriptors and
   arguments together. Retained replays keep separate writable storage while
   avoiding repeated image allocation and relocation setup.

@@ -513,6 +513,11 @@ let gc_9_4_3 = [
   ("regTCP_PERFCOUNTER_FILTER", (0x12b9, 0, [ ("buffer", (0, 0)); ("flat", (1, 1)); ("dim", (2, 4)); ("data_format", (5, 10)); ("num_format", (11, 14)); ("sw_mode", (15, 19)); ("num_samples", (20, 21)); ("opcode_type", (22, 24)); ("glc", (25, 25)); ("slc", (26, 26)); ("compression_enable", (27, 27)); ("addr_mode", (28, 30)) ]));
   ("regTCP_PERFCOUNTER_FILTER_EN", (0x12ba, 0, [ ("buffer", (0, 0)); ("flat", (1, 1)); ("dim", (2, 2)); ("data_format", (3, 3)); ("num_format", (4, 4)); ("sw_mode", (5, 5)); ("num_samples", (6, 6)); ("opcode_type", (7, 7)); ("glc", (8, 8)); ("slc", (9, 9)); ("compression_enable", (10, 10)); ("addr_mode", (11, 11)) ]));
   ("regCP_PERFMON_CNTX_CNTL", (0xd8, 1, [ ("perfmon_enable", (31, 31)) ]));
+  ("regSCRATCH_REG0", (0x2040, 1, [ ("scratch_reg0", (0, 31)) ]));
+  ("regSCRATCH_REG1", (0x2041, 1, [ ("scratch_reg1", (0, 31)) ]));
+  ("regSCRATCH_REG2", (0x2042, 1, [ ("scratch_reg2", (0, 31)) ]));
+  ("regSCRATCH_REG3", (0x2043, 1, [ ("scratch_reg3", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
   ("regSCRATCH_REG6", (0x2046, 1, [ ("scratch_reg6", (0, 31)) ]));
   ("regSCRATCH_REG7", (0x2047, 1, [ ("scratch_reg7", (0, 31)) ]));
   ("regCP_COHER_START_DELAY", (0x207b, 1, [ ("start_delay_count", (0, 5)) ]));
@@ -1023,7 +1028,6 @@ let gc_9_4_3 = [
   ("regGRBM_CAM_DATA", (0x5e17, 1, [ ("cam_addr", (0, 15)); ("cam_remapaddr", (16, 31)) ]));
   ("regGRBM_HYP_CAM_DATA", (0x5e17, 1, [ ("cam_addr", (0, 15)); ("cam_remapaddr", (16, 31)) ]));
   ("regRLC_FWL_FIRST_VIOL_ADDR", (0x5f37, 1, [ ("viol_status", (0, 0)); ("viol_op", (1, 1)); ("viol_addr", (2, 19)); ("viol_aperture_id", (20, 31)) ]));
-  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_11_0_0 = [
@@ -1796,6 +1800,11 @@ let gc_11_0_0 = [
   ("regTCP_CNTL2", (0x19a3, 1, [ ("ls_disable_clocks", (0, 7)); ("tcp_fmt_mgcg_disable", (8, 8)); ("tcpf_latency_bypass_disable", (9, 9)); ("tcp_write_data_mgcg_disable", (10, 10)); ("tcp_inner_block_mgcg_disable", (11, 11)); ("tcp_adrs_img_calc_mgcg_disable", (12, 12)); ("v64_combine_enable", (13, 13)); ("tagram_addr_swizzle_disable", (14, 14)); ("return_order_override", (15, 15)); ("power_opt_disable", (16, 16)); ("gcr_rsp_fgcg_disable", (17, 17)); ("perf_en_override", (18, 19)); ("tc_td_ram_clken_disable", (20, 20)); ("tc_td_data_clken_disable", (21, 21)); ("tcp_gl1_req_clken_disable", (22, 22)); ("tcp_gl1r_src_clken_disable", (23, 23)); ("spare_bit", (26, 26)); ("tagram_xy_bias_override", (27, 28)); ("tcp_req_mgcg_disable", (29, 29)); ("tcp_miss_mgcg_disable", (30, 30)); ("disable_mipmap_param_calc_self_gating", (31, 31)) ]));
   ("regTCP_DEBUG_INDEX", (0x19a5, 1, [ ("index", (0, 4)) ]));
   ("regTCP_DEBUG_DATA", (0x19a6, 1, [ ("data", (0, 17)) ]));
+  ("regSCRATCH_REG0", (0x2040, 1, [ ("scratch_reg0", (0, 31)) ]));
+  ("regSCRATCH_REG1", (0x2041, 1, [ ("scratch_reg1", (0, 31)) ]));
+  ("regSCRATCH_REG2", (0x2042, 1, [ ("scratch_reg2", (0, 31)) ]));
+  ("regSCRATCH_REG3", (0x2043, 1, [ ("scratch_reg3", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
   ("regSCRATCH_REG6", (0x2046, 1, [ ("scratch_reg6", (0, 31)) ]));
   ("regSCRATCH_REG7", (0x2047, 1, [ ("scratch_reg7", (0, 31)) ]));
   ("regRLC_GPM_PERF_COUNT_0", (0x2140, 1, [ ("feature_sel", (0, 3)); ("se_index", (4, 7)); ("sa_index", (8, 11)); ("wgp_index", (12, 15)); ("event_sel", (16, 17)); ("unused", (18, 19)); ("enable", (20, 20)); ("reserved", (21, 31)) ]));
@@ -2608,7 +2617,6 @@ let gc_11_0_0 = [
   ("regRLC_FWL_FIRST_VIOL_ADDR", (0x5f26, 1, [ ("viol_addr", (0, 17)); ("viol_aperture_id", (18, 29)); ("viol_op", (30, 30)); ("reserved", (31, 31)) ]));
   ("regRLC_GFX_IMU_DATA_0", (0x4052, 1, [ ("data", (0, 31)) ]));
   ("regRLC_GFX_IMU_CMD", (0x4053, 1, [ ("cmd", (0, 31)) ]));
-  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_11_0_3 = [
@@ -3373,6 +3381,11 @@ let gc_11_0_3 = [
   ("regTCP_CNTL", (0x19a2, 1, [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("enable_128b_dcc_comp_read_for_indep64", (7, 7)); ("disable_write_combining", (9, 9)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_z_map", (28, 28)); ("force_order_between_read_write_to_same_address", (29, 29)); ("astc_ve_msb_tolerant", (31, 31)) ]));
   ("regTCP_CNTL2", (0x19a3, 1, [ ("ls_disable_clocks", (0, 7)); ("tcp_fmt_mgcg_disable", (8, 8)); ("tcpf_latency_bypass_disable", (9, 9)); ("tcp_write_data_mgcg_disable", (10, 10)); ("tcp_inner_block_mgcg_disable", (11, 11)); ("tcp_adrs_img_calc_mgcg_disable", (12, 12)); ("v64_combine_enable", (13, 13)); ("tagram_addr_swizzle_disable", (14, 14)); ("return_order_override", (15, 15)); ("power_opt_disable", (16, 16)); ("gcr_rsp_fgcg_disable", (17, 17)); ("perf_en_override", (18, 19)); ("tc_td_ram_clken_disable", (20, 20)); ("tc_td_data_clken_disable", (21, 21)); ("tcp_gl1_req_clken_disable", (22, 22)); ("tcp_gl1r_src_clken_disable", (23, 23)); ("spare_bit", (26, 26)); ("tagram_xy_bias_override", (27, 28)); ("tcp_req_mgcg_disable", (29, 29)); ("tcp_miss_mgcg_disable", (30, 30)); ("disable_mipmap_param_calc_self_gating", (31, 31)) ]));
   ("regTCP_CREDIT", (0x19a4, 1, [ ("lfifo_ram_depth", (0, 9)); ("gl1_req_credit", (10, 15)); ("req_fifo_credit", (16, 22)); ("td_ram_credit", (23, 27)); ("td_data_credit", (29, 31)) ]));
+  ("regSCRATCH_REG0", (0x2040, 1, [ ("scratch_reg0", (0, 31)) ]));
+  ("regSCRATCH_REG1", (0x2041, 1, [ ("scratch_reg1", (0, 31)) ]));
+  ("regSCRATCH_REG2", (0x2042, 1, [ ("scratch_reg2", (0, 31)) ]));
+  ("regSCRATCH_REG3", (0x2043, 1, [ ("scratch_reg3", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
   ("regSCRATCH_REG6", (0x2046, 1, [ ("scratch_reg6", (0, 31)) ]));
   ("regSCRATCH_REG7", (0x2047, 1, [ ("scratch_reg7", (0, 31)) ]));
   ("regRLC_GPM_PERF_COUNT_0", (0x2140, 1, [ ("feature_sel", (0, 3)); ("se_index", (4, 7)); ("sa_index", (8, 11)); ("wgp_index", (12, 15)); ("event_sel", (16, 17)); ("unused", (18, 19)); ("enable", (20, 20)); ("reserved", (21, 31)) ]));
@@ -4206,7 +4219,6 @@ let gc_11_0_3 = [
   ("regRLC_FWL_FIRST_VIOL_ADDR", (0x5f26, 1, [ ("viol_addr", (0, 17)); ("viol_aperture_id", (18, 29)); ("viol_op", (30, 30)); ("reserved", (31, 31)) ]));
   ("regRLC_GFX_IMU_DATA_0", (0x4052, 1, [ ("data", (0, 31)) ]));
   ("regRLC_GFX_IMU_CMD", (0x4053, 1, [ ("cmd", (0, 31)) ]));
-  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_11_5_0 = [
@@ -4800,6 +4812,11 @@ let gc_11_5_0 = [
   ("regTCP_STATUS", (0x19a1, 1, [ ("tcp_busy", (0, 0)); ("input_busy", (1, 1)); ("adrs_busy", (2, 2)); ("tagrams_busy", (3, 3)); ("cntrl_busy", (4, 4)); ("lfifo_busy", (5, 5)); ("read_busy", (6, 6)); ("format_busy", (7, 7)); ("vm_busy", (8, 8)); ("memif_busy", (9, 9)); ("gcr_busy", (10, 10)); ("ofifo_busy", (11, 11)); ("ofifo_queue_busy", (12, 13)); ("xnack_prt", (15, 15)) ]));
   ("regTCP_CNTL", (0x19a2, 1, [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("enable_128b_dcc_comp_read_for_indep64", (7, 7)); ("disable_decompression_power_opt", (8, 8)); ("disable_write_combining", (9, 9)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_z_map", (28, 28)); ("force_order_between_read_write_to_same_address", (29, 29)); ("astc_ve_msb_tolerant", (31, 31)) ]));
   ("regTCP_CNTL2", (0x19a3, 1, [ ("ls_disable_clocks", (0, 7)); ("tcp_fmt_mgcg_disable", (8, 8)); ("tcpf_latency_bypass_disable", (9, 9)); ("tcp_write_data_mgcg_disable", (10, 10)); ("tcp_inner_block_mgcg_disable", (11, 11)); ("tcp_adrs_img_calc_mgcg_disable", (12, 12)); ("v64_combine_enable", (13, 13)); ("tagram_addr_swizzle_disable", (14, 14)); ("return_order_override", (15, 15)); ("power_opt_disable", (16, 16)); ("gcr_rsp_fgcg_disable", (17, 17)); ("perf_en_override", (18, 19)); ("tcp_gl1_req_clken_disable", (22, 22)); ("tcp_gl1r_src_clken_disable", (23, 23)); ("tcp_force_2x_to_load", (24, 24)); ("spare_bit", (26, 26)); ("tagram_xy_bias_override", (27, 28)); ("tcp_req_mgcg_disable", (29, 29)); ("tcp_miss_mgcg_disable", (30, 30)); ("disable_mipmap_param_calc_self_gating", (31, 31)) ]));
+  ("regSCRATCH_REG0", (0x2040, 1, [ ("scratch_reg0", (0, 31)) ]));
+  ("regSCRATCH_REG1", (0x2041, 1, [ ("scratch_reg1", (0, 31)) ]));
+  ("regSCRATCH_REG2", (0x2042, 1, [ ("scratch_reg2", (0, 31)) ]));
+  ("regSCRATCH_REG3", (0x2043, 1, [ ("scratch_reg3", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
   ("regSCRATCH_REG6", (0x2046, 1, [ ("scratch_reg6", (0, 31)) ]));
   ("regSCRATCH_REG7", (0x2047, 1, [ ("scratch_reg7", (0, 31)) ]));
   ("regRLC_GPM_PERF_COUNT_0", (0x2140, 1, [ ("feature_sel", (0, 3)); ("se_index", (4, 7)); ("sa_index", (8, 11)); ("wgp_index", (12, 15)); ("event_sel", (16, 17)); ("unused", (18, 19)); ("enable", (20, 20)); ("reserved", (21, 31)) ]));
@@ -5426,7 +5443,6 @@ let gc_11_5_0 = [
   ("regGRBM_HYP_CAM_DATA_UPPER", (0x5e12, 1, [ ("cam_addr", (0, 1)); ("cam_remapaddr", (16, 17)) ]));
   ("regRLC_GFX_IMU_DATA_0", (0x4052, 1, [ ("data", (0, 31)) ]));
   ("regRLC_GFX_IMU_CMD", (0x4053, 1, [ ("cmd", (0, 31)) ]));
-  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let gc_12_0_0 = [
@@ -6059,6 +6075,11 @@ let gc_12_0_0 = [
   ("regCP_ME_CNTL", (0x803, 1, [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ]));
   ("regGRBM_GFX_CNTL", (0x900, 1, [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ]));
   ("regGRBM_NOWHERE", (0x901, 1, [ ("data", (0, 31)) ]));
+  ("regSCRATCH_REG0", (0x2040, 1, [ ("scratch_reg0", (0, 31)) ]));
+  ("regSCRATCH_REG1", (0x2041, 1, [ ("scratch_reg1", (0, 31)) ]));
+  ("regSCRATCH_REG2", (0x2042, 1, [ ("scratch_reg2", (0, 31)) ]));
+  ("regSCRATCH_REG3", (0x2043, 1, [ ("scratch_reg3", (0, 31)) ]));
+  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
   ("regSCRATCH_REG6", (0x2046, 1, [ ("scratch_reg6", (0, 31)) ]));
   ("regSCRATCH_REG7", (0x2047, 1, [ ("scratch_reg7", (0, 31)) ]));
   ("regRLC_GPM_PERF_COUNT_0", (0x2140, 1, [ ("feature_sel", (0, 3)); ("se_index", (4, 7)); ("sa_index", (8, 11)); ("wgp_index", (12, 15)); ("event_sel", (16, 17)); ("unused", (18, 19)); ("enable", (20, 20)); ("reserved", (21, 31)) ]));
@@ -6812,7 +6833,6 @@ let gc_12_0_0 = [
   ("regGRBMH_RB_SA0_REMAP_CNTL", (0x5922, 1, [ ("rb0_remap_en", (0, 0)); ("rb0_remap", (1, 3)); ("rb1_remap_en", (4, 4)); ("rb1_remap", (5, 7)); ("rb2_remap_en", (8, 8)); ("rb2_remap", (9, 11)); ("rb3_remap_en", (12, 12)); ("rb3_remap", (13, 15)) ]));
   ("regGRBMH_RB_SA1_REMAP_CNTL", (0x5923, 1, [ ("rb0_remap_en", (0, 0)); ("rb0_remap", (1, 3)); ("rb1_remap_en", (4, 4)); ("rb1_remap", (5, 7)); ("rb2_remap_en", (8, 8)); ("rb2_remap", (9, 11)); ("rb3_remap_en", (12, 12)); ("rb3_remap", (13, 15)) ]));
   ("regGRBMH_GRBM_SA_REMAP_CNTL", (0x5a09, 1, [ ("se0_sa_remap", (0, 1)); ("se1_sa_remap", (2, 3)); ("se2_sa_remap", (4, 5)); ("se3_sa_remap", (6, 7)); ("se4_sa_remap", (8, 9)); ("se5_sa_remap", (10, 11)); ("se6_sa_remap", (12, 13)); ("se7_sa_remap", (14, 15)) ]));
-  ("regSCRATCH_REG5", (0x2045, 1, [ ("scratch_reg5", (0, 31)) ]));
 ]
 
 let mmhub_1_8_0 = [
@@ -8996,6 +9016,7 @@ let nbio_4_3_0 = [
   ("regBIF_BX_PF0_GPU_HDP_FLUSH_REQ", (0x106, 2, [ ("cp0", (0, 0)); ("cp1", (1, 1)); ("cp2", (2, 2)); ("cp3", (3, 3)); ("cp4", (4, 4)); ("cp5", (5, 5)); ("cp6", (6, 6)); ("cp7", (7, 7)); ("cp8", (8, 8)); ("cp9", (9, 9)); ("sdma0", (10, 10)); ("sdma1", (11, 11)); ("rsvd_eng0", (12, 12)); ("rsvd_eng1", (13, 13)); ("rsvd_eng2", (14, 14)); ("rsvd_eng3", (15, 15)); ("rsvd_eng4", (16, 16)); ("rsvd_eng5", (17, 17)); ("rsvd_eng6", (18, 18)); ("rsvd_eng7", (19, 19)); ("rsvd_eng8", (20, 20)); ("rsvd_eng9", (21, 21)); ("rsvd_eng10", (22, 22)); ("rsvd_eng11", (23, 23)); ("rsvd_eng12", (24, 24)); ("rsvd_eng13", (25, 25)); ("rsvd_eng14", (26, 26)); ("rsvd_eng15", (27, 27)); ("rsvd_eng16", (28, 28)); ("rsvd_eng17", (29, 29)); ("rsvd_eng18", (30, 30)); ("rsvd_eng19", (31, 31)) ]));
   ("regBIF_BX_PF0_GPU_HDP_FLUSH_DONE", (0x107, 2, [ ("cp0", (0, 0)); ("cp1", (1, 1)); ("cp2", (2, 2)); ("cp3", (3, 3)); ("cp4", (4, 4)); ("cp5", (5, 5)); ("cp6", (6, 6)); ("cp7", (7, 7)); ("cp8", (8, 8)); ("cp9", (9, 9)); ("sdma0", (10, 10)); ("sdma1", (11, 11)); ("rsvd_eng0", (12, 12)); ("rsvd_eng1", (13, 13)); ("rsvd_eng2", (14, 14)); ("rsvd_eng3", (15, 15)); ("rsvd_eng4", (16, 16)); ("rsvd_eng5", (17, 17)); ("rsvd_eng6", (18, 18)); ("rsvd_eng7", (19, 19)); ("rsvd_eng8", (20, 20)); ("rsvd_eng9", (21, 21)); ("rsvd_eng10", (22, 22)); ("rsvd_eng11", (23, 23)); ("rsvd_eng12", (24, 24)); ("rsvd_eng13", (25, 25)); ("rsvd_eng14", (26, 26)); ("rsvd_eng15", (27, 27)); ("rsvd_eng16", (28, 28)); ("rsvd_eng17", (29, 29)); ("rsvd_eng18", (30, 30)); ("rsvd_eng19", (31, 31)) ]));
   ("regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN", (0xc0, 2, [ ("bif_doorbell_aper_en", (0, 0)) ]));
+  ("regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL", (0xf7, 2, [ ("hdp_mem_flush_addr", (0, 0)) ]));
   ("regRCC_DEV0_EPF2_STRAP2", (0xd102, 5, [ ("strap_no_soft_reset_dev0_f2", (7, 7)); ("strap_resize_bar_en_dev0_f2", (8, 8)); ("strap_max_pasid_width_dev0_f2", (9, 13)); ("strap_msi_pervector_mask_cap_dev0_f2", (14, 14)); ("strap_aer_en_dev0_f2", (16, 16)); ("strap_acs_en_dev0_f2", (17, 17)); ("strap_cpl_abort_err_en_dev0_f2", (20, 20)); ("strap_dpa_en_dev0_f2", (21, 21)); ("strap_vc_en_dev0_f2", (23, 23)); ("strap_msi_multi_cap_dev0_f2", (24, 26)); ("strap_pasid_en_dev0_f2", (28, 28)); ("strap_pasid_exe_permission_supported_dev0_f2", (29, 29)); ("strap_pasid_global_invalidate_supported_dev0_f2", (30, 30)); ("strap_pasid_priv_mode_supported_dev0_f2", (31, 31)) ]));
   ("regRCC_DEV0_EPF2_STRAP20", (0xd114, 5, []));
   ("regBIF_BX_PF1_GPU_HDP_FLUSH_REQ", (0x8e26, 5, [ ("cp0", (0, 0)); ("cp1", (1, 1)); ("cp2", (2, 2)); ("cp3", (3, 3)); ("cp4", (4, 4)); ("cp5", (5, 5)); ("cp6", (6, 6)); ("cp7", (7, 7)); ("cp8", (8, 8)); ("cp9", (9, 9)); ("sdma0", (10, 10)); ("sdma1", (11, 11)); ("rsvd_eng0", (12, 12)); ("rsvd_eng1", (13, 13)); ("rsvd_eng2", (14, 14)); ("rsvd_eng3", (15, 15)); ("rsvd_eng4", (16, 16)); ("rsvd_eng5", (17, 17)); ("rsvd_eng6", (18, 18)); ("rsvd_eng7", (19, 19)); ("rsvd_eng8", (20, 20)); ("rsvd_eng9", (21, 21)); ("rsvd_eng10", (22, 22)); ("rsvd_eng11", (23, 23)); ("rsvd_eng12", (24, 24)); ("rsvd_eng13", (25, 25)); ("rsvd_eng14", (26, 26)); ("rsvd_eng15", (27, 27)); ("rsvd_eng16", (28, 28)); ("rsvd_eng17", (29, 29)); ("rsvd_eng18", (30, 30)); ("rsvd_eng19", (31, 31)) ]));
@@ -9106,6 +9127,7 @@ let nbio_7_9_0 = [
   ("regS2A_DOORBELL_ENTRY_14_CTRL", (0x7a8e, 5, [ ("s2a_doorbell_port14_enable", (0, 0)); ("s2a_doorbell_port14_awid", (1, 5)); ("s2a_doorbell_port14_fence_enable", (6, 6)); ("s2a_doorbell_port14_range_offset", (7, 16)); ("s2a_doorbell_port14_range_size", (17, 24)); ("s2a_doorbell_port14_64bit_support_dis", (25, 25)); ("s2a_doorbell_port14_need_deduct_range_offset", (26, 26)); ("s2a_doorbell_port14_awaddr_31_28_value", (28, 31)) ]));
   ("regS2A_DOORBELL_ENTRY_15_CTRL", (0x7a8f, 5, [ ("s2a_doorbell_port15_enable", (0, 0)); ("s2a_doorbell_port15_awid", (1, 5)); ("s2a_doorbell_port15_fence_enable", (6, 6)); ("s2a_doorbell_port15_range_offset", (7, 16)); ("s2a_doorbell_port15_range_size", (17, 24)); ("s2a_doorbell_port15_64bit_support_dis", (25, 25)); ("s2a_doorbell_port15_need_deduct_range_offset", (26, 26)); ("s2a_doorbell_port15_awaddr_31_28_value", (28, 31)) ]));
   ("regXCC_DOORBELL_FENCE", (0x740c, 5, [ ("xcc_0_doorbell_fence", (0, 0)); ("xcc_1_doorbell_fence", (1, 1)); ("xcc_2_doorbell_fence", (2, 2)); ("xcc_3_doorbell_fence", (3, 3)); ("xcc_4_doorbell_fence", (4, 4)); ("xcc_5_doorbell_fence", (5, 5)); ("xcc_6_doorbell_fence", (6, 6)); ("xcc_7_doorbell_fence", (7, 7)); ("shub_slv_mode", (16, 16)); ("rmote_cp_sent", (17, 17)); ("cp_0_sent", (18, 18)); ("cp_1_sent", (19, 19)); ("cp_2_sent", (20, 20)); ("cp_3_sent", (21, 21)); ("cp_4_sent", (22, 22)); ("cp_5_sent", (23, 23)); ("cp_6_sent", (24, 24)); ("cp_7_sent", (25, 25)); ("remote_client_sent", (26, 26)); ("remote_client_clr_pending", (27, 27)) ]));
+  ("regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL", (0xf7, 2, [ ("hdp_mem_flush_addr", (0, 0)) ]));
 ]
 
 let nbio_7_11_0 = [
@@ -9155,6 +9177,7 @@ let nbif_6_3_1 = [
   ("regRCC_DEV0_EPF2_STRAP20", (0xd114, 5, []));
   ("regBIF_BX_PF1_GPU_HDP_FLUSH_REQ", (0x8e26, 5, [ ("cp0", (0, 0)); ("cp1", (1, 1)); ("cp2", (2, 2)); ("cp3", (3, 3)); ("cp4", (4, 4)); ("cp5", (5, 5)); ("cp6", (6, 6)); ("cp7", (7, 7)); ("cp8", (8, 8)); ("cp9", (9, 9)); ("sdma0", (10, 10)); ("sdma1", (11, 11)); ("rsvd_eng0", (12, 12)); ("rsvd_eng1", (13, 13)); ("rsvd_eng2", (14, 14)); ("rsvd_eng3", (15, 15)); ("rsvd_eng4", (16, 16)); ("rsvd_eng5", (17, 17)); ("rsvd_eng6", (18, 18)); ("rsvd_eng7", (19, 19)); ("rsvd_eng8", (20, 20)); ("rsvd_eng9", (21, 21)); ("rsvd_eng10", (22, 22)); ("rsvd_eng11", (23, 23)); ("rsvd_eng12", (24, 24)); ("rsvd_eng13", (25, 25)); ("rsvd_eng14", (26, 26)); ("rsvd_eng15", (27, 27)); ("rsvd_eng16", (28, 28)); ("rsvd_eng17", (29, 29)); ("rsvd_eng18", (30, 30)); ("rsvd_eng19", (31, 31)) ]));
   ("regBIF_BX_PF1_GPU_HDP_FLUSH_DONE", (0x8e27, 5, [ ("cp0", (0, 0)); ("cp1", (1, 1)); ("cp2", (2, 2)); ("cp3", (3, 3)); ("cp4", (4, 4)); ("cp5", (5, 5)); ("cp6", (6, 6)); ("cp7", (7, 7)); ("cp8", (8, 8)); ("cp9", (9, 9)); ("sdma0", (10, 10)); ("sdma1", (11, 11)); ("rsvd_eng0", (12, 12)); ("rsvd_eng1", (13, 13)); ("rsvd_eng2", (14, 14)); ("rsvd_eng3", (15, 15)); ("rsvd_eng4", (16, 16)); ("rsvd_eng5", (17, 17)); ("rsvd_eng6", (18, 18)); ("rsvd_eng7", (19, 19)); ("rsvd_eng8", (20, 20)); ("rsvd_eng9", (21, 21)); ("rsvd_eng10", (22, 22)); ("rsvd_eng11", (23, 23)); ("rsvd_eng12", (24, 24)); ("rsvd_eng13", (25, 25)); ("rsvd_eng14", (26, 26)); ("rsvd_eng15", (27, 27)); ("rsvd_eng16", (28, 28)); ("rsvd_eng17", (29, 29)); ("rsvd_eng18", (30, 30)); ("rsvd_eng19", (31, 31)) ]));
+  ("regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL", (0xf7, 2, [ ("hdp_mem_flush_addr", (0, 0)) ]));
 ]
 
 let mp_11_0_0 = [

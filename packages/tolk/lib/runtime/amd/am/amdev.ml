@@ -36,11 +36,7 @@ module Am_register = struct
     write t ~value:(read t land lnot mask) fields
 end
 
-(* Firmware: amdev.py AMFirmware, with helpers.py fetch_fw folded in
-   because the driver-less tier is its only consumer. The reference
-   downloads a missing or mismatched file from the pinned
-   linux-firmware tree; that fallback is deferred, so failures name
-   the pinned source instead. *)
+(* Firmware: amdev.py AMFirmware and helpers.py fetch_fw. *)
 
 module Firmware = struct
   type desc = int list * bytes
@@ -62,49 +58,53 @@ module Firmware = struct
     done;
     Bytes.unsafe_to_string out
 
-  let zstd_dc path =
-    let tmp = Filename.temp_file "tolk_fw" ".bin" in
-    Fun.protect
-      ~finally:(fun () -> try Sys.remove tmp with Sys_error _ -> ())
-      (fun () ->
-        let cmd =
-          Printf.sprintf "zstd -q -d -c %s > %s" (Filename.quote path)
-            (Filename.quote tmp)
-        in
-        let status = Sys.command cmd in
-        if status <> 0 then
-          failwith
-            (Printf.sprintf "zstd -d -c %s failed with exit code %d" path
-               status);
-        Bytes.of_string (In_channel.with_open_bin tmp In_channel.input_all))
+  let command_output program args =
+    let input = Unix.open_process_args_in program args in
+    match In_channel.input_all input with
+    | exception exn ->
+        let backtrace = Printexc.get_raw_backtrace () in
+        (try ignore (Unix.close_process_in input) with _ -> ());
+        Printexc.raise_with_backtrace exn backtrace
+    | output ->
+        (match Unix.close_process_in input with
+         | Unix.WEXITED 0 -> Bytes.of_string output
+         | Unix.WEXITED code ->
+             failwith (Printf.sprintf "%s failed with exit code %d" program code)
+         | Unix.WSIGNALED signal | Unix.WSTOPPED signal ->
+             failwith (Printf.sprintf "%s failed with signal %d" program signal))
 
-  (* helpers.py fetch_fw *)
   let fetch_fw ?dir name ~sha256 =
-    let dir =
-      match dir with
-      | Some d -> d
-      | None -> Helpers.getenv_str "AMD_FW_PATH" "/lib/firmware/amdgpu"
-    in
+    let dir = Option.value dir
+        ~default:(Helpers.getenv_str "AMD_FW_PATH" "/lib/firmware/amdgpu") in
     let plain = Filename.concat dir name in
-    let zst = plain ^ ".zst" in
-    let blob =
-      if Sys.file_exists plain then
-        Bytes.of_string (In_channel.with_open_bin plain In_channel.input_all)
-      else if Sys.file_exists zst then zstd_dc zst
-      else
-        failwith
-          (Printf.sprintf
-             "firmware %s not found: searched %s and %s; fetch it from %s/%s"
-             name plain zst Fw.upstream name)
-    in
-    let actual = hex (Helpers.sha256 blob) in
-    if not (String.equal actual sha256) then
-      failwith
-        (Printf.sprintf
-           "fetch sha mismatch, expected %s but got %s for %s (pinned source \
-            %s/%s)"
-           sha256 actual plain Fw.upstream name);
-    blob
+    let matches blob = String.equal (hex (Helpers.sha256 blob)) sha256 in
+    let local path read =
+      if Sys.file_exists path then
+        Option.bind (read path) (fun blob -> if matches blob then Some blob else None)
+      else None in
+    let local_blob = match local plain (fun path ->
+        Some (Bytes.of_string (In_channel.with_open_bin path In_channel.input_all))) with
+      | Some blob -> Some blob
+      | None -> local (plain ^ ".zst") (fun path ->
+          try Some (command_output "zstd" [|"zstd"; "-q"; "-d"; "-c"; path|])
+          with Unix.Unix_error (Unix.ENOENT, _, _) -> None) in
+    match local_blob with
+    | Some blob -> blob
+    | None ->
+        let url = Fw.upstream ^ "/" ^ name in
+        let key = url ^ "\n" ^ sha256 in
+        match Tolk.Diskcache.get ~table:"firmware" ~key with
+        | Some blob when matches blob -> blob
+        | _ ->
+            let blob = command_output "curl"
+                [|"curl"; "--fail"; "--location"; "--silent"; "--show-error";
+                  "--connect-timeout"; "10"; "--max-time"; "60"; url|] in
+            let actual = hex (Helpers.sha256 blob) in
+            if not (String.equal actual sha256) then
+              failwith (Printf.sprintf
+                "fetch sha mismatch, expected %s but got %s for %s" sha256 actual url);
+            Tolk.Diskcache.put ~table:"firmware" ~key blob;
+            blob
 
   (* amdev.py:110 load_fw *)
   let load_fw ?dir fname =

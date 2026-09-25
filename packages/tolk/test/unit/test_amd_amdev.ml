@@ -314,10 +314,12 @@ let with_fw_dir f =
   Sys.mkdir dir 0o700;
   Fun.protect
     ~finally:(fun () ->
-      Array.iter
-        (fun e -> Sys.remove (Filename.concat dir e))
-        (Sys.readdir dir);
-      Sys.rmdir dir)
+      let rec remove path =
+        if Sys.is_directory path then begin
+          Array.iter (fun entry -> remove (Filename.concat path entry)) (Sys.readdir path);
+          Sys.rmdir path
+        end else Sys.remove path in
+      remove dir)
     (fun () -> f dir)
 
 let write_file path content =
@@ -325,6 +327,124 @@ let write_file path content =
       Out_channel.output_string oc content)
 
 let sha_abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+let firmware_fetch_case dir case =
+  let name = "firmware with spaces;literal.bin" in
+  let plain = Filename.concat dir name in
+  let payload = Filename.concat dir "payload" in
+  let status = Filename.concat dir "status" in
+  let requests = Filename.concat dir "requests" in
+  let args = Filename.concat dir "args" in
+  let url = Fw_defs.upstream ^ "/" ^ name in
+  let key = url ^ "\n" ^ sha_abc in
+  let fetch () = Firmware.fetch_fw ~dir name ~sha256:sha_abc in
+  let read path = In_channel.with_open_bin path In_channel.input_all in
+  let calls () = String.length (read requests) in
+  write_file status "0";
+  write_file payload "abc";
+  match case with
+  | "fallback" ->
+      write_file plain "abc";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal bool false (Sys.file_exists requests);
+      write_file plain "outdated";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal string "outdated" (read plain);
+      equal int 1 (calls ());
+      let arguments = String.split_on_char '\n' (read args)
+        |> List.filter (fun argument -> argument <> "") in
+      equal string url (List.hd (List.rev arguments));
+      Sys.remove plain;
+      write_file status "22";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal int 1 (calls ());
+      Tolk.Diskcache.put ~table:"firmware" ~key (Bytes.of_string "corrupted cache");
+      write_file status "0";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal int 2 (calls ());
+      let sha_garbage = "795b6904e54f82411df4b0e27a373a55eea3f9d66dac5a9bce1dd92f7b401da5" in
+      write_file payload "garbage";
+      equal bytes (Bytes.of_string "garbage")
+        (Firmware.fetch_fw ~dir name ~sha256:sha_garbage);
+      equal int 3 (calls ());
+      write_file payload "abc";
+      write_file (Filename.concat dir "compressed.bin.zst") "no decompressor on PATH";
+      equal bytes (Bytes.of_string "abc")
+        (Firmware.fetch_fw ~dir "compressed.bin" ~sha256:sha_abc);
+      equal int 4 (calls ())
+  | "compressed" ->
+      let zstd = Filename.concat (Filename.concat dir "bin") "zstd" in
+      write_file zstd {|#!/bin/sh
+printf x >> "$TOLK_FW_TEST_DIR/decompressions"
+/bin/cat "$TOLK_FW_TEST_DIR/decompressed"
+exit "$(/bin/cat "$TOLK_FW_TEST_DIR/zstd-status")"
+|};
+      Unix.chmod zstd 0o700;
+      let decompressed = Filename.concat dir "decompressed" in
+      let zstd_status = Filename.concat dir "zstd-status" in
+      let decompressions = Filename.concat dir "decompressions" in
+      write_file (plain ^ ".zst") "compressed fixture";
+      write_file decompressed "abc";
+      write_file zstd_status "0";
+      write_file plain "abc";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal bool false (Sys.file_exists decompressions);
+      write_file plain "outdated";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal bool false (Sys.file_exists requests);
+      equal string "x" (read decompressions);
+      write_file decompressed "outdated compressed firmware";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal int 1 (calls ());
+      write_file zstd_status "1";
+      raises_match (Exn.failure ~substring:"zstd failed with exit code 1") fetch;
+      equal int 1 (calls ())
+  | "failures" ->
+      write_file status "22";
+      raises_match (Exn.failure ~substring:"curl failed with exit code 22") fetch;
+      equal (option bytes) None (Tolk.Diskcache.get ~table:"firmware" ~key);
+      write_file status "0";
+      write_file payload "garbage";
+      raises_match (Exn.failure ~substring:("fetch sha mismatch, expected " ^ sha_abc ^
+        " but got 795b6904e54f82411df4b0e27a373a55eea3f9d66dac5a9bce1dd92f7b401da5")) fetch;
+      equal (option bytes) None (Tolk.Diskcache.get ~table:"firmware" ~key);
+      write_file payload "abc";
+      equal bytes (Bytes.of_string "abc") (fetch ());
+      equal int 3 (calls ());
+      equal (option bytes) (Some (Bytes.of_string "abc"))
+        (Tolk.Diskcache.get ~table:"firmware" ~key)
+  | _ -> fail ("unknown firmware case " ^ case)
+
+let () =
+  if Array.length Sys.argv = 3 && Sys.argv.(1) = "--firmware-fetch-test" then begin
+    firmware_fetch_case (Sys.getenv "TOLK_FW_TEST_DIR") Sys.argv.(2);
+    exit 0
+  end
+
+let with_firmware_process case =
+  with_fw_dir (fun dir ->
+      let bin = Filename.concat dir "bin" in
+      Sys.mkdir bin 0o700;
+      let curl = Filename.concat bin "curl" in
+      write_file curl {|#!/bin/sh
+printf x >> "$TOLK_FW_TEST_DIR/requests"
+printf '%s\n' "$@" > "$TOLK_FW_TEST_DIR/args"
+/bin/cat "$TOLK_FW_TEST_DIR/payload"
+exit "$(/bin/cat "$TOLK_FW_TEST_DIR/status")"
+|};
+      Unix.chmod curl 0o700;
+      let env = Unix.environment () |> Array.to_list |> List.filter (fun entry ->
+          not (List.exists (fun prefix -> String.starts_with ~prefix entry)
+            ["PATH="; "XDG_CACHE_HOME="; "TOLK_FW_TEST_DIR="])) in
+      let env = Array.of_list (["PATH=" ^ bin; "XDG_CACHE_HOME=" ^ Filename.concat dir "cache";
+          "TOLK_FW_TEST_DIR=" ^ dir] @ env) in
+      let exe = Sys.executable_name in
+      let pid = Unix.create_process_env exe [|exe; "--firmware-fetch-test"; case|]
+          env Unix.stdin Unix.stdout Unix.stderr in
+      match snd (Unix.waitpid [] pid) with
+      | Unix.WEXITED code -> equal int 0 code
+      | Unix.WSIGNALED signal | Unix.WSTOPPED signal ->
+          fail (Printf.sprintf "firmware subprocess stopped with signal %d" signal))
 
 (* Scripted devices for the IP-block protocols: a discovery table
    covering every register family the device core resolves, a register
@@ -1095,37 +1215,15 @@ let () =
                        (Firmware.fetch_fw ~dir "fw2.bin"
                           ~sha256:
                             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"))));
-          test "corrupted files fail naming both digests" (fun () ->
+          test "missing and outdated local firmware uses verified cached downloads" (fun () ->
+              with_firmware_process "fallback");
+          test "local firmware precedence distinguishes mismatched and malformed compressed files" (fun () ->
+              with_firmware_process "compressed");
+          test "failed and mismatched downloads cannot populate the firmware cache" (fun () ->
+              with_firmware_process "failures");
+          test "unknown firmware fails before a download" (fun () ->
               with_fw_dir (fun dir ->
-                  write_file (Filename.concat dir "smu_13_0_0.bin") "garbage";
-                  let pinned = List.assoc "smu_13_0_0.bin" Fw_defs.hashes in
-                  raises_match
-                    (Exn.failure
-                       ~substring:("fetch sha mismatch, expected " ^ pinned))
-                    (fun () -> Firmware.load_fw ~dir "smu_13_0_0.bin");
-                  (* the sha256 of "garbage" *)
-                  raises_match
-                    (Exn.failure
-                       ~substring:
-                         "795b6904e54f82411df4b0e27a373a55eea3f9d66dac5a9bce1dd92f7b401da5")
-                    (fun () -> Firmware.load_fw ~dir "smu_13_0_0.bin")));
-          test "missing files name the searched paths" (fun () ->
-              with_fw_dir (fun dir ->
-                  raises_match
-                    (Exn.failure
-                       ~substring:(Filename.concat dir "psp_13_0_0_sos.bin"))
-                    (fun () -> Firmware.load_fw ~dir "psp_13_0_0_sos.bin");
-                  raises_match
-                    (Exn.failure
-                       ~substring:
-                         (Filename.concat dir "psp_13_0_0_sos.bin.zst"))
-                    (fun () -> Firmware.load_fw ~dir "psp_13_0_0_sos.bin");
-                  raises_match
-                    (Exn.failure
-                       ~substring:"gitlab.com/kernel-firmware/linux-firmware")
-                    (fun () -> Firmware.load_fw ~dir "psp_13_0_0_sos.bin");
-                  raises_match
-                    (Exn.failure ~substring:"has no pinned sha256")
+                  raises_match (Exn.failure ~substring:"has no pinned sha256")
                     (fun () -> Firmware.load_fw ~dir "unknown_fw.bin")));
           test "decompresses the zst variant" (fun () ->
               if Sys.command "command -v zstd >/dev/null 2>&1" <> 0 then
@@ -1451,6 +1549,25 @@ let () =
                   equal
                     (list (pair int int))
                     [ (resp, 0); (arg, 0); (msg, 0x2f) ]
+                    (List.rev !(fd.log))));
+          test "mp0 13.0.15 uses driver reset, metrics and supported clocks" (fun () ->
+              with_fake_dev ~mp0:(13, 0, 15) ~mp1:(13, 0, 12) (fun fd ->
+                  let smu = Smu.create fd.dev in
+                  ack_messages fd;
+                  let resp, arg, msg = smu_addrs fd in
+                  let send id value = [(resp, 0); (arg, value); (msg, id)] in
+                  Smu.mode1_reset smu;
+                  equal (list (pair int int)) (send 3 1) (List.rev !(fd.log));
+                  fd.log := [];
+                  Mmio.write32 fd.fvram (Smu.driver_table_paddr smu) 0x12345678l;
+                  equal int32 0x12345678l (Bytes.get_int32_le (Smu.read_table smu ~size:4 7) 0);
+                  equal (list (pair int int)) (send 9 7) (List.rev !(fd.log));
+                  fd.log := [];
+                  Smu.set_clocks smu ~level:None;
+                  equal (list (pair int int))
+                    (List.concat_map (fun clock ->
+                        send 0x13 (clock lsl 16) @ send 0x14 ((clock lsl 16) lor 0xffff))
+                      [3; 4; 2])
                     (List.rev !(fd.log))));
           test "mode1_reset waits for PCI vendor readiness" (fun () ->
               let reads = ref 0 in

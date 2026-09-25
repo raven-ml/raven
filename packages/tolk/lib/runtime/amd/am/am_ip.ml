@@ -518,7 +518,7 @@ module Smu = struct
      then
        let debugsmc_msg_mode1reset = 2 in
        send_msg ~debug:true t debugsmc_msg_mode1reset 0
-     else if List.mem mp0 [ (13, 0, 6); (13, 0, 12) ] then
+     else if List.mem mp0 [ (13, 0, 6); (13, 0, 12); (13, 0, 15) ] then
        send_msg t
          (require "PPSMC_MSG_GfxDriverReset" M.ppsmc_msg_gfxdriverreset)
          1
@@ -539,7 +539,7 @@ module Smu = struct
   let read_table t ~size arg =
     let module M = (val t.smu_mod) in
     (if
-       List.mem (Amdev.ip_ver t.adev Am.mp0_hwip) [ (13, 0, 6); (13, 0, 12) ]
+       List.mem (Amdev.ip_ver t.adev Am.mp0_hwip) [ (13, 0, 6); (13, 0, 12); (13, 0, 15) ]
      then
        send_msg t
          (require "PPSMC_MSG_GetMetricsTable" M.ppsmc_msg_getmetricstable)
@@ -589,7 +589,7 @@ module Smu = struct
         not
           (List.mem
              (Amdev.ip_ver t.adev Am.mp0_hwip)
-             [ (13, 0, 6); (13, 0, 12) ])
+             [ (13, 0, 6); (13, 0, 12); (13, 0, 15) ])
       then [ require "PPCLK_GFXCLK" M.ppclk_gfxclk ]
       else []
     in

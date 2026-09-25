@@ -60,7 +60,7 @@ end
 (** Firmware images for device boot.
 
     Loads the firmware files a device generation needs from the local
-    firmware directory, verifies each file against its pinned SHA-256
+    firmware directory or pinned upstream source, verifies their SHA-256
     digest, and splits the files into the images handed to the
     security processor while the device boots. *)
 module Firmware : sig
@@ -85,14 +85,15 @@ module Firmware : sig
   (** The type for a device's firmware set. *)
 
   val fetch_fw : ?dir:string -> string -> sha256:string -> bytes
-  (** [fetch_fw name ~sha256] is the content of the firmware file
-      [name] in the directory [dir] (defaults to [$AMD_FW_PATH], or
-      [/lib/firmware/amdgpu] when unset): the plain file when present,
-      otherwise the [.zst]-suffixed variant decompressed with the
-      [zstd] tool. Raises [Failure] naming the searched paths and the
-      pinned upstream source when neither file exists, or naming the
-      expected and actual digests when the content's SHA-256 is not
-      [sha256]. *)
+  (** [fetch_fw name ~sha256] is the verified firmware content. It first
+      checks [name] and its [.zst] variant in [dir] (defaults to
+      [$AMD_FW_PATH], or [/lib/firmware/amdgpu] when unset). Compressed
+      files require the [zstd] tool. If neither local file has the expected
+      digest, it uses the disk cache or downloads from the pinned upstream
+      source with [curl]. Cached and downloaded bytes must also match
+      [sha256]; only verified downloads are cached. Local files are unchanged.
+      Raises [Failure] if the download command fails or its digest differs,
+      and [Unix.Unix_error] if [curl] cannot be started. *)
 
   val load_fw : ?dir:string -> string -> bytes
   (** [load_fw name] is {!fetch_fw} with the digest pinned for [name]

@@ -2,10 +2,12 @@
 """Emit the OCaml AMD hardware data tables (amd_*_defs.ml) next to this script.
 
 Regenerate with:
-  uv run packages/tolk/lib/runtime/amd/generate_tables.py
+  uv run packages/tolk/lib/runtime/amd/generate_tables.py --reference _tinygrad_target
 
-Values are read from the pinned reference clone at `_tinygrad/` (repository
-root); no network access is needed. The curated symbol inventories below drive
+Values default to the pinned reference clone at `_tinygrad/` (repository
+root). During migration, select the frozen target with `--reference` as above.
+The source checkout and commit are reported before generation; no network access
+is needed. The curated symbol inventories below drive
 emission: to grow coverage, add a symbol to the relevant list and rerun.
 Output is deterministic; rerunning must produce byte-identical files.
 
@@ -17,14 +19,20 @@ embedded struct's own module. Every emitted accessor is cross-checked against
 the reference ctypes layout before being written.
 """
 
+import argparse
 import ctypes
 import inspect
 import os
 import re
+import subprocess
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "..", "..", "..", "..", "_tinygrad"))
+_parser = argparse.ArgumentParser(description=__doc__)
+_parser.add_argument("--reference", default=os.path.join(_HERE, "..", "..", "..", "..", "..", "_tinygrad"),
+                     help="tinygrad source checkout (default: repository _tinygrad)")
+_REFERENCE = os.path.abspath(_parser.parse_args().reference)
+sys.path.insert(0, _REFERENCE)
 
 from tinygrad import helpers  # noqa: E402
 from tinygrad.runtime.autogen import amdgpu_kd, hsa  # noqa: E402
@@ -528,10 +536,6 @@ def gen_regs():
         prefix, ver = family_version(value)
         fam_values.append((prefix, ver, value))
         fam = dict(getattr(regs, value))
-        # The target boot protocol stores the resident TMR size in REG5.
-        # This register is absent from the old reference's curated maps.
-        if prefix == "gc":
-            fam.setdefault("regSCRATCH_REG5", (0x2045, 1, {"scratch_reg5": (0, 31)}))
         lines.append(f"let {value} = [")
         lines += [reg_entry(fam, nm) for nm in fam]
         lines.append("]")
@@ -993,6 +997,13 @@ def gen_fw():
 
 
 def main():
+    checkout = subprocess.run(["git", "-C", _REFERENCE, "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True)
+    revision = "archive/unversioned"
+    if checkout.returncode == 0 and os.path.realpath(checkout.stdout.strip()) == os.path.realpath(_REFERENCE):
+        revision = subprocess.run(["git", "-C", _REFERENCE, "rev-parse", "HEAD"],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+    print(f"generating from {_REFERENCE} at {revision}")
     outputs = {
         "amd_pm4_defs.ml": gen_pm4,
         "amd_sdma_defs.ml": gen_sdma,

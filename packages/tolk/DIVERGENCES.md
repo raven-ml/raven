@@ -6,6 +6,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **AMD firmware lookup accepts verified plain local files and `AMD_FW_PATH`.**
+  The target checks the system directory's compressed files before downloading.
+  Tolk also accepts plain files and a configured directory for offline PCI boot;
+  every local, cached or downloaded image must match the same pinned digest.
+  Coverage: `test_amd_amdev` local precedence, compressed files, stale contents,
+  cache corruption and failed downloads. Reconsider if offline deployments use
+  a shared firmware-cache interface instead of a local directory.
+
 - **Automatic buffer teardown defers GC re-entry during device operations.**
   OCaml may run a buffer finalizer during another allocator or queue operation;
   releasing that buffer can re-enter the same lock or alter state mid-update.

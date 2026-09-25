@@ -72,6 +72,11 @@ let () =
             equal int 13 S.ppsmc_msg_setdriverdramaddrhigh;
             equal (option int) None S.ppclk_gfxclk;
             equal (option int) (Some 3) S.ppsmc_msg_gfxdriverreset);
+          test "13.0.15 resolves to the existing 13.0.12 interface" (fun () ->
+            let module S = (val Tables.smu ~version:(13, 0, 15)) in
+            equal (option int) (Some 3) S.ppsmc_msg_gfxdriverreset;
+            equal (option int) (Some 9) S.ppsmc_msg_getmetricstable;
+            equal (option int) None S.ppclk_gfxclk);
           test "14.0.3 resolves to 14.0.2" (fun () ->
             let module S = (val Tables.smu ~version:(14, 0, 3)) in
             equal (option int) None S.ppsmc_msg_mode1reset;
@@ -90,9 +95,13 @@ let () =
             (* cp_hqd_pq_control lives at dword 0x91 of the image. *)
             equal int 0x12345678
               (Int32.to_int (Bytes.get_int32_le b (0x91 * 4))));
+          test "PSP13.0.15 uses the target firmware pin" (fun () ->
+            equal string
+              "3b28d53e75a88131155e3931378ac8434eca4880ada9211d3b4e8915b6289583"
+              (List.assoc "psp_13_0_15_sos.bin" Tables.Fw_defs.hashes));
           test "firmware digests are indexed by file name" (fun () ->
             equal string
-              "801a09c9bf06188260db9b51ad8f978f15d84c72ca91b90643a2ef8af4074776"
+              "1dd1de8ecf5455ea4719c502b64b32ac18763d5601128c01b4a4a36211a122c2"
               (List.assoc "gc_11_0_0_mec.bin" Tables.Fw_defs.hashes));
         ];
     ]

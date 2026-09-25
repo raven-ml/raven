@@ -35,18 +35,12 @@ with their rationale and validation; commit count is not an acceptance metric.
   Validate staged peer transfers and shared host signals on small-BAR devices.
   Validate AMD AQL/multi-XCC
   dispatch and ring/staging reuse under long asynchronous batches.
-  Complete AMD race/recovery fixes and consumed firmware/register
-  tables. Audit VF mailbox leases, gated register access and PF-only boot
+  Complete AMD race/recovery fixes. Audit VF mailbox leases, gated register access and PF-only boot
   operations against the existing AMD device scope; justify any retained gap.
   Validate compiled PM4 scratch separation on multi-die hardware and reconcile
   scratch growth across retained and multi-device links.
   Validate NV channel/descriptor, semaphore and GSP compute submission behavior
   on hardware, including compute changes from video-labelled commits.
-- Regenerate consumed AMD register tables and firmware hashes from the frozen
-  target instead of old-pin inputs plus selected handwritten additions. Port
-  the consumed SMU/PSP 13.0.15 branches coherently. Restore target
-  firmware retrieval/cache behavior when installed blobs are missing or have
-  different hashes, using existing fetch facilities without new dependencies.
 - Complete PCI multi-die mappings: export AMD hive memory through XGMI peer
   addresses instead of its PCI BAR, and select BAR or fabric addresses according
   to the receiving device. Establish raw-PCI fabric identity and reachability;
