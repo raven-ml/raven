@@ -366,7 +366,7 @@ module Queue = struct
             Ffi.hcq_await state.State.queue address value (Helpers.getenv "HCQDEV_WAIT_TIMEOUT_MS" 30000);
             ignore (Sys.opaque_identity timeline) in
     Device.{timestamp_divider = 1000.; profile_offset = (fun () -> Profile.calibrate (fun () -> Ffi.profile_clock));
-      completion; prepare = (fun () -> ()); host = Device.name host; max_kernel_bindings = None; copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
+      completion; prepare = (fun () -> ()); host = Device.name host; max_kernel_bindings = None; config = (fun () -> ""); copy; encode = Cuda_queue.encode device_name; lower = Cuda_queue.lower device_name;
       compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
 end
 

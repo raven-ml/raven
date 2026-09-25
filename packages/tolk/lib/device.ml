@@ -89,6 +89,7 @@ type queue = {
   encode : Uop.t -> Uop.t option;
   lower : Uop.t -> Uop.t option;
   compile : Uop.t -> Uop.t;
+  config : unit -> string;
 }
 
 module Renderer_set = struct

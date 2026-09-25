@@ -238,12 +238,22 @@ let program_cache : (string, Tolk_uop.Uop.t) Hashtbl.t = Hashtbl.create 64
 let runtime_cache : (string, Device.prog) Hashtbl.t = Hashtbl.create 64
 let queue_template_cache = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
 
+let profiling () = debug >= 2 || Helpers.getenv "PROFILE" 0 <> 0
+
+(* No tinygrad counterpart: the reference keeps compiled queues per process,
+   where rune's disk cache stores them across processes. *)
+let queue_config ?(profile = profiling ()) device =
+  strf "PROFILE=%b,ALL2ALL=%d,HCQ_NUM_SDMA=%d,QUEUE=%s" profile
+    (Helpers.Context_var.get Helpers.all2all)
+    (Helpers.getenv "HCQ_NUM_SDMA" (-1))
+    (match Device.queue device with Some q -> q.Device.config () | None -> "")
+
 (* Rewrite each kernel CALL(SINK) in [linear] to CALL(PROGRAM), compiling the
    body with [to_program] and caching the compiled PROGRAM by the SINK's
    semantic key. Bulk STORE calls pass through unchanged. [beam] stamps
    sinks that carry no beam width of their own; kernel_info is part of the
    semantic key, so a stamped sink gets its own cache entry. *)
-let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2 || Helpers.getenv "PROFILE" 0 <> 0) ~to_program linear =
+let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_program linear =
   let module U = Tolk_uop.Uop in
   let stamp body =
     match beam with
@@ -286,17 +296,20 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = debug >= 2 || Helpers
       U.op n = Tolk_uop.Ops.Buffer && U.addrspace n = Some Tolk_uop.Dtype.Global)
       (U.toposort ~enter_calls:true linear) then Hcq2.compile ~to_program ~profile linear
   else
-    let hosts = U.toposort ~enter_calls:false linear
+    let queued = U.toposort ~enter_calls:false linear
         |> List.filter_map (fun n -> match U.device_of n with
             | Some (U.Single name) ->
-                Option.map (fun q -> Device.get q.Device.host)
-                  (Device.queue (Device.get name))
+                let d = Device.get name in
+                Option.map (fun q -> d, Device.get q.Device.host) (Device.queue d)
             | _ -> None)
-        |> List.sort_uniq (fun a b -> String.compare (Device.name a) (Device.name b)) in
+        |> List.sort_uniq (fun (a, _) (b, _) -> String.compare (Device.name a) (Device.name b)) in
+    let hosts = List.sort_uniq (fun a b -> String.compare (Device.name a) (Device.name b))
+        (List.map snd queued) in
     (* Link-time tags are semantic here: a runtime table and a captured input
        must never share a linked template. Keep the hash-consed key alive. *)
     let key = Marshal.to_string
-        (profile, Helpers.Context_var.get Helpers.all2all, Helpers.getenv "HCQ_NUM_SDMA" (-1),
+        (List.map (fun (d, _) -> Device.name d, queue_config ~profile d) queued,
+         queue_config ~profile device,
          cache_key ~device ~ast_key:(string_of_int (U.tag linear)),
          List.map (fun host -> cache_key ~device:host ~ast_key:"") hosts) [] in
     let templates = Domain.DLS.get queue_template_cache in

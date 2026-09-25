@@ -156,6 +156,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function traced under `PROFILE=1` or `DEBUG>=2` no longer serves
+  its persistent cache entry to later unprofiled runs, which ran with
+  per-kernel queue timestamps (512-token gpt-oss-20b prefill 7-10% slower).
+- A compiled function's persistent cache entry is no longer served under
+  other scheduling or queue settings, such as AMD's `AMD_AQL`, `WAVES_PER_SH`,
+  `AMD_DISABLE_SDMA` or interface, whose queues it would replay wrongly.
 - A compiled `Nx.sort` of floats returns the input's elements at its
   indices: -0 stays -0 and a NaN keeps its sign and payload. A values-only
   sort costs up to 1.8x more (131k bfloat16, CPU). `float64` still returns

@@ -117,6 +117,11 @@ type queue = {
       (** Lowers device-specific host accesses, such as timeline polling. *)
   compile : Tolk_uop.Uop.t -> Tolk_uop.Uop.t;
       (** Compiles the final host sink to a PROGRAM. *)
+  config : unit -> string;
+      (** [config ()] renders the state [copy] and [encode] read that the
+          device's name and compiler do not determine, such as the ring kind
+          and sizes, as [KEY=value] pairs; [""] when there is none. Queue
+          compilations under equal configs are interchangeable. *)
 }
 (** Device hooks for compiling queue submission through the shared UOp protocol. *)
 

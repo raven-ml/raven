@@ -433,7 +433,7 @@ let foreign_completion_dependencies () =
       !during_wait ();
       if !fail_wait then failwith "pending access failed" in
   let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion; prepare = (fun () -> ());
-    host = Device.name owner; max_kernel_bindings = None; copy = (fun _ -> None); encode = (fun _ -> None);
+    host = Device.name owner; max_kernel_bindings = None; config = (fun () -> ""); copy = (fun _ -> None); encode = (fun _ -> None);
     lower = (fun _ -> None); compile = (fun _ -> fail "not compiled")} in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let source = Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime owner)

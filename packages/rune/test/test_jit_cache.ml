@@ -79,8 +79,8 @@ let fresh_dir =
     Unix.mkdir dir 0o755;
     dir
 
-let child_env extra =
-  let names = List.map fst extra in
+let child_env ?(unset = []) extra =
+  let names = unset @ List.map fst extra in
   let keep binding =
     match String.index_opt binding '=' with
     | Some i -> not (List.mem (String.sub binding 0 i) names)
@@ -109,9 +109,9 @@ let drain fd =
 (* A child's text-mode stdout ends lines with CRLF on Windows. *)
 let strip_cr s = String.concat "" (String.split_on_char '\r' s)
 
-let run_child ?(exe = Sys.executable_name) ?(extra = []) ~cache role =
+let run_child ?(exe = Sys.executable_name) ?unset ?(extra = []) ~cache role =
   let env =
-    child_env
+    child_env ?unset
       ([ ("XDG_CACHE_HOME", cache); (role_var, role); ("RUNE_JIT_DEBUG", "1") ]
       @ extra)
   in
@@ -223,6 +223,22 @@ let jitcache_zero_disables () =
   let _, events = run_child ~extra:[ ("JITCACHE", "0") ] ~cache "once" in
   equal (list string) ~msg:"warm cache ignored" [] events
 
+(* A trace stored under one value of a setting that changes what it compiles to
+   must not be served under another. The second child runs with [name] and
+   [also] removed from this process's environment. *)
+let misses_without ?(also = []) name value =
+  let cache = fresh_dir () in
+  let _, events = run_child ~extra:[ (name, value) ] ~cache "once" in
+  equal (list string) ~msg:(name ^ " stores") [ "miss"; "store" ] events;
+  let _, events = run_child ~unset:(name :: also) ~cache "once" in
+  equal (list string) ~msg:(name ^ " unset misses") [ "miss"; "store" ] events
+
+(* Profiling compiles queues with timestamps; LATE_ALLREDUCE is a setting
+   scheduling reads, for when sharded traces are cached. *)
+let schedule_settings_are_part_of_the_key () =
+  misses_without ~also:[ "DEBUG" ] "PROFILE" "1";
+  misses_without "LATE_ALLREDUCE" "0"
+
 let pmap_bails () =
   let cache = fresh_dir () in
   let _, events = run_child ~cache "pmap" in
@@ -248,6 +264,9 @@ let () =
                 different_exe_fingerprint_is_a_miss;
               test "JITCACHE=0 disables the cache and touches no disk"
                 jitcache_zero_disables;
+              test
+                "a trace is not served under other queue or schedule settings"
+                schedule_settings_are_part_of_the_key;
               test "pmap compilations bail and still work" pmap_bails;
             ];
         ]

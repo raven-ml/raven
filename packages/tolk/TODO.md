@@ -120,6 +120,14 @@ migration to main.
 
 ## Separately scoped work
 
+- Make stored NV queues process-independent. The encoder embeds the channels'
+  work-submission tokens (`tolk_nv.ml` `tolk_hcq_gpfifo` call) and the
+  device's per-thread local memory in each QMD template (`template_dev`); both
+  come from this process. Read them through link-time patches, as AMD reads
+  scratch through its `amd_scratch` placeholder, then drop `COMPUTE_TOKEN`,
+  `COPY_TOKEN` and `SLM` from NV's queue config. Acceptance: an NV host test
+  encodes one program for two devices that differ only in tokens and local
+  memory and gets equal linears.
 - Review whether Tolk needs its `nn` layer. Design shared safetensors ownership
   with Nx and model/state ownership with Kaun, avoiding duplicate codecs and
   additional JSON dependencies.

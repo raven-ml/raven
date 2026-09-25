@@ -143,6 +143,15 @@ val program_config : unit -> string
     are interchangeable exactly when their configurations are equal, so any
     cache of compiled programs must key on it. *)
 
+val queue_config : ?profile:bool -> Device.t -> string
+(** [queue_config ?profile d] renders the settings a queue compilation for [d]
+    reads, as [KEY=value] pairs: [profile] (defaults to [DEBUG >= 2] or
+    [PROFILE=1]), which adds queue timestamps, [ALL2ALL] and [HCQ_NUM_SDMA],
+    which pick the copy queues, and [d]'s queue {!Device.queue.config}. Two
+    compilations of one schedule for [d] are interchangeable when their configs
+    are equal, so any cache of compiled schedules must key on it, with
+    {!program_config} for its kernels. *)
+
 val compile_linear :
   device:Device.t ->
   ?beam:int ->

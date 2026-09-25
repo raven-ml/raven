@@ -2384,7 +2384,17 @@ module Queue = struct
         (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
         Timeline.guarded_wait timeline (fun () ->
             Hcq.Signal.wait timeline.Timeline.timeline value) in
-    Device.{timestamp_divider = 100.; profile_offset; completion; prepare = (fun () -> State.prepare state); host = Device.name host; max_kernel_bindings = None; copy;
+    (* The encoder's ring kind, interface and sizes, and the resource limit it
+       reads per call. *)
+    let config () =
+      let hw = state.State.hw in
+      Printf.sprintf "AQL=%b,AM=%b,WAVES_PER_SH=%d,COMPUTE_RING=%d,SDMA_RING=%s"
+        hw.is_aql hw.is_am (Tolk.Helpers.getenv "WAVES_PER_SH" 0)
+        (Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
+        (match state.State.sdma_queue 0 with
+         | Some q -> string_of_int (Hcq.Mmio.size q.Queue_desc.ring)
+         | None -> "none") in
+    Device.{timestamp_divider = 100.; profile_offset; completion; prepare = (fun () -> State.prepare state); host = Device.name host; max_kernel_bindings = None; copy; config;
       encode = Encoded_queue.encode state.State.hw ~props:state.State.iface.Iface.props
         ~name:state.State.name ~compute_ring_size:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
         ~copy_ring_size:(fun idx -> Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) (state.State.sdma_queue idx));

@@ -372,7 +372,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
       | None -> fun () -> ()
       | Some tl -> let value = Timeline.submitted tl in
           fun () -> Timeline.guarded_wait tl (fun () -> Signal.wait tl.Timeline.timeline value)); prepare = (fun () -> Option.iter Timeline.prepare !timeline; Submission.prepare ~timeout_ms submission);
-    host = "CPU"; max_kernel_bindings = None; copy = (fun call ->
+    host = "CPU"; max_kernel_bindings = None; config = (fun () -> ""); copy = (fun call ->
       let index = match U.as_call call with
         | Some {args = dst :: _; _} when split_copies && U.device_of dst = Some (U.Single "CPU") -> 1
         | _ -> 0 in

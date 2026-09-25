@@ -445,3 +445,18 @@ delete it rather than registering it.
   `test/unit/frontend/test_linalg.ml` and Rune's JIT factorization/gradient
   cases. Retain while these consumers need compiled factorizations; reconsider
   if equivalent operations gain a shared upstream implementation.
+
+- **Queue configs** (`device.mli` `queue.config`, `engine/realize.ml`
+  `queue_config`). The reference keeps compiled queues per process and has no
+  persistent compiled-schedule cache. Tolk's backends render the state their
+  queue encoders read: on AMD the ring kind (AQL or PM4), the interface (AM or
+  KFD), `WAVES_PER_SH` and the ring sizes; on NV the ring entries, and also the
+  channels' work-submission tokens and the per-thread local memory its QMD
+  templates embed, which are per process, so a stored NV queue is served only
+  to a process whose values match; nothing on Metal and CUDA. `queue_config`
+  adds profiling, `ALL2ALL` and `HCQ_NUM_SDMA`. Consumers: tolk's queue
+  template cache and rune's jit cache key. Coverage: `test_hcq2` (another
+  config compiles anew) and `test_jit_cache` (PROFILE). Reconsider when NV
+  reads its tokens and local memory through link-time patches, and if rune's
+  cache stops storing compiled queues.
+

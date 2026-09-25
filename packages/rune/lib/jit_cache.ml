@@ -112,34 +112,19 @@ let key ~device ~beam call =
           | None -> ""
         in
         (* What decides the stored linear for a fixed binary and trace: the
-           program configuration each kernel compiles under, the variables that
-           shape the schedule, and the beam search settings, with [beam] the
-           effective width (per-call override or the BEAM env var). A setting
-           missing here keeps serving the entry compiled under its old value. *)
+           settings each kernel compiles under, the settings scheduling reads,
+           the queue compilation's settings and the device's queue state, and
+           the beam search settings, with [beam] the effective width (per-call
+           override or the BEAM env var). A setting missing here keeps serving
+           the entry compiled under its old value. *)
         let knobs =
-          let module H = Tolk.Helpers in
-          let var v =
-            Printf.sprintf "%s=%d" (H.Context_var.key v) (H.Context_var.get v)
-          in
           String.concat ","
             [
               Tolk.Realize.program_config ();
+              Tolk.Schedule.config ();
+              Tolk.Realize.queue_config device;
               Printf.sprintf "BEAM=%d" beam;
               Printf.sprintf "BEAM_ESTIMATE=%d" (env_int "BEAM_ESTIMATE" 1);
-              Printf.sprintf "NO_MEMORY_PLANNER=%d"
-                (env_int "NO_MEMORY_PLANNER" 0);
-              var H.openpilot_hacks;
-              var H.float16;
-              var H.split_reduceop;
-              var H.reduceop_split_threshold;
-              var H.reduceop_split_size;
-              var H.max_kernel_buffers;
-              var H.pcontig;
-              var H.ring;
-              var H.all2all;
-              var H.allreduce_node_ndevs;
-              var H.ring_allreduce_threshold;
-              var H.allreduce_cast;
             ]
         in
         Some

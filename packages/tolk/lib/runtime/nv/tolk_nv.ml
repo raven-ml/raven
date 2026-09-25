@@ -2587,10 +2587,17 @@ module Queue = struct
         (match timeline.Timeline.error_state with Some exn -> raise exn | None -> ());
         Timeline.guarded_wait timeline (fun () ->
             Hcq.Signal.wait timeline.Timeline.timeline value) in
-    Device.{timestamp_divider = 1000.; profile_offset; completion; prepare = (fun () -> State.prepare state); host = Device.name host; max_kernel_bindings = None; copy;
+    let compute_entries = Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring / 8
+    and copy_entries = Hcq.Mmio.size state.State.dma_queue.Queue_desc.ring / 8 in
+    (* The encoder also embeds the channels' work-submission tokens and the
+       per-thread local memory in its QMD templates, both of this process. *)
+    let config () =
+      Printf.sprintf "COMPUTE_ENTRIES=%d,COPY_ENTRIES=%d,COMPUTE_TOKEN=%d,COPY_TOKEN=%d,SLM=%d"
+        compute_entries copy_entries state.State.compute_queue.Queue_desc.token
+        state.State.dma_queue.Queue_desc.token state.State.hw.slm_per_thread in
+    Device.{timestamp_divider = 1000.; profile_offset; completion; prepare = (fun () -> State.prepare state); host = Device.name host; max_kernel_bindings = None; copy; config;
       encode = Encoded_queue.encode state.State.hw ~name:state.State.name
-        ~compute_entries:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring / 8)
-        ~copy_entries:(Hcq.Mmio.size state.State.dma_queue.Queue_desc.ring / 8)
+        ~compute_entries ~copy_entries
         ~compute_token:state.State.compute_queue.Queue_desc.token
         ~copy_token:state.State.dma_queue.Queue_desc.token;
       lower = Encoded_queue.lower state.State.name;
