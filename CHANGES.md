@@ -389,6 +389,10 @@ thread.
 
 ### Tolk (new)
 
+- Interleaved compatible device groups share compiled batches when byte
+  dependencies permit reordering. Runtime alias checks also cover writable
+  accesses moved across another group.
+
 - Compiled batches wait for earlier foreign accesses that their queue timelines
   do not cover, preventing races when separate device groups share host memory.
   Already ordered device accesses retain asynchronous submission.

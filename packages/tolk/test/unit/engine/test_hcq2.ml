@@ -150,6 +150,61 @@ let all_to_all_copy_queues () =
       check 1 "2" ["submit_amd_copy_0"; "submit_amd_copy_1"];
       check 1 "0" ["submit_amd_copy_0"])
 
+let peer_group_batches () =
+  let host = Tolk_cpu.create "CPU" and prepared = ref 0 in
+  let names = ["CPU:batch-a"; "CPU:batch-b"] in
+  let make name =
+    let encode u = match U.op u, U.arg u, U.children u with
+      | Ops.Custom_function, U.Arg.String "submit_cpu_copy_0", [_; dependency] ->
+          Some (U.group [dependency])
+      | _ -> None in
+    let copy call = match U.as_call call with
+      | Some {args = dst :: _; _} when U.device_of dst = Some (U.Single name) -> Some "COPY:0"
+      | _ -> None in
+    let queue = Device.{timestamp_divider = 1.; completion = (fun () () -> ());
+      prepare = (fun () -> incr prepared); host = "CPU"; copy; encode; lower = (fun _ -> None);
+      compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+    let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+    Device.make ~name ~peer_group:name ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:name
+        ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
+      ~runtime:(Device.runtime host) ~synchronize:(fun () -> ()) ~queue () in
+  let devices = List.map make names in
+  let a slot = parameter ~device:(List.nth names 0) slot
+  and b slot = parameter ~device:(List.nth names 1) slot in
+  let store dst src = U.store_call ~dst ~src in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let compile calls = Hcq2.compile ~to_program (U.linear calls) in
+  let info call = match U.arg (U.without_after call) with
+    | U.Arg.Call_info {aux = Some info; _} -> info
+    | _ -> fail "expected a queue batch" in
+  let sizes linear = List.map (fun call -> List.length (info call).fallback) (U.children linear) in
+  let linear = compile [store (a 1) (a 0); store (b 3) (b 2); store (a 5) (a 4)] in
+  equal (list int) [2; 1] (sizes linear);
+  let first = info (List.hd (U.children linear)) in
+  equal int 3 (List.length first.independent_accesses);
+  equal (list int) [1; 1; 1]
+    (sizes (compile [store (a 1) (a 0); store (b 3) (a 1); store (a 5) (b 3)]));
+  equal (list int) [1; 1; 1]
+    (sizes (compile [store (a 1) (a 0); store (b 3) (a 5); store (a 5) (a 4)]));
+  let separated = compile [store (a 1) (a 0); U.noop ~dtype:Dtype.void ();
+      store (b 3) (b 2); store (a 5) (a 4)] in
+  equal int 4 (List.length (U.children separated));
+  let imported = U.import (U.export linear) in
+  equal string (U.semantic_key linear) (U.semantic_key imported);
+  let device = List.hd devices and binding = Realize.Buffers.create () in
+  let linked = Realize.link_linear binding imported in
+  let buffers = Array.init 6 (fun _ ->
+      let buffer = Device.create_buffer ~size:32 ~dtype:Dtype.int32 host in
+      Device.Buffer.ensure_allocated buffer; buffer) in
+  (* These slots occur in different batches. Checking only the first batch's
+     kernel arguments would miss this runtime alias introduced by reordering. *)
+  buffers.(5) <- buffers.(3);
+  raises (Invalid_argument "queue replay: bindings introduce an untracked writable alias")
+    (fun () -> Realize.run_linear ~device ~to_program binding ~jit:true
+      ~input_uops:(Array.map U.from_buffer buffers) linked);
+  equal int 0 !prepared
+
 let staged_peer_dependencies () =
   let staging_mode = ref `Accept in
   let host = Tolk_cpu.create "CPU" in
@@ -550,6 +605,7 @@ let compiled_host_submission () =
 let () = run "Engine_hcq2" [
   test "AMD all-to-all honors default and explicit SDMA queue counts" all_to_all_copy_queues;
   test "staging alternates bounded slots with read-before-reuse dependencies" staged_peer_dependencies;
+  test "interleaved groups preserve dependencies and check reordered aliases" peer_group_batches;
   test "byte intervals match a per-byte dependency model" byte_dependencies;
   test "owned aliases and device lanes preserve allocation identity" region_identity;
   test "only overlapping accesses wait across queues" overlap_waits;

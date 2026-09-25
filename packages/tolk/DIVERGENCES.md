@@ -24,8 +24,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   remain valid. Shared graph roots establish dependencies for writable aliases. Consumers: retained Rune
   and Tolk submissions, particularly external pointer imports. Coverage:
   `test_hcq2` duplicate writable inputs, overlapping external wrappers, unchanged
-  timelines on rejection and accepted read-only/disjoint bindings. Reconsider
+  timelines on rejection, aliases across regrouped batches, and accepted
+  read-only/disjoint bindings. Reconsider
   when dependencies can be recompiled automatically for a changed alias layout.
+
+- **Peer regrouping respects cross-group byte dependencies.** The frozen
+  target groups a whole queue-compatible run by peer group. Tolk combines
+  interleaved groups only when doing so preserves preceding reads and writes;
+  ordinary calls remain boundaries. This matters for device groups sharing
+  host memory. Coverage: `test_hcq2` independent regrouping, read-after-write
+  chains and write-after-read barriers. Reconsider when upstream orders shared
+  memory accesses between incompatible peer groups.
 
 - **Multi-axis reshapes use each axis's own shard count.** The frozen target
   reuses the last range's count while constructing all local dimensions, so a

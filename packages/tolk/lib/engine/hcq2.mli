@@ -53,7 +53,9 @@ val stage_copies :
 val compile :
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   ?profile:bool -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [compile ~to_program ?profile linear] encodes calls supported by their device's queue hooks into
-    host programs, combining adjacent calls from the same peer group. Other
-    calls remain individual dispatches. [to_program device sink] compiles byte-copy
-    kernels for stores assigned to compute queues. *)
+(** [compile ~to_program ?profile linear] encodes supported queue calls into
+    host programs. Interleaved peer groups combine when byte dependencies
+    permit reordering; ordinary calls remain dispatch boundaries. Reordered
+    writable accesses participate in the runtime alias checks, including
+    bindings used only by another group. [to_program device sink] compiles
+    byte-copy kernels for stores assigned to compute queues. *)

@@ -323,7 +323,8 @@ let lower_call queue devices calls original_calls independent_accesses timestamp
   let dedup xs = List.fold_left (fun acc u ->
       if List.exists (U.equal u) acc then acc else acc @ [u]) [] xs in
   let originals = List.concat_map (fun c -> fst (arguments c.call)) calls
-      @ List.concat_map (fun call -> fst (arguments call)) original_calls in
+      @ List.concat_map (fun call -> fst (arguments call)) original_calls
+      @ List.concat_map (fun (a, b) -> [a; b]) independent_accesses in
   let sources = List.map (fun g -> (U.src g).(0)) runtime in
   let timestamp_buffers = List.map (fun (_, start, _) -> U.buf_uop start) timestamps in
   let args = dedup (bufs @ originals @ sources @ timestamp_buffers) in
@@ -360,7 +361,7 @@ let lower_call queue devices calls original_calls independent_accesses timestamp
         precompile_backward = false; dtype = Dtype.void; aux = Some aux} in
   U.after ~src:call ~deps:!patches
 
-let compile_batch ~profile ~original_calls calls =
+let compile_batch ~profile ~original_calls ~reordered_accesses calls =
   let plan = plan ~profile calls in
   let devices = List.fold_left (fun ds (d, _, _) ->
       if List.mem d ds then ds else ds @ [d]) [] plan.queues in
@@ -394,7 +395,9 @@ let compile_batch ~profile ~original_calls calls =
      parameters, then restore the original argument nodes outside the host
      program so execution resolves their current bindings on every call. The
      dependency plan above keeps the original allocation alias information. *)
-  let nodes = U.toposort ~enter_calls:false (U.linear (List.map (fun c -> c.call) calls)) in
+  let nodes = U.toposort ~enter_calls:false (U.group
+      (List.map (fun c -> c.call) calls
+       @ List.concat_map (fun (a, b) -> [a; b]) reordered_accesses)) in
   let slot = List.fold_left (fun slot u -> match U.as_param u with
       | Some {param; _} -> max slot (param.slot + 1) | None -> slot) 0 nodes in
   let mappings = nodes |> List.filter (fun u ->
@@ -404,7 +407,8 @@ let compile_batch ~profile ~original_calls calls =
   let substitute = U.substitute ~walk:true mappings in
   let calls = List.map (fun c -> {c with call = substitute c.call}) calls in
   let sink = substitute (U.sink ~kernel_info submits) in
-  let independent_accesses = List.map (fun (a, b) -> substitute a, substitute b) plan.independent_accesses in
+  let independent_accesses = List.map (fun (a, b) -> substitute a, substitute b)
+      (plan.independent_accesses @ reordered_accesses) in
   let timestamps = List.map (fun (d, a, b) -> d, substitute a, substitute b) plan.timestamps in
   let original_calls = List.map substitute original_calls in
   let lowered = lower_call queue devices calls original_calls independent_accesses timestamps sink in
@@ -519,19 +523,47 @@ let compile ~to_program ?(profile = false) linear =
              {c with queue = "COPY:" ^ string_of_int index}
          | _ -> c)
     | _ -> c in
-  let result = ref [] and batch = ref [] and group = ref None in
+  let result = ref [] and batches = ref [] in
+  let dependencies = ref (Deps_tracker.create ()) in
+  let placements = Hashtbl.create 16 and next = ref 0 in
   let flush () =
-    if !batch <> [] then begin
-      let calls, original_calls = List.split (List.rev !batch) in
-      result := compile_batch ~profile ~original_calls calls :: !result
-    end;
-    batch := []; group := None in
+    List.iter (fun (_, calls, checks) ->
+        let calls, original_calls = List.split (List.rev !calls) in
+        result := compile_batch ~profile ~original_calls ~reordered_accesses:!checks calls :: !result)
+      !batches;
+    batches := []; dependencies := Deps_tracker.create ();
+    Hashtbl.clear placements; next := 0 in
   List.iter (fun call -> match enqueue call with
       | None -> flush (); result := call :: !result
       | Some c ->
           let c = compile_copy ~to_program (assign_copy c) in
           let peer_group = Device.peer_group (Device.get c.device) in
-          if !group <> Some peer_group then flush ();
-          group := Some peer_group; batch := (c, call) :: !batch) (U.children linear);
+          let args, writes = arguments c.call in
+          let deps = Deps_tracker.access !dependencies (List.map Deps_tracker.uop args)
+              ~writes !next |> List.map (Hashtbl.find placements) in
+          let candidate = List.mapi (fun i (group, _, _) -> i, group) !batches
+              |> List.rev |> List.find_opt (fun (_, group) -> group = peer_group) in
+          let index, calls = match candidate with
+            | Some (i, _) when List.for_all (fun dependency -> dependency <= i) deps ->
+                let _, calls, checks = List.nth !batches i in
+                (* Moving a call across another group creates new alias
+                   assumptions. Keep them in the earlier batch's runtime
+                   checks, including arguments used only by the later group. *)
+                List.iteri (fun j (_, other_calls, _) -> if j > i then
+                    List.iter (fun (other, _) ->
+                        let other_args, other_writes = arguments other.call in
+                        List.iteri (fun a arg -> List.iteri (fun b other_arg ->
+                            if List.mem a writes || List.mem b other_writes then
+                              checks := (arg, other_arg) :: !checks) other_args) args)
+                      !other_calls) !batches;
+                i, calls
+            | _ ->
+                let calls = ref [] and checks = ref [] in
+                let i = List.length !batches in
+                batches := !batches @ [peer_group, calls, checks];
+                i, calls in
+          calls := (c, call) :: !calls;
+          Hashtbl.add placements !next index;
+          incr next) (U.children linear);
   flush ();
   U.linear (List.rev !result)
