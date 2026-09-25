@@ -1201,6 +1201,124 @@ let test_half_products_multiply_wide () =
   check "bfloat16" Nx.bfloat16;
   check "float16" Nx.float16
 
+(* Compiled max and min are NaN when any element is NaN, as eager's, and of -0
+   and +0 give the greater for a maximum and the lesser for a minimum, as IEEE
+   orders them, where eager keeps the first; [ieee] is that reference. Compiled
+   argmax and argmin agree with eager: the first NaN, and the first of equal
+   zeros. The compiled comparison ignored a NaN unless it came first: max [1;
+   nan; 0; 2] was 2 and its argmax 3, and Metal's flushed subnormals. Each row
+   of [short] is one case, reduced along its row and, transposed, along a
+   column; [long] reduces rows of 4096, which the reduction splits across
+   threads; [grid] reduces both axes. *)
+let test_extremes () =
+  let nan = Float.nan in
+  let short =
+    [|
+      [| nan; 1.; 0.; 2.; -1. |];
+      [| 1.; 0.; nan; 2.; -1. |];
+      [| 1.; 0.; 2.; -1.; nan |];
+      [| nan; nan; nan; nan; nan |];
+      [| 2.; -2.; 2.; -2.; 1. |];
+      [| -0.; 0.; -1.; 0.; -0. |];
+      [| 0.; -0.; -1.; -0.; 0. |];
+      [| -0.; -0.; -0.; -1.; 1. |];
+      [| 0.; 0.; 0.; -1.; 1. |];
+      [| -1.; -2.; -3.; -4.; -0. |];
+      [| -1e-40; 1e-40; -2e-40; -3e-40; -1. |];
+    |]
+  in
+  let long =
+    Array.init 4 (fun row ->
+        Array.init 4096 (fun i ->
+            match (row, i) with
+            | 0, 3000 | 1, 4000 | 2, 3000 -> -0.
+            | 0, 3500 | 1, 100 | 2, 3500 -> 0.
+            | 3, 4095 -> nan
+            | 2, _ -> float_of_int (1 + (i mod 7))
+            | _ -> -.float_of_int (1 + (i mod 7))))
+  in
+  let grid =
+    [|
+      [| -1.; -2.; -3.; -4. |];
+      [| -5.; -0.; 0.; -1. |];
+      [| -0.; -1.; -2.; -3. |];
+    |]
+  in
+  let matrix dtype rows =
+    Nx.cast dtype
+      (Nx.create f32
+         [| Array.length rows; Array.length rows.(0) |]
+         (Array.concat (Array.to_list rows)))
+  in
+  let ieee op values =
+    let pick a b =
+      if Float.is_nan a || Float.is_nan b then nan
+      else if a > b then if op = `Max then a else b
+      else if b > a then if op = `Max then b else a
+      else if Float.sign_bit a = (op = `Max) then b
+      else a
+    in
+    Array.fold_left pick values.(0) values
+  in
+  let rows x =
+    let cols = (Nx.shape x).(1) in
+    let flat = to_arr (Nx.cast f32 x) in
+    Array.init
+      (Array.length flat / cols)
+      (fun r -> Array.sub flat (r * cols) cols)
+  in
+  let both reduce x =
+    Nx.concatenate ~axis:0 [ reduce 1 x; reduce 0 (Nx.transpose x) ]
+  in
+  let values t = to_arr (Nx.cast f32 t) in
+  let check (type b) name (dtype : (float, b) Nx.dtype) devices =
+    List.iter
+      (fun device ->
+        let compiled f x = values (Rune.jit' ~device f x) in
+        let msg what = Printf.sprintf "%s %s, %s" name what device in
+        List.iter
+          (fun (input, x) ->
+            List.iter
+              (fun (what, op, reduce) ->
+                let expected = Array.map (ieee op) (rows x) in
+                equal
+                  ~msg:(msg (what ^ " of " ^ input))
+                  (array float_exact)
+                  (Array.append expected expected)
+                  (compiled (both reduce) x))
+              [
+                ("max", `Max, fun a x -> Nx.max ~axes:[ a ] x);
+                ("min", `Min, fun a x -> Nx.min ~axes:[ a ] x);
+              ];
+            List.iter
+              (fun (what, reduce) ->
+                equal
+                  ~msg:(msg (what ^ " of " ^ input))
+                  (array float_exact)
+                  (values (both reduce x))
+                  (compiled (both reduce) x))
+              [
+                ("argmax", fun a x -> Nx.argmax ~axis:a x);
+                ("argmin", fun a x -> Nx.argmin ~axis:a x);
+              ])
+          [ ("short", matrix dtype short); ("long", matrix dtype long) ];
+        let x = matrix dtype grid in
+        let all = Array.concat (Array.to_list (rows x)) in
+        equal ~msg:(msg "max of grid") (array float_exact)
+          [| ieee `Max all |]
+          (compiled (fun x -> Nx.reshape [| 1 |] (Nx.max x)) x);
+        equal ~msg:(msg "min of grid") (array float_exact)
+          [| ieee `Min (Array.map Float.neg all) |]
+          (compiled (fun x -> Nx.reshape [| 1 |] (Nx.min (Nx.neg x))) x))
+      devices
+  in
+  check "float32" f32 devices;
+  check "float16" Nx.float16 devices;
+  check "bfloat16" Nx.bfloat16 devices;
+  check "float8_e4m3" Nx.float8_e4m3 devices;
+  check "float8_e5m2" Nx.float8_e5m2 devices;
+  check "float64" f64 [ "CPU" ]
+
 (* Cumulative reductions *)
 
 (* A sum over int8 or int16 accumulates in int32; the compiled scan hands back
@@ -3555,6 +3673,7 @@ let tests =
           test_half_sums_accumulate_wide;
         test "half-precision products multiply wide"
           test_half_products_multiply_wide;
+        slow "extremes" test_extremes;
       ];
     group "cumulative reductions"
       [

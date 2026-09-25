@@ -757,11 +757,13 @@ let float_bits x =
    Tolk's comparisons never let a NaN win, and its sort recovers positions by
    matching values for equality, which a NaN never satisfies. A float orders as
    its bits (see [float_bits]), with a negative value's magnitude bits flipped
-   so that the larger float is the larger integer, and -0 read as +0 so that
-   equal zeros tie. Every NaN takes the greatest integer ([`Greatest]) or the
-   least ([`Least]); no number takes either. The -0 test compares bits: a float
-   comparison may flush subnormals to zero. A non-float [x] is its own key. *)
-let order_keys ~nan x =
+   so that the larger float is the larger integer. -0 is read as +0 so that
+   equal zeros tie ([`Tied]), or orders below +0 ([`Ordered]). Every NaN,
+   recognised on its bits (magnitude above infinity's), takes the greatest
+   integer ([`Greatest]) or the least ([`Least]); no number takes either. The
+   -0 test compares bits: a float comparison may flush subnormals to zero. A
+   non-float [x] is its own key. *)
+let order_keys ~nan ~zeros x =
   let dtype = F.Tensor.dtype x in
   if not (TD.is_float dtype) then (x, Fun.id)
   else
@@ -780,20 +782,35 @@ let order_keys ~nan x =
         (lt bits (F.Creation.const_like bits (F.Tensor.Sint 0)))
         (bitwise_xor bits max) bits
     in
-    let merged =
-      where
-        (eq bits (bound (Tolk_uop.Const.min_value int)))
-        (F.Creation.const_like bits (F.Tensor.Sint 0))
-        bits
+    let zeros =
+      match zeros with
+      | `Tied ->
+          where
+            (eq bits (bound (Tolk_uop.Const.min_value int)))
+            (F.Creation.const_like bits (F.Tensor.Sint 0))
+            bits
+      | `Ordered -> bits
     in
     let values keys =
       F.Dtype_ops.cast
         (where (eq keys nan_key)
-           (F.Creation.const_like x (F.Tensor.Sfloat Float.nan))
+           (F.Creation.const_like ~dtype:(F.Tensor.dtype x) keys
+              (F.Tensor.Sfloat Float.nan))
            (F.Dtype_ops.bitcast (flip keys) (F.Tensor.dtype x)))
         dtype
     in
-    (where (isnan x) nan_key (flip merged), values)
+    let infinity =
+      match F.Tensor.dtype x with
+      | TD.Float16 -> 0x7c00L
+      | TD.Bfloat16 -> 0x7f80L
+      | TD.Float32 -> Int64.of_int32 (Int32.bits_of_float Float.infinity)
+      | TD.Float64 -> Int64.bits_of_float Float.infinity
+      | dt -> invalid_arg ("Rune.jit: no order keys for " ^ TD.to_string dt)
+    in
+    let nan_bits =
+      gt (bitwise_and bits max) (bound (Tolk_uop.Const.int64 int infinity))
+    in
+    (where nan_bits nan_key (flip zeros), values)
 
 (* A running maximum or minimum of [t] along [axis], as eager's: NaN from the
    first NaN on, and the first of equal values, so that -0 and +0 keep their
@@ -810,7 +827,9 @@ let running ~packs ~axis ~op t =
   let dtype = F.Tensor.dtype t in
   let n = List.nth (F.Tensor.shape t) axis in
   let keys, values =
-    order_keys ~nan:(match op with `Max -> `Greatest | `Min -> `Least) t
+    order_keys
+      ~nan:(match op with `Max -> `Greatest | `Min -> `Least)
+      ~zeros:`Tied t
   in
   let key_bits = TD.bitsize (F.Tensor.dtype keys) in
   let shift = 63 - key_bits in
@@ -858,10 +877,27 @@ let running ~packs ~axis ~op t =
     in
     where signed_zero minus_zero (values key)
 
+(* The greatest or least element of [t] over [axes]: NaN when any element is
+   NaN, as eager's, and of -0 and +0 the greater for a maximum and the lesser
+   for a minimum, as IEEE orders them, where eager keeps the first. One integer
+   reduction over the keys (see [order_keys]) gives both, and keeps the order of
+   subnormals that a float comparison flushes. *)
+let extreme ~op ~axes t =
+  let reduce, nan =
+    match op with
+    | `Max -> (F.Reduce.max, `Greatest)
+    | `Min -> (F.Reduce.min, `Least)
+  in
+  if not (TD.is_float (F.Tensor.dtype t)) then
+    reduce ~axis:axes ~keepdim:false t
+  else
+    let keys, values = order_keys ~nan ~zeros:`Ordered t in
+    values (reduce ~axis:axes ~keepdim:false keys)
+
 (* The keys a sort orders: NaN after every number in either direction, and equal
    zeros tied, so that a stable sort keeps their order. *)
 let sort_keys ~descending x =
-  order_keys ~nan:(if descending then `Least else `Greatest) x
+  order_keys ~nan:(if descending then `Least else `Greatest) ~zeros:`Tied x
 
 (* Whether [st]'s device computes int64 natively, which the packed sort
    needs. *)
@@ -1759,25 +1795,29 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some
           (fun k ->
             ret k (dt t_in)
-              (F.Reduce.max ~axis:(Array.to_list axes) ~keepdim:false (go t_in)))
+              (extreme ~op:`Max ~axes:(Array.to_list axes) (go t_in)))
     | E_reduce_min { t_in; axes } ->
         Some
           (fun k ->
             ret k (dt t_in)
-              (F.Reduce.min ~axis:(Array.to_list axes) ~keepdim:false (go t_in)))
+              (extreme ~op:`Min ~axes:(Array.to_list axes) (go t_in)))
+    (* Over integer keys the first NaN is the extreme and zeros tie, so the
+       first of equal extremes is eager's position. *)
     | E_argmax { t_in; axis; keepdims } ->
         Some
           (fun k ->
+            let keys, _ = order_keys ~nan:`Greatest ~zeros:`Tied (go t_in) in
             ret k ND.int32
               (F.Dtype_ops.cast
-                 (F.Op.argmax ~axis ~keepdim:keepdims (go t_in))
+                 (F.Op.argmax ~axis ~keepdim:keepdims keys)
                  TD.int32))
     | E_argmin { t_in; axis; keepdims } ->
         Some
           (fun k ->
+            let keys, _ = order_keys ~nan:`Least ~zeros:`Tied (go t_in) in
             ret k ND.int32
               (F.Dtype_ops.cast
-                 (F.Op.argmin ~axis ~keepdim:keepdims (go t_in))
+                 (F.Op.argmin ~axis ~keepdim:keepdims keys)
                  TD.int32))
     | E_sort { t_in; axis; descending } ->
         Some
