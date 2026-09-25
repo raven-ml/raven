@@ -141,6 +141,8 @@ type t = {
   invalidate_caches_fn : (unit -> unit) option;
   queue : queue option;
   bufferize : Uop.t -> Buffer.t option;
+  program_buffers : Buffer.t Uop.Tbl.t;
+  program_lock : Mutex.t;
   synchronize_lock : Mutex.t;
   pending_lock : Mutex.t;
   pending_accesses : (string, int option -> unit) Hashtbl.t;
@@ -179,6 +181,7 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
   let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
   let device = { name; peer_group; allocator; renderer_set; runtime; synchronize;
     invalidate_caches_fn = invalidate_caches; queue; bufferize;
+    program_buffers = Uop.Tbl.create 16; program_lock = Mutex.create ();
     synchronize_lock = Mutex.create (); pending_lock = Mutex.create ();
     pending_accesses = Hashtbl.create 0; pending_timings = Hashtbl.create 0;
     profile_events = [] } in
@@ -322,7 +325,15 @@ let profile d =
         events)
 
 let queue d = d.queue
-let bufferize d u = Storage.with_operation (fun () -> d.bufferize u)
+let bufferize d u = Storage.with_operation (fun () ->
+    if Uop.node_tag u <> Some "program" then d.bufferize u
+    else Mutex.protect d.program_lock (fun () ->
+        match Uop.Tbl.find_opt d.program_buffers u with
+        | Some buffer -> Some buffer
+        | None ->
+            let buffer = d.bufferize u in
+            Option.iter (Uop.Tbl.add d.program_buffers u) buffer;
+            buffer))
 
 let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
   let module U = Tolk_uop.Uop in

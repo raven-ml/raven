@@ -651,6 +651,10 @@ thread.
 
 ### Tolk (new)
 
+- NV submissions share immutable program images and allocate descriptors and
+  arguments together. Retained replays keep separate writable storage while
+  avoiding repeated image allocation and relocation setup.
+
 - AMD reset and firmware settling delays now sleep instead of consuming a CPU
   core in busy loops. Scripted hardware tests use the device's injected clock.
 

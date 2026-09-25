@@ -253,7 +253,10 @@ val queue : t -> queue option
 (** [queue d] is [d]'s compiled submission capability, if any. *)
 
 val bufferize : t -> Tolk_uop.Uop.t -> Buffer.t option
-(** [bufferize d placeholder] resolves a backend storage descriptor at link time. *)
+(** [bufferize d placeholder] resolves a backend storage descriptor at link time.
+    Resolved [program] placeholders are cached by [d] across independently linked
+    schedules. Their buffers belong to the device and must not be explicitly
+    deallocated by a caller. Other descriptors retain backend-defined ownership. *)
 
 val compile_program :
   t ->

@@ -21,9 +21,7 @@ with their rationale and validation; commit count is not an acceptance metric.
   to eager link-and-execute, reserve a whole link before writing, drain through
   `Device.synchronize` before wrap (including profiles), and retain backing after
   failed completion. Cover unpublished, oversized and independently retained
-  links before adopting it. Share NV code images within a compiled schedule
-  and use one QMD/argument arena per run. Measure allocation counts and
-  test independent retained links, descriptor alignment and replay patching.
+  links before adopting it.
 - Validate deferred buffer finalization on AMD/NV hardware with `nolru` and
   `LRU=0`, forcing GC during allocation, mapped-buffer teardown,
   compiled submission, signal reservation and kernarg reuse. Verify that waits

@@ -491,7 +491,7 @@ let with_fake_sysfs devices f =
   in
   Fun.protect ~finally:(fun () -> rm_tree root) (fun () -> f root)
 
-let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(profile = false)
+let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(profile = false)
     ?lib ?global_size ?(local_size = [U.Launch_int 1]) ?image_address ?allocator
     ?(synchronize = fun () -> ())
     ~compute_class ~copies m =
@@ -579,7 +579,15 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(profile = false)
       ~synchronize:(fun timeout -> ignore timeout; Submission.check submission; synchronize ()) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)]
-    else if chain then [call; U.replace call ~src:[|program; parameter 1|] ()] else [call] in
+    else if chain then begin
+      let extras = List.init extra_args (fun i -> U.variable ~param:true
+          ~name:("extra_" ^ string_of_int i) ~min_val:(-1024) ~max_val:1024 ~dtype:D.int64 ()) in
+      let extra_program = if extras = [] then program else
+          U.program ~sink:(U.sink ~kernel_info [store])
+            ~linear:(U.linear (Program_spec.program spec @ extras)) ~source:(U.source "")
+            ~binary:(U.binary (Bytes.to_string lib)) ~info:{info with vars = info.vars @ extras} () in
+      [call; U.replace call ~src:[|extra_program; parameter 1|] ()]
+    end else [call] in
   Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
 
 let slm_allocator ?(synchronize = fun () -> ()) () =
@@ -775,28 +783,69 @@ let shared_calibration m =
   equal int 0 !frees;
   ignore (Sys.opaque_identity (device, calibration))
 
-let queue_chain ~compute_class m =
+let queue_chain ?(extra_args = 0) ~compute_class m =
   let open Tolk in
-  let compiled, device, host, buffers, submission = queue_fixture ~chain:true ~compute_class ~copies:false m in
-  let linked = Realize.link_linear compiled in
+  let compiled, device, _, buffers, submission =
+    queue_fixture ~chain:true ~extra_args ~compute_class ~copies:false m in
+  let first = Realize.link_linear ~allow_cache:false compiled in
+  let arena = Hashtbl.find buffers "qmd" in
+  equal int 1 (List.length (Hashtbl.find_all buffers "qmd"));
+  equal int 1 (List.length (Hashtbl.find_all buffers "program"));
+  let second = Realize.link_linear ~allow_cache:false compiled in
+  let other = Hashtbl.find buffers "qmd" in
+  is_false (Device.Buffer.id arena = Device.Buffer.id other);
+  equal int 2 (List.length (Hashtbl.find_all buffers "qmd"));
+  equal int 1 (List.length (Hashtbl.find_all buffers "program"));
+  let qmd_size = if compute_class >= Defs.blackwell_compute_a then 512 else 256 in
+  let prefix_size = if compute_class >= Defs.blackwell_compute_a then 896 else 0x160 in
+  let stride = qmd_size + ((prefix_size + (3 + extra_args) * 8 + 255) / 256 * 256) in
+  equal int (2 * stride) (Device.Buffer.nbytes arena);
   let inputs = Array.init 2 (fun _ -> Device.create_buffer ~size:16 ~dtype:D.int32 device) in
-  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
-    ~jit:true ~var_vals:["small", 4; "count", 2]
-    ~input_uops:(Array.map U.from_buffer inputs) linked;
-  Submission.check submission;
-  let descriptors = Hashtbl.find_all buffers "qmd" |> List.map (fun b -> b,
-      Qmd.create ~compute_class ~view:(Mmio.make ~addr:(Device.Buffer.addr b) ~size:(Device.Buffer.nbytes b))) in
-  equal int 2 (List.length descriptors);
-  let first = List.find (fun (_, d) -> Qmd.read d "dependent_qmd0_enable" = 1) descriptors in
-  let last = List.find (fun (_, d) -> Qmd.read d "dependent_qmd0_enable" = 0) descriptors in
-  equal int (Nativeint.to_int (Device.Buffer.addr (fst last)) lsr 8 land 0xffffffff)
-    (Qmd.read (snd first) "dependent_qmd0_pointer");
-  equal int 1 (Qmd.read (snd first) "dependent_qmd0_action");
-  equal int 1 (Qmd.read (snd first) "dependent_qmd0_prefetch");
-  equal int 0 (Qmd.read (snd first) "release0_enable");
-  equal int 1 (Qmd.read (snd last) "release0_enable");
+  let retire () =
+    let timeline = Hashtbl.find buffers "timeline" in
+    let bytes = Device.Buffer.as_bytes timeline in
+    Bytes.set_int64_le bytes 0 (Bytes.get_int64_le bytes 8);
+    Device.Buffer.copyin timeline bytes;
+    let progress = Hashtbl.find buffers "progress_compute" in
+    let bytes = Device.Buffer.as_bytes progress in
+    Bytes.set_int32_le bytes 8 (Int64.to_int32 (Bytes.get_int64_le bytes 0));
+    Device.Buffer.copyin progress bytes in
+  let run linked arena small count inputs =
+    Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+      ~jit:true ~var_vals:(["small", small; "count", count] @
+        List.init extra_args (fun i -> "extra_" ^ string_of_int i, i + small))
+      ~input_uops:(Array.map U.from_buffer inputs) linked;
+    Submission.check submission;
+    let address = Device.Buffer.addr arena in
+    equal int 0 (Nativeint.to_int address land 255);
+    let descriptors = Array.init 2 (fun i ->
+        Qmd.create ~compute_class ~view:(Mmio.make
+          ~addr:(Nativeint.add address (Nativeint.of_int (i * stride))) ~size:qmd_size)) in
+    equal int (((Nativeint.to_int address + stride) lsr 8) land 0xffffffff)
+      (Qmd.read descriptors.(0) "dependent_qmd0_pointer");
+    equal int 1 (Qmd.read descriptors.(0) "dependent_qmd0_action");
+    equal int 1 (Qmd.read descriptors.(0) "dependent_qmd0_prefetch");
+    equal int 0 (Qmd.read descriptors.(0) "release0_enable");
+    equal int 1 (Qmd.read descriptors.(1) "release0_enable");
+    let bytes = Device.Buffer.as_bytes arena in
+    Array.iteri (fun i input ->
+        let at = i * stride + qmd_size + prefix_size in
+        equal int64 (Int64.of_nativeint (Device.Buffer.addr input)) (Bytes.get_int64_le bytes at);
+        equal int small (Bytes.get_int8 bytes (at + 8));
+        equal int64 (Int64.of_int count) (Bytes.get_int64_le bytes (at + 16));
+        if i = 1 then for j = 0 to extra_args - 1 do
+          equal int64 (Int64.of_int (j + small)) (Bytes.get_int64_le bytes (at + 24 + j * 8))
+        done) inputs;
+    retire () in
+  run first arena 4 2 inputs;
+  let first_bytes = Device.Buffer.as_bytes arena in
+  run second other 7 5 (Array.of_list [inputs.(1); inputs.(0)]);
+  equal bytes first_bytes (Device.Buffer.as_bytes arena);
+  let other_bytes = Device.Buffer.as_bytes other in
+  run first arena (-3) 8 (Array.of_list [inputs.(1); inputs.(0)]);
+  equal bytes other_bytes (Device.Buffer.as_bytes other);
+  equal int 1 (List.length (Hashtbl.find_all buffers "program"));
   let stream = Device.Buffer.as_bytes (Hashtbl.find buffers "cmdbuf_compute") in
-  (* One cache barrier, one six-dword wait, and one four-dword launch. *)
   equal int 72 (Bytes.length stream)
 
 let queue_timeout m =
@@ -929,6 +978,9 @@ let () =
              with_fixture (queue_chain ~compute_class:Defs.ada_compute_a));
          test "Blackwell descriptors chain launches and release only the tail" (fun () ->
              with_fixture (queue_chain ~compute_class:Defs.blackwell_compute_b));
+         test "mixed argument footprints share aligned per-submission arenas" (fun () ->
+             List.iter (fun compute_class -> with_fixture (queue_chain ~extra_args:40 ~compute_class))
+               [Defs.ada_compute_a; Defs.blackwell_compute_b]);
          test "independent retained batches cannot overfill the FIFO" (fun () ->
              with_fixture (queue_capacity ~copies:false ~resume:false));
          test "compute and copy FIFOs resume when the GPU retires work" (fun () ->

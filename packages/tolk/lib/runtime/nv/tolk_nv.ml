@@ -1717,11 +1717,34 @@ module Encoded_queue = struct
     else [cast D.uint32 value]
   let hilo value = [cast D.uint32 (shr value (u64 32)); cast D.uint32 value]
 
+  let program_images = Hashtbl.create 16
+  let program_images_lock = Mutex.create ()
+
+  let program_image name (object_ : Tiny_elf.t) =
+    let binary = Bytes.to_string object_.lib in
+    let key = name, object_.name, binary in
+    Mutex.protect program_images_lock (fun () ->
+      match Hashtbl.find_opt program_images key with
+      | Some cached -> cached
+      | None ->
+          let data = Program.image ~name:object_.name (Bytes.of_string binary) in
+          let image = U.placeholder ~shape:[Bytes.length data.image] ~dtype:D.uint8
+              ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name)
+              ~allocation:("nv_image", string_of_int data.lcmem_usage) () |> U.with_tag "program" in
+          let relocations = List.concat_map (fun (offset, target, width, shift) ->
+              let address = shr (add (addr name image) (u64 target)) (u64 shift) in
+              if width = 8 then [offset, cast D.uint32 address;
+                offset + 4, cast D.uint32 (shr address (u64 32))]
+              else [offset, cast D.uint32 address]) data.relocations in
+          let cached = data, Tolk.Hcq2.patch ~blob:(Bytes.to_string data.image) image relocations in
+          Hashtbl.add program_images key cached;
+          cached)
+
   (* Merge symbolic fields by dword. Descriptor fields share words, and
      several span a boundary, so independently storing fields would clobber
      their neighbours. Link patches stay naturally aligned. *)
   type descriptor = { qmd : Qmd.t; words : (int, U.t) Hashtbl.t;
-    buffer : U.t; blob : bytes; mutable releases : int }
+    offset : int; blob : bytes; mutable releases : int }
 
   let field t name value =
     let hi, lo = Qmd.range t.qmd name in
@@ -1756,6 +1779,23 @@ module Encoded_queue = struct
             ~name:"tolk_hcq_wait_progress" ~dtype:D.void
             [index (context name); index progress; target] in
         let next = add (U.load ~src:(index (U.after ~src:progress ~deps:[dependency])) ()) (u64 1) in
+        let programs = if not compute then [] else List.filter_map (fun node ->
+            match U.as_call node with
+            | Some {body; _} when U.op body = Ops.Program ->
+                let object_ = U.to_elf body in
+                let data, image = program_image name object_ in
+                let template_dev = {dev with slm_per_thread = max dev.slm_per_thread (round_up data.lcmem_usage 32)} in
+                let qmd, prefix = Program.template template_dev data in
+                Some (data, image, qmd, prefix, Tiny_elf.layout object_.signature)
+            | _ -> None) (U.children linear) in
+        let qmd_size = round_up (Qmd.sizeof ~compute_class:dev.compute_class) 256 in
+        let stride = qmd_size + List.fold_left (fun size (data, _, _, prefix, layout) ->
+            max size (round_up (max (snd (List.assoc 0 data.Program.constbufs))
+              (Array.length prefix * 4 + List.fold_left (fun size (field : Tiny_elf.field) ->
+                max size (field.offset + field.size)) 0 layout)) 256)) 0 programs in
+        let qmd_buffer = U.placeholder ~shape:[List.length programs * stride] ~dtype:D.uint8
+            ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name) () |> U.with_tag "qmd" in
+        let remaining = ref programs and qmd_offset = ref 0 in
         let commands = ref [] and descriptors = ref [] and previous = ref None in
         let q xs = commands := List.rev_append xs !commands in
         let nvm subchannel method_ xs =
@@ -1796,32 +1836,16 @@ module Encoded_queue = struct
         List.iter (fun node -> match U.as_call node, U.arg node with
           | Some {body; args}, _ when U.op body = Ops.Program && compute ->
               let info = Option.get (U.as_program_info body) in
-              let object_ = U.to_elf body in
-              let data = Program.image ~name:object_.name object_.lib in
-              let template_dev = {dev with slm_per_thread = max dev.slm_per_thread (round_up data.lcmem_usage 32)} in
-              let qmd, prefix = Program.template template_dev data in
-              let image = U.placeholder ~shape:[Bytes.length data.image] ~dtype:D.uint8
-                  ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name)
-                  ~allocation:("nv_image", string_of_int data.lcmem_usage) () |> U.with_tag "program" in
-              let relocations = List.concat_map (fun (offset, target, width, shift) ->
-                  let address = shr (add (addr name image) (u64 target)) (u64 shift) in
-                  if width = 8 then [offset, cast D.uint32 address;
-                    offset + 4, cast D.uint32 (shr address (u64 32))]
-                  else [offset, cast D.uint32 address]) data.relocations in
-              let image = Tolk.Hcq2.patch ~blob:(Bytes.to_string data.image) image relocations in
-              let layout = Tiny_elf.layout object_.signature in
-              let qmd_size = round_up (Qmd.sizeof ~compute_class:dev.compute_class) 256 in
+              let data, image, qmd, prefix, layout = List.hd !remaining in
+              remaining := List.tl !remaining;
               let at = qmd_size + Array.length prefix * 4 in
-              let size = round_up (max (qmd_size + snd (List.assoc 0 data.constbufs))
-                  (at + List.fold_left (fun n (f : Tiny_elf.field) -> max n (f.offset + f.size)) 0 layout)) 256 in
-              let buffer = U.placeholder ~shape:[size] ~dtype:D.uint8 ~slot:(U.fresh_buffer_slot ())
-                  ~device:(U.Single name) () |> U.with_tag "qmd" in
-              let blob = Bytes.make size '\000' in
+              let blob = Bytes.make stride '\000' in
               let template = Qmd.to_bytes qmd in
               Bytes.blit template 0 blob 0 (Bytes.length template);
               Array.iteri (fun i word -> Bytes.set_int32_le blob (qmd_size + i * 4) (Int32.of_int word)) prefix;
-              let d = {qmd; words = Hashtbl.create 32; buffer; blob; releases = 0} in
-              let address = addr name buffer in
+              let d = {qmd; words = Hashtbl.create 32; offset = !qmd_offset; blob; releases = 0} in
+              qmd_offset := !qmd_offset + stride;
+              let address = add (addr name qmd_buffer) (u64 d.offset) in
               let check_dims limits values = List.iteri (fun i dim ->
                   let value = match dim with U.Launch_int n -> Some n
                     | U.Launch_float f -> Some (int_of_float f) | U.Launch_sym _ -> None in
@@ -1926,10 +1950,15 @@ module Encoded_queue = struct
           nvm 4 Defs.nvc6b5_launch_dma [u32 (bits Defs.nvc6b5_launch_dma_flush_enable 1
             lor bits Defs.nvc6b5_launch_dma_semaphore_type 1)]
         end;
-        let patches = List.rev_map (fun (d, rows) ->
-            let fields = Hashtbl.fold (fun word value rows -> (word * 4, value) :: rows) d.words []
-                |> List.sort (fun (a, _) (b, _) -> Int.compare a b) in
-            Tolk.Hcq2.patch ~blob:(Bytes.to_string d.blob) ~after:[dependency] d.buffer (fields @ rows)) !descriptors in
+        let patches = if !descriptors = [] then [] else begin
+          let descriptors = List.rev !descriptors in
+          let blob = Bytes.concat Bytes.empty (List.map (fun (d, _) -> d.blob) descriptors) in
+          let rows = List.concat_map (fun (d, rows) ->
+              let fields = Hashtbl.fold (fun word value rows -> (word * 4, value) :: rows) d.words []
+                  |> List.sort (fun (a, _) (b, _) -> Int.compare a b) in
+              List.map (fun (offset, value) -> d.offset + offset, value) (fields @ rows)) descriptors in
+          [Tolk.Hcq2.patch ~blob:(Bytes.to_string blob) ~after:[dependency] qmd_buffer rows]
+        end in
         let commands = List.rev !commands in
         let size = List.length commands * 4 in
         if size / 4 > 0x1fffff then invalid_arg "NV command stream exceeds its FIFO entry";

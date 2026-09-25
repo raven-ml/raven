@@ -708,7 +708,41 @@ let failed_finalizer_is_not_retried () =
   is_true ~msg:"uncertain native backing survives collection"
     (Stdlib.Weak.check backing 0)
 
+let program_storage_is_device_owned () =
+  let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let allocations = Atomic.make 0 and fail = ref true in
+  let make name =
+    Device.make ~name ~allocator:(Device.Allocator.Pack host)
+      ~renderer_set:(Device.Renderer_set.make ~device:name [])
+      ~synchronize:(fun timeout -> ignore timeout)
+      ~bufferize:(fun u ->
+        if !fail then failwith "program setup failed";
+        ignore (Atomic.fetch_and_add allocations 1);
+        Unix.sleepf 0.001;
+        Some (Device.Buffer.create ~device:name ~size:(Uop.max_numel u)
+          ~dtype:(Uop.dtype u) (Device.Allocator.Pack host))) () in
+  let owner = make "PROGRAM_OWNER" in
+  let placeholder = Uop.placeholder ~slot:0 ~shape:[16] ~dtype:D.uint8
+      ~device:(Uop.Single (Device.name owner)) () |> Uop.with_tag "program" in
+  raises (Failure "program setup failed") (fun () ->
+      ignore (Device.bufferize owner placeholder));
+  fail := false;
+  let worker = Domain.spawn (fun () -> Option.get (Device.bufferize owner placeholder)) in
+  let buffer = Option.get (Device.bufferize owner placeholder) in
+  let concurrent = Domain.join worker in
+  equal ~msg:"concurrent links share one program allocation" int 1 (Atomic.get allocations);
+  is_true (buffer == concurrent);
+  let scratch = Uop.with_tag "kernargs" placeholder in
+  let first = Option.get (Device.bufferize owner scratch)
+  and second = Option.get (Device.bufferize owner scratch) in
+  is_false ~msg:"writable command storage remains independent" (first == second);
+  let other = make "PROGRAM_OTHER_OWNER" in
+  let separate = Option.get (Device.bufferize other placeholder) in
+  is_false ~msg:"program storage is owned by each device" (buffer == separate);
+  equal int 4 (Atomic.get allocations)
+
 let () = run __FILE__ [ copy_from_tests;
+  test "program storage belongs to the device across links" program_storage_is_device_owned;
   test "device bootstrap registration rolls back failed initialization" device_initialization_registration;
   test "failed buffer finalizers are reported without retrying teardown" failed_finalizer_is_not_retried;
   test "buffer finalizers wait for device operations" finalizers_wait_for_device_operations;
