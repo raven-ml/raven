@@ -18,20 +18,14 @@ let range_start_of_op = function
   | _ -> None
 
 let is_range u = U.op u = Ops.Range
-let is_const u = U.op u = Ops.Const
+let is_const u = Option.is_some (U.as_const u)
 let is_load u = U.op u = Ops.Index
 
-let const_int_value u =
-  match U.arg u with
-  | U.Arg.Value c ->
-      (match Const.view c with
-       | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
-       | _ -> None)
-  | _ -> None
+let const_int_value = U.const_int_value
 
 let is_zero_const u =
-  match U.op u, U.arg u with
-  | Ops.Const, U.Arg.Value c ->
+  match U.as_const u with
+  | Some c ->
       (match Const.view c with
        | Const.Int n -> Z.equal n Z.zero
        | Const.Float f -> Float.equal f 0.0
@@ -544,7 +538,7 @@ let rule_reduce_split_add =
    WHERE. *)
 let rule_reduce_and_where =
   let open Upat in
-  let x = op ~name:"x" Ops.Param
+  let x = ops ~name:"x" [ Ops.Param; Ops.Buffer ]
   and y = var "y" and c = var "c" and z = var "zero" in
   let w = where (alu [ x; y ] Ops.And) c z in
   op ~src:[ w ] ~name:"red" ~allow_any_len:true Ops.Reduce
@@ -677,7 +671,7 @@ let pm_reduce_load_collapse =
    simplify with [pm], and substitute back. *)
 
 let is_leaf n =
-  match U.op n with
+  is_const n || match U.op n with
   | Ops.Const | Ops.Param | Ops.Buffer -> true
   | _ -> false
 

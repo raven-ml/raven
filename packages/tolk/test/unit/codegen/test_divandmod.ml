@@ -552,9 +552,10 @@ let property_folds_are_numerically_correct () =
    statically zero and the quotient is irreducible — no other strategy can
    improve on it, and some would rewrite it into a larger expression. *)
 let param_multiple_of_folds_mod_and_leaves_div () =
+  List.iter (fun param ->
   let x =
     Uop.variable ~name:"x" ~min_val:0 ~max_val:100 ~dtype:Dtype.weakint
-      ~multiple_of:4 ()
+      ~multiple_of:4 ~param ()
   in
   (match rewrite (floormod x (ic 4)) with
    | Some r ->
@@ -566,7 +567,7 @@ let param_multiple_of_folds_mod_and_leaves_div () =
   is_true ~msg:"x % 3 does not fold to zero"
     (match rewrite (floormod x (ic 3)) with
      | Some r -> Uop.const_int_value r <> Some 0
-     | None -> true)
+     | None -> true)) [ false; true ]
 
 let param_without_multiple_of_does_not_fold () =
   let x = var ~name:"x" ~lo:0 ~hi:100 () in

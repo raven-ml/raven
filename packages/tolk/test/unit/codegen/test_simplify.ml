@@ -75,7 +75,7 @@ let count_ranges root = List.length (find_ranges root)
 
 (* The float payload of [root] when it is a single folded constant. *)
 let float_const root =
-  match U.Arg.as_value (U.arg root) with
+  match U.as_const root with
   | Some value -> (
       match C.view value with C.Float f -> Some f | _ -> None)
   | None -> None
@@ -629,9 +629,10 @@ let reduce_simplify_tests =
              r1 fold: min(max(3,0),5) * 1.0 = 3.0.
              Result: 3.0 * 4.0 = 12.0, no ranges. *)
           equal int (count_ranges result) 0;
-          (* Both factors stay weak, so nothing casts: the pass leaves
-             MUL(3, 4) for the symbolic fold that follows it. *)
-          is_false (has_node (fun n -> U.op n = Ops.Cast) result));
+          is_true (D.equal (U.dtype result) D.float32);
+          let folded = U.graph_rewrite
+              (Upat.Pattern_matcher.rewrite Symbolic.symbolic) result in
+          equal (option (float 1e-9)) (Some 12.0) (float_const folded));
       (* Bound from two sides:
          ((r >= lower) & (r < upper)).where(val, 0).reduce(r, ADD) *)
       test "bound from two sides" (fun () ->

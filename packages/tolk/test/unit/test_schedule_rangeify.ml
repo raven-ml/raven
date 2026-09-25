@@ -175,7 +175,7 @@ let is_always_contiguous_tests =
       (* A COPY is turned into a store before rangeify, so it is no buffer
          identity of its own. *)
       test "copy" (fun () ->
-          let dummy = U.const (C.int D.weakint 0) in
+          let dummy = U.const (C.int D.int32 0) in
           is_false
             (is_always_contiguous
                (U.copy ~src:dummy ~device:(U.Single "CPU") ())));

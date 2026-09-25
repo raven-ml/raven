@@ -389,6 +389,9 @@ thread.
 
 ### Tolk (new)
 
+- Gated reductions and indexed loads collapse again with typed constants,
+  avoiding unnecessary loops. Divisibility folding now handles symbolic
+  variables before and after conversion to kernel parameters.
 - Fix a compilation rewrite cycle in BF16 arithmetic, including half-width
   random draws and Rune gradients, by preserving literal widths during late
   float emulation.

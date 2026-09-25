@@ -90,8 +90,6 @@ acceptance requirement; skipped tests are not execution evidence.
   renderer widths, view offsets, stage buffer sizes and range metadata. Port
   remaining symbolic rules and measure rewrite performance and long-lived
   memory use with weak node caches.
-  Restore gated reduction/load collapse and multiple-of folding for symbolic
-  BUFFERs; migrate low-level fixtures to flat storage and typed literals.
 - Add deterministic beam coverage for reconsidering candidates rejected by
   the per-step compute filter. Measure search cost and selected kernels at
   the upstream stopping threshold. Port remaining heuristics, device-aware

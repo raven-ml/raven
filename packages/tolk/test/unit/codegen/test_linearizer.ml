@@ -128,11 +128,11 @@ module P = struct
         match U.addrspace u with
         | Some Dtype.Local ->
             Define_local
-              { size = Option.value (int_const (U.src u).(0)) ~default:(-1);
+              { size = Option.get (Option.get (U.as_buffer u)).buffer.size;
                 dtype = U.dtype u }
         | Some Dtype.Reg ->
             Define_reg
-              { size = Option.value (int_const (U.src u).(0)) ~default:(-1);
+              { size = Option.get (Option.get (U.as_buffer u)).buffer.size;
                 dtype = U.dtype u }
         | _ -> Other u)
     | Ops.Special -> (
@@ -207,7 +207,7 @@ let define_reg ~size ~dtype ~slot =
   U.buffer ~slot ~dtype ~shape:(i32 size) ~addrspace:Dtype.Reg ()
 
 let define_var ~name ~lo ~hi ~dtype () =
-  U.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
+  U.variable ~name ~min_val:lo ~max_val:hi ~dtype ~param:true ()
 
 let loop_range ~axis size =
   U.range ~size ~axis ~kind:Axis_type.Weak ~dtype:Dtype.int32 ()
@@ -394,15 +394,15 @@ let () =
             (match P.view program after_pos with
              | P.After { src; deps = [ dep ]; dtype } ->
                  is_true (Dtype.equal dtype dt);
-                 (match (P.view program src, P.view program dep) with
-                  | P.Load _, P.Const { value; _ } ->
+                 (match (P.view program src, U.as_const (List.nth program dep)) with
+                  | P.Load _, Some value ->
                       (match Const.view value with
                        | Float f -> is_true (f = 1.0)
                        | _ -> failwith "expected Float const")
-                  | src_view, dep_view ->
+                  | src_view, _ ->
                       failwith
                         (Printf.sprintf "unexpected After operands:\n%s\n%s"
-                           (pp_view src_view) (pp_view dep_view)))
+                           (pp_view src_view) (pp_view (P.view program dep))))
              | view -> fail_view "expected After" view));
           test "effect-only After nodes preserve store ordering" (fun () ->
             let p0 = U.param ~slot:0 ~dtype:ptr () in
@@ -696,7 +696,7 @@ let () =
                          (match P.view program ptr with
                           | P.Define_reg _ ->
                               (match P.view program value with
-                               | P.Const _ -> ()
+                               | _ when Option.is_some (U.as_const (List.nth program value)) -> ()
                                | P.Binary { op = `Add; _ } ->
                                    is_true
                                      ~msg:
@@ -1078,8 +1078,10 @@ let () =
             let sum = U.alu_binary ~op:Ops.Add ~lhs:casted ~rhs:bitcoded in
             let program = linearize (U.sink [ sum ]) in
             P.validate program;
-            equal int 1
+            equal int 2
               (count program (function P.Cast _ -> true | _ -> false));
+            is_true (List.exists (U.equal c1f) program);
+            is_true (List.exists (U.equal casted) program);
             equal int 1
               (count program (function P.Bitcast _ -> true | _ -> false)));
           test "vectorize emission" (fun () ->
