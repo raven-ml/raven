@@ -163,6 +163,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled float sum or product of tensors groups as the program does:
+  `c + (a + b)` was computed as `(c + a) + b`, 0 instead of 1 for a = 1e8,
+  b = -1e8, c = 1 in `float32`. Unrolled reductions add their lanes' sum to
+  the accumulator, and run up to 4x faster on the CPU.
 - Compiled mxfp4 products weigh tolk's kernel against decoding by one row
   bound per device, the same for one matrix and for routes grouped by expert:
   8 rows on Metal and 64 on the CPU, at every dtype. It was 32 at bfloat16

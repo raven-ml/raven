@@ -432,6 +432,24 @@ let check_cjvp2 ?(h = 1e-5) ?(tol = 1e-5) ~msg
     (Array.mapi (fun i d -> Complex.add d from_b.(i)) from_a)
     (to_carr dy)
 
+(* A compiled float sum or product groups as the program does: c + (a + b) is 1
+   for a = 1e8, b = -1e8 and c = 1, where (c + a) + b rounds to 0, and c * (a *
+   b) overflows where (c * a) * b does not. *)
+let check_float_association ?devices () =
+  let abc f x = f (Nx.get [ 0 ] x) (Nx.get [ 1 ] x) (Nx.get [ 2 ] x) in
+  List.iter
+    (fun (name, f, rows) ->
+      let x = Nx.create f32 [| 3; 1 |] rows in
+      equal ~msg:name (array float_exact)
+        (to_arr (abc f x))
+        (to_arr (Rune.jit' ?devices (abc f) x)))
+    [
+      ("c + (a + b)", (fun a b c -> Nx.add c (Nx.add a b)), [| 1e8; -1e8; 1.0 |]);
+      ( "c * (a * b)",
+        (fun a b c -> Nx.mul c (Nx.mul a b)),
+        [| 1e20; 1e20; 1e-30 |] );
+    ]
+
 (* Bitcast compiles to the bits eager reads, both ways, from a transposed view:
    both zeros, infinities, quiet and signalling NaN with payloads, subnormals.
    The bits leave and enter the compiled function as stored, and an eager

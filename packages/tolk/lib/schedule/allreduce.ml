@@ -92,8 +92,8 @@ let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
   let chunks = Array.init hdev (fun k -> numel * k / hdev, numel * (k + 1) / hdev) in
   let fold = fold_reduce op in
   (* Replicas must agree bit for bit, so every device folds the boxes' partial
-     sums of a chunk in box order, over stored partials: a partial fused into
-     that fold renders as one flat sum with the copies, which C reassociates. *)
+     sums of a chunk in box order. Each partial is stored: the other boxes copy
+     it, and its own device reads it back rather than computing it again. *)
   let owned = Array.init ndev (fun i ->
       let k = i mod hdev and box = i / hdev * hdev in
       U.contiguous ~src:(fold (List.init hdev (fun j ->

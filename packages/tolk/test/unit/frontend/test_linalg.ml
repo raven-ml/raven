@@ -174,7 +174,9 @@ let solve_tests =
             (El.sub (Op.matmul a x) b));
       slow "wide right-hand sides take the blocked path" (fun () ->
           (* 80 rows span several 32-row blocks plus a partial trailing
-             block; the residual is independent of the solver. *)
+             block; the residual is independent of the solver. Rounding alone
+             allows residuals up to 2·n·u·max(|a||x|) = 0.2 here (typically
+             0.02); a wrong block gives residuals of order |b|, up to 3. *)
           let n = 80 in
           let a_data =
             Array.init (n * n) (fun k ->
@@ -194,7 +196,7 @@ let solve_tests =
             Linalg.solve_triangular ~upper:false ~transpose:false
               ~unit_diag:false a b
           in
-          check_zero ~tol:1e-3 ~msg:"blocked |a·x - b|"
+          check_zero ~tol:1e-2 ~msg:"blocked |a·x - b|"
             (El.sub (Op.matmul a x) b);
           (* The flags compose with blocking: ~upper reads the strict upper
              triangle of a matrix whose stored diagonal is garbage (never read

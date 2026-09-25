@@ -29,22 +29,6 @@ let strip_parens s =
       if !d = 0 then String.sub s 1 (n - 2) else s
     with Exit -> s
 
-let has_top_level_char ch s =
-  let depth = ref 0 in
-  let found = ref false in
-  String.iter
-    (function
-      | '(' -> incr depth
-      | ')' -> decr depth
-      | c when c = ch && !depth = 0 -> found := true
-      | _ -> ())
-    s;
-  !found
-
-let is_parenthesized_top_level_add s =
-  let stripped = strip_parens s in
-  not (String.equal stripped s) && has_top_level_char '+' stripped
-
 let prod = List.fold_left ( * ) 1
 
 (* Replace first occurrence of [needle] with [replacement] in [s]. *)
@@ -889,7 +873,10 @@ let base_rewrite : ctx rule list =
                | None -> store
                | Some gate -> strf "if (%s) %s" (lookup ctx gate) store)
         | None -> None );
-    (* ALU: dispatch to code_for_op *)
+    (* ALU: dispatch to code_for_op. C groups a chain of one operator from
+       the left, so an operand of the same operator loses its parentheses on
+       the left always and on the right only where the operator is
+       associative: float addition and multiplication are not. *)
     ( ops Ops.Group.alu ~name:"x",
       fun ctx bs _ ->
         let x = bs $ "x" in
@@ -897,15 +884,12 @@ let base_rewrite : ctx rule list =
         let assoc_strip =
           List.mem xop [ Ops.Add; Ops.Mul; Ops.Xor; Ops.Or; Ops.And ]
         in
+        let regroups = not (Dtype.is_float (U.dtype x)) in
         let args =
           Array.to_list (U.src x)
-          |> List.map (fun s ->
+          |> List.mapi (fun i s ->
                  let rendered = lookup ctx s in
-                 if U.op (U.base s) = xop && assoc_strip then
-                   strip_parens rendered
-                 else if
-                   xop = Ops.Add
-                   && is_parenthesized_top_level_add rendered
+                 if assoc_strip && (i = 0 || regroups) && U.op (U.base s) = xop
                  then strip_parens rendered
                  else rendered)
         in

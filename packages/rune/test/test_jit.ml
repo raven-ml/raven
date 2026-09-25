@@ -4399,6 +4399,8 @@ let tests =
       [
         test "64-bit constants keep every bit" test_64_bit_constants;
         test "narrow constants wrap" test_narrow_constants_wrap;
+        test "float sums and products keep their grouping"
+          (check_float_association ?devices:None);
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "a compiled float8 bitcast is refused"

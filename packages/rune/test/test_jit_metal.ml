@@ -891,6 +891,8 @@ let tests =
         test "sort keeps subnormals" test_sort_keeps_subnormals;
         test "empty values have no storage" test_empty_values;
         test "scans keep subnormals" test_scans_keep_subnormals;
+        test "float sums and products keep their grouping"
+          (check_float_association ~devices:[ Rune.device "METAL" ]);
         test "a 17-argument kernel between queued work matches eager"
           test_many_argument_kernel;
       ];

@@ -192,10 +192,7 @@ let reducescatter ~only_consumer shrink =
                  (* Each device folds its own box's partials of its block into
                     its destination. Under boxes, a second phase folds that in
                     place with the other boxes' partials, which their devices
-                    at its rail store and copy, in box order. A partial is
-                    stored before that fold, as the hierarchical allreduce
-                    stores its: fused into it, it would render as one flat sum
-                    with the copies. *)
+                    at its rail store and copy, in box order. *)
                  [ (fun dst -> List.mapi (fun k _ ->
                        U.store ~dst:(U.mselect ~src:dst ~index:k)
                          ~value:(box_sum k (List.nth boxes (own k)) k) ()) targets);

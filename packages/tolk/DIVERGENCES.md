@@ -85,14 +85,12 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   partial, then the other boxes' in index order, and each device takes the
   chunk from its own box. With three or more boxes the devices fold in
   different orders and their replicas differ in the last bits. Tolk folds the
-  partials in box order on every device and stores each partial first. The
-  stored partial works around the C renderer, which prints a nested sum as one
-  flat expression and so reassociates a partial fused into the fold. Traffic
-  is unchanged. Consumer: RFC 0005's replicated values, which readers take
-  from any one device. Coverage: `test_multi` hierarchical replicas on 6 and 8
-  devices with 1 and 2 devices per box. Reconsider when upstream fixes the
-  fold order; the `contiguous` can go when the renderer keeps the graph's
-  association.
+  partials in box order on every device and stores each partial once: the
+  other boxes copy it and its own device reads it back rather than computing
+  it again inside the fold. Traffic is unchanged. Consumer: RFC 0005's
+  replicated values, which readers take from any one device. Coverage:
+  `test_multi` hierarchical replicas on 6 and 8 devices with 1 and 2 devices
+  per box. Reconsider when upstream fixes the fold order.
 
 - **Compiled AMD submission bounds polling and reserves ring space before
   writing commands.** The frozen target can spin forever or overwrite unread
@@ -291,6 +289,18 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   consumer requires proofs that cannot be expressed by the existing rules.
 
 ## Rendering
+
+- **A float sum or product keeps the graph's grouping.** The reference's
+  C-style renderer strips the parentheses of every same-operator operand of
+  ADD and MUL, so `c + (a + b)` prints as `c+a+b`, which C evaluates as
+  `(c + a) + b`: 0 instead of 1 for a = 1e8, b = -1e8, c = 1 in float32.
+  Tolk strips them only from a left operand, which C groups the same way, or
+  at a dtype where the operator is associative (integers and booleans). An
+  unrolled reduction now adds its lanes' sum to the accumulator
+  (`acc+(v0+v1+v2+v3)`) as the graph says, which also shortens the CPU loop's
+  dependency chain. Coverage: rune `test_jit` and `test_jit_metal` "float sums
+  and products keep their grouping". Remove this ruling when upstream keeps
+  the association.
 
 - **Pointer casts preserve volatile qualifiers.** The frozen reference qualifies
   parameters but its `CStyleLanguage.render_ptr` drops the qualifier when casting
