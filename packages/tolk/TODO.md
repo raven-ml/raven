@@ -49,8 +49,6 @@ with their rationale and validation; commit count is not an acceptance metric.
   the consumed SMU/PSP 13.0.15 branches coherently. Restore target
   firmware retrieval/cache behavior when installed blobs are missing or have
   different hashes, using existing fetch facilities without new dependencies.
-  Replace test-driven busy-spin delays with actual production sleeps and a
-  narrow test clock boundary.
 - Complete PCI multi-die mappings: export AMD hive memory through XGMI peer
   addresses instead of its PCI BAR, and select BAR or fabric addresses according
   to the receiving device. Establish raw-PCI fabric identity and reachability;

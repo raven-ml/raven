@@ -330,8 +330,8 @@ let sha_abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
    covering every register family the device core resolves, a register
    file over a hashtable with per-address read hooks and a write log,
    an anonymous mapping standing in for VRAM, and a clock that advances
-   one millisecond per reading so waits and settle delays consume no
-   wall time. *)
+   one millisecond per reading and jumps over recorded settle delays,
+   so tests consume no wall time. *)
 
 let mmhub_base = 0x3000
 let mp0_base = 0x10000
@@ -356,6 +356,7 @@ let dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys =
   ]
 
 type fake_dev = {
+  sleeps : int list ref;
   dev : Amdev.t;
   fvram : Mmio.t;
   store : (int, int) Hashtbl.t;
@@ -377,7 +378,7 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
       let reads = Hashtbl.create 16 in
       let wr_hooks = Hashtbl.create 16 in
       let log = ref [] in
-      let clock = ref 0 in
+      let clock = ref 0 and sleeps = ref [] in
       let rreg addr =
         match Hashtbl.find_opt reads addr with
         | Some hook -> hook ()
@@ -426,9 +427,10 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
           ~now_ms:(fun () ->
             incr clock;
             !clock)
+          ~sleep_ms:(fun ms -> sleeps := ms :: !sleeps; clock := !clock + ms)
           ~is_booting:booting ~on_range_mapped ()
       in
-      f { dev; fvram = vram; store; reads; wr_hooks; log })
+      f { dev; fvram = vram; store; reads; wr_hooks; log; sleeps })
 
 let raddr dev name = (Amdev.Am_register.reg (Amdev.reg dev name)).Reg.addr
 
@@ -1317,6 +1319,7 @@ let () =
                   Hashtbl.replace fd.reads (s.r 81) (fun () -> 1);
                   Hashtbl.replace fd.store (s.r 71) 1;
                   Psp.init_hw psp;
+                  equal (list int) [20; 20] (List.rev !(fd.sleeps));
                   let mc = Amdev.paddr2mc fd.dev in
                   let ring_mc = mc (Psp.ring_paddr psp) in
                   let tmr = Psp.tmr_paddr psp in
@@ -1469,6 +1472,7 @@ let () =
                   let start = Amdev.now_ms fd.dev in
                   Smu.mode1_reset smu;
                   equal int 3 !reads;
+                  equal (list int) [500] !(fd.sleeps);
                   is_true ~msg:"reset settles before returning"
                     (Amdev.now_ms fd.dev - start >= 500)));
           test "mode1_reset stops on PCI readiness timeout" (fun () ->
@@ -1492,6 +1496,7 @@ let () =
                       | _ -> false)
                     (fun () -> Smu.mode1_reset smu);
                   is_true ~msg:"config was polled" (!reads > 1);
+                  equal (list int) [500] !(fd.sleeps);
                   let elapsed = Amdev.now_ms fd.dev - start in
                   is_true ~msg:"500ms settling plus bounded 2s readiness"
                     (elapsed >= 2500 && elapsed < 2520)));
@@ -1510,6 +1515,7 @@ let () =
                   ack_messages fd;
                   let start = Amdev.now_ms fd.dev in
                   Smu.mode1_reset smu;
+                  equal (list int) [] !(fd.sleeps);
                   is_true ~msg:"no settling delay for individual hive members"
                     (Amdev.now_ms fd.dev - start < 500)));
           test "is_smu_alive polls the response register" (fun () ->
@@ -2491,6 +2497,7 @@ let () =
                   let r54 = raddr fd.dev "mmMP1_SMN_C2PMSG_54" in
                   let r75 = raddr fd.dev "mmMP1_SMN_C2PMSG_75" in
                   Hashtbl.replace fd.wr_hooks r75 (fun _ ->
+                      equal int 100 (List.hd !(fd.sleeps));
                       Hashtbl.replace fd.store r54 1);
                   fd.log := [];
                   Am_boot.init t;

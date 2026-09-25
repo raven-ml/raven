@@ -34,14 +34,6 @@ let wait_cond adev ?(timeout_ms = 10000) ~value ~msg cb =
   in
   go 0
 
-(* time.sleep equivalents in the boot protocols only need elapsed wall
-   time, so waiting on the device clock keeps them scriptable too. *)
-let sleep_ms adev ms =
-  let start = Amdev.now_ms adev in
-  while Amdev.now_ms adev - start < ms do
-    ()
-  done
-
 let lo32 v = v land 0xffffffff
 let hi32 v = v lsr 32
 
@@ -533,7 +525,7 @@ module Smu = struct
      else
        send_msg t (require "PPSMC_MSG_Mode1Reset" M.ppsmc_msg_mode1reset) 0);
     if not (Amdev.is_hive t.adev) then begin
-      sleep_ms t.adev 500;
+      Amdev.sleep_ms t.adev 500;
       (* Config reads fail fast on a wedged GPU. MMIO can instead block
          until the root port's PCIe completion timeout. *)
       wait_cond t.adev ~timeout_ms:2000 ~value:0x1002
@@ -788,7 +780,7 @@ module Psp = struct
     if Am_register.read (creg t 71) <> 0 then begin
       Am_register.write (creg t 64) ~value:Am.gfx_ctrl_cmd_id_destroy_rings [];
       (* There might be handshake issue with hardware which needs delay *)
-      sleep_ms t.adev 20
+      Amdev.sleep_ms t.adev 20
     end;
     (* Wait until the sOS is ready *)
     wait_cond t.adev ~value:0x80000000 ~msg:"sOS not ready" (fun () ->
@@ -798,7 +790,7 @@ module Psp = struct
     Am_register.write (creg t 71) ~value:t.ring_size [];
     Am_register.write (creg t 64) ~value:(Am.psp_ring_type__km lsl 16) [];
     (* There might be handshake issue with hardware which needs delay *)
-    sleep_ms t.adev 20;
+    Amdev.sleep_ms t.adev 20;
     wait_cond t.adev ~value:0x80000000 ~msg:"sOS ring not created" (fun () ->
         Am_register.read (creg t 64) land 0x8000FFFF)
 
@@ -1045,7 +1037,7 @@ module Gfx = struct
       else Am_register.write (Amdev.reg t.adev ~inst "regCP_MEC_CNTL") ~value:0x0 []
     done;
     (* Wait for MEC to be ready *)
-    sleep_ms t.adev 50
+    Amdev.sleep_ms t.adev 50
 
   let halt_engines t =
     for inst = 0 to t.xccs - 1 do
@@ -1135,7 +1127,7 @@ module Gfx = struct
           (Amdev.reg t.adev ~inst "regGRBM_SOFT_RESET")
           [ ("soft_reset_cp", 1); ("soft_reset_cpc", 1) ]
       done;
-      sleep_ms t.adev 50;
+      Amdev.sleep_ms t.adev 50;
       for inst = 0 to t.xccs - 1 do
         Am_register.write (Amdev.reg t.adev ~inst "regGRBM_SOFT_RESET") ~value:0x0 []
       done
@@ -1789,7 +1781,7 @@ module Sdma = struct
       Am_register.write
         (Amdev.reg adev "regGRBM_SOFT_RESET")
         [ ("soft_reset_sdma0", 1) ];
-      sleep_ms adev 10;
+      Amdev.sleep_ms adev 10;
       Am_register.write (Amdev.reg adev "regGRBM_SOFT_RESET") ~value:0x0 []
     end
 end

@@ -247,6 +247,7 @@ val create : Tolk_hcq.System.Pci_device.t -> t
 val make :
   ?pci_dev:Tolk_hcq.System.Pci_device.t ->
   ?now_ms:(unit -> int) ->
+  ?sleep_ms:(int -> unit) ->
   ?is_booting:bool ref ->
   ?on_range_mapped:(unit -> unit) ref ->
   read_config:(offset:int -> size:int -> int) ->
@@ -269,6 +270,8 @@ val make :
     {!create} entirely), the BAR mappings, discovery table and memory
     manager are taken as given, and [now_ms] is the monotonic
     millisecond clock behind {!now_ms} (defaults to the system's).
+    [sleep_ms] suspends execution for a settling delay in milliseconds
+    (defaults to [Unix.sleepf]); injected clocks should advance during it.
     [read_config] supplies PCI configuration reads at byte offsets,
     including vendor readiness after a reset.
     Construction reads the address-topology registers through [rreg],
@@ -364,8 +367,12 @@ val set_on_range_mapped : t -> (unit -> unit) -> unit
 
 val now_ms : t -> int
 (** [now_ms t] is the device's monotonic clock in milliseconds. The
-    boot protocols time their register waits and settle delays against
-    it; injecting a clock through {!make} makes those waits scriptable. *)
+    boot protocols use it to bound register polling. *)
+
+val sleep_ms : t -> int -> unit
+(** [sleep_ms t ms] suspends execution for [ms] milliseconds while hardware
+    settles. Uses the delay function supplied to {!make}, or [Unix.sleepf]
+    for a PCI device. *)
 
 (** {2:addr Address topology}
 

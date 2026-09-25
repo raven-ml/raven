@@ -139,8 +139,7 @@ let init t =
       Am_ip.Smu.set_clocks t.smu ~level:(Some 0);
       Am_ip.Gfx.halt_engines t.gfx;
       Am_ip.Sdma.halt_engines t.sdma;
-      let start = Amdev.now_ms adev in
-      while Amdev.now_ms adev - start < 100 do () done;
+      Amdev.sleep_ms adev 100;
       Am_ip.Smu.mode1_reset t.smu
     end;
     set_bus_master t true;

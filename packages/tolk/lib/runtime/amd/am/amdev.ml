@@ -693,6 +693,8 @@ let parse_discovery blob =
 
 external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
 
+let system_sleep_ms ms = Unix.sleepf (float_of_int ms /. 1000.)
+
 type t = {
   pci_dev : System.Pci_device.t option;
   read_config : offset:int -> size:int -> int;
@@ -711,6 +713,7 @@ type t = {
   paddr_base : int;
   mc_base : int;
   now_ms : unit -> int;
+  sleep_ms : int -> unit;
   is_booting : bool ref;
   is_err_state : bool ref;
   on_range_mapped : (unit -> unit) ref;
@@ -735,6 +738,7 @@ let set_err_state t v = t.is_err_state := v
 let set_on_range_mapped t f = t.on_range_mapped := f
 let mm t = t.mm
 let now_ms t = t.now_ms ()
+let sleep_ms t ms = t.sleep_ms ms
 
 let ip_ver t hwip =
   match List.assoc_opt hwip t.discovery.ip_ver with
@@ -920,7 +924,8 @@ let gmc_state reg =
   in
   (is_hive, paddr_base, fb_base + paddr_base)
 
-let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
+let make ?pci_dev ?(now_ms = monotonic_ms) ?(sleep_ms = system_sleep_ms)
+    ?(is_booting = ref true)
     ?(on_range_mapped = ref (fun () -> ())) ~read_config ~rreg ~wreg ~vram ~doorbell64
     ~mmio ~vram_size ~large_bar ~reserved_vram_size ~discovery ~mm ~devfmt ()
     =
@@ -946,6 +951,7 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(is_booting = ref true)
     paddr_base;
     mc_base;
     now_ms;
+    sleep_ms;
     is_booting;
     is_err_state = ref false;
     on_range_mapped;
@@ -1021,6 +1027,7 @@ let create pci_dev =
     paddr_base;
     mc_base;
     now_ms = monotonic_ms;
+    sleep_ms = system_sleep_ms;
     is_booting;
     is_err_state = ref false;
     on_range_mapped;

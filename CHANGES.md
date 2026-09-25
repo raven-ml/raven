@@ -651,6 +651,9 @@ thread.
 
 ### Tolk (new)
 
+- AMD reset and firmware settling delays now sleep instead of consuming a CPU
+  core in busy loops. Scripted hardware tests use the device's injected clock.
+
 - KFD and NVK retain host backing when driver-memory retirement fails during
   cleanup, preventing failed allocation rollback from unmapping live storage.
 
