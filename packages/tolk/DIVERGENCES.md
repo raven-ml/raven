@@ -6,6 +6,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 ## OCaml representation and lifetime
 
+- **Safetensors loading eagerly uploads each tensor.** `State.safe_load` returns
+  tensors on the default device; the target returns views over DISK storage and
+  transfers them when loading model state. Tolk's GPT2 example uses this loader,
+  covered by `nn/test_nn` raw-value, FP8, header-validation and state-loading
+  tests. Keep this temporary ownership choice until the deferred Nx/Kaun design
+  decides how to share validated file mappings and their lifetimes. Nx already
+  owns mapped safetensors loading; adding another mapping layer or JSON dependency
+  would deepen the duplication. Reconsider eager upload in that shared design.
+
 - **Linked command storage stays independently owned.** The target uses a
   device ring for cache-enabled links with link-time input bindings. Tolk's
   public links may remain unpublished or replay after newer links; input tags

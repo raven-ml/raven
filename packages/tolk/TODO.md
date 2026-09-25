@@ -85,6 +85,10 @@ acceptance requirement; skipped tests are not execution evidence.
   Remove the Llama driver's manual staging shortcuts: its attention-score
   kernel is named `E_2`, whereas the target tensor graph produces
   `r_2_2_2_2_2`.
+- Minimize strict-OOB rejections observed in 19 frontend cases and three
+  Metal tensor-core cases (padded contraction and BF16 accumulation). Distinguish
+  incomplete relational proofs from incorrect fixture extents; preserve strict
+  rejection of unproved accesses and use shared symbolic rules for valid proofs.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
   Minimize the CUDA-only `Coalesce: multiple stores to the same offset` report
@@ -109,6 +113,15 @@ acceptance requirement; skipped tests are not execution evidence.
   the target's exact arithmetic.
 - Use the target's sanitized `signed_char` name for RDNA3 int8 tensor-core
   fragments; distinguish source naming parity from fragment layout correctness.
+- Carry full-width dynamic scalar bindings through retained execution. The
+  native ABI accepts `int64`, but `exec_context`/`run_linear` bind values through
+  OCaml `int`, excluding part of the signed 64-bit range. Separate typed scalar
+  arguments from host-sized launch geometry; cover both int64 endpoints through
+  real CPU/Metal execution and CUDA shared-queue argument packing.
+- Validate conflicting formal identities in hand-built programs. Rendered-name
+  deduplication and ABI node-identity deduplication can disagree for same-name
+  scalar parameters with different dtypes or bounds; establish one invariant
+  before native dispatch without rejecting intentional distinct slots.
 - Add deterministic beam coverage for reconsidering candidates rejected by
   the per-step compute filter. Measure search cost and selected kernels at
   the upstream stopping threshold. Port remaining heuristics, including
@@ -209,7 +222,9 @@ migration to main.
 
 - Review whether Tolk needs its `nn` layer. Design shared safetensors ownership
   with Nx and model/state ownership with Kaun, avoiding duplicate codecs and
-  additional JSON dependencies.
+  additional JSON dependencies. Resolve eager per-tensor uploads in Tolk versus
+  file-backed views in Nx and the target, including mapping lifetimes and
+  device placement at state loading.
 - Decide whether a concrete consumer warrants additional renderers/backends
   (ISA/x86, LLVMIR, PTX/NVCC, NIR/NAK, WGSL, OpenCL, DSP, HIP runtime, QCOM,
   NumPy runtime, RDMA/BNXT, USB/remote), low-level SQTT/PMC/PMA profiling, NV
