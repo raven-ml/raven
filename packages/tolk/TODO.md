@@ -76,9 +76,6 @@ acceptance requirement; skipped tests are not execution evidence.
   where the reference uses promoting operators and preserve raw ALU
   construction where it does not.
 
-- Validate large WMMA accumulator ordering at optimizer/expander boundaries,
-  including BF16/FNUZ across supported renderers. Audit remaining gating rules
-  while preserving symbolic extents.
 - Remove remaining parallel property reconstruction and silent guesses in
   view offsets and range metadata. Port remaining symbolic rules and measure
   rewrite performance and long-lived memory use with weak node caches.

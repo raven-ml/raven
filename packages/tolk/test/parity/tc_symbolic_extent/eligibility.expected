@@ -1,0 +1,6 @@
+aligned metal: 8x8x8
+aligned cuda: 8x16x8
+aligned amd: rejected
+unaligned metal: rejected
+unaligned cuda: rejected
+unaligned amd: rejected

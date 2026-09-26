@@ -1,0 +1,46 @@
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_fp16.h>
+struct __align__(8) half4 { half x, y, z, w; }; __device__ half4 make_half4(half x, half y, half z, half w) { half4 r={x, y, z, w}; return r; }
+__device__ float4 __WMMA_8_16_8_half_float(half4 a, half2 b, float4 c){
+  int *a_pk = (int *)(&a), *b_pk = (int *)(&b), *c_pk = (int *)(&c);
+  asm("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32"
+      "{%0, %1, %2, %3}, {%4, %5},"
+      "{%6}, {%0, %1, %2, %3};"
+    : "+r"(c_pk[0]), "+r"(c_pk[1]), "+r"(c_pk[2]), "+r"(c_pk[3])
+    : "r"(a_pk[0]), "r"(a_pk[1]), "r"(b_pk[0]));
+  return c;
+}
+extern "C" __global__ void __launch_bounds__(32) tc_symbolic_extent(half* data0_16384, half* data1_16384, float* data2_16384, const int tc_k_) {
+  float buf0[4];
+  int gidx0 = blockIdx.x; /* 16 */
+  int gidx1 = blockIdx.y; /* 8 */
+  int lidx0 = threadIdx.x; /* 32 */
+  int alu0 = (gidx0<<3);
+  int alu1 = (lidx0>>2);
+  int alu2 = ((gidx1<<11)+(alu1<<7));
+  int alu3 = (lidx0&3);
+  int alu4 = (alu3<<1);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  for (int Ridx2 = 0; Ridx2 < tc_k_; Ridx2++) {
+    int alu9 = (alu0+alu1+(alu3<<8)+(Ridx2<<10));
+    half val0 = (*(data1_16384+(alu9+128)));
+    half val1 = (*(data1_16384+alu9));
+    int alu10 = (alu2+alu4+(Ridx2<<3));
+    half2 val2 = (*((half2*)((data0_16384+(alu10+1024)))));
+    half2 val3 = (*((half2*)((data0_16384+alu10))));
+    float4 wmma0 = __WMMA_8_16_8_half_float(make_half4(val3.x,val3.y,val2.x,val2.y), make_half2(val1,val0), make_float4(0.0f,0.0f,0.0f,0.0f));
+    *(buf0+0) = ((*(buf0+0))+wmma0.x);
+    *(buf0+1) = ((*(buf0+1))+wmma0.y);
+    *(buf0+2) = ((*(buf0+2))+wmma0.z);
+    *(buf0+3) = ((*(buf0+3))+wmma0.w);
+  }
+  int alu16 = (alu0+alu4+alu2);
+  *((float2*)((data2_16384+(alu16+1024)))) = make_float2((*(buf0+2)),(*(buf0+3)));
+  *((float2*)((data2_16384+alu16))) = make_float2((*(buf0+0)),(*(buf0+1)));
+}

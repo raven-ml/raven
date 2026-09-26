@@ -22,7 +22,8 @@ From the repository root, regenerate these cases against that source tree:
 PYTHONPATH="$PWD/_plans/tinygrad-d0c974527" python3 - <<'PY'
 import runpy
 import tinygrad
-for case in ("image_load_store", "tc_matmul_128", "multi_stack", "weak_movement_width"):
+for case in ("image_load_store", "tc_matmul_128", "multi_stack", "weak_movement_width",
+             "tc_matmul_wide_types", "tc_symbolic_extent"):
     runpy.run_path(f"packages/tolk/test/parity/{case}/main.py", run_name="__main__")
 PY
 ```
@@ -32,3 +33,19 @@ its submodules. Inspect regenerated expectations before accepting changes.
 These fixtures compile and render graphs; they do not establish accelerator
 hardware correctness. The Metal runtime suite separately checks numerical
 128³ contractions and BF16 inputs/outputs.
+
+The same revision also covers `tc_matmul_wide_types` (128³ BF16 contractions
+on Metal, CUDA and all four AMD fragment families, plus both FNUZ formats on
+gfx942) and `tc_symbolic_extent` (accepted and rejected symbolic contraction
+sizes, including full lowering of accepted Metal/CUDA cases).
+
+For these two cases, `.expected` always contains the unchanged upstream output.
+An adjacent `.tolk.expected` records only a reviewed intentional difference and
+is the corresponding Dune comparison input. Reference generation excludes
+`.tolk.expected` from the upstream inventory and never rewrites it. The sole
+exception here is the signed-zero rule in [DIVERGENCES.md](../../DIVERGENCES.md):
+Tolk retains the leading `+0` in float reductions. This affects both stages of
+all non-Metal `tc_matmul_wide_types` cases and the Metal symbolic-extent case.
+Operand fragments, accumulator lane ordering and memory addresses otherwise
+match. Metal BF16 and CUDA symbolic-extent outputs match upstream directly.
+The runtime Metal suite checks 128³ BF16 results and symbolic K=8→16→8 replay.

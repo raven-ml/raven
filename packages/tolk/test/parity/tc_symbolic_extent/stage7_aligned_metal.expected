@@ -1,0 +1,32 @@
+#include <metal_stdlib>
+using namespace metal;
+float2 __WMMA_8_8_8_half_float(half2 a, half2 b, float2 c){
+  simdgroup_half8x8 mat_a, mat_b; simdgroup_float8x8 mat_c;
+  mat_a.thread_elements()[0] = a[0]; mat_b.thread_elements()[0] = b[0]; mat_c.thread_elements()[0] = c[0];
+  mat_a.thread_elements()[1] = a[1]; mat_b.thread_elements()[1] = b[1]; mat_c.thread_elements()[1] = c[1];
+  simdgroup_multiply_accumulate(mat_c, mat_a, mat_b, mat_c);
+  return float2(mat_c.thread_elements()[0], mat_c.thread_elements()[1]);
+}
+struct args_t { device half* data0_16384; device half* data1_16384; device float* data2_16384; int tc_k_; };
+kernel void tc_symbolic_extent(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device half* data0_16384 = args.data0_16384; device half* data1_16384 = args.data1_16384; device float* data2_16384 = args.data2_16384; int tc_k_ = args.tc_k_;
+  float buf0[2];
+  int gidx0 = gid.x; /* 16 */
+  int gidx1 = gid.y; /* 16 */
+  int lidx0 = lid.x; /* 32 */
+  int alu0 = (((lidx0>>3)&1)<<2);
+  int alu1 = ((lidx0&1)<<1);
+  int alu2 = ((gidx0<<3)+alu0+alu1);
+  int alu3 = (((lidx0>>4)<<9)+(((lidx0>>1)&3)<<7));
+  int alu4 = (alu3+(gidx1<<10));
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  for (int Ridx2 = 0; Ridx2 < tc_k_; Ridx2++) {
+    half2 val0 = (*((device half2*)((data0_16384+(alu4+alu0+(Ridx2<<3)+alu1)))));
+    half2 val1 = (*((device half2*)((data1_16384+(alu2+alu3+(Ridx2<<10))))));
+    float2 wmma0 = __WMMA_8_8_8_half_float(val0, val1, float2((*(buf0+0)),(*(buf0+1))));
+    *(buf0+0) = wmma0.x;
+    *(buf0+1) = wmma0.y;
+  }
+  *((device float2*)((data2_16384+(alu2+alu4)))) = float2((*(buf0+0)),(*(buf0+1)));
+}

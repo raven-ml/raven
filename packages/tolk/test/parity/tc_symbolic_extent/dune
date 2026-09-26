@@ -1,0 +1,24 @@
+(executable
+ (name main)
+ (libraries tolk tolk.uop tolk_parity_helpers))
+
+(rule
+ (package tolk)
+ (targets
+  eligibility.actual
+  stage5_aligned_metal.actual
+  stage7_aligned_metal.actual
+  stage5_aligned_cuda.actual
+  stage7_aligned_cuda.actual)
+ (action (run ./main.exe .)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff eligibility.expected eligibility.actual)
+   (diff stage5_aligned_metal.tolk.expected stage5_aligned_metal.actual)
+   (diff stage7_aligned_metal.tolk.expected stage7_aligned_metal.actual)
+   (diff stage5_aligned_cuda.expected stage5_aligned_cuda.actual)
+   (diff stage7_aligned_cuda.expected stage7_aligned_cuda.actual))))

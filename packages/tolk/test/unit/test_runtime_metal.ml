@@ -366,7 +366,7 @@ let test_thread_reduction kind width expected () =
   equal (list int) expected (read_i32 output)
 
 let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.float32)
-    ~m ~n ~k ~locals () =
+    ?(symbolic_k = false) ~m ~n ~k ~locals () =
   let device = metal_device () in
   let ren = Device.renderer device in
   if Renderer.tensor_cores ren = [] then skip ~reason:"Metal tensor cores unavailable" ();
@@ -375,7 +375,11 @@ let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.floa
   let a = param dtype_in 1 (m * k) and b = param dtype_in 2 (k * n) in
   let range axis size kind = U.range ~size:(U.const_int size) ~axis ~kind () in
   let row = range 0 m Axis_type.Global and col = range 1 n Axis_type.Global in
-  let red = range 2 k Axis_type.Reduce in
+  let red =
+    if symbolic_k then
+      let extent = U.variable ~name:"tc_k" ~min_val:1 ~max_val:2 ~param:true () in
+      U.range ~size:U.O.(extent * int_ 8) ~axis:2 ~kind:Axis_type.Reduce ()
+    else range 2 k Axis_type.Reduce in
   let load ptr index = U.load ~src:(U.index ~ptr ~idxs:[ index ] ()) () in
   let av = load a U.O.(row * int_ k + red) in
   let bv = load b U.O.(red * int_ n + col) in
@@ -414,23 +418,32 @@ let test_tensor_core_matmul ?(dtype_in = Dtype.float32) ?(dtype_out = Dtype.floa
   let a = Array.init (m * k) (fun i -> float_of_int ((i * 13 mod 7) - 2)) in
   let b = Array.init (k * n) (fun i -> float_of_int ((i * 11 mod 9) - 3)) in
   let output = buffer dtype_out (Array.make (m * n) nan) in
-  run_spec device spec [ output; buffer dtype_in a; buffer dtype_in b ];
-  let bytes = Device.Buffer.as_bytes output in
-  for i = 0 to m - 1 do
-    for j = 0 to n - 1 do
-      let expected = ref 0. in
-      for r = 0 to k - 1 do expected := !expected +. a.(i * k + r) *. b.(r * n + j) done;
-      if dtype_out = Dtype.Bfloat16 then
-        expected := Dtype.truncate_float Dtype.bfloat16 !expected;
-      let actual = match dtype_out with
-        | Dtype.Float32 -> Int32.float_of_bits (Bytes.get_int32_le bytes ((i * n + j) * 4))
-        | Dtype.Bfloat16 -> Int32.float_of_bits (Int32.shift_left
-            (Int32.of_int (Bytes.get_uint16_le bytes ((i * n + j) * 2))) 16)
-        | _ -> invalid_arg "tensor-core test dtype" in
-      is_true ~msg:(Printf.sprintf "matmul[%d,%d]: expected %g, got %g" i j !expected actual)
-        (Float.abs (actual -. !expected) < 1.e-5)
-    done
-  done
+  let buffers = [| output; buffer dtype_in a; buffer dtype_in b |] in
+  let submit =
+    if symbolic_k then
+      let replay = compile_queue device [queue_call device spec [0; 1; 2]] in
+      fun vars -> replay ~wait:true ~vars buffers
+    else fun vars -> ignore (call_spec device spec (Array.to_list buffers) vars) in
+  let trials = if symbolic_k then [8, ["tc_k", 1L]; 16, ["tc_k", 2L]; 8, ["tc_k", 1L]]
+    else [k, []] in
+  List.iter (fun (active_k, vars) ->
+    submit vars;
+    let bytes = Device.Buffer.as_bytes output in
+    for i = 0 to m - 1 do
+      for j = 0 to n - 1 do
+        let expected = ref 0. in
+        for r = 0 to active_k - 1 do expected := !expected +. a.(i * k + r) *. b.(r * n + j) done;
+        if dtype_out = Dtype.Bfloat16 then
+          expected := Dtype.truncate_float Dtype.bfloat16 !expected;
+        let actual = match dtype_out with
+          | Dtype.Float32 -> Int32.float_of_bits (Bytes.get_int32_le bytes ((i * n + j) * 4))
+          | Dtype.Bfloat16 -> Int32.float_of_bits (Int32.shift_left
+              (Int32.of_int (Bytes.get_uint16_le bytes ((i * n + j) * 2))) 16)
+          | _ -> invalid_arg "tensor-core test dtype" in
+        is_true ~msg:(Printf.sprintf "matmul[%d,%d]: expected %g, got %g" i j !expected actual)
+          (Float.abs (actual -. !expected) < 1.e-5)
+      done
+  done) trials
 
 let cpu_maps_metal_storage () =
   let metal = metal_device () in
@@ -627,6 +640,10 @@ let () =
             (test_tensor_core_matmul ~m:9 ~n:11 ~k:13 ~locals:0);
           test "tensor cores preserve a 128-cubed contraction"
             (test_tensor_core_matmul ~m:128 ~n:128 ~k:128 ~locals:0);
+          test "tensor cores replay a symbolic contraction extent"
+            (test_tensor_core_matmul ~m:32 ~n:32 ~k:16 ~locals:0 ~symbolic_k:true);
+          test "tensor cores preserve a 128-cubed BF16 contraction"
+            (test_tensor_core_matmul ~dtype_in:Dtype.Bfloat16 ~m:128 ~n:128 ~k:128 ~locals:0);
           test "tensor cores accumulate BF16 inputs in float32"
             (test_tensor_core_matmul ~dtype_in:Dtype.Bfloat16 ~m:9 ~n:11 ~k:13 ~locals:0);
           test "tensor cores accumulate BF16 inputs in BF16"
