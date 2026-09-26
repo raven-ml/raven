@@ -424,6 +424,8 @@ let () =
   end
 
 let with_firmware_process case =
+  if Sys.win32 then
+    skip ~reason:"the fake curl and zstd are shell scripts, which Windows cannot run" ();
   with_fw_dir (fun dir ->
       let bin = Filename.concat dir "bin" in
       Sys.mkdir bin 0o700;

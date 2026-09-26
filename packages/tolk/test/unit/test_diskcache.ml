@@ -208,6 +208,8 @@ let read_entry ~table ~key =
 (* Tests. *)
 
 let platform_does_not_require_shell_tools () =
+  if Sys.win32 then
+    skip ~reason:"Windows loads the child's DLLs through PATH, so PATH cannot be emptied" ();
   let expected = Tolk_cpu__Compiler_cpu.host_arch () in
   equal string expected
     (run_child [ (role_var, "platform"); ("PATH", Lazy.force cache_root) ])
