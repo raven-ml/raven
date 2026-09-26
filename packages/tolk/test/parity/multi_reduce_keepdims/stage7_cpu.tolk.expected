@@ -1,0 +1,49 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_4_8(float* restrict data0_4, float* restrict data1_32, float* restrict data2_64, const int _device_num_) {
+  for (int Lidx2 = 0; Lidx2 < 4; Lidx2++) {
+    int alu0 = (Lidx2<<3);
+    float4 val0 = (*((float4*)((data1_32+(alu0+4)))));
+    float4 val1 = (*((float4*)((data1_32+alu0))));
+    int alu1 = ((_device_num_<<5)+alu0);
+    float4 val2 = (*((float4*)((data2_64+(alu1+4)))));
+    float4 val3 = (*((float4*)((data2_64+alu1))));
+    float alu2 = (val0[0]+val2[0]);
+    float alu3 = (val0[1]+val2[1]);
+    float alu4 = (val0[2]+val2[2]);
+    float alu5 = (val0[3]+val2[3]);
+    float alu6 = (val1[0]+val3[0]);
+    float alu7 = (val1[1]+val3[1]);
+    float alu8 = (val1[2]+val3[2]);
+    float alu9 = (val1[3]+val3[3]);
+    float alu10 = ((alu6!=alu6)?alu6:alu7);
+    float alu11 = ((alu7<alu6)?alu6:alu10);
+    float alu12 = ((alu11!=alu11)?alu11:alu8);
+    float alu13 = ((alu8<alu11)?alu11:alu12);
+    float alu14 = ((alu13!=alu13)?alu13:alu9);
+    float alu15 = ((alu9<alu13)?alu13:alu14);
+    float alu16 = ((alu15!=alu15)?alu15:alu2);
+    float alu17 = ((alu2<alu15)?alu15:alu16);
+    float alu18 = ((alu17!=alu17)?alu17:alu3);
+    float alu19 = ((alu3<alu17)?alu17:alu18);
+    float alu20 = ((alu19!=alu19)?alu19:alu4);
+    float alu21 = ((alu4<alu19)?alu19:alu20);
+    float alu22 = ((alu21!=alu21)?alu21:alu5);
+    float alu23 = ((alu5<alu21)?alu21:alu22);
+    *(data0_4+Lidx2) = alu23;
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_4_2_4(float* restrict data0_32, float* restrict data1_32, float* restrict data2_64, float* restrict data3_4, const int _device_num_) {
+  for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {
+    float val0 = (*(data3_4+Lidx1));
+    int alu0 = (Lidx1<<3);
+    for (int Lidx2 = 0; Lidx2 < 2; Lidx2++) {
+      int alu1 = (Lidx2<<2);
+      int alu2 = (alu0+alu1);
+      float4 val1 = (*((float4*)((data1_32+alu2))));
+      float4 val2 = (*((float4*)((data2_64+((_device_num_<<5)+alu0+alu1)))));
+      *((float4*)((data0_32+alu2))) = (float4){((val1[0]+val2[0])-val0),((val1[1]+val2[1])-val0),((val1[2]+val2[2])-val0),((val1[3]+val2[3])-val0)};
+    }
+  }
+}

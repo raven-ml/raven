@@ -1,0 +1,87 @@
+   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 128, device='CPU')
+   1 Ops.CONST           :            dtypes.weakint                           []                               32
+   2 Ops.CAST            :            dtypes.int                               ['32']                           dtypes.int
+   3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+   4 Ops.CONST           :            dtypes.weakint                           []                               1
+   5 Ops.CAST            :            dtypes.int                               ['1']                            dtypes.int
+   6 Ops.SHL             :            dtypes.int                               [3, 5]                           None
+   7 Ops.CONST           :            dtypes.weakint                           []                               2
+   8 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+   9 Ops.SHRINK          :            dtypes.float                             [0, 6, 8]                        None
+  10 Ops.CONST           :            dtypes.weakfloat                         []                               0.0
+  11 Ops.CAST            :            dtypes.float                             ['0.0']                          dtypes.float
+  12 Ops.PARAM           :            dtypes.half                              []                               ParamArg(1, dtypes.half, 256, device='CPU')
+  13 Ops.SHR             :            dtypes.int                               [3, 8]                           None
+  14 Ops.CONST           :            dtypes.weakint                           []                               4
+  15 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+  16 Ops.SHL             :            dtypes.int                               [13, 15]                         None
+  17 Ops.CONST           :            dtypes.weakint                           []                               3
+  18 Ops.CAST            :            dtypes.int                               ['3']                            dtypes.int
+  19 Ops.AND             :            dtypes.int                               [3, 18]                          None
+  20 Ops.SHL             :            dtypes.int                               [19, 5]                          None
+  21 Ops.ADD             :            dtypes.int                               [16, 20]                         None
+  22 Ops.SHRINK          :            dtypes.half                              [12, 21, 8]                      None
+  23 Ops.LOAD            :            dtypes.half                              [22]                             None
+  24 Ops.CONST           :            dtypes.weakint                           []                               0
+  25 Ops.CAST            :            dtypes.int                               ['0']                            dtypes.int
+  26 Ops.INDEX           :            dtypes.half                              [23, 25]                         None
+  27 Ops.INDEX           :            dtypes.half                              [23, 5]                          None
+  28 Ops.CONST           :            dtypes.weakint                           []                               128
+  29 Ops.CAST            :            dtypes.int                               ['128']                          dtypes.int
+  30 Ops.ADD             :            dtypes.int                               [21, 29]                         None
+  31 Ops.SHRINK          :            dtypes.half                              [12, 30, 8]                      None
+  32 Ops.LOAD            :            dtypes.half                              [31]                             None
+  33 Ops.INDEX           :            dtypes.half                              [32, 25]                         None
+  34 Ops.INDEX           :            dtypes.half                              [32, 5]                          None
+  35 Ops.CONST           :            dtypes.weakint                           []                               8
+  36 Ops.CAST            :            dtypes.int                               ['8']                            dtypes.int
+  37 Ops.ADD             :            dtypes.int                               [21, 36]                         None
+  38 Ops.SHRINK          :            dtypes.half                              [12, 37, 8]                      None
+  39 Ops.LOAD            :            dtypes.half                              [38]                             None
+  40 Ops.INDEX           :            dtypes.half                              [39, 25]                         None
+  41 Ops.INDEX           :            dtypes.half                              [39, 5]                          None
+  42 Ops.CONST           :            dtypes.weakint                           []                               136
+  43 Ops.CAST            :            dtypes.int                               ['136']                          dtypes.int
+  44 Ops.ADD             :            dtypes.int                               [21, 43]                         None
+  45 Ops.SHRINK          :            dtypes.half                              [12, 44, 8]                      None
+  46 Ops.LOAD            :            dtypes.half                              [45]                             None
+  47 Ops.INDEX           :            dtypes.half                              [46, 25]                         None
+  48 Ops.INDEX           :            dtypes.half                              [46, 5]                          None
+  49 Ops.STACK           :            dtypes.half                              [26, 27, 33, 34, 40, 41, 47, 48] None
+  50 Ops.PARAM           :            dtypes.half                              []                               ParamArg(2, dtypes.half, 128, device='CPU')
+  51 Ops.SHL             :            dtypes.int                               [19, 15]                         None
+  52 Ops.ADD             :            dtypes.int                               [51, 13]                         None
+  53 Ops.INDEX           :            dtypes.half                              [50, 52]                         None
+  54 Ops.LOAD            :            dtypes.half                              [53]                             None
+  55 Ops.ADD             :            dtypes.int                               [52, 36]                         None
+  56 Ops.INDEX           :            dtypes.half                              [50, 55]                         None
+  57 Ops.LOAD            :            dtypes.half                              [56]                             None
+  58 Ops.CONST           :            dtypes.weakint                           []                               64
+  59 Ops.CAST            :            dtypes.int                               ['64']                           dtypes.int
+  60 Ops.ADD             :            dtypes.int                               [52, 59]                         None
+  61 Ops.INDEX           :            dtypes.half                              [50, 60]                         None
+  62 Ops.LOAD            :            dtypes.half                              [61]                             None
+  63 Ops.CONST           :            dtypes.weakint                           []                               72
+  64 Ops.CAST            :            dtypes.int                               ['72']                           dtypes.int
+  65 Ops.ADD             :            dtypes.int                               [52, 64]                         None
+  66 Ops.INDEX           :            dtypes.half                              [50, 65]                         None
+  67 Ops.LOAD            :            dtypes.half                              [66]                             None
+  68 Ops.STACK           :            dtypes.half                              [54, 57, 62, 67]                 None
+  69 Ops.STACK           :            dtypes.float                             [11, 11, 11, 11]                 None
+  70 Ops.WMMA            :            dtypes.float                             [49, 68, 69]                     ((8, 16, 16), dtypes.half, 32, None)
+  71 Ops.INDEX           :            dtypes.float                             [70, 25]                         None
+  72 Ops.ADD             :            dtypes.float                             [11, 71]                         None
+  73 Ops.INDEX           :            dtypes.float                             [70, 5]                          None
+  74 Ops.ADD             :            dtypes.float                             [11, 73]                         None
+  75 Ops.STACK           :            dtypes.float                             [72, 74]                         None
+  76 Ops.STORE           :            dtypes.void                              [9, 75]                          None
+  77 Ops.ADD             :            dtypes.int                               [6, 59]                          None
+  78 Ops.SHRINK          :            dtypes.float                             [0, 77, 8]                       None
+  79 Ops.INDEX           :            dtypes.float                             [70, 8]                          None
+  80 Ops.ADD             :            dtypes.float                             [11, 79]                         None
+  81 Ops.INDEX           :            dtypes.float                             [70, 18]                         None
+  82 Ops.ADD             :            dtypes.float                             [11, 81]                         None
+  83 Ops.STACK           :            dtypes.float                             [80, 82]                         None
+  84 Ops.STORE           :            dtypes.void                              [78, 83]                         None
+  85 Ops.GROUP           :            dtypes.void                              [76, 76, 84, 84]                 None
+  86 Ops.SINK            :            dtypes.void                              [85]                             KernelInfo(name='r_32_2_2_2', applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), opts_to_apply=None, estimates=None, beam=0)

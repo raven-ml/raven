@@ -17,7 +17,7 @@
  (package tolk)
  (action
   (progn
-   (diff stage5_cuda_sm80.expected stage5_cuda_sm80.actual)
-   (diff stage5_cuda_sm90.expected stage5_cuda_sm90.actual)
-   (diff stage7_cuda_sm80.expected stage7_cuda_sm80.actual)
-   (diff stage7_cuda_sm90.expected stage7_cuda_sm90.actual))))
+   (diff stage5_cuda_sm80.tolk.expected stage5_cuda_sm80.actual)
+   (diff stage5_cuda_sm90.tolk.expected stage5_cuda_sm90.actual)
+   (diff stage7_cuda_sm80.tolk.expected stage7_cuda_sm80.actual)
+   (diff stage7_cuda_sm90.tolk.expected stage7_cuda_sm90.actual))))

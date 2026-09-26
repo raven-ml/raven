@@ -1,0 +1,35 @@
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device float* data0_32; device float* data1_64; };
+kernel void E_8_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_32 = args.data0_32; device float* data1_64 = args.data1_64;
+  int lidx0 = lid.x; /* 8 */
+  int alu0 = (lidx0<<3);
+  float4 val0 = (*((device float4*)((data1_64+(alu0+4)))));
+  float4 val1 = (*((device float4*)((data1_64+alu0))));
+  float alu1 = -val0.x;
+  float alu2 = ((alu1<-7.0f)?-7.0f:alu1);
+  float alu3 = -alu2;
+  float alu4 = -val0.z;
+  float alu5 = ((alu4<-7.0f)?-7.0f:alu4);
+  float alu6 = -alu5;
+  float alu7 = -val1.x;
+  float alu8 = ((alu7<-7.0f)?-7.0f:alu7);
+  float alu9 = -alu8;
+  float alu10 = -val1.z;
+  float alu11 = ((alu10<-7.0f)?-7.0f:alu10);
+  float alu12 = -alu11;
+  float alu13 = ((val0.y<-7.0f)?-7.0f:val0.y);
+  float alu14 = -alu13;
+  float alu15 = ((val0.w<-7.0f)?-7.0f:val0.w);
+  float alu16 = -alu15;
+  float alu17 = ((val1.y<-7.0f)?-7.0f:val1.y);
+  float alu18 = -alu17;
+  float alu19 = ((val1.w<-7.0f)?-7.0f:val1.w);
+  float alu20 = -alu19;
+  float alu21 = ((alu14<-7.0f)?-7.0f:alu14);
+  float alu22 = ((alu16<-7.0f)?-7.0f:alu16);
+  float alu23 = ((alu18<-7.0f)?-7.0f:alu18);
+  float alu24 = ((alu20<-7.0f)?-7.0f:alu20);
+  *((device float4*)((data0_32+(lidx0<<2)))) = float4((alu9*(1/(exp2((alu9*1.7020000219345093f*-1.4426950216293335f))+1.0f))*(1.0f-alu23)),(alu12*(1/(exp2((alu12*1.7020000219345093f*-1.4426950216293335f))+1.0f))*(1.0f-alu24)),(alu3*(1/(exp2((alu3*1.7020000219345093f*-1.4426950216293335f))+1.0f))*(1.0f-alu21)),(alu6*(1/(exp2((alu6*1.7020000219345093f*-1.4426950216293335f))+1.0f))*(1.0f-alu22)));
+}

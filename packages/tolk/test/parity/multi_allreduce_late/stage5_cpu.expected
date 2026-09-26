@@ -59,7 +59,7 @@
    5 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
    6 Ops.SHL             : 0          dtypes.int                               [3, 5]                           None
    7 Ops.SHRINK          : 0          dtypes.float                             [0, 6, 2]                        None
-   8 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 16, device=('CPU', 'CPU:1'))
+   8 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 16, device=('CPU:0', 'CPU:1'))
    9 Ops.SHRINK          : 0          dtypes.float                             [8, 6, 2]                        None
   10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
   11 Ops.STORE           : 0          dtypes.void                              [7, 10]                          None

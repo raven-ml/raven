@@ -39,13 +39,20 @@ on Metal, CUDA and all four AMD fragment families, plus both FNUZ formats on
 gfx942) and `tc_symbolic_extent` (accepted and rejected symbolic contraction
 sizes, including full lowering of accepted Metal/CUDA cases).
 
-For these two cases, `.expected` always contains the unchanged upstream output.
+For every case, `.expected` contains the unchanged upstream output.
 An adjacent `.tolk.expected` records only a reviewed intentional difference and
 is the corresponding Dune comparison input. Reference generation excludes
-`.tolk.expected` from the upstream inventory and never rewrites it. The sole
-exception here is the signed-zero rule in [DIVERGENCES.md](../../DIVERGENCES.md):
+`.tolk.expected` from the upstream inventory and never rewrites it. In these tensor-core cases, the
+exception is the signed-zero rule in [DIVERGENCES.md](../../DIVERGENCES.md):
 Tolk retains the leading `+0` in float reductions. This affects both stages of
 all non-Metal `tc_matmul_wide_types` cases and the Metal symbolic-extent case.
 Operand fragments, accumulator lane ordering and memory addresses otherwise
 match. Metal BF16 and CUDA symbolic-extent outputs match upstream directly.
 The runtime Metal suite checks 128³ BF16 results and symbolic K=8→16→8 replay.
+
+Other local snapshots record reviewed floating-point grouping and MAX
+semantics, Metal's native integer type names, and direct storage-window copies
+and collective arguments. Each difference belongs to the corresponding ruling
+in DIVERGENCES.md. Kernel-count changes in multi-device fixtures come from
+removing staging copies; both implementations preserve the same device tuples.
+Local snapshots are exact outputs, not normalized versions of the reference.

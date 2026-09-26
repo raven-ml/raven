@@ -26,13 +26,6 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   equivalent ownership protocol. Arbitrary recursive replay of one mutable
   graph from a custom runtime callback remains outside this contract.
 
-- **Scheduled device metadata uses canonical device names.** Tolk collapses
-  `CPU:0` to `CPU` at its device boundary, so late-allreduce PARAM tuples use
-  `CPU` where the target keeps the alias. This prevents duplicate host owners;
-  generated kernel sources are identical. Coverage: `test_device` canonical
-  lookup/recursive bootstrap and `multi_allreduce_late` scheduling fixtures.
-  Reconsider if device aliases are preserved separately from storage identity.
-
 - **Program/runtime caches are weakly owned by device instances.** Upstream
   retains process-global cache entries. Tolk permits replacing a device under
   the same canonical name, so old compiler graphs and native executables retire

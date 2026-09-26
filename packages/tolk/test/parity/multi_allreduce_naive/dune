@@ -20,7 +20,7 @@
  (package tolk)
  (action
   (progn
-   (diff stage5_cpu.expected stage5_cpu.actual)
-   (diff stage5_cuda.expected stage5_cuda.actual)
-   (diff stage7_cpu.expected stage7_cpu.actual)
-   (diff stage7_cuda.expected stage7_cuda.actual))))
+   (diff stage5_cpu.tolk.expected stage5_cpu.actual)
+   (diff stage5_cuda.tolk.expected stage5_cuda.actual)
+   (diff stage7_cpu.tolk.expected stage7_cpu.actual)
+   (diff stage7_cuda.tolk.expected stage7_cuda.actual))))

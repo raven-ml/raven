@@ -20,4 +20,4 @@
    (diff stage5_cpu.expected stage5_cpu.actual)
    (diff stage5_metal.expected stage5_metal.actual)
    (diff stage7_cpu.expected stage7_cpu.actual)
-   (diff stage7_metal.expected stage7_metal.actual))))
+   (diff stage7_metal.tolk.expected stage7_metal.actual))))

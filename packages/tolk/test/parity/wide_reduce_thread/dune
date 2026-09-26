@@ -12,4 +12,4 @@
  (alias runtest)
  (package tolk)
  (action
-  (diff stage7_cpu.expected stage7_cpu.actual)))
+  (diff stage7_cpu.tolk.expected stage7_cpu.actual)))
