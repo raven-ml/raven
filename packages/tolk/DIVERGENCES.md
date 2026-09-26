@@ -359,6 +359,20 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   direct native-import and staged-fallback execution remain hardware acceptance
   in TODO. Reconsider when the target applies the same receiver-side check.
 
+- **Raw PCI AMD peers retain BAR addressing instead of unconditional XGMI
+  exports.** The target selects a fabric address whenever the source advertises
+  multiple regions, without checking the receiver or a unique hive identity.
+  NV interprets such non-system addresses as its own device memory; matching
+  region sizes and indices also cannot identify a shared AMD hive. Tolk exports
+  the original owner's BAR address with the system-memory aperture and keeps
+  existing small-BAR and receiver-range staging checks. Consumers: AMD/NV peer
+  copies and Rune multi-device execution. Coverage: shared HCQ tests check
+  unsupported-map staging, slot reuse and rejection of kernel imports before
+  user writes; raw PCI BAR reachability and mixed-vendor execution remain
+  hardware acceptance in TODO. Reconsider direct XGMI exports when source and
+  receiver fabric identity and reachability can be established, or upstream
+  supplies that protocol; region layout alone is insufficient.
+
 - **PCI peers can import system memory owned by small-BAR devices.** Host
   timelines and queue signals use system physical pages, not the owner's BAR.
   The frozen target rejects them together with inaccessible device memory,

@@ -36,13 +36,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   scratch growth across retained and multi-device links.
   Validate NV channel/descriptor, semaphore and GSP compute submission behavior
   on hardware, including compute changes from video-labelled commits.
-- Complete PCI multi-die mappings: export AMD hive memory through XGMI peer
-  addresses instead of its PCI BAR, and select BAR or fabric addresses according
-  to the receiving device. Establish raw-PCI fabric identity and reachability;
-  region index/count alone cannot prove a shared hive, and driver sysfs state
-  cannot be assumed after takeover. Validate mixed-vendor/cross-hive mappings
-  and receiver-aperture rejection, including NV-to-AMD staged fallback on raw
-  PCI hardware.
+- Validate raw PCI peer mappings across mixed vendors and separate hives on
+  large-BAR and small-BAR devices, including receiver-aperture rejection and
+  NV-to-AMD staged fallback. Preserve BAR/system addressing until the separately
+  scoped XGMI identity prerequisite is satisfied.
   Inject combined setup/cleanup failures in KFD/NVK: GPU map then driver free,
   UVM/RM map then UVM range free, successful range cleanup then RM free,
   and failed peer import then per-GPU unmap.
@@ -95,6 +92,13 @@ hardware evidence and commit history, then rebase and push the completed
 migration to main.
 
 ## Separately scoped work
+
+- Enable direct AMD XGMI peer exports only with proven raw-PCI fabric identity
+  and receiver reachability, selecting BAR or fabric addresses for the receiver.
+  The target's source-only hive test supplies no such proof: region index/count
+  can match across disconnected hives, and driver sysfs state cannot be assumed
+  after takeover. Keep existing BAR/staged transfers until that protocol is
+  available; see the raw PCI addressing ruling in DIVERGENCES.md.
 
 - Measure the column-split all-gather memory-bound expected failure on Rune's
   transpose-and-replicate consumer. The current target pads and allreduces,
