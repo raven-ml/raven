@@ -172,9 +172,12 @@ val save : string -> t -> unit
 val load : string -> t
 (** [load path] is the checkpoint stored in the safetensors file at [path],
     whether written by {!save} or produced elsewhere. The file is mapped and its
-    entries are views of it, read when first used: the file must not be modified
-    in place while an entry is alive, and [Nx.copy] gives a tensor that no
-    longer depends on it. An entry whose dtype nx lacks is loaded as its bytes,
-    at [uint8]. See {!Nx_io.load_safetensors}.
+    entries are views of it, read when first used; a device whose memory is the
+    host's holds an entry placed on it as those same pages. The file must not be
+    modified in place while an entry, or a value placed from one, is alive:
+    nothing enforces it, and a file rewritten underneath gives other elements
+    and a truncated one faults. [Nx.copy] gives a tensor that no longer depends
+    on it. An entry whose dtype nx lacks is loaded as its bytes, at [uint8]. See
+    {!Nx_io.load_safetensors}.
 
     Raises [Failure] on I/O or format errors. *)

@@ -497,16 +497,16 @@ let test_capture_resident_elsewhere () =
   in
   equal ~msg:"nothing is uploaded" int 0 up
 
-(* A weight over a mapped file is placed by reading the file. *)
-let test_place_from_a_mapped_file () =
-  let n = 4096 in
+(* [with_mapped_f32 values f] is [f] applied to a float32 tensor over a fresh
+   mapping of a file holding [values]. *)
+let with_mapped_f32 values f =
+  let n = Array.length values in
   let path = Filename.temp_file "rune_metal_mapped_" ".bin" in
   Fun.protect
     ~finally:(fun () ->
       full_major ();
       try Sys.remove path with Sys_error _ -> ())
     (fun () ->
-      let values = Array.init n (fun i -> float_of_int (i mod 97) /. 8.0) in
       let oc = open_out_bin path in
       let bytes = Bytes.create (4 * n) in
       Array.iteri
@@ -526,19 +526,72 @@ let test_place_from_a_mapped_file () =
       Nx_buffer.register_file
         { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
         mapping;
-      let w =
-        Nx.of_buffer
-          (Nx_buffer.reinterpret Nx_dtype.Float32 mapping)
-          ~shape:[| 64; 64 |]
-      in
-      let placed = on_metal (Nx.matrix_transpose w) in
-      let g =
-        Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Nx.matmul x placed)
-      in
-      let x = Nx.create f32 [| 2; 64 |] (Array.make 128 0.5) in
-      check_arr ~msg:"matches eager"
-        (to_arr (Nx.matmul x (Nx.matrix_transpose w)))
-        (g x))
+      f
+        (Nx.of_buffer
+           (Nx_buffer.reinterpret Nx_dtype.Float32 mapping)
+           ~shape:[| n |]))
+
+(* A weight over a mapped file placed on Metal is the file's pages, borrowed:
+   nothing is uploaded or counted, and the transpose is kept. *)
+let test_place_from_a_mapped_file () =
+  let values = Array.init 4096 (fun i -> float_of_int (i mod 97) /. 8.0) in
+  with_mapped_f32 values @@ fun w ->
+  let w = Nx.reshape [| 64; 64 |] w in
+  let resident () = (Rune.jit_stats ()).resident_bytes in
+  let base = resident () in
+  let placed, up = delta (fun () -> on_metal (Nx.matrix_transpose w)) in
+  equal ~msg:"nothing is uploaded" int 0 up;
+  equal ~msg:"nothing is counted" int 0 (resident () - base);
+  equal ~msg:"the view is kept" (array int)
+    (Nx.strides (Nx.matrix_transpose w))
+    (Nx.strides placed);
+  let g =
+    Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Nx.matmul x placed)
+  in
+  let x = Nx.create f32 [| 2; 64 |] (Array.make 128 0.5) in
+  check_arr ~msg:"matches eager"
+    (to_arr (Nx.matmul x (Nx.matrix_transpose w)))
+    (g x)
+
+(* A consumed value over a mapped file lends its storage to no result: an
+   indexed write into it lands in storage of the program's own, and the file's
+   pages keep their elements, at a 16-byte boundary and 8 bytes past one, where
+   a checkpoint's entries sit; a compiled copy of it is its elements. The same
+   value copied into owned storage is lent. *)
+let test_borrowed_storage_is_never_lent () =
+  let metal = Rune.device "METAL" in
+  let reused () = (Rune.jit_stats ()).reused_bytes in
+  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+  let write =
+    Rune.jit ~devices:[ metal ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun pool ->
+        Nx.scatter ~axis:0 ~indices ~values:(vec32 [| 10.0; 30.0 |]) pool)
+  in
+  let copy = Rune.jit' ~devices:[ metal ] Nx.copy in
+  with_mapped_f32 [| 5.0; 6.0; 1.0; 2.0; 3.0; 4.0 |] @@ fun file ->
+  List.iter
+    (fun (msg, pool) ->
+      let msg s = msg ^ ": " ^ s in
+      let expected = to_arr pool in
+      ignore (write (on_metal (Nx.copy pool)));
+      let p = on_metal pool in
+      let before = reused () in
+      let y = write p in
+      equal ~msg:(msg "a borrowed pool lends nothing") int 0 (reused () - before);
+      check_arr ~msg:(msg "the written pool")
+        [| 10.0; expected.(1); 30.0; expected.(3) |]
+        y;
+      check_arr ~msg:(msg "the file's pages") expected pool;
+      raises_consumed (fun () -> to_arr p);
+      check_arr ~msg:(msg "a compiled copy") expected (copy (on_metal pool));
+      let before = reused () in
+      ignore (write (on_metal (Nx.copy pool)));
+      equal ~msg:(msg "an owned pool is lent") int 16 (reused () - before))
+    [
+      ("at 0 mod 16", Nx.slice [ Nx.R (0, 4) ] file);
+      ("at 8 mod 16", Nx.slice [ Nx.R (2, 6) ] file);
+    ]
 
 (* Metal flushes float32 subnormals to zero when it compares floats. A compiled
    sort keeps them, in order, as eager does, and -0 ties with 0. *)
@@ -934,8 +987,10 @@ let tests =
           test_unsupported_dtype_raises_before_a_call;
         test "a capture moves a program past a dtype"
           test_capture_moves_past_a_dtype;
-        test "a weight over a mapped file is placed from the file"
+        test "a weight over a mapped file is borrowed"
           test_place_from_a_mapped_file;
+        test "borrowed storage is never lent or written"
+          test_borrowed_storage_is_never_lent;
       ];
     group "reads, moves and loops"
       [

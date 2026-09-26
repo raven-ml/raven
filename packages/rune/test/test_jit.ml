@@ -3511,8 +3511,9 @@ let test_place_then_consume () =
   check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
   raises_consumed (fun () -> to_arr p)
 
-(* File-backed sources. An upload reads a tensor over a mapped file from the
-   file itself. *)
+(* File-backed sources. CPU:1 addresses host memory, so a tensor over a mapped
+   file placed there is the file's pages, borrowed: no bytes move, the view is
+   kept, and the storage is never lent, written or counted. *)
 
 (* An int32 tensor of [n] elements over a fresh mapping of a file whose bytes
    are [byte i] at offset [i], with the file's path. *)
@@ -3553,20 +3554,22 @@ let remove_mapped path =
   full_major ();
   try Sys.remove path with Sys_error _ when Sys.win32 -> ()
 
-(* [x] placed from its file equals [x] placed from memory. *)
+(* [x] placed from its file is its view of the file's pages, bit for bit [x]. *)
 let check_placed_from_file ~msg x =
   is_true
     ~msg:(msg ^ ": over a mapped file")
     (Nx_buffer.file_range (Nx.data x) <> None);
-  let from_memory = place (Nx.copy x) in
+  let base = resident () in
   let from_file, up, _ = delta (fun () -> place x) in
-  equal ~msg:(msg ^ ": bytes uploaded") int (Nx.nbytes x) up;
-  let differing =
-    Nx.item [] (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal from_file from_memory)))
-  in
-  equal ~msg:(msg ^ ": elements differing") int32 0l differing
+  equal ~msg:(msg ^ ": bytes uploaded") int 0 up;
+  equal ~msg:(msg ^ ": bytes counted") int 0 (resident () - base);
+  equal ~msg:(msg ^ ": the view") (array int) (Nx.strides x)
+    (Nx.strides from_file);
+  equal ~msg:(msg ^ ": elements") (array int32)
+    (Nx.to_array (Nx.copy x))
+    (Nx.to_array from_file)
 
-let test_file_backed_upload () =
+let test_file_backed_placement () =
   let n = (chunk / 4) + 4099 in
   let x, path = mapped_int32 ~byte:first_byte n in
   Fun.protect
@@ -4018,8 +4021,7 @@ let test_a_consumed_carry_keeps_its_placement () =
     (Nx.to_array (Nx.mul_s (rows86 ()) 8.0))
     (Nx.to_array (Nx.add s r))
 
-(* A split upload from a mapped file uploads each device's window once, read
-   from the file. *)
+(* A split placement of a mapped file borrows each device's window of it. *)
 let test_split_upload_from_a_file () =
   let n = 1 lsl 16 in
   let x, path = mapped_int32 ~byte:first_byte n in
@@ -4029,7 +4031,7 @@ let test_split_upload_from_a_file () =
       let y, up, _ =
         delta (fun () -> Nx.place (Nx.Placement.sharded ~axis:0 cpus) x)
       in
-      equal ~msg:"each window once" int (Nx.nbytes x) up;
+      equal ~msg:"no window is copied" int 0 up;
       equal ~msg:"elements" (array int32)
         (Nx.to_array (Nx.copy x))
         (Nx.to_array y))
@@ -4209,6 +4211,74 @@ let with_budget bytes f =
   Fun.protect ~finally:(fun () -> Unix.putenv "RUNE_JIT_RESIDENT_BUDGET" "") f
 
 let majors () = (Gc.quick_stat ()).major_collections
+
+(* A consumed value over a mapped file lends its storage to no result: a result
+   that continues it, or an indexed write into it, gets storage of its own, and
+   the file's pages keep their elements. So does an entry 8 bytes past a 16-byte
+   boundary, where a checkpoint's entries sit, which is a window of its borrowed
+   storage; a compiled copy of it is its elements. Placing it counts nothing
+   against the collection budget. The same value copied into owned storage is
+   lent, as a control. *)
+let test_borrowed_storage_is_never_lent () =
+  let n = 4096 in
+  let x, path = mapped_int32 ~byte:first_byte n in
+  Fun.protect
+    ~finally:(fun () -> remove_mapped path)
+    (fun () ->
+      let reused () = (Rune.jit_stats ()).reused_bytes in
+      let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+      let values = Nx.create Nx.int32 [| 2 |] [| 7l; 9l |] in
+      let step = consume' (fun x -> Nx.add x x) in
+      let write =
+        consume' (fun pool -> Nx.scatter ~axis:0 ~indices ~values pool)
+      in
+      let copy = Rune.jit' ~devices:[ cpu1 ] Nx.copy in
+      let check ~msg e =
+        let msg s = msg ^ ": " ^ s in
+        let expected = Nx.to_array (Nx.copy e) in
+        ignore (step (place (Nx.copy e)));
+        let p = place e in
+        let before = reused () in
+        let y = step p in
+        equal
+          ~msg:(msg "a borrowed argument lends nothing")
+          int 0
+          (reused () - before);
+        equal ~msg:(msg "the result") (array int32)
+          (Nx.to_array (Nx.add (Nx.copy e) (Nx.copy e)))
+          (Nx.to_array y);
+        raises_consumed (fun () -> to_arr p);
+        ignore (write (place (Nx.copy e)));
+        let before = reused () in
+        let y = write (place e) in
+        equal
+          ~msg:(msg "a borrowed pool lends nothing")
+          int 0
+          (reused () - before);
+        let written = Array.copy expected in
+        written.(0) <- 7l;
+        written.(2) <- 9l;
+        equal ~msg:(msg "the written pool") (array int32) written
+          (Nx.to_array y);
+        equal ~msg:(msg "the file's pages") (array int32) expected
+          (Nx.to_array e);
+        equal ~msg:(msg "a compiled copy") (array int32) expected
+          (Nx.to_array (copy (place e)));
+        let before = reused () in
+        ignore (write (place (Nx.copy e)));
+        equal
+          ~msg:(msg "an owned pool is lent")
+          int (Nx.nbytes e)
+          (reused () - before)
+      in
+      check ~msg:"at 0 mod 16" x;
+      check ~msg:"at 8 mod 16" (Nx.slice [ Nx.R (2, n) ] x);
+      with_budget 1024 (fun () ->
+          let before = majors () in
+          for _ = 1 to 20 do
+            ignore (place x)
+          done;
+          equal ~msg:"placing it collects nothing" int 0 (majors () - before)))
 
 (* The collection budget counts every device allocation since the last major
    collection: eager results count as outputs do, and weights placed before a
@@ -4670,8 +4740,10 @@ let tests =
       ];
     group "file-backed sources"
       [
-        slow "a mapped leaf larger than a chunk uploads from its file"
-          test_file_backed_upload;
+        slow "a mapped leaf larger than a chunk is borrowed"
+          test_file_backed_placement;
+        test "borrowed storage is never lent or written"
+          test_borrowed_storage_is_never_lent;
         test "a replaced file is not read" test_file_backed_upload_after_replace;
       ];
     group "device lists"

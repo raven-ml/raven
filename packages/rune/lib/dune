@@ -24,6 +24,7 @@
   nx
   nx.quant
   nx.effect
+  nx.backend
   nx.buffer
   unix
   threads

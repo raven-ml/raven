@@ -167,6 +167,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.place` of a tensor over a mapped file on Metal (Apple silicon) or a
+  `CPU:k` device borrows the file's pages instead of copying them, and keeps
+  its view: gpt-oss-20b's weights take 1.3 GB of the process's memory instead
+  of 14 GB and import in 3.5 s instead of 9.5 s cold. Borrowed storage is never
+  lent to a compiled call's output or written, and counts nothing in
+  `resident_bytes` or the collection budget.
+
 - Overlapping or reentrant calls to the same `jit` or `pmap` closure now raise
   `Invalid_argument` before accessing shared compilation or replay state.
   Sequential calls can move between domains and threads.
