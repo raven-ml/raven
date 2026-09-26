@@ -6,7 +6,7 @@
   host storage, the cache key); stage 2's amendment, 2026-09-25 (an abstract
   `Placement.t` over a grid, cuts inside one tile, eager results over split
   operands, local reads, engines per backend, the withdrawal of §Fully sharded
-  training, the stage 2 budget); the mapped-weights revision, 2026-09-26
+  training, restored at M4, the stage 2 budget); the mapped-weights revision, 2026-09-26
   (borrowed storage, Laws 8 and 9)
 - Packages: nx (`Nx.Device`, `Nx.Placement`, `place`, `placement`, the tensor
   representation, routing and reads), rune (devices, the device engine, `jit`
@@ -719,25 +719,32 @@ placement with program boundaries does not express fully sharded training:
 this RFC's amendment is withdrawn, and the roadmap's position that it is a
 rune transformation stands.
 
-**Withdrawn** (stage 2's probe, 2026-09-25). The probe ran eight layers of
-`relu (h @ W)`, with 4 MiB weights, parameters, gradients and Adam's moments
-split over `CPU:1`..`CPU:4`, and one tolk realize per layer. The worst
-device's peak over its share of the state was 2.66 layers at best, above the
-bound of 2.14 (two layers plus 0.14 of activations). It was 3.66 under tolk's
-default lowering, 8.16 under the naive one, and 2.89 with both collectives
-written out by hand. Three causes: a gather to a device list lowers to an
-allreduce of zero-padded shards, which moves twice an all-gather's bytes;
-gradients are allreduced and then sliced, since there is no reduce-scatter;
-and every copy source is staged in its own buffer. An all-gather into slices,
-a reduce-scatter rewrite, copies from views and the backward in two programs
-per layer would each address one cause. None is built, and they were not
-measured together. They are tolk collectives work, planned as its own stream
-(all-gather, reduce-scatter, copies from views, hierarchical variants) for
-the two-node training gate. Fully sharded training returns through placement
-and `jit` if this probe, re-run after that stream and stage 2's M4, holds the
-bound; until then this section stays withdrawn. Its throughput gate (90% of
-torch) further needs gathers overlapped with compute, without which it
-reaches about 88%.
+**Restored** (stage 2's M4, 2026-09-26). The probe that withdrew this
+section ran eight layers of `relu (h @ W)` with parameters, gradients and
+Adam's moments split over `CPU:1`..`CPU:4`, one tolk realize per layer, and
+its worst device peaked at 2.66 layers of its share of the state against a
+bound of 2.14. Its three causes are gone: a gather to a device list lowers to
+an all-gather into slices; an allreduce whose only consumer takes each
+device's rows lowers to a reduce-scatter; and a copy reads its source's window
+without staging it. Re-run through rune, with placement and `jit`, one program
+per layer and phase, each weight gathered with
+`Nx.place (Nx.Placement.replicated ds) w`, the worst device's peak over
+(P + G + O)/n is:
+
+| Layers | Devices | Peak | Bound | Between devices per step |
+|---|---|---|---|---|
+| 8 × 1024×1024 | 4 | 1.922 | 2.125 | 288 MiB |
+| 8 × 1024×1024 | 8 | 1.961 | 2.062 | 672 MiB |
+| 4 × 2048×4096, alternating | 4 | 1.789 | 2.023 | 1152 MiB |
+
+Every device holds the same peak, and the weights equal one device's. The
+same step written directly against tolk peaks at 1.891, 1.945 and 1.781
+layers, so rune adds at most 0.03 of a layer.
+
+The throughput gate (90% of torch) still needs a layer's gather overlapped
+with the previous layer's compute, which tolk's collectives stream schedules
+next; without it the estimate is about 88%. Both gates are measured on the
+rented node (stage 2's M6).
 
 ### Engines, and what belongs where
 
@@ -1073,10 +1080,9 @@ use-after-release mode that donation and unreachability cover.
 
 RFC 0003 shipped `to_device` as extensible by optional arguments. This RFC
 replaces it instead, because a placement is a value nx must name. The roadmap's
-position that fully sharded training is a rune transformation stands for
-now: under tolk's current collectives, placement with program boundaries does
-not express it. It returns through placement and `jit` if the probe holds
-its bound after tolk's collectives stream and stage 2's M4 (§Fully sharded
+position that fully sharded training is a rune transformation no longer
+holds: with tolk's all-gather, reduce-scatter and unstaged copies, placement
+with program boundaries expresses it within its memory bound (§Fully sharded
 training). Its other positions stand: collectives are tolk graph
 operations ported from tinygrad, and sharded checkpoints and data live in
 kaun.
