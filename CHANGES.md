@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed NVIDIA GSP initialization now retires mapped context and channel
+  allocations after a successful device stop. Failed stops retain their
+  virtual addresses, page tables and backing storage.
+
 - Fix concurrent raw-PCI AMD/NV allocations across devices corrupting their
   shared virtual-address allocator or failing during its first initialization.
 

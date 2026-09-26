@@ -1809,7 +1809,6 @@ module Gsp = struct
      bound by physical and/or virtual address; the allocations are returned so
      a second pass can bind the same memory the other way. *)
   let promote_ctx t ~client ~subdevice ~obj ~ctxbufs ?bufs ?virt ?phys () =
-    let mm = Nvdev.mm t.nvdev in
     let res = ref [] in
     let entries =
       List.map
@@ -1819,7 +1818,7 @@ module Gsp = struct
           let x =
             match bufs with
             | Some bs when List.mem_assoc buf bs -> List.assoc buf bs
-            | _ -> Tolk.Memory.valloc mm desc.size ~contiguous:true ()
+            | _ -> Nvdev.alloc_boot_mapping t.nvdev desc.size
           in
           res := (buf, x) :: !res;
           {
@@ -1850,7 +1849,7 @@ module Gsp = struct
            failwith "Gsp: a channel allocation needs its parameter structure"
        | Some p ->
            let module C = G.Nv_channelgpfifo_allocation_parameters in
-           let ramfc = Tolk.Memory.valloc (Nvdev.mm t.nvdev) 0x1000 ~contiguous:true () in
+           let ramfc = Nvdev.alloc_boot_mapping t.nvdev 0x1000 in
            let ramfc_paddr = fst (List.hd ramfc.Tolk.Memory.paddrs) in
            let method_paddr =
              match Nvdev.alloc_boot_mem t.nvdev ~sysmem:false 0x5000 with
@@ -1996,7 +1995,7 @@ module Gsp = struct
       ~client:t.priv_root ();
     (* the golden-image channel *)
     let module C = G.Nv_channelgpfifo_allocation_parameters in
-    let gpfifo_area = Tolk.Memory.valloc mm (4 lsl 10) ~contiguous:true () in
+    let gpfifo_area = Nvdev.alloc_boot_mapping nvdev (4 lsl 10) in
     let gpfifo_paddr = fst (List.hd gpfifo_area.Tolk.Memory.paddrs) in
     let gg = Nv_tables.create_blob C.sizeof in
     Nv_tables.set_field gg C.gpfifooffset gpfifo_area.Tolk.Memory.va_addr;

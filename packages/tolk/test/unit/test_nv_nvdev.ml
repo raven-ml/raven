@@ -139,6 +139,83 @@ let pt_ops fd =
    sys_membar and trigger, at dev_vm's 0xb80000 + 0x30b0. *)
 let invalidate_write = (0xb830b0, 0x80000043)
 
+let boot_mapping_failure ~hardware ~stop_fails () =
+  let check_reset = ref (fun () -> ()) in
+  with_fake_dev ~on_reset:(fun () ->
+      !check_reset ();
+      if stop_fails then failwith "reset failed") (fun fd ->
+    let mm = Nvdev.mm fd.dev in
+    let owned = ref [] in
+    let root = Memory.root_page_table mm and ops = pt_ops fd in
+    let root_entries () = List.init (Memory.pte_cnt mm 0) (ops.valid root) in
+    let before = root_entries () in
+    let assert_reserved () =
+      let probe = Memory.valloc mm 0x1000 ~contiguous:true () in
+      Fun.protect ~finally:(fun () -> Memory.vfree mm probe) (fun () ->
+        List.iter (fun mapping ->
+            is_true ~msg:"owned virtual ranges cannot be reused before reset completes"
+              (probe.Memory.va_addr <> mapping.Memory.va_addr);
+            is_true ~msg:"owned physical pages cannot be reused before reset completes"
+              (fst (List.hd probe.Memory.paddrs) <> fst (List.hd mapping.Memory.paddrs)))
+          !owned)
+    in
+    check_reset := assert_reserved;
+    let acquire () =
+      List.iter (fun size ->
+          let mapping = Nvdev.alloc_boot_mapping fd.dev size in
+          owned := mapping :: !owned) [0x1000; 0x2000];
+      failwith "context publication failed"
+    in
+    raises_match
+      (function
+        | Failure error -> error = "context publication failed" && not stop_fails
+        | Tolk_hcq.System.Rollback_failed
+            (Failure error, [Failure cleanup]) ->
+            error = "context publication failed" && cleanup = "reset failed" && stop_fails
+        | _ -> false)
+      (fun () -> Nvdev.init fd.dev
+          ~init_sw:(if hardware then Fun.const () else acquire)
+          ~init_hw:(if hardware then acquire else fun () -> fail "hardware must not start"));
+    equal int (if hardware then 1 else 0) !(fd.resets);
+    is_true (Nvdev.is_err_state fd.dev);
+    if stop_fails then begin
+      assert_reserved ();
+      is_true ~msg:"uncertain reset retains page-table entries"
+        (root_entries () <> before);
+      raises (Invalid_argument "NV initialization on a faulted device")
+        (fun () -> Nvdev.init fd.dev ~init_sw:(Fun.const ()) ~init_hw:(Fun.const ()));
+      equal ~msg:"a faulted owner never retries uncertain retirement" int 1 !(fd.resets);
+      (* Only the anonymous-memory fixture is quiescent here. *)
+      List.iter (Memory.vfree mm) !owned
+    end else begin
+      equal ~msg:"rollback removes host-created page-table links"
+        (list bool) before (root_entries ());
+      let first = List.hd (List.rev !owned) in
+      let probe = Memory.valloc mm 0x1000 ~contiguous:true () in
+      Fun.protect ~finally:(fun () -> Memory.vfree mm probe) (fun () ->
+        equal ~msg:"rollback returns the virtual reservation" int
+          first.Memory.va_addr probe.Memory.va_addr;
+        equal ~msg:"rollback returns the physical backing" (list (pair int int))
+          first.Memory.paddrs probe.Memory.paddrs)
+    end)
+
+let successful_boot_mapping_residency () =
+  with_fake_dev (fun fd ->
+      let mapping = ref None in
+      Nvdev.init fd.dev
+        ~init_sw:(Fun.const ())
+        ~init_hw:(fun () -> mapping := Some (Nvdev.alloc_boot_mapping fd.dev 0x1000));
+      let mapping = Option.get !mapping and mm = Nvdev.mm fd.dev in
+      Fun.protect ~finally:(fun () -> Memory.vfree mm mapping) (fun () ->
+        let probe = Memory.valloc mm 0x1000 ~contiguous:true () in
+        Fun.protect ~finally:(fun () -> Memory.vfree mm probe) (fun () ->
+          is_true ~msg:"successful boot keeps the mapping resident"
+            (probe.Memory.va_addr <> mapping.Memory.va_addr);
+          is_true ~msg:"successful boot keeps physical context storage resident"
+            (fst (List.hd probe.Memory.paddrs) <> fst (List.hd mapping.Memory.paddrs)));
+        equal int 0 !(fd.resets);
+        is_false (Nvdev.is_err_state fd.dev)))
+
 let () =
   run "Nvdev"
     [
@@ -614,6 +691,14 @@ let () =
         ];
       group "boot rollback"
         [
+          test "software failure retires mapped context allocations"
+            (boot_mapping_failure ~hardware:false ~stop_fails:false);
+          test "hardware failure stops before retiring mapped context allocations"
+            (boot_mapping_failure ~hardware:true ~stop_fails:false);
+          test "failed stop retains mapped context allocations without retry"
+            (boot_mapping_failure ~hardware:true ~stop_fails:true);
+          test "successful boot keeps mapped context allocations resident"
+            successful_boot_mapping_residency;
           test "software failure releases boot pages without resetting" (fun () ->
               with_fake_dev (fun fd ->
                   let paddr = ref None in

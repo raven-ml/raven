@@ -627,20 +627,27 @@ let include_regs t ~family ~arch =
   include_into t.regs ~rreg:t.rreg ~wreg:t.wreg family arch
 
 (* nvdev.py:149 _alloc_boot_mem *)
+let track_boot_allocation t free =
+  match t.boot_allocations with
+  | None -> ()
+  | Some pending -> t.boot_allocations <- Some (free :: pending)
+
+let alloc_boot_mapping t size =
+  let mapping = Memory.valloc t.mm size ~contiguous:true () in
+  track_boot_allocation t (fun () -> Memory.vfree t.mm mapping);
+  mapping
+
 let alloc_boot_mem t ?data ?(contiguous = false) ?sysmem size =
   let sz = (size + 0xfff) land lnot 0xfff in
   let sysmem = match sysmem with Some b -> b | None -> not t.large_bar in
-  let track free = match t.boot_allocations with
-    | None -> ()
-    | Some pending -> t.boot_allocations <- Some (free :: pending) in
   let view, paddr, sysaddr =
     if sysmem then
       let view, sysaddr = t.alloc_sysmem ~contiguous size in
-      track (fun () -> Tolk_hcq.Hcq.File_io.munmap (Mmio.addr view) ~size:(Mmio.size view));
+      track_boot_allocation t (fun () -> Tolk_hcq.Hcq.File_io.munmap (Mmio.addr view) ~size:(Mmio.size view));
       (view, None, sysaddr)
     else
       let paddr = Memory.palloc t.mm sz () in
-      track (fun () -> Memory.pfree t.mm paddr ());
+      track_boot_allocation t (fun () -> Memory.pfree t.mm paddr ());
       let view = Mmio.view t.vram ~off:paddr ~size:sz () in
       let sysaddr =
         List.init (sz / 0x1000) (fun i -> t.bar1_base + paddr + (i * 0x1000))

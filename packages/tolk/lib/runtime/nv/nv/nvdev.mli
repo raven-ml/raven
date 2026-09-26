@@ -267,8 +267,9 @@ val init : t -> init_sw:(unit -> unit) -> init_hw:(unit -> unit) -> unit
     failures accompany the original exception in
     {!Tolk_hcq.System.Rollback_failed}.
 
-    This does not release virtual mappings created directly by the firmware
-    layer or the PCI claim. Raises [Invalid_argument] for a faulted device or
+    Allocations from {!alloc_boot_mem} and {!alloc_boot_mapping} participate
+    in this cleanup. Firmware-owned page-directory reservations and the PCI
+    claim remain held. Raises [Invalid_argument] for a faulted device or
     a nested initialization. *)
 
 val pci_dev : t -> Tolk_hcq.System.Pci_device.t option
@@ -367,6 +368,13 @@ val wreg : t -> int -> int -> unit
     byte address [addr], like {!rreg}. *)
 
 (** {2:bootmem Boot memory} *)
+
+val alloc_boot_mapping : t -> int -> Tolk.Memory.virt_mapping
+(** [alloc_boot_mapping t size] allocates physically contiguous device memory
+    and maps it in [t]'s virtual address space. During {!init}, the allocation
+    participates in its failure cleanup before being returned to the caller.
+    A successful initialization keeps it resident. Outside {!init}, the caller
+    owns its lifetime; this operation does not provide channel rollback. *)
 
 val alloc_boot_mem :
   t ->
