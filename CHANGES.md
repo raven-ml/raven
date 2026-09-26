@@ -679,6 +679,11 @@ thread.
 
 ### Tolk (new)
 
+- `Device.Buffer.borrow` wraps host memory as a buffer of the host device that
+  keeps the memory's owner reachable until it and every mapping of it are
+  released, and `Device.Buffer.ownership` tells such borrowed storage from
+  owned storage. Only owned storage counts in `mem_used`.
+
 - Keep each compiled queue submission's address table, signal storage and
   Metal command arguments separate. Equal-sized batches could overwrite one
   another's linked addresses or arguments, corrupting replayed computations.

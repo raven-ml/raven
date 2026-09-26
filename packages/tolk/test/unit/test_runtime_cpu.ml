@@ -1073,6 +1073,51 @@ let test_symbolic_stage_extents () =
       (read_i32_buffer result)
   done
 
+(* Borrowed buffers belong to the host device, which the tests open by name. *)
+let () = Device.register "CPU" Tolk_cpu.create
+
+let borrowed_storage () =
+  let device = cpu "borrow" in
+  let owner = create_i32_buffer device [ 1; 2; 3; 4 ] in
+  let used = Device.Buffer.mem_used () in
+  let borrowed =
+    Device.Buffer.borrow ~size:4 ~dtype:Dtype.int32
+      ~source:owner (Device.Buffer.addr owner)
+  in
+  let view = i32_view borrowed ~offset:4 ~size:2 in
+  is_true (Device.Buffer.ownership owner = Device.Buffer.Owned);
+  is_true (Device.Buffer.ownership borrowed = Device.Buffer.Borrowed);
+  is_true (Device.Buffer.ownership view = Device.Buffer.Borrowed);
+  equal int used (Device.Buffer.mem_used ());
+  equal (list int) [ 2; 3 ] (read_i32_buffer view);
+  let importer = cpu "borrow-importer" in
+  equal nativeint
+    (Nativeint.add (Device.Buffer.addr owner) 4n)
+    (Device.Buffer.addr ~device:(Device.name importer) view);
+  Device.Buffer.deallocate view;
+  Device.Buffer.deallocate borrowed;
+  equal int used (Device.Buffer.mem_used ());
+  equal (list int) [ 1; 2; 3; 4 ] (read_i32_buffer owner)
+
+(* The source of a borrowed buffer is collected only after the buffer. *)
+let borrowed_source_lifetime () =
+  let device = cpu "borrow-lifetime" in
+  let collected = ref false in
+  let[@inline never] make () =
+    let owner = create_i32_buffer device [ 5; 6 ] in
+    Gc.finalise (fun _ -> collected := true) owner;
+    Device.Buffer.borrow ~size:2 ~dtype:Dtype.int32
+      ~source:owner (Device.Buffer.addr owner)
+  in
+  let borrowed = ref (Some (make ())) in
+  Gc.full_major ();
+  is_false ~msg:"the source outlives no buffer over it" !collected;
+  equal (list int) [ 5; 6 ] (read_i32_buffer (Option.get !borrowed));
+  borrowed := None;
+  Gc.full_major ();
+  Gc.full_major ();
+  is_true ~msg:"the source goes with the last buffer over it" !collected
+
 let main () =
   run "Cpu_runtime"
     [
@@ -1229,6 +1274,9 @@ let main () =
                memory (LRU skip): the backing buffer stays valid afterwards. *)
             Device.Buffer.deallocate external_;
             equal (list int) [ 42 ] (read_i32_buffer backing));
+          test "borrowed storage is neither owned nor counted" borrowed_storage;
+          test "a borrowed buffer keeps its source reachable"
+            borrowed_source_lifetime;
           test "buffer views copy at byte offsets" (fun () ->
             let device = cpu "views-copy" in
             let base = create_i32_buffer device [ 1; 2; 3; 4 ] in

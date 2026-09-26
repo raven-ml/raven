@@ -119,6 +119,16 @@ val on_device :
     allocator is resolved on first use. Constructing it does not open [device].
     Size validation and [spec] have the same contract as {!create}. *)
 
+val borrow : size:int -> dtype:Dtype.t -> source:'a -> nativeint -> t
+(** [borrow ~size ~dtype ~source addr] is an allocated, {!Borrowed} base buffer
+    of the host device, ["CPU"], over the [size] elements of [dtype] at the host
+    address [addr]. Another device reads it through its mapping ({!get}).
+    [source] is the value that keeps the memory valid, such as the host array
+    or the file mapping it belongs to: the buffer keeps it reachable, so the
+    memory outlives the buffer's allocation and every mapping of it into
+    another device, which {!deallocate} releases after synchronizing that
+    device. Size validation is {!create}'s. *)
+
 val install_allocator_resolver : (string -> Allocator.packed) -> unit
 (** [install_allocator_resolver f] connects lazy buffers to the device registry.
     The runtime installs this once; graph construction does not need it. *)
@@ -132,6 +142,22 @@ val view : t -> size:int -> dtype:Dtype.t -> offset:int -> t
     [offset] is negative, past [nbytes b], at [nbytes b] for a nonempty view,
     if [size] is negative or its byte size exceeds [max_int], or if the
     resulting view extends past the root base buffer. *)
+
+(** {1:ownership Ownership} *)
+
+type ownership =
+  | Owned  (** Allocated by the buffer's allocator, which frees it. *)
+  | Borrowed
+      (** Memory the runtime did not allocate, at a
+          {!Buffer_spec.external_ptr}: a caller's host memory, a mapped file,
+          or a handle another runtime owns. The allocator neither frees nor
+          caches it, and {!mem_used} does not count it. Whether it may be
+          written is its owner's rule. *)
+(** The type for who allocated a buffer's memory. *)
+
+val ownership : t -> ownership
+(** [ownership b] is the ownership of [b]'s root base buffer, decided when it
+    was created: {!Borrowed} with an external pointer, {!Owned} otherwise. *)
 
 (** {1:identity Identity and metadata} *)
 
@@ -319,7 +345,7 @@ val addr : ?device:string -> t -> nativeint
 (** {1:accounting Allocation accounting} *)
 
 val mem_used : ?device:string -> unit -> int
-(** [mem_used ()] counts live internally allocated bytes, excluding disk storage.
+(** [mem_used ()] counts live {!Owned} bytes, excluding disk storage.
     With [device], it counts only that device's bytes, or zero if it has no live
     allocations. Reads and allocation updates are synchronized across domains. *)
 

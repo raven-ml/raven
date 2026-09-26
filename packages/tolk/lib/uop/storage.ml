@@ -40,7 +40,10 @@ type t = {
   base : t option;
   offset : int;
   allocated_views : int Atomic.t;
+  source : source;
 }
+
+and source = No_source | Source : 'a -> source
 
 and 'buf mapping = { map : t -> 'buf; unmap : 'buf -> unit }
 and 'buf allocator = {
@@ -176,9 +179,13 @@ let is_allocated buf =
       | Some root -> buf.base_storage == root.storage
 let allocated_views buf = Atomic.get (base buf).allocated_views
 
+type ownership = Owned | Borrowed
+
+let ownership buf =
+  match (base buf).spec.external_ptr with None -> Owned | Some _ -> Borrowed
+
 let counts_as_used buf =
-  not (String.starts_with ~prefix:"DISK" buf.device)
-  && Option.is_none buf.spec.external_ptr
+  not (String.starts_with ~prefix:"DISK" buf.device) && ownership buf = Owned
 
 let rec allocate buf =
   with_operation (fun () ->
@@ -245,14 +252,15 @@ let checked_nbytes size dtype =
     invalid_arg "buffer size is negative or exceeds the byte address range";
   size * itemsize
 
-let make ~device ~size ~dtype ?(spec = Buffer_spec.default) allocator =
+let make ~device ~size ~dtype ?(spec = Buffer_spec.default) ?(source = No_source)
+    allocator =
   if Dtype.is_weak dtype then invalid_arg "buffer storage requires a concrete dtype";
   ignore (checked_nbytes size dtype : int);
   let buf = {
     id = fresh_id (); device; size; dtype; spec; allocator;
     storage = Unallocated; base_storage = Unallocated;
     mappings = []; mapping_error = None; base = None; offset = 0;
-    allocated_views = Atomic.make 0;
+    allocated_views = Atomic.make 0; source;
   } in
   Gc.finalise finalize buf;
   buf
@@ -267,6 +275,20 @@ let install_allocator_resolver f = allocator_resolver := f
 
 let on_device ~device ~size ~dtype ?spec () =
   make ~device ~size ~dtype ?spec (lazy (!allocator_resolver device))
+
+(* The tinygrad counterpart, a buffer over [external_ptr] ([Tensor.from_blob]),
+   leaves the memory's owner to the caller; a borrowed buffer keeps it, so the
+   memory outlives the buffer's allocation and every mapping of it. It is a
+   buffer of the host device, ["CPU"], whose allocator takes host addresses;
+   other devices reach it through their mappings. *)
+let borrow ~size ~dtype ~source addr =
+  let spec = { Buffer_spec.default with external_ptr = Some addr } in
+  let buf =
+    make ~device:"CPU" ~size ~dtype ~spec ~source:(Source source)
+      (lazy (!allocator_resolver "CPU"))
+  in
+  ensure_allocated buf;
+  buf
 
 let supports_offset buf =
   let Allocator.Pack alloc = allocator buf in
@@ -310,6 +332,7 @@ let view buf ~size ~dtype ~offset =
     allocator = root.allocator; storage = Unallocated; base_storage = Unallocated;
     mappings = []; mapping_error = None; base = Some root;
     offset = buf.offset + offset; allocated_views = Atomic.make 0;
+    source = No_source;
   } in
   Gc.finalise finalize v;
   v

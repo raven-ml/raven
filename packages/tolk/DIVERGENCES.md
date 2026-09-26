@@ -1201,3 +1201,18 @@ delete it rather than registering it.
   golden and parity output is unchanged. Coverage: `test_run`
   "non-consecutive tensor indices select their elements", the shape tests in
   `test_frontend`.
+
+- **A borrowed buffer keeps its memory's owner** (`uop/storage.ml`
+  `borrow`, `ownership`). The reference wraps memory it did not allocate
+  through `external_ptr` (`Tensor.from_blob`) and leaves the memory's owner to
+  the caller. `Storage.borrow` makes a buffer of the host device over the
+  memory, which other devices reach through their mappings, takes the owner as
+  its `source` and keeps it reachable until the buffer is collected, so the
+  memory outlives the buffer's allocation and every mapping of it into another
+  device, which `deallocate` releases after synchronizing that device. `Storage.ownership` names what
+  `external_ptr` already decides (the reference's `mem_used`, LRU and free all
+  skip such buffers): `Owned` or `Borrowed`. Consumer: rune's placement, which
+  borrows mapped files on devices that address host memory.
+  Coverage: `test_runtime_cpu` "borrowed storage is neither owned nor counted"
+  and "a borrowed buffer keeps its source reachable". Reconsider when the
+  runtime's buffers move into nx.device.
