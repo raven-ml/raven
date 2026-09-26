@@ -408,13 +408,15 @@ val scalar : ('a, 'b) dtype -> 'a -> ('a, 'b) t
     shape [|\||]. *)
 
 val full_like : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [full_like t v] is {!full} with the same dtype and shape as [t]. *)
+(** [full_like t v] is {!full} with the same dtype and shape as [t], placed
+    where [t] is: a split [t] gives a value split the same way. Inside a
+    compiled function the value is a constant of the program. *)
 
 val ones_like : ('a, 'b) t -> ('a, 'b) t
-(** [ones_like t] is {!ones} with the same dtype and shape as [t]. *)
+(** [ones_like t] is {!full_like} with ones. *)
 
 val zeros_like : ('a, 'b) t -> ('a, 'b) t
-(** [zeros_like t] is {!zeros} with the same dtype and shape as [t]. *)
+(** [zeros_like t] is {!full_like} with zeros. *)
 
 val scalar_like : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [scalar_like t v] is {!scalar} with the same dtype as [t]. *)

@@ -1764,6 +1764,15 @@ let full (ctx : context) dtype shape_arr value =
           settle (at_devices ds)
             (Nx_backend.full host_context dtype shape_arr value))
 
+(* [full_at p dtype shape value] is [full] at the placement [p]: a split one
+   gives each device its window. *)
+let full_at p dtype shape_arr value =
+  let context = On (Placement.devices p) in
+  match Effect.perform (E_const_scalar { context; value; dtype }) with
+  | scalar -> broadcast scalar shape_arr
+  | exception Effect.Unhandled _ ->
+      settle (At p) (Nx_backend.full host_context dtype shape_arr value)
+
 let from_host (ctx : context) array =
   try Effect.perform (E_from_host { context = ctx; array })
   with Effect.Unhandled _ -> (

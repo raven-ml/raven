@@ -2513,6 +2513,10 @@ thread.
 
 ### Nx
 
+- Eagerly, `Nx.zeros_like`, `ones_like`, `full_like` and `fill` of a split
+  value are split the same way, each device holding its slice. They made a full
+  copy on every device, so an optimiser state built from split parameters
+  (`Vega.adam_init`) took as many times their memory as there are devices.
 - Preserve distinct tensor, view and device identities when they are created
   concurrently; lost counter increments could make unrelated values alias in
   identity tables used by tracing.

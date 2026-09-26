@@ -77,6 +77,16 @@ let zeros dtype shape = F.zeros (Lazy.force context) dtype shape
 let scalar dtype v = F.scalar (Lazy.force context) dtype v
 let eye ?m ?k dtype n = F.eye (Lazy.force context) ?m ?k dtype n
 
+(* A value made like a placed one lives where that one does, split as it is. *)
+let full_like x v =
+  match x with
+  | Nx_effect.Placed r -> Nx_effect.full_at r.r_placement (dtype x) (shape x) v
+  | Nx_effect.Host _ | Nx_effect.Traced _ -> F.full_like x v
+
+let zeros_like x = full_like x (Nx_dtype.zero (dtype x))
+let ones_like x = full_like x (Nx_dtype.one (dtype x))
+let fill v x = full_like x v
+
 let arange dtype start stop step =
   F.arange (Lazy.force context) dtype start stop step
 

@@ -308,6 +308,34 @@ let test_created_scalars_are_held () =
     [| 2.; 4.; 6.; 8.; 10.; 12. |]
     (Nx.to_array y)
 
+(* A value filled like a split one is split the same way, and each device holds
+   only its slice. *)
+let test_filled_like_a_split_value () =
+  let four = [ dev1; dev2; dev3; dev4 ] in
+  let rows = Nx.Placement.sharded ~axis:0 four in
+  let s = Nx.place rows (Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1)) in
+  let z = Nx.zeros_like s in
+  equal ~msg:"split like its model" placement rows (Nx.placement z);
+  equal ~msg:"its elements" (array float_exact) (Array.make 48 0.0)
+    (Nx.to_array z);
+  (match (cell_of z).state with
+  | Live (Mem (_, shards)) ->
+      equal ~msg:"a slice on each device" (list int) [ 12; 12; 12; 12 ]
+        (List.map Nx_buffer.length shards)
+  | _ -> fail "expected storage of the test engine");
+  let t = Nx.transpose s in
+  equal ~msg:"a moved model" placement
+    (Nx.Placement.sharded ~axis:1 four)
+    (Nx.placement (Nx.ones_like t));
+  equal ~msg:"fill" (array float_exact) (Array.make 48 3.0)
+    (Nx.to_array (Nx.fill 3.0 t));
+  let before = !uploads in
+  let h = Nx.full_like (Nx.sum s) 2.0 in
+  equal ~msg:"a filled scalar is held" int before !uploads;
+  equal ~msg:"on the copies' devices" placement
+    (Nx.Placement.replicated four)
+    (Nx.placement h)
+
 (* Reads *)
 
 let test_a_read_copies_what_it_reads () =
@@ -782,6 +810,7 @@ let tests =
           test_results_live_with_their_operands;
         test "scalars created on a device are held, filled values are not"
           test_created_scalars_are_held;
+        test "a value filled like a split one" test_filled_like_a_split_value;
         test "a read copies what it reads" test_a_read_copies_what_it_reads;
         test "views share their cell" test_views_share_the_cell;
         test "several devices" test_several_devices;
