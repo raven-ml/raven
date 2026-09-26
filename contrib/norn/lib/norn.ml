@@ -121,6 +121,10 @@ let hmc_kernel ?(integrator : integrator = leapfrog) ?(num_leapfrog = 20)
     let p = ref p0 in
     let lp = ref state.log_density in
     let g = ref state.grad_log_density in
+    (* A fixed trajectory length can be near a period of the target and
+       barely move the chain; a step drawn within 15% of [step_size] breaks
+       the resonance. *)
+    let step_size = step_size *. (0.85 +. (0.3 *. Nx.item [] (Nx.rand f64 [||]))) in
     for _ = 1 to num_leapfrog do
       let q', p', lp', g' = integrator metric.scale !q !p !g glp step_size in
       q := q';
