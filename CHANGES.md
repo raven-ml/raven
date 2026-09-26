@@ -2513,6 +2513,10 @@ thread.
 
 ### Nx
 
+- `Nx.take` (and `Nx.slice` with a list of indices) along the split axis of a
+  split value is a copy on each device, as a reduction over that axis is: each
+  device selects among its own rows. It raised, although a compiled program
+  lowers the same gather as a sum across the devices.
 - Eagerly, `Nx.zeros_like`, `ones_like`, `full_like` and `fill` of a split
   value are split the same way, each device holding its slice. They made a full
   copy on every device, so an optimiser state built from split parameters

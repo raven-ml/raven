@@ -255,12 +255,13 @@ val to_array : ('a, 'b) t -> 'a array
     The result of an operation lives where its placed operands live: operands on
     the host join them, and operands on two different device sets raise. Over
     split operands, an elementwise result keeps their split, which must be the
-    same for all of them (copies take it); a reduction over the split axis is a
-    full copy on each device; and an operation along the split axis ({!sort},
-    {!cumsum}, {!pad} or {!concatenate} along it, linear algebra on its last two
-    axes, {!fft} over it) raises. A read ({!item}, {!to_array}, {!to_buffer},
-    {!pp}, a save) copies the elements it reads and leaves the value where it
-    is. A value's storage is released when no value reaches it.
+    same for all of them (copies take it); a reduction over the split axis, and
+    a {!take} along it, give a full copy on each device; and an operation along
+    the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along it,
+    linear algebra on its last two axes, {!fft} over it) raises. A read
+    ({!item}, {!to_array}, {!to_buffer}, {!pp}, a save) copies the elements it
+    reads and leaves the value where it is. A value's storage is released when
+    no value reaches it.
 
     A movement ({!reshape}, {!transpose}, {!slice} by indices and unit-step
     ranges, {!flip}, {!broadcast_to}, {!sliding_window}) of a placed value is a

@@ -270,6 +270,27 @@ let test_batch_split_operations () =
     (fun i -> Nx.correlate i w)
     (Nx.reshape [| 2; 1; 4; 4 |] (Nx.arange Nx.float32 0 32 1))
 
+(* Rows of a table split along its rows, taken at positions on the host: each
+   device selects among its own rows and the selections sum across the devices,
+   so eager and compiled code agree on a copy on each device. *)
+let test_rows_of_a_split_table () =
+  let table = Nx.reshape [| 8; 6 |] (Nx.arange Nx.float32 0 48 1) in
+  let ids = Nx.create Nx.int32 [| 5 |] [| 7l; 0l; 3l; 3l; 6l |] in
+  let take t = Nx.take ~axis:0 ~indices:ids t in
+  let compiled = Rune.jit' take (rows devs4 table) in
+  let eager = take (rows devs4 table) in
+  equal ~msg:"a copy on each device" placement
+    (Nx.Placement.replicated devs4)
+    (Nx.placement compiled);
+  equal ~msg:"eager: placement" placement (Nx.placement compiled)
+    (Nx.placement eager);
+  equal ~msg:"compiled: the rows" (array float_exact)
+    (Nx.to_array (take table))
+    (Nx.to_array compiled);
+  equal ~msg:"eager: the rows" (array float_exact)
+    (Nx.to_array (take table))
+    (Nx.to_array eager)
+
 (* A roll along the split axis by one slice of two cuts each slice whole, which
    a compiled program copies to both devices: eager and compiled agree on the
    elements and the placement. *)
@@ -1070,6 +1091,7 @@ let tests =
       [
         test "a split output in eager code" test_split_output_in_eager_code;
         test "operations over a batch split" test_batch_split_operations;
+        test "rows of a split table" test_rows_of_a_split_table;
         test "a roll by one slice" test_roll_by_a_slice;
         test "a feedback call moves no bytes" test_feedback_moves_no_bytes;
         test "copies feed back without transfer" test_replicated_feedback;

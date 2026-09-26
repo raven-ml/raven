@@ -471,7 +471,9 @@ let test_eager_results_over_split_operands () =
   check "rows gathered from columns" cols
     (Nx.slice [ Nx.L [ 1; 0 ] ] x)
     (Nx.slice [ Nx.L [ 1; 0 ] ] t);
-  along (fun () -> Nx.slice [ Nx.L [ 1; 0 ] ] s);
+  check "rows gathered along the split axis" copies
+    (Nx.slice [ Nx.L [ 7; 0; 3 ] ] x)
+    (Nx.slice [ Nx.L [ 7; 0; 3 ] ] s);
   let ids = Nx.create Nx.int32 [| 8 |] [| 5l; 0l; 3l; 3l; 1l; 2l; 4l; 0l |] in
   check "rows taken by split positions" rows
     (Nx.take ~axis:0 ~indices:ids w)

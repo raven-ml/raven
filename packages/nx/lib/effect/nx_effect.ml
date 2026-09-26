@@ -1070,7 +1070,7 @@ type rule =
        concatenation, fft, linear algebra *)
   | Gather of int
     (* reads its first operand along this axis at the positions its second
-       holds, the other axes as elementwise *)
+       holds, the other axes as elementwise; along a split axis, a reduction *)
   | Reduce of { axes : int array; keepdims : bool }
   | Contract
     (* a product over the last axis of the first and the next-to-last of the
@@ -1134,11 +1134,15 @@ let result op rule operands =
         (fun p -> List.iter (fun a -> if cut p a then along op a) axes)
         ps;
       combine op ps
-  | Gather axis ->
-      (match operands with
-      | (Some p, _) :: _ when cut p axis -> along op axis
-      | _ -> ());
-      combine op ps
+  | Gather axis -> (
+      match operands with
+      | (Some p, _) :: _ when cut p axis ->
+          (* Each device selects among the rows it holds and the selections sum
+             across the devices, as tolk lowers a gather: a copy on each. A 1-D
+             grid's only cut is this one; a grid cut along other axes too would
+             keep those cuts, renumbered as [Reduce] does. *)
+          List.fold_left (fun p (a, _) -> Grid.uncut p ~axis:a) p (Grid.cuts p)
+      | _ -> combine op ps)
   | Reduce { axes; keepdims } ->
       let reduce p =
         let p =
