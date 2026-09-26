@@ -686,6 +686,10 @@ thread.
 
 ### Tolk (new)
 
+- An NV queue submission whose command stream lies beyond the GPFIFO entry's
+  40-bit address field fails with `HCQ command stream lies outside a GPFIFO
+  entry's 40-bit address`, where its address spilled into the entry's length.
+
 - Fix BEAM search compiling no candidate on Windows: its per-candidate
   compile timeout called `Unix.alarm`, which Windows lacks, and each
   candidate was dropped as failed. Candidates now compile untimed there.

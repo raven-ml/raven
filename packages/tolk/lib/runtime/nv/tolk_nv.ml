@@ -1701,9 +1701,9 @@ module Encoded_queue = struct
         let ring = placeholder ~volatile:true name ("ring_" ^ suffix) D.uint64 entries in
         let put = placeholder ~volatile:true name ("gpput_" ^ suffix) D.uint32 1 in
         let doorbell = placeholder ~volatile:true name "doorbell" D.uint32 1 in
-        let entry = bor (addr name buffer) (u64 (((size / 4) lsl 42) lor (1 lsl 41))) in
         Some (Tolk.Hcq2.ccall ~host:name ~after:[buffer] ~name:"tolk_hcq_gpfifo" ~dtype:D.void
-          [index (context name); index ring; index put; index doorbell; entry;
+          [index (context name); index ring; index put; index doorbell;
+           addr name buffer; u64 (size / 4);
            u32 (if compute then compute_token else copy_token); u32 entries;
            index progress; index retired])
     | _ -> None

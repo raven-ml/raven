@@ -152,6 +152,7 @@ module Submission = struct
     match Mmio.read64 t.view 8 with
     | 0L -> ()
     | 2L -> failwith "HCQ command stream exceeds ring capacity"
+    | 3L -> failwith "HCQ command stream lies outside a GPFIFO entry's 40-bit address"
     | _ -> failwith "HCQ submission timed out"
 
   let clear_error t = Mmio.write64 t.view 8 0L
