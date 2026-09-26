@@ -1219,11 +1219,31 @@ let stage_capacity_tests =
             int 0 (List.length storage));
     ]
 
+let kernel_split_keeps_independent_ranges () =
+  let n = U.variable ~name:"store_count" ~min_val:1 ~max_val:8 ~param:true () in
+  let m = U.variable ~name:"value_count" ~min_val:1 ~max_val:8 ~param:true () in
+  let dst_range = U.range ~size:n ~axis:0 ~kind:Ak.Loop () in
+  let value_range = U.range ~size:m ~axis:1 ~kind:Ak.Loop () in
+  let dst = mk_param ~idx:93740 [8] in
+  let store = U.store ~dst:(U.index ~ptr:dst ~idxs:[dst_range] ())
+      ~value:(U.cast ~src:value_range ~dtype:D.float32) () in
+  let graph = Rangeify.get_kernel_graph
+      (U.sink [U.end_ ~value:store ~ranges:[dst_range; value_range]]) in
+  let bounds = U.toposort ~enter_calls:true graph
+      |> List.filter_map (fun node -> Option.map
+          (fun (range : U.range_view) -> U.sym_infer range.size
+             ["store_count", 2L; "value_count", 5L]) (U.as_range node))
+      |> List.sort Int.compare in
+  equal ~msg:"equal maximum extents do not identify independent store loops"
+    (list int) [2; 5] bounds
+
 (* Main *)
 
 let () =
   run "Schedule.Rangeify"
     [
+      test "kernel splitting preserves independent symbolic ranges"
+        kernel_split_keeps_independent_ranges;
       stage_capacity_tests;
       stack_selection_tests;
       test "Shape queries release graphs" shape_queries_release_graphs;

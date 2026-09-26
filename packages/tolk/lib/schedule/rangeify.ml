@@ -423,26 +423,12 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
 
 (* Add buffers *)
 
-(* How many elements an index spans: a range's size, one element for an axis
-   pinned to a constant, and otherwise the bound of the expression — a stage
-   flattened to a single index no longer holds a RANGE, but it still spans its
-   whole extent. *)
-let range_int_size r =
-  match U.as_range r with
-  | Some v -> Option.value (U.const_int_value v.size) ~default:(Bound.to_int (Bound.succ (U.vmax r)))
-  | None -> if U.op r = Ops.Const then 1 else Bound.to_int (Bound.succ (U.vmax r))
-
-let flat_index_of_ranges ?dims ranges =
-  let range_dims ranges =
-    match dims with
-    | Some dims when List.length dims = List.length ranges -> dims
-    | _ -> List.map range_int_size ranges
-  in
+let flat_index_of_ranges ~dims ranges =
   match ranges with
   | [] -> int_ 0
   | [ r ] -> r
   | ranges ->
-      let dims = Array.of_list (range_dims ranges) in
+      let dims = Array.of_list dims in
       let ranges = Array.of_list ranges in
       let n_axes = Array.length ranges in
       let acc = ref ranges.(n_axes - 1) in
@@ -883,93 +869,6 @@ let split_store n =
         in
         let ret =
           U.graph_rewrite ~bottom_up:true ~name:"kernel_split" rewrite n
-        in
-        let ret =
-          match U.as_end ret with
-          | Some { value; ranges } -> (
-              match U.as_store value with
-              | Some { dst; value = stored; gate } -> (
-                  match U.as_index dst with
-                  | Some { ptr; idxs } ->
-                      let is_range r = U.op r = Ops.Range in
-                      let stored_ranges =
-                        List.filter is_range (U.ranges stored)
-                      in
-                      let same_size a b = Bound.equal (U.vmax a) (U.vmax b) in
-                      let flat_size ranges =
-                        List.fold_left
-                          (fun acc r -> acc * (Bound.to_int (Bound.succ (U.vmax r))))
-                          1 ranges
-                      in
-                      let same_flat_size dst stored =
-                        flat_size dst = flat_size stored
-                      in
-                      let range_mem r ranges =
-                        List.exists (U.equal r) ranges
-                      in
-                      let same_ranges a b =
-                        List.length a = List.length b
-                        && List.for_all (fun r -> range_mem r b) a
-                      in
-                      let sort_ranges ranges =
-                        List.sort_uniq
-                          (fun a b ->
-                             let c = range_axis_cmp a b in
-                             if c = 0 then compare (U.tag a) (U.tag b) else c)
-                          ranges
-                      in
-                      let rewrite_flat_idx idx =
-                        let dst_ranges =
-                          List.filter is_range (U.ranges idx)
-                        in
-                        match dst_ranges, stored_ranges with
-                        | [ dst ], [ stored ] when same_size dst stored ->
-                            Some (`Substitute [ (dst, stored) ])
-                        | _ :: _, _ :: _
-                          when (not (same_ranges dst_ranges stored_ranges))
-                               && same_flat_size dst_ranges stored_ranges ->
-                            let gate_ranges =
-                              match gate with
-                              | None -> []
-                              | Some gate -> U.ranges gate
-                            in
-                            if
-                              List.exists
-                                (fun r -> range_mem r gate_ranges)
-                                dst_ranges
-                            then None
-                            else
-                              Some
-                                (`Replace
-                                  ( flat_index_of_ranges stored_ranges,
-                                    dst_ranges ))
-                        | _ -> None
-                      in
-                      (match idxs with
-                       | [ idx ] -> (
-                           match rewrite_flat_idx idx with
-                           | Some (`Substitute subs) ->
-                           let idxs = List.map (U.substitute subs) idxs in
-                           let dst = U.index ~ptr ~idxs () in
-                           let ranges = List.map (U.substitute subs) ranges in
-                           U.end_ ~value:(U.store ~dst ~value:stored ?gate ())
-                             ~ranges
-                           | Some (`Replace (idx, dst_ranges)) ->
-                               let dst = U.index ~ptr ~idxs:[ idx ] () in
-                               let ranges =
-                                 ranges
-                                 |> List.filter
-                                      (fun r -> not (range_mem r dst_ranges))
-                                 |> fun rs -> sort_ranges (rs @ stored_ranges)
-                               in
-                               U.end_
-                                 ~value:(U.store ~dst ~value:stored ?gate ())
-                                 ~ranges
-                           | None -> ret)
-                       | _ -> ret)
-                  | None -> ret)
-              | None -> ret)
-          | None -> ret
         in
         let ret = renumber_kernel_ranges ret in
         let info : U.call_info =

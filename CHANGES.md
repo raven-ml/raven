@@ -698,6 +698,10 @@ thread.
 
 ### Tolk (new)
 
+- Kernel splitting preserves independent store and value loops, including
+  symbolic loops with equal maximum sizes. They no longer collapse into one
+  loop and change which output elements are written.
+
 - Independent kernel lowering and beam candidates share bounded compilation
   workers through `PARALLEL`. Workers inherit scoped settings and finish
   before errors propagate; device timing stays in the caller.
