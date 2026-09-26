@@ -2513,6 +2513,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx_quant.apply` of a weight split on its experts over rows copied on
+  each device no longer raises "operands on ... place one of them": the eager
+  product decodes each matrix, and reads the rows, on the host.
 - `Nx.take` (and `Nx.slice` with a list of indices) along the split axis of a
   split value is a copy on each device, as a reduction over that axis is: each
   device selects among its own rows. It raised, although a compiled program

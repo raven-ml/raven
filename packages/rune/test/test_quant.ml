@@ -917,6 +917,11 @@ let test_over_devices () =
        Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
        (fun w -> Nx_quant.apply ~ids w x)
        (Nx_quant.place (Nx.Placement.sharded ~axis:0 two) w));
+  close ~msg:"split experts, eagerly, over rows copied on both devices"
+    (routed (ids, x))
+    (Nx_quant.apply ~ids
+       (Nx_quant.place (Nx.Placement.sharded ~axis:0 two) w)
+       (Nx.place (Nx.Placement.replicated two) x));
   (* Routes and rows split as well: a route may name an expert on the other
      device, which multiplies it. *)
   let ids = ints [| 4; 1 |] [| 3; 0; 1; 2 |] and x = floats [| 4; 1; 1; 64 |] in

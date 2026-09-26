@@ -101,8 +101,11 @@ let e8m0 =
          if s = 255 then Float.nan else Float.ldexp 1.0 (s - 127)))
 
 (* [decode codes scales] is rows [[| r; k / 2 |]] and [[| r; k / 32 |]] at
-   float32, [[| r; k |]]. *)
+   float32, [[| r; k |]], decoded on the host: rows of a placed weight are read
+   there first, so those of a split one meet no value on other devices. *)
 let decode codes scales =
+  let codes = Nx.place Nx.Placement.host codes
+  and scales = Nx.place Nx.Placement.host scales in
   let r = Nx.dim 0 codes and k = 2 * Nx.dim 1 codes in
   let indices t = Nx.cast Nx.int32 (Nx.reshape [| -1 |] (Nx.contiguous t)) in
   let values = Nx.take ~axis:0 ~indices:(indices codes) byte_values in
@@ -334,7 +337,7 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
     let x =
       Nx.reshape
         [| Array.fold_left ( * ) 1 xb; m; inputs |]
-        (Nx.contiguous (Nx.cast Nx.float32 x))
+        (Nx.contiguous (Nx.cast Nx.float32 (Nx.place Nx.Placement.host x)))
     in
     let lead = Array.sub ws 0 (wr - 2) in
     let base = ref 0 in
