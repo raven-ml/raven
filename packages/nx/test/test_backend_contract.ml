@@ -5,4 +5,4 @@ module Contract =
       let create_context = Nx_backend.create_context
     end)
 
-let () = Windtrap.run "nx backend contract" (Contract.suite ())
+let () = exit (Windtrap.run "nx backend contract" (Contract.suite ()))

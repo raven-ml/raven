@@ -240,48 +240,50 @@ let test_log_inverted () =
   contains ~sub:">10<" svg
 
 let () =
-  run "Scale"
-    [
-      group "linear"
-        [
-          test "ticks present" test_linear_ticks_present;
-          test "xlim constrains" test_linear_xlim;
-          test "ylim constrains" test_linear_ylim;
-          test "negative range" test_linear_negative_range;
-          test "small range" test_linear_small_range;
-          test "single point" test_linear_single_point;
-        ];
-      group "log"
-        [
-          test "power-of-10 ticks" test_log_ticks;
-          test "log y axis" test_log_y;
-          test "labels every decade" test_log_rejects_nothing_below_one;
-        ];
-      group "sqrt"
-        [
-          test "handles zero" test_sqrt_handles_zero;
-          test "differs from linear" test_sqrt_differs_from_linear;
-        ];
-      group "asinh"
-        [
-          test "negative values" test_asinh_negative_values;
-          test "differs from linear" test_asinh_differs_from_linear;
-        ];
-      group "symlog"
-        [
-          test "linear and log ticks" test_symlog_has_linear_and_log_ticks;
-          test "differs from linear" test_symlog_differs_from_linear;
-        ];
-      group "inverted"
-        [
-          test "reverses tick order" test_invert_reverses_tick_order;
-          test "preserves ticks" test_invert_preserves_ticks;
-          test "log inverted" test_log_inverted;
-        ];
-      group "custom ticks"
-        [
-          test "explicit xticks" test_explicit_xticks;
-          test "explicit yticks" test_explicit_yticks;
-          test "explicit ticks replace auto" test_explicit_xticks_replace_auto;
-        ];
-    ]
+  exit
+    (run "Scale"
+       [
+         group "linear"
+           [
+             test "ticks present" test_linear_ticks_present;
+             test "xlim constrains" test_linear_xlim;
+             test "ylim constrains" test_linear_ylim;
+             test "negative range" test_linear_negative_range;
+             test "small range" test_linear_small_range;
+             test "single point" test_linear_single_point;
+           ];
+         group "log"
+           [
+             test "power-of-10 ticks" test_log_ticks;
+             test "log y axis" test_log_y;
+             test "labels every decade" test_log_rejects_nothing_below_one;
+           ];
+         group "sqrt"
+           [
+             test "handles zero" test_sqrt_handles_zero;
+             test "differs from linear" test_sqrt_differs_from_linear;
+           ];
+         group "asinh"
+           [
+             test "negative values" test_asinh_negative_values;
+             test "differs from linear" test_asinh_differs_from_linear;
+           ];
+         group "symlog"
+           [
+             test "linear and log ticks" test_symlog_has_linear_and_log_ticks;
+             test "differs from linear" test_symlog_differs_from_linear;
+           ];
+         group "inverted"
+           [
+             test "reverses tick order" test_invert_reverses_tick_order;
+             test "preserves ticks" test_invert_preserves_ticks;
+             test "log inverted" test_log_inverted;
+           ];
+         group "custom ticks"
+           [
+             test "explicit xticks" test_explicit_xticks;
+             test "explicit yticks" test_explicit_yticks;
+             test "explicit ticks replace auto"
+               test_explicit_xticks_replace_auto;
+           ];
+       ])

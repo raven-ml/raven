@@ -168,4 +168,4 @@ let suite =
     group "errors" [ test "invalid arguments" test_errors ];
   ]
 
-let () = run "Nx Sliding window" suite
+let () = exit (run "Nx Sliding window" suite)

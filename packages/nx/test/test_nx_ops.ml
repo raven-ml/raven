@@ -446,4 +446,4 @@ let suite =
     group "Erfinv" erfinv_tests;
   ]
 
-let () = run "Nx Ops" suite
+let () = exit (run "Nx Ops" suite)

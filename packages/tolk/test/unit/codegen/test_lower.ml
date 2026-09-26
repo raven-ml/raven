@@ -91,7 +91,7 @@ let shared_loop_barrier ~unbounded ~same_buffer ~already_barrier () =
   end
 
 let () =
-  run "Codegen_lower"
+  exit (run "Codegen_lower"
     [
       test "bounded shared loop finishes reads before the next write"
         (shared_loop_barrier ~unbounded:false ~same_buffer:true ~already_barrier:false);
@@ -548,4 +548,4 @@ let () =
                           (test_renderer ~extra_matcher ())
                           (U.sink [ marker ])))));
         ];
-    ]
+    ])

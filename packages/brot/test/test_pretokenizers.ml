@@ -2222,72 +2222,75 @@ let test_json_of_hf () =
     {|{"type":"Punctuation","behavior":"Isolated"}|}
 
 let () =
-  run "Pre-tokenizers Test Suite"
-    [
-      group "byte_level"
-        [
-          test "ByteLevel basic" test_byte_level_basic;
-          test "ByteLevel GPT-2 pattern" test_byte_level_pattern;
-          test "ByteLevel prefix space" test_byte_level_prefix_space;
-          test "ByteLevel special chars" test_byte_level_special_chars;
-          test "ByteLevel unicode" test_byte_level_unicode;
-          test "ByteLevel edge cases" test_byte_level_edge_cases;
-          test "ByteLevel matches the pattern" test_byte_level_matches_pattern;
-          test "ByteLevel on malformed UTF-8" test_byte_level_malformed_utf8;
-          test "byte-level decoding" test_byte_level_decode;
-        ];
-      group "offsets"
-        [ test "offsets are source spans" test_offsets_are_source_spans ];
-      group "bert"
-        [
-          test "BERT tokenization" test_bert_pretokenizer;
-          test "punctuation class" test_punctuation_class;
-        ];
-      group "whitespace"
-        [
-          test "Whitespace tokenization" test_whitespace_pretokenizer;
-          test "WhitespaceSplit" test_whitespace_split;
-        ];
-      group "punctuation"
-        [
-          test "Punctuation behaviors" test_punctuation_pretokenizer;
-          test "every behavior" test_punctuation_behaviors;
-        ];
-      group "digits" [ test "Digits tokenization" test_digits_pretokenizer ];
-      group "split"
-        ([
-           test "every behavior and invert" test_split_behaviors;
-           test "patterns of several characters and bytes" test_split_patterns;
-           test "regex: the cl100k pattern" test_split_regex_cl100k;
-           test "regex: the o200k pattern" test_split_regex_o200k;
-           test "regex: every behavior and invert" test_split_regex_behaviors;
-           test "regex: invalid UTF-8" test_split_regex_invalid_utf8;
-           test "regex: in a sequence" test_split_regex_in_sequence;
-           test "regex: rejected patterns" test_split_regex_rejected;
-           test "regex: which patterns are walked" test_split_regex_walkers;
-           test "regex: the walkers on the parity corpora"
-             test_split_regex_walkers_on_corpora;
-           test "CharDelimiterSplit" test_char_delimiter_split;
-         ]
-        @ split_regex_walker_props);
-      group "sequence"
-        [ test "Sequence of tokenizers" test_sequence_pretokenizer ];
-      group "fixed_length" [ test "FixedLength chunks" test_fixed_length ];
-      group "unicode_scripts" [ test "UnicodeScripts" test_unicode_scripts ];
-      group "metaspace"
-        [
-          test "Metaspace basic" test_metaspace_basic;
-          test "Metaspace matches HuggingFace" test_metaspace_huggingface;
-          test "Metaspace offsets are of the source" test_metaspace_offsets;
-          test "Metaspace prepends on first to the opening piece"
-            test_metaspace_first;
-          test "Byte level after a walker" test_byte_level_after_a_walker;
-        ];
-      group "chunking" [ test "walking a long text" test_chunked_walk ];
-      group "json"
-        [
-          test "HuggingFace shape" test_json_shape;
-          test "round-trip" test_json_round_trip;
-          test "reading HuggingFace JSON" test_json_of_hf;
-        ];
-    ]
+  exit
+    (run "Pre-tokenizers Test Suite"
+       [
+         group "byte_level"
+           [
+             test "ByteLevel basic" test_byte_level_basic;
+             test "ByteLevel GPT-2 pattern" test_byte_level_pattern;
+             test "ByteLevel prefix space" test_byte_level_prefix_space;
+             test "ByteLevel special chars" test_byte_level_special_chars;
+             test "ByteLevel unicode" test_byte_level_unicode;
+             test "ByteLevel edge cases" test_byte_level_edge_cases;
+             test "ByteLevel matches the pattern"
+               test_byte_level_matches_pattern;
+             test "ByteLevel on malformed UTF-8" test_byte_level_malformed_utf8;
+             test "byte-level decoding" test_byte_level_decode;
+           ];
+         group "offsets"
+           [ test "offsets are source spans" test_offsets_are_source_spans ];
+         group "bert"
+           [
+             test "BERT tokenization" test_bert_pretokenizer;
+             test "punctuation class" test_punctuation_class;
+           ];
+         group "whitespace"
+           [
+             test "Whitespace tokenization" test_whitespace_pretokenizer;
+             test "WhitespaceSplit" test_whitespace_split;
+           ];
+         group "punctuation"
+           [
+             test "Punctuation behaviors" test_punctuation_pretokenizer;
+             test "every behavior" test_punctuation_behaviors;
+           ];
+         group "digits" [ test "Digits tokenization" test_digits_pretokenizer ];
+         group "split"
+           ([
+              test "every behavior and invert" test_split_behaviors;
+              test "patterns of several characters and bytes"
+                test_split_patterns;
+              test "regex: the cl100k pattern" test_split_regex_cl100k;
+              test "regex: the o200k pattern" test_split_regex_o200k;
+              test "regex: every behavior and invert" test_split_regex_behaviors;
+              test "regex: invalid UTF-8" test_split_regex_invalid_utf8;
+              test "regex: in a sequence" test_split_regex_in_sequence;
+              test "regex: rejected patterns" test_split_regex_rejected;
+              test "regex: which patterns are walked" test_split_regex_walkers;
+              test "regex: the walkers on the parity corpora"
+                test_split_regex_walkers_on_corpora;
+              test "CharDelimiterSplit" test_char_delimiter_split;
+            ]
+           @ split_regex_walker_props);
+         group "sequence"
+           [ test "Sequence of tokenizers" test_sequence_pretokenizer ];
+         group "fixed_length" [ test "FixedLength chunks" test_fixed_length ];
+         group "unicode_scripts" [ test "UnicodeScripts" test_unicode_scripts ];
+         group "metaspace"
+           [
+             test "Metaspace basic" test_metaspace_basic;
+             test "Metaspace matches HuggingFace" test_metaspace_huggingface;
+             test "Metaspace offsets are of the source" test_metaspace_offsets;
+             test "Metaspace prepends on first to the opening piece"
+               test_metaspace_first;
+             test "Byte level after a walker" test_byte_level_after_a_walker;
+           ];
+         group "chunking" [ test "walking a long text" test_chunked_walk ];
+         group "json"
+           [
+             test "HuggingFace shape" test_json_shape;
+             test "round-trip" test_json_round_trip;
+             test "reading HuggingFace JSON" test_json_of_hf;
+           ];
+       ])

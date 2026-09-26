@@ -387,10 +387,10 @@ let storage_tests = group "custom storage" [
     all_floats 5.0 result);
 ]
 
-let () = run "Tolk_frontend_custom_kernel"
+let () = exit (run "Tolk_frontend_custom_kernel"
     [tests; input_tests; storage_tests; group "explicit call outputs"
       [test "inline calls write outputs at explicit positions" (explicit_call_outputs false);
        test "precompiled calls write outputs at explicit positions" (explicit_call_outputs true);
        test "nested calls resolve anonymous internal storage" nested_call_internal_allocation;
        test "inline outputs keep symbolic extents" (symbolic_call_outputs false);
-       test "precompiled outputs keep symbolic extents" (symbolic_call_outputs true)]]
+       test "precompiled outputs keep symbolic extents" (symbolic_call_outputs true)]])

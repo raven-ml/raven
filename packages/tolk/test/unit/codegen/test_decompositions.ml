@@ -1314,7 +1314,7 @@ let operator_promotion_tests =
             (simplified (binary Ops.Floordiv y (Uop.const_int 8)))) ]
 
 let () =
-  run "tolk.uop.decomp"
+  exit (run "tolk.uop.decomp"
     [
       operator_promotion_tests;
       group "transcendentals"
@@ -1465,4 +1465,4 @@ let () =
           test "gated f32 store is not decomposed"
             gated_f32_store_is_not_float_decomposed;
         ];
-    ]
+    ])

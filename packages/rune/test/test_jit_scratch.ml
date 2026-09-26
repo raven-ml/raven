@@ -564,7 +564,7 @@ let consumer_excludes_alias move () =
         (array float_exact) (Array.make 4 9.) (Nx.to_array (consume (place 8.))))
 
 let () =
-  run "rune transfer scratch"
+  exit (run "rune transfer scratch"
     (call_ownership_tests @ [
       test "partial consumption upgrade releases prior cells" partial_consumption_upgrade_unwinds;
       test "consumption excludes alias reads" (consumer_excludes_alias false);
@@ -586,4 +586,4 @@ let () =
         concurrent_device_lookups_keep_one_identity;
       test "independent replays keep their intermediates"
         independent_replays_keep_their_intermediates;
-    ])
+    ]))

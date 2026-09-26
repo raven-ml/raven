@@ -536,4 +536,4 @@ let tests =
       ];
   ]
 
-let () = run "kaun stateful" tests
+let () = exit (run "kaun stateful" tests)

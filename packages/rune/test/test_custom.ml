@@ -315,4 +315,4 @@ let tests =
       ];
   ]
 
-let () = run "rune custom" tests
+let () = exit (run "rune custom" tests)

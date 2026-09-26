@@ -976,7 +976,7 @@ let concurrent_execution_statistics () =
   equal (float 1e-15) 1000. (G.snapshot ()).time_sum_s
 
 let () =
-  run "Engine_realize"
+  exit (run "Engine_realize"
     [
       compilation_worker_tests;
       program_completion_tests;
@@ -1304,4 +1304,4 @@ let () =
             equal int 2 (Device.Buffer.size v);
             equal int 16 (Device.Buffer.offset v));
         ];
-    ]
+    ])

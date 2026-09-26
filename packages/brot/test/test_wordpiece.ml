@@ -226,17 +226,18 @@ let test_wordpiece_hf_semantics () =
   case ~max:100 "" []
 
 let () =
-  run "WordPiece tests"
-    [
-      group "basic"
-        [
-          test "basic tokenization" test_wordpiece_basic;
-          test "subword tokenization" test_wordpiece_subwords;
-          test "unknown tokens" test_wordpiece_unknown;
-          test "max input chars" test_wordpiece_max_chars;
-          test "save and load" test_wordpiece_save_load;
-          test "tokenizer integration" test_tokenizer_integration;
-          test "greedy matching" test_wordpiece_greedy_matching;
-          test "HuggingFace semantics" test_wordpiece_hf_semantics;
-        ];
-    ]
+  exit
+    (run "WordPiece tests"
+       [
+         group "basic"
+           [
+             test "basic tokenization" test_wordpiece_basic;
+             test "subword tokenization" test_wordpiece_subwords;
+             test "unknown tokens" test_wordpiece_unknown;
+             test "max input chars" test_wordpiece_max_chars;
+             test "save and load" test_wordpiece_save_load;
+             test "tokenizer integration" test_tokenizer_integration;
+             test "greedy matching" test_wordpiece_greedy_matching;
+             test "HuggingFace semantics" test_wordpiece_hf_semantics;
+           ];
+       ])

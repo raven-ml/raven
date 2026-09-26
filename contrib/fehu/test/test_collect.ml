@@ -113,7 +113,7 @@ let test_concat_singleton () =
   equal ~msg:"same length" int 5 (Collect.length t)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  exit (Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Collect"
     [
       group "rollout"
@@ -135,4 +135,4 @@ let () =
           test "empty raises" test_concat_empty_raises;
           test "singleton" test_concat_singleton;
         ];
-    ]
+    ])

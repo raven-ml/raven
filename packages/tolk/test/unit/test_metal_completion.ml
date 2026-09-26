@@ -89,7 +89,7 @@ let shared_encode_order profile () =
       icb_before extent extent icb_after in
   equal string (pass 7 ^ "|" ^ pass 11) (shared_encode profile)
 
-let () = run __FILE__ [
+let () = exit (run __FILE__ [
   test "shared submission keeps ICB and direct dispatch order" (shared_encode_order false);
   test "profiled direct dispatch reads updated launch sizes" (shared_encode_order true);
   test "host waits observe completion and profiling writes" successful_completion;
@@ -97,4 +97,4 @@ let () = run __FILE__ [
   test "completion is collected in submission order" ordered_collection;
   test "GPU failures stop submissions and retain command ownership" failed_completion;
   test "context retirement rejects unfinished commands" context_retirement;
-]
+])

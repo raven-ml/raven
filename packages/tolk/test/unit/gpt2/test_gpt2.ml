@@ -230,4 +230,4 @@ let tokenizer_tests =
               equal string "Hello." (Brot.decode t (Brot.encode_ids t "Hello."))));
     ]
 
-let () = run "Tolk_gpt2" [ model_tests; tokenizer_tests ]
+let () = exit (run "Tolk_gpt2" [ model_tests; tokenizer_tests ])

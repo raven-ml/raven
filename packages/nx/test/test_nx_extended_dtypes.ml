@@ -567,4 +567,4 @@ let suite =
       ];
   ]
 
-let () = run "Nx Extended Dtypes" suite
+let () = exit (run "Nx Extended Dtypes" suite)

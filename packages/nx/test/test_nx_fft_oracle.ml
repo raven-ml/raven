@@ -525,4 +525,4 @@ let suite =
       ];
   ]
 
-let () = run "Nx FFT oracle" suite
+let () = exit (run "Nx FFT oracle" suite)

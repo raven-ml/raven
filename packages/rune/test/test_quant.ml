@@ -1080,7 +1080,7 @@ let test_debug () =
 
 let () =
   if Sys.getenv_opt form_role <> None then run_form_role ();
-  run "rune quant"
+  exit (run "rune quant"
     [
       group "Law 2"
         [
@@ -1112,4 +1112,4 @@ let () =
           test "over two devices" test_over_devices;
           test "debug" test_debug;
         ];
-    ]
+    ])

@@ -112,7 +112,7 @@ let test_add_after_clear () =
   equal ~msg:"size = 1 after re-add" int 1 (Buffer.size buf)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  exit (Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Buffer"
     [
       group "creation"
@@ -141,4 +141,4 @@ let () =
           test "resets size" test_clear_resets;
           test "add after clear" test_add_after_clear;
         ];
-    ]
+    ])

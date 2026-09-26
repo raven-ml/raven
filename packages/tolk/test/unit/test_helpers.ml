@@ -217,7 +217,7 @@ let compilation_cpu_quota =
             "2000000 100000", 8; " 200000\t100000\n", 2])]
 
 let () =
-  run __FILE__
+  exit (run __FILE__
     [ formatting; counters; contexts; compilation_cpu_quota;
       test "target strings preserve architecture and interface spelling" (fun () ->
           let t = Target.of_string "remote:host:2+nv:cuda:sm_89" in
@@ -302,5 +302,8 @@ let () =
           raises (Failure "queue initialization failed") open_runtime;
           equal bool false !pci_attempted);
       test "does not treat cancellation as an unavailable driver" (fun () ->
-          raises Sys.Break (fun () -> select [ (fun () -> raise Sys.Break); (fun () -> ()) ]));
-    ]
+          (* windtrap ends the run on Sys.Break, so the test catches it. *)
+          match select [ (fun () -> raise Sys.Break); (fun () -> ()) ] with
+          | _ -> fail "expected Sys.Break"
+          | exception Sys.Break -> ());
+    ])

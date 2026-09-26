@@ -297,7 +297,7 @@ let concurrent_timeline_initialization () =
   equal bytes (Bytes.make 16 '\000') (Device.Buffer.as_bytes first_timeline)
 
 let () =
-  run "Cuda_runtime"
+  exit (run "Cuda_runtime"
     [
       test "concurrent first links share one timeline and context descriptor"
         concurrent_timeline_initialization;
@@ -700,4 +700,4 @@ let () =
                 (array (float 1e-6))
                 (neg data1) (read_f32 out1));
         ];
-    ]
+    ])

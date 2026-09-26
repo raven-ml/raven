@@ -310,7 +310,7 @@ let () =
   match Sys.getenv_opt role_var with
   | Some role -> run_role role
   | None ->
-      run "tolk.diskcache"
+      exit (run "tolk.diskcache"
         [
           group "Diskcache"
             [
@@ -332,4 +332,4 @@ let () =
               test "concurrent writers never tear an entry"
                 concurrent_writers_never_tear;
             ];
-        ]
+        ])

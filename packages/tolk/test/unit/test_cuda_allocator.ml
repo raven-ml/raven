@@ -52,6 +52,6 @@ let isolated_driver () =
     | _ -> fail "isolated CUDA allocator fixture failed"
   end
 
-let () = run "CUDA allocation ownership" [
+let () = exit (run "CUDA allocation ownership" [
   test "retained allocations survive device replacement and stage device peers" isolated_driver;
-]
+])

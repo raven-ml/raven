@@ -1146,4 +1146,4 @@ let tests =
       ];
   ]
 
-let () = run "rune device lists" tests
+let () = exit (run "rune device lists" tests)

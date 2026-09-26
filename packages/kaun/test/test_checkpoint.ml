@@ -471,45 +471,48 @@ let test_to_int_errors () =
     (fun () -> Checkpoint.to_int "v" ckpt)
 
 let () =
-  run "kaun checkpoint"
-    [
-      group "round-trip"
-        [
-          test "save and load preserve values" test_round_trip;
-          test "save and load preserve dtypes" test_round_trip_dtypes;
-          test "of_int and to_int round-trip through a file" test_int_round_trip;
-          test "a key round-trips through a file" test_key_round_trip;
-        ];
-      group "training"
-        [
-          test "resumed Adam training continues identically"
-            test_resume_training;
-          test "resumed SGD momentum continues identically"
-            test_resume_sgd_momentum;
-          test "pretrained weights load by name into a fresh model"
-            test_load_pretrained;
-        ];
-      group "naming"
-        [
-          test "prefix prepends dotted names" test_prefix_names;
-          test "leaves are named by their path" test_nested_paths;
-          test "a root leaf is named by the prefix alone" test_root_leaf_prefix;
-          test "a fixed tensor has an entry" test_fixed_tensor_entry;
-          test "find and get look entries up by name" test_find_get;
-        ];
-      group "errors"
-        [
-          test "missing entry raises with its name" test_missing_entry;
-          test "unrelated entries are ignored" test_extra_entries_ignored;
-          test "shape mismatch raises" test_shape_mismatch;
-          test "dtype mismatch raises" test_dtype_mismatch;
-          test "to_tensor is strict and returns the entry as stored"
-            test_to_tensor;
-          test "to_float casts floating-point entries only" test_to_float;
-          test "concat rejects duplicate names" test_concat_duplicate;
-          test "duplicate leaf paths are rejected" test_duplicate_names;
-          test "empty tensor names are rejected" test_empty_name;
-          test "to_int rejects missing and non-scalar entries"
-            test_to_int_errors;
-        ];
-    ]
+  exit
+    (run "kaun checkpoint"
+       [
+         group "round-trip"
+           [
+             test "save and load preserve values" test_round_trip;
+             test "save and load preserve dtypes" test_round_trip_dtypes;
+             test "of_int and to_int round-trip through a file"
+               test_int_round_trip;
+             test "a key round-trips through a file" test_key_round_trip;
+           ];
+         group "training"
+           [
+             test "resumed Adam training continues identically"
+               test_resume_training;
+             test "resumed SGD momentum continues identically"
+               test_resume_sgd_momentum;
+             test "pretrained weights load by name into a fresh model"
+               test_load_pretrained;
+           ];
+         group "naming"
+           [
+             test "prefix prepends dotted names" test_prefix_names;
+             test "leaves are named by their path" test_nested_paths;
+             test "a root leaf is named by the prefix alone"
+               test_root_leaf_prefix;
+             test "a fixed tensor has an entry" test_fixed_tensor_entry;
+             test "find and get look entries up by name" test_find_get;
+           ];
+         group "errors"
+           [
+             test "missing entry raises with its name" test_missing_entry;
+             test "unrelated entries are ignored" test_extra_entries_ignored;
+             test "shape mismatch raises" test_shape_mismatch;
+             test "dtype mismatch raises" test_dtype_mismatch;
+             test "to_tensor is strict and returns the entry as stored"
+               test_to_tensor;
+             test "to_float casts floating-point entries only" test_to_float;
+             test "concat rejects duplicate names" test_concat_duplicate;
+             test "duplicate leaf paths are rejected" test_duplicate_names;
+             test "empty tensor names are rejected" test_empty_name;
+             test "to_int rejects missing and non-scalar entries"
+               test_to_int_errors;
+           ];
+       ])

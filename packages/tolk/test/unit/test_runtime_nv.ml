@@ -963,7 +963,7 @@ let queue_retirement_timeout m =
       (Device.Buffer.as_bytes (Hashtbl.find buffers tag))) before
 
 let () =
-  run "Nv_runtime"
+  exit (run "Nv_runtime"
     [
       group "compiled queues"
         [test "shared clock calibration owns its stamp and scopes debug waits" (fun () -> with_fixture (fun m -> shared_calibration m));
@@ -1728,4 +1728,4 @@ let () =
               Tolk.Device.synchronize device;
               equal (list int) [ 42 ] (read_i32 dst));
         ];
-    ]
+    ])

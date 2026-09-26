@@ -217,7 +217,7 @@ let successful_boot_mapping_residency () =
         is_false (Nvdev.is_err_state fd.dev)))
 
 let () =
-  run "Nvdev"
+  exit (run "Nvdev"
     [
       group "register resolution"
         [
@@ -831,4 +831,4 @@ let () =
                   in
                   equal (option int) (Some 0x300000) paddr));
         ];
-    ]
+    ])

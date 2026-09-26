@@ -423,7 +423,7 @@ let schedule_cache_allows_reentrant_lowering () =
   equal ~msg:"the published schedule is reused" int 1 !calls
 
 let () =
-  run "Engine_schedule"
+  exit (run "Engine_schedule"
     [
       group "create_schedule"
         [
@@ -463,4 +463,4 @@ let () =
           test "a window a call writes keeps its offset"
             a_window_a_call_writes_keeps_its_offset;
         ];
-    ]
+    ])

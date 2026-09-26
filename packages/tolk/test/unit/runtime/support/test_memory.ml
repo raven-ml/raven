@@ -277,7 +277,7 @@ let shared_allocation_failure_releases_lock () =
   Tlsf.free allocator whole
 
 let () =
-  run "Memory"
+  exit (run "Memory"
     [
       group "shared virtual addresses"
         [ test "independent managers allocate disjoint ranges and coalesce" shared_virtual_address_space;
@@ -822,4 +822,4 @@ let () =
               Memory.unmap_range fx.mm ~vaddr ~size:0x1000;
               equal (array int64) (Array.make 8 0L) (slice fx 0 8));
         ];
-    ]
+    ])

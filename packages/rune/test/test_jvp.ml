@@ -440,4 +440,4 @@ let tests =
       ];
   ]
 
-let () = run "rune jvp" tests
+let () = exit (run "rune jvp" tests)

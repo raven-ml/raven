@@ -1797,104 +1797,111 @@ let test_safetensors_bfloat16_bit_exact () =
       equal ~msg:"bfloat16 payload round-trip" string payload_in payload_out)
 
 let () =
-  run "Nx_io comprehensive tests"
-    [
-      group "npy"
-        [
-          test "Save/load float32" test_npy_save_load_float32;
-          test "Save/load int64" test_npy_save_load_int64;
-          test "Overwrite protection" test_npy_overwrite_protection;
-          test "External versions, endian, and layout"
-            test_npy_external_variants;
-          test "Reject trailing payload" test_npy_rejects_trailing_payload;
-        ];
-      group "txt" txt_tests;
-      group "npz"
-        [
-          test "Save/load multiple arrays" test_npz_save_load_multiple;
-          test "Load specific entry" test_npz_load_entry;
-          test "External deflated archive" test_npz_external_deflate;
-          test "Store incompressible data"
-            test_npz_selects_store_for_incompressible_data;
-          test "Reject CRC and unsafe names"
-            test_npz_rejects_bad_crc_and_unsafe_names;
-        ];
-      group "gzip"
-        [
-          test "External stream" test_gunzip_external_stream;
-          test "Concatenated members" test_gunzip_concatenated_members;
-          test "Checksum failure is atomic"
-            test_gunzip_preserves_destination_on_error;
-        ];
-      group "zlib" [ test "Round trip" test_zlib_round_trip ];
-      group "png"
-        [
-          test "External filters" test_png_external_filters;
-          test "External sample depths" test_png_external_depths;
-          test "External Adam7 palette" test_png_external_adam7_palette;
-          test "Save/load and exclusive overwrite" test_png_save_load;
-          test "Encode to a string" test_png_encode;
-          test "Reject corruption" test_png_rejects_corruption;
-        ];
-      group "jpeg"
-        [
-          test "External baseline" test_jpeg_external_baseline;
-          test "External progressive" test_jpeg_external_progressive;
-          test "External grayscale" test_jpeg_external_grayscale;
-          test "External CMYK" test_jpeg_external_cmyk;
-          test "External restart interval" test_jpeg_external_restart;
-          test "Reject truncation" test_jpeg_rejects_truncation;
-          test "Save/load" test_jpeg_save_load;
-        ];
-      group "safetensors"
-        [
-          test "Decode JSON string escapes" test_safetensors_json_escapes;
-          test "Encode Unicode and control characters"
-            test_safetensors_json_encoding;
-          test "Reject invalid JSON strings"
-            test_safetensors_invalid_json_strings;
-          test "Save/load tensors" test_safetensors_save_load;
-          test "Save/load keys" test_safetensors_keys_round_trip;
-          test "Different dtypes" test_safetensors_different_dtypes;
-          test "Float16 round-trip" test_safetensors_float16_roundtrip;
-          test "Float16 bit exact" test_safetensors_float16_bit_exact;
-          test "Bfloat16 round-trip" test_safetensors_bfloat16_roundtrip;
-          test "Bfloat16 bit exact" test_safetensors_bfloat16_bit_exact;
-          test "Half values round-trip" test_safetensors_half_values_roundtrip;
-          test "Rank-0 half round-trip" test_safetensors_rank0_half;
-          test "Rank-0 float32 round-trip" test_safetensors_rank0_roundtrip;
-          test "Rank-0 int64 round-trip" test_safetensors_rank0_int64;
-          test "Int64 round-trip" test_safetensors_int64_roundtrip;
-          test "Uint64 round-trip" test_safetensors_uint64_roundtrip;
-          test "Uint32 round-trip" test_safetensors_uint32_roundtrip;
-          test "Int16 round-trip" test_safetensors_int16_roundtrip;
-          test "Uint16 round-trip" test_safetensors_uint16_roundtrip;
-          test "Int8 round-trip" test_safetensors_int8_roundtrip;
-          test "Uint8 round-trip" test_safetensors_uint8_roundtrip;
-          test "Bool round-trip" test_safetensors_bool_roundtrip;
-          test "Float8 e4m3 round-trip" test_safetensors_float8_e4m3_roundtrip;
-          test "Float8 e5m2 round-trip" test_safetensors_float8_e5m2_roundtrip;
-          test "Views are bit exact" test_safetensors_views_bit_exact;
-          test "A misaligned file equals its aligned twin"
-            test_safetensors_misaligned_twin;
-          test "Views know their file range" test_safetensors_file_range;
-          test "Dtypes nx lacks load as bytes" test_safetensors_foreign_dtypes;
-          test "Invalid files raise" test_safetensors_invalid_files;
-          test "Not a regular file raises" test_safetensors_not_a_regular_file;
-          test "A view outlives its archive"
-            test_safetensors_view_outlives_archive;
-          test "Failed save keeps the destination" test_safetensors_failed_save;
-          test "Refused rename keeps the temporary file"
-            test_safetensors_refused_rename;
-          test "Replace and delete a loaded file"
-            test_safetensors_replace_loaded_file;
-        ];
-      group "dtype_conversions"
-        [ test "Basic conversions" test_dtype_conversions ];
-      group "edge_cases"
-        [
-          test "Empty arrays" test_empty_arrays;
-          test "Large arrays" test_large_arrays;
-          test "High dimensional arrays" test_high_dimensional_arrays;
-        ];
-    ]
+  exit
+    (run "Nx_io comprehensive tests"
+       [
+         group "npy"
+           [
+             test "Save/load float32" test_npy_save_load_float32;
+             test "Save/load int64" test_npy_save_load_int64;
+             test "Overwrite protection" test_npy_overwrite_protection;
+             test "External versions, endian, and layout"
+               test_npy_external_variants;
+             test "Reject trailing payload" test_npy_rejects_trailing_payload;
+           ];
+         group "txt" txt_tests;
+         group "npz"
+           [
+             test "Save/load multiple arrays" test_npz_save_load_multiple;
+             test "Load specific entry" test_npz_load_entry;
+             test "External deflated archive" test_npz_external_deflate;
+             test "Store incompressible data"
+               test_npz_selects_store_for_incompressible_data;
+             test "Reject CRC and unsafe names"
+               test_npz_rejects_bad_crc_and_unsafe_names;
+           ];
+         group "gzip"
+           [
+             test "External stream" test_gunzip_external_stream;
+             test "Concatenated members" test_gunzip_concatenated_members;
+             test "Checksum failure is atomic"
+               test_gunzip_preserves_destination_on_error;
+           ];
+         group "zlib" [ test "Round trip" test_zlib_round_trip ];
+         group "png"
+           [
+             test "External filters" test_png_external_filters;
+             test "External sample depths" test_png_external_depths;
+             test "External Adam7 palette" test_png_external_adam7_palette;
+             test "Save/load and exclusive overwrite" test_png_save_load;
+             test "Encode to a string" test_png_encode;
+             test "Reject corruption" test_png_rejects_corruption;
+           ];
+         group "jpeg"
+           [
+             test "External baseline" test_jpeg_external_baseline;
+             test "External progressive" test_jpeg_external_progressive;
+             test "External grayscale" test_jpeg_external_grayscale;
+             test "External CMYK" test_jpeg_external_cmyk;
+             test "External restart interval" test_jpeg_external_restart;
+             test "Reject truncation" test_jpeg_rejects_truncation;
+             test "Save/load" test_jpeg_save_load;
+           ];
+         group "safetensors"
+           [
+             test "Decode JSON string escapes" test_safetensors_json_escapes;
+             test "Encode Unicode and control characters"
+               test_safetensors_json_encoding;
+             test "Reject invalid JSON strings"
+               test_safetensors_invalid_json_strings;
+             test "Save/load tensors" test_safetensors_save_load;
+             test "Save/load keys" test_safetensors_keys_round_trip;
+             test "Different dtypes" test_safetensors_different_dtypes;
+             test "Float16 round-trip" test_safetensors_float16_roundtrip;
+             test "Float16 bit exact" test_safetensors_float16_bit_exact;
+             test "Bfloat16 round-trip" test_safetensors_bfloat16_roundtrip;
+             test "Bfloat16 bit exact" test_safetensors_bfloat16_bit_exact;
+             test "Half values round-trip"
+               test_safetensors_half_values_roundtrip;
+             test "Rank-0 half round-trip" test_safetensors_rank0_half;
+             test "Rank-0 float32 round-trip" test_safetensors_rank0_roundtrip;
+             test "Rank-0 int64 round-trip" test_safetensors_rank0_int64;
+             test "Int64 round-trip" test_safetensors_int64_roundtrip;
+             test "Uint64 round-trip" test_safetensors_uint64_roundtrip;
+             test "Uint32 round-trip" test_safetensors_uint32_roundtrip;
+             test "Int16 round-trip" test_safetensors_int16_roundtrip;
+             test "Uint16 round-trip" test_safetensors_uint16_roundtrip;
+             test "Int8 round-trip" test_safetensors_int8_roundtrip;
+             test "Uint8 round-trip" test_safetensors_uint8_roundtrip;
+             test "Bool round-trip" test_safetensors_bool_roundtrip;
+             test "Float8 e4m3 round-trip"
+               test_safetensors_float8_e4m3_roundtrip;
+             test "Float8 e5m2 round-trip"
+               test_safetensors_float8_e5m2_roundtrip;
+             test "Views are bit exact" test_safetensors_views_bit_exact;
+             test "A misaligned file equals its aligned twin"
+               test_safetensors_misaligned_twin;
+             test "Views know their file range" test_safetensors_file_range;
+             test "Dtypes nx lacks load as bytes"
+               test_safetensors_foreign_dtypes;
+             test "Invalid files raise" test_safetensors_invalid_files;
+             test "Not a regular file raises"
+               test_safetensors_not_a_regular_file;
+             test "A view outlives its archive"
+               test_safetensors_view_outlives_archive;
+             test "Failed save keeps the destination"
+               test_safetensors_failed_save;
+             test "Refused rename keeps the temporary file"
+               test_safetensors_refused_rename;
+             test "Replace and delete a loaded file"
+               test_safetensors_replace_loaded_file;
+           ];
+         group "dtype_conversions"
+           [ test "Basic conversions" test_dtype_conversions ];
+         group "edge_cases"
+           [
+             test "Empty arrays" test_empty_arrays;
+             test "Large arrays" test_large_arrays;
+             test "High dimensional arrays" test_high_dimensional_arrays;
+           ];
+       ])

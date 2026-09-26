@@ -1372,4 +1372,4 @@ let tests =
       ];
   ]
 
-let () = run "vega" tests
+let () = exit (run "vega" tests)

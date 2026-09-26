@@ -137,15 +137,16 @@ let test_one_slot_on_metal () =
     ]
 
 let () =
-  run "kaun cache index metal"
-    [
-      group "select and every"
-        [
-          test
-            "a stream of blocks compiled for Metal stores and reads the \
-             expected entries"
-            test_stream_on_metal;
-          test "a pool of one slot keeps what its token stored"
-            test_one_slot_on_metal;
-        ];
-    ]
+  exit
+    (run "kaun cache index metal"
+       [
+         group "select and every"
+           [
+             test
+               "a stream of blocks compiled for Metal stores and reads the \
+                expected entries"
+               test_stream_on_metal;
+             test "a pool of one slot keeps what its token stored"
+               test_one_slot_on_metal;
+           ];
+       ])

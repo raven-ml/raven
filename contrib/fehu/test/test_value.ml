@@ -80,7 +80,7 @@ let test_to_string_dict () =
   is_true ~msg:"dict non-empty" (String.length s > 0)
 
 let () =
-  run "Fehu.Value"
+  exit (run "Fehu.Value"
     [
       group "equality"
         [
@@ -107,4 +107,4 @@ let () =
           test "to_string list" test_to_string_list;
           test "to_string dict" test_to_string_dict;
         ];
-    ]
+    ])

@@ -1358,7 +1358,7 @@ let fully_sharded (name, ndev, dims) =
     ]
 
 let () =
-  Helpers.Context_var.with_context
+  exit (Helpers.Context_var.with_context
     [ B (Helpers.dev, [ Target.of_string "CPU" ]) ]
   @@ fun () ->
   run "Collectives"
@@ -1434,4 +1434,4 @@ let () =
                4,
                [| 2048; 4096; 2048; 4096; 2048 |] );
            ]);
-    ]
+    ])

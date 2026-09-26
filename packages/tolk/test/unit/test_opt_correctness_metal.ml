@@ -44,8 +44,8 @@ let workload_test device w =
                    r.miscompiled))))
 
 let () =
-  run __FILE__
+  exit (run __FILE__
     [
       group "beam actions preserve semantics (Metal)"
         (List.map (workload_test device) Tolk_opt_fuzz.workloads);
-    ]
+    ])

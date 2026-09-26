@@ -184,4 +184,4 @@ let tests =
       ];
   ]
 
-let () = run "kaun data parallel" tests
+let () = exit (run "kaun data parallel" tests)

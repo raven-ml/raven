@@ -181,51 +181,54 @@ let test_step_count_validation () =
       ignore (S.one_cycle ~max_value:1. ~total_steps:0 () : S.t))
 
 let () =
-  run "vega schedules"
-    [
-      group "schedules"
-        [
-          test "constant is constant" test_constant;
-          test "exponential decay is geometric in steps" test_exponential_decay;
-          test "cosine decay spans init to final" test_cosine_decay;
-          test "warmup cosine ramps then decays" test_warmup_cosine;
-          test "constructors reject bad step counts" test_schedule_validation;
-          test "polynomial_decay" test_polynomial_decay;
-          test "warmup_cosine_decay" test_warmup_cosine_decay;
-          test "piecewise_constant" test_piecewise_constant;
-          test "piecewise_constant validation"
-            test_piecewise_constant_validation;
-          test "join" test_join;
-          test "join step reset" test_join_step_reset;
-          test "join validation" test_join_validation;
-          test "cosine_decay_restarts" test_cosine_decay_restarts;
-          test "cosine_decay_restarts t_mul" test_cosine_decay_restarts_t_mul;
-          test "cosine_decay_restarts m_mul" test_cosine_decay_restarts_m_mul;
-          test "one_cycle" test_one_cycle;
-          prop "constant is constant at any step"
-            Gen.(pair float nat)
-            (fun (v, step) ->
-              let s = S.constant v in
-              equal float_exact (S.eval s 0) (S.eval s step));
-          prop "cosine_decay bounded" Gen.nat (fun step ->
-              let s = S.cosine_decay ~init_value:1.0 ~decay_steps:100 () in
-              let v = S.eval s step in
-              is_true ~msg:">=0" (v >= 0.0);
-              is_true ~msg:"<=1" (v <= 1.0 +. 1e-6));
-          prop "one_cycle bounded" Gen.nat (fun step ->
-              let s = S.one_cycle ~max_value:1.0 ~total_steps:100 () in
-              let v = S.eval s step in
-              is_true ~msg:">=0" (v >= 0.0);
-              is_true ~msg:"<=max" (v <= 1.0 +. 1e-6));
-          prop "cosine_decay_restarts periodic" Gen.nat (fun step ->
-              let period = 50 in
-              let s =
-                S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:period ()
-              in
-              let v1 = S.eval s step in
-              let v2 = S.eval s (step + period) in
-              equal ~msg:"periodic" (float 1e-5) v1 v2);
-          test "restarts and one-cycle reject bad step counts"
-            test_step_count_validation;
-        ];
-    ]
+  exit
+    (run "vega schedules"
+       [
+         group "schedules"
+           [
+             test "constant is constant" test_constant;
+             test "exponential decay is geometric in steps"
+               test_exponential_decay;
+             test "cosine decay spans init to final" test_cosine_decay;
+             test "warmup cosine ramps then decays" test_warmup_cosine;
+             test "constructors reject bad step counts" test_schedule_validation;
+             test "polynomial_decay" test_polynomial_decay;
+             test "warmup_cosine_decay" test_warmup_cosine_decay;
+             test "piecewise_constant" test_piecewise_constant;
+             test "piecewise_constant validation"
+               test_piecewise_constant_validation;
+             test "join" test_join;
+             test "join step reset" test_join_step_reset;
+             test "join validation" test_join_validation;
+             test "cosine_decay_restarts" test_cosine_decay_restarts;
+             test "cosine_decay_restarts t_mul" test_cosine_decay_restarts_t_mul;
+             test "cosine_decay_restarts m_mul" test_cosine_decay_restarts_m_mul;
+             test "one_cycle" test_one_cycle;
+             prop "constant is constant at any step"
+               Gen.(pair float nat)
+               (fun (v, step) ->
+                 let s = S.constant v in
+                 equal float_exact (S.eval s 0) (S.eval s step));
+             prop "cosine_decay bounded" Gen.nat (fun step ->
+                 let s = S.cosine_decay ~init_value:1.0 ~decay_steps:100 () in
+                 let v = S.eval s step in
+                 is_true ~msg:">=0" (v >= 0.0);
+                 is_true ~msg:"<=1" (v <= 1.0 +. 1e-6));
+             prop "one_cycle bounded" Gen.nat (fun step ->
+                 let s = S.one_cycle ~max_value:1.0 ~total_steps:100 () in
+                 let v = S.eval s step in
+                 is_true ~msg:">=0" (v >= 0.0);
+                 is_true ~msg:"<=max" (v <= 1.0 +. 1e-6));
+             prop "cosine_decay_restarts periodic" Gen.nat (fun step ->
+                 let period = 50 in
+                 let s =
+                   S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:period
+                     ()
+                 in
+                 let v1 = S.eval s step in
+                 let v2 = S.eval s (step + period) in
+                 equal ~msg:"periodic" (float 1e-5) v1 v2);
+             test "restarts and one-cycle reject bad step counts"
+               test_step_count_validation;
+           ];
+       ])

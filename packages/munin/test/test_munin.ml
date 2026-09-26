@@ -1701,4 +1701,4 @@ let suite =
     group "System monitor" system_monitor_tests;
   ]
 
-let () = run "Munin" suite
+let () = exit (run "Munin" suite)

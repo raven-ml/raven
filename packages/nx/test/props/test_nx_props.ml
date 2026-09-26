@@ -702,7 +702,7 @@ let stress_props =
 (* ── Suite ── *)
 
 let () =
-  run "Nx Properties"
+  exit (run "Nx Properties"
     [
       group "Arithmetic" arithmetic_props;
       group "Shape" shape_props;
@@ -718,4 +718,4 @@ let () =
       group "Broadcasting" broadcasting_props;
       group "Einsum" einsum_props;
       group "Stress Tests" stress_props;
-    ]
+    ])

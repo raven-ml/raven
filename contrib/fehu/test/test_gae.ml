@@ -201,7 +201,7 @@ let test_normalize_single () =
   equal ~msg:"single normalizes to 0" f 0.0 normed.(0)
 
 let () =
-  run "Fehu.Gae"
+  exit (run "Fehu.Gae"
     [
       group "compute"
         [
@@ -231,4 +231,4 @@ let () =
           test "empty" test_normalize_empty;
           test "single element" test_normalize_single;
         ];
-    ]
+    ])

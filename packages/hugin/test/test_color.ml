@@ -180,58 +180,59 @@ let test_orange_matches_hex () =
   check_rgba "orange" (r1, g1, b1, 1.) (r2, g2, b2, 1.)
 
 let () =
-  run "Color"
-    [
-      group "sRGB roundtrip"
-        [
-          test "black" test_black_roundtrip;
-          test "white" test_white_roundtrip;
-          test "red" test_red_roundtrip;
-          test "green" test_green_roundtrip;
-          test "blue" test_blue_roundtrip;
-          test "mid gray" test_mid_gray_roundtrip;
-          test "arbitrary" test_arbitrary_roundtrip;
-        ];
-      group "hex parsing"
-        [
-          test "6-digit with hash" test_hex_6_with_hash;
-          test "6-digit without hash" test_hex_6_without_hash;
-          test "8-digit with alpha" test_hex_8_with_alpha;
-          test "case insensitive" test_hex_case_insensitive;
-          test "invalid length" test_hex_invalid_length;
-          test "invalid chars" test_hex_invalid_chars;
-          test "empty string" test_hex_empty;
-        ];
-      group "OKLCH constructors"
-        [
-          test "oklch fields" test_oklch_fields;
-          test "oklcha alpha" test_oklcha_alpha;
-        ];
-      group "operations"
-        [
-          test "lighten clamps" test_lighten_clamps;
-          test "darken clamps" test_darken_clamps;
-          test "lighten adds" test_lighten_adds;
-          test "darken subtracts" test_darken_subtracts;
-          test "with_alpha" test_with_alpha;
-        ];
-      group "mix"
-        [
-          test "mix 0.0 returns first" test_mix_zero;
-          test "mix 1.0 returns second" test_mix_one;
-          test "midpoint lightness" test_mix_midpoint_lightness;
-          test "midpoint chroma" test_mix_midpoint_chroma;
-          test "hue shortest arc forward" test_mix_hue_forward;
-          test "hue wraps across 360" test_mix_hue_wraps_360;
-          test "hue reverse wrap" test_mix_hue_reverse_wrap;
-          test "alpha interpolates" test_mix_alpha;
-        ];
-      group "gamut clamping"
-        [ test "high chroma clamped" test_high_chroma_clamped ];
-      group "named colors"
-        [
-          test "black" test_black_named;
-          test "white" test_white_named;
-          test "orange matches hex" test_orange_matches_hex;
-        ];
-    ]
+  exit
+    (run "Color"
+       [
+         group "sRGB roundtrip"
+           [
+             test "black" test_black_roundtrip;
+             test "white" test_white_roundtrip;
+             test "red" test_red_roundtrip;
+             test "green" test_green_roundtrip;
+             test "blue" test_blue_roundtrip;
+             test "mid gray" test_mid_gray_roundtrip;
+             test "arbitrary" test_arbitrary_roundtrip;
+           ];
+         group "hex parsing"
+           [
+             test "6-digit with hash" test_hex_6_with_hash;
+             test "6-digit without hash" test_hex_6_without_hash;
+             test "8-digit with alpha" test_hex_8_with_alpha;
+             test "case insensitive" test_hex_case_insensitive;
+             test "invalid length" test_hex_invalid_length;
+             test "invalid chars" test_hex_invalid_chars;
+             test "empty string" test_hex_empty;
+           ];
+         group "OKLCH constructors"
+           [
+             test "oklch fields" test_oklch_fields;
+             test "oklcha alpha" test_oklcha_alpha;
+           ];
+         group "operations"
+           [
+             test "lighten clamps" test_lighten_clamps;
+             test "darken clamps" test_darken_clamps;
+             test "lighten adds" test_lighten_adds;
+             test "darken subtracts" test_darken_subtracts;
+             test "with_alpha" test_with_alpha;
+           ];
+         group "mix"
+           [
+             test "mix 0.0 returns first" test_mix_zero;
+             test "mix 1.0 returns second" test_mix_one;
+             test "midpoint lightness" test_mix_midpoint_lightness;
+             test "midpoint chroma" test_mix_midpoint_chroma;
+             test "hue shortest arc forward" test_mix_hue_forward;
+             test "hue wraps across 360" test_mix_hue_wraps_360;
+             test "hue reverse wrap" test_mix_hue_reverse_wrap;
+             test "alpha interpolates" test_mix_alpha;
+           ];
+         group "gamut clamping"
+           [ test "high chroma clamped" test_high_chroma_clamped ];
+         group "named colors"
+           [
+             test "black" test_black_named;
+             test "white" test_white_named;
+             test "orange matches hex" test_orange_matches_hex;
+           ];
+       ])

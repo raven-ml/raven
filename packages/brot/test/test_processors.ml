@@ -328,27 +328,30 @@ let test_byte_level_trim_encoded_newline () =
     (trimmed (Post_processor.byte_level ()) tokens offsets)
 
 let () =
-  run "Processors"
-    [
-      group "template"
-        [
-          test "multi-id special expansion" test_template_multi_special;
-          test "pair template semantics" test_template_pair_type_ids;
-          test "default pair template" test_template_default_pair;
-          test "pair template order without specials" test_template_pair_order;
-          test "single sequence template" test_template_single_sequence;
-        ];
-      group "pairs"
-        [
-          test "merged without special tokens" test_pair_without_special_tokens;
-          test "merged with special tokens" test_pair_with_special_tokens;
-          test "segments and offsets" test_pair_segments_and_offsets;
-        ];
-      group "byte level"
-        [
-          test "trim offsets" test_byte_level_trim_offsets;
-          test "trim whitespace-only token"
-            test_byte_level_trim_whitespace_token;
-          test "keep encoded newline" test_byte_level_trim_encoded_newline;
-        ];
-    ]
+  exit
+    (run "Processors"
+       [
+         group "template"
+           [
+             test "multi-id special expansion" test_template_multi_special;
+             test "pair template semantics" test_template_pair_type_ids;
+             test "default pair template" test_template_default_pair;
+             test "pair template order without specials"
+               test_template_pair_order;
+             test "single sequence template" test_template_single_sequence;
+           ];
+         group "pairs"
+           [
+             test "merged without special tokens"
+               test_pair_without_special_tokens;
+             test "merged with special tokens" test_pair_with_special_tokens;
+             test "segments and offsets" test_pair_segments_and_offsets;
+           ];
+         group "byte level"
+           [
+             test "trim offsets" test_byte_level_trim_offsets;
+             test "trim whitespace-only token"
+               test_byte_level_trim_whitespace_token;
+             test "keep encoded newline" test_byte_level_trim_encoded_newline;
+           ];
+       ])

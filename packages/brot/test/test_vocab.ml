@@ -175,4 +175,4 @@ let suite =
     test "save load" test_vocab_save_load;
   ]
 
-let () = run "Vocabulary tests" [ group "vocab" suite ]
+let () = exit (run "Vocabulary tests" [ group "vocab" suite ])

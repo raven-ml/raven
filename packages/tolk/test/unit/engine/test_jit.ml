@@ -119,7 +119,7 @@ let raises_jit_error fn =
   raises_match (function Jit.Jit_error _ -> true | _ -> false) fn
 
 let () =
-  run "Engine_jit"
+  exit (run "Engine_jit"
     [
       group "TinyJit"
         [
@@ -199,4 +199,4 @@ let () =
             equal (array int64) [| 9L |] state.vals;
             equal (array int) [| 9; 1; 1 |] state.global);
         ];
-    ]
+    ])

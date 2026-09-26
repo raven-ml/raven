@@ -239,7 +239,7 @@ let rejects_layout f =
 (* Tests *)
 
 let () =
-  run __FILE__
+  exit (run __FILE__
     [
       (* Existing Tc helper tests *)
 
@@ -776,4 +776,4 @@ let () =
                 ignore (P.apply_opt t (U.Opt.Split { kind = Axis_type.Local; top = false; axis; amount = 2 }))
             end);
         ];
-    ]
+    ])

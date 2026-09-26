@@ -234,26 +234,27 @@ let test_json_round_trip () =
     (Ok {|{"type":"Unigram","unk_id":0,"byte_fallback":true}|}) model_text
 
 let () =
-  run "Unigram tests"
-    [
-      group "tokenization"
-        [
-          test "best path over overlapping pieces" test_best_path;
-          test "equal scores keep the longer piece"
-            test_equal_scores_keep_the_longer_piece;
-          test "white space is a character" test_white_space_is_a_character;
-          test "unknown characters" test_unknown_characters;
-          test "byte fallback" test_byte_fallback;
-          test "long pretoken" test_long_pretoken;
-          test "without an unknown token" test_without_an_unknown_token;
-          test "fused run that is an entry" test_fused_run_that_is_an_entry;
-          test "piece starting at an uncovered character"
-            test_piece_starting_at_an_uncovered_character;
-        ];
-      group "model"
-        [
-          test "unk_id outside the vocabulary"
-            test_unk_id_outside_the_vocabulary;
-          test "JSON round trip" test_json_round_trip;
-        ];
-    ]
+  exit
+    (run "Unigram tests"
+       [
+         group "tokenization"
+           [
+             test "best path over overlapping pieces" test_best_path;
+             test "equal scores keep the longer piece"
+               test_equal_scores_keep_the_longer_piece;
+             test "white space is a character" test_white_space_is_a_character;
+             test "unknown characters" test_unknown_characters;
+             test "byte fallback" test_byte_fallback;
+             test "long pretoken" test_long_pretoken;
+             test "without an unknown token" test_without_an_unknown_token;
+             test "fused run that is an entry" test_fused_run_that_is_an_entry;
+             test "piece starting at an uncovered character"
+               test_piece_starting_at_an_uncovered_character;
+           ];
+         group "model"
+           [
+             test "unk_id outside the vocabulary"
+               test_unk_id_outside_the_vocabulary;
+             test "JSON round trip" test_json_round_trip;
+           ];
+       ])

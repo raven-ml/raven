@@ -825,7 +825,7 @@ let compiled_host_submission () =
       equal ~msg:"second batch retains its linked destination" int32 b
         (Bytes.get_int32_le (Device.Buffer.as_bytes second) 0)) [12l, 34l; 56l, 78l]
 
-let () = run "Engine_hcq2" [
+let () = exit (run "Engine_hcq2" [
   test "AMD all-to-all honors default and explicit SDMA queue counts" all_to_all_copy_queues;
   test "staging alternates bounded slots with read-before-reuse dependencies" staged_peer_dependencies;
   test "interleaved groups preserve dependencies and check reordered aliases" peer_group_batches;
@@ -838,4 +838,4 @@ let () = run "Engine_hcq2" [
   test "alias constraints follow FIFO and transitive cross-queue waits" alias_ordering;
   test "peer epilogues and profiling slots participate in timelines" peers_and_timestamps;
   test "compiled host submission patches addresses and replays through timelines" compiled_host_submission;
-]
+])

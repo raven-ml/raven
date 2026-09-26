@@ -618,7 +618,7 @@ let concurrent_timeline_initialization () =
   equal bytes (Bytes.make 16 '\000') (Device.Buffer.as_bytes first_timeline)
 
 let () =
-  run "Metal_runtime"
+  exit (run "Metal_runtime"
     [
       test "concurrent first links share one timeline and context descriptor"
         concurrent_timeline_initialization;
@@ -934,4 +934,4 @@ let () =
             equal int before (Realize.queue_submissions ());
             equal (list int) [2] (read_i32 dst));
         ];
-    ]
+    ])

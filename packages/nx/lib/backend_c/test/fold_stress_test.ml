@@ -35,5 +35,5 @@ let test_threaded_overlap () =
     expected (F.to_array folded)
 
 let () =
-  Windtrap.run "nx C backend fold stress"
-    [ group "threading" [ test "overlap race witness" test_threaded_overlap ] ]
+  exit (Windtrap.run "nx C backend fold stress"
+    [ group "threading" [ test "overlap race witness" test_threaded_overlap ] ])

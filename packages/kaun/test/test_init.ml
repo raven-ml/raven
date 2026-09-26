@@ -186,45 +186,49 @@ let test_init_compiles_under_jit () =
   check "lecun_normal" Init.lecun_normal
 
 let () =
-  run "kaun init"
-    [
-      group "constant"
-        [ test "zeros, ones, constant fill and ignore fans" test_constants ];
-      group "random"
-        [
-          test "uniform stays in range with the right mean"
-            test_uniform_range_and_mean;
-          test "normal matches mean and variance" test_normal_mean_and_variance;
-          test "same seed reproduces the draw" test_deterministic_same_seed;
-        ];
-      group "variance scaling"
-        [
-          test "glorot uniform respects its limit" test_glorot_uniform_bounds;
-          test "glorot normal hits fan-average variance"
-            test_glorot_normal_variance;
-          test "he uniform respects its limit" test_he_uniform_bounds;
-          test "he normal hits fan-in variance" test_he_normal_variance;
-          test "lecun uniform respects its limit" test_lecun_uniform_bounds;
-          test "lecun normal hits fan-in variance" test_lecun_normal_variance;
-          test "fan-out mode scales by fan_out"
-            test_variance_scaling_fan_out_mode;
-          test "variance follows fans, not shape"
-            test_variance_follows_fans_not_shape;
-        ];
-      group "shape and dtype"
-        [
-          test "produces the requested shape" test_requested_shape;
-          test "one initializer serves float32 and float64" test_float64_dtype;
-        ];
-      group "validation"
-        [
-          test "negative scale or stddev is rejected"
-            test_negative_scale_rejected;
-          test "non-positive fans are rejected" test_non_positive_fan_rejected;
-        ];
-      group "transforms"
-        [
-          test "initializers compile inside a scope on a traced key"
-            test_init_compiles_under_jit;
-        ];
-    ]
+  exit
+    (run "kaun init"
+       [
+         group "constant"
+           [ test "zeros, ones, constant fill and ignore fans" test_constants ];
+         group "random"
+           [
+             test "uniform stays in range with the right mean"
+               test_uniform_range_and_mean;
+             test "normal matches mean and variance"
+               test_normal_mean_and_variance;
+             test "same seed reproduces the draw" test_deterministic_same_seed;
+           ];
+         group "variance scaling"
+           [
+             test "glorot uniform respects its limit" test_glorot_uniform_bounds;
+             test "glorot normal hits fan-average variance"
+               test_glorot_normal_variance;
+             test "he uniform respects its limit" test_he_uniform_bounds;
+             test "he normal hits fan-in variance" test_he_normal_variance;
+             test "lecun uniform respects its limit" test_lecun_uniform_bounds;
+             test "lecun normal hits fan-in variance" test_lecun_normal_variance;
+             test "fan-out mode scales by fan_out"
+               test_variance_scaling_fan_out_mode;
+             test "variance follows fans, not shape"
+               test_variance_follows_fans_not_shape;
+           ];
+         group "shape and dtype"
+           [
+             test "produces the requested shape" test_requested_shape;
+             test "one initializer serves float32 and float64"
+               test_float64_dtype;
+           ];
+         group "validation"
+           [
+             test "negative scale or stddev is rejected"
+               test_negative_scale_rejected;
+             test "non-positive fans are rejected"
+               test_non_positive_fan_rejected;
+           ];
+         group "transforms"
+           [
+             test "initializers compile inside a scope on a traced key"
+               test_init_compiles_under_jit;
+           ];
+       ])

@@ -170,7 +170,7 @@ let symbolic_dimensions () =
       check_values (float_of_int (8 * length)) 1 (Reduce.sum result)) [1; 3; 4]
 
 let () =
-  Tolk.Helpers.Context_var.with_context
+  exit (Tolk.Helpers.Context_var.with_context
     [B (Tolk.Helpers.dev, [Tolk_uop.Target.of_string "CPU"])] (fun () ->
       run "Like"
         [test "single-device fills preserve placement and independent storage" single_device;
@@ -182,4 +182,4 @@ let () =
          test "unplaced multidimensional tiles gather at the destination" unplaced_multiaxis_gather;
           test "gather rewriting handles mixed lane metadata" mixed_partition_rewrite;
           test "custom kernels select a concrete operand placement" custom_kernels_select_concrete_placement;
-          test "sharded fills preserve symbolic nonsharded dimensions" symbolic_dimensions])
+          test "sharded fills preserve symbolic nonsharded dimensions" symbolic_dimensions]))

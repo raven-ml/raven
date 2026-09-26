@@ -684,4 +684,4 @@ let suite =
     group "Top-k" top_k_tests;
   ]
 
-let () = run "Nx Sorting" suite
+let () = exit (run "Nx Sorting" suite)

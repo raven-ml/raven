@@ -13,7 +13,7 @@ module Tables = Tolk_amd.Amd_tables
 module Am = Tolk_amd.Amd_tables.Am_defs
 
 let () =
-  run "Amd_tables"
+  exit (run "Amd_tables"
     [
       group "virtual-function metadata"
         [
@@ -146,4 +146,4 @@ let () =
               "1dd1de8ecf5455ea4719c502b64b32ac18763d5601128c01b4a4a36211a122c2"
               (List.assoc "gc_11_0_0_mec.bin" Tables.Fw_defs.hashes));
         ];
-    ]
+    ])

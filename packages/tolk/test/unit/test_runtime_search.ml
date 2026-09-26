@@ -448,7 +448,12 @@ let codegen_timing_buffer_lifetime ~interrupt () =
       let compile () = Helpers.Context_var.with_context
           [B (Helpers.parallel, 0); B (Helpers.cachelevel, 0)]
           (fun () -> ignore (Codegen.to_program ~beam_device:device renderer ast)) in
-      if interrupt then raises Sys.Break compile else compile ();
+      if interrupt then
+        (* Catch cancellation before Windtrap treats it as a fatal test error. *)
+        (match compile () with
+         | () -> fail "expected Sys.Break"
+         | exception Sys.Break -> ())
+      else compile ();
       is_true ~msg:"the public codegen path executes a timing candidate"
         (!samples > 0);
       equal ~msg:"all candidates share the kernel's two timing buffers"
@@ -592,10 +597,14 @@ let sequential_compile_interrupt () =
       Unix.putenv "BEAM_STRICT_MODE" (Option.value strict ~default:"");
       List.iter Device.Buffer.deallocate rawbufs)
     (fun () ->
-      raises Sys.Break (fun () ->
-          Helpers.Context_var.with_context [B (Helpers.parallel, 0)] (fun () ->
-              ignore (Search.beam_search ~to_program ~disable_cache:true
-                (P.create ast ren) rawbufs ~var_vals:[] 1 device)));
+      (* windtrap ends the run on Sys.Break, so the test catches it. *)
+      (match
+         Helpers.Context_var.with_context [B (Helpers.parallel, 0)] (fun () ->
+             Search.beam_search ~to_program ~disable_cache:true
+               (P.create ast ren) rawbufs ~var_vals:[] 1 device)
+       with
+       | _ -> fail "expected Sys.Break"
+       | exception Sys.Break -> ());
       equal ~msg:"interruption stops candidate compilation immediately" int 1 !compiled)
 
 let beam_requires_runtime_device () =
@@ -816,7 +825,7 @@ let overflowing_resource_products_reject_candidates () =
   Helpers.Context_var.with_context [B (Helpers.cachelevel, 0)]
     (fun () -> List.iter check [Ak.Upcast; Ak.Local])
 
-let () = run __FILE__
+let () = exit (run __FILE__
     [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
       test "codegen retires retained timing buffers after successful beam search"
         (codegen_timing_buffer_lifetime ~interrupt:false);
@@ -844,4 +853,4 @@ let () = run __FILE__
       test "codegen rounds negative timing midpoints down without cache eviction"
         (codegen_midpoint_rounds_down ~has_cache_hook:false);
       test "beam invokes the available cache hook for each timing sample"
-        (codegen_midpoint_rounds_down ~has_cache_hook:true) ]
+        (codegen_midpoint_rounds_down ~has_cache_hook:true) ])

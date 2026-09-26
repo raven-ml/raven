@@ -982,4 +982,4 @@ let suite =
       ];
   ]
 
-let () = run "Nx FFT" suite
+let () = exit (run "Nx FFT" suite)

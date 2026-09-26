@@ -321,11 +321,12 @@ let row_broadcast_cases =
   ]
 
 let () =
-  run "Nx Splat"
-    [
-      group "Float dtypes" float_cases;
-      group "Integer dtypes" int_cases;
-      group "Complex dtypes" complex_cases;
-      group "Bool dtype" bool_cases;
-      group "Partial broadcast" row_broadcast_cases;
-    ]
+  exit
+    (run "Nx Splat"
+       [
+         group "Float dtypes" float_cases;
+         group "Integer dtypes" int_cases;
+         group "Complex dtypes" complex_cases;
+         group "Bool dtype" bool_cases;
+         group "Partial broadcast" row_broadcast_cases;
+       ])

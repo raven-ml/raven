@@ -276,42 +276,44 @@ let test_pool_rejects_bad_input () =
     (fun () -> Pool.max_pool2d ~kernel_size:(3, 3) x)
 
 let () =
-  run "kaun conv"
-    [
-      group "conv"
-        [
-          test "init produces the documented shapes" test_conv_init_shapes;
-          test "an identity kernel is the identity" test_conv_identity_kernel;
-          test "a kernel of ones sums each window" test_conv_window_sums;
-          test "correlates without flipping the kernel"
-            test_conv_edge_detector_row;
-          test "1x1 filters mix channels per pixel" test_conv_mixes_channels;
-          test "stride subsamples the windows" test_conv_stride;
-          test "output shapes follow stride and padding"
-            test_conv_shape_contracts;
-          test "make respects w_init, bias_init and the conv fans"
-            test_conv_custom_inits_and_fans;
-          test "bias:false drops the bias parameter" test_conv_no_bias;
-          test "names follow walk order" test_conv_names;
-          test "parameter gradients agree with finite differences"
-            test_conv_gradients;
-          test "input gradients agree with finite differences"
-            test_conv_input_gradients;
-          test "make rejects non-positive geometry"
-            test_conv_rejects_bad_geometry;
-          test "apply rejects invalid inputs" test_conv_rejects_bad_input;
-        ];
-      group "pooling"
-        [
-          test "max pool takes each window maximum" test_max_pool_analytic;
-          test "avg pool takes each window mean" test_avg_pool_analytic;
-          test "stride overrides the window step" test_pool_overlapping_stride;
-          test "rectangular kernels pool each axis independently"
-            test_pool_rectangular_kernel;
-          test "leading axes are preserved" test_pool_shape_contracts;
-          test "max pool routes the gradient to the maximum"
-            test_max_pool_gradient_routes_to_max;
-          test "gradients agree with finite differences" test_pool_gradients;
-          test "invalid inputs are rejected" test_pool_rejects_bad_input;
-        ];
-    ]
+  exit
+    (run "kaun conv"
+       [
+         group "conv"
+           [
+             test "init produces the documented shapes" test_conv_init_shapes;
+             test "an identity kernel is the identity" test_conv_identity_kernel;
+             test "a kernel of ones sums each window" test_conv_window_sums;
+             test "correlates without flipping the kernel"
+               test_conv_edge_detector_row;
+             test "1x1 filters mix channels per pixel" test_conv_mixes_channels;
+             test "stride subsamples the windows" test_conv_stride;
+             test "output shapes follow stride and padding"
+               test_conv_shape_contracts;
+             test "make respects w_init, bias_init and the conv fans"
+               test_conv_custom_inits_and_fans;
+             test "bias:false drops the bias parameter" test_conv_no_bias;
+             test "names follow walk order" test_conv_names;
+             test "parameter gradients agree with finite differences"
+               test_conv_gradients;
+             test "input gradients agree with finite differences"
+               test_conv_input_gradients;
+             test "make rejects non-positive geometry"
+               test_conv_rejects_bad_geometry;
+             test "apply rejects invalid inputs" test_conv_rejects_bad_input;
+           ];
+         group "pooling"
+           [
+             test "max pool takes each window maximum" test_max_pool_analytic;
+             test "avg pool takes each window mean" test_avg_pool_analytic;
+             test "stride overrides the window step"
+               test_pool_overlapping_stride;
+             test "rectangular kernels pool each axis independently"
+               test_pool_rectangular_kernel;
+             test "leading axes are preserved" test_pool_shape_contracts;
+             test "max pool routes the gradient to the maximum"
+               test_max_pool_gradient_routes_to_max;
+             test "gradients agree with finite differences" test_pool_gradients;
+             test "invalid inputs are rejected" test_pool_rejects_bad_input;
+           ];
+       ])

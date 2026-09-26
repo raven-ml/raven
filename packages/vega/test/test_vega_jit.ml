@@ -174,14 +174,15 @@ let test_polynomial_decay_compiles () =
     [ 0.5; 0.7; 1.0; 2.0 ]
 
 let () =
-  run "vega jit"
-    [
-      group "a step compiles with its state consumed" tests;
-      group "precision"
-        [
-          test "compiled radam rectifies as in float64"
-            test_radam_compiled_rectification;
-          test "a polynomial decay compiles to eager's values"
-            test_polynomial_decay_compiles;
-        ];
-    ]
+  exit
+    (run "vega jit"
+       [
+         group "a step compiles with its state consumed" tests;
+         group "precision"
+           [
+             test "compiled radam rectifies as in float64"
+               test_radam_compiled_rectification;
+             test "a polynomial decay compiles to eager's values"
+               test_polynomial_decay_compiles;
+           ];
+       ])

@@ -169,13 +169,14 @@ let test_clip_transform_stamp () =
   check_xref pdf
 
 let () =
-  run "Vg pdf"
-    [
-      test "document" test_document;
-      test "fill and stroke" test_fill_and_stroke;
-      test "alpha" test_alpha_uses_ext_gstate;
-      test "text embeds font" test_text_embeds_font;
-      test "image" test_image;
-      test "placed image" test_image_placed;
-      test "clip, transform and stamp" test_clip_transform_stamp;
-    ]
+  exit
+    (run "Vg pdf"
+       [
+         test "document" test_document;
+         test "fill and stroke" test_fill_and_stroke;
+         test "alpha" test_alpha_uses_ext_gstate;
+         test "text embeds font" test_text_embeds_font;
+         test "image" test_image;
+         test "placed image" test_image_placed;
+         test "clip, transform and stamp" test_clip_transform_stamp;
+       ])

@@ -8,4 +8,4 @@
    [Rand_cases]; [test_rand_cuda] runs the device-independent subset pinned
    to CUDA. *)
 
-let () = Windtrap.run "Tolk_frontend rand" Rand_cases.all_groups
+let () = exit (Windtrap.run "Tolk_frontend rand" Rand_cases.all_groups)

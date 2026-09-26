@@ -6,8 +6,14 @@
 open Windtrap
 open Tolk
 
+(* windtrap ends the run on Out_of_memory, so the test catches it itself. *)
+let raises_out_of_memory f =
+  match f () with
+  | (_ : int) -> fail "expected Out_of_memory"
+  | exception Out_of_memory -> ()
+
 let () =
-  run "Bump"
+  exit (run "Bump"
     [
       group "Alloc"
         [
@@ -33,10 +39,10 @@ let () =
           test "raises when full and wrapping is disabled" (fun () ->
               let b = Bump.create ~size:100 ~wrap:false () in
               equal int 0 (Bump.alloc b 60 ());
-              raises Out_of_memory (fun () -> Bump.alloc b 60 ()));
+              raises_out_of_memory (fun () -> Bump.alloc b 60 ()));
           test "alignment padding counts toward exhaustion" (fun () ->
               let b = Bump.create ~size:16 ~wrap:false () in
               equal int 0 (Bump.alloc b 1 ());
-              raises Out_of_memory (fun () -> Bump.alloc b 9 ~align:8 ()));
+              raises_out_of_memory (fun () -> Bump.alloc b 9 ~align:8 ()));
         ];
-    ]
+    ])

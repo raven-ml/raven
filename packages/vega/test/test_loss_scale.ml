@@ -172,4 +172,4 @@ let tests =
       ];
   ]
 
-let () = run "vega loss scale" tests
+let () = exit (run "vega loss scale" tests)

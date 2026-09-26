@@ -1170,7 +1170,7 @@ let promoting_tests =
 (* Entry point *)
 
 let () =
-  run "Codegen.Simplify"
+  exit (run "Codegen.Simplify"
     [
       flatten_range_tests;
       split_ranges_tests;
@@ -1182,4 +1182,4 @@ let () =
       vmin_vmax_tests;
       load_collapse_extra_tests;
       promoting_tests;
-    ]
+    ])

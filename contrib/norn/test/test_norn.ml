@@ -107,11 +107,11 @@ let test_diagnostics () =
       done)
 
 let () =
-  run "Norn"
+  exit (run "Norn"
     [
       test "HMC: 2D Gaussian" test_hmc;
       test "NUTS: 2D Gaussian" test_nuts;
       test "Kernel API" test_kernel_api;
       test "Sample with kernel" test_sample_with_kernel;
       test "Diagnostics" test_diagnostics;
-    ]
+    ])

@@ -577,7 +577,7 @@ let param_without_multiple_of_does_not_fold () =
      | None -> true)
 
 let () =
-  run "tolk.uop.divandmod"
+  exit (run "tolk.uop.divandmod"
     [
       group "fast rules"
         [
@@ -656,4 +656,4 @@ let () =
           test "simplify preserves index expression values"
             simplify_preserves_index_values;
         ];
-    ]
+    ])

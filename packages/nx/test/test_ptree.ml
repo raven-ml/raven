@@ -770,4 +770,4 @@ let tests =
     group "signatures" [ test "roles" test_signatures ];
   ]
 
-let () = run "Nx.Ptree" tests
+let () = exit (run "Nx.Ptree" tests)

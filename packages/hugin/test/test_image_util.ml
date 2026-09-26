@@ -84,14 +84,15 @@ let test_pp_payload_decodes_to_the_png () =
     (String.length payload)
 
 let () =
-  run "Image_util"
-    [
-      group "pp data URI"
-        [
-          test "produces valid base64 data URI" test_pp_data_uri;
-          test "payload matches the rendered PNG"
-            test_pp_payload_decodes_to_the_png;
-        ];
-      group "render_to_buffer"
-        [ test "produces a complete PNG" test_render_to_buffer ];
-    ]
+  exit
+    (run "Image_util"
+       [
+         group "pp data URI"
+           [
+             test "produces valid base64 data URI" test_pp_data_uri;
+             test "payload matches the rendered PNG"
+               test_pp_payload_decodes_to_the_png;
+           ];
+         group "render_to_buffer"
+           [ test "produces a complete PNG" test_render_to_buffer ];
+       ])

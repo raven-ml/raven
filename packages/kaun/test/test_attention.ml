@@ -1969,123 +1969,136 @@ let test_rejects_bad_geometry () =
         (Nx.zeros Nx.float32 [| 2; 4 |]))
 
 let () =
-  run "kaun attention"
-    [
-      group "scaled dot-product attention"
-        [
-          test "output shape pairs queries with value features" test_core_shapes;
-          test "weights are the softmax of the scores"
-            test_core_analytic_weights;
-          test "scores are scaled by 1/sqrt d" test_core_scales_by_sqrt_d;
-          test "masked keys get exactly zero weight"
-            test_core_mask_zeroes_weights;
-          test "gradients agree with finite differences" test_core_gradients;
-          test "masked gradients agree with finite differences"
-            test_core_masked_gradients;
-          test "mismatched shapes are rejected" test_core_rejects_bad_shapes;
-          test "a query that sees no key yields zero" test_core_is_total;
-          test "a query that sees no key has zero gradients"
-            test_core_empty_row_gradients;
-        ];
-      group "attention sinks and the score scale"
-        [
-          test "a scale replaces 1 / sqrt d" test_core_scale;
-          test "sinks are an appended column that is dropped"
-            test_sinks_are_an_appended_column;
-          test "a query that sees no key yields zero and zero gradients"
-            test_sinks_keep_attention_total;
-          test
-            "gradients with respect to the sinks agree with finite differences"
-            test_sink_gradients;
-          test "compiled attention with sinks equals eager" test_sinks_compiled;
-          test "sinks that do not broadcast are rejected"
-            test_sinks_reject_bad_shapes;
-        ];
-      group "multi-head self-attention"
-        [
-          test "init produces the documented shapes" test_init_shapes;
-          test "names prefix each projection's leaves" test_names;
-          test "apply preserves the input shape" test_apply_shapes;
-          test "identity projections reduce apply to the core"
-            test_apply_identity_is_the_core;
-          test "heads attend to their feature slices independently"
-            test_heads_attend_independently;
-          test "causally, position 0 attends only to itself"
-            test_causal_first_position_is_itself;
-          test "causal masking ignores future positions"
-            test_causal_ignores_the_future;
-          test "self-attention is permutation-equivariant"
-            test_permutation_equivariance;
-          test "a padding mask hides padded keys"
-            test_padding_mask_hides_padded_keys;
-          test "grouped keys equal repeated keys" test_grouped_equals_repeated;
-          test "gradients agree with finite differences" test_gradients;
-          test "invalid geometry is rejected" test_rejects_bad_geometry;
-        ];
-      group "key-value cache"
-        [
-          test "a whole prompt matches causal apply"
-            test_cached_prefill_matches_apply;
-          test "a whole index is causal apply and keeps nothing"
-            test_cached_whole;
-          test "a window bounds what a token sees" test_cached_window;
-          test "an attention cache is two pools of its slots" test_cache_pools;
-          test "a window is part of the index" test_index_window;
-          test "a selection reads the columns each token chose"
-            test_index_select;
-          test "selecting every column is the read without a selection"
-            test_index_select_everything;
-          test "on a whole index a chosen column is a token"
-            test_index_select_whole;
-          test "a selection may be a broadcast view" test_index_select_broadcast;
-          test "a pool of one slot keeps what its token stored"
-            test_index_one_slot;
-          test "a selection is a tensor of the index"
-            test_index_select_structure;
-          test "a compiled selection reads and stores as eager"
-            test_index_select_compiled;
-          test "a block stands at its last position" test_index_every;
-          test "what addresses nothing stores no block"
-            test_index_every_addresses;
-          test "a window counts positions, not blocks" test_index_every_window;
-          test "a selection of blocks sees closed ones" test_index_every_select;
-          test "on a whole index blocks are read from their closing tokens"
-            test_index_every_whole;
-          test "rows gives each sequence a run of blocks" test_index_every_rows;
-          test "blocks are part of the index" test_index_every_rejects;
-          test "a block's entry does not depend on how it was fed"
-            test_index_every_stream;
-          test "a compiled stream of blocks stores and reads as eager"
-            test_index_every_compiled;
-          test "chunking is invariant" test_cached_chunking_is_invariant;
-          test "rows of different lengths share a batch"
-            test_cached_ragged_batch;
-          test "any slot map gives the same outputs" test_cached_slots_are_free;
-          test "rows can share the slots of a prefix" test_cached_shared_prefix;
-          test "the update is functional" test_cached_update_is_functional;
-          test "what addresses nothing writes no slot" test_cached_addresses;
-          test "masked columns contribute exactly zero"
-            test_cached_masked_columns_are_zero;
-          test "windowed-out columns contribute exactly zero"
-            test_cached_windowed_columns_are_zero;
-          test "one jitted step serves every position and slot map"
-            test_cached_step_jits_once;
-          test "a changed window compiles again"
-            test_a_changed_window_compiles_again;
-          test "one storage behind two caches raises"
-            test_one_storage_behind_two_caches_raises;
-          test "eager and compiled runs agree on what addresses nothing"
-            test_cached_out_of_range_under_jit;
-          test "gradients flow through the cache" test_cached_gradients;
-          test "heads, extend, attend and merge compose cached"
-            test_pieces_compose_cached;
-          test "attend takes sinks per query head, grouped or not"
-            test_attend_sinks_per_query_head;
-          test "a composed layer with sinks is invariant under chunking"
-            test_composed_sinks_chunking;
-          test "the pieces reject other shapes" test_pieces_reject_bad_shapes;
-          test "a list of caches names its leaves by index"
-            test_cache_list_paths;
-          test "invalid geometry is rejected" test_cached_rejects_bad_geometry;
-        ];
-    ]
+  exit
+    (run "kaun attention"
+       [
+         group "scaled dot-product attention"
+           [
+             test "output shape pairs queries with value features"
+               test_core_shapes;
+             test "weights are the softmax of the scores"
+               test_core_analytic_weights;
+             test "scores are scaled by 1/sqrt d" test_core_scales_by_sqrt_d;
+             test "masked keys get exactly zero weight"
+               test_core_mask_zeroes_weights;
+             test "gradients agree with finite differences" test_core_gradients;
+             test "masked gradients agree with finite differences"
+               test_core_masked_gradients;
+             test "mismatched shapes are rejected" test_core_rejects_bad_shapes;
+             test "a query that sees no key yields zero" test_core_is_total;
+             test "a query that sees no key has zero gradients"
+               test_core_empty_row_gradients;
+           ];
+         group "attention sinks and the score scale"
+           [
+             test "a scale replaces 1 / sqrt d" test_core_scale;
+             test "sinks are an appended column that is dropped"
+               test_sinks_are_an_appended_column;
+             test "a query that sees no key yields zero and zero gradients"
+               test_sinks_keep_attention_total;
+             test
+               "gradients with respect to the sinks agree with finite \
+                differences"
+               test_sink_gradients;
+             test "compiled attention with sinks equals eager"
+               test_sinks_compiled;
+             test "sinks that do not broadcast are rejected"
+               test_sinks_reject_bad_shapes;
+           ];
+         group "multi-head self-attention"
+           [
+             test "init produces the documented shapes" test_init_shapes;
+             test "names prefix each projection's leaves" test_names;
+             test "apply preserves the input shape" test_apply_shapes;
+             test "identity projections reduce apply to the core"
+               test_apply_identity_is_the_core;
+             test "heads attend to their feature slices independently"
+               test_heads_attend_independently;
+             test "causally, position 0 attends only to itself"
+               test_causal_first_position_is_itself;
+             test "causal masking ignores future positions"
+               test_causal_ignores_the_future;
+             test "self-attention is permutation-equivariant"
+               test_permutation_equivariance;
+             test "a padding mask hides padded keys"
+               test_padding_mask_hides_padded_keys;
+             test "grouped keys equal repeated keys"
+               test_grouped_equals_repeated;
+             test "gradients agree with finite differences" test_gradients;
+             test "invalid geometry is rejected" test_rejects_bad_geometry;
+           ];
+         group "key-value cache"
+           [
+             test "a whole prompt matches causal apply"
+               test_cached_prefill_matches_apply;
+             test "a whole index is causal apply and keeps nothing"
+               test_cached_whole;
+             test "a window bounds what a token sees" test_cached_window;
+             test "an attention cache is two pools of its slots"
+               test_cache_pools;
+             test "a window is part of the index" test_index_window;
+             test "a selection reads the columns each token chose"
+               test_index_select;
+             test "selecting every column is the read without a selection"
+               test_index_select_everything;
+             test "on a whole index a chosen column is a token"
+               test_index_select_whole;
+             test "a selection may be a broadcast view"
+               test_index_select_broadcast;
+             test "a pool of one slot keeps what its token stored"
+               test_index_one_slot;
+             test "a selection is a tensor of the index"
+               test_index_select_structure;
+             test "a compiled selection reads and stores as eager"
+               test_index_select_compiled;
+             test "a block stands at its last position" test_index_every;
+             test "what addresses nothing stores no block"
+               test_index_every_addresses;
+             test "a window counts positions, not blocks"
+               test_index_every_window;
+             test "a selection of blocks sees closed ones"
+               test_index_every_select;
+             test "on a whole index blocks are read from their closing tokens"
+               test_index_every_whole;
+             test "rows gives each sequence a run of blocks"
+               test_index_every_rows;
+             test "blocks are part of the index" test_index_every_rejects;
+             test "a block's entry does not depend on how it was fed"
+               test_index_every_stream;
+             test "a compiled stream of blocks stores and reads as eager"
+               test_index_every_compiled;
+             test "chunking is invariant" test_cached_chunking_is_invariant;
+             test "rows of different lengths share a batch"
+               test_cached_ragged_batch;
+             test "any slot map gives the same outputs"
+               test_cached_slots_are_free;
+             test "rows can share the slots of a prefix"
+               test_cached_shared_prefix;
+             test "the update is functional" test_cached_update_is_functional;
+             test "what addresses nothing writes no slot" test_cached_addresses;
+             test "masked columns contribute exactly zero"
+               test_cached_masked_columns_are_zero;
+             test "windowed-out columns contribute exactly zero"
+               test_cached_windowed_columns_are_zero;
+             test "one jitted step serves every position and slot map"
+               test_cached_step_jits_once;
+             test "a changed window compiles again"
+               test_a_changed_window_compiles_again;
+             test "one storage behind two caches raises"
+               test_one_storage_behind_two_caches_raises;
+             test "eager and compiled runs agree on what addresses nothing"
+               test_cached_out_of_range_under_jit;
+             test "gradients flow through the cache" test_cached_gradients;
+             test "heads, extend, attend and merge compose cached"
+               test_pieces_compose_cached;
+             test "attend takes sinks per query head, grouped or not"
+               test_attend_sinks_per_query_head;
+             test "a composed layer with sinks is invariant under chunking"
+               test_composed_sinks_chunking;
+             test "the pieces reject other shapes" test_pieces_reject_bad_shapes;
+             test "a list of caches names its leaves by index"
+               test_cache_list_paths;
+             test "invalid geometry is rejected"
+               test_cached_rejects_bad_geometry;
+           ];
+       ])

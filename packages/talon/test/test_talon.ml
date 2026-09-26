@@ -1407,21 +1407,22 @@ let ergonomic_tests =
   ]
 
 let () =
-  run "Talon"
-    [
-      group "Col" col_tests;
-      group "Creation" creation_tests;
-      group "Columns" column_tests;
-      group "Null masks" mask_tests;
-      group "Option accessors" option_tests;
-      group "Rows" row_tests;
-      group "Concatenation" concat_tests;
-      group "Row module" row_module_tests;
-      group "Sort & Group" sort_group_tests;
-      group "Aggregations" agg_tests;
-      group "Conversions" conversion_tests;
-      group "Edge cases" edge_tests;
-      group "Wide operations" wide_tests;
-      group "Ergonomic APIs" ergonomic_tests;
-      group "Join & Reshape" join_reshape_tests;
-    ]
+  exit
+    (run "Talon"
+       [
+         group "Col" col_tests;
+         group "Creation" creation_tests;
+         group "Columns" column_tests;
+         group "Null masks" mask_tests;
+         group "Option accessors" option_tests;
+         group "Rows" row_tests;
+         group "Concatenation" concat_tests;
+         group "Row module" row_module_tests;
+         group "Sort & Group" sort_group_tests;
+         group "Aggregations" agg_tests;
+         group "Conversions" conversion_tests;
+         group "Edge cases" edge_tests;
+         group "Wide operations" wide_tests;
+         group "Ergonomic APIs" ergonomic_tests;
+         group "Join & Reshape" join_reshape_tests;
+       ])

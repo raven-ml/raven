@@ -316,35 +316,37 @@ let test_import_attention () =
         [3], got [2]") (fun () -> float ~shape:[| 3 |] "attn.c_proj.bias")
 
 let () =
-  run "kaun hf"
-    [
-      group "cache paths"
-        [
-          test "cache_path lays out cache_dir/repo/revision/file"
-            test_cache_path_layout;
-          test "cache_path uses the revision" test_cache_path_revision;
-          test "cache_path honours RAVEN_CACHE_ROOT" test_cache_path_env;
-        ];
-      group "downloading"
-        [
-          test "cached files are served without the network"
-            test_cached_file_served;
-          test "offline misses raise" test_offline_miss_raises;
-          test "a download is renamed into place" test_download_is_atomic;
-          test "clear_cache removes one repository or all" test_clear_cache;
-        ];
-      group "loading"
-        [
-          test "load_config parses a cached config.json" test_load_config;
-          test "single-file checkpoints load" test_load_single_file;
-          test "a cached single file loads without the network"
-            test_load_single_file_stays_local;
-          test "sharded checkpoints merge their shards" test_load_sharded;
-          test "repositories without safetensors raise" test_load_missing_raises;
-        ];
-      group "importing"
-        [
-          test "a fused, transposed block is built from its entries"
-            test_import_attention;
-        ];
-    ]
+  exit
+    (run "kaun hf"
+       [
+         group "cache paths"
+           [
+             test "cache_path lays out cache_dir/repo/revision/file"
+               test_cache_path_layout;
+             test "cache_path uses the revision" test_cache_path_revision;
+             test "cache_path honours RAVEN_CACHE_ROOT" test_cache_path_env;
+           ];
+         group "downloading"
+           [
+             test "cached files are served without the network"
+               test_cached_file_served;
+             test "offline misses raise" test_offline_miss_raises;
+             test "a download is renamed into place" test_download_is_atomic;
+             test "clear_cache removes one repository or all" test_clear_cache;
+           ];
+         group "loading"
+           [
+             test "load_config parses a cached config.json" test_load_config;
+             test "single-file checkpoints load" test_load_single_file;
+             test "a cached single file loads without the network"
+               test_load_single_file_stays_local;
+             test "sharded checkpoints merge their shards" test_load_sharded;
+             test "repositories without safetensors raise"
+               test_load_missing_raises;
+           ];
+         group "importing"
+           [
+             test "a fused, transposed block is built from its entries"
+               test_import_attention;
+           ];
+       ])

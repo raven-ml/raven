@@ -324,7 +324,7 @@ let conditional_loop_nesting () =
     (inner_pos < edge_pos && edge_pos < end_pos)
 
 let () =
-  run "Linearizer"
+  exit (run "Linearizer"
     [
       test "Conditional loops retain nesting" conditional_loop_nesting;
       group "Late kernel to program"
@@ -1163,4 +1163,4 @@ let () =
             equal int 2
               (count program (function P.Store _ -> true | _ -> false)));
         ];
-    ]
+    ])

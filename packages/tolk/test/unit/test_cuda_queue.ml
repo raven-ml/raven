@@ -55,7 +55,7 @@ let symbols root = U.toposort ~enter_calls:true root |> List.filter_map (fun u -
 let peer slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 16)
     ~device:(U.Single "CUDA:queue-peer") ()
 
-let () = run "CUDA queue compilation" [
+let () = exit (run "CUDA queue compilation" [
   test "compatible peers share a submission with cross-device dependencies" (fun () ->
       let compiled = compile [U.store_call ~dst:(parameter 1) ~src:(parameter 0);
           U.store_call ~dst:(peer 2) ~src:(parameter 1);
@@ -124,4 +124,4 @@ let () = run "CUDA queue compilation" [
       match U.arg (U.without_after (List.hd (U.children compiled))) with
       | U.Arg.Call_info {aux = Some info; _} -> equal int 3 (List.length info.accesses)
       | _ -> fail "queue lost original dispatch access metadata");
-]
+])

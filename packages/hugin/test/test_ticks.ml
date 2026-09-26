@@ -118,14 +118,15 @@ let test_fractional_range () =
     (labels svg)
 
 let () =
-  run "Ticks"
-    [
-      group "linear formatting"
-        [
-          test "zero label" test_zero_label;
-          test "reasonable count" test_reasonable_count;
-          test "large range bounded" test_large_range;
-          test "fractional range" test_fractional_range;
-        ];
-      group "log formatting" [ test "log tick labels" test_log_tick_labels ];
-    ]
+  exit
+    (run "Ticks"
+       [
+         group "linear formatting"
+           [
+             test "zero label" test_zero_label;
+             test "reasonable count" test_reasonable_count;
+             test "large range bounded" test_large_range;
+             test "fractional range" test_fractional_range;
+           ];
+         group "log formatting" [ test "log tick labels" test_log_tick_labels ];
+       ])

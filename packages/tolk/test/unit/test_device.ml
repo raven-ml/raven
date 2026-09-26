@@ -1119,7 +1119,7 @@ let independent_views_share_one_root () =
   equal (list int) [10; 20; 30; 40] (read_i32 root);
   Device.Buffer.deallocate root
 
-let () = run __FILE__ [ copy_from_tests;
+let () = exit (run __FILE__ [ copy_from_tests;
   test "independent views share root ownership across domains" independent_views_share_one_root;
   test "program storage belongs to the device across links" program_storage_is_device_owned;
   test "device bootstrap registration rolls back failed initialization" device_initialization_registration;
@@ -1156,4 +1156,4 @@ let () = run __FILE__ [ copy_from_tests;
   test "serialization copies external storage into an independent owner" external_storage_serialization;
   test "serialization keeps unopened storage lazy" lazy_storage_serialization; test "buffer byte ranges reject overflow" buffer_byte_ranges; test "compilation canonicalizes interleaved kernel arguments" interleaved_kernel_formals; test "empty storage never calls an allocator" empty_storage; test "failed view allocation preserves ownership" failed_view_allocation_preserves_ownership;
   test "stale views refresh on every storage access" stale_views_refresh_on_access;
-  test "external views refresh without freeing their owner" external_views_refresh_without_freeing_owner ]
+  test "external views refresh without freeing their owner" external_views_refresh_without_freeing_owner ])

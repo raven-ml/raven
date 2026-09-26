@@ -671,4 +671,4 @@ let suite =
     group "Type Conversion" type_conversion;
   ]
 
-let () = run "Nx Basics" suite
+let () = exit (run "Nx Basics" suite)

@@ -551,51 +551,54 @@ let test_sp_batch_sink_spill_order () =
   check_batch tok docs
 
 let () =
-  run "brot kernels"
-    [
-      group "resume protocol"
-        [
-          test "a document crossing the span chunk" test_chunk_boundary;
-          test "pretoken counts at the chunk seam" test_chunk_seam_lengths;
-          test "a long pretoken hands back between chunks"
-            test_long_pretoken_hand_back;
-          test "hand-backs at the chunk's edges" test_encode_at_chunk_edges;
-          test "a class hand-back after an encode resume"
-            test_class_after_encode_resume;
-          test "maximal multi-id spans across chunks" test_many_ids_per_span;
-          test "a span larger than the ids buffer" test_huge_span;
-        ];
-      group "batch walker"
-        [ test "every shape at every batch alignment" test_batch_alignments ];
-      group "selection and refusals"
-        [
-          test "caching off" test_cache_off;
-          test "ignore_merges" test_ignore_merges;
-          test "dropout leaves the kernel unselected" test_dropout_not_selected;
-          test "a byte without an id" test_missing_byte_id;
-          test "a merge result len_table disagrees with"
-            test_len_table_disagreement;
-          test "unclassified code points" test_class_hand_back;
-        ];
-      group "sentencepiece resume protocol"
-        [
-          test "a cache-hit stream stays one span" test_sp_stream;
-          test "a stream outgrowing the ids reserve" test_sp_ids_full;
-          test "a unit past the key hands back" test_sp_long_unit;
-          test "a character without a piece" test_sp_missing_char;
-          test "a mark run right after a resume" test_sp_resume_mark_run;
-          test "punctuation adjacency" test_sp_punct_adjacency;
-          test "byte fallback is cached and then served" test_sp_fallback_cached;
-          test "a merge result len_table disagrees with"
-            test_sp_len_table_disagreement;
-          test "caching off" test_sp_cache_off;
-          test "dropout leaves the sub-cut off" test_sp_dropout_not_selected;
-        ];
-      group "batch sink"
-        [
-          test "literals and hand-backs spill in order"
-            test_batch_sink_spill_order;
-          test "sentencepiece literals and hand-backs spill in order"
-            test_sp_batch_sink_spill_order;
-        ];
-    ]
+  exit
+    (run "brot kernels"
+       [
+         group "resume protocol"
+           [
+             test "a document crossing the span chunk" test_chunk_boundary;
+             test "pretoken counts at the chunk seam" test_chunk_seam_lengths;
+             test "a long pretoken hands back between chunks"
+               test_long_pretoken_hand_back;
+             test "hand-backs at the chunk's edges" test_encode_at_chunk_edges;
+             test "a class hand-back after an encode resume"
+               test_class_after_encode_resume;
+             test "maximal multi-id spans across chunks" test_many_ids_per_span;
+             test "a span larger than the ids buffer" test_huge_span;
+           ];
+         group "batch walker"
+           [ test "every shape at every batch alignment" test_batch_alignments ];
+         group "selection and refusals"
+           [
+             test "caching off" test_cache_off;
+             test "ignore_merges" test_ignore_merges;
+             test "dropout leaves the kernel unselected"
+               test_dropout_not_selected;
+             test "a byte without an id" test_missing_byte_id;
+             test "a merge result len_table disagrees with"
+               test_len_table_disagreement;
+             test "unclassified code points" test_class_hand_back;
+           ];
+         group "sentencepiece resume protocol"
+           [
+             test "a cache-hit stream stays one span" test_sp_stream;
+             test "a stream outgrowing the ids reserve" test_sp_ids_full;
+             test "a unit past the key hands back" test_sp_long_unit;
+             test "a character without a piece" test_sp_missing_char;
+             test "a mark run right after a resume" test_sp_resume_mark_run;
+             test "punctuation adjacency" test_sp_punct_adjacency;
+             test "byte fallback is cached and then served"
+               test_sp_fallback_cached;
+             test "a merge result len_table disagrees with"
+               test_sp_len_table_disagreement;
+             test "caching off" test_sp_cache_off;
+             test "dropout leaves the sub-cut off" test_sp_dropout_not_selected;
+           ];
+         group "batch sink"
+           [
+             test "literals and hand-backs spill in order"
+               test_batch_sink_spill_order;
+             test "sentencepiece literals and hand-backs spill in order"
+               test_sp_batch_sink_spill_order;
+           ];
+       ])

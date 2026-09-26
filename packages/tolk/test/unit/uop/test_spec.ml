@@ -1421,7 +1421,7 @@ let conditional_loop_contract () =
           ~src:[| i32 0; loop; cond |] ()))
 
 let () =
-  run "tolk.uop.spec"
+  exit (run "tolk.uop.spec"
     [
       group "shared_spec"
         [
@@ -1584,4 +1584,4 @@ let () =
           test "full_spec accepts intermediate forms"
             full_spec_accepts_intermediate_forms;
         ];
-    ]
+    ])

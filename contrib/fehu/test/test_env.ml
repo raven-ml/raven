@@ -180,7 +180,7 @@ let test_time_limit_needs_reset () =
     (fun () -> Env.step wrapped action_right)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  exit (Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Env"
     [
       group "creation"
@@ -211,4 +211,4 @@ let () =
           test "defaults" test_step_result_defaults;
           test "custom values" test_step_result_custom;
         ];
-    ]
+    ])

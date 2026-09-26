@@ -90,13 +90,15 @@ let test_vector_types_unaligned () =
   equal ~msg:"declared alignments" (list int) [ 1 ] (declared_alignments source)
 
 let () =
-  run "rune jit alignment"
-    [
-      group "host memory in place"
-        [
-          test "a capture at an address that is 4 modulo 16" test_offset_capture;
-          test "an input at an address that is 4 modulo 16" test_offset_input;
-          test "the CPU device declares no vector alignment"
-            test_vector_types_unaligned;
-        ];
-    ]
+  exit
+    (run "rune jit alignment"
+       [
+         group "host memory in place"
+           [
+             test "a capture at an address that is 4 modulo 16"
+               test_offset_capture;
+             test "an input at an address that is 4 modulo 16" test_offset_input;
+             test "the CPU device declares no vector alignment"
+               test_vector_types_unaligned;
+           ];
+       ])

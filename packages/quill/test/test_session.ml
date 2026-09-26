@@ -183,9 +183,10 @@ let undo_redo_tests =
   ]
 
 let () =
-  run "Session"
-    [
-      group "Basic" basic_tests;
-      group "Execution state" execution_state_tests;
-      group "Undo/Redo" undo_redo_tests;
-    ]
+  exit
+    (run "Session"
+       [
+         group "Basic" basic_tests;
+         group "Execution state" execution_state_tests;
+         group "Undo/Redo" undo_redo_tests;
+       ])

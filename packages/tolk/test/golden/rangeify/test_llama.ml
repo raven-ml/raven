@@ -111,4 +111,4 @@ let tiny_forward () =
   equal ~msg:"normalized vocabulary projection" (array (float 2e-5)) logits
     (Run.to_float_array output)
 
-let () = run "Llama fixture" [test "tiny forward matches tinygrad CPU" tiny_forward]
+let () = exit (run "Llama fixture" [test "tiny forward matches tinygrad CPU" tiny_forward])

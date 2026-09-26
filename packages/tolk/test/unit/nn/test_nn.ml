@@ -297,4 +297,4 @@ let state_tests =
           is_true (T.uop p == before));
     ]
 
-let () = run "Tolk_nn" [ embedding_tests; linear_tests; layer_norm_tests; state_tests; header_tests ]
+let () = exit (run "Tolk_nn" [ embedding_tests; linear_tests; layer_norm_tests; state_tests; header_tests ])

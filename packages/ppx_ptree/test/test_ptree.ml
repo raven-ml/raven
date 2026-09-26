@@ -516,23 +516,24 @@ let test_grad () =
     (Nx.to_array derived.head.w)
 
 let () =
-  run "ppx_ptree"
-    [
-      group "walks"
-        [
-          test "records, options, lists and tuples" test_record;
-          test "tensors and a type without parameter" test_tensors;
-          test "structures" test_model;
-          test "[@ptree.walk]" test_walk_attribute;
-          test "[@ptree.int] and [@ptree.skip]" test_data;
-          test "variants" test_variant;
-          test "attributes on constructors" test_constructor_attributes;
-          test "recursive types" test_recursive;
-          test "arrays" test_array;
-          test "aliases" test_alias;
-          test "a fixed instance over an earlier type" test_earlier_payload;
-          test "the guide's block" test_guide;
-          test "an anonymous parameter" test_phantom;
-        ];
-      group "transformations" [ test "grad" test_grad ];
-    ]
+  exit
+    (run "ppx_ptree"
+       [
+         group "walks"
+           [
+             test "records, options, lists and tuples" test_record;
+             test "tensors and a type without parameter" test_tensors;
+             test "structures" test_model;
+             test "[@ptree.walk]" test_walk_attribute;
+             test "[@ptree.int] and [@ptree.skip]" test_data;
+             test "variants" test_variant;
+             test "attributes on constructors" test_constructor_attributes;
+             test "recursive types" test_recursive;
+             test "arrays" test_array;
+             test "aliases" test_alias;
+             test "a fixed instance over an earlier type" test_earlier_payload;
+             test "the guide's block" test_guide;
+             test "an anonymous parameter" test_phantom;
+           ];
+         group "transformations" [ test "grad" test_grad ];
+       ])

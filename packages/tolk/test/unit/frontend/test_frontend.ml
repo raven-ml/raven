@@ -1195,7 +1195,7 @@ let assignment_tests =
     ]
 
 let () =
-  run "Tolk_frontend"
+  exit (run "Tolk_frontend"
     [
       creation_tests;
       creation2_tests;
@@ -1218,4 +1218,4 @@ let () =
       scan_tests;
       conv_tests;
       scalar_operand_tests;
-    ]
+    ])

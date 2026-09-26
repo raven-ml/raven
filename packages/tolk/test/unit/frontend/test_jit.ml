@@ -411,4 +411,4 @@ let returned_tensor_tests =
     ]
 
 let () =
-  run "Tolk_frontend_jit" [ elementwise_tests; symbolic_tests; error_tests; input_view_tests; returned_tensor_tests ]
+  exit (run "Tolk_frontend_jit" [ elementwise_tests; symbolic_tests; error_tests; input_view_tests; returned_tensor_tests ])

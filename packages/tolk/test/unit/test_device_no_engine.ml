@@ -50,4 +50,4 @@ let fail_loud_tests =
               Device.Buffer.copy_from ~dst ~src));
     ]
 
-let () = run __FILE__ [ fail_loud_tests ]
+let () = exit (run __FILE__ [ fail_loud_tests ])

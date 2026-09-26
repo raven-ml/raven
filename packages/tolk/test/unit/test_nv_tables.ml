@@ -21,7 +21,7 @@ let reg family arch name =
   List.assoc name (List.assoc arch arches)
 
 let () =
-  run "Nv_tables"
+  exit (run "Nv_tables"
     [
       group "constants"
         [
@@ -350,4 +350,4 @@ let () =
                   Gsp.Nv_channelgpfifo_allocation_parameters
                   .huserdmemory_elem_size ));
         ];
-    ]
+    ])

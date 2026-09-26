@@ -356,4 +356,4 @@ let tests =
       ];
   ]
 
-let () = run "rune tensor parallelism" tests
+let () = exit (run "rune tensor parallelism" tests)

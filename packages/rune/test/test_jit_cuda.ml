@@ -528,4 +528,4 @@ let tests =
       ];
   ]
 
-let () = run "rune jit cuda" tests
+let () = exit (run "rune jit cuda" tests)

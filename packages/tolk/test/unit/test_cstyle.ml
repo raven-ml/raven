@@ -508,7 +508,7 @@ let safe_dtype_gen = Gen.with_pp Dtype.pp (Gen.of_list safe_dtypes)
 (* Runner *)
 
 let () =
-  run "Renderer"
+  exit (run "Renderer"
     [
       group "Volatile parameters"
         [ test "buffer qualifiers survive rendering and serialization" (fun () ->
@@ -1721,4 +1721,4 @@ let () =
           prop "deterministic" renderer_gen (fun (_name, renderer) ->
             equal text (render renderer f32_1) (render renderer f32_1));
         ];
-    ]
+    ])

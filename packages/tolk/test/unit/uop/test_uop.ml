@@ -2770,7 +2770,7 @@ let constants_preserve_operand_shape () =
     [scalar; vector; tensor]
 
 let () =
-  run "tolk.uop"
+  exit (run "tolk.uop"
     [
       group "Construction"
         [
@@ -2962,4 +2962,4 @@ let () =
             unbind_splits_bound_variables;
           test "bind validates the variable range" bind_validates_range;
         ];
-    ]
+    ])

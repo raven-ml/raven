@@ -1143,4 +1143,4 @@ let unicode_tests =
     test "malformed unicode" test_malformed_unicode;
   ]
 
-let () = run "brot unicode" [ group "unicode" unicode_tests ]
+let () = exit (run "brot unicode" [ group "unicode" unicode_tests ])

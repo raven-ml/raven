@@ -42,7 +42,7 @@ let test_n_episodes_matches () =
   equal ~msg:"n_episodes matches" int 7 stats.n_episodes
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  exit (Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Eval"
     [
       group "run"
@@ -50,4 +50,4 @@ let () =
           test "constant reward statistics" test_constant_reward_stats;
           test "n_episodes matches stats" test_n_episodes_matches;
         ];
-    ]
+    ])

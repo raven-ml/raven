@@ -583,4 +583,4 @@ let tests =
       ];
   ]
 
-let () = run "rune rng" tests
+let () = exit (run "rune rng" tests)

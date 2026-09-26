@@ -169,4 +169,4 @@ let tests =
     group "linear and movement rules" linear_tests;
   ]
 
-let () = run "rune complex" tests
+let () = exit (run "rune complex" tests)

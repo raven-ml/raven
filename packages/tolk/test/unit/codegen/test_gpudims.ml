@@ -732,7 +732,7 @@ let promotion_tests =
 (* Entry point *)
 
 let () =
-  run "Codegen.Gpudims"
+  exit (run "Codegen.Gpudims"
     [
       promotion_tests;
       noop_tests;
@@ -746,4 +746,4 @@ let () =
       none_passthrough_tests;
       integration_tests;
       missing_locals_tests;
-    ]
+    ])

@@ -262,22 +262,23 @@ let () =
           (check_store e5m2 Nx_dtype.float8_e5m2 inputs ~wide:false);
       ]
   in
-  run "float codecs"
-    [
-      group "formats" [ test "domain and bits" check_formats ];
-      group "float8 codes"
-        [
-          test "e4m3" (check_codes e4m3 ~is_nan:e4m3_nan);
-          test "e5m2" (check_codes e5m2 ~is_nan:e5m2_nan);
-          test "e4m3fnuz" (check_codes e4m3fnuz ~is_nan:fnuz_nan);
-          test "e5m2fnuz" (check_codes e5m2fnuz ~is_nan:fnuz_nan);
-          test "e4m3 buffers" (check_buffer_codes Nx_dtype.float8_e4m3 e4m3);
-          test "e5m2 buffers" (check_buffer_codes Nx_dtype.float8_e5m2 e5m2);
-        ];
-      group "from float32"
-        (sweep f32_sweep ~wide:false
-        @ [ test "nx casts" (check_casts f32_sweep ~src:Nx.float32) ]);
-      group "from float64"
-        (sweep f64_sweep ~wide:true
-        @ [ test "nx casts" (check_casts f64_sweep ~src:Nx.float64) ]);
-    ]
+  exit
+    (run "float codecs"
+       [
+         group "formats" [ test "domain and bits" check_formats ];
+         group "float8 codes"
+           [
+             test "e4m3" (check_codes e4m3 ~is_nan:e4m3_nan);
+             test "e5m2" (check_codes e5m2 ~is_nan:e5m2_nan);
+             test "e4m3fnuz" (check_codes e4m3fnuz ~is_nan:fnuz_nan);
+             test "e5m2fnuz" (check_codes e5m2fnuz ~is_nan:fnuz_nan);
+             test "e4m3 buffers" (check_buffer_codes Nx_dtype.float8_e4m3 e4m3);
+             test "e5m2 buffers" (check_buffer_codes Nx_dtype.float8_e5m2 e5m2);
+           ];
+         group "from float32"
+           (sweep f32_sweep ~wide:false
+           @ [ test "nx casts" (check_casts f32_sweep ~src:Nx.float32) ]);
+         group "from float64"
+           (sweep f64_sweep ~wide:true
+           @ [ test "nx casts" (check_casts f64_sweep ~src:Nx.float64) ]);
+       ])

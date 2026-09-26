@@ -196,8 +196,10 @@ let test_diagnostic_locations () =
     cases
 
 let () =
-  run "ppx_ptree locations"
-    [
-      test "keeps source locations in generated code" test_generated_locations;
-      test "reports rejected forms at their source" test_diagnostic_locations;
-    ]
+  exit
+    (run "ppx_ptree locations"
+       [
+         test "keeps source locations in generated code"
+           test_generated_locations;
+         test "reports rejected forms at their source" test_diagnostic_locations;
+       ])

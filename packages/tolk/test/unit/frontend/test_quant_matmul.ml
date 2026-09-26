@@ -517,7 +517,7 @@ let refusals =
             ~scales:(empty D.uint8 [ 1; 8; 2 ])))
 
 let () =
-  run "Tolk_frontend_quant_matmul"
+  exit (run "Tolk_frontend_quant_matmul"
     [
       product_tests;
       exact_tests;
@@ -536,4 +536,4 @@ let () =
                clamped ~k:64 r;
              ])
            renderers);
-    ]
+    ])

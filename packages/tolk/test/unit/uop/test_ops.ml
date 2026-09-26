@@ -167,7 +167,7 @@ let group_predicates_match_group_lists () =
   agrees "Comparison" comparison is_comparison
 
 let () =
-  run "tolk.uop.ops_parity"
+  exit (run "tolk.uop.ops_parity"
     [
       group "Ops parity"
         [
@@ -178,4 +178,4 @@ let () =
           test "predicates match public groups"
             group_predicates_match_group_lists;
         ];
-    ]
+    ])

@@ -486,4 +486,4 @@ let tests =
       ];
   ]
 
-let () = run "rune vmap" tests
+let () = exit (run "rune vmap" tests)

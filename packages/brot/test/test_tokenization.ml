@@ -1615,10 +1615,11 @@ let tokenization_tests =
   ]
 
 let () =
-  run "brot tokenization"
-    [
-      group "tokenization" tokenization_tests;
-      group "batch" batch_tests;
-      group "stride" stride_tests;
-      group "sentencepiece" sentencepiece_tests;
-    ]
+  exit
+    (run "brot tokenization"
+       [
+         group "tokenization" tokenization_tests;
+         group "batch" batch_tests;
+         group "stride" stride_tests;
+         group "sentencepiece" sentencepiece_tests;
+       ])
