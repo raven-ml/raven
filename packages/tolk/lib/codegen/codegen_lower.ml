@@ -193,7 +193,7 @@ let wmma_add =
       ( alu [ op ~name:"wmma" Ops.Wmma; var "add" ] Ops.Add => fun bs ->
         let wmma = bs $ "wmma" and add = bs $ "add" in
         match U.as_wmma wmma with
-        | Some v -> Some (U.replace wmma ~src:[| v.a; v.b; U.O.(v.c + add) |] ())
+        | Some v -> Some (U.replace wmma ~src:[| v.a; v.b; U.Promoting.(v.c + add) |] ())
         | None -> None );
       ( alu
           [ op ~name:"permute" ~src:[ op ~name:"wmma" Ops.Wmma ] Ops.Permute; var "add" ]
@@ -202,7 +202,7 @@ let wmma_add =
         let permute = bs $ "permute" and wmma = bs $ "wmma" and add = bs $ "add" in
         match U.marg permute with
         | U.Marg_permute order ->
-            let pushed = U.O.(wmma + U.permute ~src:add ~order:(argsort order)) in
+            let pushed = U.Promoting.(wmma + U.permute ~src:add ~order:(argsort order)) in
             Some (U.permute ~src:pushed ~order)
         | _ -> None );
       ( alu
@@ -225,7 +225,7 @@ let wmma_add =
                 ~src:(U.permute ~src:add ~order:(argsort order))
                 ~shape:(shape_arg (U.shape wmma))
             in
-            let pushed = U.O.(wmma + rearranged) in
+            let pushed = U.Promoting.(wmma + rearranged) in
             Some
               (U.permute
                  ~src:(U.reshape ~src:pushed ~shape:(shape_arg (U.shape reshape)))

@@ -1447,6 +1447,23 @@ let mop_tests =
               equal (list int) [3; 5] (List.map const_int (U.as_shape (src result 1)));
               equal (list int) [2; 4] (U.max_shape result)
           | None -> fail "expected adjacent SHRINKs to merge");
+      test "adjacent SHRINKs promote mixed offset widths" (fun () ->
+          let narrow = U.variable ~name:"narrow_offset" ~min_val:0 ~max_val:4
+              ~dtype:D.int16 () in
+          let wide = U.variable ~name:"wide_offset" ~min_val:0 ~max_val:4
+              ~dtype:D.int32 () in
+          let inner = U.shrink ~src:(ptr_buffer 0) ~offset:narrow ~size:(idx 8) in
+          let outer = U.shrink ~src:inner ~offset:wide ~size:(idx 2) in
+          match mop outer with
+          | Some result ->
+              let offset = src result 1 in
+              equal string "i32" (D.to_string (U.dtype offset));
+              is_true ~msg:"narrow offset is cast before adding the wide offset"
+                (List.exists (fun n -> U.op n = Ops.Cast && src n 0 == narrow
+                     && D.equal (U.dtype n) D.int32) (U.toposort offset));
+              equal int 7 (U.sym_infer offset
+                  ["narrow_offset", 3L; "wide_offset", 4L])
+          | None -> fail "expected mixed-width SHRINKs to merge");
       test "adjacent SHRINKs retain symbolic offsets and sizes" (fun () ->
           let base = ptr_buffer 0 in
           let offset = U.variable ~name:"offset" ~min_val:0 ~max_val:4 () in

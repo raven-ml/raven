@@ -13,7 +13,7 @@ let mop_cleanup : Upat.Pattern_matcher.t =
       (op ~name:"outer" ~src:[ op ~name:"inner" Ops.Shrink; any; any ] Ops.Shrink
       => fun bs ->
         let outer = bs $ "outer" and inner = bs $ "inner" in
-        let offsets = List.map2 (fun a b -> Uop.simplify Uop.O.(a + b))
+        let offsets = List.map2 (fun a b -> Uop.simplify Uop.Promoting.(a + b))
             (Uop.as_shape (Uop.src inner).(1))
             (Uop.as_shape (Uop.src outer).(1)) in
         match offsets with

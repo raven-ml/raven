@@ -694,6 +694,10 @@ thread.
 
 ### Tolk (new)
 
+- Preserve mixed-width symbolic offsets and GPU launch dimensions by promoting
+  operands before combining them; apply the same promotion to image coordinates,
+  WMMA accumulation and optimizer predicates.
+
 - Buffer finalizers remain deferred until every overlapping operation on a
   domain has returned. One system thread could previously trigger teardown
   while another still had a device update in progress.

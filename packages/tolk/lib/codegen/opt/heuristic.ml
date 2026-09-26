@@ -35,7 +35,7 @@ let nth_size k axis = List.nth (P.full_shape k) axis
 let nth_rng k axis = List.nth (P.rngs k) axis
 
 let prod_at shape axes =
-  List.fold_left (fun acc a -> U.O.(acc * List.nth shape a)) (U.const_int 1) axes
+  List.fold_left (fun acc a -> U.Promoting.(acc * List.nth shape a)) (U.const_int 1) axes
   |> U.simplify
 
 let is_range u = Option.is_some (U.as_range u)
@@ -139,9 +139,9 @@ let try_tensor_cores k =
               | Some size ->
                   let shape = P.full_shape tk in
                   let globals = List.fold_left (fun acc axis ->
-                      U.O.(acc * List.nth shape axis)) (U.const_int 1)
+                      U.Promoting.(acc * List.nth shape axis)) (U.const_int 1)
                       (P.axes_of tk [Axis_type.Global]) in
-                  let enough = U.O.(not_ (globals < (U.const_int size * U.const_int min_globals))) in
+                  let enough = U.Promoting.(not_ (globals < (U.const_int size * U.const_int min_globals))) in
                   if U.resolve ~default:false enough then
                     split 0 [size] Axis_type.Upcast
             end;
@@ -262,7 +262,7 @@ let try_grouping k =
     if Renderer.device (P.ren k) = "QCOM" then 240 else 2048
   in
   if U.resolve ~default:false
-      U.O.(not_ (U.const_int threshold < prod_at (P.full_shape k) (P.upcastable_dims k))) then
+      U.Promoting.(not_ (U.const_int threshold < prod_at (P.full_shape k) (P.upcastable_dims k))) then
     (try List.iter (fun axis ->
       try
         ignore (P.apply_opt k (U.Opt.Split { kind = Axis_type.Local; top = true; axis; amount = 16 }));
@@ -293,7 +293,7 @@ let upcast_masked k =
           match List.nth (P.axis_types k) axis with
           | Axis_type.Global ->
               let global_upcast =
-                U.O.(prod_at (P.full_shape k)
+                U.Promoting.(prod_at (P.full_shape k)
                   (List.filter
                      (fun a -> List.nth (P.axis_types k) a = Axis_type.Global)
                      acc)
@@ -303,13 +303,13 @@ let upcast_masked k =
                 prod_at (P.full_shape k) (P.axes_of k [ Axis_type.Global ])
               in
               U.resolve ~default:false
-                U.O.(not_ (global_prod / global_upcast < U.const_int (occupancy_floor ())))
+                U.Promoting.(not_ (global_prod // global_upcast < U.const_int (occupancy_floor ())))
           | _ -> true
       in
       if sz <= 0 || sz > 7 || not image_occupancy_ok then acc
       else if is_masked (nth_rng k axis)
               && U.resolve ~default:false
-                   U.O.(not_ (U.const_int 49 < prod_at (P.full_shape k) acc * U.const_int sz))
+                   U.Promoting.(not_ (U.const_int 49 < prod_at (P.full_shape k) acc * U.const_int sz))
       then axis :: acc
       else acc) [] (P.upcastable_dims k)
   in
@@ -363,8 +363,8 @@ let upcast_heuristic k =
   while
     !continue_
     && U.resolve ~default:false
-         U.O.(not_ (prod_at (P.full_shape k) (P.upcastable_dims k) < U.const_int 1024))
-    && U.resolve ~default:false U.O.(P.upcast_size k < U.const_int 32)
+         U.Promoting.(not_ (prod_at (P.full_shape k) (P.upcastable_dims k) < U.const_int 1024))
+    && U.resolve ~default:false U.Promoting.(P.upcast_size k < U.const_int 32)
   do
     let upcast_amounts =
       if is_dsp then (if Hashtbl.length upcasted = 0 then [ 128 ] else [])
@@ -388,9 +388,9 @@ let unroll_reduce k =
   try
     let ud = P.unrollable_dims k in
     if ud <> []
-       && (U.resolve ~default:false U.O.(not_ (U.const_int 4 < P.upcast_size k))
+       && (U.resolve ~default:false U.Promoting.(not_ (U.const_int 4 < P.upcast_size k))
            || P.axes_of k [ Axis_type.Unroll ] = [])
-       && U.resolve ~default:false U.O.(P.upcast_size k < U.const_int 64)
+       && U.resolve ~default:false U.Promoting.(P.upcast_size k < U.const_int 64)
     then begin
       let s = const_int_or 0 (nth_size k (last ud)) in
       if s <= 32 then begin

@@ -156,7 +156,7 @@ let move_gates_from_index_rule node =
       | Ops.Where, [| gate; value; alt |] -> (
           match fold_gated_load value gate alt (U.dtype node) with
           | Some folded -> Some folded
-          | None -> fold_gated_load alt (U.O.not_ gate) value (U.dtype node))
+          | None -> fold_gated_load alt (U.Promoting.not_ gate) value (U.dtype node))
       | _ -> None)
 
 let pm_move_gates_from_index sink =

@@ -52,8 +52,8 @@ let array_rev a =
   Array.init n (fun i -> a.(n - 1 - i))
 
 let product_uops_from a start =
-  let open U.O in
-  let acc = ref (int_ 1) in
+  let open U.Promoting in
+  let acc = ref (U.const_int 1) in
   for i = start to Stdlib.(Array.length a - 1) do
     acc := !acc * a.(i)
   done;
@@ -78,7 +78,7 @@ let group_dim_values dims max_sizes =
             (Bound.int max_sizes.(i)) then begin
           dims := Array.init (n - 1) (fun j ->
             if j < i then d.(j)
-            else if j = i then Symbolic.simplify U.O.(d.(i) * d.(Stdlib.(i + 1)))
+            else if j = i then Symbolic.simplify U.Promoting.(d.(i) * d.(Stdlib.(i + 1)))
             else d.(j + 1));
           loop ()
         end else try_merge (i + 1)
@@ -110,22 +110,22 @@ let split_dims dims max_sizes =
 let flat_index raw limited =
   if Array.length raw = 1 then raw.(0)
   else
-  let open U.O in
-  let acc = ref (int_ 0) in
+  let open U.Promoting in
+  let acc = ref (U.const_int 0) in
   for i = 0 to Stdlib.(Array.length raw - 1) do
     acc := !acc + (raw.(i) * product_uops_from limited Stdlib.(i + 1))
   done;
   Symbolic.simplify !acc
 
 let decompose_flat flat dims =
-  let open U.O in
+  let open U.Promoting in
   Array.to_list
     (Array.mapi
        (fun i dim ->
          let tail = product_uops_from dims Stdlib.(i + 1) in
          let idx =
            if U.const_int_value tail = Some 1 then Symbolic.simplify flat
-           else Symbolic.simplify (floordiv flat tail)
+           else Symbolic.simplify (flat // tail)
          in
          if i = 0 then idx else Symbolic.simplify (idx mod dim))
        dims)
@@ -162,7 +162,7 @@ let rec get_grouped_dims kind dims max_sizes ~reverse =
                   && Array.exists (fun d -> Option.is_none (U.const_int_value d)) dims then
                  failwith "cannot split symbolic GPU dimensions";
                let split = split_dims idims max_sizes in
-               if split == idims then dims else Array.map U.O.int_ split)
+               if split == idims then dims else Array.map U.const_int split)
     in
     let raw =
       Array.mapi (fun i s ->
@@ -186,12 +186,12 @@ let gate_missing_locals (idx : U.t) (idx_view : U.index_view)
     (missing : U.t list) : U.t =
   if List.length idx_view.idxs <> 1 then
     invalid_arg "index has 2 sources";
-  let open U.O in
-  let eq lhs rhs = U.alu_binary ~op:Ops.Cmpeq ~lhs ~rhs in
+  let open U.Promoting in
+  let eq lhs rhs = not_ (ne lhs rhs) in
   let mask =
     List.fold_left
-      (fun acc x -> U.alu_binary ~op:Ops.And ~lhs:acc ~rhs:(eq x (int_ 0)))
-      (eq (List.hd missing) (int_ 0))
+      (fun acc x -> and_ acc (eq x (U.const_int 0)))
+      (eq (List.hd missing) (U.const_int 0))
       (List.tl missing)
   in
   U.replace idx

@@ -230,8 +230,8 @@ let transform_to_image shapes ren buf offset =
             (fun (height, width) ->
               let width_u = U.const_int width in
               let row_stride = U.const_int (4 * width) in
-              let x = U.O.((offset // c4) mod width_u) in
-              let y = U.O.(offset // row_stride) in
+              let x = U.Promoting.((offset // c4) mod width_u) in
+              let y = U.Promoting.(offset // row_stride) in
               let cidx =
                 Symbolic.uop_given_valid valid_u
                   (U.stack ~dtype:(U.dtype x) [ x; y ])
@@ -352,7 +352,7 @@ let index_base_offset idx =
 
 let index_offset base offset =
   match base with
-  | Base_uop base -> U.O.(base + U.const_int offset)
+  | Base_uop base -> U.Promoting.(base + U.const_int offset)
   | Base_const | Base_invalid -> U.const_int offset
 
 let coalesce_divides expr width =

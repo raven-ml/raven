@@ -664,10 +664,14 @@ let missing_locals_tests =
           let sink = U.sink ~kernel_info:(kernel_info ()) [ st ] in
           let result = Gpudims.pm_add_gpudims (gpu_renderer ()) sink in
           let is_eq_zero n =
-            U.op n = Ops.Cmpeq
-            && Array.exists
-                 (fun s -> U.const_int_value s = Some 0)
-                 (U.src n)
+            match U.op n, U.src n with
+            | Ops.Cmpne, [| comparison; truth |]
+              when U.equal truth (U.const_bool true) ->
+                U.op comparison = Ops.Cmpne
+                && Array.exists
+                     (fun s -> U.const_int_value s = Some 0)
+                     (U.src comparison)
+            | _ -> false
           in
           let gate =
             List.find_opt
@@ -706,11 +710,31 @@ let missing_locals_tests =
             (fun () -> ignore (Gpudims.pm_add_gpudims (gpu_renderer ()) sink)));
     ]
 
+let promotion_tests =
+  group "coordinate promotion"
+    [
+      test "grouping widens dimensions before multiplying" (fun () ->
+          let narrow = U.variable ~name:"narrow_dimension" ~min_val:2 ~max_val:4
+              ~dtype:D.int16 () in
+          let wide = U.variable ~name:"wide_dimension" ~min_val:2 ~max_val:4
+              ~dtype:D.int32 () in
+          let indices = Gpudims.get_grouped_dims Gpudims.Group_id
+              [| narrow; wide |] (Some [16]) ~reverse:false in
+          let size = special_size_node (Gpu_dim.Group_id 0) indices in
+          equal string "weakint" (D.to_string (U.dtype size));
+          is_true ~msg:"narrow dimension is cast before forming the launch size"
+            (List.exists (fun n -> U.op n = Ops.Cast && (U.src n).(0) == narrow
+                 && D.equal (U.dtype n) D.int32) (U.toposort size));
+          equal int 12 (U.sym_infer size
+              ["narrow_dimension", 3L; "wide_dimension", 4L]));
+    ]
+
 (* Entry point *)
 
 let () =
   run "Codegen.Gpudims"
     [
+      promotion_tests;
       noop_tests;
       reverse_tests;
       split_same_len_tests;
