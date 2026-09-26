@@ -678,7 +678,7 @@ let missing_locals_tests =
 (* Entry point *)
 
 let () =
-  run "Codegen.Gpudims"
+  exit (run "Codegen.Gpudims"
     [
       noop_tests;
       reverse_tests;
@@ -691,4 +691,4 @@ let () =
       none_passthrough_tests;
       integration_tests;
       missing_locals_tests;
-    ]
+    ])

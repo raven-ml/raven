@@ -594,61 +594,62 @@ let test_file_range_after_unmap () =
 
 (* Test suite *)
 let () =
-  run "Nx_buffer tests"
-    [
-      group "creation"
-        [
-          test "create bfloat16" test_create_bfloat16;
-          test "create bool" test_create_bool;
-          test "create int4" test_create_int4;
-          test "create uint4" test_create_uint4;
-          test "create float8_e4m3" test_create_float8_e4m3;
-          test "create float8_e5m2" test_create_float8_e5m2;
-        ];
-      group "genarray" [ test "genarray creation" test_genarray_creation ];
-      group "properties"
-        [
-          test "dtype round-trip" test_dtype_roundtrip;
-          test "itemsize" test_itemsize;
-        ];
-      group "semantics"
-        [
-          test "bfloat16" test_bfloat16_semantics;
-          test "float8 e4m3" test_float8_e4m3_semantics;
-          test "float8 e5m2" test_float8_e5m2_semantics;
-          test "float64 rounds once" test_float64_rounds_once;
-          test "int4 clamping" test_int4_clamping;
-          test "uint64 roundtrip" test_uint64_roundtrip;
-        ];
-      group "operations"
-        [
-          test "blit" test_blit;
-          test "fill" test_fill;
-          test "int4 bytes blit roundtrip" test_int4_bytes_blit_roundtrip;
-          test "int4 bytes blit offsets" test_int4_bytes_blit_offsets;
-          test "int4 bytes blit odd offsets raise"
-            test_int4_bytes_blit_odd_raises;
-        ];
-      group "conversions"
-        [
-          test "bigarray roundtrip" test_bigarray_roundtrip;
-          test "genarray roundtrip" test_genarray_roundtrip;
-          test "to_bigarray1 rejects extended kinds"
-            test_to_bigarray1_extended_raises;
-          test "extended genarray bridge" test_genarray_extended_roundtrip;
-          test "of_bigarray1 rejects unsupported kinds"
-            test_of_bigarray1_unsupported_raises;
-        ];
-      group "reinterpret"
-        [
-          test "bit exact at every dtype" test_reinterpret_bit_exact;
-          test "aliases its source" test_reinterpret_aliases;
-          test "raises" test_reinterpret_raises;
-          test "keeps a mapped file alive" test_reinterpret_mapped_lifetime;
-        ];
-      group "mapped files"
-        [
-          test "file_range follows views by address" test_file_range;
-          test "a record dies with its mapping" test_file_range_after_unmap;
-        ];
-    ]
+  exit
+    (run "Nx_buffer tests"
+       [
+         group "creation"
+           [
+             test "create bfloat16" test_create_bfloat16;
+             test "create bool" test_create_bool;
+             test "create int4" test_create_int4;
+             test "create uint4" test_create_uint4;
+             test "create float8_e4m3" test_create_float8_e4m3;
+             test "create float8_e5m2" test_create_float8_e5m2;
+           ];
+         group "genarray" [ test "genarray creation" test_genarray_creation ];
+         group "properties"
+           [
+             test "dtype round-trip" test_dtype_roundtrip;
+             test "itemsize" test_itemsize;
+           ];
+         group "semantics"
+           [
+             test "bfloat16" test_bfloat16_semantics;
+             test "float8 e4m3" test_float8_e4m3_semantics;
+             test "float8 e5m2" test_float8_e5m2_semantics;
+             test "float64 rounds once" test_float64_rounds_once;
+             test "int4 clamping" test_int4_clamping;
+             test "uint64 roundtrip" test_uint64_roundtrip;
+           ];
+         group "operations"
+           [
+             test "blit" test_blit;
+             test "fill" test_fill;
+             test "int4 bytes blit roundtrip" test_int4_bytes_blit_roundtrip;
+             test "int4 bytes blit offsets" test_int4_bytes_blit_offsets;
+             test "int4 bytes blit odd offsets raise"
+               test_int4_bytes_blit_odd_raises;
+           ];
+         group "conversions"
+           [
+             test "bigarray roundtrip" test_bigarray_roundtrip;
+             test "genarray roundtrip" test_genarray_roundtrip;
+             test "to_bigarray1 rejects extended kinds"
+               test_to_bigarray1_extended_raises;
+             test "extended genarray bridge" test_genarray_extended_roundtrip;
+             test "of_bigarray1 rejects unsupported kinds"
+               test_of_bigarray1_unsupported_raises;
+           ];
+         group "reinterpret"
+           [
+             test "bit exact at every dtype" test_reinterpret_bit_exact;
+             test "aliases its source" test_reinterpret_aliases;
+             test "raises" test_reinterpret_raises;
+             test "keeps a mapped file alive" test_reinterpret_mapped_lifetime;
+           ];
+         group "mapped files"
+           [
+             test "file_range follows views by address" test_file_range;
+             test "a record dies with its mapping" test_file_range_after_unmap;
+           ];
+       ])

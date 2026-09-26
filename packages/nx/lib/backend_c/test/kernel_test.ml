@@ -105,4 +105,4 @@ let tests =
       test "sort worker scratch is isolated" test_sort_worker_scratch;
     ]
 
-let () = Windtrap.run "nx C backend kernels" [ tests ]
+let () = exit (Windtrap.run "nx C backend kernels" [ tests ])

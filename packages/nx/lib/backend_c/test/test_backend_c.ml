@@ -81,4 +81,4 @@ let tests =
                 singular rhs));
     ]
 
-let () = Windtrap.run "nx C backend ABI" [ tests ]
+let () = exit (Windtrap.run "nx C backend ABI" [ tests ])

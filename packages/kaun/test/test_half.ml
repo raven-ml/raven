@@ -481,4 +481,4 @@ let tests =
       [ test "jitted loss-scaled fit" test_f16_train_loss_scaled ];
   ]
 
-let () = run "kaun half precision" tests
+let () = exit (run "kaun half precision" tests)

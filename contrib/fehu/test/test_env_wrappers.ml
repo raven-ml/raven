@@ -293,7 +293,7 @@ let test_time_limit_needs_reset () =
     (fun () -> Env.step wrapped action_right)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  exit (Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Env (wrappers)"
     [
       group "state sharing"
@@ -333,4 +333,4 @@ let () =
           test "nonpositive raises" test_time_limit_nonpositive;
           test "needs reset after truncation" test_time_limit_needs_reset;
         ];
-    ]
+    ])

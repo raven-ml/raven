@@ -79,25 +79,26 @@ let test_viridis_endpoints () =
   is_true ~msg:"viridis end is bright" (r1 > 0.8)
 
 let () =
-  run "Cmap"
-    [
-      group "eval"
-        [
-          test "at 0.0" test_eval_at_zero;
-          test "at 1.0" test_eval_at_one;
-          test "negative clamped" test_eval_negative_clamped;
-          test "above 1.0 clamped" test_eval_above_one_clamped;
-        ];
-      group "of_colors"
-        [
-          test "two stops midpoint" test_two_stops_midpoint;
-          test "three stops midpoint" test_three_stops_midpoint;
-          test "one stop raises" test_one_stop_raises;
-          test "empty raises" test_empty_raises;
-        ];
-      group "predefined"
-        [
-          test "all evaluate without error" test_predefined_no_raise;
-          test "viridis endpoints" test_viridis_endpoints;
-        ];
-    ]
+  exit
+    (run "Cmap"
+       [
+         group "eval"
+           [
+             test "at 0.0" test_eval_at_zero;
+             test "at 1.0" test_eval_at_one;
+             test "negative clamped" test_eval_negative_clamped;
+             test "above 1.0 clamped" test_eval_above_one_clamped;
+           ];
+         group "of_colors"
+           [
+             test "two stops midpoint" test_two_stops_midpoint;
+             test "three stops midpoint" test_three_stops_midpoint;
+             test "one stop raises" test_one_stop_raises;
+             test "empty raises" test_empty_raises;
+           ];
+         group "predefined"
+           [
+             test "all evaluate without error" test_predefined_no_raise;
+             test "viridis endpoints" test_viridis_endpoints;
+           ];
+       ])

@@ -421,7 +421,7 @@ let set_read fd ?base ?idx name v =
   Hashtbl.replace fd.reads (addr_of fd ?base ?idx name) (fun () -> v)
 
 let () =
-  run "Nv_ip"
+  exit (run "Nv_ip"
     [
       group "vbios fwsec"
         [
@@ -1380,4 +1380,4 @@ let () =
                           };
                         ])));
         ];
-    ]
+    ])

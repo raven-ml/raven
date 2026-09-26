@@ -405,7 +405,7 @@ let call_ownership_tests =
     ]
 
 let () =
-  run "rune transfer scratch"
+  exit (run "rune transfer scratch"
     (call_ownership_tests @ [
       test "reads keep their resident owner alive"
         reads_keep_their_resident_owner_alive;
@@ -418,4 +418,4 @@ let () =
         concurrent_device_lookups_keep_one_identity;
       test "independent replays keep their intermediates"
         independent_replays_keep_their_intermediates;
-    ])
+    ]))

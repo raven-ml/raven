@@ -127,8 +127,8 @@ let confusion_tests =
 let predictions_and_labels =
   Gen.(
     pair
-      (list ~size:(pure 12) (float_range (-5.) 5.))
-      (list ~size:(pure 4) (int_range 0 2)))
+      (list ~size:(constant 12) (float_range (-5.) 5.))
+      (list ~size:(constant 4) (int_range 0 2)))
 
 let prf_tests =
   [
@@ -165,7 +165,7 @@ let prf_tests =
 (* AUC-ROC *)
 
 (* Scores drawn from four integer values, so ties are frequent. *)
-let tied_scores = Gen.(list ~size:(pure 6) (int_range 0 3))
+let tied_scores = Gen.(list ~size:(constant 6) (int_range 0 3))
 
 let auc_tests =
   [
@@ -255,4 +255,4 @@ let tests =
     group "placed values" placed_tests;
   ]
 
-let () = run "kaun metric" tests
+let () = exit (run "kaun metric" tests)

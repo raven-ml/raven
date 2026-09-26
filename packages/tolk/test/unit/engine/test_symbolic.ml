@@ -134,7 +134,7 @@ let symbolic_reduce_matches_concrete device =
   equal ~msg:"single compilation across bind values" int 1 !compiles
 
 let () =
-  run "Engine_symbolic"
+  exit (run "Engine_symbolic"
     [
       test "symbolic shrink+sum runs for several bind values on CPU" (fun () ->
           symbolic_reduce_matches_concrete (Tolk_cpu.create "CPU"));
@@ -153,4 +153,4 @@ let () =
             with Failure msg -> skip ~reason:msg ()
           in
           symbolic_launch_matches_concrete device);
-    ]
+    ])

@@ -175,7 +175,7 @@ let single_kernel_jit ~sink ~out_buf =
       [ U.call ~body:sink ~args:[ cp_out; cp_in ] ~info:(call_info "k") ]
 
 let () =
-  run "Engine_jit_capture"
+  exit (run "Engine_jit_capture"
     [
       group "Capture and replay (numeric)"
         [
@@ -259,4 +259,4 @@ let () =
             run [ 5; 6; 7; 8 ];
             equal (list int) [ 20; 22; 24; 26 ] (read_buffer out_buf));
         ];
-    ]
+    ])

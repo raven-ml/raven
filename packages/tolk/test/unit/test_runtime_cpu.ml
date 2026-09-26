@@ -1330,4 +1330,4 @@ let main () =
 let () =
   match Sys.getenv_opt export_blob_var with
   | Some path -> export_child path
-  | None -> main ()
+  | None -> exit (main ())

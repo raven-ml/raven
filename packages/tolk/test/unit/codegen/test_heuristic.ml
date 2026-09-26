@@ -805,7 +805,7 @@ let integration_tests =
 (* Entry *)
 
 let () =
-  run __FILE__
+  exit (run __FILE__
     [
       grouping_tests;
       reduce_unroll_tests;
@@ -816,4 +816,4 @@ let () =
       masked_upcast_tests;
       local_groups_tests;
       integration_tests;
-    ]
+    ])

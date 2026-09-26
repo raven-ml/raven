@@ -140,13 +140,14 @@ let test_clip_transform_stamp () =
   equal ~msg:"non-finite positions are skipped" int 2 (count ~sub:"<use " svg)
 
 let () =
-  run "Vg svg"
-    [
-      test "document" test_document;
-      test "fill" test_fill;
-      test "curves and numbers" test_curves_and_numbers;
-      test "stroke" test_stroke;
-      test "text embeds font" test_text_embeds_font;
-      test "image" test_image;
-      test "clip, transform and stamp" test_clip_transform_stamp;
-    ]
+  exit
+    (run "Vg svg"
+       [
+         test "document" test_document;
+         test "fill" test_fill;
+         test "curves and numbers" test_curves_and_numbers;
+         test "stroke" test_stroke;
+         test "text embeds font" test_text_embeds_font;
+         test "image" test_image;
+         test "clip, transform and stamp" test_clip_transform_stamp;
+       ])

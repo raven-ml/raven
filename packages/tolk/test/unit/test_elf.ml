@@ -162,7 +162,7 @@ let cpu_relocation_tests =
       test "PLT32 above upper bound uses an absolute trampoline" (fun () -> plt32_case 0x80000000L ~trampoline:true) ]
 
 let () =
-  run "Elf"
+  exit (run "Elf"
     [
       cpu_relocation_tests;
       group "Parsing"
@@ -258,4 +258,4 @@ let () =
               raises (Invalid_argument "unsupported ELF type") (fun () ->
                   Elf.load obj));
         ];
-    ]
+    ])

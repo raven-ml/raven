@@ -127,4 +127,4 @@ let scaling_tests =
       scaling "softmax" softmax 25;
     ]
 
-let () = run "Schedule.Scaling" [ scaling_tests ]
+let () = exit (run "Schedule.Scaling" [ scaling_tests ])

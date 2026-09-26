@@ -219,4 +219,4 @@ let tests =
       ];
   ]
 
-let () = run "rune engine" tests
+let () = exit (run "rune engine" tests)

@@ -298,4 +298,4 @@ let suite =
       ];
   ]
 
-let () = run "Nx STFT" suite
+let () = exit (run "Nx STFT" suite)

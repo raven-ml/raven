@@ -139,7 +139,7 @@ let pt_ops fd =
 let invalidate_write = (0xb830b0, 0x80000043)
 
 let () =
-  run "Nvdev"
+  exit (run "Nvdev"
     [
       group "register resolution"
         [
@@ -655,4 +655,4 @@ let () =
                   in
                   equal (option int) (Some 0x300000) paddr));
         ];
-    ]
+    ])

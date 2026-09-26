@@ -277,7 +277,7 @@ let shaped_constant_proof () =
       equal (option int) None (byte_offset permuted))
     [always_false; self_compare; zero; true_]
 
-let () = run "Contiguous view"
+let () = exit (run "Contiguous view"
     [test "storage windows retain allocation boundaries" storage_windows_keep_allocation_boundaries;
      test "storage windows retain typed effects" storage_windows_keep_effects_and_typed_anchors;
 test "constant folding preserves tensor shape during view proofs" shaped_constant_proof;
@@ -291,4 +291,4 @@ test "constant folding preserves tensor shape during view proofs" shaped_constan
      test "subword byte offsets retain typed anchors" typed_bitcast_anchor;
      test "empty views preserve offsets and storage anchors" empty_and_storage_anchors;
      test "caller tags are preserved without certifying strided views" tags_are_not_proofs;
-     test "view offsets use exact arithmetic before host narrowing" exact_offsets]
+     test "view offsets use exact arithmetic before host narrowing" exact_offsets])

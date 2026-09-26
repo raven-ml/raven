@@ -450,7 +450,7 @@ let test_tuple_unpack_valid () =
 (* Entry point *)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  exit (Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Space"
     [
       group "Discrete"
@@ -545,4 +545,4 @@ let () =
           test "tuple" test_spec_tuple;
           test "dict" test_spec_dict;
         ];
-    ]
+    ])

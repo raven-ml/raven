@@ -283,4 +283,4 @@ let cholesky_tests =
             failf "expected nans in the factor of a non-PD input");
     ]
 
-let () = run "Tolk_frontend_linalg" [ qr_tests; solve_tests; cholesky_tests ]
+let () = exit (run "Tolk_frontend_linalg" [ qr_tests; solve_tests; cholesky_tests ])

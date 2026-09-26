@@ -263,4 +263,4 @@ let suite =
     group "fft" [ test "rfft magnitude" test_rfft_magnitude ];
   ]
 
-let () = run "Nx Complex" suite
+let () = exit (run "Nx Complex" suite)

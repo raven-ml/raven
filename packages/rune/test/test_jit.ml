@@ -4944,4 +4944,4 @@ let tests =
       ];
   ]
 
-let () = run "rune jit" tests
+let () = exit (run "rune jit" tests)

@@ -62,7 +62,7 @@ let qcom_renderer () =
     ~render:(fun ?name:_ _ -> "") ()
 
 let () =
-  run "Coalesce image selection"
+  exit (run "Coalesce image selection"
     [
       group "image valid dimensions"
         [
@@ -457,4 +457,4 @@ let () =
                    | _ -> false)
                  lowered));
         ];
-    ]
+    ])

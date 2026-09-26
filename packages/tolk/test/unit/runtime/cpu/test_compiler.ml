@@ -76,7 +76,7 @@ let invalid_c_raises_compile_error () =
     (fun () -> ignore (Tolk_cpu__Compiler_cpu.compile_clang "int test( {"))
 
 let () =
-  run "Runtime_cpu_compiler"
+  exit (run "Runtime_cpu_compiler"
     [
       group "Clang"
         [
@@ -99,4 +99,4 @@ let () =
             compiler_output_is_parseable_by_elf_support;
           test "invalid C raises Compile_error" invalid_c_raises_compile_error;
         ];
-    ]
+    ])

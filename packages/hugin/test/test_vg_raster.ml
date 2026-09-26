@@ -432,57 +432,58 @@ let test_non_finite_points_break_lines () =
   equal (float 0.01) 0. (cov img 0 5)
 
 let () =
-  run "Vg raster"
-    [
-      group "vg"
-        [
-          test "dimensions and background" test_dimensions;
-          test "alpha compositing" test_alpha_compositing;
-        ];
-      group "fill"
-        [
-          test "full rect" test_full_rect;
-          test "half pixel edges" test_half_pixel_edges;
-          test "circle area" test_circle_area;
-          test "orientation independent" test_orientation_independent;
-          test "fill rules" test_fill_rules;
-          test "open subpath closed" test_open_subpath_is_closed_for_fill;
-          test "non-finite points" test_non_finite_points_break_lines;
-        ];
-      group "stroke"
-        [
-          test "butt" test_stroke_butt;
-          test "caps" test_stroke_caps;
-          test "joins" test_stroke_joins;
-          test "dash" test_stroke_dash;
-          test "dots" test_dots;
-          test "zero width" test_zero_width_stroke_draws_nothing;
-        ];
-      group "clip"
-        [
-          test "rect" test_clip_rect;
-          test "nested and shaped" test_clip_nested_and_shaped;
-          test "images" test_clip_masks_images_and_text;
-        ];
-      group "transform"
-        [
-          test "translate and scale" test_transform;
-          test "rotation" test_rotation;
-        ];
-      group "stamp"
-        [
-          test "matches group" test_stamp_matches_group;
-          test "clips and transforms" test_stamp_clips_and_transforms;
-        ];
-      group "text" [ test "ink within bounds" test_text ];
-      group "bounds" [ test "enclose the ink" test_picture_bounds ];
-      group "image"
-        [
-          test "nearest" test_image_nearest;
-          test "placed" test_image_placed;
-          test "gray and alpha" test_image_gray_and_alpha;
-          test "downscale averages" test_image_downscale_averages;
-          test "partially off vg" test_image_partially_off_vg;
-          test "shape validation" test_image_shape_validation;
-        ];
-    ]
+  exit
+    (run "Vg raster"
+       [
+         group "vg"
+           [
+             test "dimensions and background" test_dimensions;
+             test "alpha compositing" test_alpha_compositing;
+           ];
+         group "fill"
+           [
+             test "full rect" test_full_rect;
+             test "half pixel edges" test_half_pixel_edges;
+             test "circle area" test_circle_area;
+             test "orientation independent" test_orientation_independent;
+             test "fill rules" test_fill_rules;
+             test "open subpath closed" test_open_subpath_is_closed_for_fill;
+             test "non-finite points" test_non_finite_points_break_lines;
+           ];
+         group "stroke"
+           [
+             test "butt" test_stroke_butt;
+             test "caps" test_stroke_caps;
+             test "joins" test_stroke_joins;
+             test "dash" test_stroke_dash;
+             test "dots" test_dots;
+             test "zero width" test_zero_width_stroke_draws_nothing;
+           ];
+         group "clip"
+           [
+             test "rect" test_clip_rect;
+             test "nested and shaped" test_clip_nested_and_shaped;
+             test "images" test_clip_masks_images_and_text;
+           ];
+         group "transform"
+           [
+             test "translate and scale" test_transform;
+             test "rotation" test_rotation;
+           ];
+         group "stamp"
+           [
+             test "matches group" test_stamp_matches_group;
+             test "clips and transforms" test_stamp_clips_and_transforms;
+           ];
+         group "text" [ test "ink within bounds" test_text ];
+         group "bounds" [ test "enclose the ink" test_picture_bounds ];
+         group "image"
+           [
+             test "nearest" test_image_nearest;
+             test "placed" test_image_placed;
+             test "gray and alpha" test_image_gray_and_alpha;
+             test "downscale averages" test_image_downscale_averages;
+             test "partially off vg" test_image_partially_off_vg;
+             test "shape validation" test_image_shape_validation;
+           ];
+       ])

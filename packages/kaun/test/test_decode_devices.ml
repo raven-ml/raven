@@ -228,12 +228,14 @@ let test_writes_scale_with_tokens () =
     (Float.abs (ratio -. 64.0) <= 6.4)
 
 let () =
-  run "kaun decode over devices"
-    [
-      group "tensor parallelism"
-        [
-          test "generation over four devices" test_generation_over_four_devices;
-          test "pool writes scale with the call's tokens"
-            test_writes_scale_with_tokens;
-        ];
-    ]
+  exit
+    (run "kaun decode over devices"
+       [
+         group "tensor parallelism"
+           [
+             test "generation over four devices"
+               test_generation_over_four_devices;
+             test "pool writes scale with the call's tokens"
+               test_writes_scale_with_tokens;
+           ];
+       ])

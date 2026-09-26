@@ -150,7 +150,7 @@ let disk_clone () =
       equal bool false (Sys.file_exists path))
 
 let () =
-  Tolk.Helpers.Context_var.with_context
+  exit (Tolk.Helpers.Context_var.with_context
     [B (Tolk.Helpers.dev, [Tolk_uop.Target.of_string "CPU"])] (fun () ->
       run "Clone"
         [test "sharded clones allocate per shard and preserve their axis" graph_clone;
@@ -158,4 +158,4 @@ let () =
          test "cross-device assignment preserves destination aliases and source storage" cross_device_assignment;
          test "cross-device assignment rejects noncontiguous destinations" noncontiguous_cross_device_assignment;
          test "sharded clones preserve symbolic nonsharded dimensions" symbolic_clone;
-         test "DISK destinations reject before allocation and host gathers remain available" disk_clone])
+         test "DISK destinations reject before allocation and host gathers remain available" disk_clone]))

@@ -49,9 +49,10 @@ let test_roberta_base () =
       equal ~msg:"attention mask" (list int) [ 1; 1; 1; 1; 1 ] attention)
 
 let () =
-  run "HF tokenizers"
-    [
-      group "bert-base-uncased" [ test "encode" test_bert_base_uncased ];
-      group "gpt2" [ test "encode" test_gpt2_small ];
-      group "roberta-base" [ test "encode" test_roberta_base ];
-    ]
+  exit
+    (run "HF tokenizers"
+       [
+         group "bert-base-uncased" [ test "encode" test_bert_base_uncased ];
+         group "gpt2" [ test "encode" test_gpt2_small ];
+         group "roberta-base" [ test "encode" test_roberta_base ];
+       ])

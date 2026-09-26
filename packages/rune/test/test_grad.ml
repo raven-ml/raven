@@ -637,4 +637,4 @@ let tests =
       ];
   ]
 
-let () = run "rune grad" tests
+let () = exit (run "rune grad" tests)

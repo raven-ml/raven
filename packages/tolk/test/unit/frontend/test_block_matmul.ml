@@ -416,4 +416,4 @@ let code_tests =
               ]);
       ])
 
-let () = run "block_matmul" [ value_tests; code_tests ]
+let () = exit (run "block_matmul" [ value_tests; code_tests ])

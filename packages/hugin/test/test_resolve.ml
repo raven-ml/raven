@@ -466,106 +466,109 @@ let test_ytick_format () =
   contains ~sub:">$0<" svg
 
 let () =
-  run "Resolve"
-    [
-      group "basic marks"
-        [
-          test "line" test_line_resolves;
-          test "point" test_point_resolves;
-          test "bar" test_bar_resolves;
-          test "hist" test_hist_resolves;
-          test "text" test_text_mark_resolves;
-          test "hline adds a path" test_hline_resolves;
-          test "vline adds a path" test_vline_resolves;
-          test "empty layers" test_empty_layers;
-        ];
-      group "decorations"
-        [
-          test "title appears" test_title_appears;
-          test "xlabel appears" test_xlabel_appears;
-          test "ylabel appears" test_ylabel_appears;
-          test "outermost title wins" test_outermost_title_wins;
-        ];
-      group "histogram normalization"
-        [
-          test "bins" test_hist_bins;
-          test "density" test_hist_density;
-          test "edges" test_hist_edges;
-          test "bar count tracks bin count" test_hist_bin_count_tracks_bins;
-        ];
-      group "auto coloring"
-        [
-          test "different colors" test_auto_color_different;
-          test "explicit color preserved" test_explicit_color_preserved;
-        ];
-      group "grid layout"
-        [
-          test "2x2 grid" test_grid_2x2;
-          test "empty grid" test_grid_empty;
-          test "hstack" test_hstack;
-          test "vstack" test_vstack;
-        ];
-      group "themes"
-        [
-          test "dark theme" test_dark_theme;
-          test "dark theme differs from default"
-            test_dark_theme_differs_from_default;
-          test "minimal theme" test_minimal_theme;
-        ];
-      group "grid lines" [ test "grid lines off" test_grid_lines_off ];
-      group "legend"
-        [
-          test "legend appears" test_legend_appears;
-          test "a label alone shows the legend" test_label_alone_shows_legend;
-        ];
-      group "fill_between"
-        [
-          test "resolves" test_fill_between_resolves;
-          test "with label" test_fill_between_with_label;
-        ];
-      group "hspan/vspan"
-        [ test "hspan" test_hspan_resolves; test "vspan" test_vspan_resolves ];
-      group "step line"
-        [
-          test "post" test_step_post;
-          test "pre" test_step_pre;
-          test "mid" test_step_mid;
-        ];
-      group "errorbar"
-        [
-          test "symmetric" test_errorbar_symmetric;
-          test "asymmetric" test_errorbar_asymmetric;
-          test "with xerr" test_errorbar_with_xerr;
-        ];
-      group "heatmap"
-        [
-          test "resolves" test_heatmap_resolves;
-          test "annotated" test_heatmap_annotated;
-          test "custom fmt" test_heatmap_custom_fmt;
-        ];
-      group "tick format"
-        [
-          test "xtick_format" test_xtick_format;
-          test "ytick_format" test_ytick_format;
-        ];
-      group "imshow"
-        [
-          test "rasterizes to image" test_imshow_rasterizes_to_image;
-          test "stretches differ" test_imshow_stretches_differ;
-          test "cmap changes output" test_imshow_cmap_changes_output;
-        ];
-      group "contour"
-        [
-          test "unfilled has stroked paths"
-            test_contour_unfilled_has_stroked_paths;
-          test "filled more paths" test_contour_filled_more_paths;
-          test "level count affects paths"
-            test_contour_level_count_affects_paths;
-          test "legend" test_contour_legend;
-        ];
-      group "inverted axes"
-        [
-          test "invert changes path data" test_invert_changes_path_data;
-          test "yinvert HR diagram" test_yinvert_hr_diagram;
-        ];
-    ]
+  exit
+    (run "Resolve"
+       [
+         group "basic marks"
+           [
+             test "line" test_line_resolves;
+             test "point" test_point_resolves;
+             test "bar" test_bar_resolves;
+             test "hist" test_hist_resolves;
+             test "text" test_text_mark_resolves;
+             test "hline adds a path" test_hline_resolves;
+             test "vline adds a path" test_vline_resolves;
+             test "empty layers" test_empty_layers;
+           ];
+         group "decorations"
+           [
+             test "title appears" test_title_appears;
+             test "xlabel appears" test_xlabel_appears;
+             test "ylabel appears" test_ylabel_appears;
+             test "outermost title wins" test_outermost_title_wins;
+           ];
+         group "histogram normalization"
+           [
+             test "bins" test_hist_bins;
+             test "density" test_hist_density;
+             test "edges" test_hist_edges;
+             test "bar count tracks bin count" test_hist_bin_count_tracks_bins;
+           ];
+         group "auto coloring"
+           [
+             test "different colors" test_auto_color_different;
+             test "explicit color preserved" test_explicit_color_preserved;
+           ];
+         group "grid layout"
+           [
+             test "2x2 grid" test_grid_2x2;
+             test "empty grid" test_grid_empty;
+             test "hstack" test_hstack;
+             test "vstack" test_vstack;
+           ];
+         group "themes"
+           [
+             test "dark theme" test_dark_theme;
+             test "dark theme differs from default"
+               test_dark_theme_differs_from_default;
+             test "minimal theme" test_minimal_theme;
+           ];
+         group "grid lines" [ test "grid lines off" test_grid_lines_off ];
+         group "legend"
+           [
+             test "legend appears" test_legend_appears;
+             test "a label alone shows the legend" test_label_alone_shows_legend;
+           ];
+         group "fill_between"
+           [
+             test "resolves" test_fill_between_resolves;
+             test "with label" test_fill_between_with_label;
+           ];
+         group "hspan/vspan"
+           [
+             test "hspan" test_hspan_resolves; test "vspan" test_vspan_resolves;
+           ];
+         group "step line"
+           [
+             test "post" test_step_post;
+             test "pre" test_step_pre;
+             test "mid" test_step_mid;
+           ];
+         group "errorbar"
+           [
+             test "symmetric" test_errorbar_symmetric;
+             test "asymmetric" test_errorbar_asymmetric;
+             test "with xerr" test_errorbar_with_xerr;
+           ];
+         group "heatmap"
+           [
+             test "resolves" test_heatmap_resolves;
+             test "annotated" test_heatmap_annotated;
+             test "custom fmt" test_heatmap_custom_fmt;
+           ];
+         group "tick format"
+           [
+             test "xtick_format" test_xtick_format;
+             test "ytick_format" test_ytick_format;
+           ];
+         group "imshow"
+           [
+             test "rasterizes to image" test_imshow_rasterizes_to_image;
+             test "stretches differ" test_imshow_stretches_differ;
+             test "cmap changes output" test_imshow_cmap_changes_output;
+           ];
+         group "contour"
+           [
+             test "unfilled has stroked paths"
+               test_contour_unfilled_has_stroked_paths;
+             test "filled more paths" test_contour_filled_more_paths;
+             test "level count affects paths"
+               test_contour_level_count_affects_paths;
+             test "legend" test_contour_legend;
+           ];
+         group "inverted axes"
+           [
+             test "invert changes path data" test_invert_changes_path_data;
+             test "yinvert HR diagram" test_yinvert_hr_diagram;
+           ];
+       ])

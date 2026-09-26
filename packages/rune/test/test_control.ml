@@ -248,4 +248,4 @@ let tests =
       ];
   ]
 
-let () = run "rune control" tests
+let () = exit (run "rune control" tests)

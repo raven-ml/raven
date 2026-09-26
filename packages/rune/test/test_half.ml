@@ -165,4 +165,4 @@ let tests =
       ];
   ]
 
-let () = run "rune half precision" tests
+let () = exit (run "rune half precision" tests)

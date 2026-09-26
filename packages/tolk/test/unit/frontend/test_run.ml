@@ -1880,7 +1880,7 @@ let sharding_tests =
     ]
 
 let () =
-  run "Tolk_frontend_run"
+  exit (run "Tolk_frontend_run"
     [
       test "DEV targets select the default device within a context" (fun () ->
           let original = Run.device_name () in
@@ -1921,4 +1921,4 @@ let () =
       assign_tests;
       attention_tests;
       symbolic_tests;
-    ]
+    ])

@@ -108,11 +108,11 @@ let symbolic_dimensions () =
       check_values (float_of_int (8 * length)) 1 (Reduce.sum result)) [1; 3; 4]
 
 let () =
-  Tolk.Helpers.Context_var.with_context
+  exit (Tolk.Helpers.Context_var.with_context
     [B (Tolk.Helpers.dev, [Tolk_uop.Target.of_string "CPU"])] (fun () ->
       run "Like"
         [test "single-device fills preserve placement and independent storage" single_device;
          test "replicated fills copy one complete allocation" replicated;
          test "sharded fills allocate local shapes on each device" sharded;
          test "unbuffered fills preserve partition structure without fill allocations" broadcast_constants;
-         test "sharded fills preserve symbolic nonsharded dimensions" symbolic_dimensions])
+         test "sharded fills preserve symbolic nonsharded dimensions" symbolic_dimensions]))

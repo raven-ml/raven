@@ -104,7 +104,7 @@ let test_on_render_id () =
     (Env.id wrapped)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  exit (Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   run "Fehu.Render"
     [
       group "image"
@@ -123,4 +123,4 @@ let () =
           test "passthrough" test_on_render_passthrough;
           test "id suffix" test_on_render_id;
         ];
-    ]
+    ])

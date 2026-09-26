@@ -1001,58 +1001,62 @@ let test_categorical_distribution () =
     probs
 
 let () =
-  run "Nx.Rng"
-    [
-      group "key"
-        [
-          test "creation" test_key_creation;
-          test "splitting" test_key_splitting;
-          test "fold_in" test_fold_in;
-          test "split_batch rows are split" test_split_batch_rows_are_split;
-          test "of_tensor checks the words axis"
-            test_of_tensor_checks_the_words_axis;
-          test "samplers take one key" test_samplers_take_one_key;
-        ];
-      group "sampling"
-        [
-          test "rand" test_rand;
-          test "randn" test_randn;
-          test "randn_fills_the_whole_draw" test_randn_fills_the_whole_draw;
-          test "keyless float sampler dtypes" test_keyless_float_sampler_dtypes;
-          test "randint" test_randint;
-          test "bits underlie uniform" test_bits_underlie_uniform;
-          test "uniform_half_open" test_uniform_half_open;
-          test "randint_covers_range_uniformly"
-            test_randint_covers_range_uniformly;
-          test "bernoulli" test_bernoulli;
-          test "bernoulli_extremes" test_bernoulli_extremes;
-          test "bernoulli is elementwise" test_bernoulli_is_elementwise;
-          test "shuffle_preserves_shape" test_shuffle_preserves_shape;
-          test "truncated_normal" test_truncated_normal;
-          test "truncated_normal_distribution"
-            test_truncated_normal_distribution;
-          test "truncated_normal matches the conditional moments"
-            test_truncated_normal_matches_the_conditional_moments;
-          test "truncated_normal handles narrow bounds"
-            test_truncated_normal_handles_narrow_bounds;
-          test "keyed samplers are pure" test_keyed_samplers_are_pure;
-          test "permutation is a permutation" test_permutation_is_a_permutation;
-          test "permutation positions are uniform"
-            test_permutation_positions_are_uniform;
-          test "gumbel and exponential moments"
-            test_gumbel_and_exponential_moments;
-          test "gamma moments" test_gamma_moments;
-          test "gamma is elementwise" test_gamma_is_elementwise;
-          test "parameter shapes are checked" test_parameter_shapes_are_checked;
-          test "poisson matches the pmf" test_poisson_matches_the_pmf;
-          test "poisson is elementwise" test_poisson_is_elementwise;
-          test "beta moments" test_beta_moments;
-          test "dirichlet is on the simplex" test_dirichlet_is_on_the_simplex;
-          test "categorical" test_categorical;
-          test "categorical_2d" test_categorical_2d;
-          test "categorical_axis_handling" test_categorical_axis_handling;
-          test "categorical broadcast logits axis"
-            test_categorical_broadcast_logits_axis;
-          test "categorical_distribution" test_categorical_distribution;
-        ];
-    ]
+  exit
+    (run "Nx.Rng"
+       [
+         group "key"
+           [
+             test "creation" test_key_creation;
+             test "splitting" test_key_splitting;
+             test "fold_in" test_fold_in;
+             test "split_batch rows are split" test_split_batch_rows_are_split;
+             test "of_tensor checks the words axis"
+               test_of_tensor_checks_the_words_axis;
+             test "samplers take one key" test_samplers_take_one_key;
+           ];
+         group "sampling"
+           [
+             test "rand" test_rand;
+             test "randn" test_randn;
+             test "randn_fills_the_whole_draw" test_randn_fills_the_whole_draw;
+             test "keyless float sampler dtypes"
+               test_keyless_float_sampler_dtypes;
+             test "randint" test_randint;
+             test "bits underlie uniform" test_bits_underlie_uniform;
+             test "uniform_half_open" test_uniform_half_open;
+             test "randint_covers_range_uniformly"
+               test_randint_covers_range_uniformly;
+             test "bernoulli" test_bernoulli;
+             test "bernoulli_extremes" test_bernoulli_extremes;
+             test "bernoulli is elementwise" test_bernoulli_is_elementwise;
+             test "shuffle_preserves_shape" test_shuffle_preserves_shape;
+             test "truncated_normal" test_truncated_normal;
+             test "truncated_normal_distribution"
+               test_truncated_normal_distribution;
+             test "truncated_normal matches the conditional moments"
+               test_truncated_normal_matches_the_conditional_moments;
+             test "truncated_normal handles narrow bounds"
+               test_truncated_normal_handles_narrow_bounds;
+             test "keyed samplers are pure" test_keyed_samplers_are_pure;
+             test "permutation is a permutation"
+               test_permutation_is_a_permutation;
+             test "permutation positions are uniform"
+               test_permutation_positions_are_uniform;
+             test "gumbel and exponential moments"
+               test_gumbel_and_exponential_moments;
+             test "gamma moments" test_gamma_moments;
+             test "gamma is elementwise" test_gamma_is_elementwise;
+             test "parameter shapes are checked"
+               test_parameter_shapes_are_checked;
+             test "poisson matches the pmf" test_poisson_matches_the_pmf;
+             test "poisson is elementwise" test_poisson_is_elementwise;
+             test "beta moments" test_beta_moments;
+             test "dirichlet is on the simplex" test_dirichlet_is_on_the_simplex;
+             test "categorical" test_categorical;
+             test "categorical_2d" test_categorical_2d;
+             test "categorical_axis_handling" test_categorical_axis_handling;
+             test "categorical broadcast logits axis"
+               test_categorical_broadcast_logits_axis;
+             test "categorical_distribution" test_categorical_distribution;
+           ];
+       ])

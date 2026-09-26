@@ -766,4 +766,4 @@ let suite =
       test_truncation_without_a_post_processor;
   ]
 
-let () = run "Encoding tests" [ group "encoding" suite ]
+let () = exit (run "Encoding tests" [ group "encoding" suite ])

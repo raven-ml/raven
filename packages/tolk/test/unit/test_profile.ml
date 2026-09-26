@@ -35,7 +35,7 @@ let render events =
       Out_channel.with_open_bin path (fun channel -> Profile.output channel events);
       In_channel.with_open_bin path In_channel.input_all)
 
-let () = run "Profile" [
+let () = exit (run "Profile" [
   test "clock calibration rejects outliers and invalid samples" (fun () ->
       let samples = [|1e6; 1e15; 1e6; -1e15; 1e6|] and count = ref 0 in
       let before = Unix.gettimeofday () *. 1e6 -. 1e6 in
@@ -122,4 +122,4 @@ let () = run "Profile" [
         |> String.split_on_char ',' in
       is_true (List.mem "\"ts\":0" fields);
       is_true (List.mem "\"ts\":10" fields));
-]
+])

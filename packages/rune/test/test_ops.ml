@@ -407,4 +407,4 @@ let tests =
     group "composites" composite_tests;
   ]
 
-let () = run "rune ops" tests
+let () = exit (run "rune ops" tests)

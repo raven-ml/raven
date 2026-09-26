@@ -1839,20 +1839,21 @@ let advanced_solve_tests =
   ]
 
 let () =
-  run "Nx Linalg"
-    [
-      group "Matrix Multiply" matmul_tests;
-      group "Dot Product" dot_tests;
-      group "Solve/Inverse" solve_inverse_tests;
-      group "Decompositions" decomposition_tests;
-      group "Norms" norm_tests;
-      group "Utilities" utility_tests;
-      group "Advanced Utilities" advanced_utility_tests;
-      group "Product Ops" product_tests;
-      group "Einsum" einsum_tests;
-      group "Advanced Decompositions" advanced_decomposition_tests;
-      group "Eigen" eigen_tests;
-      group "Advanced Norms" advanced_norm_tests;
-      group "Advanced Solve" advanced_solve_tests;
-      group "Triangular Solve" solve_triangular_tests;
-    ]
+  exit
+    (run "Nx Linalg"
+       [
+         group "Matrix Multiply" matmul_tests;
+         group "Dot Product" dot_tests;
+         group "Solve/Inverse" solve_inverse_tests;
+         group "Decompositions" decomposition_tests;
+         group "Norms" norm_tests;
+         group "Utilities" utility_tests;
+         group "Advanced Utilities" advanced_utility_tests;
+         group "Product Ops" product_tests;
+         group "Einsum" einsum_tests;
+         group "Advanced Decompositions" advanced_decomposition_tests;
+         group "Eigen" eigen_tests;
+         group "Advanced Norms" advanced_norm_tests;
+         group "Advanced Solve" advanced_solve_tests;
+         group "Triangular Solve" solve_triangular_tests;
+       ])

@@ -56,7 +56,7 @@ let global_ptr ?(slot = 0) () =
   U.param ~slot ~dtype:Dtype.float32 ~addrspace:Dtype.Global ()
 
 let () =
-  run "Codegen_lower"
+  exit (run "Codegen_lower"
     [
       test "anonymous local storage survives lowering until linearization" (fun () ->
           let local = U.alloc ~slot:17 ~dtype:Dtype.float32 ~shape:(U.const_int 4)
@@ -493,4 +493,4 @@ let () =
                           (test_renderer ~extra_matcher ())
                           (U.sink [ marker ])))));
         ];
-    ]
+    ])

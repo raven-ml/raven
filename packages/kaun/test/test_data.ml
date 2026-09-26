@@ -200,4 +200,4 @@ let tests =
       ];
   ]
 
-let () = run "kaun data" tests
+let () = exit (run "kaun data" tests)

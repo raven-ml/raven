@@ -927,7 +927,7 @@ let higher_order_tests =
   ]
 
 let () =
-  run "Nx Sanity"
+  exit (run "Nx Sanity"
     [
       group "Creation Functions" creation_tests;
       group "Range Generation" range_generation_tests;
@@ -951,4 +951,4 @@ let () =
       group "Sorting and Searching" sorting_searching_tests;
       group "Display and Formatting" display_formatting_tests;
       group "Higher-order Functions" higher_order_tests;
-    ]
+    ])

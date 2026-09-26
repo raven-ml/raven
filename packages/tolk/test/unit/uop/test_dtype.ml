@@ -649,4 +649,4 @@ let tests =
 let () =
   match Sys.getenv_opt "TOLK_DTYPE_ENV_CASE" with
   | Some case -> run_env_case case
-  | None -> run "tolk.uop.dtype" tests
+  | None -> exit (run "tolk.uop.dtype" tests)

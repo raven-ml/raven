@@ -138,19 +138,20 @@ let test_of_string_errors () =
     | _ -> false)
 
 let () =
-  run "Vg font"
-    [
-      test "identity" test_identity;
-      test "em metrics" test_em_metrics;
-      test "advance scales with size" test_advance_scales_with_size;
-      test "advance additive without kerning"
-        test_advance_is_additive_without_kerning;
-      test "kerning tightens pairs" test_kerning_tightens_pairs;
-      test "bold is wider" test_bold_is_wider;
-      test "bounds" test_bounds;
-      test "bounds descender" test_bounds_descender;
-      test "glyph positions" test_glyphs_positions;
-      test "unmapped uses fallback" test_unmapped_uses_fallback;
-      test "glyph paths" test_glyph_paths;
-      test "of_string errors" test_of_string_errors;
-    ]
+  exit
+    (run "Vg font"
+       [
+         test "identity" test_identity;
+         test "em metrics" test_em_metrics;
+         test "advance scales with size" test_advance_scales_with_size;
+         test "advance additive without kerning"
+           test_advance_is_additive_without_kerning;
+         test "kerning tightens pairs" test_kerning_tightens_pairs;
+         test "bold is wider" test_bold_is_wider;
+         test "bounds" test_bounds;
+         test "bounds descender" test_bounds_descender;
+         test "glyph positions" test_glyphs_positions;
+         test "unmapped uses fallback" test_unmapped_uses_fallback;
+         test "glyph paths" test_glyph_paths;
+         test "of_string errors" test_of_string_errors;
+       ])

@@ -226,7 +226,7 @@ let fragment shape = U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float3
     ~shape:(shape_node shape) ~addrspace:Dtype.Reg ()
 
 let () =
-  run "Multi_device"
+  exit (run "Multi_device"
     [
       group "Ownership"
         [
@@ -702,4 +702,4 @@ let () =
               in
               equal (array (float 1e-6)) [| 36. |] got);
         ];
-    ]
+    ])

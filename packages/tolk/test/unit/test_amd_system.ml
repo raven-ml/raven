@@ -81,7 +81,7 @@ let create_dev root pcibus =
 let is_failure = function Failure _ -> true | _ -> false
 
 let () =
-  run "System"
+  exit (run "System"
     [
       group "setup rollback"
         [
@@ -492,4 +492,4 @@ let () =
                 raises_match is_failure (fun () ->
                     Pci_device.alloc_sysmem System.page_size));
         ];
-    ]
+    ])

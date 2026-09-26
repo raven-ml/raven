@@ -13,7 +13,7 @@ module Gen = Windtrap.Gen
 let gen_shape ~max_ndim ~max_dim =
   let open Gen in
   let* ndim = int_range 1 max_ndim in
-  let+ dims = list ~size:(pure ndim) (int_range 1 max_dim) in
+  let+ dims = list ~size:(constant ndim) (int_range 1 max_dim) in
   Array.of_list dims
 
 let gen_shape_2d ~max_dim =
@@ -47,7 +47,7 @@ let gen_tensor_with_values (type a b) (dtype : (a, b) Nx.dtype)
     (gen_val : a Gen.t) (shape : int array) =
   let size = Array.fold_left ( * ) 1 shape in
   let open Gen in
-  let+ data = list ~size:(pure size) gen_val in
+  let+ data = list ~size:(constant size) gen_val in
   Nx.create dtype shape (Array.of_list data)
 
 let gen_f32 shape = gen_tensor_with_values Nx.float32 gen_float_safe shape
@@ -221,7 +221,7 @@ let gen_f32_with_index =
   let* t = gen_f32 shape in
   let ndim = Array.length shape in
   let rec gen_indices i acc =
-    if i >= ndim then pure (List.rev acc)
+    if i >= ndim then constant (List.rev acc)
     else
       let* idx = int_range 0 (shape.(i) - 1) in
       gen_indices (i + 1) (idx :: acc)
@@ -236,7 +236,7 @@ let gen_f32_1d_with_take_indices =
   let* t = gen_f32 [| len |] in
   let* num_indices = int_range 1 8 in
   let+ idx_list =
-    list ~size:(pure num_indices) (map Int32.of_int (int_range 0 (len - 1)))
+    list ~size:(constant num_indices) (map Int32.of_int (int_range 0 (len - 1)))
   in
   let indices = Nx.create Nx.int32 [| num_indices |] (Array.of_list idx_list) in
   (t, indices)
@@ -247,7 +247,7 @@ let gen_f32_with_mask =
   let* shape = gen_shape ~max_ndim:3 ~max_dim:4 in
   let size = Array.fold_left ( * ) 1 shape in
   let* t = gen_f32 shape in
-  let+ bools = list ~size:(pure size) bool in
+  let+ bools = list ~size:(constant size) bool in
   let mask = Nx.create Nx.bool shape (Array.of_list bools) in
   (t, mask)
 
@@ -259,9 +259,9 @@ let gen_f32_with_mask =
 let gen_broadcastable_shapes =
   let open Gen in
   let* ndim = int_range 1 3 in
-  let* dims = list ~size:(pure ndim) (int_range 1 5) in
+  let* dims = list ~size:(constant ndim) (int_range 1 5) in
   let result_shape = Array.of_list dims in
-  let+ choices = list ~size:(pure ndim) (int_range 0 2) in
+  let+ choices = list ~size:(constant ndim) (int_range 0 2) in
   let shape_a = Array.copy result_shape in
   let shape_b = Array.copy result_shape in
   List.iteri
@@ -284,10 +284,10 @@ let gen_f32_broadcastable_pair =
 let gen_f32_with_broadcast_shape =
   let open Gen in
   let* ndim = int_range 1 3 in
-  let* dims = list ~size:(pure ndim) (int_range 1 5) in
+  let* dims = list ~size:(constant ndim) (int_range 1 5) in
   let target = Array.of_list dims in
   (* Build source shape: randomly set some dims to 1 *)
-  let* which_ones = list ~size:(pure ndim) bool in
+  let* which_ones = list ~size:(constant ndim) bool in
   let source =
     Array.mapi (fun i d -> if List.nth which_ones i then 1 else d) target
   in
@@ -340,7 +340,7 @@ let f32_stress_pair =
 let gen_f32_2d_plus =
   let open Gen in
   let* ndim = int_range 2 4 in
-  let* dims = list ~size:(pure ndim) (int_range 2 6) in
+  let* dims = list ~size:(constant ndim) (int_range 2 6) in
   gen_f32 (Array.of_list dims)
 
 let f32_2d_plus = tensor gen_f32_2d_plus
@@ -349,9 +349,9 @@ let f32_2d_plus = tensor gen_f32_2d_plus
 let gen_broadcastable_shapes_stress =
   let open Gen in
   let* ndim = int_range 2 5 in
-  let* dims = list ~size:(pure ndim) (int_range 1 6) in
+  let* dims = list ~size:(constant ndim) (int_range 1 6) in
   let result_shape = Array.of_list dims in
-  let+ choices = list ~size:(pure ndim) (int_range 0 2) in
+  let+ choices = list ~size:(constant ndim) (int_range 0 2) in
   let shape_a = Array.copy result_shape in
   let shape_b = Array.copy result_shape in
   List.iteri

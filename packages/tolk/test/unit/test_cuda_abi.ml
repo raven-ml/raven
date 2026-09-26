@@ -102,7 +102,7 @@ let compiled_arguments () =
   equal int 0 (live_modules ())
 
 let () =
-  run "CUDA native ABI"
+  exit (run "CUDA native ABI"
     [ test "timestamp callback runs only while the queue is healthy" (fun () ->
         is_true (timestamp () > 0L));
       test "concurrent initialization publishes a complete driver table" concurrent_initialization;
@@ -118,4 +118,4 @@ let () =
         registration_status 2;
         raises (Failure "CUDA Error 2, injected synchronization failure")
           (fun () -> ignore (register_host 0x10000n 16)));
-      test "shutdown releases all resources after synchronization failure" shutdown_after_failure ]
+      test "shutdown releases all resources after synchronization failure" shutdown_after_failure ])

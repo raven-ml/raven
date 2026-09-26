@@ -229,7 +229,7 @@ let import_rollback_ownership ~fail_clear () =
   end else equal int 1 !frees
 
 let () =
-  run "Memory"
+  exit (run "Memory"
     [
       group "Map_range"
         [
@@ -754,4 +754,4 @@ let () =
               Memory.unmap_range fx.mm ~vaddr ~size:0x1000;
               equal (array int64) (Array.make 8 0L) (slice fx 0 8));
         ];
-    ]
+    ])

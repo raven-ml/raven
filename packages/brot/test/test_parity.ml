@@ -629,26 +629,28 @@ let check_walker model tokenizer =
 (* One test per (tokenizer, corpus, kind), so that a kind that brot does not yet
    match shows up on its own instead of hiding the kinds after it. *)
 let () =
-  run "HF parity"
-    (List.map
-       (fun (model, corpora) ->
-         group model
-           (slow "load" (with_tokenizer model ignore)
-           :: test "walker" (with_tokenizer model (check_walker model))
-           :: List.map
-                (fun corpus ->
-                  group corpus
-                    (List.map
-                       (fun (kind, check) ->
-                         test kind (with_tokenizer model (check model corpus)))
-                       [
-                         ("ids", check_ids);
-                         ("offsets", check_offsets);
-                         ("decode", check_decode);
-                         ("special ids", check_special);
-                         ("special tokens mask", check_mask);
-                         ("type ids", check_types);
-                         ("attention mask", check_attention);
-                       ]))
-                corpora))
-       models)
+  exit
+    (run "HF parity"
+       (List.map
+          (fun (model, corpora) ->
+            group model
+              (slow "load" (with_tokenizer model ignore)
+              :: test "walker" (with_tokenizer model (check_walker model))
+              :: List.map
+                   (fun corpus ->
+                     group corpus
+                       (List.map
+                          (fun (kind, check) ->
+                            test kind
+                              (with_tokenizer model (check model corpus)))
+                          [
+                            ("ids", check_ids);
+                            ("offsets", check_offsets);
+                            ("decode", check_decode);
+                            ("special ids", check_special);
+                            ("special tokens mask", check_mask);
+                            ("type ids", check_types);
+                            ("attention mask", check_attention);
+                          ]))
+                   corpora))
+          models))

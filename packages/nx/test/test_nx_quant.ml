@@ -663,4 +663,4 @@ let tests =
       ];
   ]
 
-let () = run "nx quant" tests
+let () = exit (run "nx quant" tests)

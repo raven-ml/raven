@@ -297,7 +297,7 @@ let () =
   match Sys.getenv_opt role_var with
   | Some role -> run_role role
   | None ->
-      run "rune.jit_cache"
+      exit (run "rune.jit_cache"
         [
           group "persistent compile cache"
             [
@@ -319,4 +319,4 @@ let () =
               test "programs over several devices bail and still work"
                 devices_bail;
             ];
-        ]
+        ])

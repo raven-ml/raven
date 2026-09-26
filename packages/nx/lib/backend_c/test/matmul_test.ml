@@ -1261,14 +1261,16 @@ let test_split_chunk_order () =
     ]
 
 let () =
-  Windtrap.run "nx C backend matmul"
-    [
-      group "internal-path-equivalence"
-        [
-          test "owned, workspace, and Accelerate paths" test_maintenance_paths;
-          test "a 1x1 output sums in chunks" test_dot_path;
-          test "a row keeps the dot's arithmetic" test_row_path;
-          test "few outputs sum as the dot" test_direct_is_dots;
-          test "the split path adds chunks in order" test_split_chunk_order;
-        ];
-    ]
+  exit
+    (Windtrap.run "nx C backend matmul"
+       [
+         group "internal-path-equivalence"
+           [
+             test "owned, workspace, and Accelerate paths"
+               test_maintenance_paths;
+             test "a 1x1 output sums in chunks" test_dot_path;
+             test "a row keeps the dot's arithmetic" test_row_path;
+             test "few outputs sum as the dot" test_direct_is_dots;
+             test "the split path adds chunks in order" test_split_chunk_order;
+           ];
+       ])

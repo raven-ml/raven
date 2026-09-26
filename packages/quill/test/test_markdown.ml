@@ -414,11 +414,12 @@ let attrs_tests =
   ]
 
 let () =
-  run "Markdown"
-    [
-      group "Parsing" parsing_tests;
-      group "Rendering" rendering_tests;
-      group "ID persistence" id_persistence_tests;
-      group "Structured outputs" structured_output_tests;
-      group "Attributes" attrs_tests;
-    ]
+  exit
+    (run "Markdown"
+       [
+         group "Parsing" parsing_tests;
+         group "Rendering" rendering_tests;
+         group "ID persistence" id_persistence_tests;
+         group "Structured outputs" structured_output_tests;
+         group "Attributes" attrs_tests;
+       ])

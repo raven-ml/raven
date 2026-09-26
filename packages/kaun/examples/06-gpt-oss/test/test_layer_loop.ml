@@ -202,11 +202,12 @@ let test_blocks_read_weights_and_reuse_caches () =
     (Nx.Placement.equal cpu1 (Nx.placement !x))
 
 let () =
-  run "gpt-oss layer loop"
-    [
-      group "block programs"
-        [
-          test "each reads its weights and index and reuses its cache"
-            test_blocks_read_weights_and_reuse_caches;
-        ];
-    ]
+  exit
+    (run "gpt-oss layer loop"
+       [
+         group "block programs"
+           [
+             test "each reads its weights and index and reuses its cache"
+               test_blocks_read_weights_and_reuse_caches;
+           ];
+       ])

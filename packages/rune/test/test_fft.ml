@@ -375,4 +375,4 @@ let tests =
     group "jit" [ test "rfft is refused under jit" test_jit_rfft_refused ];
   ]
 
-let () = run "rune fft" tests
+let () = exit (run "rune fft" tests)

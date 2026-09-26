@@ -345,4 +345,4 @@ let tests =
       @ grad_check_tests);
   ]
 
-let () = run "kaun fn" tests
+let () = exit (run "kaun fn" tests)

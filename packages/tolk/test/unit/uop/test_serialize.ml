@@ -263,7 +263,7 @@ let () =
   match (Sys.getenv_opt blob_var, Sys.getenv_opt key_var) with
   | Some blob_file, Some key_file -> export_child ~blob_file ~key_file
   | _ ->
-  run "tolk.uop.serialize"
+  exit (run "tolk.uop.serialize"
     [
       group "Serialization"
         [
@@ -294,4 +294,4 @@ let () =
           test "cross-process export/import lands on this universe"
             cross_process_import;
         ];
-    ]
+    ])

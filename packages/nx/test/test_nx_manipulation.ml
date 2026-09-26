@@ -601,15 +601,16 @@ let other_manipulation_tests =
   ]
 
 let () =
-  run "Nx Manipulation"
-    [
-      group "Reshape" reshape_tests;
-      group "Transpose" transpose_tests;
-      group "Concatenate" concatenate_tests;
-      group "Stack" stack_tests;
-      group "Split" split_tests;
-      group "Squeeze/Expand" squeeze_expand_tests;
-      group "Broadcasting" broadcast_tests;
-      group "Tile/Repeat" tile_repeat_tests;
-      group "Other Manipulation" other_manipulation_tests;
-    ]
+  exit
+    (run "Nx Manipulation"
+       [
+         group "Reshape" reshape_tests;
+         group "Transpose" transpose_tests;
+         group "Concatenate" concatenate_tests;
+         group "Stack" stack_tests;
+         group "Split" split_tests;
+         group "Squeeze/Expand" squeeze_expand_tests;
+         group "Broadcasting" broadcast_tests;
+         group "Tile/Repeat" tile_repeat_tests;
+         group "Other Manipulation" other_manipulation_tests;
+       ])

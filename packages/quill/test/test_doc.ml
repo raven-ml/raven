@@ -98,7 +98,9 @@ let modification_tests =
   ]
 
 let () =
-  run "Doc"
-    [
-      group "Accessors" accessor_tests; group "Modifications" modification_tests;
-    ]
+  exit
+    (run "Doc"
+       [
+         group "Accessors" accessor_tests;
+         group "Modifications" modification_tests;
+       ])

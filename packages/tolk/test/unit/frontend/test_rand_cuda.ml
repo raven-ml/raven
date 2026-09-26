@@ -16,7 +16,7 @@ let cuda_available () =
   with _ -> false
 
 let () =
-  Tolk.Helpers.Context_var.with_context
+  exit (Tolk.Helpers.Context_var.with_context
     [ B (Tolk.Helpers.dev, [ Tolk_uop.Target.of_string "CUDA" ]) ] (fun () ->
   if cuda_available () then
     run "Tolk_frontend rand (CUDA)" Rand_cases.exact_groups
@@ -25,4 +25,4 @@ let () =
       [
         group "cuda"
           [ test "skipped" (fun () -> skip ~reason:"CUDA unavailable" ()) ];
-      ])
+      ]))

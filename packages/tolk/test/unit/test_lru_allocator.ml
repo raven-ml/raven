@@ -94,7 +94,7 @@ let inside_allocation n f ~during =
   run ()
 
 let () =
-  run "Lru_allocator"
+  exit (run "Lru_allocator"
     [
       test "failed flush restores untouched entries beside concurrent frees" (fun () ->
           let lru, fail_alloc, freed, during_free, failed_owner, error =
@@ -166,4 +166,4 @@ let () =
             ~during:(fun () -> ignore (lru.alloc 200 spec : int));
           is_true (List.mem kept !freed || lru.alloc 100 spec = kept)
         done);
-    ]
+    ])

@@ -150,9 +150,10 @@ let writing_tests =
 let integration_tests = [ test "round_trip" test_round_trip ]
 
 let () =
-  run "Talon_csv"
-    [
-      group "Reading" reading_tests;
-      group "Writing" writing_tests;
-      group "Integration" integration_tests;
-    ]
+  exit
+    (run "Talon_csv"
+       [
+         group "Reading" reading_tests;
+         group "Writing" writing_tests;
+         group "Integration" integration_tests;
+       ])

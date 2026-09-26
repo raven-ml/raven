@@ -378,7 +378,7 @@ let disk_views_move_after_bulk_transfers () =
       | Some _ -> () | None -> fail "expected call") calls
 
 let () =
-  run "Engine.Schedule"
+  exit (run "Engine.Schedule"
     [
       test "disk views move after explicit bulk transfers" disk_views_move_after_bulk_transfers;
       test "ordinary slices keep the base call input"
@@ -410,4 +410,4 @@ let () =
         concurrent_internal_buffer_slots_keep_imports_distinct;
       test "concurrent memory plans keep arenas distinct"
         concurrent_memory_plans_keep_arenas_distinct;
-    ]
+    ])

@@ -460,35 +460,38 @@ let test_gradient_with_a_padded_row grad () =
     (leaves alone) padded
 
 let () =
-  run "kaun decoder"
-    [
-      group "one definition"
-        (List.concat
+  exit
+    (run "kaun decoder"
+       [
+         group "one definition"
+           (List.concat
+              [
+                both "one call over Cache_index.rows is hidden" test_agreement;
+                both "chunks of 1, of 7 and whole agree" test_chunks;
+                both "slots can be renamed" test_slot_renaming;
+                both "two sequences share the slots of a prefix"
+                  test_shared_prefix;
+                both "the tokens of a sequence can be lanes of one call"
+                  test_lanes_of_one_sequence;
+                both "a ragged batch matches each row alone" test_ragged_batch;
+                both "unnamed slots are never observed" test_poisoning;
+                both "a lane that addresses nothing is finite" test_empty_lane;
+              ]);
+         group "generation"
            [
-             both "one call over Cache_index.rows is hidden" test_agreement;
-             both "chunks of 1, of 7 and whole agree" test_chunks;
-             both "slots can be renamed" test_slot_renaming;
-             both "two sequences share the slots of a prefix" test_shared_prefix;
-             both "the tokens of a sequence can be lanes of one call"
-               test_lanes_of_one_sequence;
-             both "a ragged batch matches each row alone" test_ragged_batch;
-             both "unnamed slots are never observed" test_poisoning;
-             both "a lane that addresses nothing is finite" test_empty_lane;
-           ]);
-      group "generation"
-        [
-          test "jitted generation matches recomputation and reuses every leaf"
-            test_generation_matches_recomputation;
-        ];
-      group "gradients"
-        [
-          test "a fully padded row, eager"
-            (test_gradient_with_a_padded_row (fun loss ->
-                 Rune.grad model_ptree loss));
-          test "a fully padded row, compiled"
-            (test_gradient_with_a_padded_row (fun loss ->
-                 Rune.jit
-                   Nx.Ptree.(model_ptree @-> returns model_ptree)
-                   (Rune.grad model_ptree loss)));
-        ];
-    ]
+             test
+               "jitted generation matches recomputation and reuses every leaf"
+               test_generation_matches_recomputation;
+           ];
+         group "gradients"
+           [
+             test "a fully padded row, eager"
+               (test_gradient_with_a_padded_row (fun loss ->
+                    Rune.grad model_ptree loss));
+             test "a fully padded row, compiled"
+               (test_gradient_with_a_padded_row (fun loss ->
+                    Rune.jit
+                      Nx.Ptree.(model_ptree @-> returns model_ptree)
+                      (Rune.grad model_ptree loss)));
+           ];
+       ])

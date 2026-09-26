@@ -140,11 +140,12 @@ let test_pool_after_fork () =
   check (parallel_probe () = 0) "parent worker pool after child exit"
 
 let () =
-  Windtrap.run "nx C backend engine"
-    [
-      group "engine-invariants"
-        [
-          test "driver and FFI funnels" test_engine;
-          test "worker pool is rebuilt after fork" test_pool_after_fork;
-        ];
-    ]
+  exit
+    (Windtrap.run "nx C backend engine"
+       [
+         group "engine-invariants"
+           [
+             test "driver and FFI funnels" test_engine;
+             test "worker pool is rebuilt after fork" test_pool_after_fork;
+           ];
+       ])

@@ -214,7 +214,7 @@ let concurrent_link_publication () =
   is_true (U.equal first_result (link linear));
   ignore (Sys.opaque_identity device)
 
-let () = run "Engine_link" [
+let () = exit (run "Engine_link" [
   test "secondary owner replacement invalidates cached links without invalidating retained links" replacement_ownership;
   test "obsolete owner storage retires even while the original graph remains live" obsolete_link_collection;
   test "concurrent first links publish one retained graph" concurrent_link_publication;
@@ -225,4 +225,4 @@ let () = run "Engine_link" [
   test "does not cache link-time inputs" input_links;
   test "preserves runtime parameters and call bodies" preserve_runtime;
   test "executes linked host calls with rebound buffers and scalars" host_call_replay;
-]
+])

@@ -74,7 +74,7 @@ let check_launch_dimension dimension bindings expected =
   is_true (global = [U.Launch_value_int expected; U.Launch_value_int 1; U.Launch_value_int 1])
 
 let () =
-  run "Program_spec"
+  exit (run "Program_spec"
     [
       group "Extraction"
         [
@@ -548,4 +548,4 @@ let () =
             let est = E.of_program [ r; a; body; end_ ] in
             expect_exact_estimate (Z.of_int64 Int64.max_int) [] est.ops);
         ];
-    ]
+    ])

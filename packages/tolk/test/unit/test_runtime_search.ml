@@ -550,10 +550,14 @@ let sequential_compile_interrupt () =
       Unix.putenv "BEAM_STRICT_MODE" (Option.value strict ~default:"");
       List.iter Device.Buffer.deallocate rawbufs)
     (fun () ->
-      raises Sys.Break (fun () ->
-          Helpers.Context_var.with_context [B (Search.beam_parallel, 0)] (fun () ->
-              ignore (Search.beam_search ~to_program ~disable_cache:true
-                (P.create ast ren) rawbufs ~var_vals:[] 1 device)));
+      (* windtrap ends the run on Sys.Break, so the test catches it. *)
+      (match
+         Helpers.Context_var.with_context [B (Search.beam_parallel, 0)] (fun () ->
+             Search.beam_search ~to_program ~disable_cache:true
+               (P.create ast ren) rawbufs ~var_vals:[] 1 device)
+       with
+       | _ -> fail "expected Sys.Break"
+       | exception Sys.Break -> ());
       equal ~msg:"interruption stops candidate compilation immediately" int 1 !compiled)
 
 let candidate_program_metadata ~large () =
@@ -733,7 +737,7 @@ let overflowing_resource_products_reject_candidates () =
     ~finally:(fun () -> Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:""))
     (fun () -> List.iter check [Ak.Upcast; Ak.Local])
 
-let () = run __FILE__
+let () = exit (run __FILE__
     [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
       test "beam reconsiders compute-filtered candidates in later rounds"
         compute_filtered_candidate_is_reconsidered;
@@ -752,4 +756,4 @@ let () = run __FILE__
       test "codegen rounds negative timing midpoints down without cache eviction"
         (codegen_midpoint_rounds_down ~has_cache_hook:false);
       test "beam invokes the available cache hook for each timing sample"
-        (codegen_midpoint_rounds_down ~has_cache_hook:true) ]
+        (codegen_midpoint_rounds_down ~has_cache_hook:true) ])

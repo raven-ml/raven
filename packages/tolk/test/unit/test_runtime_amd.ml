@@ -672,7 +672,7 @@ let queue_full () =
   equal int64 1021L (Bytes.get_int64_le (Device.Buffer.as_bytes pointer) 0)
 
 let () =
-  run "Amd_runtime"
+  exit (run "Amd_runtime"
     [ group "AQL"
         [test "compiled single-XCC packets wrap in dispatch units" (fun () -> execute_aql_queue ~multi:false);
          test "compiled multi-XCC completion is predicated after dispatch" (fun () -> execute_aql_queue ~multi:true)];
@@ -1513,4 +1513,4 @@ let () =
               Tolk.Device.synchronize device;
               equal (list int) [ 42 ] (read_i32 dst));
         ];
-    ]
+    ])

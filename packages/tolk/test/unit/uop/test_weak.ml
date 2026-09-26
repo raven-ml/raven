@@ -230,7 +230,7 @@ let late_simplification_preserves_committed_literals () =
     (Array.exists (fun s -> U.op s = Ops.Const) (U.src early))
 
 let () =
-  run "tolk.uop.weak"
+  exit (run "tolk.uop.weak"
     [
       group "default width"
         [
@@ -275,4 +275,4 @@ let () =
           test "gated long index keeps its width for huge buffers"
             gated_long_index_keeps_wide_storage;
         ];
-    ]
+    ])

@@ -1206,63 +1206,66 @@ let test_train_min_frequency () =
   equal ~msg:"merges" (list string) [ "a a" ] (trained_merges tokenizer)
 
 let () =
-  run "BPE tests"
-    [
-      group "basic"
-        [
-          test "basic tokenization" test_bpe_basic;
-          test "builder pattern" test_bpe_builder;
-          test "ignore_merges" test_ignore_merges;
-          test "dropout overrides ignore_merges"
-            test_dropout_overrides_ignore_merges;
-          test "empty prefix and suffix" test_empty_affixes;
-          test "save and load" test_bpe_save_load;
-          test "end-of-word suffix" test_suffix_only;
-          test "end-of-word suffix and merges" test_suffix_and_merges;
-          test "end-of-word suffix on a multi-byte character"
-            test_suffix_multibyte;
-          test "missing suffixed character" test_suffix_unknown;
-          test "byte fallback with a suffix" test_suffix_byte_fallback;
-          test "byte fallback with a prefix" test_prefix_byte_fallback;
-          test "byte fallback with a prefix over a long word"
-            test_prefix_byte_fallback_long;
-          test "continuing prefix with and without a suffix"
-            test_prefix_and_suffix;
-          test "tokenizer integration" test_tokenizer_integration;
-          test "unknown character" test_unknown_character;
-          test "byte fallback before the unknown token"
-            test_unk_after_byte_fallback;
-          test "a vocabulary hit flushes the unknown token"
-            test_unk_flushed_by_vocab_hit;
-          test "truncated UTF-8" test_truncated_utf8;
-          test "words past the rank scan" test_long_word_merges;
-        ];
-      group "cache"
-        [
-          test "collisions agree with the merges" test_cache_agrees_with_merges;
-          test "the seed agrees with the merges" test_seed_agrees_with_merges;
-          test "the seed under ignore_merges" test_seed_ignore_merges;
-          test "long and many-token pretokens" test_cache_long_and_wide;
-          test "a set filled beyond two ways" test_set_eviction;
-          test "front promotion and eviction" test_front_promotion_and_eviction;
-          test "small capacities on the parity corpora"
-            test_cache_capacities_on_parity_corpus;
-        ];
-      group "training"
-        [
-          test "vocabulary and merges" test_train;
-          test "end-of-word suffix" test_train_suffix;
-          test "continuing subword prefix" test_train_prefix;
-          test "limit_alphabet" test_train_limit_alphabet;
-          test "initial_alphabet" test_train_initial_alphabet;
-          test "max_token_length" test_train_max_token_length;
-          test "min_frequency" test_train_min_frequency;
-          test "a byte-level pre-tokenizer" test_train_byte_level;
-          test "a normalizer" test_train_normalizer;
-          test "no pre-tokenizer" test_train_whole_text;
-          test "training from files" test_train_files;
-          test "a pair merged twice" test_train_repeated_merge;
-        ];
-      group "parallel"
-        [ test "shared cache across domains" test_parallel_cache ];
-    ]
+  exit
+    (run "BPE tests"
+       [
+         group "basic"
+           [
+             test "basic tokenization" test_bpe_basic;
+             test "builder pattern" test_bpe_builder;
+             test "ignore_merges" test_ignore_merges;
+             test "dropout overrides ignore_merges"
+               test_dropout_overrides_ignore_merges;
+             test "empty prefix and suffix" test_empty_affixes;
+             test "save and load" test_bpe_save_load;
+             test "end-of-word suffix" test_suffix_only;
+             test "end-of-word suffix and merges" test_suffix_and_merges;
+             test "end-of-word suffix on a multi-byte character"
+               test_suffix_multibyte;
+             test "missing suffixed character" test_suffix_unknown;
+             test "byte fallback with a suffix" test_suffix_byte_fallback;
+             test "byte fallback with a prefix" test_prefix_byte_fallback;
+             test "byte fallback with a prefix over a long word"
+               test_prefix_byte_fallback_long;
+             test "continuing prefix with and without a suffix"
+               test_prefix_and_suffix;
+             test "tokenizer integration" test_tokenizer_integration;
+             test "unknown character" test_unknown_character;
+             test "byte fallback before the unknown token"
+               test_unk_after_byte_fallback;
+             test "a vocabulary hit flushes the unknown token"
+               test_unk_flushed_by_vocab_hit;
+             test "truncated UTF-8" test_truncated_utf8;
+             test "words past the rank scan" test_long_word_merges;
+           ];
+         group "cache"
+           [
+             test "collisions agree with the merges"
+               test_cache_agrees_with_merges;
+             test "the seed agrees with the merges" test_seed_agrees_with_merges;
+             test "the seed under ignore_merges" test_seed_ignore_merges;
+             test "long and many-token pretokens" test_cache_long_and_wide;
+             test "a set filled beyond two ways" test_set_eviction;
+             test "front promotion and eviction"
+               test_front_promotion_and_eviction;
+             test "small capacities on the parity corpora"
+               test_cache_capacities_on_parity_corpus;
+           ];
+         group "training"
+           [
+             test "vocabulary and merges" test_train;
+             test "end-of-word suffix" test_train_suffix;
+             test "continuing subword prefix" test_train_prefix;
+             test "limit_alphabet" test_train_limit_alphabet;
+             test "initial_alphabet" test_train_initial_alphabet;
+             test "max_token_length" test_train_max_token_length;
+             test "min_frequency" test_train_min_frequency;
+             test "a byte-level pre-tokenizer" test_train_byte_level;
+             test "a normalizer" test_train_normalizer;
+             test "no pre-tokenizer" test_train_whole_text;
+             test "training from files" test_train_files;
+             test "a pair merged twice" test_train_repeated_merge;
+           ];
+         group "parallel"
+           [ test "shared cache across domains" test_parallel_cache ];
+       ])

@@ -358,7 +358,7 @@ let test_pipeline () =
 (* ───── Test Suite ───── *)
 
 let () =
-  run "Sowilo"
+  exit (run "Sowilo"
     [
       group "transforms"
         [
@@ -393,4 +393,4 @@ let () =
       group "edge_detection"
         [ test "sobel" test_sobel; slow "canny" test_canny ];
       group "integration" [ test "pipeline" test_pipeline ];
-    ]
+    ])

@@ -1219,7 +1219,7 @@ let gated_f32_store_is_not_float_decomposed () =
   | Some _ -> is_true ~msg:"gated store should not match f2f store rule" false
 
 let () =
-  run "tolk.uop.decomp"
+  exit (run "tolk.uop.decomp"
     [
       group "transcendentals"
         [ test "sqrt decomposition builds Where"
@@ -1363,4 +1363,4 @@ let () =
           test "gated f32 store is not decomposed"
             gated_f32_store_is_not_float_decomposed;
         ];
-    ]
+    ])

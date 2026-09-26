@@ -2712,8 +2712,11 @@ let test_internal_branches () =
   test_trsm_batched_fail ()
 
 let () =
-  Windtrap.run "nx C backend linalg stress"
-    [
-      group "internal-algorithm-branches"
-        [ test "factorization and workspace gauntlet" test_internal_branches ];
-    ]
+  exit
+    (Windtrap.run "nx C backend linalg stress"
+       [
+         group "internal-algorithm-branches"
+           [
+             test "factorization and workspace gauntlet" test_internal_branches;
+           ];
+       ])

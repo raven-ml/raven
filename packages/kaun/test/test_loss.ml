@@ -148,8 +148,8 @@ let softmax_ce_tests =
 let logits_and_labels =
   Gen.(
     pair
-      (list ~size:(pure 6) (float_range (-10.) 10.))
-      (list ~size:(pure 2) (int_range 0 2)))
+      (list ~size:(constant 6) (float_range (-10.) 10.))
+      (list ~size:(constant 2) (int_range 0 2)))
 
 let softmax_ce_sparse_tests =
   [
@@ -283,4 +283,4 @@ let tests =
     group "gradients" grad_tests;
   ]
 
-let () = run "kaun loss" tests
+let () = exit (run "kaun loss" tests)

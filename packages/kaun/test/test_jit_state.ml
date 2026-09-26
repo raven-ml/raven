@@ -264,4 +264,4 @@ let tests =
       ];
   ]
 
-let () = run "kaun jit state" tests
+let () = exit (run "kaun jit state" tests)

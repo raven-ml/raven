@@ -245,33 +245,34 @@ let test_stroke_invariants () =
     dotted.dash
 
 let () =
-  run "Vg geometry"
-    [
-      group "affine"
-        [
-          test "composition order" test_apply_composition;
-          test "quarter turn" test_rotate_quarter_turn;
-          test "invert round trip" test_invert_roundtrip;
-          test "invert singular" test_invert_singular;
-        ];
-      group "path"
-        [
-          test "building" test_building;
-          test "segment without current point"
-            test_segment_without_current_point_moves;
-          test "close is idempotent" test_close_is_idempotent;
-          test "polyline" test_polyline;
-          test "append order" test_append_order;
-          test "transform" test_transform;
-          test "circle endpoints" test_circle_endpoints;
-        ];
-      group "box" [ test "operations" test_box ];
-      group "flatten"
-        [ test "chords" test_flatten; test "bounds" test_path_bounds ];
-      group "printing" [ test "pictures" test_pp ];
-      group "stroke"
-        [
-          test "defaults" test_stroke_defaults;
-          test "invariants" test_stroke_invariants;
-        ];
-    ]
+  exit
+    (run "Vg geometry"
+       [
+         group "affine"
+           [
+             test "composition order" test_apply_composition;
+             test "quarter turn" test_rotate_quarter_turn;
+             test "invert round trip" test_invert_roundtrip;
+             test "invert singular" test_invert_singular;
+           ];
+         group "path"
+           [
+             test "building" test_building;
+             test "segment without current point"
+               test_segment_without_current_point_moves;
+             test "close is idempotent" test_close_is_idempotent;
+             test "polyline" test_polyline;
+             test "append order" test_append_order;
+             test "transform" test_transform;
+             test "circle endpoints" test_circle_endpoints;
+           ];
+         group "box" [ test "operations" test_box ];
+         group "flatten"
+           [ test "chords" test_flatten; test "bounds" test_path_bounds ];
+         group "printing" [ test "pictures" test_pp ];
+         group "stroke"
+           [
+             test "defaults" test_stroke_defaults;
+             test "invariants" test_stroke_invariants;
+           ];
+       ])

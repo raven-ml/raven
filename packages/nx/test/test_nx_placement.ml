@@ -840,4 +840,4 @@ let tests =
       ];
   ]
 
-let () = run "nx placement" tests
+let () = exit (run "nx placement" tests)

@@ -74,8 +74,9 @@ let test_remat_keeps_under_half_the_activations () =
     (arena < activations / 2)
 
 let () =
-  run "rune remat memory"
-    [
-      test "jit (grad) under remat keeps under half the activations"
-        test_remat_keeps_under_half_the_activations;
-    ]
+  exit
+    (run "rune remat memory"
+       [
+         test "jit (grad) under remat keeps under half the activations"
+           test_remat_keeps_under_half_the_activations;
+       ])

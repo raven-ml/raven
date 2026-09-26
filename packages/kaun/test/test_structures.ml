@@ -238,4 +238,4 @@ let tests =
       ];
   ]
 
-let () = run "kaun structures" tests
+let () = exit (run "kaun structures" tests)

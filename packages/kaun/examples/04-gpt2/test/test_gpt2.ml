@@ -88,11 +88,12 @@ let test_cache () =
     (visits caches (Gpt2.cache cfg ~slots:3 Nx.float32))
 
 let () =
-  run "gpt2"
-    [
-      group "structures"
-        [
-          test "the parameters' walk" test_params;
-          test "the decoding state's structure" test_cache;
-        ];
-    ]
+  exit
+    (run "gpt2"
+       [
+         group "structures"
+           [
+             test "the parameters' walk" test_params;
+             test "the decoding state's structure" test_cache;
+           ];
+       ])

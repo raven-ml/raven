@@ -104,9 +104,10 @@ let attrs_tests =
   ]
 
 let () =
-  run "Cell"
-    [
-      group "Constructors" constructor_tests;
-      group "Transformations" transformation_tests;
-      group "Attributes" attrs_tests;
-    ]
+  exit
+    (run "Cell"
+       [
+         group "Constructors" constructor_tests;
+         group "Transformations" transformation_tests;
+         group "Attributes" attrs_tests;
+       ])

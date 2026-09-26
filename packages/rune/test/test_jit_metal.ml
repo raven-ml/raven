@@ -1005,4 +1005,4 @@ let tests =
       ];
   ]
 
-let () = run "rune jit metal" tests
+let () = exit (run "rune jit metal" tests)

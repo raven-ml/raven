@@ -224,28 +224,29 @@ let test_rejects_bad_input () =
         (Nx.zeros Nx.float32 [| 2; 1; 3; 4 |]))
 
 let () =
-  run "kaun rope"
-    [
-      group "schedules"
-        [
-          test "standard frequencies" test_standard_frequencies;
-          test "llama 3 bands" test_llama3_frequencies;
-          test "a schedule from its frequencies" test_of_frequencies;
-          test "yarn ramp" test_yarn_frequencies;
-        ];
-      group "rotation"
-        [
-          test "position zero is the identity" test_position_zero_is_identity;
-          test "a pair turns by position times frequency" test_rotation;
-          test "yarn rotation matches the reference and keeps norms"
-            test_yarn_rotation;
-          test "feature i pairs with i + head_dim / 2"
-            test_pairs_first_half_with_second;
-          test "products depend on the position difference" test_relative;
-          test "each row has its own positions" test_per_row_positions;
-          test "angles are formed at float32" test_half_precision_angles;
-          test "gradients agree with finite differences" test_gradients;
-          test "compiles to the eager result" test_jit_matches_eager;
-          test "invalid inputs are rejected" test_rejects_bad_input;
-        ];
-    ]
+  exit
+    (run "kaun rope"
+       [
+         group "schedules"
+           [
+             test "standard frequencies" test_standard_frequencies;
+             test "llama 3 bands" test_llama3_frequencies;
+             test "a schedule from its frequencies" test_of_frequencies;
+             test "yarn ramp" test_yarn_frequencies;
+           ];
+         group "rotation"
+           [
+             test "position zero is the identity" test_position_zero_is_identity;
+             test "a pair turns by position times frequency" test_rotation;
+             test "yarn rotation matches the reference and keeps norms"
+               test_yarn_rotation;
+             test "feature i pairs with i + head_dim / 2"
+               test_pairs_first_half_with_second;
+             test "products depend on the position difference" test_relative;
+             test "each row has its own positions" test_per_row_positions;
+             test "angles are formed at float32" test_half_precision_angles;
+             test "gradients agree with finite differences" test_gradients;
+             test "compiles to the eager result" test_jit_matches_eager;
+             test "invalid inputs are rejected" test_rejects_bad_input;
+           ];
+       ])

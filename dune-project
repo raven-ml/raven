@@ -33,7 +33,7 @@
   (name thumper)))
 
 (pin
- (url "git+https://github.com/invariant-hq/windtrap.git#93473fb37635b95a0de94a228caef3df8fa798ee")
+ (url "git+https://github.com/invariant-hq/windtrap.git#1297fca14e30afef99ea9ccd2ed0dea3804352af")
  (package
   (name windtrap)))
 

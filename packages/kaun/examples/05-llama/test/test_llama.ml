@@ -61,4 +61,6 @@ let test_params () =
     (visits params (Llama.make (cfg ~tied:false)))
 
 let () =
-  run "llama" [ group "structures" [ test "the parameters' walk" test_params ] ]
+  exit
+    (run "llama"
+       [ group "structures" [ test "the parameters' walk" test_params ] ])

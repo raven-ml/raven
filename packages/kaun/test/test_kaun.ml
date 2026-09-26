@@ -92,4 +92,4 @@ let tests =
       ];
   ]
 
-let () = run "kaun" tests
+let () = exit (run "kaun" tests)

@@ -1125,7 +1125,7 @@ let tc_tests =
 (* Entry *)
 
 let () =
-  run __FILE__
+  exit (run __FILE__
     [
       shift_to_tests;
       validation_tests;
@@ -1138,4 +1138,4 @@ let () =
       convert_loop_to_global_tests;
       dispatch_tests;
       tc_tests;
-    ]
+    ])

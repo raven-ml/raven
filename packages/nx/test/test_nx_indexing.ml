@@ -599,4 +599,4 @@ let suite =
     group "edge cases" edge_case_tests;
   ]
 
-let () = run "Nx Indexing" suite
+let () = exit (run "Nx Indexing" suite)

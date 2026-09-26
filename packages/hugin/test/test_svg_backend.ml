@@ -134,32 +134,33 @@ let test_placed_values () =
     (render (Hugin.image (Placed.place rgb)))
 
 let () =
-  run "Svg_backend"
-    [
-      group "SVG structure"
-        [
-          test "XML envelope" test_svg_envelope;
-          test "dimensions" test_svg_dimensions;
-          test "clip region is referenced" test_clip_region;
-          test "placed values" test_placed_values;
-        ];
-      group "XML escaping"
-        [
-          test "ampersand and less-than" test_xml_escaping;
-          test "quotes" test_xml_escaping_quotes;
-          test "no raw delimiter survives" test_xml_no_raw_delimiters;
-        ];
-      group "line styles"
-        [
-          test "solid has no dash array" test_solid_line_has_no_dasharray;
-          test "dashed" test_dashed_line;
-          test "dotted" test_dotted_line;
-          test "dashed and dotted differ" test_dashed_and_dotted_differ;
-        ];
-      group "markers"
-        [
-          test "line markers instantiate a symbol" test_markers_in_svg;
-          test "one marker per point" test_marker_count_matches_points;
-          test "scatter markers" test_scatter_markers;
-        ];
-    ]
+  exit
+    (run "Svg_backend"
+       [
+         group "SVG structure"
+           [
+             test "XML envelope" test_svg_envelope;
+             test "dimensions" test_svg_dimensions;
+             test "clip region is referenced" test_clip_region;
+             test "placed values" test_placed_values;
+           ];
+         group "XML escaping"
+           [
+             test "ampersand and less-than" test_xml_escaping;
+             test "quotes" test_xml_escaping_quotes;
+             test "no raw delimiter survives" test_xml_no_raw_delimiters;
+           ];
+         group "line styles"
+           [
+             test "solid has no dash array" test_solid_line_has_no_dasharray;
+             test "dashed" test_dashed_line;
+             test "dotted" test_dotted_line;
+             test "dashed and dotted differ" test_dashed_and_dotted_differ;
+           ];
+         group "markers"
+           [
+             test "line markers instantiate a symbol" test_markers_in_svg;
+             test "one marker per point" test_marker_count_matches_points;
+             test "scatter markers" test_scatter_markers;
+           ];
+       ])

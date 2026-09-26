@@ -456,23 +456,24 @@ let test_gpt2_round_trip () =
                     (json_text (to_json saved |> json_member "post_processor"))))
 
 let () =
-  run "brot json"
-    [
-      group "serialization"
-        [
-          test "normalizer json" test_normalizer_json;
-          test "normalizer hf members" test_normalizer_hf_members;
-          test "normalizer regex json" test_normalizer_regex_json;
-          test "decoder json" test_decoder_json;
-          test "replace regex json" test_replace_regex_json;
-          test "sentencepiece decoder json" test_sentencepiece_decoder_json;
-          test "pretrained decoder json" test_pretrained_decoder_json;
-          test "post processor json" test_post_processor_json;
-          test "post processor hf members" test_post_processor_hf_members;
-          test "pretrained post processor json"
-            test_pretrained_post_processor_json;
-          test "bpe flags json" test_bpe_flags_json;
-          test "llama" test_llama;
-          test "gpt2 round trip" test_gpt2_round_trip;
-        ];
-    ]
+  exit
+    (run "brot json"
+       [
+         group "serialization"
+           [
+             test "normalizer json" test_normalizer_json;
+             test "normalizer hf members" test_normalizer_hf_members;
+             test "normalizer regex json" test_normalizer_regex_json;
+             test "decoder json" test_decoder_json;
+             test "replace regex json" test_replace_regex_json;
+             test "sentencepiece decoder json" test_sentencepiece_decoder_json;
+             test "pretrained decoder json" test_pretrained_decoder_json;
+             test "post processor json" test_post_processor_json;
+             test "post processor hf members" test_post_processor_hf_members;
+             test "pretrained post processor json"
+               test_pretrained_post_processor_json;
+             test "bpe flags json" test_bpe_flags_json;
+             test "llama" test_llama;
+             test "gpt2 round trip" test_gpt2_round_trip;
+           ];
+       ])

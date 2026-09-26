@@ -106,11 +106,12 @@ let test_params () =
     (visits params p)
 
 let () =
-  run "gpt-oss structures"
-    [
-      group "structures"
-        [
-          test "a block's walk" test_block;
-          test "the parameters' walk" test_params;
-        ];
-    ]
+  exit
+    (run "gpt-oss structures"
+       [
+         group "structures"
+           [
+             test "a block's walk" test_block;
+             test "the parameters' walk" test_params;
+           ];
+       ])

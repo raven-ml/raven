@@ -337,59 +337,64 @@ let test_rms_norm_rejects_bad_input () =
         features") (fun () -> Rms_norm.apply p (Nx.zeros Nx.float32 [| 2; 3 |]))
 
 let () =
-  run "kaun layers"
-    [
-      group "linear"
-        [
-          test "init produces the documented shapes" test_linear_init_shapes;
-          test "apply matches the affine map" test_linear_apply_affine;
-          test "bias:false drops the bias parameter" test_linear_no_bias;
-          test "leading axes are batch axes" test_linear_batched_apply;
-          test "make respects w_init and bias_init" test_linear_custom_inits;
-          test "names follow walk order" test_linear_names;
-          test "gradients agree with finite differences" test_linear_gradients;
-          test "Nx.Ptree.map2 rejects a bias mismatch"
-            test_linear_map2_bias_mismatch;
-          test "make rejects non-positive geometry"
-            test_linear_rejects_bad_geometry;
-        ];
-      group "embedding"
-        [
-          test "init produces the documented shape" test_embedding_init_shape;
-          test "apply gathers the indexed rows" test_embedding_gathers_rows;
-          test "output shape is the ids shape plus dim"
-            test_embedding_output_shape;
-          test "a scalar id yields a single row" test_embedding_scalar_id;
-          test "gradient counts duplicate ids"
-            test_embedding_duplicate_id_gradient;
-          test "gradients agree with finite differences"
-            test_embedding_gradients;
-          test "out-of-range ids read zero"
-            test_embedding_out_of_range_ids_read_zero;
-          test "make rejects non-positive geometry"
-            test_embedding_rejects_bad_geometry;
-        ];
-      group "layer norm"
-        [
-          test "init is the identity normalization" test_layer_norm_init_shapes;
-          test "matches the analytic normalization" test_layer_norm_analytic;
-          test "standardizes each vector of a batch"
-            test_layer_norm_standardizes;
-          test "constant vectors map to beta" test_layer_norm_constant_input;
-          test "eps enters the denominator" test_layer_norm_eps;
-          test "gradients agree with finite differences"
-            test_layer_norm_gradients;
-          test "invalid inputs are rejected" test_layer_norm_rejects_bad_input;
-        ];
-      group "rms norm"
-        [
-          test "matches the analytic normalization" test_rms_norm_analytic;
-          test "eps enters under the square root" test_rms_norm_eps;
-          test "scales each vector to unit root mean square"
-            test_rms_norm_unit_rms;
-          test "a constant vector is not centered away"
-            test_rms_norm_does_not_center;
-          test "gradients agree with finite differences" test_rms_norm_gradients;
-          test "invalid inputs are rejected" test_rms_norm_rejects_bad_input;
-        ];
-    ]
+  exit
+    (run "kaun layers"
+       [
+         group "linear"
+           [
+             test "init produces the documented shapes" test_linear_init_shapes;
+             test "apply matches the affine map" test_linear_apply_affine;
+             test "bias:false drops the bias parameter" test_linear_no_bias;
+             test "leading axes are batch axes" test_linear_batched_apply;
+             test "make respects w_init and bias_init" test_linear_custom_inits;
+             test "names follow walk order" test_linear_names;
+             test "gradients agree with finite differences"
+               test_linear_gradients;
+             test "Nx.Ptree.map2 rejects a bias mismatch"
+               test_linear_map2_bias_mismatch;
+             test "make rejects non-positive geometry"
+               test_linear_rejects_bad_geometry;
+           ];
+         group "embedding"
+           [
+             test "init produces the documented shape" test_embedding_init_shape;
+             test "apply gathers the indexed rows" test_embedding_gathers_rows;
+             test "output shape is the ids shape plus dim"
+               test_embedding_output_shape;
+             test "a scalar id yields a single row" test_embedding_scalar_id;
+             test "gradient counts duplicate ids"
+               test_embedding_duplicate_id_gradient;
+             test "gradients agree with finite differences"
+               test_embedding_gradients;
+             test "out-of-range ids read zero"
+               test_embedding_out_of_range_ids_read_zero;
+             test "make rejects non-positive geometry"
+               test_embedding_rejects_bad_geometry;
+           ];
+         group "layer norm"
+           [
+             test "init is the identity normalization"
+               test_layer_norm_init_shapes;
+             test "matches the analytic normalization" test_layer_norm_analytic;
+             test "standardizes each vector of a batch"
+               test_layer_norm_standardizes;
+             test "constant vectors map to beta" test_layer_norm_constant_input;
+             test "eps enters the denominator" test_layer_norm_eps;
+             test "gradients agree with finite differences"
+               test_layer_norm_gradients;
+             test "invalid inputs are rejected"
+               test_layer_norm_rejects_bad_input;
+           ];
+         group "rms norm"
+           [
+             test "matches the analytic normalization" test_rms_norm_analytic;
+             test "eps enters under the square root" test_rms_norm_eps;
+             test "scales each vector to unit root mean square"
+               test_rms_norm_unit_rms;
+             test "a constant vector is not centered away"
+               test_rms_norm_does_not_center;
+             test "gradients agree with finite differences"
+               test_rms_norm_gradients;
+             test "invalid inputs are rejected" test_rms_norm_rejects_bad_input;
+           ];
+       ])

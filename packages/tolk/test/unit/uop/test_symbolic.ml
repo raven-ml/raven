@@ -1580,7 +1580,7 @@ let integer_width_folding_tests =
 (* Entry point *)
 
 let () =
-  run "tolk.uop.symbolic"
+  exit (run "tolk.uop.symbolic"
     (simplify_driver_groups
      @ [
          test "END preserves effects" end_preserves_effects;
@@ -1610,4 +1610,4 @@ let () =
          unpack_u64_tests;
          mop_tests;
          remove_invalid_tests;
-       ])
+       ]))

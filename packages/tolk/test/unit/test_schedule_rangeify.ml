@@ -1234,7 +1234,7 @@ let stage_capacity_tests =
 (* Main *)
 
 let () =
-  run "Schedule.Rangeify"
+  exit (run "Schedule.Rangeify"
     [
       stage_capacity_tests;
       stack_selection_tests;
@@ -1250,4 +1250,4 @@ let () =
       reshape_merge_tests;
       split_reduce_tests;
       symbolic_variable_tests;
-    ]
+    ])

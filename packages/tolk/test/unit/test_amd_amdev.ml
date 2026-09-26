@@ -771,7 +771,7 @@ let scripted_registration ?(sdma_queues = fun () -> []) fd t =
   (qd, tl, resetup_ran, submission)
 
 let () =
-  run "Amdev"
+  exit (run "Amdev"
     [
       group "ip discovery"
         [
@@ -2819,4 +2819,4 @@ let () =
                       raises_match (Exn.failure ~substring:"SMU msg")
                         (fun () -> Pci_iface.sleep t ~timeout_ms:0))));
         ];
-    ]
+    ])

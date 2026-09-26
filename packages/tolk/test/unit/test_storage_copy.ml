@@ -169,7 +169,7 @@ let failed_wait_retains_staging () =
       equal ~msg:"a subsequent successful copy retires its own staging" int 1 !freed;
       equal int 64 !live)
 
-let () = run __FILE__
+let () = exit (run __FILE__
     [test "non-host byte copies use bounded ordered staging" (roundtrip 0);
      test "non-host offset views preserve bytes outside staging chunks" (roundtrip 1);
-     test "failed staging teardown reports errors and retains backing" failed_wait_retains_staging]
+     test "failed staging teardown reports errors and retains backing" failed_wait_retains_staging])

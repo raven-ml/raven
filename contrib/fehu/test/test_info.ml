@@ -65,7 +65,7 @@ let test_string_convenience () =
 let test_null_convenience () = equal ~msg:"Info.null" value Value.Null Info.null
 
 let () =
-  run "Fehu.Info"
+  exit (run "Fehu.Info"
     [
       group "operations"
         [
@@ -86,4 +86,4 @@ let () =
           test "string" test_string_convenience;
           test "null" test_null_convenience;
         ];
-    ]
+    ])

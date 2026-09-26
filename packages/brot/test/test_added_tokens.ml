@@ -398,4 +398,4 @@ let suite =
     test "scan long space run" test_scan_long_space_run;
   ]
 
-let () = run "Added tokens" [ group "added_tokens" suite ]
+let () = exit (run "Added tokens" [ group "added_tokens" suite ])

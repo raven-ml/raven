@@ -182,4 +182,4 @@ let tests =
       ];
   ]
 
-let () = run "rune jacobian" tests
+let () = exit (run "rune jacobian" tests)
