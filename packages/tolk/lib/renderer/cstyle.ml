@@ -329,23 +329,14 @@ let render_access ctx u = "*" ^ render_ptr ctx u
    pointer's shape. *)
 let image_index u =
   match U.as_index u with
-  | Some { ptr; idxs } when is_image_shape (U.shape_opt ptr) ->
-      let idx =
-        match idxs with
-        | [ idx ] -> idx
-        | [ y; x ] -> U.stack [ y; x ]
-        | _ -> invalid_arg "image_index: expected one int2 or two scalars"
-      in
-      Some (ptr, idx)
+  | Some { ptr; idxs = [ y; x ] } when is_image_shape (U.shape_opt ptr) ->
+      Some (ptr, y, x)
+  | Some { ptr; _ } when is_image_shape (U.shape_opt ptr) ->
+      invalid_arg "image_index: expected two scalar coordinates"
   | _ -> None
 
-let image_coord (ctx : ctx) idx =
-  match U.op idx, U.src idx with
-  | Ops.Stack, lanes when Array.length lanes = 2 && Dtype.is_int (U.dtype idx) ->
-      let y = lookup ctx lanes.(0) in
-      let x = lookup ctx lanes.(1) in
-      Some (strf "(int2)(%s,%s)" x y)
-  | _ -> None
+let image_coord ctx y x =
+  strf "(int2)(%s,%s)" (lookup ctx x) (lookup ctx y)
 
 let check_image_support ctx =
   if not ctx.lang.supports_images then failwith "renderer does not support images"
@@ -353,16 +344,9 @@ let check_image_support ctx =
 let render_image_load ctx node src alt gate =
   match image_index src with
   | None -> None
-  | Some (buf, idx) ->
+  | Some (buf, y, x) ->
       check_image_support ctx;
-      let coord =
-        match image_coord ctx idx with
-        | Some coord -> coord
-        | None ->
-            invalid_arg
-              (strf "image load coordinate must be int2, got %s"
-                 (Dtype.to_string (U.dtype idx)))
-      in
+      let coord = image_coord ctx y x in
       let read = strf "read_imagef(%s, smp, %s)" (lookup ctx buf) coord in
       let value =
         match alt, gate with
@@ -381,16 +365,9 @@ let render_image_load ctx node src alt gate =
 let render_image_store ctx dst value gate =
   match image_index dst with
   | None -> None
-  | Some (buf, idx) ->
+  | Some (buf, y, x) ->
       check_image_support ctx;
-      let coord =
-        match image_coord ctx idx with
-        | Some coord -> coord
-        | None ->
-            invalid_arg
-              (strf "image store coordinate must be int2, got %s"
-                 (Dtype.to_string (U.dtype idx)))
-      in
+      let coord = image_coord ctx y x in
       let value =
         if Dtype.equal (U.dtype value) Dtype.float32 then lookup ctx value
         else

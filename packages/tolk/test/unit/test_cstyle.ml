@@ -336,30 +336,27 @@ let image_param slot =
 
 let make_image_load () =
   let img = image_param 0 in
-  let buf = param 1 dt in
+  let buf = U.param ~slot:1 ~dtype:dt ~shape:(U.const_int 4) () in
   let c0 = const (int32_c 0) and c1 = const (int32_c 1) in
-  let coord = U.stack ~dtype:Dtype.int32 [ c0; c1 ] in
-  let src = ptr_index img coord () in
-  let dst = ptr_index buf c0 () in
+  let src = U.index ~ptr:img ~idxs:[c0; c1] () in
+  let dst = U.shrink ~src:buf ~offset:c0 ~size:(U.const_int 4) in
   U.sink [ store dst (load src) ]
 
 let make_image_store () =
   let img = image_param 0 in
-  let buf = param 1 dt in
+  let buf = U.param ~slot:1 ~dtype:dt ~shape:(U.const_int 4) () in
   let c0 = const (int32_c 0) and c1 = const (int32_c 1) in
-  let coord = U.stack ~dtype:Dtype.int32 [ c0; c1 ] in
-  let src = ptr_index buf c0 () in
-  let dst = ptr_index img coord () in
+  let src = U.shrink ~src:buf ~offset:c0 ~size:(U.const_int 4) in
+  let dst = U.index ~ptr:img ~idxs:[c0; c1] () in
   U.sink [ store dst (load src) ]
 
 let make_gated_image_store () =
   let img = image_param 0 in
-  let buf = param 1 dt in
+  let buf = U.param ~slot:1 ~dtype:dt ~shape:(U.const_int 4) () in
   let c0 = const (int32_c 0) and c1 = const (int32_c 1) in
   let gate = const (Const.bool true) in
-  let coord = U.stack ~dtype:Dtype.int32 [ c0; c1 ] in
-  let src = ptr_index buf c0 () in
-  let dst = ptr_index img coord () in
+  let src = U.shrink ~src:buf ~offset:c0 ~size:(U.const_int 4) in
+  let dst = U.index ~ptr:img ~idxs:[c0; c1] () in
   U.sink [ U.store ~dst ~value:(load src) ~gate () ]
 
 let make_type_convert ~from_dt ~to_dt mk_convert =
@@ -844,6 +841,8 @@ let () =
             assert_contains "opencl image param" load_out "read_only image2d_t";
             assert_contains "opencl sampler preamble" load_out "const sampler_t smp";
             assert_contains "opencl read_imagef" load_out "read_imagef(";
+            assert_contains "image loads are float4 values" load_out "float4 val0";
+            assert_contains "image coordinates render constants" load_out "(int2)(1,0)";
             let store_out = render_kernel opencl_renderer (make_image_store ()) in
             assert_contains "opencl mutable image param" store_out "write_only image2d_t";
             assert_contains "opencl write_imagef" store_out "write_imagef(";

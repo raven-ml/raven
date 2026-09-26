@@ -167,21 +167,12 @@ let simplify_valid_image_coords buf y x =
       | _ -> None)
   | _ -> None
 
-let simplify_valid_image_load ptr idx =
-  match U.op idx, U.src idx with
-  | Ops.Stack, [| y; x |] -> (
-      match simplify_valid_image_coords ptr y x with
-      | Some (y, x) ->
-          Some (image_index ptr [ U.stack ~dtype:(U.dtype y) [ y; x ] ])
-      | None -> None)
-  | _ -> None
-
 let indexing_simplify_rule node =
   match U.as_index node with
   | Some { ptr; idxs = [ idx ] } -> (
       match invalid_where_index idx with
       | Some (valid, value) -> simplify_valid_load ptr value valid
-      | None -> simplify_valid_image_load ptr idx)
+      | None -> None)
   | Some { ptr; idxs = [ y; x ] } -> (
       match simplify_valid_image_coords ptr y x with
       | Some (y, x) -> Some (image_index ptr [ y; x ])
@@ -270,14 +261,13 @@ let transform_to_image shapes ren buf offset =
              Hashtbl.replace shapes param.slot (height, width);
              let x = lane cidx 0 in
              let y = lane cidx 1 in
-             let coord =
+             let coords =
                match valid with
-               | None -> U.stack ~dtype:(U.dtype x) [ y; x ]
+               | None -> [ y; x ]
                | Some valid ->
-                   U.stack ~dtype:(U.dtype x)
-                     [ U.valid ~src:y ~cond:valid; U.valid ~src:x ~cond:valid ]
+                   [ U.valid ~src:y ~cond:valid; U.valid ~src:x ~cond:valid ]
              in
-             Some (image_index buf [ coord ]))
+             Some (image_index buf coords))
     | None -> None
 
 let transform_to_image_rule shapes ren node =

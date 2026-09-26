@@ -81,8 +81,6 @@ acceptance requirement; skipped tests are not execution evidence.
 - Validate large WMMA accumulator ordering at optimizer/expander boundaries,
   including BF16/FNUZ across supported renderers. Audit remaining gating rules
   while preserving symbolic extents.
-  Canonicalize image coordinates across all producers and consumers,
-  and render final constants.
 - Remove remaining parallel property reconstruction and silent guesses in
   view offsets and range metadata. Port remaining symbolic rules and measure
   rewrite performance and long-lived memory use with weak node caches.

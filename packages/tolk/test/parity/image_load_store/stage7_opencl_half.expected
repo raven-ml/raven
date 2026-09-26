@@ -1,0 +1,8 @@
+__kernel void image_copy(read_only image2d_t data0_1_64_4, write_only image2d_t data1_1_64_4) {
+const sampler_t smp = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;
+  int gidx0 = get_group_id(0); /* 8 */
+  int gidx1 = get_group_id(1); /* 8 */
+  int alu0 = (gidx0+(gidx1<<3));
+  float4 val0 = read_imagef(data0_1_64_4, smp, (int2)(alu0,0));
+  write_imagef(data1_1_64_4, (int2)(alu0,0), (float4)((val0.x+0.5f),(val0.y+0.5f),(val0.z+0.5f),(val0.w+0.5f)));
+}

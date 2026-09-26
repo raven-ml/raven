@@ -16,11 +16,6 @@ let custom_fmt n =
   | (Ops.Custom | Ops.Customi), Some fmt -> Some fmt
   | _ -> None
 
-let coord ?(cast = false) x y =
-  let maybe_cast u = if cast then U.cast ~src:u ~dtype:Dtype.weakint else u in
-  let x = maybe_cast x and y = maybe_cast y in
-  U.stack ~dtype:(U.dtype x) [ x; y ]
-
 let image_param ?(slot = 0) = function
   | [ height; width; 4 ] ->
       U.param ~slot ~dtype:Dtype.float32 ~image:(height, width) ()
@@ -117,8 +112,10 @@ let () =
                     shrink)
             in
             match U.as_index root with
-            | Some { ptr; _ } ->
-                equal (list int) [ 1; 4; 4 ] (U.max_shape ptr)
+            | Some { ptr; idxs } ->
+                equal (list int) [ 1; 4; 4 ] (U.max_shape ptr);
+                equal int 2 (List.length idxs);
+                equal (list int) [4] (U.max_shape root)
             | None -> failwith "expected image index");
           test "opencl target pitch enables image index" (fun () ->
             let param =
@@ -140,8 +137,10 @@ let () =
                     shrink)
             in
             match U.as_index root with
-            | Some { ptr; _ } ->
-                equal (list int) [ 1; 4; 4 ] (U.max_shape ptr)
+            | Some { ptr; idxs } ->
+                equal (list int) [ 1; 4; 4 ] (U.max_shape ptr);
+                equal int 2 (List.length idxs);
+                equal (list int) [4] (U.max_shape root)
             | None -> failwith "expected image index");
         ];
       group "image stores"
@@ -358,21 +357,22 @@ let () =
             let img = image_param [ 4; 4; 4 ] in
             let x = U.const (Const.int Dtype.int32 0) in
             let y = U.const (Const.int Dtype.int32 1) in
-            let idx = coord ~cast:true x y in
-            let node = U.index ~ptr:img ~idxs:[ idx ] () in
+            let idxs = List.map (fun u -> U.cast ~src:u ~dtype:Dtype.weakint) [y; x] in
+            let node = U.index ~ptr:img ~idxs () in
             let root =
               run_matcher
                 Upat.Pattern_matcher.(
                   Weak.pm_lower_index_dtype () ++ Coalesce.indexing_simplify)
                 node
             in
-            let idx =
+            let idxs =
               match U.as_index root with
-              | Some { idxs = [ idx ]; _ } -> idx
-              | Some _ -> failwith "expected scalar image coordinate"
+              | Some { idxs = [ y; x ]; _ } -> [y; x]
+              | Some _ -> failwith "expected two scalar image coordinates"
               | None -> failwith "expected index"
             in
-            equal int 0 (count (fun n -> U.op n = Ops.Cast && Dtype.is_weak (U.dtype n)) idx));
+            List.iter (fun idx ->
+              equal int 0 (count (fun n -> U.op n = Ops.Cast && Dtype.is_weak (U.dtype n)) idx)) idxs);
           test "lower index dtype concretizes index binary math" (fun () ->
             (* An all-weak expression commits only once something that is not
                itself weak demands a width from it, so drive it from a sink. *)

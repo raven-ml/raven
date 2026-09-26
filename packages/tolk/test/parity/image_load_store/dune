@@ -1,0 +1,19 @@
+(executable
+ (name main)
+ (libraries tolk tolk.uop tolk_parity_helpers))
+
+(rule
+ (package tolk)
+ (targets stage5_opencl_float.actual stage7_opencl_float.actual
+          stage5_opencl_half.actual stage7_opencl_half.actual)
+ (action (run ./main.exe .)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff stage5_opencl_float.expected stage5_opencl_float.actual)
+   (diff stage7_opencl_float.expected stage7_opencl_float.actual)
+   (diff stage5_opencl_half.expected stage5_opencl_half.actual)
+   (diff stage7_opencl_half.expected stage7_opencl_half.actual))))

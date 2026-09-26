@@ -327,7 +327,7 @@ let () =
             match U.as_load (Gater.pm_move_gates_from_index load) with
             | Some { alt = Some alt; _ } -> equal int 4 (U.max_numel alt)
             | _ -> failwith "expected gated load");
-          test "gater strips stacked image load coordinates with same invalid gate"
+          test "gater strips image load coordinates with same invalid gate"
             (fun () ->
             let p =
               U.param ~slot:0 ~dtype:Dtype.float32
@@ -341,12 +341,9 @@ let () =
             in
             let y = U.const_int 3 in
             let x = U.const_int 5 in
-            let coord =
-              U.stack ~dtype:Dtype.weakint
-                [ U.O.where gate y (U.invalid ());
-                  U.O.where gate x (U.invalid ()) ]
-            in
-            let src = U.index ~ptr:p ~idxs:[ coord ] () in
+            let idxs = [ U.O.where gate y (U.invalid ());
+                         U.O.where gate x (U.invalid ()) ] in
+            let src = U.index ~ptr:p ~idxs () in
             let lowered = Gater.pm_move_gates_from_index (U.load ~src ()) in
             match U.as_load lowered with
             | Some { src; gate = Some load_gate; alt = Some _ } ->
@@ -354,16 +351,13 @@ let () =
                 is_true ~msg:"invalid removed from image index"
                   (not (has_invalid_const src));
                 (match U.as_index src with
-                | Some { idxs = [ coord' ]; _ } ->
-                    (match U.op coord', U.src coord' with
-                    | Ops.Stack, [| y'; x' |] ->
-                        is_true ~msg:"y coordinate stripped" (U.equal y y');
-                        is_true ~msg:"x coordinate stripped" (U.equal x x')
-                    | _ -> failwith "expected stacked image coordinate")
-                | Some _ -> failwith "expected one stacked image index"
+                | Some { idxs = [ y'; x' ]; _ } ->
+                    is_true ~msg:"y coordinate stripped" (U.equal y y');
+                    is_true ~msg:"x coordinate stripped" (U.equal x x')
+                | Some _ -> failwith "expected two scalar image indices"
                 | None -> failwith "expected index")
             | _ -> failwith "expected gated load");
-          test "gater strips stacked image store coordinates with same invalid gate"
+          test "gater strips image store coordinates with same invalid gate"
             (fun () ->
             let p =
               U.param ~slot:0 ~dtype:Dtype.float32
@@ -377,12 +371,9 @@ let () =
             in
             let y = U.const_int 3 in
             let x = U.const_int 5 in
-            let coord =
-              U.stack ~dtype:Dtype.weakint
-                [ U.O.where gate y (U.invalid ());
-                  U.O.where gate x (U.invalid ()) ]
-            in
-            let dst = U.index ~ptr:p ~idxs:[ coord ] () in
+            let idxs = [ U.O.where gate y (U.invalid ());
+                         U.O.where gate x (U.invalid ()) ] in
+            let dst = U.index ~ptr:p ~idxs () in
             let store = U.store ~dst ~value:(U.const_float 1.0) () in
             let lowered = Gater.pm_move_gates_from_index store in
             match U.as_store lowered with
@@ -392,13 +383,10 @@ let () =
                 is_true ~msg:"invalid removed from image index"
                   (not (has_invalid_const dst));
                 (match U.as_index dst with
-                | Some { idxs = [ coord' ]; _ } ->
-                    (match U.op coord', U.src coord' with
-                    | Ops.Stack, [| y'; x' |] ->
-                        is_true ~msg:"y coordinate stripped" (U.equal y y');
-                        is_true ~msg:"x coordinate stripped" (U.equal x x')
-                    | _ -> failwith "expected stacked image coordinate")
-                | Some _ -> failwith "expected one stacked image index"
+                | Some { idxs = [ y'; x' ]; _ } ->
+                    is_true ~msg:"y coordinate stripped" (U.equal y y');
+                    is_true ~msg:"x coordinate stripped" (U.equal x x')
+                | Some _ -> failwith "expected two scalar image indices"
                 | None -> failwith "expected index")
             | _ -> failwith "expected gated store");
           test "gater strips only the first variadic invalid index" (fun () ->

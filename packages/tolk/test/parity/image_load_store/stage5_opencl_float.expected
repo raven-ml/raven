@@ -1,0 +1,33 @@
+   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 256, image=(1, 64))
+   1 Ops.CONST           :            dtypes.weakint                           []                               0
+   2 Ops.CAST            :            dtypes.int                               ['0']                            dtypes.int
+   3 Ops.CONST           :            dtypes.weakint                           []                               8
+   4 Ops.CAST            :            dtypes.int                               ['8']                            dtypes.int
+   5 Ops.SPECIAL         :            dtypes.int                               [4]                              gidx0
+   6 Ops.SPECIAL         :            dtypes.int                               [4]                              gidx1
+   7 Ops.CONST           :            dtypes.weakint                           []                               3
+   8 Ops.CAST            :            dtypes.int                               ['3']                            dtypes.int
+   9 Ops.SHL             :            dtypes.int                               [6, 8]                           None
+  10 Ops.ADD             :            dtypes.int                               [5, 9]                           None
+  11 Ops.INDEX           :            dtypes.float                             [0, 2, 10]                       None
+  12 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 256, image=(1, 64))
+  13 Ops.INDEX           :            dtypes.float                             [12, 2, 10]                      None
+  14 Ops.LOAD            :            dtypes.float                             [13]                             None
+  15 Ops.INDEX           :            dtypes.float                             [14, 2]                          None
+  16 Ops.CONST           :            dtypes.weakfloat                         []                               0.5
+  17 Ops.CAST            :            dtypes.float                             ['0.5']                          dtypes.float
+  18 Ops.ADD             :            dtypes.float                             [15, 17]                         None
+  19 Ops.CONST           :            dtypes.weakint                           []                               1
+  20 Ops.CAST            :            dtypes.int                               ['1']                            dtypes.int
+  21 Ops.INDEX           :            dtypes.float                             [14, 20]                         None
+  22 Ops.ADD             :            dtypes.float                             [21, 17]                         None
+  23 Ops.CONST           :            dtypes.weakint                           []                               2
+  24 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+  25 Ops.INDEX           :            dtypes.float                             [14, 24]                         None
+  26 Ops.ADD             :            dtypes.float                             [25, 17]                         None
+  27 Ops.INDEX           :            dtypes.float                             [14, 8]                          None
+  28 Ops.ADD             :            dtypes.float                             [27, 17]                         None
+  29 Ops.STACK           :            dtypes.float                             [18, 22, 26, 28]                 None
+  30 Ops.STORE           :            dtypes.void                              [11, 29]                         None
+  31 Ops.GROUP           :            dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.SINK            :            dtypes.void                              [31]                             KernelInfo(name='image_copy', applied_opts=(), opts_to_apply=(), estimates=None, beam=0)

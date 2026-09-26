@@ -694,6 +694,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix image load/store lowering to carry two scalar coordinates throughout
+  the pipeline, preserving four-lane pixel values and correctly rendering
+  constant coordinates in OpenCL kernels.
+
 - Preserve weak exponent constants and promote mixed integer/float operands
   when lowering `exp2` and `log2`, keeping exponent arithmetic consistent with
   ordinary graph operations.

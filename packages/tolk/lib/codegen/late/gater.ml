@@ -40,17 +40,6 @@ let indexed_two_invalid_gate mop =
           src.(2) <- xi;
           Some (yg, U.replace mop ~src ())
       | _ -> None)
-  | Ops.Index, [| _; coord |] when U.op coord = Ops.Stack -> (
-      match U.src coord with
-      | [| y; x |] -> (
-          match invalid_where y, invalid_where x with
-          | Some (yg, yi), Some (xg, xi) when U.equal yg xg ->
-              let coord = U.replace coord ~src:[| yi; xi |] () in
-              let src = Array.copy (U.src mop) in
-              src.(1) <- coord;
-              Some (yg, U.replace mop ~src ())
-          | _ -> None)
-      | _ -> None)
   | _ -> None
 
 let indexed_invalid_gate mop =
