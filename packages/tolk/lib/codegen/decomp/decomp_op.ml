@@ -355,7 +355,11 @@ let rule_floormod_to_mod _ops node =
         Some (Uop.alu_binary ~op:Ops.Add ~lhs:r ~rhs:fixup)
   | _ -> None
 
-(* MAX x y -> where(x < y, y, x). *)
+(* MAX x y -> where(x < y, y, x). A float max propagates NaN from either
+   operand and keeps [y] on a tie, as eager's does (max(-0, +0) is +0):
+   where(y < x, x, where(x != x, x, y)). A second operand that is a nonzero
+   constant other than NaN needs one comparison, where(x < y, y, x): its tie
+   keeps an equal value with the same bits. *)
 let rule_max (ops : supported_ops) node =
   if ops.has_max || not ops.has_cmplt then None
   else match Uop.op node with
@@ -363,7 +367,16 @@ let rule_max (ops : supported_ops) node =
         let s = Uop.src node in
         if Array.length s = 2 then
           let x = s.(0) and y = s.(1) in
-          Some (Uop.O.where (Uop.O.(x < y)) y x)
+          let tie_safe_const u =
+            match Option.map Const.view (Uop.as_const u) with
+            | Some (Const.Float f) -> not (Float.is_nan f) && f <> 0.0
+            | _ -> false
+          in
+          let open Uop.O in
+          if not (Dtype.is_float (Uop.dtype node)) then Some (where (x < y) y x)
+          else if tie_safe_const y then
+            Some (where (x < y) y x)
+          else Some (where (y < x) x (where (ne x x) x y))
         else None
     | _ -> None
 

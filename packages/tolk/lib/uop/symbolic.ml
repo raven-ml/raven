@@ -750,6 +750,11 @@ let exact_algebra u = not (Dtype.is_float (Uop.dtype u))
 let nonzero x =
   Bound.lt Bound.zero (Uop.vmin x) || Bound.lt (Uop.vmax x) Bound.zero
 
+(* A float constant other than NaN: the one float a rewrite can know is
+   not NaN. *)
+let not_nan_const u =
+  match const_float_v u with Some f -> not (Float.is_nan f) | None -> false
+
 let is_neg_zero c =
   match const_float_v c with
   | Some f -> f = 0.0 && Float.sign_bit f
@@ -1487,12 +1492,17 @@ let symbolic : Upat.Pattern_matcher.t =
          let lo = Uop.vmin x and hi = Uop.vmax x in
          if Bound.equal lo hi then Some (const_bound_like x lo) else None);
 
-    (* max(x, y) -> x if x.vmin >= y.vmax; -> y if x.vmax <= y.vmin. *)
+    (* max(x, y) -> x if x.vmin >= y.vmax; -> y if x.vmax <= y.vmin. Float
+       bounds exclude NaN, which max propagates, so at float the dropped
+       operand must be a constant, and max keeps its second operand on a tie
+       (max(-0, +0) is +0), so dropping it needs a strict bound. *)
     (rewrite2 (fun x y -> alu [ x; y ] Ops.Max) (fun x y ->
+       let droppable u = exact_algebra u || not_nan_const u in
+       let below = if exact_algebra y then Bound.le else Bound.lt in
        if is_max_identity x then Some y
        else if is_max_identity y then Some x
-       else if Bound.le (Uop.vmax y) (Uop.vmin x) then Some x
-       else if Bound.le (Uop.vmax x) (Uop.vmin y) then Some y
+       else if droppable y && below (Uop.vmax y) (Uop.vmin x) then Some x
+       else if droppable x && Bound.le (Uop.vmax x) (Uop.vmin y) then Some y
        else None));
   ]
   (* two-stage associative folding sits between max folding and the lt rules,

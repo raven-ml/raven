@@ -333,6 +333,19 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit_metal` "ordered comparisons are false at NaN". Remove this
   ruling when upstream keeps NaN out of `>=` and `<=`.
 
+- **Max propagates NaN and keeps its second operand on a tie.** The
+  reference lowers `max(x, y)` to `where(x < y, y, x)`, which drops a NaN `y`
+  and keeps `x` on a tie, and folds a max by bounds that exclude NaN:
+  compiled `max(|x| + 1, sin(x * inf))` was 3 where eager is NaN, and
+  `max(-0, +0)` was -0 where eager is +0. At float Tolk lowers it to
+  `where(y < x, x, where(x != x, x, y))`, which constant folding reduces to
+  one comparison for a constant first operand, or to `where(x < y, y, x)`
+  when the second operand is a nonzero constant other than NaN, and folds by
+  bounds only when the dropped operand is a constant other than NaN, by a
+  strict bound when it is the second. Clip costs what it did; relu 3% more
+  on the CPU. Coverage: rune `test_jit` and `test_jit_metal` "max propagates
+  NaN". Remove this ruling when upstream's max propagates NaN.
+
 - **A fixed-width integer constant holds its dtype's value.** The reference
   keeps integer constants exact until emission: folding runs with
   `truncate_output=False`, and a cast of a weak literal is stripped whatever

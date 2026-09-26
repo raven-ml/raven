@@ -899,6 +899,8 @@ let tests =
           (check_float_identities ~devices:[ Rune.device "METAL" ]);
         test "ordered comparisons are false at NaN"
           (check_nan_comparisons ~devices:[ Rune.device "METAL" ]);
+        test "max propagates NaN"
+          (check_max_nan ~devices:[ Rune.device "METAL" ]);
         test "integer comparisons read wrapped values"
           (check_wrapping_comparisons ~devices:[ Rune.device "METAL" ]);
         test "folded integer constants wrap"

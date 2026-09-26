@@ -167,6 +167,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.maximum` or `Nx.minimum` propagates NaN from either operand
+  and keeps eager's second operand on a tie: `max 3 nan` was 3 and
+  `max (-0) (+0)` was -0.
 - A compiled `>=` or `<=` with a NaN operand is false, as eager's is: it was
   true, so a mask like `where (x >= 0) x 0` kept NaNs that eager drops.
 - A program of `Rune.jit` over several devices binds its intermediates to each

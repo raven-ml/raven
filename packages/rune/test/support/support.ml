@@ -477,21 +477,17 @@ let check_float_constant_association ?devices () =
    0, inf and NaN; x * 0 is NaN at inf and -0 at negative x; (x * y) / y is NaN
    where x * y overflows; x / (1 + x) keeps its digits for small x, where 1 - 1
    / (1 + x) cancels them; -0 + 0 is +0. Compared bit for bit. *)
-let check_float_identities ?devices () =
-  let check name f rows =
-    let x = vec32 rows in
-    let bits t = Array.map Int32.bits_of_float (to_arr t) in
-    let canon b =
-      if
-        Int32.logand b 0x7f800000l = 0x7f800000l
-        && Int32.logand b 0x007fffffl <> 0l
-      then 0x7fc00000l
-      else b
-    in
-    equal ~msg:name (array int32)
-      (Array.map canon (bits (f x)))
-      (Array.map canon (bits (Rune.jit' ?devices f x)))
+(* [f x] compiled has the bits of [f x] eager, every NaN counting as one. *)
+let check_same_bits ?devices name f x =
+  let bits t =
+    Array.map
+      (fun v -> Int32.bits_of_float (if Float.is_nan v then nan else v))
+      (to_arr t)
   in
+  equal ~msg:name (array int32) (bits (f x)) (bits (Rune.jit' ?devices f x))
+
+let check_float_identities ?devices () =
+  let check name f rows = check_same_bits ?devices name f (vec32 rows) in
   check "x / x" (fun x -> Nx.div x x) [| 0.; infinity; nan; 2. |];
   check "x * 0" (fun x -> Nx.mul_s x 0.) [| infinity; nan; -1.; 2. |];
   check "(x * y) / y"
@@ -523,6 +519,28 @@ let check_nan_comparisons ?devices () =
   equal ~msg:"where (x >= 0) x 0" (array float_exact)
     (to_arr (masked x))
     (to_arr (Rune.jit' ?devices masked x))
+
+(* Max propagates NaN from either operand and keeps its second operand on a tie,
+   as eager's does: max (|x| + 1) (sin (x * inf)) is NaN and max (-0) (+0) is
+   +0. *)
+let check_max_nan ?devices () =
+  let check name f rows = check_same_bits ?devices name f (vec32 rows) in
+  check "max (|x| + 1) (sin (x * inf))"
+    (fun x ->
+      Nx.maximum (Nx.add_s (Nx.abs x) 1.) (Nx.sin (Nx.mul_s x infinity)))
+    [| 2.; -3. |];
+  check "max x 0"
+    (fun x -> Nx.maximum x (Nx.zeros_like x))
+    [| -0.; 0.; nan; -1. |];
+  check "max 0 x"
+    (fun x -> Nx.maximum (Nx.zeros_like x) x)
+    [| -0.; 0.; nan; 2. |];
+  check "min x 0"
+    (fun x -> Nx.minimum x (Nx.zeros_like x))
+    [| -0.; 0.; nan; 1. |];
+  check "clamp x -1 1"
+    (fun x -> Nx.clamp ~min:(-1.) ~max:1. x)
+    [| nan; -0.; 1.; -1.; 3.; -3. |]
 
 (* Integer arithmetic wraps at its dtype's width before a comparison reads it,
    as eager's does: uint8 0 - 1 is 255, int8 127 + 1 is -128, and uint16 256 *
