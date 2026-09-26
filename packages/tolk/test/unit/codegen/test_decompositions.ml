@@ -868,6 +868,50 @@ let late_bounded_cmplt_collapses_to_eq () =
          && const_int64_value src.(1) = Some 4L)
   | None -> is_true ~msg:"late CMPLT rule fired" false
 
+let late_bounded_cmplt_preserves_mixed_width_midpoint ~upper_boundary () =
+  let midpoint, min_val, max_val, lower_dtype, upper_dtype, values =
+    if upper_boundary then
+      (128, 0, 200, Dtype.int8, Dtype.weakint, [0; 127; 128; 129; 200])
+    else
+      (-129, -200, 0, Dtype.weakint, Dtype.int8, [-200; -130; -129; -128; 0])
+  in
+  let x = Uop.variable ~name:"mixed_midpoint" ~min_val ~max_val
+      ~dtype:Dtype.weakint () in
+  let lower = Uop.const (Const.int lower_dtype (midpoint - 1)) in
+  let upper = Uop.const (Const.int upper_dtype (midpoint + 1)) in
+  let below = Uop.alu_binary ~op:Ops.Cmplt ~lhs:lower ~rhs:x in
+  let above = Uop.alu_binary ~op:Ops.Cmplt ~lhs:x ~rhs:upper in
+  let evaluate predicate value =
+    let result = Uop.substitute
+        [x, Uop.const (Const.int Dtype.weakint value)] predicate
+        |> Symbolic.simplify in
+    match Option.map Const.view (Uop.as_const result) with
+    | Some (Const.Bool actual) -> actual
+    | _ -> fail (Format.asprintf "expected Boolean at x=%d, got %a"
+                   value Uop.pp result)
+  in
+  List.iter (fun swapped ->
+      let lhs, rhs = if swapped then above, below else below, above in
+      let predicate = Uop.alu_binary ~op:Ops.And ~lhs ~rhs in
+      let rewritten =
+        match Decomp_op.get_late_rewrite_patterns (supported_ops ()) predicate with
+        | Some result -> result
+        | None -> fail "mixed-width interval did not rewrite"
+      in
+      let label = Printf.sprintf "midpoint=%d, swapped=%b" midpoint swapped in
+      equal ~msg:label string "CMPEQ" (Ops.name (Uop.op rewritten));
+      let midpoint_node = (Uop.src rewritten).(1) in
+      equal ~msg:label string "weakint" (Dtype.to_string (Uop.dtype midpoint_node));
+      equal ~msg:label (option int) (Some midpoint)
+        (Uop.const_int_value midpoint_node);
+      List.iter (fun value ->
+          let message = Printf.sprintf "%s, x=%d" label value in
+          equal ~msg:(message ^ ": original interval") bool (value = midpoint)
+            (evaluate predicate value);
+          equal ~msg:(message ^ ": rewritten equality") bool (value = midpoint)
+            (evaluate rewritten value)) values)
+    [false; true]
+
 let late_comparisons_use_exact_integer_proofs () =
   let open Uop in
   let x = param ~slot:0 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu () in
@@ -1426,6 +1470,10 @@ let () =
             late_negated_const_cmplt_canonicalizes;
           test "bounded CMPLT collapses to equality"
             late_bounded_cmplt_collapses_to_eq;
+          test "bounded CMPLT preserves a midpoint above the lower bound's width"
+            (late_bounded_cmplt_preserves_mixed_width_midpoint ~upper_boundary:true);
+          test "bounded CMPLT preserves a midpoint below the upper bound's width"
+            (late_bounded_cmplt_preserves_mixed_width_midpoint ~upper_boundary:false);
           test "late comparisons use exact integer proofs"
             late_comparisons_use_exact_integer_proofs;
           test "comparison extrema simplify before late codegen"

@@ -130,7 +130,13 @@ let singleton_quotient_floormod_folds () =
   let d = ic 5 in
   let e = floormod x d in
   match rewrite e with
-  | Some r -> is_true ~msg:"singleton quotient mod folds to Sub" (Uop.op r = Ops.Sub)
+  | Some r ->
+      is_true ~msg:"singleton quotient mod removes the known multiple"
+        (Uop.equal r Uop.Promoting.(x - (ic 2 * d)));
+      for value = 10 to 14 do
+        equal ~msg:(Printf.sprintf "remainder at x=%d" value) int (value mod 5)
+          (Uop.sym_infer r ["x", Int64.of_int value])
+      done
   | None -> is_true ~msg:"singleton quotient mod rule fired" false
 
 (* A divisor bounded below but unbounded above still cancels when the
@@ -149,8 +155,15 @@ let cancel_one_sided_bounded_divisor_mod () =
   let y = var ~name:"cy" ~lo:3 ~hi:max_int () in
   match rewrite (floormod x y) with
   | Some r ->
-      is_true ~msg:"one-sided-bounded divisor folds mod to a subtraction"
-        (Uop.op r = Ops.Sub)
+      is_true ~msg:"one-sided-bounded divisor removes the zero quotient term"
+        (Uop.equal r Uop.Promoting.(x - (ic 0 * y)));
+      List.iter (fun divisor ->
+          for value = 0 to 2 do
+            equal ~msg:(Printf.sprintf "remainder at cx=%d, cy=%d" value divisor)
+              int (value mod divisor)
+              (Uop.sym_infer r
+                 ["cx", Int64.of_int value; "cy", Int64.of_int divisor])
+          done) [3; 4; 5; max_int - 1; max_int]
   | None -> is_true ~msg:"cancel fired for one-sided-bounded divisor (mod)" false
 
 (* (a % 12) % 3 -> a % 3 (remove_nested_mod on a single term). *)
