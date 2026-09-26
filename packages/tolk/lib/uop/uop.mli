@@ -1878,6 +1878,12 @@ module Promoting : sig
   val or_ : t -> t -> t
   (** [or_ a b] is {!Ops.Or} of the {!broadcasted} operands. *)
 
+  val shl : t -> t -> t
+  (** [shl a b] is {!Ops.Shl} of the {!broadcasted} operands. *)
+
+  val shr : t -> t -> t
+  (** [shr a b] is {!Ops.Shr} of the {!broadcasted} operands. *)
+
   val ( mod ) : t -> t -> t
   (** [a mod b] is {!Ops.Floormod} of the {!broadcasted} operands.
       Raises [Invalid_argument] unless both promote to an integer dtype. *)

@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- Integer decomposition now promotes introduced operands consistently, including
+  signed division corrections and shift counts. Exact comparison thresholds
+  stay weak until proved, so an out-of-range threshold cannot become zero.
+
 - GPU launch lowering rejects symbolic dimensions that require physical
   splitting instead of launching their maximum size without a bounds gate.
   Dimension grouping and splitting also keep intermediate products exact.

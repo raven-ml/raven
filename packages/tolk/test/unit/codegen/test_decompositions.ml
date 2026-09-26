@@ -407,7 +407,7 @@ let floordiv_lowering_corrects_mixed_sign () =
   let d = Uop.const (Const.int Dtype.int32 3) in
   let q = Uop.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:d in
   match Decomp_op.get_simplifying_rewrite_patterns (supported_ops ()) q with
-  | Some r -> is_true ~msg:"rewrites to corrected Sub" (Uop.op r = Ops.Sub)
+  | Some r -> is_true ~msg:"rewrites to corrected Add" (Uop.op r = Ops.Add)
   | None -> is_true ~msg:"rule fired" false
 
 let floormod_power_of_two_uses_and_for_negative_input () =
@@ -538,7 +538,13 @@ let late_cmod_power_of_two_without_and_uses_generic_rule () =
     Decomp_op.get_late_rewrite_patterns
       (supported_ops ~has_and:false ~disable_fast_idiv:false ()) r
   with
-  | Some r -> is_true ~msg:"Cmod uses x - d*Cdiv when And is unavailable" (Uop.op r = Ops.Sub)
+  | Some r ->
+      for value = 0 to 100 do
+        let result = Uop.substitute [x, Uop.const (Const.int Dtype.int32 value)] r
+            |> Symbolic.simplify |> Uop.const_int_value in
+        equal ~msg:(Printf.sprintf "%d mod 4" value) (option int)
+          (Some (value mod 4)) result
+      done
   | None -> is_true ~msg:"generic Cmod rule fired" false
 
 let signed_cdiv_pow2_nonnegative_uses_constant_condition () =
@@ -1218,9 +1224,43 @@ let gated_f32_store_is_not_float_decomposed () =
   | None -> ()
   | Some _ -> is_true ~msg:"gated store should not match f2f store rule" false
 
+let operator_promotion_tests =
+  let uop = Testable.make ~pp:Uop.pp ~equal:Uop.equal in
+  let x = Uop.param ~slot:910 ~dtype:Dtype.int16 () in
+  let y = Uop.param ~slot:911 ~dtype:Dtype.int32 () in
+  let binary op lhs rhs = Uop.alu_binary ~op ~lhs ~rhs in
+  let simplified node =
+    Decomp_op.get_simplifying_rewrite_patterns (supported_ops ()) node in
+  group "operator promotion"
+    [ test "MAX promotes comparison and selection operands" (fun () ->
+          let wide = Uop.cast ~src:x ~dtype:Dtype.int32 in
+          let expected = Uop.alu_ternary ~op:Ops.Where
+              ~a:(binary Ops.Cmplt wide y) ~b:y ~c:wide in
+          equal (option uop) (Some expected)
+            (Decomp_op.get_late_rewrite_patterns
+               (supported_ops ~has_max:false ()) (binary Ops.Max x y)));
+      test "floor correction promotes its boolean before negation" (fun () ->
+          let divisor = Uop.const_int 3 and zero = Uop.const_int 0 in
+          let remainder = binary Ops.Cmod y divisor in
+          let condition = binary Ops.And (binary Ops.Cmpne remainder zero)
+              (binary Ops.Cmpne (binary Ops.Cmplt y zero)
+                 (binary Ops.Cmplt divisor zero)) in
+          let correction = binary Ops.Mul
+              (Uop.cast ~src:condition ~dtype:Dtype.int32) (Uop.const_int (-1)) in
+          let expected = binary Ops.Add (binary Ops.Cdiv y divisor) correction in
+          equal (option uop) (Some expected)
+            (simplified (binary Ops.Floordiv y divisor)));
+      test "floor mask retains the generated weak integer" (fun () ->
+          equal (option uop) (Some (binary Ops.And y (Uop.const_int 7)))
+            (simplified (binary Ops.Floormod y (Uop.const_int 8))));
+      test "floor shift retains the generated weak count" (fun () ->
+          equal (option uop) (Some (binary Ops.Shr y (Uop.const_int 3)))
+            (simplified (binary Ops.Floordiv y (Uop.const_int 8)))) ]
+
 let () =
   run "tolk.uop.decomp"
     [
+      operator_promotion_tests;
       group "transcendentals"
         [ test "sqrt decomposition builds Where"
             sqrt_decomposition_builds_where;

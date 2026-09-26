@@ -3698,6 +3698,8 @@ module Promoting = struct
   let xor = binop Ops.Xor
   let and_ = binop Ops.And
   let or_ = binop Ops.Or
+  let shl = binop Ops.Shl
+  let shr = binop Ops.Shr
   let pow = binop Ops.Pow
   let maximum = binop Ops.Max
 

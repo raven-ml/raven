@@ -8,8 +8,6 @@
 open Tolk_uop
 
 
-let const_float_v v x = Uop.const (Const.float v x)
-
 (* Threefry2x32 counter-based PRNG. Splits a 64-bit counter and a 64-bit
    key into 32-bit halves, runs 5 rounds, repacks to 64 bits. *)
 
@@ -21,52 +19,29 @@ let threefry_rotations = [|
 let threefry_key_magic = 0x1BD11BDA
 
 let threefry2x32 x key =
-  let u32 = Dtype.uint32 in
-  let u64 = Dtype.uint64 in
-  let u32c n = Uop.const (Const.int Dtype.uint32 n) in
-  let u64c n = Uop.const (Const.int Dtype.uint64 n) in
-  (* Narrowing to uint32 truncates, so the low word needs no mask. *)
-  let low32 u = Uop.cast ~dtype:u32 ~src:u in
-  let high32 u =
-    Uop.cast ~dtype:u32
-      ~src:(Uop.alu_binary ~op:Ops.Shr ~lhs:u ~rhs:(u64c 32))
-  in
+  let low32 u = Uop.cast ~dtype:Dtype.uint32 ~src:u in
+  let high32 u = low32 (Uop.Promoting.shr u (Uop.const_int 32)) in
   let rot32 v r =
-    let hi = Uop.alu_binary ~op:Ops.Shl ~lhs:v ~rhs:(u32c r) in
-    let lo = Uop.alu_binary ~op:Ops.Shr ~lhs:v ~rhs:(u32c (32 - r)) in
-    Uop.alu_binary ~op:Ops.Add ~lhs:hi ~rhs:lo
-  in
+    Uop.Promoting.(shl v (Uop.const_int r) + shr v (Uop.const_int Stdlib.(32 - r))) in
   let key0 = low32 key and key1 = high32 key in
-  let ks = [|
-    key1;
-    Uop.alu_binary ~op:Ops.Xor
-      ~lhs:(Uop.alu_binary ~op:Ops.Xor ~lhs:key0 ~rhs:key1)
-      ~rhs:(u32c threefry_key_magic);
-    key0;
-  |] in
+  let ks = [| key1;
+    Uop.Promoting.(xor (xor key0 key1) (Uop.const_int threefry_key_magic));
+    key0 |] in
   let round xr0 xr1 i =
     let rots = threefry_rotations.(i mod 2) in
     let a, b = Array.fold_left (fun (a, b) r ->
-      let sum = Uop.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
-      let mixed = Uop.alu_binary ~op:Ops.Xor ~lhs:sum ~rhs:(rot32 b r) in
-      sum, mixed) (xr0, xr1) rots
-    in
+      let sum = Uop.Promoting.(a + b) in
+      sum, Uop.Promoting.xor sum (rot32 b r)) (xr0, xr1) rots in
     let k0 = ks.(i mod 3) and k1 = ks.((i + 1) mod 3) in
-    Uop.alu_binary ~op:Ops.Add ~lhs:a ~rhs:k0,
-    Uop.alu_binary ~op:Ops.Add
-      ~lhs:(Uop.alu_binary ~op:Ops.Add ~lhs:b ~rhs:k1)
-      ~rhs:(u32c (i + 1))
-  in
-  let init0 = Uop.alu_binary ~op:Ops.Add ~lhs:(low32 x) ~rhs:ks.(2) in
-  let init1 = Uop.alu_binary ~op:Ops.Add ~lhs:(high32 x) ~rhs:ks.(0) in
+    let increment = Uop.const_int (i + 1) in
+    Uop.Promoting.(a + k0), Uop.Promoting.(b + k1 + increment) in
+  let init0 = Uop.Promoting.(low32 x + ks.(2)) in
+  let init1 = Uop.Promoting.(high32 x + ks.(0)) in
   let rec loop i (a, b) =
-    if i >= 5 then a, b else loop (i + 1) (round a b i)
-  in
+    if i >= 5 then a, b else loop (i + 1) (round a b i) in
   let xr0, xr1 = loop 0 (init0, init1) in
-  (* Combine as uint64: (xr1 << 32) | xr0 *)
-  let to_u64 v = Uop.cast ~dtype:u64 ~src:v in
-  let hi = Uop.alu_binary ~op:Ops.Shl ~lhs:(to_u64 xr1) ~rhs:(u64c 32) in
-  Uop.alu_binary ~op:Ops.Or ~lhs:hi ~rhs:(to_u64 xr0)
+  let to_u64 v = Uop.cast ~dtype:Dtype.uint64 ~src:v in
+  Uop.Promoting.(or_ (shl (to_u64 xr1) (Uop.const_int 32)) (to_u64 xr0))
 
 (* Integer division magic *)
 
@@ -123,11 +98,9 @@ let next_integer_dtype (dt : Dtype.t) =
   | None -> None
 
 let shifted_div x x_for_mul multiplier shift =
-  let dt = Uop.dtype x_for_mul in
-  let product = Uop.alu_binary ~op:Ops.Mul ~lhs:x_for_mul
-      ~rhs:(Uop.const (Const.integer dt multiplier)) in
-  let quotient = Uop.alu_binary ~op:Ops.Shr ~lhs:product
-      ~rhs:(Uop.const (Const.int dt shift)) in
+  let product = Uop.Promoting.(x_for_mul *
+      Uop.const (Const.integer Dtype.weakint multiplier)) in
+  let quotient = Uop.Promoting.shr product (Uop.const_int shift) in
   Uop.cast ~src:quotient ~dtype:(Uop.dtype x)
 
 (* Multiply-shift division is valid only for a positive divisor and a
@@ -157,8 +130,7 @@ let rec fast_idiv ?(dont_cast = false) ~supports_dtype x d =
         let factor_shift = Z.trailing_zeros d in
         if factor_shift = 0 then try_widen ()
         else
-          let reduced = Uop.alu_binary ~op:Ops.Shr ~lhs:x
-              ~rhs:(Uop.const (Const.int dtype factor_shift)) in
+          let reduced = Uop.Promoting.shr x (Uop.const_int factor_shift) in
           match fast_idiv ~dont_cast:true ~supports_dtype reduced
                   (Z.shift_right d factor_shift) with
           | Some _ as result -> result
@@ -234,18 +206,11 @@ let is_signed_int_node n =
   let dt = Uop.dtype n in
   Dtype.is_int dt && not (Dtype.is_unsigned dt)
 
-let signed_int_dtype n =
-  let dt = Uop.dtype n in
-  if Dtype.is_int dt && not (Dtype.is_unsigned dt) then Some dt else None
-
-let const_integer_for dt n = Uop.const (Const.integer dt n)
+let weak_integer n = Uop.const (Const.integer Dtype.weakint n)
 
 let const_integer_value_signed n =
   let dt = Uop.dtype n in
-  if Dtype.is_int dt && not (Dtype.is_unsigned dt) then
-    (match const_integer n with
-     | Some v -> Some (dt, v)
-     | None -> None)
+  if Dtype.is_int dt && not (Dtype.is_unsigned dt) then const_integer n
   else None
 
 let is_neg_one node =
@@ -267,10 +232,10 @@ let as_mul_const_signed n =
   match Uop.op n, Uop.src n with
   | Ops.Mul, [| a; b |] ->
       (match const_integer_value_signed b with
-       | Some (dt, v) -> Some (a, dt, v)
+       | Some v -> Some (a, v)
        | None ->
            (match const_integer_value_signed a with
-            | Some (dt, v) -> Some (b, dt, v)
+            | Some v -> Some (b, v)
             | None -> None))
   | _ -> None
 
@@ -290,12 +255,8 @@ let floor_same_as_trunc a b =
   || (Bound.le (Uop.vmax a) Bound.zero && Bound.le (Uop.vmax b) Bound.zero)
 
 let floor_fixup_condition a b r =
-  let zero_a = Uop.const_like a 0 in
-  let zero_b = Uop.const_like b 0 in
-  let zero_r = Uop.const_like r 0 in
-  let has_remainder = Uop.O.(ne r zero_r) in
-  let sign_diff = Uop.O.(ne (a < zero_a) (b < zero_b)) in
-  Uop.alu_binary ~op:Ops.And ~lhs:has_remainder ~rhs:sign_diff
+  let zero = Uop.const_int 0 in
+  Uop.Promoting.(and_ (ne r zero) (ne (a < zero) (b < zero)))
 
 (* Arithmetic right shift is floor division for either sign. Run this
    before introducing the truncating quotient and remainder correction. *)
@@ -305,8 +266,7 @@ let rule_floordiv_to_shr (ops : supported_ops) node =
     | Ops.Floordiv, dtype, [| x; divisor |] when Dtype.is_int dtype ->
         (match const_integer divisor with
          | Some d when Z.compare d Z.one > 0 && Z.popcount d = 1 ->
-             Some (Uop.alu_binary ~op:Ops.Shr ~lhs:x
-                     ~rhs:(Uop.const (Const.int dtype (Z.trailing_zeros d))))
+             Some (Uop.Promoting.shr x (Uop.const_int (Z.trailing_zeros d)))
          | _ -> None)
     | _ -> None
 
@@ -318,11 +278,9 @@ let rule_floordiv_to_idiv _ops node =
       let q = Uop.alu_binary ~op:Ops.Cdiv ~lhs:a ~rhs:b in
       if floor_same_as_trunc a b then Some q
       else
-        let fixup =
-          Uop.cast ~src:(floor_fixup_condition a b (Uop.alu_binary ~op:Ops.Cmod ~lhs:a ~rhs:b))
-            ~dtype:(Uop.dtype q)
-        in
-        Some (Uop.alu_binary ~op:Ops.Sub ~lhs:q ~rhs:fixup)
+        let fixup = floor_fixup_condition a b
+            (Uop.alu_binary ~op:Ops.Cmod ~lhs:a ~rhs:b) in
+        Some Uop.Promoting.(q - fixup)
   | _ -> None
 
 (* FLOORMOD by 2^k -> x & (2^k - 1). This is correct for any signed
@@ -334,8 +292,7 @@ let rule_floormod_and (ops : supported_ops) node =
         (match const_integer c with
          | Some cv when Z.sign cv > 0 && Z.popcount cv = 1 ->
              Some
-               (Uop.alu_binary ~op:Ops.And ~lhs:x
-                  ~rhs:(Uop.const (Const.integer dt (Z.pred cv))))
+               (Uop.Promoting.and_ x (Uop.const (Const.integer Dtype.weakint (Z.pred cv))))
          | _ -> None)
     | _ -> None
 
@@ -348,11 +305,8 @@ let rule_floormod_to_mod _ops node =
       if floor_same_as_trunc a b then Some r
       else
         let fixup =
-          Uop.alu_ternary ~op:Ops.Where
-            ~a:(floor_fixup_condition a b r) ~b
-            ~c:(Uop.const_like b 0)
-        in
-        Some (Uop.alu_binary ~op:Ops.Add ~lhs:r ~rhs:fixup)
+          Uop.Promoting.where (floor_fixup_condition a b r) b (Uop.const_like b 0) in
+        Some Uop.Promoting.(r + fixup)
   | _ -> None
 
 (* MAX x y -> where(x < y, y, x). A float max propagates NaN from either
@@ -372,7 +326,7 @@ let rule_max (ops : supported_ops) node =
             | Some (Const.Float f) -> not (Float.is_nan f) && f <> 0.0
             | _ -> false
           in
-          let open Uop.O in
+          let open Uop.Promoting in
           if not (Dtype.is_float (Uop.dtype node)) then Some (where (x < y) y x)
           else if tie_safe_const y then
             Some (where (x < y) y x)
@@ -407,8 +361,7 @@ let rule_de_morgan (ops : supported_ops) node =
          | dt, [| a; b |] when Dtype.is_bool dt ->
              (match as_logical_not a, as_logical_not b with
               | Some x, Some y ->
-                  let or_ = Uop.alu_binary ~op:Ops.Or ~lhs:x ~rhs:y in
-                  Some (Uop.O.not_ or_)
+                  Some Uop.Promoting.(not_ (or_ x y))
               | _ -> None)
          | _ -> None)
     | _ -> None
@@ -426,8 +379,7 @@ let rule_mul_to_shl (ops : supported_ops) node =
                | Some n when n > 0 ->
                    (match Uop.dtype node with
                     | dt when Dtype.is_int dt ->
-                        Some (Uop.alu_binary ~op:Ops.Shl ~lhs:base
-                                ~rhs:(Uop.const (Const.int dt n)))
+                        Some (Uop.Promoting.shl base (Uop.const_int n))
                     | _ -> None)
                | Some _ | None -> None)
           | None -> None
@@ -453,8 +405,7 @@ let rule_udiv_to_shr (ops : supported_ops) node =
               | Some cv ->
                   (match log2_of_power cv with
                    | Some n when n > 0 ->
-                       Some (Uop.alu_binary ~op:Ops.Shr ~lhs:x
-                               ~rhs:(Uop.const (Const.int dt n)))
+                       Some (Uop.Promoting.shr x (Uop.const_int n))
                    | Some _ | None -> None)
               | None -> None)
          | _ -> None)
@@ -474,8 +425,7 @@ let rule_sdiv_to_shr (ops : supported_ops) node =
                   (match log2_of_power cv with
                    | Some n when n > 0 ->
                        let lt_zero =
-                         Uop.alu_binary ~op:Ops.Cmplt ~lhs:x
-                           ~rhs:(Uop.const (Const.int64 dt 0L))
+                         Uop.Promoting.(x < Uop.const_int 0)
                        in
                        let cond =
                          if Bound.equal (Uop.vmin lt_zero) (Uop.vmax lt_zero) then
@@ -483,13 +433,11 @@ let rule_sdiv_to_shr (ops : supported_ops) node =
                          else lt_zero
                        in
                        let correction =
-                         Uop.alu_ternary ~op:Ops.Where ~a:cond
-                           ~b:(Uop.const (Const.int64 dt (Int64.sub cv 1L)))
-                           ~c:(Uop.const (Const.int64 dt 0L))
+                         Uop.Promoting.where cond
+                           (Uop.const (Const.int64 Dtype.weakint (Int64.sub cv 1L)))
+                           (Uop.const_int 0)
                        in
-                       Some (Uop.alu_binary ~op:Ops.Shr
-                               ~lhs:(Uop.alu_binary ~op:Ops.Add ~lhs:x ~rhs:correction)
-                               ~rhs:(Uop.const (Const.int dt n)))
+                       Some Uop.Promoting.(shr (x + correction) (Uop.const_int n))
                    | Some _ | None -> None)
               | None -> None)
          | _ -> None)
@@ -512,8 +460,7 @@ let rule_mod_from_idiv (ops : supported_ops) node =
   else match Uop.op node, Uop.src node with
     | Ops.Cmod, [| x; d |] when Dtype.is_int (Uop.dtype x) ->
         Option.map (fun quotient ->
-            let product = Uop.alu_binary ~op:Ops.Mul ~lhs:d ~rhs:quotient in
-            Uop.alu_binary ~op:Ops.Sub ~lhs:x ~rhs:product)
+            Uop.Promoting.(x - (d * quotient)))
           (fast_idiv_const ops x d)
     | _ -> None
 
@@ -558,20 +505,17 @@ let rule_not_cmplt_const (ops : supported_ops) node =
            when is_signed_int_node x
                 && Option.is_some (const_integer_value_signed c) ->
              (match const_integer_value_signed c with
-              | Some (dt, cv) ->
+              | Some cv ->
                   Some
-                    (Uop.alu_binary ~op:Ops.Cmplt
-                       ~lhs:(const_integer_for dt (Z.pred cv))
-                       ~rhs:x)
+                    Uop.Promoting.(weak_integer (Z.pred cv) < x)
               | None -> None)
          | [| c; x |]
            when is_signed_int_node x
                 && Option.is_some (const_integer_value_signed c) ->
              (match const_integer_value_signed c with
-              | Some (dt, cv) ->
+              | Some cv ->
                   Some
-                    (Uop.alu_binary ~op:Ops.Cmplt ~lhs:x
-                       ~rhs:(const_integer_for dt (Z.succ cv)))
+                    Uop.Promoting.(x < weak_integer (Z.succ cv))
               | None -> None)
          | _ -> None)
     | _ -> None
@@ -583,19 +527,14 @@ let rule_negated_signed_cmplt (ops : supported_ops) node =
         (match as_mul_neg_one lhs with
          | Some x when is_signed_int_node x ->
              (match as_mul_const_signed rhs with
-              | Some (y, dt, cv) when is_signed_int_node y ->
+              | Some (y, cv) when is_signed_int_node y ->
                   Some
-                    (Uop.alu_binary ~op:Ops.Cmplt
-                       ~lhs:(Uop.alu_binary ~op:Ops.Mul ~lhs:y
-                               ~rhs:(const_integer_for dt (Z.neg cv)))
-                       ~rhs:x)
+                    Uop.Promoting.((y * weak_integer (Z.neg cv)) < x)
               | _ ->
                   (match const_integer_value_signed rhs with
-                   | Some (dt, cv) ->
+                   | Some cv ->
                        Some
-                         (Uop.alu_binary ~op:Ops.Cmplt
-                            ~lhs:(const_integer_for dt (Z.neg cv))
-                            ~rhs:x)
+                         Uop.Promoting.(weak_integer (Z.neg cv) < x)
                    | None -> None))
          | _ -> None)
     | _ -> None
@@ -608,13 +547,12 @@ let rule_bounded_cmplt_to_eq (ops : supported_ops) node =
           match Uop.op left, Uop.src left, Uop.op right, Uop.src right with
           | Ops.Cmplt, [| c1; x1 |], Ops.Cmplt, [| x2; c2 |]
             when Uop.equal x1 x2 && is_signed_int_node x1 ->
-              (match const_integer c1, const_integer c2,
-                     signed_int_dtype x1 with
-               | Some lo, Some hi, Some dt
+              (match const_integer c1, const_integer c2 with
+               | Some lo, Some hi
                  when Z.equal (Z.succ lo) (Z.pred hi) ->
-                   Some
-                     (Uop.alu_binary ~op:Ops.Cmpeq ~lhs:x1
-                        ~rhs:(const_integer_for dt (Z.succ lo)))
+                   let lhs, rhs = Uop.Promoting.broadcasted x1
+                       (weak_integer (Z.succ lo)) in
+                   Some (Uop.alu_binary ~op:Ops.Cmpeq ~lhs ~rhs)
                | _ -> None)
           | _ -> None
         in
@@ -691,8 +629,7 @@ let rule_recip_to_fdiv (ops : supported_ops) node =
         let s = Uop.src node in
         (match s with
          | [| x |] ->
-             let v = Uop.dtype x in
-             Some (Uop.alu_binary ~op:Ops.Fdiv ~lhs:(const_float_v v 1.0) ~rhs:x)
+             Some (Uop.alu_binary ~op:Ops.Fdiv ~lhs:(Uop.const_float 1.0) ~rhs:x)
          | _ -> None)
     | _ -> None
 

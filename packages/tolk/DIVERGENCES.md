@@ -567,6 +567,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit_metal` "integer comparisons read wrapped values". Remove this
   ruling when upstream reasons modularly.
 
+- **Late comparison thresholds retain exact weak integers.** The target can
+  commit an arithmetic threshold to its operand width before proving it. Tolk
+  computes generated thresholds exactly and retains their weak literal, so a
+  singleton interval around `2^80` cannot become equality with zero for an
+  `int64` operand. Consumer: low-level integer comparison lowering. Coverage:
+  `test_decompositions` exact-threshold and full-lowering extrema controls.
+  Reconsider when the target proves representability before commitment.
+
 - **Symbolic keeps float sums and products as written.** The reference folds
   `(x + c1) + c2` into `x + (c1 + c2)`, moves constants to the tail of a
   chain and factors `x*c0 + x*c1` into `x*(c0 + c1)` at every dtype; in
