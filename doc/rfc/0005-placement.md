@@ -6,7 +6,8 @@
   host storage, the cache key); stage 2's amendment, 2026-09-25 (an abstract
   `Placement.t` over a grid, cuts inside one tile, eager results over split
   operands, local reads, engines per backend, the withdrawal of §Fully sharded
-  training, the stage 2 budget)
+  training, the stage 2 budget); the mapped-weights revision, 2026-09-26
+  (borrowed storage, Laws 8 and 9)
 - Packages: nx (`Nx.Device`, `Nx.Placement`, `place`, `placement`, the tensor
   representation, routing and reads), rune (devices, the device engine, `jit`
   placement), tolk (ports), kaun (example importers)
@@ -298,7 +299,9 @@ val placement : ('a, 'b) t -> Placement.t
 - **nx opens no device and keeps no registry.** Devices come from the library
   that owns runtimes: `Rune.device`, `Rune.devices`, `Rune.default_device`.
   `Rune.devices "CPU"` is `[Nx.Device.host]`; `"CPU:1"`, `"CPU:2"` are
-  devices with storage of their own, opened by name, for tests of placement.
+  devices opened by name for tests of placement, which own the storage their
+  engines allocate and address host memory, so a mapped value placed on
+  `CPU:1` is borrowed as on Metal.
   rune gains `val device : string -> Nx.Device.t`, `val devices : string ->
   Nx.Device.t list` and `val default_device : unit -> Nx.Device.t`, and
   `?device : string` becomes `?devices : Nx.Device.t list` on `jit`, `jit2`
@@ -484,18 +487,31 @@ hugin's data preparation, kaun's `Metric`.
 | Source | `place p x` |
 |---|---|
 | already at `p` | `x` |
-| the host, or a mapped file | RFC 0003's chunked upload; under a split placement each device reads only its own slice of the file |
+| host memory or a mapped file, on a device that addresses host memory (Metal on Apple silicon, `CPU:k`) | the value's own storage, borrowed: nothing is copied and the view is kept |
+| host memory or a mapped file, on any other device | RFC 0003's chunked upload of the storage the view covers, and the view is kept; under a split placement each device reads only its own slice |
 | a device of the same engine | the view's window, then tolk's `transfer` for each shard that changes device, or a host bounce where the allocator has none (the CPU device); a strided window bounces through the host in rune until stage 3 compiles a contiguous copy on its source device |
 | another engine | a host bounce, in chunks |
 | the host, from a device | a read of the whole value, gathering shards |
 
-The source is never released. An empty value is placed and allocates nothing.
-Placing a host value on the host returns it; on `CPU:1` it gets
-storage of its own. Storage that wraps memory the engine did not allocate (a
-mapped file, host memory) is never written: donating such a value consumes it
-but never lends its storage to an output. A value an engine uploads once per
-step and many programs read, such as a layer loop's index, is placed once per
-step; its buffer comes from the allocator cache like any other.
+Placement moves storage only when the destination cannot address it, and
+never reshapes it: a view placed anywhere is the same view over the placed
+storage, so a transposed weight costs no copy on any device. The source is
+never released. An empty value is placed and allocates nothing. Placing a host
+value on the host returns it.
+
+Device storage is either owned, allocated by its engine, or borrowed, wrapping
+memory the engine did not allocate: a mapped file or host memory. Only owned
+storage is lent to an output, written in place or counted against the
+collection budget; the functions that do so take owned storage, so a borrowed
+buffer is never written by construction. Donating a value over borrowed
+storage consumes it and lends nothing. A value an engine uploads once per step
+and many programs read, such as a layer loop's index, is placed once per step;
+its buffer comes from the allocator cache like any other.
+
+A value over a mapped file assumes the file is unchanged while the value, or
+any value placed from it, is alive. Nothing can enforce this: a file rewritten
+underneath gives other elements, and a truncated one faults. RFC 0003's mapped
+reads carry the same precondition; the checkpoint loader states it once.
 
 ### Lifetime and donation
 
@@ -504,15 +520,19 @@ every submission that reads or writes it has completed: an engine records per
 cell the last submission that uses it, and a submission keeps reachable every
 host buffer it wraps until it completes. Donation state lives on the cell, and
 `Rune.jit_step` is the only call that donates (Compiled functions). Bound
-captures keep RFC 0003's Laws 8 and 9, and its Law 10 reads: an upload from a
-mapped file bypasses the allocator cache, so a dropped model does not stay
-allocated in it; every other allocation goes through the cache, which tolk
+captures keep RFC 0003's Laws 8 and 9, and its Law 10 reads: borrowed storage
+is never allocated, so a dropped model over a mapped file leaves nothing in the
+allocator cache; an upload from a mapped file bypasses the cache for the same
+reason; every other allocation goes through the cache, which tolk
 empties before an allocation fails (`device.ml:48-56`). An allocation that
 still fails after the engine drains its queue, collects and retries once
 raises `Nx.Device.Out_of_memory`; a call that raises has consumed no donated
-input. The collection budget counts every device allocation since the last
-major collection, eager results and per-step uploads included, 4 GiB by
-default; placing Llama 3.1 70B then runs about 35 collections.
+input. The collection budget counts owned device storage allocated since the
+last major collection, eager results and per-step uploads included, 4 GiB by
+default; placing Llama 3.1 70B then runs about 35 collections. Borrowed
+storage keeps its source (the mapping or host buffer) reachable until the last
+value over it is unreachable and the submissions that read it have completed,
+by Law 4.
 
 ### Compiled functions
 
@@ -735,13 +755,17 @@ value per tolk backend, shared by that backend's devices, so a placement over
 devices of two backends (`[METAL; CPU:1]`) raises by the rule that a
 placement's devices share one engine, with no check of its own; Metal, with
 one device, never enters a list of several. The engine moves split and
-replicated values shard by shard: chunked uploads from the host, a mapped file
-giving each device only its window, tolk's transfer between devices of its
+replicated values shard by shard: borrowed storage on devices that address
+host memory, chunked uploads from the host elsewhere, a mapped file giving each
+device only its window, tolk's transfer between devices of its
 backend (a host bounce on `CPU:k`), a chunked host bounce between backends
 written in tolk, and `Out_of_memory` naming the device that failed. It gains
 no field for this; `place` carries every move. Transfer code lives in tolk,
 with one exception: a strided device-to-device copy bounces through the host
-in rune until stage 3 compiles a contiguous copy on the source device. Stage 3
+in rune until stage 3 compiles a contiguous copy on the source device.
+Ownership is a property of the device buffer, not of rune's store, so it moves
+with the buffers, the allocator and the budget into `nx.device` under RFC
+0007's step H. Stage 3
 adds `run : 'r. 'r Effect.t -> 'r`, with one function over nx's effect
 vocabulary that lists an effect's tensor operands; an engine raises
 `Invalid_argument` naming any effect it does not implement, and nx's
@@ -854,6 +878,29 @@ then placed: a transient of one layer's experts, 3.4 GB for V4-Flash.
    and the rented node's bring-up time-boxed at 6 of those days. Stop at 48 engineer-days or
    3,700 inserted source lines; then ship what landed through the CPU
    acceptance and open the hardware gate as a tolk item.
+**Borrowed storage,** on one device, independent of stage 2 and before stage
+3's engine. tolk: a Metal allocator mapping over a page-aligned host address
+(`newBufferWithBytesNoCopy`), filling the mapping seam CUDA, AMD and NV fill (a
+tolk divergence: the target copies the file into device memory, which holds
+the model twice and lets the OS compress the copy); `CPU:k` wraps host memory
+likewise. rune: device buffers carry owned or borrowed; placement borrows on
+devices that address host memory, reading each entry's pages once first so
+the device does not fault them in cold. Acceptance on the M1 Max, against a
+baseline recorded on the same build: gpt-oss-20b keeps its 228 checks and
+greedy ids; decode median and 512-token prefill within 2%; anonymous weight
+memory below 1 GB (13.76 GB today); no compressor growth over a prompt call
+(10-20 GB today); cold placement at most 4 s (7.3 s today). Then the
+residency-set port (tolk declares every allocation on every command buffer
+today, an unrecorded divergence), measured on borrowed and owned weights. Then
+views kept on devices that copy: uploads carry the storage as stored.
+
+Measured before this item: overlapping page ranges of two wraps are legal
+(observed, not documented); MXFP4 at the file's alignment costs nothing;
+projections read through the kept view are faster at decode except `lm_head`,
+whose bf16 matrix-vector kernel is 3-4 times slower through a transpose
+(tolk's heuristic does not see through casts). Until tolk selects that kernel
+through casts, the gpt-oss loader places `lm_head` contiguous and says why.
+
 3. **Devices compute:** the engine's `run`, eager operations that do not wait,
    tolk's transfer ports; DeepSeek V4-Flash on one node.
 
@@ -894,6 +941,14 @@ then placed: a transient of one layer's experts, 3.4 GB for V4-Flash.
    capability errors raise at the operation; only execution failures may
    surface at the next use of an affected value. Prevents an API that changes
    when dispatch becomes asynchronous.
+8. **Placement moves storage only when the destination cannot address it, and
+   a view stays the same view.** Prevents weights held twice on devices that
+   share host memory, compressed copies of file pages, and a transpose costing
+   a copy of the weight at load.
+9. **Storage is owned or borrowed, and only owned storage is written, lent or
+   counted.** Prevents a GPU write into a file's pages, which the OS drops
+   silently on a read-only mapping, and a mapped model evicting owned
+   allocations through the collection budget.
 
 RFC 0001's Law 2 stands. Its Law 3 reads "resident" for "unforced", counted
 by cell, and applies to the leaves of `jit_step`'s second argument, which
@@ -988,6 +1043,16 @@ block) threads its outputs as state, so two modules cover them.
 re-performed backward operations escape past the inner scope; routing in the
 fallback composes in any order.
 
+**Keep the copy, done right** (read the file into owned buffers bypassing the
+page cache, and keep them resident). The strongest alternative to borrowing,
+with no tolk divergence. It loses on two counts. Every run pays the copy. And
+on macOS a committed residency set does not wire allocations between command
+buffers (measured: wired only while one runs, dropped after 2-4 s idle), so
+owned weights are still compressed under pressure and the stall stays.
+Borrowed file pages are dropped and re-read, never compressed. A knob
+(`~mapped`, `Nx.wrap`, a mapped placement) was rejected: the rule follows from
+the source and the device, so there is nothing to choose.
+
 **Lazy evaluation as API** (a realise call, or a graph the user manages). Law 7
 already lets an engine defer and fuse work until a read, a `place` or a
 compiled call; the API fixes only where errors surface. **Named meshes and
@@ -1050,9 +1115,10 @@ During implementation:
 
 ## Future possibilities
 
-A no-copy Metal buffer over a page-aligned mapping, a tolk divergence, which
-would bring placing gpt-oss-20b from 7.3 s to near zero on Apple machines; a
-mesh constructor over the grid representation; an upload of a list of entries
+A mesh constructor over the grid representation; models larger than memory
+as a placement pattern (borrow and warm layer i+1 while layer i runs; clean
+pages drop for free); a writer that realigns misaligned checkpoints (DeepSeek
+V3's unpadded entries still copy); an upload of a list of entries
 into one buffer, if a load-time measurement shows the per-layer stack matters;
 a per-shard checkpoint writer; moving vmap's and autodiff's identity tables
 onto `Traced` payloads, as jit's are here. Nothing listed here is a reason to
