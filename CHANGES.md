@@ -702,6 +702,9 @@ thread.
 
 ### Tolk (new)
 
+- Fix building Tolk's CUDA ABI tests on Windows by declaring the timing and
+  system functions used by the runtime's C stubs.
+
 - Fix host calls to C runtime functions such as `memcpy` on Windows: the CPU
   device looked them up in the executable alone, where POSIX searches every
   loaded library, and failed with `link_symbol: undefined symbol memcpy`.
