@@ -941,6 +941,10 @@ let pad_mode_tests =
             (shape
                (Op.pad ~mode:Op.Replicate (base ())
                   [ None; None; Some (0, 0); Some (1, -1) ])));
+      test "a non-finite fill of an integer tensor raises" (fun () ->
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> Op.pad ~value:(T.Sfloat Float.nan) (ones_i [ 3 ]) [ Some (1, 1) ]));
       test "reflect too large raises" (fun () ->
           raises_match
             (function Invalid_argument _ -> true | _ -> false)

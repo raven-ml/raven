@@ -232,10 +232,7 @@ let scalar_const_as_int u =
 let cast_const target c =
   match Const.view c with
   | Const.Bool b -> Some (Const.of_scalar target (`Bool b))
-  | Const.Int n ->
-      let value = if Dtype.is_int target || Dtype.is_bool target then
-        Dtype.truncate_integer target n else n in
-      Some (Const.of_view target (Const.Int value))
+  | Const.Int n -> Some (Const.of_view target (Const.Int n))
   | Const.Float f when Const.converts target (Const.Float f) ->
       Some (Const.of_scalar target (`Float f))
   | Const.Float _ | Const.Invalid -> None

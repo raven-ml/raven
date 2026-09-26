@@ -618,8 +618,8 @@ let render_int (ctx : ctx) (dt : Dtype.t) n =
   let text = Z.to_string n in
   match dt with
   | Dtype.Int64 -> text ^ "l"
-  | Dtype.Uint64 -> Z.to_string (Z.extract n 0 64) ^ "ul"
-  | Dtype.Uint32 -> Z.to_string (Z.extract n 0 32) ^ "u"
+  | Dtype.Uint64 -> text ^ "ul"
+  | Dtype.Uint32 -> text ^ "u"
   | Dtype.Uint8 | Dtype.Uint16 -> strf "(%s)" (render_cast ctx dt (text ^ "u"))
   | Dtype.Int8 | Dtype.Int16 -> strf "(%s)" (render_cast ctx dt text)
   | Dtype.Bool -> if Z.equal n Z.zero then "0" else "1"

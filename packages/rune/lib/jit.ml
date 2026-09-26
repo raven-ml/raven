@@ -67,8 +67,6 @@ let tolk_dtype dt =
   | Some tdt -> tdt
   | None -> unsupported ("a tensor of " ^ ND.to_string dt)
 
-(* [v] as the scalar eager stores at [dt]: an integer outside the range wraps,
-   so 256 is 0 in uint8 and 200 is -56 in int8. *)
 let scalar_of : type a b. (a, b) ND.t -> a -> F.Tensor.scalar =
  fun dt v ->
   match dt with
@@ -78,14 +76,14 @@ let scalar_of : type a b. (a, b) ND.t -> a -> F.Tensor.scalar =
   | ND.BFloat16 -> F.Tensor.Sfloat v
   | ND.Float8_e4m3 -> F.Tensor.Sfloat v
   | ND.Float8_e5m2 -> F.Tensor.Sfloat v
-  | ND.Int8 -> F.Tensor.Sint (TD.truncate_int TD.int8 v)
-  | ND.UInt8 -> F.Tensor.Sint (TD.truncate_int TD.uint8 v)
-  | ND.Int16 -> F.Tensor.Sint (TD.truncate_int TD.int16 v)
-  | ND.UInt16 -> F.Tensor.Sint (TD.truncate_int TD.uint16 v)
+  | ND.Int8 -> F.Tensor.Sint v
+  | ND.UInt8 -> F.Tensor.Sint v
+  | ND.Int16 -> F.Tensor.Sint v
+  | ND.UInt16 -> F.Tensor.Sint v
   | ND.Int4 -> F.Tensor.Sint v
   | ND.UInt4 -> F.Tensor.Sint v
   | ND.Int32 -> F.Tensor.Sint (Int32.to_int v)
-  | ND.UInt32 -> F.Tensor.Sint (TD.truncate_int TD.uint32 (Int32.to_int v))
+  | ND.UInt32 -> F.Tensor.Sint (Int32.to_int v)
   | ND.Int64 -> F.Tensor.Sint64 v
   | ND.UInt64 -> F.Tensor.Sint64 v
   | ND.Bool -> F.Tensor.Sbool v

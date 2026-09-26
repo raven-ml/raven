@@ -205,14 +205,6 @@ let matmul ?dtype a b = dot ?dtype a b
 
 (* Constant padding *)
 
-(* A fill value enters as a weak literal, so the padded tensor is promoted by
-   the select below rather than by an explicit cast here. *)
-let scalar_tensor = function
-  | T.Sint n -> T.i n
-  | T.Sint64 n -> T.of_uop (Uop.const (Const.int64 D.weakint n))
-  | T.Sfloat x -> T.f x
-  | T.Sbool v -> T.b v
-
 let pad_value t px value =
   let px = List.map (function None -> (0, 0) | Some p -> p) px in
   let sh = T.shape t in
@@ -237,11 +229,22 @@ let pad_value t px value =
     in
     Elementwise.where mask base value
 
-let pad_constant t px value = pad_value t px (scalar_tensor value)
+(* A fill holds the padded tensor's dtype, so an integer fill wraps as that
+   dtype stores it; a NaN or infinite fill has no integer value and is refused. *)
+let fill_of t value =
+  let dt = T.dtype t in
+  (match value with
+   | T.Sfloat x when not (Const.converts dt (Const.Float x)) ->
+       invalid_arg
+         (Printf.sprintf "Op.pad: fill %g has no value at %s" x (D.to_string dt))
+   | _ -> ());
+  T.of_uop (Uop.const (T.scalar_const dt value))
+
+let pad_constant t px value = pad_value t px (fill_of t value)
 
 let pad_to ?(value = T.Sint 0) t dims =
   let ret = Movement.pad_to t dims in
-  let value = scalar_tensor value in
+  let value = fill_of t value in
   if T.uop ret == T.uop t
      || Uop.equal (T.uop value) (Uop.const (Const.zero (T.dtype value))) then ret
   else
