@@ -28,8 +28,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `CPU:0` to `CPU` at its device boundary, so late-allreduce PARAM tuples use
   `CPU` where the target keeps the alias. This prevents duplicate host owners;
   generated kernel sources are identical. Coverage: `test_device` canonical
-  lookup/recursive bootstrap and `multi_allreduce_late` scheduling fixtures.
-  Reconsider if device aliases are preserved separately from storage identity.
+  lookup/recursive bootstrap. Reconsider if device aliases are preserved
+  separately from storage identity.
 
 - **Program/runtime caches are weakly owned by device instances.** Upstream
   retains process-global cache entries. Tolk permits replacing a device under
@@ -973,7 +973,12 @@ delete it rather than registering it.
   A stage counts as storage, so a value is staged once; a stage of a
   symbolic value with a symbolic inner axis is not a window, and no
   cross-device store of one arises (see `storage_view`). Coverage:
-  `test/unit/engine/test_collectives.ml` "copies".
+  `test/unit/engine/test_collectives.ml` "copies", and the parity fixtures
+  `multi_replicate_elementwise`, `multi_allreduce_naive` and
+  `multi_allreduce_ring` (stage5 and stage7, cpu and cuda). There the
+  reference stages each copied window of a parameter or partial into a buffer
+  of its own and copies that: tolk has 4, 2 and 2 kernels fewer, and each
+  remaining copy kernel reads the window of the original buffer.
 
 - **A gather is an all-gather of pure copies** (`schedule/multi.ml`
   `allgather`). The reference lowers a copy of a split value to several
@@ -996,8 +1001,10 @@ delete it rather than registering it.
   storage instead of a fresh allocation it then copies. Consumer: every
   copy of a split value (`Creation.clone`, `U.copy` to a device list,
   resharding in `multi_pm`). Coverage:
-  `test/unit/engine/test_collectives.ml` "all-gather" and
-  `test/unit/engine/test_multi.ml`.
+  `test/unit/engine/test_collectives.ml` "all-gather",
+  `test/unit/engine/test_multi.ml`, and the parity fixture
+  `multi_allreduce_late` (stage5 and stage7, cpu and cuda), where the
+  reference's copy of the allreduce's result into the output is gone.
 
 - **A reshard of an allreduce is a reduce-scatter** (`schedule/multi.ml`
   `lower_allreduces`, `schedule/prepare.ml` `forward_call_outputs`). The
