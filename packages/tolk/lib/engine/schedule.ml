@@ -79,9 +79,11 @@ let call_arg_node node =
   let base = unwrap_src node in
   if base == node then U.buf_uop base
   else
-    let bytes u = U.max_numel u * Dtype.itemsize (U.dtype u) in
+    let bytes u =
+      Bound.mul (Bound.int (U.max_numel u))
+        (Bound.int (Dtype.itemsize (U.dtype u))) in
     match Indexing.storage_window node with
-    | Some (b, offset) when offset <> 0 || bytes node <> bytes b ->
+    | Some (b, offset) when offset <> 0 || not (Bound.equal (bytes node) (bytes b)) ->
         U.substitute [ (base, U.buf_uop base) ] node
     | _ -> U.buf_uop base
 

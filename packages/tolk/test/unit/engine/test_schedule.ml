@@ -328,6 +328,26 @@ let staged_sum () =
   Run.realize_many [ x ];
   U.contiguous ~src:(T.uop (Tolk_frontend.Elementwise.add x (T.f 1.0))) ()
 
+let a_window_with_a_huge_backing_keeps_its_extent () =
+  let extent = (1 lsl (Sys.int_size - 2)) + 1 in
+  let base = U.buffer ~slot:0 ~dtype:Dtype.float32
+      ~shape:(U.const_int extent) () in
+  let view = U.shrink ~src:base ~offset:(U.const_int 0)
+      ~size:(U.const_int 1) in
+  let reader = call "read_window" [view] in
+  let linear = Schedule.create_schedule
+      (U.sink [U.after ~src:base ~deps:[reader]]) in
+  match U.children linear with
+  | [reader] ->
+      (match U.as_call reader with
+       | Some {args = [argument]; _} ->
+           equal ~msg:"scheduled argument extent" (list int) [1]
+             (U.max_shape argument);
+           is_true ~msg:"the view still names its original backing"
+             (U.equal (U.buf_uop argument) base)
+       | _ -> fail "expected one call argument")
+  | _ -> fail "expected one scheduled call"
+
 let a_window_a_call_reads_keeps_its_offset () =
   on_cpu @@ fun () ->
   let alloc =
@@ -436,6 +456,8 @@ let () =
         [
           test "a view a call reads is copied in" a_read_view_is_copied_in;
           test "a view a call stores into raises" a_written_view_raises;
+          test "a window over huge storage keeps its extent"
+            a_window_with_a_huge_backing_keeps_its_extent;
           test "a window a call reads keeps its offset"
             a_window_a_call_reads_keeps_its_offset;
           test "a window a call writes keeps its offset"

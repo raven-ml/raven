@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- Scheduled calls preserve the extent of small views over large symbolic
+  storage. Byte-size comparisons no longer overflow and expand a view to
+  its entire backing buffer.
+
 - Mixed weak and concrete operands in `Uop.usum`, `Uop.uprod` and floating
   power decomposition are promoted before arithmetic, preventing invalid
   integer operations in generated floating-point kernels.
