@@ -202,13 +202,27 @@ let concurrent_link_publication () =
         ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
       ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout)
       ~bufferize:(fun node ->
-        ignore (Atomic.fetch_and_add entered 1);
-        while Atomic.get entered <> 2 do Domain.cpu_relax () done;
         Some (B.create ~device:name ~size:(U.max_numel node) ~dtype:(U.dtype node) allocator)) () in
-  let linear = U.linear [call [placeholder device "shared" Dtype.uint8 4]] in
-  let first = Domain.spawn (fun () -> link linear)
-  and second = Domain.spawn (fun () -> link linear) in
-  let first_result = Domain.join first and second_result = Domain.join second in
+  let source = Device.create_buffer ~size:1 ~dtype:Dtype.uint8 device in
+  let address = U.getaddr ~device:name ~src:(U.from_buffer source) () in
+  let linear = U.linear [call [placeholder device "shared" Dtype.uint8 4; address]] in
+  (* Resolving the retained address occurs after cache lookup, outside native
+     ownership. A barrier inside bufferize would wait under the device lock. *)
+  let resolve_address node =
+    ignore (Atomic.fetch_and_add entered 1);
+    let deadline = Unix.gettimeofday () +. 10. in
+    while Atomic.get entered < 2 && Unix.gettimeofday () < deadline do
+      Domain.cpu_relax ()
+    done;
+    if Atomic.get entered < 2 then failwith "concurrent link misses did not rendezvous";
+    resolve node in
+  let first = Domain.spawn (fun () -> Link.run ~resolve:resolve_address linear)
+  and second = Domain.spawn (fun () -> Link.run ~resolve:resolve_address linear) in
+  let join worker = try Ok (Domain.join worker) with error -> Error error in
+  let first_result = join first and second_result = join second in
+  let result = function Ok linked -> linked | Error error -> raise error in
+  let first_result = result first_result and second_result = result second_result in
+  equal ~msg:"both calls miss the cache before either publishes" int 2 (Atomic.get entered);
   is_true ~msg:"simultaneous misses publish one retained linked graph"
     (U.equal first_result second_result);
   is_true (U.equal first_result (link linear));
