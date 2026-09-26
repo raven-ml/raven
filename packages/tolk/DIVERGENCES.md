@@ -396,6 +396,17 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   recovery remain open in TODO. Reconsider when upstream provides equivalent
   failure ownership rules.
 
+- **NV boot failure retires allocations only after stopping hardware.** The
+  target has no rollback around Falcon/GSP preparation and startup. Tolk
+  tracks boot pages across those phases; a hardware-phase failure disables
+  bus mastering and requires a successful PCI reset before freeing pages.
+  A failed reset retains pages and the claim, and reports both failures.
+  Consumer: failed driver-less NV startup. Coverage: `test_nv_nvdev`
+  software, allocation-write, hardware, reset-failure and success paths;
+  `test_amd_system` checks reset command status. GSP virtual mappings,
+  claim retirement and physical-device validation remain in TODO. Reconsider
+  when upstream provides equivalent failure ownership.
+
 - **PCI cleanup releases owned system-memory virtual ranges and the CPU
   view's address.** The frozen reference frees only device-memory ranges and
   assumes the GPU address is the CPU mapping address. BAR mappings can differ;

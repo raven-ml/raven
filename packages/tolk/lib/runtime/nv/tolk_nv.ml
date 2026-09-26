@@ -1086,23 +1086,25 @@ module Pci_iface = struct
     if Nvdev.fmc_boot nvdev then begin
       let flcn = Ip.Flcn_cot.create nvdev in
       let gsp = Ip.Gsp.create nvdev ~boot:(Ip.Gsp.cot_boot flcn) in
-      Ip.Flcn_cot.init_sw flcn;
-      Ip.Gsp.init_sw gsp;
-      Ip.Flcn_cot.init_hw flcn
-        ~libos_args_sysmem:(Ip.Gsp.libos_args_sysmem gsp)
-        ~wpr_meta_sysmem:(Ip.Gsp.wpr_meta_sysmem gsp);
-      Ip.Gsp.init_hw gsp;
+      Nvdev.init nvdev
+        ~init_sw:(fun () -> Ip.Flcn_cot.init_sw flcn; Ip.Gsp.init_sw gsp)
+        ~init_hw:(fun () ->
+          Ip.Flcn_cot.init_hw flcn
+            ~libos_args_sysmem:(Ip.Gsp.libos_args_sysmem gsp)
+            ~wpr_meta_sysmem:(Ip.Gsp.wpr_meta_sysmem gsp);
+          Ip.Gsp.init_hw gsp);
       { nvdev; gsp }
     end
     else begin
       let flcn = Ip.Flcn.create nvdev in
       let gsp = Ip.Gsp.create nvdev ~boot:(Ip.Gsp.falcon_boot flcn) in
-      Ip.Flcn.init_sw flcn;
-      Ip.Gsp.init_sw gsp;
-      Ip.Flcn.init_hw flcn
-        ~libos_args_sysmem:(Ip.Gsp.libos_args_sysmem gsp)
-        ~wpr_meta_sysmem:(Ip.Gsp.wpr_meta_sysmem gsp);
-      Ip.Gsp.init_hw gsp;
+      Nvdev.init nvdev
+        ~init_sw:(fun () -> Ip.Flcn.init_sw flcn; Ip.Gsp.init_sw gsp)
+        ~init_hw:(fun () ->
+          Ip.Flcn.init_hw flcn
+            ~libos_args_sysmem:(Ip.Gsp.libos_args_sysmem gsp)
+            ~wpr_meta_sysmem:(Ip.Gsp.wpr_meta_sysmem gsp);
+          Ip.Gsp.init_hw gsp);
       { nvdev; gsp }
     end
 

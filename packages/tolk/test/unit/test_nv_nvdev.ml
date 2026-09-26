@@ -61,7 +61,8 @@ type fake = {
 
 let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1)
     ?(scratch_mb = 80) ?(vram_bytes = 0x5000000) ?(bar1_base = 0x40000000)
-    ?(cfg = 0x7) ?(pre = fun ~reads:_ ~resets:_ -> ()) f =
+    ?(cfg = 0x7) ?(on_reset = fun () -> ())
+    ?(pre = fun ~reads:_ ~resets:_ -> ()) f =
   with_fake_vram vram_bytes (fun fvram ->
       let store = Hashtbl.create 16 in
       let reads = Hashtbl.create 16 in
@@ -95,7 +96,7 @@ let with_fake_dev ?(arch = 0x17) ?(impl = 2) ?(boot0 = 0x174000a1)
           ~write_config_flush:(fun ~offset ~value ~size ->
             cfg_writes := (offset, value, size) :: !cfg_writes;
             cfg_val := value)
-          ~reset:(fun () -> incr resets)
+          ~reset:(fun () -> incr resets; on_reset ())
           ~now_ms:(fun () ->
             incr clock;
             !clock)
@@ -610,6 +611,96 @@ let () =
                   Hashtbl.replace reads scratch_42_addr (record "vram" 80))
                 (fun _ ->
                   equal (list string) [ "therm"; "vram" ] (List.rev !order)));
+        ];
+      group "boot rollback"
+        [
+          test "software failure releases boot pages without resetting" (fun () ->
+              with_fake_dev (fun fd ->
+                  let paddr = ref None in
+                  raises_match (Exn.failure ~substring:"firmware unavailable")
+                    (fun () ->
+                      Nvdev.init fd.dev
+                        ~init_sw:(fun () ->
+                          let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                          paddr := addr;
+                          failwith "firmware unavailable")
+                        ~init_hw:(fun () -> failwith "hardware must not start"));
+                  equal int 0 !(fd.resets);
+                  is_true (Nvdev.is_err_state fd.dev);
+                  let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                  equal (option int) !paddr addr));
+          test "invalid boot data releases the allocation made before validation" (fun () ->
+              with_fake_dev (fun fd ->
+                  raises_match
+                    (function Invalid_argument _ -> true | _ -> false)
+                    (fun () ->
+                      Nvdev.init fd.dev
+                        ~init_sw:(fun () ->
+                          ignore (Nvdev.alloc_boot_mem fd.dev
+                            ~data:(Bytes.make 0x2000 'x') 0x1000))
+                        ~init_hw:(fun () -> failwith "hardware must not start"));
+                  equal int 0 !(fd.resets);
+                  let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                  equal (option int) (Some 0x200000) addr));
+          test "hardware failure resets before releasing boot pages" (fun () ->
+              let check_reset = ref (fun () -> ()) in
+              with_fake_dev ~on_reset:(fun () -> !check_reset ()) (fun fd ->
+                  let paddr = ref None in
+                  check_reset := (fun () ->
+                    let addr = Memory.palloc (Nvdev.mm fd.dev) 0x1000 () in
+                    is_true (Some addr <> !paddr);
+                    Memory.pfree (Nvdev.mm fd.dev) addr ());
+                  raises_match (Exn.failure ~substring:"GSP init failed")
+                    (fun () ->
+                      Nvdev.init fd.dev
+                        ~init_sw:(fun () ->
+                          let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                          paddr := addr)
+                        ~init_hw:(fun () -> failwith "GSP init failed"));
+                  equal int 1 !(fd.resets);
+                  equal (list (triple int int int))
+                    [ (0x4, 0x7, 2); (0x4, 0x3, 2) ] (cfg_writes fd);
+                  let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                  equal (option int) !paddr addr));
+          test "failed reset retains boot memory and both errors" (fun () ->
+              with_fake_dev ~on_reset:(fun () -> failwith "reset failed")
+                (fun fd ->
+                  let paddr = ref None and host_view = ref None in
+                  raises_match
+                    (function
+                      | Tolk_hcq.System.Rollback_failed
+                          (Failure error, [ Failure cleanup ]) ->
+                          error = "GSP init failed" && cleanup = "reset failed"
+                      | _ -> false)
+                    (fun () ->
+                      Nvdev.init fd.dev
+                        ~init_sw:(fun () ->
+                          let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                          paddr := addr;
+                          let view, _, _ = Nvdev.alloc_boot_mem fd.dev ~sysmem:true
+                              ~data:(Bytes.of_string "HELD") 0x1000 in
+                          host_view := Some view)
+                        ~init_hw:(fun () -> failwith "GSP init failed"));
+                  equal string "HELD"
+                    (Bytes.to_string (Mmio.read_bytes (Option.get !host_view) ~off:0 ~len:4));
+                  let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                  is_true (addr <> !paddr);
+                  is_true (Nvdev.is_err_state fd.dev);
+                  raises_match (function Invalid_argument message -> contains ~needle:"faulted" message | _ -> false)
+                    (fun () -> Nvdev.init fd.dev ~init_sw:(fun () -> ())
+                        ~init_hw:(fun () -> ()))));
+          test "successful initialization retains boot pages" (fun () ->
+              with_fake_dev (fun fd ->
+                  let paddr = ref None in
+                  Nvdev.init fd.dev
+                    ~init_sw:(fun () ->
+                      let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                      paddr := addr)
+                    ~init_hw:(fun () -> ());
+                  let _, addr, _ = Nvdev.alloc_boot_mem fd.dev 0x1000 in
+                  is_true (addr <> !paddr);
+                  equal int 0 !(fd.resets);
+                  is_false (Nvdev.is_err_state fd.dev)));
         ];
       group "boot memory"
         [

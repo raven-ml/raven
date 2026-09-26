@@ -19,8 +19,9 @@ with their rationale and validation; commit count is not an acceptance metric.
   `LRU=0`, forcing GC during allocation, mapped-buffer teardown,
   compiled submission, signal reservation and kernarg reuse. Verify that waits
   target submitted work and PCI allocator/page-table operations cannot re-enter.
-- Complete AMD/NV fault-reporting and recovery handoffs for retained
+- Validate AMD/NV fault reporting and publication quarantine for retained
   submissions, including failures during publication and timed dispatch.
+  Preserve the target NV backend's non-recoverable fault contract.
   Validate NV channel retirement across independently linked
   batches on hardware, including kernel-argument arena
   reuse during long asynchronous batches.
@@ -49,9 +50,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   Establish generation-specific quiescence and claim retirement after failed
   AMD hardware initialization, preserving GC9.5 resident firmware/TMR and
   retaining claims/backing when safe shutdown cannot be proved.
-  Complete phase-specific rollback of NV Falcon/GSP `init_sw/init_hw` failures
-  before a booted interface exists; ordinary shutdown cannot serve as a blanket
-  rollback. Run the Linux BAR-acquisition failure
+  Complete NV GSP virtual-address, page-table and BAR retirement after
+  failed initialization, and release PCI claims only after proven quiescence.
+  Firmware-populated and partially constructed tables need phase-specific
+  cleanup. Run the Linux BAR-acquisition failure
   regression. Validate post-boot
   AMD/NV queue/runtime rollback with injected hardware failures, including
   faulted queue retirement and doorbell mappings; inject driver mapping

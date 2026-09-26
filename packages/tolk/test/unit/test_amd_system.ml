@@ -83,6 +83,28 @@ let is_failure = function Failure _ -> true | _ -> false
 let () =
   run "System"
     [
+      group "PCI reset"
+        [
+          test "failed reset reports status instead of permitting retirement" (fun () ->
+              with_fake_root (fun root ->
+                  add_full_dev root "0000:08:00.0";
+                  let dev = create_dev root "0000:08:00.0" in
+                  let bin = root // "bin" in
+                  mkdir_p bin;
+                  let sudo = bin // "sudo" in
+                  write_file sudo "#!/bin/sh\nexit 7\n";
+                  Unix.chmod sudo 0o755;
+                  let old_path = Sys.getenv "PATH" in
+                  Fun.protect ~finally:(fun () -> Unix.putenv "PATH" old_path)
+                    (fun () ->
+                      Unix.putenv "PATH" (bin ^ ":" ^ old_path);
+                      raises_match (Exn.failure ~substring:"status 7")
+                        (fun () -> Pci_device.reset dev);
+                      write_file sudo "#!/bin/sh\nexec \"$@\"\n";
+                      Pci_device.reset dev;
+                      equal string "1\n"
+                        (read_file (dev_dir root "0000:08:00.0" // "reset")))));
+        ];
       group "setup rollback"
         [
           test "success transfers ownership" (fun () ->

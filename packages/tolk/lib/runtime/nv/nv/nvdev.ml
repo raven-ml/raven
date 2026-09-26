@@ -298,6 +298,8 @@ type t = {
   now_ms : unit -> int;
   bar1_base : int;
   alloc_sysmem : contiguous:bool -> int -> Mmio.t * int list;
+  stop_boot : unit -> unit;
+  mutable boot_allocations : (unit -> unit) list option;
   mm : Nv_page_table.t Memory.t;
 }
 
@@ -491,6 +493,13 @@ let setup ~pci_dev ~devfmt ~mmio ~map_vram ~rreg ~wreg:raw_wreg ~read_config
       now_ms;
       bar1_base;
       alloc_sysmem;
+      stop_boot = (fun () ->
+        write_config_flush ~offset:pci_command
+          ~value:(read_config ~offset:pci_command ~size:2 land lnot pci_command_master)
+          ~size:2;
+        reset ();
+        sleep_ms now_ms 100);
+      boot_allocations = None;
       mm;
     }
   in
@@ -562,6 +571,30 @@ let create pci_dev =
       ~bar1_base:(fst (System.Pci_device.bar_info pci_dev 1))
       ())
 
+let init t ~init_sw ~init_hw =
+  if !(t.is_err_state) then invalid_arg "NV initialization on a faulted device";
+  if Option.is_some t.boot_allocations then invalid_arg "nested NV initialization";
+  t.boot_allocations <- Some [];
+  let hardware_started = ref false in
+  match init_sw (); hardware_started := true; init_hw () with
+  | () -> t.boot_allocations <- None
+  | exception error ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      t.is_err_state := true;
+      let failures = ref [] in
+      let release free =
+        match free () with
+        | () -> false
+        | exception error -> failures := error :: !failures; true in
+      (* A failed stop leaves every allocation live. Independent releases can
+         proceed only after the device can no longer address the boot pages. *)
+      if not !hardware_started || not (release t.stop_boot) then
+        t.boot_allocations <- Some (List.filter release (Option.get t.boot_allocations));
+      let error = match List.rev !failures with
+        | [] -> error
+        | failures -> System.Rollback_failed (error, failures) in
+      Printexc.raise_with_backtrace error backtrace
+
 let pci_dev t = t.pci_dev
 let devfmt t = t.devfmt
 let mmio t = t.mmio
@@ -596,12 +629,17 @@ let include_regs t ~family ~arch =
 let alloc_boot_mem t ?data ?(contiguous = false) ?sysmem size =
   let sz = (size + 0xfff) land lnot 0xfff in
   let sysmem = match sysmem with Some b -> b | None -> not t.large_bar in
+  let track free = match t.boot_allocations with
+    | None -> ()
+    | Some pending -> t.boot_allocations <- Some (free :: pending) in
   let view, paddr, sysaddr =
     if sysmem then
       let view, sysaddr = t.alloc_sysmem ~contiguous size in
+      track (fun () -> Tolk_hcq.Hcq.File_io.munmap (Mmio.addr view) ~size:(Mmio.size view));
       (view, None, sysaddr)
     else
       let paddr = Memory.palloc t.mm sz () in
+      track (fun () -> Memory.pfree t.mm paddr ());
       let view = Mmio.view t.vram ~off:paddr ~size:sz () in
       let sysaddr =
         List.init (sz / 0x1000) (fun i -> t.bar1_base + paddr + (i * 0x1000))

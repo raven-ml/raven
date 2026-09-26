@@ -254,7 +254,22 @@ val make :
     [pci_dev] when given and to inert stand-ins otherwise. [now_ms] is
     the monotonic millisecond clock behind {!now_ms} (defaults to the
     system's); the reset settle delay waits on it, so injecting a
-    clock makes the delay scriptable. *)
+    clock makes the delay scriptable. During {!init}, [alloc_sysmem] must
+    return independently owned mappings, which are unmapped on rollback once
+    they are no longer reachable by the device. *)
+
+val init : t -> init_sw:(unit -> unit) -> init_hw:(unit -> unit) -> unit
+(** [init t ~init_sw ~init_hw] prepares boot memory, then starts the firmware.
+    Boot allocations made by [init_sw] and [init_hw] remain resident on success.
+    Failure marks [t] faulted and releases those allocations. Once [init_hw] has
+    started, release requires disabling bus mastering and completing a PCI reset
+    first. A failed reset retains the allocations and device claim. Cleanup
+    failures accompany the original exception in
+    {!Tolk_hcq.System.Rollback_failed}.
+
+    This does not release virtual mappings created directly by the firmware
+    layer or the PCI claim. Raises [Invalid_argument] for a faulted device or
+    a nested initialization. *)
 
 val pci_dev : t -> Tolk_hcq.System.Pci_device.t option
 (** [pci_dev t] is the underlying PCI device; [None] for devices built

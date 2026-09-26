@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- Driver-less NV startup retires boot allocations after initialization fails,
+  stopping the device first if firmware has started. Failed resets now report
+  an error and retain memory that the device may still access.
+
 - Driver-less AMD startup preserves resident boot memory when software
   preparation fails. Root-page and PSP-fence clearing now starts only after
   the session is marked dirty.

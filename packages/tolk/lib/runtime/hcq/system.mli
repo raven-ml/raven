@@ -234,7 +234,7 @@ module Pci_device : sig
 
   val reset : t -> unit
   (** [reset t] requests a function-level reset of the device through
-      [sudo] in a subshell. Best effort: failures are not reported. *)
+      [sudo] in a subshell. Raises [Failure] if the reset command fails. *)
 
   val wait_irq : t -> timeout_ms:int -> unit
   (** [wait_irq t ~timeout_ms] blocks until the device raises an

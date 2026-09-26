@@ -479,9 +479,10 @@ module Pci_device = struct
           List.filteri (fun i _ -> i < ceildiv size 0x1000) paddrs_4k ))
 
   let reset t =
-    ignore
-      (Sys.command (Printf.sprintf "sudo sh -c 'echo 1 > %s/reset'" t.dev_path)
-        : int)
+    let command = "echo 1 > " ^ Filename.quote (t.dev_path ^ "/reset") in
+    let status = Sys.command ("sudo sh -c " ^ Filename.quote command) in
+    if status <> 0 then
+      failwith (Printf.sprintf "PCI reset of %s failed with status %d" t.pcibus status)
 
   (* ops_amd.py:899: block on the interrupt eventfd for at most
      [timeout_ms] and drain its counter once an interrupt fired; a
