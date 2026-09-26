@@ -333,6 +333,19 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   replay rebinding and input lifetime. Reconsider when a shared staging pool
   has reservations spanning independent submissions.
 
+- **AMD scratch grows per device.** The frozen target's class-wide
+  `max_scratch_psize` makes a later allocation on one device inherit another
+  device's largest request. Tolk keeps the maximum and backing with each
+  device; retained PM4 links own the exact backing they captured, and AQL
+  growth waits before replacing that device's descriptor. This avoids
+  allocating unrelated devices' high-water marks and needs no shared mutable
+  sizing state. Consumers: independently retained AMD schedules on multiple
+  devices. Coverage: device-local growth and alternating host-submitted PM4
+  links check distinct backing, sizes and encoded scratch addresses. These
+  fixtures do not execute AMD kernels or validate AQL hardware retirement;
+  those gates remain in TODO. Reconsider if a shared hardware descriptor or
+  cross-device scratch-sizing requirement is established.
+
 - **Multi-die PM4 dispatch partitions resident-wave scratch.** The frozen
   target offsets each die by `private_segment_size / xccs`, although that field
   is bytes per thread. Tolk uses the requested resident-wave allocation divided

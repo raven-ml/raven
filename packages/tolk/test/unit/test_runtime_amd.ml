@@ -291,13 +291,12 @@ let read_i32 buf =
   List.init (Bytes.length bytes / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le bytes (i * 4)))
 
-let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ?(aql = false) ?(multi = false) ?(split_copies = false) ?(profile = false) ~copies () =
+let queue_fixture ?host ?(device_name = "AMD:queue-compilation") ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256) ?(aql = false) ?(multi = false) ?(split_copies = false) ?(profile = false) ~copies () =
   let open Tolk in
   let open Tolk_uop in
-  let device_name = "AMD:queue-compilation" in
   let timeline = ref None in
   let submission = Submission.create () in
-  let host = Tolk_cpu.create "CPU" in
+  let host = match host with Some host -> host | None -> Tolk_cpu.create "CPU" in
   let parameter slot = U.param ~slot ~dtype:D.int32 ~shape:(U.const_int 16)
       ~device:(U.Single (if split_copies && slot <> 0 then "CPU" else device_name)) () in
   let output = U.param ~slot:0 ~dtype:D.int32 ~shape:(U.const_int 16) () in
@@ -583,6 +582,63 @@ let compiled_pm4_scratch_slices () =
          Int64.shift_right_logical (Int64.add base (Int64.of_int (die * per_die))) 8))
     (List.rev !writes)
 
+let retained_pm4_scratch () =
+  let open Tolk in
+  let host = Tolk_cpu.create "CPU" in
+  let make device_name scratch =
+    let compiled, device, _, buffers, submission =
+      queue_fixture ~host ~device_name ~scratch ~copies:false () in
+    let linked = Realize.link_linear compiled in
+    let input = i32_buf device (List.init 16 Fun.id) in
+    let backing = Hashtbl.find buffers "scratch" in
+    let address = Device.Buffer.addr backing in
+    let run () =
+      Realize.run_linear ~device
+        ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
+        ~jit:true ~var_vals:["small", 7L; "count", 3L]
+        ~input_uops:[|U.from_buffer input|] linked;
+      Submission.check submission;
+      let get tag = Hashtbl.find buffers tag in
+      (* The fixture executes host submission, not the GPU. Retire that
+         submission before inspecting or replaying its retained storage. *)
+      let timeline = Device.Buffer.as_bytes (get "timeline") in
+      Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
+      Device.Buffer.copyin (get "timeline") timeline;
+      Device.Buffer.copyin (get "read_ptr_compute")
+        (Device.Buffer.as_bytes (get "write_ptr_compute"));
+      let stream = Device.Buffer.as_bytes (get "cmdbuf_compute") in
+      let hw = gfx1100 () in
+      let module P = (val hw.Tolk_amd.pm4) in
+      let register name =
+        (Tolk_amd.Amd_tables.Ip.reg hw.gc name).addr - P.packet3_set_sh_reg_start in
+      let base_reg = register "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" in
+      let size_reg = register "regCOMPUTE_TMPRING_SIZE" in
+      let word i = Int32.to_int (Bytes.get_int32_le stream (4 * i)) land 0xffffffff in
+      let bases = ref [] and sizes = ref [] and pos = ref 0 in
+      while !pos < Bytes.length stream / 4 do
+        let header = word !pos in
+        let count = ((header lsr 16) land 0x3fff) + 2 in
+        if (header lsr 8) land 0xff = P.packet3_set_sh_reg then begin
+          if word (!pos + 1) = base_reg then
+            bases := Bytes.get_int64_le stream (4 * (!pos + 2)) :: !bases;
+          if word (!pos + 1) = size_reg then
+            sizes := word (!pos + 2) :: !sizes
+        end;
+        pos := !pos + count
+      done;
+      equal (list int64)
+        [Int64.shift_right_logical (Int64.of_nativeint address) 8] !bases;
+      equal (list int) [512 lor ((scratch / 4) lsl 12)] !sizes;
+      equal int (scratch * 64 * 32 * 96) (Device.Buffer.nbytes backing)
+    in
+    address, run
+  in
+  let first_address, first = make "AMD:scratch-small" 128 in
+  let second_address, second = make "AMD:scratch-large" 256 in
+  is_false ~msg:"independent devices must own distinct scratch backing"
+    (first_address = second_address);
+  first (); second (); first (); second ()
+
 let execute_aql_queue ~multi =
   let open Tolk in
   let compiled, device, host, buffers, submission = queue_fixture ~aql:true ~multi ~copies:false () in
@@ -680,6 +736,7 @@ let () =
         test "SDMA writes patch mixed-width values on replay" compiled_sdma_write;
         test "profiling timestamps bracket the compiled dispatch" compiled_profile_packets;
         test "PM4 compute dies use disjoint scratch slices" compiled_pm4_scratch_slices;
+        test "retained PM4 links keep each device scratch" retained_pm4_scratch;
         test "upload and download publish to independent SDMA rings" execute_split_copy_queues;
         test "a replay timeout suppresses publication and latches failure" queue_timeout;
         test "a full ring times out without overwriting unread commands" queue_full;
@@ -1210,6 +1267,30 @@ let () =
               equal (list int) [ 0x3000000 ] !frees;
               equal int (512 lor (128 lsl 12)) dev.tmpring_size;
               equal int 512 dev.max_private_segment_size);
+          test "growth remains local to each device" (fun () ->
+              let first = gfx1100 ~scratch:(no_scratch ()) () in
+              let second = gfx1100 ~scratch:(no_scratch ()) () in
+              let props = ["simd_count", 192; "simd_per_cu", 2;
+                "array_count", 12; "simd_arrays_per_engine", 2;
+                "max_slots_scratch_cu", 32] in
+              let frees = ref [] in
+              let free buffer = frees := Buffer.va buffer :: !frees in
+              let grow device address size =
+                Tolk_amd.ensure_has_local_memory device ~props ~free
+                  ~alloc:(fun size -> Buffer.make ~va:address ~size ~meta:() ()) size in
+              grow first 0x10000000n 512;
+              grow second 0x20000000n 128;
+              equal int 128 second.max_private_segment_size;
+              equal int 0x1800000 (Buffer.size second.scratch);
+              let second_backing = second.scratch in
+              grow first 0x30000000n 1024;
+              equal int 1024 first.max_private_segment_size;
+              equal int 128 second.max_private_segment_size;
+              is_true (second.scratch == second_backing);
+              equal (list nativeint) [0x10000000n] !frees;
+              grow second 0x40000000n 64;
+              is_true (second.scratch == second_backing);
+              equal (list nativeint) [0x10000000n] !frees);
           test "per-thread sizes round up to the wave granule" (fun () ->
               let dev = gfx1100 ~scratch:(no_scratch ()) () in
               let props =
