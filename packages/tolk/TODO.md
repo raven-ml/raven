@@ -34,8 +34,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   invalidation and queue-construction handoff on hardware. Validate VF failed
   boot and retirement retention; establish post-retirement VA/page-table/backing
   cleanup without submitting to a stopped KIQ or using an expired FINI lease.
-  Validate compiled PM4 scratch separation on multi-die hardware and reconcile
-  scratch growth across retained and multi-device links.
+  Validate compiled PM4 scratch separation on multi-die hardware and scratch
+  growth across retained and multi-device links on hardware.
   Validate NV channel/descriptor, semaphore and GSP compute submission behavior
   on hardware, including compute changes from video-labelled commits.
 - Validate raw PCI peer mappings across mixed vendors and separate hives on
@@ -53,8 +53,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   Complete NV GSP virtual-address, page-table and BAR retirement after
   failed initialization, and release PCI claims only after proven quiescence.
   Firmware-populated and partially constructed tables need phase-specific
-  cleanup. Run the Linux BAR-acquisition failure
-  regression. Validate post-boot
+  cleanup. Resolve ordinary channel construction outside initialization: retain
+  published context/RAMFC allocations until acknowledged RM/channel retirement
+  or a proven device stop, and release allocations that remain unpublished.
+  Validate post-boot
   AMD/NV queue/runtime rollback with injected hardware failures, including
   faulted queue retirement and doorbell mappings; inject driver mapping
   failures to validate allocation unwinding. Validate host/device placement,
@@ -70,21 +72,18 @@ acceptance requirement; skipped tests are not execution evidence.
 
 ## 3. Close parity and adopt the reference
 
-- Measure rewrite performance and long-lived memory use with weak node caches.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.
-- Measure shared compilation worker overhead and search latency against the
-  target, including first-use capacity, affinity/container defaults and
-  concurrent caches. Completed-work compile budgets cannot interrupt a stuck
-  native compiler; review whether an isolated worker lifetime is warranted.
-  Complete TSan acceptance, including the runtime
+- Complete TSan acceptance, including the runtime
   weak-reference/GC warnings reproduced independently of Raven.
-- Measure search cost, selected-kernel latency, JIT replay, allocations and
-  handle counts on CPU and supported accelerator consumer workloads, including
-  applicable model/custom-kernel performance candidates.
-- Remove closed divergence rulings. Give retained differences a current
-  consumer, test and reconsideration criterion. Update the reference pin and
-  expectations only when drivers and implementation agree.
+- Complete native Metal ICB/pipeline retirement measurements in an environment
+  that permits object-lifetime tracing; the local profiler cannot acquire the
+  required task port.
+- Measure search cost, selected-kernel latency, JIT replay and allocations on
+  AMD/NV/CUDA consumer workloads, including applicable model and custom kernels.
+- Update the reference pin after the remaining acceptance requirements pass,
+  keeping regenerated upstream expectations and justified local expectations
+  distinct.
 
 Acceptance: the complete reference corpus is regenerated reproducibly and
 every difference is either closed or an explicitly justified divergence.

@@ -110,6 +110,13 @@ present a meaningless table. This is what makes each row a like-for-like
 comparison — a stage-transform benchmark is only honest if both stages consume
 the identical graph.
 
+Both Python companions require an explicit reference directory and verify the
+imported `tinygrad` package comes from it. The compile runner writes
+`tinygrad.metadata.json` with its source digest, revision when available,
+renderer targets, effective cache environment and sample counts; runtime
+records reference provenance in `tinygrad_runtime.json`. Extracted archives
+have a null revision rather than inheriting the enclosing repository's HEAD.
+
 ## The context suite: `runtime/`
 
 Runtime throughput of a few compiled kernels (matmul GFLOP/s; elementwise,

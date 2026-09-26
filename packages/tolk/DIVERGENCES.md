@@ -11,7 +11,9 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   live allocation accounting so independent OCaml callers do not lose updates.
   First-run display bookkeeping uses synchronized weak program keys rather than
   retaining every historical program ID. Coverage: concurrent execution and
-  allocation regressions in `test_realize` and `test_helpers`.
+  allocation regressions in `test_realize` and `test_helpers`. Reconsider the
+  synchronization if statistics become owner-local and publication can still
+  produce one coherent snapshot without lost concurrent updates.
 
 - **Native operations serialize on their participating allocator owners.**
   OCaml callers share retained devices across domains and system threads.
@@ -94,9 +96,10 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   and cache policy do not establish a transient lifetime. Owned storage keeps
   those consumers on one allocation protocol. Coverage: `test_link` independent
   bindings and `bench/link` verified Metal chains with retained replay. Paired
-  64/128-call measurements show mixed eager-link costs and do not isolate a ring
-  benefit; they do not establish AMD/NV performance parity. Reconsider if a
-  consumer demonstrates substantial allocation cost and can scope one-shot
+  64/128-call measurements show slower eager linking and faster independently
+  retained linking in Tolk; they do not isolate a ring benefit or establish
+  AMD/NV performance parity. Reconsider if a consumer demonstrates substantial
+  allocation cost and can scope one-shot
   publication, reserve whole links before writing, and drain completion and
   profiles before reuse, retaining backing after failed completion.
 
@@ -564,6 +567,10 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   context isolation; Search's failure/interrupt draining and sequential/parallel
   compile-budget tests. Native hard cancellation would require an isolated
   worker lifetime and remains a reason to reconsider the execution mechanism.
+  A bounded 1,024-request Metal compilation run reaches a stable RSS plateau,
+  with no retained OCaml heap growth; it does not prove native handle release
+  or arbitrary-source stability and supplies no memory-growth reason to add
+  worker processes.
   OCaml 5.5.1 TSan reports ephemeron races also reproduced by a standalone,
   mutex-protected Stdlib.Weak program; this does not establish harmlessness or
   satisfy TSan acceptance. Reconsider if domain isolation cannot preserve
@@ -588,6 +595,12 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   provide equally prompt bounded reclamation.
 
 ## Numerics
+
+These differences preserve elementwise float semantics. ADD reductions retain
+upstream's unspecified association and loop-invariant-factor hoists, as stated
+in `Rune.jit` and the compilation guide. Contraction and attention coverage
+includes opt-correctness's `row_reduce` and `matmul_full_reduce` workloads.
+A fixed-order reduction contract would require revisiting those shared hoists.
 
 - **Float constants fold with nx's codec.** The reference saturates a finite
   float8 value past the largest finite one and rounds a bfloat16 constant
@@ -692,18 +705,6 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   rune `test_jit` and `test_jit_metal` "zeros keep their sign". Remove this
   ruling when upstream keeps these signs.
 
-- **A sum reduction's association is unspecified; its hoists stay.** The
-  preceding rulings keep a program's own float arithmetic as written. An ADD
-  reduction is the exception, as it is in the reference: it denotes the sum
-  of its terms in an unspecified association, so symbolic may reorder it and
-  move loop-invariant factors out of it (`reduce(x * c) -> reduce(x) * c`
-  and the loop-invariant MUL terms of an ADD reduce), visible only in rounding
-  and at overflow. Restricting them to integers cost a scaled contraction
-  21% on the CPU (256^3, 0.75 against 0.91 ms), and attention scores up to
-  50% in the review's measurement. MAX's hoist of a non-negative factor is
-  exact and stays. Rune states the contract in `Rune.jit`'s documentation
-  and the compilation guide.
-
 - **A fixed-width integer constant holds its dtype's value.** The reference
   keeps integer constants exact until emission: folding runs with
   `truncate_output=False`, and a cast of a weak literal is stripped whatever
@@ -751,7 +752,9 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   does, writes `x ** -0.5` as `1 / sqrt x`, leaves other negative exponents to
   `xpow`, and selects +0 and +inf for a half-integer power of a zero or -inf.
   Coverage: rune `test_jit` "pow of a subnormal base" and both suites' "pow
-  of a tensor base matches eager".
+  of a tensor base matches eager". Remove these guards when the reference's
+  constant-power rewrites preserve subnormal, signed-zero and infinite-base
+  results in those same eager/compiled comparisons.
 
 ## Validation dependencies
 
@@ -869,8 +872,9 @@ delete it rather than registering it.
   reads an input after an earlier kernel writes a candidate output. A host
   submission's own pointer accesses do not describe that order. Keep the
   original dispatches' argument slots as metadata. Rune's donation and Metal
-  replay suites cover the consumer. Remove this metadata if reuse analysis moves before queue
-  compilation or upstream exposes equivalent access information.
+  replay suites cover the consumer. Remove this metadata if reuse analysis
+  moves before queue compilation or upstream exposes equivalent access
+  information.
 
 - **`split_reduceop` leaves a one-hot sum whole** (`schedule/prepare.ml`
   `is_one_hot_sum`). The reference splits any reduce whose input is 32768
@@ -927,7 +931,10 @@ delete it rather than registering it.
   Split along the scattered axis, every device reads every update and keeps
   those in its rows: the loaded index, widened to the index type, is offset by
   the device's first row, taken from the device range. Coverage: test_multi's
-  "Kernels over split storage".
+  "Kernels over split storage". Replace this custom kernel when shared scatter
+  lowering iterates the update count, preserves duplicate index order and
+  drops out-of-range writes on every supported backend, including split
+  storage; retain the explicit uniqueness promise for parallel updates.
 
 - **A gate clause on a loaded value survives a reshape** (`uop/symbolic.ml`
   `pm_drop_and_clauses`). The reference keeps, on each axis of a reshape, only
@@ -939,7 +946,9 @@ delete it rather than registering it.
   axis (one update, or a destination axis of size 1). tolk keeps a clause that
   reads memory on every axis; every golden and parity output is unchanged.
   Covered by `test_run`, the block and quant gate tests and rune's
-  out-of-range scatter checks, on CPU and Metal.
+  out-of-range scatter checks, on CPU and Metal. Remove the extra clause
+  retention when the shared reshape/gate rewrite preserves loaded-value
+  predicates, including one-element and split destinations, in those tests.
 
 - **Quantised matrix product** (`frontend/op.ml` `quant_matmul`). The
   reference's only fused quantised products are hand-written AMD kernels in
@@ -1016,7 +1025,10 @@ delete it rather than registering it.
   quantised product: each device multiplies its own slices, and whole blocks
   over matrices split along their first axis, or over split inputs, leave a
   float32 partial per device that an allreduce sums (test_multi's "Kernels
-  over split storage").
+  over split storage"). Replace the custom builder when a shared product
+  lowering selects expert weights without gathering a matrix per block,
+  skips invalid blocks, and preserves float32 product accumulation and split
+  partials; compare its values and performance on the existing workloads.
 
 - **A narrow-in, float32-out tensor core takes widened operands**
   (`codegen/opt/postrange.ml` `tc_operand`). The reference's matcher takes a
@@ -1178,7 +1190,9 @@ delete it rather than registering it.
   staged copy of the view, and each is the raw storage a library collective
   needs. Coverage: `test/unit/engine/test_collectives.ml` "a realized
   allreduce of a symbolic slice keeps its values" and "a gather of a slice of
-  a split buffer stages nothing".
+  a split buffer stages nothing". Remove the allocation/view split when the
+  shared call protocol writes symbolic output windows into their original
+  storage and forwards source windows without staging, passing both tests.
 
 - **Every call's arguments are realized under one rule**
   (`schedule/indexing.ml` `realize_call_args`, `engine/schedule.ml`
@@ -1193,7 +1207,10 @@ delete it rather than registering it.
   body as the base buffer from offset 0. Tolk's `create_schedule` keeps a
   window over part of its buffer as the argument. The collectives pass their
   whole allocation. Coverage: `test/unit/engine/test_schedule.ml` "call
-  arguments".
+  arguments". Consumers include custom kernels and collectives with sliced
+  storage. Remove the extra realization handling when the upstream call
+  boundary preserves window offsets and distinguishes read materialization
+  from writes to the original allocation for both lowered and unlowered calls.
 
 - **`Creation.shard` splits a replicated value where it lives**
   (`frontend/creation.ml` `shard`). The reference raises on any multi-device
@@ -1205,6 +1222,9 @@ delete it rather than registering it.
   multi-device source still raises. Consumer: `test/unit/engine/test_collectives.ml`
   (the fully sharded step's gradient and the reshard traffic test). Coverage:
   `test/unit/frontend/test_run.ml` "a replicated tensor splits where it lives".
+  Replace this branch when the shared reshard constructor accepts an existing
+  replica group and produces device-local slices without transfer, preserving
+  the fully sharded step's reduce-scatter and traffic tests.
 
 - **Compiled factorizations preserve Rune's eager conventions**
   (`frontend/linalg.ml`). Both implementations compose Householder QR, but
@@ -1270,7 +1290,10 @@ delete it rather than registering it.
   is a cast from the load's dtype, or is a constant that comes back bit for
   bit through the load's dtype; otherwise the select stays. Every golden and
   parity output is unchanged. Coverage: `test_lower` "gater folds a select
-  into a load only when its value survives".
+  into a load only when its value survives". Consumers are widened loads
+  with index or numeric alternatives. Remove the guard when shared gated-load
+  lowering preserves the alternative in the select's dtype, including the
+  bfloat16-to-float64 index case, without narrowing it through the load.
 
 - **Concatenation selects its pieces** (`frontend/op.ml` `cat`). The
   reference joins pieces of unequal extent by summing them zero-padded
@@ -1290,6 +1313,9 @@ delete it rather than registering it.
   rune's `E_cat` (`Nx.concatenate`).
   Coverage: `test_run` "unequal extents keep every bit", rune's `test_jit`
   and `test_jit_metal` "concatenation keeps every bit", on CPU and Metal.
+  Replace the selects when shared concatenation moves unequal-sized pieces
+  without floating arithmetic and preserves signed zeros, subnormals and NaN
+  bit patterns in those tests.
 
 - **Several tensor indices read through one linear gather**
   (`frontend/op.ml` `getitem`). The reference selects `x[i, :, j]` by
