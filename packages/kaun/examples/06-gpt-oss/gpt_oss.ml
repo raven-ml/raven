@@ -333,8 +333,24 @@ let of_hf ?placement cfg dt ckpt =
     head =
       (if cfg.tied then None
        else
+         (* Contiguous: through the transpose, tolk's bfloat16 matrix-vector
+            kernel reads the head 3 to 4 times slower (its heuristic does not
+            see through casts). A placed head is copied where it is placed: a
+            host copy walks the file's pages in transposed order, 4 s cold
+            against 0.4 s. *)
+         let w =
+           place Column ~axis:1
+             (Nx.matrix_transpose
+                (float ~shape:[| cfg.vocab_size; cfg.dim |] "lm_head.weight"))
+         in
          Some
-           (column ~bias:false ~inputs:cfg.dim ~outputs:cfg.vocab_size "lm_head"));
+           {
+             Linear.w =
+               (match placement with
+               | None -> Nx.contiguous w
+               | Some _ -> Rune.jit' Nx.contiguous w);
+             b = None;
+           });
   }
 
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
