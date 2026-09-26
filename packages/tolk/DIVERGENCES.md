@@ -1158,12 +1158,16 @@ delete it rather than registering it.
   (the fully sharded step's gradient and the reshard traffic test). Coverage:
   `test/unit/frontend/test_run.ml` "a replicated tensor splits where it lives".
 
-- **Composed QR, Cholesky and triangular solves** (`frontend/linalg.ml`).
-  Rune's `E_qr`, `E_cholesky` and `E_solve_triangular` handlers use these
-  shape-unrolled graphs to compile linear algebra and its gradients. Coverage:
-  `test/unit/frontend/test_linalg.ml` and Rune's JIT factorization/gradient
-  cases. Retain while these consumers need compiled factorizations; reconsider
-  if equivalent operations gain a shared upstream implementation.
+- **Compiled factorizations preserve Rune's eager conventions**
+  (`frontend/linalg.ml`). Both implementations compose Householder QR, but
+  Tolk skips zero-tail reflectors and supports reduced factors so compiled
+  results match eager LAPACK, including factor signs. Cholesky and triangular
+  solves have no counterpart in the frozen target. Consumers: Rune's QR,
+  Cholesky and triangular-solve effects and gradients. Coverage:
+  `test_linalg` and Rune's JIT factorization/gradient cases, including zero-tail
+  and reduced QR. Reconsider the QR implementation when shared lowering can
+  preserve those conventions; reconsider the other compositions when equivalent
+  upstream operations exist.
 
 - **Queue configs** (`device.mli` `queue.config`, `engine/realize.ml`
   `queue_config`). The reference keeps compiled queues per process and has no
@@ -1172,7 +1176,8 @@ delete it rather than registering it.
   KFD), `WAVES_PER_SH` and the ring sizes; on NV the ring entries, and also the
   channels' work-submission tokens and the per-thread local memory its QMD
   templates embed, which are per process, so a stored NV queue is served only
-  to a process whose values match; nothing on Metal and CUDA. `queue_config`
+  to a process whose values match; on Metal, `ICB_MAX_BINDINGS=15`; CUDA
+  adds no backend-specific state. `queue_config`
   adds profiling, `ALL2ALL` and `HCQ_NUM_SDMA`. Consumers: tolk's queue
   template cache and rune's jit cache key. Coverage: `test_hcq2` (another
   config compiles anew) and `test_jit_cache` (PROFILE). Reconsider when NV

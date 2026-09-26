@@ -82,11 +82,9 @@ acceptance requirement; skipped tests are not execution evidence.
   native compiler; review whether an isolated worker lifetime is warranted.
   Complete TSan acceptance, including the runtime
   weak-reference/GC warnings reproduced independently of Raven.
-- Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
-  AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
-  correctness fixes; measure accelerator candidates on supported hardware.
 - Measure search cost, selected-kernel latency, JIT replay, allocations and
-  handle counts on consumer workloads.
+  handle counts on CPU and supported accelerator consumer workloads, including
+  applicable model/custom-kernel performance candidates.
 - Remove closed divergence rulings. Give retained differences a current
   consumer, test and reconsideration criterion. Update the reference pin and
   expectations only when drivers and implementation agree.
@@ -99,6 +97,15 @@ hardware evidence and commit history, then rebase and push the completed
 migration to main.
 
 ## Separately scoped work
+
+- Measure the column-split all-gather memory-bound expected failure on Rune's
+  transpose-and-replicate consumer. The current target pads and allreduces,
+  reserving more storage than Tolk's copy gather; the extra-one-shard budget
+  is a performance goal beyond parity. Inner-axis windows stage every foreign
+  shard at once. If the consumer needs a lower peak, reuse receiver-local
+  scratch through existing STORE/AFTER dependencies and measure the latency
+  tradeoff. Preserve values, fold order, peer traffic and asynchronous lifetimes;
+  validate sender packing separately for hierarchical strided gathers.
 
 - Unrolling the block kernel's constant inner loop of 8 on the CPU
   (`Op.block_matmul`, a `Split` of kind `Unroll` on the last axis) fails to
