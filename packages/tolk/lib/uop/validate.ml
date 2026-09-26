@@ -88,8 +88,10 @@ let validate_index_with_gate_bounds size idx gate =
   interval_empty (lo, hi) || (Bound.le Bound.zero lo && Bound.lt hi size)
 
 (* Reuse weak-integer algebra only after proving that each native operation
-   has the same mathematical value. In particular, do not narrow the unsigned
-   bounds hull: small C integers may be promoted or stored between operations. *)
+   has the same mathematical value: its exact weak result fits the native
+   dtype, whose own bounds cover every wrapped value. In particular, do not
+   narrow the unsigned bounds hull: small C integers may be promoted or stored
+   between operations. *)
 let lift_index_proof idx gate =
   let exception Unsupported in
   let require condition = if not condition then raise Unsupported in
@@ -118,7 +120,11 @@ let lift_index_proof idx gate =
               Z.to_int n
           | _ -> raise Unsupported in
         let lifted = match Uop.op u, Uop.src u with
-          | Ops.Const, _ when Dtype.is_int dtype || Dtype.is_bool dtype -> u
+          | Ops.Const, _ when Dtype.is_bool dtype -> u
+          | Ops.Const, _ when Dtype.is_int dtype ->
+              (match integer_const u with
+               | Some (`Int n) -> Uop.const (Const.integer Dtype.weakint n)
+               | _ -> raise Unsupported)
           | (Ops.And | Ops.Or | Ops.Cmplt | Ops.Cmpne | Ops.Cmpeq as op), [|a; b|]
             when Dtype.is_bool dtype -> binary op a b
           | Ops.Cast, [|src|] when Dtype.is_int dtype && Dtype.is_int (Uop.dtype src) ->
@@ -126,13 +132,14 @@ let lift_index_proof idx gate =
               lift src
           | (Ops.Add | Ops.Sub | Ops.Mul as op), [|a; b|] when Dtype.is_int dtype ->
               let result = binary op a b in
-              require (fits dtype u);
+              require (fits dtype result);
               result
           | Ops.Shl, [|a; b|] when Dtype.is_int dtype ->
               let value = lift a and count = shift_count a b in
-              require (Bound.le Bound.zero (Uop.vmin a) && fits dtype u);
-              Uop.alu_binary ~op:Ops.Mul ~lhs:value
-                ~rhs:(Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one count)))
+              let result = Uop.alu_binary ~op:Ops.Mul ~lhs:value
+                  ~rhs:(Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one count))) in
+              require (Bound.le Bound.zero (Uop.vmin a) && fits dtype result);
+              result
           | Ops.Shr, [|a; b|] when Dtype.is_int dtype ->
               ignore (lift a); ignore (shift_count a b);
               require (Bound.le Bound.zero (Uop.vmin a) && fits dtype u);
