@@ -575,7 +575,11 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   the reference allocates them normally.** It can: refcounting frees
   promptly. Under a lazy GC the exact-size LRU cache hoards every searched
   shape, and driver module loads OOM without triggering the allocator's
-  failure flush.
+  failure flush. Consumer: beam search over kernels with different buffer
+  sizes during one compile. Coverage: `test_runtime_search` retains timing
+  buffer references and verifies explicit retirement after successful search
+  and interruption. Reconsider if native-memory accounting and cache ownership
+  provide equally prompt bounded reclamation.
 
 ## Numerics
 

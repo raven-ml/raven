@@ -410,6 +410,53 @@ let transient_program_lifetimes =
       test "rejected timings release programs" (check (Some (Failure "timing failed")));
       test "interrupted search releases programs" (check (Some Exit)) ]
 
+let codegen_timing_buffer_lifetime ~interrupt () =
+  let suffix = if interrupt then "interrupt" else "success" in
+  let backing = cpu ("beam-buffer-lifetime-" ^ suffix) in
+  let retained = ref [] and samples = ref 0 in
+  let runtime obj =
+    let program = Device.runtime backing obj in
+    let call buffers ~global ~local ~vals ~wait ~timeout =
+      equal ~msg:"candidate timing uses its two kernel buffers" int 2
+        (Array.length buffers);
+      Array.iter (fun buffer ->
+          is_true ~msg:"timing storage bypasses the exact-size LRU"
+            (Device.Buffer.spec buffer).nolru;
+          is_true ~msg:"timing storage stays allocated during execution"
+            (Device.Buffer.is_allocated buffer);
+          if not (List.exists (fun held -> held == buffer) !retained) then
+            retained := buffer :: !retained) buffers;
+      let elapsed = program.call buffers ~global ~local ~vals ~wait ~timeout in
+      incr samples;
+      if interrupt then raise Sys.Break;
+      elapsed
+    in
+    {program with Device.call}
+  in
+  let renderer = Device.renderer backing in
+  let renderer_set = Device.Renderer_set.make ~device:"CPU" ~arch:"generic"
+      ["CLANG", Fun.const renderer] in
+  let device = Device.make ~name:("CPU:beam-buffer-observer-" ^ suffix)
+      ~allocator:(Device.allocator backing) ~renderer_set ~runtime
+      ~synchronize:(fun timeout -> Device.synchronize ?timeout backing) () in
+  let ast = elementwise_1d_ast ~n:4 in
+  let info = Option.get (U.as_kernel_info ast) in
+  let ast = U.replace ast ~arg:(U.Arg.Kernel_info {info with beam = 1}) () in
+  Fun.protect
+    ~finally:(fun () -> List.iter Device.Buffer.deallocate !retained)
+    (fun () ->
+      let compile () = Helpers.Context_var.with_context
+          [B (Helpers.parallel, 0); B (Helpers.cachelevel, 0)]
+          (fun () -> ignore (Codegen.to_program ~beam_device:device renderer ast)) in
+      if interrupt then raises Sys.Break compile else compile ();
+      is_true ~msg:"the public codegen path executes a timing candidate"
+        (!samples > 0);
+      equal ~msg:"all candidates share the kernel's two timing buffers"
+        int 2 (List.length !retained);
+      List.iter (fun buffer ->
+          is_false ~msg:"codegen explicitly retires timing storage despite live references"
+            (Device.Buffer.is_allocated buffer)) !retained)
+
 let codegen_midpoint_rounds_down ~has_cache_hook () =
   let backing = cpu "beam-midpoint" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
@@ -771,6 +818,10 @@ let overflowing_resource_products_reject_candidates () =
 
 let () = run __FILE__
     [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
+      test "codegen retires retained timing buffers after successful beam search"
+        (codegen_timing_buffer_lifetime ~interrupt:false);
+      test "codegen retires retained timing buffers after beam interruption"
+        (codegen_timing_buffer_lifetime ~interrupt:true);
       test "beam codegen requires an explicit runtime" beam_requires_runtime_device;
       test "sequential compilation discards completed over-budget work"
         (completed_compile_budget 0);
