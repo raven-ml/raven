@@ -698,6 +698,10 @@ thread.
 
 ### Tolk (new)
 
+- Generated kernel declarations preserve explicit parameter names. Rendering
+  and ABI validation now share the same naming rule and reject collisions
+  between buffer or scalar parameters before native dispatch.
+
 - Kernel splitting preserves independent store and value loops, including
   symbolic loops with equal maximum sizes. They no longer collapse into one
   loop and change which output elements are written.

@@ -1744,15 +1744,20 @@ val semantic_key : t -> string
     keys. It excludes hash-cons identity, {!node_tag}, and side
     {!metadata}. *)
 
+val param_name : t -> string
+(** [param_name u] is [u]'s compiled declaration name: its explicit name with
+    colons replaced by underscores, or [data] followed by its slot, followed
+    by an underscore and its underscore-separated shape dimensions.
+    Raises [Invalid_argument] if [u] is not a parameter. *)
+
 val program_signature : program_info -> t list -> Tiny_elf.argument list
 (** [program_signature info linear] extracts the compiled argument signature
     from [linear], using [info]'s buffer slots and scalar binding order.
     Symbolic dimensions use their maximum bounds.
 
     Raises [Invalid_argument] if [info.globals] and the linear buffer formals
-    disagree, a scalar formal is not a parameter, or scalar formals have the
-    same rendered name. Distinct explicit scalar slots remain distinct even
-    when they share a binding name. *)
+    disagree, a scalar formal is not a parameter, or distinct formals have
+    the same declaration name according to {!param_name}. *)
 
 val to_elf : t -> Tiny_elf.t
 (** [to_elf program] is [program]'s binary, entry point, target and signature.

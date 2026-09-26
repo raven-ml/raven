@@ -3477,9 +3477,33 @@ let semantic_key root =
   in
   key root
 
+let param_name u =
+  let dim_name dim =
+    match const_int_value dim with
+    | Some n -> string_of_int n
+    | None ->
+        (match as_param dim with
+         | Some { param = { name = Some name; _ }; _ } -> name
+         | _ -> Printf.sprintf "sym%d" (tag dim))
+  in
+  match as_param u with
+  | Some { param; shape } ->
+      let name = match param.name with
+        | Some name -> String.map (fun c -> if c = ':' then '_' else c) name
+        | None -> Printf.sprintf "data%d" param.slot in
+      let dims = if op shape = Ops.Noop then [] else as_shape shape in
+      name ^ "_" ^ String.concat "_" (List.map dim_name dims)
+  | None -> invalid_arg "Uop.param_name: expected a parameter"
+
 let program_signature (info : program_info) linear =
   let buffer_slots = List.mapi (fun i slot -> slot, i) info.globals in
+  let names = Hashtbl.create 8 in
   let argument slot u =
+    let name = param_name u in
+    if Hashtbl.mem names name then
+      invalid_arg (Printf.sprintf
+        "Uop.program_signature: conflicting parameter declarations render as %S" name);
+    Hashtbl.add names name ();
     match op u, arg u with
     | Ops.Param, Arg.Param_arg p ->
         let shape = List.map (fun dim -> Bound.to_int (vmax dim)) (shape u) in
@@ -3497,19 +3521,7 @@ let program_signature (info : program_info) linear =
   let slots = List.map (fun (a : Tiny_elf.argument) -> a.slot) buffers in
   if List.sort Int.compare slots <> List.init (List.length info.globals) Fun.id then
     invalid_arg "Uop.program_signature: globals and linear parameters disagree";
-  (* C-style renderers emit one declaration per rendered scalar name. The
-     signature must not pack two arguments for that single declaration. *)
-  let scalar_names = Hashtbl.create 8 in
   let scalars = List.mapi (fun i u ->
-      let name = match op u, arg u with
-        | Ops.Param, Arg.Param_arg p ->
-            if p.slot >= 0 then Printf.sprintf "data%d_" p.slot
-            else Option.value p.name ~default:(Printf.sprintf "data%d_" p.slot)
-        | _ -> invalid_arg "Uop.program_signature: expected a parameter" in
-      if Hashtbl.mem scalar_names name then
-        invalid_arg (Printf.sprintf
-          "Uop.program_signature: conflicting scalar formals render as %S" name);
-      Hashtbl.add scalar_names name ();
       argument (List.length info.globals + i) u) info.vars in
   buffers @ scalars
 

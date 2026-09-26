@@ -943,33 +943,6 @@ let writable_params (uops : U.t list) : unit U.Ref_tbl.t =
 
 let sub_str i = if i >= 0 then string_of_int i else "m" ^ string_of_int (-i)
 
-let param_shape_dim_name dim =
-  match U.const_int_value dim with
-  | Some n -> string_of_int n
-  | None -> (
-      match U.as_param dim with
-      | Some { param = { name = Some name; _ }; _ } -> name
-      | _ -> strf "sym%d" (U.tag dim))
-
-let param_shape_names u =
-  match U.as_param u with
-  | Some { shape; _ } when U.op shape <> Ops.Noop ->
-      List.map param_shape_dim_name (U.as_shape shape)
-  | _ -> []
-
-(* A parameter is a buffer (rendered as a pointer) unless it lives in the
-   scalar ALU space, which denotes a symbolic runtime variable. *)
-let param_is_buffer (param : U.param_arg) = param.addrspace <> Dtype.Alu
-
-let name_param (u : U.t) : string =
-  match U.as_param u with
-  | Some { param; _ } ->
-      if param_is_buffer param then
-        strf "data%d_%s" param.slot (String.concat "_" (param_shape_names u))
-      else if param.slot >= 0 then strf "data%d_" param.slot
-      else Option.value param.name ~default:(strf "data%d_" param.slot)
-  | None -> "data"
-
 let name_range v =
   let base = strf "%sidx%d" (Axis_type.letter v.U.kind) v.U.axis in
   match v.U.sub with
@@ -1080,7 +1053,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
            | Some ki -> name := ki.name
            | None -> ())
       | Ops.Param ->
-          let rendered = name_param u in
+          let rendered = U.param_name u in
           U.Tbl.replace r u rendered;
           (match U.as_param u with
            | Some _ ->

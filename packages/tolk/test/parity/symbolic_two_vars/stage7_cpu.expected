@@ -1,5 +1,5 @@
-void E(float* restrict data0_1, float* restrict data1_128, float* restrict data2_128, const int data3_, const int data4_) {
-  float val0 = (*(data1_128+data3_));
-  float val1 = (*(data2_128+data4_));
+void E(float* restrict data0_1, float* restrict data1_128, float* restrict data2_128, const int tokens_, const int start_pos_) {
+  float val0 = (*(data1_128+tokens_));
+  float val1 = (*(data2_128+start_pos_));
   *(data0_1+0) = (val0+val1);
 }

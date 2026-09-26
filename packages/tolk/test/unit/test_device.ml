@@ -436,7 +436,7 @@ let interleaved_kernel_formals () =
   let prototype = String.split_on_char '\n' (Program_spec.src spec)
       |> List.find (String.starts_with ~prefix:"extern \"C\" __global__") in
   equal string
-    "extern \"C\" __global__ void __launch_bounds__(1) canonical_formals(int* data7_1, int* data2_1, const int increment) {"
+    "extern \"C\" __global__ void __launch_bounds__(1) canonical_formals(int* data7_1, int* data2_1, const int increment_) {"
     prototype;
   equal (list int) [ 7; 2 ] (Program_spec.globals spec);
   let obj = Program_spec.to_elf spec in

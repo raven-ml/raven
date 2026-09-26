@@ -110,23 +110,39 @@ let () =
               U.param ~slot ~dtype ~addrspace:Dtype.Alu ~name
                 ~vmin_vmax:(Bound.zero, Bound.int hi) () in
             let cases = [
-              "value", [formal "value"; formal ~dtype:Dtype.int64 "value"];
-              "value", [formal "value"; formal ~hi:8 "value"];
-              "data1_", [formal ~slot:1 "first"; formal ~slot:1 "second"];
-              "data1_", [formal ~slot:1 "first"; formal "data1_"]] in
+              "value_", [formal "value"; formal ~dtype:Dtype.int64 "value"];
+              "value_", [formal "value"; formal ~hi:8 "value"];
+              "value_", [formal ~slot:3 "value"; formal ~slot:9 "value"];
+              "a_b_", [formal ~slot:1 "a:b"; formal ~slot:2 "a_b"]] in
             List.iter (fun (name, formals) ->
                 let spec = spec_of formals |> Program_spec.with_lib Bytes.empty in
                 let error = Invalid_argument (Printf.sprintf
-                    "Uop.program_signature: conflicting scalar formals render as %S" name) in
+                    "Uop.program_signature: conflicting parameter declarations render as %S" name) in
                 raises error (fun () -> Program_spec.to_elf spec);
                 raises error (fun () ->
                     U.program_signature (Program_spec.program_info spec) formals)) cases);
-          test "distinct scalar slots retain same-name bindings" (fun () ->
-            let formal slot dtype hi =
-              U.param ~slot ~dtype ~addrspace:Dtype.Alu ~name:"value"
+          test "buffer and scalar declarations share collision checks" (fun () ->
+            let buffer slot name = U.param ~slot ~name ~dtype:Dtype.float32
+                ~shape:(U.const_int 4) ~addrspace:Dtype.Global () in
+            let spec = spec_of [buffer 0 "input:tile"; buffer 1 "input_tile"]
+                |> Program_spec.with_lib Bytes.empty in
+            raises (Invalid_argument
+              "Uop.program_signature: conflicting parameter declarations render as \"input_tile_4\"")
+              (fun () -> Program_spec.to_elf spec);
+            let output = U.param ~slot:0 ~name:"value" ~dtype:Dtype.float32
+                ~addrspace:Dtype.Global () in
+            let value = U.param ~slot:1 ~name:"value" ~dtype:Dtype.int32
+                ~addrspace:Dtype.Alu ~vmin_vmax:(Bound.zero, Bound.int 7) () in
+            let spec = spec_of [output; value] |> Program_spec.with_lib Bytes.empty in
+            raises (Invalid_argument
+              "Uop.program_signature: conflicting parameter declarations render as \"value_\"")
+              (fun () -> Program_spec.to_elf spec));
+          test "named scalar formals preserve binding order and deduplication" (fun () ->
+            let formal slot name dtype hi =
+              U.param ~slot ~dtype ~addrspace:Dtype.Alu ~name
                 ~vmin_vmax:(Bound.zero, Bound.int hi) () in
-            let first = formal 3 Dtype.int32 7 in
-            let second = formal 9 Dtype.int64 8 in
+            let first = formal 3 "first" Dtype.int32 7 in
+            let second = formal 9 "second" Dtype.int64 8 in
             let spec = spec_of [first; second; first]
                 |> Program_spec.with_lib Bytes.empty in
             let obj = Program_spec.to_elf spec in
@@ -134,7 +150,7 @@ let () =
               (List.map (fun (arg : Tiny_elf.argument) -> arg.slot) obj.signature);
             is_true (List.map (fun (arg : Tiny_elf.argument) -> arg.dtype) obj.signature
                 = [Dtype.int32; Dtype.int64]);
-            equal (list string) ["value"; "value"]
+            equal (list string) ["first"; "second"]
               (List.map (fun (v : Program_spec.var) -> v.name) (Program_spec.vars spec)));
           test "reads and writes are deduplicated" (fun () ->
             let p0 = param 0 Dtype.float32 in

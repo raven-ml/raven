@@ -65,21 +65,13 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   rejects nested capture. Reconsider if upstream supplies a scoped capture
   protocol; this does not make mutable JIT instances safe for concurrent use.
 
-- **Numbered scalar declarations use their parameter slots.** Upstream renders
-  symbolic binding names as C identifiers; Tolk uses `data<slot>_` for numbered
-  scalars, preserving separate declarations when explicit slots share a binding
-  name. Consumer: hand-built PROGRAMs with repeated symbolic bindings. Coverage:
-  `test_program_spec` accepts distinct slots with the same binding name and
-  rejects actual declaration collisions. This source-only naming difference
-  does not change slots, argument order or binding lookup. Reconsider if the IR
-  requires every formal to have a distinct symbolic name.
-
-- **Compiled signatures reject colliding scalar declarations.** The target
-  does not check for different formal nodes producing the same declaration
-  name. Tolk's shared ELF signature boundary rejects these programs before
-  native dispatch; different explicit slots sharing a symbolic binding name
-  remain valid. Consumer: hand-built PROGRAMs and retained native argument
-  packing. Coverage: `test_program_spec` dtype, bounds and slot/name collisions.
+- **Compiled signatures reject colliding declarations.** The target does not
+  check for different formal nodes producing the same declaration name.
+  Rendering and the shared ELF signature boundary use one canonical name;
+  distinct buffer or scalar formals whose explicit names collide are rejected
+  before native dispatch. Consumers: hand-built PROGRAMs and retained native
+  argument packing. Coverage: `test_program_spec` scalar, buffer and mixed
+  collisions, including colon normalization, plus binding order and dtype checks.
   Reconsider when canonical formal identities make the mismatch impossible.
 
 - **AMD boot records an unfinished session before initializing hardware.**

@@ -1058,16 +1058,34 @@ let () =
               (render opencl_renderer f32_1) "__global";
             assert_contains "metal device"
               (render metal_renderer f32_1) "device");
+          test "explicit names survive numbered buffer and scalar parameters" (fun () ->
+            let input = U.param ~slot:0 ~name:"input:tile" ~dtype:Dtype.float32
+                ~shape:(U.const_int 4) () in
+            let output = U.param ~slot:1 ~name:"output:tile" ~dtype:Dtype.float32
+                ~shape:(U.const_int 4) () in
+            let scalar = U.param ~slot:2 ~name:"for" ~dtype:Dtype.int32
+                ~addrspace:Dtype.Alu () in
+            let index = U.cconst (Const.int Dtype.weakint 0) Dtype.int32 in
+            let value = U.alu_binary ~op:Ops.Add
+                ~lhs:(U.load ~src:(U.index ~ptr:input ~idxs:[index] ()) ())
+                ~rhs:(U.cast ~src:scalar ~dtype:Dtype.float32) in
+            let sink = U.sink [U.store ~dst:(U.index ~ptr:output ~idxs:[index] ()) ~value ()] in
+            for_each_renderer all_renderers (fun name renderer ->
+                let source = render_kernel renderer sink in
+                assert_contains (name ^ " named input") source "input_tile_4";
+                assert_contains (name ^ " named output") source "output_tile_4";
+                assert_contains (name ^ " named scalar") source "for_";
+                assert_not_contains (name ^ " numbered scalar name") source "data2_"));
           test "scalar parameter" (fun () ->
             let prog = make_define_var () in
             assert_contains "clang scalar param in inner signature"
-              (render clang_renderer prog) "static void test_(float* restrict data0_-1, const int n)";
+              (render clang_renderer prog) "static void test_(float* restrict data0_-1, const int n_)";
             assert_contains "clang scalar param forwarded through vals"
               (render clang_renderer prog) "test_((float*)bufs[0], (int)vals[0]);";
             assert_contains "opencl scalar param in signature"
               (render opencl_renderer prog) "__global float* data0_-1, const int n";
             assert_contains "metal scalar param in signature"
-              (render metal_renderer prog) "struct args_t { device float* data0_-1; int n; };";
+              (render metal_renderer prog) "struct args_t { device float* data0_-1; int n_; };";
             assert_contains "cuda scalar param in signature"
               (render (Cstyle.cuda Gpu_target.SM80) prog) "float* data0_-1, const int n");
           test "64-bit scalar parameter" (fun () ->
@@ -1077,7 +1095,7 @@ let () =
             assert_contains "clang 64-bit scalar forwarded through vals"
               (render clang_renderer prog) "(long)vals[0]";
             assert_contains "metal 64-bit scalar param"
-              (render metal_renderer prog) "long n = args.n;";
+              (render metal_renderer prog) "long n_ = args.n_;";
             assert_contains "opencl 64-bit scalar param"
               (render opencl_renderer prog) "const long n");
           test "buffer parameter and body both use type_map" (fun () ->
