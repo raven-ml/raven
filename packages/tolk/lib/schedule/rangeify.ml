@@ -725,22 +725,19 @@ let renumber_kernel_ranges root =
   U.substitute mappings root
 
 let find_bufs n =
-  (* A base buffer read through two INDEXes whose immediate pointer has a
-     different op (e.g. a raw BUFFER vs an AFTER/STAGE over it) is a
-     read/write cycle within the kernel. Key on the pointer op, matching
-     tinygrad's [read_from.setdefault(buf, idx.src[0].op)]. *)
-  let read_from : Ops.t U.Ref_tbl.t = U.Ref_tbl.create 8 in
+  (* A kernel cannot read two different states of the same storage, including
+     two distinct AFTER nodes over it. *)
+  let read_from : U.t U.Ref_tbl.t = U.Ref_tbl.create 8 in
   List.iter (fun s ->
       match U.as_index s with
       | Some { ptr; _ } ->
           let b = U.buf_uop ptr in
           (match U.op b with
            | Ops.Buffer | Ops.Alloc | Ops.Param ->
-               let ptr_op = U.op ptr in
                (match U.Ref_tbl.find_opt read_from b with
-                | Some prev when not (Ops.equal prev ptr_op) ->
+                | Some prev when not (U.equal prev ptr) ->
                     failwith "cycle detected while indexing buffer"
-                | _ -> U.Ref_tbl.replace read_from b ptr_op)
+                | _ -> U.Ref_tbl.replace read_from b ptr)
            | _ -> ())
       | None -> ())
     (* [enter_calls:false]: a precompiled call's payload (e.g. a staged

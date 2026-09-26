@@ -2318,17 +2318,16 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | Scan.E_scan_bwd bwd -> Some (fun k -> stage_scan_bwd st bwd k)
     (* Gradient checkpointing. A differentiated remat's arguments are the
        residuals of its backward pass, so they are materialised. The backward
-       pass reads them through an AFTER on their storage whose dependencies are
-       the cotangents of the result, materialised too: that node is one the
-       forward pass never built, so the recomputation shares nothing with it,
-       and the kernels reading it wait for the cotangents, so the recomputation
-       runs in the backward pass. Storage the program does not write (an input
-       of the compiled function, a constant) takes no AFTER: a kernel reading it
-       in two states would be a read/write cycle to the scheduler, and no
+       pass copies each written residual after the result's cotangents exist.
+       The copy is a distinct checkpoint for the recomputation, so it shares
+       no forward intermediates. Reading one buffer through different AFTER
+       states in a fused higher-order derivative would instead be a read/write
+       cycle. Storage the program does not write (an input of the compiled
+       function, a constant) needs no checkpoint copy, and no
        intermediate of the forward pass depends on it alone. An argument backed
        by such storage is read as it is, so a remat whose arguments are all
        inputs or constants shares the forward pass's nodes, as does one whose
-       cotangents are storage from the start: the AFTER has nothing to wait for.
+       cotangents are storage from the start: there is nothing to wait for.
        A staged scan body, whose backward loop recomputes each step already,
        keeps the plain function. *)
     | Remat.E_remat (Remat.Call { params_s; params; f; residuals; _ }) ->
@@ -2363,7 +2362,13 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                          (traced st (placement_in st v) (dt v)
                             (F.Tensor.of_uop
                                (reroot s
-                                  (fun s -> U.after ~src:s ~deps)
+                                  (fun s ->
+                                    if deps = [] then s
+                                    else
+                                      let buffer = make_node st (U.dtype s) (U.max_numel s) in
+                                      U.after ~src:buffer
+                                        ~deps:[U.store ~dst:buffer
+                                          ~value:(U.after ~src:s ~deps) ()])
                                   (F.Tensor.uop tt)))))
                    values))
     (* Indexed access *)

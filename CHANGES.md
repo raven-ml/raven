@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Preserve higher-order compiled `Rune.remat` gradients with strict buffer-state
+  validation. Written residuals get a separate checkpoint after their cotangents
+  are ready, retaining the activation-memory bound without ambiguous reads.
+
 - `Nx.place` of a tensor over a mapped file on Metal (Apple silicon) or a
   `CPU:k` device borrows the file's pages instead of copying them, and keeps
   its view: gpt-oss-20b's weights take 1.3 GB of the process's memory instead

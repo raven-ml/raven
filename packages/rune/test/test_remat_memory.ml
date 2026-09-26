@@ -10,9 +10,8 @@
    weights and input uploaded to it and the gradients computed on it: on the CPU
    device those alias host memory and count nothing. What remains is the memory
    planner's arena, the most intermediates live at once, and on Metal the
-   compiled queue's command storage (33 KiB here). The arenas are shared by
-   every program the process compiles and only grow, so this suite compiles one
-   program and runs alone in its executable. *)
+   compiled queue's command storage. The arena belongs to the retained program;
+   this suite compiles one program and measures its first execution. *)
 
 open Windtrap
 
@@ -34,7 +33,7 @@ let device_bytes () =
 (* Without remat the gradient keeps every layer's pre-activation until the
    backward pass reaches it, [layers * batch * hidden] floats: the arena is
    5,013,504 bytes on the CPU device. With remat it keeps each layer's input, an
-   eighth of that, and recomputes one layer at a time: 1,802,240 bytes. The
+   eighth of that, and recomputes one layer at a time. The
    layers are unrolled: a staged [Rune.scan] already recomputes each step in its
    backward loop, remat or not. *)
 let test_remat_keeps_under_half_the_activations () =

@@ -776,6 +776,16 @@ delete it rather than registering it.
   `test_jit_metal.ml` exercise this extension. Reconsider it if upstream gains
   a cross-kernel recurrence that supports these consumers.
 
+- **Rune rematerialization uses explicit checkpoint copies**
+  (`rune/lib/jit.ml`, `Remat.E_barrier`). Rune differentiates through effects;
+  the reference has no matching checkpoint transformation to port. A written
+  residual is copied after its cotangents exist, giving recomputation distinct
+  storage without representing two states of the same buffer inside one kernel.
+  Read-only inputs and constants are shared. The scheduler retains the target's
+  strict pointer-state check. Coverage: `test_grad` higher-order/captured remat
+  cases and `test_remat_memory`'s CPU/Metal activation bound. Reconsider the copy
+  if a shared call boundary can isolate recomputation without another allocation.
+
 - **Ordered argument accesses on compiled queue calls** (`Uop.queue_info.accesses`).
   Rune's donation and staged-carry analysis must see whether a later kernel
   reads an input after an earlier kernel writes a candidate output. A host

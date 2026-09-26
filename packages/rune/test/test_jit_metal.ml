@@ -44,6 +44,22 @@ let test_matmul_grad_on_metal () =
   let x = Nx.create f32 [| 2; 3 |] [| 1.0; 0.0; -1.0; 0.5; 2.0; 1.0 |] in
   check_arr ~msg:"grad through metal jit" (to_arr (Rune.grad' f x)) (g x)
 
+let test_remat_second_derivatives () =
+  let input = vec32 [| 0.7; -1.3; 2.1 |] in
+  let direction = vec32 [| 1.9; 0.8; -0.6 |] in
+  let loss remat weights =
+    Nx.sum (Nx.sin (remat (fun w x -> Nx.tanh (Nx.mul x w)) weights
+      (Nx.cos input))) in
+  let hvp loss weights =
+    Rune.grad' (fun w -> Nx.sum (Nx.mul (Rune.grad' loss w) direction)) weights in
+  let plain = hvp (loss (fun f -> f)) in
+  let remat = Rune.remat Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+  let compiled = Rune.jit' ~devices:[Rune.device "METAL"] (hvp (loss remat)) in
+  List.iter (fun weights ->
+      check_arr ~eps:1e-4 ~msg:"rematerialized second derivative"
+        (to_arr (plain weights)) (compiled weights))
+    [direction; input]
+
 (* Multi-kernel compiled traces replay as batched compiled queues: the kernels
    are recorded into an indirect command buffer on the first call and later
    calls patch the rebound buffers (fresh outputs, resident inputs) into it
@@ -934,6 +950,8 @@ let tests =
           test_top_k_on_metal;
         slow "sort matches eager" test_sort_matches_eager;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
+        test "rematerialized second derivatives replay correctly"
+          test_remat_second_derivatives;
         test "custom backward replays indexed scatter"
           test_custom_backward_on_metal;
         test "multi-kernel traces replay as compiled queues"

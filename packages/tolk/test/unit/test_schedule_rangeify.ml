@@ -819,6 +819,15 @@ let pipeline_test name ~expected_calls build_fn =
 let get_kernel_graph_tests =
   group "get_kernel_graph"
     [
+      test "rejects distinct written states of one buffer in a kernel" (fun () ->
+          let buffer = mk_param ~idx:0 [ 4 ] in
+          let written value =
+            U.after ~src:buffer ~deps:[U.store ~dst:buffer ~value ()] in
+          let first = written (mk_param ~idx:1 [ 4 ]) in
+          let second = written (mk_param ~idx:2 [ 4 ]) in
+          let sum = U.alu_binary ~op:Ops.Add ~lhs:first ~rhs:second in
+          raises (Failure "cycle detected while indexing buffer") (fun () ->
+              ignore (Rangeify.get_kernel_graph (wrap_sink sum))));
       (* test_basic_binop_fusion *)
       pipeline_test "elementwise fusion" ~expected_calls:1 (fun () ->
           let a = mk_param ~idx:0 [ 10 ] in
