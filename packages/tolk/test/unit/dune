@@ -174,7 +174,8 @@
  (name test_metal_completion)
  (modules test_metal_completion)
  (package tolk)
- (enabled_if (= %{system} macosx))
+ (build_if
+  (= %{system} macosx))
  (libraries test_metal_completion_driver windtrap threads))
 
 (test
