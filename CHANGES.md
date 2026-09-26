@@ -3449,6 +3449,10 @@ thread.
 
 ### Kaun
 
+- The Llama example's `--devices` (a device, a CPU count or a comma-separated
+  list) replaces `--jit` and compiles the decode step tensor-parallel over
+  several devices: projections split into and out of the heads, caches on
+  their kv-heads, the rest a copy on each device.
 - **Breaking:** `Embedding.apply` returns a row of zeros for an id outside
   `[0, vocab)`, and `Loss.softmax_cross_entropy_sparse` takes zero loss for a
   label outside the classes (still counted by `` `Mean ``), eagerly as under

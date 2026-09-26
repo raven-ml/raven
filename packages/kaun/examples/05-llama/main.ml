@@ -7,14 +7,20 @@
 
    Downloads the checkpoint and tokenizer from an ungated HuggingFace mirror
    (about 2.5 GB, cached afterwards) and samples a continuation of a prompt
-   through key-value caches. [--jit DEVICE] compiles the decode step with
-   [Rune.jit]; [--temperature 0] decodes greedily. *)
+   through key-value caches. [--devices LIST] compiles the decode step with
+   [Rune.jit] for a device, tensor-parallel over several; [--temperature 0]
+   decodes greedily. *)
 
 open Kaun
 
-(* The placement that holds every leaf and cache pool whole on [device]. *)
-let whole_on device =
-  Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+(* Tensor parallelism over [ds]: the projections into the heads and the hidden
+   features split by columns, those out of them by rows, the caches on their
+   kv-heads, and the rest a copy on each device. On one device every leaf is
+   whole there. *)
+let parallel ds role ~axis =
+  match role with
+  | Llama.Whole -> Nx.Placement.replicated ds
+  | Column | Row | Kv_heads -> Nx.Placement.sharded ~axis ds
 
 (* The sampling parameters are tensors, so a compiled step reads them as
    arguments: a captured temperature would be frozen into its program. *)
@@ -35,9 +41,10 @@ end
    places, the key and the sampling parameters, consumes the caches, fills them,
    and returns the next token, the next key and the written caches. The host
    advances the index between calls. Positions and slots enter as tensors, so
-   [Rune.jit] compiles a prefill and one single-token step. With [device], the
-   step compiles for it and the caches are placed on it. *)
-let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
+   [Rune.jit] compiles a prefill and one single-token step. With [devices], the
+   step compiles for them and the caches are placed there as the parameters
+   are. *)
+let generate (type b) ?devices cfg (params : (float, b) Nx.t Llama.params)
     (dt : (float, b) Nx.dtype) ~temperature ~top_k ~top_p ~seed ~max_tokens
     prompt =
   let greedy = temperature <= 0.0 in
@@ -61,14 +68,14 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
     ((Nx.reshape [| 1; 1 |] next, keys.(0)), caches)
   in
   let step =
-    match device with
+    match devices with
     | None -> step
-    | Some device ->
+    | Some devices ->
         let sampling = Nx.Ptree.instantiate (module Sampling)
         and caches =
           Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
         in
-        Rune.jit ~devices:[ device ]
+        Rune.jit ~devices
           Nx.Ptree.(
             tensor @-> Cache_index.ptree @-> Nx.Rng.ptree @-> sampling
             @-> consumes caches
@@ -90,10 +97,12 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
       (step
          (Nx.create Nx.int32 [| 1; n0 |] prompt)
          !index (Nx.Rng.key seed) sampling
-         (Llama.cache ?placement:(whole_on device) cfg ~slots:context dt))
+         (Llama.cache
+            ?placement:(Option.map parallel devices)
+            cfg ~slots:context dt))
   in
   let out = Array.make max_tokens 0l in
-  (* The first single-token step compiles under [--jit]: time from the
+  (* The first single-token step compiles under [--devices]: time from the
      second. *)
   let t0 = ref (Unix.gettimeofday ()) in
   for n = 0 to max_tokens - 1 do
@@ -110,6 +119,14 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Llama.params)
       (float_of_int (max_tokens - 2) /. (Unix.gettimeofday () -. !t0));
   out
 
+(* A device, a CPU device count ([4] is CPU:1..CPU:4) or a comma-separated
+   list. *)
+let parse_devices s =
+  match int_of_string_opt s with
+  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
+  | Some _ -> failwith "--devices: the device count must be positive"
+  | None -> List.map String.trim (String.split_on_char ',' s)
+
 let load_tokenizer () =
   let path = Kaun_hf.download_file ~file:"tokenizer.json" Llama.default_repo in
   match Brot.from_file path with
@@ -118,14 +135,18 @@ let load_tokenizer () =
 
 let () =
   let prompt = ref "The capital of France is" in
-  let count = ref 24 and jit = ref "" in
+  let count = ref 24 and devices = ref "" in
   let dtype = ref "" and temperature = ref 0.7 and seed = ref 0 in
   let top_k = ref 50 and top_p = ref 0.9 in
   Arg.parse
     [
       ("--prompt", Arg.Set_string prompt, "Text to continue");
       ("--count", Arg.Set_int count, "Number of tokens to generate");
-      ("--jit", Arg.Set_string jit, "Compile the decode step for this device");
+      ( "--devices",
+        Arg.Set_string devices,
+        "Compile the decode step over these devices, tensor-parallel over \
+         several: a device (METAL), a CPU count (4 = CPU:1..CPU:4) or a \
+         comma-separated list" );
       ( "--dtype",
         Arg.Set_string dtype,
         "float32, float16 or bfloat16 (default: the checkpoint's own)" );
@@ -135,22 +156,25 @@ let () =
       ("--seed", Arg.Set_int seed, "Sampling seed");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "llama [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
+    "llama [--prompt P] [--count N] [--devices LIST] [--dtype DT]";
   let cfg = Llama.config_of_json (Kaun_hf.load_config Llama.default_repo) in
   let ckpt = Kaun_hf.load_checkpoint Llama.default_repo in
   let tokenizer = load_tokenizer () in
   (* The tokenizer opens the ids with the begin-of-text token the model was
      trained to start from. *)
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
-  let device = if !jit = "" then None else Some (Rune.device !jit) in
+  let devices =
+    if !devices = "" then None
+    else Some (List.map Rune.device (parse_devices !devices))
+  in
   (* At the checkpoint's own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =
     if !dtype = "" then Llama.stored_dtype ckpt
     else Llama.dtype_of_string !dtype
   in
   let toks =
-    generate ?device cfg
-      (Llama.of_hf ?placement:(whole_on device) cfg dt ckpt)
+    generate ?devices cfg
+      (Llama.of_hf ?placement:(Option.map parallel devices) cfg dt ckpt)
       dt ~temperature:!temperature ~top_k:!top_k ~top_p:!top_p ~seed:!seed
       ~max_tokens:!count ids
   in
