@@ -899,9 +899,12 @@ let test_padded_reduction op transform values expected () =
 
 let test_zero_initialized_custom_storage () =
   let device = cpu "custom-bss" in
+  (* The host calls the entry with its own convention, as the renderer's
+     entry declares it. *)
+  let abi = if Sys.win32 then "__attribute__((ms_abi)) " else "" in
   let source = {|
     static volatile int zeroes[4];
-    void read_zeroes(const unsigned long long *bufs, const long long *vals) {
+    |} ^ abi ^ {|void read_zeroes(const unsigned long long *bufs, const long long *vals) {
       int *out = (int *)bufs[0];
       for (int i = 0; i < 4; i++) out[i] = zeroes[i] + (int)vals[0];
     }
