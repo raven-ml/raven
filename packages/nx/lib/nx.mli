@@ -2183,11 +2183,14 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     are kept with size 1. [keepdims] defaults to [false]. Negative axes count
     from the end.
 
-    An eager float sum spreads the elements of a run over sixteen partial sums
-    by position, so a vector's sum does not depend on its stride. A sum over
-    several axes, or along an axis that is not contiguous in memory, groups its
-    elements by the layout, and the same values in another layout can differ in
-    the last bits.
+    A float sum is the sum of its terms in an unspecified association. It is
+    deterministic for a given input layout on a given machine and does not
+    depend on the thread count; the same values in another layout can differ in
+    rounding, and at overflow in whether a term overflows. {!mean} and the
+    contraction of {!matmul} and the products built on it sum the same way.
+    Today each output of a product of vectors, or of a single row or column,
+    also has the bits of {!inner} of its row and column, which this contract
+    does not promise.
 
     {@ocaml[
       # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
@@ -2466,7 +2469,8 @@ val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     At [float16], [bfloat16] and the float8 dtypes, the operands are widened to
     [float32], multiplied and summed at [float32], and each element of the
-    result is rounded once to the operands' dtype.
+    result is rounded once to the operands' dtype. The contraction sums as
+    {!sum} describes.
 
     Raises [Invalid_argument] if inputs are 0-D or inner dimensions mismatch.
 

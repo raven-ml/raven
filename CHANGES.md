@@ -2094,7 +2094,7 @@ thread.
   not 85), and everything else the blocked kernel (100 x 100 x 10: 10 us, not 27).
 - On macOS, eager `float32` and `float64` `Nx.matmul` with few outputs no
   longer goes to Accelerate: it is faster (2 x 300000 x 2 `float32`: 0.14 ms,
-  not 1.35) and each output has the bits of its row-column dot.
+  not 1.35), and each output currently has the bits of its row-column dot.
 - Eager `Nx.matmul` with few outputs over a long contraction splits the
   contraction across cores: 3 x 70001 x 5 at `bfloat16` takes 0.18 ms, not
   0.44.
@@ -2102,21 +2102,20 @@ thread.
   `float32`) and a long contraction is faster: 2 x 30000 x 2 takes 0.08 ms, not
   0.38, where it had packed mostly empty tiles.
 - Eager `Nx.matmul` of small matrices is up to 8 times faster (16 x 64 x 100
-  `float32`: 0.009 ms, not 0.074), and each output has the bits of `Nx.dot` of
-  its row and column.
+  `float32`: 0.009 ms, not 0.074), and each output currently has the bits of
+  `Nx.dot` of its row and column.
 - Eager `Nx.matmul` of 2 to 7 rows, or of a few columns, is 15 to 50 times
   faster: 2 `bfloat16` rows times 2880 x 5760 take 3 ms, not 45 (7 rows: 3.2 ms,
   not 156).
 - Eager float `Nx.sum` spreads every element of a run over sixteen partial
-  sums by its position, strided or not: a vector's sum no longer depends on its
-  stride, and a sum whose length is not a multiple of 16 can change in the last
-  bit. Reductions over several axes, or along a non-contiguous axis, still
-  depend on the layout.
+  sums by its position, strided or not, so a sum whose length is not a multiple
+  of 16 can change in the last bit; currently a vector's sum ignores its stride.
 - Eager `Nx.matmul` and `Nx.dot` of a vector and a matrix, in either order,
   are over 20 times faster at `bfloat16` and `float16` (a row times 2880 x 5760:
-  0.95 ms, not 21.8), and each output has the bits of its row-column dot.
+  0.95 ms, not 21.8), and each output currently has the bits of its row-column
+  dot.
 - Eager `Nx.dot` of two vectors, `Nx.vecdot` and `Nx.inner` are faster and
-  more accurate, and give the same bits on any thread count or layout: a dot of
+  more accurate, and give the same bits on any thread count: a dot of
   2^20 `bfloat16` elements takes 0.06 ms, against 0.39 ms before.
 - `Nx.take` from a table on several devices at positions split across them
   runs where they live: each device takes its own positions' rows, and the
