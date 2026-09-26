@@ -91,7 +91,7 @@ The bench times these functions, each fed its stage input built in `setup`:
 | linearize | `Linearizer.linearize` | `codegen/late/linearizer.ml` | lowered sink → program |
 | render | `Renderer.render ren ~name program` | `renderer.ml`, `renderer/cstyle.ml` | program → backend source |
 
-The bench uses the CPU (clang) renderer (`Cstyle.clang_no_abi X86_64`) — the
+The bench uses the CPU (clang) renderer (`Cstyle.clang_no_abi`) — the
 same renderer the parity `cpu` goldens bless through, so the render stage stays
 on a proven path. Stage 7 (device compile) is out of scope: it shells out to
 the toolchain, is disk-cached and noisy, and does not belong in the tight gate.

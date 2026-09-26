@@ -1144,31 +1144,13 @@ let () =
                       failwith "qcom should advertise float16 with IMAGE and FLOAT16"));
             if Renderer.supports_dtype Cstyle.qcom fp8 then
               failwith "qcom should not advertise fp8";
-            if not (Renderer.supports_dtype (Cstyle.clang Gpu_target.X86_64) Dtype.bfloat16) then
-              failwith "x86_64 clang should advertise bfloat16";
-            if not (Renderer.supports_dtype (Cstyle.clang Gpu_target.Arm64) Dtype.bfloat16) then
-              failwith "arm64 clang should advertise bfloat16";
-            if Renderer.supports_dtype (Cstyle.clang Gpu_target.Riscv64) Dtype.bfloat16 then
-              failwith "riscv64 clang should not advertise bfloat16";
-            if Renderer.emulated_float_dtypes (Cstyle.clang Gpu_target.X86_64) <> [] then
-              failwith "x86_64 clang should not storage-emulate bfloat16";
-            if
-              Renderer.emulated_float_dtypes (Cstyle.clang Gpu_target.Riscv64)
-              <> [ (Dtype.Bfloat16, Dtype.Float32) ]
-            then
-              failwith "riscv64 clang should storage-emulate bfloat16";
-            if
-              Renderer.supports_dtype
-                (Cstyle.clang ~native_bf16:false Gpu_target.X86_64)
-                Dtype.bfloat16
-            then
-              failwith "clang without native __bf16 should not advertise bfloat16";
-            if
-              Renderer.emulated_float_dtypes
-                (Cstyle.clang ~native_bf16:false Gpu_target.X86_64)
-              <> [ (Dtype.Bfloat16, Dtype.Float32) ]
-            then
-              failwith "clang without native __bf16 should storage-emulate bfloat16";
+            List.iter
+              (fun arch ->
+                if not (Renderer.supports_dtype (Cstyle.clang arch) Dtype.bfloat16) then
+                  failwith "clang should advertise bfloat16 on every target";
+                if Renderer.emulated_float_dtypes (Cstyle.clang arch) <> [] then
+                  failwith "clang should hold bfloat16 as its bits, not emulate it")
+              [ Gpu_target.X86_64; Gpu_target.Arm64; Gpu_target.Riscv64 ];
             if
               Renderer.emulated_float_dtypes (Cstyle.opencl "cl_khr_fp16")
               <> []

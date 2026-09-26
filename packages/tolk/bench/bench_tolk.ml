@@ -28,7 +28,7 @@ open Tolk
 module U = Tolk_uop.Uop
 module Graphs = Tolk_bench_graphs.Graphs
 
-let ren = Cstyle.clang_no_abi Gpu_target.X86_64
+let ren = Cstyle.clang_no_abi
 let optimize = true
 let keep x = ignore (Sys.opaque_identity x)
 

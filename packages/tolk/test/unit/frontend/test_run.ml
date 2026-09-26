@@ -344,9 +344,7 @@ let check_index_loads_gated t =
   in
   let program =
     Tolk.Linearizer.linearize
-      (Tolk.Codegen.full_rewrite_to_sink
-         (Tolk.Cstyle.clang_no_abi Tolk.Gpu_target.X86_64)
-         kernel)
+      (Tolk.Codegen.full_rewrite_to_sink Tolk.Cstyle.clang_no_abi kernel)
   in
   let index_loads =
     List.filter_map

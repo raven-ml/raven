@@ -27,7 +27,7 @@ let make_kernel ~name ~opts_to_apply ~ptr_size =
       applied_opts = []; opts_to_apply; estimates = None; beam = 0 }
     [ e ]
 
-let ren = Cstyle.clang_no_abi Gpu_target.X86_64
+let ren = Cstyle.clang_no_abi
 
 let saved_stdout = Unix.dup Unix.stdout
 

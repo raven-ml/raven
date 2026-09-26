@@ -21,9 +21,8 @@
 (** {1:compiling Compiling} *)
 
 val cc : unit -> string
-(** [cc ()] is the compiler executable, the current value of [CC]. It decides
-    whether the renderer takes native [__bf16] (see {!supports_bf16}), so the
-    compiler's cache key records it. *)
+(** [cc ()] is the compiler executable, the current value of [CC]. Objects
+    differ by compiler, so the compiler's cache key records it. *)
 
 val host_arch : unit -> string
 (** [host_arch ()] is the normalized host architecture followed by [,native],
@@ -49,17 +48,3 @@ val compile_clang : ?arch:string -> string -> bytes
     Raises {!Compiler.Compile_error} if clang cannot be started or exits with a
     non-zero status, or if [arch] is malformed or unsupported. The error
     message includes clang's stderr output when available. *)
-
-val supports_bf16 : ?arch:string -> unit -> bool
-(** [supports_bf16 ?arch ()] is [true] iff the selected C compiler accepts the
-    [__bf16] type for [arch], which defaults to {!host_arch}.
-
-    Clang only gained [__bf16] on x86-64 in version 15, so older toolchains
-    reject bfloat16 kernel source. The result is determined by compiling a
-    one-line probe with the same flags as {!compile_clang} and is computed at
-    most once per compiler and architecture.
-
-    Pass the result as [native_bf16] when constructing a CPU renderer so that
-    bfloat16 kernels fall back to storage emulation on affected targets.
-
-    Raises {!Compiler.Compile_error} for a malformed architecture description. *)

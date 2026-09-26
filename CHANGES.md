@@ -709,6 +709,12 @@ thread.
   40-bit address field fails with `HCQ command stream lies outside a GPFIFO
   entry's 40-bit address`, where its address spilled into the entry's length.
 
+- CPU kernels hold bfloat16 as its bits (`unsigned short`) instead of C's
+  `__bf16`, so a bfloat16 value keeps every bit on every host: on x86-64 a
+  gated bfloat16 load failed to link (`__truncsfbf2`), or with AVX512-BF16
+  quieted signalling NaNs and flushed subnormals. `Cstyle.clang` loses
+  `?native_bf16`, `Cstyle.clang_no_abi` its unused architecture, and
+  `Compiler_cpu.supports_bf16` is removed: no compiler support is needed.
 
 - Fix host calls to C runtime functions such as `memcpy` on Windows: the CPU
   device looked them up in the executable alone, where POSIX searches every

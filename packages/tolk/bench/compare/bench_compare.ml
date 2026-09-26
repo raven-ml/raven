@@ -29,7 +29,7 @@ let keep x = ignore (Sys.opaque_identity x)
 
 (* Render-only renderer for stages 2-6: byte-identical to the parity "cpu"
    goldens. *)
-let ren = Cstyle.clang_no_abi Gpu_target.X86_64
+let ren = Cstyle.clang_no_abi
 
 (* Device renderer + compiler for stage 7: the host clang path the CPU device
    actually uses, so the compiled source is a valid translation unit. *)

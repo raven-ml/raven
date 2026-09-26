@@ -20,7 +20,7 @@
 
 (** {1:cpu CPU} *)
 
-val clang : ?native_bf16:bool -> ?aligned:bool -> Gpu_target.cpu -> Renderer.t
+val clang : ?aligned:bool -> Gpu_target.cpu -> Renderer.t
 (** [clang arch] is a Clang/CPU renderer with SIMD support.
 
     Generates C code for host CPU execution using Clang extensions:
@@ -32,15 +32,14 @@ val clang : ?native_bf16:bool -> ?aligned:bool -> Gpu_target.cpu -> Renderer.t
     the kernel to avoid a libffi dependency at JIT time.
 
     Device is ["CPU"]. No GPU thread support ({!Renderer.has_local} is [false]).
-    No shared memory. [arch] selects dtype capabilities: bfloat16 is native on
-    x86_64 and arm64 targets and storage-emulated on riscv64, matching
-    tinygrad's Clang renderer policy.
+    No shared memory. [arch] selects the entry's calling convention: the
+    Microsoft one for x86-64 on a Windows host.
 
-    [native_bf16] (default [true]) states whether the host C compiler accepts
-    the [__bf16] storage type (Clang gained it on x86-64 in version 15). When
-    [false], bfloat16 is storage-emulated through float32 on every target,
-    like riscv64. Runtimes should pass the result of a compiler probe such as
-    [Compiler_cpu.supports_bf16].
+    bfloat16 is held as its bits, an [unsigned short], on every target, and
+    converted to and from float32 by integer operations: no C compiler
+    support for [__bf16] is needed, and a value moves bit for bit, NaN
+    payloads and subnormals included, where LLVM would widen and narrow a
+    [__bf16].
 
     [aligned] states whether vector types are declared aligned to their size
     ([true]) or to one byte ([false]). A kernel whose vector types are aligned
@@ -52,8 +51,8 @@ val clang : ?native_bf16:bool -> ?aligned:bool -> Gpu_target.cpu -> Renderer.t
     See also {!clang_no_abi} for tests and runtimes that intentionally bypass
     the fixed ABI wrapper. *)
 
-val clang_no_abi : ?native_bf16:bool -> Gpu_target.cpu -> Renderer.t
-(** [clang_no_abi arch] is {!clang} without the fixed-ABI wrapper.
+val clang_no_abi : Renderer.t
+(** [clang_no_abi] is {!clang} without the fixed-ABI wrapper.
 
     Generates a plain [void name(...)] signature with individual typed
     parameters. This is a low-level renderer used by tests, golden generators,

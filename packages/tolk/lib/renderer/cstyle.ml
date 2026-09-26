@@ -1298,11 +1298,33 @@ let make_language
     render_kernel; preamble;
   }
 
+(* A bfloat16 constant as its bits, for languages that hold bfloat16 as an
+   unsigned 16-bit integer. *)
+let bf16_bits_const_rule : ctx rule =
+  let open Upat in
+  ( cast ~name:"x" (op Ops.Const),
+    fun _ctx bs _ ->
+      let x = bs $ "x" in
+      match const_view_of_uop x with
+      | Some c when Dtype.equal (U.dtype x) Dtype.bfloat16 -> (
+          match Const.view c with
+          | Const.Float f ->
+              Some (strf "%uu" (Nx_dtype.Scalar.encode BFloat16 f))
+          | _ -> None)
+      | _ -> None )
+
 (* ClangRenderer *)
 
+(* bfloat16 is held as its bits. C's __bf16 is a storage type whose values
+   LLVM widens to float32 and narrows back wherever they merge across a branch;
+   on x86-64 the narrowing is a call to compiler-rt's __truncsfbf2, or with
+   AVX512-BF16 an instruction that quiets NaNs and flushes subnormals. As an
+   integer a bfloat16 moves bit for bit, and it becomes a float only through
+   the manual casts. *)
 let clang_type_map : Dtype.t -> string option = function
   | Dtype.Bool -> Some "_Bool"
   | Dtype.Float16 -> Some "__fp16"
+  | Dtype.Bfloat16 -> Some "unsigned short"
   | _ -> None
 
 let clang_code_for_op : code_for_op =
@@ -1430,6 +1452,7 @@ let clang_language : language =
     ~infinity:"__builtin_inff()"
     ~nan:"__builtin_nanf(\"\")"
     ~code_for_op:clang_code_for_op
+    ~string_rewrite:(bf16_bits_const_rule :: base_rewrite)
     ~extra_matcher:clang_extra_matcher
     ~preamble:(fun lang uops -> clang_preamble lang uops)
     ()
@@ -1510,19 +1533,6 @@ let opencl_code_for_workitem name : string =
   | Gpu_dim.Local_id _ -> strf "get_local_id(%d)" a
   | Gpu_dim.Global_idx _ -> strf "get_global_id(%d)" a
 
-let opencl_bf16_const_rule : ctx rule =
-  let open Upat in
-  ( cast ~name:"x" (op Ops.Const),
-    fun _ctx bs _ ->
-      let x = bs $ "x" in
-      match const_view_of_uop x with
-      | Some c when Dtype.equal (U.dtype x) Dtype.bfloat16 -> (
-          match Const.view c with
-          | Const.Float f ->
-              Some (strf "%uu" (Nx_dtype.Scalar.encode BFloat16 f))
-          | _ -> None)
-      | _ -> None )
-
 (* OpenCL BITCAST: as_dtype((src_dtype)(src)) *)
 let opencl_bitcast_rule : ctx rule =
   let open Upat in
@@ -1571,7 +1581,7 @@ let opencl_language : language =
     ~type_map:opencl_type_map
     ~supports_images:true
     ~string_rewrite:
-      (opencl_bitcast_rule :: opencl_bf16_const_rule :: base_rewrite)
+      (opencl_bitcast_rule :: bf16_bits_const_rule :: base_rewrite)
     ~extra_matcher:opencl_extra_matcher
     ~preamble:opencl_preamble
     ()
@@ -2371,7 +2381,7 @@ let intel_language : language =
     ~type_map:opencl_type_map
     ~supports_images:true
     ~string_rewrite:
-      (intel_bf16_cast_rule :: opencl_bitcast_rule :: opencl_bf16_const_rule
+      (intel_bf16_cast_rule :: opencl_bitcast_rule :: bf16_bits_const_rule
      :: base_rewrite)
     ~extra_matcher:opencl_extra_matcher
     ~preamble:opencl_preamble
@@ -2413,20 +2423,12 @@ let supports_qcom_dtype dt =
       false
   | _ -> true
 
-let supports_clang_dtype ~native_bf16 arch dt =
+let supports_clang_dtype dt =
   match dt with
-  | Dtype.Bfloat16 -> (
-      match arch with
-      | Gpu_target.X86_64 | Gpu_target.Arm64 -> native_bf16
-      | Gpu_target.Riscv64 -> false)
   | Dtype.Fp8e4m3 | Dtype.Fp8e5m2 | Dtype.Fp8e4m3fnuz
   | Dtype.Fp8e5m2fnuz ->
       false
   | _ -> true
-
-let clang_emulated_floats ~native_bf16 arch =
-  if supports_clang_dtype ~native_bf16 arch Dtype.bfloat16 then []
-  else [ (Dtype.Bfloat16, Dtype.Float32) ]
 
 let supports_metal_dtype arch dt =
   match dt with
@@ -2461,17 +2463,16 @@ let supports_amd_dtype arch dt =
   | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> arch = Gpu_target.CDNA3
   | _ -> true
 
-let clang_no_abi ?(native_bf16 = true) arch =
+let clang_no_abi =
   Renderer.make ~name:"clang" ~device:"CPU" ~has_local:false
     ~has_shared:false
     ~shared_max:0 ~global_max:[ 1; 0; 0 ]
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang ~extra_matcher:clang_language.extra_matcher
-    ~supports_dtype:(supports_clang_dtype ~native_bf16 arch)
-    ~emulated_floats:(clang_emulated_floats ~native_bf16 arch)
+    ~supports_dtype:supports_clang_dtype
     ~render:(render clang_language) ()
 
-let clang ?(native_bf16 = true) ?aligned arch =
+let clang ?aligned arch =
   let language = clang_fixed_abi_language ?aligned arch in
   Renderer.make ~name:"clang" ~device:"CPU" ~has_local:false
     ~has_shared:false
@@ -2479,8 +2480,7 @@ let clang ?(native_bf16 = true) ?aligned arch =
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang
     ~extra_matcher:language.extra_matcher
-    ~supports_dtype:(supports_clang_dtype ~native_bf16 arch)
-    ~emulated_floats:(clang_emulated_floats ~native_bf16 arch)
+    ~supports_dtype:supports_clang_dtype
     ~render:(render language) ()
 
 let opencl arch =

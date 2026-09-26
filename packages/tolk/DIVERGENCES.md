@@ -806,6 +806,25 @@ A fixed-order reduction contract would require revisiting those shared hoists.
   and products keep their grouping". Remove this ruling when upstream keeps
   the association.
 
+- **The Clang renderer holds bfloat16 as its bits** (`renderer/cstyle.ml`
+  `clang_type_map`). The reference renders `__bf16` on x86-64 and arm64 and
+  storage-emulates it through float32 on riscv64, flushing subnormals. C's `__bf16` is a
+  storage type: wherever a value merges across a branch or select, LLVM widens
+  it to float32 and narrows it back, on x86-64 through compiler-rt's
+  `__truncsfbf2` (absent from a JIT-loaded object, so the kernel failed to
+  load) or, with AVX512-BF16, `vcvtneps2bf16`, which quiets NaNs and flushes
+  subnormals, so the bits a kernel stored depended on the host CPU; clang
+  18.1.3 also crashed on some such kernels with `-march=native` there. Tolk
+  renders bfloat16 as `unsigned short` on every target, its constants as bit
+  patterns, and converts through the manual casts the reference already
+  applies: a value moves bit for bit, no compiler needs `__bf16`, and the
+  `native_bf16` compiler probe is gone. In parity case
+  `mxfp4_dequant_matmul_bf16` the CPU source names the type `unsigned short`.
+  Coverage:
+  `test_runtime_cpu` "a bfloat16 gated load keeps every bit"; rune's
+  quantised and bit-exactness suites on ubuntu CI. Reconsider if LLVM keeps
+  bfloat16 values unwidened on x86-64.
+
 - **A narrow integer result is cast back to its dtype.** C computes on
   `char` and `short` in `int`, and the reference leaves the result
   unnarrowed: `uint8` `x - 1 < x` renders as

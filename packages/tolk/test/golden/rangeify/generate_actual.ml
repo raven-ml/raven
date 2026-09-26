@@ -338,7 +338,7 @@ type test_case = {
 
 let all_renderers =
   [
-    ("clang", Cstyle.clang_no_abi Gpu_target.X86_64);
+    ("clang", Cstyle.clang_no_abi);
     ("cuda", Cstyle.cuda Gpu_target.SM80);
     ("metal", Cstyle.metal (Gpu_target.Apple 7));
     ("opencl", Cstyle.opencl "");

@@ -244,7 +244,7 @@ let render_only prefix ren =
 
 let renderers =
   [
-    ("RCLANG", Cstyle.clang_no_abi Gpu_target.X86_64);
+    ("RCLANG", Cstyle.clang_no_abi);
     ("RCUDA", Cstyle.cuda Gpu_target.SM80);
     ("RMETAL", Cstyle.metal (Gpu_target.Apple 7));
     ("ROPENCL", Cstyle.opencl "");

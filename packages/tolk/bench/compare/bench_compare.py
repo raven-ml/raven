@@ -78,7 +78,7 @@ OPTIMIZE = True
 N_STAGE = 20
 N_COMPILE = 5
 
-# Render-only renderer for stages 2-6: matches the tolk clang_no_abi/X86_64
+# Render-only renderer for stages 2-6: matches the tolk clang_no_abi
 # goldens byte for byte.
 REN = ClangRenderer(Target("CPU", arch="x86_64,znver2"))
 

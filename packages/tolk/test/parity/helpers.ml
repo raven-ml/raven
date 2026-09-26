@@ -8,7 +8,7 @@ let idx n = U.const (Const.int Dtype.weakint n)
 
 let all_backends =
   [
-    ("cpu", Cstyle.clang_no_abi Gpu_target.X86_64);
+    ("cpu", Cstyle.clang_no_abi);
     ("cuda", Cstyle.cuda Gpu_target.SM80);
     ("metal", Cstyle.metal (Gpu_target.Apple 7));
     ("opencl", Cstyle.opencl "");

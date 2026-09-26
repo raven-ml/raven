@@ -177,23 +177,3 @@ let compile_clang ?arch src =
         else Printf.sprintf "%s failed:\n%s" label err
       in
       raise (Compiler.Compile_error msg)
-
-(* Probe the selected compiler and target, since feature flags can change
-   which scalar types it accepts. *)
-let bf16_support = Hashtbl.create 4
-let bf16_mutex = Mutex.create ()
-
-let supports_bf16 ?arch () = Mutex.protect bf16_mutex (fun () ->
-  let arch = match arch with Some arch -> arch | None -> host_arch () in
-  ignore (parse_arch arch);
-  let key = cc (), arch in
-  match Hashtbl.find_opt bf16_support key with
-  | Some supported -> supported
-  | None ->
-      let supported =
-        match compile_clang ~arch "__bf16 f(__bf16 *x) { return x[0]; }" with
-        | (_ : bytes) -> true
-        | exception Compiler.Compile_error _ -> false
-      in
-      Hashtbl.replace bf16_support key supported;
-      supported)
