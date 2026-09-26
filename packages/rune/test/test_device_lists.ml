@@ -689,10 +689,9 @@ let test_dropout_per_device_decorrelates () =
   is_true ~msg:"per-device dropout masks are decorrelated"
     (to_arr (Nx.slice [ Nx.I 0 ] masks) <> to_arr (Nx.slice [ Nx.I 1 ] masks))
 
-(* A program over several devices declines to stage a scan (its probe answer is
-   [false]): the recurrence and its gradient unroll into the program. The scan
-   folds the columns, so splitting the rows commutes with it and the gathered
-   gradient equals the single-device one. *)
+(* A scan and its gradient stage over several devices as on one. The scan folds
+   the columns, so splitting the rows commutes with it and the gathered gradient
+   equals the single-device one. *)
 let test_grad_through_scan_over_devices () =
   let loss x =
     let n = (Nx.shape x).(0) in
@@ -709,6 +708,132 @@ let test_grad_through_scan_over_devices () =
   let x = m46 () in
   let g = Rune.jit Nx.Ptree.(tensor @-> returns tensor) grads in
   check_arr ~msg:"split grads" (to_arr (g x)) (g (rows devs2 x))
+
+(* A scan over rows split along their only axis, from a split carry, stages as a
+   loop: the body is traced once, where unrolled it would be traced per row. It
+   equals the fold unrolled by hand in the same program, and one device, bit for
+   bit. Each device's slice of a row is 16 bytes, a whole row of the loop. A
+   scan along the split axis would read each row on one device, so it unrolls,
+   and its row cuts raise as they do eagerly. *)
+let test_a_staged_scan_over_split_rows () =
+  let traces = ref 0 in
+  let step c x =
+    incr traces;
+    let c = Nx.tanh (Nx.add (Nx.mul_s c 0.5) x) in
+    (c, Nx.mul c x)
+  in
+  let staged c xs = Rune.scan' ~f:step ~init:c xs in
+  let unrolled c xs =
+    let c = ref c in
+    let ys =
+      List.init (Nx.dim 0 xs) (fun i ->
+          let c', y = step !c (Nx.slice [ Nx.I i ] xs) in
+          c := c';
+          y)
+    in
+    (!c, Nx.stack ~axis:0 ys)
+  in
+  let xs =
+    Nx.create f32 [| 6; 16 |] (Array.init 96 (fun i -> sin (float_of_int i)))
+  in
+  let c =
+    Nx.create f32 [| 16 |] (Array.init 16 (fun i -> float_of_int i /. 10.))
+  in
+  let sg = Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor)) in
+  let run f ~devices c xs =
+    let c', ys = Rune.jit ~devices sg f c xs in
+    (to_arr c', to_arr ys)
+  in
+  let split axis x = Nx.place (Nx.Placement.sharded ~axis devs4) x in
+  traces := 0;
+  let staged_over4 = run staged ~devices:devs4 (split 0 c) (split 1 xs) in
+  equal ~msg:"the body is traced once" int 1 !traces;
+  let exact = array float_exact in
+  let unrolled_over4 = run unrolled ~devices:devs4 (split 0 c) (split 1 xs) in
+  equal ~msg:"carry, unrolled" exact (fst unrolled_over4) (fst staged_over4);
+  equal ~msg:"rows, unrolled" exact (snd unrolled_over4) (snd staged_over4);
+  let one = run staged ~devices:[ List.hd devs4 ] c xs in
+  equal ~msg:"carry, one device" exact (fst one) (fst staged_over4);
+  equal ~msg:"rows, one device" exact (snd one) (snd staged_over4);
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () ->
+      ignore
+        (run staged ~devices:devs4 c
+           (split 0 (Nx.concatenate ~axis:0 [ xs; xs ]))))
+
+(* The carry's placements are staged to a fixed point of the body: each leaf the
+   body moves is staged again where the body puts it. *)
+let test_a_carry_placed_by_its_body () =
+  let traces = ref 0 in
+  (* [a] takes the rows' split at the first trace, [b] takes [a]'s at the
+     second, and the third is a fixed point. *)
+  let step (a, b) x =
+    incr traces;
+    let a' = Nx.add (Nx.mul_s a 0.5) x in
+    let b' = Nx.add (Nx.mul_s b 0.5) a in
+    ((a', b'), Nx.mul a' b')
+  in
+  let f xs =
+    let (a, b), ys =
+      Rune.scan
+        Nx.Ptree.(pair tensor tensor)
+        Nx.Ptree.tensor Nx.Ptree.tensor ~f:step
+        ~init:(Nx.zeros f32 [| 16 |], Nx.zeros f32 [| 16 |])
+        xs
+    in
+    Nx.add (Nx.sum a) (Nx.add (Nx.sum b) (Nx.sum ys))
+  in
+  let xs =
+    Nx.create f32 [| 6; 16 |] (Array.init 96 (fun i -> sin (float_of_int i)))
+  in
+  let run devices x =
+    to_arr (Rune.jit ~devices Nx.Ptree.(tensor @-> returns tensor) f x)
+  in
+  let one = run [ List.hd devs4 ] xs in
+  traces := 0;
+  let four = run devs4 (Nx.place (Nx.Placement.sharded ~axis:1 devs4) xs) in
+  equal ~msg:"the body is traced to a fixed point" int 3 !traces;
+  equal ~msg:"equals one device" (array (float 1e-5)) one four
+
+(* A scan whose carry starts as a copy and which the body splits stages again
+   with the carry split, its first value split where it lives: two traces of the
+   body, not one per row. Its gradient stages too, the carry's cotangent kept
+   where the carry is, and equals one device's. *)
+let test_grad_through_a_staged_scan () =
+  let traces = ref 0 in
+  let loss (w, xs) =
+    let _, ys =
+      Rune.scan'
+        ~f:(fun c x ->
+          incr traces;
+          let c = Nx.tanh (Nx.add (Nx.mul c w) x) in
+          (c, Nx.mul c x))
+        ~init:(Nx.zeros f32 [| 16 |]) xs
+    in
+    Nx.sum ys
+  in
+  let p = Nx.Ptree.(pair tensor tensor) in
+  let grads ~devices (w, xs) =
+    let dw, dxs =
+      Rune.jit ~devices Nx.Ptree.(p @-> returns p) (Rune.grad p loss) (w, xs)
+    in
+    (to_arr dw, to_arr dxs)
+  in
+  let w =
+    Nx.create f32 [| 16 |]
+      (Array.init 16 (fun i -> 0.3 +. (float_of_int i /. 100.)))
+  in
+  let xs =
+    Nx.create f32 [| 6; 16 |] (Array.init 96 (fun i -> sin (float_of_int i)))
+  in
+  let expected = grads ~devices:[ List.hd devs4 ] (w, xs) in
+  traces := 0;
+  let split axis x = Nx.place (Nx.Placement.sharded ~axis devs4) x in
+  let dw, dxs = grads ~devices:devs4 (split 0 w, split 1 xs) in
+  equal ~msg:"the body is traced twice forward and once backward" int 3 !traces;
+  equal ~msg:"dw" (array (float 1e-6)) (fst expected) dw;
+  equal ~msg:"dxs" (array (float 1e-6)) (snd expected) dxs
 
 (* The DP microbench: a 2-layer MLP train step (value_and_grad + SGD inside the
    compiled function), the parameters entering from the host as a copy on each
@@ -873,7 +998,10 @@ let tests =
         test "dropout per device decorrelates masks"
           test_dropout_per_device_decorrelates;
         test "two collectively reduced outputs" test_two_collective_outputs;
-        test "grad through a scan unrolls into the program"
+        test "a staged scan over split rows" test_a_staged_scan_over_split_rows;
+        test "grad through a staged scan" test_grad_through_a_staged_scan;
+        test "a carry placed by its body" test_a_carry_placed_by_its_body;
+        test "grad through a scan over split rows"
           test_grad_through_scan_over_devices;
       ];
     group "training"

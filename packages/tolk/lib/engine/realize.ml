@@ -1069,7 +1069,11 @@ let rec dispatch_call binding ctx ~device ~to_program call =
    to a view of its argument buffer at the data-index offset. The body's
    kernels assume an aligned base pointer, so a stride must be a whole number
    of 16 bytes (the widest vector access, float4 or half8): the loop's builder
-   pads rows to it. *)
+   pads rows to it.
+
+   A loop over several devices binds each slot to a view of every device's
+   buffer, at the same offset: the sizes and strides are one device's, whose
+   body runs over its slice of every value. *)
 and exec_loop binding ctx ~device ~to_program call =
   let module U = Tolk_uop.Uop in
   let int_child children i =
@@ -1099,8 +1103,13 @@ and exec_loop binding ctx ~device ~to_program call =
       in
       let in_slots = decode_slots () in
       let out_slots = decode_slots () in
+      let shards = function
+        | Single b -> [ b ]
+        | Multi m -> Device.Multi_buffer.bufs m
+      in
       let bufs =
-        Array.of_list (List.map (resolve binding ctx) (call_arg_uops args))
+        Array.of_list
+          (List.map (resolve_buffer binding ctx) (call_arg_uops args))
       in
       let buf i =
         if i < 0 || i >= Array.length bufs then
@@ -1110,9 +1119,9 @@ and exec_loop binding ctx ~device ~to_program call =
       in
       List.iter
         (fun (_, pos0, _, _, stride) ->
-          if stride * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype (buf pos0))
-             mod 16 <> 0
-          then invalid_arg "exec_loop: a slot stride is not 16-byte aligned")
+          let dtype = Device.Buffer.dtype (List.hd (shards (buf pos0))) in
+          if stride * Tolk_uop.Dtype.itemsize dtype mod 16 <> 0 then
+            invalid_arg "exec_loop: a slot stride is not 16-byte aligned")
         (in_slots @ out_slots);
       let bind ~next j (node, pos0, pos1, size, stride) =
         let b =
@@ -1120,14 +1129,20 @@ and exec_loop binding ctx ~device ~to_program call =
           else buf (if (j + next) mod 2 = 0 then pos0 else pos1)
         in
         let i = if reversed then trip - 1 - j else j in
-        let b =
-          if stride = 0 then b
-          else
-            let dt = Device.Buffer.dtype b in
-            Device.Buffer.view b ~size ~dtype:dt
-              ~offset:(i * stride * Tolk_uop.Dtype.itemsize dt)
+        let row b =
+          let dt = Device.Buffer.dtype b in
+          Device.Buffer.view b ~size ~dtype:dt
+            ~offset:(i * stride * Tolk_uop.Dtype.itemsize dt)
         in
-        Buffers.seed binding node b
+        match b with
+        | Single b ->
+            Buffers.seed binding node (if stride = 0 then b else row b)
+        | Multi m ->
+            Buffers.seed_multi binding node
+              (if stride = 0 then m
+               else
+                 Device.Multi_buffer.of_bufs
+                   (List.map row (Device.Multi_buffer.bufs m)))
       in
       if debug >= 2 then
         Printf.eprintf "exec_loop: %d iterations, reversed=%b\n%!" trip
@@ -1140,7 +1155,9 @@ and exec_loop binding ctx ~device ~to_program call =
       done;
       (* The body's launches are asynchronous. Block until they complete so
          the per-iteration views are never released under queued work. *)
-      Device.synchronize (device_for ~device (buf 0))
+      List.iter
+        (fun b -> Device.synchronize (device_for ~device b))
+        (shards (buf 0))
   | None -> invalid_arg "exec_loop: expected CALL"
 
 let rec run_linear ~device ~to_program binding ?(var_vals = [])

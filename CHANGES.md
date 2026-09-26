@@ -167,6 +167,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.scan` inside `Rune.jit` over several devices stages as a loop, as on
+  one device: its body is traced once, each device running it over its slices
+  of the carry and the rows. It unrolled into the program, one copy of the
+  body per step. A scan whose rows are split along the scanned axis, or whose
+  row slices are not whole 16-byte units, still unrolls.
 - `Nx_quant.apply` inside `Rune.jit` over several devices takes the kernels
   one device takes, on each device's slices. Over experts split across the
   devices, each device multiplies the routes to its own experts and the
