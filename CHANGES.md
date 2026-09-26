@@ -679,6 +679,10 @@ thread.
 
 ### Tolk (new)
 
+- Keep each compiled queue submission's address table, signal storage and
+  Metal command arguments separate. Equal-sized batches could overwrite one
+  another's linked addresses or arguments, corrupting replayed computations.
+
 - Preserve buffer and scalar arguments used only by a conditional store's
   gate. Indexed writes beside unit axes could fail compilation after their
   bounds checks moved into control flow.

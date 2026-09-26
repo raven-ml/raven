@@ -104,7 +104,7 @@ let plan ?(profile = false) calls =
   let slots = List.map (fun device ->
       let n = 2 * (List.length (Hashtbl.find queues device) + 1
                    + if profile then 2 * Array.length calls else 0) in
-      device, (U.placeholder ~shape:[n] ~dtype:Dtype.uint64 ~slot:0
+      device, (U.placeholder ~shape:[n] ~dtype:Dtype.uint64 ~slot:(U.fresh_buffer_slot ())
         ~device:(U.Single device) ~volatile:true () |> U.with_tag "slots")) !devices in
   let slot device i = view (List.assoc device slots) (2 * i) 2 in
   let signal (device, queue) =
@@ -292,7 +292,7 @@ let lower_batch queue devices calls original_calls independent_accesses timestam
   let runtime, linked = List.partition (fun g -> not (link_value g)) addresses in
   let addresses = runtime @ linked in
   let table = U.placeholder ~shape:[max 1 (List.length addresses)] ~dtype:Dtype.uint64
-      ~slot:0 ~device:(U.Single queue.host) () |> U.with_tag "inputs" in
+      ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single queue.host) () |> U.with_tag "inputs" in
   let mappings = List.mapi (fun i addr ->
       addr, U.load ~src:(U.index ~ptr:table ~idxs:[U.const_int i] ()) ()) addresses in
   let sink = U.substitute ~walk:true ~enter_calls:true mappings sink in

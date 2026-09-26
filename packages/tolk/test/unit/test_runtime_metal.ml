@@ -196,6 +196,36 @@ let shared_pipelines_survive_link_retirement () =
   equal (list int) [6] (read_i32 a);
   equal (list int) [5] (read_i32 b)
 
+let independent_batches_own_command_storage () =
+  let device = metal_device () in
+  let spec = compile_incr device "metal_independent_batches" in
+  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let batch slots = Realize.compile_linear ~device ~profile:false ~to_program
+      (U.linear [queue_call device spec slots]) in
+  let first = batch [0; 1] and second = batch [2; 3] in
+  let linked = Realize.link_linear ~allow_cache:false
+      (U.linear (U.children first @ U.children second)) in
+  (* A one-command ICB has 64 argument/launch bytes followed by ten header
+     words. Identical pipeline descriptors still need separate mutable storage. *)
+  let commands = U.toposort linked |> List.filter_map (fun u ->
+      match U.as_buffer u with
+      | Some {buffer = {buffer = Some [buf]; _}; _}
+        when Device.Buffer.device buf = Device.name device
+             && Device.Buffer.nbytes buf = 64 + (10 * 8) -> Some buf
+      | _ -> None) in
+  equal ~msg:"each batch owns its indirect command and argument storage" int 2
+    (List.length commands);
+  let a = i32_buf device [0] and b = i32_buf device [11]
+  and c = i32_buf device [0] and d = i32_buf device [29] in
+  Fun.protect ~finally:(fun () ->
+      List.iter Device.Buffer.deallocate [a; b; c; d]) (fun () ->
+      for _ = 1 to 2 do
+        Realize.run_linear ~device ~to_program ~jit:true ~wait:true
+          ~input_uops:(Array.of_list (List.map U.from_buffer [a; b; c; d])) linked;
+        equal (list int) [12] (read_i32 a);
+        equal (list int) [30] (read_i32 c)
+      done)
+
 let overlapping_copy_between_kernels () =
   let device = metal_device () in
   let spec = compile_incr device "metal_ordered_overlap" in
@@ -713,6 +743,8 @@ let () =
             equal (list int) [22] (read_i32 a);
             equal (list int) [21] (read_i32 b);
             equal int 2 (List.length (Device.profile device))));
+          test "independent batches own command and argument storage"
+            independent_batches_own_command_storage;
           test "shares pipelines across commands and independently retired links"
             shared_pipelines_survive_link_retirement;
           test "preserves overlapping copies between compiled kernels"

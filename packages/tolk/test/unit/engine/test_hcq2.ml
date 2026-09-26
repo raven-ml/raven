@@ -732,7 +732,22 @@ let compiled_host_submission () =
   and dst = Device.create_buffer ~size:0 ~dtype:Dtype.uint8 device in
   let before = Realize.queue_submissions () in
   replay empty_copy [|src; dst|];
-  equal int before (Realize.queue_submissions ())
+  equal int before (Realize.queue_submissions ());
+  (* These equal-sized tables mix a runtime source with a linked destination.
+     Linking both batches together must not replace the first destination with
+     the second batch's static patch. *)
+  copy_queue := "COPY:0";
+  let first = buffer 0l and second = buffer 0l in
+  let batch dst slot = Realize.compile_linear ~device ~to_program
+      (U.linear [U.store_call ~dst:(U.from_buffer dst) ~src:(ptr slot)]) in
+  let batches = U.linear (U.children (batch first 0) @ U.children (batch second 1))
+      |> Realize.link_linear ~allow_cache:false in
+  List.iter (fun (a, b) ->
+      replay batches [|buffer a; buffer b|];
+      equal ~msg:"first batch retains its linked destination" int32 a
+        (Bytes.get_int32_le (Device.Buffer.as_bytes first) 0);
+      equal ~msg:"second batch retains its linked destination" int32 b
+        (Bytes.get_int32_le (Device.Buffer.as_bytes second) 0)) [12l, 34l; 56l, 78l]
 
 let () = run "Engine_hcq2" [
   test "AMD all-to-all honors default and explicit SDMA queue counts" all_to_all_copy_queues;

@@ -11,60 +11,171 @@
    expert-parallel product: each device multiplies the routes to its own
    experts, and only their products and the routes' ids cross devices.
 
-   The CPU opener is replaced before any device opens by one whose allocator
-   records every transfer between devices, so the test reads traffic off the
-   run. It runs alone in its executable for that reason. *)
+   The CPU peers use a synchronous shared copy queue. Its compiled submission
+   copies the bytes and increments an owned traffic counter, so replay counts
+   executed transfers. Ordinary kernels and the CPU host use the CPU runtime.
+   The test runs alone because it replaces the CPU opener. *)
 
 open Windtrap
 open Rune_test_support.Support
 
 (* Counting devices *)
 
-let transfers : (string * string, int) Hashtbl.t = Hashtbl.create 8
+module U = Tolk_uop.Uop
+module D = Tolk_uop.Dtype
+module B = Tolk.Device.Buffer
 
-let counting (Tolk.Device.Allocator.Pack a) =
-  let transfer ~dest ~src ~dest_device ~src_device n =
-    let key = (src_device, dest_device) in
-    let sum = Option.value (Hashtbl.find_opt transfers key) ~default:0 in
-    Hashtbl.replace transfers key (sum + n);
-    let bytes = Bytes.create n in
-    a.copyout bytes src;
-    a.copyin dest bytes;
-    true
-  in
+let transfers : (string * string, B.t) Hashtbl.t = Hashtbl.create 8
+
+let host_allocator () =
   Tolk.Device.Allocator.Pack
-    { a with transfer = Some transfer; supports_transfer = true }
+    (Tolk_uop.Storage.Host_allocator.make ~synchronize:ignore)
+
+let zero_buffer name size =
+  let buffer =
+    B.create ~device:name ~size ~dtype:D.uint64 (host_allocator ())
+  in
+  B.ensure_allocated buffer;
+  B.copyin buffer (Bytes.make (8 * size) '\000');
+  buffer
+
+let counter key =
+  match Hashtbl.find_opt transfers key with
+  | Some buffer -> buffer
+  | None ->
+      let buffer = zero_buffer "CPU" 1 in
+      Hashtbl.add transfers key buffer;
+      buffer
 
 let create name =
   let cpu = Tolk_cpu.create ~aligned:false name in
-  let renderer = Tolk.Device.renderer cpu in
-  let renderer_set =
-    Tolk.Device.Renderer_set.make ~device:name
-      ~arch:(Tolk.Renderer.target renderer).Tolk_uop.Target.arch
-      [ ("CLANG", fun _ -> renderer) ]
-  in
-  let allocator =
-    counting
-      (Tolk.Device.Allocator.Pack
-         (Tolk.Device.Lru_allocator.wrap
-            (Tolk_uop.Storage.Host_allocator.make ~synchronize:ignore)))
-  in
-  Tolk.Device.make ~name ~allocator ~renderer_set
-    ~runtime:(Tolk.Device.runtime cpu)
-    ~synchronize:(fun timeout -> Tolk.Device.synchronize ?timeout cpu)
-    ~bufferize:(Tolk.Device.bufferize cpu)
-    ()
+  if name = "CPU" then cpu
+  else
+    let renderer = Tolk.Device.renderer cpu in
+    let renderer_set =
+      Tolk.Device.Renderer_set.make ~device:name
+        ~arch:(Tolk.Renderer.target renderer).Tolk_uop.Target.arch
+        [ ("CLANG", fun _ -> renderer) ]
+    in
+    let timeline = zero_buffer name 2 in
+    let uint n = U.const (Tolk_uop.Const.int D.uint64 n) in
+    let index ptr = U.index ~ptr ~idxs:[ U.const_int 0 ] () in
+    let device node =
+      match U.device_of node with
+      | Some (U.Single name) -> name
+      | _ -> fail "copy queue expected a single-device argument"
+    in
+    let encode node =
+      match (U.op node, U.arg node, U.children node) with
+      | ( Tolk_uop.Ops.Custom_function,
+          U.Arg.String ("submit_cpu_copy_0" | "submit_cpu_compute_0"),
+          [ linear; dependency ] ) ->
+          let previous = ref [ dependency ] in
+          let nodes =
+            List.map
+              (fun instruction ->
+                let next =
+                  match (U.as_call instruction, U.arg instruction) with
+                  | Some { body; args = [ dst; src ] }, _
+                    when U.op body = Tolk_uop.Ops.Store ->
+                      let bytes =
+                        uint (U.max_numel src * D.itemsize (U.dtype src))
+                      in
+                      let copy =
+                        Tolk.Hcq2.ccall ~after:!previous ~name:"memcpy"
+                          ~dtype:D.uint64
+                          [
+                            U.getaddr ~device:name ~src:dst ();
+                            U.getaddr ~device:name ~src ();
+                            bytes;
+                          ]
+                      in
+                      let count =
+                        U.placeholder ~shape:[ 1 ] ~dtype:D.uint64 ~slot:0
+                          ~device:(U.Single name) ~volatile:true
+                          ~allocation:
+                            ( "test_transfer",
+                              Marshal.to_string (device src, device dst) [] )
+                          ()
+                      in
+                      let ptr = index (U.after ~src:count ~deps:[ copy ]) in
+                      U.store ~dst:ptr
+                        ~value:
+                          (U.alu_binary ~op:Tolk_uop.Ops.Add
+                             ~lhs:(U.load ~src:ptr ()) ~rhs:bytes)
+                        ()
+                  | _, U.Arg.Typed ("store", _) ->
+                      U.store
+                        ~dst:
+                          (index
+                             (U.after
+                                ~src:(U.src instruction).(0)
+                                ~deps:!previous))
+                        ~value:(U.src instruction).(1)
+                        ()
+                  | _, U.Arg.Typed (("wait" | "barrier"), _) -> U.noop ()
+                  | _ -> fail "unexpected synchronous copy queue instruction"
+                in
+                if U.op next <> Tolk_uop.Ops.Noop then previous := [ next ];
+                next)
+              (U.children linear)
+          in
+          Some (U.group nodes)
+      | _ -> None
+    in
+    let queue =
+      Tolk.Device.
+        {
+          timestamp_divider = 1.;
+          profile_offset = (fun () -> 0.);
+          completion = (fun () -> Fun.const ());
+          prepare = (fun () -> ());
+          host = "CPU";
+          max_kernel_bindings = Some 0;
+          copy = (fun _ -> Some "COPY:0");
+          encode;
+          lower = (fun _ -> None);
+          compile =
+            (fun sink ->
+              let host = Tolk.Device.get "CPU" in
+              Tolk.Codegen.to_program ~optimize:false host
+                (Tolk.Device.renderer host)
+                sink);
+          config = (fun () -> "COUNTED_HOST_COPY=1");
+        }
+    in
+    let bufferize node =
+      match (U.node_tag node, U.as_param node) with
+      | Some "timeline", _ -> Some timeline
+      | _, Some { param = { allocation = Some ("test_transfer", key); _ }; _ }
+        ->
+          Some (counter (Marshal.from_string key 0))
+      | _ -> Tolk.Device.bufferize cpu node
+    in
+    (* Synchronous host queues cannot wait for another queue in the same
+       submission. Separate peer groups let HCQ preserve those dependencies
+       between submissions instead. *)
+    Tolk.Device.make ~name ~peer_group:name ~allocator:(host_allocator ())
+      ~renderer_set ~runtime:(Tolk.Device.runtime cpu)
+      ~synchronize:(fun timeout -> Tolk.Device.synchronize ?timeout cpu)
+      ~queue ~bufferize ()
 
 let () = Tolk.Device.register "CPU" create
 
 (* Bytes a call moves between two of rune's devices. *)
 let peer_bytes f =
-  let before = Hashtbl.copy transfers in
+  let read buffer = Int64.to_int (Bytes.get_int64_le (B.as_bytes buffer) 0) in
+  let before = Hashtbl.create (Hashtbl.length transfers) in
+  Hashtbl.iter
+    (fun key buffer -> Hashtbl.add before key (read buffer))
+    transfers;
   let y = f () in
   let moved =
     Hashtbl.fold
-      (fun ((src, dst) as key) n sum ->
-        let n = n - Option.value (Hashtbl.find_opt before key) ~default:0 in
+      (fun ((src, dst) as key) buffer sum ->
+        let n =
+          read buffer - Option.value (Hashtbl.find_opt before key) ~default:0
+        in
         if src <> dst && src <> "CPU" && dst <> "CPU" then sum + n else sum)
       transfers 0
   in
@@ -211,8 +322,36 @@ let test_expert_parallel_product () =
   equal ~msg:"the lanes' products and ids cross devices" int
     (allreduce + ids_gather) peer
 
+let test_rune_shared_reduce_replay () =
+  let reduce = Rune.jit' (Nx.sum ~axes:[ 0 ]) in
+  List.iter
+    (fun replay ->
+      let values =
+        Array.init 64 (fun i ->
+            float_of_int ((1000 * replay) + (100 * (i / 16)) + (i mod 16)))
+      in
+      let source =
+        Nx.place
+          (Nx.Placement.sharded ~axis:0 cpus)
+          (Nx.create f32 [| 4; 16 |] values)
+      in
+      let reduced = reduce source in
+      let expected =
+        Array.init 16 (fun i -> float_of_int ((4000 * replay) + 600 + (4 * i)))
+      in
+      List.iteri
+        (fun lane device ->
+          equal
+            ~msg:(Printf.sprintf "replay %d, lane %d" replay lane)
+            (array float_exact) expected
+            (to_arr (Nx.place (Nx.Placement.device device) reduced)))
+        cpus)
+    [ 0; 1; 2 ]
+
 let tests =
   [
+    test "Rune shared copy replay reduces every shard"
+      test_rune_shared_reduce_replay;
     group "tensor parallelism"
       [ test "a column-then-row MLP" test_tensor_parallel_mlp ];
     group "expert parallelism"

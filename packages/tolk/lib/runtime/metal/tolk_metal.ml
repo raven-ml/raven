@@ -390,8 +390,8 @@ module Queue = struct
           (List.rev !stamps);
         let size = stamp_offset + 8 * List.length !stamps in
         let desc = {commands = !commands; header} in
-        let buffer = U.placeholder ~shape:[size] ~dtype:Dtype.uint8 ~slot:0
-            ~device:(U.Single name) ~volatile:true
+        let buffer = U.placeholder ~shape:[size] ~dtype:Dtype.uint8
+            ~slot:(U.fresh_buffer_slot ()) ~device:(U.Single name) ~volatile:true
             ~allocation:("metal_icb", Marshal.to_string desc []) () in
         let patched = Hcq2.patch ~after:[dependency] buffer (List.rev !rows) in
         let header_ptr = index patched header in
