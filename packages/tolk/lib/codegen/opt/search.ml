@@ -155,9 +155,11 @@ type compiled = { program : U.t; compile_time : float }
 
 exception Compile_timeout
 
+(* The timeout is SIGALRM's, which Windows lacks: there, as the reference
+   does where [signal.alarm] is missing, a candidate compiles untimed. *)
 let with_compile_timeout ~use_timeout f =
   let prev =
-    if use_timeout then
+    if use_timeout && not Sys.win32 then
       let h =
         Sys.signal Sys.sigalrm
           (Sys.Signal_handle (fun _ -> raise Compile_timeout))

@@ -686,6 +686,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix BEAM search compiling no candidate on Windows: its per-candidate
+  compile timeout called `Unix.alarm`, which Windows lacks, and each
+  candidate was dropped as failed. Candidates now compile untimed there.
+
 - Fix host calls to C runtime functions such as `memcpy` on Windows: the CPU
   device looked them up in the executable alone, where POSIX searches every
   loaded library, and failed with `link_symbol: undefined symbol memcpy`.
