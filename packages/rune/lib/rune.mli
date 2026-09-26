@@ -521,10 +521,15 @@ val jit :
     a consumed leaf views part of its storage (a slice, a transpose, a
     broadcast: pass [Nx.copy] of it), or if another leaf of the call or a
     capture of the function, bound or copied, reaches that storage, naming both
-    paths. A host leaf has no storage to consume: it is uploaded, stays usable,
-    and lends nothing. A call that raises before its first kernel consumes
-    nothing; one that fails after it has consumed its consumed arguments and
-    returns nothing.
+    paths. Consumption also raises [Invalid_argument] if another read,
+    placement, or compiled call is using the same storage, including through
+    another view or compiled function. Once a call has exclusive use of a
+    consumed storage, overlapping reads, placements and calls reaching it
+    raise. Unrelated storage remains independent, and sequential calls may use
+    different domains. A host leaf has no storage to consume: it is uploaded,
+    stays usable, and lends nothing. A call that fails while preparing arguments
+    consumes nothing. Once execution begins, consumed arguments stay consumed
+    even if the call raises and returns nothing.
 
     {b Lending.} A result may take the storage of a consumed leaf, so a loop
     that consumes its state holds one generation of it on the device. It does
@@ -609,7 +614,10 @@ val jit :
     that captures the value shares them. A compiled function keeps the values it
     binds reachable, and their buffers stay while it is reachable: a call that
     consumes a bound storage ends it for its values, and the programs that bind
-    it keep replaying with it. A closure whose capture was consumed raises
+    it keep replaying with it. This ownership starts when tracing first
+    encounters the resident capture, so a concurrent consuming call cannot lend
+    its bytes while compilation is in progress. A failed trace releases its
+    bindings. A closure whose capture was consumed raises
     [Invalid_argument] at its next trace. Mutating a captured tensor between
     calls is not supported and has unspecified visibility (the host may observe
     the mutation through its in-place binding; other devices never do): pass

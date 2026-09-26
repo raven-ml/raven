@@ -277,6 +277,9 @@ and cell = {
   length : int; (* elements of the storage, per shard *)
   mutable state : state;
   bound : int Atomic.t; (* reachable program bindings to the storage *)
+  lock : Mutex.t;
+  mutable readers : int;
+  mutable exclusive : bool;
 }
 
 and state = Live of storage | Consumed of consumption
@@ -333,11 +336,81 @@ let consumed { path } =
         value the call returned"
        path)
 
+(* The lock only protects the cell's bookkeeping. Readers and consumers keep
+   their claim while executing outside it; overlapping consumption never waits. *)
+module Cell = struct
+  let busy () = invalid_arg "Nx: storage is in use by another reader or consuming call"
+
+  let state c =
+    Mutex.lock c.lock;
+    let state = c.state in
+    Mutex.unlock c.lock;
+    state
+
+  let borrow c =
+    Mutex.lock c.lock;
+    let blocked = c.exclusive in
+    if not blocked then c.readers <- c.readers + 1;
+    Mutex.unlock c.lock;
+    if blocked then busy ()
+
+  let release c =
+    Mutex.lock c.lock;
+    let valid = not c.exclusive && c.readers > 0 in
+    if valid then c.readers <- c.readers - 1;
+    Mutex.unlock c.lock;
+    if not valid then invalid_arg "Nx: unbalanced storage borrow"
+
+  let with_borrow c f =
+    borrow c;
+    Fun.protect ~finally:(fun () -> release c) (fun () ->
+        match c.state with Live _ -> f () | Consumed k -> consumed k)
+
+  let upgrade c =
+    Mutex.lock c.lock;
+    let available = not c.exclusive && c.readers = 1 in
+    if available then begin c.readers <- 0; c.exclusive <- true end;
+    Mutex.unlock c.lock;
+    if not available then busy ()
+
+  let consume c why =
+    let state = Consumed why in
+    Mutex.lock c.lock;
+    let valid = c.exclusive in
+    if valid then c.state <- state;
+    Mutex.unlock c.lock;
+    if not valid then invalid_arg "Nx: consumption requires exclusive storage"
+
+  let finish c =
+    Mutex.lock c.lock;
+    let retire =
+      match c.state with Consumed _ -> Atomic.get c.bound = 0 | Live _ -> false
+    in
+    c.exclusive <- false;
+    c.readers <- 1;
+    Mutex.unlock c.lock;
+    retire
+
+  let pin c =
+    Mutex.lock c.lock;
+    ignore (Atomic.fetch_and_add c.bound 1);
+    Mutex.unlock c.lock
+
+  let unpin c =
+    Mutex.lock c.lock;
+    let previous = Atomic.fetch_and_add c.bound (-1) in
+    let retire = previous = 1 && not c.exclusive
+      && match c.state with Consumed _ -> true | Live _ -> false in
+    Mutex.unlock c.lock;
+    retire
+end
+
 (* Reading placed values *)
 
 (* The elements of a placed value's view. A held value's are its one element,
    broadcast. *)
 let read_elements (type a b) (r : (a, b) resident) : (a, b) Nx_buffer.t =
+  Cell.with_borrow r.r_cell (fun () ->
   match r.r_cell.state with
   | Consumed k -> consumed k
   | Live (Held (dt, v)) -> (
@@ -347,7 +420,7 @@ let read_elements (type a b) (r : (a, b) resident) : (a, b) Nx_buffer.t =
           Nx_buffer.fill buf v;
           buf
       | None -> assert false)
-  | Live _ -> (List.hd (Grid.devices r.r_cell.placement)).d_engine.read r
+  | Live _ -> (List.hd (Grid.devices r.r_cell.placement)).d_engine.read r)
 
 (* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
 let global p shape =
@@ -504,7 +577,8 @@ end
    engine owns it. The engine attaches the finaliser that releases the
    storage. *)
 let cell ~placement ~length storage =
-  { placement; length; state = Live storage; bound = Atomic.make 0 }
+  { placement; length; state = Live storage; bound = Atomic.make 0;
+    lock = Mutex.create (); readers = 0; exclusive = false }
 
 let placed placement dtype view cell =
   if Placement.is_host placement then
@@ -1028,15 +1102,17 @@ let to_host (type a b) (x : (a, b) t) : (a, b) Nx_buffer.t =
 (* Moving *)
 
 let move (type a b) p (x : (a, b) t) : (a, b) t =
-  match x with
+  let move () = match x with
   | Traced _ -> outside_trace ()
-  | Placed { r_cell = { state = Consumed k; _ }; _ } -> consumed k
   | Placed { r_placement; _ } when Placement.equal r_placement p -> x
   | Host _ when Placement.is_host p -> x
   | Placed r when Placement.is_host p -> Host (read_host r)
   | Host _ | Placed _ ->
       Placement.check_shape "Nx.place" p (View.shape (view x));
-      (Placement.engine p).place p x
+      (Placement.engine p).place p x in
+  match x with
+  | Placed r -> Cell.with_borrow r.r_cell move
+  | Host _ | Traced _ -> move ()
 
 let place p x =
   try Effect.perform (E_place { placement = p; t_in = x })

@@ -255,7 +255,7 @@ type store = {
 type Nx_effect.storage += Buffers of store
 
 let store_of (c : Nx_effect.cell) =
-  match c.state with Live (Buffers s) -> Some s | _ -> None
+  match Nx_effect.Cell.state c with Live (Buffers s) -> Some s | _ -> None
 
 (* The tolk device of [d] and the buffer of [s] it holds. nx places a view only
    on devices that hold its storage. *)
@@ -417,7 +417,7 @@ type state = {
   mutable consts : (U.t * Nx.Placement.t * packed) list;
       (* reverse order, each at its placement in the program *)
   bound : F.Tensor.t Tensor_map.Tbl.t; (* resident captures bound in place *)
-  mutable bound_consts : (U.t * packed * seed) list;
+  mutable bound_consts : (U.t * packed * seed * store option) list;
   scan_stacks : (U.t * int * Nx.Placement.t) list Tbl.t;
       (* staged scans: the step record's identity -> the per-leaf carry-stack
          buffer nodes the forward loop wrote, with their row strides and the
@@ -805,7 +805,11 @@ let bind_const (type a b) st seed (x : (a, b) Nx_effect.t) : F.Tensor.t =
   let local = local_shape p (shape_of x) in
   let layout = layout_of seed in
   let node = make_node st (tolk_dtype dt) (layout_size layout local) in
-  st.bound_consts <- (node, Packed (dt, x), seed) :: st.bound_consts;
+  let cell = match seed with Whole { cell; _ } | Range { cell; _ } -> cell
+    | Copy -> assert false in
+  let bound_consts = (node, Packed (dt, x), seed, store_of cell) :: st.bound_consts in
+  Nx_effect.Cell.pin cell;
+  st.bound_consts <- bound_consts;
   let tt = whole_tensor p (layout_tensor node layout local) in
   Tensor_map.Tbl.replace st.bound (Key x) tt;
   tt
@@ -824,7 +828,8 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
       err
         "Rune.jit: a tensor traced by another jit entered this trace; a value \
          computed inside a jitted function exists outside it only as an output"
-  | _ -> (
+  | _ ->
+      let capture () =
       check_capture st x;
       match seed_of (List.map tolk_device_of st.st_devices) x with
       | (Whole _ | Range _) as seed -> (
@@ -836,7 +841,12 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
           | Some t -> t
           | None ->
               Tensor_map.Tbl.replace st.captures (Key x) ();
-              lift_const st x))
+              lift_const st x) in
+      match x with
+      | Placed r ->
+          Nx_effect.Cell.borrow r.r_cell;
+          Fun.protect ~finally:(fun () -> Nx_effect.Cell.release r.r_cell) capture
+      | Host _ | Traced _ -> capture ()
 
 (* Composed operations Tolk has no primitive for. *)
 
@@ -4042,7 +4052,7 @@ let rec make_placed : type a b.
        Consumed storage is retired by replay or its last compiled capture. *)
     Gc.finalise
       (fun (c : Nx_effect.cell) ->
-        match c.state with
+        match Nx_effect.Cell.state c with
         | Live _ when s.s_bufs <> [] -> enqueue_release s
         | _ -> ())
       cell;
@@ -4609,6 +4619,15 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       scan_bodies = 0;
     }
   in
+  let transferred = ref false in
+  Fun.protect ~finally:(fun () ->
+      if not !transferred then
+        List.iter (fun (_, _, seed, store) ->
+            let cell = match seed with Whole { cell; _ } | Range { cell; _ } -> cell
+              | Copy -> assert false in
+            if Nx_effect.Cell.unpin cell then Option.iter enqueue_release store)
+          st.bound_consts)
+    (fun () ->
   (* One placeholder and one input record per leaf visit, in traversal order, so
      replay pairs current leaves positionally: a tensor behind two leaves is two
      inputs, equal on this call and free to differ on the next. *)
@@ -4932,7 +4951,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   in
   let input_nodes = List.map (fun inp -> inp.i_node) (List.rev !inputs) in
   let constant_nodes = List.map (fun (node, _, _) -> node) st.consts
-      @ List.map (fun (node, _, _) -> node) st.bound_consts in
+      @ List.map (fun (node, _, _, _) -> node) st.bound_consts in
   let held = input_nodes @ constant_nodes @ output_nodes in
   let replay_nodes =
     input_nodes
@@ -5048,16 +5067,16 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
      reads leave storage in place, and the value is reachable from the trace. *)
   let bound =
     List.map
-      (fun (node, pk, seed_) ->
+      (fun (node, pk, seed_, store) ->
         Hashtbl.replace reserved (U.tag node) ();
         match seed_ with
         | Range { cell; bufs; lo; span; _ } ->
             let bufs = List.map (fun buf -> buffer_range buf ~lo ~span) bufs in
             own node bufs;
-            (cell, pk)
+            (cell, pk, store)
         | Whole { cell; bufs } ->
             own node bufs;
-            (cell, pk)
+            (cell, pk, store)
         | Copy -> assert false (* only a seeded capture is bound *))
       st.bound_consts
   in
@@ -5232,12 +5251,9 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   let reserved = Hashtbl.create (List.length input_nodes + List.length constant_nodes) in
   List.iter (fun node -> Hashtbl.replace reserved (U.tag (mapped node)) ())
     (input_nodes @ constant_nodes);
-  List.iter
-    (fun ((c : Nx_effect.cell), _) -> ignore (Atomic.fetch_and_add c.bound 1))
-    bound;
   let cp_captures =
     Array.of_list
-      (List.map fst bound
+      (List.map (fun (cell, _, _) -> cell) bound
       @ List.filter_map
           (fun (_, _, Packed (_, x)) ->
             match x with Nx_effect.Placed r -> Some r.r_cell | _ -> None)
@@ -5257,7 +5273,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       cp_consumptions = info.consumptions;
       cp_names = info.names;
       cp_captures;
-      cp_bound = Array.of_list bound;
+      cp_bound = Array.of_list (List.map (fun (cell, packed, _) -> cell, packed) bound);
       cp_outputs;
       cp_results = results;
       cp_first;
@@ -5270,22 +5286,26 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
   in
   (* A bound storage that a call consumed stays for the programs that bind it;
      the last of them to go releases it. *)
-  let cells = List.map (fun (cell, _) -> (cell, store_of cell)) bound in
+  let cells = List.map (fun (cell, _, store) -> (cell, store)) bound in
   Gc.finalise_last
     (fun () ->
       List.iter
         (fun ((cell : Nx_effect.cell), store) ->
-          let previous = Atomic.fetch_and_add cell.bound (-1) in
-          match (cell.state, store) with
-          | Consumed _, Some s when previous = 1 ->
-              enqueue_release s
-          | _ -> ())
+          if Nx_effect.Cell.unpin cell then Option.iter enqueue_release store)
         cells)
     compiled;
-  compiled
+  transferred := true;
+  compiled)
 
 let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
     (leaves : Nx.packed array) (seeds : seed array) : q =
+  let exclusive = ref [] in
+  Fun.protect ~finally:(fun () ->
+      List.iter (fun (cell, store) ->
+          if Nx_effect.Cell.finish cell then Option.iter enqueue_release store)
+        !exclusive;
+      drain_releases ())
+    (fun () ->
   drain_releases ();
   let input_uops = Array.copy c.cp_input_uops in
   let context = Tolk.Realize.exec_context ~input_uops () in
@@ -5389,6 +5409,10 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
               upload_windows c.cp_scratch inp.i_place leaf c.cp_devices
                 inp.i_bufs))
     leaves;
+  List.iter (fun (_, cell) ->
+      let acquired = (cell, store_of cell) :: !exclusive in
+      Nx_effect.Cell.upgrade cell;
+      exclusive := acquired) consumed;
   (* Lending claims: an output takes the storage of its partner, its buffer on
      each device in the program's order, when the partner seeded from owned
      storage that no program binds. *)
@@ -5519,24 +5543,12 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
     List.map
       (fun (i, (cell : Nx_effect.cell)) ->
         let s = store_of cell in
-        cell.state <- Consumed c.cp_consumptions.(i);
+        Nx_effect.Cell.consume cell c.cp_consumptions.(i);
         (i, cell, s))
       consumed
   in
-  let release () =
-    List.iter
-      (fun (_, (cell : Nx_effect.cell), s) ->
-        match s with Some s when Atomic.get cell.bound = 0 -> release_store s | _ -> ())
-      marked
-  in
-  (match
-     Tolk.Realize.run_linear ~device:c.cp_device ~to_program ~input_uops
-       ~var_vals:c.cp_vars ~jit:true c.cp_linear
-   with
-  | () -> ()
-  | exception e ->
-      release ();
-      raise e);
+  Tolk.Realize.run_linear ~device:c.cp_device ~to_program ~input_uops
+    ~var_vals:c.cp_vars ~jit:true c.cp_linear;
   (* An output that is an input or a capture returned unchanged keeps its
      reserved binding: its value is copied into the storage allocated for it, so
      it never aliases an input and survives later calls. A consumed input
@@ -5559,12 +5571,16 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   if c.cp_zero_copy then Tolk.Device.synchronize c.cp_device;
   ignore (Sys.opaque_identity !keep);
   ignore (Sys.opaque_identity c.cp_bound);
-  let placed_on place dt shape bufs =
-    make_placed place
-      (List.map snd c.cp_devices)
-      dt
-      (NV.create (local_shape place shape))
-      bufs
+  let placed_on ?tag place dt shape bufs =
+    let value = make_placed place (List.map snd c.cp_devices) dt
+        (NV.create (local_shape place shape)) bufs in
+    Option.iter (fun tag ->
+        match Hashtbl.find_opt claims tag with
+        | Some (_, store, _) when store.s_bufs <> [] ->
+            store.s_bufs <- [];
+            account store (-1)
+        | _ -> ()) tag;
+    value
   in
   (* The result's leaves, in walk order. *)
   let values =
@@ -5613,27 +5629,13 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                      | Some bufs -> Nx.P (placed_on place dt shape bufs)
                      | None ->
                          Nx.P
-                           (placed_on place dt shape
+                           (placed_on ~tag place dt shape
                               (Hashtbl.find out_bufs tag)))))
          c.cp_results)
   in
   let y = Nx.Ptree.rebuild q ~like:c.cp_skeleton values in
-  (* The storage of each consumed leaf is now owned by the output that claimed
-     it, or returned to the allocator, where the next call's fresh outputs reuse
-     it in queue order, after the kernels of this call. A storage a program
-     binds stays for it (see [trace_compile]). *)
-  let claimed cell =
-    Hashtbl.fold (fun _ (e, _, _) a -> a || e == cell) claims false
-  in
-  List.iter
-    (fun (_, cell, s) ->
-      match s with
-      | Some s when claimed cell ->
-          s.s_bufs <- [];
-          account s (-1)
-      | Some s when Atomic.get cell.Nx_effect.bound = 0 -> release_store s
-      | _ -> ())
-    marked;
+  (* Lent storage was detached as each output owner was constructed. The
+     call's finalizer retires other consumed storage once no capture pins it. *)
   if Lazy.Mutexed.force jit_debug >= 1 then begin
     let after = Atomic.get transfer_stats in
     Printf.eprintf
@@ -5664,7 +5666,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
               | Some _ -> "storage released"))
       marked
   end;
-  y
+  y)
 
 (* Public entry points *)
 
@@ -5773,6 +5775,18 @@ let check_live leaves =
    A call flattens its arguments once: the leaves seed the program, and the
    skeleton and the leaves' signatures are its key. [RUNE_JIT_DEBUG=1] reports
    each retrace with the first difference from the previous call's key. *)
+let with_input_borrows leaves f =
+  let borrowed = ref [] in
+  Fun.protect ~finally:(fun () -> List.iter Nx_effect.Cell.release !borrowed)
+    (fun () ->
+      Array.iter (fun (Nx.P leaf) -> match leaf with
+          | Placed r when not (List.memq r.r_cell !borrowed) ->
+              let acquired = r.r_cell :: !borrowed in
+              Nx_effect.Cell.borrow r.r_cell;
+              borrowed := acquired
+          | Host _ | Placed _ | Traced _ -> ()) leaves;
+      f ())
+
 let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
     (args : a Nx.Ptree.t) (result : r Nx.Ptree.t) (f : a -> r) : a -> r =
   let in_use = Atomic.make false in
@@ -5801,6 +5815,7 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
       Fun.protect ~finally:(fun () -> Atomic.set in_use false) (fun () ->
         let leaves, skeleton = Nx.Ptree.flatten args v in
         let leaves = Array.of_list leaves in
+        with_input_borrows leaves (fun () ->
         check_live leaves;
         let ds, decided =
           match
@@ -5866,7 +5881,7 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
               captured_on := Some (ds, decided);
               run ds decided
         in
-        run ds decided))
+        run ds decided)))
 
 (* [devices], checked as a placement's devices are: at least one, distinct, of
    one backend. *)

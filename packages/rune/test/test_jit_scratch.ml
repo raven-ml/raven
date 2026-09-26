@@ -404,9 +404,181 @@ let call_ownership_tests =
       ("jit over devices", fun f -> Rune.jit' ~devices:[Rune.device "CPU:1"; Rune.device "CPU:2"] f);
     ]
 
+let with_cell_runtime ?(after = false) name f =
+  let base = Tolk.Device.get name in
+  let pending = Atomic.make None in
+  let runtime object_ =
+    let program = Tolk.Device.runtime base object_ in
+    let call buffers ~global ~local ~vals ~wait ~timeout =
+      let callback = Atomic.exchange pending None in
+      if not after then Option.iter (fun run -> run ()) callback;
+      let elapsed = program.call buffers ~global ~local ~vals ~wait ~timeout in
+      if after then Option.iter (fun run -> run ()) callback;
+      elapsed
+    in
+    { program with call }
+  in
+  let renderer = Tolk.Device.renderer base in
+  let allocator = Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  ignore (Tolk.Device.make ~name ~allocator:(Tolk.Device.Allocator.Pack allocator)
+      ~renderer_set:(Tolk.Device.Renderer_set.make ~device:name
+          [ "CLANG", fun _ -> renderer ]) ~runtime ~synchronize:(fun _ -> ()) ());
+  let device = Rune.device name in
+  let place value = Nx.place (Nx.Placement.device device)
+      (Nx.full Nx.float32 [| 4 |] value) in
+  let donor () = Rune.jit ~devices:[device]
+      Nx.Ptree.(consumes tensor @@ returns tensor) (fun x -> Nx.add_s x 1.) in
+  f pending device place donor
+
+let cell_busy = function
+  | Invalid_argument message -> String.starts_with ~prefix:"Nx: storage is in use" message
+  | _ -> false
+
+let shared_reader_excludes_consumption () =
+  with_cell_runtime "CPU:765" (fun pending device place donor ->
+      let read = Rune.jit' ~devices:[device] (fun x -> Nx.add_s x 2.) in
+      let consume = donor () in
+      ignore (read (place 0.)); ignore (consume (place 0.));
+      let input = place 3. in
+      Atomic.set pending (Some (fun () ->
+          raises_match cell_busy (fun () -> ignore (consume input))));
+      equal (array float_exact) (Array.make 4 5.) (Nx.to_array (read input));
+      equal (array float_exact) (Array.make 4 3.) (Nx.to_array input);
+      equal ~msg:"a rejected consumer releases its borrow"
+        (array float_exact) (Array.make 4 4.) (Nx.to_array (consume input)))
+
+let overlapping_trace_excludes_consumption thread () =
+  let name = if thread then "CPU:766" else "CPU:767" in
+  with_cell_runtime name (fun pending device place donor ->
+      is_true (Option.is_none (Atomic.get pending));
+      let consume = donor () in
+      ignore (consume (place 0.));
+      let input = place 3. in
+      let entered = Atomic.make false and finish = Atomic.make false in
+      let read = Rune.jit' ~devices:[device] (fun x ->
+          Atomic.set entered true;
+          while not (Atomic.get finish) do Thread.yield () done;
+          Nx.add_s x 2.) in
+      let result = Atomic.make None in
+      let run () = Atomic.set result (Some (try Ok (read input) with exn -> Error exn)) in
+      let join =
+        if thread then let worker = Thread.create run () in fun () -> Thread.join worker
+        else let worker = Domain.spawn run in fun () -> Domain.join worker
+      in
+      while not (Atomic.get entered) && Option.is_none (Atomic.get result) do
+        Thread.yield ()
+      done;
+      let overlap = try ignore (consume input); None with exn -> Some exn in
+      Atomic.set finish true;
+      join ();
+      (match overlap with Some exn when cell_busy exn -> ()
+       | Some exn -> raise exn | None -> fail "a tracing reader must exclude consumption");
+      let output = match Option.get (Atomic.get result) with
+        | Ok value -> value | Error exn -> raise exn in
+      equal (array float_exact) (Array.make 4 5.) (Nx.to_array output);
+      equal (array float_exact) (Array.make 4 3.) (Nx.to_array input);
+      equal ~msg:"the cell can be consumed later on another domain"
+        (array float_exact) (Array.make 4 4.)
+        (Domain.join (Domain.spawn (fun () -> Nx.to_array (consume input)))))
+
+let capture_pins_during_trace () =
+  with_cell_runtime "CPU:768" (fun pending device place donor ->
+      is_true (Option.is_none (Atomic.get pending));
+      let consume = donor () in
+      ignore (consume (place 0.));
+      let weight = place 3. in
+      let entered = Atomic.make false and finish = Atomic.make false in
+      let capture = Rune.jit' ~devices:[device] (fun x ->
+          let value = Nx.add x weight in
+          Atomic.set entered true;
+          while not (Atomic.get finish) do Domain.cpu_relax () done;
+          value) in
+      let finished = Atomic.make false in
+      let worker = Domain.spawn (fun () ->
+          Fun.protect ~finally:(fun () -> Atomic.set finished true) (fun () ->
+              try Ok (capture (Nx.full Nx.float32 [|4|] 2.)) with exn -> Error exn)) in
+      while not (Atomic.get entered || Atomic.get finished) do Domain.cpu_relax () done;
+      let consumed = try Ok (consume weight) with exn -> Error exn in
+      Atomic.set finish true;
+      let captured = Domain.join worker in
+      let result = function Ok value -> value | Error exn -> raise exn in
+      equal ~msg:"a capture pins its original bytes before compilation finishes"
+        (array float_exact) (Array.make 4 5.) (Nx.to_array (result captured));
+      equal (array float_exact) (Array.make 4 4.) (Nx.to_array (result consumed));
+      ignore (Sys.opaque_identity (capture, ())))
+
+let failed_trace_releases_capture_pin () =
+  with_cell_runtime "CPU:769" (fun pending device place donor ->
+      is_true (Option.is_none (Atomic.get pending));
+      let weight = place 3. in
+      let capture = Rune.jit' ~devices:[device] (fun x ->
+          ignore (Nx.add x weight); raise Exit) in
+      raises Exit (fun () -> ignore (capture (Nx.full Nx.float32 [|4|] 2.)));
+      let cell = match weight with Nx_effect.Placed r -> r.r_cell
+        | Host _ | Traced _ -> fail "expected placed storage" in
+      equal int 0 (Atomic.get cell.bound);
+      equal (array float_exact) (Array.make 4 4.) (Nx.to_array ((donor ()) weight)))
+
+let destructive_failure_consumes_aliases () =
+  with_cell_runtime ~after:true "CPU:770" (fun pending device place donor ->
+      ignore device;
+      let consume = donor () in
+      ignore (consume (place 0.));
+      let input = place 3. in
+      let alias = Nx.reshape [|2;2|] input in
+      Atomic.set pending (Some (fun () -> raise Exit));
+      raises Exit (fun () -> ignore (consume input));
+      raises_match (function Invalid_argument message ->
+          String.starts_with ~prefix:"this value was consumed" message | _ -> false)
+        (fun () -> ignore (Nx.to_array alias));
+      equal (array float_exact) (Array.make 4 9.) (Nx.to_array (consume (place 8.))))
+
+let partial_consumption_upgrade_unwinds () =
+  with_cell_runtime "CPU:771" (fun pending device place donor ->
+      let read = Rune.jit' ~devices:[device] (fun x -> Nx.add_s x 2.) in
+      let consume = donor () in
+      let pair = Rune.jit ~devices:[device]
+          Nx.Ptree.(consumes (pair tensor tensor) @@ returns (pair tensor tensor))
+          (fun (a, b) -> Nx.neg a, Nx.neg b) in
+      ignore (read (place 0.)); ignore (consume (place 0.));
+      ignore (pair (place 0., place 0.));
+      let shared = place 3. and free = place 5. in
+      let next = ref None in
+      Atomic.set pending (Some (fun () ->
+          raises_match cell_busy (fun () -> ignore (pair (free, shared)));
+          next := Some (consume free)));
+      equal (array float_exact) (Array.make 4 5.) (Nx.to_array (read shared));
+      equal ~msg:"a rejected later upgrade releases earlier exclusive cells"
+        (array float_exact) (Array.make 4 6.) (Nx.to_array (Option.get !next));
+      equal (array float_exact) (Array.make 4 3.) (Nx.to_array shared))
+
+let consumer_excludes_alias move () =
+  let name = if move then "CPU:772" else "CPU:773" in
+  with_cell_runtime name (fun pending device place donor ->
+      let consume = donor () in
+      ignore (consume (place 0.));
+      let input = place 3. in
+      let alias = Nx.reshape [|2;2|] input in
+      Atomic.set pending (Some (fun () ->
+          raises_match cell_busy (fun () ->
+              if move then ignore (Nx.place (Nx.Placement.device device) alias)
+              else ignore (Nx.to_array alias))));
+      equal (array float_exact) (Array.make 4 4.) (Nx.to_array (consume input));
+      equal ~msg:"alias rejection does not retain the cell or closure claim"
+        (array float_exact) (Array.make 4 9.) (Nx.to_array (consume (place 8.))))
+
 let () =
   run "rune transfer scratch"
     (call_ownership_tests @ [
+      test "partial consumption upgrade releases prior cells" partial_consumption_upgrade_unwinds;
+      test "consumption excludes alias reads" (consumer_excludes_alias false);
+      test "consumption excludes same-placement alias moves" (consumer_excludes_alias true);
+      test "shared reader excludes consumption" shared_reader_excludes_consumption;
+      test "a domain tracing a shared input excludes consumption" (overlapping_trace_excludes_consumption false);
+      test "a systhread tracing a shared input excludes consumption" (overlapping_trace_excludes_consumption true);
+      test "capture pins storage during tracing" capture_pins_during_trace;
+      test "failed trace releases its capture pin" failed_trace_releases_capture_pin;
+      test "destructive failure consumes old aliases" destructive_failure_consumes_aliases;
       test "reads keep their resident owner alive"
         reads_keep_their_resident_owner_alive;
       test "failed release preserves all owners"

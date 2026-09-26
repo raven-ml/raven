@@ -263,6 +263,12 @@ val to_array : ('a, 'b) t -> 'a array
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
 
+    Reads and placements keep their source storage in use until they return.
+    If a compiled call consumes that storage concurrently, the conflicting
+    operation raises [Invalid_argument] instead of waiting. This applies to
+    every view of the storage. A consumed value cannot be read or placed again;
+    its shape and dtype remain available.
+
     A movement ({!reshape}, {!transpose}, {!slice} by indices and unit-step
     ranges, {!flip}, {!broadcast_to}, {!sliding_window}) of a placed value is a
     view of the same storage: it copies nothing and stays on the same devices. A

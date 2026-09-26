@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Consuming a placed argument now requires exclusive access to its storage
+  across compiled functions, reads and placements. Captures retain ownership
+  during tracing, preventing concurrent consumption from changing their values.
+
 - Preserve higher-order compiled `Rune.remat` gradients with strict buffer-state
   validation. Written residuals get a separate checkpoint after their cotangents
   are ready, retaining the activation-memory bound without ambiguous reads.

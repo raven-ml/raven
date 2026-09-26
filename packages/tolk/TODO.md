@@ -91,9 +91,8 @@ acceptance requirement; skipped tests are not execution evidence.
   policy. Share bounded workers
   with lowering, with cancellation/timeouts, errors,
   affinity/container limits and concurrent-cache coverage.
-  Establish exclusive ownership during destructive donation of shared Rune
-  storage across callers. Cover overlapping fibers and device
-  finalizers registered on another domain or systhreads sharing a domain:
+  Cover overlapping fibers and device finalizers registered on another domain
+  or systhreads sharing a domain:
   operation scopes currently prevent only same-domain GC re-entry and do not
   serialize device callers. Complete TSan acceptance, including the runtime
   weak-reference/GC warnings reproduced independently of Raven.

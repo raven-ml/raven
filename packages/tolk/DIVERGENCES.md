@@ -46,6 +46,16 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   IDs, so relinking or replay after replacement fails before native writes.
   Unlike unlinked templates, linked queues cannot be exported across processes.
 
+- **Rune consumption excludes concurrent users of the same storage.**
+  Shared reads and argument tracing hold a per-cell borrow; consumption must
+  upgrade it exclusively before modifying storage. Capture pins start at first
+  discovery and unwind on trace failure. The target has no corresponding
+  shared OCaml value contract. Consumers: independent compiled closures, Nx
+  views, domains and system threads. Coverage: `test_jit_scratch` conflicting
+  readers, captures, partial claim unwind and failed execution; `test_jit`
+  consumption and capture lifetimes. Reconsider if Rune removes destructive
+  consumption or moves ownership into its type system.
+
 - **Schedule capture follows the dynamic continuation scope.** Upstream uses
   a process-global callback list. Tolk and Rune may compile on independent
   domains or system threads, so `Realize.with_capture` scopes a private effect

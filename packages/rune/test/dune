@@ -115,7 +115,7 @@
  (name test_jit_scratch)
  (modules test_jit_scratch)
  (package rune)
- (libraries rune nx nx.buffer tolk tolk.uop windtrap))
+ (libraries rune nx nx.buffer nx.effect tolk tolk.uop windtrap threads))
 
 (tests
  (names test_jit_cache)
