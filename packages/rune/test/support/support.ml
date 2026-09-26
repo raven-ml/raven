@@ -505,6 +505,25 @@ let check_float_identities ?devices () =
   check "1 / (x * x)" (fun x -> Nx.recip (Nx.mul x x)) [| 1e20; 3e-20 |];
   check "x + 0" (fun x -> Nx.add_s x 0.) [| -0.; 1. |]
 
+(* An ordered comparison with a NaN operand is false, as eager's is: x >= 5, x
+   <= 5 and x >= x at NaN, and a mask built from one keeps the NaN out. *)
+let check_nan_comparisons ?devices () =
+  let x = vec32 [| nan; 1.; 5.; 7.; neg_infinity; infinity |] in
+  let check name f =
+    equal ~msg:name (array bool)
+      (Nx.to_array (f x))
+      (Nx.to_array (Rune.jit' ?devices f x))
+  in
+  check "x >= 5" (fun x -> Nx.greater_equal_s x 5.);
+  check "x <= 5" (fun x -> Nx.less_equal_s x 5.);
+  check "x >= x" (fun x -> Nx.greater_equal x x);
+  check "x <= x" (fun x -> Nx.less_equal x x);
+  check "exp x >= -1" (fun x -> Nx.greater_equal_s (Nx.exp x) (-1.));
+  let masked x = Nx.where (Nx.greater_equal_s x 0.) x (Nx.zeros_like x) in
+  equal ~msg:"where (x >= 0) x 0" (array float_exact)
+    (to_arr (masked x))
+    (to_arr (Rune.jit' ?devices masked x))
+
 (* Integer arithmetic wraps at its dtype's width before a comparison reads it,
    as eager's does: uint8 0 - 1 is 255, int8 127 + 1 is -128, and uint16 256 *
    256 is 0. *)

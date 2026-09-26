@@ -324,6 +324,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit_metal` "float identities hold only where IEEE keeps them". Remove
   this ruling when upstream restricts these rules.
 
+- **An ordered comparison is false at NaN.** The reference writes `a >= b` as
+  `not (a < b)` and `a <= b` as `not (b < a)`, true when either operand is
+  NaN: compiled `x >= 5`, `x <= 5` and `x >= x` were true at NaN where eager
+  is false, and `where (x >= 0) x 0` kept a NaN eager drops. At float Tolk
+  writes them `(a > b) | (a = b)` and `(a < b) | (a = b)`; integers keep the
+  negation, which is exact there. Coverage: rune `test_jit` and
+  `test_jit_metal` "ordered comparisons are false at NaN". Remove this
+  ruling when upstream keeps NaN out of `>=` and `<=`.
+
 - **A fixed-width integer constant holds its dtype's value.** The reference
   keeps integer constants exact until emission: folding runs with
   `truncate_output=False`, and a cast of a weak literal is stripped whatever
@@ -339,7 +348,6 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit_metal` "folded integer constants wrap"; tolk `test_weak`
   "uncasting keeps a wrapping cast", `test_symbolic` "a cast constant keeps
   its wrapped value". Remove this ruling when upstream wraps its constants.
-
 
 - **A power decomposes with the transcendentals, at float32 or wider.** The
   reference rewrites every `POW` into `xpow` (`exp2 (e * log2 |x|)` with sign

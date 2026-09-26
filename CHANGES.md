@@ -167,6 +167,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `>=` or `<=` with a NaN operand is false, as eager's is: it was
+  true, so a mask like `where (x >= 0) x 0` kept NaNs that eager drops.
 - A program of `Rune.jit` over several devices binds its intermediates to each
   device's shared arenas, as one-device programs do: each device's grow with
   its own programs and stay across calls. They were allocated and released on

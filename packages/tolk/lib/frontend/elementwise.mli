@@ -65,10 +65,10 @@ val gt : Tensor.t -> Tensor.t -> Tensor.t
 (** [gt a b] is [a > b]. *)
 
 val le : Tensor.t -> Tensor.t -> Tensor.t
-(** [le a b] is [a <= b]. *)
+(** [le a b] is [a <= b], false where either operand is NaN. *)
 
 val ge : Tensor.t -> Tensor.t -> Tensor.t
-(** [ge a b] is [a >= b]. *)
+(** [ge a b] is [a >= b], false where either operand is NaN. *)
 
 val ne : Tensor.t -> Tensor.t -> Tensor.t
 (** [ne a b] is [a <> b]. *)

@@ -86,9 +86,17 @@ let sub a b =
 let lt a b = binop Ops.Cmplt a b
 let gt a b = binop ~reverse:true Ops.Cmplt a b
 let ne a b = binop Ops.Cmpne a b
-let ge a b = logical_not (lt a b)
-let le a b = logical_not (gt a b)
 let eq a b = logical_not (ne a b)
+
+(* A NaN operand makes every ordered comparison false, so at float [a <= b]
+   is [a < b] or [a = b]: the negation of [a > b] would be true at NaN. *)
+let or_equal cmp a b =
+  if D.is_float (Uop.promo_dtype [ T.uop a; T.uop b ]) then
+    binop Ops.Or (cmp a b) (eq a b)
+  else logical_not (cmp b a)
+
+let le a b = or_equal lt a b
+let ge a b = or_equal gt a b
 
 (* Bitwise *)
 

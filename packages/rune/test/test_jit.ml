@@ -4425,6 +4425,8 @@ let tests =
           (check_float_constant_association ?devices:None);
         test "float identities hold only where IEEE keeps them"
           (check_float_identities ?devices:None);
+        test "ordered comparisons are false at NaN"
+          (check_nan_comparisons ?devices:None);
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "a compiled float8 bitcast is refused"
