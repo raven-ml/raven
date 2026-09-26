@@ -366,6 +366,23 @@ let () =
               equal (array int64)
                 (sparse 8 [ (3, 0x20001L); (4, 0x21001L) ])
                 (slice fx 0x11000 8));
+          test "failed table detachment retains its physical page" (fun () ->
+              let armed = ref false and clears = ref 0 in
+              let fx = make_fixture ~fail_clear:(fun () ->
+                  if !armed then incr clears;
+                  !armed && !clears = 2) () in
+              ignore (Memory.map_range fx.mm ~vaddr:0x3000 ~size:0x1000
+                [(0x20000, 0x1000)] Memory.Phys ());
+              let tables = Memory.page_tables fx.mm ~vaddr:0x3000 ~size:0x1000 in
+              let child = (List.hd (List.rev tables)).paddr in
+              armed := true;
+              raises (Failure "page clear failed") (fun () ->
+                  Memory.unmap_range fx.mm ~vaddr:0x3000 ~size:0x1000);
+              equal int 2 !clears;
+              let next = Memory.palloc fx.mm 0x1000 ~zero:false () in
+              is_true ~msg:(Printf.sprintf
+                "uncertain child table at 0x%x must not be reused as 0x%x" child next)
+                (next <> child));
           test "keeps page tables that still hold mappings" (fun () ->
               let fx = make_fixture () in
               let (_ : Memory.virt_mapping) =

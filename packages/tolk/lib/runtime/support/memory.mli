@@ -201,7 +201,8 @@ val map_range :
 
 val unmap_range : 'pt t -> vaddr:int -> size:int -> unit
 (** [unmap_range t ~vaddr ~size] invalidates every entry mapping the
-    range and frees page tables that become empty.
+    range and frees page tables that become empty. An empty table is released
+    only after its parent entry has been successfully invalidated.
 
     Raises [Invalid_argument] if part of the range is not mapped. *)
 

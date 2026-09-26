@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- PCI page-table teardown retains an empty child table if clearing its
+  parent entry fails, preventing physical memory reuse while the device
+  may still reach that table.
+
 - Symbolic shapes survive staged-storage cleanup and multi-device view
   movement. Empty reductions retain their identities, and reused padded
   materializations preserve the source extent and offset.

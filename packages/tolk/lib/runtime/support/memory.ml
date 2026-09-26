@@ -205,8 +205,8 @@ let try_free_pt ctx =
            i >= cnt || ((not (ops.valid pt i)) && all_invalid (i + 1))
          in
          all_invalid 0 ->
-      pfree mm (ops.paddr pt) ~ptable:true ();
       ops.set_entry parent_pt ~idx:parent_idx ~paddr:0x0 ~valid:false ();
+      pfree mm (ops.paddr pt) ~ptable:true ();
       true
   | _ -> false
 

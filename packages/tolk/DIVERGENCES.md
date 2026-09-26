@@ -394,8 +394,8 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   Borrowed host mappings remain owned by the caller. Consumers:
   allocation retries and long-lived accelerator sessions. Coverage:
   `test_memory` allocation, zeroing, entry-write and flush failures, including
-  adjacent mappings, precreated tables and source retention after failed import
-  rollback; `test_amd_system` covers reverse
+  adjacent mappings, precreated tables, failed parent detachment and source
+  retention after failed import rollback; `test_amd_system` covers reverse
   rollback order, acquisition failures, cleanup failures, descriptor release,
   PCI claim retries and buffer finalizers after successful or failed queue retirement;
   `test_nv_tables` covers 570/580/610 unregister layouts; `test_amd_amdev`
