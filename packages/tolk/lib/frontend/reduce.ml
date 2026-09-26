@@ -15,7 +15,8 @@ module T = Tensor
 
 (* Reduction is not allowed over a provably size-one axis: those axes are
    dropped by reshape instead. A symbolic axis whose size cannot be shown to
-   be one is reduced. *)
+   be one is reduced. A float sum with nothing left to reduce still adds its
+   +0 start: a sum of -0 is +0. *)
 let rop t op axis =
   let sh = T.symbolic_shape t in
   let axis = List.sort_uniq compare axis in
@@ -27,6 +28,8 @@ let rop t op axis =
   let ret =
     if reduce_axis <> [] then
       T.of_uop (U.reduce_axis ~src:(T.uop t) ~op ~axes:reduce_axis)
+    else if op = Ops.Add && D.is_float (T.dtype t) then
+      Elementwise.add t (T.f 0.0)
     else t
   in
   if axis <> reduce_axis then

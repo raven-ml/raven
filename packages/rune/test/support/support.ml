@@ -542,6 +542,24 @@ let check_max_nan ?devices () =
     (fun x -> Nx.clamp ~min:(-1.) ~max:1. x)
     [| nan; -0.; 1.; -1.; 3.; -3. |]
 
+(* A zero's sign survives negation, complementary selects and small sums, as
+   eager's does: -(x + 3) at x = -3 is -0, and a sum of -0s is +0. *)
+let check_signed_zeros ?devices () =
+  let check name f rows = check_same_bits ?devices name f (vec32 rows) in
+  check "-(x + 3)" (fun x -> Nx.neg (Nx.add_s x 3.)) [| -3.; 1. |];
+  check "-(x + -x)" (fun x -> Nx.neg (Nx.add x (Nx.neg x))) [| 2.; -0. |];
+  check "c ? x : 0 + c ? 0 : y"
+    (fun x ->
+      let c = Nx.less_s x 1. in
+      Nx.add
+        (Nx.where c x (Nx.zeros_like x))
+        (Nx.where c (Nx.zeros_like x) (Nx.mul_s x 2.)))
+    [| -0.; 3. |];
+  check "sum of 4 -0" (fun x -> Nx.sum x) [| -0.; -0.; -0.; -0. |];
+  check "sum of 1 -0" (fun x -> Nx.sum x) [| -0. |];
+  check "mean of 4 -0" (fun x -> Nx.mean x) [| -0.; -0.; -0.; -0. |];
+  check "cumsum of 4 -0" (fun x -> Nx.cumsum ~axis:0 x) [| -0.; -0.; -0.; -0. |]
+
 (* Integer arithmetic wraps at its dtype's width before a comparison reads it,
    as eager's does: uint8 0 - 1 is 255, int8 127 + 1 is -128, and uint16 256 *
    256 is 0. *)

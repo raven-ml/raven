@@ -4428,6 +4428,7 @@ let tests =
         test "ordered comparisons are false at NaN"
           (check_nan_comparisons ?devices:None);
         test "max propagates NaN" (check_max_nan ?devices:None);
+        test "zeros keep their sign" (check_signed_zeros ?devices:None);
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "a compiled float8 bitcast is refused"

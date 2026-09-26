@@ -901,6 +901,8 @@ let tests =
           (check_nan_comparisons ~devices:[ Rune.device "METAL" ]);
         test "max propagates NaN"
           (check_max_nan ~devices:[ Rune.device "METAL" ]);
+        test "zeros keep their sign"
+          (check_signed_zeros ~devices:[ Rune.device "METAL" ]);
         test "integer comparisons read wrapped values"
           (check_wrapping_comparisons ~devices:[ Rune.device "METAL" ]);
         test "folded integer constants wrap"

@@ -432,6 +432,18 @@ let reduce_fold op = function
   | first :: rest ->
       List.fold_left (fun a x -> U.alu_binary ~op ~lhs:a ~rhs:x) first rest
 
+(* The elements a horizontal reduce over the leading [num_axes] axes of [src]
+   combines, in order. *)
+let horizontal_lanes src num_axes =
+  let rec product = function
+    | 0 -> [ [] ]
+    | n ->
+        let dim = List.nth (U.max_shape src) (num_axes - n) in
+        List.concat
+          (List.init dim (fun i -> List.map (fun idx -> int_ i :: idx) (product (n - 1))))
+  in
+  List.map (fun idxs -> U.index ~ptr:src ~idxs ()) (product num_axes)
+
 (* fix group for reduce: split grouped reduces into a local buffer written by the
    non-grouped reduces, then a final reduce over the group loops. *)
 let range_kind_is kind r =
@@ -537,8 +549,7 @@ let reduce_ranges_to_acc ctx node =
       in
       let acc_initted = U.after ~src:acc ~deps:(acc_init :: reduce_range) in
       let inp =
-        if num_axes <> 0 then
-          reduce_with_num_axes ~src ~ranges:[] ~op ~num_axes ~dtype
+        if num_axes <> 0 then reduce_fold op (horizontal_lanes src num_axes)
         else src
       in
       let acc_out =
@@ -552,18 +563,19 @@ let reduce_ranges_to_acc ctx node =
       Some (U.after ~src:acc ~deps:[ acc_out ])
   | _ -> None
 
+(* A reduce with no loop left folds its lanes. A float sum starts from its +0
+   identity, as a sum does: without it a sum of -0 would be -0. *)
 let expand_horizontal_reduce node =
   match U.as_reduce node with
   | Some { src; ranges = []; op; num_axes } ->
-      let rec product = function
-        | 0 -> [ [] ]
-        | n ->
-            let dim = List.nth (U.max_shape src) (num_axes - n) in
-            List.concat
-              (List.init dim (fun i -> List.map (fun idx -> int_ i :: idx) (product (n - 1))))
+      let dtype = U.dtype node in
+      let lanes = horizontal_lanes src num_axes in
+      let lanes =
+        if op = Ops.Add && Dtype.is_float dtype then
+          U.const (identity_element op dtype) :: lanes
+        else lanes
       in
-      let vals = List.map (fun idxs -> U.index ~ptr:src ~idxs ()) (product num_axes) in
-      Some (reduce_fold op vals)
+      Some (reduce_fold op lanes)
   | Some _ | None -> None
 
 (* Merge [End] nodes sharing the same ranges and nesting scope (created by

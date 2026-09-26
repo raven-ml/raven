@@ -1644,11 +1644,14 @@ let symbolic : Upat.Pattern_matcher.t =
          Some Uop.O.(y + merged));
 
     (* c.where(t, 0) + c.where(0, f) -> c.where(t, f): the branches are
-       complementary, so exactly one contributes. *)
+       complementary, so exactly one contributes. At float only with -0 zeros:
+       t + (+0) is +0 at t = -0. *)
     (let c = var "c" and t = var "t" and f = var "f" in
      let z0 = cvar ~name:"z0" () and z1 = cvar ~name:"z1" () in
      O.(where c t z0 + where c z1 f) => fun bs ->
-       if is_zero_const (bs $ "z0") && is_zero_const (bs $ "z1")
+       let z0 = bs $ "z0" and z1 = bs $ "z1" in
+       if is_zero_const z0 && is_zero_const z1
+          && (exact_algebra (bs $ "t") || (is_neg_zero z0 && is_neg_zero z1))
        then Some (Uop.O.where (bs $ "c") (bs $ "t") (bs $ "f"))
        else None);
 
@@ -1688,13 +1691,18 @@ let symbolic : Upat.Pattern_matcher.t =
 
     (* -1 * (x + c) -> x*-1 + c*-1. Distributing as a multiply (not a NEG)
        lets a scaled operand's constant factor fold through the two-stage
-       associative rule, so the un-scaled term stays the shared node. *)
+       associative rule, so the un-scaled term stays the shared node. Not at
+       float: -(x + c) of a zero sum is -0, and (-x) + (-c) is +0. *)
     (let x = var "x" and c = cvar ~name:"c" () in
      O.(neg_one * (x + c)) => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
-       let neg u = Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1)) in
-       let nx = neg x and nc = neg c in
-       Some Uop.O.(nx + nc));
+       if not (exact_algebra x) then None
+       else
+         let neg u =
+           Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1))
+         in
+         let nx = neg x and nc = neg c in
+         Some Uop.O.(nx + nc));
 
     (* cond.not.where(t, f) -> cond.where(f, t) when f is not Invalid. *)
     (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
@@ -2303,17 +2311,19 @@ let sym : Upat.Pattern_matcher.t =
          in
          Some (Uop.replace root ~src:(Array.of_list flat) ()));
 
-    (* -1 * (x + y) -> x*-1 + y*-1 (general, on all numeric types). As a
-       multiply rather than a NEG, a scaled operand's constant factor folds
-       through the two-stage associative rule, keeping the un-scaled term
-       shared. *)
+    (* -1 * (x + y) -> x*-1 + y*-1. As a multiply rather than a NEG, a scaled
+       operand's constant factor folds through the two-stage associative rule,
+       keeping the un-scaled term shared. Not at float: -(x + y) of a zero sum
+       is -0, and (-x) + (-y) is +0. *)
     (rewrite2 (fun x y -> O.(neg_one * (x + y)))
        (fun x y ->
-         let neg u =
-           Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1))
-         in
-         let nx = neg x and ny = neg y in
-         Some Uop.O.(nx + ny)));
+         if not (exact_algebra x) then None
+         else
+           let neg u =
+             Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1))
+           in
+           let nx = neg x and ny = neg y in
+           Some Uop.O.(nx + ny)));
 
     (* (x + y) * c  ->  x*c + y*c  (int only; floats hit NaN issues). *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)

@@ -167,6 +167,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled float sum of -0s, the negation of a zero sum, and `c ? t : 0 +
+  c ? 0 : f` keep eager's sign of zero: a sum of -0s was -0 and `-(x + 3)` at
+  x = -3 was +0.
 - A compiled `Nx.maximum` or `Nx.minimum` propagates NaN from either operand
   and keeps eager's second operand on a tie: `max 3 nan` was 3 and
   `max (-0) (+0)` was -0.

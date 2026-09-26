@@ -346,6 +346,20 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   on the CPU. Coverage: rune `test_jit` and `test_jit_metal` "max propagates
   NaN". Remove this ruling when upstream's max propagates NaN.
 
+- **A float zero keeps its sign through negation, selects and sums.** The
+  reference distributes `-(x + y)` into `(-x) + (-y)`, merges
+  `c ? t : 0 + c ? 0 : f` into `c ? t : f`, and folds a sum's `+0` start
+  away when the reduction is unrolled or over a size-one axis. Each loses a
+  zero's sign: `-(x + 3)` at x = -3 is -0 (compiled +0), `t + 0` at t = -0
+  is +0 (compiled -0), and a sum of -0s is +0 (compiled -0). Tolk
+  distributes the negation at integer and boolean dtypes only, merges the
+  selects at float only with -0 zeros, and starts a float sum from +0 where
+  no accumulator does: a reduce left without a loop folds its lanes onto +0
+  (a partial sum nested inside an accumulating loop carries it too, one add
+  per iteration), and a sum with nothing left to reduce adds +0. Coverage:
+  rune `test_jit` and `test_jit_metal` "zeros keep their sign". Remove this
+  ruling when upstream keeps these signs.
+
 - **A fixed-width integer constant holds its dtype's value.** The reference
   keeps integer constants exact until emission: folding runs with
   `truncate_output=False`, and a cast of a weak literal is stripped whatever
