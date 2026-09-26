@@ -17,7 +17,9 @@
    Run the Python companion against an explicit tinygrad checkout for a
    like-for-like CPU comparison. Repeat alternating runs on a quiet host.
    The backend defaults to CPU unless [DEV] selects another device; its
-   name is recorded in every row. *)
+   name is recorded in every row. Allocation deltas cover the calling domain
+   and include timing-loop overhead; storage bytes count live logical buffers,
+   not native allocator reservations or backend object handles. *)
 
 module Dtype = Tolk_uop.Dtype
 module Dev = Tolk.Device
@@ -44,6 +46,17 @@ let target_s = 1.5
 let min_k = 5
 let max_k = 5000
 
+type timing = {
+  median_ns : float;
+  min_ns : float;
+  k : int;
+  allocated_words : float;
+  promoted_words : float;
+  major_words : float;
+  storage_bytes_before : int;
+  storage_bytes_after : int;
+}
+
 let time_replay call =
   let est =
     let t0 = now () in
@@ -54,14 +67,26 @@ let time_replay call =
     int_of_float (Float.max 1. (target_s /. Float.max est 1e-9))
     |> max min_k |> min max_k
   in
-  let samples =
-    Array.init k (fun _ ->
-        let t0 = now () in
-        call ();
-        Int64.to_float (Int64.sub (now ()) t0))
-  in
+  let samples = Array.make k 0. in
+  let storage_bytes_before = Tolk.Helpers.Global_counters.mem_used () in
+  let minor, promoted, major = Gc.counters () in
+  for i = 0 to k - 1 do
+    let t0 = now () in
+    call ();
+    samples.(i) <- Int64.to_float (Int64.sub (now ()) t0)
+  done;
+  let minor_after, promoted_after, major_after = Gc.counters () in
+  let storage_bytes_after = Tolk.Helpers.Global_counters.mem_used () in
   Array.sort Float.compare samples;
-  (samples.(k / 2), samples.(0), k)
+  let per_call words = words /. float_of_int k in
+  {
+    median_ns = samples.(k / 2); min_ns = samples.(0); k;
+    allocated_words = per_call
+        ((minor_after -. minor) +. (major_after -. major) -. (promoted_after -. promoted));
+    promoted_words = per_call (promoted_after -. promoted);
+    major_words = per_call (major_after -. major);
+    storage_bytes_before; storage_bytes_after;
+  }
 
 (* A replayable compute workload: build the graph from realized inputs, warm
    and capture through the JIT, then time execution-only replays. *)
@@ -98,9 +123,7 @@ type row = {
   size : string;
   unit_ : string;
   amount : float;  (* flops or bytes moved per replay *)
-  median_ns : float;
-  min_ns : float;
-  k : int;
+  timing : timing;
 }
 
 (* Throughput is [amount /. ns]: one flop per ns is a GFLOP/s, one byte per ns
@@ -109,7 +132,7 @@ let per_ns amount ns = amount /. ns
 
 let matmul_row n =
   let a = input [ n; n ] and b = input [ n; n ] in
-  let median_ns, min_ns, k =
+  let timing =
     time_compute ~build:(fun ins -> Op.matmul ins.(0) ins.(1)) [| a; b |]
   in
   let flops = 2.0 *. float_of_int n *. float_of_int n *. float_of_int n in
@@ -118,14 +141,12 @@ let matmul_row n =
     size = string_of_int n;
     unit_ = "GFLOP/s";
     amount = flops;
-    median_ns;
-    min_ns;
-    k;
+    timing;
   }
 
 let elementwise_row n =
   let a = input [ n ] and b = input [ n ] and c = input [ n ] in
-  let median_ns, min_ns, k =
+  let timing =
     time_compute
       ~build:(fun ins -> El.add ins.(0) (El.mul ins.(1) ins.(2)))
       [| a; b; c |]
@@ -136,14 +157,12 @@ let elementwise_row n =
     size = "16M";
     unit_ = "GB/s";
     amount = bytes;
-    median_ns;
-    min_ns;
-    k;
+    timing;
   }
 
 let reduce_row n =
   let x = input [ n ] in
-  let median_ns, min_ns, k =
+  let timing =
     time_compute ~build:(fun ins -> Rd.sum ins.(0)) [| x |]
   in
   let bytes = float_of_int n *. float_of_int f32_bytes in
@@ -152,22 +171,18 @@ let reduce_row n =
     size = "16M";
     unit_ = "GB/s";
     amount = bytes;
-    median_ns;
-    min_ns;
-    k;
+    timing;
   }
 
 let copy_row n =
-  let median_ns, min_ns, k = time_copy n in
+  let timing = time_copy n in
   let bytes = float_of_int n *. float_of_int f32_bytes in
   {
     bench = "copy";
     size = "16M";
     unit_ = "GB/s";
     amount = bytes;
-    median_ns;
-    min_ns;
-    k;
+    timing;
   }
 
 (* Output *)
@@ -179,9 +194,11 @@ let write_file path contents =
 
 let row_json backend r =
   Printf.sprintf
-    {|{"bench":"%s","size":"%s","backend":"%s","unit":"%s","median":%.6f,"peak":%.6f,"k":%d}|}
-    r.bench r.size backend r.unit_ (per_ns r.amount r.median_ns)
-    (per_ns r.amount r.min_ns) r.k
+    {|{"bench":"%s","size":"%s","backend":"%s","unit":"%s","median":%.6f,"peak":%.6f,"k":%d,"allocated_words_per_replay":%.0f,"promoted_words_per_replay":%.0f,"major_words_per_replay":%.0f,"storage_bytes_before":%d,"storage_bytes_after":%d}|}
+    r.bench r.size backend r.unit_ (per_ns r.amount r.timing.median_ns)
+    (per_ns r.amount r.timing.min_ns) r.timing.k
+    r.timing.allocated_words r.timing.promoted_words r.timing.major_words
+    r.timing.storage_bytes_before r.timing.storage_bytes_after
 
 let print_table backend rows =
   Printf.printf "\ntolk runtime throughput (backend %s)\n" backend;
@@ -190,9 +207,9 @@ let print_table backend rows =
   List.iter
     (fun r ->
       Printf.printf "%-12s  %-6s  %10.2f  %10.2f  %8s  %6d\n" r.bench r.size
-        (per_ns r.amount r.median_ns)
-        (per_ns r.amount r.min_ns)
-        r.unit_ r.k)
+        (per_ns r.amount r.timing.median_ns)
+        (per_ns r.amount r.timing.min_ns)
+        r.unit_ r.timing.k)
     rows
 
 let () =

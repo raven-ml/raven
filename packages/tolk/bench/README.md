@@ -92,7 +92,7 @@ Three pieces, joined on `(workload, size, stage)`:
 OUT=/tmp/tolk-cmp && mkdir -p "$OUT"
 dune build packages/tolk/bench/compare/bench_compare.exe
 SCACHE=0 CCACHE=0 ./_build/default/packages/tolk/bench/compare/bench_compare.exe "$OUT"
-uv run packages/tolk/bench/compare/bench_compare.py "$OUT"
+uv run packages/tolk/bench/compare/bench_compare.py "$OUT" --reference PATH_TO_REFERENCE
 uv run packages/tolk/bench/compare/report.py "$OUT"
 ```
 
@@ -120,10 +120,14 @@ runtime gap would mean changing compiler semantics, which is out of scope.
 ```
 dune build packages/tolk/bench/runtime/bench_runtime.exe
 ./_build/default/packages/tolk/bench/runtime/bench_runtime.exe
-uv run packages/tolk/bench/runtime/bench_runtime.py
+uv run packages/tolk/bench/runtime/bench_runtime.py --reference PATH_TO_REFERENCE
 ```
 
-The backend defaults to CPU; set `DEV=METAL` (etc.) to run on another device.
+The backend defaults to CPU; set the same `DEV=METAL` (etc.) for both runners
+to compare another device. JSON rows include logical storage bytes before and
+after replay. The OCaml runner also records allocated and promoted words per
+replay in the calling domain, including timing-loop overhead. These counters
+do not report native allocator reservations or backend handle counts.
 
 ## Baseline and blessing
 

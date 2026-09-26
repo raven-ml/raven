@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Reference-side compile-pipeline timing for the comparative runner.
 
-Builds the same three workload graphs as the OCaml side (see graphs.ml —
+Builds the same workload graphs as the OCaml side (see graphs.ml —
 the UOp construction is mirrored op for op) and times the counterpart of
 each tolk pipeline stage the same way: warm once, then median and min of N
 samples on a monotonic clock in one warm process. Import cost is excluded.
 
 Stage mapping to the tolk side:
   schedule_linear   tolk rangeify + schedule combined
-                    (create_schedule(get_kernel_graph(sink)) + memory plan)
+                    (create_schedule(get_kernel_graph(prepare_rangeify(sink))) + memory plan)
   codegen           per-kernel full_rewrite_to_sink
   linearize         per-kernel linearize + line_rewrite cleanups
   render            per-kernel renderer.render
@@ -18,17 +18,29 @@ Writes <out>/tinygrad.json (timing rows) and <out>/tinygrad.verify.json
 (per-workload kernel count and first-kernel source) for report.py to join
 and cross-check against the tolk side.
 
-Run from the repo root:  uv run packages/tolk/bench/compare/bench_compare.py
+Run from the repo root:
+  uv run packages/tolk/bench/compare/bench_compare.py OUT --reference PATH
 """
 
+import argparse
+import hashlib
 import math
 import os
 import platform
+import subprocess
+from pathlib import Path
 import sys
 import time
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "..", "..", "..", "_tinygrad"))
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("out_dir", nargs="?", default=".")
+parser.add_argument("--reference", type=Path, required=True)
+args = parser.parse_args()
+reference = args.reference.resolve()
+reference_package = (reference / "tinygrad").resolve()
+if not (reference_package / "__init__.py").is_file():
+    parser.error("--reference must contain the tinygrad Python package")
+sys.path.insert(0, str(reference))
 
 # Read once at import in tinygrad: disable every cache so repeated passes and
 # the stage-7 compile measure cold work, and strip ANSI from kernel names so
@@ -42,8 +54,13 @@ os.environ.setdefault("NO_COLOR", "1")
 
 import json  # noqa: E402
 
+import tinygrad  # noqa: E402
+
+if Path(tinygrad.__file__).resolve().parent != reference_package:
+    raise RuntimeError("imported tinygrad does not belong to --reference")
+
 from tinygrad.codegen import (  # noqa: E402
-    full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups,
+    full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups, pm_alloc_to_buf,
 )
 from tinygrad.codegen.late.linearizer import linearize  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
@@ -52,6 +69,7 @@ from tinygrad.renderer.cstyle import ClangRenderer  # noqa: E402
 from tinygrad.schedule import create_schedule  # noqa: E402
 from tinygrad.schedule.memory import memory_plan_rewrite  # noqa: E402
 from tinygrad.schedule.rangeify import get_kernel_graph  # noqa: E402
+from tinygrad.schedule.prepare import prepare_rangeify  # noqa: E402
 from tinygrad.uop.ops import (  # noqa: E402
     KernelInfo, Ops, UOp, shape_to_shape_arg,
 )
@@ -79,7 +97,7 @@ def mk_param(slot, *shape):
 
 
 def wrap_sink(*srcs):
-    contigs = [UOp(Ops.CONTIGUOUS, s.dtype, (s,)) for s in srcs]
+    contigs = [s.contiguous() for s in srcs]
     return UOp.sink(*contigs)
 
 
@@ -96,11 +114,11 @@ def build_reduce():
 
 
 def _reshape(x, shape):
-    return UOp(Ops.RESHAPE, dtypes.float32, (x, shape_to_shape_arg(shape)))
+    return UOp(Ops.RESHAPE, src=(x, shape_to_shape_arg(shape)))
 
 
 def _transpose(x):
-    return UOp(Ops.PERMUTE, dtypes.float32, (x,), (1, 0))
+    return UOp(Ops.PERMUTE, src=(x,), arg=(1, 0))
 
 
 def _contract(ae, be, m, n, k):
@@ -145,13 +163,13 @@ def build_attention():
     s, d = ATTN_SEQ, ATTN_DIM
 
     def reshape(x, shape):
-        return UOp(Ops.RESHAPE, dtypes.float32, (x, shape_to_shape_arg(shape)))
+        return UOp(Ops.RESHAPE, src=(x, shape_to_shape_arg(shape)))
 
     def broadcast(x, shape):
         return x.expand(shape)
 
     def bcast(val, shape):
-        return UOp.const(dtypes.float32, val, shape=shape)
+        return UOp.const(val, dtypes.float32).reshape((1,) * len(shape)).expand(shape)
 
     q = mk_param(0, s, d)
     k = mk_param(1, s, d)
@@ -186,7 +204,7 @@ def build_lorenz(n_steps):
     w = LORENZ_WIDTH
 
     def bcast(v):
-        return UOp.const(dtypes.float32, v, shape=(w,))
+        return UOp.const(v, dtypes.float32).reshape((1,)).expand((w,))
 
     sigma, rho, beta, dt = bcast(10.0), bcast(28.0), bcast(2.5), bcast(0.0625)
     x = mk_param(0, w)
@@ -226,7 +244,7 @@ def build_rnn_grad(horizon):
     h = [h0]
     for x in xs:
         h.append(matmul(x, w_in, b, d, d) + matmul(h[-1], w_rec, b, d, d))
-    two = UOp.const(dtypes.float32, 2.0, shape=(b, d))
+    two = UOp.const(2.0, dtypes.float32).reshape((1, 1)).expand((b, d))
     g = [None] * (horizon + 1)
     g[horizon] = two * h[horizon]
     for t in range(horizon - 1, -1, -1):
@@ -264,17 +282,17 @@ WORKLOADS = [
 # Pipeline seams.
 
 def extract_kernels(sink):
-    kg = get_kernel_graph(sink)
+    kg = get_kernel_graph(prepare_rangeify(sink))
     return [u.src[0] for u in kg.toposort()
             if u.op is Ops.CALL and isinstance(u.src[0].arg, KernelInfo)]
 
 
 def schedule_linear(sink):
-    return memory_plan_rewrite(create_schedule(get_kernel_graph(sink)))
+    return memory_plan_rewrite(create_schedule(get_kernel_graph(prepare_rangeify(sink))))
 
 
 def linearize_kernel(processed):
-    return line_rewrite(linearize(processed), pm_linearize_cleanups)
+    return line_rewrite(linearize(processed), pm_linearize_cleanups + pm_alloc_to_buf)
 
 
 def render_kernel(ren, kernel):
@@ -341,19 +359,43 @@ def measure(name, size, build):
 
 
 def main():
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+    out_dir = args.out_dir
     rows = []
     verify = {}
+    revision = (subprocess.check_output(
+        ["git", "-C", str(reference), "rev-parse", "HEAD"], text=True).strip()
+        if (reference / ".git").exists() else None)
+    digest = hashlib.sha256()
+    for source in sorted(reference_package.rglob("*.py")):
+        digest.update(str(source.relative_to(reference)).encode() + b"\0")
+        digest.update(source.read_bytes() + b"\0")
+    metadata = {
+        "reference": str(reference), "imported_package": str(reference_package),
+        "revision": revision, "python_source_sha256": digest.hexdigest(),
+        "python": sys.version, "render_target": str(REN.target),
+        "compile_target": str(DEVICE_REN.target),
+        "n_stage": N_STAGE, "n_compile": N_COMPILE, "warmups": 1,
+        "environment": {name: os.environ.get(name) for name in
+                        ("SCACHE", "CACHELEVEL", "CCACHE", "BEAM",
+                         "IGNORE_BEAM_CACHE", "NO_COLOR", "PARALLEL")},
+    }
+    Path(out_dir, "tinygrad.metadata.json").write_text(
+        json.dumps(metadata, indent=2) + "\n")
+
+    def write_results():
+        for filename, data in (("tinygrad.json", rows), ("tinygrad.verify.json", verify)):
+            with open(os.path.join(out_dir, filename), "w") as f:
+                json.dump(data, f, indent=2)
+                f.write("\n")
+
+    write_results()
     for name, size, build in WORKLOADS:
+        print(f"measuring {name}/{size}", flush=True)
         r, (vname, v) = measure(name, size, build)
         rows.extend(r)
         verify[f"{vname}/{size}"] = v
-    with open(os.path.join(out_dir, "tinygrad.json"), "w") as f:
-        json.dump(rows, f, indent=2)
-        f.write("\n")
-    with open(os.path.join(out_dir, "tinygrad.verify.json"), "w") as f:
-        json.dump(verify, f, indent=2)
-        f.write("\n")
+        # Keep completed workloads available if a later native compile fails.
+        write_results()
     print(f"wrote {len(rows)} rows for {len(WORKLOADS)} workloads "
           f"to {out_dir}/tinygrad.json")
 

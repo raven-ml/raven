@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Compare execution-only CPU throughput with an explicit tinygrad checkout.
+"""Compare execution-only throughput with an explicit tinygrad checkout.
 
-Run the OCaml executable first, then:
-  python packages/tolk/bench/runtime/bench_runtime.py OUT --reference _tinygrad_target
+Run either companion first, using the same DEV for both:
+  python packages/tolk/bench/runtime/bench_runtime.py OUT --reference PATH_TO_REFERENCE
 
 Both sides use realized zero-filled inputs, two JIT warmup/capture calls and
-adaptive replay timing. Compilation and allocation are outside the timed
-region. Repeat alternating runs on a quiet host before drawing conclusions.
+adaptive replay timing. Compilation and input-buffer allocation are outside
+the timed region. Repeat alternating runs on a quiet host before drawing conclusions.
 """
 
 import argparse
@@ -21,20 +21,29 @@ import time
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("out_dir", nargs="?", default=".")
-parser.add_argument("--reference", type=Path,
-                    default=Path(__file__).resolve().parents[4] / "_tinygrad")
+parser.add_argument("--reference", type=Path, required=True)
 args = parser.parse_args()
-sys.path.insert(0, str(args.reference.resolve()))
+reference = args.reference.resolve()
+reference_package = (reference / "tinygrad").resolve()
+if not (reference_package / "__init__.py").is_file():
+    parser.error("--reference must contain the tinygrad Python package")
+sys.path.insert(0, str(reference))
 
-# Force the reference onto CPU so the context column matches the tolk CPU
-# default, and silence ANSI so nothing leaks into stdout.
+# Match the OCaml runner: CPU by default, or the explicitly selected backend.
 os.environ.setdefault("DEV", "CPU")
 os.environ.setdefault("NO_COLOR", "1")
+
+import tinygrad  # noqa: E402
+
+if Path(tinygrad.__file__).resolve().parent != reference_package:
+    raise RuntimeError("imported tinygrad does not belong to --reference")
 
 from tinygrad import Device, Tensor, TinyJit  # noqa: E402
 from tinygrad.device import Buffer  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
+from tinygrad.helpers import GlobalCounters  # noqa: E402
 
+BACKEND = Device.DEFAULT
 F32_BYTES = 4
 BUF_ELEMS = 16 * 1024 * 1024
 TARGET_S = 1.5
@@ -43,7 +52,7 @@ MAX_K = 5000
 
 
 def sync():
-    Device["CPU"].synchronize()
+    Device[BACKEND].synchronize()
 
 
 def time_replay(call):
@@ -55,12 +64,14 @@ def time_replay(call):
     k = int(max(1.0, TARGET_S / max(est_s, 1e-9)))
     k = max(MIN_K, min(MAX_K, k))
     samples = []
+    storage_before = GlobalCounters.mem_used
     for _ in range(k):
         t0 = time.perf_counter_ns()
         call()
         samples.append(float(time.perf_counter_ns() - t0))
+    storage_after = GlobalCounters.mem_used
     samples.sort()
-    return samples[k // 2], samples[0], k
+    return samples[k // 2], samples[0], k, storage_before, storage_after
 
 
 def time_compute(build, inputs):
@@ -78,40 +89,43 @@ def time_compute(build, inputs):
 
 def input_tensor(shape):
     return Tensor(bytes(math.prod(shape) * F32_BYTES), dtype=dtypes.float32,
-                  device="CPU").reshape(shape).realize()
+                  device=BACKEND).reshape(shape).realize()
 
 
 def matmul_bench(n):
     a = input_tensor((n, n))
     b = input_tensor((n, n))
-    median, minimum, k = time_compute(lambda a, b: (a @ b).realize(), (a, b))
+    median, minimum, k, storage_before, storage_after = time_compute(lambda a, b: (a @ b).realize(), (a, b))
     flops = 2.0 * n * n * n
     return {"bench": "matmul", "size": str(n), "unit": "GFLOP/s",
-            "amount": flops, "median_ns": median, "min_ns": minimum, "k": k}
+            "amount": flops, "median_ns": median, "min_ns": minimum, "k": k,
+            "storage_bytes_before": storage_before, "storage_bytes_after": storage_after}
 
 
 def elementwise_bench(n):
     a = input_tensor((n,))
     b = input_tensor((n,))
     c = input_tensor((n,))
-    median, minimum, k = time_compute(
+    median, minimum, k, storage_before, storage_after = time_compute(
         lambda a, b, c: (a + b * c).realize(), (a, b, c))
     return {"bench": "elementwise", "size": "16M", "unit": "GB/s",
             "amount": 4.0 * n * F32_BYTES,
-            "median_ns": median, "min_ns": minimum, "k": k}
+            "median_ns": median, "min_ns": minimum, "k": k,
+            "storage_bytes_before": storage_before, "storage_bytes_after": storage_after}
 
 
 def reduce_bench(n):
     x = input_tensor((n,))
-    median, minimum, k = time_compute(lambda x: x.sum().realize(), (x,))
+    median, minimum, k, storage_before, storage_after = time_compute(lambda x: x.sum().realize(), (x,))
     return {"bench": "reduce", "size": "16M", "unit": "GB/s",
             "amount": float(n) * F32_BYTES,
-            "median_ns": median, "min_ns": minimum, "k": k}
+            "median_ns": median, "min_ns": minimum, "k": k,
+            "storage_bytes_before": storage_before, "storage_bytes_after": storage_after}
 
 
 def copy_bench(n):
-    dev = Device["CPU"]
-    buf = Buffer("CPU", n, dtypes.float32).allocate()
+    dev = Device[BACKEND]
+    buf = Buffer(BACKEND, n, dtypes.float32).allocate()
     host = memoryview(bytearray(n * F32_BYTES))
 
     def call():
@@ -119,10 +133,11 @@ def copy_bench(n):
         dev.synchronize()
 
     call()
-    median, minimum, k = time_replay(call)
+    median, minimum, k, storage_before, storage_after = time_replay(call)
     return {"bench": "copy", "size": "16M", "unit": "GB/s",
             "amount": float(n) * F32_BYTES,
-            "median_ns": median, "min_ns": minimum, "k": k}
+            "median_ns": median, "min_ns": minimum, "k": k,
+            "storage_bytes_before": storage_before, "storage_bytes_after": storage_after}
 
 
 BENCHES = [
@@ -150,12 +165,11 @@ def run_reference():
 def main():
     out_dir = args.out_dir
 
-    with open(os.path.join(out_dir, "tolk_runtime.json")) as f:
-        tolk_rows = json.load(f)
+    tolk_file = Path(out_dir, "tolk_runtime.json")
+    tolk_rows = json.loads(tolk_file.read_text()) if tolk_file.exists() else []
 
-    if any(row["backend"] != "CPU" for row in tolk_rows):
-        raise ValueError("the reference CPU benchmark requires DEV=CPU on both sides")
-    reference = args.reference.resolve()
+    if any(row["backend"] != BACKEND for row in tolk_rows):
+        raise ValueError("both runtime benchmarks must use the same DEV backend")
     revision = (subprocess.check_output(
         ["git", "-C", str(reference), "rev-parse", "HEAD"], text=True).strip()
         if (reference / ".git").exists() else None)
@@ -164,11 +178,16 @@ def main():
         digest.update(str(source.relative_to(reference)).encode() + b"\0")
         digest.update(source.read_bytes() + b"\0")
     ref = run_reference()
-    provenance = {"reference": str(reference), "revision": revision,
+    provenance = {"reference": str(reference), "imported_package": str(reference_package),
+                  "revision": revision,
                   "python_source_sha256": digest.hexdigest(), "python": sys.version,
-                  "target": str(Device["CPU"].renderer.target),
+                  "target": str(Device[BACKEND].renderer.target),
                   "rows": list(ref.values())}
     Path(out_dir, "tinygrad_runtime.json").write_text(json.dumps(provenance, indent=2) + "\n")
+
+    if not tolk_rows:
+        print(f"wrote {len(ref)} reference rows for {BACKEND} to {out_dir}")
+        return
 
     header = ["bench", "size", "backend", "tolk", "tg", "unit"]
     table = []
@@ -184,7 +203,7 @@ def main():
             "unit": t["unit"],
         })
 
-    print(f"CPU execution-only throughput against tinygrad {revision or digest.hexdigest()}")
+    print(f"{BACKEND} execution-only throughput against tinygrad {revision or digest.hexdigest()}")
     rows = [header] + [[
         r["bench"], r["size"], r["backend"], f"{r['tolk']:.2f}",
         f"{r['tg']:.2f}" if r["tg"] is not None else "-", r["unit"],
