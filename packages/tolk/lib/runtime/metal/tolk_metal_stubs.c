@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <mach/mach_time.h>
 
 /* GPUStartTime and GPUEndTime use the host mach-time clock (Apple's
@@ -128,6 +129,34 @@ CAMLprim value caml_tolk_metal_buffer_contents(value v_buf) {
   CAMLparam1(v_buf);
   id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(v_buf);
   CAMLreturn(caml_copy_nativeint((intnat)[buf contents]));
+}
+
+/* A buffer over the pages that hold the [v_size] bytes at [v_ptr], without a
+   copy (Metal wraps page-aligned memory only), or 0 unless the device shares
+   memory with the host and Metal accepts the range. */
+CAMLprim value caml_tolk_metal_buffer_wrap(value v_device, value v_ptr,
+                                          value v_size) {
+  CAMLparam3(v_device, v_ptr, v_size);
+  @autoreleasepool {
+    id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
+    uintptr_t page = (uintptr_t)getpagesize();
+    uintptr_t ptr = (uintptr_t)Nativeint_val(v_ptr);
+    uintptr_t first = ptr & ~(page - 1);
+    uintptr_t last = (ptr + (uintptr_t)Long_val(v_size) + page - 1) & ~(page - 1);
+    id<MTLBuffer> buf = nil;
+    if ([device hasUnifiedMemory])
+      buf = [device newBufferWithBytesNoCopy:(void*)first
+                                      length:last - first
+                                     options:MTLResourceStorageModeShared
+                                 deallocator:nil];
+    CAMLreturn(caml_copy_nativeint((intnat)buf));
+  }
+}
+
+CAMLprim value caml_tolk_metal_has_unified_memory(value v_device) {
+  CAMLparam1(v_device);
+  id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
+  CAMLreturn(Val_bool([device hasUnifiedMemory]));
 }
 
 CAMLprim value caml_tolk_metal_buffer_free(value v_buf) {

@@ -121,4 +121,5 @@ let create ?aligned name =
         Device.Buffer.copyin buffer bytes;
         Some buffer
     | _ -> None in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize:(fun timeout -> ignore timeout; synchronize ()) ~bufferize ()
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize:(fun timeout -> ignore timeout; synchronize ())
+    ~shares_host_memory:true ~bufferize ()

@@ -150,6 +150,7 @@ type t = {
   id : int;
   name : string;
   peer_group : string;
+  shares_host_memory : bool;
   allocator : Allocator.packed;
   renderer_set : Renderer_set.t;
   runtime : runtime option;
@@ -221,7 +222,8 @@ let with_initialization name f =
           end))
 
 let make ~name ~allocator ~renderer_set ?runtime ~synchronize
-    ?invalidate_caches ?peer_group ?queue ?(bufferize = fun _ -> None)
+    ?invalidate_caches ?peer_group ?(shares_host_memory = false) ?queue
+    ?(bufferize = fun _ -> None)
     ?(initialize = fun _ -> ()) () =
   let queue = Option.map (fun (q : queue) -> {q with
       prepare = (fun () -> Storage.with_operation q.prepare);
@@ -232,7 +234,7 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
     }) queue in
   let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
   let device = { id = Atomic.fetch_and_add next_id 1;
-    name; peer_group; allocator; renderer_set; runtime; synchronize;
+    name; peer_group; shares_host_memory; allocator; renderer_set; runtime; synchronize;
     invalidate_caches_fn = invalidate_caches; queue; bufferize;
     program_buffers = Uop.Tbl.create 16; program_lock = Mutex.create ();
     synchronize_lock = Mutex.create (); pending_lock = Mutex.create ();
@@ -265,6 +267,9 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
 let id d = d.id
 let name d = d.name
 let peer_group d = d.peer_group
+(* No tinygrad counterpart: the reference copies every placement. rune borrows
+   a mapped file's pages on a device whose memory is the host's. *)
+let shares_host_memory d = d.shares_host_memory
 let renderer d = Renderer_set.select d.renderer_set
 let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
   Storage.with_operation (fun () ->

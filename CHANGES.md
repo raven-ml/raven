@@ -679,6 +679,11 @@ thread.
 
 ### Tolk (new)
 
+- A Metal kernel on a unified-memory device reads and writes a buffer of the
+  CPU device in place, through a no-copy Metal buffer over the pages that hold
+  it: Metal's allocator maps host storage, where binding one raised.
+  `Device.shares_host_memory` says whether a device's memory is the host's.
+
 - `Device.Buffer.borrow` wraps host memory as a buffer of the host device that
   keeps the memory's owner reachable until it and every mapping of it are
   released, and `Device.Buffer.ownership` tells such borrowed storage from

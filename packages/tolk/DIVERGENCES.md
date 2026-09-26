@@ -1216,3 +1216,25 @@ delete it rather than registering it.
   Coverage: `test_runtime_cpu` "borrowed storage is neither owned nor counted"
   and "a borrowed buffer keeps its source reachable". Reconsider when the
   runtime's buffers move into nx.device.
+
+- **Metal maps host memory without a copy** (`runtime/metal/tolk_metal.ml`
+  `Allocator.raw`'s `mapping`, `caml_tolk_metal_buffer_wrap`). The
+  reference's `MetalAllocator` has no `_map`: a safetensors file on the disk
+  device reaches Metal through `.to("METAL")`, one CPU copy into a new shared
+  buffer. On gpt-oss-20b that holds the 13.76 GB of weights twice (the file's
+  pages and the anonymous copy), and macOS compresses the fresh copy before
+  its first GPU use and decompresses it before each command buffer that
+  declares it (first calls of 2 to 18 s). On a unified-memory device tolk
+  fills the mapping seam CUDA, AMD and NV fill: `newBufferWithBytesNoCopy`
+  over the pages that hold a host allocation (Metal wraps page-aligned memory
+  only), viewed at the allocation's offset, registered as a queue resource
+  and released after synchronizing; any other source raises
+  `Mapping_unavailable`. Two wraps may share pages (observed on an M1 Max,
+  including under the debug layer and shader validation; Apple documents
+  neither way). `Device.shares_host_memory` (no counterpart) says whether a
+  device's memory is the host's, `hasUnifiedMemory` on Metal and true on the
+  CPU devices, since a mapping into a discrete GPU (CUDA, AMD, NV) reads
+  across the bus. Consumer: rune's placement, which borrows mapped files on
+  Metal and the CPU devices. Coverage: `test_runtime_metal` "Metal kernels map
+  borrowed host memory without copying". Reconsider if the reference gains a
+  Metal `_map`.

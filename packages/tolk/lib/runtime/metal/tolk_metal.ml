@@ -20,6 +20,12 @@ module Ffi = struct
   external buffer_alloc : nativeint -> int -> nativeint
     = "caml_tolk_metal_buffer_alloc"
 
+  external buffer_wrap : nativeint -> nativeint -> int -> nativeint
+    = "caml_tolk_metal_buffer_wrap"
+
+  external has_unified_memory : nativeint -> bool
+    = "caml_tolk_metal_has_unified_memory"
+
   external buffer_contents : nativeint -> nativeint = "caml_tolk_metal_buffer_contents"
 
   external buffer_free : nativeint -> unit = "caml_tolk_metal_buffer_free"
@@ -155,11 +161,39 @@ module Allocator = struct
         invalid_arg "Metal buffer view exceeds base buffer";
       Metal_buffer.{handle = buf.handle; size; offset = buf.offset + byte_offset}
     in
+    (* The tinygrad counterpart has no mapping: it copies host storage into a
+       Metal buffer. Where the GPU shares the host's memory, the pages that
+       hold host storage are wrapped in place instead, so a mapped file is not
+       held twice. Two wraps may share a page. *)
+    let map source =
+      let unavailable () =
+        raise (Tolk_uop.Storage.Mapping_unavailable
+            "Metal maps host memory on unified-memory devices only")
+      in
+      match Device.Buffer.host_addr source with
+      | None -> unavailable ()
+      | Some address ->
+          let size = Device.Buffer.nbytes source in
+          let handle = Ffi.buffer_wrap state.State.device address size in
+          if handle = 0n then unavailable ();
+          (try Ffi.hcq_resource state.State.context handle true
+           with exn -> Ffi.buffer_free handle; raise exn);
+          let offset =
+            Nativeint.to_int (Nativeint.sub address (Ffi.buffer_contents handle))
+          in
+          Metal_buffer.{handle; size; offset}
+    in
+    let unmap buf =
+      State.synchronize state;
+      if not state.State.closed then
+        Ffi.hcq_resource state.State.context buf.Metal_buffer.handle false;
+      Ffi.buffer_free buf.Metal_buffer.handle
+    in
     {
       Device.Allocator.kind = Metal_buffer.kind;
       host = (fun buf -> Some (Nativeint.add (Ffi.buffer_contents buf.Metal_buffer.handle)
           (Nativeint.of_int buf.offset)));
-      mapping = None;
+      mapping = Some {map; unmap};
       synchronize = (fun () -> State.synchronize state);
       alloc;
       free;
@@ -434,4 +468,5 @@ let create name =
           Renderer.with_compiler (Compiler.create ()) (Cstyle.metal arch)) ] in
   let synchronize () = State.synchronize state in
   let queue, bufferize = Queue.create state name in
-  Device.make ~name ~allocator ~renderer_set ~synchronize:(fun timeout -> ignore timeout; synchronize ()) ~queue ~bufferize ()
+  Device.make ~name ~allocator ~renderer_set ~synchronize:(fun timeout -> ignore timeout; synchronize ())
+    ~shares_host_memory:(Ffi.has_unified_memory state.State.device) ~queue ~bufferize ()

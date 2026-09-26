@@ -156,13 +156,15 @@ val make :
   synchronize:(int option -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
   ?peer_group:string ->
+  ?shares_host_memory:bool ->
   ?queue:queue ->
   ?bufferize:(Tolk_uop.Uop.t -> Buffer.t option) ->
   ?initialize:(t -> unit) ->
   unit ->
   t
 (** [make ~name ~allocator ~renderer_set ?runtime ~synchronize
-    ?invalidate_caches ?peer_group ?queue ?bufferize ?initialize ()] is a device runtime, registered under its
+    ?invalidate_caches ?peer_group ?shares_host_memory ?queue ?bufferize
+    ?initialize ()] is a device runtime, registered under its
     canonical [name] for graph-owned buffers to resolve their allocator.
 
     [runtime obj] loads a compiled binary and returns a dispatch handle.
@@ -174,6 +176,10 @@ val make :
 
     [peer_group] identifies devices sharing compatible memory mappings and
     queue signals. It defaults to the backend prefix of [name].
+
+    [shares_host_memory] says whether the device's memory is the host's, so its
+    kernels read host memory mapped into it at full speed. It defaults to
+    [false].
 
     [queue] supplies host compilation hooks. [bufferize] resolves backend
     allocation descriptors during linking, returning [None] for generic storage.
@@ -194,6 +200,12 @@ val name : t -> string
 
 val peer_group : t -> string
 (** [peer_group d] identifies devices compatible with [d] for queue batching. *)
+
+val shares_host_memory : t -> bool
+(** [shares_host_memory d] is [true] iff [d]'s memory is the host's: the CPU
+    devices, and a GPU with unified memory. Host memory mapped into such a
+    device ({!Buffer.get}) is read in place; elsewhere a mapping reads across a
+    bus. *)
 
 val renderer : t -> Renderer.t
 (** [renderer d] is the active renderer. *)

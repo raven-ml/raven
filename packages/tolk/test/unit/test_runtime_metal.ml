@@ -453,6 +453,36 @@ let cpu_maps_metal_storage () =
       run ();
       equal (list int) [0; 8; 9; 0] (read_i32 base))
 
+(* Host memory borrowed by the CPU device, read and written by Metal kernels in
+   place, through the wrap of the pages that hold it. *)
+let metal_maps_borrowed_host_memory () =
+  let metal = metal_device () in
+  let cpu = Tolk_cpu.create "CPU:metal-borrow" in
+  let n = 4096 in
+  let owner = Device.create_buffer ~size:n ~dtype:Dtype.int32 cpu in
+  Device.Buffer.ensure_allocated owner;
+  Device.Buffer.copyin owner
+    (int32_to_bytes (List.init n (fun i -> if i = 1 then 41 else 0)));
+  let host = Device.Buffer.addr owner in
+  let first_four () = List.filteri (fun i _ -> i < 4) (read_i32 owner) in
+  let base =
+    Device.Buffer.borrow ~size:n ~dtype:Dtype.int32
+      ~source:owner host
+  in
+  let spec = compile_incr metal "metal_over_borrowed_memory" in
+  let replay = compile_queue metal [ queue_call metal spec [ 0; 1 ] ] in
+  replay ~wait:true [| i32_view base ~offset:8 ~size:1; i32_view base ~offset:4 ~size:1 |];
+  equal (list int) [ 0; 41; 42; 0 ] (first_four ());
+  (* A range that starts and ends inside pages, which it shares with [base]'s
+     wrap. *)
+  let skewed =
+    Device.Buffer.borrow ~size:3 ~dtype:Dtype.int32
+      ~source:owner (Nativeint.add host 4n)
+  in
+  replay ~wait:true
+    [| i32_view skewed ~offset:8 ~size:1; i32_view skewed ~offset:4 ~size:1 |];
+  equal (list int) [ 0; 41; 42; 43 ] (first_four ())
+
 let beam_timings_use_compiled_queues () =
   let device = metal_device () in
   let renderer = Device.renderer device in
@@ -589,6 +619,8 @@ let () =
             sharded_kernels_on_two_devices;
           test "CPU kernels map Metal storage and byte views without copying"
             cpu_maps_metal_storage;
+          test "Metal kernels map borrowed host memory without copying"
+            metal_maps_borrowed_host_memory;
           test "tensor cores retain warp lanes across four local dimensions"
             (test_tensor_core_matmul ~m:32 ~n:64 ~k:8 ~locals:3);
           test "tensor cores preserve padded output and contraction lanes"
