@@ -57,19 +57,14 @@ type indexing_context = {
       (** Memoised reachable buffer-boundary nodes per node tag.  Shared
           across buffer-limiting rewrites so a subtree's reachable set is
           computed once. *)
-  shape_exprs : Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option;
-      (** Symbolic shape of a node, as seen by every phase. *)
   mutable range_idx : int;
       (** Monotonic counter for fresh range axis indices. *)
 }
 (** Per-node state populated by {!run_rangeify}.  All maps are keyed
     by {!Tolk_uop.Uop.tag}. *)
 
-val create_context :
-  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) -> unit ->
-  indexing_context
-(** [create_context ()] is a fresh, empty context.  [shape_exprs] defaults to
-    the node's own shape. *)
+val create_context : unit -> indexing_context
+(** [create_context ()] is a fresh, empty context. *)
 
 val new_range :
   indexing_context -> int -> ?kind:Tolk_uop.Axis_type.t -> unit ->
@@ -98,32 +93,19 @@ val simplify_expr : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** {1:movement Movement ops} *)
 
 val apply_movement_op :
-  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) ->
-  shapes:(Tolk_uop.Uop.t -> int list option) ->
-  Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t list ->
-  Tolk_uop.Uop.t list
-(** [apply_movement_op ?shape_exprs ~shapes node rngs] transforms [rngs]
-    (output ranges) through a movement op, producing the corresponding input
-    ranges. [shape_exprs], when supplied, preserves symbolic dimensions;
-    otherwise concrete [shapes] are lifted to integer constants before
-    trying the node's own symbolic shape. Handles Shrink, Permute, Flip,
-    Expand, Pad, and Reshape.
+  Tolk_uop.Uop.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t list
+(** [apply_movement_op node rngs] transforms output ranges [rngs] through
+    [node], using its symbolic shape to produce input ranges. Handles Shrink,
+    Permute, Flip, Expand, Pad, and Reshape.
 
-    Raises [Assert_failure] if [view] is not a movement op. *)
+    Raises [Invalid_argument] if [node] is not a movement operation. *)
 
 (** {1:rangeify Rangeify passes} *)
 
-val run_rangeify :
-  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) ->
-  Tolk_uop.Uop.t ->
-  shapes:(Tolk_uop.Uop.t -> int list option) ->
-  indexing_context
-(** [run_rangeify ?shape_exprs root ~shapes] builds the realize map, then
-    walks the graph from roots to leaves assigning per-node ranges.
-    [shape_exprs], if given, supplies symbolic axis sizes for range bounds.
-    Returns a populated {!indexing_context} ready for
-    {!apply_rangeify_pass}. *)
+val run_rangeify : Tolk_uop.Uop.t -> indexing_context
+(** [run_rangeify root] builds the realize map, then walks the graph from roots
+    to leaves assigning ranges from each node's symbolic shape. Returns a
+    context ready for {!apply_rangeify_pass}. *)
 
 val apply_rangeify_pass :
   indexing_context -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t

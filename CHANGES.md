@@ -694,6 +694,10 @@ thread.
 
 ### Tolk (new)
 
+- Symbolic partial reshapes preserve their actual dimensions when mapping
+  indices. Equal upper bounds no longer make distinct trailing dimensions
+  interchangeable, avoiding incorrect coordinates for dynamic shapes.
+
 - Fix image load/store lowering to carry two scalar coordinates throughout
   the pipeline, preserving four-lane pixel values and correctly rendering
   constant coordinates in OpenCL kernels.

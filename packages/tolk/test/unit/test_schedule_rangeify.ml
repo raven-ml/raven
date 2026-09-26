@@ -344,10 +344,9 @@ let apply_movement_op_tests =
               let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 0; 0 ] in
               let size = mk_shape [ 4; 4 ] in
-              let shapes = shape_of in
               let v = U.shrink ~src:param ~offset:before ~size in
               let result =
-                Indexing.apply_movement_op ~shapes v
+                Indexing.apply_movement_op v
                   [ rng0; rng1 ]
               in
               (* zero offsets: output ranges should be same ids as input *)
@@ -360,10 +359,9 @@ let apply_movement_op_tests =
               let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 1; 2 ] in
               let size = mk_shape [ 2; 2 ] in
-              let shapes = shape_of in
               let v = U.shrink ~src:param ~offset:before ~size in
               let result =
-                Indexing.apply_movement_op ~shapes v
+                Indexing.apply_movement_op v
                   [ rng0; rng1 ]
               in
               equal int 2 (List.length result);
@@ -378,10 +376,9 @@ let apply_movement_op_tests =
               let ctx = Indexing.create_context () in
               let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let rng1 = Indexing.new_range ctx 8 ~kind:Ak.Weak () in
-              let shapes = shape_of in
               let v = U.permute ~src:param ~order:[ 1; 0 ] in
               let result =
-                Indexing.apply_movement_op ~shapes v
+                Indexing.apply_movement_op v
                   [ rng0; rng1 ]
               in
               (* permute [1;0]: argsort = [1;0] → result = [rng1; rng0] *)
@@ -401,10 +398,9 @@ let apply_movement_op_tests =
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
               let rng = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
-              let shapes = shape_of in
               let v = U.flip ~src:param ~dims:[ true ] in
               let result =
-                Indexing.apply_movement_op ~shapes v [ rng ]
+                Indexing.apply_movement_op v [ rng ]
               in
               (* (size-1) - r in the reference's a + b*(-1) form *)
               is_true (op_is Ops.Add (List.nth result 0)));
@@ -412,10 +408,9 @@ let apply_movement_op_tests =
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
               let rng = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
-              let shapes = shape_of in
               let v = U.flip ~src:param ~dims:[ false ] in
               let result =
-                Indexing.apply_movement_op ~shapes v [ rng ]
+                Indexing.apply_movement_op v [ rng ]
               in
               equal int (U.tag rng) (U.tag (List.nth result 0)));
         ];
@@ -427,10 +422,9 @@ let apply_movement_op_tests =
               let ctx = Indexing.create_context () in
               let r0 = Indexing.new_range ctx 3 ~kind:Ak.Weak () in
               let r1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
-              let shapes = shape_of in
               let v = U.expand ~src:param ~dims:(mk_shape [ 3 ]) in
               let result =
-                Indexing.apply_movement_op ~shapes v [ r0; r1 ]
+                Indexing.apply_movement_op v [ r0; r1 ]
               in
               equal int 1 (List.length result);
               is_true (List.nth result 0 == r1));
@@ -440,10 +434,9 @@ let apply_movement_op_tests =
               let r0 = Indexing.new_range ctx 2 ~kind:Ak.Weak () in
               let r1 = Indexing.new_range ctx 3 ~kind:Ak.Weak () in
               let r2 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
-              let shapes = shape_of in
               let v = U.expand ~src:param ~dims:(mk_shape [ 2; 3 ]) in
               let result =
-                Indexing.apply_movement_op ~shapes v [ r0; r1; r2 ]
+                Indexing.apply_movement_op v [ r0; r1; r2 ]
               in
               equal int 1 (List.length result);
               is_true (List.nth result 0 == r2));
@@ -458,7 +451,7 @@ let apply_movement_op_tests =
               let rng0 = U.range ~size:m ~axis:0 ~kind:Ak.Weak () in
               let rng1 = U.range ~size:n ~axis:1 ~kind:Ak.Weak () in
               let result =
-                Indexing.apply_movement_op ~shapes:(fun _ -> None)
+                Indexing.apply_movement_op
                   expanded [ rng0; rng1 ]
               in
               equal int 1 (List.length result);
@@ -474,10 +467,9 @@ let apply_movement_op_tests =
               let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 0; 0 ] in
               let size = mk_shape [ 4; 4 ] in
-              let shapes = shape_of in
               let v = U.pad ~src:param ~offset:before ~size in
               let result =
-                Indexing.apply_movement_op ~shapes v
+                Indexing.apply_movement_op v
                   [ rng0; rng1 ]
               in
               equal int (U.tag rng0) (U.tag (List.nth result 0));
@@ -489,10 +481,9 @@ let apply_movement_op_tests =
               let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Weak () in
               let before = mk_shape [ 2; 0 ] in
               let size = mk_shape [ 6; 4 ] in
-              let shapes = shape_of in
               let v = U.pad ~src:param ~offset:before ~size in
               let result =
-                Indexing.apply_movement_op ~shapes v
+                Indexing.apply_movement_op v
                   [ rng0; rng1 ]
               in
               (* axis 0: pad_before=2 -> WHERE(valid, offset, invalid) *)
@@ -508,10 +499,9 @@ let apply_movement_op_tests =
               let rng = Indexing.new_range ctx 6 ~kind:Ak.Weak () in
               let before = mk_shape [ 0 ] in
               let size = mk_shape [ 6 ] in
-              let shapes = shape_of in
               let v = U.pad ~src:param ~offset:before ~size in
               let result =
-                Indexing.apply_movement_op ~shapes v [ rng ]
+                Indexing.apply_movement_op v [ rng ]
               in
               (* end padding nonzero -> WHERE must be generated *)
               is_true (op_is Ops.Where (List.nth result 0)));
@@ -527,7 +517,7 @@ let apply_movement_op_tests =
               in
               let rng = U.range ~size ~axis:0 ~kind:Ak.Weak () in
               let result =
-                Indexing.apply_movement_op ~shapes:(fun _ -> None)
+                Indexing.apply_movement_op
                   padded [ rng ]
               in
               let gated = List.hd result in
@@ -547,10 +537,9 @@ let apply_movement_op_tests =
               let ctx = Indexing.create_context () in
               let rng_out = Indexing.new_range ctx 6 ~kind:Ak.Weak () in
               let new_shape = mk_shape [ 6 ] in
-              let shapes = shape_of in
               let v = U.reshape ~src:param ~shape:new_shape in
               let result =
-                Indexing.apply_movement_op ~shapes v [ rng_out ]
+                Indexing.apply_movement_op v [ rng_out ]
               in
               equal int 2 (List.length result));
           test "unflatten [6] to [2;3]" (fun () ->
@@ -561,10 +550,9 @@ let apply_movement_op_tests =
               let rng0 = Indexing.new_range ctx 2 ~kind:Ak.Weak () in
               let rng1 = Indexing.new_range ctx 3 ~kind:Ak.Weak () in
               let new_shape = mk_shape [ 2; 3 ] in
-              let shapes = shape_of in
               let v = U.reshape ~src:param ~shape:new_shape in
               let result =
-                Indexing.apply_movement_op ~shapes v
+                Indexing.apply_movement_op v
                   [ rng0; rng1 ]
               in
               equal int 1 (List.length result));
@@ -585,7 +573,7 @@ let apply_movement_op_tests =
               let reshaped = U.reshape ~src:param ~shape:flat in
               let rng = U.range ~size:flat ~axis:0 ~kind:Ak.Weak () in
               let result =
-                Indexing.apply_movement_op ~shapes:(fun _ -> None)
+                Indexing.apply_movement_op
                   reshaped [ rng ]
               in
               equal int 2 (List.length result);
@@ -607,8 +595,7 @@ let run_rangeify_tests =
           let param = mk_param ~idx:0 [ 4 ] in
           let store = materialize param in
           let sink = U.sink [ store ] in
-          let shapes = shape_of in
-          let ctx = Indexing.run_rangeify sink ~shapes in
+          let ctx = Indexing.run_rangeify sink in
           (match Hashtbl.find_opt ctx.realize_map (U.tag store) with
           | Some (Indexing.Realized axes) ->
               equal (list int) [ 0 ] axes
@@ -618,8 +605,7 @@ let run_rangeify_tests =
           let param = mk_param ~idx:0 [ 4 ] in
           let store = materialize param in
           let sink = U.sink [ store ] in
-          let shapes = shape_of in
-          let ctx = Indexing.run_rangeify sink ~shapes in
+          let ctx = Indexing.run_rangeify sink in
           is_true (Hashtbl.mem ctx.range_map (U.tag store)));
       (* The maps are keyed on the graph rangeify walked. A node the apply
          pass builds must not acquire an entry: hash-consing collapses nodes
@@ -640,7 +626,7 @@ let run_rangeify_tests =
             U.sink
               [ materialize scalar_use; materialize wide_use ]
           in
-          let ctx = Indexing.run_rangeify sink ~shapes:shape_of in
+          let ctx = Indexing.run_rangeify sink in
           let keys tbl = Hashtbl.fold (fun k _ acc -> k :: acc) tbl [] in
           let ranged = keys ctx.range_map and realized = keys ctx.realize_map in
           ignore (Indexing.apply_rangeify_pass ctx sink);
@@ -654,16 +640,14 @@ let run_rangeify_tests =
           let neg = U.alu_unary ~op:Ops.Neg ~src:param in
           let store = materialize neg in
           let sink = U.sink [ store ] in
-          let shapes = shape_of in
-          let ctx = Indexing.run_rangeify sink ~shapes in
+          let ctx = Indexing.run_rangeify sink in
           is_true (Hashtbl.mem ctx.range_map (U.tag neg)));
       test "reduce creates reduce-kind ranges" (fun () ->
           let param = mk_param ~idx:0 [ 4; 4 ] in
           let red = U.reduce_axis ~src:param ~op:Ops.Add ~axes:[ 1 ] in
           let store = materialize red in
           let sink = U.sink [ store ] in
-          let shapes = shape_of in
-          let ctx = Indexing.run_rangeify sink ~shapes in
+          let ctx = Indexing.run_rangeify sink in
           (match Hashtbl.find_opt ctx.range_map (U.tag red) with
           | Some (in_rngs, _out_rngs) ->
               equal int 2 (List.length in_rngs);
@@ -679,8 +663,7 @@ let run_rangeify_tests =
           let perm = U.permute ~src:param ~order:[ 1; 0 ] in
           let store = materialize perm in
           let sink = U.sink [ store ] in
-          let shapes = shape_of in
-          let ctx = Indexing.run_rangeify sink ~shapes in
+          let ctx = Indexing.run_rangeify sink in
           (match Hashtbl.find_opt ctx.range_map (U.tag perm) with
           | Some (in_rngs, out_rngs) ->
               equal int 2 (List.length in_rngs);
@@ -692,8 +675,7 @@ let run_rangeify_tests =
           let param = mk_param ~idx:0 [ 4; 8 ] in
           let store = materialize param in
           let sink = U.sink [ store ] in
-          let shapes = shape_of in
-          let ctx = Indexing.run_rangeify sink ~shapes in
+          let ctx = Indexing.run_rangeify sink in
           (match Hashtbl.find_opt ctx.realize_map (U.tag store) with
           | Some (Indexing.Realized axes) ->
               equal (list int) [ 0; 1 ] axes
@@ -706,11 +688,8 @@ let run_rangeify_tests =
           in
           let store = materialize param in
           let sink = U.sink [ store ] in
-          let shape_exprs u =
-            if u == param || u == store then Some [ n ] else None
-          in
           let ctx =
-            Indexing.run_rangeify sink ~shapes:shape_of ~shape_exprs
+            Indexing.run_rangeify sink
           in
           match Hashtbl.find_opt ctx.range_map (U.tag store) with
           | Some ([ rng ], _) ->
@@ -730,7 +709,7 @@ let apply_rangeify_pass_tests =
           let param = mk_param ~idx:0 [ 4; 4 ] in
           let red = U.reduce_axis ~src:param ~op:Ops.Add ~axes:[ 1 ] in
           let root = U.sink [materialize red] in
-          let ctx = Indexing.run_rangeify root ~shapes:shape_of in
+          let ctx = Indexing.run_rangeify root in
           let lowered = Indexing.apply_rangeify_pass ctx root in
           let red =
             find_node
@@ -752,7 +731,7 @@ let apply_rangeify_pass_tests =
             U.pad ~src:param ~offset:(mk_shape [ 1 ]) ~size:(mk_shape [ 6 ])
           in
           let root = U.sink [materialize pad] in
-          let ctx = Indexing.run_rangeify root ~shapes:shape_of in
+          let ctx = Indexing.run_rangeify root in
           let lowered = Indexing.apply_rangeify_pass ctx root in
           let where =
             find_node
@@ -780,7 +759,7 @@ let apply_rangeify_pass_tests =
                 materialize (U.permute ~src:sum ~order:[ 1; 0 ]);
               ]
           in
-          let ctx = Indexing.run_rangeify root ~shapes:shape_of in
+          let ctx = Indexing.run_rangeify root in
           let lowered = Indexing.apply_rangeify_pass ctx root in
           let stage =
             find_node (fun u -> Option.is_some (U.as_stage u)) lowered

@@ -25,13 +25,11 @@ let idx n = U.const_int n
 let btrue = U.const_bool true
 let bfalse = U.const_bool false
 
-let ( +! ) a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b
+let ( +! ) = U.Promoting.( + )
 (* SUB is never built in the tensor/index graph: [a - b] is [a + b * (-1)],
    the form the symbolic simplifier normalises to. *)
-let ( -! ) a b =
-  U.alu_binary ~op:Ops.Add ~lhs:a
-    ~rhs:(U.alu_binary ~op:Ops.Mul ~lhs:b ~rhs:(U.const_like b (-1)))
-let ( *! ) a b = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b
+let ( -! ) = U.Promoting.( - )
+let ( *! ) = U.Promoting.( * )
 
 (* Reshape re-derives index arithmetic via mod/div and then simplifies it
    under [symbolic + pm_simplify_valid + pm_drop_and_clauses]. *)
@@ -116,17 +114,6 @@ let is_one e =
 let same_expr a b =
   U.equal a b || is_zero (simplify_expr (a -! b))
 
-let shape_expr_of ?shape_exprs ~shapes u =
-  let fallback () =
-    match shapes u with
-    | Some sh -> Some (List.map idx sh)
-    | None -> U.shape_opt u
-  in
-  match shape_exprs with
-  | Some shape_exprs ->
-      (match shape_exprs u with Some _ as sh -> sh | None -> fallback ())
-  | None -> fallback ()
-
 (* Indexing context *)
 
 type realize_state = Marked | Realized of int list
@@ -136,16 +123,14 @@ type indexing_context = {
   non_removable : (int, unit) Hashtbl.t;
   range_map : (int, U.t list * U.t list) Hashtbl.t;
   buf_cache : (int, U.t list) Hashtbl.t;
-  shape_exprs : U.t -> U.t list option;
   mutable range_idx : int;
 }
 
-let create_context ?(shape_exprs = U.shape_opt) () = {
+let create_context () = {
   realize_map = Hashtbl.create 256;
   non_removable = Hashtbl.create 16;
   range_map = Hashtbl.create 256;
   buf_cache = Hashtbl.create 256;
-  shape_exprs;
   range_idx = 0;
 }
 
@@ -192,10 +177,10 @@ let broadcast_axes src_shape out_shape =
    of the axes it adds, so those axes drop out and the stretched ones index
    the single element the source holds. Ranges pass through unchanged when
    either shape is unknown: there is no frame to map them into. *)
-let broadcast_rngs ctx x src rngs =
+let broadcast_rngs x src rngs =
   match
-    (if Ops.Group.is_broadcastable (U.op x) then ctx.shape_exprs x else None),
-    ctx.shape_exprs src
+    (if Ops.Group.is_broadcastable (U.op x) then U.shape_opt x else None),
+    U.shape_opt src
   with
   | Some out_shape, Some src_shape ->
       let baxes = broadcast_axes src_shape out_shape in
@@ -284,8 +269,8 @@ let apply_reshape in_shape out_shape rngs =
   let combined = List.fold_left ( +! ) (idx 0) (List.rev terms) in
   let acc = ref combined in
   let axes = List.rev_map (fun s ->
-    let r = U.alu_binary ~op:Ops.Floormod ~lhs:!acc ~rhs:s in
-    acc := U.alu_binary ~op:Ops.Floordiv ~lhs:!acc ~rhs:s;
+    let r = U.Promoting.(!acc mod s) in
+    acc := U.Promoting.(!acc // s);
     r) (List.rev in_shape) in
   let sink =
     U.sink axes
@@ -299,65 +284,38 @@ let argsort order =
   List.map snd (List.sort (fun (a, _) (b, _) -> compare a b) indexed)
 
 (* [r >= k] expressed as [not (r < k)]. *)
-let ge r k =
-  let lt = U.alu_binary ~op:Ops.Cmplt ~lhs:r ~rhs:k in
-  U.alu_binary ~op:Ops.Cmpne ~lhs:lt ~rhs:btrue
+let ge r k = U.Promoting.(not_ (r < k))
 
 (* [r = k] expressed as [not (r <> k)], for an integer literal [k]. *)
-let eq r k =
-  let ne = U.alu_binary ~op:Ops.Cmpne ~lhs:r ~rhs:(U.const_like r k) in
-  U.alu_binary ~op:Ops.Cmpne ~lhs:ne ~rhs:btrue
+let eq r k = U.Promoting.(not_ (ne r (idx k)))
 
-let apply_movement_op ?shape_exprs ~shapes n rngs =
+let apply_movement_op n rngs =
   let src = (U.src n).(0) in
-  match U.op n with
-  | Ops.Shrink ->
-      (match U.marg n with
-	       | U.Marg_bounds pairs ->
-	           zip_shortest rngs pairs
-	           |> List.map (fun (r, (offset, _)) ->
-	             if is_zero offset then r else r +! offset)
-	       | _ -> rngs)
-  | Ops.Permute ->
-      (match U.marg n with
-       | U.Marg_permute order -> List.map (fun p -> List.nth rngs p) (argsort order)
-       | _ -> rngs)
-  | Ops.Flip ->
-      (match U.marg n, shape_expr_of ?shape_exprs ~shapes src with
-	       | U.Marg_flip dims, Some in_shape ->
-	           zip_shortest rngs (zip_shortest dims in_shape)
-	           |> List.map (fun (r, (f, sh)) ->
-	             if not f then r else (sh -! idx 1) -! r)
-	       | _ -> rngs)
-  | Ops.Expand ->
-      (* Expand prepends [dims] as new leading axes, so the input ranges are
-         the output ranges with the leading [dims] dropped. *)
-      (match U.marg n with
-       | U.Marg_shape dims ->
-           let d = List.length dims in
-           List.filteri (fun i _ -> i >= d) rngs
-       | _ -> rngs)
-  | Ops.Pad ->
-      (match shape_expr_of ?shape_exprs ~shapes src, U.marg n with
-	       | Some in_shape, U.Marg_bounds pairs ->
-	           zip_shortest (zip_shortest rngs in_shape) pairs
-	           |> List.map (fun ((r, sh), (offset, size)) ->
-	             if same_expr size sh && is_zero offset then r
-	             else
-	               let upper =
-                 U.alu_binary ~op:Ops.Cmplt ~lhs:r ~rhs:(offset +! sh) in
-	               let valid =
-	                  U.alu_binary ~op:Ops.And ~lhs:(ge r offset) ~rhs:upper
-	                  |> U.graph_rewrite ~name:"pad" (Upat.Pattern_matcher.rewrite pad_pm) in
-	               U.alu_ternary ~op:Ops.Where ~a:valid ~b:(r -! offset)
-	                 ~c:(U.invalid ()))
-	       | _ -> rngs)
-  | Ops.Reshape ->
-      (match shape_expr_of ?shape_exprs ~shapes src,
-             shape_expr_of ?shape_exprs ~shapes n with
-       | Some in_shape, Some out_shape -> apply_reshape in_shape out_shape rngs
-       | _ -> rngs)
-  | _ -> assert false
+  match U.op n, U.marg n with
+  | Ops.Shrink, U.Marg_bounds pairs ->
+      zip_shortest rngs pairs
+      |> List.map (fun (r, (offset, _)) ->
+           if is_zero offset then r else r +! offset)
+  | Ops.Permute, U.Marg_permute order ->
+      List.map (fun p -> List.nth rngs p) (argsort order)
+  | Ops.Flip, U.Marg_flip dims ->
+      zip_shortest rngs (zip_shortest dims (U.shape src))
+      |> List.map (fun (r, (flip, size)) ->
+           if not flip then r else (size -! idx 1) -! r)
+  | Ops.Expand, U.Marg_shape dims ->
+      List.filteri (fun i _ -> i >= List.length dims) rngs
+  | Ops.Pad, U.Marg_bounds pairs ->
+      zip_shortest (zip_shortest rngs (U.shape src)) pairs
+      |> List.map (fun ((r, shape), (offset, size)) ->
+           if same_expr size shape && is_zero offset then r
+           else
+             let upper = U.Promoting.(r < offset + shape) in
+             let valid = U.Promoting.and_ (ge r offset) upper
+               |> U.graph_rewrite ~name:"pad" (Upat.Pattern_matcher.rewrite pad_pm) in
+             U.Promoting.where valid (r -! offset) (U.invalid ()))
+  | Ops.Reshape, U.Marg_shape out_shape ->
+      apply_reshape (U.shape src) out_shape rngs
+  | _ -> invalid_arg "Indexing.apply_movement_op: expected a movement operation"
 
 let src0 u = (U.src u).(0)
 let src_tail u =
@@ -369,64 +327,29 @@ let movement_src u =
 
 let is_movement u = Option.is_some (movement_src u)
 
-let shape_of n =
-  let rec concrete = function
-    | [] -> Some []
-    | dim :: rest ->
-        Option.bind (U.const_int_value dim) (fun value ->
-            Option.map (fun dims -> value :: dims) (concrete rest))
-  in
-  Option.bind (U.shape_opt n) concrete
-
 let pm_mop_through_index n =
   match U.as_index n with
-  | Some { ptr; _ } when is_movement ptr ->
+  | Some { ptr; idxs } when is_movement ptr ->
       let src = Option.get (movement_src ptr) in
-      let idxs = src_tail n in
-      let mop_shape u =
-        match shape_of u with
-        | Some _ as shape -> shape
-        | None -> (
-            try Some (List.map (fun dim -> Bound.to_int (U.vmax dim)) (U.shape u))
-            with Invalid_argument _ -> None)
-      in
-      (match mop_shape src, mop_shape ptr with
-       | Some _, Some ps when List.length idxs = List.length ps ->
-           let new_idxs =
-             apply_movement_op ~shapes:shape_of ptr idxs
-           in
-           Some (U.replace n ~src:(Array.of_list (src :: new_idxs)) ())
-       | Some src_shape, Some ptr_shape when U.op ptr = Ops.Reshape ->
-           let nidxs = List.length idxs in
-           let ptr_suffix =
-             List.filteri (fun i _ -> i >= nidxs) ptr_shape
-           in
-           let src_prefix = List.length src_shape - List.length ptr_suffix in
-           if src_prefix < 0 then None
-           else
-             let src_suffix =
-               List.filteri (fun i _ -> i >= src_prefix) src_shape
-             in
-             if src_suffix <> ptr_suffix then None
-             else if src_prefix = 0 then
-               if Dtype.equal (U.dtype src) (U.dtype n) then Some src
-               else None
-             else
-               let src_prefix_shape =
-                 List.filteri (fun i _ -> i < src_prefix) src_shape
-               in
-               let ptr_prefix_shape =
-                 List.filteri (fun i _ -> i < nidxs) ptr_shape
-               in
-               let shapes u =
-                 if u == src then Some src_prefix_shape
-                 else if u == ptr then Some ptr_prefix_shape
-                 else shape_of u
-               in
-               let new_idxs = apply_movement_op ~shapes ptr idxs in
-               let ret = U.replace n ~src:(Array.of_list (src :: new_idxs)) () in
-               if shape_of ret = shape_of n then Some ret else None
-       | _ -> None)
+      let src_shape = U.shape src and ptr_shape = U.shape ptr in
+      if List.length idxs = List.length ptr_shape then
+        Some (U.replace n ~src:(Array.of_list (src :: apply_movement_op ptr idxs)) ())
+      else if U.op ptr = Ops.Reshape then
+        let ptr_suffix = List.filteri (fun i _ -> i >= List.length idxs) ptr_shape in
+        let src_prefix = List.length src_shape - List.length ptr_suffix in
+        if src_prefix < 0 then None
+        else
+          let src_suffix = List.filteri (fun i _ -> i >= src_prefix) src_shape in
+          if not (List.for_all2 U.equal src_suffix ptr_suffix) then None
+          else if src_prefix = 0 then
+            if Dtype.equal (U.dtype src) (U.dtype n) then Some src else None
+          else
+            let src_prefix_shape = List.filteri (fun i _ -> i < src_prefix) src_shape in
+            let ptr_prefix_shape = List.filteri (fun i _ -> i < List.length idxs) ptr_shape in
+            let new_idxs = apply_reshape src_prefix_shape ptr_prefix_shape idxs in
+            let result = U.replace n ~src:(Array.of_list (src :: new_idxs)) () in
+            if List.equal U.equal (U.shape result) (U.shape n) then Some result else None
+      else None
   | _ -> None
 
 let pm_mop_past_after n =
@@ -728,13 +651,8 @@ let choose_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs =
   | [rs] -> Some rs
   | _ -> Some (merge_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs)
 
-let run_rangeify ?shape_exprs root ~shapes =
-  let shape_exprs =
-    match shape_exprs with
-    | Some shape_exprs -> shape_exprs
-    | None -> fun x -> Option.map (List.map idx) (shapes x)
-  in
-  let ctx = create_context ~shape_exprs () in
+let run_rangeify root =
+  let ctx = create_context () in
   generate_realize_map ctx root;
   let consumers, topo = consumer_map root in
   let ending : (int, U.t list) Hashtbl.t = Hashtbl.create 256 in
@@ -746,7 +664,7 @@ let run_rangeify ?shape_exprs root ~shapes =
   let step x =
     if skip_for_rangeify x then () else begin
       ending_set x (List.concat_map ending_get (consumers x));
-      let out_shape = Option.value ~default:[] (shape_exprs x) in
+      let out_shape = Option.value ~default:[] (U.shape_opt x) in
       (* The ranges the consumers iterate but this node is broadcast over:
          they end here, because the value is computed once and reused across
          them. A REDUCE ends them ahead of the merge below, which is what
@@ -754,7 +672,7 @@ let run_rangeify ?shape_exprs root ~shapes =
       let broadcast_ending_ranges =
         List.concat_map
           (fun c ->
-            match range_get ctx c, ctx.shape_exprs x, ctx.shape_exprs c with
+            match range_get ctx c, U.shape_opt x, U.shape_opt c with
             | Some (c_in, _), Some x_shape, Some c_shape
               when Ops.Group.is_broadcastable (U.op c) ->
                 List.filter_map (List.nth_opt c_in)
@@ -768,7 +686,7 @@ let run_rangeify ?shape_exprs root ~shapes =
       let consumer_rngs =
         List.filter_map
           (fun c -> match range_get ctx c with
-             | Some (in_rngs, _) -> Some (broadcast_rngs ctx c x in_rngs)
+             | Some (in_rngs, _) -> Some (broadcast_rngs c x in_rngs)
              | None -> None)
           (consumers x)
       in
@@ -794,7 +712,7 @@ let run_rangeify ?shape_exprs root ~shapes =
           ending_set x (ending_get x @ broadcast_ending_ranges);
           let rngs =
             if is_movement_op x then
-              apply_movement_op ~shape_exprs ~shapes x out_rngs
+              apply_movement_op x out_rngs
             else out_rngs
           in
           (* Stack: the leading range selects the source; the sources take
@@ -820,20 +738,10 @@ let run_rangeify ?shape_exprs root ~shapes =
           let rngs =
             match U.as_reduce x with
             | Some { src; num_axes; _ } when num_axes > 0 ->
-                let in_shape_expr =
-                  match shape_exprs src with
-                  | Some _ as sh -> sh
-                  | None -> Option.map (List.map idx) (shapes src)
-                in
-                (match in_shape_expr with
-                 | Some in_shape_expr ->
-                     let reduce_rngs =
-                       List.filteri (fun i _ -> i < num_axes) in_shape_expr
-                       |> List.map (fun size ->
-                              new_range_expr ctx size ~kind:Axis_type.Reduce ())
-                     in
-                     reduce_rngs @ out_rngs
-                 | None -> rngs)
+                let reduce_rngs =
+                  U.shape src |> List.filteri (fun i _ -> i < num_axes)
+                  |> List.map (fun size -> new_range_expr ctx size ~kind:Axis_type.Reduce ()) in
+                reduce_rngs @ out_rngs
             | _ -> rngs
           in
           range_set ctx x (rngs, out_rngs)
@@ -905,7 +813,7 @@ let create_stage_and_index_srcs ctx x =
   let rewrite_child i s =
     let src_rngs =
       match parent_rngs with
-      | Some (in_rngs, _) -> broadcast_rngs ctx x s in_rngs
+      | Some (in_rngs, _) -> broadcast_rngs x s in_rngs
       | None -> []
     in
     if direct_buffer_src s then

@@ -278,6 +278,37 @@ let storage_windows_keep_effects_and_typed_anchors () =
       equal int 1 offset
   | None -> fail "typed effect-bearing storage window was not proved"
 
+let partial_reshape_compares_symbolic_suffix () =
+  let n = U.variable ~name:"suffix_n" ~min_val:1 ~max_val:8 () in
+  let m = U.variable ~name:"suffix_m" ~min_val:1 ~max_val:8 () in
+  let base = U.param ~slot:93836 ~dtype:Dtype.float32
+      ~shape:(U.stack [U.const_int 2; n; m]) () in
+  let reshaped = U.reshape ~src:base
+      ~shape:(U.stack [U.const_int 2; m; n]) in
+  let indexed = U.index ~ptr:reshaped ~idxs:[U.const_int 1] () in
+  is_true ~msg:"equal upper bounds do not prove equality of trailing shapes"
+    (Option.is_none (Tolk.Indexing.movement_ops indexed))
+
+let partial_reshape_uses_symbolic_prefix () =
+  let n = U.variable ~name:"movement_n" ~min_val:1 ~max_val:8 () in
+  let i = U.variable ~name:"movement_i" ~min_val:0 ~max_val:15 () in
+  let base = U.param ~slot:93835 ~dtype:Dtype.float32
+      ~shape:(U.stack [U.const_int 2; n; U.const_int 3]) () in
+  let reshaped = U.reshape ~src:base
+      ~shape:(U.stack [U.Promoting.(U.const_int 2 * n); U.const_int 3]) in
+  let indexed = U.index ~ptr:reshaped ~idxs:[i] () in
+  match Tolk.Indexing.movement_ops indexed with
+  | None -> fail "partial symbolic reshape did not propagate its index"
+  | Some result ->
+      let view = Option.get (U.as_index result) in
+      is_true ~msg:"the movement keeps its source anchor" (U.equal view.ptr base);
+      equal (list int) [1; 1]
+        (List.map (fun index -> U.sym_infer index
+             ["movement_n", 3L; "movement_i", 4L]) view.idxs);
+      equal (list int) [1; 3]
+        (List.map (fun index -> U.sym_infer index
+             ["movement_n", 5L; "movement_i", 8L]) view.idxs)
+
 let shaped_constant_proof () =
   let base = U.buffer ~slot:93833 ~dtype:Dtype.uint32 ~shape:(shape [2; 3]) () in
   let always_false = U.alu_binary ~op:Ops.Cmplt ~lhs:base
@@ -298,7 +329,9 @@ let shaped_constant_proof () =
     [always_false; self_compare; zero; true_]
 
 let () = run "Contiguous view"
-    [test "storage windows retain allocation boundaries" storage_windows_keep_allocation_boundaries;
+    [test "partial reshape compares symbolic suffix dimensions" partial_reshape_compares_symbolic_suffix;
+     test "partial reshape uses symbolic prefix dimensions" partial_reshape_uses_symbolic_prefix;
+     test "storage windows retain allocation boundaries" storage_windows_keep_allocation_boundaries;
      test "storage windows retain typed effects" storage_windows_keep_effects_and_typed_anchors;
      test "partition storage requires owned lanes" partition_storage_requires_owned_lanes;
 test "constant folding preserves tensor shape during view proofs" shaped_constant_proof;

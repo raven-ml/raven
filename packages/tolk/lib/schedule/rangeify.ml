@@ -42,8 +42,6 @@ let movement_src u =
 
 let is_movement u = Option.is_some (movement_src u)
 
-let shape_expr_of = U.shape_opt
-
 let shape_of n =
   let rec concrete = function
     | [] -> Some []
@@ -1194,7 +1192,7 @@ let add_buffers_rules counter =
 let get_kernel_graph root =
   let root = Prepare.prepare_rangeify root in
   let rctx =
-    Indexing.run_rangeify root ~shapes:shape_of ~shape_exprs:shape_expr_of
+    Indexing.run_rangeify root
   in
   let root = Indexing.apply_rangeify_pass rctx root in
   let root =

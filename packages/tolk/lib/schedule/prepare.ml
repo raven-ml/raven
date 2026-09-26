@@ -250,7 +250,7 @@ let rec push_movement node rngs =
   match U.op node with
   | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute | Ops.Flip ->
       push_movement (src0 node)
-        (Indexing.apply_movement_op ~shapes:shape_of node rngs)
+        (Indexing.apply_movement_op node rngs)
   | _ -> (node, rngs)
 
 let live_axes rngs =
