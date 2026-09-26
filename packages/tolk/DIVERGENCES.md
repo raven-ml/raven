@@ -539,10 +539,13 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   and raw selection tests. Reconsider when upstream preserves the same storage
   semantics across its emulation passes.
 
-- **Host-scalar `bitcast` stays in `symbolic.ml`**, upstream moved it to
-  `dtype.ml` (`67dc02d7e`). Forced by layering: `Const` depends on `Dtype`.
-  The only would-be consumer is host-side rand arithmetic, and
-  `lib/frontend/rand.ml` builds `_bits_to_rand` from UOp `Bitcast` nodes.
+- **Host-scalar `bitcast` belongs to `Const`.** The reference places its
+  scalar helper in `dtype.py`; Tolk keeps representation conversion in
+  `Const`, which depends on `Dtype`. Both symbolic constant folding and the
+  exact host launch evaluator use this one helper. Coverage: constant and
+  stacked bitcasts in `test_symbolic`, and source-representation preservation
+  in `test_program_spec` launch dimensions. Reconsider the module placement
+  only if the `Const`/`Dtype` dependency changes.
 
 - **Compilation workers use OCaml domains rather than Python processes.**
   This is an execution mechanism, not a reason for different search policy.
@@ -958,7 +961,10 @@ delete it rather than registering it.
   trip count into the estimates symbolically. A trip count that reads memory,
   such as the quantised product's id-bounded loop, is not known before the
   kernel runs, and `sym_infer` cannot evaluate it, so tolk counts it at its
-  upper bound. The reference has no loop of this kind.
+  upper bound. The reference has no loop of this kind. Coverage:
+  `test_program_spec` checks loaded loop bounds and preservation of their full
+  scalar width. Reconsider if costing can evaluate loaded trip counts before
+  execution or upstream supplies the same conservative estimate.
 
 - **Block matrix product** (`frontend/op.ml` `block_matmul`). The reference
   multiplies blocks of rows by matrices chosen per block only through `matmul`
@@ -1030,6 +1036,9 @@ delete it rather than registering it.
   variable decides as in the reference, and the rendered source is the
   reference's either way. Consumer: rune's CPU device, which binds host memory
   it did not allocate (slices, mapped files) and passes `~aligned:false`.
+  Coverage: `test_runtime_cpu` selected alignment and same-name device
+  replacement preserve compiled alignment. Reconsider if device construction
+  guarantees alignment for every borrowed host buffer.
 
 - **Copies read and write contiguous windows of storage in place**
   (`schedule/prepare.ml` `storage_view`, `engine/schedule.ml`
@@ -1039,16 +1048,21 @@ delete it rather than registering it.
   Tolk keeps a copy's source or destination when it is storage (a buffer, or
   a STAGE, which becomes one) or a contiguous window of storage, and a copy
   kernel storing `dst[i + a] <- src[i + b]` becomes a transfer between byte
-  views. The reference forbids offset copies because SDMA cannot do them;
-  tolk's copy paths take them: Realize resolves the SHRINK to a
+  views. The reference's bulk-copy matcher accepts zero indices or one
+  shared range; it does not recognize unequal source and destination offsets.
+  This is a lowering restriction: its AMD SDMA packets also take byte
+  addresses. Tolk's copy paths accept these views: Realize resolves the SHRINK to a
   `Device.Buffer.view`, `Deps_tracker.uop` keys byte intervals by view
   offset, and the AMD SDMA `COPY_LINEAR` path (`tolk_amd.ml`) takes byte
   addresses with no alignment requirement. Unverified on SDMA, CUDA and NV
   queues until the node runs. Non-contiguous windows are still staged.
-  A stage counts as storage, so a value is staged once; a stage of a
-  symbolic value with a symbolic inner axis is not a window, and no
-  cross-device store of one arises (see `storage_view`). Coverage:
-  `test/unit/engine/test_collectives.ml` "copies".
+  A zero-coordinate stage owns storage; window acceptance uses the shared
+  flattened-index proof rather than a concrete-shape gate. Consumers: Rune
+  collective transfers and frontend cross-device assignment. Coverage:
+  `test/unit/engine/test_collectives.ml` "copies", `test_contiguous_view`
+  allocation-boundary checks, and `test_clone` partial destination controls.
+  Reconsider this lowering difference when upstream accepts the same proved
+  source and destination windows without extra staging.
 
 - **A gather is an all-gather of pure copies** (`schedule/multi.ml`
   `allgather`). The reference lowers a copy of a split value to several
