@@ -223,7 +223,9 @@ CAMLprim value caml_tolk_cpu_jit_link_symbol(value v_libs, value v_sym) {
 #endif
   }
   if (addr == NULL) {
-    caml_failwith("link_symbol failed");
+    char msg[256];
+    snprintf(msg, sizeof(msg), "link_symbol: undefined symbol %s", sym);
+    caml_failwith(msg);
   }
   CAMLreturn(caml_copy_nativeint((intnat)addr));
 }

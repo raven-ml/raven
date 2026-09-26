@@ -686,6 +686,9 @@ thread.
 
 ### Tolk (new)
 
+- A CPU kernel that calls a symbol the process lacks fails naming it,
+  `link_symbol: undefined symbol NAME`, where it said `link_symbol failed`.
+
 - A Metal kernel on a unified-memory device reads and writes a buffer of the
   CPU device in place, through a no-copy Metal buffer over the pages that hold
   it: Metal's allocator maps host storage, where binding one raised.
