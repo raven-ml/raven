@@ -709,7 +709,7 @@ let reduce_simplify_tests =
             (fun (msg, cond, ranges) ->
               let src = where cond (f32 2.0) (U.const_float 0.0) in
               let red =
-                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
               in
               equal ~msg int ranges
                 (count_ranges (Simplify.reduce_simplify_all red)))
@@ -730,7 +730,7 @@ let reduce_simplify_tests =
           List.iter
             (fun (msg, src, maxes) ->
               let red =
-                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
               in
               let result = Simplify.reduce_simplify_all red in
               equal ~msg int maxes
@@ -1080,7 +1080,7 @@ let promoting_tests =
           List.iter
             (fun (msg, src) ->
               let red =
-                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
               in
               let result = Simplify.reduce_simplify_all red in
               equal ~msg int 0 (count_ranges result);
@@ -1102,7 +1102,7 @@ let promoting_tests =
             (fun (msg, cond) ->
               let src = where cond (f32 2.0) (U.const_float 0.0) in
               let red =
-                U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
+                U.reduce ~op:Ops.Add ~src ~ranges:[ r ]
               in
               equal ~msg int 1
                 (count_ranges (Simplify.reduce_simplify_all red)))
@@ -1135,7 +1135,7 @@ let promoting_tests =
           List.iter
             (fun (op, compensation) ->
               let red =
-                U.reduce ~op ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+                U.reduce ~op ~src ~ranges:[ r0; r1 ]
               in
               let result = Simplify.reduce_unparented_all red in
               equal int 0 (List.length (mixed_operands result));

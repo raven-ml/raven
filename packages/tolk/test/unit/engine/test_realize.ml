@@ -599,6 +599,7 @@ let submission_fixture device_name prepare invoke =
       free = (fun () -> ()); handle = 0n} in
   let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.);
     completion = (fun () timeout -> ignore timeout); prepare; host = device_name;
+    max_kernel_bindings = None; config = (fun () -> "");
     copy = (fun buffer -> ignore buffer; None); encode = (fun node -> ignore node; None);
     lower = (fun node -> ignore node; None);
     compile = (fun node -> ignore node; fail "fixture is already compiled")} in

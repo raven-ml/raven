@@ -1529,20 +1529,26 @@ let end_preserves_effects () =
     (rewrite edge)
 
 let distributed_negation_keeps_scaled_terms_shared () =
-  let x = Uop.param ~slot:0 ~dtype:Dtype.float32 () in
-  let y = Uop.param ~slot:1 ~dtype:Dtype.float32 () in
-  let f value = Uop.const (Const.float Dtype.weakfloat value) in
+  let x = Uop.param ~slot:0 ~dtype:Dtype.weakint () in
+  let y = Uop.param ~slot:1 ~dtype:Dtype.weakint () in
+  let integer = Uop.const_int in
   let mul lhs rhs = Uop.alu_binary ~op:Ops.Mul ~lhs ~rhs in
   let add lhs rhs = Uop.alu_binary ~op:Ops.Add ~lhs ~rhs in
-  let scaled = mul y (f 0.625) in
-  let expression = mul (add x scaled) (f (-1.0)) in
-  let expected_step = add (mul x (f (-1.0))) (mul scaled (f (-1.0))) in
+  let scaled = mul y (integer 5) in
+  let expression = mul (add x scaled) (integer (-1)) in
+  let expected_step = add (mul x (integer (-1))) (mul scaled (integer (-1))) in
   (match sym expression with
    | Some actual -> equal ~msg:"distribution leaves literals bare for folding"
        uop expected_step actual
    | None -> fail "expected negation distribution");
-  let expected = add (mul x (f (-1.0))) (mul y (f (-0.625))) in
-  equal uop expected (simplify expression)
+  let expected = add (mul x (integer (-1))) (mul y (integer (-5))) in
+  equal uop expected (simplify expression);
+  let x = Uop.param ~slot:0 ~dtype:Dtype.float32 () in
+  let y = Uop.param ~slot:1 ~dtype:Dtype.float32 () in
+  let f value = Uop.const (Const.float Dtype.weakfloat value) in
+  let expression = mul (add x (mul y (f 0.625))) (f (-1.0)) in
+  equal ~msg:"floating negation preserves grouping and signed zero"
+    uop expression (simplify expression)
 
 let integer_width_folding_tests =
   group "integer width folding"

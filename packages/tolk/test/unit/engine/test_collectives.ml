@@ -1380,8 +1380,7 @@ let () =
                  the two are compared as changes. *)
               let counts () =
                 ( (usage "CPU:1").live,
-                  Option.value ~default:0
-                    (Hashtbl.find_opt Storage.mem_used_per_device "CPU:1") )
+                  Storage.mem_used ~device:"CPU:1" () )
               in
               let before = counts () in
               Device.Buffer.ensure_allocated buf;

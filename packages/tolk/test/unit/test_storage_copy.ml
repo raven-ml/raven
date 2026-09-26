@@ -93,6 +93,7 @@ let fixture suffix =
     timestamp_divider = 1.; profile_offset = (fun () -> 0.);
     completion = (fun () -> fun timeout -> ignore timeout; drain_pending ());
     prepare = (fun () -> ()); host = host_name;
+    max_kernel_bindings = None; config = (fun () -> "");
     copy = (fun _ -> Some "COPY:0"); encode; lower = (fun _ -> None);
     compile = Codegen.to_program ~optimize:false cpu (Device.renderer cpu);
   } in

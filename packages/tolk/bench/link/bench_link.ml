@@ -42,7 +42,7 @@ let template device program ~eager =
       if eager then U.with_tag "lt_input" p else p) in
   U.linear (List.init !calls (fun i ->
       U.call ~body:program ~args:[args.(i mod 2); args.(1 - (i mod 2))]
-        ~info:{grad_fxn = None; name = Some (string_of_int i);
+        ~info:{grad_fxn = None; name = Some (U.Label (string_of_int i));
           precompile = false; precompile_backward = false; aux = None; dtype = Dtype.void}))
 
 let roots linked =

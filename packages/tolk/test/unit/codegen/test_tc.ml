@@ -176,7 +176,7 @@ let matmul_widened_global_ast ?(acc = D.float32) ~dtype ~m ~n ~k () =
       ~rhs:(widened p_b ((r_k * idx n) + r_n))
   in
   let src = if D.equal acc D.float32 then mul else U.cast ~src:mul ~dtype:acc in
-  let red = U.reduce ~op:Ops.Add ~src ~ranges:[ r_k ] ~dtype:acc in
+  let red = U.reduce ~op:Ops.Add ~src ~ranges:[ r_k ] in
   let st =
     U.store ~dst:(U.index ~ptr:p_out ~idxs:[ (r_m * idx n) + r_n ] ()) ~value:red ()
   in

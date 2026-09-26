@@ -721,9 +721,9 @@ let test_concurrent_identities () =
             for i = 0 to 4095 do
               let d = Nx_effect.Device.make "IDENTITY" engine in
               let placed =
-                Nx_effect.placed (Nx_effect.Device d) Nx.float32
+                Nx_effect.placed (Nx.Placement.device d) Nx.float32
                   (Nx_core.View.create [| 1 |])
-                  (Nx_effect.cell engine ~length:1
+                  (Nx_effect.cell ~placement:(Nx.Placement.device d) ~length:1
                      (Nx_effect.Held (Nx.float32, 1.)))
               in
               let traced =

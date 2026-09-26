@@ -751,6 +751,7 @@ let finalizers_wait_for_device_operations () =
       profile_offset = (fun () -> !probe (); 0.);
       completion = (fun () -> !probe (); fun timeout -> ignore timeout; !probe ());
       prepare = (fun () -> !probe ()); host = "CPU";
+      max_kernel_bindings = None; config = (fun () -> "");
       copy = (fun _ -> None); encode = (fun _ -> None);
       lower = (fun _ -> None); compile = Fun.id} in
   let dev = Device.make ~name:"FINALIZER" ~allocator ~queue
