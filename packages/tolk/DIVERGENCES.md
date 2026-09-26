@@ -291,6 +291,23 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit_metal` "integer comparisons read wrapped values". Remove this
   ruling when upstream reasons modularly.
 
+- **Symbolic keeps float sums and products as written.** The reference folds
+  `(x + c1) + c2` into `x + (c1 + c2)`, moves constants to the tail of a
+  chain and factors `x*c0 + x*c1` into `x*(c0 + c1)` at every dtype; in
+  float that changes the rounding the program asked for: `(x + 1e8) - 1e8`
+  compiled to `x` (1 at x = 1 where eager gives 0) and `(x * 1e30) * 1e-30`
+  to `x`. Tolk applies these rules at integer and boolean dtypes only. The
+  arithmetic tolk's own decompositions introduce is theirs to arrange, so
+  they state their constants combined (`tanh`'s exponent is one multiply by
+  `-2 / ln 2`, `erf`, `sinh`, `cosh` and `atanh` likewise). A program's own
+  constant chains now run as written: on the CPU a tanh-form gelu costs 14%
+  more (4M float32, 14.85 against 16.9 ms, from its `1 + tanh` across
+  tolk's `2 s - 1`), a Lorenz step half as much (9.07 against 4.45 ms) and
+  swiglu 7% less; softmax and layer norm are unchanged. Coverage: rune
+  `test_jit` and `test_jit_metal` "float constants keep their grouping".
+  Remove this ruling when upstream keeps float association.
+
+
 - **A fixed-width integer constant holds its dtype's value.** The reference
   keeps integer constants exact until emission: folding runs with
   `truncate_output=False`, and a cast of a weak literal is stripped whatever

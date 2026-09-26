@@ -450,6 +450,29 @@ let check_float_association ?devices () =
         [| 1e20; 1e20; 1e-30 |] );
     ]
 
+(* Constants do not regroup either: (x + 1e8) - 1e8 is 0 at x = 1 in float32,
+   where x + (1e8 - 1e8) would be 1, and (x * 1e30) * 1e-30 overflows at x =
+   1e10 where x * (1e30 * 1e-30) does not. *)
+let check_float_constant_association ?devices () =
+  let check name f rows =
+    let x = vec32 rows in
+    equal ~msg:name (array float_exact)
+      (to_arr (f x))
+      (to_arr (Rune.jit' ?devices f x))
+  in
+  check "(x + 1e8) - 1e8"
+    (fun x -> Nx.sub_s (Nx.add_s x 1e8) 1e8)
+    [| 1.0; 3.0; -7.0 |];
+  check "(x * 1e30) * 1e-30"
+    (fun x -> Nx.mul_s (Nx.mul_s x 1e30) 1e-30)
+    [| 1e10; 1.0; -2e9 |];
+  check "(x + 0.1) + 0.2"
+    (fun x -> Nx.add_s (Nx.add_s x 0.1) 0.2)
+    [| 1.0; 3.0; -7.0 |];
+  check "x0 + (x1 + -1e8)"
+    (fun x -> Nx.add (Nx.get [ 0 ] x) (Nx.add_s (Nx.get [ 1 ] x) (-1e8)))
+    [| 1.0; 1e8 |]
+
 (* Integer arithmetic wraps at its dtype's width before a comparison reads it,
    as eager's does: uint8 0 - 1 is 255, int8 127 + 1 is -128, and uint16 256 *
    256 is 0. *)

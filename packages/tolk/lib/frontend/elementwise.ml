@@ -152,10 +152,15 @@ let cos t =
   let up = Dtype_ops.cast t (D.least_upper_dtype [ T.dtype t; D.float32 ]) in
   Dtype_ops.cast (sin (sub (T.f (Float.pi /. 2.)) up)) (T.dtype t)
 
-let exp t =
+(* The decompositions state their constants combined: arithmetic they introduce
+   is theirs to arrange, where symbolic keeps a program's float arithmetic as
+   written. [exp_scaled s t] is [exp (s * t)]. *)
+let exp_scaled s t =
   let t = Dtype_ops.cast t (D.least_upper_float (T.dtype t)) in
   let up = Dtype_ops.cast t (D.least_upper_dtype [ T.dtype t; D.float32 ]) in
-  Dtype_ops.cast (exp2 (mul up (T.f (1. /. Float.log 2.)))) (T.dtype t)
+  Dtype_ops.cast (exp2 (mul up (T.f (s /. Float.log 2.)))) (T.dtype t)
+
+let exp t = exp_scaled 1.0 t
 
 let log t =
   let l = log2 t in
@@ -212,7 +217,10 @@ let sigmoid t =
     (add (T.f 1.0) (exp2 (mul t (T.f (-1. /. Float.log 2.)))))
 
 let tanh t =
-  sub (mul (T.f 2.0) (sigmoid (mul (T.f 2.0) t))) (T.f 1.0)
+  let sigmoid_2t =
+    reciprocal (add (T.f 1.0) (exp2 (mul t (T.f (-2. /. Float.log 2.)))))
+  in
+  sub (mul (T.f 2.0) sigmoid_2t) (T.f 1.0)
 
 (* Horner evaluation of a polynomial with float coefficients, high order
    first: [polyn x [c0; ...; cn]] is [c0*x^n + ... + cn]. *)
@@ -313,7 +321,7 @@ let erf t =
           (mul s
              (polyn s
                 [ 1.061405429; -1.453152027; 1.421413741; -0.284496736; 0.254829592 ]))
-          (exp (neg (square t)))))
+          (exp_scaled (-1.0) (square t))))
 
 let log10 t =
   let l = log2 t in
@@ -342,11 +350,11 @@ let atan t = asin (div t (sqrt (add (T.f 1.0) (mul t t))))
 
 (* Hyperbolic functions and their inverses *)
 
-let sinh t = div (sub (exp t) (exp (neg t))) (T.f 2.0)
-let cosh t = div (add (exp t) (exp (neg t))) (T.f 2.0)
+let sinh t = mul (sub (exp t) (exp_scaled (-1.0) t)) (T.f 0.5)
+let cosh t = mul (add (exp t) (exp_scaled (-1.0) t)) (T.f 0.5)
 
 let atanh t =
-  div (log (div (add (T.f 1.0) t) (sub (T.f 1.0) t))) (T.f 2.0)
+  mul (log2 (div (add (T.f 1.0) t) (sub (T.f 1.0) t))) (T.f (Float.log 2. /. 2.))
 
 let asinh t =
   let sg = where (lt t (T.i 0)) (T.f (-1.)) (T.f 1.) in

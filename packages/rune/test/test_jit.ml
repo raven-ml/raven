@@ -4421,6 +4421,8 @@ let tests =
         test "pow of a subnormal base" test_pow_of_subnormal;
         test "float sums and products keep their grouping"
           (check_float_association ?devices:None);
+        test "float constants keep their grouping"
+          (check_float_constant_association ?devices:None);
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
         test "a compiled float8 bitcast is refused"

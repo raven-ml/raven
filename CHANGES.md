@@ -186,10 +186,11 @@ All notable changes to this project will be documented in this file.
   shift or quotient wraps at its width before it is read: C computed it in
   `int`, so `uint8` `x - 1 < x` was false at every x where eager is true
   from x = 1.
-- A compiled float sum or product of tensors groups as the program does:
-  `c + (a + b)` was computed as `(c + a) + b`, 0 instead of 1 for a = 1e8,
-  b = -1e8, c = 1 in `float32`. Unrolled reductions add their lanes' sum to
-  the accumulator, and run up to 4x faster on the CPU.
+- A compiled float sum or product groups as the program does, constants
+  included: `c + (a + b)` was computed as `(c + a) + b`, 0 instead of 1 for
+  a = 1e8, b = -1e8, c = 1 in `float32`, and `(x + 1e8) - 1e8` as `x`.
+  Unrolled reductions add their lanes' sum to the accumulator and run up to
+  4x faster on the CPU; a tanh-form GELU runs 14% slower there.
 - Compiled mxfp4 products weigh tolk's kernel against decoding by one row
   bound per device, the same for one matrix and for routes grouped by expert:
   8 rows on Metal and 64 on the CPU, at every dtype. It was 32 at bfloat16

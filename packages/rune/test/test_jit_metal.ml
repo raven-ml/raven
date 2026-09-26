@@ -893,6 +893,8 @@ let tests =
         test "scans keep subnormals" test_scans_keep_subnormals;
         test "float sums and products keep their grouping"
           (check_float_association ~devices:[ Rune.device "METAL" ]);
+        test "float constants keep their grouping"
+          (check_float_constant_association ~devices:[ Rune.device "METAL" ]);
         test "integer comparisons read wrapped values"
           (check_wrapping_comparisons ~devices:[ Rune.device "METAL" ]);
         test "folded integer constants wrap"

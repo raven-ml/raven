@@ -1189,6 +1189,11 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
 (* phase 2 *)
 
+(* Integer and boolean arithmetic regroups freely. Float addition and
+   multiplication round at each step, so regrouping or factoring them changes
+   the result the program asks for. *)
+let regroups u = not (Dtype.is_float (Uop.dtype u))
+
 (* Two-stage ALU folding on associative ops: x.op(c1).op(c2) -> x.op(c1.op(c2)). *)
 let rule_two_stage_associative_for assoc_op =
   let open Upat in
@@ -1197,8 +1202,8 @@ let rule_two_stage_associative_for assoc_op =
   alu [ alu [ x; c1 ] assoc_op; c2 ] assoc_op => fun bs ->
     let x = bs $ "x" and c1 = bs $ "c1" and c2 = bs $ "c2" in
     if
-      assoc_op = Ops.Add
-      && Dtype.is_unsigned (Uop.dtype x)
+      (assoc_op = Ops.Add && Dtype.is_unsigned (Uop.dtype x))
+      || ((assoc_op = Ops.Add || assoc_op = Ops.Mul) && not (regroups x))
     then None
     else
       let combined = Uop.alu_binary ~op:assoc_op ~lhs:c1 ~rhs:c2 in
@@ -1400,7 +1405,7 @@ let symbolic : Upat.Pattern_matcher.t =
      and c0 = cvar ~name:"c0" () and c1 = cvar ~name:"c1" () in
      O.((x * c0) + (x * c1)) => fun bs ->
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       Some Uop.O.(x * (c0 + c1)));
+       if regroups x then Some Uop.O.(x * (c0 + c1)) else None);
 
     (* y + (x * c0) + (x * c1) -> y + x*(c0+c1). *)
     (let x = var "x" and y = var "y"
@@ -1408,7 +1413,7 @@ let symbolic : Upat.Pattern_matcher.t =
      O.((y + x * c0) + (x * c1)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y"
        and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       Some Uop.O.(y + (x * (c0 + c1))));
+       if regroups x then Some Uop.O.(y + (x * (c0 + c1))) else None);
 
     (* (x + x) -> x * 2. *)
     (rewrite1 (fun x -> O.(x + x))
@@ -1416,25 +1421,28 @@ let symbolic : Upat.Pattern_matcher.t =
 
     (* y + x + x -> y + x*2 (associative variant). *)
     (rewrite2 (fun x y -> O.((y + x) + x))
-       (fun x y -> Some Uop.O.(y + (x * Uop.const_like x 2))));
+       (fun x y ->
+         if regroups x then Some Uop.O.(y + (x * Uop.const_like x 2)) else None));
 
     (* (x + x * c) -> x * (c + 1). *)
     (let x = var "x" and c = cvar ~name:"c" () in
      O.(x + x * c) => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
-       Some Uop.O.(x * (c + Uop.const_like c 1)));
+       if regroups x then Some Uop.O.(x * (c + Uop.const_like c 1)) else None);
 
     (* y + x + x*c -> y + x*(c+1). *)
     (let x = var "x" and y = var "y" and c = cvar ~name:"c" () in
      O.((y + x) + (x * c)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       Some Uop.O.(y + (x * (c + Uop.const_like c 1))));
+       if regroups x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
+       else None);
 
     (* y + x*c + x -> y + x*(c+1). *)
     (let x = var "x" and y = var "y" and c = cvar ~name:"c" () in
      O.((y + (x * c)) + x) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       Some Uop.O.(y + (x * (c + Uop.const_like c 1))));
+       if regroups x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
+       else None);
 
     (* y * (x + c) -> (y*x) + (y*c)  (distribution, int only). *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
@@ -1541,14 +1549,14 @@ let symbolic : Upat.Pattern_matcher.t =
     (let x = var "x" and y = var "y" and c1 = cvar ~name:"c1" () in
      O.((x + c1) + y) => fun bs ->
        let y = bs $ "y" in
-       if Uop.op y = Ops.Const then None
+       if Uop.op y = Ops.Const || not (regroups y) then None
        else
          let x = bs $ "x" and c1 = bs $ "c1" in
          Some Uop.O.((x + y) + c1));
     (let x = var "x" and y = var "y" and c1 = cvar ~name:"c1" () in
      O.((x * c1) * y) => fun bs ->
        let y = bs $ "y" in
-       if Uop.op y = Ops.Const then None
+       if Uop.op y = Ops.Const || not (regroups y) then None
        else
          let x = bs $ "x" and c1 = bs $ "c1" in
          Some Uop.O.((x * y) * c1));
