@@ -360,6 +360,18 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   rune `test_jit` and `test_jit_metal` "zeros keep their sign". Remove this
   ruling when upstream keeps these signs.
 
+- **A sum reduction's association is unspecified; its hoists stay.** The
+  preceding rulings keep a program's own float arithmetic as written. An ADD
+  reduction is the exception, as it is in the reference: it denotes the sum
+  of its terms in an unspecified association, so symbolic may reorder it and
+  move loop-invariant factors out of it (`reduce(x * c) -> reduce(x) * c`
+  and the loop-invariant MUL terms of an ADD reduce), visible only in rounding
+  and at overflow. Restricting them to integers cost a scaled contraction
+  21% on the CPU (256^3, 0.75 against 0.91 ms), and attention scores up to
+  50% in the review's measurement. MAX's hoist of a non-negative factor is
+  exact and stays. Rune states the contract in `Rune.jit`'s documentation
+  and the compilation guide.
+
 - **A fixed-width integer constant holds its dtype's value.** The reference
   keeps integer constants exact until emission: folding runs with
   `truncate_output=False`, and a cast of a weak literal is stripped whatever

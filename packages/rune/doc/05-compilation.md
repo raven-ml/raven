@@ -50,6 +50,12 @@ Outputs are values on the device: shape and dtype never transfer, and a read cop
 
 Device memory that backs an output is held until the output is garbage-collected or consumed. Past a budget of device allocations since the last major collection, 4 GiB by default and set in bytes by `RUNE_JIT_RESIDENT_BUDGET`, a collection runs before allocating more; an allocation that still fails raises `Nx.Device.Out_of_memory` before the call consumes anything. The intermediate values of a call live in scratch memory shared by every compiled function on the device, sized to the largest any of them needs, so the blocks of a deep model called in turn do not each hold their own.
 
+## Numerics
+
+A compiled program performs the operations the function performs. A sum over an axis (`Nx.sum`, `Nx.mean`, the contraction of `Nx.matmul`) is the sum of its terms in an unspecified association. The compiler may add the terms in another order than eager, split them across threads, and move a factor that does not vary along the summed axis out of the sum (`sum (0.125 * a * b)` becomes `0.125 * sum (a * b)`). Results then differ from eager's in rounding, and at overflow in whether a term overflows. A maximum over an axis is exact, except which zero it returns when -0 and +0 tie.
+
+Beyond that, compiled float results can differ from eager's in the last bits where the kernel compiler fuses a multiply and an add, where a division by a constant becomes a multiplication by its rounded reciprocal, and in transcendental functions, which are approximations within a few units in the last place (`Nx.pow` about 70); Metal flushes float32 subnormals to zero, a `float16` program on the CPU is not rounded after each operation, and signed integer overflow is undefined in the generated C.
+
 ## The Persistent Cache
 
 The first compilation of a trace writes its scheduled and compiled kernels to a disk cache under `$XDG_CACHE_HOME/tolk/rune_jit` (`XDG_CACHE_HOME` defaults to `~/.cache` on Linux and `~/Library/Caches` on macOS). A later process compiling the same trace loads them, so tracing is most of a warm start. Entries are invalidated when the executable, the device, its compiler or the code generation options change. `JITCACHE=0` disables the cache; programs over several devices are never persisted. Results are identical either way.
