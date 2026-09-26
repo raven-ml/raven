@@ -85,12 +85,16 @@ module Make (H : HashedType) : S with type key = H.t = struct
 
   let rec resize t =
     let oldlen = Array.length t.table in
-    let newlen = next_sz oldlen in
-    if newlen > oldlen then begin
+    (* Dead bucket capacity warrants compaction, not a larger table. Keeping
+       at most half a table of live entries leaves slack after rebuilding. *)
+    let compact = count t <= oldlen / 2 in
+    let newlen = if compact then oldlen else next_sz oldlen in
+    if compact || newlen > oldlen then begin
       let newt = create newlen in
       newt.limit <- t.limit + 100;
       iter (fun d -> add newt d) t;
-      t.table <- newt.table
+      t.table <- newt.table;
+      t.totsize <- newt.totsize
     end
 
   and add t d =

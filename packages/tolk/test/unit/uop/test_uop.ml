@@ -242,6 +242,61 @@ let group_algebra () =
   agrees "reduce" reduce is_reduce;
   agrees "comparison" comparison is_comparison
 
+let hashcons_resize_discards_retired_bucket_accounting () =
+  let module H = Tolk_uop__Hashcons.Make (struct
+    type t = int
+    let equal = Int.equal
+    let hash key = key mod 7
+  end) in
+  let table = H.create 7 in
+  let[@inline never] fill_dead_buckets () =
+    for key = 0 to 6 do
+      ignore (Sys.opaque_identity (H.hashcons table key))
+    done
+  in
+  fill_dead_buckets ();
+  Gc.full_major ();
+  Gc.full_major ();
+  let buckets, entries, slots, _, _, _ = H.stats table in
+  equal ~msg:"warmup entries are collected" int 0 entries;
+  equal int 7 buckets;
+  equal int 21 slots;
+  (* Four live collisions grow one bucket and trigger a rehash. Empty
+     buckets disappear from that rehash and must stop contributing to load. *)
+  let collisions = Array.init 4 (fun i -> H.hashcons table (i * 7)) in
+  let buckets_before, entries, slots, _, _, _ = H.stats table in
+  equal int 4 entries;
+  equal ~msg:"rehash retains only the live bucket" int 7 slots;
+  let separate = Array.init 6 (fun i -> H.hashcons table (i + 1)) in
+  let buckets_after, entries, slots, _, _, _ = H.stats table in
+  equal ~msg:"retired buckets cannot force another resize" int buckets_before buckets_after;
+  equal int 10 entries;
+  equal int 25 slots;
+  ignore (Sys.opaque_identity (collisions, separate))
+
+let hashcons_churn_compacts_dead_buckets () =
+  let module H = Tolk_uop__Hashcons.Make (struct
+    type t = int
+    let equal = Int.equal
+    let hash key = key / 4
+  end) in
+  let table = H.create 257 in
+  let anchor = H.hashcons table (-4) in
+  let[@inline never] churn batch =
+    let nodes = Array.init 64 (fun i -> H.hashcons table ((batch * 64) + i)) in
+    ignore (Sys.opaque_identity nodes)
+  in
+  for batch = 0 to 31 do
+    churn batch;
+    Gc.full_major ();
+    Gc.full_major ();
+    let buckets, entries, _, _, _, _ = H.stats table in
+    equal ~msg:"only the retained anchor survives each batch" int 1 entries;
+    equal ~msg:"dead buckets cannot grow a sparsely populated table" int 257 buckets;
+    is_true ~msg:"compaction preserves live canonical identities"
+      (H.hashcons table (-4) == anchor)
+  done
+
 let hashcons_identity () =
   let sum = Uop.alu_binary ~op:Ops.Add ~lhs:(Uop.const_int 1) ~rhs:(Uop.const_int 2) in
   let sum' = Uop.alu_binary ~op:Ops.Add ~lhs:(Uop.const_int 1) ~rhs:(Uop.const_int 2) in
@@ -2732,6 +2787,10 @@ let () =
           test "Ops tinygrad order" ops_tinygrad_order;
           test "Ops.Group algebra" group_algebra;
           test "hash-consing yields same node" hashcons_identity;
+          test "hash-consing churn compacts dead buckets"
+            hashcons_churn_compacts_dead_buckets;
+          test "hash-cons resize discards retired bucket accounting"
+            hashcons_resize_discards_retired_bucket_accounting;
           test "independent allocations reserve unique buffer slots" concurrent_buffer_slots;
           test "Add has two srcs" add_has_two_srcs;
           test "infix O module builds Mul" infix_builds_mul;

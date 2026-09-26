@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- Long-running graph construction reclaims dead hash-consing bucket capacity
+  instead of repeatedly growing sparse tables, reducing retained memory while
+  preserving the identity of live `Uop` nodes.
+
 - `Uop.get_idx` and `Uop.get_valid` handle invalid lanes and generic values
   consistently. The duplicate `Indexing.get_idx` and `Indexing.get_valid`
   functions are removed; use the canonical `Uop` functions.
