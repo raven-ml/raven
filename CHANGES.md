@@ -2009,6 +2009,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx.matmul` of small matrices is up to 8 times faster (16 x 64 x 100
+  `float32`: 0.009 ms, not 0.074), and each output has the bits of `Nx.dot` of
+  its row and column.
 - Eager `Nx.matmul` of 2 to 7 rows, or of a few columns, is 15 to 50 times
   faster: 2 `bfloat16` rows times 2880 x 5760 take 3 ms, not 45 (7 rows: 3.2 ms,
   not 156).

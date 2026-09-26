@@ -7,11 +7,11 @@
 
    Correctness gate (before any tuning): every path is checked against an
    independent f64 (or exact-integer / complex) reference, and the blocked
-   kernel is cross-checked against the fully independent naive triple-loop path
-   (mode 2) over every size, transpose combo, offset, batch broadcast, and
-   dtype. Inputs are read back through Nx_buffer.get so the reference uses the
-   ACTUAL quantized operands: for low-precision dtypes the only slack is
-   f32-accumulation plus a single output-quantization step.
+   kernel is cross-checked against the fully independent direct loop, one dot
+   per output (mode 2), over every size, transpose combo, offset, batch
+   broadcast, and dtype. Inputs are read back through Nx_buffer.get so the
+   reference uses the ACTUAL quantized operands: for low-precision dtypes the
+   only slack is f32-accumulation plus a single output-quantization step.
 
    Public matmul semantics live in the Nx backend contract; this suite retains
    owned-kernel, workspace, worker-partition, and Accelerate-routing checks. *)
@@ -35,8 +35,8 @@ type ('a, 'b) ffi = {
 external mm : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
   = "caml_nx_c_matmul"
 
-(* mode: 0 owned+policy, 1 owned+single-thread, 2 owned direct naive, 3 accel, 4
-   owned+four threads *)
+(* mode: 0 owned+policy, 1 owned+single-thread, 2 owned direct (one dot per
+   output), 3 accel, 4 owned+four threads *)
 external mm_ex : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> int -> unit
   = "caml_nx_c_matmul_ex"
 
@@ -102,13 +102,25 @@ let test_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol_rel ~tol_abs
   done;
   let a_ffi = ffi ~offset:a_off abuf [| m; k |] [| ars; acs |] in
   let b_ffi = ffi ~offset:b_off bbuf [| k; n |] [| brs; bcs |] in
+  (* C sits between [c_off] and [guard] cells of a fill value, so a store
+     outside it shows as a changed fill. *)
+  let guard = 16 in
   let run label call =
-    let cbuf = Buf.create kind (c_off + (m * n)) in
-    for t = 0 to c_off + (m * n) - 1 do
+    let size = c_off + (m * n) + guard in
+    let cbuf = Buf.create kind size in
+    for t = 0 to size - 1 do
       Buf.set cbuf t 123456.0
     done;
+    let fill = Buf.get cbuf 0 in
     let c_ffi = ffi ~offset:c_off cbuf [| m; n |] [| n; 1 |] in
     call c_ffi a_ffi b_ffi;
+    let outside = ref 0 in
+    for t = 0 to size - 1 do
+      if
+        (t < c_off || t >= c_off + (m * n))
+        && not (Float.equal (Buf.get cbuf t) fill)
+      then incr outside
+    done;
     let bad = ref 0 and maxerr = ref 0.0 in
     for i = 0 to m - 1 do
       for j = 0 to n - 1 do
@@ -121,9 +133,11 @@ let test_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol_rel ~tol_abs
     done;
     ok
       (Printf.sprintf
-         "%s %s %dx%dx%d aT=%b bT=%b off=%d/%d/%d (bad=%d maxerr=%.3g)" name
-         label m k n a_trans b_trans a_off b_off c_off !bad !maxerr)
-      (!bad = 0)
+         "%s %s %dx%dx%d aT=%b bT=%b off=%d/%d/%d (bad=%d outside=%d \
+          maxerr=%.3g)"
+         name label m k n a_trans b_trans a_off b_off c_off !bad !outside
+         !maxerr)
+      (!bad = 0 && !outside = 0)
   in
   List.iter
     (function
@@ -134,16 +148,14 @@ let test_real (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol_rel ~tol_abs
     modes
 
 (* Cross-check the OWNED blocked kernel (mode 0, engine policy — the
-   multi-thread panel / M-split path) against the naive path with no OCaml
+   multi-thread panel / M-split path) against the direct loop with no OCaml
    reference (both are C-speed) — for sizes where an OCaml reference triple loop
    would be slow. This forces the owned path explicitly, not `mm`: on macOS the
    frontend routes large floats to Accelerate, and this test's whole point is
-   the owned kernel (incl. mm_mpar_body). Both paths sum in the same k-order, so
-   they agree to within one FMA rounding: the blocked microkernel fuses (vfma),
-   the naive loop fuses only if the compiler contracts a*b+c, so compare within
-   a tolerance rather than bitwise (an exact test would be hostage to that
-   contraction). A real bug moves the result by orders of magnitude, far outside
-   tol. *)
+   the owned kernel (incl. mm_mpar_body). The blocked kernel sums along k in
+   order and the direct loop in sixteen lanes, so they agree to within rounding:
+   compare within a tolerance rather than bitwise. A real bug moves the result
+   by orders of magnitude, far outside tol. *)
 let test_diff (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~m ~k ~n () =
   let fa i p = sin (float_of_int (((i * k) + p) * 13 mod 4099)) in
   let fb p j = cos (float_of_int (((p * n) + j) * 7 mod 4093)) in
@@ -162,7 +174,7 @@ let test_diff (type b) ~(kind : (float, b) Nx_dtype.t) ~name ~tol ~m ~k ~n () =
     if e > tol +. (tol *. abs_float r) then incr bad
   done;
   ok
-    (Printf.sprintf "%s diff blocked-vs-naive %dx%dx%d (bad=%d maxerr=%.3g)"
+    (Printf.sprintf "%s diff blocked-vs-direct %dx%dx%d (bad=%d maxerr=%.3g)"
        name m k n !bad !maxerr)
     (!bad = 0)
 
@@ -878,7 +890,7 @@ let test_maintenance_paths () =
     ~m:130 ~k:70 ~n:90 ~a_off:11 ~b_off:0 ~c_off:9 ~a_trans:true
     ~modes:[ `Prod; `Direct ] ();
 
-  (* larger sizes: blocked-vs-naive differential (no OCaml reference) + one
+  (* larger sizes: blocked-vs-direct differential (no OCaml reference) + one
      ref *)
   List.iter
     (fun s ->
@@ -938,11 +950,11 @@ let test_maintenance_paths () =
 
   (* M-partition: a narrow matrix (n <= NC, or too few panels to fill the pool)
      drives the (batch x panel x MC-block) split with B pre-packed once into a
-     shared buffer. Cross-check the M-split blocked result against the naive
-     triple loop. Includes m NOT divisible by MC=256 (last MC-block has mr < MR,
-     the remainder-tile path in mm_mpar_body) and one case crossing
-     MM_KC_FULLK_MAX (both levers at once) — disjoint (ic, jc) tiles must
-     reconstruct the full product. *)
+     shared buffer. Cross-check the M-split blocked result against the direct
+     loop. Includes m NOT divisible by MC=256 (last MC-block has mr < MR, the
+     remainder-tile path in mm_mpar_body) and one case crossing MM_KC_FULLK_MAX
+     (both levers at once) — disjoint (ic, jc) tiles must reconstruct the full
+     product. *)
   List.iter
     (fun (m, k, n) ->
       test_diff ~kind:Nx_dtype.float32 ~name:"f32-msplit" ~tol:1e-4 ~m ~k ~n ();
@@ -1156,6 +1168,49 @@ let test_row_path () =
   ok "f32 column, A b has the bits of b^T A^T, A by columns"
     (column rows [| 1; n |] 4 = by_rows)
 
+(* The direct loop sums every output as the dot of its row and column: the bits
+   of each output equal its own 1x1 dot, for a tiny product (taken by the
+   policy) and larger ones forced direct, over contractions of one and of two
+   chunks. *)
+let test_direct_is_dots () =
+  List.iter
+    (fun (m, k, n, mode) ->
+      let a = Buf.create Nx_dtype.float32 (m * k)
+      and b = Buf.create Nx_dtype.float32 (k * n) in
+      for t = 0 to (m * k) - 1 do
+        Buf.set a t (sin (float_of_int t))
+      done;
+      for t = 0 to (k * n) - 1 do
+        Buf.set b t (cos (float_of_int (3 * t)))
+      done;
+      let c = Buf.create Nx_dtype.float32 (m * n) in
+      mm_ex
+        (ffi c [| m; n |] [| n; 1 |])
+        (ffi a [| m; k |] [| k; 1 |])
+        (ffi b [| k; n |] [| n; 1 |])
+        mode;
+      let dot i j =
+        let d = Buf.create Nx_dtype.float32 1 in
+        mm_ex
+          (ffi d [| 1; 1 |] [| 1; 1 |])
+          (ffi ~offset:(i * k) a [| 1; k |] [| k; 1 |])
+          (ffi ~offset:j b [| k; 1 |] [| n; 1 |])
+          1;
+        Int32.bits_of_float (Buf.get d 0)
+      in
+      let same = ref true in
+      for i = 0 to m - 1 do
+        for j = 0 to n - 1 do
+          if Int32.bits_of_float (Buf.get c ((i * n) + j)) <> dot i j then
+            same := false
+        done
+      done;
+      ok
+        (Printf.sprintf "f32 %dx%dx%d mode %d, each output is its dot" m k n
+           mode)
+        !same)
+    [ (2, 300, 2, 1); (20, 300, 30, 2); (4, 70001, 3, 2) ]
+
 let () =
   Windtrap.run "nx C backend matmul"
     [
@@ -1164,5 +1219,6 @@ let () =
           test "owned, workspace, and Accelerate paths" test_maintenance_paths;
           test "a 1x1 output sums in chunks" test_dot_path;
           test "a row keeps the dot's arithmetic" test_row_path;
+          test "the direct loop sums as the dot" test_direct_is_dots;
         ];
     ]

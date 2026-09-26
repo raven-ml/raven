@@ -93,9 +93,18 @@
 #define MM_KC 512
 #define MM_KC_FULLK_MAX 2048
 
-/* Below this the pack setup does not pay: run a direct strided triple loop in
-   the compute type instead. Tuned by the test. */
+/* Below this the pack setup does not pay: run the direct loop, one dot per
+   output, instead. Tuned by the test. */
 #define MM_DIRECT_CUTOFF (48 * 48 * 48)
+
+/* The contraction chunk of every dot-shaped sum (the direct loop, the dot and
+   row paths): each chunk is summed in nx_c.h's order, and the chunks are added
+   in order. */
+#define MM_DOT_CHUNK (64 * 1024)
+
+/* Outputs per row tile of the direct loop: its lanes live on the stack
+   (sixteen rows of this many compute values, 16 KiB at complex64). */
+#define MM_DIRECT_TILE 64
 
 /* Register tile height, shared by every microkernel; NR is per compute type. */
 #define MM_MR 8
@@ -421,23 +430,6 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
         nx_c_st_##sfx(c + idx * esz, tile[i * NR + j]);                        \
       }                                                                        \
   }                                                                            \
-  static void mm_direct_##sfx(const void *va, int64_t ars, int64_t acs,        \
-                              const void *vb, int64_t brs, int64_t bcs,        \
-                              void *vc, int64_t crs, int64_t ccs, int64_t m,   \
-                              int64_t n, int64_t k) {                          \
-    const char *a = (const char *)va;                                        \
-    const char *b = (const char *)vb;                                        \
-    char *c = (char *)vc;                                                     \
-    int64_t esz = (int64_t)sizeof(storage);                                   \
-    for (int64_t i = 0; i < m; i++)                                           \
-      for (int64_t j = 0; j < n; j++) {                                       \
-        compute acc = (compute)0;                                            \
-        for (int64_t p = 0; p < k; p++)                                       \
-          MM_MAC_##cat(acc, nx_c_ld_##sfx(a + (i * ars + p * acs) * esz),      \
-                       nx_c_ld_##sfx(b + (p * brs + j * bcs) * esz));          \
-        nx_c_st_##sfx(c + (i * crs + j * ccs) * esz, acc);                    \
-      }                                                                        \
-  }                                                                            \
   /* Dot of k elements at element strides as, bs into one compute value, in \
      nx_c.h's summation order: the contiguous run vectorizes over the lanes'  \
      independent accumulators, where one would wait on every multiply-add. */ \
@@ -491,6 +483,48 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
     for (int64_t j = 0; j < n; j++)                                           \
       out[j] = (compute)NX_C_LANE_TREE(MM_LANE_ROW, MM_ADD_##cat);            \
   }                                                                            \
+  /* A row tile of nt outputs over the whole k into `sums`: MM_DOT_CHUNK     \
+     chunks summed by mm_row and added in order, the order of every          \
+     dot-shaped sum. `lanes` holds NX_C_LANES * nt compute values and `part`  \
+     nt. */                                                                    \
+  static void mm_row_tile_##sfx(const void *va, int64_t as, const void *vb,    \
+                                int64_t brs, int64_t bcs, int64_t k,           \
+                                int64_t nt, void *vlanes, void *vsums,         \
+                                void *vpart) {                                 \
+    const char *a = (const char *)va;                                        \
+    const char *b = (const char *)vb;                                        \
+    int64_t esz = (int64_t)sizeof(storage);                                   \
+    compute *sums = (compute *)vsums, *part = (compute *)vpart;              \
+    for (int64_t p0 = 0; p0 == 0 || p0 < k; p0 += MM_DOT_CHUNK) {             \
+      int64_t len = k - p0 < MM_DOT_CHUNK ? k - p0 : MM_DOT_CHUNK;            \
+      mm_row_##sfx(a + p0 * as * esz, as, b + p0 * brs * esz, brs, bcs, len,   \
+                   nt, vlanes, p0 == 0 ? vsums : vpart);                       \
+      for (int64_t j = 0; p0 > 0 && j < nt; j++)                              \
+        sums[j] = (compute)MM_ADD_##cat(sums[j], part[j]);                   \
+    }                                                                          \
+  }                                                                            \
+  /* Every output as the dot of its row of A and its column of B, a row at a \
+     time in row tiles of MM_DIRECT_TILE outputs, so each output has the bits \
+     of its 1x1 dot and row-major B still streams along its rows. */           \
+  static void mm_direct_##sfx(const void *va, int64_t ars, int64_t acs,        \
+                              const void *vb, int64_t brs, int64_t bcs,        \
+                              void *vc, int64_t crs, int64_t ccs, int64_t m,   \
+                              int64_t n, int64_t k) {                          \
+    const char *a = (const char *)va;                                        \
+    const char *b = (const char *)vb;                                        \
+    char *c = (char *)vc;                                                     \
+    int64_t esz = (int64_t)sizeof(storage);                                   \
+    compute lanes[NX_C_LANES * MM_DIRECT_TILE];                              \
+    compute sums[MM_DIRECT_TILE], part[MM_DIRECT_TILE];                       \
+    for (int64_t i = 0; i < m; i++)                                           \
+      for (int64_t j0 = 0; j0 < n; j0 += MM_DIRECT_TILE) {                    \
+        int64_t nt = n - j0 < MM_DIRECT_TILE ? n - j0 : MM_DIRECT_TILE;      \
+        mm_row_tile_##sfx(a + i * ars * esz, acs, b + j0 * bcs * esz, brs,     \
+                          bcs, k, nt, lanes, sums, part);                      \
+        for (int64_t j = 0; j < nt; j++)                                      \
+          nx_c_st_##sfx(c + (i * crs + (j0 + j) * ccs) * esz, sums[j]);       \
+      }                                                                        \
+  }                                                                            \
   /* KC-panel accumulate: dst[i] += src[i] over `count` compute elements, the \
      one place a partial MR x NR tile folds into the compute-typed C tile. In  \
      compute precision (int64 wraps modularly BY CONSTRUCTION — MM_ADD's SINT  \
@@ -521,8 +555,9 @@ typedef void (*nx_c_mm_direct)(const void *, int64_t, int64_t, const void *,
                               int64_t, int64_t, int64_t);
 typedef void (*nx_c_mm_dot)(const void *, int64_t, const void *, int64_t,
                            int64_t, void *);
-typedef void (*nx_c_mm_row)(const void *, int64_t, const void *, int64_t,
-                           int64_t, int64_t, int64_t, void *, void *);
+typedef void (*nx_c_mm_row_tile)(const void *, int64_t, const void *, int64_t,
+                                int64_t, int64_t, int64_t, void *, void *,
+                                void *);
 typedef void (*nx_c_mm_micro)(void *, const void *, const void *, int64_t);
 typedef void (*nx_c_mm_acc)(void *, const void *, int);
 
@@ -531,7 +566,7 @@ typedef struct {
   nx_c_mm_store store;
   nx_c_mm_direct direct;
   nx_c_mm_dot dot;
-  nx_c_mm_row row;
+  nx_c_mm_row_tile row_tile;
   nx_c_mm_micro micro; /* NULL: dtype unsupported for matmul */
   nx_c_mm_acc acc;     /* KC-panel tile accumulate (compute-typed) */
   int MR, NR;
@@ -544,7 +579,7 @@ typedef struct {
                        mm_store_##sfx,                                         \
                        mm_direct_##sfx,                                        \
                        mm_dot_##sfx,                                           \
-                       mm_row_##sfx,                                           \
+                       mm_row_tile_##sfx,                                      \
                        MM_MICRO_##compute,                                     \
                        mm_acc_##sfx,                                           \
                        MM_MR,                                                  \
@@ -784,16 +819,14 @@ static void mm_direct_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 /* ── Dot: a 1x1 output ────────────────────────────────────────────────────
 
    A product whose output is one element per batch matrix (a row times a column,
-   what Nx.dot of two vectors becomes) has no tile to fill: the direct loop's one
-   accumulator waits on every multiply-add, and the blocked path pads a 1x1 tile.
-   Its own path splits each contraction into fixed MM_DOT_CHUNK-element chunks,
-   one job per (batch, chunk). A job sums its chunk with the kernel's sixteen
-   lanes into a compute-typed partial; the job that finishes a batch's last
-   chunk adds that batch's partials in chunk order and stores once. The chunk
-   size, the lanes and the combine order are fixed, so the result is the same on
-   any thread count, and it is summed in the compute type and rounded once like
-   every other path. */
-#define MM_DOT_CHUNK (64 * 1024)
+   what Nx.dot of two vectors becomes) has no tile to fill, and the direct loop
+   would sum its contraction on one thread. Its own path splits each contraction
+   into its MM_DOT_CHUNK-element chunks, one job per (batch, chunk). A job sums
+   its chunk with the kernel's sixteen lanes into a compute-typed partial; the
+   job that finishes a batch's last chunk adds that batch's partials in chunk
+   order and stores once. The chunk size, the lanes and the combine order are
+   fixed, so the result is the same on any thread count, and it is summed in the
+   compute type and rounded once like every other path. */
 
 typedef struct {
   const mm_ctx *x;
@@ -897,15 +930,8 @@ static void mm_row_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     const char *ab, *bb;
     char *cb;
     mm_batch_base(x, bt, &ab, &bb, &cb);
-    bb += j0 * x->b_cs * x->esz;
-    for (int64_t p0 = 0; p0 == 0 || p0 < x->k; p0 += MM_DOT_CHUNK) {
-      int64_t len = x->k - p0;
-      if (len > MM_DOT_CHUNK) len = MM_DOT_CHUNK;
-      d->row(ab + p0 * x->a_cs * x->esz, x->a_cs,
-             bb + p0 * x->b_rs * x->esz, x->b_rs, x->b_cs, len, nt, lanes,
-             p0 == 0 ? sums : chunk_sums);
-      if (p0 > 0) d->acc(sums, chunk_sums, (int)nt);
-    }
+    d->row_tile(ab, x->a_cs, bb + j0 * x->b_cs * x->esz, x->b_rs, x->b_cs,
+                x->k, nt, lanes, sums, chunk_sums);
     d->store(sums, cb, x->c_rs, x->c_cs, 0, j0, 1, (int)nt, (int)nt);
   }
 }
@@ -1227,7 +1253,7 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
 #endif
 
   if (use_direct) {
-    /* One job per batch matrix; a lone matrix runs on one thread (the fair naive
+    /* One job per batch matrix; a lone matrix runs on one thread (the fair direct
        baseline the test measures against). */
     int nth = nthreads > 0
                   ? nthreads
@@ -1515,7 +1541,7 @@ CAMLprim value caml_nx_c_matmul(value vout, value va, value vb) {
    owned kernel so it stays covered on macOS where eligible products use cblas:
      0 = owned blocked, engine thread policy   (owned multi-thread path)
      1 = owned blocked, forced single thread
-     2 = owned direct naive triple loop
+     2 = owned direct loop, one dot per output
      3 = automatic Accelerate route if eligible, else owned policy
      4 = owned, forced four threads (a split the policy would not choose). */
 void nx_c_matmul_maintenance(value vout, value va, value vb, int mode) {
