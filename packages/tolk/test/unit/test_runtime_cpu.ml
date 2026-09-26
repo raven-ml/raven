@@ -158,6 +158,38 @@ let runtime_survives_owner_replacement () =
   program.free ();
   raises (Invalid_argument "CPU program has been unloaded") call
 
+let unreachable_runtime_is_collected () =
+  let name = "unreachable-executable-lifetime" in
+  let weak_program = Stdlib.Weak.create 1 and weak_call = Stdlib.Weak.create 1 in
+  let[@inline never] load () =
+    let device = cpu name in
+    let spec = Device.compile_program device ~name:"gc_owned_executable"
+        (increment_program ()) in
+    let output = create_i32_buffer device [0] and input = create_i32_buffer device [41] in
+    let program = Device.runtime device (Program_spec.to_elf spec) in
+    Stdlib.Weak.set weak_program 0 (Some program);
+    Stdlib.Weak.set weak_call 0 (Some program.call);
+    ref (Some program.call), output, input
+  in
+  let retained_call, output, input = load () in
+  ignore (cpu name);
+  for _ = 1 to 3 do Gc.full_major () done;
+  is_true ~msg:"the retained call keeps its executable alive"
+    (Stdlib.Weak.check weak_call 0);
+  let[@inline never] execute_and_drop () =
+    let call = Option.get !retained_call in
+    ignore (call [|output; input|] ~global:[|1; 1; 1|] ~local:None
+        ~vals:[||] ~wait:false ~timeout:None);
+    equal (list int) [42] (read_i32_buffer output);
+    retained_call := None
+  in
+  execute_and_drop ();
+  for _ = 1 to 3 do Gc.full_major () done;
+  is_false ~msg:"unreachable runtime records are not retained"
+    (Stdlib.Weak.check weak_program 0);
+  is_false ~msg:"dropping the last call releases its managed executable owner"
+    (Stdlib.Weak.check weak_call 0)
+
 let timing_cache_eviction () =
   let host = cpu "eviction-host" in
   let renderer_set = Device.Renderer_set.make ~device:"CPU"
@@ -1236,6 +1268,8 @@ let main () =
             ignore (Sys.opaque_identity buf));
           test "live executables survive device replacement and major collection"
             runtime_survives_owner_replacement;
+          test "unreachable executables release managed roots without explicit free"
+            unreachable_runtime_is_collected;
           test "cache eviction materializes ones without beam search, stats, or capture"
             timing_cache_eviction;
           test "wait returns positive elapsed time" (fun () ->
