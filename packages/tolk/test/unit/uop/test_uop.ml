@@ -268,6 +268,20 @@ let bool_folds_are_logical () =
   equal op_testable Ops.Mul (Uop.op (Uop.uprod [ x; x ]));
   equal op_testable Ops.Add (Uop.op (Uop.usum [ x; x ]))
 
+let mixed_folds_promote fold () =
+  let index = Uop.variable ~name:"fold_index" ~min_val:0 ~max_val:8 () in
+  let value = Uop.variable ~name:"fold_value" ~min_val:0 ~max_val:8 ~dtype:Dtype.float32 () in
+  List.iter (fun (operands, position) ->
+      let result = fold operands in
+      let promoted = (Uop.src result).(position) in
+      equal ~msg:"mixed folds cast nonconstant weak operands" op_testable Ops.Cast (Uop.op promoted);
+      equal string (Dtype.to_string Dtype.float32) (Dtype.to_string (Uop.dtype promoted));
+      is_true (Uop.equal (Uop.src promoted).(0) index))
+    [([index; value], 0); ([value; index], 1)];
+  let result = fold [value; Uop.const_int 3] in
+  equal ~msg:"weak literals acquire the consuming numeric family" string
+    "weakfloat" (Dtype.to_string (Uop.dtype (Uop.src result).(1)))
+
 let arithmetic_helpers_tinygrad_parity () =
   let open Uop.O in
   let x = Uop.variable ~name:"x" ~min_val:0 ~max_val:64 () in
@@ -2709,6 +2723,8 @@ let () =
           test "infix O module builds Mul" infix_builds_mul;
           test "usum and uprod fold booleans with Or and And"
             bool_folds_are_logical;
+          test "usum promotes mixed weak and concrete operands" (mixed_folds_promote Uop.usum);
+          test "uprod promotes mixed weak and concrete operands" (mixed_folds_promote Uop.uprod);
           test "scalar BUFFER carries Param_arg" param_arg_symbolic_constructor;
           test "tinygrad arithmetic helper parity"
             arithmetic_helpers_tinygrad_parity;

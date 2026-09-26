@@ -603,9 +603,7 @@ let get_transcendental_patterns (ops : Decomp_op.supported_ops) (node : Uop.t) =
      float's precision absorbs. *)
   | Ops.Pow, Some base when Dtype.is_float dt ->
       let exponent = (Uop.src node).(1) in
-      if Dtype.equal dt Dtype.float32 || Dtype.equal dt Dtype.float64 then
-        Some (xpow base exponent)
-      else
-        let f32 u = Uop.cast ~src:u ~dtype:Dtype.float32 in
-        Some (Uop.cast ~src:(xpow (f32 base) (f32 exponent)) ~dtype:dt)
+      let dtype = if Dtype.equal dt Dtype.float64 then Dtype.float64 else Dtype.float32 in
+      let promote u = Uop.cast ~src:u ~dtype in
+      Some (Uop.cast ~src:(xpow (promote base) (promote exponent)) ~dtype:dt)
   | _ -> None

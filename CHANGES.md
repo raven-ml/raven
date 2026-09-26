@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- Mixed weak and concrete operands in `Uop.usum`, `Uop.uprod` and floating
+  power decomposition are promoted before arithmetic, preventing invalid
+  integer operations in generated floating-point kernels.
+
 - CUDA cross-device copies use shared host staging for device-only storage.
   Pinned imports retain their original allocation context across device
   replacement, avoiding name-based peer-context lookup.

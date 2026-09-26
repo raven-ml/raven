@@ -71,11 +71,6 @@ acceptance requirement; skipped tests are not execution evidence.
 
 ## 3. Close parity and adopt the reference
 
-- Finish classifying raw constructors in dtype/transcendental decomposition
-  and schedule indexing, including `usum`/`uprod` consumers. Use `U.Promoting`
-  where the reference uses promoting operators and preserve raw ALU
-  construction where it does not.
-
 - Remove remaining parallel property reconstruction and silent guesses in
   view offsets and range metadata. Port remaining symbolic rules and measure
   rewrite performance and long-lived memory use with weak node caches.

@@ -93,6 +93,29 @@ let xpow_refuses_a_width_without_an_integer () =
         (Decomp_transcendental.get_transcendental_patterns
            (supported_ops ~has_sqrt:false ()) sqrt))
 
+let pow_promotes_weak_exponent_before_parity () =
+  List.iter (fun dtype ->
+      let base = Uop.variable ~name:"pow_base" ~min_val:1 ~max_val:4 ~dtype () in
+      let exponent = Uop.variable ~name:"pow_exponent" ~min_val:(-3) ~max_val:3 () in
+      let power = Uop.alu_binary ~op:Ops.Pow ~lhs:base ~rhs:exponent in
+      Spec.type_verify Spec.full_spec power;
+      let result = Option.get
+          (Decomp_transcendental.get_transcendental_patterns (supported_ops ()) power) in
+      let arithmetic_dtype =
+        if Dtype.equal dtype Dtype.float64 then Dtype.float64 else Dtype.float32 in
+      let truncations = List.filter (fun n -> Uop.op n = Ops.Trunc) (Uop.toposort result) in
+      is_true ~msg:"power tests exponent parity in floating arithmetic" (truncations <> []);
+      List.iter (fun n ->
+          equal ~msg:"TRUNC receives the promoted exponent" string
+            (Dtype.to_string arithmetic_dtype) (Dtype.to_string (Uop.dtype (Uop.src n).(0))))
+        truncations;
+      is_true ~msg:"the weak exponent is cast before arithmetic"
+        (List.exists (fun n -> Uop.op n = Ops.Cast
+             && Dtype.equal (Uop.dtype n) arithmetic_dtype
+             && Uop.equal (Uop.src n).(0) exponent) (Uop.toposort result));
+      Spec.type_verify Spec.full_spec result)
+    [ Dtype.float32; Dtype.float64; Dtype.float16 ]
+
 let log2_denormal_scale_uses_float_power () =
   let x = Uop.const_float 1.0 in
   let log2 = Uop.alu_unary ~op:Ops.Log2 ~src:x in
@@ -1303,6 +1326,8 @@ let () =
             sqrt_decomposition_builds_where;
           test "xpow refuses a width without an integer"
             xpow_refuses_a_width_without_an_integer;
+          test "POW promotes weak exponents before parity arithmetic"
+            pow_promotes_weak_exponent_before_parity;
           test "log2 denormal scale uses float power"
             log2_denormal_scale_uses_float_power;
           test "sin f16 Cody-Waite casts quadrant to f32"
