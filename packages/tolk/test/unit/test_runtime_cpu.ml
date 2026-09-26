@@ -861,10 +861,19 @@ let test_emulated_fp8_raw_bitcasts () =
 
 let test_software_sin_large_arguments () =
   let device = cpu "software-sin-large" in
-  let values = [| 0.0; 1.0; Float.pi; 39800.0; 1.0e6; 1.0e10; 2.0 ** 31.0;
-                  2.0 ** 32.0; 1.0e20; 1.0e30; 3.4028234663852886e38 |] in
-  let values = Array.append values (Array.map Float.neg values)
-      |> Array.map (fun x -> Int32.float_of_bits (Int32.bits_of_float x)) in
+  (* Each float32 argument with its sine rounded to float64, computed at 60
+     digits: the host's libm is no oracle, MinGW's gives sin 1e20 = -0.771. *)
+  let cases = [| 0.0, 0.0; 1.0, 0.8414709848078965;
+                 3.1415927410125732, -8.742278000372475e-08;
+                 39800.0, 0.7428572235125965; 1.0e6, -0.34999350217129294;
+                 1.0e10, -0.4875060250875107; 2147483648.0, -0.9713101757929392;
+                 4294967296.0, -0.4619865795138349;
+                 1.0000000200408773e+20, 0.6565766778545903;
+                 1.0000000150474662e+30, -0.7911634385219837;
+                 3.4028234663852886e+38, -0.5218765233336585 |] in
+  let cases = Array.append cases
+      (Array.map (fun (x, s) -> (Float.neg x, Float.neg s)) cases) in
+  let values = Array.map fst cases in
   let count = Array.length values in
   let param slot = U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int count)
       ~addrspace:Dtype.Global () in
@@ -890,11 +899,10 @@ let test_software_sin_large_arguments () =
   Device.Buffer.copyin input bytes;
   run_spec device spec [ output; input ];
   let result = Device.Buffer.as_bytes output in
-  Array.iteri (fun i x ->
-      let expected = Float.sin x in
+  Array.iteri (fun i (x, expected) ->
       let actual = Int32.float_of_bits (Bytes.get_int32_le result (i * 4)) in
       is_true ~msg:(Printf.sprintf "sin(%g): expected %.9g, got %.9g" x expected actual)
-        (Float.abs (expected -. actual) < 2.0e-6)) values
+        (Float.abs (expected -. actual) < 2.0e-6)) cases
 
 let test_padded_reduction op transform values expected () =
   let device = cpu "padded-reduction" in
