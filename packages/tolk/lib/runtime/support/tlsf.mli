@@ -20,7 +20,8 @@
 (** {1:types Types} *)
 
 type t
-(** The type for TLSF allocators. Mutable. *)
+(** The type for mutable TLSF allocators. Allocation and deallocation on
+    the same allocator are safe across domains and system threads. *)
 
 exception Out_of_memory of string
 (** Raised by {!alloc} when no free block can satisfy a request. The

@@ -30,6 +30,7 @@ type block = {
 }
 
 type t = {
+  lock : Mutex.t;
   base : int;
   block_size : int;
   l2_cnt : int;
@@ -127,58 +128,60 @@ let create ~size ?(base = 0) ?(block_size = 16) ?(lv2_cnt = 16) () =
   let storage = Array.init n_levels (fun _ -> Hashtbl.create 4) in
   let lv1_entries = Array.make n_levels 0 in
   let blocks = Hashtbl.create 64 in
-  let t = { base; block_size; l2_cnt; storage; lv1_entries; blocks } in
+  let t = { lock = Mutex.create (); base; block_size; l2_cnt; storage; lv1_entries; blocks } in
   Hashtbl.replace blocks 0
     { size; next = None; prev = None; is_free = true };
   if size > 0 then insert_block t 0 size ();
   t
 
 let alloc t req_size ?(align = 1) () =
-  let req_size = max t.block_size req_size in
-  let size = max t.block_size (req_size + align - 1) in
-  (* Round up to the next bucket boundary so any entry there fits. *)
-  let size = round_up size (1 lsl (bit_length size - t.l2_cnt)) in
-  let n_levels = Array.length t.storage in
-  let result = ref (-1) in
-  let l1 = ref (lv1 size) in
-  while !l1 < n_levels && !result = -1 do
-    if t.lv1_entries.(!l1) <> 0 then begin
-      let l2_start =
-        if !l1 = bit_length size then lv2 t size else 0 in
-      let l2_end = 1 lsl t.l2_cnt in
-      let l2 = ref l2_start in
-      while !l2 < l2_end && !result = -1 do
-        let entries =
-          match Hashtbl.find_opt t.storage.(!l1) !l2 with
-          | Some l -> l | None -> [] in
-        if entries <> [] then begin
-          let start = ref (List.hd entries) in
-          let nsize = ref (Hashtbl.find t.blocks !start).size in
-          assert (!nsize >= size);
-          (* Alignment: split off a prefix if the start isn't aligned. *)
-          let new_start = round_up !start align in
-          if new_start <> !start then begin
-            split_block t !start !nsize (new_start - !start);
-            start := new_start;
-            nsize := (Hashtbl.find t.blocks new_start).size
+  Mutex.protect t.lock (fun () ->
+    let req_size = max t.block_size req_size in
+    let size = max t.block_size (req_size + align - 1) in
+    (* Round up to the next bucket boundary so any entry there fits. *)
+    let size = round_up size (1 lsl (bit_length size - t.l2_cnt)) in
+    let n_levels = Array.length t.storage in
+    let result = ref (-1) in
+    let l1 = ref (lv1 size) in
+    while !l1 < n_levels && !result = -1 do
+      if t.lv1_entries.(!l1) <> 0 then begin
+        let l2_start =
+          if !l1 = bit_length size then lv2 t size else 0 in
+        let l2_end = 1 lsl t.l2_cnt in
+        let l2 = ref l2_start in
+        while !l2 < l2_end && !result = -1 do
+          let entries =
+            match Hashtbl.find_opt t.storage.(!l1) !l2 with
+            | Some l -> l | None -> [] in
+          if entries <> [] then begin
+            let start = ref (List.hd entries) in
+            let nsize = ref (Hashtbl.find t.blocks !start).size in
+            assert (!nsize >= size);
+            (* Alignment: split off a prefix if the start isn't aligned. *)
+            let new_start = round_up !start align in
+            if new_start <> !start then begin
+              split_block t !start !nsize (new_start - !start);
+              start := new_start;
+              nsize := (Hashtbl.find t.blocks new_start).size
+            end;
+            (* Split off the tail if the block is larger than needed. *)
+            if !nsize > req_size then
+              split_block t !start !nsize req_size;
+            remove_block t !start req_size ();
+            result := !start + t.base
           end;
-          (* Split off the tail if the block is larger than needed. *)
-          if !nsize > req_size then
-            split_block t !start !nsize req_size;
-          remove_block t !start req_size ();
-          result := !start + t.base
-        end;
-        incr l2
-      done
-    end;
-    incr l1
-  done;
-  if !result = -1 then
-    raise (Out_of_memory (Printf.sprintf "Can't allocate %d bytes" req_size));
-  !result
+          incr l2
+        done
+      end;
+      incr l1
+    done;
+    if !result = -1 then
+      raise (Out_of_memory (Printf.sprintf "Can't allocate %d bytes" req_size));
+    !result)
 
 let free t start =
-  let s = start - t.base in
-  let blk = Hashtbl.find t.blocks s in
-  insert_block t s blk.size ();
-  merge_block t s
+  Mutex.protect t.lock (fun () ->
+    let s = start - t.base in
+    let blk = Hashtbl.find t.blocks s in
+    insert_block t s blk.size ();
+    merge_block t s)

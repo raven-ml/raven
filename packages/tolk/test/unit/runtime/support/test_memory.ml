@@ -44,7 +44,7 @@ let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
     ?(fail_write = fun () -> false) ?(fail_clear = fun () -> false)
     ?(fail_flush = fun () -> false)
     ?(palloc_ranges = [ (0x8000, 0x8000); (0x1000, 0x1000) ])
-    ?(va_size = 0x200000) ?(clear_root = true) () =
+    ?(va_size = 0x200000) ?va_allocator ?(clear_root = true) () =
   let vram = Array.make (vram_size / 8) 0L in
   let zeroed = ref [] in
   let booting = ref true in
@@ -77,7 +77,9 @@ let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
   let mm =
     Memory.create ~pt_ops ~vram_size ~boot_size ~va_bits:21
       ~va_shifts:[ 12; 15; 18 ] ~va_base ~palloc_ranges
-      ~va_allocator:(Tlsf.create ~size:va_size ~base:va_base ())
+      ~va_allocator:(match va_allocator with
+        | Some allocator -> allocator
+        | None -> Tlsf.create ~size:va_size ~base:va_base ())
       ~is_booting:(fun () -> !booting)
       ~zero_vram:(fun ~paddr ~size ->
         if fail_zero () then failwith "zeroing failed";
@@ -230,9 +232,56 @@ let import_rollback_ownership ~fail_clear () =
       (Weak.check weak 0)
   end else equal int 1 !frees
 
+let shared_virtual_address_space () =
+  let capacity = 0x200000 and domains = 4 and per_domain = 96 in
+  let allocator = Tlsf.create ~size:capacity () in
+  let fixtures = Array.init domains (fun _ -> make_fixture ~va_allocator:allocator ()) in
+  let concurrently f =
+    let ready = Atomic.make 0 in
+    let workers = Array.init domains (fun i -> Domain.spawn (fun () ->
+        ignore (Atomic.fetch_and_add ready 1);
+        while Atomic.get ready <> domains do Domain.cpu_relax () done;
+        try Ok (f i) with exn -> Error (exn, Printexc.get_raw_backtrace ()))) in
+    let results = Array.map Domain.join workers in
+    Array.map (function Ok value -> value
+      | Error (exn, backtrace) -> Printexc.raise_with_backtrace exn backtrace) results in
+  for round = 1 to 4 do
+    let addresses = concurrently (fun i ->
+        Array.init per_domain (fun _ -> Memory.alloc_vaddr fixtures.(i).mm 0x1000 ())) in
+    let ordered = Array.concat (Array.to_list addresses) in
+    Array.sort Int.compare ordered;
+    Array.iteri (fun i address ->
+        equal ~msg:(Printf.sprintf "round %d address %d alignment" round i)
+          int 0 (address mod 0x1000);
+        if i > 0 && ordered.(i - 1) + 0x1000 > address then
+          failf "round %d: overlapping live VA ranges at %#x and %#x"
+            round ordered.(i - 1) address) ordered;
+    ignore (concurrently (fun i ->
+        Array.iter (Memory.free_vaddr fixtures.(i).mm) addresses.(i)) : unit array);
+    let whole = Tlsf.alloc allocator capacity () in
+    equal ~msg:"all devices return one coalesced address space" int 0 whole;
+    Tlsf.free allocator whole
+  done
+
+let shared_allocation_failure_releases_lock () =
+  let allocator = Tlsf.create ~size:0x200000 () in
+  let first = make_fixture ~va_allocator:allocator ()
+  and second = make_fixture ~va_allocator:allocator () in
+  raises_match oom (fun () -> Memory.alloc_vaddr first.mm 0x400000 ());
+  let address = Domain.join (Domain.spawn (fun () ->
+      Memory.alloc_vaddr second.mm 0x1000 ())) in
+  equal int 0 address;
+  Memory.free_vaddr first.mm address;
+  let whole = Tlsf.alloc allocator 0x200000 () in
+  equal int 0 whole;
+  Tlsf.free allocator whole
+
 let () =
   run "Memory"
     [
+      group "shared virtual addresses"
+        [ test "independent managers allocate disjoint ranges and coalesce" shared_virtual_address_space;
+          test "allocation failure leaves the shared allocator usable" shared_allocation_failure_releases_lock ];
       group "Map_range"
         [
           test "writes small-page entries at every level" (fun () ->

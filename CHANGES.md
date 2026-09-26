@@ -702,6 +702,9 @@ thread.
 
 ### Tolk (new)
 
+- Fix concurrent raw-PCI AMD/NV allocations across devices corrupting their
+  shared virtual-address allocator or failing during its first initialization.
+
 - CPU and Metal scheduling no longer split kernels at 31 buffers. Their packed
   argument interfaces support wider inputs, avoiding unnecessary intermediate
   kernels in large gradient sums; explicit buffer limits still apply.

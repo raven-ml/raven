@@ -903,7 +903,8 @@ let mm_rcc_config_memsize = 0xde3
 (* One virtual address space shared by every device. *)
 let va_base = 0x200000000000
 let va_size = 1 lsl 44
-let va_allocator = lazy (Tlsf.create ~size:va_size ~base:va_base ())
+let va_allocator = Lazy.Mutexed.from_fun (fun () ->
+    Tlsf.create ~size:va_size ~base:va_base ())
 
 (* The register-access closures stored in [t]: named lookup with its
    cache, and dword access either over the register BAR (with the
@@ -1119,7 +1120,7 @@ let create pci_dev =
           (List.init (lv_span + 1) (fun k ->
                let i = lv_span - k in
                (1 lsl (i + 12), if i >= 9 then 2 lsl 20 else 0x1000)))
-        ~va_allocator:(Lazy.force va_allocator)
+        ~va_allocator:(Lazy.Mutexed.force va_allocator)
         ~is_booting:(fun () -> !is_booting)
         ~zero_vram:(fun ~paddr ~size ->
           Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))

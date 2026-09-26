@@ -306,7 +306,8 @@ type t = {
 (* nvdev.py:70: one virtual address space shared by every device. *)
 let va_base = 0x1000000000
 let va_size = 1 lsl 44
-let va_allocator = lazy (Tlsf.create ~size:va_size ~base:va_base ())
+let va_allocator = Lazy.Mutexed.from_fun (fun () ->
+    Tlsf.create ~size:va_size ~base:va_base ())
 
 external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
 
@@ -458,7 +459,7 @@ let setup ~pci_dev ~devfmt ~mmio ~map_vram ~rreg ~wreg:raw_wreg ~read_config
       ~boot_size:(2 lsl 20) ~va_bits ~va_shifts ~va_base:0
       ~palloc_ranges:
         (List.map (fun x -> (x, x)) [ 512 lsl 20; 2 lsl 20; 4 lsl 10 ])
-      ~va_allocator:(Lazy.force va_allocator)
+      ~va_allocator:(Lazy.Mutexed.force va_allocator)
       ~is_booting:(fun () -> !is_booting)
       ~zero_vram:(fun ~paddr ~size ->
         Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
