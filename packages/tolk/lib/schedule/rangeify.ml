@@ -44,7 +44,7 @@ let movement_src u =
 let is_movement u = Option.is_some (movement_src u)
 
 let device_max_bufs =
-  function "METAL" -> 31 | "WEBGPU" -> 8 | "CPU" -> 31 | _ -> 0
+  function "WEBGPU" -> 8 | _ -> 0
 
 let base n = U.base n
 

@@ -1344,6 +1344,26 @@ let rangeify_symbolic_storage_tests =
                 (Rangeify.get_kernel_graph (U.sink [U.store ~dst ~value ()]))));
     ]
 
+let packed_argument_buffer_limits =
+  let check device limit expected () =
+    let inputs = List.init 40 (fun slot ->
+        U.param ~slot ~dtype:D.float32 ~shape:(weak_int 4)
+          ~device:(U.Single device) ()) in
+    let value = List.fold_left (fun lhs rhs ->
+        U.alu_binary ~op:Ops.Add ~lhs ~rhs)
+        (List.hd inputs) (List.tl inputs) in
+    let graph = Helpers.Context_var.with_context
+        [B (Helpers.max_kernel_buffers, limit)]
+        (fun () -> Rangeify.get_kernel_graph (wrap_sink value)) in
+    equal ~msg:"kernel count follows the requested buffer policy"
+      int expected (count_calls graph)
+  in
+  group "packed argument buffer limits"
+    [ test "CPU keeps forty inputs in one kernel by default" (check "CPU" 0 1);
+      test "Metal keeps forty inputs in one kernel by default" (check "METAL" 0 1);
+      test "CPU honors an explicit thirty-one-buffer limit" (check "CPU" 31 2);
+      test "Metal honors an explicit thirty-one-buffer limit" (check "METAL" 31 2) ]
+
 (* Main *)
 
 let () =
@@ -1353,6 +1373,7 @@ let () =
         kernel_split_keeps_independent_ranges;
       symbolic_empty_shape_tests;
       rangeify_symbolic_storage_tests;
+      packed_argument_buffer_limits;
       moved_after_symbolic_tests;
       stage_capacity_tests;
       stack_selection_tests;
