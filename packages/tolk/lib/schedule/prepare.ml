@@ -70,32 +70,35 @@ let found_after ctx ~after ~value =
         a := U.permute ~src:!a ~order:(argsort order);
         x := src0 !x
     | Ops.Reshape ->
-        (match shape_of (src0 !x) with
-         | Some s ->
-             a := U.reshape ~src:!a ~shape:(shape_node s);
-             x := src0 !x
-         | None -> continue_ := false)
+        let source = src0 !x in
+        a := U.reshape ~src:!a ~shape:(U.stack (U.shape source));
+        x := source
     | Ops.Where ->
         let s = U.src !x in
-        if is_invalid s.(2) && U.op s.(1) = Ops.Pad then x := src0 s.(1);
-        continue_ := false
+        if is_invalid (base s.(2)) && U.op s.(1) = Ops.Pad then begin
+          let padded = U.src s.(1) in
+          a := U.shrink ~src:!a ~offset:padded.(1)
+              ~size:(U.stack (U.shape padded.(0)));
+          x := padded.(0)
+        end else continue_ := false
     | _ -> continue_ := false
   done;
   U.Ref_tbl.replace ctx !x !a
 
 let pm_fold_moved_after ctx n =
+  let record value =
+    match U.op value with
+    | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute
+    | Ops.Flip | Ops.Cast | Ops.Where ->
+        found_after ctx ~after:n ~value; None
+    | _ -> None in
   match U.op n with
   | Ops.After ->
       let deps = src_tail n in
       (match List.find_opt (fun d -> U.op d = Ops.Store) deps with
-       | Some s ->
-           let value = (Option.get (U.as_store s)).value in
-           (match U.op value with
-            | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute
-            | Ops.Flip | Ops.Cast | Ops.Where ->
-                found_after ctx ~after:n ~value; None
-            | _ -> None)
+       | Some s -> record (Option.get (U.as_store s)).value
        | None -> None)
+  | Ops.Stage when Array.length (U.src n) = 1 -> record (src0 n)
   | op when Ops.Group.is_alu op || op = Ops.Cast || op = Ops.Bitcast ->
       let children = U.children n in
       let new_children =
@@ -568,6 +571,7 @@ let disk_copy n =
   | _ -> None
 
 let earliest_rewrites =
+  let has_zero dims = List.exists (fun dim -> U.const_int_value dim = Some 0) dims in
   let shaped_const n value =
     let dims = match U.shape n with [ d ] -> d | ds -> U.stack ds in
     U.expand ~src:(U.const value) ~dims
@@ -651,15 +655,15 @@ let earliest_rewrites =
       expand_bitcast;
       (fun n -> match U.as_reduce n with
          | Some { src; op; _ } ->
-             (match shape_of src, shape_of n with
-              | Some s, Some t when List.mem 0 s && not (List.mem 0 t) ->
+             (match U.shape_opt src, U.shape_opt n with
+              | Some s, Some t when has_zero s && not (has_zero t) ->
                   Some (shaped_const n (identity_of op (U.dtype n)))
               | _ -> None)
          | None -> None);
       (fun n ->
         if U.op n = Ops.Sink then None
-        else match shape_of n with
-          | Some s when List.mem 0 s ->
+        else match U.shape_opt n with
+          | Some s when has_zero s ->
               Some (shaped_const n (Const.zero (U.dtype n)))
           | _ -> None);
     ]

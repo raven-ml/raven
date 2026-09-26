@@ -32,7 +32,8 @@ let src_tail u =
   let s = U.src u in
   Array.to_list (Array.sub s 1 (Array.length s - 1))
 
-let shape_node = function [ d ] -> int_ d | ds -> U.stack (List.map int_ ds)
+let shape_arg = function [ d ] -> d | ds -> U.stack ds
+let shape_node dims = shape_arg (List.map int_ dims)
 
 let movement_src u =
   match U.op u with
@@ -41,15 +42,6 @@ let movement_src u =
   | _ -> None
 
 let is_movement u = Option.is_some (movement_src u)
-
-let shape_of n =
-  let rec concrete = function
-    | [] -> Some []
-    | dim :: rest ->
-        Option.bind (U.const_int_value dim) (fun value ->
-            Option.map (fun dims -> value :: dims) (concrete rest))
-  in
-  Option.bind (U.shape_opt n) concrete
 
 let device_max_bufs =
   function "METAL" -> 31 | "WEBGPU" -> 8 | "CPU" -> 31 | _ -> 0
@@ -125,11 +117,11 @@ let remove_noop_stage n =
            if not (List.equal ( == ) idxs ranges) then None
            else
              let ptr = src0 src in
-             (match shape_of n with
-              | Some sh when sh <> [] ->
+             (match U.shape n with
+              | [] -> Some ptr
+              | sh ->
                   let zeros = shape_node (List.map (fun _ -> 0) sh) in
-                  Some (U.shrink ~src:ptr ~offset:zeros ~size:(shape_node sh))
-              | _ -> Some ptr)
+                  Some (U.shrink ~src:ptr ~offset:zeros ~size:(shape_arg sh)))
        | _ -> None)
   | _ -> None
 
@@ -138,7 +130,7 @@ let cleanup_dead_axes n =
   | Some { src; ranges; opts; _ } when opts.removable
                                        && (not (is_always_run (U.op src)))
                                        && U.op src <> Ops.After ->
-      let sh = Option.value (shape_of n) ~default:[] in
+      let sh = U.shape n in
       if List.length sh <> List.length ranges then None
       else if List.exists (fun r -> match U.as_range r with
           | Some v -> U.op v.size <> Ops.Const | None -> false) ranges
@@ -152,7 +144,7 @@ let cleanup_dead_axes n =
               | Ops.Range -> not (List.exists (U.equal rng) src_ranges)
               | _ -> false
             in
-            if dead then begin new_sh := 1 :: !new_sh; hit := true end
+            if dead then begin new_sh := int_ 1 :: !new_sh; hit := true end
             else begin
               new_sh := s :: !new_sh;
               new_ranges := rng :: !new_ranges
@@ -162,40 +154,16 @@ let cleanup_dead_axes n =
           let new_ranges = List.rev !new_ranges in
           let new_sh = List.rev !new_sh in
           let b = U.stage ~src ~ranges:new_ranges ~opts in
-          let r = U.reshape ~src:b ~shape:(shape_node new_sh) in
-          Some (U.broadcast_to ~src:r ~shape:(shape_node sh))
+          let r = U.reshape ~src:b ~shape:(shape_arg new_sh) in
+          Some (U.broadcast_to ~src:r ~shape:(shape_arg sh))
   | _ -> None
 
 let is_reduce_range r =
   match U.as_range r with
   | Some v -> v.kind = Axis_type.Reduce | None -> false
 
-let range_size_expr r =
-  match U.as_range r with Some v -> v.size | None -> int_ 1
-
-let prod_expr = function
-  | [] -> int_ 1
-  | x :: xs ->
-      let open U.O in
-      List.fold_left ( * ) x xs
-
-let unflatten_stage_index flat ranges =
-  let sizes = List.map range_size_expr ranges in
-  let open U.O in
-  let rec loop acc flat = function
-    | [] -> List.rev acc
-    | [ _ ] -> List.rev (flat :: acc)
-    | _ :: rest ->
-        let stride = prod_expr rest in
-        let axis = flat // stride in
-        loop (axis :: acc) (flat mod stride) rest
-  in
-  loop [] flat sizes
-
-(* The index sources that correspond one-for-one with a stage's ranges. A
-   stage flattened to a single index expression is unflattened back; any other
-   arity mismatch means the index was built against a different stage, which
-   the rangeify pass must never produce. *)
+(* Removing a stage substitutes one index for each closed coordinate. A flat
+   access must first be expressed by an explicit reshape. *)
 let stage_index_sources buf idx =
   let srcs = src_tail idx in
   let ranges = buf.U.ranges in
@@ -205,13 +173,10 @@ let stage_index_sources buf idx =
   if not (List.for_all removable_range ranges) then None
   else if List.length ranges = List.length srcs then Some srcs
   else
-    match srcs, ranges with
-    | [ flat ], _ :: _ :: _ -> Some (unflatten_stage_index flat ranges)
-    | _ ->
-        invalid_arg
-          (Printf.sprintf "Rangeify: index on wrong stage, %d ranges vs %d \
-                           index sources" (List.length ranges)
-             (List.length srcs))
+    invalid_arg
+      (Printf.sprintf "Rangeify: index on wrong stage, %d ranges vs %d \
+                       index sources" (List.length ranges)
+         (List.length srcs))
 
 let substitute_stage_ranges mappings src =
   let mappings = List.filter (fun (k, v) -> not (U.equal k v)) mappings in
@@ -1022,9 +987,7 @@ let add_buffers_rules counter =
              (* Always restore the shape view, including the rank-0 one: a
                 scalar read acquires its flat 0 index by moving through the
                 reshape. *)
-             (match shape_of n with
-              | Some sh -> Some (U.reshape ~src:inner ~shape:(shape_node sh))
-              | None -> Some inner)
+             Some (U.reshape ~src:inner ~shape:(shape_arg (U.shape n)))
            else None
        | _ -> None);
     (* Strip RESHAPE on CALL args *)

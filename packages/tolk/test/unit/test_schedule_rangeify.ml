@@ -307,7 +307,7 @@ let range_helper_tests =
             U.alu_ternary ~op:Ops.Where ~a:gate ~b:rng0 ~c:(U.invalid ())
           in
           let stacked = U.stack [ gated; rng1 ] in
-          let result = Indexing.get_idx stacked in
+          let result = U.get_idx stacked in
           is_true (op_is Ops.Stack result);
           equal int 2 (List.length (U.children result));
           is_true (List.nth (U.children result) 0 == rng0);
@@ -320,7 +320,7 @@ let range_helper_tests =
             U.alu_ternary ~op:Ops.Where ~a:gate ~b:rng ~c:(U.invalid ())
           in
           let stacked = U.stack [ gated; U.invalid (); rng ] in
-          let result = Indexing.get_valid stacked in
+          let result = U.get_valid stacked in
           is_true (op_is Ops.Stack result);
           let lanes = U.children result in
           equal int 3 (List.length lanes);
@@ -523,8 +523,8 @@ let apply_movement_op_tests =
               let gated = List.hd result in
               is_true (op_is Ops.Where gated);
               (* r - offset in the reference's a + b*(-1) form *)
-              is_true (op_is Ops.Add (Indexing.get_idx gated));
-              is_false (op_is Ops.Const (Indexing.get_valid gated)));
+              is_true (op_is Ops.Add (U.get_idx gated));
+              is_false (op_is Ops.Const (U.get_valid gated)));
         ];
       (* RESHAPE *)
       group "reshape"
@@ -1219,6 +1219,29 @@ let stage_capacity_tests =
             int 0 (List.length storage));
     ]
 
+let symbolic_empty_shape_tests =
+  let n = U.variable ~name:"empty_symbolic_extent" ~min_val:1 ~max_val:8
+      ~param:true () in
+  let source dims = U.expand ~src:(U.const (C.int D.int32 7))
+      ~dims:(U.stack dims) in
+  let prepared value = Prepare.prepare_rangeify (U.sink [value]) |> first_src in
+  group "symbolic empty shapes"
+    [
+      test "a literal zero dimension clears a symbolic tensor" (fun () ->
+          let empty = U.range ~size:(weak_int 0) ~axis:0 ~kind:Ak.Weak () in
+          let value = U.stage ~src:(source [n]) ~ranges:[empty]
+              ~opts:{device = Some (U.Single "CPU"); addrspace = D.Global; removable = false} in
+          equal int 0 (U.sym_infer (U.base (prepared value)) []));
+      test "an empty sum keeps the identity with a symbolic output" (fun () ->
+          let value = U.reduce_axis ~src:(source [weak_int 0; n])
+              ~op:Ops.Add ~axes:[0] in
+          equal int 0 (U.sym_infer (U.base (prepared value)) []));
+      test "an empty product keeps the identity with a symbolic output" (fun () ->
+          let value = U.reduce_axis ~src:(source [weak_int 0; n])
+              ~op:Ops.Mul ~axes:[0] in
+          equal int 1 (U.sym_infer (U.base (prepared value)) []));
+    ]
+
 let kernel_split_keeps_independent_ranges () =
   let n = U.variable ~name:"store_count" ~min_val:1 ~max_val:8 ~param:true () in
   let m = U.variable ~name:"value_count" ~min_val:1 ~max_val:8 ~param:true () in
@@ -1237,6 +1260,90 @@ let kernel_split_keeps_independent_ranges () =
   equal ~msg:"equal maximum extents do not identify independent store loops"
     (list int) [2; 5] bounds
 
+let moved_after_symbolic_tests =
+  let add_one src = U.alu_binary ~op:Ops.Add ~lhs:src
+      ~rhs:(U.const (C.float D.float32 1.)) in
+  let stored value =
+    let dst = U.param_like value ~slot:93801 in
+    U.after ~src:dst ~deps:[U.store ~dst ~value ()] in
+  let consumer materialized source =
+    Helpers.Context_var.with_context [B (Helpers.openpilot_hacks, 1)] (fun () ->
+        let result = Prepare.prepare_rangeify
+            (U.sink [materialized; add_one source]) in
+        (U.src result).(1)) in
+  let uses_materialization value =
+    is_true ~msg:"consumer reads the existing materialization"
+      (List.exists (op_is Ops.After) (U.toposort value)) in
+  group "moved materializations"
+    [
+      test "a symbolic reshape reuses its materialization" (fun () ->
+          let n = U.variable ~name:"moved_extent" ~min_val:1 ~max_val:8
+              ~param:true () in
+          let source = add_one (U.param ~slot:93800 ~dtype:D.float32
+              ~shape:(U.stack [n; weak_int 2]) ~device:(U.Single "CPU") ()) in
+          let moved = U.reshape ~src:source ~shape:(U.stack [weak_int 2; n]) in
+          let result = consumer (U.contiguous ~src:moved ()) source in
+          uses_materialization result;
+          List.iter (fun size ->
+              equal (list int) [size; 2]
+                (List.map (fun dim -> U.sym_infer dim
+                    ["moved_extent", Int64.of_int size]) (U.shape result))) [3; 5]);
+      test "a padded selection shrinks the reused materialization" (fun () ->
+          let source = mk_param ~idx:93802 [2] in
+          let padded = U.pad ~src:source ~offset:(weak_int 1) ~size:(weak_int 4) in
+          let mask = U.param ~slot:93803 ~dtype:D.bool ~shape:(weak_int 4) () in
+          let moved = U.alu_ternary ~op:Ops.Where ~a:mask ~b:padded ~c:(U.invalid ()) in
+          let result = consumer (stored moved) source in
+          uses_materialization result;
+          equal (list int) [2] (U.max_shape result);
+          let reused = List.find (fun value ->
+              List.exists (op_is Ops.After) (U.toposort value))
+              (U.children result) in
+          (match Indexing.storage_window reused with
+           | Some (_, offset) -> equal ~msg:"inverse pad byte offset" int 4 offset
+           | None -> fail "expected a contiguous window of the stored result"));
+      test "a staged permutation reuses its materialization" (fun () ->
+          let source = add_one (mk_param ~idx:93804 [2; 3]) in
+          let moved = U.permute ~src:source ~order:[1; 0] in
+          let result = consumer (U.contiguous ~src:moved ()) source in
+          uses_materialization result;
+          equal (list int) [2; 3] (U.max_shape result));
+    ]
+
+let rangeify_symbolic_storage_tests =
+  group "symbolic storage views"
+    [
+      test "stacked symbolic reshapes keep their logical shape" (fun () ->
+          let n = U.variable ~name:"stacked_view_size" ~min_val:1 ~max_val:4 ~param:true () in
+          let lane slot device =
+            let p = U.param ~slot ~dtype:D.float32 ~shape:(weak_int 4)
+                ~device:(U.Single device) () in
+            U.reshape ~src:(U.shrink ~src:p ~offset:(weak_int 0) ~size:n)
+              ~shape:(U.stack [n; weak_int 1]) in
+          let stacked = U.mstack [lane 94001 "CPU:0"; lane 94002 "CPU:1"] in
+          let graph = Rangeify.get_kernel_graph (U.sink [stacked]) in
+          let result = first_src graph in
+          equal ~msg:"moving reshapes through a stack preserves symbolic dimensions"
+            (list int) [2;1]
+            (List.map (fun d -> U.sym_infer d ["stacked_view_size", 2L]) (U.shape result)));
+      test "stage removal rejects ambiguous partial indexing" (fun () ->
+          let n = U.variable ~name:"partial_row_size" ~min_val:1 ~max_val:4 ~param:true () in
+          let row = U.range ~size:(weak_int 2) ~axis:0 ~kind:Ak.Weak () in
+          let column = U.range ~size:n ~axis:1 ~kind:Ak.Weak () in
+          let staged = U.stage ~src:(U.cast ~src:U.Promoting.(row * weak_int 10 + column)
+              ~dtype:D.int32) ~ranges:[row; column]
+              ~opts:{device = Some (U.Single "CPU"); addrspace = D.Global; removable = true} in
+          let selected = U.index ~ptr:staged ~idxs:[weak_int 1] () in
+          let value = U.shrink ~src:selected ~offset:(weak_int 0) ~size:n in
+          let dst = U.param ~slot:94003 ~dtype:D.int32 ~shape:(weak_int 4)
+              ~device:(U.Single "CPU") () in
+          let dst = U.shrink ~src:dst ~offset:(weak_int 0) ~size:n in
+          raises (Invalid_argument
+              "Rangeify: index on wrong stage, 2 ranges vs 1 index sources")
+            (fun () -> ignore
+                (Rangeify.get_kernel_graph (U.sink [U.store ~dst ~value ()]))));
+    ]
+
 (* Main *)
 
 let () =
@@ -1244,6 +1351,9 @@ let () =
     [
       test "kernel splitting preserves independent symbolic ranges"
         kernel_split_keeps_independent_ranges;
+      symbolic_empty_shape_tests;
+      rangeify_symbolic_storage_tests;
+      moved_after_symbolic_tests;
       stage_capacity_tests;
       stack_selection_tests;
       test "Shape queries release graphs" shape_queries_release_graphs;

@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- Symbolic shapes survive staged-storage cleanup and multi-device view
+  movement. Empty reductions retain their identities, and reused padded
+  materializations preserve the source extent and offset.
+
 - Concurrent HCQ clock calibration keeps each timestamp submission, host
   timing and readback together, preventing overwritten samples and waits
   blocked by another calibration.
