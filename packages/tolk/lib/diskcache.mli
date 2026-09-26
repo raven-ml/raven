@@ -14,11 +14,13 @@
 
 val get : table:string -> key:string -> 'a option
 (** [get ~table ~key] retrieves a cached value, or [None] if the key is
-    absent or the cache file is corrupt/stale. *)
+    absent, the cache file is corrupt/stale, or the current [CACHELEVEL]
+    context is less than [1]. *)
 
 val put : table:string -> key:string -> 'a -> unit
 (** [put ~table ~key value] stores [value] in the cache. Creates the cache
-    directory if needed.
+    directory if needed. Does nothing if the current [CACHELEVEL] context is
+    less than [1].
 
     The entry is written to a temporary file and atomically renamed into
     place, so concurrent readers and writers of the same key always observe

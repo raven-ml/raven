@@ -32,8 +32,8 @@ let beam_dev_timeout () = Helpers.getenv "BEAM_DEV_TIMEOUT" 1 <> 0
    CPU-side compile runs in parallel — the GPU timing phase below always runs
    one candidate at a time. *)
 let beam_parallel = Helpers.Context_var.int ~key:"BEAM_PARALLEL" ~default:0
-let cachelevel () = Helpers.getenv "CACHELEVEL" 1
-let ignore_beam_cache () = Helpers.getenv "IGNORE_BEAM_CACHE" 0 <> 0
+let cachelevel () = Helpers.Context_var.get Helpers.cachelevel
+let ignore_beam_cache () = Helpers.Context_var.get Helpers.ignore_beam_cache <> 0
 
 (* Minimum progress per beam step, in microseconds. *)
 let beam_min_progress () =

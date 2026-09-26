@@ -60,10 +60,69 @@ let child_spam () =
   done;
   print_string (if !torn then "torn" else "ok")
 
+let child_compiler_context () =
+  let module C = Helpers.Context_var in
+  let calls = ref 0 in
+  let make () = Compiler.make ~name:"CACHE_POLICY" ~cachekey:"compiler-policy"
+      ~compile:(fun src -> incr calls; Bytes.of_string src) () in
+  let cached = C.with_context [B (Helpers.ccache, 1)] make in
+  let disabled = C.with_context [B (Helpers.ccache, 0)] (fun () ->
+      let snapshot = C.snapshot () in
+      let worker = Domain.spawn (fun () -> C.with_snapshot snapshot (fun () ->
+          Compiler.cachekey (make ()))) in
+      equal (option string) None (Domain.join worker);
+      C.with_context [B (Helpers.ccache, 1)] (fun () ->
+          equal (option string) (Some "compiler-policy") (Compiler.cachekey (make ())));
+      make ()) in
+  equal (option string) None (Compiler.cachekey disabled);
+  let compile compiler src = equal bytes (Bytes.of_string src)
+      (Compiler.compile_cached compiler src) in
+  compile cached "cached";
+  C.with_context [B (Helpers.ccache, 0)] (fun () -> compile cached "cached");
+  equal int 1 !calls;
+  compile disabled "uncached";
+  compile disabled "uncached";
+  equal int 3 !calls;
+  C.with_context [B (Helpers.cachelevel, 0)] (fun () ->
+      compile cached "cached";
+      compile cached "temporary";
+      equal (option bytes) None (Diskcache.get ~table:"compiler-policy" ~key:"cached"));
+  equal int 5 !calls;
+  equal (option bytes) None (Diskcache.get ~table:"compiler-policy" ~key:"temporary");
+  compile cached "cached";
+  equal int 5 !calls;
+  compile cached "temporary";
+  compile cached "temporary";
+  equal int 6 !calls;
+  raises Exit (fun () -> C.with_context [B (Helpers.cachelevel, 0)] (fun () -> raise Exit));
+  equal (option bytes) (Some (Bytes.of_string "temporary"))
+    (Diskcache.get ~table:"compiler-policy" ~key:"temporary");
+  print_string "ok"
+
+let child_assert_compile () =
+  let calls = ref 0 in
+  let compile src = incr calls; Bytes.of_string src in
+  let cached = Compiler.make ~name:"ASSERT_POLICY" ~cachekey:"compiler-assert" ~compile () in
+  let uncached = Compiler.make ~name:"ASSERT_POLICY" ~compile () in
+  Diskcache.put ~table:"compiler-assert" ~key:"hit" (Bytes.of_string "binary");
+  equal bytes (Bytes.of_string "binary") (Compiler.compile_cached cached "hit");
+  List.iter (fun compiler ->
+      raises_match (function Compiler.Compile_error _ -> true | _ -> false)
+        (fun () -> ignore (Compiler.compile_cached compiler "miss"))) [cached; uncached];
+  Helpers.Context_var.with_context [B (Helpers.cachelevel, 0)] (fun () ->
+      raises_match (function Compiler.Compile_error _ -> true | _ -> false)
+        (fun () -> ignore (Compiler.compile_cached cached "hit")));
+  equal int 0 !calls;
+  equal bytes (Bytes.of_string "direct") (Compiler.compile cached "direct");
+  equal int 1 !calls;
+  print_string "ok"
+
 let run_role = function
   | "put" -> child_put ()
   | "get" -> child_get ()
   | "spam" -> child_spam ()
+  | "compiler-context" -> child_compiler_context ()
+  | "compiler-assert" -> child_assert_compile ()
   | "platform" ->
       ignore (Gpu_target.host_cpu ());
       print_string (Tolk_cpu__Compiler_cpu.host_arch ())
@@ -255,6 +314,12 @@ let () =
         [
           group "Diskcache"
             [
+              test "compiler cache policy follows nested contexts and worker snapshots"
+                (fun () -> equal string "ok" (run_child
+                     [role_var, "compiler-context"; "CCACHE", "1"; "CACHELEVEL", "2"; "ASSERT_COMPILE", "0"]));
+              test "assert compile permits hits and blocks every cache miss"
+                (fun () -> equal string "ok" (run_child
+                     [role_var, "compiler-assert"; "CCACHE", "1"; "CACHELEVEL", "2"; "ASSERT_COMPILE", "1"]));
               test "platform detection does not require shell tools"
                 platform_does_not_require_shell_tools;
               test "cache location follows the platform, not directory contents"

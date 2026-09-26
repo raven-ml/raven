@@ -49,6 +49,7 @@ let cache_path ~table ~key =
   Filename.concat dir (hash ^ ".cache")
 
 let get ~table ~key =
+  if Helpers.Context_var.get Helpers.cachelevel < 1 then None else
   let path = cache_path ~table ~key in
   if not (Sys.file_exists path) then None
   else
@@ -72,6 +73,7 @@ let get ~table ~key =
    other's in-progress writes. (A process id would not do: on Windows
    [Unix.getpid] is a handle value that sibling processes routinely share.) *)
 let put ~table ~key value =
+  if Helpers.Context_var.get Helpers.cachelevel < 1 then () else
   let path = cache_path ~table ~key in
   let dir = Filename.dirname path in
   ensure_dir dir;

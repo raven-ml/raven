@@ -390,12 +390,9 @@ let transient_program_lifetimes =
         ~runtime ~synchronize:(fun timeout -> ignore timeout; pending := false) () in
     let ast = elementwise_1d_ast ~n:4 in
     let rawbufs = create_bufs_for_kernel device ast in
-    let cachelevel = Sys.getenv_opt "CACHELEVEL" in
-    Unix.putenv "CACHELEVEL" "0";
     Fun.protect
-      ~finally:(fun () ->
-        Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:"");
-        List.iter Device.Buffer.deallocate rawbufs)
+      ~finally:(fun () -> List.iter Device.Buffer.deallocate rawbufs)
+      (fun () -> Helpers.Context_var.with_context [B (Helpers.cachelevel, 0)]
       (fun () ->
         let search () =
           ignore (Search.beam_search ~to_program ~disable_cache:true
@@ -406,7 +403,7 @@ let transient_program_lifetimes =
          | _ -> search ());
         is_true ~msg:"the test timed at least one compiled candidate" (!loaded > 0);
         equal ~msg:"every transient program is released before search returns"
-          int !loaded !freed)
+          int !loaded !freed))
   in
   group "transient program lifetimes"
     [ test "successful timings release programs" (check None);
@@ -444,10 +441,7 @@ let codegen_midpoint_rounds_down ~has_cache_hook () =
       (elementwise_1d_ast ~n:4) in
   let info = Option.get (U.as_kernel_info ast) in
   let ast = U.replace ast ~arg:(U.Arg.Kernel_info { info with beam = 1 }) () in
-  let cachelevel = Sys.getenv_opt "CACHELEVEL" in
-  Unix.putenv "CACHELEVEL" "0";
-  Fun.protect
-    ~finally:(fun () -> Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:""))
+  Helpers.Context_var.with_context [B (Helpers.cachelevel, 0)]
     (fun () -> ignore (Codegen.to_program ~beam_device:device device ren ast));
   equal ~msg:"beam does not synthesize an eviction kernel" int 0 !evictions;
   is_true ~msg:"codegen benchmarks candidates" (!observed <> []);
@@ -602,14 +596,13 @@ let candidate_program_metadata ~large () =
     program in
   let ast = elementwise_1d_ast ~n:4 in
   let rawbufs = create_bufs_for_kernel device ast in
-  let cachelevel = Sys.getenv_opt "CACHELEVEL" and max_uops = Sys.getenv_opt "BEAM_UOPS_MAX" in
-  Unix.putenv "CACHELEVEL" "0";
+  let max_uops = Sys.getenv_opt "BEAM_UOPS_MAX" in
   Fun.protect
     ~finally:(fun () ->
-      Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:"");
       Unix.putenv "BEAM_UOPS_MAX" (Option.value max_uops ~default:"");
       List.iter Device.Buffer.deallocate (sample :: rawbufs))
-    (fun () ->
+    (fun () -> Helpers.Context_var.with_context [B (Helpers.cachelevel, 0)]
+      (fun () ->
       let search () = ignore (Search.beam_search ~to_program:compile_candidate
           ~disable_cache:true (P.create ast renderer) rawbufs
           ~var_vals:["timing_extent", Int64.of_int extent] 1 device) in
@@ -628,7 +621,7 @@ let candidate_program_metadata ~large () =
       timed := 0;
       search ();
       is_true ~msg:"exact costs beyond host integers can still be ranked and timed"
-        (!timed > 0))
+        (!timed > 0)))
 
 (* Entry *)
 
@@ -687,15 +680,12 @@ let compute_filtered_candidate_is_reconsidered () =
     children.(3) <- U.binary candidate;
     U.replace template ~src:children () in
   let rawbufs = create_bufs_for_kernel device ast in
-  let cachelevel = Sys.getenv_opt "CACHELEVEL"
-  and min_progress = Sys.getenv_opt "BEAM_MIN_PROGRESS" in
-  Unix.putenv "CACHELEVEL" "0";
+  let min_progress = Sys.getenv_opt "BEAM_MIN_PROGRESS" in
   Unix.putenv "BEAM_MIN_PROGRESS" "0.01";
   Fun.protect ~finally:(fun () ->
-      Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:"");
       Unix.putenv "BEAM_MIN_PROGRESS" (Option.value min_progress ~default:"");
       List.iter Device.Buffer.deallocate (sample :: rawbufs)) (fun () ->
-    let result = Helpers.Context_var.with_context [B (Search.beam_parallel, 0)] (fun () ->
+    let result = Helpers.Context_var.with_context [B (Search.beam_parallel, 0); B (Helpers.cachelevel, 0)] (fun () ->
         Search.beam_search ~to_program:compile_candidate ~disable_cache:true
           ~allow_test_size:false (P.create ast renderer) rawbufs ~var_vals:[] 1 device) in
     equal ~msg:"the previously rejected AST reuses its compilation" int 1
@@ -727,10 +717,7 @@ let overflowing_resource_products_reject_candidates () =
     equal ~msg:"overflow cannot make an excessive lane product admissible"
       int 0 !compiled
   in
-  let cachelevel = Sys.getenv_opt "CACHELEVEL" in
-  Unix.putenv "CACHELEVEL" "0";
-  Fun.protect
-    ~finally:(fun () -> Unix.putenv "CACHELEVEL" (Option.value cachelevel ~default:""))
+  Helpers.Context_var.with_context [B (Helpers.cachelevel, 0)]
     (fun () -> List.iter check [Ak.Upcast; Ak.Local])
 
 let () = run __FILE__

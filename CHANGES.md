@@ -694,6 +694,10 @@ thread.
 
 ### Tolk (new)
 
+- Apply `CCACHE` when creating a compiler and `CACHELEVEL` at each disk-cache
+  access, including scoped worker contexts. `ASSERT_COMPILE` now rejects cache
+  misses before invoking a compiler while allowing cached binaries.
+
 - Keep shard shape and placement metadata through repeated unbuffered
   `zeros_like` and `ones_like` calls. Device-less partitions now materialize
   correctly on one device; `Uop.Multi` retains optional device names per lane.

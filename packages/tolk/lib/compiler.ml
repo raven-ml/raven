@@ -13,9 +13,9 @@ type t = {
 
 exception Compile_error of string
 
-let ccache = Helpers.getenv "CCACHE" 1
-
-let make ~name ?cachekey ~compile () = { name; cachekey; compile }
+let make ~name ?cachekey ~compile () =
+  let cachekey = if Helpers.Context_var.get Helpers.ccache = 0 then None else cachekey in
+  { name; cachekey; compile }
 
 let name t = t.name
 
@@ -24,12 +24,12 @@ let cachekey t = t.cachekey
 let compile t src = t.compile src
 
 let compile_cached t src =
-  match (if ccache <> 0 then t.cachekey else None) with
-  | None -> t.compile src
-  | Some table ->
-      match Diskcache.get ~table ~key:src with
-      | Some lib -> lib
-      | None ->
-          let lib = t.compile src in
-          Diskcache.put ~table ~key:src lib;
-          lib
+  let cached = Option.bind t.cachekey (fun table -> Diskcache.get ~table ~key:src) in
+  match cached with
+  | Some lib -> lib
+  | None ->
+      if Helpers.getenv "ASSERT_COMPILE" 0 <> 0 then
+        raise (Compile_error ("compilation disabled by ASSERT_COMPILE\n" ^ src));
+      let lib = t.compile src in
+      Option.iter (fun table -> Diskcache.put ~table ~key:src lib) t.cachekey;
+      lib
