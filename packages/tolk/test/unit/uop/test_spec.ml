@@ -1122,7 +1122,8 @@ let program_oob_affine_proof_preserves_unsigned_overflow () =
       List.iter (fun product ->
           let index = Uop.O.(Uop.cast ~src:product ~dtype:Dtype.int64 +
               Uop.const (Const.integer Dtype.int64 (Z.neg scale))) in
-          is_false ~msg:"a stored unsigned product can wrap before widening"
+          is_false ~msg:(Printf.sprintf "%s %s can wrap before widening"
+              (Dtype.to_string dtype) (Ops.name (Uop.op product)))
             (masked_access_accepted ~size:(Z.to_int (Z.succ scale)) ~index ~gate))
         [ Uop.O.(x * scalar scale);
           Uop.alu_binary ~op:Ops.Shl ~lhs:x ~rhs:(scalar (Z.of_int shift)) ])

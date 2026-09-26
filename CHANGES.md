@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- `CHECK_OOB` rejects affine index proofs that rely on unsigned multiplication
+  or shifts not wrapping. Widening an already wrapped value could previously
+  make an unsafe access appear valid.
+
 - Driver-less NV startup retires boot allocations after initialization fails,
   stopping the device first if firmware has started. Failed resets now report
   an error and retain memory that the device may still access.
