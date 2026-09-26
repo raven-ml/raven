@@ -234,10 +234,6 @@ let is_signed_int_node n =
   let dt = Uop.dtype n in
   Dtype.is_int dt && not (Dtype.is_unsigned dt)
 
-let signed_int_dtype n =
-  let dt = Uop.dtype n in
-  if Dtype.is_int dt && not (Dtype.is_unsigned dt) then Some dt else None
-
 let const_integer_for dt n = Uop.const (Const.integer dt n)
 
 let const_integer_value_signed n =
@@ -608,13 +604,14 @@ let rule_bounded_cmplt_to_eq (ops : supported_ops) node =
           match Uop.op left, Uop.src left, Uop.op right, Uop.src right with
           | Ops.Cmplt, [| c1; x1 |], Ops.Cmplt, [| x2; c2 |]
             when Uop.equal x1 x2 && is_signed_int_node x1 ->
-              (match const_integer c1, const_integer c2,
-                     signed_int_dtype x1 with
-               | Some lo, Some hi, Some dt
-                 when Z.equal (Z.succ lo) (Z.pred hi) ->
+              (match const_integer c1, const_integer c2 with
+               | Some lo, Some hi when Z.equal (Z.succ lo) (Z.pred hi) ->
+                   (* The midpoint takes its bounds' dtype: a weak bound keeps
+                      a value past [x1]'s width exact, where [x1]'s dtype
+                      would wrap it onto a value [x1] can hold. *)
                    Some
                      (Uop.alu_binary ~op:Ops.Cmpeq ~lhs:x1
-                        ~rhs:(const_integer_for dt (Z.succ lo)))
+                        ~rhs:(const_integer_for (Uop.dtype c1) (Z.succ lo)))
                | _ -> None)
           | _ -> None
         in
