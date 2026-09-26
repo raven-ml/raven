@@ -406,7 +406,14 @@ static inline nx_c_dtype nx_c_dtype_of_kind(int kind) {
    and NX_C_LANE_TREE combines the lanes by one fixed balanced tree. A
    contiguous run vectorizes over independent accumulators, and the rounding
    depends on neither the layout nor the machine. LANE(i) names lane i and ADD
-   is the compute type's addition. */
+   is the compute type's addition.
+
+   The matmul's dot-shaped paths (the split path, a 1x1 output among them; the
+   row path; the direct loop) share one order for an output: its contraction
+   in fixed chunks of MM_DOT_CHUNK (65536) elements, each chunk in these lanes
+   and this tree, the chunks added in order. Each such output has the bits of
+   the dot of its row and column. The blocked kernel, which sums along k in
+   order, and Accelerate on macOS do not. */
 #define NX_C_LANES 16
 #define NX_C_LANE_TREE(LANE, ADD)                                             \
   ADD(ADD(ADD(ADD(LANE(0), LANE(1)), ADD(LANE(2), LANE(3))),                  \

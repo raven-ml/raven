@@ -365,6 +365,15 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
 #define MM_ADD_NX_C_CAT_COMPLEX(a, b) ((a) + (b))
 #define MM_ADD_NX_C_CAT_BOOL(a, b) ((a) + (b))
 
+/* Kept out of line: inlined into mm_row's strided branch, mm_dot made clang
+   compile mm_row's k-outer loop worse (a bf16 row product over 2 x 30000 x 2
+   took 0.136 ms against 0.065 on an M1 Max). */
+#if defined(__GNUC__) || defined(__clang__)
+#define MM_NOINLINE __attribute__((noinline))
+#else
+#define MM_NOINLINE
+#endif
+
 /* Lane i of mm_dot's sums and of mm_row's lane rows for output j. */
 #define MM_LANE_DOT(i) s[i]
 #define MM_LANE_ROW(i) lanes[(i) * n + j]
@@ -433,8 +442,9 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
   /* Dot of k elements at element strides as, bs into one compute value, in \
      nx_c.h's summation order: the contiguous run vectorizes over the lanes'  \
      independent accumulators, where one would wait on every multiply-add. */ \
-  static void mm_dot_##sfx(const void *va, int64_t as, const void *vb,         \
-                           int64_t bs, int64_t k, void *vout) {                \
+  MM_NOINLINE static void mm_dot_##sfx(const void *va, int64_t as,             \
+                                       const void *vb, int64_t bs, int64_t k,  \
+                                       void *vout) {                           \
     const char *a = (const char *)va;                                        \
     const char *b = (const char *)vb;                                        \
     int64_t esz = (int64_t)sizeof(storage);                                   \
@@ -466,7 +476,7 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
     const char *b = (const char *)vb;                                        \
     int64_t esz = (int64_t)sizeof(storage);                                   \
     compute *out = (compute *)vout;                                           \
-    if (bcs != 1) {                                                           \
+    if (bcs != 1 || n == 1) {                                                 \
       for (int64_t j = 0; j < n; j++)                                         \
         mm_dot_##sfx(va, as, b + j * bcs * esz, brs, k, &out[j]);             \
       return;                                                                  \
@@ -555,6 +565,8 @@ typedef void (*nx_c_mm_direct)(const void *, int64_t, int64_t, const void *,
                               int64_t, int64_t, int64_t);
 typedef void (*nx_c_mm_dot)(const void *, int64_t, const void *, int64_t,
                            int64_t, void *);
+typedef void (*nx_c_mm_row)(const void *, int64_t, const void *, int64_t,
+                           int64_t, int64_t, int64_t, void *, void *);
 typedef void (*nx_c_mm_row_tile)(const void *, int64_t, const void *, int64_t,
                                 int64_t, int64_t, int64_t, void *, void *,
                                 void *);
@@ -566,6 +578,7 @@ typedef struct {
   nx_c_mm_store store;
   nx_c_mm_direct direct;
   nx_c_mm_dot dot;
+  nx_c_mm_row row;
   nx_c_mm_row_tile row_tile;
   nx_c_mm_micro micro; /* NULL: dtype unsupported for matmul */
   nx_c_mm_acc acc;     /* KC-panel tile accumulate (compute-typed) */
@@ -579,6 +592,7 @@ typedef struct {
                        mm_store_##sfx,                                         \
                        mm_direct_##sfx,                                        \
                        mm_dot_##sfx,                                           \
+                       mm_row_##sfx,                                           \
                        mm_row_tile_##sfx,                                      \
                        MM_MICRO_##compute,                                     \
                        mm_acc_##sfx,                                           \
@@ -816,67 +830,65 @@ static void mm_direct_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
-/* ── Dot: a 1x1 output ────────────────────────────────────────────────────
+/* ── Split: few outputs over a long contraction ────────────────────────────
 
-   A product whose output is one element per batch matrix (a row times a column,
-   what Nx.dot of two vectors becomes) has no tile to fill, and the direct loop
-   would sum its contraction on one thread. Its own path splits each contraction
-   into its MM_DOT_CHUNK-element chunks, one job per (batch, chunk). A job sums
-   its chunk with the kernel's sixteen lanes into a compute-typed partial; the
-   job that finishes a batch's last chunk adds that batch's partials in chunk
-   order and stores once. The chunk size, the lanes and the combine order are
-   fixed, so the result is the same on any thread count, and it is summed in the
-   compute type and rounded once like every other path. */
+   A product with few outputs (the 1x1 dot of two vectors, or a product whose
+   one register tile would be at least half padding) has too little output to
+   share among cores, so its contraction is split instead: fixed MM_DOT_CHUNK
+   chunks, one job per (batch, row, chunk). A job sums its chunk of the row's
+   outputs with mm_row into compute-typed partials; the job that finishes a
+   row's last chunk adds that row's partials in chunk order and stores once.
+   The chunks, lanes and combine order are the direct loop's, so every output
+   has the bits of its 1x1 dot on any thread count. The caller keeps n small:
+   each worker holds NX_C_LANES * n lanes. */
 
 typedef struct {
   const mm_ctx *x;
   int64_t nchunks;           /* chunks per contraction */
-  char *partials;            /* nbatch * nchunks compute elements */
-  _Atomic int64_t *pending;  /* per batch: chunks not yet summed */
-} mm_dot_ctx;
+  char *partials;            /* per job: n compute values */
+  _Atomic int64_t *pending;  /* per (batch, row): chunks not yet summed */
+  char *lanes;               /* per worker: NX_C_LANES * n compute values */
+  int64_t lane_slot;         /* bytes per worker */
+} mm_split_ctx;
 
-static void mm_dot_body(int64_t lo, int64_t hi, int worker, void *vctx) {
-  (void)worker;
-  const mm_dot_ctx *dc = (const mm_dot_ctx *)vctx;
-  const mm_ctx *x = dc->x;
+static void mm_split_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  const mm_split_ctx *sc = (const mm_split_ctx *)vctx;
+  const mm_ctx *x = sc->x;
   const nx_c_mm_desc *d = x->d;
+  char *lanes = sc->lanes + (int64_t)worker * sc->lane_slot;
+  int64_t row_bytes = x->n * d->csize;
   for (int64_t job = lo; job < hi; job++) {
-    int64_t bt = job / dc->nchunks, chunk = job % dc->nchunks;
+    int64_t row = job / sc->nchunks, chunk = job % sc->nchunks;
+    int64_t bt = row / x->m, i = row % x->m;
     const char *ab, *bb;
     char *cb;
     mm_batch_base(x, bt, &ab, &bb, &cb);
     int64_t p0 = chunk * MM_DOT_CHUNK;
     int64_t len = x->k - p0;
     if (len > MM_DOT_CHUNK) len = MM_DOT_CHUNK;
-    char *sum = dc->partials + bt * dc->nchunks * d->csize;
-    d->dot(ab + p0 * x->a_cs * x->esz, x->a_cs, bb + p0 * x->b_rs * x->esz,
-           x->b_rs, len, sum + chunk * d->csize);
-    if (dc->nchunks > 1 &&
-        atomic_fetch_sub_explicit(&dc->pending[bt], 1, memory_order_acq_rel) !=
+    char *sums = sc->partials + row * sc->nchunks * row_bytes;
+    const char *arow = ab + (i * x->a_rs + p0 * x->a_cs) * x->esz;
+    const char *bcol = bb + p0 * x->b_rs * x->esz;
+    if (x->n == 1)
+      d->dot(arow, x->a_cs, bcol, x->b_rs, len, sums + chunk * row_bytes);
+    else
+      d->row(arow, x->a_cs, bcol, x->b_rs, x->b_cs, len, x->n, lanes,
+             sums + chunk * row_bytes);
+    if (sc->nchunks > 1 &&
+        atomic_fetch_sub_explicit(&sc->pending[row], 1, memory_order_acq_rel) !=
             1)
       continue;
-    for (int64_t c = 1; c < dc->nchunks; c++)
-      d->acc(sum, sum + c * d->csize, 1);
-    d->store(sum, cb, x->c_rs, x->c_cs, 0, 0, 1, 1, 1);
+    for (int64_t c = 1; c < sc->nchunks; c++)
+      d->acc(sums, sums + c * row_bytes, (int)x->n);
+    d->store(sums, cb, x->c_rs, x->c_cs, i, 0, 1, (int)x->n, (int)x->n);
   }
 }
 
-static nx_c_status mm_dot_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
-                              int nthreads) {
+static nx_c_status mm_split_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
+                                int nthreads) {
   int64_t nchunks = x->k > MM_DOT_CHUNK ? mm_ceil_div(x->k, MM_DOT_CHUNK) : 1;
-  int64_t jobs = nbatch * nchunks;
-  size_t partials_sz = (size_t)jobs * (size_t)x->d->csize;
-  partials_sz = (partials_sz + 63) & ~(size_t)63;
-  size_t pending_sz = nchunks > 1 ? (size_t)nbatch * sizeof(_Atomic int64_t) : 0;
-  char *scratch = mm_alloc(partials_sz + pending_sz);
-  if (!scratch) return NX_C_ERR_ALLOC;
-  mm_dot_ctx dc;
-  dc.x = x;
-  dc.nchunks = nchunks;
-  dc.partials = scratch;
-  dc.pending = nchunks > 1 ? (_Atomic int64_t *)(scratch + partials_sz) : NULL;
-  for (int64_t bt = 0; nchunks > 1 && bt < nbatch; bt++)
-    atomic_init(&dc.pending[bt], nchunks);
+  int64_t rows = nbatch * x->m;
+  int64_t jobs = rows * nchunks;
   /* Compute-bound class, not bandwidth: every element costs a load conversion
      and a multiply-add, and every output a lane combine and a store. On an M1
      Max it splits a 2^20-element f32 dot to 0.06 ms against 0.11 ms serial, and
@@ -884,11 +896,29 @@ static nx_c_status mm_dot_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
   int nth = nthreads > 0
                 ? nthreads
                 : nx_c_threads_for(NX_C_COST_COMPUTE, jobs,
-                                   x->k < MM_DOT_CHUNK ? x->k : MM_DOT_CHUNK,
+                                   (x->k < MM_DOT_CHUNK ? x->k : MM_DOT_CHUNK) *
+                                       x->n,
                                    bytes);
   if (nth > jobs) nth = (int)jobs;
   if (nth < 1) nth = 1;
-  nx_c_parallel_for(nth, jobs, bytes, mm_dot_body, &dc, scratch);
+  size_t partials_sz = (size_t)jobs * (size_t)(x->n * x->d->csize);
+  partials_sz = (partials_sz + 63) & ~(size_t)63;
+  size_t pending_sz = nchunks > 1 ? (size_t)rows * sizeof(_Atomic int64_t) : 0;
+  pending_sz = (pending_sz + 63) & ~(size_t)63;
+  int64_t lane_slot = NX_C_LANES * x->n * x->d->csize;
+  lane_slot = (lane_slot + 63) & ~(int64_t)63;
+  char *scratch = mm_alloc(partials_sz + pending_sz + (size_t)nth * lane_slot);
+  if (!scratch) return NX_C_ERR_ALLOC;
+  mm_split_ctx sc;
+  sc.x = x;
+  sc.nchunks = nchunks;
+  sc.partials = scratch;
+  sc.pending = nchunks > 1 ? (_Atomic int64_t *)(scratch + partials_sz) : NULL;
+  for (int64_t r = 0; nchunks > 1 && r < rows; r++)
+    atomic_init(&sc.pending[r], nchunks);
+  sc.lanes = scratch + partials_sz + pending_sz;
+  sc.lane_slot = lane_slot;
+  nx_c_parallel_for(nth, jobs, bytes, mm_split_body, &sc, scratch);
   return NX_C_OK;
 }
 
@@ -1172,10 +1202,9 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   if ((m > 1 && c_rs == 0) || (n > 1 && c_cs == 0))
     return NX_C_ERR_OUT_ALIASED; /* distinct C rows/cols would collide on one cell */
 
-  /* Tiny products, and products whose one register tile would be at least
-     half padding, take the direct loop. */
-  int use_direct = force_direct || ((int64_t)m * n * k < MM_DIRECT_CUTOFF) ||
-                   (2 * m * n < (int64_t)MR * NR);
+  /* Tiny products take the direct loop. */
+  int use_direct = force_direct || ((int64_t)m * n * k < MM_DIRECT_CUTOFF);
+  int few_outputs = 2 * m * n < (int64_t)MR * NR;
 
   /* Rough total traffic, for the pool's lock-release decision (HEAVY threads
      off run count, not this). A large GEMM clears the cutoff and releases. */
@@ -1213,12 +1242,13 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   x.n_ic = 0;
 
   /* A single row or column takes the dot's arithmetic on every platform,
-     ahead of Accelerate: one output by splitting its contraction, several by
+     ahead of Accelerate: a 1x1 output by splitting its contraction, a row by
      tiles of outputs. A column C = A b is the row C^T = b^T A^T: the row is b
-     along its rows, the matrix is A with its strides swapped, and the
-     outputs run down C. */
+     along its rows, the matrix is A with its strides swapped, and the outputs
+     run down C. */
+  if (!force_direct && m == 1 && n == 1)
+    return mm_split_run(&x, nbatch, bytes, nthreads);
   if ((m == 1 || n == 1) && !force_direct) {
-    if (m == 1 && n == 1) return mm_dot_run(&x, nbatch, bytes, nthreads);
     if (m == 1) return mm_row_run(&x, nbatch, bytes, nthreads);
     mm_ctx t = x;
     t.A = B;
@@ -1253,6 +1283,11 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
 #else
   (void)allow_accel;
 #endif
+
+  /* A product whose register tile would be at least half padding, and that
+     is not tiny, splits its contraction. */
+  if (few_outputs && !use_direct)
+    return mm_split_run(&x, nbatch, bytes, nthreads);
 
   if (use_direct) {
     /* One job per batch matrix; a lone matrix runs on one thread (the fair direct

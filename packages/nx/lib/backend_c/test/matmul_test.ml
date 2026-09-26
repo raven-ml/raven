@@ -1168,10 +1168,10 @@ let test_row_path () =
   ok "f32 column, A b has the bits of b^T A^T, A by columns"
     (column rows [| 1; n |] 4 = by_rows)
 
-(* The direct loop sums every output as the dot of its row and column: the bits
-   of each output equal its own 1x1 dot, for a product with fewer outputs than a
-   register tile (taken by the policy) and a larger one forced direct, over
-   contractions of one and of two chunks. *)
+(* The direct loop and the split path sum every output as the dot of its row and
+   column: the bits of each output equal its own 1x1 dot, for a tiny product
+   (the direct loop), few outputs over two chunks (the split path) on the owned
+   policy, on one and four threads, and larger products forced direct. *)
 let test_direct_is_dots () =
   List.iter
     (fun (m, k, n, mode) ->
@@ -1184,11 +1184,10 @@ let test_direct_is_dots () =
         Buf.set b t (cos (float_of_int (3 * t)))
       done;
       let c = Buf.create Nx_dtype.float32 (m * n) in
-      mm_ex
-        (ffi c [| m; n |] [| n; 1 |])
-        (ffi a [| m; k |] [| k; 1 |])
-        (ffi b [| k; n |] [| n; 1 |])
-        mode;
+      let c_ffi = ffi c [| m; n |] [| n; 1 |]
+      and a_ffi = ffi a [| m; k |] [| k; 1 |]
+      and b_ffi = ffi b [| k; n |] [| n; 1 |] in
+      if mode < 0 then mm c_ffi a_ffi b_ffi else mm_ex c_ffi a_ffi b_ffi mode;
       let dot i j =
         let d = Buf.create Nx_dtype.float32 1 in
         mm_ex
@@ -1209,7 +1208,53 @@ let test_direct_is_dots () =
         (Printf.sprintf "f32 %dx%dx%d mode %d, each output is its dot" m k n
            mode)
         !same)
-    [ (3, 70001, 5, 0); (2, 300, 2, 1); (20, 300, 30, 2); (4, 70001, 3, 2) ]
+    [
+      (3, 70001, 5, 0);
+      (3, 70001, 5, 4);
+      (2, 300, 2, 1);
+      (20, 300, 30, 2);
+      (4, 70001, 3, 2);
+    ]
+
+(* The split path adds a row's chunks in order: its outputs have the bits of the
+   direct loop's, whose chunk combine is separate code, over three or more
+   chunks, on the policy's threads, one thread and four. A reversed combine
+   fails here, where a comparison against the split path's own 1x1 dots cannot
+   see it. *)
+let test_split_chunk_order () =
+  List.iter
+    (fun (m, k, n) ->
+      let a = Buf.create Nx_dtype.float32 (m * k)
+      and b = Buf.create Nx_dtype.float32 (k * n) in
+      for t = 0 to (m * k) - 1 do
+        Buf.set a t (sin (float_of_int t))
+      done;
+      for t = 0 to (k * n) - 1 do
+        Buf.set b t (cos (float_of_int (3 * t)))
+      done;
+      let run mode =
+        let c = Buf.create Nx_dtype.float32 (m * n) in
+        mm_ex
+          (ffi c [| m; n |] [| n; 1 |])
+          (ffi a [| m; k |] [| k; 1 |])
+          (ffi b [| k; n |] [| n; 1 |])
+          mode;
+        Array.init (m * n) (fun t -> Int32.bits_of_float (Buf.get c t))
+      in
+      let direct = run 2 in
+      List.iter
+        (fun mode ->
+          ok
+            (Printf.sprintf "f32 %dx%dx%d mode %d has the direct loop's bits" m
+               k n mode)
+            (run mode = direct))
+        [ 0; 1; 4 ])
+    [
+      (3, (3 * 65536) + 5, 5);
+      (1, (3 * 65536) + 5, 1);
+      (2, 200003, 7);
+      (5, 140000, 9);
+    ]
 
 let () =
   Windtrap.run "nx C backend matmul"
@@ -1219,6 +1264,7 @@ let () =
           test "owned, workspace, and Accelerate paths" test_maintenance_paths;
           test "a 1x1 output sums in chunks" test_dot_path;
           test "a row keeps the dot's arithmetic" test_row_path;
-          test "the direct loop sums as the dot" test_direct_is_dots;
+          test "few outputs sum as the dot" test_direct_is_dots;
+          test "the split path adds chunks in order" test_split_chunk_order;
         ];
     ]

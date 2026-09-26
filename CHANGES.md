@@ -2009,6 +2009,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx.matmul` with few outputs over a long contraction splits the
+  contraction across cores: 3 x 70001 x 5 at `bfloat16` takes 0.18 ms, not
+  0.44.
 - Eager `Nx.matmul` with fewer than half a register tile of outputs (48 at
   `float32`) and a long contraction is faster: 2 x 30000 x 2 takes 0.08 ms, not
   0.38, where it had packed mostly empty tiles.
