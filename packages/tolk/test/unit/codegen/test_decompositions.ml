@@ -138,6 +138,39 @@ let sin_f16_cody_waite_casts_quadrant_to_f32 () =
         has_quadrant_cast
   | None -> is_true ~msg:"sin decomposition fired" false
 
+let transcendental_exponent_promotion () =
+  let x = Uop.param ~slot:0 ~dtype:Dtype.float32 ~addrspace:Dtype.Alu () in
+  let rewrite op =
+    let node = Uop.alu_unary ~op ~src:x in
+    Option.get (Decomp_transcendental.get_transcendental_patterns
+        { (supported_ops ()) with force_transcendental = true } node)
+  in
+  let exp2 = rewrite Ops.Exp2 in
+  is_false ~msg:"exponent residual and split use promoting subtraction"
+    (contains_op Ops.Sub exp2);
+  is_true ~msg:"rounded integer is converted before residual arithmetic"
+    (List.exists (fun n ->
+         match Uop.op n, Uop.src n with
+         | Ops.Mul, [| rounded; negative_one |]
+           when const_float_value negative_one = Some (-1.) ->
+             Uop.op rounded = Ops.Cast
+             && Dtype.equal (Uop.dtype rounded) Dtype.float32
+             && Dtype.equal (Uop.dtype (Uop.src rounded).(0)) Dtype.int32
+         | _ -> false) (Uop.toposort exp2))
+
+let transcendental_exponent_masks_stay_weak () =
+  let x = Uop.param ~slot:0 ~dtype:Dtype.float32 ~addrspace:Dtype.Alu () in
+  let node = Uop.alu_unary ~op:Ops.Log2 ~src:x in
+  let lowered = Option.get (Decomp_transcendental.get_transcendental_patterns
+      { (supported_ops ()) with force_transcendental = true } node) in
+  let mask = List.find_map (fun n ->
+      match Uop.op n, Uop.src n with
+      | Ops.And, [| _; mask |] when const_int64_value mask = Some 255L -> Some mask
+      | _ -> None) (Uop.toposort lowered) in
+  match mask with
+  | Some mask -> equal string "weakint" (Dtype.to_string (Uop.dtype mask))
+  | None -> fail "log2 decomposition lost its exponent mask"
+
 let decomposes_free_of_long u =
   let tagged = Uop.with_tag "0" u in
   let rewritten =
@@ -1262,7 +1295,11 @@ let () =
     [
       operator_promotion_tests;
       group "transcendentals"
-        [ test "sqrt decomposition builds Where"
+        [ test "exponent arithmetic uses promoting operations"
+            transcendental_exponent_promotion;
+          test "exponent masks remain weak until commitment"
+            transcendental_exponent_masks_stay_weak;
+          test "sqrt decomposition builds Where"
             sqrt_decomposition_builds_where;
           test "xpow refuses a width without an integer"
             xpow_refuses_a_width_without_an_integer;

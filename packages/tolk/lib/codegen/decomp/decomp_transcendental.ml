@@ -8,6 +8,7 @@
 (* Transcendentals *)
 
 open Tolk_uop
+module P = Uop.Promoting
 
 
 let transcendental_scalars = [ Dtype.Float16; Dtype.Float32; Dtype.Float64 ]
@@ -29,26 +30,16 @@ let float_div lhs rhs =
   Uop.alu_binary ~op:Ops.Mul ~lhs
     ~rhs:(Uop.alu_unary ~op:Ops.Reciprocal ~src:rhs)
 
-(* Shift by a simplified constant [Uop.t] amount [y]. Power-of-two
-   multiply/divide encodes the shift on [x]'s own integer dtype, matching
-   tinygrad's helper-level expectation that [y.simplify().arg] exists. *)
-let shl x y =
-  let v = Uop.dtype x in
-  match Uop.const_int_value y with
-  | Some n ->
-      Uop.alu_binary ~op:Ops.Mul ~lhs:x
-        ~rhs:(const_int64_v v (Int64.shift_left 1L n))
+(* Shift by a simplified constant amount through an exact power of two.
+   Its weak dtype defers integer-width commitment to the consuming operation. *)
+let shift_power y =
+  match Uop.const_int_value (Uop.simplify y) with
+  | Some n -> Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one n))
   | None ->
-      invalid_arg "Decomp_transcendental.shl: shift amount must be a constant"
+      invalid_arg "Decomp_transcendental: shift amount must be a constant"
 
-let shr x y =
-  let v = Uop.dtype x in
-  match Uop.const_int_value y with
-  | Some n ->
-      Uop.alu_binary ~op:Ops.Floordiv ~lhs:x
-        ~rhs:(const_int64_v v (Int64.shift_left 1L n))
-  | None ->
-      invalid_arg "Decomp_transcendental.shr: shift amount must be a constant"
+let shl x y = P.(x * shift_power y)
+let shr x y = P.(x // shift_power y)
 
 (* IEEE 754 bit-layout helpers. All operate on a [Uop.t] with a
    floating-point dtype; sizes are taken from [Dtype.finfo]. *)
@@ -92,12 +83,9 @@ let fconst_like node x =
 (* [rintk d] rounds [d] to the nearest integer away from zero, returning a
    value in the integer dtype matching [d]'s float width. *)
 let rintk d =
-  let fdt = Uop.dtype d in
-  let out = int_for_float fdt in
-  let zero = fconst_like d 0.0 in
-  let open Uop.O in
-  let bias = where (d < zero) (fconst_like d (-0.5)) (fconst_like d 0.5) in
-  cast out (d + bias)
+  let bias = P.where P.(d < Uop.const_float 0.)
+      (fconst_like d (-0.5)) (fconst_like d 0.5) in
+  Uop.cast ~src:P.(d + bias) ~dtype:(int_for_float (Uop.dtype d))
 
 (* [pow2if q float_dtype] is [(float)(2^q)] for integer [q] whose range
    fits a biased exponent of [float_dtype]. *)
@@ -105,48 +93,35 @@ let pow2if q float_dtype =
   let qdt = Uop.dtype q in
   (* int16 pairs with the caller's float width; int32/int64 with f32/f64. *)
   let out = match qdt with Dtype.Int16 -> float_dtype | _ -> float_for_int qdt in
-  let qv = qdt in
-  let q_biased =
-    Uop.alu_binary ~op:Ops.Add ~lhs:q
-      ~rhs:(const_int64_v qv (Int64.of_int (exponent_bias out)))
-  in
-  let shifted = shl q_biased (Uop.const (Const.int qv (mantissa_bits out))) in
-  Uop.bitcast ~src:shifted ~dtype:out
+  Uop.bitcast
+    ~src:(shl P.(q + Uop.const_int (exponent_bias out))
+            (Uop.const_int (mantissa_bits out)))
+    ~dtype:out
 
 (* [ilogb2k d] is the integer part of [log2 d] for [d] in [\[0, +inf)].
    Bit-extracts the exponent field. *)
 let ilogb2k d =
   let fdt = Uop.dtype d in
-  let int_dt = int_for_float fdt in
-  let iv = int_dt in
-  let dint = Uop.bitcast ~src:d ~dtype:int_dt in
-  let mb = Uop.const (Const.int iv (mantissa_bits fdt)) in
-  let mask = const_int64_v iv (Int64.of_int (exponent_mask fdt)) in
-  let masked = Uop.alu_binary ~op:Ops.And ~lhs:(shr dint mb) ~rhs:mask in
-  Uop.alu_binary ~op:Ops.Add ~lhs:masked
-    ~rhs:(const_int64_v iv (Int64.of_int (-exponent_bias fdt)))
+  let dint = Uop.bitcast ~src:d ~dtype:(int_for_float fdt) in
+  P.(and_ (shr dint (Uop.const_int (mantissa_bits fdt)))
+       (Uop.const_int (exponent_mask fdt)) - Uop.const_int (exponent_bias fdt))
 
 (* [ldexp3k d e] is [d * 2^e] via direct manipulation of the exponent
    field. Safe for any [d] (including denormals). *)
 let ldexp3k d e =
   let fdt = Uop.dtype d in
   let int_dt = int_for_float fdt in
-  let iv = int_dt in
   let m1 = Uop.bitcast ~src:d ~dtype:int_dt in
-  let e_int = Uop.cast ~src:e ~dtype:int_dt in
-  let mb = Uop.const (Const.int iv (mantissa_bits fdt)) in
-  let m2 = shl e_int mb in
-  Uop.bitcast ~src:(Uop.alu_binary ~op:Ops.Add ~lhs:m1 ~rhs:m2) ~dtype:fdt
+  let m2 = shl (Uop.cast ~src:e ~dtype:int_dt)
+      (Uop.const_int (mantissa_bits fdt)) in
+  Uop.bitcast ~src:P.(m1 + m2) ~dtype:fdt
 
 (* [ldexp2k d e] is [d * 2^e] via two fp multiplies. Faster than
    [ldexp3k] but requires [d > 0] and non-denormal. *)
 let ldexp2k d e =
   let fdt = Uop.dtype d in
-  let one = Uop.const (Const.int (Uop.dtype e) 1) in
-  let half = shr e one in
-  let other = Uop.alu_binary ~op:Ops.Sub ~lhs:e ~rhs:half in
-  let mul = Uop.alu_binary ~op:Ops.Mul in
-  mul ~lhs:(mul ~lhs:d ~rhs:(pow2if half fdt)) ~rhs:(pow2if other fdt)
+  let half = shr e (Uop.const_int 1) in
+  P.(d * pow2if half fdt * pow2if (e - half) fdt)
 
 (* [frexp v] returns [(mantissa, exponent)] assuming [v <> 0]. The
    mantissa is normalized into [\[0.5, 1.0)]. *)
@@ -158,29 +133,13 @@ let frexp v =
     | Dtype.Float16 -> 0x83FFL, 0x3800L
     | _ -> 0x807FFFFFL, 0x3F000000L
   in
-  let uint_dt = uint_for_float fdt in
-  let uv = uint_dt in
-  let bits = Uop.bitcast ~src:v ~dtype:uint_dt in
-  let mb = Uop.const (Const.int uv (mantissa_bits fdt)) in
-  let mask_exp = const_int64_v uv (Int64.of_int (exponent_mask fdt)) in
-  let exponent =
-    Uop.alu_binary ~op:Ops.And ~lhs:(shr bits mb) ~rhs:mask_exp
-  in
-  let mantissa =
-    Uop.bitcast ~dtype:fdt
-      ~src:(Uop.alu_binary ~op:Ops.Or
-              ~lhs:(Uop.alu_binary ~op:Ops.And ~lhs:bits
-                      ~rhs:(const_int64_v uv m1_raw))
-              ~rhs:(const_int64_v uv m2_raw))
-  in
-  let exp =
-    Uop.alu_binary ~op:Ops.Add
-      ~lhs:(Uop.alu_binary ~op:Ops.Add ~lhs:exponent
-              ~rhs:(const_int64_v uv
-                      (Int64.neg (Int64.of_int (exponent_bias fdt)))))
-      ~rhs:(const_int64_v uv 1L)
-  in
-  mantissa, exp
+  let bits = Uop.bitcast ~src:v ~dtype:(uint_for_float fdt) in
+  let exponent = P.and_ (shr bits (Uop.const_int (mantissa_bits fdt)))
+      (Uop.const_int (exponent_mask fdt)) in
+  let literal n = Uop.const (Const.integer Dtype.weakint (Z.of_int64 n)) in
+  let mantissa = Uop.bitcast ~dtype:fdt
+      ~src:(P.or_ (P.and_ bits (literal m1_raw)) (literal m2_raw)) in
+  mantissa, P.(exponent - Uop.const_int (exponent_bias fdt) + Uop.const_int 1)
 
 (* [_lazy_map_numbers x inf ninf nan ratio] expresses
    [match x with inf -> inf | -inf -> _inf | nan -> nan | _ -> ratio]
@@ -453,7 +412,7 @@ let xexp2 d =
   let zero = fconst_like d 0.0 in
   let x = lazy_map_numbers d ~inf:zero ~ninf:zero ~nan:zero ~ratio:d in
   let q = rintk x in
-  let s = Uop.alu_binary ~op:Ops.Sub ~lhs:x ~rhs:(Uop.cast ~src:q ~dtype:fdt) in
+  let s = P.(x - q) in
   let u =
     if fdt = Dtype.Float64 then
       polyN s

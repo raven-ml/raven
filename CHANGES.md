@@ -694,6 +694,10 @@ thread.
 
 ### Tolk (new)
 
+- Preserve weak exponent constants and promote mixed integer/float operands
+  when lowering `exp2` and `log2`, keeping exponent arithmetic consistent with
+  ordinary graph operations.
+
 - Apply `CCACHE` when creating a compiler and `CACHELEVEL` at each disk-cache
   access, including scoped worker contexts. `ASSERT_COMPILE` now rejects cache
   misses before invoking a compiler while allowing cached binaries.

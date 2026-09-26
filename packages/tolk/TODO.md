@@ -71,9 +71,10 @@ acceptance requirement; skipped tests are not execution evidence.
 
 ## 3. Close parity and adopt the reference
 
-- Audit promotion in the remaining decomposition, range/index and WMMA rule
-  bodies, plus `usum`/`uprod`. Use `U.Promoting` where the reference uses
-  promoting operators and preserve raw ALU construction where it does not.
+- Finish classifying raw constructors in dtype/transcendental decomposition
+  and schedule indexing, including `usum`/`uprod` consumers. Use `U.Promoting`
+  where the reference uses promoting operators and preserve raw ALU
+  construction where it does not.
 
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
