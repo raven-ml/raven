@@ -187,6 +187,26 @@ let select_interface ~device candidates =
 (* Variables have one immutable default; scoped overrides are local to the
    calling thread and are explicitly transported to compilation workers. *)
 
+let cpu_count_from_quota ~available contents =
+  let fields = String.map (function '\t' | '\r' | '\n' -> ' ' | c -> c) contents
+      |> String.split_on_char ' ' |> List.filter (fun part -> part <> "") in
+  try match fields with
+    | [quota; period] when quota <> "max" ->
+        let quota = int_of_string quota and period = int_of_string period in
+        if quota < 0 || period <= 0 then available
+        else min available (max 1 (quota / period))
+    | _ -> available
+  with Failure _ -> available
+
+let cpu_count =
+  let available = Domain.recommended_domain_count () in
+  try
+    In_channel.with_open_text "/sys/fs/cgroup/cpu.max" In_channel.input_all
+    |> cpu_count_from_quota ~available
+  with Sys_error _ -> available
+
+let parallel = Context_var.int ~key:"PARALLEL" ~default:cpu_count
+
 let debug = Context_var.int ~key:"DEBUG" ~default:0
 let beam = Context_var.int ~key:"BEAM" ~default:0
 let noopt = Context_var.int ~key:"NOOPT" ~default:0

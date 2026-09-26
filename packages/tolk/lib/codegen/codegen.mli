@@ -50,11 +50,10 @@ val full_rewrite_to_sink :
 val to_program :
   ?optimize:bool ->
   ?beam_device:Device.t ->
-  Device.t ->
   Renderer.t ->
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t
-(** [to_program ?optimize ?beam_device dev ren sink] compiles kernel [sink]
+(** [to_program ?optimize ?beam_device ren sink] compiles kernel [sink]
     into an on-graph {!Tolk_uop.Ops.Program} node
     [PROGRAM(SINK, LINEAR, SOURCE, BINARY)].
 
@@ -67,8 +66,9 @@ val to_program :
 
     [sink] must carry {!Tolk_uop.Uop.kernel_info}. When [optimize] is [true]
     (default) and [sink] is untagged, the optimization block in
-    {!full_rewrite_to_sink} runs; tagged sinks skip it. [beam_device] overrides
-    the runtime device used for beam-search buffers; when omitted, [dev] is
-    used.
+    {!full_rewrite_to_sink} runs; tagged sinks skip it. [beam_device] supplies
+    the runtime device used for beam-search buffers. Omit it for device-free
+    compilation when the kernel does not request beam search.
 
-    Raises [Invalid_argument] if the device renderer has no compiler. *)
+    Raises [Invalid_argument] if the renderer has no compiler, or if an
+    optimized kernel requests beam search without [beam_device]. *)

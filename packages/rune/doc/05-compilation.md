@@ -62,7 +62,11 @@ The first compilation of a trace writes its scheduled and compiled kernels to a 
 
 ## Beam Search
 
-By default each kernel is scheduled by fixed heuristics. `~beam:n` (or the `BEAM` environment variable) searches schedules instead: each round compiles and times candidates on the device and keeps the `n` best. Compilation is much slower and the kernels are usually faster. The tuned result lands in the persistent cache, so the search runs once per trace. `~beam_parallel:k` (or `BEAM_PARALLEL`) compiles a round's candidates on `k` domains; candidates are still timed one at a time, and the result is the same.
+By default each kernel is scheduled by fixed heuristics. `~beam:n` (or the `BEAM` environment variable) searches schedules instead: each round compiles and times candidates on the device and keeps the `n` best. Compilation is much slower and the kernels are usually faster. The tuned result lands in the persistent cache, so the search runs once per trace. `~parallel:k` (or `PARALLEL`) bounds domains compiling independent kernels and search candidates. The default uses available CPUs; `0` compiles sequentially. Candidates are still timed one at a time.
+
+The first compilation using a positive `PARALLEL` value fixes the shared worker
+limit for the process. Later positive values reuse that limit; `~parallel:0`
+compiles in the caller. Candidate timing remains sequential.
 
 ## Debugging
 

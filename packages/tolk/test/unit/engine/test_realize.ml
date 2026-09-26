@@ -463,6 +463,120 @@ let owner_cache_tests = group "Owner cache lifetime"
       test "concurrent systhread misses publish one runtime" (parallel_cache_misses ~threads:true);
       test "failed constructors do not poison subsequent cache misses" cache_failure_retry ]
 
+let compilation_batch bodies =
+  U.linear (List.map (fun body -> U.call ~body ~args:[] ~info:(call_info None)) bodies)
+
+let shared_compilation_admission () =
+  let run_round parallel =
+    let active = Atomic.make 0 and peak = Atomic.make 0 and started = Atomic.make 0 in
+    let ready = Atomic.make 0 and timed_out = Atomic.make false in
+    let rec record_peak value =
+      let previous = Atomic.get peak in
+      if value > previous && not (Atomic.compare_and_set peak previous value) then
+        record_peak value in
+    let caller_count = if parallel = 2 then 2 else 1 in
+    let callers = Array.init caller_count (fun caller ->
+        let device = test_device
+            ~name:(Printf.sprintf "TEST:shared-workers-%d-%d" parallel caller)
+            (runtime_state ()) in
+        let bodies = List.init 8 (fun index -> U.sink
+            ~kernel_info:(kernel_info
+              (Printf.sprintf "shared_worker_%d_%d_%d" parallel caller index)) []) in
+        device, bodies) in
+    let run caller () =
+      let device, bodies = callers.(caller) in
+      ignore (Atomic.fetch_and_add ready 1);
+      while Atomic.get ready < caller_count do Domain.cpu_relax () done;
+      Helpers.Context_var.with_context
+        [B (Helpers.parallel, parallel); B (Helpers.tc_opt, caller + 7)] (fun () ->
+          let compile owner body =
+            is_true (owner == device);
+            equal int (caller + 7) (Helpers.Context_var.get Helpers.tc_opt);
+            equal int parallel (Helpers.Context_var.get Helpers.parallel);
+            let count = Atomic.fetch_and_add active 1 + 1 in
+            record_peak count;
+            let index = Atomic.fetch_and_add started 1 in
+            Fun.protect ~finally:(fun () -> ignore (Atomic.fetch_and_add active (-1)))
+              (fun () ->
+                if index < 2 then begin
+                  let deadline = Unix.gettimeofday () +. 5. in
+                  while Atomic.get started < 2 && Unix.gettimeofday () < deadline do
+                    Unix.sleepf 0.001
+                  done;
+                  if Atomic.get started < 2 then Atomic.set timed_out true
+                end;
+                Unix.sleepf 0.001;
+                program_of body) in
+          Realize.compile_linear ~device ~to_program:compile (compilation_batch bodies)) in
+    let domains = Array.init caller_count (fun caller -> Domain.spawn (run caller)) in
+    let results = Array.map Domain.join domains in
+    Array.iter (fun result -> equal int 8 (Array.length (U.src result))) results;
+    equal ~msg:"positive scopes reuse the first shared worker capacity" int 2 (Atomic.get peak);
+    is_false ~msg:"both admitted workers started without a timeout" (Atomic.get timed_out);
+    equal int (8 * caller_count) (Atomic.get started);
+    equal int 0 (Atomic.get active)
+  in
+  List.iter run_round [2; 4; 1];
+  let caller = Domain.self () in
+  let device = test_device ~name:"TEST:inline-worker-batch" (runtime_state ()) in
+  let count = ref 0 in
+  let compile owner body =
+    ignore owner;
+    is_true ~msg:"zero bypasses an initialized worker owner" (Domain.self () = caller);
+    incr count;
+    program_of body in
+  let bodies = List.init 2 (fun i -> U.sink
+      ~kernel_info:(kernel_info (Printf.sprintf "inline_worker_%d" i)) []) in
+  Helpers.Context_var.with_context [B (Helpers.parallel, 0)] (fun () ->
+      ignore (Realize.compile_linear ~device ~to_program:compile (compilation_batch bodies)));
+  equal int 2 !count
+
+let parallel_compilation_order_and_recursion () =
+  let device = test_device ~name:"TEST:recursive-worker-batch" (runtime_state ()) in
+  let make name = U.sink ~kernel_info:(kernel_info name) [] in
+  let first = make "worker_outer_first" and second = make "worker_outer_second" in
+  let inner = List.init 2 (fun i -> make (Printf.sprintf "worker_inner_%d" i)) in
+  let count = Atomic.make 0 in
+  let rec compile owner body =
+    ignore (Atomic.fetch_and_add count 1);
+    if U.equal body first then
+      ignore (Realize.compile_linear ~device:owner ~to_program:compile
+          (compilation_batch inner));
+    program_of body in
+  Helpers.Context_var.with_context [B (Helpers.parallel, 2)] (fun () ->
+      let input = compilation_batch [first; second; first] in
+      let output = Realize.compile_linear ~device ~to_program:compile input in
+      let bodies = Array.to_list (U.src output) |> List.map (fun call ->
+          (Option.get (U.as_call call)).body) in
+      equal (list string)
+        (List.map (fun body -> U.semantic_key (program_of body)) [first; second; first])
+        (List.map U.semantic_key bodies);
+      equal ~msg:"duplicates compile once; nested batches make progress" int 4 (Atomic.get count);
+      ignore (Realize.compile_linear ~device ~to_program:compile input);
+      equal ~msg:"a warm batch uses the shared program cache" int 4 (Atomic.get count))
+
+let beam_compilation_stays_in_caller () =
+  let device = test_device ~name:"TEST:caller-beam-compilation" (runtime_state ()) in
+  let caller = Domain.self () in
+  let bodies = List.init 2 (fun i -> U.sink
+      ~kernel_info:{(kernel_info (Printf.sprintf "caller_beam_%d" i)) with beam = 1} []) in
+  let count = ref 0 in
+  let compile owner body =
+    ignore owner;
+    is_true ~msg:"beam search retains device timing in its caller" (Domain.self () = caller);
+    incr count;
+    program_of body in
+  Helpers.Context_var.with_context [B (Helpers.parallel, 2)] (fun () ->
+      ignore (Realize.compile_linear ~device ~to_program:compile (compilation_batch bodies)));
+  equal int 2 !count
+
+let compilation_worker_tests = group "Shared compilation workers"
+    [test "positive scopes reuse shared admission and zero compiles inline"
+       shared_compilation_admission;
+     test "parallel lowering retains call order, deduplicates, and permits nested batches"
+       parallel_compilation_order_and_recursion;
+     test "beam lowering stays in the caller" beam_compilation_stays_in_caller]
+
 exception Capture_test_failure
 
 type _ Effect.t += Pause_capture : unit Effect.t
@@ -773,6 +887,7 @@ let concurrent_execution_statistics () =
 let () =
   run "Engine_realize"
     [
+      compilation_worker_tests;
       test "multi-owner templates retire when a secondary owner is replaced" obsolete_multi_owner_template;
       test "concurrent submissions retain their own address tables"
         (serialized_submission_tables ~independent:false);

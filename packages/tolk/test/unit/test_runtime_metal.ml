@@ -125,13 +125,13 @@ let call_spec device spec bufs var_vals =
           U.from_buffer (List.nth bufs slot)
       | _ -> arg) call.args in
   let call = U.call ~body:call.body ~args ~info:call.info in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   Realize.time_call ~device ~to_program ~var_vals call (fun sample -> sample ())
 
 let run_spec device spec bufs = ignore (call_spec device spec bufs [])
 
 let compile_queue ?(profile = false) device calls =
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~profile ~to_program (U.linear calls) in
   is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
       match U.arg (U.without_after call) with
@@ -147,7 +147,7 @@ let compile_queue ?(profile = false) device calls =
 let shared_pipelines_survive_link_retirement () =
   let device = metal_device () in
   let spec = compile_incr device "metal_shared_pipeline" in
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   let calls = [queue_call device spec [1; 0]; queue_call device spec [0; 1]] in
   let compiled = Realize.compile_linear ~device ~profile:false ~to_program (U.linear calls) in
   let first = Realize.link_linear ~allow_cache:false compiled
@@ -199,7 +199,7 @@ let shared_pipelines_survive_link_retirement () =
 let independent_batches_own_command_storage () =
   let device = metal_device () in
   let spec = compile_incr device "metal_independent_batches" in
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   let batch slots = Realize.compile_linear ~device ~profile:false ~to_program
       (U.linear [queue_call device spec slots]) in
   let first = batch [0; 1] and second = batch [2; 3] in
@@ -499,7 +499,7 @@ let beam_timings_use_compiled_queues () =
   let kernel_info = U.{name = "beam_queue_timing"; applied_opts = [];
     opts_to_apply = None; estimates = None; beam = 0} in
   let sink = U.sink ~kernel_info [U.end_ ~value:store ~ranges:[range]] in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   let before = Realize.queue_submissions () in
   let selected = Search.beam_search ~to_program ~disable_cache:true
       (Postrange.create sink renderer) [dst; src] ~var_vals:[] 1 device in
@@ -529,7 +529,7 @@ let multi_device_calls_use_queues () =
   let store = U.store ~dst:(at (ptr 0)) ~value () in
   let info = U.{name = "metal_multi_lane"; applied_opts = []; opts_to_apply = Some [];
     estimates = None; beam = 0} in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   let program = to_program device (U.sink ~kernel_info:info [store]) in
   let output = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
       ~device:(U.Multi [Some name; Some name]) () in
@@ -565,7 +565,7 @@ let sharded_kernels_on_two_devices () =
   let value = U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:(at (ptr 1)) ()) ~rhs:dnum in
   let info = U.{name = "metal_two_devices"; applied_opts = []; opts_to_apply = Some [];
     estimates = None; beam = 0} in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   let program = to_program first (U.sink ~kernel_info:info [U.store ~dst:(at (ptr 0)) ~value ()]) in
   let sharded slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1)
       ~device:(U.Multi (List.map Option.some names)) () in

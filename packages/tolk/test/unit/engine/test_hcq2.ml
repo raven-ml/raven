@@ -144,7 +144,7 @@ let all_to_all_copy_queues () =
       let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () -> Fun.const ());
         prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; config = (fun () -> ""); copy = (fun _ -> Some "COPY:0");
         encode; lower = (fun _ -> None);
-        compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+        compile = Codegen.to_program ~optimize:false (Device.renderer host)} in
       let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
       ignore (Device.make ~name ~allocator
         ~renderer_set:(Device.Renderer_set.make ~device:name
@@ -159,7 +159,7 @@ let all_to_all_copy_queues () =
         selected := [];
         Unix.putenv "HCQ_NUM_SDMA" count;
         Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.all2all, all2all)] (fun () ->
-            ignore (Hcq2.compile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) linear));
+            ignore (Hcq2.compile ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device)) linear));
         equal (list string) expected (List.sort_uniq String.compare !selected) in
       check 0 "" ["submit_amd_copy_0"];
       check 1 "" ["submit_amd_copy_0"; "submit_amd_copy_1"; "submit_amd_copy_2"];
@@ -179,7 +179,7 @@ let peer_group_batches () =
       | _ -> None in
     let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () -> Fun.const ());
       prepare = (fun () -> incr prepared); host = "CPU"; max_kernel_bindings = None; config = (fun () -> ""); copy; encode; lower = (fun _ -> None);
-      compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+      compile = Codegen.to_program ~optimize:false (Device.renderer host)} in
     let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
     Device.make ~name ~peer_group:name ~allocator
       ~renderer_set:(Device.Renderer_set.make ~device:name
@@ -189,7 +189,7 @@ let peer_group_batches () =
   let a slot = parameter ~device:(List.nth names 0) slot
   and b slot = parameter ~device:(List.nth names 1) slot in
   let store dst src = U.store_call ~dst ~src in
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   let compile calls = Hcq2.compile ~to_program (U.linear calls) in
   let info call = match U.arg (U.without_after call) with
     | U.Arg.Call_info {aux = Some info; _} -> info
@@ -242,7 +242,7 @@ let sharded_batches () =
     let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () -> Fun.const ());
       prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; config = (fun () -> "");
       copy = (fun _ -> Some "COPY:0"); encode; lower = (fun _ -> None);
-      compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+      compile = Codegen.to_program ~optimize:false (Device.renderer host)} in
     let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
     ignore (Device.make ~name ~peer_group:"lanes" ~allocator
       ~renderer_set:(Device.Renderer_set.make ~device:name
@@ -257,7 +257,7 @@ let sharded_batches () =
       ~value:(U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:(at (ptr 1)) ()) ~rhs:lane) () in
   let kernel_info = U.{name = "lane_kernel"; applied_opts = []; opts_to_apply = Some [];
     estimates = None; beam = 0} in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   let program = to_program host (U.sink ~kernel_info [store]) in
   let sharded slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 32)
       ~device:(U.Multi (List.map Option.some names)) () in
@@ -420,7 +420,7 @@ let compiled_host_submission () =
   let compilations = ref 0 in
   let compile sink =
     incr compilations;
-    let program = Codegen.to_program ~optimize:false host (Device.renderer host) sink in
+    let program = Codegen.to_program ~optimize:false (Device.renderer host) sink in
     Spec.type_verify Spec.program_spec (U.src program).(0);
     program in
   let ring = ref "A" in
@@ -440,7 +440,7 @@ let compiled_host_submission () =
   let linear = U.linear [U.store_call ~dst:(ptr 1) ~src:(ptr 0);
                          U.store_call ~dst:(ptr 2) ~src:(ptr 1)] in
   let to_program device sink =
-    let program = Codegen.to_program device (Device.renderer device) sink in
+    let program = Codegen.to_program ~beam_device:device (Device.renderer device) sink in
     generated := program :: !generated;
     program in
   let compiled = Realize.compile_linear ~device ~to_program linear in
@@ -507,7 +507,7 @@ let compiled_host_submission () =
     let store = U.store ~dst:(at (p 0)) ~value:(U.load ~src:(at (p 1)) ()) () in
     let kernel_info = U.{name = "host_queue_copy"; applied_opts = []; opts_to_apply = Some [];
       estimates = None; beam = 0} in
-    let body = Codegen.to_program ~optimize:false host (Device.renderer host)
+    let body = Codegen.to_program ~optimize:false (Device.renderer host)
         (U.sink ~kernel_info [store]) in
     U.call ~body ~args:[dst; src]
       ~info:{grad_fxn = None; name = None; precompile = false;

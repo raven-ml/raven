@@ -84,9 +84,10 @@ acceptance requirement; skipped tests are not execution evidence.
   rewrite performance and long-lived memory use with weak node caches.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.
-- Port remaining beam heuristics and device-aware compilation. Share bounded workers
-  with lowering, with cancellation/timeouts, errors,
-  affinity/container limits and concurrent-cache coverage.
+- Measure shared compilation worker overhead and search latency against the
+  target, including first-use capacity, affinity/container defaults and
+  concurrent caches. Completed-work compile budgets cannot interrupt a stuck
+  native compiler; review whether an isolated worker lifetime is warranted.
   Cover overlapping fibers and device finalizers registered on another domain
   or systhreads sharing a domain:
   operation scopes currently prevent only same-domain GC re-entry and do not

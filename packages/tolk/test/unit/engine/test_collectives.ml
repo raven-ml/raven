@@ -115,7 +115,7 @@ module Run = struct
         (fun dim -> U.const_int_value dim = Some 0) (T.symbolic_shape t))) ts in
     if ts <> [] then begin
       let dev = device () in
-      let to_program dev = Codegen.to_program dev (Device.renderer dev) in
+      let to_program dev = Codegen.to_program ~beam_device:dev (Device.renderer dev) in
       let outs = List.map (fun t -> U.contiguous ~src:(T.uop t) ()) ts in
       let tensor_sink = U.sink outs in
       let sink, buffer_map = Bufferize.run tensor_sink in

@@ -32,7 +32,7 @@ let kernel device =
   let store = U.store ~dst:(U.index ~ptr:dst ~idxs:[r] ()) ~value () in
   let kernel_info = U.{name = "link_chain"; applied_opts = [];
     opts_to_apply = None; estimates = None; beam = 0} in
-  Codegen.to_program ~optimize:false device (Device.renderer device)
+  Codegen.to_program ~optimize:false (Device.renderer device)
     (U.sink ~kernel_info [U.end_ ~value:store ~ranges:[r]])
 
 let template device program ~eager =
@@ -98,7 +98,7 @@ let median values =
 let run device program inputs ~eager =
   let input_uops = Array.map U.from_buffer inputs in
   let ctx = Realize.exec_context ~input_uops ~update_stats:false () in
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~profile:false ~to_program
       (template device program ~eager) in
   let tags = U.toposort compiled |> List.filter (fun u -> U.node_tag u = Some "lt_input") in

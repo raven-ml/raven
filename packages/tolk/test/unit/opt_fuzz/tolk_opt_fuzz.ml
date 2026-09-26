@@ -288,8 +288,8 @@ let seed_buffers bufs =
    buffer's contents afterwards, so an action that scribbles outside its
    output is caught alongside one that computes the wrong value. *)
 let run_kernel dev ast bufs =
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
-  let program = Codegen.to_program dev (Device.renderer dev) ast in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
+  let program = Codegen.to_program ~beam_device:dev (Device.renderer dev) ast in
   let info = Option.get (U.as_program_info program) in
   seed_buffers bufs;
   let args = List.init (1 + List.fold_left max (-1) info.globals) (fun slot ->

@@ -201,9 +201,24 @@ let contexts =
      test "snapshots are immutable and replace a worker's current context" snapshot_transport;
      test "exited scopes release their values" scopes_release_values]
 
+let compilation_cpu_quota =
+  group "compilation CPU quota"
+    [test "unlimited and malformed quota retain available CPUs" (fun () ->
+         List.iter (fun quota ->
+             equal ~msg:quota int 8 (Helpers.cpu_count_from_quota ~available:8 quota))
+           ["max 100000"; ""; "100000"; "bad 100000"; "100000 0";
+            "100000 -1"; "-1 100000"; "100000 100000 extra"]);
+     test "quota bounds workers by whole available CPUs" (fun () ->
+         List.iter (fun (quota, expected) ->
+             equal ~msg:quota int expected
+               (Helpers.cpu_count_from_quota ~available:8 quota))
+           ["200000 100000", 2; "250000 100000", 2;
+            "10000 100000", 1; "0 100000", 1;
+            "2000000 100000", 8; " 200000\t100000\n", 2])]
+
 let () =
   run __FILE__
-    [ formatting; counters; contexts;
+    [ formatting; counters; contexts; compilation_cpu_quota;
       test "target strings preserve architecture and interface spelling" (fun () ->
           let t = Target.of_string "remote:host:2+nv:cuda:sm_89" in
           equal string "NV" t.device;

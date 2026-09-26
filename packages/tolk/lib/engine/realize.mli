@@ -127,6 +127,14 @@ val compile_linear :
     arguments. The program cache uses that device and its selected renderer.
     {!Tolk_uop.Ops.Store} calls are left unchanged.
 
+    Independent uncached kernels compile in parallel under the [PARALLEL]
+    context. [to_program execution_device] is applied in the caller; the
+    resulting compiler must support concurrent calls. Workers inherit the
+    caller's context, and every started compilation finishes before a failure
+    propagates. Kernels requesting beam search compile in the caller, with
+    only their candidate compilation delegated to workers. [PARALLEL=0]
+    disables worker compilation.
+
     [profile] adds queue timestamps and defaults to [true] when [DEBUG >= 2]
     or [PROFILE=1]. [wait] uses them for elapsed time; [PROFILE=1] also retains
     asynchronous timestamp records for {!Device.profile}.

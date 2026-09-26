@@ -3,7 +3,7 @@
 (library
  (name tolk)
  (public_name tolk)
- (private_modules host_config)
+ (private_modules host_config worker)
  (libraries nx.dtype zarith unix threads tolk_uop))
 
 ; Use the configured executable target, including cross-compilation, rather

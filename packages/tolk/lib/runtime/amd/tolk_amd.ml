@@ -1773,7 +1773,7 @@ module Queue = struct
         ~name:state.State.name ~compute_ring_size:(Hcq.Mmio.size state.State.compute_queue.Queue_desc.ring)
         ~copy_ring_size:(fun idx -> Option.map (fun q -> Hcq.Mmio.size q.Queue_desc.ring) (state.State.sdma_queue idx));
       lower = Encoded_queue.lower state.State.name;
-      compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
+      compile = Codegen.to_program ~optimize:false (Device.renderer host)}
 end
 
 (* The shared device open path over the selected interface: everything

@@ -447,7 +447,7 @@ exception Jit_error of string
 val jit :
   ?devices:Nx.Device.t list ->
   ?beam:int ->
-  ?beam_parallel:int ->
+  ?parallel:int ->
   ('a -> 'b) Nx.Ptree.fn ->
   ('a -> 'b) ->
   'a ->
@@ -628,9 +628,11 @@ val jit :
     and the kernels usually faster. When [beam] is omitted, the [BEAM] context
     gives the width, initially set by the environment variable. Explicit [0]
     disables search for kernels without their own positive beam width.
-    [beam_parallel] compiles a round's candidates on that many domains
-    without changing the result, and is not part of any key; it defaults to
-    [BEAM_PARALLEL] (sequential).
+    [parallel] bounds domains compiling independent kernels and beam candidates.
+    It is not part of any cache key and defaults to the [PARALLEL] context,
+    initially sized from available CPUs. The first parallel compilation fixes
+    the shared worker limit; later positive settings reuse it. [0] compiles
+    sequentially. Candidate timing remains sequential.
 
     {b Persistence.} Compiled programs are also written to a disk cache and
     loaded by later processes that compile the same trace; [JITCACHE=0] disables
@@ -689,7 +691,7 @@ val jit :
 val jit' :
   ?devices:Nx.Device.t list ->
   ?beam:int ->
-  ?beam_parallel:int ->
+  ?parallel:int ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t

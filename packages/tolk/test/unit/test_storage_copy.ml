@@ -95,7 +95,7 @@ let fixture suffix =
     prepare = (fun () -> ()); host = host_name;
     max_kernel_bindings = None; config = (fun () -> "");
     copy = (fun _ -> Some "COPY:0"); encode; lower = (fun _ -> None);
-    compile = Codegen.to_program ~optimize:false cpu (Device.renderer cpu);
+    compile = Codegen.to_program ~optimize:false (Device.renderer cpu);
   } in
   let device = Device.make ~name ~allocator ~renderer_set ~queue
       ~synchronize:(fun timeout -> ignore timeout; drain_pending ())

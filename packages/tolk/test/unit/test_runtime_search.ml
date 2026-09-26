@@ -131,7 +131,7 @@ let elementwise_2d_ast ~s0 ~s1 =
 (* Tests *)
 
 let to_program device =
-  Codegen.to_program ~optimize:false device (Device.renderer device)
+  Codegen.to_program ~optimize:false (Device.renderer device)
 
 let program_call program bufs =
   let info = Option.get (U.as_program_info program) in
@@ -442,7 +442,7 @@ let codegen_midpoint_rounds_down ~has_cache_hook () =
   let info = Option.get (U.as_kernel_info ast) in
   let ast = U.replace ast ~arg:(U.Arg.Kernel_info { info with beam = 1 }) () in
   Helpers.Context_var.with_context [B (Helpers.cachelevel, 0)]
-    (fun () -> ignore (Codegen.to_program ~beam_device:device device ren ast));
+    (fun () -> ignore (Codegen.to_program ~beam_device:device ren ast));
   equal ~msg:"beam does not synthesize an eviction kernel" int 0 !evictions;
   is_true ~msg:"codegen benchmarks candidates" (!observed <> []);
   equal ~msg:"only an advertised cache hook runs before each sample" int
@@ -464,7 +464,7 @@ let parallel_failure_joins_workers failure () =
   in
   let compile src =
     ignore src;
-    if Helpers.Context_var.get Search.beam_parallel <> 2
+    if Helpers.Context_var.get Helpers.parallel <> 2
        || Helpers.Context_var.get Helpers.tc_opt <> 1 then
       Atomic.set inherited_context false;
     let worker = Atomic.fetch_and_add started 1 in
@@ -508,18 +508,19 @@ let parallel_failure_joins_workers failure () =
       let outcome =
         try
           Helpers.Context_var.with_context
-            [B (Search.beam_parallel, 2); B (Helpers.tc_opt, 1)] (fun () ->
+            [B (Helpers.parallel, 2); B (Helpers.tc_opt, 1)] (fun () ->
               ignore (Search.beam_search ~to_program ~disable_cache:true
                 (P.create ast ren) rawbufs ~var_vals:[] 1 device));
           None
         with exn -> Some exn in
       let completed_at_return = Atomic.get finished in
       Atomic.set returned true;
-      equal int 2 (Atomic.get started);
+      is_true ~msg:"the failure overlapped another started compiler"
+        (Atomic.get started >= 2);
       is_true ~msg:"compiler workers receive the caller's immutable policy snapshot"
         (Atomic.get inherited_context);
       equal ~msg:"all started workers finish before search propagates failure"
-        int 2 completed_at_return;
+        int (Atomic.get started) completed_at_return;
       is_false ~msg:"worker coordination completed within its deadline"
         (Atomic.get timed_out);
       match outcome with
@@ -545,10 +546,54 @@ let sequential_compile_interrupt () =
       List.iter Device.Buffer.deallocate rawbufs)
     (fun () ->
       raises Sys.Break (fun () ->
-          Helpers.Context_var.with_context [B (Search.beam_parallel, 0)] (fun () ->
+          Helpers.Context_var.with_context [B (Helpers.parallel, 0)] (fun () ->
               ignore (Search.beam_search ~to_program ~disable_cache:true
                 (P.create ast ren) rawbufs ~var_vals:[] 1 device)));
       equal ~msg:"interruption stops candidate compilation immediately" int 1 !compiled)
+
+let beam_requires_runtime_device () =
+  let sink = elementwise_1d_ast ~n:4 in
+  let info = Option.get (U.as_kernel_info sink) in
+  let sink = U.replace sink ~arg:(U.Arg.Kernel_info {info with beam = 1}) () in
+  raises (Invalid_argument "Codegen.to_program: beam search requires a runtime device")
+    (fun () -> ignore (Codegen.to_program ren sink))
+
+let completed_compile_budget parallel () =
+  let backing = cpu "beam-budget-buffers" in
+  let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
+  let ast = elementwise_1d_ast ~n:64 in
+  let program = to_program backing ast in
+  let started = Atomic.make 0 and completed = Atomic.make false in
+  let dispatched = Atomic.make 0 in
+  let device = Device.make ~name:(Printf.sprintf "CPU:beam-budget-%d" parallel)
+      ~allocator:(Device.Buffer.allocator sample)
+      ~renderer_set:(Device.Renderer_set.make ~device:"CPU" ["CLANG", Fun.const ren])
+      ~runtime:(fun _ ->
+        ignore (Atomic.fetch_and_add dispatched 1);
+        failwith "over-budget programs must not enter timing")
+      ~synchronize:(fun timeout -> ignore timeout) () in
+  let compile owner sink =
+    ignore (owner, sink);
+    if Atomic.fetch_and_add started 1 <> 0 then failwith "candidate rejected";
+    Unix.sleepf 1.05;
+    Atomic.set completed true;
+    program in
+  let buffers = create_bufs_for_kernel device ast in
+  let timeout = Sys.getenv_opt "BEAM_TIMEOUT_SEC" in
+  let uops = Sys.getenv_opt "BEAM_UOPS_MAX" in
+  Fun.protect ~finally:(fun () ->
+      Unix.putenv "BEAM_TIMEOUT_SEC" (Option.value timeout ~default:"");
+      Unix.putenv "BEAM_UOPS_MAX" (Option.value uops ~default:"");
+      List.iter Device.Buffer.deallocate (sample :: buffers)) (fun () ->
+    Unix.putenv "BEAM_TIMEOUT_SEC" "1";
+    Unix.putenv "BEAM_UOPS_MAX" "0";
+    Helpers.Context_var.with_context [B (Helpers.parallel, parallel); B (Helpers.cachelevel, 0)]
+      (fun () -> ignore (Search.beam_search ~to_program:compile ~disable_cache:true
+          (P.create ast ren) buffers ~var_vals:[] 1 device));
+    is_true ~msg:"an over-budget compiler retains ownership until it returns"
+      (Atomic.get completed);
+    equal ~msg:"completed over-budget results are discarded before native timing"
+      int 0 (Atomic.get dispatched))
 
 let candidate_program_metadata ~large () =
   let extent = if large then 1 lsl 32 else 131072 in
@@ -556,12 +601,12 @@ let candidate_program_metadata ~large () =
   let scaled = if large then [|4096; 16; 1|] else [|65536; 1; 1|] in
   let backing = cpu "beam-program-buffers" in
   let sample = Device.create_buffer ~size:1 ~dtype:D.float32 backing in
-  let compiled = ref 0 and timed = ref 0 and expected = ref [] in
+  let compiled = Atomic.make 0 and timed = ref 0 and expected = Atomic.make [] in
   let estimates = ref None in
   let runtime (obj : Tiny_elf.t) =
     equal string "callback-arch" obj.target.arch;
     is_true ~msg:"timing retains the callback PROGRAM, changing only launch size"
-      (List.mem obj.profile_key !expected);
+      (List.mem obj.profile_key (Atomic.get expected));
     let call _ ~global ~local ~vals ~wait:_ ~timeout:_ =
       incr timed;
       equal (array int) scaled global;
@@ -578,7 +623,7 @@ let candidate_program_metadata ~large () =
       ~synchronize:(fun timeout -> ignore timeout)
       ~invalidate_caches:(fun () -> ()) () in
   let compile_candidate device ast =
-    incr compiled;
+    ignore (Atomic.fetch_and_add compiled 1);
     let program = to_program device ast in
     let info = Option.get (U.as_program_info program) in
     let symbolic_extent = U.variable ~name:"timing_extent" ~min_val:65536 ~max_val:extent () in
@@ -592,7 +637,11 @@ let candidate_program_metadata ~large () =
     let program = U.replace program ~src:children ~arg:(U.Arg.Program_info info) () in
     let scaled = U.replace program ~arg:(U.Arg.Program_info {info with
         global_size = List.map (fun n -> U.Launch_int n) (Array.to_list scaled)}) () in
-    expected := Some (U.semantic_key scaled) :: !expected;
+    let key = Some (U.semantic_key scaled) in
+    let rec publish () =
+      let previous = Atomic.get expected in
+      if not (Atomic.compare_and_set expected previous (key :: previous)) then publish () in
+    publish ();
     program in
   let ast = elementwise_1d_ast ~n:4 in
   let rawbufs = create_bufs_for_kernel device ast in
@@ -608,12 +657,12 @@ let candidate_program_metadata ~large () =
           ~var_vals:["timing_extent", Int64.of_int extent] 1 device) in
       Unix.putenv "BEAM_UOPS_MAX" "1";
       search ();
-      is_true ~msg:"candidate compilation uses the supplied constructor" (!compiled > 0);
+      is_true ~msg:"candidate compilation uses the supplied constructor" (Atomic.get compiled > 0);
       equal ~msg:"oversized PROGRAMs are rejected before timing" int 0 !timed;
-      compiled := 0;
+      Atomic.set compiled 0;
       Unix.putenv "BEAM_UOPS_MAX" "0";
       search ();
-      is_true ~msg:"accepted candidates use the supplied constructor" (!compiled > 0);
+      is_true ~msg:"accepted candidates use the supplied constructor" (Atomic.get compiled > 0);
       is_true ~msg:"PROGRAMs without estimates can still be timed" (!timed > 0);
       estimates := Some { U.ops = U.Sym (U.const
           (C.integer D.weakint (Z.shift_left Z.one 100)));
@@ -685,7 +734,7 @@ let compute_filtered_candidate_is_reconsidered () =
   Fun.protect ~finally:(fun () ->
       Unix.putenv "BEAM_MIN_PROGRESS" (Option.value min_progress ~default:"");
       List.iter Device.Buffer.deallocate (sample :: rawbufs)) (fun () ->
-    let result = Helpers.Context_var.with_context [B (Search.beam_parallel, 0); B (Helpers.cachelevel, 0)] (fun () ->
+    let result = Helpers.Context_var.with_context [B (Helpers.parallel, 0); B (Helpers.cachelevel, 0)] (fun () ->
         Search.beam_search ~to_program:compile_candidate ~disable_cache:true
           ~allow_test_size:false (P.create ast renderer) rawbufs ~var_vals:[] 1 device) in
     equal ~msg:"the previously rejected AST reuses its compilation" int 1
@@ -722,6 +771,11 @@ let overflowing_resource_products_reject_candidates () =
 
 let () = run __FILE__
     [ beam_search_tests; search_timing_tests; transient_program_lifetimes;
+      test "beam codegen requires an explicit runtime" beam_requires_runtime_device;
+      test "sequential compilation discards completed over-budget work"
+        (completed_compile_budget 0);
+      test "parallel compilation discards completed over-budget work"
+        (completed_compile_budget 2);
       test "beam reconsiders compute-filtered candidates in later rounds"
         compute_filtered_candidate_is_reconsidered;
       test "beam rejects overflowing resource products"

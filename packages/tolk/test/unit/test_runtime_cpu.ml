@@ -125,7 +125,7 @@ let program_call spec bufs =
   U.call ~body ~args ~info:U.{grad_fxn = None; name = None; precompile = false;
     precompile_backward = false; dtype = Dtype.void; aux = None}
 
-let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device)
+let to_program device = Codegen.to_program ~optimize:false (Device.renderer device)
 
 let runtime_survives_owner_replacement () =
   let name = "cached-executable-lifetime" in
@@ -183,7 +183,7 @@ let timing_cache_eviction () =
     (* Direct codegen consumes the kernel's resolved beam policy; it must not
        read a surrounding context again after compile_linear selected zero. *)
     Helpers.Context_var.with_context [B (Helpers.beam, 3)] (fun () ->
-      Codegen.to_program device (Device.renderer device) sink) in
+      Codegen.to_program ~beam_device:device (Device.renderer device) sink) in
   let kernels = (Helpers.Global_counters.snapshot ()).kernel_count in
   Realize.with_capture
     (fun linear vars ->
@@ -886,7 +886,7 @@ let test_sparse_program_arguments () =
     { name = "sparse_arguments";
       applied_opts = []; opts_to_apply = None; estimates = None; beam = 0 } in
   let sink = U.sink ~kernel_info [ U.store ~dst:(index output) ~value:sum () ] in
-  let program = Codegen.to_program ~optimize:false device (Device.renderer device) sink in
+  let program = Codegen.to_program ~optimize:false (Device.renderer device) sink in
   let bind values =
     let buffer = create_i32_buffer device values in
     U.from_buffer buffer, buffer in
@@ -898,7 +898,7 @@ let test_sparse_program_arguments () =
     { grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None; dtype = Dtype.void } in
   let call = U.call ~body:program ~args ~info in
-  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
     ~var_vals:[ "increment", 1L ] (U.linear [ call ]);
   equal (list int) [ 42 ] (read_i32_buffer output_buffer);
   equal (list int) [ 41 ] (read_i32_buffer input_buffer);
@@ -1009,7 +1009,7 @@ let test_full_width_scalar_bindings () =
   let store = U.store ~dst:(U.index ~ptr:output ~idxs:[U.const_int 0] ()) ~value () in
   let info : U.kernel_info = {name = "full_width_scalars"; applied_opts = [];
       opts_to_apply = None; estimates = None; beam = 0} in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   let program = to_program device (U.sink ~kernel_info:info [store]) in
   let buffer = Device.create_buffer ~size:1 ~dtype:Dtype.int64 device in
   let call_info : U.call_info = {grad_fxn = None; name = None; precompile = false;

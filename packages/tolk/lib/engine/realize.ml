@@ -303,37 +303,57 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
         U.replace body ~arg:(U.Arg.Kernel_info { ki with U.beam = beam }) ()
     | Some _ | None -> body
   in
-  let compile_call call =
-    match U.as_call call with
-    | Some { body; args }
-      when Tolk_uop.Ops.equal (U.op body) Tolk_uop.Ops.Sink ->
-        let device =
-          match List.find_map (fun arg -> match U.device_of arg with
-              | Some (U.Single name) | Some (U.Multi (Some name :: _)) -> Some name
-              | _ -> None) args with
-          | Some name when Device.canonicalize name <> Device.canonicalize (Device.name device) ->
-              Device.get name
-          | Some _ | None -> device
-        in
-        let body = stamp body in
-        let ckey = cache_key ~device ~ast_key:(U.semantic_key body) in
-        let cache = device_cache device in
-        let program =
-          match with_cache_lock cache.lock (fun () -> Hashtbl.find_opt cache.programs ckey) with
-          | Some p -> p
-          | None ->
-              let p = to_program device body in
-              with_cache_lock cache.lock (fun () ->
-                  match Hashtbl.find_opt cache.programs ckey with
-                  | Some winner -> winner
-                  | None -> Hashtbl.add cache.programs ckey p; p)
-        in
-        U.replace call
-          ~src:(Array.of_list (program :: List.tl (U.children call)))
-          ()
-    | _ -> call
-  in
-  let linear = U.linear (List.map compile_call (U.children linear)) in
+  let programs = Hashtbl.create 16 and pending = Hashtbl.create 16 in
+  let tasks = ref [] in
+  let calls = U.toposort ~enter_calls:true linear
+      |> List.filter_map (fun call ->
+        match U.as_call call with
+        | Some { body; args } when U.op body = Tolk_uop.Ops.Sink
+                                  && Option.is_some (U.as_kernel_info body) ->
+            let device =
+              match List.find_map (fun arg -> match U.device_of arg with
+                  | Some (U.Single name) | Some (U.Multi (Some name :: _)) -> Some name
+                  | _ -> None) args with
+              | Some name when Device.canonicalize name <> Device.canonicalize (Device.name device) ->
+                  Device.get name
+              | Some _ | None -> device
+            in
+            let body = stamp body in
+            let ckey = cache_key ~device ~ast_key:(U.semantic_key body) in
+            let key = Device.id device, ckey in
+            if not (Hashtbl.mem programs key || Hashtbl.mem pending key) then begin
+              let cache = device_cache device in
+              match with_cache_lock cache.lock (fun () -> Hashtbl.find_opt cache.programs ckey) with
+              | Some program -> Hashtbl.add programs key program
+              | None ->
+                  (* Applying the device argument resolves the renderer in the
+                     caller. Tasks only hold a compiler and immutable input. *)
+                  let compile = to_program device in
+                  Hashtbl.add pending key ();
+                  tasks := (key, cache, ckey, compile, body) :: !tasks
+            end;
+            Some (call, key)
+        | _ -> None) in
+  let tasks = List.rev !tasks in
+  let compile (key, (cache : device_cache), ckey, compile, body) =
+    let program = compile body in
+    let program = with_cache_lock cache.lock (fun () ->
+        match Hashtbl.find_opt cache.programs ckey with
+        | Some winner -> winner
+        | None -> Hashtbl.add cache.programs ckey program; program) in
+    key, program in
+  let compiled =
+    if List.exists (fun (_, _, _, _, body) ->
+        (Option.get (U.as_kernel_info body)).U.beam > 0) tasks then
+      (* Beam owns device timing in this caller; only its candidates enter
+         workers, avoiding nested admission and device work in a worker. *)
+      Array.of_list (List.map compile tasks)
+    else Worker.map compile tasks in
+  Array.iter (fun (key, program) -> Hashtbl.add programs key program) compiled;
+  let replacements = List.map (fun (call, key) ->
+      call, U.replace call
+        ~src:(Array.of_list (Hashtbl.find programs key :: List.tl (U.children call))) ()) calls in
+  let linear = U.substitute ~enter_calls:true replacements linear in
   if not cache || List.exists (fun n ->
       U.op n = Tolk_uop.Ops.Buffer && U.addrspace n = Some Tolk_uop.Dtype.Global)
       (U.toposort ~enter_calls:true linear) then Hcq2.compile ~to_program ~profile linear

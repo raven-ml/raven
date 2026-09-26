@@ -43,7 +43,7 @@ let inner t =
   | None ->
       let device = Run.device () in
       let to_program device =
-        Tolk.Codegen.to_program device (Tolk.Device.renderer device)
+        Tolk.Codegen.to_program ~beam_device:device (Tolk.Device.renderer device)
       in
       let jit =
         Tolk.Jit.create ~device ~to_program

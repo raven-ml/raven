@@ -271,7 +271,7 @@ let time_spec device spec bufs =
       | Some buf -> U.from_buffer buf | None -> U.noop ()) in
   let call = U.call ~body ~args ~info:U.{grad_fxn = None; name = None;
     precompile = false; precompile_backward = false; dtype = D.void; aux = None} in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   Realize.time_call ~device ~to_program call (fun sample -> sample ())
 
 let i32_buf device values =
@@ -332,7 +332,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
     encode = Tolk_amd.Encoded_queue.encode hw ~props ~name:device_name
         ~compute_ring_size:4096 ~copy_ring_size:(fun _ -> Some 4096);
     lower = Tolk_amd.Encoded_queue.lower device_name;
-    compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+    compile = Codegen.to_program ~optimize:false (Device.renderer host)} in
   let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
   let renderer_set = Device.Renderer_set.make ~device:device_name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
@@ -370,7 +370,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(dispatch_ptr = false) ?(scratch = 256)
       ~synchronize:(fun timeout -> ignore timeout; ()) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)] else [call] in
-  Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
+  Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
 
 let compiled_sdma_write () =
   let open Tolk in
@@ -389,7 +389,7 @@ let compiled_sdma_write () =
   let module S = (val (gfx1100 ()).Tolk_amd.sdma) in
   List.iteri (fun replay (a, b) ->
       Realize.run_linear ~device ~jit:true ~var_vals:["write32", a; "write64", b]
-        ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) linked;
+        ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device)) linked;
       Submission.check submission;
       let ring = Device.Buffer.as_bytes (get "ring_copy_0") in
       let stream = Bytes.sub ring (replay * 28) 28 in
@@ -412,7 +412,7 @@ let compiled_profile_packets () =
   let input = i32_buf device (List.init 16 Fun.id) in
   let input_uops = [|U.from_buffer input|] in
   Realize.run_linear ~device
-    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
     ~jit:true ~var_vals:["small", -17L; "count", 3L] ~input_uops linked;
   Submission.check submission;
   let call = U.without_after (List.hd (U.children linked)) in
@@ -469,7 +469,7 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
   if copies then begin
     set_word "write_ptr_copy_0" 4088; set_word "read_ptr_copy_0" 4088
   end;
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   List.iteri (fun replay (small, count) ->
       if replay = 1 then begin
         let bytes = Bytes.make 16 '\000' in
@@ -523,7 +523,7 @@ let execute_split_copy_queues () =
   set_word "write_ptr_copy_0" 4088L; set_word "read_ptr_copy_0" 4088L;
   let inputs = [|i32_buf device (List.init 16 Fun.id);
     i32_buf host (List.init 16 Fun.id); i32_buf host (List.init 16 Fun.id)|] in
-  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
     ~jit:true ~var_vals:["small", 7L; "count", 3L]
     ~input_uops:(Array.map U.from_buffer inputs) linked;
   Submission.check submission;
@@ -545,7 +545,7 @@ let compiled_pm4_scratch_slices () =
   let linked = Realize.link_linear compiled in
   let input = i32_buf device (List.init 16 Fun.id) in
   Realize.run_linear ~device
-    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
     ~jit:true ~var_vals:["small", 7L; "count", 3L]
     ~input_uops:[|U.from_buffer input|] linked;
   Submission.check submission;
@@ -595,7 +595,7 @@ let execute_aql_queue ~multi =
   put "write_ptr_compute" 62;
   put "read_ptr_compute" 62;
   let input = i32_buf device (List.init 16 Fun.id) in
-  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
     ~jit:true ~var_vals:["small", -17L; "count", 3L] ~input_uops:[|U.from_buffer input|] linked;
   Submission.check submission;
   let word tag = Int64.to_int (Bytes.get_int64_le (Device.Buffer.as_bytes (get tag)) 0) in
@@ -621,7 +621,7 @@ let execute_aql_queue ~multi =
   Bytes.set_int64_le timeline 0 (Bytes.get_int64_le timeline 8);
   Device.Buffer.copyin (get "timeline") timeline;
   let rebound = i32_buf device (List.init 16 (fun i -> i + 1)) in
-  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+  Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
     ~jit:true ~var_vals:["small", 5L; "count", 9L] ~input_uops:[|U.from_buffer rebound|] linked;
   Submission.check submission;
   equal int 68 (word "write_ptr_compute");
@@ -637,7 +637,7 @@ let queue_timeout () =
   let linked = Realize.link_linear compiled in
   let input = i32_buf device (List.init 16 Fun.id) in
   let run () = Realize.run_linear ~device
-      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) ~jit:true
+      ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device)) ~jit:true
       ~var_vals:["small", 7L; "count", 3L] ~input_uops:[|U.from_buffer input|] linked in
   run ();
   let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "doorbell_compute") in
@@ -664,7 +664,7 @@ let queue_full () =
   Device.Buffer.copyin pointer initial;
   let input = i32_buf device (List.init 16 Fun.id) in
   Realize.run_linear ~device
-    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) ~jit:true
+    ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device)) ~jit:true
     ~var_vals:["small", 7L; "count", 3L] ~input_uops:[|U.from_buffer input|] linked;
   raises_match (Exn.failure ~substring:"HCQ submission timed out")
     (fun () -> Submission.check submission);

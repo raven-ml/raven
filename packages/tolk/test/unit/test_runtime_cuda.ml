@@ -112,13 +112,13 @@ let call_spec device spec bufs var_vals =
           U.from_buffer (List.nth bufs slot)
       | _ -> arg) call.args in
   let call = U.call ~body:call.body ~args ~info:call.info in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   Realize.time_call ~device ~to_program ~var_vals call (fun sample -> sample ())
 
 let run_spec device spec bufs = ignore (call_spec device spec bufs [])
 
 let compile_queue device calls =
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~to_program (U.linear calls) in
   is_true ~msg:"queue compilation produces a host submission" (List.exists (fun call ->
       match U.arg (U.without_after call) with
@@ -131,7 +131,7 @@ let compile_queue device calls =
 let cached_functions_survive_link_collection () =
   let device = cuda_device () in
   let spec = compile_incr device "cuda_cached_function" in
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   let compiled = Realize.compile_linear ~device ~profile:false ~to_program
       (U.linear [queue_call device spec [1; 0]; queue_call device spec [0; 1]]) in
   let function_param = List.find (fun u -> match U.as_param u with
@@ -491,7 +491,7 @@ let () =
           test "f16 tensor-core matmul" (fun () ->
               let device = cuda_device () in
               let to_program device body =
-                Codegen.to_program device (Device.renderer device) body
+                Codegen.to_program ~beam_device:device (Device.renderer device) body
               in
               let m, n, k = (16, 8, 16) in
               let a_data =
@@ -577,7 +577,7 @@ let () =
           test "queue call replays with updated variables" (fun () ->
               let device = cuda_device () in
               let to_program device body =
-                Codegen.to_program device (Device.renderer device) body
+                Codegen.to_program ~beam_device:device (Device.renderer device) body
               in
               let data = [| 1.0; 2.0; 4.0; 8.0; 16.0; 32.0; 64.0; 128.0 |] in
               let n = Array.length data in
@@ -618,7 +618,7 @@ let () =
           test "queue call replays with rebound inputs" (fun () ->
               let device = cuda_device () in
               let to_program device body =
-                Codegen.to_program device (Device.renderer device) body
+                Codegen.to_program ~beam_device:device (Device.renderer device) body
               in
               let data1 = [| 1.0; 2.0; 3.0; 4.0 |] in
               let data2 = [| 10.0; 20.0; 30.0; 40.0 |] in
@@ -656,7 +656,7 @@ let () =
           test "queue call replays with rebound input and output slots" (fun () ->
               let device = cuda_device () in
               let to_program device body =
-                Codegen.to_program device (Device.renderer device) body
+                Codegen.to_program ~beam_device:device (Device.renderer device) body
               in
               let data1 = [| 1.0; 2.0; 3.0; 4.0 |] in
               let data2 = [| 10.0; 20.0; 30.0; 40.0 |] in

@@ -69,7 +69,7 @@ let rec make_beam_search device beam_width =
         ~finally:(fun () -> List.iter Device.Buffer.deallocate rawbufs)
         (fun () ->
           Search.beam_search
-            ~to_program:(fun dev -> to_program ~optimize:false dev (Device.renderer dev))
+            ~to_program:(fun dev -> to_program ~optimize:false (Device.renderer dev))
             ~allow_test_size:(beam_estimate () <> 0)
             k rawbufs ~var_vals beam_width dev))
     device
@@ -117,11 +117,12 @@ and full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
    [PROGRAM(SINK, LINEAR, SOURCE, BINARY)] carrying the launch/argument
    metadata as its arg, mirroring the compiled-kernel representation the
    engine dispatches on. *)
-and to_program ?(optimize = true) ?beam_device dev ren sink =
-  ignore (kernel_info_exn "to_program" sink : U.kernel_info);
+and to_program ?(optimize = true) ?beam_device ren sink =
+  let requested = kernel_info_exn "to_program" sink in
   let optimize = optimize && not (has_tag sink) in
-  let beam_device = Option.value beam_device ~default:dev in
-  let full_sink = full_rewrite_to_sink ~optimize ~beam_device ren sink in
+  if optimize && requested.beam > 0 && Option.is_none beam_device then
+    invalid_arg "Codegen.to_program: beam search requires a runtime device";
+  let full_sink = full_rewrite_to_sink ~optimize ?beam_device ren sink in
   let ki = kernel_info_exn "to_program" full_sink in
   (* Linearization detaches STORE gates into IF statements. Capture arguments
      while every gate-only dependency is still reachable from the SINK. *)
@@ -162,5 +163,5 @@ let () =
       let device = Device.get (Device.Buffer.device dst) in
       let call = U.store_call ~dst:(U.from_buffer dst) ~src:(U.from_buffer src) in
       Realize.run_linear ~device
-        ~to_program:(fun dev -> to_program dev (Device.renderer dev))
+        ~to_program:(fun dev -> to_program ~beam_device:dev (Device.renderer dev))
         ~update_stats:false (U.linear [call]))

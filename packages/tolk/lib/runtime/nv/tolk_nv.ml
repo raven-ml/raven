@@ -1751,7 +1751,7 @@ let submit_commands ~device ~queue commands =
     estimates = None; beam = 0} in
   let call = Hcq2.lower_call ~devices:[name] (U.sink ~kernel_info [bump]) in
   let linked = Realize.link_linear (U.linear [call]) in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   Realize.run_linear ~device ~to_program ~jit:true ~wait:true ~update_stats:false linked
 
 let ensure_has_local_memory (dev : 'meta device) ~num_gpcs
@@ -2149,7 +2149,7 @@ module Queue = struct
         ~compute_token:state.State.compute_queue.Queue_desc.token
         ~copy_token:state.State.dma_queue.Queue_desc.token;
       lower = Encoded_queue.lower state.State.name;
-      compile = Codegen.to_program ~optimize:false host (Device.renderer host)}
+      compile = Codegen.to_program ~optimize:false (Device.renderer host)}
 end
 
 (* The shared device open path over the selected interface: everything from

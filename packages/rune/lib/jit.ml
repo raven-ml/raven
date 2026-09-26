@@ -124,7 +124,7 @@ let backend name =
   | Some i -> String.sub name 0 i
   | None -> name
 
-let to_program dev = Tolk.Codegen.to_program dev (Tolk.Device.renderer dev)
+let to_program dev = Tolk.Codegen.to_program ~beam_device:dev (Tolk.Device.renderer dev)
 
 (* Environment knobs, read when a jit closure is created (not at module
    initialization) so tests can toggle them with [Unix.putenv]. *)
@@ -4590,7 +4590,7 @@ type leaf_info = {
    over [devices], each leaf seeding the program at its placement in
    [placements] and read under its layout in [layouts]. *)
 let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
-    ~decided ~placements ~layouts ?beam ?beam_parallel (p : p Nx.Ptree.t)
+    ~decided ~placements ~layouts ?beam ?parallel (p : p Nx.Ptree.t)
     (q : q Nx.Ptree.t) (f : p -> q) (params : p) (leaves : Nx.packed array) :
     q compiled =
   let consumed i = info.consumed.(i) in
@@ -5001,11 +5001,11 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
           let compile () =
             Tolk.Realize.compile_linear ~device:dev ?beam ~to_program linear
           in
-          let compiled = match beam_parallel with
+          let compiled = match parallel with
             | None -> compile ()
             | Some n ->
                 Tolk.Helpers.Context_var.(
-                  with_context [ B (Tolk.Search.beam_parallel, n) ] compile) in
+                  with_context [ B (Tolk.Helpers.parallel, n) ] compile) in
           (* Persistent serialization normalizes this trace's external names;
              queue compilation already saw their PARAM semantics. *)
           U.substitute ~walk:true
@@ -5787,7 +5787,7 @@ let with_input_borrows leaves f =
           | Host _ | Placed _ | Traced _ -> ()) leaves;
       f ())
 
-let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
+let compile_fn (type a r) ?requested ?beam ?parallel ~roles
     (args : a Nx.Ptree.t) (result : r Nx.Ptree.t) (f : a -> r) : a -> r =
   let in_use = Atomic.make false in
   let captured_on = ref None in
@@ -5861,7 +5861,7 @@ let compile_fn (type a r) ?requested ?beam ?beam_parallel ~roles
                   ~placements:
                     (Array.map (fun (Nx.P x) -> leaf_placement ds x) leaves)
                   ~layouts:(Array.map layout_of seeds)
-                  ?beam ?beam_parallel args result f v leaves
+                  ?beam ?parallel args result f v leaves
               in
               (* Captures it binds make the devices the closure's. *)
               if c.cp_bound <> [||] && !captured_on = None then
@@ -5891,12 +5891,12 @@ let checked_devices what devices =
   | exception Invalid_argument m ->
       invalid_arg (Printf.sprintf "%s: ~devices: %s" what m)
 
-let jit ?devices ?beam ?beam_parallel sg f =
+let jit ?devices ?beam ?parallel sg f =
   let (Structure.Uncurried u) = Structure.signature "Rune.jit" sg in
   let requested = Option.map (checked_devices "Rune.jit") devices in
   u.curry
-    (compile_fn ?requested ?beam ?beam_parallel ~roles:u.roles u.args u.result
+    (compile_fn ?requested ?beam ?parallel ~roles:u.roles u.args u.result
        (u.apply f))
 
-let jit' ?devices ?beam ?beam_parallel f =
-  jit ?devices ?beam ?beam_parallel Nx.Ptree.(tensor @-> returns tensor) f
+let jit' ?devices ?beam ?parallel f =
+  jit ?devices ?beam ?parallel Nx.Ptree.(tensor @-> returns tensor) f

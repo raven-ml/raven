@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `Rune.jit` and `Rune.jit'` take `?parallel` instead of
+  `?beam_parallel`, controlling both independent kernel compilation and beam
+  candidates through the shared `PARALLEL` setting.
+
 - Consuming a placed argument now requires exclusive access to its storage
   across compiled functions, reads and placements. Captures retain ownership
   during tracing, preventing concurrent consumption from changing their values.
@@ -693,6 +697,10 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- Independent kernel lowering and beam candidates share bounded compilation
+  workers through `PARALLEL`. Workers inherit scoped settings and finish
+  before errors propagate; device timing stays in the caller.
 
 - Symbolic partial reshapes preserve their actual dimensions when mapping
   indices. Equal upper bounds no longer make distinct trailing dimensions

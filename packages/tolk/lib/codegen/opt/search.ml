@@ -27,11 +27,6 @@ let beam_uops_max () = Helpers.getenv "BEAM_UOPS_MAX" 3000
 let beam_timeout_sec () = Helpers.getenv "BEAM_TIMEOUT_SEC" 10
 let beam_strict_mode () = Helpers.getenv "BEAM_STRICT_MODE" 0 <> 0
 let beam_dev_timeout () = Helpers.getenv "BEAM_DEV_TIMEOUT" 1 <> 0
-(* [BEAM_PARALLEL] sets the number of domains compiling a beam step's
-   candidates concurrently; 0 (the default) compiles sequentially. Only the
-   CPU-side compile runs in parallel — the GPU timing phase below always runs
-   one candidate at a time. *)
-let beam_parallel = Helpers.Context_var.int ~key:"BEAM_PARALLEL" ~default:0
 let cachelevel () = Helpers.Context_var.get Helpers.cachelevel
 let ignore_beam_cache () = Helpers.Context_var.get Helpers.ignore_beam_cache <> 0
 
@@ -153,37 +148,16 @@ let get_test_global_size global_size max_global_size =
 
 type compiled = { program : U.t; compile_time : float }
 
-exception Compile_timeout
-
-let with_compile_timeout ~use_timeout f =
-  let prev =
-    if use_timeout then
-      let h =
-        Sys.signal Sys.sigalrm
-          (Sys.Signal_handle (fun _ -> raise Compile_timeout))
-      in
-      ignore (Unix.alarm (beam_timeout_sec ()));
-      Some h
-    else None
-  in
-  let cleanup () = match prev with
-    | Some h -> ignore (Unix.alarm 0); Sys.set_signal Sys.sigalrm h
-    | None -> ()
-  in
-  match f () with
-  | v -> cleanup (); v
-  | exception e -> cleanup (); raise e
-
 (* Compile a single candidate through the shared PROGRAM constructor and reject
    oversized linear programs, as the reference search does.
    Returns (index, result) so callers can dispatch candidates in parallel and
    match results back. *)
-let try_compile ~to_program ~use_timeout ((idx, s) : int * P.t) (device : Device.t)
+let try_compile ~compile_program ((idx, s) : int * P.t)
     : int * compiled option =
   let compile () =
     let st = Unix.gettimeofday () in
     let ast = P.get_optimized_ast ~name_override:"test" (P.copy s) in
-    let program = to_program device ast in
+    let program = compile_program ast in
     let uop_count = Array.length (U.src (U.src program).(1)) in
     let beam_uops_max = beam_uops_max () in
     if beam_uops_max > 0 && uop_count >= beam_uops_max then begin
@@ -192,13 +166,16 @@ let try_compile ~to_program ~use_timeout ((idx, s) : int * P.t) (device : Device
           uop_count beam_uops_max;
       None
     end else
-      Some { program; compile_time = Unix.gettimeofday () -. st }
+      let compile_time = max 0. (Unix.gettimeofday () -. st) in
+      let budget = beam_timeout_sec () in
+      if budget > 0 && compile_time >= float_of_int budget then begin
+        if debug >= 2 then
+          Printf.eprintf "*** BEAM COMPILE BUDGET EXCEEDED (completed in %.2fs)\n%!" compile_time;
+        None
+      end else Some { program; compile_time }
   in
   let result =
-    try with_compile_timeout ~use_timeout compile with
-    | Compile_timeout ->
-        if debug >= 2 then Printf.eprintf "*** BEAM COMPILE TIMEOUT\n%!";
-        None
+    try compile () with
     | (Sys.Break | Out_of_memory | Stack_overflow) as exn -> raise exn
     | Failure _ | Invalid_argument _ ->
         if debug >= 4 then
@@ -208,54 +185,12 @@ let try_compile ~to_program ~use_timeout ((idx, s) : int * P.t) (device : Device
   in
   (idx, result)
 
-(* Compile a beam step's candidates, optionally across domains
-   ([beam_parallel] sets the worker count; 0 is sequential). Workers only run
-   the CPU-side compile (optimize, lower, render, nvrtc); the GPU timing phase
-   runs afterwards in the main domain, one candidate at a time, so timings
-   never contend for the device. In parallel mode the per-candidate alarm
-   timeout is skipped: SIGALRM is process-global. *)
-let compile_candidates ~to_program ~device ~nworkers candidates =
-  let n = List.length candidates in
-  let compiled : compiled option array = Array.make n None in
-  let compile_one ~use_timeout i cand =
-    compiled.(i) <- snd (try_compile ~to_program ~use_timeout (i, cand) device)
-  in
-  if nworkers <= 0 || n < 2 then begin
-    List.iteri (compile_one ~use_timeout:true) candidates;
-    compiled
-  end else begin
-    let nworkers = min nworkers (min 16 n) in
-    let cands = Array.of_list candidates in
-    let context = Helpers.Context_var.snapshot () in
-    let chunk = (n + nworkers - 1) / nworkers in
-    let workers = ref [] and failure = ref None in
-    let record_failure exn =
-      match !failure with
-      | None -> failure := Some (exn, Printexc.get_raw_backtrace ())
-      | Some _ -> ()
-    in
-    (try
-      for w = 0 to nworkers - 1 do
-          let lo = w * chunk in
-          let hi = min ((w + 1) * chunk) n in
-          let worker = Domain.spawn (fun () ->
-              Helpers.Context_var.with_snapshot context (fun () ->
-                  for i = lo to hi - 1 do
-                    compiled.(i) <-
-                      snd (try_compile ~to_program ~use_timeout:false (i, cands.(i)) device)
-                  done)) in
-          workers := worker :: !workers
-      done
-    with exn -> record_failure exn);
-    (* A failed spawn or join must not let another worker outlive the search
-       scope while it still owns candidate compilation and its snapshot. *)
-    List.iter (fun worker ->
-        try Domain.join worker with exn -> record_failure exn)
-      (List.rev !workers);
-    match !failure with
-    | None -> compiled
-    | Some (exn, backtrace) -> Printexc.raise_with_backtrace exn backtrace
-  end
+(* Device selection is completed by the caller; workers only compile. Timing
+   starts after the batch has drained, so candidates cannot contend for it. *)
+let compile_candidates ~to_program ~device candidates =
+  let compile_program = to_program device in
+  candidates |> List.mapi (fun i candidate -> i, candidate)
+  |> Worker.map (fun candidate -> snd (try_compile ~compile_program candidate))
 
 (* Timing *)
 
@@ -460,7 +395,6 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
       (* Compilation is reusable; eligibility is reconsidered each round.
          Only a binary accepted for timing enters [seen_libs]. *)
       let compiled_asts : compiled option U.Ref_tbl.t = U.Ref_tbl.create 256 in
-      let nworkers = Helpers.Context_var.get beam_parallel in
       if beam_debug > 0 then
         Format.eprintf "BEAM_SEARCH:@\n%a@." U.pp (P.ast s);
       if debug >= 2 then
@@ -547,7 +481,7 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
         let timed = ref [] in
         let least_compute_ops = ref infinity in
         let n_candidates = List.length candidates in
-        let compiled = compile_candidates ~to_program ~device ~nworkers uncompiled in
+        let compiled = compile_candidates ~to_program ~device uncompiled in
         List.iteri (fun i cand -> U.Ref_tbl.add compiled_asts (P.ast cand) compiled.(i)) uncompiled;
         List.iteri
           (fun i cand ->

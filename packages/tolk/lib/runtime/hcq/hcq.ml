@@ -469,7 +469,7 @@ let profile_offset name =
   fun () -> Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.debug, 0)] (fun () ->
     let device, stamp, linked = Lazy.force calibration in
     let queue = Option.get (Device.queue device) in
-    let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+    let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
     Profile.calibrate (fun () ->
         Realize.run_linear ~device ~to_program ~jit:true ~wait:false ~update_stats:false linked;
         fun () ->

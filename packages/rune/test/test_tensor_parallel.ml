@@ -138,8 +138,7 @@ let create name =
           compile =
             (fun sink ->
               let host = Tolk.Device.get "CPU" in
-              Tolk.Codegen.to_program ~optimize:false host
-                (Tolk.Device.renderer host)
+              Tolk.Codegen.to_program ~optimize:false (Tolk.Device.renderer host)
                 sink);
           config = (fun () -> "COUNTED_HOST_COPY=1");
         }

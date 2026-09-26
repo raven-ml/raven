@@ -380,7 +380,7 @@ let time_spec device spec bufs =
       | Some buf -> U.from_buffer buf | None -> U.noop ()) in
   let call = U.call ~body ~args ~info:U.{grad_fxn = None; name = None;
     precompile = false; precompile_backward = false; dtype = D.void; aux = None} in
-  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
   Realize.time_call ~device ~to_program call (fun sample -> sample ())
 
 let i32_buf device values =
@@ -489,7 +489,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(pro
     encode = Tolk_nv.Encoded_queue.encode (nv_dev ~compute_class m) ~name:device_name
         ~compute_entries:8 ~copy_entries:8 ~compute_token:0x123 ~copy_token:0x456;
     lower = Tolk_nv.Encoded_queue.lower device_name;
-    compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+    compile = Codegen.to_program ~optimize:false (Device.renderer host)} in
   let image_addresses = Hashtbl.create 2 in
   let allocator = match allocator with
     | Some allocator -> allocator
@@ -549,7 +549,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(pro
             ~binary:(U.binary (Bytes.to_string lib)) ~info:{info with vars = info.vars @ extras} () in
       [call; U.replace call ~src:[|extra_program; parameter 1|] ()]
     end else [call] in
-  Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
+  Hcq2.compile ~profile ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device)) (U.linear calls), device, host, buffers, submission
 
 let slm_allocator ?(synchronize = fun () -> ()) () =
   let open Tolk in
@@ -579,7 +579,7 @@ let execute_queue ~compute_class ~copies m =
   let word tag = Int32.to_int (Bytes.get_int32_le (Device.Buffer.as_bytes (get tag)) 0) in
   set32 "gpput_compute" 7;
   if copies then set32 "gpput_copy" 7;
-  let to_program device = Codegen.to_program device (Device.renderer device) in
+  let to_program device = Codegen.to_program ~beam_device:device (Device.renderer device) in
   List.iteri (fun replay (small, count) ->
       let inputs = Array.init (if copies then 3 else 1) (fun _ ->
           Device.create_buffer ~size:16 ~dtype:D.int32 device) in
@@ -654,7 +654,7 @@ let raw_submissions m =
   let linked = Realize.link_linear compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   Realize.run_linear ~device
-    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
     ~jit:true ~var_vals:["small", 7L; "count", 3L] ~input_uops:[|U.from_buffer input|] linked;
   check 3L 2L 1L;
   Tolk_nv.submit_commands ~device ~queue:"COMPUTE:0" setup;
@@ -772,7 +772,7 @@ let queue_chain ?(extra_args = 0) ~compute_class m =
     Bytes.set_int32_le bytes 8 (Int64.to_int32 (Bytes.get_int64_le bytes 0));
     Device.Buffer.copyin progress bytes in
   let run linked arena small count inputs =
-    Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+    Realize.run_linear ~device ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
       ~jit:true ~var_vals:(["small", Int64.of_int small; "count", Int64.of_int count] @
         List.init extra_args (fun i -> "extra_" ^ string_of_int i, Int64.of_int (i + small)))
       ~input_uops:(Array.map U.from_buffer inputs) linked;
@@ -815,7 +815,7 @@ let queue_timeout m =
   let linked = Realize.link_linear compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run () = Realize.run_linear ~device
-      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device)) ~jit:true
+      ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device)) ~jit:true
       ~var_vals:["small", 7L; "count", 3L] ~input_uops:[|U.from_buffer input|] linked in
   run ();
   let doorbell () = Device.Buffer.as_bytes (Hashtbl.find buffers "gpput_compute") in
@@ -839,7 +839,7 @@ let queue_capacity ~copies ~resume m =
   let run () =
     let linked = Realize.link_linear ~allow_cache:false compiled in
     Realize.run_linear ~device
-      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+      ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
       ~jit:true ~var_vals:["small", 7L; "count", 3L]
       ~input_uops:inputs linked
   in
@@ -888,7 +888,7 @@ let queue_counter_rollover m =
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   List.iter (fun expected ->
       Realize.run_linear ~device
-        ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+        ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
         ~jit:true ~var_vals:["small", 7L; "count", 3L]
         ~input_uops:[|U.from_buffer input|] linked;
       Submission.check submission;
@@ -911,7 +911,7 @@ let queue_retirement_timeout m =
   let linked = Realize.link_linear compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run small = Realize.run_linear ~device
-      ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+      ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
       ~jit:true ~var_vals:["small", Int64.of_int small; "count", 3L]
       ~input_uops:[|U.from_buffer input|] linked in
   run 7;
@@ -1397,7 +1397,7 @@ let () =
                   let linked = Realize.link_linear compiled in
                   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
                   Realize.run_linear ~device
-                    ~to_program:(fun device -> Codegen.to_program device (Device.renderer device))
+                    ~to_program:(fun device -> Codegen.to_program ~beam_device:device (Device.renderer device))
                     ~jit:true ~var_vals:["small", -17L; "count", 3L]
                     ~input_uops:[|U.from_buffer input|] linked;
                   Submission.check submission;

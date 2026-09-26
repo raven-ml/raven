@@ -207,8 +207,12 @@ module Allocator = struct
 end
 
 module Compiler = struct
+  (* The private native compiler owns one process-wide service. Serialize its
+     initialization and requests; Mutex waiting releases the domain runtime. *)
+  let service_lock = Mutex.create ()
+
   let compile src =
-    match Ffi.compile src with
+    match Mutex.protect service_lock (fun () -> Ffi.compile src) with
     | Some binary -> binary
     | None -> Bytes.of_string src
     | exception Failure _ -> Bytes.of_string src
@@ -452,7 +456,7 @@ module Queue = struct
     Device.{timestamp_divider = 1000.; profile_offset = (fun () -> Profile.calibrate (fun () -> Ffi.profile_clock));
       completion; prepare = (fun () -> Ffi.hcq_wait state.State.context 0L); host = Device.name host; max_kernel_bindings = None; config = (fun () -> "ICB_MAX_BINDINGS=15");
       copy = (fun _ -> None); encode = encode device_name; lower = lower device_name;
-      compile = Codegen.to_program ~optimize:false host (Device.renderer host)}, bufferize state device_name
+      compile = Codegen.to_program ~optimize:false (Device.renderer host)}, bufferize state device_name
 end
 
 let create name =

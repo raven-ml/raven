@@ -15,13 +15,6 @@ val actions : Tolk_uop.Uop.Opt.t list
     round applies one of these to every scheduler kept from the previous
     round. *)
 
-val beam_parallel : int Helpers.Context_var.t
-(** [beam_parallel] is the number of domains {!beam_search} uses to compile a
-    round's candidates concurrently ([BEAM_PARALLEL] environment variable;
-    [0], the default, compiles sequentially). Only the CPU-side compile runs
-    in parallel; candidates are always timed one at a time. Override it for a
-    scope with {!Helpers.Context_var.with_context}. *)
-
 val beam_search :
   to_program:(Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   ?allow_test_size:bool ->
@@ -45,5 +38,12 @@ val beam_search :
     - [disable_cache] (default from [IGNORE_BEAM_CACHE] env) bypasses
       on-disk cache reads. Successful searches still update the cache when
       caching is enabled.
+
+    Candidate compilation shares the [PARALLEL] worker bound with normal kernel
+    lowering. [to_program device] is applied in the caller; its resulting
+    compiler must support concurrent calls. Timing remains in the caller.
+    Started compilations finish before an error propagates. A result exceeding
+    [BEAM_TIMEOUT_SEC] is discarded after compilation returns; this budget
+    does not interrupt a native compiler.
 
     Returns the best scheduler found. *)

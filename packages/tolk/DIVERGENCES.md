@@ -527,9 +527,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 
 - **Compilation workers use OCaml domains rather than Python processes.**
   This is an execution mechanism, not a reason for different search policy.
-  Workers inherit immutable context snapshots; domain/systhread isolation and
-  exceptional worker joins have regression coverage. Shared worker limits,
-  cancellation policy and runtime caches still require the TODO acceptance.
+  Workers share first-use `PARALLEL` capacity and inherit immutable context
+  snapshots. Failed or interrupted batches join every started domain before
+  returning, because native compilers and their OCaml inputs must remain
+  owned until completion. `BEAM_TIMEOUT_SEC` rejects completed over-budget
+  work; it does not interrupt a native call with a process-global signal.
+  Coverage: Realize's overlapping batches, nested lowering, capacity reuse and
+  context isolation; Search's failure/interrupt draining and sequential/parallel
+  compile-budget tests. Native hard cancellation would require an isolated
+  worker lifetime and remains a reason to reconsider the execution mechanism.
   OCaml 5.5.1 TSan reports ephemeron races also reproduced by a standalone,
   mutex-protected Stdlib.Weak program; this does not establish harmlessness or
   satisfy TSan acceptance. Reconsider if domain isolation cannot preserve
