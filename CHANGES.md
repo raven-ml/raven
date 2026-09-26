@@ -679,6 +679,10 @@ thread.
 
 ### Tolk (new)
 
+- Preserve buffer and scalar arguments used only by a conditional store's
+  gate. Indexed writes beside unit axes could fail compilation after their
+  bounds checks moved into control flow.
+
 - Frontend `Jit.create` automatically realizes the tensors enumerated by
   `outputs` during warmup and capture, so lazy return values compute correctly
   on replay without explicit `Run.realize` calls.

@@ -123,6 +123,9 @@ and to_program ?(optimize = true) ?beam_device dev ren sink =
   let beam_device = Option.value beam_device ~default:dev in
   let full_sink = full_rewrite_to_sink ~optimize ~beam_device ren sink in
   let ki = kernel_info_exn "to_program" full_sink in
+  (* Linearization detaches STORE gates into IF statements. Capture arguments
+     while every gate-only dependency is still reachable from the SINK. *)
+  let info = U.program_info_from_sink ~target:(Renderer.target ren) full_sink in
   let program = Linearizer.linearize full_sink in
   let full_sink = List.hd (List.rev program) in
   let src = Renderer.render ren ~name:ki.name program in
@@ -136,7 +139,6 @@ and to_program ?(optimize = true) ?beam_device dev ren sink =
       (String.concat ", " (List.map U.Opt.to_string ki.applied_opts));
   if debug () >= 4 then Printf.eprintf "%s\n%!" src;
   let lib = Compiler.compile_cached comp src in
-  let info = U.program_info_from_sink ~target:(Renderer.target ren) full_sink in
   let full_sink =
     match ki.estimates with
     | Some _ -> full_sink

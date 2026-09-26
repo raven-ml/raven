@@ -966,6 +966,41 @@ let test_linear_formal_order ?(permute_slots = false) ~reverse_buffers ~reverse_
   equal int64 (Int64.of_int (wide_value + 8)) (Bytes.get_int64_le (Device.Buffer.as_bytes out) 0);
   equal int64 5L (Bytes.get_int64_le (Device.Buffer.as_bytes inp) 0)
 
+let test_store_gate_only_arguments () =
+  let device = cpu "store-gate-arguments" in
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+  let output = ptr 0 and input = ptr 1 in
+  let threshold = U.variable ~name:"threshold" ~min_val:0 ~max_val:10
+      ~dtype:Dtype.int32 () in
+  let index ptr = U.index ~ptr ~idxs:[U.const_int 0] () in
+  let gate = U.alu_binary ~op:Ops.Cmplt
+      ~lhs:(U.load ~src:(index input) ()) ~rhs:threshold in
+  let destination = U.index ~ptr:output
+      ~idxs:[U.valid ~src:(U.const_int 0) ~cond:gate] () in
+  let store = U.store ~dst:destination
+      ~value:(U.const (Const.int Dtype.int32 42)) () in
+  let kernel_info : U.kernel_info = {name = "store_gate_arguments";
+      applied_opts = []; opts_to_apply = None; estimates = None; beam = 0} in
+  let program = to_program device (U.sink ~kernel_info [store]) in
+  let obj = U.to_elf program in
+  equal int ~msg:"gate-only buffer and scalar remain in the signature" 3
+    (List.length obj.signature);
+  let output_buffer = create_i32_buffer device [-1] in
+  let input_buffer = create_i32_buffer device [5] in
+  let call = U.call ~body:program
+      ~args:[U.from_buffer output_buffer; U.from_buffer input_buffer]
+      ~info:U.{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; dtype = Dtype.void; aux = None} in
+  Fun.protect ~finally:(fun () ->
+      Device.Buffer.deallocate output_buffer;
+      Device.Buffer.deallocate input_buffer) (fun () ->
+      List.iter (fun (threshold, expected) ->
+          Device.Buffer.copyin output_buffer (int32_to_bytes [-1]);
+          Realize.run_linear ~device ~to_program ~wait:true
+            ~var_vals:["threshold", threshold] (U.linear [call]);
+          equal (list int) [expected] (read_i32_buffer output_buffer))
+        [3L, -1; 8L, 42; 3L, -1])
+
 let test_full_width_scalar_bindings () =
   let device = cpu "full-width-scalars" in
   let output = U.param ~slot:0 ~dtype:Dtype.int64 ~shape:(U.const_int 1) () in
@@ -1045,6 +1080,8 @@ let main () =
         [
           test "symbolic stages reserve maxima and execute active extents"
             test_symbolic_stage_extents;
+          test "store gates retain their buffer and scalar arguments"
+            test_store_gate_only_arguments;
           test "retained execution preserves both signed int64 endpoints"
             test_full_width_scalar_bindings;
           test "direct binding waits for foreign storage" direct_binding_waits_for_foreign_storage;
