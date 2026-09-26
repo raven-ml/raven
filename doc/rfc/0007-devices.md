@@ -136,6 +136,7 @@ module Buffer : sig
   val create : device -> Nx_dtype.Scalar.t -> int -> t
   val view : t -> offset:int -> Nx_dtype.Scalar.t -> int -> t      (* offset in bytes *)
   val of_host : ('a, 'b) Nx_buffer.t -> t       (* on the host device; no copy *)
+  val wrap : device -> ('a, 'b) Nx_buffer.t -> t  (* borrowed; no copy *)
   val copy : dst:t -> src:t -> unit             (* DMA or peer, else a host bounce *)
 end
 module Program : sig
@@ -195,10 +196,14 @@ and synchronises without one, and copies by DMA where it can; the host bounce
 `bufferize` and compiler setup leave it for tolk.
 
 **Memory.** Each device has one caching allocator, one budget and one
-`Out_of_memory`. nx attaches the finaliser of every cell over device buffers,
-and lending moves storage to the new cell. A finaliser queues buffers, which
-return to the cache once the event of their last submission completes;
-freeing to the system synchronises first.
+`Out_of_memory`. A device buffer is owned, allocated by the allocator and
+counted against the budget, or borrowed, wrapping host memory or a mapped file
+that the device addresses, which is neither counted nor written nor lent (RFC
+0005 Laws 8 and 9). nx attaches the finaliser of every cell over device
+buffers, and lending moves owned storage to the new cell. A finaliser queues
+buffers: an owned one returns to the cache once the event of its last
+submission completes, and a borrowed one releases its source then; freeing to
+the system synchronises first.
 
 ### Values and dispatch
 
@@ -453,7 +458,8 @@ phases whose pull requests each leave every package they touch green:
    interface, `Kind`, the host devices and the allocator; `on_device` and the
    registry go, and `Rune.device` opens through the vendors' `get` and `v` (7
    to 11). G1: the host's program loader and the CUDA runtime into nx (1 to 2
-   each). H: one allocator, budget and `Stats` per device (3 to 4).
+   each). H: one allocator, budget and `Stats` per device, with buffers owned
+   or borrowed and only owned ones counted (3 to 4).
 3. **Placements carry backends** (5 to 8). J1: backend values over the
    shared cell, `?backend` on the placement constructors and the `backend`
    eliminator, RFC 0005's engine becoming `Nx.Backend.host`, the host keeping
