@@ -45,14 +45,21 @@ let check_result msg result =
       (Float.abs (sc -. tc) /. tc < 0.6)
   done
 
+(* A sampler's estimates hold for most chains, not for every seed: each
+   claim is checked on several chains. *)
+let seeds = [ 42; 43; 44; 45 ]
+
 let test_hmc () =
-  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
-      let init = Nx.zeros f64 [| 2 |] in
-      let result =
-        Norn.hmc ~step_size:0.1 ~num_leapfrog:20 ~num_warmup:200 ~n:500 log_prob
-          init
-      in
-      check_result "HMC" result)
+  List.iter
+    (fun seed ->
+      Nx.Rng.with_key (Nx.Rng.key seed) (fun () ->
+          let init = Nx.zeros f64 [| 2 |] in
+          let result =
+            Norn.hmc ~step_size:0.1 ~num_leapfrog:20 ~num_warmup:200 ~n:500
+              log_prob init
+          in
+          check_result (Printf.sprintf "HMC, seed %d" seed) result))
+    seeds
 
 let test_nuts () =
   Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
@@ -78,13 +85,16 @@ let test_kernel_api () =
         (info.acceptance_rate >= 0.0 && info.acceptance_rate <= 1.0))
 
 let test_sample_with_kernel () =
-  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
-      let init = Nx.zeros f64 [| 2 |] in
-      let result =
-        Norn.sample ~step_size:0.1 ~num_warmup:200 ~n:500 log_prob init
-          (fun ~step_size ~metric -> Norn.hmc_kernel ~step_size ~metric ())
-      in
-      check_result "sample+kernel" result)
+  List.iter
+    (fun seed ->
+      Nx.Rng.with_key (Nx.Rng.key seed) (fun () ->
+          let init = Nx.zeros f64 [| 2 |] in
+          let result =
+            Norn.sample ~step_size:0.1 ~num_warmup:200 ~n:500 log_prob init
+              (fun ~step_size ~metric -> Norn.hmc_kernel ~step_size ~metric ())
+          in
+          check_result (Printf.sprintf "sample+kernel, seed %d" seed) result))
+    seeds
 
 let test_diagnostics () =
   Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->

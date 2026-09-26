@@ -1,0 +1,37 @@
+lib: [
+  "_build/install/default/lib/norn/.private/norn__Adapt.cmi" {".private/norn__Adapt.cmi"}
+  "_build/install/default/lib/norn/.private/norn__Adapt.cmt" {".private/norn__Adapt.cmt"}
+  "_build/install/default/lib/norn/.private/norn__Internal.cmi" {".private/norn__Internal.cmi"}
+  "_build/install/default/lib/norn/.private/norn__Internal.cmt" {".private/norn__Internal.cmt"}
+  "_build/install/default/lib/norn/.private/norn__Nuts.cmi" {".private/norn__Nuts.cmi"}
+  "_build/install/default/lib/norn/.private/norn__Nuts.cmt" {".private/norn__Nuts.cmt"}
+  "_build/install/default/lib/norn/META"
+  "_build/install/default/lib/norn/adapt.ml"
+  "_build/install/default/lib/norn/dune-package"
+  "_build/install/default/lib/norn/internal.ml"
+  "_build/install/default/lib/norn/norn.a"
+  "_build/install/default/lib/norn/norn.cma"
+  "_build/install/default/lib/norn/norn.cmi"
+  "_build/install/default/lib/norn/norn.cmt"
+  "_build/install/default/lib/norn/norn.cmti"
+  "_build/install/default/lib/norn/norn.cmx"
+  "_build/install/default/lib/norn/norn.cmxa"
+  "_build/install/default/lib/norn/norn.ml"
+  "_build/install/default/lib/norn/norn.mli"
+  "_build/install/default/lib/norn/norn__.cmi"
+  "_build/install/default/lib/norn/norn__.cmt"
+  "_build/install/default/lib/norn/norn__.cmx"
+  "_build/install/default/lib/norn/norn__.ml"
+  "_build/install/default/lib/norn/norn__Adapt.cmx"
+  "_build/install/default/lib/norn/norn__Internal.cmx"
+  "_build/install/default/lib/norn/norn__Nuts.cmx"
+  "_build/install/default/lib/norn/nuts.ml"
+  "_build/install/default/lib/norn/opam"
+]
+libexec: [
+  "_build/install/default/lib/norn/norn.cmxs"
+]
+doc: [
+  "_build/install/default/doc/norn/CHANGES.md"
+  "_build/install/default/doc/norn/README.md"
+]

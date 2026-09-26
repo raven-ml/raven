@@ -119,6 +119,9 @@ val hmc_kernel :
   unit ->
   kernel
 (** [hmc_kernel ~step_size ~metric ()] is a Hamiltonian Monte Carlo kernel.
+    Each transition integrates with a step size drawn uniformly within 15% of
+    [step_size], from the current key, so that a fixed number of steps never
+    locks onto a period of the target.
 
     [integrator] defaults to {!leapfrog}. [num_leapfrog] defaults to [20]. *)
 
