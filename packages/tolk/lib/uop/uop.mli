@@ -933,17 +933,13 @@ val is_invalid_const : t -> bool
 val get_idx : t -> t
 (** [get_idx u] recovers the index expression from a possibly-gated index. A
     gate is a [where cond idx invalid]; [get_idx] returns [idx] there, recurses
-    lane-wise through an {!Ops.Stack}, and is the identity otherwise.
-
-    @raise Invalid_argument if [u] is not an integer index expression. *)
+    lane-wise through an {!Ops.Stack}, and is the identity otherwise. *)
 
 val get_valid : t -> t
 (** [get_valid u] recovers the boolean guard of a possibly-gated index: [cond]
     for a [where cond idx invalid], recursed lane-wise through an
     {!Ops.Stack}; a bare {!Const.invalid} yields false and any other
-    expression yields true.
-
-    @raise Invalid_argument if [u] is not an integer index expression. *)
+    expression yields true. *)
 
 (** {2:ctors_control Control flow}
 

@@ -122,18 +122,6 @@ val apply_rangeify_pass :
 
 (** {1:helpers Range helpers} *)
 
-val get_idx : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [get_idx r] extracts the index value from a possibly-gated range.
-    [where(valid, index, invalid)] yields [index]; [stack [r0; ...]]
-    yields [stack [get_idx r0; ...]]; anything else yields [r]
-    unchanged. *)
-
-val get_valid : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [get_valid r] extracts the validity condition from a
-    possibly-gated range.  [where(valid, _, invalid)] yields [valid];
-    [stack [r0; ...]] yields [stack [get_valid r0; ...]]; [invalid]
-    yields [false]; anything else yields [true]. *)
-
 val movement_ops : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
 (** [movement_ops u] pushes movement through INDEX, AFTER and END. *)
 

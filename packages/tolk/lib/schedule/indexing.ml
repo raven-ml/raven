@@ -61,12 +61,6 @@ let is_elementwise_or_reduce u =
   let o = U.op u in
   Ops.Group.is_elementwise o || o = Ops.Reduce
 
-let is_invalid_const u =
-  U.op u = Ops.Const
-  && (match U.arg u with
-      | U.Arg.Value c -> Const.view c = Const.Invalid
-      | _ -> false)
-
 (* Does [n] or its backward slice contain a non-injective movement op? *)
 let has_non_injective_view n =
   List.exists (fun x ->
@@ -74,26 +68,6 @@ let has_non_injective_view n =
     | Ops.Shrink | Ops.Permute | Ops.Flip | Ops.Pad -> true
     | _ -> false)
     (n :: U.backward_slice n)
-
-(* A possibly-gated range is encoded as [Where(valid, idx, invalid)];
-   these accessors strip the wrapper when present. *)
-
-let rec get_idx r =
-  match U.op r with
-  | Ops.Stack -> U.stack (List.map get_idx (U.children r))
-  | Ops.Where ->
-      let s = U.src r in
-      if Array.length s = 3 && is_invalid_const s.(2) then s.(1) else r
-  | _ -> r
-
-let rec get_valid r =
-  match U.op r with
-  | Ops.Stack -> U.stack (List.map get_valid (U.children r))
-  | Ops.Where ->
-      let s = U.src r in
-      if Array.length s = 3 && is_invalid_const s.(2) then s.(0) else btrue
-  | Ops.Const when is_invalid_const r -> bfalse
-  | _ -> btrue
 
 let prod_valid valids = U.uprod (btrue :: valids)
 let sum_valid valids = U.usum (bfalse :: valids)
@@ -618,7 +592,7 @@ let skip_for_rangeify x =
 let merge_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs =
   let per_axis = transpose consumer_rngs in
   let pairs = List.map (fun axis_rngs ->
-    List.map get_idx axis_rngs, List.map get_valid axis_rngs) per_axis in
+    List.map U.get_idx axis_rngs, List.map U.get_valid axis_rngs) per_axis in
   let all_all_same = List.for_all (fun (lr, _) -> all_same lr) pairs in
   let axis_size i =
     match List.nth_opt out_shape i with
@@ -858,7 +832,7 @@ let convert_reduce ctx x =
 let convert_pad_to_where ctx x =
   match U.op x, range_get ctx x with
   | Ops.Pad, Some (in_rngs, _) ->
-      let valid = prod_valid (List.map get_valid in_rngs) in
+      let valid = prod_valid (List.map U.get_valid in_rngs) in
       let bx = with_indexed_children ctx x in
       let src = (U.src bx).(0) in
       Some (U.alu_ternary ~op:Ops.Where ~a:valid ~b:src ~c:(U.const (Const.zero (U.dtype x))))

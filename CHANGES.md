@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.get_idx` and `Uop.get_valid` handle invalid lanes and generic values
+  consistently. The duplicate `Indexing.get_idx` and `Indexing.get_valid`
+  functions are removed; use the canonical `Uop` functions.
+
 - PCI page-table teardown retains an empty child table if clearing its
   parent entry fails, preventing physical memory reuse while the device
   may still reach that table.

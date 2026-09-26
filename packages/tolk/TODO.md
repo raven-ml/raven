@@ -71,9 +71,7 @@ acceptance requirement; skipped tests are not execution evidence.
 
 ## 3. Close parity and adopt the reference
 
-- Remove remaining parallel property reconstruction and silent guesses in
-  view offsets and range metadata. Port remaining symbolic rules and measure
-  rewrite performance and long-lived memory use with weak node caches.
+- Measure rewrite performance and long-lived memory use with weak node caches.
 - Validate both signed int64 endpoints through CUDA shared-queue argument
   packing and replay on hardware.
 - Measure shared compilation worker overhead and search latency against the

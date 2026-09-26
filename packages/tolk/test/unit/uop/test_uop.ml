@@ -259,6 +259,20 @@ let infix_builds_mul () =
 
 (* Validity masks combine through these folds, and the valid simplifier
    splits conjunctions on [And]. *)
+let validity_accessors_accept_invalid_and_generic_values () =
+  let invalid = Uop.invalid () in
+  List.iter (fun (value, valid) ->
+      is_true ~msg:"ungated values retain their identity"
+        (Uop.equal value (Uop.get_idx value));
+      is_true ~msg:"validity depends on the sentinel rather than dtype"
+        (Uop.equal (Uop.const_bool valid) (Uop.get_valid value)))
+    [invalid, false; Uop.const_float 1.5, true; Uop.const_bool true, true];
+  let invalids = Uop.stack [invalid; invalid] in
+  is_true (Uop.equal invalids (Uop.get_idx invalids));
+  is_true ~msg:"an all-invalid stack retains per-lane invalidity"
+    (Uop.equal (Uop.stack [Uop.const_bool false; Uop.const_bool false])
+       (Uop.get_valid invalids))
+
 let bool_folds_are_logical () =
   let flag name = Uop.variable ~name ~min_val:0 ~max_val:1 ~dtype:Dtype.bool () in
   let a = flag "a" and b = flag "b" in
@@ -2723,6 +2737,8 @@ let () =
           test "infix O module builds Mul" infix_builds_mul;
           test "usum and uprod fold booleans with Or and And"
             bool_folds_are_logical;
+          test "validity accessors accept invalid and generic values"
+            validity_accessors_accept_invalid_and_generic_values;
           test "usum promotes mixed weak and concrete operands" (mixed_folds_promote Uop.usum);
           test "uprod promotes mixed weak and concrete operands" (mixed_folds_promote Uop.uprod);
           test "scalar BUFFER carries Param_arg" param_arg_symbolic_constructor;

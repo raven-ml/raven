@@ -1002,10 +1002,8 @@ let is_invalid_const u =
 
 (* An index expression may be gated as [where cond idx invalid]; get_idx
    recovers the index and get_valid the guard. Both recurse through stacked
-   lanes and require an integer index. *)
+   lanes, including invalid lanes whose sentinel has boolean dtype. *)
 let rec get_idx u =
-  if not (Dtype.is_int (dtype u)) then
-    invalid_arg "Uop.get_idx: expected an integer index expression";
   match op u with
   | Ops.Stack -> stack (List.map get_idx (children u))
   | Ops.Where
@@ -1014,8 +1012,6 @@ let rec get_idx u =
   | _ -> u
 
 let rec get_valid u =
-  if not (Dtype.is_int (dtype u)) then
-    invalid_arg "Uop.get_valid: expected an integer index expression";
   match op u with
   | Ops.Stack -> stack (List.map get_valid (children u))
   | Ops.Where
