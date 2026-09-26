@@ -34,6 +34,6 @@ extern "C" __global__ void __launch_bounds__(32) r_32_2_2_2(float* data0_128, nv
   nv_bfloat16 val11 = (*(data2_128+alu3));
   float4 wmma0 = __WMMA_8_16_16___bf16_float(make_nv_bfloat168(val7,val0,val1,val2,val5,val6,val3,val4), make_nv_bfloat164(val11,val10,val8,val9), make_float4(0.0f,0.0f,0.0f,0.0f));
   int alu4 = (lidx0<<1);
-  *((float2*)((data0_128+(alu4+64)))) = make_float2(wmma0.z,wmma0.w);
-  *((float2*)((data0_128+alu4))) = make_float2(wmma0.x,wmma0.y);
+  *((float2*)((data0_128+(alu4+64)))) = make_float2((0.0f+wmma0.z),(0.0f+wmma0.w));
+  *((float2*)((data0_128+alu4))) = make_float2((0.0f+wmma0.x),(0.0f+wmma0.y));
 }

@@ -26,8 +26,8 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   hip_bfloat16 val6 = (*(data2_256+alu6));
   hip_bfloat16 val7 = (*(data2_256+alu3));
   float4 wmma0 = __WMMA_16_16_16___bf16_float(make_hip_bfloat164(val3,val0,val1,val2), make_hip_bfloat164(val7,val4,val5,val6), make_float4(0.0f,0.0f,0.0f,0.0f), 0, 0, 0);
-  *(data0_256+alu4) = wmma0.y;
-  *(data0_256+alu5) = wmma0.z;
-  *(data0_256+alu6) = wmma0.w;
-  *(data0_256+alu3) = wmma0.x;
+  *(data0_256+alu4) = (0.0f+wmma0.y);
+  *(data0_256+alu5) = (0.0f+wmma0.z);
+  *(data0_256+alu6) = (0.0f+wmma0.w);
+  *(data0_256+alu3) = (0.0f+wmma0.x);
 }

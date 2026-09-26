@@ -10,5 +10,6 @@ kernel void E_5_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   float val1 = (*(data2_10+alu0));
   float val2 = (*(data3_10+alu0));
   float val3 = (*(data4_10+alu0));
-  *(data0_10+alu0) = (val0+((val1+val2)*2.0f)+val3);
+  float alu1 = (val1+val2);
+  *(data0_10+alu0) = (alu1+val0+alu1+val3);
 }

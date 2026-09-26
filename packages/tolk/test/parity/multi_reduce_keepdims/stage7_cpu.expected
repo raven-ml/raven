@@ -15,14 +15,21 @@ void r_4_8(float* restrict data0_4, float* restrict data1_32, float* restrict da
     float alu7 = (val1[1]+val3[1]);
     float alu8 = (val1[2]+val3[2]);
     float alu9 = (val1[3]+val3[3]);
-    float alu10 = ((alu6<alu7)?alu7:alu6);
-    float alu11 = ((alu10<alu8)?alu8:alu10);
-    float alu12 = ((alu11<alu9)?alu9:alu11);
-    float alu13 = ((alu12<alu2)?alu2:alu12);
-    float alu14 = ((alu13<alu3)?alu3:alu13);
-    float alu15 = ((alu14<alu4)?alu4:alu14);
-    float alu16 = ((alu15<alu5)?alu5:alu15);
-    *(data0_4+Lidx2) = alu16;
+    float alu10 = ((alu6!=alu6)?alu6:alu7);
+    float alu11 = ((alu7<alu6)?alu6:alu10);
+    float alu12 = ((alu11!=alu11)?alu11:alu8);
+    float alu13 = ((alu8<alu11)?alu11:alu12);
+    float alu14 = ((alu13!=alu13)?alu13:alu9);
+    float alu15 = ((alu9<alu13)?alu13:alu14);
+    float alu16 = ((alu15!=alu15)?alu15:alu2);
+    float alu17 = ((alu2<alu15)?alu15:alu16);
+    float alu18 = ((alu17!=alu17)?alu17:alu3);
+    float alu19 = ((alu3<alu17)?alu17:alu18);
+    float alu20 = ((alu19!=alu19)?alu19:alu4);
+    float alu21 = ((alu4<alu19)?alu19:alu20);
+    float alu22 = ((alu21!=alu21)?alu21:alu5);
+    float alu23 = ((alu5<alu21)?alu21:alu22);
+    *(data0_4+Lidx2) = alu23;
   }
 }
 ---

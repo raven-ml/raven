@@ -7,7 +7,7 @@ extern "C" __global__ void __launch_bounds__(16) r_16(float* data0_1, float* dat
   __shared__ __align__(16) float buf1[16];
   int lidx0 = threadIdx.x; /* 16 */
   float val0 = (*(data1_16+lidx0));
-  *(buf1+lidx0) = val0;
+  *(buf1+lidx0) = (0.0f+val0);
   __syncthreads();
   *(buf0+0) = 0.0f;
   for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {

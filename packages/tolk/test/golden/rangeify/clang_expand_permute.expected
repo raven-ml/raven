@@ -8,7 +8,7 @@ void E_10_10_10(float* restrict data0_1000, float* restrict data1_100, float* re
         int alu1 = ((Lidx2*10)+Lidx1);
         float val2 = (*(data1_100+alu1));
         float val3 = (*(data2_100+alu1));
-        *(data0_1000+((Lidx1*10)+Lidx2+(Lidx0*100))) = (val0+val1+val2+val3);
+        *(data0_1000+((Lidx1*10)+Lidx2+(Lidx0*100))) = (val0+val1+(val2+val3));
       }
     }
   }

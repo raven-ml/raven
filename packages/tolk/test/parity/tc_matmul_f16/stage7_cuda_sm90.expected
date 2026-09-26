@@ -30,6 +30,6 @@ extern "C" __global__ void __launch_bounds__(32) r_32_2_2_2(float* data0_128, ha
   half2 val7 = (*((half2*)((data1_256+alu3))));
   float4 wmma0 = __WMMA_8_16_16_half_float(make_half8(val7.x,val7.y,val4.x,val4.y,val6.x,val6.y,val5.x,val5.y), make_half4(val3,val2,val0,val1), make_float4(0.0f,0.0f,0.0f,0.0f));
   int alu4 = (lidx0<<1);
-  *((float2*)((data0_128+(alu4+64)))) = make_float2(wmma0.z,wmma0.w);
-  *((float2*)((data0_128+alu4))) = make_float2(wmma0.x,wmma0.y);
+  *((float2*)((data0_128+(alu4+64)))) = make_float2((0.0f+wmma0.z),(0.0f+wmma0.w));
+  *((float2*)((data0_128+alu4))) = make_float2((0.0f+wmma0.x),(0.0f+wmma0.y));
 }

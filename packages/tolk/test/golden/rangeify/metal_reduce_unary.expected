@@ -7,7 +7,7 @@ kernel void r_16(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_po
   threadgroup __attribute__((aligned(16))) float buf1[16];
   int lidx0 = lid.x; /* 16 */
   float val0 = (*(data1_16+lidx0));
-  *(buf1+lidx0) = val0;
+  *(buf1+lidx0) = (0.0f+val0);
   threadgroup_barrier(mem_flags::mem_threadgroup);
   *(buf0+0) = 0.0f;
   for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {

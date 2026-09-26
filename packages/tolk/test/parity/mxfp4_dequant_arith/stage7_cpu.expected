@@ -48,7 +48,7 @@ void E_96_2_2(float* restrict data0_384, int* restrict data1_2, unsigned char* r
     float alu9 = ((cast3<7.0f)?(cast3+-2.0f):6.0f);
     float alu10 = ((cast3<5.0f)?(cast3*0.5f):alu9);
     int alu11 = (Lidx2<<1);
-    *((float2*)((data0_384+(alu11+192)))) = (float2){(alu8*(1.0f+(((float)(((val2&((unsigned char)(15u)))>>((unsigned char)(3u)))))*-2.0f))*val3),(alu10*(1.0f+(((float)((alu6>>((unsigned char)(3u)))))*-2.0f))*val3)};
-    *((float2*)((data0_384+alu11))) = (float2){(alu3*(1.0f+(((float)(((val1&((unsigned char)(15u)))>>((unsigned char)(3u)))))*-2.0f))*val4),(alu5*(1.0f+(((float)((alu1>>((unsigned char)(3u)))))*-2.0f))*val4)};
+    *((float2*)((data0_384+(alu11+192)))) = (float2){(alu8*(1.0f-(((float)(((val2&((unsigned char)(15u)))>>((unsigned char)(3u)))))*2.0f))*val3),(alu10*(1.0f-(((float)((alu6>>((unsigned char)(3u)))))*2.0f))*val3)};
+    *((float2*)((data0_384+alu11))) = (float2){(alu3*(1.0f-(((float)(((val1&((unsigned char)(15u)))>>((unsigned char)(3u)))))*2.0f))*val4),(alu5*(1.0f-(((float)((alu1>>((unsigned char)(3u)))))*2.0f))*val4)};
   }
 }

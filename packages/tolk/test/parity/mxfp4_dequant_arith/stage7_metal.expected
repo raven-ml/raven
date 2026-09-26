@@ -57,6 +57,6 @@ kernel void E_3_32_2_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgr
   float alu10 = ((cast3<7.0f)?(cast3+-2.0f):6.0f);
   float alu11 = ((cast3<5.0f)?(cast3*0.5f):alu10);
   int alu12 = ((gidx0<<6)+(lidx0<<1));
-  *((device float2*)((data0_384+(alu12+192)))) = float2((alu9*(1.0f+(((float)(((val2&((uchar)(15u)))>>((uchar)(3u)))))*-2.0f))*val3),(alu11*(1.0f+(((float)((alu7>>((uchar)(3u)))))*-2.0f))*val3));
-  *((device float2*)((data0_384+alu12))) = float2((alu4*(1.0f+(((float)(((val1&((uchar)(15u)))>>((uchar)(3u)))))*-2.0f))*val4),(alu6*(1.0f+(((float)((alu2>>((uchar)(3u)))))*-2.0f))*val4));
+  *((device float2*)((data0_384+(alu12+192)))) = float2((alu9*(1.0f-(((float)(((val2&((uchar)(15u)))>>((uchar)(3u)))))*2.0f))*val3),(alu11*(1.0f-(((float)((alu7>>((uchar)(3u)))))*2.0f))*val3));
+  *((device float2*)((data0_384+alu12))) = float2((alu4*(1.0f-(((float)(((val1&((uchar)(15u)))>>((uchar)(3u)))))*2.0f))*val4),(alu6*(1.0f-(((float)((alu2>>((uchar)(3u)))))*2.0f))*val4));
 }

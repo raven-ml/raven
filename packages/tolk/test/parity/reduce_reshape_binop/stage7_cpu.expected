@@ -11,6 +11,6 @@ void r_10_10(float* restrict data0_10, float* restrict data1_100, float* restric
     float val8 = (*(data1_100+(Lidx1+90)));
     float val9 = (*(data1_100+Lidx1));
     float val10 = (*(data2_10+Lidx1));
-    *(data0_10+Lidx1) = (val9+val0+val1+val2+val3+val4+val5+val6+val7+val8+val10);
+    *(data0_10+Lidx1) = (0.0f+val9+val0+val1+val2+val3+val4+val5+val6+val7+val8+val10);
   }
 }

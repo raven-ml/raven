@@ -45,12 +45,12 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   hip_bfloat16 val30 = (*(data2_256+(alu0+96)));
   hip_bfloat16 val31 = (*(data2_256+alu0));
   float8 wmma0 = __WMMA_16_16_16___bf16_float(make_hip_bfloat1616(val15,val0,val7,val8,val9,val10,val11,val12,val13,val14,val1,val2,val3,val4,val5,val6), make_hip_bfloat1616(val31,val19,val26,val27,val28,val29,val30,val16,val17,val18,val20,val21,val22,val23,val24,val25), make_float8(0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f));
-  *(data0_256+lidx0) = wmma0[0];
-  *(data0_256+(lidx0+128)) = wmma0[4];
-  *(data0_256+(lidx0+160)) = wmma0[5];
-  *(data0_256+(lidx0+192)) = wmma0[6];
-  *(data0_256+(lidx0+224)) = wmma0[7];
-  *(data0_256+(lidx0+32)) = wmma0[1];
-  *(data0_256+(lidx0+64)) = wmma0[2];
-  *(data0_256+(lidx0+96)) = wmma0[3];
+  *(data0_256+lidx0) = (0.0f+wmma0[0]);
+  *(data0_256+(lidx0+128)) = (0.0f+wmma0[4]);
+  *(data0_256+(lidx0+160)) = (0.0f+wmma0[5]);
+  *(data0_256+(lidx0+192)) = (0.0f+wmma0[6]);
+  *(data0_256+(lidx0+224)) = (0.0f+wmma0[7]);
+  *(data0_256+(lidx0+32)) = (0.0f+wmma0[1]);
+  *(data0_256+(lidx0+64)) = (0.0f+wmma0[2]);
+  *(data0_256+(lidx0+96)) = (0.0f+wmma0[3]);
 }

@@ -20,7 +20,7 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   float val4 = (*(data4_16+(lidx1+4)));
   float val5 = (*(data4_16+(lidx1+8)));
   float4 val6 = (*((float4*)((data3_16+alu0))));
-  *(data0_16+(lidx1+alu0)) = ((*(buf0+0))+(val6.x*val2)+(val6.y*val4)+(val6.z*val5)+(val6.w*val3));
+  *(data0_16+(lidx1+alu0)) = ((*(buf0+0))+(0.0f+(val6.x*val2)+(val6.y*val4)+(val6.z*val5)+(val6.w*val3)));
 }
 ---
 typedef long unsigned int size_t;
@@ -45,7 +45,7 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   float val4 = (*(data4_16+(lidx1+4)));
   float val5 = (*(data4_16+(lidx1+8)));
   float4 val6 = (*((float4*)((data3_16+alu0))));
-  *(data0_16+(lidx1+alu0)) = (2.0f*((*(buf0+0))+(val6.x*val2)+(val6.y*val4)+(val6.z*val5)+(val6.w*val3)));
+  *(data0_16+(lidx1+alu0)) = (2.0f*((*(buf0+0))+(0.0f+(val6.x*val2)+(val6.y*val4)+(val6.z*val5)+(val6.w*val3))));
 }
 ---
 typedef long unsigned int size_t;
@@ -62,7 +62,7 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   float val0 = (*(data1_16+alu1));
   float4 val1 = (*((float4*)((data2_16+alu0))));
   float4 val2 = (*((float4*)((data3_16+(lidx1<<2)))));
-  *(data0_16+alu1) = ((2.0f*val0)+(val1.x*val2.x)+(val1.y*val2.y)+(val1.z*val2.z)+(val1.w*val2.w));
+  *(data0_16+alu1) = ((2.0f*val0)+(0.0f+(val1.x*val2.x)+(val1.y*val2.y)+(val1.z*val2.z)+(val1.w*val2.w)));
 }
 ---
 typedef long unsigned int size_t;
@@ -88,7 +88,7 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   float val7 = (*(data4_16+(lidx1+12)));
   float val8 = (*(data4_16+(lidx1+4)));
   float val9 = (*(data4_16+(lidx1+8)));
-  *(data0_16+(lidx1+(lidx0<<2))) = ((*(buf0+0))+(val2*val6)+(val4*val8)+(val5*val9)+(val3*val7));
+  *(data0_16+(lidx1+(lidx0<<2))) = ((*(buf0+0))+(0.0f+(val2*val6)+(val4*val8)+(val5*val9)+(val3*val7)));
 }
 ---
 typedef long unsigned int size_t;
@@ -114,7 +114,7 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   float val7 = (*(data4_16+(lidx1+12)));
   float val8 = (*(data4_16+(lidx1+4)));
   float val9 = (*(data4_16+(lidx1+8)));
-  *(data0_16+(lidx1+(lidx0<<2))) = ((*(buf0+0))+(val2*val6)+(val4*val8)+(val5*val9)+(val3*val7));
+  *(data0_16+(lidx1+(lidx0<<2))) = ((*(buf0+0))+(0.0f+(val2*val6)+(val4*val8)+(val5*val9)+(val3*val7)));
 }
 ---
 typedef long unsigned int size_t;
@@ -129,5 +129,5 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
   float4 val0 = (*((float4*)((data1_16+alu0))));
   int lidx1 = __ockl_get_local_id(1); /* 4 */
   float4 val1 = (*((float4*)((data2_16+(lidx1<<2)))));
-  *(data0_16+(lidx1+alu0)) = ((val0.x*val1.x)+(val0.y*val1.y)+(val0.z*val1.z)+(val0.w*val1.w));
+  *(data0_16+(lidx1+alu0)) = (0.0f+(val0.x*val1.x)+(val0.y*val1.y)+(val0.z*val1.z)+(val0.w*val1.w));
 }

@@ -12,7 +12,7 @@ kernel void r_16_16_16_16(constant args_t& args [[buffer(0)]], uint3 gid [[threa
   float val0 = (*(data1_256+(gidx1+alu0)));
   int gidx0 = gid.x; /* 16 */
   float val1 = (*(data2_256+(gidx0+alu0)));
-  *(buf2+lidx0) = (val0*val1);
+  *(buf2+lidx0) = (0.0f+(val0*val1));
   threadgroup_barrier(mem_flags::mem_threadgroup);
   *(buf1+0) = 0.0f;
   for (int Ridx104 = 0; Ridx104 < 16; Ridx104++) {
