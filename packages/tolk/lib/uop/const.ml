@@ -26,12 +26,9 @@ let invalid = { dtype = Dtype.bool; view = Invalid }
 
 let integer (dtype : Dtype.t) value =
   if not (Dtype.is_int dtype) then invalid_arg (err_not_int dtype);
-  { dtype; view = Int value }
+  { dtype; view = Int (Dtype.truncate_integer dtype value) }
 
-let int64 dtype value =
-  let n = Z.of_int64 value in
-  integer dtype
-    (if Dtype.equal dtype Dtype.uint64 then Z.extract n 0 64 else n)
+let int64 dtype value = integer dtype (Z.of_int64 value)
 
 let int dtype value = integer dtype (Z.of_int value)
 

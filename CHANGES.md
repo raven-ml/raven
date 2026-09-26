@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled integer constant folded from constants wraps at its dtype as
+  eager's does: `uint8` `x < full 200 + 100` compared with 300, true for
+  every x, where eager compares with 44 (likewise `255 * 255`, `int8`
+  `127 + 1`, `uint16` `65535 + 1` and `int32` `max + 1`).
 - A compiled `Nx.pow` of a tensor base compiles for any float exponent, a
   tensor or a constant that is not a whole or half number, where it raised
   `unhandled op POW`, and takes pow's special values: the sign of an odd

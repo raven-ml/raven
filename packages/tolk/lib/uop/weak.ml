@@ -157,10 +157,18 @@ let pm_lower_index_dtype () =
     ops ~name:"u" Ops.Group.all => (fun bs -> lower_weak_node (bs $ "u"));
   ]
 
+(* A cast of a weak constant goes where the constant keeps its value through
+   it; an integer the cast wraps is another value. *)
+let keeps_value s c =
+  match Option.map Const.view (U.as_const s), Option.map Const.view (U.as_const c) with
+  | Some (Const.Int a), Some (Const.Int b) -> Z.equal a b
+  | _ -> true
+
 let uncast_const u =
   let src = Array.map (fun s ->
       match U.op s, U.src s with
-      | Ops.Cast, [| c |] when not (is_weak s) && U.op c = Ops.Const && is_weak c -> c
+      | Ops.Cast, [| c |]
+        when not (is_weak s) && U.op c = Ops.Const && is_weak c && keeps_value s c -> c
       | _ -> s) (U.src u) in
   if Array.for_all2 U.equal src (U.src u) then None
   else match derived_dtypes u src with

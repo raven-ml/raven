@@ -1160,19 +1160,11 @@ let exec_alu_folds_and_absorbs () =
          (match Const.view r with Const.Invalid -> true | _ -> false)
    | None -> is_true ~msg:"Invalid absorbs the fold" false);
   let byte n = Const.int Dtype.uint8 n in
-  (match Uop.exec_alu ~truncate_output:true Ops.Add Dtype.uint8 [ byte 255; byte 1 ]
-   with
+  (match Uop.exec_alu Ops.Add Dtype.uint8 [ byte 255; byte 1 ] with
    | Some r ->
-       is_true ~msg:"truncated add wraps to the dtype width"
+       is_true ~msg:"an add wraps to the dtype width"
          (Const.view r = Const.Int (Z.of_int 0))
-   | None -> is_true ~msg:"truncated add folds" false);
-  (match
-     Uop.exec_alu ~truncate_output:false Ops.Add Dtype.uint8 [ byte 255; byte 1 ]
-   with
-   | Some r ->
-       is_true ~msg:"untruncated add keeps the full value"
-         (Const.view r = Const.Int (Z.of_int 256))
-   | None -> is_true ~msg:"untruncated add folds" false)
+   | None -> is_true ~msg:"an add folds" false)
 
 let exec_alu_exact_scalars () =
   let check name op dtype args expected =

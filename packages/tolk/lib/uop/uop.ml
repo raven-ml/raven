@@ -3350,14 +3350,12 @@ let const_as_integer c =
   | Const.Bool b -> Some (if b then Z.one else Z.zero)
   | Const.Float _ | Const.Invalid -> None
 
-let const_of_target ~truncate_output ~(target : Dtype.t) value =
+let const_of_target ~(target : Dtype.t) value =
   match value with
   | `Int n ->
       if Dtype.is_bool target then Some (Const.bool (Z.sign n <> 0))
       else if Dtype.is_float target then Some (Const.float target (Z.to_float n))
-      else
-        Some (Const.integer target
-          (if truncate_output then Dtype.truncate_integer target n else n))
+      else Some (Const.integer target n)
   | `Float f -> Some (Const.float target f)
 
 let compare_integer_float n f =
@@ -3379,7 +3377,7 @@ let compare_constants a b =
 
 let any_invalid args = List.exists (fun c -> Const.view c = Const.Invalid) args
 
-let exec_unary ~truncate_output op (target : Dtype.t) c =
+let exec_unary op (target : Dtype.t) c =
   if Dtype.is_float target then
     match const_as_float c with
     | None -> None
@@ -3395,13 +3393,13 @@ let exec_unary ~truncate_output op (target : Dtype.t) c =
           | Ops.Trunc -> Some (Float.trunc x)
           | _ -> None
         in
-        Option.bind result (fun f -> const_of_target ~truncate_output ~target (`Float f))
+        Option.bind result (fun f -> const_of_target ~target (`Float f))
   else
     let result = Option.bind (const_as_integer c) (fun x ->
       match op with Ops.Neg -> Some (Z.neg x) | Ops.Trunc -> Some x | _ -> None) in
-    Option.bind result (fun n -> const_of_target ~truncate_output ~target (`Int n))
+    Option.bind result (fun n -> const_of_target ~target (`Int n))
 
-let exec_binary ~truncate_output op (target : Dtype.t) a b =
+let exec_binary op (target : Dtype.t) a b =
   if Ops.Group.is_comparison op then
     let comparison = compare_constants a b in
     let result = match op with
@@ -3423,7 +3421,7 @@ let exec_binary ~truncate_output op (target : Dtype.t) a b =
           | Ops.Pow -> Some (if x = 0. && y < 0. then Float.infinity else x ** y)
           | _ -> None
         in
-        Option.bind result (fun f -> const_of_target ~truncate_output ~target (`Float f))
+        Option.bind result (fun f -> const_of_target ~target (`Float f))
     | _ -> None
   else
     match const_as_integer a, const_as_integer b with
@@ -3444,10 +3442,10 @@ let exec_binary ~truncate_output op (target : Dtype.t) a b =
           | Ops.Shr -> Some (Z.shift_right x (Z.to_int y))
           | _ -> None
         in
-        Option.bind result (fun n -> const_of_target ~truncate_output ~target (`Int n))
+        Option.bind result (fun n -> const_of_target ~target (`Int n))
     | _ -> None
 
-let exec_ternary ~truncate_output op (target : Dtype.t) a b c =
+let exec_ternary op (target : Dtype.t) a b c =
   match op with
   | Ops.Where ->
       let condition = match Const.view a with
@@ -3461,24 +3459,24 @@ let exec_ternary ~truncate_output op (target : Dtype.t) a b c =
       if Dtype.is_float target then
         (match const_as_float a, const_as_float b, const_as_float c with
          | Some x, Some y, Some z ->
-             const_of_target ~truncate_output ~target (`Float ((x *. y) +. z))
+             const_of_target ~target (`Float ((x *. y) +. z))
          | _ -> None)
       else
         (match const_as_integer a, const_as_integer b, const_as_integer c with
          | Some x, Some y, Some z ->
-             const_of_target ~truncate_output ~target (`Int (Z.add (Z.mul x y) z))
+             const_of_target ~target (`Int (Z.add (Z.mul x y) z))
          | _ -> None)
   | _ -> None
 
-let exec_alu ?(truncate_output = true) op (target : Dtype.t) args =
+let exec_alu op (target : Dtype.t) args =
   let is_binary = Ops.Group.is_binary op in
   if is_binary && any_invalid args then Some Const.invalid
   else
     match args with
-    | [ a ] when Ops.Group.is_unary op -> exec_unary ~truncate_output op target a
-    | [ a; b ] when is_binary -> exec_binary ~truncate_output op target a b
+    | [ a ] when Ops.Group.is_unary op -> exec_unary op target a
+    | [ a; b ] when is_binary -> exec_binary op target a b
     | [ a; b; c ] when Ops.Group.is_ternary op ->
-        exec_ternary ~truncate_output op target a b c
+        exec_ternary op target a b c
     | _ -> None
 
 let rec infer_int var_vals u =

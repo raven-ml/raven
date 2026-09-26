@@ -9,10 +9,9 @@
 
     A constant pairs a scalar payload with its {!Dtype.t}. Direct integer and
     floating-point constructors validate that the dtype matches the payload
-    kind. Integer payloads have arbitrary precision until an explicit
-    dtype conversion; floating-point payloads are rounded to [dtype]'s precision
-    on construction, so a constant never carries more precision than its dtype
-    can represent.
+    kind. A payload holds a value of its dtype: an integer wraps to a
+    fixed-width dtype's range and a float is rounded to its precision on
+    construction. Weak integers keep arbitrary precision.
 
     Constants participate in pattern matching and constant folding through
     {!view}. The {!Invalid} payload is the absorbing element of ALU folding
@@ -46,8 +45,8 @@ val bool : bool -> t
 (** [bool b] is the boolean constant [b] with dtype {!Dtype.bool}. *)
 
 val integer : Dtype.t -> Z.t -> t
-(** [integer dtype n] is the exact integer [n] tagged with [dtype], without
-    range checking or truncation. Weak arithmetic can retain intermediates
+(** [integer dtype n] is [n] at [dtype]: wrapped to a fixed-width dtype's
+    range, exact at {!Dtype.weakint}, whose arithmetic can retain intermediates
     larger than any storage dtype.
 
     Raises [Invalid_argument] if [dtype] is not an integer dtype. *)
@@ -60,7 +59,7 @@ val int : Dtype.t -> int -> t
 val int64 : Dtype.t -> int64 -> t
 (** [int64 dtype n] is the integer constant [n] tagged with [dtype]. For
     {!Dtype.uint64}, [n] is interpreted as an unsigned 64-bit bit pattern.
-    Other integer dtypes retain the signed value without truncation.
+    See {!integer}.
 
     Raises [Invalid_argument]
       if [dtype] is not an integer dtype (as per {!Dtype.is_int}, which accepts

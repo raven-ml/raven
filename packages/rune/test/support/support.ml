@@ -490,6 +490,29 @@ let check_wrapping_comparisons ?devices () =
     (Nx.create Nx.int8 [| 5 |] [| -128; -1; 0; 12; 127 |])
     (cases 1 2 5 127)
 
+(* A constant folded from constants holds its dtype's value, as eager's does:
+   uint8 200 + 100 is 44, uint16 65535 + 1 is 0, int32 max + 1 is min. *)
+let check_wrapped_constants ?devices () =
+  let check (type a b) name (x : (a, b) Nx.t) f =
+    equal ~msg:name (array bool)
+      (Nx.to_array (f x))
+      (Nx.to_array (Rune.jit' ?devices f x))
+  in
+  let u8 = Nx.create Nx.uint8 [| 5 |] [| 0; 1; 16; 200; 255 |] in
+  check "uint8 x < 255 * 255" u8 (fun x ->
+      Nx.less x (Nx.mul_s (Nx.full_like x 255) 255));
+  check "uint8 x < 200 + 100" u8 (fun x ->
+      Nx.less x (Nx.add_s (Nx.full_like x 200) 100));
+  check "int8 x < 127 + 1"
+    (Nx.create Nx.int8 [| 4 |] [| -128; -1; 0; 127 |])
+    (fun x -> Nx.less x (Nx.add_s (Nx.full_like x 127) 1));
+  check "uint16 x < 65535 + 1"
+    (Nx.create Nx.uint16 [| 4 |] [| 0; 1; 300; 65535 |])
+    (fun x -> Nx.less x (Nx.add_s (Nx.full_like x 65535) 1));
+  check "int32 x < max + 1"
+    (Nx.create Nx.int32 [| 3 |] [| 0l; 1l; -1l |])
+    (fun x -> Nx.less x (Nx.add_s (Nx.full_like x Int32.max_int) 1l))
+
 (* A compiled power matches eager's within the rounding of [exp2 (e * log2 x)]:
    a relative [2e-5] at float32 and two units in the last place at float16,
    where it is computed at float32. Zeros, infinities and NaN match exactly,

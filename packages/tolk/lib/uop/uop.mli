@@ -1660,16 +1660,14 @@ val sym_infer : t -> (string * int) list -> int
 
     Raises [Invalid_argument] if [u] does not reduce to a constant. *)
 
-val exec_alu : ?truncate_output:bool -> Ops.t -> Dtype.t -> Const.t list -> Const.t option
-(** [exec_alu ?truncate_output op target args] folds ALU op [op] applied to
+val exec_alu : Ops.t -> Dtype.t -> Const.t list -> Const.t option
+(** [exec_alu op target args] folds ALU op [op] applied to
     constant [args], producing a constant of [target] dtype, or [None] when the
     op or operand shapes are not foldable. Any binary op with an {!Const.invalid}
     operand folds to {!Const.invalid} regardless of dtype.
 
-    [truncate_output] defaults to [true]: the folded value is narrowed to
-    [target]'s value domain (a no-op for {!Dtype.weakint} and
-    {!Dtype.weakfloat}, which have no finite width). Symbolic fold sites pass
-    [false] to keep exact integer intermediates, deferring narrowing to emission.
+    The folded value is [target]'s: a fixed-width integer wraps, as every
+    {!Const.integer} does, and a weak one stays exact.
 
     Bool comparisons follow IEEE for floats (nan differs from nan, [0.0] equals
     [-0.0]); integer division and modulo use C-truncating ({!Ops.Cdiv},

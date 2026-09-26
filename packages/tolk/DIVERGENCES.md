@@ -291,6 +291,23 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit_metal` "integer comparisons read wrapped values". Remove this
   ruling when upstream reasons modularly.
 
+- **A fixed-width integer constant holds its dtype's value.** The reference
+  keeps integer constants exact until emission: folding runs with
+  `truncate_output=False`, and a cast of a weak literal is stripped whatever
+  it does to the value. So `uint8` `full 200 + 100` stayed 300 and
+  `x < 300` folded to true, where the program compares with 44; the same held
+  for `255 * 255`, `int8` `127 + 1`, `uint16` `65535 + 1` and `int32`
+  `max + 1`. Tolk wraps every constant it builds at a fixed width
+  (`Const.integer`), as it already rounds float constants to their precision,
+  and keeps weak integers exact; `exec_alu` loses its `truncate_output` knob.
+  A committed cast of a literal goes only where the literal keeps its value,
+  and `(x // c1) // c2 -> x // (c1 * c2)` needs `c1 * c2` in range. Index
+  arithmetic is weakint and unchanged. Coverage: rune `test_jit` and
+  `test_jit_metal` "folded integer constants wrap"; tolk `test_weak`
+  "uncasting keeps a wrapping cast", `test_symbolic` "a cast constant keeps
+  its wrapped value". Remove this ruling when upstream wraps its constants.
+
+
 - **A power decomposes with the transcendentals, at float32 or wider.** The
   reference rewrites every `POW` into `xpow` (`exp2 (e * log2 |x|)` with sign
   and zero fixups) inside `sym`, importing the decomposition into its

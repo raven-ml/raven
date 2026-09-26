@@ -55,7 +55,8 @@ val pm_lower_index_dtype : unit -> Upat.Pattern_matcher.t
 
 val pm_uncast_const : Upat.Pattern_matcher.t
 (** [pm_uncast_const] removes a literal's committed cast only when both operand
-    promotion and result dtype remain unchanged. *)
+    promotion and result dtype remain unchanged and the literal keeps its value
+    through the cast. *)
 
 val pm_cast_const : Upat.Pattern_matcher.t
 (** [pm_cast_const] states every remaining literal's concrete width at its

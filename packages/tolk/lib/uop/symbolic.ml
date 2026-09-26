@@ -341,7 +341,7 @@ let fold_const_alu root =
       if i = count then Some (List.rev acc)
       else
         match
-          Uop.exec_alu ~truncate_output:false (Uop.op root) dtype (lane i)
+          Uop.exec_alu (Uop.op root) dtype (lane i)
         with
         | Some c -> fold (i + 1) (c :: acc)
         | None -> None
@@ -1457,7 +1457,11 @@ let symbolic : Upat.Pattern_matcher.t =
      and c1 = cvar ~name:"c1" () and c2 = cvar ~name:"c2" () in
      alu [ alu [ x; c1 ] Ops.Floordiv; c2 ] Ops.Floordiv => fun bs ->
        let x = bs $ "x" and c1 = bs $ "c1" and c2 = bs $ "c2" in
-       if Bound.lt Bound.zero (Uop.vmin c2) then
+       let dt = Uop.dtype x in
+       let product = Bound.mul (Uop.vmin c1) (Uop.vmin c2) in
+       if Bound.lt Bound.zero (Uop.vmin c2)
+          && Bound.le (Dtype.min dt) product && Bound.le product (Dtype.max dt)
+       then
          Some
            (Uop.alu_binary ~op:Ops.Floordiv ~lhs:x
               ~rhs:Uop.O.(c1 * c2))

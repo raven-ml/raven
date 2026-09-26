@@ -4415,6 +4415,8 @@ let tests =
         test "narrow constants wrap" test_narrow_constants_wrap;
         test "integer comparisons read wrapped values"
           (check_wrapping_comparisons ?devices:None);
+        test "folded integer constants wrap"
+          (check_wrapped_constants ?devices:None);
         test "pow of a tensor base matches eager" (check_pow ?devices:None);
         test "pow of a subnormal base" test_pow_of_subnormal;
         test "float sums and products keep their grouping"

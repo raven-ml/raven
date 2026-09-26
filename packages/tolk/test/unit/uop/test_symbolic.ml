@@ -91,17 +91,25 @@ let two_stage_associative () =
     (rewrite e)
 
 (* c0 + x < c1 moves c0 across only where neither side wraps: over uint8 x,
-   x - 1 < 5 is false at 0, where x < 6 would be true. *)
+   x - 1 (x + 255) < 5 is false at 0, where x < 6 would be true. *)
 let offset_comparison_respects_wrap () =
-  let c n = Uop.const (Const.int Dtype.uint8 n) in
+  let c dt n = Uop.const (Const.int dt n) in
   let x = Uop.param ~slot:0 ~dtype:Dtype.uint8 () in
-  let kept = rewrite Uop.O.(x + c (-1) < c 5) in
+  let kept = rewrite Uop.O.(x + c Dtype.uint8 (-1) < c Dtype.uint8 5) in
   is_true ~msg:"uint8 x - 1 < 5 keeps its offset"
     (Uop.op (Uop.src kept).(0) = Ops.Add);
-  let y = var ~dtype:Dtype.uint8 ~name:"y" ~lo:1 ~hi:9 () in
-  equal ~msg:"uint8 y - 1 < 5 over [1, 9] is y < 6" uop
-    (rewrite Uop.O.(y < c 6))
-    (rewrite Uop.O.(y + c (-1) < c 5))
+  let y = var ~dtype:Dtype.int8 ~name:"y" ~lo:1 ~hi:9 () in
+  equal ~msg:"int8 y - 1 < 5 over [1, 9] is y < 6" uop
+    (rewrite Uop.O.(y < c Dtype.int8 6))
+    (rewrite Uop.O.(y + c Dtype.int8 (-1) < c Dtype.int8 5))
+
+(* A weak constant cast to a fixed width holds the wrapped value: over uint8 x,
+   x < uint8 300 is x < 44, which no bound decides. *)
+let cast_constant_keeps_its_wrapped_value () =
+  let x = Uop.param ~slot:0 ~dtype:Dtype.uint8 () in
+  let bound = Uop.cconst (Const.int Dtype.weakint 300) Dtype.uint8 in
+  is_true ~msg:"x < uint8 300 does not fold"
+    (Uop.op (rewrite Uop.O.(x < bound)) <> Ops.Const)
 
 (* A non-finite float has no integer value: its cast to an integer stays a
    cast instead of folding (C leaves the conversion undefined). *)
@@ -347,6 +355,8 @@ let simplify_driver_groups =
         test "associative combine" two_stage_associative;
         test "an offset crosses a comparison only without wrapping"
           offset_comparison_respects_wrap;
+        test "a cast constant keeps its wrapped value"
+          cast_constant_keeps_its_wrapped_value;
         test "a non-finite cast to an integer stays a cast"
           non_finite_cast_to_int_stays;
       ];

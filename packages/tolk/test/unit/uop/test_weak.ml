@@ -194,6 +194,17 @@ let uncast_preserves_operand_and_result_types () =
   is_true ~msg:"a concrete operand meet cannot hide a weak shifted value"
     (U.equal shift (rewrite Weak.pm_uncast_const shift))
 
+(* A committed cast goes only where the literal keeps its value through it:
+   uint8 300 is 44, so the cast of 300 stays and the cast of 44 goes. *)
+let uncast_keeps_a_wrapping_cast () =
+  let x = U.param ~slot:0 ~dtype:D.uint8 () in
+  let bound n = U.cconst (C.int D.weakint n) D.uint8 in
+  let kept = U.O.(x < bound 300) in
+  is_true ~msg:"x < uint8 300 keeps its cast"
+    (U.equal kept (rewrite Weak.pm_uncast_const kept));
+  let stripped = rewrite Weak.pm_uncast_const U.O.(x < bound 44) in
+  is_true ~msg:"x < uint8 44 loses its cast" (U.op (src stripped 1) = Ops.Const)
+
 let final_constants_state_width_on_each_edge () =
   let literal = U.const_int 1 in
   let i = U.variable ~name:"integer" ~min_val:0 ~max_val:10 ~dtype:D.int32 () in
@@ -252,6 +263,7 @@ let () =
         ];
       group "literal edges"
         [ test "uncasting preserves both derived types" uncast_preserves_operand_and_result_types;
+          test "uncasting keeps a wrapping cast" uncast_keeps_a_wrapping_cast;
           test "late simplification preserves committed literals" late_simplification_preserves_committed_literals;
           test "final constants state edge widths" final_constants_state_width_on_each_edge ];
       group "whole pass"
