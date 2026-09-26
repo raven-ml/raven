@@ -816,6 +816,36 @@ let finalizers_wait_for_device_operations () =
     ["mapping wait", false; "unmap", false; "free", false]
     (List.rev !releases)
 
+(* Two systhreads share DLS. Finishing the first operation must not drain
+   finalizers while the second still has a native update in progress. *)
+let finalizers_wait_for_overlapping_systhreads () =
+  let frees = Atomic.make 0 in
+  let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let allocator = Device.Allocator.Pack {host with
+      free = (fun raw size spec ->
+        ignore (Atomic.fetch_and_add frees 1);
+        host.free raw size spec)} in
+  let abandon () =
+    let buffer = Device.Buffer.create ~device:"OVERLAPPING_FINALIZER" ~size:1
+        ~dtype:D.uint8 allocator in
+    Device.Buffer.ensure_allocated buffer in
+  let wait_started, started = registry_gate () in
+  let wait_finish, finish = registry_gate () in
+  let worker = ref None in
+  Fun.protect ~finally:(fun () ->
+      finish (); Option.iter (fun join -> join ()) !worker) (fun () ->
+    Storage.with_operation (fun () ->
+      abandon ();
+      worker := Some (registry_worker ~systhread:true (fun () ->
+        Storage.with_operation (fun () -> started (); wait_finish ())));
+      wait_started ();
+      Gc.full_major (); Gc.full_major ();
+      equal ~msg:"both operations defer teardown" int 0 (Atomic.get frees));
+    equal ~msg:"the remaining operation still owns its update" int 0
+      (Atomic.get frees));
+  equal ~msg:"the last operation drains deferred teardown exactly once" int 1
+    (Atomic.get frees)
+
 (* A failed free may already have changed native state. It must surface once
    and retain the owner without retrying an uncertain teardown. *)
 let failed_finalizer_is_not_retried () =
@@ -938,6 +968,7 @@ let () = run __FILE__ [ copy_from_tests;
   test "failed openers cannot publish provisional devices" failed_opener_does_not_publish;
   test "failed buffer finalizers are reported without retrying teardown" failed_finalizer_is_not_retried;
   test "buffer finalizers wait for device operations" finalizers_wait_for_device_operations;
+  test "buffer finalizers wait for overlapping systhreads" finalizers_wait_for_overlapping_systhreads;
   test "foreign access completion is captured, coalesced and retried" foreign_completion_dependencies;
   test "host storage owns zeroed pages suitable for GPU registration" (fun () ->
       List.iter (fun size ->

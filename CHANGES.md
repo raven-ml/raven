@@ -694,6 +694,10 @@ thread.
 
 ### Tolk (new)
 
+- Buffer finalizers remain deferred until every overlapping operation on a
+  domain has returned. One system thread could previously trigger teardown
+  while another still had a device update in progress.
+
 - Conditional GPU loops now finish shared-memory reads before the next iteration
   writes the same storage. Their backedge condition is preserved when inserting
   the required workgroup barrier.

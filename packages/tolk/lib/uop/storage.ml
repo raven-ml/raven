@@ -83,12 +83,12 @@ end
    their entire teardown, including imported mappings, outside such operations.
    This prevents re-entry on a domain; it does not serialize device callers. *)
 type operation = {
-  mutable active : bool;
+  mutable depth : int;
   pending : (unit -> unit) list Atomic.t;
 }
 
 let operation = Domain.DLS.new_key (fun () ->
-    { active = false; pending = Atomic.make [] })
+    { depth = 0; pending = Atomic.make [] })
 
 (* A failed teardown can have released only part of its mappings. Retain its
    owner rather than retrying an uncertain unmap or losing live GPU backing. *)
@@ -127,14 +127,11 @@ let rec drain state =
 
 let with_operation f =
   let state = Domain.DLS.get operation in
-  if state.active then f ()
-  else begin
-    state.active <- true;
-    Fun.protect ~finally:(fun () -> state.active <- false) (fun () ->
-        let result = f () in
-        drain state;
-        result)
-  end
+  state.depth <- state.depth + 1;
+  Fun.protect ~finally:(fun () -> state.depth <- state.depth - 1) (fun () ->
+      let result = f () in
+      if state.depth = 1 then drain state;
+      result)
 
 let live_bytes = ref 0
 let live_bytes_per_device : (string, int) Hashtbl.t = Hashtbl.create 4
