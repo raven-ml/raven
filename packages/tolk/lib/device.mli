@@ -226,6 +226,15 @@ val queue_runtime : t -> runtime
 
     Raises [Invalid_argument] if [d] only supports compiled queue submission. *)
 
+val allocator : t -> Allocator.packed
+(** [allocator device] is the allocator belonging to this device instance.
+    It remains the same when another instance replaces its registered name. *)
+
+val with_operation : ?buffers:Buffer.t list -> t list -> (unit -> 'a) -> 'a
+(** [with_operation devices f] calls [f ()] with native ownership of [devices],
+    their pending dependencies and [buffers]. Nested calls may only use already
+    held owners. Ownership is released when [f] returns or raises. *)
+
 val synchronize : ?timeout:int -> t -> unit
 (** [synchronize ?timeout d] blocks until all pending work on [d] completes, then
     waits for recorded foreign memory accesses and collects registered queue
@@ -236,14 +245,16 @@ val synchronize : ?timeout:int -> t -> unit
 val depend_on : t -> t -> unit
 (** [depend_on owner source] records completion of work already submitted to
     [source] that accesses [owner] memory. It does not wait. Repeated calls
-    retain only the latest completion for each source.
+    retain only the latest completion for each source identity. Devices with the
+    same name retain separate completions.
     Raises [Invalid_argument] if a distinct [source] has no queue. *)
 
-val wait_dependencies : t -> ordered:string list -> unit
+val wait_dependencies : t -> ordered:t list -> unit
 (** [wait_dependencies owner ~ordered] waits for recorded foreign memory
     accesses whose submitting devices are absent from [ordered]. Queue
     submissions use this before accessing [owner] memory when their encoded
-    timeline waits cover only [ordered]. Names must be canonical. Covered
+    timeline waits cover only [ordered]. Device identities, rather than names,
+    determine coverage. Covered
     accesses remain pending for subsequent host synchronization. Failed waits
     retain their records for retry. This does not synchronize [owner] itself. *)
 

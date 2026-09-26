@@ -438,10 +438,10 @@ let cpu_maps_metal_storage () =
   let base = i32_buf metal [0; 41; 0; 0] in
   let input = i32_view base ~offset:4 ~size:1 in
   let output = i32_view base ~offset:8 ~size:1 in
-  let ptr = Option.get (Device.Buffer.get ~device:(Device.name cpu)
+  let ptr = Option.get (Device.Buffer.get ~target:(Device.allocator cpu)
       Storage.Host_allocator.kind base) in
   equal nativeint (Nativeint.add ptr 4n)
-    (Device.Buffer.addr ~device:(Device.name cpu) input);
+    (Device.Buffer.addr ~target:(Device.allocator cpu) input);
   let spec = compile_incr cpu "cpu_over_metal_storage" in
   let runtime = Device.runtime cpu (Program_spec.to_elf spec) in
   Fun.protect ~finally:runtime.free (fun () ->

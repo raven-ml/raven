@@ -70,12 +70,7 @@ let create name =
       ~arch:(Renderer.target renderer).Target.arch
       [ ("CLANG", fun _ -> renderer) ]
   in
-  let allocator =
-    counting name
-      (Device.Allocator.Pack
-         (Device.Lru_allocator.wrap
-            (Storage.Host_allocator.make ~synchronize:ignore)))
-  in
+  let allocator = counting name (Device.allocator cpu) in
   Device.make ~name ~allocator ~renderer_set ~runtime:(Device.runtime cpu)
     ~synchronize:(fun timeout -> Device.synchronize ?timeout cpu)
     ~bufferize:(Device.bufferize cpu) ()

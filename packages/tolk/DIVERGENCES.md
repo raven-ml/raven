@@ -13,16 +13,18 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   retaining every historical program ID. Coverage: concurrent execution and
   allocation regressions in `test_realize` and `test_helpers`.
 
-- **Queue submissions serialize on their participating device owners.** Tolk
-  callers may share retained links across domains or system threads. One
-  ordered owner scope covers table updates, timeline reservation and prepared
-  fallback legs; nested storage transport reuses the scope. The target does
-  not supply this OCaml concurrency boundary. Coverage: `test_realize` shared
-  tables, independent links sharing a timeline, nested transport and failed
-  preparation; `test_hcq2` staged/ordered fallback. Reconsider if links become
-  immutable per call or backends supply an equivalent submission protocol.
-  This does not serialize arbitrary recursive replay of an identical graph
-  from a custom runtime callback.
+- **Native operations serialize on their participating allocator owners.**
+  OCaml callers share retained devices across domains and system threads.
+  One ordered scope covers allocation, imports, synchronization, submission and
+  teardown; nested transport reuses it. Retained allocator identities and
+  completion waits survive same-name device replacement. Mapping snapshots and
+  replay addresses are rechecked after preparation under those owners. The
+  target does not supply this OCaml concurrency boundary. Coverage:
+  `test_device` cross-domain finalization, suspended scopes and retained waits;
+  `test_realize` shared tables, nested transport and address publication;
+  CPU/Metal lifetime and Rune scratch tests. Reconsider if backends supply an
+  equivalent ownership protocol. Arbitrary recursive replay of one mutable
+  graph from a custom runtime callback remains outside this contract.
 
 - **Scheduled device metadata uses canonical device names.** Tolk collapses
   `CPU:0` to `CPU` at its device boundary, so late-allreduce PARAM tuples use
@@ -123,8 +125,10 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   Explicit release still reports errors. Coverage: `test_jit_scratch` premature
   read finalization, failed release and concurrent transfer accounting; `test_device`
   finalization during device calls and failed teardown, allocator tests, and
-  Metal lifetime checks. This scope is not cross-domain or systhread locking;
-  concurrency remains open in TODO.
+  Metal lifetime checks. Counted GC scopes prevent re-entry; allocator owners
+  separately serialize native operations across domains and systhreads.
+  Buffer finalizers do not drain queued logical retirements: errors from those
+  retirements surface at an explicit safe point, with no retry after failure.
   Reconsider if native ownership makes automatic teardown non-reentrant.
 
 - **Failed automatic or cached teardown retains its owner until process exit.** An

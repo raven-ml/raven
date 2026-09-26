@@ -1957,6 +1957,7 @@ let on_device_hang (iface : 'mem Nv_iface.t) ~debugger ~debug_channel () =
 
 module State = struct
   type 'mem t = {
+    operation_owner : Tolk_uop.Storage.Owner.t;
     name : string;
     is_valid : unit -> bool;
     iface : 'mem Nv_iface.t;
@@ -2029,7 +2030,8 @@ module Allocator = struct
       Hcq.Buffer.offset buf ~off:byte_offset ~size ()
     in
     {
-      Tolk.Device.Allocator.kind = state.State.iface.Nv_iface.kind;
+      Tolk.Device.Allocator.owner = state.State.operation_owner;
+      kind = state.State.iface.Nv_iface.kind;
       host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
       mapping = Some {
         map = state.State.iface.Nv_iface.map;
@@ -2066,7 +2068,8 @@ module Queue = struct
     let name = state.State.name in
     let size = U.max_numel u and dtype = U.dtype u in
     let borrow_view ?(device = "CPU") ?address view =
-      let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> State.synchronize state) in
+      let allocator = { (Storage.Host_allocator.make ~synchronize:(fun () -> State.synchronize state))
+        with owner = state.State.operation_owner } in
       let allocator = match address with None -> allocator
         | Some address -> {allocator with addr = Some (fun _ -> address)} in
       let spec = {Device.Buffer_spec.default with external_ptr = Some (Hcq.Mmio.addr view); nolru = true} in
@@ -2085,7 +2088,8 @@ module Queue = struct
     | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
         let libs, symbol = (Marshal.from_string data 0 : string list * string) in
         if libs <> [] then invalid_arg "NV host helpers do not load libraries";
-        let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+        let allocator = { (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
+          with owner = state.State.operation_owner } in
         let b = B.create ~device:"CPU" ~size:1 ~dtype:Dtype.uint64 (Device.Allocator.Pack allocator) in
         let bytes = Bytes.create 8 in
         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Hcq.Submission.symbol symbol));
@@ -2271,6 +2275,7 @@ let open_device ?(is_valid = fun () -> true) ~name (iface : 'mem Nv_iface.t) =
   let state =
     {
       State.name = name;
+      operation_owner = Tolk_uop.Storage.Owner.create ();
       is_valid;
       submission = hw.submission;
       iface;

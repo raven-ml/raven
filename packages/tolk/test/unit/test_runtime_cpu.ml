@@ -87,7 +87,7 @@ let direct_binding_waits_for_foreign_storage () =
       ~renderer_set:(Device.Renderer_set.make ~device:"CPU:binding-importer"
         ["CLANG", (fun _ -> Device.renderer host)])
       ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout; incr importer_syncs) () in
-  ignore (Device.Buffer.get ~device:(Device.name importer) Storage.Host_allocator.kind source);
+  ignore (Device.Buffer.get ~target:(Device.allocator importer) Storage.Host_allocator.kind source);
   let output = create_i32_buffer host (List.init 16 (fun _ -> 0)) in
   let spec = Device.compile_program host ~name:"foreign_increment" (increment_program ()) in
   let runtime = Device.runtime host (Program_spec.to_elf spec) in
@@ -1106,7 +1106,7 @@ let borrowed_storage () =
   let importer = cpu "borrow-importer" in
   equal nativeint
     (Nativeint.add (Device.Buffer.addr owner) 4n)
-    (Device.Buffer.addr ~device:(Device.name importer) view);
+    (Device.Buffer.addr ~target:(Device.allocator importer) view);
   Device.Buffer.deallocate view;
   Device.Buffer.deallocate borrowed;
   equal int used (Device.Buffer.mem_used ());

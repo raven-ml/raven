@@ -58,6 +58,11 @@ let load_program ~name ~lib =
 (* Device Registration *)
 
 let create ?aligned name =
+  let synchronize () = () in
+  let allocator =
+    Device.Allocator.Pack
+      (Device.Lru_allocator.wrap (Tolk_uop.Storage.Host_allocator.make ~synchronize))
+  in
   let runtime (obj : Tolk_uop.Tiny_elf.t) =
     let entry_name = obj.name and lib = obj.lib in
     let buffers, scalars = List.partition
@@ -75,7 +80,7 @@ let create ?aligned name =
     let loaded = load_program ~name:entry_name ~lib in
     let call bufs ~global:_ ~local:_ ~vals ~wait ~timeout:_ =
       let bufs = Array.map (fun buf ->
-          Option.value (Device.Buffer.get ~device:name buffer_kind buf) ~default:0n) bufs in
+          Option.value (Device.Buffer.get ~target:allocator buffer_kind buf) ~default:0n) bufs in
       if Atomic.get loaded.unloaded then invalid_arg "CPU program has been unloaded";
       let st = if wait then monotonic_ns () else 0 in
       Fun.protect
@@ -87,7 +92,6 @@ let create ?aligned name =
     in
     Device.{ call; free = (fun () -> unload_program loaded); handle = 0n }
   in
-  let synchronize () = () in
   let renderer_set = Device.Renderer_set.make ~device:name ~arch:(Compiler_cpu.host_arch ())
       [ "CLANG", (fun target ->
           let arch = match String.split_on_char ',' target.Tolk_uop.Target.arch with
@@ -106,10 +110,6 @@ let create ?aligned name =
           Renderer.with_compiler compiler
             (Cstyle.clang ~native_bf16:(Compiler_cpu.supports_bf16 ~arch:target.arch ())
                ?aligned arch)) ] in
-  let allocator =
-    Device.Allocator.Pack
-      (Device.Lru_allocator.wrap (Tolk_uop.Storage.Host_allocator.make ~synchronize))
-  in
   let bufferize u = match Tolk_uop.Uop.as_param u with
     | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
         let libs, symbol = (Marshal.from_string data 0 : string list * string) in

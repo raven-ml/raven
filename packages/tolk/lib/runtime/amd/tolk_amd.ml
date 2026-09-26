@@ -1565,6 +1565,7 @@ end
 
 module State = struct
   type 'mem t = {
+    operation_owner : Tolk_uop.Storage.Owner.t;
     name : string;
     buffer_kind : 'mem Hcq.Buffer.t Type.Id.t;
     is_valid : unit -> bool;
@@ -1651,7 +1652,8 @@ module Allocator = struct
       Hcq.Buffer.offset buf ~off:byte_offset ~size ()
     in
     {
-      Tolk.Device.Allocator.kind = state.State.buffer_kind;
+      Tolk.Device.Allocator.owner = state.State.operation_owner;
+      kind = state.State.buffer_kind;
       host = (fun buf -> Option.map Hcq.Mmio.addr (Hcq.Buffer.view buf));
       mapping = Some {
         map = state.State.iface.Iface.map;
@@ -1680,7 +1682,8 @@ module Queue = struct
     let name = state.State.name in
     let size = U.max_numel u and dtype = U.dtype u in
     let borrow_view view =
-      let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> State.synchronize state) in
+      let allocator = { (Storage.Host_allocator.make ~synchronize:(fun () -> State.synchronize state))
+        with owner = state.State.operation_owner } in
       let spec = {Device.Buffer_spec.default with external_ptr = Some (Hcq.Mmio.addr view); nolru = true} in
       B.create ~device:"CPU" ~size ~dtype ~spec (Device.Allocator.Pack allocator) in
     let borrowed raw =
@@ -1697,7 +1700,8 @@ module Queue = struct
     | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
         let libs, symbol = (Marshal.from_string data 0 : string list * string) in
         if libs <> [] then invalid_arg "AMD host helpers do not load libraries";
-        let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+        let allocator = { (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
+          with owner = state.State.operation_owner } in
         let b = B.create ~device:"CPU" ~size:1 ~dtype:Dtype.uint64 (Device.Allocator.Pack allocator) in
         let bytes = Bytes.create 8 in
         Bytes.set_int64_le bytes 0 (Int64.of_nativeint (Hcq.Submission.symbol symbol));
@@ -1917,6 +1921,7 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
   let state =
     {
       State.name = name;
+      operation_owner = Tolk_uop.Storage.Owner.create ();
       buffer_kind = iface.Iface.kind;
       is_valid;
       iface;

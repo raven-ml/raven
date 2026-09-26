@@ -88,10 +88,7 @@ acceptance requirement; skipped tests are not execution evidence.
   target, including first-use capacity, affinity/container defaults and
   concurrent caches. Completed-work compile budgets cannot interrupt a stuck
   native compiler; review whether an isolated worker lifetime is warranted.
-  Cover overlapping fibers and device finalizers registered on another domain
-  or systhreads sharing a domain:
-  operation scopes currently prevent only same-domain GC re-entry and do not
-  serialize device callers. Complete TSan acceptance, including the runtime
+  Complete TSan acceptance, including the runtime
   weak-reference/GC warnings reproduced independently of Raven.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable

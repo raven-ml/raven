@@ -183,7 +183,8 @@ let rec run ~resolve ?(allow_cache = true) linear =
                 | U.Arg.Device (U.Single d) -> Some d
                 | U.Arg.Empty -> None
                 | _ -> invalid_arg "link: address needs one device" in
-              let address = B.addr ?device buf in
+              let target = Option.map (fun name -> Device.allocator (Device.get name)) device in
+              let address = B.addr ?target buf in
               Some (U.const (Const.int64 Dtype.uint64 (Int64.of_nativeint address)))
         | Ops.Store -> fold_store u
         | Ops.End ->

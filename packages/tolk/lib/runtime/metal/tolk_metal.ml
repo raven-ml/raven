@@ -68,6 +68,7 @@ end
 
 module State = struct
   type t = {
+    operation_owner : Tolk_uop.Storage.Owner.t;
     device : nativeint;
     queue : nativeint;
     context : nativeint;
@@ -95,6 +96,7 @@ module State = struct
           context_buffer = None;
           closed = false;
           programs = Hashtbl.create 16;
+          operation_owner = Tolk_uop.Storage.Owner.create ();
           program_lock = Mutex.create ();
           needs_icb_fix;
           arch;
@@ -111,14 +113,22 @@ module State = struct
 
   let timeline t = with_program_lock t (fun () -> t.timeline)
 
-  let synchronize t =
-    if not t.closed then begin
-      Option.iter (fun timeline ->
-          let value = Bytes.get_int64_le (Device.Buffer.as_bytes timeline) 8 in
-          Ffi.hcq_wait t.context value) (timeline t)
-    end
+  let timeline_value t =
+    match timeline t with
+    | None -> 0L
+    | Some timeline ->
+        let view = Option.get (Device.Buffer.as_buffer timeline) in
+        let value = ref 0L in
+        for i = 0 to 7 do
+          value := Int64.logor !value
+              (Int64.shift_left (Int64.of_int (Bigarray.Array1.unsafe_get view (8 + i))) (8 * i))
+        done;
+        !value
 
-  let shutdown t =
+  let synchronize t = Tolk_uop.Storage.Owner.run [t.operation_owner] (fun () ->
+    if not t.closed then Ffi.hcq_wait t.context (timeline_value t))
+
+  let shutdown t = Tolk_uop.Storage.Owner.run [t.operation_owner] (fun () ->
     if not t.closed then (
       synchronize t;
       Mutex.protect t.program_lock (fun () ->
@@ -129,7 +139,8 @@ module State = struct
             Hashtbl.clear t.programs;
             Ffi.release_command_queue t.queue;
             Ffi.release_device t.device
-          end))
+          end)))
+
 end
 
 module Allocator = struct
@@ -190,7 +201,8 @@ module Allocator = struct
       Ffi.buffer_free buf.Metal_buffer.handle
     in
     {
-      Device.Allocator.kind = Metal_buffer.kind;
+      Device.Allocator.owner = state.State.operation_owner;
+      kind = Metal_buffer.kind;
       host = (fun buf -> Some (Nativeint.add (Ffi.buffer_contents buf.Metal_buffer.handle)
           (Nativeint.of_int buf.offset)));
       mapping = Some {map; unmap};
@@ -264,17 +276,18 @@ module Queue = struct
     offset : int; sizes : int }
   type descriptor = { commands : command list; header : int }
 
-  let host_buffer ?(bytes = Bytes.empty) size =
-    let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let host_buffer ~owner ?(bytes = Bytes.empty) size =
+    let allocator = Device.Allocator.Pack { (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
+        with owner } in
     let b = B.create ~device:"CPU" ~size ~dtype:Dtype.uint64 allocator in
     B.ensure_allocated b;
     B.copyin b (if Bytes.length bytes = 0 then Bytes.make (size * 8) '\000' else bytes);
     b
 
-  let word value =
+  let word state value =
     let bytes = Bytes.create 8 in
     Bytes.set_int64_le bytes 0 (Int64.of_nativeint value);
-    host_buffer ~bytes 1
+    host_buffer ~owner:state.State.operation_owner ~bytes 1
 
   let context name = U.placeholder ~shape:[1] ~dtype:Dtype.uint64 ~slot:0
       ~device:(U.Single name) ~allocation:("metal_context", "") ()
@@ -286,14 +299,14 @@ module Queue = struct
     | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
         let libs, symbol = (Marshal.from_string data 0 : string list * string) in
         if libs <> [] then invalid_arg "Metal host helpers do not load libraries";
-        Some (word (Ffi.hcq_symbol symbol))
+        Some (word state (Ffi.hcq_symbol symbol))
     | Some {param = {allocation = Some ("metal_context", _); _}; _} ->
         Some (State.with_program_lock state (fun () ->
             if state.State.closed then invalid_arg "Metal device is closed";
             match state.State.context_buffer with
             | Some buffer -> buffer
             | None ->
-                let buffer = word state.context in
+                let buffer = word state state.context in
                 state.context_buffer <- Some buffer;
                 buffer))
     | Some {param = {allocation = Some ("metal_icb", data); _}; _} ->
@@ -351,7 +364,7 @@ module Queue = struct
             match state.State.timeline with
             | Some buffer -> buffer
             | None ->
-                let buffer = host_buffer 2 in
+                let buffer = host_buffer ~owner:state.State.operation_owner 2 in
                 state.timeline <- Some buffer;
                 buffer))
     | _ -> None
@@ -447,9 +460,7 @@ module Queue = struct
   let create state device_name =
     let host = try Device.get "CPU" with Failure _ -> Tolk_cpu.create "CPU" in
     let completion () =
-      let value = match State.timeline state with
-        | None -> 0L
-        | Some timeline -> Bytes.get_int64_le (B.as_bytes timeline) 8 in
+      let value = State.timeline_value state in
       fun timeout -> ignore timeout; Ffi.hcq_wait state.State.context value in
     (* The shared encoder dispatches kernels above 15 arguments directly;
        all calls still use the same queue, timeline and resource ownership. *)

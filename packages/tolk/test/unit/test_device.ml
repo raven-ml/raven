@@ -95,6 +95,7 @@ let copy_from_tests =
 let failed_view_allocation_preserves_ownership () =
   let attempts = ref 0 and frees = ref 0 in
   let allocator = Device.Allocator.Pack {
+      owner = Storage.Owner.create ();
       kind = Type.Id.make ();
       host = Fun.const None;
       mapping = None;
@@ -193,6 +194,7 @@ let external_views_refresh_without_freeing_owner () =
 let empty_storage () =
   let unexpected op = fail ("empty storage called allocator " ^ op) in
   let allocator = Device.Allocator.Pack {
+      owner = Storage.Owner.create ();
       kind = Type.Id.make ();
       host = Fun.const None;
       mapping = None;
@@ -509,6 +511,7 @@ let lazy_storage_serialization () =
 let typed_storage_identity () =
   let kind : bytes Type.Id.t = Type.Id.make () in
   let allocator : bytes Device.Allocator.t = {
+    owner = Storage.Owner.create ();
     kind; host = Fun.const None; mapping = None; synchronize = (fun () -> ());
     alloc = (fun size _ -> Bytes.make size '\000');
     free = (fun _ _ _ -> ()); addr = None; offset = None;
@@ -549,6 +552,7 @@ let mappings_follow_storage_ownership () =
       (Device.Allocator.Pack source_allocator) in
   let target name =
     let allocator : (nativeint * int) Device.Allocator.t = {
+      owner = Storage.Owner.create ();
       kind = target_kind; host = Fun.const None;
       mapping = Some {
         map = (fun source -> record (name ^ " map");
@@ -575,7 +579,7 @@ let mappings_follow_storage_ownership () =
       ~synchronize:(fun timeout -> ignore timeout; allocator.synchronize ()) () in
   let first = target "MAP_TARGET:1" and second = target "MAP_TARGET:2" in
   is_true (Option.is_none (Device.Buffer.find_mapping target_kind source));
-  let get device buf = Option.get (Device.Buffer.get ~device:(Device.name device) target_kind buf) in
+  let get device buf = Option.get (Device.Buffer.get ~target:(Device.allocator device) target_kind buf) in
   let data, offset = get first source in
   equal int 0 offset;
   Device.Buffer.copyin source (i32_to_bytes [0; 42; 0; 0]);
@@ -589,9 +593,9 @@ let mappings_follow_storage_ownership () =
   is_true (cached_data == data);
   equal int 4 cached_offset;
   events := "address lookup" :: !events;
-  equal nativeint 0x1004n (Device.Buffer.addr ~device:(Device.name second) view);
+  equal nativeint 0x1004n (Device.Buffer.addr ~target:(Device.allocator second) view);
   equal string "address lookup" (List.hd !events);
-  Device.Buffer.synchronize ~device:(Device.name second) view;
+  Device.Buffer.synchronize ~target:(Device.allocator second) view;
   equal string "source sync" (List.hd !events);
   let count event = List.length (List.filter (String.equal event) !events) in
   equal int 1 (count "MAP_TARGET:1 map");
@@ -686,7 +690,7 @@ let foreign_completion_dependencies () =
   equal (list int) [11; 9; 9; 5] !waited;
   submitted := 13;
   Device.depend_on owner source;
-  Device.wait_dependencies owner ~ordered:[name];
+  Device.wait_dependencies owner ~ordered:[source];
   equal (list int) [11; 9; 9; 5] !waited;
   Device.wait_dependencies owner ~ordered:[];
   equal (list int) [13; 11; 9; 9; 5] !waited;
@@ -700,10 +704,59 @@ let foreign_completion_dependencies () =
     (fun () -> Device.wait_dependencies owner ~ordered:[]);
   during_wait := (fun () -> ());
   fail_wait := false;
-  Device.wait_dependencies owner ~ordered:[name];
+  Device.wait_dependencies owner ~ordered:[source];
   equal (list int) [17; 13; 11; 9; 9; 5] !waited;
   Device.synchronize owner;
   equal (list int) [19; 17; 13; 11; 9; 9; 5] !waited
+
+let same_name_completion_owners () =
+  let owner = Tolk_cpu.create "CPU:replacement-pending-owner" in
+  let name = "PENDING:replacement" in
+  let waited = ref [] and during_wait = ref (fun () -> ()) in
+  let make label =
+    let submitted = ref 1 and failing = ref false in
+    let completion () =
+      let value = !submitted in
+      fun timeout ->
+        ignore timeout;
+        waited := (label, value) :: !waited;
+        !during_wait ();
+        if !failing then failwith "old completion failed" in
+    let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.);
+      completion; prepare = (fun () -> ()); host = Device.name owner;
+      max_kernel_bindings = None; config = (fun () -> ""); copy = (fun _ -> None);
+      encode = (fun _ -> None); lower = (fun _ -> None); compile = (fun _ -> fail "not compiled")} in
+    let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+    let device = Device.make ~name ~allocator
+        ~renderer_set:(Device.Renderer_set.make ~device:name [])
+        ~synchronize:(fun timeout -> ignore timeout) ~queue () in
+    device, submitted, failing in
+  let old, old_value, old_fails = make "old" in
+  Device.depend_on owner old;
+  let current, current_value, current_fails = make "current" in
+  ignore current_fails;
+  Device.depend_on owner current;
+  Device.wait_dependencies owner ~ordered:[current];
+  equal ~msg:"a new same-name queue cannot order an old context's completion"
+    (list (pair string int)) ["old", 1] !waited;
+  Device.synchronize owner;
+  equal (list (pair string int)) ["current", 1; "old", 1] !waited;
+  old_value := 2;
+  current_value := 2;
+  Device.depend_on owner old;
+  Device.depend_on owner current;
+  old_fails := true;
+  during_wait := (fun () -> current_value := 3; Device.depend_on owner current);
+  raises (Failure "old completion failed")
+    (fun () -> Device.wait_dependencies owner ~ordered:[]);
+  during_wait := (fun () -> ());
+  old_fails := false;
+  Device.wait_dependencies owner ~ordered:[current];
+  Device.synchronize owner;
+  equal ~msg:"failure restoration preserves both identities and the newer current fence"
+    (list (pair string int))
+    ["current", 3; "old", 2; "old", 2; "current", 2; "current", 1; "old", 1]
+    !waited
 
 (* A backend callback reserves work before an allocation can run the GC.
    Releasing unrelated storage there must not synchronize an unsubmitted fence
@@ -740,7 +793,7 @@ let finalizers_wait_for_device_operations () =
     Device.Buffer.ensure_allocated buf;
     let view = Device.Buffer.view buf ~size:1 ~dtype:D.uint8 ~offset:0 in
     Device.Buffer.ensure_allocated view;
-    ignore (Device.Buffer.addr ~device:"FINALIZER_MAP" view) in
+    ignore (Device.Buffer.addr ~target:(Device.allocator (Device.get "FINALIZER_MAP")) view) in
   let collect () =
     probe := (fun () -> ());
     abandon ();
@@ -845,6 +898,114 @@ let finalizers_wait_for_overlapping_systhreads () =
       (Atomic.get frees));
   equal ~msg:"the last operation drains deferred teardown exactly once" int 1
     (Atomic.get frees)
+
+type _ Effect.t += Pause_device_operation : unit Effect.t
+
+let suspended_device_operation () =
+  let make = registry_factory () in
+  let device = make "SUSPENDED_OPERATION" in
+  let continuation : (unit, unit) Effect.Deep.continuation option ref = ref None in
+  Effect.Deep.try_with (fun () ->
+      Device.with_operation [device] (fun () ->
+          Device.synchronize device;
+          Effect.perform Pause_device_operation;
+          Device.synchronize device)) ()
+    {effc = (fun (type a) (request : a Effect.t) -> match request with
+        | Pause_device_operation -> Some (fun (k : (a, unit) Effect.Deep.continuation) ->
+            continuation := Some k)
+        | _ -> None)};
+  Fun.protect ~finally:(fun () -> Effect.Deep.continue (Option.get !continuation) ())
+    (fun () -> raises
+        (Invalid_argument "device operation: owner is held by a suspended computation")
+        (fun () -> Device.synchronize device));
+  Device.synchronize device
+
+let foreign_retirement_waits_for_native_owner () =
+  let make = registry_factory () in
+  let first = make "RETIRE_ACTIVE" and second = make "RETIRE_FOREIGN" in
+  let releases = ref 0 in
+  Device.with_operation [first] (fun () ->
+      Storage.retire (fun () ->
+          Device.synchronize second;
+          incr releases);
+      equal ~msg:"foreign retirement stays outside the active native owner" int 0
+        !releases;
+      Storage.with_operation (fun () -> ());
+      equal ~msg:"a nested safe point does not drain native retirement" int 0
+        !releases);
+  equal ~msg:"retirement drains exactly once after the native owner exits" int 1
+    !releases;
+  Storage.retire (fun () -> incr releases);
+  equal ~msg:"retirement waits for an explicit operation safe point" int 1
+    !releases;
+  Storage.with_operation (fun () -> ());
+  equal int 2 !releases
+
+let finalizers_preserve_queued_retirement_errors () =
+  let frees = ref 0 in
+  let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let allocator = Device.Allocator.Pack {host with
+      free = (fun raw size spec -> incr frees; host.free raw size spec)} in
+  let[@inline never] abandon () =
+    let buffer = Device.Buffer.create ~device:"RETIRE_GC" ~size:1
+        ~dtype:D.uint8 allocator in
+    Device.Buffer.ensure_allocated buffer in
+  abandon ();
+  let error = Failure "queued retirement failed" in
+  let calls = ref 0 in
+  Storage.retire (fun () -> incr calls; raise error);
+  Gc.full_major ();
+  equal ~msg:"the unrelated buffer finalizer still frees its allocation" int 1 !frees;
+  equal ~msg:"GC cannot surface another retirement's failure" int 0 !calls;
+  raises error (fun () -> Storage.with_operation (fun () -> ()));
+  equal int 1 !calls;
+  Storage.with_operation (fun () -> ());
+  equal ~msg:"failed retirement is not retried" int 1 !calls
+
+let teardown_shares_device_ownership ~systhread ~automatic () =
+  let busy = Atomic.make false and overlap = Atomic.make false in
+  let frees = Atomic.make 0 in
+  let wait_ready, ready = registry_gate () and wait_busy, entered = registry_gate () in
+  let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let allocator = Device.Allocator.Pack {host with
+      free = (fun raw size spec ->
+        if Atomic.get busy then Atomic.set overlap true;
+        host.free raw size spec;
+        ignore (Atomic.fetch_and_add frees 1))} in
+  let dev = Device.make ~name:"CONCURRENT_TEARDOWN" ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:"TEST" [])
+      ~synchronize:(fun timeout -> ignore timeout)
+      ~runtime:(fun obj ->
+        ignore obj;
+        Device.{call = (fun bufs ~global ~local ~vals ~wait ~timeout ->
+            ignore (bufs, global, local, vals, wait, timeout);
+            Atomic.set busy true;
+            entered ();
+            (* Allow a competing teardown to enter on the broken implementation;
+               the owner guard instead blocks it until this callback returns. *)
+            let deadline = Unix.gettimeofday () +. 0.1 in
+            while Atomic.get frees = 0 && Unix.gettimeofday () < deadline do Thread.yield () done;
+            Atomic.set busy false;
+            None);
+          free = (fun () -> ()); handle = 0n}) () in
+  let join = registry_worker ~systhread (fun () ->
+      let buffer = ref (Some (Device.create_buffer ~size:1 ~dtype:D.uint8 dev)) in
+      Device.Buffer.ensure_allocated (Option.get !buffer);
+      ready (); wait_busy ();
+      if automatic then begin
+        buffer := None;
+        Gc.full_major (); Gc.full_major ()
+      end else Device.Buffer.deallocate (Option.get !buffer)) in
+  wait_ready ();
+  let obj = Tiny_elf.{lib = Bytes.empty; name = "ownership_probe";
+      target = Renderer.target (Device.renderer device); signature = [];
+      profile_key = None} in
+  let program = Device.runtime dev obj in
+  Fun.protect ~finally:(fun () -> entered (); join (); program.free ()) (fun () ->
+      ignore (program.call [||] ~global:[|1; 1; 1|] ~local:None ~vals:[||]
+        ~wait:false ~timeout:None));
+  is_false ~msg:"allocator teardown does not overlap native execution" (Atomic.get overlap);
+  equal ~msg:"storage retires exactly once" int 1 (Atomic.get frees)
 
 (* A failed free may already have changed native state. It must surface once
    and retain the owner without retrying an uncertain teardown. *)
@@ -969,7 +1130,17 @@ let () = run __FILE__ [ copy_from_tests;
   test "failed buffer finalizers are reported without retrying teardown" failed_finalizer_is_not_retried;
   test "buffer finalizers wait for device operations" finalizers_wait_for_device_operations;
   test "buffer finalizers wait for overlapping systhreads" finalizers_wait_for_overlapping_systhreads;
+  test "suspended device operations reject unrelated fibers" suspended_device_operation;
+  test "foreign retirement waits for the active native owner" foreign_retirement_waits_for_native_owner;
+  test "buffer finalizers preserve queued retirement error timing" finalizers_preserve_queued_retirement_errors;
+  test "cross-domain finalizers share device ownership"
+    (teardown_shares_device_ownership ~systhread:false ~automatic:true);
+  test "explicit domain teardown shares device ownership"
+    (teardown_shares_device_ownership ~systhread:false ~automatic:false);
+  test "explicit systhread teardown shares device ownership"
+    (teardown_shares_device_ownership ~systhread:true ~automatic:false);
   test "foreign access completion is captured, coalesced and retried" foreign_completion_dependencies;
+  test "same-name foreign completions retain separate owners" same_name_completion_owners;
   test "host storage owns zeroed pages suitable for GPU registration" (fun () ->
       List.iter (fun size ->
           let b = Device.create_buffer device ~size ~dtype:D.uint8

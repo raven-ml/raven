@@ -780,9 +780,10 @@ let obsolete_multi_owner_template () =
     (Stdlib.Weak.check program 0);
   ignore (Sys.opaque_identity (primary, replacement, linear))
 
-let submission_fixture device_name prepare invoke =
-  let allocator = Device.Allocator.Pack (Storage.Host_allocator.make
-      ~synchronize:(fun () -> ())) in
+let submission_fixture ?address device_name prepare invoke =
+  let raw = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let allocator = Device.Allocator.Pack (match address with
+      | None -> raw | Some addr -> {raw with addr = Some addr}) in
   let runtime object_ =
     ignore object_;
     Device.{call = (fun buffers ~global ~local ~vals ~wait ~timeout ->
@@ -863,6 +864,18 @@ let serialized_submission_tables ~independent () =
   equal (array int) [|1; 2|] reservations;
   ignore (Sys.opaque_identity (table, other_table))
 
+let submission_addresses_follow_preparation () =
+  let address = ref 0x1000n and observed = ref 0L in
+  let buffer, link = submission_fixture ~address:(fun raw -> ignore raw; !address)
+      "TEST:prepared-address"
+      (fun () -> address := 0x2000n)
+      (fun table -> observed := Bytes.get_int64_le (Device.Buffer.as_bytes table) 0) in
+  let table, replay = link () in
+  let input = buffer () in
+  replay input;
+  equal ~msg:"the table uses the binding resolved inside native ownership" int64 0x2000L !observed;
+  ignore (Sys.opaque_identity table)
+
 let submission_scope_reentry () =
   let inner_called = ref false in
   let inner_buffer, inner_link =
@@ -877,7 +890,7 @@ let submission_scope_reentry () =
         if !depth = 0 then begin
           incr depth;
           !recur ();
-          raises (Invalid_argument "queue replay: submission owner was not prepared")
+          raises (Invalid_argument "device operation: owner was not prepared")
             (fun () -> inner_replay input)
         end) in
   let table, replay = link () in
@@ -972,6 +985,7 @@ let () =
         (serialized_submission_tables ~independent:false);
       test "independent links serialize reservations on their shared device timeline"
         (serialized_submission_tables ~independent:true);
+      test "submission addresses are resolved after preparation" submission_addresses_follow_preparation;
       test "submission scope permits reentry and rejects unprepared owners before writes" submission_scope_reentry;
       test "failed preparation leaves the address table unchanged and releases ownership" failed_submission_prepare;
       test "retained queue replay rejects replaced device owners before writes" replaced_submission_owner;

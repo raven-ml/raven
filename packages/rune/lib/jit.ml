@@ -278,53 +278,27 @@ let account store sign =
   update_stats (fun s ->
       { s with resident_bytes = s.resident_bytes + (sign * store.s_nbytes) })
 
-(* Finalizers only record the store; buffers are released at the next safe point
-   (a read, a placement or a replay), not mid-GC inside arbitrary device
-   code. *)
-let pending_release : store list Atomic.t = Atomic.make []
-
-let rec enqueue_release store =
-  let pending = Atomic.get pending_release in
-  if not (Atomic.compare_and_set pending_release pending (store :: pending)) then
-    enqueue_release store
-
-let release_store s =
+(* Retirement uses the device operation queue, so callbacks cannot release
+   storage owned by another device while a native owner is held. *)
+let enqueue_release s =
   match s.s_bufs with
   | [] -> ()
   | bufs ->
-      s.s_bufs <- [];
-      account s (-1);
-      (* Deallocation returns each buffer to its device's LRU pool, where only
-         work queued after the kernels that use it can take it. A buffer that
-         bypasses the pool returns to the system, so the work that may still
-         read it is awaited first; tolk does so itself before it unmaps a
-         borrowed buffer from a device. Transient kernel-argument views can
-         outlive the call; freeing their base makes them stale. A failed
-         teardown keeps its detached owners alive without retrying uncertain
-         native frees. *)
-      Tolk.Device.Buffer.release (fun () ->
-          if List.exists (fun b -> (Tolk.Device.Buffer.spec b).nolru) bufs then
-            List.iter Tolk.Device.synchronize s.s_devices;
-          List.iter Tolk.Device.Buffer.deallocate bufs)
+      Tolk.Device.Buffer.retire (fun () ->
+          if s.s_bufs <> [] then begin
+            s.s_bufs <- [];
+            account s (-1);
+            (* Detach once before native teardown. Failed retirement retains the
+               captured buffers without retrying uncertain native frees. *)
+            if List.exists (fun b -> (Tolk.Device.Buffer.spec b).nolru) bufs then
+              List.iter Tolk.Device.synchronize s.s_devices;
+            List.iter Tolk.Device.Buffer.deallocate bufs
+          end)
 
-let drain_releases () =
-  let rec release = function
-    | [] -> ()
-    | store :: rest -> (
-        match release_store store with
-        | () -> release rest
-        | exception exn ->
-            let backtrace = Printexc.get_raw_backtrace () in
-            List.iter enqueue_release (List.rev rest);
-            Printexc.raise_with_backtrace exn backtrace)
-  in
-  release (Atomic.exchange pending_release [])
-
-(* A query is a safe point too: retiring the collected values first keeps
-   [resident_bytes] to the storage still reachable, instead of a figure that
-   depends on when the GC last ran. *)
+(* Queries drain collected values unless a native operation still owns them.
+   During a native callback, resident bytes include its deferred retirements. *)
 let stats () =
-  drain_releases ();
+  Tolk.Device.Buffer.with_operation (fun () -> ());
   Atomic.get transfer_stats
 
 (* The collection budget: device allocations since the last major collection,
@@ -353,7 +327,7 @@ let reserve_allocation n =
 
 let collect () =
   Gc.major ();
-  drain_releases ();
+  Tolk.Device.Buffer.with_operation (fun () -> ());
   (* Observe the new epoch without discarding reservations another caller
      already recorded after this collection. *)
   ignore (reserve_allocation 0)
@@ -3766,7 +3740,7 @@ let read_window : type a b.
 let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
  fun r ->
   Fun.protect ~finally:(fun () -> ignore (Sys.opaque_identity r)) @@ fun () ->
-  drain_releases ();
+  Tolk.Device.Buffer.with_operation (fun () -> ());
   match store_of r.r_cell with
   | None -> assert false (* nx reads held and consumed values itself *)
   | Some { s_bufs = []; _ } ->
@@ -3785,7 +3759,7 @@ let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
    has flushed its own cache by then); a second failure is the device's
    [Out_of_memory]. *)
 let allocate d buf =
-  drain_releases ();
+  Tolk.Device.Buffer.with_operation (fun () -> ());
   let n = Tolk.Device.Buffer.nbytes buf in
   if reserve_allocation n then begin
     collect ();
@@ -4004,7 +3978,7 @@ let borrow : type a b.
             ~dtype:(tolk_dtype dt) ~source:host base
         in
         made := buf :: !made;
-        ignore (Tolk.Device.Buffer.addr ~device:(Tolk.Device.name dev) buf);
+        ignore (Tolk.Device.Buffer.addr ~target:(Tolk.Device.allocator dev) buf);
         buf
       in
       match List.map2 wrap devs spans with
@@ -5304,9 +5278,9 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       List.iter (fun (cell, store) ->
           if Nx_effect.Cell.finish cell then Option.iter enqueue_release store)
         !exclusive;
-      drain_releases ())
+      Tolk.Device.Buffer.with_operation (fun () -> ()))
     (fun () ->
-  drain_releases ();
+  Tolk.Device.Buffer.with_operation (fun () -> ());
   let input_uops = Array.copy c.cp_input_uops in
   let context = Tolk.Realize.exec_context ~input_uops () in
   let supply node bufs =

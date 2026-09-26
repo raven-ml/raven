@@ -50,6 +50,7 @@ end
 
 module State = struct
   type t = {
+    operation_owner : Tolk_uop.Storage.Owner.t;
     name : string;
     device : int;
     context : nativeint;
@@ -75,6 +76,7 @@ module State = struct
       let queue = Ffi.hcq_create context in
       (try
          let state = {
+           operation_owner = Tolk_uop.Storage.Owner.create ();
            queue; closed = false; timeline = None; handles = None;
            functions = Hashtbl.create 16; function_lock = Mutex.create ();
            name = Device.canonicalize name; device = cu_device; context; arch;
@@ -95,13 +97,13 @@ module State = struct
 
   let timeline t = with_function_lock t (fun () -> t.timeline)
 
-  let synchronize t =
+  let synchronize t = Tolk_uop.Storage.Owner.run [t.operation_owner] (fun () ->
     if not t.closed then begin
       Ffi.ctx_set_current t.context;
       Ffi.hcq_synchronize t.queue
-    end
+    end)
 
-  let shutdown t =
+  let shutdown t = Tolk_uop.Storage.Owner.run [t.operation_owner] (fun () ->
     let retire = Mutex.protect t.function_lock (fun () ->
         if t.closed then false else begin t.closed <- true; true end) in
     if retire then begin
@@ -110,7 +112,7 @@ module State = struct
           Ffi.ctx_destroy t.context;
           Mutex.protect t.function_lock (fun () -> Hashtbl.clear t.functions))
         (fun () -> Ffi.hcq_destroy t.queue)
-    end
+    end)
 
   let find name = List.find_opt (fun state -> state.name = Device.canonicalize name) !devices
 
@@ -174,7 +176,7 @@ module Allocator = struct
         if raw.registered then Ffi.mem_host_unregister raw.address
       end
     in
-    Device.Allocator.{kind = buffer_kind;
+    Device.Allocator.{owner = state.State.operation_owner; kind = buffer_kind;
       host = (fun (buf : storage) -> if buf.host then Some buf.address else None);
       mapping = Some {map; unmap};
       synchronize = (fun () -> State.synchronize state);
@@ -190,8 +192,9 @@ module Queue = struct
   module U = Uop
   module B = Device.Buffer
 
-  let word value =
-    let allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let word state value =
+    let allocator = { (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
+        with owner = state.State.operation_owner } in
     let b = B.create ~device:"CPU" ~size:1 ~dtype:Dtype.uint64
         (Device.Allocator.Pack allocator) in
     let bytes = Bytes.create 8 in
@@ -204,14 +207,14 @@ module Queue = struct
     | Some {param = {allocation = Some ("cfunc", data); _}; _} ->
         let libs, symbol = (Marshal.from_string data 0 : string list * string) in
         if libs <> [] then invalid_arg "CUDA host helpers do not load libraries";
-        Some (word (Ffi.hcq_symbol symbol))
+        Some (word state (Ffi.hcq_symbol symbol))
     | Some {param = {allocation = Some ("cuda_context", _); _}; _} ->
         Some (State.with_function_lock state (fun () ->
             if state.State.closed then invalid_arg "CUDA device is closed";
             match state.State.handles with
             | Some buffer -> buffer
             | None ->
-                let buffer = word state.queue in
+                let buffer = word state state.queue in
                 state.handles <- Some buffer;
                 buffer))
     | Some {param = {allocation = Some ("cuda_function", data); _}; _} ->
@@ -225,7 +228,7 @@ module Queue = struct
                 Ffi.ctx_set_current state.State.context;
                 let module_ = Ffi.module_load (fst key) in
                 try
-                  let buffer = word (Ffi.module_function module_ object_.name) in
+                  let buffer = word state (Ffi.module_function module_ object_.name) in
                   Hashtbl.add state.State.functions key buffer;
                   buffer
                 with exn ->

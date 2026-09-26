@@ -172,6 +172,7 @@ let import_rollback_ownership ~fail_clear () =
   let frees = ref 0 in
   let source_kind = Type.Id.make () and target_kind = Type.Id.make () in
   let source_allocator : int Device.Allocator.t = {
+    owner = Tolk_uop.Storage.Owner.create ();
     kind = source_kind; host = Fun.const None; mapping = None;
     synchronize = (fun () -> ());
     alloc = (fun size spec -> ignore spec; equal int 0x2000 size; 0x800000);
@@ -180,7 +181,8 @@ let import_rollback_ownership ~fail_clear () =
     addr = Some Nativeint.of_int; offset = None;
   } in
   let target_allocator : int Device.Allocator.t = {
-    source_allocator with kind = target_kind;
+    source_allocator with
+    owner = Tolk_uop.Storage.Owner.create (); kind = target_kind;
     mapping = Some {
       map = (fun source ->
           let physical = Option.get (Device.Buffer.get source_kind source) in
@@ -200,7 +202,7 @@ let import_rollback_ownership ~fail_clear () =
     let source = Device.Buffer.create ~device:"IMPORT_SOURCE" ~size:0x2000
         ~dtype:Tolk_uop.Dtype.uint8 (Device.Allocator.Pack source_allocator) in
     Weak.set weak 0 (Some source);
-    (match Device.Buffer.get ~device:(Device.name device) target_kind source with
+    (match Device.Buffer.get ~target:(Device.allocator device) target_kind source with
      | _ -> fail "mapping flush must fail"
      | exception exn -> error := Some exn);
     let original = Option.get !error in

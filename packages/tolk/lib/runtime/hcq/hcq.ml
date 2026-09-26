@@ -445,7 +445,7 @@ let profile_offset name =
   let open Tolk in
   let open Tolk_uop in
   let module U = Uop in
-  let calibration = lazy (
+  let calibration = Lazy.Mutexed.from_fun (fun () ->
     let device = Device.get name in
     let stamp = Device.create_buffer ~size:2 ~dtype:Dtype.uint64
         ~spec:{Device.Buffer_spec.default with host = true; uncached = true; nolru = true} device in
@@ -467,7 +467,7 @@ let profile_offset name =
     let call = Hcq2.lower_call ~devices:[name] (U.sink ~kernel_info [bump]) in
     device, stamp, Realize.link_linear (U.linear [call])) in
   fun () -> Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.debug, 0)] (fun () ->
-    let device, stamp, linked = Lazy.force calibration in
+    let device, stamp, linked = Lazy.Mutexed.force calibration in
     let queue = Option.get (Device.queue device) in
     let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
     Profile.calibrate (fun () ->

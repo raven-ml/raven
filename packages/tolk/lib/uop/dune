@@ -3,7 +3,7 @@
 (library
  (name tolk_uop)
  (public_name tolk.uop)
- (libraries nx.dtype zarith)
+ (libraries nx.dtype zarith threads)
  (foreign_stubs
   (language c)
   (names tolk_storage_stubs)))

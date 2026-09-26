@@ -109,11 +109,9 @@ let independent_replays_keep_their_intermediates () =
     in
     { program with call }
   in
-  let allocator =
-    Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ())
-  in
+  let allocator = Tolk.Device.allocator base in
   ignore
-    (Tolk.Device.make ~name ~allocator:(Tolk.Device.Allocator.Pack allocator)
+    (Tolk.Device.make ~name ~allocator
        ~renderer_set:
          (Tolk.Device.Renderer_set.make ~device:name
             [ ("CLANG", fun _ -> renderer) ])
@@ -360,11 +358,9 @@ let reentrant_replays_have_one_owner name () =
         in
         { program with call }
       in
-      let allocator =
-        Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ())
-      in
+      let allocator = Tolk.Device.allocator base in
       ignore
-        (Tolk.Device.make ~name ~allocator:(Tolk.Device.Allocator.Pack allocator)
+        (Tolk.Device.make ~name ~allocator
            ~renderer_set:
              (Tolk.Device.Renderer_set.make ~device:name
                 [("CLANG", fun _ -> renderer)])
@@ -419,8 +415,8 @@ let with_cell_runtime ?(after = false) name f =
     { program with call }
   in
   let renderer = Tolk.Device.renderer base in
-  let allocator = Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
-  ignore (Tolk.Device.make ~name ~allocator:(Tolk.Device.Allocator.Pack allocator)
+  let allocator = Tolk.Device.allocator base in
+  ignore (Tolk.Device.make ~name ~allocator
       ~renderer_set:(Tolk.Device.Renderer_set.make ~device:name
           [ "CLANG", fun _ -> renderer ]) ~runtime ~synchronize:(fun _ -> ()) ());
   let device = Rune.device name in

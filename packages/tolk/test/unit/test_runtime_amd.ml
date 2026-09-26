@@ -487,7 +487,7 @@ let execute_queue ~copies ~dispatch_ptr ~scratch =
       let arena = Device.Buffer.as_bytes (get "kernargs") in
       equal int small (Bytes.get_int8 arena 8);
       equal int64 (Int64.of_int count) (Bytes.get_int64_le arena 16);
-      equal int64 (Int64.of_nativeint (Device.Buffer.addr ~device:(Device.name device)
+      equal int64 (Int64.of_nativeint (Device.Buffer.addr ~target:(Device.allocator device)
           inputs.(0))) (Bytes.get_int64_le arena 0);
       if dispatch_ptr then begin
         equal int 0x31502 (Int32.to_int (Bytes.get_int32_le arena 24));

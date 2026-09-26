@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Placed storage retires through the shared device-safe queue, preserving
+  allocation lifetimes during native callbacks and reporting failed retirement
+  at explicit safe points.
+
 - **Breaking:** `Rune.jit` and `Rune.jit'` take `?parallel` instead of
   `?beam_parallel`, controlling both independent kernel compilation and beam
   candidates through the shared `PARALLEL` setting.
@@ -697,6 +701,13 @@ thread.
   Metal by default) with live `munin watch` monitoring.
 
 ### Tolk (new)
+
+- Concurrent native allocation, submission and teardown share device ownership,
+  retaining original owners across device replacement. Pending waits and
+  replay addresses are validated under the same ownership scope.
+
+- **Breaking:** low-level buffer `get`, `addr` and `synchronize` select a
+  retained allocator with `?target` instead of resolving a `?device` name.
 
 - Hand-built partial `PROGRAM` graphs complete only their missing compilation
   stages, preserving supplied instructions, source and ABI metadata. Complete

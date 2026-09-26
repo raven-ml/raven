@@ -7,77 +7,6 @@
 
 exception Mapping_unavailable of string
 
-module Buffer_spec = struct
-  type t = {
-    uncached : bool;
-    cpu_access : bool;
-    host : bool;
-    nolru : bool;
-    external_ptr : nativeint option;
-  }
-
-  let default =
-    {
-      uncached = false;
-      cpu_access = false;
-      host = false;
-      nolru = false;
-      external_ptr = None;
-    }
-end
-
-type t = {
-  id : int;
-  device : string;
-  size : int;
-  dtype : Dtype.t;
-  spec : Buffer_spec.t;
-  allocator : allocator_pack Lazy.t;
-  mutable storage : allocation;
-  mutable base_storage : allocation;
-  mutable mappings : (allocator_pack * backing) list;
-  mutable mapping_error : (exn * Printexc.raw_backtrace) option;
-  base : t option;
-  offset : int;
-  allocated_views : int Atomic.t;
-  source : source;
-}
-
-and source = No_source | Source : 'a -> source
-
-and 'buf mapping = { map : t -> 'buf; unmap : 'buf -> unit }
-and 'buf allocator = {
-  host : 'buf -> nativeint option;
-  mapping : 'buf mapping option;
-  synchronize : unit -> unit;
-  kind : 'buf Type.Id.t;
-  alloc : int -> Buffer_spec.t -> 'buf;
-  free : 'buf -> int -> Buffer_spec.t -> unit;
-  addr : ('buf -> nativeint) option;
-  offset : ('buf -> int -> int -> 'buf) option;
-}
-and allocator_pack = Pack : 'buf allocator -> allocator_pack
-and backing = Backing : 'buf allocator * 'buf -> backing
-and allocation = Unallocated | Empty | Allocated of backing
-
-module Allocator = struct
-  type host_view =
-    (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-  type buffer = t
-  type nonrec 'buf mapping = 'buf mapping = { map : buffer -> 'buf; unmap : 'buf -> unit }
-  type 'buf t = 'buf allocator = {
-    host : 'buf -> nativeint option;
-    mapping : 'buf mapping option;
-    synchronize : unit -> unit;
-    kind : 'buf Type.Id.t;
-    alloc : int -> Buffer_spec.t -> 'buf;
-    free : 'buf -> int -> Buffer_spec.t -> unit;
-    addr : ('buf -> nativeint) option;
-    offset : ('buf -> int -> int -> 'buf) option;
-  }
-  type packed = allocator_pack = Pack : 'buf t -> packed
-end
-
 (* Finalizers can interrupt any OCaml allocation, including one between a
    reserved timeline value and its submission or inside a PCI allocator. Keep
    their entire teardown, including imported mappings, outside such operations.
@@ -125,13 +54,128 @@ let rec drain state =
       release_all (List.rev pending);
       drain state
 
-let with_operation f =
+let with_scope ~drain_pending f =
   let state = Domain.DLS.get operation in
   state.depth <- state.depth + 1;
   Fun.protect ~finally:(fun () -> state.depth <- state.depth - 1) (fun () ->
       let result = f () in
-      if state.depth = 1 then drain state;
+      if drain_pending && state.depth = 1 then drain state;
       result)
+
+let with_operation f = with_scope ~drain_pending:true f
+
+let retire action = push (Domain.DLS.get operation).pending action
+
+module Owner = struct
+  type t = { id : int; lock : Mutex.t; holder : int option Atomic.t }
+  let next_id = Atomic.make 0
+  let create () = {id = Atomic.fetch_and_add next_id 1; lock = Mutex.create ();
+    holder = Atomic.make None}
+  type _ Effect.t += Held : t list option Effect.t
+
+  let current () =
+    try Effect.perform Held with Effect.Unhandled Held -> None
+
+  let run owners f =
+    let owners = List.sort_uniq (fun a b -> Int.compare a.id b.id) owners in
+    match current () with
+    | Some held ->
+        if not (List.for_all (fun owner -> List.exists (( == ) owner) held) owners) then
+          invalid_arg "device operation: owner was not prepared";
+        f ()
+    | None ->
+        let rec acquire = function
+          | [] -> Effect.Deep.try_with f ()
+              {effc = (fun (type a) (request : a Effect.t) ->
+                  match request with
+                  | Held -> Some (fun (k : (a, _) Effect.Deep.continuation) ->
+                      Effect.Deep.continue k (Some owners))
+                  | _ -> None)}
+          | owner :: rest ->
+              let thread = Thread.id (Thread.self ()) in
+              if Atomic.get owner.holder = Some thread then
+                invalid_arg "device operation: owner is held by a suspended computation";
+              Mutex.protect owner.lock (fun () ->
+                  Atomic.set owner.holder (Some thread);
+                  Fun.protect ~finally:(fun () -> Atomic.set owner.holder None)
+                    (fun () -> acquire rest))
+        in
+        with_operation (fun () -> acquire owners)
+end
+
+module Buffer_spec = struct
+  type t = {
+    uncached : bool;
+    cpu_access : bool;
+    host : bool;
+    nolru : bool;
+    external_ptr : nativeint option;
+  }
+
+  let default =
+    {
+      uncached = false;
+      cpu_access = false;
+      host = false;
+      nolru = false;
+      external_ptr = None;
+    }
+end
+
+type t = {
+  id : int;
+  device : string;
+  size : int;
+  dtype : Dtype.t;
+  spec : Buffer_spec.t;
+  allocator : allocator_pack Lazy.Mutexed.t;
+  storage : allocation Atomic.t;
+  base_storage : allocation Atomic.t;
+  mappings : (allocator_pack * backing) list Atomic.t;
+  mutable mapping_error : (exn * Printexc.raw_backtrace) option;
+  base : t option;
+  offset : int;
+  allocated_views : int Atomic.t;
+  source : source;
+}
+
+and source = No_source | Source : 'a -> source
+
+and 'buf mapping = { map : t -> 'buf; unmap : 'buf -> unit }
+and 'buf allocator = {
+  owner : Owner.t;
+  host : 'buf -> nativeint option;
+  mapping : 'buf mapping option;
+  synchronize : unit -> unit;
+  kind : 'buf Type.Id.t;
+  alloc : int -> Buffer_spec.t -> 'buf;
+  free : 'buf -> int -> Buffer_spec.t -> unit;
+  addr : ('buf -> nativeint) option;
+  offset : ('buf -> int -> int -> 'buf) option;
+}
+and allocator_pack = Pack : 'buf allocator -> allocator_pack
+and backing = Backing : 'buf allocator * 'buf -> backing
+and allocation = Unallocated | Empty | Allocated of backing
+
+module Allocator = struct
+  type host_view =
+    (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  type buffer = t
+  type nonrec 'buf mapping = 'buf mapping = { map : buffer -> 'buf; unmap : 'buf -> unit }
+  type 'buf t = 'buf allocator = {
+    owner : Owner.t;
+    host : 'buf -> nativeint option;
+    mapping : 'buf mapping option;
+    synchronize : unit -> unit;
+    kind : 'buf Type.Id.t;
+    alloc : int -> Buffer_spec.t -> 'buf;
+    free : 'buf -> int -> Buffer_spec.t -> unit;
+    addr : ('buf -> nativeint) option;
+    offset : ('buf -> int -> int -> 'buf) option;
+  }
+  type packed = allocator_pack = Pack : 'buf t -> packed
+end
+
 
 let live_bytes = ref 0
 let live_bytes_per_device : (string, int) Hashtbl.t = Hashtbl.create 4
@@ -164,16 +208,34 @@ let size buf = buf.size
 let dtype buf = buf.dtype
 let spec buf = buf.spec
 let nbytes buf = buf.size * Dtype.itemsize buf.dtype
-let allocator buf = Lazy.force (base buf).allocator
+let allocator buf = Lazy.Mutexed.force (base buf).allocator
+
+let allocator_owner (Allocator.Pack alloc) = alloc.owner
+let rec with_buffers ?(owners = []) buffers f =
+  let roots = List.map base buffers |> List.sort_uniq (fun a b -> Int.compare a.id b.id) in
+  let snapshots = List.map (fun root -> root, allocator root, Atomic.get root.mappings) roots in
+  let participants = owners @ List.concat_map (fun (_, allocator, mappings) ->
+      allocator_owner allocator :: List.map (fun (target, _) -> allocator_owner target) mappings) snapshots in
+  match Owner.run participants (fun () ->
+      if List.for_all (fun (root, _, mappings) -> Atomic.get root.mappings == mappings) snapshots
+      then Some (f ()) else None) with
+  | Some result -> result
+  | None -> with_buffers ~owners buffers f
+
+let with_buffer ?target buf f =
+  let owners = Option.fold ~none:[] ~some:(fun target -> [allocator_owner target]) target in
+  with_buffers ~owners [buf] f
+
+let with_backing buf f = Owner.run [allocator_owner (allocator buf)] f
 
 let is_allocated buf =
-  match buf.storage with
+  match Atomic.get buf.storage with
   | Unallocated -> false
   | Empty -> true
   | Allocated _ ->
       match buf.base with
       | None -> true
-      | Some root -> buf.base_storage == root.storage
+      | Some root -> Atomic.get buf.base_storage == Atomic.get root.storage
 let allocated_views buf = Atomic.get (base buf).allocated_views
 
 type ownership = Owned | Borrowed
@@ -185,18 +247,18 @@ let counts_as_used buf =
   not (String.starts_with ~prefix:"DISK" buf.device) && ownership buf = Owned
 
 let rec allocate buf =
-  with_operation (fun () ->
+  with_operation (fun () -> with_backing buf (fun () ->
     if is_allocated buf then invalid_arg "buffer already allocated";
-    if nbytes buf = 0 then buf.storage <- Empty
+    if nbytes buf = 0 then Atomic.set buf.storage Empty
     else match buf.base with
     | None ->
         let Allocator.Pack alloc = allocator buf in
         let raw = alloc.alloc (nbytes buf) buf.spec in
-        buf.storage <- Allocated (Backing (alloc, raw));
+        Atomic.set buf.storage (Allocated (Backing (alloc, raw)));
         if counts_as_used buf then add_mem_used buf.device (nbytes buf)
     | Some root ->
         ensure_allocated root;
-        match root.storage with
+        match Atomic.get root.storage with
         | Allocated (Backing (alloc, raw)) ->
             let offset = match alloc.offset with
               | Some f -> f
@@ -204,44 +266,51 @@ let rec allocate buf =
             in
             let view = offset raw (nbytes buf) buf.offset in
             let storage = Allocated (Backing (alloc, view)) in
-            let first_allocation = buf.storage == Unallocated in
-            buf.storage <- storage;
-            buf.base_storage <- root.storage;
+            let first_allocation = Atomic.get buf.storage == Unallocated in
+            Atomic.set buf.storage storage;
+            Atomic.set buf.base_storage (Atomic.get root.storage);
             if first_allocation then
               ignore (Atomic.fetch_and_add root.allocated_views 1)
-        | Unallocated | Empty -> assert false)
+        | Unallocated | Empty -> assert false))
 
-and ensure_allocated buf = if not (is_allocated buf) then allocate buf
+and ensure_allocated buf = with_backing buf (fun () ->
+    if not (is_allocated buf) then allocate buf)
 
 let deallocate buf =
-  with_operation (fun () ->
-    match buf.base, buf.storage with
+  if Atomic.get buf.storage != Unallocated then
+  with_operation (fun () -> with_buffer buf (fun () ->
+    match buf.base, Atomic.get buf.storage with
     | _, Unallocated -> ()
-    | _, Empty -> buf.storage <- Unallocated
+    | _, Empty -> Atomic.set buf.storage Unallocated
     | None, Allocated (Backing (alloc, raw)) ->
         Option.iter (fun (error, backtrace) ->
             Printexc.raise_with_backtrace error backtrace) buf.mapping_error;
-        let rec unmap () = match buf.mappings with
+        let rec unmap () = match Atomic.get buf.mappings with
           | [] -> ()
           | (_, Backing (mapped_alloc, mapped)) :: rest ->
               mapped_alloc.synchronize ();
               (Option.get mapped_alloc.mapping).unmap mapped;
-              buf.mappings <- rest;
+              Atomic.set buf.mappings rest;
               unmap ()
         in
         unmap ();
         alloc.free raw (nbytes buf) buf.spec;
         if counts_as_used buf then add_mem_used buf.device (-nbytes buf);
-        buf.storage <- Unallocated
+        Atomic.set buf.storage Unallocated
     | Some root, Allocated _ ->
-        buf.storage <- Unallocated;
-        buf.base_storage <- Unallocated;
-        ignore (Atomic.fetch_and_add root.allocated_views (-1)))
+        Atomic.set buf.storage Unallocated;
+        Atomic.set buf.base_storage Unallocated;
+        ignore (Atomic.fetch_and_add root.allocated_views (-1))))
 
 let finalize buf =
-  let state = Domain.DLS.get operation in
-  push state.pending (fun () -> deallocate buf);
-  with_operation (fun () -> ())
+  if Atomic.get buf.storage != Unallocated then begin
+    let action () = deallocate buf in
+    if (Domain.DLS.get operation).depth > 0 then retire action
+    else
+      (* A GC callback may free this buffer, but queued logical retirements
+         report their errors only at an explicit operation safe point. *)
+      with_scope ~drain_pending:false (fun () -> release action)
+  end
 
 let checked_nbytes size dtype =
   let itemsize = Dtype.itemsize dtype in
@@ -255,15 +324,15 @@ let make ~device ~size ~dtype ?(spec = Buffer_spec.default) ?(source = No_source
   ignore (checked_nbytes size dtype : int);
   let buf = {
     id = fresh_id (); device; size; dtype; spec; allocator;
-    storage = Unallocated; base_storage = Unallocated;
-    mappings = []; mapping_error = None; base = None; offset = 0;
+    storage = Atomic.make Unallocated; base_storage = Atomic.make Unallocated;
+    mappings = Atomic.make []; mapping_error = None; base = None; offset = 0;
     allocated_views = Atomic.make 0; source;
   } in
   Gc.finalise finalize buf;
   buf
 
 let create ~device ~size ~dtype ?spec allocator =
-  make ~device ~size ~dtype ?spec (Lazy.from_val allocator)
+  make ~device ~size ~dtype ?spec (Lazy.Mutexed.from_fun (fun () -> allocator))
 
 let allocator_resolver = ref (fun device ->
     invalid_arg (Printf.sprintf "no allocator registered for %S" device))
@@ -271,7 +340,7 @@ let allocator_resolver = ref (fun device ->
 let install_allocator_resolver f = allocator_resolver := f
 
 let on_device ~device ~size ~dtype ?spec () =
-  make ~device ~size ~dtype ?spec (lazy (!allocator_resolver device))
+  make ~device ~size ~dtype ?spec (Lazy.Mutexed.from_fun (fun () -> !allocator_resolver device))
 
 (* The tinygrad counterpart, a buffer over [external_ptr] ([Tensor.from_blob]),
    leaves the memory's owner to the caller; a borrowed buffer keeps it, so the
@@ -282,7 +351,7 @@ let borrow ~size ~dtype ~source addr =
   let spec = { Buffer_spec.default with external_ptr = Some addr } in
   let buf =
     make ~device:"CPU" ~size ~dtype ~spec ~source:(Source source)
-      (lazy (!allocator_resolver "CPU"))
+      (Lazy.Mutexed.from_fun (fun () -> !allocator_resolver "CPU"))
   in
   ensure_allocated buf;
   buf
@@ -302,18 +371,18 @@ let synchronize_mappings ?except buf =
   let root = match buf.base with Some root -> root | None -> buf in
   List.iter (fun (target, Backing (alloc, _)) ->
       if not (Option.fold ~none:false ~some:(fun except -> target == except) except) then
-        alloc.synchronize ()) root.mappings
+        alloc.synchronize ()) (Atomic.get root.mappings)
 
 external host_view : nativeint -> int -> Allocator.host_view = "caml_tolk_host_view"
 
-let as_buffer buf =
-  if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
+let as_buffer buf = with_backing buf (fun () ->
+  if Atomic.get buf.storage == Unallocated then invalid_arg "buffer is not allocated";
   ensure_allocated buf;
-  match buf.storage with
+  match Atomic.get buf.storage with
   | Unallocated -> invalid_arg "buffer is not allocated"
   | Empty -> None
   | Allocated (Backing (alloc, raw)) ->
-      Option.map (fun addr -> host_view addr (nbytes buf)) (alloc.host raw)
+      Option.map (fun addr -> host_view addr (nbytes buf)) (alloc.host raw))
 
 let view buf ~size ~dtype ~offset =
   if offset < 0 then invalid_arg "buffer view offset must be non-negative";
@@ -326,29 +395,30 @@ let view buf ~size ~dtype ~offset =
     invalid_arg "buffer view exceeds base buffer";
   let v = {
     id = fresh_id (); device = root.device; size; dtype; spec = root.spec;
-    allocator = root.allocator; storage = Unallocated; base_storage = Unallocated;
-    mappings = []; mapping_error = None; base = Some root;
+    allocator = root.allocator; storage = Atomic.make Unallocated; base_storage = Atomic.make Unallocated;
+    mappings = Atomic.make []; mapping_error = None; base = Some root;
     offset = buf.offset + offset; allocated_views = Atomic.make 0;
     source = No_source;
   } in
   Gc.finalise finalize v;
   v
 
-let target_allocator device buf =
-  match device with None -> allocator buf | Some device -> !allocator_resolver device
+let target_allocator target buf =
+  match target with None -> allocator buf | Some target -> target
 
-let synchronize ?device buf =
+let synchronize ?target buf =
   with_operation (fun () ->
-    let target = target_allocator device buf in
+    let target = target_allocator target buf in
+    with_buffer ~target buf (fun () ->
     synchronize_mappings ~except:target buf;
     if target != allocator buf then begin
       let Allocator.Pack source = allocator buf in
       source.synchronize ()
-    end)
+    end))
 
 let rec mapped_backing target buf =
   ensure_allocated buf;
-  match buf.storage with
+  match Atomic.get buf.storage with
   | Empty -> None
   | Unallocated -> assert false
   | Allocated raw when target == allocator buf -> Some raw
@@ -363,7 +433,7 @@ let rec mapped_backing target buf =
                Some (Backing (alloc, offset raw (nbytes buf) buf.offset))
            | None -> assert false)
       | None ->
-          match List.find_opt (fun (key, _) -> key == target) buf.mappings with
+          match List.find_opt (fun (key, _) -> key == target) (Atomic.get buf.mappings) with
           | Some (_, raw) -> Some raw
           | None ->
               let Allocator.Pack alloc = target in
@@ -382,11 +452,11 @@ let rec mapped_backing target buf =
                     push failed_releases (fun () -> deallocate buf);
                     Printexc.raise_with_backtrace error backtrace in
               let raw = Backing (alloc, mapped) in
-              buf.mappings <- (target, raw) :: buf.mappings;
+              Atomic.set buf.mappings ((target, raw) :: Atomic.get buf.mappings);
               Some raw
 
 let find_mapping : type a. a Type.Id.t -> t -> a option = fun kind buf ->
-  with_operation (fun () ->
+  with_operation (fun () -> with_buffer buf (fun () ->
     let root = match buf.base with Some root -> root | None -> buf in
     let rec find : (allocator_pack * backing) list -> a option = function
       | [] -> None
@@ -399,12 +469,13 @@ let find_mapping : type a. a Type.Id.t -> t -> a option = fun kind buf ->
                 | Some offset -> Some (offset raw (nbytes buf) buf.offset)
                 | None -> invalid_arg "mapped allocator does not support views"
     in
-    find root.mappings)
+    find (Atomic.get root.mappings)))
 
-let get : type a. ?device:string -> a Type.Id.t -> t -> a option =
-  fun ?device kind buf ->
+let get : type a. ?target:Allocator.packed -> a Type.Id.t -> t -> a option =
+  fun ?target kind buf ->
   with_operation (fun () ->
-    let target = target_allocator device buf in
+    let target = target_allocator target buf in
+    with_buffer ~target buf (fun () ->
     let Allocator.Pack alloc = target in
     if Option.is_none (Type.Id.provably_equal kind alloc.kind) then
       invalid_arg "buffer storage belongs to a different backend";
@@ -413,25 +484,27 @@ let get : type a. ?device:string -> a Type.Id.t -> t -> a option =
         (match Type.Id.provably_equal kind alloc.kind with
          | Some Type.Equal -> Some (raw : a)
          | None -> assert false)
-    | None -> None)
+    | None -> None))
 
 let host_addr buf =
-  with_operation (fun () ->
+  with_operation (fun () -> with_buffer buf (fun () ->
     ensure_allocated buf;
     synchronize_mappings buf;
-    match buf.storage with
+    match Atomic.get buf.storage with
     | Allocated (Backing (alloc, raw)) -> alloc.synchronize (); alloc.host raw
     | Empty -> Some Nativeint.zero
-    | Unallocated -> assert false)
+    | Unallocated -> assert false))
 
-let addr ?device buf =
+let addr ?target buf =
   with_operation (fun () ->
-    match mapped_backing (target_allocator device buf) buf with
+    let target = target_allocator target buf in
+    with_buffer ~target buf (fun () ->
+    match mapped_backing target buf with
     | Some (Backing (alloc, raw)) ->
         (match alloc.addr with
          | Some addr -> addr raw
          | None -> invalid_arg "buffer storage has no native address")
-    | None -> Nativeint.zero)
+    | None -> Nativeint.zero))
 
 module Host_allocator = struct
   let kind : nativeint Type.Id.t = Type.Id.make ()
@@ -450,7 +523,7 @@ module Host_allocator = struct
     let map source = match host_addr source with
       | Some addr -> addr
       | None -> invalid_arg "buffer has no host mapping" in
-    Allocator.{ kind; synchronize; alloc; free;
+    Allocator.{ owner = Owner.create (); kind; synchronize; alloc; free;
       host = Option.some; addr = Some Fun.id; offset = Some offset;
       mapping = Some {map; unmap = ignore} }
 end
@@ -483,20 +556,24 @@ external host_copyout : nativeint -> bytes -> int -> int -> unit
 
 let copy_bytes ~upload buf bytes =
   with_operation (fun () ->
-    ensure_size buf bytes;
-    if buf.storage == Unallocated then invalid_arg "buffer is not allocated";
-    ensure_allocated buf;
-    synchronize_mappings buf;
-    match buf.storage with
-    | Unallocated -> assert false
-    | Empty -> ()
-    | Allocated (Backing (alloc, raw)) ->
-        let copy = if upload then host_copyin else host_copyout in
-        match alloc.host raw with
-        | Some address ->
-            alloc.synchronize ();
-            copy address bytes 0 (Bytes.length bytes)
-        | None ->
+    let copy = if upload then host_copyin else host_copyout in
+    let copied = with_buffer buf (fun () ->
+        ensure_size buf bytes;
+        if Atomic.get buf.storage == Unallocated then invalid_arg "buffer is not allocated";
+        ensure_allocated buf;
+        synchronize_mappings buf;
+        match Atomic.get buf.storage with
+        | Unallocated -> assert false
+        | Empty -> true
+        | Allocated (Backing (alloc, raw)) ->
+            match alloc.host raw with
+            | None -> false
+            | Some address ->
+                alloc.synchronize ();
+                copy address bytes 0 (Bytes.length bytes);
+                true) in
+    if not copied then begin
+      let Allocator.Pack alloc = allocator buf in
             (* Command storage is host mapped and takes the branch above.
                Only user storage needs a queued STORE, through staging owned
                by the same device so no foreign host import is required. *)
@@ -526,13 +603,13 @@ let copy_bytes ~upload buf bytes =
               if upload then copy address bytes (!offset * width) (size * width);
               if upload then copy_from ~dst:target ~src:chunk
               else copy_from ~dst:chunk ~src:target;
-              alloc.synchronize ();
+              with_buffer buf alloc.synchronize;
               if not upload then copy address bytes (!offset * width) (size * width);
               if chunk != staging then deallocate chunk;
               if target != buf then deallocate target;
               offset := !offset + size
             done;
-            deallocate staging)
+            deallocate staging end)
 
 let copyin buf bytes = copy_bytes ~upload:true buf bytes
 let copyout buf bytes = copy_bytes ~upload:false buf bytes

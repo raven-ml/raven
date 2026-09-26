@@ -27,13 +27,9 @@ module B = Tolk.Device.Buffer
 
 let transfers : (string * string, B.t) Hashtbl.t = Hashtbl.create 8
 
-let host_allocator () =
-  Tolk.Device.Allocator.Pack
-    (Tolk_uop.Storage.Host_allocator.make ~synchronize:ignore)
-
 let zero_buffer name size =
   let buffer =
-    B.create ~device:name ~size ~dtype:D.uint64 (host_allocator ())
+    B.create ~device:name ~size ~dtype:D.uint64 (Tolk.Device.allocator (Tolk.Device.get name))
   in
   B.ensure_allocated buffer;
   B.copyin buffer (Bytes.make (8 * size) '\000');
@@ -154,7 +150,7 @@ let create name =
     (* Synchronous host queues cannot wait for another queue in the same
        submission. Separate peer groups let HCQ preserve those dependencies
        between submissions instead. *)
-    Tolk.Device.make ~name ~peer_group:name ~allocator:(host_allocator ())
+    Tolk.Device.make ~name ~peer_group:name ~allocator:(Tolk.Device.allocator cpu)
       ~renderer_set ~runtime:(Tolk.Device.runtime cpu)
       ~synchronize:(fun timeout -> Tolk.Device.synchronize ?timeout cpu)
       ~queue ~bufferize ()

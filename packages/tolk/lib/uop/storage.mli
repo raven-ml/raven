@@ -31,6 +31,20 @@ module Buffer_spec : sig
        external_ptr = None}]. *)
 end
 
+module Owner : sig
+  type t
+  (** The type for exclusive native device ownership. *)
+
+  val create : unit -> t
+  (** [create ()] is a fresh owner shared by a device and its allocators. *)
+
+  val run : t list -> (unit -> 'a) -> 'a
+  (** [run owners f] calls [f ()] with [owners] held in a stable order.
+      Nested calls may use only owners already held; an additional owner
+      raises [Invalid_argument] before [f] runs. Unrelated suspended computations
+      on the same systhread also raise rather than blocking that thread. *)
+end
+
 (** {1:allocator Allocator} *)
 
 (** Backend allocator interface.
@@ -65,6 +79,8 @@ module Allocator : sig
   (** The type for a buffer's bytes seen from the host. *)
 
   type 'buf t = {
+    owner : Owner.t;
+        (** Native device owner, preserved by allocator wrappers. *)
     host : 'buf -> nativeint option;
         (** Host address of the allocation, if CPU-accessible. *)
     mapping : 'buf mapping option;
@@ -128,6 +144,11 @@ val borrow : size:int -> dtype:Dtype.t -> source:'a -> nativeint -> t
     memory outlives the buffer's allocation and every mapping of it into
     another device, which {!deallocate} releases after synchronizing that
     device. Size validation is {!create}'s. *)
+
+val with_buffers : ?owners:Owner.t list -> t list -> (unit -> 'a) -> 'a
+(** [with_buffers buffers f] calls [f ()] with the native owners of [buffers],
+    their imported mappings and additional [owners]. Imported mappings are
+    rechecked after acquisition, so [f] sees a complete owner set. *)
 
 val install_allocator_resolver : (string -> Allocator.packed) -> unit
 (** [install_allocator_resolver f] connects lazy buffers to the device registry.
@@ -198,17 +219,26 @@ val release : (unit -> unit) -> unit
     resources it owns are retained until process exit without automatic retry,
     and the original exception and backtrace are propagated. *)
 
+val retire : (unit -> unit) -> unit
+(** [retire action] queues [action ()] for the next successful outermost
+    {!with_operation} on the current domain. It never runs [action] itself.
+    Actions run once, outside native owner guards; a failing action and its
+    resources are retained without retry, and its original exception and
+    backtrace propagate from the draining operation. Buffer finalizers do not
+    drain this queue. *)
+
 val with_operation : (unit -> 'a) -> 'a
 (** [with_operation f] is [f ()], deferring buffer finalizers on the current
-    domain until the outermost operation returns. Deferred releases retain
+    domain until its last active operation returns. Deferred releases retain
     their buffers and use their allocators' normal synchronization. Storage
     operations already establish this scope; device runtimes also use it
     around setup, dispatch and submission.
 
     If [f] raises, pending releases wait for a later successful operation.
     A deferred release failure is propagated and its storage retained until
-    process exit, without retrying uncertain teardown. Calls on different
-    domains are not serialized. *)
+    process exit, without retrying uncertain teardown. This GC scope does not
+    serialize callers; storage and device operations separately acquire their
+    shared native {!Owner} guards. *)
 
 (** {1:allocation Allocation} *)
 
@@ -314,9 +344,9 @@ val find_mapping : 'a Type.Id.t -> t -> 'a option
     source owner retains imports and releases them in reverse creation order.
     Views preserve their byte offsets. The caller must retain [b]. *)
 
-val get : ?device:string -> 'a Type.Id.t -> t -> 'a option
-(** [get ?device kind b] initializes [b] and returns its backend buffer, or
-    [None] for empty storage. [device] defaults to [b]'s device. Another device
+val get : ?target:Allocator.packed -> 'a Type.Id.t -> t -> 'a option
+(** [get ?target kind b] initializes [b] and returns its backend buffer, or
+    [None] for empty storage. [target] defaults to [b]'s allocator. Another allocator
     maps the base allocation once, then derives byte-offset views from that
     mapping. Mappings are retained by the source owner and unmapped before it
     is freed. Binding an existing mapping does not wait for its users: direct
@@ -327,18 +357,18 @@ val get : ?device:string -> 'a Type.Id.t -> t -> 'a option
     identity or it cannot map [b]. The caller must retain [b] while using the
     returned backend buffer. *)
 
-val synchronize : ?device:string -> t -> unit
-(** [synchronize ?device b] waits for other importing devices and, when [device]
-    differs from [b]'s owner, for the owner as well. [device] defaults to [b]'s
-    device, whose own dispatch order must be preserved by the caller. Use this
+val synchronize : ?target:Allocator.packed -> t -> unit
+(** [synchronize ?target b] waits for other importing devices and, when [target]
+    differs from [b]'s allocator, for its device as well. [target] defaults to
+    [b]'s allocator, whose own dispatch order must be preserved by the caller. Use this
     before direct dispatch; compiled queue dependencies replace these waits. *)
 
 val host_addr : t -> nativeint option
 (** [host_addr b] initializes and synchronizes [b], then returns its host
     mapping, if any. The pointer is valid while [b] remains allocated. *)
 
-val addr : ?device:string -> t -> nativeint
-(** [addr ?device b] is the device address of [b], or [0n] for empty storage.
+val addr : ?target:Allocator.packed -> t -> nativeint
+(** [addr ?target b] is the device address of [b], or [0n] for empty storage.
     Initializes or maps [b] as {!get} does, without waiting on an existing
     mapping. Raises [Invalid_argument] for opaque storage. *)
 

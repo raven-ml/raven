@@ -12,7 +12,8 @@ let numbering () =
   let count = ref 0 and fail = ref false and freed = ref [] in
   let raw =
     {
-      Device.Allocator.alloc =
+      Device.Allocator.owner = Tolk_uop.Storage.Owner.create ();
+      alloc =
         (fun _ _ ->
           if !fail then begin
             fail := false;
@@ -40,7 +41,8 @@ let failing_numbering () =
   let cleanup_error = Failure "cached buffer retirement failed" in
   let raw =
     {
-      Device.Allocator.alloc =
+      Device.Allocator.owner = Tolk_uop.Storage.Owner.create ();
+      alloc =
         (fun _ _ ->
           if !fail_alloc then begin
             fail_alloc := false;

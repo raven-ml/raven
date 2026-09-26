@@ -160,9 +160,8 @@ type t = {
   bufferize : Uop.t -> Buffer.t option;
   program_buffers : Buffer.t Uop.Tbl.t;
   program_lock : Mutex.t;
-  synchronize_lock : Mutex.t;
   pending_lock : Mutex.t;
-  pending_accesses : (string, int option -> unit) Hashtbl.t;
+  pending_accesses : (int * Storage.Owner.t * (int option -> unit)) list Atomic.t;
   pending_timings : (int * int, pending_timing) Hashtbl.t;
   mutable profile_events : Profile.event list;
 }
@@ -225,20 +224,22 @@ let make ~name ~allocator ~renderer_set ?runtime ~synchronize
     ?invalidate_caches ?peer_group ?(shares_host_memory = false) ?queue
     ?(bufferize = fun _ -> None)
     ?(initialize = fun _ -> ()) () =
+  let Allocator.Pack raw_allocator = allocator in
+  let run f = Storage.Owner.run [raw_allocator.owner] f in
   let queue = Option.map (fun (q : queue) -> {q with
-      prepare = (fun () -> Storage.with_operation q.prepare);
+      prepare = (fun () -> run q.prepare);
       profile_offset = (fun () -> Storage.with_operation q.profile_offset);
       completion = (fun () ->
-        let wait = Storage.with_operation q.completion in
-        fun timeout -> Storage.with_operation (fun () -> wait timeout));
+        let wait = run q.completion in
+        fun timeout -> run (fun () -> wait timeout));
     }) queue in
   let peer_group = Option.value peer_group ~default:(List.hd (String.split_on_char ':' (canonicalize name))) in
   let device = { id = Atomic.fetch_and_add next_id 1;
     name; peer_group; shares_host_memory; allocator; renderer_set; runtime; synchronize;
     invalidate_caches_fn = invalidate_caches; queue; bufferize;
     program_buffers = Uop.Tbl.create 16; program_lock = Mutex.create ();
-    synchronize_lock = Mutex.create (); pending_lock = Mutex.create ();
-    pending_accesses = Hashtbl.create 0; pending_timings = Hashtbl.create 0;
+    pending_lock = Mutex.create ();
+    pending_accesses = Atomic.make []; pending_timings = Hashtbl.create 0;
     profile_events = [] } in
   let key = canonicalize name in
   with_initialization key (fun opening ->
@@ -271,6 +272,30 @@ let peer_group d = d.peer_group
    a mapped file's pages on a device whose memory is the host's. *)
 let shares_host_memory d = d.shares_host_memory
 let renderer d = Renderer_set.select d.renderer_set
+let allocator d = d.allocator
+let owner d = let Allocator.Pack allocator = d.allocator in allocator.owner
+
+let rec with_operation ?(buffers = []) devices f =
+  Storage.with_operation (fun () ->
+    let pending = List.map (fun device ->
+        let timings = Mutex.protect device.pending_lock (fun () ->
+            Hashtbl.to_seq device.pending_timings |> List.of_seq) in
+        device, Atomic.get device.pending_accesses, timings) devices in
+    let owners = List.concat_map (fun (device, accesses, _) ->
+        owner device :: List.map (fun (_, owner, _) -> owner) accesses) pending in
+    let guarded_buffers = buffers @ List.concat_map (fun (_, _, timings) ->
+        List.map (fun (_, timing) -> timing.buffer) timings) pending in
+    let unchanged (device, accesses, timings) =
+      Atomic.get device.pending_accesses == accesses &&
+      Mutex.protect device.pending_lock (fun () ->
+          Hashtbl.length device.pending_timings = List.length timings &&
+          List.for_all (fun (key, timing) -> match Hashtbl.find_opt device.pending_timings key with
+              | Some current -> current == timing | None -> false) timings) in
+    match Storage.with_buffers ~owners guarded_buffers (fun () ->
+        if List.for_all unchanged pending then Some (f ()) else None) with
+    | Some result -> result
+    | None -> with_operation ~buffers devices f)
+
 let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
   Storage.with_operation (fun () ->
     let nbufs = List.fold_left (fun n (a : Tolk_uop.Tiny_elf.argument) ->
@@ -288,15 +313,15 @@ let load_runtime ~ordered d (obj : Tolk_uop.Tiny_elf.t) =
     let prg = runtime obj in
     let name = obj.name in
     let call bufs ~global ~local ~vals ~wait ~timeout =
-      Storage.with_operation (fun () ->
+      with_operation ~buffers:(Array.to_list bufs) [d] (fun () ->
         if Array.length bufs <> nbufs || Array.length vals <> nvals then
           invalid_arg (Printf.sprintf
               "program %S: expected %d buffers and %d scalars, received %d and %d"
               name nbufs nvals (Array.length bufs) (Array.length vals));
-        if not ordered then Array.iter (Buffer.synchronize ~device:d.name) bufs;
+        if not ordered then Array.iter (Buffer.synchronize ~target:d.allocator) bufs;
         prg.call bufs ~global ~local ~vals ~wait ~timeout)
     in
-    { prg with call; free = (fun () -> Storage.with_operation prg.free) })
+    { prg with call; free = (fun () -> with_operation [d] prg.free) })
 
 let runtime d = load_runtime ~ordered:false d
 let queue_runtime d = load_runtime ~ordered:true d
@@ -307,50 +332,45 @@ let with_pending_lock d f =
     Fun.protect ~finally:(fun () -> Mutex.unlock d.pending_lock) f)
 
 let depend_on d source =
-  if d != source then begin
+  if d != source then with_operation [d; source] (fun () ->
     let queue = match source.queue with
       | Some queue -> queue
       | None -> invalid_arg "Device.depend_on: source has no queue" in
-    with_pending_lock d (fun () ->
-        Hashtbl.replace d.pending_accesses source.name (queue.completion ()))
-  end
+    let wait = queue.completion () in
+    let accesses = Atomic.get d.pending_accesses in
+    Atomic.set d.pending_accesses
+      ((source.id, owner source, wait) ::
+       List.filter (fun (id, _, _) -> id <> source.id) accesses))
 
 let record_timing d ~name ~queue ~buffer ~first ~last =
   if first < 0 || last < 0 || max first last >= Buffer.nbytes buffer / 8 then
     invalid_arg "Device.record_timing: timestamp outside storage";
   if Option.is_none d.queue then invalid_arg "Device.record_timing: device has no queue";
-  with_pending_lock d (fun () ->
+  with_operation ~buffers:[buffer] [d] (fun () -> with_pending_lock d (fun () ->
       Hashtbl.replace d.pending_timings (Buffer.id buffer, first)
-        {buffer; first; last; label = name; queue_name = queue})
+        {buffer; first; last; label = name; queue_name = queue}))
 
-let with_synchronize_lock d f =
-  Storage.with_operation (fun () -> Mutex.protect d.synchronize_lock f)
-
-let wait_dependencies d ~ordered = with_synchronize_lock d (fun () ->
-  let accesses = with_pending_lock d (fun () ->
-      let accesses = Hashtbl.to_seq d.pending_accesses |> List.of_seq
-        |> List.filter (fun (source, _) -> not (List.mem source ordered)) in
-      List.iter (fun (source, _) -> Hashtbl.remove d.pending_accesses source) accesses;
-      accesses) in
-  try List.iter (fun (_, wait) -> wait None) accesses
+let wait_dependencies d ~ordered = with_operation [d] (fun () ->
+  let accesses, retained = List.partition (fun (source, _, _) ->
+      not (List.exists (fun device -> device.id = source) ordered)) (Atomic.get d.pending_accesses) in
+  Atomic.set d.pending_accesses retained;
+  try List.iter (fun (_, _, wait) -> wait None) accesses
   with exn ->
     let backtrace = Printexc.get_raw_backtrace () in
-    with_pending_lock d (fun () ->
-        List.iter (fun (source, wait) ->
-            if not (Hashtbl.mem d.pending_accesses source) then
-              Hashtbl.add d.pending_accesses source wait) accesses);
+    let current = Atomic.get d.pending_accesses in
+    Atomic.set d.pending_accesses (current @ List.filter (fun (id, _, _) ->
+        not (List.exists (fun (existing, _, _) -> existing = id) current)) accesses);
     Printexc.raise_with_backtrace exn backtrace)
 
-let synchronize ?timeout d = with_synchronize_lock d (fun () ->
+let synchronize ?timeout d = with_operation [d] (fun () ->
   let pending, accesses = with_pending_lock d (fun () ->
       let pending = Hashtbl.to_seq_values d.pending_timings |> List.of_seq in
       Hashtbl.clear d.pending_timings;
-      let accesses = Hashtbl.to_seq d.pending_accesses |> List.of_seq in
-      Hashtbl.clear d.pending_accesses;
+      let accesses = Atomic.exchange d.pending_accesses [] in
       pending, accesses) in
   let events = try
     d.synchronize timeout;
-    List.iter (fun (_, wait) -> wait timeout) accesses;
+    List.iter (fun (_, _, wait) -> wait timeout) accesses;
     match pending with
     | [] -> []
     | _ ->
@@ -370,9 +390,9 @@ let synchronize ?timeout d = with_synchronize_lock d (fun () ->
   with exn ->
     let backtrace = Printexc.get_raw_backtrace () in
     with_pending_lock d (fun () ->
-      List.iter (fun (source, wait) ->
-          if not (Hashtbl.mem d.pending_accesses source) then
-            Hashtbl.add d.pending_accesses source wait) accesses;
+      let current = Atomic.get d.pending_accesses in
+      Atomic.set d.pending_accesses (current @ List.filter (fun (id, _, _) ->
+          not (List.exists (fun (existing, _, _) -> existing = id) current)) accesses);
       List.iter (fun entry ->
         let key = Buffer.id entry.buffer, entry.first in
         if not (Hashtbl.mem d.pending_timings key) then
@@ -393,15 +413,6 @@ let profile d =
         events)
 
 let queue d = d.queue
-let bufferize d u = Storage.with_operation (fun () ->
-    if Uop.node_tag u <> Some "program" then d.bufferize u
-    else Mutex.protect d.program_lock (fun () ->
-        match Uop.Tbl.find_opt d.program_buffers u with
-        | Some buffer -> Some buffer
-        | None ->
-            let buffer = d.bufferize u in
-            Option.iter (Uop.Tbl.add d.program_buffers u) buffer;
-            buffer))
 
 let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
   let module U = Tolk_uop.Uop in
@@ -426,7 +437,7 @@ let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
 
 let invalidate_caches d =
-  Option.map (fun invalidate () -> Storage.with_operation invalidate)
+  Option.map (fun invalidate () -> with_operation [d] invalidate)
     d.invalidate_caches_fn
 
 (* Device registry
@@ -485,6 +496,19 @@ let get device =
                 Printexc.raise_with_backtrace exn backtrace))
 
 let () = Storage.install_allocator_resolver (fun name -> (get name).allocator)
+
+let bufferize d u =
+  let devices = d :: (match d.queue with None -> [] | Some queue -> [get queue.host]) in
+  with_operation devices (fun () ->
+    if Uop.node_tag u <> Some "program" then d.bufferize u
+    else Mutex.protect d.program_lock (fun () ->
+        match Uop.Tbl.find_opt d.program_buffers u with
+        | Some buffer -> Some buffer
+        | None ->
+            let buffer = d.bufferize u in
+            Option.iter (Uop.Tbl.add d.program_buffers u) buffer;
+            buffer))
+
 
 module Multi_buffer = struct
   type t = { bufs : Buffer.t list }

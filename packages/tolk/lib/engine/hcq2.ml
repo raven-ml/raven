@@ -464,8 +464,8 @@ let stage_copies ~resolve linear =
     | Some {body; args = [dst; src]}, Some selected when U.op body = Ops.Store ->
         let target = resolve dst and source = resolve src in
         let mapped = try
-          ignore (B.addr ~device:selected.device target : nativeint);
-          ignore (B.addr ~device:selected.device source : nativeint);
+          ignore (B.addr ~target:(Device.allocator (Device.get selected.device)) target : nativeint);
+          ignore (B.addr ~target:(Device.allocator (Device.get selected.device)) source : nativeint);
           true
         with Storage.Mapping_unavailable _ -> false in
         if mapped || B.base_id target = B.base_id source then [call] else begin
@@ -485,7 +485,7 @@ let stage_copies ~resolve linear =
           (* All queued legs must be able to import the staging allocation.
              Otherwise retain the ordinary bounded host-copy fallback. *)
           List.iter (fun call -> Option.iter (fun selected ->
-              ignore (B.addr ~device:selected.device buffer : nativeint)) (enqueue call)) calls;
+              ignore (B.addr ~target:(Device.allocator (Device.get selected.device)) buffer : nativeint)) (enqueue call)) calls;
           changed := true;
           calls
         end

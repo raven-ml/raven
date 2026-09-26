@@ -22,8 +22,11 @@ let fixture suffix =
     let jobs = List.rev !pending in
     pending := [];
     List.iter (fun run -> run ()) jobs in
-  let host = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
+  let Device.Allocator.Pack cpu_allocator = Device.allocator cpu in
+  let host = { (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
+      with owner = cpu_allocator.owner } in
   let allocator = Device.Allocator.Pack Device.Allocator.{
+    owner = host.owner;
     kind = Type.Id.make ();
     alloc = (fun size spec ->
       let staging = spec.Device.Buffer_spec.host && spec.cpu_access && spec.nolru in

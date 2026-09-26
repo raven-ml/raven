@@ -454,7 +454,7 @@ let with_fake_sysfs devices f =
 
 let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(profile = false)
     ?lib ?global_size ?(local_size = [U.Launch_int 1]) ?image_address ?allocator
-    ?(synchronize = fun () -> ())
+    ?(synchronize = fun _ -> ())
     ~compute_class ~copies m =
   let open Tolk in
   let open Tolk_uop in
@@ -499,7 +499,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(pro
             Option.value (Hashtbl.find_opt image_addresses address) ~default:address)} in
   let renderer_set = Device.Renderer_set.make ~device:device_name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
-  let buffers = Hashtbl.create 16 in
+  let buffers = Hashtbl.create 16 and native_buffers = Hashtbl.create 16 in
   let bufferize u = match U.as_param u with
     | Some {param = {allocation = Some ("hcq_submission", _); _}; _} ->
         Some (Submission.buffer submission)
@@ -518,7 +518,11 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(pro
      | _ -> ());
     if U.node_tag u = Some "program" then
       Device.Buffer.copyin buffer (Bytes.make (Device.Buffer.nbytes buffer) '\255');
-    Option.iter (fun tag -> Hashtbl.add buffers tag buffer) (U.node_tag u);
+    Option.iter (fun tag ->
+        Hashtbl.add buffers tag buffer;
+        Hashtbl.replace native_buffers tag
+          (Mmio.make ~addr:(Device.Buffer.addr buffer) ~size:(Device.Buffer.nbytes buffer)))
+      (U.node_tag u);
     if U.node_tag u = Some "timeline" then begin
       let address = Device.Buffer.addr buffer in
       let view = Mmio.make ~addr:address ~size:16 in
@@ -537,7 +541,7 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(pro
      | _ -> ());
     Some buffer in
   let device = Device.make ~name:device_name ~allocator ~renderer_set
-      ~synchronize:(fun timeout -> ignore timeout; Submission.check submission; synchronize ()) ~queue ~bufferize () in
+      ~synchronize:(fun timeout -> ignore timeout; Submission.check submission; synchronize native_buffers) ~queue ~bufferize () in
   let calls = if copies then [U.store_call ~dst:(parameter 0) ~src:(parameter 1);
       call; U.store_call ~dst:(parameter 2) ~src:(parameter 0)]
     else if chain then begin
@@ -698,31 +702,27 @@ let shared_calibration m =
     if Some raw = !stamp then incr frees;
     base.free raw size spec in
   let allocator = Device.Allocator.Pack {base with alloc; free} in
-  let buffers = ref None and waits = ref 0 and fail_wait = ref false in
+  let waits = ref 0 and fail_wait = ref false in
   let collecting = ref false in
-  let synchronize () =
+  let synchronize buffers =
     if not !collecting then begin
     equal int 0 (Helpers.Context_var.get Helpers.debug);
     incr waits;
-    let get tag = Device.Buffer.as_bytes (Hashtbl.find (Option.get !buffers) tag) in
+    let get tag = Hashtbl.find buffers tag in
     let timeline = get "timeline" in
-    equal int64 (Int64.of_int !waits) (Bytes.get_int64_le timeline 8);
+    equal int64 (Int64.of_int !waits) (Mmio.read64 timeline 8);
     let commands = get "cmdbuf_compute" in
-    equal int64 (Int64.of_nativeint (Option.get !stamp)) (Bytes.get_int64_le commands 28);
+    equal int64 (Int64.of_nativeint (Option.get !stamp)) (Mmio.read64 commands 28);
     if !fail_wait then failwith "calibration wait failed";
     let stamp_view = Mmio.make ~addr:(Option.get !stamp) ~size:16 in
     Mmio.write64 stamp_view 8 1234000L;
-    Bytes.set_int64_le timeline 0 (Int64.of_int !waits);
-    Device.Buffer.copyin (Hashtbl.find (Option.get !buffers) "timeline") timeline;
-    let progress = get "progress_compute" in
-    Bytes.set_int32_le progress 8 (Int32.of_int !waits);
-    Device.Buffer.copyin (Hashtbl.find (Option.get !buffers) "progress_compute") progress
+    Mmio.write64 timeline 0 (Int64.of_int !waits);
+    Mmio.write32 (get "progress_compute") 8 (Int32.of_int !waits)
     end in
   let calibration = Tolk_hcq.Hcq.profile_offset "NV:queue-compilation" in
   equal int 0 !allocations;
-  let _, device, _, slots, _ = queue_fixture ~allocator ~synchronize
+  let _, device, _, _, _ = queue_fixture ~allocator ~synchronize
       ~compute_class:Defs.ada_compute_a ~copies:false m in
-  buffers := Some slots;
   Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.debug, 2)] (fun () ->
       for round = 1 to 2 do
         let before = Unix.gettimeofday () *. 1e6 -. 1234. in
@@ -1339,7 +1339,8 @@ let () =
                   let check () = if !faulted then raise error in
                   let allocator, allocs, frees, _, attempts = slm_allocator ~synchronize:check () in
                   let _, device, _, _, _ = queue_fixture ~allocator
-                      ~synchronize:(fun () ->
+                      ~synchronize:(fun buffers ->
+                        ignore buffers;
                         if !fail_wait then faulted := true;
                         check ())
                       ~compute_class:Defs.ada_compute_a ~copies:false m in
