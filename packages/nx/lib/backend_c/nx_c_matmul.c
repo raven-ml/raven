@@ -1241,12 +1241,13 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   x.n_jc = 0;
   x.n_ic = 0;
 
-  /* A single row or column takes the dot's arithmetic on every platform,
-     ahead of Accelerate: a 1x1 output by splitting its contraction, a row by
-     tiles of outputs. A column C = A b is the row C^T = b^T A^T: the row is b
-     along its rows, the matrix is A with its strides swapped, and the outputs
-     run down C. */
-  if (!force_direct && m == 1 && n == 1)
+  /* Few outputs, and a single row or column, take the dot's arithmetic on
+     every platform, ahead of Accelerate: a 1x1 output or a product whose
+     register tile would be at least half padding (and that is not tiny) by
+     splitting its contraction, a row by tiles of outputs. A column C = A b is
+     the row C^T = b^T A^T: the row is b along its rows, the matrix is A with
+     its strides swapped, and the outputs run down C. */
+  if (!force_direct && ((m == 1 && n == 1) || (few_outputs && !use_direct)))
     return mm_split_run(&x, nbatch, bytes, nthreads);
   if ((m == 1 || n == 1) && !force_direct) {
     if (m == 1) return mm_row_run(&x, nbatch, bytes, nthreads);
@@ -1283,11 +1284,6 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
 #else
   (void)allow_accel;
 #endif
-
-  /* A product whose register tile would be at least half padding, and that
-     is not tiny, splits its contraction. */
-  if (few_outputs && !use_direct)
-    return mm_split_run(&x, nbatch, bytes, nthreads);
 
   if (use_direct) {
     /* One job per batch matrix; a lone matrix runs on one thread (the fair direct

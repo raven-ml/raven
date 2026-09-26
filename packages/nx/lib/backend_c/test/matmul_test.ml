@@ -1171,7 +1171,9 @@ let test_row_path () =
 (* The direct loop and the split path sum every output as the dot of its row and
    column: the bits of each output equal its own 1x1 dot, for a tiny product
    (the direct loop), few outputs over two chunks (the split path) on the owned
-   policy, on one and four threads, and larger products forced direct. *)
+   policy, on one and four threads, and through the default route (mode -1,
+   where Accelerate could take a float32 product on macOS), and larger products
+   forced direct. *)
 let test_direct_is_dots () =
   List.iter
     (fun (m, k, n, mode) ->
@@ -1211,6 +1213,7 @@ let test_direct_is_dots () =
     [
       (3, 70001, 5, 0);
       (3, 70001, 5, 4);
+      (3, 70001, 5, -1);
       (2, 300, 2, 1);
       (20, 300, 30, 2);
       (4, 70001, 3, 2);

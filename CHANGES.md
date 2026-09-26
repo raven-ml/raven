@@ -2009,6 +2009,9 @@ thread.
 
 ### Nx
 
+- On macOS, eager `float32` and `float64` `Nx.matmul` with few outputs no
+  longer goes to Accelerate: it is faster (2 x 300000 x 2 `float32`: 0.14 ms,
+  not 1.35) and each output has the bits of its row-column dot.
 - Eager `Nx.matmul` with few outputs over a long contraction splits the
   contraction across cores: 3 x 70001 x 5 at `bfloat16` takes 0.18 ms, not
   0.44.
