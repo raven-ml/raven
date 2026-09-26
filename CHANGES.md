@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix host calls to C runtime functions such as `memcpy` on Windows: the CPU
+  device looked them up in the executable alone, where POSIX searches every
+  loaded library, and failed with `link_symbol: undefined symbol memcpy`.
+
 - A CPU kernel that calls a symbol the process lacks fails naming it,
   `link_symbol: undefined symbol NAME`, where it said `link_symbol failed`.
 

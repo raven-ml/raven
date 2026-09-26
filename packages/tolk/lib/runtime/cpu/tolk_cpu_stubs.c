@@ -18,6 +18,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <tlhelp32.h>
 #else
 #include <pthread.h>
 #include <dlfcn.h>
@@ -217,7 +218,18 @@ CAMLprim value caml_tolk_cpu_jit_link_symbol(value v_libs, value v_sym) {
 
   if (addr == NULL) {
 #if defined(_WIN32)
-    addr = (void *)GetProcAddress(GetModuleHandle(NULL), sym);
+    /* The process's symbols are the exports of every module loaded in it, as
+       RTLD_DEFAULT searches them: memcpy is the C runtime DLL's, not the
+       executable's. */
+    HANDLE modules = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+    if (modules != INVALID_HANDLE_VALUE) {
+      MODULEENTRY32 module;
+      module.dwSize = sizeof(module);
+      for (BOOL more = Module32First(modules, &module); more && addr == NULL;
+           more = Module32Next(modules, &module))
+        addr = (void *)GetProcAddress(module.hModule, sym);
+      CloseHandle(modules);
+    }
 #else
     addr = dlsym(RTLD_DEFAULT, sym);
 #endif
