@@ -69,6 +69,13 @@ let () =
                 Defs.Uvm_map_external_allocation_params.gpuattributescount;
               equal (pair int int) (0x10, 4)
                 Defs.Uvm_gpu_mapping_attributes.gpumappingtype);
+          test "uvm unmap external request layout" (fun () ->
+              equal int 0x42 Defs.uvm_unmap_external;
+              equal int 0x28 Defs.Uvm_unmap_external_params.sizeof;
+              equal (pair int int) (0, 8) Defs.Uvm_unmap_external_params.base;
+              equal (pair int int) (8, 8) Defs.Uvm_unmap_external_params.length;
+              equal (pair int int) (0x10, 0x10) Defs.Uvm_unmap_external_params.gpuuuid;
+              equal (pair int int) (0x20, 4) Defs.Uvm_unmap_external_params.rmstatus);
           test "sm error states" (fun () ->
               (* NV83DE_CTRL_DEBUG_READ_ALL_SM_ERROR_STATES_PARAMS *)
               equal (pair int int) (0x12cc, 1)

@@ -44,7 +44,8 @@ with their rationale and validation; commit count is not an acceptance metric.
   and receiver-aperture rejection, including NV-to-AMD staged fallback on raw
   PCI hardware.
   Inject combined setup/cleanup failures in KFD/NVK: GPU map then driver free,
-  UVM/RM map then UVM range free, and successful range cleanup then RM free.
+  UVM/RM map then UVM range free, successful range cleanup then RM free,
+  and failed peer import then per-GPU unmap.
   Verify owned host mappings remain after failed retirement, borrowed sources
   are retained, and successful cleanup releases each owned mapping once.
   Establish generation-specific quiescence and claim retirement after failed

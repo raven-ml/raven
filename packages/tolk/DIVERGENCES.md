@@ -370,7 +370,9 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   page-table rollback retains backing storage and
   virtual reservations because the device may still address them. Failed import
   rollback also retains the source, blocks explicit deallocation and propagates
-  the original error; neither successful unrelated work nor GC authorizes retry.
+  the original error. KFD rolls back receiver mappings even when the mapping
+  ioctl fails at its final synchronization. NVK removes only the importing
+  GPU's mapping, preserving the source's shared UVM range; neither successful unrelated work nor GC authorizes retry.
   Failed PCI claims release their lock and acquired descriptors so they can
   be retried. Bootstrap failures release descriptors and per-device KFD
   events. KFD's process-wide event page remains cached; an ambiguous registration

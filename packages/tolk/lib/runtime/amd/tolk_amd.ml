@@ -1090,9 +1090,19 @@ module Kfd_iface = struct
 
   let map t b =
     let kfd, _ = scan () in
-    map_to_gpu ~kfd ~gpu_id:t.gpu_id b;
-    Hcq.Buffer.make ~va:(Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b)
-      ~meta:{ (Hcq.Buffer.meta b) with ownership = Imported } ()
+    let complete = ref false in
+    Fun.protect
+      ~finally:(fun () -> if not !complete then
+        (* A mapping may exist even when its final synchronization failed.
+           Failed rollback must retain its source through Storage's import path. *)
+        Kfd.unmap_memory_from_gpu kfd ~handle:(Hcq.Buffer.meta b).handle
+          ~gpu_ids:[| t.gpu_id |])
+      (fun () ->
+        map_to_gpu ~kfd ~gpu_id:t.gpu_id b;
+        let mapped = Hcq.Buffer.make ~va:(Hcq.Buffer.va b) ~size:(Hcq.Buffer.size b)
+            ~meta:{ (Hcq.Buffer.meta b) with ownership = Imported } () in
+        complete := true;
+        mapped)
 
   let map_storage t source =
     let module B = Tolk.Device.Buffer in

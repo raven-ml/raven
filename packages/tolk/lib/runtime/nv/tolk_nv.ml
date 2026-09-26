@@ -675,9 +675,22 @@ module Nvk_iface = struct
 
   let gpu_uvm_map st t ~va ~size ~mem_handle ?(create_range = true)
       ?(has_cpu_mapping = false) ?(ownership = Owned) () =
-    let created = ref false and complete = ref false in
+    let created = ref false and attempted = ref false and complete = ref false in
     Fun.protect
-      ~finally:(fun () -> if !created && not !complete then free_range st ~va ~size)
+      ~finally:(fun () ->
+        if not !complete then begin
+          if !created then free_range st ~va ~size
+          else if !attempted then begin
+            (* A failed mapping can leave PTE writes in flight. Remove only
+               this GPU's import; the shared range belongs to its source. *)
+            let module P = Defs.Uvm_unmap_external_params in
+            let b = Nv_tables.create_blob P.sizeof in
+            Nv_tables.set_field b P.base (Nativeint.to_int va);
+            Nv_tables.set_field b P.length size;
+            blit_bytes b ~off:(fst P.gpuuuid) t.gpu_uuid;
+            uvm st ~cmd:Defs.uvm_unmap_external ~rmstatus:P.rmstatus b
+          end
+        end)
       (fun () ->
         if create_range then begin
           let module C = Defs.Uvm_create_external_range_params in
@@ -710,6 +723,7 @@ module Nvk_iface = struct
           map_external_params ~rm_ctrl_fd:st.fd_ctl ~root:st.root ~va ~size
             ~mem_handle ~gpu_uuid:t.gpu_uuid
         in
+        attempted := true;
         uvm st ~cmd:Defs.uvm_map_external_allocation ~rmstatus:M.rmstatus mb;
         let buffer = Hcq.Buffer.make ~va ~size
           ?view:

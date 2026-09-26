@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- Failed KFD and NVK peer imports remove partially installed receiver mappings
+  before releasing their source. Failed cleanup retains the source because
+  the receiving GPU may still access it.
+
 - Symbolic and range optimization now use tinygrad's operand promotion when
   constructing arithmetic. Constant-base powers with integer exponents no
   longer truncate the logarithm used in their decomposition.

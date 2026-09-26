@@ -143,6 +143,7 @@ let uvm_unregister_gpu_vaspace = 0x1a
 let uvm_unregister_channel = 0x1c
 let uvm_create_external_range = 0x49
 let uvm_map_external_allocation = 0x21
+let uvm_unmap_external = 0x42
 let uvm_free = 0x22
 
 (* GR info query indexes. *)
@@ -463,6 +464,14 @@ module Uvm_map_external_allocation_params = struct
   let hclient = (0x2424, 4)
   let hmemory = (0x2428, 4)
   let rmstatus = (0x242c, 4)
+end
+
+module Uvm_unmap_external_params = struct
+  let sizeof = 0x28
+  let base = (0, 8)
+  let length = (8, 8)
+  let gpuuuid = (0x10, 0x10)
+  let rmstatus = (0x20, 4)
 end
 
 module Uvm_gpu_mapping_attributes = struct

@@ -360,7 +360,9 @@ module Kfd_iface : sig
   val map : t -> mem Hcq.Buffer.t -> mem Hcq.Buffer.t
   (** [map t buf] maps a region allocated through another interface
       into this GPU and is the region as visible to it (without a CPU
-      view). *)
+      view). Failed setup unmaps the receiver. If that cleanup also fails,
+      raises [Fun.Finally_raised]; [buf] must remain alive because the
+      receiver may still access it. *)
 
   (** {2:queues Queues} *)
 

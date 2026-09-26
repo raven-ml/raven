@@ -212,6 +212,7 @@ UVM_COMMANDS = [
     "UVM_UNREGISTER_CHANNEL",
     "UVM_CREATE_EXTERNAL_RANGE",
     "UVM_MAP_EXTERNAL_ALLOCATION",
+    "UVM_UNMAP_EXTERNAL",
     "UVM_FREE",
 ]
 
@@ -325,6 +326,8 @@ STRUCTS = [
     ("Uvm_map_external_allocation_params", "UVM_MAP_EXTERNAL_ALLOCATION_PARAMS",
      ["base", "length", "perGpuAttributes/array", "gpuAttributesCount",
       "rmCtrlFd", "hClient", "hMemory", "rmStatus"]),
+    ("Uvm_unmap_external_params", "UVM_UNMAP_EXTERNAL_PARAMS",
+     ["base", "length", "gpuUuid/region", "rmStatus"]),
     ("Uvm_gpu_mapping_attributes", "UvmGpuMappingAttributes",
      ["gpuUuid/region", "gpuMappingType"]),
 ]
