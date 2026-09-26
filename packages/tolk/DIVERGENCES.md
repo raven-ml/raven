@@ -456,8 +456,7 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
 - **CUDA submission calls ordinary C helpers instead of Python-callable driver
   objects.** Generated host code runs with the OCaml runtime released, so
   helpers retain the first submission failure for synchronization to report.
-  Consumers: compiled submission and JIT replay. Allocator-upload handoffs
-  remain transitional work in TODO. Coverage: driver-independent submission
+  Consumers: compiled submission and JIT replay. Coverage: driver-independent submission
   compilation and CUDA runtime replay/transfer cases (hardware acceptance is
   still open in TODO). Reconsider the helper boundary if a native driver
   binding can provide the same calling convention and failure lifetime.

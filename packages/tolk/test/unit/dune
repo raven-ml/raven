@@ -182,3 +182,11 @@
  (modules test_storage_copy)
  (package tolk)
  (libraries unix tolk tolk.uop tolk.cpu windtrap))
+
+(test
+ (name test_cuda_allocator)
+ (modules test_cuda_allocator)
+ (package tolk)
+ (enabled_if (<> %{os_type} Win32))
+ (libraries tolk tolk.uop tolk.cuda windtrap unix)
+ (deps cuda_allocator_fixture/libcuda.so))

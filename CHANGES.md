@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- CUDA cross-device copies use shared host staging for device-only storage.
+  Pinned imports retain their original allocation context across device
+  replacement, avoiding name-based peer-context lookup.
+
 - Concurrent native allocation, submission and teardown share device ownership,
   retaining original owners across device replacement. Pending waits and
   replay addresses are validated under the same ownership scope.

@@ -1,0 +1,5 @@
+(rule
+ (target libcuda.so)
+ (enabled_if (<> %{os_type} Win32))
+ (action
+  (run %{cc} -shared -fPIC -o %{target} %{dep:driver.c})))

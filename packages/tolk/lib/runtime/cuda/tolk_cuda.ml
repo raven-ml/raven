@@ -30,7 +30,6 @@ module Ffi = struct
 
   external mem_host_register : nativeint -> int -> int = "caml_tolk_cuda_mem_host_register"
   external mem_host_unregister : nativeint -> unit = "caml_tolk_cuda_mem_host_unregister"
-  external enable_peer : int -> int -> nativeint -> bool = "caml_tolk_cuda_enable_peer"
   external host_read : bytes -> nativeint -> unit = "caml_tolk_cuda_host_read"
   external module_load : string -> nativeint = "caml_tolk_cuda_module_load"
 
@@ -51,8 +50,6 @@ end
 module State = struct
   type t = {
     operation_owner : Tolk_uop.Storage.Owner.t;
-    name : string;
-    device : int;
     context : nativeint;
     queue : nativeint;
     mutable closed : bool;
@@ -61,12 +58,9 @@ module State = struct
     mutable timeline : Device.Buffer.t option;
     mutable handles : Device.Buffer.t option;
     arch : string;
-    peers : (nativeint, bool) Hashtbl.t;
   }
 
-  let devices : t list ref = ref []
-
-  let create name device_id =
+  let create device_id =
     Ffi.init ();
     let cu_device = Ffi.device_get device_id in
     let context = Ffi.ctx_create cu_device in
@@ -79,9 +73,7 @@ module State = struct
            operation_owner = Tolk_uop.Storage.Owner.create ();
            queue; closed = false; timeline = None; handles = None;
            functions = Hashtbl.create 16; function_lock = Mutex.create ();
-           name = Device.canonicalize name; device = cu_device; context; arch;
-           peers = Hashtbl.create 4 } in
-         devices := !devices @ [ state ];
+           context; arch } in
          state
        with exn ->
          let bt = Printexc.get_raw_backtrace () in
@@ -107,24 +99,12 @@ module State = struct
     let retire = Mutex.protect t.function_lock (fun () ->
         if t.closed then false else begin t.closed <- true; true end) in
     if retire then begin
-      devices := List.filter (fun d -> d != t) !devices;
       Fun.protect ~finally:(fun () ->
           Ffi.ctx_destroy t.context;
           Mutex.protect t.function_lock (fun () -> Hashtbl.clear t.functions))
         (fun () -> Ffi.hcq_destroy t.queue)
     end)
 
-  let find name = List.find_opt (fun state -> state.name = Device.canonicalize name) !devices
-
-  let enable_peer dst src =
-    if dst.context = src.context then true else
-    match Hashtbl.find_opt dst.peers src.context with
-    | Some supported -> supported
-    | None ->
-        Ffi.ctx_set_current dst.context;
-        let supported = Ffi.enable_peer dst.device src.device src.context in
-        Hashtbl.add dst.peers src.context supported;
-        supported
 end
 
 module Allocator = struct
@@ -154,11 +134,12 @@ module Allocator = struct
     in
     let map source =
       Ffi.ctx_set_current state.State.context;
-      match State.find (Device.Buffer.device source) with
-      | Some owner ->
+      let Device.Allocator.Pack source_allocator = Device.Buffer.allocator source in
+      match Type.Id.provably_equal source_allocator.kind buffer_kind with
+      | Some Type.Equal ->
           let raw = Option.get (Device.Buffer.get buffer_kind source) in
-          if not (raw.host || State.enable_peer state owner) then
-            raise (Tolk_uop.Storage.Mapping_unavailable "CUDA peer storage is not accessible");
+          if not raw.host then
+            raise (Tolk_uop.Storage.Mapping_unavailable "CUDA device storage requires host staging");
           {raw with registered = false}
       | None ->
           (match Device.Buffer.host_addr source with
@@ -289,7 +270,7 @@ let create name =
         | None -> invalid_arg (Printf.sprintf "invalid CUDA device %S" name))
     | None -> 0
   in
-  let state = State.create name device_id in
+  let state = State.create device_id in
   try
     let allocator = Allocator.create state in
     let renderer_set = Device.Renderer_set.make ~device:name ~arch:state.State.arch

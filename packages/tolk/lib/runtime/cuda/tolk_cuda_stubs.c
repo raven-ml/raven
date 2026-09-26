@@ -49,8 +49,6 @@ static CUresult (*p_cuMemHostAlloc)(void **, size_t, unsigned int);
 static CUresult (*p_cuMemFreeHost)(void *);
 static CUresult (*p_cuMemHostRegister)(void *, size_t, unsigned int);
 static CUresult (*p_cuMemHostUnregister)(void *);
-static CUresult (*p_cuDeviceCanAccessPeer)(int *, CUdevice, CUdevice);
-static CUresult (*p_cuCtxEnablePeerAccess)(CUcontext, unsigned int);
 static CUresult (*p_cuMemcpyAsync)(CUdeviceptr, CUdeviceptr, size_t, CUstream);
 static CUresult (*p_cuModuleLoadData)(CUmodule *, const void *);
 static CUresult (*p_cuModuleGetFunction)(CUfunction *, CUmodule, const char *);
@@ -106,8 +104,6 @@ static void load_cuda(void) {
   LOAD_CUDA(p_cuMemFreeHost, "cuMemFreeHost");
   LOAD_CUDA(p_cuMemHostRegister, "cuMemHostRegister_v2");
   LOAD_CUDA(p_cuMemHostUnregister, "cuMemHostUnregister");
-  LOAD_CUDA(p_cuDeviceCanAccessPeer, "cuDeviceCanAccessPeer");
-  LOAD_CUDA(p_cuCtxEnablePeerAccess, "cuCtxEnablePeerAccess");
   LOAD_CUDA(p_cuMemcpyAsync, "cuMemcpyAsync");
   LOAD_CUDA(p_cuModuleLoadData, "cuModuleLoadData");
   LOAD_CUDA(p_cuModuleGetFunction, "cuModuleGetFunction");
@@ -476,18 +472,6 @@ CAMLprim value caml_tolk_cuda_mem_host_unregister(value v_ptr) {
   CAMLparam1(v_ptr);
   cuda_check(p_cuMemHostUnregister((void *)Nativeint_val(v_ptr)));
   CAMLreturn(Val_unit);
-}
-
-CAMLprim value caml_tolk_cuda_enable_peer(value v_device, value v_peer,
-                                        value v_context) {
-  CAMLparam3(v_device, v_peer, v_context);
-  int supported = 0;
-  cuda_check(p_cuDeviceCanAccessPeer(&supported, Int_val(v_device), Int_val(v_peer)));
-  if (!supported) CAMLreturn(Val_false);
-  CUresult status = p_cuCtxEnablePeerAccess((CUcontext)Nativeint_val(v_context), 0);
-  if (status == 217 || status == 711 || status == 801) CAMLreturn(Val_false);
-  if (status != 704) cuda_check(status); /* already enabled */
-  CAMLreturn(Val_true);
 }
 
 CAMLprim value caml_tolk_cuda_host_read(value v_bytes, value v_host) {
