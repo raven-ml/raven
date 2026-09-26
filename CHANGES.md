@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- Range optimization preserves loop iteration counts after successive merges.
+  Splits and gated shrinking also update enclosing loop binders when the body
+  contains a nested sink, preventing duplicated or unclosed ranges.
+
 - Integer decomposition now promotes introduced operands consistently, including
   signed division corrections and shift counts. Exact comparison thresholds
   stay weak until proved, so an out-of-range threshold cannot become zero.

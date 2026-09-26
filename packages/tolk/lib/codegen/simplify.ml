@@ -140,17 +140,16 @@ let simplify_merge_adjacent u =
             List.filter_map (fun r1 ->
               if r0 == r1 then None else Some (r0, r1)) u_ended) u_ended
     in
-    let result = ref u in
-    List.iter (fun (r0, r1) ->
+    List.find_map (fun (r0, r1) ->
       if range_kind r0 = range_kind r1
          && List.for_all (fun rngs ->
               mem_phys r0 rngs = mem_phys r1 rngs) reduce_ranges
       then begin
-        let open U.O in
+        let open U.Promoting in
         let s0 = range_size r0 and s1 = range_size r1 in
         let merged = range_with_size r0 (s0 * s1) in
         let nidx =
-          U.substitute [ (r0, merged // s1); (r1, merged mod s1) ] !result
+          U.substitute [ (r0, merged // s1); (r1, merged mod s1) ] u
         in
         let nidx =
           U.graph_rewrite ~name:"check_merge"
@@ -161,15 +160,15 @@ let simplify_merge_adjacent u =
                ])
             nidx
         in
-        if count_divmod nidx <= count_divmod !result then result := nidx
-      end) pairs;
-    if !result == u then None else Some !result
+        if count_divmod nidx <= count_divmod u then Some nidx else None
+      end else None) pairs
 
 (* Simplify ranges *)
 
 (* Flush [ctx] by substituting each captured range with [sub k v], then
    simplify the result with the symbolic rewriter. *)
 let do_substitute ctx x ~sub =
+  if Option.is_none (U.as_kernel_info x) then None else
   let mappings =
     U.Ref_tbl.fold (fun k v acc ->
       match v with Some v -> (k, sub k v) :: acc | None -> acc) ctx []
@@ -313,7 +312,7 @@ let split_ranges_rule ctx node =
       None
   | Ops.Sink ->
       do_substitute ctx node ~sub:(fun r c ->
-        let open U.O in
+        let open U.Promoting in
         let outer_size = range_size r // c in
         let (outer, inner) = range_split r ~outer_size ~inner_size:c in
         (outer * c) + inner)

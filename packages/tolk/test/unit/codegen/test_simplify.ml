@@ -182,6 +182,14 @@ let flatten_range_tests =
 let split_ranges_tests =
   group "pm_split_ranges"
     [
+      test "nested sinks keep enclosing split binders consistent" (fun () ->
+          let r = loop_range ~axis:0 8 in
+          let body = U.sink [U.O.(r mod idx 2)] in
+          let root = wrap_sink [U.end_ ~value:body ~ranges:[r]] in
+          let result = flatten_range_all (Simplify.split_ranges root) in
+          equal (list int) [2; 4]
+            (List.sort compare (List.map range_size_int (find_ranges result)));
+          equal int 0 (List.length (U.ranges result)));
       test "splits Range(8) used with mod 2" (fun () ->
           let r = loop_range ~axis:0 8 in
           let open U.O in
@@ -236,6 +244,12 @@ let split_ranges_tests =
 let simplify_merge_tests =
   group "pm_simplify_ranges - merge adjacent"
     [
+      test "merging three loops preserves their iteration count" (fun () ->
+          let ranges = List.mapi (fun axis n -> loop_range ~axis n) [2; 3; 4] in
+          let body = U.end_ ~value:(f32 1.) ~ranges in
+          let result = Simplify.simplify_ranges (wrap_sink [body]) in
+          equal int 24 (List.fold_left (fun n r -> n * range_size_int r) 1
+            (find_ranges result)));
       test "merges adjacent ranges in End with same kind" (fun () ->
           (* Two adjacent Weak ranges with sizes 3 and 4. Expression uses
              r0*4 + r1, which is the canonical divmod pattern that merges
@@ -277,6 +291,13 @@ let range_shrink_tests =
     [
       (* Port of test_range_shrink_single_guard:
          Range(0..203) guarded by r < 4 everywhere -> shrink to 0..3 *)
+      test "nested sinks keep enclosing shrunk binders consistent" (fun () ->
+          let r = loop_range ~axis:0 8 in
+          let load = gated_load U.O.(r < idx 4) r in
+          let root = wrap_sink [U.end_ ~value:(U.sink [load]) ~ranges:[r]] in
+          let result = Simplify.simplify_ranges root in
+          equal (list int) [4] (List.map range_size_int (find_ranges result));
+          equal int 0 (List.length (U.ranges result)));
       test "shrinks range with single guard" (fun () ->
           let r = loop_range ~axis:0 204 in
           let open U.O in
