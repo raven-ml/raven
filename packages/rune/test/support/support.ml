@@ -782,13 +782,12 @@ let check_bitcast_matches_eager ?devices () =
     let int = Nx.dtype bits in
     let to_float x = Nx.bitcast float (Nx.transpose x) in
     let to_bits x = Nx.bitcast int (Nx.transpose x) in
-    let expected = Nx.to_array (Nx.transpose bits) in
-    equal ~msg:(name ^ " from bits") bool true
-      (Nx.to_array (Nx.bitcast int (Rune.jit' ?devices to_float bits))
-      = expected);
-    equal ~msg:(name ^ " to bits") bool true
-      (Nx.to_array (Rune.jit' ?devices to_bits (Nx.bitcast float bits))
-      = expected)
+    let ints x = Nx.to_array (Nx.cast Nx.int32 x) in
+    let expected = ints (Nx.transpose bits) in
+    equal ~msg:(name ^ " from bits") (array int32) expected
+      (ints (Nx.bitcast int (Rune.jit' ?devices to_float bits)));
+    equal ~msg:(name ^ " to bits") (array int32) expected
+      (ints (Rune.jit' ?devices to_bits (Nx.bitcast float bits)))
   in
   check "float32"
     (Nx.create Nx.int32 [| 2; 5 |]
@@ -874,13 +873,13 @@ let check_concatenate_keeps_bits ?devices () =
         (Nx.init int [| 24; 24 |] (fun i ->
              pattern.(((24 * i.(0)) + i.(1)) mod Array.length pattern)))
     in
+    let ints x = Nx.to_array (Nx.cast Nx.int32 (Nx.bitcast int x)) in
     List.iter
       (fun axis ->
         equal
           ~msg:(Printf.sprintf "%s along axis %d" name axis)
-          bool true
-          (Nx.to_array (Nx.bitcast int (Rune.jit' ?devices (join axis) x))
-          = Nx.to_array (Nx.bitcast int x)))
+          (array int32) (ints x)
+          (ints (Rune.jit' ?devices (join axis) x)))
       [ 0; 1 ]
   in
   check "float32"
