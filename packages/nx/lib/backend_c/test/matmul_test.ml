@@ -869,8 +869,8 @@ let test_maintenance_paths () =
       (200, 3, 5);
     ];
 
-  (* Fewer rows than the register tile, or fewer columns, above the direct
-     cutoff: the blocked kernel's partial edge tiles. *)
+  (* Fewer rows than the register tile above the direct loop's bound, and fewer
+     columns: the blocked kernel's partial edge tiles. *)
   List.iter
     (fun (m, k, n) ->
       List.iter
@@ -881,7 +881,7 @@ let test_maintenance_paths () =
           test_real ~kind:Nx_dtype.bfloat16 ~name:"bf16-narrow" ~tol_rel:1e-2
             ~tol_abs:1e-2 ~m ~k ~n ~a_trans ~b_trans ~modes:[ `Prod; `St ] ())
         [ (false, false); (true, true) ])
-    [ (2, 300, 200); (7, 256, 100); (200, 300, 3); (5, 3000, 11) ];
+    [ (2, 4096, 1024); (7, 4096, 256); (200, 300, 3); (5, 100000, 11) ];
 
   (* offsets on all three operands *)
   test_real ~kind:Nx_dtype.float32 ~name:"f32" ~tol_rel:1e-3 ~tol_abs:1e-3 ~m:40
@@ -1169,11 +1169,11 @@ let test_row_path () =
     (column rows [| 1; n |] 4 = by_rows)
 
 (* The direct loop and the split path sum every output as the dot of its row and
-   column: the bits of each output equal its own 1x1 dot, for a tiny product
-   (the direct loop), few outputs over two chunks (the split path) on the owned
-   policy, on one and four threads, and through the default route (mode -1,
-   where Accelerate could take a float32 product on macOS), and larger products
-   forced direct. *)
+   column: the bits of each output equal its own 1x1 dot, for a product with
+   fewer rows than the register tile (the direct loop), few outputs (the split
+   path) over one and two chunks on the owned policy, on one and four threads,
+   and through the default route (mode -1, where Accelerate could take a float32
+   product on macOS), and larger products forced direct. *)
 let test_direct_is_dots () =
   List.iter
     (fun (m, k, n, mode) ->
@@ -1215,6 +1215,7 @@ let test_direct_is_dots () =
       (3, 70001, 5, 4);
       (3, 70001, 5, -1);
       (2, 300, 2, 1);
+      (4, 300, 64, 1);
       (20, 300, 30, 2);
       (4, 70001, 3, 2);
     ]

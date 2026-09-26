@@ -93,9 +93,18 @@
 #define MM_KC 512
 #define MM_KC_FULLK_MAX 2048
 
-/* Below this the pack setup does not pay: run the direct loop, one dot per
-   output, instead. Tuned by the test. */
+/* The linalg entry's serial GEMM (nx_c_gemm2d_ct) runs the direct loop below
+   this many multiply-adds, where the pack setup does not pay. */
 #define MM_DIRECT_CUTOFF (48 * 48 * 48)
+
+/* The driver runs the direct loop for a product with fewer rows than the
+   register tile, whose one row panel the blocked kernel would mostly pad,
+   while one thread beats the blocked kernel's threads: below this many
+   multiply-adds. With at least MR rows the blocked kernel wins at every size.
+   The bound is fitted, on an M1 Max, by the smallest worst-case loss over a
+   grid of shapes (see the commit that set it); it moves with the pool's
+   start-up cost, the core count and the two kernels' per-core rates. */
+#define MM_DIRECT_ROWS_MNK (5 << 20)
 
 /* The contraction chunk of every dot-shaped sum (the direct loop, the dot and
    row paths): each chunk is summed in nx_c.h's order, and the chunks are added
@@ -1202,8 +1211,8 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   if ((m > 1 && c_rs == 0) || (n > 1 && c_cs == 0))
     return NX_C_ERR_OUT_ALIASED; /* distinct C rows/cols would collide on one cell */
 
-  /* Tiny products take the direct loop. */
-  int use_direct = force_direct || ((int64_t)m * n * k < MM_DIRECT_CUTOFF);
+  int use_direct =
+      force_direct || (m < MR && (int64_t)m * n * k < MM_DIRECT_ROWS_MNK);
   int few_outputs = 2 * m * n < (int64_t)MR * NR;
 
   /* Rough total traffic, for the pool's lock-release decision (HEAVY threads
@@ -1242,12 +1251,12 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   x.n_ic = 0;
 
   /* Few outputs, and a single row or column, take the dot's arithmetic on
-     every platform, ahead of Accelerate: a 1x1 output or a product whose
-     register tile would be at least half padding (and that is not tiny) by
-     splitting its contraction, a row by tiles of outputs. A column C = A b is
-     the row C^T = b^T A^T: the row is b along its rows, the matrix is A with
-     its strides swapped, and the outputs run down C. */
-  if (!force_direct && ((m == 1 && n == 1) || (few_outputs && !use_direct)))
+     every platform, ahead of Accelerate: a product whose register tile would
+     be at least half padding (a 1x1 output among them) by splitting its
+     contraction, a row by tiles of outputs. A column C = A b is the row
+     C^T = b^T A^T: the row is b along its rows, the matrix is A with its
+     strides swapped, and the outputs run down C. */
+  if (!force_direct && few_outputs)
     return mm_split_run(&x, nbatch, bytes, nthreads);
   if ((m == 1 || n == 1) && !force_direct) {
     if (m == 1) return mm_row_run(&x, nbatch, bytes, nthreads);

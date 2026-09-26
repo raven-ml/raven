@@ -2009,6 +2009,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx.matmul` chooses its small-product loop by rows: fewer than 8 rows
+  up to about 5 million multiply-adds take it (4 x 4096 x 16 `bfloat16`: 28 us,
+  not 85), and everything else the blocked kernel (100 x 100 x 10: 10 us, not 27).
 - On macOS, eager `float32` and `float64` `Nx.matmul` with few outputs no
   longer goes to Accelerate: it is faster (2 x 300000 x 2 `float32`: 0.14 ms,
   not 1.35) and each output has the bits of its row-column dot.
