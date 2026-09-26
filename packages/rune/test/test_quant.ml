@@ -1041,12 +1041,20 @@ let test_forms () =
     (grouped "one route per expert");
   equal ~msg:"over two devices, the kernel on each" (list string) [ "kernel" ]
     (Hashtbl.find_all forms "sixteen routes over two devices");
-  (* Past the row bound; on Metal the rows are padded to the block kernel's
-     smallest tile, so that its pinned options apply. *)
-  equal ~msg:"a hundred rows decode, padded on Metal" (list string)
+  (* Past the row bound; where the block kernel has row tiles, on a Metal GPU
+     with tensor cores, the rows are padded to its smallest tile, so that its
+     pinned options apply. *)
+  let tiles =
+    metal
+    && Tolk.Renderer.tensor_cores
+         (Tolk.Device.renderer (Tolk.Device.get "METAL"))
+       <> []
+  in
+  equal ~msg:"a hundred rows decode, padded on Metal's tensor cores"
+    (list string)
     [
       Printf.sprintf "decoded, blocks of %d rows on the block kernel"
-        (if metal then 104 else 100);
+        (if tiles then 104 else 100);
     ]
     (Hashtbl.find_all forms "a hundred rows")
 
