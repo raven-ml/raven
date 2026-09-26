@@ -1012,7 +1012,11 @@ let test_forms () =
     Unix.create_process_env exe [| exe |] env Unix.stdin Unix.stdout err_write
   in
   Unix.close err_write;
-  let lines = String.split_on_char '\n' (drain err_read) in
+  (* On Windows the child's standard error is a text channel: its lines end
+     in "\r\n". *)
+  let lines =
+    List.map String.trim (String.split_on_char '\n' (drain err_read))
+  in
   (match Unix.waitpid [] pid with
   | _, Unix.WEXITED 0 -> ()
   | _ -> fail ("child failed:\n" ^ String.concat "\n" lines));
