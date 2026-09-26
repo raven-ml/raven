@@ -686,6 +686,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix CPU kernels with bfloat16 loads gated on data failing to load on x86-64
+  with `link_symbol failed`: the compiler rounds such a load's value through
+  `__truncsfbf2`, which the CPU device now provides.
+
 - A CPU kernel that calls a symbol the process lacks fails naming it,
   `link_symbol: undefined symbol NAME`, where it said `link_symbol failed`.
 

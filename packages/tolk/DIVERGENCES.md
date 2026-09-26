@@ -1238,3 +1238,19 @@ delete it rather than registering it.
   Metal and the CPU devices. Coverage: `test_runtime_metal` "Metal kernels map
   borrowed host memory without copying". Reconsider if the reference gains a
   Metal `_map`.
+
+- **The CPU loader links compiler builtins to its own copies**
+  (`runtime/cpu/tolk_cpu.ml` `builtin_sources`). The reference's loader
+  resolves an undefined symbol in named libraries only, and an object that
+  calls into compiler-rt fails to load. On x86-64 without AVX512-BF16, LLVM
+  rounds a bfloat16 value merged across a branch (a load gated on data whose
+  fallback is a constant) back from float32 with a call to `__truncsfbf2`,
+  though the rendered source converts nothing. tolk compiles that builtin
+  once with the kernels' compiler for the host, so its calling convention is
+  theirs on every host, Windows included, and rounds as the renderer's manual
+  cast does. Consumer: every CPU kernel on x86-64 with such a load, such as
+  rune's quantised products and bfloat16 gathers. Coverage: `test_runtime_cpu`
+  "a bfloat16 gated load keeps every bit" (the call appears on x86-64 only)
+  and "__truncsfbf2 links and rounds to nearest even" (every host). Reconsider
+  if the reference's loader gains builtins or the renderer stops emitting
+  such merges.

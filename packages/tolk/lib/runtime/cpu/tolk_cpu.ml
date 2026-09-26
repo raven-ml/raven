@@ -29,15 +29,54 @@ type loaded_program = {
   unloaded : bool Atomic.t;
 }
 
-let link_symbol ?(libs = []) name =
-  let libs = Array.of_list libs in
-  link_symbol_raw libs name
-
 let unload_program loaded =
   if Atomic.compare_and_set loaded.unloaded false true then
     exec_free loaded.base loaded.size
 
-let load_program ~name ~lib =
+(* Compiler builtins. No tinygrad counterpart: its loader fails the same way.
+
+   LLVM lowers what a target cannot do inline to calls into its builtins
+   library, and a loaded object has no copy of it. On x86-64 without
+   AVX512-BF16, a bfloat16 value merged across a branch, such as a gated load
+   whose fallback is a constant, is widened to float32 and rounded back by a
+   call to [__truncsfbf2], though the source converts nothing. Such a call
+   links to a copy compiled once by the kernels' compiler for this host, so
+   it follows their calling convention on every host. It rounds as the
+   renderer's manual cast does, so it gives back the bits a widened
+   bfloat16 came from, NaN payloads included. *)
+let builtin_sources =
+  [
+    ( "__truncsfbf2",
+      {|__bf16 __truncsfbf2(float x) {
+  union { float f; unsigned int u; } in = { x };
+  unsigned int b = in.u;
+  b = (-b & 0x7f800000u) ? b + ((b >> 16) & 1u) + 0x7fffu
+      : (b & 0xffffu) ? (b | 0x10000u) : b;
+  union { unsigned short u; __bf16 f; } out = { (unsigned short)(b >> 16) };
+  return out.f;
+}|} );
+  ]
+
+let builtins = Hashtbl.create 1
+let builtins_lock = Mutex.create ()
+
+let rec link_symbol ?(libs = []) name =
+  match List.assoc_opt name builtin_sources with
+  | Some src -> builtin name src
+  | None -> link_symbol_raw (Array.of_list libs) name
+
+and builtin name src =
+  Mutex.protect builtins_lock (fun () ->
+      match Hashtbl.find_opt builtins name with
+      | Some loaded -> loaded.entry
+      | None ->
+          let loaded =
+            load_program ~name ~lib:(Compiler_cpu.compile_clang src)
+          in
+          Hashtbl.add builtins name loaded;
+          loaded.entry)
+
+and load_program ~name ~lib =
   let prepared = Elf_cpu_loader.load ~link_symbol ~entry:name lib in
   let size = Elf_cpu_loader.alloc_size prepared in
   let base = exec_alloc size in

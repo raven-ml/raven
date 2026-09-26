@@ -741,6 +741,92 @@ let test_emulated_compact_float_storage () =
       equal ~msg:(Dtype.to_string dtype ^ " raw bitcast") string
         (Bytes.to_string (encode (bits @ [ 0 ]))) (Bytes.to_string (Device.Buffer.as_bytes bitcast))) cases
 
+(* A bfloat16 load gated on data, whose fallback is a constant. On x86-64
+   without AVX512-BF16 the compiler rounds the merged value back to bfloat16
+   with a call to __truncsfbf2, which the loader must link, and which must
+   give back every bit: NaNs with their payloads, a subnormal, both zeros. *)
+let test_bfloat16_gated_load_keeps_bits () =
+  let device = cpu "bfloat16-gated-load" in
+  let bits = [ 0x7f81; 0xffc3; 0x0001; 0x8000; 0x7f80; 0x3f80 ] in
+  let n = List.length bits and count = List.length bits + 2 in
+  let param slot dtype size =
+    U.param ~slot ~dtype ~shape:(U.const_int size) ~addrspace:Dtype.Global () in
+  let dst = param 0 Dtype.bfloat16 count and src = param 1 Dtype.bfloat16 n in
+  let flags = param 2 Dtype.int32 count in
+  let range = U.range ~size:(U.const_int count) ~axis:0 ~kind:Axis_type.Weak () in
+  let index ptr offset = U.index ~ptr ~idxs:[ offset ] () in
+  let cond = U.O.ne (U.load ~src:(index flags range) ()) (U.const (Const.int Dtype.int32 0)) in
+  let loaded = U.load ~src:(index src (U.valid ~src:range ~cond)) () in
+  let value = U.alu_ternary ~op:Ops.Where ~a:cond ~b:loaded
+      ~c:(U.const (Const.float Dtype.bfloat16 0.0)) in
+  let store = U.store ~dst:(index dst range) ~value () in
+  let sink = U.sink [ U.end_ ~value:store ~ranges:[ range ] ] in
+  let program = Codegen_lower.lower (Device.renderer device) sink
+      |> Linearizer.linearize in
+  let spec = Device.compile_program device ~name:"bfloat16_gated_load" program in
+  let allocate dtype size =
+    let buffer = Device.create_buffer ~size ~dtype device in
+    Device.Buffer.ensure_allocated buffer;
+    buffer in
+  let encode bits =
+    let bytes = Bytes.create (2 * List.length bits) in
+    List.iteri (fun i v -> Bytes.set_uint16_le bytes (2 * i) v) bits;
+    bytes in
+  let input = allocate Dtype.bfloat16 n and output = allocate Dtype.bfloat16 count in
+  let gates = create_i32_buffer device (List.init count (fun i -> if i < n then 1 else 0)) in
+  Device.Buffer.copyin input (encode bits);
+  run_spec device spec [ output; input; gates ];
+  let result = Device.Buffer.as_bytes output in
+  equal (list int) (bits @ [ 0; 0 ])
+    (List.init count (fun i -> Bytes.get_uint16_le result (2 * i)))
+
+(* A kernel that calls __truncsfbf2 links it on every host, and it rounds
+   float32 to bfloat16 to nearest, ties to even, keeping a NaN a NaN. *)
+let test_truncsfbf2_rounds () =
+  let device = cpu "truncsfbf2" in
+  let renderer = Device.renderer device in
+  let compiler = Option.get (Renderer.compiler renderer) in
+  let cases =
+    [ 0x3f800000, 0x3f80; 0x3f808000, 0x3f80; 0x3f818000, 0x3f82;
+      0x3f808001, 0x3f81; 0xbf80ffff, 0xbf81; 0x7f7fffff, 0x7f80;
+      0x7f800000, 0x7f80; 0xff800000, 0xff80; 0x7fc00001, 0x7fc1;
+      0x7f800001, 0x7f81; 0x00000001, 0x0000; 0x80000000, 0x8000 ] in
+  let count = List.length cases in
+  let param slot dtype =
+    U.param ~slot ~dtype ~shape:(U.const_int count) ~addrspace:Dtype.Global () in
+  let dst = param 0 Dtype.bfloat16 and src = param 1 Dtype.float32 in
+  let range = U.range ~size:(U.const (Const.int Dtype.int32 count)) ~axis:0
+      ~kind:Axis_type.Loop ~dtype:Dtype.int32 () in
+  let index ptr = U.index ~ptr ~idxs:[ range ] () in
+  let body = U.custom_function ~name:"round_bf16"
+      ~srcs:[ U.custom_inline ~fmt:"(unsigned long)&round_bf16" ~args:[]
+                ~dtype:Dtype.uint64 ] in
+  let info : U.call_info =
+    { grad_fxn = None; name = None; precompile = false;
+      precompile_backward = false; aux = None; dtype = Dtype.void } in
+  let call = U.call ~body ~args:[ U.load ~src:(index src) (); index dst ] ~info in
+  let sink = Linearizer.pm_add_control_flow
+      (U.sink [ U.end_ ~value:call ~ranges:[ range ] ]) in
+  let program = Linearizer.linearize sink in
+  let helper = "__bf16 __truncsfbf2(float);\n\
+                static void round_bf16(float x, __bf16 *out) { *out = __truncsfbf2(x); }" in
+  let name = "truncsfbf2_rounds" in
+  let source = helper ^ "\n" ^ Renderer.render renderer ~name program in
+  let lib = Compiler.compile compiler source in
+  let spec = Program_spec.of_program ~name ~src:source ~device:(Device.name device)
+      ~lib program in
+  let input = Device.create_buffer ~size:count ~dtype:Dtype.float32 device in
+  let output = Device.create_buffer ~size:count ~dtype:Dtype.bfloat16 device in
+  Device.Buffer.ensure_allocated input;
+  Device.Buffer.ensure_allocated output;
+  let bytes = Bytes.create (4 * count) in
+  List.iteri (fun i (f, _) -> Bytes.set_int32_le bytes (4 * i) (Int32.of_int f)) cases;
+  Device.Buffer.copyin input bytes;
+  run_spec device spec [ output; input ];
+  let result = Device.Buffer.as_bytes output in
+  equal (list int) (List.map snd cases)
+    (List.init count (fun i -> Bytes.get_uint16_le result (2 * i)))
+
 let test_emulated_fp8_raw_bitcasts () =
   let device = cpu "fp8-raw-bitcasts" in
   let expected = Bytes.init 256 Char.chr in
@@ -1153,6 +1239,8 @@ let main () =
             test_emulated_compact_float_storage;
           test "emulated FP8 loads preserve all normal values" test_emulated_fp8_loads;
           test "emulated FP8 raw bitcasts preserve all byte encodings" test_emulated_fp8_raw_bitcasts;
+          test "a bfloat16 gated load keeps every bit" test_bfloat16_gated_load_keeps_bits;
+          test "__truncsfbf2 links and rounds to nearest even" test_truncsfbf2_rounds;
           test "emulated long division preserves quotient and remainder"
             test_emulated_long_division;
           test "emulated long buffer arithmetic preserves both words" test_emulated_long_buffer_arithmetic;
