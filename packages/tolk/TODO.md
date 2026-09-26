@@ -78,8 +78,8 @@ acceptance requirement; skipped tests are not execution evidence.
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Validate large WMMA accumulator ordering at optimizer/expander boundaries,
-  including BF16/FNUZ across supported renderers. Port remaining slot allocation,
-  gating and WAR barriers while preserving symbolic extents.
+  including BF16/FNUZ across supported renderers. Audit remaining gating rules
+  while preserving symbolic extents.
   Canonicalize image coordinates across all producers and consumers,
   and render final constants.
 - Remove remaining parallel property reconstruction and silent guesses in

@@ -55,9 +55,76 @@ let has_invalid_const root =
 let global_ptr ?(slot = 0) () =
   U.param ~slot ~dtype:Dtype.float32 ~addrspace:Dtype.Global ()
 
+let shared_loop_barrier ~unbounded ~same_buffer ~already_barrier () =
+  let loop = if unbounded then U.loop ~axis:19 else
+      U.range ~size:(U.const_int 2) ~axis:19 ~kind:Axis_type.Loop () in
+  let local slot = U.alloc ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~addrspace:Dtype.Local () in
+  let shared = local 10 in
+  let input = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+  let output = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+  let index ptr = U.index ~ptr ~idxs:[U.const_int 0] () in
+  let write = U.store ~dst:(index (U.after ~src:shared ~deps:[loop]))
+      ~value:(U.load ~src:(index input) ()) () in
+  let read_from = if same_buffer then shared else local 11 in
+  let read = U.load ~src:(index (U.after ~src:read_from ~deps:[write])) () in
+  let body = U.store ~dst:(index output) ~value:read () in
+  let body = if already_barrier then U.barrier ~srcs:[body] () else body in
+  let condition = U.param ~slot:2 ~dtype:Dtype.bool ~addrspace:Dtype.Alu () in
+  let ending = if unbounded then U.backedge ~body ~loop ~cond:condition
+      else U.end_ ~value:body ~ranges:[loop] in
+  let lowered = Codegen_lower.lower (Cstyle.metal (Gpu_target.Apple 7))
+      (U.sink [ending]) in
+  let op = if unbounded then Ops.Backedge else Ops.End in
+  let endings = List.filter (fun node -> U.op node = op) (U.toposort lowered) in
+  equal int 1 (List.length endings);
+  let ending = List.hd endings in
+  equal bool (same_buffer || already_barrier)
+    (U.op (U.src ending).(0) = Ops.Barrier);
+  if unbounded then
+    is_true ~msg:"backedge retains its condition" (U.equal (U.src ending).(2) condition);
+  if same_buffer || already_barrier then begin
+    let barrier = (U.src ending).(0) in
+    equal ~msg:"loop barrier owns the body once" int 1 (Array.length (U.src barrier));
+    is_false ~msg:"an existing loop barrier is not wrapped again"
+      (U.op (U.src barrier).(0) = Ops.Barrier)
+  end
+
 let () =
   run "Codegen_lower"
     [
+      test "bounded shared loop finishes reads before the next write"
+        (shared_loop_barrier ~unbounded:false ~same_buffer:true ~already_barrier:false);
+      test "conditional shared loop finishes reads before the backedge"
+        (shared_loop_barrier ~unbounded:true ~same_buffer:true ~already_barrier:false);
+      test "conditional shared loop keeps independent buffers separate"
+        (shared_loop_barrier ~unbounded:true ~same_buffer:false ~already_barrier:false);
+      test "conditional shared loop retains its existing barrier"
+        (shared_loop_barrier ~unbounded:true ~same_buffer:true ~already_barrier:true);
+      test "accumulators and staged locals share slots after explicit storage" (fun () ->
+          let explicit = U.alloc ~slot:17 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+              ~addrspace:Dtype.Local () in
+          let index ptr i = U.index ~ptr ~idxs:[i] () in
+          let initialized = U.after ~src:explicit
+              ~deps:[U.store ~dst:(index explicit (U.const_int 0))
+                ~value:(U.const (Const.int Dtype.int32 3)) ()] in
+          let input = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in
+          let output = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+          let range = U.range ~size:(U.const_int 4) ~axis:0 ~kind:Axis_type.Reduce () in
+          let sum = U.reduce ~src:(U.load ~src:(index input range) ())
+              ~ranges:[range] ~op:Ops.Add in
+          let staged = U.stage ~src:sum ~ranges:[]
+              ~opts:{device = None; addrspace = Dtype.Local; removable = false} in
+          let value = U.O.(U.load ~src:staged () +
+              U.load ~src:(index initialized (U.const_int 0)) ()) in
+          let lowered = Codegen_lower.lower (Cstyle.metal (Gpu_target.Apple 7))
+              (U.sink [U.store ~dst:(index output (U.const_int 0)) ~value ()]) in
+          let slots = List.filter_map (fun node ->
+              if U.op node <> Ops.Alloc then None else
+              match U.Arg.as_param_arg (U.arg node) with
+              | Some p -> Some p.slot
+              | None -> None) (U.toposort lowered) |> List.sort Int.compare in
+          equal (list int) [17; 18; 19] slots);
       test "anonymous local storage survives lowering until linearization" (fun () ->
           let local = U.alloc ~slot:17 ~dtype:Dtype.float32 ~shape:(U.const_int 4)
               ~addrspace:Dtype.Local () in

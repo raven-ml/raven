@@ -1330,6 +1330,10 @@ val ranges : t -> t list
     {!Ops.Wmma}, {!Ops.Call}, {!Ops.Copy}) drop ended ranges from the
     propagated set. *)
 
+val ended_ranges : t -> t list
+(** [ended_ranges u] are the scopes closed by [u]. A backedge closes only
+    its loop header; ranges used by its condition remain live. *)
+
 val ranges_subset : t -> t -> bool
 (** [ranges_subset sub sup] is [true] iff every {!Ops.Range} in
     [ranges sub] also appears in [ranges sup]. *)

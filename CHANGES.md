@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- Conditional GPU loops now finish shared-memory reads before the next iteration
+  writes the same storage. Their backedge condition is preserved when inserting
+  the required workgroup barrier.
+
 - Range optimization preserves loop iteration counts after successive merges.
   Splits and gated shrinking also update enclosing loop binders when the body
   contains a nested sink, preventing duplicated or unclosed ranges.

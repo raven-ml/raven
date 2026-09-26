@@ -828,52 +828,46 @@ let range_repeats kind =
       false
 
 let add_war_barrier node =
-  match U.as_end node with
-  | None -> None
-  | Some { value; ranges } ->
-      let loops =
-        List.filter
-          (fun r ->
-            match U.as_range r with
-            | Some { kind; _ } -> range_repeats kind && Bound.lt (Bound.int 0) (U.vmax r)
-            | None -> false)
-          ranges
-      in
-      if loops = [] || U.op value = Ops.Barrier then None
-      else
-        let body = U.toposort value in
-        let stored_bufs =
-          List.filter_map
-            (fun x ->
-              if
-                is_local_store x
-                && List.exists
-                     (fun r -> List.exists (U.equal r) (U.ranges x))
-                     loops
-              then Some (U.buf_uop x)
-              else None)
-            body
-        in
-        let loads =
-          List.filter
-            (fun x ->
-              U.op x = Ops.Load
-              && List.exists
-                   (U.equal (U.buf_uop (U.src x).(0)))
-                   stored_bufs)
-            body
-        in
-        if loads = [] then None
-        else
-          Some
-            (U.end_ ~value:(U.barrier ~srcs:(value :: loads) ()) ~ranges)
+  let loops =
+    List.filter
+      (fun r ->
+        match U.as_range r with
+        | Some { kind; _ } ->
+            range_repeats kind
+            && (Dtype.equal (U.dtype r) Dtype.void || Bound.lt Bound.zero (U.vmax r))
+        | None -> false)
+      (U.ended_ranges node)
+  in
+  let value = (U.src node).(0) in
+  if loops = [] || U.op value = Ops.Barrier then None
+  else
+    let body = U.toposort value in
+    let stored_bufs =
+      List.filter_map
+        (fun x ->
+          if is_local_store x
+             && List.exists (fun r -> List.exists (U.equal r) (U.ranges x)) loops
+          then Some (U.buf_uop x)
+          else None)
+        body
+    in
+    if not (List.exists
+        (fun x -> U.op x = Ops.Load
+          && List.exists (U.equal (U.buf_uop (U.src x).(0))) stored_bufs)
+        body)
+    then None
+    else
+      let src = Array.copy (U.src node) in
+      src.(0) <- U.barrier ~srcs:[value] ();
+      Some (U.replace node ~src ())
 
 let pm_implicit_barriers =
   let open Upat in
   PM.make
     [
       op ~name:"after" Ops.After => (fun bs -> add_raw_barrier (bs $ "after"));
-      op ~name:"end" Ops.End => (fun bs -> add_war_barrier (bs $ "end"));
+      ops ~name:"end" [Ops.End; Ops.Backedge]
+        => (fun bs -> add_war_barrier (bs $ "end"));
     ]
 
 (* number params *)
