@@ -686,6 +686,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix host calls to C runtime functions such as `memcpy` on Windows: the CPU
+  device looked them up in the executable alone, where POSIX searches every
+  loaded library, and failed with `link_symbol: undefined symbol memcpy`.
+
 - Fix CPU kernels with bfloat16 loads gated on data failing to load on x86-64
   with `link_symbol failed`: the compiler rounds such a load's value through
   `__truncsfbf2`, which the CPU device now provides.
