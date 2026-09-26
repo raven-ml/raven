@@ -487,24 +487,30 @@ hugin's data preparation, kaun's `Metric`.
 | Source | `place p x` |
 |---|---|
 | already at `p` | `x` |
-| host memory or a mapped file, on a device that addresses host memory (Metal on Apple silicon, `CPU:k`) | the value's own storage, borrowed: nothing is copied and the view is kept |
-| host memory or a mapped file, on any other device | RFC 0003's chunked upload of the storage the view covers, and the view is kept; under a split placement each device reads only its own slice |
+| a mapped file, on a device whose memory is the host's (Metal on Apple silicon, `CPU:k`) | the file's pages, borrowed: nothing is copied and the view is kept |
+| any other host value, or a mapped file on any other device | RFC 0003's chunked upload of the storage the view covers, and the view is kept; under a split placement each device reads only its own slice |
 | a device of the same engine | the view's window, then tolk's `transfer` for each shard that changes device, or a host bounce where the allocator has none (the CPU device); a strided window bounces through the host in rune until stage 3 compiles a contiguous copy on its source device |
 | another engine | a host bounce, in chunks |
 | the host, from a device | a read of the whole value, gathering shards |
 
-Placement moves storage only when the destination cannot address it, and
-never reshapes it: a view placed anywhere is the same view over the placed
+Placement copies a mapped file only to a device whose memory is not the
+host's, and never reshapes storage: a view placed anywhere is the same view over the placed
 storage, so a transposed weight costs no copy on any device. The source is
 never released. An empty value is placed and allocates nothing. Placing a host
 value on the host returns it.
 
-Device storage is either owned, allocated by its engine, or borrowed, wrapping
-memory the engine did not allocate: a mapped file or host memory. Only owned
-storage is lent to an output, written in place or counted against the
-collection budget; the functions that do so take owned storage, so a borrowed
-buffer is never written by construction. Donating a value over borrowed
-storage consumes it and lends nothing. A value an engine uploads once per step
+Device storage is either owned, allocated by its engine, or borrowed, a
+mapped file's pages that the device addresses. Ownership is fixed when the
+storage is made and read from the buffer. Only owned storage is lent to an
+output, and so written in place, or counted against the collection budget:
+replay's one lending path takes owned storage only, and every other write
+targets storage the engine allocated for it. Donating a value over borrowed
+storage consumes it and lends nothing. Only mapped files are borrowed because
+what borrowing buys exists only for file-backed pages: the OS drops and
+re-reads them instead of compressing them, and no second resident copy holds
+bytes whose home is the disk. Anonymous host memory is compressed either way,
+and borrowing it would forfeit lending for states placed from the host and
+donated, such as cache pools (+8% on gpt-oss-20b's 512-token prefill). A value an engine uploads once per step
 and many programs read, such as a layer loop's index, is placed once per step;
 its buffer comes from the allocator cache like any other.
 
@@ -530,7 +536,7 @@ raises `Nx.Device.Out_of_memory`; a call that raises has consumed no donated
 input. The collection budget counts owned device storage allocated since the
 last major collection, eager results and per-step uploads included, 4 GiB by
 default; placing Llama 3.1 70B then runs about 35 collections. Borrowed
-storage keeps its source (the mapping or host buffer) reachable until the last
+storage keeps the file's mapping reachable until the last
 value over it is unreachable and the submissions that read it have completed,
 by Law 4.
 
@@ -762,8 +768,8 @@ value per tolk backend, shared by that backend's devices, so a placement over
 devices of two backends (`[METAL; CPU:1]`) raises by the rule that a
 placement's devices share one engine, with no check of its own; Metal, with
 one device, never enters a list of several. The engine moves split and
-replicated values shard by shard: borrowed storage on devices that address
-host memory, chunked uploads from the host elsewhere, a mapped file giving each
+replicated values shard by shard: mapped files borrowed on devices whose
+memory is the host's, chunked uploads from the host elsewhere, a mapped file giving each
 device only its window, tolk's transfer between devices of its
 backend (a host bounce on `CPU:k`), a chunked host bounce between backends
 written in tolk, and `Out_of_memory` naming the device that failed. It gains
@@ -889,10 +895,12 @@ then placed: a transient of one layer's experts, 3.4 GB for V4-Flash.
 3's engine. tolk: a Metal allocator mapping over a page-aligned host address
 (`newBufferWithBytesNoCopy`), filling the mapping seam CUDA, AMD and NV fill (a
 tolk divergence: the target copies the file into device memory, which holds
-the model twice and lets the OS compress the copy); `CPU:k` wraps host memory
-likewise. rune: device buffers carry owned or borrowed; placement borrows on
-devices that address host memory, reading each entry's pages once first so
-the device does not fault them in cold. Acceptance on the M1 Max, against a
+the model twice and lets the OS compress the copy); `CPU:k` addresses host memory
+directly. tolk: device buffers carry owned or borrowed, fixed at construction,
+and each device says whether its memory is the host's. rune: placement borrows
+mapped files on those devices, reading each entry's pages once first so the
+device does not fault them in cold; a value borrowed on one such device and
+placed on another still copies until a use needs otherwise. Acceptance on the M1 Max, against a
 baseline recorded on the same build: gpt-oss-20b keeps its 228 checks and
 greedy ids; decode median and 512-token prefill within 2%; anonymous weight
 memory below 1 GB (13.76 GB today); no compressor growth over a prompt call
@@ -948,12 +956,12 @@ through casts, the gpt-oss loader places `lm_head` contiguous and says why.
    capability errors raise at the operation; only execution failures may
    surface at the next use of an affected value. Prevents an API that changes
    when dispatch becomes asynchronous.
-8. **Placement moves storage only when the destination cannot address it, and
-   a view stays the same view.** Prevents weights held twice on devices that
+8. **Placement copies a mapped file only to a device whose memory is not the
+   host's, and a view stays the same view.** Prevents weights held twice on devices that
    share host memory, compressed copies of file pages, and a transpose costing
    a copy of the weight at load.
-9. **Storage is owned or borrowed, and only owned storage is written, lent or
-   counted.** Prevents a GPU write into a file's pages, which the OS drops
+9. **A value's storage is owned or borrowed, and only owned storage is lent,
+   written in place or counted.** Prevents a GPU write into a file's pages, which the OS drops
    silently on a read-only mapping, and a mapped model evicting owned
    allocations through the collection budget.
 

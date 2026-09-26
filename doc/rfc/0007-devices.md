@@ -197,9 +197,9 @@ and synchronises without one, and copies by DMA where it can; the host bounce
 
 **Memory.** Each device has one caching allocator, one budget and one
 `Out_of_memory`. A device buffer is owned, allocated by the allocator and
-counted against the budget, or borrowed, wrapping host memory or a mapped file
-that the device addresses, which is neither counted nor written nor lent (RFC
-0005 Laws 8 and 9). nx attaches the finaliser of every cell over device
+counted against the budget, or borrowed, wrapping memory the allocator did not
+allocate, which is never counted, and whose values are never written or lent
+(RFC 0005 Laws 8 and 9). nx attaches the finaliser of every cell over device
 buffers, and lending moves owned storage to the new cell. A finaliser queues
 buffers: an owned one returns to the cache once the event of its last
 submission completes, and a borrowed one releases its source then; freeing to
