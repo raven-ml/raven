@@ -452,7 +452,7 @@ let with_fake_sysfs devices f =
   in
   Fun.protect ~finally:(fun () -> rm_tree root) (fun () -> f root)
 
-let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(profile = false)
+let queue_fixture ?(timeout_ms = 30000) ?(stream_base = 0x10_0000_0000) ?(chain = false) ?(extra_args = 0) ?(profile = false)
     ?lib ?global_size ?(local_size = [U.Launch_int 1]) ?image_address ?allocator
     ?(synchronize = fun _ -> ())
     ~compute_class ~copies m =
@@ -490,13 +490,16 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(pro
         ~compute_entries:8 ~copy_entries:8 ~compute_token:0x123 ~copy_token:0x456;
     lower = Tolk_nv.Encoded_queue.lower device_name;
     compile = Codegen.to_program ~optimize:false (Device.renderer host)} in
-  let image_addresses = Hashtbl.create 2 in
-  let allocator = match allocator with
+  let device_addresses = Hashtbl.create 2 in
+  let Device.Allocator.Pack allocator = match allocator with
     | Some allocator -> allocator
-    | None ->
-        let host_allocator = Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
-        Device.Allocator.Pack {host_allocator with addr = Some (fun address ->
-            Option.value (Hashtbl.find_opt image_addresses address) ~default:address)} in
+    | None -> Device.Allocator.Pack
+        (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+  let allocator = Device.Allocator.Pack {allocator with
+      addr = Option.map (fun addr raw ->
+          let address = addr raw in
+          Option.value (Hashtbl.find_opt device_addresses address) ~default:address)
+        allocator.addr} in
   let renderer_set = Device.Renderer_set.make ~device:device_name
       ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))] in
   let buffers = Hashtbl.create 16 and native_buffers = Hashtbl.create 16 in
@@ -512,16 +515,23 @@ let queue_fixture ?(timeout_ms = 30000) ?(chain = false) ?(extra_args = 0) ?(pro
     let buffer = Device.Buffer.create ~device:device_name ~size:(U.max_numel u)
         ~dtype:(U.dtype u) allocator in
     Device.Buffer.ensure_allocated buffer;
+    let native_address = Device.Buffer.addr buffer in
     (match image_address, U.node_tag u with
      | Some address, Some "program" ->
-         Hashtbl.replace image_addresses (Device.Buffer.addr buffer) address
+         Hashtbl.replace device_addresses native_address address
+     | _, Some tag when String.starts_with ~prefix:"cmdbuf_" tag ->
+         (* A GPFIFO entry holds a 40-bit address, which a host pointer need
+            not fit (x86-64 Linux places them near 2^47): the fake device
+            gives each command stream a GPU address from [stream_base]. *)
+         Hashtbl.replace device_addresses native_address
+           (Nativeint.of_int (stream_base + (Hashtbl.length device_addresses lsl 24)))
      | _ -> ());
     if U.node_tag u = Some "program" then
       Device.Buffer.copyin buffer (Bytes.make (Device.Buffer.nbytes buffer) '\255');
     Option.iter (fun tag ->
         Hashtbl.add buffers tag buffer;
         Hashtbl.replace native_buffers tag
-          (Mmio.make ~addr:(Device.Buffer.addr buffer) ~size:(Device.Buffer.nbytes buffer)))
+          (Mmio.make ~addr:native_address ~size:(Device.Buffer.nbytes buffer)))
       (U.node_tag u);
     if U.node_tag u = Some "timeline" then begin
       let address = Device.Buffer.addr buffer in
@@ -684,6 +694,21 @@ let raw_submission_timeout m =
       Tolk_nv.submit_commands ~device ~queue:"COMPUTE:0" [|0x20012000; Defs.ada_compute_a|]);
   raises_match (Exn.failure ~substring:"HCQ submission timed out") (fun () -> Submission.check submission);
   List.iter (fun (buffer, before) -> equal Windtrap.bytes before (Device.Buffer.as_bytes buffer)) protected;
+  ignore (Sys.opaque_identity linked)
+
+(* A command stream the GPFIFO entry cannot address fails its submission and
+   publishes nothing, where its address would spill into the word count. *)
+let stream_beyond_gpfifo_address m =
+  let open Tolk in
+  let compiled, device, _, buffers, submission =
+    queue_fixture ~stream_base:(1 lsl 40) ~compute_class:Defs.ada_compute_a ~copies:false m in
+  let linked = Realize.link_linear compiled in
+  let ring = Hashtbl.find buffers "ring_compute" in
+  let before = Device.Buffer.as_bytes ring in
+  raises_match (Exn.failure ~substring:"40-bit address") (fun () ->
+      Tolk_nv.submit_commands ~device ~queue:"COMPUTE:0" [|0x20012000; Defs.ada_compute_a|]);
+  raises_match (Exn.failure ~substring:"40-bit address") (fun () -> Submission.check submission);
+  equal Windtrap.bytes before (Device.Buffer.as_bytes ring);
   ignore (Sys.opaque_identity linked)
 
 let shared_calibration ?(concurrent = false) m =
@@ -971,6 +996,7 @@ let () =
              with_fixture (shared_calibration ~concurrent:true));
          test "raw setup and kernels share timeline and FIFO progress" (fun () -> with_fixture raw_submissions);
          test "failed raw submission leaves live storage and counters unchanged" (fun () -> with_fixture raw_submission_timeout);
+         test "a stream beyond the GPFIFO address field fails its submission" (fun () -> with_fixture stream_beyond_gpfifo_address);
          test "Ada descriptors chain launches and release only the tail" (fun () ->
              with_fixture (queue_chain ~compute_class:Defs.ada_compute_a));
          test "Blackwell descriptors chain launches and release only the tail" (fun () ->

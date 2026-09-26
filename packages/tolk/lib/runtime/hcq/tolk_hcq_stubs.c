@@ -295,12 +295,18 @@ CAMLprim value caml_tolk_hcq_wait_progress(value state, value progress, value ta
 
 /* Ampere exposes GPPut but no GPGet. Each stream therefore retires a
    software sequence after its engine has finished using command storage. */
+/* A GPFIFO entry holds the stream's address, word-aligned below 2^40, in
+   bits 2-39, the fetch flag in bit 41 and the word count in bits 42-62. An
+   address outside that field would spill into the count, so it fails. */
 static void tolk_hcq_gpfifo(volatile uint64_t *state, volatile uint64_t *ring,
                             volatile uint32_t *put, volatile uint32_t *doorbell,
-                            uint64_t entry, uint32_t token, uint32_t capacity,
-                            volatile uint64_t *progress, volatile uint64_t *retired) {
+                            uint64_t addr, uint64_t words, uint32_t token,
+                            uint32_t capacity, volatile uint64_t *progress,
+                            volatile uint64_t *retired) {
   if (state[1]) return;
   if (capacity < 2 || (capacity & (capacity - 1))) { state[1] = 2; return; }
+  if ((addr & 3) || (addr >> 40) || (words >> 21)) { state[1] = 3; return; }
+  uint64_t entry = addr | (words << 42) | (1ULL << 41);
   uint64_t next = progress[0] + 1;
   if (next >= capacity) tolk_hcq_wait_progress(state, progress, next - capacity + 1);
   if (state[1]) return;
