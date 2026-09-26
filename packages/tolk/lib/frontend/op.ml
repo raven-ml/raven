@@ -586,6 +586,11 @@ let slices t = Uop.max_shard_shape (T.uop t)
 
 let device_count = function Uop.Multi ds -> List.length ds | _ -> 1
 
+let placed_device t =
+  match T.device t with
+  | Some (Uop.Multi devices) when List.exists Option.is_none devices -> None
+  | device -> device
+
 (* The position of the device running a kernel among [n]. *)
 let device_position n =
   Uop.range ~size:(Uop.const_int n) ~axis:(-1) ~kind:Axis_type.Device ()
@@ -939,15 +944,15 @@ let quant_matmul ?ids x ~codes ~scales =
   if (ix = 0 && i > 0) || (ix > 0 && i mod ix <> 0) then
     invalid_arg "Op.quant_matmul: x's instances must divide the product's";
   let device =
-    match List.find_map T.device [ x; codes; scales ] with
+    match List.find_map placed_device [ x; codes; scales ] with
     | Some device -> device
     | None -> invalid_arg "Op.quant_matmul: no operand is placed on a device"
   in
   let ren =
     match device with
-    | Uop.Single name | Uop.Multi (name :: _) ->
+    | Uop.Single name | Uop.Multi (Some name :: _) ->
         Tolk.Device.renderer (Tolk.Device.get name)
-    | Uop.Multi [] | Uop.Index _ ->
+    | Uop.Multi ([] | None :: _) | Uop.Index _ ->
         invalid_arg "Op.quant_matmul: no device name"
   in
   (* Over split operands each device multiplies its own instances, rows or
@@ -1359,15 +1364,15 @@ let block_matmul ?(transpose = false) x w ~ids =
   if not (D.is_float dtype && D.itemsize dtype <= 4) then
     invalid_arg "Op.block_matmul: x must be a float of at most 32 bits";
   let device =
-    match List.find_map T.device [ x; w; ids ] with
+    match List.find_map placed_device [ x; w; ids ] with
     | Some device -> device
     | None -> invalid_arg "Op.block_matmul: no operand is placed on a device"
   in
   let ren =
     match device with
-    | Uop.Single name | Uop.Multi (name :: _) ->
+    | Uop.Single name | Uop.Multi (Some name :: _) ->
         Tolk.Device.renderer (Tolk.Device.get name)
-    | Uop.Multi [] | Uop.Index _ ->
+    | Uop.Multi ([] | None :: _) | Uop.Index _ ->
         invalid_arg "Op.block_matmul: no device name"
   in
   (* Over split operands each device multiplies its own blocks, rows or

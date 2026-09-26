@@ -365,13 +365,16 @@ let copy_rejects_bad_device_or_dtype () =
       let disk = Uop.replace copy ~arg:(Uop.Arg.Device device) () in
       is_true ~msg:"Copy spec rejects disk destinations"
         (rejected Spec.tensor_spec disk))
-    [Uop.Single "DISK:weights"; Uop.Multi ["CPU"; "DISK:weights"]];
+    [Uop.Single "DISK:weights"; Uop.Multi [Some "CPU"; Some "DISK:weights"]];
   let bad_index = Uop.copy ~src ~device:(Uop.Index 0) () in
   is_true ~msg:"Copy rejects positional device selector"
     (rejected Spec.tensor_spec bad_index);
   let bad_empty = Uop.copy ~src ~device:(Uop.Multi []) () in
   is_true ~msg:"Copy rejects empty multi-device target"
-    (rejected Spec.tensor_spec bad_empty)
+    (rejected Spec.tensor_spec bad_empty);
+  let bad_unplaced = Uop.copy ~src ~device:(Uop.Multi [None; None]) () in
+  is_true ~msg:"Copy requires concrete destination devices"
+    (rejected Spec.tensor_spec bad_unplaced)
 
 let call_reject_bad_layouts () =
   let info = call_info "f" in
@@ -457,7 +460,7 @@ let reduce_rejects_old_op_arg () =
 let allreduce_layouts () =
   let src = i32 1 in
   let red =
-    Uop.allreduce ~src ~device:(Uop.Multi [ "CPU"; "GPU" ]) ~op:Ops.Add
+    Uop.allreduce ~src ~device:(Uop.Multi [ Some "CPU"; Some "GPU" ]) ~op:Ops.Add
   in
   is_true ~msg:"Allreduce accepted" (accepts Spec.tensor_spec red);
   let missing_arg = Uop.replace red ~arg:Uop.Arg.Empty () in
@@ -472,7 +475,7 @@ let allreduce_layouts () =
 let allreduce_rejects_bad_device_or_dtype () =
   let src = i32 1 in
   let red =
-    Uop.allreduce ~src ~device:(Uop.Multi [ "CPU"; "GPU" ]) ~op:Ops.Add
+    Uop.allreduce ~src ~device:(Uop.Multi [ Some "CPU"; Some "GPU" ]) ~op:Ops.Add
   in
   is_true ~msg:"Allreduce result dtype must match source"
     (Dtype.equal (Uop.dtype red) Dtype.int32);
@@ -490,7 +493,7 @@ let multi_device_selection_layouts () =
   let shape = Uop.stack [ Uop.const_int 4 ] in
   let sharded =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape ~axis:0
-      ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
+      ~device:(Uop.Multi [ Some "CPU"; Some "GPU" ]) ()
   in
   let multi = Uop.unshard ~src:sharded ~axes:[0] () in
   let selected = Uop.mselect ~src:multi ~index:1 in
@@ -541,7 +544,7 @@ let multi_device_stack_layouts () =
     (rejected Spec.tensor_spec bad_indexed);
   let multi_src =
     Uop.buffer ~slot:2 ~dtype:Dtype.int32 ~shape:(Uop.stack [ Uop.const_int 4 ])
-      ~axis:0 ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
+      ~axis:0 ~device:(Uop.Multi [ Some "CPU"; Some "GPU" ]) ()
   in
   let bad_multi = Uop.mstack [ Uop.unshard ~src:multi_src ~axes:[0] () ] in
   is_true ~msg:"Mstack rejects already-multi sources"
@@ -553,7 +556,7 @@ let multi_device_multi_layouts () =
   let shape = Uop.stack [ Uop.const_int 4; Uop.const_int 4 ] in
   let sharded =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~shape ~axis:1
-      ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
+      ~device:(Uop.Multi [ Some "CPU"; Some "GPU" ]) ()
   in
   let ok = Uop.unshard ~src:sharded ~axes:[1] () in
   is_true ~msg:"Multi accepts in-range sharding axis"

@@ -539,7 +539,7 @@ let store_flat dst n tt =
 let program_device st =
   match st.st_devices with
   | [ _ ] -> U.Single (Tolk.Device.name st.st_device)
-  | ds -> U.Multi (List.map Nx.Device.name ds)
+  | ds -> U.Multi (List.map (fun d -> Some (Nx.Device.name d)) ds)
 
 (* A buffer of [n] elements on every device of the program. *)
 let make_node st dtolk n =
@@ -1908,7 +1908,7 @@ let reshard st p q tt =
   let whole =
     if Nx_effect.Grid.cuts p = [] then tt
     else
-      F.Tensor.of_uop (U.copy ~src:(F.Tensor.uop tt) ~device:(U.Multi names) ())
+      F.Tensor.of_uop (U.copy ~src:(F.Tensor.uop tt) ~device:(U.Multi (List.map Option.some names)) ())
   in
   match Nx_effect.Grid.cuts q with
   | [] -> whole

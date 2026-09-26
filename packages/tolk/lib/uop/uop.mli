@@ -71,12 +71,13 @@ type t
 
 (** Device placement.
 
-    [Single] names a concrete device; [Multi] names a group of devices
-    that share a shard. [Index] selects a device by position while rewriting
-    one shard of a multi-device value. *)
+    [Single] names a concrete device; [Multi] describes each lane of a
+    partitioned or replicated value. A [None] lane has no storage device,
+    as with a partitioned constant. [Index] selects a device by position
+    while rewriting one shard of a multi-device value. *)
 type device =
   | Single of string
-  | Multi of string list
+  | Multi of string option list
   | Index of int
 
 (** Schedule options attached to kernel metadata. Axes are absolute indices
@@ -1343,7 +1344,8 @@ val device_of : t -> device option
     DAG: a {!Ops.Stage} reports its buffer's device,
     {!Ops.After} inherits from [src.(0)],
     {!Ops.Mselect} indexes into the [Multi] device of its source,
-    {!Ops.Mstack} stacks per-shard [Single] devices into [Multi],
+    {!Ops.Mstack} stacks per-shard devices into [Multi], retaining [None]
+    for lanes without a device,
     {!Ops.Param} and {!Ops.Buffer} read [Param_arg.device], and
     {!Ops.Copy} and {!Ops.Allreduce} read their payload device.
     Other ops report the device of their first child that has one, or

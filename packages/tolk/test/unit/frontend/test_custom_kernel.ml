@@ -351,7 +351,7 @@ let storage_tests = group "custom storage" [
     let input = Run.of_float_array ~shape:[4; 4]
         (Array.init 16 float_of_int) |> Creation.clone ~device:(U.Single "CPU")
         |> Creation.shard ~devices ~axis:0 in
-    let output = Creation.empty ~device:(U.Multi devices) [2; 4] in
+    let output = Creation.empty ~device:(U.Multi (List.map Option.some devices)) [2; 4] in
     let output = T.of_uop (U.unshard ~src:(T.uop output) ~axes:[0] ()) in
     let output = first (T.custom_kernel ~fxn:custom_add_one_kernel [output; input])
         |> Creation.clone ~device:(U.Single "CPU") in

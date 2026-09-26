@@ -246,6 +246,26 @@ let storage_windows_keep_allocation_boundaries () =
           equal int 8 offset
       | None -> fail "staged storage window was not proved") stages
 
+let partition_storage_requires_owned_lanes () =
+  let constant = U.broadcast_to
+      ~src:(U.const_of_dtype Dtype.int32 (Const_scalar (`Int 1L)))
+      ~shape:(U.const_int 8) in
+  let storage name = U.buffer ~slot:93834 ~dtype:Dtype.int32
+      ~shape:(U.const_int 8) ~device:(U.Single name) () in
+  let first = storage "CPU:1" and second = storage "CPU:2" in
+  let computed = U.alu_binary ~op:Ops.Add ~lhs:first ~rhs:constant in
+  List.iter (fun group ->
+      is_true ~msg:"logical partition values do not own storage"
+        (Option.is_none (Tolk.Indexing.storage_window group));
+      is_true ~msg:"selecting a logical partition does not create storage"
+        (Option.is_none (Tolk.Indexing.storage_window (U.mselect ~src:group ~index:0))))
+    [U.mstack [constant; constant]; U.mstack [first; computed]];
+  let group = U.mstack [first; second] in
+  is_true ~msg:"a group of storage windows remains a storage window"
+    (Option.is_some (Tolk.Indexing.storage_window group));
+  is_true ~msg:"a selected owned lane remains a storage window"
+    (Option.is_some (Tolk.Indexing.storage_window (U.mselect ~src:group ~index:1)))
+
 let storage_windows_keep_effects_and_typed_anchors () =
   let base = U.buffer ~slot:93833 ~dtype:Dtype.int32 ~shape:(U.const_int 8) () in
   let store = U.store ~dst:base ~value:base () in
@@ -280,6 +300,7 @@ let shaped_constant_proof () =
 let () = run "Contiguous view"
     [test "storage windows retain allocation boundaries" storage_windows_keep_allocation_boundaries;
      test "storage windows retain typed effects" storage_windows_keep_effects_and_typed_anchors;
+     test "partition storage requires owned lanes" partition_storage_requires_owned_lanes;
 test "constant folding preserves tensor shape during view proofs" shaped_constant_proof;
      test "unsupported backends reject typed views" unsupported_devices;
      test "one-element bitcast views preserve byte extent" bitcast_singleton_extent;

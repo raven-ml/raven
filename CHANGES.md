@@ -694,6 +694,10 @@ thread.
 
 ### Tolk (new)
 
+- Keep shard shape and placement metadata through repeated unbuffered
+  `zeros_like` and `ones_like` calls. Device-less partitions now materialize
+  correctly on one device; `Uop.Multi` retains optional device names per lane.
+
 - Preserve mixed-width symbolic offsets and GPU launch dimensions by promoting
   operands before combining them; apply the same promotion to image coordinates,
   WMMA accumulation and optimizer predicates.

@@ -86,14 +86,40 @@ let allgather multi device =
   let sources = match device_exn multi with
     | U.Multi ds -> ds | _ -> invalid_arg "multi: gather requires multiple devices" in
   let targets = match device with
-    | U.Single d -> [d] | U.Multi ds -> ds
+    | U.Single d -> [Some d] | U.Multi ds -> ds
     | U.Index _ -> invalid_arg "multi: gather to an indexed device" in
+  let sharding = U.sharding multi in
+  let coordinates j = List.map (fun (_, rng) ->
+      match U.const_int_value (subst_device_num rng j) with
+      | Some c -> c
+      | None -> invalid_arg "multi: gather shard index is not concrete") sharding in
+  (* Unplaced shards are values, not collective buffer arguments. Reconstruct
+     their tiles on the destination before asking for any storage. *)
+  if List.exists Option.is_none sources && (match device with U.Single _ -> true | _ -> false) then
+    let pieces = List.init (List.length sources) (fun i ->
+        coordinates i, U.copy ~src:(U.mselect ~src:(inner multi) ~index:i) ~device ()) in
+    let pieces = List.fold_right (fun (j, (axis, _)) pieces ->
+        let without_axis coords = List.filteri (fun i _ -> i <> j) coords in
+        let keys = List.sort_uniq Stdlib.compare (List.map (fun (coords, _) -> without_axis coords) pieces) in
+        List.map (fun key ->
+            let group = List.filter_map (fun (coords, value) ->
+                if without_axis coords = key then Some (List.nth coords j, value) else None) pieces
+              |> List.sort (fun (a, _) (b, _) -> Int.compare a b) in
+            let values = List.map snd group in
+            let shape = U.shape (List.hd values) in
+            let order = List.init axis (fun i -> i + 1) @ [0]
+              @ List.init (List.length shape - axis) (fun i -> axis + i + 1) in
+            let stacked = U.permute ~src:(U.stack values) ~order in
+            let shape = List.mapi (fun i dim ->
+                if i = axis then mul (int_ (List.length values)) dim else dim) shape in
+            key, U.reshape ~src:stacked ~shape:(emit shape)) keys)
+      (List.mapi (fun j shard -> j, shard) sharding) pieces in
+    (match pieces with [_, value] -> value
+     | _ -> invalid_arg "multi: gather did not reconstruct one value")
+  else
   let local = U.shape (inner multi) in
   let window j =
-    let coords = List.map (fun (axis, rng) ->
-        match U.const_int_value (subst_device_num rng j) with
-        | Some c -> axis, c
-        | None -> invalid_arg "multi: gather shard index is not concrete") (U.sharding multi) in
+    let coords = List.combine (List.map fst sharding) (coordinates j) in
     emit (List.mapi (fun axis size -> match List.assoc_opt axis coords with
         | Some c -> mul (int_ c) size | None -> zero) local) in
   let relay = match Allreduce.box_size ~like:multi (List.length sources) with
@@ -108,7 +134,7 @@ let allgather multi device =
         U.shrink ~src:replica ~offset:(window j) ~size:(emit local) in
       let pairs = List.concat (List.mapi (fun k _ -> List.mapi (fun j _ -> k, j) sources) targets) in
       let deliver state (k, j) value =
-        U.store ~dst:(slot state k j) ~value:(Allreduce.copy_to_device value (List.nth targets k)) () in
+        U.store ~dst:(slot state k j) ~value:(Allreduce.copy_to_device value (Option.get (List.nth targets k))) () in
       (* The relayed shards are a second phase: it reads them back from the
          relays' windows the first phase wrote. *)
       [ (fun dst -> List.filter_map (fun (k, j) ->
@@ -188,7 +214,7 @@ let reducescatter ~only_consumer shrink =
                  let box_sum k members h =
                    Allreduce.fold_reduce op (List.map (fun j ->
                        Allreduce.copy_to_device (block_of k (U.mselect ~src ~index:j))
-                         (List.nth targets h)) members) in
+                         (Option.get (List.nth targets h))) members) in
                  (* Each device folds its own box's partials of its block into
                     its destination. Under boxes, a second phase folds that in
                     place with the other boxes' partials, which their devices
@@ -202,7 +228,7 @@ let reducescatter ~only_consumer shrink =
                          let term b members =
                            if b = own k then U.mselect ~src:first ~index:k
                            else Allreduce.copy_to_device
-                               (U.contiguous ~src:(box_sum k members (at b k)) ()) target in
+                               (U.contiguous ~src:(box_sum k members (at b k)) ()) (Option.get target) in
                          U.store ~dst:(U.mselect ~src:first ~index:k)
                            ~value:(Allreduce.fold_reduce op (List.mapi term boxes)) ()) targets) ])
            in
@@ -412,7 +438,7 @@ let rec multi_pm node =
       | Some (U.Single _), Some (U.Multi devices) ->
           let simple = simp srcs.(0) in
           Some (U.mstack (List.map (fun d -> if U.device_of simple = None then simple
-              else U.copy ~src:srcs.(0) ~device:(U.Single d) ()) devices))
+              else U.copy ~src:srcs.(0) ~device:(U.Single (Option.get d)) ()) devices))
       | Some (U.Multi _), Some (U.Single _ as device) ->
           let value = U.mselect ~src:srcs.(0) ~index:0 in
           Some (if U.device_of value = Some device then value else U.copy ~src:value ~device ())

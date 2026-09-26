@@ -111,7 +111,7 @@ let mk_param_multi ~idx ?(dtype = Dtype.float32) ~devices ?axis shape =
     | None -> shape
   in
   let shape_id = if shape = [] then None else Some (mk_shape shape) in
-  U.param ~slot:idx ~dtype ?shape:shape_id ~device:(Multi devices) ?axis ()
+  U.param ~slot:idx ~dtype ?shape:shape_id ~device:(Multi (List.map Option.some devices)) ?axis ()
 
 let wrap_sink srcs =
   let contigs = List.map (fun src -> U.contiguous ~src ()) srcs in

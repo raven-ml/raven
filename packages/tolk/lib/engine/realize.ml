@@ -309,7 +309,7 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
       when Tolk_uop.Ops.equal (U.op body) Tolk_uop.Ops.Sink ->
         let device =
           match List.find_map (fun arg -> match U.device_of arg with
-              | Some (U.Single name) | Some (U.Multi (name :: _)) -> Some name
+              | Some (U.Single name) | Some (U.Multi (Some name :: _)) -> Some name
               | _ -> None) args with
           | Some name when Device.canonicalize name <> Device.canonicalize (Device.name device) ->
               Device.get name
@@ -348,7 +348,7 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
     let participants = U.toposort ~enter_calls:false linear
         |> List.concat_map (fun n -> match U.device_of n with
             | Some (U.Single name) -> [name]
-            | Some (U.Multi names) -> names
+            | Some (U.Multi names) -> List.filter_map Fun.id names
             | Some (U.Index _) | None -> [])
         |> queue_participants in
     (* Link-time tags are semantic here: a runtime table and a captured input

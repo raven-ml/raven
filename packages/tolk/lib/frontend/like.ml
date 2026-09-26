@@ -19,7 +19,7 @@ let create t make =
           T.of_uop (U.copy ~src:(T.uop value) ~device:(U.Multi devices) ())
       | Some axis ->
           let shape = U.shard_shape (T.uop t) in
-          let shards = List.map (fun device -> T.uop (make shape (Some device))) devices in
+          let shards = List.map (fun device -> T.uop (make shape device)) devices in
           let range = U.range ~size:(U.const_int (List.length devices))
               ~axis:(-1) ~kind:Tolk_uop.Axis_type.Device () in
           T.of_uop (U.unshard ~src:(U.mstack shards) ~axes:[axis] ~ranges:[range] ()))

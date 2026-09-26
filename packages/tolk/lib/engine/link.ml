@@ -64,7 +64,7 @@ let rec run ~resolve ?(allow_cache = true) linear =
         List.iter (fun node ->
             (match U.device_of node with
              | Some (U.Single name) -> own_name name
-             | Some (U.Multi names) -> List.iter own_name names
+             | Some (U.Multi names) -> List.iter (Option.iter own_name) names
              | Some (U.Index _) | None -> ());
             (match U.arg node with
              | U.Arg.Call_info {aux = Some info; _} ->

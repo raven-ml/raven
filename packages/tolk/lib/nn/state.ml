@@ -304,7 +304,7 @@ let load_state_dict ?(strict = true) ?(realize = true) model state_dict =
               match Tensor.device v, Tensor.device s with
               | Some (U.Multi _), Some (U.Multi _) -> s
               | Some (U.Multi devices), _ ->
-                  Creation.shard ?axis:(U.axis (Tensor.uop v)) ~devices s
+                  Creation.shard ?axis:(U.axis (Tensor.uop v)) ~devices:(List.map Option.get devices) s
               | _, None -> s
               | destination, Some source ->
                   let destination = match destination with

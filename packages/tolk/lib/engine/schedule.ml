@@ -373,7 +373,7 @@ let plannable_buffer held b =
       &&
       match device with
       | U.Single dev -> plannable_device_name dev
-      | U.Multi devs -> List.for_all plannable_device_name devs
+      | U.Multi devs -> List.for_all (Option.fold ~none:false ~some:plannable_device_name) devs
       | U.Index _ -> false)
   | _ -> false
 
@@ -610,7 +610,7 @@ let lower_sink_to_linear ~get_kernel_graph call : U.t option =
 
 let device_name = function
   | U.Single d -> d
-  | U.Multi ds -> "(" ^ String.concat ", " ds ^ ")"
+  | U.Multi ds -> "(" ^ String.concat ", " (List.map (Option.value ~default:"None") ds) ^ ")"
   | U.Index i -> string_of_int i
 
 (* A kernel reads and writes buffers of one device; only a copy crosses

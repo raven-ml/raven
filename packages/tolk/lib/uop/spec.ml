@@ -43,7 +43,7 @@ let option_for_all p = function
 
 let valid_device_payload = function
   | Uop.Single _ -> true
-  | Uop.Multi devs -> devs <> []
+  | Uop.Multi devs -> devs <> [] && List.for_all Option.is_some devs
   | Uop.Index _ -> false
 
 let valid_shape_child u =
@@ -141,7 +141,7 @@ let copy_arg_device u =
       valid_device_payload device
       && not (match device with
           | Uop.Single d -> String.starts_with ~prefix:"DISK" d
-          | Uop.Multi ds -> List.exists (String.starts_with ~prefix:"DISK") ds
+          | Uop.Multi ds -> List.exists (Option.fold ~none:false ~some:(String.starts_with ~prefix:"DISK")) ds
           | Uop.Index _ -> false)
   | _ -> false
 

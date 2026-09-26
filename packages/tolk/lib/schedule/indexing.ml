@@ -459,7 +459,7 @@ let contiguous_view u =
     String.starts_with ~prefix:"WEBGPU" device || String.starts_with ~prefix:"CL" device in
   if (match U.device_of u with
       | Some (U.Single device) -> unsupported device
-      | Some (U.Multi devices) -> List.exists unsupported devices
+      | Some (U.Multi devices) -> List.exists (Option.fold ~none:false ~some:unsupported) devices
       | None | Some (U.Index _) -> false) then None
   else
     let integer n = match U.op n, U.arg n with
@@ -545,7 +545,9 @@ let rec storage_window u =
   | _ -> None
 and storage_anchor u =
   match U.op u with
-  | Ops.Buffer | Ops.Alloc | Ops.Param | Ops.Mselect | Ops.Mstack -> true
+  | Ops.Buffer | Ops.Alloc | Ops.Param -> true
+  | Ops.Mselect -> Option.is_some (storage_window (src0 u))
+  | Ops.Mstack -> Array.for_all (fun lane -> Option.is_some (storage_window lane)) (U.src u)
   | Ops.Stage -> Array.length (U.src u) = 1
   | Ops.Bitcast | Ops.Detach | Ops.Contiguous_backward | Ops.After ->
       Option.is_some (storage_window (src0 u))

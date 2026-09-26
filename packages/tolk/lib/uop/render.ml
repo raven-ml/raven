@@ -108,12 +108,12 @@ let const_repr_string c =
 
 let device_repr_string = function
   | Single d -> python_quote d
-  | Multi ds -> tuple_string (List.map python_quote ds)
+  | Multi ds -> tuple_string (List.map (Option.fold ~none:"None" ~some:python_quote) ds)
   | Index i -> string_of_int i
 
 let device_arg_string = function
   | Single d -> d
-  | Multi ds -> tuple_string (List.map python_quote ds)
+  | Multi ds -> tuple_string (List.map (Option.fold ~none:"None" ~some:python_quote) ds)
   | Index i -> string_of_int i
 
 let bound_pair_string (a, b) =

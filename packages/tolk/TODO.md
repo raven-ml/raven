@@ -99,12 +99,6 @@ acceptance requirement; skipped tests are not execution evidence.
 - Review upstream gradient, Conv2d, optimizer, GPT-OSS, GGUF/quantization and
   AMD custom-kernel changes against current Rune/Kaun consumers. Port applicable
   correctness fixes; measure accelerator candidates on supported hardware.
-- Reconcile device-less partition metadata centrally: an `MSTACK` of pure
-  constants reports no device, so repeated unbuffered `*_like` calls lose its
-  partition while preserving global shape and values. The target UOp mixin
-  preserves a tuple of absent devices; its Tensor wrapper instead inserts a
-  default-device copy and already loses the axis on the first call. Establish
-  the intended UOp/frontend contract without constructor-local inference.
 - Measure search cost, selected-kernel latency, JIT replay, allocations and
   handle counts on consumer workloads.
 - Remove closed divergence rulings. Give retained differences a current

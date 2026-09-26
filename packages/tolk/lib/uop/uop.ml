@@ -7,7 +7,7 @@
 
 (* Types *)
 
-type device = Single of string | Multi of string list | Index of int
+type device = Single of string | Multi of string option list | Index of int
 
 module Opt = struct
   (* Variant order is load-bearing: total order over Opt.t uses
@@ -669,15 +669,15 @@ and compute_device u =
   | Ops.Mselect when Array.length children >= 1 ->
       (match device_of children.(0), Arg.as_int (arg u) with
        | Some (Multi devs), Some i when i >= 0 && i < List.length devs ->
-           Some (Single (List.nth devs i))
+           Option.map (fun name -> Single name) (List.nth devs i)
        | _ -> None)
   | Ops.Mstack ->
       let per = Array.map device_of children in
       let all_single =
         Array.for_all
           (function
-            | Some (Single _) -> true
-            | None | Some (Multi _) | Some (Index _) -> false)
+            | None | Some (Single _) -> true
+            | Some (Multi _) | Some (Index _) -> false)
           per
       in
       if (not all_single) || Array.length per = 0 then None
@@ -685,8 +685,9 @@ and compute_device u =
         let names =
           Array.map
             (function
-              | Some (Single s) -> s
-              | None | Some (Multi _) | Some (Index _) -> assert false)
+              | Some (Single s) -> Some s
+              | None -> None
+              | Some (Multi _) | Some (Index _) -> assert false)
             per
         in
         Some (Multi (Array.to_list names))
@@ -1101,7 +1102,7 @@ let mselect ~src ~index =
 
 let copy ~src ~device () =
   let disk = String.starts_with ~prefix:"DISK" in
-  if (match device with Single d -> disk d | Multi ds -> List.exists disk ds | Index _ -> false) then
+  if (match device with Single d -> disk d | Multi ds -> List.exists (Option.fold ~none:false ~some:disk) ds | Index _ -> false) then
     invalid_arg "Uop.copy: disk destinations require an explicit store";
   if Dtype.is_weak (dtype src) then
     invalid_arg "Uop.copy: storage requires a concrete dtype";
@@ -2372,7 +2373,9 @@ let buffer ~slot ~dtype ?shape:shape_arg ?name ?addrspace ?axis ?device ?volatil
   let p = default_param_arg ~dtype ?size ?name ?addrspace ?device ?volatile slot in
   let devices = match p.addrspace, device with
     | Dtype.Global, Some (Single device) -> Some [device]
-    | Dtype.Global, Some (Multi devices) -> Some devices
+    | Dtype.Global, Some (Multi devices) ->
+        Some (List.map (function Some device -> device
+            | None -> invalid_arg "Uop.buffer: every storage shard requires a device") devices)
     | _ -> None
   in
   let buffer = Option.map (fun devices ->
@@ -3532,7 +3535,7 @@ let to_elf u =
   | _ -> invalid_arg "Uop.to_elf: expected a compiled PROGRAM"
 
 let export_magic = "TOLKUOP\x00"
-let export_version = 35
+let export_version = 36
 
 type serialized_node = {
   serialized_op : Ops.t;

@@ -21,7 +21,7 @@ let allocation_sizes t = List.map (fun u -> match U.arg u with
     | U.Arg.Param_arg {size = Some size; _} -> size
     | _ -> fail "allocation has no size") (allocations t)
 let check_devices t = equal (option (list string)) (Some devices)
-    (match T.device t with Some (U.Multi devices) -> Some devices | _ -> None)
+    (match T.device t with Some (U.Multi devices) -> Some (List.map Option.get devices) | _ -> None)
 
 let single_device () =
   let source = Creation.clone ~device:(U.Single "CPU:1") (Creation.ones [2; 4]) in
@@ -95,6 +95,68 @@ let broadcast_constants () =
       equal (list int) [4; 4] (T.shape repeated);
       check_values 1. 16 repeated) [0; 1]
 
+let repeated_unbuffered_partitions () =
+  List.iter (fun axis ->
+      let source = Creation.shard ~axis ~devices (Creation.ones [4; 6]) in
+      let ones = Creation.ones_like ~buffer:false source in
+      let zeros = Creation.zeros_like ~buffer:false ones in
+      List.iter (fun value ->
+          equal (option int) (Some axis) (U.axis (T.uop value));
+          equal (list int) [4; 6] (T.shape value);
+          equal (list int) (if axis = 0 then [2; 6] else [4; 3])
+            (U.max_shard_shape (T.uop value));
+          equal int 0 (List.length (allocations value));
+          is_true (T.device value = Some (U.Multi [None; None])))
+        [ones; zeros]) [0; 1]
+
+let unbuffered_partition_materialization () =
+  let source = Creation.shard ~axis:1 ~devices (Creation.ones [4; 6]) in
+  let ones = Creation.ones_like ~buffer:false source in
+  let value = Creation.clone ones in
+  equal (option int) (Some 1) (U.axis (T.uop value));
+  equal (list int) [4; 6] (T.shape value);
+  equal (list int) [4; 3] (U.max_shard_shape (T.uop value));
+  check_values 1. 24 ones
+
+let unplaced_multiaxis_gather () =
+  let row values = U.stack (List.map (fun value -> U.const_of_dtype D.float32 (U.Const_scalar (`Float value))) values) in
+  let shard = U.stack [row [1.; 2.; 3.]; row [4.; 5.; 6.]] in
+  let lane = U.range ~size:(U.const_int 4) ~axis:(-1) ~kind:Tolk_uop.Axis_type.Device () in
+  let coordinate op = U.alu_binary ~op ~lhs:lane ~rhs:(U.const_int 2) in
+  let value = T.of_uop (U.unshard ~src:(U.mstack [shard; shard; shard; shard])
+      ~axes:[0; 1] ~ranges:[coordinate Tolk_uop.Ops.Floordiv; coordinate Tolk_uop.Ops.Floormod] ()) in
+  equal (list int) [4; 6] (T.shape value);
+  equal (array float_exact)
+    [|1.; 2.; 3.; 1.; 2.; 3.; 4.; 5.; 6.; 4.; 5.; 6.;
+      1.; 2.; 3.; 1.; 2.; 3.; 4.; 5.; 6.; 4.; 5.; 6.|]
+    (gather value)
+
+let mixed_partition_rewrite () =
+  let placed = Run.of_float_array ~shape:[2; 3] [|1.; 2.; 3.; 4.; 5.; 6.|] in
+  let row values = U.stack (List.map (fun value -> U.const_of_dtype D.float32 (U.Const_scalar (`Float value))) values) in
+  let unplaced = U.stack [row [7.; 8.; 9.]; row [10.; 11.; 12.]] in
+  let group = U.mstack [T.uop placed; unplaced] in
+  let partition = U.unshard ~src:group ~axes:[0] () in
+  let gathered = U.graph_rewrite Tolk.Multi.multi_pm
+      (U.copy ~src:partition ~device:(U.Single "CPU") ()) in
+  equal (array float_exact) [|1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.|]
+    (gather (T.of_uop gathered))
+
+let custom_kernels_select_concrete_placement () =
+  let device = U.Multi (List.map Option.some devices) in
+  let source = Creation.shard ~axis:1 ~devices (Creation.ones [2; 4; 32]) in
+  let x = Creation.ones_like ~buffer:false source in
+  is_true (T.device x = Some (U.Multi [None; None]));
+  let empty dtype shape = Creation.empty ~dtype ~device shape in
+  let block = Op.block_matmul x (empty D.float32 [2; 32; 5])
+      ~ids:(empty D.int32 [2]) in
+  let quant = Op.quant_matmul x ~codes:(empty D.uint8 [2; 5; 16])
+      ~scales:(empty D.uint8 [2; 5; 1]) in
+  List.iter (fun result ->
+      check_devices result;
+      equal (option int) (Some 1) (U.axis (T.uop result));
+      equal (list int) [2; 4; 5] (T.shape result)) [block; quant]
+
 let symbolic_dimensions () =
   List.iter (fun length ->
       let source = Creation.shard ~axis:0 ~devices (Creation.ones [4; 4]) in
@@ -115,4 +177,9 @@ let () =
          test "replicated fills copy one complete allocation" replicated;
          test "sharded fills allocate local shapes on each device" sharded;
          test "unbuffered fills preserve partition structure without fill allocations" broadcast_constants;
-         test "sharded fills preserve symbolic nonsharded dimensions" symbolic_dimensions])
+         test "repeated unbuffered fills preserve device-less partitions" repeated_unbuffered_partitions;
+         test "unplaced clone layout and single-device materialization" unbuffered_partition_materialization;
+         test "unplaced multidimensional tiles gather at the destination" unplaced_multiaxis_gather;
+          test "gather rewriting handles mixed lane metadata" mixed_partition_rewrite;
+          test "custom kernels select a concrete operand placement" custom_kernels_select_concrete_placement;
+          test "sharded fills preserve symbolic nonsharded dimensions" symbolic_dimensions])

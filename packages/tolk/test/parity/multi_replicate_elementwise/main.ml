@@ -27,7 +27,7 @@ let devices = [ "CPU:0"; "CPU:1" ]
 let shard_axis0 src ~rows ~cols =
   let ndev = List.length devices in
   let sz = rows / ndev in
-  let copied = U.copy ~src ~device:(Multi devices) () in
+  let copied = U.copy ~src ~device:(Multi (List.map Option.some devices)) () in
   let dnum =
     U.range ~size:(U.const_int ndev) ~axis:(-1) ~kind:Axis_type.Device ()
   in
@@ -44,7 +44,7 @@ let shard_axis0 src ~rows ~cols =
 let build () =
   let a = shard_axis0 (Helpers.mk_param ~idx:0 [ 16; 8 ]) ~rows:16 ~cols:8 in
   let b =
-    U.copy ~src:(Helpers.mk_param ~idx:1 [ 16; 8 ]) ~device:(Multi devices) ()
+    U.copy ~src:(Helpers.mk_param ~idx:1 [ 16; 8 ]) ~device:(Multi (List.map Option.some devices)) ()
   in
   Helpers.wrap_sink [ U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b ]
 

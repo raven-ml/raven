@@ -811,11 +811,35 @@ let call_constructor_parity () =
   in
   is_true ~msg:"call rejects leaking ranges" leaked_range_rejected
 
+let deviceless_partition_selection () =
+  let shard = Uop.expand ~src:(Uop.const (Const.float Dtype.float32 1.))
+      ~dims:(Uop.stack [Uop.const_int 4; Uop.const_int 3]) in
+  let group = Uop.mstack [shard; shard] in
+  is_true ~msg:"MSTACK retains logical device-group metadata"
+    (Uop.device_of group = Some (Uop.Multi [None; None]));
+  let selected = Uop.mselect ~src:group ~index:1 in
+  is_true ~msg:"MSELECT accepts an unplaced lane"
+    (Spec.accepts Spec.tensor_spec selected);
+  is_true (Option.is_none (Uop.device_of selected));
+  equal (list int) [4; 3] (shape_ints selected);
+  is_false ~msg:"a committed group has tuple placement, even with absent lanes"
+    (Uop.is_virtual group);
+  let value = Uop.unshard ~src:group ~axes:[1] () in
+  let permuted = Uop.permute ~src:value ~order:[1; 0] in
+  equal (option int) (Some 0) (Uop.axis permuted);
+  equal (list int) [3; 4] (Uop.max_shard_shape permuted);
+  let imported = Uop.import (Uop.export value) in
+  is_true (Uop.device_of imported = Some (Uop.Multi [None; None]));
+  equal (option int) (Some 1) (Uop.axis imported);
+  raises (Invalid_argument "Uop.buffer: every storage shard requires a device")
+    (fun () -> ignore (Uop.buffer ~slot:0 ~dtype:Dtype.float32
+        ~shape:(Uop.const_int 12) ~device:(Uop.Multi [None; None]) ()))
+
 let property_helpers_parity () =
   let shape2 = Uop.stack [ Uop.const_int 2; Uop.const_int 4 ] in
   let param =
     Uop.param ~slot:0 ~dtype:Dtype.int32 ~shape:shape2
-      ~axis:0 ~device:(Uop.Multi [ "CPU"; "GPU" ]) ()
+      ~axis:0 ~device:(Uop.Multi [ Some "CPU"; Some "GPU" ]) ()
   in
   is_true ~msg:"Sharded parameter carries an UNSHARD axis" (Uop.axis param = Some 0);
   equal (list int) ~msg:"Sharded parameter retains its logical shape"
@@ -2713,6 +2737,7 @@ let () =
             const_scalar_payload_constructors;
           test "tinygrad call constructor parity"
             call_constructor_parity;
+          test "device-less partition selection preserves lane shape" deviceless_partition_selection;
           test "tinygrad property helper parity" property_helpers_parity;
           test "division promotes integer operands" division_promotes_integer_operands;
           test "STACK promotes all operands" stack_promotes_all_operands;

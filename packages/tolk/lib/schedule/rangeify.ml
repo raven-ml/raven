@@ -378,7 +378,7 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
   | op when Ops.Group.is_binary op || Ops.Group.is_ternary op ->
       let dname = match U.device_of n with
         | Some (Single d) -> Some (List.hd (String.split_on_char ':' d))
-        | Some (Multi ds) -> Some (List.hd (String.split_on_char ':' (List.hd ds)))
+        | Some (Multi (Some name :: _)) -> Some (List.hd (String.split_on_char ':' name))
         | _ -> None
       in
       Option.bind dname (fun d ->

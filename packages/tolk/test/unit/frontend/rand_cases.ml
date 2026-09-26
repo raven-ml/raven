@@ -332,7 +332,7 @@ let placement_tests =
         is_true (T.device counter = Some (U.Single device));
         check_ints [| count; 0 |] counter in
   let check_sharding axis t =
-    is_true (T.device t = Some (U.Multi devices));
+    is_true (T.device t = Some (U.Multi (List.map Option.some devices)));
     equal (option int) axis (U.axis (T.uop t)) in
   group "placement"
     [

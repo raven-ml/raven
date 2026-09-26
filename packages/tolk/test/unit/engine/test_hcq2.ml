@@ -56,7 +56,7 @@ let region_identity () =
   equal int 16 a.start;
   equal int 48 a.stop;
   let multi = U.param ~slot:100 ~dtype:Dtype.int32 ~shape:(U.const_int 32)
-      ~device:(U.Multi ["NV"; "NV:1"]) () in
+      ~device:(U.Multi [Some "NV"; Some "NV:1"]) () in
   let a = Deps_tracker.uop (slice (U.mselect ~src:multi ~index:0) 4 8)
   and b = Deps_tracker.uop (slice (U.mselect ~src:multi ~index:1) 4 8) in
   equal bool true (a.base = b.base);
@@ -260,7 +260,7 @@ let sharded_batches () =
   let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
   let program = to_program host (U.sink ~kernel_info [store]) in
   let sharded slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 32)
-      ~device:(U.Multi names) () in
+      ~device:(U.Multi (List.map Option.some names)) () in
   let kernel = U.call ~body:program ~args:[sharded 0; sharded 1]
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; aux = None; dtype = Dtype.void} in

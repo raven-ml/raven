@@ -29,19 +29,19 @@ let check_values expected tensor = equal (array float_exact) expected (gather te
 let graph_clone () =
   List.iter (fun axis ->
       let source = T.of_uop (U.param ~slot:0 ~dtype:D.float32 ~axis
-          ~device:(U.Multi devices) ~shape:(shape [4; 6]) ()) in
+          ~device:(U.Multi (List.map Option.some devices)) ~shape:(shape [4; 6]) ()) in
       let clone = Creation.clone source in
       equal (list int) [4; 6] (T.shape clone);
       equal (option int) (Some axis) (U.axis (T.uop clone));
       equal (option (list string)) (Some devices)
-        (match T.device clone with Some (U.Multi devices) -> Some devices | _ -> None);
+        (match T.device clone with Some (U.Multi devices) -> Some (List.map Option.get devices) | _ -> None);
       equal int 12 (allocation_size clone);
       equal (list int) (if axis = 0 then [2; 6] else [4; 3])
         (U.max_shard_shape (T.uop clone));
       let gathered = Creation.clone ~device:cpu source in
       equal (option int) None (U.axis (T.uop gathered));
       equal int 24 (allocation_size gathered);
-      let singleton = Creation.clone ~device:(U.Multi ["cpu:3"]) source in
+      let singleton = Creation.clone ~device:(U.Multi [Some "cpu:3"]) source in
       equal (list int) [4; 6] (T.shape singleton);
       equal (option int) None (U.axis (T.uop singleton));
       equal int 24 (allocation_size singleton);

@@ -93,7 +93,7 @@ let plan ?(profile = false) calls =
       let args, _ = arguments c.call in
       let foreign = List.concat_map (fun u -> match U.device_of u with
           | Some (U.Single d) -> [Device.canonicalize d]
-          | Some (U.Multi ds) -> List.map Device.canonicalize ds
+          | Some (U.Multi ds) -> List.filter_map (Option.map Device.canonicalize) ds
           | _ -> []) args
         |> List.filter (fun d -> d <> c.device && hardware d) |> unique in
       List.iter ensure foreign;

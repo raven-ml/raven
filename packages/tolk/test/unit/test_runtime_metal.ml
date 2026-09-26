@@ -532,7 +532,7 @@ let multi_device_calls_use_queues () =
   let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
   let program = to_program device (U.sink ~kernel_info:info [store]) in
   let output = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
-      ~device:(U.Multi [name; name]) () in
+      ~device:(U.Multi [Some name; Some name]) () in
   let input = U.param ~slot:1 ~dtype:Dtype.int32 ~shape:(U.const_int 1)
       ~device:(U.Single name) () in
   let call = U.call ~body:program ~args:[output; input]
@@ -568,7 +568,7 @@ let sharded_kernels_on_two_devices () =
   let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
   let program = to_program first (U.sink ~kernel_info:info [U.store ~dst:(at (ptr 0)) ~value ()]) in
   let sharded slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1)
-      ~device:(U.Multi names) () in
+      ~device:(U.Multi (List.map Option.some names)) () in
   let call = U.call ~body:program ~args:[sharded 0; sharded 1]
       ~info:{grad_fxn = None; name = None; precompile = false;
         precompile_backward = false; aux = None; dtype = Dtype.void} in

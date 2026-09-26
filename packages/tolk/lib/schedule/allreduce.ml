@@ -50,8 +50,8 @@ let shrink_to src shape =
 let canonicalize_device (device : U.device) : U.device =
   match device with
   | Single d -> Single (Helpers.canonicalize_device_name d)
-  | Multi [ d ] -> Single (Helpers.canonicalize_device_name d)
-  | Multi ds -> Multi (List.map Helpers.canonicalize_device_name ds)
+  | Multi [ Some d ] -> Single (Helpers.canonicalize_device_name d)
+  | Multi ds -> Multi (List.map (Option.map Helpers.canonicalize_device_name) ds)
   | Index _ as d -> d
 
 (* Reduction *)
@@ -98,15 +98,15 @@ let hierarchical buf ~op ~device ~shape ~ndev ~hdev devs =
       let k = i mod hdev and box = i / hdev * hdev in
       U.contiguous ~src:(fold (List.init hdev (fun j ->
           let shard = U.mselect ~src:flat ~index:(box + j) in
-          copy_to_device (shrink shard [chunks.(k)]) devs.(i)))) ()) in
+          copy_to_device (shrink shard [chunks.(k)]) (Option.get devs.(i))))) ()) in
   let summed = Array.init ndev (fun i ->
       fold (List.init (ndev / hdev) (fun box ->
           let j = box * hdev + i mod hdev in
-          if j = i then owned.(i) else copy_to_device owned.(j) devs.(i)))) in
+          if j = i then owned.(i) else copy_to_device owned.(j) (Option.get devs.(i))))) in
   let gathered = Array.init hdev (fun k ->
       match device with
       | U.Single target -> copy_to_device summed.(k) target
-      | _ -> U.mstack (List.init ndev (fun j -> copy_to_device summed.(j / hdev * hdev + k) devs.(j)))) in
+      | _ -> U.mstack (List.init ndev (fun j -> copy_to_device summed.(j / hdev * hdev + k) (Option.get devs.(j))))) in
   let result = assemble numel (List.init hdev (fun k -> (chunks.(k), gathered.(k)))) in
   reshape result shape
 
@@ -184,7 +184,7 @@ let reduce_shards buf ~op ~device devs =
                   let shard = U.mselect ~src:buf ~index:j in
                   copy_to_device
                     (shrink (reshape shard [ numel ]) [ (s, e) ])
-                    devs.(i))
+                    (Option.get devs.(i)))
             in
             fold_reduce op chunks_on_i
           else
@@ -203,11 +203,11 @@ let reduce_shards buf ~op ~device devs =
                 if step = 0 then U.mselect ~src:!reduced ~index:src_idx
                 else !reduced
               in
-              let cp = copy_to_device r devs.(dest_idx) in
+              let cp = copy_to_device r (Option.get devs.(dest_idx)) in
               let ch =
                 copy_to_device
                   (U.mselect ~src:chunk ~index:dest_idx)
-                  devs.(dest_idx)
+                  (Option.get devs.(dest_idx))
               in
               reduced := reduce op cp ch
             done;
@@ -225,14 +225,14 @@ let reduce_shards buf ~op ~device devs =
           | _ when use_all2all ->
               (* All-to-all: copy to every device and stack. *)
               U.mstack
-                (List.init ndev (fun j -> copy_to_device rc devs.(j)))
+                (List.init ndev (fun j -> copy_to_device rc (Option.get devs.(j))))
           | _ ->
               (* Ring: chain copies around the ring, then reorder. *)
               let chain = Array.make ndev rc in
               let current = ref rc in
               for step = 0 to ndev - 2 do
                 current :=
-                  copy_to_device !current devs.((i + step) mod ndev);
+                  copy_to_device !current (Option.get devs.((i + step) mod ndev));
                 chain.(step + 1) <- !current
               done;
               U.mstack

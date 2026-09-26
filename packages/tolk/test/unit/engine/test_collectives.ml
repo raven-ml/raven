@@ -297,7 +297,7 @@ let strategy name = (name, List.assoc name strategies)
 
 (* A copy of a split value to a device list: an all-gather. *)
 let gather devices w =
-  T.of_uop (U.copy ~src:(T.uop w) ~device:(U.Multi devices) ())
+  T.of_uop (U.copy ~src:(T.uop w) ~device:(U.Multi (List.map Option.some devices)) ())
 
 (* Column sums of a [rows; cols] array in float64. *)
 let column_sums ~rows ~cols data =
@@ -601,7 +601,7 @@ let gather_tests =
           let copied =
             U.copy
               ~src:(T.uop (host ~shape:[ 4; 12 ] data))
-              ~device:(U.Multi devices) ()
+              ~device:(U.Multi (List.map Option.some devices)) ()
           in
           let tile =
             U.shrink ~src:copied
@@ -714,7 +714,7 @@ let gather_tests =
           let w = C.shard ~axis:0 ~devices (host ~shape:[ 4; 4 ] (spread 16)) in
           let lowered =
             U.graph_rewrite Multi.multi_pm
-              (U.copy ~src:(T.uop w) ~device:(U.Multi devices) ())
+              (U.copy ~src:(T.uop w) ~device:(U.Multi (List.map Option.some devices)) ())
           in
           match (U.op lowered, U.children lowered) with
           | Ops.After, [ output; call ] -> (
@@ -733,7 +733,7 @@ let gather_tests =
                   is_true ~msg:"the call writes the output's storage"
                     (U.storage_base output == dst);
                   is_true ~msg:"on the target devices"
-                    (U.device_of dst = Some (U.Multi devices))
+                    (U.device_of dst = Some (U.Multi (List.map Option.some devices)))
               | _ -> fail "the AFTER does not wait on an allgather call")
           | _ -> fail "the gather is not an AFTER of one call");
       (* Boxes apply to concrete shapes only, as for the allreduce. *)
@@ -774,7 +774,7 @@ let gather_tests =
                     (Run.to_float_array
                        (C.clone ~device:(U.Single "CPU")
                           (Rd.sum ~axis:[ 0; 1 ] gathered))))
-                [ U.Single "CPU:1"; U.Multi devices ])
+                [ U.Single "CPU:1"; U.Multi (List.map Option.some devices) ])
             [ 3; 7 ]);
       (* The gather feeds a sum, as a gathered weight feeds a product. *)
       test "a row-split gather holds the value and at most one shard more"
@@ -806,7 +806,7 @@ let gather_tests =
                     (fun peak -> peak <= rows * cols * 4)
                     peak)
                 peaks)
-            [ U.Single "CPU:1"; U.Multi devices ]);
+            [ U.Single "CPU:1"; U.Multi (List.map Option.some devices) ]);
     ]
 
 (* An allreduce resharded to rows is a reduce-scatter: each device receives its
@@ -969,7 +969,7 @@ let reduce_scatter_tests =
       (* No frontend path puts an ALLREDUCE in a call body, so the call is built
          by hand. *)
       test "an allreduce in a call body raises" (fun () ->
-          let device = U.Multi (devices 2) in
+          let device = U.Multi (List.map Option.some (devices 2)) in
           let tensor slot =
             U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int 4) ~device ()
           in

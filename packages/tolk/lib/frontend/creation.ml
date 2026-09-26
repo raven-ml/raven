@@ -44,12 +44,16 @@ let clone ?device t =
   in
   let canonicalize = Tolk.Helpers.canonicalize_device_name in
   let device = match device with
-    | U.Single device | U.Multi [device] -> U.Single (canonicalize device)
-    | U.Multi devices -> U.Multi (List.map canonicalize devices)
+    | U.Single device -> U.Single (canonicalize device)
+    | U.Multi devices ->
+        let devices = List.map (fun device -> canonicalize
+            (match device with Some name -> name | None -> Backend.device_name ())) devices in
+        (match devices with [device] -> U.Single device
+         | _ -> U.Multi (List.map Option.some devices))
     | U.Index _ -> device in
   let disk = String.starts_with ~prefix:"DISK" in
   if (match device with U.Single d -> disk d
-      | U.Multi devices -> List.exists disk devices | U.Index _ -> false) then
+      | U.Multi devices -> List.exists (Option.fold ~none:false ~some:disk) devices | U.Index _ -> false) then
     invalid_arg "Creation.clone: cannot clone DISK storage; use an explicit store";
   let axis = match device with U.Multi _ -> U.axis (T.uop t) | _ -> None in
   let shape, max_shape, n =
@@ -108,7 +112,7 @@ let shard ?axis ~devices t =
   if devices = [] then invalid_arg "Creation.shard: empty device group";
   match T.device t with
   | None -> t
-  | Some (U.Multi on) when on = devices && replicated t ->
+  | Some (U.Multi on) when on = List.map Option.some devices && replicated t ->
       (* The tinygrad counterpart rejects every multi-device source. A value
          replicated on [devices] is split where it lives: each device keeps
          its own shard of its replica, so resharding from replicated to split
@@ -124,7 +128,7 @@ let shard ?axis ~devices t =
           if source = device then t
           else T.of_uop (U.copy ~src:(T.uop t) ~device:(U.Single device) ())
       | _ ->
-          let copied = U.copy ~src:(T.uop t) ~device:(U.Multi devices) () in
+          let copied = U.copy ~src:(T.uop t) ~device:(U.Multi (List.map Option.some devices)) () in
           match axis with
           | None -> T.of_uop copied
           | Some axis -> partition t copied ~devices axis

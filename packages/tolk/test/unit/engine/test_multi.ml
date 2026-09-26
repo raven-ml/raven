@@ -86,7 +86,7 @@ let shard_shrink shape ndev src axis =
   U.shrink ~src ~offset:(emit before) ~size:(emit size)
 
 let sharded x shape devices axis =
-  let copied = U.copy ~src:x ~device:(U.Multi devices) () in
+  let copied = U.copy ~src:x ~device:(U.Multi (List.map Option.some devices)) () in
   U.unshard ~src:(shard_shrink shape (List.length devices) copied axis) ~axes:[axis] ()
 
 (* Realize a graph through the frontend, with [host] compiling the schedule,
@@ -152,7 +152,7 @@ let split_storage devices shape axis data =
       ~src:
         (Tolk_frontend.Tensor.uop
            (Tolk_frontend.Creation.empty ~dtype:Dtype.float32
-              ~device:(U.Multi devices) local))
+              ~device:(U.Multi (List.map Option.some devices)) local))
       ~axes:[ axis ] ()
   in
   let value = sharded (input "CPU" shape data) shape devices axis in
@@ -202,7 +202,7 @@ let spread ?axis shape u =
   Tolk_frontend.Tensor.of_uop
     (match axis with
     | Some axis -> sharded u shape devs4 axis
-    | None -> U.copy ~src:u ~device:(U.Multi devs4) ())
+    | None -> U.copy ~src:u ~device:(U.Multi (List.map Option.some devs4)) ())
 
 let wave n = Array.init n (fun i -> Float.of_int ((i * 7 mod 11) - 5) /. 8.)
 
@@ -234,7 +234,7 @@ let () =
               let n = U.variable ~name:"sharded_n" ~min_val:1 ~max_val:5 () in
               let full = alu Ops.Mul n (int_ 2) in
               let p = U.param ~slot:0 ~dtype:Dtype.float32
-                  ~shape:(emit [full; int_ 4]) ~axis:0 ~device:(U.Multi devs2) () in
+                  ~shape:(emit [full; int_ 4]) ~axis:0 ~device:(U.Multi (List.map Option.some devs2)) () in
               equal (list int) [10; 4] (U.max_shape p);
               equal (list int) [5; 4] (U.max_shard_shape p);
               let storage = U.storage_base p in
@@ -318,7 +318,7 @@ let () =
           test "two-axis device gather preserves every tile" (fun () ->
               let devices = List.init 6 (fun i -> "CPU:" ^ string_of_int (i + 1)) in
               let data = iota 48 in
-              let copied = U.copy ~src:(input "CPU" [4; 12] data) ~device:(U.Multi devices) () in
+              let copied = U.copy ~src:(input "CPU" [4; 12] data) ~device:(U.Multi (List.map Option.some devices)) () in
               let r = U.range ~size:(int_ 6) ~axis:(-1) ~kind:Axis_type.Device () in
               let a = alu Ops.Floordiv r (int_ 3) and b = alu Ops.Floormod r (int_ 3) in
               let local = U.shrink ~src:copied
@@ -364,7 +364,7 @@ let () =
           test "multi buffer node allocates one shard per device" (fun () ->
               let node =
                 U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
-                  ~shape:(shape_node [ 4 ]) ~device:(U.Multi devs2) ()
+                  ~shape:(shape_node [ 4 ]) ~device:(U.Multi (List.map Option.some devs2)) ()
               in
               let ctx = Realize.exec_context () in
               match Realize.resolve_buffer ctx node with
@@ -409,7 +409,7 @@ let () =
                 device_buffers
                   (realize
                      (U.copy ~src:(input "CPU" [ 8 ] data)
-                        ~device:(U.Multi devs2) ()))
+                        ~device:(U.Multi (List.map Option.some devs2)) ()))
               in
               equal ~msg:"shard devices" (list string) devs2
                 (List.map Device.Buffer.device bufs);
@@ -472,7 +472,7 @@ let () =
               let rows = [ 6; 1; 3 ] in
               let t = split_storage devs4 [ 8; 3 ] 0 data in
               let index = broadcast (ints [ 3; 1 ] (Array.of_list rows)) [ 3; 3 ] in
-              let on_each u = U.copy ~src:u ~device:(U.Multi devs4) () in
+              let on_each u = U.copy ~src:u ~device:(U.Multi (List.map Option.some devs4)) () in
               let written =
                 Tolk_frontend.Op.scatter_indexed t ~dim:0
                   (Tolk_frontend.Tensor.of_uop (on_each index))
@@ -594,7 +594,7 @@ let () =
                  device's first row, 256, does not fit the index's type. *)
               let devs = devs2 in
               let t = split_storage devs [ 512; 1 ] 0 (Array.make 512 0.0) in
-              let on_each u = U.copy ~src:u ~device:(U.Multi devs) () in
+              let on_each u = U.copy ~src:u ~device:(U.Multi (List.map Option.some devs)) () in
               let row =
                 let buf =
                   Device.create_buffer ~size:1 ~dtype:Dtype.uint8
@@ -673,10 +673,10 @@ let () =
           test "symbolic allreduce retains logical sizes under forced ring" (fun () ->
               Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.ring, 2)] (fun () ->
                   let v = U.variable ~name:"collective_size" ~min_val:1 ~max_val:7 () in
-                  let src = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:v ~device:(U.Multi devs4) () in
-                  let result = Option.get (Allreduce.handle_allreduce src ~op:Ops.Add ~device:(U.Multi devs4)) in
+                  let src = U.param ~slot:0 ~dtype:Dtype.float32 ~shape:v ~device:(U.Multi (List.map Option.some devs4)) () in
+                  let result = Option.get (Allreduce.handle_allreduce src ~op:Ops.Add ~device:(U.Multi (List.map Option.some devs4))) in
                   is_true (List.for_all2 U.equal [v] (U.shape result));
-                  let call = Option.get (Allreduce.create_allreduce_function src ~op:Ops.Add ~device:(U.Multi devs4)) in
+                  let call = Option.get (Allreduce.create_allreduce_function src ~op:Ops.Add ~device:(U.Multi (List.map Option.some devs4))) in
                   is_true (List.for_all2 U.equal [v] (U.shape call));
                   equal (list int) [7] (U.max_shape call);
                   List.iter (fun n ->

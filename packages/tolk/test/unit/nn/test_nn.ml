@@ -236,7 +236,7 @@ let state_tests =
           let p = Tolk_frontend.Creation.shard ~axis:1 ~devices (empty ()) in
           State.load_state_dict ~realize:false [("p", p)] [("p", empty ())];
           equal (option (list string)) (Some devices)
-            (match T.device p with Some (U.Multi ds) -> Some ds | _ -> None);
+            (match T.device p with Some (U.Multi ds) -> Some (List.map Option.get ds) | _ -> None);
           equal (option int) (Some 1) (U.axis (T.uop p));
           equal (list int) [2; 2] (U.max_shard_shape (T.uop p));
           equal (list int) [2; 4] (T.shape p));
