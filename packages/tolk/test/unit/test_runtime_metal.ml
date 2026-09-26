@@ -520,6 +520,41 @@ let multi_device_calls_use_queues () =
       equal (list int) [value] (read_i32 a);
       equal (list int) [value + 1] (read_i32 b)) [10; 73]
 
+(* Two Metal devices on one GPU run a sharded kernel as one batch: each lane
+   reads its own device's input and binds its own device index. *)
+let sharded_kernels_on_two_devices () =
+  let devices = List.map (fun name ->
+      try Tolk_metal.create name with Failure msg -> skip ~reason:msg ())
+      ["METAL:lane-a"; "METAL:lane-b"] in
+  let names = List.map Device.name devices in
+  let first = List.hd devices in
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1) () in
+  let at ptr = U.index ~ptr ~idxs:[U.const_int 0] () in
+  let dnum = U.variable ~param:true ~name:"_device_num" ~min_val:0 ~max_val:1
+      ~dtype:Dtype.int32 () in
+  let value = U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:(at (ptr 1)) ()) ~rhs:dnum in
+  let info = U.{name = "metal_two_devices"; applied_opts = []; opts_to_apply = Some [];
+    estimates = None; beam = 0} in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let program = to_program first (U.sink ~kernel_info:info [U.store ~dst:(at (ptr 0)) ~value ()]) in
+  let sharded slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 1)
+      ~device:(U.Multi names) () in
+  let call = U.call ~body:program ~args:[sharded 0; sharded 1]
+      ~info:{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; aux = None; dtype = Dtype.void} in
+  let compiled = Realize.compile_linear ~device:first ~to_program (U.linear [call])
+      |> Realize.link_linear in
+  equal ~msg:"one batch" int 1 (List.length (U.children compiled));
+  List.iter (fun value ->
+      let outputs = List.map (fun d -> i32_buf d [0]) devices in
+      let inputs = List.mapi (fun i d -> i32_buf d [value * (i + 1)]) devices in
+      let before = Realize.queue_submissions () in
+      let input_uops = [|U.mstack (List.map U.from_buffer outputs);
+                         U.mstack (List.map U.from_buffer inputs)|] in
+      Realize.run_linear ~device:first ~to_program ~input_uops ~jit:true ~wait:true compiled;
+      equal ~msg:"one submission" int 1 (Realize.queue_submissions () - before);
+      equal (list int) [value; 2 * value + 1] (List.concat_map read_i32 outputs)) [10; 73]
+
 let concurrent_timeline_initialization () =
   let device = metal_device () in
   let name = Device.name device in
@@ -550,6 +585,8 @@ let () =
           test "beam timing replays compiled Metal queues" beam_timings_use_compiled_queues;
           test "multi-device calls share inputs and bind each lane in compiled queues"
             multi_device_calls_use_queues;
+          test "a sharded kernel on two Metal devices runs as one batch"
+            sharded_kernels_on_two_devices;
           test "CPU kernels map Metal storage and byte views without copying"
             cpu_maps_metal_storage;
           test "tensor cores retain warp lanes across four local dimensions"

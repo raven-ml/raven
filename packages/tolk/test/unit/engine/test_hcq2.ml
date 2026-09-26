@@ -228,6 +228,82 @@ let peer_group_batches () =
       ~input_uops:(Array.map U.from_buffer buffers) linked);
   equal int 0 !prepared
 
+(* A layer program: a kernel sharded over two queued devices, and the copies
+   gathering the next layer's weight between them. The kernel becomes one call
+   per device binding its device index, and every call joins one batch. *)
+let sharded_batches () =
+  let host = Tolk_cpu.create "CPU" in
+  let names = ["CPU:lane-a"; "CPU:lane-b"] in
+  let make name =
+    let encode u = match U.op u, U.arg u, U.children u with
+      | Ops.Custom_function, U.Arg.String ("submit_cpu_copy_0" | "submit_cpu_compute_0"),
+        [_; dependency] -> Some (U.group [dependency])
+      | _ -> None in
+    let queue = Device.{timestamp_divider = 1.; profile_offset = (fun () -> 0.); completion = (fun () -> Fun.const ());
+      prepare = (fun () -> ()); host = "CPU"; max_kernel_bindings = None; config = (fun () -> "");
+      copy = (fun _ -> Some "COPY:0"); encode; lower = (fun _ -> None);
+      compile = Codegen.to_program ~optimize:false host (Device.renderer host)} in
+    let allocator = Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize:(fun () -> ())) in
+    ignore (Device.make ~name ~peer_group:"lanes" ~allocator
+      ~renderer_set:(Device.Renderer_set.make ~device:name
+        ["CLANG", (fun target -> Renderer.with_target target (Device.renderer host))])
+      ~runtime:(Device.runtime host) ~synchronize:(fun timeout -> ignore timeout; ()) ~queue ()) in
+  List.iter make names;
+  let ptr slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 32) () in
+  let at ptr = U.index ~ptr ~idxs:[U.const_int 0] () in
+  let lane = U.variable ~param:true ~name:"_device_num" ~min_val:0 ~max_val:1
+      ~dtype:Dtype.int32 () in
+  let store = U.store ~dst:(at (ptr 0))
+      ~value:(U.alu_binary ~op:Ops.Add ~lhs:(U.load ~src:(at (ptr 1)) ()) ~rhs:lane) () in
+  let kernel_info = U.{name = "lane_kernel"; applied_opts = []; opts_to_apply = Some [];
+    estimates = None; beam = 0} in
+  let to_program device = Codegen.to_program ~optimize:false device (Device.renderer device) in
+  let program = to_program host (U.sink ~kernel_info [store]) in
+  let sharded slot = U.param ~slot ~dtype:Dtype.int32 ~shape:(U.const_int 32)
+      ~device:(U.Multi names) () in
+  let kernel = U.call ~body:program ~args:[sharded 0; sharded 1]
+      ~info:{grad_fxn = None; name = None; precompile = false;
+        precompile_backward = false; aux = None; dtype = Dtype.void} in
+  let a slot = parameter ~device:(List.nth names 0) slot
+  and b slot = parameter ~device:(List.nth names 1) slot in
+  let linear = Hcq2.compile ~to_program (U.linear
+      [kernel; U.store_call ~dst:(a 2) ~src:(b 3); U.store_call ~dst:(b 4) ~src:(a 5);
+       U.store_call ~dst:(b 6) ~src:(U.mselect ~src:(sharded 0) ~index:0)]) in
+  let batches = List.filter_map (fun call -> match U.arg (U.without_after call) with
+      | U.Arg.Call_info {aux = Some info; _} -> Some info
+      | _ -> None) (U.children linear) in
+  equal ~msg:"one batch" int 1 (List.length batches);
+  equal ~msg:"nothing dispatched outside it" int 1 (List.length (U.children linear));
+  let calls = (List.hd batches).fallback in
+  let lanes = List.filter_map (fun call -> match U.as_call call with
+      | Some {body; args; _} when U.op body = Ops.Program ->
+          List.find_map (fun arg -> Option.map (fun (_, value) -> Int64.to_int value)
+              (if U.is_bound_var arg then Some (U.unbind arg) else None)) args
+      | _ -> None) calls in
+  equal ~msg:"a kernel per device, binding its index" (list int) [0; 1] lanes;
+  (* Only the copy reading lane a's kernel output shares bytes with a kernel,
+     so only its queue, lane a's copy queue where the copy pushes from, waits
+     for a compute queue; the other copies run beside the kernels. *)
+  let queued = List.map (fun call ->
+      let on u = match U.device_of u with
+        | Some (U.Single d) -> d | _ -> fail "a queued call on one device" in
+      match U.as_call call with
+      | Some {body; args = [_; src]; _} when U.op body = Ops.Store ->
+          Hcq2.{call; device = on src; queue = "COPY:0"}
+      | Some {args = dst :: _; _} -> Hcq2.{call; device = on dst; queue = "COMPUTE:0"}
+      | _ -> fail "expected a call") calls in
+  let plan = Hcq2.plan queued in
+  let waits = List.map (fun (device, name, nodes) ->
+      let rec before_last = function
+        | [] -> []
+        | nodes when List.for_all (fun u -> U.op u <> Ops.Call) nodes -> []
+        | u :: rest -> u :: before_last rest in
+      (device ^ " " ^ name, List.length (constant_waits (before_last nodes)))) plan.queues in
+  equal ~msg:"waits before each queue's last call" (list (pair string int))
+    (List.map (fun (d, q, _) -> d ^ " " ^ q,
+        if d = List.hd names && q = "COPY:0" then 1 else 0) plan.queues)
+    waits
+
 let staged_peer_dependencies () =
   let staging_mode = ref `Accept in
   let host = Tolk_cpu.create "CPU" in
@@ -753,6 +829,7 @@ let () = run "Engine_hcq2" [
   test "AMD all-to-all honors default and explicit SDMA queue counts" all_to_all_copy_queues;
   test "staging alternates bounded slots with read-before-reuse dependencies" staged_peer_dependencies;
   test "interleaved groups preserve dependencies and check reordered aliases" peer_group_batches;
+  test "a sharded kernel and the next weight's copies share one batch" sharded_batches;
   test "byte intervals match a per-byte dependency model" byte_dependencies;
   test "owned aliases and device lanes preserve allocation identity" region_identity;
   test "only overlapping accesses wait across queues" overlap_waits;
