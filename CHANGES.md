@@ -702,6 +702,9 @@ thread.
 
 ### Tolk (new)
 
+- A CPU kernel that calls a symbol the process lacks fails naming it,
+  `link_symbol: undefined symbol NAME`, where it said `link_symbol failed`.
+
 - Failed NVIDIA GSP initialization now retires mapped context and channel
   allocations after a successful device stop. Failed stops retain their
   virtual addresses, page tables and backing storage.
@@ -838,6 +841,7 @@ thread.
 - Driver-less AMD startup preserves resident boot memory when software
   preparation fails. Root-page and PSP-fence clearing now starts only after
   the session is marked dirty.
+
 
 - A Metal kernel on a unified-memory device reads and writes a buffer of the
   CPU device in place, through a no-copy Metal buffer over the pages that hold
