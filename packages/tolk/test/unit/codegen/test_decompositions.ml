@@ -73,7 +73,7 @@ let supported_ops ?(has_and = true) ?(has_max = true) ?(has_cmplt = true)
 (* Sqrt lowers through xpow, which produces a Where at the root for the
    zero-zero fixup. *)
 let sqrt_decomposition_builds_where () =
-  let base = Uop.const_float 2.0 in
+  let base = Uop.const (Const.float Dtype.float32 2.0) in
   let sqrt = Uop.alu_unary ~op:Ops.Sqrt ~src:base in
   match
     Decomp_transcendental.get_transcendental_patterns
@@ -81,6 +81,17 @@ let sqrt_decomposition_builds_where () =
   with
   | Some r -> is_true ~msg:"outer op is Where" (Uop.op r = Ops.Where)
   | None -> is_true ~msg:"sqrt decomposition fired" false
+
+(* xpow reads the sign through an integer of the base's width, and a width
+   with no integer, such as a weak float's, fails loudly. *)
+let xpow_refuses_a_width_without_an_integer () =
+  let sqrt = Uop.alu_unary ~op:Ops.Sqrt ~src:(Uop.const_float 2.0) in
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () ->
+      ignore
+        (Decomp_transcendental.get_transcendental_patterns
+           (supported_ops ~has_sqrt:false ()) sqrt))
 
 let log2_denormal_scale_uses_float_power () =
   let x = Uop.const_float 1.0 in
@@ -939,6 +950,8 @@ let () =
       group "transcendentals"
         [ test "sqrt decomposition builds Where"
             sqrt_decomposition_builds_where;
+          test "xpow refuses a width without an integer"
+            xpow_refuses_a_width_without_an_integer;
           test "log2 denormal scale uses float power"
             log2_denormal_scale_uses_float_power;
           test "sin f16 Cody-Waite casts quadrant to f32"

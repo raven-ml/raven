@@ -569,10 +569,12 @@ let xpow base exponent =
   let v = Uop.dtype base in
   let c x = const_float_v v x in
   let bits =
-    match v with
-    | Dtype.Float64 -> Dtype.int64
-    | Dtype.Float16 -> Dtype.int16
-    | _ -> Dtype.int32
+    match Dtype.itemsize v with
+    | 8 -> Dtype.int64
+    | 4 -> Dtype.int32
+    | 2 -> Dtype.int16
+    | 1 -> Dtype.int8
+    | n -> invalid_arg (Printf.sprintf "xpow: no integer of %d bytes" n)
   in
   let open Uop.O in
   let eq a b = Uop.alu_binary ~op:Ops.Cmpeq ~lhs:a ~rhs:b in
