@@ -1,0 +1,1131 @@
+upstream-sha256: 6da8fb8f840ff87b378c4cecc56757f1d64c6e7a37f1ced7570267a10322a8ca
+actual-sha256: ff39abec38e8dd5d3a4abccd0d337e34686359535feded8407e1df60e55990cd
+--- upstream.expected
++++ tolk.actual
+@@ -28,570 +28,574 @@
+   27 Ops.ADD             :            dtypes.int                               [20, 26]                         None
+   28 Ops.ADD             :            dtypes.int                               [14, 27]                         None
+   29 Ops.SHRINK          :            dtypes.float                             [0, 28, 22]                      None
+-  30 Ops.PARAM           :            dtypes.bfloat16                          []                               ParamArg(0, dtypes.bfloat16, 16384)
+-  31 Ops.ADD             :            dtypes.int                               [27, 13]                         None
+-  32 Ops.INDEX           :            dtypes.bfloat16                          [30, 31]                         None
+-  33 Ops.LOAD            :            dtypes.bfloat16                          [32]                             None
+-  34 Ops.ADD             :            dtypes.int                               [31, 12]                         None
+-  35 Ops.INDEX           :            dtypes.bfloat16                          [30, 34]                         None
+-  36 Ops.LOAD            :            dtypes.bfloat16                          [35]                             None
+-  37 Ops.CONST           :            dtypes.weakint                           []                               1024
+-  38 Ops.CAST            :            dtypes.int                               ['1024']                         dtypes.int
+-  39 Ops.ADD             :            dtypes.int                               [31, 38]                         None
+-  40 Ops.INDEX           :            dtypes.bfloat16                          [30, 39]                         None
+-  41 Ops.LOAD            :            dtypes.bfloat16                          [40]                             None
+-  42 Ops.CONST           :            dtypes.weakint                           []                               1025
+-  43 Ops.CAST            :            dtypes.int                               ['1025']                         dtypes.int
+-  44 Ops.ADD             :            dtypes.int                               [31, 43]                         None
+-  45 Ops.INDEX           :            dtypes.bfloat16                          [30, 44]                         None
+-  46 Ops.LOAD            :            dtypes.bfloat16                          [45]                             None
+-  47 Ops.ADD             :            dtypes.int                               [31, 16]                         None
+-  48 Ops.INDEX           :            dtypes.bfloat16                          [30, 47]                         None
+-  49 Ops.LOAD            :            dtypes.bfloat16                          [48]                             None
+-  50 Ops.CONST           :            dtypes.weakint                           []                               9
+-  51 Ops.CAST            :            dtypes.int                               ['9']                            dtypes.int
+-  52 Ops.ADD             :            dtypes.int                               [31, 51]                         None
+-  53 Ops.INDEX           :            dtypes.bfloat16                          [30, 52]                         None
+-  54 Ops.LOAD            :            dtypes.bfloat16                          [53]                             None
+-  55 Ops.CONST           :            dtypes.weakint                           []                               1032
+-  56 Ops.CAST            :            dtypes.int                               ['1032']                         dtypes.int
+-  57 Ops.ADD             :            dtypes.int                               [31, 56]                         None
+-  58 Ops.INDEX           :            dtypes.bfloat16                          [30, 57]                         None
+-  59 Ops.LOAD            :            dtypes.bfloat16                          [58]                             None
+-  60 Ops.CONST           :            dtypes.weakint                           []                               1033
+-  61 Ops.CAST            :            dtypes.int                               ['1033']                         dtypes.int
+-  62 Ops.ADD             :            dtypes.int                               [31, 61]                         None
+-  63 Ops.INDEX           :            dtypes.bfloat16                          [30, 62]                         None
+-  64 Ops.LOAD            :            dtypes.bfloat16                          [63]                             None
+-  65 Ops.STACK           :            dtypes.bfloat16                          [33, 36, 41, 46, 49, 54, 59, 64] None
+-  66 Ops.PARAM           :            dtypes.bfloat16                          []                               ParamArg(1, dtypes.bfloat16, 16384)
+-  67 Ops.ADD             :            dtypes.int                               [6, 23]                          None
+-  68 Ops.SHL             :            dtypes.int                               [10, 16]                         None
+-  69 Ops.ADD             :            dtypes.int                               [67, 68]                         None
+-  70 Ops.INDEX           :            dtypes.bfloat16                          [66, 69]                         None
+-  71 Ops.LOAD            :            dtypes.bfloat16                          [70]                             None
+-  72 Ops.CONST           :            dtypes.weakint                           []                               128
+-  73 Ops.CAST            :            dtypes.int                               ['128']                          dtypes.int
+-  74 Ops.ADD             :            dtypes.int                               [69, 73]                         None
+-  75 Ops.INDEX           :            dtypes.bfloat16                          [66, 74]                         None
+-  76 Ops.LOAD            :            dtypes.bfloat16                          [75]                             None
+-  77 Ops.ADD             :            dtypes.int                               [69, 38]                         None
+-  78 Ops.INDEX           :            dtypes.bfloat16                          [66, 77]                         None
+-  79 Ops.LOAD            :            dtypes.bfloat16                          [78]                             None
+-  80 Ops.CONST           :            dtypes.weakint                           []                               1152
+-  81 Ops.CAST            :            dtypes.int                               ['1152']                         dtypes.int
+-  82 Ops.ADD             :            dtypes.int                               [69, 81]                         None
+-  83 Ops.INDEX           :            dtypes.bfloat16                          [66, 82]                         None
+-  84 Ops.LOAD            :            dtypes.bfloat16                          [83]                             None
+-  85 Ops.STACK           :            dtypes.bfloat16                          [71, 76, 79, 84]                 None
+-  86 Ops.CONST           :            dtypes.weakfloat                         []                               0.0
+-  87 Ops.CAST            :            dtypes.float                             ['0.0']                          dtypes.float
+-  88 Ops.STACK           :            dtypes.float                             [87, 87, 87, 87]                 None
+-  89 Ops.WMMA            :            dtypes.float                             [65, 85, 88]                     ((8, 16, 16), dtypes.bfloat16, 32, None)
++  30 Ops.CONST           :            dtypes.weakfloat                         []                               0.0
++  31 Ops.CAST            :            dtypes.float                             ['0.0']                          dtypes.float
++  32 Ops.PARAM           :            dtypes.bfloat16                          []                               ParamArg(0, dtypes.bfloat16, 16384)
++  33 Ops.ADD             :            dtypes.int                               [27, 13]                         None
++  34 Ops.INDEX           :            dtypes.bfloat16                          [32, 33]                         None
++  35 Ops.LOAD            :            dtypes.bfloat16                          [34]                             None
++  36 Ops.ADD             :            dtypes.int                               [33, 12]                         None
++  37 Ops.INDEX           :            dtypes.bfloat16                          [32, 36]                         None
++  38 Ops.LOAD            :            dtypes.bfloat16                          [37]                             None
++  39 Ops.CONST           :            dtypes.weakint                           []                               1024
++  40 Ops.CAST            :            dtypes.int                               ['1024']                         dtypes.int
++  41 Ops.ADD             :            dtypes.int                               [33, 40]                         None
++  42 Ops.INDEX           :            dtypes.bfloat16                          [32, 41]                         None
++  43 Ops.LOAD            :            dtypes.bfloat16                          [42]                             None
++  44 Ops.CONST           :            dtypes.weakint                           []                               1025
++  45 Ops.CAST            :            dtypes.int                               ['1025']                         dtypes.int
++  46 Ops.ADD             :            dtypes.int                               [33, 45]                         None
++  47 Ops.INDEX           :            dtypes.bfloat16                          [32, 46]                         None
++  48 Ops.LOAD            :            dtypes.bfloat16                          [47]                             None
++  49 Ops.ADD             :            dtypes.int                               [33, 16]                         None
++  50 Ops.INDEX           :            dtypes.bfloat16                          [32, 49]                         None
++  51 Ops.LOAD            :            dtypes.bfloat16                          [50]                             None
++  52 Ops.CONST           :            dtypes.weakint                           []                               9
++  53 Ops.CAST            :            dtypes.int                               ['9']                            dtypes.int
++  54 Ops.ADD             :            dtypes.int                               [33, 53]                         None
++  55 Ops.INDEX           :            dtypes.bfloat16                          [32, 54]                         None
++  56 Ops.LOAD            :            dtypes.bfloat16                          [55]                             None
++  57 Ops.CONST           :            dtypes.weakint                           []                               1032
++  58 Ops.CAST            :            dtypes.int                               ['1032']                         dtypes.int
++  59 Ops.ADD             :            dtypes.int                               [33, 58]                         None
++  60 Ops.INDEX           :            dtypes.bfloat16                          [32, 59]                         None
++  61 Ops.LOAD            :            dtypes.bfloat16                          [60]                             None
++  62 Ops.CONST           :            dtypes.weakint                           []                               1033
++  63 Ops.CAST            :            dtypes.int                               ['1033']                         dtypes.int
++  64 Ops.ADD             :            dtypes.int                               [33, 63]                         None
++  65 Ops.INDEX           :            dtypes.bfloat16                          [32, 64]                         None
++  66 Ops.LOAD            :            dtypes.bfloat16                          [65]                             None
++  67 Ops.STACK           :            dtypes.bfloat16                          [35, 38, 43, 48, 51, 56, 61, 66] None
++  68 Ops.PARAM           :            dtypes.bfloat16                          []                               ParamArg(1, dtypes.bfloat16, 16384)
++  69 Ops.ADD             :            dtypes.int                               [6, 23]                          None
++  70 Ops.SHL             :            dtypes.int                               [10, 16]                         None
++  71 Ops.ADD             :            dtypes.int                               [69, 70]                         None
++  72 Ops.INDEX           :            dtypes.bfloat16                          [68, 71]                         None
++  73 Ops.LOAD            :            dtypes.bfloat16                          [72]                             None
++  74 Ops.CONST           :            dtypes.weakint                           []                               128
++  75 Ops.CAST            :            dtypes.int                               ['128']                          dtypes.int
++  76 Ops.ADD             :            dtypes.int                               [71, 75]                         None
++  77 Ops.INDEX           :            dtypes.bfloat16                          [68, 76]                         None
++  78 Ops.LOAD            :            dtypes.bfloat16                          [77]                             None
++  79 Ops.ADD             :            dtypes.int                               [71, 40]                         None
++  80 Ops.INDEX           :            dtypes.bfloat16                          [68, 79]                         None
++  81 Ops.LOAD            :            dtypes.bfloat16                          [80]                             None
++  82 Ops.CONST           :            dtypes.weakint                           []                               1152
++  83 Ops.CAST            :            dtypes.int                               ['1152']                         dtypes.int
++  84 Ops.ADD             :            dtypes.int                               [71, 83]                         None
++  85 Ops.INDEX           :            dtypes.bfloat16                          [68, 84]                         None
++  86 Ops.LOAD            :            dtypes.bfloat16                          [85]                             None
++  87 Ops.STACK           :            dtypes.bfloat16                          [73, 78, 81, 86]                 None
++  88 Ops.STACK           :            dtypes.float                             [31, 31, 31, 31]                 None
++  89 Ops.WMMA            :            dtypes.float                             [67, 87, 88]                     ((8, 16, 16), dtypes.bfloat16, 32, None)
+   90 Ops.CONST           :            dtypes.weakint                           []                               0
+   91 Ops.CAST            :            dtypes.int                               ['0']                            dtypes.int
+   92 Ops.INDEX           :            dtypes.float                             [89, 91]                         None
+-  93 Ops.ADD             :            dtypes.int                               [31, 2]                          None
+-  94 Ops.INDEX           :            dtypes.bfloat16                          [30, 93]                         None
+-  95 Ops.LOAD            :            dtypes.bfloat16                          [94]                             None
+-  96 Ops.CONST           :            dtypes.weakint                           []                               17
+-  97 Ops.CAST            :            dtypes.int                               ['17']                           dtypes.int
+-  98 Ops.ADD             :            dtypes.int                               [31, 97]                         None
+-  99 Ops.INDEX           :            dtypes.bfloat16                          [30, 98]                         None
+- 100 Ops.LOAD            :            dtypes.bfloat16                          [99]                             None
+- 101 Ops.CONST           :            dtypes.weakint                           []                               1040
+- 102 Ops.CAST            :            dtypes.int                               ['1040']                         dtypes.int
+- 103 Ops.ADD             :            dtypes.int                               [31, 102]                        None
+- 104 Ops.INDEX           :            dtypes.bfloat16                          [30, 103]                        None
+- 105 Ops.LOAD            :            dtypes.bfloat16                          [104]                            None
+- 106 Ops.CONST           :            dtypes.weakint                           []                               1041
+- 107 Ops.CAST            :            dtypes.int                               ['1041']                         dtypes.int
+- 108 Ops.ADD             :            dtypes.int                               [31, 107]                        None
+- 109 Ops.INDEX           :            dtypes.bfloat16                          [30, 108]                        None
+- 110 Ops.LOAD            :            dtypes.bfloat16                          [109]                            None
+- 111 Ops.CONST           :            dtypes.weakint                           []                               24
+- 112 Ops.CAST            :            dtypes.int                               ['24']                           dtypes.int
+- 113 Ops.ADD             :            dtypes.int                               [31, 112]                        None
+- 114 Ops.INDEX           :            dtypes.bfloat16                          [30, 113]                        None
+- 115 Ops.LOAD            :            dtypes.bfloat16                          [114]                            None
+- 116 Ops.CONST           :            dtypes.weakint                           []                               25
+- 117 Ops.CAST            :            dtypes.int                               ['25']                           dtypes.int
+- 118 Ops.ADD             :            dtypes.int                               [31, 117]                        None
+- 119 Ops.INDEX           :            dtypes.bfloat16                          [30, 118]                        None
+- 120 Ops.LOAD            :            dtypes.bfloat16                          [119]                            None
+- 121 Ops.CONST           :            dtypes.weakint                           []                               1048
+- 122 Ops.CAST            :            dtypes.int                               ['1048']                         dtypes.int
+- 123 Ops.ADD             :            dtypes.int                               [31, 122]                        None
+- 124 Ops.INDEX           :            dtypes.bfloat16                          [30, 123]                        None
+- 125 Ops.LOAD            :            dtypes.bfloat16                          [124]                            None
+- 126 Ops.CONST           :            dtypes.weakint                           []                               1049
+- 127 Ops.CAST            :            dtypes.int                               ['1049']                         dtypes.int
+- 128 Ops.ADD             :            dtypes.int                               [31, 127]                        None
+- 129 Ops.INDEX           :            dtypes.bfloat16                          [30, 128]                        None
+- 130 Ops.LOAD            :            dtypes.bfloat16                          [129]                            None
+- 131 Ops.STACK           :            dtypes.bfloat16                          [95, 100, 105, 110, 115, 120, 125, 130] None
+- 132 Ops.CONST           :            dtypes.weakint                           []                               2048
+- 133 Ops.CAST            :            dtypes.int                               ['2048']                         dtypes.int
+- 134 Ops.ADD             :            dtypes.int                               [69, 133]                        None
+- 135 Ops.INDEX           :            dtypes.bfloat16                          [66, 134]                        None
+- 136 Ops.LOAD            :            dtypes.bfloat16                          [135]                            None
+- 137 Ops.CONST           :            dtypes.weakint                           []                               2176
+- 138 Ops.CAST            :            dtypes.int                               ['2176']                         dtypes.int
+- 139 Ops.ADD             :            dtypes.int                               [69, 138]                        None
+- 140 Ops.INDEX           :            dtypes.bfloat16                          [66, 139]                        None
+- 141 Ops.LOAD            :            dtypes.bfloat16                          [140]                            None
+- 142 Ops.CONST           :            dtypes.weakint                           []                               3072
+- 143 Ops.CAST            :            dtypes.int                               ['3072']                         dtypes.int
+- 144 Ops.ADD             :            dtypes.int                               [69, 143]                        None
+- 145 Ops.INDEX           :            dtypes.bfloat16                          [66, 144]                        None
+- 146 Ops.LOAD            :            dtypes.bfloat16                          [145]                            None
+- 147 Ops.CONST           :            dtypes.weakint                           []                               3200
+- 148 Ops.CAST            :            dtypes.int                               ['3200']                         dtypes.int
+- 149 Ops.ADD             :            dtypes.int                               [69, 148]                        None
+- 150 Ops.INDEX           :            dtypes.bfloat16                          [66, 149]                        None
+- 151 Ops.LOAD            :            dtypes.bfloat16                          [150]                            None
+- 152 Ops.STACK           :            dtypes.bfloat16                          [136, 141, 146, 151]             None
+- 153 Ops.WMMA            :            dtypes.float                             [131, 152, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
+- 154 Ops.INDEX           :            dtypes.float                             [153, 91]                        None
+- 155 Ops.ADD             :            dtypes.float                             [92, 154]                        None
+- 156 Ops.ADD             :            dtypes.int                               [31, 8]                          None
+- 157 Ops.INDEX           :            dtypes.bfloat16                          [30, 156]                        None
+- 158 Ops.LOAD            :            dtypes.bfloat16                          [157]                            None
+- 159 Ops.CONST           :            dtypes.weakint                           []                               33
+- 160 Ops.CAST            :            dtypes.int                               ['33']                           dtypes.int
+- 161 Ops.ADD             :            dtypes.int                               [31, 160]                        None
+- 162 Ops.INDEX           :            dtypes.bfloat16                          [30, 161]                        None
+- 163 Ops.LOAD            :            dtypes.bfloat16                          [162]                            None
+- 164 Ops.CONST           :            dtypes.weakint                           []                               1056
+- 165 Ops.CAST            :            dtypes.int                               ['1056']                         dtypes.int
+- 166 Ops.ADD             :            dtypes.int                               [31, 165]                        None
+- 167 Ops.INDEX           :            dtypes.bfloat16                          [30, 166]                        None
+- 168 Ops.LOAD            :            dtypes.bfloat16                          [167]                            None
+- 169 Ops.CONST           :            dtypes.weakint                           []                               1057
+- 170 Ops.CAST            :            dtypes.int                               ['1057']                         dtypes.int
+- 171 Ops.ADD             :            dtypes.int                               [31, 170]                        None
+- 172 Ops.INDEX           :            dtypes.bfloat16                          [30, 171]                        None
+- 173 Ops.LOAD            :            dtypes.bfloat16                          [172]                            None
+- 174 Ops.CONST           :            dtypes.weakint                           []                               40
+- 175 Ops.CAST            :            dtypes.int                               ['40']                           dtypes.int
+- 176 Ops.ADD             :            dtypes.int                               [31, 175]                        None
+- 177 Ops.INDEX           :            dtypes.bfloat16                          [30, 176]                        None
+- 178 Ops.LOAD            :            dtypes.bfloat16                          [177]                            None
+- 179 Ops.CONST           :            dtypes.weakint                           []                               41
+- 180 Ops.CAST            :            dtypes.int                               ['41']                           dtypes.int
+- 181 Ops.ADD             :            dtypes.int                               [31, 180]                        None
+- 182 Ops.INDEX           :            dtypes.bfloat16                          [30, 181]                        None
+- 183 Ops.LOAD            :            dtypes.bfloat16                          [182]                            None
+- 184 Ops.CONST           :            dtypes.weakint                           []                               1064
+- 185 Ops.CAST            :            dtypes.int                               ['1064']                         dtypes.int
+- 186 Ops.ADD             :            dtypes.int                               [31, 185]                        None
+- 187 Ops.INDEX           :            dtypes.bfloat16                          [30, 186]                        None
+- 188 Ops.LOAD            :            dtypes.bfloat16                          [187]                            None
+- 189 Ops.CONST           :            dtypes.weakint                           []                               1065
+- 190 Ops.CAST            :            dtypes.int                               ['1065']                         dtypes.int
+- 191 Ops.ADD             :            dtypes.int                               [31, 190]                        None
+- 192 Ops.INDEX           :            dtypes.bfloat16                          [30, 191]                        None
+- 193 Ops.LOAD            :            dtypes.bfloat16                          [192]                            None
+- 194 Ops.STACK           :            dtypes.bfloat16                          [158, 163, 168, 173, 178, 183, 188, 193] None
+- 195 Ops.CONST           :            dtypes.weakint                           []                               4096
+- 196 Ops.CAST            :            dtypes.int                               ['4096']                         dtypes.int
+- 197 Ops.ADD             :            dtypes.int                               [69, 196]                        None
+- 198 Ops.INDEX           :            dtypes.bfloat16                          [66, 197]                        None
+- 199 Ops.LOAD            :            dtypes.bfloat16                          [198]                            None
+- 200 Ops.CONST           :            dtypes.weakint                           []                               4224
+- 201 Ops.CAST            :            dtypes.int                               ['4224']                         dtypes.int
+- 202 Ops.ADD             :            dtypes.int                               [69, 201]                        None
+- 203 Ops.INDEX           :            dtypes.bfloat16                          [66, 202]                        None
+- 204 Ops.LOAD            :            dtypes.bfloat16                          [203]                            None
+- 205 Ops.CONST           :            dtypes.weakint                           []                               5120
+- 206 Ops.CAST            :            dtypes.int                               ['5120']                         dtypes.int
+- 207 Ops.ADD             :            dtypes.int                               [69, 206]                        None
+- 208 Ops.INDEX           :            dtypes.bfloat16                          [66, 207]                        None
+- 209 Ops.LOAD            :            dtypes.bfloat16                          [208]                            None
+- 210 Ops.CONST           :            dtypes.weakint                           []                               5248
+- 211 Ops.CAST            :            dtypes.int                               ['5248']                         dtypes.int
+- 212 Ops.ADD             :            dtypes.int                               [69, 211]                        None
+- 213 Ops.INDEX           :            dtypes.bfloat16                          [66, 212]                        None
+- 214 Ops.LOAD            :            dtypes.bfloat16                          [213]                            None
+- 215 Ops.STACK           :            dtypes.bfloat16                          [199, 204, 209, 214]             None
+- 216 Ops.WMMA            :            dtypes.float                             [194, 215, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
+- 217 Ops.INDEX           :            dtypes.float                             [216, 91]                        None
+- 218 Ops.ADD             :            dtypes.float                             [155, 217]                       None
+- 219 Ops.CONST           :            dtypes.weakint                           []                               48
+- 220 Ops.CAST            :            dtypes.int                               ['48']                           dtypes.int
+- 221 Ops.ADD             :            dtypes.int                               [31, 220]                        None
+- 222 Ops.INDEX           :            dtypes.bfloat16                          [30, 221]                        None
+- 223 Ops.LOAD            :            dtypes.bfloat16                          [222]                            None
+- 224 Ops.CONST           :            dtypes.weakint                           []                               49
+- 225 Ops.CAST            :            dtypes.int                               ['49']                           dtypes.int
+- 226 Ops.ADD             :            dtypes.int                               [31, 225]                        None
+- 227 Ops.INDEX           :            dtypes.bfloat16                          [30, 226]                        None
+- 228 Ops.LOAD            :            dtypes.bfloat16                          [227]                            None
+- 229 Ops.CONST           :            dtypes.weakint                           []                               1072
+- 230 Ops.CAST            :            dtypes.int                               ['1072']                         dtypes.int
+- 231 Ops.ADD             :            dtypes.int                               [31, 230]                        None
+- 232 Ops.INDEX           :            dtypes.bfloat16                          [30, 231]                        None
+- 233 Ops.LOAD            :            dtypes.bfloat16                          [232]                            None
+- 234 Ops.CONST           :            dtypes.weakint                           []                               1073
+- 235 Ops.CAST            :            dtypes.int                               ['1073']                         dtypes.int
+- 236 Ops.ADD             :            dtypes.int                               [31, 235]                        None
+- 237 Ops.INDEX           :            dtypes.bfloat16                          [30, 236]                        None
+- 238 Ops.LOAD            :            dtypes.bfloat16                          [237]                            None
+- 239 Ops.CONST           :            dtypes.weakint                           []                               56
+- 240 Ops.CAST            :            dtypes.int                               ['56']                           dtypes.int
+- 241 Ops.ADD             :            dtypes.int                               [31, 240]                        None
+- 242 Ops.INDEX           :            dtypes.bfloat16                          [30, 241]                        None
+- 243 Ops.LOAD            :            dtypes.bfloat16                          [242]                            None
+- 244 Ops.CONST           :            dtypes.weakint                           []                               57
+- 245 Ops.CAST            :            dtypes.int                               ['57']                           dtypes.int
+- 246 Ops.ADD             :            dtypes.int                               [31, 245]                        None
+- 247 Ops.INDEX           :            dtypes.bfloat16                          [30, 246]                        None
+- 248 Ops.LOAD            :            dtypes.bfloat16                          [247]                            None
+- 249 Ops.CONST           :            dtypes.weakint                           []                               1080
+- 250 Ops.CAST            :            dtypes.int                               ['1080']                         dtypes.int
+- 251 Ops.ADD             :            dtypes.int                               [31, 250]                        None
+- 252 Ops.INDEX           :            dtypes.bfloat16                          [30, 251]                        None
+- 253 Ops.LOAD            :            dtypes.bfloat16                          [252]                            None
+- 254 Ops.CONST           :            dtypes.weakint                           []                               1081
+- 255 Ops.CAST            :            dtypes.int                               ['1081']                         dtypes.int
+- 256 Ops.ADD             :            dtypes.int                               [31, 255]                        None
+- 257 Ops.INDEX           :            dtypes.bfloat16                          [30, 256]                        None
+- 258 Ops.LOAD            :            dtypes.bfloat16                          [257]                            None
+- 259 Ops.STACK           :            dtypes.bfloat16                          [223, 228, 233, 238, 243, 248, 253, 258] None
+- 260 Ops.CONST           :            dtypes.weakint                           []                               6144
+- 261 Ops.CAST            :            dtypes.int                               ['6144']                         dtypes.int
+- 262 Ops.ADD             :            dtypes.int                               [69, 261]                        None
+- 263 Ops.INDEX           :            dtypes.bfloat16                          [66, 262]                        None
+- 264 Ops.LOAD            :            dtypes.bfloat16                          [263]                            None
+- 265 Ops.CONST           :            dtypes.weakint                           []                               6272
+- 266 Ops.CAST            :            dtypes.int                               ['6272']                         dtypes.int
+- 267 Ops.ADD             :            dtypes.int                               [69, 266]                        None
+- 268 Ops.INDEX           :            dtypes.bfloat16                          [66, 267]                        None
+- 269 Ops.LOAD            :            dtypes.bfloat16                          [268]                            None
+- 270 Ops.CONST           :            dtypes.weakint                           []                               7168
+- 271 Ops.CAST            :            dtypes.int                               ['7168']                         dtypes.int
+- 272 Ops.ADD             :            dtypes.int                               [69, 271]                        None
+- 273 Ops.INDEX           :            dtypes.bfloat16                          [66, 272]                        None
+- 274 Ops.LOAD            :            dtypes.bfloat16                          [273]                            None
+- 275 Ops.CONST           :            dtypes.weakint                           []                               7296
+- 276 Ops.CAST            :            dtypes.int                               ['7296']                         dtypes.int
+- 277 Ops.ADD             :            dtypes.int                               [69, 276]                        None
+- 278 Ops.INDEX           :            dtypes.bfloat16                          [66, 277]                        None
+- 279 Ops.LOAD            :            dtypes.bfloat16                          [278]                            None
+- 280 Ops.STACK           :            dtypes.bfloat16                          [264, 269, 274, 279]             None
+- 281 Ops.WMMA            :            dtypes.float                             [259, 280, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
+- 282 Ops.INDEX           :            dtypes.float                             [281, 91]                        None
+- 283 Ops.ADD             :            dtypes.float                             [218, 282]                       None
+- 284 Ops.CONST           :            dtypes.weakint                           []                               64
+- 285 Ops.CAST            :            dtypes.int                               ['64']                           dtypes.int
+- 286 Ops.ADD             :            dtypes.int                               [31, 285]                        None
+- 287 Ops.INDEX           :            dtypes.bfloat16                          [30, 286]                        None
+- 288 Ops.LOAD            :            dtypes.bfloat16                          [287]                            None
+- 289 Ops.CONST           :            dtypes.weakint                           []                               65
+- 290 Ops.CAST            :            dtypes.int                               ['65']                           dtypes.int
+- 291 Ops.ADD             :            dtypes.int                               [31, 290]                        None
+- 292 Ops.INDEX           :            dtypes.bfloat16                          [30, 291]                        None
+- 293 Ops.LOAD            :            dtypes.bfloat16                          [292]                            None
+- 294 Ops.CONST           :            dtypes.weakint                           []                               1088
+- 295 Ops.CAST            :            dtypes.int                               ['1088']                         dtypes.int
+- 296 Ops.ADD             :            dtypes.int                               [31, 295]                        None
+- 297 Ops.INDEX           :            dtypes.bfloat16                          [30, 296]                        None
+- 298 Ops.LOAD            :            dtypes.bfloat16                          [297]                            None
+- 299 Ops.CONST           :            dtypes.weakint                           []                               1089
+- 300 Ops.CAST            :            dtypes.int                               ['1089']                         dtypes.int
+- 301 Ops.ADD             :            dtypes.int                               [31, 300]                        None
+- 302 Ops.INDEX           :            dtypes.bfloat16                          [30, 301]                        None
+- 303 Ops.LOAD            :            dtypes.bfloat16                          [302]                            None
+- 304 Ops.CONST           :            dtypes.weakint                           []                               72
+- 305 Ops.CAST            :            dtypes.int                               ['72']                           dtypes.int
+- 306 Ops.ADD             :            dtypes.int                               [31, 305]                        None
+- 307 Ops.INDEX           :            dtypes.bfloat16                          [30, 306]                        None
+- 308 Ops.LOAD            :            dtypes.bfloat16                          [307]                            None
+- 309 Ops.CONST           :            dtypes.weakint                           []                               73
+- 310 Ops.CAST            :            dtypes.int                               ['73']                           dtypes.int
+- 311 Ops.ADD             :            dtypes.int                               [31, 310]                        None
+- 312 Ops.INDEX           :            dtypes.bfloat16                          [30, 311]                        None
+- 313 Ops.LOAD            :            dtypes.bfloat16                          [312]                            None
+- 314 Ops.CONST           :            dtypes.weakint                           []                               1096
+- 315 Ops.CAST            :            dtypes.int                               ['1096']                         dtypes.int
+- 316 Ops.ADD             :            dtypes.int                               [31, 315]                        None
+- 317 Ops.INDEX           :            dtypes.bfloat16                          [30, 316]                        None
+- 318 Ops.LOAD            :            dtypes.bfloat16                          [317]                            None
+- 319 Ops.CONST           :            dtypes.weakint                           []                               1097
+- 320 Ops.CAST            :            dtypes.int                               ['1097']                         dtypes.int
+- 321 Ops.ADD             :            dtypes.int                               [31, 320]                        None
+- 322 Ops.INDEX           :            dtypes.bfloat16                          [30, 321]                        None
+- 323 Ops.LOAD            :            dtypes.bfloat16                          [322]                            None
+- 324 Ops.STACK           :            dtypes.bfloat16                          [288, 293, 298, 303, 308, 313, 318, 323] None
+- 325 Ops.CONST           :            dtypes.weakint                           []                               8192
+- 326 Ops.CAST            :            dtypes.int                               ['8192']                         dtypes.int
+- 327 Ops.ADD             :            dtypes.int                               [69, 326]                        None
+- 328 Ops.INDEX           :            dtypes.bfloat16                          [66, 327]                        None
+- 329 Ops.LOAD            :            dtypes.bfloat16                          [328]                            None
+- 330 Ops.CONST           :            dtypes.weakint                           []                               8320
+- 331 Ops.CAST            :            dtypes.int                               ['8320']                         dtypes.int
+- 332 Ops.ADD             :            dtypes.int                               [69, 331]                        None
+- 333 Ops.INDEX           :            dtypes.bfloat16                          [66, 332]                        None
+- 334 Ops.LOAD            :            dtypes.bfloat16                          [333]                            None
+- 335 Ops.CONST           :            dtypes.weakint                           []                               9216
+- 336 Ops.CAST            :            dtypes.int                               ['9216']                         dtypes.int
+- 337 Ops.ADD             :            dtypes.int                               [69, 336]                        None
+- 338 Ops.INDEX           :            dtypes.bfloat16                          [66, 337]                        None
+- 339 Ops.LOAD            :            dtypes.bfloat16                          [338]                            None
+- 340 Ops.CONST           :            dtypes.weakint                           []                               9344
+- 341 Ops.CAST            :            dtypes.int                               ['9344']                         dtypes.int
+- 342 Ops.ADD             :            dtypes.int                               [69, 341]                        None
+- 343 Ops.INDEX           :            dtypes.bfloat16                          [66, 342]                        None
+- 344 Ops.LOAD            :            dtypes.bfloat16                          [343]                            None
+- 345 Ops.STACK           :            dtypes.bfloat16                          [329, 334, 339, 344]             None
+- 346 Ops.WMMA            :            dtypes.float                             [324, 345, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
+- 347 Ops.INDEX           :            dtypes.float                             [346, 91]                        None
+- 348 Ops.ADD             :            dtypes.float                             [283, 347]                       None
+- 349 Ops.CONST           :            dtypes.weakint                           []                               80
+- 350 Ops.CAST            :            dtypes.int                               ['80']                           dtypes.int
+- 351 Ops.ADD             :            dtypes.int                               [31, 350]                        None
+- 352 Ops.INDEX           :            dtypes.bfloat16                          [30, 351]                        None
+- 353 Ops.LOAD            :            dtypes.bfloat16                          [352]                            None
+- 354 Ops.CONST           :            dtypes.weakint                           []                               81
+- 355 Ops.CAST            :            dtypes.int                               ['81']                           dtypes.int
+- 356 Ops.ADD             :            dtypes.int                               [31, 355]                        None
+- 357 Ops.INDEX           :            dtypes.bfloat16                          [30, 356]                        None
+- 358 Ops.LOAD            :            dtypes.bfloat16                          [357]                            None
+- 359 Ops.CONST           :            dtypes.weakint                           []                               1104
+- 360 Ops.CAST            :            dtypes.int                               ['1104']                         dtypes.int
+- 361 Ops.ADD             :            dtypes.int                               [31, 360]                        None
+- 362 Ops.INDEX           :            dtypes.bfloat16                          [30, 361]                        None
+- 363 Ops.LOAD            :            dtypes.bfloat16                          [362]                            None
+- 364 Ops.CONST           :            dtypes.weakint                           []                               1105
+- 365 Ops.CAST            :            dtypes.int                               ['1105']                         dtypes.int
+- 366 Ops.ADD             :            dtypes.int                               [31, 365]                        None
+- 367 Ops.INDEX           :            dtypes.bfloat16                          [30, 366]                        None
+- 368 Ops.LOAD            :            dtypes.bfloat16                          [367]                            None
+- 369 Ops.CONST           :            dtypes.weakint                           []                               88
+- 370 Ops.CAST            :            dtypes.int                               ['88']                           dtypes.int
+- 371 Ops.ADD             :            dtypes.int                               [31, 370]                        None
+- 372 Ops.INDEX           :            dtypes.bfloat16                          [30, 371]                        None
+- 373 Ops.LOAD            :            dtypes.bfloat16                          [372]                            None
+- 374 Ops.CONST           :            dtypes.weakint                           []                               89
+- 375 Ops.CAST            :            dtypes.int                               ['89']                           dtypes.int
+- 376 Ops.ADD             :            dtypes.int                               [31, 375]                        None
+- 377 Ops.INDEX           :            dtypes.bfloat16                          [30, 376]                        None
+- 378 Ops.LOAD            :            dtypes.bfloat16                          [377]                            None
+- 379 Ops.CONST           :            dtypes.weakint                           []                               1112
+- 380 Ops.CAST            :            dtypes.int                               ['1112']                         dtypes.int
+- 381 Ops.ADD             :            dtypes.int                               [31, 380]                        None
+- 382 Ops.INDEX           :            dtypes.bfloat16                          [30, 381]                        None
+- 383 Ops.LOAD            :            dtypes.bfloat16                          [382]                            None
+- 384 Ops.CONST           :            dtypes.weakint                           []                               1113
+- 385 Ops.CAST            :            dtypes.int                               ['1113']                         dtypes.int
+- 386 Ops.ADD             :            dtypes.int                               [31, 385]                        None
+- 387 Ops.INDEX           :            dtypes.bfloat16                          [30, 386]                        None
+- 388 Ops.LOAD            :            dtypes.bfloat16                          [387]                            None
+- 389 Ops.STACK           :            dtypes.bfloat16                          [353, 358, 363, 368, 373, 378, 383, 388] None
+- 390 Ops.CONST           :            dtypes.weakint                           []                               10240
+- 391 Ops.CAST            :            dtypes.int                               ['10240']                        dtypes.int
+- 392 Ops.ADD             :            dtypes.int                               [69, 391]                        None
+- 393 Ops.INDEX           :            dtypes.bfloat16                          [66, 392]                        None
+- 394 Ops.LOAD            :            dtypes.bfloat16                          [393]                            None
+- 395 Ops.CONST           :            dtypes.weakint                           []                               10368
+- 396 Ops.CAST            :            dtypes.int                               ['10368']                        dtypes.int
+- 397 Ops.ADD             :            dtypes.int                               [69, 396]                        None
+- 398 Ops.INDEX           :            dtypes.bfloat16                          [66, 397]                        None
+- 399 Ops.LOAD            :            dtypes.bfloat16                          [398]                            None
+- 400 Ops.CONST           :            dtypes.weakint                           []                               11264
+- 401 Ops.CAST            :            dtypes.int                               ['11264']                        dtypes.int
+- 402 Ops.ADD             :            dtypes.int                               [69, 401]                        None
+- 403 Ops.INDEX           :            dtypes.bfloat16                          [66, 402]                        None
+- 404 Ops.LOAD            :            dtypes.bfloat16                          [403]                            None
+- 405 Ops.CONST           :            dtypes.weakint                           []                               11392
+- 406 Ops.CAST            :            dtypes.int                               ['11392']                        dtypes.int
+- 407 Ops.ADD             :            dtypes.int                               [69, 406]                        None
+- 408 Ops.INDEX           :            dtypes.bfloat16                          [66, 407]                        None
+- 409 Ops.LOAD            :            dtypes.bfloat16                          [408]                            None
+- 410 Ops.STACK           :            dtypes.bfloat16                          [394, 399, 404, 409]             None
+- 411 Ops.WMMA            :            dtypes.float                             [389, 410, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
+- 412 Ops.INDEX           :            dtypes.float                             [411, 91]                        None
+- 413 Ops.ADD             :            dtypes.float                             [348, 412]                       None
+- 414 Ops.CONST           :            dtypes.weakint                           []                               96
+- 415 Ops.CAST            :            dtypes.int                               ['96']                           dtypes.int
+- 416 Ops.ADD             :            dtypes.int                               [31, 415]                        None
+- 417 Ops.INDEX           :            dtypes.bfloat16                          [30, 416]                        None
+- 418 Ops.LOAD            :            dtypes.bfloat16                          [417]                            None
+- 419 Ops.CONST           :            dtypes.weakint                           []                               97
+- 420 Ops.CAST            :            dtypes.int                               ['97']                           dtypes.int
+- 421 Ops.ADD             :            dtypes.int                               [31, 420]                        None
+- 422 Ops.INDEX           :            dtypes.bfloat16                          [30, 421]                        None
+- 423 Ops.LOAD            :            dtypes.bfloat16                          [422]                            None
+- 424 Ops.CONST           :            dtypes.weakint                           []                               1120
+- 425 Ops.CAST            :            dtypes.int                               ['1120']                         dtypes.int
+- 426 Ops.ADD             :            dtypes.int                               [31, 425]                        None
+- 427 Ops.INDEX           :            dtypes.bfloat16                          [30, 426]                        None
+- 428 Ops.LOAD            :            dtypes.bfloat16                          [427]                            None
+- 429 Ops.CONST           :            dtypes.weakint                           []                               1121
+- 430 Ops.CAST            :            dtypes.int                               ['1121']                         dtypes.int
+- 431 Ops.ADD             :            dtypes.int                               [31, 430]                        None
+- 432 Ops.INDEX           :            dtypes.bfloat16                          [30, 431]                        None
+- 433 Ops.LOAD            :            dtypes.bfloat16                          [432]                            None
+- 434 Ops.CONST           :            dtypes.weakint                           []                               104
+- 435 Ops.CAST            :            dtypes.int                               ['104']                          dtypes.int
+- 436 Ops.ADD             :            dtypes.int                               [31, 435]                        None
+- 437 Ops.INDEX           :            dtypes.bfloat16                          [30, 436]                        None
+- 438 Ops.LOAD            :            dtypes.bfloat16                          [437]                            None
+- 439 Ops.CONST           :            dtypes.weakint                           []                               105
+- 440 Ops.CAST            :            dtypes.int                               ['105']                          dtypes.int
+- 441 Ops.ADD             :            dtypes.int                               [31, 440]                        None
+- 442 Ops.INDEX           :            dtypes.bfloat16                          [30, 441]                        None
+- 443 Ops.LOAD            :            dtypes.bfloat16                          [442]                            None
+- 444 Ops.CONST           :            dtypes.weakint                           []                               1128
+- 445 Ops.CAST            :            dtypes.int                               ['1128']                         dtypes.int
+- 446 Ops.ADD             :            dtypes.int                               [31, 445]                        None
+- 447 Ops.INDEX           :            dtypes.bfloat16                          [30, 446]                        None
+- 448 Ops.LOAD            :            dtypes.bfloat16                          [447]                            None
+- 449 Ops.CONST           :            dtypes.weakint                           []                               1129
+- 450 Ops.CAST            :            dtypes.int                               ['1129']                         dtypes.int
+- 451 Ops.ADD             :            dtypes.int                               [31, 450]                        None
+- 452 Ops.INDEX           :            dtypes.bfloat16                          [30, 451]                        None
+- 453 Ops.LOAD            :            dtypes.bfloat16                          [452]                            None
+- 454 Ops.STACK           :            dtypes.bfloat16                          [418, 423, 428, 433, 438, 443, 448, 453] None
+- 455 Ops.CONST           :            dtypes.weakint                           []                               12288
+- 456 Ops.CAST            :            dtypes.int                               ['12288']                        dtypes.int
+- 457 Ops.ADD             :            dtypes.int                               [69, 456]                        None
+- 458 Ops.INDEX           :            dtypes.bfloat16                          [66, 457]                        None
+- 459 Ops.LOAD            :            dtypes.bfloat16                          [458]                            None
+- 460 Ops.CONST           :            dtypes.weakint                           []                               12416
+- 461 Ops.CAST            :            dtypes.int                               ['12416']                        dtypes.int
+- 462 Ops.ADD             :            dtypes.int                               [69, 461]                        None
+- 463 Ops.INDEX           :            dtypes.bfloat16                          [66, 462]                        None
+- 464 Ops.LOAD            :            dtypes.bfloat16                          [463]                            None
+- 465 Ops.CONST           :            dtypes.weakint                           []                               13312
+- 466 Ops.CAST            :            dtypes.int                               ['13312']                        dtypes.int
+- 467 Ops.ADD             :            dtypes.int                               [69, 466]                        None
+- 468 Ops.INDEX           :            dtypes.bfloat16                          [66, 467]                        None
+- 469 Ops.LOAD            :            dtypes.bfloat16                          [468]                            None
+- 470 Ops.CONST           :            dtypes.weakint                           []                               13440
+- 471 Ops.CAST            :            dtypes.int                               ['13440']                        dtypes.int
+- 472 Ops.ADD             :            dtypes.int                               [69, 471]                        None
+- 473 Ops.INDEX           :            dtypes.bfloat16                          [66, 472]                        None
+- 474 Ops.LOAD            :            dtypes.bfloat16                          [473]                            None
+- 475 Ops.STACK           :            dtypes.bfloat16                          [459, 464, 469, 474]             None
+- 476 Ops.WMMA            :            dtypes.float                             [454, 475, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
+- 477 Ops.INDEX           :            dtypes.float                             [476, 91]                        None
+- 478 Ops.ADD             :            dtypes.float                             [413, 477]                       None
+- 479 Ops.CONST           :            dtypes.weakint                           []                               112
+- 480 Ops.CAST            :            dtypes.int                               ['112']                          dtypes.int
+- 481 Ops.ADD             :            dtypes.int                               [31, 480]                        None
+- 482 Ops.INDEX           :            dtypes.bfloat16                          [30, 481]                        None
+- 483 Ops.LOAD            :            dtypes.bfloat16                          [482]                            None
+- 484 Ops.CONST           :            dtypes.weakint                           []                               113
+- 485 Ops.CAST            :            dtypes.int                               ['113']                          dtypes.int
+- 486 Ops.ADD             :            dtypes.int                               [31, 485]                        None
+- 487 Ops.INDEX           :            dtypes.bfloat16                          [30, 486]                        None
+- 488 Ops.LOAD            :            dtypes.bfloat16                          [487]                            None
+- 489 Ops.CONST           :            dtypes.weakint                           []                               1136
+- 490 Ops.CAST            :            dtypes.int                               ['1136']                         dtypes.int
+- 491 Ops.ADD             :            dtypes.int                               [31, 490]                        None
+- 492 Ops.INDEX           :            dtypes.bfloat16                          [30, 491]                        None
+- 493 Ops.LOAD            :            dtypes.bfloat16                          [492]                            None
+- 494 Ops.CONST           :            dtypes.weakint                           []                               1137
+- 495 Ops.CAST            :            dtypes.int                               ['1137']                         dtypes.int
+- 496 Ops.ADD             :            dtypes.int                               [31, 495]                        None
+- 497 Ops.INDEX           :            dtypes.bfloat16                          [30, 496]                        None
+- 498 Ops.LOAD            :            dtypes.bfloat16                          [497]                            None
+- 499 Ops.CONST           :            dtypes.weakint                           []                               120
+- 500 Ops.CAST            :            dtypes.int                               ['120']                          dtypes.int
+- 501 Ops.ADD             :            dtypes.int                               [31, 500]                        None
+- 502 Ops.INDEX           :            dtypes.bfloat16                          [30, 501]                        None
+- 503 Ops.LOAD            :            dtypes.bfloat16                          [502]                            None
+- 504 Ops.CONST           :            dtypes.weakint                           []                               121
+- 505 Ops.CAST            :            dtypes.int                               ['121']                          dtypes.int
+- 506 Ops.ADD             :            dtypes.int                               [31, 505]                        None
+- 507 Ops.INDEX           :            dtypes.bfloat16                          [30, 506]                        None
+- 508 Ops.LOAD            :            dtypes.bfloat16                          [507]                            None
+- 509 Ops.CONST           :            dtypes.weakint                           []                               1144
+- 510 Ops.CAST            :            dtypes.int                               ['1144']                         dtypes.int
+- 511 Ops.ADD             :            dtypes.int                               [31, 510]                        None
+- 512 Ops.INDEX           :            dtypes.bfloat16                          [30, 511]                        None
+- 513 Ops.LOAD            :            dtypes.bfloat16                          [512]                            None
+- 514 Ops.CONST           :            dtypes.weakint                           []                               1145
+- 515 Ops.CAST            :            dtypes.int                               ['1145']                         dtypes.int
+- 516 Ops.ADD             :            dtypes.int                               [31, 515]                        None
+- 517 Ops.INDEX           :            dtypes.bfloat16                          [30, 516]                        None
+- 518 Ops.LOAD            :            dtypes.bfloat16                          [517]                            None
+- 519 Ops.STACK           :            dtypes.bfloat16                          [483, 488, 493, 498, 503, 508, 513, 518] None
+- 520 Ops.CONST           :            dtypes.weakint                           []                               14336
+- 521 Ops.CAST            :            dtypes.int                               ['14336']                        dtypes.int
+- 522 Ops.ADD             :            dtypes.int                               [69, 521]                        None
+- 523 Ops.INDEX           :            dtypes.bfloat16                          [66, 522]                        None
+- 524 Ops.LOAD            :            dtypes.bfloat16                          [523]                            None
+- 525 Ops.CONST           :            dtypes.weakint                           []                               14464
+- 526 Ops.CAST            :            dtypes.int                               ['14464']                        dtypes.int
+- 527 Ops.ADD             :            dtypes.int                               [69, 526]                        None
+- 528 Ops.INDEX           :            dtypes.bfloat16                          [66, 527]                        None
+- 529 Ops.LOAD            :            dtypes.bfloat16                          [528]                            None
+- 530 Ops.CONST           :            dtypes.weakint                           []                               15360
+- 531 Ops.CAST            :            dtypes.int                               ['15360']                        dtypes.int
+- 532 Ops.ADD             :            dtypes.int                               [69, 531]                        None
+- 533 Ops.INDEX           :            dtypes.bfloat16                          [66, 532]                        None
+- 534 Ops.LOAD            :            dtypes.bfloat16                          [533]                            None
+- 535 Ops.CONST           :            dtypes.weakint                           []                               15488
+- 536 Ops.CAST            :            dtypes.int                               ['15488']                        dtypes.int
+- 537 Ops.ADD             :            dtypes.int                               [69, 536]                        None
+- 538 Ops.INDEX           :            dtypes.bfloat16                          [66, 537]                        None
+- 539 Ops.LOAD            :            dtypes.bfloat16                          [538]                            None
+- 540 Ops.STACK           :            dtypes.bfloat16                          [524, 529, 534, 539]             None
+- 541 Ops.WMMA            :            dtypes.float                             [519, 540, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
+- 542 Ops.INDEX           :            dtypes.float                             [541, 91]                        None
+- 543 Ops.ADD             :            dtypes.float                             [478, 542]                       None
+- 544 Ops.INDEX           :            dtypes.float                             [89, 12]                         None
+- 545 Ops.INDEX           :            dtypes.float                             [153, 12]                        None
+- 546 Ops.ADD             :            dtypes.float                             [544, 545]                       None
+- 547 Ops.INDEX           :            dtypes.float                             [216, 12]                        None
++  93 Ops.ADD             :            dtypes.float                             [31, 92]                         None
++  94 Ops.ADD             :            dtypes.int                               [33, 2]                          None
++  95 Ops.INDEX           :            dtypes.bfloat16                          [32, 94]                         None
++  96 Ops.LOAD            :            dtypes.bfloat16                          [95]                             None
++  97 Ops.CONST           :            dtypes.weakint                           []                               17
++  98 Ops.CAST            :            dtypes.int                               ['17']                           dtypes.int
++  99 Ops.ADD             :            dtypes.int                               [33, 98]                         None
++ 100 Ops.INDEX           :            dtypes.bfloat16                          [32, 99]                         None
++ 101 Ops.LOAD            :            dtypes.bfloat16                          [100]                            None
++ 102 Ops.CONST           :            dtypes.weakint                           []                               1040
++ 103 Ops.CAST            :            dtypes.int                               ['1040']                         dtypes.int
++ 104 Ops.ADD             :            dtypes.int                               [33, 103]                        None
++ 105 Ops.INDEX           :            dtypes.bfloat16                          [32, 104]                        None
++ 106 Ops.LOAD            :            dtypes.bfloat16                          [105]                            None
++ 107 Ops.CONST           :            dtypes.weakint                           []                               1041
++ 108 Ops.CAST            :            dtypes.int                               ['1041']                         dtypes.int
++ 109 Ops.ADD             :            dtypes.int                               [33, 108]                        None
++ 110 Ops.INDEX           :            dtypes.bfloat16                          [32, 109]                        None
++ 111 Ops.LOAD            :            dtypes.bfloat16                          [110]                            None
++ 112 Ops.CONST           :            dtypes.weakint                           []                               24
++ 113 Ops.CAST            :            dtypes.int                               ['24']                           dtypes.int
++ 114 Ops.ADD             :            dtypes.int                               [33, 113]                        None
++ 115 Ops.INDEX           :            dtypes.bfloat16                          [32, 114]                        None
++ 116 Ops.LOAD            :            dtypes.bfloat16                          [115]                            None
++ 117 Ops.CONST           :            dtypes.weakint                           []                               25
++ 118 Ops.CAST            :            dtypes.int                               ['25']                           dtypes.int
++ 119 Ops.ADD             :            dtypes.int                               [33, 118]                        None
++ 120 Ops.INDEX           :            dtypes.bfloat16                          [32, 119]                        None
++ 121 Ops.LOAD            :            dtypes.bfloat16                          [120]                            None
++ 122 Ops.CONST           :            dtypes.weakint                           []                               1048
++ 123 Ops.CAST            :            dtypes.int                               ['1048']                         dtypes.int
++ 124 Ops.ADD             :            dtypes.int                               [33, 123]                        None
++ 125 Ops.INDEX           :            dtypes.bfloat16                          [32, 124]                        None
++ 126 Ops.LOAD            :            dtypes.bfloat16                          [125]                            None
++ 127 Ops.CONST           :            dtypes.weakint                           []                               1049
++ 128 Ops.CAST            :            dtypes.int                               ['1049']                         dtypes.int
++ 129 Ops.ADD             :            dtypes.int                               [33, 128]                        None
++ 130 Ops.INDEX           :            dtypes.bfloat16                          [32, 129]                        None
++ 131 Ops.LOAD            :            dtypes.bfloat16                          [130]                            None
++ 132 Ops.STACK           :            dtypes.bfloat16                          [96, 101, 106, 111, 116, 121, 126, 131] None
++ 133 Ops.CONST           :            dtypes.weakint                           []                               2048
++ 134 Ops.CAST            :            dtypes.int                               ['2048']                         dtypes.int
++ 135 Ops.ADD             :            dtypes.int                               [71, 134]                        None
++ 136 Ops.INDEX           :            dtypes.bfloat16                          [68, 135]                        None
++ 137 Ops.LOAD            :            dtypes.bfloat16                          [136]                            None
++ 138 Ops.CONST           :            dtypes.weakint                           []                               2176
++ 139 Ops.CAST            :            dtypes.int                               ['2176']                         dtypes.int
++ 140 Ops.ADD             :            dtypes.int                               [71, 139]                        None
++ 141 Ops.INDEX           :            dtypes.bfloat16                          [68, 140]                        None
++ 142 Ops.LOAD            :            dtypes.bfloat16                          [141]                            None
++ 143 Ops.CONST           :            dtypes.weakint                           []                               3072
++ 144 Ops.CAST            :            dtypes.int                               ['3072']                         dtypes.int
++ 145 Ops.ADD             :            dtypes.int                               [71, 144]                        None
++ 146 Ops.INDEX           :            dtypes.bfloat16                          [68, 145]                        None
++ 147 Ops.LOAD            :            dtypes.bfloat16                          [146]                            None
++ 148 Ops.CONST           :            dtypes.weakint                           []                               3200
++ 149 Ops.CAST            :            dtypes.int                               ['3200']                         dtypes.int
++ 150 Ops.ADD             :            dtypes.int                               [71, 149]                        None
++ 151 Ops.INDEX           :            dtypes.bfloat16                          [68, 150]                        None
++ 152 Ops.LOAD            :            dtypes.bfloat16                          [151]                            None
++ 153 Ops.STACK           :            dtypes.bfloat16                          [137, 142, 147, 152]             None
++ 154 Ops.WMMA            :            dtypes.float                             [132, 153, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
++ 155 Ops.INDEX           :            dtypes.float                             [154, 91]                        None
++ 156 Ops.ADD             :            dtypes.float                             [93, 155]                        None
++ 157 Ops.ADD             :            dtypes.int                               [33, 8]                          None
++ 158 Ops.INDEX           :            dtypes.bfloat16                          [32, 157]                        None
++ 159 Ops.LOAD            :            dtypes.bfloat16                          [158]                            None
++ 160 Ops.CONST           :            dtypes.weakint                           []                               33
++ 161 Ops.CAST            :            dtypes.int                               ['33']                           dtypes.int
++ 162 Ops.ADD             :            dtypes.int                               [33, 161]                        None
++ 163 Ops.INDEX           :            dtypes.bfloat16                          [32, 162]                        None
++ 164 Ops.LOAD            :            dtypes.bfloat16                          [163]                            None
++ 165 Ops.CONST           :            dtypes.weakint                           []                               1056
++ 166 Ops.CAST            :            dtypes.int                               ['1056']                         dtypes.int
++ 167 Ops.ADD             :            dtypes.int                               [33, 166]                        None
++ 168 Ops.INDEX           :            dtypes.bfloat16                          [32, 167]                        None
++ 169 Ops.LOAD            :            dtypes.bfloat16                          [168]                            None
++ 170 Ops.CONST           :            dtypes.weakint                           []                               1057
++ 171 Ops.CAST            :            dtypes.int                               ['1057']                         dtypes.int
++ 172 Ops.ADD             :            dtypes.int                               [33, 171]                        None
++ 173 Ops.INDEX           :            dtypes.bfloat16                          [32, 172]                        None
++ 174 Ops.LOAD            :            dtypes.bfloat16                          [173]                            None
++ 175 Ops.CONST           :            dtypes.weakint                           []                               40
++ 176 Ops.CAST            :            dtypes.int                               ['40']                           dtypes.int
++ 177 Ops.ADD             :            dtypes.int                               [33, 176]                        None
++ 178 Ops.INDEX           :            dtypes.bfloat16                          [32, 177]                        None
++ 179 Ops.LOAD            :            dtypes.bfloat16                          [178]                            None
++ 180 Ops.CONST           :            dtypes.weakint                           []                               41
++ 181 Ops.CAST            :            dtypes.int                               ['41']                           dtypes.int
++ 182 Ops.ADD             :            dtypes.int                               [33, 181]                        None
++ 183 Ops.INDEX           :            dtypes.bfloat16                          [32, 182]                        None
++ 184 Ops.LOAD            :            dtypes.bfloat16                          [183]                            None
++ 185 Ops.CONST           :            dtypes.weakint                           []                               1064
++ 186 Ops.CAST            :            dtypes.int                               ['1064']                         dtypes.int
++ 187 Ops.ADD             :            dtypes.int                               [33, 186]                        None
++ 188 Ops.INDEX           :            dtypes.bfloat16                          [32, 187]                        None
++ 189 Ops.LOAD            :            dtypes.bfloat16                          [188]                            None
++ 190 Ops.CONST           :            dtypes.weakint                           []                               1065
++ 191 Ops.CAST            :            dtypes.int                               ['1065']                         dtypes.int
++ 192 Ops.ADD             :            dtypes.int                               [33, 191]                        None
++ 193 Ops.INDEX           :            dtypes.bfloat16                          [32, 192]                        None
++ 194 Ops.LOAD            :            dtypes.bfloat16                          [193]                            None
++ 195 Ops.STACK           :            dtypes.bfloat16                          [159, 164, 169, 174, 179, 184, 189, 194] None
++ 196 Ops.CONST           :            dtypes.weakint                           []                               4096
++ 197 Ops.CAST            :            dtypes.int                               ['4096']                         dtypes.int
++ 198 Ops.ADD             :            dtypes.int                               [71, 197]                        None
++ 199 Ops.INDEX           :            dtypes.bfloat16                          [68, 198]                        None
++ 200 Ops.LOAD            :            dtypes.bfloat16                          [199]                            None
++ 201 Ops.CONST           :            dtypes.weakint                           []                               4224
++ 202 Ops.CAST            :            dtypes.int                               ['4224']                         dtypes.int
++ 203 Ops.ADD             :            dtypes.int                               [71, 202]                        None
++ 204 Ops.INDEX           :            dtypes.bfloat16                          [68, 203]                        None
++ 205 Ops.LOAD            :            dtypes.bfloat16                          [204]                            None
++ 206 Ops.CONST           :            dtypes.weakint                           []                               5120
++ 207 Ops.CAST            :            dtypes.int                               ['5120']                         dtypes.int
++ 208 Ops.ADD             :            dtypes.int                               [71, 207]                        None
++ 209 Ops.INDEX           :            dtypes.bfloat16                          [68, 208]                        None
++ 210 Ops.LOAD            :            dtypes.bfloat16                          [209]                            None
++ 211 Ops.CONST           :            dtypes.weakint                           []                               5248
++ 212 Ops.CAST            :            dtypes.int                               ['5248']                         dtypes.int
++ 213 Ops.ADD             :            dtypes.int                               [71, 212]                        None
++ 214 Ops.INDEX           :            dtypes.bfloat16                          [68, 213]                        None
++ 215 Ops.LOAD            :            dtypes.bfloat16                          [214]                            None
++ 216 Ops.STACK           :            dtypes.bfloat16                          [200, 205, 210, 215]             None
++ 217 Ops.WMMA            :            dtypes.float                             [195, 216, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
++ 218 Ops.INDEX           :            dtypes.float                             [217, 91]                        None
++ 219 Ops.ADD             :            dtypes.float                             [156, 218]                       None
++ 220 Ops.CONST           :            dtypes.weakint                           []                               48
++ 221 Ops.CAST            :            dtypes.int                               ['48']                           dtypes.int
++ 222 Ops.ADD             :            dtypes.int                               [33, 221]                        None
++ 223 Ops.INDEX           :            dtypes.bfloat16                          [32, 222]                        None
++ 224 Ops.LOAD            :            dtypes.bfloat16                          [223]                            None
++ 225 Ops.CONST           :            dtypes.weakint                           []                               49
++ 226 Ops.CAST            :            dtypes.int                               ['49']                           dtypes.int
++ 227 Ops.ADD             :            dtypes.int                               [33, 226]                        None
++ 228 Ops.INDEX           :            dtypes.bfloat16                          [32, 227]                        None
++ 229 Ops.LOAD            :            dtypes.bfloat16                          [228]                            None
++ 230 Ops.CONST           :            dtypes.weakint                           []                               1072
++ 231 Ops.CAST            :            dtypes.int                               ['1072']                         dtypes.int
++ 232 Ops.ADD             :            dtypes.int                               [33, 231]                        None
++ 233 Ops.INDEX           :            dtypes.bfloat16                          [32, 232]                        None
++ 234 Ops.LOAD            :            dtypes.bfloat16                          [233]                            None
++ 235 Ops.CONST           :            dtypes.weakint                           []                               1073
++ 236 Ops.CAST            :            dtypes.int                               ['1073']                         dtypes.int
++ 237 Ops.ADD             :            dtypes.int                               [33, 236]                        None
++ 238 Ops.INDEX           :            dtypes.bfloat16                          [32, 237]                        None
++ 239 Ops.LOAD            :            dtypes.bfloat16                          [238]                            None
++ 240 Ops.CONST           :            dtypes.weakint                           []                               56
++ 241 Ops.CAST            :            dtypes.int                               ['56']                           dtypes.int
++ 242 Ops.ADD             :            dtypes.int                               [33, 241]                        None
++ 243 Ops.INDEX           :            dtypes.bfloat16                          [32, 242]                        None
++ 244 Ops.LOAD            :            dtypes.bfloat16                          [243]                            None
++ 245 Ops.CONST           :            dtypes.weakint                           []                               57
++ 246 Ops.CAST            :            dtypes.int                               ['57']                           dtypes.int
++ 247 Ops.ADD             :            dtypes.int                               [33, 246]                        None
++ 248 Ops.INDEX           :            dtypes.bfloat16                          [32, 247]                        None
++ 249 Ops.LOAD            :            dtypes.bfloat16                          [248]                            None
++ 250 Ops.CONST           :            dtypes.weakint                           []                               1080
++ 251 Ops.CAST            :            dtypes.int                               ['1080']                         dtypes.int
++ 252 Ops.ADD             :            dtypes.int                               [33, 251]                        None
++ 253 Ops.INDEX           :            dtypes.bfloat16                          [32, 252]                        None
++ 254 Ops.LOAD            :            dtypes.bfloat16                          [253]                            None
++ 255 Ops.CONST           :            dtypes.weakint                           []                               1081
++ 256 Ops.CAST            :            dtypes.int                               ['1081']                         dtypes.int
++ 257 Ops.ADD             :            dtypes.int                               [33, 256]                        None
++ 258 Ops.INDEX           :            dtypes.bfloat16                          [32, 257]                        None
++ 259 Ops.LOAD            :            dtypes.bfloat16                          [258]                            None
++ 260 Ops.STACK           :            dtypes.bfloat16                          [224, 229, 234, 239, 244, 249, 254, 259] None
++ 261 Ops.CONST           :            dtypes.weakint                           []                               6144
++ 262 Ops.CAST            :            dtypes.int                               ['6144']                         dtypes.int
++ 263 Ops.ADD             :            dtypes.int                               [71, 262]                        None
++ 264 Ops.INDEX           :            dtypes.bfloat16                          [68, 263]                        None
++ 265 Ops.LOAD            :            dtypes.bfloat16                          [264]                            None
++ 266 Ops.CONST           :            dtypes.weakint                           []                               6272
++ 267 Ops.CAST            :            dtypes.int                               ['6272']                         dtypes.int
++ 268 Ops.ADD             :            dtypes.int                               [71, 267]                        None
++ 269 Ops.INDEX           :            dtypes.bfloat16                          [68, 268]                        None
++ 270 Ops.LOAD            :            dtypes.bfloat16                          [269]                            None
++ 271 Ops.CONST           :            dtypes.weakint                           []                               7168
++ 272 Ops.CAST            :            dtypes.int                               ['7168']                         dtypes.int
++ 273 Ops.ADD             :            dtypes.int                               [71, 272]                        None
++ 274 Ops.INDEX           :            dtypes.bfloat16                          [68, 273]                        None
++ 275 Ops.LOAD            :            dtypes.bfloat16                          [274]                            None
++ 276 Ops.CONST           :            dtypes.weakint                           []                               7296
++ 277 Ops.CAST            :            dtypes.int                               ['7296']                         dtypes.int
++ 278 Ops.ADD             :            dtypes.int                               [71, 277]                        None
++ 279 Ops.INDEX           :            dtypes.bfloat16                          [68, 278]                        None
++ 280 Ops.LOAD            :            dtypes.bfloat16                          [279]                            None
++ 281 Ops.STACK           :            dtypes.bfloat16                          [265, 270, 275, 280]             None
++ 282 Ops.WMMA            :            dtypes.float                             [260, 281, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
++ 283 Ops.INDEX           :            dtypes.float                             [282, 91]                        None
++ 284 Ops.ADD             :            dtypes.float                             [219, 283]                       None
++ 285 Ops.CONST           :            dtypes.weakint                           []                               64
++ 286 Ops.CAST            :            dtypes.int                               ['64']                           dtypes.int
++ 287 Ops.ADD             :            dtypes.int                               [33, 286]                        None
++ 288 Ops.INDEX           :            dtypes.bfloat16                          [32, 287]                        None
++ 289 Ops.LOAD            :            dtypes.bfloat16                          [288]                            None
++ 290 Ops.CONST           :            dtypes.weakint                           []                               65
++ 291 Ops.CAST            :            dtypes.int                               ['65']                           dtypes.int
++ 292 Ops.ADD             :            dtypes.int                               [33, 291]                        None
++ 293 Ops.INDEX           :            dtypes.bfloat16                          [32, 292]                        None
++ 294 Ops.LOAD            :            dtypes.bfloat16                          [293]                            None
++ 295 Ops.CONST           :            dtypes.weakint                           []                               1088
++ 296 Ops.CAST            :            dtypes.int                               ['1088']                         dtypes.int
++ 297 Ops.ADD             :            dtypes.int                               [33, 296]                        None
++ 298 Ops.INDEX           :            dtypes.bfloat16                          [32, 297]                        None
++ 299 Ops.LOAD            :            dtypes.bfloat16                          [298]                            None
++ 300 Ops.CONST           :            dtypes.weakint                           []                               1089
++ 301 Ops.CAST            :            dtypes.int                               ['1089']                         dtypes.int
++ 302 Ops.ADD             :            dtypes.int                               [33, 301]                        None
++ 303 Ops.INDEX           :            dtypes.bfloat16                          [32, 302]                        None
++ 304 Ops.LOAD            :            dtypes.bfloat16                          [303]                            None
++ 305 Ops.CONST           :            dtypes.weakint                           []                               72
++ 306 Ops.CAST            :            dtypes.int                               ['72']                           dtypes.int
++ 307 Ops.ADD             :            dtypes.int                               [33, 306]                        None
++ 308 Ops.INDEX           :            dtypes.bfloat16                          [32, 307]                        None
++ 309 Ops.LOAD            :            dtypes.bfloat16                          [308]                            None
++ 310 Ops.CONST           :            dtypes.weakint                           []                               73
++ 311 Ops.CAST            :            dtypes.int                               ['73']                           dtypes.int
++ 312 Ops.ADD             :            dtypes.int                               [33, 311]                        None
++ 313 Ops.INDEX           :            dtypes.bfloat16                          [32, 312]                        None
++ 314 Ops.LOAD            :            dtypes.bfloat16                          [313]                            None
++ 315 Ops.CONST           :            dtypes.weakint                           []                               1096
++ 316 Ops.CAST            :            dtypes.int                               ['1096']                         dtypes.int
++ 317 Ops.ADD             :            dtypes.int                               [33, 316]                        None
++ 318 Ops.INDEX           :            dtypes.bfloat16                          [32, 317]                        None
++ 319 Ops.LOAD            :            dtypes.bfloat16                          [318]                            None
++ 320 Ops.CONST           :            dtypes.weakint                           []                               1097
++ 321 Ops.CAST            :            dtypes.int                               ['1097']                         dtypes.int
++ 322 Ops.ADD             :            dtypes.int                               [33, 321]                        None
++ 323 Ops.INDEX           :            dtypes.bfloat16                          [32, 322]                        None
++ 324 Ops.LOAD            :            dtypes.bfloat16                          [323]                            None
++ 325 Ops.STACK           :            dtypes.bfloat16                          [289, 294, 299, 304, 309, 314, 319, 324] None
++ 326 Ops.CONST           :            dtypes.weakint                           []                               8192
++ 327 Ops.CAST            :            dtypes.int                               ['8192']                         dtypes.int
++ 328 Ops.ADD             :            dtypes.int                               [71, 327]                        None
++ 329 Ops.INDEX           :            dtypes.bfloat16                          [68, 328]                        None
++ 330 Ops.LOAD            :            dtypes.bfloat16                          [329]                            None
++ 331 Ops.CONST           :            dtypes.weakint                           []                               8320
++ 332 Ops.CAST            :            dtypes.int                               ['8320']                         dtypes.int
++ 333 Ops.ADD             :            dtypes.int                               [71, 332]                        None
++ 334 Ops.INDEX           :            dtypes.bfloat16                          [68, 333]                        None
++ 335 Ops.LOAD            :            dtypes.bfloat16                          [334]                            None
++ 336 Ops.CONST           :            dtypes.weakint                           []                               9216
++ 337 Ops.CAST            :            dtypes.int                               ['9216']                         dtypes.int
++ 338 Ops.ADD             :            dtypes.int                               [71, 337]                        None
++ 339 Ops.INDEX           :            dtypes.bfloat16                          [68, 338]                        None
++ 340 Ops.LOAD            :            dtypes.bfloat16                          [339]                            None
++ 341 Ops.CONST           :            dtypes.weakint                           []                               9344
++ 342 Ops.CAST            :            dtypes.int                               ['9344']                         dtypes.int
++ 343 Ops.ADD             :            dtypes.int                               [71, 342]                        None
++ 344 Ops.INDEX           :            dtypes.bfloat16                          [68, 343]                        None
++ 345 Ops.LOAD            :            dtypes.bfloat16                          [344]                            None
++ 346 Ops.STACK           :            dtypes.bfloat16                          [330, 335, 340, 345]             None
++ 347 Ops.WMMA            :            dtypes.float                             [325, 346, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
++ 348 Ops.INDEX           :            dtypes.float                             [347, 91]                        None
++ 349 Ops.ADD             :            dtypes.float                             [284, 348]                       None
++ 350 Ops.CONST           :            dtypes.weakint                           []                               80
++ 351 Ops.CAST            :            dtypes.int                               ['80']                           dtypes.int
++ 352 Ops.ADD             :            dtypes.int                               [33, 351]                        None
++ 353 Ops.INDEX           :            dtypes.bfloat16                          [32, 352]                        None
++ 354 Ops.LOAD            :            dtypes.bfloat16                          [353]                            None
++ 355 Ops.CONST           :            dtypes.weakint                           []                               81
++ 356 Ops.CAST            :            dtypes.int                               ['81']                           dtypes.int
++ 357 Ops.ADD             :            dtypes.int                               [33, 356]                        None
++ 358 Ops.INDEX           :            dtypes.bfloat16                          [32, 357]                        None
++ 359 Ops.LOAD            :            dtypes.bfloat16                          [358]                            None
++ 360 Ops.CONST           :            dtypes.weakint                           []                               1104
++ 361 Ops.CAST            :            dtypes.int                               ['1104']                         dtypes.int
++ 362 Ops.ADD             :            dtypes.int                               [33, 361]                        None
++ 363 Ops.INDEX           :            dtypes.bfloat16                          [32, 362]                        None
++ 364 Ops.LOAD            :            dtypes.bfloat16                          [363]                            None
++ 365 Ops.CONST           :            dtypes.weakint                           []                               1105
++ 366 Ops.CAST            :            dtypes.int                               ['1105']                         dtypes.int
++ 367 Ops.ADD             :            dtypes.int                               [33, 366]                        None
++ 368 Ops.INDEX           :            dtypes.bfloat16                          [32, 367]                        None
++ 369 Ops.LOAD            :            dtypes.bfloat16                          [368]                            None
++ 370 Ops.CONST           :            dtypes.weakint                           []                               88
++ 371 Ops.CAST            :            dtypes.int                               ['88']                           dtypes.int
++ 372 Ops.ADD             :            dtypes.int                               [33, 371]                        None
++ 373 Ops.INDEX           :            dtypes.bfloat16                          [32, 372]                        None
++ 374 Ops.LOAD            :            dtypes.bfloat16                          [373]                            None
++ 375 Ops.CONST           :            dtypes.weakint                           []                               89
++ 376 Ops.CAST            :            dtypes.int                               ['89']                           dtypes.int
++ 377 Ops.ADD             :            dtypes.int                               [33, 376]                        None
++ 378 Ops.INDEX           :            dtypes.bfloat16                          [32, 377]                        None
++ 379 Ops.LOAD            :            dtypes.bfloat16                          [378]                            None
++ 380 Ops.CONST           :            dtypes.weakint                           []                               1112
++ 381 Ops.CAST            :            dtypes.int                               ['1112']                         dtypes.int
++ 382 Ops.ADD             :            dtypes.int                               [33, 381]                        None
++ 383 Ops.INDEX           :            dtypes.bfloat16                          [32, 382]                        None
++ 384 Ops.LOAD            :            dtypes.bfloat16                          [383]                            None
++ 385 Ops.CONST           :            dtypes.weakint                           []                               1113
++ 386 Ops.CAST            :            dtypes.int                               ['1113']                         dtypes.int
++ 387 Ops.ADD             :            dtypes.int                               [33, 386]                        None
++ 388 Ops.INDEX           :            dtypes.bfloat16                          [32, 387]                        None
++ 389 Ops.LOAD            :            dtypes.bfloat16                          [388]                            None
++ 390 Ops.STACK           :            dtypes.bfloat16                          [354, 359, 364, 369, 374, 379, 384, 389] None
++ 391 Ops.CONST           :            dtypes.weakint                           []                               10240
++ 392 Ops.CAST            :            dtypes.int                               ['10240']                        dtypes.int
++ 393 Ops.ADD             :            dtypes.int                               [71, 392]                        None
++ 394 Ops.INDEX           :            dtypes.bfloat16                          [68, 393]                        None
++ 395 Ops.LOAD            :            dtypes.bfloat16                          [394]                            None
++ 396 Ops.CONST           :            dtypes.weakint                           []                               10368
++ 397 Ops.CAST            :            dtypes.int                               ['10368']                        dtypes.int
++ 398 Ops.ADD             :            dtypes.int                               [71, 397]                        None
++ 399 Ops.INDEX           :            dtypes.bfloat16                          [68, 398]                        None
++ 400 Ops.LOAD            :            dtypes.bfloat16                          [399]                            None
++ 401 Ops.CONST           :            dtypes.weakint                           []                               11264
++ 402 Ops.CAST            :            dtypes.int                               ['11264']                        dtypes.int
++ 403 Ops.ADD             :            dtypes.int                               [71, 402]                        None
++ 404 Ops.INDEX           :            dtypes.bfloat16                          [68, 403]                        None
++ 405 Ops.LOAD            :            dtypes.bfloat16                          [404]                            None
++ 406 Ops.CONST           :            dtypes.weakint                           []                               11392
++ 407 Ops.CAST            :            dtypes.int                               ['11392']                        dtypes.int
++ 408 Ops.ADD             :            dtypes.int                               [71, 407]                        None
++ 409 Ops.INDEX           :            dtypes.bfloat16                          [68, 408]                        None
++ 410 Ops.LOAD            :            dtypes.bfloat16                          [409]                            None
++ 411 Ops.STACK           :            dtypes.bfloat16                          [395, 400, 405, 410]             None
++ 412 Ops.WMMA            :            dtypes.float                             [390, 411, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
++ 413 Ops.INDEX           :            dtypes.float                             [412, 91]                        None
++ 414 Ops.ADD             :            dtypes.float                             [349, 413]                       None
++ 415 Ops.CONST           :            dtypes.weakint                           []                               96
++ 416 Ops.CAST            :            dtypes.int                               ['96']                           dtypes.int
++ 417 Ops.ADD             :            dtypes.int                               [33, 416]                        None
++ 418 Ops.INDEX           :            dtypes.bfloat16                          [32, 417]                        None
++ 419 Ops.LOAD            :            dtypes.bfloat16                          [418]                            None
++ 420 Ops.CONST           :            dtypes.weakint                           []                               97
++ 421 Ops.CAST            :            dtypes.int                               ['97']                           dtypes.int
++ 422 Ops.ADD             :            dtypes.int                               [33, 421]                        None
++ 423 Ops.INDEX           :            dtypes.bfloat16                          [32, 422]                        None
++ 424 Ops.LOAD            :            dtypes.bfloat16                          [423]                            None
++ 425 Ops.CONST           :            dtypes.weakint                           []                               1120
++ 426 Ops.CAST            :            dtypes.int                               ['1120']                         dtypes.int
++ 427 Ops.ADD             :            dtypes.int                               [33, 426]                        None
++ 428 Ops.INDEX           :            dtypes.bfloat16                          [32, 427]                        None
++ 429 Ops.LOAD            :            dtypes.bfloat16                          [428]                            None
++ 430 Ops.CONST           :            dtypes.weakint                           []                               1121
++ 431 Ops.CAST            :            dtypes.int                               ['1121']                         dtypes.int
++ 432 Ops.ADD             :            dtypes.int                               [33, 431]                        None
++ 433 Ops.INDEX           :            dtypes.bfloat16                          [32, 432]                        None
++ 434 Ops.LOAD            :            dtypes.bfloat16                          [433]                            None
++ 435 Ops.CONST           :            dtypes.weakint                           []                               104
++ 436 Ops.CAST            :            dtypes.int                               ['104']                          dtypes.int
++ 437 Ops.ADD             :            dtypes.int                               [33, 436]                        None
++ 438 Ops.INDEX           :            dtypes.bfloat16                          [32, 437]                        None
++ 439 Ops.LOAD            :            dtypes.bfloat16                          [438]                            None
++ 440 Ops.CONST           :            dtypes.weakint                           []                               105
++ 441 Ops.CAST            :            dtypes.int                               ['105']                          dtypes.int
++ 442 Ops.ADD             :            dtypes.int                               [33, 441]                        None
++ 443 Ops.INDEX           :            dtypes.bfloat16                          [32, 442]                        None
++ 444 Ops.LOAD            :            dtypes.bfloat16                          [443]                            None
++ 445 Ops.CONST           :            dtypes.weakint                           []                               1128
++ 446 Ops.CAST            :            dtypes.int                               ['1128']                         dtypes.int
++ 447 Ops.ADD             :            dtypes.int                               [33, 446]                        None
++ 448 Ops.INDEX           :            dtypes.bfloat16                          [32, 447]                        None
++ 449 Ops.LOAD            :            dtypes.bfloat16                          [448]                            None
++ 450 Ops.CONST           :            dtypes.weakint                           []                               1129
++ 451 Ops.CAST            :            dtypes.int                               ['1129']                         dtypes.int
++ 452 Ops.ADD             :            dtypes.int                               [33, 451]                        None
++ 453 Ops.INDEX           :            dtypes.bfloat16                          [32, 452]                        None
++ 454 Ops.LOAD            :            dtypes.bfloat16                          [453]                            None
++ 455 Ops.STACK           :            dtypes.bfloat16                          [419, 424, 429, 434, 439, 444, 449, 454] None
++ 456 Ops.CONST           :            dtypes.weakint                           []                               12288
++ 457 Ops.CAST            :            dtypes.int                               ['12288']                        dtypes.int
++ 458 Ops.ADD             :            dtypes.int                               [71, 457]                        None
++ 459 Ops.INDEX           :            dtypes.bfloat16                          [68, 458]                        None
++ 460 Ops.LOAD            :            dtypes.bfloat16                          [459]                            None
++ 461 Ops.CONST           :            dtypes.weakint                           []                               12416
++ 462 Ops.CAST            :            dtypes.int                               ['12416']                        dtypes.int
++ 463 Ops.ADD             :            dtypes.int                               [71, 462]                        None
++ 464 Ops.INDEX           :            dtypes.bfloat16                          [68, 463]                        None
++ 465 Ops.LOAD            :            dtypes.bfloat16                          [464]                            None
++ 466 Ops.CONST           :            dtypes.weakint                           []                               13312
++ 467 Ops.CAST            :            dtypes.int                               ['13312']                        dtypes.int
++ 468 Ops.ADD             :            dtypes.int                               [71, 467]                        None
++ 469 Ops.INDEX           :            dtypes.bfloat16                          [68, 468]                        None
++ 470 Ops.LOAD            :            dtypes.bfloat16                          [469]                            None
++ 471 Ops.CONST           :            dtypes.weakint                           []                               13440
++ 472 Ops.CAST            :            dtypes.int                               ['13440']                        dtypes.int
++ 473 Ops.ADD             :            dtypes.int                               [71, 472]                        None
++ 474 Ops.INDEX           :            dtypes.bfloat16                          [68, 473]                        None
++ 475 Ops.LOAD            :            dtypes.bfloat16                          [474]                            None
++ 476 Ops.STACK           :            dtypes.bfloat16                          [460, 465, 470, 475]             None
++ 477 Ops.WMMA            :            dtypes.float                             [455, 476, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
++ 478 Ops.INDEX           :            dtypes.float                             [477, 91]                        None
++ 479 Ops.ADD             :            dtypes.float                             [414, 478]                       None
++ 480 Ops.CONST           :            dtypes.weakint                           []                               112
++ 481 Ops.CAST            :            dtypes.int                               ['112']                          dtypes.int
++ 482 Ops.ADD             :            dtypes.int                               [33, 481]                        None
++ 483 Ops.INDEX           :            dtypes.bfloat16                          [32, 482]                        None
++ 484 Ops.LOAD            :            dtypes.bfloat16                          [483]                            None
++ 485 Ops.CONST           :            dtypes.weakint                           []                               113
++ 486 Ops.CAST            :            dtypes.int                               ['113']                          dtypes.int
++ 487 Ops.ADD             :            dtypes.int                               [33, 486]                        None
++ 488 Ops.INDEX           :            dtypes.bfloat16                          [32, 487]                        None
++ 489 Ops.LOAD            :            dtypes.bfloat16                          [488]                            None
++ 490 Ops.CONST           :            dtypes.weakint                           []                               1136
++ 491 Ops.CAST            :            dtypes.int                               ['1136']                         dtypes.int
++ 492 Ops.ADD             :            dtypes.int                               [33, 491]                        None
++ 493 Ops.INDEX           :            dtypes.bfloat16                          [32, 492]                        None
++ 494 Ops.LOAD            :            dtypes.bfloat16                          [493]                            None
++ 495 Ops.CONST           :            dtypes.weakint                           []                               1137
++ 496 Ops.CAST            :            dtypes.int                               ['1137']                         dtypes.int
++ 497 Ops.ADD             :            dtypes.int                               [33, 496]                        None
++ 498 Ops.INDEX           :            dtypes.bfloat16                          [32, 497]                        None
++ 499 Ops.LOAD            :            dtypes.bfloat16                          [498]                            None
++ 500 Ops.CONST           :            dtypes.weakint                           []                               120
++ 501 Ops.CAST            :            dtypes.int                               ['120']                          dtypes.int
++ 502 Ops.ADD             :            dtypes.int                               [33, 501]                        None
++ 503 Ops.INDEX           :            dtypes.bfloat16                          [32, 502]                        None
++ 504 Ops.LOAD            :            dtypes.bfloat16                          [503]                            None
++ 505 Ops.CONST           :            dtypes.weakint                           []                               121
++ 506 Ops.CAST            :            dtypes.int                               ['121']                          dtypes.int
++ 507 Ops.ADD             :            dtypes.int                               [33, 506]                        None
++ 508 Ops.INDEX           :            dtypes.bfloat16                          [32, 507]                        None
++ 509 Ops.LOAD            :            dtypes.bfloat16                          [508]                            None
++ 510 Ops.CONST           :            dtypes.weakint                           []                               1144
++ 511 Ops.CAST            :            dtypes.int                               ['1144']                         dtypes.int
++ 512 Ops.ADD             :            dtypes.int                               [33, 511]                        None
++ 513 Ops.INDEX           :            dtypes.bfloat16                          [32, 512]                        None
++ 514 Ops.LOAD            :            dtypes.bfloat16                          [513]                            None
++ 515 Ops.CONST           :            dtypes.weakint                           []                               1145
++ 516 Ops.CAST            :            dtypes.int                               ['1145']                         dtypes.int
++ 517 Ops.ADD             :            dtypes.int                               [33, 516]                        None
++ 518 Ops.INDEX           :            dtypes.bfloat16                          [32, 517]                        None
++ 519 Ops.LOAD            :            dtypes.bfloat16                          [518]                            None
++ 520 Ops.STACK           :            dtypes.bfloat16                          [484, 489, 494, 499, 504, 509, 514, 519] None
++ 521 Ops.CONST           :            dtypes.weakint                           []                               14336
++ 522 Ops.CAST            :            dtypes.int                               ['14336']                        dtypes.int
++ 523 Ops.ADD             :            dtypes.int                               [71, 522]                        None
++ 524 Ops.INDEX           :            dtypes.bfloat16                          [68, 523]                        None
++ 525 Ops.LOAD            :            dtypes.bfloat16                          [524]                            None
++ 526 Ops.CONST           :            dtypes.weakint                           []                               14464
++ 527 Ops.CAST            :            dtypes.int                               ['14464']                        dtypes.int
++ 528 Ops.ADD             :            dtypes.int                               [71, 527]                        None
++ 529 Ops.INDEX           :            dtypes.bfloat16                          [68, 528]                        None
++ 530 Ops.LOAD            :            dtypes.bfloat16                          [529]                            None
++ 531 Ops.CONST           :            dtypes.weakint                           []                               15360
++ 532 Ops.CAST            :            dtypes.int                               ['15360']                        dtypes.int
++ 533 Ops.ADD             :            dtypes.int                               [71, 532]                        None
++ 534 Ops.INDEX           :            dtypes.bfloat16                          [68, 533]                        None
++ 535 Ops.LOAD            :            dtypes.bfloat16                          [534]                            None
++ 536 Ops.CONST           :            dtypes.weakint                           []                               15488
++ 537 Ops.CAST            :            dtypes.int                               ['15488']                        dtypes.int
++ 538 Ops.ADD             :            dtypes.int                               [71, 537]                        None
++ 539 Ops.INDEX           :            dtypes.bfloat16                          [68, 538]                        None
++ 540 Ops.LOAD            :            dtypes.bfloat16                          [539]                            None
++ 541 Ops.STACK           :            dtypes.bfloat16                          [525, 530, 535, 540]             None
++ 542 Ops.WMMA            :            dtypes.float                             [520, 541, 88]                   ((8, 16, 16), dtypes.bfloat16, 32, None)
++ 543 Ops.INDEX           :            dtypes.float                             [542, 91]                        None
++ 544 Ops.ADD             :            dtypes.float                             [479, 543]                       None
++ 545 Ops.INDEX           :            dtypes.float                             [89, 12]                         None
++ 546 Ops.ADD             :            dtypes.float                             [31, 545]                        None
++ 547 Ops.INDEX           :            dtypes.float                             [154, 12]                        None
+  548 Ops.ADD             :            dtypes.float                             [546, 547]                       None
+- 549 Ops.INDEX           :            dtypes.float                             [281, 12]                        None
++ 549 Ops.INDEX           :            dtypes.float                             [217, 12]                        None
+  550 Ops.ADD             :            dtypes.float                             [548, 549]                       None
+- 551 Ops.INDEX           :            dtypes.float                             [346, 12]                        None
++ 551 Ops.INDEX           :            dtypes.float                             [282, 12]                        None
+  552 Ops.ADD             :            dtypes.float                             [550, 551]                       None
+- 553 Ops.INDEX           :            dtypes.float                             [411, 12]                        None
++ 553 Ops.INDEX           :            dtypes.float                             [347, 12]                        None
+  554 Ops.ADD             :            dtypes.float                             [552, 553]                       None
+- 555 Ops.INDEX           :            dtypes.float                             [476, 12]                        None
++ 555 Ops.INDEX           :            dtypes.float                             [412, 12]                        None
+  556 Ops.ADD             :            dtypes.float                             [554, 555]                       None
+- 557 Ops.INDEX           :            dtypes.float                             [541, 12]                        None
++ 557 Ops.INDEX           :            dtypes.float                             [477, 12]                        None
+  558 Ops.ADD             :            dtypes.float                             [556, 557]                       None
+- 559 Ops.STACK           :            dtypes.float                             [543, 558]                       None
+- 560 Ops.STORE           :            dtypes.void                              [29, 559]                        None
+- 561 Ops.ADD             :            dtypes.int                               [28, 38]                         None
+- 562 Ops.SHRINK          :            dtypes.float                             [0, 561, 22]                     None
+- 563 Ops.INDEX           :            dtypes.float                             [89, 22]                         None
+- 564 Ops.INDEX           :            dtypes.float                             [153, 22]                        None
+- 565 Ops.ADD             :            dtypes.float                             [563, 564]                       None
+- 566 Ops.INDEX           :            dtypes.float                             [216, 22]                        None
+- 567 Ops.ADD             :            dtypes.float                             [565, 566]                       None
+- 568 Ops.INDEX           :            dtypes.float                             [281, 22]                        None
+- 569 Ops.ADD             :            dtypes.float                             [567, 568]                       None
+- 570 Ops.INDEX           :            dtypes.float                             [346, 22]                        None
+- 571 Ops.ADD             :            dtypes.float                             [569, 570]                       None
+- 572 Ops.INDEX           :            dtypes.float                             [411, 22]                        None
+- 573 Ops.ADD             :            dtypes.float                             [571, 572]                       None
+- 574 Ops.INDEX           :            dtypes.float                             [476, 22]                        None
+- 575 Ops.ADD             :            dtypes.float                             [573, 574]                       None
+- 576 Ops.INDEX           :            dtypes.float                             [541, 22]                        None
+- 577 Ops.ADD             :            dtypes.float                             [575, 576]                       None
+- 578 Ops.INDEX           :            dtypes.float                             [89, 5]                          None
+- 579 Ops.INDEX           :            dtypes.float                             [153, 5]                         None
++ 559 Ops.INDEX           :            dtypes.float                             [542, 12]                        None
++ 560 Ops.ADD             :            dtypes.float                             [558, 559]                       None
++ 561 Ops.STACK           :            dtypes.float                             [544, 560]                       None
++ 562 Ops.STORE           :            dtypes.void                              [29, 561]                        None
++ 563 Ops.ADD             :            dtypes.int                               [28, 40]                         None
++ 564 Ops.SHRINK          :            dtypes.float                             [0, 563, 22]                     None
++ 565 Ops.INDEX           :            dtypes.float                             [89, 22]                         None
++ 566 Ops.ADD             :            dtypes.float                             [31, 565]                        None
++ 567 Ops.INDEX           :            dtypes.float                             [154, 22]                        None
++ 568 Ops.ADD             :            dtypes.float                             [566, 567]                       None
++ 569 Ops.INDEX           :            dtypes.float                             [217, 22]                        None
++ 570 Ops.ADD             :            dtypes.float                             [568, 569]                       None
++ 571 Ops.INDEX           :            dtypes.float                             [282, 22]                        None
++ 572 Ops.ADD             :            dtypes.float                             [570, 571]                       None
++ 573 Ops.INDEX           :            dtypes.float                             [347, 22]                        None
++ 574 Ops.ADD             :            dtypes.float                             [572, 573]                       None
++ 575 Ops.INDEX           :            dtypes.float                             [412, 22]                        None
++ 576 Ops.ADD             :            dtypes.float                             [574, 575]                       None
++ 577 Ops.INDEX           :            dtypes.float                             [477, 22]                        None
++ 578 Ops.ADD             :            dtypes.float                             [576, 577]                       None
++ 579 Ops.INDEX           :            dtypes.float                             [542, 22]                        None
+  580 Ops.ADD             :            dtypes.float                             [578, 579]                       None
+- 581 Ops.INDEX           :            dtypes.float                             [216, 5]                         None
+- 582 Ops.ADD             :            dtypes.float                             [580, 581]                       None
+- 583 Ops.INDEX           :            dtypes.float                             [281, 5]                         None
++ 581 Ops.INDEX           :            dtypes.float                             [89, 5]                          None
++ 582 Ops.ADD             :            dtypes.float                             [31, 581]                        None
++ 583 Ops.INDEX           :            dtypes.float                             [154, 5]                         None
+  584 Ops.ADD             :            dtypes.float                             [582, 583]                       None
+- 585 Ops.INDEX           :            dtypes.float                             [346, 5]                         None
++ 585 Ops.INDEX           :            dtypes.float                             [217, 5]                         None
+  586 Ops.ADD             :            dtypes.float                             [584, 585]                       None
+- 587 Ops.INDEX           :            dtypes.float                             [411, 5]                         None
++ 587 Ops.INDEX           :            dtypes.float                             [282, 5]                         None
+  588 Ops.ADD             :            dtypes.float                             [586, 587]                       None
+- 589 Ops.INDEX           :            dtypes.float                             [476, 5]                         None
++ 589 Ops.INDEX           :            dtypes.float                             [347, 5]                         None
+  590 Ops.ADD             :            dtypes.float                             [588, 589]                       None
+- 591 Ops.INDEX           :            dtypes.float                             [541, 5]                         None
++ 591 Ops.INDEX           :            dtypes.float                             [412, 5]                         None
+  592 Ops.ADD             :            dtypes.float                             [590, 591]                       None
+- 593 Ops.STACK           :            dtypes.float                             [577, 592]                       None
+- 594 Ops.STORE           :            dtypes.void                              [562, 593]                       None
+- 595 Ops.GROUP           :            dtypes.void                              [560, 560, 594, 594]             None
+- 596 Ops.SINK            :            dtypes.void                              [595]                            KernelInfo(name='tc_matmul_wide_types', applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UNROLL))), opts_to_apply=None, estimates=None, beam=0)
++ 593 Ops.INDEX           :            dtypes.float                             [477, 5]                         None
++ 594 Ops.ADD             :            dtypes.float                             [592, 593]                       None
++ 595 Ops.INDEX           :            dtypes.float                             [542, 5]                         None
++ 596 Ops.ADD             :            dtypes.float                             [594, 595]                       None
++ 597 Ops.STACK           :            dtypes.float                             [580, 596]                       None
++ 598 Ops.STORE           :            dtypes.void                              [564, 597]                       None
++ 599 Ops.GROUP           :            dtypes.void                              [562, 562, 598, 598]             None
++ 600 Ops.SINK            :            dtypes.void                              [599]                            KernelInfo(name='tc_matmul_wide_types', applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.UNROLL))), opts_to_apply=None, estimates=None, beam=0)

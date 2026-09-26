@@ -1,0 +1,11 @@
+(rule
+ (alias runtest)
+ (package tolk)
+ (deps expected_diff.py)
+ (action (run python3 %{dep:test_expected_diff.py})))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (deps generate_reference.py)
+ (action (run python3 %{dep:test_generate_reference.py})))

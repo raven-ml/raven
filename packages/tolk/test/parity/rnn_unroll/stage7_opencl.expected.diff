@@ -1,0 +1,22 @@
+upstream-sha256: 088fe131bb2a2cebea33d1ef67d966fdf1288230e51148e6973369e5899ab59d
+actual-sha256: 21204a3f8f494b1f12436f47be80c9bc4feb668f2457cd8f0894ea8d3c261d2b
+--- upstream.expected
++++ tolk.actual
+@@ -14,7 +14,7 @@
+   float val4 = (*(data4_16+(lidx1+4)));
+   float val5 = (*(data4_16+(lidx1+8)));
+   float4 val6 = (*((__global float4*)((data3_16+alu0))));
+-  *(data0_16+(lidx1+alu0)) = ((*(buf0+0))+(val6.x*val2)+(val6.y*val4)+(val6.z*val5)+(val6.w*val3));
++  *(data0_16+(lidx1+alu0)) = ((*(buf0+0))+(0.0f+(val6.x*val2)+(val6.y*val4)+(val6.z*val5)+(val6.w*val3)));
+ }
+ ---
+ __kernel void r_16_4_4_4_4(__global float* data0_1, __global float* data1_16, __global float* data2_16, __global float* data3_16, __global float* data4_16) {
+@@ -25,7 +25,7 @@
+   __attribute__ ((aligned (16))) __local float buf4[16];
+   int lidx0 = get_local_id(0); /* 16 */
+   float val0 = (*(data1_16+lidx0));
+-  *(buf4+lidx0) = (val0*val0);
++  *(buf4+lidx0) = (0.0f+(val0*val0));
+   barrier(CLK_LOCAL_MEM_FENCE);
+   *(buf0+0) = 0.0f;
+   for (int Ridx106 = 0; Ridx106 < 16; Ridx106++) {

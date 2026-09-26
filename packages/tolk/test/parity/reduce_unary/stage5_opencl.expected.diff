@@ -1,0 +1,41 @@
+upstream-sha256: bb583f516457e1ada3238da68509a3b5288b5a90688f410dad231c418c4d76f9
+actual-sha256: e774919888ca27d546646b6cd4d472843e57107aed5114521dfcb3689a914903
+--- upstream.expected
++++ tolk.actual
+@@ -19,19 +19,20 @@
+   18 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 16, device='CPU')
+   19 Ops.INDEX           :            dtypes.float                             [18, 16]                         None
+   20 Ops.LOAD            :            dtypes.float                             [19]                             None
+-  21 Ops.STORE           :            dtypes.void                              [17, 20]                         None
+-  22 Ops.BARRIER         :            dtypes.void                              [21]                             None
+-  23 Ops.AFTER           :            dtypes.float                             [15, 22]                         None
+-  24 Ops.INDEX           : 101        dtypes.float                             [23, 11]                         None
+-  25 Ops.LOAD            : 101        dtypes.float                             [24]                             None
+-  26 Ops.ADD             : 101        dtypes.float                             [14, 25]                         None
+-  27 Ops.STORE           : 101        dtypes.void                              [13, 26]                         None
+-  28 Ops.END             :            dtypes.void                              [27, 11]                         None
+-  29 Ops.AFTER           :            dtypes.float                             [4, 28]                          None
+-  30 Ops.INDEX           :            dtypes.float                             [29, 2]                          None
+-  31 Ops.LOAD            :            dtypes.float                             [30]                             None
+-  32 Ops.SQRT            :            dtypes.float                             [31]                             None
+-  33 Ops.NEG             :            dtypes.float                             [32]                             None
+-  34 Ops.CMPEQ           :            dtypes.bool                              [16, 2]                          None
+-  35 Ops.STORE           :            dtypes.void                              [3, 33, 34]                      None
+-  36 Ops.SINK            :            dtypes.void                              [35]                             KernelInfo(name='r_16', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), opts_to_apply=None, estimates=None, beam=0)
++  21 Ops.ADD             :            dtypes.float                             [7, 20]                          None
++  22 Ops.STORE           :            dtypes.void                              [17, 21]                         None
++  23 Ops.BARRIER         :            dtypes.void                              [22]                             None
++  24 Ops.AFTER           :            dtypes.float                             [15, 23]                         None
++  25 Ops.INDEX           : 101        dtypes.float                             [24, 11]                         None
++  26 Ops.LOAD            : 101        dtypes.float                             [25]                             None
++  27 Ops.ADD             : 101        dtypes.float                             [14, 26]                         None
++  28 Ops.STORE           : 101        dtypes.void                              [13, 27]                         None
++  29 Ops.END             :            dtypes.void                              [28, 11]                         None
++  30 Ops.AFTER           :            dtypes.float                             [4, 29]                          None
++  31 Ops.INDEX           :            dtypes.float                             [30, 2]                          None
++  32 Ops.LOAD            :            dtypes.float                             [31]                             None
++  33 Ops.SQRT            :            dtypes.float                             [32]                             None
++  34 Ops.NEG             :            dtypes.float                             [33]                             None
++  35 Ops.CMPEQ           :            dtypes.bool                              [16, 2]                          None
++  36 Ops.STORE           :            dtypes.void                              [3, 34, 35]                      None
++  37 Ops.SINK            :            dtypes.void                              [36]                             KernelInfo(name='r_16', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), opts_to_apply=None, estimates=None, beam=0)

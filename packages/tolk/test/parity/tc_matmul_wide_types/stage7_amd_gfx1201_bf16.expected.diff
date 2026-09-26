@@ -1,0 +1,25 @@
+upstream-sha256: b0a4e9480aeef6cf95f5ac47b9a7de29a9a5cb203d46e1c89e8fd9ca6ff36a9c
+actual-sha256: e31d986646c1e05573d388e1d74b4870e958492b5d38dc9e5d71164ca6ac97a9
+--- upstream.expected
++++ tolk.actual
+@@ -156,12 +156,12 @@
+   float8 wmma5 = __WMMA_16_16_16___bf16_float(make_hip_bfloat168(val50,val51,val52,val53,val54,val55,val57,val58), make_hip_bfloat168(val65,val66,val67,val68,val69,val70,val72,val73), cast0);
+   float8 wmma6 = __WMMA_16_16_16___bf16_float(make_hip_bfloat168(val59,val60,val61,val62,val2,val3,val4,val5), make_hip_bfloat168(val74,val75,val76,val77,val80,val81,val82,val83), cast0);
+   float8 wmma7 = __WMMA_16_16_16___bf16_float(make_hip_bfloat168(val63,val0,val19,val24,val49,val56,val1,val6), make_hip_bfloat168(val127,val78,val97,val102,val64,val71,val79,val84), cast0);
+-  *(data2_16384+(alu6+128)) = (wmma7[1]+wmma1[1]+wmma2[1]+wmma3[1]+wmma4[1]+wmma5[1]+wmma6[1]+wmma0[1]);
+-  *(data2_16384+(alu6+256)) = (wmma7[2]+wmma1[2]+wmma2[2]+wmma3[2]+wmma4[2]+wmma5[2]+wmma6[2]+wmma0[2]);
+-  *(data2_16384+(alu6+384)) = (wmma7[3]+wmma1[3]+wmma2[3]+wmma3[3]+wmma4[3]+wmma5[3]+wmma6[3]+wmma0[3]);
+-  *(data2_16384+(alu6+512)) = (wmma7[4]+wmma1[4]+wmma2[4]+wmma3[4]+wmma4[4]+wmma5[4]+wmma6[4]+wmma0[4]);
+-  *(data2_16384+(alu6+640)) = (wmma7[5]+wmma1[5]+wmma2[5]+wmma3[5]+wmma4[5]+wmma5[5]+wmma6[5]+wmma0[5]);
+-  *(data2_16384+(alu6+768)) = (wmma7[6]+wmma1[6]+wmma2[6]+wmma3[6]+wmma4[6]+wmma5[6]+wmma6[6]+wmma0[6]);
+-  *(data2_16384+(alu6+896)) = (wmma7[7]+wmma1[7]+wmma2[7]+wmma3[7]+wmma4[7]+wmma5[7]+wmma6[7]+wmma0[7]);
+-  *(data2_16384+alu6) = (wmma7[0]+wmma1[0]+wmma2[0]+wmma3[0]+wmma4[0]+wmma5[0]+wmma6[0]+wmma0[0]);
++  *(data2_16384+(alu6+128)) = (0.0f+wmma7[1]+wmma1[1]+wmma2[1]+wmma3[1]+wmma4[1]+wmma5[1]+wmma6[1]+wmma0[1]);
++  *(data2_16384+(alu6+256)) = (0.0f+wmma7[2]+wmma1[2]+wmma2[2]+wmma3[2]+wmma4[2]+wmma5[2]+wmma6[2]+wmma0[2]);
++  *(data2_16384+(alu6+384)) = (0.0f+wmma7[3]+wmma1[3]+wmma2[3]+wmma3[3]+wmma4[3]+wmma5[3]+wmma6[3]+wmma0[3]);
++  *(data2_16384+(alu6+512)) = (0.0f+wmma7[4]+wmma1[4]+wmma2[4]+wmma3[4]+wmma4[4]+wmma5[4]+wmma6[4]+wmma0[4]);
++  *(data2_16384+(alu6+640)) = (0.0f+wmma7[5]+wmma1[5]+wmma2[5]+wmma3[5]+wmma4[5]+wmma5[5]+wmma6[5]+wmma0[5]);
++  *(data2_16384+(alu6+768)) = (0.0f+wmma7[6]+wmma1[6]+wmma2[6]+wmma3[6]+wmma4[6]+wmma5[6]+wmma6[6]+wmma0[6]);
++  *(data2_16384+(alu6+896)) = (0.0f+wmma7[7]+wmma1[7]+wmma2[7]+wmma3[7]+wmma4[7]+wmma5[7]+wmma6[7]+wmma0[7]);
++  *(data2_16384+alu6) = (0.0f+wmma7[0]+wmma1[0]+wmma2[0]+wmma3[0]+wmma4[0]+wmma5[0]+wmma6[0]+wmma0[0]);
+ }

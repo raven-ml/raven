@@ -1,0 +1,11 @@
+upstream-sha256: 8c4af0571269639f80a961f1ac3610a54d20831f77d9f714712f46773d9760ef
+actual-sha256: 30e0542cf9b5d6b72e0e1ace3a89c55b4e123916d71bc8160cb18a96a4e39b34
+--- upstream.expected
++++ tolk.actual
+@@ -4,5 +4,5 @@
+   float4 val1 = (*((float4*)((data1_24+16))));
+   float4 val2 = (*((float4*)((data1_24+20))));
+   float4 val3 = (*((float4*)((data1_24+8))));
+-  *(data0_1+0) = ((val3[0]*val3[0]*val1[0]*val1[0])+(val3[1]*val3[1]*val1[1]*val1[1])+(val3[2]*val3[2]*val1[2]*val1[2])+(val3[3]*val3[3]*val1[3]*val1[3])+(val0[0]*val0[0]*val2[0]*val2[0])+(val0[1]*val0[1]*val2[1]*val2[1])+(val0[2]*val0[2]*val2[2]*val2[2])+(val0[3]*val0[3]*val2[3]*val2[3]));
++  *(data0_1+0) = (0.0f+(val3[0]*val3[0]*(val1[0]*val1[0]))+(val3[1]*val3[1]*(val1[1]*val1[1]))+(val3[2]*val3[2]*(val1[2]*val1[2]))+(val3[3]*val3[3]*(val1[3]*val1[3]))+(val0[0]*val0[0]*(val2[0]*val2[0]))+(val0[1]*val0[1]*(val2[1]*val2[1]))+(val0[2]*val0[2]*(val2[2]*val2[2]))+(val0[3]*val0[3]*(val2[3]*val2[3])));
+ }

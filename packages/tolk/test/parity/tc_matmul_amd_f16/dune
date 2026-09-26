@@ -17,7 +17,39 @@
  (package tolk)
  (action
   (progn
-   (diff stage5_amd_gfx1100.tolk.expected stage5_amd_gfx1100.actual)
-   (diff stage5_amd_gfx1201.tolk.expected stage5_amd_gfx1201.actual)
-   (diff stage7_amd_gfx1100.tolk.expected stage7_amd_gfx1100.actual)
-   (diff stage7_amd_gfx1201.tolk.expected stage7_amd_gfx1201.actual))))
+   (diff stage5_amd_gfx1100.expected.diff stage5_amd_gfx1100.actual.diff)
+   (diff stage5_amd_gfx1201.expected.diff stage5_amd_gfx1201.actual.diff)
+   (diff stage7_amd_gfx1100.expected.diff stage7_amd_gfx1100.actual.diff)
+   (diff stage7_amd_gfx1201.expected.diff stage7_amd_gfx1201.actual.diff))))
+
+(rule
+ (package tolk)
+ (target stage5_amd_gfx1100.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage5_amd_gfx1100.expected} %{dep:stage5_amd_gfx1100.actual}))))
+
+(rule
+ (package tolk)
+ (target stage5_amd_gfx1201.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage5_amd_gfx1201.expected} %{dep:stage5_amd_gfx1201.actual}))))
+
+(rule
+ (package tolk)
+ (target stage7_amd_gfx1100.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_amd_gfx1100.expected} %{dep:stage7_amd_gfx1100.actual}))))
+
+(rule
+ (package tolk)
+ (target stage7_amd_gfx1201.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_amd_gfx1201.expected} %{dep:stage7_amd_gfx1201.actual}))))

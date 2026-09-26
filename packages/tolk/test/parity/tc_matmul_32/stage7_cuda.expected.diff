@@ -1,0 +1,13 @@
+upstream-sha256: bc771a6dbdf1e1fd2a863c3c28bcca1e190f908af16e6a3fd0e14b2a11562d3e
+actual-sha256: a6051a351721a3029bb11f988307a3b4189f57f294f69c427746696f7c337999
+--- upstream.expected
++++ tolk.actual
+@@ -45,6 +45,6 @@
+   float4 wmma0 = __WMMA_8_16_16_half_float(make_half8(val8.x,val8.y,val12.x,val12.y,val9.x,val9.y,val13.x,val13.y), make_half4(val3,val4,val5,val6), cast0);
+   float4 wmma1 = __WMMA_8_16_16_half_float(make_half8(val15.x,val15.y,val10.x,val10.y,val14.x,val14.y,val11.x,val11.y), make_half4(val7,val2,val0,val1), cast0);
+   int alu7 = (alu0+alu5+alu4);
+-  *((float2*)((data2_1024+(alu7+256)))) = make_float2((wmma1.z+wmma0.z),(wmma1.w+wmma0.w));
+-  *((float2*)((data2_1024+alu7))) = make_float2((wmma1.x+wmma0.x),(wmma1.y+wmma0.y));
++  *((float2*)((data2_1024+(alu7+256)))) = make_float2((0.0f+wmma1.z+wmma0.z),(0.0f+wmma1.w+wmma0.w));
++  *((float2*)((data2_1024+alu7))) = make_float2((0.0f+wmma1.x+wmma0.x),(0.0f+wmma1.y+wmma0.y));
+ }

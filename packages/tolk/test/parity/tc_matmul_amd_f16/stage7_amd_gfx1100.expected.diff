@@ -1,0 +1,25 @@
+upstream-sha256: 54ad316943caf2e5775222cdb6bdb22d12859bddaa1bae2f8ee4fc357ad88101
+actual-sha256: 3ad1f76b8671ab578bf9a23cd99bac8b8b5112805bca54c59468e9a52bb51026
+--- upstream.expected
++++ tolk.actual
+@@ -35,12 +35,12 @@
+   half4 val18 = (*((half4*)((data1_256+(alu1+8)))));
+   half4 val19 = (*((half4*)((data1_256+alu1))));
+   float8 wmma0 = __WMMA_16_16_16_half_float(make_half16(val19.x,val19.y,val19.z,val19.w,val17.x,val17.y,val17.z,val17.w,val18.x,val18.y,val18.z,val18.w,val16.x,val16.y,val16.z,val16.w), make_half16(val15,val3,val10,val11,val12,val13,val14,val0,val1,val2,val4,val5,val6,val7,val8,val9), make_float8(0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f,0.0f));
+-  *(data0_256+lidx0) = wmma0[0];
+-  *(data0_256+(lidx0+128)) = wmma0[4];
+-  *(data0_256+(lidx0+160)) = wmma0[5];
+-  *(data0_256+(lidx0+192)) = wmma0[6];
+-  *(data0_256+(lidx0+224)) = wmma0[7];
+-  *(data0_256+(lidx0+32)) = wmma0[1];
+-  *(data0_256+(lidx0+64)) = wmma0[2];
+-  *(data0_256+(lidx0+96)) = wmma0[3];
++  *(data0_256+lidx0) = (0.0f+wmma0[0]);
++  *(data0_256+(lidx0+128)) = (0.0f+wmma0[4]);
++  *(data0_256+(lidx0+160)) = (0.0f+wmma0[5]);
++  *(data0_256+(lidx0+192)) = (0.0f+wmma0[6]);
++  *(data0_256+(lidx0+224)) = (0.0f+wmma0[7]);
++  *(data0_256+(lidx0+32)) = (0.0f+wmma0[1]);
++  *(data0_256+(lidx0+64)) = (0.0f+wmma0[2]);
++  *(data0_256+(lidx0+96)) = (0.0f+wmma0[3]);
+ }

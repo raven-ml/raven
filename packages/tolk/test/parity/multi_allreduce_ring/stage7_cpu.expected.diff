@@ -1,0 +1,45 @@
+upstream-sha256: 09aad3aa1c61c78c105c586552da166103ad39056dd7f35d242303201f6d82c2
+actual-sha256: bc2ba6246c3f44d1715b624c22ab4b13264fd11999950f62b3739b42dcf29826
+--- upstream.expected
++++ tolk.actual
+@@ -8,7 +8,7 @@
+     float val5 = (*(data1_512+(Lidx1+448)));
+     float val6 = (*(data1_512+(Lidx1+64)));
+     float val7 = (*(data1_512+Lidx1));
+-    *(data0_64+Lidx1) = (val7+val6+val0+val1+val2+val3+val4+val5);
++    *(data0_64+Lidx1) = (0.0f+val7+val6+val0+val1+val2+val3+val4+val5);
+   }
+ }
+ ---
+@@ -22,15 +22,6 @@
+ }
+ ---
+ typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+-void E_8_4(float* restrict data0_32, float* restrict data1_32) {
+-  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+-    int alu0 = (Lidx0<<2);
+-    float4 val0 = (*((float4*)((data1_32+alu0))));
+-    *((float4*)((data0_32+alu0))) = val0;
+-  }
+-}
+----
+-typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+ void E_8_4(float* restrict data0_32, float* restrict data1_32, float* restrict data2_64) {
+   for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+     int alu0 = (Lidx0<<2);
+@@ -120,15 +111,6 @@
+   for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+     int alu0 = (Lidx0<<2);
+     float4 val0 = (*((float4*)((data1_64+(alu0+32)))));
+-    *((float4*)((data0_32+alu0))) = val0;
+-  }
+-}
+----
+-typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+-void E_8_4(float* restrict data0_32, float* restrict data1_32) {
+-  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+-    int alu0 = (Lidx0<<2);
+-    float4 val0 = (*((float4*)((data1_32+alu0))));
+     *((float4*)((data0_32+alu0))) = val0;
+   }
+ }

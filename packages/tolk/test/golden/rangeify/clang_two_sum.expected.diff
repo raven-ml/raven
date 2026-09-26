@@ -1,0 +1,13 @@
+upstream-sha256: 64fe741808e49dc5d0735b58de7be1b3b87a97494765e183948fe18613a1e269
+actual-sha256: d7ed9ff6a59b53c95ca5b9873bd4aa94925fcc4f3b290b32497a5e85814c1ab6
+--- upstream.expected
++++ tolk.actual
+@@ -11,7 +11,7 @@
+     *(buf0+0) = 0.0f;
+     for (int Ridx1 = 0; Ridx1 < 16; Ridx1++) {
+       float4 val1 = (*((float4*)((data1_4096+((Ridx1<<2)+(Lidx2<<6))))));
+-      *(buf0+0) = ((*(buf0+0))+val1[0]+val1[1]+val1[2]+val1[3]);
++      *(buf0+0) = ((*(buf0+0))+(val1[0]+val1[1]+val1[2]+val1[3]));
+     }
+     *(data0_64+Lidx2) = ((*(buf1+0))+(*(buf0+0)));
+   }

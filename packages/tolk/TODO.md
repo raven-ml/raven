@@ -82,8 +82,7 @@ acceptance requirement; skipped tests are not execution evidence.
 - Measure search cost, selected-kernel latency, JIT replay and allocations on
   AMD/NV/CUDA consumer workloads, including applicable model and custom kernels.
 - Update the reference pin after the remaining acceptance requirements pass,
-  keeping regenerated upstream expectations and justified local expectations
-  distinct.
+  keeping raw upstream expectations and approved diff expectations distinct.
 
 Acceptance: the complete reference corpus is regenerated reproducibly and
 every difference is either closed or an explicitly justified divergence.

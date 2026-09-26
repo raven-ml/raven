@@ -20,4 +20,12 @@
    (diff stage5_cpu.expected stage5_cpu.actual)
    (diff stage5_metal.expected stage5_metal.actual)
    (diff stage7_cpu.expected stage7_cpu.actual)
-   (diff stage7_metal.tolk.expected stage7_metal.actual))))
+   (diff stage7_metal.expected.diff stage7_metal.actual.diff))))
+
+(rule
+ (package tolk)
+ (target stage7_metal.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_metal.expected} %{dep:stage7_metal.actual}))))

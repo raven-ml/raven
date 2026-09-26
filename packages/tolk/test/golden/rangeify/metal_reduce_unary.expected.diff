@@ -1,0 +1,13 @@
+upstream-sha256: 80d8e7866c8b56aa5610cabf3de1bc360889478badb78ac1652f1e42e6201215
+actual-sha256: 9a3924f330d0df471fc487f6924980146cd3f9e920cdc409fd76340389b10741
+--- upstream.expected
++++ tolk.actual
+@@ -7,7 +7,7 @@
+   threadgroup __attribute__((aligned(16))) float buf1[16];
+   int lidx0 = lid.x; /* 16 */
+   float val0 = (*(data1_16+lidx0));
+-  *(buf1+lidx0) = val0;
++  *(buf1+lidx0) = (0.0f+val0);
+   threadgroup_barrier(mem_flags::mem_threadgroup);
+   *(buf0+0) = 0.0f;
+   for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {

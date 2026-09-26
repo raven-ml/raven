@@ -1,0 +1,35 @@
+upstream-sha256: f2d00da6354b8e571c54cadc372b4039a4956d388a7536de3454a92f497f7dd7
+actual-sha256: b421b65a6db14822b2b9d99edaba19e9a86b99fcc231a2084103d0cbca3cba9a
+--- upstream.expected
++++ tolk.actual
+@@ -12,29 +12,7 @@
+   float val5 = (*(data1_128+(lidx0+64)));
+   float val6 = (*(data1_128+(lidx0+80)));
+   float val7 = (*(data1_128+(lidx0+96)));
+-  *(data0_16+lidx0) = (val0+val2+val3+val4+val5+val6+val7+val1);
+-}
+----
+-typedef unsigned int uint;
+-#define INFINITY (__int_as_float(0x7f800000))
+-#define NAN (__int_as_float(0x7fffffff))
+-template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+-extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* data1_16) {
+-  int lidx0 = threadIdx.x; /* 4 */
+-  int alu0 = (lidx0<<2);
+-  float4 val0 = (*((float4*)((data1_16+alu0))));
+-  *((float4*)((data0_16+alu0))) = val0;
+-}
+----
+-typedef unsigned int uint;
+-#define INFINITY (__int_as_float(0x7f800000))
+-#define NAN (__int_as_float(0x7fffffff))
+-template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+-extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* data1_16) {
+-  int lidx0 = threadIdx.x; /* 4 */
+-  int alu0 = (lidx0<<2);
+-  float4 val0 = (*((float4*)((data1_16+alu0))));
+-  *((float4*)((data0_16+alu0))) = val0;
++  *(data0_16+lidx0) = (0.0f+val0+val2+val3+val4+val5+val6+val7+val1);
+ }
+ ---
+ typedef unsigned int uint;

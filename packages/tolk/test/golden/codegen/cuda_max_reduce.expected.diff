@@ -1,0 +1,16 @@
+upstream-sha256: 25051ec4626499ef7bc80ebb3e58c74f65ac10e77ff46f6d0c6fd4d87313f374
+actual-sha256: f42631a219564806338aa5e4f0bf51531b81112529b91da3186f33558540b5d7
+--- upstream.expected
++++ tolk.actual
+@@ -8,8 +8,9 @@
+   for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {
+     float val0 = (*(data0_64+Ridx0));
+     float val1 = (*(buf0+0));
+-    float alu1 = ((val1<val0)?val0:val1);
+-    *(buf0+0) = alu1;
++    float alu1 = ((val1!=val1)?val1:val0);
++    float alu2 = ((val0<val1)?val1:alu1);
++    *(buf0+0) = alu2;
+   }
+   *(data1_1+0) = (*(buf0+0));
+ }

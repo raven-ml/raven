@@ -1,0 +1,25 @@
+upstream-sha256: e4233ea50d84db7f30d9d70a0e410073ed64b66f78fc345bc08d232780a579c6
+actual-sha256: f10618af26dbf4f365b2e52e26cc4001925ec3d907427464adc607d2bf959610
+--- upstream.expected
++++ tolk.actual
+@@ -282,12 +282,12 @@
+   float8 wmma5 = __WMMA_16_16_16___bf16_float(make_hip_bfloat1616(val106,val107,val108,val109,val110,val111,val112,val113,val114,val115,val117,val118,val119,val120,val121,val122), make_hip_bfloat1616(val130,val131,val132,val133,val134,val135,val136,val137,val138,val139,val141,val142,val143,val144,val145,val146), cast0);
+   float8 wmma6 = __WMMA_16_16_16___bf16_float(make_hip_bfloat1616(val123,val124,val125,val126,val2,val3,val4,val5,val6,val7,val8,val9,val10,val11,val13,val14), make_hip_bfloat1616(val147,val148,val149,val150,val153,val154,val155,val156,val157,val158,val159,val160,val161,val162,val164,val165), cast0);
+   float8 wmma7 = __WMMA_16_16_16___bf16_float(make_hip_bfloat1616(val127,val0,val39,val50,val61,val72,val83,val94,val105,val116,val1,val12,val23,val32,val33,val34), make_hip_bfloat1616(val255,val151,val190,val201,val212,val223,val234,val245,val129,val140,val152,val163,val174,val183,val184,val185), cast0);
+-  *(data2_16384+(alu4+1024)) = (wmma7[4]+wmma1[4]+wmma2[4]+wmma3[4]+wmma4[4]+wmma5[4]+wmma6[4]+wmma0[4]);
+-  *(data2_16384+(alu4+1280)) = (wmma7[5]+wmma1[5]+wmma2[5]+wmma3[5]+wmma4[5]+wmma5[5]+wmma6[5]+wmma0[5]);
+-  *(data2_16384+(alu4+1536)) = (wmma7[6]+wmma1[6]+wmma2[6]+wmma3[6]+wmma4[6]+wmma5[6]+wmma6[6]+wmma0[6]);
+-  *(data2_16384+(alu4+1792)) = (wmma7[7]+wmma1[7]+wmma2[7]+wmma3[7]+wmma4[7]+wmma5[7]+wmma6[7]+wmma0[7]);
+-  *(data2_16384+(alu4+256)) = (wmma7[1]+wmma1[1]+wmma2[1]+wmma3[1]+wmma4[1]+wmma5[1]+wmma6[1]+wmma0[1]);
+-  *(data2_16384+(alu4+512)) = (wmma7[2]+wmma1[2]+wmma2[2]+wmma3[2]+wmma4[2]+wmma5[2]+wmma6[2]+wmma0[2]);
+-  *(data2_16384+(alu4+768)) = (wmma7[3]+wmma1[3]+wmma2[3]+wmma3[3]+wmma4[3]+wmma5[3]+wmma6[3]+wmma0[3]);
+-  *(data2_16384+alu4) = (wmma7[0]+wmma1[0]+wmma2[0]+wmma3[0]+wmma4[0]+wmma5[0]+wmma6[0]+wmma0[0]);
++  *(data2_16384+(alu4+1024)) = (0.0f+wmma7[4]+wmma1[4]+wmma2[4]+wmma3[4]+wmma4[4]+wmma5[4]+wmma6[4]+wmma0[4]);
++  *(data2_16384+(alu4+1280)) = (0.0f+wmma7[5]+wmma1[5]+wmma2[5]+wmma3[5]+wmma4[5]+wmma5[5]+wmma6[5]+wmma0[5]);
++  *(data2_16384+(alu4+1536)) = (0.0f+wmma7[6]+wmma1[6]+wmma2[6]+wmma3[6]+wmma4[6]+wmma5[6]+wmma6[6]+wmma0[6]);
++  *(data2_16384+(alu4+1792)) = (0.0f+wmma7[7]+wmma1[7]+wmma2[7]+wmma3[7]+wmma4[7]+wmma5[7]+wmma6[7]+wmma0[7]);
++  *(data2_16384+(alu4+256)) = (0.0f+wmma7[1]+wmma1[1]+wmma2[1]+wmma3[1]+wmma4[1]+wmma5[1]+wmma6[1]+wmma0[1]);
++  *(data2_16384+(alu4+512)) = (0.0f+wmma7[2]+wmma1[2]+wmma2[2]+wmma3[2]+wmma4[2]+wmma5[2]+wmma6[2]+wmma0[2]);
++  *(data2_16384+(alu4+768)) = (0.0f+wmma7[3]+wmma1[3]+wmma2[3]+wmma3[3]+wmma4[3]+wmma5[3]+wmma6[3]+wmma0[3]);
++  *(data2_16384+alu4) = (0.0f+wmma7[0]+wmma1[0]+wmma2[0]+wmma3[0]+wmma4[0]+wmma5[0]+wmma6[0]+wmma0[0]);
+ }

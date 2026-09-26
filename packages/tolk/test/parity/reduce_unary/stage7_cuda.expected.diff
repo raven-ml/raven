@@ -1,0 +1,13 @@
+upstream-sha256: 984b9cadd054647a25f717369d9b5d8934d2fefc21ee473a3b395611de2aa644
+actual-sha256: 5aa7f7588b178d88cee12a4f83b863e9cbac6d088d37cc6a7c880c4d9e2e6bc1
+--- upstream.expected
++++ tolk.actual
+@@ -7,7 +7,7 @@
+   __shared__ __align__(16) float buf1[16];
+   int lidx0 = threadIdx.x; /* 16 */
+   float val0 = (*(data1_16+lidx0));
+-  *(buf1+lidx0) = val0;
++  *(buf1+lidx0) = (0.0f+val0);
+   __syncthreads();
+   *(buf0+0) = 0.0f;
+   for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {

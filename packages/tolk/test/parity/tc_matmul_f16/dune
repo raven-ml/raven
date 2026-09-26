@@ -17,7 +17,39 @@
  (package tolk)
  (action
   (progn
-   (diff stage5_cuda_sm80.tolk.expected stage5_cuda_sm80.actual)
-   (diff stage5_cuda_sm90.tolk.expected stage5_cuda_sm90.actual)
-   (diff stage7_cuda_sm80.tolk.expected stage7_cuda_sm80.actual)
-   (diff stage7_cuda_sm90.tolk.expected stage7_cuda_sm90.actual))))
+   (diff stage5_cuda_sm80.expected.diff stage5_cuda_sm80.actual.diff)
+   (diff stage5_cuda_sm90.expected.diff stage5_cuda_sm90.actual.diff)
+   (diff stage7_cuda_sm80.expected.diff stage7_cuda_sm80.actual.diff)
+   (diff stage7_cuda_sm90.expected.diff stage7_cuda_sm90.actual.diff))))
+
+(rule
+ (package tolk)
+ (target stage5_cuda_sm80.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage5_cuda_sm80.expected} %{dep:stage5_cuda_sm80.actual}))))
+
+(rule
+ (package tolk)
+ (target stage5_cuda_sm90.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage5_cuda_sm90.expected} %{dep:stage5_cuda_sm90.actual}))))
+
+(rule
+ (package tolk)
+ (target stage7_cuda_sm80.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_cuda_sm80.expected} %{dep:stage7_cuda_sm80.actual}))))
+
+(rule
+ (package tolk)
+ (target stage7_cuda_sm90.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_cuda_sm90.expected} %{dep:stage7_cuda_sm90.actual}))))

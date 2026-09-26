@@ -37,7 +37,8 @@ path. Run it with:
   DEV=CPU _build/default/packages/tolk/test/golden/rangeify/test_llama.exe
 
 Raw .expected files retain the unchanged reference output. Adjacent
-.tolk.expected files cover the reviewed IEEE differences in DIVERGENCES.md:
+.expected.diff files cover the reviewed IEEE differences in DIVERGENCES.md:
 float association and reduction identities, and NaN/tie behavior in MAX.
-Dune compares those cases against the explicit local snapshot. Reference
-generation never rewrites local snapshots; no source normalization is used.
+Dune compares the exact upstream-to-Tolk diff, including hashes of both
+complete outputs. Reference generation never rewrites approved diffs; no source
+normalization is used. See ../README.md for the review workflow.

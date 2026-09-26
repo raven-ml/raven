@@ -125,13 +125,13 @@
    (diff amd_elementwise_where.expected amd_elementwise_where.actual)
    (diff amd_gated_store.expected amd_gated_store.actual)
    (diff amd_llama_embedding.expected amd_llama_embedding.actual)
-   (diff amd_llama_ffn_gate.tolk.expected amd_llama_ffn_gate.actual)
-   (diff amd_llama_output_projection.tolk.expected amd_llama_output_projection.actual)
-   (diff amd_llama_rmsnorm.tolk.expected amd_llama_rmsnorm.actual)
+   (diff amd_llama_ffn_gate.expected.diff amd_llama_ffn_gate.actual.diff)
+   (diff amd_llama_output_projection.expected.diff amd_llama_output_projection.actual.diff)
+   (diff amd_llama_rmsnorm.expected.diff amd_llama_rmsnorm.actual.diff)
    (diff amd_llama_vector_scale.expected amd_llama_vector_scale.actual)
-   (diff amd_lorenz_fold.tolk.expected amd_lorenz_fold.actual)
+   (diff amd_lorenz_fold.expected.diff amd_lorenz_fold.actual.diff)
    (diff amd_matmul_small.expected amd_matmul_small.actual)
-   (diff amd_max_reduce.tolk.expected amd_max_reduce.actual)
+   (diff amd_max_reduce.expected.diff amd_max_reduce.actual.diff)
    (diff amd_multi_output.expected amd_multi_output.actual)
    (diff amd_no_optimize.expected amd_no_optimize.actual)
    (diff amd_parallel_reduce.expected amd_parallel_reduce.actual)
@@ -147,19 +147,17 @@
    (diff clang_elementwise_where.expected clang_elementwise_where.actual)
    (diff clang_gated_store.expected clang_gated_store.actual)
    (diff clang_llama_embedding.expected clang_llama_embedding.actual)
-   (diff clang_llama_ffn_gate.tolk.expected clang_llama_ffn_gate.actual)
-   (diff
-    clang_llama_output_projection.tolk.expected
-    clang_llama_output_projection.actual)
-   (diff clang_llama_rmsnorm.tolk.expected clang_llama_rmsnorm.actual)
+   (diff clang_llama_ffn_gate.expected.diff clang_llama_ffn_gate.actual.diff)
+   (diff clang_llama_output_projection.expected.diff clang_llama_output_projection.actual.diff)
+   (diff clang_llama_rmsnorm.expected.diff clang_llama_rmsnorm.actual.diff)
    (diff clang_llama_vector_scale.expected clang_llama_vector_scale.actual)
-   (diff clang_max_reduce.tolk.expected clang_max_reduce.actual)
+   (diff clang_max_reduce.expected.diff clang_max_reduce.actual.diff)
    (diff clang_multi_output.expected clang_multi_output.actual)
    (diff clang_no_optimize.expected clang_no_optimize.actual)
    (diff clang_parallel_reduce.expected clang_parallel_reduce.actual)
    (diff clang_reduce_rows.expected clang_reduce_rows.actual)
    (diff clang_sum_reduce.expected clang_sum_reduce.actual)
-   (diff clang_lorenz_fold.tolk.expected clang_lorenz_fold.actual)
+   (diff clang_lorenz_fold.expected.diff clang_lorenz_fold.actual.diff)
    (diff cuda_dot_product.expected cuda_dot_product.actual)
    (diff cuda_elementwise_2d.expected cuda_elementwise_2d.actual)
    (diff cuda_elementwise_add.expected cuda_elementwise_add.actual)
@@ -169,20 +167,18 @@
    (diff cuda_elementwise_where.expected cuda_elementwise_where.actual)
    (diff cuda_gated_store.expected cuda_gated_store.actual)
    (diff cuda_llama_embedding.expected cuda_llama_embedding.actual)
-   (diff cuda_llama_ffn_gate.tolk.expected cuda_llama_ffn_gate.actual)
-   (diff
-    cuda_llama_output_projection.tolk.expected
-    cuda_llama_output_projection.actual)
-   (diff cuda_llama_rmsnorm.tolk.expected cuda_llama_rmsnorm.actual)
+   (diff cuda_llama_ffn_gate.expected.diff cuda_llama_ffn_gate.actual.diff)
+   (diff cuda_llama_output_projection.expected.diff cuda_llama_output_projection.actual.diff)
+   (diff cuda_llama_rmsnorm.expected.diff cuda_llama_rmsnorm.actual.diff)
    (diff cuda_llama_vector_scale.expected cuda_llama_vector_scale.actual)
    (diff cuda_matmul_small.expected cuda_matmul_small.actual)
-   (diff cuda_max_reduce.tolk.expected cuda_max_reduce.actual)
+   (diff cuda_max_reduce.expected.diff cuda_max_reduce.actual.diff)
    (diff cuda_multi_output.expected cuda_multi_output.actual)
    (diff cuda_no_optimize.expected cuda_no_optimize.actual)
    (diff cuda_parallel_reduce.expected cuda_parallel_reduce.actual)
    (diff cuda_reduce_rows.expected cuda_reduce_rows.actual)
    (diff cuda_sum_reduce.expected cuda_sum_reduce.actual)
-   (diff cuda_lorenz_fold.tolk.expected cuda_lorenz_fold.actual)
+   (diff cuda_lorenz_fold.expected.diff cuda_lorenz_fold.actual.diff)
    (diff metal_dot_product.expected metal_dot_product.actual)
    (diff metal_elementwise_2d.expected metal_elementwise_2d.actual)
    (diff metal_elementwise_add.expected metal_elementwise_add.actual)
@@ -194,20 +190,18 @@
    (diff metal_elementwise_where.expected metal_elementwise_where.actual)
    (diff metal_gated_store.expected metal_gated_store.actual)
    (diff metal_llama_embedding.expected metal_llama_embedding.actual)
-   (diff metal_llama_ffn_gate.tolk.expected metal_llama_ffn_gate.actual)
-   (diff
-    metal_llama_output_projection.tolk.expected
-    metal_llama_output_projection.actual)
-   (diff metal_llama_rmsnorm.tolk.expected metal_llama_rmsnorm.actual)
+   (diff metal_llama_ffn_gate.expected.diff metal_llama_ffn_gate.actual.diff)
+   (diff metal_llama_output_projection.expected.diff metal_llama_output_projection.actual.diff)
+   (diff metal_llama_rmsnorm.expected.diff metal_llama_rmsnorm.actual.diff)
    (diff metal_llama_vector_scale.expected metal_llama_vector_scale.actual)
    (diff metal_matmul_small.expected metal_matmul_small.actual)
-   (diff metal_max_reduce.tolk.expected metal_max_reduce.actual)
+   (diff metal_max_reduce.expected.diff metal_max_reduce.actual.diff)
    (diff metal_multi_output.expected metal_multi_output.actual)
    (diff metal_no_optimize.expected metal_no_optimize.actual)
    (diff metal_parallel_reduce.expected metal_parallel_reduce.actual)
    (diff metal_reduce_rows.expected metal_reduce_rows.actual)
    (diff metal_sum_reduce.expected metal_sum_reduce.actual)
-   (diff metal_lorenz_fold.tolk.expected metal_lorenz_fold.actual)
+   (diff metal_lorenz_fold.expected.diff metal_lorenz_fold.actual.diff)
    (diff opencl_dot_product.expected opencl_dot_product.actual)
    (diff opencl_elementwise_2d.expected opencl_elementwise_2d.actual)
    (diff opencl_elementwise_add.expected opencl_elementwise_add.actual)
@@ -219,17 +213,215 @@
    (diff opencl_elementwise_where.expected opencl_elementwise_where.actual)
    (diff opencl_gated_store.expected opencl_gated_store.actual)
    (diff opencl_llama_embedding.expected opencl_llama_embedding.actual)
-   (diff opencl_llama_ffn_gate.tolk.expected opencl_llama_ffn_gate.actual)
-   (diff
-    opencl_llama_output_projection.tolk.expected
-    opencl_llama_output_projection.actual)
-   (diff opencl_llama_rmsnorm.tolk.expected opencl_llama_rmsnorm.actual)
+   (diff opencl_llama_ffn_gate.expected.diff opencl_llama_ffn_gate.actual.diff)
+   (diff opencl_llama_output_projection.expected.diff opencl_llama_output_projection.actual.diff)
+   (diff opencl_llama_rmsnorm.expected.diff opencl_llama_rmsnorm.actual.diff)
    (diff opencl_llama_vector_scale.expected opencl_llama_vector_scale.actual)
    (diff opencl_matmul_small.expected opencl_matmul_small.actual)
-   (diff opencl_max_reduce.tolk.expected opencl_max_reduce.actual)
+   (diff opencl_max_reduce.expected.diff opencl_max_reduce.actual.diff)
    (diff opencl_multi_output.expected opencl_multi_output.actual)
    (diff opencl_no_optimize.expected opencl_no_optimize.actual)
    (diff opencl_parallel_reduce.expected opencl_parallel_reduce.actual)
    (diff opencl_reduce_rows.expected opencl_reduce_rows.actual)
    (diff opencl_sum_reduce.expected opencl_sum_reduce.actual)
-   (diff opencl_lorenz_fold.tolk.expected opencl_lorenz_fold.actual))))
+   (diff opencl_lorenz_fold.expected.diff opencl_lorenz_fold.actual.diff))))
+
+(rule
+ (package tolk)
+ (target amd_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:amd_llama_ffn_gate.expected} %{dep:amd_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target amd_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:amd_llama_output_projection.expected} %{dep:amd_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target amd_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:amd_llama_rmsnorm.expected} %{dep:amd_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target amd_lorenz_fold.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:amd_lorenz_fold.expected} %{dep:amd_lorenz_fold.actual}))))
+
+(rule
+ (package tolk)
+ (target amd_max_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:amd_max_reduce.expected} %{dep:amd_max_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_llama_ffn_gate.expected} %{dep:clang_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_llama_output_projection.expected} %{dep:clang_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_llama_rmsnorm.expected} %{dep:clang_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_lorenz_fold.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_lorenz_fold.expected} %{dep:clang_lorenz_fold.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_max_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_max_reduce.expected} %{dep:clang_max_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_llama_ffn_gate.expected} %{dep:cuda_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_llama_output_projection.expected} %{dep:cuda_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_llama_rmsnorm.expected} %{dep:cuda_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_lorenz_fold.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_lorenz_fold.expected} %{dep:cuda_lorenz_fold.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_max_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_max_reduce.expected} %{dep:cuda_max_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_llama_ffn_gate.expected} %{dep:metal_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_llama_output_projection.expected} %{dep:metal_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_llama_rmsnorm.expected} %{dep:metal_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_lorenz_fold.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_lorenz_fold.expected} %{dep:metal_lorenz_fold.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_max_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_max_reduce.expected} %{dep:metal_max_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_llama_ffn_gate.expected} %{dep:opencl_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_llama_output_projection.expected} %{dep:opencl_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_llama_rmsnorm.expected} %{dep:opencl_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_lorenz_fold.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_lorenz_fold.expected} %{dep:opencl_lorenz_fold.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_max_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_max_reduce.expected} %{dep:opencl_max_reduce.actual}))))

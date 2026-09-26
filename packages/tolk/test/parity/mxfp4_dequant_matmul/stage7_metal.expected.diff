@@ -1,0 +1,69 @@
+upstream-sha256: 3471d913315453980128e6deded014399d3e2c74c43bd836ec9acf4a554a3c15
+actual-sha256: b43d535fed9f0ee9ba377924583b060294d0bd4b84e1ebc7be8756c73f36c8ec
+--- upstream.expected
++++ tolk.actual
+@@ -1,12 +1,12 @@
+ #include <metal_stdlib>
+ using namespace metal;
+-struct args_t { device int* data0_64; device int* data1_2; device unsigned char* data2_128; };
++struct args_t { device int* data0_64; device int* data1_2; device uchar* data2_128; };
+ kernel void E_32_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+-  device int* data0_64 = args.data0_64; device int* data1_2 = args.data1_2; device unsigned char* data2_128 = args.data2_128;
++  device int* data0_64 = args.data0_64; device int* data1_2 = args.data1_2; device uchar* data2_128 = args.data2_128;
+   int2 val0 = (*((device int2*)((data1_2+0))));
+   int lidx0 = lid.x; /* 32 */
+-  unsigned char val1 = (((-1<val0.x)&(val0.x<4))?*(data2_128+(lidx0+(val0.x<<5))):((unsigned char)(0u)));
+-  unsigned char val2 = (((-1<val0.y)&(val0.y<4))?*(data2_128+(lidx0+(val0.y<<5))):((unsigned char)(0u)));
++  uchar val1 = (((-1<val0.x)&(val0.x<4))?*(data2_128+(lidx0+(val0.x<<5))):((uchar)(0u)));
++  uchar val2 = (((-1<val0.y)&(val0.y<4))?*(data2_128+(lidx0+(val0.y<<5))):((uchar)(0u)));
+   *(data0_64+lidx0) = ((int)(val1));
+   *(data0_64+(lidx0+32)) = ((int)(val2));
+ }
+@@ -28,35 +28,35 @@
+ ---
+ #include <metal_stdlib>
+ using namespace metal;
+-struct args_t { device float* data0_2048; device int* data1_2; device unsigned char* data2_2048; device float* data3_64; };
++struct args_t { device float* data0_2048; device int* data1_2; device uchar* data2_2048; device float* data3_64; };
+ kernel void E_16_32_2_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+-  device float* data0_2048 = args.data0_2048; device int* data1_2 = args.data1_2; device unsigned char* data2_2048 = args.data2_2048; device float* data3_64 = args.data3_64;
++  device float* data0_2048 = args.data0_2048; device int* data1_2 = args.data1_2; device uchar* data2_2048 = args.data2_2048; device float* data3_64 = args.data3_64;
+   int2 val0 = (*((device int2*)((data1_2+0))));
+   int gidx0 = gid.x; /* 16 */
+   int lidx0 = lid.x; /* 32 */
+   int alu0 = (lidx0+(gidx0<<5));
+-  unsigned char val1 = (((-1<val0.x)&(val0.x<4))?*(data2_2048+(alu0+(val0.x<<9))):((unsigned char)(0u)));
+-  unsigned char val2 = (((-1<val0.y)&(val0.y<4))?*(data2_2048+(alu0+(val0.y<<9))):((unsigned char)(0u)));
++  uchar val1 = (((-1<val0.x)&(val0.x<4))?*(data2_2048+(alu0+(val0.x<<9))):((uchar)(0u)));
++  uchar val2 = (((-1<val0.y)&(val0.y<4))?*(data2_2048+(alu0+(val0.y<<9))):((uchar)(0u)));
+   int alu1 = ((gidx0<<1)+(lidx0>>4));
+   float val3 = (*(data3_64+(alu1+32)));
+   float val4 = (*(data3_64+alu1));
+-  unsigned char alu2 = (val1>>((unsigned char)(4u)));
+-  float cast0 = ((float)((val1&((unsigned char)(7u)))));
+-  float cast1 = ((float)((alu2&((unsigned char)(7u)))));
++  uchar alu2 = (val1>>((uchar)(4u)));
++  float cast0 = ((float)((val1&((uchar)(7u)))));
++  float cast1 = ((float)((alu2&((uchar)(7u)))));
+   float alu3 = ((cast0<7.0f)?(cast0+-2.0f):6.0f);
+   float alu4 = ((cast0<5.0f)?(cast0*0.5f):alu3);
+   float alu5 = ((cast1<7.0f)?(cast1+-2.0f):6.0f);
+   float alu6 = ((cast1<5.0f)?(cast1*0.5f):alu5);
+-  unsigned char alu7 = (val2>>((unsigned char)(4u)));
+-  float cast2 = ((float)((val2&((unsigned char)(7u)))));
+-  float cast3 = ((float)((alu7&((unsigned char)(7u)))));
++  uchar alu7 = (val2>>((uchar)(4u)));
++  float cast2 = ((float)((val2&((uchar)(7u)))));
++  float cast3 = ((float)((alu7&((uchar)(7u)))));
+   float alu8 = ((cast2<7.0f)?(cast2+-2.0f):6.0f);
+   float alu9 = ((cast2<5.0f)?(cast2*0.5f):alu8);
+   float alu10 = ((cast3<7.0f)?(cast3+-2.0f):6.0f);
+   float alu11 = ((cast3<5.0f)?(cast3*0.5f):alu10);
+   int alu12 = ((gidx0<<6)+(lidx0<<1));
+-  *((device float2*)((data0_2048+(alu12+1024)))) = float2((alu9*(1.0f+(((float)(((val2&((unsigned char)(15u)))>>((unsigned char)(3u)))))*-2.0f))*val3),(alu11*(1.0f+(((float)((alu7>>((unsigned char)(3u)))))*-2.0f))*val3));
+-  *((device float2*)((data0_2048+alu12))) = float2((alu4*(1.0f+(((float)(((val1&((unsigned char)(15u)))>>((unsigned char)(3u)))))*-2.0f))*val4),(alu6*(1.0f+(((float)((alu2>>((unsigned char)(3u)))))*-2.0f))*val4));
++  *((device float2*)((data0_2048+(alu12+1024)))) = float2((alu9*(1.0f-(((float)(((val2&((uchar)(15u)))>>((uchar)(3u)))))*2.0f))*val3),(alu11*(1.0f-(((float)((alu7>>((uchar)(3u)))))*2.0f))*val3));
++  *((device float2*)((data0_2048+alu12))) = float2((alu4*(1.0f-(((float)(((val1&((uchar)(15u)))>>((uchar)(3u)))))*2.0f))*val4),(alu6*(1.0f-(((float)((alu2>>((uchar)(3u)))))*2.0f))*val4));
+ }
+ ---
+ #include <metal_stdlib>

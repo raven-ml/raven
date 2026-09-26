@@ -17,7 +17,39 @@
  (package tolk)
  (action
   (progn
-   (diff stage5_cpu.tolk.expected stage5_cpu.actual)
-   (diff stage5_metal.tolk.expected stage5_metal.actual)
-   (diff stage7_cpu.tolk.expected stage7_cpu.actual)
-   (diff stage7_metal.tolk.expected stage7_metal.actual))))
+   (diff stage5_cpu.expected.diff stage5_cpu.actual.diff)
+   (diff stage5_metal.expected.diff stage5_metal.actual.diff)
+   (diff stage7_cpu.expected.diff stage7_cpu.actual.diff)
+   (diff stage7_metal.expected.diff stage7_metal.actual.diff))))
+
+(rule
+ (package tolk)
+ (target stage5_cpu.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage5_cpu.expected} %{dep:stage5_cpu.actual}))))
+
+(rule
+ (package tolk)
+ (target stage5_metal.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage5_metal.expected} %{dep:stage5_metal.actual}))))
+
+(rule
+ (package tolk)
+ (target stage7_cpu.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_cpu.expected} %{dep:stage7_cpu.actual}))))
+
+(rule
+ (package tolk)
+ (target stage7_metal.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_metal.expected} %{dep:stage7_metal.actual}))))

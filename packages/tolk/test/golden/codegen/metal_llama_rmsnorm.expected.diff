@@ -1,0 +1,11 @@
+upstream-sha256: 793e72367927902e82d517dfbc387bc6eba6c2064dfbdb697aacd0fec6051db5
+actual-sha256: 523028a504a52261dd05a5114fc54fa3637a7ae5ec88eb37c83db16e51c4eb6e
+--- upstream.expected
++++ tolk.actual
+@@ -7,5 +7,5 @@
+   int alu0 = (lidx0<<3);
+   float4 val0 = (*((device float4*)((data1_16+(alu0+4)))));
+   float4 val1 = (*((device float4*)((data1_16+alu0))));
+-  *(data0_2+lidx0) = sqrt(((((val1.x*val1.x)+(val1.y*val1.y)+(val1.z*val1.z)+(val1.w*val1.w)+(val0.x*val0.x)+(val0.y*val0.y)+(val0.z*val0.z)+(val0.w*val0.w))*0.125f)+9.999999747378752e-06f));
++  *(data0_2+lidx0) = sqrt((((0.0f+(val1.x*val1.x)+(val1.y*val1.y)+(val1.z*val1.z)+(val1.w*val1.w)+(val0.x*val0.x)+(val0.y*val0.y)+(val0.z*val0.z)+(val0.w*val0.w))*0.125f)+9.999999747378752e-06f));
+ }

@@ -1,0 +1,13 @@
+upstream-sha256: 9326894ce8c5026232b47c671536d691acf94d9fd1970a5fc0d93905639f7ae5
+actual-sha256: f7d4fd4a6b74119210842b006a726c862f0f325d52dbc66eedb80992d79b72e0
+--- upstream.expected
++++ tolk.actual
+@@ -12,7 +12,7 @@
+   float val0 = (*(data1_256+(gidx1+alu0)));
+   int gidx0 = gid.x; /* 16 */
+   float val1 = (*(data2_256+(gidx0+alu0)));
+-  *(buf2+lidx0) = (val0*val1);
++  *(buf2+lidx0) = (0.0f+(val0*val1));
+   threadgroup_barrier(mem_flags::mem_threadgroup);
+   *(buf1+0) = 0.0f;
+   for (int Ridx104 = 0; Ridx104 < 16; Ridx104++) {

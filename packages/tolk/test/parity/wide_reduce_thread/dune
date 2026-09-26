@@ -12,4 +12,12 @@
  (alias runtest)
  (package tolk)
  (action
-  (diff stage7_cpu.tolk.expected stage7_cpu.actual)))
+  (diff stage7_cpu.expected.diff stage7_cpu.actual.diff)))
+
+(rule
+ (package tolk)
+ (target stage7_cpu.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_cpu.expected} %{dep:stage7_cpu.actual}))))

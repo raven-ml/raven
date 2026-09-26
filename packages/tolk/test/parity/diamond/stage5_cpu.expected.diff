@@ -1,0 +1,44 @@
+upstream-sha256: e42c62dbb9b92eb0fcf1bb620c2c33f75b8fbac04b1747a5b08c9b1e488a57e8
+actual-sha256: 8af0bab813c8de321d9ac80cf58384c316b540f25f0bdc3f8d19398d95abebcf
+--- upstream.expected
++++ tolk.actual
+@@ -3,24 +3,22 @@
+    2 Ops.CAST            :            dtypes.int                               ['10']                           dtypes.int
+    3 Ops.RANGE           : 0          dtypes.int                               [2]                              (0, AxisType.WEAK)
+    4 Ops.INDEX           : 0          dtypes.float                             [0, 3]                           None
+-   5 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 10, device='CPU')
++   5 Ops.PARAM           :            dtypes.float                             []                               ParamArg(2, dtypes.float, 10, device='CPU')
+    6 Ops.INDEX           : 0          dtypes.float                             [5, 3]                           None
+    7 Ops.LOAD            : 0          dtypes.float                             [6]                              None
+-   8 Ops.PARAM           :            dtypes.float                             []                               ParamArg(2, dtypes.float, 10, device='CPU')
++   8 Ops.PARAM           :            dtypes.float                             []                               ParamArg(3, dtypes.float, 10, device='CPU')
+    9 Ops.INDEX           : 0          dtypes.float                             [8, 3]                           None
+   10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+-  11 Ops.PARAM           :            dtypes.float                             []                               ParamArg(3, dtypes.float, 10, device='CPU')
+-  12 Ops.INDEX           : 0          dtypes.float                             [11, 3]                          None
+-  13 Ops.LOAD            : 0          dtypes.float                             [12]                             None
+-  14 Ops.ADD             : 0          dtypes.float                             [10, 13]                         None
+-  15 Ops.CONST           :            dtypes.weakfloat                         []                               2.0
+-  16 Ops.CAST            :            dtypes.float                             ['2.0']                          dtypes.float
+-  17 Ops.MUL             : 0          dtypes.float                             [14, 16]                         None
+-  18 Ops.ADD             : 0          dtypes.float                             [7, 17]                          None
+-  19 Ops.PARAM           :            dtypes.float                             []                               ParamArg(4, dtypes.float, 10, device='CPU')
+-  20 Ops.INDEX           : 0          dtypes.float                             [19, 3]                          None
+-  21 Ops.LOAD            : 0          dtypes.float                             [20]                             None
+-  22 Ops.ADD             : 0          dtypes.float                             [18, 21]                         None
+-  23 Ops.STORE           : 0          dtypes.void                              [4, 22]                          None
+-  24 Ops.END             :            dtypes.void                              [23, 3]                          None
+-  25 Ops.SINK            :            dtypes.void                              [24]                             KernelInfo(name='E_10', applied_opts=(), opts_to_apply=None, estimates=None, beam=0)
++  11 Ops.ADD             : 0          dtypes.float                             [7, 10]                          None
++  12 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 10, device='CPU')
++  13 Ops.INDEX           : 0          dtypes.float                             [12, 3]                          None
++  14 Ops.LOAD            : 0          dtypes.float                             [13]                             None
++  15 Ops.ADD             : 0          dtypes.float                             [11, 14]                         None
++  16 Ops.ADD             : 0          dtypes.float                             [15, 11]                         None
++  17 Ops.PARAM           :            dtypes.float                             []                               ParamArg(4, dtypes.float, 10, device='CPU')
++  18 Ops.INDEX           : 0          dtypes.float                             [17, 3]                          None
++  19 Ops.LOAD            : 0          dtypes.float                             [18]                             None
++  20 Ops.ADD             : 0          dtypes.float                             [16, 19]                         None
++  21 Ops.STORE           : 0          dtypes.void                              [4, 20]                          None
++  22 Ops.END             :            dtypes.void                              [21, 3]                          None
++  23 Ops.SINK            :            dtypes.void                              [22]                             KernelInfo(name='E_10', applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

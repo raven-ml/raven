@@ -117,124 +117,440 @@
    (diff clang_binop_permute.expected clang_binop_permute.actual)
    (diff clang_binop_reshape.expected clang_binop_reshape.actual)
    (diff clang_contiguous_add.expected clang_contiguous_add.actual)
-   (diff clang_diamond.tolk.expected clang_diamond.actual)
+   (diff clang_diamond.expected.diff clang_diamond.actual.diff)
    (diff clang_elementwise_3way.expected clang_elementwise_3way.actual)
    (diff clang_elementwise_add.expected clang_elementwise_add.actual)
-   (diff
-    clang_llama_forward_from_embedding.tolk.expected
-    clang_llama_forward_from_embedding.actual)
-   (diff clang_llama_ffn_gate.tolk.expected clang_llama_ffn_gate.actual)
-   (diff
-    clang_llama_output_projection.tolk.expected
-    clang_llama_output_projection.actual)
-   (diff clang_llama_rmsnorm.tolk.expected clang_llama_rmsnorm.actual)
+   (diff clang_llama_forward_from_embedding.expected.diff clang_llama_forward_from_embedding.actual.diff)
+   (diff clang_llama_ffn_gate.expected.diff clang_llama_ffn_gate.actual.diff)
+   (diff clang_llama_output_projection.expected.diff clang_llama_output_projection.actual.diff)
+   (diff clang_llama_rmsnorm.expected.diff clang_llama_rmsnorm.actual.diff)
    (diff clang_llama_vector_scale.expected clang_llama_vector_scale.actual)
-   (diff clang_two_sum.tolk.expected clang_two_sum.actual)
-   (diff clang_multistage_reduce.tolk.expected clang_multistage_reduce.actual)
-   (diff clang_expand_permute.tolk.expected clang_expand_permute.actual)
-   (diff clang_mulacc.tolk.expected clang_mulacc.actual)
+   (diff clang_two_sum.expected.diff clang_two_sum.actual.diff)
+   (diff clang_multistage_reduce.expected.diff clang_multistage_reduce.actual.diff)
+   (diff clang_expand_permute.expected.diff clang_expand_permute.actual.diff)
+   (diff clang_mulacc.expected.diff clang_mulacc.actual.diff)
    (diff
     clang_permute_through_reshape.expected
     clang_permute_through_reshape.actual)
-   (diff
-    clang_reduce_permute_binop.tolk.expected
-    clang_reduce_permute_binop.actual)
-   (diff
-    clang_reduce_reshape_binop.tolk.expected
-    clang_reduce_reshape_binop.actual)
-   (diff clang_reduce_shrink.tolk.expected clang_reduce_shrink.actual)
-   (diff clang_reduce_unary.tolk.expected clang_reduce_unary.actual)
+   (diff clang_reduce_permute_binop.expected.diff clang_reduce_permute_binop.actual.diff)
+   (diff clang_reduce_reshape_binop.expected.diff clang_reduce_reshape_binop.actual.diff)
+   (diff clang_reduce_shrink.expected.diff clang_reduce_shrink.actual.diff)
+   (diff clang_reduce_unary.expected.diff clang_reduce_unary.actual.diff)
    (diff clang_reshape_chain.expected clang_reshape_chain.actual)
    (diff clang_shrink_fuse.expected clang_shrink_fuse.actual)
    (diff cuda_binop_permute.expected cuda_binop_permute.actual)
    (diff cuda_binop_reshape.expected cuda_binop_reshape.actual)
    (diff cuda_contiguous_add.expected cuda_contiguous_add.actual)
-   (diff cuda_diamond.tolk.expected cuda_diamond.actual)
+   (diff cuda_diamond.expected.diff cuda_diamond.actual.diff)
    (diff cuda_elementwise_3way.expected cuda_elementwise_3way.actual)
    (diff cuda_elementwise_add.expected cuda_elementwise_add.actual)
-   (diff
-    cuda_llama_forward_from_embedding.tolk.expected
-    cuda_llama_forward_from_embedding.actual)
-   (diff cuda_llama_ffn_gate.tolk.expected cuda_llama_ffn_gate.actual)
-   (diff
-    cuda_llama_output_projection.tolk.expected
-    cuda_llama_output_projection.actual)
-   (diff cuda_llama_rmsnorm.tolk.expected cuda_llama_rmsnorm.actual)
+   (diff cuda_llama_forward_from_embedding.expected.diff cuda_llama_forward_from_embedding.actual.diff)
+   (diff cuda_llama_ffn_gate.expected.diff cuda_llama_ffn_gate.actual.diff)
+   (diff cuda_llama_output_projection.expected.diff cuda_llama_output_projection.actual.diff)
+   (diff cuda_llama_rmsnorm.expected.diff cuda_llama_rmsnorm.actual.diff)
    (diff cuda_llama_vector_scale.expected cuda_llama_vector_scale.actual)
    (diff cuda_two_sum.expected cuda_two_sum.actual)
-   (diff cuda_multistage_reduce.tolk.expected cuda_multistage_reduce.actual)
-   (diff cuda_expand_permute.tolk.expected cuda_expand_permute.actual)
+   (diff cuda_multistage_reduce.expected.diff cuda_multistage_reduce.actual.diff)
+   (diff cuda_expand_permute.expected.diff cuda_expand_permute.actual.diff)
    (diff cuda_mulacc.expected cuda_mulacc.actual)
    (diff
     cuda_permute_through_reshape.expected
     cuda_permute_through_reshape.actual)
-   (diff cuda_reduce_permute_binop.tolk.expected cuda_reduce_permute_binop.actual)
-   (diff cuda_reduce_reshape_binop.tolk.expected cuda_reduce_reshape_binop.actual)
+   (diff cuda_reduce_permute_binop.expected.diff cuda_reduce_permute_binop.actual.diff)
+   (diff cuda_reduce_reshape_binop.expected.diff cuda_reduce_reshape_binop.actual.diff)
    (diff cuda_reduce_shrink.expected cuda_reduce_shrink.actual)
-   (diff cuda_reduce_unary.tolk.expected cuda_reduce_unary.actual)
+   (diff cuda_reduce_unary.expected.diff cuda_reduce_unary.actual.diff)
    (diff cuda_reshape_chain.expected cuda_reshape_chain.actual)
    (diff cuda_shrink_fuse.expected cuda_shrink_fuse.actual)
    (diff metal_binop_permute.expected metal_binop_permute.actual)
    (diff metal_binop_reshape.expected metal_binop_reshape.actual)
    (diff metal_contiguous_add.expected metal_contiguous_add.actual)
-   (diff metal_diamond.tolk.expected metal_diamond.actual)
+   (diff metal_diamond.expected.diff metal_diamond.actual.diff)
    (diff metal_elementwise_3way.expected metal_elementwise_3way.actual)
    (diff metal_elementwise_add.expected metal_elementwise_add.actual)
-   (diff
-    metal_llama_forward_from_embedding.tolk.expected
-    metal_llama_forward_from_embedding.actual)
-   (diff metal_llama_ffn_gate.tolk.expected metal_llama_ffn_gate.actual)
-   (diff
-    metal_llama_output_projection.tolk.expected
-    metal_llama_output_projection.actual)
-   (diff metal_llama_rmsnorm.tolk.expected metal_llama_rmsnorm.actual)
+   (diff metal_llama_forward_from_embedding.expected.diff metal_llama_forward_from_embedding.actual.diff)
+   (diff metal_llama_ffn_gate.expected.diff metal_llama_ffn_gate.actual.diff)
+   (diff metal_llama_output_projection.expected.diff metal_llama_output_projection.actual.diff)
+   (diff metal_llama_rmsnorm.expected.diff metal_llama_rmsnorm.actual.diff)
    (diff metal_llama_vector_scale.expected metal_llama_vector_scale.actual)
    (diff metal_two_sum.expected metal_two_sum.actual)
-   (diff metal_multistage_reduce.tolk.expected metal_multistage_reduce.actual)
-   (diff metal_expand_permute.tolk.expected metal_expand_permute.actual)
+   (diff metal_multistage_reduce.expected.diff metal_multistage_reduce.actual.diff)
+   (diff metal_expand_permute.expected.diff metal_expand_permute.actual.diff)
    (diff metal_mulacc.expected metal_mulacc.actual)
    (diff
     metal_permute_through_reshape.expected
     metal_permute_through_reshape.actual)
-   (diff
-    metal_reduce_permute_binop.tolk.expected
-    metal_reduce_permute_binop.actual)
-   (diff
-    metal_reduce_reshape_binop.tolk.expected
-    metal_reduce_reshape_binop.actual)
+   (diff metal_reduce_permute_binop.expected.diff metal_reduce_permute_binop.actual.diff)
+   (diff metal_reduce_reshape_binop.expected.diff metal_reduce_reshape_binop.actual.diff)
    (diff metal_reduce_shrink.expected metal_reduce_shrink.actual)
-   (diff metal_reduce_unary.tolk.expected metal_reduce_unary.actual)
+   (diff metal_reduce_unary.expected.diff metal_reduce_unary.actual.diff)
    (diff metal_reshape_chain.expected metal_reshape_chain.actual)
    (diff metal_shrink_fuse.expected metal_shrink_fuse.actual)
    (diff opencl_binop_permute.expected opencl_binop_permute.actual)
    (diff opencl_binop_reshape.expected opencl_binop_reshape.actual)
    (diff opencl_contiguous_add.expected opencl_contiguous_add.actual)
-   (diff opencl_diamond.tolk.expected opencl_diamond.actual)
+   (diff opencl_diamond.expected.diff opencl_diamond.actual.diff)
    (diff opencl_elementwise_3way.expected opencl_elementwise_3way.actual)
    (diff opencl_elementwise_add.expected opencl_elementwise_add.actual)
-   (diff
-    opencl_llama_forward_from_embedding.tolk.expected
-    opencl_llama_forward_from_embedding.actual)
-   (diff opencl_llama_ffn_gate.tolk.expected opencl_llama_ffn_gate.actual)
-   (diff
-    opencl_llama_output_projection.tolk.expected
-    opencl_llama_output_projection.actual)
-   (diff opencl_llama_rmsnorm.tolk.expected opencl_llama_rmsnorm.actual)
+   (diff opencl_llama_forward_from_embedding.expected.diff opencl_llama_forward_from_embedding.actual.diff)
+   (diff opencl_llama_ffn_gate.expected.diff opencl_llama_ffn_gate.actual.diff)
+   (diff opencl_llama_output_projection.expected.diff opencl_llama_output_projection.actual.diff)
+   (diff opencl_llama_rmsnorm.expected.diff opencl_llama_rmsnorm.actual.diff)
    (diff opencl_llama_vector_scale.expected opencl_llama_vector_scale.actual)
    (diff opencl_two_sum.expected opencl_two_sum.actual)
-   (diff opencl_multistage_reduce.tolk.expected opencl_multistage_reduce.actual)
-   (diff opencl_expand_permute.tolk.expected opencl_expand_permute.actual)
+   (diff opencl_multistage_reduce.expected.diff opencl_multistage_reduce.actual.diff)
+   (diff opencl_expand_permute.expected.diff opencl_expand_permute.actual.diff)
    (diff opencl_mulacc.expected opencl_mulacc.actual)
    (diff
     opencl_permute_through_reshape.expected
     opencl_permute_through_reshape.actual)
-   (diff
-    opencl_reduce_permute_binop.tolk.expected
-    opencl_reduce_permute_binop.actual)
-   (diff
-    opencl_reduce_reshape_binop.tolk.expected
-    opencl_reduce_reshape_binop.actual)
+   (diff opencl_reduce_permute_binop.expected.diff opencl_reduce_permute_binop.actual.diff)
+   (diff opencl_reduce_reshape_binop.expected.diff opencl_reduce_reshape_binop.actual.diff)
    (diff opencl_reduce_shrink.expected opencl_reduce_shrink.actual)
-   (diff opencl_reduce_unary.tolk.expected opencl_reduce_unary.actual)
+   (diff opencl_reduce_unary.expected.diff opencl_reduce_unary.actual.diff)
    (diff opencl_reshape_chain.expected opencl_reshape_chain.actual)
    (diff opencl_shrink_fuse.expected opencl_shrink_fuse.actual))))
+
+(rule
+ (package tolk)
+ (target clang_diamond.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_diamond.expected} %{dep:clang_diamond.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_expand_permute.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_expand_permute.expected} %{dep:clang_expand_permute.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_llama_ffn_gate.expected} %{dep:clang_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_llama_forward_from_embedding.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_llama_forward_from_embedding.expected} %{dep:clang_llama_forward_from_embedding.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_llama_output_projection.expected} %{dep:clang_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_llama_rmsnorm.expected} %{dep:clang_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_mulacc.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_mulacc.expected} %{dep:clang_mulacc.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_multistage_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_multistage_reduce.expected} %{dep:clang_multistage_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_reduce_permute_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_reduce_permute_binop.expected} %{dep:clang_reduce_permute_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_reduce_reshape_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_reduce_reshape_binop.expected} %{dep:clang_reduce_reshape_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_reduce_shrink.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_reduce_shrink.expected} %{dep:clang_reduce_shrink.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_reduce_unary.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_reduce_unary.expected} %{dep:clang_reduce_unary.actual}))))
+
+(rule
+ (package tolk)
+ (target clang_two_sum.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:clang_two_sum.expected} %{dep:clang_two_sum.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_diamond.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_diamond.expected} %{dep:cuda_diamond.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_expand_permute.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_expand_permute.expected} %{dep:cuda_expand_permute.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_llama_ffn_gate.expected} %{dep:cuda_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_llama_forward_from_embedding.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_llama_forward_from_embedding.expected} %{dep:cuda_llama_forward_from_embedding.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_llama_output_projection.expected} %{dep:cuda_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_llama_rmsnorm.expected} %{dep:cuda_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_multistage_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_multistage_reduce.expected} %{dep:cuda_multistage_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_reduce_permute_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_reduce_permute_binop.expected} %{dep:cuda_reduce_permute_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_reduce_reshape_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_reduce_reshape_binop.expected} %{dep:cuda_reduce_reshape_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target cuda_reduce_unary.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:cuda_reduce_unary.expected} %{dep:cuda_reduce_unary.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_diamond.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_diamond.expected} %{dep:metal_diamond.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_expand_permute.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_expand_permute.expected} %{dep:metal_expand_permute.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_llama_ffn_gate.expected} %{dep:metal_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_llama_forward_from_embedding.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_llama_forward_from_embedding.expected} %{dep:metal_llama_forward_from_embedding.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_llama_output_projection.expected} %{dep:metal_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_llama_rmsnorm.expected} %{dep:metal_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_multistage_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_multistage_reduce.expected} %{dep:metal_multistage_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_reduce_permute_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_reduce_permute_binop.expected} %{dep:metal_reduce_permute_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_reduce_reshape_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_reduce_reshape_binop.expected} %{dep:metal_reduce_reshape_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target metal_reduce_unary.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:metal_reduce_unary.expected} %{dep:metal_reduce_unary.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_diamond.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_diamond.expected} %{dep:opencl_diamond.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_expand_permute.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_expand_permute.expected} %{dep:opencl_expand_permute.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_llama_ffn_gate.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_llama_ffn_gate.expected} %{dep:opencl_llama_ffn_gate.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_llama_forward_from_embedding.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_llama_forward_from_embedding.expected} %{dep:opencl_llama_forward_from_embedding.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_llama_output_projection.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_llama_output_projection.expected} %{dep:opencl_llama_output_projection.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_llama_rmsnorm.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_llama_rmsnorm.expected} %{dep:opencl_llama_rmsnorm.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_multistage_reduce.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_multistage_reduce.expected} %{dep:opencl_multistage_reduce.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_reduce_permute_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_reduce_permute_binop.expected} %{dep:opencl_reduce_permute_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_reduce_reshape_binop.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_reduce_reshape_binop.expected} %{dep:opencl_reduce_reshape_binop.actual}))))
+
+(rule
+ (package tolk)
+ (target opencl_reduce_unary.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:opencl_reduce_unary.expected} %{dep:opencl_reduce_unary.actual}))))

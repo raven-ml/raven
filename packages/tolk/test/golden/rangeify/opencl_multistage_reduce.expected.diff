@@ -1,0 +1,16 @@
+upstream-sha256: b1984db78f5689b42f411d8a729d9b158e7170f3a96366af89cabcc8d5426c5d
+actual-sha256: c433d7a896d02ba05d255aa7437567b02ca0cb0f0383bac09a4240445d297182
+--- upstream.expected
++++ tolk.actual
+@@ -13,8 +13,9 @@
+       *(buf0+0) = ((*(buf0+0))+val0);
+     }
+     float val1 = (*(buf0+0));
+-    float alu4 = ((val1<0.0f)?0.0f:val1);
+-    *(buf1+0) = ((*(buf1+0))+alu4);
++    float alu4 = ((val1!=val1)?val1:0.0f);
++    float alu5 = ((0.0f<val1)?val1:alu4);
++    *(buf1+0) = ((*(buf1+0))+alu5);
+   }
+   *(buf3+lidx0) = (*(buf1+0));
+   barrier(CLK_LOCAL_MEM_FENCE);

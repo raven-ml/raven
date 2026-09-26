@@ -1,0 +1,12 @@
+upstream-sha256: 7ced7182a6f7ef4c5f620b4bc509e18652b5955e933c54889d6d01b1d52bd1d7
+actual-sha256: c064f953d74dba85380845835ab90c5d4aed78f0c33be6a68e753974a6273c12
+--- upstream.expected
++++ tolk.actual
+@@ -4,6 +4,6 @@
+     int alu0 = (Lidx1<<3);
+     float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
+     float4 val1 = (*((float4*)((data1_16+alu0))));
+-    *(data0_2+Lidx1) = __builtin_sqrtf(((((val1[0]*val1[0])+(val1[1]*val1[1])+(val1[2]*val1[2])+(val1[3]*val1[3])+(val0[0]*val0[0])+(val0[1]*val0[1])+(val0[2]*val0[2])+(val0[3]*val0[3]))*0.125f)+9.999999747378752e-06f));
++    *(data0_2+Lidx1) = __builtin_sqrtf((((0.0f+(val1[0]*val1[0])+(val1[1]*val1[1])+(val1[2]*val1[2])+(val1[3]*val1[3])+(val0[0]*val0[0])+(val0[1]*val0[1])+(val0[2]*val0[2])+(val0[3]*val0[3]))*0.125f)+9.999999747378752e-06f));
+   }
+ }

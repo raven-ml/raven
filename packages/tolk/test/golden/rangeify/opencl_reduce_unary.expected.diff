@@ -1,0 +1,13 @@
+upstream-sha256: 7f7283fd978fdf74f9c97557bf91f2516b1512bd1ad66cbd0bf25c94b7b1b26f
+actual-sha256: a87bafc1432503634a981505864b1006d65105119893f712fc5b71433cf7d5fb
+--- upstream.expected
++++ tolk.actual
+@@ -3,7 +3,7 @@
+   __attribute__ ((aligned (16))) __local float buf1[16];
+   int lidx0 = get_local_id(0); /* 16 */
+   float val0 = (*(data1_16+lidx0));
+-  *(buf1+lidx0) = val0;
++  *(buf1+lidx0) = (0.0f+val0);
+   barrier(CLK_LOCAL_MEM_FENCE);
+   *(buf0+0) = 0.0f;
+   for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {

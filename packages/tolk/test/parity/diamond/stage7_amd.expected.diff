@@ -1,0 +1,12 @@
+upstream-sha256: edf36b85e11dd77b17d41c9e2f809e22485bc46b49fd24832df906387efc4a32
+actual-sha256: c394bd5c166943a1c9706d380307faa11fb50f19be1b54c7e4db393ccc964433
+--- upstream.expected
++++ tolk.actual
+@@ -10,5 +10,6 @@
+   float val1 = (*(data2_10+alu0));
+   float val2 = (*(data3_10+alu0));
+   float val3 = (*(data4_10+alu0));
+-  *(data0_10+alu0) = (val0+((val1+val2)*2.0f)+val3);
++  float alu1 = (val1+val2);
++  *(data0_10+alu0) = (alu1+val0+alu1+val3);
+ }

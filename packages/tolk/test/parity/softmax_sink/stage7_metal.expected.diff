@@ -1,0 +1,90 @@
+upstream-sha256: 1d73a8d0eb79061f04fbce66cef973f7b5b62ce4d69d29819db4a792eaccb5f1
+actual-sha256: 763bf8fc8611bd0ad5bcb577eca84016e8bf216e98fec57c40ee4472463bba28
+--- upstream.expected
++++ tolk.actual
+@@ -22,33 +22,45 @@
+   float4 val14 = (*((device float4*)((data2_24+(alu0+8)))));
+   float4 val15 = (*((device float4*)((data2_24+alu0))));
+   int alu1 = (lidx0*3);
+-  float alu2 = (val0?val15.x:((float)(-INFINITY)));
+-  float alu3 = (val1?val15.y:((float)(-INFINITY)));
+-  float alu4 = (val6?val13.x:((float)(-INFINITY)));
+-  float alu5 = (val7?val13.y:((float)(-INFINITY)));
+-  float alu6 = (val10?val14.x:((float)(-INFINITY)));
+-  float alu7 = (val11?val14.y:((float)(-INFINITY)));
+-  float alu8 = (val4?val15.z:((float)(-INFINITY)));
+-  float alu9 = ((alu2<alu3)?alu3:alu2);
+-  float alu10 = (val8?val13.z:((float)(-INFINITY)));
+-  float alu11 = ((alu4<alu5)?alu5:alu4);
+-  float alu12 = (val2?val14.z:((float)(-INFINITY)));
+-  float alu13 = ((alu6<alu7)?alu7:alu6);
+-  float alu14 = (val5?val15.w:((float)(-INFINITY)));
+-  float alu15 = ((alu9<alu8)?alu8:alu9);
+-  float alu16 = (val9?val13.w:((float)(-INFINITY)));
+-  float alu17 = ((alu11<alu10)?alu10:alu11);
+-  float alu18 = (val3?val14.w:((float)(-INFINITY)));
+-  float alu19 = ((alu13<alu12)?alu12:alu13);
+-  float alu20 = ((alu15<alu14)?alu14:alu15);
+-  float alu21 = ((alu17<alu16)?alu16:alu17);
+-  float alu22 = ((alu19<alu18)?alu18:alu19);
+-  float alu23 = ((alu20<val12)?val12:alu20);
+-  float alu24 = ((alu21<val12)?val12:alu21);
+-  float alu25 = ((alu22<val12)?val12:alu22);
+-  *(data0_6+(alu1+1)) = alu24;
+-  *(data0_6+(alu1+2)) = alu25;
+-  *(data0_6+alu1) = alu23;
++  float alu2 = (val10?val14.x:((float)(-INFINITY)));
++  float alu3 = (val11?val14.y:((float)(-INFINITY)));
++  float alu4 = (val2?val14.z:((float)(-INFINITY)));
++  float alu5 = ((alu2!=alu2)?alu2:alu3);
++  float alu6 = ((alu3<alu2)?alu2:alu5);
++  float alu7 = (val3?val14.w:((float)(-INFINITY)));
++  float alu8 = ((alu6!=alu6)?alu6:alu4);
++  float alu9 = ((alu4<alu6)?alu6:alu8);
++  float alu10 = ((alu9!=alu9)?alu9:alu7);
++  float alu11 = ((alu7<alu9)?alu9:alu10);
++  float alu12 = (val0?val15.x:((float)(-INFINITY)));
++  float alu13 = (val1?val15.y:((float)(-INFINITY)));
++  float alu14 = (val4?val15.z:((float)(-INFINITY)));
++  float alu15 = ((alu12!=alu12)?alu12:alu13);
++  float alu16 = ((alu13<alu12)?alu12:alu15);
++  float alu17 = (val5?val15.w:((float)(-INFINITY)));
++  float alu18 = ((alu16!=alu16)?alu16:alu14);
++  float alu19 = ((alu14<alu16)?alu16:alu18);
++  float alu20 = ((alu19!=alu19)?alu19:alu17);
++  float alu21 = ((alu17<alu19)?alu19:alu20);
++  float alu22 = (val6?val13.x:((float)(-INFINITY)));
++  float alu23 = (val7?val13.y:((float)(-INFINITY)));
++  float alu24 = (val8?val13.z:((float)(-INFINITY)));
++  float alu25 = ((alu22!=alu22)?alu22:alu23);
++  float alu26 = ((alu23<alu22)?alu22:alu25);
++  float alu27 = (val9?val13.w:((float)(-INFINITY)));
++  float alu28 = ((alu26!=alu26)?alu26:alu24);
++  float alu29 = ((alu24<alu26)?alu26:alu28);
++  float alu30 = ((alu29!=alu29)?alu29:alu27);
++  float alu31 = ((alu27<alu29)?alu29:alu30);
++  float alu32 = ((alu11!=alu11)?alu11:val12);
++  float alu33 = ((val12<alu11)?alu11:alu32);
++  float alu34 = ((alu21!=alu21)?alu21:val12);
++  float alu35 = ((val12<alu21)?alu21:alu34);
++  float alu36 = ((alu31!=alu31)?alu31:val12);
++  float alu37 = ((val12<alu31)?alu31:alu36);
++  *(data0_6+(alu1+1)) = alu37;
++  *(data0_6+(alu1+2)) = alu33;
++  *(data0_6+alu1) = alu35;
+ }
+ ---
+ #include <metal_stdlib>
+@@ -92,9 +104,9 @@
+   float alu13 = (val9?val16.w:((float)(-INFINITY)));
+   float alu14 = (val10?val17.x:((float)(-INFINITY)));
+   float alu15 = (val11?val17.y:((float)(-INFINITY)));
+-  *(data0_6+alu1) = (exp2(((alu10-val12)*1.4426950216293335f))+exp2(((alu11-val12)*1.4426950216293335f))+exp2(((alu12-val12)*1.4426950216293335f))+exp2(((alu13-val12)*1.4426950216293335f))+exp2(((val15-val12)*1.4426950216293335f)));
+-  *(data0_6+alu2) = (exp2(((alu14-val13)*1.4426950216293335f))+exp2(((alu15-val13)*1.4426950216293335f))+exp2(((alu6-val13)*1.4426950216293335f))+exp2(((alu7-val13)*1.4426950216293335f))+exp2(((val15-val13)*1.4426950216293335f)));
+-  *(data0_6+alu0) = (exp2(((alu4-val14)*1.4426950216293335f))+exp2(((alu5-val14)*1.4426950216293335f))+exp2(((alu8-val14)*1.4426950216293335f))+exp2(((alu9-val14)*1.4426950216293335f))+exp2(((val15-val14)*1.4426950216293335f)));
++  *(data0_6+alu1) = (0.0f+exp2(((alu10-val12)*1.4426950216293335f))+exp2(((alu11-val12)*1.4426950216293335f))+exp2(((alu12-val12)*1.4426950216293335f))+exp2(((alu13-val12)*1.4426950216293335f))+exp2(((val15-val12)*1.4426950216293335f)));
++  *(data0_6+alu2) = (0.0f+exp2(((alu14-val13)*1.4426950216293335f))+exp2(((alu15-val13)*1.4426950216293335f))+exp2(((alu6-val13)*1.4426950216293335f))+exp2(((alu7-val13)*1.4426950216293335f))+exp2(((val15-val13)*1.4426950216293335f)));
++  *(data0_6+alu0) = (0.0f+exp2(((alu4-val14)*1.4426950216293335f))+exp2(((alu5-val14)*1.4426950216293335f))+exp2(((alu8-val14)*1.4426950216293335f))+exp2(((alu9-val14)*1.4426950216293335f))+exp2(((val15-val14)*1.4426950216293335f)));
+ }
+ ---
+ #include <metal_stdlib>

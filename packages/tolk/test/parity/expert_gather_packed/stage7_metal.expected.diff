@@ -1,0 +1,32 @@
+upstream-sha256: 7bac0340f9d9dfe0244bd839a2b0f34d443560f3c94652ba3aea10db8e1afac0
+actual-sha256: 0fc7779890dbf7644281d890fc1afa8932df90f0169ba1ebb69acae0cfd79d14
+--- upstream.expected
++++ tolk.actual
+@@ -1,19 +1,19 @@
+ #include <metal_stdlib>
+ using namespace metal;
+-struct args_t { device unsigned char* data0_576; device int* data1_6; device unsigned char* data2_384; };
++struct args_t { device uchar* data0_576; device int* data1_6; device uchar* data2_384; };
+ kernel void E_3_32_6(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+-  device unsigned char* data0_576 = args.data0_576; device int* data1_6 = args.data1_6; device unsigned char* data2_384 = args.data2_384;
++  device uchar* data0_576 = args.data0_576; device int* data1_6 = args.data1_6; device uchar* data2_384 = args.data2_384;
+   int4 val0 = (*((device int4*)((data1_6+0))));
+   int gidx0 = gid.x; /* 3 */
+   int lidx0 = lid.x; /* 32 */
+   int alu0 = (lidx0+(gidx0<<5));
+-  unsigned char val1 = (((-1<val0.x)&(val0.x<4))?*(data2_384+(alu0+(val0.x*96))):((unsigned char)(0u)));
+-  unsigned char val2 = (((-1<val0.y)&(val0.y<4))?*(data2_384+(alu0+(val0.y*96))):((unsigned char)(0u)));
+-  unsigned char val3 = (((-1<val0.z)&(val0.z<4))?*(data2_384+(alu0+(val0.z*96))):((unsigned char)(0u)));
+-  unsigned char val4 = (((-1<val0.w)&(val0.w<4))?*(data2_384+(alu0+(val0.w*96))):((unsigned char)(0u)));
++  uchar val1 = (((-1<val0.x)&(val0.x<4))?*(data2_384+(alu0+(val0.x*96))):((uchar)(0u)));
++  uchar val2 = (((-1<val0.y)&(val0.y<4))?*(data2_384+(alu0+(val0.y*96))):((uchar)(0u)));
++  uchar val3 = (((-1<val0.z)&(val0.z<4))?*(data2_384+(alu0+(val0.z*96))):((uchar)(0u)));
++  uchar val4 = (((-1<val0.w)&(val0.w<4))?*(data2_384+(alu0+(val0.w*96))):((uchar)(0u)));
+   int2 val5 = (*((device int2*)((data1_6+4))));
+-  unsigned char val6 = (((-1<val5.x)&(val5.x<4))?*(data2_384+(alu0+(val5.x*96))):((unsigned char)(0u)));
+-  unsigned char val7 = (((-1<val5.y)&(val5.y<4))?*(data2_384+(alu0+(val5.y*96))):((unsigned char)(0u)));
++  uchar val6 = (((-1<val5.x)&(val5.x<4))?*(data2_384+(alu0+(val5.x*96))):((uchar)(0u)));
++  uchar val7 = (((-1<val5.y)&(val5.y<4))?*(data2_384+(alu0+(val5.y*96))):((uchar)(0u)));
+   *(data0_576+alu0) = val1;
+   *(data0_576+(alu0+192)) = val3;
+   *(data0_576+(alu0+288)) = val4;

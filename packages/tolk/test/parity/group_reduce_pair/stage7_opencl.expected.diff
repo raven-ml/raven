@@ -1,0 +1,13 @@
+upstream-sha256: 350c3f4565e666927b573ce988a7880670b081170187f6fcf767e0f22d5f7d5d
+actual-sha256: f2ca8da2203223fb6e38372c1e4bbe35b16a8f77980219ed7cc2bc936782e3e5
+--- upstream.expected
++++ tolk.actual
+@@ -8,7 +8,7 @@
+   float val0 = (*(data1_256+(gidx1+alu0)));
+   int gidx0 = get_group_id(0); /* 16 */
+   float val1 = (*(data2_256+(gidx0+alu0)));
+-  *(buf2+lidx0) = (val0*val1);
++  *(buf2+lidx0) = (0.0f+(val0*val1));
+   barrier(CLK_LOCAL_MEM_FENCE);
+   *(buf1+0) = 0.0f;
+   for (int Ridx104 = 0; Ridx104 < 16; Ridx104++) {

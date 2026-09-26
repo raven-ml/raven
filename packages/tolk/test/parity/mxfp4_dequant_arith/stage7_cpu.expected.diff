@@ -1,0 +1,14 @@
+upstream-sha256: 2847019374ba93e950020b33c02bcd2a8eb0257ec197083fc77f5457aad1eb18
+actual-sha256: e6d55b79ff3f32dc2582eb53be710af70c1eedae3707aa2164d1ec3c086b7025
+--- upstream.expected
++++ tolk.actual
+@@ -48,7 +48,7 @@
+     float alu9 = ((cast3<7.0f)?(cast3+-2.0f):6.0f);
+     float alu10 = ((cast3<5.0f)?(cast3*0.5f):alu9);
+     int alu11 = (Lidx2<<1);
+-    *((float2*)((data0_384+(alu11+192)))) = (float2){(alu8*(1.0f+(((float)(((val2&((unsigned char)(15u)))>>((unsigned char)(3u)))))*-2.0f))*val3),(alu10*(1.0f+(((float)((alu6>>((unsigned char)(3u)))))*-2.0f))*val3)};
+-    *((float2*)((data0_384+alu11))) = (float2){(alu3*(1.0f+(((float)(((val1&((unsigned char)(15u)))>>((unsigned char)(3u)))))*-2.0f))*val4),(alu5*(1.0f+(((float)((alu1>>((unsigned char)(3u)))))*-2.0f))*val4)};
++    *((float2*)((data0_384+(alu11+192)))) = (float2){(alu8*(1.0f-(((float)(((val2&((unsigned char)(15u)))>>((unsigned char)(3u)))))*2.0f))*val3),(alu10*(1.0f-(((float)((alu6>>((unsigned char)(3u)))))*2.0f))*val3)};
++    *((float2*)((data0_384+alu11))) = (float2){(alu3*(1.0f-(((float)(((val1&((unsigned char)(15u)))>>((unsigned char)(3u)))))*2.0f))*val4),(alu5*(1.0f-(((float)((alu1>>((unsigned char)(3u)))))*2.0f))*val4)};
+   }
+ }

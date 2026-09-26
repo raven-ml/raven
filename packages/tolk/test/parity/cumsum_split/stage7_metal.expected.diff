@@ -1,0 +1,33 @@
+upstream-sha256: 35c1a8734a1d685f2798a51d0c50eabf4cc9c987217a59ef3e2a154237ce05b3
+actual-sha256: e5be2c56c669663b7fa71d6399b1bdd367c4ab4c11edb726c4abde8c40ce05f0
+--- upstream.expected
++++ tolk.actual
+@@ -35,10 +35,10 @@
+     float val13 = (alu9?*(data1_3000+(alu5+702)):0.0f);
+     float val14 = (alu8?*(data1_3000+(alu5+705)):0.0f);
+     float val15 = (alu7?*(data1_3000+(alu5+708)):0.0f);
+-    *(buf0+0) = ((*(buf0+0))+val7+val6+val5+val4);
+-    *(buf0+1) = ((*(buf0+1))+val3+val2+val1+val0);
+-    *(buf0+2) = ((*(buf0+2))+val12+val13+val14+val15);
+-    *(buf0+3) = ((*(buf0+3))+val8+val9+val10+val11);
++    *(buf0+0) = ((*(buf0+0))+(val7+val6+val5+val4));
++    *(buf0+1) = ((*(buf0+1))+(val3+val2+val1+val0));
++    *(buf0+2) = ((*(buf0+2))+(val12+val13+val14+val15));
++    *(buf0+3) = ((*(buf0+3))+(val8+val9+val10+val11));
+   }
+   int alu16 = (alu0+(lidx0<<10));
+   *(data0_3072+alu16) = (*(buf0+0));
+@@ -58,9 +58,10 @@
+   float val1 = (*(data1_3072+(alu0+255)));
+   float val2 = (*(data1_3072+(alu0+511)));
+   float val3 = (*(data1_3072+(alu0+767)));
+-  float alu1 = (val1+val2);
+-  float alu2 = (alu1+val3);
+-  *((device float4*)((data0_12+(lidx0<<2)))) = float4(val1,alu1,alu2,(alu2+val0));
++  float alu1 = (0.0f+val1);
++  float alu2 = (alu1+val2);
++  float alu3 = (alu2+val3);
++  *((device float4*)((data0_12+(lidx0<<2)))) = float4(alu1,alu2,alu3,(alu3+val0));
+ }
+ ---
+ #include <metal_stdlib>

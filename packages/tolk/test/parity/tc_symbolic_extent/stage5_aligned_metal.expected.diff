@@ -1,0 +1,47 @@
+upstream-sha256: d2e6b4345cb46b9b1ac7792366b78ff78f2b8a48e3cf69aa85f19d2787ac192e
+actual-sha256: 59cf0fa6863888b034e8b0a41827d0f1e89b9acd1a97796bc0793bb9f1fe2be4
+--- upstream.expected
++++ tolk.actual
+@@ -65,22 +65,24 @@
+   64 Ops.SHRINK          : 2          dtypes.half                              [60, 63, 15]                     None
+   65 Ops.LOAD            : 2          dtypes.half                              [64]                             None
+   66 Ops.LOAD            : 2          dtypes.float                             [52]                             None
+-  67 Ops.INDEX           : 2          dtypes.float                             [51, 12]                         None
+-  68 Ops.LOAD            : 2          dtypes.float                             [67]                             None
+-  69 Ops.STACK           : 2          dtypes.float                             [66, 68]                         None
+-  70 Ops.WMMA            : 2          dtypes.float                             [59, 65, 69]                     ((8, 8, 8), dtypes.half, 32, None)
+-  71 Ops.INDEX           : 2          dtypes.float                             [70, 42]                         None
+-  72 Ops.STORE           : 2          dtypes.void                              [52, 71]                         None
+-  73 Ops.INDEX           : 2          dtypes.float                             [70, 12]                         None
+-  74 Ops.STORE           : 2          dtypes.void                              [67, 73]                         None
+-  75 Ops.GROUP           : 2          dtypes.void                              [72, 74]                         None
+-  76 Ops.END             :            dtypes.void                              [75, 50]                         None
+-  77 Ops.AFTER           :            dtypes.float                             [40, 76]                         None
+-  78 Ops.INDEX           :            dtypes.float                             [77, 42]                         None
+-  79 Ops.LOAD            :            dtypes.float                             [78]                             None
+-  80 Ops.INDEX           :            dtypes.float                             [77, 12]                         None
++  67 Ops.ADD             : 2          dtypes.float                             [45, 66]                         None
++  68 Ops.INDEX           : 2          dtypes.float                             [51, 12]                         None
++  69 Ops.LOAD            : 2          dtypes.float                             [68]                             None
++  70 Ops.ADD             : 2          dtypes.float                             [45, 69]                         None
++  71 Ops.STACK           : 2          dtypes.float                             [67, 70]                         None
++  72 Ops.WMMA            : 2          dtypes.float                             [59, 65, 71]                     ((8, 8, 8), dtypes.half, 32, None)
++  73 Ops.INDEX           : 2          dtypes.float                             [72, 42]                         None
++  74 Ops.STORE           : 2          dtypes.void                              [52, 73]                         None
++  75 Ops.INDEX           : 2          dtypes.float                             [72, 12]                         None
++  76 Ops.STORE           : 2          dtypes.void                              [68, 75]                         None
++  77 Ops.GROUP           : 2          dtypes.void                              [74, 76]                         None
++  78 Ops.END             :            dtypes.void                              [77, 50]                         None
++  79 Ops.AFTER           :            dtypes.float                             [40, 78]                         None
++  80 Ops.INDEX           :            dtypes.float                             [79, 42]                         None
+   81 Ops.LOAD            :            dtypes.float                             [80]                             None
+-  82 Ops.STACK           :            dtypes.float                             [79, 81]                         None
+-  83 Ops.STORE           :            dtypes.void                              [39, 82]                         None
+-  84 Ops.GROUP           :            dtypes.void                              [83, 83]                         None
+-  85 Ops.SINK            :            dtypes.void                              [84]                             KernelInfo(name='tc_symbolic_extent', applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), opts_to_apply=None, estimates=None, beam=0)
++  82 Ops.INDEX           :            dtypes.float                             [79, 12]                         None
++  83 Ops.LOAD            :            dtypes.float                             [82]                             None
++  84 Ops.STACK           :            dtypes.float                             [81, 83]                         None
++  85 Ops.STORE           :            dtypes.void                              [39, 84]                         None
++  86 Ops.GROUP           :            dtypes.void                              [85, 85]                         None
++  87 Ops.SINK            :            dtypes.void                              [86]                             KernelInfo(name='tc_symbolic_extent', applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), opts_to_apply=None, estimates=None, beam=0)

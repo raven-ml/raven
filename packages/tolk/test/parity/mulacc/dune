@@ -29,7 +29,15 @@
    (diff stage5_metal.expected stage5_metal.actual)
    (diff stage5_opencl.expected stage5_opencl.actual)
    (diff stage7_amd.expected stage7_amd.actual)
-   (diff stage7_cpu.tolk.expected stage7_cpu.actual)
+   (diff stage7_cpu.expected.diff stage7_cpu.actual.diff)
    (diff stage7_cuda.expected stage7_cuda.actual)
    (diff stage7_metal.expected stage7_metal.actual)
    (diff stage7_opencl.expected stage7_opencl.actual))))
+
+(rule
+ (package tolk)
+ (target stage7_cpu.actual.diff)
+ (action
+  (with-stdout-to %{target}
+   (run python3 %{dep:../../expected_diff.py}
+    %{dep:stage7_cpu.expected} %{dep:stage7_cpu.actual}))))

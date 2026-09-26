@@ -1,0 +1,34 @@
+upstream-sha256: b79261ebc74b5e907b0af335112c7903748281f20ab0dafc025ad1cf08658079
+actual-sha256: 818ede042453d6fa2091bb8b8dfd003f94c28c275e325e75530475c578762f4f
+--- upstream.expected
++++ tolk.actual
+@@ -18,14 +18,21 @@
+   float alu7 = (val1.y+val3.y);
+   float alu8 = (val1.z+val3.z);
+   float alu9 = (val1.w+val3.w);
+-  float alu10 = ((alu6<alu7)?alu7:alu6);
+-  float alu11 = ((alu10<alu8)?alu8:alu10);
+-  float alu12 = ((alu11<alu9)?alu9:alu11);
+-  float alu13 = ((alu12<alu2)?alu2:alu12);
+-  float alu14 = ((alu13<alu3)?alu3:alu13);
+-  float alu15 = ((alu14<alu4)?alu4:alu14);
+-  float alu16 = ((alu15<alu5)?alu5:alu15);
+-  *(data0_4+lidx0) = alu16;
++  float alu10 = ((alu6!=alu6)?alu6:alu7);
++  float alu11 = ((alu7<alu6)?alu6:alu10);
++  float alu12 = ((alu11!=alu11)?alu11:alu8);
++  float alu13 = ((alu8<alu11)?alu11:alu12);
++  float alu14 = ((alu13!=alu13)?alu13:alu9);
++  float alu15 = ((alu9<alu13)?alu13:alu14);
++  float alu16 = ((alu15!=alu15)?alu15:alu2);
++  float alu17 = ((alu2<alu15)?alu15:alu16);
++  float alu18 = ((alu17!=alu17)?alu17:alu3);
++  float alu19 = ((alu3<alu17)?alu17:alu18);
++  float alu20 = ((alu19!=alu19)?alu19:alu4);
++  float alu21 = ((alu4<alu19)?alu19:alu20);
++  float alu22 = ((alu21!=alu21)?alu21:alu5);
++  float alu23 = ((alu5<alu21)?alu21:alu22);
++  *(data0_4+lidx0) = alu23;
+ }
+ ---
+ typedef unsigned int uint;

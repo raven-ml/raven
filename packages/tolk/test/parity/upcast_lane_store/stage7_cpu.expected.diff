@@ -1,0 +1,17 @@
+upstream-sha256: 1e4ec52356b0d8dda2b0b2f2c1bcc9edc0e4507860813475fbbdb2d875d2300f
+actual-sha256: 5efe4db98fa8cad2baf5d6619d42dafcd5b13ae214a07c5cb5fe03e6d8daf465
+--- upstream.expected
++++ tolk.actual
+@@ -12,9 +12,9 @@
+       float4 val1 = (*((float4*)((data1_1769472+(alu4+768)))));
+       float4 val2 = (*((float4*)((data1_1769472+alu4))));
+       float4 val3 = (*((float4*)((data2_768+alu3))));
+-      *(buf0+0) = ((*(buf0+0))+(val2[0]*val3[0])+(val2[1]*val3[1])+(val2[2]*val3[2])+(val2[3]*val3[3]));
+-      *(buf0+1) = ((*(buf0+1))+(val1[0]*val3[0])+(val1[1]*val3[1])+(val1[2]*val3[2])+(val1[3]*val3[3]));
+-      *(buf0+2) = ((*(buf0+2))+(val0[0]*val3[0])+(val0[1]*val3[1])+(val0[2]*val3[2])+(val0[3]*val3[3]));
++      *(buf0+0) = ((*(buf0+0))+((val2[0]*val3[0])+(val2[1]*val3[1])+(val2[2]*val3[2])+(val2[3]*val3[3])));
++      *(buf0+1) = ((*(buf0+1))+((val1[0]*val3[0])+(val1[1]*val3[1])+(val1[2]*val3[2])+(val1[3]*val3[3])));
++      *(buf0+2) = ((*(buf0+2))+((val0[0]*val3[0])+(val0[1]*val3[1])+(val0[2]*val3[2])+(val0[3]*val3[3])));
+     }
+     int alu9 = (Lidx1*3);
+     int alu10 = (alu9+1);

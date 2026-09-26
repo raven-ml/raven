@@ -1,0 +1,154 @@
+upstream-sha256: 9fb20b92d5550e6da5befd3dbc5684518acd572b425c82443518c398ed0a325b
+actual-sha256: 11e1e5e30eafa0f92c1475df0b1132e28aa392c1e011969384a17fb4d48585d5
+--- upstream.expected
++++ tolk.actual
+@@ -14,27 +14,36 @@
+   float4 val2 = (*((float4*)((data1_12+8))));
+   float alu0 = (((val0[0]!=val0[0])^1)?val0[0]:((float)(-__builtin_inff())));
+   float alu1 = (((val0[1]!=val0[1])^1)?val0[1]:((float)(-__builtin_inff())));
+-  float alu2 = ((alu0<alu1)?alu1:alu0);
+-  float alu3 = (((val0[2]!=val0[2])^1)?val0[2]:((float)(-__builtin_inff())));
+-  float alu4 = ((alu2<alu3)?alu3:alu2);
+-  float alu5 = (((val0[3]!=val0[3])^1)?val0[3]:((float)(-__builtin_inff())));
+-  float alu6 = (((val1[0]!=val1[0])^1)?val1[0]:((float)(-__builtin_inff())));
+-  float alu7 = (((val1[1]!=val1[1])^1)?val1[1]:((float)(-__builtin_inff())));
+-  float alu8 = ((alu6<alu7)?alu7:alu6);
+-  float alu9 = (((val1[2]!=val1[2])^1)?val1[2]:((float)(-__builtin_inff())));
+-  float alu10 = ((alu8<alu9)?alu9:alu8);
+-  float alu11 = (((val1[3]!=val1[3])^1)?val1[3]:((float)(-__builtin_inff())));
+-  float alu12 = ((alu4<alu5)?alu5:alu4);
+-  float alu13 = ((alu10<alu11)?alu11:alu10);
+-  float alu14 = (((val2[0]!=val2[0])^1)?val2[0]:((float)(-__builtin_inff())));
+-  float alu15 = (((val2[1]!=val2[1])^1)?val2[1]:((float)(-__builtin_inff())));
+-  float alu16 = ((alu14<alu15)?alu15:alu14);
+-  float alu17 = (((val2[2]!=val2[2])^1)?val2[2]:((float)(-__builtin_inff())));
+-  float alu18 = ((alu16<alu17)?alu17:alu16);
+-  float alu19 = (((val2[3]!=val2[3])^1)?val2[3]:((float)(-__builtin_inff())));
+-  float alu20 = ((alu18<alu19)?alu19:alu18);
+-  *(data0_3+2) = alu20;
+-  *((float2*)((data0_3+0))) = (float2){alu12,alu13};
++  float alu2 = ((alu0!=alu0)?alu0:alu1);
++  float alu3 = ((alu1<alu0)?alu0:alu2);
++  float alu4 = (((val0[2]!=val0[2])^1)?val0[2]:((float)(-__builtin_inff())));
++  float alu5 = ((alu3!=alu3)?alu3:alu4);
++  float alu6 = ((alu4<alu3)?alu3:alu5);
++  float alu7 = (((val0[3]!=val0[3])^1)?val0[3]:((float)(-__builtin_inff())));
++  float alu8 = (((val1[0]!=val1[0])^1)?val1[0]:((float)(-__builtin_inff())));
++  float alu9 = (((val1[1]!=val1[1])^1)?val1[1]:((float)(-__builtin_inff())));
++  float alu10 = ((alu8!=alu8)?alu8:alu9);
++  float alu11 = ((alu9<alu8)?alu8:alu10);
++  float alu12 = (((val1[2]!=val1[2])^1)?val1[2]:((float)(-__builtin_inff())));
++  float alu13 = ((alu11!=alu11)?alu11:alu12);
++  float alu14 = ((alu12<alu11)?alu11:alu13);
++  float alu15 = (((val1[3]!=val1[3])^1)?val1[3]:((float)(-__builtin_inff())));
++  float alu16 = ((alu6!=alu6)?alu6:alu7);
++  float alu17 = ((alu7<alu6)?alu6:alu16);
++  float alu18 = ((alu14!=alu14)?alu14:alu15);
++  float alu19 = ((alu15<alu14)?alu14:alu18);
++  float alu20 = (((val2[0]!=val2[0])^1)?val2[0]:((float)(-__builtin_inff())));
++  float alu21 = (((val2[1]!=val2[1])^1)?val2[1]:((float)(-__builtin_inff())));
++  float alu22 = ((alu20!=alu20)?alu20:alu21);
++  float alu23 = ((alu21<alu20)?alu20:alu22);
++  float alu24 = (((val2[2]!=val2[2])^1)?val2[2]:((float)(-__builtin_inff())));
++  float alu25 = ((alu23!=alu23)?alu23:alu24);
++  float alu26 = ((alu24<alu23)?alu23:alu25);
++  float alu27 = (((val2[3]!=val2[3])^1)?val2[3]:((float)(-__builtin_inff())));
++  float alu28 = ((alu26!=alu26)?alu26:alu27);
++  float alu29 = ((alu27<alu26)?alu26:alu28);
++  *(data0_3+2) = alu29;
++  *((float2*)((data0_3+0))) = (float2){alu17,alu19};
+ }
+ ---
+ typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+@@ -161,27 +170,36 @@
+   float4 val5 = (*((float4*)((data3_12+8))));
+   float alu0 = (((val1[0]!=val2[0])&((val3[0]!=val3[0])^1))?val3[0]:((float)(-__builtin_inff())));
+   float alu1 = (((val1[1]!=val2[0])&((val3[1]!=val3[1])^1))?val3[1]:((float)(-__builtin_inff())));
+-  float alu2 = ((alu0<alu1)?alu1:alu0);
+-  float alu3 = (((val1[2]!=val2[0])&((val3[2]!=val3[2])^1))?val3[2]:((float)(-__builtin_inff())));
+-  float alu4 = ((alu2<alu3)?alu3:alu2);
+-  float alu5 = (((val1[3]!=val2[0])&((val3[3]!=val3[3])^1))?val3[3]:((float)(-__builtin_inff())));
+-  float alu6 = (((val1[0]!=val2[1])&((val4[0]!=val4[0])^1))?val4[0]:((float)(-__builtin_inff())));
+-  float alu7 = (((val1[1]!=val2[1])&((val4[1]!=val4[1])^1))?val4[1]:((float)(-__builtin_inff())));
+-  float alu8 = ((alu6<alu7)?alu7:alu6);
++  float alu2 = (((val1[0]!=val2[1])&((val4[0]!=val4[0])^1))?val4[0]:((float)(-__builtin_inff())));
++  float alu3 = (((val1[1]!=val2[1])&((val4[1]!=val4[1])^1))?val4[1]:((float)(-__builtin_inff())));
++  float alu4 = ((alu0!=alu0)?alu0:alu1);
++  float alu5 = ((alu1<alu0)?alu0:alu4);
++  float alu6 = (((val1[2]!=val2[0])&((val3[2]!=val3[2])^1))?val3[2]:((float)(-__builtin_inff())));
++  float alu7 = ((alu2!=alu2)?alu2:alu3);
++  float alu8 = ((alu3<alu2)?alu2:alu7);
+   float alu9 = (((val1[2]!=val2[1])&((val4[2]!=val4[2])^1))?val4[2]:((float)(-__builtin_inff())));
+-  float alu10 = ((alu8<alu9)?alu9:alu8);
+-  float alu11 = (((val1[3]!=val2[1])&((val4[3]!=val4[3])^1))?val4[3]:((float)(-__builtin_inff())));
+-  float alu12 = ((alu4<alu5)?alu5:alu4);
+-  float alu13 = ((alu10<alu11)?alu11:alu10);
+-  float alu14 = (((val1[0]!=val0)&((val5[0]!=val5[0])^1))?val5[0]:((float)(-__builtin_inff())));
+-  float alu15 = (((val1[1]!=val0)&((val5[1]!=val5[1])^1))?val5[1]:((float)(-__builtin_inff())));
+-  float alu16 = ((alu14<alu15)?alu15:alu14);
+-  float alu17 = (((val1[2]!=val0)&((val5[2]!=val5[2])^1))?val5[2]:((float)(-__builtin_inff())));
+-  float alu18 = ((alu16<alu17)?alu17:alu16);
+-  float alu19 = (((val1[3]!=val0)&((val5[3]!=val5[3])^1))?val5[3]:((float)(-__builtin_inff())));
+-  float alu20 = ((alu18<alu19)?alu19:alu18);
+-  *(data0_3+2) = alu20;
+-  *((float2*)((data0_3+0))) = (float2){alu12,alu13};
++  float alu10 = ((alu5!=alu5)?alu5:alu6);
++  float alu11 = ((alu6<alu5)?alu5:alu10);
++  float alu12 = (((val1[3]!=val2[0])&((val3[3]!=val3[3])^1))?val3[3]:((float)(-__builtin_inff())));
++  float alu13 = ((alu8!=alu8)?alu8:alu9);
++  float alu14 = ((alu9<alu8)?alu8:alu13);
++  float alu15 = (((val1[3]!=val2[1])&((val4[3]!=val4[3])^1))?val4[3]:((float)(-__builtin_inff())));
++  float alu16 = ((alu11!=alu11)?alu11:alu12);
++  float alu17 = ((alu12<alu11)?alu11:alu16);
++  float alu18 = ((alu14!=alu14)?alu14:alu15);
++  float alu19 = ((alu15<alu14)?alu14:alu18);
++  float alu20 = (((val1[0]!=val0)&((val5[0]!=val5[0])^1))?val5[0]:((float)(-__builtin_inff())));
++  float alu21 = (((val1[1]!=val0)&((val5[1]!=val5[1])^1))?val5[1]:((float)(-__builtin_inff())));
++  float alu22 = ((alu20!=alu20)?alu20:alu21);
++  float alu23 = ((alu21<alu20)?alu20:alu22);
++  float alu24 = (((val1[2]!=val0)&((val5[2]!=val5[2])^1))?val5[2]:((float)(-__builtin_inff())));
++  float alu25 = ((alu23!=alu23)?alu23:alu24);
++  float alu26 = ((alu24<alu23)?alu23:alu25);
++  float alu27 = (((val1[3]!=val0)&((val5[3]!=val5[3])^1))?val5[3]:((float)(-__builtin_inff())));
++  float alu28 = ((alu26!=alu26)?alu26:alu27);
++  float alu29 = ((alu27<alu26)?alu26:alu28);
++  *(data0_3+2) = alu29;
++  *((float2*)((data0_3+0))) = (float2){alu17,alu19};
+ }
+ ---
+ typedef int int2 __attribute__((aligned(8),ext_vector_type(2)));
+@@ -271,8 +289,9 @@
+ void r_3_2(float* restrict data0_3, float* restrict data1_6) {
+   for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {
+     float2 val0 = (*((float2*)((data1_6+(Lidx1<<1)))));
+-    float alu0 = ((val0[0]<val0[1])?val0[1]:val0[0]);
+-    *(data0_3+Lidx1) = alu0;
++    float alu0 = ((val0[0]!=val0[0])?val0[0]:val0[1]);
++    float alu1 = ((val0[1]<val0[0])?val0[0]:alu0);
++    *(data0_3+Lidx1) = alu1;
+   }
+ }
+ ---
+@@ -298,14 +317,14 @@
+     int alu12 = (cast0>>1);
+     int alu13 = (cast1>>1);
+     float alu14 = (alu4-((float)(cast0)));
+-    float alu15 = (alu10-((float)(cast1)));
+-    float alu16 = (((alu0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu14)+0.0013392627006396651f)*alu14)+0.009618384763598442f)*alu14)+0.055503472685813904f)*alu14)+0.24022644758224487f)*alu14)+0.6931471824645996f)*alu14)+1.0f)*__builtin_bit_cast(float, (int)(((alu12+127)<<23)))*__builtin_bit_cast(float, (int)((((cast0-alu12)+127)<<23)))));
+-    float alu17 = ((alu0<-150.0f)?0.0f:alu16);
+-    float alu18 = (((alu6<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu15)+0.0013392627006396651f)*alu15)+0.009618384763598442f)*alu15)+0.055503472685813904f)*alu15)+0.24022644758224487f)*alu15)+0.6931471824645996f)*alu15)+1.0f)*__builtin_bit_cast(float, (int)(((alu13+127)<<23)))*__builtin_bit_cast(float, (int)((((cast1-alu13)+127)<<23)))));
+-    float alu19 = ((alu6<-150.0f)?0.0f:alu18);
+-    float alu20 = (alu1?((float)(__builtin_nanf(""))):alu17);
+-    float alu21 = (alu7?((float)(__builtin_nanf(""))):alu19);
+-    *(data0_3+Lidx1) = (alu20+alu21);
++    float alu15 = (((alu0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu14)+0.0013392627006396651f)*alu14)+0.009618384763598442f)*alu14)+0.055503472685813904f)*alu14)+0.24022644758224487f)*alu14)+0.6931471824645996f)*alu14)+1.0f)*__builtin_bit_cast(float, (int)(((alu12+127)<<23)))*__builtin_bit_cast(float, (int)((((cast0-alu12)+127)<<23)))));
++    float alu16 = ((alu0<-150.0f)?0.0f:alu15);
++    float alu17 = (alu1?((float)(__builtin_nanf(""))):alu16);
++    float alu18 = (alu10-((float)(cast1)));
++    float alu19 = (((alu6<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu18)+0.0013392627006396651f)*alu18)+0.009618384763598442f)*alu18)+0.055503472685813904f)*alu18)+0.24022644758224487f)*alu18)+0.6931471824645996f)*alu18)+1.0f)*__builtin_bit_cast(float, (int)(((alu13+127)<<23)))*__builtin_bit_cast(float, (int)((((cast1-alu13)+127)<<23)))));
++    float alu20 = ((alu6<-150.0f)?0.0f:alu19);
++    float alu21 = (alu7?((float)(__builtin_nanf(""))):alu20);
++    *(data0_3+Lidx1) = (0.0f+alu17+alu21);
+   }
+ }
+ ---

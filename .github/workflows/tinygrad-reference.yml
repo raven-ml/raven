@@ -1,0 +1,44 @@
+name: Check tinygrad reference
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Tinygrad ref to compare with the committed upstream fixtures
+        default: master
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out candidate tinygrad
+        uses: actions/checkout@v4
+        with:
+          repository: tinygrad/tinygrad
+          ref: ${{ inputs.revision || 'master' }}
+          path: _tinygrad
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Regenerate and compare upstream outputs
+        run: |
+          revision=$(git -C _tinygrad rev-parse HEAD)
+          python3 packages/tolk/test/generate_reference.py \
+            --reference _tinygrad --revision "$revision" \
+            --output _reference/candidate --check
+      - name: Preserve source hashes and comparison diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinygrad-reference
+          path: _reference/candidate
+          if-no-files-found: error

@@ -1,0 +1,65 @@
+upstream-sha256: 0613bc88b90a6131a94a452fcb6bec09d76a70be290a7e3187c4fe8859bfd29c
+actual-sha256: 3366845cd5397cf977f85a85465280f5d7846bd83aa6b69392198298b778d248
+--- upstream.expected
++++ tolk.actual
+@@ -3,15 +3,6 @@
+   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+     int alu0 = (Lidx0<<2);
+     float4 val0 = (*((float4*)((data1_128+alu0))));
+-    *((float4*)((data0_64+alu0))) = val0;
+-  }
+-}
+----
+-typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+-void E_16_4(float* restrict data0_64, float* restrict data1_64) {
+-  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+-    int alu0 = (Lidx0<<2);
+-    float4 val0 = (*((float4*)((data1_64+alu0))));
+     *((float4*)((data0_64+alu0))) = val0;
+   }
+ }
+@@ -26,28 +17,10 @@
+ }
+ ---
+ typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+-void E_16_4(float* restrict data0_64, float* restrict data1_64) {
+-  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+-    int alu0 = (Lidx0<<2);
+-    float4 val0 = (*((float4*)((data1_64+alu0))));
+-    *((float4*)((data0_64+alu0))) = val0;
+-  }
+-}
+----
+-typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+ void E_16_4(float* restrict data0_64, float* restrict data1_128) {
+   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+     int alu0 = (Lidx0<<2);
+     float4 val0 = (*((float4*)((data1_128+alu0))));
+-    *((float4*)((data0_64+alu0))) = val0;
+-  }
+-}
+----
+-typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+-void E_16_4(float* restrict data0_64, float* restrict data1_64) {
+-  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+-    int alu0 = (Lidx0<<2);
+-    float4 val0 = (*((float4*)((data1_64+alu0))));
+     *((float4*)((data0_64+alu0))) = val0;
+   }
+ }
+@@ -62,15 +35,6 @@
+ }
+ ---
+ typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+-void E_16_4(float* restrict data0_64, float* restrict data1_64) {
+-  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+-    int alu0 = (Lidx0<<2);
+-    float4 val0 = (*((float4*)((data1_64+alu0))));
+-    *((float4*)((data0_64+alu0))) = val0;
+-  }
+-}
+----
+-typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+ void E_16_4(float* restrict data0_64, float* restrict data1_64, float* restrict data2_64) {
+   for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+     int alu0 = (Lidx0<<2);

@@ -1,0 +1,17 @@
+upstream-sha256: 624c19a01f285dc22e66b5d7f5c6ae45e001205bd18c8304351c35b6f36cbe5b
+actual-sha256: eb692c83f960473b4f5f4cac13a287f829a8744a2a342c9981def8998949e068
+--- upstream.expected
++++ tolk.actual
+@@ -67,8 +67,8 @@
+   float4 wmma1 = __WMMA_16_16_32_float8_e5m2fnuz_float(__builtin_bit_cast(unsigned long, (hip_bf88)(make_hip_bf88(val36.x,val36.y,val36.z,val36.w,val37.x,val37.y,val37.z,val37.w))), __builtin_bit_cast(unsigned long, (hip_bf88)(make_hip_bf88(val22,val23,val24,val25,val26,val27,val29,val30))), cast0, 0, 0, 0);
+   float4 wmma2 = __WMMA_16_16_32_float8_e5m2fnuz_float(__builtin_bit_cast(unsigned long, (hip_bf88)(make_hip_bf88(val38.x,val38.y,val38.z,val38.w,val32.x,val32.y,val32.z,val32.w))), __builtin_bit_cast(unsigned long, (hip_bf88)(make_hip_bf88(val0,val1,val2,val3,val5,val6,val7,val8))), cast0, 0, 0, 0);
+   float4 wmma3 = __WMMA_16_16_32_float8_e5m2fnuz_float(__builtin_bit_cast(unsigned long, (hip_bf88)(make_hip_bf88(val39.x,val39.y,val39.z,val39.w,val35.x,val35.y,val35.z,val35.w))), __builtin_bit_cast(unsigned long, (hip_bf88)(make_hip_bf88(val31,val4,val9,val10,val19,val20,val21,val28))), cast0, 0, 0, 0);
+-  *(data2_16384+(alu6+128)) = (wmma3.y+wmma0.y+wmma1.y+wmma2.y);
+-  *(data2_16384+(alu6+256)) = (wmma3.z+wmma0.z+wmma1.z+wmma2.z);
+-  *(data2_16384+(alu6+384)) = (wmma3.w+wmma0.w+wmma1.w+wmma2.w);
+-  *(data2_16384+alu6) = (wmma3.x+wmma0.x+wmma1.x+wmma2.x);
++  *(data2_16384+(alu6+128)) = (0.0f+wmma3.y+wmma0.y+wmma1.y+wmma2.y);
++  *(data2_16384+(alu6+256)) = (0.0f+wmma3.z+wmma0.z+wmma1.z+wmma2.z);
++  *(data2_16384+(alu6+384)) = (0.0f+wmma3.w+wmma0.w+wmma1.w+wmma2.w);
++  *(data2_16384+alu6) = (0.0f+wmma3.x+wmma0.x+wmma1.x+wmma2.x);
+ }

@@ -1,0 +1,32 @@
+upstream-sha256: e46900234a0277fc7eabae19f38c14d0f3468efee86267eb54444d10011bb0f4
+actual-sha256: c1b55bf80913c7b17077bb41ecbca2221a9946236dc5a76ad17271a69a3b9990
+--- upstream.expected
++++ tolk.actual
+@@ -7,20 +7,11 @@
+   float val0 = (*(data0_16+gidx0));
+   float val1 = (*(data1_16+gidx0));
+   float val2 = (*(data2_16+gidx0));
+-  float alu0 = (val1-val0);
+-  float alu1 = (val0+(alu0*0.625f));
+-  float alu2 = ((val0*(28.0f-val2))-val1);
+-  float alu3 = (val1+(0.0625f*alu2));
+-  float alu4 = ((val0*val1)+(val2*-2.5f));
+-  float alu5 = (val2+(0.0625f*alu4));
+-  float alu6 = ((alu1*alu3)+(alu5*-2.5f));
+-  float alu7 = ((alu4*-0.0625f)-val2);
+-  float alu8 = ((alu0*-0.625f)-val0);
+-  float alu9 = (alu3+alu8);
+-  float alu10 = (alu1+(alu9*0.625f));
+-  float alu11 = ((alu2*-0.0625f)-val1);
+-  float alu12 = ((alu1*(28.0f+alu7))+alu11);
+-  float alu13 = (alu3+(0.0625f*alu12));
+-  float alu14 = (alu5+(0.0625f*alu6));
+-  *(data3_16+gidx0) = (alu10+((alu13+alu8+(alu9*-0.625f))*0.625f)+alu13+(0.0625f*((alu10*(28.0f+alu7+(alu6*-0.0625f)))+alu11+(alu12*-0.0625f)))+alu14+(0.0625f*((alu10*alu13)+(alu14*-2.5f))));
++  float alu0 = (val0+(0.0625f*(10.0f*(val1-val0))));
++  float alu1 = (val1+(0.0625f*((val0*(28.0f-val2))-val1)));
++  float alu2 = (val2+(0.0625f*((val0*val1)-(2.5f*val2))));
++  float alu3 = (alu0+(0.0625f*(10.0f*(alu1-alu0))));
++  float alu4 = (alu1+(0.0625f*((alu0*(28.0f-alu2))-alu1)));
++  float alu5 = (alu2+(0.0625f*((alu0*alu1)-(2.5f*alu2))));
++  *(data3_16+gidx0) = (alu3+(0.0625f*(10.0f*(alu4-alu3)))+(alu4+(0.0625f*((alu3*(28.0f-alu5))-alu4)))+(alu5+(0.0625f*((alu3*alu4)-(2.5f*alu5)))));
+ }

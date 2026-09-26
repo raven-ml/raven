@@ -1,0 +1,13 @@
+upstream-sha256: 05c184cf49bb420badc8a8bfb360c2834e69db19e8adc836f3c3178feee2345b
+actual-sha256: 862473771730fc17171e6aa161b6fbc97382ac1380fdedd9070ed6e6c6e3f805
+--- upstream.expected
++++ tolk.actual
+@@ -8,7 +8,7 @@
+         int alu1 = ((Lidx2*10)+Lidx1);
+         float val2 = (*(data1_100+alu1));
+         float val3 = (*(data2_100+alu1));
+-        *(data0_1000+((Lidx1*10)+Lidx2+(Lidx0*100))) = (val0+val1+val2+val3);
++        *(data0_1000+((Lidx1*10)+Lidx2+(Lidx0*100))) = (val0+val1+(val2+val3));
+       }
+     }
+   }

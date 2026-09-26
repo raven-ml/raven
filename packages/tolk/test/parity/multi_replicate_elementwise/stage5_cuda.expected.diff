@@ -1,0 +1,119 @@
+upstream-sha256: d494c4292480bce5e013ef90b2a57506be73df930c37a58b809f6179882e00f9
+actual-sha256: 1657204932bc729ee1df1395d0d4048dc0cd67bf7194864c61beccd358f024d6
+--- upstream.expected
++++ tolk.actual
+@@ -1,5 +1,5 @@
+ === kernel 0 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU')
++   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:0')
+    1 Ops.CONST           :            dtypes.weakint                           []                               16
+    2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+    3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+@@ -16,24 +16,7 @@
+   14 Ops.GROUP           :            dtypes.void                              [13, 13, 13, 13]                 None
+   15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+ === kernel 1 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:0')
+-   1 Ops.CONST           :            dtypes.weakint                           []                               16
+-   2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+-   3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+-   4 Ops.CONST           :            dtypes.weakint                           []                               2
+-   5 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+-   6 Ops.SHL             :            dtypes.int                               [3, 5]                           None
+-   7 Ops.CONST           :            dtypes.weakint                           []                               4
+-   8 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+-   9 Ops.SHRINK          :            dtypes.float                             [0, 6, 8]                        None
+-  10 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 64, device='CPU')
+-  11 Ops.SHRINK          :            dtypes.float                             [10, 6, 8]                       None
+-  12 Ops.LOAD            :            dtypes.float                             [11]                             None
+-  13 Ops.STORE           :            dtypes.void                              [9, 12]                          None
+-  14 Ops.GROUP           :            dtypes.void                              [13, 13, 13, 13]                 None
+-  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+-=== kernel 2 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU')
++   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:1')
+    1 Ops.CONST           :            dtypes.weakint                           []                               16
+    2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+    3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+@@ -52,25 +35,8 @@
+   16 Ops.STORE           :            dtypes.void                              [9, 15]                          None
+   17 Ops.GROUP           :            dtypes.void                              [16, 16, 16, 16]                 None
+   18 Ops.SINK            :            dtypes.void                              [17]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+-=== kernel 3 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:1')
+-   1 Ops.CONST           :            dtypes.weakint                           []                               16
+-   2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+-   3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+-   4 Ops.CONST           :            dtypes.weakint                           []                               2
+-   5 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+-   6 Ops.SHL             :            dtypes.int                               [3, 5]                           None
+-   7 Ops.CONST           :            dtypes.weakint                           []                               4
+-   8 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+-   9 Ops.SHRINK          :            dtypes.float                             [0, 6, 8]                        None
+-  10 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 64, device='CPU')
+-  11 Ops.SHRINK          :            dtypes.float                             [10, 6, 8]                       None
+-  12 Ops.LOAD            :            dtypes.float                             [11]                             None
+-  13 Ops.STORE           :            dtypes.void                              [9, 12]                          None
+-  14 Ops.GROUP           :            dtypes.void                              [13, 13, 13, 13]                 None
+-  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+-=== kernel 4 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU')
++=== kernel 2 ===
++   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:0')
+    1 Ops.CONST           :            dtypes.weakint                           []                               16
+    2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+    3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+@@ -86,25 +52,8 @@
+   13 Ops.STORE           :            dtypes.void                              [9, 12]                          None
+   14 Ops.GROUP           :            dtypes.void                              [13, 13, 13, 13]                 None
+   15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+-=== kernel 5 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:0')
+-   1 Ops.CONST           :            dtypes.weakint                           []                               16
+-   2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+-   3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+-   4 Ops.CONST           :            dtypes.weakint                           []                               2
+-   5 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+-   6 Ops.SHL             :            dtypes.int                               [3, 5]                           None
+-   7 Ops.CONST           :            dtypes.weakint                           []                               4
+-   8 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+-   9 Ops.SHRINK          :            dtypes.float                             [0, 6, 8]                        None
+-  10 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 64, device='CPU')
+-  11 Ops.SHRINK          :            dtypes.float                             [10, 6, 8]                       None
+-  12 Ops.LOAD            :            dtypes.float                             [11]                             None
+-  13 Ops.STORE           :            dtypes.void                              [9, 12]                          None
+-  14 Ops.GROUP           :            dtypes.void                              [13, 13, 13, 13]                 None
+-  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+-=== kernel 6 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU')
++=== kernel 3 ===
++   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:1')
+    1 Ops.CONST           :            dtypes.weakint                           []                               16
+    2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+    3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+@@ -123,24 +72,7 @@
+   16 Ops.STORE           :            dtypes.void                              [9, 15]                          None
+   17 Ops.GROUP           :            dtypes.void                              [16, 16, 16, 16]                 None
+   18 Ops.SINK            :            dtypes.void                              [17]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+-=== kernel 7 ===
+-   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device='CPU:1')
+-   1 Ops.CONST           :            dtypes.weakint                           []                               16
+-   2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
+-   3 Ops.SPECIAL         :            dtypes.int                               [2]                              lidx0
+-   4 Ops.CONST           :            dtypes.weakint                           []                               2
+-   5 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+-   6 Ops.SHL             :            dtypes.int                               [3, 5]                           None
+-   7 Ops.CONST           :            dtypes.weakint                           []                               4
+-   8 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+-   9 Ops.SHRINK          :            dtypes.float                             [0, 6, 8]                        None
+-  10 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 64, device='CPU')
+-  11 Ops.SHRINK          :            dtypes.float                             [10, 6, 8]                       None
+-  12 Ops.LOAD            :            dtypes.float                             [11]                             None
+-  13 Ops.STORE           :            dtypes.void                              [9, 12]                          None
+-  14 Ops.GROUP           :            dtypes.void                              [13, 13, 13, 13]                 None
+-  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), opts_to_apply=None, estimates=None, beam=0)
+-=== kernel 8 ===
++=== kernel 4 ===
+    0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 64, device=('CPU:0', 'CPU:1'))
+    1 Ops.CONST           :            dtypes.weakint                           []                               16
+    2 Ops.CAST            :            dtypes.int                               ['16']                           dtypes.int
