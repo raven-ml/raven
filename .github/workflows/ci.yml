@@ -42,20 +42,30 @@ jobs:
         if: runner.os == 'Windows'
         run: rm -f "C:/Strawberry/perl/bin/pkg-config" "C:/Strawberry/perl/bin/pkg-config.bat"
 
+      # The pinned packages come at the commits dune-project's pins name, the
+      # ones dune.lock resolves, so CI and a locked build test the same code.
       - name: Install dependencies
+        id: deps
         run: |
-          opam pin add thumper git+https://github.com/invariant-hq/thumper.git --no-action
-          opam pin add windtrap git+https://github.com/invariant-hq/windtrap.git --no-action
-          opam pin add litany git+https://github.com/invariant-hq/litany.git --no-action
+          for url in $(sed -n 's/^ *(url "\(git+[^"]*\)")$/\1/p' dune-project); do
+            case $url in
+              *#*) opam pin add "$(basename "${url%%#*}" .git)" "$url" --no-action ;;
+              *) echo "dune-project pins $url without a commit" >&2; exit 1 ;;
+            esac
+          done
           opam install . --deps-only --with-test
 
+      # Each package's step runs even when an earlier one failed, so that one
+      # run reports every broken package.
       - name: Build and test nx
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/nx
           opam exec -- dune build --release @packages/nx/runtest
           opam exec -- dune build --release @packages/nx/lib/backend_c/test/backend-stress
 
       - name: Build and test brot
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         env:
           BROT_REQUIRE_FIXTURES: 1
         run: |
@@ -65,61 +75,73 @@ jobs:
           opam exec -- dune build --release @packages/brot/runtest
 
       - name: Build and test talon
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/talon
           opam exec -- dune build --release @packages/talon/runtest
 
       - name: Build and test rune
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/rune
           opam exec -- dune build --release @packages/rune/runtest
 
       - name: Build and test ppx_ptree
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/ppx_ptree
           opam exec -- dune build --release @packages/ppx_ptree/runtest
 
       - name: Build and test kaun
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/kaun
           opam exec -- dune build --release @packages/kaun/runtest
 
       - name: Build and test vega
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/vega
           opam exec -- dune build --release @packages/vega/runtest
 
       - name: Build and test fehu
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release contrib/fehu
           opam exec -- dune build --release @contrib/fehu/runtest
 
       - name: Build and test sowilo
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release contrib/sowilo
           opam exec -- dune build --release @contrib/sowilo/runtest
 
       - name: Build and test munin
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/munin
           opam exec -- dune build --release @packages/munin/runtest
 
       - name: Build and test norn
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release contrib/norn
           opam exec -- dune build --release @contrib/norn/runtest
 
       - name: Build and test tolk
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/tolk
           opam exec -- dune build --release @packages/tolk/runtest
 
       - name: Build and test hugin
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/hugin
           opam exec -- dune build --release @packages/hugin/runtest
 
       - name: Build and test quill
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           opam exec -- dune build --release packages/quill
           opam exec -- dune build --release @packages/quill/runtest
