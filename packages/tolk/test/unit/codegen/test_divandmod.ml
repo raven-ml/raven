@@ -317,21 +317,21 @@ let large_constant_residue_double_does_not_overflow_rewrite () =
   let e = floordiv x (ic max_int) in
   is_true ~msg:"overflowing residue proof is rejected" (rewrite e = None)
 
-let nest_by_factor_accepts_stack_numerator () =
+(* (2a + 3) // 4 nests by the factor 2: ((2a + 3) // 2) // 2 = (a + 1) // 2. A
+   stacked numerator takes a divisor of its own shape, which is not a scalar
+   constant, so it stays out of the constant-denominator rules, as in the
+   reference. *)
+let nest_by_factor_divides_the_common_factor () =
   let a = var ~name:"a" ~lo:(-10) ~hi:10 () in
-  let b = var ~name:"b" ~lo:(-10) ~hi:10 () in
-  let two = ic 2 in
-  let x = Uop.stack [ Uop.O.(two * a); Uop.O.(two * b) ] in
-  let e = floordiv x (ic 4) in
+  let e = floordiv Uop.O.((ic 2 * a) + ic 3) (ic 4) in
   match rewrite e with
   | Some r ->
       let src = Uop.src r in
-      is_true ~msg:"stack numerator participates in nest_by_factor"
+      is_true ~msg:"(2a + 3) // 4 is (a + 1) // 2"
         (Uop.op r = Ops.Floordiv
          && Array.length src = 2
          && Uop.const_int_value src.(1) = Some 2)
-  | None ->
-      is_true ~msg:"stack numerator nest_by_factor rewrites" false
+  | None -> is_true ~msg:"(2a + 3) // 4 rewrites" false
 
 (* Property test: every fold the matcher makes must agree numerically with
    the unfolded expression over the whole declared range, under floor
@@ -630,8 +630,8 @@ let () =
             factor_remainder_floormod_splits_multiple_constant_factors;
           test "large constant residue proof rejects overflow"
             large_constant_residue_double_does_not_overflow_rewrite;
-          test "nest_by_factor accepts stack numerator"
-            nest_by_factor_accepts_stack_numerator;
+          test "nest_by_factor divides the common factor"
+            nest_by_factor_divides_the_common_factor;
         ];
       group "param multiple_of"
         [
