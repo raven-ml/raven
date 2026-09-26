@@ -138,15 +138,6 @@ let export_rejects_grad_fxn () =
     (function Invalid_argument _ -> true | _ -> false)
     (fun () -> U.export call)
 
-let find_sub haystack needle =
-  let n = String.length haystack and m = String.length needle in
-  let rec loop i =
-    if i + m > n then fail "substring not found"
-    else if String.equal (String.sub haystack i m) needle then i
-    else loop (i + 1)
-  in
-  loop 0
-
 let import_rejects_malformed () =
   let failure f = raises_match (function Failure _ -> true | _ -> false) f in
   failure (fun () -> U.import "");
@@ -156,18 +147,22 @@ let import_rejects_malformed () =
   failure (fun () -> U.import (String.sub blob 0 4));
   failure (fun () -> U.import (String.sub blob 0 12));
   failure (fun () -> U.import (String.sub blob 0 (String.length blob - 4)));
-  (* Older layouts and future formats are rejected before reading the graph. *)
-  let current_version = Marshal.to_string 35 [] in
-  let p = find_sub blob current_version in
+  (* Read the version block from this export instead of hard-coding a version
+     whose next bump would fail before exercising malformed-input rejection. *)
+  let version_offset = String.length "TOLKUOP\x00" in
+  let current_version : int = Marshal.from_string blob version_offset in
+  let version_size = Marshal.total_size (Bytes.of_string blob) version_offset in
+  let prefix = String.sub blob 0 version_offset in
+  let graph_offset = version_offset + version_size in
+  let graph = String.sub blob graph_offset (String.length blob - graph_offset) in
+  let versions = List.init current_version Fun.id @ [-1; current_version + 1] in
   List.iter (fun version ->
-      let replacement = Marshal.to_string version [] in
-      let changed =
-        String.sub blob 0 p ^ replacement
-        ^ String.sub blob
-            (p + String.length current_version)
-            (String.length blob - p - String.length current_version)
-      in
-      failure (fun () -> U.import changed)) [ 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17; 18; 19; 20; 21; 22; 23; 24; 25; 26; 27; 28; 29; 30; 31; 32; 33; 34; 36 ]
+      let header = prefix ^ Marshal.to_string version [] in
+      let error = Failure
+          (Printf.sprintf "Uop.import: unsupported format version %d" version) in
+      (* The same version error must precede decoding even a missing graph. *)
+      raises error (fun () -> U.import (header ^ graph));
+      raises error (fun () -> U.import header)) versions
 
 (* Buffer nodes hash-cons on their slot: an imported graph that carries a
    process-local internal slot collides with a local buffer minted with the
