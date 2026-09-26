@@ -159,6 +159,9 @@ module Iface : sig
     is_am : bool;
         (** [true] when the interface drives the GPU directly rather
             than through the kernel driver. *)
+    can_recover : bool;
+        (** [true] when compute-engine reset and bounded timing waits are
+            available. Virtual functions and kernel-managed devices cannot reset. *)
     queue_event : queue_event;
         (** The completion event queues fire; unused when [is_am]. *)
     queue_event_mailbox_ptr : nativeint;
@@ -206,12 +209,14 @@ module Iface : sig
       (compute_queue:Queue_desc.t ->
       tl:('mem, 'mem device) Hcq.Timeline.t ->
       submission:Hcq.Submission.t ->
+      sdma_queue:(int -> Queue_desc.t option) ->
       sdma_queues:(unit -> Queue_desc.t list) ->
       unit)
       option;
         (** Hands the interface the device's compute queue, timeline and native submission state
             once they exist, for interrupt collection and fault
-            recovery. *)
+            recovery. The indexed SDMA constructor lets a virtual-function
+            interface finish queue setup before returning its initialization lease. *)
     after_sync : (unit -> unit) option;
         (** Run after every successful device synchronization. *)
     device_fini : (unit -> unit) option;
@@ -465,6 +470,8 @@ module Pci_iface : sig
     compute_queue:Queue_desc.t ->
     tl:('mem, 'mem device) Hcq.Timeline.t ->
     submission:Hcq.Submission.t ->
+    device_count:int ->
+    sdma_queue:(int -> Queue_desc.t option) ->
     sdma_queues:(unit -> Queue_desc.t list) ->
     unit
   (** [register ~am ~compute_queue ~tl ~submission ~sdma_queues] makes a booted device visible
@@ -474,12 +481,18 @@ module Pci_iface : sig
       its native submission failure cleared. [sdma_queues ()] lists existing
       copy queues; recovery requires them to be idle because compute reset
       cannot cancel outstanding copies. The
-      device runtime registers each device once its queues exist. *)
+      device runtime registers each device once its queues exist. For a virtual
+      function, registration first constructs the first [min device_count 8]
+      SDMA queues through [sdma_queue], then returns initialization access.
+      A constructor failure preserves the access lease and leaves the device
+      unavailable to interrupt collection. *)
 
   val unregister : Am_boot.t -> unit
-  (** [unregister am] removes [am]'s registrations. Failed runtime setup
-      unregisters its device before retiring queues. Scripted devices must
-      also leave the registry before their mappings do. *)
+  (** [unregister am] removes [am] from interrupt collection. Virtual-function
+      boot storage remains owned after queue retirement because its mappings
+      cannot be invalidated through a stopped privileged queue. Physical-function
+      registrations are removed. Scripted devices must unregister before their
+      mappings are released. *)
 
   val collect_interrupts : ?reset:Am_boot.t -> ?drain_only:bool -> unit -> unit
   (** [collect_interrupts ()] services the interrupt rings of every

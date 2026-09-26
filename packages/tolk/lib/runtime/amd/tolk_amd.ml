@@ -285,6 +285,7 @@ module Iface = struct
     props : (string * int) list;
     ip_versions : ip_versions;
     is_am : bool;
+    can_recover : bool;
     queue_event : queue_event;
     queue_event_mailbox_ptr : nativeint;
     alloc :
@@ -312,6 +313,7 @@ module Iface = struct
       (compute_queue:Queue_desc.t ->
       tl:('mem, 'mem device) Timeline.t ->
       submission:Hcq.Submission.t ->
+      sdma_queue:(int -> Queue_desc.t option) ->
       sdma_queues:(unit -> Queue_desc.t list) ->
       unit)
       option;
@@ -1234,6 +1236,7 @@ module Kfd_iface = struct
       Iface.props = t.props;
       ip_versions = t.ip_versions;
       is_am = false;
+      can_recover = false;
       queue_event = t.queue_event;
       queue_event_mailbox_ptr = t.queue_event_mailbox_ptr;
       alloc =
@@ -1305,7 +1308,7 @@ module Pci_iface = struct
   let vendor = 0x1002
 
   let pci_ids =
-    [ (0xffff, [ 0x74a1; 0x744c; 0x7480; 0x7550; 0x7551; 0x7590; 0x75a0 ]) ]
+    [ (0xffff, [ 0x74a1; 0x74b5; 0x744c; 0x7480; 0x7550; 0x7551; 0x7590; 0x75a0; 0x75a8; 0x75b0; 0x75b3 ]) ]
 
   let am t = Base.dev_impl t.base
 
@@ -1344,6 +1347,47 @@ module Pci_iface = struct
       ("gfx_target_version", if gfxver = 90403 then 90402 else gfxver);
     ]
 
+  (* The open driver-less devices, so any wait can collect interrupts
+     for all of them (the reference walks its global device table; the
+     runtime here has none, so the interface keeps its own). The entry
+     hides the timeline's buffer metadata, so scripted devices register
+     like real ones. *)
+  type registered =
+    | Booting of Am_boot.t
+    | Registered : {
+        r_am : Am_boot.t;
+        r_compute : Queue_desc.t;
+        r_tl : ('mem, 'mem device) Timeline.t;
+        r_submission : Hcq.Submission.t;
+        r_sdma_queues : unit -> Queue_desc.t list;
+      }
+        -> registered
+
+  let registry : registered list ref = ref []
+  let registry_lock = Mutex.create ()
+  let with_registry f = Mutex.protect registry_lock f
+
+  let register ~am ~compute_queue ~tl ~submission ~device_count ~sdma_queue ~sdma_queues =
+    if Amdev.is_vf am.Am_boot.adev then begin
+      for idx = 0 to min device_count 8 - 1 do
+        ignore (sdma_queue idx : Queue_desc.t option)
+      done;
+      Amdev.release_vf_access am.Am_boot.adev
+    end;
+    with_registry (fun () ->
+      registry := Registered { r_am = am; r_compute = compute_queue; r_tl = tl;
+        r_submission = submission; r_sdma_queues = sdma_queues }
+        :: List.filter (function Booting boot -> boot != am
+          | Registered registered -> registered.r_am != am) !registry)
+
+  let unregister am =
+    with_registry (fun () -> registry := List.filter_map (function
+      | Booting _ as entry -> Some entry
+      | Registered registered as entry ->
+          if registered.r_am != am then Some entry
+          else if Amdev.is_vf am.Am_boot.adev then Some (Booting am)
+          else None) !registry)
+
   (* ops_amd.py:844 PCIIface.__init__ *)
   let create ~device_id =
     let base =
@@ -1353,6 +1397,7 @@ module Pci_iface = struct
         ~va_size:Amdev.va_size
         ~dev_impl:(fun pci_dev ->
           let boot = Am_boot.create (Amdev.create pci_dev) in
+          with_registry (fun () -> registry := Booting boot :: !registry);
           Am_boot.init boot;
           boot)
         ~mm:(fun boot -> Amdev.mm boot.Am_boot.adev)
@@ -1424,49 +1469,29 @@ module Pci_iface = struct
           (Amdev.doorbell64 boot.Am_boot.adev)
           ~off:(doorbell_index * 8) ~size:8 ();
       hdp_flush = Some (Hcq.Mmio.view (Amdev.mmio boot.Am_boot.adev)
-        ~off:(Amdev.Am_register.read (Amdev.reg boot.Am_boot.adev
-          "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL")) ~size:4 ());
+        ~off:(if Amdev.is_vf boot.Am_boot.adev then
+          (Amdev.Am_register.reg (Amdev.reg boot.Am_boot.adev
+            "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL")).Amd_tables.Reg.addr * 4
+          else Amdev.Am_register.read (Amdev.reg boot.Am_boot.adev
+            "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL")) ~size:4 ());
       resetup = Some (fun () -> ignore (setup () : int));
     }
 
-  (* The open driver-less devices, so any wait can collect interrupts
-     for all of them (the reference walks its global device table; the
-     runtime here has none, so the interface keeps its own). The entry
-     hides the timeline's buffer metadata, so scripted devices register
-     like real ones. *)
-  type registered =
-    | Registered : {
-        r_am : Am_boot.t;
-        r_compute : Queue_desc.t;
-        r_tl : ('mem, 'mem device) Timeline.t;
-        r_submission : Hcq.Submission.t;
-        r_sdma_queues : unit -> Queue_desc.t list;
-      }
-        -> registered
-
-  let registry : registered list ref = ref []
-
-  let register ~am ~compute_queue ~tl ~submission ~sdma_queues =
-    registry :=
-      Registered { r_am = am; r_compute = compute_queue; r_tl = tl;
-        r_submission = submission; r_sdma_queues = sdma_queues }
-      :: !registry
-
-  let unregister am =
-    registry := List.filter (fun (Registered r) -> r.r_am != am) !registry
-
   (* ops_amd.py:891 _collect_interrupts *)
   let collect_interrupts ?reset ?(drain_only = false) () =
+    let entries = with_registry (fun () -> !registry) in
     List.iter
       (fun entry ->
         match entry with
+        | Booting _ -> ()
         | Registered r ->
             let boot = r.r_am in
             if drain_only then Am_ip.Ih.drain boot.Am_boot.ih
             else
               Am_ip.Ih.interrupt_handler boot.Am_boot.ih ~soc:boot.Am_boot.soc
                 ~gmc:boot.Am_boot.gmc ~smu:boot.Am_boot.smu;
-            if Option.fold ~none:false ~some:(fun target -> target == boot) reset then begin
+            if not (Amdev.is_vf boot.Am_boot.adev)
+               && Option.fold ~none:false ~some:(fun target -> target == boot) reset then begin
               (* MEC reset cannot cancel copies waiting on abandoned compute
                  signals. Keep the fault latched until SDMA is known idle. *)
               if List.exists (fun queue ->
@@ -1488,7 +1513,7 @@ module Pci_iface = struct
               Hcq.Submission.clear_error r.r_submission;
               r.r_tl.Timeline.error_state <- None
             end)
-      !registry
+      entries
 
   (* Protocol timeouts during interrupt collection surface as the
      device's fault report, so the timeline latches them like any other
@@ -1515,6 +1540,7 @@ module Pci_iface = struct
       Iface.props = t.props;
       ip_versions = t.ip_versions;
       is_am = true;
+      can_recover = not (Amdev.is_vf (am t).Am_boot.adev);
       (* driver-less devices have no driver events; signal packets skip
          the mailbox when the owner is_am *)
       queue_event = { event_id = 0 };
@@ -1537,8 +1563,9 @@ module Pci_iface = struct
           if spent_ms > 200 then sleep (am t) ~timeout_ms:200);
       on_device_hang = (fun () -> on_device_hang (am t));
       register =
-        Some (fun ~compute_queue ~tl ~submission ~sdma_queues ->
-          register ~am:(am t) ~compute_queue ~tl ~submission ~sdma_queues);
+        Some (fun ~compute_queue ~tl ~submission ~sdma_queue ~sdma_queues ->
+          register ~am:(am t) ~compute_queue ~tl ~submission ~device_count:(Base.count t.base)
+            ~sdma_queue ~sdma_queues);
       after_sync = Some (fun () -> collect_interrupts ~drain_only:true ());
       device_fini = Some (fun () -> Am_boot.fini (am t));
     }
@@ -1547,12 +1574,18 @@ module Pci_iface = struct
     let alive = ref true in
     let stop () =
       alive := false;
-      unregister (am t);
-      Am_boot.fini (am t);
+      Fun.protect
+        ~finally:(fun () -> if Amdev.is_vf (am t).Am_boot.adev then unregister (am t))
+        (fun () -> Am_boot.fini (am t));
+      (* The KIQ is now stopped and FINI access returned to the PF. Mapping
+         cleanup cannot invalidate translations through either path safely. *)
+      if Amdev.is_vf (am t).Am_boot.adev then
+        failwith "AMD setup rollback retains VF storage after queue retirement";
       (* Faulted HQD shutdown skips its inactive wait. Retain storage unless
          the hardware has positively completed queue retirement. *)
       if Amdev.is_err_state (am t).Am_boot.adev then
-        failwith "AMD setup rollback cannot reclaim faulted device storage" in
+        failwith "AMD setup rollback cannot reclaim faulted device storage";
+      unregister (am t) in
     let interface = iface t in
     System.with_buffer_setup ~free:interface.Iface.free ~stop ~close:(fun () -> ())
       (fun ~track ~free ->
@@ -1592,7 +1625,7 @@ module State = struct
       t.submission
 
   let wait_timeout t timeout =
-    if not t.iface.Iface.is_am || timeout = Some 0 then None else timeout
+    if not t.iface.Iface.can_recover || timeout = Some 0 then None else timeout
 
   let synchronize ?timeout t =
     (* A scratch buffer's finalizer can outlive failed setup. Its backing
@@ -1942,7 +1975,7 @@ let open_device ?(is_valid = fun () -> true) ~name iface =
   in
   (match iface.Iface.register with
   | Some register -> register ~compute_queue ~tl:state.State.tl ~submission:state.State.submission
-      ~sdma_queues:(fun () -> Hashtbl.to_seq_values sdma_queues |> List.of_seq |> List.filter_map Fun.id)
+      ~sdma_queue ~sdma_queues:(fun () -> Hashtbl.to_seq_values sdma_queues |> List.of_seq |> List.filter_map Fun.id)
   | None -> ());
   (match iface.Iface.device_fini with
   | Some fini ->

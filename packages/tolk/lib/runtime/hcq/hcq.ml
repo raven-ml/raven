@@ -27,6 +27,12 @@ module Ffi = struct
     = "caml_tolk_hcq_mmap_bc" "caml_tolk_hcq_mmap"
 
   external munmap : nativeint -> int -> unit = "caml_tolk_hcq_munmap"
+  external read8 : nativeint -> int -> int = "caml_tolk_hcq_read8"
+  [@@noalloc]
+
+  external write8 : nativeint -> int -> int -> unit = "caml_tolk_hcq_write8"
+  [@@noalloc]
+
   external read32 : nativeint -> int32 = "caml_tolk_hcq_read32"
 
   external write32 : nativeint -> int32 -> unit = "caml_tolk_hcq_write32"
@@ -104,6 +110,15 @@ module Mmio = struct
     let size = match size with Some s -> s | None -> t.size - off in
     check t off size;
     { addr = ptr t off; size }
+
+  let read8 t off =
+    check t off 1;
+    Ffi.read8 t.addr off
+
+  let write8 t off v =
+    check t off 1;
+    if v < 0 || v > 255 then invalid_arg "Mmio.write8: value is not a byte";
+    Ffi.write8 t.addr off v
 
   let read32 t off =
     check t off 4;

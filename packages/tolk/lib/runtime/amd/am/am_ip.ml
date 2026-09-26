@@ -14,25 +14,9 @@ module Mmio = Tolk_hcq.Hcq.Mmio
 
 let debug = Helpers.getenv "DEBUG" 0
 
-exception Timeout_error of string
+exception Timeout_error = Amdev.Timeout_error
 
-(* helpers.py:538 wait_cond, over the device clock so tests can script
-   the passage of time. *)
-let wait_cond adev ?(timeout_ms = 10000) ~value ~msg cb =
-  let start = Amdev.now_ms adev in
-  let rec go last =
-    if Amdev.now_ms adev - start < timeout_ms then begin
-      let v = cb () in
-      if v = value then () else go v
-    end
-    else
-      raise
-        (Timeout_error
-           (Printf.sprintf
-              "%s. Timed out after %d ms, condition not met: %d != %d" msg
-              timeout_ms last value))
-  in
-  go 0
+let wait_cond = Amdev.wait_cond
 
 let lo32 v = v land 0xffffffff
 let hi32 v = v lsr 32
@@ -274,34 +258,54 @@ module Gmc = struct
 
   (* ip.py:85 flush_hdp *)
   let flush_hdp adev =
-    Amdev.wreg adev
+    if Amdev.is_vf adev then
+      Am_register.write (Amdev.reg adev "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL") ~value:0 []
+    else Amdev.wreg adev
       (Am_register.read (Amdev.reg adev "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL")
       / 4)
       0x0
 
   (* ip.py:86 flush_tlb *)
-  let flush_tlb t ?(flush_type = 0) ~xccs hub ~vmid =
+  let flush_tlb t ?kiq ?(flush_type = 0) ~xccs hub ~vmid =
     let adev = t.adev in
     flush_hdp adev;
     (* Can't issue TLB invalidation if the hub isn't initialized. *)
     if hub_initted t hub then begin
       let pref = hub_pref hub in
-      List.iter (fun inst ->
-        (if hub = Mm then
-           wait_cond adev ~value:1 ~msg:"mm flush_tlb timeout" (fun () ->
-               Am_register.read (Amdev.reg adev ~inst "regMMVM_INVALIDATE_ENG17_SEM")
-               land 0x1));
-        Am_register.write
-          (Amdev.reg adev ~inst
-             (Printf.sprintf "reg%sVM_INVALIDATE_ENG17_REQ" pref))
-          [
-            ("flush_type", flush_type);
-            ("per_vmid_invalidate_req", 1 lsl vmid);
+      let request = Amd_tables.Reg.encode
+          (Am_register.reg (Amdev.reg adev (Printf.sprintf "reg%sVM_INVALIDATE_ENG17_REQ" pref)))
+          [ ("flush_type", flush_type); ("per_vmid_invalidate_req", 1 lsl vmid);
             ("invalidate_l2_ptes", 1); ("invalidate_l2_pde0", 1);
             ("invalidate_l2_pde1", 1); ("invalidate_l2_pde2", 1);
-            ("invalidate_l1_ptes", 1);
-            ("clear_protection_fault_status_addr", 0);
-          ];
+            ("invalidate_l1_ptes", 1); ("clear_protection_fault_status_addr", 0) ] in
+      List.iter (fun inst ->
+        match kiq with
+        | Some (storage, va) when Amdev.is_vf adev ->
+            let xcc, reg_inst = if hub = Gc then inst, 0 else 0, inst in
+            let address suffix = (Am_register.reg (Amdev.reg adev ~inst:reg_inst
+                (Printf.sprintf "reg%sVM_INVALIDATE_ENG17_%s" pref suffix))).Amd_tables.Reg.addr in
+            let base = 0x3000 * xcc in
+            let wptr = Int64.to_int (Mmio.read64 storage (base + 0x1008)) in
+            let fence = wptr + 1 in
+            let module P = (val Amd_tables.pm4 ~gfx9:(Amdev.ip_ver adev Am.gc_hwip < (10, 0, 0))) in
+            let packet = [| P.packet3 P.packet3_write_data 3; 1 lsl 16; address "REQ"; 0; request;
+                P.packet3 P.packet3_wait_reg_mem 5; P.wait_reg_mem_function 3;
+                address "ACK"; 0; 1 lsl vmid; 1 lsl vmid; 0x20;
+                P.packet3 P.packet3_write_data 3; P.wr_confirm lor P.write_data_dst_sel 5;
+                lo32 (va + base + 0x1010); hi32 (va + base + 0x1010); fence |] in
+            Array.iteri (fun i word -> Mmio.write32 storage
+                (base + ((wptr + i) mod 0x400) * 4) (Int32.of_int word)) packet;
+            let next = Int64.of_int (wptr + Array.length packet) in
+            Mmio.write64 storage (base + 0x1008) next;
+            Mmio.write64 (Amdev.doorbell64 adev) ((Am.amdgpu_doorbell_kiq + xcc * 0x20) * 8) next;
+            wait_cond adev ~value:fence ~msg:(Printf.sprintf "kiq flush_tlb timeout on xcc %d" xcc)
+              (fun () -> Int64.to_int (Mmio.read64 storage (base + 0x1010)))
+        | _ ->
+        (if hub = Mm then
+           wait_cond adev ~value:1 ~msg:"mm flush_tlb timeout" (fun () ->
+               Am_register.read (Amdev.reg adev ~inst "regMMVM_INVALIDATE_ENG17_SEM") land 0x1));
+        Am_register.write (Amdev.reg adev ~inst
+            (Printf.sprintf "reg%sVM_INVALIDATE_ENG17_REQ" pref)) ~value:request [];
         wait_cond adev ~value:(1 lsl vmid) ~msg:"flush_tlb timeout"
           (fun () ->
             Am_register.read
@@ -964,6 +968,8 @@ module Gfx = struct
     xccs : int;
     mqd_paddr : int array;
     mqd_mc : int array;
+    mutable kiq : (Mmio.t * int) option;
+    mutable kiq_ready : bool;
   }
 
   (* The queue-descriptor fields shared by every generation's layout. *)
@@ -1008,18 +1014,16 @@ module Gfx = struct
 
   (* ip.py:248 AM_GFX.init_sw *)
   let create adev =
-    let xccs =
-      List.length
-        (List.assoc Am.gc_hwip (Amdev.discovery adev).Amdev.regs_offset)
-    in
+    let xccs = List.length (Amdev.live_instances adev Am.gc_hwip) in
     let mqd_paddr =
-      Array.init 2 (fun _ ->
+      Array.init (2 + Bool.to_int (Amdev.is_vf adev)) (fun _ ->
           Memory.palloc (Amdev.mm adev) (0x1000 * xccs) ~zero:false ~boot:true
             ())
     in
-    { adev; xccs; mqd_paddr; mqd_mc = Array.map (Amdev.paddr2mc adev) mqd_paddr }
+    { adev; xccs; mqd_paddr; mqd_mc = Array.map (Amdev.paddr2mc adev) mqd_paddr; kiq = None; kiq_ready = false }
 
   let xccs t = t.xccs
+  let kiq t = if t.kiq_ready then t.kiq else None
 
   (* ip.py:372 _grbm_select *)
   let grbm_select ?(me = 0) ?(pipe = 0) ?(queue = 0) ?(vmid = 0) ~inst t =
@@ -1095,9 +1099,9 @@ module Gfx = struct
   (* ip.py:399 _dequeue_hqds *)
   let dequeue_hqds t =
     let adev = t.adev in
-    for q = 0 to 1 do
+    List.iter (fun (me, pipe, queue) ->
       for inst = 0 to t.xccs - 1 do
-        grbm_select ~me:1 ~pipe:0 ~queue:q ~inst t;
+        grbm_select ~me ~pipe ~queue ~inst t;
         if Am_register.read (Amdev.reg adev ~inst "regCP_HQD_ACTIVE") land 1 <> 0
         then begin
           (* 1 - DRAIN_PIPE; 2 - RESET_WAVES *)
@@ -1112,10 +1116,12 @@ module Gfx = struct
                 Am_register.read (Amdev.reg adev ~inst "regCP_HQD_ACTIVE") land 1)
         end
       done
-    done;
+    ) ([1, 0, 0; 1, 0, 1] @ if Amdev.is_vf adev then [2, 1, 0] else []);
     for inst = 0 to t.xccs - 1 do grbm_select ~inst t done
 
-  let fini_hw t = dequeue_hqds t
+  let fini_hw t =
+    dequeue_hqds t;
+    t.kiq_ready <- false
 
   (* ip.py:305 reset_mec *)
   let reset_mec t ~fw =
@@ -1134,6 +1140,119 @@ module Gfx = struct
     end;
     config_mec t ~fw;
     enable_mec t
+
+  (* ip.py:316 setup_ring *)
+  let setup_ring ?kiq_xcc t ~ring_addr ~ring_size ~rptr_addr ~wptr_addr ~eop_addr
+      ~eop_size ~idx ~aql =
+    let adev = t.adev in
+    let me, pipe, queue = if Option.is_some kiq_xcc then 2, 1, 0 else 1, idx / 4, idx mod 4 in
+    let mqd_index = queue + if Option.is_some kiq_xcc then 2 else 0 in
+    let doorbell = match kiq_xcc with
+      | Some xcc -> Am.amdgpu_doorbell_kiq + xcc * 0x20
+      | None -> Am.amdgpu_navi10_doorbell_mec_ring0 in
+    let gc_major, _, _ = Amdev.ip_ver adev Am.gc_hwip in
+    let encode name fields =
+      Amd_tables.Reg.encode (Am_register.reg (Amdev.reg adev name)) fields
+    in
+    let module M = (val mqd_mod adev) in
+    let first, last = match kiq_xcc with Some xcc -> xcc, xcc
+      | None -> 0, (if aql then t.xccs else 1) - 1 in
+    for xcc = first to last do
+      grbm_select ~me ~pipe ~queue ~inst:xcc t;
+      let mqd = Bytes.make M.sizeof '\x00' in
+      M.set_header mqd 0xC0310800;
+      M.set_cp_mqd_base_addr_lo mqd (lo32 (t.mqd_mc.(mqd_index) + (0x1000 * xcc)));
+      M.set_cp_mqd_base_addr_hi mqd (hi32 (t.mqd_mc.(mqd_index) + (0x1000 * xcc)));
+      M.set_cp_hqd_pipe_priority mqd 0x2;
+      M.set_cp_hqd_queue_priority mqd 0xf;
+      M.set_cp_hqd_quantum mqd 0x111;
+      M.set_cp_hqd_persistent_state mqd
+        (encode "regCP_HQD_PERSISTENT_STATE"
+           [ ("preload_size", 0x55); ("preload_req", 1) ]);
+      M.set_cp_hqd_pq_base_lo mqd (lo32 (ring_addr lsr 8));
+      M.set_cp_hqd_pq_base_hi mqd (hi32 (ring_addr lsr 8));
+      M.set_cp_hqd_pq_rptr_report_addr_lo mqd (lo32 rptr_addr);
+      M.set_cp_hqd_pq_rptr_report_addr_hi mqd (hi32 rptr_addr);
+      M.set_cp_hqd_pq_wptr_poll_addr_lo mqd (lo32 wptr_addr);
+      M.set_cp_hqd_pq_wptr_poll_addr_hi mqd (hi32 wptr_addr);
+      M.set_cp_hqd_pq_doorbell_control mqd
+        (encode "regCP_HQD_PQ_DOORBELL_CONTROL"
+           [ ("doorbell_offset", doorbell * 2); ("doorbell_en", 1) ]);
+      M.set_cp_hqd_pq_control mqd
+        (encode "regCP_HQD_PQ_CONTROL"
+           ([
+              ("rptr_block_size", 5); ("unord_dispatch", 0);
+              ("queue_size", bit_length (ring_size / 4) - 2);
+            ]
+           @ (if Option.is_some kiq_xcc then ["priv_state",1; "kmd_queue",1] else [])
+           @
+           if aql then
+             [
+               ("queue_full_en", 1); ("slot_based_wptr", 2);
+               ("no_update_rptr", Bool.to_int (xcc <> 0 || t.xccs = 1));
+             ]
+           else []));
+      M.set_cp_hqd_ib_control mqd
+        (encode "regCP_HQD_IB_CONTROL" [ ("min_ib_avail_size", 0x3) ]);
+      M.set_cp_hqd_hq_status0 mqd 0x20004000;
+      M.set_cp_mqd_control mqd (encode "regCP_MQD_CONTROL" [ ("priv_state", 1) ]);
+      M.set_cp_hqd_vmid mqd 0;
+      M.set_cp_hqd_aql_control mqd (Bool.to_int aql);
+      M.set_cp_hqd_eop_base_addr_lo mqd (lo32 (eop_addr lsr 8));
+      M.set_cp_hqd_eop_base_addr_hi mqd (hi32 (eop_addr lsr 8));
+      M.set_cp_hqd_eop_control mqd
+        (encode "regCP_HQD_EOP_CONTROL"
+           [ ("eop_size", bit_length (eop_size / 4) - 2) ]);
+      (if aql && t.xccs > 1 then
+         match gc_major with
+         | 9 ->
+             Am.V9_mqd.set_compute_tg_chunk_size mqd 1;
+             Am.V9_mqd.set_compute_current_logic_xcc_id mqd xcc;
+             Am.V9_mqd.set_cp_mqd_stride_size mqd 0x1000
+         | ma ->
+             invalid_arg
+               (Printf.sprintf
+                  "multi-die queues need the gfx9 descriptor, not gfx%d" ma));
+      M.set_compute_static_thread_mgmt_se0 mqd 0xffffffff;
+      M.set_compute_static_thread_mgmt_se1 mqd 0xffffffff;
+      M.set_compute_static_thread_mgmt_se2 mqd 0xffffffff;
+      M.set_compute_static_thread_mgmt_se3 mqd 0xffffffff;
+      (* ip.py:337: 8 shader engines on gfx10+, 4 below *)
+      (match gc_major with
+      | 11 ->
+          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se4 mqd 0xffffffff;
+          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se5 mqd 0xffffffff;
+          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se6 mqd 0xffffffff;
+          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se7 mqd 0xffffffff
+      | 12 ->
+          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se4 mqd 0xffffffff;
+          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se5 mqd 0xffffffff;
+          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se6 mqd 0xffffffff;
+          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se7 mqd 0xffffffff
+      | _ -> ());
+      Mmio.blit_bytes (Amdev.vram adev)
+        ~off:(t.mqd_paddr.(mqd_index) + (0x1000 * xcc))
+        mqd;
+      (* The queue-bringup registers mirror the descriptor's register
+         block, dword for dword from its 0x80th dword. *)
+      let base =
+        (Am_register.reg (Amdev.reg adev ~inst:xcc "regCP_MQD_BASE_ADDR"))
+          .Amd_tables.Reg.addr
+      in
+      let last =
+        (Am_register.reg (Amdev.reg adev ~inst:xcc "regCP_HQD_PQ_WPTR_HI"))
+          .Amd_tables.Reg.addr
+      in
+      for i = 0 to last - base do
+        Amdev.wreg adev ~inst:xcc (base + i)
+          (Int32.to_int (Bytes.get_int32_le mqd ((0x80 + i) * 4))
+          land 0xffffffff)
+      done;
+      Am_register.write (Amdev.reg adev ~inst:xcc "regCP_HQD_ACTIVE") ~value:0x1 [];
+      Gmc.flush_hdp adev;
+      grbm_select ~inst:xcc t
+    done;
+    doorbell
 
   (* ip.py:253 AM_GFX.init_hw *)
   let init_hw t ~soc ~gmc ~psp ~fw ~partial_boot =
@@ -1216,116 +1335,40 @@ module Gfx = struct
           ~value:((0x100 * inst) + 0xf8) []
       done;
       enable_mec t;
-      (* Set 1 partition *)
-      if t.xccs > 1 then Psp.spatial_partition_cmd psp 1
+      if Amdev.is_vf adev then begin
+        let size = 0x3000 * t.xccs in
+        let va = Memory.alloc_vaddr (Amdev.mm adev) size () in
+        let storage, paddrs = Tolk_hcq.System.with_rollback (fun rollback ->
+            rollback (fun () -> Memory.free_vaddr (Amdev.mm adev) va);
+            Tolk_hcq.System.Pci_device.alloc_sysmem ~vaddr:(Nativeint.of_int va) size) in
+        t.kiq <- Some (storage, va);
+        (match Memory.map_range (Amdev.mm adev) ~vaddr:va ~size
+            (List.map (fun address -> address, 0x1000) paddrs) Memory.Sys
+            ~snooped:true ~uncached:true () with
+        | _ -> ()
+        | exception (Fun.Finally_raised _ as error) -> raise error
+        | exception error ->
+            let backtrace = Printexc.get_raw_backtrace () in
+            Tolk_hcq.System.with_rollback (fun rollback ->
+              rollback (fun () ->
+                Tolk_hcq.Hcq.File_io.munmap (Mmio.addr storage) ~size;
+                Memory.free_vaddr (Amdev.mm adev) va;
+                t.kiq <- None);
+              Printexc.raise_with_backtrace error backtrace));
+        for xcc = 0 to t.xccs - 1 do
+          let base = va + 0x3000 * xcc in
+          ignore (setup_ring ~kiq_xcc:xcc t ~ring_addr:base ~ring_size:0x1000
+              ~rptr_addr:(base + 0x1000) ~wptr_addr:(base + 0x1008)
+              ~eop_addr:(base + 0x2000) ~eop_size:0x1000 ~idx:0 ~aql:false)
+        done;
+        for inst = 0 to t.xccs - 1 do
+          Am_register.update (Amdev.reg adev ~inst "regRLC_CP_SCHEDULERS")
+            ["scheduler0", (2 lsl 5) lor (1 lsl 3) lor 0x80]
+        done;
+        t.kiq_ready <- true
+      end;
+      if t.xccs > 1 && not (Amdev.is_vf adev) then Psp.spatial_partition_cmd psp 1
     end
-
-  (* ip.py:316 setup_ring *)
-  let setup_ring t ~ring_addr ~ring_size ~rptr_addr ~wptr_addr ~eop_addr
-      ~eop_size ~idx ~aql =
-    let adev = t.adev in
-    let pipe, queue = (idx / 4, idx mod 4) in
-    let doorbell = Am.amdgpu_navi10_doorbell_mec_ring0 in
-    let gc_major, _, _ = Amdev.ip_ver adev Am.gc_hwip in
-    let encode name fields =
-      Amd_tables.Reg.encode (Am_register.reg (Amdev.reg adev name)) fields
-    in
-    let module M = (val mqd_mod adev) in
-    for xcc = 0 to (if aql then t.xccs else 1) - 1 do
-      grbm_select ~me:1 ~pipe ~queue ~inst:xcc t;
-      let mqd = Bytes.make M.sizeof '\x00' in
-      M.set_header mqd 0xC0310800;
-      M.set_cp_mqd_base_addr_lo mqd (lo32 (t.mqd_mc.(queue) + (0x1000 * xcc)));
-      M.set_cp_mqd_base_addr_hi mqd (hi32 (t.mqd_mc.(queue) + (0x1000 * xcc)));
-      M.set_cp_hqd_pipe_priority mqd 0x2;
-      M.set_cp_hqd_queue_priority mqd 0xf;
-      M.set_cp_hqd_quantum mqd 0x111;
-      M.set_cp_hqd_persistent_state mqd
-        (encode "regCP_HQD_PERSISTENT_STATE"
-           [ ("preload_size", 0x55); ("preload_req", 1) ]);
-      M.set_cp_hqd_pq_base_lo mqd (lo32 (ring_addr lsr 8));
-      M.set_cp_hqd_pq_base_hi mqd (hi32 (ring_addr lsr 8));
-      M.set_cp_hqd_pq_rptr_report_addr_lo mqd (lo32 rptr_addr);
-      M.set_cp_hqd_pq_rptr_report_addr_hi mqd (hi32 rptr_addr);
-      M.set_cp_hqd_pq_wptr_poll_addr_lo mqd (lo32 wptr_addr);
-      M.set_cp_hqd_pq_wptr_poll_addr_hi mqd (hi32 wptr_addr);
-      M.set_cp_hqd_pq_doorbell_control mqd
-        (encode "regCP_HQD_PQ_DOORBELL_CONTROL"
-           [ ("doorbell_offset", doorbell * 2); ("doorbell_en", 1) ]);
-      M.set_cp_hqd_pq_control mqd
-        (encode "regCP_HQD_PQ_CONTROL"
-           ([
-              ("rptr_block_size", 5); ("unord_dispatch", 0);
-              ("queue_size", bit_length (ring_size / 4) - 2);
-            ]
-           @
-           if aql then
-             [
-               ("queue_full_en", 1); ("slot_based_wptr", 2);
-               ("no_update_rptr", Bool.to_int (xcc <> 0 || t.xccs = 1));
-             ]
-           else []));
-      M.set_cp_hqd_ib_control mqd
-        (encode "regCP_HQD_IB_CONTROL" [ ("min_ib_avail_size", 0x3) ]);
-      M.set_cp_hqd_hq_status0 mqd 0x20004000;
-      M.set_cp_mqd_control mqd (encode "regCP_MQD_CONTROL" [ ("priv_state", 1) ]);
-      M.set_cp_hqd_vmid mqd 0;
-      M.set_cp_hqd_aql_control mqd (Bool.to_int aql);
-      M.set_cp_hqd_eop_base_addr_lo mqd (lo32 (eop_addr lsr 8));
-      M.set_cp_hqd_eop_base_addr_hi mqd (hi32 (eop_addr lsr 8));
-      M.set_cp_hqd_eop_control mqd
-        (encode "regCP_HQD_EOP_CONTROL"
-           [ ("eop_size", bit_length (eop_size / 4) - 2) ]);
-      (if aql && t.xccs > 1 then
-         match gc_major with
-         | 9 ->
-             Am.V9_mqd.set_compute_tg_chunk_size mqd 1;
-             Am.V9_mqd.set_compute_current_logic_xcc_id mqd xcc;
-             Am.V9_mqd.set_cp_mqd_stride_size mqd 0x1000
-         | ma ->
-             invalid_arg
-               (Printf.sprintf
-                  "multi-die queues need the gfx9 descriptor, not gfx%d" ma));
-      M.set_compute_static_thread_mgmt_se0 mqd 0xffffffff;
-      M.set_compute_static_thread_mgmt_se1 mqd 0xffffffff;
-      M.set_compute_static_thread_mgmt_se2 mqd 0xffffffff;
-      M.set_compute_static_thread_mgmt_se3 mqd 0xffffffff;
-      (* ip.py:337: 8 shader engines on gfx10+, 4 below *)
-      (match gc_major with
-      | 11 ->
-          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se4 mqd 0xffffffff;
-          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se5 mqd 0xffffffff;
-          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se6 mqd 0xffffffff;
-          Am.V11_compute_mqd.set_compute_static_thread_mgmt_se7 mqd 0xffffffff
-      | 12 ->
-          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se4 mqd 0xffffffff;
-          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se5 mqd 0xffffffff;
-          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se6 mqd 0xffffffff;
-          Am.V12_compute_mqd.set_compute_static_thread_mgmt_se7 mqd 0xffffffff
-      | _ -> ());
-      Mmio.blit_bytes (Amdev.vram adev)
-        ~off:(t.mqd_paddr.(queue) + (0x1000 * xcc))
-        mqd;
-      (* The queue-bringup registers mirror the descriptor's register
-         block, dword for dword from its 0x80th dword. *)
-      let base =
-        (Am_register.reg (Amdev.reg adev ~inst:xcc "regCP_MQD_BASE_ADDR"))
-          .Amd_tables.Reg.addr
-      in
-      let last =
-        (Am_register.reg (Amdev.reg adev ~inst:xcc "regCP_HQD_PQ_WPTR_HI"))
-          .Amd_tables.Reg.addr
-      in
-      for i = 0 to last - base do
-        Amdev.wreg adev (base + i)
-          (Int32.to_int (Bytes.get_int32_le mqd ((0x80 + i) * 4))
-          land 0xffffffff)
-      done;
-      Am_register.write (Amdev.reg adev ~inst:xcc "regCP_HQD_ACTIVE") ~value:0x1 [];
-      Gmc.flush_hdp adev;
-      grbm_select ~inst:xcc t
-    done;
-    doorbell
 
   (* ip.py:350 AM_GFX.set_clockgating_state *)
   let set_clockgating_state t =
@@ -1585,6 +1628,7 @@ module Ih = struct
       end
     done;
     drain t;
+    if not (Amdev.is_vf adev) then begin
     let bif_intr =
       Am_register.read_bitfields
         (Amdev.reg adev "regBIF_BX0_BIF_DOORBELL_INT_CNTL")
@@ -1628,6 +1672,7 @@ module Ih = struct
           ("ras_athub_err_event_interrupt_clear", athub_err);
         ];
       Amdev.set_err_state adev true
+    end
     end
 end
 

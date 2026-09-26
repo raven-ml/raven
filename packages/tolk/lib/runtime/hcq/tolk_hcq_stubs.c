@@ -157,6 +157,17 @@ CAMLprim value caml_tolk_hcq_mmap_bc(value *argv, int argn) {
 /* Volatile access to mapped device memory. The copies must keep the OCaml
    runtime lock held: the bytes value may move under the GC otherwise. */
 
+CAMLprim value caml_tolk_hcq_read8(value v_addr, value v_off) {
+  volatile uint8_t *p = (volatile uint8_t *)Nativeint_val(v_addr);
+  return Val_int(p[Long_val(v_off)]);
+}
+
+CAMLprim value caml_tolk_hcq_write8(value v_addr, value v_off, value v_v) {
+  volatile uint8_t *p = (volatile uint8_t *)Nativeint_val(v_addr);
+  p[Long_val(v_off)] = (uint8_t)Long_val(v_v);
+  return Val_unit;
+}
+
 CAMLprim value caml_tolk_hcq_read32(value v_addr) {
   CAMLparam1(v_addr);
   volatile uint32_t *p = (volatile uint32_t *)Nativeint_val(v_addr);

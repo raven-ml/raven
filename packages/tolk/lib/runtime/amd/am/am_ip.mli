@@ -139,12 +139,13 @@ module Gmc : sig
   (** [flush_hdp adev] flushes the host-data-path write buffer, making
       host writes to device memory visible to the engines. *)
 
-  val flush_tlb : t -> ?flush_type:int -> xccs:int -> hub -> vmid:int -> unit
+  val flush_tlb : t -> ?kiq:(Tolk_hcq.Hcq.Mmio.t * int) -> ?flush_type:int -> xccs:int -> hub -> vmid:int -> unit
   (** [flush_tlb t ~xccs hub ~vmid] invalidates the translation caches
       of [hub] for the VM context [vmid] on each live memory-hub instance
       for [Mm], or [xccs] instances — see {!Gfx.xccs} — for [Gc], after a
       host-data-path flush. A hub whose {!init_hub} has not run yet is
-      skipped. [flush_type] defaults to [0]. This is the flush boot
+      skipped. [kiq] supplies the virtual function’s privileged queue storage
+      and GPU address after queue initialization. [flush_type] defaults to [0]. This is the flush boot
       installs as the memory manager's after-mapping hook (see
       {!Amdev.set_on_range_mapped}). Raises {!Timeout_error} when the
       hub does not acknowledge. *)
@@ -318,6 +319,11 @@ module Gfx : sig
       memory, one per hardware queue slot on every compute die.
       Requires [adev] to be booting. *)
 
+  val kiq : t -> (Tolk_hcq.Hcq.Mmio.t * int) option
+  (** [kiq t] is the initialized virtual-function queue backing and its
+      GPU virtual address, or [None] before initialization, after successful
+      queue retirement, or on a physical function. *)
+
   val xccs : t -> int
   (** [xccs t] is the number of compute dies the device discovered. *)
 
@@ -338,7 +344,9 @@ module Gfx : sig
       loading the golden register values, opening the doorbell routes
       through [soc], configuring shader memory for every VM context,
       starting the processors and, on multi-die parts, asking the
-      secure OS through [psp] for a single partition. Raises
+      secure OS through [psp] for a single partition on physical functions.
+      Virtual functions retain their assigned partition and create a privileged
+      queue for translation invalidation. Raises
       {!Timeout_error} when the firmware or a processor does not come
       up. *)
 
@@ -347,6 +355,7 @@ module Gfx : sig
       starts them again from the instruction start addresses in [fw]. *)
 
   val setup_ring :
+    ?kiq_xcc:int ->
     t ->
     ring_addr:int ->
     ring_size:int ->
@@ -360,7 +369,8 @@ module Gfx : sig
   (** [setup_ring t ~ring_addr ~ring_size ~rptr_addr ~wptr_addr
       ~eop_addr ~eop_size ~idx ~aql] creates hardware queue [idx] over
       the ring at [ring_addr] ([ring_size] bytes, a power of two) with
-      the given read/write-pointer and end-of-pipe buffer addresses,
+      the given read/write-pointer and end-of-pipe buffer addresses.
+      [kiq_xcc] selects the privileged queue on that compute die,
       writing the queue descriptor and activating the queue ([aql]
       selects the architected queuing-language format, and on
       multi-die parts replicates the queue on every die). Returns the

@@ -702,6 +702,13 @@ thread.
 
 ### Tolk (new)
 
+- Raw-PCI AMD virtual functions now use mailbox access leases, gated registers,
+  and privileged translation-invalidation queues. PF-only boot operations and
+  forced recovery are excluded; uncertain setup storage remains owned.
+- Low-level AMD `Amdev.make` now requires byte-register callbacks, and `Iface`
+  carries `can_recover`. `Pci_iface.register` receives the SDMA constructor and
+  device count to finish VF queue setup before returning initialization access.
+
 - Long-running graph construction reclaims dead hash-consing bucket capacity
   instead of repeatedly growing sparse tables, reducing retained memory while
   preserving the identity of live `Uop` nodes.

@@ -151,8 +151,10 @@ let fake_register () =
   in
   let amr =
     Amdev.Am_register.make ~reg:r
-      ~rreg:(fun a -> Option.value ~default:0 (Hashtbl.find_opt store a))
-      ~wreg:(fun a v -> Hashtbl.replace store a v)
+      ~rreg:(fun ~direct a ->
+        equal bool false direct; Option.value ~default:0 (Hashtbl.find_opt store a))
+      ~wreg:(fun ~direct a v ->
+        equal bool false direct; Hashtbl.replace store a v)
   in
   (amr, store)
 
@@ -483,6 +485,9 @@ type fake_dev = {
   reads : (int, unit -> int) Hashtbl.t;
   wr_hooks : (int, int -> unit) Hashtbl.t;
   log : (int * int) list ref;
+  byte_log : (int * int) list ref;
+  byte_reads : (int, unit -> int) Hashtbl.t;
+  clock_hook : (unit -> unit) ref;
 }
 
 let check_resident_bytes fd resident =
@@ -509,7 +514,16 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
       let reads = Hashtbl.create 16 in
       let wr_hooks = Hashtbl.create 16 in
       let log = ref [] in
+      let byte_log = ref [] and byte_reads = Hashtbl.create 2 in
+      let byte_store = Hashtbl.create 2 in
+      let rreg8 address = match Hashtbl.find_opt byte_reads address with
+        | Some read -> read ()
+        | None -> Option.value (Hashtbl.find_opt byte_store address) ~default:0 in
+      let wreg8 address value =
+        byte_log := (address, value) :: !byte_log;
+        Hashtbl.replace byte_store address (if value = 1 then 2 else value) in
       let clock = ref 0 and sleeps = ref [] in
+      let clock_hook = ref (fun () -> ()) in
       let rreg addr =
         match Hashtbl.find_opt reads addr with
         | Some hook -> hook ()
@@ -529,6 +543,23 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
       Hashtbl.replace store (mmhub_base + 0xc9c) 0x10;
       Hashtbl.replace store remap_hdp_addr 0x54;
       pre store;
+      let discovery = Amdev.parse_discovery
+          (discovery_blob ~harvested (dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys @ extra_ips)) in
+      if Option.value (Hashtbl.find_opt store Am.mmrcc_iov_func_identifier) ~default:0 land 1 <> 0 then
+        List.iter (fun (instance, bases) ->
+            let version = List.assoc Am.gc_hwip discovery.Amdev.ip_ver in
+            let ip = Tolk_amd.Amd_tables.Ip.create ~name:"gc" ~version ~bases in
+            let addr name = (Tolk_amd.Amd_tables.Ip.reg ip name).Reg.addr in
+            Hashtbl.replace wr_hooks (addr "regRLC_SPARE_INT") (fun value ->
+              equal ~msg:(Printf.sprintf "RLC interrupt on instance %d" instance) int 1 value;
+              let request = Hashtbl.find store (addr "regSCRATCH_REG1") in
+              let address = request land 0xfffff in
+              if request land (1 lsl 28) <> 0 then
+                Hashtbl.replace store (addr "regSCRATCH_REG0") (rreg address)
+              else wreg address (Hashtbl.find store (addr "regSCRATCH_REG0"));
+              Hashtbl.replace store (addr "regSCRATCH_REG1") 0))
+          (List.assoc Am.gc_hwip discovery.Amdev.regs_offset);
+
       let booting = ref true in
       let on_range_mapped = ref (fun () -> ()) in
       let mm =
@@ -547,21 +578,21 @@ let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
           ()
       in
       let dev =
-        Amdev.make ~read_config ~rreg ~wreg ~vram
+        Amdev.make ~read_config ~rreg ~wreg
+          ~rreg8 ~wreg8 ~vram
           ~doorbell64:(Mmio.view vram ~off:0 ~size:0x1000 ())
           ~mmio:(Mmio.view vram ~off:0 ~size:0x1000 ())
           ~vram_size:(Mmio.size vram) ~large_bar:true ~reserved_vram_size:0
-          ~discovery:
-            (Amdev.parse_discovery
-               (discovery_blob ~harvested (dev_ips ~gc ~mp0 ~mp1 ~mmhub ~sdma ~bif ~osssys @ extra_ips)))
+          ~discovery
           ~mm ~devfmt:"test"
           ~now_ms:(fun () ->
+            !clock_hook ();
             incr clock;
             !clock)
           ~sleep_ms:(fun ms -> sleeps := ms :: !sleeps; clock := !clock + ms)
           ~is_booting:booting ~on_range_mapped ()
       in
-      f { dev; fvram = vram; store; reads; wr_hooks; log; sleeps })
+      f { dev; fvram = vram; store; reads; wr_hooks; log; sleeps; byte_log; byte_reads; clock_hook })
 
 let raddr dev name = (Amdev.Am_register.reg (Amdev.reg dev name)).Reg.addr
 
@@ -745,7 +776,8 @@ let check_boot_stamps fd log =
    memory: a compute queue mid-stream whose [resetup] records its
    replay, and a timeline mid-flight with a latched error. Offsets sit
    in the main memory region, beyond every boot allocation. *)
-let scripted_registration ?(sdma_queues = fun () -> []) fd t =
+let scripted_registration ?(sdma_queues = fun () -> [])
+    ?(sdma_queue = fun _ -> None) ?(device_count = 0) fd t =
   let view off size = Mmio.view fd.fvram ~off ~size () in
   let slot off =
     Hbuf.make ~va:(Nativeint.of_int off) ~size:16 ~view:(view off 16) ~meta:()
@@ -778,7 +810,7 @@ let scripted_registration ?(sdma_queues = fun () -> []) fd t =
   let bytes = Bytes.make 16 '\000' in
   Bytes.set_int64_le bytes 8 1L;
   Tolk.Device.Buffer.copyin (Submission.buffer submission) bytes;
-  Pci_iface.register ~am:t ~compute_queue:qd ~tl ~submission ~sdma_queues;
+  Pci_iface.register ~am:t ~compute_queue:qd ~tl ~submission ~device_count ~sdma_queue ~sdma_queues;
   (qd, tl, resetup_ran, submission)
 
 let () =
@@ -1016,6 +1048,187 @@ let () =
               raises_match
                 (Exn.invalid_arg ~substring:"has no field")
                 (fun () -> Amdev.Am_register.update amr [ ("nope", 1) ]));
+        ];
+      group "virtual functions"
+        [
+          test "initialization and finalization leases use byte mailbox handshakes" (fun () ->
+              with_fake_dev ~gc:(9, 4, 3) ~mmhub:(1, 8, 0) ~bif:(7, 9, 0)
+                ~pre:(fun store ->
+                  Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  equal bool true (Amdev.is_vf fd.dev);
+                  let control = Am.nv_maibox_control_trn_offset_byte in
+                  equal (list (pair int int)) [control,0; control,1; control,0; control+1,2]
+                    (List.rev !(fd.byte_log));
+                  let requests () = List.rev !(fd.log) |> List.filter_map (fun (address,value) ->
+                    if address = Am.mmmailbox_msgbuf_trn_dw0 then Some value else None) in
+                  Amdev.acquire_fini_access fd.dev;
+                  equal (list int) [Am.idh_req_gpu_init_access] (requests ());
+                  Amdev.release_vf_access fd.dev;
+                  Amdev.release_vf_access fd.dev;
+                  Amdev.acquire_fini_access fd.dev;
+                  Amdev.release_vf_access fd.dev;
+                  equal (list int) [Am.idh_req_gpu_init_access; Am.idh_req_gpu_init_access+1;
+                    Am.idh_req_gpu_fini_access; Am.idh_req_gpu_fini_access+1] (requests ())));
+          test "timed-out lease handback is not repeated" (fun () ->
+              with_fake_dev ~gc:(9, 4, 3) ~mmhub:(1, 8, 0) ~bif:(7, 9, 0)
+                ~pre:(fun store ->
+                  Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  Hashtbl.replace fd.byte_reads Am.nv_maibox_control_trn_offset_byte (fun () -> 0);
+                  Amdev.release_vf_access fd.dev;
+                  let log = !(fd.byte_log) in
+                  Amdev.release_vf_access fd.dev;
+                  equal (list (pair int int)) log !(fd.byte_log)));
+          test "queue registration returns INIT access only after all queues exist" (fun () ->
+              with_fake_dev ~gc:(9,4,3) ~mmhub:(1,8,0) ~bif:(7,9,0)
+                ~mp1:(13,0,0) ~sdma:(4,4,2)
+                ~pre:(fun store -> Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  let boot = Am_boot.create ~fw:no_fw fd.dev in
+                  let indices = ref [] in
+                  let requests () = List.rev !(fd.log) |> List.filter_map (fun (address,value) ->
+                    if address = Am.mmmailbox_msgbuf_trn_dw0 then Some value else None) in
+                  let queue idx =
+                    equal (list int) [Am.idh_req_gpu_init_access] (requests ());
+                    indices := idx :: !indices;
+                    if idx = 1 then failwith "queue construction failed" else None in
+                  raises_match (Exn.failure ~substring:"queue construction failed") (fun () ->
+                    ignore (scripted_registration ~device_count:3 ~sdma_queue:queue fd boot));
+                  equal (list int) [0;1] (List.rev !indices);
+                  equal (list int) [Am.idh_req_gpu_init_access] (requests ());
+                  indices := [];
+                  ignore (scripted_registration ~device_count:12
+                    ~sdma_queue:(fun idx ->
+                      equal (list int) [Am.idh_req_gpu_init_access] (requests ());
+                      indices := idx :: !indices; None) fd boot);
+                  Pci_iface.unregister boot;
+                  equal (list int) (List.init 8 Fun.id) (List.rev !indices);
+                  equal (list int) [Am.idh_req_gpu_init_access; Am.idh_req_gpu_init_access+1] (requests ())));
+          test "finalization keeps its lease on error and releases it after successful retirement" (fun () ->
+              with_fake_dev ~gc:(9,4,3) ~mmhub:(1,8,0) ~bif:(7,9,0)
+                ~mp1:(13,0,0) ~sdma:(4,4,2)
+                ~pre:(fun store -> Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  let boot = Am_boot.create ~fw:no_fw fd.dev in
+                  Amdev.release_vf_access fd.dev;
+                  fd.log := [];
+                  Hashtbl.replace fd.reads (raddr fd.dev "regCP_HQD_ACTIVE")
+                    (fun () -> failwith "scripted retirement failure");
+                  raises_match (Exn.failure ~substring:"scripted retirement failure")
+                    (fun () -> Am_boot.fini boot);
+                  let requests () = List.rev !(fd.log) |> List.filter_map (fun (address,value) ->
+                    if address = Am.mmmailbox_msgbuf_trn_dw0 then Some value else None) in
+                  equal (list int) [Am.idh_req_gpu_fini_access] (requests ());
+                  Hashtbl.remove fd.reads (raddr fd.dev "regCP_HQD_ACTIVE");
+                  Hashtbl.replace fd.reads (raddr fd.dev "regBIF_BX0_BIF_DOORBELL_INT_CNTL")
+                    (fun () -> failwith "PF interrupt register read by VF");
+                  Hashtbl.replace fd.wr_hooks (raddr fd.dev "mmMP1_SMN_C2PMSG_66")
+                    (fun _ -> failwith "PF clocks changed by VF");
+                  Am_boot.fini boot;
+                  equal (list int) [Am.idh_req_gpu_fini_access; Am.idh_req_gpu_fini_access+1] (requests ())));
+          test "a VF hang preserves its fault and never resets compute engines" (fun () ->
+              with_fake_dev ~gc:(9,4,3) ~mmhub:(1,8,0) ~bif:(7,9,0)
+                ~mp1:(13,0,0) ~sdma:(4,4,2)
+                ~pre:(fun store -> Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  let boot = Am_boot.create ~fw:no_fw fd.dev in
+                  let queue, timeline, resetup, submission = scripted_registration fd boot in
+                  Fun.protect ~finally:(fun () -> Pci_iface.unregister boot) (fun () ->
+                    Amdev.release_vf_access fd.dev;
+                    timeline.Timeline.error_state <- None;
+                    raises_match (Exn.failure ~substring:"Device hang detected") (fun () ->
+                      Timeline.guarded_wait timeline (fun () -> Submission.check submission));
+                    equal int 0 !resetup;
+                    equal int64 42L (Mmio.read64 queue.Queue_desc.write_ptr 0);
+                    equal int 0 (Signal.value timeline.Timeline.timeline);
+                    equal bool true (Option.is_some timeline.Timeline.error_state);
+                    raises_match (Exn.failure ~substring:"submission timed out")
+                      (fun () -> Submission.check submission))));
+          test "privileged queue topology excludes harvested compute dies" (fun () ->
+              with_fake_dev ~gc:(9,4,3) ~mmhub:(1,8,0) ~bif:(7,9,0)
+                ~extra_ips:[0xb,1,(9,4,3),[0x18000;0x19000]] ~harvested:[0xb,1]
+                ~pre:(fun store -> Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd -> equal int 1 (Gfx.xccs (Gfx.create fd.dev))));
+          test "KIQ uses the privileged descriptor and the selected compute die" (fun () ->
+              with_fake_dev ~gc:(9,4,3) ~mmhub:(1,8,0) ~bif:(7,9,0)
+                ~extra_ips:[0xb,1,(9,4,3),[0x18000;0x19000]]
+                ~pre:(fun store -> Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  let gfx = Gfx.create fd.dev in
+                  let doorbell = Gfx.setup_ring ~kiq_xcc:1 gfx ~ring_addr:0x300000
+                    ~ring_size:0x1000 ~rptr_addr:0x301000 ~wptr_addr:0x301008
+                    ~eop_addr:0x302000 ~eop_size:0x1000 ~idx:0 ~aql:false in
+                  equal int (Am.amdgpu_doorbell_kiq + 0x20) doorbell;
+                  let reg name = Amdev.reg fd.dev ~inst:1 name in
+                  let fields = Amdev.Am_register.read_bitfields ~direct:true (reg "regCP_HQD_PQ_CONTROL") in
+                  equal int 1 (List.assoc "priv_state" fields);
+                  equal int 1 (List.assoc "kmd_queue" fields);
+                  equal int 1 (Amdev.Am_register.read ~direct:true (reg "regCP_HQD_ACTIVE"));
+                  equal int 0 (Amdev.Am_register.read ~direct:true (Amdev.reg fd.dev "regCP_HQD_ACTIVE"))));
+          test "KIQ invalidation wraps its ring and waits for its published fence" (fun () ->
+              with_fake_dev ~gc:(9,4,3) ~mmhub:(1,8,0) ~bif:(7,9,0)
+                ~pre:(fun store -> Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  let gmc = Gmc.create fd.dev in
+                  let storage = Mmio.view fd.fvram ~off:0x100000 ~size:0x3000 () in
+                  let va = 0x500000 in
+                  Mmio.write64 storage 0x1008 0x3feL;
+                  let observed = ref false in
+                  fd.clock_hook := (fun () ->
+                    if Mmio.read64 (Amdev.doorbell64 fd.dev) (Am.amdgpu_doorbell_kiq * 8) = 1039L then begin
+                      observed := true;
+                      equal int64 1039L (Mmio.read64 storage 0x1008);
+                      Mmio.write64 storage 0x1010 1023L
+                    end);
+                  fd.log := [];
+                  Gmc.flush_tlb gmc ~kiq:(storage,va) ~xccs:1 Gmc.Mm ~vmid:3;
+                  equal bool true !observed;
+                  let packet = Array.init 17 (fun i -> Int32.to_int
+                    (Mmio.read32 storage (((0x3fe+i) mod 0x400)*4)) land 0xffffffff) in
+                  equal int 0xc0033700 packet.(0);
+                  equal int (raddr fd.dev "regMMVM_INVALIDATE_ENG17_REQ") packet.(2);
+                  equal int 0xc0053c00 packet.(5);
+                  equal int (raddr fd.dev "regMMVM_INVALIDATE_ENG17_ACK") packet.(7);
+                  equal int 8 packet.(9);
+                  equal int (va+0x1010) packet.(14);
+                  equal int 1023 packet.(16);
+                  equal (list (pair int int))
+                    [raddr fd.dev "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL",0]
+                    !(fd.log)));
+          test "gated register access uses the selected instance and direct access bypasses it" (fun () ->
+              with_fake_dev ~gc:(9, 4, 3) ~mmhub:(1, 8, 0) ~bif:(7, 9, 0)
+                ~extra_ips:[0xb, 1, (9,4,3), [0x18000;0x19000]]
+                ~pre:(fun store ->
+                  Hashtbl.replace store Am.mmrcc_iov_func_identifier 1;
+                  Hashtbl.replace store Am.mmmailbox_msgbuf_rcv_dw0 Am.idh_ready_to_access_gpu)
+                (fun fd ->
+                  let reg name = Amdev.reg fd.dev ~inst:1 name in
+                  let addr name = (Amdev.Am_register.reg (reg name)).Reg.addr in
+                  Hashtbl.replace fd.wr_hooks (addr "regRLC_SPARE_INT") (fun value ->
+                    equal int 1 value;
+                    Hashtbl.replace fd.store (addr "regSCRATCH_REG0") 0x1234;
+                    Hashtbl.replace fd.store (addr "regSCRATCH_REG1") 0);
+                  equal int 0x1234 (Amdev.Am_register.read (reg "regCP_STAT"));
+                  equal ~msg:"read request used instance one" bool true
+                    (List.mem (addr "regSCRATCH_REG1", addr "regCP_STAT" lor (1 lsl 28)) !(fd.log));
+                  fd.log := [];
+                  Amdev.Am_register.write (reg "regCP_STAT") ~direct:true ~value:9 [];
+                  equal (list (pair int int)) [addr "regCP_STAT",9] !(fd.log);
+                  Amdev.Am_register.write (reg "regGRBM_GFX_CNTL") ~value:7 [];
+                  equal int 7 (Hashtbl.find fd.store (addr "regSCRATCH_REG2"));
+                  Hashtbl.remove fd.wr_hooks (addr "regRLC_SPARE_INT");
+                  match Amdev.Am_register.read (reg "regCP_STAT") with
+                  | _ -> fail "gateway read did not time out"
+                  | exception Amdev.Timeout_error _ -> ()));
         ];
       group "firmware"
         [

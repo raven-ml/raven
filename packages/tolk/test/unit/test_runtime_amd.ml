@@ -719,6 +719,24 @@ let () =
               with_map 8192 (fun m ->
                   is_true (Mmio.addr m <> 0n);
                   equal int 8192 (Mmio.size m)));
+          test "byte access preserves adjacent mailbox controls" (fun () ->
+              with_map 8192 (fun m ->
+                  Mmio.write32 m 0 0xaabbccddl;
+                  let mailbox = Mmio.view m ~off:1 ~size:2 () in
+                  Mmio.write8 mailbox 0 1;
+                  equal int32 0xaabb01ddl (Mmio.read32 m 0);
+                  Mmio.write8 mailbox 1 2;
+                  equal int32 0xaa0201ddl (Mmio.read32 m 0);
+                  equal (list int) [0xdd; 1; 2; 0xaa]
+                    (List.init 4 (Mmio.read8 m));
+                  Mmio.write8 mailbox 0 255;
+                  equal int 255 (Mmio.read8 mailbox 0);
+                  raises_match is_invalid_arg (fun () -> Mmio.read8 mailbox 2);
+                  raises_match is_invalid_arg (fun () -> Mmio.read8 mailbox (-1));
+                  raises_match is_invalid_arg (fun () -> Mmio.write8 mailbox 2 0);
+                  raises_match is_invalid_arg (fun () -> Mmio.write8 mailbox 0 256);
+                  raises_match is_invalid_arg (fun () -> Mmio.write8 mailbox 0 (-1));
+                  equal int32 0xaa02ffddl (Mmio.read32 m 0)));
           test "32-bit roundtrip at byte offsets" (fun () ->
               with_map 8192 (fun m ->
                   Mmio.write32 m 0 0x11223344l;

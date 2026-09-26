@@ -78,7 +78,10 @@ val init : t -> unit
     the clocks), enables clock gating, and stamps the scratch
     registers. Marks the session dirty before clearing the root page table
     and security-processor fence or programming hardware. Leaves the
-    device out of the booting state ({!Amdev.is_booting}).
+    device out of the booting state ({!Amdev.is_booting}). Virtual functions
+    keep the host-assigned partition, skip physical-function firmware, power,
+    clock and scratch-stamp operations, and create a privileged queue for
+    translation invalidation while initialization access is held.
 
     Raises [Failure] when the device is part of a multi-die fabric in a
     malformed state (resetting a fabric one die at a time would wedge
@@ -89,7 +92,11 @@ val fini : t -> unit
 (** [fini t] shuts the session down: drains and disables the engine
     queues, drops the clocks, handles pending interrupts, and writes
     the session's error flag to [regSCRATCH_REG6] so the next session
-    can trust (or distrust) the state left behind. *)
+    can trust (or distrust) the state left behind. Virtual functions obtain
+    finalization access when needed, skip physical-function clocks and stamps,
+    and return their held lease only after engine retirement and interrupt
+    handling succeed. A mailbox timeout is ignored; other failures propagate
+    without returning the held lease. *)
 
 val recover : ?force:bool -> t -> bool
 (** [recover t] restores a faulted device without a reboot: handles

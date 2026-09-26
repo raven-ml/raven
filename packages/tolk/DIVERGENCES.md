@@ -402,7 +402,14 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   finalizers. PCI teardown tracks partially programmed SDMA rings, removes
   failed AMD interrupt registrations, releases NV doorbell mappings and
   disables failed runtime shutdown hooks. Faulted PCI devices retain storage
-  unless queue retirement can be established. NVK
+  unless queue retirement can be established. AMD VF boot owners remain in
+  the native device registry without participating in interrupt collection.
+  Unpublished KIQ setup releases backing only when mapping rollback proves
+  it unreachable. Published KIQ backing remains owned through retirement.
+  VF runtime-setup rollback retains buffers after finalization: the KIQ is
+  stopped and FINI access has been returned, so subsequent unmap/TLB cleanup
+  cannot safely use either path. Post-retirement reset and mapping cleanup
+  still require hardware validation. NVK
   unregisters channels with the installed driver's layout, then unwinds UVM
   registrations, control mappings and the per-device RM object tree.
   Borrowed host mappings remain owned by the caller. Consumers:
@@ -413,7 +420,10 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   rollback order, acquisition failures, cleanup failures, descriptor release,
   PCI claim retries and buffer finalizers after successful or failed queue retirement;
   `test_nv_tables` covers 570/580/610 unregister layouts; `test_amd_amdev`
-  injects a register failure after enabling an SDMA ring and checks teardown.
+  injects a register failure after enabling an SDMA ring and checks teardown,
+  VF queue-construction lease ordering, failed FINI lease retention, and the
+  prohibition on forced VF recovery. KIQ packet tests cover wrapped publication
+  and fence ordering through scripted memory, not hardware execution.
   Driver fault injection and hardware
   recovery remain open in TODO. Reconsider when upstream provides equivalent
   failure ownership rules.

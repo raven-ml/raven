@@ -68,6 +68,11 @@ module Ip : sig
   (** The version requested at [create] time (from IP discovery), not the
       resolved family's version. *)
 
+  val segment_extents : t -> (int * int) list
+  (** [segment_extents t] lists each segment and its greatest register offset,
+      in segment order. Offsets are inclusive and measured in dwords relative
+      to the segment base. Only segments represented by registers are listed. *)
+
   val reg : t -> string -> Reg.t
   (** [reg t nm] looks up the register [nm], falling back to the
       ["mm"]-prefixed spelling when the ["reg"]-prefixed one is absent.
@@ -80,6 +85,9 @@ module type Pm4 = sig
   (** [packet3 op count] builds a type-3 packet header; [count] is the number
       of payload dwords minus one. *)
 
+  val packet3_write_data : int
+  val wr_confirm : int
+  val write_data_dst_sel : int -> int
   val packet3_nop : int
   val packet3_set_sh_reg : int
   val packet3_set_sh_reg_start : int

@@ -29,27 +29,29 @@ module Am_register : sig
   (** The type for device registers. *)
 
   val make :
-    reg:Amd_tables.Reg.t -> rreg:(int -> int) -> wreg:(int -> int -> unit) -> t
+    reg:Amd_tables.Reg.t ->
+    rreg:(direct:bool -> int -> int) ->
+    wreg:(direct:bool -> int -> int -> unit) -> t
   (** [make ~reg ~rreg ~wreg] is [reg] accessed through [rreg] and
       [wreg], which read and write 32-bit values at absolute dword
-      addresses. *)
+      addresses. [direct] bypasses the virtual-function register gateway. *)
 
   val reg : t -> Amd_tables.Reg.t
   (** [reg t] is the underlying register definition. *)
 
-  val read : t -> int
+  val read : ?direct:bool -> t -> int
   (** [read t] is the register's current 32-bit value. *)
 
-  val read_bitfields : t -> (string * int) list
+  val read_bitfields : ?direct:bool -> t -> (string * int) list
   (** [read_bitfields t] is {!read} decoded into the register's named
       fields. *)
 
-  val write : t -> ?value:int -> (string * int) list -> unit
+  val write : t -> ?direct:bool -> ?value:int -> (string * int) list -> unit
   (** [write t fields] stores the named field assignments ored with
       [value] (defaults to [0]); unnamed bits are written from [value]
       alone. Raises [Invalid_argument] on an unknown field name. *)
 
-  val update : t -> (string * int) list -> unit
+  val update : t -> ?direct:bool -> (string * int) list -> unit
   (** [update t fields] is a read-modify-write of [fields]: bits
       outside the named fields keep their current value. Raises
       [Invalid_argument] on an unknown field name. *)
@@ -256,6 +258,8 @@ val make :
   read_config:(offset:int -> size:int -> int) ->
   rreg:(int -> int) ->
   wreg:(int -> int -> unit) ->
+  rreg8:(int -> int) ->
+  wreg8:(int -> int -> unit) ->
   vram:Tolk_hcq.Hcq.Mmio.t ->
   doorbell64:Tolk_hcq.Hcq.Mmio.t ->
   mmio:Tolk_hcq.Hcq.Mmio.t ->
@@ -270,7 +274,8 @@ val make :
 (** [make ~read_config ~rreg ~wreg ... ()] is a device over caller-provided parts:
     every register access goes through [rreg] and [wreg] (32-bit values
     at absolute dword addresses, replacing the register-BAR path of
-    {!create} entirely), the BAR mappings, discovery table and memory
+    {!create} entirely). [rreg8] and [wreg8] access mailbox bytes at byte
+    offsets without changing adjacent bytes. The BAR mappings, discovery table and memory
     manager are taken as given, and [now_ms] is the monotonic
     millisecond clock behind {!now_ms} (defaults to the system's).
     [sleep_ms] suspends execution for a settling delay in milliseconds
@@ -340,6 +345,26 @@ val ip_ver : t -> int -> int * int * int
 
 val gc_info : t -> gc_info
 (** [gc_info t] is the device's graphics-core geometry. *)
+
+val is_vf : t -> bool
+(** [is_vf t] is [true] for a PCI virtual function. Construction obtains
+    its initialization access lease from the physical function. *)
+
+val release_vf_access : t -> unit
+(** [release_vf_access t] returns the held access lease, if any. A timed-out
+    handback is ignored and the local lease is cleared before the request. *)
+
+val acquire_fini_access : t -> unit
+(** [acquire_fini_access t] requests finalization access for a virtual
+    function with no held lease. A timed-out request is ignored. *)
+
+exception Timeout_error of string
+
+val wait_cond :
+  t -> ?timeout_ms:int -> value:int -> msg:string -> (unit -> int) -> unit
+(** [wait_cond t ~value ~msg read] polls [read] until it equals [value].
+    Raises [Timeout_error] after [timeout_ms] milliseconds (default [10000])
+    according to the device clock. *)
 
 val is_booting : t -> bool
 (** [is_booting t] is [true] while the device is booting; only
@@ -411,16 +436,18 @@ val reg : t -> ?inst:int -> string -> Am_register.t
     wins. [inst] selects its discovered IP instance and defaults to [0].
     Raises [Invalid_argument] if the register or instance is absent. *)
 
-val rreg : t -> int -> int
+val rreg : t -> ?inst:int -> ?direct:bool -> int -> int
 (** [rreg t reg] is the 32-bit value of the register at dword address
     [reg], read through the register BAR, or through the indirect
-    index/data window for addresses beyond it. *)
+    index/data window for addresses beyond it. Virtual functions route gated
+    registers through the RLC gateway of [inst] (default [0]); [direct=true]
+    bypasses that gateway. *)
 
-val wreg : t -> int -> int -> unit
+val wreg : t -> ?inst:int -> ?direct:bool -> int -> int -> unit
 (** [wreg t reg v] writes the 32-bit value [v] to the register at dword
     address [reg], like {!rreg}. *)
 
-val wreg_pair : t -> ?inst:int -> string -> lo:string -> hi:string -> int -> unit
+val wreg_pair : t -> ?inst:int -> ?direct:bool -> string -> lo:string -> hi:string -> int -> unit
 (** [wreg_pair t ?inst base ~lo ~hi v] writes the 64-bit value [v] across the
     register pair named [base ^ lo] (low half) and [base ^ hi] (high
     half), using discovered IP instance [inst] (default [0]). *)

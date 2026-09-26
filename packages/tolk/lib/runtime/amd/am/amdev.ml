@@ -18,22 +18,22 @@ module Tlsf = Tolk.Tlsf
 module Am_register = struct
   type t = {
     reg : Amd_tables.Reg.t;
-    rreg : int -> int;
-    wreg : int -> int -> unit;
+    rreg : direct:bool -> int -> int;
+    wreg : direct:bool -> int -> int -> unit;
   }
 
   let make ~reg ~rreg ~wreg = { reg; rreg; wreg }
   let reg t = t.reg
-  let read t = t.rreg t.reg.Amd_tables.Reg.addr
-  let read_bitfields t = Amd_tables.Reg.decode t.reg (read t)
+  let read ?(direct = false) t = t.rreg ~direct t.reg.Amd_tables.Reg.addr
+  let read_bitfields ?direct t = Amd_tables.Reg.decode t.reg (read ?direct t)
 
-  let write t ?(value = 0) fields =
-    t.wreg t.reg.Amd_tables.Reg.addr
+  let write t ?(direct = false) ?(value = 0) fields =
+    t.wreg ~direct t.reg.Amd_tables.Reg.addr
       (value lor Amd_tables.Reg.encode t.reg fields)
 
-  let update t fields =
+  let update t ?direct fields =
     let mask = Amd_tables.Reg.fields_mask t.reg (List.map fst fields) in
-    write t ~value:(read t land lnot mask) fields
+    write t ?direct ~value:(read ?direct t land lnot mask) fields
 end
 
 (* Firmware: amdev.py AMFirmware and helpers.py fetch_fw. *)
@@ -695,6 +695,41 @@ external monotonic_ms : unit -> int = "caml_tolk_hcq_monotonic_ms" [@@noalloc]
 
 let system_sleep_ms ms = Unix.sleepf (float_of_int ms /. 1000.)
 
+exception Timeout_error of string
+
+let wait_on ~now_ms ?(timeout_ms = 10000) ~value ~msg cb =
+  let start = now_ms () in
+  let rec go last =
+    if now_ms () - start < timeout_ms then begin
+      let value_now = cb () in
+      if value_now <> value then go value_now
+    end else raise (Timeout_error (Printf.sprintf
+      "%s. Timed out after %d ms, condition not met: %d != %d"
+      msg timeout_ms last value))
+  in
+  go 0
+
+let vf_mailbox_request ~rreg ~wreg ~rreg8 ~wreg8 ~now_ms
+    ?(wait_ready = true) request =
+  let control = Am.nv_maibox_control_trn_offset_byte in
+  wreg8 control 0;
+  wait_on ~now_ms ~timeout_ms:1000 ~value:0
+    ~msg:"VF mailbox acknowledgement did not clear" (fun () -> rreg8 control land 2);
+  List.iteri (fun index value -> wreg (Am.mmmailbox_msgbuf_trn_dw0 + index) value)
+    [request; 0; 0; 0];
+  wreg8 control 1;
+  wait_on ~now_ms ~timeout_ms:Am.nv_mailbox_poll_ack_timedout ~value:2
+    ~msg:(Printf.sprintf "VF mailbox request 0x%x was not acked" request)
+    (fun () -> rreg8 control land 2);
+  wreg8 control 0;
+  if wait_ready then begin
+    wait_on ~now_ms ~timeout_ms:Am.nv_mailbox_poll_msg_timedout
+      ~value:Am.idh_ready_to_access_gpu ~msg:"VF mailbox: the PF never granted access"
+      (fun () -> rreg Am.mmmailbox_msgbuf_rcv_dw0);
+    wreg8 (control + 1) 2
+  end;
+  request + 1
+
 type t = {
   pci_dev : System.Pci_device.t option;
   read_config : offset:int -> size:int -> int;
@@ -706,9 +741,12 @@ type t = {
   large_bar : bool;
   reserved_vram_size : int;
   discovery : discovery;
-  rreg : int -> int;
-  wreg : int -> int -> unit;
+  rreg : ?inst:int -> ?direct:bool -> int -> int;
+  wreg : ?inst:int -> ?direct:bool -> int -> int -> unit;
   reg : int -> string -> Am_register.t;
+  is_vf : bool;
+  vf_access : int ref;
+  vf_mailbox_request : ?wait_ready:bool -> int -> int;
   is_hive : bool;
   paddr_base : int;
   mc_base : int;
@@ -719,6 +757,23 @@ type t = {
   on_range_mapped : (unit -> unit) ref;
   mm : Am_page_table.t Memory.t;
 }
+
+let is_vf t = t.is_vf
+
+let release_vf_access t =
+  let lease = !(t.vf_access) in
+  t.vf_access := 0;
+  if lease <> 0 then
+    try ignore (t.vf_mailbox_request ~wait_ready:false lease)
+    with Timeout_error _ -> ()
+
+let acquire_fini_access t =
+  if t.is_vf && !(t.vf_access) = 0 then
+    try t.vf_access := t.vf_mailbox_request Am.idh_req_gpu_fini_access
+    with Timeout_error _ -> ()
+
+let wait_cond t ?timeout_ms ~value ~msg cb =
+  wait_on ~now_ms:t.now_ms ?timeout_ms ~value ~msg cb
 
 let pci_dev t = t.pci_dev
 let read_config t ~offset ~size = t.read_config ~offset ~size
@@ -751,8 +806,8 @@ let paddr2mc t paddr = t.mc_base + paddr
 let paddr2xgmi t paddr = t.paddr_base + paddr
 let xgmi2paddr t xgmi_paddr = xgmi_paddr - t.paddr_base
 
-let rreg t r = t.rreg r
-let wreg t r v = t.wreg r v
+let rreg t ?inst ?direct r = t.rreg ?inst ?direct r
+let wreg t ?inst ?direct r v = t.wreg ?inst ?direct r v
 let reg t ?(inst = 0) name = t.reg inst name
 
 let live_instances t hwip =
@@ -768,9 +823,9 @@ let aids t =
           if inst lsr 2 = aid then mask lor (1 lsl (inst land 3)) else mask) 0 live in
       List.mem mask [0xf; 0x3; 0xc]))
 
-let wreg_pair t ?(inst = 0) base ~lo ~hi v =
-  Am_register.write (reg t ~inst (base ^ lo)) ~value:(v land 0xffffffff) [];
-  Am_register.write (reg t ~inst (base ^ hi)) ~value:(v lsr 32) []
+let wreg_pair t ?(inst = 0) ?direct base ~lo ~hi v =
+  Am_register.write (reg t ~inst (base ^ lo)) ?direct ~value:(v land 0xffffffff) [];
+  Am_register.write (reg t ~inst (base ^ hi)) ?direct ~value:(v lsr 32) []
 
 let indirect_wreg_pcie t ?(aid = 0) r v =
   let reg_addr =
@@ -854,7 +909,14 @@ let va_allocator = lazy (Tlsf.create ~size:va_size ~base:va_base ())
    cache, and dword access either over the register BAR (with the
    indirect index/data window beyond it, amdev.py:249-258) or over
    injected functions. *)
-let reg_access ~ips access =
+let reg_access ~ips ~is_vf ~now_ms access =
+  let gated = if not is_vf then [] else
+      List.concat_map (fun (ip, instances) ->
+          if Amd_tables.Ip.name ip <> "gc" then [] else
+          List.concat_map (fun (_, bases) ->
+              List.map (fun (segment, last) -> bases.(segment), bases.(segment) + last)
+                (Amd_tables.Ip.segment_extents ip)) instances) ips in
+  let is_gated address = List.exists (fun (lo, hi) -> lo <= address && address <= hi) gated in
   let regs = Hashtbl.create 64 in
   (* Exact names only: Ip.reg's reg->mm fallback must not fire, or a
      name absent from a later family could shadow the exact definition
@@ -876,17 +938,38 @@ let reg_access ~ips access =
     in
     loop ips
   in
-  let rec rreg r =
+  let rec rreg ?(inst = 0) ?(direct = false) r =
+    if not direct && is_gated r then rlcg_rw ~inst ~read:true r 0 else
     match access with
     | `Bar mmio ->
         if r >= Mmio.size mmio / 4 then indirect_rreg r else raw_rreg mmio r
     | `Fns (rreg, _) -> rreg r
-  and wreg r v =
+  and wreg ?(inst = 0) ?(direct = false) r v =
+    if not direct && is_gated r then ignore (rlcg_rw ~inst ~read:false r v) else
     match access with
     | `Bar mmio ->
         if r >= Mmio.size mmio / 4 then indirect_wreg r v
         else raw_wreg mmio r v
     | `Fns (_, wreg) -> wreg r v
+  and rlcg_rw ~inst ~read address value =
+    let gfx_cntl = (Am_register.reg (reg inst "regGRBM_GFX_CNTL")).Amd_tables.Reg.addr
+    and gfx_index = (Am_register.reg (reg inst "regGRBM_GFX_INDEX")).Amd_tables.Reg.addr in
+    if address = gfx_cntl || address = gfx_index then begin
+      Am_register.write (reg inst (if address = gfx_cntl then "regSCRATCH_REG2" else "regSCRATCH_REG3"))
+        ~direct:true ~value [];
+      value
+    end else begin
+      Am_register.write (reg inst "regSCRATCH_REG0") ~direct:true ~value [];
+      Am_register.write (reg inst "regSCRATCH_REG1") ~direct:true
+        ~value:(address lor if read then 1 lsl 28 else 0) [];
+      Am_register.write (reg inst "regRLC_SPARE_INT") ~direct:true ~value:1 [];
+      wait_on ~now_ms ~value:0 ~msg:(Printf.sprintf "RLC gateway timeout on 0x%x" address)
+        (fun () -> Am_register.read ~direct:true (reg inst "regSCRATCH_REG1") land 0xfffff);
+      let error = Am_register.read ~direct:true (reg inst "regSCRATCH_REG1") land 0xf000000 in
+      if Helpers.getenv "AM_DEBUG" 0 >= 1 && error <> 0 then
+        Printf.eprintf "RLC gateway refused 0x%x: 0x%x\n%!" address error;
+      Am_register.read ~direct:true (reg inst "regSCRATCH_REG0")
+    end
   and indirect_rreg r =
     Am_register.write (reg 0 "regBIF_BX_PF0_RSMU_INDEX") ~value:(r * 4) [];
     Am_register.read (reg 0 "regBIF_BX_PF0_RSMU_DATA")
@@ -897,7 +980,9 @@ let reg_access ~ips access =
     match Hashtbl.find_opt regs (name, inst) with
     | Some r -> r
     | None ->
-        let r = Am_register.make ~reg:(find inst name) ~rreg ~wreg in
+        let r = Am_register.make ~reg:(find inst name)
+            ~rreg:(fun ~direct address -> rreg ~inst ~direct address)
+            ~wreg:(fun ~direct address value -> wreg ~inst ~direct address value) in
         Hashtbl.add regs (name, inst) r;
         r
   in
@@ -926,11 +1011,21 @@ let gmc_state reg =
 
 let make ?pci_dev ?(now_ms = monotonic_ms) ?(sleep_ms = system_sleep_ms)
     ?(is_booting = ref true)
-    ?(on_range_mapped = ref (fun () -> ())) ~read_config ~rreg ~wreg ~vram ~doorbell64
+    ?(on_range_mapped = ref (fun () -> ())) ~read_config ~rreg ~wreg ~rreg8 ~wreg8 ~vram ~doorbell64
     ~mmio ~vram_size ~large_bar ~reserved_vram_size ~discovery ~mm ~devfmt ()
     =
+  let is_vf = rreg Am.mmrcc_iov_func_identifier land 1 <> 0 in
+  let vf_mailbox_request = vf_mailbox_request ~rreg ~wreg ~rreg8 ~wreg8 ~now_ms in
+  let vf_access = ref (if is_vf then vf_mailbox_request Am.idh_req_gpu_init_access else 0) in
+  System.with_rollback (fun rollback ->
+  rollback (fun () ->
+      let lease = !vf_access in
+      vf_access := 0;
+      if lease <> 0 then
+        try ignore (vf_mailbox_request ~wait_ready:false lease)
+        with Timeout_error _ -> ());
   let rreg, wreg, reg =
-    reg_access ~ips:(build_ips discovery) (`Fns (rreg, wreg))
+    reg_access ~ips:(build_ips discovery) ~is_vf ~now_ms (`Fns (rreg, wreg))
   in
   let is_hive, paddr_base, mc_base = gmc_state (reg 0) in
   {
@@ -947,6 +1042,9 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(sleep_ms = system_sleep_ms)
     rreg;
     wreg;
     reg;
+    is_vf;
+    vf_access;
+    vf_mailbox_request;
     is_hive;
     paddr_base;
     mc_base;
@@ -956,7 +1054,7 @@ let make ?pci_dev ?(now_ms = monotonic_ms) ?(sleep_ms = system_sleep_ms)
     is_err_state = ref false;
     on_range_mapped;
     mm;
-  }
+  })
 
 let create pci_dev =
   (* These are independent CPU BAR mappings, not GPU backing allocations.
@@ -972,6 +1070,17 @@ let create pci_dev =
     let vram = map_bar 0 in
     let doorbell64 = map_bar 2 in
     let mmio = map_bar 5 in
+    let is_vf = raw_rreg mmio Am.mmrcc_iov_func_identifier land 1 <> 0 in
+    let vf_mailbox_request = vf_mailbox_request ~rreg:(raw_rreg mmio)
+        ~wreg:(raw_wreg mmio) ~rreg8:(Mmio.read8 mmio) ~wreg8:(Mmio.write8 mmio)
+        ~now_ms:monotonic_ms in
+    let vf_access = ref (if is_vf then vf_mailbox_request Am.idh_req_gpu_init_access else 0) in
+    rollback (fun () ->
+        let lease = !vf_access in
+        vf_access := 0;
+        if lease <> 0 then
+          try ignore (vf_mailbox_request ~wait_ready:false lease)
+          with Timeout_error _ -> ());
     let vram_size = raw_rreg mmio mm_rcc_config_memsize lsl 20 in
     let large_bar = Mmio.size vram >= vram_size in
     let tmr_offset = vram_size - (64 lsl 10) in
@@ -989,7 +1098,8 @@ let create pci_dev =
     let reserved_vram_size =
       match gc_ver with 9, (4 | 5), _ -> 384 lsl 20 | _ -> 64 lsl 20
     in
-    let rreg, wreg, reg = reg_access ~ips:(build_ips discovery) (`Bar mmio) in
+    let rreg, wreg, reg = reg_access ~ips:(build_ips discovery)
+        ~is_vf ~now_ms:monotonic_ms (`Bar mmio) in
     let is_hive, paddr_base, mc_base = gmc_state (reg 0) in
     let is_booting = ref true in
     let on_range_mapped = ref (fun () -> ()) in
@@ -1032,6 +1142,9 @@ let create pci_dev =
       rreg;
       wreg;
       reg;
+      is_vf;
+      vf_access;
+      vf_mailbox_request;
       is_hive;
       paddr_base;
       mc_base;

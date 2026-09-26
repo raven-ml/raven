@@ -49,8 +49,8 @@ let create ?fw adev =
      after every mapping, once the hubs that hold them exist. *)
   Amdev.set_on_range_mapped adev (fun () ->
       let xccs = Am_ip.Gfx.xccs gfx in
-      Am_ip.Gmc.flush_tlb gmc ~xccs Am_ip.Gmc.Gc ~vmid:0;
-      Am_ip.Gmc.flush_tlb gmc ~xccs Am_ip.Gmc.Mm ~vmid:0);
+      Am_ip.Gmc.flush_tlb gmc ?kiq:(Am_ip.Gfx.kiq gfx) ~xccs Am_ip.Gmc.Gc ~vmid:0;
+      Am_ip.Gmc.flush_tlb gmc ?kiq:(Am_ip.Gfx.kiq gfx) ~xccs Am_ip.Gmc.Mm ~vmid:0);
   { adev; fw; soc; gmc; ih; psp; smu; gfx; sdma; partial_boot = false }
 
 let init_hw t blocks =
@@ -126,7 +126,8 @@ let init t =
   t.partial_boot <- partial_boot;
   (* A failed hardware phase must not inherit the previous session's clean
      shutdown stamp. REG7 and the resident TMR remain intact for GC 9.5. *)
-  Am_register.write (reg "regSCRATCH_REG6") ~value:1 [];
+  if not (Amdev.is_vf adev) then
+    Am_register.write (reg "regSCRATCH_REG6") ~value:1 [];
   (* Software construction must leave a reusable resident session intact
      until its scratch state records ownership of the new initialization. *)
   let vram = Amdev.vram adev in
@@ -138,7 +139,7 @@ let init t =
 
   (* Init hw for the blocks where it is needed. *)
   if not partial_boot then begin
-    if Am_ip.Psp.is_sos_alive t.psp && Am_ip.Smu.is_smu_alive t.smu then begin
+    if not (Amdev.is_vf adev) && Am_ip.Psp.is_sos_alive t.psp && Am_ip.Smu.is_smu_alive t.smu then begin
       set_bus_master t false;
       if Amdev.is_hive adev then
         failwith
@@ -158,15 +159,16 @@ let init t =
     end;
     set_bus_master t true;
     init_hw t
-      [
+      ([
         ("Soc", fun () -> Am_ip.Soc.init_hw t.soc);
         ("Gmc", fun () -> Am_ip.Gmc.init_hw t.gmc ~soc:t.soc);
         ("Ih", fun () -> Am_ip.Ih.init_hw t.ih);
+      ] @ if Amdev.is_vf adev then [] else [
         ("Psp", fun () -> Am_ip.Psp.init_hw t.psp);
         ("Smu", fun () -> Am_ip.Smu.init_hw t.smu);
-      ]
+      ])
   end
-  else Am_ip.Psp.restore_tmr t.psp;
+  else if not (Amdev.is_vf adev) then Am_ip.Psp.restore_tmr t.psp;
 
   (* Booting done. *)
   Amdev.set_is_booting adev false;
@@ -181,6 +183,7 @@ let init t =
       ("Sdma", fun () -> Am_ip.Sdma.init_hw t.sdma ~soc:t.soc);
     ];
 
+  if not (Amdev.is_vf adev) then begin
   let max_power = am_power_limit () in
   if max_power > 0. then begin
     Am_ip.Smu.set_power_limit t.smu max_power;
@@ -193,6 +196,7 @@ let init t =
   Am_register.write (reg "regSCRATCH_REG7") ~value:version [];
   (* Set initialized state. *)
   Am_register.write (reg "regSCRATCH_REG6") ~value:1 [];
+  end;
   if debug >= 2 then
     Printf.printf "am %s: boot done\n%!" (Amdev.devfmt adev)
 
@@ -200,15 +204,18 @@ let init t =
 let fini t =
   if debug >= 2 then
     Printf.printf "am %s: Finalizing\n%!" (Amdev.devfmt t.adev);
+  Amdev.acquire_fini_access t.adev;
   Am_ip.Sdma.fini_hw t.sdma;
   Am_ip.Gfx.fini_hw t.gfx;
-  Am_ip.Smu.set_clocks t.smu ~level:(Some 0);
+  if not (Amdev.is_vf t.adev) then Am_ip.Smu.set_clocks t.smu ~level:(Some 0);
   Am_ip.Ih.interrupt_handler t.ih ~soc:t.soc ~gmc:t.gmc ~smu:t.smu;
   (* Set finalized state. *)
+  if not (Amdev.is_vf t.adev) then
   Am_register.write
     (Amdev.reg t.adev "regSCRATCH_REG6")
     ~value:(if Amdev.is_err_state t.adev then 1 else 0)
-    []
+    [];
+  Amdev.release_vf_access t.adev
 
 (* amdev.py:232 recover *)
 let recover ?(force = false) t =

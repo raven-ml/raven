@@ -30,8 +30,10 @@ with their rationale and validation; commit count is not an acceptance metric.
   Validate staged peer transfers and shared host signals on small-BAR devices.
   Validate AMD AQL/multi-XCC
   dispatch and ring/staging reuse under long asynchronous batches.
-  Complete AMD race/recovery fixes. Audit VF mailbox leases, gated register access and PF-only boot
-  operations against the existing AMD device scope; justify any retained gap.
+  Validate AMD PF/VF mailbox access windows, gated registers, per-XCC KIQ
+  invalidation and queue-construction handoff on hardware. Validate VF failed
+  boot and retirement retention; establish post-retirement VA/page-table/backing
+  cleanup without submitting to a stopped KIQ or using an expired FINI lease.
   Validate compiled PM4 scratch separation on multi-die hardware and reconcile
   scratch growth across retained and multi-device links.
   Validate NV channel/descriptor, semaphore and GSP compute submission behavior

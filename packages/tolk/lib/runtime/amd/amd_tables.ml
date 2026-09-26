@@ -92,6 +92,15 @@ module Ip = struct
   let name t = t.name
   let version t = t.version
 
+  let segment_extents t =
+    let extents = Hashtbl.create 8 in
+    Hashtbl.iter (fun _ (reg : Reg.t) ->
+        let previous = Option.value (Hashtbl.find_opt extents reg.segment) ~default:0 in
+        Hashtbl.replace extents reg.segment (max previous reg.offset)) t.regs;
+    Hashtbl.fold (fun segment offset entries -> (segment, offset) :: entries)
+      extents []
+    |> List.sort compare
+
   let reg t reg_name =
     match Hashtbl.find_opt t.regs reg_name with
     | Some r -> r
@@ -113,6 +122,9 @@ end
 
 module type Pm4 = sig
   val packet3 : int -> int -> int
+  val packet3_write_data : int
+  val wr_confirm : int
+  val write_data_dst_sel : int -> int
   val packet3_nop : int
   val packet3_set_sh_reg : int
   val packet3_set_sh_reg_start : int

@@ -47,6 +47,8 @@ from tinygrad.runtime.autogen.am import (  # noqa: E402
 # PM4 symbols shared by both packet flavors (RDNA `Nv` and gfx9 `Soc15`).
 PM4_SHARED_INTS = [
     "PACKET3_NOP",
+    "PACKET3_WRITE_DATA",
+    "WR_CONFIRM",
     "PACKET3_SET_SH_REG",
     "PACKET3_SET_SH_REG_START",
     "PACKET3_SET_SH_REG_END",
@@ -69,6 +71,7 @@ PM4_SHARED_INTS = [
     "int_sel__mec_release_mem__send_interrupt_after_write_confirm",
 ]
 PM4_SHARED_ENCODERS = [
+    "WRITE_DATA_DST_SEL",
     "WAIT_REG_MEM_FUNCTION",
     "WAIT_REG_MEM_MEM_SPACE",
     "WAIT_REG_MEM_OPERATION",
@@ -307,7 +310,13 @@ PTE_FLAG_IDS = [
     "AMDGPU_PDE_PTE_GFX12",
 ]
 VM_LEVEL_IDS = ["AMDGPU_VM_PDB2", "AMDGPU_VM_PDB1", "AMDGPU_VM_PDB0", "AMDGPU_VM_PTB"]
-DOORBELL_IDS = ["AMDGPU_NAVI10_DOORBELL_MEC_RING0", "AMDGPU_NAVI10_DOORBELL_sDMA_ENGINE0"]
+DOORBELL_IDS = ["AMDGPU_NAVI10_DOORBELL_MEC_RING0", "AMDGPU_NAVI10_DOORBELL_sDMA_ENGINE0", "AMDGPU_DOORBELL_KIQ"]
+VF_IDS = [
+    "mmRCC_IOV_FUNC_IDENTIFIER", "NV_MAIBOX_CONTROL_TRN_OFFSET_BYTE",
+    "mmMAILBOX_MSGBUF_TRN_DW0", "mmMAILBOX_MSGBUF_RCV_DW0",
+    "IDH_REQ_GPU_INIT_ACCESS", "IDH_REQ_GPU_FINI_ACCESS", "IDH_READY_TO_ACCESS_GPU",
+    "NV_MAILBOX_POLL_ACK_TIMEDOUT", "NV_MAILBOX_POLL_MSG_TIMEDOUT",
+]
 
 # Interrupt-ring entry decoders: (name, dword index, shift, mask or None).
 IH_ENTRY_FIELDS = [
@@ -906,6 +915,9 @@ def gen_am():
     lines.append("")
     lines.append("(* Doorbell assignments. *)")
     lines += [int_let(nm, getattr(am, nm)) for nm in DOORBELL_IDS]
+    lines.append("")
+    lines.append("(* Virtual-function mailbox and identification. *)")
+    lines += [int_let(nm, getattr(am, nm)) for nm in VF_IDS]
     lines.append("")
 
     lines.append("(* Interrupt-ring entries: decoders over the 8 dwords of an entry. *)")

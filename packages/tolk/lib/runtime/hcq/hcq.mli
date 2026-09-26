@@ -115,6 +115,15 @@ module Mmio : sig
       default). Raises [Invalid_argument] if the subregion does not fit
       in [t]. *)
 
+  val read8 : t -> int -> int
+  (** [read8 t off] is the unsigned byte at offset [off]. Raises
+      [Invalid_argument] if [off] is outside the region. *)
+
+  val write8 : t -> int -> int -> unit
+  (** [write8 t off v] stores the byte [v] at offset [off]. Raises
+      [Invalid_argument] if [off] is outside the region or [v] is outside
+      the range [0] to [255]. *)
+
   val read32 : t -> int -> int32
   (** [read32 t off] is the 32-bit value at byte offset [off]. Raises
       [Invalid_argument] if [off + 4] exceeds the region. *)

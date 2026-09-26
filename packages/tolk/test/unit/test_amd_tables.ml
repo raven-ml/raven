@@ -15,6 +15,48 @@ module Am = Tolk_amd.Amd_tables.Am_defs
 let () =
   run "Amd_tables"
     [
+      group "virtual-function metadata"
+        [
+          test "mailbox addresses, messages and timeouts match the protocol" (fun () ->
+              equal (list int)
+                [0xde5; 0x3978; 0xe56; 0xe5a; 1; 3; 1; 500; 15000; 0]
+                [Am.mmrcc_iov_func_identifier; Am.nv_maibox_control_trn_offset_byte;
+                 Am.mmmailbox_msgbuf_trn_dw0; Am.mmmailbox_msgbuf_rcv_dw0;
+                 Am.idh_req_gpu_init_access; Am.idh_req_gpu_fini_access;
+                 Am.idh_ready_to_access_gpu; Am.nv_mailbox_poll_ack_timedout;
+                 Am.nv_mailbox_poll_msg_timedout; Am.amdgpu_doorbell_kiq]);
+          test "KIQ register writes use generation-matched PM4 fields" (fun () ->
+              List.iter (fun gfx9 ->
+                  let module P = (val Tables.pm4 ~gfx9) in
+                  equal int 0x37 P.packet3_write_data;
+                  equal int 0x100000 P.wr_confirm;
+                  equal int 0x100 P.(write_data_dst_sel 1);
+                  equal int 0xc0033700 P.(packet3 packet3_write_data 3))
+                [false; true]);
+          test "GC gating uses resolved inclusive segment extents" (fun () ->
+              List.iter (fun (version, expected) ->
+                  List.iter (fun bases ->
+                      let ip = Tables.Ip.create ~name:"gc" ~version ~bases in
+                      equal (list (pair int int)) expected (Tables.Ip.segment_extents ip))
+                    [Array.make 6 0; Array.init 6 (fun i -> (i + 1) * 0x10000)])
+                [((9, 4, 3), [0, 4794; 1, 24375]);
+                 ((9, 5, 0), [0, 4794; 1, 24375]);
+                 ((11, 0, 0), [0, 8275; 1, 24358]);
+                 ((12, 0, 0), [0, 8275; 1, 24386])]);
+          test "VF coherency and RLC gateway registers are available" (fun () ->
+              List.iter (fun (name, version) ->
+                  let ip = Tables.Ip.create ~name ~version ~bases:(Array.make 9 0) in
+                  let reg = Tables.Ip.reg ip
+                      "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL" in
+                  equal (pair int int) (2, 247) (reg.segment, reg.offset);
+                  equal (pair int int) (0, 0)
+                    (List.assoc "hdp_mem_flush_addr" (Array.to_list reg.fields)))
+                ["nbio", (7, 9, 0); "nbif", (6, 3, 1)];
+              let gc = Tables.Ip.create ~name:"gc" ~version:(9, 4, 3)
+                  ~bases:(Array.make 6 0) in
+              equal int 19660 (Tables.Ip.reg gc "regRLC_SPARE_INT").offset;
+              equal int 19561 (Tables.Ip.reg gc "regRLC_GPM_GENERAL_6").offset);
+        ];
       group "page-table flags"
         [
           test "bit-63 flags survive as int64" (fun () ->

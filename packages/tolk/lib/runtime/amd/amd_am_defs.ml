@@ -679,6 +679,18 @@ let amdgpu_vm_ptb = 3
 (* Doorbell assignments. *)
 let amdgpu_navi10_doorbell_mec_ring0 = 3
 let amdgpu_navi10_doorbell_sdma_engine0 = 0x100
+let amdgpu_doorbell_kiq = 0
+
+(* Virtual-function mailbox and identification. *)
+let mmrcc_iov_func_identifier = 0xde5
+let nv_maibox_control_trn_offset_byte = 0x3978
+let mmmailbox_msgbuf_trn_dw0 = 0xe56
+let mmmailbox_msgbuf_rcv_dw0 = 0xe5a
+let idh_req_gpu_init_access = 1
+let idh_req_gpu_fini_access = 3
+let idh_ready_to_access_gpu = 1
+let nv_mailbox_poll_ack_timedout = 0x1f4
+let nv_mailbox_poll_msg_timedout = 0x3a98
 
 (* Interrupt-ring entries: decoders over the 8 dwords of an entry. *)
 let soc15_client_id_from_ih_entry (e : int array) = e.(0) land 0xff
