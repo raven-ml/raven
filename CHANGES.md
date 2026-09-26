@@ -698,6 +698,10 @@ thread.
 
 ### Tolk (new)
 
+- Hand-built partial `PROGRAM` graphs complete only their missing compilation
+  stages, preserving supplied instructions, source and ABI metadata. Complete
+  programs can be reused without invoking a compiler.
+
 - Generated kernel declarations preserve explicit parameter names. Rendering
   and ABI validation now share the same naming rule and reject collisions
   between buffer or scalar parameters before native dispatch.

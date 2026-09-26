@@ -577,6 +577,84 @@ let compilation_worker_tests = group "Shared compilation workers"
        parallel_compilation_order_and_recursion;
      test "beam lowering stays in the caller" beam_compilation_stays_in_caller]
 
+let program_completion_tests =
+  let sink name = U.sink ~kernel_info:(kernel_info name) [] in
+  let renderer compile render = Renderer.make ~name:"stages" ~device:"TEST"
+      ~has_local:false ~has_shared:false ~shared_max:0
+      ~compiler:(Compiler.make ~name:"PROGRAM_STAGES" ~compile ()) ~render () in
+  group "PROGRAM completion"
+    [test "supplied source compiles without rendering or rewriting earlier stages" (fun () ->
+         let sink = sink "supplied_source" in
+         let linear = U.linear [sink] and source = U.source "supplied source bytes" in
+         let info = {(U.program_info_from_sink sink) with
+             global_size = [U.Launch_int 9; U.Launch_int 1; U.Launch_int 1]} in
+         let input = U.with_tag "prepared-program"
+             (U.program ~sink ~linear ~source ~info ()) in
+         let seen = ref [] in
+         let ren = renderer (fun src -> seen := src :: !seen; Bytes.of_string ("compiled:" ^ src))
+             (fun ?name program -> ignore (name, program); fail "source must bypass rendering") in
+         let output = Codegen.to_program ren input in
+         equal (list string) ["supplied source bytes"] !seen;
+         List.iteri (fun i node -> is_true (U.equal node (U.src output).(i))) [sink; linear; source];
+         is_true (Option.get (U.as_program_info output) == info);
+         equal (option string) (Some "prepared-program") (U.node_tag output);
+         equal (option string) (Some "compiled:supplied source bytes")
+           (U.Arg.as_string (U.arg (U.src output).(3))));
+     test "supplied linear instructions are retained and receive missing estimates" (fun () ->
+         let sink = sink "supplied_linear" in
+         let linear = U.linear [U.const_int 17; sink] in
+         let info = U.program_info_from_sink sink in
+         let rendered = ref false in
+         let ren = renderer Bytes.of_string (fun ?name nodes ->
+             equal (option string) (Some "supplied_linear") name;
+             equal (list string) (List.map U.semantic_key (U.children linear))
+               (List.map U.semantic_key nodes);
+             rendered := true; "rendered supplied linear") in
+         let output = Codegen.to_program ren (U.program ~sink ~linear ~info ()) in
+         is_true !rendered;
+         is_true (U.equal linear (U.src output).(1));
+         is_true (Option.is_some (Option.get (U.as_kernel_info (U.src output).(0))).estimates);
+         is_true (Option.get (U.as_program_info output) == info));
+     test "prepared sink completion does not repeat beam optimization" (fun () ->
+         let sink = U.sink ~kernel_info:{(kernel_info "prepared_sink") with beam = 1} [] in
+         let ren = renderer Bytes.of_string (fun ?name nodes ->
+             ignore name;
+             is_true (List.exists (fun node -> U.op node = Ops.Sink) nodes);
+             "prepared sink") in
+         let input = U.program ~sink ~info:(U.program_info_from_sink sink) () in
+         let output = Codegen.to_program ren input in
+         equal (list string) ["SINK"; "LINEAR"; "SOURCE"; "BINARY"]
+           (List.map (fun node -> Ops.name (U.op node)) (U.children output)));
+     test "complete programs need no compiler and retain identity" (fun () ->
+         let input = program_of (sink "already_compiled") in
+         is_true (U.equal input (Codegen.to_program test_renderer input)));
+     test "missing metadata is derived without recompiling supplied binary" (fun () ->
+         let input = U.replace (program_of (sink "derive_metadata")) ~arg:U.Arg.Empty () in
+         let output = Codegen.to_program test_renderer input in
+         equal string (Target.to_string (Renderer.target test_renderer))
+           (Target.to_string (Option.get (U.as_program_info output)).target);
+         List.iter2 (fun before after -> is_true (U.equal before after))
+           (U.children input) (U.children output));
+     test "Realize deduplicates unfinished programs and skips complete programs" (fun () ->
+         let device = test_device ~name:"TEST:partial-program-cache" (runtime_state ()) in
+         let sink = sink "partial_program_cache" in
+         let partial = U.program ~sink ~linear:(U.linear [sink]) ~source:(U.source "partial")
+             ~info:(U.program_info_from_sink sink) () in
+         let complete = program_of sink and count = ref 0 in
+         let ren = renderer (fun source -> incr count; Bytes.of_string source)
+             (fun ?name nodes -> ignore (name, nodes); fail "source must bypass rendering") in
+         let compile owner = ignore owner; Codegen.to_program ren in
+         let input = compilation_batch [partial; complete; partial] in
+         let output = Realize.compile_linear ~device ~to_program:compile input in
+         equal int 1 !count;
+         let calls = U.src output in
+         let body i = (Option.get (U.as_call calls.(i))).body in
+         is_true (U.equal (body 0) (body 2));
+         is_true (U.equal complete (body 1));
+         equal int 4 (Array.length (U.src (body 0)));
+         ignore (Realize.compile_linear ~device ~to_program:compile input);
+         equal int 1 !count)]
+
 exception Capture_test_failure
 
 type _ Effect.t += Pause_capture : unit Effect.t
@@ -888,6 +966,7 @@ let () =
   run "Engine_realize"
     [
       compilation_worker_tests;
+      program_completion_tests;
       test "multi-owner templates retire when a secondary owner is replaced" obsolete_multi_owner_template;
       test "concurrent submissions retain their own address tables"
         (serialized_submission_tables ~independent:false);

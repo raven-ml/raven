@@ -127,6 +127,19 @@ let program_call spec bufs =
 
 let to_program device = Codegen.to_program ~optimize:false (Device.renderer device)
 
+let source_stage_program_executes () =
+  let device = cpu "source-stage-program" in
+  let spec = Device.compile_program device ~name:"source_stage_increment" (increment_program ()) in
+  let output = create_i32_buffer device [0] and input = create_i32_buffer device [41] in
+  Fun.protect ~finally:(fun () -> List.iter Device.Buffer.deallocate [output; input]) (fun () ->
+      let call = program_call spec [output; input] in
+      let body = (Option.get (U.as_call call)).body in
+      let partial = U.replace body ~src:(Array.sub (U.src body) 0 3) () in
+      let args = Array.copy (U.src call) in
+      args.(0) <- partial;
+      Realize.run_linear ~device ~to_program ~wait:true (U.linear [U.replace call ~src:args ()]);
+      equal (list int) [42] (read_i32_buffer output))
+
 let runtime_survives_owner_replacement () =
   let name = "cached-executable-lifetime" in
   let program, output, input =
@@ -1322,6 +1335,8 @@ let main () =
                 ignore
                   (Device.Buffer.view base ~size:2 ~dtype:Dtype.int32
                      ~offset:12)));
+          test "completes a source-stage PROGRAM before CPU execution"
+            source_stage_program_executes;
           test "compile and run a cross-process imported kernel"
             imported_program_runs;
         ];

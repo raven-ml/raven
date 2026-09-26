@@ -120,9 +120,10 @@ val compile_linear :
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t
 (** [compile_linear ~device ?beam ?profile ~to_program linear] rewrites every kernel
-    {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink}
-    into a call whose body is the compiled {!Tolk_uop.Ops.Program} returned by
-    [to_program execution_device sink]. The execution device comes from the
+    {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink} or an
+    unfinished {!Tolk_uop.Ops.Program} into a call with the complete program
+    returned by [to_program execution_device body]. Programs already carrying
+    metadata and a final binary are retained unchanged. The execution device comes from the
     call arguments, falling back to [device] for a kernel without placed
     arguments. The program cache uses that device and its selected renderer.
     {!Tolk_uop.Ops.Store} calls are left unchanged.

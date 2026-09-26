@@ -308,8 +308,12 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
   let calls = U.toposort ~enter_calls:true linear
       |> List.filter_map (fun call ->
         match U.as_call call with
-        | Some { body; args } when U.op body = Tolk_uop.Ops.Sink
-                                  && Option.is_some (U.as_kernel_info body) ->
+        | Some { body; args }
+          when (U.op body = Tolk_uop.Ops.Sink && Option.is_some (U.as_kernel_info body))
+            || (U.op body = Tolk_uop.Ops.Program
+                && not (Option.is_some (U.as_program_info body)
+                        && Array.length (U.src body) > 0
+                        && U.op (U.src body).(Array.length (U.src body) - 1) = Tolk_uop.Ops.Binary)) ->
             let device =
               match List.find_map (fun arg -> match U.device_of arg with
                   | Some (U.Single name) | Some (U.Multi (Some name :: _)) -> Some name
@@ -344,7 +348,7 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
     key, program in
   let compiled =
     if List.exists (fun (_, _, _, _, body) ->
-        (Option.get (U.as_kernel_info body)).U.beam > 0) tasks then
+        match U.as_kernel_info body with Some ki -> ki.U.beam > 0 | None -> false) tasks then
       (* Beam owns device timing in this caller; only its candidates enter
          workers, avoiding nested admission and device work in a worker. *)
       Array.of_list (List.map compile tasks)

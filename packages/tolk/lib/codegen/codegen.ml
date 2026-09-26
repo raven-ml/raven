@@ -112,47 +112,67 @@ and full_rewrite_to_sink ?(optimize = true) ?beam_device ren sink =
   let sink = Codegen_lower.lower ren sink in
   sink
 
-(* Build an on-graph PROGRAM node for kernel [sink]: optimize + lower, derive
-   program metadata, linearize, render, and compile. The result is
-   [PROGRAM(SINK, LINEAR, SOURCE, BINARY)] carrying the launch/argument
-   metadata as its arg, mirroring the compiled-kernel representation the
-   engine dispatches on. *)
-and to_program ?(optimize = true) ?beam_device ren sink =
-  let requested = kernel_info_exn "to_program" sink in
-  let optimize = optimize && not (has_tag sink) in
-  if optimize && requested.beam > 0 && Option.is_none beam_device then
-    invalid_arg "Codegen.to_program: beam search requires a runtime device";
-  let full_sink = full_rewrite_to_sink ~optimize ?beam_device ren sink in
-  let ki = kernel_info_exn "to_program" full_sink in
-  (* Linearization detaches STORE gates into IF statements. Capture arguments
-     while every gate-only dependency is still reachable from the SINK. *)
-  let info = U.program_info_from_sink ~target:(Renderer.target ren) full_sink in
-  let program = Linearizer.linearize full_sink in
-  let full_sink = List.hd (List.rev program) in
-  let src = Renderer.render ren ~name:ki.name program in
-  let comp =
-    match Renderer.compiler ren with
-    | Some c -> c
-    | None -> invalid_arg "Codegen.to_program: device renderer has no compiler"
+(* SINK input still needs lowering; a PROGRAM already owns its prepared stages. *)
+and to_program ?(optimize = true) ?beam_device ren input =
+  let program = match U.op input with
+    | Ops.Sink ->
+        let requested = kernel_info_exn "to_program" input in
+        let optimize = optimize && not (has_tag input) in
+        if optimize && requested.beam > 0 && Option.is_none beam_device then
+          invalid_arg "Codegen.to_program: beam search requires a runtime device";
+        let sink = full_rewrite_to_sink ~optimize ?beam_device ren input in
+        (* Linearization detaches STORE gates into IF statements. Capture
+           arguments while gate-only dependencies are still reachable. *)
+        let info = U.program_info_from_sink ~target:(Renderer.target ren) sink in
+        U.program ~sink ~info ()
+    | Ops.Program ->
+        (match U.children input with
+         | sink :: _ when U.op sink = Ops.Sink ->
+             (match U.as_program_info input with
+              | Some _ -> input
+              | None ->
+                  let info = U.program_info_from_sink ~target:(Renderer.target ren) sink in
+                  U.replace input ~arg:(U.Arg.Program_info info) ())
+         | _ -> invalid_arg "Codegen.to_program: invalid PROGRAM stages")
+    | _ -> invalid_arg "Codegen.to_program: expected SINK or PROGRAM"
   in
-  if debug () >= 3 && ki.applied_opts <> [] then
-    Printf.eprintf "%-25s opts: %s\n%!" ki.name
-      (String.concat ", " (List.map U.Opt.to_string ki.applied_opts));
-  if debug () >= 4 then Printf.eprintf "%s\n%!" src;
-  let lib = Compiler.compile_cached comp src in
-  let full_sink =
-    match ki.estimates with
-    | Some _ -> full_sink
-    | None ->
-        let estimates =
-          Program_spec.Estimates.(to_uop (of_program program))
-        in
-        U.replace full_sink
-          ~arg:(U.Arg.Kernel_info { ki with estimates = Some estimates })
-          ()
-  in
-  U.program ~sink:full_sink ~linear:(U.linear program) ~source:(U.source src)
-    ~binary:(U.binary (Bytes.to_string lib)) ~info ()
+  complete_program ren program
+
+and complete_program ren program =
+  match U.children program with
+  | [sink] when U.op sink = Ops.Sink ->
+      let ki = kernel_info_exn "to_program" sink in
+      if debug () >= 3 && ki.applied_opts <> [] then
+        Printf.eprintf "%-25s opts: %s\n%!" ki.name
+          (String.concat ", " (List.map U.Opt.to_string ki.applied_opts));
+      let instructions = Linearizer.linearize sink in
+      let sink = List.hd (List.rev instructions) in
+      complete_program ren (U.replace program ~src:[|sink; U.linear instructions|] ())
+  | [sink; linear] when U.op sink = Ops.Sink && U.op linear = Ops.Linear ->
+      let ki = kernel_info_exn "to_program" sink in
+      let instructions = U.children linear in
+      let sink = match ki.estimates with
+        | Some _ -> sink
+        | None ->
+            let estimates = Program_spec.Estimates.(to_uop (of_program instructions)) in
+            U.replace sink ~arg:(U.Arg.Kernel_info {ki with estimates = Some estimates}) () in
+      let source = Renderer.render ren ~name:ki.name instructions in
+      complete_program ren (U.replace program ~src:[|sink; linear; U.source source|] ())
+  | [sink; linear; source]
+    when U.op sink = Ops.Sink && U.op linear = Ops.Linear && U.op source = Ops.Source ->
+      let source_text = match U.Arg.as_string (U.arg source) with
+        | Some text -> text
+        | None -> invalid_arg "Codegen.to_program: SOURCE is not a string" in
+      if debug () >= 4 then Printf.eprintf "%s\n%!" source_text;
+      let compiler = match Renderer.compiler ren with
+        | Some compiler -> compiler
+        | None -> invalid_arg "Codegen.to_program: device renderer has no compiler" in
+      let binary = Compiler.compile_cached compiler source_text in
+      U.replace program ~src:[|sink; linear; source; U.binary (Bytes.to_string binary)|] ()
+  | [sink; linear; source; binary]
+    when U.op sink = Ops.Sink && U.op linear = Ops.Linear
+         && U.op source = Ops.Source && U.op binary = Ops.Binary -> program
+  | _ -> invalid_arg "Codegen.to_program: invalid PROGRAM stages"
 
 (* Copy submission needs lowering, so install it at the existing compiler
    boundary rather than introduce another execution path in storage. *)

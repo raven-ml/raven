@@ -53,22 +53,22 @@ val to_program :
   Renderer.t ->
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t
-(** [to_program ?optimize ?beam_device ren sink] compiles kernel [sink]
-    into an on-graph {!Tolk_uop.Ops.Program} node
-    [PROGRAM(SINK, LINEAR, SOURCE, BINARY)].
+(** [to_program ?optimize ?beam_device ren input] completes a kernel into an
+    on-graph {!Tolk_uop.Ops.Program} node [PROGRAM(SINK, LINEAR, SOURCE, BINARY)].
 
-    It runs {!full_rewrite_to_sink}, derives program metadata with
-    {!Tolk_uop.Uop.program_info_from_sink}, linearizes, renders the kernel
-    source, and compiles it to a binary. The rendered source and compiled
-    binary are attached as {!Tolk_uop.Ops.Source} and {!Tolk_uop.Ops.Binary}
-    children; launch dimensions, scalar variables, and buffer slots are
-    carried on the node's {!Tolk_uop.Uop.program_info} arg.
+    A [SINK] input must carry {!Tolk_uop.Uop.kernel_info}. It is optimized and
+    lowered through {!full_rewrite_to_sink}, and its argument and launch
+    metadata are captured before linearization. [optimize] defaults to [true];
+    tagged sinks skip optimization. [beam_device] supplies the runtime when
+    an optimized sink requests beam search.
 
-    [sink] must carry {!Tolk_uop.Uop.kernel_info}. When [optimize] is [true]
-    (default) and [sink] is untagged, the optimization block in
-    {!full_rewrite_to_sink} runs; tagged sinks skip it. [beam_device] supplies
-    the runtime device used for beam-search buffers. Omit it for device-free
-    compilation when the kernel does not request beam search.
+    A [PROGRAM] input is already prepared: supplied stages are retained without
+    repeating optimization or lowering. Missing [LINEAR], [SOURCE], and [BINARY]
+    stages are produced in order. Existing program metadata is preserved; absent
+    metadata is derived from its sink and the renderer target. Missing estimates
+    are computed when rendering a [LINEAR] stage. A complete program is returned
+    unchanged and does not require a compiler.
 
-    Raises [Invalid_argument] if the renderer has no compiler, or if an
-    optimized kernel requests beam search without [beam_device]. *)
+    Raises [Invalid_argument] for malformed stages, when compilation is needed
+    but the renderer has no compiler, or when an optimized sink requests beam
+    search without [beam_device]. *)
