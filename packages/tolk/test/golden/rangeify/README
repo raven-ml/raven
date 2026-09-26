@@ -1,13 +1,13 @@
 Rangeify source fixtures
 =======================
 
-The reference driver uses tinygrad a83c6f8011863c17ef4e9c24c59e521be3c754d3.
+The reference driver uses tinygrad d0c9745274335e44b5dd7c15b8422c2b684a3ed9.
 Generate into a separate directory before comparing or promoting expectations:
 
   DEV=CPU python3 packages/tolk/test/golden/rangeify/generate_expected.py \
-    --tinygrad _plans/tinygrad-a83c6f801 --output _plans/goldens-a83/rangeify
+    --tinygrad _plans/tinygrad-d0c974527 --output _plans/goldens-d0/rangeify
   DEV=CPU _build/default/packages/tolk/test/golden/rangeify/generate_actual.exe \
-    _plans/goldens-a83/rangeify
+    _plans/goldens-d0/rangeify
 
 The ordinary cases compare tensor-level graph lowering and rendered source.
 The four isolated Llama cases retain individual model-derived kernel graphs.
@@ -35,3 +35,9 @@ final logits, with absolute tolerance 2e-5, using Tolk's normal CPU execution
 path. Run it with:
 
   DEV=CPU _build/default/packages/tolk/test/golden/rangeify/test_llama.exe
+
+Raw .expected files retain the unchanged reference output. Adjacent
+.tolk.expected files cover the reviewed IEEE differences in DIVERGENCES.md:
+float association and reduction identities, and NaN/tie behavior in MAX.
+Dune compares those cases against the explicit local snapshot. Reference
+generation never rewrites local snapshots; no source normalization is used.

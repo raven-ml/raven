@@ -1,0 +1,9 @@
+Codegen source fixtures
+=======================
+
+Raw .expected files contain unchanged tinygrad
+d0c9745274335e44b5dd7c15b8422c2b684a3ed9 output. Adjacent .tolk.expected
+files cover the reviewed IEEE differences in DIVERGENCES.md: float grouping,
+leading reduction +0, and MAX NaN propagation and second-operand ties.
+Dune compares those cases against the explicit local snapshot. Reference
+generation excludes local snapshots; no source normalization is used.
