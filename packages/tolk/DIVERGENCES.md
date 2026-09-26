@@ -611,8 +611,11 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   no accumulator does: a reduce left without a loop folds its lanes onto +0
   (a partial sum nested inside an accumulating loop carries it too, one add
   per iteration), and a sum with nothing left to reduce adds +0. Coverage:
-  rune `test_jit` and `test_jit_metal` "zeros keep their sign". Remove this
-  ruling when upstream keeps these signs.
+  rune `test_jit` and `test_jit_metal` "zeros keep their sign". Parity
+  fixtures: llama rmsnorm, ffn_gate and output_projection, the reduce_*
+  drivers, group_reduce_pair, the tc_matmul_* epilogues, and the reduces of
+  multi_allreduce_late, multi_allreduce_naive and multi_allreduce_ring.
+  Remove this ruling when upstream keeps these signs.
 
 - **A sum reduction's association is unspecified; its hoists stay.** The
   preceding rulings keep a program's own float arithmetic as written. An ADD
