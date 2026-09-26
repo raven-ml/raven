@@ -84,8 +84,8 @@ let floor_mod_checked x d =
       in
       int_of_int64_checked r
 
-let floordiv x y = Uop.alu_binary ~op:Ops.Floordiv ~lhs:x ~rhs:y
-let floormod x y = Uop.alu_binary ~op:Ops.Floormod ~lhs:x ~rhs:y
+let floordiv = Uop.Promoting.( // )
+let floormod = Uop.Promoting.( mod )
 
 let floordiv_pat x y = Upat.alu [ x; y ] Ops.Floordiv
 
@@ -100,7 +100,7 @@ let rule_nested_div =
     let x = bs $ "x" and c = bs $ "c" in
     let a = bs $ "a" and d = bs $ "d" in
     if Bound.lt Bound.zero (Uop.vmin d)
-    then Some (floordiv Uop.O.(x + (a * c)) Uop.O.(c * d))
+    then Some (floordiv Uop.Promoting.(x + (a * c)) Uop.Promoting.(c * d))
     else None
 
 (* Rule 1b: split the multiple of [d] out of the constant, for any [d <> 0]:
@@ -117,9 +117,9 @@ let rule_add_const_divmod =
     | Some cv, Some dv when dv <> 0 ->
         (match floor_mod_checked cv dv, floor_div_checked cv dv with
          | Some c_mod_v, Some c_div_v when c_mod_v <> cv ->
-             let split = Uop.O.(x + Uop.const_like c c_mod_v) in
+             let split = Uop.Promoting.(x + Uop.const_like c c_mod_v) in
              if Uop.op n = Ops.Floordiv
-             then Some Uop.O.(floordiv split d + Uop.const_like c c_div_v)
+             then Some Uop.Promoting.(floordiv split d + Uop.const_like c c_div_v)
              else Some (floormod split d)
          | _ -> None)
     | _ -> None
@@ -147,7 +147,7 @@ let try_cancel_divmod d_op x y =
   let xdiv = floordiv x y in
   let q = Uop.vmin xdiv in
   if not (Bound.equal q (Uop.vmax xdiv)) then None
-  else if d_op = Ops.Floormod then Some Uop.O.(x - (Uop.const (Bound.const (Uop.dtype x) q) * y))
+  else if d_op = Ops.Floormod then Some Uop.Promoting.(x - (Uop.const (Bound.const (Uop.dtype x) q) * y))
   else Some (Uop.const (Bound.const (Uop.dtype xdiv) q))
 
 (* remove_nested_mod for ADD: (a%4 + b) % 2 -> (a+b) % 2 when the inner
@@ -173,7 +173,7 @@ let try_remove_nested_mod d_op x y c =
       let sum = Uop.usum new_xs in
       let sum_c =
         if const = 0 then sum
-        else Uop.O.(sum + Uop.const_like sum const)
+        else Uop.Promoting.(sum + Uop.const_like sum const)
       in
       Some (floormod sum_c y)
 
@@ -242,7 +242,7 @@ let try_fold_divmod_congruence d_op x y c =
             else
               let r_terms =
                 List.map2
-                  (fun r v -> Uop.O.(Uop.const_like v r * v))
+                  (fun r v -> Uop.Promoting.(Uop.const_like v r * v))
                   rems unwrap_terms
               in
               let const_u = Uop.const_like x const_mod_c in
@@ -258,7 +258,7 @@ let try_fold_divmod_congruence d_op x y c =
                     (match mul_checked k c with
                      | Some offset_v ->
                          let offset = Uop.const_like y offset_v in
-                         result := Some Uop.O.(rem_sum - offset)
+                         result := Some Uop.Promoting.(rem_sum - offset)
                      | None -> ())
                   else
                     let coeffs =
@@ -276,7 +276,7 @@ let try_fold_divmod_congruence d_op x y c =
                               let quot_terms =
                                 List.map2
                                   (fun coeff v ->
-                                    Uop.O.(Uop.const_like v coeff * v))
+                                    Uop.Promoting.(Uop.const_like v coeff * v))
                                   coeffs unwrap_terms
                               in
                               let const_part = Uop.const_like x const_part_v in
@@ -331,18 +331,18 @@ let try_gcd_remainder d_op x y c =
              | Some const_mod ->
                  let new_x =
                    if const_mod = 0 then xp_g
-                   else Uop.O.(xp_g + Uop.const_like xp_g const_mod)
+                   else Uop.Promoting.(xp_g + Uop.const_like xp_g const_mod)
                  in
                  if Bound.lt (Uop.vmin new_x) Bound.zero then None
                  else if d_op = Ops.Floormod then
                    let divisor = Uop.const_like y c_over_g in
                    let factor = Uop.const_like y g in
                    let offset = Uop.const_like y const_rem in
-                   Some Uop.O.(floormod new_x divisor * factor + offset)
+                   Some Uop.Promoting.(floormod new_x divisor * factor + offset)
                  else
                    let divisor = Uop.const_like y c_over_g in
                    let offset = Uop.const_like y const_quot in
-                   Some Uop.O.(floordiv new_x divisor + offset))
+                   Some Uop.Promoting.(floordiv new_x divisor + offset))
         | _ -> None
 
 (* divide_by_gcd: variable-denominator fallback. x op y -> (x/g) op (y/g)
@@ -357,7 +357,7 @@ let try_divide_by_gcd d_op x y =
        | Some x_g, Some y_g ->
            let ret = Uop.alu_binary ~op:d_op ~lhs:x_g ~rhs:y_g in
            if d_op = Ops.Floormod
-           then Some Uop.O.(ret * gcd_all)
+           then Some Uop.Promoting.(ret * gcd_all)
            else Some ret
        | _ -> None)
 
@@ -380,12 +380,12 @@ let try_factor_remainder d_op x y =
                     (match Uop.divides u c with
                      | Some u_c ->
                          let rem_coeff = Uop.const_like y c_mod in
-                         rem := Uop.O.(u_c * rem_coeff) :: !rem;
+                         rem := Uop.Promoting.(u_c * rem_coeff) :: !rem;
                          if d_op = Ops.Floordiv then
                            (match floor_div_checked c y_c with
                             | Some c_div ->
                                 let quo_coeff = Uop.const_like y c_div in
-                                quo := Uop.O.(u_c * quo_coeff) :: !quo
+                                quo := Uop.Promoting.(u_c * quo_coeff) :: !quo
                             | None -> failed := true)
                          else quo := Uop.const_like u 0 :: !quo
                      | None -> failed := true)
@@ -402,7 +402,7 @@ let try_factor_remainder d_op x y =
       if Bound.lt (Uop.vmin rem_sum) Bound.zero then None
       else if d_op = Ops.Floormod
       then Some (floormod rem_sum y)
-      else Some Uop.O.(floordiv rem_sum y + Uop.usum (List.rev !quo))
+      else Some Uop.Promoting.(floordiv rem_sum y + Uop.usum (List.rev !quo))
 
 (* nest_by_factor: for each non-trivial common factor [f] of a numerator
    term that also divides [c], try rewriting [x op c] via [x / f] and a
@@ -426,7 +426,7 @@ let rec try_nest_by_factor d_op x y c =
     List.iter2 (fun f t_opt ->
       match floor_mod_checked f div_, t_opt with
       | Some r, Some t when r <> 0 ->
-          b_parts := Uop.O.(Uop.const_like t r * t) :: !b_parts
+          b_parts := Uop.Promoting.(Uop.const_like t r * t) :: !b_parts
       | Some _, _ -> ()
       | None, _ -> failed := true) factors terms;
     match !failed, floor_mod_checked const div_, floor_div_checked c div_ with
@@ -440,7 +440,7 @@ let rec try_nest_by_factor d_op x y c =
         if Bound.le Bound.zero (Uop.vmin b) && Bound.lt (Uop.vmax b) (Bound.int div_) then
           let c_div = Uop.const_like x c_div_v in
           let factor_u = Uop.const_like x div_ in
-          Some Uop.O.(floormod newxs c_div * factor_u + b)
+          Some Uop.Promoting.(floormod newxs c_div * factor_u + b)
         else None
     | _ -> None
   in

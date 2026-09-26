@@ -3696,8 +3696,16 @@ module Promoting = struct
   let ( < ) = binop Ops.Cmplt
   let ne = binop Ops.Cmpne
   let xor = binop Ops.Xor
+  let and_ = binop Ops.And
+  let or_ = binop Ops.Or
   let pow = binop Ops.Pow
   let maximum = binop Ops.Max
+
+  let where condition yes no =
+    let b, c = broadcasted yes no in
+    alu_ternary ~op:Ops.Where ~a:condition ~b ~c
+
+  let not_ a = ne (cast ~src:a ~dtype:Dtype.bool) (const_bool true)
 
   let neg a =
     if Dtype.is_bool (dtype a) then ne a (const_bool true)
@@ -3712,6 +3720,12 @@ module Promoting = struct
     if not (Dtype.is_int (dtype lhs) && Dtype.is_int (dtype rhs)) then
       invalid_arg "Uop.Promoting.( // ): expected integer operands";
     alu_binary ~op:Ops.Floordiv ~lhs ~rhs
+
+  let ( mod ) a b =
+    let lhs, rhs = broadcasted a b in
+    if not (Dtype.is_int (dtype lhs) && Dtype.is_int (dtype rhs)) then
+      invalid_arg "Uop.Promoting.( mod ): expected integer operands";
+    alu_binary ~op:Ops.Floormod ~lhs ~rhs
 
   (* Integers take [max] under the involution [x lxor k], with
      [k = min + max] of the dtype: [-1] when signed, all ones when

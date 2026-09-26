@@ -70,10 +70,9 @@ acceptance requirement; skipped tests are not execution evidence.
 
 ## 3. Close parity and adopt the reference
 
-- Audit the remaining rule ports for promotion: `symbolic.ml`, `divandmod.ml`,
-  `postrange.ml` and the other codegen rule bodies build with `U.O`, which
-  promotes nothing, where the reference's source uses its promoting operators.
-  A ported body uses `U.Promoting` there, as the reduce-collapse rules do.
+- Audit promotion in the remaining decomposition, range/index and WMMA rule
+  bodies, plus `usum`/`uprod`. Use `U.Promoting` where the reference uses
+  promoting operators and preserve raw ALU construction where it does not.
 
 - Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
   weak-integer overflow with movements, sliced aliases and symbolic copies.

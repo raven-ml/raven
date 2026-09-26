@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- Symbolic and range optimization now use tinygrad's operand promotion when
+  constructing arithmetic. Constant-base powers with integer exponents no
+  longer truncate the logarithm used in their decomposition.
+
 - `CHECK_OOB` rejects affine index proofs that rely on unsigned multiplication
   or shifts not wrapping. Widening an already wrapped value could previously
   make an unsafe access appear valid.

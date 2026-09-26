@@ -1865,6 +1865,23 @@ module Promoting : sig
   val ne : t -> t -> t
   (** [ne a b] is {!Ops.Cmpne} of the {!broadcasted} operands. *)
 
+  val where : t -> t -> t -> t
+  (** [where condition yes no] selects between the {!broadcasted} branches.
+      The condition must be boolean. *)
+
+  val not_ : t -> t
+  (** [not_ a] casts [a] to boolean and compares it with [true]. *)
+
+  val and_ : t -> t -> t
+  (** [and_ a b] is {!Ops.And} of the {!broadcasted} operands. *)
+
+  val or_ : t -> t -> t
+  (** [or_ a b] is {!Ops.Or} of the {!broadcasted} operands. *)
+
+  val ( mod ) : t -> t -> t
+  (** [a mod b] is {!Ops.Floormod} of the {!broadcasted} operands.
+      Raises [Invalid_argument] unless both promote to an integer dtype. *)
+
   val xor : t -> t -> t
   (** [xor a b] is {!Ops.Xor} of the {!broadcasted} operands. *)
 

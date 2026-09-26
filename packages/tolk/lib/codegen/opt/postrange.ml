@@ -301,7 +301,7 @@ let shift_to ?(top = false) ?input_new_rng t rng amount new_kind =
         U.range ~size:(U.const (Const.int (U.dtype rng) amount)) ~axis ~kind:new_kind ()
   in
   let replaced_rng = U.replace rng ~src:[| old_sz |] () in
-  let open U.O in
+  let open U.Promoting in
   let sub_axis =
     if top then (new_rng * old_sz) + replaced_rng
     else (replaced_rng * U.const_int amount) + new_rng
@@ -325,7 +325,7 @@ let const_dims t kinds =
 
 let upcast_size t =
   let fs = full_shape t in
-  List.fold_left (fun acc axis -> U.O.(acc * List.nth fs axis))
+  List.fold_left (fun acc axis -> U.Promoting.(acc * List.nth fs axis))
     (U.const_int 1) (axes_of t [ Axis_type.Upcast; Axis_type.Unroll ])
   |> U.simplify
 
@@ -454,13 +454,13 @@ let check_shared_memory t axis kind amount =
   | Some red when (kind = Axis_type.Local && List.mem axis (reduce_axes t))
                   || group_for_reduces t > 0 ->
       let fs = full_shape t in
-      let lanes = List.fold_left (fun acc axis -> U.O.(acc * List.nth fs axis))
+      let lanes = List.fold_left (fun acc axis -> U.Promoting.(acc * List.nth fs axis))
           (U.const_int 1)
           (axes_of t [ Axis_type.Upcast; Axis_type.Warp; Axis_type.Local ]) in
-      let needed = U.simplify U.O.(U.const_int amount * lanes
+      let needed = U.simplify U.Promoting.(U.const_int amount * lanes
           * U.const_int (Dtype.itemsize (U.dtype red))) in
       let limit = Renderer.shared_max t.ren in
-      check (U.resolve ~default:false U.O.(not_ (U.const_int limit < needed)))
+      check (U.resolve ~default:false U.Promoting.(not_ (U.const_int limit < needed)))
         (strf "exceeds shared memory: needs %s, max %d"
            (Render.expr_to_string needed) limit)
   | _ -> ()

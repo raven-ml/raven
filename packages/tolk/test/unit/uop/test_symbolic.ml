@@ -627,8 +627,7 @@ let self_fold_tests =
           let result = sym expr in
           (match result with
           | Some r ->
-              check_op r Ops.Neg;
-              is_true (src r 0 == x)
+              equal uop (U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(idx (-1))) r
           | None -> fail "expected rule to fire"));
       test "x ^ x → 0" (fun () ->
           let x = var "x" 0 10 in
@@ -1550,6 +1549,41 @@ let distributed_negation_keeps_scaled_terms_shared () =
   equal ~msg:"floating negation preserves grouping and signed zero"
     uop expression (simplify expression)
 
+let rule_body_promotion_tests =
+  let x () = Uop.param ~slot:830 ~dtype:Dtype.int32 () in
+  let apply matcher input =
+    match Upat.Pattern_matcher.rewrite matcher input with
+    | Some result -> result
+    | None -> fail "expected the source-matched rewrite to apply" in
+  group "rule body promotion"
+    [ test "constant-base power promotes an integer exponent before log multiplication" (fun () ->
+          let exponent = x () in
+          let base = Uop.const_float 3. in
+          let input = Uop.alu_binary ~op:Ops.Pow ~lhs:base ~rhs:exponent in
+          let product = Uop.alu_binary ~op:Ops.Mul
+              ~lhs:(Uop.cast ~src:exponent ~dtype:Dtype.weakfloat)
+              ~rhs:(Uop.const_float (log 3. /. log 2.)) in
+          let expected = Uop.alu_unary ~op:Ops.Exp2 ~src:product in
+          equal uop expected (apply Symbolic.symbolic_simple input));
+      test "self-addition keeps its introduced multiplier weak" (fun () ->
+          let x = x () in
+          let expected = Uop.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(Uop.const_int 2) in
+          equal uop expected (apply Symbolic.symbolic Uop.O.(x + x)));
+      test "negative floor divisor uses promoting negation" (fun () ->
+          let x = x () in
+          let expected = Uop.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(Uop.const_int (-1)) in
+          equal uop expected
+            (apply Symbolic.symbolic_simple Uop.O.(x // Uop.const_int (-1))));
+      test "nested division commits newly built weak arithmetic" (fun () ->
+          let x = x () in
+          let one = Uop.const_int 1 and two = Uop.const_int 2
+          and three = Uop.const_int 3 in
+          let numerator = Uop.O.(x + Uop.cast ~src:(one * two) ~dtype:Dtype.int32) in
+          let denominator = Uop.cast ~src:Uop.O.(two * three) ~dtype:Dtype.int32 in
+          let expected = Uop.O.(numerator // denominator) in
+          equal uop expected
+            (apply Divandmod.div_and_mod_symbolic Uop.O.(((x // two) + one) // three))) ]
+
 let integer_width_folding_tests =
   group "integer width folding"
     [
@@ -1585,6 +1619,7 @@ let () =
      @ [
          test "END preserves effects" end_preserves_effects;
          integer_width_folding_tests;
+         rule_body_promotion_tests;
          test "distributed negation keeps scaled terms shared"
            distributed_negation_keeps_scaled_terms_shared;
          const_fold_tests;

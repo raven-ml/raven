@@ -338,7 +338,7 @@ let weak_exponent c v =
 let simplify_pow x c =
   let whole v = Float.of_int (Float.to_int v) = v in
   let half_integer v = whole (v -. 0.5) in
-  let pow x v = Uop.alu_binary ~op:Ops.Pow ~lhs:x ~rhs:v in
+  let pow = Uop.Promoting.pow in
   match const_numeric_v c with
   | None -> None
   | Some e ->
@@ -354,21 +354,21 @@ let simplify_pow x c =
         (* half-integer: x^e = x^(e-0.5) * sqrt(x) *)
         let half = pow x (Uop.const_float (e -. 0.5)) in
         let s = Uop.alu_unary ~op:Ops.Sqrt ~src:x in
-        let r = Uop.alu_binary ~op:Ops.Mul ~lhs:half ~rhs:s in
+        let r = Uop.Promoting.(half * s) in
         if not (Dtype.is_float (Uop.dtype x)) then Some r
         else
           let is v = Uop.alu_binary ~op:Ops.Cmpeq ~lhs:x
               ~rhs:(const_numeric_like x v) in
-          Some Uop.O.(where (is 0.0) (const_numeric_like x 0.0)
+          Some Uop.Promoting.(where (is 0.0) (const_numeric_like x 0.0)
                         (where (is Float.neg_infinity)
                            (const_numeric_like x Float.infinity) r))
       else if whole e then
         (* integer >= 0: repeated squaring *)
         let n = Float.to_int e in
         let y = pow x (weak_exponent c (Float.of_int (n / 2))) in
-        let y2 = Uop.alu_binary ~op:Ops.Mul ~lhs:y ~rhs:y in
+        let y2 = Uop.Promoting.(y * y) in
         if n mod 2 = 1
-        then Some (Uop.alu_binary ~op:Ops.Mul ~lhs:y2 ~rhs:x)
+        then Some (Uop.Promoting.(y2 * x))
         else Some y2
       else None
 
@@ -462,7 +462,7 @@ let quotient_base ~div_op q base div =
                     if k = 0 then Some base
                     else
                       let step = Uop.const_like base (k * div) in
-                      Some Uop.O.(base - step)))
+                      Some Uop.Promoting.(base - step)))
     | _ -> None
 
 (* A scaled mod [(base % div) * mul] recombines with a partner carrying the
@@ -490,7 +490,7 @@ let fold_add_divmod_recombine root =
               let q, scale = pop_const_mul terms.(!j) in
               if scale = div * mul then
                 let emit head =
-                  let head = Uop.O.(head * Uop.const_like head mul) in
+                  let head = Uop.Promoting.(head * Uop.const_like head mul) in
                   result := Some (Uop.usum (head :: others !i !j))
                 in
                 match quotient_base ~div_op q base div with
@@ -503,7 +503,7 @@ let fold_add_divmod_recombine root =
                           | Some b ->
                               emit
                                 (Uop.alu_binary ~op:mod_op ~lhs:b
-                                   ~rhs:Uop.O.(Uop.const_like b div * q_den))
+                                   ~rhs:Uop.Promoting.(Uop.const_like b div * q_den))
                           | None -> ())
                     | _ -> ()));
            incr j
@@ -590,7 +590,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
            | Ops.Bitcast -> Uop.bitcast ~src:x ~dtype:dt
            | op -> Uop.alu_unary ~op ~src:x
          in
-         Some (Uop.O.where cond lifted (Uop.invalid ())));
+         Some (Uop.Promoting.where cond lifted (Uop.invalid ())));
 
     (* Binary(invalid_gate, y) -> cond.where(op(x, y), invalid). *)
     (let cond = var "cond" and x = var "x" and y = var "y" in
@@ -601,7 +601,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
        else
          let alu = bs $ "alu" and cond = bs $ "cond"
          and x = bs $ "x" and y = bs $ "y" in
-         Some (Uop.O.where cond
+         Some (Uop.Promoting.where cond
                  (Uop.alu_binary ~op:(Uop.op alu) ~lhs:x ~rhs:y)
                  (Uop.invalid ())));
 
@@ -614,7 +614,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
        else
          let alu = bs $ "alu" and cond = bs $ "cond"
          and x = bs $ "x" and y = bs $ "y" in
-         Some (Uop.O.where cond
+         Some (Uop.Promoting.where cond
                  (Uop.alu_binary ~op:(Uop.op alu) ~lhs:y ~rhs:x)
                  (Uop.invalid ())));
 
@@ -642,7 +642,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
        else
          let cond = bs $ "cond" and x = bs $ "x"
          and a = bs $ "a" and b = bs $ "b" in
-         Some (Uop.O.where cond (Uop.O.where x a b) i));
+         Some (Uop.Promoting.where cond (Uop.Promoting.where x a b) i));
 
     (* Normalize where(cond, Invalid, val) -> !cond.where(val, Invalid).
        If val is also Invalid, fold to Invalid. *)
@@ -652,7 +652,7 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
        else
          let cond = bs $ "cond" and v = bs $ "val" in
          if is_invalid_const v then Some i
-         else Some (Uop.O.where (Uop.O.not_ cond) v i));
+         else Some (Uop.Promoting.where (Uop.Promoting.not_ cond) v i));
 
     (* where(a, where(cond, x, Invalid), c)
        -> (!a | cond).where(a.where(x, c), Invalid). *)
@@ -667,9 +667,9 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
          else
            let cond = bs $ "cond" and x = bs $ "x" in
            let lifted =
-             Uop.alu_binary ~op:Ops.Or ~lhs:(Uop.O.not_ a) ~rhs:cond
+             Uop.Promoting.or_ (Uop.Promoting.not_ a) cond
            in
-           Some (Uop.O.where lifted (Uop.O.where a x c) i));
+           Some (Uop.Promoting.where lifted (Uop.Promoting.where a x c) i));
 
     (* where(a, b, where(cond, x, Invalid))
        -> (a | cond).where(a.where(b, x), Invalid). *)
@@ -683,8 +683,8 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
          if is_invalid_const b then None
          else
            let cond = bs $ "cond" and x = bs $ "x" in
-           let lifted = Uop.alu_binary ~op:Ops.Or ~lhs:a ~rhs:cond in
-           Some (Uop.O.where lifted (Uop.O.where a b x) i));
+           let lifted = Uop.Promoting.or_ a cond in
+           Some (Uop.Promoting.where lifted (Uop.Promoting.where a b x) i));
   ]
   ++ pm_invalid_load_store)
 
@@ -733,7 +733,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        match const_int_v (bs $ "c0"), const_int_v (bs $ "c1") with
        | Some a, Some b when not (Dtype.is_unsigned (Uop.dtype x)) ->
            let c = Uop.const_like x (a + b) in
-           Some Uop.O.(x + c)
+           Some Uop.Promoting.(x + c)
        | _ -> None);
 
     (* x - 0 -> x, except -0 - -0, which is +0. *)
@@ -748,7 +748,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
            Some (bs $ "x")
        | Some n, _ ->
            if not (Dtype.is_unsigned (Uop.dtype x))
-           then Some Uop.O.(x + Uop.const_like x (-n))
+           then Some Uop.Promoting.(x + Uop.const_like x (-n))
            else None
        | _, Some f ->
            Option.map
@@ -783,9 +783,9 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
     (* cdiv(x, -1) -> -x; x // -1 -> -x. *)
     rewrite1 (fun x -> O.(cdiv x neg_one)) (fun x ->
-       Some (Uop.O.neg x));
+       Some (Uop.Promoting.neg x));
     (rewrite1 (fun x -> alu [ x; neg_one ] Ops.Floordiv)
-       (fun x -> Some (Uop.O.neg x)));
+       (fun x -> Some (Uop.Promoting.neg x)));
 
     (* cmod(x, x) -> 0; x mod x -> 0. *)
     rewrite1 (fun x -> O.(cmod x x)) (fun x -> Some (Uop.const_like x 0));
@@ -947,7 +947,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
     (* where(cond, false, true) -> !cond *)
     (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
-     where cond false_ true_ => fun bs -> Some (Uop.O.not_ (bs $ "cond")));
+     where cond false_ true_ => fun bs -> Some (Uop.Promoting.not_ (bs $ "cond")));
 
     (* where(x == y, 1, 0) -> where(x != y, 0, 1) *)
     (let x = var "x"
@@ -960,7 +960,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        | Some 1, Some 0 ->
            let x = bs $ "x" and y = bs $ "y" in
            Some
-             (Uop.O.where
+             (Uop.Promoting.where
                 (Uop.alu_binary ~op:Ops.Cmpne ~lhs:x ~rhs:y)
                 (bs $ "zero") (bs $ "one"))
        | _ -> None);
@@ -976,7 +976,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        else
          match scalar_const_as_int (bs $ "c") with
          | Some 0 -> Some (bs $ "x")
-         | Some 1 -> Some (Uop.O.not_ (bs $ "x"))
+         | Some 1 -> Some (Uop.Promoting.not_ (bs $ "x"))
          | Some _ -> Some (shaped_const (bs $ "x") (Const.bool true))
          | None -> None);
 
@@ -1080,7 +1080,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
     (* x.cast(bool) -> x != 0 *)
     (rewrite1 (fun x -> cast ~dtype:Dtype.bool x) (fun x ->
-       Some (Uop.O.ne x (Uop.const_like x 0))));
+       Some (Uop.Promoting.ne x (Uop.const_like x 0))));
 
     (* ** pow ** *)
     (let x = var "x" and c = cvar ~name:"c" () in
@@ -1094,20 +1094,20 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        match const_numeric_v c with
        | Some f when f = 1.0 -> Some c
        | Some f when f > 0.0 ->
-           let log2_c = const_numeric_like x (log f /. log 2.0) in
-           let prod = Uop.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:log2_c in
+           let log2_c = Uop.const_float (log f /. log 2.0) in
+           let prod = Uop.Promoting.(x * log2_c) in
            Some (Uop.alu_unary ~op:Ops.Exp2 ~src:prod)
        | _ -> None);
 
     (* bool MUL -> AND (so downstream rules don't miscompute bool arithmetic). *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      O.(x * y) => fun bs ->
-       Some (Uop.alu_binary ~op:Ops.And ~lhs:(bs $ "x") ~rhs:(bs $ "y")));
+       Some (Uop.Promoting.and_ (bs $ "x") (bs $ "y")));
 
     (* bool ADD -> OR *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      O.(x + y) => fun bs ->
-       Some (Uop.alu_binary ~op:Ops.Or ~lhs:(bs $ "x") ~rhs:(bs $ "y")));
+       Some (Uop.Promoting.or_ (bs $ "x") (bs $ "y")));
 
     (* x * 0 -> 0 (or NaN if x is a Const NaN/Inf float). *)
     (rewrite1 (fun x -> O.(x * zero)) fold_mul_zero);
@@ -1133,7 +1133,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (* bool max(x, y) -> x | y. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      alu [ x; y ] Ops.Max => fun bs ->
-       Some (Uop.alu_binary ~op:Ops.Or ~lhs:(bs $ "x") ~rhs:(bs $ "y")));
+       Some (Uop.Promoting.or_ (bs $ "x") (bs $ "y")));
   ] ++ Movement.mop_cleanup)
 
 (* phase 2 *)
@@ -1192,7 +1192,7 @@ let lt_folding x c =
         | None -> None
         | Some q ->
 	        let rhs = Uop.const_like q (c / d) in
-	        Some Uop.O.(q < rhs)
+	        Some Uop.Promoting.(q < rhs)
 
 (* A simplex [a0*x0 + a1*x1 + ...] with all [ai > 0] and [xi >= 0] can be
    canonicalised to [x0 + x1 + ...] when testing [> 0]. *)
@@ -1325,7 +1325,7 @@ let fold_where_closure cond t f =
     let t' = Uop.substitute [ (cond, shaped_const cond (Const.bool true)) ] t in
     let f' = Uop.substitute [ (cond, shaped_const cond (Const.bool false)) ] f in
     if Uop.equal t' t && Uop.equal f' f then None
-    else Some (Uop.O.where cond t' f')
+    else Some (Uop.Promoting.where cond t' f')
 
 let symbolic : Upat.Pattern_matcher.t =
   let open Upat in
@@ -1349,7 +1349,7 @@ let symbolic : Upat.Pattern_matcher.t =
      and c0 = cvar ~name:"c0" () and c1 = cvar ~name:"c1" () in
      O.((x * c0) + (x * c1)) => fun bs ->
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       if exact_algebra x then Some Uop.O.(x * (c0 + c1)) else None);
+       if exact_algebra x then Some Uop.Promoting.(x * (c0 + c1)) else None);
 
     (* y + (x * c0) + (x * c1) -> y + x*(c0+c1). *)
     (let x = var "x" and y = var "y"
@@ -1357,35 +1357,35 @@ let symbolic : Upat.Pattern_matcher.t =
      O.((y + x * c0) + (x * c1)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y"
        and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       if exact_algebra x then Some Uop.O.(y + (x * (c0 + c1))) else None);
+       if exact_algebra x then Some Uop.Promoting.(y + (x * (c0 + c1))) else None);
 
     (* (x + x) -> x * 2. *)
     (rewrite1 (fun x -> O.(x + x))
-       (fun x -> Some Uop.O.(x * Uop.const_like x 2)));
+       (fun x -> Some Uop.Promoting.(x * Uop.const_int 2)));
 
     (* y + x + x -> y + x*2 (associative variant). *)
     (rewrite2 (fun x y -> O.((y + x) + x))
        (fun x y ->
-         if exact_algebra x then Some Uop.O.(y + (x * Uop.const_like x 2)) else None));
+         if exact_algebra x then Some Uop.Promoting.(y + (x * Uop.const_int 2)) else None));
 
     (* (x + x * c) -> x * (c + 1). *)
     (let x = var "x" and c = cvar ~name:"c" () in
      O.(x + x * c) => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
-       if exact_algebra x then Some Uop.O.(x * (c + Uop.const_like c 1)) else None);
+       if exact_algebra x then Some Uop.Promoting.(x * (c + Uop.const_int 1)) else None);
 
     (* y + x + x*c -> y + x*(c+1). *)
     (let x = var "x" and y = var "y" and c = cvar ~name:"c" () in
      O.((y + x) + (x * c)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       if exact_algebra x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
+       if exact_algebra x then Some Uop.Promoting.(y + (x * (c + Uop.const_int 1)))
        else None);
 
     (* y + x*c + x -> y + x*(c+1). *)
     (let x = var "x" and y = var "y" and c = cvar ~name:"c" () in
      O.((y + (x * c)) + x) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       if exact_algebra x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
+       if exact_algebra x then Some Uop.Promoting.(y + (x * (c + Uop.const_int 1)))
        else None);
 
     (* y * (x + c) -> (y*x) + (y*c)  (distribution, int only). *)
@@ -1393,7 +1393,7 @@ let symbolic : Upat.Pattern_matcher.t =
      and y = cvar ~name:"y" () and c = cvar ~name:"c" () in
      O.(y * (x + c)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       Some Uop.O.((y * x) + (y * c)));
+       Some Uop.Promoting.((y * x) + (y * c)));
 
     (let x = var "x"
      and c1 = cvar ~name:"c1" () and c2 = cvar ~name:"c2" () in
@@ -1405,8 +1405,7 @@ let symbolic : Upat.Pattern_matcher.t =
           && Bound.le (Dtype.min dt) product && Bound.le product (Dtype.max dt)
        then
          Some
-           (Uop.alu_binary ~op:Ops.Floordiv ~lhs:x
-              ~rhs:Uop.O.(c1 * c2))
+           (Uop.Promoting.(x // (c1 * c2)))
        else None);
 
     (* ALU/variable with min==max -> const. *)
@@ -1455,8 +1454,8 @@ let symbolic : Upat.Pattern_matcher.t =
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
        match const_int_v c0, const_int_v c1 with
        | Some c0v, Some c1v when abs c0v > 1 ->
-           let lhs = if c0v > 0 then x else Uop.O.neg x in
-           Some Uop.O.(lhs < Uop.const_like x (ceil_div c1v (abs c0v)))
+           let lhs = if c0v > 0 then x else Uop.Promoting.neg x in
+           Some Uop.Promoting.(lhs < Uop.const_int (ceil_div c1v (abs c0v)))
        | _ -> None);
 
     (* (x//d) < c  ->  x < c*d for d > 0, and  c*d < x for d < 0. *)
@@ -1468,7 +1467,7 @@ let symbolic : Upat.Pattern_matcher.t =
        match const_int_v d, const_int_v c with
        | Some dv, Some cv when dv <> 0 ->
            let bound = Uop.const_like x (cv * dv) in
-           if dv > 0 then Some Uop.O.(x < bound) else Some Uop.O.(bound < x)
+           if dv > 0 then Some Uop.Promoting.(x < bound) else Some Uop.Promoting.(bound < x)
        | _ -> None);
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and d = cvar ~name:"d" ()
@@ -1478,7 +1477,7 @@ let symbolic : Upat.Pattern_matcher.t =
        match const_int_v d, const_int_v c with
        | Some dv, Some cv when dv > 0 ->
            let bound = if cv > 0 then cv * dv else cv * dv - (dv - 1) in
-           Some Uop.O.(x < Uop.const_like x bound)
+           Some Uop.Promoting.(x < Uop.const_int bound)
        | _ -> None);
 
     (* Move add/mul consts to the tail: (x + c1) + y -> (x + y) + c1.
@@ -1491,19 +1490,19 @@ let symbolic : Upat.Pattern_matcher.t =
        if Uop.op y = Ops.Const || not (exact_algebra y) then None
        else
          let x = bs $ "x" and c1 = bs $ "c1" in
-         Some Uop.O.((x + y) + c1));
+         Some Uop.Promoting.((x + y) + c1));
     (let x = var "x" and y = var "y" and c1 = cvar ~name:"c1" () in
      O.((x * c1) * y) => fun bs ->
        let y = bs $ "y" in
        if Uop.op y = Ops.Const || not (exact_algebra y) then None
        else
          let x = bs $ "x" and c1 = bs $ "c1" in
-         Some Uop.O.((x * y) * c1));
+         Some Uop.Promoting.((x * y) * c1));
 
     (* x*(-1) < y*(-1)  ->  y < x. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint) and y = var "y" in
      O.(alu [ x; neg_one ] Ops.Mul < alu [ y; neg_one ] Ops.Mul) => fun bs ->
-       Some Uop.O.((bs $ "y") < (bs $ "x")));
+       Some Uop.Promoting.((bs $ "y") < (bs $ "x")));
 
     (* Generic lt folding: lifts a common factor out of an ADD-split LHS. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
@@ -1519,8 +1518,8 @@ let symbolic : Upat.Pattern_matcher.t =
        match canonicalize_simplex (bs $ "x") with
        | None -> None
        | Some newx ->
-           Some (Uop.O.ne
-                   Uop.O.(newx < Uop.const_like newx 1)
+           Some (Uop.Promoting.ne
+                   Uop.Promoting.(newx < Uop.const_int 1)
                    (Uop.const_bool true)));
 
     (* Uses of a condition fold to a literal inside its own where branches. *)
@@ -1533,19 +1532,19 @@ let symbolic : Upat.Pattern_matcher.t =
      O.ne (where gate x zero) zero => fun bs ->
        let gate = bs $ "gate" and x = bs $ "x" in
        Some (Uop.alu_binary ~op:Ops.And ~lhs:gate
-               ~rhs:(Uop.O.ne x (Uop.zero_like x))));
+               ~rhs:(Uop.Promoting.ne x (Uop.zero_like x))));
 
     (* a.where(b.where(c, d), d) -> (a & b).where(c, d). *)
     (rewrite4
        (fun a b c d -> where a (where b c d) d)
        (fun a b c d ->
-         Some (Uop.O.where (Uop.alu_binary ~op:Ops.And ~lhs:a ~rhs:b) c d)));
+         Some (Uop.Promoting.where (Uop.Promoting.and_ a b) c d)));
 
     (* a.where(c, b.where(c, d)) -> (a | b).where(c, d). *)
     (rewrite4
        (fun a b c d -> where a c (where b c d))
        (fun a b c d ->
-         Some (Uop.O.where (Uop.alu_binary ~op:Ops.Or ~lhs:a ~rhs:b) c d)));
+         Some (Uop.Promoting.where (Uop.Promoting.or_ a b) c d)));
 
     (* Binary(where(c, t, f), where(c, tt, ff)) -> where(c, op(t,tt), op(f,ff))
        when at least one branch is const on both sides. *)
@@ -1563,7 +1562,7 @@ let symbolic : Upat.Pattern_matcher.t =
        else
          let lhs = Uop.alu_binary ~op:(Uop.op alu) ~lhs:t ~rhs:tt in
          let rhs = Uop.alu_binary ~op:(Uop.op alu) ~lhs:f ~rhs:ff in
-         Some (Uop.O.where c lhs rhs));
+         Some (Uop.Promoting.where c lhs rhs));
 
     (* (y + where(c, t, f)) + where(c, tt, ff) collapses when t&tt or
        f&ff are consts: -> y + where(c, t+tt, f+ff). *)
@@ -1578,8 +1577,8 @@ let symbolic : Upat.Pattern_matcher.t =
        let f_const = Uop.op f = Ops.Const && Uop.op ff = Ops.Const in
        if not (t_const || f_const) then None
        else
-         let merged = Uop.O.where c Uop.O.(t + tt) Uop.O.(f + ff) in
-         Some Uop.O.(y + merged));
+         let merged = Uop.Promoting.where c Uop.Promoting.(t + tt) Uop.Promoting.(f + ff) in
+         Some Uop.Promoting.(y + merged));
 
     (* c.where(t, 0) + c.where(0, f) -> c.where(t, f): the branches are
        complementary, so exactly one contributes. At float only with -0 zeros:
@@ -1590,7 +1589,7 @@ let symbolic : Upat.Pattern_matcher.t =
        let z0 = bs $ "z0" and z1 = bs $ "z1" in
        if is_zero_const z0 && is_zero_const z1
           && (exact_algebra (bs $ "t") || (is_neg_zero z0 && is_neg_zero z1))
-       then Some (Uop.O.where (bs $ "c") (bs $ "t") (bs $ "f"))
+       then Some (Uop.Promoting.where (bs $ "c") (bs $ "t") (bs $ "f"))
        else None);
 
     (* Long/weak integer math narrows when every operand and the result fit
@@ -1634,18 +1633,16 @@ let symbolic : Upat.Pattern_matcher.t =
        let x = bs $ "x" and c = bs $ "c" in
        if not (exact_algebra x) then None
        else
-         let neg u =
-           Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const (Const.of_scalar (Dtype.weak_dtype (Uop.dtype u)) (`Int (-1L))))
-         in
+         let neg = Uop.Promoting.neg in
          let nx = neg x and nc = neg c in
-         Some Uop.O.(nx + nc));
+         Some Uop.Promoting.(nx + nc));
 
     (* cond.not.where(t, f) -> cond.where(f, t) when f is not Invalid. *)
     (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
      where (alu [ cond; true_ ] Ops.Cmpne) (var "t") (var "f") => fun bs ->
        let c = bs $ "cond" and t = bs $ "t" and f = bs $ "f" in
        if is_invalid_const f then None
-       else Some (Uop.O.where c f t));
+       else Some (Uop.Promoting.where c f t));
 
     (* Integer (c0 + x) < c1 -> x < (c1 - c0) where neither side wraps. Float
        rounding prevents this. *)
@@ -1654,7 +1651,7 @@ let symbolic : Upat.Pattern_matcher.t =
      O.((c0 + x) < c1) => fun bs ->
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
        if Dtype.is_int (Uop.dtype x) && offset_is_exact x c0 c1 then
-         Some Uop.O.(x < (c1 - c0))
+         Some Uop.Promoting.(x < (c1 - c0))
        else None);
 
     (* A range mod its own upper bound is just the range. *)
@@ -2073,7 +2070,7 @@ let pm_simplify_valid =
          let cond = bs $ "cond" and x = bs $ "x" in
          if Uop.dtype x = Dtype.Weakint then
            let x' = uop_given_valid cond x in
-           if Uop.equal x x' then None else Some (Uop.O.where cond x' i)
+           if Uop.equal x x' then None else Some (Uop.Promoting.where cond x' i)
          else None);
 
   ]
@@ -2110,7 +2107,7 @@ let pm_drop_and_clauses =
              | [] -> Uop.const_bool true
              | xs -> Uop.uprod xs
            in
-           Some (Uop.O.where new_cond x i));
+           Some (Uop.Promoting.where new_cond x i));
   ]
 
 let sym : Upat.Pattern_matcher.t =
@@ -2195,7 +2192,7 @@ let sym : Upat.Pattern_matcher.t =
               let new_src = Array.copy rsrc in
               new_src.(0) <- x;
               let new_r = Uop.replace r ~src:new_src () in
-              Some (Uop.alu_binary ~op:Ops.Mul ~lhs:new_r ~rhs:c)
+              Some (Uop.Promoting.(new_r * c))
           | _ -> None);
 
     (* [reduce(x0 * x1 * ... , ranges)] with [arg] in [{Add, Max}] moves
@@ -2240,7 +2237,7 @@ let sym : Upat.Pattern_matcher.t =
                   new_src.(0) <- new_body;
                   let new_r = Uop.replace r ~src:new_src () in
                   let out_prod = Uop.uprod outside in
-                  Some (Uop.alu_binary ~op:Ops.Mul ~lhs:new_r ~rhs:out_prod)
+                  Some (Uop.Promoting.(new_r * out_prod))
           | _ -> None);
 
     (* GROUP with a single source -> the source (peephole cleanup). *)
@@ -2275,18 +2272,16 @@ let sym : Upat.Pattern_matcher.t =
        (fun x y ->
          if not (exact_algebra x) then None
          else
-           let neg u =
-             Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const (Const.of_scalar (Dtype.weak_dtype (Uop.dtype u)) (`Int (-1L))))
-           in
+           let neg = Uop.Promoting.neg in
            let nx = neg x and ny = neg y in
-           Some Uop.O.(nx + ny)));
+           Some Uop.Promoting.(nx + ny)));
 
     (* (x + y) * c  ->  x*c + y*c  (int only; floats hit NaN issues). *)
     (let x = var_dtype "x" (exact_dtype Dtype.Weakint)
      and y = var "y" and c = cvar ~name:"c" () in
      O.((x + y) * c) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       Some Uop.O.((x * c) + (y * c)));
+       Some Uop.Promoting.((x * c) + (y * c)));
   ])
 
 (* top-level simplifier *)
