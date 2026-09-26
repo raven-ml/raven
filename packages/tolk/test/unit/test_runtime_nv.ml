@@ -599,7 +599,7 @@ let execute_queue ~compute_class ~copies m =
       let at = qmd_size + (if Qmd.version qmd < 4 then 88 else 224) * 4 in
       equal int small (Bytes.get_int8 qmd_bytes (at + 8));
       equal int64 (Int64.of_int count) (Bytes.get_int64_le qmd_bytes (at + 16));
-      equal int64 (Int64.of_nativeint (Device.Buffer.addr ~device:(Device.name device) inputs.(0)))
+      equal int64 (Int64.of_nativeint (Device.Buffer.addr ~target:(Device.allocator device) inputs.(0)))
         (Bytes.get_int64_le qmd_bytes at);
       equal int count (Qmd.read qmd (if Qmd.version qmd < 4 then "cta_raster_width" else "grid_width"));
       equal int 1 (Qmd.read qmd "cta_thread_dimension0");
@@ -686,7 +686,7 @@ let raw_submission_timeout m =
   List.iter (fun (buffer, before) -> equal Windtrap.bytes before (Device.Buffer.as_bytes buffer)) protected;
   ignore (Sys.opaque_identity linked)
 
-let shared_calibration m =
+let shared_calibration ?(concurrent = false) m =
   let open Tolk in
   let stamp = ref None and allocations = ref 0 and frees = ref 0 in
   let base = Tolk_uop.Storage.Host_allocator.make ~synchronize:(fun () -> ()) in
@@ -703,10 +703,19 @@ let shared_calibration m =
     base.free raw size spec in
   let allocator = Device.Allocator.Pack {base with alloc; free} in
   let waits = ref 0 and fail_wait = ref false in
-  let collecting = ref false in
+  let collecting = ref false and overlapping = ref false in
+  let sample_owner = ref None and samples = ref 0 in
   let synchronize buffers =
     if not !collecting then begin
     equal int 0 (Helpers.Context_var.get Helpers.debug);
+    if !overlapping then begin
+      let owner = Domain.self () in
+      if !samples mod 5 = 0 then sample_owner := Some owner
+      else is_true ~msg:"one calibration owns all five timestamp samples"
+          (!sample_owner = Some owner);
+      incr samples;
+      Unix.sleepf 0.001
+    end;
     incr waits;
     let get tag = Hashtbl.find buffers tag in
     let timeline = get "timeline" in
@@ -722,6 +731,7 @@ let shared_calibration m =
   let calibration = Tolk_hcq.Hcq.profile_offset "NV:queue-compilation" in
   equal int 0 !allocations;
   let _, device, _, _, _ = queue_fixture ~allocator ~synchronize
+      ~timeout_ms:(if concurrent then 1000 else 30000)
       ~compute_class:Defs.ada_compute_a ~copies:false m in
   Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.debug, 2)] (fun () ->
       for round = 1 to 2 do
@@ -733,12 +743,36 @@ let shared_calibration m =
         equal int 1 !allocations;
         equal int 2 (Helpers.Context_var.get Helpers.debug)
       done;
+      if concurrent then begin
+        overlapping := true;
+        let ready = Atomic.make 0 and first_failure = Atomic.make None in
+        let workers = List.init 2 (fun _ -> Domain.spawn (fun () ->
+            try
+              ignore (Atomic.fetch_and_add ready 1);
+              while Atomic.get ready < 2 do Domain.cpu_relax () done;
+              for sample = 1 to 10 do
+                is_true ~msg:(Printf.sprintf "finite clock offset at calibration %d" sample)
+                  (Float.is_finite (calibration ()))
+              done
+            with error ->
+              let backtrace = Printexc.get_raw_backtrace () in
+              ignore (Atomic.compare_and_set first_failure None (Some (error, backtrace)));
+              Printexc.raise_with_backtrace error backtrace)) in
+        let results = List.map (fun worker ->
+            try Ok (Domain.join worker) with error -> Error error) workers in
+        overlapping := false;
+        Option.iter (fun (error, backtrace) ->
+            Printexc.raise_with_backtrace error backtrace) (Atomic.get first_failure);
+        List.iter (function Ok () -> () | Error error -> raise error) results;
+        equal int 100 !samples;
+        equal int 110 !waits
+      end;
       collecting := true;
       equal int 0 (List.length (Device.profile device));
       collecting := false;
       fail_wait := true;
       raises_match (Exn.failure ~substring:"calibration wait failed") calibration;
-      equal int 11 !waits;
+      equal int (if concurrent then 111 else 11) !waits;
       equal int 2 (Helpers.Context_var.get Helpers.debug));
   Gc.full_major ();
   equal int 0 !frees;
@@ -932,7 +966,9 @@ let () =
   run "Nv_runtime"
     [
       group "compiled queues"
-        [test "shared clock calibration owns its stamp and scopes debug waits" (fun () -> with_fixture shared_calibration);
+        [test "shared clock calibration owns its stamp and scopes debug waits" (fun () -> with_fixture (fun m -> shared_calibration m));
+         test "concurrent clock calibrations retain each sample interval" (fun () ->
+             with_fixture (shared_calibration ~concurrent:true));
          test "raw setup and kernels share timeline and FIFO progress" (fun () -> with_fixture raw_submissions);
          test "failed raw submission leaves live storage and counters unchanged" (fun () -> with_fixture raw_submission_timeout);
          test "Ada descriptors chain launches and release only the tail" (fun () ->

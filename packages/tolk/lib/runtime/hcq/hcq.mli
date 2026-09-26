@@ -19,7 +19,9 @@ val profile_offset : string -> unit -> float
     device's queue. It submits five timestamps through the shared HCQ path and
     returns the median host-minus-device offset in microseconds. Resources are
     allocated on the first call, after the device has been registered, and kept
-    alive by the callback. Calibration suppresses debug synchronization and
+    alive by the callback. Sampling holds the device and submission-host owners
+    until the final timestamp is read, so concurrent calls cannot overwrite
+    each other's samples. Calibration suppresses debug synchronization and
     emits no profiling events. Device submission and wait failures propagate. *)
 
 (** Files and memory mappings. *)

@@ -447,6 +447,7 @@ let profile_offset name =
   let module U = Uop in
   let calibration = Lazy.Mutexed.from_fun (fun () ->
     let device = Device.get name in
+    let host = Device.get (Option.get (Device.queue device)).host in
     let stamp = Device.create_buffer ~size:2 ~dtype:Dtype.uint64
         ~spec:{Device.Buffer_spec.default with host = true; uncached = true; nolru = true} device in
     let timeline = Hcq2.timeline name in
@@ -465,12 +466,18 @@ let profile_offset name =
     let kernel_info = U.{name = "clock_calibration"; applied_opts = []; opts_to_apply = None;
       estimates = None; beam = 0} in
     let call = Hcq2.lower_call ~devices:[name] (U.sink ~kernel_info [bump]) in
-    device, stamp, Realize.link_linear (U.linear [call])) in
+    let linked = Realize.link_linear (U.linear [call]) in
+    let buffers = U.toposort linked |> List.concat_map (fun node ->
+        match U.as_buffer node with
+        | Some {buffer = {buffer = Some buffers; _}; _} -> buffers
+        | _ -> []) in
+    device, host, stamp, linked, buffers) in
   fun () -> Helpers.Context_var.with_context [Helpers.Context_var.B (Helpers.debug, 0)] (fun () ->
-    let device, stamp, linked = Lazy.Mutexed.force calibration in
+    let device, host, stamp, linked, buffers = Lazy.Mutexed.force calibration in
     let queue = Option.get (Device.queue device) in
     let to_program device = Codegen.to_program ~optimize:false (Device.renderer device) in
-    Profile.calibrate (fun () ->
+    Device.with_operation ~buffers [device; host] (fun () ->
+      Profile.calibrate (fun () ->
         Realize.run_linear ~device ~to_program ~jit:true ~wait:false ~update_stats:false linked;
         fun () ->
           Device.synchronize device;
@@ -480,4 +487,4 @@ let profile_offset name =
             ticks := Int64.logor !ticks
               (Int64.shift_left (Int64.of_int (Bigarray.Array1.unsafe_get view (8 + i))) (8 * i))
           done;
-          Int64.to_float !ticks /. queue.timestamp_divider))
+          Int64.to_float !ticks /. queue.timestamp_divider)))

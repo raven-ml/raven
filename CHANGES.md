@@ -702,6 +702,10 @@ thread.
 
 ### Tolk (new)
 
+- Concurrent HCQ clock calibration keeps each timestamp submission, host
+  timing and readback together, preventing overwritten samples and waits
+  blocked by another calibration.
+
 - Scheduled calls preserve the extent of small views over large symbolic
   storage. Byte-size comparisons no longer overflow and expand a view to
   its entire backing buffer.
