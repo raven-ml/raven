@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- GPU launch lowering rejects symbolic dimensions that require physical
+  splitting instead of launching their maximum size without a bounds gate.
+  Dimension grouping and splitting also keep intermediate products exact.
+
 - Failed KFD and NVK peer imports remove partially installed receiver mappings
   before releasing their source. Failed cleanup retains the source because
   the receiving GPU may still access it.

@@ -38,13 +38,14 @@ let special_name_of_kind kind i =
   Gpu_dim.to_special_name dim
 
 let smallest_factor n =
-  let limit = int_of_float (ceil (sqrt (float_of_int n))) in
+  let root = Z.sqrt n in
+  let limit = if Z.equal (Z.mul root root) n then root else Z.succ root in
   let rec loop f =
-    if f > limit then 1
-    else if n mod f = 0 then f
-    else loop (f + 1)
+    if Z.gt f limit then Z.one
+    else if Z.equal (Z.rem n f) Z.zero then f
+    else loop (Z.succ f)
   in
-  loop 2
+  loop (Z.of_int 2)
 
 let array_rev a =
   let n = Array.length a in
@@ -73,10 +74,11 @@ let group_dim_values dims max_sizes =
     else
       let rec try_merge i =
         if i >= nm || i >= n - 1 then None
-        else if dim_max d.(i) * dim_max d.(i + 1) <= max_sizes.(i) then begin
+        else if Bound.le (Bound.mul (U.vmax d.(i)) (U.vmax d.(i + 1)))
+            (Bound.int max_sizes.(i)) then begin
           dims := Array.init (n - 1) (fun j ->
             if j < i then d.(j)
-            else if j = i then U.simplify U.O.(d.(i) * d.(Stdlib.(i + 1)))
+            else if j = i then Symbolic.simplify U.O.(d.(i) * d.(Stdlib.(i + 1)))
             else d.(j + 1));
           loop ()
         end else try_merge (i + 1)
@@ -91,18 +93,18 @@ let split_dims dims max_sizes =
        dims (Array.sub max_sizes 0 (Array.length dims))
   then dims
   else begin
-    let d = Array.make 3 1 in
-    for i = 0 to min (Array.length dims) 3 - 1 do d.(i) <- dims.(i) done;
+    let d = Array.make 3 Z.one in
+    for i = 0 to min (Array.length dims) 3 - 1 do d.(i) <- Z.of_int dims.(i) done;
     for i = 0 to 2 do
-      while d.(i) > max_sizes.(i) do
+      while Z.gt d.(i) (Z.of_int max_sizes.(i)) do
         let div = smallest_factor d.(i) in
-        if div = 1 then failwith (err_limit dims max_sizes);
+        if Z.equal div Z.one then failwith (err_limit dims max_sizes);
         let next = (i + 1) mod 3 in
-        d.(next) <- d.(next) * div;
-        d.(i) <- d.(i) / div
+        d.(next) <- Z.mul d.(next) div;
+        d.(i) <- Z.div d.(i) div
       done
     done;
-    if d.(2) = 1 then Array.sub d 0 2 else d
+    Array.map Z.to_int (if Z.equal d.(2) Z.one then Array.sub d 0 2 else d)
   end
 
 let flat_index raw limited =
@@ -113,7 +115,7 @@ let flat_index raw limited =
   for i = 0 to Stdlib.(Array.length raw - 1) do
     acc := !acc + (raw.(i) * product_uops_from limited Stdlib.(i + 1))
   done;
-  U.simplify !acc
+  Symbolic.simplify !acc
 
 let decompose_flat flat dims =
   let open U.O in
@@ -122,10 +124,10 @@ let decompose_flat flat dims =
        (fun i dim ->
          let tail = product_uops_from dims Stdlib.(i + 1) in
          let idx =
-           if U.const_int_value tail = Some 1 then U.simplify flat
-           else U.simplify (floordiv flat tail)
+           if U.const_int_value tail = Some 1 then Symbolic.simplify flat
+           else Symbolic.simplify (floordiv flat tail)
          in
-         if i = 0 then idx else U.simplify (idx mod dim))
+         if i = 0 then idx else Symbolic.simplify (idx mod dim))
        dims)
 
 let same_uop_array a b =
@@ -154,9 +156,13 @@ let rec get_grouped_dims kind dims max_sizes ~reverse =
                (* [split_dims] returns its argument physically unchanged when
                   every dim fits; keep the original (possibly symbolic) dims
                   in that case. *)
+               let needs_split = Array.exists2 (fun d m -> d > m)
+                   idims (Array.sub max_sizes 0 (Array.length idims)) in
+               if needs_split
+                  && Array.exists (fun d -> Option.is_none (U.const_int_value d)) dims then
+                 failwith "cannot split symbolic GPU dimensions";
                let split = split_dims idims max_sizes in
-               if split == idims then dims
-               else Array.map U.O.int_ split)
+               if split == idims then dims else Array.map U.O.int_ split)
     in
     let raw =
       Array.mapi (fun i s ->
@@ -257,7 +263,7 @@ let add_gpudims (ctx : Renderer.t) (s : U.t) : U.t option =
         else
           let shape_of keys =
             Array.of_list (List.map (fun k ->
-              U.simplify (Option.get (U.as_range (Rkmap.find k all_ranges))).size)
+              Symbolic.simplify (Option.get (U.as_range (Rkmap.find k all_ranges))).size)
               keys)
           in
           let global_shape = shape_of global_dims in

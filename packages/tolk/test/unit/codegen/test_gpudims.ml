@@ -259,6 +259,12 @@ let split_same_len_tests =
       test "(5,12,7) / (8,4,16)" (fun () ->
           check_grouped_dims Gpudims.Group_id [| 5; 12; 7 |] (Some [ 8; 4; 16 ]) false
             [ 10; 3; 14 ]);
+      test "split redistribution retains exact intermediate products" (fun () ->
+          let high = 1 lsl 61 and limit = 1 lsl 60 in
+          let idxs = Gpudims.get_grouped_dims Gpudims.Group_id
+              (Array.map idx [|high; high; 2|])
+              (Some [limit; high; limit]) ~reverse:false in
+          equal (list int) [limit; high; 4] (special_sizes idxs));
       test "split decomposition uses integer floor division" (fun () ->
           let idxs =
             Gpudims.get_grouped_dims Gpudims.Group_id
@@ -279,6 +285,13 @@ let grouping_preferred_tests =
       test "(512,4,2) / (8192,2,2)" (fun () ->
           check_grouped_dims Gpudims.Group_id [| 512; 4; 2 |] (Some [ 8192; 2; 2 ]) false
             [ 2048; 2 ]);
+      test "symbolic dimensions can cross a limit by grouping" (fun () ->
+          let n = U.variable ~name:"n" ~min_val:1 ~max_val:4 ~dtype:D.weakint () in
+          let idxs = Gpudims.get_grouped_dims Gpudims.Group_id [|idx 1; n|]
+              (Some [4; 3]) ~reverse:false in
+          equal int 2 (List.length idxs);
+          equal (Testable.make ~pp:U.pp ~equal:U.equal) n
+            (special_size_node (Gpu_dim.Group_id 0) idxs));
       test "symbolic contraction keeps grouped SPECIAL size symbolic" (fun () ->
           let n =
             U.variable ~name:"n" ~min_val:1 ~max_val:4
@@ -346,6 +359,17 @@ let is_failure = function Failure _ -> true | _ -> false
 let error_tests =
   group "errors"
     [
+      test "symbolic dimensions cannot be split at their maximum" (fun () ->
+          List.iter (fun lower ->
+              let n = U.variable ~name:"n" ~min_val:lower ~max_val:32 ~dtype:D.weakint () in
+              raises_match is_failure (fun () ->
+                  ignore (Gpudims.get_grouped_dims Gpudims.Group_id [|n|]
+                    (Some [16; 16; 16]) ~reverse:false))) [1; 17]);
+      test "grouping feasibility does not overflow host integers" (fun () ->
+          let large = 1 lsl 32 in
+          raises_match is_failure (fun () ->
+              ignore (Gpudims.get_grouped_dims Gpudims.Group_id
+                [|idx large; idx large|] (Some [0x7fffffff]) ~reverse:false)));
       test "prime dim 23 unfactorable" (fun () ->
           raises_match is_failure (fun () ->
               ignore
@@ -390,6 +414,12 @@ let none_passthrough_tests =
           check_grouped_dims Gpudims.Group_id [| 2; 3; 4 |] None false [ 2; 3; 4 ]);
       test "single dim passthrough" (fun () ->
           check_grouped_dims Gpudims.Group_id [| 100 |] None false [ 100 ]);
+      test "symbolic fitting dimensions keep their physical extent" (fun () ->
+          let n = U.variable ~name:"n" ~min_val:1 ~max_val:16 ~dtype:D.weakint () in
+          let idxs = Gpudims.get_grouped_dims Gpudims.Group_id [|n|]
+              (Some [16; 16; 16]) ~reverse:false in
+          equal (Testable.make ~pp:U.pp ~equal:U.equal) n
+            (special_size_node (Gpu_dim.Group_id 0) idxs));
       test "symbolic passthrough keeps SPECIAL size symbolic" (fun () ->
           let n =
             U.variable ~name:"n" ~min_val:1 ~max_val:10
@@ -399,7 +429,8 @@ let none_passthrough_tests =
             Gpudims.get_grouped_dims Gpudims.Group_id [| n |] None
               ~reverse:false
           in
-          is_true (U.equal (special_size_node (Gpu_dim.Group_id 0) idxs) n));
+          equal (Testable.make ~pp:U.pp ~equal:U.equal) n
+            (special_size_node (Gpu_dim.Group_id 0) idxs));
     ]
 
 (* Group 10: integration via pm_add_gpudims *)
