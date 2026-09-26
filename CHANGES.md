@@ -2009,6 +2009,9 @@ thread.
 
 ### Nx
 
+- Eager `Nx.matmul` with fewer than half a register tile of outputs (48 at
+  `float32`) and a long contraction is faster: 2 x 30000 x 2 takes 0.08 ms, not
+  0.38, where it had packed mostly empty tiles.
 - Eager `Nx.matmul` of small matrices is up to 8 times faster (16 x 64 x 100
   `float32`: 0.009 ms, not 0.074), and each output has the bits of `Nx.dot` of
   its row and column.

@@ -1169,9 +1169,9 @@ let test_row_path () =
     (column rows [| 1; n |] 4 = by_rows)
 
 (* The direct loop sums every output as the dot of its row and column: the bits
-   of each output equal its own 1x1 dot, for a tiny product (taken by the
-   policy) and larger ones forced direct, over contractions of one and of two
-   chunks. *)
+   of each output equal its own 1x1 dot, for a product with fewer outputs than a
+   register tile (taken by the policy) and a larger one forced direct, over
+   contractions of one and of two chunks. *)
 let test_direct_is_dots () =
   List.iter
     (fun (m, k, n, mode) ->
@@ -1209,7 +1209,7 @@ let test_direct_is_dots () =
         (Printf.sprintf "f32 %dx%dx%d mode %d, each output is its dot" m k n
            mode)
         !same)
-    [ (2, 300, 2, 1); (20, 300, 30, 2); (4, 70001, 3, 2) ]
+    [ (3, 70001, 5, 0); (2, 300, 2, 1); (20, 300, 30, 2); (4, 70001, 3, 2) ]
 
 let () =
   Windtrap.run "nx C backend matmul"
