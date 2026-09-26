@@ -14,14 +14,14 @@
     placed. *)
 
 val cached :
-  device:Nx.Device.t ->
+  devices:Nx.Device.t list ->
   Gpt_oss.config ->
   (float, 'b) Nx.t Gpt_oss.params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
   (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
-(** [cached ~device cfg p] is {!Gpt_oss.cached}[ cfg p] run on [device] by an
+(** [cached ~devices cfg p] is {!Gpt_oss.cached}[ cfg p] run on [devices] by an
     embedding program and one block program per layer kind, each compiled once
     per call shape. Apply it once and reuse the result: the partial application
     holds the programs. A block program is {!Gpt_oss.block} compiled on the
@@ -36,20 +36,21 @@ val cached :
     where [block] and [cache] instantiate {!Gpt_oss.Block} and
     {!Kaun.Attention.Cache}: it reads its layer's weights and the index, and
     consumes its layer's cache and the residual stream, whose storage its
-    results take. A call places the index on [device] once for all the layers
-    and consumes the caches it is given. [p] is best placed on [device]
-    ({!Gpt_oss.of_hf}[ ~placement]): its leaves are read where they are. *)
+    results take. A call places the index on [devices], a copy on each, once for
+    all the layers and consumes the caches it is given. [p] is best placed on
+    [devices] ({!Gpt_oss.of_hf}[ ~placement]): its leaves are read where they
+    are, split ones included. *)
 
 val greedy :
-  ?device:Nx.Device.t ->
+  ?devices:Nx.Device.t list ->
   Gpt_oss.config ->
   (float, 'b) Nx.t Gpt_oss.params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   (int32, Nx.int32_elt) Nx.t ->
   (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
-(** [greedy ?device cfg p caches index ids] is the most likely next token of
+(** [greedy ?devices cfg p caches index ids] is the most likely next token of
     each sequence, of shape [[| batch |]], after the tokens [ids], and the
-    caches with their keys and values written. With [device] it is {!cached} and
-    a compiled head over the last position; without, {!Gpt_oss.cached} run
+    caches with their keys and values written. With [devices] it is {!cached}
+    and a compiled head over the last position; without, {!Gpt_oss.cached} run
     eagerly. Apply it to [cfg p] once and reuse the result. *)

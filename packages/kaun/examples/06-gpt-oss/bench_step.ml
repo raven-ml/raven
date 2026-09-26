@@ -127,7 +127,9 @@ let run ?device c params dt ~tokens ~steps ~context =
   let placement =
     Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
   in
-  let step = Layer_loop.greedy ?device c params in
+  let step =
+    Layer_loop.greedy ?devices:(Option.map (fun d -> [ d ]) device) c params
+  in
   let timed (caches, index, ids) =
     let t0 = Unix.gettimeofday () in
     let token, caches = step caches index ids in

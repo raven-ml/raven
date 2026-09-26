@@ -3449,6 +3449,11 @@ thread.
 
 ### Kaun
 
+- The gpt-oss example's `main.exe` and `validate.exe` take `--devices` in place
+  of `--jit` and run expert-parallel over several devices
+  (`Gpt_oss.expert_parallel`): each device holds an equal share of the
+  experts, the rest a copy on each. `Layer_loop.cached` and `greedy` take
+  `~devices`, a list.
 - The Llama example's `--devices` (a device, a CPU count or a comma-separated
   list) replaces `--jit` and compiles the decode step tensor-parallel over
   several devices: projections split into and out of the heads, caches on

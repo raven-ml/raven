@@ -45,6 +45,11 @@ type 'a params = {
 type t = Nx.float32_t params
 type role = Whole | Column | Row | Experts | Kv_heads
 
+let expert_parallel ds role ~axis =
+  match role with
+  | Experts -> Nx.Placement.sharded ~axis ds
+  | Whole | Column | Row | Kv_heads -> Nx.Placement.replicated ds
+
 (* Structures *)
 
 module Block = struct

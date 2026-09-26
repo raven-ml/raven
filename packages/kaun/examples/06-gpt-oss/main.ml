@@ -5,9 +5,11 @@
 
 (* Greedy decoding with gpt-oss through key-value caches. It shows the decode
    loop and times it: one step function serves the prefill and every
-   single-token step. Under [--jit DEVICE] the step is {!Layer_loop.greedy}:
+   single-token step. Under [--devices LIST] the step is {!Layer_loop.greedy}:
    each layer kind is compiled once per call shape and the host calls it once
-   per layer, so the whole prompt goes through in one call.
+   per layer, so the whole prompt goes through in one call. Over several devices
+   it runs expert-parallel: each device holds an equal share of the experts, and
+   the mixture sums their products across the devices.
 
    With [--prompt TEXT] the text becomes the user's turn of a harmony
    conversation, [--system TEXT] its instructions and [--reasoning EFFORT] how
@@ -23,7 +25,7 @@
    but what they generate is noise: it rarely opens a message, so a prompt
    usually prints nothing but the timings.
 
-   Usage: main.exe [--repo REPO] [--jit DEVICE] [--dtype DT] [--count N]
+   Usage: main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--count N]
    [--prompt TEXT [--system TEXT] [--reasoning low|medium|high]
    [--show-analysis]]. *)
 
@@ -45,14 +47,19 @@ let fixed_prompt =
     2359l;
   |]
 
-(* The placement that holds every leaf and cache pool whole on [device]. *)
-let whole_on device =
-  Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
+(* A device, a CPU device count ([4] is CPU:1..CPU:4) or a comma-separated
+   list. *)
+let parse_devices s =
+  match int_of_string_opt s with
+  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
+  | Some _ -> failwith "--devices: the device count must be positive"
+  | None -> List.map String.trim (String.split_on_char ',' s)
 
 (* [on_token] sees every generated token as it arrives and says whether to stop.
-   With [device], the step compiles for it and the caches are placed on it. *)
-let generate ?device cfg params dt ~log ~count ~on_token prompt =
-  let step = Layer_loop.greedy ?device cfg params in
+   With [devices], the step compiles for them and the caches are placed there as
+   the parameters are. *)
+let generate ?devices cfg params dt ~log ~count ~on_token prompt =
+  let step = Layer_loop.greedy ?devices cfg params in
   let timed caches index ids =
     let t0 = Unix.gettimeofday () in
     let token, caches = step caches index ids in
@@ -64,7 +71,9 @@ let generate ?device cfg params dt ~log ~count ~on_token prompt =
   let index = Cache_index.rows ~context [| n0 |] in
   let first, caches, prefill =
     timed
-      (Gpt_oss.cache ?placement:(whole_on device) cfg ~slots:context dt)
+      (Gpt_oss.cache
+         ?placement:(Option.map Gpt_oss.expert_parallel devices)
+         cfg ~slots:context dt)
       index
       (Nx.create Nx.int32 [| 1; n0 |] prompt)
   in
@@ -125,7 +134,7 @@ let effort_of_string = function
 
 let () =
   let repo = ref "tiny-random/gpt-oss-mxfp4" in
-  let jit = ref "" and count = ref 0 and dtype = ref "" in
+  let devices = ref "" and count = ref 0 and dtype = ref "" in
   let prompt = ref "" and system = ref "" and reasoning = ref "medium" in
   let show_analysis = ref false in
   Arg.parse
@@ -133,7 +142,11 @@ let () =
       ( "--repo",
         Arg.Set_string repo,
         "A gpt-oss repository (default tiny-random/gpt-oss-mxfp4)" );
-      ("--jit", Arg.Set_string jit, "Compile the step for this device");
+      ( "--devices",
+        Arg.Set_string devices,
+        "Compile the step over these devices, expert-parallel over several: a \
+         device (METAL), a CPU count (4 = CPU:1..CPU:4) or a comma-separated \
+         list" );
       ( "--dtype",
         Arg.Set_string dtype,
         "float32 or bfloat16 (default: the checkpoint's own)" );
@@ -148,8 +161,8 @@ let () =
         "Print the model's reasoning on standard error" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "main.exe [--repo REPO] [--jit DEVICE] [--dtype DT] [--count N] [--prompt \
-     TEXT [--system TEXT] [--reasoning EFFORT] [--show-analysis]]";
+    "main.exe [--repo REPO] [--devices LIST] [--dtype DT] [--count N] \
+     [--prompt TEXT [--system TEXT] [--reasoning EFFORT] [--show-analysis]]";
   let effort = effort_of_string !reasoning in
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config !repo) in
   let ckpt = Kaun_hf.load_checkpoint !repo in
@@ -158,16 +171,23 @@ let () =
     if !dtype = "" then Gpt_oss.stored_dtype ckpt
     else Gpt_oss.dtype_of_string !dtype
   in
-  let device = if !jit = "" then None else Some (Rune.device !jit) in
+  let devices =
+    if !devices = "" then None
+    else Some (List.map Rune.device (parse_devices !devices))
+  in
   let count default = if !count > 0 then !count else default in
   let log = if !prompt = "" then stdout else stderr in
   let t0 = Unix.gettimeofday () in
-  let params = Gpt_oss.of_hf ?placement:(whole_on device) cfg dt ckpt in
+  let params =
+    Gpt_oss.of_hf
+      ?placement:(Option.map Gpt_oss.expert_parallel devices)
+      cfg dt ckpt
+  in
   Printf.fprintf log "weights imported in %.1f s\n%!"
     (Unix.gettimeofday () -. t0);
   if !prompt = "" then
     let out =
-      generate ?device cfg params dt ~log ~count:(count 16)
+      generate ?devices cfg params dt ~log ~count:(count 16)
         ~on_token:(fun _ -> false)
         fixed_prompt
     in
@@ -184,7 +204,7 @@ let () =
     in
     let on_token = printer harmony ~show_analysis:!show_analysis in
     let out =
-      generate ?device cfg params dt ~log ~count:(count 256) ~on_token
+      generate ?devices cfg params dt ~log ~count:(count 256) ~on_token
         (Array.map Int32.of_int ids)
     in
     print_newline ();

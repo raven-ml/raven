@@ -137,7 +137,7 @@ let test_blocks_read_weights_and_reuse_caches () =
       is_true ~msg:"the builder places each pool"
         (Nx.Placement.equal cpu1 (Nx.placement c.Attention.Cache.keys)))
     caches;
-  let cached = Layer_loop.cached ~device:(Rune.device "CPU:1") cfg p in
+  let cached = Layer_loop.cached ~devices:[ Rune.device "CPU:1" ] cfg p in
   let index = Cache_index.rows ~context [| n0 |] in
   let ids = Nx.create Nx.int32 [| 1; n0 |] (Array.init n0 Int32.of_int) in
   let x, caches = cached caches index ids in

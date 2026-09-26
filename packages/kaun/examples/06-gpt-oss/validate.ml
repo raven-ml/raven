@@ -25,13 +25,14 @@
    against the whole-sequence one; a ragged batch of two prompts against each
    prompt's own reference.
 
-   [--jit DEVICE] compiles every function under test; the per-block streams are
-   then checked at the last block only. [--dtype bfloat16] runs the whole model
-   at half precision against the same float32 reference and skips the building
-   blocks.
+   [--devices LIST] compiles every function under test; the per-block streams
+   are then checked at the last block only. Over several devices the experts are
+   split among them and the rest is a copy on each. [--dtype bfloat16] runs the
+   whole model at half precision against the same float32 reference and skips
+   the building blocks.
 
    Usage: validate.exe [--fixtures DIR] [--float-weights FILE] [--mxfp4-weights
-   FILE] [--jit DEVICE] [--dtype DT]. Without the weight files they come from
+   FILE] [--devices LIST] [--dtype DT]. Without the weight files they come from
    the fixtures' repositories (14 MB each, cached), as the configurations always
    do. Not part of the test suite: it needs the download. *)
 
@@ -127,10 +128,8 @@ let identical ?(flushed = fun _ -> false) name expected actual =
     (Printf.sprintf "  (%d of %d values differ%s%s)" !differing
        (Array.length expected) !first zeroed)
 
-let compiled device f x =
-  match device with
-  | None -> f x
-  | Some device -> Rune.jit' ~devices:[ Rune.device device ] f x
+let compiled devices f x =
+  match devices with None -> f x | Some devices -> Rune.jit' ~devices f x
 
 let number j =
   match j with
@@ -169,6 +168,22 @@ let moe_params ckpt ~layer ~weight =
 
 let float_weight ckpt name = Moe.Float (tensor ckpt name)
 
+let place_experts devices (p : _ Moe.t) =
+  match devices with
+  | None -> p
+  | Some ds ->
+      let split = Nx.Placement.sharded ~axis:0 ds in
+      let weight = function
+        | Moe.Float w -> Moe.Float (Nx.place split w)
+        | Moe.Quant w -> Moe.Quant (Nx_quant.place split w)
+      in
+      {
+        gate_up = weight p.gate_up;
+        gate_up_bias = Nx.place split p.gate_up_bias;
+        down = weight p.down;
+        down_bias = Nx.place split p.down_bias;
+      }
+
 (* The checkpoint's [[| ...; groups; 16 |]] blocks as [[| ...; inputs / 2 |]]
    codes. *)
 let mxfp4 ~scales blocks =
@@ -193,7 +208,7 @@ let packed_weight ckpt ~offset name =
    little else. *)
 let min_normal = Float.ldexp 1.0 (-126)
 
-let dequant ~device fx =
+let dequant ~devices fx =
   List.iter
     (fun (name, case) ->
       let shape = ints (mem "blocks_shape" case) in
@@ -205,28 +220,30 @@ let dequant ~device fx =
       let weight b = mxfp4 ~scales b in
       let expected = floats (mem "values" case) in
       let flushed i =
-        device = Some "METAL"
+        List.exists
+          (fun d -> Nx.Device.name d = "METAL")
+          (Option.value devices ~default:[])
         && (scale_bytes.(i / 32) = 0 || Float.abs expected.(i) < min_normal)
       in
       identical ~flushed
         (Printf.sprintf "dequant %s, float32" name)
         expected
         (flat
-           (compiled device
+           (compiled devices
               (fun b -> Nx_quant.dequant Nx.float32 (weight b))
               blocks));
       identical ~flushed
         (Printf.sprintf "dequant %s, bfloat16" name)
         expected
         (flat
-           (compiled device
+           (compiled devices
               (fun b ->
                 Nx.cast Nx.float32 (Nx_quant.dequant Nx.bfloat16 (weight b)))
               blocks)))
     (members (mem "dequant" fx));
   let nan_scale = uint8 [| 1; 1 |] [| 255 |] in
   let group =
-    compiled device
+    compiled devices
       (fun b ->
         Nx_quant.dequant Nx.float32 (Nx_quant.mxfp4 ~scales:nan_scale b))
       (uint8 [| 1; 16 |] (Array.make 16 0x21))
@@ -235,7 +252,7 @@ let dequant ~device fx =
     (Array.for_all Float.is_nan (flat group))
     ""
 
-let ties ~device fx =
+let ties ~devices fx =
   let k = int_of_float (number (mem "num_experts_per_tok" (mem "config" fx))) in
   let case = mem "ties" fx in
   let logits = floats (mem "logits" case) in
@@ -243,9 +260,9 @@ let ties ~device fx =
   let x = float32 [| 3; experts |] logits in
   let ids =
     Array.map Int32.to_int
-      (flat (compiled device (fun x -> fst (Moe.route ~k x)) x))
+      (flat (compiled devices (fun x -> fst (Moe.route ~k x)) x))
   in
-  let weights = flat (compiled device (fun x -> snd (Moe.route ~k x)) x) in
+  let weights = flat (compiled devices (fun x -> snd (Moe.route ~k x)) x) in
   let row a r = Array.sub a (r * k) k in
   let lowest_first =
     [| [| 0; 1; 2; 3 |]; [| 6; 13; 20; 27 |]; [| 5; 9; 20; 21 |] |]
@@ -274,7 +291,7 @@ let ties ~device fx =
      %!"
     same_sets
 
-let block ~device ~tol ~k ~limit label (router, p) case =
+let block ~devices ~tol ~k ~limit label (router, p) case =
   let shape = ints (mem "shape" case) in
   let width = shape.(Array.length shape - 1) in
   let x = float32 shape (floats (mem "hidden" case)) in
@@ -282,17 +299,17 @@ let block ~device ~tol ~k ~limit label (router, p) case =
   let name what = Printf.sprintf "%s: %s" label what in
   close ~tol (name "router logits")
     (floats (mem "router_logits" case))
-    (flat (compiled device (fun x -> Linear.apply router x) tokens));
+    (flat (compiled devices (fun x -> Linear.apply router x) tokens));
   let route x = Moe.route ~k (Linear.apply router x) in
-  let ids = compiled device (fun x -> fst (route x)) tokens in
+  let ids = compiled devices (fun x -> fst (route x)) tokens in
   check (name "selected experts")
     (Array.map Int32.to_int (flat ids) = ints (mem "experts" case))
     "";
   close ~tol (name "expert weights")
     (floats (mem "expert_weights" case))
-    (flat (compiled device (fun x -> snd (route x)) tokens));
+    (flat (compiled devices (fun x -> snd (route x)) tokens));
   let last = Nx.dim 0 tokens - 1 in
-  let apply x = compiled device (fun x -> Moe.apply ~limit p (route x) x) x in
+  let apply x = compiled devices (fun x -> Moe.apply ~limit p (route x) x) x in
   let whole = apply tokens in
   close ~tol (name "output") (floats (mem "output" case)) (flat whole);
   close ~tol
@@ -300,7 +317,7 @@ let block ~device ~tol ~k ~limit label (router, p) case =
     (flat (Nx.slice [ I last ] whole))
     (flat (apply (Nx.slice [ R (last, last + 1) ] tokens)))
 
-let blocks ~device ~tol fx ~label ~weight ckpt =
+let blocks ~devices ~tol fx ~label ~weight ckpt =
   let config = mem "config" fx in
   let k = int_of_float (number (mem "num_experts_per_tok" config)) in
   let limit = number (mem "swiglu_limit" config) in
@@ -308,14 +325,15 @@ let blocks ~device ~tol fx ~label ~weight ckpt =
   List.iter
     (fun (offset, cases) ->
       let weight = weight ckpt ~offset:(int_of_string offset) in
-      let p = moe_params ckpt ~layer ~weight in
+      let router, experts = moe_params ckpt ~layer ~weight in
+      let p = (router, place_experts devices experts) in
       List.iter
         (fun (case_name, case) ->
           let label =
             if offset = "0" then Printf.sprintf "%s %s" label case_name
             else Printf.sprintf "%s scales+%s %s" label offset case_name
           in
-          block ~device ~tol ~k ~limit label p case)
+          block ~devices ~tol ~k ~limit label p case)
         (members cases))
     (members (mem "cases" fx))
 
@@ -380,15 +398,14 @@ let rotary fx (cfg : Gpt_oss.config) =
     (part half)
 
 (* [Gpt_oss.cached cfg p] compiled as one program for the whole model. *)
-let compiled_cached ~device cfg (p : (float, 'b) Nx.t Gpt_oss.params) =
+let compiled_cached ~devices cfg (p : (float, 'b) Nx.t Gpt_oss.params) =
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
-  Rune.jit
-    ~devices:[ Rune.device device ]
+  Rune.jit ~devices
     Nx.Ptree.(
       caches @-> Cache_index.ptree @-> tensor @-> returns (pair tensor caches))
     (Gpt_oss.cached cfg p)
 
-let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
+let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (p : (float, b) Nx.t Gpt_oss.params) (dt : (float, b) Nx.dtype) =
   let name what = Printf.sprintf "%s: %s" label what in
   let to32 t = Nx.cast Nx.float32 t in
@@ -417,7 +434,7 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       close ~tol
         (name (Printf.sprintf "attention of block %d (%s) alone" i kind))
         expected
-        (flat (compiled device (attend layer) x));
+        (flat (compiled devices (attend layer) x));
       if layer = Gpt_oss.Sliding && exact then begin
         let unbound = flat (attend Gpt_oss.Full x) in
         let gap = ref 0.0 in
@@ -431,7 +448,7 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       end)
     (List.combine cfg.layers p.blocks);
   let logits =
-    compiled device
+    compiled devices
       (fun ids -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids)))
       ids
   in
@@ -466,10 +483,9 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (floats (mem "last_first_values" case))
     (Array.init 8 at);
   Option.iter
-    (fun device ->
+    (fun devices ->
       let as_inputs =
-        Rune.jit
-          ~devices:[ Rune.device device ]
+        Rune.jit ~devices
           Nx.Ptree.(instantiate (module Gpt_oss.Params) @-> returns tensor)
           (fun p -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids)))
           p
@@ -477,7 +493,7 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       close ~tol
         (name "parameters as compiled inputs, packed ones included")
         (flat logits) (flat as_inputs))
-    device;
+    devices;
   let n_layers = List.length cfg.layers in
   let stream k =
     let first l = List.filteri (fun i _ -> i < k) l in
@@ -490,7 +506,7 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       in
       to32 (Nx.slice [ I 0; I (n - 1); R (0, 8) ] h)
     in
-    Nx.to_array (compiled device f ids)
+    Nx.to_array (compiled devices f ids)
   in
   List.iter
     (fun k ->
@@ -498,7 +514,8 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
         (name (Printf.sprintf "residual stream after block %d" k))
         (floats (mem (string_of_int k) (mem "hidden" case)))
         (stream k))
-    (if device = None then List.init n_layers (fun i -> i + 1) else [ n_layers ]);
+    (if devices = None then List.init n_layers (fun i -> i + 1)
+     else [ n_layers ]);
   let slots = Nx.create Nx.int32 [| 1; n |] (Array.init n Int32.of_int) in
   let chunked cached =
     let _, hs, _ =
@@ -523,7 +540,7 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     to32 (Gpt_oss.logits cfg p (Nx.concatenate ~axis:1 (List.rev hs)))
   in
   let eager_logits =
-    if device = None then logits
+    if devices = None then logits
     else to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids))
   in
   close ~tol
@@ -531,13 +548,13 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (flat eager_logits)
     (flat (chunked (Gpt_oss.cached cfg p)));
   Option.iter
-    (fun device ->
-      let whole = compiled_cached ~device cfg p in
+    (fun devices ->
+      let whole = compiled_cached ~devices cfg p in
       close ~tol:1e-6
         (name "one program per layer kind is the whole-model program")
         (flat (chunked whole))
-        (flat (chunked (Layer_loop.cached ~device:(Rune.device device) cfg p))))
-    device;
+        (flat (chunked (Layer_loop.cached ~devices cfg p))))
+    devices;
   let short = ints (mem "short_ids" fx) in
   let m = Array.length short in
   let padded = Array.append (Array.make (n - m) 0) short in
@@ -548,7 +565,7 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     in
     to32 (Gpt_oss.logits cfg p (Nx.slice [ A; I (n - 1) ] h))
   in
-  let both = compiled device batch (ids_tensor [| tokens; padded |]) in
+  let both = compiled devices batch (ids_tensor [| tokens; padded |]) in
   let row r ids_key =
     Array.map (fun i -> Nx.item [ r; i ] both) (ints (mem ids_key case))
   in
@@ -560,16 +577,14 @@ let model (type b) ~device ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (floats (mem "short_top_values" case))
     (row 1 "short_top_ids")
 
-let models ~device ~dtype ~label fx path =
+let models ~devices ~dtype ~label fx path =
   let repo = string (mem "repo" fx) in
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config repo) in
   let cfg =
     { cfg with window = int_of_float (number (mem "sliding_window" fx)) }
   in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string dtype in
-  let placement =
-    Option.map (fun d _ ~axis:_ -> Nx.Placement.device (Rune.device d)) device
-  in
+  let placement = Option.map Gpt_oss.expert_parallel devices in
   let p = Gpt_oss.from_file ?placement cfg dt path in
   rotary fx cfg;
   List.iteri
@@ -590,13 +605,22 @@ let models ~device ~dtype ~label fx path =
          precision keeps about three digits: the reference's softmax also ran at
          float32 here, so the gap is that of the weights and activations. *)
       let exact = dtype = "float32" in
-      model ~device
+      model ~devices
         ~tol:(if exact then 1e-5 else 5e-2)
         ~exact ~label fx case cfg p dt)
     (members (mem "cases" fx))
 
+(* A device, a CPU device count ([4] is CPU:1..CPU:4) or a comma-separated
+   list. *)
+let parse_devices s =
+  match int_of_string_opt s with
+  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
+  | Some _ -> failwith "--devices: the device count must be positive"
+  | None -> List.map String.trim (String.split_on_char ',' s)
+
 let () =
-  let fixtures = ref "fixtures" and jit = ref "" and dtype = ref "float32" in
+  let fixtures = ref "fixtures" and devices = ref "" in
+  let dtype = ref "float32" in
   let float_weights = ref "" and mxfp4_weights = ref "" in
   Arg.parse
     [
@@ -607,15 +631,20 @@ let () =
       ( "--mxfp4-weights",
         Arg.Set_string mxfp4_weights,
         "model.safetensors of the MXFP4 checkpoint" );
-      ( "--jit",
-        Arg.Set_string jit,
-        "Compile the functions under test for this device" );
+      ( "--devices",
+        Arg.Set_string devices,
+        "Compile the functions under test over these devices, expert-parallel \
+         over several: a device (METAL), a CPU count (4 = CPU:1..CPU:4) or a \
+         comma-separated list" );
       ("--dtype", Arg.Set_string dtype, "float32 (default) or bfloat16");
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "validate.exe [--fixtures DIR] [--float-weights FILE] [--mxfp4-weights \
-     FILE] [--jit DEVICE] [--dtype DT]";
-  let device = if !jit = "" then None else Some !jit in
+     FILE] [--devices LIST] [--dtype DT]";
+  let devices =
+    if !devices = "" then None
+    else Some (List.map Rune.device (parse_devices !devices))
+  in
   let weights fx given =
     let repo = string (mem "repo" fx) in
     Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
@@ -632,19 +661,19 @@ let () =
     let tol = 1e-5 in
     let fx = fixture "gpt-oss-bf16" in
     let ckpt = Checkpoint.load (weights fx !float_weights) in
-    blocks ~device ~tol fx ~label:"float"
+    blocks ~devices ~tol fx ~label:"float"
       ~weight:(fun ckpt ~offset:_ name -> float_weight ckpt name)
       ckpt;
-    ties ~device fx;
+    ties ~devices fx;
     let fx = fixture "gpt-oss-mxfp4" in
     let ckpt = Checkpoint.load (weights fx !mxfp4_weights) in
-    dequant ~device fx;
-    blocks ~device ~tol fx ~label:"mxfp4" ~weight:packed_weight ckpt
+    dequant ~devices fx;
+    blocks ~devices ~tol fx ~label:"mxfp4" ~weight:packed_weight ckpt
   end;
   let fx = fixture "gpt-oss-bf16-model" in
-  models ~device ~dtype:!dtype ~label:"float model" fx
+  models ~devices ~dtype:!dtype ~label:"float model" fx
     (weights fx !float_weights);
   let fx = fixture "gpt-oss-mxfp4-model" in
-  models ~device ~dtype:!dtype ~label:"mxfp4 model" fx
+  models ~devices ~dtype:!dtype ~label:"mxfp4 model" fx
     (weights fx !mxfp4_weights);
   if !failures > 0 then exit 1
