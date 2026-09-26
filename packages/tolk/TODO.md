@@ -76,8 +76,6 @@ acceptance requirement; skipped tests are not execution evidence.
   where the reference uses promoting operators and preserve raw ALU
   construction where it does not.
 
-- Add reference cases for image loads/stores, `multi_stack`, 128³ Metal WMMA,
-  weak-integer overflow with movements, sliced aliases and symbolic copies.
 - Validate large WMMA accumulator ordering at optimizer/expander boundaries,
   including BF16/FNUZ across supported renderers. Audit remaining gating rules
   while preserving symbolic extents.

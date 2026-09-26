@@ -1,0 +1,72 @@
+#include <metal_stdlib>
+using namespace metal;
+float2 __WMMA_8_8_8_half_float(half2 a, half2 b, float2 c){
+  simdgroup_half8x8 mat_a, mat_b; simdgroup_float8x8 mat_c;
+  mat_a.thread_elements()[0] = a[0]; mat_b.thread_elements()[0] = b[0]; mat_c.thread_elements()[0] = c[0];
+  mat_a.thread_elements()[1] = a[1]; mat_b.thread_elements()[1] = b[1]; mat_c.thread_elements()[1] = c[1];
+  simdgroup_multiply_accumulate(mat_c, mat_a, mat_b, mat_c);
+  return float2(mat_c.thread_elements()[0], mat_c.thread_elements()[1]);
+}
+struct args_t { device half* data0_16384; device half* data1_16384; device float* data2_16384; };
+kernel void tc_matmul_128(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device half* data0_16384 = args.data0_16384; device half* data1_16384 = args.data1_16384; device float* data2_16384 = args.data2_16384;
+  int gidx1 = gid.y; /* 16 */
+  int lidx0 = lid.x; /* 32 */
+  int alu0 = (((lidx0>>4)<<9)+(((lidx0>>1)&3)<<7));
+  int alu1 = (alu0+(gidx1<<10));
+  int alu2 = ((lidx0&1)<<1);
+  int alu3 = (((lidx0>>3)&1)<<2);
+  int alu4 = (alu1+alu2+alu3);
+  half2 val0 = (*((device half2*)((data0_16384+(alu4+104)))));
+  half2 val1 = (*((device half2*)((data0_16384+(alu4+112)))));
+  half2 val2 = (*((device half2*)((data0_16384+(alu4+120)))));
+  half2 val3 = (*((device half2*)((data0_16384+(alu4+16)))));
+  half2 val4 = (*((device half2*)((data0_16384+(alu4+24)))));
+  half2 val5 = (*((device half2*)((data0_16384+(alu4+32)))));
+  half2 val6 = (*((device half2*)((data0_16384+(alu4+40)))));
+  half2 val7 = (*((device half2*)((data0_16384+(alu4+48)))));
+  half2 val8 = (*((device half2*)((data0_16384+(alu4+56)))));
+  half2 val9 = (*((device half2*)((data0_16384+(alu4+64)))));
+  half2 val10 = (*((device half2*)((data0_16384+(alu4+72)))));
+  half2 val11 = (*((device half2*)((data0_16384+(alu4+8)))));
+  half2 val12 = (*((device half2*)((data0_16384+(alu4+80)))));
+  half2 val13 = (*((device half2*)((data0_16384+(alu4+88)))));
+  half2 val14 = (*((device half2*)((data0_16384+(alu4+96)))));
+  half2 val15 = (*((device half2*)((data0_16384+alu4))));
+  int gidx0 = gid.x; /* 16 */
+  int alu5 = ((gidx0<<3)+alu3+alu2);
+  int alu6 = (alu5+alu0);
+  half2 val16 = (*((device half2*)((data1_16384+(alu6+1024)))));
+  half2 val17 = (*((device half2*)((data1_16384+(alu6+10240)))));
+  half2 val18 = (*((device half2*)((data1_16384+(alu6+11264)))));
+  half2 val19 = (*((device half2*)((data1_16384+(alu6+12288)))));
+  half2 val20 = (*((device half2*)((data1_16384+(alu6+13312)))));
+  half2 val21 = (*((device half2*)((data1_16384+(alu6+14336)))));
+  half2 val22 = (*((device half2*)((data1_16384+(alu6+15360)))));
+  half2 val23 = (*((device half2*)((data1_16384+(alu6+2048)))));
+  half2 val24 = (*((device half2*)((data1_16384+(alu6+3072)))));
+  half2 val25 = (*((device half2*)((data1_16384+(alu6+4096)))));
+  half2 val26 = (*((device half2*)((data1_16384+(alu6+5120)))));
+  half2 val27 = (*((device half2*)((data1_16384+(alu6+6144)))));
+  half2 val28 = (*((device half2*)((data1_16384+(alu6+7168)))));
+  half2 val29 = (*((device half2*)((data1_16384+(alu6+8192)))));
+  half2 val30 = (*((device half2*)((data1_16384+(alu6+9216)))));
+  half2 val31 = (*((device half2*)((data1_16384+alu6))));
+  float2 wmma0 = __WMMA_8_8_8_half_float(val2, val22, float2(0.0f,0.0f));
+  float2 wmma1 = __WMMA_8_8_8_half_float(val1, val21, wmma0);
+  float2 wmma2 = __WMMA_8_8_8_half_float(val0, val20, wmma1);
+  float2 wmma3 = __WMMA_8_8_8_half_float(val14, val19, wmma2);
+  float2 wmma4 = __WMMA_8_8_8_half_float(val13, val18, wmma3);
+  float2 wmma5 = __WMMA_8_8_8_half_float(val12, val17, wmma4);
+  float2 wmma6 = __WMMA_8_8_8_half_float(val10, val30, wmma5);
+  float2 wmma7 = __WMMA_8_8_8_half_float(val9, val29, wmma6);
+  float2 wmma8 = __WMMA_8_8_8_half_float(val8, val28, wmma7);
+  float2 wmma9 = __WMMA_8_8_8_half_float(val7, val27, wmma8);
+  float2 wmma10 = __WMMA_8_8_8_half_float(val6, val26, wmma9);
+  float2 wmma11 = __WMMA_8_8_8_half_float(val5, val25, wmma10);
+  float2 wmma12 = __WMMA_8_8_8_half_float(val4, val24, wmma11);
+  float2 wmma13 = __WMMA_8_8_8_half_float(val3, val23, wmma12);
+  float2 wmma14 = __WMMA_8_8_8_half_float(val11, val16, wmma13);
+  float2 wmma15 = __WMMA_8_8_8_half_float(val15, val31, wmma14);
+  *((device float2*)((data2_16384+(alu5+alu1)))) = wmma15;
+}

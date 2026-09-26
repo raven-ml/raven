@@ -1,0 +1,32 @@
+   0 Ops.PARAM           :            dtypes.float                             []                               ParamArg(0, dtypes.float, 8, device=('CPU:0', 'CPU:1'))
+   1 Ops.CONST           :            dtypes.weakint                           []                               2
+   2 Ops.CAST            :            dtypes.int                               ['2']                            dtypes.int
+   3 Ops.RANGE           : 0          dtypes.int                               [2]                              (0, AxisType.WEAK)
+   4 Ops.SHL             : 0          dtypes.int                               [3, 2]                           None
+   5 Ops.CONST           :            dtypes.weakint                           []                               4
+   6 Ops.CAST            :            dtypes.int                               ['4']                            dtypes.int
+   7 Ops.SHRINK          : 0          dtypes.float                             [0, 4, 6]                        None
+   8 Ops.PARAM           :            dtypes.float                             []                               ParamArg(1, dtypes.float, 8, device=('CPU:0', 'CPU:1'))
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 4, 6]                        None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.weakint                           []                               0
+  12 Ops.CAST            :            dtypes.int                               ['0']                            dtypes.int
+  13 Ops.INDEX           : 0          dtypes.float                             [10, 12]                         None
+  14 Ops.CONST           :            dtypes.weakfloat                         []                               1.0
+  15 Ops.CAST            :            dtypes.float                             ['1.0']                          dtypes.float
+  16 Ops.ADD             : 0          dtypes.float                             [13, 15]                         None
+  17 Ops.CONST           :            dtypes.weakint                           []                               1
+  18 Ops.CAST            :            dtypes.int                               ['1']                            dtypes.int
+  19 Ops.INDEX           : 0          dtypes.float                             [10, 18]                         None
+  20 Ops.ADD             : 0          dtypes.float                             [19, 15]                         None
+  21 Ops.INDEX           : 0          dtypes.float                             [10, 2]                          None
+  22 Ops.ADD             : 0          dtypes.float                             [21, 15]                         None
+  23 Ops.CONST           :            dtypes.weakint                           []                               3
+  24 Ops.CAST            :            dtypes.int                               ['3']                            dtypes.int
+  25 Ops.INDEX           : 0          dtypes.float                             [10, 24]                         None
+  26 Ops.ADD             : 0          dtypes.float                             [25, 15]                         None
+  27 Ops.STACK           : 0          dtypes.float                             [16, 20, 22, 26]                 None
+  28 Ops.STORE           : 0          dtypes.void                              [7, 27]                          None
+  29 Ops.GROUP           : 0          dtypes.void                              [28, 28, 28, 28]                 None
+  30 Ops.END             :            dtypes.void                              [29, 3]                          None
+  31 Ops.SINK            :            dtypes.void                              [30]                             KernelInfo(name='E_2_4', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), opts_to_apply=None, estimates=None, beam=0)
