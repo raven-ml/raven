@@ -473,6 +473,38 @@ let check_float_constant_association ?devices () =
     (fun x -> Nx.add (Nx.get [ 0 ] x) (Nx.add_s (Nx.get [ 1 ] x) (-1e8)))
     [| 1.0; 1e8 |]
 
+(* Float identities hold only where IEEE arithmetic keeps them: x / x is NaN at
+   0, inf and NaN; x * 0 is NaN at inf and -0 at negative x; (x * y) / y is NaN
+   where x * y overflows; x / (1 + x) keeps its digits for small x, where 1 - 1
+   / (1 + x) cancels them; -0 + 0 is +0. Compared bit for bit. *)
+let check_float_identities ?devices () =
+  let check name f rows =
+    let x = vec32 rows in
+    let bits t = Array.map Int32.bits_of_float (to_arr t) in
+    let canon b =
+      if
+        Int32.logand b 0x7f800000l = 0x7f800000l
+        && Int32.logand b 0x007fffffl <> 0l
+      then 0x7fc00000l
+      else b
+    in
+    equal ~msg:name (array int32)
+      (Array.map canon (bits (f x)))
+      (Array.map canon (bits (Rune.jit' ?devices f x)))
+  in
+  check "x / x" (fun x -> Nx.div x x) [| 0.; infinity; nan; 2. |];
+  check "x * 0" (fun x -> Nx.mul_s x 0.) [| infinity; nan; -1.; 2. |];
+  check "(x * y) / y"
+    (fun x ->
+      let y = Nx.mul_s x 1e30 in
+      Nx.div (Nx.mul x y) y)
+    [| 1e10; 3. |];
+  check "x / (1 + x)"
+    (fun x -> Nx.div x (Nx.add_s x 1.))
+    [| 1e-8; 3e-8; 0.5; 1e8 |];
+  check "1 / (x * x)" (fun x -> Nx.recip (Nx.mul x x)) [| 1e20; 3e-20 |];
+  check "x + 0" (fun x -> Nx.add_s x 0.) [| -0.; 1. |]
+
 (* Integer arithmetic wraps at its dtype's width before a comparison reads it,
    as eager's does: uint8 0 - 1 is 255, int8 127 + 1 is -128, and uint16 256 *
    256 is 0. *)

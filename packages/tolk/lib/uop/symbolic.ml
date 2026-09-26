@@ -743,21 +743,38 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
   ]
   ++ pm_invalid_load_store)
 
+(* Integer and boolean arithmetic obeys the ring identities exactly. Float
+   arithmetic rounds at each step and carries -0, inf and NaN, so a rewrite
+   that regroups, factors or cancels it changes the result the program asks
+   for; only the identities exact under IEEE apply there. *)
+let exact_algebra u = not (Dtype.is_float (Uop.dtype u))
+
+(* [x] is never zero, so neither -0 nor +0: [x + 0] is [x]. *)
+let nonzero x =
+  Bound.lt Bound.zero (Uop.vmin x) || Bound.lt (Uop.vmax x) Bound.zero
+
+let is_neg_zero c =
+  match const_float_v c with
+  | Some f -> f = 0.0 && Float.sign_bit f
+  | None -> false
+
+(* [x * 0] is 0 only where [x] is finite and the sign of zero is not asked:
+   at integer dtypes. *)
 let fold_mul_zero x =
-  match const_float_v x with
-  | Some f when not (Float.is_finite f) -> const_nan_like x
-  | _ -> Some (Uop.const_like x 0)
+  if exact_algebra x then Some (Uop.const_like x 0) else None
 
 let symbolic_simple : Upat.Pattern_matcher.t =
   let open Upat in
   Pattern_matcher.(pm_data_invalid ++ make [
-    (* x + 0 -> x *)
-    rewrite1 (fun x -> O.(x + zero)) (fun x -> Some x);
+    (* x + 0 -> x, except -0 + +0, which is +0. *)
+    rewrite1 (fun x -> O.(x + zero)) (fun x ->
+       if exact_algebra x || nonzero x then Some x else None);
     (let x = var "x" and c = cvar ~name:"c" () in
      alu [ x; c ] Ops.Add => fun bs ->
-       match const_int_v (bs $ "c"), const_float_v (bs $ "c") with
-       | Some 0, _ -> Some (bs $ "x")
-       | _, Some f when f = 0.0 -> Some (bs $ "x")
+       let x = bs $ "x" and c = bs $ "c" in
+       match const_int_v c, const_float_v c with
+       | Some 0, _ -> Some x
+       | _, Some f when f = 0.0 && (is_neg_zero c || nonzero x) -> Some x
        | _ -> None);
     (let x = var "x"
      and c0 = cvar ~name:"c0" () and c1 = cvar ~name:"c1" () in
@@ -769,14 +786,16 @@ let symbolic_simple : Upat.Pattern_matcher.t =
            Some Uop.O.(x + c)
        | _ -> None);
 
-    (* x - 0 -> x *)
-    rewrite1 (fun x -> O.(x - zero)) (fun x -> Some x);
+    (* x - 0 -> x, except -0 - -0, which is +0. *)
+    rewrite1 (fun x -> O.(x - zero)) (fun x ->
+       if exact_algebra x || nonzero x then Some x else None);
     (let x = var "x" and c = cvar ~name:"c" () in
      alu [ x; c ] Ops.Sub => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
        match const_int_v c, const_float_v c with
        | Some 0, _ -> Some (bs $ "x")
-       | _, Some f when f = 0.0 -> Some (bs $ "x")
+       | _, Some f when f = 0.0 && (not (is_neg_zero c) || nonzero x) ->
+           Some (bs $ "x")
        | Some n, _ ->
            if not (Dtype.is_unsigned (Uop.dtype x))
            then Some Uop.O.(x + Uop.const_like x (-n))
@@ -1171,16 +1190,6 @@ let symbolic_simple : Upat.Pattern_matcher.t =
          alu [ alu [ x; zero ] Ops.Mul; op ~src:[ zero ] Ops.Reciprocal ] Ops.Mul)
        (fun x -> const_nan_like x));
 
-    (* x / x -> 1 (can be wrong if x is 0). *)
-    (rewrite1 (fun x -> alu [ x; op ~src:[ x ] Ops.Reciprocal ] Ops.Mul)
-       (fun x -> Some (Uop.const_like x 1)));
-
-    (* (x * x2) / x2 -> x (can be wrong if x2 is 0). *)
-    (rewrite2
-       (fun x x2 ->
-         alu [ alu [ x; x2 ] Ops.Mul; op ~src:[ x2 ] Ops.Reciprocal ] Ops.Mul)
-       (fun x _ -> Some x));
-
     (* bool max(x, y) -> x | y. *)
     (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      alu [ x; y ] Ops.Max => fun bs ->
@@ -1188,11 +1197,6 @@ let symbolic_simple : Upat.Pattern_matcher.t =
   ] ++ Movement.mop_cleanup)
 
 (* phase 2 *)
-
-(* Integer and boolean arithmetic regroups freely. Float addition and
-   multiplication round at each step, so regrouping or factoring them changes
-   the result the program asks for. *)
-let regroups u = not (Dtype.is_float (Uop.dtype u))
 
 (* Two-stage ALU folding on associative ops: x.op(c1).op(c2) -> x.op(c1.op(c2)). *)
 let rule_two_stage_associative_for assoc_op =
@@ -1203,7 +1207,7 @@ let rule_two_stage_associative_for assoc_op =
     let x = bs $ "x" and c1 = bs $ "c1" and c2 = bs $ "c2" in
     if
       (assoc_op = Ops.Add && Dtype.is_unsigned (Uop.dtype x))
-      || ((assoc_op = Ops.Add || assoc_op = Ops.Mul) && not (regroups x))
+      || ((assoc_op = Ops.Add || assoc_op = Ops.Mul) && not (exact_algebra x))
     then None
     else
       let combined = Uop.alu_binary ~op:assoc_op ~lhs:c1 ~rhs:c2 in
@@ -1405,7 +1409,7 @@ let symbolic : Upat.Pattern_matcher.t =
      and c0 = cvar ~name:"c0" () and c1 = cvar ~name:"c1" () in
      O.((x * c0) + (x * c1)) => fun bs ->
        let x = bs $ "x" and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       if regroups x then Some Uop.O.(x * (c0 + c1)) else None);
+       if exact_algebra x then Some Uop.O.(x * (c0 + c1)) else None);
 
     (* y + (x * c0) + (x * c1) -> y + x*(c0+c1). *)
     (let x = var "x" and y = var "y"
@@ -1413,7 +1417,7 @@ let symbolic : Upat.Pattern_matcher.t =
      O.((y + x * c0) + (x * c1)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y"
        and c0 = bs $ "c0" and c1 = bs $ "c1" in
-       if regroups x then Some Uop.O.(y + (x * (c0 + c1))) else None);
+       if exact_algebra x then Some Uop.O.(y + (x * (c0 + c1))) else None);
 
     (* (x + x) -> x * 2. *)
     (rewrite1 (fun x -> O.(x + x))
@@ -1422,26 +1426,26 @@ let symbolic : Upat.Pattern_matcher.t =
     (* y + x + x -> y + x*2 (associative variant). *)
     (rewrite2 (fun x y -> O.((y + x) + x))
        (fun x y ->
-         if regroups x then Some Uop.O.(y + (x * Uop.const_like x 2)) else None));
+         if exact_algebra x then Some Uop.O.(y + (x * Uop.const_like x 2)) else None));
 
     (* (x + x * c) -> x * (c + 1). *)
     (let x = var "x" and c = cvar ~name:"c" () in
      O.(x + x * c) => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
-       if regroups x then Some Uop.O.(x * (c + Uop.const_like c 1)) else None);
+       if exact_algebra x then Some Uop.O.(x * (c + Uop.const_like c 1)) else None);
 
     (* y + x + x*c -> y + x*(c+1). *)
     (let x = var "x" and y = var "y" and c = cvar ~name:"c" () in
      O.((y + x) + (x * c)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       if regroups x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
+       if exact_algebra x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
        else None);
 
     (* y + x*c + x -> y + x*(c+1). *)
     (let x = var "x" and y = var "y" and c = cvar ~name:"c" () in
      O.((y + (x * c)) + x) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-       if regroups x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
+       if exact_algebra x then Some Uop.O.(y + (x * (c + Uop.const_like c 1)))
        else None);
 
     (* y * (x + c) -> (y*x) + (y*c)  (distribution, int only). *)
@@ -1451,16 +1455,6 @@ let symbolic : Upat.Pattern_matcher.t =
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
        Some Uop.O.((y * x) + (y * c)));
 
-    (* (x / x2) / x3 -> x / (x2 * x3)  when x2 and x3 differ. *)
-    (let x = var "x" and x2 = var "x2" and x3 = var "x3" in
-     let recip p = op ~src:[ p ] Ops.Reciprocal in
-     alu [ alu [ x; recip x2 ] Ops.Mul; recip x3 ] Ops.Mul => fun bs ->
-       let x2 = bs $ "x2" and x3 = bs $ "x3" in
-       if Uop.equal x2 x3 then None
-       else
-         Some
-           (Uop.alu_binary ~op:Ops.Mul ~lhs:(bs $ "x")
-              ~rhs:(Uop.alu_unary ~op:Ops.Reciprocal ~src:Uop.O.(x2 * x3))));
     (let x = var "x"
      and c1 = cvar ~name:"c1" () and c2 = cvar ~name:"c2" () in
      alu [ alu [ x; c1 ] Ops.Floordiv; c2 ] Ops.Floordiv => fun bs ->
@@ -1549,14 +1543,14 @@ let symbolic : Upat.Pattern_matcher.t =
     (let x = var "x" and y = var "y" and c1 = cvar ~name:"c1" () in
      O.((x + c1) + y) => fun bs ->
        let y = bs $ "y" in
-       if Uop.op y = Ops.Const || not (regroups y) then None
+       if Uop.op y = Ops.Const || not (exact_algebra y) then None
        else
          let x = bs $ "x" and c1 = bs $ "c1" in
          Some Uop.O.((x + y) + c1));
     (let x = var "x" and y = var "y" and c1 = cvar ~name:"c1" () in
      O.((x * c1) * y) => fun bs ->
        let y = bs $ "y" in
-       if Uop.op y = Ops.Const || not (regroups y) then None
+       if Uop.op y = Ops.Const || not (exact_algebra y) then None
        else
          let x = bs $ "x" and c1 = bs $ "c1" in
          Some Uop.O.((x * y) * c1));
@@ -2277,51 +2271,6 @@ let sym : Upat.Pattern_matcher.t =
                   let out_prod = Uop.uprod outside in
                   Some (Uop.alu_binary ~op:Ops.Mul ~lhs:new_r ~rhs:out_prod)
           | _ -> None);
-
-    (* (x * x).reciprocal -> x.reciprocal * x.reciprocal. *)
-    (rewrite1
-       (fun x -> op ~src:[ alu [ x; x ] Ops.Mul ] Ops.Reciprocal)
-       (fun x ->
-         let r = Uop.alu_unary ~op:Ops.Reciprocal ~src:x in
-         Some (Uop.alu_binary ~op:Ops.Mul ~lhs:r ~rhs:r)));
-
-    (* (x * x * x).reciprocal -> (1/x)*(1/x)*(1/x). *)
-    (rewrite1
-       (fun x ->
-         op ~src:[ alu [ alu [ x; x ] Ops.Mul; x ] Ops.Mul ] Ops.Reciprocal)
-       (fun x ->
-         let r = Uop.alu_unary ~op:Ops.Reciprocal ~src:x in
-         Some (Uop.alu_binary ~op:Ops.Mul
-                 ~lhs:(Uop.alu_binary ~op:Ops.Mul ~lhs:r ~rhs:r) ~rhs:r)));
-
-    (* (x * c).reciprocal -> (1/x) * (1/c). *)
-    (let x = var "x" and c = cvar ~name:"c" () in
-     op ~src:[ alu [ x; c ] Ops.Mul ] Ops.Reciprocal => fun bs ->
-       let x = bs $ "x" and c = bs $ "c" in
-       let rx = Uop.alu_unary ~op:Ops.Reciprocal ~src:x in
-       let rc = Uop.alu_unary ~op:Ops.Reciprocal ~src:c in
-       Some (Uop.alu_binary ~op:Ops.Mul ~lhs:rx ~rhs:rc));
-
-    (* x * (1/(1+x)) -> 1 - 1/(1+x). *)
-    (let x = var "x" in
-     let d = op ~name:"d" ~src:[ O.(x + one) ] Ops.Reciprocal in
-     O.(x * d) => fun bs ->
-       let d = bs $ "d" in
-       Some Uop.O.(Uop.const_like d 1 - d));
-
-    (* x * (1/(1+x) * y) -> y * (1 - 1/(1+x)). *)
-    (let x = var "x" and y = var "y" in
-     let d = op ~name:"d" ~src:[ O.(x + one) ] Ops.Reciprocal in
-     O.(x * (d * y)) => fun bs ->
-       let y = bs $ "y" and d = bs $ "d" in
-       Some Uop.O.(y * (Uop.const_like d 1 - d)));
-
-    (* x * (1/(1+x) + y) -> (1 - 1/(1+x)) + x*y. *)
-    (let x = var "x" and y = var "y" in
-     let d = op ~name:"d" ~src:[ O.(x + one) ] Ops.Reciprocal in
-     O.(x * (d + y)) => fun bs ->
-       let x = bs $ "x" and y = bs $ "y" and d = bs $ "d" in
-       Some Uop.O.((Uop.const_like d 1 - d) + (x * y)));
 
     (* GROUP with a single source -> the source (peephole cleanup). *)
     (rewrite1 (fun x -> op ~src:[ x ] Ops.Group) (fun x -> Some x));

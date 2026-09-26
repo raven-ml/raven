@@ -307,6 +307,22 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   `test_jit` and `test_jit_metal` "float constants keep their grouping".
   Remove this ruling when upstream keeps float association.
 
+- **The listed float identities apply only where IEEE keeps them.** The reference
+  folds `x / x` to 1, `x * 0` to 0, `(x * y) / y` to `x`, `x + 0` and
+  `x - 0` to `x`, splits `1 / (x * x)` and `1 / (x * c)` into products of
+  reciprocals, merges `(x / y) / z` into `x / (y * z)`, and rewrites
+  `x * (1 / (1 + x))` as `1 - 1 / (1 + x)`, at every dtype. In float these
+  change the program: `x / x` is NaN at 0, inf and NaN, `x * 0` is NaN at
+  inf and -0 at negative x, `(x * y) / y` is NaN where `x * y` overflows,
+  `-0 + 0` is +0, and `1 - 1 / (1 + x)` cancels every digit of `x / (1 + x)`
+  for small x (1e-8 gave 0). Tolk drops the rules on reciprocals, which only
+  float arithmetic reaches (at integers x * (1/x) is not 1 either), applies
+  `x * 0` at integer and boolean dtypes (`exact_algebra`), and at float keeps
+  `x * 1`, `x + -0`, `x - +0`, `x + x -> 2x`, and `x + 0` or `x - 0` where
+  bounds exclude zero. No CPU kernel of sigmoid, silu, swiglu, softmax, gelu,
+  layer norm or Lorenz changes time. Coverage: rune `test_jit` and
+  `test_jit_metal` "float identities hold only where IEEE keeps them". Remove
+  this ruling when upstream restricts these rules.
 
 - **A fixed-width integer constant holds its dtype's value.** The reference
   keeps integer constants exact until emission: folding runs with

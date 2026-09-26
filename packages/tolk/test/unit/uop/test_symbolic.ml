@@ -1170,40 +1170,24 @@ let invalid_where_tests =
           | None -> fail "expected gated-invalid condition to lift its gate");
     ]
 
-(* Sigmoid reciprocal folds (phase-3 [sym]). *)
-
+(* x * (1/(1+x)) keeps its division at float: 1 - 1/(1+x) cancels the digits
+   of a small x. *)
 let sigmoid_tests =
   let fvar name = U.variable ~name ~min_val:0 ~max_val:10 ~dtype:D.float32 () in
   let recip_1p x = U.alu_unary ~op:Ops.Reciprocal ~src:U.O.(x + U.const_float 1.0) in
+  let kept name e =
+    test name (fun () ->
+        match sym e with
+        | Some r -> is_true ~msg:"no 1 - 1/(1+x)" (U.op r <> Ops.Sub && U.op r <> Ops.Add)
+        | None -> ())
+  in
+  let x = fvar "x" and y = fvar "y" in
+  let d = recip_1p x in
   group "sigmoid"
     [
-      test "x * (1/(1+x)) -> 1 - 1/(1+x)" (fun () ->
-          let x = fvar "x" in
-          let d = recip_1p x in
-          match sym U.O.(x * d) with
-          | Some r ->
-              check_op r Ops.Sub;
-              check_const_float (src r 0) 1.0;
-              is_true (src r 1 == d)
-          | None -> fail "expected sigmoid fold");
-      test "x * (1/(1+x) * y) -> y * (1 - 1/(1+x))" (fun () ->
-          let x = fvar "x" and y = fvar "y" in
-          let d = recip_1p x in
-          match sym U.O.(x * (d * y)) with
-          | Some r ->
-              check_op r Ops.Mul;
-              is_true (src r 0 == y);
-              check_op (src r 1) Ops.Sub
-          | None -> fail "expected sigmoid product fold");
-      test "x * (1/(1+x) + y) -> (1 - 1/(1+x)) + x*y" (fun () ->
-          let x = fvar "x" and y = fvar "y" in
-          let d = recip_1p x in
-          match sym U.O.(x * (d + y)) with
-          | Some r ->
-              check_op r Ops.Add;
-              check_op (src r 0) Ops.Sub;
-              check_op (src r 1) Ops.Mul
-          | None -> fail "expected sigmoid sum fold");
+      kept "float x * (1/(1+x)) stays" U.O.(x * d);
+      kept "float x * (1/(1+x) * y) stays" U.O.(x * (d * y));
+      kept "float x * (1/(1+x) + y) stays" U.O.(x * (d + y));
     ]
 
 (* Masked-numerator division: (x & mask) // c collapses when the mask only

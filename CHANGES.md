@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled float `x / x`, `x * 0`, `(x * y) / y` and `-0 + 0` compute what
+  they say: they folded to 1, 0, `x` and -0, wrong at 0, inf, NaN and
+  overflow. `x / (1 + x)` was rewritten to `1 - 1 / (1 + x)`, which is 0 at
+  x = 1e-8.
 - A compiled integer constant folded from constants wraps at its dtype as
   eager's does: `uint8` `x < full 200 + 100` compared with 300, true for
   every x, where eager compares with 44 (likewise `255 * 255`, `int8`
