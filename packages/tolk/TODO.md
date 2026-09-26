@@ -46,11 +46,12 @@ with their rationale and validation; commit count is not an acceptance metric.
   UVM/RM map then UVM range free, and successful range cleanup then RM free.
   Verify owned host mappings remain after failed retirement, borrowed sources
   are retained, and successful cleanup releases each owned mapping once.
-  Complete phase-specific rollback of AMD `Am_boot.create/init` and NV
-  Falcon/GSP `init_sw/init_hw` failures before a booted interface exists;
-  ordinary shutdown assumes initialization succeeded and cannot serve as a
-  blanket rollback. Preserve resident AMD GC9.5 firmware/TMR state, and retain
-  claims until quiescence is established. Run the Linux BAR-acquisition failure
+  Establish generation-specific quiescence and claim retirement after failed
+  AMD hardware initialization, preserving GC9.5 resident firmware/TMR and
+  retaining claims/backing when safe shutdown cannot be proved.
+  Complete phase-specific rollback of NV Falcon/GSP `init_sw/init_hw` failures
+  before a booted interface exists; ordinary shutdown cannot serve as a blanket
+  rollback. Run the Linux BAR-acquisition failure
   regression. Validate post-boot
   AMD/NV queue/runtime rollback with injected hardware failures, including
   faulted queue retirement and doorbell mappings; inject driver mapping

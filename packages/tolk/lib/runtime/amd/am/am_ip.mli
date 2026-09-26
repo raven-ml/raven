@@ -243,8 +243,9 @@ module Psp : sig
   (** [create adev ~fw] prepares the block for loading the firmware set
       [fw]: picks the mailbox register family of the device's
       security-processor generation and allocates the staging buffer,
-      command buffer, fence buffer and submission ring from boot memory. Requires [adev] to be
-      booting. *)
+      command buffer, fence buffer and submission ring from boot memory without
+      changing their bytes. The caller must clear the fence before hardware
+      initialization. Requires [adev] to be booting. *)
 
   val is_sos_alive : t -> bool
   (** [is_sos_alive t] is [true] iff the secure OS reports itself

@@ -127,6 +127,14 @@ let init t =
   (* A failed hardware phase must not inherit the previous session's clean
      shutdown stamp. REG7 and the resident TMR remain intact for GC 9.5. *)
   Am_register.write (reg "regSCRATCH_REG6") ~value:1 [];
+  (* Software construction must leave a reusable resident session intact
+     until its scratch state records ownership of the new initialization. *)
+  let vram = Amdev.vram adev in
+  let root = Amdev.Am_page_table.paddr
+      (Tolk.Memory.root_page_table (Amdev.mm adev)) in
+  Tolk_hcq.Hcq.Mmio.blit_bytes vram ~off:root (Bytes.make 0x1000 '\000');
+  Tolk_hcq.Hcq.Mmio.blit_bytes vram ~off:(Am_ip.Psp.fence_paddr t.psp)
+    (Bytes.make Amd_tables.Am_defs.psp_fence_buffer_size '\000');
 
   (* Init hw for the blocks where it is needed. *)
   if not partial_boot then begin

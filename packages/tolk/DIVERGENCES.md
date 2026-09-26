@@ -266,6 +266,15 @@ Retained rulings from the September 2026 audit; unresolved gaps live in
   remains open. Reconsider when upstream provides equivalent bounds and
   backpressure.
 
+- **AMD boot memory changes begin after the dirty-session stamp.** The target
+  clears the root page and PSP fence during software construction. A later
+  constructor failure can therefore corrupt a session still marked clean.
+  Tolk reserves those regions without writing them and clears them at the
+  existing hardware-init boundary, retaining resident GC9.5 firmware/TMR state.
+  Coverage: `test_amd_amdev` resident-byte preservation, failed construction and
+  dirty-before-clear ordering. Hardware quiescence remains open. Reconsider
+  when the target gives these writes the same failure boundary.
+
 - **AMD compute recovery requires idle SDMA queues.** The reference resets
   compute processors and advances their abandoned timeline without cancelling
   queued DMA commands. Those commands can still wait on signals from discarded

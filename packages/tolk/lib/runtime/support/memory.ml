@@ -77,7 +77,7 @@ let root_page_table t = t.root_page_table
 
 let create ~pt_ops ~vram_size ~boot_size ~va_bits ~va_shifts ~va_base
     ~palloc_ranges ~va_allocator ~is_booting ~zero_vram ?(first_lv = 0)
-    ?(reserve_ptable = false) ?(smi_dev = false) ?(dbg_name = "mm")
+    ?(reserve_ptable = false) ?(clear_root = true) ?(dbg_name = "mm")
     ?(on_range_mapped = fun () -> ()) () =
   let shifts = Array.of_list va_shifts in
   let n = Array.length shifts in
@@ -94,7 +94,7 @@ let create ~pt_ops ~vram_size ~boot_size ~va_bits ~va_shifts ~va_base
   if not (is_booting ()) then
     invalid_arg "During booting, only boot memory can be allocated";
   let root_paddr = Tlsf.alloc boot_allocator 0x1000 ~align:0x1000 () in
-  if not smi_dev then zero_vram ~paddr:root_paddr ~size:0x1000;
+  if clear_root then zero_vram ~paddr:root_paddr ~size:0x1000;
   {
     pt_ops;
     vram_size;

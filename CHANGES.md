@@ -690,6 +690,10 @@ thread.
 
 ### Tolk (new)
 
+- Driver-less AMD startup preserves resident boot memory when software
+  preparation fails. Root-page and PSP-fence clearing now starts only after
+  the session is marked dirty.
+
 - A Metal kernel on a unified-memory device reads and writes a buffer of the
   CPU device in place, through a no-copy Metal buffer over the pages that hold
   it: Metal's allocator maps host storage, where binding one raised.

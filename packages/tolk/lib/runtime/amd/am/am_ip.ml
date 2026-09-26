@@ -705,7 +705,7 @@ module Psp = struct
       Memory.palloc mm Am.psp_cmd_buffer_size ~zero:false ~boot:true ()
     in
     let fence_paddr =
-      Memory.palloc mm Am.psp_fence_buffer_size ~zero:true ~boot:true ()
+      Memory.palloc mm Am.psp_fence_buffer_size ~zero:false ~boot:true ()
     in
     let ring_size = 0x10000 in
     let ring_paddr = Memory.palloc mm ring_size ~zero:false ~boot:true () in

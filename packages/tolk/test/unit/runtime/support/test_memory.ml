@@ -44,7 +44,7 @@ let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
     ?(fail_write = fun () -> false) ?(fail_clear = fun () -> false)
     ?(fail_flush = fun () -> false)
     ?(palloc_ranges = [ (0x8000, 0x8000); (0x1000, 0x1000) ])
-    ?(va_size = 0x200000) ?(smi_dev = false) () =
+    ?(va_size = 0x200000) ?(clear_root = true) () =
   let vram = Array.make (vram_size / 8) 0L in
   let zeroed = ref [] in
   let booting = ref true in
@@ -83,7 +83,7 @@ let make_fixture ?(va_base = 0) ?(vram_size = 0x100000) ?(boot_size = 0x10000)
         if fail_zero () then failwith "zeroing failed";
         zeroed := (paddr, size) :: !zeroed;
         Array.fill vram (paddr / 8) (size / 8) 0L)
-      ~reserve_ptable ~smi_dev
+      ~reserve_ptable ~clear_root
       ~on_range_mapped:(fun () ->
         incr flushes;
         if fail_flush () then failwith "flush failed")
@@ -441,8 +441,8 @@ let () =
                 !(fx.zeroed);
               let (_ : int) = Memory.palloc fx.mm 0x1000 ~zero:false () in
               equal int 2 (List.length !(fx.zeroed)));
-          test "skips zeroing the root page table for smi devices" (fun () ->
-              let fx = make_fixture ~smi_dev:true () in
+          test "can defer zeroing the root page table" (fun () ->
+              let fx = make_fixture ~clear_root:false () in
               equal (list (pair int int)) [] !(fx.zeroed));
           test "reserves a dedicated page-table region" (fun () ->
               let fx = make_fixture ~vram_size:0x300000 ~reserve_ptable:true ()

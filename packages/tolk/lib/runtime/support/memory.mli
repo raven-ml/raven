@@ -105,7 +105,7 @@ val create :
   zero_vram:(paddr:int -> size:int -> unit) ->
   ?first_lv:int ->
   ?reserve_ptable:bool ->
-  ?smi_dev:bool ->
+  ?clear_root:bool ->
   ?dbg_name:string ->
   ?on_range_mapped:(unit -> unit) ->
   unit ->
@@ -133,9 +133,10 @@ val create :
     [true] only boot-region memory can be allocated. [zero_vram]
     clears a physical range of device memory. [on_range_mapped] runs
     after every {!map_range} (e.g. to flush TLBs; defaults to a
-    no-op). [dbg_name] prefixes debug output (see below). When
-    [smi_dev] is [true] the root page table is not zeroed on creation
-    (monitoring-only access to a live device).
+    no-op). [dbg_name] prefixes debug output (see below). [clear_root]
+    defaults to [true]. When [false], creation reserves the
+    root page without writing to it; the caller must initialize it before
+    using the manager to create mappings.
 
     The root page table is allocated from the boot region, so the
     device must be booting at creation time.

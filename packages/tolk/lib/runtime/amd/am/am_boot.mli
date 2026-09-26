@@ -62,7 +62,8 @@ val create : ?fw:Amdev.Firmware.t -> Amdev.t -> t
     overrides it) and creates every block, in the fixed order that
     gives each its boot-memory addresses — a partial boot reuses the
     previous session's layout, so the order is part of the protocol.
-    Also installs the memory manager's after-mapping hook, flushing
+    No boot-memory bytes are changed. Also installs the memory manager's
+    after-mapping hook, flushing
     both memory hubs' TLBs once they are up. [adev] must be booting. *)
 
 val init : t -> unit
@@ -75,7 +76,9 @@ val init : t -> unit
     DMA engines, raises the clocks ([AM_POWER_LIMIT] in the environment
     instead caps the power draw in watts and lets the firmware manage
     the clocks), enables clock gating, and stamps the scratch
-    registers. Leaves the device out of the booting state ({!Amdev.is_booting}).
+    registers. Marks the session dirty before clearing the root page table
+    and security-processor fence or programming hardware. Leaves the
+    device out of the booting state ({!Amdev.is_booting}).
 
     Raises [Failure] when the device is part of a multi-die fabric in a
     malformed state (resetting a fabric one die at a time would wedge

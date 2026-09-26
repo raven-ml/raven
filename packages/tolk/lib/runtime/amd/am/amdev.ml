@@ -1013,7 +1013,7 @@ let create pci_dev =
         ~is_booting:(fun () -> !is_booting)
         ~zero_vram:(fun ~paddr ~size ->
           Mmio.blit_bytes vram ~off:paddr (Bytes.make size '\000'))
-        ~first_lv:Am.amdgpu_vm_pdb2 ~reserve_ptable:(not large_bar)
+        ~first_lv:Am.amdgpu_vm_pdb2 ~reserve_ptable:(not large_bar) ~clear_root:false
         ~dbg_name:devfmt
         ~on_range_mapped:(fun () -> !on_range_mapped ())
         ()

@@ -242,7 +242,9 @@ val create : Tolk_hcq.System.Pci_device.t -> t
     region behind them; four page-table levels over a 48-bit virtual
     space shared by all devices). The device starts in the booting
     state: only boot-region memory can be allocated until boot
-    completes. Raises [Failure] if a BAR cannot be mapped or the
+    completes. Resident boot memory is left intact; {!Am_boot.init}
+    clears the root page table after marking the new session active.
+    Raises [Failure] if a BAR cannot be mapped or the
     discovery table is malformed. *)
 
 val make :

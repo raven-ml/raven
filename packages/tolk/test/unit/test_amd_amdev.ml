@@ -485,6 +485,17 @@ type fake_dev = {
   log : (int * int) list ref;
 }
 
+let check_resident_bytes fd resident =
+  let size = Bytes.length resident in
+  let actual = Mmio.read_bytes fd.fvram ~off:0 ~len:size in
+  let first_changed = ref 0 in
+  while !first_changed < size
+        && Bytes.get resident !first_changed = Bytes.get actual !first_changed do
+    incr first_changed
+  done;
+  equal ~msg:"first changed resident byte (length means unchanged)"
+    int size !first_changed
+
 let with_fake_dev ?(gc = (11, 0, 2)) ?(mp0 = (13, 0, 10))
     ?(mp1 = (13, 0, 10)) ?(mmhub = (3, 0, 0)) ?(sdma = (6, 0, 2))
     ?(bif = (4, 3, 0)) ?(osssys = (6, 0, 0)) ?(extra_ips = [])
@@ -2490,6 +2501,45 @@ let () =
         ];
       group "boot machine"
         [
+          test "software boot construction preserves resident memory" (fun () ->
+              with_fake_dev (fun fd ->
+                  let resident = Bytes.make 0x300000 '\x5a' in
+                  Mmio.blit_bytes fd.fvram ~off:0 resident;
+                  ignore (Am_boot.create ~fw:boot_fw fd.dev);
+                  check_resident_bytes fd resident));
+          test "failed software boot construction preserves resident memory" (fun () ->
+              with_fake_dev ~mp1:(99, 0, 0) (fun fd ->
+                  let resident = Bytes.make 0x300000 '\x5a' in
+                  Mmio.blit_bytes fd.fvram ~off:0 resident;
+                  raises_match
+                    (Exn.invalid_arg ~substring:"no smu message table")
+                    (fun () -> ignore (Am_boot.create ~fw:boot_fw fd.dev));
+                  check_resident_bytes fd resident));
+          test "boot marks the session dirty before clearing reused memory" (fun () ->
+              with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
+                  let t = Am_boot.create ~fw:boot_fw fd.dev in
+                  ignore (script_boot fd t);
+                  let root = Amdev.Am_page_table.paddr
+                      (Memory.root_page_table (Amdev.mm fd.dev)) in
+                  let fence = Psp.fence_paddr t.psp in
+                  Mmio.write32 fd.fvram root 0x5a5a5a5al;
+                  Mmio.write32 fd.fvram fence 0x5a5a5a5al;
+                  Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG7") Am_boot.version;
+                  Hashtbl.replace fd.store (raddr fd.dev "regSCRATCH_REG5") 0x120000;
+                  let r6 = raddr fd.dev "regSCRATCH_REG6" in
+                  Hashtbl.replace fd.wr_hooks r6 (fun value ->
+                      equal int 1 value;
+                      equal int32 0x5a5a5a5al (Mmio.read32 fd.fvram root);
+                      equal int32 0x5a5a5a5al (Mmio.read32 fd.fvram fence);
+                      Hashtbl.remove fd.wr_hooks r6);
+                  Hashtbl.replace fd.wr_hooks (raddr fd.dev "regGRBM_SOFT_RESET")
+                    (fun _ ->
+                      equal int 1 (Hashtbl.find fd.store r6);
+                      equal int32 0l (Mmio.read32 fd.fvram root);
+                      equal int32 0l (Mmio.read32 fd.fvram fence);
+                      failwith "stop after software preparation");
+                  raises (Failure "stop after software preparation")
+                    (fun () -> Am_boot.init t)));
           test "cold boot: block order and the scratch-register stamps"
             (fun () ->
               with_fake_dev ~mp1:(13, 0, 0) (fun fd ->
