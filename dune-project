@@ -28,17 +28,17 @@
 (opam_file_location inside_opam_directory)
 
 (pin
- (url "git+https://github.com/invariant-hq/thumper.git")
+ (url "git+https://github.com/invariant-hq/thumper.git#0d42dc6964e30525b0595b6d5be04a1eda76c90e")
  (package
   (name thumper)))
 
 (pin
- (url "git+https://github.com/invariant-hq/windtrap.git")
+ (url "git+https://github.com/invariant-hq/windtrap.git#93473fb37635b95a0de94a228caef3df8fa798ee")
  (package
   (name windtrap)))
 
 (pin
- (url "git+https://github.com/invariant-hq/litany.git")
+ (url "git+https://github.com/invariant-hq/litany.git#4cab5e78fd62d2455638fb76ca030ee6d9ce1d29")
  (package
   (name litany)))
 
