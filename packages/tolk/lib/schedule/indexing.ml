@@ -450,17 +450,83 @@ and storage_anchor u =
       Option.is_some (storage_window (src0 u))
   | _ -> false
 
+(* Build the direct-consumer map for [root] from its toposort, over data
+   sources only: a node reached through a shape or index argument is not a
+   consumer of it. *)
+let consumer_map root =
+  let tbl : (int, U.t list) Hashtbl.t = Hashtbl.create 256 in
+  let topo = U.toposort root in
+  List.iter (fun u -> Hashtbl.replace tbl (U.tag u) []) topo;
+  List.iter (fun u ->
+    List.iter (fun s ->
+      match Hashtbl.find_opt tbl (U.tag s) with
+      | Some prev -> Hashtbl.replace tbl (U.tag s) (u :: prev)
+      | None -> ()) (data_srcs (U.op u) (U.src u))) topo;
+  (fun u -> Option.value ~default:[] (Hashtbl.find_opt tbl (U.tag u))),
+  topo
+
+(* Whether rangeify leaves [n] intact. A consumer that assigns [n] ranges
+   rewrites it into index arithmetic over the consumer's lanes — fine for a
+   kernel's input, wrong for a call's argument, whose constant window over a
+   buffer must survive to scheduling. Calls and the nodes rangeify skips
+   assign no ranges; a movement consumer is neutral only when neutral
+   itself. *)
+let neutral_consumers consumers =
+  let memo = Hashtbl.create 16 in
+  let rec neutral n =
+    match Hashtbl.find_opt memo (U.tag n) with
+    | Some v -> v
+    | None ->
+        let v =
+          List.for_all
+            (fun c ->
+              match U.op c with
+              | Ops.Call | Ops.Linear | Ops.After | Ops.Mselect | Ops.Mstack ->
+                  true
+              | op when Ops.Group.is_movement op -> neutral c
+              | _ -> false)
+            (consumers n)
+        in
+        Hashtbl.replace memo (U.tag n) v;
+        v
+  in
+  neutral
+
+(* The view chain of [a] down to its storage anchor survives rangeify intact
+   when every node on it has neutral consumers. The anchor itself is storage
+   (or a future allocation): it is never rewritten into index arithmetic, so
+   its consumers do not matter. *)
+let window_survives consumers a =
+  let neutral = neutral_consumers consumers in
+  let rec chain n =
+    match U.op n with
+    | Ops.After | Ops.Buffer | Ops.Param | Ops.Alloc | Ops.Mselect
+    | Ops.Mstack | Ops.Stage ->
+        true
+    | Ops.Bitcast | Ops.Detach | Ops.Contiguous_backward ->
+        neutral n && chain (U.src n).(0)
+    | op when Ops.Group.is_movement op -> neutral n && chain (U.src n).(0)
+    | _ -> false
+  in
+  chain a
+
 (* Realize the arguments of a call. A call's argument is storage: a buffer,
    or a contiguous window of one, which reaches the call as a byte view. Any
    other argument the call only reads is realized into a copy; one it stores
-   into raises, since the call would write the copy. The tinygrad counterpart
+   into raises, since the call would write the copy. A window a kernel also
+   reads does not survive: the kernel rangeifies the shared view into its
+   own index arithmetic, and the call would read the buffer's base, so it is
+   realized into a copy like any non-window. The tinygrad counterpart
    realizes every argument that is not a buffer, written or not, and only of
    bodies still to be lowered. *)
-let realize_call_args ctx c =
+let realize_call_args ctx consumers c =
   let src = U.src c in
   let passes a =
     always_contiguous (U.op (strip_reshapes a))
-    || Option.is_some (storage_window a)
+    ||
+    match storage_window a with
+    | Some _ -> window_survives consumers a
+    | None -> false
   in
   let views = List.filter (fun slot -> not (passes src.(slot + 1)))
       (List.init (Array.length src - 1) Fun.id) in
@@ -484,10 +550,10 @@ let realize_call_args ctx c =
       views
   end
 
-let generate_realize_map ctx root =
+let generate_realize_map ctx consumers root =
   List.iter (fun n ->
     (match U.op n with
-     | Ops.Call -> realize_call_args ctx n
+     | Ops.Call -> realize_call_args ctx consumers n
      | _ -> ());
     (match U.op n with
      | Ops.Store -> realize_set ctx n Marked
@@ -509,21 +575,6 @@ let generate_realize_map ctx root =
          end
      | _ -> ()))
     (U.toposort root)
-
-(* Build the direct-consumer map for [root] from its toposort, over data
-   sources only: a node reached through a shape or index argument is not a
-   consumer of it. *)
-let consumer_map root =
-  let tbl : (int, U.t list) Hashtbl.t = Hashtbl.create 256 in
-  let topo = U.toposort root in
-  List.iter (fun u -> Hashtbl.replace tbl (U.tag u) []) topo;
-  List.iter (fun u ->
-    List.iter (fun s ->
-      match Hashtbl.find_opt tbl (U.tag s) with
-      | Some prev -> Hashtbl.replace tbl (U.tag s) (u :: prev)
-      | None -> ()) (data_srcs (U.op u) (U.src u))) topo;
-  (fun u -> Option.value ~default:[] (Hashtbl.find_opt tbl (U.tag u))),
-  topo
 
 (* Transpose [[a0;a1;...]; [b0;b1;...]; ...] to per-index lists, truncating
    to the shortest input. *)
@@ -627,8 +678,8 @@ let choose_consumer_rngs ctx ~pcontig ~out_shape x consumer_rngs =
 
 let run_rangeify root =
   let ctx = create_context () in
-  generate_realize_map ctx root;
   let consumers, topo = consumer_map root in
+  generate_realize_map ctx consumers root;
   let ending : (int, U.t list) Hashtbl.t = Hashtbl.create 256 in
   let ending_get x =
     Option.value ~default:[] (Hashtbl.find_opt ending (U.tag x)) in
