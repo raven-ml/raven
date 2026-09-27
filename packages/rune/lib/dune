@@ -10,6 +10,7 @@
   vmap
   debug
   tensor_map
+  tangent_query
   gate
   derivs
   jit

@@ -128,6 +128,26 @@ val jvp_aux :
     auxiliary data beside its result. The auxiliary value is returned as it is
     and has no tangent. *)
 
+val tangent : ('a, 'b) Nx.t -> ('a, 'b) Nx.t option
+(** [tangent x] is the tangent a forward mode maintains for [x], if any:
+    [Some dx] while a forward-mode transformation surrounds the call and tracks
+    [x], and [None] otherwise — no forward mode is installed, [x] is a constant
+    of the one that is (a value computed from constants, a {!detach}ed tensor,
+    anything inside {!no_grad}), or the mode does not track it.
+
+    This is the query for code that {e consumes} tangents — a curvature
+    collector over a batched forward pass, a diagnostic — rather than producing
+    them: it reads the store the transformation already keeps and does not
+    perturb the computation. Treat [None] as "no tangent here".
+
+    Batching a forward pass along [k] directions is {!vmap} around {!jvp}. The
+    query inside the mapped function answers the whole [k]-lane batch, the lanes
+    on a leading axis, but a consumer must read that answer {e outside} the
+    map's extent: the mapped function runs once for all lanes, and within it
+    {!Nx.shape} reports the map's virtual, lane-less shape, so an in-scope
+    consumer cannot see — let alone contract — the lane axis. Carry the tensor
+    out of the map (for instance in an effect payload) and read it there. *)
+
 (** {1:complex Complex tensors}
 
     A complex tensor is two real components per element, so a function of one is

@@ -108,6 +108,12 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_ceil _ -> None
       | E_floor _ -> None
       | E_round _ -> None
+      (* The tangent query: answered from this store, so a consumer inside the
+         scope reads exactly the tangents this differentiation maintains. A
+         tensor the store does not track is answered [None] rather than passed
+         outward: the innermost forward mode owns the tangent convention in its
+         extent (see tangent_query.ml). *)
+      | Tangent_query.E_tangent x -> Some (fun k -> continue k (tangent x))
       (* Scan: forward mode has no staged rule yet, so run the eager fold under
          a nested instance of this handler — every step's operations flow
          through it and acquire their tangents as they always did. Claiming

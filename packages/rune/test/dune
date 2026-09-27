@@ -17,6 +17,7 @@
   test_custom
   test_fft
   test_jacobian
+  test_tangent
   test_control
   test_jit
   test_device_lists
@@ -32,6 +33,7 @@
   test_custom
   test_fft
   test_jacobian
+  test_tangent
   test_control
   test_jit
   test_device_lists

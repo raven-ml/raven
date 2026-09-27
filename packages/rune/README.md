@@ -45,7 +45,9 @@ nest into records, so models compose structurally — see
   pullback; `_aux` variants thread non-differentiated data out of the
   objective
 - **Forward mode** — `jvp` for Jacobian-vector products in a single
-  forward pass
+  forward pass; `tangent` reads the tangent a forward mode maintains for
+  any tensor it tracks, so libraries can consume tangents without
+  depending on how a transformation stores them
 - **Vectorizing map** — `vmap` lifts a per-example function to batched
   inputs, mapping axis 0 of every argument its signature lists
 - **Composition** — transformations nest freely: `vmap` of `grad` is

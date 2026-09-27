@@ -167,6 +167,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.tangent` reads the tangent the installed forward mode maintains for a
+  tensor, so code that consumes tangents — a curvature collector over a batched
+  forward pass, a diagnostic — does not have to know how a transformation
+  stores them.
+
 - Placed storage retires through the shared device-safe queue, preserving
   allocation lifetimes during native callbacks and reporting failed retirement
   at explicit safe points.

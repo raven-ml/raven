@@ -152,6 +152,10 @@ let jvp_aux p q f params tangents =
   | Some a -> (y, Nx.Ptree.map q (fun _ yl -> output_tangent store yl) y, a)
   | None -> assert false (* [f'] completed, so [aux] was set. *)
 
+(* Reading tangents: what the installed forward mode maintains for a tensor,
+   for code that consumes tangents rather than producing them. *)
+let tangent = Tangent_query.query
+
 (* Custom differentiation rules *)
 
 let custom_vjp = Custom.custom_vjp
