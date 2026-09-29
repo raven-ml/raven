@@ -934,6 +934,13 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         end)
               end;
               out)
+      (* A = Q R with Qᴴ Q = I and R upper triangular with a real diagonal. The
+         rule works on the cotangents Q̄ = conj gq and R̄ = conj gr under the
+         pairing Re tr(X̄ᴴ dX), where a product transposes to its conjugate
+         transpose: with M = R R̄ᴴ - Q̄ᴴ Q, and copyltu M its strict lower
+         triangle mirrored as a Hermitian matrix around the real part of its
+         diagonal, Ā = (Q̄ + Q copyltu M) R^-H. The imaginary part of M's
+         diagonal is the phase R's real diagonal fixes, and moves nothing. *)
       | E_qr { t_in; reduced } ->
           Some
             (fun () ->
@@ -945,36 +952,34 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                     match (Tape.find tape q, Tape.find tape r) with
                     | None, None -> ()
                     | found_q, found_r ->
-                        let gq =
+                        let qbar =
                           match found_q with
-                          | Some g -> g
+                          | Some g -> T.conjugate g
                           | None -> T.zeros_like q
                         in
-                        let gr =
+                        let rbar =
                           match found_r with
-                          | Some g ->
-                              T.matrix_transpose (T.tril (T.matrix_transpose g))
+                          | Some g -> T.conjugate (T.triu g)
                           | None -> T.zeros_like r
                         in
                         let m =
                           T.sub
-                            (T.matmul r (T.matrix_transpose gr))
-                            (T.matmul (T.matrix_transpose gq) q)
+                            (T.matmul r (Derivs.adjoint rbar))
+                            (T.matmul (Derivs.adjoint qbar) q)
                         in
                         let lower_strict = T.tril ~k:(-1) m in
-                        let diag_mat = Derivs.diag_matrix (T.diagonal m) in
                         let copyltu =
                           T.add
-                            (T.add lower_strict
-                               (T.matrix_transpose lower_strict))
-                            diag_mat
+                            (T.add lower_strict (Derivs.adjoint lower_strict))
+                            (Derivs.diag_matrix
+                               (Derivs.real_part (T.diagonal m)))
                         in
-                        let rhs = T.add gq (T.matmul q copyltu) in
-                        let da_t =
-                          solve_triangular ~upper:true ~transpose:false
-                            ~unit_diag:false r (T.matrix_transpose rhs)
-                        in
-                        Tape.accumulate tape t_in (T.matrix_transpose da_t))
+                        (* conj Ā = conj (rhs R^-H) = (R^-1 rhsᴴ)ᵀ. *)
+                        let rhs = T.add qbar (T.matmul q copyltu) in
+                        Tape.accumulate tape t_in
+                          (T.matrix_transpose
+                             (solve_triangular ~upper:true ~transpose:false
+                                ~unit_diag:false r (Derivs.adjoint rhs))))
               end;
               (q, r))
       (* P A = L U. The pivots and the permutation are integers, so only the

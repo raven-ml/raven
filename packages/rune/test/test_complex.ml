@@ -200,6 +200,9 @@ let b32 () =
       (0.6, -1.1); (1.4, 0.3); (-0.8, 0.7); (0.2, 1.0); (0.9, -0.4); (-0.3, 0.5);
     |]
 
+let flat2 (a, b) =
+  Nx.concatenate ~axis:0 [ Nx.reshape [| -1 |] a; Nx.reshape [| -1 |] b ]
+
 (* A transposed solve is the conjugate transpose on complex. *)
 
 let triangular name ~upper ~transpose ~unit_diag =
@@ -255,6 +258,16 @@ let cholesky_tests =
         m33;
     ]
 
+(* QR has no forward rule. *)
+
+let qr_tests =
+  [
+    test "tall (reverse)" (fun () ->
+        check_cgrad ~msg:"qr" (fun z -> flat2 (Nx.qr z)) (b32 ()));
+    test "square (reverse)" (fun () ->
+        check_cgrad ~msg:"qr square" (fun z -> flat2 (Nx.qr z)) (m33 ()));
+  ]
+
 let tests =
   [
     group "holomorphic rules" holomorphic_tests;
@@ -265,6 +278,7 @@ let tests =
     group "linear and movement rules" linear_tests;
     group "triangular solves" solve_tests;
     group "cholesky" cholesky_tests;
+    group "qr" qr_tests;
   ]
 
 let () = exit (run "rune complex" tests)

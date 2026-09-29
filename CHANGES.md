@@ -172,6 +172,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Gradients through `Nx.qr` are right on complex matrices. The reverse rule
+  used plain transposes where the unitary factor needs conjugate transposes.
 - Gradients and tangents of `Nx.cholesky` are right on complex Hermitian
   matrices, which the rules treated as symmetric, and follow what the
   factorisation reads: the lower triangle and the real part of the diagonal.
