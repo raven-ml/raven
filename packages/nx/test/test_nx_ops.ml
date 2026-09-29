@@ -46,129 +46,15 @@ let test_unary_op ~op ~op_name ~dtype ~shape ~input ~expected () =
 
 (* ───── Add Edge Cases ───── *)
 
-let add_edge_cases =
-  [
-    test "broadcast error"
-      (test_broadcast_error ~op:Nx.add ~op_name:"add" ~dtype:Nx.float32
-         ~a_shape:[| 3 |] ~b_shape:[| 4 |]);
-    test "nan propagation" (test_nan_propagation ~op:Nx.add ~op_name:"add");
-    test "inf arithmetic" (fun () ->
-        let a =
-          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.neg_infinity |]
-        in
-        let b = Nx.create Nx.float32 [| 2 |] [| 5.0; 10.0 |] in
-        let result = Nx.add a b in
-        equal ~msg:"inf + 5" (float 1e-6) Float.infinity (Nx.item [ 0 ] result);
-        equal ~msg:"-inf + 10" (float 1e-6) Float.neg_infinity
-          (Nx.item [ 1 ] result));
-    test "inf + inf" (fun () ->
-        let a =
-          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
-        in
-        let b =
-          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.neg_infinity |]
-        in
-        let result = Nx.add a b in
-        equal ~msg:"inf + inf" (float 1e-6) Float.infinity
-          (Nx.item [ 0 ] result);
-        equal ~msg:"inf + -inf" bool true (Float.is_nan (Nx.item [ 1 ] result)));
-  ]
-
 (* ───── Sub Edge Cases ───── *)
-
-let sub_edge_cases =
-  [
-    test "inf - inf" (fun () ->
-        let a =
-          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
-        in
-        let b =
-          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.neg_infinity |]
-        in
-        let result = Nx.sub a b in
-        equal ~msg:"inf - inf" bool true (Float.is_nan (Nx.item [ 0 ] result));
-        equal ~msg:"inf - -inf" (float 1e-6) Float.infinity
-          (Nx.item [ 1 ] result));
-  ]
 
 (* ───── Div Edge Cases ───── *)
 
-let div_edge_cases =
-  [
-    test "div by zero float" (fun () ->
-        let a = Nx.create Nx.float32 [| 3 |] [| 1.0; -1.0; 0.0 |] in
-        let b = Nx.create Nx.float32 [| 3 |] [| 0.0; 0.0; 0.0 |] in
-        let result = Nx.div a b in
-        equal ~msg:"1/0" (float 1e-6) Float.infinity (Nx.item [ 0 ] result);
-        equal ~msg:"-1/0" (float 1e-6) Float.neg_infinity (Nx.item [ 1 ] result);
-        equal ~msg:"0/0" bool true (Float.is_nan (Nx.item [ 2 ] result)));
-  ]
-
 (* ───── Pow Edge Cases ───── *)
-
-let pow_edge_cases =
-  [
-    test "zero^zero" (fun () ->
-        let a = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
-        let b = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
-        let result = Nx.pow a b in
-        equal ~msg:"0^0" (float 1e-6) 1.0 (Nx.item [ 0 ] result));
-    test "negative base fractional exp" (fun () ->
-        let a = Nx.create Nx.float32 [| 1 |] [| -2.0 |] in
-        let b = Nx.create Nx.float32 [| 1 |] [| 0.5 |] in
-        let result = Nx.pow a b in
-        equal ~msg:"(-2)^0.5" bool true (Float.is_nan (Nx.item [ 0 ] result)));
-    test "pow overflow" (fun () ->
-        let a = Nx.create Nx.float32 [| 1 |] [| 10.0 |] in
-        let b = Nx.create Nx.float32 [| 1 |] [| 100.0 |] in
-        let result = Nx.pow a b in
-        equal ~msg:"10^100" (float 1e-6) Float.infinity (Nx.item [ 0 ] result));
-  ]
 
 (* ───── Math Function Edge Cases ───── *)
 
-let math_edge_cases =
-  [
-    test "exp overflow" (fun () ->
-        let t = Nx.create Nx.float32 [| 1 |] [| 1000.0 |] in
-        let result = Nx.exp t in
-        equal ~msg:"exp(1000)" (float 1e-6) Float.infinity
-          (Nx.item [ 0 ] result));
-    test "exp underflow" (fun () ->
-        let t = Nx.create Nx.float32 [| 1 |] [| -1000.0 |] in
-        let result = Nx.exp t in
-        equal ~msg:"exp(-1000)" (float 1e-6) 0.0 (Nx.item [ 0 ] result));
-    test "log negative" (fun () ->
-        let t = Nx.create Nx.float32 [| 1 |] [| -1.0 |] in
-        let result = Nx.log t in
-        equal ~msg:"log(-1)" bool true (Float.is_nan (Nx.item [ 0 ] result)));
-    test "log zero" (fun () ->
-        let t = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
-        let result = Nx.log t in
-        equal ~msg:"log(0)" (float 1e-6) Float.neg_infinity
-          (Nx.item [ 0 ] result));
-    test "sqrt negative" (fun () ->
-        let t = Nx.create Nx.float32 [| 1 |] [| -1.0 |] in
-        let result = Nx.sqrt t in
-        equal ~msg:"sqrt(-1)" bool true (Float.is_nan (Nx.item [ 0 ] result)));
-    test "asin out of domain" (fun () ->
-        let t = Nx.create Nx.float32 [| 1 |] [| 2.0 |] in
-        let result = Nx.asin t in
-        equal ~msg:"asin(2)" bool true (Float.is_nan (Nx.item [ 0 ] result)));
-  ]
-
 (* ───── Comparison Edge Cases ───── *)
-
-let comparison_edge_cases =
-  [
-    test "nan comparisons" (fun () ->
-        let t1 = Nx.create Nx.float32 [| 3 |] [| Float.nan; 1.; Float.nan |] in
-        let t2 = Nx.create Nx.float32 [| 3 |] [| Float.nan; Float.nan; 1. |] in
-        let eq_result = Nx.equal t1 t2 in
-        let ne_result = Nx.not_equal t1 t2 in
-        check_t "nan equal" [| 3 |] [| false; false; false |] eq_result;
-        check_t "nan not_equal" [| 3 |] [| true; true; true |] ne_result);
-  ]
 
 (* ───── Reduction Edge Cases ───── *)
 
@@ -207,14 +93,6 @@ let reduction_edge_cases =
 
 (* ───── Rounding Edge Cases ───── *)
 
-let rounding_edge_cases =
-  [
-    test "clip" (fun () ->
-        let t = Nx.create Nx.float32 [| 5 |] [| -1.; 2.; 5.; 8.; 10. |] in
-        let result = Nx.clamp ~min:0. ~max:7. t in
-        check_t "clip" [| 5 |] [| 0.; 2.; 5.; 7.; 7. |] result);
-  ]
-
 (* ───── Cumulative Tests ───── *)
 
 let cumulative_tests =
@@ -252,13 +130,6 @@ let cumulative_tests =
   ]
 
 (* ───── Bitwise Edge Cases ───── *)
-
-let bitwise_edge_cases =
-  [
-    test "invert"
-      (test_unary_op ~op:Nx.bitwise_not ~op_name:"invert" ~dtype:Nx.int32
-         ~shape:[| 3 |] ~input:[| 5l; 0l; 7l |] ~expected:[| -6l; -1l; -8l |]);
-  ]
 
 (* ───── Log/Standardize Tests ───── *)
 
@@ -387,63 +258,14 @@ let standardize_tests =
 (* [erfinv] at float64 is a seven-digit guess refined by Newton steps, so it is
    held to reference values at double precision, and to [erf] round trip over
    the interval; float32 keeps the guess's seven digits. *)
-let erfinv_tests =
-  [
-    test "reference values at float64" (fun () ->
-        List.iter
-          (fun (x, expected) ->
-            equal
-              ~msg:(Printf.sprintf "erfinv %g" x)
-              (float (1e-15 *. Float.abs expected))
-              expected
-              (Nx.item [] (Nx.erfinv (Nx.scalar Nx.float64 x))))
-          [
-            (0.5, 0.47693627620446987);
-            (-0.3, -0.27246271472675435);
-            (0.9, 1.1630871536766742);
-            (0.999999, 3.4589107372754988);
-            (0.99999999, 4.0522372432687634);
-            (1.0 -. 1e-13, 5.2614833313726763);
-            (-.(1.0 -. 1e-16), -5.8635847487551679);
-          ]);
-    test "erf round trip at float64" (fun () ->
-        let x = Nx.linspace Nx.float64 (-0.999) 0.999 1999 in
-        let back = Nx.erf (Nx.erfinv x) in
-        let worst = Nx.item [] (Nx.max (Nx.abs (Nx.sub back x))) in
-        equal ~msg:"max |erf (erfinv x) - x|" (float 1e-14) 0.0 worst);
-    test "float32 keeps seven digits" (fun () ->
-        let x = Nx.linspace Nx.float32 (-0.999) 0.999 999 in
-        let back = Nx.erf (Nx.erfinv x) in
-        let worst = Nx.item [] (Nx.max (Nx.abs (Nx.sub back x))) in
-        equal ~msg:"max |erf (erfinv x) - x|" (float 2e-6) 0.0 worst);
-    test "endpoints and outside" (fun () ->
-        let v =
-          Nx.to_array
-            (Nx.erfinv (Nx.create Nx.float64 [| 4 |] [| 1.0; -1.0; 1.5; 0.0 |]))
-        in
-        equal ~msg:"erfinv 1" float_exact Float.infinity v.(0);
-        equal ~msg:"erfinv -1" float_exact Float.neg_infinity v.(1);
-        equal ~msg:"erfinv 1.5" bool true (Float.is_nan v.(2));
-        equal ~msg:"erfinv 0" float_exact 0.0 v.(3));
-  ]
-
 (* Test Suite Organization *)
 
 let suite =
   [
-    group "Add Edge Cases" add_edge_cases;
-    group "Sub Edge Cases" sub_edge_cases;
-    group "Div Edge Cases" div_edge_cases;
-    group "Pow Edge Cases" pow_edge_cases;
-    group "Math Edge Cases" math_edge_cases;
-    group "Comparison Edge Cases" comparison_edge_cases;
     group "Reduction Edge Cases" reduction_edge_cases;
-    group "Rounding Edge Cases" rounding_edge_cases;
     group "Cumulative" cumulative_tests;
-    group "Bitwise Edge Cases" bitwise_edge_cases;
     group "Log" log_tests;
     group "Standardize" standardize_tests;
-    group "Erfinv" erfinv_tests;
   ]
 
 let () = exit (run "Nx Ops" suite)

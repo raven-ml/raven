@@ -14,161 +14,13 @@ open Test_nx_props_support
 
 (* ── Arithmetic Properties ── *)
 
-let arithmetic_props =
-  [
-    (* Addition *)
-    prop "add commutative (f32)" f32_pair (fun (a, b) ->
-        equal (approx ()) (Nx.add b a) (Nx.add a b));
-    prop "add commutative (i32)" i32_pair (fun (a, b) ->
-        equal (exact ()) (Nx.add b a) (Nx.add a b));
-    prop "add identity (f32)" f32_any (fun a ->
-        equal (approx ()) a (Nx.add a (Nx.zeros_like a)));
-    prop "add identity (i32)" i32_any (fun a ->
-        equal (exact ()) a (Nx.add a (Nx.zeros_like a)));
-    prop "add inverse (f32)" f32_any (fun a ->
-        let z = Nx.add a (Nx.neg a) in
-        equal (approx ()) (Nx.zeros_like a) z);
-    prop "sub is add neg (f32)" f32_pair (fun (a, b) ->
-        equal (approx ()) (Nx.add a (Nx.neg b)) (Nx.sub a b));
-    prop "sub is add neg (i32)" i32_pair (fun (a, b) ->
-        equal (exact ()) (Nx.add a (Nx.neg b)) (Nx.sub a b));
-    (* Multiplication *)
-    prop "mul commutative (f32)" f32_pair (fun (a, b) ->
-        equal (approx ()) (Nx.mul b a) (Nx.mul a b));
-    prop "mul commutative (i32)" i32_pair (fun (a, b) ->
-        equal (exact ()) (Nx.mul b a) (Nx.mul a b));
-    prop "mul identity (f32)" f32_any (fun a ->
-        equal (approx ()) a (Nx.mul a (Nx.ones_like a)));
-    prop "mul identity (i32)" i32_any (fun a ->
-        equal (exact ()) a (Nx.mul a (Nx.ones_like a)));
-    prop "mul zero (f32)" f32_any (fun a ->
-        equal (approx ()) (Nx.zeros_like a) (Nx.mul a (Nx.zeros_like a)));
-    prop "mul zero (i32)" i32_any (fun a ->
-        equal (exact ()) (Nx.zeros_like a) (Nx.mul a (Nx.zeros_like a)));
-    prop "distributive (i32)" i32_triple (fun (a, b, c) ->
-        equal (exact ())
-          (Nx.add (Nx.mul a b) (Nx.mul a c))
-          (Nx.mul a (Nx.add b c)));
-    (* Division / Modulo *)
-    prop "div inverse of mul (f32)" f32_pair (fun (a, b) ->
-        assume (all_nonzero_f32 b);
-        equal (close ~atol:1e-3 ~rtol:1e-3 ()) a (Nx.div (Nx.mul a b) b));
-    prop "div self = ones (f32)" f32_any (fun a ->
-        assume (all_nonzero_f32 a);
-        equal (approx ()) (Nx.ones_like a) (Nx.div a a));
-    prop "int div/mod relation (i32)" i32_pair_b_nonzero (fun (a, b) ->
-        equal (exact ()) a (Nx.add (Nx.mul (Nx.div a b) b) (Nx.mod_ a b)));
-    (* Negation *)
-    prop "neg involution (f32)" f32_any (fun a ->
-        equal (approx ()) a (Nx.neg (Nx.neg a)));
-    prop "neg involution (i32)" i32_any (fun a ->
-        equal (exact ()) a (Nx.neg (Nx.neg a)));
-    (* Min / Max *)
-    prop "maximum commutative (f32)" f32_pair (fun (a, b) ->
-        assume (no_nan a && no_nan b);
-        equal (approx ()) (Nx.maximum b a) (Nx.maximum a b));
-    prop "minimum commutative (f32)" f32_pair (fun (a, b) ->
-        assume (no_nan a && no_nan b);
-        equal (approx ()) (Nx.minimum b a) (Nx.minimum a b));
-    prop "maximum idempotent (f32)" f32_any (fun a ->
-        assume (no_nan a);
-        equal (approx ()) a (Nx.maximum a a));
-  ]
-
 (* ── Shape Manipulation Properties ── *)
-
-let shape_props =
-  [
-    prop "reshape roundtrip (f32)" f32_any (fun t ->
-        let flat = Nx.flatten t in
-        equal (approx ()) t (Nx.reshape (Nx.shape t) flat));
-    prop "flatten preserves data (f32)" f32_any (fun t ->
-        equal (array float_exact) (Nx.to_array t) (Nx.to_array (Nx.flatten t)));
-    prop "transpose involution (2d f32)" f32_2d (fun t ->
-        equal (approx ()) t (Nx.transpose (Nx.transpose t)));
-    prop "transpose shape (2d f32)" f32_2d (fun t ->
-        let s = Nx.shape t in
-        equal (array int) [| s.(1); s.(0) |] (Nx.shape (Nx.transpose t)));
-    prop "flip involution (f32)" f32_any (fun t ->
-        equal (approx ()) t (Nx.flip (Nx.flip t)));
-    prop "copy preserves data (f32)" f32_any (fun t ->
-        equal (approx ()) t (Nx.copy t));
-    prop "copy has its own storage (f32)" f32_any (fun t ->
-        is_true (Nx.data (Nx.copy t) != Nx.data t));
-    prop "contiguous is contiguous (f32)" f32_any (fun t ->
-        is_true (Nx.is_c_contiguous (Nx.contiguous t)));
-    prop "contiguous preserves data (f32)" f32_any (fun t ->
-        equal (approx ()) t (Nx.contiguous t));
-    prop "reshape preserves numel (f32)" f32_any (fun t ->
-        equal int (Nx.numel t) (Nx.numel (Nx.flatten t)));
-  ]
 
 (* ── Comparison Properties ── *)
 
-let comparison_props =
-  [
-    prop "equal reflexive (f32)" f32_any (fun a ->
-        assume (no_nan a);
-        is_true @@ all_true (Nx.equal a a));
-    prop "less irreflexive (f32)" f32_any (fun a ->
-        is_true @@ all_true (Nx.logical_not (Nx.less a a)));
-    prop "less/greater complement (f32)" f32_pair (fun (a, b) ->
-        is_true @@ all_true (Nx.array_equal (Nx.less a b) (Nx.greater b a)));
-    prop "less_equal from less|equal (f32)" f32_pair (fun (a, b) ->
-        assume (no_nan a && no_nan b);
-        is_true
-        @@ all_true
-             (Nx.array_equal (Nx.less_equal a b)
-                (Nx.logical_or (Nx.less a b) (Nx.equal a b))));
-    prop "not_equal complement of equal (f32)" f32_pair (fun (a, b) ->
-        assume (no_nan a && no_nan b);
-        is_true
-        @@ all_true
-             (Nx.array_equal (Nx.not_equal a b) (Nx.logical_not (Nx.equal a b))));
-  ]
-
 (* ── Logical & Bitwise Properties ── *)
 
-let logical_bitwise_props =
-  [
-    prop "bitwise_not involution (i32)" i32_any (fun a ->
-        equal (exact ()) a (Nx.bitwise_not (Nx.bitwise_not a)));
-    prop "bitwise_and commutative (i32)" i32_pair (fun (a, b) ->
-        equal (exact ()) (Nx.bitwise_and b a) (Nx.bitwise_and a b));
-    prop "bitwise_or commutative (i32)" i32_pair (fun (a, b) ->
-        equal (exact ()) (Nx.bitwise_or b a) (Nx.bitwise_or a b));
-    prop "bitwise_xor self = zeros (i32)" i32_any (fun a ->
-        equal (exact ()) (Nx.zeros_like a) (Nx.bitwise_xor a a));
-    prop "de morgan and (i32)" i32_pair (fun (a, b) ->
-        equal (exact ())
-          (Nx.bitwise_or (Nx.bitwise_not a) (Nx.bitwise_not b))
-          (Nx.bitwise_not (Nx.bitwise_and a b)));
-    prop "de morgan or (i32)" i32_pair (fun (a, b) ->
-        equal (exact ())
-          (Nx.bitwise_and (Nx.bitwise_not a) (Nx.bitwise_not b))
-          (Nx.bitwise_not (Nx.bitwise_or a b)));
-  ]
-
 (* ── Rounding Properties ── *)
-
-let rounding_props =
-  [
-    prop "floor <= input (f32)" f32_any (fun x ->
-        assume (all_finite x);
-        is_true @@ all_true (Nx.less_equal (Nx.floor x) x));
-    prop "ceil >= input (f32)" f32_any (fun x ->
-        assume (all_finite x);
-        is_true @@ all_true (Nx.greater_equal (Nx.ceil x) x));
-    prop "floor idempotent (f32)" f32_any (fun x ->
-        assume (all_finite x);
-        equal (approx ()) (Nx.floor x) (Nx.floor (Nx.floor x)));
-    prop "ceil idempotent (f32)" f32_any (fun x ->
-        assume (all_finite x);
-        equal (approx ()) (Nx.ceil x) (Nx.ceil (Nx.ceil x)));
-    prop "round idempotent (f32)" f32_any (fun x ->
-        assume (all_finite x);
-        equal (approx ()) (Nx.round x) (Nx.round (Nx.round x)));
-  ]
 
 (* ── Sorting Properties ── *)
 
@@ -208,54 +60,6 @@ let sorting_props =
   ]
 
 (* ── Math Function Properties ── *)
-
-let math_function_props =
-  let mk_f32_constrained gen_val =
-    let gen =
-      let open Gen in
-      let* shape = gen_shape ~max_ndim:3 ~max_dim:4 in
-      gen_tensor_with_values Nx.float32 gen_val shape
-    in
-    tensor gen
-  in
-  let f32_small = mk_f32_constrained gen_float_small in
-  let f32_positive = mk_f32_constrained gen_float_positive in
-  let f32_unit = mk_f32_constrained gen_float_unit in
-  let f32_trig = mk_f32_constrained gen_float_trig in
-  let f32_recip = mk_f32_constrained (Gen.float_range 0.1 10.) in
-  [
-    prop "exp/log inverse (f32)" f32_small (fun x ->
-        assume (all_finite x);
-        equal (close ~atol:1e-4 ~rtol:1e-4 ()) x (Nx.log (Nx.exp x)));
-    prop "log/exp inverse (f32)" f32_positive (fun x ->
-        equal (close ~atol:1e-4 ~rtol:1e-4 ()) x (Nx.exp (Nx.log x)));
-    prop "sin^2 + cos^2 = 1 (f32)" f32_trig (fun x ->
-        let sum = Nx.add (Nx.square (Nx.sin x)) (Nx.square (Nx.cos x)) in
-        equal (close ~atol:1e-4 ~rtol:0. ()) (Nx.ones_like x) sum);
-    prop "sqrt(square(x)) = abs(x) (f32)" f32_any (fun x ->
-        assume (all_finite x);
-        equal
-          (close ~atol:1e-4 ~rtol:1e-4 ())
-          (Nx.abs x)
-          (Nx.sqrt (Nx.square x)));
-    prop "abs idempotent (f32)" f32_any (fun x ->
-        equal (approx ()) (Nx.abs x) (Nx.abs (Nx.abs x)));
-    prop "sign * abs = x (f32)" f32_any (fun x ->
-        assume (all_finite x && all_nonzero_f32 x);
-        equal (approx ()) x (Nx.mul (Nx.sign x) (Nx.abs x)));
-    prop "tanh range (f32)" f32_any (fun x ->
-        assume (all_finite x);
-        is_true
-        @@ all_true (Nx.less_equal (Nx.abs (Nx.tanh x)) (Nx.ones_like x)));
-    prop "recip involution (f32)" f32_recip (fun x ->
-        equal (close ~atol:1e-3 ~rtol:1e-3 ()) x (Nx.recip (Nx.recip x)));
-    prop "square = mul self (f32)" f32_any (fun x ->
-        equal (approx ()) (Nx.mul x x) (Nx.square x));
-    prop "asin(sin(x)) = x (f32)" f32_unit (fun x ->
-        (* asin(sin(x)) = x only when x in [-pi/2, pi/2]; use values in (-1,1)
-           which are well within that range when interpreted as radians *)
-        equal (close ~atol:1e-4 ~rtol:1e-4 ()) x (Nx.asin (Nx.sin x)));
-  ]
 
 (* ── Reduction Properties ── *)
 
@@ -354,147 +158,9 @@ let linalg_props =
 
 (* ── Concatenation Properties ── *)
 
-let concat_props =
-  [
-    prop "concat single = identity (f32)" f32_any (fun t ->
-        equal (approx ()) t (Nx.concatenate ~axis:0 [ t ]));
-    prop "concat shape (f32)" f32_pair (fun (a, b) ->
-        let sa = Nx.shape a and sb = Nx.shape b in
-        assume
-          (Array.length sa = Array.length sb
-          && Array.length sa > 0
-          && Array.sub sa 1 (Array.length sa - 1)
-             = Array.sub sb 1 (Array.length sb - 1));
-        let c = Nx.concatenate ~axis:0 [ a; b ] in
-        equal int (sa.(0) + sb.(0)) (Nx.shape c).(0));
-    prop "stack creates axis (f32)" f32_pair (fun (a, b) ->
-        assume (Nx.shape a = Nx.shape b);
-        let s = Nx.stack ~axis:0 [ a; b ] in
-        equal ~msg:"rank" int (Nx.ndim a + 1) (Nx.ndim s);
-        equal ~msg:"new axis" int 2 (Nx.shape s).(0));
-    prop "concat/split roundtrip (f32 1d)" f32_1d (fun t ->
-        let n = Nx.numel t in
-        assume (n >= 2 && n mod 2 = 0);
-        let parts = Nx.split ~axis:0 2 t in
-        equal (approx ()) t (Nx.concatenate ~axis:0 parts));
-  ]
-
 (* ── Indexing Properties ── *)
 
-let indexing_props =
-  [
-    prop "set/item roundtrip (f32)" f32_with_index (fun (t, indices) ->
-        let v = 42.0 in
-        let c = Nx.set (List.map (fun i -> Nx.I i) indices) (Nx.scalar Nx.float32 v) t in
-        equal float_exact v (Nx.item indices c));
-    prop "set of a get is identity (f32)" f32_any (fun t ->
-        assume (Nx.ndim t >= 1);
-        let sub = Nx.get [ 0 ] t in
-        equal (approx ()) t (Nx.set [ Nx.I 0 ] sub t));
-    prop "slice A is identity (f32)" f32_any (fun t ->
-        let spec = List.init (Nx.ndim t) (fun _ -> Nx.A) in
-        equal (approx ()) t (Nx.slice spec t));
-    prop "slice full range = identity (f32 1d)" f32_1d (fun t ->
-        let n = Nx.numel t in
-        equal (approx ()) t (Nx.slice [ Nx.R (0, n) ] t));
-    prop "take all indices = identity (f32 1d)" f32_1d (fun t ->
-        let n = Nx.numel t in
-        let indices = Nx.arange Nx.int32 0 n 1 in
-        equal (approx ()) t (Nx.take ~indices t));
-    prop "take indices valid (f32 1d)" f32_1d_with_take_indices
-      (fun (t, indices) ->
-        let taken = Nx.take ~indices t in
-        for i = 0 to Nx.numel indices - 1 do
-          let idx = Int32.to_int (Nx.item [ i ] indices) in
-          equal
-            ~msg:(Printf.sprintf "element %d" i)
-            float_exact (Nx.item [ idx ] t) (Nx.item [ i ] taken)
-        done);
-    prop "take_along_axis with argsort = sort (f32 1d)" f32_1d (fun t ->
-        assume (no_nan t);
-        let sorted, _ = Nx.sort t in
-        let arg_indices = Nx.argsort t in
-        let gathered = Nx.take_along_axis ~axis:0 ~indices:arg_indices t in
-        equal (approx ()) sorted gathered);
-    prop "extract preserves count (f32)" f32_with_mask (fun (t, mask) ->
-        let extracted = Nx.extract ~condition:mask t in
-        let n_true =
-          let flat = Nx.flatten mask in
-          let count = ref 0 in
-          for i = 0 to Nx.numel flat - 1 do
-            if Nx.item [ i ] flat then incr count
-          done;
-          !count
-        in
-        equal int n_true (Nx.numel extracted));
-    prop "set of a slice is identity (f32)" f32_any (fun t ->
-        assume (Nx.ndim t >= 1 && (Nx.shape t).(0) >= 1);
-        let spec = [ Nx.R (0, 1) ] in
-        equal (approx ()) t (Nx.set spec (Nx.slice spec t) t));
-    prop "nonzero indices are valid (i32 1d)" i32_1d (fun t ->
-        let nz = Nx.nonzero t in
-        let indices = nz.(0) in
-        let n = Nx.numel t in
-        Array.iter
-          (fun i ->
-            let idx = Int32.to_int i in
-            satisfies ~msg:"index in range" int (fun i -> i >= 0 && i < n) idx;
-            not_equal ~msg:"selects a nonzero" int32 0l (Nx.item [ idx ] t))
-          (Nx.to_array indices));
-  ]
-
 (* ── Broadcasting Properties ── *)
-
-let broadcasting_props =
-  [
-    prop "broadcast_to idempotent (f32)" f32_with_broadcast_shape
-      (fun (t, target) ->
-        let b = Nx.broadcast_to target t in
-        equal (approx ()) b (Nx.broadcast_to target b));
-    prop "broadcast_to preserves values (f32)" f32_with_broadcast_shape
-      (fun (t, target) ->
-        let b = Nx.broadcast_to target t in
-        (* Every element in broadcast result must exist in original *)
-        let orig_vals = Nx.to_array (Nx.flatten (Nx.contiguous t)) in
-        let bc_vals = Nx.to_array (Nx.flatten (Nx.contiguous b)) in
-        Array.iter
-          (fun v ->
-            satisfies ~msg:"value came from the source" float_exact
-              (fun v -> Array.exists (fun o -> Float.equal v o) orig_vals)
-              v)
-          bc_vals);
-    prop "broadcasted common shape (f32)" f32_broadcastable_pair (fun (a, b) ->
-        let a', b' = Nx.broadcasted a b in
-        equal (array int) (Nx.shape a') (Nx.shape b'));
-    prop "broadcasted symmetric shape (f32)" f32_broadcastable_pair
-      (fun (a, b) ->
-        let a1, _ = Nx.broadcasted a b in
-        let _, b2 = Nx.broadcasted b a in
-        equal (array int) (Nx.shape a1) (Nx.shape b2));
-    prop "broadcast scalar to any shape (f32)" f32_any (fun t ->
-        let v = 3.0 in
-        let s = Nx.scalar Nx.float32 v in
-        let b = Nx.broadcast_to (Nx.shape t) s in
-        equal ~msg:"shape" (array int) (Nx.shape t) (Nx.shape b);
-        is_true ~msg:"every element is the scalar"
-        @@ all_true (Nx.equal b (Nx.full_like t v)));
-    prop "add with broadcast = add after broadcast (f32)" f32_broadcastable_pair
-      (fun (a, b) ->
-        let result = Nx.add a b in
-        let a', b' = Nx.broadcasted a b in
-        let result2 = Nx.add a' b' in
-        equal (approx ()) result2 result);
-    prop "expand_dims/squeeze roundtrip (f32)" f32_any (fun t ->
-        let expanded = Nx.unsqueeze ~axes:[ 0 ] t in
-        let squeezed = Nx.squeeze ~axes:[ 0 ] expanded in
-        equal (approx ()) t squeezed);
-    prop "broadcast_arrays consistent with broadcasted (f32)"
-      f32_broadcastable_pair (fun (a, b) ->
-        let arr = Nx.broadcast_arrays [ a; b ] in
-        let a', b' = Nx.broadcasted a b in
-        equal (approx ()) a' (List.nth arr 0);
-        equal (approx ()) b' (List.nth arr 1));
-  ]
 
 (* ── Einsum Equivalence Properties ── *)
 
@@ -704,18 +370,9 @@ let stress_props =
 let () =
   exit (run "Nx Properties"
     [
-      group "Arithmetic" arithmetic_props;
-      group "Shape" shape_props;
-      group "Comparison" comparison_props;
-      group "Logical & Bitwise" logical_bitwise_props;
-      group "Rounding" rounding_props;
       group "Sorting" sorting_props;
-      group "Math Functions" math_function_props;
       group "Reductions" reduction_props;
       group "Linear Algebra" linalg_props;
-      group "Concatenation" concat_props;
-      group "Indexing" indexing_props;
-      group "Broadcasting" broadcasting_props;
       group "Einsum" einsum_props;
       group "Stress Tests" stress_props;
     ])

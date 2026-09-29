@@ -10,6 +10,16 @@ let tensor w =
     (fun t -> (Nx.shape t, Nx.to_array t))
     (pair (array int) (array w))
 
+(* Floats equal within [rel] of the larger magnitude, every NaN equal to every
+   NaN: the witness of a computed float that may be NaN. *)
+let close ~rel =
+  Testable.make
+    ~pp:(fun ppf x -> Format.fprintf ppf "%.17g" x)
+    ~equal:(fun a b ->
+      (Float.is_nan a && Float.is_nan b)
+      || a = b
+      || Float.abs (a -. b) <= rel *. Float.max (Float.abs a) (Float.abs b))
+
 let raises_invalid_arg f =
   raises_match Exn.invalid_arg (fun () -> ignore (f ()))
 
@@ -67,13 +77,24 @@ let ravel shape idx =
 type layout = { name : string; apply : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 
 let layout_steps =
-  let rows f t = if Nx.ndim t = 0 || Nx.dim 0 t = 0 then t else f (Nx.dim 0 t) t in
+  let rows f t =
+    if Nx.ndim t = 0 || Nx.dim 0 t = 0 then t else f (Nx.dim 0 t) t
+  in
   [
     { name = "transposed"; apply = (fun t -> Nx.transpose t) };
     { name = "flipped"; apply = (fun t -> Nx.flip t) };
-    { name = "every other row"; apply = (fun t -> rows (fun n -> Nx.slice [ Rs (0, n, 2) ]) t) };
-    { name = "without its first row"; apply = (fun t -> rows (fun n -> Nx.slice [ R (1, n) ]) t) };
-    { name = "broadcast over a new axis"; apply = (fun t -> Nx.broadcast_to (Array.append [| 2 |] (Nx.shape t)) t) };
+    {
+      name = "every other row";
+      apply = (fun t -> rows (fun n -> Nx.slice [ Rs (0, n, 2) ]) t);
+    };
+    {
+      name = "without its first row";
+      apply = (fun t -> rows (fun n -> Nx.slice [ R (1, n) ]) t);
+    };
+    {
+      name = "broadcast over a new axis";
+      apply = (fun t -> Nx.broadcast_to (Array.append [| 2 |] (Nx.shape t)) t);
+    };
   ]
 
 let pp_layout ppf = function
@@ -90,8 +111,8 @@ let layout =
 
 let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 
-(* Whether [shape] can view the elements of [t] where they are: the strides
-   that the unit steps of [shape] give must place every element. *)
+(* Whether [shape] can view the elements of [t] where they are: the strides that
+   the unit steps of [shape] give must place every element. *)
 let viewable t shape =
   let st = Array.map (fun b -> b / Nx.itemsize t) (Nx.strides t) in
   let pos k =
@@ -100,8 +121,12 @@ let viewable t shape =
     !p
   in
   let n = Nx.numel t in
-  let unit d = ravel shape (Array.mapi (fun e _ -> if e = d then 1 else 0) shape) in
-  let strides = Array.mapi (fun d s -> if s > 1 then pos (unit d) - pos 0 else 0) shape in
+  let unit d =
+    ravel shape (Array.mapi (fun e _ -> if e = d then 1 else 0) shape)
+  in
+  let strides =
+    Array.mapi (fun d s -> if s > 1 then pos (unit d) - pos 0 else 0) shape
+  in
   List.for_all
     (fun k ->
       let p = ref (pos 0) in
@@ -438,3 +463,20 @@ module Ref = struct
     let a = broadcast_to shape a and b = broadcast_to shape b in
     { shape; data = Array.map2 f a.data b.data }
 end
+
+(* A tensor of [dtype] under some layout, its elements drawn from [value]. It
+   prints as its layout and its elements. *)
+let viewed ?(shape = Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 4))
+    ?(layout = layout) ~pp dtype value =
+  let drawn =
+    let open Gen in
+    let* s = shape in
+    let* steps = layout in
+    let+ xs = array ~size:(constant (Ref.numel s)) value in
+    (steps, lay_out steps (Nx.create dtype s xs))
+  in
+  Gen.map snd
+    (Gen.with_pp
+       (fun ppf (steps, t) ->
+         Format.fprintf ppf "%a: %a" pp_layout steps (Ref.pp pp) (Ref.of_nx t))
+       drawn)
