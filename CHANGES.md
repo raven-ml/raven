@@ -2711,6 +2711,10 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.uniform` and `Nx.Rng.normal`, and so `Nx.rand`, `Nx.randn` and the
+  samplers built on them, return a draw with a buffer of its own. A compiled
+  program that read a draw several times recomputed the generator for every
+  read: a matmul of 512 rows against a drawn matrix took 305 ms instead of 2.
 - `Nx.slice` and `Nx.set` clamp the start of a stepped range (`Rs`) into the
   axis, as they clamp its stop and both bounds of `R`. A start outside the
   axis read zeros or raised.

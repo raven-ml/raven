@@ -181,6 +181,37 @@ let test_jit_normal_matches_eager () =
     (to_arr (f k))
     (Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) f k)
 
+(* A draw is computed once however often a compiled program reads it: a matmul
+   against a drawn matrix does the generator's work once, not once per row of
+   the other operand. The operations a replay spends beyond the matmul's own are
+   the same for 8 rows as for 64. *)
+let test_jit_draw_is_computed_once () =
+  let replay_ops g arg =
+    let ops () = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
+    ignore (g arg);
+    let before = ops () in
+    ignore (g arg);
+    Z.to_int (Z.sub (ops ()) before)
+  in
+  let generator_ops draw rows =
+    let x = Nx.ones f32 [| rows; 16 |] in
+    let key = Nx.Rng.key 4 in
+    let drawn =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+        (fun key -> Nx.matmul x (draw key))
+    in
+    let given = Rune.jit Nx.Ptree.(tensor @-> returns tensor) (Nx.matmul x) in
+    replay_ops drawn key - replay_ops given (draw key)
+  in
+  List.iter
+    (fun (msg, draw) ->
+      equal ~msg int (generator_ops draw 8) (generator_ops draw 64))
+    [
+      ("uniform", fun key -> Nx.Rng.uniform key f32 [| 16; 16 |]);
+      ("normal", fun key -> Nx.Rng.normal key f32 [| 16; 16 |]);
+    ]
+
 let test_jit_split_derived_key_traces () =
   let f key =
     let ks = Nx.Rng.split key in
@@ -543,6 +574,7 @@ let tests =
           test_jit_int_samplers_bit_parity;
         test "a traced parameter compiles" test_jit_traced_parameter;
         test "normal matches eager" test_jit_normal_matches_eager;
+        test "a draw is computed once" test_jit_draw_is_computed_once;
         test "keys split inside the trace compile"
           test_jit_split_derived_key_traces;
         test "fold_in drives fresh values through a jitted step"

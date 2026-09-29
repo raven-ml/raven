@@ -2615,6 +2615,9 @@ module Make (B : Backend_intf.S) = struct
         reshape shape
           (shrink [| (0, n) |] (flatten (blocks "bits" k ((n + 1) / 2))))
 
+    (* A draw is a buffer of its own, as tinygrad's [rand] is: a compiled
+       program that reads it more than once, such as a matmul against a drawn
+       matrix, would otherwise recompute the generator for every read. *)
     let uniform (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t
         =
       check_shape "uniform" shape;
@@ -2647,7 +2650,7 @@ module Make (B : Backend_intf.S) = struct
                    bottom)
                 (scalar ctx Nx_dtype.float64 (Float.ldexp 1.0 (-53)))
             in
-            reshape shape u
+            copy (reshape shape u)
         | _ ->
             let p = significand_bits dtype in
             let mask =
@@ -2658,7 +2661,7 @@ module Make (B : Backend_intf.S) = struct
                 (cast Nx_dtype.float32 (bitwise_and (bits k shape) mask))
                 (scalar ctx Nx_dtype.float32 (Float.ldexp 1.0 (-p)))
             in
-            cast dtype u
+            copy (cast dtype u)
 
     (* Box-Muller: a radius from one uniform and an angle from another give two
        independent samples, r cos(2 pi u2) and r sin(2 pi u2). Both are kept, so
@@ -2669,7 +2672,13 @@ module Make (B : Backend_intf.S) = struct
        result leaves a double carrying float32 noise, which is what this used to
        do. [u1] can be exactly 0, so it is floored before the log — at 2^-p, the
        smallest positive value the uniform can take, so the floor rewrites zero
-       and nothing else. *)
+       and nothing else.
+
+       The samples are a buffer of their own, like the uniforms, where
+       tinygrad's [randn] is not: the transform costs a logarithm, a square root
+       and a cosine per sample, and a compiled matmul against a drawn matrix
+       would pay them again for every row it reads, forty times the matmul
+       itself on the CPU. *)
     let normal (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
       check_shape "normal" shape;
       let ctx = B.context k in
@@ -2691,7 +2700,7 @@ module Make (B : Backend_intf.S) = struct
           let z =
             concatenate ~axis:0 [ mul r (cos angle); mul r (sin angle) ]
           in
-          cast dtype (reshape shape (shrink [| (0, n) |] z))
+          copy (cast dtype (reshape shape (shrink [| (0, n) |] z)))
         in
         match dtype with
         | Nx_dtype.Float64 -> box_muller Nx_dtype.float64
