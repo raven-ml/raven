@@ -1,4 +1,4 @@
-/* Backend-local OCaml wrapper for the owned-GEMM maintenance hook. */
+/* The benchmark's OCaml wrapper for the owned GEMM. */
 
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -7,6 +7,6 @@
 
 CAMLprim value caml_nx_c_owned_matmul(value vout, value va, value vb) {
   CAMLparam3(vout, va, vb);
-  nx_c_matmul_maintenance(vout, va, vb, 0);
+  nx_c_matmul_owned(vout, va, vb);
   CAMLreturn(Val_unit);
 }

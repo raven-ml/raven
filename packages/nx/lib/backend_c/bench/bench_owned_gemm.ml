@@ -1,6 +1,6 @@
 (* Performance guard for the self-contained GEMM used off macOS and whenever an
-   operation is not eligible for Accelerate. This benchmark intentionally uses a
-   backend-local maintenance hook; public matmul stays in packages/nx/bench. *)
+   operation is not eligible for Accelerate. This benchmark intentionally calls
+   the backend's owned-GEMM hook; public matmul stays in packages/nx/bench. *)
 
 type ('a, 'b) ffi = {
   buffer : Nx_device.Buffer.t;

@@ -55,11 +55,8 @@ nx_c_status nx_c_gemm2d_ct_ws(nx_c_dtype dt, int64_t m, int64_t n, int64_t k,
                             const char *B, int64_t b_rs, int64_t b_cs, char *C,
                             int64_t c_rs, int64_t c_cs, char *scratch);
 
-/* Internal maintenance hooks. Only the backend-local test and benchmark stubs
-   bind these; they are not part of the installed OCaml API. */
-void nx_c_matmul_maintenance(value vout, value va, value vb, int mode);
-int nx_c_matmul_accelerate_available(void);
-int nx_c_matmul_accelerate_enabled(void);
-void nx_c_matmul_accelerate_override(int mode);
+/* The owned kernel, never Accelerate, for the owned-GEMM benchmark; the
+   installed OCaml API binds no path selection. */
+void nx_c_matmul_owned(value vout, value va, value vb);
 
 #endif /* NX_C_MATMUL_H */

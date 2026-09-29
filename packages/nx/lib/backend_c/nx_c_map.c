@@ -934,13 +934,34 @@ static const nx_c_map_table nx_c_where_table = {
    speed. These are branchless/hardware forms that the vectorizer turns into
    packed converts. They are a DELIBERATE, TESTED copy of the nx_dtype.h
    converters: they MUST produce bit-identical results for EVERY input
-   (rounding mode, NaN quieting, subnormals, overflow) — pinned by the
-   nx_c_cast_convert_selfcheck gate, which sweeps all 65536 f16 patterns plus
-   NaN/inf/subnormal/overflow f32 edges against the canonical converters. If a
-   future edit here diverges, that test fails; do not "fix" it by loosening the
-   gate. nx_dtype.h stays the single owner of the storage format; this is only
+   (rounding mode, NaN quieting, subnormals, overflow) — pinned by the cast sweep of
+   packages/nx/test/dtype/test_float_codecs.ml, which checks Nx.cast from
+   float32 against an exact reference over every bit pattern around each
+   format's rounding bit. If a future edit here diverges, that test fails; do not
+   "fix" it by loosening the test. nx_dtype.h stays the single owner of the storage format; this is only
    a vectorizable restatement used nowhere but the cast fast path. */
 
+#if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+/* The portable converter's result (the #else branch) via the hardware
+   narrowing convert (FCVTN, round-to-nearest-even) plus a branchless
+   NaN-payload fixup: the hardware convert force-quiets NaNs by setting the
+   mantissa MSB, whereas float_to_half preserves the raw payload, so only NaN
+   lanes are recomputed to stay bit-identical. Finite/inf/subnormal all already
+   match the canonical converter exactly. The whole loop stays SIMD. */
+static inline uint16_t nx_c_f32_to_f16_hw(float f) {
+  _Float16 h = (_Float16)f;
+  uint16_t o;
+  __builtin_memcpy(&o, &h, sizeof o);
+  union { float f; uint32_t i; } u = {.f = f};
+  uint32_t b = u.i;
+  uint32_t is_nan = ((b & 0x7F800000u) == 0x7F800000u) & ((b & 0x007FFFFFu) != 0u);
+  uint16_t sgn = (uint16_t)((b & 0x80000000u) >> 16);
+  uint16_t nan_ret = (uint16_t)(0x7C00u + ((b & 0x007FFFFFu) >> 13));
+  nan_ret += (nan_ret == 0x7C00u);
+  return is_nan ? (uint16_t)(sgn + nan_ret) : o;
+}
+static inline uint16_t nx_c_f32_to_f16(float f) { return nx_c_f32_to_f16_hw(f); }
+#else
 /* Branchless f32 -> IEEE binary16, round-to-nearest-even. All three exponent
    regimes are computed and the result selected; the subnormal shift is masked so
    a discarded lane never triggers undefined shift behaviour. */
@@ -979,26 +1000,6 @@ static inline uint16_t nx_c_f32_to_f16_sw(float f) {
   return reg;
 }
 
-#if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
-/* Same result via the hardware narrowing convert (FCVTN, round-to-nearest-even)
-   plus a branchless NaN-payload fixup: the hardware convert force-quiets NaNs by
-   setting the mantissa MSB, whereas float_to_half preserves the raw payload, so
-   only NaN lanes are recomputed to stay bit-identical. Finite/inf/subnormal all
-   already match the canonical converter exactly. The whole loop stays SIMD. */
-static inline uint16_t nx_c_f32_to_f16_hw(float f) {
-  _Float16 h = (_Float16)f;
-  uint16_t o;
-  __builtin_memcpy(&o, &h, sizeof o);
-  union { float f; uint32_t i; } u = {.f = f};
-  uint32_t b = u.i;
-  uint32_t is_nan = ((b & 0x7F800000u) == 0x7F800000u) & ((b & 0x007FFFFFu) != 0u);
-  uint16_t sgn = (uint16_t)((b & 0x80000000u) >> 16);
-  uint16_t nan_ret = (uint16_t)(0x7C00u + ((b & 0x007FFFFFu) >> 13));
-  nan_ret += (nan_ret == 0x7C00u);
-  return is_nan ? (uint16_t)(sgn + nan_ret) : o;
-}
-static inline uint16_t nx_c_f32_to_f16(float f) { return nx_c_f32_to_f16_hw(f); }
-#else
 static inline uint16_t nx_c_f32_to_f16(float f) { return nx_c_f32_to_f16_sw(f); }
 #endif
 
@@ -1359,73 +1360,3 @@ CAMLprim value caml_nx_c_cast(value vout, value va) {
   CAMLreturn(Val_unit);
 }
 
-/* Equivalence gate for the local cast-fast-path converters. Returns the number
-   of inputs where nx_c_f32_to_f16 (both the portable and, where compiled, the
-   active hardware form) or nx_c_f32_to_bf16 disagree by even one bit with the
-   canonical nx_dtype.h converters — MUST be 0. Covers all 65536 f16 bit
-   patterns round-tripped through half_to_float, a dense sweep of the rounding
-   band (every 13-bit round/sticky decision at representative magnitudes and both
-   signs), and the NaN/inf/subnormal/overflow f32 edges. Pure C, no allocation;
-   the backend-local maintenance stub asserts the result is 0. This is a plain
-   C hook rather than a shipping OCaml primitive. */
-int64_t nx_c_cast_convert_selfcheck(void) {
-  int64_t mism = 0;
-
-#define NX_C_CHK_F16(f)                                                         \
-  do {                                                                         \
-    float f_ = (f);                                                            \
-    uint16_t want = float_to_half(f_);                                        \
-    mism += (nx_c_f32_to_f16_sw(f_) != want);                                  \
-    mism += (nx_c_f32_to_f16(f_) != want);                                     \
-  } while (0)
-#define NX_C_CHK_BF16(f)                                                        \
-  do {                                                                         \
-    float f_ = (f);                                                            \
-    mism += (nx_c_f32_to_bf16(f_) != float_to_bfloat16(f_));                   \
-  } while (0)
-#define NX_C_CHK(f)                                                             \
-  do {                                                                         \
-    NX_C_CHK_F16(f);                                                            \
-    NX_C_CHK_BF16(f);                                                           \
-  } while (0)
-
-  /* All 65536 f16 patterns via the inverse converter (exact grid points, all
-     subnormals, inf, and the f16 NaN payloads). */
-  for (uint32_t h = 0; h < 65536u; h++) NX_C_CHK(half_to_float((uint16_t)h));
-
-  /* Rounding band: for each biased exponent from below the smallest subnormal to
-     past overflow, sweep the low 13 mantissa bits (the round/sticky decision)
-     across a spread of high mantissa bits, both signs. */
-  for (uint32_t ef = 0x30000000u; ef <= 0x49000000u; ef += 0x00800000u) {
-    for (uint32_t mhi = 0; mhi < 0x00800000u; mhi += 0x00100000u) {
-      for (uint32_t mlo = 0; mlo < 0x00002000u; mlo++) {
-        uint32_t bits = ef | (mhi & 0x007FE000u) | mlo;
-        union { uint32_t u; float f; } p = {.u = bits};
-        NX_C_CHK(p.f);
-        union { uint32_t u; float f; } n = {.u = bits | 0x80000000u};
-        NX_C_CHK(n.f);
-      }
-    }
-  }
-
-  /* Explicit edges: signed zeros, subnormal/overflow boundaries, inf, and a
-     spread of NaN payloads (both signs). */
-  static const uint32_t edges[] = {
-      0x00000000u, 0x80000000u, /* +/-0 */
-      0x33000000u, 0x33800000u, 0x38000000u, 0x38800000u, /* subnormal edges */
-      0x477FE000u, 0x47800000u, 0x47FFE000u, 0x48000000u, /* overflow edges */
-      0x7F7FFFFFu, 0xFF7FFFFFu, /* +/-max finite f32 */
-      0x7F800000u, 0xFF800000u, /* +/-inf */
-      0x7F800001u, 0x7FABCDEFu, 0x7FC00000u, 0x7FFFFFFFu, /* NaN payloads */
-      0xFF800001u, 0xFFABCDEFu, 0xFFC00000u, 0xFFFFFFFFu,
-  };
-  for (size_t i = 0; i < sizeof(edges) / sizeof(edges[0]); i++) {
-    union { uint32_t u; float f; } p = {.u = edges[i]};
-    NX_C_CHK(p.f);
-  }
-
-#undef NX_C_CHK
-#undef NX_C_CHK_F16
-#undef NX_C_CHK_BF16
-  return mism;
-}

@@ -594,129 +594,6 @@ static void nx_c_coalesce_map(const nx_c_ndarray *ops, int nop,
   }
 }
 
-/* Test hook: the coalesced rank for the given operands (see nx_c_selftest.c). */
-int nx_c_selftest_coalesce_rank(const nx_c_ndarray *ops, int nop,
-                               const int64_t *elem_size, int64_t *total) {
-  nx_c_plan p;
-  nx_c_coalesce_map(ops, nop, elem_size, &p);
-  if (total) *total = p.total;
-  return p.ndim;
-}
-
-/* Test hook: hardware CPU count, so the self-test can assert the policy splits
-   when hardware allows. */
-int nx_c_selftest_ncores(void) { return nx_c_ncores(); }
-
-/* Test hook: exercise the exported nx_c_parallel_for under the claim dispatch
-   and report what the contract actually promises: every chunk carries a worker
-   index in [0, nth), and the claimed chunks partition [0, total) exactly (no
-   gap, no overlap, verified by per-unit marks plus a covered-count). WHICH
-   worker ids appear beyond that is a race by design — a fast thread may claim
-   everything — so the static split's all-indices-contiguous guarantee is gone,
-   and `distinct` reports what happened rather than a promise.
-
-   `gate` makes multi-thread fan-out deterministic, not probabilistic: every
-   body entry bumps `arrivals`, and a body holding a PARTIAL chunk (hi-lo <
-   total, i.e. the range was actually cut) spins until a second entry lands.
-   The spinner holds its chunk, so it cannot claim the rest of the range
-   itself; the parallel path only cuts when >= 2 threads participate, so
-   another thread must claim a remaining chunk and bump the counter — the spin
-   terminates and >= 2 distinct worker ids are recorded. The serial path is one
-   whole-range call, which the partial-chunk test exempts; pass gate only when
-   the pool can actually go parallel (cores > 1).
-
-   Also drives the free_on_exit path: a heap per-worker scratch is written by
-   the body (live during the run) and handed to nx_c_parallel_for to free — a
-   double-free or leak here would show under ASan. Honors the contract by
-   holding the lock on entry. */
-typedef struct {
-  pthread_mutex_t m;
-  unsigned char seen[NX_C_MAX_THREADS];
-  int distinct;
-  int max_worker;
-  int bad_worker;      /* saw an index outside [0, NX_C_MAX_THREADS) */
-  int bad_range;       /* saw a chunk outside [0, total), or hi < lo */
-  int overlap;         /* some unit claimed twice */
-  int64_t covered;     /* sum of (hi - lo) over claimed chunks */
-  int64_t total;
-  unsigned char *mark; /* one flag per unit, or NULL if OOM */
-  int gate;
-  _Atomic int arrivals;
-  int *scratch; /* per-worker heap scratch; freed by nx_c_parallel_for */
-} nx_c_widx_probe;
-
-static void nx_c_widx_body(int64_t lo, int64_t hi, int worker, void *ctx) {
-  nx_c_widx_probe *p = ctx;
-  atomic_fetch_add_explicit(&p->arrivals, 1, memory_order_relaxed);
-  if (p->scratch && worker >= 0 && worker < NX_C_MAX_THREADS)
-    p->scratch[worker] = worker; /* scratch is live here, before the free */
-  /* Clamp before touching mark: a cut mutant handing an out-of-range chunk must
-     FAIL the partition check, never scribble past the test heap. `covered`
-     keeps the raw extent so an oversized cut also shows as covered != total. */
-  int64_t mlo = lo < 0 ? 0 : lo;
-  int64_t mhi = hi > p->total ? p->total : hi;
-  pthread_mutex_lock(&p->m);
-  if (lo < 0 || hi > p->total || hi < lo) p->bad_range = 1;
-  if (worker >= 0 && worker < NX_C_MAX_THREADS) {
-    if (!p->seen[worker]) {
-      p->seen[worker] = 1;
-      p->distinct++;
-    }
-  } else {
-    p->bad_worker = 1;
-  }
-  if (worker > p->max_worker) p->max_worker = worker;
-  p->covered += hi - lo;
-  if (p->mark)
-    for (int64_t i = mlo; i < mhi; i++) {
-      if (p->mark[i]) p->overlap = 1;
-      p->mark[i] = 1;
-    }
-  pthread_mutex_unlock(&p->m);
-  if (p->gate && hi - lo < p->total)
-    while (atomic_load_explicit(&p->arrivals, memory_order_relaxed) < 2)
-      ;
-}
-
-int nx_c_selftest_worker_indices(int nth, int64_t total, int gate, int *out_max,
-                                int *out_partition_ok,
-                                int *out_pool_workers) {
-  nx_c_widx_probe p;
-  pthread_mutex_init(&p.m, NULL);
-  memset(p.seen, 0, sizeof p.seen);
-  p.distinct = 0;
-  p.max_worker = -1;
-  p.bad_worker = 0;
-  p.bad_range = 0;
-  p.overlap = 0;
-  p.covered = 0;
-  p.total = total;
-  p.mark = calloc((size_t)total, 1);
-  p.gate = gate;
-  atomic_store_explicit(&p.arrivals, 0, memory_order_relaxed);
-  p.scratch = nx_c_aligned_alloc((size_t)(nth > 0 ? nth : 1) * sizeof(int));
-  /* Report the pool's REAL worker count, so callers gate fan-out assertions on
-     a pool that actually has >= 2 threads — if allocation, atfork registration,
-     or every spawn failed, dispatch legally degrades to serial and a
-     distinct>=2 assertion would false-fail. */
-  nx_c_pool *pool = nx_c_pool_get();
-  if (out_pool_workers) *out_pool_workers = pool ? pool->nworkers : 1;
-  /* Effectively unbounded `bytes` keeps the chunk policy off its byte floor, so
-     total > nth * chunks-per-worker exercises the multi-chunk claim loop and a
-     small total the unit-granular tail shape. The scratch is handed to the
-     primitive to free — not freed here (it would be a leak on the
-     re-acquire-raises path; that is exactly what free_on_exit fixes). */
-  nx_c_parallel_for(nth, total, INT64_MAX / 2, nx_c_widx_body, &p, p.scratch);
-  pthread_mutex_destroy(&p.m);
-  int partition_ok = p.covered == total && !p.overlap && !p.bad_worker &&
-                     !p.bad_range && p.max_worker >= 0 &&
-                     p.max_worker < (nth > 0 ? nth : 1);
-  free(p.mark);
-  if (out_max) *out_max = p.max_worker;
-  if (out_partition_ok) *out_partition_ok = partition_ok;
-  return p.distinct;
-}
-
 /* ── Shared 2-stream odometer ──────────────────────────────────────────────
    fold/argreduce/scan all iterate a nest of kept dims carrying one input and
    one output pointer. seek positions both pointers at a linear index (once per
@@ -753,21 +630,6 @@ static void nx_c_next2(int nk, const int64_t *shape, const int64_t *s_in,
     *ip -= (shape[d] - 1) * s_in[d];
     *op -= (shape[d] - 1) * s_out[d];
   }
-}
-
-/* Test hook: seek2's positioning for a linear index, as byte offsets from a
-   caller-supplied base. Lets the self-test check a mid-nest (idx>0) thread start
-   directly — the chunk-start seek every parallel driver depends on — rather than
-   only through a driver. The caller sizes `base` to cover the offsets. */
-void nx_c_selftest_seek2(int nk, const int64_t *shape, const int64_t *s_in,
-                        const int64_t *s_out, int64_t idx, char *base,
-                        int64_t *in_off, int64_t *out_off) {
-  int64_t coord[NX_C_MAX_NDIM];
-  char *ip;
-  char *op;
-  nx_c_seek2(nk, shape, s_in, s_out, idx, coord, base, base, &ip, &op);
-  *in_off = ip - base;
-  *out_off = op - base;
 }
 
 /* ── Map driver ────────────────────────────────────────────────────────────
@@ -837,7 +699,7 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
                        const nx_c_ndarray *ops, const int64_t *elem_size,
                        nx_c_cost_class cls, void *ctx) {
   int nop = nin + 1;
-  if (nop > NX_C_MAX_OPERANDS) return NX_C_ERR_ARITY;
+  if (nop > NX_C_MAX_OPERANDS) abort(); /* the stubs pass a fixed arity */
 
   nx_c_map_loop *kernel = tbl->fn[dt];
   if (kernel == NULL)
@@ -847,12 +709,12 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
   nx_c_coalesce_map(ops, nop, elem_size, &p);
   if (p.total == 0) return NX_C_OK; /* empty tensor: kernels are no-ops */
 
-  /* On a non-empty output, a 0-stride dim of extent > 1 would alias elements
-     (parallel threads racing one cell, wrong even serially). Checked on the
-     coalesced output (index 0), after the empty short-circuit — an empty tensor
-     writes nothing, so a stride-0 dim there is harmless. Verified, not assumed. */
+  /* The binding allocates a fresh output, so no dim of extent > 1 has a 0
+     stride: one would put parallel threads racing on one cell. Asserted on the
+     coalesced output (index 0), after the empty short-circuit, since an empty
+     tensor writes nothing. */
   for (int i = 0; i < p.ndim; i++)
-    if (p.shape[i] > 1 && p.bstride[0][i] == 0) return NX_C_ERR_OUT_ALIASED;
+    if (p.shape[i] > 1 && p.bstride[0][i] == 0) abort();
 
   /* Traffic for the bandwidth heuristic: an operand only touches the elements
      it actually holds, so a 0-stride (broadcast) dim contributes one element,
@@ -1104,10 +966,10 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *s
      Verified, not assumed — a binding that forgets to sort gets a loud status
      rather than a silently-wrong partial reduction. */
   if (ra != n_reduce) return NX_C_ERR_AXES;
-  /* out is aligned, one axis per kept input axis; a short/long descriptor would
-     read unspecified stride slots — so pair the out strides only now that the
-     rank is verified. */
-  if (out->ndim != e.nk) return NX_C_ERR_OUT_RANK;
+  /* out is aligned, one axis per kept input axis, as the binding allocates it;
+     a short/long descriptor would read unspecified stride slots, so the rank is
+     asserted before the out strides are paired. */
+  if (out->ndim != e.nk) abort();
   for (int j = 0; j < e.nk; j++) e.k_out_stride[j] = out->strides[j] * out_elem;
 
   int64_t out_total = 1;
@@ -1235,8 +1097,9 @@ nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
   if (tbl->step[dt] == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
 
-  if (axis < 0 || axis >= in->ndim) return NX_C_ERR_AXIS;
-  if (out->ndim != in->ndim - 1) return NX_C_ERR_OUT_RANK;
+  /* The frontend passes a valid axis and the binding allocates out: shape and
+     stride reads rely on both. */
+  if (axis < 0 || axis >= in->ndim || out->ndim != in->ndim - 1) abort();
 
   int64_t axis_len = in->shape[axis];
   nx_c_status vs = nx_c_argreduce_validate(axis_len);
@@ -1314,8 +1177,9 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
   if (tbl->init[dt] == NULL || tbl->step[dt] == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
 
-  if (axis < 0 || axis >= in->ndim) return NX_C_ERR_AXIS;
-  if (out->ndim != in->ndim) return NX_C_ERR_OUT_RANK;
+  /* The frontend passes a valid axis and the binding allocates out: shape and
+     stride reads rely on both. */
+  if (axis < 0 || axis >= in->ndim || out->ndim != in->ndim) abort();
 
   nx_c_scan_exec e;
   e.init = tbl->init[dt];
@@ -1362,7 +1226,7 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
 NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
   if (strcmp(s, NX_C_ERR_EMPTY_REDUCE) == 0 || strcmp(s, NX_C_ERR_AXES) == 0 ||
       strcmp(s, NX_C_ERR_AXIS) == 0 || strcmp(s, NX_C_ERR_OUT_RANK) == 0 ||
-      strcmp(s, NX_C_ERR_OUT_ALIASED) == 0 || strcmp(s, NX_C_ERR_SHAPE) == 0)
+      strcmp(s, NX_C_ERR_SHAPE) == 0)
     nx_c_raise_invalid(op, s);
   nx_c_raise(op, s);
 }
@@ -1370,7 +1234,7 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
 void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class cls,
                     int nin, const value *vals, void *ctx) {
   int nop = nin + 1;
-  if (nop > NX_C_MAX_OPERANDS) nx_c_raise(op, NX_C_ERR_ARITY);
+  if (nop > NX_C_MAX_OPERANDS) abort(); /* the stubs pass a fixed arity */
 
   nx_c_ndarray ops[NX_C_MAX_OPERANDS];
   int64_t elem[NX_C_MAX_OPERANDS];
@@ -1393,18 +1257,19 @@ void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class 
 /* Build the squeezed output descriptor the reduction drivers want: rank equal
    to the kept (non-reduced) input axes, aligned to them in order. Accepts an
    output already squeezed (keepdims=false) or full-rank with size-1 reduced dims
-   (keepdims=true), inferred from its rank. Bounds/dup-checks the axes with an
-   order-independent mask so a malformed axis is caught before use (the driver
-   re-checks strict ordering). */
+   (keepdims=true), inferred from its rank. The frontend passes valid,
+   deduplicated axes (Backend_intf) and the binding allocates out, which the
+   mask indexing and the stride copy rely on: asserted, the strict ordering
+   the fold driver checks. */
 static nx_c_status nx_c_squeeze_out(const nx_c_ndarray *in, const nx_c_ndarray *out,
                                   const int *axes, int n_reduce,
                                   nx_c_ndarray *sq) {
-  if (n_reduce < 0 || n_reduce > in->ndim) return NX_C_ERR_AXES;
+  if (n_reduce < 0 || n_reduce > in->ndim) abort();
   bool reduced[NX_C_MAX_NDIM];
   for (int a = 0; a < in->ndim; a++) reduced[a] = false;
   for (int i = 0; i < n_reduce; i++) {
     int a = axes[i];
-    if (a < 0 || a >= in->ndim || reduced[a]) return NX_C_ERR_AXES;
+    if (a < 0 || a >= in->ndim || reduced[a]) abort();
     reduced[a] = true;
   }
   int kept = in->ndim - n_reduce;
@@ -1412,7 +1277,7 @@ static nx_c_status nx_c_squeeze_out(const nx_c_ndarray *in, const nx_c_ndarray *
     *sq = *out; /* already squeezed */
     return NX_C_OK;
   }
-  if (out->ndim != in->ndim) return NX_C_ERR_OUT_RANK;
+  if (out->ndim != in->ndim) abort();
   sq->data = out->data;
   sq->offset = out->offset;
   sq->ndim = kept;

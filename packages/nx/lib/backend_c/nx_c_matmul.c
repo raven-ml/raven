@@ -826,7 +826,8 @@ static void mm_mpar_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
-/* Direct path: one job is one whole batch matrix (small, or force_direct). */
+/* Direct path: one job is one whole batch matrix, of fewer rows than a
+   register tile. */
 static void mm_direct_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
   const mm_ctx *x = (const mm_ctx *)vctx;
@@ -893,8 +894,8 @@ static void mm_split_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
-static nx_c_status mm_split_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
-                                int nthreads) {
+static nx_c_status mm_split_run(const mm_ctx *x, int64_t nbatch,
+                                int64_t bytes) {
   int64_t nchunks = x->k > MM_DOT_CHUNK ? mm_ceil_div(x->k, MM_DOT_CHUNK) : 1;
   int64_t rows = nbatch * x->m;
   int64_t jobs = rows * nchunks;
@@ -902,12 +903,9 @@ static nx_c_status mm_split_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
      and a multiply-add, and every output a lane combine and a store. On an M1
      Max it splits a 2^20-element f32 dot to 0.06 ms against 0.11 ms serial, and
      100000 dots of 16 to 0.24 ms against 0.89 ms; at 2^24 elements it ties. */
-  int nth = nthreads > 0
-                ? nthreads
-                : nx_c_threads_for(NX_C_COST_COMPUTE, jobs,
-                                   (x->k < MM_DOT_CHUNK ? x->k : MM_DOT_CHUNK) *
-                                       x->n,
-                                   bytes);
+  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, jobs,
+                             (x->k < MM_DOT_CHUNK ? x->k : MM_DOT_CHUNK) * x->n,
+                             bytes);
   if (nth > jobs) nth = (int)jobs;
   if (nth < 1) nth = 1;
   size_t partials_sz = (size_t)jobs * (size_t)(x->n * x->d->csize);
@@ -975,16 +973,14 @@ static void mm_row_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
-static nx_c_status mm_row_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
-                              int nthreads) {
+static nx_c_status mm_row_run(const mm_ctx *x, int64_t nbatch,
+                              int64_t bytes) {
   int64_t tile = MM_ROW_LANE_BYTES / (NX_C_LANES * x->d->csize);
   if (tile > x->n) tile = x->n;
   int64_t ntiles = mm_ceil_div(x->n, tile);
   int64_t jobs = nbatch * ntiles;
   /* Compute-bound class, as for the dot. */
-  int nth = nthreads > 0 ? nthreads
-                         : nx_c_threads_for(NX_C_COST_COMPUTE, jobs,
-                                            x->k * tile, bytes);
+  int nth = nx_c_threads_for(NX_C_COST_COMPUTE, jobs, x->k * tile, bytes);
   if (nth > jobs) nth = (int)jobs;
   if (nth < 1) nth = 1;
   int64_t slot = (NX_C_LANES + 2) * tile * x->d->csize;
@@ -1009,18 +1005,6 @@ static nx_c_status mm_row_run(const mm_ctx *x, int64_t nbatch, int64_t bytes,
    (per-matrix under the cutoff) therefore
    stays on the owned batch-parallel path, which beats serial cblas calls. */
 #define MM_ACCEL_CUTOFF (64 * 64 * 64)
-
-/* Test-only routing override: -1 use the automatic platform policy (default),
-   0 force owned, 1 force Accelerate. Lets the backend-local differential
-   exercise both routes in one process. */
-static int g_accel_override = -1;
-
-/* Hook enabled? The test override wins; normal macOS builds always use
-   Accelerate for eligible products. */
-static int mm_accel_enabled(void) {
-  if (g_accel_override >= 0) return g_accel_override;
-  return 1;
-}
 
 /* Map a 2-D operand's (row,col) element strides to a cblas transpose + leading
    dimension — the owned pack's stride insight applied to cblas's ld model: a unit
@@ -1143,13 +1127,11 @@ static void mm_accel_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 static const char MM_ERR_DTYPE_MISMATCH[] =
     "matmul operands must share one dtype";
 
-/* nthreads: 0 = engine policy (nx_c_threads_for), > 0 = forced by maintenance
-   tests. allow_accel: 1 lets the
-   macOS Accelerate hook claim eligible f32/f64/c32/c64 products (the frontend
-   path); 0 forces the owned kernel for maintenance tests and benchmarks. */
+/* allow_accel: 1 lets the macOS Accelerate hook claim eligible f32/f64/c32/c64
+   products (the frontend path); 0 keeps the owned kernel, for its benchmark. */
 static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
                                  const nx_c_ndarray *C, nx_c_dtype dt,
-                                 int force_direct, int nthreads, int allow_accel) {
+                                 int allow_accel) {
   const nx_c_mm_desc *d = &mm_desc[dt];
   if (d->micro == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
@@ -1211,8 +1193,7 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   if ((m > 1 && c_rs == 0) || (n > 1 && c_cs == 0))
     return NX_C_ERR_OUT_ALIASED; /* distinct C rows/cols would collide on one cell */
 
-  int use_direct =
-      force_direct || (m < MR && (int64_t)m * n * k < MM_DIRECT_ROWS_MNK);
+  int use_direct = m < MR && (int64_t)m * n * k < MM_DIRECT_ROWS_MNK;
   int few_outputs = 2 * m * n < (int64_t)MR * NR;
 
   /* Rough total traffic, for the pool's lock-release decision (HEAVY threads
@@ -1256,10 +1237,9 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
      contraction, a row by tiles of outputs. A column C = A b is the row
      C^T = b^T A^T: the row is b along its rows, the matrix is A with its
      strides swapped, and the outputs run down C. */
-  if (!force_direct && few_outputs)
-    return mm_split_run(&x, nbatch, bytes, nthreads);
-  if ((m == 1 || n == 1) && !force_direct) {
-    if (m == 1) return mm_row_run(&x, nbatch, bytes, nthreads);
+  if (few_outputs) return mm_split_run(&x, nbatch, bytes);
+  if (m == 1 || n == 1) {
+    if (m == 1) return mm_row_run(&x, nbatch, bytes);
     mm_ctx t = x;
     t.A = B;
     t.B = A;
@@ -1272,7 +1252,7 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
     t.b_cs = a_rs;
     t.c_rs = c_cs;
     t.c_cs = c_rs;
-    return mm_row_run(&t, nbatch, bytes, nthreads);
+    return mm_row_run(&t, nbatch, bytes);
   }
 
   /* Accelerate hook: for eligible f32/f64/c32/c64 the driver hands each batch
@@ -1282,7 +1262,7 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
      (low-precision/int, non-mappable layout, sub-cutoff, off macOS) fall through
      to the owned path below. */
 #if defined(__APPLE__)
-  if (allow_accel && mm_accel_enabled()) {
+  if (allow_accel) {
     mm_accel_ctx ac;
     if (mm_accel_eligible(dt, m, n, k, a_rs, a_cs, b_rs, b_cs, c_rs, c_cs, &ac)) {
       ac.x = &x;
@@ -1295,11 +1275,8 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
 #endif
 
   if (use_direct) {
-    /* One job per batch matrix; a lone matrix runs on one thread (the fair direct
-       baseline the test measures against). */
-    int nth = nthreads > 0
-                  ? nthreads
-                  : nx_c_threads_for(NX_C_COST_HEAVY, nbatch, m * n * k, bytes);
+    /* One job per batch matrix; a lone matrix runs on one thread. */
+    int nth = nx_c_threads_for(NX_C_COST_HEAVY, nbatch, m * n * k, bytes);
     if (nth > nbatch) nth = (int)nbatch;
     if (nth < 1) nth = 1;
     nx_c_parallel_for(nth, nbatch, bytes, mm_direct_body, &x, NULL);
@@ -1324,25 +1301,20 @@ static nx_c_status nx_c_matmul_run(const nx_c_ndarray *A, const nx_c_ndarray *B,
   int use_mpar = 0;
   int nth;
   int64_t total_jobs;
-  if (nthreads > 0) {
-    nth = nthreads; /* forced (the ST gate) — always the panel path */
-    total_jobs = panels;
+  int nth_panel = nx_c_threads_for(NX_C_COST_HEAVY, panels, m * ncm * k, bytes);
+  if (nth_panel > panels) nth_panel = (int)panels;
+  int64_t fine = panels * n_ic;
+  int nth_fine =
+      n_ic > 1 ? nx_c_threads_for(NX_C_COST_HEAVY, fine, mcm * ncm * k, bytes)
+               : nth_panel;
+  if (nth_fine > fine) nth_fine = (int)fine;
+  if (n_ic > 1 && nth_fine > nth_panel) {
+    use_mpar = 1;
+    nth = nth_fine;
+    total_jobs = fine;
   } else {
-    int nth_panel = nx_c_threads_for(NX_C_COST_HEAVY, panels, m * ncm * k, bytes);
-    if (nth_panel > panels) nth_panel = (int)panels;
-    int64_t fine = panels * n_ic;
-    int nth_fine =
-        n_ic > 1 ? nx_c_threads_for(NX_C_COST_HEAVY, fine, mcm * ncm * k, bytes)
-                 : nth_panel;
-    if (nth_fine > fine) nth_fine = (int)fine;
-    if (n_ic > 1 && nth_fine > nth_panel) {
-      use_mpar = 1;
-      nth = nth_fine;
-      total_jobs = fine;
-    } else {
-      nth = nth_panel;
-      total_jobs = panels;
-    }
+    nth = nth_panel;
+    total_jobs = panels;
   }
   if (nth < 1) nth = 1;
   if (nth > total_jobs) nth = (int)total_jobs;
@@ -1532,7 +1504,7 @@ static NX_C_NORETURN void mm_raise(const char *op, nx_c_status s) {
   /* Shape/contraction and aliased-output violations are the caller's bad
      argument; everything else (unsupported dtype, packed, dtype mismatch,
      allocation) is a Failure. Cold path, so strcmp is free — and a status must be
-     compared by content, never by pointer (nx_c_selftest.c). */
+     compared by content, never by pointer. */
   if (strcmp(s, NX_C_ERR_SHAPE) == 0 || strcmp(s, NX_C_ERR_OUT_ALIASED) == 0)
     nx_c_raise_invalid(op, s);
   nx_c_raise(op, s);
@@ -1554,7 +1526,7 @@ static nx_c_status nx_c_matmul_extract(value va, value vb, value vc,
 }
 
 static void mm_stub(const char *op, value vout, value va, value vb,
-                    int force_direct, int nthreads, int allow_accel) {
+                    int allow_accel) {
   nx_c_ndarray A, B, C;
   nx_c_dtype dt;
   nx_c_status s = nx_c_matmul_extract(va, vb, vout, &A, &B, &C, &dt);
@@ -1564,7 +1536,7 @@ static void mm_stub(const char *op, value vout, value va, value vb,
      (workers touch only C scratch, never the runtime) — or, on the Accelerate
      path, hands each batch matrix to cblas under the released lock. Called with
      the lock held, as any CAMLprim is. */
-  s = nx_c_matmul_run(&A, &B, &C, dt, force_direct, nthreads, allow_accel);
+  s = nx_c_matmul_run(&A, &B, &C, dt, allow_accel);
   if (s != NX_C_OK) mm_raise(op, s);
 }
 
@@ -1572,45 +1544,14 @@ CAMLprim value caml_nx_c_matmul(value vout, value va, value vb) {
   CAMLparam3(vout, va, vb);
   /* Frontend path: engine thread policy, Accelerate hook allowed (default-on on
      macOS). */
-  mm_stub("matmul", vout, va, vb, 0, 0, 1);
+  mm_stub("matmul", vout, va, vb, 1);
   CAMLreturn(Val_unit);
 }
 
-/* Internal maintenance hook. Test/benchmark-only stubs bind this C function;
-   the installed OCaml library exposes no path-selection API. Modes 0-2 force the
-   owned kernel so it stays covered on macOS where eligible products use cblas:
-     0 = owned blocked, engine thread policy   (owned multi-thread path)
-     1 = owned blocked, forced single thread
-     2 = owned direct loop, one dot per output
-     3 = automatic Accelerate route if eligible, else owned policy
-     4 = owned, forced four threads (a split the policy would not choose). */
-void nx_c_matmul_maintenance(value vout, value va, value vb, int mode) {
-  int force_direct = (mode == 2);
-  int nthreads = (mode == 0 || mode == 3) ? 0 : mode == 4 ? 4 : 1;
-  int allow_accel = (mode == 3);
-  mm_stub("matmul", vout, va, vb, force_direct, nthreads, allow_accel);
-}
-
-int nx_c_matmul_accelerate_available(void) {
-#if defined(__APPLE__)
-  return 1;
-#else
-  return 0;
-#endif
-}
-
-int nx_c_matmul_accelerate_enabled(void) {
-#if defined(__APPLE__)
-  return mm_accel_enabled();
-#else
-  return 0;
-#endif
-}
-
-void nx_c_matmul_accelerate_override(int mode) {
-#if defined(__APPLE__)
-  g_accel_override = mode;
-#else
-  (void)mode;
-#endif
+/* The owned kernel under the engine's thread policy, never Accelerate: the
+   path off macOS and for every product Accelerate does not take, which the
+   owned-GEMM benchmark (bench/) measures on macOS too. The installed OCaml
+   library binds no path selection. */
+void nx_c_matmul_owned(value vout, value va, value vb) {
+  mm_stub("matmul", vout, va, vb, 0);
 }

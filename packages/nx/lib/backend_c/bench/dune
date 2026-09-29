@@ -1,4 +1,4 @@
-; The benchmark calls a private C maintenance hook without using Nx_backend
+; The benchmark calls the backend's private owned-GEMM hook without using Nx_backend
 ; from OCaml. Keep the backend archive live for single-pass ELF linkers.
 
 (executable
