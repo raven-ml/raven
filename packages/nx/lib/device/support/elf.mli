@@ -1,0 +1,47 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(** Loading ELF objects into flat images.
+
+    GPU programs and firmware come as 64-bit little-endian ELF objects. This
+    module lays an object's sections out in one image: sections with an address
+    at it, the others appended in order at their alignment. It resolves symbols
+    to image offsets and lists the relocations for the caller to apply, since
+    their kinds are the target's. *)
+
+type section = {
+  name : string;  (** Its name. *)
+  kind : int;  (** Its type, [sh_type]. *)
+  offset : int;  (** Its offset in the image, for sections in it. *)
+  contents : string;  (** Its bytes in the object. *)
+}
+(** The type for sections. *)
+
+type relocation = {
+  at : int;  (** The image offset to patch. *)
+  target : int;  (** The image offset of the symbol it refers to. *)
+  kind : int;  (** Its type, [ELF64_R_TYPE]. *)
+  addend : int;  (** Its addend, [0] for [SHT_REL] entries. *)
+}
+(** The type for relocations. *)
+
+type t = {
+  image : string;  (** The laid-out image of the [SHT_PROGBITS] sections. *)
+  sections : section list;  (** Every section, in order. *)
+  symbols : (string * int) list;
+      (** The defined symbols and their image offsets. *)
+  relocations : relocation list;  (** In section order. *)
+}
+(** The type for loaded objects. *)
+
+val load : ?align:int -> string -> t
+(** [load obj] lays out the ELF object [obj], aligning appended sections to at
+    least [align] (defaults to [1]).
+
+    Raises [Failure] if [obj] is not a 64-bit little-endian ELF object, is
+    truncated, or has a relocation against an undefined symbol. *)
+
+val symbol : t -> string -> int option
+(** [symbol o name] is the image offset of the symbol [name] of [o]. *)

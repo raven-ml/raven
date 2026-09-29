@@ -2757,6 +2757,8 @@ thread.
 
 ### Nx
 
+- New `nx.device.support` library: the PCI, memory, page-table, ELF and
+  firmware support shared by runtimes that drive a GPU without its driver.
 - `Nx_device.make` takes `?sleep`, which lets a polling device block on its
   interrupts once its signal word stays still and report the fault it finds,
   and `?finalize`, which runs at exit on every device, failed or not.

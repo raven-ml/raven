@@ -1,0 +1,4 @@
+(test
+ (name test_support)
+ (package nx)
+ (libraries nx.device nx.device.support nx.dtype unix windtrap))
