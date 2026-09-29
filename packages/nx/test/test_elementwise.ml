@@ -216,6 +216,28 @@ let binary_ops =
          ])
        binary)
 
+(* A scalar variant is its operation against a scalar tensor, on either side. *)
+let scalar_variants =
+  let exact = tensor (close ~rel:0. ()) in
+  prop "each scalar variant is its operation with the scalar on its side"
+    (Gen.pair (floats Nx.float64) Gen.any_float)
+    (fun (t, s) ->
+      let c = Nx.scalar Nx.float64 s in
+      let right name op op_s = equal ~msg:name exact (op t c) (op_s t s) in
+      let left name op rop_s = equal ~msg:name exact (op c t) (rop_s s t) in
+      right "add_s" Nx.add Nx.add_s;
+      right "sub_s" Nx.sub Nx.sub_s;
+      right "mul_s" Nx.mul Nx.mul_s;
+      right "div_s" Nx.div Nx.div_s;
+      right "pow_s" Nx.pow Nx.pow_s;
+      right "mod_s" Nx.mod_ Nx.mod_s;
+      right "maximum_s" Nx.maximum Nx.maximum_s;
+      right "minimum_s" Nx.minimum Nx.minimum_s;
+      left "rsub_s" Nx.sub Nx.rsub_s;
+      left "rdiv_s" Nx.div Nx.rdiv_s;
+      left "rpow_s" Nx.pow Nx.rpow_s;
+      left "rmod_s" Nx.mod_ Nx.rmod_s)
+
 let refusals =
   test "a binary operation refuses shapes that do not broadcast" (fun () ->
       raises_invalid_arg (fun () ->
@@ -337,57 +359,8 @@ let int_laws =
     ]
 
 let int_ops =
-  let agree name nx ocaml =
-    prop (name ^ " agrees with Int32's") (pair_of int32_tuple) (fun (a, b) ->
-        equal (Ref.witness int32)
-          (Ref.map2 ocaml (Ref.of_nx a) (Ref.of_nx b))
-          (Ref.of_nx (nx a b)))
-  in
-  let nonzero =
-    let open Gen in
-    let* s = array ~size:(int_range 0 3) (int_range 0 3) in
-    let* steps = layout in
-    let one =
-      viewed ~shape:(constant s) ~layout:(constant ~pp:pp_layout steps)
-    in
-    pair
-      (one ~pp:pp_int32 Nx.int32 int32_value)
-      (one ~pp:pp_int32 Nx.int32 (such_that (fun v -> v <> 0l) int32_value))
-  in
   group "integer operations"
     [
-      agree "add" Nx.add Int32.add;
-      agree "sub" Nx.sub Int32.sub;
-      agree "mul" Nx.mul Int32.mul;
-      agree "maximum" Nx.maximum max;
-      agree "bitwise_and" Nx.bitwise_and Int32.logand;
-      agree "bitwise_or" Nx.bitwise_or Int32.logor;
-      agree "bitwise_xor" Nx.bitwise_xor Int32.logxor;
-      prop "div truncates toward zero, and mod_ has the sign of the dividend"
-        nonzero (fun (a, b) ->
-          let ra = Ref.of_nx a and rb = Ref.of_nx b in
-          equal (Ref.witness int32) (Ref.map2 Int32.div ra rb)
-            (Ref.of_nx (Nx.div a b));
-          equal (Ref.witness int32) (Ref.map2 Int32.rem ra rb)
-            (Ref.of_nx (Nx.mod_ a b)));
-      prop "neg, abs and bitwise_not agree with Int32's" int32s (fun t ->
-          let r = Ref.of_nx t in
-          let map f = { r with data = Array.map f r.data } in
-          equal (Ref.witness int32) (map Int32.neg) (Ref.of_nx (Nx.neg t));
-          equal (Ref.witness int32) (map Int32.abs) (Ref.of_nx (Nx.abs t));
-          equal (Ref.witness int32) (map Int32.lognot)
-            (Ref.of_nx (Nx.bitwise_not t)));
-      prop "lshift and rshift agree with Int32's arithmetic shifts"
-        (Gen.pair int32s (Gen.int_range 0 31))
-        (fun (t, n) ->
-          let r = Ref.of_nx t in
-          let map f = { r with data = Array.map f r.data } in
-          equal (Ref.witness int32)
-            (map (fun v -> Int32.shift_left v n))
-            (Ref.of_nx (Nx.lshift t n));
-          equal (Ref.witness int32)
-            (map (fun v -> Int32.shift_right v n))
-            (Ref.of_nx (Nx.rshift t n)));
       test "shifts refuse a negative count and a float dtype" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.lshift (Nx.zeros Nx.int32 [| 2 |]) (-1));
@@ -416,53 +389,94 @@ let int_ops =
             (Ref.of_nx (Nx.logical_not a)));
     ]
 
-(* Narrow integers wrap at their width. *)
+(* Integers of every width wrap there, and unsigned ones order, divide and shift
+   as unsigned: each operation agrees with int64 arithmetic wrapped to the
+   width. Division and remainder by zero give zero. *)
 
-type small = Small : string * (int, 'b) Nx.dtype * int * bool -> small
+(* Integer power: a negative exponent gives zero, but for bases one and minus
+   one. *)
+let ipow b e =
+  if Int64.compare e 0L < 0 then
+    if b = 1L then 1L
+    else if b = -1L then if Int64.rem e 2L = 0L then 1L else -1L
+    else 0L
+  else
+    let r = ref 1L in
+    for _ = 1 to Int64.to_int e do
+      r := Int64.mul !r b
+    done;
+    !r
 
-let wrap bits signed v =
-  let m = 1 lsl bits in
-  let v = ((v mod m) + m) mod m in
-  if signed && v >= m / 2 then v - m else v
-
-let narrow_ints =
-  group "narrow integers"
+let integer_dtypes =
+  group "integer dtypes"
     (List.map
-       (fun (Small (name, dtype, bits, signed)) ->
-         let lo = if signed then -(1 lsl (bits - 1)) else 0 in
-         let hi = if signed then (1 lsl (bits - 1)) - 1 else (1 lsl bits) - 1 in
+       (fun (Int_dtype d) ->
          let values =
-           Gen.array ~size:(Gen.int_range 0 9)
-             (Gen.frequency
-                [
-                  (3, Gen.int_range lo hi);
-                  (1, Gen.of_list ~pp:Format.pp_print_int [ lo; hi; 0 ]);
-                ])
+           Gen.array ~size:(Gen.int_range 0 8)
+             (int_value ~bits:d.bits ~signed:d.signed)
          in
-         prop (name ^ " arithmetic and bits wrap at its width")
-           (Gen.pair values values) (fun (xs, ys) ->
-             let n = Int.min (Array.length xs) (Array.length ys) in
-             let t v = Nx.create dtype [| n |] (Array.sub v 0 n) in
-             let expect f =
-               Array.init n (fun i -> wrap bits signed (f xs.(i) ys.(i)))
+         prop
+           (d.name
+          ^ " arithmetic, bits and order agree with int64's at its width")
+           (Gen.triple values values (Gen.int_range 0 (d.bits - 1)))
+           (fun (xs, ys, n) ->
+             let len = Int.min (Array.length xs) (Array.length ys) in
+             let xs = Array.sub xs 0 len and ys = Array.sub ys 0 len in
+             let t v = Nx.create d.dtype [| len |] (Array.map d.of_i64 v) in
+             let a = t xs and b = t ys in
+             let w = wrap ~bits:d.bits ~signed:d.signed in
+             let values f = Array.map (fun v -> d.of_i64 (w v)) f in
+             let check msg expected actual =
+               equal ~msg (array d.exact) (values expected) (Nx.to_array actual)
              in
-             let check msg f nx =
-               equal ~msg (array int) (expect f)
-                 (Nx.to_array (nx (t xs) (t ys)))
+             let both f = Array.map2 f xs ys in
+             let by_zero f x y = if y = 0L then 0L else f x y in
+             let div = if d.signed then Int64.div else Int64.unsigned_div in
+             let rem = if d.signed then Int64.rem else Int64.unsigned_rem in
+             let cmp = int_compare ~signed:d.signed in
+             check "add" (both Int64.add) (Nx.add a b);
+             check "sub" (both Int64.sub) (Nx.sub a b);
+             check "mul" (both Int64.mul) (Nx.mul a b);
+             check "div" (both (by_zero div)) (Nx.div a b);
+             check "mod_" (both (by_zero rem)) (Nx.mod_ a b);
+             check "maximum"
+               (both (fun x y -> if cmp x y >= 0 then x else y))
+               (Nx.maximum a b);
+             check "minimum"
+               (both (fun x y -> if cmp x y <= 0 then x else y))
+               (Nx.minimum a b);
+             check "bitwise_and" (both Int64.logand) (Nx.bitwise_and a b);
+             check "bitwise_or" (both Int64.logor) (Nx.bitwise_or a b);
+             check "bitwise_xor" (both Int64.logxor) (Nx.bitwise_xor a b);
+             check "neg" (Array.map Int64.neg xs) (Nx.neg a);
+             check "recip" (Array.map (by_zero div 1L) xs) (Nx.recip a);
+             check "abs"
+               (Array.map (fun x -> if d.signed then Int64.abs x else x) xs)
+               (Nx.abs a);
+             check "bitwise_not" (Array.map Int64.lognot xs) (Nx.bitwise_not a);
+             check "lshift"
+               (Array.map (fun x -> Int64.shift_left x n) xs)
+               (Nx.lshift a n);
+             check "rshift"
+               (Array.map
+                  (fun x ->
+                    if d.signed then Int64.shift_right x n
+                    else Int64.shift_right_logical x n)
+                  xs)
+               (Nx.rshift a n);
+             let exps =
+               Array.map
+                 (fun y ->
+                   if d.signed then Int64.rem y 6L else Int64.unsigned_rem y 6L)
+                 ys
              in
-             check "add" ( + ) Nx.add;
-             check "sub" ( - ) Nx.sub;
-             check "mul" ( * ) Nx.mul;
-             check "bitwise_and" ( land ) Nx.bitwise_and;
-             check "bitwise_or" ( lor ) Nx.bitwise_or;
-             check "bitwise_xor" ( lxor ) Nx.bitwise_xor;
-             check "neg" (fun x _ -> -x) (fun a _ -> Nx.neg a)))
-       [
-         Small ("int8", Nx.int8, 8, true);
-         Small ("uint8", Nx.uint8, 8, false);
-         Small ("int16", Nx.int16, 16, true);
-         Small ("uint16", Nx.uint16, 16, false);
-       ])
+             check "pow" (Array.map2 ipow xs exps) (Nx.pow a (t exps));
+             equal ~msg:"less" (array bool)
+               (both (fun x y -> cmp x y < 0))
+               (Nx.to_array (Nx.less a b));
+             equal ~msg:"equal" (array bool) (both ( = ))
+               (Nx.to_array (Nx.equal a b))))
+       int_dtypes)
 
 let packed_ints =
   test "int4 and uint4 refuse arithmetic (nx.mli is silent)" (fun () ->
@@ -577,6 +591,36 @@ let complex_numbers =
             (Nx.create Nx.float64 [| 3 |]
                [| infinity; infinity; 1e300 *. Float.sqrt 2. |])
             (Nx.magnitude Nx.float64 z));
+      prop
+        "abs is the modulus and sign the unit in the same direction, zero at \
+         zero"
+        complexes (fun z ->
+          let r = Ref.of_nx z in
+          let map f = { r with data = Array.map f r.data } in
+          let unit (w : Complex.t) =
+            let m = Complex.norm w in
+            if m = 0. then Complex.zero
+            else Complex.{ re = w.re /. m; im = w.im /. m }
+          in
+          equal
+            (Ref.witness (complex_close ~rel:1e-15))
+            (map (fun w -> Complex.{ re = Complex.norm w; im = 0. }))
+            (Ref.of_nx (Nx.abs z));
+          equal
+            (Ref.witness (complex_close ~rel:1e-15))
+            (map unit)
+            (Ref.of_nx (Nx.sign z)));
+      test "complex numbers refuse order, remainder and rounding" (fun () ->
+          let z =
+            Nx.create Nx.complex128 [| 2 |]
+              Complex.[| { re = 1.; im = 1. }; { re = 2.; im = 0. } |]
+          in
+          let refuses f =
+            raises_match (fun _ -> true) (fun () -> ignore (f ()))
+          in
+          refuses (fun () -> Nx.less z z);
+          refuses (fun () -> Nx.mod_ z z);
+          refuses (fun () -> Nx.round z));
       test
         "imag, angle and conjugate of a non-finite real part are NaN, as \
          documented" (fun () ->
@@ -621,8 +665,21 @@ let narrow_floats =
                equal ~msg:"sqrt" exact
                  (Nx.cast dt (Nx.sqrt (wide a)))
                  (Nx.sqrt a));
+           prop
+             (name ^ " unary operations are float32's, rounded once")
+             (Gen.map (Nx.cast dt) (floats Nx.float32))
+             (fun a ->
+               List.iter
+                 (fun (u : unary) ->
+                   equal ~msg:u.name exact (Nx.cast dt (u.nx (wide a))) (u.nx a))
+                 unary);
          ])
-       [ Narrow ("float16", Nx.float16); Narrow ("bfloat16", Nx.bfloat16) ]
+       [
+         Narrow ("float16", Nx.float16);
+         Narrow ("bfloat16", Nx.bfloat16);
+         Narrow ("float8_e4m3", Nx.float8_e4m3);
+         Narrow ("float8_e5m2", Nx.float8_e5m2);
+       ]
     @ [
         test "float16 and bfloat16 sums accumulate wider than they store"
           (fun () ->
@@ -631,6 +688,35 @@ let narrow_floats =
             equal float_exact 1024.
               (Nx.item [] (Nx.sum (Nx.ones Nx.bfloat16 [| 1024 |]))));
       ])
+
+(* Booleans *)
+
+let booleans =
+  let bools = Gen.array ~size:(Gen.int_range 0 8) Gen.bool in
+  group "booleans"
+    [
+      prop "logical operations, where and min on bool agree with OCaml's"
+        (Gen.pair bools bools) (fun (xs, ys) ->
+          let n = Int.min (Array.length xs) (Array.length ys) in
+          let xs = Array.sub xs 0 n and ys = Array.sub ys 0 n in
+          let t v = Nx.create Nx.bool [| n |] v in
+          let a = t xs and b = t ys in
+          let both f = Array.map2 f xs ys in
+          equal ~msg:"logical_and" (array bool) (both ( && ))
+            (Nx.to_array (Nx.logical_and a b));
+          equal ~msg:"logical_or" (array bool) (both ( || ))
+            (Nx.to_array (Nx.logical_or a b));
+          equal ~msg:"logical_xor" (array bool) (both ( <> ))
+            (Nx.to_array (Nx.logical_xor a b));
+          equal ~msg:"logical_not" (array bool) (Array.map not xs)
+            (Nx.to_array (Nx.logical_not a));
+          equal ~msg:"where" (array bool)
+            (both (fun x y -> if x then y else not y))
+            (Nx.to_array (Nx.where a b (Nx.logical_not b)));
+          if n > 0 then
+            equal ~msg:"min" bool (Array.for_all Fun.id xs)
+              (Nx.item [] (Nx.min a)));
+    ]
 
 (* Data types *)
 
@@ -680,13 +766,15 @@ let () =
          unary_ops;
          classifiers;
          binary_ops;
+         scalar_variants;
          refusals;
          comparisons;
          int_laws;
          int_ops;
-         narrow_ints;
+         integer_dtypes;
          packed_ints;
          complex_numbers;
+         booleans;
          narrow_floats;
          dtypes;
        ])

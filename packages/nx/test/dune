@@ -6,7 +6,6 @@
 (tests
  (names
   test_nx_placement
-  test_nx_sanity
   test_nx_fft
   test_nx_fft_oracle
   test_nx_rng
@@ -20,13 +19,13 @@
   test_elementwise
   test_reductions
   test_sorting
-  test_linalg)
+  test_linalg
+  test_windows)
  (package nx)
  (modules
   :standard
   \
-  backend_contract
-  test_backend_contract
+  test_format
   test_nx_support
   test_nx_io
   test_nx_quant
@@ -42,10 +41,14 @@
   nx_test))
 
 (test
- (name test_backend_contract)
+ (name test_format)
  (package nx)
- (modules backend_contract test_backend_contract)
- (libraries nx.dtype nx.buffer nx.c nx.core windtrap))
+ (modules test_format)
+ (libraries nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_format.ml test_format.ml.corrected))))
 
 (test
  (name test_nx_quant)

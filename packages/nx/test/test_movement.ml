@@ -321,6 +321,22 @@ let reshapes =
           end);
     ]
 
+(* 32 axes, the most a tensor has. *)
+let high_rank =
+  group "high rank"
+    [
+      test "a tensor of 32 axes adds, transposes and sums as one of few"
+        (fun () ->
+          let shape = Array.init 32 (fun i -> if i < 29 then 1 else 2) in
+          let t = tensor_of shape in
+          let r = Ref.of_nx t in
+          equal ints (Ref.map2 Int32.add r r) (Ref.of_nx (Nx.add t t));
+          equal ints (Ref.transpose r) (Ref.of_nx (Nx.transpose t));
+          equal ints
+            (Ref.reduce ~axes:[ 31; 30 ] Int32.add 0l r)
+            (Ref.of_nx (Nx.sum ~axes:[ 31; 30 ] t)));
+    ]
+
 (* The interface promises these results share their source's storage. *)
 let views =
   let shares name f =
@@ -369,4 +385,6 @@ let views =
 let () =
   exit
     (run "nx movement"
-       [ reshapes; reorderings; repetitions; joins; flattening; views ])
+       [
+         high_rank; reshapes; reorderings; repetitions; joins; flattening; views;
+       ])

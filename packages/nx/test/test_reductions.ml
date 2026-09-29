@@ -362,11 +362,55 @@ let normalisations =
             (Ref.of_nx (Nx.standardize t)));
     ]
 
+(* Every integer dtype sums at its width and orders as it is signed. *)
+let integer_dtypes =
+  group "integer dtypes"
+    (List.map
+       (fun (Int_dtype d) ->
+         prop
+           (d.name
+          ^ " sum wraps at its width, and max, min and argmax follow its order"
+           )
+           (Gen.array ~size:(Gen.int_range 1 9)
+              (int_value ~bits:d.bits ~signed:d.signed))
+           (fun xs ->
+             let t =
+               Nx.create d.dtype [| Array.length xs |] (Array.map d.of_i64 xs)
+             in
+             let cmp = int_compare ~signed:d.signed in
+             let extreme better =
+               Array.fold_left
+                 (fun (bi, bv) (i, v) ->
+                   if better (cmp v bv) then (i, v) else (bi, bv))
+                 (0, xs.(0))
+                 (Array.mapi (fun i v -> (i, v)) xs)
+             in
+             let value v = d.of_i64 (wrap ~bits:d.bits ~signed:d.signed v) in
+             equal ~msg:"sum" d.exact
+               (value (Array.fold_left Int64.add 0L xs))
+               (Nx.item [] (Nx.sum t));
+             equal ~msg:"max" d.exact
+               (value (snd (extreme (fun c -> c > 0))))
+               (Nx.item [] (Nx.max t));
+             equal ~msg:"min" d.exact
+               (value (snd (extreme (fun c -> c < 0))))
+               (Nx.item [] (Nx.min t));
+             equal ~msg:"argmax" int32
+               (Int32.of_int (fst (extreme (fun c -> c > 0))))
+               (Nx.item [] (Nx.argmax t))))
+       int_dtypes
+    @ [
+        slow "a float32 sum of 2^25 ones is exact" (fun () ->
+            equal float_exact 0x1p25
+              (Nx.item [] (Nx.sum (Nx.ones Nx.float32 [| 1 lsl 25 |]))));
+      ])
+
 let () =
   exit
     (run "nx reductions"
        [
          integer_reductions;
+         integer_dtypes;
          float_reductions;
          arg_reductions;
          scans;

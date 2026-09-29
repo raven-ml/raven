@@ -78,6 +78,47 @@ let sortables =
       };
     S
       {
+        name = "uint32";
+        dtype = Nx.uint32;
+        value =
+          Gen.frequency
+            [ (3, Gen.map Int32.of_int (Gen.int_range 0 3)); (1, Gen.int32) ];
+        compare = Int32.unsigned_compare;
+        is_nan = (fun _ -> false);
+        exact = int32;
+        pp = (fun ppf v -> Format.fprintf ppf "%lu" v);
+      };
+    (* Complex numbers order by real part, then imaginary part; NaN in either
+       part sorts last. *)
+    S
+      {
+        name = "complex128";
+        dtype = Nx.complex128;
+        value =
+          (let part =
+             Gen.frequency
+               [
+                 (6, Gen.map float_of_int (Gen.int_range (-2) 2));
+                 (1, Gen.constant ~pp:pp_float Float.nan);
+               ]
+           in
+           Gen.(
+             let+ re = part and+ im = part in
+             Complex.{ re; im }));
+        compare =
+          (fun (a : Complex.t) (b : Complex.t) ->
+            let c x y = if x < y then -1 else if x > y then 1 else 0 in
+            match c a.re b.re with 0 -> c a.im b.im | k -> k);
+        is_nan = (fun (z : Complex.t) -> Float.is_nan z.re || Float.is_nan z.im);
+        exact =
+          Testable.contramap
+            (fun (z : Complex.t) -> (z.re, z.im))
+            (pair float_exact float_exact);
+        pp =
+          (fun ppf (z : Complex.t) -> Format.fprintf ppf "(%g, %g)" z.re z.im);
+      };
+    S
+      {
         name = "uint64";
         dtype = Nx.uint64;
         value =

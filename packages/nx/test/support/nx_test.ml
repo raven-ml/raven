@@ -713,3 +713,110 @@ let viewed ?(shape = Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 4))
        (fun ppf (steps, t) ->
          Format.fprintf ppf "%a: %a" pp_layout steps (Ref.pp pp) (Ref.of_nx t))
        drawn)
+
+(* The integer dtypes, their values seen as int64: [bits] and [signed] say where
+   they wrap and how they order. *)
+type int_dtype =
+  | Int_dtype : {
+      name : string;
+      dtype : ('a, 'b) Nx.dtype;
+      bits : int;
+      signed : bool;
+      to_i64 : 'a -> int64;
+      of_i64 : int64 -> 'a;
+      exact : 'a testable;
+    }
+      -> int_dtype
+
+let wrap ~bits ~signed v =
+  if bits = 64 then v
+  else
+    let m = Int64.shift_left 1L bits in
+    let x = Int64.logand v (Int64.pred m) in
+    if signed && Int64.compare x (Int64.shift_right m 1) >= 0 then Int64.sub x m
+    else x
+
+let int_dtypes =
+  let small name dtype bits signed =
+    Int_dtype
+      {
+        name;
+        dtype;
+        bits;
+        signed;
+        to_i64 = Int64.of_int;
+        of_i64 = Int64.to_int;
+        exact = int;
+      }
+  in
+  [
+    small "int8" Nx.int8 8 true;
+    small "uint8" Nx.uint8 8 false;
+    small "int16" Nx.int16 16 true;
+    small "uint16" Nx.uint16 16 false;
+    Int_dtype
+      {
+        name = "int32";
+        dtype = Nx.int32;
+        bits = 32;
+        signed = true;
+        to_i64 = Int64.of_int32;
+        of_i64 = Int64.to_int32;
+        exact = int32;
+      };
+    Int_dtype
+      {
+        name = "uint32";
+        dtype = Nx.uint32;
+        bits = 32;
+        signed = false;
+        to_i64 = (fun v -> Int64.logand (Int64.of_int32 v) 0xFFFF_FFFFL);
+        of_i64 = Int64.to_int32;
+        exact = int32;
+      };
+    Int_dtype
+      {
+        name = "int64";
+        dtype = Nx.int64;
+        bits = 64;
+        signed = true;
+        to_i64 = Fun.id;
+        of_i64 = Fun.id;
+        exact = int64;
+      };
+    Int_dtype
+      {
+        name = "uint64";
+        dtype = Nx.uint64;
+        bits = 64;
+        signed = false;
+        to_i64 = Fun.id;
+        of_i64 = Fun.id;
+        exact = int64;
+      };
+  ]
+
+(* The least and greatest values of a width, as int64. *)
+let int_range ~bits ~signed =
+  if signed then
+    ( Int64.neg (Int64.shift_left 1L (bits - 1)),
+      Int64.pred (Int64.shift_left 1L (bits - 1)) )
+  else (0L, if bits = 64 then -1L else Int64.pred (Int64.shift_left 1L bits))
+
+(* Values of a width that break arithmetic: its ends, their neighbours, zero,
+   ones, and values in between. *)
+let int_value ~bits ~signed =
+  let lo, hi = int_range ~bits ~signed in
+  let wrapped = Gen.map (fun v -> wrap ~bits ~signed (Int64.of_int v)) in
+  Gen.frequency
+    [
+      (4, wrapped (Gen.int_range (-9) 9));
+      (2, Gen.map (wrap ~bits ~signed) Gen.int64);
+      ( 1,
+        Gen.of_list
+          ~pp:(fun ppf v -> Format.fprintf ppf "%Ld" v)
+          [ lo; hi; Int64.succ lo; Int64.pred hi; 0L; 1L ] );
+    ]
+
+let int_compare ~signed a b =
+  if signed then Int64.compare a b else Int64.unsigned_compare a b

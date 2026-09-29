@@ -131,6 +131,18 @@ let scatters =
               Nx.scatter ~axis:0 ~indices:(indices_tensor [| 0 |])
                 ~values:(Nx.zeros Nx.int32 [| 1 |])
                 (Nx.zeros Nx.int32 [| 2; 2 |])));
+      prop "scatter with unique indices writes as the default does" along
+        (fun (s, axis, _) ->
+          let _, t = tensor_of s in
+          let n = s.(axis) in
+          (* Each lane takes the axis positions in reverse, which are unique. *)
+          let positions =
+            Nx.init Nx.int32 s (fun i -> Int32.of_int (n - 1 - i.(axis)))
+          in
+          let values = Nx.neg t in
+          equal (tensor int32)
+            (Nx.scatter ~axis ~indices:positions ~values t)
+            (Nx.scatter ~unique_indices:true ~axis ~indices:positions ~values t));
       test "scatter refuses indices whose shape differs off the axis" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.scatter ~axis:0

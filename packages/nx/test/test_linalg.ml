@@ -442,6 +442,24 @@ let factorizations =
                (Nx.add (Nx.tril a) (Nx.triu ~k:1 (Nx.full_like a 7.))));
           let u = Nx.cholesky ~upper:true a in
           equal near a (t u *@ u));
+      prop "cholesky of a Hermitian matrix gives L with L Lᴴ = a" (sized spd)
+        (fun a ->
+          let z =
+            Nx.complex Nx.complex128 ~re:a
+              ~im:
+                (Nx.sub
+                   (Nx.triu ~k:1 (Nx.mul_s a 0.1))
+                   (t (Nx.triu ~k:1 (Nx.mul_s a 0.1))))
+          in
+          let l = Nx.cholesky z in
+          let c = close ~rel:1e-9 ~abs:1e-9 () in
+          equal
+            (tensor
+               (Testable.contramap
+                  (fun (w : Complex.t) -> (w.re, w.im))
+                  (pair c c)))
+            z
+            (l *@ Nx.conjugate (t l)));
       test "cholesky refuses a matrix that is not positive definite" (fun () ->
           raises_match
             (function

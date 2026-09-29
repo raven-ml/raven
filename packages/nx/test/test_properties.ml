@@ -146,6 +146,26 @@ let conversions =
                 ~shape:[| 3 |]));
     ]
 
+let iteration =
+  group "iteration"
+    [
+      prop "map_item maps and fold_item folds each element in row-major order"
+        viewed (fun t ->
+          let r = Ref.of_layout t in
+          equal (Ref.witness int32)
+            (Ref.map (Int32.mul 3l) r)
+            (Ref.of_nx (Nx.map_item (Int32.mul 3l) t));
+          equal (list int32) (Array.to_list r.data)
+            (List.rev (Nx.fold_item (fun acc x -> x :: acc) [] t)));
+      prop
+        "iter_item visits each element in row-major order (nx.mli is silent on \
+         the order)"
+        viewed (fun t ->
+          let seen = ref [] in
+          Nx.iter_item (fun x -> seen := x :: !seen) t;
+          equal (list int32) (Array.to_list (Nx.to_array t)) (List.rev !seen));
+    ]
+
 let bits = Gen.map Int32.float_of_bits Gen.int32
 
 let casts =
@@ -192,4 +212,115 @@ let casts =
               Nx.bitcast Nx.int8 (Nx.zeros Nx.int4 [| 2 |])));
     ]
 
-let () = exit (run "nx properties" [ properties; conversions; casts ])
+(* A float truncated toward zero, held at the ends of the range, NaN at 0. *)
+let saturate ~bits ~signed x =
+  let lo, hi = int_range ~bits ~signed in
+  let t = Float.trunc x in
+  let two_63 = 0x1p63 in
+  if Float.is_nan x then 0L
+  else if signed then
+    if t <= Int64.to_float lo then lo
+    else if t >= if bits = 64 then two_63 else Int64.to_float hi then hi
+    else Int64.of_float t
+  else if t <= 0. then 0L
+  else if bits = 64 then
+    if t >= 0x1p64 then hi
+    else if t >= two_63 then
+      Int64.add (Int64.of_float (t -. two_63)) Int64.min_int
+    else Int64.of_float t
+  else if t >= Int64.to_float hi then hi
+  else Int64.of_float t
+
+let integer_casts =
+  group "casts to integers"
+    (List.map
+       (fun (Int_dtype d) ->
+         prop
+           ("cast from float64 to " ^ d.name
+          ^ " truncates, holds at the range and takes NaN to 0 (nx.mli is \
+             silent)")
+           (Gen.array ~size:(Gen.int_range 0 8)
+              (Gen.one_of [ Gen.any_float; Gen.float_range (-300.) 300. ]))
+           (fun xs ->
+             equal (array d.exact)
+               (Array.map
+                  (fun x -> d.of_i64 (saturate ~bits:d.bits ~signed:d.signed x))
+                  xs)
+               (Nx.to_array
+                  (Nx.cast d.dtype
+                     (Nx.create Nx.float64 [| Array.length xs |] xs)))))
+       int_dtypes
+    @ [
+        prop "int4 and uint4 hold every value of their range through a cast"
+          (Gen.pair
+             (Gen.array ~size:(Gen.int_range 0 8) (Gen.int_range (-8) 7))
+             (Gen.array ~size:(Gen.int_range 0 8) (Gen.int_range 0 15)))
+          (fun (s, u) ->
+            let through narrow wide v =
+              Nx.to_array
+                (Nx.cast wide
+                   (Nx.cast narrow (Nx.create wide [| Array.length v |] v)))
+            in
+            equal (array int) s (through Nx.int4 Nx.int8 s);
+            equal (array int) u (through Nx.uint4 Nx.uint8 u));
+        test
+          "a real value is complex with no imaginary part, and back it drops \
+           that part" (fun () ->
+            let z =
+              Nx.cast Nx.complex128
+                (Nx.create Nx.float64 [| 2 |] [| 1.5; -2. |])
+            in
+            equal
+              (array (pair float_exact float_exact))
+              [| (1.5, 0.); (-2., 0.) |]
+              (Array.map (fun (c : Complex.t) -> (c.re, c.im)) (Nx.to_array z));
+            let r =
+              Nx.cast Nx.float64
+                (Nx.create Nx.complex128 [| 1 |] [| { re = 3.; im = 9. } |])
+            in
+            equal (array float_exact) [| 3. |] (Nx.to_array r));
+      ])
+
+(* A bitcast to a dtype of the same width and back keeps every bit. *)
+type same_width = W : string * ('a, 'b) Nx.dtype -> same_width
+
+let bitcasts =
+  let round_trip (type a b) name (source : (a, b) Nx.dtype) (w : a testable)
+      (value : a Gen.t) widths =
+    List.map
+      (fun (W (dname, dt)) ->
+        prop
+          (Printf.sprintf "bitcast from %s to %s and back keeps every bit" name
+             dname)
+          (Gen.array ~size:(Gen.int_range 0 8) value)
+          (fun xs ->
+            let t = Nx.create source [| Array.length xs |] xs in
+            equal (tensor w) t (Nx.bitcast source (Nx.bitcast dt t))))
+      widths
+  in
+  group "bitcasts"
+    (round_trip "uint8" Nx.uint8 int (Gen.int_range 0 255)
+       [
+         W ("int8", Nx.int8);
+         W ("float8_e4m3", Nx.float8_e4m3);
+         W ("float8_e5m2", Nx.float8_e5m2);
+       ]
+    @ round_trip "uint16" Nx.uint16 int (Gen.int_range 0 65535)
+        [
+          W ("int16", Nx.int16);
+          W ("float16", Nx.float16);
+          W ("bfloat16", Nx.bfloat16);
+        ]
+    @ round_trip "uint32" Nx.uint32 int32 Gen.int32
+        [ W ("int32", Nx.int32); W ("float32", Nx.float32) ]
+    @ round_trip "uint64" Nx.uint64 int64 Gen.int64
+        [
+          W ("int64", Nx.int64);
+          W ("float64", Nx.float64);
+          W ("complex64", Nx.complex64);
+        ])
+
+let () =
+  exit
+    (run "nx properties"
+       [ properties; conversions; iteration; casts; integer_casts; bitcasts ])
