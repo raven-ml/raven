@@ -2757,6 +2757,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** the `nx.backend` virtual library is removed. `nx.c` is an
+  ordinary library, `Nx_c` (it was `Nx_backend`), without `create_context`;
+  nx always links it, and another implementation of the operations is a
+  backend named in a placement (`Nx.Backend`) instead of a link-time
+  replacement of nx.c.
 - `Nx.Backend.S` has `place`, which makes a value at one of the backend's
   placements, and `Nx.place` asks the target placement's backend. A placed
   value is read by the backend that made its storage, so a backend can hold

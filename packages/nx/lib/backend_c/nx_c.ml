@@ -19,8 +19,6 @@ open Nx_core
 
 type context = unit
 
-let create_context () = ()
-
 (* ── The tensor handle ─────────────────────────────────────────────────────
 
    FIELD ORDER IS ABI: [t] is passed to C directly, no per-call FFI record. The

@@ -1,8 +1,8 @@
 # Nx C backend
 
-This directory contains `nx.c`, the default implementation of the
-`nx.backend` virtual library. It is self-contained C11 on every supported
-platform. On macOS, eligible floating-point matrix multiplications are routed
+This directory contains `nx.c`, nx's kernels over host memory: the `Nx_c`
+module, which `Nx.Backend.host` runs. It is self-contained C11 on every
+supported platform. On macOS, eligible floating-point matrix multiplications are routed
 automatically to the system Accelerate framework; all other operations use the
 owned kernels in this directory.
 
