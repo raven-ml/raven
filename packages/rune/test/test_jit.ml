@@ -532,10 +532,17 @@ let test_lu_matches_eager () =
          ])
   in
   let factors m =
-    let p, l, u = Nx.lu m in
-    Nx.stack [ p; l; u ]
+    let _, l, u = Nx.lu m in
+    Nx.stack [ l; u ]
   in
-  check_arr ~msg:"P, L and U" (to_arr (factors a)) (Rune.jit' factors a);
+  check_arr ~msg:"L and U" (to_arr (factors a)) (Rune.jit' factors a);
+  let order m =
+    let perm, _, _ = Nx.lu m in
+    perm
+  in
+  equal ~msg:"row order" (array int32)
+    (Nx.to_array (order a))
+    (Nx.to_array (Rune.jit' order a));
   check_arr ~msg:"det" (to_arr (Nx.det a)) (Rune.jit' Nx.det a)
 
 (* The LU pullback is made of graph ops (triangular solves, matmuls and a gather

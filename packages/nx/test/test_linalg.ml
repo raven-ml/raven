@@ -442,15 +442,28 @@ let complex_matrix ?(batch = Gen.constant ~pp:pp_shape [||]) m n =
         (Gen.pair (matrix ~batch m n) (matrix ~batch m n)))
 
 (* P is a permutation matrix: zeros and ones, one 1 in each row and column. *)
-let is_permutation p =
-  let r = Ref.of_nx p in
+(* Every lane of [perm] orders its rows once each. *)
+let is_permutation perm =
+  let r = Ref.of_nx perm in
   let n = Ref.ndim r in
-  let ones_along ax =
-    Array.for_all (( = ) 1.) (Ref.reduce ~axes:[ ax ] ( +. ) 0. r).data
+  let m = r.shape.(n - 1) in
+  let sorted =
+    Ref.along ~axis:(n - 1) ~length:m
+      (fun l ->
+        let l = Array.copy l in
+        Array.sort compare l;
+        l)
+      r
   in
-  Array.for_all (fun v -> v = 0. || v = 1.) r.data
-  && ones_along (n - 1)
-  && ones_along (n - 2)
+  Array.for_all
+    (fun k -> Int32.to_int sorted.data.(k) = k mod m)
+    (Array.init (Array.length r.data) Fun.id)
+
+(* The rows of [a] in the order [perm], lane by lane. *)
+let rows perm a =
+  Nx.take_along_axis ~axis:(-2)
+    ~indices:(Nx.broadcast_to (Nx.shape a) (Nx.unsqueeze ~axes:[ -1 ] perm))
+    a
 
 let factorizations =
   group "factorizations"
@@ -500,18 +513,19 @@ let factorizations =
           equal near (identity_like q) (t q *@ q);
           is_true ~msg:"R is upper-triangular" (is_upper r));
       prop
-        "lu gives a permutation P, a unit lower-triangular L with entries of \
-         magnitude at most 1, and an upper-triangular U with P L U = a"
+        "lu gives a row order, a unit lower-triangular l with entries of \
+         magnitude at most 1, and an upper-triangular u whose product is a's \
+         rows in that order"
         (sized (fun m -> sized (fun n -> matrix ~batch m n)))
         (fun a ->
           let p, l, u = Nx.lu a in
-          equal near a (p *@ l *@ u);
+          equal near (rows p a) (l *@ u);
           let p32, l32, u32 = Nx.lu (Nx.cast Nx.float32 a) in
           equal ~msg:"at float32"
             (tensor (close ~rel:1e-5 ~abs:1e-5 ()))
-            (Nx.cast Nx.float32 a)
-            (Nx.matmul (Nx.matmul p32 l32) u32);
-          is_true ~msg:"P is a permutation" (is_permutation p);
+            (rows p32 (Nx.cast Nx.float32 a))
+            (Nx.matmul l32 u32);
+          is_true ~msg:"the order is a permutation" (is_permutation p);
           is_true ~msg:"L is lower-triangular" (is_upper (t l));
           equal ~msg:"L has a unit diagonal" near
             (Nx.ones_like (Nx.diagonal l))
@@ -529,18 +543,18 @@ let factorizations =
           let same x y =
             let p, l, u = Nx.lu x and p', l', u' = Nx.lu y in
             let exact = tensor (close ~rel:0. ()) in
-            equal exact p p';
+            equal (tensor int32) p p';
             equal exact l l';
             equal exact u u'
           in
           same (Nx.contiguous v) v;
           let v32 = Nx.cast Nx.float32 v in
           same (Nx.contiguous v32) v32);
-      prop "lu of a complex matrix gives P L U = a"
+      prop "lu of a complex matrix gives l u = a's rows in its order"
         (sized (fun m -> sized (fun n -> complex_matrix ~batch m n)))
         (fun z ->
           let p, l, u = Nx.lu z in
-          equal near_complex z (Nx.matmul (Nx.matmul p l) u));
+          equal near_complex (rows p z) (Nx.matmul l u));
       test "lu keeps a zero pivot of a singular matrix on U's diagonal"
         (fun () ->
           let a =
@@ -548,7 +562,7 @@ let factorizations =
               [| 1.; 2.; 3.; 2.; 4.; 6.; 1.; 0.; 1. |]
           in
           let p, l, u = Nx.lu a in
-          equal near a (p *@ l *@ u);
+          equal near (rows p a) (l *@ u);
           equal (close ~rel:0. ~abs:1e-15 ()) 0. (Nx.item [ 2; 2 ] u));
       prop
         "svd gives orthonormal U and Vh and descending S with U diag S Vh = a"

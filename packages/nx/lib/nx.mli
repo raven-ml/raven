@@ -2645,11 +2645,11 @@ val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
 
     See also {!svd}, {!lu}. *)
 
-val lu : ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t * ('a, 'b) t
-(** [lu a] is [(P, L, U)] where [a = P L U], [P] is a permutation matrix, [L] is
-    lower-triangular with ones on its diagonal, and [U] is upper-triangular. For
-    [a] of shape [·.., m, n] and [k = min m n], [P] is [·.., m, m], [L] is
-    [·.., m, k] and [U] is [·.., k, n].
+val lu : ('a, 'b) t -> (int32, int32_elt) t * ('a, 'b) t * ('a, 'b) t
+(** [lu a] is [(perm, l, u)] where row [i] of [l *@ u] is row [perm.(i)] of [a],
+    [l] is lower-triangular with ones on its diagonal, and [u] is
+    upper-triangular. For [a] of shape [·.., m, n] and [k = min m n], [perm] is
+    [·.., m], [l] is [·.., m, k] and [u] is [·.., k, n].
 
     The factorization pivots partially: at each column the row of largest
     magnitude at or below the diagonal ([|re| + |im|] for complex) moves up to

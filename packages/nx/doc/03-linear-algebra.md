@@ -84,13 +84,14 @@ let q_full, r_full = Nx.qr ~mode:`Complete a
 
 ### LU
 
-Factor A = P·L·U with partial pivoting, where P is a permutation matrix, L is
-lower triangular with a unit diagonal and U is upper triangular. `det`,
-`slogdet`, `solve` and `inv` are computed from this factorization:
+Factor A with partial pivoting into a row order `perm`, L lower triangular
+with a unit diagonal and U upper triangular, so that the rows of A taken in
+the order `perm` are L·U. `det`, `slogdet`, `solve` and `inv` are computed from
+this factorization:
 
 <!-- $MDX skip -->
 ```ocaml
-let p, l, u = Nx.lu a
+let perm, l, u = Nx.lu a
 ```
 
 ### SVD

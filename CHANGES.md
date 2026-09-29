@@ -2745,8 +2745,8 @@ thread.
   `matrix_power` with a negative power now use `Nx.lu`.
 - `Nx.solve` and `Nx.inv` solve complex systems correctly. The QR-based solve
   applied `Qᵀ` where a complex `Q` needs `Qᴴ`.
-- `Nx.lu` factors a matrix with partial pivoting as `(P, L, U)` with
-  `a = P L U`, for rectangular and batched input; a singular matrix keeps its
+- `Nx.lu` factors a matrix with partial pivoting as `(perm, l, u)`, where row
+  `i` of `l *@ u` is row `perm.(i)` of `a`, for rectangular and batched input; a singular matrix keeps its
   zero pivot in `U`. Rune differentiates it for square input and compiles it
   under `Rune.jit`.
 - `Nx.rfftn` and `rfft2` refuse an `s` of another length than `axes`, as

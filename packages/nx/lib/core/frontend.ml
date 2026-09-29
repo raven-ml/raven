@@ -4289,13 +4289,7 @@ module Make (B : Backend_intf.S) = struct
         (eye ctx ~m:k dt m)
     in
     let u = triu (slice_internal (batch @ [ R (0, k); A ]) packed) in
-    (* P[perm[i], i] = 1: row i of L U is row perm[i] of a. *)
-    let p =
-      cast dt
-        (cmpeq (expand_dims [ -2 ] perm)
-           (reshape [| m; 1 |] (arange ctx int32 0 m 1)))
-    in
-    (p, l, u)
+    (perm, l, u)
 
   let svd ?full_matrices a =
     check_float_or_complex ~op:"svd" a;
