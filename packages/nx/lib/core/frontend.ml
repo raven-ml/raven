@@ -3177,7 +3177,7 @@ module Make (B : Backend_intf.S) = struct
 
     let shuffle k x =
       let s = shape x in
-      if Array.length s = 0 then x
+      if Array.length s = 0 || s.(0) = 0 then x
       else take ~axis:0 ~indices:(permutation k s.(0)) x
 
     (* Gumbel-max: adding Gumbel noise to log-probabilities and taking the

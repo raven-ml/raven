@@ -2724,6 +2724,8 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.shuffle` and `Nx.shuffle` return a tensor whose first axis is empty
+  unchanged. They raised, asking `permutation` for a permutation of nothing.
 - `Nx.Rng.randint` and `Nx.randint` over a range wider than 2^31, such as
   all of int32, draw across the whole range. The offset from `low` overflowed
   int32, and every draw past the middle of the range landed on one value.
