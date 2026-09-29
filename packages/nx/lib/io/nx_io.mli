@@ -22,7 +22,9 @@ val load_image : ?grayscale:bool -> string -> (int, Nx.uint8_elt) Nx.t
     The file contents, rather than the extension, determine whether the image is
     PNG or JPEG. [grayscale] defaults to [false]. The result has shape
     [[|height; width|]] when [grayscale] is [true] and [[|height; width; 3|]]
-    otherwise.
+    otherwise. An alpha channel is dropped, a grayscale image loads as three
+    equal channels, and [~grayscale:true] reads a colour image as its luma
+    [0.299 R + 0.587 G + 0.114 B] (ITU-R BT.601), within one level.
 
     @raise Failure if the stream is malformed or is neither PNG nor JPEG.
     @raise Unix.Unix_error if [path] cannot be read. *)
@@ -36,7 +38,9 @@ val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
     [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
     exist.
 
-    @raise Failure if the shape or extension is unsupported or encoding fails.
+    @raise Failure
+      if the shape or extension is unsupported, the image has no pixels, or
+      encoding fails.
     @raise Unix.Unix_error
       if [path] cannot be written or already exists when [overwrite] is [false].
 *)
@@ -47,7 +51,9 @@ val encode_png : (int, Nx.uint8_elt) Nx.t -> string
     [[|height; width|]], [[|height; width; 1|]], [[|height; width; 3|]] and
     [[|height; width; 4|]].
 
-    @raise Failure if the shape is unsupported or encoding fails. *)
+    @raise Failure
+      if the shape is unsupported, the image has no pixels, or encoding fails.
+*)
 
 (** {1:numpy NumPy formats} *)
 
@@ -186,10 +192,18 @@ val load_txt :
 (** [load_txt ?sep ?comments ?skiprows ?max_rows path dtype] parses delimited
     text into a tensor.
 
-    [sep] defaults to [" "]. [comments] defaults to ["#"]. [skiprows] defaults
-    to [0]. The result is 1D or 2D depending on parsed data.
+    The first [skiprows] lines are skipped, then each line is a row of fields
+    separated by [sep], except blank lines and lines that start with [comments],
+    and at most [max_rows] rows are read. A file of one row or one column loads
+    as a vector, and any other as a matrix of shape [[|rows; columns|]]. [sep]
+    defaults to [" "], [comments] to ["#"], [skiprows] to [0], and [max_rows] to
+    every row.
 
-    @raise Failure if [path] cannot be read or its contents cannot be parsed. *)
+    @raise Failure
+      if [path] cannot be read, its contents cannot be parsed (no row, rows of
+      different lengths, a field that is no literal of [dtype] or is out of its
+      range), [skiprows] is negative, [max_rows] is not positive, or text does
+      not hold [dtype] (see {!save_txt}). *)
 
 val save_txt :
   ?sep:string ->
@@ -203,6 +217,14 @@ val save_txt :
   unit
 (** [save_txt ?sep ?append ?newline ?header ?footer ?comments path t] writes a
     scalar, vector, or matrix tensor to delimited text.
+
+    A vector is written as one row. Each line of [header] and [footer] is
+    written before and after the rows, prefixed with [comments]. Floats are
+    written in [%.18e] notation, 19 significant digits rounded from their exact
+    value, so a float reads back as itself, NaN aside: every NaN is written
+    [nan], and the infinities [inf] and [-inf]. Integers are written in decimal,
+    unsigned ones as unsigned, and booleans as [1] and [0]. Text holds bool, the
+    integer dtypes but int4 and uint4, and the float dtypes but float8.
 
     [sep] defaults to [" "]. [append] defaults to [false]. [newline] defaults to
     ["\n"]. [comments] defaults to ["# "].
