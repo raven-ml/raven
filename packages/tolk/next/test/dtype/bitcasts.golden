@@ -1,0 +1,893 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+from	to	value	bitcast
+dtypes.fp8e4m3	dtypes.fp8e4m3	0.0	0.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	-0.0	-0.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	1.0	1.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	-2.0	-2.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	1.5	1.5
+dtypes.fp8e4m3	dtypes.fp8e4m3	0.1	0.1015625
+dtypes.fp8e4m3	dtypes.fp8e4m3	448.0	448.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	100000.0	448.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	1e+39	448.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	-1e+39	-448.0
+dtypes.fp8e4m3	dtypes.fp8e4m3	inf	nan
+dtypes.fp8e4m3	dtypes.fp8e4m3	-inf	nan
+dtypes.fp8e4m3	dtypes.fp8e4m3	nan	nan
+dtypes.fp8e4m3	dtypes.fp8e4m3	1	1.0
+dtypes.fp8e4m3	dtypes.fp8e5m2	0.0	0.0
+dtypes.fp8e4m3	dtypes.fp8e5m2	-0.0	-0.0
+dtypes.fp8e4m3	dtypes.fp8e5m2	1.0	0.5
+dtypes.fp8e4m3	dtypes.fp8e5m2	-2.0	-2.0
+dtypes.fp8e4m3	dtypes.fp8e5m2	1.5	1.0
+dtypes.fp8e4m3	dtypes.fp8e5m2	0.1	0.0048828125
+dtypes.fp8e4m3	dtypes.fp8e5m2	448.0	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2	100000.0	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2	1e+39	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2	-1e+39	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2	inf	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2	-inf	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2	nan	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2	1	0.5
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	0.0	0.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	-0.0	nan
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	1.0	0.5
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	-2.0	-1.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	1.5	0.75
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	0.1	0.05078125
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	448.0	224.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	100000.0	224.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	1e+39	224.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	-1e+39	-224.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	inf	240.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	-inf	-240.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	nan	240.0
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	1	0.5
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	0.0	0.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	-0.0	nan
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	1.0	0.25
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	-2.0	-1.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	1.5	0.5
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	0.1	0.00244140625
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	448.0	49152.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	100000.0	49152.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	1e+39	49152.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	-1e+39	-49152.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	inf	57344.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	-inf	-57344.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	nan	57344.0
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	1	0.25
+dtypes.fp8e4m3	dtypes.uchar	0.0	0
+dtypes.fp8e4m3	dtypes.uchar	-0.0	128
+dtypes.fp8e4m3	dtypes.uchar	1.0	56
+dtypes.fp8e4m3	dtypes.uchar	-2.0	192
+dtypes.fp8e4m3	dtypes.uchar	1.5	60
+dtypes.fp8e4m3	dtypes.uchar	0.1	29
+dtypes.fp8e4m3	dtypes.uchar	448.0	126
+dtypes.fp8e4m3	dtypes.uchar	100000.0	126
+dtypes.fp8e4m3	dtypes.uchar	1e+39	126
+dtypes.fp8e4m3	dtypes.uchar	-1e+39	254
+dtypes.fp8e4m3	dtypes.uchar	inf	127
+dtypes.fp8e4m3	dtypes.uchar	-inf	255
+dtypes.fp8e4m3	dtypes.uchar	nan	127
+dtypes.fp8e4m3	dtypes.uchar	1	56
+dtypes.fp8e4m3	dtypes.char	0.0	0
+dtypes.fp8e4m3	dtypes.char	-0.0	-128
+dtypes.fp8e4m3	dtypes.char	1.0	56
+dtypes.fp8e4m3	dtypes.char	-2.0	-64
+dtypes.fp8e4m3	dtypes.char	1.5	60
+dtypes.fp8e4m3	dtypes.char	0.1	29
+dtypes.fp8e4m3	dtypes.char	448.0	126
+dtypes.fp8e4m3	dtypes.char	100000.0	126
+dtypes.fp8e4m3	dtypes.char	1e+39	126
+dtypes.fp8e4m3	dtypes.char	-1e+39	-2
+dtypes.fp8e4m3	dtypes.char	inf	127
+dtypes.fp8e4m3	dtypes.char	-inf	-1
+dtypes.fp8e4m3	dtypes.char	nan	127
+dtypes.fp8e4m3	dtypes.char	1	56
+dtypes.fp8e4m3	dtypes.bool	0.0	False
+dtypes.fp8e4m3	dtypes.bool	-0.0	True
+dtypes.fp8e4m3	dtypes.bool	1.0	True
+dtypes.fp8e4m3	dtypes.bool	-2.0	True
+dtypes.fp8e4m3	dtypes.bool	1.5	True
+dtypes.fp8e4m3	dtypes.bool	0.1	True
+dtypes.fp8e4m3	dtypes.bool	448.0	True
+dtypes.fp8e4m3	dtypes.bool	100000.0	True
+dtypes.fp8e4m3	dtypes.bool	1e+39	True
+dtypes.fp8e4m3	dtypes.bool	-1e+39	True
+dtypes.fp8e4m3	dtypes.bool	inf	True
+dtypes.fp8e4m3	dtypes.bool	-inf	True
+dtypes.fp8e4m3	dtypes.bool	nan	True
+dtypes.fp8e4m3	dtypes.bool	1	True
+dtypes.fp8e5m2	dtypes.fp8e4m3	0.0	0.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	-0.0	-0.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	1.0	1.5
+dtypes.fp8e5m2	dtypes.fp8e4m3	-2.0	-2.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	1.5	1.75
+dtypes.fp8e5m2	dtypes.fp8e4m3	0.1	0.4375
+dtypes.fp8e5m2	dtypes.fp8e4m3	448.0	30.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	100000.0	352.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	1e+39	352.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	-1e+39	-352.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	inf	384.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	-inf	-384.0
+dtypes.fp8e5m2	dtypes.fp8e4m3	nan	nan
+dtypes.fp8e5m2	dtypes.fp8e4m3	1	1.5
+dtypes.fp8e5m2	dtypes.fp8e5m2	0.0	0.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	-0.0	-0.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	1.0	1.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	-2.0	-2.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	1.5	1.5
+dtypes.fp8e5m2	dtypes.fp8e5m2	0.1	0.09375
+dtypes.fp8e5m2	dtypes.fp8e5m2	448.0	448.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	100000.0	57344.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	1e+39	57344.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	-1e+39	-57344.0
+dtypes.fp8e5m2	dtypes.fp8e5m2	inf	inf
+dtypes.fp8e5m2	dtypes.fp8e5m2	-inf	-inf
+dtypes.fp8e5m2	dtypes.fp8e5m2	nan	nan
+dtypes.fp8e5m2	dtypes.fp8e5m2	1	1.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	0.0	0.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	-0.0	nan
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	1.0	0.75
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	-2.0	-1.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	1.5	0.875
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	0.1	0.21875
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	448.0	15.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	100000.0	176.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	1e+39	176.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	-1e+39	-176.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	inf	192.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	-inf	-192.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	nan	240.0
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	1	0.75
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	0.0	0.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	-0.0	nan
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	1.0	0.5
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	-2.0	-1.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	1.5	0.75
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	0.1	0.046875
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	448.0	224.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	100000.0	28672.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	1e+39	28672.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	-1e+39	-28672.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	inf	32768.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	-inf	-32768.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	nan	57344.0
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	1	0.5
+dtypes.fp8e5m2	dtypes.uchar	0.0	0
+dtypes.fp8e5m2	dtypes.uchar	-0.0	128
+dtypes.fp8e5m2	dtypes.uchar	1.0	60
+dtypes.fp8e5m2	dtypes.uchar	-2.0	192
+dtypes.fp8e5m2	dtypes.uchar	1.5	62
+dtypes.fp8e5m2	dtypes.uchar	0.1	46
+dtypes.fp8e5m2	dtypes.uchar	448.0	95
+dtypes.fp8e5m2	dtypes.uchar	100000.0	123
+dtypes.fp8e5m2	dtypes.uchar	1e+39	123
+dtypes.fp8e5m2	dtypes.uchar	-1e+39	251
+dtypes.fp8e5m2	dtypes.uchar	inf	124
+dtypes.fp8e5m2	dtypes.uchar	-inf	252
+dtypes.fp8e5m2	dtypes.uchar	nan	127
+dtypes.fp8e5m2	dtypes.uchar	1	60
+dtypes.fp8e5m2	dtypes.char	0.0	0
+dtypes.fp8e5m2	dtypes.char	-0.0	-128
+dtypes.fp8e5m2	dtypes.char	1.0	60
+dtypes.fp8e5m2	dtypes.char	-2.0	-64
+dtypes.fp8e5m2	dtypes.char	1.5	62
+dtypes.fp8e5m2	dtypes.char	0.1	46
+dtypes.fp8e5m2	dtypes.char	448.0	95
+dtypes.fp8e5m2	dtypes.char	100000.0	123
+dtypes.fp8e5m2	dtypes.char	1e+39	123
+dtypes.fp8e5m2	dtypes.char	-1e+39	-5
+dtypes.fp8e5m2	dtypes.char	inf	124
+dtypes.fp8e5m2	dtypes.char	-inf	-4
+dtypes.fp8e5m2	dtypes.char	nan	127
+dtypes.fp8e5m2	dtypes.char	1	60
+dtypes.fp8e5m2	dtypes.bool	0.0	False
+dtypes.fp8e5m2	dtypes.bool	-0.0	True
+dtypes.fp8e5m2	dtypes.bool	1.0	True
+dtypes.fp8e5m2	dtypes.bool	-2.0	True
+dtypes.fp8e5m2	dtypes.bool	1.5	True
+dtypes.fp8e5m2	dtypes.bool	0.1	True
+dtypes.fp8e5m2	dtypes.bool	448.0	True
+dtypes.fp8e5m2	dtypes.bool	100000.0	True
+dtypes.fp8e5m2	dtypes.bool	1e+39	True
+dtypes.fp8e5m2	dtypes.bool	-1e+39	True
+dtypes.fp8e5m2	dtypes.bool	inf	True
+dtypes.fp8e5m2	dtypes.bool	-inf	True
+dtypes.fp8e5m2	dtypes.bool	nan	True
+dtypes.fp8e5m2	dtypes.bool	1	True
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	-0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	1.0	2.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	-2.0	-4.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	1.5	3.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	0.1	0.203125
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	448.0	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	100000.0	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	1e+39	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	-1e+39	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	inf	-0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	-inf	-0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	nan	-0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	1	2.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	-0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	1.0	2.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	-2.0	-8.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	1.5	4.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	0.1	0.01953125
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	448.0	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	100000.0	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	1e+39	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	-1e+39	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	inf	-0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	-inf	-0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	nan	-0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	1	2.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	-0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	1.0	1.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	-2.0	-2.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	1.5	1.5
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	0.1	0.1015625
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	448.0	240.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	100000.0	240.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	1e+39	240.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	-1e+39	-240.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	inf	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	-inf	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	nan	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	1	1.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	-0.0	0.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	1.0	1.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	-2.0	-4.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	1.5	2.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	0.1	0.009765625
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	448.0	57344.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	100000.0	57344.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	1e+39	57344.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	-1e+39	-57344.0
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	inf	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	-inf	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	nan	nan
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	1	1.0
+dtypes.fp8e4m3fnuz	dtypes.uchar	0.0	0
+dtypes.fp8e4m3fnuz	dtypes.uchar	-0.0	0
+dtypes.fp8e4m3fnuz	dtypes.uchar	1.0	64
+dtypes.fp8e4m3fnuz	dtypes.uchar	-2.0	200
+dtypes.fp8e4m3fnuz	dtypes.uchar	1.5	68
+dtypes.fp8e4m3fnuz	dtypes.uchar	0.1	37
+dtypes.fp8e4m3fnuz	dtypes.uchar	448.0	127
+dtypes.fp8e4m3fnuz	dtypes.uchar	100000.0	127
+dtypes.fp8e4m3fnuz	dtypes.uchar	1e+39	127
+dtypes.fp8e4m3fnuz	dtypes.uchar	-1e+39	255
+dtypes.fp8e4m3fnuz	dtypes.uchar	inf	128
+dtypes.fp8e4m3fnuz	dtypes.uchar	-inf	128
+dtypes.fp8e4m3fnuz	dtypes.uchar	nan	128
+dtypes.fp8e4m3fnuz	dtypes.uchar	1	64
+dtypes.fp8e4m3fnuz	dtypes.char	0.0	0
+dtypes.fp8e4m3fnuz	dtypes.char	-0.0	0
+dtypes.fp8e4m3fnuz	dtypes.char	1.0	64
+dtypes.fp8e4m3fnuz	dtypes.char	-2.0	-56
+dtypes.fp8e4m3fnuz	dtypes.char	1.5	68
+dtypes.fp8e4m3fnuz	dtypes.char	0.1	37
+dtypes.fp8e4m3fnuz	dtypes.char	448.0	127
+dtypes.fp8e4m3fnuz	dtypes.char	100000.0	127
+dtypes.fp8e4m3fnuz	dtypes.char	1e+39	127
+dtypes.fp8e4m3fnuz	dtypes.char	-1e+39	-1
+dtypes.fp8e4m3fnuz	dtypes.char	inf	-128
+dtypes.fp8e4m3fnuz	dtypes.char	-inf	-128
+dtypes.fp8e4m3fnuz	dtypes.char	nan	-128
+dtypes.fp8e4m3fnuz	dtypes.char	1	64
+dtypes.fp8e4m3fnuz	dtypes.bool	0.0	False
+dtypes.fp8e4m3fnuz	dtypes.bool	-0.0	False
+dtypes.fp8e4m3fnuz	dtypes.bool	1.0	True
+dtypes.fp8e4m3fnuz	dtypes.bool	-2.0	True
+dtypes.fp8e4m3fnuz	dtypes.bool	1.5	True
+dtypes.fp8e4m3fnuz	dtypes.bool	0.1	True
+dtypes.fp8e4m3fnuz	dtypes.bool	448.0	True
+dtypes.fp8e4m3fnuz	dtypes.bool	100000.0	True
+dtypes.fp8e4m3fnuz	dtypes.bool	1e+39	True
+dtypes.fp8e4m3fnuz	dtypes.bool	-1e+39	True
+dtypes.fp8e4m3fnuz	dtypes.bool	inf	True
+dtypes.fp8e4m3fnuz	dtypes.bool	-inf	True
+dtypes.fp8e4m3fnuz	dtypes.bool	nan	True
+dtypes.fp8e4m3fnuz	dtypes.bool	1	True
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	-0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	1.0	2.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	-2.0	-3.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	1.5	2.5
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	0.1	0.625
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	448.0	44.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	100000.0	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	1e+39	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	-1e+39	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	inf	-0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	-inf	-0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	nan	-0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	1	2.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	-0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	1.0	2.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	-2.0	-4.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	1.5	3.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	0.1	0.1875
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	448.0	896.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	100000.0	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	1e+39	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	-1e+39	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	inf	-0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	-inf	-0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	nan	-0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	1	2.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	-0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	1.0	1.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	-2.0	-1.5
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	1.5	1.25
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	0.1	0.3125
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	448.0	22.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	100000.0	240.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	1e+39	240.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	-1e+39	-240.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	inf	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	-inf	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	nan	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	1	1.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	-0.0	0.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	1.0	1.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	-2.0	-2.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	1.5	1.5
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	0.1	0.09375
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	448.0	448.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	100000.0	57344.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	1e+39	57344.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	-1e+39	-57344.0
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	inf	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	-inf	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	nan	nan
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	1	1.0
+dtypes.fp8e5m2fnuz	dtypes.uchar	0.0	0
+dtypes.fp8e5m2fnuz	dtypes.uchar	-0.0	0
+dtypes.fp8e5m2fnuz	dtypes.uchar	1.0	64
+dtypes.fp8e5m2fnuz	dtypes.uchar	-2.0	196
+dtypes.fp8e5m2fnuz	dtypes.uchar	1.5	66
+dtypes.fp8e5m2fnuz	dtypes.uchar	0.1	50
+dtypes.fp8e5m2fnuz	dtypes.uchar	448.0	99
+dtypes.fp8e5m2fnuz	dtypes.uchar	100000.0	127
+dtypes.fp8e5m2fnuz	dtypes.uchar	1e+39	127
+dtypes.fp8e5m2fnuz	dtypes.uchar	-1e+39	255
+dtypes.fp8e5m2fnuz	dtypes.uchar	inf	128
+dtypes.fp8e5m2fnuz	dtypes.uchar	-inf	128
+dtypes.fp8e5m2fnuz	dtypes.uchar	nan	128
+dtypes.fp8e5m2fnuz	dtypes.uchar	1	64
+dtypes.fp8e5m2fnuz	dtypes.char	0.0	0
+dtypes.fp8e5m2fnuz	dtypes.char	-0.0	0
+dtypes.fp8e5m2fnuz	dtypes.char	1.0	64
+dtypes.fp8e5m2fnuz	dtypes.char	-2.0	-60
+dtypes.fp8e5m2fnuz	dtypes.char	1.5	66
+dtypes.fp8e5m2fnuz	dtypes.char	0.1	50
+dtypes.fp8e5m2fnuz	dtypes.char	448.0	99
+dtypes.fp8e5m2fnuz	dtypes.char	100000.0	127
+dtypes.fp8e5m2fnuz	dtypes.char	1e+39	127
+dtypes.fp8e5m2fnuz	dtypes.char	-1e+39	-1
+dtypes.fp8e5m2fnuz	dtypes.char	inf	-128
+dtypes.fp8e5m2fnuz	dtypes.char	-inf	-128
+dtypes.fp8e5m2fnuz	dtypes.char	nan	-128
+dtypes.fp8e5m2fnuz	dtypes.char	1	64
+dtypes.fp8e5m2fnuz	dtypes.bool	0.0	False
+dtypes.fp8e5m2fnuz	dtypes.bool	-0.0	False
+dtypes.fp8e5m2fnuz	dtypes.bool	1.0	True
+dtypes.fp8e5m2fnuz	dtypes.bool	-2.0	True
+dtypes.fp8e5m2fnuz	dtypes.bool	1.5	True
+dtypes.fp8e5m2fnuz	dtypes.bool	0.1	True
+dtypes.fp8e5m2fnuz	dtypes.bool	448.0	True
+dtypes.fp8e5m2fnuz	dtypes.bool	100000.0	True
+dtypes.fp8e5m2fnuz	dtypes.bool	1e+39	True
+dtypes.fp8e5m2fnuz	dtypes.bool	-1e+39	True
+dtypes.fp8e5m2fnuz	dtypes.bool	inf	True
+dtypes.fp8e5m2fnuz	dtypes.bool	-inf	True
+dtypes.fp8e5m2fnuz	dtypes.bool	nan	True
+dtypes.fp8e5m2fnuz	dtypes.bool	1	True
+dtypes.half	dtypes.half	0.0	0.0
+dtypes.half	dtypes.half	-0.0	-0.0
+dtypes.half	dtypes.half	1.0	1.0
+dtypes.half	dtypes.half	-2.0	-2.0
+dtypes.half	dtypes.half	1.5	1.5
+dtypes.half	dtypes.half	0.1	0.0999755859375
+dtypes.half	dtypes.half	448.0	448.0
+dtypes.half	dtypes.half	100000.0	inf
+dtypes.half	dtypes.half	1e+39	inf
+dtypes.half	dtypes.half	-1e+39	-inf
+dtypes.half	dtypes.half	inf	inf
+dtypes.half	dtypes.half	-inf	-inf
+dtypes.half	dtypes.half	nan	nan
+dtypes.half	dtypes.half	1	1.0
+dtypes.half	dtypes.bfloat16	0.0	0.0
+dtypes.half	dtypes.bfloat16	-0.0	-0.0
+dtypes.half	dtypes.bfloat16	1.0	0.0078125
+dtypes.half	dtypes.bfloat16	-2.0	-2.0
+dtypes.half	dtypes.bfloat16	1.5	0.125
+dtypes.half	dtypes.bfloat16	0.1	5.2295945351943374e-11
+dtypes.half	dtypes.bfloat16	448.0	9.223372036854776e+18
+dtypes.half	dtypes.bfloat16	100000.0	2.658455991569832e+36
+dtypes.half	dtypes.bfloat16	1e+39	2.658455991569832e+36
+dtypes.half	dtypes.bfloat16	-1e+39	-2.658455991569832e+36
+dtypes.half	dtypes.bfloat16	inf	2.658455991569832e+36
+dtypes.half	dtypes.bfloat16	-inf	-2.658455991569832e+36
+dtypes.half	dtypes.bfloat16	nan	4.253529586511731e+37
+dtypes.half	dtypes.bfloat16	1	0.0078125
+dtypes.half	dtypes.ushort	0.0	0
+dtypes.half	dtypes.ushort	-0.0	32768
+dtypes.half	dtypes.ushort	1.0	15360
+dtypes.half	dtypes.ushort	-2.0	49152
+dtypes.half	dtypes.ushort	1.5	15872
+dtypes.half	dtypes.ushort	0.1	11878
+dtypes.half	dtypes.ushort	448.0	24320
+dtypes.half	dtypes.ushort	100000.0	31744
+dtypes.half	dtypes.ushort	1e+39	31744
+dtypes.half	dtypes.ushort	-1e+39	64512
+dtypes.half	dtypes.ushort	inf	31744
+dtypes.half	dtypes.ushort	-inf	64512
+dtypes.half	dtypes.ushort	nan	32256
+dtypes.half	dtypes.ushort	1	15360
+dtypes.half	dtypes.short	0.0	0
+dtypes.half	dtypes.short	-0.0	-32768
+dtypes.half	dtypes.short	1.0	15360
+dtypes.half	dtypes.short	-2.0	-16384
+dtypes.half	dtypes.short	1.5	15872
+dtypes.half	dtypes.short	0.1	11878
+dtypes.half	dtypes.short	448.0	24320
+dtypes.half	dtypes.short	100000.0	31744
+dtypes.half	dtypes.short	1e+39	31744
+dtypes.half	dtypes.short	-1e+39	-1024
+dtypes.half	dtypes.short	inf	31744
+dtypes.half	dtypes.short	-inf	-1024
+dtypes.half	dtypes.short	nan	32256
+dtypes.half	dtypes.short	1	15360
+dtypes.bfloat16	dtypes.half	0.0	0.0
+dtypes.bfloat16	dtypes.half	-0.0	-0.0
+dtypes.bfloat16	dtypes.half	1.0	1.875
+dtypes.bfloat16	dtypes.half	-2.0	-2.0
+dtypes.bfloat16	dtypes.half	1.5	1.9375
+dtypes.bfloat16	dtypes.half	0.1	1.4501953125
+dtypes.bfloat16	dtypes.half	448.0	3.9375
+dtypes.bfloat16	dtypes.half	100000.0	7.76171875
+dtypes.bfloat16	dtypes.half	1e+39	nan
+dtypes.bfloat16	dtypes.half	-1e+39	nan
+dtypes.bfloat16	dtypes.half	inf	nan
+dtypes.bfloat16	dtypes.half	-inf	nan
+dtypes.bfloat16	dtypes.half	nan	nan
+dtypes.bfloat16	dtypes.half	1	1.875
+dtypes.bfloat16	dtypes.bfloat16	0.0	0.0
+dtypes.bfloat16	dtypes.bfloat16	-0.0	-0.0
+dtypes.bfloat16	dtypes.bfloat16	1.0	1.0
+dtypes.bfloat16	dtypes.bfloat16	-2.0	-2.0
+dtypes.bfloat16	dtypes.bfloat16	1.5	1.5
+dtypes.bfloat16	dtypes.bfloat16	0.1	0.10009765625
+dtypes.bfloat16	dtypes.bfloat16	448.0	448.0
+dtypes.bfloat16	dtypes.bfloat16	100000.0	99840.0
+dtypes.bfloat16	dtypes.bfloat16	1e+39	inf
+dtypes.bfloat16	dtypes.bfloat16	-1e+39	-inf
+dtypes.bfloat16	dtypes.bfloat16	inf	inf
+dtypes.bfloat16	dtypes.bfloat16	-inf	-inf
+dtypes.bfloat16	dtypes.bfloat16	nan	nan
+dtypes.bfloat16	dtypes.bfloat16	1	1.0
+dtypes.bfloat16	dtypes.ushort	0.0	0
+dtypes.bfloat16	dtypes.ushort	-0.0	32768
+dtypes.bfloat16	dtypes.ushort	1.0	16256
+dtypes.bfloat16	dtypes.ushort	-2.0	49152
+dtypes.bfloat16	dtypes.ushort	1.5	16320
+dtypes.bfloat16	dtypes.ushort	0.1	15821
+dtypes.bfloat16	dtypes.ushort	448.0	17376
+dtypes.bfloat16	dtypes.ushort	100000.0	18371
+dtypes.bfloat16	dtypes.ushort	1e+39	32640
+dtypes.bfloat16	dtypes.ushort	-1e+39	65408
+dtypes.bfloat16	dtypes.ushort	inf	32640
+dtypes.bfloat16	dtypes.ushort	-inf	65408
+dtypes.bfloat16	dtypes.ushort	nan	32704
+dtypes.bfloat16	dtypes.ushort	1	16256
+dtypes.bfloat16	dtypes.short	0.0	0
+dtypes.bfloat16	dtypes.short	-0.0	-32768
+dtypes.bfloat16	dtypes.short	1.0	16256
+dtypes.bfloat16	dtypes.short	-2.0	-16384
+dtypes.bfloat16	dtypes.short	1.5	16320
+dtypes.bfloat16	dtypes.short	0.1	15821
+dtypes.bfloat16	dtypes.short	448.0	17376
+dtypes.bfloat16	dtypes.short	100000.0	18371
+dtypes.bfloat16	dtypes.short	1e+39	32640
+dtypes.bfloat16	dtypes.short	-1e+39	-128
+dtypes.bfloat16	dtypes.short	inf	32640
+dtypes.bfloat16	dtypes.short	-inf	-128
+dtypes.bfloat16	dtypes.short	nan	32704
+dtypes.bfloat16	dtypes.short	1	16256
+dtypes.float	dtypes.float	0.0	0.0
+dtypes.float	dtypes.float	-0.0	-0.0
+dtypes.float	dtypes.float	1.0	1.0
+dtypes.float	dtypes.float	-2.0	-2.0
+dtypes.float	dtypes.float	1.5	1.5
+dtypes.float	dtypes.float	0.1	0.10000000149011612
+dtypes.float	dtypes.float	448.0	448.0
+dtypes.float	dtypes.float	100000.0	100000.0
+dtypes.float	dtypes.float	1e+39	inf
+dtypes.float	dtypes.float	-1e+39	-inf
+dtypes.float	dtypes.float	inf	inf
+dtypes.float	dtypes.float	-inf	-inf
+dtypes.float	dtypes.float	nan	nan
+dtypes.float	dtypes.float	1	1.0
+dtypes.float	dtypes.uint	0.0	0
+dtypes.float	dtypes.uint	-0.0	2147483648
+dtypes.float	dtypes.uint	1.0	1065353216
+dtypes.float	dtypes.uint	-2.0	3221225472
+dtypes.float	dtypes.uint	1.5	1069547520
+dtypes.float	dtypes.uint	0.1	1036831949
+dtypes.float	dtypes.uint	448.0	1138753536
+dtypes.float	dtypes.uint	100000.0	1203982336
+dtypes.float	dtypes.uint	1e+39	2139095040
+dtypes.float	dtypes.uint	-1e+39	4286578688
+dtypes.float	dtypes.uint	inf	2139095040
+dtypes.float	dtypes.uint	-inf	4286578688
+dtypes.float	dtypes.uint	nan	2143289344
+dtypes.float	dtypes.uint	1	1065353216
+dtypes.float	dtypes.int	0.0	0
+dtypes.float	dtypes.int	-0.0	-2147483648
+dtypes.float	dtypes.int	1.0	1065353216
+dtypes.float	dtypes.int	-2.0	-1073741824
+dtypes.float	dtypes.int	1.5	1069547520
+dtypes.float	dtypes.int	0.1	1036831949
+dtypes.float	dtypes.int	448.0	1138753536
+dtypes.float	dtypes.int	100000.0	1203982336
+dtypes.float	dtypes.int	1e+39	2139095040
+dtypes.float	dtypes.int	-1e+39	-8388608
+dtypes.float	dtypes.int	inf	2139095040
+dtypes.float	dtypes.int	-inf	-8388608
+dtypes.float	dtypes.int	nan	2143289344
+dtypes.float	dtypes.int	1	1065353216
+dtypes.double	dtypes.double	0.0	0.0
+dtypes.double	dtypes.double	-0.0	-0.0
+dtypes.double	dtypes.double	1.0	1.0
+dtypes.double	dtypes.double	-2.0	-2.0
+dtypes.double	dtypes.double	1.5	1.5
+dtypes.double	dtypes.double	0.1	0.1
+dtypes.double	dtypes.double	448.0	448.0
+dtypes.double	dtypes.double	100000.0	100000.0
+dtypes.double	dtypes.double	1e+39	1e+39
+dtypes.double	dtypes.double	-1e+39	-1e+39
+dtypes.double	dtypes.double	inf	inf
+dtypes.double	dtypes.double	-inf	-inf
+dtypes.double	dtypes.double	nan	nan
+dtypes.double	dtypes.double	1	1.0
+dtypes.double	dtypes.ulong	0.0	0
+dtypes.double	dtypes.ulong	-0.0	9223372036854775808
+dtypes.double	dtypes.ulong	1.0	4607182418800017408
+dtypes.double	dtypes.ulong	-2.0	13835058055282163712
+dtypes.double	dtypes.ulong	1.5	4609434218613702656
+dtypes.double	dtypes.ulong	0.1	4591870180066957722
+dtypes.double	dtypes.ulong	448.0	4646588915539509248
+dtypes.double	dtypes.ulong	100000.0	4681608360884174848
+dtypes.double	dtypes.ulong	1e+39	5190260616003865117
+dtypes.double	dtypes.ulong	-1e+39	14413632652858640925
+dtypes.double	dtypes.ulong	inf	9218868437227405312
+dtypes.double	dtypes.ulong	-inf	18442240474082181120
+dtypes.double	dtypes.ulong	nan	9221120237041090560
+dtypes.double	dtypes.ulong	1	4607182418800017408
+dtypes.double	dtypes.long	0.0	0
+dtypes.double	dtypes.long	-0.0	-9223372036854775808
+dtypes.double	dtypes.long	1.0	4607182418800017408
+dtypes.double	dtypes.long	-2.0	-4611686018427387904
+dtypes.double	dtypes.long	1.5	4609434218613702656
+dtypes.double	dtypes.long	0.1	4591870180066957722
+dtypes.double	dtypes.long	448.0	4646588915539509248
+dtypes.double	dtypes.long	100000.0	4681608360884174848
+dtypes.double	dtypes.long	1e+39	5190260616003865117
+dtypes.double	dtypes.long	-1e+39	-4033111420850910691
+dtypes.double	dtypes.long	inf	9218868437227405312
+dtypes.double	dtypes.long	-inf	-4503599627370496
+dtypes.double	dtypes.long	nan	9221120237041090560
+dtypes.double	dtypes.long	1	4607182418800017408
+dtypes.uchar	dtypes.fp8e4m3	-1	raises error
+dtypes.uchar	dtypes.fp8e4m3	0	0.0
+dtypes.uchar	dtypes.fp8e4m3	1	0.001953125
+dtypes.uchar	dtypes.fp8e4m3	2	0.00390625
+dtypes.uchar	dtypes.fp8e4m3	85	13.0
+dtypes.uchar	dtypes.fp8e4m3	255	nan
+dtypes.uchar	dtypes.fp8e4m3	256	raises error
+dtypes.uchar	dtypes.fp8e4m3	1.5	raises error
+dtypes.uchar	dtypes.fp8e5m2	-1	raises error
+dtypes.uchar	dtypes.fp8e5m2	0	0.0
+dtypes.uchar	dtypes.fp8e5m2	1	1.52587890625e-05
+dtypes.uchar	dtypes.fp8e5m2	2	3.0517578125e-05
+dtypes.uchar	dtypes.fp8e5m2	85	80.0
+dtypes.uchar	dtypes.fp8e5m2	255	nan
+dtypes.uchar	dtypes.fp8e5m2	256	raises error
+dtypes.uchar	dtypes.fp8e5m2	1.5	raises error
+dtypes.uchar	dtypes.fp8e4m3fnuz	-1	raises error
+dtypes.uchar	dtypes.fp8e4m3fnuz	0	0.0
+dtypes.uchar	dtypes.fp8e4m3fnuz	1	0.0009765625
+dtypes.uchar	dtypes.fp8e4m3fnuz	2	0.001953125
+dtypes.uchar	dtypes.fp8e4m3fnuz	85	6.5
+dtypes.uchar	dtypes.fp8e4m3fnuz	255	-240.0
+dtypes.uchar	dtypes.fp8e4m3fnuz	256	raises error
+dtypes.uchar	dtypes.fp8e4m3fnuz	1.5	raises error
+dtypes.uchar	dtypes.fp8e5m2fnuz	-1	raises error
+dtypes.uchar	dtypes.fp8e5m2fnuz	0	0.0
+dtypes.uchar	dtypes.fp8e5m2fnuz	1	7.62939453125e-06
+dtypes.uchar	dtypes.fp8e5m2fnuz	2	1.52587890625e-05
+dtypes.uchar	dtypes.fp8e5m2fnuz	85	40.0
+dtypes.uchar	dtypes.fp8e5m2fnuz	255	-57344.0
+dtypes.uchar	dtypes.fp8e5m2fnuz	256	raises error
+dtypes.uchar	dtypes.fp8e5m2fnuz	1.5	raises error
+dtypes.uchar	dtypes.uchar	-1	raises error
+dtypes.uchar	dtypes.uchar	0	0
+dtypes.uchar	dtypes.uchar	1	1
+dtypes.uchar	dtypes.uchar	2	2
+dtypes.uchar	dtypes.uchar	85	85
+dtypes.uchar	dtypes.uchar	255	255
+dtypes.uchar	dtypes.uchar	256	raises error
+dtypes.uchar	dtypes.uchar	1.5	raises error
+dtypes.uchar	dtypes.char	-1	raises error
+dtypes.uchar	dtypes.char	0	0
+dtypes.uchar	dtypes.char	1	1
+dtypes.uchar	dtypes.char	2	2
+dtypes.uchar	dtypes.char	85	85
+dtypes.uchar	dtypes.char	255	-1
+dtypes.uchar	dtypes.char	256	raises error
+dtypes.uchar	dtypes.char	1.5	raises error
+dtypes.uchar	dtypes.bool	-1	raises error
+dtypes.uchar	dtypes.bool	0	False
+dtypes.uchar	dtypes.bool	1	True
+dtypes.uchar	dtypes.bool	2	True
+dtypes.uchar	dtypes.bool	85	True
+dtypes.uchar	dtypes.bool	255	True
+dtypes.uchar	dtypes.bool	256	raises error
+dtypes.uchar	dtypes.bool	1.5	raises error
+dtypes.ushort	dtypes.half	-1	raises error
+dtypes.ushort	dtypes.half	0	0.0
+dtypes.ushort	dtypes.half	1	5.960464477539063e-08
+dtypes.ushort	dtypes.half	2	1.1920928955078125e-07
+dtypes.ushort	dtypes.half	21845	85.3125
+dtypes.ushort	dtypes.half	65535	nan
+dtypes.ushort	dtypes.half	65536	raises error
+dtypes.ushort	dtypes.half	1.5	raises error
+dtypes.ushort	dtypes.bfloat16	-1	raises error
+dtypes.ushort	dtypes.bfloat16	0	0.0
+dtypes.ushort	dtypes.bfloat16	1	9.183549615799121e-41
+dtypes.ushort	dtypes.bfloat16	2	1.8367099231598242e-40
+dtypes.ushort	dtypes.bfloat16	21845	14637248544768.0
+dtypes.ushort	dtypes.bfloat16	65535	nan
+dtypes.ushort	dtypes.bfloat16	65536	raises error
+dtypes.ushort	dtypes.bfloat16	1.5	raises error
+dtypes.ushort	dtypes.ushort	-1	raises error
+dtypes.ushort	dtypes.ushort	0	0
+dtypes.ushort	dtypes.ushort	1	1
+dtypes.ushort	dtypes.ushort	2	2
+dtypes.ushort	dtypes.ushort	21845	21845
+dtypes.ushort	dtypes.ushort	65535	65535
+dtypes.ushort	dtypes.ushort	65536	raises error
+dtypes.ushort	dtypes.ushort	1.5	raises error
+dtypes.ushort	dtypes.short	-1	raises error
+dtypes.ushort	dtypes.short	0	0
+dtypes.ushort	dtypes.short	1	1
+dtypes.ushort	dtypes.short	2	2
+dtypes.ushort	dtypes.short	21845	21845
+dtypes.ushort	dtypes.short	65535	-1
+dtypes.ushort	dtypes.short	65536	raises error
+dtypes.ushort	dtypes.short	1.5	raises error
+dtypes.uint	dtypes.float	-1	raises error
+dtypes.uint	dtypes.float	0	0.0
+dtypes.uint	dtypes.float	1	1.401298464324817e-45
+dtypes.uint	dtypes.float	2	2.802596928649634e-45
+dtypes.uint	dtypes.float	1431655765	14660154687488.0
+dtypes.uint	dtypes.float	4294967295	nan
+dtypes.uint	dtypes.float	4294967296	raises error
+dtypes.uint	dtypes.float	1.5	raises error
+dtypes.uint	dtypes.uint	-1	raises error
+dtypes.uint	dtypes.uint	0	0
+dtypes.uint	dtypes.uint	1	1
+dtypes.uint	dtypes.uint	2	2
+dtypes.uint	dtypes.uint	1431655765	1431655765
+dtypes.uint	dtypes.uint	4294967295	4294967295
+dtypes.uint	dtypes.uint	4294967296	raises error
+dtypes.uint	dtypes.uint	1.5	raises error
+dtypes.uint	dtypes.int	-1	raises error
+dtypes.uint	dtypes.int	0	0
+dtypes.uint	dtypes.int	1	1
+dtypes.uint	dtypes.int	2	2
+dtypes.uint	dtypes.int	1431655765	1431655765
+dtypes.uint	dtypes.int	4294967295	-1
+dtypes.uint	dtypes.int	4294967296	raises error
+dtypes.uint	dtypes.int	1.5	raises error
+dtypes.ulong	dtypes.double	-1	raises error
+dtypes.ulong	dtypes.double	0	0.0
+dtypes.ulong	dtypes.double	1	5e-324
+dtypes.ulong	dtypes.double	2	1e-323
+dtypes.ulong	dtypes.double	6148914691236517205	1.1945305291614955e+103
+dtypes.ulong	dtypes.double	18446744073709551615	nan
+dtypes.ulong	dtypes.double	18446744073709551616	raises error
+dtypes.ulong	dtypes.double	1.5	raises error
+dtypes.ulong	dtypes.ulong	-1	raises error
+dtypes.ulong	dtypes.ulong	0	0
+dtypes.ulong	dtypes.ulong	1	1
+dtypes.ulong	dtypes.ulong	2	2
+dtypes.ulong	dtypes.ulong	6148914691236517205	6148914691236517205
+dtypes.ulong	dtypes.ulong	18446744073709551615	18446744073709551615
+dtypes.ulong	dtypes.ulong	18446744073709551616	raises error
+dtypes.ulong	dtypes.ulong	1.5	raises error
+dtypes.ulong	dtypes.long	-1	raises error
+dtypes.ulong	dtypes.long	0	0
+dtypes.ulong	dtypes.long	1	1
+dtypes.ulong	dtypes.long	2	2
+dtypes.ulong	dtypes.long	6148914691236517205	6148914691236517205
+dtypes.ulong	dtypes.long	18446744073709551615	-1
+dtypes.ulong	dtypes.long	18446744073709551616	raises error
+dtypes.ulong	dtypes.long	1.5	raises error
+dtypes.char	dtypes.fp8e4m3	-129	raises error
+dtypes.char	dtypes.fp8e4m3	-128	-0.0
+dtypes.char	dtypes.fp8e4m3	-1	nan
+dtypes.char	dtypes.fp8e4m3	0	0.0
+dtypes.char	dtypes.fp8e4m3	1	0.001953125
+dtypes.char	dtypes.fp8e4m3	42	0.3125
+dtypes.char	dtypes.fp8e4m3	127	nan
+dtypes.char	dtypes.fp8e4m3	128	raises error
+dtypes.char	dtypes.fp8e4m3	1.5	raises error
+dtypes.char	dtypes.fp8e5m2	-129	raises error
+dtypes.char	dtypes.fp8e5m2	-128	-0.0
+dtypes.char	dtypes.fp8e5m2	-1	nan
+dtypes.char	dtypes.fp8e5m2	0	0.0
+dtypes.char	dtypes.fp8e5m2	1	1.52587890625e-05
+dtypes.char	dtypes.fp8e5m2	42	0.046875
+dtypes.char	dtypes.fp8e5m2	127	nan
+dtypes.char	dtypes.fp8e5m2	128	raises error
+dtypes.char	dtypes.fp8e5m2	1.5	raises error
+dtypes.char	dtypes.fp8e4m3fnuz	-129	raises error
+dtypes.char	dtypes.fp8e4m3fnuz	-128	nan
+dtypes.char	dtypes.fp8e4m3fnuz	-1	-240.0
+dtypes.char	dtypes.fp8e4m3fnuz	0	0.0
+dtypes.char	dtypes.fp8e4m3fnuz	1	0.0009765625
+dtypes.char	dtypes.fp8e4m3fnuz	42	0.15625
+dtypes.char	dtypes.fp8e4m3fnuz	127	240.0
+dtypes.char	dtypes.fp8e4m3fnuz	128	raises error
+dtypes.char	dtypes.fp8e4m3fnuz	1.5	raises error
+dtypes.char	dtypes.fp8e5m2fnuz	-129	raises error
+dtypes.char	dtypes.fp8e5m2fnuz	-128	nan
+dtypes.char	dtypes.fp8e5m2fnuz	-1	-57344.0
+dtypes.char	dtypes.fp8e5m2fnuz	0	0.0
+dtypes.char	dtypes.fp8e5m2fnuz	1	7.62939453125e-06
+dtypes.char	dtypes.fp8e5m2fnuz	42	0.0234375
+dtypes.char	dtypes.fp8e5m2fnuz	127	57344.0
+dtypes.char	dtypes.fp8e5m2fnuz	128	raises error
+dtypes.char	dtypes.fp8e5m2fnuz	1.5	raises error
+dtypes.char	dtypes.uchar	-129	raises error
+dtypes.char	dtypes.uchar	-128	128
+dtypes.char	dtypes.uchar	-1	255
+dtypes.char	dtypes.uchar	0	0
+dtypes.char	dtypes.uchar	1	1
+dtypes.char	dtypes.uchar	42	42
+dtypes.char	dtypes.uchar	127	127
+dtypes.char	dtypes.uchar	128	raises error
+dtypes.char	dtypes.uchar	1.5	raises error
+dtypes.char	dtypes.char	-129	raises error
+dtypes.char	dtypes.char	-128	-128
+dtypes.char	dtypes.char	-1	-1
+dtypes.char	dtypes.char	0	0
+dtypes.char	dtypes.char	1	1
+dtypes.char	dtypes.char	42	42
+dtypes.char	dtypes.char	127	127
+dtypes.char	dtypes.char	128	raises error
+dtypes.char	dtypes.char	1.5	raises error
+dtypes.char	dtypes.bool	-129	raises error
+dtypes.char	dtypes.bool	-128	True
+dtypes.char	dtypes.bool	-1	True
+dtypes.char	dtypes.bool	0	False
+dtypes.char	dtypes.bool	1	True
+dtypes.char	dtypes.bool	42	True
+dtypes.char	dtypes.bool	127	True
+dtypes.char	dtypes.bool	128	raises error
+dtypes.char	dtypes.bool	1.5	raises error
+dtypes.short	dtypes.half	-32769	raises error
+dtypes.short	dtypes.half	-32768	-0.0
+dtypes.short	dtypes.half	-1	nan
+dtypes.short	dtypes.half	0	0.0
+dtypes.short	dtypes.half	1	5.960464477539063e-08
+dtypes.short	dtypes.half	10922	0.05206298828125
+dtypes.short	dtypes.half	32767	nan
+dtypes.short	dtypes.half	32768	raises error
+dtypes.short	dtypes.half	1.5	raises error
+dtypes.short	dtypes.bfloat16	-32769	raises error
+dtypes.short	dtypes.bfloat16	-32768	-0.0
+dtypes.short	dtypes.bfloat16	-1	nan
+dtypes.short	dtypes.bfloat16	0	0.0
+dtypes.short	dtypes.bfloat16	1	9.183549615799121e-41
+dtypes.short	dtypes.bfloat16	10922	3.019806626980426e-13
+dtypes.short	dtypes.bfloat16	32767	nan
+dtypes.short	dtypes.bfloat16	32768	raises error
+dtypes.short	dtypes.bfloat16	1.5	raises error
+dtypes.short	dtypes.ushort	-32769	raises error
+dtypes.short	dtypes.ushort	-32768	32768
+dtypes.short	dtypes.ushort	-1	65535
+dtypes.short	dtypes.ushort	0	0
+dtypes.short	dtypes.ushort	1	1
+dtypes.short	dtypes.ushort	10922	10922
+dtypes.short	dtypes.ushort	32767	32767
+dtypes.short	dtypes.ushort	32768	raises error
+dtypes.short	dtypes.ushort	1.5	raises error
+dtypes.short	dtypes.short	-32769	raises error
+dtypes.short	dtypes.short	-32768	-32768
+dtypes.short	dtypes.short	-1	-1
+dtypes.short	dtypes.short	0	0
+dtypes.short	dtypes.short	1	1
+dtypes.short	dtypes.short	10922	10922
+dtypes.short	dtypes.short	32767	32767
+dtypes.short	dtypes.short	32768	raises error
+dtypes.short	dtypes.short	1.5	raises error
+dtypes.int	dtypes.float	-2147483649	raises error
+dtypes.int	dtypes.float	-2147483648	-0.0
+dtypes.int	dtypes.float	-1	nan
+dtypes.int	dtypes.float	0	0.0
+dtypes.int	dtypes.float	1	1.401298464324817e-45
+dtypes.int	dtypes.float	715827882	3.0316488252093987e-13
+dtypes.int	dtypes.float	2147483647	nan
+dtypes.int	dtypes.float	2147483648	raises error
+dtypes.int	dtypes.float	1.5	raises error
+dtypes.int	dtypes.uint	-2147483649	raises error
+dtypes.int	dtypes.uint	-2147483648	2147483648
+dtypes.int	dtypes.uint	-1	4294967295
+dtypes.int	dtypes.uint	0	0
+dtypes.int	dtypes.uint	1	1
+dtypes.int	dtypes.uint	715827882	715827882
+dtypes.int	dtypes.uint	2147483647	2147483647
+dtypes.int	dtypes.uint	2147483648	raises error
+dtypes.int	dtypes.uint	1.5	raises error
+dtypes.int	dtypes.int	-2147483649	raises error
+dtypes.int	dtypes.int	-2147483648	-2147483648
+dtypes.int	dtypes.int	-1	-1
+dtypes.int	dtypes.int	0	0
+dtypes.int	dtypes.int	1	1
+dtypes.int	dtypes.int	715827882	715827882
+dtypes.int	dtypes.int	2147483647	2147483647
+dtypes.int	dtypes.int	2147483648	raises error
+dtypes.int	dtypes.int	1.5	raises error
+dtypes.long	dtypes.double	-9223372036854775809	raises error
+dtypes.long	dtypes.double	-9223372036854775808	-0.0
+dtypes.long	dtypes.double	-1	nan
+dtypes.long	dtypes.double	0	0.0
+dtypes.long	dtypes.double	1	5e-324
+dtypes.long	dtypes.double	3074457345618258602	3.7206620809969885e-103
+dtypes.long	dtypes.double	9223372036854775807	nan
+dtypes.long	dtypes.double	9223372036854775808	raises error
+dtypes.long	dtypes.double	1.5	raises error
+dtypes.long	dtypes.ulong	-9223372036854775809	raises error
+dtypes.long	dtypes.ulong	-9223372036854775808	9223372036854775808
+dtypes.long	dtypes.ulong	-1	18446744073709551615
+dtypes.long	dtypes.ulong	0	0
+dtypes.long	dtypes.ulong	1	1
+dtypes.long	dtypes.ulong	3074457345618258602	3074457345618258602
+dtypes.long	dtypes.ulong	9223372036854775807	9223372036854775807
+dtypes.long	dtypes.ulong	9223372036854775808	raises error
+dtypes.long	dtypes.ulong	1.5	raises error
+dtypes.long	dtypes.long	-9223372036854775809	raises error
+dtypes.long	dtypes.long	-9223372036854775808	-9223372036854775808
+dtypes.long	dtypes.long	-1	-1
+dtypes.long	dtypes.long	0	0
+dtypes.long	dtypes.long	1	1
+dtypes.long	dtypes.long	3074457345618258602	3074457345618258602
+dtypes.long	dtypes.long	9223372036854775807	9223372036854775807
+dtypes.long	dtypes.long	9223372036854775808	raises error
+dtypes.long	dtypes.long	1.5	raises error
+dtypes.bool	dtypes.fp8e4m3	False	0.0
+dtypes.bool	dtypes.fp8e4m3	True	0.001953125
+dtypes.bool	dtypes.fp8e5m2	False	0.0
+dtypes.bool	dtypes.fp8e5m2	True	1.52587890625e-05
+dtypes.bool	dtypes.fp8e4m3fnuz	False	0.0
+dtypes.bool	dtypes.fp8e4m3fnuz	True	0.0009765625
+dtypes.bool	dtypes.fp8e5m2fnuz	False	0.0
+dtypes.bool	dtypes.fp8e5m2fnuz	True	7.62939453125e-06
+dtypes.bool	dtypes.uchar	False	0
+dtypes.bool	dtypes.uchar	True	1
+dtypes.bool	dtypes.char	False	0
+dtypes.bool	dtypes.char	True	1
+dtypes.bool	dtypes.bool	False	False
+dtypes.bool	dtypes.bool	True	True

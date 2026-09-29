@@ -1,0 +1,11 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+group	members
+fp8_ocp	dtypes.fp8e4m3 dtypes.fp8e5m2
+fp8_fnuz	dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz
+fp8s	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz
+floats	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.double
+uints	dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong
+sints	dtypes.char dtypes.short dtypes.int dtypes.long
+ints	dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long
+weaks	dtypes.weakint dtypes.weakfloat
+all	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.double dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool

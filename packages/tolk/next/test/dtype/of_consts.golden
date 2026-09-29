@@ -1,0 +1,29 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+consts	dtype
+[]	dtypes.float
+[True]	dtypes.bool
+[False, True]	dtypes.bool
+[Invalid]	dtypes.bool
+[Invalid, True]	dtypes.bool
+[1]	dtypes.int
+[True, 2]	dtypes.int
+[True, 3.0]	dtypes.float
+[2, 3.0]	dtypes.float
+[True, 2, 3.0]	dtypes.float
+[1.5]	dtypes.float
+[Invalid, 1.5]	dtypes.float
+[0, 2147483647]	dtypes.int
+[-2147483648, 0]	dtypes.int
+[2147483648]	dtypes.long
+[-2147483649]	dtypes.long
+[9223372036854775807]	dtypes.long
+[9223372036854775808]	dtypes.ulong
+[18446744073709551615]	dtypes.ulong
+[-1, 9223372036854775808]	dtypes.long
+[18446744073709551616]	raises OverflowError
+[-9223372036854775809]	raises OverflowError
+[18446744073709551616, 18446744073709551616]	raises OverflowError
+[True, 18446744073709551616]	dtypes.long
+[Invalid, 18446744073709551616]	raises OverflowError
+[Invalid, 1]	dtypes.int
+[False, 2147483648]	dtypes.long

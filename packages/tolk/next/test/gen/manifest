@@ -1,8 +1,20 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+dtype/bitcasts.golden
+dtype/commit.golden
+dtype/const.golden
+dtype/const_repr.golden
+dtype/decode.golden
 dtype/finfo.golden
+dtype/groups.golden
 dtype/least_upper.golden
+dtype/least_upper_triples.golden
 dtype/lossless_cast.golden
+dtype/names.golden
+dtype/of_const.golden
+dtype/of_consts.golden
+dtype/projections.golden
 dtype/properties.golden
+dtype/truncation.golden
 helpers/colors.golden
 helpers/device_targets.golden
 helpers/division.golden

@@ -1,0 +1,97 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+lo	hi	default_int	dtype
+0	0	None	dtypes.int
+0	0	dtypes.char	dtypes.char
+0	0	dtypes.uchar	dtypes.uchar
+0	0	dtypes.short	dtypes.short
+0	0	dtypes.long	dtypes.long
+-128	127	None	dtypes.int
+-128	127	dtypes.char	dtypes.char
+-128	127	dtypes.uchar	dtypes.int
+-128	127	dtypes.short	dtypes.short
+-128	127	dtypes.long	dtypes.long
+-129	0	None	dtypes.int
+-129	0	dtypes.char	dtypes.int
+-129	0	dtypes.uchar	dtypes.int
+-129	0	dtypes.short	dtypes.short
+-129	0	dtypes.long	dtypes.long
+0	255	None	dtypes.int
+0	255	dtypes.char	dtypes.int
+0	255	dtypes.uchar	dtypes.uchar
+0	255	dtypes.short	dtypes.short
+0	255	dtypes.long	dtypes.long
+0	2147483647	None	dtypes.int
+0	2147483647	dtypes.char	dtypes.int
+0	2147483647	dtypes.uchar	dtypes.int
+0	2147483647	dtypes.short	dtypes.int
+0	2147483647	dtypes.long	dtypes.long
+-2147483648	0	None	dtypes.int
+-2147483648	0	dtypes.char	dtypes.int
+-2147483648	0	dtypes.uchar	dtypes.int
+-2147483648	0	dtypes.short	dtypes.int
+-2147483648	0	dtypes.long	dtypes.long
+0	2147483648	None	dtypes.long
+0	2147483648	dtypes.char	dtypes.long
+0	2147483648	dtypes.uchar	dtypes.long
+0	2147483648	dtypes.short	dtypes.long
+0	2147483648	dtypes.long	dtypes.long
+-2147483649	0	None	dtypes.long
+-2147483649	0	dtypes.char	dtypes.long
+-2147483649	0	dtypes.uchar	dtypes.long
+-2147483649	0	dtypes.short	dtypes.long
+-2147483649	0	dtypes.long	dtypes.long
+0	9223372036854775807	None	dtypes.long
+0	9223372036854775807	dtypes.char	dtypes.long
+0	9223372036854775807	dtypes.uchar	dtypes.long
+0	9223372036854775807	dtypes.short	dtypes.long
+0	9223372036854775807	dtypes.long	dtypes.long
+-9223372036854775808	9223372036854775807	None	dtypes.long
+-9223372036854775808	9223372036854775807	dtypes.char	dtypes.long
+-9223372036854775808	9223372036854775807	dtypes.uchar	dtypes.long
+-9223372036854775808	9223372036854775807	dtypes.short	dtypes.long
+-9223372036854775808	9223372036854775807	dtypes.long	dtypes.long
+0	9223372036854775808	None	dtypes.ulong
+0	9223372036854775808	dtypes.char	dtypes.ulong
+0	9223372036854775808	dtypes.uchar	dtypes.ulong
+0	9223372036854775808	dtypes.short	dtypes.ulong
+0	9223372036854775808	dtypes.long	dtypes.ulong
+0	18446744073709551615	None	dtypes.ulong
+0	18446744073709551615	dtypes.char	dtypes.ulong
+0	18446744073709551615	dtypes.uchar	dtypes.ulong
+0	18446744073709551615	dtypes.short	dtypes.ulong
+0	18446744073709551615	dtypes.long	dtypes.ulong
+-1	9223372036854775808	None	dtypes.long
+-1	9223372036854775808	dtypes.char	dtypes.long
+-1	9223372036854775808	dtypes.uchar	dtypes.long
+-1	9223372036854775808	dtypes.short	dtypes.long
+-1	9223372036854775808	dtypes.long	dtypes.long
+0	18446744073709551616	None	dtypes.long
+0	18446744073709551616	dtypes.char	dtypes.long
+0	18446744073709551616	dtypes.uchar	dtypes.long
+0	18446744073709551616	dtypes.short	dtypes.long
+0	18446744073709551616	dtypes.long	dtypes.long
+-9223372036854775809	0	None	dtypes.long
+-9223372036854775809	0	dtypes.char	dtypes.long
+-9223372036854775809	0	dtypes.uchar	dtypes.long
+-9223372036854775809	0	dtypes.short	dtypes.long
+-9223372036854775809	0	dtypes.long	dtypes.long
+-9223372036854775808	-9223372036854775808	None	dtypes.long
+-9223372036854775808	-9223372036854775808	dtypes.char	dtypes.long
+-9223372036854775808	-9223372036854775808	dtypes.uchar	dtypes.long
+-9223372036854775808	-9223372036854775808	dtypes.short	dtypes.long
+-9223372036854775808	-9223372036854775808	dtypes.long	dtypes.long
+18446744073709551615	18446744073709551615	None	dtypes.ulong
+18446744073709551615	18446744073709551615	dtypes.char	dtypes.ulong
+18446744073709551615	18446744073709551615	dtypes.uchar	dtypes.ulong
+18446744073709551615	18446744073709551615	dtypes.short	dtypes.ulong
+18446744073709551615	18446744073709551615	dtypes.long	dtypes.ulong
+18446744073709551616	18446744073709551616	None	raises OverflowError
+18446744073709551616	18446744073709551616	dtypes.char	raises OverflowError
+18446744073709551616	18446744073709551616	dtypes.uchar	raises OverflowError
+18446744073709551616	18446744073709551616	dtypes.short	raises OverflowError
+18446744073709551616	18446744073709551616	dtypes.long	raises OverflowError
+-9223372036854775809	-9223372036854775809	None	raises OverflowError
+-9223372036854775809	-9223372036854775809	dtypes.char	raises OverflowError
+-9223372036854775809	-9223372036854775809	dtypes.uchar	raises OverflowError
+-9223372036854775809	-9223372036854775809	dtypes.short	raises OverflowError
+-9223372036854775809	-9223372036854775809	dtypes.long	raises OverflowError

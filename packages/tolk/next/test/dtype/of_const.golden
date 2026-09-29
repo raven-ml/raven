@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+value	dtype
+True	dtypes.bool
+False	dtypes.bool
+Invalid	dtypes.bool
+0	dtypes.weakint
+18446744073709551616	dtypes.weakint
+0.0	dtypes.weakfloat
+nan	dtypes.weakfloat

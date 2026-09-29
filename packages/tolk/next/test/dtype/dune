@@ -1,0 +1,18 @@
+(test
+ (name test_dtype)
+ (modules test_dtype)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test zarith)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(executable
+ (name sum_acc)
+ (modules sum_acc)
+ (libraries unix tolk.next))
+
+(cram
+ (package tolk)
+ (deps sum_acc.exe))

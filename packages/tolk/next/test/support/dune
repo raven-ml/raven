@@ -1,8 +1,8 @@
 (library
  (name tolk_next_test)
- (modules golden)
+ (modules golden dtypes)
  (wrapped false)
- (libraries windtrap))
+ (libraries windtrap tolk.next zarith))
 
 (test
  (name test_golden)

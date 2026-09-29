@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+a	b	c	least_upper	folded
+dtypes.fp8e4m3	dtypes.fp8e4m3fnuz	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e4m3	dtypes.fp8e5m2	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e4m3	dtypes.fp8e5m2fnuz	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e4m3fnuz	dtypes.fp8e4m3	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e4m3fnuz	dtypes.fp8e5m2fnuz	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e5m2	dtypes.fp8e4m3	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e5m2	dtypes.fp8e4m3fnuz	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e5m2	dtypes.fp8e5m2fnuz	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e5m2fnuz	dtypes.fp8e4m3fnuz	dtypes.bfloat16	dtypes.bfloat16	dtypes.float
+dtypes.fp8e5m2fnuz	dtypes.fp8e5m2	dtypes.bfloat16	dtypes.bfloat16	dtypes.float

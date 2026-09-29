@@ -1,0 +1,22 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+dtype	weak	strong	least_upper_float	sum_acc	storage_fmt
+dtypes.void	dtypes.void	dtypes.void	raises KeyError	raises KeyError	None
+dtypes.bool	dtypes.bool	dtypes.bool	dtypes.float	dtypes.int	?
+dtypes.weakint	dtypes.weakint	dtypes.int	dtypes.weakfloat	dtypes.int	None
+dtypes.char	dtypes.weakint	dtypes.char	dtypes.float	dtypes.int	b
+dtypes.uchar	dtypes.weakint	dtypes.uchar	dtypes.float	dtypes.uint	B
+dtypes.short	dtypes.weakint	dtypes.short	dtypes.float	dtypes.int	h
+dtypes.ushort	dtypes.weakint	dtypes.ushort	dtypes.float	dtypes.uint	H
+dtypes.int	dtypes.weakint	dtypes.int	dtypes.float	dtypes.int	i
+dtypes.uint	dtypes.weakint	dtypes.uint	dtypes.float	dtypes.uint	I
+dtypes.long	dtypes.weakint	dtypes.long	dtypes.float	dtypes.long	q
+dtypes.ulong	dtypes.weakint	dtypes.ulong	dtypes.float	dtypes.ulong	Q
+dtypes.weakfloat	dtypes.weakfloat	dtypes.float	dtypes.weakfloat	dtypes.float	None
+dtypes.fp8e4m3	dtypes.weakfloat	dtypes.fp8e4m3	dtypes.fp8e4m3	dtypes.float	B
+dtypes.fp8e4m3fnuz	dtypes.weakfloat	dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	dtypes.float	B
+dtypes.fp8e5m2	dtypes.weakfloat	dtypes.fp8e5m2	dtypes.fp8e5m2	dtypes.float	B
+dtypes.fp8e5m2fnuz	dtypes.weakfloat	dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	dtypes.float	B
+dtypes.half	dtypes.weakfloat	dtypes.half	dtypes.half	dtypes.float	e
+dtypes.bfloat16	dtypes.weakfloat	dtypes.bfloat16	dtypes.bfloat16	dtypes.float	H
+dtypes.float	dtypes.weakfloat	dtypes.float	dtypes.float	dtypes.float	f
+dtypes.double	dtypes.weakfloat	dtypes.double	dtypes.double	dtypes.double	d
