@@ -58,8 +58,8 @@ let sysmem m n =
               raise e))
 
 let alloc ?(host = false) ?(uncached = false) ?(cpu_access = false)
-    ?(zero = false) m n =
-  if host || (cpu_access && small_bar m) then sysmem m n
+    ?(devmem = false) ?(zero = false) m n =
+  if host || (cpu_access && small_bar m && not devmem) then sysmem m n
   else
     let n = round_up n (if n >= 8 lsl 20 then 2 lsl 20 else 0x1000) in
     Option.map
@@ -84,7 +84,7 @@ let free m mem =
 
 let map_host m a n =
   let lo = Nativeint.to_int a and n = round_up n Sysmem.page in
-  let base = Page_table.Space.base (Page_table.space m.tables) in
+  let base = Page_table.base m.tables in
   if lo mod Sysmem.page <> 0 then
     Error (Printf.sprintf "the host memory at 0x%x does not start on a page" lo)
   else if lo < base || lo + n > base + Page_table.span m.tables then

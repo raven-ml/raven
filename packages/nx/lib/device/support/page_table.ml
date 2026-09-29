@@ -27,8 +27,8 @@ type entry = {
   levels : int list;
   bits : int;
   first : int;
-  get : table:int -> int -> int64;
-  set : table:int -> int -> int64 -> unit;
+  get : level:int -> table:int -> int -> int64;
+  set : level:int -> table:int -> int -> int64 -> unit;
   encode :
     level:int ->
     table:bool ->
@@ -67,6 +67,7 @@ type t = {
   pages : (int * int) list; (* block sizes and alignments, largest first *)
   mutable booting : bool;
   root : int;
+  base : int;
 }
 
 let round_up n a = (n + a - 1) / a * a
@@ -109,7 +110,7 @@ let pfree t pa = Tlsf.free (owner t pa) pa
    from the root to the table it is in: each element is a table's physical
    address, its level, and the index of the next entry. *)
 type walk = {
-  mutable at : int; (* the virtual address, relative to the space's base *)
+  mutable at : int; (* the virtual address, relative to the tables' base *)
   mutable path : (int * int * int) list;
   create : bool;
   free_tables : bool;
@@ -119,7 +120,7 @@ type walk = {
 let index t level va = va / t.covers.(level) mod t.counts.(level)
 
 let walk t ?(create = false) ?(free_tables = false) ?(inspect = false) va =
-  let at = va - Space.base t.space in
+  let at = va - t.base in
   let lv = t.e.first in
   { at; path = [ (t.root, lv, index t lv at) ]; create; free_tables; inspect }
 
@@ -127,25 +128,26 @@ let top w = List.hd w.path
 
 let down t w =
   let table, level, i = top w in
-  let e = t.e.get ~table i in
+  let e = t.e.get ~level ~table i in
   if not (t.e.valid e) then begin
     if not w.create then
       invalid_arg "Page_table: an address of the range is not mapped";
     match take t (pool t ~table:true) 0x1000 with
     | None -> failwith "Page_table: no memory for a page table"
     | Some pa ->
-        t.e.set ~table i
+        t.e.set ~level ~table i
           (t.e.encode ~level ~table:true Phys ~uncached:false ~snooped:false
              ~fragment:0 ~valid:true pa)
   end;
-  let e = t.e.get ~table i in
+  let e = t.e.get ~level ~table i in
   if t.e.leaf ~level e then invalid_arg "Page_table: a page where a table was";
   let child = t.e.address e and level = level + 1 in
   w.path <- (child, level, index t level w.at) :: w.path
 
 let empty t table level =
   let rec go i =
-    i >= t.counts.(level) || ((not (t.e.valid (t.e.get ~table i))) && go (i + 1))
+    i >= t.counts.(level)
+    || ((not (t.e.valid (t.e.get ~level ~table i))) && go (i + 1))
   in
   go 0
 
@@ -155,7 +157,7 @@ let try_free t w =
   | (table, level, _) :: (parent, plevel, pi) :: _
     when w.free_tables && empty t table level ->
       pfree t table;
-      t.e.set ~table:parent pi
+      t.e.set ~level:plevel ~table:parent pi
         (t.e.encode ~level:plevel ~table:false Phys ~uncached:false
            ~snooped:false ~fragment:0 ~valid:false 0);
       true
@@ -194,7 +196,7 @@ let visit ?(pa = 0) t w size f =
             || w.at land (covers - 1) <> 0
             || (pa + off) land (covers - 1) <> 0
           else
-            let e = t.e.get ~table i in
+            let e = t.e.get ~level ~table i in
             (not (t.e.leaf ~level e)) && (w.free_tables || t.e.valid e)
         in
         if deeper then begin
@@ -231,7 +233,7 @@ let fragment ~va ~pa size =
 
 (* Tables *)
 
-let create e space ~memory ~boot ~tables ~pages =
+let create ?base e space ~memory ~boot ~tables ~pages =
   let levels = Array.of_list (List.rev e.levels) in
   let msb = Array.of_list (e.levels @ [ e.bits + 1 ]) in
   let n = Array.length levels in
@@ -258,21 +260,30 @@ let create e space ~memory ~boot ~tables ~pages =
     pages;
     booting = true;
     root;
+    base = Option.value base ~default:(Space.base space);
   }
 
 let booted t = t.booting <- false
 let root t = t.root
 let space t = t.space
+let base t = t.base
 let span t = 1 lsl t.e.bits
 let memory t = Tlsf.length t.main
+
+let tables t ~va n =
+  let w = walk t ~create:true va in
+  let path = ref [] in
+  visit t w n (fun _ _ _ _ _ _ ->
+      if !path = [] then path := List.map (fun (table, _, _) -> table) w.path);
+  List.rev !path
 
 let clear t ~va n =
   let w = walk t ~free_tables:true va in
   visit t w n (fun _ table level i n _ ->
       for k = i to i + n - 1 do
-        if not (t.e.valid (t.e.get ~table k)) then
+        if not (t.e.valid (t.e.get ~level ~table k)) then
           invalid_arg (Printf.sprintf "Page_table.unmap: 0x%x is not mapped" va);
-        t.e.set ~table k
+        t.e.set ~level ~table k
           (t.e.encode ~level ~table:false Phys ~uncached:false ~snooped:false
              ~fragment:0 ~valid:false 0)
       done)
@@ -284,19 +295,19 @@ let unmap t ~va n =
 let map ?(uncached = false) ?(snooped = false) t ~va space ranges =
   let size = List.fold_left (fun n (_, s) -> n + s) 0 ranges in
   let probe = walk t ~inspect:true va in
-  visit t probe size (fun _ table _ i n _ ->
+  visit t probe size (fun _ table level i n _ ->
       for k = i to i + n - 1 do
-        if t.e.valid (t.e.get ~table k) then
+        if t.e.valid (t.e.get ~level ~table k) then
           invalid_arg
             (Printf.sprintf "Page_table.map: 0x%x is mapped already" va)
       done);
   let w = walk t ~create:true va in
-  let base = Space.base t.space in
+  let base = t.base in
   let write (pa, bytes) =
     visit ~pa t w bytes (fun off table level i n covers ->
         let fragment = fragment ~va:(base + w.at) ~pa:(pa + off) (n * covers) in
         for k = 0 to n - 1 do
-          t.e.set ~table (i + k)
+          t.e.set ~level ~table (i + k)
             (t.e.encode ~level ~table:false space ~uncached ~snooped ~fragment
                ~valid:true
                (pa + off + (k * covers)))

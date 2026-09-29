@@ -63,11 +63,13 @@ type entry = {
           level up; [[12; 21; 30; 39]] for four levels of 512 entries. *)
   bits : int;  (** The number of bits of a virtual address. *)
   first : int;  (** The number of the root level. *)
-  get : table:int -> int -> int64;
-      (** [get ~table i] is entry [i] of the table at physical address [table].
-      *)
-  set : table:int -> int -> int64 -> unit;
-      (** [set ~table i e] writes entry [i] of the table at [table]. *)
+  get : level:int -> table:int -> int -> int64;
+      (** [get ~level ~table i] is entry [i] of the table of [level] at physical
+          address [table]. Where the format's entries are wider than 64 bits, it
+          is the 64 bits of them that the entry uses. *)
+  set : level:int -> table:int -> int -> int64 -> unit;
+      (** [set ~level ~table i e] writes entry [i] of the table of [level] at
+          [table]: [e] as {!get} reads it. *)
   encode :
     level:int ->
     table:bool ->
@@ -112,6 +114,7 @@ type t
 (** The type for the page tables and physical memory of one GPU. *)
 
 val create :
+  ?base:int ->
   entry ->
   Space.t ->
   memory:int ->
@@ -123,9 +126,10 @@ val create :
     physical memory: a boot pool of its first [boot] bytes, a pool for page
     tables of [memory / 512] bytes rounded up to 1 MiB if [tables], and the main
     pool. [pages] lists the physical block sizes and alignments that {!alloc}
-    tries, largest first. It allocates the root table in the boot pool, and
-    starts {e booting}: until {!booted}, physical memory comes only from the
-    boot pool.
+    tries, largest first. The tables translate the addresses from [base] on
+    (defaults to [s]'s base), of which [s] allocates some. It allocates the root
+    table in the boot pool, and starts {e booting}: until {!booted}, physical
+    memory comes only from the boot pool.
 
     Raises [Invalid_argument] if the pools do not fit in [memory] or the boot
     pool cannot hold the root table. *)
@@ -136,9 +140,12 @@ val booted : t -> unit
 val space : t -> Space.t
 (** [space t] is the virtual address space [t] maps. *)
 
+val base : t -> int
+(** [base t] is the first virtual address the tables translate. *)
+
 val span : t -> int
-(** [span t] is the number of virtual addresses the tables reach from the
-    space's base: [2{^bits}]. *)
+(** [span t] is the number of virtual addresses the tables reach from {!base}:
+    [2{^bits}]. *)
 
 val root : t -> int
 (** [root t] is the physical address of the root table. *)
@@ -169,6 +176,13 @@ val map :
 
     Raises [Invalid_argument] if an address of the range is mapped already, and
     [Failure] if a table cannot be allocated, having unmapped what it mapped. *)
+
+val tables : t -> va:int -> int -> int list
+(** [tables t ~va n] is the physical addresses of the tables from the root down
+    to the one whose entries would map the [n] bytes from [va], creating those
+    that are missing, as {!map} would, root first.
+
+    Raises [Failure] if a table cannot be allocated. *)
 
 val unmap : t -> va:int -> int -> unit
 (** [unmap t ~va n] unmaps the [n] bytes mapped from [va], frees the tables that

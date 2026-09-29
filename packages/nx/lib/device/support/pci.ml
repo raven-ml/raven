@@ -165,6 +165,10 @@ let resize_bar p i =
           settings"
          i p.bus e)
 
+let reset p =
+  write (path p.bus "reset") "1";
+  Unix.sleepf 0.1
+
 let wait_interrupt p ms =
   match p.interrupts with Some fd -> vfio_wait fd ms | None -> false
 

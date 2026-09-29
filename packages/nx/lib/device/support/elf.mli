@@ -15,6 +15,9 @@ type section = {
   name : string;  (** Its name. *)
   kind : int;  (** Its type, [sh_type]. *)
   offset : int;  (** Its offset in the image, for sections in it. *)
+  size : int;
+      (** Its size in memory, [sh_size], which a section with no bytes in the
+          object, such as [.bss], has too. *)
   contents : string;  (** Its bytes in the object. *)
 }
 (** The type for sections. *)

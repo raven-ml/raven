@@ -69,6 +69,12 @@ val resize_bar : t -> int -> unit
 
     Raises [Failure] if the system refuses. *)
 
+val reset : t -> unit
+(** [reset p] resets [p] with the reset Linux has for it, and waits until it
+    answers again: it clears the state a previous driver left in it.
+
+    Raises [Failure] naming the file if the process may not reset it. *)
+
 val wait_interrupt : t -> int -> bool
 (** [wait_interrupt p ms] waits at most [ms] milliseconds for an interrupt of
     [p], releasing the OCaml runtime, and is [true] iff one arrived. Without

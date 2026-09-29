@@ -3,7 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type section = { name : string; kind : int; offset : int; contents : string }
+type section = {
+  name : string;
+  kind : int;
+  offset : int;
+  size : int;
+  contents : string;
+}
+
 type relocation = { at : int; target : int; kind : int; addend : int }
 
 type t = {
@@ -24,6 +31,7 @@ type header = {
   h_name : string;
   h_kind : int;
   h_addr : int;
+  h_size : int;
   h_contents : string;
   h_link : int;
   h_info : int;
@@ -77,6 +85,7 @@ let load ?(align = 1) obj =
           h_name = cstring names name;
           h_kind = kind;
           h_addr = addr;
+          h_size = size;
           h_contents = (if kind = sht_nobits then "" else sub offset size);
           h_link = u32 (h + 40);
           h_info = u32 (h + 44);
@@ -190,7 +199,13 @@ let load ?(align = 1) obj =
            let offset =
              match appended.(i) with Some at -> at | None -> h.h_addr
            in
-           { name = h.h_name; kind = h.h_kind; offset; contents = h.h_contents })
+           {
+             name = h.h_name;
+             kind = h.h_kind;
+             offset;
+             size = h.h_size;
+             contents = h.h_contents;
+           })
          headers)
   in
   { image = Bytes.to_string image; sections; symbols; relocations }

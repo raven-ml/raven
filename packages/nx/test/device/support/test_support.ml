@@ -98,9 +98,9 @@ let format mem ~flushes =
     bits = 48;
     first = 0;
     get =
-      (fun ~table i ->
+      (fun ~level:_ ~table i ->
         Option.value ~default:0L (Hashtbl.find_opt mem (table + (8 * i))));
-    set = (fun ~table i e -> Hashtbl.replace mem (table + (8 * i)) e);
+    set = (fun ~level:_ ~table i e -> Hashtbl.replace mem (table + (8 * i)) e);
     encode =
       (fun ~level:_ ~table _ ~uncached:_ ~snooped:_ ~fragment ~valid pa ->
         if not valid then 0L
@@ -142,10 +142,10 @@ let tables ?(table_pool = false) ?(memory = 65 lsl 20) () =
   Page_table.booted t;
   (t, mem, flushes)
 
-(* The entry that maps [va], and its level and the offset of [va] in its
-   page. *)
-let leaf t mem va =
-  let off = va - space_base in
+(* The entry that maps [va], and its level and the offset of [va] in its page,
+   in tables that translate from [base] (defaults to the space's). *)
+let leaf ?(base = space_base) t mem va =
+  let off = va - base in
   let rec go table level =
     let shift = List.nth [ 39; 30; 21; 12 ] level in
     let count = if level = 0 then 1024 else 512 in
@@ -161,11 +161,11 @@ let leaf t mem va =
   go (Page_table.root t) 0
 
 (* The physical address [va] maps to, and the level of its entry. *)
-let translate t mem va =
+let translate ?base t mem va =
   Option.map
     (fun (e, level, off) ->
       (Int64.to_int (Int64.logand e 0xFFFF_FFFF_F000L) + off, level))
-    (leaf t mem va)
+    (leaf ?base t mem va)
 
 let fragment t mem va =
   Option.map
@@ -333,6 +333,65 @@ let test_boot_pool () =
   let c = require_some (Page_table.palloc ~boot:true t 0x1000) in
   is_true ~msg:"boot memory on request" (c < 1 lsl 20)
 
+(* Entries are read and written with the level of their table: [set] sees each
+   level from the root to the leaf once when one page is mapped. *)
+let test_entry_levels () =
+  let mem = Hashtbl.create 16 and flushes = ref 0 and levels = ref [] in
+  let f = format mem ~flushes in
+  let f =
+    {
+      f with
+      set =
+        (fun ~level ~table i e ->
+          levels := level :: !levels;
+          f.set ~level ~table i e);
+    }
+  in
+  let space = Page_table.Space.create ~base:space_base (1 lsl 40) in
+  let t =
+    Page_table.create f space ~memory:(8 lsl 20) ~boot:(1 lsl 20) ~tables:false
+      ~pages:[ (0x1000, 0x1000) ]
+  in
+  Page_table.booted t;
+  ignore
+    (Page_table.map t ~va:(space_base + 0x7000) Page_table.Phys
+       [ (0x40_0000, 0x1000) ]);
+  equal ~msg:"root to leaf" (list int) [ 0; 1; 2; 3 ] (List.rev !levels)
+
+let test_path () =
+  let t, mem, _ = tables () in
+  let va = space_base + (6 lsl 20) in
+  let path = Page_table.tables t ~va (2 lsl 20) in
+  equal ~msg:"three tables down to the 2 MiB entries" int 3 (List.length path);
+  equal ~msg:"root first" int (Page_table.root t) (List.hd path);
+  equal ~msg:"the same tables again" (list int) path
+    (Page_table.tables t ~va (2 lsl 20));
+  ignore (Page_table.map t ~va Page_table.Phys [ (2 lsl 20, 2 lsl 20) ]);
+  equal ~msg:"which map uses"
+    (option (pair int int))
+    (Some ((2 lsl 20) + 8, 2))
+    (translate t mem (va + 8))
+
+(* Tables may translate from a base below their space's: an address is then
+   indexed from that base. *)
+let test_base () =
+  let mem = Hashtbl.create 16 and flushes = ref 0 in
+  let space = Page_table.Space.create ~base:space_base (1 lsl 40) in
+  let t =
+    Page_table.create ~base:0 (format mem ~flushes) space ~memory:(8 lsl 20)
+      ~boot:(1 lsl 20) ~tables:false
+      ~pages:[ (0x1000, 0x1000) ]
+  in
+  Page_table.booted t;
+  equal ~msg:"its base" int 0 (Page_table.base t);
+  let va = space_base + 0x5000 in
+  ignore (Page_table.map t ~va Page_table.Phys [ (0x40_0000, 0x1000) ]);
+  equal ~msg:"indexed from 0"
+    (option (pair int int))
+    (Some (0x40_0008, 3))
+    (translate ~base:0 t mem (va + 8));
+  is_none ~msg:"not from the space's base" (translate t mem (va + 8))
+
 (* Elf *)
 
 (* A 64-bit little-endian relocatable object with the given sections, after the
@@ -451,6 +510,22 @@ let test_elf () =
     (String.length o.image);
   equal ~msg:"its symbols are image offsets" (option int) (Some 0x102)
     (Elf.symbol o "k.kd");
+  let bss =
+    elf
+      [
+        (".text", 1, 0, "ABCD", 0, 0, 4, 0);
+        (".bss", 8, 0, String.make 64 'x', 0, 0, 8, 0);
+      ]
+  in
+  (match
+     List.find_opt
+       (fun (s : Elf.section) -> s.name = ".bss")
+       (Elf.load bss).sections
+   with
+  | Some s ->
+      equal ~msg:"a section with no bytes has a size" int 64 s.size;
+      equal ~msg:"and no contents" string "" s.contents
+  | None -> fail "no .bss");
   let failure = Exn.failure ~substring:"Elf.load" in
   raises_match failure (fun () -> Elf.load "not an elf");
   raises_match failure (fun () -> Elf.load (String.sub obj 0 100))
@@ -578,6 +653,9 @@ let () =
              test_tables_freed;
              test "alloc and free" test_alloc;
              test "the boot pool" test_boot_pool;
+             test "entries by level" test_entry_levels;
+             test "the tables of a range" test_path;
+             test "a base of their own" test_base;
            ];
          group "elf" [ test "layout, symbols, relocations" test_elf ];
          group "firmware"

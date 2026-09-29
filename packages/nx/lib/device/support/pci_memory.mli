@@ -49,6 +49,7 @@ val alloc :
   ?host:bool ->
   ?uncached:bool ->
   ?cpu_access:bool ->
+  ?devmem:bool ->
   ?zero:bool ->
   t ->
   int ->
@@ -59,9 +60,10 @@ val alloc :
       addresses at the GPU's address;
     - otherwise the GPU's memory, bypassing the GPU's caches if [uncached] and
       zeroed if [zero]; with [~cpu_access:true], one physical block the process
-      reaches through the memory BAR, or system memory when the BAR is small.
-      Every flag defaults to [false]. [None] if the memory or the address space
-      is exhausted.
+      reaches through the memory BAR, or system memory when the BAR is small,
+      unless [devmem], which keeps it in the GPU's memory for structures the GPU
+      requires there. Every flag defaults to [false]. [None] if the memory or
+      the address space is exhausted.
 
     Raises [Failure] if system memory or a page table cannot be allocated,
     having freed what it took. *)

@@ -717,8 +717,8 @@ let entry d ~flush =
     levels = [ 12; 21; 30; 39 ];
     bits = 48;
     first = D.amdgpu_vm_pdb2;
-    get = (fun ~table i -> Mmio.get64 d.vram (table + (8 * i)));
-    set = (fun ~table i e -> Mmio.set64 d.vram (table + (8 * i)) e);
+    get = (fun ~level:_ ~table i -> Mmio.get64 d.vram (table + (8 * i)));
+    set = (fun ~level:_ ~table i e -> Mmio.set64 d.vram (table + (8 * i)) e);
     encode =
       (fun ~level ~table space ~uncached ~snooped ~fragment ~valid pa ->
         let pa = if space = Phys then paddr2xgmi d pa else pa in
