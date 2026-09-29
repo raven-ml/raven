@@ -408,12 +408,11 @@ let integer_dtypes =
 let at_scale =
   group "reductions at scale"
     [
-      test
-        "argmax and argmin refuse an axis longer than an int32 index holds \
-         (nx.mli is silent)" (fun () ->
+      test "argmax and argmin refuse an axis longer than an int32 index reaches"
+        (fun () ->
           let long = Nx.broadcast_to [| 2147483648 |] (Nx.scalar Nx.int8 1) in
-          raises_match Exn.failure (fun () -> Nx.argmax long);
-          raises_match Exn.failure (fun () -> Nx.argmin ~axis:0 long));
+          raises_invalid_arg (fun () -> Nx.argmax long);
+          raises_invalid_arg (fun () -> Nx.argmin ~axis:0 long));
       slow
         "sum along the long axis of a matrix of two columns keeps each column"
         (fun () ->

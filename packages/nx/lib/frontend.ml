@@ -2079,31 +2079,30 @@ let argsort ?(descending = false) ?(axis = -1) x =
   if ndim x = 0 then scalar (B.context x) Nx_dtype.int32 0l
   else B.argsort ~axis:(sort_axis "argsort" x axis) ~descending x
 
-let argmax ?axis ?(keepdims = false) x =
-  let x', axis =
-    match axis with
-    | None -> (flatten x, 0)
-    | Some a ->
-        let r = ndim x in
+(* The tensor and axis an arg-reduction runs along. Its indices are int32, so
+   the axis holds at most [Int32.max_int] entries, checked before flattening. *)
+let arg_axis op ?axis x =
+  let r = ndim x in
+  let a =
+    Option.map
+      (fun a ->
         let a = resolve_single_axis ~ndim_opt:r x a in
         if a < 0 || a >= r then
-          err "argmax" "axis %d out of bounds for %dD tensor" a r;
-        (x, a)
+          err op "axis %d out of bounds for %dD tensor" a r;
+        a)
+      axis
   in
+  let n = match a with None -> numel x | Some a -> (shape x).(a) in
+  if n > Int32.to_int Int32.max_int then
+    err op "axis of %d entries, more than an int32 index reaches" n;
+  match a with None -> (flatten x, 0) | Some a -> (x, a)
+
+let argmax ?axis ?(keepdims = false) x =
+  let x', axis = arg_axis "argmax" ?axis x in
   B.argmax ~axis ~keepdims x'
 
-let argmin (type a b) ?axis ?(keepdims = false) (x : (a, b) t) :
-    (int32, Nx_dtype.int32_elt) t =
-  let x', axis =
-    match axis with
-    | None -> (flatten x, 0)
-    | Some a ->
-        let r = ndim x in
-        let a = resolve_single_axis ~ndim_opt:r x a in
-        if a < 0 || a >= r then
-          err "argmin" "axis %d out of bounds for %dD tensor" a r;
-        (x, a)
-  in
+let argmin ?axis ?(keepdims = false) x =
+  let x', axis = arg_axis "argmin" ?axis x in
   B.argmin ~axis ~keepdims x'
 
 (* Above this many entries [top_k] stops taking one greatest entry per pass

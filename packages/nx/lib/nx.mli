@@ -2440,7 +2440,8 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
     the index of the first NaN. When [axis] is omitted, operates on the
     flattened tensor. [keepdims] defaults to [false].
 
-    Raises [Invalid_argument] if [axis] is out of bounds.
+    Raises [Invalid_argument] if [axis] is out of bounds, or if it holds more
+    than [Int32.max_int] entries, which an int32 index cannot reach.
 
     {@ocaml[
       # create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |]
@@ -2456,7 +2457,7 @@ val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
     the index of the first NaN. When [axis] is omitted, operates on the
     flattened tensor. [keepdims] defaults to [false].
 
-    Raises [Invalid_argument] if [axis] is out of bounds.
+    Raises [Invalid_argument] as {!argmax} does.
 
     See also {!argmax}. *)
 

@@ -2810,6 +2810,10 @@ thread.
 
 ### Nx
 
+- `Nx.argmax` and `Nx.argmin` raise `Invalid_argument` on an axis of more
+  than `Int32.max_int` entries, which their int32 indices cannot reach, and
+  say so. They raised `Failure` from the C backend, after flattening, which
+  could copy the whole axis first.
 - Storing an out-of-range integer into an int4 or uint4 element keeps its low
   four bits, as every wider integer dtype keeps its low bits. It clamped to
   the range, so `Nx.create Nx.int4 [| 1 |] [| 9 |]` held 7 where an int8 store
