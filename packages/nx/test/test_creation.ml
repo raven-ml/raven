@@ -54,17 +54,13 @@ let filled =
       test "create refuses a negative dimension" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.create Nx.int32 [| 2; -3 |] [| 1l; 2l |]));
-      xfail
-        ~reason:
-          "create, zeros and eye check only the product of the shape, and \
-           return a tensor of shape [-2; -3]"
-        (test
-           "create, zeros and eye refuse negative dimensions whose product is \
-            the element count (nx.mli is silent)" (fun () ->
-             raises_invalid_arg (fun () ->
-                 Nx.create Nx.int32 [| -2; -3 |] (Array.make 6 0l));
-             raises_invalid_arg (fun () -> Nx.zeros Nx.int32 [| -2; -3 |]);
-             raises_invalid_arg (fun () -> Nx.eye ~m:(-2) Nx.int32 (-3))));
+      test
+        "create, zeros and eye refuse negative dimensions whose product is the \
+         element count (nx.mli is silent)" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.create Nx.int32 [| -2; -3 |] (Array.make 6 0l));
+          raises_invalid_arg (fun () -> Nx.zeros Nx.int32 [| -2; -3 |]);
+          raises_invalid_arg (fun () -> Nx.eye ~m:(-2) Nx.int32 (-3)));
     ]
 
 let dims = Gen.int_range 0 5
@@ -244,33 +240,28 @@ let grids =
               Nx.meshgrid
                 (Nx.zeros Nx.int32 [| 2 |])
                 (Nx.zeros Nx.int32 [| 2; 2 |])));
-      xfail
-        ~reason:
-          "one_hot compares the indices with arange in their own dtype, which \
-           wraps past its range: uint8 index 5 of 300 classes also marks class \
-           261, and int8 index -100 of 200 classes marks class 156"
-        (cases
-           "one_hot marks one class per index in range and none out of range, \
-            whatever the index dtype"
-           ~name:(fun (name, _, _, _) -> name)
-           [
-             ( "uint8 index 5 of 300 classes",
-               300,
-               Some 5,
-               fun () ->
-                 Nx.one_hot ~num_classes:300
-                   (Nx.create Nx.uint8 [| 1 |] [| 5 |]) );
-             ( "int8 index -100 of 200 classes",
-               200,
-               None,
-               fun () ->
-                 Nx.one_hot ~num_classes:200
-                   (Nx.create Nx.int8 [| 1 |] [| -100 |]) );
-           ]
-           (fun (_, n, hot, one_hot) ->
-             equal (Ref.witness int)
-               (Ref.init [| 1; n |] (fun i -> if Some i.(1) = hot then 1 else 0))
-               (Ref.of_nx (one_hot ()))));
+      cases
+        "one_hot marks one class per index in range and none out of range, \
+         whatever the index dtype"
+        ~name:(fun (name, _, _, _) -> name)
+        [
+          ( "uint8 index 5 of 300 classes",
+            300,
+            Some 5,
+            fun () ->
+              Nx.one_hot ~num_classes:300 (Nx.create Nx.uint8 [| 1 |] [| 5 |])
+          );
+          ( "int8 index -100 of 200 classes",
+            200,
+            None,
+            fun () ->
+              Nx.one_hot ~num_classes:200 (Nx.create Nx.int8 [| 1 |] [| -100 |])
+          );
+        ]
+        (fun (_, n, hot, one_hot) ->
+          equal (Ref.witness int)
+            (Ref.init [| 1; n |] (fun i -> if Some i.(1) = hot then 1 else 0))
+            (Ref.of_nx (one_hot ())));
       test "one_hot refuses zero classes and float indices" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.one_hot ~num_classes:0 (Nx.zeros Nx.int32 [| 2 |]));

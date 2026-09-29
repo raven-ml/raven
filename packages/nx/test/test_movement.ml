@@ -191,34 +191,23 @@ let joins =
           raises_invalid_arg (fun () ->
               Nx.stack [ tensor_of [| 2 |]; tensor_of [| 3 |] ]);
           raises_invalid_arg (fun () -> Nx.split ~axis:0 2 (tensor_of [| 3 |])));
-      xfail
-        ~reason:"split computes the axis size mod 0 and raises Division_by_zero"
-        (test "split refuses zero parts" (fun () ->
-             raises_invalid_arg (fun () ->
-                 Nx.split ~axis:0 0 (tensor_of [| 4 |]))));
-      xfail
-        ~reason:
-          "concatenate copies a single tensor without reading the axis, and \
-           reads -2 of a vector as -1"
-        (test
-           "concatenate refuses an axis out of bounds, for one tensor too \
-            (nx.mli is silent)" (fun () ->
-             let v = tensor_of [| 4 |] in
-             raises_invalid_arg (fun () -> Nx.concatenate ~axis:(-2) [ v; v ]);
-             raises_invalid_arg (fun () -> Nx.concatenate ~axis:5 [ v ]);
-             raises_invalid_arg (fun () ->
-                 Nx.concatenate ~axis:0 [ Nx.scalar Nx.int32 1l ])));
-      xfail
-        ~reason:
-          "a negative index ends the part before it as a raw bound, which is \
-           empty, and starts the part after it counted from the end"
-        (test
-           "array_split at a negative index counts it from the end, as a range \
-            does (nx.mli is silent)" (fun () ->
-             let v = tensor_of [| 4 |] in
-             equal (list same)
-               (Nx.array_split ~axis:0 (`Indices [ 3 ]) v)
-               (Nx.array_split ~axis:0 (`Indices [ -1 ]) v)));
+      test "split refuses zero parts" (fun () ->
+          raises_invalid_arg (fun () -> Nx.split ~axis:0 0 (tensor_of [| 4 |])));
+      test
+        "concatenate refuses an axis out of bounds, for one tensor too (nx.mli \
+         is silent)" (fun () ->
+          let v = tensor_of [| 4 |] in
+          raises_invalid_arg (fun () -> Nx.concatenate ~axis:(-2) [ v; v ]);
+          raises_invalid_arg (fun () -> Nx.concatenate ~axis:5 [ v ]);
+          raises_invalid_arg (fun () ->
+              Nx.concatenate ~axis:0 [ Nx.scalar Nx.int32 1l ]));
+      test
+        "array_split at a negative index counts it from the end, as a range \
+         does (nx.mli is silent)" (fun () ->
+          let v = tensor_of [| 4 |] in
+          equal (list same)
+            (Nx.array_split ~axis:0 (`Indices [ 3 ]) v)
+            (Nx.array_split ~axis:0 (`Indices [ -1 ]) v));
     ]
 
 let flattening =

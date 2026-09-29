@@ -83,17 +83,11 @@ let properties =
         (fun (_, (expected, view)) ->
           equal bool expected
             (Nx.is_c_contiguous (view (Nx.zeros Nx.int32 [| 2; 3 |]))));
-      xfail
-        ~reason:
-          "is_c_contiguous compares every stride with its row-major value, so \
-           it says false for a unit axis of another stride, as in the \
-           transpose of a [1; 3], and for a tensor with no elements, even a \
-           created [0]"
-        (prop ~examples:[ transposed_row ]
-           "is_c_contiguous holds exactly when the elements follow each other \
-            in the buffer"
-           laid_out (fun (_, t) ->
-             equal bool (consecutive t) (Nx.is_c_contiguous t)));
+      prop ~examples:[ transposed_row ]
+        "is_c_contiguous holds exactly when the elements follow each other in \
+         the buffer"
+        laid_out (fun (_, t) ->
+          equal bool (consecutive t) (Nx.is_c_contiguous t));
     ]
 
 let conversions =
@@ -123,24 +117,17 @@ let conversions =
       test "contiguous of a contiguous tensor shares its storage" (fun () ->
           let t = Nx.zeros Nx.int32 [| 2; 3 |] in
           is_true (Nx.data (Nx.contiguous t) == Nx.data t));
-      xfail
-        ~reason:
-          "contiguous copies a C-contiguous view whose offset is not 0, such \
-           as a tensor without its first row"
-        (prop ~examples:[ without_first ]
-           "contiguous shares the storage of every C-contiguous tensor" laid_out
-           (fun (_, t) ->
-             if Nx.is_c_contiguous t then
-               is_true (Nx.data (Nx.contiguous t) == Nx.data t)));
-      xfail
-        ~reason:
-          "to_bigarray wraps the tensor's own buffer when it is contiguous \
-           from offset 0"
-        (test "to_bigarray copies, so writing the bigarray leaves the tensor"
-           (fun () ->
-             let t = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
-             Bigarray.Genarray.set (Nx.to_bigarray t) [| 0 |] 99l;
-             equal same (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]) t));
+      prop ~examples:[ without_first ]
+        "contiguous shares the storage of a C-contiguous tensor at offset 0, \
+         and copies one past it"
+        laid_out (fun (_, t) ->
+          if Nx.is_c_contiguous t then
+            equal bool (Nx.offset t = 0) (Nx.data (Nx.contiguous t) == Nx.data t));
+      test "to_bigarray copies, so writing the bigarray leaves the tensor"
+        (fun () ->
+          let t = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
+          Bigarray.Genarray.set (Nx.to_bigarray t) [| 0 |] 99l;
+          equal same (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]) t);
       test "to_bigarray refuses a dtype Bigarray has no kind for" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.to_bigarray (Nx.zeros Nx.bfloat16 [| 2 |])));

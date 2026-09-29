@@ -226,31 +226,24 @@ let selections =
                (Nx.extract
                   ~condition:(Nx.reshape [| 3; 2 |] condition)
                   (Nx.transpose t))));
-      xfail
-        ~reason:
-          "compress without an axis never compares the lengths, and takes a \
-           position past the end as a zero"
-        (test
-           "compress without an axis refuses a condition longer than the tensor"
-           (fun () ->
-             raises_invalid_arg (fun () ->
-                 Nx.compress
-                   ~condition:
-                     (Nx.create Nx.bool [| 3 |] [| false; false; true |])
-                   (Nx.zeros Nx.int32 [| 2 |]))));
+      test "compress without an axis refuses a condition longer than the tensor"
+        (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.compress
+                ~condition:(Nx.create Nx.bool [| 3 |] [| false; false; true |])
+                (Nx.zeros Nx.int32 [| 2 |])));
       test "compress refuses a condition of another length" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.compress ~axis:0
                 ~condition:(Nx.create Nx.bool [| 3 |] [| true; false; true |])
                 (Nx.zeros Nx.int32 [| 2 |])));
-      xfail ~reason:"extract compares shapes where nx.mli compares sizes"
-        (test "extract flattens a condition of the same size and another shape"
-           (fun () ->
-             let r, t = tensor_of [| 2; 3 |] in
-             let cond = [| true; false; false; true; true; false |] in
-             equal ints (Ref.compress cond r)
-               (Ref.of_nx
-                  (Nx.extract ~condition:(Nx.create Nx.bool [| 6 |] cond) t))));
+      test "extract flattens a condition of the same size and another shape"
+        (fun () ->
+          let r, t = tensor_of [| 2; 3 |] in
+          let cond = [| true; false; false; true; true; false |] in
+          equal ints (Ref.compress cond r)
+            (Ref.of_nx
+               (Nx.extract ~condition:(Nx.create Nx.bool [| 6 |] cond) t)));
       test "extract refuses a condition of another size" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.extract
@@ -294,17 +287,12 @@ let windows =
 let stepped_ranges =
   group "stepped ranges"
     [
-      xfail
-        ~reason:
-          "a stepped range keeps its start unclamped: a gather reads zeros \
-           from the out-of-range positions, and a step of 1 or -1 shrinks out \
-           of bounds and raises"
-        (cases "a stepped range starting outside its axis selects as R does"
-           ~name:(fun (s : Nx.index) -> Format.asprintf "%a" pp_index s)
-           [ Rs (-10, 3, 1); Rs (-10, 4, 2); Rs (10, 0, -1); Rs (10, 0, -2) ]
-           (fun spec ->
-             let r, t = tensor_of [| 4 |] in
-             equal ints (Ref.slice [ spec ] r) (Ref.of_nx (Nx.slice [ spec ] t))));
+      cases "a stepped range starting outside its axis selects as R does"
+        ~name:(fun (s : Nx.index) -> Format.asprintf "%a" pp_index s)
+        [ Rs (-10, 3, 1); Rs (-10, 4, 2); Rs (10, 0, -1); Rs (10, 0, -2) ]
+        (fun spec ->
+          let r, t = tensor_of [| 4 |] in
+          equal ints (Ref.slice [ spec ] r) (Ref.of_nx (Nx.slice [ spec ] t)));
     ]
 
 let () =
