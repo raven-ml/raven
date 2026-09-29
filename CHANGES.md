@@ -2757,6 +2757,11 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.create`, `Buffer.view` and `Nx_device.external_buffer`
+  take every element count whose bytes fit in `max_int`, as documented. They
+  refused counts whose bits overflowed, from an eighth of that size (such as
+  2^58 + 1 `float64` elements), with `Invalid_argument`; a host buffer too
+  large to allocate now raises `Out_of_memory`.
 - Every movement works on int4 and uint4 values: `Nx.take`,
   `Nx.take_along_axis`, `Nx.slice` with `L`, `M`, `D` or a step other than ±1,
   `Nx.pad`, `Nx.concatenate`, `Nx.extract_patches`, `Nx.set` and

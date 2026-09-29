@@ -157,6 +157,7 @@ let aligned_from = Int.max (64 * 1024) (4 * page)
 let heap n =
   if n < aligned_from then
     shared (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
+  else if n > max_int - page then raise Stdlib.Out_of_memory
   else
     let ba =
       Bigarray.Array1.create Bigarray.char Bigarray.c_layout (n + page - 1)
@@ -507,13 +508,17 @@ module Buffer = struct
     length : int;
   }
 
-  let nbytes_of s n = ((n * Nx_dtype.Scalar.bitsize s) + 7) / 8
+  (* [n * bitsize s / 8] rounded up, without the product overflowing. *)
+  let nbytes_of s n =
+    let bits = Nx_dtype.Scalar.bitsize s in
+    (n / 8 * bits) + (((n mod 8 * bits) + 7) / 8)
 
   (* The bytes of [n] elements of [s], for a new buffer or view. *)
   let checked_nbytes fn s n =
     if n < 0 then
       invalid_arg (Printf.sprintf "Nx_device.Buffer.%s: %d elements" fn n);
-    if n > (max_int - 7) / Nx_dtype.Scalar.bitsize s then
+    let size = Nx_dtype.Scalar.bitsize s / 8 in
+    if size > 0 && n > max_int / size then
       invalid_arg
         (Printf.sprintf "Nx_device.Buffer.%s: %d elements of %s overflow" fn n
            (Nx_dtype.Scalar.to_string s));
