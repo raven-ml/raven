@@ -14,8 +14,8 @@ module T = Nx
 let shape_string s =
   "[" ^ String.concat "," (Array.to_list (Array.map string_of_int s)) ^ "]"
 
-let rec handler : type r. Format.formatter -> (r, r) Effect.Deep.handler =
- fun ppf ->
+let rec install : type a. Format.formatter -> (unit -> a) -> a =
+ fun ppf f ->
   let open Effect.Deep in
   (* Logs [name] with the output shape, then continues with the output. *)
   let obs (type a b) name (out : (a, b) t) =
@@ -25,11 +25,6 @@ let rec handler : type r. Format.formatter -> (r, r) Effect.Deep.handler =
   let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     match eff with
-    | E_op op ->
-        Some
-          (fun () ->
-            Format.fprintf ppf "%a@." Op.pp op;
-            eval op)
     | Nx_quant.Effect.E_quant { w; op } ->
         let name =
           match op with
@@ -42,14 +37,20 @@ let rec handler : type r. Format.formatter -> (r, r) Effect.Deep.handler =
     | Remat.E_remat (Remat.Call c) ->
         Some
           (fun () ->
-            let f params = match_with c.f params (handler ppf) in
+            let f params = install ppf (fun () -> c.f params) in
             Remat.run (Remat.Call { c with f }))
     | _ -> None
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
-   fun eff -> Option.map Gate.deliver (rule eff)
+  let effc : type c. c Effect.t -> ((c, a) continuation -> a) option =
+   fun eff -> Option.map Answer.deliver (rule eff)
   in
-  { retc = Fun.id; exnc = raise; effc }
+  let run op =
+    Format.fprintf ppf "%a@." Op.pp op;
+    eval op
+  in
+  match_with
+    (fun () -> Nx_effect.intercept { run } f)
+    ()
+    { retc = Fun.id; exnc = raise; effc }
 
-let with_debug ?(ppf = Format.err_formatter) f =
-  Gate.with_transform (fun () -> Effect.Deep.match_with f () (handler ppf))
+let with_debug ?(ppf = Format.err_formatter) f = install ppf f

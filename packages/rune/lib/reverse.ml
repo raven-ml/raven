@@ -78,11 +78,15 @@ let err_quant () =
 
 (* Handler *)
 
-let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
- fun tape ->
+(* [install tape f] is [f ()] with its operations differentiated on [tape]:
+   an interpreter of the operations, and a handler of the effects its rules
+   answer, installed outside the interpreter. *)
+let rec install : type a. Tape.t -> (unit -> a) -> a =
+ fun tape f ->
   let open Effect.Deep in
   let tracked x = Tape.tracked tape x in
   let track x = Tape.track tape x in
+  let paused = ref 0 in
 
   (* [pull1 out x f] records: cotangent of [x] += [f] applied to the cotangent
      of [out]. Skips recording when [x] is untracked. *)
@@ -827,189 +831,184 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
 
   let body : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
-    if not (Gate.enabled ()) then None
-    else
-      match eff with
-      | E_op op -> Some (fun () -> run op)
-      (* Staged scan. When a stager lies beyond, the scan passes on and the
-         tape records its transpose, a scan too (see [staged_scan]). Otherwise
-         the eager fold runs under a nested instance of this handler, taping
-         every step. *)
-      | Scan.E_scan_probe -> Some Scan.probe
-      | Scan.E_scan req ->
-          Some
-            (fun () ->
-              let fold () =
-                Effect.Deep.match_with
-                  (fun () -> Scan.eager req)
-                  () (handler tape)
-              in
-              Scan.pass_on ~fold (fun () -> staged_scan tape req))
-      | Axis.E_lanes { axis; t_in } ->
-          Some
-            (fun () ->
-              no_rule "Rune.lanes" (tracked t_in) (fun () ->
-                  Axis.lanes axis t_in))
-      (* Custom rules. The forward function runs in the enclosing context: this
-         handler replaces its internals with the user's rule, while enclosing
-         transformations see the forward computation itself. *)
-      | Custom.E_custom_vjp
-          (Custom.Vjp_call { params_s; result_s; params; fwd; bwd }) ->
-          Some
-            (fun () ->
-              let any =
-                Nx.Ptree.fold params_s
-                  (fun _ leaf any -> any || tracked leaf)
-                  params false
-              in
-              let y, res = own fwd params in
+    match eff with
+    | Pause.E_pause -> Some (Pause.hold paused)
+    | _ when !paused > 0 -> None
+    (* Staged scan. When a stager lies beyond, the scan passes on and the
+       tape records its transpose, a scan too (see [staged_scan]). Otherwise
+       the eager fold runs under a nested instance of this handler, taping
+       every step. *)
+    | Scan.E_scan_probe -> Some Scan.probe
+    | Scan.E_scan req ->
+        Some
+          (fun () ->
+            let fold () = install tape (fun () -> Scan.eager req) in
+            Scan.pass_on ~fold (fun () -> staged_scan tape req))
+    | Axis.E_lanes { axis; t_in } ->
+        Some
+          (fun () ->
+            no_rule "Rune.lanes" (tracked t_in) (fun () ->
+                Axis.lanes axis t_in))
+    (* Custom rules. The forward function runs in the enclosing context: this
+       handler replaces its internals with the user's rule, while enclosing
+       transformations see the forward computation itself. *)
+    | Custom.E_custom_vjp
+        (Custom.Vjp_call { params_s; result_s; params; fwd; bwd }) ->
+        Some
+          (fun () ->
+            let any =
+              Nx.Ptree.fold params_s
+                (fun _ leaf any -> any || tracked leaf)
+                params false
+            in
+            let y, res = own fwd params in
+            (* A result that is one of the parameters is aliased, so its
+               cotangent is the result's alone. *)
+            let y = if any then Structure.aliases result_s y else y in
+            if any then begin
+              Nx.Ptree.fold result_s (fun _ leaf () -> track leaf) y ();
+              Tape.record tape (fun () ->
+                  let seeded = ref false in
+                  (* [bwd] takes and returns gradients, the conjugates of the
+                     tape's cotangents (see [Rune.vjp]). *)
+                  let cts =
+                    Nx.Ptree.map result_s
+                      (fun _ leaf ->
+                        match Tape.find tape leaf with
+                        | Some ct ->
+                            seeded := true;
+                            T.conjugate ct
+                        | None -> T.zeros_like leaf)
+                      y
+                  in
+                  if !seeded then
+                    ignore
+                      (Structure.map2 "Rune.custom_vjp" params_s
+                         ~this:"the parameters" ~that:"bwd's gradients"
+                         (fun _ leaf g ->
+                           if tracked leaf then
+                             Tape.accumulate tape leaf (T.conjugate g);
+                           leaf)
+                         params (bwd res cts)))
+            end;
+            y)
+    (* A custom_jvp has no reverse rule. One whose result holds no tensor
+       has nothing to differentiate, and its function runs. *)
+    | Custom.E_custom_jvp
+        (Custom.Jvp_call { params_s; result_s; params; f; _ }) ->
+        Some
+          (fun () ->
+            let y = own f params in
+            if
+              Structure.holds_tensor result_s y
+              && Nx.Ptree.fold params_s
+                   (fun _ leaf any -> any || tracked leaf)
+                   params false
+            then
+              invalid_arg
+                "Rune: a custom_jvp function is not reverse-differentiable; \
+                 define a custom_vjp rule instead"
+            else y)
+    (* Gradient checkpointing. The call passes on with [f] run under this
+       handler over a scratch tape linked to this one, which tells whether the
+       result depends on a tracked tensor: an argument, or one [f] captures.
+       The scratch tape is then dropped. When the result does depend on one,
+       the tape keeps the arguments and, once the result's cotangents exist,
+       differentiates a second run of [f] (see [recompute]). *)
+    | Remat.E_remat (Remat.Call { params_s; result_s; params; f; _ }) ->
+        Some
+          (fun () ->
+            let depends = ref false in
+            let f' params =
+              let scratch = Tape.create ~parent:tape () in
+              let y = install scratch (fun () -> f params) in
+              depends :=
+                Nx.Ptree.fold result_s
+                  (fun _ leaf d -> d || Tape.tracked scratch leaf)
+                  y false;
+              y
+            in
+            let y =
+              Remat.run
+                (Remat.Call
+                   { params_s; result_s; params; f = f'; residuals = true })
+            in
+            if not !depends then y
+            else begin
               (* A result that is one of the parameters is aliased, so its
                  cotangent is the result's alone. *)
-              let y = if any then Structure.aliases result_s y else y in
-              if any then begin
-                Nx.Ptree.fold result_s (fun _ leaf () -> track leaf) y ();
+              let y = Structure.aliases result_s y in
+              Nx.Ptree.fold result_s (fun _ leaf () -> track leaf) y ();
+              Tape.record tape (fun () ->
+                  if
+                    Nx.Ptree.fold result_s
+                      (fun _ leaf seeded ->
+                        seeded || Option.is_some (Tape.find tape leaf))
+                      y false
+                  then
+                    recompute tape params_s result_s f params
+                      (Nx.Ptree.map result_s
+                         (fun _ leaf -> Tape.cotangent tape leaf)
+                         y));
+              y
+            end)
+    (* The barrier is the identity: an output's cotangent is its value's. *)
+    | Remat.E_barrier { values; after } ->
+        if not (List.exists (fun (Nx.P v) -> tracked v) values) then None
+        else
+          Some
+            (fun () ->
+              let out = Remat.barrier ~after values in
+              List.iter2
+                (fun (Nx.P v) o ->
+                  let o = Nx.unpack (T.dtype v) o in
+                  if tracked v && o != v then begin
+                    track o;
+                    Tape.record tape (fun () ->
+                        match Tape.find tape o with
+                        | None -> ()
+                        | Some g -> Tape.accumulate tape v g)
+                  end)
+                values out;
+              out)
+    (* Quantised products. A weight is never differentiated; the cotangent of
+       [x] is the transposed product with the same ids, summed over the axes
+       along which [x] was broadcast. The tape holds the weight and the ids,
+       nothing decoded. *)
+    | Nx_quant.Effect.E_quant
+        { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
+        Some
+          (fun () ->
+            if tracked codes || tracked scales then err_quant ();
+            let y = Nx_quant.Effect.perform w op in
+            (match op with
+            | Apply { ids; x; transpose } when tracked x ->
+                track y;
                 Tape.record tape (fun () ->
-                    let seeded = ref false in
-                    (* [bwd] takes and returns gradients, the conjugates of the
-                       tape's cotangents (see [Rune.vjp]). *)
-                    let cts =
-                      Nx.Ptree.map result_s
-                        (fun _ leaf ->
-                          match Tape.find tape leaf with
-                          | Some ct ->
-                              seeded := true;
-                              T.conjugate ct
-                          | None -> T.zeros_like leaf)
-                        y
-                    in
-                    if !seeded then
-                      ignore
-                        (Structure.map2 "Rune.custom_vjp" params_s
-                           ~this:"the parameters" ~that:"bwd's gradients"
-                           (fun _ leaf g ->
-                             if tracked leaf then
-                               Tape.accumulate tape leaf (T.conjugate g);
-                             leaf)
-                           params (bwd res cts)))
-              end;
-              y)
-      (* A custom_jvp has no reverse rule. One whose result holds no tensor
-         has nothing to differentiate, and its function runs. *)
-      | Custom.E_custom_jvp
-          (Custom.Jvp_call { params_s; result_s; params; f; _ }) ->
-          Some
-            (fun () ->
-              let y = own f params in
-              if
-                Structure.holds_tensor result_s y
-                && Nx.Ptree.fold params_s
-                     (fun _ leaf any -> any || tracked leaf)
-                     params false
-              then
-                invalid_arg
-                  "Rune: a custom_jvp function is not reverse-differentiable; \
-                   define a custom_vjp rule instead"
-              else y)
-      (* Gradient checkpointing. The call passes on with [f] run under this
-         handler over a scratch tape linked to this one, which tells whether the
-         result depends on a tracked tensor: an argument, or one [f] captures.
-         The scratch tape is then dropped. When the result does depend on one,
-         the tape keeps the arguments and, once the result's cotangents exist,
-         differentiates a second run of [f] (see [recompute]). *)
-      | Remat.E_remat (Remat.Call { params_s; result_s; params; f; _ }) ->
-          Some
-            (fun () ->
-              let depends = ref false in
-              let f' params =
-                let scratch = Tape.create ~parent:tape () in
-                let y = Effect.Deep.match_with f params (handler scratch) in
-                depends :=
-                  Nx.Ptree.fold result_s
-                    (fun _ leaf d -> d || Tape.tracked scratch leaf)
-                    y false;
-                y
-              in
-              let y =
-                Remat.run
-                  (Remat.Call
-                     { params_s; result_s; params; f = f'; residuals = true })
-              in
-              if not !depends then y
-              else begin
-                (* A result that is one of the parameters is aliased, so its
-                   cotangent is the result's alone. *)
-                let y = Structure.aliases result_s y in
-                Nx.Ptree.fold result_s (fun _ leaf () -> track leaf) y ();
-                Tape.record tape (fun () ->
-                    if
-                      Nx.Ptree.fold result_s
-                        (fun _ leaf seeded ->
-                          seeded || Option.is_some (Tape.find tape leaf))
-                        y false
-                    then
-                      recompute tape params_s result_s f params
-                        (Nx.Ptree.map result_s
-                           (fun _ leaf -> Tape.cotangent tape leaf)
-                           y));
-                y
-              end)
-      (* The barrier is the identity: an output's cotangent is its value's. *)
-      | Remat.E_barrier { values; after } ->
-          if not (List.exists (fun (Nx.P v) -> tracked v) values) then None
-          else
-            Some
-              (fun () ->
-                let out = Remat.barrier ~after values in
-                List.iter2
-                  (fun (Nx.P v) o ->
-                    let o = Nx.unpack (T.dtype v) o in
-                    if tracked v && o != v then begin
-                      track o;
-                      Tape.record tape (fun () ->
-                          match Tape.find tape o with
-                          | None -> ()
-                          | Some g -> Tape.accumulate tape v g)
-                    end)
-                  values out;
-                out)
-      (* Quantised products. A weight is never differentiated; the cotangent of
-         [x] is the transposed product with the same ids, summed over the axes
-         along which [x] was broadcast. The tape holds the weight and the ids,
-         nothing decoded. *)
-      | Nx_quant.Effect.E_quant
-          { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
-          Some
-            (fun () ->
-              if tracked codes || tracked scales then err_quant ();
-              let y = Nx_quant.Effect.perform w op in
-              (match op with
-              | Apply { ids; x; transpose } when tracked x ->
-                  track y;
-                  Tape.record tape (fun () ->
-                      match Tape.find tape y with
-                      | None -> ()
-                      | Some g ->
-                          let x_shape = T.shape x in
-                          let vector = Array.length x_shape = 1 in
-                          let g =
-                            if vector then T.unsqueeze ~axes:[ T.ndim g - 1 ] g
-                            else g
-                          in
-                          let op =
-                            Nx_quant.Effect.Apply
-                              { ids; x = g; transpose = not transpose }
-                          in
-                          let dx = Nx_quant.Effect.perform w op in
-                          let dx =
-                            if vector then
-                              T.reshape x_shape
-                                (unbroadcast dx (Array.append [| 1 |] x_shape))
-                            else unbroadcast dx x_shape
-                          in
-                          Tape.accumulate tape x dx)
-              | Apply _ | Dequant _ -> ());
-              y)
-      | _ -> None
+                    match Tape.find tape y with
+                    | None -> ()
+                    | Some g ->
+                        let x_shape = T.shape x in
+                        let vector = Array.length x_shape = 1 in
+                        let g =
+                          if vector then T.unsqueeze ~axes:[ T.ndim g - 1 ] g
+                          else g
+                        in
+                        let op =
+                          Nx_quant.Effect.Apply
+                            { ids; x = g; transpose = not transpose }
+                        in
+                        let dx = Nx_quant.Effect.perform w op in
+                        let dx =
+                          if vector then
+                            T.reshape x_shape
+                              (unbroadcast dx (Array.append [| 1 |] x_shape))
+                          else unbroadcast dx x_shape
+                        in
+                        Tape.accumulate tape x dx)
+            | Apply _ | Dequant _ -> ());
+            y)
+    | _ -> None
   in
   (* A rerun tape differentiates code the forward pass already ran, so it drops
      the code's additions, which are never taped. Under [no_grad] it keeps its
@@ -1021,7 +1020,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
     else
       match eff with
       | Total.E_add _ -> Some (fun () -> ())
-      | _ when Gate.enabled () -> body eff
+      | Pause.E_pause -> body eff
+      | _ when !paused = 0 -> body eff
       | Scan.E_scan_probe -> Some Scan.probe
       | Scan.E_scan req ->
           Some
@@ -1046,10 +1046,15 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
           Some (fun () -> dropped f params)
       | _ -> None
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
-   fun eff -> Option.map Gate.deliver (rule eff)
+  let effc : type c. c Effect.t -> ((c, a) continuation -> a) option =
+   fun eff -> Option.map Answer.deliver (rule eff)
   in
-  { retc = Fun.id; exnc = raise; effc }
+  (* While paused, every operation passes on as it is. *)
+  let run op = if !paused > 0 then eval op else run op in
+  match_with
+    (fun () -> Nx_effect.intercept { run } f)
+    ()
+    { retc = Fun.id; exnc = raise; effc }
 
 (* A staged scan passes on with its step run under this handler over a scratch
    tape linked to [tape], whose leaves are then the tensors the step captures
@@ -1065,9 +1070,7 @@ and staged_scan tape (req : Scan.scan_req) : Scan.scan_res =
   let captures = ref [] in
   let run c x =
     let scratch = Tape.create ~parent:tape () in
-    let c', y =
-      Effect.Deep.match_with (fun () -> req_step.run c x) () (handler scratch)
-    in
+    let c', y = install scratch (fun () -> req_step.run c x) in
     captures := Tape.captures scratch;
     (c', y @ c)
   in
@@ -1086,10 +1089,7 @@ and staged_scan tape (req : Scan.scan_req) : Scan.scan_res =
     let t = Tape.create ~parent:tape ~rerun:true () in
     List.iter (fun (Nx.P l) -> Tape.track t l) (c @ captures);
     List.iter2 (fun r (Nx.P l) -> if r then Tape.track t l) tracked x;
-    let c', y =
-      Gate.with_transform (fun () ->
-          Effect.Deep.match_with (fun () -> req_step.run c x) () (handler t))
-    in
+    let c', y = install t (fun () -> req_step.run c x) in
     if not (List.is_empty (Tape.captures t)) then
       invalid_arg
         "Rune.scan: the body reads a differentiated tensor in the backward \
@@ -1168,10 +1168,7 @@ and recompute : type p q.
          if Tape.tracked tape p then Tape.track run p';
          p)
        params params');
-  let y =
-    Gate.with_transform (fun () ->
-        Effect.Deep.match_with f params' (handler run))
-  in
+  let y = install run (fun () -> f params') in
   ignore
     (Structure.map2 "Rune.remat" result_s ~this:"the result"
        ~that:"the cotangents"

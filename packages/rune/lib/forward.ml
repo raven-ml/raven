@@ -43,9 +43,13 @@ let rec zip actives leaves ts =
   | false :: actives, _ :: leaves, ts -> zip actives leaves ts
   | _ -> assert false
 
-let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
- fun tangents ->
+(* [install tangents f] is [f ()] with its operations' tangents in
+   [tangents]: an interpreter of the operations, and a handler of the effects
+   its rules answer, installed outside the interpreter. *)
+let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
+ fun tangents f ->
   let open Effect.Deep in
+  let paused = ref 0 in
   let tangent x = Tensor_map.find tangents x in
   let active x = Option.is_some (tangent x) in
   let tan_or_zeros x =
@@ -402,263 +406,261 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
 
   let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
-    if not (Gate.enabled ()) then None
-    else
-      match eff with
-      | E_op op -> Some (fun () -> run op)
-      (* Scan. When a stager lies beyond, the scan passes on as the scan of its
-         jvp: the carry and the rows gain the tangents of their active leaves,
-         the outputs those of theirs, and the step runs the body under a nested
-         instance of this handler. A carry whose tangent is zero at [init] gains
-         one only once a step makes it active: the step then aborts its run with
-         [Grow] and the scan passes on again, carrying it. Otherwise, the eager
-         fold runs under a nested instance of this handler, and every step's
-         operations acquire their tangents. *)
-      | Scan.E_scan_probe -> Some Scan.probe
-      | Scan.E_scan req ->
-          Some
-            (fun () ->
-              let fold () =
-                Effect.Deep.match_with
-                  (fun () -> Scan.eager req)
-                  () (handler tangents)
+    match eff with
+    | Pause.E_pause -> Some (Pause.hold paused)
+    | _ when !paused > 0 -> None
+    (* Scan. When a stager lies beyond, the scan passes on as the scan of its
+       jvp: the carry and the rows gain the tangents of their active leaves,
+       the outputs those of theirs, and the step runs the body under a nested
+       instance of this handler. A carry whose tangent is zero at [init] gains
+       one only once a step makes it active: the step then aborts its run with
+       [Grow] and the scan passes on again, carrying it. Otherwise, the eager
+       fold runs under a nested instance of this handler, and every step's
+       operations acquire their tangents. *)
+    | Scan.E_scan_probe -> Some Scan.probe
+    | Scan.E_scan req ->
+        Some
+          (fun () ->
+            let fold () = install tangents (fun () -> Scan.eager req) in
+            Scan.pass_on ~fold @@ fun () ->
+              let exception Grow of bool list in
+              let flags = List.map (fun (P l) -> active l) in
+              let tangents_of actives leaves =
+                List.concat
+                  (List.map2
+                     (fun a (P l) -> if a then [ P (tan_or_zeros l) ] else [])
+                     actives leaves)
               in
-              Scan.pass_on ~fold @@ fun () ->
-                let exception Grow of bool list in
-                let flags = List.map (fun (P l) -> active l) in
-                let tangents_of actives leaves =
-                  List.concat
-                    (List.map2
-                       (fun a (P l) -> if a then [ P (tan_or_zeros l) ] else [])
-                       actives leaves)
-                in
-                let seed actives leaves ts =
-                  List.iter
-                    (fun (P l, d) ->
-                      Tensor_map.set tangents l (T.unpack (T.dtype l) d))
-                    (zip actives leaves ts)
-                in
-                let nc = List.length req.req_carry
-                and nx = List.length req.req_xs in
-                let rows = flags req.req_xs in
-                let rec attempt carried =
-                  let outputs = ref [] in
-                  let run c x =
-                    let c, dc = Scan.split nc c and x, dx = Scan.split nx x in
-                    seed carried c dc;
-                    seed rows x dx;
-                    let c', y =
-                      Effect.Deep.match_with
-                        (fun () -> req.req_step.run c x)
-                        () (handler tangents)
-                    in
-                    let next = flags c' in
-                    if List.exists2 (fun a a' -> a' && not a) carried next then
-                      raise (Grow (List.map2 ( || ) carried next));
-                    outputs := flags y;
-                    (c' @ tangents_of carried c', y @ tangents_of !outputs y)
+              let seed actives leaves ts =
+                List.iter
+                  (fun (P l, d) ->
+                    Tensor_map.set tangents l (T.unpack (T.dtype l) d))
+                  (zip actives leaves ts)
+              in
+              let nc = List.length req.req_carry
+              and nx = List.length req.req_xs in
+              let rows = flags req.req_xs in
+              let rec attempt carried =
+                let outputs = ref [] in
+                let run c x =
+                  let c, dc = Scan.split nc c and x, dx = Scan.split nx x in
+                  seed carried c dc;
+                  seed rows x dx;
+                  let c', y =
+                    install tangents (fun () -> req.req_step.run c x)
                   in
-                  match
-                    Effect.perform
-                      (Scan.E_scan
-                         {
-                           req with
-                           req_carry =
-                             req.req_carry @ tangents_of carried req.req_carry;
-                           req_xs = req.req_xs @ tangents_of rows req.req_xs;
-                           req_step = { run };
-                         })
-                  with
-                  | res ->
-                      let set actives (leaves, ts) =
-                        List.iter
-                          (fun (P l, d) ->
-                            set_tangent l (T.unpack (T.dtype l) d))
-                          (zip actives leaves ts);
-                        leaves
-                      in
-                      let r_carry = set carried (Scan.split nc res.r_carry) in
-                      let r_ys =
-                        set !outputs
-                          (Scan.split (List.length !outputs) res.r_ys)
-                      in
-                      { Scan.r_carry; r_ys }
-                  (* The aborted run's slot tensors are never reached again. *)
-                  | exception Grow carried -> attempt carried
+                  let next = flags c' in
+                  if List.exists2 (fun a a' -> a' && not a) carried next then
+                    raise (Grow (List.map2 ( || ) carried next));
+                  outputs := flags y;
+                  (c' @ tangents_of carried c', y @ tangents_of !outputs y)
                 in
-                attempt (flags req.req_carry))
-      (* A gather is linear. *)
-      | Axis.E_lanes { axis; t_in } ->
-          Some (fun () -> lift1 (Axis.lanes axis t_in) t_in (Axis.lanes axis))
-      (* Custom rules. *)
-      | Custom.E_custom_jvp
-          (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
-          Some
-            (fun () ->
-              if
-                not
-                  (Nx.Ptree.fold params_s
-                     (fun _ leaf any -> any || active leaf)
-                     params false)
-              then f params
-              else begin
-                let dparams =
-                  Nx.Ptree.map params_s (fun _ leaf -> tan_or_zeros leaf) params
-                in
-                let y, dy = jvp params dparams in
-                (* A result that is one of the parameters is aliased, so the
-                   parameter keeps its own tangent. *)
-                let y = Structure.aliases result_s y in
-                let set path yl dyl =
-                  if T.shape yl <> T.shape dyl then
-                    invalid_arg
-                      (Printf.sprintf
-                         "Rune.custom_jvp: %s: tangent shape [%s] does not \
-                          match result shape [%s]"
-                         (Structure.describe path)
-                         (Structure.shape_string (T.shape dyl))
-                         (Structure.shape_string (T.shape yl)));
-                  set_tangent yl dyl;
-                  yl
-                in
-                ignore
-                  (Structure.map2 "Rune.custom_jvp" result_s ~this:"the result"
-                     ~that:"jvp's tangents" set y dy);
-                y
-              end)
-      (* A custom_vjp has no forward rule. One whose result holds no tensor
-         has nothing to differentiate, and its function runs. *)
-      | Custom.E_custom_vjp
-          (Custom.Vjp_call { params_s; result_s; params; fwd; _ }) ->
-          Some
-            (fun () ->
-              let y = fst (fwd params) in
-              if
-                Structure.holds_tensor result_s y
-                && Nx.Ptree.fold params_s
-                     (fun _ leaf any -> any || active leaf)
-                     params false
-              then
-                invalid_arg
-                  "Rune: a custom_vjp function is not forward-differentiable; \
-                   define a custom_jvp rule instead"
-              else y)
-      (* Gradient checkpointing. The call passes on as the remat of [f]'s jvp: a
-         function of the call's arguments that gives each argument it receives
-         the tangent of the call's argument at its position, runs [f] under this
-         handler and returns [f]'s results and the tangents of its active ones,
-         so that an enclosing transformation sees the tangents as results of the
-         remat. The tangents of the arguments, like those of the tensors [f]
-         captures, are tensors the function closes over. *)
-      | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals })
-        ->
-          Some
-            (fun () ->
+                match
+                  Effect.perform
+                    (Scan.E_scan
+                       {
+                         req with
+                         req_carry =
+                           req.req_carry @ tangents_of carried req.req_carry;
+                         req_xs = req.req_xs @ tangents_of rows req.req_xs;
+                         req_step = { run };
+                       })
+                with
+                | res ->
+                    let set actives (leaves, ts) =
+                      List.iter
+                        (fun (P l, d) ->
+                          set_tangent l (T.unpack (T.dtype l) d))
+                        (zip actives leaves ts);
+                      leaves
+                    in
+                    let r_carry = set carried (Scan.split nc res.r_carry) in
+                    let r_ys =
+                      set !outputs
+                        (Scan.split (List.length !outputs) res.r_ys)
+                    in
+                    { Scan.r_carry; r_ys }
+                (* The aborted run's slot tensors are never reached again. *)
+                | exception Grow carried -> attempt carried
+              in
+              attempt (flags req.req_carry))
+    (* A gather is linear. *)
+    | Axis.E_lanes { axis; t_in } ->
+        Some (fun () -> lift1 (Axis.lanes axis t_in) t_in (Axis.lanes axis))
+    (* Custom rules. *)
+    | Custom.E_custom_jvp
+        (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
+        Some
+          (fun () ->
+            if
+              not
+                (Nx.Ptree.fold params_s
+                   (fun _ leaf any -> any || active leaf)
+                   params false)
+            then f params
+            else begin
               let dparams =
-                List.map
-                  (fun (P p) -> Option.map (fun d -> P d) (tangent p))
-                  (fst (Nx.Ptree.flatten params_s params))
+                Nx.Ptree.map params_s (fun _ leaf -> tan_or_zeros leaf) params
               in
-              let active_out = ref [] in
-              let f' params =
-                List.iter2
-                  (fun (P p) d ->
-                    Option.iter
-                      (fun d ->
-                        Tensor_map.set tangents p (T.unpack (T.dtype p) d))
-                      d)
-                  (fst (Nx.Ptree.flatten params_s params))
-                  dparams;
-                let y = Effect.Deep.match_with f params (handler tangents) in
-                let ys = fst (Nx.Ptree.flatten result_s y) in
-                active_out := List.map (fun (P l) -> active l) ys;
-                ( y,
-                  List.filter_map
-                    (fun (P l) -> Option.map (fun d -> P d) (tangent l))
-                    ys )
-              in
-              let y, dy =
-                Remat.run
-                  (Remat.Call
-                     {
-                       params_s;
-                       result_s = Nx.Ptree.pair result_s Structure.packed_list;
-                       params;
-                       f = f';
-                       residuals;
-                     })
+              let y, dy = jvp params dparams in
+              (* A result that is one of the parameters is aliased, so the
+                 parameter keeps its own tangent. *)
+              let y = Structure.aliases result_s y in
+              let set path yl dyl =
+                if T.shape yl <> T.shape dyl then
+                  invalid_arg
+                    (Printf.sprintf
+                       "Rune.custom_jvp: %s: tangent shape [%s] does not \
+                        match result shape [%s]"
+                       (Structure.describe path)
+                       (Structure.shape_string (T.shape dyl))
+                       (Structure.shape_string (T.shape yl)));
+                set_tangent yl dyl;
+                yl
               in
               ignore
-                (List.fold_left2
-                   (fun dy (P l) is_active ->
-                     match (is_active, dy) with
-                     | true, d :: dy ->
-                         set_tangent l (T.unpack (T.dtype l) d);
-                         dy
-                     | true, [] -> assert false
-                     | false, dy -> dy)
-                   dy
-                   (fst (Nx.Ptree.flatten result_s y))
-                   !active_out);
-              y)
-      (* The barrier is the identity, and the tangents pass through it with
-         their values: an output's tangent is its value's tangent after the
-         barrier. A tangent read around the barrier would let the
-         recomputation's tangents share the forward pass's. *)
-      | Remat.E_barrier { values; after } ->
-          let tangents =
-            List.filter_map
-              (fun (P v) -> Option.map (fun d -> P d) (tangent v))
-              values
-          in
-          if tangents = [] then None
-          else
-            Some
-              (fun () ->
-                let out = Remat.barrier ~after (values @ tangents) in
-                let rec split vs out =
-                  match (vs, out) with
-                  | [], tangents -> ([], tangents)
-                  | _ :: vs, o :: out ->
-                      let os, tangents = split vs out in
-                      (o :: os, tangents)
-                  | _ :: _, [] -> assert false
-                in
-                let out, tangents = split values out in
-                ignore
-                  (List.fold_left2
-                     (fun tangents (P v) o ->
-                       match (tangent v, tangents) with
-                       | Some _, d :: tangents ->
-                           set_tangent
-                             (T.unpack (T.dtype v) o)
-                             (T.unpack (T.dtype v) d);
-                           tangents
-                       | Some _, [] -> assert false
-                       | None, tangents -> tangents)
-                     tangents values out);
-                out)
-      (* Quantised products. A weight is never differentiated; the tangent of a
-         product is the product of the tangent of [x]. *)
-      | Nx_quant.Effect.E_quant
-          { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
+                (Structure.map2 "Rune.custom_jvp" result_s ~this:"the result"
+                   ~that:"jvp's tangents" set y dy);
+              y
+            end)
+    (* A custom_vjp has no forward rule. One whose result holds no tensor
+       has nothing to differentiate, and its function runs. *)
+    | Custom.E_custom_vjp
+        (Custom.Vjp_call { params_s; result_s; params; fwd; _ }) ->
+        Some
+          (fun () ->
+            let y = fst (fwd params) in
+            if
+              Structure.holds_tensor result_s y
+              && Nx.Ptree.fold params_s
+                   (fun _ leaf any -> any || active leaf)
+                   params false
+            then
+              invalid_arg
+                "Rune: a custom_vjp function is not forward-differentiable; \
+                 define a custom_jvp rule instead"
+            else y)
+    (* Gradient checkpointing. The call passes on as the remat of [f]'s jvp: a
+       function of the call's arguments that gives each argument it receives
+       the tangent of the call's argument at its position, runs [f] under this
+       handler and returns [f]'s results and the tangents of its active ones,
+       so that an enclosing transformation sees the tangents as results of the
+       remat. The tangents of the arguments, like those of the tensors [f]
+       captures, are tensors the function closes over. *)
+    | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals })
+      ->
+        Some
+          (fun () ->
+            let dparams =
+              List.map
+                (fun (P p) -> Option.map (fun d -> P d) (tangent p))
+                (fst (Nx.Ptree.flatten params_s params))
+            in
+            let active_out = ref [] in
+            let f' params =
+              List.iter2
+                (fun (P p) d ->
+                  Option.iter
+                    (fun d ->
+                      Tensor_map.set tangents p (T.unpack (T.dtype p) d))
+                    d)
+                (fst (Nx.Ptree.flatten params_s params))
+                dparams;
+              let y = install tangents (fun () -> f params) in
+              let ys = fst (Nx.Ptree.flatten result_s y) in
+              active_out := List.map (fun (P l) -> active l) ys;
+              ( y,
+                List.filter_map
+                  (fun (P l) -> Option.map (fun d -> P d) (tangent l))
+                  ys )
+            in
+            let y, dy =
+              Remat.run
+                (Remat.Call
+                   {
+                     params_s;
+                     result_s = Nx.Ptree.pair result_s Structure.packed_list;
+                     params;
+                     f = f';
+                     residuals;
+                   })
+            in
+            ignore
+              (List.fold_left2
+                 (fun dy (P l) is_active ->
+                   match (is_active, dy) with
+                   | true, d :: dy ->
+                       set_tangent l (T.unpack (T.dtype l) d);
+                       dy
+                   | true, [] -> assert false
+                   | false, dy -> dy)
+                 dy
+                 (fst (Nx.Ptree.flatten result_s y))
+                 !active_out);
+            y)
+    (* The barrier is the identity, and the tangents pass through it with
+       their values: an output's tangent is its value's tangent after the
+       barrier. A tangent read around the barrier would let the
+       recomputation's tangents share the forward pass's. *)
+    | Remat.E_barrier { values; after } ->
+        let tangents =
+          List.filter_map
+            (fun (P v) -> Option.map (fun d -> P d) (tangent v))
+            values
+        in
+        if tangents = [] then None
+        else
           Some
             (fun () ->
-              if active codes || active scales then err_quant ();
-              let y = Nx_quant.Effect.perform w op in
-              (match op with
-              | Apply { ids; x; transpose } -> (
-                  match tangent x with
-                  | None -> ()
-                  | Some dx ->
-                      set_tangent y
-                        (Nx_quant.Effect.perform w
-                           (Apply { ids; x = dx; transpose })))
-              | Dequant _ -> ());
-              y)
-      | _ -> None
+              let out = Remat.barrier ~after (values @ tangents) in
+              let rec split vs out =
+                match (vs, out) with
+                | [], tangents -> ([], tangents)
+                | _ :: vs, o :: out ->
+                    let os, tangents = split vs out in
+                    (o :: os, tangents)
+                | _ :: _, [] -> assert false
+              in
+              let out, tangents = split values out in
+              ignore
+                (List.fold_left2
+                   (fun tangents (P v) o ->
+                     match (tangent v, tangents) with
+                     | Some _, d :: tangents ->
+                         set_tangent
+                           (T.unpack (T.dtype v) o)
+                           (T.unpack (T.dtype v) d);
+                         tangents
+                     | Some _, [] -> assert false
+                     | None, tangents -> tangents)
+                   tangents values out);
+              out)
+    (* Quantised products. A weight is never differentiated; the tangent of a
+       product is the product of the tangent of [x]. *)
+    | Nx_quant.Effect.E_quant
+        { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
+        Some
+          (fun () ->
+            if active codes || active scales then err_quant ();
+            let y = Nx_quant.Effect.perform w op in
+            (match op with
+            | Apply { ids; x; transpose } -> (
+                match tangent x with
+                | None -> ()
+                | Some dx ->
+                    set_tangent y
+                      (Nx_quant.Effect.perform w
+                         (Apply { ids; x = dx; transpose })))
+            | Dequant _ -> ());
+            y)
+    | _ -> None
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
-   fun eff -> Option.map Gate.deliver (rule eff)
+  let effc : type c. c Effect.t -> ((c, a) continuation -> a) option =
+   fun eff -> Option.map Answer.deliver (rule eff)
   in
-  { retc = Fun.id; exnc = raise; effc }
+  (* While paused, every operation passes on as it is. *)
+  let run op = if !paused > 0 then eval op else run op in
+  match_with
+    (fun () -> Nx_effect.intercept { run } f)
+    ()
+    { retc = Fun.id; exnc = raise; effc }

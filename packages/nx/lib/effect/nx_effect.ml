@@ -974,23 +974,36 @@ let traced (type a b) (ctx : context) (dtype : (a, b) Nx_dtype.t)
 
 type packed = P : ('a, 'b) t -> packed
 
+(* The gate: how many interceptions are live, on any domain. While none is,
+   nothing performs an effect to find one. The count is global because a
+   suspended fiber may resume on another domain. *)
+let intercepts = Atomic.make 0
+let intercepting () = Atomic.get intercepts > 0
+
 (* Effects *)
 
 type _ Effect.t +=
   | E_view : ('a, 'b) t -> View.t Effect.t
   | E_placement : ('a, 'b) t -> placement Effect.t
 
-(* Lenses. The effect is performed first: a handler may present a transformed
-   view (vmap shows batched tensors without their batch axis) or placement; only
-   the unhandled fallback answers from the tensor. *)
+(* Lenses. Under an interception the effect is performed first: a handler may
+   present a transformed view (vmap shows batched tensors without their batch
+   axis) or placement; only the unhandled fallback answers from the tensor. *)
+
+let direct_view (type a b) (x : (a, b) t) : View.t =
+  match x with
+  | Host t -> t.view
+  | Placed r -> whole_view r
+  | Traced t -> t.t_view
 
 let view (type a b) (x : (a, b) t) : View.t =
-  try Effect.perform (E_view x)
-  with Effect.Unhandled _ -> (
-    match x with
-    | Host t -> t.view
-    | Placed r -> whole_view r
-    | Traced t -> t.t_view)
+  if not (intercepting ()) then direct_view x
+  else
+    let e = E_view x in
+    match Effect.perform e with
+    | v -> v
+    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
+        direct_view x
 
 let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
   | Host t -> t.dtype
@@ -1291,8 +1304,6 @@ type move = Op.move =
   | Shrink of (int * int) array
   | Flip of bool array
   | Window of { axis : int; size : int; step : int }
-
-type _ Effect.t += E_op : 'r Op.t -> 'r Effect.t
 
 (* Routing
 
@@ -2129,13 +2140,20 @@ let context : type a b. (a, b) t -> context = function
    case. *)
 let on_host (p : context) = p == Placement.host || is_host_placement p
 
+let direct_placement (type a b) (x : (a, b) t) : placement =
+  match x with
+  | Host _ -> Placement.host
+  | Placed r -> r.r_placement
+  | Traced _ -> outside_trace ()
+
 let placement (type a b) (x : (a, b) t) : placement =
-  try Effect.perform (E_placement x)
-  with Effect.Unhandled _ -> (
-    match x with
-    | Host _ -> Placement.host
-    | Placed r -> r.r_placement
-    | Traced _ -> outside_trace ())
+  if not (intercepting ()) then direct_placement x
+  else
+    let e = E_placement x in
+    match Effect.perform e with
+    | p -> p
+    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
+        direct_placement x
 
 (* Dispatch
 
@@ -2312,61 +2330,201 @@ let backend_compare : type a b.
 let all_host xs = List.for_all (function Host _ -> true | _ -> false) xs
 
 (* The operations that host code calls most, on nx.cpu with no closure when
-   their operands are on the host. *)
+   their operands are on the host. The operation is built only on a backend's
+   path. *)
 
-let direct_unary op k x =
+let direct_unary k x =
   match x with
   | Host t -> Host (cpu_unary k t)
-  | Placed _ | Traced _ -> backend_unary (backend_of op) k x
+  | Placed _ | Traced _ -> backend_unary (backend_of (Unary (k, x))) k x
 
-let direct_binary op k x y =
+let direct_binary k x y =
   match (x, y) with
-  | Host x, Host y -> Host (cpu_binary k x y)
-  | _ -> backend_binary (backend_of op) k x y
+  | Host a, Host b -> Host (cpu_binary k a b)
+  | _ -> backend_binary (backend_of (Binary (k, x, y))) k x y
 
-let direct_compare op k x y =
+let direct_compare k x y =
   match (x, y) with
-  | Host x, Host y -> Host (cpu_compare k x y)
-  | _ -> backend_compare (backend_of op) k x y
+  | Host a, Host b -> Host (cpu_compare k a b)
+  | _ -> backend_compare (backend_of (Compare (k, x, y))) k x y
 
-let direct_where op c x y =
+let direct_where c x y =
   match (c, x, y) with
-  | Host c, Host x, Host y -> Host (Nx_cpu.where c x y)
+  | Host c', Host a, Host b -> Host (Nx_cpu.where c' a b)
   | _ ->
-      let (module B : Backend.S) = backend_of op in
+      let (module B : Backend.S) = backend_of (Where (c, x, y)) in
       B.where c x y
 
-let direct_reduce op k axes x =
+let direct_reduce k axes x =
   match x with
   | Host t -> Host (Nx_cpu.reduce ~op:(reduce_op k) ~axes t)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of op in
+      let (module B : Backend.S) = backend_of (Reduce (k, axes, x)) in
       B.reduce ~op:(reduce_op k) ~axes x
 
-let direct_matmul op x y =
+let direct_matmul x y =
   match (x, y) with
-  | Host x, Host y -> Host (Nx_cpu.matmul x y)
+  | Host a, Host b -> Host (Nx_cpu.matmul a b)
   | _ ->
-      let (module B : Backend.S) = backend_of op in
+      let (module B : Backend.S) = backend_of (Matmul (x, y)) in
       B.matmul x y
 
-let direct_copy op x =
+let direct_copy x =
   match x with
   | Host t -> Host (Nx_cpu.copy t)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of op in
+      let (module B : Backend.S) = backend_of (Contiguous x) in
       B.copy x
 
-(* [on_host1 x f g] is [f] of [x]'s array when [x] is on the host, and [g ()]
-   otherwise; [on_host2] and [on_host3] over two and three operands. *)
-let on_host1 x f g =
-  match x with Host t -> Host (f t) | Placed _ | Traced _ -> g ()
+let direct_scan k axis x =
+  let op = reduce_op k in
+  match x with
+  | Host t -> Host (Nx_cpu.associative_scan ~axis ~op t)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) = backend_of (Scan (k, axis, x)) in
+      B.associative_scan ~axis ~op x
 
-let on_host2 x y f g =
-  match (x, y) with Host x, Host y -> Host (f x y) | _ -> g ()
+let direct_arg_reduce k axis x =
+  match x with
+  | Host t -> (
+      match k with
+      | Nx_backend.Argmax -> Host (Nx_cpu.argmax ~axis ~keepdims:false t)
+      | Argmin -> Host (Nx_cpu.argmin ~axis ~keepdims:false t))
+  | Placed _ | Traced _ -> (
+      let (module B : Backend.S) = backend_of (Arg_reduce (k, axis, x)) in
+      match k with
+      | Argmax -> B.argmax ~axis ~keepdims:false x
+      | Argmin -> B.argmin ~axis ~keepdims:false x)
 
-let on_host3 x y z f g =
-  match (x, y, z) with Host x, Host y, Host z -> Host (f x y z) | _ -> g ()
+let direct_sort descending axis x =
+  match x with
+  | Host t -> Host (Nx_cpu.sort ~axis ~descending t)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) = backend_of (Sort { descending; axis; x }) in
+      B.sort ~axis ~descending x
+
+let direct_argsort descending axis x =
+  match x with
+  | Host t -> Host (Nx_cpu.argsort ~axis ~descending t)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) =
+        backend_of (Argsort { descending; axis; x })
+      in
+      B.argsort ~axis ~descending x
+
+let direct_pad padding v x =
+  match x with
+  | Host t -> Host (Nx_cpu.pad t padding v)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) = backend_of (Pad (padding, v, x)) in
+      B.pad x padding v
+
+let direct_cat axis xs =
+  if all_host xs then Host (Nx_cpu.cat (List.map host_of xs) ~axis)
+  else
+    let (module B : Backend.S) = backend_of (Cat (axis, xs)) in
+    B.cat xs ~axis
+
+let direct_convert c dtype x =
+  match x with
+  | Host t -> (
+      match c with
+      | Nx_backend.Cast -> Host (Nx_cpu.cast ~dtype t)
+      | Bitcast -> Host (Nx_cpu.bitcast ~dtype t))
+  | Placed _ | Traced _ -> (
+      let (module B : Backend.S) = backend_of (Convert (c, dtype, x)) in
+      match c with Cast -> B.cast ~dtype x | Bitcast -> B.bitcast ~dtype x)
+
+let direct_threefry key ctr =
+  match (key, ctr) with
+  | Host k, Host c -> Host (Nx_cpu.threefry k c)
+  | _ ->
+      let (module B : Backend.S) = backend_of (Threefry (key, ctr)) in
+      B.threefry key ctr
+
+let direct_gather axis indices data =
+  match (data, indices) with
+  | Host d, Host i -> Host (Nx_cpu.gather d i ~axis)
+  | _ ->
+      let (module B : Backend.S) = backend_of (Gather (axis, indices, data)) in
+      B.gather data indices ~axis
+
+let direct_scatter mode unique axis indices updates into =
+  match (into, indices, updates) with
+  | Host d, Host i, Host u ->
+      Host
+        (Nx_cpu.scatter ~mode ~unique_indices:unique d ~indices:i ~updates:u
+           ~axis)
+  | _ ->
+      let (module B : Backend.S) =
+        backend_of (Scatter { mode; unique; axis; indices; updates; into })
+      in
+      B.scatter ~mode ~unique_indices:unique into ~indices ~updates ~axis
+
+let direct_update x starts v =
+  match (x, starts, v) with
+  | Host t, Host s, Host w -> Host (Nx_cpu.update t ~starts:s w)
+  | _ ->
+      let (module B : Backend.S) = backend_of (Update (x, starts, v)) in
+      B.update x ~starts v
+
+let direct_unfold kernel_size stride dilation padding x =
+  match x with
+  | Host t -> Host (Nx_cpu.unfold t ~kernel_size ~stride ~dilation ~padding)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) =
+        backend_of (Unfold { kernel_size; stride; dilation; padding; x })
+      in
+      B.unfold x ~kernel_size ~stride ~dilation ~padding
+
+let direct_fold output_size kernel_size stride dilation padding x =
+  match x with
+  | Host t ->
+      Host (Nx_cpu.fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) =
+        backend_of
+          (Fold { output_size; kernel_size; stride; dilation; padding; x })
+      in
+      B.fold x ~output_size ~kernel_size ~stride ~dilation ~padding
+
+let direct_fft inverse axes x =
+  match x with
+  | Host t -> Host (if inverse then Nx_cpu.ifft t ~axes else Nx_cpu.fft t ~axes)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) = backend_of (Fft { inverse; axes; x }) in
+      if inverse then B.ifft x ~axes else B.fft x ~axes
+
+let direct_rfft dtype axes x =
+  match x with
+  | Host t -> Host (Nx_cpu.rfft t ~dtype ~axes)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) = backend_of (Rfft { dtype; axes; x }) in
+      B.rfft x ~dtype ~axes
+
+let direct_irfft dtype axes s x =
+  match x with
+  | Host t -> Host (Nx_cpu.irfft ?s t ~dtype ~axes)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) = backend_of (Irfft { dtype; axes; s; x }) in
+      B.irfft ?s x ~dtype ~axes
+
+let direct_cholesky upper x =
+  match x with
+  | Host t -> Host (Nx_cpu.cholesky ~upper t)
+  | Placed _ | Traced _ ->
+      let (module B : Backend.S) = backend_of (Cholesky { upper; x }) in
+      B.cholesky ~upper x
+
+let direct_solve_triangular upper transpose unit_diag a b =
+  match (a, b) with
+  | Host x, Host y ->
+      Host (Nx_cpu.solve_triangular ~upper ~transpose ~unit_diag x y)
+  | _ ->
+      let (module B : Backend.S) =
+        backend_of (Solve_triangular { upper; transpose; unit_diag; a; b })
+      in
+      B.solve_triangular ~upper ~transpose ~unit_diag a b
 
 (* [direct op] answers [op] with no interpretation. The decompositions run on
    the backend even on the host: their host case settles its results as a
@@ -2374,108 +2532,33 @@ let on_host3 x y z f g =
 let direct : type r. r Op.t -> r =
  fun op ->
   match[@warning "@4@8"] op with
-  | Unary (k, x) -> direct_unary op k x
-  | Binary (k, x, y) -> direct_binary op k x y
-  | Compare (k, x, y) -> direct_compare op k x y
-  | Where (c, x, y) -> direct_where op c x y
-  | Reduce (k, axes, x) -> direct_reduce op k axes x
-  | Scan (k, axis, x) ->
-      let kind = reduce_op k in
-      on_host1 x (Nx_cpu.associative_scan ~axis ~op:kind) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.associative_scan ~axis ~op:kind x)
-  | Arg_reduce (Argmax, axis, x) ->
-      on_host1 x (Nx_cpu.argmax ~axis ~keepdims:false) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.argmax ~axis ~keepdims:false x)
-  | Arg_reduce (Argmin, axis, x) ->
-      on_host1 x (Nx_cpu.argmin ~axis ~keepdims:false) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.argmin ~axis ~keepdims:false x)
-  | Sort { descending; axis; x } ->
-      on_host1 x (Nx_cpu.sort ~axis ~descending) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.sort ~axis ~descending x)
-  | Argsort { descending; axis; x } ->
-      on_host1 x (Nx_cpu.argsort ~axis ~descending) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.argsort ~axis ~descending x)
-  | Pad (padding, v, x) ->
-      on_host1 x
-        (fun t -> Nx_cpu.pad t padding v)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.pad x padding v)
-  | Cat (axis, xs) ->
-      if all_host xs then Host (Nx_cpu.cat (List.map host_of xs) ~axis)
-      else
-        let (module B : Backend.S) = backend_of op in
-        B.cat xs ~axis
-  | Convert (Cast, dtype, x) ->
-      on_host1 x (Nx_cpu.cast ~dtype) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.cast ~dtype x)
-  | Convert (Bitcast, dtype, x) ->
-      on_host1 x (Nx_cpu.bitcast ~dtype) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.bitcast ~dtype x)
-  | Threefry (key, ctr) ->
-      on_host2 key ctr Nx_cpu.threefry (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.threefry key ctr)
-  | Gather (axis, indices, data) ->
-      on_host2 data indices
-        (fun d i -> Nx_cpu.gather d i ~axis)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.gather data indices ~axis)
+  | Unary (k, x) -> direct_unary k x
+  | Binary (k, x, y) -> direct_binary k x y
+  | Compare (k, x, y) -> direct_compare k x y
+  | Where (c, x, y) -> direct_where c x y
+  | Reduce (k, axes, x) -> direct_reduce k axes x
+  | Scan (k, axis, x) -> direct_scan k axis x
+  | Arg_reduce (k, axis, x) -> direct_arg_reduce k axis x
+  | Sort { descending; axis; x } -> direct_sort descending axis x
+  | Argsort { descending; axis; x } -> direct_argsort descending axis x
+  | Pad (padding, v, x) -> direct_pad padding v x
+  | Cat (axis, xs) -> direct_cat axis xs
+  | Convert (c, dtype, x) -> direct_convert c dtype x
+  | Threefry (key, ctr) -> direct_threefry key ctr
+  | Gather (axis, indices, data) -> direct_gather axis indices data
   | Scatter { mode; unique; axis; indices; updates; into } ->
-      on_host3 into indices updates
-        (fun d i u ->
-          Nx_cpu.scatter ~mode ~unique_indices:unique d ~indices:i ~updates:u
-            ~axis)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.scatter ~mode ~unique_indices:unique into ~indices ~updates ~axis)
-  | Update (x, starts, v) ->
-      on_host3 x starts v
-        (fun t s v -> Nx_cpu.update t ~starts:s v)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.update x ~starts v)
+      direct_scatter mode unique axis indices updates into
+  | Update (x, starts, v) -> direct_update x starts v
   | Unfold { kernel_size; stride; dilation; padding; x } ->
-      on_host1 x
-        (fun t -> Nx_cpu.unfold t ~kernel_size ~stride ~dilation ~padding)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.unfold x ~kernel_size ~stride ~dilation ~padding)
+      direct_unfold kernel_size stride dilation padding x
   | Fold { output_size; kernel_size; stride; dilation; padding; x } ->
-      on_host1 x
-        (fun t ->
-          Nx_cpu.fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.fold x ~output_size ~kernel_size ~stride ~dilation ~padding)
-  | Matmul (x, y) -> direct_matmul op x y
-  | Fft { inverse; axes; x } ->
-      on_host1 x
-        (if inverse then Nx_cpu.ifft ~axes else Nx_cpu.fft ~axes)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          if inverse then B.ifft x ~axes else B.fft x ~axes)
-  | Rfft { dtype; axes; x } ->
-      on_host1 x (Nx_cpu.rfft ~dtype ~axes) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.rfft x ~dtype ~axes)
-  | Irfft { dtype; axes; s; x } ->
-      on_host1 x (Nx_cpu.irfft ?s ~dtype ~axes) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.irfft ?s x ~dtype ~axes)
-  | Contiguous x -> direct_copy op x
-  | Cholesky { upper; x } ->
-      on_host1 x (Nx_cpu.cholesky ~upper) (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.cholesky ~upper x)
+      direct_fold output_size kernel_size stride dilation padding x
+  | Matmul (x, y) -> direct_matmul x y
+  | Fft { inverse; axes; x } -> direct_fft inverse axes x
+  | Rfft { dtype; axes; x } -> direct_rfft dtype axes x
+  | Irfft { dtype; axes; s; x } -> direct_irfft dtype axes s x
+  | Contiguous x -> direct_copy x
+  | Cholesky { upper; x } -> direct_cholesky upper x
   | Qr { reduced; x } ->
       let (module B : Backend.S) = backend_of op in
       B.qr ~reduced x
@@ -2497,62 +2580,157 @@ let direct : type r. r Op.t -> r =
         let values, vectors = B.eigh x in
         (values, Some vectors)
       else (B.eigvalsh x, None)
-  | Solve_triangular { upper; transpose; unit_diag; a; b = y } ->
-      on_host2 a y
-        (Nx_cpu.solve_triangular ~upper ~transpose ~unit_diag)
-        (fun () ->
-          let (module B : Backend.S) = backend_of op in
-          B.solve_triangular ~upper ~transpose ~unit_diag a y)
+  | Solve_triangular { upper; transpose; unit_diag; a; b } ->
+      direct_solve_triangular upper transpose unit_diag a b
   | Move (x, m) -> moved x m
   | Place (p, x) -> move_to p x
   | Read x -> read_elements_of x
 
-(* Interpretation
+(* Interception
 
-   [eval op] performs [op] for the transformations around the caller, and
-   answers it directly when there is none: only a perform of this very effect
-   that no handler took falls back. *)
-let eval : type r. r Op.t -> r =
+   [intercept i f] runs [f] with every operation its fiber performs delivered
+   to [i.run], which runs outside [f]'s handlers: the operations [i.run]
+   issues reach the enclosing interpretation. The gate is raised for the
+   extent of [f], however it ends. *)
+
+type interpreter = { run : 'r. 'r Op.t -> 'r }
+type _ Effect.t += E_op : 'r Op.t -> 'r Effect.t | E_intercepted : bool Effect.t
+
+let intercept i f =
+  Atomic.incr intercepts;
+  Fun.protect ~finally:(fun () -> Atomic.decr intercepts) @@ fun () ->
+  let effc : type c a.
+      c Effect.t -> ((c, a) Effect.Deep.continuation -> a) option = function
+    | E_op op ->
+        Some
+          (fun k ->
+            match i.run op with
+            | v -> Effect.Deep.continue k v
+            | exception e ->
+                let bt = Printexc.get_raw_backtrace () in
+                Effect.Deep.discontinue_with_backtrace k e bt)
+    | E_intercepted -> Some (fun k -> Effect.Deep.continue k true)
+    | _ -> None
+  in
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
+
+(* Whether the calling fiber is inside an interception, outside its [run]. *)
+let intercepted () =
+  intercepting ()
+  &&
+  let e = E_intercepted in
+  match Effect.perform e with
+  | b -> b
+  | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> false
+
+(* [perform op] delivers [op] to the interception around the caller, and
+   answers it directly when there is none: only an unhandled perform of this
+   very effect falls back. *)
+let perform : type r. r Op.t -> r =
  fun op ->
   let e = E_op op in
   match Effect.perform e with
   | v -> v
   | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> direct op
 
-(* Entry functions, one per constructor. *)
+(* [eval op] is [op] in the current interpretation. *)
+let eval op = if intercepting () then perform op else direct op
 
-let unary k x = eval (Unary (k, x))
-let binary k x y = eval (Binary (k, x, y))
-let cmp k x y = eval (Compare (k, x, y))
-let where c x y = eval (Where (c, x, y))
-let reduce k ~axes x = eval (Reduce (k, axes, x))
-let scan k ~axis x = eval (Scan (k, axis, x))
-let arg_reduce k ~axis x = eval (Arg_reduce (k, axis, x))
-let sort ~descending ~axis x = eval (Sort { descending; axis; x })
-let argsort ~descending ~axis x = eval (Argsort { descending; axis; x })
-let pad padding v x = eval (Pad (padding, v, x))
-let cat ~axis xs = eval (Cat (axis, xs))
-let cast dtype x = eval (Convert (Cast, dtype, x))
-let bitcast dtype x = eval (Convert (Bitcast, dtype, x))
-let threefry key ctr = eval (Threefry (key, ctr))
-let gather ~axis indices x = eval (Gather (axis, indices, x))
+(* Entry functions, one per constructor. While the gate is down, each answers
+   directly and builds no operation. *)
+
+let unary k x =
+  if intercepting () then perform (Unary (k, x)) else direct_unary k x
+
+let binary k x y =
+  if intercepting () then perform (Binary (k, x, y)) else direct_binary k x y
+
+let cmp k x y =
+  if intercepting () then perform (Compare (k, x, y)) else direct_compare k x y
+
+let where c x y =
+  if intercepting () then perform (Where (c, x, y)) else direct_where c x y
+
+let reduce k ~axes x =
+  if intercepting () then perform (Reduce (k, axes, x))
+  else direct_reduce k axes x
+
+let scan k ~axis x =
+  if intercepting () then perform (Scan (k, axis, x)) else direct_scan k axis x
+
+let arg_reduce k ~axis x =
+  if intercepting () then perform (Arg_reduce (k, axis, x))
+  else direct_arg_reduce k axis x
+
+let sort ~descending ~axis x =
+  if intercepting () then perform (Sort { descending; axis; x })
+  else direct_sort descending axis x
+
+let argsort ~descending ~axis x =
+  if intercepting () then perform (Argsort { descending; axis; x })
+  else direct_argsort descending axis x
+
+let pad padding v x =
+  if intercepting () then perform (Pad (padding, v, x))
+  else direct_pad padding v x
+
+let cat ~axis xs =
+  if intercepting () then perform (Cat (axis, xs)) else direct_cat axis xs
+
+let cast dtype x =
+  if intercepting () then perform (Convert (Cast, dtype, x))
+  else direct_convert Cast dtype x
+
+let bitcast dtype x =
+  if intercepting () then perform (Convert (Bitcast, dtype, x))
+  else direct_convert Bitcast dtype x
+
+let threefry key ctr =
+  if intercepting () then perform (Threefry (key, ctr))
+  else direct_threefry key ctr
+
+let gather ~axis indices x =
+  if intercepting () then perform (Gather (axis, indices, x))
+  else direct_gather axis indices x
 
 let scatter ~mode ~unique ~axis ~indices ~updates into =
-  eval (Scatter { mode; unique; axis; indices; updates; into })
+  if intercepting () then
+    perform (Scatter { mode; unique; axis; indices; updates; into })
+  else direct_scatter mode unique axis indices updates into
 
-let update x ~starts v = eval (Update (x, starts, v))
+let update x ~starts v =
+  if intercepting () then perform (Update (x, starts, v))
+  else direct_update x starts v
 
 let unfold ~kernel_size ~stride ~dilation ~padding x =
-  eval (Unfold { kernel_size; stride; dilation; padding; x })
+  if intercepting () then
+    perform (Unfold { kernel_size; stride; dilation; padding; x })
+  else direct_unfold kernel_size stride dilation padding x
 
 let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
-  eval (Fold { output_size; kernel_size; stride; dilation; padding; x })
+  if intercepting () then
+    perform (Fold { output_size; kernel_size; stride; dilation; padding; x })
+  else direct_fold output_size kernel_size stride dilation padding x
 
-let matmul x y = eval (Matmul (x, y))
-let fft ~inverse ~axes x = eval (Fft { inverse; axes; x })
-let rfft dtype ~axes x = eval (Rfft { dtype; axes; x })
-let irfft ?s dtype ~axes x = eval (Irfft { dtype; axes; s; x })
-let cholesky ~upper x = eval (Cholesky { upper; x })
+let matmul x y =
+  if intercepting () then perform (Matmul (x, y)) else direct_matmul x y
+
+let fft ~inverse ~axes x =
+  if intercepting () then perform (Fft { inverse; axes; x })
+  else direct_fft inverse axes x
+
+let rfft dtype ~axes x =
+  if intercepting () then perform (Rfft { dtype; axes; x })
+  else direct_rfft dtype axes x
+
+let irfft ?s dtype ~axes x =
+  if intercepting () then perform (Irfft { dtype; axes; s; x })
+  else direct_irfft dtype axes s x
+
+let cholesky ~upper x =
+  if intercepting () then perform (Cholesky { upper; x })
+  else direct_cholesky upper x
+
 let qr ~reduced x = eval (Qr { reduced; x })
 let lu x = eval (Lu x)
 let svd ~full_matrices x = eval (Svd { full_matrices; x })
@@ -2567,9 +2745,12 @@ let eig x = with_vectors "eig" (eval (Eig { vectors = true; x }))
 let eigh x = with_vectors "eigh" (eval (Eigh { vectors = true; x }))
 
 let solve_triangular ~upper ~transpose ~unit_diag a b =
-  eval (Solve_triangular { upper; transpose; unit_diag; a; b })
+  if intercepting () then
+    perform (Solve_triangular { upper; transpose; unit_diag; a; b })
+  else direct_solve_triangular upper transpose unit_diag a b
 
-let move x m = eval (Move (x, m))
+let move x m =
+  if intercepting () then perform (Move (x, m)) else moved x m
 let reshape x shape = move x (Reshape shape)
 let expand x shape = move x (Expand shape)
 let permute x axes = move x (Permute axes)
@@ -2581,7 +2762,7 @@ let sliding_window x ~axis ~window ~step =
 
 (* The elements of [x]'s view in C order, in a host buffer. The storage of a
    host value that is contiguous from its first element is that buffer. *)
-let read x = eval (Read x)
+let read x = if intercepting () then perform (Read x) else read_elements_of x
 
 (* A value already at [p] is returned as it is. *)
 let place (type a b) p (x : (a, b) t) : (a, b) t =
@@ -2589,13 +2770,14 @@ let place (type a b) p (x : (a, b) t) : (a, b) t =
     match x with
     | Placed r -> Cell.with_borrow r.r_cell (fun () -> x)
     | Host _ | Traced _ -> x
-  else eval (Place (p, x))
+  else if intercepting () then perform (Place (p, x))
+  else move_to p x
 
 (* [copy x] is [x] in storage of its own, C-contiguous from its first element:
    it always copies. [contiguous x] is [x] itself when its bytes are already
    C-contiguous from its first element. A traced value has no bytes: the
    interpretation that made it answers its copy. *)
-let copy x = eval (Contiguous x)
+let copy x = if intercepting () then perform (Contiguous x) else direct_copy x
 
 let contiguous x =
   match x with

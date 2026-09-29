@@ -209,10 +209,14 @@ let quant (type a b) st w (op : (a, b) Nx_quant.Effect.op) : (a, b) t =
         T.reshape (Array.append (Array.sub s 0 (r - 2)) [| s.(r - 1) |]) y
       else y
 
-let rec handler : type r. state -> (r, r) Effect.Deep.handler =
- fun (st : state) ->
+(* [install st f] is [f ()] with its operations batched by [st]: an
+   interpreter of the operations, and a handler of the effects its rules
+   answer, installed outside the interpreter. *)
+let rec install : type a. state -> (unit -> a) -> a =
+ fun (st : state) f ->
   let open Effect.Deep in
   let b x = batched st x in
+  let running = ref 0 in
   (* [out], marked batched. *)
   let lane out =
     mark st out;
@@ -359,18 +363,16 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     match eff with
-    | E_op op -> Some (fun () -> run op)
     (* Shape queries: batched tensors present their unbatched remainder, as a
-       contiguous view. *)
-    | E_view x ->
-        if batched st x then
-          Some
-            (fun () ->
-              let s = T.shape x in
-              Nx_array.View.create (Array.sub s 1 (Array.length s - 1)))
-        else None
+       contiguous view. The interpreter, which runs inside this handler, sees
+       the physical tensors. *)
+    | E_view x when !running = 0 && batched st x ->
+        Some
+          (fun () ->
+            let s = T.shape x in
+            Nx_array.View.create (Array.sub s 1 (Array.length s - 1)))
     (* A lane of a map over the split axis has no placement of its own. *)
-    | E_placement x when batched st x ->
+    | E_placement x when !running = 0 && batched st x ->
         Some
           (fun () ->
             match Nx_effect.Placement.without_leading_axis (placement x) with
@@ -430,12 +432,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             (fun (Nx.P p) b -> if b then mark st p)
             (fst (Nx.Ptree.flatten params_s ps))
             flags;
-          let y, res = match_with fwd ps (handler st) in
+          let y, res = install st (fun () -> fwd ps) in
           (Nx.Ptree.map result_s (fun _ l -> ensure_batched st l) y, res)
         in
         let bwd' res cts =
           Nx.Ptree.fold result_s (fun _ c () -> mark st c) cts ();
-          let gs = match_with (fun () -> bwd res cts) () (handler st) in
+          let gs = install st (fun () -> bwd res cts) in
           Structure.map2 "Rune.custom_vjp" params_s ~this:"the parameters"
             ~that:"bwd's gradients"
             (fun _ p g ->
@@ -465,7 +467,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         let out = ref [] in
         let f' ps =
           mark_params ps;
-          let y = match_with f ps (handler st) in
+          let y = install st (fun () -> f ps) in
           out :=
             List.map
               (fun (Nx.P l) -> batched st l)
@@ -475,7 +477,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         let jvp' ps dps =
           mark_params ps;
           mark_params dps;
-          let y, dy = match_with (fun () -> jvp ps dps) () (handler st) in
+          let y, dy = install st (fun () -> jvp ps dps) in
           let both = ref [] in
           let batch_both (type a b) (y : (a, b) t) (dy : (a, b) t) =
             let b = batched st y || batched st dy in
@@ -524,7 +526,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             (fun (Nx.P p) b -> if b then mark st p)
             (fst (Nx.Ptree.flatten params_s params))
             flags;
-          let y = match_with f params (handler st) in
+          let y = install st (fun () -> f params) in
           out :=
             List.map
               (fun (Nx.P l) -> batched st l)
@@ -565,9 +567,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | Scan.E_scan req ->
         Some
           (fun () ->
-            let fold () =
-              match_with (fun () -> Scan.eager req) () (handler st)
-            in
+            let fold () = install st (fun () -> Scan.eager req) in
             Scan.pass_on ~fold @@ fun () ->
               let exception Grow of bool list in
               let flags = List.map (fun (Nx.P l) -> batched st l) in
@@ -589,9 +589,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 let run c x =
                   List.iter2 (fun b (Nx.P c) -> if b then mark st c) carried c;
                   List.iter2 (fun b (Nx.P x) -> if b then mark st x) rows x;
-                  let c', y =
-                    match_with (fun () -> req.req_step.run c x) () (handler st)
-                  in
+                  let c', y = install st (fun () -> req.req_step.run c x) in
                   let next = flags c' in
                   if List.exists2 (fun b b' -> b' && not b) carried next then
                     raise (Grow (List.map2 ( || ) carried next));
@@ -637,7 +635,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             out)
     | _ -> None
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
-   fun eff -> Option.map Gate.deliver (rule eff)
+  let effc : type c. c Effect.t -> ((c, a) continuation -> a) option =
+   fun eff -> Option.map Answer.deliver (rule eff)
   in
-  { retc = Fun.id; exnc = raise; effc }
+  let run op =
+    incr running;
+    Fun.protect ~finally:(fun () -> decr running) (fun () -> run op)
+  in
+  match_with
+    (fun () -> Nx_effect.intercept { run } f)
+    ()
+    { retc = Fun.id; exnc = raise; effc }

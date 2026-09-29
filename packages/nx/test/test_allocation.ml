@@ -32,17 +32,31 @@ let row = Nx.create Nx.float32 [| 1024 |] (Array.make 1024 0.5)
 let dispatch =
   group "one-element operations"
     [
-      test "add" (fun () -> equal int 103 (words (fun () -> Nx.add a b)));
-      test "less" (fun () -> equal int 103 (words (fun () -> Nx.less a b)));
+      test "add" (fun () -> equal int 66 (words (fun () -> Nx.add a b)));
+      test "less" (fun () -> equal int 66 (words (fun () -> Nx.less a b)));
       test "where" (fun () ->
-          equal int 106 (words (fun () -> Nx.where mask a b)));
-      test "sum" (fun () -> equal int 138 (words (fun () -> Nx.sum a)));
+          equal int 66 (words (fun () -> Nx.where mask a b)));
+      test "sum" (fun () -> equal int 116 (words (fun () -> Nx.sum a)));
       test "matmul" (fun () ->
-          equal int 122 (words (fun () -> Nx.matmul mat mat)));
+          equal int 92 (words (fun () -> Nx.matmul mat mat)));
       test "zeros" (fun () ->
-          equal int 120 (words (fun () -> Nx.zeros Nx.float32 [| 1 |])));
+          equal int 108 (words (fun () -> Nx.zeros Nx.float32 [| 1 |])));
       test "shape of a vector" (fun () ->
-          equal int 11 (words (fun () -> Nx.shape row)));
+          equal int 2 (words (fun () -> Nx.shape row)));
     ]
 
-let () = exit (run "nx allocation" [ dispatch ])
+(* With no interception anywhere, a host operation allocates what nx.cpu's
+   kernel allocates for its result, and the two words of the [Host] block
+   around it. *)
+let host_path =
+  group "host path"
+    [
+      test "add allocates its result" (fun () ->
+          let x = Nx_cpu.buffer () Nx.float32 [| 1 |] in
+          let y = Nx_cpu.buffer () Nx.float32 [| 1 |] in
+          equal int
+            (words (fun () -> Nx_cpu.add x y) + 2)
+            (words (fun () -> Nx.add a b)));
+    ]
+
+let () = exit (run "nx allocation" [ dispatch; host_path ])

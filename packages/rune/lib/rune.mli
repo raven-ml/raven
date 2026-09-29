@@ -966,5 +966,6 @@ val detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     to an operation whose gradient is not implemented. *)
 
 val no_grad : (unit -> 'a) -> 'a
-(** [no_grad f] runs [f] with gradient tracking disabled: tensors it produces
-    are constants of the surrounding differentiation. *)
+(** [no_grad f] runs [f] with the differentiations around it paused: tensors
+    it produces are constants of them. A differentiation [f] starts runs as
+    usual, and so does code on other domains and threads. *)

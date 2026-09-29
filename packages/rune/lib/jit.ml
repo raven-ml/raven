@@ -2188,8 +2188,11 @@ let compare_graph : Nx_backend.compare -> F.Tensor.t -> F.Tensor.t -> F.Tensor.t
 
 (* Handler *)
 
-let rec handler : type r. state -> (r, r) Effect.Deep.handler =
- fun st ->
+(* [install st f] is [f ()] traced into [st]: an interpreter of the
+   operations, and a handler of the effects its rules answer, installed outside
+   the interpreter. *)
+let rec install : type a. state -> (unit -> a) -> a =
+ fun st f ->
   let open Effect.Deep in
   let dt x = Nx_effect.dtype x in
   let go x = tolk_of st x in
@@ -2420,7 +2423,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     match eff with
-    | E_op op -> Some (fun () -> run op)
     (* A traced value lives where its operation put it, which is what the
        gradient of a placement asks of its primal. *)
     | E_placement x when is_traced x -> Some (fun () -> placement_in st x)
@@ -2449,7 +2451,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 (fun _ leaf () ->
                   ignore (storage st (placement_in st leaf) (go leaf) : U.t))
                 params ();
-            Effect.Deep.match_with f params (handler st))
+            install st (fun () -> f params))
     | Remat.E_barrier { values; after } ->
         Some
           (fun () ->
@@ -2530,15 +2532,16 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         in
         Some
           (fun () ->
-            Effect.Deep.match_with
-              (fun () -> Quant.lower kernels w op)
-              () (handler st))
+            install st (fun () -> Quant.lower kernels w op))
     | _ -> None
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
-   fun eff -> Option.map Gate.deliver (rule eff)
+  let effc : type c. c Effect.t -> ((c, a) continuation -> a) option =
+   fun eff -> Option.map Answer.deliver (rule eff)
   in
-  { retc = Fun.id; exnc = raise; effc }
+  match_with
+    (fun () -> Nx_effect.intercept { run } f)
+    ()
+    { retc = Fun.id; exnc = raise; effc }
 
 (* A scan: trace the body once, compile it as a sub-program, and emit the loop
    call, which runs the steps from the last row to the first under
@@ -2565,9 +2568,8 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
         Fun.protect
           ~finally:(fun () -> st.scan_writes <- outer_writes)
           (fun () ->
-            Effect.Deep.match_with
-              (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
-              () (handler st)))
+            install st (fun () ->
+                step.run (slot_values c_slots) (slot_values x_slots))))
   in
   (* A loop can only be compiled from a stable carry (the single prototype trace
      stands for every step). A body that changes a carry's shape or placement
@@ -4092,10 +4094,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       incr pos)
     leaves;
   let ph_params = Nx.Ptree.rebuild p ~like:params (List.rev !placeholders) in
-  let y =
-    Gate.with_transform (fun () ->
-        Effect.Deep.match_with f ph_params (handler st))
-  in
+  let y = install st (fun () -> f ph_params) in
   (* Collect the values the result returns, each once, and which of them each
      result leaf is; a value the trace never saw is a constant passing through
      unchanged. *)
@@ -5315,7 +5314,7 @@ let compile_fn (type a r) ?requested ?beam ?parallel ~roles
         t
   in
   fun v ->
-    if Gate.transforming () then f v
+    if Nx_effect.intercepted () then f v
     else (
       if not (Atomic.compare_and_set in_use false true) then
         invalid_arg

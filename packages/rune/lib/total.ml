@@ -34,7 +34,7 @@ let dropping f =
   in
   let effc : type c. c Effect.t -> ((c, _) Effect.Deep.continuation -> _) option
       =
-   fun eff -> Option.map Gate.deliver (rule eff)
+   fun eff -> Option.map Answer.deliver (rule eff)
   in
   Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
 
@@ -112,7 +112,11 @@ let rec collect : type a b r.
     | _ -> None
   in
   let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
-   fun eff -> Option.map Gate.deliver (rule eff)
+   fun eff -> Option.map Answer.deliver (rule eff)
   in
-  Gate.with_transform (fun () ->
-      match_with f () { retc = (fun r -> (r, !total)); exnc = raise; effc })
+  (* The scope interprets its operations as they are, so that a compiled
+     function called inside it runs as code whose additions reach it. *)
+  match_with
+    (fun () -> Nx_effect.intercept { run = Nx_effect.eval } f)
+    ()
+    { retc = (fun r -> (r, !total)); exnc = raise; effc }

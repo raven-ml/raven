@@ -12,7 +12,8 @@
   vmap
   debug
   tensor_map
-  gate
+  answer
+  pause
   derivs
   jit
   jit_cache

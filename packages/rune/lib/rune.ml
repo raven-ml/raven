@@ -12,11 +12,6 @@ let require_scalar name y =
          name
          (Structure.shape_string (Nx.shape y)))
 
-(* Install a transformation handler for the run of [f]. The recorded depth lets
-   [jit] step aside when a transformation is observing the operations. *)
-let run_transform f x handler =
-  Gate.with_transform (fun () -> Effect.Deep.match_with f x handler)
-
 (* Gradients are defined with respect to real and complex leaves. A parameter
    structure may hold others — an RNG key threaded through a compiled step, a
    step counter, a batch of indices — and they ride along rather than being
@@ -63,7 +58,7 @@ let cotangents tape p params =
 
 let value_and_grad p f params =
   let tape, params = tracked_params p params in
-  let y = run_transform f params (Reverse.handler tape) in
+  let y = Reverse.install tape (fun () -> f params) in
   require_scalar "Rune.value_and_grad" y;
   Tape.accumulate tape y (Nx.ones_like y);
   Tape.backward tape;
@@ -102,14 +97,14 @@ let seed fn tape q y cts =
 
 let vjp p q f params cts =
   let tape, params = tracked_params p params in
-  let y = run_transform f params (Reverse.handler tape) in
+  let y = Reverse.install tape (fun () -> f params) in
   seed "Rune.vjp" tape q y cts;
   Tape.backward tape;
   (y, cotangents tape p params)
 
 let vjp_fun p q f params =
   let tape, params = tracked_params p params in
-  let y = run_transform f params (Reverse.handler tape) in
+  let y = Reverse.install tape (fun () -> f params) in
   let pullback cts =
     Tape.reset_cotangents tape;
     seed "Rune.vjp_fun" tape q y cts;
@@ -141,7 +136,7 @@ let run_forward fn p f params tangents =
          Tensor_map.set store leaf tangent;
          leaf)
        params tangents);
-  (store, run_transform f params (Forward.handler store))
+  (store, Forward.install store (fun () -> f params))
 
 let jvp p q f params tangents =
   let store, y = run_forward "Rune.jvp" p f params tangents in
@@ -211,7 +206,7 @@ let vmap ?axis fn =
               leaf)
             args
         in
-        let y = run_transform (u.apply f) args (Vmap.handler st) in
+        let y = Vmap.install st (fun () -> u.apply f args) in
         Nx.Ptree.map u.result (fun _ yl -> broadcast_output st yl) y)
 
 let vmap' ?axis f x =
@@ -220,7 +215,7 @@ let vmap' ?axis f x =
   let x = Structure.alias x in
   let st = Vmap.create ?axis ~batch_size:(Nx.shape x).(0) () in
   Vmap.mark st x;
-  broadcast_output st (run_transform f x (Vmap.handler st))
+  broadcast_output st (Vmap.install st (fun () -> f x))
 
 (* Totals *)
 
@@ -236,7 +231,7 @@ let tracked_tensor x =
 
 let run_reverse' f x ~seed =
   let tape, x = tracked_tensor x in
-  let y = run_transform f x (Reverse.handler tape) in
+  let y = Reverse.install tape (fun () -> f x) in
   Tape.accumulate tape y (Nx.conjugate (seed y));
   Tape.backward tape;
   (y, Nx.conjugate (Tape.cotangent tape x))
@@ -252,7 +247,7 @@ let vjp' f x cotangent = run_reverse' f x ~seed:(fun _ -> cotangent)
 
 let vjp_fun' f x =
   let tape, x = tracked_tensor x in
-  let y = run_transform f x (Reverse.handler tape) in
+  let y = Reverse.install tape (fun () -> f x) in
   let pullback ct =
     Tape.reset_cotangents tape;
     Tape.accumulate tape y (Nx.conjugate ct);
@@ -271,7 +266,7 @@ let jvp' f x tangent =
   let x = Structure.alias x in
   let store = Tensor_map.create () in
   Tensor_map.set store x tangent;
-  let y = run_transform f x (Forward.handler store) in
+  let y = Forward.install store (fun () -> f x) in
   (y, output_tangent store y)
 
 (* Gradient checkpointing *)
@@ -425,5 +420,5 @@ let with_debug = Debug.with_debug
 
 (* Autodiff control *)
 
-let no_grad f = Gate.without_tracing f
-let detach t = Gate.without_tracing (fun () -> Nx.copy t)
+let no_grad f = Pause.during f
+let detach t = Pause.during (fun () -> Nx.copy t)

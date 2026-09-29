@@ -50,7 +50,7 @@ type scan_res = { r_carry : leaves; r_ys : leaves }
    since it passes the scan on when it stages. Unhandled means [false].
 
    An exception raised while a handler runs the scan reaches its performer, as
-   every handler's does ([Gate.deliver]): one the fold step raises belongs at
+   every handler's does ([Answer.deliver]): one the fold step raises belongs at
    the scan, where the eager fold raises it, and a transformation's fold step
    signals through its own exceptions. *)
 type _ Effect.t +=

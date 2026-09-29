@@ -4,9 +4,9 @@ This page explains how rune implements its transformations with OCaml 5 effect h
 
 ## The Core Idea
 
-Every Nx tensor operation is a value of one type, `Nx_effect.Op.t` — `Binary (Add, x, y)`, `Reduce (Sum, axes, x)`, and so on — and performing it raises one OCaml 5 effect that carries it. Normally no handler is installed, so the effect falls through to the default backend, which executes the operation directly.
+Every Nx tensor operation is a value of one type, `Nx_effect.Op.t` — `Binary (Add, x, y)`, `Reduce (Sum, axes, x)`, and so on. Rune's transformations are interpreters of those operations: functions from an operation to its result, each installed with `Nx_effect.intercept` for the extent of the function it transforms. An operation performed inside that extent is delivered to the interpreter as one OCaml 5 effect. While no interpreter is installed anywhere, Nx performs no effect and computes each operation directly.
 
-Rune's transformations are interpreters of those operations, installed as effect handlers. Each one matches every kind of operation, and the compiler checks that none is missing, and uses them differently:
+Each interpreter matches every kind of operation, and the compiler checks that none is missing. They use them differently:
 
 - **Reverse mode** records pull thunks on a tape during the forward pass, then runs them backward.
 - **Forward mode** propagates tangents alongside primal values in a single pass, with no tape.
@@ -16,13 +16,13 @@ Rune's transformations are interpreters of those operations, installed as effect
 ```
 User code: Nx.add x y
      │
-     ├─ no handler installed → backend executes directly
+     ├─ no interpreter installed → Nx computes directly
      │
-     └─ handler installed (grad, jvp, vmap, ...) → handler intercepts,
+     └─ interpreter installed (grad, jvp, vmap, ...) → it receives the op,
         applies its treatment, evaluates the op in the enclosing context
 ```
 
-The key property: **user code does not change**. You write functions with `Nx.add`, `Nx.matmul`, `Nx.sin`, and rune transforms them by handling their effects. There is no special tensor type, no graph builder, and no tracing step — and because handlers evaluate operations in the *enclosing* context, nesting one transformation inside another just works.
+The key property: **user code does not change**. You write functions with `Nx.add`, `Nx.matmul`, `Nx.sin`, and rune transforms them by interpreting their operations. There is no special tensor type, no graph builder, and no tracing step — and because interpreters evaluate operations in the *enclosing* context, nesting one transformation inside another just works.
 
 ## Reverse Mode: the Tape
 
@@ -109,7 +109,7 @@ Under `jit`, a recomputation traced from the same arguments would be the same gr
 
 ## detach and no_grad
 
-The differentiation handlers share a tracing gate. `no_grad f` turns interception off for the extent of `f`, in both reverse and forward mode; `detach t` copies `t` with the gate closed, so the copy enters subsequent computations as an untracked constant. Neither erases anything from an existing tape — they prevent recording in the first place.
+`no_grad f` pauses the reverse- and forward-mode interpreters around `f` for its extent: they pass every operation it performs on as it is. `detach t` copies `t` with them paused, so the copy enters subsequent computations as an untracked constant. Neither erases anything from an existing tape — they prevent recording in the first place. A derivative that `f` takes itself is unaffected, and so is code that `f` runs on another domain or thread.
 
 ## The Failure Model
 
@@ -126,4 +126,4 @@ The intent is that rune never returns a wrong gradient quietly.
 
 **Side effects run in the forward pass.** Printing or logging inside a differentiated function executes during the forward pass. The backward pass runs the recorded pull thunks; it does not re-execute your function — unless you asked for that with `remat`.
 
-**Per-operation overhead.** Handling an effect costs more than a raw Nx call. For workloads dominated by large operations (matrix multiplications), the overhead is negligible; for many tiny operations it is more visible.
+**Per-operation overhead.** Interpreting an operation costs more than a raw Nx call, and while any interpreter is installed, on any domain, every Nx operation performs an effect to find one. For workloads dominated by large operations (matrix multiplications), the overhead is negligible; for many tiny operations it is more visible.

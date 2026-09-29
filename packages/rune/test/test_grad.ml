@@ -474,7 +474,7 @@ let test_no_grad_is_domain_local () =
     reverse, forward
   in
   (* Joining inside the scope guarantees both worker transformations run while
-     the parent has tracing disabled. No timing or scheduler assumption is used. *)
+     the parent's scope is open. No timing or scheduler assumption is used. *)
   let reverse, forward =
     Rune.no_grad (fun () -> Domain.join (Domain.spawn derivatives))
   in
@@ -483,8 +483,10 @@ let test_no_grad_is_domain_local () =
   check_arr ~msg:"no_grad in another domain leaves forward-mode tracing enabled"
     [|6.|] forward;
   let reverse, forward = Rune.no_grad derivatives in
-  check_arr ~msg:"the caller's reverse-mode scope remains disabled" [|0.|] reverse;
-  check_arr ~msg:"the caller's forward-mode scope remains disabled" [|0.|] forward;
+  check_arr ~msg:"a reverse-mode derivative started inside no_grad runs" [|6.|]
+    reverse;
+  check_arr ~msg:"a forward-mode derivative started inside no_grad runs" [|6.|]
+    forward;
   let reverse, forward = derivatives () in
   check_arr ~msg:"reverse-mode tracing is restored after the scope" [|6.|] reverse;
   check_arr ~msg:"forward-mode tracing is restored after the scope" [|6.|] forward;
@@ -523,13 +525,13 @@ let test_no_grad_is_thread_local () =
     [|6.|] forward;
   let square x = Nx.mul x x in
   let x = Nx.scalar f32 3. in
-  let suppressed =
+  let paused x =
     Rune.no_grad (fun () ->
         (try Rune.no_grad (fun () -> raise Exit) with Exit -> ());
-        Rune.grad' square x)
+        square x)
   in
-  check_arr ~msg:"unwinding an inner scope preserves the outer no_grad" [|0.|]
-    suppressed;
+  check_arr ~msg:"unwinding an inner scope preserves the outer no_grad" [|6.|]
+    (Rune.grad' (fun x -> Nx.add (square x) (paused x)) x);
   check_arr ~msg:"unwinding no_grad restores the calling thread" [|6.|]
     (Rune.grad' square x)
 

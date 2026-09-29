@@ -172,6 +172,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `Rune.no_grad` and `Rune.detach` pause the differentiations
+  around the calling code, found through its handlers instead of a domain- and
+  thread-local flag. A `grad` or `jvp` started inside `no_grad` differentiates;
+  it gave zero gradients.
 - `Rune.with_debug` prints every operation with its operands' dtypes and
   shapes (`mul float32[3] float32[3]`); it printed the output shape of some
   operations and skipped others, such as the Fourier transforms and linear
@@ -2863,6 +2867,12 @@ thread.
 
 ### Nx
 
+- **Breaking (effect handlers):** a transformation installs its interpreter
+  with `Nx_effect.intercept { run } f`, which hands `run` each operation `f`
+  performs, and `Nx_effect.intercepted ()` tells whether one is installed
+  around the caller; `E_op` is nx's own. While no interpreter is installed on
+  any domain, nx performs no effect and builds no operation: a one-element
+  host `Nx.add` allocates 69 words instead of 241.
 - Writing a `float` into a `float16` tensor and `Nx.cast` to `float16` from
   `float64` or a 64-bit integer round once to the nearest `float16`. They
   rounded to `float32` first, which moved a value next to a `float16` tie onto

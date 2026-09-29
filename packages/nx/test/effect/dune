@@ -1,0 +1,4 @@
+(test
+ (name test_intercept)
+ (package nx)
+ (libraries nx nx.effect windtrap))

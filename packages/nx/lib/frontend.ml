@@ -427,63 +427,68 @@ let to_array x = Array.init (numel x) (elements x)
 (* ───── Element-wise Binary Operations ───── *)
 
 (* Operands of one shape are passed as they are. *)
-let binop op a b =
+let binop k a b =
   let sa = shape a and sb = shape b in
-  if Shape.equal sa sb then op a b
+  if Shape.equal sa sb then B.binary k a b
   else
     let s = broadcast_shapes sa sb in
-    op (broadcast_to s a) (broadcast_to s b)
+    B.binary k (broadcast_to s a) (broadcast_to s b)
 
-let cmpop op a b = binop op a b
+let cmpop k a b =
+  let sa = shape a and sb = shape b in
+  if Shape.equal sa sb then B.cmp k a b
+  else
+    let s = broadcast_shapes sa sb in
+    B.cmp k (broadcast_to s a) (broadcast_to s b)
 
-let add a b = binop (B.binary Add) a b
+let add a b = binop Add a b
 let add_s t s = add t (scalar_like t s)
-let sub a b = binop (B.binary Sub) a b
+let sub a b = binop Sub a b
 let sub_s t s = sub t (scalar_like t s)
 let rsub_s s t = sub (scalar_like t s) t
-let mul a b = binop (B.binary Mul) a b
+let mul a b = binop Mul a b
 let mul_s t s = mul t (scalar_like t s)
 
 let div a b =
   let dt = B.dtype a in
-  if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then binop (B.binary Idiv) a b
-  else binop (B.binary Fdiv) a b
+  if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then binop Idiv a b
+  else binop Fdiv a b
 
 let div_s t s = div t (scalar_like t s)
 let rdiv_s s t = div (scalar_like t s) t
-let pow a b = binop (B.binary Pow) a b
+let pow a b = binop Pow a b
 let pow_s t s = pow t (scalar_like t s)
 let rpow_s s t = pow (scalar_like t s) t
-let maximum a b = binop (B.binary Maximum) a b
+let maximum a b = binop Maximum a b
 let maximum_s t s = maximum t (scalar_like t s)
-let minimum a b = binop (B.binary Minimum) a b
+let minimum a b = binop Minimum a b
 let minimum_s t s = minimum t (scalar_like t s)
-let mod_ a b = binop (B.binary Mod) a b
+let mod_ a b = binop Mod a b
 let mod_s t s = mod_ t (scalar_like t s)
 let rmod_s s t = mod_ (scalar_like t s) t
-let bitwise_xor a b = binop (B.binary Xor) a b
-let bitwise_or a b = binop (B.binary Or) a b
-let bitwise_and a b = binop (B.binary And) a b
+let bitwise_xor a b = binop Xor a b
+let bitwise_or a b = binop Or a b
+let bitwise_and a b = binop And a b
 
 (* ───── Logical and Comparison Operations ───── *)
 
 (* A logical operation reads non-zero as true and gives zero or one of the
    operands' dtype. *)
 let truth x =
-  cmpop (B.cmp Not_equal) x (scalar_like x (Nx_dtype.zero (dtype x)))
+  cmpop Not_equal x (scalar_like x (Nx_dtype.zero (dtype x)))
 let logical op a b = cast (dtype a) (binop op (truth a) (truth b))
-let logical_and a b = logical (B.binary And) a b
-let logical_or a b = logical (B.binary Or) a b
-let logical_xor a b = logical (B.binary Xor) a b
+let logical_and a b = logical And a b
+let logical_or a b = logical Or a b
+let logical_xor a b = logical Xor a b
 
 let logical_not x =
   cast (dtype x)
-    (cmpop (B.cmp Equal) x (scalar_like x (Nx_dtype.zero (dtype x))))
+    (cmpop Equal x (scalar_like x (Nx_dtype.zero (dtype x))))
 
-let cmpeq a b = cmpop (B.cmp Equal) a b
-let cmpne a b = cmpop (B.cmp Not_equal) a b
-let cmplt a b = cmpop (B.cmp Less) a b
-let cmple a b = cmpop (B.cmp Less_equal) a b
+let cmpeq a b = cmpop Equal a b
+let cmpne a b = cmpop Not_equal a b
+let cmplt a b = cmpop Less a b
+let cmple a b = cmpop Less_equal a b
 let cmpgt a b = cmplt b a
 let cmpge a b = cmple b a
 let less = cmplt
@@ -501,22 +506,21 @@ let greater_equal_s a s = greater_equal a (scalar_like a s)
 
 (* ───── Element-wise Unary Operations ───── *)
 
-let unaryop op x = op x
-let neg x = unaryop (B.unary Neg) x
+let neg x = B.unary Neg x
 
 let bitwise_not x =
   let dt = dtype x in
-  binop (B.binary Xor) x
+  binop Xor x
     (broadcast_to (shape x)
        (B.full (B.context x) dt [||] (Nx_dtype.minus_one dt)))
 
-let sin x = unaryop (B.unary Sin) x
-let cos x = unaryop (B.unary Cos) x
-let sqrt x = unaryop (B.unary Sqrt) x
-let recip x = unaryop (B.unary Recip) x
-let log x = unaryop (B.unary Log) x
-let exp x = unaryop (B.unary Exp) x
-let abs x = unaryop (B.unary Abs) x
+let sin x = B.unary Sin x
+let cos x = B.unary Cos x
+let sqrt x = B.unary Sqrt x
+let recip x = B.unary Recip x
+let log x = B.unary Log x
+let exp x = B.unary Exp x
+let abs x = B.unary Abs x
 
 (* A function composed of several operations computes a narrow float at
    float32 and rounds once, as an operation of the backend does. *)
@@ -541,9 +545,9 @@ let log2 x =
     x
 
 let exp2 x = rpow_s (Nx_dtype.of_float (dtype x) 2.0) x
-let tan x = unaryop (B.unary Tan) x
+let tan x = B.unary Tan x
 let square x = mul x x
-let sign x = unaryop (B.unary Sign) x
+let sign x = B.unary Sign x
 let relu x = maximum_s x (Nx_dtype.zero (dtype x))
 
 (* [exp] only ever sees [-|x|], so it cannot overflow, and a negative [x]
@@ -563,16 +567,16 @@ let sigmoid x =
     x
 
 let rsqrt x = at_float32 { f = (fun x -> recip (sqrt x)) } x
-let asin x = unaryop (B.unary Asin) x
-let acos x = unaryop (B.unary Acos) x
-let atan x = unaryop (B.unary Atan) x
-let sinh x = unaryop (B.unary Sinh) x
-let cosh x = unaryop (B.unary Cosh) x
-let tanh x = unaryop (B.unary Tanh) x
-let trunc x = unaryop (B.unary Trunc) x
-let ceil x = unaryop (B.unary Ceil) x
-let floor x = unaryop (B.unary Floor) x
-let round x = unaryop (B.unary Round) x
+let asin x = B.unary Asin x
+let acos x = B.unary Acos x
+let atan x = B.unary Atan x
+let sinh x = B.unary Sinh x
+let cosh x = B.unary Cosh x
+let tanh x = B.unary Tanh x
+let trunc x = B.unary Trunc x
+let ceil x = B.unary Ceil x
+let floor x = B.unary Floor x
+let round x = B.unary Round x
 
 let isinf x =
   if not (Nx_dtype.is_float (dtype x)) then
@@ -737,7 +741,7 @@ let atanh x =
 
 (* ───── Binary Mathematical Functions ───── *)
 
-let atan2 y x = binop (B.binary Atan2) y x
+let atan2 y x = binop Atan2 y x
 
 (* sqrt(x² + y²) with overflow protection via max * sqrt(1 + (min/max)²) *)
 let hypot x y =
@@ -3173,7 +3177,7 @@ module Rng = struct
       let edge x =
         maximum (lit (-.limit))
           (minimum (lit limit)
-             (unaryop (B.unary Erf) (mul x (lit (1.0 /. Float.sqrt 2.0)))))
+             (B.unary Erf (mul x (lit (1.0 /. Float.sqrt 2.0)))))
       in
       let lo = edge lower and hi = edge upper in
       let u = uniform k compute (shape lower) in
@@ -5625,7 +5629,7 @@ let standardize ?axes ?mean:mean_param ?variance:variance_param
        (add variance_tensor
           (scalar_like x (Nx_dtype.of_float (dtype x) epsilon))))
 
-let erf x = unaryop (B.unary Erf) x
+let erf x = B.unary Erf x
 
 let sliding_window ?axis ~window ?(step = 1) x =
   let r = ndim x in
