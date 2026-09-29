@@ -2757,6 +2757,10 @@ thread.
 
 ### Nx
 
+- `Nx.eig` and `Nx.eigvals` converge on complex matrices with nearly equal
+  eigenvalues, such as a Hermitian tridiagonal with paired eigenvalues, which
+  raised `Linalg_error` for want of convergence. The QR iteration's shift lost
+  half its digits to cancellation there; it is now computed as LAPACK does.
 - New `nx.amd.device` library: AMD GPUs as `Nx_device.t`s on Linux, through
   the `amdgpu` kernel driver or over PCI without it (`~interface:Pci`), which
   boots the GPU with firmware it verifies by digest and caches per user.

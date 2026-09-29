@@ -862,13 +862,26 @@ static nx_c_status eig_qr_c(eig_cplx *h, int n, int low, int igh, eig_cplx *w,
         if (en - 1 > low) bump += eig_cabs1(h[(en - 1) * n + (en - 2)]);
         mu = h[en * n + en] + bump;
       } else {
+        /* Wilkinson shift, the eigenvalue of the trailing 2x2 nearest a22, in
+           zlahqr's form a22 - u²/(x + y): x = (a11 - a22)/2, u² = a12 a21,
+           y = sqrt(x² + u²) signed with x. Built from the difference of the
+           diagonal, it keeps full precision when the two eigenvalues nearly
+           coincide, where a trace-and-determinant discriminant cancels. */
         eig_cplx a11 = h[(en - 1) * n + (en - 1)], a12 = h[(en - 1) * n + en];
         eig_cplx a21 = h[en * n + (en - 1)], a22 = h[en * n + en];
-        eig_cplx tr = a11 + a22;
-        eig_cplx det = a11 * a22 - a12 * a21;
-        eig_cplx disc = csqrt(tr * tr - 4.0 * det);
-        eig_cplx r1 = (tr + disc) / 2.0, r2 = (tr - disc) / 2.0;
-        mu = (cabs(r1 - a22) <= cabs(r2 - a22)) ? r1 : r2;
+        eig_cplx u = csqrt(a12) * csqrt(a21);
+        double s = eig_cabs1(u);
+        mu = a22;
+        if (s != 0.0) {
+          eig_cplx x = 0.5 * (a11 - a22);
+          double sx = eig_cabs1(x);
+          if (sx > s) s = sx;
+          eig_cplx y = s * csqrt((x / s) * (x / s) + (u / s) * (u / s));
+          if (sx > 0.0 &&
+              creal(x / sx) * creal(y) + cimag(x / sx) * cimag(y) < 0.0)
+            y = -y;
+          mu = a22 - u * (u / (x + y));
+        }
       }
       its++;
       itn--;
