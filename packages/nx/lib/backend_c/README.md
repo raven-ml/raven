@@ -17,9 +17,9 @@ shape, strides, offset, and dtype. The buffer is a host `Nx_device.Buffer.t`,
 whose first byte C reads with `nx_device_buffer_host` from nx.device's
 `nx_device.h`; the dtype's constructor index is its C dtype tag. Shapes,
 strides, and offsets are expressed in logical elements. Packed 4-bit dtypes are
-the only exception at the storage boundary. `test/test_backend_c.ml` pins the
-record layout and checks each C dtype row's element size, class and signedness
-against `Nx_dtype`.
+the only exception at the storage boundary. `nx_c.h`'s `_Static_assert` pins
+the tag order, and every dtype and layout crosses the FFI in Nx's suites, which
+would see a row of the wrong element size, class or signedness.
 
 Kernel tables use designated initializers indexed by the dtype enum. Unsupported
 dtype entries remain null and must be rejected by the common driver before a
@@ -52,10 +52,9 @@ factorization workers do not allocate packing buffers.
 On macOS, the top-level driver uses Accelerate CBLAS only when dtype, size, and
 strides are representable without copying. Accelerate runs on the calling thread
 with the OCaml runtime lock released and owns its internal parallelism. Every
-ineligible call falls through to the owned path. The backend-local correctness
-suite compares automatic Accelerate results with the owned oracle; the
-backend-local benchmark forces owned GEMM so fallback performance remains
-visible on Accelerate machines.
+ineligible call falls through to the owned path. The public matmul suite checks
+both routes against the sum of products; the backend-local benchmark forces
+owned GEMM so fallback performance remains visible on Accelerate machines.
 
 ## FFT and linear algebra
 
@@ -66,19 +65,18 @@ frontend norm handling remains in Nx.
 
 Cholesky, triangular solve, QR, symmetric/Hermitian eigendecomposition, general
 eigendecomposition, and SVD are implemented in the `tri`, `qr`, `eigh`, `eig`,
-and `svd` translation units. Public correctness is expressed as reconstruction,
-residual, orthogonality, dtype, layout, and batching properties in the Nx backend
-contract. Backend-local tests retain only forced algorithm/workspace and ABI
-invariants that the public interface cannot express.
+and `svd` translation units.
 
 ## Maintenance
 
-Fast correctness belongs to the normal `@runtest` alias. Generic backend
-semantics live in `packages/nx/test/backend_contract.ml`; tests here cover C ABI,
-engine, storage conversion, internal dispatch, workspace, aliasing, threading,
-and forced routing. Longer linalg and eigensolver fixtures plus scaled threaded
-fold stress run under the single
-`@packages/nx/lib/backend_c/test/backend-stress` alias and are included in CI.
+The backend is tested through Nx's public API, in `packages/nx/test`: each
+suite draws inputs on both sides of every threshold where a kernel changes
+method (matmul routes, the linalg crossovers, the sort's radix path, the
+engine's chunking and fork handling), at every dtype, with the large sizes
+tagged `slow`. To check that the suites still reach every path, build `nx_c` with
+`-fprofile-instr-generate -fcoverage-mapping` (and `-fprofile-instr-generate`
+in `c_library_flags`), run the suites and read `llvm-cov report` over
+`nx_c_*.c`.
 
 Public performance belongs to `packages/nx/bench`, including matmul, FFT, and
 linalg suites. `bench/bench_owned_gemm.ml` is deliberately the sole local
