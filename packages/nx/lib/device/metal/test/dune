@@ -2,7 +2,7 @@
  (name test_nx_metal_device)
  (package nx)
  (modules test_nx_metal_device)
- (enabled_if
+ (build_if
   (= %{system} macosx))
  (foreign_stubs
   (language c)
@@ -17,6 +17,6 @@
  (name test_nx_metal_place)
  (package nx)
  (modules test_nx_metal_place)
- (enabled_if
+ (build_if
   (= %{system} macosx))
  (libraries nx nx.metal.device nx.device windtrap))
