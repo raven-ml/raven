@@ -2724,6 +2724,9 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.randint` and `Nx.randint` over a range wider than 2^31, such as
+  all of int32, draw across the whole range. The offset from `low` overflowed
+  int32, and every draw past the middle of the range landed on one value.
 - A complex element prints its imaginary part with its own sign: `(1-2i)`,
   where `Nx.pp` printed `(1+-2i)`.
 - `Nx.rsqrt`, `log2`, `sigmoid`, `asinh`, `acosh` and `atanh` at `float16`,

@@ -3097,11 +3097,15 @@ module Make (B : Backend_intf.S) = struct
       (* [u * (high - low)] is non-negative, so the cast's truncation is a
          floor; shifting by [low] afterwards keeps it one, where folding [low]
          in first would truncate towards zero and both drop [low] and double the
-         count of 0 for a negative [low]. *)
+         count of 0 for a negative [low]. The offset reaches [2 ** 32 - 256]
+         when the range spans int32, past what int32 holds, so it is formed in
+         uint32 and shifted there, where the sum wraps into the int32 value it
+         names. *)
       let span = scalar ctx Nx_dtype.float32 (float_of_int (high - low)) in
-      add
-        (cast Nx_dtype.int32 (mul u span))
-        (scalar ctx Nx_dtype.int32 (Int32.of_int low))
+      bitcast Nx_dtype.int32
+        (add
+           (cast Nx_dtype.uint32 (mul u span))
+           (scalar ctx Nx_dtype.uint32 (Int32.of_int low)))
 
     let bernoulli (type b) k (p : (float, b) t) =
       let draw (type c) (compute : (float, c) Nx_dtype.t) =
