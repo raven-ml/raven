@@ -1169,3 +1169,79 @@ module Runtimes = struct
               raises_match (out_of_memory 16) (fun () -> Nx.add x x));
         ]
 end
+
+module Profiles = struct
+  module P = Nx_device.Profile
+  module B = Nx_device.Buffer
+
+  let profiled f =
+    P.start ();
+    match f () with
+    | () -> P.stop ()
+    | exception e ->
+        ignore (P.stop ());
+        raise e
+
+  (* Copies from the host to [d] and back, staged and through a borrow: each is
+     a span of the host named after its devices, and each that [d]'s copy queue
+     ran is also a span of its copy lane within the host's, [slack] nanoseconds
+     either side allowed for the calibration of [d]'s clock. *)
+  let copies ?(slack = 0) = function
+    | [] -> [ test "on no device" (fun () -> skip ~reason:"no device" ()) ]
+    | ds ->
+        List.map
+          (fun d ->
+            let name = Nx_device.name d in
+            test
+              (name
+             ^ "'s copies are spans of the host, and of its copy lane within \
+                them") (fun () ->
+                let host = Nx_device.host and u8 = Nx_dtype.Scalar.UInt8 in
+                let small = B.create host u8 4096
+                and big = B.create host u8 (1 lsl 20) in
+                let small_d = B.create d u8 4096
+                and big_d = B.create d u8 (1 lsl 20) in
+                let borrowed = B.borrow d big in
+                let events =
+                  profiled (fun () ->
+                      B.copy ~src:small ~dst:small_d;
+                      B.copy ~src:small_d ~dst:small;
+                      B.copy ~src:big ~dst:big_d;
+                      B.copy ~src:big_d ~dst:big)
+                in
+                ignore (Sys.opaque_identity borrowed);
+                let spans on lane =
+                  List.filter_map
+                    (function
+                      | P.Span s when Nx_device.equal s.device on && lane s.lane
+                        ->
+                          Some (s.name, s.start, s.stop)
+                      | _ -> None)
+                    events
+                in
+                let hosted = spans host (String.starts_with ~prefix:"domain ")
+                and queued = spans d (String.equal "copy") in
+                let names = [ "CPU -> " ^ name; name ^ " -> CPU" ] in
+                let names = names @ names in
+                let addressed =
+                  match B.host_address small_d with
+                  | _ -> true
+                  | exception Invalid_argument _ -> false
+                in
+                let name (n, _, _) = n in
+                equal ~msg:"host spans" (list string) names
+                  (List.map name hosted);
+                equal ~msg:"copy lane spans" (list string)
+                  (if addressed then [] else names)
+                  (List.map name queued);
+                if not addressed then
+                  List.iter2
+                    (fun (n, t0, t1) (_, s0, s1) ->
+                      is_true
+                        ~msg:
+                          (Printf.sprintf "%s: %d to %d within %d to %d" n s0 s1
+                             t0 t1)
+                        (s0 <= s1 && t0 - slack <= s0 && s1 <= t1 + slack))
+                    hosted queued))
+          ds
+end

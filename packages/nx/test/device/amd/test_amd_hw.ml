@@ -455,6 +455,7 @@ let () =
          group "programs"
            [ test "code objects" test_programs; test "scratch" test_scratch ];
          group "timeline" [ test "across 2^32" test_carry ];
+         group "profiles" (Nx_test.Profiles.copies ~slack:1_000_000 gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"
            [ test "work that never signals fails the device" test_hang ];

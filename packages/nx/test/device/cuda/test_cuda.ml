@@ -403,6 +403,7 @@ let () =
          copies;
          borrowing;
          programs;
+         group "profiles" (Nx_test.Profiles.copies gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          fault;
        ])

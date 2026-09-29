@@ -25,6 +25,7 @@ external dispatch :
   nativeint ->
   int ->
   int ->
+  nativeint ->
   unit = "test_metal_dispatch_byte" "test_metal_dispatch"
 
 let metal = Nx_metal_device.v 0
@@ -223,7 +224,7 @@ let work =
                 dispatch h.queue h.event h.fence
                   (Nx_metal_device.resources metal)
                   (Nx_device.Program.handle p)
-                  (B.address out) 8 v;
+                  (B.address out) 8 v 0n;
                 v)
           in
           equal int v (Nx_device.submitted metal);
@@ -255,7 +256,74 @@ let work =
             (words.{0}, Int64.to_int words.{1}));
     ]
 
+module P = Nx_device.Profile
+
+let profiled f =
+  P.start ();
+  match f () with
+  | () -> P.stop ()
+  | exception e ->
+      ignore (P.stop ());
+      raise e
+
+let twice =
+  lazy
+    (compile
+       {|#include <metal_stdlib>
+using namespace metal;
+struct args { device uint *out; };
+kernel void twice(constant args &a [[buffer(0)]],
+                  uint i [[threadgroup_position_in_grid]]) {
+  a.out[i] = 2u * i;
+}|})
+
+let dispatch_profile =
+  test
+    "a dispatch is a span of its command buffer's GPU times on the host clock, \
+     and the first load of its program an event" (fun () ->
+      let h = Nx_metal_device.handles metal in
+      let out = B.create metal S.UInt32 64 in
+      let stamps = B.create Nx_device.host S.UInt64 2 in
+      let binary = Lazy.force twice in
+      let before = ref 0 and after = ref 0 in
+      let events =
+        profiled (fun () ->
+            let p = Nx_device.Program.load metal ~binary ~name:"twice" in
+            before := P.now ();
+            Nx_device.submit metal ~touches:[] (fun v ->
+                dispatch h.queue h.event h.fence
+                  (Nx_metal_device.resources metal)
+                  (Nx_device.Program.handle p)
+                  (B.address out) 64 v (B.host_address stamps));
+            P.record metal ~lane:"compute" ~name:"twice" stamps;
+            Nx_device.synchronize metal;
+            after := P.now ())
+      in
+      let ours =
+        List.filter
+          (function P.Memory _ -> false | P.Span _ | P.Program _ -> true)
+          events
+      in
+      match ours with
+      | [ P.Program p; P.Span s ] ->
+          equal (pair string bool) ("twice", true)
+            (Nx_device.Program.name p.program, p.binary = binary);
+          equal (pair string string) ("METAL", "compute")
+            (Nx_device.name s.device, s.lane);
+          is_true
+            ~msg:
+              (Printf.sprintf "GPU %d to %d within host %d to %d" s.start s.stop
+                 !before !after)
+            (!before <= s.start && s.start <= s.stop && s.stop <= !after)
+      | l -> fail (Printf.sprintf "%d events" (List.length l)))
+
 let () =
   exit
     (run "nx.metal.device"
-       [ opening; memory; work; group "nx" (Nx_test.Runtimes.laws [ metal ]) ])
+       [
+         opening;
+         memory;
+         work;
+         group "profiles" (dispatch_profile :: Nx_test.Profiles.copies [ metal ]);
+         group "nx" (Nx_test.Runtimes.laws [ metal ]);
+       ])

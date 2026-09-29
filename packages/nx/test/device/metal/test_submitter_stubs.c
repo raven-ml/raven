@@ -89,12 +89,15 @@ value test_metal_set_signaled(value v_event, value v_value) {
 }
 
 /* Runs [v_pipeline] over [v_threads] threads, with the GPU address [v_address]
-   as its one argument, and signals [v_value] on [v_event] when done. */
+   as its one argument, and signals [v_value] on [v_event] when done. Unless
+   [v_stamps] is 0, it leaves the command buffer, retained, in the first of the
+   two words there and 0 in the second, to be timed. */
 value test_metal_dispatch(value v_queue, value v_event, value v_fence,
                           value v_resources, value v_pipeline,
-                          value v_address, value v_threads, value v_value) {
+                          value v_address, value v_threads, value v_value,
+                          value v_stamps) {
   CAMLparam5(v_queue, v_event, v_fence, v_resources, v_pipeline);
-  CAMLxparam3(v_address, v_threads, v_value);
+  CAMLxparam4(v_address, v_threads, v_value, v_stamps);
   id<MTLCommandQueue> queue = Object_val(v_queue);
   @autoreleasepool {
     id<MTLCommandBuffer> command = [queue commandBuffer];
@@ -119,6 +122,11 @@ value test_metal_dispatch(value v_queue, value v_event, value v_fence,
     [encoder endEncoding];
     [command encodeSignalEvent:Object_val(v_event)
                          value:(uint64_t)Long_val(v_value)];
+    uint64_t *stamps = (uint64_t *)Nativeint_val(v_stamps);
+    if (stamps != NULL) {
+      stamps[0] = (uint64_t)(uintptr_t)[command retain];
+      stamps[1] = 0;
+    }
     [command commit];
   }
   CAMLreturn(Val_unit);
@@ -127,5 +135,5 @@ value test_metal_dispatch(value v_queue, value v_event, value v_fence,
 value test_metal_dispatch_byte(value *argv, int argc) {
   (void)argc;
   return test_metal_dispatch(argv[0], argv[1], argv[2], argv[3], argv[4],
-                             argv[5], argv[6], argv[7]);
+                             argv[5], argv[6], argv[7], argv[8]);
 }

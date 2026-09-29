@@ -563,6 +563,7 @@ let () =
              test "cubins" test_programs; test "local memory" test_local_memory;
            ];
          group "timeline" [ test "across 2^32" test_carry ];
+         group "profiles" (Nx_test.Profiles.copies ~slack:1_000_000 gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"
            [
