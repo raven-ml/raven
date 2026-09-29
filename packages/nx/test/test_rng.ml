@@ -161,7 +161,6 @@ let keyed : (string * (Rng.t -> float Ref.t)) list =
     ("fold_in", fun k -> key_words (Rng.fold_in k 7));
     ( "fold_in_tensor",
       fun k -> key_words (Rng.fold_in_tensor k Nx.(scalar int32 7l)) );
-    ("fold_in_axis", fun k -> key_words (Rng.fold_in_axis k));
   ]
 
 (* The same two words, held with a negative stride, and with a stride of two
@@ -242,8 +241,6 @@ let key_tests =
           equal keys
             (Rng.fold_in k (Int32.to_int i))
             (Rng.fold_in_tensor k (Nx.scalar Nx.int32 i)));
-      prop "fold_in_axis outside a map is fold_in 0" key (fun k ->
-          equal keys (Rng.fold_in k 0) (Rng.fold_in_axis k));
     ]
 
 (* Threefry-2x32-20 is the backend contract's block function, which nx.mli names

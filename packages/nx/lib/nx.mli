@@ -821,14 +821,6 @@ module Rng : sig
       the subkey tracks a traced counter instead of freezing whatever value it
       held at trace time. *)
 
-  val fold_in_axis : t -> t
-  (** [fold_in_axis k] folds the current mapped-axis index into [k], giving one
-      independent key per lane under {!Rune.val-vmap}, a map over an axis split
-      one slice per device included. Outside a map there is a single lane and it
-      is [fold_in k 0], in a compiled program over several devices too: it sees
-      whole values. Decorrelates lanes from a key the map captures, where
-      {!split_batch} decorrelates them from a key the map is given. *)
-
   val ptree : t Ptree.t
   (** [ptree] is the structure of a key or a batch of keys: one [int32] tensor,
       at the root path. Rebuilding it checks the tensor as {!of_tensor} does. *)

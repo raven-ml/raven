@@ -791,7 +791,7 @@ let test_two_collective_outputs () =
   check_arr ~msg:"loss" [| 0.32 |] out.Grad_and_loss.loss
 
 (* Dropout per device: [vmap] over an axis split one slice per device, with
-   [fold_in_axis] folding each lane's index into the key the lanes share, so the
+   [lane_index] folding each lane's index into the key the lanes share, so the
    devices' masks decorrelate. At [x = 1] the gradient of [sum (0.5 * x**2 *
    mask)] recovers the mask; the mask is a tape constant, so this exercises the
    backward path of data-parallel dropout. *)
@@ -807,7 +807,10 @@ let test_dropout_per_device_decorrelates () =
         snd
           (Rune.value_and_grad Nx.Ptree.tensor
              (fun x ->
-               let m = Nx.cast f32 (draw (Nx.Rng.fold_in_axis key)) in
+               let m =
+                 Nx.cast f32
+                   (draw (Nx.Rng.fold_in_tensor key (Rune.lane_index ())))
+               in
                Nx.mul_s (Nx.sum (Nx.mul (Nx.mul x x) m)) 0.5)
              x))
       rows

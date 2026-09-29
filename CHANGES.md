@@ -172,6 +172,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- New `Rune.lane_index ?axis ()`: the calling lane's index in the map named
+  `axis`, or in the innermost anonymous map, as `Rune.lanes` addresses maps;
+  `0` outside any. It replaces `Nx.Rng.fold_in_axis`.
 - **Breaking:** on a complex tensor, `Rune.grad` returns the gradient
   `dL/dre + i*dL/dim`, the direction in which the objective grows fastest, so
   `z - lr * g` descends as returned. It returned the conjugate, which had to be
@@ -2858,6 +2861,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.Rng.fold_in_axis` is removed, and nx no longer declares
+  a lane index: `Nx.Rng.fold_in_tensor k (Rune.lane_index ())` gives each lane
+  of a map its own key.
 - **Breaking:** `Nx_device.Profile.start` returns the profile, and
   `Profile.stop` takes it, so that only its holder stops it. The events
   `Memory` and `Program` are `Allocation` and `Load`, and `Profile.output` is

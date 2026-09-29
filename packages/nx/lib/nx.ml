@@ -36,9 +36,6 @@ module Rng = struct
   let key seed = Frontend.Rng.key context seed
   let next_key () = Frontend.Rng.next_key context
 
-  let fold_in_axis k =
-    Frontend.Rng.fold_in_tensor k (Nx_effect.axis_index (Nx_effect.context k))
-
   type t = key
 
   let ptree = Ptree.iso of_tensor Fun.id Ptree.tensor

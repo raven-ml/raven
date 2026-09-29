@@ -193,11 +193,10 @@ val vmap : ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {b Note.} Randomness a lane captures (an {!Nx.Rng.t}, or [Nx.rand] under a
     scope the map captures) draws {e identical} values for every lane: it is a
     constant of the map. Decorrelate them either by folding the lane index into
-    one key with {!Nx.Rng.fold_in_axis}, or by mapping over a batch of keys from
-    {!Nx.Rng.split_batch}, walked with {!Nx.Rng.ptree}: each lane sees one key.
-    {!Nx.Rng.fold_in_axis} reads the lane index of the innermost anonymous map:
-    a named map passes it on. Reading a batched tensor's value inside the
-    mapped function raises.
+    one key, [Nx.Rng.fold_in_tensor k (Rune.lane_index ())] ({!lane_index}), or
+    by mapping over a batch of keys from {!Nx.Rng.split_batch}, walked with
+    {!Nx.Rng.ptree}: each lane sees one key. Reading a batched tensor's value
+    inside the mapped function raises.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
     ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
@@ -233,6 +232,16 @@ val lanes : axis -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 
     Raises [Invalid_argument] when a reverse-mode transformation inside the
     map named [a] differentiates [x]. *)
+
+val lane_index : ?axis:axis -> unit -> (int32, Nx.int32_elt) Nx.t
+(** [lane_index ?axis ()] is the calling lane's index in the map named [axis],
+    or in the innermost anonymous map when [axis] is absent: an [int32] scalar,
+    from [0] to the map's number of lanes minus one. With no such map around the
+    call there is one lane, and it is [0], in a compiled program over several
+    devices too: it sees whole values.
+
+    [Nx.Rng.fold_in_tensor k (lane_index ())] gives each lane its own key from
+    a key [k] the map captures. *)
 
 (** {1:custom Custom differentiation rules} *)
 

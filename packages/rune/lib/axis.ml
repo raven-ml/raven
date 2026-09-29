@@ -3,12 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Names of maps, and the gather that addresses one.
+(* Names of maps, and what addresses one.
 
    [lanes a x] performs [E_lanes]. The map named [a] answers it with every
    lane's [x] stacked on a new leading axis; every other map passes it on,
    swapping the lanes it batches behind the gathered axis. Unhandled, no map
-   named [a] lies around the call and there is one lane. *)
+   named [a] lies around the call and there is one lane.
+
+   [lane_index ?axis ()] performs [E_lane_index], which the map named [axis],
+   or the innermost anonymous map without one, answers with each lane's index.
+   Unhandled, there is one lane, of index 0. *)
 
 type t = int
 
@@ -17,7 +21,12 @@ let make () = Atomic.fetch_and_add counter 1
 
 type _ Effect.t +=
   | E_lanes : { axis : t; t_in : ('a, 'b) Nx.t } -> ('a, 'b) Nx.t Effect.t
+  | E_lane_index : t option -> (int32, Nx.int32_elt) Nx.t Effect.t
 
 let lanes axis t_in =
   try Effect.perform (E_lanes { axis; t_in })
   with Effect.Unhandled _ -> Nx.unsqueeze ~axes:[ 0 ] t_in
+
+let lane_index ?axis () =
+  try Effect.perform (E_lane_index axis)
+  with Effect.Unhandled _ -> Nx.scalar Nx.int32 0l

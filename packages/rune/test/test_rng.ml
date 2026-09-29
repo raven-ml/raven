@@ -8,7 +8,7 @@
    ([Nx.rand] under [Nx.Rng.with_key]), which must draw from the same generator.
    Also: bit-exact parity between eager and compiled execution (the C threefry
    kernel and Tolk's decomposition are the same function), the constant-key
-   refusal inside jit, per-lane decorrelation with [fold_in_axis], and
+   refusal inside jit, per-lane decorrelation with [lane_index], and
    composition with grad, vmap and jit over several devices. *)
 
 open Windtrap
@@ -453,24 +453,29 @@ let test_vmap_per_lane_keys () =
   is_true ~msg:"lanes are decorrelated"
     (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
 
-(* fold_in_axis: outside a transform there is a single lane, index 0. *)
+(* lane_index: outside a transform there is a single lane, index 0. *)
 
-let test_fold_in_axis_eager_is_lane_zero () =
+let test_lane_index_eager_is_zero () =
   let root = Nx.Rng.key 42 in
-  check_bits ~msg:"eager fold_in_axis == fold_in root 0"
+  check_bits ~msg:"eager, the lane index is 0"
     (Nx.Rng.uniform (Nx.Rng.fold_in root 0) f32 [| 8 |])
-    (Nx.Rng.uniform (Nx.Rng.fold_in_axis root) f32 [| 8 |])
+    (Nx.Rng.uniform
+       (Nx.Rng.fold_in_tensor root (Rune.lane_index ()))
+       f32 [| 8 |])
 
-(* fold_in_axis under vmap folds the lane index into a single key, so one key
+(* lane_index under vmap folds the lane index into a single key, so one key
    decorrelates the lanes without a manual split-and-stack — lane [i] draws what
    [fold_in root i] draws. *)
 
-let test_vmap_fold_in_axis_decorrelates () =
+let test_vmap_lane_index_decorrelates () =
   let root = Nx.Rng.key 42 in
   let xs = Nx.zeros Nx.float32 [| 4 |] in
   let out =
     Rune.vmap'
-      (fun _ -> Nx.Rng.uniform (Nx.Rng.fold_in_axis root) Nx.float32 [| 8 |])
+      (fun _ ->
+        Nx.Rng.uniform
+          (Nx.Rng.fold_in_tensor root (Rune.lane_index ()))
+          Nx.float32 [| 8 |])
       xs
   in
   equal ~msg:"one row per lane" int 4 (Nx.shape out).(0);
@@ -506,11 +511,11 @@ let test_vmap_scope_rooted_at_mapped_key () =
     (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
 
 (* Over devices: [vmap] over an axis split one slice per device runs each lane
-   on its device, and [fold_in_axis] folds the lane's index into the captured
+   on its device, and [lane_index] folds the lane's index into the captured
    key, so the devices draw decorrelated streams with no manual split: lane [i]
    draws exactly what [fold_in key i] draws. *)
 
-let test_fold_in_axis_over_devices () =
+let test_lane_index_over_devices () =
   let key = Nx.Rng.key 42 in
   let check devices =
     let n = List.length devices in
@@ -520,7 +525,10 @@ let test_fold_in_axis_over_devices () =
         (fun rows key ->
           Rune.vmap'
             (fun row ->
-              Nx.mul row (Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f32 [| 8 |]))
+              Nx.mul row
+                (Nx.Rng.uniform
+                   (Nx.Rng.fold_in_tensor key (Rune.lane_index ()))
+                   f32 [| 8 |]))
             rows)
     in
     let rows = Nx.ones f32 [| n; 8 |] in
@@ -604,14 +612,14 @@ let tests =
           test_grad_truncated_normal_bounds;
         test "vmap over per-lane keys decorrelates lanes"
           test_vmap_per_lane_keys;
-        test "fold_in_axis is lane 0 outside a transform"
-          test_fold_in_axis_eager_is_lane_zero;
+        test "lane_index is lane 0 outside a transform"
+          test_lane_index_eager_is_zero;
         test "vmap over per-lane key scopes decorrelates lanes"
           test_vmap_scope_rooted_at_mapped_key;
-        test "vmap fold_in_axis decorrelates lanes"
-          test_vmap_fold_in_axis_decorrelates;
-        test "fold_in_axis decorrelates lanes over devices"
-          test_fold_in_axis_over_devices;
+        test "vmap lane_index decorrelates lanes"
+          test_vmap_lane_index_decorrelates;
+        test "lane_index decorrelates lanes over devices"
+          test_lane_index_over_devices;
       ];
   ]
 

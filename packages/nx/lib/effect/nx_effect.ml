@@ -1247,7 +1247,6 @@ type _ Effect.t +=
       s : int array option;
     }
       -> (float, 'c) t Effect.t
-  | E_axis_index : (int32, Nx_dtype.int32_elt) t Effect.t
   | E_cholesky : { t_in : ('a, 'b) t; upper : bool } -> ('a, 'b) t Effect.t
   | E_qr : {
       t_in : ('a, 'b) t;
@@ -2772,14 +2771,6 @@ let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
 let threefry key ctr =
   binary_op (E_threefry { key; ctr }) Nx_cpu.threefry
     (fun (module B : Backend.S) -> B.threefry) key ctr
-
-(* The index of the current lane along the innermost mapped axis. The vmap
-   handler answers with a per-lane (batched) index; with no handler there is a
-   single lane, index 0. [Nx.Rng.fold_in_axis] folds it into a key to
-   decorrelate lanes. *)
-let axis_index ctx =
-  try Effect.perform E_axis_index
-  with Effect.Unhandled _ -> const_scalar ctx 0l Nx_dtype.int32
 
 (* Window operations *)
 

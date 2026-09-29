@@ -244,11 +244,10 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some (fun () -> elt2 cmple a b)
     | E_threefry { key; ctr } when batched st key || batched st ctr ->
         Some (fun () -> elt2 threefry key ctr)
-    (* The mapped-axis index is the per-lane iota [0 .. batch_size-1], carried
-       as a batched scalar so that a key folded with it (Nx.Rng.fold_in_axis)
-       decorrelates the lanes. A named map answers only the collectives that
-       name it. *)
-    | E_axis_index when Option.is_none st.axis ->
+    (* The lane index is the per-lane iota [0 .. batch_size-1], carried as a
+       batched scalar, so that a key folded with it decorrelates the lanes. A
+       named map answers only the calls that name it. *)
+    | Axis.E_lane_index axis when axis = st.axis ->
         Some
           (fun () ->
             let idx = T.arange Nx.int32 0 st.batch_size 1 in

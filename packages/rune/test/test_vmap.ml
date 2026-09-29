@@ -510,7 +510,9 @@ let test_lanes_without_the_map () =
    it. *)
 let test_named_map_passes_the_lane_index () =
   let key = Nx.Rng.key 7 and a = Rune.axis () in
-  let draw () = Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f64 [| 3 |] in
+  let draw () =
+    Nx.Rng.uniform (Nx.Rng.fold_in_tensor key (Rune.lane_index ())) f64 [| 3 |]
+  in
   let y =
     Rune.vmap' ~axis:a (fun r -> Nx.add (Nx.mul_s r 0.0) (draw ())) (xs ())
   in

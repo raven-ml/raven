@@ -173,6 +173,7 @@ type axis = Axis.t
 
 let axis = Axis.make
 let lanes = Axis.lanes
+let lane_index = Axis.lane_index
 
 let vmap ?axis fn =
   let (Structure.Uncurried u) = Structure.uncurry "Rune.vmap" fn in
