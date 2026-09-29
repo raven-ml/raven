@@ -18,7 +18,8 @@ whose first byte C reads with `nx_device_buffer_host` from nx.device's
 `nx_device.h`; the dtype's constructor index is its C dtype tag. Shapes,
 strides, and offsets are expressed in logical elements. Packed 4-bit dtypes are
 the only exception at the storage boundary. `test/test_backend_c.ml` pins the
-record layout and the mapping from dtypes to C dtype tags.
+record layout and checks each C dtype row's element size, class and signedness
+against `Nx_dtype`.
 
 Kernel tables use designated initializers indexed by the dtype enum. Unsupported
 dtype entries remain null and must be rejected by the common driver before a

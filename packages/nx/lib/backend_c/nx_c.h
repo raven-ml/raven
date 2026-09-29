@@ -110,9 +110,9 @@ static inline void nx_c_aligned_free(void *p) {
    ONE table in Nx_dtype.t declaration order, so the generated enum values
    equal its constructor indices (0=Float16 … 18=Bool) and NX_C_DTYPE_COUNT
    falls out as the trailing enumerator — the correspondence is pinned by a
-   _Static_assert below and by the binding's dtype->tag test, never by hand. Two
-   iterators project the single table: NX_C_FOR_EACH_DTYPE walks all 19 rows
-   (enum, class, size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the
+   _Static_assert below and each row's facts by the binding's dtype test, never
+   by hand. Two iterators project the single table: NX_C_FOR_EACH_DTYPE walks
+   all 19 rows (enum, class, size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the
    compute rows (load/store, float->int, kernel dispatch tables) — packed rows
    expand to nothing via the `sel` selector, so no compute code is ever
    emitted for int4/uint4 and no second list exists to drift.
@@ -225,11 +225,18 @@ typedef enum {
       NX_C_DTYPE_COUNT
 } nx_c_dtype;
 
-/* nx_c_dtype must equal Nx_dtype.t's constructor index; pin the anchors (and
-   the packed boundary, the likeliest drift point) at compile time. The
-   binding's per-dtype dtype->tag test pins the rest. */
-_Static_assert(NX_C_DTYPE_f16 == 0 && NX_C_DTYPE_f8e5m2 == 5 && NX_C_DTYPE_i4 == 6 &&
-                   NX_C_DTYPE_u4 == 7 && NX_C_DTYPE_i8 == 8 && NX_C_DTYPE_u64 == 15 &&
+/* nx_c_dtype must equal Nx_dtype.t's constructor index: every row is pinned at
+   compile time. test/test_backend_c.ml checks each row's size, class and
+   signedness against Nx_dtype. */
+_Static_assert(NX_C_DTYPE_f16 == 0 && NX_C_DTYPE_f32 == 1 &&
+                   NX_C_DTYPE_f64 == 2 && NX_C_DTYPE_bf16 == 3 &&
+                   NX_C_DTYPE_f8e4m3 == 4 && NX_C_DTYPE_f8e5m2 == 5 &&
+                   NX_C_DTYPE_i4 == 6 && NX_C_DTYPE_u4 == 7 &&
+                   NX_C_DTYPE_i8 == 8 && NX_C_DTYPE_u8 == 9 &&
+                   NX_C_DTYPE_i16 == 10 && NX_C_DTYPE_u16 == 11 &&
+                   NX_C_DTYPE_i32 == 12 && NX_C_DTYPE_u32 == 13 &&
+                   NX_C_DTYPE_i64 == 14 && NX_C_DTYPE_u64 == 15 &&
+                   NX_C_DTYPE_c32 == 16 && NX_C_DTYPE_c64 == 17 &&
                    NX_C_DTYPE_bool_ == 18 && NX_C_DTYPE_COUNT == 19,
                "nx_c_dtype must equal Nx_dtype.t's constructor index");
 

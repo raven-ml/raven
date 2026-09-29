@@ -103,8 +103,8 @@ let conversions =
           let c = Nx.copy t in
           equal same t c;
           is_true ~msg:"copy is contiguous" (Nx.is_c_contiguous c);
-          is_false ~msg:"copy shares no storage"
-            (Nx.numel t > 0 && storage c == storage t));
+          is_false ~msg:"copy shares no memory"
+            (share_memory (storage c) (storage t)));
       prop "contiguous has the values, in a contiguous layout" viewed (fun t ->
           let c = Nx.contiguous t in
           equal same t c;
@@ -136,6 +136,15 @@ let conversions =
           equal nativeint
             (Nx_device.Buffer.host_address (Nx_device.Buffer.of_bigarray ba))
             (Nx_device.Buffer.host_address (storage t)));
+      test "of_bigarray refuses the kinds that are no dtype" (fun () ->
+          let refuses (type a b) (k : (a, b) Bigarray.kind) =
+            raises_invalid_arg (fun () ->
+                Nx.of_bigarray
+                  (Bigarray.Genarray.create k Bigarray.c_layout [| 1 |]))
+          in
+          refuses Bigarray.char;
+          refuses Bigarray.int;
+          refuses Bigarray.nativeint);
     ]
 
 let iteration =

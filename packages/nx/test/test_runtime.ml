@@ -46,4 +46,39 @@ let devices =
               Nx.Placement.replicated [ d1; Nx.Device.host ]));
     ]
 
-let () = exit (run "nx runtime devices" (devices :: Runtimes.laws [ r1; r2 ]))
+(* A buffer that reaches the host engine is on the host and of the value's
+   format, whether a caller hands it over or a device's engine reads it back. *)
+let host_buffers =
+  let not_host = Exn.invalid_arg ~substring:"not CPU"
+  and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
+  and on_device = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 4
+  and float64 = Nx_core.Elements.create Nx.float64 4 in
+  group "host buffers"
+    [
+      test "from_host refuses a buffer on a device or of another format"
+        (fun () ->
+          let from_host b =
+            Nx_effect.from_host Nx_effect.host_tensor_context Nx.float32 b
+          in
+          raises_match not_host (fun () -> from_host on_device);
+          raises_match other_format (fun () -> from_host float64));
+      test "a read of a buffer on a device or of another format raises"
+        (fun () ->
+          let reading b =
+            let d =
+              Nx_effect.Device.make "READS"
+                { Devices.engine with read = (fun _ -> b) }
+            in
+            let x =
+              Nx.place (Nx.Placement.device d) (Nx.zeros Nx.float32 [| 4 |])
+            in
+            fun () -> Nx.place Nx.Placement.host x
+          in
+          raises_match not_host (reading on_device);
+          raises_match other_format (reading float64));
+    ]
+
+let () =
+  exit
+    (run "nx runtime devices"
+       (devices :: host_buffers :: Runtimes.laws [ r1; r2 ]))

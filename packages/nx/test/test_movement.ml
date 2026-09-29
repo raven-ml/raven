@@ -368,8 +368,9 @@ let views =
           List.hd (Nx.broadcast_arrays [ t; Nx.zeros Nx.int32 [| 2; 1; 1 |] ]));
       test "copy and concatenate never share" (fun () ->
           let t = tensor_of [| 2; 3 |] in
-          is_false (storage (Nx.copy t) == storage t);
-          is_false (storage (Nx.concatenate ~axis:0 [ t ]) == storage t));
+          is_false (share_memory (storage (Nx.copy t)) (storage t));
+          is_false
+            (share_memory (storage (Nx.concatenate ~axis:0 [ t ])) (storage t)));
       test
         "shrink refuses a range past its axis or ending before it starts \
          (nx.mli states no error)" (fun () ->

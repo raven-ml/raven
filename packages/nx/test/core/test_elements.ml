@@ -174,17 +174,27 @@ let formats =
     ~pp:(fun ppf s -> Format.pp_print_string ppf (S.to_string s))
     S.[ Bool; Int4; UInt4; UInt8; BFloat16; Float32; Int64; Complex128 ]
 
+(* A format, a view and a buffer of that format the view reaches, its bytes
+   drawn from a seed. *)
+let viewed =
+  Gen.with_pp (fun ppf (s, v, src) ->
+      Format.fprintf ppf "%s, %a" (S.to_string s) pp_view (v, B.length src))
+  @@ Gen.map
+       (fun (s, (v, n), seed) ->
+         let src = B.create Nx_device.host s n in
+         let ba = bytes src in
+         for i = 0 to Bigarray.Array1.dim ba - 1 do
+           ba.{i} <- seed.[i mod String.length seed]
+         done;
+         (s, v, src))
+       (Gen.triple formats
+          (Gen.with_pp pp_view views)
+          (Gen.string_of ~size:(Gen.int_range 1 9) Gen.char))
+
 let gather =
   prop "gather is the elements a view reaches in C order, each keeping its bits"
-    (Gen.triple formats
-       (Gen.with_pp pp_view views)
-       (Gen.string_of ~size:(Gen.int_range 1 9) Gen.char))
-    (fun (s, (v, n), seed) ->
-      let src = B.create Nx_device.host s n in
+    viewed (fun (s, v, src) ->
       let ba = bytes src in
-      for i = 0 to Bigarray.Array1.dim ba - 1 do
-        ba.{i} <- seed.[i mod String.length seed]
-      done;
       let g = E.gather src v in
       let expected =
         List.init (V.numel v) (fun k ->
@@ -197,6 +207,24 @@ let gather =
         (S.to_string s, V.numel v)
         (S.to_string (B.dtype g), B.length g);
       equal (list string) expected (List.init (V.numel v) (bits s (bytes g))))
+
+let contiguous =
+  prop
+    "contiguous is gather's elements, over the buffer's own memory exactly \
+     when the view is C-contiguous from the start of a byte"
+    viewed (fun (s, v, src) ->
+      let c = E.contiguous src v in
+      let n = V.numel v in
+      equal (list string)
+        (List.init n (bits s (bytes (E.gather src v))))
+        (List.init n (bits s (bytes c)));
+      let first = V.offset v * S.bitsize s in
+      equal ~msg:"over the buffer's memory" bool
+        (n > 0 && V.is_c_contiguous v && first mod 8 = 0)
+        (n > 0
+        && Nativeint.equal (B.host_address c)
+             (Nativeint.add (B.host_address src) (Nativeint.of_int (first / 8)))
+        ))
 
 (* A device over host memory, whose buffers are not the host's. *)
 let other =
@@ -222,6 +250,10 @@ let refusals =
       ( "a buffer of another device",
         fun () -> ignore (E.get uint8 (B.create (Lazy.force other) S.UInt8 1) 0)
       );
+      ( "a store into another device's buffer",
+        fun () -> E.set uint8 (B.create (Lazy.force other) S.UInt8 1) 0 0 );
+      ( "a fill of another device's buffer",
+        fun () -> E.fill uint8 (B.create (Lazy.force other) S.UInt8 1) 0 );
       ( "a gather past the end",
         fun () ->
           ignore (E.gather f32 (V.create ~offset:1 ~strides:[| 1 |] [| 2 |])) );
@@ -235,6 +267,12 @@ let refusals =
             (E.gather
                (B.create (Lazy.force other) S.UInt8 2)
                (V.create [| 2 |])) );
+      ( "contiguous elements of another device's buffer",
+        fun () ->
+          ignore
+            (E.contiguous
+               (B.create (Lazy.force other) S.UInt8 2)
+               (V.create [| 2 |])) );
     ]
     (fun (_, f) -> raises_match Exn.invalid_arg f)
 
@@ -245,6 +283,7 @@ let () =
          stores;
          fills;
          gather;
+         contiguous;
          refusals;
          test
            "4-bit stores clamp out of range values (the interfaces are silent)"

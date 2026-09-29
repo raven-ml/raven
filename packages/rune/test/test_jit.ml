@@ -3170,7 +3170,8 @@ let test_duplicate_outputs_are_two_values () =
         { u = y; v = y })
   in
   let r = host { u = vec32 [| 2.0 |]; v = vec32 [| 3.0 |] } in
-  is_true ~msg:"on the host too" (Nx_effect.to_host r.u != Nx_effect.to_host r.v);
+  let address x = Nx_device.Buffer.host_address (Nx_effect.to_host x) in
+  is_false ~msg:"on the host too" (Nativeint.equal (address r.u) (address r.v));
   check_arr ~msg:"host value" [| 6.0 |] r.u;
   check_arr ~msg:"host copy" [| 6.0 |] r.v
 

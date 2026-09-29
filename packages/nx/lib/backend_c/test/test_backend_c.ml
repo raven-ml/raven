@@ -5,9 +5,19 @@ open Windtrap
 module B = Nx_backend
 module F = Nx_core.Make_frontend (B)
 
-external dtype_tag : ('a, 'b) B.t -> int = "caml_nx_c_dtype_tag"
-
 let ctx = B.create_context ()
+
+(* The bytes of two elements, the class bits and whether the row is a signed
+   integer, as the engine sees the dtype of a tensor. *)
+external dtype_facts : ('a, 'b) B.t -> int * int * bool
+  = "caml_nx_c_dtype_facts"
+
+(* nx_c.h's NX_C_CLASS_ bits *)
+let class_int = 0x01
+let class_float = 0x02
+let class_complex = 0x04
+let class_bool = 0x08
+let class_packed = 0x10
 
 type dtype = Dtype : ('a, 'b) Nx_dtype.t -> dtype
 
@@ -28,14 +38,22 @@ let tests =
           let expected = [| -1.; -2.; -3.; -5.; -6.; -7. |] in
           equal ~msg:"neg over strided offset view" (array fexact) expected
             (F.to_array (B.neg input)));
-      test "dtype-to-tag" (fun () ->
-          (* In [Nx_dtype.t]'s constructor order, which the tag follows. *)
-          List.iteri
-            (fun tag (Dtype dt) ->
-              equal
-                ~msg:(Printf.sprintf "%s tag" (Nx_dtype.to_string dt))
-                int tag
-                (dtype_tag (B.buffer ctx dt [| 1 |])))
+      test "dtype-rows" (fun () ->
+          List.iter
+            (fun (Dtype dt) ->
+              let bits = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
+              let flag b c = if b then c else 0 in
+              let expected =
+                ( 2 * bits / 8,
+                  flag (Nx_dtype.is_int dt) class_int
+                  lor flag (Nx_dtype.is_float dt) class_float
+                  lor flag (Nx_dtype.is_complex dt) class_complex
+                  lor flag (Nx_dtype.equal dt Nx_dtype.bool) class_bool
+                  lor flag (bits = 4) class_packed,
+                  Nx_dtype.is_int dt && not (Nx_dtype.is_uint dt) )
+              in
+              equal ~msg:(Nx_dtype.to_string dt) (triple int int bool) expected
+                (dtype_facts (B.buffer ctx dt [| 1 |])))
             Nx_dtype.
               [
                 Dtype float16;

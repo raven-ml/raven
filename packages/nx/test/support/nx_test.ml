@@ -135,6 +135,16 @@ let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 (* The storage of [t]: views share it, copies do not. *)
 let storage t = Nx_effect.to_host t
 
+(* Whether host buffers [a] and [b] have a byte of memory in common. *)
+let share_memory a b =
+  let module B = Nx_device.Buffer in
+  let first b = B.host_address b in
+  let last b = Nativeint.add (first b) (Nativeint.of_int (B.nbytes b - 1)) in
+  B.nbytes a > 0
+  && B.nbytes b > 0
+  && Nativeint.compare (first a) (last b) <= 0
+  && Nativeint.compare (first b) (last a) <= 0
+
 (* Where each element of [t] is in its storage, in row-major order: element
    [idx] is at [offset + sum idx.(d) * strides.(d)] of its view. *)
 let positions t =
@@ -897,12 +907,9 @@ module Stored = struct
      row-major order. *)
 
   let storage (Nx.P t) =
-    let t = Nx.contiguous t in
-    let b = Nx_effect.to_host t in
-    let b =
-      Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel t)
+    let bytes =
+      Nx_device.Buffer.bigarray Bigarray.char (Nx_effect.elements t)
     in
-    let bytes = Nx_device.Buffer.bigarray Bigarray.char b in
     ( Nx_dtype.to_string (Nx.dtype t),
       Nx.shape t,
       String.init (Bigarray.Array1.dim bytes) (Bigarray.Array1.get bytes) )

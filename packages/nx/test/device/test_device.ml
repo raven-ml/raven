@@ -770,7 +770,7 @@ let laws =
             Nx_device.Stats.[ bytes_out h; bytes_in d; bytes_out d; bytes_in h ]);
       prop
         "of_bigarray aliases its bigarray, a borrowed host buffer of its \
-         kind's format"
+         kind's format, and bigarray is its inverse"
         (Gen.pair kinds (ints [ 0; 1; 3; 17 ]))
         (fun ((_, Kind (k, s)), n) ->
           let ba = Bigarray.Array1.create k Bigarray.c_layout n in
@@ -790,7 +790,14 @@ let laws =
           Bigarray.Array1.blit other ba;
           equal ~msg:"a write through the bigarray" string
             (pattern (n + 1) (B.nbytes b))
-            (read b));
+            (read b);
+          let back = B.bigarray k b in
+          equal ~msg:"bigarray gives the elements back" string (read b)
+            (read (B.of_bigarray back));
+          is_true ~msg:"over the same memory"
+            (n = 0
+            || Nativeint.equal (B.host_address b)
+                 (B.host_address (B.of_bigarray back))));
     ]
 
 (* Two domains take bigarrays of the same fresh buffer at once, and one keeps
