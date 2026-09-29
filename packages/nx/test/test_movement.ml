@@ -153,6 +153,19 @@ let joins =
           in
           equal (list ints) expected
             (List.map Ref.of_nx (Nx.array_split ~axis (`Indices cuts) t)));
+      prop
+        "broadcasted broadcasts both tensors, in swapped order under ~reverse"
+        (Gen.triple shape shape Gen.bool) (fun (a, b, reverse) ->
+          let b = Array.mapi (fun i d -> if i mod 2 = 0 then 1 else d) b in
+          let x = tensor_of a and y = Nx.neg (tensor_of b) in
+          match Ref.broadcast_shapes a b with
+          | exception Invalid_argument _ ->
+              raises_invalid_arg (fun () -> Nx.broadcasted ~reverse x y)
+          | s ->
+              let x = Nx.broadcast_to s x and y = Nx.broadcast_to s y in
+              equal (pair same same)
+                (if reverse then (y, x) else (x, y))
+                (Nx.broadcasted ~reverse (tensor_of a) (Nx.neg (tensor_of b))));
       prop "broadcast_arrays broadcasts every tensor to the common shape"
         (Gen.pair shape shape) (fun (a, b) ->
           let b = Array.mapi (fun i d -> if i mod 2 = 0 then 1 else d) b in
@@ -178,6 +191,34 @@ let joins =
           raises_invalid_arg (fun () ->
               Nx.stack [ tensor_of [| 2 |]; tensor_of [| 3 |] ]);
           raises_invalid_arg (fun () -> Nx.split ~axis:0 2 (tensor_of [| 3 |])));
+      xfail
+        ~reason:"split computes the axis size mod 0 and raises Division_by_zero"
+        (test "split refuses zero parts" (fun () ->
+             raises_invalid_arg (fun () ->
+                 Nx.split ~axis:0 0 (tensor_of [| 4 |]))));
+      xfail
+        ~reason:
+          "concatenate copies a single tensor without reading the axis, and \
+           reads -2 of a vector as -1"
+        (test
+           "concatenate refuses an axis out of bounds, for one tensor too \
+            (nx.mli is silent)" (fun () ->
+             let v = tensor_of [| 4 |] in
+             raises_invalid_arg (fun () -> Nx.concatenate ~axis:(-2) [ v; v ]);
+             raises_invalid_arg (fun () -> Nx.concatenate ~axis:5 [ v ]);
+             raises_invalid_arg (fun () ->
+                 Nx.concatenate ~axis:0 [ Nx.scalar Nx.int32 1l ])));
+      xfail
+        ~reason:
+          "a negative index ends the part before it as a raw bound, which is \
+           empty, and starts the part after it counted from the end"
+        (test
+           "array_split at a negative index counts it from the end, as a range \
+            does (nx.mli is silent)" (fun () ->
+             let v = tensor_of [| 4 |] in
+             equal (list same)
+               (Nx.array_split ~axis:0 (`Indices [ 3 ]) v)
+               (Nx.array_split ~axis:0 (`Indices [ -1 ]) v)));
     ]
 
 let flattening =
@@ -228,6 +269,21 @@ let flattening =
       test "flatten refuses an axis out of bounds" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.flatten ~start_dim:2 (tensor_of [| 2; 2 |])));
+      cases
+        "flatten, and roll and repeat without an axis, read a transposed tensor"
+        ~name:fst
+        [
+          ( "flatten",
+            fun t ->
+              (Ref.flatten ~start_dim:0 ~end_dim:(-1) t, fun t -> Nx.flatten t)
+          );
+          ("roll", fun t -> (Ref.roll 1 t, fun t -> Nx.roll 1 t));
+          ("repeat", fun t -> (Ref.repeat 2 t, fun t -> Nx.repeat 2 t));
+        ]
+        (fun (_, op) ->
+          let t = Nx.transpose (tensor_of [| 2; 3 |]) in
+          let expected, f = op (Ref.of_nx t) in
+          equal ints expected (Ref.of_nx (f t)));
     ]
 
 (* A tensor under some layout, and a shape of as many elements. *)
@@ -290,6 +346,16 @@ let views =
       shares "flip" (fun t -> Nx.flip t);
       shares "broadcast_to" (fun t -> Nx.broadcast_to [| 2; 4; 6 |] t);
       shares "slice by a range" (Nx.slice [ R (1, 3) ]);
+      shares "slice by an index, the whole axis and a new axis"
+        (Nx.slice [ I 1; A; N ]);
+      shares "slice by a step of 1" (Nx.slice [ A; Rs (1, 5, 1) ]);
+      shares "get" (Nx.get [ 2 ]);
+      shares "shrink" (Nx.shrink [| (1, 3); (0, 6) |]);
+      shares "expand" (fun t -> Nx.expand [| 2; -1; -1 |] t);
+      shares "swapaxes" (Nx.swapaxes 0 1);
+      shares "unflatten" (Nx.unflatten 1 [| 2; 3 |]);
+      shares "unsqueeze and squeeze" (fun t ->
+          Nx.squeeze (Nx.unsqueeze ~axes:[ 0 ] t));
       shares "slice by a step of -1" (Nx.slice [ A; Rs (5, 0, -1) ]);
       shares "a part of split" (fun t -> List.nth (Nx.split ~axis:1 3 t) 1);
       shares "sliding_window" (Nx.sliding_window ~window:2);
@@ -299,6 +365,13 @@ let views =
           let t = tensor_of [| 2; 3 |] in
           is_false (Nx.data (Nx.copy t) == Nx.data t);
           is_false (Nx.data (Nx.concatenate ~axis:0 [ t ]) == Nx.data t));
+      test
+        "shrink refuses a range past its axis or ending before it starts \
+         (nx.mli states no error)" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.shrink [| (0, 5) |] (tensor_of [| 4 |]));
+          raises_invalid_arg (fun () ->
+              Nx.shrink [| (3, 1) |] (tensor_of [| 4 |])));
       test "ravel refuses a tensor it cannot flatten without copying" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.ravel (Nx.transpose (tensor_of [| 2; 3 |]))));

@@ -54,6 +54,17 @@ let filled =
       test "create refuses a negative dimension" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.create Nx.int32 [| 2; -3 |] [| 1l; 2l |]));
+      xfail
+        ~reason:
+          "create, zeros and eye check only the product of the shape, and \
+           return a tensor of shape [-2; -3]"
+        (test
+           "create, zeros and eye refuse negative dimensions whose product is \
+            the element count (nx.mli is silent)" (fun () ->
+             raises_invalid_arg (fun () ->
+                 Nx.create Nx.int32 [| -2; -3 |] (Array.make 6 0l));
+             raises_invalid_arg (fun () -> Nx.zeros Nx.int32 [| -2; -3 |]);
+             raises_invalid_arg (fun () -> Nx.eye ~m:(-2) Nx.int32 (-3))));
     ]
 
 let dims = Gen.int_range 0 5
@@ -91,7 +102,8 @@ let diagonals =
                  and c = i.(Array.length s - 1) in
                  if c - r <= k then index_value s i else 0l))
             (Ref.of_nx (Nx.tril ~k x)));
-      test "diag refuses a rank-3 tensor" (fun () ->
+      test "diag refuses a scalar and a rank-3 tensor" (fun () ->
+          raises_invalid_arg (fun () -> Nx.diag (Nx.scalar Nx.int32 1l));
           raises_invalid_arg (fun () ->
               Nx.diag (Nx.zeros Nx.int32 [| 1; 1; 1 |])));
       test "tril and triu refuse a vector" (fun () ->
@@ -127,6 +139,21 @@ let ranges =
           equal ints
             (Ref.create [| Array.length l |] l)
             (Ref.of_nx (Nx.arange Nx.int32 start stop step)));
+      prop "arange_f counts from start by step while short of stop"
+        (Gen.triple (Gen.int_range (-20) 20) (Gen.int_range (-20) 20)
+           (Gen.one_of [ Gen.int_range (-7) (-1); Gen.int_range 1 7 ]))
+        (fun (start, stop, step) ->
+          (* Quarters are exact in binary, so the count is exact too. *)
+          let quarter i = float_of_int i /. 4. in
+          let l =
+            Array.of_list
+              (List.map quarter (arithmetic_progression start stop step))
+          in
+          equal (Ref.witness float_exact)
+            (Ref.create [| Array.length l |] l)
+            (Ref.of_nx
+               (Nx.arange_f Nx.float64 (quarter start) (quarter stop)
+                  (quarter step))));
       prop "linspace spaces n points evenly from start to stop"
         (Gen.quad Gen.bool bound bound (Gen.int_range 0 12))
         (fun (endpoint, start, stop, n) ->
@@ -155,6 +182,16 @@ let ranges =
                (Array.map exp
                   (linear_points ~endpoint (log start) (log stop) n)))
             (Ref.of_nx (Nx.geomspace ~endpoint Nx.float64 start stop n)));
+      cases "logspace raises its base, 10 by default, to each point"
+        ~name:(fun (name, _, _) -> name)
+        [
+          ("base 10", [| 1.; 10.; 100. |], Nx.logspace Nx.float64 0. 2. 3);
+          ( "base e",
+            [| 1.; exp 1.; exp 2. |],
+            Nx.logspace ~base:(exp 1.) Nx.float64 0. 2. 3 );
+        ]
+        (fun (_, expected, t) ->
+          equal floats (Ref.create [| 3 |] expected) (Ref.of_nx t));
       test "arange refuses a zero step" (fun () ->
           raises_invalid_arg (fun () -> Nx.arange Nx.int32 0 3 0);
           raises_invalid_arg (fun () -> Nx.arange_f Nx.float64 0. 3. 0.));
@@ -202,7 +239,38 @@ let grids =
           raises_invalid_arg (fun () ->
               Nx.meshgrid
                 (Nx.zeros Nx.int32 [| 2; 2 |])
-                (Nx.zeros Nx.int32 [| 2 |])));
+                (Nx.zeros Nx.int32 [| 2 |]));
+          raises_invalid_arg (fun () ->
+              Nx.meshgrid
+                (Nx.zeros Nx.int32 [| 2 |])
+                (Nx.zeros Nx.int32 [| 2; 2 |])));
+      xfail
+        ~reason:
+          "one_hot compares the indices with arange in their own dtype, which \
+           wraps past its range: uint8 index 5 of 300 classes also marks class \
+           261, and int8 index -100 of 200 classes marks class 156"
+        (cases
+           "one_hot marks one class per index in range and none out of range, \
+            whatever the index dtype"
+           ~name:(fun (name, _, _, _) -> name)
+           [
+             ( "uint8 index 5 of 300 classes",
+               300,
+               Some 5,
+               fun () ->
+                 Nx.one_hot ~num_classes:300
+                   (Nx.create Nx.uint8 [| 1 |] [| 5 |]) );
+             ( "int8 index -100 of 200 classes",
+               200,
+               None,
+               fun () ->
+                 Nx.one_hot ~num_classes:200
+                   (Nx.create Nx.int8 [| 1 |] [| -100 |]) );
+           ]
+           (fun (_, n, hot, one_hot) ->
+             equal (Ref.witness int)
+               (Ref.init [| 1; n |] (fun i -> if Some i.(1) = hot then 1 else 0))
+               (Ref.of_nx (one_hot ()))));
       test "one_hot refuses zero classes and float indices" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.one_hot ~num_classes:0 (Nx.zeros Nx.int32 [| 2 |]));

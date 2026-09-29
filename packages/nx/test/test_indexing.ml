@@ -73,6 +73,13 @@ let gathers =
                  src.(axis) <- Int32.to_int (Ref.get positions i);
                  read r src))
             (Ref.of_nx (Nx.take_along_axis ~axis ~indices t)));
+      test "take without an axis reads a transposed tensor" (fun () ->
+          let r, t = tensor_of [| 2; 3 |] in
+          let indices = [| 1; 4 |] in
+          equal ints
+            (Ref.take ~zero:0l indices (Ref.transpose r))
+            (Ref.of_nx
+               (Nx.take ~indices:(indices_tensor indices) (Nx.transpose t))));
       test "take_along_axis refuses indices of another rank" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.take_along_axis ~axis:0 ~indices:(indices_tensor [| 0 |])
@@ -119,6 +126,11 @@ let scatters =
                     (if scalar then Nx.scalar Nx.int32 100l
                      else Nx.create Nx.int32 s values.data)
                   t)));
+      test "scatter refuses indices of another rank" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.scatter ~axis:0 ~indices:(indices_tensor [| 0 |])
+                ~values:(Nx.zeros Nx.int32 [| 1 |])
+                (Nx.zeros Nx.int32 [| 2; 2 |])));
       test "scatter refuses indices whose shape differs off the axis" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.scatter ~axis:0
@@ -190,11 +202,55 @@ let selections =
                 (Ref.init [| k |] (fun i -> Int32.of_int rows.(i.(0)).(d)))
                 (Ref.of_nx axis))
             (Nx.nonzero t));
+      prop
+        "compress without an axis keeps the flattened positions where the \
+         condition holds"
+        shape (fun s ->
+          let r, t = tensor_of s in
+          let cond = Array.init (Ref.numel s) (fun i -> i mod 3 <> 1) in
+          equal ints (Ref.compress cond r)
+            (Ref.of_nx
+               (Nx.compress
+                  ~condition:(Nx.create Nx.bool [| Ref.numel s |] cond)
+                  t)));
+      test "compress and extract without an axis read a transposed tensor"
+        (fun () ->
+          let r, t = tensor_of [| 2; 3 |] in
+          let cond = [| true; false; false; true; true; false |] in
+          let condition = Nx.create Nx.bool [| 6 |] cond in
+          let expected = Ref.compress cond (Ref.transpose r) in
+          equal ints expected
+            (Ref.of_nx (Nx.compress ~condition (Nx.transpose t)));
+          equal ints expected
+            (Ref.of_nx
+               (Nx.extract
+                  ~condition:(Nx.reshape [| 3; 2 |] condition)
+                  (Nx.transpose t))));
+      xfail
+        ~reason:
+          "compress without an axis never compares the lengths, and takes a \
+           position past the end as a zero"
+        (test
+           "compress without an axis refuses a condition longer than the tensor"
+           (fun () ->
+             raises_invalid_arg (fun () ->
+                 Nx.compress
+                   ~condition:
+                     (Nx.create Nx.bool [| 3 |] [| false; false; true |])
+                   (Nx.zeros Nx.int32 [| 2 |]))));
       test "compress refuses a condition of another length" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.compress ~axis:0
                 ~condition:(Nx.create Nx.bool [| 3 |] [| true; false; true |])
                 (Nx.zeros Nx.int32 [| 2 |])));
+      xfail ~reason:"extract compares shapes where nx.mli compares sizes"
+        (test "extract flattens a condition of the same size and another shape"
+           (fun () ->
+             let r, t = tensor_of [| 2; 3 |] in
+             let cond = [| true; false; false; true; true; false |] in
+             equal ints (Ref.compress cond r)
+               (Ref.of_nx
+                  (Nx.extract ~condition:(Nx.create Nx.bool [| 6 |] cond) t))));
       test "extract refuses a condition of another size" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.extract
@@ -233,4 +289,25 @@ let windows =
                x));
     ]
 
-let () = exit (run "nx indexing" [ gathers; scatters; selections; windows ])
+(* nx.mli leaves the bounds of a range open; [R] clamps them into the axis, as
+   Python slices do, and [Ref] does the same for [Rs]. *)
+let stepped_ranges =
+  group "stepped ranges"
+    [
+      xfail
+        ~reason:
+          "a stepped range keeps its start unclamped: a gather reads zeros \
+           from the out-of-range positions, and a step of 1 or -1 shrinks out \
+           of bounds and raises"
+        (cases "a stepped range starting outside its axis selects as R does"
+           ~name:(fun (s : Nx.index) -> Format.asprintf "%a" pp_index s)
+           [ Rs (-10, 3, 1); Rs (-10, 4, 2); Rs (10, 0, -1); Rs (10, 0, -2) ]
+           (fun spec ->
+             let r, t = tensor_of [| 4 |] in
+             equal ints (Ref.slice [ spec ] r) (Ref.of_nx (Nx.slice [ spec ] t))));
+    ]
+
+let () =
+  exit
+    (run "nx indexing"
+       [ gathers; scatters; selections; windows; stepped_ranges ])

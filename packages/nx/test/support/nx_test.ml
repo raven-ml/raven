@@ -81,20 +81,40 @@ let layout_steps =
   let rows f t =
     if Nx.ndim t = 0 || Nx.dim 0 t = 0 then t else f (Nx.dim 0 t) t
   in
+  (* A stepped range gathers a copy; a window of one taken every other position
+     is a view. *)
+  let every_other axis t =
+    if Nx.ndim t = 0 || Nx.dim axis t = 0 then t
+    else Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~axis ~window:1 ~step:2 t)
+  in
   [
     { name = "transposed"; apply = (fun t -> Nx.transpose t) };
     { name = "flipped"; apply = (fun t -> Nx.flip t) };
-    {
-      name = "every other row";
-      apply = (fun t -> rows (fun n -> Nx.slice [ Rs (0, n, 2) ]) t);
-    };
+    { name = "every other row"; apply = (fun t -> every_other 0 t) };
     {
       name = "without its first row";
       apply = (fun t -> rows (fun n -> Nx.slice [ R (1, n) ]) t);
     };
     {
+      name = "without its last row";
+      apply = (fun t -> rows (fun n -> Nx.slice [ R (0, n - 1) ]) t);
+    };
+    { name = "every other column"; apply = (fun t -> every_other (-1) t) };
+    {
       name = "broadcast over a new axis";
       apply = (fun t -> Nx.broadcast_to (Array.append [| 2 |] (Nx.shape t)) t);
+    };
+    {
+      name = "with a unit axis moved last";
+      apply = (fun t -> Nx.moveaxis 0 (Nx.ndim t) (Nx.unsqueeze ~axes:[ 0 ] t));
+    };
+    {
+      name = "in windows of two along its last axis";
+      apply =
+        (fun t ->
+          if Nx.ndim t > 0 && Nx.dim (-1) t >= 2 then
+            Nx.sliding_window ~window:2 t
+          else t);
     };
   ]
 
@@ -112,28 +132,39 @@ let layout =
 
 let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 
+(* Where each element of [t] is in its buffer, in row-major order, as [Nx.data]
+   documents: element [idx] is at [offset + sum idx.(d) * strides.(d) /
+   itemsize]. *)
+let positions t =
+  let st = Array.map (fun b -> b / Nx.itemsize t) (Nx.strides t) in
+  Array.init (Nx.numel t) (fun k ->
+      let p = ref (Nx.offset t) in
+      Array.iteri (fun d i -> p := !p + (i * st.(d))) (unravel (Nx.shape t) k);
+      !p)
+
+(* Whether the elements of [t] follow each other in its buffer. *)
+let consecutive t =
+  let pos = positions t in
+  Array.for_all Fun.id (Array.mapi (fun k p -> p = pos.(0) + k) pos)
+
 (* Whether [shape] can view the elements of [t] where they are: the strides that
    the unit steps of [shape] give must place every element. *)
 let viewable t shape =
-  let st = Array.map (fun b -> b / Nx.itemsize t) (Nx.strides t) in
-  let pos k =
-    let p = ref 0 in
-    Array.iteri (fun d i -> p := !p + (i * st.(d))) (unravel (Nx.shape t) k);
-    !p
-  in
-  let n = Nx.numel t in
+  let pos = positions t in
   let unit d =
     ravel shape (Array.mapi (fun e _ -> if e = d then 1 else 0) shape)
   in
+  Array.length pos = 0
+  ||
   let strides =
-    Array.mapi (fun d s -> if s > 1 then pos (unit d) - pos 0 else 0) shape
+    Array.mapi (fun d s -> if s > 1 then pos.(unit d) - pos.(0) else 0) shape
   in
   List.for_all
     (fun k ->
-      let p = ref (pos 0) in
+      let p = ref pos.(0) in
       Array.iteri (fun d i -> p := !p + (i * strides.(d))) (unravel shape k);
-      !p = pos k)
-    (List.init n Fun.id)
+      !p = pos.(k))
+    (List.init (Array.length pos) Fun.id)
 
 (* A tensor as nx.mli describes it: a shape and its elements in row-major order.
    Every operation is written from the documented semantics as an index map,
@@ -158,15 +189,12 @@ module Ref = struct
   let get t idx = t.data.(ravel t.shape idx)
   let of_nx s = { shape = Nx.shape s; data = Nx.to_array s }
 
-  (* The elements of [s] read as [Nx.data] documents: element [idx] is at
-     [offset + sum idx.(d) * strides.(d) / itemsize] of the buffer. *)
+  (* The elements of [s] read from its buffer where [positions] says. *)
   let of_layout s =
-    let buf = Nx.data s and off = Nx.offset s in
-    let strides = Array.map (fun b -> b / Nx.itemsize s) (Nx.strides s) in
-    init (Nx.shape s) (fun idx ->
-        let i = ref off in
-        Array.iteri (fun d k -> i := !i + (k * strides.(d))) idx;
-        Nx_buffer.get buf !i)
+    {
+      shape = Nx.shape s;
+      data = Array.map (Nx_buffer.get (Nx.data s)) (positions s);
+    }
 
   let witness w =
     Testable.contramap (fun t -> (t.shape, t.data)) (pair (array int) (array w))
@@ -185,20 +213,23 @@ module Ref = struct
 
   (* Movement *)
 
-  let reshape shape t =
+  (* [shape] with its [-1], if it has one, resolved so that it holds [n]
+     elements. *)
+  let resolve n shape =
     if Array.exists (fun d -> d < -1) shape then invalid_arg "reshape";
     let holes =
-      Array.fold_left (fun n d -> if d = -1 then n + 1 else n) 0 shape
+      Array.fold_left (fun c d -> if d = -1 then c + 1 else c) 0 shape
     in
     let known =
       Array.fold_left (fun p d -> if d = -1 then p else p * d) 1 shape
     in
-    let n = numel t.shape in
     if holes > 1 || (holes = 1 && (known = 0 || n mod known <> 0)) then
       invalid_arg "reshape";
     let shape = Array.map (fun d -> if d = -1 then n / known else d) shape in
     if numel shape <> n then invalid_arg "reshape";
-    { t with shape }
+    shape
+
+  let reshape shape t = { t with shape = resolve (numel t.shape) shape }
 
   let transpose ?axes t =
     let n = ndim t in
@@ -341,6 +372,132 @@ module Ref = struct
             src.(a) <- k;
             get t src)
 
+  (* [-1] keeps the size of the axis it aligns with, from the right as
+     [broadcast_to] aligns. *)
+  let expand shape t =
+    let n = Array.length shape and m = ndim t in
+    if n < m || Array.exists (fun d -> d < -1) shape then invalid_arg "expand";
+    let resolve i d =
+      if d <> -1 then d
+      else if i < n - m then invalid_arg "expand"
+      else t.shape.(i - (n - m))
+    in
+    broadcast_to (Array.mapi resolve shape) t
+
+  let moveaxis src dst t =
+    let src = axis t src and dst = axis t dst in
+    let rest = List.filter (( <> ) src) (List.init (ndim t) Fun.id) in
+    let axes =
+      List.filteri (fun i _ -> i < dst) rest
+      @ (src :: List.filteri (fun i _ -> i >= dst) rest)
+    in
+    transpose ~axes t
+
+  let swapaxes a b t =
+    let a = axis t a and b = axis t b in
+    transpose
+      ~axes:
+        (List.init (ndim t) (fun i ->
+             if i = a then b else if i = b then a else i))
+      t
+
+  let flat t = { t with shape = [| numel t.shape |] }
+
+  (* The tensor to work on and its axis: [t] flattened when there is none. *)
+  let flat_or_axis t = function None -> (flat t, 0) | Some a -> (t, axis t a)
+
+  let roll ?axis:a shift t =
+    let t', a = flat_or_axis t a in
+    let n = t'.shape.(a) in
+    let rolled =
+      init t'.shape (fun idx ->
+          let src = Array.copy idx in
+          src.(a) <- (((idx.(a) - shift) mod n) + n) mod n;
+          get t' src)
+    in
+    { rolled with shape = t.shape }
+
+  (* nx.mli states no error for fewer repetitions than axes: they are
+     refused. *)
+  let tile reps t =
+    let n = Array.length reps and m = ndim t in
+    if n < m || Array.exists (fun r -> r < 0) reps then invalid_arg "tile";
+    let s = Array.append (Array.make (n - m) 1) t.shape in
+    let t = { t with shape = s } in
+    init (Array.map2 ( * ) s reps) (fun idx ->
+        get t (Array.mapi (fun d k -> k mod s.(d)) idx))
+
+  let repeat ?axis:a k t =
+    if k < 0 then invalid_arg "repeat";
+    let t, a = flat_or_axis t a in
+    let shape = Array.copy t.shape in
+    shape.(a) <- shape.(a) * k;
+    init shape (fun idx ->
+        let src = Array.copy idx in
+        src.(a) <- idx.(a) / k;
+        get t src)
+
+  let stack ~axis:a ts =
+    match ts with
+    | [] -> invalid_arg "stack"
+    | t0 :: _ ->
+        let n = ndim t0 + 1 in
+        let a = if a < 0 then a + n else a in
+        if a < 0 || a >= n then invalid_arg "stack";
+        concatenate ~axis:a (List.map (unsqueeze ~axes:[ a ]) ts)
+
+  let flatten ~start_dim ~end_dim t =
+    let s = axis t start_dim and e = axis t end_dim in
+    if s > e then invalid_arg "flatten";
+    let sub a b = Array.sub t.shape a (b - a) in
+    {
+      t with
+      shape =
+        Array.concat
+          [ sub 0 s; [| numel (sub s (e + 1)) |]; sub (e + 1) (ndim t) ];
+    }
+
+  let unflatten dim sizes t =
+    let d = axis t dim in
+    let sizes = resolve t.shape.(d) sizes in
+    {
+      t with
+      shape =
+        Array.concat
+          [
+            Array.sub t.shape 0 d;
+            sizes;
+            Array.sub t.shape (d + 1) (ndim t - d - 1);
+          ];
+    }
+
+  (* A part holds the positions of its interval that lie in the axis. *)
+  let array_split ~axis:a spec t =
+    let a = axis t a in
+    let size = t.shape.(a) in
+    let bounds =
+      match spec with
+      | `Count n ->
+          if n < 1 then invalid_arg "array_split";
+          List.init (n + 1) (fun i -> (i * (size / n)) + Int.min i (size mod n))
+      | `Indices l -> (0 :: l) @ [ size ]
+    in
+    let rec parts = function
+      | lo :: (hi :: _ as rest) ->
+          let lo = Int.min lo size in
+          let hi = Int.max lo (Int.min hi size) in
+          shrink
+            (Array.mapi (fun d n -> if d = a then (lo, hi) else (0, n)) t.shape)
+            t
+          :: parts rest
+      | _ -> []
+    in
+    parts bounds
+
+  let split ~axis:a n t =
+    if n < 1 || t.shape.(axis t a) mod n <> 0 then invalid_arg "split";
+    array_split ~axis:a (`Count n) t
+
   let fill v t = { t with data = Array.make (Array.length t.data) v }
 
   (* Indexing. [R] and [Rs] clamp their bounds into the axis as Python slices
@@ -377,7 +534,12 @@ module Ref = struct
           (Array.of_list
              (List.filter (fun i -> bits.(i)) (List.init dim Fun.id)))
     | N -> New
-    | D _ -> invalid_arg "Ref: D windows are not modelled"
+    | D (s, len) ->
+        if Nx.ndim s <> 0 || len < 0 || len > dim then invalid_arg "slice";
+        let first =
+          Int.max 0 (Int.min (dim - len) (Int32.to_int (Nx.item [] s)))
+        in
+        Keep (Array.init len (fun i -> first + i))
 
   let selection specs t =
     let rec go d = function
@@ -444,6 +606,29 @@ module Ref = struct
     if List.length indices <> ndim t then invalid_arg "item";
     get t (Array.of_list (List.mapi (fun d i -> index t.shape.(d) i) indices))
 
+  let take ?axis:a ~zero indices t =
+    let t, a = flat_or_axis t a in
+    let n = t.shape.(a) in
+    let shape = Array.copy t.shape in
+    shape.(a) <- Array.length indices;
+    init shape (fun idx ->
+        let k = indices.(idx.(a)) in
+        if k < 0 || k >= n then zero
+        else
+          let src = Array.copy idx in
+          src.(a) <- k;
+          get t src)
+
+  let compress ?axis:a condition t =
+    let t, a = flat_or_axis t a in
+    if Array.length condition <> t.shape.(a) then invalid_arg "compress";
+    let kept =
+      List.filter (fun i -> condition.(i)) (List.init t.shape.(a) Fun.id)
+    in
+    slice (List.init a (fun _ -> Nx.A) @ [ Nx.L kept ]) t
+
+  (* Elementwise *)
+
   (* [along ~axis ~length f t] replaces each lane of [t] along [axis] by the
      [length] elements [f] gives for it. *)
   let along ~axis:a ~length f t =
@@ -492,8 +677,6 @@ module Ref = struct
       { kept with shape = Array.of_list shape }
 
   let map f t = { shape = t.shape; data = Array.map f t.data }
-
-  (* Elementwise *)
 
   let broadcast_shapes a b =
     let n = Int.max (Array.length a) (Array.length b) in

@@ -30,22 +30,42 @@ let value = Gen.map Int32.of_int (Gen.int_range (-9) 9)
 let iota base shape =
   Array.init (Ref.numel shape) (fun i -> Int32.of_int ((base * 100) + i))
 
+let int32s l =
+  Nx.create Nx.int32
+    [| List.length l |]
+    (Array.of_list (List.map Int32.of_int l))
+
+let at k = Nx.scalar Nx.int32 (Int32.of_int k)
+
 (* Arguments listed from the tensor they apply to, the simplest first. Each list
-   holds at least one argument the API refuses. *)
+   holds at least one argument the API refuses. [extra] lists the arguments that
+   reach a bug nx has today: only the test that expects to fail draws them. *)
 
 let arg pp = Testable.make ~pp ~equal:( == )
 
 let pp_list pp =
   Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") pp
 
+let pp_ints ppf l = Format.fprintf ppf "[%a]" (pp_list Format.pp_print_int) l
+
 let pp_axes ppf = function
   | None -> Format.pp_print_string ppf "all"
-  | Some l -> Format.fprintf ppf "[%a]" (pp_list Format.pp_print_int) l
+  | Some l -> pp_ints ppf l
+
+let pp_axis ppf = function
+  | None -> Format.pp_print_string ppf "flattened"
+  | Some a -> Format.fprintf ppf "~axis:%d" a
 
 let pp_pairs ppf a =
   Format.fprintf ppf "[%a]"
     (pp_list (fun ppf (x, y) -> Format.fprintf ppf "(%d, %d)" x y))
     (Array.to_list a)
+
+let pp_pair ppf (a, b) = Format.fprintf ppf "%d %d" a b
+
+let pp_spec ppf = function
+  | `Count n -> Format.fprintf ppf "`Count %d" n
+  | `Indices l -> Format.fprintf ppf "`Indices %a" pp_ints l
 
 let axes_of r = List.init (Ref.ndim r) Fun.id
 
@@ -79,39 +99,59 @@ let flip_axes =
       (None :: List.map (fun a -> Some [ a ]) (axes_of r))
       @ [ Some [ -1 ]; Some [ Ref.ndim r ] ])
 
-let per_axis dim : Nx.index list =
-  [
-    A;
-    I 0;
-    I (-1);
-    R (1, dim);
-    R (-2, dim + 3);
-    Rs (0, dim, 2);
-    Rs (dim - 1, -dim - 1, -1);
-    Rs (-1, 0, -2);
-    L [ dim - 1; 0 ];
-    M (Nx.create Nx.bool [| dim |] (Array.init dim (fun i -> i mod 2 = 0)));
-    I dim;
-    Rs (0, dim, 0);
-  ]
+(* A range whose start lies outside the axis selects from the nearest end, as
+   [R] does. *)
+let per_axis ~extra dim =
+  let always : Nx.index list =
+    [
+      A;
+      I 0;
+      I (-1);
+      R (1, dim);
+      R (-2, dim + 3);
+      Rs (0, dim, 2);
+      Rs (dim - 1, -dim - 1, -1);
+      Rs (-1, 0, -2);
+      L [ dim - 1; 0 ];
+      M (Nx.create Nx.bool [| dim |] (Array.init dim (fun i -> i mod 2 = 0)));
+      I dim;
+      Rs (0, dim, 0);
+      M (Nx.full Nx.bool [| dim + 1 |] true);
+      M (Nx.full Nx.bool [| 1; dim |] true);
+      D (at 1, Int.max 0 (dim - 1));
+      D (at (-5), Int.min dim 1);
+      D (at (dim + 5), Int.min dim 2);
+      D (at 0, dim + 1);
+    ]
+  in
+  always
+  @ extra
+      [
+        Nx.Rs (-dim - 3, dim, 2);
+        Nx.Rs (dim + 2, -dim - 3, -2);
+        Nx.Rs (-dim - 3, dim, 1);
+        Nx.Rs (dim + 2, 0, -1);
+      ]
 
-(* Index lists that mix forms across axes, where a gather meets a new axis or a
-   mask. *)
-let combined shape : Nx.index list list =
+(* Index lists that mix forms across axes, where a gather meets a new axis, a
+   mask or a window. *)
+let combined ~extra shape : Nx.index list list =
   match Array.to_list shape with
   | d0 :: d1 :: _ ->
-      let mask = List.nth (per_axis d0) 9 in
+      let mask = List.nth (per_axis ~extra d0) 9 in
       [
         [ L [ d0 - 1; 0 ]; Rs (d1 - 1, -d1 - 1, -1) ];
         [ N; L [ 0 ] ];
         [ L [ 0 ]; N ];
         [ I (-1); N; R (0, d1) ];
         [ mask; I 0 ];
+        [ D (at 9, Int.min d0 1); L [ 0 ] ];
+        [ N; D (at 0, Int.min d0 2); I 0 ];
       ]
   | [ d0 ] -> [ [ N; L [ d0 - 1 ] ]; [ L [ 0 ]; N ] ]
   | [] -> []
 
-let specs =
+let specs ~extra =
   among (arg pp_specs) t (fun r ->
       let n = Ref.ndim r in
       let one_axis =
@@ -120,7 +160,7 @@ let specs =
              (fun d dim ->
                List.map
                  (fun s -> List.init d (fun _ -> Nx.A) @ [ s ])
-                 (per_axis dim))
+                 (per_axis ~extra dim))
              (Array.to_list r.shape))
       in
       ([] :: [ Nx.N ] :: one_axis)
@@ -129,7 +169,29 @@ let specs =
             (Array.map (fun dim -> Nx.Rs (-1, -dim - 1, -1)) r.shape);
           List.init (n + 1) (fun _ -> Nx.A);
         ]
-      @ combined r.shape)
+      @ combined ~extra r.shape)
+
+(* Values for a selection: its own shape, its last axis alone, or its shape with
+   every other axis of size one. *)
+let values_for =
+  Gen.with_pp
+    (fun ppf form ->
+      Format.pp_print_string ppf
+        (match form with
+        | 0 -> "shaped like the selection"
+        | 1 -> "shaped like its last axis"
+        | _ -> "broadcast along every other axis"))
+    (Gen.int_range 0 2)
+
+let values form (sel : int32 Ref.t) =
+  let n = Ref.ndim sel in
+  let shape =
+    match form with
+    | 0 -> sel.shape
+    | 1 -> if n = 0 then [||] else [| sel.shape.(n - 1) |]
+    | _ -> Array.mapi (fun d k -> if d mod 2 = 0 then 1 else k) sel.shape
+  in
+  Ref.init shape (fun idx -> Int32.of_int (1000 + Ref.ravel shape idx))
 
 let broadcasts =
   among (arg pp_shape) t (fun r ->
@@ -140,6 +202,19 @@ let broadcasts =
         Array.map (fun d -> if d = 1 then 3 else d) s;
         Array.map (fun d -> d + 1) s;
         [||];
+      ])
+
+let expansions =
+  among (arg pp_shape) t (fun r ->
+      let s = r.shape in
+      [
+        Array.map (fun _ -> -1) s;
+        Array.append [| 2 |] (Array.map (fun _ -> -1) s);
+        Array.map (fun d -> if d = 1 then 3 else -1) s;
+        Array.map (fun d -> if d = 1 then 0 else d) s;
+        Array.map (fun d -> d + 1) s;
+        Array.map (fun _ -> -2) s;
+        [| -2 |];
       ])
 
 let widths =
@@ -185,6 +260,147 @@ let unsqueezes =
         None;
       ])
 
+(* Pairs of axes, and one out of bounds. *)
+let axis_pairs =
+  among (arg pp_pair) t (fun r ->
+      let n = Ref.ndim r in
+      List.concat_map
+        (fun a -> List.map (fun b -> (a, b)) (axes_of r))
+        (axes_of r)
+      @ [ (n, 0); (0, n) ])
+
+let rolls ~extra =
+  among
+    (arg (fun ppf (a, k) -> Format.fprintf ppf "%a by %d" pp_axis a k))
+    t
+    (fun r ->
+      List.concat_map
+        (fun a -> [ (Some a, 1); (Some a, -2); (Some a, 7) ])
+        (axes_of r)
+      @ [ (Some (Ref.ndim r), 1) ]
+      @ extra [ (None, 1); (None, -3) ])
+
+(* nx.mli is silent on fewer repetitions than axes: they are refused. *)
+let repetitions =
+  among (arg pp_shape) t (fun r ->
+      let n = Ref.ndim r in
+      [
+        Array.make n 1;
+        Array.make n 2;
+        Array.make (n + 1) 2;
+        Array.init n (fun i -> if i = 0 then 0 else 1);
+        Array.init n (fun i -> if i = n - 1 then -1 else 1);
+        Array.make (Int.max 0 (n - 1)) 2;
+      ])
+
+let repeats ~extra =
+  among
+    (arg (fun ppf (a, k) -> Format.fprintf ppf "%d times %a" k pp_axis a))
+    t
+    (fun r ->
+      List.concat_map
+        (fun a -> [ (Some a, 2); (Some a, 0); (Some a, -1) ])
+        (axes_of r)
+      @ [ (Some (Ref.ndim r), 2) ]
+      @ extra [ (None, 2) ])
+
+(* nx.mli states no error for [take] on an axis out of bounds, so only axes of
+   the tensor are listed. *)
+let takes ~extra =
+  among
+    (arg (fun ppf (a, l) -> Format.fprintf ppf "%a at %a" pp_axis a pp_ints l))
+    t
+    (fun r ->
+      List.concat_map
+        (fun a ->
+          let dim = r.shape.(a) in
+          [ (Some a, [ dim - 1; 0; -1; dim ]); (Some a, []) ])
+        (axes_of r)
+      @ extra
+          (let n = Ref.numel r.shape in
+           [ (None, [ n - 1; 0; n; -1 ]) ]))
+
+let conditions ~extra =
+  among
+    (arg (fun ppf (a, l) ->
+         Format.fprintf ppf "%a where %a" pp_axis a
+           (pp_list Format.pp_print_bool)
+           l))
+    t
+    (fun r ->
+      List.concat_map
+        (fun a ->
+          let dim = r.shape.(a) in
+          [
+            (Some a, List.init dim (fun i -> i mod 3 <> 1));
+            (Some a, List.init dim (fun _ -> false));
+            (Some a, List.init (dim + 1) (fun i -> i = dim));
+          ])
+        (axes_of r)
+      @ extra [ (None, List.init (Ref.numel r.shape) (fun i -> i mod 2 = 0)) ])
+
+let stack_axes =
+  among (arg Format.pp_print_int) t (fun r ->
+      let n = Ref.ndim r in
+      [ 0; n; -1; n + 2 ])
+
+let array_splits =
+  among
+    (arg (fun ppf (a, spec, part) ->
+         Format.fprintf ppf "part %d of ~axis:%d %a" part a pp_spec spec))
+    t
+    (fun r ->
+      List.concat_map
+        (fun a ->
+          let dim = r.shape.(a) in
+          [
+            (a, `Count 1, 0);
+            (a, `Count 2, 1);
+            (a, `Count (dim + 1), dim);
+            (a, `Indices [ 1 ], 0);
+            (a, `Indices [ 1 ], 1);
+            (a, `Indices [ dim + 2 ], 1);
+            (a, `Indices [ 2; 1 ], 1);
+            (a, `Indices [], 0);
+            (a, `Count 0, 0);
+          ])
+        (axes_of r))
+
+let splits ~extra =
+  among
+    (arg (fun ppf (a, n, part) ->
+         Format.fprintf ppf "part %d of %d along %d" part n a))
+    t
+    (fun r ->
+      List.concat_map
+        (fun a -> [ (a, 1, 0); (a, 2, 1); (a, 3, 0) ] @ extra [ (a, 0, 0) ])
+        (axes_of r))
+
+let flattenings =
+  among (arg pp_pair) t (fun r ->
+      let n = Ref.ndim r in
+      if n = 0 then []
+      else [ (0, -1); (0, 0); (-1, -1); (0, n - 1); (1, -1); (n, -1) ])
+
+let unflattenings =
+  among
+    (arg (fun ppf (d, s) -> Format.fprintf ppf "%d %a" d pp_shape s))
+    t
+    (fun r ->
+      List.concat_map
+        (fun a ->
+          let dim = r.shape.(a) in
+          [
+            (a, [| dim |]);
+            (a, [| 1; dim |]);
+            (a, [| -1; 1 |]);
+            (a, [| dim; -1 |]);
+            (a, [| 2; -1 |]);
+            (a, [| dim + 1 |]);
+          ])
+        (axes_of r)
+      @ [ (Ref.ndim r, [| 1 |]) ])
+
 let windows =
   among
     (arg (fun ppf (a, w, s) ->
@@ -202,15 +418,12 @@ let windows =
         (-1, 1, 0);
       ])
 
-let concat_axes =
-  among (arg Format.pp_print_int) t (fun r -> [ 0; -1; Ref.ndim r ])
+let concat_axes ~extra =
+  among (arg Format.pp_print_int) t (fun r ->
+      [ 0; -1; Ref.ndim r ] @ extra [ -Ref.ndim r - 1 ])
 
 let positions =
-  among
-    (arg (fun ppf l ->
-         Format.fprintf ppf "[%a]" (pp_list Format.pp_print_int) l))
-    t
-    (fun r ->
+  among (arg pp_ints) t (fun r ->
       let n = Ref.ndim r in
       [
         List.init n (fun _ -> 0);
@@ -220,7 +433,10 @@ let positions =
         List.init (n + 1) (fun _ -> 0);
       ])
 
-let commands =
+let commands ~known_bugs =
+  let extra l = if known_bugs then l else [] in
+  let specs = specs ~extra in
+  let concat_axes = concat_axes ~extra in
   [
     command "create"
       (base @-> shape @-> makes t)
@@ -250,6 +466,14 @@ let commands =
       (flip_axes ^-> t ^-> makes t)
       (fun axes r -> Ref.flip ?axes r)
       (fun axes s -> Nx.flip ?axes s);
+    command "moveaxis"
+      (axis_pairs ^-> t ^-> makes t)
+      (fun (a, b) r -> Ref.moveaxis a b r)
+      (fun (a, b) s -> Nx.moveaxis a b s);
+    command "swapaxes"
+      (axis_pairs ^-> t ^-> makes t)
+      (fun (a, b) r -> Ref.swapaxes a b r)
+      (fun (a, b) s -> Nx.swapaxes a b s);
     command "slice" (specs ^-> t ^-> makes t) Ref.slice Nx.slice;
     command "set"
       (t ^-> specs ^-> t ^-> makes t)
@@ -259,10 +483,17 @@ let commands =
       (t ^-> specs ^-> value @-> makes t)
       (fun r specs v -> Ref.set specs (Ref.create [||] [| v |]) r)
       (fun s specs v -> Nx.set specs (Nx.scalar Nx.int32 v) s);
+    command "set values"
+      (t ^-> specs ^-> values_for @-> makes t)
+      (fun r specs form -> Ref.set specs (values form (Ref.slice specs r)) r)
+      (fun s specs form ->
+        let v = values form (Ref.slice specs (Ref.of_nx s)) in
+        Nx.set specs (Nx.create Nx.int32 v.shape v.data) s);
     command "fill" (value @-> t ^-> makes t) Ref.fill Nx.fill;
     command "broadcast_to"
       (broadcasts ^-> t ^-> makes t)
       Ref.broadcast_to Nx.broadcast_to;
+    command "expand" (expansions ^-> t ^-> makes t) Ref.expand Nx.expand;
     command "pad" (widths ^-> value @-> t ^-> makes t) Ref.pad Nx.pad;
     command "shrink" (ranges ^-> t ^-> makes t) Ref.shrink Nx.shrink;
     command "squeeze"
@@ -273,6 +504,30 @@ let commands =
       (unsqueezes ^-> t ^-> makes t)
       (fun axes r -> Ref.unsqueeze ?axes r)
       (fun axes s -> Nx.unsqueeze ?axes s);
+    command "unflatten"
+      (unflattenings ^-> t ^-> makes t)
+      (fun (d, sizes) r -> Ref.unflatten d sizes r)
+      (fun (d, sizes) s -> Nx.unflatten d sizes s);
+    command "roll"
+      (rolls ~extra ^-> t ^-> makes t)
+      (fun (axis, k) r -> Ref.roll ?axis k r)
+      (fun (axis, k) s -> Nx.roll ?axis k s);
+    command "tile" (repetitions ^-> t ^-> makes t) Ref.tile Nx.tile;
+    command "repeat"
+      (repeats ~extra ^-> t ^-> makes t)
+      (fun (axis, k) r -> Ref.repeat ?axis k r)
+      (fun (axis, k) s -> Nx.repeat ?axis k s);
+    command "take"
+      (takes ~extra ^-> t ^-> makes t)
+      (fun (axis, l) r -> Ref.take ?axis ~zero:0l (Array.of_list l) r)
+      (fun (axis, l) s -> Nx.take ?axis ~indices:(int32s l) s);
+    command "compress"
+      (conditions ~extra ^-> t ^-> makes t)
+      (fun (axis, l) r -> Ref.compress ?axis (Array.of_list l) r)
+      (fun (axis, l) s ->
+        Nx.compress ?axis
+          ~condition:(Nx.create Nx.bool [| List.length l |] (Array.of_list l))
+          s);
     command "sliding_window"
       (windows ^-> t ^-> makes t)
       (fun (axis, window, step) r -> Ref.sliding_window ~axis ~window ~step r)
@@ -281,6 +536,18 @@ let commands =
       (t ^-> concat_axes ^-> t ^-> makes t)
       (fun a axis b -> Ref.concatenate ~axis [ a; b ])
       (fun a axis b -> Nx.concatenate ~axis [ a; b ]);
+    command "stack a tensor with itself"
+      (stack_axes ^-> t ^-> makes t)
+      (fun axis r -> Ref.stack ~axis [ r; r ])
+      (fun axis s -> Nx.stack ~axis [ s; s ]);
+    command "a part of array_split"
+      (array_splits ^-> t ^-> makes t)
+      (fun (axis, spec, part) r -> List.nth (Ref.array_split ~axis spec r) part)
+      (fun (axis, spec, part) s -> List.nth (Nx.array_split ~axis spec s) part);
+    command "a part of split"
+      (splits ~extra ^-> t ^-> makes t)
+      (fun (axis, n, part) r -> List.nth (Ref.split ~axis n r) part)
+      (fun (axis, n, part) s -> List.nth (Nx.split ~axis n s) part);
     command "add" (t ^-> t ^-> makes t) (Ref.map2 Int32.add) Nx.add;
     command "contiguous" (t ^-> makes t) Fun.id Nx.contiguous;
     command "copy" (t ^-> makes t) Fun.id Nx.copy;
@@ -290,6 +557,31 @@ let commands =
       Nx.get;
     command "item" (positions ^-> t ^-> returns int32) Ref.item Nx.item;
   ]
+  @ extra
+      [
+        command "flatten"
+          (flattenings ^-> t ^-> makes t)
+          (fun (start_dim, end_dim) r -> Ref.flatten ~start_dim ~end_dim r)
+          (fun (start_dim, end_dim) s -> Nx.flatten ~start_dim ~end_dim s);
+        command "concatenate one tensor"
+          (concat_axes ^-> t ^-> makes t)
+          (fun axis r -> Ref.concatenate ~axis [ r ])
+          (fun axis s -> Nx.concatenate ~axis [ s ]);
+      ]
+
+let known_bugs =
+  "a stepped range starting outside its axis reads zeros or raises; flatten, \
+   and roll, repeat, take and compress without an axis, refuse layouts reshape \
+   cannot view; split into 0 parts raises Division_by_zero; concatenate \
+   accepts an axis out of bounds for one tensor, and -ndim - 1 for two"
 
 let () =
-  exit (run "nx values" [ stateful ~count:300 "tensors are values" commands ])
+  exit
+    (run "nx values"
+       [
+         stateful ~count:300 "tensors are values" (commands ~known_bugs:false);
+         xfail ~reason:known_bugs
+           (stateful ~count:300
+              "tensors are values, with the arguments that reach known bugs"
+              (commands ~known_bugs:true));
+       ])
