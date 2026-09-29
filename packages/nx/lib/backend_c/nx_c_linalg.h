@@ -232,9 +232,8 @@ typedef void (*la_tridiag_fn)(void *A, int64_t n, int64_t lda, void *d, void *e,
 typedef void (*la_orgtr_fn)(void *A, int64_t n, int64_t lda, void *tau, void *Z,
                             int64_t ldz);
 typedef nx_c_status (*la_tql2_fn)(void *d, void *e, void *Z, int64_t n,
-                                 int64_t ldz, int want_vec);
-typedef void (*la_eigsort_fn)(void *d, void *Z, int64_t n, int64_t ldz,
-                              int want_vec);
+                                 int64_t ldz);
+typedef void (*la_eigsort_fn)(void *d, void *Z, int64_t n, int64_t ldz);
 typedef void (*la_gebrd_fn)(void *P, int64_t pr, int64_t pc, int64_t ld,
                             void *d, void *e, void *tauq, void *taup, void *X,
                             void *Y, void *Mc, void *Pm, void *gscr);

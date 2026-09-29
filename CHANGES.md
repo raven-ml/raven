@@ -2757,6 +2757,10 @@ thread.
 
 ### Nx
 
+- `Nx.eigvalsh` converges on graded matrices, such as a tridiagonal whose
+  diagonal runs from `1e-8` to `1e8`, which raised `Linalg_error` from
+  order 100 on while `Nx.eigh` succeeded. Its values-only iteration now picks
+  the end it converges from, as LAPACK's `dsterf` does.
 - `Nx.eigh ~uplo:`U` and `Nx.eigvalsh ~uplo:`U` read the upper triangle.
   `?uplo` was ignored and both always read the lower one, so a matrix given
   by its upper triangle gave the eigenvalues of another matrix.

@@ -194,7 +194,7 @@
     }                                                                         \
   }                                                                           \
   static nx_c_status la_tql2_##sfx(void *vd, void *ve, void *vZ, int64_t n,     \
-                                  int64_t ldz, int want_vec) {                 \
+                                  int64_t ldz) {                               \
     R *d = (R *)vd;                                                           \
     R *e = (R *)ve;                                                           \
     T *Z = (T *)vZ;                                                           \
@@ -231,12 +231,11 @@
             p = s * r;                                                       \
             d[i + 1] = g + p;                                                \
             g = c * r - b;                                                   \
-            if (want_vec)                                                    \
-              for (int64_t k = 0; k < n; k++) {                             \
-                T fz = Z[k * ldz + i + 1];                                   \
-                Z[k * ldz + i + 1] = s * Z[k * ldz + i] + c * fz;            \
-                Z[k * ldz + i] = c * Z[k * ldz + i] - s * fz;               \
-              }                                                               \
+            for (int64_t k = 0; k < n; k++) {                               \
+              T fz = Z[k * ldz + i + 1];                                     \
+              Z[k * ldz + i + 1] = s * Z[k * ldz + i] + c * fz;              \
+              Z[k * ldz + i] = c * Z[k * ldz + i] - s * fz;                 \
+            }                                                                 \
           }                                                                   \
           if (r == (R)0 && i >= l) continue;                                 \
           d[l] -= p;                                                         \
@@ -247,8 +246,7 @@
     }                                                                         \
     return NX_C_OK;                                                          \
   }                                                                           \
-  static void la_eigsort_##sfx(void *vd, void *vZ, int64_t n, int64_t ldz,     \
-                               int want_vec) {                                \
+  static void la_eigsort_##sfx(void *vd, void *vZ, int64_t n, int64_t ldz) {    \
     R *d = (R *)vd;                                                           \
     T *Z = (T *)vZ;                                                           \
     for (int64_t i = 0; i < n - 1; i++) {                                     \
@@ -262,12 +260,11 @@
       if (k != i) {                                                          \
         d[k] = d[i];                                                          \
         d[i] = p;                                                            \
-        if (want_vec)                                                        \
-          for (int64_t r = 0; r < n; r++) {                                  \
-            T tmp = Z[r * ldz + i];                                          \
-            Z[r * ldz + i] = Z[r * ldz + k];                                 \
-            Z[r * ldz + k] = tmp;                                            \
-          }                                                                   \
+        for (int64_t r = 0; r < n; r++) {                                    \
+          T tmp = Z[r * ldz + i];                                            \
+          Z[r * ldz + i] = Z[r * ldz + k];                                   \
+          Z[r * ldz + k] = tmp;                                              \
+        }                                                                     \
       }                                                                       \
     }                                                                         \
   }
@@ -279,13 +276,206 @@ LA_TRAITS_c32(LA_EXPAND_EIGH)
 LA_TRAITS_c64(LA_EXPAND_EIGH)
 #undef LA_EXPAND_EIGH
 
+/* ── Eigenvalues only: LAPACK dsterf ─────────────────────────────────────
+
+   The eigenvalues of the real symmetric tridiagonal (d, e), ascending, by the
+   Pal-Walker-Kahan square-root-free QL or QR iteration (dsterf, ported with
+   0-based indices). The matrix splits where |e[m]| <= eps sqrt(|d[m] d[m+1]|);
+   each block is scaled into [ssfmin, ssfmax] and iterated by QL when its bottom
+   diagonal entry is the larger in magnitude, by QR otherwise, so that the shift
+   is always subtracted at the end where the eigenvalue converges and a graded
+   block keeps its small eigenvalues. Returns 0, or the number of subdiagonal
+   entries left unreduced after 30 n sweeps. e is destroyed. */
+static void la_ste_lae2(double a, double b, double c, double *rt1,
+                        double *rt2) {
+  double sm = a + c, df = a - c, adf = fabs(df), tb = b + b, ab = fabs(tb);
+  double acmx = a, acmn = c;
+  if (fabs(a) <= fabs(c)) {
+    acmx = c;
+    acmn = a;
+  }
+  double rt;
+  if (adf > ab)
+    rt = adf * sqrt(1.0 + (ab / adf) * (ab / adf));
+  else if (adf < ab)
+    rt = ab * sqrt(1.0 + (adf / ab) * (adf / ab));
+  else
+    rt = ab * sqrt(2.0);
+  if (sm < 0.0) {
+    *rt1 = 0.5 * (sm - rt);
+    *rt2 = (acmx / *rt1) * acmn - (b / *rt1) * b;
+  } else if (sm > 0.0) {
+    *rt1 = 0.5 * (sm + rt);
+    *rt2 = (acmx / *rt1) * acmn - (b / *rt1) * b;
+  } else {
+    *rt1 = 0.5 * rt;
+    *rt2 = -0.5 * rt;
+  }
+}
+
+static int la_sterf(int n, double *d, double *e) {
+  const int maxit = 30;
+  const double eps = 0.5 * DBL_EPSILON, eps2 = eps * eps;
+  const double safmin = DBL_MIN, safmax = 1.0 / safmin;
+  const double ssfmax = sqrt(safmax) / 3.0, ssfmin = sqrt(safmin) / eps2;
+  int nmaxit = n * maxit, jtot = 0;
+  int l1 = 0;
+  while (l1 < n) {
+    if (l1 > 0) e[l1 - 1] = 0.0;
+    int m;
+    for (m = l1; m < n - 1; m++)
+      if (fabs(e[m]) <= (sqrt(fabs(d[m])) * sqrt(fabs(d[m + 1]))) * eps) {
+        e[m] = 0.0;
+        break;
+      }
+    int l = l1, lsv = l, lend = m, lendsv = lend;
+    l1 = m + 1;
+    if (lend == l) continue;
+    /* Scale the block [l, lend] into range. */
+    double anorm = 0.0;
+    for (int i = l; i <= lend; i++)
+      if (fabs(d[i]) > anorm || d[i] != d[i]) anorm = fabs(d[i]);
+    for (int i = l; i < lend; i++)
+      if (fabs(e[i]) > anorm || e[i] != e[i]) anorm = fabs(e[i]);
+    if (anorm == 0.0) continue;
+    if (anorm != anorm) return n;
+    double scale = 1.0;
+    if (anorm > ssfmax) scale = ssfmax / anorm;
+    if (anorm < ssfmin) scale = ssfmin / anorm;
+    if (scale != 1.0) {
+      for (int i = l; i <= lend; i++) d[i] *= scale;
+      for (int i = l; i < lend; i++) e[i] *= scale;
+    }
+    for (int i = l; i < lend; i++) e[i] = e[i] * e[i];
+    if (fabs(d[lend]) < fabs(d[l])) {
+      lend = lsv;
+      l = lendsv;
+    }
+    if (lend >= l) {
+      /* QL: the eigenvalue at l converges; the chase runs up from m. */
+      for (;;) {
+        if (l != lend) {
+          for (m = l; m < lend; m++)
+            if (fabs(e[m]) <= eps2 * fabs(d[m] * d[m + 1])) break;
+        } else
+          m = lend;
+        if (m < lend) e[m] = 0.0;
+        double p = d[l];
+        if (m == l) {
+          d[l] = p;
+          l++;
+          if (l <= lend) continue;
+          break;
+        }
+        if (m == l + 1) {
+          double rt1, rt2;
+          la_ste_lae2(d[l], sqrt(e[l]), d[l + 1], &rt1, &rt2);
+          d[l] = rt1;
+          d[l + 1] = rt2;
+          e[l] = 0.0;
+          l += 2;
+          if (l <= lend) continue;
+          break;
+        }
+        if (jtot == nmaxit) break;
+        jtot++;
+        double rte = sqrt(e[l]);
+        double sigma = (d[l + 1] - p) / (2.0 * rte);
+        double r = hypot(sigma, 1.0);
+        sigma = p - rte / (sigma + (sigma >= 0.0 ? r : -r));
+        double c = 1.0, sn = 0.0, gamma = d[m] - sigma;
+        p = gamma * gamma;
+        for (int i = m - 1; i >= l; i--) {
+          double bb = e[i];
+          r = p + bb;
+          if (i != m - 1) e[i + 1] = sn * r;
+          double oldc = c;
+          c = p / r;
+          sn = bb / r;
+          double oldgam = gamma, alpha = d[i];
+          gamma = c * (alpha - sigma) - sn * oldgam;
+          d[i + 1] = oldgam + (alpha - gamma);
+          p = c != 0.0 ? (gamma * gamma) / c : oldc * bb;
+        }
+        e[l] = sn * p;
+        d[l] = sigma + gamma;
+      }
+    } else {
+      /* QR: the eigenvalue at l converges; the chase runs down from m. */
+      for (;;) {
+        for (m = l; m > lend; m--)
+          if (fabs(e[m - 1]) <= eps2 * fabs(d[m] * d[m - 1])) break;
+        if (m > lend) e[m - 1] = 0.0;
+        double p = d[l];
+        if (m == l) {
+          d[l] = p;
+          l--;
+          if (l >= lend) continue;
+          break;
+        }
+        if (m == l - 1) {
+          double rt1, rt2;
+          la_ste_lae2(d[l], sqrt(e[l - 1]), d[l - 1], &rt1, &rt2);
+          d[l] = rt1;
+          d[l - 1] = rt2;
+          e[l - 1] = 0.0;
+          l -= 2;
+          if (l >= lend) continue;
+          break;
+        }
+        if (jtot == nmaxit) break;
+        jtot++;
+        double rte = sqrt(e[l - 1]);
+        double sigma = (d[l - 1] - p) / (2.0 * rte);
+        double r = hypot(sigma, 1.0);
+        sigma = p - rte / (sigma + (sigma >= 0.0 ? r : -r));
+        double c = 1.0, sn = 0.0, gamma = d[m] - sigma;
+        p = gamma * gamma;
+        for (int i = m; i < l; i++) {
+          double bb = e[i];
+          r = p + bb;
+          if (i != m) e[i - 1] = sn * r;
+          double oldc = c;
+          c = p / r;
+          sn = bb / r;
+          double oldgam = gamma, alpha = d[i + 1];
+          gamma = c * (alpha - sigma) - sn * oldgam;
+          d[i] = oldgam + (alpha - gamma);
+          p = c != 0.0 ? (gamma * gamma) / c : oldc * bb;
+        }
+        e[l - 1] = sn * p;
+        d[l] = sigma + gamma;
+      }
+    }
+    if (scale != 1.0)
+      for (int i = lsv; i <= lendsv; i++) d[i] /= scale;
+    if (jtot >= nmaxit) {
+      int left = 0;
+      for (int i = 0; i < n - 1; i++)
+        if (e[i] != 0.0) left++;
+      return left;
+    }
+  }
+  for (int i = 1; i < n; i++) {
+    double v = d[i];
+    int j = i - 1;
+    while (j >= 0 && d[j] > v) {
+      d[j + 1] = d[j];
+      j--;
+    }
+    d[j + 1] = v;
+  }
+  return 0;
+}
+
 /* ── Tridiagonal divide-and-conquer (dlaed0-6 structure) ──────────────────
 
    The with-vectors eigenproblem's cost is tql2's O(n^3) rotation accumulation
    into Q. Divide-and-conquer replaces it — tear the tridiagonal at the midpoint,
    conquer each half,
    merge via the rank-one secular equation (deflation + a BLAS-3 back-multiply of
-   the deflated Q's). tql2 stays as the eigenvalues-only path and the small-n leaf.
+   the deflated Q's). tql2 stays as the small-n with-vectors path; the
+   eigenvalues-only path is la_sterf.
 
    This core is `double` regardless of the compute type: the tridiagonal problem
    is real (larfg's real-beta subdiagonal), the eigenvalue output is float64, and
@@ -1494,8 +1684,9 @@ typedef struct {
   char *scratch;
   int64_t stride, off_z, off_tau, off_wv, off_d, off_e, off_tW, off_tWc,
       off_tP, off_tg;
-  /* divide-and-conquer scratch (only touched on the vectors && n>SMLSIZ path):
-     widened double d/e, the real eigenvector matrix Ztri, its compute-typed
+  /* widened double d/e (the values-only and the divide-and-conquer paths), then
+     the divide-and-conquer scratch (only touched on the vectors && n>SMLSIZ
+     path): the real eigenvector matrix Ztri, its compute-typed
      copy Zc, the merge permutation indxq, the dlaed workspace + iwork, and the
      back-multiply GEMM panels. */
   int use_dc;
@@ -1519,6 +1710,9 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   void *tWc = base + x->off_tWc;
   void *tP = base + x->off_tP;
   void *tg = base + x->off_tg;
+  /* d/e widened to double, for la_sterf and the divide-and-conquer. */
+  double *dd = (double *)(base + x->off_dd);
+  double *de = (double *)(base + x->off_de);
   int64_t n = x->n;
   for (int64_t bt = lo; bt < hi; bt++) {
     const char *inb;
@@ -1529,17 +1723,7 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
                   (int64_t)sizeof(double), (const char *)x->w->data, &wb);
     mv->unpack(inb, x->in_rs, x->in_cs, n, n, work, n);
     cd->tridiag(work, n, n, d, e, tau, wv, tW, tWc, tP, tg);
-    if (x->use_dc) {
-      /* divide-and-conquer with-vectors path (n > SMLSIZ). Solve the real
-         tridiagonal in double, then V = Q_householder · Z_tri. */
-      double *dd = (double *)(base + x->off_dd);
-      double *de = (double *)(base + x->off_de);
-      double *ztri = (double *)(base + x->off_ztri);
-      void *zc = base + x->off_zc;
-      int *indxq = (int *)(base + x->off_indxq);
-      double *dcwork = (double *)(base + x->off_dcwork);
-      int *dciwork = (int *)(base + x->off_dciwork);
-      void *dcgemm = base + x->off_dcgemm;
+    if (!x->vectors || x->use_dc) {
       if (x->is_double) {
         const double *dv = (const double *)d, *ev = (const double *)e;
         for (int64_t i = 0; i < n; i++) {
@@ -1553,6 +1737,25 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
           de[i] = ev[i];
         }
       }
+    }
+    if (!x->vectors) {
+      if (la_sterf((int)n, dd, de) != 0) {
+        if (x->werr[worker] == NX_C_OK) x->werr[worker] = LA_ERR_NO_CONVERGE;
+        continue;
+      }
+      double *wd = (double *)wb;
+      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = dd[i];
+      continue;
+    }
+    if (x->use_dc) {
+      /* divide-and-conquer with-vectors path (n > SMLSIZ). Solve the real
+         tridiagonal in double, then V = Q_householder · Z_tri. */
+      double *ztri = (double *)(base + x->off_ztri);
+      void *zc = base + x->off_zc;
+      int *indxq = (int *)(base + x->off_indxq);
+      double *dcwork = (double *)(base + x->off_dcwork);
+      int *dciwork = (int *)(base + x->off_dciwork);
+      void *dcgemm = base + x->off_dcgemm;
       memset(ztri, 0, (size_t)n * n * sizeof(double));
       int info = la_stedc(dd, de, ztri, (int)n, (int)n, indxq, dcwork, dciwork,
                           dcgemm, 1);
@@ -1575,13 +1778,13 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       mv->packfull(work, n, n, n, (char *)vb, x->v_rs, x->v_cs);
       continue;
     }
-    if (x->vectors) cd->orgtr(work, n, n, tau, Z, n);
-    nx_c_status s = cd->tql2(d, e, Z, n, n, x->vectors);
+    cd->orgtr(work, n, n, tau, Z, n);
+    nx_c_status s = cd->tql2(d, e, Z, n, n);
     if (s != NX_C_OK) {
       if (x->werr[worker] == NX_C_OK) x->werr[worker] = s;
       continue;
     }
-    cd->eigsort(d, Z, n, n, x->vectors);
+    cd->eigsort(d, Z, n, n);
     double *wd = (double *)wb;
     if (x->is_double) {
       const double *dv = (const double *)d;
@@ -1590,12 +1793,10 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       const float *dv = (const float *)d;
       for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = (double)dv[i];
     }
-    if (x->vectors) {
-      const char *vb;
-      la_batch_base(bt, x->batch_nd, x->bshape, x->v_bs, x->v->offset, x->esz,
-                    (const char *)x->v->data, &vb);
-      mv->packfull(Z, n, n, n, (char *)vb, x->v_rs, x->v_cs);
-    }
+    const char *vb;
+    la_batch_base(bt, x->batch_nd, x->bshape, x->v_bs, x->v->offset, x->esz,
+                  (const char *)x->v->data, &vb);
+    mv->packfull(Z, n, n, n, (char *)vb, x->v_rs, x->v_cs);
   }
 }
 
@@ -1658,7 +1859,8 @@ static nx_c_status nx_c_eigh_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
      and the back-multiply GEMM panels sized for the largest merge/apply GEMM
      (the dlaed3 GEMM is f64, the apply GEMM the compute dtype — take the max). */
   int use_dc = vectors && n > LA_DC_SMLSIZ;
-  int64_t a_dvec = use_dc ? LA_ALN(n * (int64_t)sizeof(double)) : 0;
+  int64_t a_dvec =
+      use_dc || !vectors ? LA_ALN(n * (int64_t)sizeof(double)) : 0;
   int64_t a_ztri = use_dc ? LA_ALN(n * n * (int64_t)sizeof(double)) : 0;
   int64_t a_zc = use_dc ? a_mat : 0;
   int64_t a_indxq = use_dc ? LA_ALN(n * (int64_t)sizeof(int)) : 0;
