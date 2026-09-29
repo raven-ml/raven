@@ -1785,18 +1785,47 @@ let in_scan_body st body f =
   st.scan_bodies <- body :: st.scan_bodies;
   Fun.protect ~finally:(fun () -> st.scan_bodies <- List.tl st.scan_bodies) f
 
+(* The storage of [tt] when it holds its [n] rows of [numel] elements, each
+   device's, [stride] elements apart: a buffer of [n * stride] elements under
+   reshapes, each row's padding shrunk off when [stride] exceeds [numel], as
+   [rows_tensor] reads a loop's outputs. *)
+let rows_storage tt ~n ~numel ~stride =
+  let rec base u =
+    match U.op u with
+    | Tolk_uop.Ops.Reshape | Tolk_uop.Ops.Unshard -> base (U.src u).(0)
+    | _ -> u
+  in
+  let whole_rows u =
+    match U.marg u with
+    | U.Marg_bounds [ (r0, r1); (c0, c1) ] ->
+        U.max_shape (U.src u).(0) = [ n; stride ]
+        && List.map U.const_int_value [ r0; r1; c0; c1 ]
+           = [ Some 0; Some n; Some 0; Some numel ]
+    | _ -> false
+  in
+  let u = base (F.Tensor.uop tt) in
+  let u =
+    if U.op u = Tolk_uop.Ops.Shrink && whole_rows u then base (U.src u).(0)
+    else u
+  in
+  if U.has_buffer_identity ~after_ok:true u && U.max_shape u = [ n * stride ]
+  then Some u
+  else None
+
 (* A row slot [slot] of [numel] elements, each device's, over the rows of the
-   [n; ...] value [tt], padded to the loop's row stride when a row falls short
-   of it (a whole row: see [stage_scan]). *)
+   [n; ...] value [tt]: its storage when it holds them at the loop's row stride,
+   or a copy padded to it (a whole row: see [stage_scan]). *)
 let add_rows_in_value st l ~slot ~numel ~n tt =
   let stride = row_stride (F.Tensor.val_dtype tt) numel in
   let node =
-    if stride = numel then realize_arg st tt
-    else
-      realize_arg st
-        (F.Movement.pad
-           (F.Movement.reshape tt [ n; numel ])
-           [ (0, 0); (0, stride - numel) ])
+    match rows_storage tt ~n ~numel ~stride with
+    | Some u -> u
+    | None when stride = numel -> realize_arg st tt
+    | None ->
+        realize_arg st
+          (F.Movement.pad
+             (F.Movement.reshape tt [ n; numel ])
+             [ (0, 0); (0, stride - numel) ])
   in
   add_rows_in l ~slot ~numel ~stride node
 
@@ -1966,9 +1995,9 @@ let result_placement : type c. state -> c Effect.t -> Nx.Placement.t =
 
 (* Whether a scan over the stacks [xs] cannot be staged in [st]'s program: a row
    of a stack split along its leading axis lies on one device, and a split row
-   is read in place only as a whole number of 16-byte units (see
-   [add_rows_in_value]). Such a scan unrolls, as one whose carry changes
-   does. *)
+   is read in place only as a whole number of 16-byte units or from storage
+   that already holds it at the loop's row stride (see [add_rows_in_value]).
+   Such a scan unrolls, as one whose carry changes does. *)
 let unstageable st xs =
   List.exists
     (fun (Nx.P x) ->
@@ -1981,7 +2010,10 @@ let unstageable st xs =
            numel
              (local_shape (row p) (Array.sub shape 1 (Array.length shape - 1)))
          in
-         row_stride (tolk_dtype (Nx_effect.dtype x)) local <> local)
+         let stride = row_stride (tolk_dtype (Nx_effect.dtype x)) local in
+         stride <> local
+         && Option.is_none
+              (rows_storage (tolk_of st x) ~n:shape.(0) ~numel:local ~stride))
     xs
 
 (* Handler *)

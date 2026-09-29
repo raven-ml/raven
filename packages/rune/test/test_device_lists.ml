@@ -862,6 +862,49 @@ let test_a_staged_scan_over_split_rows () =
         (run staged ~devices:devs4 c
            (split 0 (Nx.concatenate ~axis:0 [ xs; xs ]))))
 
+(* A scan over rows that another scan wrote stages as a loop even when each
+   device's slice of a row falls short of 16 bytes: the first loop keeps its
+   rows that many bytes apart, and the second reads them there. It equals one
+   device. *)
+let test_a_scan_over_short_split_rows_of_a_scan () =
+  let traces = ref 0 in
+  let first c xs =
+    snd
+      (Rune.scan'
+         ~f:(fun c x ->
+           let c = Nx.tanh (Nx.add (Nx.mul_s c 0.5) x) in
+           (c, c))
+         ~init:c xs)
+  in
+  let second c ys =
+    Rune.scan'
+      ~f:(fun c y ->
+        incr traces;
+        let c = Nx.add (Nx.mul_s c 0.5) y in
+        (c, Nx.mul c y))
+      ~init:c ys
+  in
+  let f c xs = second c (first c xs) in
+  let xs =
+    Nx.create f32 [| 6; 8 |] (Array.init 48 (fun i -> sin (float_of_int i)))
+  in
+  let c =
+    Nx.create f32 [| 8 |] (Array.init 8 (fun i -> float_of_int i /. 10.))
+  in
+  let sg = Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor)) in
+  let run ~devices c xs =
+    let c', ys = Rune.jit ~devices sg f c xs in
+    (to_arr c', to_arr ys)
+  in
+  let one = run ~devices:[ List.hd devs4 ] c xs in
+  traces := 0;
+  let four =
+    run ~devices:devs4 (Nx.place (Nx.Placement.sharded ~axis:0 devs4) c) xs
+  in
+  equal ~msg:"the second body is traced once" int 1 !traces;
+  equal ~msg:"carry, one device" (array (float 1e-6)) (fst one) (fst four);
+  equal ~msg:"rows, one device" (array (float 1e-6)) (snd one) (snd four)
+
 (* The carry's placements are staged to a fixed point of the body: each leaf the
    body moves is staged again where the body puts it. *)
 let test_a_carry_placed_by_its_body () =
@@ -1133,6 +1176,8 @@ let tests =
           test_dropout_per_device_decorrelates;
         test "two collectively reduced outputs" test_two_collective_outputs;
         test "a staged scan over split rows" test_a_staged_scan_over_split_rows;
+        test "a scan over short split rows of a scan"
+          test_a_scan_over_short_split_rows_of_a_scan;
         test "grad through a staged scan" test_grad_through_a_staged_scan;
         test "a carry placed by its body" test_a_carry_placed_by_its_body;
         test "remat over a split batch" test_remat_over_a_split_batch;

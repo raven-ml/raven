@@ -995,6 +995,46 @@ let test_scan_reads_rows_in_place () =
   check_arr ~msg:"matches the eager fold" (to_arr (over_rows x0)) y;
   equal ~msg:"no copy of the row" int from_capture from_rows
 
+(* A scan over the rows another scan wrote reads them where the first loop wrote
+   them. A loop keeps rows of 6 floats 8 apart: alone, the first scan packs its
+   rows into the stack it returns and the second pads the rows of its argument,
+   a copy each; chained, neither copies. *)
+let test_scan_reads_rows_of_a_scan_in_place () =
+  let w =
+    Nx.create f32 [| 3; 3 |]
+      (Array.init 9 (fun i -> Float.sin (Float.of_int i) /. 3.0))
+  in
+  let rows h0 xs =
+    snd
+      (Rune.scan'
+         ~f:(fun h x ->
+           let h = Nx.tanh (Nx.add (Nx.matmul h w) x) in
+           (h, h))
+         ~init:h0 xs)
+  in
+  let series seed shape =
+    let n = Array.fold_left ( * ) 1 shape in
+    Nx.create f32 shape
+      (Array.init n (fun i -> Float.sin (Float.of_int ((7 * i) + seed)) /. 2.0))
+  in
+  let first h0 = rows h0 (series 3 [| 8; 2; 3 |]) in
+  let second ys = rows (series 5 [| 2; 3 |]) ys in
+  let kernels_per_replay f x =
+    let g = Rune.jit' f in
+    ignore (g x);
+    let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
+    let y = g x in
+    (y, (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before)
+  in
+  let h0 = series 2 [| 2; 3 |] in
+  let _, alone_first = kernels_per_replay first h0 in
+  let _, alone_second = kernels_per_replay second (series 4 [| 8; 2; 3 |]) in
+  let y, chained = kernels_per_replay (fun h0 -> second (first h0)) h0 in
+  check_arr ~eps:1e-6 ~msg:"matches the eager folds"
+    (to_arr (second (first h0)))
+    y;
+  equal ~msg:"no copy of the rows" int (alone_first + alone_second - 2) chained
+
 (* A value the function computes before a scan is computed once, before the
    loop, when the body reads it: each step launches the kernels it launches when
    the value is an argument of the function. The values are a draw and the
@@ -4934,6 +4974,8 @@ let tests =
           test_scan_rejects_ragged_rows;
         test "a scan carry is written in place" test_scan_carry_written_in_place;
         test "a scan reads its rows in place" test_scan_reads_rows_in_place;
+        test "a scan reads the rows of a scan in place"
+          test_scan_reads_rows_of_a_scan_in_place;
         test "a scan computes the values it captures once"
           test_scan_computes_captures_once;
       ];

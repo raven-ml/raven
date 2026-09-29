@@ -167,6 +167,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.scan` compiled by `Rune.jit` over the stacked outputs of another
+  staged scan reads them where the first loop wrote them. Rows of a size that
+  is not a multiple of 16 bytes were copied once per call, and a scan over such
+  rows split across devices unrolled every step; it now compiles as a loop.
+
 - `Rune.jit` replays launch a compiled kernel without rewriting graphs, reading
   the environment or selecting a renderer. Each launch re-derived the storage
   views of its arguments with a graph rewrite and rendered every compile
